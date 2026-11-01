@@ -24,7 +24,7 @@ options and defaults; for example, `just bench -start 8 -steps 3 -repetitions 3`
 experiment.
 
 The recipes run in `galois.slice`; `build` and `test` use two jobs. `just slice-cap` sets the
-shared slice cap to 9,000,000,000 bytes and disables swap until reboot; `just slice-cap 4G`
+shared slice cap to 9,000,000,000 bytes and disables swap persistently; `just slice-cap 4G`
 lowers it for a competing workload. The current run uses that aggregate envelope without
 individual command caps. Agents follow C72 and the implementation runbook for manual coordination.
 A build can warn about dependency theories that do not yet contain a `.v` file and still succeed.
