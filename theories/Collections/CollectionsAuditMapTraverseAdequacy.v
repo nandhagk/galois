@@ -7,6 +7,7 @@
 From Stdlib Require Import List Lia.
 From Galois.Collections Require Import CollectionsTrie CollectionsMap CollectionsAuditElements
   CollectionsAuditTrie CollectionsAuditTrieAdequacy CollectionsAuditMapTraverse.
+
 (** * Transformation and union equations and bounds *)
 
 Lemma audit_transform_work_app K V W E work

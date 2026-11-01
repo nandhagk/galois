@@ -8,6 +8,7 @@ From Stdlib Require Import List PArith Arith Lia.
 From Galois.Collections Require Import CollectionsTrie CollectionsMap CollectionsAuditCallback
   CollectionsAuditElements CollectionsAuditMapFold CollectionsAuditMapFoldAdequacy
   CollectionsAuditMapTraverse CollectionsAuditMapTraverseAdequacy CollectionsAuditTraversalBudget.
+
 (** * Callback source and input bounds *)
 
 Lemma audit_fold_budget_ne_adequate K V B E (call : B -> K -> V -> B * list E)

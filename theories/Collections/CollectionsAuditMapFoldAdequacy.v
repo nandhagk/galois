@@ -7,6 +7,7 @@
 From Stdlib Require Import List PArith Lia.
 From Galois.Collections Require Import CollectionsTrie CollectionsMap CollectionsAuditElements
   CollectionsAuditMapFold.
+
 (** * Fold equations and bounds *)
 
 Lemma audit_map_fold_work_app K V B E work (first second : list (audit_map_fold_event K V B E)) :

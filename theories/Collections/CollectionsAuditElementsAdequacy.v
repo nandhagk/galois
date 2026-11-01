@@ -8,6 +8,7 @@ From Stdlib Require Import List PArith Lia.
 From Galois.Collections Require Import CollectionsTrie CollectionsMap CollectionsFinSet
   CollectionsAuditElements.
 Import List.ListNotations.
+
 (** * Traversal equations and bounds *)
 
 Lemma audit_elements_work_app A (first second : list (audit_elements_event A)) :

@@ -8,6 +8,7 @@ From Stdlib Require Import List Lia.
 From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet CollectionsAuditElements CollectionsAuditTrie CollectionsAuditTrieAdequacy
   CollectionsAuditInter.
+
 (** * Intersection equations and bounds *)
 
 Lemma audit_inter_work_app K (first second : list (audit_inter_event K)) :
