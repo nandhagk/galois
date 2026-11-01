@@ -1190,6 +1190,8 @@ module Query = struct
   let claim_report ~name = function
     | identity :: report when String.equal identity [%string "Constant Top.%{qualified name}"] ->
       assumption_names report
+    | "Constant" :: identity :: report when String.equal identity [%string "Top.%{qualified name}"]
+      -> assumption_names report
     | lines ->
       Or_error.error_s
         [%message
@@ -2149,6 +2151,184 @@ let%expect_test "claim identity must be the exact source constant" =
     (Error
      ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "proof editing command can remove discovered declarations")))
+    |}]
+;;
+
+let%expect_test "exact claim identities preserve assumption reports" =
+  let name = "claim" in
+  let full = [%string "Top.%{Query.qualified name}"] in
+  let forms = [ [ [%string "Constant %{full}"] ]; [ "Constant"; full ] ] in
+  List.iter forms ~f:(fun identity ->
+    let reports =
+      [ [ Query.closed ]
+      ; []
+      ; [ "malformed" ]
+      ; [ Query.closed; Query.closed ]
+      ; [ Query.axioms; "Example.axiom : forall x,"; "  x = x" ]
+      ]
+    in
+    List.iter reports ~f:(fun report ->
+      print_s [%sexp (Query.claim_report ~name (identity @ report) : string list Or_error.t)]));
+  [%expect
+    {|
+    (Ok ())
+    (Error ("missing or unrecognized assumptions report" (lines ())))
+    (Error ("missing or unrecognized assumptions report" (lines (malformed))))
+    (Error
+     ("missing or unrecognized assumptions report"
+      (lines
+       ("Closed under the global context" "Closed under the global context"))))
+    (Ok (Example.axiom))
+    (Ok ())
+    (Error ("missing or unrecognized assumptions report" (lines ())))
+    (Error ("missing or unrecognized assumptions report" (lines (malformed))))
+    (Error
+     ("missing or unrecognized assumptions report"
+      (lines
+       ("Closed under the global context" "Closed under the global context"))))
+    (Ok (Example.axiom))
+    |}]
+;;
+
+let%expect_test "claim identities reject malformed and foreign lines" =
+  let name = "claim" in
+  let full = [%string "Top.%{Query.qualified name}"] in
+  let identities = [ [ [%string "Constant %{full}"] ]; [ "Constant"; full ] ] in
+  List.iter identities ~f:(fun identity ->
+    let bad =
+      [ identity @ [ "extra" ]
+      ; "extra" :: identity
+      ; List.map identity ~f:(fun line -> [%string " %{line}"])
+      ; [ "Constant Top.Foreign.claim" ]
+      ; [ "Constant"; "Top.Foreign.claim" ]
+      ; [ "Constant claim" ]
+      ; [ "Constant"; "claim" ]
+      ; [ "Constant Top.GaloisAuditSource.clai" ]
+      ; [ "Constant"; "Top.GaloisAuditSource.clai" ]
+      ; [ [%string "Constant %{full}.suffix"] ]
+      ; [ "Constant"; [%string "%{full}.suffix"] ]
+      ; [ "Constant" ]
+      ]
+    in
+    List.iter bad ~f:(fun lines ->
+      print_s [%sexp (Result.is_error (Query.claim_report ~name (lines @ [ Query.closed ])) : bool)]));
+  [%expect
+    {|
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    |}]
+;;
+
+let%expect_test "wrapped identity passes axioms to the existing non Float policy" =
+  let name = "claim" in
+  let source = Fixture.source Fixture.closed in
+  let claim = ({ name; line = 1 } : Claim.t) in
+  List.iter
+    [ [ [%string "Constant Top.%{Query.qualified name}"] ]
+    ; [ "Constant"; [%string "Top.%{Query.qualified name}"] ]
+    ]
+    ~f:(fun identity ->
+      let result =
+        let%bind.Or_error names =
+          Query.claim_report ~name (identity @ [ Query.axioms; "Example.axiom : True"; "  -> True" ])
+        in
+        Claims.check_names source claim names
+      in
+      print_s [%sexp (result : unit Or_error.t)];
+      let float_source = Fixture.source ~package:"Float" Fixture.closed in
+      let float_result =
+        let%bind.Or_error names =
+          Query.claim_report ~name (identity @ [ Query.axioms; "Example.axiom : True" ])
+        in
+        Claims.check_names float_source claim names
+      in
+      print_s [%sexp (float_result : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (claim))
+      (problem "theorem depends on axioms: Example.axiom")))
+    (Ok ())
+    (Error
+     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (claim))
+      (problem "theorem depends on axioms: Example.axiom")))
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "strict replay captures the long wrapped source identity" =
+  let name = "audit_dfs_source_successor_correspondence_holds" in
+  let source = [%string "Theorem %{name} : True. Proof. exact I. Qed."] in
+  let qualified = Query.qualified name in
+  let command = [%string "Locate %{qualified}.\nPrint Assumptions %{qualified}."] in
+  Fixture.with_repository ~f:(fun repository ->
+    let transcript = Query.execute ~repository source [ command ] |> Or_error.ok_exn in
+    print_string transcript;
+    print_s [%sexp (Claims.source ~repository (Fixture.source source) : unit Or_error.t)]);
+  [%expect
+    {|
+    __GALOIS_AUDIT_0__
+    Constant
+    Top.GaloisAuditSource.audit_dfs_source_successor_correspondence_holds
+    Closed under the global context
+    __GALOIS_AUDIT_1__
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "both source identity forms retain Float axiom resolution" =
+  let name = "claim" in
+  let claim = ({ name; line = 1 } : Claim.t) in
+  let source = Fixture.source ~package:Source.float_package Fixture.closed in
+  let axiom = "classic" in
+  List.iter
+    [ [ [%string "Constant Top.%{Query.qualified name}"] ]
+    ; [ "Constant"; [%string "Top.%{Query.qualified name}"] ]
+    ]
+    ~f:(fun identity ->
+      let assumptions =
+        Query.claim_report ~name (identity @ [ Query.axioms; [%string "%{axiom} : True"] ])
+        |> Or_error.ok_exn
+      in
+      let reports = [ ({ claim; assumptions } : Claims.Report.t) ] in
+      List.iter [ Query.classic_axiom; "Foreign.classic" ] ~f:(fun resolved ->
+        let transcript =
+          String.concat
+            ~sep:"\n"
+            [ Query.delimiter 0; [%string "Constant %{resolved}"]; Query.delimiter 1 ]
+        in
+        print_s
+          [%sexp
+            (Result.is_ok (Claims.validate_float source ~reports ~axioms:[ axiom ] ~transcript)
+             : bool)]));
+  [%expect
+    {|
+    true
+    false
+    true
+    false
     |}]
 ;;
 
