@@ -144,11 +144,11 @@ Definition dfs_root {V E} {EV : encoding V} {g : Graph.t V E}
 Definition dfs {V E} {EV : encoding V} {g : Graph.t V E} (p : prepared EV g)
     (blocked : FinSet.t V) (roots : list V) : dfs_result V E :=
   let st := fold_left (dfs_root p blocked) roots dfs_initial in
-  DfsResult (rev (pre st)) (rev (post st)) (parent st)
+  DfsResult (rev_append (pre st) []) (rev_append (post st) []) (parent st)
     (pre_index st) (post_index st) (seen st).
 
 (** Reverse postorder lists parents before their descendants. *)
-Definition rpo {V E} (r : dfs_result V E) : list V := rev (postorder r).
+Definition rpo {V E} (r : dfs_result V E) : list V := rev_append (postorder r) [].
 
 (** A discovery edge makes its source the target's tree parent. *)
 Definition tree_parent {V E} (EV : encoding V) (g : Graph.t V E)
@@ -619,7 +619,7 @@ Proof.
   destruct (dfs_fold_spec EV g p blocked roots roots dfs_initial Hready Hroots
     ltac:(intros w Hw; exact Hw) (dfs_initial_invariant EV g blocked roots))
     as [Hinv [_ Hdone]].
-  unfold dfs; cbn [preorder postorder visited].
+  unfold dfs; cbn [preorder postorder visited]; rewrite <- !rev_alt.
   split.
   - split.
     + intro Hmem; apply (dfs_pre_reachable _ _ _ _ _ _ Hinv).
@@ -958,7 +958,7 @@ Proof.
     (dfs_initial_labels EV g roots)) as Hlabels.
   destruct (dfs_fold_spec EV g p blocked roots roots dfs_initial Hready Hroots
     ltac:(intros w Hw; exact Hw) (dfs_initial_invariant EV g blocked roots)) as [Hinv _].
-  unfold dfs in *; cbn [tree_edge preorder visited] in *.
+  unfold dfs in *; cbn [tree_edge preorder visited] in *; rewrite <- !rev_alt in *.
   apply (dfs_seen_pre _ _ _ _ _ _ Hinv) in Hvisited.
   destruct (Map.get EV v (parent (fold_left (dfs_root p blocked) roots dfs_initial)))
     as [e|] eqn:Hparent.
@@ -1634,7 +1634,7 @@ Theorem rpo_order {V E} (EV : encoding V) (g : Graph.t V E) (p : prepared EV g)
 Proof.
   intros Hready Hroots.
   destruct (dfs_final_spec EV g p blocked roots Hready Hroots) as [Hinv [Hlabels Hinterval]].
-  unfold dfs, rpo; cbn [tree_edge visited postorder]; rewrite rev_involutive.
+  unfold dfs, rpo; cbn [tree_edge visited postorder]; rewrite <- !rev_alt; rewrite rev_involutive.
   split.
   - intros e He.
     destruct (dfs_parent_labels _ _ _ _ Hlabels v e He)
@@ -1684,7 +1684,7 @@ Proof.
   destruct (dfs_finished_classes _ _ _ _ _ Hinterval _ e Hv He)
     as [Hfalse|[[j [k [Hj [Hk Hlt]]]]|Hback]].
   - rewrite FinSet.mem_empty in Hfalse; discriminate.
-  - left; unfold rpo; cbn [postorder]; rewrite rev_involutive.
+  - left; unfold rpo; cbn [postorder]; rewrite <- !rev_alt, rev_involutive.
     apply (proj2 (dfs_before_reverse _ _ _)).
     apply (dfs_numbering_order EV _ _ _ (dfs_post_numbering _ _ _ _ Hlabels)
       _ _ j k Hj Hk); exact Hlt.
@@ -1737,7 +1737,7 @@ Proof.
   assert (Hs : In s (pre (fold_left (dfs_root p FinSet.empty) (Graph.entries g) dfs_initial))).
   { apply (dfs_seen_pre _ _ _ _ _ _ Hinv).
     apply (proj2 (reachable_dfs EV g p s Hready)); constructor; rewrite Hentry; left; reflexivity. }
-  unfold rpo, dfs; cbn [postorder]; rewrite rev_involutive.
+  unfold rpo, dfs; cbn [postorder]; rewrite <- !rev_alt, rev_involutive.
   destruct (post (fold_left (dfs_root p FinSet.empty) (Graph.entries g) dfs_initial))
     as [|head rest] eqn:Hpost.
   - apply (Permutation_in _ (dfs_partition _ _ _ _ _ _ Hinv)) in Hs.
@@ -1779,9 +1779,9 @@ Lemma dfs_rpo_nodup {V E} (EV : encoding V) (g : Graph.t V E)
     (p : prepared EV g) roots :
   ready EV g p -> incl roots (Graph.nodes g) -> NoDup (rpo (dfs p FinSet.empty roots)).
 Proof.
-  intros Hready Hroots; unfold rpo; apply NoDup_rev.
+  intros Hready Hroots; unfold rpo; rewrite <- rev_alt; apply NoDup_rev.
   destruct (dfs_final_spec EV g p FinSet.empty roots Hready Hroots) as [_ [Hlabels _]].
-  unfold dfs; cbn [postorder]; apply NoDup_rev.
+  unfold dfs; cbn [postorder]; rewrite <- rev_alt; apply NoDup_rev.
   apply (dfs_numbering_nodup EV _ _ _ (dfs_post_numbering _ _ _ _ Hlabels)).
 Qed.
 

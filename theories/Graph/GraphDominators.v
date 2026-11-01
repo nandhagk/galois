@@ -200,7 +200,7 @@ Proof.
     + pose proof (dfs_final_spec EV g p FinSet.empty (Graph.entries g)
         Hready (entries_in (proj1 Hready))) as [Hinv _].
       change (NoDup (preorder (dfs p FinSet.empty (Graph.entries g)))).
-      unfold dfs; cbn [preorder]; apply NoDup_rev.
+      unfold dfs; cbn [preorder]; rewrite <- rev_alt; apply NoDup_rev.
       exact (dfs_pre_nodup _ _ _ _ _ _ Hinv).
     + intros v Hv; apply dom_live; apply dom_roots in Hv; tauto.
     + intros u v Hedge; apply dom_edge in Hedge.

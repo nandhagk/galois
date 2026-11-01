@@ -199,7 +199,7 @@ Definition wto_component {V E} {EV : encoding V} {g : Graph.t V E}
 Definition wto_unfold {V E} {EV : encoding V} {g : Graph.t V E}
     (p : prepared EV g) (ranks : Map.t V positive) (recur : list V -> wto V)
     (region : list V) : wto V :=
-  flat_map (wto_component p ranks recur) (rev (components (scc_within p region))).
+  flat_map (wto_component p ranks recur) (rev_append (components (scc_within p region)) []).
 
 (** Binary depth covers the strictly shrinking region at every recursive component opening. *)
 Definition wto_of {V E} {EV : encoding V} {g : Graph.t V E}
@@ -729,7 +729,7 @@ Proof.
   { intros c Hc; apply Hcomponent; rewrite in_rev; exact Hc. }
   assert (Hnested : forall c, In c (rev cs) -> wto_nested (f c)).
   { intros c Hc; exact (wto_region_nested _ _ _ (Hall c Hc)). }
-  change (wto_region g region (flat_map f (rev cs))); constructor.
+  unfold wto_unfold; fold cs f; rewrite <- rev_alt; constructor.
   - apply wto_flat_nested; exact Hnested.
   - eapply Permutation_trans; [exact (wto_flat_permutation g f (rev cs) Hall)|].
     apply NoDup_Permutation.
@@ -791,7 +791,7 @@ Proof.
   intro Hready; pose proof Hready as [Hwf _].
   split.
   - apply dfs_rpo_nodup; [exact Hready|exact (entries_in Hwf)].
-  - intro v; unfold rpo; rewrite <- in_rev.
+  - intro v; unfold rpo; rewrite <- rev_alt, <- in_rev.
     rewrite <- (reachable_dfs EV g p v Hready).
     destruct (dfs_exact EV g p v (Graph.entries g) FinSet.empty
       Hready (entries_in Hwf)) as [_ [_ [Hperm Hmem]]].

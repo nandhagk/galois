@@ -433,7 +433,7 @@ Local Abbreviation D := (idf_levels EV (idom T) F (prepare EV F)).
 
 Lemma idf_level_nodes v : In v (rpo R) <-> reachable g v.
 Proof.
-  unfold rpo; rewrite <- in_rev.
+  unfold rpo; rewrite <- rev_alt, <- in_rev.
   pose proof (dfs_exact EV F (prepare EV F) v (Graph.entries F) FinSet.empty
     (idf_tree_ready EV g p Hready) (entries_in (proj1 (idf_tree_ready EV g p Hready))))
     as [_ [_ [Hperm Hpre]]].

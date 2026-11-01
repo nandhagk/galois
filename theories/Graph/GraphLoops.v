@@ -468,8 +468,9 @@ Proof.
   destruct (dfs_final_spec EV g p FinSet.empty (Graph.entries g) Hready (entries_in Hwf))
     as [Hinv [Hlabels _]].
   set (st := fold_left (dfs_root p FinSet.empty) (Graph.entries g) dfs_initial) in *.
-  change (In h (rev (DfsState.pre st))) in Hh.
-  change (In y (rev (DfsState.pre st))) in Hy.
+  change (In h (rev_append (DfsState.pre st) [])) in Hh.
+  change (In y (rev_append (DfsState.pre st) [])) in Hy.
+  rewrite <- rev_alt in Hh, Hy.
   apply (proj2 (in_rev _ _)) in Hh, Hy.
   destruct (dfs_final_post_number EV g FinSet.empty (Graph.entries g) st h Hinv Hlabels Hh)
     as [a Ha].
@@ -481,7 +482,8 @@ Proof.
   destruct (Pos.eq_dec b a) as [Heq|Hne].
   - left; subst b; eapply dfs_numbering_injective;
       [exact (dfs_post_numbering _ _ _ _ Hlabels)|exact Hb|exact Ha].
-  - right; unfold rpo, dfs; change (before (rev (rev (DfsState.post st))) h y).
+  - right; unfold rpo, dfs; cbn [postorder]; repeat rewrite <- rev_alt.
+    change (before (rev (rev (DfsState.post st))) h y).
     rewrite rev_involutive; apply (proj2 (dfs_before_reverse (DfsState.post st) h y)).
     apply (proj2 (dfs_numbering_order EV _ _ _ (dfs_post_numbering _ _ _ _ Hlabels)
       y h b a Hb Ha)); apply Pos.lt_eq_cases in Hle; tauto.

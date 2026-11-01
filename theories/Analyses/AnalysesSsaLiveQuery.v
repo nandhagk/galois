@@ -329,7 +329,7 @@ Qed.
 
 Local Lemma live_rpo_reachable n : In n (rpo r) <-> reachable g n.
 Proof.
-  unfold rpo; rewrite <- in_rev.
+  unfold rpo; rewrite <- rev_alt, <- in_rev.
   destruct (dfs_exact EN g p n (Graph.entries g) FinSet.empty Hready
     (entries_in (proj1 Hready))) as [_ [_ [Hperm _]]].
   rewrite <- live_pre_reachable; split.

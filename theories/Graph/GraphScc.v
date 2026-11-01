@@ -184,7 +184,8 @@ Definition tarjan_root {V E} {EV : encoding V} {g : Graph.t V E}
 (** Return the internal result in increasing component identifier and emission order. *)
 Definition tarjan_result {V E} (st : tarjan_state V E) : scc_result V :=
   let r := emitted st in
-  SccResult (rev (components r)) (rev (component_ids r)) (component_at r) (comp_of r).
+  SccResult (rev_append (components r) []) (rev_append (component_ids r) [])
+    (component_at r) (comp_of r).
 
 (** Iterative Tarjan visits region roots in order and ignores edges leaving the indexed region. *)
 Definition scc_within {V E} {EV : encoding V} {g : Graph.t V E} (p : prepared EV g)
@@ -844,7 +845,7 @@ Proof.
     as result eqn:Hresult.
   pose proof (tarjan_book_index _ _ Hbook) as Hindex.
   cbn zeta; unfold scc_within; rewrite <- Hresult; unfold tarjan_result.
-  cbn [components component_ids component_at comp_of].
+  cbn [components component_ids component_at comp_of]; rewrite <- !rev_alt.
   split.
   - eapply Permutation_NoDup; [apply Permutation_sym; apply tarjan_concat_rev|].
     apply (tarjan_nodup_suffix (pending result)).
@@ -2290,7 +2291,7 @@ Proof.
       [apply (tarjan_low_book _ _ _ Hinv)|apply (tarjan_low_links _ _ _ Hinv)|
        apply (tarjan_low_closed _ _ _ Hinv)|exact Hframes]. }
   unfold scc_within; rewrite <- Hresult.
-  cbn [tarjan_result components]; rewrite tarjan_concat_rev_in.
+  cbn [tarjan_result components]; rewrite <- !rev_alt, tarjan_concat_rev_in.
   split.
   - intro Hin; apply (proj1 (FinSet.of_list_spec EV x region)).
     assert (Hdisc : exists d, Map.get EV x (disc result) = Some d).
@@ -3489,6 +3490,7 @@ Proof.
   remember (fold_left (tarjan_root p (FinSet.of_list EV region)) region tarjan_initial)
     as result eqn:Hresult.
   unfold scc_within; rewrite <- Hresult; cbn [tarjan_result components comp_of].
+  rewrite <- !rev_alt.
   split.
   - intros c Hin; rewrite <- in_rev in Hin.
     exact (tarjan_output_strong _ _ _ (tarjan_invariant_output _ _ _ Hinv) c Hin).

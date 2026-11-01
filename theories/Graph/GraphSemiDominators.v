@@ -527,7 +527,7 @@ Proof.
     pose proof (reachable_dfs EV g p v Hready) as Hreach; rewrite Hentries in Hreach.
     unfold dfs in Hreach; cbn [visited] in Hreach.
     rewrite <- (dfs_seen_pre _ _ _ _ _ _ Hinv); exact Hreach.
-  - exists (pre_clock st); unfold dfs; cbn [preorder pre_num]; rewrite rev_involutive.
+  - exists (pre_clock st); unfold dfs; cbn [preorder pre_num]; rewrite <- rev_alt, rev_involutive.
     apply (dfs_pre_numbering _ _ _ _ Hlabels).
   - intros v e Hget; unfold dfs in Hget; cbn [tree_edge] in Hget.
     destruct (dfs_parent_labels _ _ _ _ Hlabels v e Hget)

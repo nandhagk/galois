@@ -56,7 +56,7 @@ Proof.
   intros Hready Hroots.
   destruct (dfs_exact EV g p v roots FinSet.empty Hready Hroots)
     as [_ [_ [Hperm Hin]]].
-  unfold rpo; rewrite <- in_rev.
+  unfold rpo; rewrite <- rev_alt, <- in_rev.
   split; intro Hv.
   - apply Hin; eapply Permutation_in; [apply Permutation_sym; exact Hperm|exact Hv].
   - eapply Permutation_in; [exact Hperm|apply Hin; exact Hv].
