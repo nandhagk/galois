@@ -2,4 +2,9 @@
  (name Galois.Rules)
  (package galois)
  (flags :standard -w +default)
- (theories Stdlib Galois.Collections Galois.Order Galois.Fixpoint))
+ (theories
+  Stdlib
+  Galois.Collections
+  Galois.Order
+  Galois.Graph
+  Galois.Fixpoint))
