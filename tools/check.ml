@@ -8,6 +8,49 @@ module Audit = struct
   [@@deriving enumerate, sexp_of, string ~capitalize:"kebab-case"]
 end
 
+module Jobs = struct
+  type t =
+    | One
+    | Two
+  [@@deriving sexp_of]
+
+  let default = Two
+  let variable = "GALOIS_CHECK_JOBS"
+
+  let parse = function
+    | None -> Ok default
+    | Some "1" -> Ok One
+    | Some "2" -> Ok Two
+    | Some value ->
+      Or_error.error_s
+        [%message "invalid claims worker setting" (variable : string) (value : string)]
+  ;;
+end
+
+module Cancellation = struct
+  module Stage = struct
+    type t =
+      | Workspace
+      | Descriptor
+      | Process
+      | Script
+      | Transcript
+    [@@deriving sexp_of]
+  end
+
+  (* Signal handlers and workers share this flag while a claims audit is active. *)
+  let requested = Atomic.make false
+
+  let fail ~stage = function
+    | Ok _ as result -> result
+    | Error error ->
+      Atomic.set requested true;
+      Or_error.tag_s
+        (Error error)
+        ~tag:[%message "fatal claims orchestration failure" (stage : Stage.t)]
+  ;;
+end
+
 module Diagnostic = struct
   type t =
     { file : Filename.t
@@ -838,6 +881,9 @@ module Query = struct
   let printing = "Set Printing All.\n"
   let null_device = "/dev/null"
 
+  (* Scope names must differ even when several queries reuse a workspace. *)
+  let scope_index = Atomic.make 0
+
   let rec remove_workspace directory =
     let children =
       let%bind.Or_error entries = Or_error.try_with (fun () -> Sys_unix.ls_dir directory) in
@@ -861,53 +907,173 @@ module Query = struct
       Or_error.try_with (fun () ->
         Core_unix.mkdir_p scratch;
         Filename_unix.temp_dir ~in_dir:scratch "query-" "")
+      |> Cancellation.fail ~stage:Workspace
     in
-    let operation = Or_error.try_with_join (fun () -> f directory) in
-    let cleanup = remove_workspace directory in
+    let operation =
+      match Or_error.try_with (fun () -> f directory) with
+      | Ok result -> result
+      | Error error -> Cancellation.fail ~stage:Workspace (Error error)
+    in
+    let cleanup =
+      Or_error.try_with_join (fun () -> remove_workspace directory)
+      |> Cancellation.fail ~stage:Workspace
+    in
+    let%map.Or_error result, () = Or_error.both operation cleanup in
+    result
+  ;;
+
+  let with_descriptor ?perm ~mode file ~f =
+    let%bind.Or_error descriptor =
+      Or_error.try_with (fun () -> Core_unix.openfile ?perm ~mode file)
+      |> Cancellation.fail ~stage:Descriptor
+    in
+    let operation =
+      Or_error.try_with_join (fun () -> f descriptor) |> Cancellation.fail ~stage:Descriptor
+    in
+    let cleanup =
+      Or_error.try_with (fun () -> Core_unix.close descriptor)
+      |> Cancellation.fail ~stage:Descriptor
+    in
     let%map.Or_error result, () = Or_error.both operation cleanup in
     result
   ;;
 
   let run_process ~mode ~directory ~args ~output =
-    let%bind.Or_error status =
-      Or_error.try_with
-      @@ fun () ->
-      Core_unix.with_file null_device ~mode:[ O_RDONLY ] ~f:(fun input ->
-        Core_unix.with_file
-          output
-          ~perm:0o600
-          ~mode:[ O_WRONLY; O_CREAT; O_TRUNC ]
-          ~f:(fun output ->
-            let ({ pid; _ } : (_, _, _) Core_unix.Pid_with_generated_fds.t) =
-              Core_unix.create_process_with_fds
-                ~working_dir:directory
-                ~prog:"systemd-run"
-                ~args:
-                  ([ "--user"
-                   ; "--scope"
-                   ; "--quiet"
-                   ; "--slice=galois.slice"
-                   ; "--"
-                   ; "env"
-                   ; "-u"
-                   ; "COQPATH"
-                   ; "rocq"
-                   ; Mode.to_string mode
-                   ; "-q"
-                   ]
-                   @ Mode.arguments mode
-                   @ args)
-                ~stdin:(Use_this input)
-                ~stdout:(Use_this output)
-                ~stderr:(Use_this output)
-                ()
+    let operation =
+      with_descriptor null_device ~mode:[ O_RDONLY ] ~f:(fun input ->
+        with_descriptor output ~perm:0o600 ~mode:[ O_WRONLY; O_CREAT; O_TRUNC ] ~f:(fun output ->
+          let index = Atomic.fetch_and_add scope_index 1 in
+          let owner = Core_unix.getpid () in
+          let unit = [%string "galois-%{owner#Pid}-%{index#Int}.scope"] in
+          let ({ pid; _ } : (_, _, _) Core_unix.Pid_with_generated_fds.t) =
+            Core_unix.create_process_with_fds
+              ~working_dir:directory
+              ~prog:"systemd-run"
+              ~args:
+                ([ "--user"
+                 ; "--scope"
+                 ; "--quiet"
+                 ; "--slice=galois.slice"
+                 ; [%string "--unit=%{unit}"]
+                 ; "--"
+                 ; "env"
+                 ; "-u"
+                 ; "COQPATH"
+                 ; "rocq"
+                 ; Mode.to_string mode
+                 ; "-q"
+                 ]
+                 @ Mode.arguments mode
+                 @ args)
+              ~stdin:(Use_this input)
+              ~stdout:(Use_this output)
+              ~stderr:(Use_this output)
+              ()
+          in
+          let reaped = ref false in
+          let proc_file name = [%string "/proc/%{pid#Pid}/%{name}"] in
+          let scope_member () =
+            let%map.Or_error groups =
+              Or_error.try_with (fun () -> In_channel.read_all (proc_file "cgroup"))
             in
-            Core_unix.waitpid pid))
+            String.split_lines groups
+            |> List.exists ~f:(fun line ->
+              String.is_suffix line ~suffix:[%string "/%{unit}"]
+              || String.is_suffix line ~suffix:[%string "/%{unit} (deleted)"])
+          in
+          let terminate () =
+            let child = Or_error.try_with (fun () -> Signal_unix.send_i Signal.kill (`Pid pid)) in
+            let member = scope_member () in
+            let scope =
+              let%bind.Or_error member = member in
+              if not member
+              then Ok ()
+              else
+                Or_error.try_with_join (fun () ->
+                  let ({ pid = killer; _ } : (_, _, _) Core_unix.Pid_with_generated_fds.t) =
+                    Core_unix.create_process_with_fds
+                      ~prog:"systemctl"
+                      ~args:[ "--user"; "kill"; "--kill-whom=all"; "--signal=KILL"; unit ]
+                      ~stdin:(Use_this input)
+                      ~stdout:(Use_this output)
+                      ~stderr:(Use_this output)
+                      ()
+                  in
+                  let status = Or_error.try_with (fun () -> Core_unix.waitpid killer) in
+                  let status =
+                    match status with
+                    | Ok _ -> status
+                    | Error _ ->
+                      let signal =
+                        Or_error.try_with (fun () -> Signal_unix.send_i Signal.kill (`Pid killer))
+                      in
+                      let reap = Or_error.try_with (fun () -> Core_unix.waitpid killer) in
+                      Or_error.both status (Or_error.both signal reap) |> Or_error.map ~f:fst
+                  in
+                  let%bind.Or_error status = status in
+                  match status with
+                  | Ok () -> Ok ()
+                  | Error _ as status ->
+                    Or_error.error_s
+                      [%message
+                        "cannot terminate Rocq scope"
+                          (unit : string)
+                          (status : Core_unix.Exit_or_signal.t)])
+            in
+            let status = Or_error.try_with (fun () -> Core_unix.waitpid pid) in
+            if Result.is_ok status then reaped := true;
+            let%map.Or_error _, status = Or_error.both (Or_error.both scope child) status in
+            status
+          in
+          let rec wait () =
+            let process = In_channel.read_all (proc_file "status") in
+            if String.is_substring process ~substring:"State:\tZ"
+            then (
+              let member = scope_member () in
+              let status = Core_unix.waitpid pid in
+              reaped := true;
+              let%bind.Or_error member = member in
+              if not member
+              then
+                Or_error.error_s
+                  [%message
+                    "Rocq scope was not established"
+                      (unit : string)
+                      (status : Core_unix.Exit_or_signal.t)]
+              else Ok status)
+            else if Atomic.get Cancellation.requested
+            then terminate ()
+            else (
+              Caml_threads.Thread.delay 0.05;
+              wait ())
+          in
+          match Or_error.try_with_join wait with
+          | Ok _ as result -> result
+          | Error _ as result when !reaped -> result
+          | Error _ as result -> Or_error.both result (terminate ()) |> Or_error.map ~f:fst))
     in
-    let%bind.Or_error transcript = Or_error.try_with (fun () -> In_channel.read_all output) in
+    let transcript =
+      Or_error.try_with (fun () -> In_channel.read_all output)
+      |> Cancellation.fail ~stage:Transcript
+    in
+    let%bind.Or_error status, transcript =
+      match operation, transcript with
+      | Error error, Ok transcript ->
+        Or_error.tag_s (Error error) ~tag:[%message "Rocq process transcript" (transcript : string)]
+      | Ok status, Ok transcript -> Ok (status, transcript)
+      | Ok _, (Error _ as error) -> error
+      | (Error _ as operation), (Error _ as transcript) -> Or_error.both operation transcript
+    in
     match status with
     | Ok () -> Ok transcript
-    | Error _ ->
+    | Error (`Exit_non_zero (125 | 126 | 127) | `Signal _) ->
+      Or_error.error_s
+        [%message
+          "Rocq assumptions query failed"
+            (status : Core_unix.Exit_or_signal.t)
+            (transcript : string)]
+      |> Cancellation.fail ~stage:Process
+    | Error (`Exit_non_zero _) ->
       Or_error.error_s
         [%message
           "Rocq assumptions query failed"
@@ -969,6 +1135,7 @@ module Query = struct
         in
         let%bind.Or_error () =
           Or_error.try_with (fun () -> Out_channel.write_all input ~data:script)
+          |> Cancellation.fail ~stage:Script
         in
         let output = Filename.concat directory "Query.log" in
         run_process ~mode:Repl ~directory ~args:(load_paths repository @ [ "-l"; input ]) ~output)
@@ -1134,8 +1301,111 @@ module Claims = struct
               "Float assumptions inspection" (source.file : Filename.t) (claims : Claim.t list)]))
   ;;
 
+  let run_workers ~(jobs : Jobs.t) ~f sources =
+    let run_parallel () =
+      let sources = Array.of_list sources in
+      let results = Array.create ~len:(Array.length sources) None in
+      let lock = Caml_threads.Mutex.create () in
+      (* The lock protects assignment of each index to exactly one worker. *)
+      let next = ref 0 in
+      let rec worker () =
+        Caml_threads.Mutex.lock lock;
+        let index = !next in
+        Int.incr next;
+        Caml_threads.Mutex.unlock lock;
+        if index < Array.length sources && not (Atomic.get Cancellation.requested)
+        then (
+          let result =
+            match Or_error.try_with (fun () -> f sources.(index)) with
+            | Ok result -> result
+            | Error error ->
+              Atomic.set Cancellation.requested true;
+              Or_error.tag_s
+                (Error error)
+                ~tag:[%message "fatal claims worker failure; coverage incomplete" (index : int)]
+          in
+          results.(index) <- Some result;
+          worker ())
+      in
+      let failure = ref (Ok ()) in
+      let run_worker () =
+        let result = Or_error.try_with worker in
+        if Result.is_error result
+        then (
+          Atomic.set Cancellation.requested true;
+          Caml_threads.Mutex.lock lock;
+          failure := Or_error.combine_errors_unit [ !failure; result ];
+          Caml_threads.Mutex.unlock lock)
+      in
+      let thread = Or_error.try_with (fun () -> Caml_threads.Thread.create run_worker ()) in
+      if Result.is_error thread then Atomic.set Cancellation.requested true;
+      run_worker ();
+      let joined =
+        match thread with
+        | Ok thread -> Or_error.try_with (fun () -> Caml_threads.Thread.join thread)
+        | Error error ->
+          Atomic.set Cancellation.requested true;
+          Error error
+      in
+      let coverage =
+        Array.to_list results
+        |> List.map ~f:(Option.value ~default:(Or_error.error_string "incomplete claims coverage"))
+        |> Or_error.combine_errors_unit
+      in
+      Or_error.combine_errors_unit [ !failure; joined; coverage ]
+    in
+    match jobs with
+    | One ->
+      List.map sources ~f:(fun item ->
+        if Atomic.get Cancellation.requested
+        then Or_error.error_string "incomplete claims coverage"
+        else (
+          match Or_error.try_with (fun () -> f item) with
+          | Ok result -> result
+          | Error error ->
+            Atomic.set Cancellation.requested true;
+            Or_error.tag_s
+              (Error error)
+              ~tag:[%message "fatal claims worker failure; coverage incomplete"]))
+      |> Or_error.combine_errors_unit
+    | Two -> run_parallel ()
+  ;;
+
   let run ~repository sources =
-    List.map sources ~f:(source ~repository) |> Or_error.combine_errors_unit
+    let%bind.Or_error jobs = Jobs.parse (Sys.getenv Jobs.variable) in
+    Atomic.set Cancellation.requested false;
+    let handler = `Handle (fun _ -> Atomic.set Cancellation.requested true) in
+    let%bind.Or_error previous_int =
+      Or_error.try_with (fun () -> Signal.Expert.signal Signal.int handler)
+    in
+    let operation =
+      Or_error.try_with_join (fun () ->
+        let%bind.Or_error previous_term =
+          Or_error.try_with (fun () -> Signal.Expert.signal Signal.term handler)
+        in
+        let inspect_source (item : Source.t) =
+          match Or_error.try_with (fun () -> source ~repository item) with
+          | Ok result -> result
+          | Error error ->
+            Atomic.set Cancellation.requested true;
+            Or_error.tag_s
+              (Error error)
+              ~tag:[%message "fatal source failure; coverage incomplete" (item.file : Filename.t)]
+        in
+        let result =
+          Or_error.try_with_join (fun () -> run_workers ~jobs ~f:inspect_source sources)
+        in
+        let restore = Or_error.try_with (fun () -> Signal.Expert.set Signal.term previous_term) in
+        let%map.Or_error result, () = Or_error.both result restore in
+        result)
+    in
+    let restore = Or_error.try_with (fun () -> Signal.Expert.set Signal.int previous_int) in
+    let result = Or_error.both operation restore |> Or_error.map ~f:fst in
+    let cancelled = Atomic.get Cancellation.requested in
+    Atomic.set Cancellation.requested false;
+    if cancelled
+    then Or_error.combine_errors_unit [ result; Or_error.error_string "claims coverage incomplete" ]
+    else result
   ;;
 end
 
@@ -2240,5 +2510,182 @@ let%expect_test "finite universe erasure is checked in the generated solver sign
     (Error
      ("missing extraction declaration" (file rules_solver.mli)
       (spelling valfinite_powerset_lattice:'a1encoding->'a1finite_setlattice)))
+    |}]
+;;
+
+let%expect_test "claims worker setting accepts only one and two" =
+  List.iter [ None; Some "1"; Some "2"; Some ""; Some "01"; Some "3" ] ~f:(fun value ->
+    print_s [%sexp (Jobs.parse value : Jobs.t Or_error.t)]);
+  [%expect
+    {|
+    (Ok Two)
+    (Ok One)
+    (Ok Two)
+    (Error
+     ("invalid claims worker setting" (variable GALOIS_CHECK_JOBS) (value "")))
+    (Error
+     ("invalid claims worker setting" (variable GALOIS_CHECK_JOBS) (value 01)))
+    (Error
+     ("invalid claims worker setting" (variable GALOIS_CHECK_JOBS) (value 3)))
+    |}]
+;;
+
+let%expect_test "claims worker results retain all failures in source order" =
+  let fail item = Or_error.error_s [%message "source failure" (item : int)] in
+  List.iter [ Jobs.One; Jobs.Two ] ~f:(fun jobs ->
+    print_s [%sexp (Claims.run_workers ~jobs ~f:fail [] : unit Or_error.t)];
+    print_s [%sexp (Claims.run_workers ~jobs ~f:fail [ 1; 2; 3 ] : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Error
+     (("source failure" (item 1)) ("source failure" (item 2))
+      ("source failure" (item 3))))
+    (Ok ())
+    (Error
+     (("source failure" (item 1)) ("source failure" (item 2))
+      ("source failure" (item 3))))
+    |}]
+;;
+
+let%expect_test "two workers can finish out of order without reordering errors" =
+  let lock = Caml_threads.Mutex.create () in
+  let condition = Caml_threads.Condition.create () in
+  (* The condition forces the first item to wait until the second has finished. *)
+  let active = ref 0 in
+  let maximum = ref 0 in
+  let first_started = ref false in
+  let second_done = ref false in
+  let completed = ref [] in
+  let run item =
+    Caml_threads.Mutex.lock lock;
+    Int.incr active;
+    maximum := Int.max !maximum !active;
+    if item = 1
+    then (
+      first_started := true;
+      Caml_threads.Condition.signal condition);
+    while item = 2 && not !first_started do
+      Caml_threads.Condition.wait condition lock
+    done;
+    while item = 1 && not !second_done do
+      Caml_threads.Condition.wait condition lock
+    done;
+    completed := item :: !completed;
+    Int.decr active;
+    if item = 2
+    then (
+      second_done := true;
+      Caml_threads.Condition.signal condition);
+    Caml_threads.Mutex.unlock lock;
+    Or_error.error_s [%message "source failure" (item : int)]
+  in
+  let result = Claims.run_workers ~jobs:Two ~f:run [ 1; 2 ] in
+  print_s [%message (!maximum : int) (List.rev !completed : int list)];
+  print_s [%sexp (result : unit Or_error.t)];
+  [%expect
+    {|
+    ((!maximum 2) ("List.rev (!completed)" (2 1)))
+    (Error (("source failure" (item 1)) ("source failure" (item 2))))
+    |}]
+;;
+
+let%expect_test "one worker visits every item sequentially" =
+  let active = ref 0 in
+  let maximum = ref 0 in
+  let visited = ref [] in
+  let run item =
+    Int.incr active;
+    maximum := Int.max !maximum !active;
+    visited := item :: !visited;
+    Int.decr active;
+    Ok ()
+  in
+  let result = Claims.run_workers ~jobs:One ~f:run [ 1; 2; 3 ] in
+  let visited = List.rev !visited in
+  print_s [%message (!maximum : int) (visited : int list) (result : unit Or_error.t)];
+  [%expect {| ((!maximum 1) (visited (1 2 3)) (result (Ok ()))) |}]
+;;
+
+let%expect_test "invalid worker setting affects claims but not other audits" =
+  let previous = Sys.getenv Jobs.variable in
+  Exn.protect
+    ~f:(fun () ->
+      Core_unix.putenv ~key:Jobs.variable ~data:"invalid";
+      Fixture.with_repository ~f:(fun repository ->
+        List.iter [ Audit.Claims; Hygiene; Layout ] ~f:(fun audit ->
+          let result = Result.is_error (run ~repository [ audit ]) in
+          print_s [%message (audit : Audit.t) (result : bool)]);
+        print_s [%sexp (Result.is_error (Extraction.run []) : bool)]))
+    ~finally:(fun () ->
+      match previous with
+      | None -> Core_unix.unsetenv Jobs.variable
+      | Some value -> Core_unix.putenv ~key:Jobs.variable ~data:value);
+  [%expect
+    {|
+    ((audit Claims) (result true))
+    ((audit Hygiene) (result false))
+    ((audit Layout) (result false))
+    true
+    |}]
+;;
+
+let%expect_test "workspace cleanup retains operation and cleanup failures" =
+  let directory = ref "" in
+  let result =
+    Query.with_workspace ~f:(fun path ->
+      directory := path;
+      Out_channel.write_all (Filename.concat path "held") ~data:"held";
+      Core_unix.chmod path ~perm:0;
+      Or_error.error_string "primary failure")
+  in
+  Core_unix.chmod !directory ~perm:0o700;
+  let cleaned = Query.remove_workspace !directory in
+  let cancelled = Atomic.get Cancellation.requested in
+  Atomic.set Cancellation.requested false;
+  let text = Result.error result |> Option.value_exn |> Error.to_string_hum in
+  let primary = String.is_substring text ~substring:"primary failure" in
+  let cleanup = String.is_substring text ~substring:!directory in
+  print_s
+    [%message (primary : bool) (cleanup : bool) (cancelled : bool) (cleaned : unit Or_error.t)];
+  [%expect
+    {|
+    ((primary true) (cleanup true) (cancelled true) (cleaned (Ok ())))
+    |}]
+;;
+
+let%expect_test "process spawn failure cancels coverage and cleans its workspace" =
+  let previous = Sys.getenv "PATH" in
+  let result =
+    Exn.protect
+      ~f:(fun () ->
+        Core_unix.putenv ~key:"PATH" ~data:"";
+        Query.with_workspace ~f:(fun directory ->
+          let output = Filename.concat directory "Query.log" in
+          Query.run_process ~mode:Repl ~directory ~args:[] ~output))
+      ~finally:(fun () ->
+        match previous with
+        | None -> Core_unix.unsetenv "PATH"
+        | Some value -> Core_unix.putenv ~key:"PATH" ~data:value)
+  in
+  let cancelled = Atomic.get Cancellation.requested in
+  Atomic.set Cancellation.requested false;
+  let text = Result.error result |> Option.value_exn |> Error.to_string_hum in
+  let fatal = String.is_substring text ~substring:"fatal claims orchestration failure" in
+  print_s [%message (fatal : bool) (cancelled : bool)];
+  [%expect {| ((fatal true) (cancelled true)) |}]
+;;
+
+let%expect_test "fatal worker exception reports incomplete coverage" =
+  let run item = if item = 1 then raise_s [%message "worker exception"] else Ok () in
+  let result = Claims.run_workers ~jobs:One ~f:run [ 1; 2 ] in
+  Atomic.set Cancellation.requested false;
+  let text = Result.error result |> Option.value_exn |> Error.to_string_hum in
+  let exception_seen = String.is_substring text ~substring:"worker exception" in
+  let incomplete = String.is_substring text ~substring:"incomplete" in
+  print_s [%message (exception_seen : bool) (incomplete : bool)];
+  [%expect
+    {|
+    ((exception_seen true) (incomplete true))
     |}]
 ;;

@@ -7,6 +7,9 @@
   core_unix
   core_unix.command_unix
   core_unix.filename_unix
+  core_unix.signal_unix
+  core_kernel.caml_threads
+  threads
   galois_extracted)
  (preprocess
   (pps ppx_jane))
