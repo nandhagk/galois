@@ -5,13 +5,13 @@
     Builds on: AnalysesAvailable, GraphPrepare, FixpointTotal and OrderDual. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderMonotone OrderBasic OrderDual OrderPowerset.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderMonotone OrderBasic OrderDual OrderPowerset.
+From Galois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
   FixpointTotal FixpointSchedule.
-From Gaulois.Views Require Import ViewsGraph.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesAvailable.
+From Galois.Views Require Import ViewsGraph.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesAvailable.
 Import List.ListNotations.
 
 (** An expression event either generates or invalidates that expression. *)

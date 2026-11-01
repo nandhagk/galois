@@ -1,4 +1,4 @@
-# Gaulois.Bits
+# Galois.Bits
 
 Bits gives n-bit machine words as plain integers: a word of width `w` is a `Z` in `[0, 2^w)`, and
 every operator follows the SMT-LIB QF_BV theory, so every operator is total. There are no traps
@@ -20,8 +20,8 @@ lemma relates a result to unwrapped arithmetic, it assumes `is_word`. Stdlib imp
 `List`, `Bool`) are implicit. `Open Scope Z_scope` applies throughout; natural-number arithmetic
 uses `%nat` where needed.
 
-`encoding` is the shared record from `Gaulois.Collections.CollectionsEncoding`; Bits depends on
-`Gaulois.Collections` for `op_encoding`.
+`encoding` is the shared record from `Galois.Collections.CollectionsEncoding`; Bits depends on
+`Galois.Collections` for `op_encoding`.
 
 ## Files
 

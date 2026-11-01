@@ -5,9 +5,9 @@
     Builds on: DomainsCongruence, DomainsConst, DomainsInterval and DomainsProduct. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderFlat OrderProduct OrderReduced.
-From Gaulois.Bits Require Import BitsWord BitsOp.
-From Gaulois.Domains Require Import DomainsNumeric DomainsConst DomainsInterval DomainsCongruence
+From Galois.Order Require Import OrderLattice OrderConcrete OrderFlat OrderProduct OrderReduced.
+From Galois.Bits Require Import BitsWord BitsOp.
+From Galois.Domains Require Import DomainsNumeric DomainsConst DomainsInterval DomainsCongruence
   DomainsProduct DomainsKnownBits DomainsWrapped.
 Import List.ListNotations.
 

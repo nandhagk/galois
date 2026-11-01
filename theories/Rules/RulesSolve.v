@@ -5,11 +5,11 @@
     Builds on: RulesModel, RulesCompile and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith Lia Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderMonotone OrderPowerset.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderMonotone OrderPowerset.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
   FixpointTotal FixpointSchedule.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesCompile RulesModel.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesCompile RulesModel.
 Import List.ListNotations.
 
 (** Databases store a finite tuple set at each explicitly represented predicate. *)

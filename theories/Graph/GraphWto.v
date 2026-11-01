@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare, GraphDfs, GraphScc and Collections maps and sets. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia Wf_nat Permutation.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc.
 Import List.ListNotations.
 
 (** A token emits a vertex, opens a headed component, or closes its innermost component. *)

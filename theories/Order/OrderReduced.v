@@ -5,7 +5,7 @@
     Builds on: OrderLattice, OrderConcrete and OrderProduct. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderProduct.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderProduct.
 
 (** A reduction descends, preserves order and is idempotent up to the preorder. *)
 Record reduction_laws {A B} (LA : lattice A) (LB : lattice B)

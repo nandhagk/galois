@@ -5,14 +5,14 @@
     Builds on: AnalysesRules, RulesDelta and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderPointwise OrderBasic.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck FixpointIndex
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderPointwise OrderBasic.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck FixpointIndex
   FixpointLeast FixpointWorklist FixpointTotal FixpointSchedule.
-From Gaulois.Views Require Import ViewsGraph.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesSolve RulesJoin RulesDelta.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesDemand AnalysesRules.
+From Galois.Views Require Import ViewsGraph.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesSolve RulesJoin RulesDelta.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesDemand AnalysesRules.
 Import List.ListNotations.
 
 Definition branch_graph : Graph.t nat nat :=

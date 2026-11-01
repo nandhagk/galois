@@ -5,9 +5,9 @@
     Builds on: AnalysesMemoryGraph, ViewsMemoryEffects and GraphCore. *)
 
 From Stdlib Require Import List.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph.
 Import List.ListNotations.
 
 Definition parallel_cfg : Graph.t bool bool :=

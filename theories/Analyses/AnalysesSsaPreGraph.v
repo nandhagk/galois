@@ -6,11 +6,11 @@
     Builds on: AnalysesAvailable, ViewsSsaPoints, ViewsSsa, GraphFrontier and Collections maps. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphDominators GraphFrontier GraphIdf GraphSemiDominators GraphLoops GraphLengauerTarjan.
-From Gaulois.Views Require Import ViewsGraph ViewsSsa ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesAvailable.
+From Galois.Views Require Import ViewsGraph ViewsSsa ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesAvailable.
 Import List.ListNotations.
 
 (** * Expression views and simultaneous substitution *)

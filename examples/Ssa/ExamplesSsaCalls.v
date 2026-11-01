@@ -5,13 +5,13 @@
     Builds on: ExamplesSsaAnalysisBase, ExamplesSsaEffects and AnalysesCalls. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderBasic.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
-From Gaulois.Analyses Require Import AnalysesCalls.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderBasic.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
+From Galois.Analyses Require Import AnalysesCalls.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
   ExamplesSsaTypingProofs ExamplesSsaEffects ExamplesSsaAnalysisBase.
 Import List.ListNotations.
 

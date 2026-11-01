@@ -5,7 +5,7 @@
     Builds on: OrderLattice and OrderConcrete. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Order Require Import OrderLattice OrderConcrete.
 
 (** Option adds a fresh bottom and otherwise uses the underlying operations. *)
 Definition option_lattice {A} (L : lattice A) : lattice (option A) :=

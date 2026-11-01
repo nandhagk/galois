@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding. *)
 
 From Stdlib Require Import Bool List NArith ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
+From Galois.Collections Require Import CollectionsEncoding.
 Import List.ListNotations.
 
 (** The primitive encodings use their prescribed boundary codes. *)

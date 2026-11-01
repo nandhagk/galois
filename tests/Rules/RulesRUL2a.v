@@ -5,8 +5,8 @@
     Builds on: RulesJoin, RulesCompile and RulesSyntax. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Rules Require Import RulesSyntax RulesCompile RulesJoin.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Rules Require Import RulesSyntax RulesCompile RulesJoin.
 Import List.ListNotations.
 
 Definition join_test_atom p ts : atom nat := Atom p ts.

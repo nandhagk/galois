@@ -5,11 +5,11 @@
     Builds on: AnalysesMemoryGraph, AnalysesMemoryFrontier and AnalysesMemoryBase. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsGraph ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier AnalysesMemoryBase.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsGraph ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier AnalysesMemoryBase.
 Import List.ListNotations.
 
 (** A successful scope test excludes a common byte at every allocation site. *)

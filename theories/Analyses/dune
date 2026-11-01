@@ -1,15 +1,15 @@
 (rocq.theory
- (name Gaulois.Analyses)
- (package gaulois)
+ (name Galois.Analyses)
+ (package galois)
  (flags :standard -w +default)
  (theories
   Stdlib
-  Gaulois.Collections
-  Gaulois.Order
-  Gaulois.Graph
-  Gaulois.Bits
-  Gaulois.Fixpoint
-  Gaulois.Rules
-  Gaulois.Rewrite
-  Gaulois.Domains
-  Gaulois.Views))
+  Galois.Collections
+  Galois.Order
+  Galois.Graph
+  Galois.Bits
+  Galois.Fixpoint
+  Galois.Rules
+  Galois.Rewrite
+  Galois.Domains
+  Galois.Views))

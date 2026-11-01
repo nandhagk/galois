@@ -5,8 +5,8 @@
     Builds on: AnalysesEgraph and ExamplesSsaAnalyses. *)
 
 From Stdlib Require Import List NArith.
-From Gaulois.Analyses Require Import AnalysesEgraph.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaAnalyses.
+From Galois.Analyses Require Import AnalysesEgraph.
+From Galois.Examples.Ssa Require Import ExamplesSsaAnalyses.
 Import List.ListNotations.
 
 (** Direct core saturation and legacy replay accept a nontrivial cheaper SSA result. *)

@@ -7,7 +7,7 @@
 (copy_files ../rules_solver.mli)
 
 (library
- (name gaulois_extracted)
+ (name galois_extracted)
  (modules algorithms rules_solver)
  ; Rocq emits catch-all matches (warning 4), such as matching XH before a wildcard.
  ; Standard nat realizations emit `let rec add = (+)` (warning 39).

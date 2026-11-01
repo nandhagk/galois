@@ -5,9 +5,9 @@
     Builds on: FixpointCheck, FixpointIndex and OrderLattice. *)
 
 From Stdlib Require Import List Bool PArith Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck.
 Import List.ListNotations.
 
 (** Join one evaluated contribution into its destination's aggregate. *)

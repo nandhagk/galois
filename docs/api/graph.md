@@ -1,4 +1,4 @@
-# Gaulois.Graph
+# Galois.Graph
 
 Graph provides edge-labelled graphs with entry nodes, and the standard algorithms over them, each
 with an exactness theorem: depth-first search and reverse postorder, dominators and

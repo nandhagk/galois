@@ -1,4 +1,4 @@
-# Gaulois.Views
+# Galois.Views
 
 A view tells the library how one language's executions relate to a graph, a structured tree, SSA
 values, effects, calls or memory. A client proves once that its semantics respects a view, and

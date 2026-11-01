@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsMap, CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool PArith PeanoNat Lia Relation_Definitions Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
 Import List.ListNotations.
 
 Module UnionFind.

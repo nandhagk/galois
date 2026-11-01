@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare, GraphDfs and GraphCertificate. *)
 
 From Stdlib Require Import List Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphCertificate.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphCertificate.
 Import List.ListNotations.
 
 Definition dfs_example_graph : Graph.t nat nat :=

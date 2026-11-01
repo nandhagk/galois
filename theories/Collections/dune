@@ -1,5 +1,5 @@
 (rocq.theory
- (name Gaulois.Collections)
- (package gaulois)
+ (name Galois.Collections)
+ (package galois)
  (flags :standard -w +default)
  (theories Stdlib))

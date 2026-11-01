@@ -1,6 +1,6 @@
 # Design
 
-Gaulois expresses analyses as constraint systems over reusable domains and language views. Its core
+Galois expresses analyses as constraint systems over reusable domains and language views. Its core
 uses Rocq Stdlib alone. Float is the optional Flocq-dependent package. A client chooses its own
 nodes, maps its operators to the word language, and proves that its semantics respects the views it
 uses. The contracts specify the intended interfaces; implementation status is in the README.

@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsMap, CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
 
 Import List.ListNotations.
 

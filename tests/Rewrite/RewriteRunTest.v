@@ -5,8 +5,8 @@
     Builds on: RewriteRun and the directly proved graph operations. *)
 
 From Stdlib Require Import List Bool NArith PeanoNat.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
   RewriteIndex RewriteRebuild RewriteRun.
 Import List.ListNotations.
 

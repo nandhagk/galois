@@ -5,10 +5,10 @@
     Builds on: ViewsSemantics, ViewsGraph, ViewsAgreement and OrderConcrete. *)
 
 From Stdlib Require Import List.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement.
 Import List.ListNotations.
 
 (** A forward invariant combines reachability with the solution's concretisation at the point. *)

@@ -5,8 +5,8 @@
     Builds on: GraphReducible, GraphNaturalLoops and GraphDominators. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominators
   GraphReducible GraphNaturalLoops.
 Import List.ListNotations.
 

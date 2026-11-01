@@ -5,11 +5,11 @@
     Builds on: DomainsEquality, DomainsSymbolic and BitsOp. *)
 
 From Stdlib Require Import List PArith ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsTable
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsTable
   CollectionsUnionFind.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
-From Gaulois.Bits Require Import BitsWord BitsOp.
-From Gaulois.Domains Require Import DomainsEquality DomainsSymbolic.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Bits Require Import BitsWord BitsOp.
+From Galois.Domains Require Import DomainsEquality DomainsSymbolic.
 Import List.ListNotations.
 Local Open Scope positive_scope.
 

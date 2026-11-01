@@ -5,9 +5,9 @@
     Builds on: GraphCore, GraphPrepare, GraphDfs, GraphScc and Collections maps and sets. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc.
 Import List.ListNotations.
 
 (** Headers are outer-first; node sets include nested loops and owners select innermost loops. *)

@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare, GraphDfs and GraphDominance. *)
 
 From Stdlib Require Import List Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance.
 Import List.ListNotations.
 
 (** The header is included explicitly; all other members can reach the tail avoiding the header. *)

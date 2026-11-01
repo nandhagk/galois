@@ -5,11 +5,11 @@
     Builds on: AnalysesSsaPre, ViewsSemantics, ViewsGraph and ViewsSsaPoints. *)
 
 From Stdlib Require Import List PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
   GraphIdf GraphLoops.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesAvailable AnalysesSsaPreGraph AnalysesSsaPre.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesAvailable AnalysesSsaPreGraph AnalysesSsaPre.
 Import List.ListNotations.
 
 (** Target points project either to a source boundary or to one source edge in progress. *)

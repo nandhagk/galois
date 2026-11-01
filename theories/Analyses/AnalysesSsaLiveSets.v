@@ -6,12 +6,12 @@
     AnalysesSsaLiveQuery. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
-From Gaulois.Fixpoint Require Import FixpointLeast.
-From Gaulois.Views Require Import ViewsGraph ViewsSsaPoints.
-From Gaulois.Rules Require Import RulesModel RulesSolve.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesRules AnalysesSsaLiveQuery.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Fixpoint Require Import FixpointLeast.
+From Galois.Views Require Import ViewsGraph ViewsSsaPoints.
+From Galois.Rules Require Import RulesModel RulesSolve.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesRules AnalysesSsaLiveQuery.
 Import List.ListNotations.
 
 (** Absent point rows represent the empty live set. *)

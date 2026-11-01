@@ -5,9 +5,9 @@
     Builds on: ExamplesSsaViews, ExamplesSsaTypingProofs, ViewsEffects and ViewsCalls. *)
 
 From Stdlib Require Import List Arith ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaActivation ExamplesSsaBridge
   ExamplesSsaViews.
 Import List.ListNotations.

@@ -5,9 +5,9 @@ import "just/settings.just"
 list:
     @just --list
 
-# Cap the total memory of the slice that every build command shares, until the next reboot.
-slice-cap size="9G":
-    systemctl --user set-property --runtime gaulois.slice MemoryMax="$1" MemorySwapMax=0
+# Set the persistent aggregate memory limit in bytes for every build command.
+slice-cap size="9000000000":
+    systemctl --user set-property galois.slice MemoryMax="$1" MemorySwapMax=0
 
 # Build the given dune targets, or everything when none are given.
 build *targets:
@@ -19,11 +19,11 @@ test *args:
 
 # Check formatting, source hygiene, layout, theorem assumptions and typed extraction.
 check *args:
-    {{ capped }} bash -c 'dune build -j 2 @fmt @theories/default @examples/default @tests/default @extraction/check tools/gaulois.exe "$@" && exec dune exec --no-build tools/gaulois.exe -- check' -- "$@"
+    {{ capped }} bash -c 'dune build -j 2 @fmt @theories/default @examples/default @tests/default @extraction/check tools/galois.exe "$@" && exec dune exec --no-build tools/galois.exe -- check' -- "$@"
 
 # Run reproducible generated workloads and report experimental sizes and timings.
 bench *args:
-    {{ capped }} dune exec -j 2 tools/gaulois.exe -- bench "$@"
+    {{ capped }} dune exec -j 2 tools/galois.exe -- bench "$@"
 
 # Format every source file in place.
 fmt:

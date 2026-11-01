@@ -5,7 +5,7 @@
     Builds on: ViewsSkeleton and ViewsSemantics. *)
 
 From Stdlib Require Import List Bool Arith Lia PeanoNat Recdef.
-From Gaulois.Views Require Import ViewsSkeleton ViewsSemantics.
+From Galois.Views Require Import ViewsSkeleton ViewsSemantics.
 Import List.ListNotations Skeleton.
 
 (** An algebra supplies one summary operation for each statement constructor. *)

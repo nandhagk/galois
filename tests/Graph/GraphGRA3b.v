@@ -5,8 +5,8 @@
     Builds on: GraphDag, GraphChain and Collections encodings. *)
 
 From Stdlib Require Import List ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDag GraphChain.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDag GraphChain.
 Import List.ListNotations.
 
 Definition gra3b_empty : Graph.t nat nat := Graph.Make [] [] (fun _ => []) id id.

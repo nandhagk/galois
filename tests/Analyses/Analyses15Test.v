@@ -5,12 +5,12 @@
     Builds on: Analyses16Test, AnalysesSsaPre and AnalysesSsaPreSemantics. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesAvailable AnalysesSsaPreGraph AnalysesSsaPre
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesAvailable AnalysesSsaPreGraph AnalysesSsaPre
   AnalysesSsaPreSemantics AnalysesSsaLiveQuery.
-From Gaulois.Tests.Analyses Require Import Analyses16Test.
+From Galois.Tests.Analyses Require Import Analyses16Test.
 Import List.ListNotations.
 
 Definition pre_frame_state := (pre_test_block * pre_test_stage)%type.

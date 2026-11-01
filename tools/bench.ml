@@ -1,6 +1,6 @@
 open Core
-module A = Gaulois_extracted.Algorithms
-module R = Gaulois_extracted.Rules_solver
+module A = Galois_extracted.Algorithms
+module R = Galois_extracted.Rules_solver
 
 module Config = struct
   let default_start = 8

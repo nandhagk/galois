@@ -5,15 +5,15 @@
     Builds on: ExamplesSsaAnalyses, ExamplesSsaViews and FixpointTotal. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointSchedule FixpointIndex
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem FixpointSchedule FixpointIndex
   FixpointWorklist FixpointTotal FixpointCheck.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesDemand AnalysesValues.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesDemand AnalysesValues.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaActivation ExamplesSsaBridge
   ExamplesSsaViews ExamplesSsaAnalyses.
 Import List.ListNotations.

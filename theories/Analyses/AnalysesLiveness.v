@@ -5,13 +5,13 @@
     Builds on: CollectionsFinSet, OrderPowerset, DomainsEquality, Views and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderLift.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderLift.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
   FixpointTotal FixpointSchedule.
-From Gaulois.Domains Require Import DomainsEquality.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsForward ViewsAgreement
+From Galois.Domains Require Import DomainsEquality.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsForward ViewsAgreement
   ViewsSsaPoints.
 Import List.ListNotations.
 

@@ -5,9 +5,9 @@
     Builds on: ExamplesSsaMemory, ExamplesSsaSemantics and ExamplesSsaTypingProofs. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaBridge ExamplesSsaMemory.
 Import List.ListNotations.
 Local Open Scope nat_scope.

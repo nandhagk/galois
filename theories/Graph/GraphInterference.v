@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsMap, CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
 Import List.ListNotations.
 
 (** An interference graph stores its vertices and indexed neighbour sets. *)

@@ -1,4 +1,4 @@
-# Gaulois.Rules
+# Galois.Rules
 
 Rules is a Datalog-style front end for dataflow analyses. An analysis is written as inference
 rules over facts, as in the 15-411 notes (Pfenning, Platzer and Simmons), and the package compiles

@@ -5,8 +5,8 @@
     Builds on: ViewsSemantics, ViewsGraph and DomainsFootprint. *)
 
 From Stdlib Require Import List ZArith Arith.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph.
 Import List.ListNotations.
 
 (** A scope covers bounded site ranges or every byte, including lifetime changes. *)

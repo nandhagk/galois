@@ -5,7 +5,7 @@
     Builds on: BitsWord, BitsOp and BitsExpr. *)
 
 From Stdlib Require Import ZArith List Lia.
-From Gaulois.Bits Require Import BitsWord BitsOp BitsExpr.
+From Galois.Bits Require Import BitsWord BitsOp BitsExpr.
 Import List.ListNotations.
 Import Bits.
 

@@ -5,12 +5,12 @@
     Builds on: CollectionsFinSet, OrderPowerset, FixpointTotal and ViewsMemory. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast
   FixpointWorklist FixpointTotal.
-From Gaulois.Views Require Import ViewsSemantics ViewsMemory.
-From Gaulois.Analyses Require Import AnalysesLiveness.
+From Galois.Views Require Import ViewsSemantics ViewsMemory.
+From Galois.Analyses Require Import AnalysesLiveness.
 Import List.ListNotations.
 
 (** Pointer effects distinguish allocation, inclusion, dereference and escape. *)

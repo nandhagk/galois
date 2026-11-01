@@ -5,8 +5,8 @@
     Builds on: GraphEdgeDominance and GraphPostDominators. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominators
   GraphEdgeDominance GraphPostDominators.
 Import List.ListNotations.
 

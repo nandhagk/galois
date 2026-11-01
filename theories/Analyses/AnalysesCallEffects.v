@@ -5,12 +5,12 @@
     Builds on: AnalysesInterprocedural, DomainsFootprint, Order and ViewsSummary. *)
 
 From Stdlib Require Import List Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderProduct OrderPowerset OrderLift.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsCalls ViewsSummary.
-From Gaulois.Analyses Require Import AnalysesInterprocedural AnalysesLiveness.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderBasic OrderProduct OrderPowerset OrderLift.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsCalls ViewsSummary.
+From Galois.Analyses Require Import AnalysesInterprocedural AnalysesLiveness.
 Import List.ListNotations.
 
 (** * Normal-return projection *)

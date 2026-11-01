@@ -5,12 +5,12 @@
     Builds on: ExamplesSsaMemory, ExamplesSsaEffects and AnalysesPointsTo. *)
 
 From Stdlib Require Import List Bool ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory ViewsCalls.
-From Gaulois.Analyses Require Import AnalysesPointsTo.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory ViewsCalls.
+From Galois.Analyses Require Import AnalysesPointsTo.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaViews ExamplesSsaBridge ExamplesSsaEffects
   ExamplesSsaMemory.
 Import List.ListNotations.

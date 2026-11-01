@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsTrie, CollectionsMap, CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool PArith Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
 Import List.ListNotations.
 

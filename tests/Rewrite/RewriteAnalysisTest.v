@@ -5,8 +5,8 @@
     Builds on: RewriteAnalysis, RewriteEgraph and Rocq Stdlib natural division. *)
 
 From Stdlib Require Import List Bool PArith PeanoNat.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
   RewriteAnalysis.
 Import List.ListNotations.
 

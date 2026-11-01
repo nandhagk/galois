@@ -5,8 +5,8 @@
     Builds on: ViewsSsa, ViewsDominated, ViewsSemantics and RewriteEquality. *)
 
 From Stdlib Require Import List.
-From Gaulois.Views Require Import ViewsSemantics ViewsSsa ViewsDominated.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph.
+From Galois.Views Require Import ViewsSemantics ViewsSsa ViewsDominated.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph.
 Import List.ListNotations.
 
 (** The current SSA environment and its operator evaluator interpret Rewrite expressions. *)

@@ -6,9 +6,9 @@
     Builds on: ExamplesSsaSyntax, ExamplesSsaTyping and ExamplesSsaSemantics. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Examples.Ssa Require Import
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Examples.Ssa Require Import
   ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics.
 Import List.ListNotations.
 

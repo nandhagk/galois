@@ -5,7 +5,7 @@
     Builds on: RewriteSyntax, RewriteRules and Rocq Stdlib lists. *)
 
 From Stdlib Require Import List.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules.
 Import List.ListNotations.
 
 Scheme All for Forall2.

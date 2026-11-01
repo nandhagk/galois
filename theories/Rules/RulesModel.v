@@ -5,8 +5,8 @@
     Builds on: RulesSyntax, RulesStratify and RulesCompile. *)
 
 From Stdlib Require Import List Bool PeanoNat Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesCompile.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesCompile.
 Import List.ListNotations.
 
 (** A stratum derives facts and rule instances using only completed lower negative relations. *)

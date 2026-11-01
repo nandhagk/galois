@@ -6,10 +6,10 @@
 
 From Stdlib Require Import List Bool PeanoNat PArith Lia Arith.Wf_nat
   Relations.Relation_Operators Relations.Operators_Properties Init.Wf.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsTable.
-From Gaulois.Order Require Import OrderPowerset.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesCompile RulesModel RulesSolve
+From Galois.Order Require Import OrderPowerset.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesCompile RulesModel RulesSolve
   RulesJoin.
 Import List.ListNotations.
 

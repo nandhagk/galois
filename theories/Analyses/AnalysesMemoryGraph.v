@@ -5,8 +5,8 @@
     Builds on: GraphCore, ViewsGraph, ViewsSemantics and ViewsMemoryEffects. *)
 
 From Stdlib Require Import List Arith Lia.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
 Import List.ListNotations.
 
 (** Definitions retain both the edge identity and its ordered effect position. *)

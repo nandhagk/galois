@@ -5,9 +5,9 @@
     Builds on: DomainsSignedBoundsDomain and the shared tagged and capped clients. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp.
-From Gaulois.Domains Require Import
+From Galois.Order Require Import OrderLattice.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp.
+From Galois.Domains Require Import
   DomainsNumeric DomainsKnownBits DomainsKnownBitsFast DomainsWrapped DomainsSignedBounds
   DomainsSignedBoundsDomain.
 Import List.ListNotations.

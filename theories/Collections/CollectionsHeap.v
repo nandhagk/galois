@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsMap. *)
 
 From Stdlib Require Import List Bool PArith PeanoNat Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
 Import List.ListNotations.
 
 Module PQueue.

@@ -5,8 +5,8 @@
     Builds on: CollectionsFinSet, OrderConcrete and OrderDual. *)
 
 From Stdlib Require Import List Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderDual.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderDual.
 
 (** Inclusion, empty and union provide the raw powerset operations. *)
 Definition powerset_lattice {K} (E : encoding K) : lattice (FinSet.t K) :=

@@ -5,10 +5,10 @@
     Builds on: FixpointQuery, FixpointSystem, FixpointIndex and CollectionsHeap. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex.
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex.
 Import List.ListNotations.
 
 (** A scheduler selects priorities and the sites that widen. *)

@@ -5,11 +5,11 @@
     Builds on: FixpointSchedule, FixpointTotal, GraphWto and OrderLattice. *)
 
 From Stdlib Require Import List Bool Arith PeanoNat PArith Lia Wf_nat Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphWto.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphWto.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
   FixpointCycles FixpointWorklist FixpointTotal FixpointSchedule.
 Import List.ListNotations.
 

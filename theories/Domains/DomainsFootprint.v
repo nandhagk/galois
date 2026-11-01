@@ -7,9 +7,9 @@
 
 From Stdlib Require Import ZArith List Bool Lia.
 From Stdlib.Sorting Require Import Sorted Permutation Mergesort.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
-From Gaulois.Domains Require Import DomainsByteRange.
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Domains Require Import DomainsByteRange.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.

@@ -5,9 +5,9 @@
     Builds on: FixpointQuery, FixpointSystem, FixpointIndex and FixpointLeast. *)
 
 From Stdlib Require Import List Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointLeast.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointLeast.
 
 (** Every touched constraint reads inside the explored set and bounds its outputs there. *)
 Definition closed_partial {X C A} (EX : encoding X) (L : lattice A) (S : System.t X C A)

@@ -5,9 +5,9 @@
     Builds on: GraphCore, GraphPrepare, GraphDfs and Collections tries, maps and finite sets. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia Permutation.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
 Import List.ListNotations.
 
 (** A topological order lists every graph node once and places each source before its target. *)

@@ -5,7 +5,7 @@
     Builds on: FixpointSystem and Stdlib transitive closure. *)
 
 From Stdlib Require Import List Relations.Relation_Operators.
-From Gaulois.Fixpoint Require Import FixpointSystem.
+From Galois.Fixpoint Require Import FixpointSystem.
 
 (** A read flows into every possible output of the same listed constraint. *)
 Definition flows {X C A} {S : System.t X C A} (SS : System.static S) (y x : X) : Prop :=

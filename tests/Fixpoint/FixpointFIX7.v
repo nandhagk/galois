@@ -5,9 +5,9 @@
     Builds on: FixpointLocalDirect, FixpointTotal, OrderBasic and OrderProduct. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderProduct.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointWorklist
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderBasic OrderProduct.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointWorklist
   FixpointTotal FixpointPartial FixpointLocal FixpointLocalDirect.
 Import List.ListNotations.
 

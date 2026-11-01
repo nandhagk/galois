@@ -6,8 +6,8 @@
     Builds on: GraphCore, GraphDominance and ViewsGraph. *)
 
 From Stdlib Require Import List.
-From Gaulois.Graph Require Import GraphCore GraphDominance.
-From Gaulois.Views Require Import ViewsGraph.
+From Galois.Graph Require Import GraphCore GraphDominance.
+From Galois.Views Require Import ViewsGraph.
 Import List.ListNotations.
 
 (** * Syntactic liveness *)

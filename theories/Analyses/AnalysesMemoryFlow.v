@@ -5,14 +5,14 @@
     Builds on: AnalysesMemoryWalk, AnalysesMemorySealed, OrderPowerset and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PArith Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderMonotone.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderMonotone.
+From Galois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast FixpointWorklist
   FixpointTotal FixpointSchedule.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier AnalysesMemorySealed
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier AnalysesMemorySealed
   AnalysesMemoryWalk AnalysesLiveness.
 Import List.ListNotations.
 

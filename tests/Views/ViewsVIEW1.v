@@ -5,12 +5,12 @@
     Builds on: ViewsSemantics, ViewsGraph, ViewsForward, ViewsAgreement and FixpointCut. *)
 
 From Stdlib Require Import List Bool Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderConcrete.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderBasic OrderConcrete.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
   FixpointCut FixpointCycles.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsForward ViewsAgreement.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsForward ViewsAgreement.
 Import List.ListNotations.
 
 (** * Dense generators and cut acceptance *)

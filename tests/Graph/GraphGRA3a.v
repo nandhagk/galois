@@ -5,8 +5,8 @@
     Builds on: GraphScc and Collections encodings. *)
 
 From Stdlib Require Import List PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphScc.
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphScc.
 Import List.ListNotations.
 
 Definition gra3a_empty : Graph.t nat (nat * nat) :=

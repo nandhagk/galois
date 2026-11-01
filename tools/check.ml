@@ -544,17 +544,17 @@ module Hygiene = struct
       else if Set.mem forbidden name && not (Source.is_float source)
       then Some [%string "axiom-bearing Stdlib import outside Float: %{name}"]
       else None
-    else if String.is_prefix name ~prefix:"Gaulois."
+    else if String.is_prefix name ~prefix:"Galois."
     then
       if
-        String.is_prefix name ~prefix:"Gaulois.Float."
+        String.is_prefix name ~prefix:"Galois.Float."
         && Source.is_production source
         && not (Source.is_float source)
-      then Some "only Gaulois.Float may depend on Float"
+      then Some "only Galois.Float may depend on Float"
       else None
     else if String.is_prefix name ~prefix:"Flocq." && Source.is_float source
     then None
-    else Some "dependency outside Stdlib/Gaulois (Flocq is Float-only)"
+    else Some "dependency outside Stdlib/Galois (Flocq is Float-only)"
   ;;
 
   let record_problem words =
@@ -815,9 +815,9 @@ module Query = struct
     ;;
   end
 
-  let scratch = "/tmp/gaulois-TOOL-1"
-  let marker = "__GAULOIS_AUDIT_"
-  let namespace = "GauloisAuditSource"
+  let scratch = "/tmp/galois-TOOL-1"
+  let marker = "__GALOIS_AUDIT_"
+  let namespace = "GaloisAuditSource"
 
   (* The fresh module and exact Locate identity prevent imported-name fallback. *)
   let qualified name = String.concat ~sep:"." [ namespace; name ]
@@ -886,11 +886,7 @@ module Query = struct
                   ([ "--user"
                    ; "--scope"
                    ; "--quiet"
-                   ; "--slice=gaulois.slice"
-                   ; "-p"
-                   ; "MemoryMax=2G"
-                   ; "-p"
-                   ; "MemorySwapMax=0"
+                   ; "--slice=galois.slice"
                    ; "--"
                    ; "env"
                    ; "-u"
@@ -935,13 +931,13 @@ module Query = struct
           |> function
           | `Yes -> true
           | `No | `Unknown -> false
-        then Some [ "-Q"; directory; [%string "Gaulois.%{package}"] ]
+        then Some [ "-Q"; directory; [%string "Galois.%{package}"] ]
         else None)
     in
     List.concat
       (theories
-       @ [ [ "-Q"; Filename.concat build "examples"; "Gaulois.Examples" ]
-         ; [ "-Q"; Filename.concat build "tests"; "Gaulois.Tests" ]
+       @ [ [ "-Q"; Filename.concat build "examples"; "Galois.Examples" ]
+         ; [ "-Q"; Filename.concat build "tests"; "Galois.Tests" ]
          ])
   ;;
 
@@ -1369,7 +1365,7 @@ let%expect_test "proof escapes declarations and unsafe checking identify their f
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
      ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
-      (problem "dependency outside Stdlib/Gaulois (Flocq is Float-only)")))
+      (problem "dependency outside Stdlib/Galois (Flocq is Float-only)")))
     (Error
      ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "record carrier Type field; parameterize the dictionary instead")))
@@ -1482,7 +1478,7 @@ let%expect_test "Rewrite logical load path resolves a compiled theorem dependenc
           ~root:Tests
           ~package
           ~file:"tests/Rewrite/RewriteDependencyTest.v"
-          {|From Gaulois.Rewrite Require Import RewriteSyntax.
+          {|From Galois.Rewrite Require Import RewriteSyntax.
 Theorem dependency_closed : True.
 Proof.
   exact closed.
@@ -1494,8 +1490,8 @@ Qed.|}
   print_s [%sexp (result : unit Or_error.t)];
   [%expect
     {|
-    (-Q <repository>/theories/Rewrite Gaulois.Rewrite -Q <repository>/examples
-     Gaulois.Examples -Q <repository>/tests Gaulois.Tests)
+    (-Q <repository>/theories/Rewrite Galois.Rewrite -Q <repository>/examples
+     Galois.Examples -Q <repository>/tests Galois.Tests)
     (Ok ())
     |}]
 ;;
@@ -1738,7 +1734,7 @@ let%expect_test "a failed Rocq process never returns a successful report" =
       Query.run_process
         ~mode:Repl
         ~directory
-        ~args:[ "-l"; "/tmp/gaulois-TOOL-1/absent-file.v" ]
+        ~args:[ "-l"; "/tmp/galois-TOOL-1/absent-file.v" ]
         ~output
     in
     print_s [%sexp (result : string Or_error.t)];
@@ -1749,7 +1745,7 @@ let%expect_test "a failed Rocq process never returns a successful report" =
     (Error
      ("Rocq assumptions query failed" (status (Error (Exit_non_zero 1)))
       (transcript
-        "Error: Can't find file /tmp/gaulois-TOOL-1/absent-file.v.\
+        "Error: Can't find file /tmp/galois-TOOL-1/absent-file.v.\
        \n\
        \n")))
     |}]
@@ -2087,10 +2083,7 @@ let%expect_test "Examples basename uniqueness spans both production subdirectori
 
 let%expect_test "Examples production sources retain theory hygiene and Float dependency boundaries" =
   List.iter
-    [ "Print nat."
-    ; "Extraction Language OCaml."
-    ; "From Gaulois.Float Require Import FloatFixture."
-    ]
+    [ "Print nat."; "Extraction Language OCaml."; "From Galois.Float Require Import FloatFixture." ]
     ~f:(fun text ->
       List.iter
         (List.take (Fixture.examples text) 2)
@@ -2115,10 +2108,10 @@ let%expect_test "Examples production sources retain theory hygiene and Float dep
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
      ((file examples/While/ExamplesWhileFixture.v) (line 1) (claim ())
-      (problem "only Gaulois.Float may depend on Float")))
+      (problem "only Galois.Float may depend on Float")))
     (Error
      ((file examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim ())
-      (problem "only Gaulois.Float may depend on Float")))
+      (problem "only Galois.Float may depend on Float")))
     |}]
 ;;
 
@@ -2163,9 +2156,9 @@ let%expect_test "Examples and test logical module paths resolve compiled theorem
           ())
       in
       let linked =
-        {|From Gaulois.Examples.While Require Import ExamplesWhileFixture.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaFixture.
-From Gaulois.Tests.Examples Require Import ExamplesTestFixture.
+        {|From Galois.Examples.While Require Import ExamplesWhileFixture.
+From Galois.Examples.Ssa Require Import ExamplesSsaFixture.
+From Galois.Tests.Examples Require Import ExamplesTestFixture.
 Theorem linked : True /\ True /\ True.
 Proof.
   exact (conj ExamplesWhileFixture.closed

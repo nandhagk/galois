@@ -5,18 +5,18 @@
     Builds on: AnalysesMemoryBase, ExamplesSsaBytes and the checked SSA test runner. *)
 
 From Stdlib Require Import List Bool ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointWorklist FixpointCheck.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement.
-From Gaulois.Analyses Require Import AnalysesMemoryBase.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointWorklist FixpointCheck.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement.
+From Galois.Analyses Require Import AnalysesMemoryBase.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
   ExamplesSsaTypingProofs ExamplesSsaViews ExamplesSsaMemory ExamplesSsaPointers ExamplesSsaBytes
   ExamplesSsaMemoryBase.
-From Gaulois.Tests.Analyses Require Import Analyses9Test.
+From Galois.Tests.Analyses Require Import Analyses9Test.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

@@ -6,7 +6,7 @@
 
 From Stdlib Require Import Bool ZArith Reals Lra Lia.
 From Flocq Require Import Core IEEE754.BinarySingleNaN IEEE754.Binary.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Order Require Import OrderLattice OrderConcrete.
 
 Local Arguments B754_zero {prec emax} _.
 Local Arguments B754_infinity {prec emax} _.

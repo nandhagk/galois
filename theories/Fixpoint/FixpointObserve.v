@@ -6,11 +6,11 @@
 
 From Stdlib Require Import List Bool Arith PeanoNat PArith Lia Permutation
   Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphWto.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCycles
+From Galois.Order Require Import OrderLattice.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphWto.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCycles
   FixpointWorklist FixpointTotal FixpointSchedule FixpointNested.
 Import List.ListNotations.
 

@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsMap. *)
 
 From Stdlib Require Import List PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
 
 Module Table.
 

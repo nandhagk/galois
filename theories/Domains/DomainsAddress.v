@@ -5,8 +5,8 @@
     Builds on: DomainsInterval and OrderConcrete. *)
 
 From Stdlib Require Import ZArith Bool Lia.
-From Gaulois.Order Require Import OrderConcrete.
-From Gaulois.Domains Require Import DomainsInterval.
+From Galois.Order Require Import OrderConcrete.
+From Galois.Domains Require Import DomainsInterval.
 
 Local Open Scope Z_scope.
 

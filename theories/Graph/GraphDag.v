@@ -6,8 +6,8 @@
 
 From Stdlib Require Import List Bool PArith ZArith Lia Relations.Relation_Operators.
 From Stdlib.Sorting Require Import Permutation.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphCertificate GraphScc.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphCertificate GraphScc.
 Import List.ListNotations.
 
 (** Check the indexed outgoing edges of precisely the visited vertices. *)

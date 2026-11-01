@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare and GraphDfs. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
 Import List.ListNotations.
 
 (** Check each listed edge at its current endpoint, then check the final endpoint. *)

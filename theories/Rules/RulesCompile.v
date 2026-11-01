@@ -5,10 +5,10 @@
     Builds on: RulesSyntax, RulesStratify, OrderPowerset and FixpointSystem. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderMonotone OrderPowerset.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderMonotone OrderPowerset.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Rules Require Import RulesSyntax RulesStratify.
 Import List.ListNotations.
 
 (** Tuple keys use the shared injective list encoding. *)

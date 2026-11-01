@@ -5,7 +5,7 @@
     Builds on: Order's basic combinators and Stdlib booleans and naturals. *)
 
 From Stdlib Require Import Bool Arith.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderMonotone OrderFlat
+From Galois.Order Require Import OrderLattice OrderConcrete OrderMonotone OrderFlat
   OrderLift OrderProduct OrderReduced OrderDual OrderBasic.
 
 Example flat_equal_join : join (flat_lattice Nat.eqb) (FVal 2) (FVal 2) = FVal 2.

@@ -5,15 +5,15 @@
     Builds on: AnalysesSsaLiveSets, Analyses11Test, Analyses12Test and ViewsVIEW8. *)
 
 From Stdlib Require Import List Bool PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
-From Gaulois.Views Require Import ViewsGraph ViewsSsaPoints.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesModel RulesSolve RulesJoin
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Views Require Import ViewsGraph ViewsSsaPoints.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesModel RulesSolve RulesJoin
   RulesDelta.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesRules AnalysesSsaLiveQuery
+From Galois.Analyses Require Import AnalysesLiveness AnalysesRules AnalysesSsaLiveQuery
   AnalysesSsaLiveSets.
-From Gaulois.Tests.Views Require Import ViewsVIEW8.
-From Gaulois.Tests.Analyses Require Import Analyses11Test Analyses12Test.
+From Galois.Tests.Views Require Import ViewsVIEW8.
+From Galois.Tests.Analyses Require Import Analyses11Test Analyses12Test.
 Import List.ListNotations.
 
 (** * Uses precede kills, including duplicate operands *)

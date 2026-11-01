@@ -5,9 +5,9 @@
     Builds on: GraphIdf, GraphFrontier and GraphDominators. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominators GraphFrontier GraphIdf.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominators GraphFrontier GraphIdf.
 Import List.ListNotations.
 
 Definition idf_diamond : Graph.t nat (nat * nat) :=

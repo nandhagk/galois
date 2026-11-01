@@ -5,8 +5,8 @@
     Builds on: RewriteEgraph and RewriteIndex. *)
 
 From Stdlib Require Import List Bool PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
   RewriteIndex.
 Import List.ListNotations.
 

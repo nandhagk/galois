@@ -5,10 +5,10 @@
     Builds on: AnalysesMemorySealed, GraphCore and CollectionsEncoding. *)
 
 From Stdlib Require Import List Bool Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph AnalysesMemorySealed.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemorySealed.
 Import List.ListNotations.
 
 Definition fixture_edge : Type := nat * (nat * nat).

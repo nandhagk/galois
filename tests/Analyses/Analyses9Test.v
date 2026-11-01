@@ -5,15 +5,15 @@
     Builds on: AnalysesPointsTo and the SSA pointer adapters. *)
 
 From Stdlib Require Import List Bool ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet CollectionsUnionFind.
-From Gaulois.Order Require Import OrderLattice OrderPowerset.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesPointsTo.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet CollectionsUnionFind.
+From Galois.Order Require Import OrderLattice OrderPowerset.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesPointsTo.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaViews ExamplesSsaBridge
   ExamplesSsaEffects ExamplesSsaMemory ExamplesSsaPointers ExamplesSsaAnalyses.
 Import List.ListNotations.

@@ -5,11 +5,11 @@
     Builds on: ExamplesSsaNumbering and AnalysesNumbering. *)
 
 From Stdlib Require Import List Arith ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
-From Gaulois.Analyses Require Import AnalysesNumbering.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaActivation ExamplesSsaViews
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
+From Galois.Analyses Require Import AnalysesNumbering.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaActivation ExamplesSsaViews
   ExamplesSsaAnalyses ExamplesSsaNumbering.
 Import List.ListNotations.
 Local Open Scope nat_scope.

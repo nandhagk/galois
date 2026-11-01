@@ -5,7 +5,7 @@
     Builds on: Collections encodings and finite sets. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
 Import List.ListNotations.
 
 (** * Graph representation *)

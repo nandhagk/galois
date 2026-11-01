@@ -5,11 +5,11 @@
     Builds on: AnalysesStructured, AnalysesCensus and the While region algebra. *)
 
 From Stdlib Require Import List Bool NArith ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset.
-From Gaulois.Views Require Import ViewsSkeleton ViewsStructured ViewsRegion ViewsGraph.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesStructured AnalysesCensus.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSkeleton
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset.
+From Galois.Views Require Import ViewsSkeleton ViewsStructured ViewsRegion ViewsGraph.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesStructured AnalysesCensus.
+From Galois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSkeleton
   ExamplesWhileViews ExamplesWhileAnalyses.
 Import List.ListNotations Skeleton.
 

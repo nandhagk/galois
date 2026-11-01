@@ -5,11 +5,11 @@
     Builds on: ViewsEffects, ViewsCalls, ViewsSummary and FixpointCheck. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderBasic.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck.
-From Gaulois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderBasic.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck.
+From Galois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
 Import List.ListNotations.
 
 (** * Empty and recursive call graphs *)

@@ -5,8 +5,8 @@
     Builds on: CollectionsEncoding, CollectionsMap, CollectionsFinSet, GraphInterference. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphInterference.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphInterference.
 Import List.ListNotations.
 
 (** A colouring records assigned colours and the vertices left in memory. *)

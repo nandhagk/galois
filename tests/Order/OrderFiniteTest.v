@@ -5,9 +5,9 @@
     Builds on: CollectionsFinSet, OrderPowerset, OrderPointwise and OrderDisjunction. *)
 
 From Stdlib Require Import List Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderPowerset OrderPointwise
+From Galois.Order Require Import OrderLattice OrderBasic OrderPowerset OrderPointwise
   OrderDisjunction.
 
 Import List.ListNotations.

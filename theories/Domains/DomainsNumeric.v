@@ -5,8 +5,8 @@
     Builds on: Order lattices and concretisations, and Bits expressions. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Bits Require Import BitsWord BitsOp BitsExpr.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Bits Require Import BitsWord BitsOp BitsExpr.
 Import List.ListNotations Bits.
 
 Local Open Scope nat_scope.

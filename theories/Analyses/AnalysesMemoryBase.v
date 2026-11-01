@@ -6,14 +6,14 @@
     Builds on: DomainsFootprint, ViewsForward, ViewsAgreement and AnalysesNumbering. *)
 
 From Stdlib Require Import List Bool ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsForward ViewsAgreement ViewsSsa
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsForward ViewsAgreement ViewsSsa
   ViewsDominated.
-From Gaulois.Analyses Require Import AnalysesNumbering.
+From Galois.Analyses Require Import AnalysesNumbering.
 Import List.ListNotations.
 
 (** * Access validation *)

@@ -5,7 +5,7 @@
     Builds on: BitsSigned, BitsArith, BitsExtend and BitsExpr. *)
 
 From Stdlib Require Import ZArith List.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr BitsSigned BitsArith BitsExtend.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr BitsSigned BitsArith BitsExtend.
 Import List.ListNotations Bits.
 
 Open Scope Z_scope.

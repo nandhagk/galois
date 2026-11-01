@@ -5,11 +5,11 @@
     Builds on: ViewsGraph, CollectionsEncoding, OrderLift and FixpointSystem. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsGraph.
 Import List.ListNotations.
 
 (** A value is computed, received as a block parameter, or unconstrained. *)

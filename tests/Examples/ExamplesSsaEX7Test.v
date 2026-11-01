@@ -5,7 +5,7 @@
     Builds on: ExamplesSsaAnalyses and the routed SSA analysis clients. *)
 
 From Stdlib Require Import ZArith.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaTyping ExamplesSsaAnalyses.
+From Galois.Examples.Ssa Require Import ExamplesSsaTyping ExamplesSsaAnalyses.
 
 (** The old qualified paths compute the same fixture values as their sources. *)
 Example compatibility_computations :

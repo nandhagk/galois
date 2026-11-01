@@ -5,10 +5,10 @@
     Builds on: AnalysesInterprocedural and OrderBasic. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderBasic.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Analyses Require Import AnalysesInterprocedural.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderBasic.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Analyses Require Import AnalysesInterprocedural.
 Import List.ListNotations.
 
 Definition simple_matched : ip_problem nat nat unit :=

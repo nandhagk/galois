@@ -5,10 +5,10 @@
     Builds on: FixpointWorklist, FixpointCheck and OrderBasic. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Order Require Import OrderLattice OrderBasic.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
+From Galois.Order Require Import OrderLattice OrderBasic.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
   FixpointWorklist.
 Import List.ListNotations.
 

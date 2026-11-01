@@ -5,14 +5,14 @@
     Builds on: ExamplesSsaActivation, ExamplesSsaBridge, ViewsSsa and AnalysesDemand. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
-From Gaulois.Graph Require Import GraphCore GraphDominance GraphEdgeDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints ViewsEffects
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
+From Galois.Graph Require Import GraphCore GraphDominance GraphEdgeDominance.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints ViewsEffects
   ViewsAgreement ViewsDominated.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesDemand.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Analyses Require Import AnalysesLiveness AnalysesDemand.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaActivation ExamplesSsaBridge.
 Import List.ListNotations.
 Local Open Scope nat_scope.

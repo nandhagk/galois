@@ -5,8 +5,8 @@
     Builds on: CollectionsMap, RewriteRun and RewriteExtract. *)
 
 From Stdlib Require Import List Bool PeanoNat NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
   RewriteRebuild RewriteRun RewriteExtract.
 Import List.ListNotations.
 

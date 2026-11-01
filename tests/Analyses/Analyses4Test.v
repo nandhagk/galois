@@ -5,12 +5,12 @@
     Builds on: AnalysesDemand, AnalysesAdce and ViewsSemantics. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointCheck.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsEffects.
-From Gaulois.Analyses Require Import AnalysesDemand AnalysesAdce.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
+From Galois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Fixpoint Require Import FixpointSystem FixpointCheck.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsEffects.
+From Galois.Analyses Require Import AnalysesDemand AnalysesAdce.
 Import List.ListNotations.
 
 Definition computed_needed {S O N E X Cv} (EX : encoding X)

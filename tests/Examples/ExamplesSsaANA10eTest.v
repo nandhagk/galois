@@ -4,9 +4,9 @@
     For example, the second store's range [4,8) invalidates the eight-byte load.
     Builds on: ExamplesSsaMemoryLegacy and AnalysesMemoryLegacy. *)
 
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Analyses Require Import AnalysesMemoryLegacy.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaMemoryLegacy.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Analyses Require Import AnalysesMemoryLegacy.
+From Galois.Examples.Ssa Require Import ExamplesSsaMemoryLegacy.
 
 (** Distinct sites preserve the nontrivial first-store candidate. *)
 Example memoryssa_accepts :

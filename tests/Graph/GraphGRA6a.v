@@ -6,8 +6,8 @@
     CollectionsFinSet. *)
 
 From Stdlib Require Import List Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphInterference GraphColour.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphInterference GraphColour.
 Import List.ListNotations.
 
 Definition empty_live_graph : interference nat :=

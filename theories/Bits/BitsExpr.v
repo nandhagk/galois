@@ -5,7 +5,7 @@
     Builds on: BitsWord and BitsOp. *)
 
 From Stdlib Require Import ZArith List.
-From Gaulois.Bits Require Import BitsWord BitsOp.
+From Galois.Bits Require Import BitsWord BitsOp.
 Import List.ListNotations.
 
 Open Scope Z_scope.

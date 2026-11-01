@@ -5,10 +5,10 @@
     Builds on: OrderDisjunction, ViewsSsa and ViewsDominated. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderDisjunction.
-From Gaulois.Graph Require Import GraphEdgeDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderDisjunction.
+From Galois.Graph Require Import GraphEdgeDominance.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
 Import List.ListNotations.
 
 (** Cartesian choices retain operand order and every combination of alternatives. *)

@@ -5,8 +5,8 @@
     Builds on: GraphCore and Collections maps. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia Permutation.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Graph Require Import GraphCore.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Graph Require Import GraphCore.
 Import List.ListNotations.
 
 (** * Indexed adjacency *)

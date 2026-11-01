@@ -1,4 +1,4 @@
-# Gaulois.Order
+# Galois.Order
 
 Order provides the vocabulary of abstract values: a `lattice` record (comparison, bottom, join,
 widening, narrowing), separate `Prop` records for its laws, evidence that ascending chains stop

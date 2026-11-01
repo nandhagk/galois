@@ -5,7 +5,7 @@
     Builds on: OrderLattice and Stdlib relations. *)
 
 From Stdlib.Relations Require Import Relation_Definitions.
-From Gaulois.Order Require Import OrderLattice.
+From Galois.Order Require Import OrderLattice.
 
 (** Assignments are ordered pointwise. *)
 Definition fun_leb {X A} (L : lattice A) (s1 s2 : X -> A) : Prop :=

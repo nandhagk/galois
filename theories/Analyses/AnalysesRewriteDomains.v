@@ -4,8 +4,8 @@
     For example, a full top fact covers both a word result and an undefined expression.
     Builds on: OrderLattice, OrderConcrete and RewriteAnalysis. *)
 
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph RewriteAnalysis.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph RewriteAnalysis.
 
 (** A concretisation constrains successful evaluation and leaves undefined results permitted. *)
 Definition rw_order_holds {A C} (G : concretisation A C) (a : A) (result : option C) : Prop :=

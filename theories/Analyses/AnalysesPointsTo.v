@@ -5,15 +5,15 @@
     Builds on: AnalysesPointsToBase, AnalysesPointsToDelta, ViewsForward and DomainsFootprint. *)
 
 From Stdlib Require Import List Bool ZArith Lia Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsUnionFind.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderConcrete.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointLeast.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory ViewsForward.
-From Gaulois.Analyses Require Import AnalysesLiveness.
-From Gaulois.Analyses Require Export AnalysesPointsToBase AnalysesPointsToDelta.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderConcrete.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Fixpoint Require Import FixpointSystem FixpointLeast.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory ViewsForward.
+From Galois.Analyses Require Import AnalysesLiveness.
+From Galois.Analyses Require Export AnalysesPointsToBase AnalysesPointsToDelta.
 Import List.ListNotations.
 
 (** Relational observations allow several active bindings and speculative sites per key. *)

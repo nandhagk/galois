@@ -5,10 +5,10 @@
     Builds on: ExamplesSsaSemantics, ExamplesSsaBridge, ViewsGraph and ViewsMemory. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaBridge.
 Import List.ListNotations.
 Local Open Scope nat_scope.

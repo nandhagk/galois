@@ -5,14 +5,14 @@
     Builds on: ViewsStructured, OrderPowerset, FixpointCut and FixpointSchedule. *)
 
 From Stdlib Require Import List Bool PArith Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderMonotone.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCut
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderMonotone.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCut
   FixpointSchedule FixpointCycles.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsSkeleton
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsSkeleton
   ViewsStructured.
-From Gaulois.Analyses Require Import AnalysesLiveness.
+From Galois.Analyses Require Import AnalysesLiveness.
 Import List.ListNotations Skeleton.
 
 (** A client lists the variables read, written and observed by its primitive actions. *)

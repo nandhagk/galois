@@ -7,8 +7,8 @@
     GraphColour. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia Sorting.Permutation.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphInterference GraphColour.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphInterference GraphColour.
 Import List.ListNotations.
 
 (** A degeneracy witness lists each vertex once, with fewer than [k] later neighbours. *)

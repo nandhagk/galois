@@ -1,5 +1,5 @@
 (library
- (name gaulois_check)
+ (name galois_check)
  (modules check bench)
  (libraries
   core
@@ -7,7 +7,7 @@
   core_unix
   core_unix.command_unix
   core_unix.filename_unix
-  gaulois_extracted)
+  galois_extracted)
  (preprocess
   (pps ppx_jane))
  ; The generated inline-test entry point has no interface, triggering warning 70.
@@ -17,11 +17,11 @@
     (:standard -w -70)))))
 
 (executable
- (name gaulois)
- (public_name gaulois)
- (package gaulois)
- (modules gaulois)
- (libraries core core_unix.command_unix gaulois_check)
+ (name galois)
+ (public_name galois)
+ (package galois)
+ (modules galois)
+ (libraries core core_unix.command_unix galois_check)
  (preprocess
   (pps ppx_jane))
  ; This executable entry point has no public module interface, triggering warning 70.

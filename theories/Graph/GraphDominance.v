@@ -6,8 +6,8 @@
 
 From Stdlib Require Import List Bool PArith.
 From Stdlib.Relations Require Import Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare.
 Import List.ListNotations.
 
 (** * Semantic dominance and parent forests *)

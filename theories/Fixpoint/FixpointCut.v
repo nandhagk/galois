@@ -5,9 +5,9 @@
     Builds on: FixpointIndex, FixpointCycles, FixpointLeast and CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool PArith Lia Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex
   FixpointCycles FixpointLeast.
 Import List.ListNotations.
 

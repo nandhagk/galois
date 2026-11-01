@@ -5,11 +5,11 @@
     Builds on: AnalysesSsaPreGraph, AnalysesSsaLiveQuery and Collections maps. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
   GraphLengauerTarjan GraphFrontier.
-From Gaulois.Views Require Import ViewsGraph ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesAvailable AnalysesSsaLiveQuery
+From Galois.Views Require Import ViewsGraph ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesAvailable AnalysesSsaLiveQuery
   AnalysesSsaPreGraph.
 Import List.ListNotations.
 

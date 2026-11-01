@@ -5,10 +5,10 @@
     Builds on: RulesSyntax, RulesStratify, RulesCompile and FixpointQuery. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesCompile.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesCompile.
 Import List.ListNotations.
 
 Definition copy_rule : rule nat := Rule (Atom 1 [TVar 0]) [LPos (Atom 0 [TVar 0])].

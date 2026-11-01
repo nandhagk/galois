@@ -5,12 +5,12 @@
     Builds on: AnalysesNumbering, ExamplesSsaNumbering and ViewsDominated. *)
 
 From Stdlib Require Import List Bool Arith Lia ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
-From Gaulois.Analyses Require Import AnalysesNumbering.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
+From Galois.Analyses Require Import AnalysesNumbering.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
   ExamplesSsaTypingProofs ExamplesSsaBridge ExamplesSsaActivation ExamplesSsaViews
   ExamplesSsaStrict ExamplesSsaAnalyses ExamplesSsaNumbering.
 Import List.ListNotations.

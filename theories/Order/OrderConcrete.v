@@ -4,7 +4,7 @@
     For example, a join preserves every concrete value of either input.
     Builds on: OrderLattice. *)
 
-From Gaulois.Order Require Import OrderLattice.
+From Galois.Order Require Import OrderLattice.
 
 (** A concretisation assigns concrete values to each abstract value. *)
 Record concretisation (A C : Type) : Type := Concretisation {

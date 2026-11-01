@@ -5,7 +5,7 @@
     Builds on: BitsWord, BitsFun, BitsTestbit, BitsSigned, BitsOp and BitsExpr. *)
 
 From Stdlib Require Import ZArith List Bool Lia Ring.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit BitsSigned BitsOp BitsExpr.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit BitsSigned BitsOp BitsExpr.
 Import List.ListNotations Bits.
 
 Open Scope Z_scope.

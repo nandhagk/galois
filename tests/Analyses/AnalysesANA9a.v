@@ -5,9 +5,9 @@
     Builds on: AnalysesPointsToBase and AnalysesPointsToDelta. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesPointsToBase AnalysesPointsToDelta.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesPointsToBase AnalysesPointsToDelta.
 Import List.ListNotations.
 
 (** The last seed is processed first: x's old fact precedes p's edge activation and z's delta. *)

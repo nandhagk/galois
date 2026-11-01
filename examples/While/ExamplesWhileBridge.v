@@ -5,8 +5,8 @@
     Builds on: While semantics and Bits expressions, operators and word laws. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit BitsOp BitsExpr.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit BitsOp BitsExpr.
+From Galois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics.
 Import List.ListNotations.
 
 Open Scope Z_scope.

@@ -5,8 +5,8 @@
     Builds on: GraphLengauerTarjan, GraphSemiDominators and Collections maps. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphSemiDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphSemiDominators
   GraphLengauerTarjan.
 Import List.ListNotations.
 

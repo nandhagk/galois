@@ -5,15 +5,15 @@
     Builds on: AnalysesLiveness, AnalysesAvailable and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderLift.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck FixpointWorklist
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderLift.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck FixpointWorklist
   FixpointTotal
   FixpointSchedule FixpointIndex.
-From Gaulois.Domains Require Import DomainsEquality.
-From Gaulois.Views Require Import ViewsGraph ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesAvailable.
+From Galois.Domains Require Import DomainsEquality.
+From Galois.Views Require Import ViewsGraph ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesAvailable.
 Import List.ListNotations.
 
 Local Definition computed_map {X C A} (EX : encoding X) (EC : encoding C) (L : lattice A)

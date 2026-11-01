@@ -5,8 +5,8 @@
     Builds on: GraphDominance, GraphDfs, GraphCertificate and Collections encodings and maps. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphCertificate GraphDominance.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphCertificate GraphDominance.
 Import List.ListNotations.
 
 (** * Fixtures and Boolean observations *)

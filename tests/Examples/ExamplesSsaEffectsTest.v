@@ -5,10 +5,10 @@
     Builds on: ExamplesSsaEffects and ExamplesSsaSyntaxTest. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaViews ExamplesSsaEffects.
-From Gaulois.Tests.Examples Require Import ExamplesSsaSyntaxTest.
+From Galois.Tests.Examples Require Import ExamplesSsaSyntaxTest.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

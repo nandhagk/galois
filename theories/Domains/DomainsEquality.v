@@ -5,8 +5,8 @@
     Builds on: CollectionsEncoding, CollectionsMap, CollectionsUnionFind and Order. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsUnionFind.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsUnionFind.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
 Import List.ListNotations.
 
 (** Reached partitions carry the forest invariant needed by every union-find operation. *)

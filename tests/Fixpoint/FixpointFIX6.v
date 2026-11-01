@@ -5,9 +5,9 @@
     Builds on: FixpointObserve, FixpointCheck, FixpointNested and OrderLattice. *)
 
 From Stdlib Require Import List Bool Arith PeanoNat PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
   FixpointWorklist FixpointSchedule FixpointNested FixpointObserve.
 Import List.ListNotations.
 

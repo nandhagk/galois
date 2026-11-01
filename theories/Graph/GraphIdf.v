@@ -7,9 +7,9 @@
 
 From Stdlib Require Import List Bool PArith NArith Arith Lia.
 From Stdlib.Relations Require Import Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphLengauerTarjan GraphDominators GraphEdgeDominance GraphFrontier.
 Import List.ListNotations.
 

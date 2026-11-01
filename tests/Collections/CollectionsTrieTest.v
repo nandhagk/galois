@@ -7,7 +7,7 @@
     Builds on: CollectionsTrie and Stdlib lists, booleans and binary integers. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Gaulois.Collections Require Import CollectionsTrie.
+From Galois.Collections Require Import CollectionsTrie.
 
 Import List.ListNotations.
 

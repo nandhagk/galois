@@ -5,8 +5,8 @@
     Builds on: While syntax, semantics and traced executions. *)
 
 From Stdlib Require Import List ZArith.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics.
 Import List.ListNotations.
 
 Open Scope Z_scope.

@@ -6,12 +6,12 @@
     Builds on: Collections, Order, Graph, Fixpoint and Rules. *)
 
 From Stdlib.extraction Require Import Extraction ExtrOcamlBasic ExtrOcamlNatInt.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderBasic OrderPowerset.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphWto.
-From Gaulois.Fixpoint Require Import FixpointCheck FixpointWorklist FixpointTotal FixpointSchedule.
-From Gaulois.Rules Require Import RulesSyntax RulesSolve.
+From Galois.Order Require Import OrderBasic OrderPowerset.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphWto.
+From Galois.Fixpoint Require Import FixpointCheck FixpointWorklist FixpointTotal FixpointSchedule.
+From Galois.Rules Require Import RulesSyntax RulesSolve.
 
 Extraction Language OCaml.
 Set Extraction Output Directory ".".

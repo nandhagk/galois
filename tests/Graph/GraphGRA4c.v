@@ -5,8 +5,8 @@
     Builds on: GraphWto and Collections encodings. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphWto.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphWto.
 Import List.ListNotations.
 
 Definition gra4c_empty : Graph.t nat (nat * nat) :=

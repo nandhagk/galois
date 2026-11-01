@@ -1,4 +1,4 @@
-# Gaulois.Analyses
+# Galois.Analyses
 
 The catalogue. Each analysis is a short composition of a view from `Views`, a domain from `Order`
 and `Domains`, and an engine and scheduler from `Fixpoint`, together with one generic soundness
@@ -1606,7 +1606,7 @@ Definition invariant_load {S O N E V K C T} (ET : encoding T)
 ### ANA-11: the same analyses as Rules programs
 
 ```coq
-(* AnalysesRules.v. From Gaulois.Rules, assumed: `program P` is a stratified list of rules
+(* AnalysesRules.v. From Galois.Rules, assumed: `program P` is a stratified list of rules
    over predicate symbols with an encoding and arities; `ground_atom P` is a predicate with a
    tuple of codes; `solve_program prog facts` is the engine's database (None if the program
    is not stratifiable); `db_holds prog db p ts` tests a tuple; `least_model` is the
@@ -3061,7 +3061,7 @@ it cannot produce a certificate accepted by the original `check_explanation`. Th
 
 ## REW-7: Order and SSA clients
 
-These declarations live outside `Gaulois.Rewrite`. The Order adapter's facts permit `None`;
+These declarations live outside `Galois.Rewrite`. The Order adapter's facts permit `None`;
 therefore they do not establish definedness. A definedness or nonzero guard needs an additional
 client fact and proof. No concrete domain transfer is assumed merely from lattice laws.
 

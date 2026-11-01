@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare and Collections maps and finite sets. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia Permutation Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare.
 Import List.ListNotations.
 
 (** The search result contains traversal orders, discovery edges and their position indexes. *)

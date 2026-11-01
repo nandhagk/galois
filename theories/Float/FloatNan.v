@@ -6,13 +6,13 @@
 
 From Stdlib Require Import Bool List ZArith Lia.
 From Flocq Require Import Core IEEE754.BinarySingleNaN IEEE754.Binary.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Views Require Import ViewsAgreement.
-From Gaulois.Analyses Require Import AnalysesDemand.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Views Require Import ViewsAgreement.
+From Galois.Analyses Require Import AnalysesDemand.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaTypingProofs ExamplesSsaBridge ExamplesSsaViews.
-From Gaulois.Float Require Import FloatOps.
+From Galois.Float Require Import FloatOps.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

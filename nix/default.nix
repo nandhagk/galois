@@ -31,8 +31,8 @@ in
       export DUNE_CACHE=enabled
       # Hardlinks avoid copying every cached file into _build.
       export DUNE_CACHE_STORAGE_MODE=hardlink
-      # One cache root for every Gaulois worktree, outside the repository.
-      export DUNE_CACHE_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/gaulois/dune"
+      # One cache root for every Galois worktree, outside the repository.
+      export DUNE_CACHE_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/galois/dune"
       # A host library path would shadow the Nix store paths of the pinned toolchain.
       unset LD_LIBRARY_PATH
     '';

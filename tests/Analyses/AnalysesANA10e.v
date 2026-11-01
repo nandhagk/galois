@@ -5,13 +5,13 @@
     Builds on: AnalysesMemorySealed, AnalysesMemoryWalk and AnalysesMemoryLegacy. *)
 
 From Stdlib Require Import List Bool ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier AnalysesMemorySealed
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier AnalysesMemorySealed
   AnalysesMemoryWalk AnalysesMemoryLegacy.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaMemoryLegacy.
+From Galois.Examples.Ssa Require Import ExamplesSsaMemoryLegacy.
 Import List.ListNotations.
 
 Definition site_a : memory_scope nat := MemoryRegions [Footprint 0 0%Z 8%Z].

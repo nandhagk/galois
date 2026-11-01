@@ -5,11 +5,11 @@
     Builds on: AnalysesScev and BitsWord. *)
 
 From Stdlib Require Import List Bool Arith ZArith NArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Bits Require Import BitsWord.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsGraph ViewsSsa.
-From Gaulois.Analyses Require Import AnalysesScev.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Bits Require Import BitsWord.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsGraph ViewsSsa.
+From Galois.Analyses Require Import AnalysesScev.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

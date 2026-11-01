@@ -5,7 +5,7 @@
     Builds on: Stdlib sorted lists and Order lattice and concretisation dictionaries. *)
 
 From Stdlib Require Import ZArith List Bool Lia Sorting.Sorted.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Order Require Import OrderLattice OrderConcrete.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.

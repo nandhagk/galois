@@ -4,7 +4,7 @@
     For example, factorial and the numbering fixtures remain available through this facade.
     Builds on: ExamplesSsaAnalysisBase and the SSA analysis client modules. *)
 
-From Gaulois.Examples.Ssa Require Export
+From Galois.Examples.Ssa Require Export
   ExamplesSsaAnalysisBase ExamplesSsaNumbering ExamplesSsaScev ExamplesSsaCalls
   ExamplesSsaMemoryBase ExamplesSsaMemoryLegacy.
 

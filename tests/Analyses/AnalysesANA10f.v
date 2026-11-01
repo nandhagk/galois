@@ -5,19 +5,19 @@
     Builds on: AnalysesMemoryFlow, AnalysesMemoryForward and the ANA-10d/e graph fixtures. *)
 
 From Stdlib Require Import List Bool ZArith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointWorklist FixpointTotal
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointWorklist FixpointTotal
   FixpointSchedule.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesMemoryBase AnalysesMemoryGraph
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesMemoryBase AnalysesMemoryGraph
   AnalysesMemoryFrontier AnalysesMemorySealed AnalysesMemoryWalk AnalysesMemoryLegacy
   AnalysesMemoryFlow AnalysesMemoryForward.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSemantics ExamplesSsaBytes
+From Galois.Examples.Ssa Require Import ExamplesSsaSemantics ExamplesSsaBytes
   ExamplesSsaMemoryLegacy.
-From Gaulois.Tests.Analyses Require Import Analyses9Test AnalysesANA10d AnalysesANA10e.
+From Galois.Tests.Analyses Require Import Analyses9Test AnalysesANA10d AnalysesANA10e.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

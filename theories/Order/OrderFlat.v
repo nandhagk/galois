@@ -5,7 +5,7 @@
     Builds on: OrderLattice and OrderConcrete. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Order Require Import OrderLattice OrderConcrete.
 
 (** Flat values add an empty bottom and an unconstrained top. *)
 Inductive flat (A : Type) : Type :=

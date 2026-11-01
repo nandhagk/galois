@@ -5,10 +5,10 @@
     Builds on: ViewsCalls, CollectionsEncoding, OrderLattice and FixpointSystem. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsCalls.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsCalls.
 Import List.ListNotations.
 
 (** A client supplies the summary lattice, local effects and call-site lifting. *)

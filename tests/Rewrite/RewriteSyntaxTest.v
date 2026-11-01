@@ -5,7 +5,7 @@
     Builds on: RewriteSyntax, RewriteRules, RewriteEquality and Rocq Stdlib naturals and lists. *)
 
 From Stdlib Require Import Arith Bool List.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality.
 Import List.ListNotations.
 
 (** The sum is variadic, while the other operators have fixed shapes. *)

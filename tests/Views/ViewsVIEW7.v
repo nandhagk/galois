@@ -5,9 +5,9 @@
     Builds on: ViewsMemory, ViewsSemantics, DomainsFootprint and OrderBasic. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Order Require Import OrderBasic OrderConcrete.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsMemory.
+From Galois.Order Require Import OrderBasic OrderConcrete.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsMemory.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.

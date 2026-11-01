@@ -6,14 +6,14 @@
     Builds on: AnalysesCalls, GraphScc, GraphDfs, FixpointIndex and FixpointTotal. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointWorklist
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointWorklist
   FixpointTotal FixpointLeast.
-From Gaulois.Views Require Import ViewsSemantics ViewsCalls ViewsSummary.
-From Gaulois.Analyses Require Import AnalysesCalls.
+From Galois.Views Require Import ViewsSemantics ViewsCalls ViewsSummary.
+From Galois.Analyses Require Import AnalysesCalls.
 Import List.ListNotations.
 
 (** * Resolver and caller preparation *)

@@ -5,8 +5,8 @@
     Builds on: GraphPrepare and GraphDominators. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphDominators.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphDominators.
 Import List.ListNotations.
 
 (** Every path from the node to an exit visits the post-dominator. *)

@@ -5,10 +5,10 @@
     Builds on: FixpointIndex, FixpointWorklist, FixpointCut and Graph algorithms. *)
 
 From Stdlib Require Import List Bool PArith NArith Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphDag
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphDag
   GraphWto GraphLoops.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointCycles
+From Galois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointCycles
   FixpointWorklist FixpointCut.
 Import List.ListNotations.
 

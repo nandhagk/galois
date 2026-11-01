@@ -5,11 +5,11 @@
     Builds on: ViewsCalls, ViewsSummary, GraphDag and OrderConcrete. *)
 
 From Stdlib Require Import List Bool PArith Lia ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderConcrete.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphDag.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderBasic OrderConcrete.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphScc GraphDag.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
 Import List.ListNotations.
 
 (** Direct targets take precedence; unavailable indirect facts use the closed inventory. *)

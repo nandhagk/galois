@@ -5,9 +5,9 @@
     Builds on: DomainsNumeric, OrderFlat and Bits word arithmetic. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderFlat.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsTestbit.
-From Gaulois.Domains Require Import DomainsNumeric.
+From Galois.Order Require Import OrderLattice OrderFlat.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsTestbit.
+From Galois.Domains Require Import DomainsNumeric.
 Import List.ListNotations.
 
 Open Scope Z_scope.

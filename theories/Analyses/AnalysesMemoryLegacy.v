@@ -5,11 +5,11 @@
     Builds on: AnalysesMemoryWalk, GraphDfs, GraphPrepare and AnalysesMemoryBase. *)
 
 From Stdlib Require Import List Bool ZArith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphIdf.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphIdf.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier
   AnalysesMemoryWalk AnalysesMemoryBase.
 Import List.ListNotations.
 

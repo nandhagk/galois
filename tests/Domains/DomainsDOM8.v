@@ -5,9 +5,9 @@
     Builds on: DomainsKnownBitsFast and the existing known-bit domain. *)
 
 From Stdlib Require Import ZArith List.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp.
-From Gaulois.Domains Require Import DomainsNumeric DomainsKnownBits DomainsKnownBitsFast.
+From Galois.Order Require Import OrderLattice.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp.
+From Galois.Domains Require Import DomainsNumeric DomainsKnownBits DomainsKnownBitsFast.
 Import List.ListNotations.
 
 Open Scope Z_scope.

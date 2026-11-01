@@ -5,7 +5,7 @@
     Builds on: BitsWord, BitsFun and Rocq Stdlib integer bit laws. *)
 
 From Stdlib Require Import ZArith Bool Lia Ring.
-From Gaulois.Bits Require Import BitsWord BitsFun.
+From Galois.Bits Require Import BitsWord BitsFun.
 
 Open Scope Z_scope.
 

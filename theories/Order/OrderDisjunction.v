@@ -5,7 +5,7 @@
     Builds on: OrderLattice, OrderConcrete and OrderMonotone. *)
 
 From Stdlib Require Import List Bool Arith Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderMonotone.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderMonotone.
 
 Import List.ListNotations.
 

@@ -7,8 +7,8 @@
 
 From Stdlib Require Import List Bool PArith Arith Lia Wf_nat Permutation.
 From Stdlib.Relations Require Import Relation_Operators Operators_Properties.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphSemiDominators.
 Import List.ListNotations.
 

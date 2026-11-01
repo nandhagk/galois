@@ -5,8 +5,8 @@
     Builds on: While semantics, ViewsSkeleton and ViewsSemantics. *)
 
 From Stdlib Require Import List Bool Arith Lia ZArith.
-From Gaulois.Views Require Import ViewsSemantics ViewsSkeleton.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics.
+From Galois.Views Require Import ViewsSemantics ViewsSkeleton.
+From Galois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics.
 Import List.ListNotations.
 
 (** While primitive actions distinguish no-ops, assignments and output. *)

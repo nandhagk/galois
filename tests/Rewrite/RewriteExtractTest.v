@@ -5,8 +5,8 @@
     Builds on: RewriteEgraph, RewriteRebuild and RewriteExtract. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteEgraph RewriteRebuild RewriteExtract.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Rewrite Require Import RewriteSyntax RewriteEgraph RewriteRebuild RewriteExtract.
 Import List.ListNotations.
 
 Bind Scope positive_scope with rw_id.

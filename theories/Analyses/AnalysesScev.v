@@ -5,11 +5,11 @@
     Builds on: BitsWord, CollectionsMap, ViewsSsa and ViewsDominated. *)
 
 From Stdlib Require Import List Bool Arith Lia ZArith NArith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Bits Require Import BitsWord.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
-From Gaulois.Analyses Require AnalysesNumbering.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Bits Require Import BitsWord.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
+From Galois.Analyses Require AnalysesNumbering.
 Import List.ListNotations.
 
 (** * Integer expressions and chains of recurrences *)

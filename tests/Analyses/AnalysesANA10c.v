@@ -5,10 +5,10 @@
     Builds on: AnalysesMemoryFrontier. *)
 
 From Stdlib Require Import List Arith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFrontier.
 Import List.ListNotations.
 
 Definition ana10c_diamond : Graph.t nat nat :=

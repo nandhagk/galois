@@ -5,9 +5,9 @@
     Builds on: DomainsInterval and OrderLattice. *)
 
 From Stdlib Require Import ZArith List.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Bits Require Import BitsOp.
-From Gaulois.Domains Require Import DomainsInterval.
+From Galois.Order Require Import OrderLattice.
+From Galois.Bits Require Import BitsOp.
+From Galois.Domains Require Import DomainsInterval.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 

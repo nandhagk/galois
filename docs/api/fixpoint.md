@@ -1,4 +1,4 @@
-# Gaulois.Fixpoint
+# Galois.Fixpoint
 
 ## Nested WTO iteration (FIX-5)
 

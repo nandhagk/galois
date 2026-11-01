@@ -5,9 +5,9 @@
     Builds on: ViewsSsa and OrderLift. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderConcrete OrderLift.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderConcrete OrderLift.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
 
 (** Refine a supplied start fact by each edge guard in order. *)
 Definition refine_fact {S O N E V K C A} (EV : encoding V)

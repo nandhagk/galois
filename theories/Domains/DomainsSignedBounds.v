@@ -5,9 +5,9 @@
     Builds on: BitsWord, BitsTestbit and DomainsKnownBits. *)
 
 From Stdlib Require Import ZArith Bool Lia.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit.
-From Gaulois.Domains Require Import DomainsKnownBits.
+From Galois.Order Require Import OrderLattice.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit.
+From Galois.Domains Require Import DomainsKnownBits.
 
 Local Open Scope Z_scope.
 

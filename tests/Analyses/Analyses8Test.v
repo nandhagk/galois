@@ -5,13 +5,13 @@
     Builds on: AnalysesCalls and ExamplesSsaCalls. *)
 
 From Stdlib Require Import List Bool Arith Lia ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderBasic.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDag.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
-From Gaulois.Analyses Require Import AnalysesCalls.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderBasic.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDag.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsEffects ViewsCalls ViewsSummary.
+From Galois.Analyses Require Import AnalysesCalls.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
   ExamplesSsaTypingProofs ExamplesSsaEffects ExamplesSsaCalls.
 Import List.ListNotations.
 Local Open Scope nat_scope.

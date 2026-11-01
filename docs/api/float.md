@@ -1,4 +1,4 @@
-# Gaulois.Float
+# Galois.Float
 
 The floating-point package, the only one that uses Flocq. It gives finite-float interval domains
 over IEEE binary32 and binary64, a NaN-observability analysis, and float operators for the `Ssa`
@@ -12,13 +12,13 @@ It depends on Order (lattices and meanings), Views (`sparse_domain`), Analyses (
 framework of ANA-4) and `Examples.Ssa`, which supplies `OExt`, `VF32` and `VF64`.
 
 Conventions of this document:
-- **Axioms.** A theorem of `Gaulois.Float` may depend on exactly these axioms and on no others:
+- **Axioms.** A theorem of `Galois.Float` may depend on exactly these axioms and on no others:
   `Stdlib.Reals.ClassicalDedekindReals.sig_forall_dec`,
   `Stdlib.Reals.ClassicalDedekindReals.sig_not_dec`,
   `Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep`, and
   `Stdlib.Logic.Classical_Prop.classic`. The pinned Flocq operations and bit decoders inherit
-  `classic` in addition to the classical real-number foundations. `gaulois check claims` must
-  allow exactly this list for `Gaulois.Float` theorems. A theorem of any other package depends
+  `classic` in addition to the classical real-number foundations. `galois check claims` must
+  allow exactly this list for `Galois.Float` theorems. A theorem of any other package depends
   on no axiom. C56 records the owner's approval of `classic`; FLT-1 updates the checker.
 - **Sections.** FloatInterval.v, FloatOps.v and FloatNan.v each open `Section Float` with
   `Context {prec emax : Z} {Hprec : Prec_gt_0 prec} {Hmax : Prec_lt_emax prec emax}` and

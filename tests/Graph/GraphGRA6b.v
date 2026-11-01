@@ -7,8 +7,8 @@
     CollectionsFinSet. *)
 
 From Stdlib Require Import List Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphInterference GraphColour GraphBriggs.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphInterference GraphColour GraphBriggs.
 Import List.ListNotations.
 
 Definition briggs_path : interference nat :=

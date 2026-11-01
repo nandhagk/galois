@@ -5,12 +5,12 @@
     Builds on: ViewsSsa, ViewsRefine and GraphEdgeDominance. *)
 
 From Stdlib Require Import List Arith Lia Wf_nat PArith Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderConcrete OrderLift.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Order Require Import OrderConcrete OrderLift.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphSemiDominators GraphLengauerTarjan GraphDominators GraphEdgeDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsRefine.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsRefine.
 Import List.ListNotations.
 
 (** Strict SSA restricts redefinition and positively preserves bindings away from their homes. *)

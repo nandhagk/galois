@@ -5,8 +5,8 @@
     Builds on: GraphLoops, GraphPrepare and Collections encodings, maps and sets. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphLoops.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphLoops.
 Import List.ListNotations.
 
 Definition gra4b_graph (roots : list nat) (adjacency : nat -> list nat)

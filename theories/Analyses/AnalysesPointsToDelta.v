@@ -5,11 +5,11 @@
     Builds on: AnalysesPointsToBase and canonical encoded maps and sets. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointLeast.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesPointsToBase.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderMonotone.
+From Galois.Fixpoint Require Import FixpointSystem FixpointLeast.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesPointsToBase.
 Import List.ListNotations.
 
 Module PtsDelta.

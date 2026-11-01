@@ -6,17 +6,17 @@
 
 From Stdlib Require Import Bool List ZArith Lia.
 From Flocq Require Import Core IEEE754.BinarySingleNaN IEEE754.Binary IEEE754.Bits.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderPointwise OrderLift.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsSsa.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesDemand.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderPointwise OrderLift.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsSsa.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesDemand.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaTypingProofs ExamplesSsaSemantics ExamplesSsaActivation ExamplesSsaBridge
   ExamplesSsaViews ExamplesSsaAnalyses.
-From Gaulois.Float Require Import FloatInterval FloatOps FloatNan.
+From Galois.Float Require Import FloatInterval FloatOps FloatNan.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

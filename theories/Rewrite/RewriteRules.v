@@ -5,7 +5,7 @@
     Builds on: RewriteSyntax and Rocq Stdlib lists. *)
 
 From Stdlib Require Import List.
-From Gaulois.Rewrite Require Import RewriteSyntax.
+From Galois.Rewrite Require Import RewriteSyntax.
 Import List.ListNotations.
 
 (** A semantics supplies partial values for variables and partial operator interpretations. *)

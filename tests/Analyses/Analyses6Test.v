@@ -5,9 +5,9 @@
     Builds on: AnalysesEgraph and RewriteRun. *)
 
 From Stdlib Require Import List PeanoNat NArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph RewriteRun.
-From Gaulois.Analyses Require Import AnalysesEgraph.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph RewriteRun.
+From Galois.Analyses Require Import AnalysesEgraph.
 Import List.ListNotations.
 
 Module ANA6Fixture.

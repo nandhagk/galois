@@ -5,9 +5,9 @@
     Builds on: DomainsWrapped. *)
 
 From Stdlib Require Import ZArith List.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Bits Require Import BitsWord BitsOp.
-From Gaulois.Domains Require Import DomainsNumeric DomainsWrapped.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Bits Require Import BitsWord BitsOp.
+From Galois.Domains Require Import DomainsNumeric DomainsWrapped.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.

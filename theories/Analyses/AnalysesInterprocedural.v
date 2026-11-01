@@ -5,10 +5,10 @@
     Builds on: CollectionsEncoding, CollectionsMap, OrderBasic and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointLeast
+From Galois.Order Require Import OrderLattice OrderBasic OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointLeast
   FixpointWorklist FixpointTotal.
 Import List.ListNotations.
 

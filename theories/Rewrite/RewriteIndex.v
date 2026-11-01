@@ -5,8 +5,8 @@
     Builds on: CollectionsMap and RewriteEgraph. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteEgraph.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Rewrite Require Import RewriteSyntax RewriteEgraph.
 Import List.ListNotations.
 
 (** The root-parent table aggregates every raw alias of each canonical child class. *)

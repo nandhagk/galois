@@ -5,10 +5,10 @@
     Builds on: ExamplesSsaMemory, ExamplesSsaPointers and AnalysesMemoryBase. *)
 
 From Stdlib Require Import List Bool ZArith Lia.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
-From Gaulois.Analyses Require Import AnalysesMemoryBase.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemory.
+From Galois.Analyses Require Import AnalysesMemoryBase.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaViews ExamplesSsaMemory ExamplesSsaEffects ExamplesSsaPointers.
 Import List.ListNotations.
 

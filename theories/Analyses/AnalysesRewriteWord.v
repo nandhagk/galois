@@ -5,9 +5,9 @@
     Builds on: BitsWord, BitsFun, BitsTestbit, BitsArith and the standalone Rewrite engine. *)
 
 From Stdlib Require Import List Bool ZArith Lia PeanoNat.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit BitsArith.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit BitsArith.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph
   RewriteAnalysis RewriteRun RewriteExtract.
 Import List.ListNotations.
 

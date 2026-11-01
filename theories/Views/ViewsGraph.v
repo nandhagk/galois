@@ -5,11 +5,11 @@
     Builds on: ViewsSemantics, GraphCore, FixpointSystem and FixpointCycles. *)
 
 From Stdlib Require Import List Bool Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCycles.
-From Gaulois.Views Require Import ViewsSemantics.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCycles.
+From Galois.Views Require Import ViewsSemantics.
 Import List.ListNotations.
 
 (** A graph view maps states to nodes and classifies taken and stationary steps. *)

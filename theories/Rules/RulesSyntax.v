@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding and Stdlib lists. *)
 
 From Stdlib Require Import List PArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
+From Galois.Collections Require Import CollectionsEncoding.
 Import List.ListNotations.
 
 (** A tuple contains the encoded constants of a ground fact. *)

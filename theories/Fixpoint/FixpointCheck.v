@@ -5,8 +5,8 @@
     Builds on: FixpointQuery, FixpointSystem and OrderLattice. *)
 
 From Stdlib Require Import List Bool.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Order Require Import OrderLattice.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
 
 (** Check every constraint return and side contribution in a single query traversal. *)
 Definition check_post {X C A} (L : lattice A) (S : System.t X C A) (s : X -> A) : bool :=

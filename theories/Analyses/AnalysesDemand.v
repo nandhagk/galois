@@ -5,14 +5,14 @@
     Builds on: OrderPointwise, ViewsAgreement, ViewsEffects and FixpointTotal. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderMonotone OrderBasic
+From Galois.Order Require Import OrderLattice OrderConcrete OrderMonotone OrderBasic
   OrderPointwise.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointLeast
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointLeast
   FixpointWorklist FixpointTotal FixpointSchedule.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsEffects.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsEffects.
 Import List.ListNotations.
 
 (** A demand domain pairs its order with value agreement. *)

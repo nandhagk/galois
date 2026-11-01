@@ -5,11 +5,11 @@
     Builds on: ExamplesSsaScev and AnalysesScev. *)
 
 From Stdlib Require Import List Bool Arith ZArith NArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsGraph ViewsSsa ViewsSemantics.
-From Gaulois.Analyses Require Import AnalysesScev.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaScev ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsGraph ViewsSsa ViewsSemantics.
+From Galois.Analyses Require Import AnalysesScev.
+From Galois.Examples.Ssa Require Import ExamplesSsaScev ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaActivation ExamplesSsaSemantics ExamplesSsaViews.
 Import List.ListNotations.
 Local Open Scope nat_scope.

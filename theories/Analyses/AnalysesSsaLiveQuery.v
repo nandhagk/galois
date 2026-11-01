@@ -5,13 +5,13 @@
     Builds on: GraphDfs, GraphDominators, GraphReducible, ViewsSsaPoints and AnalysesRules. *)
 
 From Stdlib Require Import List Bool PArith Lia Permutation Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphDominators GraphReducible.
-From Gaulois.Fixpoint Require Import FixpointLeast.
-From Gaulois.Views Require Import ViewsGraph ViewsSsaPoints.
-From Gaulois.Rules Require Import RulesSyntax RulesModel RulesSolve.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesRules.
+From Galois.Fixpoint Require Import FixpointLeast.
+From Galois.Views Require Import ViewsGraph ViewsSsaPoints.
+From Galois.Rules Require Import RulesSyntax RulesModel RulesSolve.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesRules.
 Import List.ListNotations.
 
 (** A reduced path traverses no edge that retreats in the selected DFS forest. *)

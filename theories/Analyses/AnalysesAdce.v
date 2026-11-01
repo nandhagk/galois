@@ -5,10 +5,10 @@
     Builds on: GraphControlDependence, GraphDfs and AnalysesDemand. *)
 
 From Stdlib Require Import List Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
   GraphPostDominators GraphControlDependence GraphIdf.
-From Gaulois.Analyses Require Import AnalysesDemand.
+From Galois.Analyses Require Import AnalysesDemand.
 Import List.ListNotations.
 
 (** The client identifies finite graph nodes whose effects or divergence must be retained. *)

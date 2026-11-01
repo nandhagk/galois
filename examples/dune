@@ -1,19 +1,19 @@
 ; The toy languages used as reference clients: examples/While/ and examples/Ssa/ become the
-; modules Gaulois.Examples.While.<File> and Gaulois.Examples.Ssa.<File>.
+; modules Galois.Examples.While.<File> and Galois.Examples.Ssa.<File>.
 
 (include_subdirs qualified)
 
 (rocq.theory
- (name Gaulois.Examples)
+ (name Galois.Examples)
  (flags :standard -w +default)
  (theories
   Stdlib
-  Gaulois.Collections
-  Gaulois.Order
-  Gaulois.Graph
-  Gaulois.Bits
-  Gaulois.Fixpoint
-  Gaulois.Rules
-  Gaulois.Domains
-  Gaulois.Views
-  Gaulois.Analyses))
+  Galois.Collections
+  Galois.Order
+  Galois.Graph
+  Galois.Bits
+  Galois.Fixpoint
+  Galois.Rules
+  Galois.Domains
+  Galois.Views
+  Galois.Analyses))

@@ -5,15 +5,15 @@
     Builds on: While skeleton, structured views, region summaries and dense analyses. *)
 
 From Stdlib Require Import List Bool Arith Lia ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderLift
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderLift
   OrderPointwise OrderBasic.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSkeleton ViewsStructured
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSkeleton ViewsStructured
   ViewsRegion ViewsEffects ViewsAgreement.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesAvailable AnalysesDemand
+From Galois.Analyses Require Import AnalysesLiveness AnalysesAvailable AnalysesDemand
   AnalysesStructured.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics
+From Galois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics
   ExamplesWhileSkeleton.
 Import List.ListNotations.
 

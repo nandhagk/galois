@@ -5,8 +5,8 @@
     Builds on: CollectionsMap, RewriteSyntax, RewriteEquality and RewriteEgraph. *)
 
 From Stdlib Require Import List Bool PArith NArith PeanoNat Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEquality RewriteEgraph.
 Import List.ListNotations.
 
 (** * Tree measures and deterministic candidates *)

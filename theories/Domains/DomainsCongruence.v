@@ -5,9 +5,9 @@
     Builds on: BitsWord, DomainsNumeric and Stdlib integer divisibility. *)
 
 From Stdlib Require Import ZArith Zcong List Bool Lia.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsExtend BitsTestbit.
-From Gaulois.Domains Require Import DomainsNumeric.
+From Galois.Order Require Import OrderLattice.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsExtend BitsTestbit.
+From Galois.Domains Require Import DomainsNumeric.
 Import List.ListNotations.
 
 Open Scope Z_scope.

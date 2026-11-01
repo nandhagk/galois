@@ -5,10 +5,10 @@
     Builds on: ExamplesSsaAnalysisBase and AnalysesMemoryLegacy. *)
 
 From Stdlib Require Import List ZArith.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Analyses Require Import AnalysesMemoryLegacy.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaAnalysisBase.
+From Galois.Graph Require Import GraphCore.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Analyses Require Import AnalysesMemoryLegacy.
+From Galois.Examples.Ssa Require Import ExamplesSsaAnalysisBase.
 Import List.ListNotations.
 
 (** The two edge identities leave nodes zero and one in a three-node chain. *)

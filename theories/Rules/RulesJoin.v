@@ -6,9 +6,9 @@
     Builds on: RulesCompile, CollectionsTable and CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsTable.
-From Gaulois.Rules Require Import RulesSyntax RulesCompile.
+From Galois.Rules Require Import RulesSyntax RulesCompile.
 Import List.ListNotations.
 
 (** The strategies choose literal-at-a-time or variable-at-a-time indexed enumeration. *)

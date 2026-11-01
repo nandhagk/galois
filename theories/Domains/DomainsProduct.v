@@ -6,9 +6,9 @@
     DomainsKnownBits, DomainsWrapped and OrderReduced. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderProduct OrderReduced OrderFlat.
-From Gaulois.Bits Require Import BitsWord BitsOp BitsFun BitsTestbit.
-From Gaulois.Domains Require Import DomainsNumeric DomainsConst DomainsInterval DomainsCongruence
+From Galois.Order Require Import OrderLattice OrderConcrete OrderProduct OrderReduced OrderFlat.
+From Galois.Bits Require Import BitsWord BitsOp BitsFun BitsTestbit.
+From Galois.Domains Require Import DomainsNumeric DomainsConst DomainsInterval DomainsCongruence
   DomainsKnownBits DomainsWrapped.
 Import List.ListNotations.
 

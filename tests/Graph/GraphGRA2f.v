@@ -5,8 +5,8 @@
     Builds on: GraphDominators and Collections encodings and maps. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominators.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominators.
 Import List.ListNotations.
 
 Definition dom_test_graph (roots : list nat) (adjacency : nat -> list nat)

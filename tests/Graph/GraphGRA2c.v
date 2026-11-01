@@ -5,8 +5,8 @@
     Builds on: GraphSemiDominators and Collections encodings and maps. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphSemiDominators.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphSemiDominators.
 Import List.ListNotations.
 
 (** Small adjacency fixtures keep edge identity separate from source and target. *)

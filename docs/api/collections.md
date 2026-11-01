@@ -1,4 +1,4 @@
-# Gaulois.Collections
+# Galois.Collections
 
 ## Dense finite-universe set backend (COL-3)
 

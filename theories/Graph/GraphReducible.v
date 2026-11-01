@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare, GraphDfs, GraphDominance and GraphDominators. *)
 
 From Stdlib Require Import List Bool PArith Lia Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators.
 Import List.ListNotations.
 
 (** A reachable edge is a back edge when its target dominates its source. *)

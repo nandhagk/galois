@@ -5,9 +5,9 @@
     Builds on: ExamplesSsaSemantics, ExamplesSsaTypingProofs and ViewsSemantics. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaBridge.
 Import List.ListNotations.
 Local Open Scope nat_scope.

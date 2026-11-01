@@ -5,8 +5,8 @@
     Builds on: GraphFrontier and GraphControlDependence. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominators GraphPostDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominators GraphPostDominators
   GraphFrontier GraphControlDependence.
 Import List.ListNotations.
 

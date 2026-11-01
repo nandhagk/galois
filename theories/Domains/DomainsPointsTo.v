@@ -5,9 +5,9 @@
     Builds on: CollectionsFinSet, OrderPowerset, OrderProduct and OrderBasic. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderProduct OrderPowerset.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderProduct OrderPowerset.
 Import List.ListNotations.
 
 (** Targets consist of known objects and the possibility of any other object. *)

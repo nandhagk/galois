@@ -6,13 +6,13 @@
     Builds on: AnalysesLiveness, AnalysesDemand and RulesSolve. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderPowerset OrderPointwise OrderBasic.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast.
-From Gaulois.Views Require Import ViewsGraph ViewsForward ViewsSsaPoints.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesModel RulesSolve.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesDemand.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderPowerset OrderPointwise OrderBasic.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointLeast.
+From Galois.Views Require Import ViewsGraph ViewsForward ViewsSsaPoints.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesModel RulesSolve.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesDemand.
 Import List.ListNotations.
 
 (** The six input predicates and three derived predicates have disjoint codes. *)

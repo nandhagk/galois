@@ -5,9 +5,9 @@
     Builds on: DomainsAddress, DomainsPointsTo, DomainsByteRange and DomainsFootprint. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderLift.
-From Gaulois.Domains Require Import DomainsInterval DomainsAddress DomainsPointsTo
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderLift.
+From Galois.Domains Require Import DomainsInterval DomainsAddress DomainsPointsTo
   DomainsByteRange DomainsFootprint.
 Import List.ListNotations.
 

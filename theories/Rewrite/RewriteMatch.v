@@ -5,8 +5,8 @@
     Builds on: CollectionsMap, RewriteSyntax, RewriteEgraph and RewriteIndex. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteEgraph RewriteIndex.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Rewrite Require Import RewriteSyntax RewriteEgraph RewriteIndex.
 Import List.ListNotations.
 
 (** Hole enumeration retains repetitions and the left-to-right order of children. *)

@@ -6,8 +6,8 @@
     Builds on: ExamplesSsaSyntax and Collections maps. *)
 
 From Stdlib Require Import List ZArith Bool NArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax.
 Import List.ListNotations.
 
 (** Integer widths have distinct static types. *)

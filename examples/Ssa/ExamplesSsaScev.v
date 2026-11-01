@@ -5,12 +5,12 @@
     Builds on: ExamplesSsaAnalysisBase, ExamplesSsaActivation and AnalysesScev. *)
 
 From Stdlib Require Import List Bool Arith Lia ZArith NArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Bits Require Import BitsWord.
-From Gaulois.Graph Require Import GraphCore GraphEdgeDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
-From Gaulois.Analyses Require Import AnalysesScev.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Bits Require Import BitsWord.
+From Galois.Graph Require Import GraphCore GraphEdgeDominance.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
+From Galois.Analyses Require Import AnalysesScev.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping ExamplesSsaSemantics
   ExamplesSsaTypingProofs ExamplesSsaBridge ExamplesSsaActivation ExamplesSsaViews ExamplesSsaStrict
   ExamplesSsaAnalysisBase.
 Import List.ListNotations.

@@ -6,11 +6,11 @@
 
 From Stdlib Require Import List Bool PArith Arith Lia.
 From Stdlib.Relations Require Import Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphSemiDominators GraphLengauerTarjan GraphDominators GraphEdgeDominance GraphFrontier GraphIdf.
-From Gaulois.Views Require Import ViewsGraph ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph.
+From Galois.Views Require Import ViewsGraph ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph.
 Import List.ListNotations.
 
 (** * Tagged split graph *)

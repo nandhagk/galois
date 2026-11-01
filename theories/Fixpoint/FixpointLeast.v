@@ -5,9 +5,9 @@
     Builds on: FixpointSystem, FixpointQuery and OrderMonotone. *)
 
 From Stdlib Require Import List Bool PArith Relations.Relation_Operators.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
 Import List.ListNotations.
 
 (** A single update joins only when its value is not already below the destination. *)

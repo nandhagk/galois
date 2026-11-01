@@ -5,9 +5,9 @@
     Builds on: ViewsSsaPoints, GraphDfs, GraphDominance and Collections encodings. *)
 
 From Stdlib Require Import List PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance.
-From Gaulois.Views Require Import ViewsSsaPoints.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance.
+From Galois.Views Require Import ViewsSsaPoints.
 Import List.ListNotations.
 
 (** * A finite ordered SSA view *)

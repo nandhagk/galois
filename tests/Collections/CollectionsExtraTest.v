@@ -5,7 +5,7 @@
     Builds on: CollectionsHeap, CollectionsUnionFind, CollectionsTable. *)
 
 From Stdlib Require Import List PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsHeap
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsHeap
   CollectionsUnionFind CollectionsTable.
 Import List.ListNotations.
 Local Open Scope positive_scope.

@@ -5,13 +5,13 @@
     Builds on: BitsExpr, DomainsNumeric, ViewsSsa and FixpointTotal. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr.
-From Gaulois.Domains Require Import DomainsNumeric.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointWorklist FixpointTotal.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr.
+From Galois.Domains Require Import DomainsNumeric.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem FixpointWorklist FixpointTotal.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
 Import List.ListNotations.
 
 (** A bridge supplies expressions for supported operators and partial word conversion. *)

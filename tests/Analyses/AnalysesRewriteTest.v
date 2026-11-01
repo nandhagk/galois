@@ -5,16 +5,16 @@
     Builds on: the Rewrite clients and AnalysesEgraph. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Order Require Import OrderConcrete.
-From Gaulois.Bits Require Import BitsWord.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph RewriteAnalysis
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Graph Require Import GraphCore.
+From Galois.Order Require Import OrderConcrete.
+From Galois.Bits Require Import BitsWord.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph RewriteAnalysis
   RewriteRun RewriteExtract.
-From Gaulois.Analyses Require Import AnalysesRewriteDomains AnalysesSsaRewrite AnalysesRewriteWord
+From Galois.Analyses Require Import AnalysesRewriteDomains AnalysesSsaRewrite AnalysesRewriteWord
   AnalysesEgraph.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaTyping ExamplesSsaAnalyses.
+From Galois.Examples.Ssa Require Import ExamplesSsaTyping ExamplesSsaAnalyses.
 Import List.ListNotations.
 
 (** Direct add-zero rewriting extracts the cheaper literal. *)

@@ -5,8 +5,8 @@
     Builds on: ViewsRegion, ViewsSkeleton and CollectionsMap. *)
 
 From Stdlib Require Import List Bool PArith NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Views Require Import ViewsSkeleton ViewsRegion.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Views Require Import ViewsSkeleton ViewsRegion.
 Import List.ListNotations Skeleton.
 
 (** * Postorder region tables *)

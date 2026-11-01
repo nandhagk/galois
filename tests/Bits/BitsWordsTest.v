@@ -5,8 +5,8 @@
     Builds on: BitsWord, BitsFun, BitsOp, BitsExpr, BitsBridge and BitsTestbit. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr BitsBridge BitsTestbit.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr BitsBridge BitsTestbit.
 Import List.ListNotations.
 Import Bits.
 

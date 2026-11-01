@@ -5,8 +5,8 @@
     Builds on: CollectionsEncoding and ViewsSemantics. *)
 
 From Stdlib Require Import List Bool Arith Lia PArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Views Require Import ViewsSemantics.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Views Require Import ViewsSemantics.
 Import List.ListNotations.
 
 Module Skeleton.

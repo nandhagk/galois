@@ -5,12 +5,12 @@
     Builds on: ExamplesSsaStrict, ExamplesSsaAnalyses and ExamplesSsaViewsTest. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Graph Require Import GraphCore GraphDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints ViewsDominated.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Graph Require Import GraphCore GraphDominance.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsSsaPoints ViewsDominated.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaBridge ExamplesSsaActivation
   ExamplesSsaViews ExamplesSsaAnalyses ExamplesSsaStrict.
-From Gaulois.Tests.Examples Require Import ExamplesSsaViewsTest.
+From Galois.Tests.Examples Require Import ExamplesSsaViewsTest.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

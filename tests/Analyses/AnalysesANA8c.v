@@ -5,12 +5,12 @@
     Builds on: AnalysesCallEffects, AnalysesInterprocedural and ViewsCalls. *)
 
 From Stdlib Require Import List Bool Arith PArith ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderPowerset.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointWorklist.
-From Gaulois.Views Require Import ViewsSemantics ViewsCalls ViewsSummary.
-From Gaulois.Analyses Require Import AnalysesInterprocedural AnalysesCallEffects AnalysesLiveness.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderBasic OrderPowerset.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointWorklist.
+From Galois.Views Require Import ViewsSemantics ViewsCalls ViewsSummary.
+From Galois.Analyses Require Import AnalysesInterprocedural AnalysesCallEffects AnalysesLiveness.
 Import List.ListNotations.
 
 (** * Matched recursion and normal-return observations *)

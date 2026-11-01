@@ -5,7 +5,7 @@
     Builds on: Stdlib lists and integers, Collections encoded maps. *)
 
 From Stdlib Require Import List ZArith Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
 Import List.ListNotations.
 
 (** Function names are program-wide natural-number identifiers. *)

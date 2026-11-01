@@ -5,8 +5,8 @@
     Builds on: CollectionsMap, OrderConcrete and OrderMonotone. *)
 
 From Stdlib Require Import List Bool PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderMonotone.
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderMonotone.
 
 (** An absent binding reads as the supplied default. *)
 Definition pointwise_lookup {K A} (E : encoding K) (d : A) (m : Map.t K A) (k : K) : A :=

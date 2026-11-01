@@ -6,7 +6,7 @@
 
 From Stdlib Require Import Bool ZArith Reals Lra Lia.
 From Flocq Require Import Core IEEE754.BinarySingleNaN IEEE754.Binary.
-From Gaulois.Float Require Import FloatInterval.
+From Galois.Float Require Import FloatInterval.
 
 Local Arguments B754_nan {prec emax} _ _ _.
 Local Arguments B754_zero {prec emax} _.

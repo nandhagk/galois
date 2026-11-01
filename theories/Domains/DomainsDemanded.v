@@ -6,8 +6,8 @@
     Builds on: OrderLattice, OrderConcrete, BitsWord, BitsFun, BitsTestbit and BitsArith. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit BitsArith BitsOp.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit BitsArith BitsOp.
 Import List.ListNotations.
 
 Open Scope Z_scope.

@@ -5,7 +5,7 @@
     Builds on: OrderLattice, OrderConcrete and OrderMonotone. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderMonotone.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderMonotone.
 
 (** Products compare and combine their coordinates independently. *)
 Definition product_lattice {A B} (LA : lattice A) (LB : lattice B) : lattice (A * B) :=

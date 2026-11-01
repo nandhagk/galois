@@ -5,8 +5,8 @@
     Builds on: GraphCore, GraphPrepare and CollectionsEncoding. *)
 
 From Stdlib Require Import List Arith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore GraphPrepare.
 Import List.ListNotations.
 
 (** * Computed examples *)

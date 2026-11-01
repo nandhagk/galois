@@ -5,11 +5,11 @@
     Builds on: ViewsSkeleton, ViewsGraph, ViewsForward and ViewsAgreement. *)
 
 From Stdlib Require Import List Bool Arith Lia PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCycles.
-From Gaulois.Views Require Import
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCycles.
+From Galois.Views Require Import
   ViewsSemantics ViewsGraph ViewsForward ViewsAgreement ViewsSkeleton.
 Import List.ListNotations Skeleton.
 

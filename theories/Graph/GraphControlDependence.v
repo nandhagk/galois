@@ -5,8 +5,8 @@
     Builds on: GraphFrontier and GraphPostDominators. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators
   GraphPostDominators GraphFrontier.
 Import List.ListNotations.
 

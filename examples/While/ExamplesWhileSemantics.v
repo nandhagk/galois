@@ -5,10 +5,10 @@
     Builds on: While syntax, word ranges, encodings and traced semantics. *)
 
 From Stdlib Require Import List Arith ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Bits Require Import BitsWord.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Bits Require Import BitsWord.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Examples.While Require Import ExamplesWhileSyntax.
 Import List.ListNotations.
 
 Open Scope Z_scope.

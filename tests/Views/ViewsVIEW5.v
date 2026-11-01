@@ -5,11 +5,11 @@
     Builds on: ViewsDominated, ViewsRefine and OrderFlat. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift OrderFlat.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphDominators
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift OrderFlat.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDominance GraphDominators
   GraphEdgeDominance.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsRefine ViewsDominated.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsRefine ViewsDominated.
 Import List.ListNotations.
 
 Definition dominated_test_graph : Graph.t bool bool :=

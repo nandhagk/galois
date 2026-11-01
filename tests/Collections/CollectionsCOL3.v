@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsMap, CollectionsFinSet, CollectionsDenseSet. *)
 
 From Stdlib Require Import List NArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsDenseSet.
 
 Import List.ListNotations.

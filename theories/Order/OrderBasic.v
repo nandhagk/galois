@@ -5,7 +5,7 @@
     Builds on: OrderLattice and OrderConcrete. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Order Require Import OrderLattice OrderConcrete.
 
 (** Boolean order is implication and join is disjunction. *)
 Definition bool_lattice : lattice bool :=

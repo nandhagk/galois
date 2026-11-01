@@ -5,11 +5,11 @@
     Builds on: AnalysesMemoryLegacy, AnalysesMemoryBase and ViewsSemantics. *)
 
 From Stdlib Require Import List ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryBase AnalysesMemoryGraph AnalysesMemoryLegacy.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Graph Require Import GraphCore.
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryBase AnalysesMemoryGraph AnalysesMemoryLegacy.
 Import List.ListNotations.
 
 (** The output width controls structural recursion, rather than an execution fuel bound. *)

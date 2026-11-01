@@ -5,12 +5,12 @@
     Builds on: AnalysesLiveness, OrderPowerset, ViewsGraph and ViewsForward. *)
 
 From Stdlib Require Import List Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderPowerset.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsForward.
-From Gaulois.Analyses Require Import AnalysesLiveness.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderPowerset.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsForward.
+From Galois.Analyses Require Import AnalysesLiveness.
 Import List.ListNotations.
 
 (** The expression view describes generation, invalidation and current expression values. *)

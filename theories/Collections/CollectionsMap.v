@@ -5,7 +5,7 @@
     Builds on: CollectionsEncoding, CollectionsTrie. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie.
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie.
 
 Module Map.
 

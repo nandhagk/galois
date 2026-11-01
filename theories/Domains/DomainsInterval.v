@@ -5,9 +5,9 @@
     Builds on: Order lattice dictionaries and Stdlib integer arithmetic. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit BitsArith BitsSigned BitsOp.
-From Gaulois.Domains Require Import DomainsNumeric.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit BitsArith BitsSigned BitsOp.
+From Galois.Domains Require Import DomainsNumeric.
 Import List.ListNotations.
 
 (** Bounds include both infinities and finite integers. *)

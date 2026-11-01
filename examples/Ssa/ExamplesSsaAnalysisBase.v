@@ -5,18 +5,18 @@
     Builds on: ExamplesSsaViews, AnalysesLiveness and DomainsConst. *)
 
 From Stdlib Require Import List Bool ZArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderConcrete OrderFlat OrderPointwise
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderBasic OrderConcrete OrderFlat OrderPointwise
   OrderLift.
-From Gaulois.Bits Require Import BitsWord.
-From Gaulois.Domains Require Import DomainsNumeric DomainsConst.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesDemand AnalysesEgraph
+From Galois.Bits Require Import BitsWord.
+From Galois.Domains Require Import DomainsNumeric DomainsConst.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesDemand AnalysesEgraph
   AnalysesValues AnalysesPaths AnalysesPointsTo.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsSsa ViewsDominated.
-From Gaulois.Examples.While Require Import ExamplesWhileSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsAgreement ViewsSsa ViewsDominated.
+From Galois.Examples.While Require Import ExamplesWhileSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs ExamplesSsaActivation ExamplesSsaViews
   ExamplesSsaBridge ExamplesSsaStrict ExamplesSsaPointers.
 Import List.ListNotations.

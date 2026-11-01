@@ -5,14 +5,14 @@
     Builds on: AnalysesCallScc, AnalysesCalls, ViewsSummary and OrderBasic. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsHeap.
-From Gaulois.Order Require Import OrderLattice OrderBasic OrderMonotone.
-From Gaulois.Graph Require Import GraphCore GraphPrepare.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointWorklist FixpointIndex
+From Galois.Order Require Import OrderLattice OrderBasic OrderMonotone.
+From Galois.Graph Require Import GraphCore GraphPrepare.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointWorklist FixpointIndex
   FixpointTotal FixpointLeast.
-From Gaulois.Views Require Import ViewsCalls ViewsSummary.
-From Gaulois.Analyses Require Import AnalysesCalls AnalysesCallScc.
+From Galois.Views Require Import ViewsCalls ViewsSummary.
+From Galois.Analyses Require Import AnalysesCalls AnalysesCallScc.
 Import List.ListNotations.
 
 Definition ana8a_sites (f : nat) : list nat :=

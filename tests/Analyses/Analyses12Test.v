@@ -5,13 +5,13 @@
     Builds on: AnalysesSsaLiveQuery and the checked VIEW-8 instruction-point fixture. *)
 
 From Stdlib Require Import List Bool PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance
   GraphDominators GraphReducible.
-From Gaulois.Views Require Import ViewsGraph ViewsSsaPoints.
-From Gaulois.Rules Require Import RulesSyntax RulesModel RulesSolve.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesRules AnalysesSsaLiveQuery.
-From Gaulois.Tests.Views Require Import ViewsVIEW8.
+From Galois.Views Require Import ViewsGraph ViewsSsaPoints.
+From Galois.Rules Require Import RulesSyntax RulesModel RulesSolve.
+From Galois.Analyses Require Import AnalysesLiveness AnalysesRules AnalysesSsaLiveQuery.
+From Galois.Tests.Views Require Import ViewsVIEW8.
 Import List.ListNotations.
 
 (** * Branching parallel phi operands and a loop-carried definition *)

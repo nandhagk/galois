@@ -5,8 +5,8 @@
     Builds on: RulesDelta and RulesSyntax. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsFinSet.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesJoin RulesSolve RulesDelta.
+From Galois.Collections Require Import CollectionsEncoding CollectionsFinSet.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesJoin RulesSolve RulesDelta.
 Import List.ListNotations.
 
 Definition delta_observe strategy (prog : program nat) facts queries :=

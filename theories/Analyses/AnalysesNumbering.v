@@ -5,10 +5,10 @@
     Builds on: CollectionsMap, CollectionsFinSet, ViewsSsa and ViewsDominated. *)
 
 From Stdlib Require Import List Bool Arith Lia Wf_nat PArith NArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet
   CollectionsTable.
-From Gaulois.Graph Require Import GraphCore GraphDominance GraphPrepare GraphDfs GraphDominators.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
+From Galois.Graph Require Import GraphCore GraphDominance GraphPrepare GraphDfs GraphDominators.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsDominated.
 Import List.ListNotations.
 
 (** A numbering problem supplies its SSA view, pure operators and finite value inventory. *)

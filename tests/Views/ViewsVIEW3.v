@@ -5,7 +5,7 @@
     Builds on: ViewsRegion and ViewsSkeleton. *)
 
 From Stdlib Require Import List Bool Arith.
-From Gaulois.Views Require Import ViewsSkeleton ViewsRegion.
+From Galois.Views Require Import ViewsSkeleton ViewsRegion.
 Import List.ListNotations Skeleton.
 
 Definition empty_region : stmt (list nat) bool := Atom [].

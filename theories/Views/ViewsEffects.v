@@ -5,7 +5,7 @@
     Builds on: ViewsSemantics. *)
 
 From Stdlib Require Import List Arith.
-From Gaulois.Views Require Import ViewsSemantics.
+From Galois.Views Require Import ViewsSemantics.
 
 (** Effect flags over-approximate an instruction's possible dependencies and actions. *)
 Record effects (I : Type) : Type := Effects {

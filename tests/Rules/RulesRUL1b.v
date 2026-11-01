@@ -5,10 +5,10 @@
     Builds on: RulesModel, RulesSolve and RulesCompile. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Fixpoint Require Import FixpointCheck.
-From Gaulois.Rules Require Import RulesSyntax RulesStratify RulesCompile RulesModel RulesSolve.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice.
+From Galois.Fixpoint Require Import FixpointCheck.
+From Galois.Rules Require Import RulesSyntax RulesStratify RulesCompile RulesModel RulesSolve.
 Import List.ListNotations.
 
 Definition empty_program : program nat := Program nat_encoding (fun _ => 1) [].

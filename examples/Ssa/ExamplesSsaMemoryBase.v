@@ -5,10 +5,10 @@
     Builds on: ExamplesSsaAnalysisBase, ExamplesSsaBytes and AnalysesMemoryBase. *)
 
 From Stdlib Require Import List ZArith.
-From Gaulois.Domains Require Import DomainsFootprint.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Analyses Require Import AnalysesMemoryBase.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Domains Require Import DomainsFootprint.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Analyses Require Import AnalysesMemoryBase.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaAnalysisBase ExamplesSsaBytes.
 
 Section SsaAnalysisWrappers.

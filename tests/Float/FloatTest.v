@@ -5,13 +5,13 @@
     Builds on: FloatSsa, Flocq Bits and the SSA checker. *)
 
 From Stdlib Require Import Bool List ZArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderPointwise.
-From Gaulois.Views Require Import ViewsSemantics ViewsSsa.
-From Gaulois.Analyses Require Import AnalysesDemand.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderPointwise.
+From Galois.Views Require Import ViewsSemantics ViewsSsa.
+From Galois.Analyses Require Import AnalysesDemand.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaTypingProofs ExamplesSsaSemantics ExamplesSsaActivation ExamplesSsaViews.
-From Gaulois.Float Require Import FloatInterval FloatOps FloatNan FloatSsa.
+From Galois.Float Require Import FloatInterval FloatOps FloatNan FloatSsa.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 

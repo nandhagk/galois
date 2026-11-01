@@ -6,11 +6,11 @@
     Builds on: GraphDfs, FixpointLocal and FixpointTotal. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
+From Galois.Collections Require Import CollectionsEncoding CollectionsTrie CollectionsMap
   CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointPartial
+From Galois.Order Require Import OrderLattice.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointPartial
   FixpointWorklist FixpointTotal FixpointLocal.
 Import List.ListNotations.
 

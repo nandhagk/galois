@@ -5,10 +5,10 @@
     Builds on: FixpointNested, FixpointCheck and OrderLattice. *)
 
 From Stdlib Require Import List Bool Arith PeanoNat PArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphWto.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphWto.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointCheck
   FixpointWorklist FixpointTotal FixpointSchedule FixpointNested.
 Import List.ListNotations.
 

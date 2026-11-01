@@ -5,9 +5,9 @@
     Builds on: DomainsNumeric, DomainsConst and DomainsSign. *)
 
 From Stdlib Require Import ZArith List.
-From Gaulois.Order Require Import OrderLattice OrderFlat.
-From Gaulois.Bits Require Import BitsWord BitsOp BitsExpr.
-From Gaulois.Domains Require Import DomainsNumeric DomainsConst DomainsSign.
+From Galois.Order Require Import OrderLattice OrderFlat.
+From Galois.Bits Require Import BitsWord BitsOp BitsExpr.
+From Galois.Domains Require Import DomainsNumeric DomainsConst DomainsSign.
 Import List.ListNotations Bits.
 
 Open Scope Z_scope.

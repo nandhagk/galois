@@ -5,8 +5,8 @@
     Builds on: ViewsSemantics and GraphCore. *)
 
 From Stdlib Require Import List.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics.
 Import List.ListNotations.
 
 (** The finite inventory covers every pushed frame, including callbacks and external frames. *)

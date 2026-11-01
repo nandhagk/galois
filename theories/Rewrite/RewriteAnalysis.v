@@ -5,7 +5,7 @@
     Builds on: RewriteSyntax, RewriteRules, RewriteEgraph and Rocq Stdlib positive keys. *)
 
 From Stdlib Require Import PArith.
-From Gaulois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph.
+From Galois.Rewrite Require Import RewriteSyntax RewriteRules RewriteEgraph.
 
 (** * Client operations and validity *)
 

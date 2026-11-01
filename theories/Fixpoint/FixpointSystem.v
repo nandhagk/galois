@@ -5,9 +5,9 @@
     Builds on: FixpointQuery, CollectionsMap and OrderMonotone. *)
 
 From Stdlib Require Import List.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderMonotone.
-From Gaulois.Fixpoint Require Import FixpointQuery.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderMonotone.
+From Galois.Fixpoint Require Import FixpointQuery.
 
 Module System.
 

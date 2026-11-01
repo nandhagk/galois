@@ -1,4 +1,4 @@
-# Gaulois.Examples
+# Galois.Examples
 
 Two toy languages, written the way a client would write them and proved against the library: the
 structured language `While` and the SSA language `Ssa` with static types, calls and byte memory.
@@ -7,7 +7,7 @@ library's views are then proved for it once, and every catalogue analysis become
 example, `While`'s `x + y` is `wrap32 (x + y)` over `Z`; one bridge equation says it equals
 `Bits.eval` of the 32-bit addition, so every `Domains` operator transfer works for it.
 
-The theory is `Gaulois.Examples`, with subdirectories `While` and `Ssa`. Nothing here is a model
+The theory is `Galois.Examples`, with subdirectories `While` and `Ssa`. Nothing here is a model
 of the library: a toy never imports a `Bits` operator into its semantics. Every theorem below is
 required and proved; every `Example` is small enough for `vm_compute` and is a smoke check, except
 those named as the acceptance evidence of a checker, which are required.
@@ -17,8 +17,8 @@ the `Examples` basename prefix. Computed `Example` declarations belong in `tests
 with the same statements and ownership as below. Definitions needed by those examples and the
 contracted theorems remain in the production modules. A reference below to an analysis module
 for a computed `Example` identifies its client and owner, not its physical test location.
-Their qualified names use `Gaulois.Tests.Examples.<owned test module>` instead of the production
-`Gaulois.Examples.{While,Ssa}.Examples*` module paths.
+Their qualified names use `Galois.Tests.Examples.<owned test module>` instead of the production
+`Galois.Examples.{While,Ssa}.Examples*` module paths.
 
 ## Files
 

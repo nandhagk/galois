@@ -6,11 +6,11 @@
     Builds on: GraphPrepare, GraphDfs, FixpointIndex and AnalysesMemoryGraph. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs.
-From Gaulois.Fixpoint Require Import FixpointIndex.
-From Gaulois.Views Require Import ViewsMemoryEffects.
-From Gaulois.Analyses Require Import AnalysesMemoryGraph.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs.
+From Galois.Fixpoint Require Import FixpointIndex.
+From Galois.Views Require Import ViewsMemoryEffects.
+From Galois.Analyses Require Import AnalysesMemoryGraph.
 Import List.ListNotations.
 
 (** * Preparation *)

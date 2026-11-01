@@ -5,11 +5,11 @@
     Builds on: ViewsSsa, ViewsRefine, OrderFlat and FixpointCheck. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderLift OrderFlat.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsRefine.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderLift OrderFlat.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSsa ViewsRefine.
 Import List.ListNotations.
 
 Definition test_truth (n : nat) : bool := negb (Nat.eqb n 0).

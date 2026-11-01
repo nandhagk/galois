@@ -5,7 +5,7 @@
     Builds on: BitsWord and Rocq Stdlib integer bit operations. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Gaulois.Bits Require Import BitsWord.
+From Galois.Bits Require Import BitsWord.
 
 Open Scope Z_scope.
 

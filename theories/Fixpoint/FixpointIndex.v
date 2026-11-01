@@ -5,8 +5,8 @@
     Builds on: FixpointSystem and CollectionsFinSet. *)
 
 From Stdlib Require Import List PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Fixpoint Require Import FixpointSystem.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Fixpoint Require Import FixpointSystem.
 Import List.ListNotations.
 
 (** A system index stores contributor lists and reader lists by unknown. *)

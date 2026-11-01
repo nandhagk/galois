@@ -1,4 +1,4 @@
-# Gaulois.Domains
+# Galois.Domains
 
 ## Selectable known-bit multiplication (DOM-8)
 
@@ -1165,7 +1165,7 @@ End SymbolicLaws.
   abstract domains and the combination of decision procedures", FoSSaCS 2011.
 - **Sign-separated bits and bounds.** Fan et al., "Program Analysis Combining Generalized
   Bit-Level and Word-Level Abstractions", ISSTA 2025, DOI 10.1145/3728905. DOM-9 specifies a
-  Gaulois adaptation and a stronger reduction; it does not claim full paper transfer parity.
+  Galois adaptation and a stronger reduction; it does not claim full paper transfer parity.
 - **Demanded bits.** LLVM's `DemandedBits` analysis, stated here as a relational agreement so that
   soundness is a theorem about two evaluations, with forward constants as premises.
 - **Memory.** Site-and-offset addresses as in Miné, "Field-sensitive value analysis of embedded C
@@ -1349,7 +1349,7 @@ theorems hold for all raw inputs. Neither multiplier is required to dominate the
 A circular output arc can intersect a hemisphere in two pieces; take the enclosing
 interval hull of both pieces, rather than assuming their union is a single interval. There are
 at most 2^3 combinations for valid Bits arity. The choice of widening and
-the selected component transfers are a deliberate Gaulois adaptation; they do not promise the
+the selected component transfers are a deliberate Galois adaptation; they do not promise the
 paper's full tnum-plus operation precision. A result with a `WFull` arc splits to full intervals
 in both output signs. For a malformed shape, use a sound fallback satisfying all `word_laws`.
 For backward transfer, run each component `passume` on every input-branch combination and each

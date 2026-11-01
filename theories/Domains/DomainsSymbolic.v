@@ -5,8 +5,8 @@
     Builds on: CollectionsEncoding, CollectionsTable, BitsOp and Stdlib mergesort. *)
 
 From Stdlib Require Import List PArith PeanoNat Bool Lia Sorting.Mergesort Sorting.Permutation.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsTable.
-From Gaulois.Bits Require Import BitsWord BitsOp.
+From Galois.Collections Require Import CollectionsEncoding CollectionsTable.
+From Galois.Bits Require Import BitsWord BitsOp.
 Import List.ListNotations.
 
 Module SymbolicOrder.

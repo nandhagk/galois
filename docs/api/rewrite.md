@@ -1,7 +1,7 @@
-# Gaulois.Rewrite
+# Galois.Rewrite
 
-`Gaulois.Rewrite` is a standalone, directly verified equality-saturation library. Its theory
-depends on Rocq Stdlib and `Gaulois.Collections` only. Clients supply signatures, interpretations,
+`Galois.Rewrite` is a standalone, directly verified equality-saturation library. Its theory
+depends on Rocq Stdlib and `Galois.Collections` only. Clients supply signatures, interpretations,
 rules, their proofs, fact validity and costs. Equality compares the entire `option` result: two
 undefined evaluations are equal. No statement here implies that a partial operation is defined.
 The ANA-6 compatibility surface and external explanation checker remain available in Analyses.

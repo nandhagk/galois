@@ -5,9 +5,9 @@
     Builds on: DomainsSignedBounds, DomainsNumeric, DomainsKnownBitsFast and DomainsWrapped. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsTestbit.
-From Gaulois.Domains Require Import
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsTestbit.
+From Galois.Domains Require Import
   DomainsNumeric DomainsKnownBits DomainsKnownBitsFast DomainsInterval DomainsWrapped
   DomainsSignedBounds.
 Import List.ListNotations.

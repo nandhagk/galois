@@ -5,10 +5,10 @@
     Builds on: AnalysesSsaPreGraph, ViewsSsaPoints and GraphDominators. *)
 
 From Stdlib Require Import List Bool PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators.
-From Gaulois.Views Require Import ViewsGraph ViewsSsa ViewsSsaPoints.
-From Gaulois.Analyses Require Import AnalysesAvailable AnalysesSsaPreGraph.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Graph Require Import GraphCore GraphPrepare GraphDfs GraphDominance GraphDominators.
+From Galois.Views Require Import ViewsGraph ViewsSsa ViewsSsaPoints.
+From Galois.Analyses Require Import AnalysesAvailable AnalysesSsaPreGraph.
 Import List.ListNotations.
 
 Inductive pre_test_block : Type :=

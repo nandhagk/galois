@@ -5,16 +5,16 @@
     Builds on: While views, dense analyses and the total worklist engine. *)
 
 From Stdlib Require Import List Bool Arith ZArith PArith.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderLift OrderPointwise.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointTotal FixpointSchedule FixpointWorklist.
-From Gaulois.Domains Require Import DomainsEquality.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph ViewsSkeleton ViewsStructured
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderPowerset OrderLift OrderPointwise.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem FixpointTotal FixpointSchedule FixpointWorklist.
+From Galois.Domains Require Import DomainsEquality.
+From Galois.Views Require Import ViewsSemantics ViewsGraph ViewsSkeleton ViewsStructured
   ViewsForward ViewsRegion.
-From Gaulois.Analyses Require Import AnalysesLiveness AnalysesAvailable AnalysesDemand
+From Galois.Analyses Require Import AnalysesLiveness AnalysesAvailable AnalysesDemand
   AnalysesStructured AnalysesCensus.
-From Gaulois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics
+From Galois.Examples.While Require Import ExamplesWhileSyntax ExamplesWhileSemantics
   ExamplesWhileSkeleton ExamplesWhileViews.
 Import List.ListNotations.
 

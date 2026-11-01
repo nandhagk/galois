@@ -1,5 +1,5 @@
 {
-  description = "Gaulois: general, composable program analyses in Rocq";
+  description = "Galois: general, composable program analyses in Rocq";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/c9fe7d12cd78d1adcd12dd15e24432dde5b155a0";
 

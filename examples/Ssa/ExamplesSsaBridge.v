@@ -5,13 +5,13 @@
     Builds on: ExamplesSsaSemantics, ExamplesSsaTypingProofs, AnalysesValues and GraphCore. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Views Require Import ViewsSemantics ViewsAgreement ViewsEffects ViewsSsaPoints.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr.
-From Gaulois.Analyses Require Import AnalysesValues AnalysesDemand.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderBasic OrderPointwise.
+From Galois.Graph Require Import GraphCore.
+From Galois.Views Require Import ViewsSemantics ViewsAgreement ViewsEffects ViewsSsaPoints.
+From Galois.Bits Require Import BitsWord BitsFun BitsOp BitsExpr.
+From Galois.Analyses Require Import AnalysesValues AnalysesDemand.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaTyping
   ExamplesSsaSemantics ExamplesSsaTypingProofs.
 Import List.ListNotations.
 Local Open Scope Z_scope.

@@ -5,10 +5,10 @@
     Builds on: ViewsSemantics, ViewsGraph and OrderConcrete. *)
 
 From Stdlib Require Import List.
-From Gaulois.Order Require Import OrderLattice OrderConcrete.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem.
-From Gaulois.Views Require Import ViewsSemantics ViewsGraph.
+From Galois.Order Require Import OrderLattice OrderConcrete.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem.
+From Galois.Views Require Import ViewsSemantics ViewsGraph.
 Import List.ListNotations.
 
 (** Symmetric agreements can compare states in either order at the same fact. *)

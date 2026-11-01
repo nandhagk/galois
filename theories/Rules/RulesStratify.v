@@ -5,8 +5,8 @@
     Builds on: RulesSyntax, CollectionsMap and CollectionsFinSet. *)
 
 From Stdlib Require Import List Bool PeanoNat NArith Lia.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
-From Gaulois.Rules Require Import RulesSyntax.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
+From Galois.Rules Require Import RulesSyntax.
 Import List.ListNotations.
 
 (** A stratification supplies a level for every predicate and a strict global bound. *)

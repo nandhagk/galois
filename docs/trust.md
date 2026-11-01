@@ -117,10 +117,10 @@ final gates under the original caps. These results do not replace the planned fr
 
 Outside Float, each `Theorem` must be closed under the global context. No new axioms, `Parameter`,
 `Conjecture`, `Admitted` or admitted proofs are permitted. Do not import axiom-bearing Stdlib
-modules for those proofs. `gaulois check` audits kernel-reported assumptions as well as source
+modules for those proofs. `galois check` audits kernel-reported assumptions as well as source
 hygiene and layout. Individual reports also record any separate `Print Assumptions` audits.
 
-C13 and C56 permit `Gaulois.Float` theorems to depend only on these exact axioms:
+C13 and C56 permit `Galois.Float` theorems to depend only on these exact axioms:
 `Stdlib.Reals.ClassicalDedekindReals.sig_forall_dec`,
 `Stdlib.Reals.ClassicalDedekindReals.sig_not_dec`,
 `Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep`, and

@@ -5,8 +5,8 @@
     returns a one-bit word. Builds on: BitsWord, BitsFun, BitsTestbit and CollectionsEncoding. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Gaulois.Collections Require Import CollectionsEncoding.
-From Gaulois.Bits Require Import BitsWord BitsFun BitsTestbit.
+From Galois.Collections Require Import CollectionsEncoding.
+From Galois.Bits Require Import BitsWord BitsFun BitsTestbit.
 Import List.ListNotations.
 
 Open Scope Z_scope.

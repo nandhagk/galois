@@ -1,6 +1,6 @@
-# Gaulois
+# Galois
 
-Gaulois is a standalone Rocq library for verified program analysis. It provides common data
+Galois is a standalone Rocq library for verified program analysis. It provides common data
 structures, constraint solvers, semantic views and reusable analyses without assuming a particular
 compiler, graph representation, control structure or word size. It is MIT licensed.
 

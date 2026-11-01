@@ -5,8 +5,8 @@
     Builds on: ExamplesSsaSyntax and ViewsSemantics. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Gaulois.Views Require Import ViewsSemantics.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax.
+From Galois.Views Require Import ViewsSemantics.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax.
 Import List.ListNotations.
 Open Scope Z_scope.
 

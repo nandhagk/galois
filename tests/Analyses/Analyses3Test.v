@@ -5,15 +5,15 @@
     Builds on: AnalysesValues, AnalysesPaths and the SSA constant-domain client. *)
 
 From Stdlib Require Import List ZArith Bool.
-From Gaulois.Collections Require Import CollectionsEncoding CollectionsMap.
-From Gaulois.Order Require Import OrderLattice OrderConcrete OrderFlat OrderLift OrderDisjunction.
-From Gaulois.Bits Require Import BitsWord BitsOp BitsExpr.
-From Gaulois.Domains Require Import DomainsNumeric DomainsConst.
-From Gaulois.Graph Require Import GraphCore.
-From Gaulois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointCheck FixpointWorklist.
-From Gaulois.Views Require Import ViewsGraph ViewsSsa ViewsDominated.
-From Gaulois.Analyses Require Import AnalysesValues AnalysesPaths.
-From Gaulois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaSemantics ExamplesSsaBridge
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Order Require Import OrderLattice OrderConcrete OrderFlat OrderLift OrderDisjunction.
+From Galois.Bits Require Import BitsWord BitsOp BitsExpr.
+From Galois.Domains Require Import DomainsNumeric DomainsConst.
+From Galois.Graph Require Import GraphCore.
+From Galois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointCheck FixpointWorklist.
+From Galois.Views Require Import ViewsGraph ViewsSsa ViewsDominated.
+From Galois.Analyses Require Import AnalysesValues AnalysesPaths.
+From Galois.Examples.Ssa Require Import ExamplesSsaSyntax ExamplesSsaSemantics ExamplesSsaBridge
   ExamplesSsaAnalyses.
 Import List.ListNotations.
 Local Open Scope nat_scope.

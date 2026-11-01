@@ -4,7 +4,7 @@
     For example, boolean conjunction becomes the join in the reverse boolean order.
     Builds on: OrderLattice. *)
 
-From Gaulois.Order Require Import OrderLattice.
+From Galois.Order Require Import OrderLattice.
 
 (** Dual comparison reverses the original comparison and uses meet for join and widening. *)
 Definition dual_lattice {A} (L : lattice A) (T : top L) (meet : A -> A -> A) : lattice A :=
