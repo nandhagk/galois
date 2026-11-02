@@ -13607,6 +13607,7 @@ Inductive pre_finalize_call (B BE N E U : Type) : Type :=
   | PfParameter (block : B) (edge : E)
   | PfSource (edge : E) (point : N)
   | PfTarget (edge : E) (point : N)
+  | PfExpressionTarget (edge : E) (point : N)
   | PfPositiveCompare (first second : positive) (result : bool).
 Arguments PfFlags {B BE N E U}.
 Arguments PfScope {B BE N E U}.
@@ -13628,6 +13629,8 @@ Arguments PfKill {B BE N E U}.
 Arguments PfParameter {B BE N E U}.
 Arguments PfSource {B BE N E U}.
 Arguments PfTarget {B BE N E U}.
+
+Arguments PfExpressionTarget {B BE N E U}.
 Arguments PfPositiveCompare {B BE N E U}.
 
 Section Finalize.
@@ -13711,7 +13714,7 @@ Definition pre_version_point_counted (version : pre_version E U) : exact_counted
       (nth_error (Graph.entries (cfg (gkview (pre_genkill (pre_expression a))))) 0))
   | PreComputed e _ | PreInserted e _ | PreMerged e _ =>
       let point := Graph.target (cfg (gkview (pre_genkill (pre_expression a)))) e in
-      exact_case 721 (exact_bind 722 (exact_call (PfTarget e point) 0 point)
+      exact_case 721 (exact_bind 722 (exact_call (PfExpressionTarget e point) 0 point)
         (fun point => exact_return 723 (Some point)))
   end.
 
@@ -14022,6 +14025,7 @@ Definition pre_finalize_order_input_budget (f : factored_redundancy_graph B BE E
   let definitions := frg_versions f ++ map snd (Map.elements (frg_occurrence_index f)) ++
     map (fun row => frg_operand_version (snd row)) links in
   let blocks := Graph.nodes (block_graph (pre_ssa_points a)) ++ map fst keys ++
+    map (fun row => fst (fst (fst row))) links ++
     flat_map (fun d => match d with FrPhi b _ => [b] | _ => [] end) definitions in
   let edges := edges_of (live_graph (point_model (pre_ssa_points a))) ++
     flat_map snd (Map.elements (out_index points)) ++
@@ -14036,10 +14040,12 @@ Definition pre_finalize_order_input_budget (f : factored_redundancy_graph B BE E
     flat_map (fun e => match block_edge_of (pre_ssa_points a) e with Some be => [be] | None => []
       end) edges in
   let nodes := Graph.nodes (live_graph (point_model (pre_ssa_points a))) ++
-    Graph.entries (live_graph (point_model (pre_ssa_points a))) ++ order ++
+    Graph.entries (live_graph (point_model (pre_ssa_points a))) ++
+    Graph.entries (cfg (gkview (pre_genkill (pre_expression a)))) ++ order ++
     flat_map (fun row => [fst row;snd row]) (Map.elements (idom tree)) ++
     flat_map (fun e => [Graph.source (live_graph (point_model (pre_ssa_points a))) e;
-      Graph.target (live_graph (point_model (pre_ssa_points a))) e]) edges in
+      Graph.target (live_graph (point_model (pre_ssa_points a))) e;
+      Graph.target (cfg (gkview (pre_genkill (pre_expression a)))) e]) edges in
   let width := fold_right Nat.max 0 (map (fun b => block_body b + Pos.size_nat (encode EB b))
     blocks) +
     fold_right Nat.max 0 (map (fun be => block_edge_body be + Pos.size_nat (encode EBE be))
@@ -14063,6 +14069,29 @@ Definition audit_pre_finalize_order_source_statement : Prop :=
     exact_units (pre_finalize_order_counted f facts tree points order) <=
       pre_finalize_order_input_budget f facts tree points order.
 End Rows.
+```
+
+
+### AUD-SP-PLAN-SUPPORT: prospective raw-input bound
+
+Card: AUD-SP-PLAN-SUPPORT.
+
+Future proof module: `Galois.Analyses.AnalysesAuditPrePlanSupport`.
+
+```coq
+Section PreFinalizeOrderBound.
+Context {S O B BE N E V K C U : Type}
+  (EB : encoding B) (EBE : encoding BE) (EN : encoding N) (EE : encoding E)
+  (EU : encoding U) (a : pre_expr_ssa S O B BE N E V K C U)
+  (block_body : B -> nat) (block_edge_body : BE -> nat) (point_body : N -> nat)
+  (edge_body : E -> nat) (expr_body : U -> nat).
+
+Theorem pre_finalize_order_bound : forall f facts tree points order,
+  exact_units (pre_finalize_order_counted EB EBE EN EE EU a block_body block_edge_body
+    point_body edge_body expr_body f facts tree points order) <=
+  pre_finalize_order_input_budget EB EBE EN EE EU a block_body block_edge_body point_body
+    edge_body expr_body f facts tree points order.
+End PreFinalizeOrderBound.
 ```
 
 ### Exact future theorem declarations for AUD-SP-PLAN
@@ -15896,6 +15925,8 @@ Record audit_pre_view_adapters : Type := PreViewAdapters {
   pre_point_out_source : audit_external_adapter N (list E) (Graph.out pg);
   pre_point_source_source : audit_external_adapter E N (Graph.source pg);
   pre_point_target_source : audit_external_adapter E N (Graph.target pg);
+  pre_expression_target_source : audit_external_adapter E N
+    (Graph.target (cfg (gkview (pre_genkill (pre_expression a)))));
   pre_operands_source : audit_external_adapter U (list V) (pre_operands a);
   pre_translate_source : audit_external_adapter (BE * U) (option U)
     (fun input => pre_phi_translate a (fst input) (snd input));
@@ -15931,6 +15962,7 @@ Definition audit_pre_view_adapter_laws (adapters : audit_pre_view_adapters) : Pr
   audit_external_adapter_laws (pre_point_out_source adapters) /\
   audit_external_adapter_laws (pre_point_source_source adapters) /\
   audit_external_adapter_laws (pre_point_target_source adapters) /\
+  audit_external_adapter_laws (pre_expression_target_source adapters) /\
   audit_external_adapter_laws (pre_operands_source adapters) /\
   audit_external_adapter_laws (pre_translate_source adapters) /\
   audit_external_adapter_laws (pre_initial_source adapters) /\
@@ -16167,6 +16199,9 @@ Definition pre_finalize_call_receipt (call : pre_finalize_call B BE N E U) trace
       (pre_point_source_source EB EBE EN EE EV EU a adapters) edge result trace allowance
   | PfTarget edge result => pre_actual_external_receipt
       (pre_point_target_source EB EBE EN EE EV EU a adapters) edge result trace allowance
+  | PfExpressionTarget edge result =>
+    pre_actual_external_receipt
+      (pre_expression_target_source EB EBE EN EE EV EU a adapters) edge result trace allowance
   | _ => pre_internal_receipt trace allowance
   end.
 

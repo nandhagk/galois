@@ -2132,9 +2132,11 @@ Definition mat_stratify_erases_statement : Prop := forall P(prog:program P),
  match fst(mat_stratify prog), stratify prog with
  | None, None=> True | Some context, Some native=> count(mat_native_levels context)=count native /\
  forall p, level(mat_native_levels context)p=level native p | _, _=> False end.
+Definition mat_stratify_input_size {P}(prog:program P) : nat :=
+ fold_right(fun r n=> S(length(body r))+n)0(rules prog).
 Definition mat_stratify_bound_statement : Prop := forall P(prog:program P),
  let '(_, events):=mat_stratify prog in let width:=S(mat_width events) in
- (mat_work events<=100000000*Nat.pow width 12)%nat.
+ (mat_work events<=100000000*S(mat_stratify_input_size prog)*Nat.pow width 12)%nat.
 Definition mat_stratify_total_statement : Prop := forall P(prog:program P), exists out trace,
   mat_stratify prog=(out, trace).
 Definition mat_stratify_unique_statement : Prop := forall P(prog:program P)r1 t1 r2 t2,
@@ -3427,19 +3429,10 @@ Source destination: `theories/Rules/RulesAuditMaterializeStratifyCorrectness.v`.
 ```rocq
 Theorem mat_stratify_bound :
 forall (P : Type) (prog : RulesSyntax.program P),
-let
-'(_, events) := @mat_stratify P prog in
- let width := S (RulesAuditMaterializePrelude.mat_width events) in
- RulesAuditMaterializePrelude.mat_work events <=
- Init.Nat.of_num_uint
-   (Number.UIntDecimal
-      (Decimal.D1
-         (Decimal.D0
-            (Decimal.D0
-               (Decimal.D0
-    (Decimal.D0 (Decimal.D0 (Decimal.D0 (Decimal.D0 (Decimal.D0 Decimal.Nil))))))))))
-      *
- width ^ 12.
+let '(_, events) := @mat_stratify P prog in
+let width := S (RulesAuditMaterializePrelude.mat_width events) in
+RulesAuditMaterializePrelude.mat_work events <=
+  (N.to_nat 100000000%N) * S (@mat_stratify_input_size P prog) * Nat.pow width 12.
 ```
 
 ### `RulesAuditMaterializeStratifyCorrectness.mat_stratify_erases`

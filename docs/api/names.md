@@ -5058,6 +5058,7 @@ Owned path: `theories/Analyses/AnalysesAuditPrePlan.v`.
 - `PfDom` — constructor.
 - `PfEdges` — constructor.
 - `PfExpr` — constructor.
+- `PfExpressionTarget` — constructor.
 - `PfFlags` — constructor.
 - `PfIdom` — constructor.
 - `PfInitial` — constructor.
@@ -5135,6 +5136,14 @@ Owned path: `theories/Analyses/AnalysesAuditPrePlan.v`.
 - `pre_table_step_counted` — Definition.
 - `pre_version_point_counted` — Definition.
 - `pre_will_counted` — Definition.
+
+### `Galois.Analyses.AnalysesAuditPrePlanSupport`
+
+Card: AUD-SP-PLAN-SUPPORT.
+
+Owned path: `theories/Analyses/AnalysesAuditPrePlanSupport.v`.
+
+- `pre_finalize_order_bound` — future Theorem; owner AUD-SP-PLAN-SUPPORT.
 
 ### `Galois.Analyses.AnalysesAuditPreSolve`
 
@@ -5254,6 +5263,7 @@ Owned path: `theories/Analyses/AnalysesAuditPreSource.v`.
 - `pre_erase_callback_calls` — Definition.
 - `pre_exit_source` — projection.
 - `pre_expr_encoder` — projection.
+- `pre_expression_target_source` — projection.
 - `pre_family_call_receipt` — Definition.
 - `pre_finalize_call_receipt` — Definition.
 - `pre_finite_call_receipt` — Definition.
@@ -13775,6 +13785,7 @@ Card: AUD-RU-MAT-BASE
 - `mat_niter` (def).
 - `mat_stratify` (def).
 - `mat_stratify_erases_statement` (def).
+- `mat_stratify_input_size` (def).
 - `mat_stratify_bound_statement` (def).
 - `mat_stratify_total_statement` (def).
 - `mat_stratify_unique_statement` (def).
