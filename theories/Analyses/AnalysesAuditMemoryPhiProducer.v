@@ -85,7 +85,8 @@ Definition audit_phi_producer_output {N E} (EN : encoding N) (EE : encoding E)
     (fun n => rep (memory_in old n))
     (fun e i => option_map rep (memory_before old e i))
     (fun e => rep (memory_out old e))
-    (fun n key => option_map rep (memory_operand old n key)).
+    (fun n key => if FinSet.mem EN n kept_set
+      then option_map rep (memory_operand old n key) else None).
 
 Inductive audit_phi_output_event (N E CN CV : Type) : Type :=
   | AuditPhiOutputPhiCase (remaining : list N)
@@ -179,7 +180,8 @@ Definition audit_phi_producer_output_counted {N E CN CV}
   (MemoryGraph phis versions (fun n => rep (memory_in old n))
     (fun e i => option_map rep (memory_before old e i))
     (fun e => rep (memory_out old e))
-    (fun n key => option_map rep (memory_operand old n key)),
+    (fun n key => if FinSet.mem EN n kept_set
+      then option_map rep (memory_operand old n key) else None),
    reps_events ++ [AuditPhiOutputSetBuild set_events] ++ phi_events ++ version_events).
 
 Fixpoint audit_phi_output_source_work {N E CN CV}
@@ -516,7 +518,9 @@ Definition audit_phi_producer_output_shape_statement : Prop :=
     (forall n, memory_in output n = rep (memory_in old n)) /\
     (forall e, memory_out output e = rep (memory_out old e)) /\
     (forall e i, memory_before output e i = option_map rep (memory_before old e i)) /\
-    (forall n key, memory_operand output n key = option_map rep (memory_operand old n key)).
+    (forall n key, memory_operand output n key =
+      if FinSet.mem EN n (FinSet.of_list EN (memory_phis output))
+      then option_map rep (memory_operand old n key) else None).
 
 (** Input-derived outer blocks charge every node row and every actual resolution
     row; internal calls retain their captured child traces in the family costs. *)

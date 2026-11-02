@@ -53,7 +53,8 @@ Definition audit_phi_compute_output {N E} (EN : encoding N) (EE : encoding E)
     (fun n => rep (memory_in old n))
     (fun e i => option_map rep (memory_before old e i))
     (fun e => rep (memory_out old e))
-    (fun n key => option_map rep (memory_operand old n key)).
+    (fun n key => if FinSet.mem EN n kept_set
+      then option_map rep (memory_operand old n key) else None).
 
 Definition audit_phi_compute N E T (EN : encoding N) (EE : encoding E)
     (g : Graph.t N E) (effects : E -> list (memory_effect T)) (mg : memory_graph N E) :

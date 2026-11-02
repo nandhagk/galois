@@ -1,11 +1,12 @@
 (** * Actual pruned output queries and semantic consumers
 
-    Returned memory fields evaluate their original callback and then the actual representative map.
+    Returned fields map their original callback results through representatives.
+    Operand queries first check the retained-phi index.
     For example, a missing before-occurrence returns None without a representative lookup.
     Builds on: full phi production and the unchanged history and byte contracts. *)
 
 From Stdlib Require Import List PArith.
-From Galois.Collections Require Import CollectionsEncoding CollectionsMap.
+From Galois.Collections Require Import CollectionsEncoding CollectionsMap CollectionsFinSet.
 From Galois.Graph Require Import GraphCore GraphPrepare.
 From Galois.Analyses Require Import AnalysesMemoryGraph AnalysesMemoryFlow.
 From Galois.Views Require Import ViewsMemoryEffects.
@@ -111,8 +112,10 @@ Definition audit_phi_output_fields_erases_statement : Prop :=
       Some (memory_out output e)) /\
     (forall e i, fst (audit_phi_output_optional_call version_enc before_body reps (e, i)) =
       memory_before output e i) /\
-    (forall n key, fst (audit_phi_output_optional_call version_enc operand_body reps (n, key)) =
-      memory_operand output n key).
+    (forall n key,
+      (if FinSet.mem EN n (FinSet.of_list EN (memory_phis output))
+       then fst (audit_phi_output_optional_call version_enc operand_body reps (n, key))
+       else None) = memory_operand output n key).
 
 (** This fixed pruning computation supplies the actual result used by semantic consumers. *)
 Definition audit_memory_phi_prune N E T (EN : encoding N) (EE : encoding E)
