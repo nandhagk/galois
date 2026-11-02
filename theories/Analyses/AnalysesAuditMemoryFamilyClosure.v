@@ -20,7 +20,8 @@ From Galois.Analyses Require Import AnalysesAuditMemoryState AnalysesAuditMemory
   AnalysesAuditMemoryPhiConsumer AnalysesAuditMemoryPhiSetup AnalysesAuditMemoryMemoAdaptedSource
   AnalysesAuditMemorySearchAdaptedSource AnalysesAuditMemoryPhiAdaptedSource
   AnalysesAuditMemorySnapshotPublic AnalysesAuditMemoryPhiPublic
-  AnalysesAuditMemoryMemoLegacyPlain AnalysesAuditMemoryMemoLegacySource.
+  AnalysesAuditMemoryMemoLegacyPlain AnalysesAuditMemoryMemoLegacySource
+  AnalysesAuditMemoryPhiOperandQuery.
 
 (** Internal closure combines scope injectivity, initial and busy-cut properties, encoder and
     search erasures, predecessor cost and memo-tree execution. *)
@@ -83,7 +84,8 @@ Definition audit_memory_phi_source_closure_statement : Prop :=
   audit_memory_phi_prune_whole_input_bound_statement /\
   audit_phi_output_optional_erases_statement /\ audit_phi_output_fields_erases_statement /\
   audit_phi_closure_whole_input_bound_statement /\ audit_memory_phi_producer_erases_statement /\
-  audit_memory_phi_prune_semantics_statement.
+  audit_memory_phi_prune_semantics_statement /\
+  audit_phi_operand_query_contract_statement.
 
 (** The complete closure combines internal, memo, legacy and phi source obligations. *)
 Definition audit_memory_complete_source_contract_statement : Prop :=
