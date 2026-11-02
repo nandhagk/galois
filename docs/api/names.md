@@ -19991,3 +19991,101 @@ Card: AUD-RD
 - `rd_plain_real_backpointer_allocation_closed` (Example).
 
 <!-- AUD-API-RW-TESTS-NAMES-END -->
+
+## AnalysesAuditMemoryPhiOperandQuery
+
+Public package: `Galois.Analyses`.
+
+Public module: `Galois.Analyses.AnalysesAuditMemoryPhiOperandQuery`.
+
+Card: PHI-OUTPUT-MODEL
+
+- `audit_phi_operand_code_mem` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_guard_frames` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_event` (Inductive);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_output_operand_call` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_source_work` (Fixpoint);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_direct_work` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_input_budget` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_output_operand_erases_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_trace_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_source_adequate_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_whole_input_bound_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_version_sources` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_callbacks` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_adapted_source_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_output_index` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_saved_query` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_saved_index_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_output_saved_query_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_producer_saved_query_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_public_source_bridge_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_saved_queries_bound_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `audit_phi_operand_query_contract_statement` (Definition);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `AuditPhiOperandProbe` (constructor);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `AuditPhiOperandBody` (constructor);
+  [canonical API](analyses.md#phi-operand-query-contract).
+- `AuditPhiOperandAbsent` (constructor);
+  [canonical API](analyses.md#phi-operand-query-contract).
+
+Future proof module: `Galois.Analyses.AnalysesAuditMemoryPhiOperandQueryAdequacy`.
+
+- `audit_phi_output_operand_erases` (future Theorem);
+  type `audit_phi_output_operand_erases_statement`;
+  [canonical API](analyses.md#phi-operand-query-adequacy); owner PHI-OUTPUT-QUERY-PROOF.
+- `audit_phi_operand_query_trace` (future Theorem);
+  type `audit_phi_operand_query_trace_statement`;
+  [canonical API](analyses.md#phi-operand-query-adequacy); owner PHI-OUTPUT-QUERY-PROOF.
+- `audit_phi_operand_query_source_adequate` (future Theorem);
+  type `audit_phi_operand_query_source_adequate_statement`;
+  [canonical API](analyses.md#phi-operand-query-adequacy); owner PHI-OUTPUT-QUERY-PROOF.
+- `audit_phi_operand_query_whole_input_bound` (future Theorem);
+  type `audit_phi_operand_query_whole_input_bound_statement`;
+  [canonical API](analyses.md#phi-operand-query-adequacy); owner PHI-OUTPUT-QUERY-PROOF.
+- `audit_phi_operand_query_adapted_source` (future Theorem);
+  type `audit_phi_operand_query_adapted_source_statement`;
+  [canonical API](analyses.md#phi-operand-query-adequacy); owner PHI-OUTPUT-QUERY-PROOF.
+- `audit_phi_operand_saved_queries_bound` (future Theorem);
+  type `audit_phi_operand_saved_queries_bound_statement`;
+  [canonical API](analyses.md#phi-operand-query-adequacy); owner PHI-OUTPUT-QUERY-PROOF.
+
+Future proof module: `Galois.Analyses.AnalysesAuditMemoryPhiOperandQuerySourceAdequacy`.
+
+- `audit_phi_operand_saved_index` (future Theorem);
+  type `audit_phi_operand_saved_index_statement`;
+  [canonical API](analyses.md#phi-operand-query-source-adequacy); owner PHI-OUTPUT-SOURCE-PROOF.
+- `audit_phi_operand_output_saved_query` (future Theorem);
+  type `audit_phi_operand_output_saved_query_statement`;
+  [canonical API](analyses.md#phi-operand-query-source-adequacy); owner PHI-OUTPUT-SOURCE-PROOF.
+- `audit_phi_operand_producer_saved_query` (future Theorem);
+  type `audit_phi_operand_producer_saved_query_statement`;
+  [canonical API](analyses.md#phi-operand-query-source-adequacy); owner PHI-OUTPUT-SOURCE-PROOF.
+- `audit_phi_operand_public_source_bridge` (future Theorem);
+  type `audit_phi_operand_public_source_bridge_statement`;
+  [canonical API](analyses.md#phi-operand-query-source-adequacy); owner PHI-OUTPUT-SOURCE-PROOF.
+- `audit_phi_operand_query_contract` (future Theorem);
+  type `audit_phi_operand_query_contract_statement`;
+  [canonical API](analyses.md#phi-operand-query-source-adequacy); owner PHI-OUTPUT-SOURCE-PROOF.
