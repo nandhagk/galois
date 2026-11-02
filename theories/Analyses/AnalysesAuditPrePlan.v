@@ -143,6 +143,7 @@ Inductive pre_finalize_call (B BE N E U : Type) : Type :=
   | PfParameter (block : B) (edge : E)
   | PfSource (edge : E) (point : N)
   | PfTarget (edge : E) (point : N)
+  | PfExpressionTarget (edge : E) (point : N)
   | PfPositiveCompare (first second : positive) (result : bool).
 
 Arguments PfFlags {B BE N E U}.
@@ -184,6 +185,8 @@ Arguments PfParameter {B BE N E U}.
 Arguments PfSource {B BE N E U}.
 
 Arguments PfTarget {B BE N E U}.
+
+Arguments PfExpressionTarget {B BE N E U}.
 
 Arguments PfPositiveCompare {B BE N E U}.
 
@@ -278,7 +281,7 @@ Definition pre_version_point_counted (version : pre_version E U) : exact_counted
       (nth_error (Graph.entries (cfg (gkview (pre_genkill (pre_expression a))))) 0))
   | PreComputed e _ | PreInserted e _ | PreMerged e _ =>
     let point := Graph.target (cfg (gkview (pre_genkill (pre_expression a)))) e in
-    exact_case 721 (exact_bind 722 (exact_call (PfTarget e point) 0 point)
+    exact_case 721 (exact_bind 722 (exact_call (PfExpressionTarget e point) 0 point)
       (fun point => exact_return 723 (Some point)))
   end.
 
@@ -629,6 +632,7 @@ Definition pre_finalize_order_input_budget (f : factored_redundancy_graph B BE E
   let definitions := frg_versions f ++ map snd (Map.elements (frg_occurrence_index f)) ++
     map (fun row => frg_operand_version (snd row)) links in
   let blocks := Graph.nodes (block_graph (pre_ssa_points a)) ++ map fst keys ++
+    map (fun row => fst (fst (fst row))) links ++
     flat_map (fun d =>
       match d with
       | FrPhi b _ => [b]
@@ -658,10 +662,12 @@ Definition pre_finalize_order_input_budget (f : factored_redundancy_graph B BE E
       | None => []
         end) edges in
   let nodes := Graph.nodes (live_graph (point_model (pre_ssa_points a))) ++
-    Graph.entries (live_graph (point_model (pre_ssa_points a))) ++ order ++
+    Graph.entries (live_graph (point_model (pre_ssa_points a))) ++
+    Graph.entries (cfg (gkview (pre_genkill (pre_expression a)))) ++ order ++
     flat_map (fun row => [fst row;snd row]) (Map.elements (idom tree)) ++
     flat_map (fun e => [Graph.source (live_graph (point_model (pre_ssa_points a))) e;
-      Graph.target (live_graph (point_model (pre_ssa_points a))) e]) edges in
+      Graph.target (live_graph (point_model (pre_ssa_points a))) e;
+      Graph.target (cfg (gkview (pre_genkill (pre_expression a)))) e]) edges in
   let width := fold_right Nat.max 0 (map (fun b => block_body b + Pos.size_nat (encode EB b))
     blocks) +
     fold_right Nat.max 0 (map (fun be => block_edge_body be + Pos.size_nat (encode EBE be))

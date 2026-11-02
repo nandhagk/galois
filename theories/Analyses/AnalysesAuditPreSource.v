@@ -69,6 +69,9 @@ Record audit_pre_view_adapters : Type := PreViewAdapters {
   pre_point_source_source : audit_external_adapter E N (Graph.source pg);
   (** Observe a point edge target. *)
   pre_point_target_source : audit_external_adapter E N (Graph.target pg);
+  (** Observe the expression graph target used by version availability. *)
+  pre_expression_target_source : audit_external_adapter E N
+    (Graph.target (cfg (gkview (pre_genkill (pre_expression a)))));
   (** Observe an expression operand list. *)
   pre_operands_source : audit_external_adapter U (list V) (pre_operands a);
   (** Translate an expression on its block edge. *)
@@ -120,6 +123,7 @@ Definition audit_pre_view_adapter_laws (adapters : audit_pre_view_adapters) : Pr
   audit_external_adapter_laws (pre_point_out_source adapters) /\
   audit_external_adapter_laws (pre_point_source_source adapters) /\
   audit_external_adapter_laws (pre_point_target_source adapters) /\
+  audit_external_adapter_laws (pre_expression_target_source adapters) /\
   audit_external_adapter_laws (pre_operands_source adapters) /\
   audit_external_adapter_laws (pre_translate_source adapters) /\
   audit_external_adapter_laws (pre_initial_source adapters) /\
@@ -421,6 +425,9 @@ Definition pre_finalize_call_receipt (call : pre_finalize_call B BE N E U) trace
   | PfTarget edge result =>
     pre_actual_external_receipt
       (pre_point_target_source EB EBE EN EE EV EU a adapters) edge result trace allowance
+  | PfExpressionTarget edge result =>
+    pre_actual_external_receipt
+      (pre_expression_target_source EB EBE EN EE EV EU a adapters) edge result trace allowance
   | _ => pre_internal_receipt trace allowance
   end.
 
