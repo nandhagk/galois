@@ -106,11 +106,16 @@ Definition mat_stratify_erases_statement : Prop :=
     | _, _ => False
     end.
 
-(** The proposed stratification work bound uses the same trace's operand width. *)
+(** The size counts every original rule and body literal, including duplicates. *)
+Definition mat_stratify_input_size {P} (prog : program P) : nat :=
+  fold_right (fun r n => S (length (body r)) + n) 0 (rules prog).
+
+(** The proposed work bound also counts original rules and body literals. *)
 Definition mat_stratify_bound_statement : Prop :=
   forall P (prog : program P),
     let '(_, events) := mat_stratify prog in let width := S (mat_width events) in
-    (mat_work events <= (N.to_nat 100000000%N) * Nat.pow width 12)%nat.
+    (mat_work events <= (N.to_nat 100000000%N) *
+      S (mat_stratify_input_size prog) * Nat.pow width 12)%nat.
 
 (** The proposed totality states that every program yields an output and trace. *)
 Definition mat_stratify_total_statement : Prop :=
