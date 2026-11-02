@@ -81,6 +81,7 @@ Definition audit_legacy_slice_full_trace_bound_statement : Prop :=
     (node_enc : N -> positive * list CN) (site_enc : T -> positive * list CT)
     (g : Graph.t N E) (p : prepared EN g)
     (writes : N -> list (footprint T) * list W) read roots load node_work site_work writes_work,
+    (forall n, fst (node_enc n) = encode EN n) ->
     let events := snd (audit_legacy_slice_full EN ET node_enc site_enc g p writes read roots load)
       in
     audit_legacy_slice_full_source_work EN node_work site_work writes_work events <=
