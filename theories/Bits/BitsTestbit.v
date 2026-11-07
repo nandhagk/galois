@@ -19,6 +19,13 @@ Proof.
   - apply Z.ltb_ge in Hlt. rewrite Z.mod_pow2_bits_high by lia. reflexivity.
 Qed.
 
+(** The sign bit is the highest width-relevant bit of the original integer. *)
+Theorem msb_testbit : forall w x, msb w x = Z.testbit x (Zpos w - 1).
+Proof.
+  intros w x. unfold msb. rewrite testbit_wrap by lia.
+  rewrite (proj2 (Z.ltb_lt (Zpos w - 1) (Zpos w))) by lia. reflexivity.
+Qed.
+
 (** Equality of all nonnegative bits determines a word. *)
 Theorem word_ext : forall w x y, is_word w x -> is_word w y ->
   (forall j, 0 <= j -> Z.testbit x j = Z.testbit y j) -> x = y.
