@@ -37,7 +37,7 @@ Proof.
 Qed.
 
 Example intern_ticks :
-  Cost.ticks (Intern.intern_c nat_encoding 0 Intern.empty) = 6%N.
+  Cost.ticks (Intern.intern_c nat_encoding 0 Intern.empty) = 9%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

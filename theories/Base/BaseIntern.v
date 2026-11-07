@@ -105,9 +105,13 @@ Qed.
 (** Empty interning starts with no IDs. *)
 Theorem wf_empty {K} (E : encoding K) : wf E (@empty K).
 Proof.
+  assert (Hfind : forall k, find E k (@empty K) = None).
+  { intro k. rewrite find_equation. apply Map.get_empty. }
+  assert (Hkey : forall i, key_of i (@empty K) = None).
+  { intro i. rewrite key_of_equation. apply Map.get_empty. }
   split; [apply Map.wf_empty|]. split; [apply Map.wf_empty|].
-  split; [intros k i H; discriminate H|].
-  split; [intros k i; split; discriminate|].
+  split; [intros k i H; rewrite Hfind in H; discriminate H|].
+  split; [intros k i; rewrite Hfind, Hkey; split; discriminate|].
   intros i Hi. change (i < 1)%positive in Hi. lia.
 Qed.
 
@@ -401,7 +405,9 @@ Theorem intern_list_spec {K} (E : encoding K) (HE : encoding_laws E) xs k :
 Proof.
   unfold of_list, of_list_c. rewrite (list_members E HE) by apply wf_empty.
   assert (Hempty : ~ exists i, find E k (@empty K) = Some i).
-  { intros [i H]. discriminate H. }
+  { intros [i H]. rewrite find_equation in H.
+    change (Map.get E k Map.empty = Some i) in H.
+    rewrite Map.get_empty in H. discriminate H. }
   tauto.
 Qed.
 

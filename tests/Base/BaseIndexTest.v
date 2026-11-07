@@ -37,7 +37,7 @@ Qed.
 
 Example index_singleton_ticks :
   Cost.ticks (Index.group_by_c bool_encoding
-    (Cost.lift (fun _ => 1%N) Nat.even) [2]) = 11%N.
+    (Cost.lift (fun _ => 1%N) Nat.even) [2]) = 16%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

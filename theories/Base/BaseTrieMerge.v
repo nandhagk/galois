@@ -706,4 +706,46 @@ Proof.
     exact (Hirr p Hforall).
 Qed.
 
+(** Node cardinality counts its two subtries and its optional root binding. *)
+Theorem size_node {A} (l r : Trie.t A) o :
+  size (Trie.node l o r) =
+    (size l + (match o with None => 0 | Some _ => 1 end) + size r)%nat.
+Proof.
+  rewrite !size_elements, elements_node, !length_app, !length_map.
+  destruct o; cbn [length]; lia.
+Qed.
+
+(** Every trie has the cardinality of its three observed components. *)
+Theorem size_components {A} (tr : Trie.t A) :
+  size tr =
+    (size (Trie.left tr) +
+      (match Trie.value tr with None => 0 | Some _ => 1 end) + size (Trie.right tr))%nat.
+Proof.
+  rewrite <- (Trie.node_eta tr) at 1. apply size_node.
+Qed.
+
+(** Setting adds one binding precisely when the selected code was absent. *)
+Theorem size_set {A} p (v : A) tr :
+  size (Trie.set p v tr) =
+    match Trie.get p tr with None => S (size tr) | Some _ => size tr end.
+Proof.
+  revert tr. induction p; intro tr; rewrite Trie.set_equation, size_node, Trie.get_equation.
+  - rewrite IHp, (size_components tr).
+    destruct (Trie.get p (Trie.right tr)); lia.
+  - rewrite IHp, (size_components tr).
+    destruct (Trie.get p (Trie.left tr)); lia.
+  - rewrite (size_components tr). destruct (Trie.value tr); lia.
+Qed.
+
+(** Removing a present binding decreases cardinality by one. *)
+Theorem size_remove {A} p (v : A) tr :
+  Trie.get p tr = Some v -> size tr = S (size (Trie.remove p tr)).
+Proof.
+  revert tr. induction p; intros tr Hget; rewrite Trie.get_equation in Hget;
+    rewrite Trie.remove_equation, size_node, (size_components tr).
+  - specialize (IHp _ Hget). lia.
+  - specialize (IHp _ Hget). lia.
+  - rewrite Hget. lia.
+Qed.
+
 End TrieMerge.

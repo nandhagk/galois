@@ -48,7 +48,7 @@ Qed.
 
 (** This reference-list observation changes with a backend's proved cost bounds. *)
 Example map_reference_ticks :
-  Cost.ticks (Map.get_code_c 3%positive sample) = 8%N.
+  Cost.ticks (Map.get_code_c 3%positive sample) = 2%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

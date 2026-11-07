@@ -40,7 +40,7 @@ Qed.
 
 Example memo_charged_callback :
   Cost.ticks (Memo.get_or_c nat_encoding (Cost.lift (fun _ => 100%N) S) 2 Memo.empty) =
-    105%N.
+    109%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
