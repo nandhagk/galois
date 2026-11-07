@@ -143,6 +143,7 @@ Qed.
 
 Arguments empty_c {K V} : simpl never.
 Arguments empty {K V} : simpl never.
+
 (** A cache hit pays only lookup and a miss also pays callback overhead and insertion. *)
 Theorem get_or_cost_equation {K V} (E : encoding K) (f_c : K -> Cost.t V)
     k (m : t K V) :
