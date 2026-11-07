@@ -124,13 +124,13 @@ Definition tick_problem (es : list nat) :=
 
 Example prepare_tick_doubling :
   (Cost.ticks (Bitvector.prepare_c (tick_problem [0])),
-   Cost.ticks (Bitvector.prepare_c (tick_problem [0; 0]))) = (37%N, 67%N).
+   Cost.ticks (Bitvector.prepare_c (tick_problem [0; 0]))) = (41%N, 68%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
 
 Example prepare_tick_second_doubling :
-  Cost.ticks (Bitvector.prepare_c (tick_problem [0; 0; 0; 0])) = 127%N.
+  Cost.ticks (Bitvector.prepare_c (tick_problem [0; 0; 0; 0])) = 122%N.
 Proof.
   vm_compute; reflexivity.
 Qed.

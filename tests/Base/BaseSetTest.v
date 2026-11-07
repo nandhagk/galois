@@ -41,7 +41,7 @@ Qed.
 
 Example set_ticks :
   Cost.ticks (FinSet.mem_c positive_encoding 1%positive
-    (FinSet.add positive_encoding 1%positive FinSet.empty)) = 4%N.
+    (FinSet.add positive_encoding 1%positive FinSet.empty)) = 3%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

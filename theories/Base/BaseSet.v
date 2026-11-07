@@ -23,7 +23,7 @@ Definition empty_c {K} : Cost.t (t K) := Map.empty_c.
 (** Empty sets contain no bindings. *)
 Definition empty {K} : t K := Cost.value empty_c.
 
-(** Membership retains the encoding and list lookup charges. *)
+(** Membership retains the encoding and trie lookup charges. *)
 Definition mem_c {K} (E : encoding K) k (s : t K) := Map.mem_c E k s.
 
 (** Membership observes the costed presence test. *)
@@ -141,7 +141,9 @@ Qed.
 (** Empty sets have no members. *)
 Theorem mem_empty {K} (E : encoding K) k : mem E k (@empty K) = false.
 Proof.
-  reflexivity.
+  rewrite mem_equation. change (match Map.get E k (@Map.empty K unit) with
+    Some _ => true | None => false end = false).
+  now rewrite Map.get_empty.
 Qed.
 
 (** Adding a key takes the disjunction of equality and previous membership. *)
@@ -267,16 +269,11 @@ Proof.
     exact (Hafter _ Hin).
 Qed.
 
-(** A well-formed set enumerates each key at most once. *)
+(** Well-formed set enumeration never repeats a key. *)
 Theorem elements_nodup {K} (E : encoding K) (s : t K) :
   wf E s -> NoDup (elements s).
 Proof.
-  intro Hwf; pose proof (elements_sorted E s Hwf) as Hsort.
-  induction Hsort as [|x xs Hsort IH Hafter]; constructor; [|exact IH].
-  intro Hin; rewrite Forall_forall in Hafter.
-  specialize (Hafter x Hin).
-  pose proof (proj2 (Map.code_compare_eq (encode E x) (encode E x)) eq_refl) as Hrefl.
-  rewrite Hrefl in Hafter; discriminate.
+  intro Hwf. rewrite elements_equation. now apply (Map.elements_nodup E).
 Qed.
 
 (** Subset tests precisely pointwise membership implication. *)

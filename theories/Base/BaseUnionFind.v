@@ -392,7 +392,7 @@ Local Lemma redirect_root uf x root :
   Map.get E root (parents (redirect E x root uf)) = None.
 Proof.
   intros Hp Hne Hroot; rewrite redirect_equation; cbn [parents].
-  rewrite (Map.get_set_other E HE) by congruence; exact Hroot.
+  rewrite (Map.get_set_other E HE) by (try exact Hp; congruence); exact Hroot.
 Qed.
 
 Local Lemma redirect_reaches uf x root :
@@ -801,7 +801,8 @@ Proof.
     + apply (eqb_true_iff E HE) in Heq; subst a.
       apply (Step E _ child root root).
       * rewrite link_parents; apply Map.get_set_same; exact Hp.
-      * apply Root; rewrite link_parents, (Map.get_set_other E HE) by congruence; exact Hroot.
+      * apply Root; rewrite link_parents, (Map.get_set_other E HE)
+          by (try exact Hp; congruence); exact Hroot.
     + apply Root; rewrite link_parents, (Map.get_set_other E HE).
       * exact Hnone.
       * exact Hp.

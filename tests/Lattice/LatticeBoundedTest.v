@@ -122,7 +122,7 @@ Definition be1 := exist _ (env_of_list bool_encoding [(false, true)])
 Example bounded_environment_height_and_cost :
   (rank BE_height be0, rank BE_height be1, bound BE_height,
     Cost.ticks (join_c BE be0 be0), Cost.ticks (narrow_c BE be0 be0)) =
-  (0, 1, 2, 1%N, 2%N).
+  (0, 1, 2, 2%N, 3%N).
 Proof.
   vm_compute. reflexivity.
 Qed.

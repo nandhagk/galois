@@ -1,12 +1,12 @@
 (** * Canonical maps over encoded keys
 
-    Sorted binding lists provide a reference implementation of the map interface.
+    Maps store each key beside its value in a canonical costed trie.
     For example, codes two, one and three enumerate in that order.
-    Builds on: BaseEncoding, BaseEq and CostMonad. *)
+    Builds on: BaseEncoding, BaseEq, BaseTrie and BaseTrieMerge. *)
 
 From Stdlib Require Import List Bool NArith Lia Sorting.Sorted.
-From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseEq.
+From Galois.Cost Require Import CostMonad CostList.
+From Galois.Base Require Import BaseEncoding BaseEq BaseTrie BaseTrieMerge.
 Import List.ListNotations Cost.Notations.
 
 Create Rewrite HintDb galois_map.
@@ -68,60 +68,31 @@ Proof.
     try reflexivity; eapply IHp; eassumption.
 Qed.
 
-Local Lemma compare_refl p : code_compare p p = Eq.
-Proof.
-  apply code_compare_eq. reflexivity.
-Qed.
+(** A map stores each key and value at its encoded trie position. *)
+Definition t (K V : Type) := Trie.t (K * V).
 
-Local Lemma compare_flip p q :
-  code_compare p q = Gt <-> code_compare q p = Lt.
-Proof.
-  rewrite (code_compare_antisym p q).
-  destruct (code_compare q p); cbn; split; congruence.
-Qed.
-
-(** A map stores code, key and value separately from its invariant. *)
-Definition t (K V : Type) := list (positive * (K * V)).
-
-(** Well-formed maps have consistent stored codes and strictly ordered bindings. *)
+(** Well-formed maps store every key at its own encoded position. *)
 Definition wf {K V} (E : encoding K) (m : t K V) : Prop :=
-  Forall (fun e => fst e = encode E (fst (snd e))) m /\
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) m.
+  forall p k v, Trie.get p m = Some (k, v) -> encode E k = p.
 
-Definition empty {K V} : t K V := [].
+Definition empty {K V} : t K V := Trie.empty.
 Definition empty_c {K V} : Cost.t (t K V) := Cost.ret empty.
 
-(** Code lookup visits list cells and charges every digit comparison. *)
-Fixpoint get_code_c {K V} (p : positive) (m : t K V) : Cost.t (option V) :=
-  match m with
-  | [] => Cost.ret None
-  | (q, (_, v)) :: rest =>
-    Cost.step ;;
-    let* same := positive_eqb_c p q in
-    if same then Cost.ret (Some v) else get_code_c p rest
-  end.
-
+(** Code lookup discards the stored key and retains the complete path charge. *)
+Definition get_code_c {K V} p (m : t K V) :=
+  Cost.map (option_map snd) (Trie.get_c p m).
 Definition get_code {K V} p (m : t K V) := Cost.value (get_code_c p m).
 
-(** Key lookup calls the encoding once before code lookup. *)
-Definition get_c {K V} (E : encoding K) k (m : t K V) :=
-  Cost.step ;;
-  let* p := encode_c E k in get_code_c p m.
-
-Definition get {K V} (E : encoding K) k (m : t K V) := Cost.value (get_c E k m).
-
-(** Code lookup stops at the first matching cell. *)
-Local Lemma get_code_equation {K V} p (m : t K V) :
-  get_code p m =
-  match m with
-  | [] => None
-  | (q, (_, v)) :: rest => if Pos.eqb p q then Some v else get_code p rest
-  end.
+Local Lemma get_code_trie {K V} p (m : t K V) :
+  get_code p m = option_map snd (Trie.get p m).
 Proof.
-  destruct m as [|[q [k v]] rest]; unfold get_code; cbn [get_code_c];
-    autorewrite with galois_cost; try reflexivity.
-  rewrite positive_eqb_equation. destruct (Pos.eqb p q); reflexivity.
+  reflexivity.
 Qed.
+
+(** Key lookup pays encoding-call overhead, the encoding and the trie descent. *)
+Definition get_c {K V} (E : encoding K) k (m : t K V) :=
+  Cost.step ;; let* p := encode_c E k in get_code_c p m.
+Definition get {K V} (E : encoding K) k (m : t K V) := Cost.value (get_c E k m).
 
 (** Key lookup observes precisely the encoded position. *)
 Theorem get_equation {K V} (E : encoding K) k (m : t K V) :
@@ -130,83 +101,27 @@ Proof.
   reflexivity.
 Qed.
 
-(** Sorted insertion replaces an existing code or inserts at its ordered position. *)
-Fixpoint set_code_c {K V} (p : positive) k (v : V) (m : t K V) : Cost.t (t K V) :=
-  match m with
-  | [] => Cost.ret [(p, (k, v))]
-  | (q, kv) :: rest =>
-    Cost.step ;;
-    let* order := code_compare_c p q in
-    match order with
-    | Eq => Cost.ret ((p, (k, v)) :: rest)
-    | Lt => Cost.ret ((p, (k, v)) :: m)
-    | Gt => Cost.map (cons (q, kv)) (set_code_c p k v rest)
-    end
-  end.
-
+Definition set_code_c {K V} p k (v : V) (m : t K V) := Trie.set_c p (k, v) m.
 Definition set_code {K V} p k (v : V) (m : t K V) :=
   Cost.value (set_code_c p k v m).
-
 Definition set_c {K V} (E : encoding K) k (v : V) (m : t K V) :=
-  Cost.step ;;
-  let* p := encode_c E k in set_code_c p k v m.
-
+  Cost.step ;; let* p := encode_c E k in set_code_c p k v m.
 Definition set {K V} (E : encoding K) k (v : V) (m : t K V) :=
   Cost.value (set_c E k v m).
 
-(** Setting inserts the encoded binding in code order. *)
+(** Setting inserts the encoded binding at its canonical position. *)
 Theorem set_equation {K V} (E : encoding K) k (v : V) m :
   set E k v m = set_code (encode E k) k v m.
 Proof.
   reflexivity.
 Qed.
 
-(** Code insertion exposes its three order cases. *)
-Local Lemma set_code_equation {K V} p (k : K) (v : V) m :
-  set_code p k v m =
-  match m with
-  | [] => [(p, (k, v))]
-  | (q, kv) :: rest =>
-    match code_compare p q with
-    | Eq => (p, (k, v)) :: rest
-    | Lt => (p, (k, v)) :: m
-    | Gt => (q, kv) :: set_code p k v rest
-    end
-  end.
-Proof.
-  destruct m as [|[q kv] rest]; [reflexivity|].
-  unfold set_code at 1. cbn [set_code_c]. autorewrite with galois_cost.
-  fold (code_compare p q).
-  destruct (code_compare p q); reflexivity.
-Qed.
-
-(** Removal scans all cells, deleting the matching code. *)
-Fixpoint remove_code_c {K V} p (m : t K V) : Cost.t (t K V) :=
-  match m with
-  | [] => Cost.ret []
-  | (q, kv) :: rest =>
-    Cost.step ;;
-    let* same := positive_eqb_c p q in
-    let* tail := remove_code_c p rest in
-    Cost.ret (if same then tail else (q, kv) :: tail)
-  end.
-
+Definition remove_code_c {K V} p (m : t K V) := Trie.remove_c p m.
 Definition remove_code {K V} p (m : t K V) := Cost.value (remove_code_c p m).
 Definition remove_c {K V} (E : encoding K) k (m : t K V) :=
-  Cost.step ;;
-  let* p := encode_c E k in remove_code_c p m.
+  Cost.step ;; let* p := encode_c E k in remove_code_c p m.
 Definition remove {K V} (E : encoding K) k (m : t K V) :=
   Cost.value (remove_c E k m).
-
-(** Code removal filters precisely the matching positions. *)
-Local Lemma remove_code_equation {K V} p (m : t K V) :
-  remove_code p m = filter (fun e => negb (Pos.eqb p (fst e))) m.
-Proof.
-  induction m as [|[q [k v]] rest IH]; [reflexivity|].
-  unfold remove_code in *. cbn [remove_code_c filter fst].
-  autorewrite with galois_cost. rewrite positive_eqb_equation, IH.
-  destruct (Pos.eqb p q); reflexivity.
-Qed.
 
 (** Removal uses the encoded code. *)
 Theorem remove_equation {K V} (E : encoding K) k (m : t K V) :
@@ -251,177 +166,105 @@ Definition find_or {K V} (E : encoding K) (d : V) k (m : t K V) :=
 (** Empty maps have no value. *)
 Theorem get_empty {K V} (E : encoding K) k : get E k (@empty K V) = None.
 Proof.
-  reflexivity.
-Qed.
-
-Local Lemma get_code_absent {K V} p (m : t K V) :
-  Forall (fun e => fst e <> p) m -> get_code p m = None.
-Proof.
-  induction m as [|[q [k v]] rest IH]; intro H; rewrite get_code_equation;
-    [reflexivity|].
-  inversion H as [|? ? Hq Hr]; subst. cbn in Hq.
-  assert (Hpq : Pos.eqb p q = false) by (apply Pos.eqb_neq; congruence).
-  rewrite Hpq. now apply IH.
-Qed.
-
-Local Lemma sorted_absent {K V} p q (m : t K V) :
-  code_compare p q = Lt ->
-  Forall (fun e => code_compare q (fst e) = Lt) m ->
-  get_code p m = None.
-Proof.
-  intros Hpq Hall. apply get_code_absent.
-  rewrite Forall_forall in Hall |- *. intros [r kv] Hin Heq. cbn in Heq. subst r.
-  specialize (Hall _ Hin). cbn in Hall.
-  pose proof (code_compare_trans _ _ _ Hpq Hall) as Hpp.
-  rewrite compare_refl in Hpp. discriminate.
-Qed.
-
-Local Lemma get_set_code {K V} p q (k : K) (v : V) m :
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) m ->
-  get_code p (set_code q k v m) =
-    if Pos.eqb p q then Some v else get_code p m.
-Proof.
-  induction m as [|[r [a w]] rest IH]; intro Hsort; rewrite set_code_equation.
-  - rewrite !get_code_equation. destruct (Pos.eqb p q); reflexivity.
-  - inversion Hsort as [|? ? Hrest Hafter]; subst.
-    cbn [fst] in Hafter. destruct (code_compare q r) eqn:Hqr.
-    + apply code_compare_eq in Hqr. subst r.
-      rewrite get_code_equation, (get_code_equation p ((q, (a, w)) :: rest)).
-      destruct (Pos.eqb p q); reflexivity.
-    + rewrite get_code_equation. destruct (Pos.eqb p q); reflexivity.
-    + rewrite get_code_equation, IH by exact Hrest.
-      rewrite (get_code_equation p ((r, (a, w)) :: rest)).
-      destruct (Pos.eqb p q) eqn:Hpq, (Pos.eqb p r) eqn:Hpr; try reflexivity.
-      apply Pos.eqb_eq in Hpq. apply Pos.eqb_eq in Hpr. subst q r.
-      rewrite compare_refl in Hqr. discriminate.
+  change (option_map snd (Trie.get (encode E k) (Trie.empty : t K V)) = None).
+  now rewrite Trie.get_empty.
 Qed.
 
 (** Setting a key makes its new value readable. *)
 Theorem get_set_same {K V} (E : encoding K) k (v : V) m :
   wf E m -> get E k (set E k v m) = Some v.
 Proof.
-  intros [_ Hsort]. rewrite get_equation, set_equation, get_set_code by exact Hsort.
-  now rewrite Pos.eqb_refl.
+  intro Hwf. change (option_map snd (Trie.get (encode E k)
+    (Trie.set (encode E k) (k, v) m)) = Some v).
+  now rewrite Trie.get_set_same.
 Qed.
 
 (** Setting a distinct key leaves the queried value unchanged. *)
 Theorem get_set_other {K V} (E : encoding K) (HE : encoding_laws E) k a (v : V) m :
   wf E m -> k <> a -> get E k (set E a v m) = get E k m.
 Proof.
-  intros [_ Hsort] Hne. rewrite !get_equation, set_equation, get_set_code by exact Hsort.
-  assert (Hneq : Pos.eqb (encode E k) (encode E a) = false).
-  { apply Pos.eqb_neq. intro H. apply Hne. exact (encode_injective HE _ _ H). }
-  now rewrite Hneq.
+  intros Hwf Hne. change (option_map snd (Trie.get (encode E k)
+    (Trie.set (encode E a) (a, v) m)) = option_map snd (Trie.get (encode E k) m)).
+  rewrite Trie.get_set_other; [reflexivity|].
+  intro Hcode. apply Hne. symmetry. exact (encode_injective HE _ _ Hcode).
 Qed.
 
-(** Lookup after setting is a reflected key test. *)
+(** Lookup after setting is a reflected encoded-key test. *)
 Theorem get_set {K V} (E : encoding K) k a (v : V) m :
   wf E m -> get E k (set E a v m) = if eqb E k a then Some v else get E k m.
 Proof.
-  intros [_ Hsort]. rewrite eqb_equation, !get_equation, set_equation.
-  now apply get_set_code.
-Qed.
-
-Local Lemma get_remove_code {K V} p q (m : t K V) :
-  get_code p (remove_code q m) =
-    if Pos.eqb p q then None else get_code p m.
-Proof.
-  rewrite remove_code_equation. induction m as [|[r [a v]] rest IH].
-  - rewrite get_code_equation. destruct (Pos.eqb p q); reflexivity.
-  - cbn [filter fst]. destruct (Pos.eqb q r) eqn:Hqr; cbn [negb].
-    + apply Pos.eqb_eq in Hqr. subst r.
-      rewrite IH, (get_code_equation p ((q, (a, v)) :: rest)).
-      destruct (Pos.eqb p q); reflexivity.
-    + rewrite get_code_equation, IH, (get_code_equation p ((r, (a, v)) :: rest)).
-      destruct (Pos.eqb p q) eqn:Hpq, (Pos.eqb p r) eqn:Hpr; try reflexivity.
-      apply Pos.eqb_eq in Hpq. apply Pos.eqb_eq in Hpr. subst q r.
-      rewrite Pos.eqb_refl in Hqr. discriminate.
+  intro Hwf. rewrite eqb_equation.
+  destruct (Pos.eqb (encode E k) (encode E a)) eqn:Hcode.
+  - apply Pos.eqb_eq in Hcode.
+    change (option_map snd (Trie.get (encode E k)
+      (Trie.set (encode E a) (a, v) m)) = Some v).
+    rewrite Hcode, Trie.get_set_same. reflexivity.
+  - change (option_map snd (Trie.get (encode E k)
+      (Trie.set (encode E a) (a, v) m)) = option_map snd (Trie.get (encode E k) m)).
+    rewrite Trie.get_set_other; [reflexivity|].
+    apply Pos.eqb_neq in Hcode. congruence.
 Qed.
 
 (** Removal clears its own key. *)
 Theorem get_remove_same {K V} (E : encoding K) k (m : t K V) :
   get E k (remove E k m) = None.
 Proof.
-  rewrite get_equation, remove_equation, get_remove_code, Pos.eqb_refl. reflexivity.
+  change (option_map snd (Trie.get (encode E k) (Trie.remove (encode E k) m)) = None).
+  now rewrite Trie.get_remove_same.
 Qed.
 
 (** Removing another key leaves the queried value unchanged. *)
 Theorem get_remove_other {K V} (E : encoding K) (HE : encoding_laws E) k a (m : t K V) :
   k <> a -> get E k (remove E a m) = get E k m.
 Proof.
-  intro Hne. rewrite !get_equation, remove_equation, get_remove_code.
-  assert (Hneq : Pos.eqb (encode E k) (encode E a) = false).
-  { apply Pos.eqb_neq. intro H. apply Hne. exact (encode_injective HE _ _ H). }
-  now rewrite Hneq.
+  intro Hne. change (option_map snd (Trie.get (encode E k) (Trie.remove (encode E a) m)) =
+    option_map snd (Trie.get (encode E k) m)).
+  rewrite Trie.get_remove_other; [reflexivity|].
+  intro Hcode. apply Hne. symmetry. exact (encode_injective HE _ _ Hcode).
 Qed.
 
-(** Lookup after removal is a reflected key test. *)
+(** Lookup after removal is a reflected encoded-key test. *)
 Theorem get_remove {K V} (E : encoding K) k a (m : t K V) :
   get E k (remove E a m) = if eqb E k a then None else get E k m.
 Proof.
-  rewrite eqb_equation, !get_equation, remove_equation. apply get_remove_code.
+  rewrite eqb_equation.
+  destruct (Pos.eqb (encode E k) (encode E a)) eqn:Hcode.
+  - apply Pos.eqb_eq in Hcode.
+    change (option_map snd (Trie.get (encode E k) (Trie.remove (encode E a) m)) = None).
+    rewrite Hcode, Trie.get_remove_same. reflexivity.
+  - change (option_map snd (Trie.get (encode E k) (Trie.remove (encode E a) m)) =
+      option_map snd (Trie.get (encode E k) m)).
+    rewrite Trie.get_remove_other; [reflexivity|].
+    apply Pos.eqb_neq in Hcode. congruence.
 Qed.
 
-(** Empty maps satisfy both representation invariants. *)
+(** Empty maps satisfy the stored-position invariant. *)
 Theorem wf_empty {K V} (E : encoding K) : wf E (@empty K V).
 Proof.
-  split; constructor.
+  intros p k v Hget. unfold empty in Hget. rewrite Trie.get_empty in Hget. discriminate.
 Qed.
 
-Local Lemma set_members {K V} p (k : K) (v : V) m e :
-  In e (set_code p k v m) -> e = (p, (k, v)) \/ In e m.
-Proof.
-  induction m as [|[q kv] rest IH]; rewrite set_code_equation.
-  - cbn. intuition congruence.
-  - destruct (code_compare p q); cbn; intuition.
-Qed.
-
-Local Lemma set_sorted {K V} p (k : K) (v : V) m :
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) m ->
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt)
-    (set_code p k v m).
-Proof.
-  induction m as [|[q kv] rest IH]; intro Hsort; rewrite set_code_equation.
-  - constructor; constructor.
-  - inversion Hsort as [|? ? Hrest Hafter]; subst.
-    destruct (code_compare p q) eqn:Hpq.
-    + apply code_compare_eq in Hpq. subst p. constructor; assumption.
-    + constructor; [exact Hsort|]. constructor; [exact Hpq|].
-      rewrite Forall_forall in Hafter |- *. intros e Hin.
-      eapply code_compare_trans; [exact Hpq|exact (Hafter e Hin)].
-    + constructor; [now apply IH|].
-      rewrite Forall_forall in Hafter |- *. intros e Hin.
-      apply set_members in Hin as [->|Hin]; [cbn; now apply compare_flip|].
-      exact (Hafter e Hin).
-Qed.
-
-(** Setting maintains code consistency and strict ordering. *)
+(** Setting maintains code consistency. *)
 Theorem wf_set {K V} (E : encoding K) k (v : V) m :
   wf E m -> wf E (set E k v m).
 Proof.
-  intros [Hcodes Hsort]. rewrite set_equation. split; [|now apply set_sorted].
-  rewrite Forall_forall in Hcodes |- *. intros e Hin.
-  apply set_members in Hin as [->|Hin]; [reflexivity|exact (Hcodes e Hin)].
+  intros Hwf p a w. change (Trie.get p (Trie.set (encode E k) (k, v) m) =
+    Some (a, w) -> encode E a = p).
+  destruct (Pos.eq_dec (encode E k) p) as [Hcode|Hne].
+  - rewrite <- Hcode, Trie.get_set_same.
+    intro Hpair. injection Hpair as <- <-. reflexivity.
+  - rewrite Trie.get_set_other by exact Hne. apply Hwf.
 Qed.
 
-Local Lemma sorted_filter {A} (R : A -> A -> Prop) f xs :
-  StronglySorted R xs -> StronglySorted R (filter f xs).
-Proof.
-  induction xs as [|x xs IH]; intro Hsort; [constructor|].
-  inversion Hsort as [|? ? Htail Hafter]; subst. cbn [filter].
-  destruct (f x); [constructor|]; try (now apply IH).
-  rewrite Forall_forall in Hafter |- *. intros y Hin.
-  apply filter_In in Hin as [Hin _]. now apply Hafter.
-Qed.
-
-(** Removal keeps the invariants by taking a subsequence. *)
+(** Removal maintains code consistency. *)
 Theorem wf_remove {K V} (E : encoding K) k (m : t K V) :
   wf E m -> wf E (remove E k m).
 Proof.
-  intros [Hcodes Hsort]. rewrite remove_equation, remove_code_equation.
-  split; [|now apply sorted_filter].
-  rewrite Forall_forall in Hcodes |- *. intros e Hin.
-  apply filter_In in Hin as [Hin _]. now apply Hcodes.
+  intros Hwf p a v. change (Trie.get p (Trie.remove (encode E k) m) =
+    Some (a, v) -> encode E a = p).
+  destruct (Pos.eq_dec (encode E k) p) as [Hcode|Hne].
+  - rewrite <- Hcode, Trie.get_remove_same. discriminate.
+  - rewrite Trie.get_remove_other by exact Hne. apply Hwf.
 Qed.
 
 (** Update maintains well-formedness for every callback result. *)
@@ -443,7 +286,7 @@ Proof.
   - rewrite get_remove. reflexivity.
 Qed.
 
-(** Trie implementations discharge these independent code-operation bounds. *)
+(** Code operations have the independent key-width bounds consumed by other containers. *)
 Record cost_laws : Prop := Cost_laws {
   get_code_cost : forall K V p (m : t K V),
     (Cost.ticks (get_code_c p m) <= N.pos (Pos.size p))%N;
@@ -453,157 +296,136 @@ Record cost_laws : Prop := Cost_laws {
     (Cost.ticks (remove_code_c p m) <= N.pos (Pos.size p))%N
 }.
 
-Fixpoint map_c {K V W} (f_c : V -> Cost.t W) (m : t K V) : Cost.t (t K W) :=
-  match m with
-  | [] => Cost.ret []
-  | (p, (k, v)) :: rest =>
-    Cost.step ;;
-    Cost.step ;;
-    let* w := f_c v in
-    let* tail := map_c f_c rest in
-    Cost.ret ((p, (k, w)) :: tail)
-  end.
+(** The canonical trie backend discharges every existing Map cost-law field. *)
+Theorem cost_laws_hold : cost_laws.
+Proof.
+  constructor; intros.
+  - unfold get_code_c. rewrite Cost.ticks_map, Trie.get_cost. reflexivity.
+  - unfold set_code_c. rewrite Trie.set_cost. reflexivity.
+  - unfold remove_code_c. rewrite Trie.remove_cost. reflexivity.
+Qed.
 
+(** Key lookup retains the encoder charge and one invocation-overhead tick. *)
+Theorem get_cost {K V} (E : encoding K) k (m : t K V) :
+  Cost.ticks (get_c E k m) =
+    (1 + Cost.ticks (encode_c E k) + N.pos (Pos.size (encode E k)))%N.
+Proof.
+  unfold get_c, get_code_c. autorewrite with galois_cost.
+  rewrite Trie.get_cost. fold (encode E k). lia.
+Qed.
+
+(** Key insertion retains the encoder charge and one invocation-overhead tick. *)
+Theorem set_cost {K V} (E : encoding K) k (v : V) (m : t K V) :
+  Cost.ticks (set_c E k v m) =
+    (1 + Cost.ticks (encode_c E k) + N.pos (Pos.size (encode E k)))%N.
+Proof.
+  unfold set_c, set_code_c. autorewrite with galois_cost.
+  rewrite Trie.set_cost. fold (encode E k). lia.
+Qed.
+
+(** Key removal retains the encoder charge and one invocation-overhead tick. *)
+Theorem remove_cost {K V} (E : encoding K) k (m : t K V) :
+  Cost.ticks (remove_c E k m) =
+    (1 + Cost.ticks (encode_c E k) + N.pos (Pos.size (encode E k)))%N.
+Proof.
+  unfold remove_c, remove_code_c. autorewrite with galois_cost.
+  rewrite Trie.remove_cost. fold (encode E k). lia.
+Qed.
+
+Definition map_c {K V W} (f_c : V -> Cost.t W) (m : t K V) :=
+  TrieMerge.map_c (fun kv => Cost.map (fun w => (fst kv, w)) (f_c (snd kv))) m.
 Definition map {K V W} (f : V -> W) (m : t K V) :=
   Cost.value (map_c (Cost.lift (fun _ => 1%N) f) m).
-
-(** Mapping retains positions and keys. *)
-Local Lemma map_equation {K V W} (f : V -> W) (m : t K V) :
-  map f m = List.map (fun e => (fst e, (fst (snd e), f (snd (snd e))))) m.
-Proof.
-  induction m as [|[p [k v]] rest IH]; unfold map in *; cbn [map_c List.map];
-    autorewrite with galois_cost; now rewrite ?IH.
-Qed.
-
-Local Lemma get_code_map {K V W} (f : V -> W) p (m : t K V) :
-  get_code p (map f m) = option_map f (get_code p m).
-Proof.
-  rewrite map_equation. induction m as [|[q [k v]] rest IH].
-  - reflexivity.
-  - cbn [List.map fst snd].
-    rewrite get_code_equation, (get_code_equation p ((q, (k, v)) :: rest)).
-    destruct (Pos.eqb p q); [reflexivity|exact IH].
-Qed.
 
 (** Mapping applies its function to every present value. *)
 Theorem get_map {K V W} (E : encoding K) (f : V -> W) k (m : t K V) :
   get E k (map f m) = option_map f (get E k m).
 Proof.
-  rewrite !get_equation. apply get_code_map.
+  rewrite !get_equation, !get_code_trie.
+  unfold map, map_c.
+  rewrite TrieMerge.get_map. destruct (Trie.get (encode E k) m) as [[a v]|]; reflexivity.
 Qed.
 
-Local Lemma sorted_map {A B} (R : A -> A -> Prop) (S : B -> B -> Prop) f xs :
-  (forall x y, R x y -> S (f x) (f y)) ->
-  StronglySorted R xs -> StronglySorted S (List.map f xs).
-Proof.
-  intros Hf Hsort. induction Hsort as [|x xs Hsort IH Hafter]; cbn; constructor.
-  - exact IH.
-  - rewrite Forall_forall in Hafter |- *. intros y Hin.
-    apply in_map_iff in Hin as [a [<- Hin]]. now apply Hf, Hafter.
-Qed.
-
-(** Value mapping maintains both invariants. *)
+(** Value mapping retains every stored key. *)
 Theorem wf_map {K V W} (E : encoding K) (f : V -> W) (m : t K V) :
   wf E m -> wf E (map f m).
 Proof.
-  intros [Hcodes Hsort]. rewrite map_equation. split.
-  - rewrite Forall_forall in Hcodes |- *. intros e Hin.
-    apply in_map_iff in Hin as [[p [k v]] [<- Hin]]. exact (Hcodes _ Hin).
-  - eapply sorted_map; [|exact Hsort]. intros [p [k v]] [q [a w]] H. exact H.
+  intros Hwf p a w. unfold map, map_c. rewrite TrieMerge.get_map.
+  destruct (Trie.get p m) as [[k v]|] eqn:Hget; cbn; intro Hpair; try discriminate.
+  injection Hpair as <- <-. now apply (Hwf p k v).
 Qed.
 
-Fixpoint elements_c {K V} (m : t K V) : Cost.t (list (K * V)) :=
-  match m with
-  | [] => Cost.ret []
-  | (_, kv) :: rest =>
-    Cost.step ;; Cost.map (cons kv) (elements_c rest)
-  end.
-
+(** Enumeration avoids constructing trie codes because stored pairs already contain keys. *)
+Definition elements_c {K V} (m : t K V) :=
+  let* rev := TrieMerge.fold_values_c (fun acc kv => Cost.ret (kv :: acc)) m [] in rev_c rev.
 Definition elements {K V} (m : t K V) := Cost.value (elements_c m).
-
-(** Enumeration drops codes without changing traversal order. *)
-Local Lemma elements_equation {K V} (m : t K V) : elements m = List.map snd m.
-Proof.
-  induction m as [|[p kv] rest IH]; unfold elements in *; cbn [elements_c List.map];
-    autorewrite with galois_cost; now rewrite ?IH.
-Qed.
-
-Fixpoint size_c {K V} (m : t K V) : Cost.t nat :=
-  match m with
-  | [] => Cost.ret 0
-  | _ :: rest => Cost.step ;; Cost.map S (size_c rest)
-  end.
+Definition size_c {K V} (m : t K V) := TrieMerge.size_c m.
 Definition size {K V} (m : t K V) := Cost.value (size_c m).
-Definition is_empty_c {K V} (m : t K V) :=
-  Cost.ret (match m with [] => true | _ :: _ => false end).
+Definition is_empty_c {K V} (m : t K V) := Cost.ret (Trie.is_empty m).
 Definition is_empty {K V} (m : t K V) := Cost.value (is_empty_c m).
-
-Fixpoint fold_c {K V B} (f_c : B -> K -> V -> Cost.t B) (m : t K V) (b : B) :=
-  match m with
-  | [] => Cost.ret b
-  | (_, (k, v)) :: rest =>
-    Cost.step ;;
-    Cost.step ;;
-    let* b' := f_c b k v in fold_c f_c rest b'
-  end.
+Definition fold_c {K V B} (f_c : B -> K -> V -> Cost.t B) (m : t K V) (b : B) :=
+  TrieMerge.fold_values_c (fun acc kv => f_c acc (fst kv) (snd kv)) m b.
 Definition fold {K V B} (f : B -> K -> V -> B) (m : t K V) b :=
   Cost.value (fold_c (fun b k v => Cost.lift (fun _ => 1%N) (f b k) v) m b).
+
+Local Lemma elements_equation {K V} (m : t K V) :
+  elements m = List.map snd (TrieMerge.elements m).
+Proof.
+  unfold elements, elements_c. rewrite Cost.value_bind, value_rev_c.
+  rewrite TrieMerge.fold_values_entries, TrieMerge.elements_entries.
+  generalize (TrieMerge.entries m). intro xs.
+  assert (H : forall acc, fold_left (fun acc pv => snd pv :: acc) xs acc =
+    List.rev (List.map snd xs) ++ acc).
+  { induction xs as [|x xs IH]; intro acc; cbn [fold_left List.map rev].
+    - reflexivity.
+    - rewrite IH, <- app_assoc. reflexivity. }
+  rewrite H, app_nil_r, rev_involutive. reflexivity.
+Qed.
 
 (** Size equals the length of enumeration. *)
 Theorem size_elements {K V} (m : t K V) : size m = length (elements m).
 Proof.
-  rewrite elements_equation, length_map.
-  induction m as [|e rest IH]; unfold size in *; cbn [size_c length];
-    autorewrite with galois_cost; now rewrite ?IH.
+  rewrite elements_equation, length_map. apply TrieMerge.size_elements.
 Qed.
 
 (** Folding processes the public enumeration from left to right. *)
 Theorem fold_elements {K V B} (f : B -> K -> V -> B) (m : t K V) b :
   fold f m b = fold_left (fun b kv => f b (fst kv) (snd kv)) (elements m) b.
 Proof.
-  rewrite elements_equation. revert b.
-  induction m as [|[p [k v]] rest IH]; intro b; unfold fold in *;
-    cbn [fold_c List.map fold_left fst snd]; autorewrite with galois_cost;
-    [reflexivity|apply IH].
+  unfold fold, fold_c. rewrite TrieMerge.fold_values_entries, elements_equation.
+  rewrite TrieMerge.elements_entries.
+  generalize (TrieMerge.entries m). intro xs. revert b.
+  induction xs as [|x xs IH]; intro b; cbn [List.map fold_left]; auto.
 Qed.
 
-Local Lemma get_code_in {K V} p (m : t K V) v :
-  get_code p m = Some v -> exists k, In (p, (k, v)) m.
+Local Lemma get_pair {K V} (E : encoding K) (HE : encoding_laws E) (m : t K V) k v :
+  wf E m -> get E k m = Some v -> Trie.get (encode E k) m = Some (k, v).
 Proof.
-  induction m as [|[q [k w]] rest IH]; rewrite get_code_equation; [discriminate|].
-  destruct (Pos.eqb p q) eqn:Hpq.
-  - apply Pos.eqb_eq in Hpq. intro H. injection H as ->. subst q. exists k. now left.
-  - intro H. destruct (IH H) as [a Hin]. exists a. now right.
-Qed.
-
-Local Lemma in_get_code {K V} p k (v : V) (m : t K V) :
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) m ->
-  In (p, (k, v)) m -> get_code p m = Some v.
-Proof.
-  induction m as [|[q [a w]] rest IH]; intros Hsort Hin; [contradiction|].
-  inversion Hsort as [|? ? Htail Hafter]; subst.
-  destruct Hin as [Heq|Hin].
-  - injection Heq as -> -> ->. rewrite get_code_equation, Pos.eqb_refl. reflexivity.
-  - rewrite get_code_equation. destruct (Pos.eqb p q) eqn:Hpq.
-    + apply Pos.eqb_eq in Hpq. subst p.
-      rewrite Forall_forall in Hafter. specialize (Hafter _ Hin).
-      cbn in Hafter. rewrite compare_refl in Hafter. discriminate.
-    + now apply IH.
+  intros Hwf. rewrite get_equation, get_code_trie.
+  destruct (Trie.get (encode E k) m) as [[a w]|] eqn:Hget; cbn; intro H; try discriminate.
+  injection H as <-. assert (a = k).
+  { apply (encode_injective HE). exact (Hwf _ _ _ Hget). }
+  now subst a.
 Qed.
 
 (** Public bindings are exactly the successful key lookups. *)
 Theorem elements_spec {K V} (E : encoding K) (HE : encoding_laws E) k v (m : t K V) :
   wf E m -> (In (k, v) (elements m) <-> get E k m = Some v).
 Proof.
-  intros [Hcodes Hsort]. rewrite elements_equation, get_equation. split.
+  intro Hwf. rewrite elements_equation. split.
   - intro Hin. apply in_map_iff in Hin as [[p [a w]] [Heq Hin]].
-    cbn in Heq. injection Heq as -> ->.
-    rewrite Forall_forall in Hcodes. specialize (Hcodes _ Hin). cbn in Hcodes.
-    subst p. eapply in_get_code; eassumption.
-  - intro Hget. destruct (get_code_in _ _ _ Hget) as [a Hin].
-    rewrite Forall_forall in Hcodes. specialize (Hcodes _ Hin). cbn in Hcodes.
-    apply (encode_injective HE) in Hcodes. subst a.
-    apply in_map_iff. exists (encode E k, (k, v)). split; [reflexivity|exact Hin].
+    cbn in Heq. injection Heq as Hkey Hvalue. subst a w.
+    apply TrieMerge.elements_spec in Hin.
+    change (option_map snd (Trie.get (encode E k) m) = Some v).
+    rewrite (Hwf _ _ _ Hin), Hin. reflexivity.
+  - intro Hget. apply in_map_iff. exists (encode E k, (k, v)).
+    split; [reflexivity|]. apply TrieMerge.elements_spec. now apply (get_pair E HE).
+Qed.
+
+Local Lemma code_lt p q : TrieMerge.key_lt p q <-> code_compare p q = Lt.
+Proof.
+  revert q. induction p; intro q; destruct q; rewrite code_compare_equation;
+    cbn [TrieMerge.key_lt]; try apply IHp; intuition discriminate.
 Qed.
 
 (** Enumeration has the canonical strict trie order on encoded keys. *)
@@ -612,239 +434,84 @@ Theorem elements_sorted {K V} (E : encoding K) (m : t K V) :
   StronglySorted (fun a b => code_compare (encode E (fst a)) (encode E (fst b)) = Lt)
     (elements m).
 Proof.
-  intros [Hcodes Hsort]. rewrite elements_equation.
-  induction Hsort as [|[p [k v]] rest Hsort IH Hafter];
-    cbn [List.map fst snd]; [constructor|].
-  inversion Hcodes as [|? ? Hp Hrest]; subst.
-  constructor; [now apply IH|].
-  rewrite Forall_forall in Hrest, Hafter |- *. intros [a w] Hin.
-  apply in_map_iff in Hin as [[q [b u]] [Heq Hin]].
-  cbn in Heq. injection Heq as -> ->.
-  specialize (Hafter _ Hin). specialize (Hrest _ Hin).
-  cbn [fst snd] in Hp, Hafter, Hrest.
-  cbn [fst snd].
-  now rewrite <- Hp, <- Hrest.
-Qed.
-
-Local Lemma raw_ext {K V} (m n : t K V) :
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) m ->
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) n ->
-  (forall e, In e m <-> In e n) -> m = n.
-Proof.
-  revert n. induction m as [|[p kv] rest IH]; intros [|[q av] tail] Hm Hn Heq.
-  - reflexivity.
-  - exfalso. specialize (Heq (q, av)). cbn in Heq. tauto.
-  - exfalso. specialize (Heq (p, kv)). cbn in Heq. tauto.
-  - inversion Hm as [|? ? Hrest Hp]; subst.
-    inversion Hn as [|? ? Htail Hq]; subst.
-    assert (Hpin : In (p, kv) ((q, av) :: tail)) by (apply Heq; now left).
-    assert (Hqin : In (q, av) ((p, kv) :: rest)) by (apply Heq; now left).
-    destruct Hpin as [Hhead|Hpin]; [injection Hhead as -> ->|].
-    + f_equal. apply IH; try assumption. intro e. specialize (Heq e).
-      cbn [In] in Heq. destruct (Pos.eq_dec p (fst e)) as [Hcode|Hcode].
-      *
-        split; intro Hin; exfalso;
-          first [rewrite Forall_forall in Hp; specialize (Hp _ Hin)
-                |rewrite Forall_forall in Hq; specialize (Hq _ Hin)];
-          cbn [fst] in *; rewrite <- Hcode, compare_refl in *; discriminate.
-      * assert (Hne : (p, kv) <> e).
-        { intro H. subst e. apply Hcode. reflexivity. }
-        tauto.
-    + destruct Hqin as [Hhead|Hqin].
-      * injection Hhead as -> ->. rewrite Forall_forall in Hq.
-        specialize (Hq _ Hpin). cbn in Hq. rewrite compare_refl in Hq. discriminate.
-      * rewrite Forall_forall in Hp, Hq.
-        specialize (Hp _ Hqin). specialize (Hq _ Hpin). cbn in Hp, Hq.
-        pose proof (code_compare_trans _ _ _ Hp Hq) as Hpp.
-        rewrite compare_refl in Hpp. discriminate.
+  intro Hwf. rewrite elements_equation.
+  pose proof (TrieMerge.elements_sorted m) as Hsort.
+  assert (Hcodes : forall p k v, In (p, (k, v)) (TrieMerge.elements m) -> encode E k = p).
+  { intros p k v Hin. apply (Hwf p k v). now apply TrieMerge.elements_spec. }
+  remember (TrieMerge.elements m) as xs. clear Heqxs.
+  induction Hsort as [|[p [k v]] xs Hsort IH Hafter]; cbn [List.map snd].
+  - constructor.
+  - constructor.
+    + apply IH. intros q a w Hin. exact (Hcodes q a w (or_intror Hin)).
+    + apply Forall_forall. intros [a w] Hin.
+      apply in_map_iff in Hin as [[q [b u]] [Heq Hin]].
+      cbn in Heq. injection Heq as Hkey Hvalue. subst b u.
+      cbn [fst].
+      rewrite (Hcodes p k v (or_introl eq_refl)), (Hcodes q a w (or_intror Hin)).
+      apply code_lt. rewrite Forall_forall in Hafter. exact (Hafter _ Hin).
 Qed.
 
 (** Well-formed maps with identical lookups are equal as computational values. *)
 Theorem ext {K V} (E : encoding K) (HE : encoding_laws E) (m n : t K V) :
   wf E m -> wf E n -> (forall k, get E k m = get E k n) -> m = n.
 Proof.
-  intros [Hm Hms] [Hn Hns] Hget. apply raw_ext; try assumption.
-  intros [p [k v]]. split; intro Hin.
-  - pose proof Hm as Hcodes. rewrite Forall_forall in Hcodes.
-    specialize (Hcodes _ Hin). cbn in Hcodes. subst p.
-    assert (Hlookup : get E k n = Some v).
-    { rewrite <- Hget, get_equation. eapply in_get_code; eassumption. }
-    rewrite get_equation in Hlookup.
-    destruct (get_code_in _ _ _ Hlookup) as [a Ha].
-    rewrite Forall_forall in Hn. specialize (Hn _ Ha). cbn in Hn.
-    apply (encode_injective HE) in Hn. now subst a.
-  - pose proof Hn as Hcodes. rewrite Forall_forall in Hcodes.
-    specialize (Hcodes _ Hin). cbn in Hcodes. subst p.
-    assert (Hlookup : get E k m = Some v).
-    { rewrite Hget, get_equation. eapply in_get_code; eassumption. }
-    rewrite get_equation in Hlookup.
-    destruct (get_code_in _ _ _ Hlookup) as [a Ha].
-    rewrite Forall_forall in Hm. specialize (Hm _ Ha). cbn in Hm.
-    apply (encode_injective HE) in Hm. now subst a.
+  intros Hm Hn Heq. apply Trie.extensionality. intro p.
+  destruct (Trie.get p m) as [[k v]|] eqn:Hleft;
+    destruct (Trie.get p n) as [[a w]|] eqn:Hright; try reflexivity.
+  - pose proof (Hm _ _ _ Hleft) as Hcode.
+    pose proof (Hn _ _ _ Hright) as Hcode'.
+    assert (k = a) by (apply (encode_injective HE); congruence).
+    subst a. specialize (Heq k).
+    change (option_map snd (Trie.get (encode E k) m) =
+      option_map snd (Trie.get (encode E k) n)) in Heq.
+    rewrite Hcode, Hleft, Hright in Heq. cbn in Heq. congruence.
+  - specialize (Heq k).
+    change (option_map snd (Trie.get (encode E k) m) =
+      option_map snd (Trie.get (encode E k) n)) in Heq.
+    rewrite (Hm _ _ _ Hleft), Hleft, Hright in Heq. discriminate.
+  - specialize (Heq a).
+    change (option_map snd (Trie.get (encode E a) m) =
+      option_map snd (Trie.get (encode E a) n)) in Heq.
+    rewrite (Hn _ _ _ Hright), Hleft, Hright in Heq. discriminate.
 Qed.
 
-Fixpoint filter_map_c {K V W} (f_c : V -> Cost.t (option W)) (m : t K V)
-    : Cost.t (t K W) :=
-  match m with
-  | [] => Cost.ret []
-  | (p, (k, v)) :: rest =>
-    Cost.step ;;
-    Cost.step ;;
-    let* w := f_c v in
-    let* tail := filter_map_c f_c rest in
-    Cost.ret (match w with None => tail | Some x => (p, (k, x)) :: tail end)
-  end.
-
+Definition filter_map_c {K V W} (f_c : V -> Cost.t (option W)) (m : t K V) :=
+  TrieMerge.filter_map_c
+    (fun kv => Cost.map (option_map (fun w => (fst kv, w))) (f_c (snd kv))) m.
 Definition filter_map {K V W} (f : V -> option W) (m : t K V) :=
   Cost.value (filter_map_c (Cost.lift (fun _ => 1%N) f) m).
 
-(** Filtering values keeps precisely the bindings whose callback succeeds. *)
-Local Lemma filter_map_equation {K V W} (f : V -> option W) (m : t K V) :
-  filter_map f m =
-  match m with
-  | [] => []
-  | (p, (k, v)) :: rest =>
-    match f v with
-    | None => filter_map f rest
-    | Some w => (p, (k, w)) :: filter_map f rest
-    end
-  end.
-Proof.
-  destruct m as [|[p [k v]] rest]; [reflexivity|].
-  unfold filter_map. cbn [filter_map_c]. autorewrite with galois_cost. reflexivity.
-Qed.
-
-Local Lemma filter_map_members {K V W} (f : V -> option W) (m : t K V) p k w :
-  In (p, (k, w)) (filter_map f m) -> exists v, In (p, (k, v)) m /\ f v = Some w.
-Proof.
-  induction m as [|[q [a v]] rest IH]; rewrite filter_map_equation; [contradiction|].
-  destruct (f v) as [u|] eqn:Hf.
-  - intros [Hhead|Hin].
-    + injection Hhead as -> -> ->. exists v. split; [now left|exact Hf].
-    + destruct (IH Hin) as [x [Hx Hfx]]. exists x. split; [now right|exact Hfx].
-  - intro Hin. destruct (IH Hin) as [x [Hx Hfx]]. exists x. split; [now right|exact Hfx].
-Qed.
-
-(** Filtering mapped values maintains code consistency and order. *)
+(** Filtering mapped values maintains code consistency. *)
 Theorem wf_filter_map {K V W} (E : encoding K) (f : V -> option W) (m : t K V) :
   wf E m -> wf E (filter_map f m).
 Proof.
-  intros [Hcodes Hsort]. split.
-  - rewrite Forall_forall in Hcodes |- *. intros [p [k w]] Hin.
-    apply filter_map_members in Hin as [v [Hin _]]. exact (Hcodes _ Hin).
-  - clear Hcodes. induction Hsort as [|[p [k v]] rest Hsort IH Hafter];
-      rewrite filter_map_equation; [constructor|].
-    destruct (f v) as [w|]; [constructor|]; try exact IH.
-    rewrite Forall_forall in Hafter |- *. intros [q [a x]] Hin.
-    apply filter_map_members in Hin as [u [Hin _]]. exact (Hafter _ Hin).
+  intros Hwf p a w. unfold filter_map, filter_map_c. rewrite TrieMerge.get_filter.
+  destruct (Trie.get p m) as [[k v]|] eqn:Hget; [|discriminate].
+  cbn. destruct (f v) as [u|]; cbn; intro Hpair; try discriminate.
+  injection Hpair as <- <-. now apply (Hwf p k v).
 Qed.
 
-Local Lemma get_code_filter_map {K V W} (f : V -> option W) p (m : t K V) :
-  StronglySorted (fun a b => code_compare (fst a) (fst b) = Lt) m ->
-  get_code p (filter_map f m) =
-    match get_code p m with None => None | Some v => f v end.
-Proof.
-  induction m as [|[q [k v]] rest IH]; intro Hsort;
-    rewrite filter_map_equation; [reflexivity|].
-  inversion Hsort as [|? ? Hrest Hafter]; subst.
-  rewrite (get_code_equation p ((q, (k, v)) :: rest)).
-  destruct (Pos.eqb p q) eqn:Hpq.
-  - apply Pos.eqb_eq in Hpq. subst p. destruct (f v) as [w|] eqn:Hf.
-    + rewrite get_code_equation, Pos.eqb_refl. reflexivity.
-    + rewrite IH by exact Hrest.
-      assert (Hnone : get_code q rest = None).
-      { apply get_code_absent. rewrite Forall_forall in Hafter |- *.
-        intros [r av] Hin Heq. cbn in Heq. subst r.
-        specialize (Hafter _ Hin). cbn in Hafter.
-        rewrite compare_refl in Hafter. discriminate. }
-      now rewrite Hnone.
-  - destruct (f v) as [w|]; [rewrite get_code_equation, Hpq|]; now apply IH.
-Qed.
-
-(** Combining recursively updates a sorted right-only result at every left code.
-    This reference favors a small proof over the later trie's shared traversal. *)
-Fixpoint combine_c {K V W U} (f_c : option V -> option W -> Cost.t (option U))
-    (m : t K V) (n : t K W) : Cost.t (t K U) :=
-  match m with
-  | [] => filter_map_c (fun w => f_c None (Some w)) n
-  | (p, (k, v)) :: rest =>
-    Cost.step ;;
-    let* acc := combine_c f_c rest n in
-    let* rv := get_code_c p n in
-    Cost.step ;;
-    let* new := f_c (Some v) rv in
-    match new with
-    | None => remove_code_c p acc
-    | Some u => set_code_c p k u acc
-    end
+(** Pair combination selects the first available stored key and cannot invent a key. *)
+Definition combine_pair_c {K V W U} (f : option V -> option W -> Cost.t (option U))
+    (a : option (K * V)) (b : option (K * W)) :=
+  match a, b with
+  | Some (k, v), _ =>
+    Cost.map (option_map (fun u => (k, u))) (f (Some v) (option_map snd b))
+  | None, Some (k, w) =>
+    Cost.map (option_map (fun u => (k, u))) (f None (Some w))
+  | None, None => Cost.ret None
   end.
 
+Definition combine_c {K V W U} (f_c : option V -> option W -> Cost.t (option U))
+    (m : t K V) (n : t K W) := TrieMerge.combine_c (combine_pair_c f_c) m n.
 Definition combine {K V W U} (f : option V -> option W -> option U)
     (m : t K V) (n : t K W) :=
   Cost.value (combine_c (fun a b => Cost.lift (fun _ => 1%N) (f a) b) m n).
 
-(** The reference combination processes left bindings after the right-only base. *)
-Local Lemma combine_equation {K V W U} (f : option V -> option W -> option U)
-    (m : t K V) (n : t K W) :
-  combine f m n =
-  match m with
-  | [] => filter_map (fun w => f None (Some w)) n
-  | (p, (k, v)) :: rest =>
-    match f (Some v) (get_code p n) with
-    | None => remove_code p (combine f rest n)
-    | Some u => set_code p k u (combine f rest n)
-    end
-  end.
+Local Lemma drop_pair {K U} (k : K) (o : option U) :
+  option_map snd (option_map (fun u => (k, u)) o) = o.
 Proof.
-  destruct m as [|[p [k v]] rest]; [reflexivity|].
-  unfold combine at 1. cbn [combine_c]. autorewrite with galois_cost.
-  fold (get_code p n).
-  destruct (f (Some v) (get_code p n)); reflexivity.
-Qed.
-
-(** Combination keeps the invariant for arbitrary callback results. *)
-Theorem wf_combine {K V W U} (E : encoding K) (f : option V -> option W -> option U)
-    (m : t K V) (n : t K W) :
-  wf E m -> wf E n -> wf E (combine f m n).
-Proof.
-  induction m as [|[p [k v]] rest IH]; intros Hm Hn; rewrite combine_equation.
-  - now apply wf_filter_map.
-  - destruct Hm as [Hcodes Hsort].
-    inversion Hcodes as [|? ? Hp Hrest]; subst.
-    inversion Hsort as [|? ? Htail Hafter]; subst.
-    specialize (IH (conj Hrest Htail) Hn). cbn in Hp. subst p.
-    destruct (f (Some v) (get_code (encode E k) n)).
-    + rewrite <- set_equation. now apply wf_set.
-    + rewrite <- remove_equation. now apply wf_remove.
-Qed.
-
-Local Lemma get_combine_code {K V W U} (E : encoding K)
-    (f : option V -> option W -> option U) p (m : t K V) (n : t K W) :
-  wf E m -> wf E n -> f None None = None ->
-  get_code p (combine f m n) = f (get_code p m) (get_code p n).
-Proof.
-  induction m as [|[q [k v]] rest IH]; intros Hm Hn Hnone; rewrite combine_equation.
-  - rewrite get_code_filter_map by exact (proj2 Hn).
-    change (match get_code p n with
-      | Some v => f None (Some v)
-      | None => None
-      end = f None (get_code p n)).
-    destruct (get_code p n); [reflexivity|symmetry; exact Hnone].
-  - destruct Hm as [Hcodes Hsort].
-    inversion Hcodes as [|? ? Hq Hrest]; subst.
-    inversion Hsort as [|? ? Htail Hafter]; subst.
-    pose proof (wf_combine E f rest n (conj Hrest Htail) Hn) as Hacc.
-    specialize (IH (conj Hrest Htail) Hn Hnone).
-    destruct (f (Some v) (get_code q n)) as [u|] eqn:Hf.
-    + rewrite get_set_code by exact (proj2 Hacc).
-      rewrite (get_code_equation p ((q, (k, v)) :: rest)).
-      destruct (Pos.eqb p q) eqn:Hpq; [apply Pos.eqb_eq in Hpq; subst p|].
-      * symmetry. exact Hf.
-      * exact IH.
-    + rewrite get_remove_code, (get_code_equation p ((q, (k, v)) :: rest)).
-      destruct (Pos.eqb p q) eqn:Hpq; [apply Pos.eqb_eq in Hpq; subst p|].
-      * symmetry. exact Hf.
-      * exact IH.
+  destruct o; reflexivity.
 Qed.
 
 (** Combination computes each optional value independently and cannot invent absent keys. *)
@@ -853,25 +520,26 @@ Theorem get_combine {K V W U} (E : encoding K)
   wf E m -> wf E n -> f None None = None ->
   get E k (combine f m n) = f (get E k m) (get E k n).
 Proof.
-  rewrite !get_equation. apply get_combine_code.
+  intros Hm Hn Hnone. rewrite !get_equation, !get_code_trie.
+  unfold combine, combine_c.
+  rewrite TrieMerge.get_combine by reflexivity.
+  destruct (Trie.get (encode E k) m) as [[a v]|];
+    destruct (Trie.get (encode E k) n) as [[b w]|]; cbn [combine_pair_c];
+    autorewrite with galois_cost; cbn [option_map snd]; rewrite ?drop_pair; congruence.
 Qed.
 
-Local Lemma filter_map_value_ext {K V W} (f g : V -> Cost.t (option W)) (m : t K V) :
-  (forall v, Cost.value (f v) = Cost.value (g v)) ->
-  Cost.value (filter_map_c f m) = Cost.value (filter_map_c g m).
+(** Combination selects only a key that already has the selected position. *)
+Theorem wf_combine {K V W U} (E : encoding K) (f : option V -> option W -> option U)
+    (m : t K V) (n : t K W) :
+  wf E m -> wf E n -> wf E (combine f m n).
 Proof.
-  intro Hfg. induction m as [|[p [k v]] rest IH]; [reflexivity|].
-  cbn [filter_map_c]. autorewrite with galois_cost. now rewrite Hfg, IH.
-Qed.
-
-Local Lemma combine_value_ext {K V W U}
-    (f g : option V -> option W -> Cost.t (option U)) (m : t K V) (n : t K W) :
-  (forall a b, Cost.value (f a b) = Cost.value (g a b)) ->
-  Cost.value (combine_c f m n) = Cost.value (combine_c g m n).
-Proof.
-  intro Hfg. induction m as [|[p [k v]] rest IH].
-  - cbn [combine_c]. apply filter_map_value_ext. intro w. apply Hfg.
-  - cbn [combine_c]. autorewrite with galois_cost. rewrite IH, Hfg. reflexivity.
+  intros Hm Hn p a u. unfold combine, combine_c.
+  rewrite TrieMerge.get_combine by reflexivity.
+  destruct (Trie.get p m) as [[k v]|] eqn:Hl;
+    destruct (Trie.get p n) as [[b w]|] eqn:Hr; cbn [combine_pair_c];
+    autorewrite with galois_cost; try discriminate;
+    destruct (f _ _); cbn; intro Hpair; try discriminate;
+    injection Hpair as <- <-; eauto.
 Qed.
 
 (** Costed combination depends only on the values returned by its callback. *)
@@ -879,8 +547,9 @@ Theorem combine_c_value {K V W U}
     (f_c : option V -> option W -> Cost.t (option U)) (m : t K V) (n : t K W) :
   Cost.value (combine_c f_c m n) = combine (fun a b => Cost.value (f_c a b)) m n.
 Proof.
-  unfold combine. apply combine_value_ext. intros a b.
-  now rewrite Cost.value_lift.
+  apply Trie.extensionality. intro p. unfold combine, combine_c.
+  rewrite !TrieMerge.get_combine by reflexivity.
+  destruct (Trie.get p m) as [[a v]|], (Trie.get p n) as [[b w]|]; reflexivity.
 Qed.
 
 Definition union_opt {V} (f : V -> V -> V) (a b : option V) :=
@@ -896,41 +565,34 @@ Definition diff_opt {V W} (a : option V) (b : option W) :=
   match b with None => a | Some _ => None end.
 
 Definition union_with_c {K V} (f_c : V -> V -> Cost.t V) (m n : t K V) :=
-  combine_c (fun a b =>
-    match a, b with
-    | Some v, Some w => Cost.map (@Some V) (f_c v w)
-    | Some v, None => Cost.ret (Some v)
-    | None, Some w => Cost.ret (Some w)
-    | None, None => Cost.ret None
-    end) m n.
+  TrieMerge.union_with_c
+    (fun a b => Cost.map (fun v => (fst a, v)) (f_c (snd a) (snd b))) m n.
 Definition union_with {K V} (f : V -> V -> V) (m n : t K V) :=
   Cost.value (union_with_c (fun v w => Cost.lift (fun _ => 1%N) (f v) w) m n).
 Definition inter_with_c {K V W U} (f_c : V -> W -> Cost.t U) (m : t K V) (n : t K W) :=
-  combine_c (fun a b =>
-    match a, b with
-    | Some v, Some w => Cost.map (@Some U) (f_c v w)
-    | _, _ => Cost.ret None
-    end) m n.
+  TrieMerge.inter_with_c
+    (fun a b => Cost.map (fun v => (fst a, v)) (f_c (snd a) (snd b))) m n.
 Definition inter_with {K V W U} (f : V -> W -> U) (m : t K V) (n : t K W) :=
   Cost.value (inter_with_c (fun v w => Cost.lift (fun _ => 1%N) (f v) w) m n).
-Definition diff_c {K V W} (m : t K V) (n : t K W) :=
-  combine_c (fun a b => Cost.ret (diff_opt a b)) m n.
+Definition diff_c {K V W} (m : t K V) (n : t K W) := TrieMerge.diff_c m n.
 Definition diff {K V W} (m : t K V) (n : t K W) := Cost.value (diff_c m n).
 
 (** Union specializes optional combination to retaining one-sided values. *)
 Theorem union_with_equation {K V} f (m n : t K V) :
   union_with f m n = combine (union_opt f) m n.
 Proof.
-  unfold union_with, union_with_c, combine. apply combine_value_ext.
-  intros [v|] [w|]; reflexivity.
+  apply Trie.extensionality. intro p. unfold union_with, union_with_c, combine, combine_c.
+  rewrite TrieMerge.union_get, TrieMerge.get_combine by reflexivity.
+  destruct (Trie.get p m) as [[a v]|], (Trie.get p n) as [[b w]|]; reflexivity.
 Qed.
 
 (** Intersection specializes optional combination to shared values. *)
 Theorem inter_with_equation {K V W U} (f : V -> W -> U) (m : t K V) (n : t K W) :
   inter_with f m n = combine (inter_opt f) m n.
 Proof.
-  unfold inter_with, inter_with_c, combine. apply combine_value_ext.
-  intros [v|] [w|]; reflexivity.
+  apply Trie.extensionality. intro p. unfold inter_with, inter_with_c, combine, combine_c.
+  rewrite TrieMerge.inter_get, TrieMerge.get_combine by reflexivity.
+  destruct (Trie.get p m) as [[a v]|], (Trie.get p n) as [[b w]|]; reflexivity.
 Qed.
 
 (** Union keeps one-sided bindings and combines shared bindings. *)
@@ -952,7 +614,10 @@ Qed.
 Local Lemma diff_combine {K V W} (m : t K V) (n : t K W) :
   diff m n = combine diff_opt m n.
 Proof.
-  unfold diff, diff_c, combine. apply combine_value_ext. reflexivity.
+  apply Trie.extensionality. intro p. unfold diff, diff_c, combine, combine_c.
+  fold (TrieMerge.diff m n).
+  rewrite TrieMerge.diff_get, TrieMerge.get_combine by reflexivity.
+  destruct (Trie.get p m) as [[a v]|], (Trie.get p n) as [[b w]|]; reflexivity.
 Qed.
 
 (** Difference drops every binding whose code is present on the right. *)
@@ -1047,17 +712,9 @@ Proof.
   rewrite get_empty. reflexivity.
 Qed.
 
-Fixpoint forall2_c {K V W} (r_c : V -> option W -> Cost.t bool)
-    (m : t K V) (n : t K W) : Cost.t bool :=
-  match m with
-  | [] => Cost.ret true
-  | (p, (_, v)) :: rest =>
-    Cost.step ;;
-    let* w := get_code_c p n in
-    Cost.step ;;
-    let* yes := r_c v w in
-    if yes then forall2_c r_c rest n else Cost.ret false
-  end.
+Definition forall2_c {K V W} (r_c : V -> option W -> Cost.t bool)
+    (m : t K V) (n : t K W) :=
+  TrieMerge.forall2_c (fun a b => r_c (snd a) (option_map snd b)) m n.
 Definition forall2 {K V W} (r : V -> option W -> bool) (m : t K V) (n : t K W) :=
   Cost.value (forall2_c (fun v w => Cost.lift (fun _ => 1%N) (r v) w) m n).
 Definition beq_c {K V} (f_c : V -> V -> Cost.t bool) (m n : t K V) :=
@@ -1067,43 +724,13 @@ Definition beq_c {K V} (f_c : V -> V -> Cost.t bool) (m n : t K V) :=
 Definition beq {K V} (f : V -> V -> bool) (m n : t K V) :=
   Cost.value (beq_c (fun a b => Cost.lift (fun _ => 1%N) (f a) b) m n).
 
-(** Comparison stops on the first rejected binding. *)
-Local Lemma forall2_equation {K V W} r (m : t K V) (n : t K W) :
-  forall2 r m n =
-  match m with
-  | [] => true
-  | (p, (_, v)) :: rest => r v (get_code p n) && forall2 r rest n
-  end.
-Proof.
-  destruct m as [|[p [k v]] rest]; [reflexivity|].
-  unfold forall2. cbn [forall2_c]. autorewrite with galois_cost.
-  fold (get_code p n). destruct (r v (get_code p n)); reflexivity.
-Qed.
-
 (** Costed comparison depends only on the values returned by its callback. *)
 Theorem forall2_c_value {K V W} (r_c : V -> option W -> Cost.t bool)
     (m : t K V) (n : t K W) :
   Cost.value (forall2_c r_c m n) = forall2 (fun v w => Cost.value (r_c v w)) m n.
 Proof.
-  induction m as [|[p [k v]] rest IH]; rewrite forall2_equation.
-  - reflexivity.
-  - cbn [forall2_c]. autorewrite with galois_cost. fold (get_code p n).
-    destruct (Cost.value (r_c v (get_code p n))); cbn [andb]; [exact IH|reflexivity].
-Qed.
-
-Local Lemma forall2_entries {K V W} r (m : t K V) (n : t K W) :
-  forall2 r m n = true <->
-  forall p k v, In (p, (k, v)) m -> r v (get_code p n) = true.
-Proof.
-  induction m as [|[p [k v]] rest IH]; rewrite forall2_equation.
-  - cbn. intuition.
-  - rewrite andb_true_iff, IH. split.
-    + intros [Hhead Htail] q a w [Heq|Hin].
-      * injection Heq as -> -> ->. exact Hhead.
-      * exact (Htail q a w Hin).
-    + intro H. split.
-      * apply (H p k v). now left.
-      * intros q a w Hin. apply (H q a w). now right.
+  apply eq_true_iff_eq. unfold forall2, forall2_c.
+  rewrite !TrieMerge.forall2_spec. reflexivity.
 Qed.
 
 (** Comparison accepts exactly when every left binding satisfies the supplied relation. *)
@@ -1113,14 +740,13 @@ Theorem forall2_spec {K V W} (E : encoding K) (HE : encoding_laws E)
   (forall2 r m n = true <->
     forall k v, get E k m = Some v -> r v (get E k n) = true).
 Proof.
-  intros [Hcodes Hsort]. rewrite forall2_entries. split.
-  - intros H k v Hget. rewrite get_equation in Hget.
-    destruct (get_code_in _ _ _ Hget) as [a Hin].
-    rewrite get_equation. exact (H _ _ _ Hin).
-  - intros H p k v Hin. rewrite Forall_forall in Hcodes.
-    specialize (Hcodes _ Hin). cbn [fst snd] in Hcodes. subst p.
-    rewrite <- get_equation. apply H.
-    rewrite get_equation. eapply in_get_code; eassumption.
+  intro Hwf. unfold forall2, forall2_c. rewrite TrieMerge.forall2_spec. split.
+  - intros H k v Hget. pose proof (get_pair E HE m k v Hwf Hget) as Hpair.
+    exact (H _ _ Hpair).
+  - intros H p [k v] Hget. cbn [snd].
+    pose proof (Hwf _ _ _ Hget) as Hcode. rewrite <- Hcode.
+    apply H. change (option_map snd (Trie.get (encode E k) m) = Some v).
+    now rewrite Hcode, Hget.
 Qed.
 
 (** Membership succeeds exactly when lookup succeeds. *)
@@ -1135,20 +761,22 @@ Qed.
 (** The empty map has false membership. *)
 Theorem mem_empty {K V} (E : encoding K) k : mem E k (@empty K V) = false.
 Proof.
-  reflexivity.
+  unfold mem, mem_c. rewrite Cost.value_map. change (match get E k (@empty K V) with
+    Some _ => true | None => false end = false). now rewrite get_empty.
 Qed.
 
 (** Emptiness is equivalent to absence at every key in a well-formed map. *)
 Theorem is_empty_spec {K V} (E : encoding K) (m : t K V) :
   wf E m -> (is_empty m = true <-> forall k, get E k m = None).
 Proof.
-  intro Hwf. destruct m as [|[p [k v]] rest].
-  - split; [intros _ a; apply get_empty|reflexivity].
-  - split; [discriminate|]. intro H.
-    assert (Hin : In (p, (k, v)) ((p, (k, v)) :: rest)) by now left.
-    destruct Hwf as [Hcodes Hsort]. inversion Hcodes as [|? ? Hp Htail]; subst.
-    cbn [fst snd] in Hp. specialize (H k). rewrite get_equation, <- Hp in H.
-    rewrite (in_get_code _ _ _ _ Hsort Hin) in H. discriminate.
+  intro Hwf. unfold is_empty, is_empty_c.
+  rewrite Cost.value_ret, Trie.is_empty_spec. split.
+  - intros -> k. apply get_empty.
+  - intro Hnone. apply Trie.extensionality. intro p.
+    rewrite Trie.get_empty. destruct (Trie.get p m) as [[k v]|] eqn:Hget; [|reflexivity].
+    specialize (Hnone k).
+    change (option_map snd (Trie.get (encode E k) m) = None) in Hnone.
+    rewrite (Hwf _ _ _ Hget), Hget in Hnone. discriminate.
 Qed.
 
 (** Setting increases the size exactly when its code was absent. *)
@@ -1157,145 +785,79 @@ Theorem size_set {K V} (E : encoding K) k (v : V) m :
   size (set E k v m) =
   match get E k m with None => S (size m) | Some _ => size m end.
 Proof.
-  intros [_ Hsort]. rewrite !size_elements, !elements_equation, !length_map.
-  rewrite set_equation, get_equation.
-  remember (encode E k) as p. clear Heqp.
-  induction m as [|[q [a w]] rest IH]; rewrite set_code_equation, get_code_equation.
-  - cbn [length]. reflexivity.
-  - inversion Hsort as [|? ? Htail Hafter]; subst.
-    destruct (code_compare p q) eqn:Hpq.
-    + apply code_compare_eq in Hpq. subst p. rewrite Pos.eqb_refl. reflexivity.
-    + assert (Hne : Pos.eqb p q = false).
-      { apply Pos.eqb_neq. intro H. subst p. rewrite compare_refl in Hpq. discriminate. }
-      rewrite Hne, (sorted_absent p q rest Hpq Hafter). reflexivity.
-    + assert (Hne : Pos.eqb p q = false).
-      { apply Pos.eqb_neq. intro H. subst p. rewrite compare_refl in Hpq. discriminate. }
-      rewrite Hne. cbn [length]. rewrite IH by exact Htail.
-      destruct (get_code p rest); reflexivity.
-Qed.
-
-Local Lemma filter_all {A} f (xs : list A) :
-  (forall x, In x xs -> f x = true) -> filter f xs = xs.
-Proof.
-  induction xs as [|x xs IH]; intro H; [reflexivity|].
-  cbn [filter]. rewrite H by now left. f_equal.
-  apply IH. intros a Hin. apply H. now right.
+  intro Hwf. change (TrieMerge.size (Trie.set (encode E k) (k, v) m) =
+    match option_map snd (Trie.get (encode E k) m) with
+    | None => S (TrieMerge.size m) | Some _ => TrieMerge.size m end).
+  rewrite TrieMerge.size_set. destruct (Trie.get (encode E k) m); reflexivity.
 Qed.
 
 (** Removing a present binding reduces the size by one. *)
 Theorem size_remove {K V} (E : encoding K) k (v : V) m :
   wf E m -> get E k m = Some v -> size m = S (size (remove E k m)).
 Proof.
-  intros [_ Hsort]. rewrite !size_elements, !elements_equation, !length_map.
-  rewrite remove_equation, remove_code_equation, get_equation.
-  remember (encode E k) as p. clear Heqp.
-  induction m as [|[q [a w]] rest IH]; rewrite get_code_equation; [discriminate|].
-  inversion Hsort as [|? ? Htail Hafter]; subst.
-  cbn [filter fst]. destruct (Pos.eqb p q) eqn:Hpq; cbn [negb length].
-  - intros _. apply Pos.eqb_eq in Hpq. subst p.
-    assert (Hfilter : filter (fun e => negb (Pos.eqb q (fst e))) rest = rest).
-    { apply filter_all. intros [r kv] Hin.
-      rewrite Forall_forall in Hafter. specialize (Hafter _ Hin). cbn [fst] in Hafter.
-      assert (Hne : Pos.eqb q r = false).
-      { apply Pos.eqb_neq. intro H. subst r. rewrite compare_refl in Hafter. discriminate. }
-      cbn [fst]. now rewrite Hne. }
-    now rewrite Hfilter.
-  - intro Hget. rewrite (IH Htail Hget). reflexivity.
+  intros Hwf Hget.
+  change (option_map snd (Trie.get (encode E k) m) = Some v) in Hget.
+  destruct (Trie.get (encode E k) m) as [[a w]|] eqn:Hpair; [|discriminate].
+  cbn in Hget. injection Hget as Hvalue. subst w.
+  exact (TrieMerge.size_remove (encode E k) (a, v) m Hpair).
 Qed.
 
-(** The loose backend-neutral size bound includes digit work even for an empty map. *)
+(** The loose backend-neutral size bound includes an allowance for empty maps. *)
 Definition size_cost_k : N := 2.
 
-(** The size-bound overhead constant is strictly positive. *)
+(** The backend-neutral size-bound constant is positive. *)
 Theorem size_cost_k_positive : (0 < size_cost_k)%N.
 Proof.
   reflexivity.
 Qed.
 
-Local Lemma size_length {K V} (m : t K V) : size m = length m.
-Proof.
-  rewrite size_elements, elements_equation, length_map; reflexivity.
-Qed.
-
-Local Lemma compare_bits_cost p q :
-  (Cost.ticks (code_compare_c p q) <= N.pos (Pos.size p))%N.
-Proof.
-  revert q; induction p as [p IH|p IH|]; intro q; destruct q;
-    cbn [code_compare_c Pos.size]; autorewrite with galois_cost;
-    try specialize (IH q); lia.
-Qed.
-
-Local Lemma get_scan_cost {K V} p (m : t K V) :
-  (Cost.ticks (get_code_c p m) <=
-    N.of_nat (length m) * (1 + N.pos (Pos.size p)))%N.
-Proof.
-  induction m as [|[q [k v]] rest IH]; cbn [get_code_c length];
-    autorewrite with galois_cost; [lia|].
-  pose proof (proj1 (positive_eqb_cost p q)) as Hdigits.
-  destruct (Cost.value (positive_eqb_c p q)); autorewrite with galois_cost;
-    rewrite Nat2N.inj_succ; nia.
-Qed.
-
-Local Lemma set_scan_cost {K V} p k (v : V) (m : t K V) :
-  (Cost.ticks (set_code_c p k v m) <=
-    N.of_nat (length m) * (1 + N.pos (Pos.size p)))%N.
-Proof.
-  induction m as [|[q kv] rest IH]; cbn [set_code_c length];
-    autorewrite with galois_cost; [lia|].
-  pose proof (compare_bits_cost p q) as Hdigits.
-  destruct (Cost.value (code_compare_c p q)); autorewrite with galois_cost;
-    rewrite Nat2N.inj_succ; nia.
-Qed.
-
-(** Lookup has a loose size-and-query-digit bound preserved by list and trie backends. *)
+(** Lookup satisfies the public loose size-and-width bound, including empty maps. *)
 Theorem get_size_cost {K V} (E : encoding K) k (m : t K V) :
   (Cost.ticks (get_c E k m) <= Cost.ticks (encode_c E k) +
     size_cost_k * (1 + N.of_nat (size m)) * (1 + key_bits E k))%N.
 Proof.
-  unfold get_c; autorewrite with galois_cost.
-  pose proof (get_scan_cost (Cost.value (encode_c E k)) m) as Hscan.
-  rewrite size_length; unfold size_cost_k, key_bits, encode; nia.
+  rewrite get_cost. fold (key_bits E k). unfold size_cost_k. nia.
 Qed.
 
-(** Insertion has the same loose backend-neutral size-and-query-digit bound. *)
+(** Insertion satisfies the public loose size-and-width bound, including empty maps. *)
 Theorem set_size_cost {K V} (E : encoding K) k (v : V) (m : t K V) :
   (Cost.ticks (set_c E k v m) <= Cost.ticks (encode_c E k) +
     size_cost_k * (1 + N.of_nat (size m)) * (1 + key_bits E k))%N.
 Proof.
-  unfold set_c; autorewrite with galois_cost.
-  pose proof (set_scan_cost (Cost.value (encode_c E k)) k v m) as Hscan.
-  rewrite size_length; unfold size_cost_k, key_bits, encode; nia.
+  rewrite set_cost. fold (key_bits E k). unfold size_cost_k. nia.
 Qed.
 
-(** Default lookup retains exactly the underlying lookup charge. *)
+(** Default lookup has exactly the charge of its underlying lookup. *)
 Theorem find_or_cost {K V} (E : encoding K) (d : V) k (m : t K V) :
   Cost.ticks (find_or_c E d k m) = Cost.ticks (get_c E k m).
 Proof.
-  unfold find_or_c; apply Cost.ticks_map.
+  apply Cost.ticks_map.
 Qed.
 
-Local Lemma element_keys_nodup {K V} (E : encoding K) (m : t K V) :
+(** Canonical enumeration never repeats a stored key in a well-formed map. *)
+Theorem elements_nodup {K V} (E : encoding K) (m : t K V) :
   wf E m -> NoDup (List.map fst (elements m)).
 Proof.
-  intro Hwf; pose proof (elements_sorted E m Hwf) as Hsorted.
-  induction Hsorted as [|[k v] rest Hsorted IH Hafter]; cbn [List.map fst].
+  intro Hwf. pose proof (elements_sorted E m Hwf) as Hsort.
+  induction Hsort as [|[k v] xs Hsort IH Hafter]; cbn [List.map fst].
   - constructor.
-  - constructor; [|exact IH].
-    intro Hin; apply in_map_iff in Hin as [[a w] [Heq Hin]]; cbn in Heq; subst a.
-    rewrite Forall_forall in Hafter; specialize (Hafter _ Hin); cbn in Hafter.
-    rewrite compare_refl in Hafter; discriminate.
+  - constructor; [|exact IH]. intro Hin.
+    apply in_map_iff in Hin as [[a w] [Heq Hin]]. cbn [fst] in Heq. subst a.
+    rewrite Forall_forall in Hafter. specialize (Hafter (k, w) Hin).
+    cbn [fst] in Hafter.
+    rewrite (proj2 (code_compare_eq _ _) eq_refl) in Hafter. discriminate.
 Qed.
 
-(** A well-formed map storing only keys from a finite list has at most that many bindings. *)
+(** A finite support list bounds the cardinality of a well-formed map. *)
 Theorem size_support_bound {K V} (E : encoding K) (HE : encoding_laws E)
     (U : list K) (m : t K V) :
   wf E m -> (forall k v, get E k m = Some v -> In k U) ->
   (size m <= length U)%nat.
 Proof.
-  intros Hwf Hsupport; rewrite size_elements, <- (length_map fst (elements m)).
-  apply NoDup_incl_length; [apply (element_keys_nodup E m Hwf)|].
-  intros k Hin; apply in_map_iff in Hin as [[a v] [Heq Hin]]; cbn in Heq; subst a.
-  apply (Hsupport k v), (elements_spec E HE k v m Hwf), Hin.
+  intros Hwf Hsupport. rewrite size_elements, <- (length_map fst).
+  apply NoDup_incl_length; [now apply (elements_nodup E)|].
+  intros k Hin. apply in_map_iff in Hin as [[a v] [Heq Hin]]. cbn in Heq. subst a.
+  apply (Hsupport k v). now apply (elements_spec E HE).
 Qed.
 
 (** Costed update has the same result as its pure callback projection. *)
@@ -1310,8 +872,8 @@ Qed.
 Theorem map_c_value {K V W} (f_c : V -> Cost.t W) (m : t K V) :
   Cost.value (map_c f_c m) = map (fun v => Cost.value (f_c v)) m.
 Proof.
-  rewrite map_equation. induction m as [|[p [k v]] rest IH]; [reflexivity|].
-  cbn [map_c List.map fst snd]. autorewrite with galois_cost. now rewrite IH.
+  apply Trie.extensionality. intro p. unfold map, map_c. rewrite !TrieMerge.get_map.
+  destruct (Trie.get p m) as [[k v]|]; reflexivity.
 Qed.
 
 (** Default lookup exposes its only two possible outcomes. *)
