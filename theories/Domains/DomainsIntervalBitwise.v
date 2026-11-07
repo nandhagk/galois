@@ -10,6 +10,16 @@ From Galois.Domains Require Import DomainsBound DomainsInterval DomainsIntervalA
 
 Local Open Scope Z_scope.
 
+(** Complementing a normalized word reverses its position in the unsigned range. *)
+Theorem interval_complement_word w x :
+  is_word w x -> wnot w x = modulus w - 1 - x.
+Proof.
+  intro Hword. rewrite wnot_lnot, (wrap_id w x Hword), lnot_value.
+  rewrite <- (wrap_add_modulus w (- x - 1) 1).
+  replace (- x - 1 + 1 * modulus w) with (modulus w - 1 - x) by ring.
+  apply wrap_id. destruct Hword. split; lia.
+Qed.
+
 Definition interval_not (w : width) (a : interval) : interval :=
   match interval_finite a with
   | Some (lo, hi) => interval_checked w (modulus w - 1 - hi) (modulus w - 1 - lo)

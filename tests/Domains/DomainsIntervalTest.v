@@ -7,11 +7,14 @@
 From Stdlib Require Import ZArith List.
 From Galois.Cost Require Import CostMonad.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
+From Galois.Bits Require Import BitsWord BitsOp.
 From Galois.Domains Require Import DomainsBound DomainsThreshold DomainsInterval
   DomainsIntervalRank DomainsIntervalArith DomainsIntervalCompare DomainsIntervalRefine
-  DomainsIntervalBitwise.
+  DomainsIntervalBitwise DomainsIntervalBack DomainsNumeric.
 Import List.ListNotations.
 Local Open Scope Z_scope.
+Local Abbreviation interval_fwd := (interval_forward ThresholdEmpty).
+Local Abbreviation interval_back := (interval_assume ThresholdEmpty).
 
 Example interval_hull :
   join (interval_lattice (threshold_of_list [])) (Itv (Fin 1) (Fin 3))
@@ -210,6 +213,115 @@ Example interval_lattice_callback_cost :
   Cost.ticks
     (widen_c (interval_lattice (threshold_of_list [0; 10; 20]))
       (Itv (Fin 2) (Fin 4)) (Itv (Fin 1) (Fin 12))) = 1%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_duplicate_threshold_index :
+  threshold_index [10; 10; 10] = ThresholdNode ThresholdEmpty 10 ThresholdEmpty.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_forward_clips_operand :
+  interval_fwd bvadd [(8%positive, Itv NegInf (Fin 3));
+                      (8%positive, Itv (Fin 2) (Fin 4))] 8%positive =
+  Itv (Fin 2) (Fin 7).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_forward_empty :
+  interval_fwd bvadd [(8%positive, IBot); (8%positive, Itv NegInf PosInf)] 8%positive = IBot.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_assume_unsigned_false :
+  interval_back bvult [(8%positive, Itv (Fin 0) (Fin 20));
+                       (8%positive, Itv (Fin 5) (Fin 10))] 1%positive
+    (Itv (Fin 0) (Fin 0)) = [Itv (Fin 5) (Fin 20); Itv (Fin 5) (Fin 10)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_mod_singletons :
+  interval_fwd bvsmod [(8%positive, Itv (Fin 251) (Fin 251));
+                       (8%positive, Itv (Fin 3) (Fin 3))] 8%positive = Itv (Fin 1) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_mod_positive_divisor :
+  interval_fwd bvsmod [(8%positive, Itv (Fin 251) (Fin 252));
+                       (8%positive, Itv (Fin 2) (Fin 3))] 8%positive = Itv (Fin 0) (Fin 2).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_shift :
+  interval_fwd bvashr [(8%positive, Itv (Fin 248) (Fin 252));
+                       (8%positive, Itv (Fin 1) (Fin 2))] 8%positive =
+  Itv (Fin 252) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_division_zero_and_minimum :
+  (interval_fwd bvsdiv [(8%positive, Itv (Fin 128) (Fin 129));
+                        (8%positive, Itv (Fin 0) (Fin 1))] 8%positive,
+    interval_fwd bvsdiv [(8%positive, Itv (Fin 128) (Fin 129));
+                         (8%positive, Itv (Fin 255) (Fin 255))] 8%positive) =
+  (Itv (Fin 1) (Fin 129), Itv (Fin 127) (Fin 128)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_shift_saturation :
+  (interval_fwd bvashr [(8%positive, Itv (Fin 248) (Fin 252));
+                        (8%positive, Itv (Fin 7) (Fin 8))] 8%positive,
+    interval_fwd bvashr [(8%positive, Itv (Fin 2) (Fin 4));
+                         (8%positive, Itv (Fin 8) (Fin 9))] 8%positive) =
+  (Itv (Fin 255) (Fin 255), Itv (Fin 0) (Fin 0)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_remainder_precision_gap :
+  (interval_fwd bvsrem [(8%positive, Itv (Fin 5) (Fin 5));
+                        (8%positive, Itv (Fin 2) (Fin 3))] 8%positive,
+    eval_op bvsrem [(8%positive, 5); (8%positive, 2)],
+    eval_op bvsrem [(8%positive, 5); (8%positive, 3)]) =
+  (Itv (Fin 0) (Fin 2), Some (8%positive, 1), Some (8%positive, 2)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_popcnt_point :
+  interval_fwd bvpopcnt [(1%positive, Itv (Fin 0) (Fin 0))] 1%positive =
+  Itv (Fin 0) (Fin 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_ite_uses_prepared_tree :
+  pforward (interval_word_domain (threshold_of_list [0; 10; 20])) bvite
+    [(1%positive, Itv (Fin 0) (Fin 1)); (8%positive, Itv (Fin 2) (Fin 4));
+     (8%positive, Itv (Fin 11) (Fin 12))] 8%positive = Itv (Fin 2) (Fin 12).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_backward_resize_operand_width :
+  interval_back (bvtrunc 4%positive) [(8%positive, Itv (Fin 0) (Fin 10))] 4%positive
+    (Itv (Fin 3) (Fin 5)) = [Itv (Fin 3) (Fin 5)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_invalid_width_point_rejected :
+  interval_fwd bvadd [(1%positive, Itv (Fin 0) (Fin 0));
+                      (4%positive, Itv (Fin 1) (Fin 1))] 1%positive = IBot.
 Proof.
   vm_compute. reflexivity.
 Qed.
