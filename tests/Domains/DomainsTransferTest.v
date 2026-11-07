@@ -4,10 +4,12 @@
     For example, a missing entry gives top after point collection fails.
     Builds on: DomainsTransfer. *)
 
-From Stdlib Require Import List Arith NArith.
+From Stdlib Require Import List Arith NArith ZArith.
 From Galois.Cost Require Import CostMonad.
+From Galois.Bits Require Import BitsWord BitsOp.
 From Galois.Domains Require Import DomainsTransfer.
 Import List.ListNotations.
+Local Open Scope nat_scope.
 
 Definition dispatch_table :
     Transfer.table (option (option nat)) (option nat) nat unit :=
@@ -65,3 +67,33 @@ Proof. vm_compute. reflexivity. Qed.
 Example short_circuit_ticks :
   Cost.ticks (Transfer.forward_c dispatch_table dispatch_shape 1 tt [None; Some None]) = 2%N.
 Proof. vm_compute. reflexivity. Qed.
+
+(** Both one-bit unsigned endpoints satisfy the result context. *)
+Example word_context_endpoints :
+  word_context 1%positive (1%positive, 0%Z) /\
+  word_context 1%positive (1%positive, 1%Z).
+Proof.
+  vm_compute; intuition discriminate.
+Qed.
+
+(** The first out-of-range result cannot require a finite-width payload top to contain it. *)
+Example word_context_rejects_overflow :
+  ~ word_context 1%positive (1%positive, 2%Z).
+Proof.
+  vm_compute; intuition discriminate.
+Qed.
+
+(** Result context rejects a negative raw integer and a mismatched result width. *)
+Example word_context_rejects_malformed :
+  ~ word_context 1%positive (1%positive, (-1)%Z) /\
+  ~ word_context 1%positive (2%positive, 1%Z).
+Proof.
+  vm_compute; intuition discriminate.
+Qed.
+
+(** Every successful operator result supplies the context used by the word-table laws. *)
+Example successful_word_context o xs r :
+  eval_op o xs = Some r -> word_context (fst r) r.
+Proof.
+  intro Hresult. split; [reflexivity | now apply (eval_op_is_word o xs r)].
+Qed.
