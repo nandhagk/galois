@@ -296,6 +296,7 @@ Example sb_word_remaining_query_boundaries :
   sb_reduce_half w4 false (SBRange tnum_top 8 15) = SBEmpty /\
   signed_bounds_query w4 (sb_test_const w4 4) true = None /\
   signed_bounds_query w4 (SignedBounds SBEmpty SBEmpty) false = None /\
+  signed_bounds_query w4 (SignedBounds SBEmpty SBEmpty) true = None /\
   signed_bounds_query w4 (SignedBounds (SBRange tnum_top 6 1) SBEmpty) false = None /\
   signed w4 9 = -7 /\ signed w4 15 = -1.
 Proof.
