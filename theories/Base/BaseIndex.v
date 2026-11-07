@@ -4,7 +4,7 @@
     For example, grouping [a; b; a] retains the input order within a's bucket.
     Builds on: BaseMap, BaseEncoding and BaseEq. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 Import List.ListNotations Cost.Notations.
@@ -173,6 +173,98 @@ Proof.
     (Cost.lift (fun _ => 1%N) (fun a => Cost.value (key_c a))) xs Map.empty)
     by reflexivity.
   reflexivity.
+Qed.
+
+(** Bucket lookup has exactly the charge of a map lookup. *)
+Theorem find_cost {K V} (E : encoding K) k (idx : t K V) :
+  Cost.ticks (find_c E k idx) = Cost.ticks (Map.get_c E k idx).
+Proof.
+  unfold find_c. apply Map.find_or_cost.
+Qed.
+
+(** Accumulator reversal charges exactly one tick per input element. *)
+Theorem reverse_acc_cost {A} (xs acc : list A) :
+  Cost.ticks (reverse_acc_c xs acc) = N.of_nat (length xs).
+Proof.
+  revert acc. induction xs as [|x rest IH]; intro acc; [reflexivity|].
+  cbn [reverse_acc_c length]. autorewrite with galois_cost.
+  rewrite IH, Nat2N.inj_succ. lia.
+Qed.
+
+(** Bucket reversal costs exactly its length, including zero for an empty bucket. *)
+Theorem reverse_cost {A} (xs : list A) :
+  Cost.ticks (reverse_c xs) = N.of_nat (length xs).
+Proof.
+  apply reverse_acc_cost.
+Qed.
+
+(** Collection exposes its callback, update and reached-tail charges independently. *)
+Theorem collect_cost_equation {K V} (E : encoding K) (key_c : V -> Cost.t K)
+    xs (idx : t K V) :
+  Cost.ticks (collect_c E key_c xs idx) =
+    match xs with
+    | [] => 0%N
+    | x :: rest =>
+      let update := Map.update_c E (Cost.value (key_c x))
+        (fun old => Cost.ret (Some (x ::
+          match old with None => [] | Some ys => ys end))) idx in
+      (2 + Cost.ticks (key_c x) + Cost.ticks update +
+        Cost.ticks (collect_c E key_c rest (Cost.value update)))%N
+    end.
+Proof.
+  destruct xs; [reflexivity|].
+  cbn [collect_c]. autorewrite with galois_cost. lia.
+Qed.
+
+(** Grouping pays collection followed by the actual public map of bucket reversals. *)
+Theorem group_by_cost_equation {K V} (E : encoding K) (key_c : V -> Cost.t K) xs :
+  Cost.ticks (group_by_c E key_c xs) =
+    (Cost.ticks (collect_c E key_c xs Map.empty) +
+      Cost.ticks (Map.map_c reverse_c (Cost.value (collect_c E key_c xs Map.empty))))%N.
+Proof.
+  unfold group_by_c. rewrite Cost.ticks_bind. reflexivity.
+Qed.
+
+(** A budget on primitive updates and key callbacks bounds collection linearly. *)
+Theorem collect_cost {K V} (E : encoding K) (key_c : V -> Cost.t K) xs idx c u :
+  (forall x, In x xs -> (Cost.ticks (key_c x) <= c)%N) ->
+  (forall x m, In x xs ->
+    (Cost.ticks (Map.update_c E (Cost.value (key_c x))
+      (fun old => Cost.ret (Some (x ::
+        match old with None => [] | Some ys => ys end))) m) <= u)%N) ->
+  (Cost.ticks (collect_c E key_c xs idx) <= N.of_nat (length xs) * (2 + c + u))%N.
+Proof.
+  revert idx. induction xs as [|x rest IH]; intros idx Hkey Hupdate.
+  - rewrite collect_cost_equation. cbn [length]. lia.
+  - rewrite collect_cost_equation.
+    specialize (IH (Cost.value (Map.update_c E (Cost.value (key_c x))
+      (fun old => Cost.ret (Some (x ::
+        match old with None => [] | Some ys => ys end))) idx))).
+    assert (Htailkey : forall a, In a rest -> (Cost.ticks (key_c a) <= c)%N).
+    { intros a Ha. apply Hkey. now right. }
+    assert (Htailupdate : forall a m, In a rest ->
+      (Cost.ticks (Map.update_c E (Cost.value (key_c a))
+        (fun old => Cost.ret (Some (a ::
+          match old with None => [] | Some ys => ys end))) m) <= u)%N).
+    { intros a m Ha. apply Hupdate. now right. }
+    specialize (IH Htailkey Htailupdate).
+    specialize (Hkey x (or_introl eq_refl)).
+    specialize (Hupdate x idx (or_introl eq_refl)).
+    cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Grouping is linear in collection work plus the final primitive bucket-map traversal. *)
+Theorem group_by_cost {K V} (E : encoding K) (key_c : V -> Cost.t K) xs c u :
+  (forall x, In x xs -> (Cost.ticks (key_c x) <= c)%N) ->
+  (forall x m, In x xs ->
+    (Cost.ticks (Map.update_c E (Cost.value (key_c x))
+      (fun old => Cost.ret (Some (x ::
+        match old with None => [] | Some ys => ys end))) m) <= u)%N) ->
+  (Cost.ticks (group_by_c E key_c xs) <= N.of_nat (length xs) * (2 + c + u) +
+    Cost.ticks (Map.map_c reverse_c (Cost.value (collect_c E key_c xs Map.empty))))%N.
+Proof.
+  intros Hkey Hupdate. rewrite group_by_cost_equation.
+  pose proof (collect_cost E key_c xs Map.empty c u Hkey Hupdate). lia.
 Qed.
 
 Arguments find_c {K V} E k idx : simpl never.

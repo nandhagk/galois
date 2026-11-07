@@ -415,6 +415,106 @@ Qed.
 
 Arguments empty_c {K} : simpl never.
 Arguments empty {K} : simpl never.
+(** Forward lookup has exactly the charge of the public forward-map lookup. *)
+Theorem find_cost {K} (E : encoding K) k (s : t K) :
+  Cost.ticks (find_c E k s) = Cost.ticks (Map.get_c E k (table s)).
+Proof.
+  reflexivity.
+Qed.
+
+(** Reverse lookup has exactly the charge of the public inverse-map lookup. *)
+Theorem key_of_cost {K} i (s : t K) :
+  Cost.ticks (key_of_c i s) =
+    Cost.ticks (Map.get_c positive_encoding i (inverse s)).
+Proof.
+  reflexivity.
+Qed.
+
+(** A hit pays one lookup and a miss additionally pays the two public insertions. *)
+Theorem intern_cost_equation {K} (E : encoding K) k (s : t K) :
+  Cost.ticks (intern_c E k s) =
+    (Cost.ticks (Map.get_c E k (table s)) +
+      match find E k s with
+      | Some _ => 0
+      | None =>
+        Cost.ticks (Map.set_c E k (next s) (table s)) +
+        Cost.ticks (Map.set_c positive_encoding (next s) k (inverse s))
+      end)%N.
+Proof.
+  unfold intern_c. autorewrite with galois_cost. fold (find E k s).
+  destruct (find E k s); autorewrite with galois_cost;
+    rewrite find_cost; lia.
+Qed.
+
+(** The three primitive map calls bound interning for every raw interner. *)
+Theorem intern_cost {K} (E : encoding K) k (s : t K) :
+  (Cost.ticks (intern_c E k s) <=
+    Cost.ticks (Map.get_c E k (table s)) +
+    Cost.ticks (Map.set_c E k (next s) (table s)) +
+    Cost.ticks (Map.set_c positive_encoding (next s) k (inverse s)))%N.
+Proof.
+  rewrite intern_cost_equation. destruct (find E k s); lia.
+Qed.
+
+(** List interning charges one input cell and recurses on the actual updated table. *)
+Theorem intern_list_cost_equation {K} (E : encoding K) xs (s : t K) :
+  Cost.ticks (intern_list_c E xs s) =
+    match xs with
+    | [] => 0%N
+    | k :: rest =>
+      (1 + Cost.ticks (intern_c E k s) +
+        Cost.ticks (intern_list_c E rest (snd (intern E k s))))%N
+    end.
+Proof.
+  destruct xs; [reflexivity|].
+  cbn [intern_list_c]. autorewrite with galois_cost. fold (intern E k s). lia.
+Qed.
+
+(** Empty initialization adds no ticks to list construction. *)
+Theorem of_list_cost_equation {K} (E : encoding K) xs :
+  Cost.ticks (of_list_c E xs) = Cost.ticks (intern_list_c E xs empty).
+Proof.
+  unfold of_list_c, empty_c. autorewrite with galois_cost. reflexivity.
+Qed.
+
+(** Primitive budgets on an invariant domain give a linear list-interning bound. *)
+Theorem intern_list_cost {K} (E : encoding K) (I : t K -> Prop) g f b xs s :
+  (forall k q, In k xs -> I q ->
+    I (snd (intern E k q)) /\
+    (Cost.ticks (Map.get_c E k (table q)) <= g)%N /\
+    (Cost.ticks (Map.set_c E k (next q) (table q)) <= f)%N /\
+    (Cost.ticks (Map.set_c positive_encoding (next q) k (inverse q)) <= b)%N) ->
+  I s ->
+  (Cost.ticks (intern_list_c E xs s) <= N.of_nat (length xs) * (1 + g + f + b))%N.
+Proof.
+  revert s. induction xs as [|k rest IH]; intros s Hstep Hs.
+  - rewrite intern_list_cost_equation. cbn [length]. lia.
+  - destruct (Hstep k s (or_introl eq_refl) Hs) as [Hs' [Hg [Hf Hb]]].
+    assert (Htail : forall a q, In a rest -> I q ->
+      I (snd (intern E a q)) /\
+      (Cost.ticks (Map.get_c E a (table q)) <= g)%N /\
+      (Cost.ticks (Map.set_c E a (next q) (table q)) <= f)%N /\
+      (Cost.ticks (Map.set_c positive_encoding (next q) a (inverse q)) <= b)%N).
+    { intros a q Ha Hq. apply Hstep; [now right|exact Hq]. }
+    specialize (IH _ Htail Hs').
+    pose proof (intern_cost E k s) as Hcost.
+    rewrite intern_list_cost_equation. cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Primitive budgets from the empty state bound complete list construction. *)
+Theorem of_list_cost {K} (E : encoding K) (I : t K -> Prop) g f b xs :
+  (forall k q, In k xs -> I q ->
+    I (snd (intern E k q)) /\
+    (Cost.ticks (Map.get_c E k (table q)) <= g)%N /\
+    (Cost.ticks (Map.set_c E k (next q) (table q)) <= f)%N /\
+    (Cost.ticks (Map.set_c positive_encoding (next q) k (inverse q)) <= b)%N) ->
+  I empty ->
+  (Cost.ticks (of_list_c E xs) <= N.of_nat (length xs) * (1 + g + f + b))%N.
+Proof.
+  intros Hstep Hempty. rewrite of_list_cost_equation.
+  exact (intern_list_cost E I g f b xs empty Hstep Hempty).
+Qed.
+
 Arguments find_c {K} E k s : simpl never.
 Arguments find {K} E k s : simpl never.
 Arguments key_of_c {K} i s : simpl never.

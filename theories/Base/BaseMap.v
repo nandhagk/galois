@@ -835,6 +835,14 @@ Proof.
   apply Cost.ticks_map.
 Qed.
 
+(** Membership pays exactly the lookup's encoder and queried-code width charges. *)
+Theorem mem_cost {K V} (E : encoding K) k (m : t K V) :
+  Cost.ticks (mem_c E k m) =
+    (1 + Cost.ticks (encode_c E k) + N.pos (Pos.size (encode E k)))%N.
+Proof.
+  unfold mem_c. rewrite Cost.ticks_map. apply get_cost.
+Qed.
+
 (** Canonical enumeration never repeats a stored key in a well-formed map. *)
 Theorem elements_nodup {K V} (E : encoding K) (m : t K V) :
   wf E m -> NoDup (List.map fst (elements m)).
