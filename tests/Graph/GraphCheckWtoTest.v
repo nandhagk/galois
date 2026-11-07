@@ -1,0 +1,144 @@
+(** * Candidate weak-order checks
+
+    Every token list is hand-written and checked without a hierarchy producer.
+    For example, the irreducible triangle admits an enclosing head at node 2.
+    Builds on: GraphCheckWto and GraphFixtures. *)
+
+From Stdlib Require Import List PArith.
+From Galois.Graph Require Import GraphPrepared GraphHierSpec GraphCheckWto GraphFixtures.
+Import List.ListNotations.
+Open Scope positive_scope.
+
+Example accepts_line :
+  Wto.check Fixtures.Line.prepared [1] Fixtures.Line.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_diamond :
+  Wto.check Fixtures.Diamond.prepared [1] Fixtures.Diamond.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_join_loop :
+  Wto.check Fixtures.JoinLoop.prepared [1] Fixtures.JoinLoop.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_nested_loop :
+  Wto.check Fixtures.NestedLoop.prepared [1] Fixtures.NestedLoop.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_two_entries :
+  Wto.check Fixtures.TwoEntry.prepared [1; 2] Fixtures.TwoEntry.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_self_loop :
+  Wto.check Fixtures.SelfLoop.prepared [1] Fixtures.SelfLoop.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_irreducible :
+  Wto.check Fixtures.Irreducible.prepared [1] Fixtures.Irreducible.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_empty :
+  Wto.check Fixtures.Empty.prepared [] Fixtures.Empty.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_singleton :
+  Wto.check Fixtures.Singleton.prepared [1] Fixtures.Singleton.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example excludes_unreachable :
+  Wto.check Fixtures.Unreachable.prepared [1] Fixtures.Unreachable.wto = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_missing_node :
+  Wto.check Fixtures.Line.prepared [1] [Wto.WVertex 1; Wto.WVertex 2; Wto.WVertex 3] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_unmatched_close :
+  Wto.check Fixtures.Singleton.prepared [1] [Wto.WVertex 1; Wto.WClose] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_unmatched_open :
+  Wto.check Fixtures.Singleton.prepared [1] [Wto.WOpen 1] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_duplicate :
+  Wto.check Fixtures.Singleton.prepared [1] [Wto.WVertex 1; Wto.WVertex 1] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_backward_edge :
+  Wto.check Fixtures.Line.prepared [1]
+    [Wto.WVertex 1; Wto.WVertex 3; Wto.WVertex 2; Wto.WVertex 4] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_unheaded_self_loop :
+  Wto.check Fixtures.SelfLoop.prepared [1] [Wto.WVertex 1] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_unknown_id :
+  Wto.check Fixtures.Singleton.prepared [1] [Wto.WVertex 1; Wto.WVertex 9] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_unreachable_node :
+  Wto.check Fixtures.Unreachable.prepared [1]
+    (Fixtures.Unreachable.wto ++ [Wto.WVertex 5]) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example ignores_unknown_root :
+  Wto.check Fixtures.Singleton.prepared [9] [] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_alternative_roots :
+  Wto.check Fixtures.Diamond.prepared [2] [Wto.WVertex 2; Wto.WVertex 4] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_scoped_coverage_as_unrestricted :
+  Wto.check Fixtures.Diamond.prepared [1] [Wto.WVertex 1] = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_forest_boundary :
+  Wto.check_forest Fixtures.Empty.prepared [] Hier.Nil = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
