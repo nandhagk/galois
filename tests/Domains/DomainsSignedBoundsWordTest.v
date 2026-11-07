@@ -303,6 +303,43 @@ Proof.
   vm_compute. repeat split; reflexivity.
 Qed.
 
+Example sb_word_requested_width_singleton_observations :
+  pforward signed_bounds_classic_domain bvnot
+    [(w4, pconst signed_bounds_classic_domain w4 0)] w3 =
+    SignedBounds SBEmpty SBEmpty /\
+  pforward signed_bounds_domain bvnot [(w4, sb_test_const w4 0)] w3 =
+    SignedBounds SBEmpty SBEmpty.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+Example sb_word_requested_result_width_observations :
+  let check := fun D =>
+    pforward D bvnot [(w4, sb_test_const w4 0)] w5 = sb_test_const w5 15 /\
+    pforward D bvneg [(w4, sb_test_const w4 1)] w5 = sb_test_const w5 15 /\
+    pforward D bvadd [(w4, sb_test_const w4 15); (w4, sb_test_const w4 1)] w3 =
+      sb_test_const w3 0 /\
+    pforward D bvadd [(w4, sb_test_const w4 15); (w4, sb_test_const w4 1)] w5 =
+      sb_test_const w5 0 /\
+    pforward D (bvzext w1) [(w4, sb_test_const w4 15)] w3 = SignedBounds SBEmpty SBEmpty /\
+    pforward D bvconcat [(w4, sb_test_const w4 2); (w4, sb_test_const w4 3)] w3 =
+      SignedBounds SBEmpty SBEmpty in
+  check signed_bounds_classic_domain /\ check signed_bounds_domain.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Example sb_word_requested_width_multiplication_arcs :
+  let check := fun D =>
+    pforward D bvmul [(w4, sb_lift w4 tnum_top 3 4); (w4, sb_test_const w4 1)] w2 =
+      SignedBounds (SBRange (Tnum 3 0) 0 0) (SBRange (Tnum 0 3) 3 3) /\
+    pforward D bvmul [(w4, sb_test_const w4 15); (w4, sb_lift w4 tnum_top 0 3)] w3 =
+      signed_bounds_top w3 in
+  check signed_bounds_classic_domain /\ check signed_bounds_domain.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
 Definition sb_test_legacy_precise : word_domain signed_bounds :=
   signed_bounds_word_domain (SignedBoundsOptions known_bits_default_options WidenJoin).
 

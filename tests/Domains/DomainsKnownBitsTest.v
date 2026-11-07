@@ -415,3 +415,18 @@ Example kb_malformed_backward_length_and_reductivity :
 Proof.
   vm_compute. auto.
 Qed.
+
+Example kb_requested_result_width_observations :
+  let check := fun D =>
+    pforward D bvnot [(4%positive, tnum_const 4%positive 0)] 3%positive = Tnum 0 7 /\
+    pforward D bvnot [(4%positive, tnum_const 4%positive 0)] 5%positive = Tnum 0 15 /\
+    pforward D bvadd [(4%positive, tnum_const 4%positive 15);
+      (4%positive, tnum_const 4%positive 1)] 3%positive = Tnum 7 0 /\
+    pforward D (bvzext 1%positive) [(4%positive, tnum_const 4%positive 15)]
+      3%positive = Tnum 0 7 /\
+    pforward D bvconcat [(4%positive, tnum_const 4%positive 2);
+      (4%positive, tnum_const 4%positive 3)] 3%positive = Tnum 220 35 in
+  check known_bits_classic_domain /\ check known_bits_domain.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
