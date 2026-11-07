@@ -12,6 +12,16 @@ Import List.ListNotations.
 
 Open Scope Z_scope.
 
+(** Normalization fixes in-range endpoints and wraps raw values outside the range. *)
+Example normalization_boundaries :
+  normalize_word (8%positive, 0) = (8%positive, 0) /\
+  normalize_word (8%positive, 255) = (8%positive, 255) /\
+  normalize_word (8%positive, 256) = (8%positive, 0) /\
+  normalize_word (8%positive, -1) = (8%positive, 255).
+Proof.
+  vm_compute. repeat split.
+Qed.
+
 (** Arithmetic wraps at the modulus, including the minimum signed value. *)
 Example arithmetic_overflow :
   eval_op bvadd [(8%positive, 200); (8%positive, 100)] = Some (8%positive, 44) /\

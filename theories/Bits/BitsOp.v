@@ -400,6 +400,14 @@ Proof.
   intros [w x]. unfold normalize_word. cbn. now rewrite wrap_wrap.
 Qed.
 
+(** Normalization fixes every input that already satisfies the unsigned word range. *)
+Theorem normalize_word_id : forall x,
+  is_word (fst x) (snd x) -> normalize_word x = x.
+Proof.
+  intros [w x] Hword. unfold normalize_word. cbn.
+  now rewrite (wrap_id w x Hword).
+Qed.
+
 (** Pre-normalizing operands leaves evaluation unchanged. *)
 Theorem eval_op_normalised : forall o xs,
   eval_op o xs = eval_op o (map (fun x => (fst x, wrap (fst x) (snd x))) xs).
