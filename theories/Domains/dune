@@ -1,0 +1,5 @@
+(rocq.theory
+ (name Galois.Domains)
+ (package galois)
+ (flags :standard -w +default)
+ (theories Stdlib Galois.Cost Galois.Base Galois.Lattice Galois.Bits))
