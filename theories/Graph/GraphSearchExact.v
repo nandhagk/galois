@@ -686,4 +686,538 @@ Proof.
     + exact (numbering_index _ _ _ Hpost).
 Qed.
 
+(** Prepared successor occurrences are actual labelled arcs between valid IDs. *)
+Theorem successor_arc {V E} (p : Prepared.t V E) u e v :
+  Prepared.ready p -> Prepared.valid_id p u ->
+  In (e, v) (Prepared.succ_edges p u) ->
+    Prepared.arc p u e v /\ Prepared.valid_id p v.
+Proof.
+  intros [Hgraph [_ Hlaws]] [a [Ha Hi]] Hedge.
+  apply (Prepared.succ_spec p a u e v Hlaws Hi) in Hedge.
+  destruct Hedge as [Hedge Htarget].
+  split.
+  - exists a, (Graph.target (Prepared.graph p) e).
+    repeat split; auto. exact (out_source Hgraph a e Hedge).
+  - exists (Graph.target (Prepared.graph p) e). split; [|exact Htarget].
+    eapply out_target_in; eassumption.
+Qed.
+
+Local Lemma scoped_snoc {V E} (p : Prepared.t V E) scope u es v e z :
+  Search.scoped_path p scope u es v -> Prepared.arc p v e z ->
+  Prepared.valid_id p z -> Scope.admits scope z = true ->
+    Search.scoped_path p scope u (es ++ [e]) z.
+Proof.
+  intros Hpath Harc Hvalid Hallowed.
+  induction Hpath as [v Hv Ha|u edge v es target Hu Ha Hedge Hpath IH].
+  - cbn. eapply Search.scoped_cons; [exact Hv|exact Ha|exact Harc|].
+    now apply Search.scoped_nil.
+  - cbn. eapply Search.scoped_cons; [exact Hu|exact Ha|exact Hedge|].
+    now apply IH.
+Qed.
+
+Local Lemma reachable_step {V E} (p : Prepared.t V E) scope roots u e v :
+  Search.scoped_reachable p scope roots u -> Prepared.arc p u e v ->
+  Prepared.valid_id p v -> Scope.admits scope v = true ->
+    Search.scoped_reachable p scope roots v.
+Proof.
+  intros [root [es [Hroot Hpath]]] Harc Hvalid Hallowed.
+  exists root, (es ++ [e]). split; [exact Hroot|].
+  eapply scoped_snoc; eassumption.
+Qed.
+
+(** Every active frame is a seen, admitted valid source and retains genuine unread occurrences. *)
+Definition frames_valid {V E} (p : Prepared.t V E) scope (w : SearchRun.work E) :=
+  forall u es, In (u, es) (fst w) ->
+    FinSet.mem positive_encoding u (SearchRun.seen (snd w)) = true /\
+    Prepared.valid_id p u /\ Scope.admits scope u = true /\
+    incl es (Prepared.succ_edges p u).
+
+(** Sound discovery and frame provenance carry the graph-semantic part of a run. *)
+Record sound_work {V E} (p : Prepared.t V E) scope roots (w : SearchRun.work E) : Prop := {
+  seen_reachable : forall v,
+    FinSet.mem positive_encoding v (SearchRun.seen (snd w)) = true ->
+    Search.scoped_reachable p scope roots v;
+  valid_frames : frames_valid p scope w
+}.
+
+Local Lemma member_add_old seen u v :
+  FinSet.wf positive_encoding seen ->
+  FinSet.mem positive_encoding u seen = true ->
+  FinSet.mem positive_encoding u (FinSet.add positive_encoding v seen) = true.
+Proof.
+  intros Hwf Hin. rewrite FinSet.mem_add by exact Hwf. now rewrite Hin, orb_true_r.
+Qed.
+
+Local Lemma sound_discover {V E} (p : Prepared.t V E) scope roots stack c v via :
+  representation c -> sound_work p scope roots (stack, c) ->
+  Search.scoped_reachable p scope roots v ->
+    sound_work p scope roots (stack, SearchRun.discover v via c).
+Proof.
+  intros Hrep [Hseen Hframes] Hreach. rewrite SearchRun.discover_equation.
+  constructor; cbn [fst snd SearchRun.seen].
+  - intros u Hu. rewrite FinSet.mem_add in Hu by exact (seen_wf _ Hrep).
+    apply orb_true_iff in Hu. destruct Hu as [Heq|Hu]; [|now apply Hseen].
+    apply (eqb_true_iff positive_encoding positive_encoding_laws) in Heq. now subst u.
+  - intros u es Hin. destruct (Hframes u es Hin) as [Hu Hrest].
+    split; [|exact Hrest]. apply member_add_old; [exact (seen_wf _ Hrep)|exact Hu].
+Qed.
+
+Local Lemma sound_push {V E} (p : Prepared.t V E) scope roots stack c v via :
+  representation c -> sound_work p scope roots (stack, c) ->
+  Search.scoped_reachable p scope roots v ->
+  Prepared.valid_id p v -> Scope.admits scope v = true ->
+    sound_work p scope roots
+      ((v, Prepared.succ_edges p v) :: stack, SearchRun.discover v via c).
+Proof.
+  intros Hrep Hsound Hreach Hvalid Hallowed.
+  destruct (sound_discover p scope roots stack c v via Hrep Hsound Hreach)
+    as [Hseen Hframes].
+  constructor; [exact Hseen|].
+  intros u es [Heq|Hin].
+  - inversion Heq; subst u es. split.
+    + rewrite SearchRun.discover_equation. cbn [SearchRun.seen snd].
+      rewrite FinSet.mem_add by exact (seen_wf _ Hrep).
+      rewrite eqb_refl. reflexivity.
+    + split; [exact Hvalid|]. split; [exact Hallowed|intros edge Hedge; exact Hedge].
+  - exact (Hframes u es Hin).
+Qed.
+
+Local Lemma sound_substack {V E} (p : Prepared.t V E) scope roots stack stack' c :
+  (forall u es, In (u, es) stack' ->
+    exists old, In (u, old) stack /\ incl es old) ->
+  sound_work p scope roots (stack, c) -> sound_work p scope roots (stack', c).
+Proof.
+  intros Hsub [Hseen Hframes]. constructor; [exact Hseen|].
+  intros u es Hin. destruct (Hsub u es Hin) as [old [Hold Hinc]].
+  destruct (Hframes u old Hold) as [Hu [Hvalid [Hallowed Hedges]]].
+  repeat split; try assumption. intros edge Hedge. apply Hedges, Hinc, Hedge.
+Qed.
+
+(** Every stack transition preserves scoped reachability and unread labelled-edge provenance. *)
+Theorem transition_sound {V E} (p : Prepared.t V E) scope roots w :
+  Prepared.ready p -> representation (snd w) -> sound_work p scope roots w ->
+    sound_work p scope roots (SearchRun.unwrap (fst (SearchRun.transition p scope w))).
+Proof.
+  intros Hready. destruct w as [stack c]. intros Hrep Hsound.
+  rewrite SearchRun.step_equation.
+  destruct stack as [|[u [|[e v] pending]] rest]; cbn [fst SearchRun.unwrap].
+  - exact Hsound.
+  - rewrite SearchRun.finish_equation.
+    destruct Hsound as [Hseen Hframes]. constructor; [exact Hseen|].
+    intros x es Hin. apply Hframes. now right.
+  - assert (Htail : sound_work p scope roots ((u, pending) :: rest, c)).
+    { eapply sound_substack; [|exact Hsound].
+      intros x es [Heq|Hin].
+      - inversion Heq; subst x es. exists ((e, v) :: pending).
+        split; [now left|intros edge Hedge; now right].
+      - exists es. split; [now right|intros edge Hedge; exact Hedge]. }
+    destruct (Scope.admits scope v) eqn:Hallowed; [|exact Htail].
+    destruct (Prepared.name_of p v); [|exact Htail].
+    destruct (SearchRun.edge_kind c u v); cbn [fst SearchRun.unwrap]; try exact Htail.
+    destruct (valid_frames _ _ _ _ Hsound u ((e, v) :: pending) (or_introl eq_refl))
+      as [Hu [Hvalid [_ Hedges]]].
+    destruct (successor_arc p u e v Hready Hvalid (Hedges _ (or_introl eq_refl)))
+      as [Harc Hv].
+    apply sound_push; [exact Hrep|exact Htail| |exact Hv|exact Hallowed].
+    eapply reachable_step; [|exact Harc|exact Hv|exact Hallowed].
+    exact (seen_reachable _ _ _ _ Hsound u Hu).
+Qed.
+
+Local Lemma loop_sound {V E} (p : Prepared.t V E) scope roots n w :
+  Prepared.ready p -> representation (snd w) -> sound_work p scope roots w ->
+    sound_work p scope roots (fst (SearchRun.reference_loop p scope n w)).
+Proof.
+  intro Hready. revert w. induction n as [|n IH]; intros w Hrep Hsound; [exact Hsound|].
+  pose proof (transition_representation p scope w Hrep) as Hrep'.
+  pose proof (transition_sound p scope roots w Hready Hrep Hsound) as Hsound'.
+  cbn [SearchRun.reference_loop].
+  destruct (SearchRun.transition p scope w) as [[w'|w'] evs];
+    cbn [fst snd SearchRun.unwrap] in Hrep', Hsound'.
+  - specialize (IH w' Hrep' Hsound').
+    destruct (SearchRun.reference_loop p scope n w') as [final later]. exact IH.
+  - exact Hsound'.
+Qed.
+
+Local Lemma root_sound {V E} (p : Prepared.t V E) scope roots c v :
+  Prepared.ready p -> representation c -> sound_work p scope roots ([], c) ->
+  In v roots -> sound_work p scope roots ([], fst (SearchRun.reference_root p scope c v)).
+Proof.
+  intros Hready Hrep Hsound Hroot. unfold SearchRun.reference_root.
+  destruct (Scope.admits scope v) eqn:Hallowed; [|exact Hsound].
+  destruct (FinSet.mem positive_encoding v (SearchRun.seen c)) eqn:Hfresh; [exact Hsound|].
+  destruct (Prepared.name_of p v) as [name|] eqn:Hname; [|exact Hsound].
+  assert (Hvalid : Prepared.valid_id p v).
+  { apply vertices_spec. exact (named_in_vertices p v name Hready Hname). }
+  assert (Hreach : Search.scoped_reachable p scope roots v).
+  { exists v, []. split; [exact Hroot|now apply Search.scoped_nil]. }
+  pose proof (loop_sound p scope roots (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c) Hready
+    (discover_representation c v None Hrep Hfresh)
+    (sound_push p scope roots [] c v None Hrep Hsound Hreach Hvalid Hallowed)) as Hloop.
+  destruct (SearchRun.reference_loop p scope (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as [[stack final] evs].
+  destruct Hloop as [Hseen Hframes]. constructor; [exact Hseen|].
+  intros u es Hin. contradiction.
+Qed.
+
+Local Lemma roots_sound {V E} (p : Prepared.t V E) scope roots todo c :
+  Prepared.ready p -> incl todo roots -> representation c ->
+  sound_work p scope roots ([], c) ->
+    sound_work p scope roots ([], fst (SearchRun.reference_roots p scope todo c)).
+Proof.
+  intro Hready. revert c. induction todo as [|v rest IH]; intros c Htodo Hrep Hsound;
+    [exact Hsound|].
+  pose proof (root_representation p scope c v Hrep) as Hrep'.
+  pose proof (root_sound p scope roots c v Hready Hrep Hsound
+    (Htodo v (or_introl eq_refl))) as Hsound'.
+  cbn [SearchRun.reference_roots].
+  destruct (SearchRun.reference_root p scope c v) as [c' here].
+  specialize (IH c' ltac:(intros x Hx; apply Htodo; now right) Hrep' Hsound').
+  destruct (SearchRun.reference_roots p scope rest c') as [final later]. exact IH.
+Qed.
+
+(** Every discovered vertex is reachable from an actual root through admitted valid IDs. *)
+Theorem run_reachable_sound {V E} (p : Prepared.t V E) scope roots v :
+  Prepared.ready p -> In v (Search.preorder (SearchRun.dfs p scope roots)) ->
+    Search.scoped_reachable p scope roots v.
+Proof.
+  intro Hready.
+  assert (Hinitial : sound_work p scope roots ([], @SearchRun.initial E)).
+  { constructor.
+    - intros x Hx. change (FinSet.mem positive_encoding x FinSet.empty = true) in Hx.
+      rewrite FinSet.mem_empty in Hx. discriminate.
+    - intros u es Hin. contradiction. }
+  pose proof (roots_sound p scope roots roots _ Hready ltac:(intros x Hx; exact Hx)
+    (@initial_representation E) Hinitial) as Hsound.
+  pose proof (run_representation p scope roots) as Hrep.
+  destruct Hrep as [_ [_ [_ [_ [_ Hseen]]]]].
+  intro Hin. apply Hseen in Hin.
+  unfold SearchRun.dfs in Hin. rewrite SearchRun.run_equation in Hin.
+  destruct (SearchRun.reference_roots p scope roots SearchRun.initial) as [c evs].
+  apply (seen_reachable _ _ _ _ Hsound v).
+  exact Hin.
+Qed.
+
+Definition seen_incl {E} (c c' : SearchRun.core E) :=
+  forall v, FinSet.mem positive_encoding v (SearchRun.seen c) = true ->
+    FinSet.mem positive_encoding v (SearchRun.seen c') = true.
+
+Local Lemma discover_seen {E} (c : SearchRun.core E) v via :
+  representation c -> seen_incl c (SearchRun.discover v via c).
+Proof.
+  intros Hrep u Hu. rewrite SearchRun.discover_equation. cbn [SearchRun.seen].
+  apply member_add_old; [exact (seen_wf _ Hrep)|exact Hu].
+Qed.
+
+Local Lemma transition_seen {V E} (p : Prepared.t V E) scope w :
+  representation (snd w) ->
+    seen_incl (snd w) (snd (SearchRun.unwrap (fst (SearchRun.transition p scope w)))).
+Proof.
+  destruct w as [stack c]. intro Hrep. rewrite SearchRun.step_equation.
+  destruct stack as [|[u [|[e v] pending]] rest]; cbn [fst snd SearchRun.unwrap].
+  - intros x Hx. exact Hx.
+  - rewrite SearchRun.finish_equation. intros x Hx. exact Hx.
+  - destruct (Scope.admits scope v); [|intros x Hx; exact Hx].
+    destruct (Prepared.name_of p v); [|intros x Hx; exact Hx].
+    destruct (SearchRun.edge_kind c u v); cbn [fst snd SearchRun.unwrap];
+      try (intros x Hx; exact Hx).
+    now apply discover_seen.
+Qed.
+
+Local Lemma loop_seen {V E} (p : Prepared.t V E) scope n w :
+  representation (snd w) ->
+    seen_incl (snd w) (snd (fst (SearchRun.reference_loop p scope n w))).
+Proof.
+  revert w. induction n as [|n IH]; intros w Hrep; [intros x Hx; exact Hx|].
+  pose proof (transition_representation p scope w Hrep) as Hrep'.
+  pose proof (transition_seen p scope w Hrep) as Hseen.
+  cbn [SearchRun.reference_loop].
+  destruct (SearchRun.transition p scope w) as [[w'|w'] evs];
+    cbn [fst snd SearchRun.unwrap] in Hrep', Hseen.
+  - specialize (IH w' Hrep').
+    destruct (SearchRun.reference_loop p scope n w') as [final later].
+    intros x Hx. apply IH, Hseen, Hx.
+  - exact Hseen.
+Qed.
+
+(** Finished and read adjacency occurrences already have seen admitted targets. *)
+Record closed_work {V E} (p : Prepared.t V E) scope (w : SearchRun.work E) : Prop := {
+  finished_closed : forall u, In u (SearchRun.post_rev (snd w)) ->
+    forall e v, In (e, v) (Prepared.succ_edges p u) -> Scope.admits scope v = true ->
+      FinSet.mem positive_encoding v (SearchRun.seen (snd w)) = true;
+  frame_closed : forall u pending, In (u, pending) (fst w) ->
+    forall e v, In (e, v) (Prepared.succ_edges p u) -> Scope.admits scope v = true ->
+      In (e, v) pending \/ FinSet.mem positive_encoding v (SearchRun.seen (snd w)) = true
+}.
+
+Local Lemma closed_monotone {V E} (p : Prepared.t V E) scope stack c c' :
+  seen_incl c c' -> SearchRun.post_rev c' = SearchRun.post_rev c ->
+  closed_work p scope (stack, c) -> closed_work p scope (stack, c').
+Proof.
+  intros Hseen Hpost [Hfinished Hframes]. constructor.
+  - intros u Hu e v Hedge Hallowed. apply Hseen.
+    eapply (Hfinished u).
+    + cbn [snd] in Hu |- *. now rewrite Hpost in Hu.
+    + exact Hedge.
+    + exact Hallowed.
+  - intros u pending Hin e v Hedge Hallowed.
+    destruct (Hframes u pending Hin e v Hedge Hallowed) as [Hpending|Hv];
+      [now left|right; now apply Hseen].
+Qed.
+
+Local Lemma closed_consume {V E} (p : Prepared.t V E) scope u e v pending rest c :
+  closed_work p scope ((u, (e, v) :: pending) :: rest, c) ->
+  (Scope.admits scope v = true -> FinSet.mem positive_encoding v (SearchRun.seen c) = true) ->
+    closed_work p scope ((u, pending) :: rest, c).
+Proof.
+  intros [Hfinished Hframes] Htarget. constructor; [exact Hfinished|].
+  intros x es [Heq|Hin] a y Hedge Hallowed.
+  - inversion Heq; subst x es.
+    destruct (Hframes u ((e, v) :: pending) (or_introl eq_refl) a y Hedge Hallowed)
+      as [[Hpair|Hin]|Hseen]; [|now left|now right].
+    inversion Hpair; subst a y. right. now apply Htarget.
+  - apply (Hframes x es (or_intror Hin) a y Hedge Hallowed).
+Qed.
+
+Local Lemma closed_push {V E} (p : Prepared.t V E) scope stack c v :
+  closed_work p scope (stack, c) ->
+    closed_work p scope ((v, Prepared.succ_edges p v) :: stack, c).
+Proof.
+  intros [Hfinished Hframes]. constructor; [exact Hfinished|].
+  intros u es [Heq|Hin] e x Hedge Hallowed.
+  - inversion Heq; subst u es. now left.
+  - exact (Hframes u es Hin e x Hedge Hallowed).
+Qed.
+
+Local Lemma closed_finish {V E} (p : Prepared.t V E) scope u rest c :
+  closed_work p scope ((u, []) :: rest, c) ->
+    closed_work p scope (rest, SearchRun.finish u c).
+Proof.
+  intros [Hfinished Hframes]. rewrite SearchRun.finish_equation. constructor.
+  - intros x [<-|Hin] e v Hedge Hallowed.
+    + destruct (Hframes u [] (or_introl eq_refl) e v Hedge Hallowed) as [Hfalse|Hv];
+        [contradiction|exact Hv].
+    + exact (Hfinished x Hin e v Hedge Hallowed).
+  - intros x es Hin. apply Hframes. now right.
+Qed.
+
+Local Lemma non_tree_seen {E} (c : SearchRun.core E) u v :
+  SearchRun.edge_kind c u v <> Search.Tree ->
+    FinSet.mem positive_encoding v (SearchRun.seen c) = true.
+Proof.
+  intro Hnot. destruct (FinSet.mem positive_encoding v (SearchRun.seen c)) eqn:Hseen;
+    [reflexivity|].
+  exfalso. apply Hnot, (proj2 (tree_is_white c u v)), Hseen.
+Qed.
+
+(** Closing an edge retains every previously processed labelled occurrence. *)
+Theorem transition_closed {V E} (p : Prepared.t V E) scope roots w :
+  Prepared.ready p -> representation (snd w) -> sound_work p scope roots w ->
+  closed_work p scope w ->
+    closed_work p scope (SearchRun.unwrap (fst (SearchRun.transition p scope w))).
+Proof.
+  intros Hready. destruct w as [stack c]. intros Hrep Hsound Hclosed.
+  rewrite SearchRun.step_equation.
+  destruct stack as [|[u [|[e v] pending]] rest]; cbn [fst SearchRun.unwrap].
+  - exact Hclosed.
+  - now apply closed_finish.
+  - destruct (Scope.admits scope v) eqn:Hallowed.
+    + assert (Hvalid : Prepared.valid_id p v).
+      { destruct (valid_frames _ _ _ _ Hsound u ((e, v) :: pending) (or_introl eq_refl))
+          as [_ [Hu [_ Hedges]]].
+        exact (proj2 (successor_arc p u e v Hready Hu (Hedges _ (or_introl eq_refl)))). }
+      destruct (Prepared.name_of p v) as [name|] eqn:Hname.
+      * destruct (SearchRun.edge_kind c u v) eqn:Hkind; cbn [fst SearchRun.unwrap].
+        -- apply closed_push. eapply closed_consume.
+           ++ eapply closed_monotone; [now apply discover_seen| |exact Hclosed].
+              rewrite SearchRun.discover_equation. reflexivity.
+           ++ intros _. rewrite SearchRun.discover_equation. cbn [SearchRun.seen].
+              rewrite FinSet.mem_add by exact (seen_wf _ Hrep).
+              rewrite eqb_refl. reflexivity.
+        -- eapply closed_consume; [exact Hclosed|].
+           intros _. apply (non_tree_seen c u v). congruence.
+        -- eapply closed_consume; [exact Hclosed|].
+           intros _. apply (non_tree_seen c u v). congruence.
+        -- eapply closed_consume; [exact Hclosed|].
+           intros _. apply (non_tree_seen c u v). congruence.
+      * destruct Hready as [_ [_ Hlaws]]. destruct Hvalid as [a [_ Ha]].
+        pose proof (Prepared.name_of_id_of p a v Hlaws Ha). congruence.
+    + eapply closed_consume; [exact Hclosed|]. intro Hfalse. congruence.
+Qed.
+
+Local Lemma loop_closed {V E} (p : Prepared.t V E) scope roots n w :
+  Prepared.ready p -> representation (snd w) -> sound_work p scope roots w ->
+  closed_work p scope w ->
+    closed_work p scope (fst (SearchRun.reference_loop p scope n w)).
+Proof.
+  intro Hready. revert w. induction n as [|n IH]; intros w Hrep Hsound Hclosed;
+    [exact Hclosed|].
+  pose proof (transition_representation p scope w Hrep) as Hrep'.
+  pose proof (transition_sound p scope roots w Hready Hrep Hsound) as Hsound'.
+  pose proof (transition_closed p scope roots w Hready Hrep Hsound Hclosed) as Hclosed'.
+  cbn [SearchRun.reference_loop].
+  destruct (SearchRun.transition p scope w) as [[w'|w'] evs];
+    cbn [fst snd SearchRun.unwrap] in Hrep', Hsound', Hclosed'.
+  - specialize (IH w' Hrep' Hsound' Hclosed').
+    destruct (SearchRun.reference_loop p scope n w') as [final later]. exact IH.
+  - exact Hclosed'.
+Qed.
+
+Local Lemma root_closed {V E} (p : Prepared.t V E) scope roots c v :
+  Prepared.ready p -> representation c -> sound_work p scope roots ([], c) ->
+  closed_work p scope ([], c) -> In v roots ->
+    closed_work p scope ([], fst (SearchRun.reference_root p scope c v)).
+Proof.
+  intros Hready Hrep Hsound Hclosed Hroot. unfold SearchRun.reference_root.
+  destruct (Scope.admits scope v) eqn:Hallowed; [|exact Hclosed].
+  destruct (FinSet.mem positive_encoding v (SearchRun.seen c)) eqn:Hfresh; [exact Hclosed|].
+  destruct (Prepared.name_of p v) as [name|] eqn:Hname; [|exact Hclosed].
+  assert (Hvalid : Prepared.valid_id p v).
+  { apply vertices_spec. exact (named_in_vertices p v name Hready Hname). }
+  assert (Hreach : Search.scoped_reachable p scope roots v).
+  { exists v, []. split; [exact Hroot|now apply Search.scoped_nil]. }
+  assert (Hclosed' : closed_work p scope
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)).
+  { apply closed_push. eapply closed_monotone; [now apply discover_seen| |exact Hclosed].
+    rewrite SearchRun.discover_equation. reflexivity. }
+  pose proof (loop_closed p scope roots (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c) Hready
+    (discover_representation c v None Hrep Hfresh)
+    (sound_push p scope roots [] c v None Hrep Hsound Hreach Hvalid Hallowed) Hclosed') as Hloop.
+  destruct (SearchRun.reference_loop p scope (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as [[stack final] evs].
+  destruct Hloop as [Hfinished Hframes]. constructor; [exact Hfinished|].
+  intros u es Hin. contradiction.
+Qed.
+
+Local Lemma roots_closed {V E} (p : Prepared.t V E) scope roots todo c :
+  Prepared.ready p -> incl todo roots -> representation c ->
+  sound_work p scope roots ([], c) -> closed_work p scope ([], c) ->
+    closed_work p scope ([], fst (SearchRun.reference_roots p scope todo c)).
+Proof.
+  intro Hready. revert c. induction todo as [|v rest IH];
+    intros c Htodo Hrep Hsound Hclosed; [exact Hclosed|].
+  pose proof (root_representation p scope c v Hrep) as Hrep'.
+  pose proof (root_sound p scope roots c v Hready Hrep Hsound
+    (Htodo v (or_introl eq_refl))) as Hsound'.
+  pose proof (root_closed p scope roots c v Hready Hrep Hsound Hclosed
+    (Htodo v (or_introl eq_refl))) as Hclosed'.
+  cbn [SearchRun.reference_roots].
+  destruct (SearchRun.reference_root p scope c v) as [c' here].
+  specialize (IH c' ltac:(intros x Hx; apply Htodo; now right) Hrep' Hsound' Hclosed').
+  destruct (SearchRun.reference_roots p scope rest c') as [final later]. exact IH.
+Qed.
+
+Local Lemma root_seen {V E} (p : Prepared.t V E) scope c v :
+  representation c -> seen_incl c (fst (SearchRun.reference_root p scope c v)).
+Proof.
+  intro Hrep. unfold SearchRun.reference_root.
+  destruct (Scope.admits scope v); [|intros x Hx; exact Hx].
+  destruct (FinSet.mem positive_encoding v (SearchRun.seen c)) eqn:Hfresh;
+    [intros x Hx; exact Hx|].
+  destruct (Prepared.name_of p v); [|intros x Hx; exact Hx].
+  pose proof (loop_seen p scope (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)
+    (discover_representation c v None Hrep Hfresh)) as Hseen.
+  destruct (SearchRun.reference_loop p scope (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as [w evs].
+  intros x Hx. apply Hseen. now apply (discover_seen c v None Hrep).
+Qed.
+
+Local Lemma root_visits {V E} (p : Prepared.t V E) scope c v :
+  Prepared.ready p -> representation c -> Prepared.valid_id p v ->
+  Scope.admits scope v = true ->
+    FinSet.mem positive_encoding v
+      (SearchRun.seen (fst (SearchRun.reference_root p scope c v))) = true.
+Proof.
+  intros Hready Hrep Hvalid Hallowed. unfold SearchRun.reference_root. rewrite Hallowed.
+  destruct (FinSet.mem positive_encoding v (SearchRun.seen c)) eqn:Hfresh; [exact Hfresh|].
+  destruct (Prepared.name_of p v) as [name|] eqn:Hname.
+  - pose proof (loop_seen p scope (Pos.to_nat (Prepared.fuel p))
+      ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)
+      (discover_representation c v None Hrep Hfresh)) as Hseen.
+    destruct (SearchRun.reference_loop p scope (Pos.to_nat (Prepared.fuel p))
+      ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as [w evs].
+    apply Hseen. rewrite SearchRun.discover_equation. cbn [snd SearchRun.seen].
+    rewrite FinSet.mem_add by exact (seen_wf _ Hrep). rewrite eqb_refl. reflexivity.
+  - destruct Hready as [_ [_ Hlaws]]. destruct Hvalid as [a [_ Ha]].
+    pose proof (Prepared.name_of_id_of p a v Hlaws Ha). congruence.
+Qed.
+
+Local Lemma roots_visit {V E} (p : Prepared.t V E) scope todo c :
+  Prepared.ready p -> representation c ->
+  forall v, Prepared.valid_id p v -> Scope.admits scope v = true ->
+    (In v todo \/ FinSet.mem positive_encoding v (SearchRun.seen c) = true) ->
+    FinSet.mem positive_encoding v
+      (SearchRun.seen (fst (SearchRun.reference_roots p scope todo c))) = true.
+Proof.
+  intro Hready. revert c. induction todo as [|u rest IH];
+    intros c Hrep v Hvalid Hallowed Hin.
+  - destruct Hin as [Hfalse|Hv]; [contradiction|exact Hv].
+  - pose proof (root_representation p scope c u Hrep) as Hrep'.
+    pose proof (root_seen p scope c u Hrep) as Hseen.
+    pose proof (root_visits p scope c v Hready Hrep Hvalid Hallowed) as Hvisit.
+    cbn [SearchRun.reference_roots].
+    destruct (SearchRun.reference_root p scope c u) as [c' here] eqn:Hroot.
+    pose proof (IH c' Hrep' v Hvalid Hallowed) as Htail.
+    destruct (SearchRun.reference_roots p scope rest c') as [final later].
+    apply Htail. destruct Hin as [[Heq|Hin]|Hin].
+    + subst u. rewrite Hroot in Hvisit. now right.
+    + now left.
+    + right. now apply Hseen.
+Qed.
+
+(** Interpreted arcs recover their same labelled successor occurrence. *)
+Theorem arc_successor {V E} (p : Prepared.t V E) u e v :
+  Prepared.ready p -> Prepared.arc p u e v ->
+    In (e, v) (Prepared.succ_edges p u).
+Proof.
+  intros [_ [_ Hlaws]] [a [b [Ha [Hi [Hj [Hsource [Htarget Hedge]]]]]]].
+  apply (Prepared.succ_spec p a u e v Hlaws Hi). split; [exact Hedge|].
+  now rewrite Htarget.
+Qed.
+
+(** Every admitted reachable vertex is discovered by the adequate search. *)
+Theorem run_reachable_complete {V E} (p : Prepared.t V E) scope roots v :
+  Prepared.ready p -> Search.scoped_reachable p scope roots v ->
+    In v (Search.preorder (SearchRun.dfs p scope roots)).
+Proof.
+  intros Hready [root [es [Hroot Hpath]]].
+  assert (Hinitial : sound_work p scope roots ([], @SearchRun.initial E)).
+  { constructor.
+    - intros x Hx. change (FinSet.mem positive_encoding x FinSet.empty = true) in Hx.
+      rewrite FinSet.mem_empty in Hx. discriminate.
+    - intros u pending Hin. contradiction. }
+  assert (Hclosed : closed_work p scope ([], @SearchRun.initial E)).
+  { constructor; intros u Hu; contradiction. }
+  pose proof (roots_closed p scope roots roots _ Hready ltac:(intros x Hx; exact Hx)
+    (@initial_representation E) Hinitial Hclosed) as Hfinal.
+  pose proof (roots_history p scope roots _ Hready
+    (@initial_representation E) (@initial_history E)) as Hhistory.
+  pose proof (roots_visit p scope roots _ Hready (@initial_representation E)) as Hroots.
+  pose proof (roots_representation p scope roots _ (@initial_representation E)) as Hcrep.
+  pose proof (run_representation p scope roots) as Hrep.
+  unfold SearchRun.dfs in Hrep |- *. rewrite SearchRun.run_equation in Hrep |- *.
+  destruct (SearchRun.reference_roots p scope roots SearchRun.initial) as [c evs].
+  cbn [fst snd] in Hroots, Hcrep.
+  destruct Hrep as [_ [_ [_ [_ [_ Hseen]]]]].
+  apply Hseen.
+  assert (Hpropagate : forall u path z, Search.scoped_path p scope u path z ->
+    FinSet.mem positive_encoding u (SearchRun.seen c) = true ->
+    FinSet.mem positive_encoding z (SearchRun.seen c) = true).
+  { intros u path z Hwalk. induction Hwalk as [x Hvalid Hallowed|u e x path z Hu Ha Harc Hwalk IH];
+      intro Hvisited; [exact Hvisited|].
+    apply IH. eapply (finished_closed _ _ _ Hfinal u).
+    - destruct Hhistory as [_ _ Hpartition]. cbn [fst snd map app] in Hpartition.
+      apply (Permutation_in u Hpartition).
+      apply (seen_discovered _ Hcrep).
+      exact Hvisited.
+    - exact (arc_successor p u e x Hready Harc).
+    - inversion Hwalk; assumption. }
+  apply (Hpropagate root es v Hpath).
+  assert (Hstart : Prepared.valid_id p root /\ Scope.admits scope root = true).
+  { inversion Hpath; subst; auto. }
+  destruct Hstart as [Hvalid Hallowed]. apply (Hroots root Hvalid Hallowed). now left.
+Qed.
+
 End SearchExact.
