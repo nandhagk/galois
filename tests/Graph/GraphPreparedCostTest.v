@@ -70,3 +70,38 @@ Example preparation_value_bridge :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Definition reverse_source := Prepared.prepare nat_encoding cheap_graph.
+Definition repeated_reverse := Prepared.reverse reverse_source [1; 99; 1]%positive.
+
+Example reversal_retains_raw_exit_occurrences :
+  (Prepared.entry_ids repeated_reverse, Graph.entries (Prepared.graph repeated_reverse)) =
+    ([1; 99; 1]%positive, [1; 1]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example reversal_shares_the_predecessor_index :
+  Prepared.succ repeated_reverse = Prepared.pred reverse_source.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example reversal_charges_duplicates_and_unknown_ids :
+  Cost.ticks (Prepared.reverse_c reverse_source [1; 99; 1]%positive) = 21%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_reversal_ticks :
+  Cost.ticks (Prepared.reverse_c reverse_source []) = 0%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example repeated_reversal_numeric_bound :
+  (Cost.ticks (Prepared.reverse_c reverse_source [1; 99; 1]%positive) <=?
+    N.of_nat 3 * (3 + 2 * 7))%N = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.

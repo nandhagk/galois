@@ -638,9 +638,32 @@ Qed.
 Definition reverse_graph {V E} (p : t V E) exits :=
   Graph.reverse_with (graph p) (present (name_of p) exits) (incoming_c p).
 
-(** Reversal swaps both indexes and keeps the existing ID table and fuel. *)
-Definition reverse {V E} (p : t V E) exits : t V E :=
-  Make (reverse_graph p exits) (node_enc p) (names p) (pred p) (succ p) exits (fuel p).
+(** Reversal charges every exit occurrence and inverse lookup while sharing the existing indexes. *)
+Definition reverse_c {V E} (p : t V E) exits : Cost.t (t V E) :=
+  let* entries := present_c (name_of_c p) exits in
+  Cost.ret (Make (Graph.reverse_with (graph p) entries (incoming_c p))
+    (node_enc p) (names p) (pred p) (succ p) exits (fuel p)).
+
+(** The public reversal is the value projection of its costed implementation. *)
+Definition reverse {V E} (p : t V E) exits := Cost.value (reverse_c p exits).
+
+(** Reversal changes neither names nor the binary traversal budget. *)
+Theorem reverse_equation {V E} (p : t V E) exits :
+  reverse p exits =
+    Make (reverse_graph p exits) (node_enc p) (names p) (pred p) (succ p) exits (fuel p).
+Proof.
+  unfold reverse, reverse_c. rewrite Cost.value_bind, present_c_value. reflexivity.
+Qed.
+
+(** Costed reversal only converts exits and constructs the shared reversed view. *)
+Theorem reverse_c_equation {V E} (p : t V E) exits :
+  reverse_c p exits =
+    let* entries := present_c (name_of_c p) exits in
+    Cost.ret (Make (Graph.reverse_with (graph p) entries (incoming_c p))
+      (node_enc p) (names p) (pred p) (succ p) exits (fuel p)).
+Proof.
+  reflexivity.
+Qed.
 
 Local Lemma reverse_out {V E} (p : t V E) exits v :
   Graph.out (reverse_graph p exits) v =
@@ -757,7 +780,8 @@ Qed.
 Theorem reverse_ready {V E} (p : t V E) exits :
   ready p -> (forall i, In i exits -> valid_id p i) -> ready (reverse p exits).
 Proof.
-  intros Hready Hvalid. pose proof Hready as [Hwf [Hnodup Hp]].
+  intros Hready Hvalid. rewrite reverse_equation.
+  pose proof Hready as [Hwf [Hnodup Hp]].
   split; [exact (reverse_wf p exits Hready)|].
   split; [exact (reverse_nodup p exits Hready)|].
   constructor.
@@ -810,16 +834,9 @@ Proof.
   rewrite prepare_equation. reflexivity.
 Qed.
 
-(** Reversal changes neither names nor the binary traversal budget. *)
-Theorem reverse_equation {V E} (p : t V E) exits :
-  reverse p exits =
-    Make (reverse_graph p exits) (node_enc p) (names p) (pred p) (succ p) exits (fuel p).
-Proof.
-  reflexivity.
-Qed.
-
 Arguments prepare {V E} enc g : simpl never.
 Arguments reverse {V E} p exits : simpl never.
+Arguments reverse_c {V E} p exits : simpl never.
 Arguments id_of {V E} p v : simpl never.
 Arguments id_of_c {V E} p v : simpl never.
 Arguments name_of {V E} p i : simpl never.
