@@ -1,0 +1,5 @@
+(rocq.theory
+ (name Galois.Tests.Cost)
+ (package galois)
+ (flags :standard -w +default)
+ (theories Stdlib Galois.Cost))
