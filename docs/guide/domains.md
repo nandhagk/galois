@@ -62,7 +62,9 @@ injection, result bottom and top, and the default backward embedding.
 `word_of_table` supplies the payload dictionary from a table, shape, payload lattices, top,
 constant and meet callbacks.
 `word_of_table_laws` adds the independent lattice, constant and meet obligations.
-Its context requires the result width to agree with the successful result.
+Its context requires the result width to agree and the result to be an unsigned word.
+Successful operator evaluation supplies both requirements.
+Payload tops therefore need to describe values inside their word range.
 Its output meaning uses each concrete word's own width.
 Backward operands can therefore have widths different from the result, as comparisons and
 resizing require.
