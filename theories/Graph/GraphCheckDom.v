@@ -10,10 +10,9 @@ From Stdlib Require Import List Bool PArith NArith Arith Lia.
 From Stdlib.Relations Require Import Relation_Operators.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIntern.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphSearchSpec GraphDomSpec GraphReach.
-Import List.ListNotations.
+Import List.ListNotations Dom.
 
-Module Dom.
-Include GraphDomSpec.Dom.
+Module DomCheck.
 
 Definition parent (m : Map.t positive positive) v := Map.get positive_encoding v m.
 
@@ -784,4 +783,4 @@ Arguments check {V E} p m : simpl never.
 Arguments ancestor_b m d n : simpl never.
 Arguments dominates_b t d n : simpl never.
 
-End Dom.
+End DomCheck.

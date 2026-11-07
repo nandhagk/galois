@@ -6,7 +6,8 @@
 
 From Stdlib Require Import List Bool Arith PArith.
 From Galois.Base Require Import BaseEncoding BaseMap.
-From Galois.Graph Require Import GraphModel GraphPrepared GraphHierSpec GraphCheckWto GraphCheckDom.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphHierSpec
+  GraphCheckWto GraphCheckDom.
 Import List.ListNotations.
 Close Scope positive_scope.
 
@@ -69,7 +70,7 @@ Qed.
 (** The hand-written line order satisfies the unrestricted weak-order contract. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -79,12 +80,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** The supplied line parents and their reference numbering form an exact dominator tree. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -106,7 +107,7 @@ Qed.
 (** The hand-written diamond order satisfies the unrestricted weak-order contract. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -116,12 +117,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** Both branches and the join have exactly the supplied immediate dominators. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -145,7 +146,7 @@ Qed.
 (** The join's opening token accounts for its self-loop. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -155,12 +156,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** The join's self-loop does not change the supplied immediate dominators. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -183,7 +184,7 @@ Qed.
 (** Both backward edges target the corresponding enclosing loop heads. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -193,12 +194,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** The nested-loop dominator tree follows the forward chain from entry 1. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -220,7 +221,7 @@ Qed.
 (** The shared-tail order covers paths from both graph entries. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -230,12 +231,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** Neither entry dominates the join and node 3 immediately dominates the tail node 4. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -257,7 +258,7 @@ Qed.
 (** The empty-body component is a valid order for the self-loop. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -267,12 +268,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** A singleton self-loop has no strict immediate dominator. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -294,7 +295,7 @@ Qed.
 (** The weak order accepts both entries into the irreducible cycle. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -304,12 +305,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** Both cycle nodes have entry 1 as their immediate dominator. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -331,7 +332,7 @@ Qed.
 (** The empty token list is valid on the empty rooted graph. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -341,12 +342,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** The empty graph has an exact empty dominator forest. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -368,7 +369,7 @@ Qed.
 (** An acyclic singleton needs a vertex token alone. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -378,12 +379,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** The singleton is its own reflexive ancestor and has no strict dominator. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -405,7 +406,7 @@ Qed.
 (** Listed unreachable nodes are excluded from rooted weak-order coverage. *)
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
-  apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  apply (proj1 (WtoCheck.check_correct prepared _ wto fixture_ready)).
   vm_compute. reflexivity.
 Qed.
 
@@ -415,12 +416,12 @@ Proof.
   apply Map.wf_of_list.
 Qed.
 
-Definition tree := Dom.of_parents prepared parents.
+Definition tree := DomCheck.of_parents prepared parents.
 
 (** The dominator forest covers the line and has no binding for unreachable node 5. *)
 Theorem tree_exact : Dom.exact prepared tree.
 Proof.
-  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  apply DomCheck.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 

@@ -9,10 +9,9 @@ From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec
   GraphHierSpec GraphReach.
-Import List.ListNotations.
+Import List.ListNotations Wto.
 
-Module Wto.
-Include GraphHierSpec.Wto.
+Module WtoCheck.
 
 Definition member (v : positive) xs := existsb (Pos.eqb v) xs.
 
@@ -219,4 +218,4 @@ Definition check_forest {V E} (p : Prepared.t V E) roots f := check p roots (of_
 Arguments check {V E} p roots w : simpl never.
 Arguments check_forest {V E} p roots f : simpl never.
 
-End Wto.
+End WtoCheck.
