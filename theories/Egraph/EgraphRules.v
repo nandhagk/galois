@@ -104,7 +104,7 @@ Record t (K Sort V H F : Type) : Type := Make {
   hole_sort_c : H -> Cost.t (option Sort);
   lhs : EggPattern.t K Sort V H;
   rhs : EggPattern.t K Sort V H;
-  guard_c : (H -> F) -> Cost.t bool
+  guard_c : (H -> Cost.t F) -> Cost.t bool
 }.
 
 Arguments hole_enc {K Sort V H F} _.
@@ -118,7 +118,21 @@ Definition hole_sort {K Sort V H F} (rule : t K Sort V H F) h :=
   Cost.value (hole_sort_c rule h).
 
 Definition guard {K Sort V H F} (rule : t K Sort V H F) (facts : H -> F) :=
-  Cost.value (guard_c rule facts).
+  Cost.value (guard_c rule (fun h => Cost.ret (facts h))).
+
+(** Runtime guards depend on the values of costed fact reads independently of their charges. *)
+Record guard_laws {K Sort V H F} (rule : t K Sort V H F) : Prop := Guard_laws {
+  guard_value_agrees : forall phi,
+    Cost.value (guard_c rule phi) = guard rule (fun h => Cost.value (phi h))
+}.
+
+(** A lawful runtime guard agrees with the semantic guard on the lookup's returned facts. *)
+Theorem guard_agrees {K Sort V H F} (rule : t K Sort V H F) :
+  guard_laws rule -> forall phi,
+    Cost.value (guard_c rule phi) = guard rule (fun h => Cost.value (phi h)).
+Proof.
+  intros Hl phi; exact (guard_value_agrees rule Hl phi).
+Qed.
 
 (** Class-substitution maps require an injective hole encoding independently of rule typing. *)
 Definition encoding_laws {K Sort V H F} (rule : t K Sort V H F) : Prop :=

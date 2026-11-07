@@ -99,6 +99,35 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition cascade_fixture :=
+  match Egraph.add_term arith Egraph.empty (unary (unary leaf_a)) with
+  | None => None
+  | Some (_, g) =>
+    match Egraph.add_term arith g (unary (unary leaf_b)) with
+    | None => None
+    | Some (_, h) => Egraph.union arith h 1%positive 4%positive
+    end
+  end.
+
+Example cascade_starts_with_distinct_inner_and_outer_classes :
+  option_map (fun g =>
+    (Pos.eqb (Egraph.find arith g 2%positive) (Egraph.find arith g 5%positive),
+      Pos.eqb (Egraph.find arith g 3%positive) (Egraph.find arith g 6%positive)))
+    cascade_fixture = Some (false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rebuild_merges_inner_then_outer_congruence :
+  option_map (fun g =>
+    let h := Egraph.rebuild arith g in
+    (Pos.eqb (Egraph.find arith h 2%positive) (Egraph.find arith h 5%positive),
+      Pos.eqb (Egraph.find arith h 3%positive) (Egraph.find arith h 6%positive)))
+    cascade_fixture = Some (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example insertion_reuses_clean_node :
   option_map (fun result =>
     let g := Egraph.rebuild arith (snd result) in

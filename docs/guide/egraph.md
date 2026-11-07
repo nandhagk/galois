@@ -34,7 +34,12 @@ rejecting `None` in its `holds` predicate.
 An `EggRule.t` carries a hole encoding and declares holes, their sorts, two patterns
 and a costed guard. `EggRule.encoding_laws` supplies the separate hole-encoding
 injectivity condition needed by class-substitution maps.
-The pure guard has type `(H -> F) -> bool`. It reads facts supplied for the holes.
+The runtime guard has type `(H -> Cost.t F) -> Cost.t bool`, so each actual fact
+read can retain a map or substitution lookup's cost. The pure guard has type
+`(H -> F) -> bool` and supplies `Cost.ret`-valued lookups.
+The separate `EggRule.guard_laws` record requires runtime values to agree with the
+pure guard on returned facts. `EggRule.guard_agrees` supplies that bridge to runner
+and explanation proofs. Semantic rule soundness continues to use the pure guard.
 `EggRule.wf` requires typed sides of the same sort.
 `EggRule.sound` requires valid facts and a true guard to justify an instantiated
 equality. `EggEqual.rel` closes those instances under reflexivity, symmetry,
@@ -74,6 +79,12 @@ memo index.
 related by `EggEqual.rel`. A client must justify a union by a genuine relation
 between its old classes and must establish old soundness. The structural union
 operation itself needs no semantics or proof argument.
+
+`EggInsertSpec.add_node_sound` and `EggInsertSpec.add_term_sound` prove that
+successful insertion preserves soundness from old WF, old soundness and encoding
+laws. The allocation proof retracts output representations at old identifiers to
+their old finite terms. Terms at the fresh class come from its new node and old
+child classes. The insertion laws require no post-state soundness premise.
 
 ## Scope
 
