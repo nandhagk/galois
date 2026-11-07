@@ -30,8 +30,8 @@ Qed.
 Theorem solve_stratum_cost {P} (prog : program P) facts st lower k fuel :
   Cost.ticks (solve_stratum_c prog facts st lower k fuel) =
     Cost.ticks (DatalogCompile.stratum_analysis_c prog facts st lower k) +
-    Cost.ticks (analyze_c (DatalogCompile.stratum_analysis prog facts st lower k) fuel) +
-    match analyze (DatalogCompile.stratum_analysis prog facts st lower k) fuel with
+    Cost.ticks (analyze_ref_c (DatalogCompile.stratum_analysis prog facts st lower k) fuel) +
+    match analyze_ref (DatalogCompile.stratum_analysis prog facts st lower k) fuel with
     | Outcome.Solved _ => 1 + Cost.ticks (Solver.run_c Kleene.solver
         (DatalogCompile.stratum_analysis prog facts st lower k) fuel)
     | _ => 0
@@ -40,8 +40,8 @@ Proof.
   unfold solve_stratum_c; repeat rewrite Cost.ticks_bind.
   rewrite finish_stratum_cost.
   fold (DatalogCompile.stratum_analysis prog facts st lower k).
-  fold (analyze (DatalogCompile.stratum_analysis prog facts st lower k) fuel).
-  destruct (analyze (DatalogCompile.stratum_analysis prog facts st lower k) fuel);
+  fold (analyze_ref (DatalogCompile.stratum_analysis prog facts st lower k) fuel).
+  destruct (analyze_ref (DatalogCompile.stratum_analysis prog facts st lower k) fuel);
     rewrite ?Cost.ticks_ret; lia.
 Qed.
 

@@ -4,12 +4,12 @@
     For example, a recursive seed is both derivable and present in every post-solution.
     Builds on: DatalogCompileProof and FixpointLeast. *)
 
-From Stdlib Require Import List Bool PeanoNat Lia Relations.Relation_Operators.
+From Stdlib Require Import List Bool PeanoNat PArith Lia Relations.Relation_Operators.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
-From Galois.Lattice Require Import LatticeCore LatticeSet.
+From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSet.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointLeast
-  FixpointAnalysis FixpointAnalyze FixpointCertified FixpointKleene.
+  FixpointAnalysis FixpointSolver FixpointKleene.
 From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogModel
   DatalogRelation DatalogFire DatalogCompile DatalogCompileProof.
 Import List.ListNotations.
@@ -154,20 +154,28 @@ Proof.
   apply (model_constants prog facts st Hwf Hst k (p, ts)), (proj1 (Hlower p ts)), Hmem.
 Qed.
 
-Lemma total_stratum_reached k lower Hwf Hst Hlower :
-  reached (penc prog) relation_lattice (stratum_system prog facts st lower k)
-    (proj1_sig (solve (stratum_analysis prog facts st lower k)
-      (stratum_analysis_laws prog facts st lower k HE)
-      (stratum_terminates prog facts st lower k HE Hwf
-        (represented_support k lower Hwf Hst Hlower)))).
+Local Lemma total_stratum_reached k lower :
+  program_wf prog facts -> stratified prog st ->
+  represents (fun p => Cost.value (lower p)) (model_below prog facts st k) ->
+  exists m,
+    post_solution relation_lattice (stratum_system prog facts st lower k)
+      (lookup (penc prog) relation_lattice m) /\
+    reached (penc prog) relation_lattice (stratum_system prog facts st lower k)
+      (lookup (penc prog) relation_lattice m).
 Proof.
-  pose proof (solve_run (stratum_analysis prog facts st lower k)
-    (stratum_analysis_laws prog facts st lower k HE)
-    (stratum_terminates prog facts st lower k HE Hwf
-      (represented_support k lower Hwf Hst Hlower))) as Hrun.
-  destruct (analyze_with_candidate Kleene.solver _ _ _ Hrun) as [m [Hm Hcandidate]].
-  rewrite Hcandidate.
-  exact (Kleene.kleene_reached (stratum_analysis prog facts st lower k) _ m Hm).
+  intros Hwf Hst Hlower.
+  set (a := stratum_analysis prog facts st lower k).
+  set (HL := stratum_analysis_laws prog facts st lower k HE).
+  set (HT := stratum_terminates prog facts st lower k HE Hwf
+    (represented_support k lower Hwf Hst Hlower)).
+  set (fuel := Pos.of_succ_nat
+    (length (Kleene.output_keys (Analysis.system a) (Analysis.static a)
+      (System.constraints (Analysis.system a))) * bound (Terminates.hgt HT))).
+  destruct (Kleene.kleene_fuel_adequate a HL HT fuel) as [m Hrun].
+  - unfold fuel; rewrite SuccNat2Pos.id_succ; apply Nat.lt_succ_diag_r.
+  - exists m; split.
+    + exact (Solver.solved_sound Kleene.kleene_solver_laws a fuel m HL Hrun).
+    + exact (Kleene.kleene_reached a fuel m Hrun).
 Qed.
 
 (** Every least compiled solution agrees with declarative derivation at every predicate. *)
@@ -179,17 +187,16 @@ Theorem stratum_least_is_derives k lower :
     derives prog facts st k (model_below prog facts st k) (p, ts).
 Proof.
   intros Hwf Hst Hlower s Hleast.
-  set (HL := stratum_analysis_laws prog facts st lower k HE).
-  set (HT := stratum_terminates prog facts st lower k HE Hwf
-    (represented_support k lower Hwf Hst Hlower)).
-  set (reference := proj1_sig (solve (stratum_analysis prog facts st lower k) HL HT)).
+  destruct (total_stratum_reached k lower Hwf Hst Hlower) as [m [Hpost Hreached]].
+  set (reference := lookup (penc prog) relation_lattice m).
   assert (Hreference : least_solution relation_lattice
     (stratum_system prog facts st lower k) reference).
-  { exact (solve_least (stratum_analysis prog facts st lower k) HL HT
-      relation_lub_laws (stratum_system_monotone prog facts st lower k HE Hwf Hst)). }
+  { exact (reached_least (penc prog) HE relation_lattice
+      (stratum_system prog facts st lower k) reference relation_laws relation_lub_laws
+      (stratum_system_monotone prog facts st lower k HE Hwf Hst) Hreached Hpost). }
   intros p ts; split.
   - intro Hmem; apply (stratum_reached_derives k lower Hwf Hst Hlower reference).
-    + apply total_stratum_reached.
+    + exact Hreached.
     + apply (proj1 (relation_leb _ _) (proj2 Hleast reference (proj1 Hreference) p)), Hmem.
   - intro Hderive; exact (stratum_post_solution_contains k lower Hwf Hst Hlower s
       (proj1 Hleast) (p, ts) Hderive).

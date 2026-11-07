@@ -398,7 +398,7 @@ Example solved_stratum_full_charge :
   let computed := solve_stratum_c empty_program [] st lower 0 1%positive in
   (outcome_tag (Cost.value computed), Cost.ticks computed) =
   (0, (Cost.ticks (stratum_analysis_c empty_program [] st lower 0) +
-    Cost.ticks (analyze_c empty_analysis 1%positive) + 1 +
+    Cost.ticks (analyze_ref_c empty_analysis 1%positive) + 1 +
     Cost.ticks (Solver.run_c Kleene.solver empty_analysis 1%positive))%N).
 Proof.
   vm_compute; reflexivity.
@@ -409,9 +409,9 @@ Example exhausted_stratum_skips_second_charge :
   let lower := fun _ : nat => Cost.ret (bot relation_lattice) in
   let a := stratum_analysis empty_program recursive_facts st lower 0 in
   let computed := solve_stratum_c empty_program recursive_facts st lower 0 1%positive in
-  (outcome_tag (analyze a 1%positive), outcome_tag (Cost.value computed), Cost.ticks computed) =
+  (outcome_tag (analyze_ref a 1%positive), outcome_tag (Cost.value computed), Cost.ticks computed) =
   (1, 1, (Cost.ticks (stratum_analysis_c empty_program recursive_facts st lower 0) +
-    Cost.ticks (analyze_c a 1%positive))%N).
+    Cost.ticks (analyze_ref_c a 1%positive))%N).
 Proof.
   vm_compute; reflexivity.
 Qed.

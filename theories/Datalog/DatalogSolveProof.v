@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSet.
 From Galois.Fixpoint Require Import FixpointSystem FixpointLeast FixpointAnalysis FixpointAnalyze
-  FixpointCertified FixpointSolver FixpointKleene.
+  FixpointSolver FixpointKleene.
 From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogModel DatalogRelation
   DatalogCompile DatalogCompileProof DatalogExact DatalogSolve.
 Import List.ListNotations.
@@ -87,26 +87,17 @@ Lemma solved_stratum_least k lower fuel m :
     (rel_of prog m).
 Proof.
   intros Hwf Hst Hsolve; rewrite solve_stratum_equation in Hsolve.
-  destruct (analyze (stratum_analysis prog facts st lower k) fuel)
+  destruct (analyze_ref (stratum_analysis prog facts st lower k) fuel)
     as [cert | have | why] eqn:Hcert; try discriminate.
-  pose proof (analyze_least (stratum_analysis prog facts st lower k) fuel cert
-    (stratum_analysis_laws prog facts st lower k HE) relation_lub_laws
-    (stratum_system_monotone prog facts st lower k HE Hwf Hst)
-    (fun _ => eq_refl) eq_refl Hcert) as Hleast.
   pose proof (Kleene.kleene_reached
     (stratum_analysis prog facts st lower k) fuel m Hsolve) as Hreached.
   pose proof (Solver.solved_sound Kleene.kleene_solver_laws
     (stratum_analysis prog facts st lower k) fuel m
     (stratum_analysis_laws prog facts st lower k HE) Hsolve) as Hpost.
-  split; [exact Hpost |].
-  intros u Hu p.
-  eapply (leb_trans relation_laws).
-  - exact (reached_below (penc prog) HE relation_lattice
-      (stratum_system prog facts st lower k) (rel_of prog m) (proj1_sig cert)
-      relation_laws relation_lub_laws
-      (stratum_system_monotone prog facts st lower k HE Hwf Hst)
-      Hreached (proj1 Hleast) p).
-  - exact (proj2 Hleast u Hu p).
+  exact (reached_least (penc prog) HE relation_lattice
+    (stratum_system prog facts st lower k) (rel_of prog m)
+    relation_laws relation_lub_laws
+    (stratum_system_monotone prog facts st lower k HE Hwf Hst) Hreached Hpost).
 Qed.
 
 Lemma solve_levels_exact fuel n db :
@@ -191,10 +182,9 @@ Proof.
     change (length (stratum_constraints prog facts st k) * length (universe prog facts)
       < Pos.to_nat fuel).
     pose proof (constraints_length k); unfold program_capacity in Hfuel; nia.
-  - destruct (analyze_with_accepts Kleene.solver a fuel m Hrun
+  - destruct (analyze_ref_accepts a fuel m Hrun
       (Solver.solved_sound Kleene.kleene_solver_laws a fuel m HL Hrun)) as [cert Hcert].
     exists m; rewrite solve_stratum_equation.
-    change (analyze a fuel = Outcome.Solved cert) in Hcert.
     fold a.
     rewrite Hcert; exact Hrun.
 Qed.

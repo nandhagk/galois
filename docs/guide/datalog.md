@@ -59,7 +59,8 @@ Lower positives and negatives read the fixed completed database.
 This convention does not assert that the empty predicate satisfies an unstratifiable program.
 
 `DatalogSolve.solve_program` takes program data, facts and positive fuel.
-Each stratum uses `Policy.flat` and certified `analyze`.
+Each stratum uses `Policy.flat` and certified `analyze_ref`.
+This reference entry point stays fixed when generic `analyze` selects a later engine.
 The current reference solver uses binary fuel to count joining rounds.
 A final stationary round is required.
 The outcomes have distinct meanings.
@@ -86,14 +87,15 @@ The lawful boolean encoding provides the discriminating control.
 
 ## Reference costs and compatibility
 
-The current `analyze` result exposes a pure lookup function.
+The `analyze_ref` result exposes a pure lookup function.
 The reference Datalog solver repeats the public reference run after successful certification to
 recover a map whose lookups retain their costs during database storage.
-`solved_stratum_least` bounds the reached map by the certified least solution.
+`solved_stratum_least` derives leastness from public reference reachability and soundness.
 `DatalogPipelineCost` retains the charges of both runs.
 The second callback adds an invocation tick after successful certification.
 Exhaustion and rejection skip that invocation and its work.
-A public map-valued certified analysis entry point would remove this repeated work.
+A public map-valued certified reference entry point would remove this repeated work.
+The public `analyze_ref_accepts` theorem connects a sound raw reference result to certification.
 
 The source-order fixtures observe repeated same-level query reads around fixed lower literals.
 They also compare raw binding lists from two independent multirow atoms.

@@ -64,11 +64,11 @@ Definition finish_stratum_c {P R} (a : Analysis.t P (Constraint.t P) relation) f
   | Outcome.Solved _ => Cost.step ;; Solver.run_c Kleene.solver a fuel
   end.
 
-(** The second reference run recovers a costed map because analyze exposes only a pure function. *)
+(** The second reference run recovers a costed map because analyze_ref exposes a pure function. *)
 Definition solve_stratum_c {P} (prog : program P) facts st lower k fuel
     : Cost.t (Outcome.t P relation (database P)) :=
   let* a := stratum_analysis_c prog facts st lower k in
-  let* certified := analyze_c a fuel in
+  let* certified := analyze_ref_c a fuel in
   finish_stratum_c a fuel certified.
 
 Definition solve_stratum {P} prog facts st lower k fuel :=
@@ -76,7 +76,7 @@ Definition solve_stratum {P} prog facts st lower k fuel :=
 
 Lemma solve_stratum_equation {P} (prog : program P) facts st lower k fuel :
   solve_stratum prog facts st lower k fuel =
-    match analyze (stratum_analysis prog facts st lower k) fuel with
+    match analyze_ref (stratum_analysis prog facts st lower k) fuel with
     | Outcome.OutOfFuel have => Outcome.OutOfFuel have
     | Outcome.Rejected why => Outcome.Rejected why
     | Outcome.Solved _ => Solver.run Kleene.solver
@@ -85,8 +85,8 @@ Lemma solve_stratum_equation {P} (prog : program P) facts st lower k fuel :
 Proof.
   unfold solve_stratum, solve_stratum_c; repeat rewrite Cost.value_bind.
   fold (@stratum_analysis P prog facts st lower k).
-  fold (analyze (stratum_analysis prog facts st lower k) fuel).
-  destruct (analyze (stratum_analysis prog facts st lower k) fuel); reflexivity.
+  fold (analyze_ref (stratum_analysis prog facts st lower k) fuel).
+  destruct (analyze_ref (stratum_analysis prog facts st lower k) fuel); reflexivity.
 Qed.
 
 Fixpoint solve_levels_c {P} (prog : program P) facts st fuel n
