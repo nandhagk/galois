@@ -1,0 +1,7 @@
+(rocq.theory
+ (name Galois.Tests.Legacy.Framework)
+ (flags :standard -w +default)
+ (theories Stdlib Galois.Cost Galois.Base Galois.Lattice Galois.Graph Galois.Fixpoint
+  Galois.Domains Galois.Program Galois.Framework Galois.Tests.Framework
+  GaloisLegacy.Collections GaloisLegacy.Order GaloisLegacy.Graph GaloisLegacy.Fixpoint
+  GaloisLegacy.Views GaloisLegacy.Analyses))

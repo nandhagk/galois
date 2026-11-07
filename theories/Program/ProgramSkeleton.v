@@ -99,6 +99,25 @@ Fixpoint sub {A G} (s : stmt A G) (p : position) : option (stmt A G) :=
     end
   end.
 
+(** Root lookup returns the whole statement. *)
+Theorem sub_root_equation {A G} (s : stmt A G) : sub s [] = Some s.
+Proof.
+  reflexivity.
+Qed.
+
+(** One descent follows the selected constructor child or rejects an invalid direction. *)
+Theorem sub_cons_equation {A G} (s : stmt A G) d p :
+  sub s (d :: p) =
+    match s, d with
+    | Seq l _, DFirst | If _ l _, DFirst => sub l p
+    | Seq _ r, DSecond | If _ _ r, DSecond => sub r p
+    | Block b, DBody | Loop b, DBody => sub b p
+    | _, _ => None
+    end.
+Proof.
+  destruct s, d; reflexivity.
+Qed.
+
 (** Valid positions occur once, in preorder. *)
 Fixpoint positions {A G} (s : stmt A G) : list position :=
   match s with

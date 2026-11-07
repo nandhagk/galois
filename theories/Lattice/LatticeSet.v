@@ -557,6 +557,13 @@ Proof.
   reflexivity.
 Qed.
 
+(** Valid union retains precisely the public raw union result. *)
+Theorem set_union_raw {K} (E : encoding K) a b :
+  set_raw (Cost.value (set_union_c E a b)) = FinSet.union (set_raw a) (set_raw b).
+Proof.
+  reflexivity.
+Qed.
+
 (** Inclusion cost retains enumeration charges and each charged membership callback. *)
 Theorem set_leb_cost {K} (E : encoding K) s t m :
   (forall k, (Cost.ticks (FinSet.mem_c E k (set_raw t)) <= m)%N) ->
