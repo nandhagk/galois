@@ -106,6 +106,26 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example flat_map_callback_invocation_ticks :
+  Cost.ticks (@skeleton_flat_map_c unit unit (fun _ => Cost.ret []) [tt]) = 2%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example flat_map_retains_callback_ticks :
+  Cost.ticks (@skeleton_flat_map_c unit unit
+    (fun _ => Cost.bind (Cost.tick 7) (fun _ => Cost.ret [])) [tt]) = (7 + 2)%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example flat_map_retains_copy_ticks :
+  Cost.ticks (@skeleton_flat_map_c unit unit
+    (fun _ => Cost.bind (Cost.tick 7) (fun _ => Cost.ret [tt])) [tt]) = (7 + 2 + 1)%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example syntax_visit_tick : Cost.ticks (syntax_rows_c leaf [] [] 0) = 1%N.
 Proof.
   vm_compute; reflexivity.

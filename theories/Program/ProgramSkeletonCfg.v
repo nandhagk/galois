@@ -482,16 +482,16 @@ Proof.
     rewrite syntax_rows_positions, map_id; reflexivity.
 Qed.
 
-(** Charged concatenation visits every outer cell and copies every returned inner list. *)
+(** Concatenation charges traversal and callback invocation, retaining callee and copy costs. *)
 Definition skeleton_flat_map_c {X Y} (f : X -> Cost.t (list Y)) (xs : list X) :=
-  fold_right_c (fun x rest => let* ys := f x in app_c ys rest) [] xs.
+  fold_right_c (fun x rest => Cost.step ;; let* ys := f x in app_c ys rest) [] xs.
 
 Local Lemma skeleton_flat_map_value {X Y} (f : X -> Cost.t (list Y)) xs :
   Cost.value (skeleton_flat_map_c f xs) = flat_map (fun x => Cost.value (f x)) xs.
 Proof.
   unfold skeleton_flat_map_c; rewrite value_fold_right_c.
   induction xs as [|x xs IH]; [reflexivity|].
-  cbn [fold_right flat_map]; rewrite Cost.value_bind, value_app_c, IH; reflexivity.
+  cbn [fold_right flat_map]; rewrite !Cost.value_bind, value_app_c, IH; reflexivity.
 Qed.
 
 Local Lemma skeleton_map_value {X Y} (f : X -> Cost.t Y) (g : X -> Y) xs :
