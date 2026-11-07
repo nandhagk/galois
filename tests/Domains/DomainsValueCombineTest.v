@@ -4,12 +4,14 @@
     For example, two binary operands with two alternatives produce four choices.
     Builds on: DomainsValueCombine and DomainsValueTest. *)
 
-From Stdlib Require Import List Bool Arith.
+From Stdlib Require Import List Bool Arith NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Lattice Require Import LatticeCore LatticeConcrete LatticeSimple LatticeKitFamily.
 From Galois.Domains Require Import DomainsValue DomainsValueCombine.
 From Galois.Tests.Domains Require Import DomainsValueTest.
 Import List.ListNotations.
+
+Local Open Scope nat_scope.
 
 Definition reach_product := ValueAbs.product reach_values reach_values Cost.ret.
 
@@ -32,13 +34,14 @@ Proof.
 Qed.
 
 Example renamed_transfer :
-  ValueAbs.op (ValueAbs.rename (fun _ : bool => tt) (fun _ : nat => tt) reach_values)
+  ValueAbs.op (ValueAbs.rename (fun _ : bool => Cost.ret tt)
+    (fun _ : nat => Cost.ret tt) reach_values)
     false [] = true.
 Proof. vm_compute. reflexivity. Qed.
 
 Example renamed_laws :
   value_laws
-    (ValueAbs.rename (fun _ : bool => tt) (fun _ : nat => tt) reach_values)
+    (ValueAbs.rename (fun _ : bool => Cost.ret tt) (fun _ : nat => Cost.ret tt) reach_values)
     {| ValueSem.eval := fun _ _ => Some tt; ValueSem.holds := fun _ _ => True |}
     bool_gamma.
 Proof.
@@ -129,11 +132,13 @@ Proof.
   rewrite Cost.value_map. exists (Cost.value (ValueAbs.join_all_c bool_lattice xs)).
   split; [now left|].
   apply cover_meaning in H.
-  unfold ValueAbs.join_all_c. rewrite value_fold_right_c.
-  change (fold_right orb false xs = true).
-  change (existsb (fun x => x) xs = true) in H.
-  induction xs as [|x xs IH]; cbn in *; [discriminate|].
-  destruct x; cbn in *; auto.
+  unfold ValueAbs.join_all_c. rewrite Cost.value_bind.
+  destruct xs as [|x xs]; [discriminate H|].
+  rewrite value_fold_left_c. change (fold_left orb xs x = true).
+  change (orb x (existsb (fun x => x) xs) = true) in H.
+  revert x H. induction xs as [|y xs IH]; intros x H; cbn in *.
+  - now rewrite orb_false_r in H.
+  - apply IH. destruct x, y; cbn in *; auto.
 Qed.
 
 Example inhabited_disjunction_laws :
@@ -160,4 +165,81 @@ Proof. vm_compute. reflexivity. Qed.
 Example disjunction_backward_support :
   ValueAbs.back (ValueAbs.disjunctive 1 list_fixture_lattice compact_fixture reach_values)
     tt [] [[true; false]; []] = [[true]; [false]].
+Proof. vm_compute. reflexivity. Qed.
+
+(** This chain permits a join that always loses every non-top distinction. *)
+Inductive weak_fact : Type :=
+  | WBot
+  | WPoint
+  | WTop.
+
+Definition weak_le (a b : weak_fact) :=
+  match a, b with
+  | WBot, _ => true
+  | _, WTop => true
+  | WPoint, WPoint => true
+  | _, _ => false
+  end.
+
+Definition weak_lattice := simple weak_le WBot (fun _ _ => WTop).
+
+(** Always-top joins satisfy all weak laws on the three-element chain. *)
+Theorem weak_lattice_laws : lattice_laws weak_lattice.
+Proof.
+  apply simple_laws.
+  - intros []; reflexivity.
+  - intros [] [] []; cbn [weak_le]; congruence.
+  - intros []; reflexivity.
+  - intros [] []; reflexivity.
+  - intros [] []; reflexivity.
+Qed.
+
+Example weak_singleton_keeps_point :
+  Cost.value (ValueAbs.join_all_c weak_lattice [WPoint]) = WPoint.
+Proof. vm_compute. reflexivity. Qed.
+
+Example weak_empty_uses_bottom :
+  Cost.value (ValueAbs.join_all_c weak_lattice []) = WBot.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition ordered_join_lattice :=
+  simple Nat.leb 0 (fun a b => 2 * a + b + 1).
+
+(** The order-sensitive arithmetic join satisfies weak upper bounds without leastness. *)
+Theorem ordered_join_laws : lattice_laws ordered_join_lattice.
+Proof.
+  apply simple_laws.
+  - apply Nat.leb_refl.
+  - intros a b c Hab Hbc. apply Nat.leb_le in Hab, Hbc. apply Nat.leb_le. lia.
+  - intro a. apply Nat.leb_le. lia.
+  - intros a b. apply Nat.leb_le. lia.
+  - intros a b. apply Nat.leb_le. lia.
+Qed.
+
+Example ordered_join_is_left_fold :
+  Cost.value (ValueAbs.join_all_c ordered_join_lattice [1; 2; 3]) = 14.
+Proof. vm_compute. reflexivity. Qed.
+
+Example ordered_join_retains_input_order :
+  Cost.value (ValueAbs.join_all_c ordered_join_lattice [3; 2; 1]) = 20.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition expensive_rename :=
+  ValueAbs.rename
+    (fun _ : bool => Cost.bind (Cost.tick 5%N) (fun _ => Cost.ret tt))
+    (fun _ : nat => Cost.bind (Cost.tick 7%N) (fun _ => Cost.ret tt)) reach_values.
+
+Example rename_retains_operator_conversion_ticks :
+  Cost.ticks (ValueAbs.op_c expensive_rename false []) = 7%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Example rename_retains_backward_conversion_ticks :
+  Cost.ticks (ValueAbs.back_c expensive_rename false true [true]) = 7%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Example rename_retains_guard_conversion_ticks :
+  Cost.ticks (ValueAbs.guard_c expensive_rename 0 [true]) = 9%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Example expensive_rename_keeps_values : ValueAbs.op expensive_rename false [] = true.
 Proof. vm_compute. reflexivity. Qed.

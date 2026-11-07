@@ -4,7 +4,7 @@
     For example, mixed widths enable truth while leaving disequality capability disabled.
     Builds on: DomainsPoint, DomainsTagged and DomainsBitsValue. *)
 
-From Stdlib Require Import List ZArith Bool.
+From Stdlib Require Import List ZArith Bool NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Lattice Require Import LatticeCore.
 From Galois.Bits Require Import BitsWord BitsOp BitsExpr.
@@ -157,4 +157,48 @@ Example point_empty_operand :
 Proof. vm_compute. reflexivity. Qed.
 
 Example point_wrap_boundary : pconst point_word_domain 1%positive 2 = PVal 0.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition expensive_bool_bridge : op_bridge unit bool :=
+  {| op_expr_c := fun _ => Cost.bind (Cost.tick 11) (fun _ => Cost.ret None);
+     to_word_c := fun b : bool =>
+       Cost.bind (Cost.tick 13)
+         (fun _ => Cost.ret (Some (1%positive, if b then 1%Z else 0%Z)));
+     truth_words := true;
+     differ_words_c := fun _ => Cost.bind (Cost.tick 17) (fun _ => Cost.ret true) |}.
+
+(** Adding callback charges leaves every Boolean bridge capability law unchanged. *)
+Theorem expensive_bool_bridge_laws :
+  op_bridge_laws expensive_bool_bridge (fun _ _ => None) (fun b => b).
+Proof.
+  constructor.
+  - exact (bridge_word bool_bridge_laws).
+  - exact (bridge_eq bool_bridge_laws).
+  - exact (bridge_truth bool_bridge_laws).
+  - exact (truth_total bool_bridge_laws).
+  - exact (differ_total bool_bridge_laws).
+  - exact (differ_width bool_bridge_laws).
+  - exact (differ_injective bool_bridge_laws).
+Qed.
+
+Definition expensive_bool_values := bits_values point_numeric expensive_bool_bridge TAny.
+
+Example expensive_capability_and_conversion_keep_values :
+  ValueAbs.guard expensive_bool_values (Differ false) [p 1 1] =
+  ValueAbs.guard bool_values (Differ false) [p 1 1].
+Proof. vm_compute. reflexivity. Qed.
+
+Example capability_and_conversion_ticks_are_retained :
+  Cost.ticks (ValueAbs.guard_c expensive_bool_values (Differ false) [p 1 1]) =
+    (Cost.ticks (ValueAbs.guard_c bool_values (Differ false) [p 1 1]) + 30)%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Example conversion_ticks_are_retained_for_equality :
+  Cost.ticks (ValueAbs.guard_c expensive_bool_values (Equal true) [p 1 1]) =
+    (Cost.ticks (ValueAbs.guard_c bool_values (Equal true) [p 1 1]) + 13)%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Example expression_lookup_ticks_are_retained :
+  Cost.ticks (ValueAbs.op_c expensive_bool_values tt []) =
+    (Cost.ticks (ValueAbs.op_c bool_values tt []) + 11)%N.
 Proof. vm_compute. reflexivity. Qed.

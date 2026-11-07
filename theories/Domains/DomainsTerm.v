@@ -131,8 +131,8 @@ Fixpoint abs_assume_c {A K G X} (eqb : X -> X -> Cost.t bool)
       Cost.step ;;
       let* same := eqb y x in
       if same then
-        let* b := env y in Cost.step ;; meet b a
-      else env y)
+        let* b := Cost.step ;; env y in Cost.step ;; meet b a
+      else Cost.step ;; env y)
   | Node k ts =>
     let* xs := map_c (fun t => abs_eval_c D env t) ts in
     let* qs := Cost.step ;; ValueAbs.back_c D k a xs in

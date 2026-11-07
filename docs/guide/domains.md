@@ -115,12 +115,17 @@ Otherwise the numeric assumption engine propagates the fact and reads back the o
 [`ValueAbs.product`](../../theories/Domains/DomainsValue.v#L66) computes both components and
 applies a costed reducer after forward, backward and guard transfer.
 `product_laws` needs the reducer to retain the intersection of component meanings.
-`ValueAbs.rename` transports operator and guard vocabularies under evaluator and guard agreement.
+`ValueAbs.rename` takes costed operator and guard conversions.
+It retains conversion charges and separate overhead for the conversion and delegated domain call.
+`rename_laws` states evaluator and guard agreement through the conversion callbacks' values.
 
 `ValueAbs.disjunctive k L compact D` takes an explicit weak lattice on lists and a costed
 compaction policy.
 Forward transfer enumerates the Cartesian product of operand alternatives.
 Backward and guard transfer first join each operand's alternatives and return singleton results.
+Alternative joining uses the first element as the seed and folds left in input order.
+An empty alternative list uses bottom.
+This retains singleton precision under weak laws, which do not require bottom-neutral joins.
 `disjunctive_laws` requires monotone existential list meaning, empty list bottom and
 meaning-preserving compaction.
 It needs no least-join or selective-join premise.
@@ -134,9 +139,14 @@ projection callbacks over variable maps.
 `StateSem.t` supplies concrete update and separate update laws.
 `state_laws` describes defined assignments, arbitrary havoc replacements and guards whose
 terms all evaluate successfully.
+Its arguments are the state dictionary, value semantics, concrete update, value meaning and state
+meaning.
+It has no unused value-dictionary argument.
 The one-live-state fixture in `DomainsStateTest.v` has a separate unreachable bottom.
 A carrier containing one element alone could not have both empty bottom and full top over
 an inhabited concrete state space.
+The two-variable fixture proves that updates preserve a distinct variable and that havoc permits
+both Boolean replacements.
 
 [`gamma_solver`](../../theories/Domains/DomainsTactics.v#L13) searches the exported `galois_gamma`
 database at fixed depth, then tries order and arithmetic side conditions.
@@ -144,3 +154,5 @@ Domains register soundness facts where they prove them.
 Unsupported obligations stay visible for the caller.
 The test files contain semantic clients, computed boundary cases, charged observations and
 legacy differential fixtures.
+Deferred leaf lookups charge equality, environment lookup and meet separately.
+The differential observations distinguish every global tag, payload tag, width and integer.

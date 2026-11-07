@@ -83,14 +83,17 @@ Definition product {A B K G} (D : t A K G) (E : t B K G)
        let* ls' := Cost.step ;; guard_c D g ls in
        let* rs' := Cost.step ;; guard_c E g rs in zip_reduce_c red ls' rs' |}.
 
-(** Renaming changes operator and guard vocabularies without changing the abstract carrier. *)
-Definition rename {A K G K' G'} (fk : K' -> K) (fg : G' -> G) (D : t A K G)
+(** Renaming retains conversion charges before calling the original domain. *)
+Definition rename {A K G K' G'} (fk : K' -> Cost.t K) (fg : G' -> Cost.t G) (D : t A K G)
     : t A K' G' :=
   {| lat := lat D;
      top := top D;
-     op_c := fun k xs => Cost.step ;; op_c D (fk k) xs;
-     back_c := fun k a xs => Cost.step ;; back_c D (fk k) a xs;
-     guard_c := fun g xs => Cost.step ;; guard_c D (fg g) xs |}.
+     op_c := fun k xs =>
+       let* k' := Cost.step ;; fk k in Cost.step ;; op_c D k' xs;
+     back_c := fun k a xs =>
+       let* k' := Cost.step ;; fk k in Cost.step ;; back_c D k' a xs;
+     guard_c := fun g xs =>
+       let* g' := Cost.step ;; fg g in Cost.step ;; guard_c D g' xs |}.
 
 (** Choices enumerate the ordered Cartesian product and charge every copied list cell. *)
 Fixpoint choices_c {A} (xss : list (list A)) : Cost.t (list (list A)) :=
@@ -103,9 +106,13 @@ Fixpoint choices_c {A} (xss : list (list A)) : Cost.t (list (list A)) :=
       let* rows := map_c (fun tail => Cost.ret (x :: tail)) tails in app_c rows rest) [] xs
   end.
 
-(** Joining alternatives accounts for every lattice callback. *)
+(** Alternatives join left to right from the first element and use bottom for empty input. *)
 Definition join_all_c {A} (L : lattice A) (xs : list A) : Cost.t A :=
-  fold_right_c (fun x a => Cost.step ;; join_c L x a) (bot L) xs.
+  Cost.step ;;
+  match xs with
+  | [] => Cost.ret (bot L)
+  | x :: xs => fold_left_c (fun a x => Cost.step ;; join_c L a x) xs x
+  end.
 
 (** Disjunction transfer takes its weak lattice and compaction policy as explicit parameters. *)
 Definition disjunctive {A K G} (k : nat) (L : lattice (list A))

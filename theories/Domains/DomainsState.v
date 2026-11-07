@@ -54,7 +54,7 @@ End StateSem.
 
 (** State laws describe defined assignments, arbitrary havoc values and satisfying guards. *)
 Record state_laws {S A X K G C} (SD : StateAbs.t S A X K G)
-    (M : ValueSem.t C K G) (VD : ValueAbs.t A K G) (SM : StateSem.t X C)
+    (M : ValueSem.t C K G) (SM : StateSem.t X C)
     (gam : concretisation A C) (gs : concretisation S (X -> C)) : Prop := {
   state_lat_ok : lattice_laws (StateAbs.lat SD);
   state_gamma_ok : concretisation_laws (StateAbs.lat SD) gs;

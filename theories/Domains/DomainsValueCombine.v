@@ -120,8 +120,9 @@ Qed.
 Theorem rename_laws {A C K G K' G'} (D : ValueAbs.t A K G)
     (M : ValueSem.t C K G) (N : ValueSem.t C K' G') gam fk fg :
   value_laws D M gam ->
-  (forall k cs, ValueSem.eval N k cs = ValueSem.eval M (fk k) cs) ->
-  (forall g cs, ValueSem.holds N g cs -> ValueSem.holds M (fg g) cs) ->
+  (forall k cs, ValueSem.eval N k cs = ValueSem.eval M (Cost.value (fk k)) cs) ->
+  (forall g cs, ValueSem.holds N g cs ->
+    ValueSem.holds M (Cost.value (fg g)) cs) ->
   value_laws (ValueAbs.rename fk fg D) N gam.
 Proof.
   intros H He Hg. constructor.
@@ -129,11 +130,13 @@ Proof.
   - exact (gamma_ok H).
   - exact (bot_empty H).
   - exact (top_full H).
-  - intros k xs cs c Hxs Hc. apply (op_sound H (fk k) xs cs c Hxs).
+  - intros k xs cs c Hxs Hc. apply (op_sound H (Cost.value (fk k)) xs cs c Hxs).
     now rewrite <- He.
-  - intros k a xs cs c Hxs Hc Ha. apply (back_sound H (fk k) a xs cs c Hxs); auto.
+  - intros k a xs cs c Hxs Hc Ha.
+    apply (back_sound H (Cost.value (fk k)) a xs cs c Hxs); auto.
     now rewrite <- He.
-  - intros g xs cs Hxs Hholds. apply (guard_sound H (fg g) xs cs Hxs), Hg, Hholds.
+  - intros g xs cs Hxs Hholds.
+    apply (guard_sound H (Cost.value (fg g)) xs cs Hxs), Hg, Hholds.
   - intros. apply (back_length H).
   - intros. apply (guard_length H).
 Qed.
@@ -157,27 +160,38 @@ Proof.
       (Cost.value (fold_right_c (fun x rest =>
         let* rows := map_c (fun tail => Cost.ret (x :: tail))
           (Cost.value (ValueAbs.choices_c xs)) in app_c rows rest) rest alts))).
-    { intros ys. induction ys as [|y ys IH]; intros rest Hy; [contradiction|].
-      cbn [fold_right_c]. autorewrite with galois_cost.
+    { intros ys rest Hy. rewrite value_fold_right_c.
+      revert rest Hy. induction ys as [|y ys IH]; intros rest Hy; [contradiction|].
+      cbn [fold_right]. autorewrite with galois_cost.
       apply in_app_iff. destruct Hy as [<-|Hy].
       - left. change (In (y :: row) (map (cons y) (Cost.value (ValueAbs.choices_c xs)))).
         now apply in_map.
-      - right. pose proof (IH rest Hy) as Htail.
-        autorewrite with galois_cost in Htail. exact Htail. }
+      - right. exact (IH rest Hy). }
     apply Hflat, Ha.
+Qed.
+
+Local Lemma join_fold_sound {A C} (L : lattice A) (G : concretisation A C) :
+  lattice_laws L -> concretisation_laws L G -> forall xs a c,
+  gamma G a c \/ (exists x, In x xs /\ gamma G x c) ->
+  gamma G (fold_left (join L) xs a) c.
+Proof.
+  intros HL HG xs. induction xs as [|x xs IH]; intros a c Hc; cbn [fold_left].
+  - destruct Hc as [Ha|[y [Hy _]]]; [exact Ha|contradiction].
+  - apply IH. destruct Hc as [Ha|[y [[Heq|Hy] Hc]]].
+    + left. exact (gamma_join_l L G a x c HL HG Ha).
+    + subst y. left. exact (gamma_join_r L G a x c HL HG Hc).
+    + right. exists y. auto.
 Qed.
 
 Local Lemma join_all_sound {A C} (L : lattice A) (G : concretisation A C) :
   lattice_laws L -> concretisation_laws L G -> forall xs c,
   gamma (disjunctive_gamma G) xs c -> gamma G (Cost.value (ValueAbs.join_all_c L xs)) c.
 Proof.
-  intros HL HG xs c [a [Ha Hc]]. unfold ValueAbs.join_all_c.
-  rewrite value_fold_right_c.
-  change (gamma G (fold_right (join L) (bot L) xs) c).
-  induction xs as [|x xs IH]; [contradiction|].
-  destruct Ha as [<-|Ha]; cbn [fold_right].
-  - exact (gamma_join_l L G x _ c HL HG Hc).
-  - exact (gamma_join_r L G x _ c HL HG (IH Ha)).
+  intros HL HG [|x xs] c [a [Ha Hc]]; [contradiction|].
+  unfold ValueAbs.join_all_c. rewrite Cost.value_bind, value_fold_left_c.
+  change (gamma G (fold_left (join L) xs x) c).
+  apply (join_fold_sound L G HL HG).
+  destruct Ha as [<-|Ha]; [now left|right; exists a; auto].
 Qed.
 
 Local Lemma disj_arguments {A C} (L : lattice A) (G : concretisation A C) :
