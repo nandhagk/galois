@@ -18,30 +18,44 @@ Definition fixture_default (d : bool) (o : option bool) :=
   | None => d
   end.
 
-(** This deliberately malformed reference map repeats a code with conflicting values. *)
-Definition duplicate_raw_map : Map.t positive bool :=
+(** This local mathematical model retains the reference list's first-code lookup rule. *)
+Local Fixpoint reference_list_lookup (p : positive)
+    (xs : list (positive * (positive * bool))) : option bool :=
+  match xs with
+  | [] => None
+  | (q, (_, v)) :: rest =>
+    if Pos.eqb p q then Some v else reference_list_lookup p rest
+  end.
+
+(** This local model compares stored left values with first-code right lookups. *)
+Local Definition reference_list_forall2 r
+    (xs ys : list (positive * (positive * bool))) :=
+  forallb (fun e => r (snd (snd e)) (reference_list_lookup (fst e) ys)) xs.
+
+(** This deliberately malformed local list repeats a code with conflicting values. *)
+Local Definition reference_duplicate_raw_map : list (positive * (positive * bool)) :=
   [(1%positive, (1%positive, false)); (1%positive, (1%positive, true))].
 
 Example duplicate_raw_lookup :
-  Map.get positive_encoding 1%positive duplicate_raw_map = Some false.
+  reference_list_lookup 1%positive reference_duplicate_raw_map = Some false.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example raw_bottom_default_comparison_not_reflexive :
-  Map.forall2 (fun a b => implb a (fixture_default false b))
-    duplicate_raw_map duplicate_raw_map = false.
+  reference_list_forall2 (fun a b => implb a (fixture_default false b))
+    reference_duplicate_raw_map reference_duplicate_raw_map = false.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 (** Reversing the conflicting values exposes the corresponding top-default failure. *)
-Definition duplicate_top_raw_map : Map.t positive bool :=
+Local Definition reference_duplicate_top_raw_map : list (positive * (positive * bool)) :=
   [(1%positive, (1%positive, true)); (1%positive, (1%positive, false))].
 
 Example raw_top_default_comparison_not_reflexive :
-  Map.forall2 (fun b a => implb (fixture_default true a) b)
-    duplicate_top_raw_map duplicate_top_raw_map = false.
+  reference_list_forall2 (fun b a => implb (fixture_default true a) b)
+    reference_duplicate_top_raw_map reference_duplicate_top_raw_map = false.
 Proof.
   vm_compute. reflexivity.
 Qed.

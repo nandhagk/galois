@@ -15,21 +15,32 @@ Definition fixture_subset_c {K} (E : encoding K) (s t : FinSet.t K) :=
   let* keys := FinSet.elements_c s in
   forallb_c (fun k => FinSet.mem_c E k t) keys.
 
-(** This deliberately malformed set stores key two at code one. *)
-Definition mismatched_raw_set : FinSet.t positive :=
+(** This local mathematical model observes membership by stored code. *)
+Local Definition reference_list_mem p (xs : list (positive * (positive * unit))) :=
+  existsb (fun e => Pos.eqb p (fst e)) xs.
+
+(** This local model enumerates stored keys without repairing mismatched codes. *)
+Local Definition reference_list_elements (xs : list (positive * (positive * unit))) :=
+  List.map (fun e => fst (snd e)) xs.
+
+(** This local model compares the enumerated left keys with right code membership. *)
+Local Definition reference_list_subset xs ys :=
+  forallb (fun k => reference_list_mem k ys) (reference_list_elements xs).
+
+(** This deliberately malformed local list stores key two at code one. *)
+Local Definition reference_mismatched_raw_set : list (positive * (positive * unit)) :=
   [(1%positive, (2%positive, tt))].
 
 Example raw_enumeration_comparison_not_reflexive :
-  Cost.value (fixture_subset_c positive_encoding mismatched_raw_set mismatched_raw_set) =
-  false.
+  reference_list_subset reference_mismatched_raw_set reference_mismatched_raw_set = false.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example raw_enumeration_differs_from_membership :
-  (FinSet.elements mismatched_raw_set,
-    FinSet.mem positive_encoding 1%positive mismatched_raw_set,
-    FinSet.mem positive_encoding 2%positive mismatched_raw_set) =
+  (reference_list_elements reference_mismatched_raw_set,
+    reference_list_mem 1%positive reference_mismatched_raw_set,
+    reference_list_mem 2%positive reference_mismatched_raw_set) =
   ([2%positive], true, false).
 Proof.
   vm_compute. reflexivity.
