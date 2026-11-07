@@ -11,6 +11,8 @@ printf 'Real trie VM gate\n'
 printf 'boundary: compiler startup, imports, VM reduction and kernel checking\n'
 printf 'one compiler job; warm dependencies; fresh client compilation in every round\n'
 printf 'compiler: %s\n' "$compiler"
+awk -F: '/model name/ { models[$2]++ }
+  END { for (model in models) print "host:", model, models[model], "logical CPUs" }' /proc/cpuinfo
 printf 'inherited cgroup: '
 cat /proc/self/cgroup
 slice=$(awk -F: '$1 == "0" {sub(/galois.slice.*/, "galois.slice", $3); print $3}' \

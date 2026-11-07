@@ -38,6 +38,12 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example same_small_intersection :
+  Cost.ticks (TrieMerge.inter_with_c zero_callback small small) = 6%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example three_key_bound :
   N.leb (Cost.ticks (TrieMerge.inter_with_c zero_callback small large))
     (TrieCost.trie_k * 4 * (1 + 2)) = true.
@@ -65,6 +71,22 @@ Example general_combine_changes_one_side :
   Cost.ticks (TrieMerge.combine_c
     (fun (a : option bool) (_ : option bool) =>
       Cost.lift (fun _ => 1000%N) (fun _ => a) tt) small Trie.empty) = 3007%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example traversal_counts :
+  (Cost.ticks (TrieMerge.size_c small), Cost.ticks (TrieMerge.elements_c small),
+    TrieCost.key_mass small) = (6%N, 11%N, 5%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example stateful_fold_charges :
+  let result := TrieMerge.fold_c
+    (fun acc (_ : positive) (_ : bool) =>
+      Cost.lift (fun _ => 1000%N) S acc) small 0%nat in
+  (Cost.value result, Cost.ticks result) = (3%nat, 3008%N).
 Proof.
   vm_compute. reflexivity.
 Qed.

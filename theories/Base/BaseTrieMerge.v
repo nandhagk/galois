@@ -412,6 +412,22 @@ Definition beq_c {A} (eq : A -> A -> Cost.t bool) (tr u : Trie.t A) :=
 Definition beq {A} (eq : A -> A -> bool) (tr u : Trie.t A) :=
   Cost.value (beq_c (fun a b => Cost.lift (fun _ => 1%N) (eq a) b) tr u).
 
+(** A value comparison deciding equality makes the trie checker decide canonical equality. *)
+Theorem beq_correct {A} (eq : A -> A -> Cost.t bool) (tr u : Trie.t A) :
+  (forall a b, Cost.value (eq a b) = true <-> a = b) ->
+  (Cost.value (beq_c eq tr u) = true <-> tr = u).
+Proof.
+  intro Heq. unfold beq_c. rewrite value_and_c, andb_true_iff, !forall2_spec.
+  split.
+  - intros [Hleft Hright]. apply Trie.extensionality. intro p.
+    destruct (Trie.get p tr) as [a|] eqn:Hl;
+      destruct (Trie.get p u) as [b|] eqn:Hr; try reflexivity.
+    + specialize (Hleft p a Hl). rewrite Hr in Hleft. apply Heq in Hleft. congruence.
+    + specialize (Hleft p a Hl). rewrite Hr in Hleft. discriminate.
+    + specialize (Hright p b Hr). rewrite Hl in Hright. discriminate.
+  - intros ->. split; intros p a Hget; rewrite Hget; apply Heq; reflexivity.
+Qed.
+
 (** A code-and-value list specifies traversal order without being used by executable traversals. *)
 Fixpoint entries_ne {A} (n : Trie.ne A) : list (positive * A) :=
   match n with

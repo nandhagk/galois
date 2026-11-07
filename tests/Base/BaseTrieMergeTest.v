@@ -83,3 +83,33 @@ Example count_bindings : TrieMerge.size left_map = 2%nat.
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example inter_equal :
+  TrieMerge.inter_with (fun a _ => a) left_map left_map = left_map.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example union_equal :
+  TrieMerge.union_with (fun a _ => a) left_map left_map = left_map.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_left :
+  (TrieMerge.elements (TrieMerge.inter_with Nat.add Trie.empty right_map),
+    TrieMerge.elements (TrieMerge.diff (Trie.empty : Trie.t nat) right_map)) = ([], []).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example equality_reject : TrieMerge.beq Nat.eqb left_map right_map = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_comparison :
+  TrieMerge.forall2 (fun (_ : nat) (_ : option nat) => false) Trie.empty right_map = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
