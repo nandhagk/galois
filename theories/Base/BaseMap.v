@@ -76,7 +76,8 @@ Definition wf {K V} (E : encoding K) (m : t K V) : Prop :=
   forall p k v, Trie.get p m = Some (k, v) -> encode E k = p.
 
 Definition empty {K V} : t K V := Trie.empty.
-Definition empty_c {K V} : Cost.t (t K V) := Cost.ret empty.
+(** Empty construction returns the backend's constant empty trie without traversal. *)
+Definition empty_c {K V} : Cost.t (t K V) := Cost.ret Trie.empty.
 
 (** Code lookup discards the stored key and retains the complete path charge. *)
 Definition get_code_c {K V} p (m : t K V) :=
