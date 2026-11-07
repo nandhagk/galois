@@ -669,144 +669,378 @@ module Cost_lint = struct
     | _ -> None
   ;;
 
+  (* Balanced groups and top-level separators are the supported lexical boundary.
+     This is not Rocq elaboration. In particular, imported aliases and inferred types
+     still need source review and cost theorems. *)
+  let take_until ~stops words =
+    let rec loop depth taken = function
+      | word :: _ as rest when depth = 0 && List.mem stops word ~equal:String.equal ->
+        List.rev taken, rest
+      | (("(" | "{" | "[") as word) :: rest -> loop (depth + 1) (word :: taken) rest
+      | ((")" | "}" | "]") as word) :: rest -> loop (depth - 1) (word :: taken) rest
+      | word :: rest -> loop depth (word :: taken) rest
+      | [] -> List.rev taken, []
+    in
+    loop 0 [] words
+  ;;
+
+  let rec unparenthesize = function
+    | "(" :: rest as words ->
+      (match take_until ~stops:[ ")" ] rest with
+       | inside, [ ")" ] -> unparenthesize inside
+       | _ -> words)
+    | words -> words
+  ;;
+
+  let rec codomain words =
+    let words = unparenthesize words in
+    match take_until ~stops:[ "-" ] words with
+    | _, "-" :: ">" :: rest -> codomain rest
+    | _ -> words
+  ;;
+
+  (* Recognize explicit arrow families ending in Prop, including parentheses.
+     A Prop-valued parameter or arrow domain does not classify the declaration. *)
   let is_prop header =
-    let rec loop depth = function
-      | ":" :: "Prop" :: _ when depth = 0 -> true
-      | ("(" | "{" | "[") :: rest -> loop (depth + 1) rest
-      | (")" | "}" | "]") :: rest -> loop (depth - 1) rest
-      | _ :: rest -> loop depth rest
-      | [] -> false
-    in
-    loop 0 header
+    match take_until ~stops:[ ":" ] header with
+    | _, ":" :: result -> [%equal: string list] (codomain result) [ "Prop" ]
+    | _ -> false
   ;;
 
-  (* Typed binders and local bindings identify record scrutinees. Callback arrows do not. *)
-  let cost_variables words =
-    let binder_names names words =
-      let bound, tail = List.split_while words ~f:(fun word -> not (String.equal word ":")) in
+  module Binding = struct
+    type t =
+      | Unknown
+      | Value
+      | Cost_record
+  end
+
+  let binding_type words : Binding.t =
+    let words = unparenthesize words in
+    match take_until ~stops:[ "-" ] words with
+    | _, "-" :: ">" :: _ -> Unknown
+    | _ ->
+      (match words with
+       | "Cost" :: "." :: "t" :: _ -> Cost_record
+       | _ -> Value)
+  ;;
+
+  let identifier word = not (String.is_empty word) && String.for_all word ~f:Lex.is_identifier
+
+  let bind_names env ~kind names =
+    List.fold names ~init:env ~f:(fun env name ->
+      if identifier name then Map.set env ~key:name ~data:kind else env)
+  ;;
+
+  let typed_names env words =
+    let names, annotation = take_until ~stops:[ ":" ] words in
+    let kind =
+      match annotation with
+      | ":" :: typ -> binding_type typ
+      | _ -> Binding.Unknown
+    in
+    bind_names env ~kind names
+  ;;
+
+  (* A bare name before the declaration's colon is an untyped parameter.
+     Only a binder group owns its annotation. *)
+  let rec binders env = function
+    | ("(" | "{") :: rest ->
+      let group, tail = take_until ~stops:[ ")"; "}" ] rest in
+      let env = typed_names env group in
+      (match tail with
+       | _close :: rest -> binders env rest
+       | [] -> env)
+    | ":" :: _ | [] -> env
+    | name :: rest -> binders (bind_names env ~kind:Unknown [ name ]) rest
+  ;;
+
+  let namespace scopes =
+    List.rev scopes
+    |> List.filter_map ~f:(function
+      | Scope.Module name | Scope.Signature name -> Some name
+      | Scope.Section _ -> None)
+  ;;
+
+  let name_at scopes name = String.concat ~sep:"." (namespace scopes @ [ name ])
+
+  module Twins = struct
+    type t =
+      { declared : String.Set.t
+      ; plain : String.Set.t
+      ; literals : String.Set.t
+      }
+  end
+
+  (* Only closed literal data gets a free constant reference at an argument boundary.
+     Explicit applications, including explicit type arguments, remain checked.
+     No call, projection, traversal or lambda qualifies by having zero parameters. *)
+  let literal header body =
+    let rec implicit_parameters = function
+      | "{" :: rest ->
+        (match take_until ~stops:[ "}" ] rest with
+         | _, "}" :: rest -> implicit_parameters rest
+         | _ -> false)
+      | ":" :: _ | [] -> true
+      | _ -> false
+    in
+    implicit_parameters header
+    &&
+    match unparenthesize body with
+    | [ "["; "]" ] | [ "true" ] | [ "false" ] | [ "tt" ] | [ "None" ] -> true
+    | [ number ] -> String.for_all number ~f:Char.is_digit
+    | _ -> false
+  ;;
+
+  let plain_names ~file sentences =
+    let%map.Or_error _, declared, literals =
+      List.fold_result
+        sentences
+        ~init:([], String.Set.empty, String.Set.empty)
+        ~f:(fun (scopes, declared, literals) (sentence : Lex.Sentence.t) ->
+          let words = Lex.head (Lex.words sentence) in
+          let declared, literals =
+            match declaration words with
+            | Some (name, rest) ->
+              let name = name_at scopes name in
+              let header, body = split_body rest in
+              ( Set.add declared name
+              , if Option.exists body ~f:(literal header)
+                then Set.add literals name
+                else literals )
+            | None -> declared, literals
+          in
+          let%map.Or_error scopes = Scope.advance ~file ~line:sentence.line scopes words in
+          scopes, declared, literals)
+    in
+    ({ declared
+     ; plain = Set.filter declared ~f:(fun name -> Set.mem declared [%string "%{name}%{suffix}"])
+     ; literals
+     }
+     : Twins.t)
+  ;;
+
+  let rec reference = function
+    | name :: "." :: next :: rest when identifier name && identifier next ->
+      let tail, rest = reference (next :: rest) in
+      [%string "%{name}.%{tail}"], rest
+    | name :: rest -> name, rest
+    | [] -> "", []
+  ;;
+
+  let resolve (twins : Twins.t) ~scopes name =
+    let rec loop path =
+      let candidate = String.concat ~sep:"." (path @ [ name ]) in
+      if Set.mem twins.declared candidate
+      then Some candidate
+      else (
+        match List.rev path with
+        | _ :: rest -> loop (List.rev rest)
+        | [] -> None)
+    in
+    loop (namespace scopes)
+  ;;
+
+  let record_head env words =
+    let rec head = function
+      | "(" :: rest -> head rest
+      | words -> words
+    in
+    let name, _ = reference (head words) in
+    match Map.find env name with
+    | Some Binding.Cost_record -> true
+    | Some Value -> false
+    | Some Unknown | None ->
+      String.is_suffix name ~suffix
+      || List.exists
+           [ "ret"; "bind"; "map"; "lift"; "refine"; "tick"; "step"; "tick_bits"; "mk" ]
+           ~f:(fun primitive -> String.equal [%string "Cost.%{primitive}"] name)
+  ;;
+
+  let plain_reference twins ~scopes ~env ~name rest =
+    if Map.mem env name
+    then None
+    else
+      Option.bind (resolve twins ~scopes name) ~f:(fun resolved ->
+        let ({ plain; literals; _ } : Twins.t) = twins in
+        let ends_argument =
+          match rest with
+          | [] | (")" | "}" | "]" | "," | ";" | "|" | "in" | "end") :: _ -> true
+          | _ -> false
+        in
+        if Set.mem plain resolved && not (Set.mem literals resolved && ends_argument)
+        then Some [%string "plain function in costed body: %{name}"]
+        else None)
+  ;;
+
+  (* The recursive walk restores the environment at groups and match branches.
+     let* binds a value, while an ordinary let can alias a cost record.
+     Simple names, grouped binders, lambdas and constructor branch patterns are supported.
+     Pattern lets receive no shadowing exemption. Imported module aliases are not resolved.
+     The twin index contains this source's declarations. Imports are not elaborated. *)
+  let scoped_problem twins ~scopes ~costed ~env words =
+    let rec walk env ~stops words =
+      match words with
+      | [] -> None, []
+      | word :: _ when List.mem stops word ~equal:String.equal -> None, words
+      | ("(" | "{" | "[") :: rest ->
+        let issue, tail = walk env ~stops:[ ")"; "}"; "]" ] rest in
+        resume env ~stops issue tail
+      | "let" :: rest -> local env ~stops rest
+      | "fun" :: rest ->
+        let header, tail = take_until ~stops:[ "=" ] rest in
+        (match tail with
+         | "=" :: ">" :: rest ->
+           let env =
+             match header with
+             | ("(" | "{") :: _ -> binders env header
+             | _ -> typed_names env header
+           in
+           walk env ~stops rest
+         | _ -> walk env ~stops rest)
+      | "match" :: rest ->
+        if record_head env rest
+        then Some "computational match on Cost.t outside Cost", []
+        else (
+          let issue, tail = walk env ~stops:[ "with" ] rest in
+          match issue, tail with
+          | None, "with" :: rest -> branches env ~stops rest
+          | _ -> issue, tail)
+      | name :: _ when identifier name ->
+        let name, rest = reference words in
+        let issue =
+          if costed then plain_reference twins ~scopes ~env ~name rest else None
+        in
+        (match issue with
+         | Some _ -> issue, rest
+         | None -> walk env ~stops rest)
+      | _ :: rest -> walk env ~stops rest
+    and resume env ~stops issue = function
+      | _close :: rest when Option.is_none issue -> walk env ~stops rest
+      | tail -> issue, tail
+    and local env ~stops words =
+      let monadic, words =
+        match words with
+        | "*" :: rest -> true, rest
+        | rest -> false, rest
+      in
+      let header, rhs = split_body words in
+      match unparenthesize header, rhs with
+      | name :: annotation, Some rhs
+        when List.is_empty annotation
+             || List.is_prefix annotation ~prefix:[ ":" ] ~equal:String.equal ->
+        let kind : Binding.t =
+          if monadic
+          then Value
+          else (
+            match annotation with
+            | ":" :: typ -> binding_type typ
+            | _ -> if record_head env rhs then Cost_record else Value)
+        in
+        let issue, tail = walk env ~stops:[ "in" ] rhs in
+        (match issue, tail with
+         | None, "in" :: rest -> walk (Map.set env ~key:name ~data:kind) ~stops rest
+         | _ -> issue, tail)
+      | _ ->
+        (* Unsupported let patterns receive no shadowing exemption. *)
+        walk env ~stops words
+    and branches env ~stops words =
+      let pattern, tail = take_until ~stops:[ "=" ] words in
       match tail with
-      | ":" :: "Cost" :: "." :: "t" :: _ | ":" :: "(" :: "Cost" :: "." :: "t" :: _ ->
-        if List.for_all bound ~f:(String.for_all ~f:Lex.is_identifier)
-        then List.fold bound ~init:names ~f:Set.add
-        else names
-      | _ -> names
+      | "=" :: ">" :: rest ->
+        let branch_env = bind_names env ~kind:Value pattern in
+        let issue, tail = walk branch_env ~stops:[ "|"; "end" ] rest in
+        (match issue, tail with
+         | None, "|" :: rest -> branches env ~stops rest
+         | None, "end" :: rest -> walk env ~stops rest
+         | _ -> issue, tail)
+      | _ -> walk env ~stops words
     in
-    let rec loop names = function
-      | ("(" | "{") :: rest -> loop (binder_names names rest) rest
-      | name :: ":" :: "Cost" :: "." :: "t" :: rest
-      | name :: ":" :: "(" :: "Cost" :: "." :: "t" :: rest -> loop (Set.add names name) rest
-      | "let"
-        :: name
-        :: ":"
-        :: "="
-        :: "Cost"
-        :: "."
-        :: ("ret" | "bind" | "map" | "lift" | "refine" | "tick" | "step" | "tick_bits" | "mk")
-        :: rest -> loop (Set.add names name) rest
-      | "let" :: name :: ":" :: "=" :: callee :: rest when Set.mem names callee ->
-        loop (Set.add names name) rest
-      | "let" :: name :: ":" :: "=" :: callee :: rest when String.is_suffix callee ~suffix ->
-        loop (Set.add names name) rest
-      | _ :: rest -> loop names rest
-      | [] -> names
-    in
-    loop String.Set.empty words
+    fst (walk env ~stops:[] words)
   ;;
 
-  let record_match words =
-    let variables = cost_variables words in
-    let rec loop = function
-      | "match" :: name :: _ when Set.mem variables name -> true
-      | "match" :: "(" :: name :: _ when Set.mem variables name -> true
-      | "match" :: "Cost" :: "." :: ("ret" | "bind" | "map" | "lift") :: _ -> true
-      | "match" :: name :: _ when String.is_suffix name ~suffix -> true
-      | _ :: rest -> loop rest
-      | [] -> false
-    in
-    loop words
-  ;;
-
-  let plain_names sentences =
-    let names =
-      List.filter_map sentences ~f:(fun sentence ->
-        Option.map (declaration (Lex.head (Lex.words sentence))) ~f:fst)
-      |> String.Set.of_list
-    in
-    Set.filter names ~f:(fun name -> Set.mem names [%string "%{name}%{suffix}"])
-  ;;
-
-  let problem ~plain ~header body =
+  let problem ~twins ~scopes ~header body =
     let words = header @ body in
     if contains words (qualified "mk")
     then Some "cost record construction outside Cost"
     else if contains words (qualified "ticks")
     then Some "computational Cost.ticks outside Cost"
-    else if record_match words
-    then Some "computational match on Cost.t outside Cost"
     else (
-      match declaration header with
-      | Some (name, _) when String.is_suffix name ~suffix ->
-        (match List.find body ~f:(Set.mem plain) with
-         | Some name -> Some [%string "plain function in costed body: %{name}"]
+      let costed, env =
+        match declaration header with
+        | Some (name, parameters) ->
+          String.is_suffix name ~suffix, binders String.Map.empty parameters
+        | None -> false, String.Map.empty
+      in
+      match scoped_problem twins ~scopes ~costed:false ~env header with
+      | Some _ as issue -> issue
+      | None ->
+        (match scoped_problem twins ~scopes ~costed ~env body with
+         | Some _ as issue -> issue
          | None ->
-           let list_operations =
-             [ "length"
-             ; "app"
-             ; "rev"
-             ; "map"
-             ; "filter"
-             ; "forallb"
-             ; "existsb"
-             ; "find"
-             ; "fold_left"
-             ; "fold_right"
-             ; "flat_map"
-             ; "concat"
-             ; "combine"
-             ; "partition"
-             ]
-           in
-           List.find_map list_operations ~f:(fun operation ->
-             if contains body [ "List"; "."; operation ]
-             then Some [%string "uncharged list operation in costed body: List.%{operation}"]
-             else None))
-      | Some _ | None -> None)
+           if costed
+           then (
+             let list_operations =
+               [ "length"
+               ; "app"
+               ; "rev"
+               ; "map"
+               ; "filter"
+               ; "forallb"
+               ; "existsb"
+               ; "find"
+               ; "fold_left"
+               ; "fold_right"
+               ; "flat_map"
+               ; "concat"
+               ; "combine"
+               ; "partition"
+               ]
+             in
+             List.find_map list_operations ~f:(fun operation ->
+               if contains body [ "List"; "."; operation ]
+               then Some [%string "uncharged list operation in costed body: List.%{operation}"]
+               else None))
+           else None))
   ;;
 
   let source (source : Source.t) =
     match source.root with
     | (Theories | Examples) when not (String.equal source.package cost_package) ->
-      let plain = plain_names source.sentences in
-      let%map.Or_error (_ : Region.t) =
+      let%bind.Or_error twins = plain_names ~file:source.file source.sentences in
+      let%map.Or_error (_ : Region.t), (_ : Scope.t list) =
         List.fold_result
           source.sentences
-          ~init:Region.Computation
-          ~f:(fun region ({ line; _ } as sentence : Lex.Sentence.t) ->
+          ~init:(Region.Computation, [])
+          ~f:(fun (region, scopes) ({ line; _ } as sentence : Lex.Sentence.t) ->
             let words = Lex.head (Lex.words sentence) in
-            match words, region with
-            | ("Qed" | "Defined" | "Save") :: _, _ -> Ok Region.Computation
-            | "Proof" :: _, _ -> Ok Region.Proof
-            | ( ( "Lemma"
-                | "Theorem"
-                | "Example"
-                | "Fact"
-                | "Corollary"
-                | "Proposition"
-                | "Remark"
-                | "Goal" )
-                :: _
-              , _ ) ->
-              let _, body = split_body words in
-              Ok (if Option.is_some body then Region.Computation else Proof)
-            | _, Proof -> Ok region
-            | _, Computation ->
-              let header, body = split_body words in
-              if is_prop header
-              then Ok (if Option.is_none body then Region.Proof else Computation)
-              else (
-                match problem ~plain ~header (Option.value body ~default:[]) with
-                | None -> Ok region
-                | Some problem -> Diagnostic.error ~file:source.file ~line problem))
+            let%bind.Or_error next_scopes = Scope.advance ~file:source.file ~line scopes words in
+            let%map.Or_error region =
+              match words, region with
+              | ("Qed" | "Defined" | "Save") :: _, _ -> Ok Region.Computation
+              | "Proof" :: _, _ -> Ok Region.Proof
+              | ( ( "Lemma"
+                  | "Theorem"
+                  | "Example"
+                  | "Fact"
+                  | "Corollary"
+                  | "Proposition"
+                  | "Remark"
+                  | "Goal" )
+                  :: _
+                , _ ) ->
+                let _, body = split_body words in
+                Ok (if Option.is_some body then Region.Computation else Proof)
+              | _, Proof -> Ok region
+              | _, Computation ->
+                let header, body = split_body words in
+                if is_prop header
+                then Ok (if Option.is_none body then Region.Proof else Computation)
+                else (
+                  match problem ~twins ~scopes ~header (Option.value body ~default:[]) with
+                  | None -> Ok region
+                  | Some problem -> Diagnostic.error ~file:source.file ~line problem)
+            in
+            region, next_scopes)
       in
       ()
     | Theories | Examples | Tests | Legacy_theories | Legacy_examples | Legacy_tests -> Ok ()
@@ -3836,6 +4070,257 @@ let%expect_test "cost lint rejects uncharged qualified list operations" =
     (Error
      ((file theories/Base/BaseCost.v) (line 1) (claim ())
       (problem "uncharged list operation in costed body: List.map")))
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "cost lint separates return annotations from record binders" =
+  List.iter
+    [ "Fixpoint walk_c n : Cost.t nat := match n with O => Cost.ret O | S k => walk_c k end."
+    ; "Definition rows_c xs : Cost.t (list nat) := match xs with [] => Cost.ret [] | x :: xs => \
+       Cost.ret xs end."
+    ; "Definition run_c (f : nat -> Cost.t nat) n : Cost.t nat := match n with O => f O | S k \
+       => f k end."
+    ; "Definition bad_c (m n : Cost.t nat) k : Cost.t nat := match n with x => x end."
+    ; "Definition bad_c (m : (Cost.t nat)) n : Cost.t nat := match (m) with x => x end."
+    ; "Definition bad_c next_c := match next_c O with x => x end."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Ok ())
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint recognizes Prop codomains without exempting Prop domains" =
+  List.iter
+    [ "Inductive bounded : nat -> Cost.t nat -> Prop := B m : Cost.ticks m = 0 -> bounded 0 m."
+    ; "Definition law : nat -> Prop := fun n => Cost.ticks (Cost.ret n) = 0."
+    ; "Definition law : (nat -> Prop) := fun n => Cost.ticks (Cost.ret n) = 0."
+    ; "Definition bad : Prop -> nat := fun P => Cost.ticks (Cost.ret O)."
+    ; "Definition bad : (Prop -> nat) := fun P => Cost.ticks (Cost.ret O)."
+    ; "Definition bad (P : nat -> Prop) : nat := Cost.ticks (Cost.ret O)."
+    ; "Inductive bounded : nat -> Prop := B m : Cost.ticks m = 0 -> bounded 0. \
+       Definition bad_c := Cost.ticks (Cost.ret O)."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Ok ())
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint resolves twin references in their lexical module namespace" =
+  List.iter
+    [ "Module Local. Definition empty_c := Cost.ret Other.empty. \
+       Definition empty := Cost.value empty_c. End Local."
+    ; "Module Jump. Definition rows x := x. Definition rows_c x := Cost.ret x. End Jump. \
+       Definition bad_c x := Cost.ret (Jump.rows x)."
+    ; "Module Jump. Definition rows x := x. Definition rows_c x := Cost.ret x. \
+       Definition bad_c x := Cost.ret (rows x). End Jump."
+    ; "Module A. Definition f x := x. Definition f_c x := Cost.ret x. End A. \
+       Module B. Definition f x := x. Definition run_c x := Cost.ret (f x). End B."
+    ; "Module A. Definition f x := x. Definition f_c x := Cost.ret x. \
+       Module B. Definition bad_c x := Cost.ret (f x). End B. End A."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: Jump.rows")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: rows")))
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    |}]
+;;
+
+let%expect_test "cost lint permits literal constants without exempting zero argument work" =
+  List.iter
+    [ "Definition nil {A} : list A := []. Definition nil_c {A} := Cost.ret (@nil A)."
+    ; "Definition nil {A} : list A := []. Definition nil_c {A} := Cost.ret nil."
+    ; "Definition hidden := List.rev xs. Definition hidden_c := Cost.ret hidden."
+    ; "Definition hidden := fun xs => List.rev xs. Definition hidden_c := Cost.ret hidden."
+    ; "Definition f xs := []. Definition f_c xs := Cost.ret (f xs)."
+    ; "Definition f := 0. Definition f_c := Cost.ret (f 0)."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: nil")))
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: hidden")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: hidden")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    |}]
+;;
+
+let%expect_test "cost lint scopes monadic let lambda and pattern values" =
+  List.iter
+    [ "Definition rows x := x. Definition rows_c x := Cost.ret x. \
+       Definition run_c x := let* rows := rows_c x in Cost.ret rows."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
+       Definition run_c f := Cost.ret (f 0)."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
+       Definition run_c := Cost.map (fun f => f) (Cost.ret 0)."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
+       Definition run_c xs := match xs with Some f => Cost.ret f | None => Cost.ret 0 end."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
+       Definition bad_c := (let* f := Cost.ret 0 in Cost.ret f) ;; Cost.ret (f 0)."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
+       Definition bad_c := Cost.map (fun f => f) (Cost.ret (f 0))."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
+       Definition bad_c xs := match xs with Some f => Cost.ret f | None => Cost.ret (f 0) end."
+    ; "Module M. Definition f x := x. Definition f_c x := Cost.ret x. End M. \
+       Definition bad_c := let* f := Cost.ret 0 in Cost.ret (M.f f)."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Ok ())
+    (Ok ())
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: M.f")))
+    |}]
+;;
+
+let%expect_test "cost lint keeps record aliases scoped separately from monadic values" =
+  List.iter
+    [ "Definition run_c (m : Cost.t nat) := let* m := m in match m with x => Cost.ret x end."
+    ; "Definition run_c (m : Cost.t nat) := Cost.map (fun m => match m with x => x end) m."
+    ; "Definition bad_c (m : Cost.t nat) := let alias := m in match alias with x => x end."
+    ; "Definition bad_c := let m : Cost.t nat := other_c O in match m with x => x end."
+    ; "Definition bad_c (m : Cost.t nat) := \
+       (let* m := m in Cost.ret m) ;; match m with x => x end."
+    ; "Definition bad_c (m : Cost.t nat) := \
+       Cost.map (fun m => m) (match m with x => x end)."
+    ; "Definition bad_c := Cost.map (fun (m n : Cost.t nat) => match n with x => x end) input."
+    ; "Definition bad_c (m : Cost.t nat) (n : Fin.t (N.to_nat (Cost.ticks m))) := Cost.ret n."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint never treats a literal lift charge as evidence for a leaf" =
+  List.iter
+    [ "Definition code x := x. Definition code_c := Cost.lift (fun _ => 1) code."
+    ; "Definition scan xs := List.map f xs. Definition scan_c := Cost.lift (fun _ => 1) scan."
+    ; "Definition bad_c xs := Cost.lift (fun _ => 1) (List.map f) xs."
+    ; "Definition scan xs := List.map f xs. Definition scan_c xs := Cost.step ;; \
+       Cost.ret (scan xs)."
+    ; "Definition adapter_c f x := Cost.lift (fun _ => 1) f x."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: code")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: scan")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "uncharged list operation in costed body: List.map")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: scan")))
     (Ok ())
     |}]
 ;;
