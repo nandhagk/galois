@@ -2,11 +2,11 @@
 
     Named graphs carry parent maps and token lists independently of graph producers.
     For example, a diamond's join has its entry as immediate dominator.
-    Builds on: GraphPrepared, GraphCheckWto and BaseMap. *)
+    Builds on: GraphPrepared, GraphCheckDom, GraphCheckWto and BaseMap. *)
 
 From Stdlib Require Import List Bool Arith PArith.
 From Galois.Base Require Import BaseEncoding BaseMap.
-From Galois.Graph Require Import GraphModel GraphPrepared GraphHierSpec GraphCheckWto.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphHierSpec GraphCheckWto GraphCheckDom.
 Import List.ListNotations.
 Close Scope positive_scope.
 
@@ -73,6 +73,21 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The line's parent representation is certified independently of its semantic checker. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** The supplied line parents and their reference numbering form an exact dominator tree. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  vm_compute. reflexivity.
+Qed.
+
 End Line.
 
 Module Diamond.
@@ -92,6 +107,21 @@ Qed.
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
   apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  vm_compute. reflexivity.
+Qed.
+
+(** Public map construction certifies the diamond's parent representation. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** Both branches and the join have exactly the supplied immediate dominators. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -119,6 +149,21 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Public map construction certifies the looped diamond's parent representation. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** The join's self-loop does not change the supplied immediate dominators. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  vm_compute. reflexivity.
+Qed.
+
 End JoinLoop.
 
 Module NestedLoop.
@@ -139,6 +184,21 @@ Qed.
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
   apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  vm_compute. reflexivity.
+Qed.
+
+(** Public map construction certifies the nested-loop parent representation. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** The nested-loop dominator tree follows the forward chain from entry 1. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -164,6 +224,21 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Public map construction certifies the shared-tail parent representation. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** Neither entry dominates the join and node 3 immediately dominates the tail node 4. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  vm_compute. reflexivity.
+Qed.
+
 End TwoEntry.
 
 Module SelfLoop.
@@ -183,6 +258,21 @@ Qed.
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
   apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  vm_compute. reflexivity.
+Qed.
+
+(** The empty parent map has a public representation certificate. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** A singleton self-loop has no strict immediate dominator. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -208,6 +298,21 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Public map construction certifies the irreducible graph's parent representation. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** Both cycle nodes have entry 1 as their immediate dominator. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  vm_compute. reflexivity.
+Qed.
+
 End Irreducible.
 
 Module Empty.
@@ -227,6 +332,21 @@ Qed.
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
   apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  vm_compute. reflexivity.
+Qed.
+
+(** Empty graph parents have a public representation certificate. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** The empty graph has an exact empty dominator forest. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
@@ -252,6 +372,21 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The edgeless singleton's empty parent map has a public representation certificate. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** The singleton is its own reflexive ancestor and has no strict dominator. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
+  vm_compute. reflexivity.
+Qed.
+
 End Singleton.
 
 Module Unreachable.
@@ -271,6 +406,21 @@ Qed.
 Theorem wto_valid : Wto.valid prepared (Prepared.entry_ids prepared) wto.
 Proof.
   apply (proj1 (Wto.check_correct prepared _ wto fixture_ready)).
+  vm_compute. reflexivity.
+Qed.
+
+(** The shared line parent map keeps its public representation certificate. *)
+Theorem parents_wf : Map.wf positive_encoding parents.
+Proof.
+  apply Map.wf_of_list.
+Qed.
+
+Definition tree := Dom.of_parents prepared parents.
+
+(** The dominator forest covers the line and has no binding for unreachable node 5. *)
+Theorem tree_exact : Dom.exact prepared tree.
+Proof.
+  apply Dom.check_sound; [exact fixture_ready|exact parents_wf|].
   vm_compute. reflexivity.
 Qed.
 
