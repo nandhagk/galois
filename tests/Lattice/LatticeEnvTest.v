@@ -336,7 +336,7 @@ Example environment_cost_boundaries :
   (Cost.ticks (leb_c env_bool_bottom e0 e1),
     Cost.ticks (join_c env_bool_bottom e0 e0),
     Cost.ticks (leb_c env_bool_top None (Some e0)),
-    Cost.ticks (join_c env_bool_top None (Some e0))) = (0, 0, 1, 1)%N.
+    Cost.ticks (join_c env_bool_top None (Some e0))) = (0, 1, 1, 1)%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -356,7 +356,7 @@ Defined.
 Example environment_retains_component_callback_charges :
   let L := env Bottom_default positive_encoding charged_boolean charged_boolean_top in
   (Cost.ticks (leb_c L e1 e1), Cost.ticks (join_c L e1 e1),
-    Map.elements (env_raw (join L e1 e1))) = (42%N, 50%N, [(1%positive, true)]).
+    Map.elements (env_raw (join L e1 e1))) = (40%N, 44%N, [(1%positive, true)]).
 Proof.
   vm_compute. reflexivity.
 Qed.

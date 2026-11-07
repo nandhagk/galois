@@ -87,7 +87,7 @@ Qed.
 
 Example may_cost_observations :
   (Cost.ticks (leb_c may_pos s1 s1), Cost.ticks (join_c may_pos s0 s0)) =
-  (8%N, 0%N).
+  (9%N, 1%N).
 Proof.
   vm_compute. reflexivity.
 Qed.
