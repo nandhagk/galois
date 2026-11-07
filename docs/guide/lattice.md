@@ -56,7 +56,18 @@ The [costed pair pilot](../../tests/Lattice/LatticeKitTest.v#L13) demonstrates
 the constructor and the one-line derivations.
 
 An [indexed family](../../theories/Lattice/LatticeKitFamily.v#L11) uses the
-same equations for an arbitrary index type. Its finite measures use a list
+same equations for an arbitrary index type. `family_gamma` takes an
+interpretation `G i` at each index and requires
+`gamma (G i) (p i x) c` at every index. `family_agree` likewise takes
+agreements `R i`. For example, a may-set interpretation at key `i` requires
+the observation at `i` when the concrete key is `i`. Swapping two
+observations can therefore change meaning and agreement.
+The `_uniform` constructors specialize these interpretations to constant
+families. Semantic laws require the component laws pointwise.
+`family_bot_empty` lets each concrete value choose its own rejecting index.
+It does not require one index to reject every concrete value.
+
+Finite family measures use a list
 `U` and `family_inv`, which requires invariant components everywhere and
 default-equivalent components outside `U`. `family_height` additionally
 needs component least joins to locate strict growth inside `U`.
@@ -66,8 +77,9 @@ repeated summands.
 
 `family_closed` transports pointwise invariants. `family_support_closed`
 also transports finite support when bottom matches the default and widening
-and ordered narrowing keep default equivalence. Weak laws alone do not give
-those default-stability facts.
+keeps default equivalence. Widening needs a separate stability premise.
+`narrow_equivalent` derives ordered-narrowing default stability from the weak
+bounds and transitivity, so callers supply no narrowing stability premise.
 
 ## Subtypes, fresh bottoms and costs
 

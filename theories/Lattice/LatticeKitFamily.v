@@ -28,15 +28,23 @@ Local Ltac family_order F H :=
   pose proof (proj1 (family_leb F _ _) H) as Hslots;
   clear H; rename Hslots into H.
 
-(** Family meaning requires every observation's meaning for the same concrete value. *)
-Definition family_gamma {I B A C} (G : concretisation A C) (p : I -> B -> A) :
+(** Family meaning applies each index's interpretation to that index's observation. *)
+Definition family_gamma {I B A C} (G : I -> concretisation A C) (p : I -> B -> A) :
     concretisation B C :=
-  {| gamma := fun x c => forall i, gamma G (p i x) c |}.
+  {| gamma := fun x c => forall i, gamma (G i) (p i x) c |}.
 
-(** Family agreement requires every observation's agreement. *)
-Definition family_agree {I B A C} (R : agreement A C) (p : I -> B -> A) :
+(** Family agreement applies each index's agreement to that index's observation. *)
+Definition family_agree {I B A C} (R : I -> agreement A C) (p : I -> B -> A) :
     agreement B C :=
-  {| agree := fun a x y => forall i, agree R (p i a) x y |}.
+  {| agree := fun a x y => forall i, agree (R i) (p i a) x y |}.
+
+(** Uniform family meaning specializes indexed meaning to a constant interpretation. *)
+Definition family_gamma_uniform {I B A C} (G : concretisation A C) (p : I -> B -> A) :
+    concretisation B C := family_gamma (fun _ => G) p.
+
+(** Uniform family agreement specializes indexed agreement to a constant interpretation. *)
+Definition family_agree_uniform {I B A C} (R : agreement A C) (p : I -> B -> A) :
+    agreement B C := family_agree (fun _ => R) p.
 
 (** Finite support requires invariant slots everywhere and default-equivalent slots outside U. *)
 Definition family_inv {I B A} (LA : lattice A) (p : I -> B -> A)
@@ -112,17 +120,15 @@ Proof.
     rewrite (family_narrow F); apply (narrow_inv H); auto.
 Qed.
 
-(** Supported closure additionally needs default stability of widening and ordered narrowing. *)
+(** Supported closure needs widening default stability and derives narrowing stability from laws. *)
 Theorem family_support_closed (U : list I) (d : A) {inv} :
   lattice_laws LA -> lub_laws LA -> closed_on LA inv ->
   equivalent LA (bot LA) d ->
   (forall a b, inv a -> inv b -> equivalent LA a d -> equivalent LA b d ->
     equivalent LA (widen LA a b) d) ->
-  (forall a b, inv a -> inv b -> leb LA b a = true ->
-    equivalent LA a d -> equivalent LA b d -> equivalent LA (narrow LA a b) d) ->
   closed_on L (family_inv LA p U d inv).
 Proof.
-  intros H Hlub C Hbot Hw Hn; constructor.
+  intros H Hlub C Hbot Hw; constructor.
   - split.
     + intro i; rewrite (family_bot F); apply (bot_inv C).
     + intros i _; rewrite (family_bot F); exact Hbot.
@@ -137,7 +143,8 @@ Proof.
     + intros i Hi; rewrite (family_widen F); apply Hw; auto.
   - intros x y [Hx Houtx] [Hy Houty] Hyx; family_order F Hyx; split.
     + intro i; rewrite (family_narrow F); apply (narrow_inv C); auto.
-    + intros i Hi; rewrite (family_narrow F); apply Hn; auto.
+    + intros i Hi; rewrite (family_narrow F).
+      apply (narrow_equivalent LA _ _ d H); auto.
 Qed.
 
 (** A false family comparison has a false observation in U if all outside observations pass. *)
@@ -201,46 +208,56 @@ Proof.
       rewrite (family_widen F); apply (widen_rank_progress W); auto.
 Defined.
 
-Context {C : Type} (G : concretisation A C) (R : agreement A C).
+Context {C : Type} (G : I -> concretisation A C) (R : I -> agreement A C).
 
-(** Universal slot meaning is monotone when each component meaning is monotone. *)
-Theorem family_gamma_laws : concretisation_laws LA G ->
+(** Indexed slot meaning is monotone when every index's interpretation is monotone. *)
+Theorem family_gamma_laws : (forall i, concretisation_laws LA (G i)) ->
   concretisation_laws L (family_gamma G p).
 Proof.
   intro HG; constructor; intros x y c Hxy Hc i.
   family_order F Hxy.
-  eapply (gamma_monotone HG); [apply Hxy | apply Hc].
+  eapply (gamma_monotone (HG i)); [apply Hxy | apply Hc].
 Qed.
 
-(** A chosen observation witnesses empty family bottom. *)
-Theorem family_bot_empty (i : I) : bottom_empty LA G -> bottom_empty L (family_gamma G p).
+(** Each concrete value may choose its own index rejecting the component bottom. *)
+Theorem family_bot_empty :
+  (forall c, exists i, ~ gamma (G i) (bot LA) c) ->
+  bottom_empty L (family_gamma G p).
 Proof.
-  intro HG; constructor; intros c Hc; specialize (Hc i); cbn in Hc.
-  rewrite (family_bot F) in Hc; exact (gamma_bot_empty HG c Hc).
+  intro Hreject; constructor; intros c Hc.
+  destruct (Hreject c) as [i Hreject_i]; specialize (Hc i); cbn in Hc.
+  rewrite (family_bot F) in Hc; exact (Hreject_i Hc).
 Qed.
 
-(** Component fullness gives fullness of a family top. *)
+(** A fixed index with empty component bottom suffices for empty family bottom. *)
+Theorem family_bot_empty_at (i : I) :
+  bottom_empty LA (G i) -> bottom_empty L (family_gamma G p).
+Proof.
+  intro Hempty; apply family_bot_empty; intro c; exists i; exact (gamma_bot_empty Hempty c).
+Qed.
+
+(** Fullness at every index gives fullness of a family top. *)
 Theorem family_top_full (T : top LA) t Ht :
-  top_full T G -> top_full (family_top T t Ht) (family_gamma G p).
+  (forall i, top_full T (G i)) -> top_full (family_top T t Ht) (family_gamma G p).
 Proof.
-  intro HG; constructor; intros c i; cbn; rewrite Ht; apply (gamma_top_full HG).
+  intro HG; constructor; intros c i; cbn; rewrite Ht; apply (gamma_top_full (HG i)).
 Qed.
 
-(** Universal slot agreement preserves reflexivity and antitonicity. *)
-Theorem family_agree_laws : agreement_laws LA R ->
+(** Indexed slot agreement preserves pointwise reflexivity and antitonicity. *)
+Theorem family_agree_laws : (forall i, agreement_laws LA (R i)) ->
   agreement_laws L (family_agree R p).
 Proof.
   intro HR; constructor.
-  - intros x c i; apply (agree_refl HR).
+  - intros x c i; apply (agree_refl (HR i)).
   - intros x y c d Hxy Hcd i; family_order F Hxy.
-    eapply (agree_antitone HR); [apply Hxy | apply Hcd].
+    eapply (agree_antitone (HR i)); [apply Hxy | apply Hcd].
 Qed.
 
-(** Universal slot agreement transports the component join-agreement law. *)
-Theorem family_agree_join : agreement_join_law LA R ->
+(** Indexed slot agreement transports the join-agreement law at every index. *)
+Theorem family_agree_join : (forall i, agreement_join_law LA (R i)) ->
   agreement_join_law L (family_agree R p).
 Proof.
   intro HR; constructor; intros x y c d Hx Hy i; cbn.
-  rewrite (family_join F); apply (agree_join HR); [apply Hx | apply Hy].
+  rewrite (family_join F); apply (agree_join (HR i)); [apply Hx | apply Hy].
 Qed.
 End Family.

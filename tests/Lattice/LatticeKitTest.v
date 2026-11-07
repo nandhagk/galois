@@ -169,26 +169,132 @@ Proof.
     try exact bool_lub; try exact bool_closed.
   - split; reflexivity.
   - intros [] [] _ _ [Ha _] [Hb _]; cbn in *; try discriminate; split; reflexivity.
-  - intros [] [] _ _ Hle [Ha _] [Hb _]; cbn in *;
-      try discriminate; split; reflexivity.
 Qed.
 
 Example family_meaning_laws :
-  concretisation_laws bool_pair (family_gamma (@bool_gamma nat) bool_slot).
+  concretisation_laws bool_pair (family_gamma_uniform (@bool_gamma nat) bool_slot).
 Proof.
-  exact (family_gamma_laws bool_pair_family _ bool_gamma_laws).
+  exact (family_gamma_laws bool_pair_family _ (fun _ => bool_gamma_laws)).
 Qed.
 
 Example family_agreement_laws :
-  agreement_laws bool_pair (family_agree (@bool_agree nat) bool_slot).
+  agreement_laws bool_pair (family_agree_uniform (@bool_agree nat) bool_slot).
 Proof.
-  exact (family_agree_laws bool_pair_family _ bool_agree_laws).
+  exact (family_agree_laws bool_pair_family _ (fun _ => bool_agree_laws)).
 Qed.
 
 Example family_join_agreement :
-  agreement_join_law bool_pair (family_agree (@bool_agree nat) bool_slot).
+  agreement_join_law bool_pair (family_agree_uniform (@bool_agree nat) bool_slot).
 Proof.
-  exact (family_agree_join bool_pair_family _ bool_agree_join).
+  exact (family_agree_join bool_pair_family _ (fun _ => bool_agree_join)).
+Qed.
+
+Example family_uniform_bottom_empty :
+  bottom_empty bool_pair (family_gamma_uniform (@bool_gamma nat) bool_slot).
+Proof.
+  exact (family_bot_empty_at bool_pair_family _ true bool_bot_empty).
+Qed.
+
+(** An index constrains membership only when the concrete key equals that index. *)
+Definition indexed_key_gamma (i : bool) : concretisation bool bool :=
+  {| gamma := fun present key => key = i -> present = true |}.
+
+(** An index constrains agreement only on the store component selected by that index. *)
+Definition indexed_key_agree (i : bool) : agreement bool (bool * bool) :=
+  {| agree := fun needed x y => needed = true -> bool_slot i x = bool_slot i y |}.
+
+Example indexed_component_meaning_laws i :
+  concretisation_laws bool_lattice (indexed_key_gamma i).
+Proof.
+  constructor; intros [] [] c Hle Hc Hi; cbn in *;
+    try discriminate; try reflexivity; apply Hc; exact Hi.
+Qed.
+
+Example indexed_component_agreement_laws i :
+  agreement_laws bool_lattice (indexed_key_agree i).
+Proof.
+  constructor.
+  - intros needed x _; reflexivity.
+  - intros [] [] x y Hle Hxy Hneeded; cbn in *; try discriminate; apply Hxy; reflexivity.
+Qed.
+
+Example indexed_component_join_agreement i :
+  agreement_join_law bool_lattice (indexed_key_agree i).
+Proof.
+  constructor; intros [] [] x y Hx Hy Hneeded; cbn in *; try discriminate;
+    first [solve [apply Hx; reflexivity] | solve [apply Hy; reflexivity]].
+Qed.
+
+Definition indexed_pair_gamma := family_gamma indexed_key_gamma bool_slot.
+
+Definition indexed_pair_agree := family_agree indexed_key_agree bool_slot.
+
+Definition indexed_pair_top : top bool_pair.
+Proof.
+  refine (family_top bool_pair_family bool_top (true, true) _); intros []; reflexivity.
+Defined.
+
+Example indexed_family_meaning_laws : concretisation_laws bool_pair indexed_pair_gamma.
+Proof.
+  exact (family_gamma_laws bool_pair_family _ indexed_component_meaning_laws).
+Qed.
+
+Example indexed_family_agreement_laws : agreement_laws bool_pair indexed_pair_agree.
+Proof.
+  exact (family_agree_laws bool_pair_family _ indexed_component_agreement_laws).
+Qed.
+
+Example indexed_family_join_agreement : agreement_join_law bool_pair indexed_pair_agree.
+Proof.
+  exact (family_agree_join bool_pair_family _ indexed_component_join_agreement).
+Qed.
+
+Example indexed_meaning_distinguishes_slots :
+  gamma indexed_pair_gamma (true, false) true /\
+  ~ gamma indexed_pair_gamma (false, true) true.
+Proof.
+  split.
+  - intros []; vm_compute; congruence.
+  - intro H; specialize (H true); vm_compute in H; specialize (H eq_refl); discriminate.
+Qed.
+
+Example indexed_agreement_distinguishes_slots :
+  agree indexed_pair_agree (true, false) (false, false) (false, true) /\
+  ~ agree indexed_pair_agree (false, true) (false, false) (false, true).
+Proof.
+  split.
+  - intros []; vm_compute; congruence.
+  - intro H; specialize (H false); vm_compute in H; specialize (H eq_refl); discriminate.
+Qed.
+
+Example indexed_family_bottom_empty : bottom_empty bool_pair indexed_pair_gamma.
+Proof.
+  apply (family_bot_empty bool_pair_family indexed_key_gamma).
+  intro c; exists c; cbn; intro H; specialize (H eq_refl); discriminate.
+Qed.
+
+Example indexed_family_top_full : top_full indexed_pair_top indexed_pair_gamma.
+Proof.
+  apply (family_top_full bool_pair_family indexed_key_gamma bool_top (true, true)).
+  intro i; constructor; intros c _; reflexivity.
+Qed.
+
+Example indexed_component_bottom_not_empty :
+  forall i, exists c, gamma (indexed_key_gamma i) (bot bool_lattice) c.
+Proof.
+  intros []; [exists false | exists true]; vm_compute; congruence.
+Qed.
+
+Example indexed_all_slots_boundary : forall c, gamma indexed_pair_gamma (true, true) c.
+Proof.
+  intros c []; vm_compute; reflexivity.
+Qed.
+
+Example indexed_no_slots_boundary :
+  forall c, ~ gamma indexed_pair_gamma (false, false) c.
+Proof.
+  intros c H; specialize (H c); destruct c; vm_compute in H;
+    specialize (H eq_refl); discriminate.
 Qed.
 
 Example family_measures :

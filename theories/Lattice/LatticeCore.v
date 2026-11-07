@@ -328,6 +328,16 @@ Proof.
   - apply (join_upper_r H).
 Qed.
 
+(** Ordered narrowing keeps the common preorder equivalence of its two inputs. *)
+Theorem narrow_equivalent {A} (L : lattice A) a b d :
+  lattice_laws L -> leb L b a = true -> equivalent L a d -> equivalent L b d ->
+  equivalent L (narrow L a b) d.
+Proof.
+  intros H Hba [Had _] [_ Hdb]; split.
+  - eapply (leb_trans H); [apply (narrow_lower H); exact Hba | exact Had].
+  - eapply (leb_trans H); [exact Hdb | apply (narrow_upper H); exact Hba].
+Qed.
+
 (** Assignments are ordered pointwise. *)
 Definition fun_leb {X A} (L : lattice A) (s1 s2 : X -> A) : Prop :=
   forall x, leb L (s1 x) (s2 x) = true.
