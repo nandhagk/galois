@@ -10,6 +10,10 @@ open Core
     [GALOIS_CHECK_JOBS] selects one or two claims workers and defaults to two. Invalid values
     fail when claims are requested; other checks ignore the setting.
     Import hygiene requires the pinned Stdlib sources available through ROCQPATH.
-    The [extraction] subcommand inspects the four generated artifacts supplied by Dune; its
-    alias also requires successful compilation of the generated library. *)
+    Computational declarations in new theories and examples also receive cost-erasure lint.
+    Proofs and Prop laws may observe counts.
+    The [extraction] subcommand preserves the four-artifact legacy inventory. The
+    [cost-extraction] subcommand inspects nonempty lists of new generated artifacts.
+    Both reject the exact cost-observation sentinel. Their Dune aliases require successful
+    compilation of the corresponding generated libraries. *)
 val command : Command.t

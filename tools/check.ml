@@ -633,6 +633,186 @@ module Float_boundary = struct
   ;;
 end
 
+module Cost_lint = struct
+  module Region = struct
+    type t =
+      | Computation
+      | Proof
+  end
+
+  let cost_package = "Cost"
+  let suffix = "_c"
+  let qualified name = [ cost_package; "."; name ]
+
+  let rec contains words pattern =
+    List.is_prefix words ~prefix:pattern ~equal:String.equal
+    ||
+    match words with
+    | [] -> false
+    | _ :: rest -> contains rest pattern
+  ;;
+
+  (* Only a top-level assignment separates a declaration's type from its body. *)
+  let split_body words =
+    let rec loop depth header = function
+      | ":" :: "=" :: body when depth = 0 -> List.rev header, Some body
+      | (("(" | "{" | "[") as word) :: rest -> loop (depth + 1) (word :: header) rest
+      | ((")" | "}" | "]") as word) :: rest -> loop (depth - 1) (word :: header) rest
+      | word :: rest -> loop depth (word :: header) rest
+      | [] -> List.rev header, None
+    in
+    loop 0 [] words
+  ;;
+
+  let declaration = function
+    | ("Definition" | "Let" | "Fixpoint" | "CoFixpoint") :: name :: rest -> Some (name, rest)
+    | _ -> None
+  ;;
+
+  let is_prop header =
+    let rec loop depth = function
+      | ":" :: "Prop" :: _ when depth = 0 -> true
+      | ("(" | "{" | "[") :: rest -> loop (depth + 1) rest
+      | (")" | "}" | "]") :: rest -> loop (depth - 1) rest
+      | _ :: rest -> loop depth rest
+      | [] -> false
+    in
+    loop 0 header
+  ;;
+
+  (* Typed binders and local bindings identify record scrutinees. Callback arrows do not. *)
+  let cost_variables words =
+    let binder_names names words =
+      let bound, tail = List.split_while words ~f:(fun word -> not (String.equal word ":")) in
+      match tail with
+      | ":" :: "Cost" :: "." :: "t" :: _ | ":" :: "(" :: "Cost" :: "." :: "t" :: _ ->
+        if List.for_all bound ~f:(String.for_all ~f:Lex.is_identifier)
+        then List.fold bound ~init:names ~f:Set.add
+        else names
+      | _ -> names
+    in
+    let rec loop names = function
+      | ("(" | "{") :: rest -> loop (binder_names names rest) rest
+      | name :: ":" :: "Cost" :: "." :: "t" :: rest
+      | name :: ":" :: "(" :: "Cost" :: "." :: "t" :: rest -> loop (Set.add names name) rest
+      | "let"
+        :: name
+        :: ":"
+        :: "="
+        :: "Cost"
+        :: "."
+        :: ("ret" | "bind" | "map" | "lift" | "refine" | "tick" | "step" | "tick_bits" | "mk")
+        :: rest -> loop (Set.add names name) rest
+      | "let" :: name :: ":" :: "=" :: callee :: rest when Set.mem names callee ->
+        loop (Set.add names name) rest
+      | "let" :: name :: ":" :: "=" :: callee :: rest when String.is_suffix callee ~suffix ->
+        loop (Set.add names name) rest
+      | _ :: rest -> loop names rest
+      | [] -> names
+    in
+    loop String.Set.empty words
+  ;;
+
+  let record_match words =
+    let variables = cost_variables words in
+    let rec loop = function
+      | "match" :: name :: _ when Set.mem variables name -> true
+      | "match" :: "(" :: name :: _ when Set.mem variables name -> true
+      | "match" :: "Cost" :: "." :: ("ret" | "bind" | "map" | "lift") :: _ -> true
+      | "match" :: name :: _ when String.is_suffix name ~suffix -> true
+      | _ :: rest -> loop rest
+      | [] -> false
+    in
+    loop words
+  ;;
+
+  let plain_names sentences =
+    let names =
+      List.filter_map sentences ~f:(fun sentence ->
+        Option.map (declaration (Lex.head (Lex.words sentence))) ~f:fst)
+      |> String.Set.of_list
+    in
+    Set.filter names ~f:(fun name -> Set.mem names [%string "%{name}%{suffix}"])
+  ;;
+
+  let problem ~plain ~header body =
+    let words = header @ body in
+    if contains words (qualified "mk")
+    then Some "cost record construction outside Cost"
+    else if contains words (qualified "ticks")
+    then Some "computational Cost.ticks outside Cost"
+    else if record_match words
+    then Some "computational match on Cost.t outside Cost"
+    else (
+      match declaration header with
+      | Some (name, _) when String.is_suffix name ~suffix ->
+        (match List.find body ~f:(Set.mem plain) with
+         | Some name -> Some [%string "plain function in costed body: %{name}"]
+         | None ->
+           let list_operations =
+             [ "length"
+             ; "app"
+             ; "rev"
+             ; "map"
+             ; "filter"
+             ; "forallb"
+             ; "existsb"
+             ; "find"
+             ; "fold_left"
+             ; "fold_right"
+             ; "flat_map"
+             ; "concat"
+             ; "combine"
+             ; "partition"
+             ]
+           in
+           List.find_map list_operations ~f:(fun operation ->
+             if contains body [ "List"; "."; operation ]
+             then Some [%string "uncharged list operation in costed body: List.%{operation}"]
+             else None))
+      | Some _ | None -> None)
+  ;;
+
+  let source (source : Source.t) =
+    match source.root with
+    | (Theories | Examples) when not (String.equal source.package cost_package) ->
+      let plain = plain_names source.sentences in
+      let%map.Or_error (_ : Region.t) =
+        List.fold_result
+          source.sentences
+          ~init:Region.Computation
+          ~f:(fun region ({ line; _ } as sentence : Lex.Sentence.t) ->
+            let words = Lex.head (Lex.words sentence) in
+            match words, region with
+            | ("Qed" | "Defined" | "Save") :: _, _ -> Ok Region.Computation
+            | "Proof" :: _, _ -> Ok Region.Proof
+            | ( ( "Lemma"
+                | "Theorem"
+                | "Example"
+                | "Fact"
+                | "Corollary"
+                | "Proposition"
+                | "Remark"
+                | "Goal" )
+                :: _
+              , _ ) ->
+              let _, body = split_body words in
+              Ok (if Option.is_some body then Region.Computation else Proof)
+            | _, Proof -> Ok region
+            | _, Computation ->
+              let header, body = split_body words in
+              if is_prop header
+              then Ok (if Option.is_none body then Region.Proof else Computation)
+              else (
+                match problem ~plain ~header (Option.value body ~default:[]) with
+                | None -> Ok region
+                | Some problem -> Diagnostic.error ~file:source.file ~line problem))
+      in
+      ()
+    | Theories | Examples | Tests | Legacy_theories | Legacy_examples | Legacy_tests -> Ok ()
+  ;;
+end
+
 module Hygiene = struct
   let forbidden =
     String.Set.of_list
@@ -801,6 +981,7 @@ module Hygiene = struct
   ;;
 
   let source ~policy (source : Source.t) =
+    let%bind.Or_error () = Cost_lint.source source in
     let%bind.Or_error float_import = Float_boundary.imports_float source in
     let%bind.Or_error scopes =
       List.fold_result
@@ -1617,6 +1798,13 @@ module Extraction = struct
   let solver_implementation = "rules_solver.ml"
   let solver_interface = "rules_solver.mli"
   let compact source = String.filter source ~f:(fun c -> not (Char.is_whitespace c))
+  let cost_sentinel = "GALOIS_COST_TICKS"
+
+  let cost_leak ~file source =
+    if String.is_substring source ~substring:cost_sentinel
+    then Or_error.error_s [%message "cost observation leaked into extraction" (file : Filename.t)]
+    else Ok ()
+  ;;
 
   let forbidden ~file source spelling =
     if String.is_substring (compact source) ~substring:spelling
@@ -1637,6 +1825,7 @@ module Extraction = struct
   (* Each monolithic extraction includes its complete transitive dependency closure. Checking
      the whole solver output also catches universe enumeration hidden behind helper calls. *)
   let inspect ~file source =
+    let%bind.Or_error () = cost_leak ~file source in
     let%bind.Or_error () = forbidden ~file source "Obj.magic" in
     let basename = Filename.basename file in
     if String.equal basename solver_implementation || String.equal basename solver_interface
@@ -1677,6 +1866,17 @@ module Extraction = struct
       (let%map_open.Command files = anon (sequence ("ARTIFACT" %: string)) in
        fun () -> run files)
   ;;
+
+  let cost_command =
+    Command.basic_or_error
+      ~summary:"Inspect cost-erased generated artifacts without the legacy inventory"
+      (let%map_open.Command files = anon (non_empty_sequence_as_list ("ARTIFACT" %: string)) in
+       fun () ->
+         List.map files ~f:(fun file ->
+           let%bind.Or_error source = Or_error.try_with (fun () -> In_channel.read_all file) in
+           inspect ~file source)
+         |> Or_error.combine_errors_unit)
+  ;;
 end
 
 let command =
@@ -1690,7 +1890,7 @@ let command =
         eprint_s [%sexp (error : Error.t)];
         exit 1)
     (List.map Audit.all ~f:(fun audit -> Audit.to_string audit, check_command [ audit ])
-     @ [ "extraction", Extraction.command ])
+     @ [ "extraction", Extraction.command; "cost-extraction", Extraction.cost_command ])
 ;;
 
 module Fixture = struct
@@ -3456,5 +3656,208 @@ let%expect_test "fatal worker exception reports incomplete coverage" =
   [%expect
     {|
     ((exception_seen true) (incomplete true))
+    |}]
+;;
+
+let%expect_test "cost lint rejects computational count observations and record construction" =
+  List.iter
+    [ "Definition bad_c := Cost.ticks (Cost.ret true)."
+    ; "Definition bad_c := Cost.mk true 0."
+    ; "Definition clean_c := Cost.ret true."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "cost record construction outside Cost")))
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "cost lint distinguishes record matches from value matches" =
+  List.iter
+    [ "Definition bad_c (m : Cost.t nat) := match m with x => x end."
+    ; "Definition bad_c := let m := Cost.ret true in match m with x => x end."
+    ; "Definition bad_c := match other_c true with x => x end."
+    ; "Definition clean_c (m : Cost.t nat) := match Cost.value m with x => Cost.ret x end."
+    ; "Definition clean_c (f : nat -> Cost.t nat) := match Cost.value (f 0) with x => Cost.ret x \
+       end."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Examples "Tutorial/ExamplesCost.v" text)
+           : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file examples/Tutorial/ExamplesCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file examples/Tutorial/ExamplesCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file examples/Tutorial/ExamplesCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Ok ())
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "cost lint allows theorem statements proofs Prop laws and the owning package" =
+  let text =
+    {|Definition law (m : Cost.t nat) : Prop := Cost.ticks m = 0.
+Record component_cost_laws (f : nat -> Cost.t nat) : Prop :=
+  { bounded : forall n, Cost.ticks (f n) <= 7 }.
+Lemma statement (m : Cost.t nat) : Cost.ticks m = Cost.ticks m.
+Proof. destruct m. reflexivity. Qed.
+Theorem named : True. Proof. pose (Cost.mk true 0). exact I. Qed.
+Definition law_proof : True. Proof. pose (Cost.ticks (Cost.ret true)). exact I. Defined.
+Definition clean_c := Cost.ret true.
+(* Cost.ticks (Cost.mk true 0) *)
+Definition message := "Cost.ticks (Cost.mk true 0)".|}
+  in
+  print_s
+    [%sexp (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)];
+  print_s
+    [%sexp
+      (Cost_lint.source
+         (Fixture.at ~root:Theories "Cost/CostFixture.v" "Definition primitive := Cost.mk true 0.")
+       : unit Or_error.t)];
+  print_s
+    [%sexp
+      (Cost_lint.source
+         (Fixture.at
+            ~root:Theories
+            "Base/BaseCost.v"
+            "Definition bad_c (P : Prop) := Cost.ticks (Cost.ret true).")
+       : unit Or_error.t)];
+  [%expect
+    {|
+    (Ok ())
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint resumes after proofs and does not exempt computational Prop arguments" =
+  let text =
+    "Lemma fine : True. Proof. exact I. Qed.\n\
+     Definition bad_c (P : Prop) := Cost.ticks (Cost.ret true)."
+  in
+  print_s
+    [%sexp (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)];
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 2) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint forbids the plain twin in every costed body" =
+  List.iter
+    [ "Definition f := 0. Definition f_c := Cost.ret (f 0)."
+    ; "Definition g_c := Cost.ret (f 0). Definition f_c := Cost.ret 0. Definition f := 0."
+    ; "Definition f_c := Cost.ret 0. Definition f := Cost.value f_c. Definition g_c := f_c."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "plain function in costed body: f")))
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "cost lint distinguishes local values from record aliases" =
+  List.iter
+    [ "Definition clean_c m := let v := Cost.value m in match v with x => Cost.ret x end."
+    ; "Definition bad_c (m : Cost.t nat) := let alias := m in match alias with x => x end."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Ok ())
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint checks grouped binders and computational signatures" =
+  List.iter
+    [ "Definition bad_c (m n : Cost.t nat) := match m with x => x end."
+    ; "Definition bad_c (n : Fin.t (N.to_nat (Cost.ticks m))) := Cost.ret n."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational Cost.ticks outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint rejects uncharged qualified list operations" =
+  List.iter
+    [ "Definition bad_c xs := Cost.ret (List.map f xs)."; "Definition clean_c xs := map_c f xs." ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "uncharged list operation in costed body: List.map")))
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "extraction rejects the exact cost sentinel in implementation and interface" =
+  List.iter [ "cost_erased.ml"; "cost_erased.mli" ] ~f:(fun file ->
+    List.iter
+      [ {|let bad = failwith "GALOIS_COST_TICKS"|}
+      ; {|(* GALOIS_COST_TICKS *)|}
+      ; {|let clean = "GALOIS_COST_ TICKS"|}
+      ; {|let clean = Galois_cost.value|}
+      ]
+      ~f:(fun source -> print_s [%sexp (Extraction.inspect ~file source : unit Or_error.t)]));
+  [%expect
+    {|
+    (Error ("cost observation leaked into extraction" (file cost_erased.ml)))
+    (Error ("cost observation leaked into extraction" (file cost_erased.ml)))
+    (Ok ())
+    (Ok ())
+    (Error ("cost observation leaked into extraction" (file cost_erased.mli)))
+    (Error ("cost observation leaked into extraction" (file cost_erased.mli)))
+    (Ok ())
+    (Ok ())
     |}]
 ;;
