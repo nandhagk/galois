@@ -724,7 +724,7 @@ module Cost_lint = struct
        | _ -> Value)
   ;;
 
-  let identifier word = not (String.is_empty word) && String.for_all word ~f:Lex.is_identifier
+  let identifier word = (not (String.is_empty word)) && String.for_all word ~f:Lex.is_identifier
 
   let bind_names env ~(kind : Binding.t) names =
     List.fold names ~init:env ~f:(fun env name ->
@@ -764,9 +764,7 @@ module Cost_lint = struct
   (* A declaration's bare parameters do not own its return annotation.
      A lambda's trailing bare binder group does own its annotation. *)
   let binder_sequence ~form words =
-    let finish groups result =
-      ({ groups = List.rev groups; result } : Binder_sequence.t)
-    in
+    let finish groups result = ({ groups = List.rev groups; result } : Binder_sequence.t) in
     let rec loop groups = function
       | ("(" | "{") :: rest ->
         let group, tail = take_until ~stops:[ ")"; "}" ] rest in
@@ -778,8 +776,7 @@ module Cost_lint = struct
       | words ->
         let names, tail = take_until ~stops:[ "("; "{"; ":" ] words in
         (match (form : Binder_sequence.Form.t), tail with
-         | Lambda, ":" :: annotation ->
-           finish (({ names; annotation } : Binder.t) :: groups) []
+         | Lambda, ":" :: annotation -> finish (({ names; annotation } : Binder.t) :: groups) []
          | (Declaration | Lambda), _ ->
            loop (({ names; annotation = [] } : Binder.t) :: groups) tail)
     in
@@ -836,9 +833,7 @@ module Cost_lint = struct
               let name = name_at scopes name in
               let header, body = split_body rest in
               ( Set.add declared name
-              , if Option.exists body ~f:(literal header)
-                then Set.add literals name
-                else literals )
+              , if Option.exists body ~f:(literal header) then Set.add literals name else literals )
             | None -> declared, literals
           in
           let%map.Or_error scopes = Scope.advance ~file ~line:sentence.line scopes words in
@@ -885,11 +880,7 @@ module Cost_lint = struct
     let rec loop env = function
       | name :: _ as words when identifier name ->
         let name, rest = reference words in
-        let env =
-          if String.contains name '.'
-          then env
-          else bind_names env ~kind:Value [ name ]
-        in
+        let env = if String.contains name '.' then env else bind_names env ~kind:Value [ name ] in
         loop env rest
       | _ :: rest -> loop env rest
       | [] -> env
@@ -1072,14 +1063,7 @@ module Cost_lint = struct
         | None -> false, ({ groups = []; result = header } : Binder_sequence.t)
       in
       let ({ issue; env } : Inspection.t) =
-        scoped_problem
-          twins
-          ~visible
-          ~scopes
-          ~costed:false
-          ~env:String.Map.empty
-          ~sequence
-          []
+        scoped_problem twins ~visible ~scopes ~costed:false ~env:String.Map.empty ~sequence []
       in
       match issue with
       | Some _ as issue -> issue
@@ -1131,8 +1115,9 @@ module Cost_lint = struct
         List.fold_result
           source.sentences
           ~init:({ region = Computation; scopes = []; visible = String.Set.empty } : Scan.t)
-          ~f:(fun ({ region; scopes; visible } : Scan.t)
-                  ({ line; _ } as sentence : Lex.Sentence.t) ->
+          ~f:
+            (fun
+              ({ region; scopes; visible } : Scan.t) ({ line; _ } as sentence : Lex.Sentence.t) ->
             let words = Lex.head (Lex.words sentence) in
             let%bind.Or_error next_scopes = Scope.advance ~file:source.file ~line scopes words in
             let%map.Or_error region =
@@ -1157,16 +1142,11 @@ module Cost_lint = struct
                 if is_prop header
                 then Ok (if Option.is_none body then Region.Proof else Computation)
                 else (
-                  match
-                    problem ~twins ~visible ~scopes ~header (Option.value body ~default:[])
-                  with
+                  match problem ~twins ~visible ~scopes ~header (Option.value body ~default:[]) with
                   | None -> Ok region
                   | Some problem -> Diagnostic.error ~file:source.file ~line problem)
             in
-            ({ region
-             ; scopes = next_scopes
-             ; visible = visible_declaration visible ~scopes words
-             }
+            ({ region; scopes = next_scopes; visible = visible_declaration visible ~scopes words }
              : Scan.t))
       in
       ()
@@ -4206,8 +4186,8 @@ let%expect_test "cost lint separates return annotations from record binders" =
     [ "Fixpoint walk_c n : Cost.t nat := match n with O => Cost.ret O | S k => walk_c k end."
     ; "Definition rows_c xs : Cost.t (list nat) := match xs with [] => Cost.ret [] | x :: xs => \
        Cost.ret xs end."
-    ; "Definition run_c (f : nat -> Cost.t nat) n : Cost.t nat := match n with O => f O | S k \
-       => f k end."
+    ; "Definition run_c (f : nat -> Cost.t nat) n : Cost.t nat := match n with O => f O | S k => f \
+       k end."
     ; "Definition bad_c (m n : Cost.t nat) k : Cost.t nat := match n with x => x end."
     ; "Definition bad_c (m : (Cost.t nat)) n : Cost.t nat := match (m) with x => x end."
     ; "Definition bad_c next_c := match next_c O with x => x end."
@@ -4241,8 +4221,8 @@ let%expect_test "cost lint recognizes Prop codomains without exempting Prop doma
     ; "Definition bad : Prop -> nat := fun P => Cost.ticks (Cost.ret O)."
     ; "Definition bad : (Prop -> nat) := fun P => Cost.ticks (Cost.ret O)."
     ; "Definition bad (P : nat -> Prop) : nat := Cost.ticks (Cost.ret O)."
-    ; "Inductive bounded : nat -> Prop := B m : Cost.ticks m = 0 -> bounded 0. \
-       Definition bad_c := Cost.ticks (Cost.ret O)."
+    ; "Inductive bounded : nat -> Prop := B m : Cost.ticks m = 0 -> bounded 0. Definition bad_c := \
+       Cost.ticks (Cost.ret O)."
     ]
     ~f:(fun text ->
       print_s
@@ -4270,16 +4250,16 @@ let%expect_test "cost lint recognizes Prop codomains without exempting Prop doma
 
 let%expect_test "cost lint resolves twin references in their lexical module namespace" =
   List.iter
-    [ "Module Local. Definition empty_c := Cost.ret Other.empty. \
-       Definition empty := Cost.value empty_c. End Local."
+    [ "Module Local. Definition empty_c := Cost.ret Other.empty. Definition empty := Cost.value \
+       empty_c. End Local."
     ; "Module Jump. Definition rows x := x. Definition rows_c x := Cost.ret x. End Jump. \
        Definition bad_c x := Cost.ret (Jump.rows x)."
-    ; "Module Jump. Definition rows x := x. Definition rows_c x := Cost.ret x. \
-       Definition bad_c x := Cost.ret (rows x). End Jump."
-    ; "Module A. Definition f x := x. Definition f_c x := Cost.ret x. End A. \
-       Module B. Definition f x := x. Definition run_c x := Cost.ret (f x). End B."
-    ; "Module A. Definition f x := x. Definition f_c x := Cost.ret x. \
-       Module B. Definition bad_c x := Cost.ret (f x). End B. End A."
+    ; "Module Jump. Definition rows x := x. Definition rows_c x := Cost.ret x. Definition bad_c x \
+       := Cost.ret (rows x). End Jump."
+    ; "Module A. Definition f x := x. Definition f_c x := Cost.ret x. End A. Module B. Definition \
+       f x := x. Definition run_c x := Cost.ret (f x). End B."
+    ; "Module A. Definition f x := x. Definition f_c x := Cost.ret x. Module B. Definition bad_c x \
+       := Cost.ret (f x). End B. End A."
     ]
     ~f:(fun text ->
       print_s
@@ -4337,22 +4317,21 @@ let%expect_test "cost lint permits literal constants without exempting zero argu
 
 let%expect_test "cost lint scopes monadic let lambda and pattern values" =
   List.iter
-    [ "Definition rows x := x. Definition rows_c x := Cost.ret x. \
-       Definition run_c x := let* rows := rows_c x in Cost.ret rows."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition run_c f := Cost.ret (f 0)."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition run_c := Cost.map (fun f => f) (Cost.ret 0)."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition run_c xs := match xs with Some f => Cost.ret f | None => Cost.ret 0 end."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition bad_c := (let* f := Cost.ret 0 in Cost.ret f) ;; Cost.ret (f 0)."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition bad_c := Cost.map (fun f => f) (Cost.ret (f 0))."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition bad_c xs := match xs with Some f => Cost.ret f | None => Cost.ret (f 0) end."
-    ; "Module M. Definition f x := x. Definition f_c x := Cost.ret x. End M. \
-       Definition bad_c := let* f := Cost.ret 0 in Cost.ret (M.f f)."
+    [ "Definition rows x := x. Definition rows_c x := Cost.ret x. Definition run_c x := let* rows \
+       := rows_c x in Cost.ret rows."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition run_c f := Cost.ret (f 0)."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition run_c := Cost.map (fun f => \
+       f) (Cost.ret 0)."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition run_c xs := match xs with \
+       Some f => Cost.ret f | None => Cost.ret 0 end."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition bad_c := (let* f := \
+       Cost.ret 0 in Cost.ret f) ;; Cost.ret (f 0)."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition bad_c := Cost.map (fun f => \
+       f) (Cost.ret (f 0))."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition bad_c xs := match xs with \
+       Some f => Cost.ret f | None => Cost.ret (f 0) end."
+    ; "Module M. Definition f x := x. Definition f_c x := Cost.ret x. End M. Definition bad_c := \
+       let* f := Cost.ret 0 in Cost.ret (M.f f)."
     ]
     ~f:(fun text ->
       print_s
@@ -4385,10 +4364,8 @@ let%expect_test "cost lint keeps record aliases scoped separately from monadic v
     ; "Definition run_c (m : Cost.t nat) := Cost.map (fun m => match m with x => x end) m."
     ; "Definition bad_c (m : Cost.t nat) := let alias := m in match alias with x => x end."
     ; "Definition bad_c := let m : Cost.t nat := other_c O in match m with x => x end."
-    ; "Definition bad_c (m : Cost.t nat) := \
-       (let* m := m in Cost.ret m) ;; match m with x => x end."
-    ; "Definition bad_c (m : Cost.t nat) := \
-       Cost.map (fun m => m) (match m with x => x end)."
+    ; "Definition bad_c (m : Cost.t nat) := (let* m := m in Cost.ret m) ;; match m with x => x end."
+    ; "Definition bad_c (m : Cost.t nat) := Cost.map (fun m => m) (match m with x => x end)."
     ; "Definition bad_c := Cost.map (fun (m n : Cost.t nat) => match n with x => x end) input."
     ; "Definition bad_c (m : Cost.t nat) (n : Fin.t (N.to_nat (Cost.ticks m))) := Cost.ret n."
     ]
@@ -4426,8 +4403,8 @@ let%expect_test "cost lint never treats a literal lift charge as evidence for a 
     [ "Definition code x := x. Definition code_c := Cost.lift (fun _ => 1) code."
     ; "Definition scan xs := List.map f xs. Definition scan_c := Cost.lift (fun _ => 1) scan."
     ; "Definition bad_c xs := Cost.lift (fun _ => 1) (List.map f) xs."
-    ; "Definition scan xs := List.map f xs. Definition scan_c xs := Cost.step ;; \
-       Cost.ret (scan xs)."
+    ; "Definition scan xs := List.map f xs. Definition scan_c xs := Cost.step ;; Cost.ret (scan \
+       xs)."
     ; "Definition adapter_c f x := Cost.lift (fun _ => 1) f x."
     ]
     ~f:(fun text ->
@@ -4454,21 +4431,20 @@ let%expect_test "cost lint never treats a literal lift charge as evidence for a 
 
 let%expect_test "cost lint never binds qualified constructor path components" =
   List.iter
-    [ "Module Tag. Inductive t := m. End Tag. \
-       Definition bad_c (m : Cost.t nat) (tag : Tag.t) := \
+    [ "Module Tag. Inductive t := m. End Tag. Definition bad_c (m : Cost.t nat) (tag : Tag.t) := \
        match tag with | Tag.m => match m with r => r end end."
-    ; "Module Tag. Inductive t := f. End Tag. \
-       Definition f (xs : list nat) := xs. Definition f_c xs := Cost.ret xs. \
-       Definition bad_c (tag : Tag.t) xs := match tag with | Tag.f => Cost.ret (f xs) end."
-    ; "Module Tag. Inductive t := Wrap (n : nat). End Tag. \
-       Definition run_c (m : Cost.t nat) (tag : Tag.t) := \
-       match tag with | Tag.Wrap m => match m with O => Cost.ret O | S k => Cost.ret k end end."
-    ; "Module Tag. Inductive t := Wrap (n : nat). End Tag. \
-       Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition run_c (tag : Tag.t) := match tag with | Tag.Wrap f => Cost.ret f end."
-    ; "Module Tag. Inductive t := Wrap (n : nat) | Empty. End Tag. \
-       Definition bad_c (m : Cost.t nat) (tag : Tag.t) := \
-       match tag with | Tag.Wrap m => Cost.ret m | Tag.Empty => match m with r => r end end."
+    ; "Module Tag. Inductive t := f. End Tag. Definition f (xs : list nat) := xs. Definition f_c \
+       xs := Cost.ret xs. Definition bad_c (tag : Tag.t) xs := match tag with | Tag.f => Cost.ret \
+       (f xs) end."
+    ; "Module Tag. Inductive t := Wrap (n : nat). End Tag. Definition run_c (m : Cost.t nat) (tag \
+       : Tag.t) := match tag with | Tag.Wrap m => match m with O => Cost.ret O | S k => Cost.ret k \
+       end end."
+    ; "Module Tag. Inductive t := Wrap (n : nat). End Tag. Definition f x := x. Definition f_c x \
+       := Cost.ret x. Definition run_c (tag : Tag.t) := match tag with | Tag.Wrap f => Cost.ret f \
+       end."
+    ; "Module Tag. Inductive t := Wrap (n : nat) | Empty. End Tag. Definition bad_c (m : Cost.t \
+       nat) (tag : Tag.t) := match tag with | Tag.Wrap m => Cost.ret m | Tag.Empty => match m with \
+       r => r end end."
     ]
     ~f:(fun text ->
       print_s
@@ -4492,17 +4468,17 @@ let%expect_test "cost lint never binds qualified constructor path components" =
 
 let%expect_test "cost lint reads mixed lambda binder sequences in order" =
   List.iter
-    [ "Definition bad_c : nat -> Cost.t nat -> Cost.t nat := \
-       fun x (m : Cost.t nat) => match m with r => r end."
+    [ "Definition bad_c : nat -> Cost.t nat -> Cost.t nat := fun x (m : Cost.t nat) => match m \
+       with r => r end."
     ; "Definition bad_c := fun (x : nat) y (m n : Cost.t nat) => match n with r => r end."
-    ; "Definition run_c (m : Cost.t nat) := \
-       fun x m => match m with O => Cost.ret x | S k => Cost.ret k end."
-    ; "Definition run_c (m : Cost.t nat) := \
-       fun x (m : nat) => match m with O => Cost.ret x | S k => Cost.ret k end."
-    ; "Definition run_c (m : Cost.t nat) := \
-       fun (x : nat) m (n : nat) => match m with O => Cost.ret x | S k => Cost.ret n end."
-    ; "Definition f x := x. Definition f_c x := Cost.ret x. \
-       Definition run_c := fun x (f : nat -> nat) => Cost.ret (f x)."
+    ; "Definition run_c (m : Cost.t nat) := fun x m => match m with O => Cost.ret x | S k => \
+       Cost.ret k end."
+    ; "Definition run_c (m : Cost.t nat) := fun x (m : nat) => match m with O => Cost.ret x | S k \
+       => Cost.ret k end."
+    ; "Definition run_c (m : Cost.t nat) := fun (x : nat) m (n : nat) => match m with O => \
+       Cost.ret x | S k => Cost.ret n end."
+    ; "Definition f x := x. Definition f_c x := Cost.ret x. Definition run_c := fun x (f : nat -> \
+       nat) => Cost.ret (f x)."
     ; "Definition run_c := fun x y : nat => Cost.ret (x + y)."
     ]
     ~f:(fun text ->
@@ -4527,27 +4503,21 @@ let%expect_test "cost lint reads mixed lambda binder sequences in order" =
 
 let%expect_test "cost lint prefers visible names while discovering twins across the file" =
   List.iter
-    [ "Module A. Definition f (xs : list nat) := xs. \
-       Definition f_c (xs : list nat) := Cost.ret xs. Module B. \
-       Definition bad_c (xs : list nat) := Cost.ret (f xs). \
-       Definition f (xs : list nat) := xs. End B. End A."
-    ; "Module A. Definition f (xs : list nat) := xs. \
-       Definition f_c (xs : list nat) := Cost.ret xs. Module B. \
-       Definition f (xs : list nat) := xs. \
-       Definition run_c (xs : list nat) := Cost.ret (f xs). End B. End A."
-    ; "Module A. Definition f (xs : list nat) := xs. \
-       Definition f_c (xs : list nat) := Cost.ret xs. Module B. \
-       Definition f (xs : list nat) := xs. \
-       Definition bad_c (xs : list nat) := Cost.ret (f xs). \
-       Definition f_c xs := Cost.ret xs. End B. End A."
-    ; "Definition f (xs : list nat) := xs. \
-       Definition bad_c xs := Cost.ret (f xs). Definition f_c xs := Cost.ret xs."
-    ; "Definition bad_c xs := Cost.ret (f xs). \
-       Definition f (xs : list nat) := xs. Definition f_c xs := Cost.ret xs."
-    ; "Module A. Definition f (xs : list nat) := xs. \
-       Definition f_c xs := Cost.ret xs. Module B. \
-       Definition bad_c xs := Cost.ret (A.f xs). \
-       Definition f (xs : list nat) := xs. End B. End A."
+    [ "Module A. Definition f (xs : list nat) := xs. Definition f_c (xs : list nat) := Cost.ret \
+       xs. Module B. Definition bad_c (xs : list nat) := Cost.ret (f xs). Definition f (xs : list \
+       nat) := xs. End B. End A."
+    ; "Module A. Definition f (xs : list nat) := xs. Definition f_c (xs : list nat) := Cost.ret \
+       xs. Module B. Definition f (xs : list nat) := xs. Definition run_c (xs : list nat) := \
+       Cost.ret (f xs). End B. End A."
+    ; "Module A. Definition f (xs : list nat) := xs. Definition f_c (xs : list nat) := Cost.ret \
+       xs. Module B. Definition f (xs : list nat) := xs. Definition bad_c (xs : list nat) := \
+       Cost.ret (f xs). Definition f_c xs := Cost.ret xs. End B. End A."
+    ; "Definition f (xs : list nat) := xs. Definition bad_c xs := Cost.ret (f xs). Definition f_c \
+       xs := Cost.ret xs."
+    ; "Definition bad_c xs := Cost.ret (f xs). Definition f (xs : list nat) := xs. Definition f_c \
+       xs := Cost.ret xs."
+    ; "Module A. Definition f (xs : list nat) := xs. Definition f_c xs := Cost.ret xs. Module B. \
+       Definition bad_c xs := Cost.ret (A.f xs). Definition f (xs : list nat) := xs. End B. End A."
     ]
     ~f:(fun text ->
       print_s
@@ -4576,22 +4546,18 @@ let%expect_test "cost lint prefers visible names while discovering twins across 
 
 let%expect_test "cost lint checks annotations before introducing their binders" =
   List.iter
-    [ "Definition bad_c (m : Cost.t nat) := \
-       let n : (match m with r => nat end) := 0 in Cost.ret n."
-    ; "Definition bad_c (m : Cost.t nat) := \
-       let m : (match m with r => nat end) := 0 in Cost.ret m."
-    ; "Definition bad_c (m : Cost.t nat) := \
-       fun (n : (match m with r => nat end)) => Cost.ret n."
-    ; "Definition bad_c (m : Cost.t nat) := \
-       fun x (m : (match m with r => nat end)) => Cost.ret x."
-    ; "Definition bad_c (m : Cost.t nat) := \
-       fun x (n : (match m with r => nat end)) (m : nat) => Cost.ret x."
-    ; "Definition run_c (m : Cost.t nat) := \
-       fun x (m : nat) (n : (match m with r => nat end)) => Cost.ret x."
-    ; "Definition run_c (m : Cost.t nat) := \
-       let m : nat := 0 in let n : (match m with r => nat end) := 0 in Cost.ret n."
-    ; "Definition run_c (m : Cost.t nat) := \
-       let* m := m in let n : (match m with r => nat end) := 0 in Cost.ret n."
+    [ "Definition bad_c (m : Cost.t nat) := let n : (match m with r => nat end) := 0 in Cost.ret n."
+    ; "Definition bad_c (m : Cost.t nat) := let m : (match m with r => nat end) := 0 in Cost.ret m."
+    ; "Definition bad_c (m : Cost.t nat) := fun (n : (match m with r => nat end)) => Cost.ret n."
+    ; "Definition bad_c (m : Cost.t nat) := fun x (m : (match m with r => nat end)) => Cost.ret x."
+    ; "Definition bad_c (m : Cost.t nat) := fun x (n : (match m with r => nat end)) (m : nat) => \
+       Cost.ret x."
+    ; "Definition run_c (m : Cost.t nat) := fun x (m : nat) (n : (match m with r => nat end)) => \
+       Cost.ret x."
+    ; "Definition run_c (m : Cost.t nat) := let m : nat := 0 in let n : (match m with r => nat \
+       end) := 0 in Cost.ret n."
+    ; "Definition run_c (m : Cost.t nat) := let* m := m in let n : (match m with r => nat end) := \
+       0 in Cost.ret n."
     ; "Definition bad_c (m : Cost.t nat) (n : (match m with r => nat end)) := Cost.ret n."
     ; "Definition bad_c (m : Cost.t nat) : (match m with r => nat end) := 0."
     ]
@@ -4630,13 +4596,13 @@ let%expect_test "cost lint checks annotations before introducing their binders" 
 
 let%expect_test "cost lint honors explicit monadic result annotations" =
   List.iter
-    [ "Definition bad_c (m : Cost.t nat) := \
-       let* (m : Cost.t nat) := Cost.ret m in match m with r => r end."
-    ; "Definition bad_c (m : Cost.t nat) := Cost.bind (Cost.ret m) \
-       (fun (m : Cost.t nat) => match m with r => r end)."
+    [ "Definition bad_c (m : Cost.t nat) := let* (m : Cost.t nat) := Cost.ret m in match m with r \
+       => r end."
+    ; "Definition bad_c (m : Cost.t nat) := Cost.bind (Cost.ret m) (fun (m : Cost.t nat) => match \
+       m with r => r end)."
     ; "Definition run_c (m : Cost.t nat) := let* (n : nat) := m in Cost.ret n."
-    ; "Definition run_c (m : Cost.t nat) := \
-       let* (m : nat) := m in match m with O => Cost.ret O | S n => Cost.ret n end."
+    ; "Definition run_c (m : Cost.t nat) := let* (m : nat) := m in match m with O => Cost.ret O | \
+       S n => Cost.ret n end."
     ]
     ~f:(fun text ->
       print_s
