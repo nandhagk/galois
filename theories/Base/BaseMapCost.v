@@ -14,6 +14,13 @@ Module MapCost.
 (** Physical nodes count branching and unary nodes independently of binding cardinality. *)
 Definition skeleton_nodes {K V} (m : Map.t K V) : N := TrieCost.skeleton_nodes m.
 
+(** Map size counting is linear in physical skeleton nodes, including empty overhead. *)
+Theorem size_cost {K V} (m : Map.t K V) :
+  (Cost.ticks (Map.size_c m) <= TrieCost.trie_k * (1 + skeleton_nodes m))%N.
+Proof.
+  rewrite Map.size_backend. apply TrieCost.size_cost.
+Qed.
+
 Local Lemma callback_sum {K V W} (f : V -> Cost.t W) (xs : list (positive * (K * V))) :
   fold_right (fun pv n =>
     (Cost.ticks (Cost.map (fun w => (fst (snd pv), w)) (f (snd (snd pv)))) + n)%N)

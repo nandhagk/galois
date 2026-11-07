@@ -6,7 +6,9 @@
 
 From Stdlib Require Import List NArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap BaseMapCost BaseIndex BaseIndexCost.
+From Galois.Cost Require CostList.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseTrieCost BaseMapCost
+  BaseIndex BaseIndexCost.
 Import List.ListNotations.
 
 Example index_find_cost_client {K V} (E : encoding K) k (idx : Index.t K V) :
@@ -111,4 +113,71 @@ Example map_numeric_bound_client {K V W} (E : encoding K) (f_c : V -> Cost.t W)
     fold_right (fun kv n => Cost.ticks (f_c (snd kv)) + n)%N 0%N (Map.elements m))%N.
 Proof.
   apply MapCost.map_numeric_cost.
+Qed.
+
+(** These post-card clients exercise the additional GRAPH-FRONTIER owner boundaries. *)
+Example frontier_compare_cost_client p q :
+  (Cost.ticks (Map.code_compare_c p q) <= N.pos (Pos.size p))%N.
+Proof.
+  apply Map.code_compare_cost.
+Qed.
+
+Example frontier_compare_counts :
+  (Cost.ticks (Map.code_compare_c 1 13),
+    Cost.ticks (Map.code_compare_c 13 13),
+    Cost.ticks (Map.code_compare_c 13 9)) = (1, 4, 3)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example frontier_size_cost_client {K V} (m : Map.t K V) :
+  (Cost.ticks (Map.size_c m) <=
+    TrieCost.trie_k * (1 + MapCost.skeleton_nodes m))%N.
+Proof.
+  apply MapCost.size_cost.
+Qed.
+
+Example frontier_size_counts :
+  (Cost.ticks (Map.size_c (@Map.empty positive nat)),
+    Cost.ticks (Map.size_c (Map.set positive_encoding 8%positive 7 Map.empty)),
+    Cost.ticks (Map.size_c (Map.set positive_encoding 1%positive 9
+      (Map.set positive_encoding 8%positive 7 Map.empty)))) = (0, 5, 6)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example frontier_set_construction_client {K} (E : encoding K) k (xs : list K) :
+  Cost.ticks (FinSet.of_list_c E (k :: xs)) =
+    (1 + Cost.ticks (FinSet.pairs_c xs) + Cost.ticks (@Map.empty_c K unit) +
+      1 + Cost.ticks (Map.set_c E k tt Map.empty) +
+      Cost.ticks (CostList.fold_left_c
+        (fun acc kv => Map.set_c E (fst kv) (snd kv) acc)
+        (List.map (fun a => (a, tt)) xs) (Map.set E k tt Map.empty)))%N.
+Proof.
+  apply FinSet.of_list_cost_cons.
+Qed.
+
+Example frontier_set_numeric_client {K} (HC : Map.cost_laws) (E : encoding K)
+    (xs : list K) e b :
+  (forall k, In k xs ->
+    (Cost.ticks (encode_c E k) <= e)%N /\ (key_bits E k <= b)%N) ->
+  (Cost.ticks (FinSet.of_list_c E xs) <= N.of_nat (length xs) * (3 + e + b))%N.
+Proof.
+  apply (FinSet.of_list_numeric_cost HC).
+Qed.
+
+Example frontier_set_construction_counts :
+  (Cost.ticks (FinSet.of_list_c nat_encoding []),
+    Cost.ticks (FinSet.of_list_c nat_encoding [0]),
+    Cost.ticks (FinSet.of_list_c nat_encoding [0; 0]),
+    Cost.ticks (FinSet.of_list_c nat_encoding [2; 1; 2])) = (0, 5, 10, 18)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example frontier_set_retains_encoder_charge :
+  let E := Encoding (fun p : positive => Cost.lift (fun _ => 100%N) (fun p => p) p) in
+  Cost.ticks (FinSet.of_list_c E [1%positive]) = 104%N.
+Proof.
+  vm_compute. reflexivity.
 Qed.

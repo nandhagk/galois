@@ -58,6 +58,18 @@ Proof.
     try reflexivity; apply IHp.
 Qed.
 
+(** Code comparison inspects at most the number of digits in its left operand. *)
+Theorem code_compare_cost p q :
+  (Cost.ticks (code_compare_c p q) <= N.pos (Pos.size p))%N.
+Proof.
+  revert q. induction p as [p IH|p IH|]; intros q; destruct q;
+    cbn [code_compare_c]; autorewrite with galois_cost.
+  all: try (change (1 + Cost.ticks (code_compare_c p q) <=
+    N.succ (N.pos (Pos.size p)))%N; pose proof (IH q) as Htail; lia).
+  all: try (change (1 + 0 <= N.succ (N.pos (Pos.size p)))%N; lia).
+  all: reflexivity.
+Qed.
+
 (** Strict code order is transitive. *)
 Theorem code_compare_trans p q r :
   code_compare p q = Lt -> code_compare q r = Lt -> code_compare p r = Lt.
@@ -669,6 +681,27 @@ Proof.
   cbn [of_list_from_c fold_left fst snd]. autorewrite with galois_cost. apply IH.
 Qed.
 
+Local Lemma of_list_from_cost {K V} (E : encoding K) xs (m : t K V) :
+  Cost.ticks (of_list_from_c E xs m) =
+    Cost.ticks (fold_left_c
+      (fun acc kv => set_c E (fst kv) (snd kv) acc) xs m).
+Proof.
+  revert m. induction xs as [|[k v] rest IH]; intro m.
+  - cbn [of_list_from_c]. rewrite Cost.ticks_ret, ticks_fold_left_c_nil. reflexivity.
+  - cbn [of_list_from_c]. autorewrite with galois_cost.
+    cbn [fst snd]. rewrite IH. lia.
+Qed.
+
+(** List construction retains initialization and each accumulator-threaded insertion charge. *)
+Theorem of_list_cost_equation {K V} (E : encoding K) (xs : list (K * V)) :
+  Cost.ticks (of_list_c E xs) =
+    (Cost.ticks (@empty_c K V) +
+      Cost.ticks (fold_left_c
+        (fun acc kv => set_c E (fst kv) (snd kv) acc) xs empty))%N.
+Proof.
+  unfold of_list_c. rewrite Cost.ticks_bind, of_list_from_cost. reflexivity.
+Qed.
+
 (** List construction is a left-to-right sequence of replacements. *)
 Theorem of_list_equation {K V} (E : encoding K) (xs : list (K * V)) :
   of_list E xs = fold_left (fun acc kv => set E (fst kv) (snd kv) acc) xs empty.
@@ -875,6 +908,13 @@ Qed.
 Theorem map_backend {K V W} (f_c : V -> Cost.t W) (m : t K V) :
   map_c f_c m =
     TrieMerge.map_c (fun kv => Cost.map (fun w => (fst kv, w)) (f_c (snd kv))) m.
+Proof.
+  reflexivity.
+Qed.
+
+(** Counting map bindings delegates to the backend's public code-free size operation. *)
+Theorem size_backend {K V} (m : t K V) :
+  size_c m = TrieMerge.size_c m.
 Proof.
   reflexivity.
 Qed.

@@ -4,8 +4,8 @@
     For example, adding one key twice leaves a singleton.
     Builds on: BaseMap, BaseEncoding and BaseEq. *)
 
-From Stdlib Require Import List Bool NArith Sorting.Sorted.
-From Galois.Cost Require Import CostMonad.
+From Stdlib Require Import List Bool NArith Lia Sorting.Sorted.
+From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 Import List.ListNotations Cost.Notations.
 
@@ -119,6 +119,107 @@ Definition of_list_c {K} (E : encoding K) xs :=
 
 (** List construction discards duplicate input keys. *)
 Definition of_list {K} (E : encoding K) xs := Cost.value (of_list_c E xs).
+
+(** Pair preparation pays exactly one tick for each original input cell. *)
+Theorem pairs_cost_equation {K} (xs : list K) :
+  Cost.ticks (pairs_c xs) =
+    match xs with
+    | [] => 0%N
+    | _ :: rest => (1 + Cost.ticks (pairs_c rest))%N
+    end.
+Proof.
+  destruct xs; [reflexivity|].
+  cbn [pairs_c]. autorewrite with galois_cost. reflexivity.
+Qed.
+
+(** The pair-construction recurrence sums to exactly the input length. *)
+Theorem pairs_cost {K} (xs : list K) :
+  Cost.ticks (pairs_c xs) = N.of_nat (length xs).
+Proof.
+  induction xs as [|k rest IH]; rewrite pairs_cost_equation; [reflexivity|].
+  rewrite IH. cbn [length]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Local Lemma pairs_value {K} (xs : list K) :
+  Cost.value (pairs_c xs) = List.map (fun k => (k, tt)) xs.
+Proof.
+  induction xs as [|k rest IH]; [reflexivity|].
+  cbn [pairs_c List.map]. autorewrite with galois_cost. now rewrite IH.
+Qed.
+
+(** Set construction composes the exact pair recurrence with the actual map-list call. *)
+Theorem of_list_cost_equation {K} (E : encoding K) (xs : list K) :
+  Cost.ticks (of_list_c E xs) =
+    (Cost.ticks (pairs_c xs) +
+      Cost.ticks (Map.of_list_c E (List.map (fun k => (k, tt)) xs)))%N.
+Proof.
+  unfold of_list_c. rewrite Cost.ticks_bind, pairs_value. reflexivity.
+Qed.
+
+(** Construction retains pair preparation, map initialization and all insertion charges. *)
+Theorem of_list_cost {K} (E : encoding K) (xs : list K) :
+  Cost.ticks (of_list_c E xs) =
+    (N.of_nat (length xs) + Cost.ticks (@Map.empty_c K unit) +
+      Cost.ticks (fold_left_c
+        (fun acc kv => Map.set_c E (fst kv) (snd kv) acc)
+        (List.map (fun k => (k, tt)) xs) Map.empty))%N.
+Proof.
+  rewrite of_list_cost_equation, pairs_cost, Map.of_list_cost_equation. lia.
+Qed.
+
+(** The nonempty recurrence retains the first insertion and tail fold at its actual updated map. *)
+Theorem of_list_cost_cons {K} (E : encoding K) k (xs : list K) :
+  Cost.ticks (of_list_c E (k :: xs)) =
+    (1 + Cost.ticks (pairs_c xs) + Cost.ticks (@Map.empty_c K unit) +
+      1 + Cost.ticks (Map.set_c E k tt Map.empty) +
+      Cost.ticks (fold_left_c
+        (fun acc kv => Map.set_c E (fst kv) (snd kv) acc)
+        (List.map (fun a => (a, tt)) xs) (Map.set E k tt Map.empty)))%N.
+Proof.
+  rewrite of_list_cost, pairs_cost. cbn [List.map length].
+  rewrite ticks_fold_left_c_cons, Nat2N.inj_succ. cbn [fst snd].
+  fold (Map.set E k tt Map.empty). lia.
+Qed.
+
+Local Lemma insertion_fold_cost {K} (E : encoding K) (xs : list K)
+    (m : t K) e b :
+  (forall k, In k xs ->
+    (Cost.ticks (encode_c E k) <= e)%N /\ (key_bits E k <= b)%N) ->
+  (Cost.ticks (fold_left_c
+    (fun acc kv => Map.set_c E (fst kv) (snd kv) acc)
+    (List.map (fun k => (k, tt)) xs) m) <=
+      N.of_nat (length xs) * (2 + e + b))%N.
+Proof.
+  revert m. induction xs as [|k rest IH]; intros m Hkeys.
+  - cbn [List.map]. rewrite ticks_fold_left_c_nil. cbn [length]. lia.
+  - cbn [List.map]. rewrite ticks_fold_left_c_cons. cbn [fst snd].
+    assert (Htail : forall a, In a rest ->
+      (Cost.ticks (encode_c E a) <= e)%N /\ (key_bits E a <= b)%N).
+    { intros a Ha. apply Hkeys. now right. }
+    specialize (IH (Map.set E k tt m) Htail).
+    destruct (Hkeys k (or_introl eq_refl)) as [He Hb].
+    rewrite Map.set_cost. fold (key_bits E k).
+    cbn [length]. rewrite Nat2N.inj_succ. change
+      (1 + (1 + Cost.ticks (encode_c E k) + key_bits E k) +
+        Cost.ticks (fold_left_c
+          (fun acc kv => Map.set_c E (fst kv) (snd kv) acc)
+          (List.map (fun a => (a, tt)) rest) (Map.set E k tt m)) <=
+        N.succ (N.of_nat (length rest)) * (2 + e + b))%N.
+    nia.
+Qed.
+
+(** Finite input encoder and width budgets give a numeric linear set-construction bound. *)
+Theorem of_list_numeric_cost {K} (HC : Map.cost_laws) (E : encoding K)
+    (xs : list K) e b :
+  (forall k, In k xs ->
+    (Cost.ticks (encode_c E k) <= e)%N /\ (key_bits E k <= b)%N) ->
+  (Cost.ticks (of_list_c E xs) <= N.of_nat (length xs) * (3 + e + b))%N.
+Proof.
+  intro Hkeys. rewrite of_list_cost.
+  assert (Hempty : Cost.ticks (@Map.empty_c K unit) = 0%N) by reflexivity.
+  rewrite Hempty.
+  pose proof (insertion_fold_cost E xs Map.empty e b Hkeys) as Hinsert. nia.
+Qed.
 
 (** Membership is the presence test of the underlying unit map. *)
 Theorem mem_equation {K} (E : encoding K) k (s : t K) :
