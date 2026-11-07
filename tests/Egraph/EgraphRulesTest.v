@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List NArith.
 From Galois.Cost Require Import CostMonad.
+From Galois.Base Require Import BaseEncoding.
 From Galois.Egraph Require Import EgraphSyntax EgraphRules.
 Import List.ListNotations.
 
@@ -14,7 +15,8 @@ Definition sample_sem : EggSem.t nat bool nat :=
     (fun _ args => Some (length args)).
 
 Definition sample_rule : EggRule.t nat bool bool bool bool :=
-  EggRule.Make nat bool bool bool bool [true] (fun h => if h then Some true else None)
+  EggRule.Make nat bool bool bool bool bool_encoding [true]
+    (fun h => Cost.lift (fun _ => 1%N) (fun h : bool => if h then Some true else None) h)
     (EggPattern.Hole true true) (EggPattern.Hole true true)
     (fun facts => Cost.lift (fun _ => 1%N) facts true).
 

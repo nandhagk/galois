@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List NArith.
 From Galois.Cost Require Import CostMonad.
+From Galois.Base Require Import BaseEncoding.
 From Galois.Egraph Require Import EgraphSyntax.
 Import List.ListNotations.
 
@@ -98,21 +99,30 @@ End EggFact.
 Module EggRule.
 
 Record t (K Sort V H F : Type) : Type := Make {
+  hole_enc : encoding H;
   holes : list H;
-  hole_sort : H -> option Sort;
+  hole_sort_c : H -> Cost.t (option Sort);
   lhs : EggPattern.t K Sort V H;
   rhs : EggPattern.t K Sort V H;
   guard_c : (H -> F) -> Cost.t bool
 }.
 
+Arguments hole_enc {K Sort V H F} _.
 Arguments holes {K Sort V H F} _.
-Arguments hole_sort {K Sort V H F} _ _.
+Arguments hole_sort_c {K Sort V H F} _ _.
 Arguments lhs {K Sort V H F} _.
 Arguments rhs {K Sort V H F} _.
 Arguments guard_c {K Sort V H F} _ _.
 
+Definition hole_sort {K Sort V H F} (rule : t K Sort V H F) h :=
+  Cost.value (hole_sort_c rule h).
+
 Definition guard {K Sort V H F} (rule : t K Sort V H F) (facts : H -> F) :=
   Cost.value (guard_c rule facts).
+
+(** Class-substitution maps require an injective hole encoding independently of rule typing. *)
+Definition encoding_laws {K Sort V H F} (rule : t K Sort V H F) : Prop :=
+  BaseEncoding.encoding_laws (hole_enc rule).
 
 (** The declared hole environment types both sides and gives them the same result sort. *)
 Definition wf {K Sort V H F} (a : EggAlg.t K Sort V) (rule : t K Sort V H F) : Prop :=
