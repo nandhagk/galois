@@ -10,8 +10,8 @@ From Galois.Base Require Import BaseEncoding.
 From Galois.Lattice Require Import LatticeCore LatticeSimple.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg.
-From Galois.Fixpoint Require Import FixpointSystem FixpointCheck FixpointAnalysis FixpointSolver
-  FixpointAnalyze.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointCheck
+  FixpointAnalysis FixpointSolver FixpointAnalyze.
 From Galois.Framework Require Import FrameworkDense.
 Import List.ListNotations Cost.Notations.
 
@@ -147,6 +147,27 @@ Definition charged_dense :=
 
 Example boundary_callee_and_invocation :
   Cost.ticks (Dense.rhs_c charged_dense (Dense.Seed 0)) = 12%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition charged_flow : Dense.t nat nat bool :=
+  Dense.Make
+    (Cfg.Make (Graph.Make [0] [0; 1]
+      (fun n => Cost.ret (if Nat.eqb n 0 then [0] else []))
+      (fun _ => Cost.tick 5 ;; Cost.ret 0) (fun _ => Cost.tick 7 ;; Cost.ret 1))
+      nat_encoding nat_encoding)
+    Forward bool_lattice (fun _ => Cost.ret None)
+    (fun _ a => Cost.tick 17 ;; Cost.ret a).
+
+Definition charged_lookup (_ : nat) := Cost.tick 13 ;; Cost.ret true.
+
+Example flow_retains_endpoints_transfer_and_continuation :
+  (Cost.ticks (Dense.rhs_c charged_flow (Dense.Flow 0)),
+   Cost.ticks (Dense.target_c charged_flow (Dense.Flow 0)),
+   Cost.ticks (Query.run_c charged_lookup (System.rhs (Dense.system charged_flow) (Dense.Flow 0))),
+   Cost.ticks (Eval.outputs_c (Dense.system charged_flow) charged_lookup (Dense.Flow 0))) =
+    (6%N, 8%N, 35%N, 51%N).
 Proof.
   vm_compute; reflexivity.
 Qed.

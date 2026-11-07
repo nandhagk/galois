@@ -39,6 +39,10 @@ boundary and exhausted-fuel observations are in
 universe support, direction and costed gen, kill and boundary lists. `prepare_c` enumerates
 edges once, groups edge/fact occurrences through `Index.group_by_c` and builds valid sets.
 Its pure accessor is `prepare`. Prepared boundaries are node-keyed maps.
+`Bitvector.seeds` lists `Graph.entries` forward and `Graph.nodes` backward.
+The boundary cache and `supported` use that same inventory. A forward entry absent
+from the node list still contributes its original boundary. Construction requires
+no graph-closure proof. Unseeded node boundaries are not prepared.
 
 A transfer reads two prepared maps and computes `(input \ kill) union gen`. It never
 rescans the universe, rebuilds gen/kill lists or re-encodes composite syntax. Missing edge
@@ -57,6 +61,12 @@ They do not enumerate either runtime carrier and do not become lattice-law input
 boundary and gen/kill inequalities. They reuse the collection laws. This package proves
 no second set-lattice law.
 
+`prepare_boundary_source` proves equality with the converted original optional boundary
+at every listed seed under node-encoding laws. It needs no fact-encoding or support law.
+`may_source_post_iff` and `must_source_post_iff` state the original boundary inequalities
+and retain the listed seed/edge premises. They take node-encoding and fact-encoding laws.
+The symbolic clients and may/must raw-entry counterfixtures exercise these contracts.
+
 The guide's liveness constructor is compiled in
 [`FrameworkBitvectorTest.v`](../../tests/Framework/FrameworkBitvectorTest.v#L34).
 
@@ -74,6 +84,10 @@ comparisons include the unreachable component and nonterminal exit observations 
 legacy diamond. May comparisons observe membership at each coordinate. Must comparisons
 observe membership inside the declared universe, interpreting fresh `All` universally.
 They do not assert representation equality between the new and legacy must carriers.
+The named unreachable-component nonempty-kill fixture also records a membership difference.
+Fresh `All` stays unreachable after a kill. Legacy finite-universe bottom can lose the
+killed fact at the successor. The earlier diamond equality fixtures cover their stated
+inputs. They do not establish universal legacy equality.
 
 ## State-domain action lists
 
@@ -115,6 +129,7 @@ row plans retain the query keys. Runtime rows collect their selected facts, appl
 client guard to the **stored operand facts**, and run `ValueAbs.back_c` one operation level
 backward. Ordered guards thread a changing map. Repeated operand updates retain the first
 refined occurrence. Static summaries contain all prepared reads and no sides.
+The unequal-occurrence guard fixture distinguishes that choice from retaining the last result.
 
 `Sparse.static_laws` needs no value-law input. The numeric fixture pins the full tiny row
 list in `sparse_rows_exact`, computes one-plus-one, rejects the equal-zero edge and checks a
@@ -184,6 +199,12 @@ unit values, Boolean symbolic jump weights and constant true arc weights.
 Reachability and taint are observed in its Boolean jump map. Unit value results carry
 no additional reachability information.
 
+`Ifds.fact_supported I d` permits `None` and ordinary facts in `Ifds.facts I`.
+`Ifds.flow_closed I` requires every flow output on a listed edge and supported input
+to stay in that fact support. `Ifds.seed_supported I start` requires the start fact
+to be supported. These are separate Prop predicates. They carry no encoding or ICFG
+closure laws and add no proof fields to the runtime dictionaries.
+
 The declarations share a file. `IfdsData` stores the underlying IFDS record so that
 `Ide.t` can refer to it and the final `Ifds` namespace can own `as_ide` without namespace
 reopening or `Include` aggregation. `Ifds.t`, constructor and projections expose that
@@ -194,8 +215,12 @@ same record through direct aliases.
 [`Micro.t`](../../theories/Framework/FrameworkMicro.v#L15) supplies `id`, charged composition,
 charged application and a function lattice. Composition applies the right argument first.
 `micro_laws` separately states weak and least-join laws, application equations,
-monotonicity and join upper bounds. `micro_boolean_laws` proves the Boolean instance.
+monotonicity and join upper bounds. `apply_mono` concerns the value argument.
+`apply_order` transports the function comparison through application at each value.
+`micro_boolean_laws` proves the Boolean instance.
 Neither the data record nor its laws contain lists of values or functions.
+The regression's indiscrete Boolean function order satisfies every pre-freeze obligation
+and fails `apply_order`. An ordinary Boolean function order supplies a nonunit lawful control.
 
 [`Ide.t`](../../theories/Framework/FrameworkIfds.v#L41) adds the value lattice and charged
 edge weights. Jump keys are pairs of entry/destination vertices, and each vertex contains
@@ -208,6 +233,10 @@ positive-keyed map and uses function-lattice bottom for absent keys.
 `check_jumps_iff` proves reflection, and `check_jumps_sound` gives acceptance soundness.
 Neither theorem needs micro laws or trusts a producer. The jump phase has no `Analysis.t`.
 The later tabulation card supplies its producer and balanced-path theorems.
+Path soundness additionally needs the explicit fact-support duties and semantic laws.
+The negative fixture has an empty fact inventory and a two-edge path through an unlisted
+ordinary fact. Its jump map passes the enumerated checker and omits that path's final jump.
+This is a boundary of unconditional row reflection.
 
 `value_analysis I jump_c start a0` accepts a charged jump lookup, prepares its weights once
 and returns an ordinary analysis. Rows seed the start value, apply balanced jumps and
@@ -219,6 +248,8 @@ second instance represents integer translations `x+b` over flat integer facts. I
 a translation jump and computes the final integer value. `no_carrier_enumeration` proves
 that no finite list enumerates the shared value/function carrier. These fixtures do not
 implement tabulation or establish the later path-soundness theorem.
+The noncommuting affine-function regression distinguishes call/body/return composition
+from its reversal. Its resulting function is `2*x+5`.
 
 ## Charges and verification boundary
 

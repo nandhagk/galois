@@ -153,3 +153,31 @@ Example liveness_unreachable_nonterminal_boundary :
 Proof.
   vm_compute; split; reflexivity.
 Qed.
+
+Definition old_unreachable_kill : AnalysesAvailable.genkill_view nat unit nat nat nat unit :=
+  AnalysesAvailable.GenKillView old_view gen
+    (fun e fact => Nat.eqb e 5 && Nat.eqb fact 7) (fun _ _ => Some tt).
+
+Definition old_unreachable_kill_result :=
+  old_run (AnalysesAvailable.avail_lattice CollectionsEncoding.nat_encoding old_unreachable_kill)
+    (AnalysesAvailable.available_system CollectionsEncoding.nat_encoding old_unreachable_kill)
+    (ViewsGraph.dense_constraint_encoding CollectionsEncoding.nat_encoding
+      CollectionsEncoding.nat_encoding) (ViewsGraph.forward_static _ _ _).
+
+Definition new_unreachable_kill :=
+  Bitvector.of_pure new_cfg nat_encoding [7] Forward gen
+    (fun e => if Nat.eqb e 5 then [7] else []) (fun _ => Some []).
+
+(** An unreachable kill preserves fresh All but removes seven from legacy finite-universe bottom. *)
+Example unreachable_nonempty_kill_distinguishes_fresh_bottom :
+  (must_observe (Bitvector.must_analysis new_unreachable_kill) [5; 6],
+   match old_unreachable_kill_result with
+   | None => None
+   | Some m => Some (map (fun n => AnalysesLiveness.fmem CollectionsEncoding.nat_encoding 7
+       (FixpointSystem.lookup CollectionsEncoding.nat_encoding
+         (AnalysesAvailable.avail_lattice CollectionsEncoding.nat_encoding old_unreachable_kill)
+         m n)) [5; 6])
+   end) = (Some [None; None], Some [true; false]).
+Proof.
+  vm_compute; reflexivity.
+Qed.

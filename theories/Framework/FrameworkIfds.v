@@ -8,7 +8,7 @@ From Stdlib Require Import List.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding.
 From Galois.Lattice Require Import LatticeCore LatticeSimple.
-From Galois.Program Require Import ProgramIcfg.
+From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Framework Require Import FrameworkMicro.
 Import Cost.Notations.
 
@@ -77,5 +77,21 @@ Arguments of_pure {N E P D}.
 (** IFDS is IDE with Boolean jump weights and unit values. *)
 Definition as_ide {N E P D} (I : t N E P D) : Ide.t N E P D unit bool :=
   Ide.Make I unit_lattice Micro.boolean (fun _ _ _ => Cost.ret true).
+
+(** None is supported independently of the finite inventory of ordinary facts. *)
+Definition fact_supported {N E P D} (I : t N E P D) (d : option D) : Prop :=
+  match d with
+  | None => True
+  | Some d => In d (facts I)
+  end.
+
+(** Flow closure covers listed edges and supported inputs without requiring graph closure. *)
+Definition flow_closed {N E P D} (I : t N E P D) : Prop :=
+  forall e d d', In e (Cfg.edges (Icfg.cfg (icfg I))) -> fact_supported I d ->
+    In d' (flow I e d) -> fact_supported I d'.
+
+(** Value-start support concerns its fact independently of node and encoding laws. *)
+Definition seed_supported {N E P D} (I : t N E P D) (start : N * option D) : Prop :=
+  fact_supported I (snd start).
 
 End Ifds.

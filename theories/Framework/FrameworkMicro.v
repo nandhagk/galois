@@ -48,6 +48,8 @@ Record micro_laws {A F} (LA : lattice A) (M : Micro.t A F) : Prop := {
       (Micro.apply M f (Micro.apply M g a));
   apply_mono : forall f a b, leb LA a b = true ->
     leb LA (Micro.apply M f a) (Micro.apply M f b) = true;
+  apply_order : forall f g a, leb (Micro.lat M) f g = true ->
+    leb LA (Micro.apply M f a) (Micro.apply M g a) = true;
   compose_mono : forall f f' g g',
     leb (Micro.lat M) f f' = true -> leb (Micro.lat M) g g' = true ->
     leb (Micro.lat M) (Micro.compose M f g) (Micro.compose M f' g') = true;
@@ -55,6 +57,7 @@ Record micro_laws {A F} (LA : lattice A) (M : Micro.t A F) : Prop := {
     leb LA (Micro.apply M f a) (Micro.apply M (join (Micro.lat M) f g) a) = true /\
     leb LA (Micro.apply M g a) (Micro.apply M (join (Micro.lat M) f g) a) = true
 }.
+Arguments apply_order {A F LA M}.
 
 (** Boolean micro-functions satisfy the algebra over the unit value lattice. *)
 Theorem micro_boolean_laws : micro_laws unit_lattice Micro.boolean.
@@ -64,6 +67,7 @@ Proof.
   - exact bool_lub.
   - intros []; split; reflexivity.
   - intros [] [] []; split; reflexivity.
+  - intros [] [] [] _; reflexivity.
   - intros [] [] [] _; reflexivity.
   - intros [] [] [] []; cbn; congruence.
   - intros [] [] []; split; reflexivity.

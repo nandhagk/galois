@@ -199,3 +199,19 @@ Example entry_fact_retains_callback_charge :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(** This computational order probe makes unequal refinements of one repeated operand visible. *)
+Definition unequal_occurrence_values : ValueAbs.t point unit unit :=
+  @ValueAbs.Make point unit unit point_lattice PTop (fun _ _ => Cost.ret PTop)
+    (fun _ _ fs => Cost.ret fs)
+    (fun _ fs => Cost.ret
+      (match fs with [_; _] => [PVal 1; PVal 2] | _ => fs end)).
+
+Example repeated_sparse_operand_keeps_first_refined_occurrence :
+  option_map (fun m => Map.find_or nat_encoding None 0 m)
+    (Cost.value (Sparse.guard_one_c (N := nat) nat_encoding unequal_occurrence_values
+      (Map.of_list nat_encoding [(0, Some PTop)])
+      (tt, [0; 0], [(0, Arbitrary); (0, Arbitrary)]))) = Some (Some (PVal 1)).
+Proof.
+  vm_compute; reflexivity.
+Qed.

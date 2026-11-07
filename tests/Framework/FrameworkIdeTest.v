@@ -242,3 +242,196 @@ Proof.
   exists (PVal (integer_bound xs + 1)); intro Hin.
   pose proof (member_bounded xs _ Hin); lia.
 Qed.
+
+Module PreFreezeMicro.
+
+(** This historical contract contains the fields before function-order application. *)
+Record laws {A F} (LA : lattice A) (M : Micro.t A F) : Prop := {
+  lat_ok : lattice_laws (Micro.lat M);
+  lub_ok : lub_laws (Micro.lat M);
+  id_apply : forall a, equivalent LA (Micro.apply M (Micro.id M) a) a;
+  compose_apply : forall f g a, equivalent LA
+    (Micro.apply M (Micro.compose M f g) a) (Micro.apply M f (Micro.apply M g a));
+  apply_mono : forall f a b, leb LA a b = true ->
+    leb LA (Micro.apply M f a) (Micro.apply M f b) = true;
+  compose_mono : forall f f' g g',
+    leb (Micro.lat M) f f' = true -> leb (Micro.lat M) g g' = true ->
+    leb (Micro.lat M) (Micro.compose M f g) (Micro.compose M f' g') = true;
+  join_upper : forall f g a,
+    leb LA (Micro.apply M f a) (Micro.apply M (join (Micro.lat M) f g) a) = true /\
+    leb LA (Micro.apply M g a) (Micro.apply M (join (Micro.lat M) f g) a) = true
+}.
+
+End PreFreezeMicro.
+
+Definition indiscrete_functions : lattice bool :=
+  simple (fun _ _ => true) false (fun _ _ => true).
+
+Definition bad_micro : Micro.t bool bool :=
+  Micro.of_pure true andb andb indiscrete_functions.
+
+(** The old obligations permit function comparisons that do not preserve application. *)
+Theorem bad_micro_old_obligations : PreFreezeMicro.laws bool_lattice bad_micro.
+Proof.
+  constructor.
+  - apply simple_laws; intros; reflexivity.
+  - constructor; intros; reflexivity.
+  - intros []; split; reflexivity.
+  - intros [] [] []; split; reflexivity.
+  - intros [] [] [] Hle; cbn in *; congruence.
+  - intros; reflexivity.
+  - intros [] [] []; split; reflexivity.
+Qed.
+
+(** The new field rejects true-to-false function comparison at the true value. *)
+Theorem bad_micro_new_laws_rejected : ~ micro_laws bool_lattice bad_micro.
+Proof.
+  intro Hlaw; pose proof (apply_order Hlaw true false true eq_refl) as Hbound.
+  discriminate Hbound.
+Qed.
+
+Definition reachability_micro : Micro.t bool bool :=
+  Micro.of_pure true andb andb bool_lattice.
+
+(** Ordinary Boolean function order gives a useful nonunit lawful control. *)
+Theorem reachability_micro_laws : micro_laws bool_lattice reachability_micro.
+Proof.
+  constructor.
+  - exact bool_laws.
+  - exact bool_lub.
+  - intros []; split; reflexivity.
+  - intros [] [] []; split; reflexivity.
+  - intros [] [] [] Hle; cbn in *; congruence.
+  - intros [] [] [] Hle; cbn in *; congruence.
+  - intros [] [] [] [] Hf Hg; cbn in *; congruence.
+  - intros [] [] []; split; reflexivity.
+Qed.
+
+Definition bad_order_ide : Ide.t nat nat nat unit bool bool :=
+  Ide.Make no_flow bool_lattice bad_micro (fun _ _ _ => Cost.ret true).
+
+Example bad_order_empty_jump_passes_enumerated_checker :
+  check_jumps bad_order_ide 0 Map.empty = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example bad_order_accepted_bound_loses_identity_application :
+  (Micro.apply bad_micro (Micro.id bad_micro) true,
+   Micro.apply bad_micro (Jump.lookup bad_order_ide Map.empty ((0, None), (0, None))) true) =
+    (true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition unsupported_cfg : Cfg.t nat nat :=
+  Cfg.Make (Graph.of_pure [0] [0; 1; 2]
+    (fun n => match n with 0 => [0] | 1 => [1] | _ => [] end)
+    (fun e => e) (fun e => S e)) nat_encoding nat_encoding.
+
+Definition unsupported_flow : Ifds.t nat nat nat unit :=
+  Ifds.of_pure (Icfg.of_pure unsupported_cfg nat_encoding (fun _ => Icfg.Internal))
+    unit_encoding []
+    (fun e d => match e, d with
+      | 0, None => [Some tt]
+      | 1, Some _ => [d]
+      | _, _ => []
+      end).
+
+(** A generated ordinary fact outside the declared inventory violates flow closure. *)
+Theorem unsupported_flow_not_closed : ~ Ifds.flow_closed unsupported_flow.
+Proof.
+  intro Hclosed.
+  assert (Hedge : In 0 (Cfg.edges unsupported_cfg)) by (vm_compute; auto).
+  exact (Hclosed 0 None (Some tt) Hedge I (or_introl eq_refl)).
+Qed.
+
+Example unsupported_seed_rejected : ~ Ifds.seed_supported unsupported_flow (0, Some tt).
+Proof.
+  vm_compute; tauto.
+Qed.
+
+Example zero_seed_supported : Ifds.seed_supported unsupported_flow (0, None).
+Proof.
+  vm_compute; exact I.
+Qed.
+
+Definition unsupported_ide := Ifds.as_ide unsupported_flow.
+Definition unsupported_jump := Map.of_list positive_encoding
+  [(encode (Jump.enc unsupported_ide) ((0, None), (0, None)), true);
+   (encode (Jump.enc unsupported_ide) ((0, None), (1, Some tt)), true)].
+
+Example unsupported_jump_passes_enumerated_checker :
+  check_jumps unsupported_ide 0 unsupported_jump = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Row reflection alone does not cover a two-edge path through an unlisted input fact. *)
+Example omitted_fact_support_is_not_a_path_theorem :
+  Stack.balanced unsupported_flow 0 None 2 (Some tt) /\
+  Jump.lookup unsupported_ide unsupported_jump ((0, None), (2, Some tt)) = false.
+Proof.
+  split.
+  - eapply Stack.next.
+    + apply (Stack.internal unsupported_flow 0 None (Some tt) []); vm_compute; auto.
+    + eapply Stack.next.
+      * apply (Stack.internal unsupported_flow 1 (Some tt) (Some tt) []); vm_compute; auto.
+      * apply Stack.refl.
+  - vm_compute; reflexivity.
+Qed.
+
+Inductive affine_fn :=
+  | FDead
+  | FLinear (scale offset : Z)
+  | FAny.
+
+Definition affine_le f g :=
+  match f, g with
+  | FDead, _ | _, FAny => true
+  | FLinear a b, FLinear c d => Z.eqb a c && Z.eqb b d
+  | _, _ => false
+  end.
+
+Definition affine_join f g :=
+  match f, g with
+  | FDead, _ => g
+  | _, FDead => f
+  | FLinear a b, FLinear c d =>
+    if Z.eqb a c && Z.eqb b d then f else FAny
+  | _, _ => FAny
+  end.
+
+Definition noncommuting_micro : Micro.t point affine_fn :=
+  Micro.of_pure (FLinear 1 0)
+    (fun f g => match f, g with
+      | FDead, _ | _, FDead => FDead
+      | FLinear a b, FLinear c d => FLinear (a * c) (a * d + b)
+      | _, _ => FAny
+      end)
+    (fun f x => match f, x with
+      | FDead, _ | _, PBot => PBot
+      | FLinear a b, PVal z => PVal (a * z + b)
+      | _, _ => PTop
+      end) (simple affine_le FDead affine_join).
+
+Definition noncommuting_ide : Ide.t nat nat nat unit point affine_fn :=
+  Ide.Make affine_ifds point_lattice noncommuting_micro
+    (fun _ _ _ => Cost.ret (FLinear 1 0)).
+
+Definition noncommuting_row :=
+  Jump.Return (0, @None unit)
+    (Jump.Arc 0 (0, None) (1, None) (Icfg.Call 7) (FLinear 1 1))
+    (Jump.Arc 2 (2, None) (3, None) (Icfg.Return 7) (FLinear 1 3)).
+
+Example matched_return_composition_is_not_reversed :
+  (Cost.value (Jump.rhs_c noncommuting_ide
+    (fun k => Cost.ret (if Nat.eqb (fst (fst k)) 1 then FLinear 2 0 else FLinear 1 0))
+    noncommuting_row),
+   Micro.apply noncommuting_micro
+     (Micro.compose noncommuting_micro (FLinear 1 1)
+       (Micro.compose noncommuting_micro (FLinear 2 0) (FLinear 1 3))) (PVal 4)) =
+    (FLinear 2 5, PVal 15).
+Proof.
+  vm_compute; reflexivity.
+Qed.

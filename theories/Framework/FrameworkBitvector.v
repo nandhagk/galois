@@ -45,6 +45,13 @@ Definition of_pure {N E U} cfg enc facts dir gen kill boundary : t N E U :=
     (fun e => Cost.step ;; Cost.ret (kill e))
     (fun n => Cost.step ;; Cost.ret (boundary n)).
 
+(** Boundary preparation uses the same raw seed inventory as the dense generator. *)
+Definition seeds {N E U} (P : t N E U) :=
+  match dir P with
+  | Forward => Graph.entries (Cfg.graph (cfg P))
+  | Backward => Graph.nodes (Cfg.graph (cfg P))
+  end.
+
 (** Prepared maps contain valid fact sets and retain all boundary nodes. *)
 Record prepared {N E U} (P : t N E U) := Prep {
   gen_sets : Map.t E (set_t (fact_enc P));
@@ -68,18 +75,22 @@ Definition prepare_sets_c {N E U} (P : t N E U) es
     let* xs := map_c (fun p => Cost.ret (snd p)) bucket in
     set_of_list_c (fact_enc P) xs) idx.
 
-(** Preparation groups occurrences once and constructs canonical valid sets outside transfers. *)
-Definition prepare_c {N E U} (P : t N E U) : Cost.t (prepared P) :=
-  let* es := fw_edges_c (cfg P) in
-  let* gs := prepare_sets_c P es (gen_c P) in
-  let* ks := prepare_sets_c P es (kill_c P) in
-  let* bs := map_c (fun n =>
+(** Boundary conversion visits each generated seed occurrence and retains its reader charge. *)
+Definition boundary_rows_c {N E U} (P : t N E U) :=
+  map_c (fun n =>
     Cost.step ;;
     let* b := boundary_c P n in
     match b with
     | None => Cost.ret (n, None)
     | Some xs => Cost.map (fun s => (n, Some s)) (set_of_list_c (fact_enc P) xs)
-    end) (Graph.nodes (Cfg.graph (cfg P))) in
+    end) (seeds P).
+
+(** Preparation groups occurrences once and constructs canonical valid sets outside transfers. *)
+Definition prepare_c {N E U} (P : t N E U) : Cost.t (prepared P) :=
+  let* es := fw_edges_c (cfg P) in
+  let* gs := prepare_sets_c P es (gen_c P) in
+  let* ks := prepare_sets_c P es (kill_c P) in
+  let* bs := boundary_rows_c P in
   let* bm := Map.of_list_c (Cfg.node_enc (cfg P)) bs in
   Cost.ret (Prep gs ks bm).
 
@@ -141,6 +152,57 @@ Definition boundary_set_c {N E U} {P : t N E U} (p : prepared P) n :=
 
 Definition boundary_set {N E U} {P : t N E U} (p : prepared P) n :=
   Cost.value (boundary_set_c p n).
+
+(** Boundary rows preserve the optional source lists at every seed occurrence. *)
+Theorem boundary_rows_value {N E U} (P : t N E U) :
+  Cost.value (boundary_rows_c P) =
+    map (fun n => (n, option_map (set_of_list (fact_enc P)) (boundary P n))) (seeds P).
+Proof.
+  unfold boundary_rows_c; rewrite value_map_c; apply map_ext; intro n.
+  autorewrite with galois_cost; fold (boundary P n).
+  destruct (boundary P n); reflexivity.
+Qed.
+
+(** The prepared boundary cache is the public map constructor on converted seed occurrences. *)
+Theorem prepare_boundaries_equation {N E U} (P : t N E U) :
+  boundaries (prepare P) = Map.of_list (Cfg.node_enc (cfg P))
+    (map (fun n => (n, option_map (set_of_list (fact_enc P)) (boundary P n))) (seeds P)).
+Proof.
+  unfold prepare, prepare_c; rewrite !Cost.value_bind, boundary_rows_value; reflexivity.
+Qed.
+
+Local Lemma get_mapped_inventory {K A} (E : encoding K) (HE : encoding_laws E)
+    (f : K -> A) xs n :
+  In n xs -> Map.get E n (Map.of_list E (map (fun k => (k, f k)) xs)) = Some (f n).
+Proof.
+  intro Hn; rewrite Map.of_list_get.
+  assert (Hfold : forall ys old, old = Some (f n) \/ In n ys ->
+    fold_left (fun old kv => if eqb E n (fst kv) then Some (snd kv) else old)
+      (map (fun k => (k, f k)) ys) old = Some (f n)).
+  { induction ys as [|k ys IH]; intros old Hhit; cbn [map fold_left fst snd].
+    - destruct Hhit as [->|[]]; reflexivity.
+    - destruct (eqb E n k) eqn:Hkey.
+      + apply (eqb_true_iff E HE) in Hkey; subst k.
+        apply IH; left; reflexivity.
+      + apply IH; destruct Hhit as [Hhit|[Hsame|Hhit]].
+        * left; exact Hhit.
+        * subst k; rewrite eqb_refl in Hkey; discriminate.
+        * right; exact Hhit. }
+  apply Hfold; right; exact Hn.
+Qed.
+
+(** Every listed raw seed preserves its original optional boundary without graph-closure laws. *)
+Theorem prepare_boundary_source {N E U} (P : t N E U) n :
+  encoding_laws (Cfg.node_enc (cfg P)) -> In n (seeds P) ->
+  boundary_set (prepare P) n =
+    option_map (set_of_list (fact_enc P)) (boundary P n).
+Proof.
+  intros HN Hn; unfold boundary_set, boundary_set_c.
+  change (Map.find_or (Cfg.node_enc (cfg P)) None n (boundaries (prepare P)) =
+    option_map (set_of_list (fact_enc P)) (boundary P n)).
+  rewrite Map.find_or_equation, prepare_boundaries_equation.
+  rewrite (get_mapped_inventory _ HN _ _ n Hn); reflexivity.
+Qed.
 
 (** Raw prepared lookup agrees with the stable source bucket, including empty buckets. *)
 Theorem prepare_sets_lookup {N E U} (P : t N E U) es reader e :
@@ -313,7 +375,7 @@ Qed.
 Definition supported {N E U} (P : t N E U) : Prop :=
   (forall e, In e (Cfg.edges (cfg P)) ->
     incl (gen P e) (universe P) /\ incl (kill P e) (universe P)) /\
-  (forall n xs, In n (Graph.nodes (Cfg.graph (cfg P))) ->
+  (forall n xs, In n (seeds P) ->
     boundary P n = Some xs -> incl xs (universe P)).
 
 (** May post-solutions satisfy precisely the prepared gen/kill inequalities. *)
@@ -346,6 +408,48 @@ Theorem must_post_iff {N E U} (P : t N E U) s :
 Proof.
   intro HE.
   exact (Dense.post_solution_iff (must_dense P (prepare P)) s (must_laws _ HE)).
+Qed.
+
+(** May post-solutions retain the original listed boundary facts independently of support. *)
+Theorem may_source_post_iff {N E U} (P : t N E U) s :
+  encoding_laws (Cfg.node_enc (cfg P)) -> encoding_laws (fact_enc P) ->
+  (post_solution (Analysis.lat (may_analysis P)) (Analysis.system (may_analysis P)) s <->
+    (forall n xs, In n (seeds P) -> boundary P n = Some xs ->
+      leb (may (fact_enc P)) (set_of_list (fact_enc P) xs) (s n) = true) /\
+    (forall e, In e (Cfg.edges (cfg P)) ->
+      leb (may (fact_enc P)) (may_transfer (prepare P) e
+        (s (Dense.from (may_dense P (prepare P)) e)))
+        (s (Dense.into (may_dense P (prepare P)) e)) = true)).
+Proof.
+  intros HN HU; rewrite may_post_iff by exact HU; split.
+  - intros [Hseed Hflow]; split; [|exact Hflow].
+    intros n xs Hn Hb; apply Hseed; [exact Hn|].
+    rewrite prepare_boundary_source by assumption; rewrite Hb; reflexivity.
+  - intros [Hseed Hflow]; split; [|exact Hflow].
+    intros n a Hn Ha; rewrite prepare_boundary_source in Ha by exact HN || exact Hn.
+    destruct (boundary P n) as [xs|] eqn:Hb; [|discriminate].
+    inversion Ha; subst a; apply Hseed; assumption.
+Qed.
+
+(** Must post-solutions retain the original listed Only boundary facts independently of support. *)
+Theorem must_source_post_iff {N E U} (P : t N E U) s :
+  encoding_laws (Cfg.node_enc (cfg P)) -> encoding_laws (fact_enc P) ->
+  (post_solution (Analysis.lat (must_analysis P)) (Analysis.system (must_analysis P)) s <->
+    (forall n xs, In n (seeds P) -> boundary P n = Some xs ->
+      leb (must (fact_enc P)) (Only (set_of_list (fact_enc P) xs)) (s n) = true) /\
+    (forall e, In e (Cfg.edges (cfg P)) ->
+      leb (must (fact_enc P)) (must_transfer (prepare P) e
+        (s (Dense.from (must_dense P (prepare P)) e)))
+        (s (Dense.into (must_dense P (prepare P)) e)) = true)).
+Proof.
+  intros HN HU; rewrite must_post_iff by exact HU; split.
+  - intros [Hseed Hflow]; split; [|exact Hflow].
+    intros n xs Hn Hb; apply Hseed; [exact Hn|].
+    rewrite prepare_boundary_source by assumption; rewrite Hb; reflexivity.
+  - intros [Hseed Hflow]; split; [|exact Hflow].
+    intros n a Hn Ha; rewrite prepare_boundary_source in Ha by exact HN || exact Hn.
+    destruct (boundary P n) as [xs|] eqn:Hb; [|discriminate].
+    inversion Ha; subst a; apply Hseed; assumption.
 Qed.
 
 Arguments prepare_c {N E U} P : simpl never.

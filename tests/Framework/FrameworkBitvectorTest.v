@@ -134,3 +134,112 @@ Example prepare_tick_second_doubling :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Definition raw_seed_problem nodes :=
+  Bitvector.of_pure
+    (Cfg.Make (Graph.of_pure [0] nodes (fun _ => []) (fun _ => 0) (fun _ => 0))
+      nat_encoding nat_encoding)
+    nat_encoding [7] Forward (fun _ => []) (fun _ => [])
+    (fun n => if Nat.eqb n 0 then Some [7] else None).
+
+Example may_entry_absent_from_nodes :
+  sets_observe (Bitvector.may_analysis (raw_seed_problem [])) [0; 99] =
+    Some [[7]; []].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example must_entry_absent_from_nodes :
+  must_observe (Bitvector.must_analysis (raw_seed_problem [])) [0; 99] =
+    Some [Some [7]; None].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example may_closed_seed_control :
+  sets_observe (Bitvector.may_analysis (raw_seed_problem [0])) [0; 99] =
+    Some [[7]; []].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example must_closed_seed_control :
+  must_observe (Bitvector.must_analysis (raw_seed_problem [0])) [0; 99] =
+    Some [Some [7]; None].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example missing_may_raw_seed_rejected :
+  check_post (Analysis.lat (Bitvector.may_analysis (raw_seed_problem [])))
+    (Analysis.system (Bitvector.may_analysis (raw_seed_problem [])))
+    (fun _ => set_empty nat_encoding) = false.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example missing_must_raw_seed_rejected :
+  check_post (Analysis.lat (Bitvector.must_analysis (raw_seed_problem [])))
+    (Analysis.system (Bitvector.must_analysis (raw_seed_problem [])))
+    (fun _ => All) = false.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition seed_only_problem :=
+  Bitvector.of_pure
+    (Cfg.Make (Graph.of_pure [0] [0; 1] (fun _ => []) (fun _ => 0) (fun _ => 0))
+      nat_encoding nat_encoding)
+    nat_encoding [7] Forward (fun _ => []) (fun _ => [])
+    (fun n => Some (if Nat.eqb n 0 then [7] else [99])).
+
+Example unseeded_node_boundary_is_not_cached :
+  option_map (fun s => FinSet.elements (set_raw s))
+    (Bitvector.boundary_set (Bitvector.prepare seed_only_problem) 1) = None.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example source_support_uses_only_generated_seeds : Bitvector.supported seed_only_problem.
+Proof.
+  split.
+  - intros e Hin; vm_compute in Hin; contradiction.
+  - intros n xs Hn Hb; change (0 = n \/ False) in Hn.
+    destruct Hn as [<-|Hbad]; [|contradiction].
+    change (Some [7] = Some xs) in Hb; inversion Hb; subst xs.
+    apply incl_refl.
+Qed.
+
+(** Original optional boundaries agree on every raw seed without a graph-closure premise. *)
+Theorem source_boundary_client {N E U} (P : Bitvector.t N E U) n :
+  encoding_laws (Cfg.node_enc (Bitvector.cfg P)) -> In n (Bitvector.seeds P) ->
+  Bitvector.boundary_set (Bitvector.prepare P) n =
+    option_map (set_of_list (Bitvector.fact_enc P)) (Bitvector.boundary P n).
+Proof.
+  apply Bitvector.prepare_boundary_source.
+Qed.
+
+(** Later may clients can use source boundaries without assuming universe support. *)
+Theorem source_may_client {N E U} (P : Bitvector.t N E U) s :
+  encoding_laws (Cfg.node_enc (Bitvector.cfg P)) ->
+  encoding_laws (Bitvector.fact_enc P) ->
+  post_solution (Analysis.lat (Bitvector.may_analysis P))
+    (Analysis.system (Bitvector.may_analysis P)) s ->
+  forall n xs, In n (Bitvector.seeds P) -> Bitvector.boundary P n = Some xs ->
+    leb (may (Bitvector.fact_enc P)) (set_of_list (Bitvector.fact_enc P) xs) (s n) = true.
+Proof.
+  intros HN HU Hpost; exact (proj1 ((proj1 (Bitvector.may_source_post_iff P s HN HU)) Hpost)).
+Qed.
+
+(** Later must clients obtain the same source boundary as a reached Only fact. *)
+Theorem source_must_client {N E U} (P : Bitvector.t N E U) s :
+  encoding_laws (Cfg.node_enc (Bitvector.cfg P)) ->
+  encoding_laws (Bitvector.fact_enc P) ->
+  post_solution (Analysis.lat (Bitvector.must_analysis P))
+    (Analysis.system (Bitvector.must_analysis P)) s ->
+  forall n xs, In n (Bitvector.seeds P) -> Bitvector.boundary P n = Some xs ->
+    leb (must (Bitvector.fact_enc P)) (Only (set_of_list (Bitvector.fact_enc P) xs))
+      (s n) = true.
+Proof.
+  intros HN HU Hpost; exact (proj1 ((proj1 (Bitvector.must_source_post_iff P s HN HU)) Hpost)).
+Qed.
