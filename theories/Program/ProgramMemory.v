@@ -153,7 +153,7 @@ Inductive effect_trace_states {R B} (next : B -> Memory.effect R -> B -> Prop) :
       next b a b' -> effect_trace_states next b' rest states b'' ->
       effect_trace_states next b (a :: rest) (b :: states) b''.
 
-(** Every actual read shares the edge's one ordered trace and changed existing addresses are covered.
+(** Actual reads share the edge's ordered trace and changed existing addresses are covered.
     The unrestricted [effect_no_stays] and local effect premises retain legacy domains. *)
 Record memory_laws {S O N E R B L T C} (m : semantics S O) (p : Memory.t N E R)
     (v : MemoryLink.t S O N E R B L T C) : Prop := {

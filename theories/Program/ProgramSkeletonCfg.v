@@ -235,6 +235,15 @@ Definition skel_out {A G} (prog : stmt A G) (v : skel_point) :
     end
   end.
 
+Local Lemma enclosing_locate {A G} (s : stmt A G) base p k t k' :
+  locate_from s base p k = Some (t, k') -> enclosing_from s base p k = k'.
+Proof.
+  revert s base k; induction p as [|d p IH]; intros s base k Hloc.
+  - cbn in Hloc; inversion Hloc; reflexivity.
+  - cbn [locate_from] in Hloc; cbn [enclosing_from].
+    destruct (child s d) as [u|]; [eapply IH; exact Hloc|discriminate].
+Qed.
+
 (** A syntax row retains one subtree, its context and its two point ranks. *)
 Record syntax_row (A G : Type) := SyntaxRow {
   row_position : position;
@@ -360,6 +369,17 @@ Fixpoint numbered_out_c {A G} (v : skel_point) (i : nat)
 Definition numbered_out {A G} v i (xs : list (skel_point * list (skel_action A G))) :=
   Cost.value (numbered_out_c v i xs).
 
+(** Numbered alternatives retain their payload and advance the slot at every cell. *)
+Theorem numbered_out_equation {A G} v i (xs : list (skel_point * list (skel_action A G))) :
+  numbered_out v i xs =
+    match xs with
+    | [] => []
+    | x :: rest => (SkelEdge v i, x) :: numbered_out v (S i) rest
+    end.
+Proof.
+  destruct xs; reflexivity.
+Qed.
+
 (** Numbered keys are dense slots in the same order as the alternatives. *)
 Theorem numbered_out_keys {A G} v i (xs : list (skel_point * list (skel_action A G))) :
   map fst (numbered_out v i xs) = map (SkelEdge v) (seq i (length xs)).
@@ -400,6 +420,67 @@ Definition row_out_c {A G} (r : syntax_row A G) :=
     end in
   let* leaving := numbered_out_c (PExit p) 0 exiting in
   Cost.ret [(PEntry p, entering); (PExit p, leaving)].
+
+(** A valid syntax row produces exactly the two reference outgoing tables. *)
+Theorem row_out_agrees {A G} (prog : stmt A G) (r : syntax_row A G) :
+  context prog (row_position r) (row_stack r) ->
+  sub prog (row_position r) = Some (row_statement r) ->
+  Cost.value (row_out_c r) =
+    [(PEntry (row_position r),
+      numbered_out (PEntry (row_position r)) 0 (skel_out prog (PEntry (row_position r))));
+     (PExit (row_position r),
+      numbered_out (PExit (row_position r)) 0 (skel_out prog (PExit (row_position r))))].
+Proof.
+  destruct r as [p s k rank exit]; cbn [row_position row_stack row_statement].
+  intros Hctx Hsub.
+  destruct (context_locate prog p k Hctx) as [t [Hloc Hlookup]].
+  assert (t = s) by congruence; subst t.
+  pose proof (enclosing_locate prog [] p [] s k Hloc) as Henclosing.
+  cbn [skel_out]; rewrite Hsub, Hloc, Henclosing.
+  unfold row_out_c; cbn [row_position row_stack row_statement].
+  repeat rewrite Cost.value_bind; rewrite Cost.value_ret.
+  destruct k as [|f k]; [reflexivity|].
+  rewrite Cost.value_map; reflexivity.
+Qed.
+
+Local Lemma flat_map_ext_in {X Y} (f g : X -> list Y) xs :
+  (forall x, In x xs -> f x = g x) -> flat_map f xs = flat_map g xs.
+Proof.
+  intro H; induction xs as [|x xs IH]; [reflexivity|].
+  cbn [flat_map]; rewrite H by (left; reflexivity).
+  rewrite IH; [reflexivity|intros y Hin; apply H; right; exact Hin].
+Qed.
+
+Local Lemma flat_map_project {X Y Z} (f : Y -> list Z) (g : X -> Y) xs :
+  flat_map (fun x => f (g x)) xs = flat_map f (map g xs).
+Proof.
+  induction xs as [|x xs IH]; cbn [flat_map map]; rewrite ?IH; reflexivity.
+Qed.
+
+(** Prepared outgoing rows agree with the reference selector in position order. *)
+Theorem prepared_rows_agree {A G} (prog : stmt A G) :
+  flat_map (fun r => Cost.value (row_out_c r)) (fst (syntax_rows prog [] [] 0)) =
+    flat_map (fun p =>
+      [(PEntry p, numbered_out (PEntry p) 0 (skel_out prog (PEntry p)));
+       (PExit p, numbered_out (PExit p) 0 (skel_out prog (PExit p)))]) (positions prog).
+Proof.
+  transitivity
+    (flat_map (fun r =>
+      [(PEntry (row_position r),
+        numbered_out (PEntry (row_position r)) 0 (skel_out prog (PEntry (row_position r))));
+       (PExit (row_position r),
+        numbered_out (PExit (row_position r)) 0 (skel_out prog (PExit (row_position r))))])
+      (fst (syntax_rows prog [] [] 0))).
+  - apply flat_map_ext_in; intros r Hin.
+    destruct (syntax_rows_context prog prog [] [] 0 context_root eq_refl r Hin)
+      as [Hctx Hsub].
+    apply row_out_agrees; assumption.
+  - rewrite (flat_map_project (fun p =>
+      [(PEntry p, numbered_out (PEntry p) 0 (skel_out prog (PEntry p)));
+       (PExit p, numbered_out (PExit p) 0 (skel_out prog (PExit p)))])
+      (@row_position A G)).
+    rewrite syntax_rows_positions, map_id; reflexivity.
+Qed.
 
 (** Charged concatenation visits every outer cell and copies every returned inner list. *)
 Definition skeleton_flat_map_c {X Y} (f : X -> Cost.t (list Y)) (xs : list X) :=

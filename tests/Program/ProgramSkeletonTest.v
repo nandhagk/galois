@@ -106,10 +106,56 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example syntax_visit_tick : Cost.ticks (syntax_rows_c leaf [] [] 0) = 1%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example missing_resume_tick : Cost.ticks (resume_target_c 0 []) = 1%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example cached_rank_absent :
+  indexed_point_rank (skeleton_index leaf) (PExit [DBody]) = None.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example loop_head_test :
+  (is_loop_head loop_jump (PEntry [DBody]), is_loop_head branch (PEntry [DFirst])) =
+    (true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Definition client : skeleton_client nat bool nat unit :=
   SkeletonClient (fun st => st = 0) (fun _ st l st' => l = [] /\ st' = S st)
     (fun _ _ => False) (fun _ _ => False)
     (fun b _ => Some b) (fun _ st => Some st) (fun _ _ st st' => st' = st).
+
+Example client_law_fixture : skeleton_client_laws client.
+Proof.
+  constructor.
+  - intros p n st; exists st; vm_compute; reflexivity.
+  - intros a st; left; exists [], (S st); vm_compute; split; reflexivity.
+  - intros a st Htrap; vm_compute in Htrap; contradiction.
+  - intros a st Hstop; vm_compute in Hstop; contradiction.
+  - intros a st [Htrap Hstop]; vm_compute in Htrap; contradiction.
+Qed.
+
+Example loop_never_stuck : forall m,
+  reachable_state (skeleton_semantics loop_jump client) m ->
+    ~ stuck (skeleton_semantics loop_jump client) (skeleton_endings loop_jump client) m.
+Proof.
+  apply skeleton_not_stuck; [vm_compute; reflexivity|exact client_law_fixture].
+Qed.
+
+Example loop_initial :
+  initial (skeleton_semantics loop_jump client) (Go [] [] 0).
+Proof.
+  exists 0; vm_compute; split; reflexivity.
+Qed.
 
 Example jump_resumes_loop :
   resume 0 [FLoop []] 7 = Some (Go [DBody] [FLoop []] 7).
@@ -136,4 +182,20 @@ Qed.
 Example invalid_subtree : sub leaf [DFirst] = None.
 Proof.
   vm_compute; reflexivity.
+Qed.
+
+Definition failed_guard_client : skeleton_client nat bool nat unit :=
+  SkeletonClient (init_store client) (atom_step client) (atom_trap client) (atom_stop client)
+    (fun _ _ => None) (guard_index client) (jump_effect client).
+
+Example failed_guard_traps :
+  trapped (skeleton_endings branch failed_guard_client) (Go [] [] 0).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example guard_failure_is_not_stop :
+  ~ stopped (skeleton_endings branch failed_guard_client) (Go [] [] 0).
+Proof.
+  vm_compute; tauto.
 Qed.

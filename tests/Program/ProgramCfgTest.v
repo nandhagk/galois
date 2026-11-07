@@ -59,6 +59,13 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example empty_variable_universe :
+  Vars.universe (Vars.of_pure empty nat_encoding (fun _ => []) (fun _ => [])
+    (fun _ => [])) = [].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Definition ssa : Ssa.t nat nat nat unit bool :=
   Ssa.of_pure three nat_encoding [0; 1]
     (fun x => match x with 0 => Param 0 0 | _ => Op tt [0] end)
@@ -75,6 +82,29 @@ Proof.
 Qed.
 
 Example ssa_callback_ticks : Cost.ticks (Ssa.def_c ssa 1) = 1%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition points : SsaPoints.t nat nat nat nat nat :=
+  SsaPoints.of_ssa vars ssa (fun b => Cost.ret [b]) (fun _ => Cost.ret [])
+    (fun b => Cost.ret b) (fun n => Cost.ret n) (fun e => Cost.ret (Some e))
+    (fun _ => Cost.ret None).
+
+Example point_projection :
+  (SsaPoints.block_params points 0, SsaPoints.block_edge_args points 1,
+    SsaPoints.block_edge_of points 2) = ([0], [1], Some 2).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example point_definition_absent : SsaPoints.point_definition points 0 = None.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example point_retains_ssa_callback_charge :
+  Cost.ticks (SsaPoints.block_params_c points 0) = 1%N.
 Proof.
   vm_compute; reflexivity.
 Qed.

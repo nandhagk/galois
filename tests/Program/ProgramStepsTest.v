@@ -26,6 +26,32 @@ Proof.
   apply reachable_ind; intros; lia.
 Qed.
 
+Example counter_conjunction :
+  on_steps counter (fun s l t => t = S s /\ l = []).
+Proof.
+  apply on_steps_and; [exact counter_local|exact counter_silent].
+Qed.
+
+Example counter_monotonicity : on_steps counter (fun s _ t => s < t).
+Proof.
+  eapply on_steps_mono with (P := fun s _ t => t = S s); [|exact counter_local].
+  intros s l t Hnext; subst t; lia.
+Qed.
+
+Example counter_quantified :
+  on_steps counter (fun s _ t => forall x : nat, s + x < t + x).
+Proof.
+  apply (proj1 (on_steps_forall counter (fun x s _ t => s + x < t + x))).
+  intro x; intro_step; destruct Hstep as [_ ->]; lia.
+Qed.
+
+Example counter_behaviour : same_behaviour counter (Endings (fun _ => False)
+    (fun _ => False) (fun _ => False)) 0
+    counter (Endings (fun _ => False) (fun _ => False) (fun _ => False)) 0.
+Proof.
+  apply same_behaviour_refl.
+Qed.
+
 Example counter_initial : initial counter 0.
 Proof.
   vm_compute; reflexivity.
