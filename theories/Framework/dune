@@ -2,5 +2,12 @@
  (name Galois.Framework)
  (package galois)
  (flags :standard -w +default)
- (theories Stdlib Galois.Cost Galois.Base Galois.Lattice Galois.Graph Galois.Fixpoint
-  Galois.Domains Galois.Program))
+ (theories
+  Stdlib
+  Galois.Cost
+  Galois.Base
+  Galois.Lattice
+  Galois.Graph
+  Galois.Fixpoint
+  Galois.Domains
+  Galois.Program))
