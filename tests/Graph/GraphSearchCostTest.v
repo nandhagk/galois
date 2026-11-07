@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List NArith.
 From Galois.Cost Require Import CostMonad.
-From Galois.Graph Require Import GraphVisitor GraphSearch.
+From Galois.Graph Require Import GraphVisitor GraphSearch GraphSearchCost.
 From Galois.Tests.Graph Require Import GraphSearchTest.
 Import List.ListNotations Cost.Notations.
 
@@ -34,6 +34,36 @@ Qed.
 Example empty_search_ticks :
   Cost.ticks (SearchRun.run_c SearchFixtures.diamond Visitor.noop
     SearchFixtures.unrestricted [] tt) = 0%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example evaluated_search_constant : SearchCost.search_k = 64%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example diamond_ticks :
+  Cost.ticks (SearchRun.run_c SearchFixtures.diamond Visitor.noop
+    SearchFixtures.unrestricted [1]%positive tt) = 223%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example singleton_cost_bound :
+  (Cost.ticks (SearchRun.run_c SearchFixtures.single Visitor.noop
+    SearchFixtures.unrestricted [1]%positive tt) <=?
+    SearchCost.search_k * SearchCost.search_size SearchFixtures.single [1]%positive 1 1)%N =
+    true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example diamond_cost_bound :
+  (Cost.ticks (SearchRun.run_c SearchFixtures.diamond Visitor.noop
+    SearchFixtures.unrestricted [1]%positive tt) <=?
+    SearchCost.search_k * SearchCost.search_size SearchFixtures.diamond [1]%positive 3 1)%N =
+    true.
 Proof.
   vm_compute. reflexivity.
 Qed.

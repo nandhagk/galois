@@ -304,6 +304,14 @@ Proof.
   exact Herase.
 Qed.
 
+Definition launch_c {V E S} (p : Prepared.t V E) (vis : Visitor.t E S) scope
+    (c : core E) v s : Cost.t (core E * S) :=
+  let* c' := discover_c v None c in
+  let* s' := Visitor.apply_c vis (Search.Enter v None) s in
+  let* es := Prepared.succ_edges_c p v in
+  let* answer := iterate (step_c p vis scope) (Prepared.fuel p) (([(v, es)], c'), s') in
+  let '(w, s'') := unwrap answer in Cost.ret (snd w, s'').
+
 Definition root_c {V E S} (p : Prepared.t V E) (vis : Visitor.t E S) scope
     (state : core E * S) v : Cost.t (core E * S) :=
   let '(c, s) := state in
@@ -314,12 +322,7 @@ Definition root_c {V E S} (p : Prepared.t V E) (vis : Visitor.t E S) scope
       let* name := Prepared.name_of_c p v in
       match name with
       | None => Cost.ret state
-      | Some _ =>
-        let* c' := discover_c v None c in
-        let* s' := Visitor.apply_c vis (Search.Enter v None) s in
-        let* es := Prepared.succ_edges_c p v in
-        let* answer := iterate (step_c p vis scope) (Prepared.fuel p) (([(v, es)], c'), s') in
-        let '(w, s'') := unwrap answer in Cost.ret (snd w, s'')
+      | Some _ => launch_c p vis scope c v s
       end
   else Cost.ret state.
 
@@ -358,7 +361,7 @@ Theorem root_erases {V E S} (p : Prepared.t V E) (vis : Visitor.t E S) scope c s
   Cost.value (root_c p vis scope (c, s) v) =
     let '(c', evs) := reference_root p scope c v in (c', apply_events vis evs s).
 Proof.
-  unfold root_c, reference_root. autorewrite with galois_cost.
+  unfold root_c, reference_root, launch_c. autorewrite with galois_cost.
   fold (Scope.admits scope v). destruct (Scope.admits scope v); [|reflexivity].
   autorewrite with galois_cost.
   fold (FinSet.mem positive_encoding v (seen c)).
