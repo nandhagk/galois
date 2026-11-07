@@ -14,6 +14,18 @@ Definition certify {W : Type} (P : W -> Prop) (check : W -> bool)
   | right _ => None
   end.
 
+(** Certification exposes its boolean decision and retains the original candidate. *)
+Theorem certify_equation {W : Type} (P : W -> Prop) (check : W -> bool)
+    (sound : forall w, check w = true -> P w) (w : W) :
+  certify P check sound w =
+    match Bool.bool_dec (check w) true with
+    | left H => Some (exist P w (sound w H))
+    | right _ => None
+    end.
+Proof.
+  reflexivity.
+Qed.
+
 (** Return a certified fallback when the checker rejects the candidate. *)
 Definition certify_or {W : Type} (P : W -> Prop) (check : W -> bool)
     (sound : forall w, check w = true -> P w) (fallback : {w : W | P w})

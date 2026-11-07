@@ -267,6 +267,18 @@ Proof.
     exact (Hafter _ Hin).
 Qed.
 
+(** A well-formed set enumerates each key at most once. *)
+Theorem elements_nodup {K} (E : encoding K) (s : t K) :
+  wf E s -> NoDup (elements s).
+Proof.
+  intro Hwf; pose proof (elements_sorted E s Hwf) as Hsort.
+  induction Hsort as [|x xs Hsort IH Hafter]; constructor; [|exact IH].
+  intro Hin; rewrite Forall_forall in Hafter.
+  specialize (Hafter x Hin).
+  pose proof (proj2 (Map.code_compare_eq (encode E x) (encode E x)) eq_refl) as Hrefl.
+  rewrite Hrefl in Hafter; discriminate.
+Qed.
+
 (** Subset tests precisely pointwise membership implication. *)
 Theorem subset_spec {K} (E : encoding K) (HE : encoding_laws E) (s u : t K) :
   wf E s ->

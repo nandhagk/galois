@@ -1,0 +1,5 @@
+(rocq.theory
+ (name Galois.Tests.Fixpoint)
+ (package galois)
+ (flags :standard -w +default)
+ (theories Stdlib Galois.Cost Galois.Base Galois.Lattice Galois.Graph Galois.Fixpoint))
