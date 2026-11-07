@@ -111,7 +111,7 @@ Definition get_c {K V} (E : encoding K) k (m : t K V) :=
 Definition get {K V} (E : encoding K) k (m : t K V) := Cost.value (get_c E k m).
 
 (** Code lookup stops at the first matching cell. *)
-Theorem get_code_equation {K V} p (m : t K V) :
+Local Lemma get_code_equation {K V} p (m : t K V) :
   get_code p m =
   match m with
   | [] => None
@@ -162,7 +162,7 @@ Proof.
 Qed.
 
 (** Code insertion exposes its three order cases. *)
-Theorem set_code_equation {K V} p (k : K) (v : V) m :
+Local Lemma set_code_equation {K V} p (k : K) (v : V) m :
   set_code p k v m =
   match m with
   | [] => [(p, (k, v))]
@@ -199,7 +199,7 @@ Definition remove {K V} (E : encoding K) k (m : t K V) :=
   Cost.value (remove_c E k m).
 
 (** Code removal filters precisely the matching positions. *)
-Theorem remove_code_equation {K V} p (m : t K V) :
+Local Lemma remove_code_equation {K V} p (m : t K V) :
   remove_code p m = filter (fun e => negb (Pos.eqb p (fst e))) m.
 Proof.
   induction m as [|[q [k v]] rest IH]; [reflexivity|].
@@ -468,7 +468,7 @@ Definition map {K V W} (f : V -> W) (m : t K V) :=
   Cost.value (map_c (Cost.lift (fun _ => 1%N) f) m).
 
 (** Mapping retains positions and keys. *)
-Theorem map_equation {K V W} (f : V -> W) (m : t K V) :
+Local Lemma map_equation {K V W} (f : V -> W) (m : t K V) :
   map f m = List.map (fun e => (fst e, (fst (snd e), f (snd (snd e))))) m.
 Proof.
   induction m as [|[p [k v]] rest IH]; unfold map in *; cbn [map_c List.map];
@@ -522,7 +522,7 @@ Fixpoint elements_c {K V} (m : t K V) : Cost.t (list (K * V)) :=
 Definition elements {K V} (m : t K V) := Cost.value (elements_c m).
 
 (** Enumeration drops codes without changing traversal order. *)
-Theorem elements_equation {K V} (m : t K V) : elements m = List.map snd m.
+Local Lemma elements_equation {K V} (m : t K V) : elements m = List.map snd m.
 Proof.
   induction m as [|[p kv] rest IH]; unfold elements in *; cbn [elements_c List.map];
     autorewrite with galois_cost; now rewrite ?IH.
@@ -699,7 +699,7 @@ Definition filter_map {K V W} (f : V -> option W) (m : t K V) :=
   Cost.value (filter_map_c (Cost.lift (fun _ => 1%N) f) m).
 
 (** Filtering values keeps precisely the bindings whose callback succeeds. *)
-Theorem filter_map_equation {K V W} (f : V -> option W) (m : t K V) :
+Local Lemma filter_map_equation {K V W} (f : V -> option W) (m : t K V) :
   filter_map f m =
   match m with
   | [] => []
@@ -784,7 +784,7 @@ Definition combine {K V W U} (f : option V -> option W -> option U)
   Cost.value (combine_c (fun a b => Cost.lift (fun _ => 1%N) (f a) b) m n).
 
 (** The reference combination processes left bindings after the right-only base. *)
-Theorem combine_equation {K V W U} (f : option V -> option W -> option U)
+Local Lemma combine_equation {K V W U} (f : option V -> option W -> option U)
     (m : t K V) (n : t K W) :
   combine f m n =
   match m with
@@ -974,7 +974,7 @@ Proof.
   rewrite diff_combine. apply wf_combine.
 Qed.
 
-Fixpoint of_list_from_c {K V} (E : encoding K) (xs : list (K * V)) (m : t K V) :=
+Local Fixpoint of_list_from_c {K V} (E : encoding K) (xs : list (K * V)) (m : t K V) :=
   match xs with
   | [] => Cost.ret m
   | (k, v) :: rest =>
@@ -1056,7 +1056,7 @@ Definition beq {K V} (f : V -> V -> bool) (m n : t K V) :=
   Cost.value (beq_c (fun a b => Cost.lift (fun _ => 1%N) (f a) b) m n).
 
 (** Comparison stops on the first rejected binding. *)
-Theorem forall2_equation {K V W} r (m : t K V) (n : t K W) :
+Local Lemma forall2_equation {K V W} r (m : t K V) (n : t K W) :
   forall2 r m n =
   match m with
   | [] => true
