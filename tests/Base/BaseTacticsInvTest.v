@@ -144,6 +144,22 @@ Proof.
   intro H. inv_bind. eauto.
 Qed.
 
+Example lookup_fixture_success :
+  (Cost.value (lookup_then (Cost.mk (Some 2) 5) (fun n => Cost.mk (Some (S n)) 7)),
+   Cost.ticks (lookup_then (Cost.mk (Some 2) 5) (fun n => Cost.mk (Some (S n)) 7))) =
+  (Some 3, 12%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example lookup_fixture_none :
+  (Cost.value (lookup_then (Cost.mk None 5) (fun n => Cost.mk (Some (S n)) 7)),
+   Cost.ticks (lookup_then (Cost.mk None 5) (fun n => Cost.mk (Some (S n)) 7))) =
+  (None, 5%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** A hypothesis without a value-of-bind observation is out of contract. *)
 Example bind_reject : True.
 Proof.
