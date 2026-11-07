@@ -620,6 +620,48 @@ Proof.
     apply pair_codec_laws; apply positive_codec_laws.
 Qed.
 
+(** Zero extension normalizes the input before wrapping at the larger width. *)
+Theorem eval_op_zext : forall extra w x,
+  eval_op (bvzext extra) [(w, x)] =
+    Some ((w + extra)%positive, wrap (w + extra)%positive (wrap w x)).
+Proof.
+  intros extra w x.
+  reflexivity.
+Qed.
+
+(** Sign extension uses the signed interpretation of the normalized input. *)
+Theorem eval_op_sext : forall extra w x,
+  eval_op (bvsext extra) [(w, x)] =
+    Some ((w + extra)%positive, wrap (w + extra)%positive (signed w x)).
+Proof.
+  intros extra w x.
+  cbn [eval_op result_width op_desc resize Desc.result_width Desc.run
+    op_value Desc.value map normalize_word fst snd].
+  now rewrite signed_wrap.
+Qed.
+
+(** Truncation normalizes the input and rejects targets wider than the input. *)
+Theorem eval_op_trunc : forall target w x,
+  eval_op (bvtrunc target) [(w, x)] =
+    if Pos.leb target w then Some (target, wrap target (wrap w x)) else None.
+Proof.
+  intros target w x.
+  unfold eval_op.
+  cbn [result_width op_desc resize Desc.result_width Desc.run
+    op_value Desc.value map normalize_word fst snd].
+  destruct (Pos.leb target w); reflexivity.
+Qed.
+
+(** Concatenation normalizes both inputs before joining their high and low bits. *)
+Theorem eval_op_concat : forall wa wb x y,
+  eval_op bvconcat [(wa, x); (wb, y)] =
+    Some ((wa + wb)%positive,
+      wrap (wa + wb)%positive (wrap wa x * modulus wb + wrap wb y)).
+Proof.
+  intros wa wb x y.
+  reflexivity.
+Qed.
+
 (** Zero extension preserves the normalized unsigned value. *)
 Theorem eval_zext_value : forall w n x,
   eval_op (bvzext n) [(w, x)] = Some ((w + n)%positive, wrap w x).
