@@ -18,6 +18,17 @@ Definition analyze_ref {X C A} (a : Analysis.t X C A) fuel :=
 Definition analyze_c {X C A} (a : Analysis.t X C A) fuel := analyze_ref_c a fuel.
 Definition analyze {X C A} (a : Analysis.t X C A) fuel := Cost.value (analyze_c a fuel).
 
+(** A sound solved reference candidate passes the stable reference certification entry point. *)
+Theorem analyze_ref_accepts {X C A} (a : Analysis.t X C A) fuel m :
+  Solver.run Kleene.solver a fuel = Outcome.Solved m ->
+  post_solution (Analysis.lat a) (Analysis.system a)
+    (lookup (Analysis.key_enc a) (Analysis.lat a) m) ->
+  exists cert, analyze_ref a fuel = Outcome.Solved cert.
+Proof.
+  intros Hrun Hpost.
+  exact (analyze_with_accepts Kleene.solver a fuel m Hrun Hpost).
+Qed.
+
 (** Finite-height fuel covers all declared output occurrences and a final stationary probe. *)
 Definition reference_fuel {X C A} (a : Analysis.t X C A) (HT : Terminates.t a) :=
   Pos.of_succ_nat
