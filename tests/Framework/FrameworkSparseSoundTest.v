@@ -11,7 +11,8 @@ From Galois.Lattice Require Import LatticeCore LatticeSimple LatticeConcrete Lat
 From Galois.Bits Require Import BitsWord BitsOp BitsExpr.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramSemantics ProgramSteps ProgramCfg ProgramLink ProgramSsa.
-From Galois.Domains Require Import DomainsValue DomainsPoint DomainsTagged DomainsBitsValue.
+From Galois.Domains Require Import DomainsValue DomainsPoint DomainsTagged DomainsNumeric
+  DomainsBitsValue.
 From Galois.Fixpoint Require Import FixpointAnalysis FixpointAnalyze FixpointSolver FixpointCheck.
 From Galois.Framework Require Import FrameworkSparse FrameworkSparseSound.
 From Galois.Tests.Framework Require Import FrameworkDenseTest FrameworkSparseTest.
@@ -247,4 +248,283 @@ Proof.
   - exact unit_domain_laws.
   - exact origin_entry_ok.
   - apply (proj1 (check_post_iff _ _ _) origin_post_checked).
+Qed.
+
+(** The numeric client evaluates the fixture's expressions over normalized word arguments. *)
+Definition phi_normalize (c : word) : word := (fst c, wrap (fst c) (snd c)).
+
+Definition phi_eval (e : expr) (cs : list word) : option word :=
+  eval eval_op (fun i => nth i (map phi_normalize cs) (1%positive, 0%Z)) e.
+
+Definition phi_truth (c : word) := negb (Z.eqb (snd (phi_normalize c)) 0).
+Definition phi_value_sem := bits_sem bridge phi_eval phi_truth.
+Definition phi_gamma :=
+  numeric_conc (tagged_domain point_word_domain) (tagged_gamma point_gamma) bridge.
+Definition phi_one : word := (32%positive, 1%Z).
+Definition phi_two : word := (32%positive, 2%Z).
+
+Example phi_bridge_laws : op_bridge_laws bridge phi_eval phi_truth.
+Proof.
+  constructor.
+  - intros [v z] [w t] Hword.
+    change (Some (v, wrap v z) = Some (w, t)) in Hword.
+    injection Hword as <- <-; apply wrap_is_word.
+  - intros k cs c e Hresult Hexpr.
+    change (Some k = Some e) in Hexpr; injection Hexpr as <-.
+    exists (map phi_normalize cs), c; split.
+    + clear Hresult; induction cs as [|d cs IH].
+      * constructor.
+      * constructor; [reflexivity|exact IH].
+    + split; [exact Hresult|].
+      destruct c as [w z].
+      change (Some (w, wrap w z) = Some (w, z)).
+      rewrite wrap_id; [reflexivity|].
+      exact (eval_is_word eval_op eval_op_is_word (w, z)
+        (fun i => nth i (map phi_normalize cs) (1%positive, 0%Z)) k Hresult).
+  - intros [v z] [w t] Hword.
+    change (Some (v, wrap v z) = Some (w, t)) in Hword.
+    injection Hword as <- <-; reflexivity.
+  - intros _ c; exists (phi_normalize c); reflexivity.
+  - intros d Hdisabled; discriminate.
+  - intros d c wc wd Hdisabled; discriminate.
+  - intros d c w Hdisabled; discriminate.
+Qed.
+
+Example phi_value_laws : value_laws values phi_value_sem phi_gamma.
+Proof.
+  apply bits_values_laws.
+  - apply tagged_numeric_laws; exact point_word_laws.
+  - exact phi_bridge_laws.
+  - intros w z _; exact I.
+  - reflexivity.
+Qed.
+
+(** The operation executes before branching, so guards read its actual stored result. *)
+Inductive phi_state : Type :=
+  | PhiStart
+  | PhiReady
+  | PhiArm (left : bool)
+  | PhiDone.
+
+Definition phi_branch_holds (left : bool) :=
+  phi_two = (32%positive, if left then 2%Z else 0%Z).
+
+Inductive phi_step : phi_state -> list unit -> phi_state -> Prop :=
+  | PhiCompute : phi_step PhiStart [] PhiReady
+  | PhiBranch : forall left, phi_branch_holds left ->
+      phi_step PhiReady [] (PhiArm left)
+  | PhiMerge : forall left, phi_step (PhiArm left) [] PhiDone.
+
+Definition phi_machine : semantics phi_state unit :=
+  Semantics (fun s => s = PhiStart) phi_step.
+
+Definition phi_point s :=
+  match s with
+  | PhiStart | PhiReady => 0
+  | PhiArm true => 1
+  | PhiArm false => 2
+  | PhiDone => 3
+  end.
+
+Definition phi_link : Link.t phi_state unit nat nat :=
+  Link.Make phi_point
+    (fun s _ t e => match s, t with
+      | PhiReady, PhiArm b => e = if b then 0 else 1
+      | PhiArm b, PhiDone => e = if b then 2 else 3
+      | _, _ => False
+      end)
+    (fun s _ t => s = PhiStart /\ t = PhiReady).
+
+Definition phi_values : SsaLink.t phi_state unit nat nat nat word :=
+  SsaLink.Make phi_link (fun s x => match x with
+    | 0 => Some phi_one
+    | 1 => match s with PhiStart => None | _ => Some phi_two end
+    | 2 => match s with PhiDone => Some phi_two | _ => None end
+    | 3 => match s with PhiArm _ => Some (32%positive, 19%Z) | _ => None end
+    | _ => None
+    end).
+
+Example phi_link_laws : link_laws phi_machine (Cfg.graph diamond) phi_link.
+Proof.
+  constructor.
+  - exact (cfg_wf origin_link_laws).
+  - intros s ->; left; reflexivity.
+  - intros s l t _ Hstep; destruct Hstep.
+    + left; split; reflexivity.
+    + right; exists (if left then 0 else 1); reflexivity.
+    + right; exists (if left then 2 else 3); reflexivity.
+  - intros e s l t _ Hstep Htaken; destruct Hstep; [contradiction| |].
+    + change (e = if left then 0 else 1) in Htaken; subst e.
+      destruct left; vm_compute; tauto.
+    + change (e = if left then 2 else 3) in Htaken; subst e.
+      destruct left; vm_compute; tauto.
+  - intros s l t _ _ [-> ->]; reflexivity.
+Qed.
+
+(** A branch guard and its operation witness use the same concrete subject and operands. *)
+Example phi_guard_holds e s l t :
+  step phi_machine s l t -> Link.taken phi_link s l t e ->
+  forall g ys, In (g, ys) (Ssa.guards phi_ssa e) ->
+    exists cs, Forall2 (fun y c => SsaLink.val phi_values s y = Some c) ys cs /\
+      ValueSem.holds phi_value_sem g cs.
+Proof.
+  intros Hstep Htaken g ys Hguard; destruct Hstep as [|left Hbranch|left];
+    [contradiction| |].
+  - change (e = if left then 0 else 1) in Htaken; subst e.
+    destruct left; cbn in Hguard;
+      destruct Hguard as [Heq|Hbad]; try contradiction; inversion Heq; subst g ys.
+    + exists [phi_two]; split.
+      * constructor; [reflexivity|constructor].
+      * exact Hbranch.
+    + exists [phi_two]; split.
+      * constructor; [reflexivity|constructor].
+      * exact Hbranch.
+  - change (e = if left then 2 else 3) in Htaken; subst e.
+    destruct left; contradiction.
+Qed.
+
+Example phi_guard_operation e s l t :
+  step phi_machine s l t -> Link.taken phi_link s l t e ->
+  guard_ops_consistent phi_ssa phi_values (ValueSem.eval phi_value_sem) s e.
+Proof.
+  intros Hstep Htaken g ys x k args Hguard Hin Hdef; destruct Hstep;
+    [contradiction| |].
+  - change (e = if left then 0 else 1) in Htaken; subst e.
+    destruct left; cbn in Hguard;
+      destruct Hguard as [Heq|Hbad]; try contradiction; inversion Heq; subst g ys;
+      destruct Hin as [<-|Hbad]; try contradiction;
+      cbn in Hdef; injection Hdef as <- <-;
+      exists [phi_one; phi_one], phi_two; split.
+    + constructor; [reflexivity|constructor; [reflexivity|constructor]].
+    + split; [reflexivity|vm_compute; reflexivity].
+    + constructor; [reflexivity|constructor; [reflexivity|constructor]].
+    + split; [reflexivity|vm_compute; reflexivity].
+  - change (e = if left then 2 else 3) in Htaken; subst e.
+    destruct left; contradiction.
+Qed.
+
+Example phi_value_origins x c s l t :
+  step phi_machine s l t -> SsaLink.val phi_values t x = Some c ->
+  SsaLink.val phi_values s x = Some c \/
+  (exists k args cs, Ssa.def phi_ssa x = Op k args /\
+    Forall2 (fun y d => SsaLink.val phi_values s y = Some d) args cs /\
+    ValueSem.eval phi_value_sem k cs = Some c) \/
+  (exists e b i z, Ssa.def phi_ssa x = Param b i /\ Link.taken phi_link s l t e /\
+    Graph.target (Cfg.graph diamond) e = b /\ nth_error (Ssa.args phi_ssa e) i = Some z /\
+    SsaLink.val phi_values s z = Some c) \/ Ssa.def phi_ssa x = Arbitrary.
+Proof.
+  intros Hstep Hval; destruct Hstep;
+    destruct x as [|[|[|[|x]]]]; cbn in Hval; try discriminate;
+    injection Hval as <-.
+  - left; reflexivity.
+  - right; left; exists (App bvadd [Var 0; Var 1]), [0; 0], [phi_one; phi_one].
+    split; [reflexivity|split].
+    + constructor; [reflexivity|constructor; [reflexivity|constructor]].
+    + vm_compute; reflexivity.
+  - left; reflexivity.
+  - left; reflexivity.
+  - right; right; right; reflexivity.
+  - left; reflexivity.
+  - left; reflexivity.
+  - right; right; left; exists (if left then 2 else 3), 3, 0, 1.
+    split; [reflexivity|split; [reflexivity|]].
+    destruct left; repeat split; reflexivity.
+Qed.
+
+Example phi_ssa_laws :
+  ssa_laws phi_machine phi_ssa phi_values
+    (ValueSem.eval phi_value_sem) (ValueSem.holds phi_value_sem).
+Proof.
+  constructor.
+  - exact phi_link_laws.
+  - intros [|[|[|x]]] b i Hdef; cbn in Hdef; try discriminate;
+      injection Hdef as <- <-; reflexivity.
+  - intros e s l t _ Hstep Htaken; eapply phi_guard_holds; eassumption.
+  - intros e s l t _ Hstep Htaken; eapply phi_guard_operation; eassumption.
+  - intros x c s l t _ Hstep Hval; eapply phi_value_origins; eassumption.
+  - intros s [|[|[|[|x]]]] c _ Hval; cbn in Hval; try discriminate;
+      vm_compute; tauto.
+Qed.
+
+Example phi_entry_ok :
+  SparseSound.sparse_entry_ok phi_machine phi_problem phi_values phi_gamma.
+Proof.
+  intros s [|[|[|[|x]]]] c -> Hval; cbn in Hval; try discriminate;
+    injection Hval as <-.
+  exists 0, 0; split; [reflexivity|split; [left; reflexivity|]].
+  vm_compute; repeat constructor; discriminate.
+Qed.
+
+Example numeric_phi_sound_client :
+  (forall s, reachable_state phi_machine s ->
+    SparseSound.executable (phi_candidate (UBlock (phi_point s))) = true) /\
+  (forall s l t e, reachable_state phi_machine s -> step phi_machine s l t ->
+    Link.taken phi_link s l t e -> SparseSound.executable (phi_candidate (UEdge e)) = true) /\
+  (forall s x c, reachable_state phi_machine s -> SsaLink.val phi_values s x = Some c ->
+    gamma (lift_bot_gamma phi_gamma) (phi_candidate (UVal x)) c).
+Proof.
+  apply (SparseSound.sparse_sound phi_machine phi_problem phi_values
+    phi_value_sem phi_gamma 0 phi_candidate).
+  - exact nat_encoding_laws.
+  - exact nat_encoding_laws.
+  - exact nat_encoding_laws.
+  - exact phi_ssa_laws.
+  - exact phi_value_laws.
+  - exact phi_entry_ok.
+  - apply (proj1 (check_post_iff _ _ _) diamond_post_solution_checked).
+Qed.
+
+Example numeric_phi_ready_reachable : reachable_state phi_machine PhiReady.
+Proof.
+  exists PhiStart, []; split; [reflexivity|].
+  apply exec_one; constructor.
+Qed.
+
+Example numeric_phi_nonempty_operation_and_guard :
+  Ssa.def phi_ssa 1 = Op (App bvadd [Var 0; Var 1]) [0; 0] /\
+  Ssa.guards phi_ssa 0 = [(Equal phi_two, [1])] /\
+  ValueSem.eval phi_value_sem (App bvadd [Var 0; Var 1]) [phi_one; phi_one] =
+    Some phi_two /\
+  ValueSem.holds phi_value_sem (Equal phi_two) [phi_two].
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Example numeric_phi_satisfying_guard_witness :
+  step phi_machine PhiReady [] (PhiArm true) /\
+  Link.taken phi_link PhiReady [] (PhiArm true) 0 /\
+  guard_ops_consistent phi_ssa phi_values (ValueSem.eval phi_value_sem) PhiReady 0.
+Proof.
+  assert (Hbranch : step phi_machine PhiReady [] (PhiArm true)).
+  { apply PhiBranch; reflexivity. }
+  split; [exact Hbranch|split; [reflexivity|]].
+  eapply phi_guard_operation; [exact Hbranch|reflexivity].
+Qed.
+
+Example numeric_phi_join_reachable : reachable_state phi_machine PhiDone.
+Proof.
+  exists PhiStart, []; split; [reflexivity|].
+  eapply (exec_step PhiStart [] PhiReady [] PhiDone); [constructor|].
+  eapply (exec_step PhiReady [] (PhiArm true) [] PhiDone).
+  - apply PhiBranch; reflexivity.
+  - apply exec_one; constructor.
+Qed.
+
+Example numeric_phi_parameter_two_covered :
+  SsaLink.val phi_values PhiDone 2 = Some phi_two /\
+  gamma (lift_bot_gamma phi_gamma) (phi_candidate (UVal 2)) phi_two.
+Proof.
+  split; [reflexivity|].
+  apply (proj2 (proj2 numeric_phi_sound_client) PhiDone 2 phi_two
+    numeric_phi_join_reachable); reflexivity.
+Qed.
+
+Example numeric_phi_infeasible_arm_not_taken s l t :
+  reachable_state phi_machine s -> step phi_machine s l t ->
+  ~ Link.taken phi_link s l t 1.
+Proof.
+  intros Hreach Hstep Htaken.
+  pose proof (proj1 (proj2 numeric_phi_sound_client) s l t 1 Hreach Hstep Htaken)
+    as Hexec.
+  discriminate Hexec.
 Qed.
