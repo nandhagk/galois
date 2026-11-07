@@ -302,15 +302,26 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Definition numeric_prepared := Prepared.prepare nat_encoding (Cfg.graph ssa_cfg).
+Definition numeric_parents := Map.of_list positive_encoding [(2, 1); (3, 1)]%positive.
+Definition numeric_tree := DomCheck.of_parents numeric_prepared numeric_parents.
+Definition numeric_context := make_dom_context numeric_prepared numeric_tree.
+
+Example numeric_supplied_tree_checker_accepts :
+  DomCheck.check numeric_prepared numeric_parents = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example dominated_guard_chain :
-  flat_map (Ssa.guards equal_ssa) (dominating_edges_in equal_context 2) =
+  flat_map (Ssa.guards ssa_program) (dominating_edges_in numeric_context 1) =
     [(Equal (32%positive, 2%Z), [1])].
 Proof.
   vm_compute; reflexivity.
 Qed.
 
 Example dominated_guard_refines_the_use :
-  refined_fact equal_problem equal_context unknown_facts 2 1 = Some (number 2).
+  refined_fact problem numeric_context (fun _ => Some TAny) 1 1 = Some (number 2).
 Proof.
   vm_compute; reflexivity.
 Qed.
