@@ -153,6 +153,11 @@ Each assumption bounds ticks by `N.pos (Pos.size p)` for every code and computat
 The reference implementation does not supply `Map.cost_laws_hold`.
 Consumers that need numeric trie bounds must take the law record as a premise.
 
+Value, order and functional-spec fixtures stay unchanged when a fast backend replaces a reference.
+Exact tick fixtures record the current backend's cost observations.
+The owner coordinates cost-only expectation updates alongside each replacement and its proved bounds.
+These reference counts are not a frozen resource interface.
+
 Costed callback forms retain the callback's full charge and add a call-overhead tick.
 Pure wrappers lift their callbacks as one-tick primitives.
 For example, use `Index.group_by_c` with a costed key conversion when computing a key requires
@@ -256,6 +261,44 @@ It makes no logarithmic or amortized cost claim.
 The [heap fixtures](../../tests/Base/BaseHeapTest.v#L12) distinguish numeric tie order from
 enumeration order and check decreases, ignored increases, empty pop and insertion ticks.
 
+## Union-find forests
+
+[`UnionFind.t`](../../theories/Base/BaseUnionFind.v#L16) stores parent and rank maps and a
+global maximum rank.
+`wf E uf` requires both maps to satisfy `Map.wf E`.
+It also bounds every key's rank by `max_rank uf` and requires every parent link to increase rank
+strictly.
+Missing rank entries have rank zero.
+`find E x uf` returns a representative and the compressed forest.
+Its budget is `S (max_rank uf)`, which suffices under `wf`.
+<!-- Source: BaseUnionFind.v, rank_of_equation, wf and find_equation. -->
+
+`find_correct` connects find to parent paths and proves that compression keeps those paths'
+root observations.
+`find_root` proves that the returned representative has no parent in either forest.
+`find_equiv` proves representative membership and preservation of every equivalence class.
+`union E x y uf` compresses both argument paths and links their roots by rank.
+`union_equiv` specifies exactly the old classes and the two directions of the newly joined class.
+`wf_find` and `wf_union` require explicit encoding injectivity and maintain the forest invariant.
+`equivb` returns a boolean and the resulting compressed forest.
+
+Unknown keys are singleton classes.
+Finding an unknown key returns that key and the unchanged forest.
+Self-union registers a singleton.
+`keys` enumerates registered support in canonical map order.
+`keys_spec`, `keys_union` and `find_support` describe registration and support preservation.
+`of_unions` consumes pairs in input order, and `of_unions_equiv` identifies its classes with
+the reflexive symmetric transitive closure of those input pairs.
+
+The lower-level `find_fuel` returns its current key on exhaustion and compresses the traversed
+prefix to that key.
+An insufficient budget can therefore return a non-root.
+Use public `find` with `wf` for the root guarantee.
+The [forest fixtures](../../tests/Base/BaseUnionFindTest.v#L17) cover unknown keys,
+self-union, both rank directions, path compression, support order, exhaustion and exact reference costs.
+Reference accounting helpers are private.
+Public `find_cost` and `union_cost` are reserved for the later ranked implementation's bounds.
+
 ## Interning
 
 [`Intern.t`](../../theories/Base/BaseIntern.v#L15) stores a forward `Map K positive`,
@@ -279,6 +322,39 @@ The reference `size_c` counts the forward map through `Map.size_c`.
 `intern_list_spec` states that the resulting table contains exactly the input keys.
 The [interning fixtures](../../tests/Base/BaseInternTest.v#L12) check repeated keys,
 consecutive allocation, inverse lookup, absence, an empty inverse map and allocation ticks.
+
+## Interval sets
+
+[`IntervalSet.t`](../../theories/Base/BaseIntervalSet.v#L19) is a list of half-open integer ranges.
+A pair `(lo, hi)` contains exactly the integers `lo <= b < hi`.
+Its separate `wf` predicate requires every range to be nonempty and every earlier range's upper
+endpoint to be strictly below every later range's lower endpoint.
+Adjacent ranges must coalesce.
+Separated ranges have at least one absent integer.
+Equal or reversed singleton endpoints denote the empty set.
+
+`mem set b` tests an integer.
+`add range set` and `remove range set` insert or subtract a range.
+`union left right`, `inter left right` and `diff left right` have pointwise boolean membership laws
+under the two input invariants.
+Their `wf_*` laws maintain canonical ranges.
+`ext` constructively identifies canonical lists with the same integer membership.
+`elements` returns ranges in canonical order without enumerating each integer.
+
+`subset left right` decides integer-set inclusion.
+`covers set range` tests universal membership over the queried half-open range.
+`intersects set range` tests whether at least one queried integer is present.
+Every empty query range is covered and has no intersection, including reversed endpoints.
+The query specifications require the set's `wf`.
+
+All operations have `_c` forms.
+Membership charges each examined range until its first match.
+Union merges the sorted streams and coalesces adjacent or overlapping ranges.
+Difference retains charged work through its cut continuation.
+Intersection composes two differences.
+Numeric cost bounds are deferred to `BASE-INTERN`.
+The [interval fixtures](../../tests/Base/BaseIntervalSetTest.v#L1) include negative endpoints,
+adjacent union, gap coverage, split subtraction, reversed ranges and endpoint-only intersections.
 
 ## Memo tables
 
