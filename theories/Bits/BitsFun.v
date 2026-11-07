@@ -74,6 +74,19 @@ Definition wsdiv (w : width) (x y : Z) : Z :=
   | true, true => wudiv w (wneg w x) (wneg w y)
   end.
 
+(** Signed division selects unsigned division and negation from the normalized sign bits. *)
+Theorem wsdiv_value : forall w x y,
+  wsdiv w x y =
+    match msb w x, msb w y with
+    | false, false => wudiv w x y
+    | true, false => wneg w (wudiv w (wneg w x) y)
+    | false, true => wneg w (wudiv w x (wneg w y))
+    | true, true => wudiv w (wneg w x) (wneg w y)
+    end.
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
 (** Signed remainder has the sign of the dividend. *)
 Definition wsrem (w : width) (x y : Z) : Z :=
   match msb w x, msb w y with
@@ -82,6 +95,19 @@ Definition wsrem (w : width) (x y : Z) : Z :=
   | false, true => wurem w x (wneg w y)
   | true, true => wneg w (wurem w (wneg w x) (wneg w y))
   end.
+
+(** Signed remainder selects unsigned remainder and negation from the normalized sign bits. *)
+Theorem wsrem_value : forall w x y,
+  wsrem w x y =
+    match msb w x, msb w y with
+    | false, false => wurem w x y
+    | true, false => wneg w (wurem w (wneg w x) y)
+    | false, true => wurem w x (wneg w y)
+    | true, true => wneg w (wurem w (wneg w x) (wneg w y))
+    end.
+Proof.
+  intros w x y. reflexivity.
+Qed.
 
 (** Signed modulus has the sign of the divisor when the remainder is nonzero. *)
 Definition wsmod (w : width) (x y : Z) : Z :=
@@ -96,18 +122,60 @@ Definition wsmod (w : width) (x y : Z) : Z :=
   | _, true, true => wneg w u
   end.
 
+(** Signed modulus keeps a zero residue and adjusts nonzero residues using normalized signs. *)
+Theorem wsmod_value : forall w x y,
+  wsmod w x y =
+    let ax := if msb w x then wneg w x else wrap w x in
+    let ay := if msb w y then wneg w y else wrap w y in
+    let u := wurem w ax ay in
+    match u =? 0, msb w x, msb w y with
+    | true, _, _ => u
+    | _, false, false => u
+    | _, true, false => wadd w (wneg w u) y
+    | _, false, true => wadd w u y
+    | _, true, true => wneg w u
+    end.
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
 (** Left shift discards bits above the width and gives zero for large amounts. *)
 Definition wshl (w : width) (x y : Z) : Z :=
   if Zpos w <=? wrap w y then 0 else wrap w (wrap w x * 2 ^ wrap w y).
+
+(** Left shift tests the wrapped amount against the width before multiplying. *)
+Theorem wshl_value : forall w x y,
+  wshl w x y =
+    if Zpos w <=? wrap w y then 0 else wrap w (wrap w x * 2 ^ wrap w y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
 
 (** Logical right shift fills with zero and gives zero for large amounts. *)
 Definition wlshr (w : width) (x y : Z) : Z :=
   if Zpos w <=? wrap w y then 0 else wrap w x / 2 ^ wrap w y.
 
+(** Logical right shift tests the wrapped amount against the width before dividing. *)
+Theorem wlshr_value : forall w x y,
+  wlshr w x y =
+    if Zpos w <=? wrap w y then 0 else wrap w x / 2 ^ wrap w y.
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
 (** Arithmetic right shift fills with the sign bit. *)
 Definition washr (w : width) (x y : Z) : Z :=
   if Zpos w <=? wrap w y then (if msb w x then modulus w - 1 else 0)
   else wrap w (signed w x / 2 ^ wrap w y).
+
+(** Arithmetic right shift uses the normalized sign bit when the wrapped amount is large. *)
+Theorem washr_value : forall w x y,
+  washr w x y =
+    if Zpos w <=? wrap w y then (if msb w x then modulus w - 1 else 0)
+    else wrap w (signed w x / 2 ^ wrap w y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
 
 (** Left rotation reduces the shift amount modulo the width. *)
 Definition wrotl (w : width) (x y : Z) : Z :=
@@ -235,3 +303,27 @@ Definition wslt (w : width) (x y : Z) : bool := signed w x <? signed w y.
 
 (** Signed non-strict comparison compares the signed views. *)
 Definition wsle (w : width) (x y : Z) : bool := signed w x <=? signed w y.
+
+(** Unsigned strict comparison uses the normalized operands for arbitrary integers. *)
+Theorem wult_value : forall w x y, wult w x y = (wrap w x <? wrap w y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
+(** Unsigned non-strict comparison uses the normalized operands for arbitrary integers. *)
+Theorem wule_value : forall w x y, wule w x y = (wrap w x <=? wrap w y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
+(** Signed strict comparison uses the signed interpretations for arbitrary integers. *)
+Theorem wslt_value : forall w x y, wslt w x y = (signed w x <? signed w y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
+(** Signed non-strict comparison uses the signed interpretations for arbitrary integers. *)
+Theorem wsle_value : forall w x y, wsle w x y = (signed w x <=? signed w y).
+Proof.
+  intros w x y. reflexivity.
+Qed.

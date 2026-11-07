@@ -29,6 +29,17 @@ Proof.
   reflexivity.
 Qed.
 
+(** A symbolic client combines the signed and remainder equations without foreign unfolding. *)
+Example signed_mod_symbolic_client : forall w x,
+  signed w x =
+    if x mod modulus w <? half w
+    then x mod modulus w else x mod modulus w - modulus w.
+Proof.
+  intros w x.
+  rewrite signed_value, wrap_mod.
+  reflexivity.
+Qed.
+
 Example word_boundaries :
   wrap 8%positive (-1) = 255 /\
   wrap 8%positive 256 = 0 /\

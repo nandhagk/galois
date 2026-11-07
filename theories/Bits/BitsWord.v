@@ -17,6 +17,12 @@ Definition modulus (w : width) : Z := 2 ^ Zpos w.
 (** Wrapping keeps the low bits of an integer. *)
 Definition wrap (w : width) (z : Z) : Z := z mod modulus w.
 
+(** Wrapping is integer remainder modulo the word modulus for arbitrary integers. *)
+Theorem wrap_mod : forall w z, wrap w z = z mod modulus w.
+Proof.
+  intros w z. reflexivity.
+Qed.
+
 (** An unsigned word lies between zero and the modulus. *)
 Definition is_word (w : width) (z : Z) : Prop := 0 <= z < modulus w.
 
