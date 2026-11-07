@@ -17,6 +17,14 @@ Proof.
   vm_compute. auto.
 Qed.
 
+Example tnum_raw_equivalence_is_not_record_equality :
+  leb (tnum_lattice 4%positive) (Tnum 16 0) tnum_top = true /\
+  leb (tnum_lattice 4%positive) tnum_top (Tnum 16 0) = true /\
+  Tnum 16 0 <> tnum_top.
+Proof.
+  vm_compute. split; [reflexivity|]. split; [reflexivity|discriminate].
+Qed.
+
 Example tnum_conflicting_bit : ~ tnum_gamma 8%positive (Tnum 1 1) 0.
 Proof.
   vm_compute. intros [_ Hbad]. discriminate.
