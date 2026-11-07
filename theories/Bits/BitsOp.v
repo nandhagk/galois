@@ -371,6 +371,46 @@ Proof.
     intro Hresult; [inversion Hresult; reflexivity|discriminate].
 Qed.
 
+(** Successful same-width binary dispatch requires equal operand widths. *)
+Theorem eval_op_fun2_width : forall o f wa wb x y r,
+  word_fun2 o = Some f -> eval_op o [(wa, x); (wb, y)] = Some r -> wa = wb.
+Proof.
+  intros o f wa wb x y r Hfun Hresult.
+  apply eval_op_width in Hresult.
+  unfold word_fun2 in Hfun.
+  unfold result_width, Desc.result_width in Hresult.
+  destruct (Desc.run (op_desc o)); try discriminate.
+  cbn [map fst] in Hresult.
+  destruct (Pos.eqb wa wb) eqn:Hwidth; [now apply Pos.eqb_eq|discriminate].
+Qed.
+
+(** Successful comparison dispatch requires equal operand widths. *)
+Theorem eval_op_cmp_width : forall o f wa wb x y r,
+  word_cmp o = Some f -> eval_op o [(wa, x); (wb, y)] = Some r -> wa = wb.
+Proof.
+  intros o f wa wb x y r Hfun Hresult.
+  apply eval_op_width in Hresult.
+  unfold word_cmp in Hfun.
+  unfold result_width, Desc.result_width in Hresult.
+  destruct (Desc.run (op_desc o)); try discriminate.
+  cbn [map fst] in Hresult.
+  destruct (Pos.eqb wa wb) eqn:Hwidth; [now apply Pos.eqb_eq|discriminate].
+Qed.
+
+(** Successful selection requires a one-bit condition and equal branch widths. *)
+Theorem eval_op_ite_width : forall wc wa wb c x y r,
+  eval_op bvite [(wc, c); (wa, x); (wb, y)] = Some r ->
+  wc = 1%positive /\ wa = wb.
+Proof.
+  intros wc wa wb c x y r Hresult.
+  apply eval_op_width in Hresult.
+  change ((if Pos.eqb wc 1 && Pos.eqb wa wb then Some wa else None) =
+    Some (fst r)) in Hresult.
+  destruct (Pos.eqb wc 1 && Pos.eqb wa wb) eqn:Hwidth; [|discriminate].
+  apply andb_true_iff in Hwidth as [Hcondition Hbranches].
+  split; now apply Pos.eqb_eq.
+Qed.
+
 (** A successful width check implies the operator's arity. *)
 Theorem result_width_arity : forall o ws w,
   result_width o ws = Some w -> length ws = arity o.

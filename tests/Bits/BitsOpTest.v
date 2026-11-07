@@ -206,3 +206,78 @@ Example operator_conversion_ticks :
 Proof.
   vm_compute. repeat split.
 Qed.
+
+(** Binary width checks apply to arithmetic and shift amounts even for malformed integers. *)
+Example fun2_width_boundaries :
+  eval_op bvadd [(8%positive, -1); (8%positive, 257)] = Some (8%positive, 0) /\
+  eval_op bvadd [(8%positive, -1); (4%positive, 257)] = None /\
+  eval_op bvshl [(8%positive, 1); (8%positive, 1)] = Some (8%positive, 2) /\
+  eval_op bvshl [(8%positive, 1); (1%positive, 1)] = None /\
+  eval_op bvadd [(1%positive, -1); (1%positive, 3)] = Some (1%positive, 0).
+Proof.
+  vm_compute. repeat split.
+Qed.
+
+(** Comparisons reject unequal input widths even though their result width is one. *)
+Example cmp_width_boundaries :
+  eval_op bveq [(8%positive, -1); (8%positive, 255)] = Some (1%positive, 1) /\
+  eval_op bveq [(8%positive, -1); (4%positive, 255)] = None /\
+  eval_op bvult [(8%positive, 1); (8%positive, 2)] = Some (1%positive, 1) /\
+  eval_op bvult [(8%positive, 1); (4%positive, 2)] = None /\
+  eval_op bvslt [(8%positive, -1); (8%positive, 0)] = Some (1%positive, 1) /\
+  eval_op bvslt [(8%positive, -1); (1%positive, 0)] = None /\
+  eval_op bvult [(1%positive, 0); (1%positive, 1)] = Some (1%positive, 1).
+Proof.
+  vm_compute. repeat split.
+Qed.
+
+(** Selection checks both branch widths and the condition width before choosing a branch. *)
+Example ite_width_boundaries :
+  eval_op bvite [(1%positive, 3); (8%positive, -1); (8%positive, 257)] =
+    Some (8%positive, 255) /\
+  eval_op bvite [(1%positive, 2); (8%positive, -1); (8%positive, 257)] =
+    Some (8%positive, 1) /\
+  eval_op bvite [(1%positive, 1); (8%positive, 7); (4%positive, 7)] = None /\
+  eval_op bvite [(1%positive, 0); (8%positive, 7); (4%positive, 7)] = None /\
+  eval_op bvite [(2%positive, 1); (8%positive, 7); (8%positive, 7)] = None /\
+  eval_op bvite [(2%positive, 0); (8%positive, 7); (8%positive, 7)] = None /\
+  eval_op bvite [(2%positive, 1); (1%positive, 1); (1%positive, 0)] = None /\
+  eval_op bvite [(1%positive, -1); (1%positive, 3); (1%positive, 0)] =
+    Some (1%positive, 1).
+Proof.
+  vm_compute. repeat split.
+Qed.
+
+(** A symbolic binary client recovers its value formula after inverting operand widths. *)
+Example fun2_width_symbolic_client : forall o f wa wb x y r,
+  word_fun2 o = Some f -> eval_op o [(wa, x); (wb, y)] = Some r ->
+  r = (wa, f wa x y).
+Proof.
+  intros o f wa wb x y r Hfun Hresult.
+  pose proof (eval_op_fun2_width o f wa wb x y r Hfun Hresult) as Hwidth.
+  subst wb. rewrite (eval_op_fun2 o wa x y f Hfun) in Hresult.
+  congruence.
+Qed.
+
+(** A symbolic comparison client recovers its boolean word after inverting operand widths. *)
+Example cmp_width_symbolic_client : forall o f wa wb x y r,
+  word_cmp o = Some f -> eval_op o [(wa, x); (wb, y)] = Some r ->
+  r = (1%positive, if f wa x y then 1 else 0).
+Proof.
+  intros o f wa wb x y r Hfun Hresult.
+  pose proof (eval_op_cmp_width o f wa wb x y r Hfun Hresult) as Hwidth.
+  subst wb. rewrite (eval_op_cmp o wa x y f Hfun) in Hresult.
+  congruence.
+Qed.
+
+(** A symbolic selection client recovers its value formula after inverting all width checks. *)
+Example ite_width_symbolic_client : forall wc wa wb c x y r,
+  eval_op bvite [(wc, c); (wa, x); (wb, y)] = Some r ->
+  r = (wa, if wrap 1%positive c =? 1 then wrap wa x else wrap wa y).
+Proof.
+  intros wc wa wb c x y r Hresult.
+  destruct (eval_op_ite_width wc wa wb c x y r Hresult) as [Hcondition Hbranches].
+  subst wc wb. rewrite eval_op_ite in Hresult.
+  injection Hresult as Hvalue.
+  symmetry. exact Hvalue.
+Qed.
