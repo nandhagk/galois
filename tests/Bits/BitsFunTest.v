@@ -9,6 +9,32 @@ From Galois.Bits Require Import BitsWord BitsFun.
 
 Open Scope Z_scope.
 
+(** Arithmetic handles ordinary inputs, overflow, negative integers and above-modulus inputs. *)
+Example arithmetic_value_boundaries :
+  wadd 8%positive 2 3 = 5 /\ wadd 8%positive 255 1 = 0 /\
+  wadd 8%positive (-1) 258 = 1 /\
+  wsub 8%positive 5 3 = 2 /\ wsub 8%positive 0 1 = 255 /\
+  wsub 8%positive (-1) 258 = 253 /\
+  wmul 8%positive 2 3 = 6 /\ wmul 8%positive 128 2 = 0 /\
+  wmul 8%positive (-1) 258 = 254 /\
+  wneg 8%positive 1 = 255 /\ wneg 8%positive 128 = 128 /\
+  wneg 8%positive (-257) = 1 /\ wneg 8%positive 256 = 0 /\
+  wadd 1%positive 1 1 = 0 /\ wsub 1%positive 0 1 = 1 /\
+  wmul 1%positive 1 1 = 1 /\ wneg 1%positive 1 = 1.
+Proof.
+  vm_compute. repeat split.
+Qed.
+
+(** A symbolic arithmetic client uses the primitive value equations without unfolding. *)
+Example arithmetic_value_symbolic_client : forall w x y,
+  wadd w (wsub w x y) (wmul w (wneg w x) y) =
+    wrap w (wrap w (x - y) + wrap w (wrap w (- x) * y)).
+Proof.
+  intros w x y.
+  rewrite wadd_value, wsub_value, wmul_value, wneg_value.
+  reflexivity.
+Qed.
+
 Example operation_boundaries :
   wudiv 8%positive 7 0 = 255 /\
   wsdiv 8%positive 249 0 = 1 /\

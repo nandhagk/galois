@@ -24,6 +24,30 @@ Definition wsub (w : width) (x y : Z) : Z := wrap w (x - y).
 (** Multiplication reduces the integer product to the word range. *)
 Definition wmul (w : width) (x y : Z) : Z := wrap w (x * y).
 
+(** Negation wraps the integer additive inverse for arbitrary operands. *)
+Theorem wneg_value : forall w x, wneg w x = wrap w (- x).
+Proof.
+  intros w x. reflexivity.
+Qed.
+
+(** Addition wraps the integer sum for arbitrary operands. *)
+Theorem wadd_value : forall w x y, wadd w x y = wrap w (x + y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
+(** Subtraction wraps the integer difference for arbitrary operands. *)
+Theorem wsub_value : forall w x y, wsub w x y = wrap w (x - y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
+(** Multiplication wraps the integer product for arbitrary operands. *)
+Theorem wmul_value : forall w x y, wmul w x y = wrap w (x * y).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
 (** Conjunction acts on the wrapped operands. *)
 Definition wand (w : width) (x y : Z) : Z := Z.land (wrap w x) (wrap w y).
 

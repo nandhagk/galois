@@ -33,6 +33,13 @@ Definition msb (w : width) (z : Z) : bool := Z.testbit (wrap w z) (Zpos w - 1).
 Definition signed (w : width) (z : Z) : Z :=
   let z' := wrap w z in if z' <? half w then z' else z' - modulus w.
 
+(** Signed interpretation chooses its branch after normalizing an arbitrary integer. *)
+Theorem signed_value : forall w x,
+  signed w x = if wrap w x <? half w then wrap w x else wrap w x - modulus w.
+Proof.
+  intros w x. reflexivity.
+Qed.
+
 (** Every word modulus is positive. *)
 Theorem modulus_pos : forall w, 0 < modulus w.
 Proof.
