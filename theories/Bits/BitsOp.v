@@ -692,6 +692,20 @@ Proof.
   destruct (Pos.leb target w); reflexivity.
 Qed.
 
+(** Extraction rejects invalid slices and reads the normalized input at the slice offset. *)
+Theorem eval_op_extract : forall hi lo w x,
+  eval_op (bvextract hi lo) [(w, x)] =
+    if (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w))%bool then
+      Some (Pos.of_nat (S (hi - lo)),
+        wrap (Pos.of_nat (S (hi - lo))) (wrap w x / 2 ^ Z.of_nat lo))
+    else None.
+Proof.
+  intros hi lo w x. unfold eval_op.
+  cbn [result_width op_desc resize Desc.result_width Desc.run
+    op_value Desc.value map normalize_word fst snd].
+  destruct (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w))%bool; reflexivity.
+Qed.
+
 (** Concatenation normalizes both inputs before joining their high and low bits. *)
 Theorem eval_op_concat : forall wa wb x y,
   eval_op bvconcat [(wa, x); (wb, y)] =

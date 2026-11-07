@@ -5,15 +5,19 @@
     Builds on: new and legacy known-bit multiplication and signed-half reduction. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Galois.Bits Require Import BitsWord.
+From Galois.Bits Require Import BitsWord BitsOp.
 From Galois.Domains Require Import DomainsTnum DomainsTnumArith DomainsTnumMul
+  DomainsSignedBounds DomainsNumeric DomainsKnownBits.
+From GaloisLegacy.Bits Require BitsOp.
+From GaloisLegacy.Domains Require DomainsNumeric DomainsKnownBits DomainsKnownBitsFast
   DomainsSignedBounds.
-From GaloisLegacy.Domains Require DomainsKnownBits DomainsKnownBitsFast DomainsSignedBounds.
 Import List.ListNotations.
 
 Module OldBits := GaloisLegacy.Domains.DomainsKnownBits.
 Module OldMul := GaloisLegacy.Domains.DomainsKnownBitsFast.
 Module OldBounds := GaloisLegacy.Domains.DomainsSignedBounds.
+Module OldNumeric := GaloisLegacy.Domains.DomainsNumeric.
+Module OldOp := GaloisLegacy.Bits.BitsOp.
 
 Local Open Scope Z_scope.
 
@@ -67,6 +71,85 @@ Definition legacy_reduction_comparison (w : width) : bool :=
 
 Example legacy_reduction_widths_one_four_eight :
   forallb legacy_reduction_comparison [1%positive; 4%positive; 8%positive] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Fixpoint legacy_payloads_agree (xs : list tnum) (ys : list OldBits.tnum) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x :: xs, y :: ys => legacy_tnum_agrees x y && legacy_payloads_agree xs ys
+  | _, _ => false
+  end.
+
+Definition legacy_test_operators : list op :=
+  [bvnot; bvneg; bvclz; bvctz; bvpopcnt; bvadd; bvsub; bvmul; bvudiv; bvurem;
+   bvsdiv; bvsrem; bvsmod; bvand; bvor; bvxor; bvshl; bvlshr; bvashr; bvrotl; bvrotr;
+   bveq; bvne; bvult; bvule; bvslt; bvsle; bvite; bvzext 1%positive; bvsext 1%positive;
+   bvtrunc 1%positive; bvextract 0 0; bvconcat].
+
+Definition legacy_operator (o : op) : OldOp.op :=
+  match o with
+  | bvnot => OldOp.bvnot
+  | bvneg => OldOp.bvneg
+  | bvclz => OldOp.bvclz
+  | bvctz => OldOp.bvctz
+  | bvpopcnt => OldOp.bvpopcnt
+  | bvadd => OldOp.bvadd
+  | bvsub => OldOp.bvsub
+  | bvmul => OldOp.bvmul
+  | bvudiv => OldOp.bvudiv
+  | bvurem => OldOp.bvurem
+  | bvsdiv => OldOp.bvsdiv
+  | bvsrem => OldOp.bvsrem
+  | bvsmod => OldOp.bvsmod
+  | bvand => OldOp.bvand
+  | bvor => OldOp.bvor
+  | bvxor => OldOp.bvxor
+  | bvshl => OldOp.bvshl
+  | bvlshr => OldOp.bvlshr
+  | bvashr => OldOp.bvashr
+  | bvrotl => OldOp.bvrotl
+  | bvrotr => OldOp.bvrotr
+  | bveq => OldOp.bveq
+  | bvne => OldOp.bvne
+  | bvult => OldOp.bvult
+  | bvule => OldOp.bvule
+  | bvslt => OldOp.bvslt
+  | bvsle => OldOp.bvsle
+  | bvite => OldOp.bvite
+  | bvzext n => OldOp.bvzext n
+  | bvsext n => OldOp.bvsext n
+  | bvtrunc n => OldOp.bvtrunc n
+  | bvextract hi lo => OldOp.bvextract hi lo
+  | bvconcat => OldOp.bvconcat
+  end.
+
+Definition legacy_operator_comparison (w : width) (o : op) (a b : tnum) : bool :=
+  let xs :=
+    match arity o with
+    | 1%nat => [(w, a)]
+    | 2%nat => [(w, a); (w, b)]
+    | _ => [(1%positive, a); (w, a); (w, b)]
+    end in
+  let rw := match result_width o (map fst xs) with Some r => r | None => w end in
+  let oldxs := map (fun wp => (fst wp, legacy_tnum (snd wp))) xs in
+  let oldop := legacy_operator o in
+  legacy_tnum_agrees (pforward known_bits_classic_domain o xs rw)
+    (OldNumeric.pforward OldBits.known_bits_domain oldop oldxs rw) &&
+  legacy_tnum_agrees (pforward known_bits_domain o xs rw)
+    (OldNumeric.pforward OldMul.known_bits_precise_domain oldop oldxs rw) &&
+  legacy_payloads_agree (passume known_bits_classic_domain o xs rw a)
+    (OldNumeric.passume OldBits.known_bits_domain oldop oldxs rw (legacy_tnum a)) &&
+  legacy_payloads_agree (passume known_bits_domain o xs rw a)
+    (OldNumeric.passume OldMul.known_bits_precise_domain oldop oldxs rw (legacy_tnum a)).
+
+Definition legacy_all_operators_comparison (w : width) : bool :=
+  forallb (fun o => forallb (fun a => forallb (legacy_operator_comparison w o a)
+    (legacy_mul_fixtures w)) (legacy_mul_fixtures w)) legacy_test_operators.
+
+Example legacy_full_known_bits_widths_one_four_eight :
+  forallb legacy_all_operators_comparison [1%positive; 4%positive; 8%positive] = true.
 Proof.
   vm_compute. reflexivity.
 Qed.

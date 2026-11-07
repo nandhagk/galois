@@ -186,6 +186,13 @@ Definition wrotl (w : width) (x y : Z) : Z :=
 Definition wrotr (w : width) (x y : Z) : Z :=
   wrotl w x (Zpos w - wrap w y mod Zpos w).
 
+(** Right rotation uses the complementary normalized left-rotation amount. *)
+Theorem wrotr_value : forall w x y,
+  wrotr w x y = wrotl w x (Zpos w - wrap w y mod Zpos w).
+Proof.
+  intros w x y. reflexivity.
+Qed.
+
 (** Leading-zero count returns the width on zero. *)
 Definition wclz (w : width) (x : Z) : Z :=
   if wrap w x =? 0 then Zpos w else Zpos w - 1 - Z.log2 (wrap w x).

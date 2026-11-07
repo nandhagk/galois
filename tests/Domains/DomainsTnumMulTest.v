@@ -130,3 +130,22 @@ Example multiplier_early_stop_cost :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example multiplier_legacy_stages_carry_and_known_bits :
+  tnum_mul_stages 8%positive (tnum_const 8%positive 3) (Tnum 252 1) = Tnum 244 1 /\
+  tnum_mul_stages 8%positive (tnum_const 8%positive 7) (Tnum 252 1) = Tnum 232 5 /\
+  tnum_mul_stages 8%positive (Tnum 252 1) (tnum_const 8%positive 2) = Tnum 249 2 /\
+  tnum_mul_stages 8%positive (tnum_const 8%positive 128) (Tnum 252 1) = Tnum 127 128 /\
+  tnum_mul_stages 8%positive (tnum_const 8%positive 200) (tnum_const 8%positive 3) =
+    Tnum 167 88.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Example multiplier_legacy_normalized_masks :
+  tnum_mul_stages 8%positive (tnum_const 8%positive 4) (Tnum (-2) 256) = Tnum 251 0 /\
+  tnum_mul_stages 8%positive (Tnum 256 256) (tnum_const 8%positive 0) = Tnum 255 0 /\
+  tnum_mul_stages 8%positive (Tnum 1 1) (tnum_const 8%positive 0) = Tnum 255 255.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
