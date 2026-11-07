@@ -252,6 +252,7 @@ Qed.
 
 (** Stage count reads the processed-bit index of the actual costed driver. *)
 Definition tnum_mul_stage_count (w : width) (a b : tnum) : Z :=
+  if tnum_empty w a || tnum_empty w b then 0 else
   match Cost.value (iterate (tnum_mul_step_c w a b) w (0, tnum_const w 0)) with
   | inl s => fst s
   | inr _ => 0
@@ -261,6 +262,7 @@ Definition tnum_mul_stage_count (w : width) (a b : tnum) : Z :=
 Theorem tnum_mul_stage_bound : forall w a b, 0 <= tnum_mul_stage_count w a b <= Zpos w.
 Proof.
   intros w a b. unfold tnum_mul_stage_count.
+  destruct (tnum_empty w a || tnum_empty w b); [lia|].
   pose proof (iterate_value (tnum_mul_step_c w a b) w (0, tnum_const w 0)) as Hrun.
   pose proof (tnum_mul_runs_index w a b _ _ _ Hrun) as Hindex.
   destruct (Cost.value (iterate (tnum_mul_step_c w a b) w (0, tnum_const w 0)))

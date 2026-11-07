@@ -7,15 +7,17 @@
 From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import BitsWord BitsOp.
 From Galois.Domains Require Import DomainsTnum DomainsTnumArith DomainsTnumMul
-  DomainsSignedBounds DomainsNumeric DomainsKnownBits.
+  DomainsSignedBounds DomainsNumeric DomainsKnownBits DomainsSignedBoundsRange
+  DomainsSignedBoundsDomain.
 From GaloisLegacy.Bits Require BitsOp.
 From GaloisLegacy.Domains Require DomainsNumeric DomainsKnownBits DomainsKnownBitsFast
-  DomainsSignedBounds.
+  DomainsSignedBounds DomainsSignedBoundsDomain.
 Import List.ListNotations.
 
 Module OldBits := GaloisLegacy.Domains.DomainsKnownBits.
 Module OldMul := GaloisLegacy.Domains.DomainsKnownBitsFast.
 Module OldBounds := GaloisLegacy.Domains.DomainsSignedBounds.
+Module OldSB := GaloisLegacy.Domains.DomainsSignedBoundsDomain.
 Module OldNumeric := GaloisLegacy.Domains.DomainsNumeric.
 Module OldOp := GaloisLegacy.Bits.BitsOp.
 
@@ -150,6 +152,99 @@ Definition legacy_all_operators_comparison (w : width) : bool :=
 
 Example legacy_full_known_bits_widths_one_four_eight :
   forallb legacy_all_operators_comparison [1%positive; 4%positive; 8%positive] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition legacy_signed (a : signed_bounds) : OldBounds.signed_bounds :=
+  OldBounds.SignedBounds (legacy_half (sb_zero a)) (legacy_half (sb_one a)).
+
+Definition legacy_signed_agrees (a : signed_bounds) (b : OldBounds.signed_bounds) : bool :=
+  legacy_half_agrees (sb_zero a) (OldBounds.sb_zero b) &&
+    legacy_half_agrees (sb_one a) (OldBounds.sb_one b).
+
+Fixpoint legacy_signed_list_agrees (xs : list signed_bounds)
+    (ys : list OldBounds.signed_bounds) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x :: xs, y :: ys => legacy_signed_agrees x y && legacy_signed_list_agrees xs ys
+  | _, _ => false
+  end.
+
+Definition legacy_signed_fixtures (w : width) : list signed_bounds :=
+  [signed_bounds_top w; pconst signed_bounds_domain w 0; pconst signed_bounds_domain w 1;
+   pconst signed_bounds_domain w (-1); sb_lift w tnum_top 0 3;
+   sb_lift w (Tnum 1 0) 0 (modulus w - 1);
+   SignedBounds (SBRange (Tnum 1 1) 0 7) SBEmpty].
+
+Definition legacy_signed_operator_comparison (w : width) (o : op)
+    (a b : signed_bounds) : bool :=
+  let xs :=
+    match arity o with
+    | 1%nat => [(w, a)]
+    | 2%nat => [(w, a); (w, b)]
+    | _ => [(1%positive, a); (w, a); (w, b)]
+    end in
+  let rw := match result_width o (map fst xs) with Some r => r | None => w end in
+  let oldxs := map (fun wp => (fst wp, legacy_signed (snd wp))) xs in
+  let oldop := legacy_operator o in
+  legacy_signed_agrees (pforward signed_bounds_classic_domain o xs rw)
+    (OldNumeric.pforward OldSB.signed_bounds_classic_domain oldop oldxs rw) &&
+  legacy_signed_agrees (pforward signed_bounds_domain o xs rw)
+    (OldNumeric.pforward OldSB.signed_bounds_domain oldop oldxs rw) &&
+  legacy_signed_list_agrees (passume signed_bounds_classic_domain o xs rw a)
+    (OldNumeric.passume OldSB.signed_bounds_classic_domain oldop oldxs rw (legacy_signed a)) &&
+  legacy_signed_list_agrees (passume signed_bounds_domain o xs rw a)
+    (OldNumeric.passume OldSB.signed_bounds_domain oldop oldxs rw (legacy_signed a)).
+
+Definition legacy_signed_first_difference (w : width)
+    : option (op * signed_bounds * signed_bounds) :=
+  find (fun c => let '(o, a, b) := c in
+    negb (legacy_signed_operator_comparison w o a b))
+    (flat_map (fun o => flat_map (fun a => map (fun b => (o, a, b))
+      (legacy_signed_fixtures w)) (legacy_signed_fixtures w)) legacy_test_operators).
+
+Example legacy_signed_zero_remainder_control :
+  let w := 1%positive in
+  let a := pconst signed_bounds_domain w 1 in
+  let b := pconst signed_bounds_domain w 0 in
+  let xs := [(w, a); (w, b)] in
+  let oldxs := [(w, legacy_signed a); (w, legacy_signed b)] in
+  (legacy_signed_agrees (pforward signed_bounds_classic_domain bvsrem xs w)
+    (OldNumeric.pforward OldSB.signed_bounds_classic_domain OldOp.bvsrem oldxs w),
+   legacy_signed_list_agrees (passume signed_bounds_classic_domain bvsrem xs w a)
+    (OldNumeric.passume OldSB.signed_bounds_classic_domain OldOp.bvsrem oldxs w
+      (legacy_signed a))) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example legacy_signed_width_one : legacy_signed_first_difference 1%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example legacy_signed_multiplication_control :
+  let w := 4%positive in
+  let a := pconst signed_bounds_domain w (-1) in
+  let b := signed_bounds_top w in
+  let xs := [(w, a); (w, b)] in
+  let oldxs := [(w, legacy_signed a); (w, legacy_signed b)] in
+  (legacy_signed_agrees (pforward signed_bounds_classic_domain bvmul xs w)
+    (OldNumeric.pforward OldSB.signed_bounds_classic_domain OldOp.bvmul oldxs w),
+   legacy_signed_list_agrees (passume signed_bounds_classic_domain bvmul xs w a)
+    (OldNumeric.passume OldSB.signed_bounds_classic_domain OldOp.bvmul oldxs w
+      (legacy_signed a))) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example legacy_signed_width_four : legacy_signed_first_difference 4%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example legacy_signed_width_eight : legacy_signed_first_difference 8%positive = None.
 Proof.
   vm_compute. reflexivity.
 Qed.

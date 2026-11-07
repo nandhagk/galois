@@ -41,7 +41,7 @@ Definition tnum_backward_raw_c (o : op) (wps : list (width * tnum))
   | bvconcat, [(w, _); (v, _)] =>
     Cost.ret [tnum_project w rw (fun m => Z.shiftr m (Zpos v)) q;
       tnum_project v rw (fun m => m) q]
-  | _, _ => map_c (fun wp => Cost.ret (snd wp)) wps
+  | _, _ => map_c (fun wp => Cost.step ;; Cost.ret (snd wp)) wps
   end.
 
 Definition tnum_backward_raw (o : op) (wps : list (width * tnum))

@@ -8,7 +8,7 @@ From Stdlib Require Import ZArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
 From Galois.Domains Require Import DomainsTnum DomainsSignedBounds DomainsSignedOrder
-  DomainsSignedWiden DomainsSignedBoundsDomain.
+  DomainsSignedWiden DomainsSignedBoundsRange DomainsSignedBoundsDomain DomainsSignedBoundsCost.
 
 Local Open Scope Z_scope.
 
@@ -161,4 +161,13 @@ Example signed_threshold_unsorted :
     SignedBounds (SBRange (Tnum 14 0) 0 5) SBEmpty.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Example signed_cost_bound_clients :
+  (Cost.ticks (signed_bounds_reduce_c 4%positive
+    (SignedBounds (SBRange tnum_top 1 6) SBEmpty)) <= 64)%N /\
+  Cost.ticks (sb_widen_with_c WidenDouble 4%positive
+    (signed_bounds_top 4%positive) (signed_bounds_top 4%positive)) = 1%N.
+Proof.
+  vm_compute. intuition discriminate.
 Qed.

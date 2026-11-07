@@ -53,7 +53,7 @@ Definition known_bits_table (opts : known_bits_options)
        (if Nat.eqb n (arity o) then Some (tnum_assume_entry_c o) else None) |}.
 
 (** Singleton recognition is deliberately disabled to preserve the legacy count/division precision.
-    Empty tests, generated-arity dispatch and all backward traversal still use the shared harness. *)
+    Empty tests, arity dispatch and backward traversal still use the shared harness. *)
 Definition known_bits_shape : Transfer.shape (width * tnum) tnum op width word :=
   {| Transfer.eval_c := known_bits_eval_c;
      Transfer.point_c := fun _ => Cost.ret None;
@@ -151,14 +151,14 @@ Proof.
 Qed.
 
 (** The shared word harness supplies empty handling, arity dispatch and reductive backward calls. *)
-Definition known_bits_word_domain (opts : known_bits_options) : word_domain tnum :=
+Definition known_bits_word_builder (opts : known_bits_options) : word_domain tnum :=
   word_of_table (known_bits_table opts) known_bits_shape tnum_lattice (fun _ => tnum_top)
     (fun w z => Cost.step ;; Cost.ret (tnum_const w z))
     (fun w a b => Cost.step ;; Cost.ret (tnum_meet w a b)).
 
 (** Every selected known-bit word dictionary satisfies total soundness and structural refinement. *)
-Theorem known_bits_word_laws : forall opts,
-  word_laws (known_bits_word_domain opts) tnum_gamma.
+Theorem known_bits_word_builder_laws : forall opts,
+  word_laws (known_bits_word_builder opts) tnum_gamma.
 Proof.
   intro opts. apply word_of_table_laws.
   - intros. apply known_bits_eval_equation.
@@ -172,6 +172,68 @@ Proof.
   - apply known_bits_table_refines.
   - apply tnum_meet_sound.
   - apply tnum_meet_lower_left.
+Qed.
+
+(** Nullary malformed calls retain legacy top and every nonempty call uses the shared builder. *)
+Definition known_bits_word_domain (opts : known_bits_options) : word_domain tnum :=
+  let base := known_bits_word_builder opts in
+  {| plat := plat base;
+     ptop := ptop base;
+     pconst_c := pconst_c base;
+     pforward_c := fun o xs rw =>
+       match xs with
+       | [] => Cost.step ;; Cost.ret tnum_top
+       | _ :: _ => pforward_c base o xs rw
+       end;
+     passume_c := passume_c base;
+     pmeet_c := pmeet_c base |}.
+
+(** The compatibility branch cannot hide a concrete result because Bits has no nullary operator. *)
+Theorem known_bits_word_laws : forall opts,
+  word_laws (known_bits_word_domain opts) tnum_gamma.
+Proof.
+  intro opts. pose proof (known_bits_word_builder_laws opts) as Hbase. constructor.
+  - exact (plat_laws Hbase).
+  - exact (pgamma_monotone Hbase).
+  - exact (pgamma_bot_empty Hbase).
+  - exact (ptop_sound Hbase).
+  - exact (pconst_sound Hbase).
+  - intros o xs cs rw z Hpayload Heval. destruct xs as [|x xs].
+    + inversion Hpayload; subst cs.
+      pose proof (eval_op_arity o [] (rw, z) Heval) as Harity. destruct o; discriminate Harity.
+    + exact (pforward_sound Hbase o (x :: xs) cs rw z Hpayload Heval).
+  - exact (passume_sound Hbase).
+  - exact (passume_refines Hbase).
+  - exact (pmeet_sound Hbase).
+  - exact (pmeet_lower_left Hbase).
+Qed.
+
+(** The approved malformed nullary boundary preserves the legacy unrestricted fact. *)
+Theorem known_bits_nullary : forall opts o rw,
+  pforward (known_bits_word_domain opts) o [] rw = tnum_top.
+Proof.
+  reflexivity.
+Qed.
+
+(** Nonempty calls delegate unchanged, including their complete callee charges. *)
+Theorem known_bits_nonempty_delegation : forall opts o x xs rw,
+  pforward_c (known_bits_word_domain opts) o (x :: xs) rw =
+    pforward_c (known_bits_word_builder opts) o (x :: xs) rw.
+Proof.
+  reflexivity.
+Qed.
+
+(** Multiplier selection leaves every other forward callback and its charge unchanged. *)
+Theorem known_bits_nonmultiplication_agrees : forall opts opts' o, o <> bvmul ->
+  pforward_c (known_bits_word_domain opts) o =
+    pforward_c (known_bits_word_domain opts') o.
+Proof.
+  intros opts opts' o Hother.
+  assert (Hentry : Transfer.fwd (known_bits_table opts) o =
+    Transfer.fwd (known_bits_table opts') o).
+  { destruct o; try reflexivity. contradiction. }
+  unfold known_bits_word_domain, known_bits_word_builder, word_of_table.
+  cbn [pforward_c]. unfold Transfer.forward_c, Transfer.dispatch_c. now rewrite Hentry.
 Qed.
 
 Definition known_bits_domain : word_domain tnum :=

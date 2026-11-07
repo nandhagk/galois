@@ -4,7 +4,7 @@
     For example, singleton count operands intentionally retain the legacy count bound.
     Builds on: DomainsKnownBits and DomainsTagged. *)
 
-From Stdlib Require Import ZArith List Bool.
+From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Bits Require Import BitsWord BitsFun BitsOp.
 From Galois.Domains Require Import DomainsNumeric DomainsTagged DomainsTnum DomainsTnumArith
@@ -269,8 +269,36 @@ Qed.
 
 Example kb_extract_bridge_boundaries :
   eval_op (bvextract 5 2) [(8%positive, 260)] = Some (4%positive, 1) /\
+  eval_op (bvextract 5 2) [(8%positive, -1)] = Some (4%positive, 15) /\
+  eval_op (bvextract 0 0) [(1%positive, -1)] = Some (1%positive, 1) /\
   eval_op (bvextract 8 0) [(8%positive, 1)] = None /\
   eval_op (bvextract 0 1) [(8%positive, 1)] = None.
+Proof.
+  vm_compute. auto.
+Qed.
+
+(** Extraction's arbitrary-integer client normalizes the source before division by the offset. *)
+Example kb_extract_symbolic_client : forall w x,
+  (6 <= Pos.to_nat w)%nat ->
+  eval_op (bvextract 5 2) [(w, x)] =
+    Some (4%positive, wrap 4%positive (wrap w x / 4)).
+Proof.
+  intros w x Hwidth. rewrite eval_op_extract.
+  assert (Hslice : (2 <=? 5)%nat && (5 <? Pos.to_nat w)%nat = true).
+  { apply andb_true_iff. split; [reflexivity|]. apply Nat.ltb_lt. lia. }
+  rewrite Hslice. reflexivity.
+Qed.
+
+(** The right-rotation equation applies to arbitrary raw integers. *)
+Example kb_rotr_symbolic_client : forall w x y,
+  wrotr w x y = wrotl w x (Zpos w - wrap w y mod Zpos w).
+Proof.
+  apply wrotr_value.
+Qed.
+
+Example kb_rotr_negative_raw_inputs :
+  wrotr 5%positive (-31) (-28) = 2 /\
+  wrotr 1%positive (-1) (-1) = 1.
 Proof.
   vm_compute. auto.
 Qed.
@@ -287,6 +315,22 @@ Qed.
 Example kb_precise_preserves_invalid_arity :
   pforward known_bits_precise_domain bvmul [(8%positive, tnum_top)] 8%positive =
   pforward known_bits_classic_domain bvmul [(8%positive, tnum_top)] 8%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example kb_nullary_legacy_choices :
+  pforward known_bits_classic_domain bvadd [] 8%positive = tnum_top /\
+  pforward known_bits_domain bvmul [] 4%positive = tnum_top.
+Proof.
+  vm_compute. auto.
+Qed.
+
+Example kb_nonempty_builder_charge_control :
+  pforward_c (known_bits_word_domain known_bits_default_options) bvadd
+    [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive =
+  pforward_c (known_bits_word_builder known_bits_default_options) bvadd
+    [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive.
 Proof.
   vm_compute. reflexivity.
 Qed.

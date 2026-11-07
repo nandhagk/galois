@@ -8,7 +8,7 @@ From Stdlib Require Import ZArith List Bool.
 From Galois.Cost Require Import CostMonad.
 From Galois.Lattice Require Import LatticeCore.
 From Galois.Bits Require Import BitsWord BitsFun.
-From Galois.Domains Require Import DomainsTnum DomainsTnumMul.
+From Galois.Domains Require Import DomainsTnum DomainsTnumMul DomainsTnumCost.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.
@@ -120,9 +120,10 @@ Proof.
 Qed.
 
 Example multiplier_stage_count :
-  tnum_mul_stage_count 8%positive tnum_top tnum_top = 8.
+  tnum_mul_stage_count 8%positive tnum_top tnum_top = 8 /\
+  tnum_mul_stage_count 8%positive (Tnum 1 1) tnum_top = 0.
 Proof.
-  vm_compute. reflexivity.
+  vm_compute. auto.
 Qed.
 
 Example multiplier_early_stop_cost :
@@ -148,4 +149,29 @@ Example multiplier_legacy_normalized_masks :
   tnum_mul_stages 8%positive (Tnum 1 1) (tnum_const 8%positive 0) = Tnum 255 255.
 Proof.
   vm_compute. repeat split; reflexivity.
+Qed.
+
+Example multiplier_legacy_low_rules :
+  tnum_mul 8%positive (tnum_const 8%positive 3) (tnum_const 8%positive 7) = Tnum 234 21 /\
+  tnum_mul 8%positive (Tnum 3 0) (Tnum 1 0) = Tnum 7 0.
+Proof.
+  vm_compute. auto.
+Qed.
+
+Example multiplier_legacy_remaining_stages :
+  tnum_mul_stages 8%positive tnum_top (tnum_const 8%positive 0) = Tnum 255 0 /\
+  tnum_mul_stages 8%positive tnum_top (Tnum 128 128) = Tnum 255 255 /\
+  tnum_mul 8%positive (tnum_const 8%positive 4) (Tnum 254 0) = Tnum 3 0 /\
+  tnum_mul_stages 8%positive (tnum_const 8%positive 4) (Tnum 254 0) = Tnum 251 0 /\
+  leb (tnum_lattice 8%positive) (Tnum 251 0) (Tnum 3 0) = true /\
+  leb (tnum_lattice 8%positive) (Tnum 3 0) (Tnum 251 0) = false.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Example multiplier_cost_bound_clients :
+  (Cost.ticks (tnum_mul_with_c MulBoth 8%positive tnum_top tnum_top) <= 48)%N /\
+  (Cost.ticks (tnum_mul_stages_c 8%positive tnum_top tnum_top) <= 24)%N.
+Proof.
+  vm_compute. intuition discriminate.
 Qed.
