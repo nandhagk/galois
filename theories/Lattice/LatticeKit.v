@@ -104,7 +104,7 @@ Proof.
 Qed.
 
 (** Summed component heights grow whenever a join grows in some slot. *)
-Definition slots2_height {inv1 inv2} (H1 : lattice_laws L1) (H2 : lattice_laws L2)
+Theorem slots2_height {inv1 inv2} (H1 : lattice_laws L1) (H2 : lattice_laws L2)
     (C1 : closed_on L1 inv1) (C2 : closed_on L2 inv2)
     (R1 : height_on L1 inv1) (R2 : height_on L2 inv2) :
     height_on L (fun x => inv1 (p1 x) /\ inv2 (p2 x)).
@@ -133,7 +133,7 @@ Proof.
 Defined.
 
 (** Summed component widening credits decrease in every escaping slot. *)
-Definition slots2_wrank {inv1 inv2}
+Theorem slots2_wrank {inv1 inv2}
     (W1 : widening_rank_on L1 inv1) (W2 : widening_rank_on L2 inv2) :
     widening_rank_on L (fun x => inv1 (p1 x) /\ inv2 (p2 x)).
 Proof.

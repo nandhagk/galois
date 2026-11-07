@@ -56,7 +56,7 @@ Proof.
 Qed.
 
 (** Complementing height gives widening credits when widening equals join. *)
-Definition height_wrank {A} (L : lattice A) {inv}
+Theorem height_wrank {A} (L : lattice A) {inv}
     (Hlaws : lattice_laws L) (_Hlub : lub_laws L) (Hclosed : closed_on L inv)
     (Hw : forall a b, widen L a b = join L a b) (H : height_on L inv) :
     widening_rank_on L inv.

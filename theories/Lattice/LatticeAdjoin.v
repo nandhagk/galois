@@ -181,7 +181,7 @@ Proof.
 Qed.
 
 (** Reached heights add one above the fresh bottom's zero rank. *)
-Definition lift_bot_height {inv} (H : lattice_laws L) (R : height_on L inv) :
+Theorem lift_bot_height {inv} (H : lattice_laws L) (R : height_on L inv) :
     height_on (lift_bot L) (lift_bot_inv inv).
 Proof.
   refine {| rank := fun x =>
@@ -204,7 +204,7 @@ Proof.
 Defined.
 
 (** The fresh bottom receives one credit above the component widening bound. *)
-Definition lift_bot_wrank {inv} (W : widening_rank_on L inv) :
+Theorem lift_bot_wrank {inv} (W : widening_rank_on L inv) :
     widening_rank_on (lift_bot L) (lift_bot_inv inv).
 Proof.
   refine {| wrank := fun x =>

@@ -160,7 +160,7 @@ Proof.
 Qed.
 
 (** Invariant-relative height becomes total subtype height. *)
-Definition sub_height (H : height_on L inv) : height (sub_lattice L inv C).
+Theorem sub_height (H : height_on L inv) : height (sub_lattice L inv C).
 Proof.
   refine {| rank := fun a => rank H (proj1_sig a);
             bound := bound H |}.
@@ -172,7 +172,7 @@ Proof.
 Defined.
 
 (** Invariant-relative widening credits become total subtype widening credits. *)
-Definition sub_wrank (W : widening_rank_on L inv) : widening_rank (sub_lattice L inv C).
+Theorem sub_wrank (W : widening_rank_on L inv) : widening_rank (sub_lattice L inv C).
 Proof.
   refine {| wrank := fun a => wrank W (proj1_sig a);
             wbound := wbound W |}.

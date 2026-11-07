@@ -156,7 +156,7 @@ Proof.
 Qed.
 
 (** Finite sums of component heights measure joins under the default-support invariant. *)
-Definition family_height (U : list I) (d : A) {inv}
+Theorem family_height (U : list I) (d : A) {inv}
     (H : lattice_laws LA) (Hlub : lub_laws LA) (C : closed_on LA inv)
     (R : height_on LA inv) : height_on L (family_inv LA p U d inv).
 Proof.
@@ -181,7 +181,7 @@ Proof.
 Defined.
 
 (** Finite sums of component widening credits decrease on every escaping family input. *)
-Definition family_wrank (U : list I) (d : A) {inv}
+Theorem family_wrank (U : list I) (d : A) {inv}
     (H : lattice_laws LA) (W : widening_rank_on LA inv) :
     widening_rank_on L (family_inv LA p U d inv).
 Proof.
