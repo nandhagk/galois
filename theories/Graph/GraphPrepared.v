@@ -5,10 +5,10 @@
     Builds on: GraphModel, BaseIntern, BaseMap and BaseIndex. *)
 
 From Stdlib Require Import List Bool PArith Arith Lia Permutation.
-From Galois.Cost Require Import CostMonad.
+From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseIntern BaseIndex.
 From Galois.Graph Require Import GraphModel.
-Import List.ListNotations.
+Import List.ListNotations Cost.Notations.
 
 Module Prepared.
 
@@ -100,18 +100,173 @@ Fixpoint index_nodes {V A} enc (table : Intern.t V) (f : V -> A) vs : Map.t posi
     end
   end.
 
-(** Preparation is deliberately pure until GraphPreparedCost supplies its costed bridge. *)
+(** Present mapping retains the callback charge for every input occurrence. *)
+Fixpoint present_c {A B} (f : A -> Cost.t (option B)) (xs : list A)
+    : Cost.t (list B) :=
+  match xs with
+  | [] => Cost.ret []
+  | x :: rest =>
+    Cost.step ;;
+    Cost.step ;;
+    let* y := f x in
+    let* ys := present_c f rest in
+    Cost.ret (match y with None => ys | Some y => y :: ys end)
+  end.
+
+(** Costed present mapping has the same order and missing-value behavior as the reference. *)
+Theorem present_c_value {A B} (f : A -> Cost.t (option B)) xs :
+  Cost.value (present_c f xs) = present (fun x => Cost.value (f x)) xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [present_c present]. autorewrite with galois_cost.
+  rewrite IH. destruct (Cost.value (f x)); reflexivity.
+Qed.
+
+(** Flattening retains each outgoing callback and each copied edge occurrence. *)
+Definition all_edges_c {V E} (g : Graph.t V E) :=
+  fold_right_c (fun v tail =>
+    Cost.step ;;
+    let* es := Graph.out_c g v in app_c es tail) [] (Graph.nodes g).
+
+(** Flattening observes the original node and edge order even on malformed graphs. *)
+Theorem all_edges_c_value {V E} (g : Graph.t V E) :
+  Cost.value (all_edges_c g) = all_edges g.
+Proof.
+  unfold all_edges_c, all_edges. rewrite value_fold_right_c.
+  induction (Graph.nodes g) as [|v rest IH]; cbn [fold_right flat_map].
+  - reflexivity.
+  - autorewrite with galois_cost. rewrite IH. reflexivity.
+Qed.
+
+(** Tagging retains endpoint callbacks and the interning lookup for each edge. *)
+Definition tagged_c {V E} enc table (endpoint : E -> Cost.t V) es :=
+  present_c (fun e =>
+    Cost.step ;;
+    let* v := endpoint e in
+    let* i := Intern.find_c enc v table in Cost.ret (option_map (fun i => (e, i)) i)) es.
+
+Local Lemma present_ext {A B} (f g : A -> option B) xs :
+  (forall x, f x = g x) -> present f xs = present g xs.
+Proof.
+  intro Hfg. induction xs as [|x rest IH]; [reflexivity|].
+  cbn [present]. rewrite Hfg, IH. reflexivity.
+Qed.
+
+(** Tagging preserves labels, order and absent-endpoint filtering. *)
+Theorem tagged_c_value {V E} enc table (endpoint : E -> Cost.t V) es :
+  Cost.value (tagged_c enc table endpoint es) =
+    tagged enc table (fun e => Cost.value (endpoint e)) es.
+Proof.
+  unfold tagged_c, tagged. rewrite present_c_value.
+  apply present_ext. intro e. reflexivity.
+Qed.
+
+(** Node indexing keeps right-fold overwrite behavior and skips absent node IDs. *)
+Fixpoint index_nodes_c {V A} enc (table : Intern.t V) (f : V -> Cost.t A) vs
+    : Cost.t (Map.t positive A) :=
+  match vs with
+  | [] => Cost.ret Map.empty
+  | v :: rest =>
+    Cost.step ;;
+    let* tail := index_nodes_c enc table f rest in
+    let* i := Intern.find_c enc v table in
+    match i with
+    | None => Cost.ret tail
+    | Some i =>
+      Cost.step ;;
+      let* a := f v in Map.set_c positive_encoding i a tail
+    end
+  end.
+
+(** Costed node indexing returns the original raw map for arbitrary tables and callbacks. *)
+Theorem index_nodes_c_value {V A} enc (table : Intern.t V) (f : V -> Cost.t A) vs :
+  Cost.value (index_nodes_c enc table f vs) =
+    index_nodes enc table (fun v => Cost.value (f v)) vs.
+Proof.
+  induction vs as [|v rest IH]; [reflexivity|].
+  cbn [index_nodes_c index_nodes]. autorewrite with galois_cost.
+  rewrite IH. fold (Intern.find enc v table).
+  destruct (Intern.find enc v table); autorewrite with galois_cost; reflexivity.
+Qed.
+
+Local Lemma index_nodes_ext {V A} enc (table : Intern.t V) (f g : V -> A) vs :
+  (forall v, f v = g v) -> index_nodes enc table f vs = index_nodes enc table g vs.
+Proof.
+  intro Hfg. induction vs as [|v rest IH]; [reflexivity|].
+  cbn [index_nodes]. rewrite IH, Hfg. reflexivity.
+Qed.
+
+(** Root conversion preserves repeated and missing entries in the original order. *)
+Definition ids_c {V} enc (table : Intern.t V) vs :=
+  present_c (fun v => Intern.find_c enc v table) vs.
+
+(** Root conversion returns precisely the successful original entry lookups. *)
+Theorem ids_c_value {V} enc (table : Intern.t V) vs :
+  Cost.value (ids_c enc table vs) = ids enc table vs.
+Proof.
+  apply present_c_value.
+Qed.
+
+(** Edge counting retains outgoing callback and list-length charges at every node. *)
+Definition edge_count_c {V E} (g : Graph.t V E) :=
+  fold_right_c (fun v n =>
+    Cost.step ;;
+    let* es := Graph.out_c g v in
+    let* m := length_c es in Cost.ret (m + n)) 0 (Graph.nodes g).
+
+(** Costed edge counting agrees on every graph, including repeated node occurrences. *)
+Theorem edge_count_c_value {V E} (g : Graph.t V E) :
+  Cost.value (edge_count_c g) = edge_count g.
+Proof.
+  unfold edge_count_c, edge_count. rewrite value_fold_right_c.
+  induction (Graph.nodes g) as [|v rest IH]; cbn [fold_right]; [reflexivity|].
+  autorewrite with galois_cost. rewrite IH. reflexivity.
+Qed.
+
+(** Preparation retains all accessor, interning, indexing and list traversal charges. *)
+Definition prepare_c {V E} (enc : encoding V) (g : Graph.t V E) : Cost.t (t V E) :=
+  let* table := Intern.of_list_c enc (Graph.nodes g) in
+  let* edges := all_edges_c g in
+  let* incoming_index := Index.group_by_c enc (Graph.target_c g) edges in
+  let* outgoing := index_nodes_c enc table (fun v =>
+    Cost.step ;;
+    let* es := Graph.out_c g v in tagged_c enc table (Graph.target_c g) es)
+    (Graph.nodes g) in
+  let* incoming := index_nodes_c enc table (fun v =>
+    let* es := Index.find_c enc v incoming_index in
+    tagged_c enc table (Graph.source_c g) es) (Graph.nodes g) in
+  let* entries := ids_c enc table (Graph.entries g) in
+  let* n := length_c (Graph.nodes g) in
+  let* m := edge_count_c g in
+  Cost.ret (Make g enc table outgoing incoming entries
+    (Pos.of_succ_nat (2 * n + m + 1))).
+
+(** The public preparation is the value projection of its single costed implementation. *)
 Definition prepare {V E} (enc : encoding V) (g : Graph.t V E) : t V E :=
-  let table := Intern.of_list enc (Graph.nodes g) in
-  let incoming_index := Index.group_by enc (Graph.target g) (all_edges g) in
-  Make g enc table
-    (index_nodes enc table (fun v => tagged enc table (Graph.target g) (Graph.out g v))
-      (Graph.nodes g))
-    (index_nodes enc table (fun v => tagged enc table (Graph.source g)
-      (Index.find enc v incoming_index))
-      (Graph.nodes g))
-    (ids enc table (Graph.entries g))
-    (Pos.of_succ_nat (2 * length (Graph.nodes g) + edge_count g + 1)).
+  Cost.value (prepare_c enc g).
+
+(** Preparation preserves its original record values and occurrence-sensitive reference equation. *)
+Theorem prepare_equation {V E} enc (g : Graph.t V E) :
+  prepare enc g =
+    let table := Intern.of_list enc (Graph.nodes g) in
+    let incoming_index := Index.group_by enc (Graph.target g) (all_edges g) in
+    Make g enc table
+      (index_nodes enc table (fun v => tagged enc table (Graph.target g) (Graph.out g v))
+        (Graph.nodes g))
+      (index_nodes enc table (fun v => tagged enc table (Graph.source g)
+        (Index.find enc v incoming_index))
+        (Graph.nodes g))
+      (ids enc table (Graph.entries g))
+      (Pos.of_succ_nat (2 * length (Graph.nodes g) + edge_count g + 1)).
+Proof.
+  unfold prepare, prepare_c. autorewrite with galois_cost.
+  rewrite all_edges_c_value, Index.group_by_c_value.
+  change (Cost.value (Intern.of_list_c enc (Graph.nodes g))) with
+    (Intern.of_list enc (Graph.nodes g)).
+  rewrite !index_nodes_c_value, ids_c_value, edge_count_c_value.
+  f_equal; apply index_nodes_ext; intro v; autorewrite with galois_cost;
+    rewrite tagged_c_value; reflexivity.
+Qed.
 
 (** Readiness connects IDs, domains, adjacency, duplicates and the exact reference fuel. *)
 Record laws {V E} (p : t V E) : Prop := {
@@ -298,7 +453,7 @@ Local Lemma prepared_lookup {V E} enc (HE : encoding_laws enc) (g : Graph.t V E)
     end.
 Proof.
   rewrite succ_edges_equation, pred_edges_equation, !Index.find_equation.
-  cbn [prepare succ pred]. rewrite !index_lookup by exact HE.
+  rewrite !prepare_equation. cbn [succ pred]. rewrite !index_lookup by exact HE.
   destruct (Intern.key_of i (Intern.of_list enc (Graph.nodes g))); cbn [option_map].
   - rewrite Index.find_group_by. split; reflexivity.
   - split; reflexivity.
@@ -308,7 +463,10 @@ Qed.
 Theorem prepare_ready {V E} (enc : encoding V) (HE : encoding_laws enc) (g : Graph.t V E) :
   graph_wf g -> (forall v, NoDup (Graph.out g v)) -> ready (prepare enc g).
 Proof.
-  intros Hwf Hnodup. split; [exact Hwf|]. split; [exact Hnodup|].
+  intros Hwf Hnodup. rewrite prepare_equation.
+  split; [exact Hwf|]. split; [exact Hnodup|].
+  pose proof (prepared_lookup enc HE g) as Hlookup.
+  rewrite prepare_equation in Hlookup.
   pose proof (Intern.wf_of_list enc HE (Graph.nodes g)) as Htable.
   assert (Hdomain : forall v, In v (Graph.nodes g) <->
     exists i, Intern.find enc v (Intern.of_list enc (Graph.nodes g)) = Some i).
@@ -322,25 +480,25 @@ Proof.
   - apply index_wf.
   - apply index_wf.
   - intros v i Hfind.
-    rewrite (proj1 (prepared_lookup enc HE g i)).
+    rewrite (proj1 (Hlookup i)).
     change (Intern.find enc v (Intern.of_list enc (Graph.nodes g)) = Some i) in Hfind.
     rewrite (Intern.key_of_find enc v i _ Htable Hfind).
     apply tagged_fst. intros e He. apply Hdomain.
     apply (out_target_in Hwf v e); [apply Hdomain; now exists i|exact He].
-  - intros i e j Hin. rewrite (proj1 (prepared_lookup enc HE g i)) in Hin.
+  - intros i e j Hin. rewrite (proj1 (Hlookup i)) in Hin.
     destruct (Intern.key_of i (Intern.of_list enc (Graph.nodes g))) as [v|];
       [apply tagged_spec in Hin; exact (proj2 Hin)|contradiction].
-  - intros v i e j Hfind. rewrite (proj2 (prepared_lookup enc HE g i)).
+  - intros v i e j Hfind. rewrite (proj2 (Hlookup i)).
     change (Intern.find enc v (Intern.of_list enc (Graph.nodes g)) = Some i) in Hfind.
     rewrite (Intern.key_of_find enc v i _ Htable Hfind).
     rewrite tagged_spec, (incoming_spec enc HE g v e Hwf). tauto.
   - intros i Hname.
     change (Intern.key_of i (Intern.of_list enc (Graph.nodes g)) = None) in Hname.
-    rewrite (proj1 (prepared_lookup enc HE g i)), Hname. reflexivity.
+    rewrite (proj1 (Hlookup i)), Hname. reflexivity.
   - intros i Hname.
     change (Intern.key_of i (Intern.of_list enc (Graph.nodes g)) = None) in Hname.
-    rewrite (proj2 (prepared_lookup enc HE g i)), Hname. reflexivity.
-  - intro i. rewrite (proj2 (prepared_lookup enc HE g i)).
+    rewrite (proj2 (Hlookup i)), Hname. reflexivity.
+  - intro i. rewrite (proj2 (Hlookup i)).
     destruct (Intern.key_of i (Intern.of_list enc (Graph.nodes g))) as [v|].
     + rewrite tagged_fst.
       * apply NoDup_filter. apply edges_nodup.
@@ -642,31 +800,14 @@ Qed.
 (** Preparation exposes its source graph without requiring implementation unfolding. *)
 Theorem prepare_graph {V E} enc (g : Graph.t V E) : graph (prepare enc g) = g.
 Proof.
-  reflexivity.
+  rewrite prepare_equation. reflexivity.
 Qed.
 
 (** Preparation interns precisely the listed nodes in first-occurrence order. *)
 Theorem prepare_names {V E} enc (g : Graph.t V E) :
   names (prepare enc g) = Intern.of_list enc (Graph.nodes g).
 Proof.
-  reflexivity.
-Qed.
-
-(** The neutral preparation equation exposes public reference traversals for later cost bridges. *)
-Theorem prepare_equation {V E} enc (g : Graph.t V E) :
-  prepare enc g =
-    let table := Intern.of_list enc (Graph.nodes g) in
-    let incoming_index := Index.group_by enc (Graph.target g) (all_edges g) in
-    Make g enc table
-      (index_nodes enc table (fun v => tagged enc table (Graph.target g) (Graph.out g v))
-        (Graph.nodes g))
-      (index_nodes enc table (fun v => tagged enc table (Graph.source g)
-        (Index.find enc v incoming_index))
-        (Graph.nodes g))
-      (ids enc table (Graph.entries g))
-      (Pos.of_succ_nat (2 * length (Graph.nodes g) + edge_count g + 1)).
-Proof.
-  reflexivity.
+  rewrite prepare_equation. reflexivity.
 Qed.
 
 (** Reversal changes neither names nor the binary traversal budget. *)
