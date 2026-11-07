@@ -613,7 +613,7 @@ Qed.
 
 (** The code conversion is a constant-size word-RAM operation. *)
 Definition op_code_c : op -> Cost.t (nat * (positive * positive)) :=
-  Cost.lift (fun _ => 1%N) op_code.
+  Cost.lift (fun _ => 1%N) (fun o => Desc.code (op_desc o)).
 
 (** The costed conversion has exactly the public constructor-and-parameter code as its value. *)
 Theorem op_code_equation : forall o, Cost.value (op_code_c o) = op_code o.
