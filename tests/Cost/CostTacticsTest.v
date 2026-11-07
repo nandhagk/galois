@@ -69,6 +69,18 @@ Proof.
   intro Hbound. bigO_solver.
 Qed.
 
+Example solve_monotone_arithmetic : bigO (fun n : N => 2 * n) (fun n => n).
+Proof.
+  bigO_solver.
+Qed.
+
+Example solve_monotone_composed (g : N -> N) :
+  bigO (fun n : N => n) g ->
+  bigO (fun n => 2 * (n * n + 1)) (fun n => g (n * n + 1)).
+Proof.
+  intro Hbound. bigO_solver.
+Qed.
+
 Definition stop_c (n : nat) : Cost.t (nat + nat) := Cost.ret (inr n).
 
 Example loop_one :
