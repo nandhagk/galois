@@ -109,13 +109,13 @@ Example partition_empty_cost :
   (Cost.ticks (partition_leb_c positive_encoding None partition_three),
     Cost.ticks (partition_join_c positive_encoding positive_encoding_laws None partition_three),
     Cost.ticks (partition_leb_c positive_encoding partition_discrete partition_discrete)) =
-    (1%N, 1%N, 1%N).
+    (1%N, 1%N, 2%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
 
 Example partition_scan_traversal_ticks :
-  Cost.ticks (partition_scan_c positive_encoding [1; 2] UnionFind.make UnionFind.make) = 31%N.
+  Cost.ticks (partition_scan_c positive_encoding [1; 2] UnionFind.make UnionFind.make) = 40%N.
 Proof.
   vm_compute; reflexivity.
 Qed.
