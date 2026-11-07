@@ -35,7 +35,7 @@ Ltac set_solver :=
   end;
   try (firstorder (auto 4)).
 
-(** Invert option-producing matches, substitute option variables and reject constructor clashes. *)
+(** Invert option matches and constructor equalities, leaving self-referential results untouched. *)
 Ltac inv_option :=
   repeat match goal with
   | H : Some _ = None |- _ => discriminate H
@@ -43,6 +43,12 @@ Ltac inv_option :=
   | H : Some _ = Some _ |- _ => injection H; clear H; intros; subst
   | H : context [match ?e with Some _ => _ | None => _ end] |- _ =>
     let Hoption := fresh "Hoption" in destruct e eqn:Hoption; cbn in H
-  | H : ?e = Some _ |- _ => first [is_var e; subst e | progress rewrite H in *]
+  | H : ?e = Some ?v |- _ =>
+    first
+      [ is_var e; subst e
+      | lazymatch v with
+        | context [e] => fail
+        | _ => progress rewrite H in *
+        end ]
   | H : ?e = None |- _ => first [is_var e; subst e | progress rewrite H in *]
   end.

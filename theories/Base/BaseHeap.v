@@ -97,7 +97,7 @@ Proof.
 Qed.
 
 (** Selection visits every binding and retains the least priority-and-code pair. *)
-Fixpoint pick_c {K} (E : encoding K) (xs : list (K * positive))
+Local Fixpoint pick_c {K} (E : encoding K) (xs : list (K * positive))
     : Cost.t (option (K * positive)) :=
   match xs with
   | [] => Cost.ret None
@@ -112,7 +112,7 @@ Fixpoint pick_c {K} (E : encoding K) (xs : list (K * positive))
   end.
 
 (** Selection observes the costed live-binding scan. *)
-Definition pick {K} (E : encoding K) xs := Cost.value (pick_c E xs).
+Local Definition pick {K} (E : encoding K) xs := Cost.value (pick_c E xs).
 
 Local Lemma pick_equation {K} (E : encoding K) x rest :
   pick E (x :: rest) =
@@ -171,7 +171,7 @@ Definition push_c {K} (E : encoding K) p k (q : t K) :=
 Definition push {K} (E : encoding K) p k (q : t K) := Cost.value (push_c E p k q).
 
 (** Push retains the queue unchanged unless it inserts or strictly decreases a priority. *)
-Theorem push_equation {K} (E : encoding K) p k (q : t K) :
+Local Lemma push_equation {K} (E : encoding K) p k (q : t K) :
   push E p k q =
   match priority E k q with
   | None => Map.set E k p q
@@ -197,7 +197,7 @@ Definition pop_c {K} (E : encoding K) (q : t K) : Cost.t (option (positive * K *
 Definition pop {K} (E : encoding K) (q : t K) := Cost.value (pop_c E q).
 
 (** Pop chooses from the live enumeration and removes exactly the chosen key. *)
-Theorem pop_equation {K} (E : encoding K) (q : t K) :
+Local Lemma pop_equation {K} (E : encoding K) (q : t K) :
   pop E q =
   match pick E (Map.elements q) with
   | None => None

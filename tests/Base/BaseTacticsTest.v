@@ -112,3 +112,30 @@ Example inv_option_clash (o : option nat) :
 Proof.
   intros H Hnone. inv_option.
 Qed.
+
+(** A non-variable lookup observation still rewrites an unrelated result payload. *)
+Example inv_option_observation (lookup : nat -> option nat) k v :
+  lookup k = Some v ->
+  (match lookup k with
+  | Some w => w
+  | None => 0
+  end) = v.
+Proof.
+  intro H. inv_option. reflexivity.
+Qed.
+
+(** A self-referential payload stays available as an explicit witness after option inversion. *)
+Example inv_option_self_reference (lookup : nat -> option nat) (g : option nat -> nat) k :
+  lookup k = Some (g (lookup k)) -> exists v, lookup k = Some v.
+Proof.
+  intro H. inv_option. exists (g (lookup k)). exact H.
+Qed.
+
+(** Constant lookup and payload functions inhabit the self-reference regression's premise. *)
+Example inv_option_self_reference_model :
+  let lookup := fun (_ : nat) => Some 0 in
+  let g := fun (_ : option nat) => 0 in
+  lookup 0 = Some (g (lookup 0)).
+Proof.
+  vm_compute. reflexivity.
+Qed.

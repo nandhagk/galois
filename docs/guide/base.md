@@ -385,8 +385,13 @@ The named `galois_map` database contains lookup and membership rewrite laws.
 with `auto 4` for its propositional residue.
 `inv_option` repeatedly splits option-producing matches, inverts constructor equalities,
 substitutes option variables and discharges impossible constructor branches.
+It leaves an observation unchanged when its result payload contains the same observation.
+This prevents a self-referential lookup equation from expanding its own result repeatedly.
 
 The [tactic contracts](../../tests/Base/BaseTacticsTest.v#L10) have three symbolic goals each
-for map rewriting, set rewriting and set solving, and four for option inversion.
+for map rewriting, set rewriting and set solving, and six for option inversion.
 An additional unsupported list goal checks that `set_solver` returns control with the residue.
+The option tests retain noncyclic lookup rewriting and leave a self-referential lookup for
+an explicit witness proof.
+A computed constant-function model checks that the self-reference premise is inhabited.
 <!-- Source: the named Example declarations in BaseTacticsTest.v. -->
