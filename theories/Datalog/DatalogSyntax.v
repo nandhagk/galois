@@ -5,6 +5,7 @@
     Builds on: BaseEncoding and Stdlib lists. *)
 
 From Stdlib Require Import List PArith.
+From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding.
 Import List.ListNotations.
 
@@ -43,14 +44,16 @@ Arguments body {P}.
 
 Record program (P : Type) : Type := Program {
   penc : encoding P;
-  arity : P -> nat;
+  arity_c : P -> Cost.t nat;
   rules : list (rule P)
 }.
 
 Arguments Program {P}.
 Arguments penc {P}.
-Arguments arity {P}.
+Arguments arity_c {P}.
 Arguments rules {P}.
+
+Definition arity {P} (prog : program P) p := Cost.value (arity_c prog p).
 
 Definition ground_atom (P : Type) : Type := (P * tuple)%type.
 
@@ -71,6 +74,17 @@ Definition lit_atom {P} (l : literal P) : atom P :=
 
 Definition atom_vars {P} (a : atom P) : list nat :=
   flat_map (fun t => match t with TVar v => [v] | TConst _ => [] end) (args a).
+
+(** Variable occurrence is exactly occurrence of its variable term. *)
+Theorem atom_vars_spec {P} (a : atom P) v :
+  In v (atom_vars a) <-> In (TVar v) (args a).
+Proof.
+  unfold atom_vars; rewrite in_flat_map; split.
+  - intros [t [Hin Hvar]]; destruct t as [w | c]; cbn in Hvar.
+    + destruct Hvar as [Heq | Hbad]; [subst w; exact Hin | contradiction].
+    + contradiction.
+  - intro Hin; exists (TVar v); cbn; auto.
+Qed.
 
 (** * Well-formed programs *)
 
