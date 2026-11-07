@@ -1,5 +1,11 @@
 (rocq.theory
  (name Galois.Tests.Legacy.Lattice)
  (flags :standard -w +default)
- (theories Stdlib Galois.Cost Galois.Base Galois.Lattice GaloisLegacy.Order GaloisLegacy.Collections
+ (theories
+  Stdlib
+  Galois.Cost
+  Galois.Base
+  Galois.Lattice
+  GaloisLegacy.Order
+  GaloisLegacy.Collections
   GaloisLegacy.Domains))

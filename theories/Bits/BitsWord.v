@@ -14,8 +14,26 @@ Definition width := positive.
 (** The modulus is the first integer outside the unsigned word range. *)
 Definition modulus (w : width) : Z := 2 ^ Zpos w.
 
+(** The word modulus is two raised to its positive bit width. *)
+Theorem modulus_value : forall w, modulus w = 2 ^ Zpos w.
+Proof.
+  intro w. reflexivity.
+Qed.
+
+(** The binary logarithm of the word modulus is its bit width. *)
+Theorem modulus_log2 : forall w, Z.log2 (modulus w) = Zpos w.
+Proof.
+  intro w. rewrite modulus_value. apply Z.log2_pow2. lia.
+Qed.
+
 (** Wrapping keeps the low bits of an integer. *)
 Definition wrap (w : width) (z : Z) : Z := z mod modulus w.
+
+(** Wrapping is integer remainder modulo the word modulus for arbitrary integers. *)
+Theorem wrap_mod : forall w z, wrap w z = z mod modulus w.
+Proof.
+  intros w z. reflexivity.
+Qed.
 
 (** An unsigned word lies between zero and the modulus. *)
 Definition is_word (w : width) (z : Z) : Prop := 0 <= z < modulus w.
@@ -32,6 +50,13 @@ Definition msb (w : width) (z : Z) : bool := Z.testbit (wrap w z) (Zpos w - 1).
 (** The signed view interprets the highest bit as a negative weight. *)
 Definition signed (w : width) (z : Z) : Z :=
   let z' := wrap w z in if z' <? half w then z' else z' - modulus w.
+
+(** Signed interpretation chooses its branch after normalizing an arbitrary integer. *)
+Theorem signed_value : forall w x,
+  signed w x = if wrap w x <? half w then wrap w x else wrap w x - modulus w.
+Proof.
+  intros w x. reflexivity.
+Qed.
 
 (** Every word modulus is positive. *)
 Theorem modulus_pos : forall w, 0 < modulus w.

@@ -341,7 +341,8 @@ Fixpoint intern_list_c {K} (E : encoding K) (xs : list K) (s : t K) : Cost.t (t 
   end.
 
 (** List construction starts interning with the empty table. *)
-Definition of_list_c {K} (E : encoding K) xs := intern_list_c E xs (@empty K).
+Definition of_list_c {K} (E : encoding K) xs :=
+  let* initial := @empty_c K in intern_list_c E xs initial.
 
 (** List construction allocates IDs by first occurrence. *)
 Definition of_list {K} (E : encoding K) xs := Cost.value (of_list_c E xs).
@@ -403,7 +404,8 @@ Qed.
 Theorem intern_list_spec {K} (E : encoding K) (HE : encoding_laws E) xs k :
   In k xs <-> exists i, find E k (of_list E xs) = Some i.
 Proof.
-  unfold of_list, of_list_c. rewrite (list_members E HE) by apply wf_empty.
+  unfold of_list, of_list_c. rewrite Cost.value_bind. fold (@empty K).
+  rewrite (list_members E HE) by apply wf_empty.
   assert (Hempty : ~ exists i, find E k (@empty K) = Some i).
   { intros [i H]. rewrite find_equation in H.
     change (Map.get E k Map.empty = Some i) in H.

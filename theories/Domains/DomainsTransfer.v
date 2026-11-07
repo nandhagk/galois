@@ -315,8 +315,9 @@ Definition value_of_table {A K G C} (T : Transfer.table A A K unit)
 Definition word_output {P} (G : width -> P -> Z -> Prop) (_ : width) (p : P) (c : word) :=
   G (fst c) p (snd c).
 
-(** Result context constrains the result width, independently of operand widths. *)
-Definition word_context (w : width) (c : word) := fst c = w.
+(** Result context requires a normalized result at the requested width. *)
+Definition word_context (w : width) (c : word) :=
+  fst c = w /\ is_word (fst c) (snd c).
 
 (** The word builder leaves meet and the payload lattice independent of transfer entries. *)
 Definition word_of_table {P} (T : Transfer.table (width * P) P op width)
@@ -372,11 +373,11 @@ Proof.
   - exact Hconst.
   - intros o xs cs rw z Hxs Hr.
     exact (forward_sound T S _ _ _ HS HT o rw xs cs (rw, z)
-      Hxs (eq_trans (Heval o cs) Hr) eq_refl).
+      Hxs (eq_trans (Heval o cs) Hr) (conj eq_refl (eval_op_is_word o cs (rw, z) Hr))).
   - intros o xs cs rw z a Hxs Hr Ha. apply combine_backward with (G := G).
     + exact Hxs.
     + exact (backward_sound T S _ _ _ HS HT o rw a xs cs (rw, z)
-        Hxs (eq_trans (Heval o cs) Hr) eq_refl Ha).
+        Hxs (eq_trans (Heval o cs) Hr) (conj eq_refl (eval_op_is_word o cs (rw, z) Hr)) Ha).
   - intros. apply (backward_refines T S _ Hback).
   - exact Hmeet.
   - exact Hlower.
