@@ -368,6 +368,19 @@ Proof.
   intros Hp. apply (ids_inverse _ Hp).
 Qed.
 
+(** Entry IDs name exactly the entries whose forward lookup succeeds. *)
+Theorem entry_ids_spec {V E} (p : t V E) i :
+  laws p ->
+  (In i (entry_ids p) <->
+    exists v, In v (Graph.entries (graph p)) /\ id_of p v = Some i).
+Proof.
+  intro Hp; rewrite (entries_agree p Hp).
+  unfold ids; rewrite present_spec.
+  split; intros [v [Hin Hv]]; exists v; split; [exact Hin| |exact Hin|].
+  - rewrite id_of_equation; exact Hv.
+  - rewrite id_of_equation in Hv; exact Hv.
+Qed.
+
 (** Valid IDs denote actual nodes of the client graph. *)
 Definition valid_id {V E} (p : t V E) i :=
   exists v, In v (Graph.nodes (graph p)) /\ id_of p v = Some i.
