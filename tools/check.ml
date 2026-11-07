@@ -1006,12 +1006,9 @@ module Cost_lint = struct
         when List.is_empty annotation
              || List.is_prefix annotation ~prefix:[ ":" ] ~equal:String.equal ->
         let kind : Binding.t =
-          if monadic
-          then Value
-          else (
-            match annotation with
-            | ":" :: typ -> binding_type typ
-            | _ -> if record_head env rhs then Cost_record else Value)
+          match annotation with
+          | ":" :: typ -> binding_type typ
+          | _ -> if monadic then Value else if record_head env rhs then Cost_record else Value
         in
         let issue, _ = walk env ~stops:[] annotation in
         let issue, tail =
@@ -4628,6 +4625,33 @@ let%expect_test "cost lint checks annotations before introducing their binders" 
     (Error
      ((file theories/Base/BaseCost.v) (line 1) (claim ())
       (problem "computational match on Cost.t outside Cost")))
+    |}]
+;;
+
+let%expect_test "cost lint honors explicit monadic result annotations" =
+  List.iter
+    [ "Definition bad_c (m : Cost.t nat) := \
+       let* (m : Cost.t nat) := Cost.ret m in match m with r => r end."
+    ; "Definition bad_c (m : Cost.t nat) := Cost.bind (Cost.ret m) \
+       (fun (m : Cost.t nat) => match m with r => r end)."
+    ; "Definition run_c (m : Cost.t nat) := let* (n : nat) := m in Cost.ret n."
+    ; "Definition run_c (m : Cost.t nat) := \
+       let* (m : nat) := m in match m with O => Cost.ret O | S n => Cost.ret n end."
+    ]
+    ~f:(fun text ->
+      print_s
+        [%sexp
+          (Cost_lint.source (Fixture.at ~root:Theories "Base/BaseCost.v" text) : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Error
+     ((file theories/Base/BaseCost.v) (line 1) (claim ())
+      (problem "computational match on Cost.t outside Cost")))
+    (Ok ())
+    (Ok ())
     |}]
 ;;
 
