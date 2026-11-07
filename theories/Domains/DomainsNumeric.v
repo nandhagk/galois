@@ -160,19 +160,19 @@ Proof.
   now rewrite He, IHes.
 Qed.
 
-(** The term dictionary dispatches literal nodes independently of operator nodes. *)
+(** The internal term adapter uses transfers alone and leaves its width-one top unused. *)
 Definition numeric_values {A} (D : numeric_domain A) : ValueAbs.t A numeric_op unit :=
   {| ValueAbs.lat := lat D;
      ValueAbs.top := top_at D 1%positive;
      ValueAbs.op_c := fun k xs =>
        match k with
-       | Literal w z => of_const_c D w z
-       | Operator o => forward_c D o xs
+       | Literal w z => Cost.step ;; of_const_c D w z
+       | Operator o => Cost.step ;; forward_c D o xs
        end;
      ValueAbs.back_c := fun k a xs =>
        match k with
        | Literal _ _ => Cost.ret xs
-       | Operator o => assume_c D o a xs
+       | Operator o => Cost.step ;; assume_c D o a xs
        end;
      ValueAbs.guard_c := fun _ xs => Cost.ret xs |}.
 
@@ -226,12 +226,9 @@ Local Lemma numeric_term_eval env e : env_ok env ->
   eval_term numeric_eval env (numeric_term e) = eval eval_op env e.
 Proof.
   intro Hok. induction e as [i|w z|o es IH].
-  - rewrite eval_var. cbn [numeric_term eval_term normalize_word].
-    destruct (env i) as [w z] eqn:Hi. cbn.
-    change (Some (w, z) = Some (w, wrap w z)).
-    rewrite wrap_id; [reflexivity|pose proof (Hok i) as Hw; now rewrite Hi in Hw].
+  - rewrite eval_var, normalize_word_id by apply Hok. reflexivity.
   - reflexivity.
-  - rewrite eval_app. cbn [numeric_term eval_term]. rewrite map_map.
+  - rewrite eval_app. cbn [numeric_term]. rewrite eval_term_node, map_map.
     assert (Hargs : sequence
       (map (fun e => eval_term numeric_eval env (numeric_term e)) es) =
       eval_args eval_op env es).
@@ -312,3 +309,46 @@ Proof.
     (fun x y => Cost.step ;; Cost.ret (Nat.eqb x y)) (meet_c D)
     (lat_laws H) (meet_lower_left H) (numeric_term e) (fun x => Cost.ret (env x)) a i).
 Qed.
+
+(** The charged numeric evaluator retains the values supplied by charged environment callbacks. *)
+Theorem num_eval_c_sound {A} (D : numeric_domain A) G env cenv e r :
+  numeric_laws D G -> env_ok cenv ->
+  (forall i, gamma G (Cost.value (env i)) (cenv i)) ->
+  eval eval_op cenv e = Some r -> gamma G (Cost.value (num_eval_c D env e)) r.
+Proof.
+  intros H Hok Henv He.
+  unfold num_eval_c. rewrite Cost.value_bind, numeric_term_equation, abs_eval_projection.
+  eapply (term_eval_sound (numeric_values D)
+    {| ValueSem.eval := numeric_eval; ValueSem.holds := fun _ _ => True |} G).
+  - exact (numeric_op_sound D G H).
+  - exact Henv.
+  - change (eval_term numeric_eval cenv (numeric_term e) = Some r).
+    rewrite numeric_term_eval by exact Hok. exact He.
+Qed.
+
+(** Charged numeric assumptions retain concrete environments and all callback costs. *)
+Theorem num_assume_c_sound {A} (D : numeric_domain A) G env cenv e a r :
+  numeric_laws D G -> env_ok cenv ->
+  (forall i, gamma G (Cost.value (env i)) (cenv i)) ->
+  eval eval_op cenv e = Some r -> gamma G a r ->
+  forall i, gamma G (Cost.value (Cost.value (num_assume_c D env e a) i)) (cenv i).
+Proof.
+  intros H Hok Henv He Ha i. unfold num_assume_c.
+  rewrite Cost.value_bind, numeric_term_equation.
+  eapply (term_assume_sound (numeric_values D)
+    {| ValueSem.eval := numeric_eval; ValueSem.holds := fun _ _ => True |} G)
+    with (env := env) (cenv := cenv) (t := numeric_term e) (a := a) (c := r).
+  - exact (numeric_op_sound D G H).
+  - exact (numeric_back_sound D G H).
+  - intros x y Hxy. apply Nat.eqb_eq. exact Hxy.
+  - exact (meet_sound H).
+  - exact Henv.
+  - change (eval_term numeric_eval cenv (numeric_term e) = Some r).
+    rewrite numeric_term_eval by exact Hok. exact He.
+  - exact Ha.
+Qed.
+
+Arguments num_eval_c : simpl never.
+Arguments num_eval : simpl never.
+Arguments num_assume_c : simpl never.
+Arguments num_assume : simpl never.

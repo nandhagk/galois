@@ -54,6 +54,25 @@ Fixpoint eval_term {C K X} (ev : K -> list C -> option C) (env : X -> C)
     end
   end.
 
+(** A concrete leaf reads its environment unchanged. *)
+Theorem eval_term_leaf {C K X} (ev : K -> list C -> option C) env (x : X) :
+  eval_term ev env (Leaf x) = Some (env x).
+Proof.
+  reflexivity.
+Qed.
+
+(** A concrete node evaluates its ordered operands before dispatch. *)
+Theorem eval_term_node {C K X} (ev : K -> list C -> option C) env k
+    (ts : list (term K X)) :
+  eval_term ev env (Node k ts) =
+    match sequence (map (eval_term ev env) ts) with
+    | Some cs => ev k cs
+    | None => None
+    end.
+Proof.
+  reflexivity.
+Qed.
+
 (** Abstract evaluation charges term visits, operand visits and dictionary calls. *)
 Fixpoint abs_eval_c {A K G X} (D : ValueAbs.t A K G) (env : X -> Cost.t A)
     (t : term K X) : Cost.t A :=
@@ -75,6 +94,13 @@ Fixpoint abs_eval_c {A K G X} (D : ValueAbs.t A K G) (env : X -> Cost.t A)
 (** The pure evaluator is the result of the charged traversal. *)
 Definition abs_eval {A K G X} (D : ValueAbs.t A K G) (env : X -> A) t :=
   Cost.value (abs_eval_c D (fun x => Cost.ret (env x)) t).
+
+(** An abstract leaf reads its environment unchanged. *)
+Theorem abs_eval_leaf {A K G X} (D : ValueAbs.t A K G) (env : X -> A) x :
+  abs_eval D env (Leaf x) = env x.
+Proof.
+  reflexivity.
+Qed.
 
 (** A node transfers the ordered values of its children. *)
 Theorem abs_eval_node {A K G X} (D : ValueAbs.t A K G) (env : X -> A) k ts :
@@ -169,7 +195,8 @@ Proof.
   intro H. apply term_eval_sound. exact (op_sound H).
 Qed.
 
-Local Lemma eval_projection {A K G X} (D : ValueAbs.t A K G)
+(** Evaluation observes environment values independently of their callback charges. *)
+Theorem abs_eval_projection {A K G X} (D : ValueAbs.t A K G)
     (env : X -> Cost.t A) t :
   Cost.value (abs_eval_c D env t) = abs_eval D (fun x => Cost.value (env x)) t.
 Proof.
@@ -213,14 +240,13 @@ Proof.
     + apply Heq in Hsame. subst j. apply Hmeet; [apply Henv|exact Ha].
     + apply Henv.
   - unfold abs_assume. cbn [abs_assume_c]. autorewrite with galois_cost.
-    cbn [Cost.bind Cost.ret Cost.value Cost.map Cost.step Cost.tick].
-    rewrite value_map_c || idtac. cbn [eval_term] in Heval.
+    cbn [eval_term] in Heval.
     destruct (sequence (map (eval_term (ValueSem.eval M) cenv) ts)) as [cs|]
       eqn:Hcs; [|discriminate].
     assert (Hxs : Forall2 (gamma gam)
       (map (fun t => Cost.value (abs_eval_c D env t)) ts) cs).
     { eapply sequence_sound; [|exact Hcs]. apply Forall_forall.
-      intros t Hin d Hd. rewrite eval_projection.
+      intros t Hin d Hd. rewrite abs_eval_projection.
       eapply term_eval_sound; eauto. }
     pose proof (Hback k a _ cs c Hxs Heval Ha) as Hqs.
     unfold ValueAbs.back in Hqs.
@@ -270,7 +296,6 @@ Proof.
     destruct (Cost.value (eqb j x)); autorewrite with galois_cost;
       [apply Hmeet|apply (leb_refl HL)].
   - unfold abs_assume. cbn [abs_assume_c]. autorewrite with galois_cost.
-    cbn [Cost.bind Cost.ret Cost.value Cost.map Cost.step Cost.tick].
     generalize (Cost.value (ValueAbs.back_c D k a
       (map (fun t => Cost.value (abs_eval_c D env t)) ts))) as qs.
     revert env. induction H as [|t ts Ht Hts IH]; intros env qs.
@@ -279,3 +304,9 @@ Proof.
       * apply (leb_refl HL).
       * eapply (leb_trans HL); [apply IH|apply Ht].
 Qed.
+
+Arguments abs_eval_c : simpl never.
+Arguments abs_eval : simpl never.
+Arguments abs_assume_c : simpl never.
+Arguments abs_assume : simpl never.
+Arguments eval_term : simpl never.

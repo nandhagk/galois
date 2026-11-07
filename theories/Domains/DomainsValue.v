@@ -194,3 +194,9 @@ Qed.
 
 Create HintDb galois_gamma.
 #[export] Hint Resolve op_sound back_sound guard_sound top_full : galois_gamma.
+
+Arguments ValueAbs.product : simpl never.
+Arguments ValueAbs.disjunctive : simpl never.
+Arguments ValueAbs.rename : simpl never.
+Arguments ValueAbs.choices_c : simpl never.
+Arguments ValueAbs.join_all_c : simpl never.

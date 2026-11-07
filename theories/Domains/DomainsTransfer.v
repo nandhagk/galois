@@ -149,6 +149,34 @@ Arguments fwd_sound {A B K R C T S gA gB ctx_ok}.
 Arguments bwd_sound {A B K R C T S gA gB ctx_ok}.
 Arguments bwd_length {A B K R C T S gA gB ctx_ok}.
 
+(** Structural refinement is proved per backward entry and for the default embedding. *)
+Record table_refines {A B K R C} (T : Transfer.table A B K R)
+    (S : Transfer.shape A B K R C) (rel : A -> B -> Prop) : Prop := {
+  keep_refines : forall x, rel x (Cost.value (Transfer.keep_c S x));
+  entry_refines : forall k n f r a xs,
+    Cost.value (Transfer.bwd T k n) = Some f -> length xs = n ->
+    Forall2 rel xs (Cost.value (f r a xs))
+}.
+
+Arguments keep_refines {A B K R C T S rel}.
+Arguments entry_refines {A B K R C T S rel}.
+
+(** Per-entry refinement and default refinement cover the whole backward dispatch. *)
+Theorem backward_refines {A B K R C} (T : Transfer.table A B K R)
+    (S : Transfer.shape A B K R C) rel :
+  table_refines T S rel -> forall k r a xs,
+  Forall2 rel xs (Transfer.backward T S k r a xs).
+Proof.
+  intros H k r a xs. unfold Transfer.backward, Transfer.backward_c.
+  autorewrite with galois_cost.
+  destruct (Cost.value (Transfer.bwd T k (length xs))) as [f|] eqn:Hf.
+  - autorewrite with galois_cost. eapply (entry_refines H); eauto.
+  - rewrite value_map_c. clear Hf.
+    induction xs as [|x xs IH]; cbn; constructor.
+    + exact (keep_refines H x).
+    + exact IH.
+Qed.
+
 Section Soundness.
 Context {A B K R C : Type} (T : Transfer.table A B K R)
   (S : Transfer.shape A B K R C) (gA : A -> C -> Prop)
@@ -185,7 +213,8 @@ Theorem forward_sound k r xs cs c :
 Proof.
   intros Hxs Heval Hctx. unfold Transfer.forward, Transfer.forward_c.
   autorewrite with galois_cost.
-  cbn [Cost.bind Cost.ret Cost.value Cost.map Cost.step Cost.tick].
+  change (existsb (fun x => Cost.value (Cost.step ;; Transfer.is_empty_c S x)) xs)
+    with (existsb (fun x => Cost.value (Transfer.is_empty_c S x)) xs).
   rewrite (no_empty xs cs Hxs).
   destruct (Cost.value (Transfer.points_c S xs)) as [ds|] eqn:Hp.
   - pose proof (points_agree xs cs Hxs ds Hp) as ->.
@@ -236,7 +265,9 @@ Theorem forward_empty {A B K R C} (T : Transfer.table A B K R)
 Proof.
   intro H. unfold Transfer.forward, Transfer.forward_c.
   autorewrite with galois_cost.
-  cbn [Cost.bind Cost.ret Cost.value Cost.map Cost.step Cost.tick]. now rewrite H.
+  change (existsb (fun x => Cost.value (Cost.step ;; Transfer.is_empty_c S x)) xs)
+    with (existsb (fun x => Cost.value (Transfer.is_empty_c S x)) xs).
+  now rewrite H.
 Qed.
 
 (** The all-point path evaluates concretely and maps failed evaluation to bottom. *)
@@ -252,7 +283,8 @@ Theorem forward_point {A B K R C} (T : Transfer.table A B K R)
 Proof.
   intros He Hp. unfold Transfer.forward, Transfer.forward_c.
   autorewrite with galois_cost.
-  cbn [Cost.bind Cost.ret Cost.value Cost.map Cost.step Cost.tick].
+  change (existsb (fun x => Cost.value (Cost.step ;; Transfer.is_empty_c S x)) xs)
+    with (existsb (fun x => Cost.value (Transfer.is_empty_c S x)) xs).
   rewrite He. autorewrite with galois_cost.
   rewrite Hp. autorewrite with galois_cost.
   unfold Transfer.eval. destruct (Cost.value (Transfer.eval_c S k cs));
@@ -315,7 +347,7 @@ Proof.
     + now apply IH.
 Qed.
 
-(** Shape and entry laws prove word soundness once, with a separate structural refinement premise. *)
+(** Shape and entry laws prove word soundness once under independent structural refinement. *)
 Theorem word_of_table_laws {P} (T : Transfer.table (width * P) P op width)
     (S : Transfer.shape (width * P) P op width word)
     (L : width -> lattice P) top constant meet (G : width -> P -> Z -> Prop) :
@@ -327,8 +359,7 @@ Theorem word_of_table_laws {P} (T : Transfer.table (width * P) P op width)
   (forall w z, ~ G w (bot (L w)) z) ->
   (forall w z, is_word w z -> G w (top w) z) ->
   (forall w z, G w (Cost.value (constant w z)) (wrap w z)) ->
-  (forall o xs rw a, Forall2 (fun wp q => leb (L (fst wp)) q (snd wp) = true)
-    xs (Transfer.backward T S o rw a xs)) ->
+  table_refines T S (fun wp q => leb (L (fst wp)) q (snd wp) = true) ->
   (forall w a b z, G w a z -> G w b z -> G w (Cost.value (meet w a b)) z) ->
   (forall w a b, leb (L w) (Cost.value (meet w a b)) a = true) ->
   word_laws (word_of_table T S L top constant meet) G.
@@ -346,7 +377,12 @@ Proof.
     + exact Hxs.
     + exact (backward_sound T S _ _ _ HS HT o rw a xs cs (rw, z)
         Hxs (eq_trans (Heval o cs) Hr) eq_refl Ha).
-  - exact Hback.
+  - intros. apply (backward_refines T S _ Hback).
   - exact Hmeet.
   - exact Hlower.
 Qed.
+
+Arguments Transfer.forward_c : simpl never.
+Arguments Transfer.forward : simpl never.
+Arguments Transfer.backward_c : simpl never.
+Arguments Transfer.backward : simpl never.
