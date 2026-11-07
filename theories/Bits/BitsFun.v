@@ -4,7 +4,7 @@
     arithmetic. For example, unsigned division by zero gives the all-ones word.
     Builds on: BitsWord and Rocq Stdlib integer bit operations. *)
 
-From Stdlib Require Import ZArith.
+From Stdlib Require Import ZArith List Lia.
 From Galois.Bits Require Import BitsWord.
 
 Open Scope Z_scope.
@@ -119,6 +119,86 @@ Definition popcount (z : Z) : Z :=
 
 (** Population count counts the set bits below the width. *)
 Definition wpopcnt (w : width) (x : Z) : Z := popcount (wrap w x).
+
+Local Lemma filter_seq_shift : forall (f : nat -> bool) n start,
+  length (filter f (seq (S start) n)) =
+    length (filter (fun i => f (S i)) (seq start n)).
+Proof.
+  intros f n. induction n as [|n IH]; intro start; [reflexivity|].
+  cbn [seq filter]. destruct (f (S start)); cbn; now rewrite IH.
+Qed.
+
+Local Lemma count_even : forall a n,
+  length (filter (fun i => Z.testbit (2 * a) (Z.of_nat i)) (seq 0 (S n))) =
+    length (filter (fun i => Z.testbit a (Z.of_nat i)) (seq 0 n)).
+Proof.
+  intros a n. cbn [seq filter]. rewrite Z.testbit_even_0.
+  rewrite filter_seq_shift. f_equal. apply filter_ext. intro i.
+  rewrite Nat2Z.inj_succ, Z.testbit_even_succ by lia. reflexivity.
+Qed.
+
+Local Lemma count_odd : forall a n,
+  length (filter (fun i => Z.testbit (2 * a + 1) (Z.of_nat i)) (seq 0 (S n))) =
+    S (length (filter (fun i => Z.testbit a (Z.of_nat i)) (seq 0 n))).
+Proof.
+  intros a n. cbn [seq filter]. rewrite Z.testbit_odd_0. cbn [length].
+  rewrite filter_seq_shift. f_equal. f_equal. apply filter_ext. intro i.
+  rewrite Nat2Z.inj_succ, Z.testbit_odd_succ by lia. reflexivity.
+Qed.
+
+Local Lemma count_zero : forall n,
+  length (filter (fun i => Z.testbit 0 (Z.of_nat i)) (seq 0 n)) = 0%nat.
+Proof.
+  intro n. generalize (seq 0 n) as xs. intro xs.
+  induction xs as [|i xs IH]; [reflexivity|].
+  cbn [filter]. rewrite Z.bits_0. exact IH.
+Qed.
+
+(** A nonnegative integer below two to the n has exactly its population count in the low n bits. *)
+Theorem popcount_testbit : forall n z, 0 <= z < 2 ^ Z.of_nat n ->
+  popcount z =
+    Z.of_nat (length (filter (fun i => Z.testbit z (Z.of_nat i)) (seq 0 n))).
+Proof.
+  induction n as [|n IH]; intros z Hz.
+  - assert (z = 0) by (cbn in Hz; lia). subst z. reflexivity.
+  - destruct z as [|p|p]; [now rewrite count_zero| |lia].
+    rewrite Nat2Z.inj_succ, Z.pow_succ_r in Hz by lia.
+    destruct p as [p|p|].
+    + change (0 <= 2 * Zpos p + 1 < 2 * 2 ^ Z.of_nat n) in Hz.
+      rewrite (count_odd (Zpos p)).
+      cbn [popcount popcount_pos]. rewrite Nat2Z.inj_succ.
+      rewrite <- (IH (Zpos p)) by lia. cbn [popcount]. lia.
+    + rewrite (count_even (Zpos p)).
+      cbn [popcount popcount_pos]. apply (IH (Zpos p)).
+      change (0 <= 2 * Zpos p < 2 * 2 ^ Z.of_nat n) in Hz. lia.
+    + change (popcount 1 =
+        Z.of_nat (length (filter (fun i => Z.testbit (2 * 0 + 1) (Z.of_nat i))
+          (seq 0 (S n))))).
+      rewrite count_odd, count_zero. reflexivity.
+Qed.
+
+(** Word population count agrees with the filter-count specification of the legacy interface. *)
+Theorem wpopcnt_spec : forall w x, wpopcnt w x =
+  Z.of_nat (length (filter (fun i => Z.testbit (wrap w x) (Z.of_nat i))
+    (seq 0 (Pos.to_nat w)))).
+Proof.
+  intros w x. apply popcount_testbit.
+  rewrite positive_nat_Z. apply wrap_is_word.
+Qed.
+
+(** The recursion-step count follows the same positive digit traversal as population count. *)
+Fixpoint popcount_steps_pos (p : positive) : nat :=
+  match p with
+  | xH => 1%nat
+  | xO q => S (popcount_steps_pos q)
+  | xI q => S (popcount_steps_pos q)
+  end.
+
+(** Population count visits exactly one node per binary digit of a positive argument. *)
+Theorem popcount_cost : forall p, popcount_steps_pos p = Pos.size_nat p.
+Proof.
+  intro p. induction p; cbn; congruence.
+Qed.
 
 (** Unsigned strict comparison compares the wrapped values. *)
 Definition wult (w : width) (x y : Z) : bool := wrap w x <? wrap w y.
