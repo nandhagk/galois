@@ -137,31 +137,31 @@ Qed.
 
 (** Exact reference-backend counts may change with a backend's proved replacement bounds. *)
 Example uf_empty_find_ticks :
-  Cost.ticks (UnionFind.find_c positive_encoding 1%positive UnionFind.make) = 4%N.
+  Cost.ticks (UnionFind.find_c positive_encoding 1%positive UnionFind.make) = 5%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example uf_exhausted_ticks :
-  Cost.ticks (UnionFind.find_fuel_c positive_encoding 0 4%positive uf_sample) = 0%N.
+  Cost.ticks (UnionFind.find_fuel_c positive_encoding 0 4%positive uf_sample) = 1%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example uf_singleton_union_ticks :
-  Cost.ticks (UnionFind.union_c positive_encoding 1%positive 1%positive UnionFind.make) = 19%N.
+  Cost.ticks (UnionFind.union_c positive_encoding 1%positive 1%positive UnionFind.make) = 21%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example uf_distinct_union_ticks :
-  Cost.ticks (UnionFind.union_c positive_encoding 1%positive 2%positive UnionFind.make) = 31%N.
+  Cost.ticks (UnionFind.union_c positive_encoding 1%positive 2%positive UnionFind.make) = 33%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example uf_pair_find_ticks :
-  Cost.ticks (UnionFind.find_c positive_encoding 2%positive uf_pair) = 13%N.
+  Cost.ticks (UnionFind.find_c positive_encoding 2%positive uf_pair) = 15%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

@@ -38,7 +38,7 @@ Proof.
 Qed.
 
 Example heap_push_ticks :
-  Cost.ticks (Heap.push_c positive_encoding 1%positive 1%positive Heap.empty) = 6%N.
+  Cost.ticks (Heap.push_c positive_encoding 1%positive 1%positive Heap.empty) = 9%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

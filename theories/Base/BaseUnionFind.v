@@ -6,9 +6,11 @@
 
 From Stdlib Require Import List Bool NArith PeanoNat Lia Relation_Definitions Relation_Operators
   Sorting.Sorted.
-From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
+From Galois.Cost Require Import CostMonad CostList.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseUnionFindLoop.
 Import List.ListNotations Cost.Notations.
+
+Local Open Scope nat_scope.
 
 Module UnionFind.
 
@@ -56,22 +58,12 @@ Definition redirect {K} (E : encoding K) (x root : K) (uf : t K) :=
 
 (** Exhaustion returns the current key and compresses the traversed prefix to that key.
     Root correctness requires enough fuel and a well-formed forest. *)
-Fixpoint find_fuel_c {K} (E : encoding K) (fuel : nat) (x : K) (uf : t K)
+Definition find_fuel_c {K} (E : encoding K) (fuel : nat) (x : K) (uf : t K)
     : Cost.t (K * t K) :=
-  match fuel with
-  | 0 => Cost.ret (x, uf)
-  | S rest =>
-    Cost.step ;;
-    let* parent := Map.get_c E x (parents uf) in
-    match parent with
-    | None => Cost.ret (x, uf)
-    | Some y =>
-      let* result := find_fuel_c E rest y uf in
-      let '(root, compressed) := result in
-      let* uf' := redirect_c E x root compressed in
-      Cost.ret (root, uf')
-    end
-  end.
+  let* walked := UnionFindLoop.walk_c E (parents uf) fuel x in
+  let '(root, path) := walked in
+  let* compressed := fold_left_c (fun acc key => redirect_c E key root acc) path uf in
+  Cost.ret (root, compressed).
 Definition find_fuel {K} (E : encoding K) fuel x (uf : t K) :=
   Cost.value (find_fuel_c E fuel x uf).
 
@@ -168,7 +160,8 @@ Definition keys_c {K} (_ : encoding K) (uf : t K) : Cost.t (list K) :=
   let* xs := Map.elements_c m in firsts_c xs.
 Definition keys {K} (E : encoding K) (uf : t K) := Cost.value (keys_c E uf).
 
-Local Fixpoint unions_from_c {K} (E : encoding K) (xs : list (K * K)) (uf : t K)
+(** Pair-list accumulation threads each actual compressed forest into the next union. *)
+Fixpoint unions_from_c {K} (E : encoding K) (xs : list (K * K)) (uf : t K)
     : Cost.t (t K) :=
   match xs with
   | [] => Cost.ret uf
@@ -209,6 +202,19 @@ Proof.
 Qed.
 
 (** Bounded find follows a parent and compresses on return, or stops at a root or exhaustion. *)
+Theorem find_fuel_path {K} (E : encoding K) fuel x uf :
+  exists root path,
+    UnionFindLoop.path_spec E (parents uf) fuel x root path /\
+    find_fuel E fuel x uf = (root, fold_left (fun acc key => redirect E key root acc) path uf).
+Proof.
+  pose proof (UnionFindLoop.walk_correct E (parents uf) fuel x) as Hpath.
+  unfold find_fuel, find_fuel_c. rewrite Cost.value_bind.
+  destruct (Cost.value (UnionFindLoop.walk_c E (parents uf) fuel x)) as [root path].
+  exists root, path. split; [exact Hpath|].
+  rewrite Cost.value_bind, value_fold_left_c. reflexivity.
+Qed.
+
+(** Bounded find retains the original compression-on-return equation on raw forests. *)
 Theorem find_fuel_equation {K} (E : encoding K) fuel x uf :
   find_fuel E fuel x uf =
   match fuel with
@@ -222,12 +228,18 @@ Theorem find_fuel_equation {K} (E : encoding K) fuel x uf :
     end
   end.
 Proof.
-  destruct fuel as [|fuel]; [reflexivity|].
-  unfold find_fuel at 1; cbn [find_fuel_c]; autorewrite with galois_cost.
-  fold (Map.get E x (parents uf)).
-  destruct (Map.get E x (parents uf)) as [y|]; [|reflexivity].
-  rewrite Cost.value_bind; fold (find_fuel E fuel y uf).
-  destruct (find_fuel E fuel y uf); reflexivity.
+  destruct (find_fuel_path E fuel x uf) as [root [path [Hpath Hresult]]].
+  destruct fuel as [|fuel].
+  - inversion Hpath; subst. exact Hresult.
+  - destruct (Map.get E x (parents uf)) as [y|] eqn:Hparent.
+    + inversion Hpath as [|rest a Hnone|rest a b r frames Hget Htail]; subst;
+        [congruence|].
+      assert (Hequal : b = y) by congruence. subst b.
+      destruct (find_fuel_path E fuel y uf) as [root' [path' [Hpath' Hresult']]].
+      destruct (UnionFindLoop.path_unique E _ _ _ _ _ Htail _ _ Hpath') as [Hr Hps].
+      subst root' path'. rewrite Hresult, Hresult', fold_left_app. reflexivity.
+    + inversion Hpath as [|rest a Hnone|rest a b r frames Hget Htail]; subst;
+        [exact Hresult|congruence].
 Qed.
 
 (** Public find uses one more than the maximum rank as its traversal budget. *)
@@ -1020,6 +1032,67 @@ Proof.
   apply union_support; exact Hwf.
 Qed.
 
+(** Linking roots preserves the old forest invariant under the selected rank comparison. *)
+Theorem wf_link child root (raise : bool) uf :
+  wf E uf -> child <> root -> Map.get E root (parents uf) = None ->
+  (if raise then rank_of E uf child <= rank_of E uf root
+   else rank_of E uf child < rank_of E uf root) ->
+  wf E (link E child root raise uf).
+Proof.
+  destruct raise; intros Hwf Hne Hroot Hrank.
+  - apply link_raise_wf; assumption.
+  - rewrite link_equation. apply redirect_wf; assumption.
+Qed.
+
+(** A root link merges only its two root classes. *)
+Theorem link_equiv_equation child root raise uf a b :
+  wf E uf -> wf E (link E child root raise uf) -> child <> root ->
+  Map.get E child (parents uf) = None -> Map.get E root (parents uf) = None ->
+  (equiv E (link E child root raise uf) a b <-> equiv E uf a b \/
+    (fst (find E a uf) = child /\ root = fst (find E b uf)) \/
+    (fst (find E a uf) = root /\ child = fst (find E b uf))).
+Proof.
+  apply link_equiv.
+Qed.
+
+(** A link adds its child to support and records its winner when raising rank. *)
+Theorem link_support_equation child root raise uf z : wf E uf ->
+  (support E (link E child root raise uf) z <->
+    z = child \/ (raise = true /\ z = root) \/ support E uf z).
+Proof.
+  apply link_support.
+Qed.
+
+(** A raised link increments only its winning root's rank. *)
+Theorem link_rank_equation child root raise uf a :
+  Map.wf E (ranks uf) ->
+  rank_of E (link E child root raise uf) a =
+    if raise then if eqb E a root then S (rank_of E uf root) else rank_of E uf a
+    else rank_of E uf a.
+Proof.
+  intro Hr. destruct raise; [|reflexivity].
+  destruct (eqb E a root) eqn:Heq.
+  - apply (eqb_true_iff E HE) in Heq. subst a. apply link_rank_root. exact Hr.
+  - apply link_rank_other; [exact Hr|].
+    intro Hequal. subst a. rewrite eqb_refl in Heq. discriminate.
+Qed.
+
+(** Touch preserves ranks and classes and only extends the finite support. *)
+Theorem touch_spec uf x : wf E uf ->
+  wf E (touch E x uf) /\
+  max_rank (touch E x uf) = max_rank uf /\
+  (forall a, rank_of E (touch E x uf) a = rank_of E uf a) /\
+  (forall a b, equiv E (touch E x uf) a b <-> equiv E uf a b) /\
+  (forall a, support E uf a -> support E (touch E x uf) a).
+Proof.
+  intro Hwf. split; [apply touch_wf; exact Hwf|]. split.
+  - rewrite touch_equation. destruct (Map.get E x (ranks uf)); reflexivity.
+  - split; [intro a; apply touch_ranks; exact (proj1 (proj2 Hwf))|]. split.
+    + intros a b. unfold equiv. rewrite !touch_rep by exact Hwf. reflexivity.
+    + intros a Ha. apply (proj2 (touch_support x uf a (proj1 (proj2 Hwf)))).
+      right. exact Ha.
+Qed.
+
 End SupportAndUnion.
 
 (** The initial support is empty. *)
@@ -1136,11 +1209,32 @@ Qed.
     Encoding and key-comparison costs are retained by the costed Map and equality operations.
     Domain callbacks use one-tick pure lifts in addition to the Map callback overhead. *)
 
-(** Rank lookup charges precisely its underlying Map lookup. *)
+(** Construction incurs no traversal or encoding work. *)
+Theorem make_cost {K} : Cost.ticks (@make_c K) = 0%N.
+Proof.
+  reflexivity.
+Qed.
+
+(** Rank lookup retains the underlying Map cost. *)
 Theorem rank_of_cost {K} (E : encoding K) uf x :
   Cost.ticks (rank_of_c E uf x) = Cost.ticks (Map.get_c E x (ranks uf)).
 Proof.
   unfold rank_of_c; apply Cost.ticks_map.
+Qed.
+
+(** Compression changes neither the rank map nor its cached maximum, including on raw forests. *)
+Theorem find_ranks {K} (E : encoding K) uf x :
+  ranks (snd (find E x uf)) = ranks uf /\
+  max_rank (snd (find E x uf)) = max_rank uf.
+Proof.
+  rewrite find_equation. apply find_fuel_ranks.
+Qed.
+
+(** Every key retains its rank after a find, independently of forest well-formedness. *)
+Theorem find_rank_of {K} (E : encoding K) uf x a :
+  rank_of E (snd (find E x uf)) a = rank_of E uf a.
+Proof.
+  rewrite !rank_of_equation, (proj1 (find_ranks E uf x)). reflexivity.
 Qed.
 
 (** A redirect charges precisely its underlying Map update. *)
@@ -1150,44 +1244,34 @@ Proof.
   unfold redirect_c; rewrite Cost.ticks_bind, Cost.ticks_ret; lia.
 Qed.
 
-(** Each visited find frame charges one tick, its lookup, recursion and compression update. *)
+(** Bounded find charges its actual binary walk and compression fold. *)
 Local Lemma reference_find_fuel_ticks {K} (E : encoding K) fuel x uf :
   Cost.ticks (find_fuel_c E fuel x uf) =
-  match fuel with
-  | 0 => 0%N
-  | S rest =>
-    (1 + Cost.ticks (Map.get_c E x (parents uf)) +
-      match Map.get E x (parents uf) with
-      | None => 0
-      | Some y =>
-        let '(root, compressed) := find_fuel E rest y uf in
-        Cost.ticks (find_fuel_c E rest y uf) +
-          Cost.ticks (Map.set_c E x root (parents compressed))
-      end)%N
-  end.
+  (Cost.ticks (UnionFindLoop.walk_c E (parents uf) fuel x) +
+    let '(root, path) := Cost.value (UnionFindLoop.walk_c E (parents uf) fuel x) in
+    Cost.ticks (fold_left_c (fun acc key => redirect_c E key root acc) path uf))%N.
 Proof.
-  destruct fuel as [|fuel]; [reflexivity|].
-  cbn [find_fuel_c]; autorewrite with galois_cost; fold (Map.get E x (parents uf)).
-  destruct (Map.get E x (parents uf)) as [y|];
-    [|rewrite Cost.ticks_ret; lia].
-  rewrite Cost.ticks_bind; fold (find_fuel E fuel y uf).
-  destruct (find_fuel E fuel y uf) as [root compressed].
-  rewrite Cost.ticks_bind, Cost.ticks_ret, redirect_cost; lia.
+  unfold find_fuel_c. rewrite Cost.ticks_bind.
+  destruct (Cost.value (UnionFindLoop.walk_c E (parents uf) fuel x)) as [root path].
+  rewrite Cost.ticks_bind, Cost.ticks_ret. lia.
 Qed.
 
-(** Public find's exact cost is its first frame plus the charged tail and redirect calls. *)
+(** Public find uses the same actual walk and fold at one more than the cached maximum rank. *)
 Local Lemma reference_find_ticks {K} (E : encoding K) x uf :
   Cost.ticks (find_c E x uf) =
-  (1 + Cost.ticks (Map.get_c E x (parents uf)) +
-    match Map.get E x (parents uf) with
-    | None => 0
-    | Some y =>
-      let '(root, compressed) := find_fuel E (max_rank uf) y uf in
-      Cost.ticks (find_fuel_c E (max_rank uf) y uf) +
-        Cost.ticks (Map.set_c E x root (parents compressed))
-    end)%N.
+  Cost.ticks (find_fuel_c E (S (max_rank uf)) x uf).
 Proof.
-  exact (reference_find_fuel_ticks E (S (max_rank uf)) x uf).
+  reflexivity.
+Qed.
+
+(** Callee-relative find accounting retains every walked lookup and reached compression fold. *)
+Theorem find_fuel_callee_cost {K} (E : encoding K) fuel x uf :
+  Cost.ticks (find_fuel_c E fuel x uf) =
+  (Cost.ticks (UnionFindLoop.walk_c E (parents uf) fuel x) +
+    let '(root, path) := Cost.value (UnionFindLoop.walk_c E (parents uf) fuel x) in
+    Cost.ticks (fold_left_c (fun acc key => redirect_c E key root acc) path uf))%N.
+Proof.
+  apply reference_find_fuel_ticks.
 Qed.
 
 (** Union charges its two finds, equality, optional rank queries and selected touch or link. *)
