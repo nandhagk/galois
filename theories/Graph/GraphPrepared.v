@@ -266,7 +266,9 @@ Local Lemma inverse_find {V} enc (table : Intern.t V) v i :
   Intern.wf enc table ->
   (Intern.find enc v table = Some i <-> Intern.key_of i table = Some v).
 Proof.
-  intros [_ [_ [_ [Hlink _]]]]. apply Hlink.
+  intro Hwf. split.
+  - exact (Intern.key_of_find enc v i table Hwf).
+  - exact (Intern.find_key_of enc v i table Hwf).
 Qed.
 
 Local Lemma index_lookup {V A} enc (HE : encoding_laws enc) vs (f : V -> A) i :
