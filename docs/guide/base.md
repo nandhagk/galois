@@ -226,6 +226,7 @@ Bucket construction therefore avoids repeatedly appending to a growing list.
 
 `find_group_by` proves that a bucket equals the matching input filter in input order.
 `wf_group_by` proves the underlying map invariant.
+`group_by_c_value` lets a client apply these laws to any costed key callback's returned values.
 The [index fixtures](../../tests/Base/BaseIndexTest.v#L12) include interleaved buckets,
 an absent bucket, empty input and the charge of a singleton group.
 
@@ -290,8 +291,10 @@ The agreement theorem proves the returned result equals `f k` and the returned c
 
 `get_or_c E f_c k m` returns a cached result without calling `f_c` on a hit.
 A miss charges the callback and stores its result.
+`get_or_c_value` connects that costed callback to the pure agreement theorem.
 `map_memo_c` threads one cache through an input list.
 `map_memo_agrees` proves equality with `List.map f` and validity and well-formedness of the final cache.
+`map_memo_c_value` retains that semantic interface for arbitrary callback charges.
 The [memo fixtures](../../tests/Base/BaseMemoTest.v#L12) cover a miss, a hit, an unrelated absent key,
 empty and repeated-key lists, and retention of an explicitly expensive callback's charge.
 

@@ -156,6 +156,25 @@ Proof.
     rewrite rev_involutive in Hfind. exact Hfind.
 Qed.
 
+Local Lemma collect_value_ext {K V} (E : encoding K) (f g : V -> Cost.t K) xs idx :
+  (forall x, Cost.value (f x) = Cost.value (g x)) ->
+  Cost.value (collect_c E f xs idx) = Cost.value (collect_c E g xs idx).
+Proof.
+  intro Hfg. revert idx. induction xs as [|x rest IH]; intro idx; [reflexivity|].
+  cbn [collect_c]. autorewrite with galois_cost. rewrite Hfg. apply IH.
+Qed.
+
+(** Grouping retains arbitrary key-callback costs without changing the stable buckets. *)
+Theorem group_by_c_value {K V} (E : encoding K) (key_c : V -> Cost.t K) xs :
+  Cost.value (group_by_c E key_c xs) = group_by E (fun a => Cost.value (key_c a)) xs.
+Proof.
+  unfold group_by, group_by_c. autorewrite with galois_cost.
+  rewrite (collect_value_ext E key_c
+    (Cost.lift (fun _ => 1%N) (fun a => Cost.value (key_c a))) xs Map.empty)
+    by reflexivity.
+  reflexivity.
+Qed.
+
 Arguments find_c {K V} E k idx : simpl never.
 Arguments find {K V} E k idx : simpl never.
 Arguments group_by_c {K V} E key_c xs : simpl never.

@@ -50,6 +50,14 @@ Proof.
   fold (Map.get E k m). destruct (Map.get E k m); reflexivity.
 Qed.
 
+(** Arbitrary callback charges do not change the cache's returned data. *)
+Theorem get_or_c_value {K V} (E : encoding K) (f_c : K -> Cost.t V) k (m : t K V) :
+  Cost.value (get_or_c E f_c k m) = get_or E (fun a => Cost.value (f_c a)) k m.
+Proof.
+  rewrite get_or_equation. unfold get_or_c. autorewrite with galois_cost.
+  fold (Map.get E k m). destruct (Map.get E k m); reflexivity.
+Qed.
+
 (** An empty table is valid for every reference function. *)
 Theorem valid_empty {K V} (E : encoding K) (f : K -> V) : valid E f (@empty K V).
 Proof.
@@ -106,6 +114,16 @@ Theorem map_memo_equation {K V} (E : encoding K) (f : K -> V) xs (m : t K V) :
   end.
 Proof.
   destruct xs; reflexivity.
+Qed.
+
+(** Costed memoized mapping observes only the callback's returned values. *)
+Theorem map_memo_c_value {K V} (E : encoding K) (f_c : K -> Cost.t V) xs (m : t K V) :
+  Cost.value (map_memo_c E f_c xs m) = map_memo E (fun a => Cost.value (f_c a)) xs m.
+Proof.
+  revert m. induction xs as [|k rest IH]; intro m; rewrite map_memo_equation.
+  - reflexivity.
+  - cbn [map_memo_c]. autorewrite with galois_cost.
+    rewrite get_or_c_value, IH. reflexivity.
 Qed.
 
 (** Memoized mapping returns the reference list and a valid well-formed cache. *)
