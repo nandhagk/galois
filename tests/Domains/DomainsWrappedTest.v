@@ -8,7 +8,8 @@ From Stdlib Require Import ZArith List.
 From Galois.Cost Require Import CostMonad.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
 From Galois.Bits Require Import BitsWord BitsOp.
-From Galois.Domains Require Import DomainsThreshold DomainsIntervalBack DomainsNumeric
+From Galois.Domains Require Import DomainsBound DomainsThreshold DomainsInterval
+  DomainsIntervalBack DomainsNumeric
   DomainsWrapped DomainsWrappedRank
   DomainsWrappedParts DomainsWrappedArith DomainsWrappedTransfer DomainsWrappedRefine
   DomainsWrappedBack.
@@ -417,6 +418,53 @@ Qed.
 Example wrapped_piece_retains_interval_costs :
   Cost.ticks (wrapped_piece_forward_c bvnot [] w1) =
   (Cost.ticks (interval_forward_c ThresholdEmpty bvnot [] w1) + 2)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Local Definition wrapped_malformed_backward_inputs : list (list (width * wrapped)) :=
+  [[]; [(w1, WItv (-1) 2); (w4, WItv (-1) 17); (w8, WItv 10 9)]].
+
+Example wrapped_backward_malformed_fallback_count_and_refinement :
+  map (fun xs =>
+    let ys := passume D bvadd xs w1 (WItv 1 1) in
+    (ys, Nat.eqb (length ys) (length xs),
+     forallb (fun p =>
+       leb (plat D (fst (fst p))) (snd p) (snd (fst p))) (combine xs ys)))
+    wrapped_malformed_backward_inputs =
+  [([], true, true); ([WFull; WItv 15 1; WFull], true, true)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_consistency_retains_delegated_forward_cost (q : interval) :
+  Cost.ticks (wrapped_assume_consistent_c bvadd w8 w8
+    (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) q) =
+  (Cost.ticks (interval_forward_c ThresholdEmpty bvadd
+    [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8) + 2)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_consistency_accept_and_reject_costs :
+  (Cost.value (interval_forward_c ThresholdEmpty bvadd
+      [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8),
+    Cost.ticks (interval_forward_c ThresholdEmpty bvadd
+      [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8),
+    map (fun q =>
+      let checked := wrapped_assume_consistent_c bvadd w8 w8
+        (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) q in
+      (Cost.value checked, Cost.ticks checked))
+      [Itv (Fin 4) (Fin 5); Itv (Fin 20) (Fin 21)]) =
+  (Itv (Fin 3) (Fin 7), 20%N, [(true, 22%N); (false, 22%N)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrapped_consistency_rejects_width_mismatch_without_delegation :
+  let checked := wrapped_assume_consistent_c bvadd w8 w4
+    (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) (Itv (Fin 4) (Fin 5)) in
+  (Cost.value checked, Cost.ticks checked) = (false, 1%N).
 Proof.
   vm_compute. reflexivity.
 Qed.

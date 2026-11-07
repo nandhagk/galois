@@ -325,3 +325,22 @@ Example interval_invalid_width_point_rejected :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Local Definition interval_malformed_backward_inputs : list (list (width * interval)) :=
+  [[]; [(8%positive, Itv NegInf PosInf)];
+   [(1%positive, Itv NegInf PosInf); (4%positive, Itv (Fin (-3)) (Fin 20));
+    (8%positive, Itv PosInf PosInf)]].
+
+Example interval_backward_malformed_fallback_count_and_refinement :
+  map (fun xs =>
+    let ys := interval_back bvadd xs 1%positive (Itv (Fin 1) (Fin 1)) in
+    (ys, Nat.eqb (length ys) (length xs),
+     forallb (fun p =>
+       leb (plat (interval_word_domain ThresholdEmpty) (fst (fst p)))
+         (snd p) (snd (fst p))) (combine xs ys)))
+    interval_malformed_backward_inputs =
+  [([], true, true); ([Itv (Fin 0) (Fin 255)], true, true);
+   ([Itv (Fin 0) (Fin 1); Itv (Fin 0) (Fin 15); IBot], true, true)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
