@@ -242,6 +242,8 @@ module Source = struct
       ]
   ;;
 
+  let test_packages = Set.add packages examples_package
+
   let analysis_families =
     String.Set.of_list [ "Dataflow"; "Values"; "Ssa"; "Equality"; "Loops"; "Calls"; "Memory" ]
   ;;
@@ -256,6 +258,7 @@ module Source = struct
 
   let new_package = function
     | [ "Analyses"; family; _ ] when Set.mem analysis_families family -> "Analyses"
+    | [ "Domains"; "Memory"; _ ] -> "Domains"
     | [ "Next"; _extension; _ ] -> "Next"
     | ("Analyses" | "Next") :: _ -> ""
     | [ package; _ ] -> package
@@ -263,6 +266,8 @@ module Source = struct
   ;;
 
   let test_package = function
+    | [ "Examples"; directory; _ ] when Set.mem example_directories directory -> examples_package
+    | "Examples" :: _ -> ""
     | [ package; _ ] -> package
     | parts -> new_package parts
   ;;
@@ -852,7 +857,7 @@ module Layout = struct
     let allowed =
       match root with
       | Theories -> Source.packages
-      | Tests -> Source.packages
+      | Tests -> Source.test_packages
       | Legacy_theories -> Source.legacy_packages
       | Legacy_tests -> Set.add Source.legacy_packages Source.examples_package
       | Examples | Legacy_examples -> String.Set.singleton Source.examples_package
@@ -1230,12 +1235,14 @@ module Query = struct
        ; logical = [%string "Galois.Analyses.%{family}"]
        }
        : Load_path.t))
+    @ [ ({ relative = "theories/Domains/Memory"; logical = "Galois.Domains.Memory" } : Load_path.t)
+      ]
     @ List.map (Set.to_list Source.legacy_packages) ~f:(fun package ->
       ({ relative = [%string "legacy/theories/%{package}"]
        ; logical = [%string "GaloisLegacy.%{package}"]
        }
        : Load_path.t))
-    @ List.concat_map (Set.to_list Source.packages) ~f:(fun package ->
+    @ List.concat_map (Set.to_list Source.test_packages) ~f:(fun package ->
       [ ({ relative = [%string "tests/%{package}"]; logical = [%string "Galois.Tests.%{package}"] }
          : Load_path.t)
       ; { relative = [%string "tests/legacy/%{package}"]
@@ -1800,10 +1807,20 @@ let%expect_test "new package and family load paths resolve alongside reused lega
     ; Fixture.at ~root:Tests "Graph/GraphTestFixture.v" Fixture.closed
     ; Fixture.at ~root:Tests "legacy/Graph/GraphLegacyTestFixture.v" Fixture.closed
     ; Fixture.at ~root:Examples "Tutorial/ExamplesTutorialFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Domains/DomainsFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Domains/Memory/DomainsMemoryFixture.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Domains/Memory/DomainsDemandTestFixture.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Domains/Memory/DomainsDemandLegacyTestFixture.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Examples/Ssa/ExamplesSsaSyntaxTestFixture.v" Fixture.closed
+    ; Fixture.at
+        ~root:Tests
+        "legacy/Examples/Ssa/ExamplesSsaTypingLegacyTestFixture.v"
+        Fixture.closed
     ]
   in
   let result =
     Query.with_workspace ~f:(fun repository ->
+      let%bind.Or_error () = Layout.run sources in
       List.iter sources ~f:(fun ({ file; source; _ } : Source.t) ->
         let file = Filename.concat repository file in
         Core_unix.mkdir_p (Filename.dirname file);
@@ -1827,6 +1844,12 @@ From Galois.Next.Extension Require NextFixture.
 From Galois.Tests.Graph Require GraphTestFixture.
 From Galois.Tests.Legacy.Graph Require GraphLegacyTestFixture.
 From Galois.Examples.Tutorial Require ExamplesTutorialFixture.
+From Galois.Domains Require DomainsFixture.
+From Galois.Domains.Memory Require DomainsMemoryFixture.
+From Galois.Tests.Domains.Memory Require DomainsDemandTestFixture.
+From Galois.Tests.Legacy.Domains.Memory Require DomainsDemandLegacyTestFixture.
+From Galois.Tests.Examples.Ssa Require ExamplesSsaSyntaxTestFixture.
+From Galois.Tests.Legacy.Examples.Ssa Require ExamplesSsaTypingLegacyTestFixture.
 Theorem linked : True.
 Proof.
   pose proof Galois.Graph.GraphFixture.closed.
@@ -1835,6 +1858,12 @@ Proof.
   pose proof NextFixture.closed.
   pose proof GraphTestFixture.closed.
   pose proof GraphLegacyTestFixture.closed.
+  pose proof DomainsFixture.closed.
+  pose proof DomainsMemoryFixture.closed.
+  pose proof DomainsDemandTestFixture.closed.
+  pose proof DomainsDemandLegacyTestFixture.closed.
+  pose proof ExamplesSsaSyntaxTestFixture.closed.
+  pose proof ExamplesSsaTypingLegacyTestFixture.closed.
   exact ExamplesTutorialFixture.closed.
 Qed.|}
       in
@@ -1888,6 +1917,65 @@ let%expect_test "new package and client directories are accepted independently o
     (Analyses Bits Collections Domains Fixpoint Float Graph Order Rewrite Rules
      Views)
     (Ok ())
+    |}]
+;;
+
+let%expect_test "memory domains and example tests mirror their supported subdirectories" =
+  let memory =
+    [ Fixture.at ~root:Theories "Domains/Memory/DomainsDemand.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Domains/Memory/DomainsDemandTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Domains/Memory/DomainsDemandLegacyTest.v" Fixture.closed
+    ]
+  in
+  let examples =
+    Set.to_list Source.example_directories
+    |> List.concat_map ~f:(fun directory ->
+      [ Fixture.at
+          ~root:Tests
+          [%string "Examples/%{directory}/Examples%{directory}Test.v"]
+          Fixture.closed
+      ; Fixture.at
+          ~root:Tests
+          [%string "legacy/Examples/%{directory}/Examples%{directory}LegacyTest.v"]
+          Fixture.closed
+      ])
+  in
+  print_s [%sexp (Source.test_packages : String.Set.t)];
+  print_s [%sexp (Layout.run (memory @ examples) : unit Or_error.t)];
+  [%expect
+    {|
+    (Analyses Base Bits Cost Datalog Domains Egraph Examples Fixpoint Float
+     Framework Graph Lattice Next Program)
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "unknown memory and example test directories remain invalid" =
+  List.iter
+    [ Fixture.at ~root:Theories "Domains/Unknown/DomainsDemand.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Domains/Unknown/DomainsDemandTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Domains/Unknown/DomainsDemandLegacyTest.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Domains/Memory/Nested/DomainsDemand.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Examples/Unknown/ExamplesTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Examples/Unknown/ExamplesLegacyTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Examples/ExamplesTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Examples/ExamplesLegacyTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Examples/Ssa/Nested/ExamplesTest.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Examples/Ssa/Nested/ExamplesLegacyTest.v" Fixture.closed
+    ]
+    ~f:(fun source -> print_s [%sexp (Result.is_error (Layout.run [ source ]) : bool)]);
+  [%expect
+    {|
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
     |}]
 ;;
 

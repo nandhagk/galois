@@ -3,6 +3,7 @@ open Core
 (** Audits authored Rocq sources under the repository root, defaulting to the working directory.
     Claims are replayed using the pinned Rocq executable and built dependency load paths.
     New and legacy sources have separate package inventories and basename namespaces.
+    New layout checks include Domains/Memory and the supported Examples client test mirrors.
     A theorem's Float axiom allowance requires an explicit import from Galois.Float or
     GaloisLegacy.Float. A Float package path alone grants no allowance.
     Layout checks warn when a new Rocq file exceeds 1,500 lines.
