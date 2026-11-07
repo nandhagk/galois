@@ -75,12 +75,12 @@ End Hints.
 Example reject_false_comparison : True.
 Proof.
   pose proof bool_laws as H.
-  Fail solve [assert (leb bool_lattice true false = true) by order_solver].
+  Fail assert (leb bool_lattice true false = true) by order_solver.
   exact I.
 Qed.
 
 Example reject_missing_laws {A} (L : lattice A) (a : A) : True.
 Proof.
-  Fail solve [assert (leb L a a = true) by order_solver].
+  Fail assert (leb L a a = true) by order_solver.
   exact I.
 Qed.
