@@ -54,6 +54,27 @@ Definition wf {K} (E : encoding K) (s : t K) : Prop :=
   (forall k i, find E k s = Some i <-> key_of i s = Some k) /\
   (forall i, (i < next s)%positive -> exists k, find E k s = Some i).
 
+(** Forward lookup is the public observation of the stored key-to-ID map. *)
+Theorem find_equation {K} (E : encoding K) k (s : t K) :
+  find E k s = Map.get E k (table s).
+Proof.
+  reflexivity.
+Qed.
+
+(** Reverse lookup is the public observation of the stored ID-to-key map. *)
+Theorem key_of_equation {K} i (s : t K) :
+  key_of i s = Map.get positive_encoding i (inverse s).
+Proof.
+  reflexivity.
+Qed.
+
+(** Well-formed interning supplies the invariant of each stored map. *)
+Theorem wf_maps {K} (E : encoding K) (s : t K) :
+  wf E s -> Map.wf E (table s) /\ Map.wf positive_encoding (inverse s).
+Proof.
+  intros [Htable [Hinverse _]]. now split.
+Qed.
+
 (** Interning charges forward lookup and both map insertions on a miss. *)
 Definition intern_c {K} (E : encoding K) k (s : t K) :=
   let* old := find_c E k s in
@@ -130,6 +151,13 @@ Qed.
 (** Forward lookup has the advertised inverse in every well-formed table. *)
 Theorem key_of_find {K} (E : encoding K) k i (s : t K) :
   wf E s -> find E k s = Some i -> key_of i s = Some k.
+Proof.
+  intros [_ [_ [_ [Hlink _]]]]. apply Hlink.
+Qed.
+
+(** Reverse lookup identifies the same key-to-ID binding in every well-formed table. *)
+Theorem find_key_of {K} (E : encoding K) k i (s : t K) :
+  wf E s -> key_of i s = Some k -> find E k s = Some i.
 Proof.
   intros [_ [_ [_ [Hlink _]]]]. apply Hlink.
 Qed.

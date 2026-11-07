@@ -52,3 +52,24 @@ Example map_reference_ticks :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Combination keeps callback values and retains an expensive callback's declared charge. *)
+Example map_costed_combination :
+  let merged := Map.combine_c
+    (fun a b => Cost.lift (fun _ => 1000%N)
+      (fun _ => match a with Some _ => a | None => b end) tt) sample Map.empty in
+  (Map.elements (Cost.value merged), N.ltb 1000 (Cost.ticks merged)) =
+    ([(2%positive, 20); (1%positive, 11); (3%positive, 30)], true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Comparison keeps callback results and retains their declared charge. *)
+Example map_costed_comparison :
+  let checked := Map.forall2_c
+    (fun v w => Cost.lift (fun _ => 1000%N)
+      (fun _ => match w with Some w => Nat.eqb v w | None => false end) tt) sample sample in
+  (Cost.value checked, N.ltb 1000 (Cost.ticks checked)) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.

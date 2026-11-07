@@ -874,6 +874,15 @@ Proof.
   - cbn [combine_c]. autorewrite with galois_cost. rewrite IH, Hfg. reflexivity.
 Qed.
 
+(** Costed combination depends only on the values returned by its callback. *)
+Theorem combine_c_value {K V W U}
+    (f_c : option V -> option W -> Cost.t (option U)) (m : t K V) (n : t K W) :
+  Cost.value (combine_c f_c m n) = combine (fun a b => Cost.value (f_c a b)) m n.
+Proof.
+  unfold combine. apply combine_value_ext. intros a b.
+  now rewrite Cost.value_lift.
+Qed.
+
 Definition union_opt {V} (f : V -> V -> V) (a b : option V) :=
   match a, b with
   | Some v, Some w => Some (f v w)
@@ -1066,6 +1075,17 @@ Proof.
   destruct m as [|[p [k v]] rest]; [reflexivity|].
   unfold forall2. cbn [forall2_c]. autorewrite with galois_cost.
   fold (get_code p n). destruct (r v (get_code p n)); reflexivity.
+Qed.
+
+(** Costed comparison depends only on the values returned by its callback. *)
+Theorem forall2_c_value {K V W} (r_c : V -> option W -> Cost.t bool)
+    (m : t K V) (n : t K W) :
+  Cost.value (forall2_c r_c m n) = forall2 (fun v w => Cost.value (r_c v w)) m n.
+Proof.
+  induction m as [|[p [k v]] rest IH]; rewrite forall2_equation.
+  - reflexivity.
+  - cbn [forall2_c]. autorewrite with galois_cost. fold (get_code p n).
+    destruct (Cost.value (r_c v (get_code p n))); cbn [andb]; [exact IH|reflexivity].
 Qed.
 
 Local Lemma forall2_entries {K V W} r (m : t K V) (n : t K W) :
