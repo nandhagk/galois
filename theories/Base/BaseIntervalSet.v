@@ -89,8 +89,11 @@ Theorem mem_equation rs b :
 Proof.
   destruct rs as [|r rest].
   - reflexivity.
-  - unfold mem at 1. cbn [mem_c Cost.bind Cost.step Cost.tick Cost.value].
-    destruct ((fst r <=? b) && (b <? snd r)); reflexivity.
+  - change (Cost.value (Cost.bind Cost.step (fun _ =>
+      if (fst r <=? b) && (b <? snd r) then Cost.ret true else mem_c rest b)) =
+      if (fst r <=? b) && (b <? snd r) then true else mem rest b).
+    rewrite Cost.value_bind.
+    destruct ((fst r <=? b) && (b <? snd r)); [apply Cost.value_ret|reflexivity].
 Qed.
 
 (** Emptiness checks whether the range list is empty. *)
@@ -281,8 +284,12 @@ Local Lemma merge_equation xs ys :
   end.
 Proof.
   destruct xs as [|x xt], ys as [|y yt]; try reflexivity.
-  unfold merge at 1. cbn [merge_c Cost.bind Cost.step Cost.tick Cost.value Cost.map].
-  destruct (fst x <=? fst y); reflexivity.
+  change (Cost.value (Cost.bind Cost.step (fun _ =>
+    if fst x <=? fst y then Cost.map (cons x) (merge_c xt (y :: yt))
+    else Cost.map (cons y) (merge_c (x :: xt) yt))) =
+    if fst x <=? fst y then x :: merge xt (y :: yt) else y :: merge (x :: xt) yt).
+  rewrite Cost.value_bind.
+  destruct (fst x <=? fst y); rewrite Cost.value_map; reflexivity.
 Qed.
 
 Local Lemma merge_in xs ys r :
@@ -357,9 +364,13 @@ Local Lemma coalesce_from_equation r rs :
   end.
 Proof.
   destruct rs as [|s rest]; [reflexivity|].
-  unfold coalesce_from at 1.
-  cbn [coalesce_from_c Cost.bind Cost.step Cost.tick Cost.value Cost.map].
-  destruct (snd r <? fst s); reflexivity.
+  change (Cost.value (Cost.bind Cost.step (fun _ =>
+    if snd r <? fst s then Cost.map (cons r) (coalesce_from_c s rest)
+    else coalesce_from_c (fst r, Z.max (snd r) (snd s)) rest)) =
+    if snd r <? fst s then r :: coalesce_from s rest
+    else coalesce_from (fst r, Z.max (snd r) (snd s)) rest).
+  rewrite Cost.value_bind.
+  destruct (snd r <? fst s); [rewrite Cost.value_map|]; reflexivity.
 Qed.
 
 Local Definition coalesce_c (rs : t) : Cost.t t :=
@@ -512,8 +523,22 @@ Local Lemma cut_equation lo hi tail finish ys :
   end.
 Proof.
   destruct ys as [|[m n] rest]; [reflexivity|].
-  unfold cut at 1. cbn [cut_c Cost.bind Cost.step Cost.tick Cost.value Cost.map].
-  destruct (n <=? lo), (hi <=? m), (m <=? lo), (hi <=? n); reflexivity.
+  change (Cost.value (Cost.bind Cost.step (fun _ =>
+    if n <=? lo then cut_c lo hi tail finish rest
+    else if hi <=? m then Cost.map (cons (lo, hi)) (finish ((m, n) :: rest))
+    else if m <=? lo then
+      if hi <=? n then finish ((m, n) :: rest) else cut_c n hi tail finish rest
+    else Cost.map (cons (lo, m))
+      (if hi <=? n then finish ((m, n) :: rest) else cut_c n hi tail finish rest))) =
+    if n <=? lo then cut lo hi tail finish rest
+    else if hi <=? m then (lo, hi) :: Cost.value (finish ((m, n) :: rest))
+    else if m <=? lo then
+      if hi <=? n then Cost.value (finish ((m, n) :: rest)) else cut n hi tail finish rest
+    else (lo, m) ::
+      if hi <=? n then Cost.value (finish ((m, n) :: rest)) else cut n hi tail finish rest).
+  rewrite Cost.value_bind.
+  destruct (n <=? lo), (hi <=? m), (m <=? lo), (hi <=? n);
+    try rewrite Cost.value_map; reflexivity.
 Qed.
 
 Local Fixpoint subtract_c (xs ys : t) {struct xs} : Cost.t t :=
