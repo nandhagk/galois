@@ -82,3 +82,74 @@ Example direct_bit_costs :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** The physical code deliberately differs from the positive key stored beside the value. *)
+Definition malformed_abstract : Map.t positive nat :=
+  Map.set_code 1%positive 13%positive 130 Map.empty.
+
+Definition conversion_control : Map.t positive nat :=
+  Map.set positive_encoding 13%positive 130 Map.empty.
+
+Example malformed_conversion_observes_stored_key :
+  let converted := Slot.of_map positive_encoding universe malformed_abstract in
+  (Map.get positive_encoding 13%positive malformed_abstract,
+    Slot.lookup positive_encoding universe converted 13%positive,
+    Slot.elements converted, Intern.size universe) =
+    (None, Some 130, [(1%positive, 130)], 2%nat).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example conversion_universe_wf : Intern.wf positive_encoding universe.
+Proof.
+  apply (Intern.wf_of_list positive_encoding positive_encoding_laws).
+Qed.
+
+(** Numeric output validity does not require well-formedness of the malformed abstract map. *)
+Example malformed_conversion_is_valid :
+  Slot.valid universe (Slot.of_map positive_encoding universe malformed_abstract).
+Proof.
+  apply (Slot.slot_of_map_valid positive_encoding positive_encoding_laws).
+  exact conversion_universe_wf.
+Qed.
+
+Example conversion_control_wf : Map.wf positive_encoding conversion_control.
+Proof.
+  apply Map.wf_set. apply Map.wf_empty.
+Qed.
+
+Example conversion_control_lookup_spec :
+  Slot.lookup positive_encoding universe
+    (Slot.of_map positive_encoding universe conversion_control) 13%positive =
+    Map.get positive_encoding 13%positive conversion_control.
+Proof.
+  rewrite (Slot.slot_of_map_lookup positive_encoding positive_encoding_laws)
+    by (try exact conversion_universe_wf; exact conversion_control_wf).
+  vm_compute. reflexivity.
+Qed.
+
+Example conversion_control_lookup :
+  let converted := Slot.of_map positive_encoding universe conversion_control in
+  (Map.get positive_encoding 13%positive conversion_control,
+    Slot.lookup positive_encoding universe converted 13%positive) = (Some 130, Some 130).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example conversion_control_round_trip :
+  Slot.to_map positive_encoding universe
+    (Slot.of_map positive_encoding universe conversion_control) = conversion_control.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example conversion_control_refines :
+  Slot.refines positive_encoding universe
+    (Slot.of_map positive_encoding universe conversion_control) conversion_control.
+Proof.
+  pose proof (Slot.slot_to_map_refines positive_encoding positive_encoding_laws universe
+    (Slot.of_map positive_encoding universe conversion_control) conversion_universe_wf
+    (Slot.slot_of_map_valid positive_encoding positive_encoding_laws universe
+      conversion_control conversion_universe_wf)) as Hrefines.
+  now rewrite conversion_control_round_trip in Hrefines.
+Qed.
