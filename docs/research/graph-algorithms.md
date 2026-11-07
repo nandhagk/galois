@@ -3,7 +3,7 @@ Copied from the pre-redesign research notes on 2026-11-07. Card and ruling IDs r
 # Graph algorithms: evidence and implementation plan
 
 Research snapshot, 2026-10-28. This is a proposed plan, not a contract or a claim of
-implemented, benchmarked, or kernel-checked Gaulois behavior. `historical API contracts` is binding;
+implemented, benchmarked, or kernel-checked Gaulois behavior. The retired graph API contract is binding;
 the owner must rule on changes of meaning, names, statements, or prescribed algorithms. Minimal
 contract repairs follow C14 and must be reported for the next documentation checkpoint. The
 ledger lists all GRA cards as queued; `theories/Graph` contains only its dune skeleton.

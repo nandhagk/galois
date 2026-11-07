@@ -77,25 +77,99 @@ Record lattice (A : Type) := {
 }.
 ```
 
-Presentations carry their encodings, and separate semantic links connect program steps to
-presentations. An `Analysis.t` combines a system, lattice and policy. `analyze` produces an
-explicit outcome, and `certify` checks an untrusted candidate.
+Presentations carry the encodings needed by their algorithms. The separate `Link.t` relates
+concrete states and steps to a presentation. Its laws belong in a separate `Prop` record.
+
+```coq
+Record Cfg.t N E := {
+  graph : Graph.t N E; node_enc : encoding N; edge_enc : encoding E
+}.
+Record Ssa.t N E V K G := {
+  cfg : Cfg.t N E; val_enc : encoding V; values : list V;
+  def : V -> definition N V K; home : V -> N; params : N -> list V;
+  args : E -> list V; guards : E -> list (G * list V)
+}.
+Record Link.t S O N E := {
+  point : S -> N; taken : S -> list O -> S -> E -> Prop;
+  stays : S -> list O -> S -> Prop
+}.
+```
+
+The value abstraction accepts any operator language `K` and guard language `G`. `Bits` supplies
+one instance. `ValueAbs.t` contains the computational operations, and `ValueSem.t` describes
+their concrete interpretation. Separate laws connect the two.
+
+```coq
+Record ValueAbs.t A K G := {
+  lat : lattice A; top : A; op : K -> list A -> A;
+  back : K -> A -> list A -> list A; guard : G -> list A -> list A
+}.
+Record ValueSem.t C K G := {
+  eval : K -> list C -> option C; holds : G -> list C -> Prop
+}.
+```
+
+An `Analysis.t` combines a system, lattice and policy. Running it needs no semantic proof.
+`analyze` reports whether a post-solution was obtained, fuel ran out or a candidate was rejected.
+`certify` connects a check to its soundness proof at the acceptance boundary.
+
+```coq
+Record Policy.t X := {
+  order : X -> positive; widen_at : X -> bool; delay : nat; narrowing : nat
+}.
+Record Analysis.t X C A := {
+  key_enc : encoding X; row_enc : encoding C; lat : lattice A;
+  system : System.t X C A; static : System.static system; policy : Policy.t X
+}.
+Parameter analyze : forall {X C A} (a : Analysis.t X C A), positive ->
+  Outcome.t X A {s : X -> A | post_solution (lat a) (system a) s}.
+Parameter certify : forall {W} (P : W -> Prop) (check : W -> bool),
+  (forall w, check w = true -> P w) -> W -> option {w | P w}.
+```
+
+Frameworks construct an `Analysis.t`. The memory framework accepts a client-supplied alias
+oracle, whose semantic laws are separate from its operations.
+
+```coq
+Record Alias.t R := {
+  disjoint : R -> R -> bool; covers : R -> R -> bool; all : R
+}.
+```
 
 ## Shared abstractions
 
-The target shares a fuel driver and potential lemmas in `Cost`. `Base` supplies interning,
-indexes, memo tables, interval sets, relations and certificate helpers. `Graph` shares search,
-SCC hierarchy and dominance infrastructure. `Fixpoint` shares its evaluator and update rule.
-`Lattice` shares combinator laws, `Bits` shares an operator table, and `Domains` shares transfer
-dispatch. `Program` shares semantic completion lemmas, and `Framework` shares gen/kill and
-tabulation machinery.
+The target shares recurring implementations and their proofs through these package interfaces.
+
+| Home | Shared abstraction and responsibility |
+| --- | --- |
+| `Cost` | `iterate` and `fix_wf` provide loop drivers, invariants and potential lemmas. |
+| `Base` | `Index.group_by` and `Map.find_or` share indexing and default lookup. |
+| `Base` | `Memo` supplies tables, validity invariants and agreement with a reference function. |
+| `Base` | `Intern` prepares dense IDs, inverse tables and interned collections with agreement to client keys. |
+| `Base` | `IntervalSet` shares interval operations; `Rel` shares paths and relational closures. |
+| `Base` | `certify` and `certify_or` share checked acceptance and fallback. Derived encodings prove injectivity by round trip. |
+| `Graph` | `Search` shares traversal with visitors. The SCC hierarchy supports WTO and loop projections. Dominance backends share preparation. |
+| `Fixpoint` | A constraint evaluator, update rule and checker serve the solver engines. `Analysis.t`, `Policy.t` and `analyze` separate systems from scheduling. |
+| `Lattice` | The combinator kit derives operations and laws. `height_on` expresses finiteness relative to an invariant. |
+| `Bits` | One operator table supplies evaluation, arity, result width and codes. |
+| `Domains` | A transfer harness shares arity dispatch, singleton handling, backward defaults and soundness. |
+| `Program` | Presentations bundle encodings. Step-local laws and structured-language completion lemmas share semantic reasoning. |
+| `Framework` | Gen/kill problems and stack-alphabet tabulation share dataflow and matched-call machinery. |
 
 ## Shared tactics
 
-The target tactics have documented contracts and representative tests. Cost tactics simplify
-cost projections and bounds. Map and set tactics normalise lookups and membership. Other tactics
-handle key equality, option and bind cases, loop invariants, lattice order, domain soundness,
-operator cases and encoding round trips.
+The target tactics have documented contracts, named hint databases and representative tests.
+
+- `cost_simpl` and `bigO_solver` simplify cost projections and combine bounds.
+- `simpl_map` and `simpl_set` normalise map lookups and set membership after updates and set operations.
+- `set_solver` reflects membership goals to propositions and uses `intuition`.
+- `inv_option` and `inv_bind` destruct option matches and costed bind chains.
+- `case_key` derives equalities and disequalities from encoded-key and `eqb` tests.
+- `fold_invariant` and `iterate_invariant` apply invariant lemmas and leave the step obligation.
+- `order_solver` uses lattice laws and the `galois_order` database at a fixed depth.
+- `gamma_solver` applies registered domain transfer-soundness lemmas.
+- `op_cases` splits on the `Bits` operator table.
+- `solve_roundtrip` proves decoder round trips for derived encodings.
 
 ## Migration
 

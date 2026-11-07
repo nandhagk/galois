@@ -157,7 +157,7 @@ The following are replacement fragments, not an authorization to modify a contra
   exact-hull reduction, DOM-2/DOM-3 reuse, all theorem statements, and C34 intact unless
   the owner rules otherwise. Add the multiply and shift witnesses as optional future
   precision research, not new completion conditions.
-* Review `historical API contracts`, `historical design and trust documents`, and C34's descriptions with the above
+* Review the retired domains API contract, the retired design overview, and C34's descriptions with the above
   evidence: “stronger reduction” is supported by the displayed counterexample; it does
   not establish implementation correctness or comprehensive transfer parity. No false
   DOM-9 public theorem statement was identified in this source audit. No API change is

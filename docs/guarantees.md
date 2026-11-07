@@ -29,8 +29,10 @@ Flocq is imported only by Float packages and files that import them.
 ## Cost model
 
 The target cost model is a word-RAM model. Ticks count unit operations, and each costed
-algorithm bounds its ticks. Trie descent and encoded key comparison charge per bit. Bounds
-concern Rocq definitions. A tick count is not a time measurement.
+algorithm bounds its ticks. Operations on counters, ranks, dense IDs, fuel and similar numbers
+cost O(1) when those numbers have O(log n) bits. Trie descent and encoded key comparison charge
+one tick per key bit. After interning, a key has O(log n) bits. Bounds concern Rocq definitions.
+A tick count is not a time measurement.
 
 ## Checks
 

@@ -97,7 +97,7 @@ examples are required. A new benchmark suite or a mandatory benchmark gate is no
 
 ## What the actual ANA-6 contract already supports
 
-The source of truth is `historical API contracts`, ANA-6 definitions at lines 663–722 and theorems at
+The source of truth is the retired analyses API contract, ANA-6 definitions at lines 663–722 and theorems at
 1654–1681, together with `historical card ANA-6.md`. It is inaccurate to describe this as a fixed
 Bits-only rewriter:
 

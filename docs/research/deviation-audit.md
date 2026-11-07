@@ -63,7 +63,8 @@ example, bounds `[18,21]` remove the difference. The diagnostic `multiplier.js` 
 independent finite model and witness checks.
 It and `witness-bigint.js` ran with the pinned Node binary under a 4 GiB scope and 20 second
 timeout; the latter checks all concrete products for both witnesses. Neither is a kernel-checked
-example. The exact commands, exit statuses and file hashes are in `MANIFEST.md` in this directory.
+example. The scripts and `MANIFEST.md`, which records commands, exit statuses and file hashes,
+are archived historical evidence and are not included in this copy.
 
 DOM-8 does at most `w` abstract additions, up to `w` joins and `w` scalar shifts, and always
 visits all `w` bit positions. Listing 4 stops when the multiplier value and mask become zero.
@@ -150,7 +151,7 @@ set for pending pairs alone can reduce repeated list membership costs while pres
 universe, but needs a deterministic order or an explicit result-order contract.
 
 The extractor's optimum is for finite materialized additive tree cost
-(`RewriteExtract.v:331` and `historical design and trust documents`); shared DAG/program cost is a different objective.
+(`RewriteExtract.v:331` and the retired trust document); shared DAG/program cost is a different objective.
 No fairness or full saturation guarantee follows from bounded attempts. A timeout in another
 engine also limits completeness, so boundedness alone is not a comparative defect. The facade can
 return `None` when explanation construction fails. C19 explicitly approves deferred global DAG,
@@ -306,7 +307,7 @@ liveness agreement and preparation coverage, not just a faster inner loop.
 `AnalysesSsaPre.v:402` and `AnalysesSsaPreSemantics.v:73` implement and prove the stated
 pure, total client realizer and semantic premises. [SSAPRE](https://doi.org/10.1145/319301.319348)
 addresses a broader optimization setting; unique-entry, totality and semantic laws narrow client
-coverage. The lack of a PRE optimality theorem in `historical design and trust documents` is a weaker guarantee, not a
+coverage. The lack of a PRE optimality theorem in the retired trust document is a weaker guarantee, not a
 counterexample to optimal placement. Proving or refuting optimality needs a defined cost objective,
 legal competitor transformations and a concrete witness; changing these is a contract decision.
 
@@ -329,7 +330,7 @@ a more refined IEEE treatment could preserve them. A split negative/positive non
 transfer with separately handled signed zeros, NaNs and infinities could be more precise, but
 must prove outward rounding and the exact current observable semantics; traps and NaN payload
 observability must not be silently strengthened. This is not a least-hull implementation claim.
-C13/C56 permit exactly the four named Float axioms listed in `historical design and trust documents`; no exception is
+C13/C56 permit exactly the four named Float axioms listed in the retired trust document; no exception is
 extended to core. Flocq is a semantic and proof dependency, not a competitor analysis.
 
 For a concrete source-derived binary32 example, take numerator `[1,1]` and a denominator
