@@ -34,7 +34,7 @@ Ltac case_key :=
   end.
 
 (** Induct on the round-trip input, reduce constructor matches and rewrite recursive
-    and explicitly supplied round-trip hypotheses. Unsupported residue stays visible. *)
+    and explicitly supplied decoder round trips. Unrelated equalities stay untouched. *)
 Ltac solve_roundtrip :=
   intros;
   match goal with
@@ -51,6 +51,8 @@ Ltac solve_roundtrip :=
   | H : codec_laws ?C |- context [decode ?C (encode (codec_enc ?C) ?x)] =>
     rewrite (decode_encode H x); cbn
   | H : forall x, ?f (?g x) = Some x |- context [?f (?g ?y)] => progress rewrite (H y)
-  | H : ?lhs = ?rhs |- context [?lhs] => progress rewrite H
+  | H : ?f (Cost.value (?g ?x)) = Some ?x |-
+      context [?f (Cost.value (?g ?x))] => progress rewrite H
+  | H : ?f (?g ?x) = Some ?x |- context [?f (?g ?x)] => progress rewrite H
   end;
   try reflexivity.

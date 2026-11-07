@@ -4,7 +4,7 @@
     For example, the raw positive equality form uses the same law as [eqb].
     Builds on: BaseKeyTactics and BaseCode. *)
 
-From Stdlib Require Import Bool List NArith.
+From Stdlib Require Import Arith Bool List NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseCode BaseEq BaseKeyTactics.
 Import List.ListNotations.
@@ -58,6 +58,20 @@ Example solve_option {A} (CA : codec A) (HA : codec_laws CA) :
   forall x, option_of_code CA (Cost.value (option_to_code_c CA x)) = Some x.
 Proof.
   solve_roundtrip.
+Qed.
+
+(** This decoder leaves an unrelated natural-number condition for its caller. *)
+Definition unsupported (n : nat) (b : bool) : option bool :=
+  if Nat.eqb n 0 then Some b else None.
+
+Example solve_roundtrip_cyclic_equalities :
+  forall n m : nat, n = 0%nat -> n = m -> m = n ->
+  forall b : bool, unsupported n b = Some b.
+Proof.
+  intros n m Hzero Hnm Hmn b.
+  solve_roundtrip.
+  - rewrite Hzero. reflexivity.
+  - rewrite Hzero. reflexivity.
 Qed.
 
 Example key_positive : eqb positive_encoding 1 1 = true.
