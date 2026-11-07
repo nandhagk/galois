@@ -432,11 +432,7 @@ Proof.
   rewrite Cost.value_bind in Hbound.
   assert (Hfeasible : SparseRefine.edge_feasible P sigma e = true).
   { eapply SparseRefine.edge_feasible_sound; eassumption. }
-  unfold SparseRefine.edge_feasible, SparseRefine.edge_feasible_c in Hfeasible.
-  autorewrite with galois_cost in Hfeasible.
-  fold (SparseRefine.plans P e) (SparseRefine.dependencies P e) in Hfeasible.
-  change (map (fun x => Cost.value (Cost.ret (sigma (UVal x)))))
-    with (map (fun x => sigma (UVal x))) in Hfeasible.
+  rewrite SparseRefine.edge_feasible_equation in Hfeasible.
   destruct (Cost.value (refine_c P (SparseRefine.plans P e) (SparseRefine.dependencies P e)
     (map (fun x => sigma (UVal x)) (SparseRefine.dependencies P e)))) as [fm|]
     eqn:Href; [|discriminate].

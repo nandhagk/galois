@@ -4,7 +4,7 @@
     For example, equality of an identity result refines its previously unrestricted operand.
     Builds on: FrameworkSparseRefine, FrameworkSparseTest and GraphFixtures. *)
 
-From Stdlib Require Import List Bool Arith ZArith.
+From Stdlib Require Import List Bool Arith ZArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseCode BaseMap.
 From Galois.Lattice Require Import LatticeCore LatticeConcrete LatticeDisjunction LatticeAdjoin.
@@ -14,7 +14,8 @@ From Galois.Program Require Import ProgramSemantics ProgramCfg ProgramLink Progr
   ProgramStrict ProgramEdgeProjection.
 From Galois.Domains Require Import DomainsValue DomainsPoint DomainsTagged DomainsNumeric
   DomainsBitsValue.
-From Galois.Fixpoint Require Import FixpointAnalysis FixpointAnalyze FixpointSolver FixpointCheck.
+From Galois.Fixpoint Require Import FixpointAnalysis FixpointAnalyze FixpointSolver FixpointCheck
+  FixpointSystem.
 From Galois.Framework Require Import FrameworkSparse FrameworkSparseRefine.
 From Galois.Tests.Framework Require Import FrameworkDenseTest FrameworkSparseTest
   FrameworkSparseSoundTest.
@@ -297,7 +298,10 @@ Proof.
 Qed.
 
 Example path_backward_refines_joined_arguments :
-  ValueAbs.back (path_values 2) (Var 0) [TBot] [[number 7]] = [[TBot]].
+  match ValueAbs.guard (path_values 2) (Truth false) [[number 7]] with
+  | [subject] => ValueAbs.back (path_values 2) (Var 0) subject [[number 7]]
+  | _ => []
+  end = [[TBot]].
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -523,6 +527,246 @@ Qed.
 Example repeated_edge_refinement_keeps_stored_fact :
   refined_fact_projected repeated_problem (make_dom_context repeated_prepared repeated_tree)
     (fun _ => Some TAny) 2 0 = Some TAny.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** A pure reader adapter has no internal lookup charge but still pays invocation overhead. *)
+Definition ret_reader {N E V A} (sigma : unknown N E V -> option A) u :=
+  Cost.ret (sigma u).
+
+Definition charged_reader {N E V A} charge (sigma : unknown N E V -> option A) u :=
+  Cost.tick charge ;; Cost.ret (sigma u).
+
+Definition rejected_facts (u : unknown nat (nat * nat) nat) :=
+  match u with UVal 1 => Some (number 0) | _ => Some TAny end.
+
+Definition missing_facts (u : unknown nat (nat * nat) nat) :=
+  match u with UVal 1 => None | _ => Some (@TAny point) end.
+
+Definition equal_edge : nat * nat := (1, 2).
+
+Example costed_refinement_retains_reader_charge :
+  Cost.value (refine_fact_c equal_problem (charged_reader 7 unknown_facts) equal_edge 0
+    (Some TAny)) = Some (number 2) /\
+  Cost.ticks (refine_fact_c equal_problem (charged_reader 7 unknown_facts) equal_edge 0
+    (Some TAny)) =
+    (7 + Cost.ticks (refine_fact_c equal_problem (ret_reader unknown_facts) equal_edge 0%nat
+      (Some TAny)))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example accepted_edge_retains_both_reader_charges :
+  Cost.value (edge_feasible_c equal_problem (charged_reader 7 unknown_facts) equal_edge) = true /\
+  Cost.ticks (edge_feasible_c equal_problem (charged_reader 7 unknown_facts) equal_edge) =
+    (14 + Cost.ticks (edge_feasible_c equal_problem (ret_reader unknown_facts) equal_edge))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example edge_refinement_retains_initial_and_subject_reader_charges :
+  Cost.value (refine_on_edge_c equal_problem (charged_reader 7 unknown_facts) equal_edge 0) =
+    Some (number 2) /\
+  Cost.ticks (refine_on_edge_c equal_problem (charged_reader 7 unknown_facts) equal_edge 0) =
+    (14 + Cost.ticks
+      (refine_on_edge_c equal_problem (ret_reader unknown_facts) equal_edge 0%nat))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example infeasible_edge_retains_both_reader_charges :
+  Cost.value (edge_feasible_c equal_problem (charged_reader 7 rejected_facts) equal_edge) = false /\
+  Cost.ticks (edge_feasible_c equal_problem (charged_reader 7 rejected_facts) equal_edge) =
+    (14 + Cost.ticks (edge_feasible_c equal_problem (ret_reader rejected_facts) equal_edge))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example missing_subject_retains_snapshot_reader_charges :
+  Cost.value (edge_feasible_c equal_problem (charged_reader 7 missing_facts) equal_edge) = false /\
+  Cost.ticks (edge_feasible_c equal_problem (charged_reader 7 missing_facts) equal_edge) =
+    (14 + Cost.ticks (edge_feasible_c equal_problem (ret_reader missing_facts) equal_edge))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example ordinary_fold_retains_initial_and_operand_reader_charges :
+  Cost.value (refined_fact_c equal_problem equal_context (charged_reader 7 unknown_facts) 2 0) =
+    Some (number 2) /\
+  Cost.ticks (refined_fact_c equal_problem equal_context (charged_reader 7 unknown_facts) 2 0) =
+    (14 + Cost.ticks
+      (refined_fact_c equal_problem equal_context (ret_reader unknown_facts) 2%nat 0%nat))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example nonempty_fold_symbolic_reader_cost
+    (reader : unknown nat (nat * nat) nat -> Cost.t (option (tagged point))) :
+  Cost.ticks (refined_fact_c equal_problem equal_context reader 2 0) =
+    (Cost.ticks (dominating_edges_in_c equal_context 2%nat) + 2 +
+      Cost.ticks (reader (UVal 0%nat)) +
+      Cost.ticks (refine_fact_c equal_problem reader equal_edge 0%nat
+        (Cost.value (reader (UVal 0%nat)))))%N.
+Proof.
+  rewrite refined_fact_cost_equation.
+  change (dominating_edges_in equal_context 2) with [equal_edge].
+  rewrite ticks_fold_left_c_cons, ticks_fold_left_c_nil; lia.
+Qed.
+
+Definition lookup_facts : Map.t (unknown nat (nat * nat) nat) (option (tagged point)) :=
+  Map.of_list (Sparse.key_enc equal_problem) [(UVal 0, Some TAny); (UVal 1, Some TAny)].
+
+Definition map_reader :=
+  lookup_c (Sparse.key_enc equal_problem)
+    (Analysis.lat (sparse_analysis equal_problem 1)) lookup_facts.
+
+(** Value-only adapters are comparison controls, not costed runtime lookup implementations. *)
+Definition value_only_map_reader u := Cost.ret (Cost.value (map_reader u)).
+
+Example map_reader_has_nonzero_lookup_cost :
+  N.ltb 0 (Cost.ticks (map_reader (UVal 1))) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example real_map_reader_refinement_cost :
+  Cost.value (refine_fact_c equal_problem map_reader equal_edge 0 (Some TAny)) =
+    Some (number 2) /\
+  Cost.ticks (refine_fact_c equal_problem map_reader equal_edge 0 (Some TAny)) =
+    (Cost.ticks (map_reader (UVal 1%nat)) +
+      Cost.ticks
+        (refine_fact_c equal_problem value_only_map_reader equal_edge 0%nat (Some TAny)))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example real_map_reader_feasibility_cost :
+  Cost.value (edge_feasible_c equal_problem map_reader equal_edge) = true /\
+  Cost.ticks (edge_feasible_c equal_problem map_reader equal_edge) =
+    (Cost.ticks (map_reader (UVal 1%nat)) + Cost.ticks (map_reader (UVal 0%nat)) +
+      Cost.ticks (edge_feasible_c equal_problem value_only_map_reader equal_edge))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Definition rejected_lookup_facts :=
+  Map.set (Sparse.key_enc equal_problem) (UVal 1) (Some (number 0)) lookup_facts.
+
+Definition rejected_map_reader :=
+  lookup_c (Sparse.key_enc equal_problem)
+    (Analysis.lat (sparse_analysis equal_problem 1)) rejected_lookup_facts.
+
+Definition value_only_rejected_map_reader u := Cost.ret (Cost.value (rejected_map_reader u)).
+
+Example real_map_reader_rejection_cost :
+  Cost.value (edge_feasible_c equal_problem rejected_map_reader equal_edge) = false /\
+  Cost.ticks (edge_feasible_c equal_problem rejected_map_reader equal_edge) =
+    (Cost.ticks (rejected_map_reader (UVal 1%nat)) +
+      Cost.ticks (rejected_map_reader (UVal 0%nat)) +
+      Cost.ticks (edge_feasible_c equal_problem value_only_rejected_map_reader equal_edge))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example real_map_reader_fold_cost :
+  Cost.value (refined_fact_c equal_problem equal_context map_reader 2 0) = Some (number 2) /\
+  Cost.ticks (refined_fact_c equal_problem equal_context map_reader 2 0) =
+    (Cost.ticks (map_reader (UVal 0%nat)) + Cost.ticks (map_reader (UVal 1%nat)) +
+      Cost.ticks (refined_fact_c equal_problem equal_context value_only_map_reader 2%nat 0%nat))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Definition occurrence_prepared :=
+  Prepared.prepare nat_encoding (EdgeProjection.occurrence_graph (Cfg.graph equal_cfg)).
+Definition occurrence_tree := DomCheck.of_parents occurrence_prepared Fixtures.Diamond.parents.
+Definition occurrence_context := make_dom_context occurrence_prepared occurrence_tree.
+
+Example nonempty_occurrence_tree_checker_accepts :
+  DomCheck.check occurrence_prepared Fixtures.Diamond.parents = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example nonempty_projected_fold_preserves_value :
+  dominating_edges_projected occurrence_context 2 = [(1, 2)] /\
+  refined_fact_projected equal_problem occurrence_context unknown_facts 2 0 = Some (number 2).
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example projected_fold_retains_initial_and_operand_reader_charges :
+  Cost.value (refined_fact_projected_c equal_problem occurrence_context
+    (charged_reader 7 unknown_facts) 2 0) = Some (number 2) /\
+  Cost.ticks (refined_fact_projected_c equal_problem occurrence_context
+    (charged_reader 7 unknown_facts) 2 0) =
+    (14 + Cost.ticks (refined_fact_projected_c equal_problem occurrence_context
+      (ret_reader unknown_facts) 2%nat 0%nat))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example projected_fold_symbolic_reader_cost
+    (reader : unknown nat (nat * nat) nat -> Cost.t (option (tagged point))) :
+  Cost.ticks (refined_fact_projected_c equal_problem occurrence_context reader 2 0) =
+    (Cost.ticks (dominating_edges_projected_c occurrence_context 2%nat) + 2 +
+      Cost.ticks (reader (UVal 0%nat)) +
+      Cost.ticks (refine_fact_c equal_problem reader equal_edge 0%nat
+        (Cost.value (reader (UVal 0%nat)))))%N.
+Proof.
+  rewrite refined_fact_projected_cost_equation.
+  change (dominating_edges_projected occurrence_context 2) with [equal_edge].
+  rewrite ticks_fold_left_c_cons, ticks_fold_left_c_nil; lia.
+Qed.
+
+Example projected_fold_real_map_reader_cost :
+  Cost.value (refined_fact_projected_c equal_problem occurrence_context map_reader 2 0) =
+    Some (number 2) /\
+  Cost.ticks (refined_fact_projected_c equal_problem occurrence_context map_reader 2 0) =
+    (Cost.ticks (map_reader (UVal 0%nat)) + Cost.ticks (map_reader (UVal 1%nat)) +
+      Cost.ticks (refined_fact_projected_c equal_problem occurrence_context
+        value_only_map_reader 2%nat 0%nat))%N.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example unknown_block_refinement_identity :
+  refined_fact equal_problem equal_context unknown_facts 9 0 = unknown_facts (UVal 0).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition disconnected_ssa :=
+  Ssa.of_pure
+    (Cfg.Make (Prepared.graph Fixtures.Unreachable.prepared) nat_encoding
+      (codec_enc (pair_codec nat_codec nat_codec)))
+    nat_encoding [0; 1] (Ssa.def equal_ssa) (Ssa.home equal_ssa)
+    (Ssa.params equal_ssa) (Ssa.args equal_ssa) (Ssa.guards equal_ssa).
+
+Definition disconnected_problem := Sparse.Make disconnected_ssa values (fun _ => Cost.ret TAny).
+Definition disconnected_context :=
+  make_dom_context Fixtures.Unreachable.prepared Fixtures.Unreachable.tree.
+
+Example listed_unreachable_block_refinement_identity :
+  dominating_edges_in disconnected_context 5 = [] /\
+  refined_fact disconnected_problem disconnected_context unknown_facts 5 0 = unknown_facts (UVal 0).
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example empty_query_retains_initial_reader_charge :
+  Cost.ticks (refined_fact_c equal_problem equal_context (charged_reader 7 unknown_facts) 9 0) =
+    (7 + Cost.ticks
+      (refined_fact_c equal_problem equal_context (ret_reader unknown_facts) 9%nat 0%nat))%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example nonempty_guard_reader_invocation_cost :
+  Cost.ticks (plans_c equal_problem equal_edge) =
+    (1 + Cost.ticks (Ssa.guards_c equal_ssa equal_edge) +
+      Cost.ticks (map_c (guard_plan_c equal_ssa) [(Equal (32%positive, 2%Z), [1%nat])]))%N.
 Proof.
   vm_compute; reflexivity.
 Qed.

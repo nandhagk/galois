@@ -19,11 +19,21 @@ Module SparseRefine.
 
 (** Prepared plans retain the ordered guards and their immediate definitions. *)
 Definition plans_c {N E V K G A} (P : Sparse.t N E V K G A) e :=
-  let* gs := Ssa.guards_c (Sparse.ssa P) e in
+  let* gs := Cost.step ;; Ssa.guards_c (Sparse.ssa P) e in
   map_c (Sparse.guard_plan_c (Sparse.ssa P)) gs.
 
 Definition plans {N E V K G A} (P : Sparse.t N E V K G A) e :=
   Cost.value (plans_c P e).
+
+(** Guard preparation retains the syntax reader and its invocation tick before mapping plans. *)
+Theorem plans_cost_equation {N E V K G A} (P : Sparse.t N E V K G A) e :
+  Cost.ticks (plans_c P e) =
+    (1 + Cost.ticks (Ssa.guards_c (Sparse.ssa P) e) +
+      Cost.ticks (map_c (Sparse.guard_plan_c (Sparse.ssa P))
+        (Ssa.guards (Sparse.ssa P) e)))%N.
+Proof.
+  unfold plans_c; autorewrite with galois_cost; reflexivity.
+Qed.
 
 (** Dependencies include subjects and exactly one level of operation operands. *)
 Definition dependencies_c {N E V K G A} (P : Sparse.t N E V K G A) e :=
@@ -34,13 +44,13 @@ Definition dependencies {N E V K G A} (P : Sparse.t N E V K G A) e :=
 
 (** A supplied fact replaces the selected key before the shared ordered refinement. *)
 Definition refine_fact_c {N E V K G A} (P : Sparse.t N E V K G A)
-    (sigma : Sparse.unknown N E V -> option A) e z a :=
+    (sigma_c : Sparse.unknown N E V -> Cost.t (option A)) e z a :=
   let* ps := plans_c P e in
   let* deps := dependencies_c P e in
   let* xs := app_c [z] deps in
   let* fs := map_c (fun x =>
     let* same := eqb_c (Ssa.val_enc (Sparse.ssa P)) x z in
-    Cost.ret (if same then a else sigma (Sparse.UVal x))) xs in
+    if same then Cost.ret a else Cost.step ;; sigma_c (Sparse.UVal x)) xs in
   let* result := Sparse.refine_c P ps xs fs in
   match result with
   | None => Cost.ret None
@@ -48,18 +58,24 @@ Definition refine_fact_c {N E V K G A} (P : Sparse.t N E V K G A)
   end.
 
 Definition refine_fact {N E V K G A} (P : Sparse.t N E V K G A) sigma e z a :=
-  Cost.value (refine_fact_c P sigma e z a).
+  Cost.value (refine_fact_c P (fun u => Cost.ret (sigma u)) e z a).
+
+(** Reading the selected initial fact retains the reader's cost and invocation overhead. *)
+Definition refine_on_edge_c {N E V K G A} (P : Sparse.t N E V K G A)
+    (sigma_c : Sparse.unknown N E V -> Cost.t (option A)) e z :=
+  let* a := Cost.step ;; sigma_c (Sparse.UVal z) in
+  refine_fact_c P sigma_c e z a.
 
 (** Edge refinement starts at the stored fact. *)
 Definition refine_on_edge {N E V K G A} (P : Sparse.t N E V K G A) sigma e z :=
-  refine_fact P sigma e z (sigma (Sparse.UVal z)).
+  Cost.value (refine_on_edge_c P (fun u => Cost.ret (sigma u)) e z).
 
 (** Feasibility uses the same snapshot, guards and dependency test as the edge row. *)
 Definition edge_feasible_c {N E V K G A} (P : Sparse.t N E V K G A)
-    (sigma : Sparse.unknown N E V -> option A) e :=
+    (sigma_c : Sparse.unknown N E V -> Cost.t (option A)) e :=
   let* ps := plans_c P e in
   let* xs := dependencies_c P e in
-  let* fs := map_c (fun x => Cost.ret (sigma (Sparse.UVal x))) xs in
+  let* fs := map_c (fun x => Cost.step ;; sigma_c (Sparse.UVal x)) xs in
   let* result := Sparse.refine_c P ps xs fs in
   match result with
   | None => Cost.ret false
@@ -67,7 +83,142 @@ Definition edge_feasible_c {N E V K G A} (P : Sparse.t N E V K G A)
   end.
 
 Definition edge_feasible {N E V K G A} (P : Sparse.t N E V K G A) sigma e :=
-  Cost.value (edge_feasible_c P sigma e).
+  Cost.value (edge_feasible_c P (fun u => Cost.ret (sigma u)) e).
+
+(** The costed reader's values determine the same ordered snapshot refinement. *)
+Theorem refine_fact_c_equation {N E V K G A} (P : Sparse.t N E V K G A)
+    sigma_c e z a :
+  Cost.value (refine_fact_c P sigma_c e z a) =
+    match Cost.value (Sparse.refine_c P (plans P e) (z :: dependencies P e)
+      (map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
+        then a else Cost.value (sigma_c (Sparse.UVal x))) (z :: dependencies P e))) with
+    | None => None
+    | Some m => Map.find_or (Ssa.val_enc (Sparse.ssa P)) None z m
+    end.
+Proof.
+  unfold refine_fact_c; autorewrite with galois_cost.
+  change ([z] ++ Cost.value (dependencies_c P e)) with (z :: dependencies P e).
+  assert (Hmap : map (fun x => Cost.value
+    (let* same := eqb_c (Ssa.val_enc (Sparse.ssa P)) x z in
+     if same then Cost.ret a else Cost.step ;; sigma_c (Sparse.UVal x)))
+    (z :: dependencies P e) =
+    map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
+      then a else Cost.value (sigma_c (Sparse.UVal x))) (z :: dependencies P e)).
+  { apply map_ext; intro x; rewrite Cost.value_bind.
+    fold (eqb (Ssa.val_enc (Sparse.ssa P)) x z).
+    destruct (eqb (Ssa.val_enc (Sparse.ssa P)) x z);
+      autorewrite with galois_cost; reflexivity. }
+  rewrite Hmap; fold (plans P e).
+  destruct (Cost.value (Sparse.refine_c P (plans P e) (z :: dependencies P e)
+    (map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
+      then a else Cost.value (sigma_c (Sparse.UVal x))) (z :: dependencies P e))));
+    reflexivity.
+Qed.
+
+(** Pure refinement is a ret-valued reader adapter with unchanged functional behavior. *)
+Theorem refine_fact_equation {N E V K G A} (P : Sparse.t N E V K G A) sigma e z a :
+  refine_fact P sigma e z a =
+    match Cost.value (Sparse.refine_c P (plans P e) (z :: dependencies P e)
+      (map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
+        then a else sigma (Sparse.UVal x)) (z :: dependencies P e))) with
+    | None => None
+    | Some m => Map.find_or (Ssa.val_enc (Sparse.ssa P)) None z m
+    end.
+Proof.
+  unfold refine_fact; rewrite refine_fact_c_equation; reflexivity.
+Qed.
+
+(** Pointwise reader agreement suffices without equality of functions. *)
+Theorem refine_fact_c_agrees {N E V K G A} (P : Sparse.t N E V K G A)
+    sigma_c sigma e z a :
+  (forall u, Cost.value (sigma_c u) = sigma u) ->
+  Cost.value (refine_fact_c P sigma_c e z a) = refine_fact P sigma e z a.
+Proof.
+  intro Hagrees; rewrite refine_fact_c_equation, refine_fact_equation.
+  assert (Hmap : map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
+      then a else Cost.value (sigma_c (Sparse.UVal x))) (z :: dependencies P e) =
+    map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
+      then a else sigma (Sparse.UVal x)) (z :: dependencies P e)).
+  { apply map_ext; intro x; rewrite Hagrees; reflexivity. }
+  rewrite Hmap; reflexivity.
+Qed.
+
+(** The edge adapter starts from the assignment's selected stored fact. *)
+Theorem refine_on_edge_equation {N E V K G A} (P : Sparse.t N E V K G A) sigma e z :
+  refine_on_edge P sigma e z = refine_fact P sigma e z (sigma (Sparse.UVal z)).
+Proof.
+  unfold refine_on_edge, refine_on_edge_c; autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Pointwise reader agreement also preserves the selected initial edge fact. *)
+Theorem refine_on_edge_c_agrees {N E V K G A} (P : Sparse.t N E V K G A)
+    sigma_c sigma e z :
+  (forall u, Cost.value (sigma_c u) = sigma u) ->
+  Cost.value (refine_on_edge_c P sigma_c e z) = refine_on_edge P sigma e z.
+Proof.
+  intro Hagrees; unfold refine_on_edge_c; autorewrite with galois_cost.
+  rewrite refine_on_edge_equation, Hagrees; apply refine_fact_c_agrees; exact Hagrees.
+Qed.
+
+(** The selected read and the remaining refinement both retain their actual charges. *)
+Theorem refine_on_edge_cost_equation {N E V K G A} (P : Sparse.t N E V K G A)
+    sigma_c e z :
+  Cost.ticks (refine_on_edge_c P sigma_c e z) =
+    (1 + Cost.ticks (sigma_c (Sparse.UVal z)) +
+      Cost.ticks (refine_fact_c P sigma_c e z (Cost.value (sigma_c (Sparse.UVal z)))))%N.
+Proof.
+  unfold refine_on_edge_c; autorewrite with galois_cost; lia.
+Qed.
+
+(** The costed feasibility reader supplies exactly the edge row's dependency snapshot. *)
+Theorem edge_feasible_c_equation {N E V K G A} (P : Sparse.t N E V K G A) sigma_c e :
+  Cost.value (edge_feasible_c P sigma_c e) =
+    match Cost.value (Sparse.refine_c P (plans P e) (dependencies P e)
+      (map (fun x => Cost.value (sigma_c (Sparse.UVal x))) (dependencies P e))) with
+    | None => false
+    | Some m =>
+      Cost.value (Sparse.feasible_c (Ssa.val_enc (Sparse.ssa P)) (Sparse.dom P)
+        (dependencies P e) m)
+    end.
+Proof.
+  unfold edge_feasible_c; autorewrite with galois_cost.
+  fold (plans P e) (dependencies P e).
+  assert (Hmap : map (fun x => Cost.value (Cost.step ;; sigma_c (Sparse.UVal x)))
+    (dependencies P e) =
+    map (fun x => Cost.value (sigma_c (Sparse.UVal x))) (dependencies P e)).
+  { apply map_ext; intro x; autorewrite with galois_cost; reflexivity. }
+  rewrite Hmap.
+  destruct (Cost.value (Sparse.refine_c P (plans P e) (dependencies P e)
+    (map (fun x => Cost.value (sigma_c (Sparse.UVal x))) (dependencies P e))));
+    reflexivity.
+Qed.
+
+(** The pure feasibility adapter preserves the original accepted and rejected results. *)
+Theorem edge_feasible_equation {N E V K G A} (P : Sparse.t N E V K G A) sigma e :
+  edge_feasible P sigma e =
+    match Cost.value (Sparse.refine_c P (plans P e) (dependencies P e)
+      (map (fun x => sigma (Sparse.UVal x)) (dependencies P e))) with
+    | None => false
+    | Some m =>
+      Cost.value (Sparse.feasible_c (Ssa.val_enc (Sparse.ssa P)) (Sparse.dom P)
+        (dependencies P e) m)
+    end.
+Proof.
+  unfold edge_feasible; rewrite edge_feasible_c_equation; reflexivity.
+Qed.
+
+(** Pointwise reader agreement preserves feasibility without an extensionality principle. *)
+Theorem edge_feasible_c_agrees {N E V K G A} (P : Sparse.t N E V K G A)
+    sigma_c sigma e :
+  (forall u, Cost.value (sigma_c u) = sigma u) ->
+  Cost.value (edge_feasible_c P sigma_c e) = edge_feasible P sigma e.
+Proof.
+  intro Hagrees; rewrite edge_feasible_c_equation, edge_feasible_equation.
+  assert (Hmap : map (fun x => Cost.value (sigma_c (Sparse.UVal x))) (dependencies P e) =
+    map (fun x => sigma (Sparse.UVal x)) (dependencies P e)).
+  { apply map_ext; intro x; apply Hagrees. }
+  rewrite Hmap; reflexivity.
+Qed.
 
 (** A map covers each bound value in its supplied read scope. *)
 Definition covers {V A C} (EV : encoding V) (gam : concretisation A C)
@@ -460,15 +611,7 @@ Proof.
     + apply Hfacts; exact Hx.
   - exact Hguards.
   - exact Hops.
-  - unfold refine_fact, refine_fact_c; autorewrite with galois_cost.
-    assert (Hmap : map (fun x => Cost.value
-      (let* same := eqb_c (Ssa.val_enc (Sparse.ssa P)) x z in
-       Cost.ret (if same then a else sigma (Sparse.UVal x)))) (z :: dependencies P e) =
-      map (fun x => if eqb (Ssa.val_enc (Sparse.ssa P)) x z
-        then a else sigma (Sparse.UVal x)) (z :: dependencies P e)).
-    { apply map_ext; intro x; rewrite Cost.value_bind, Cost.value_ret; reflexivity. }
-    change ([z] ++ Cost.value (dependencies_c P e)) with (z :: dependencies P e).
-    rewrite Hmap; fold (plans P e).
+  - rewrite refine_fact_equation.
     rewrite Href; apply (proj2 Hm); [left; reflexivity|exact Hz].
 Qed.
 
@@ -480,7 +623,8 @@ Theorem refine_on_edge_sound e z c :
   val z = Some c ->
   gamma (lift_bot_gamma gam) (refine_on_edge P sigma e z) c.
 Proof.
-  intros Hguards Hops Hz; apply refine_fact_sound; try assumption.
+  intros Hguards Hops Hz; rewrite refine_on_edge_equation.
+  apply refine_fact_sound; try assumption.
   apply Hfacts; exact Hz.
 Qed.
 
@@ -498,10 +642,7 @@ Proof.
   - intros x c _ Hx; apply Hfacts; exact Hx.
   - exact Hguards.
   - exact Hops.
-  - unfold edge_feasible, edge_feasible_c; autorewrite with galois_cost.
-    fold (plans P e) (dependencies P e).
-    change (map (fun x => Cost.value (Cost.ret (sigma (Sparse.UVal x)))) (dependencies P e))
-      with (map (fun x => sigma (Sparse.UVal x)) (dependencies P e)).
+  - rewrite edge_feasible_equation.
     rewrite Href; apply (feasible_sound _ _ M gam val); try assumption.
     eapply dependencies_bound; eassumption.
 Qed.
@@ -529,12 +670,31 @@ Qed.
 
 (** Dominance refinement charges every edge and reuses the frozen single-edge engine. *)
 Definition refined_fact_c {N E V K G A} (P : Sparse.t N E V K G A)
-    (ctx : dom_context N E) sigma b z :=
+    (ctx : dom_context N E) (sigma_c : Sparse.unknown N E V -> Cost.t (option A)) b z :=
   let* es := dominating_edges_in_c ctx b in
-  fold_left_c (fun a e => refine_fact_c P sigma e z a) es (sigma (Sparse.UVal z)).
+  let* a := Cost.step ;; sigma_c (Sparse.UVal z) in
+  fold_left_c (fun a e => refine_fact_c P sigma_c e z a) es a.
 
 Definition refined_fact {N E V K G A} (P : Sparse.t N E V K G A) ctx sigma b z :=
-  Cost.value (refined_fact_c P ctx sigma b z).
+  Cost.value (refined_fact_c P ctx (fun u => Cost.ret (sigma u)) b z).
+
+Local Lemma fold_left_agrees {X A} (f g : A -> X -> A) xs a :
+  (forall a x, f a x = g a x) -> fold_left f xs a = fold_left g xs a.
+Proof.
+  intro Hagrees; revert a; induction xs as [|x xs IH]; intro a; cbn [fold_left].
+  - reflexivity.
+  - rewrite Hagrees; apply IH.
+Qed.
+
+(** The costed fold starts at the selected reader value and preserves query order. *)
+Theorem refined_fact_c_equation {N E V K G A} (P : Sparse.t N E V K G A)
+    ctx sigma_c b z :
+  Cost.value (refined_fact_c P ctx sigma_c b z) =
+    fold_left (fun a e => Cost.value (refine_fact_c P sigma_c e z a))
+      (dominating_edges_in ctx b) (Cost.value (sigma_c (Sparse.UVal z))).
+Proof.
+  unfold refined_fact_c; autorewrite with galois_cost; reflexivity.
+Qed.
 
 (** The public equation exposes the ancestor-ordered fold and its stored initial fact. *)
 Theorem refined_fact_equation {N E V K G A} (P : Sparse.t N E V K G A) ctx sigma b z :
@@ -542,22 +702,43 @@ Theorem refined_fact_equation {N E V K G A} (P : Sparse.t N E V K G A) ctx sigma
     fold_left (fun a e => refine_fact P sigma e z a)
       (dominating_edges_in ctx b) (sigma (Sparse.UVal z)).
 Proof.
-  unfold refined_fact, refined_fact_c; rewrite Cost.value_bind, value_fold_left_c.
-  reflexivity.
+  unfold refined_fact; rewrite refined_fact_c_equation; reflexivity.
+Qed.
+
+(** Pointwise reader agreement preserves every intermediate ordinary-fold value. *)
+Theorem refined_fact_c_agrees {N E V K G A} (P : Sparse.t N E V K G A)
+    ctx sigma_c sigma b z :
+  (forall u, Cost.value (sigma_c u) = sigma u) ->
+  Cost.value (refined_fact_c P ctx sigma_c b z) = refined_fact P ctx sigma b z.
+Proof.
+  intro Hagrees; rewrite refined_fact_c_equation, refined_fact_equation, Hagrees.
+  apply fold_left_agrees; intros a e; apply refine_fact_c_agrees; exact Hagrees.
+Qed.
+
+(** The ordinary fold retains the query, initial reader and every reached edge charge. *)
+Theorem refined_fact_cost_equation {N E V K G A} (P : Sparse.t N E V K G A)
+    ctx sigma_c b z :
+  Cost.ticks (refined_fact_c P ctx sigma_c b z) =
+    (Cost.ticks (dominating_edges_in_c ctx b) + 1 +
+      Cost.ticks (sigma_c (Sparse.UVal z)) +
+      Cost.ticks (fold_left_c (fun a e => refine_fact_c P sigma_c e z a)
+        (dominating_edges_in ctx b) (Cost.value (sigma_c (Sparse.UVal z)))))%N.
+Proof.
+  unfold refined_fact_c; autorewrite with galois_cost.
+  fold (dominating_edges_in ctx b); lia.
 Qed.
 
 (** The fold adds linear traversal overhead to a uniform bound on one edge refinement. *)
 Theorem refined_fact_cost {N E V K G A} (P : Sparse.t N E V K G A)
-    ctx sigma b z k :
-  (forall a e, (Cost.ticks (refine_fact_c P sigma e z a) <= k)%N) ->
-  (Cost.ticks (refined_fact_c P ctx sigma b z) <=
-    Cost.ticks (dominating_edges_in_c ctx b) +
+    ctx sigma_c b z k :
+  (forall a e, (Cost.ticks (refine_fact_c P sigma_c e z a) <= k)%N) ->
+  (Cost.ticks (refined_fact_c P ctx sigma_c b z) <=
+    Cost.ticks (dominating_edges_in_c ctx b) + 1 + Cost.ticks (sigma_c (Sparse.UVal z)) +
       N.of_nat (length (dominating_edges_in ctx b)) * (k + 1))%N.
 Proof.
-  intro Hbound; unfold refined_fact_c; rewrite Cost.ticks_bind.
-  pose proof (ticks_fold_left_c_le (fun a e => refine_fact_c P sigma e z a) k
-    (dominating_edges_in ctx b) (sigma (Sparse.UVal z)) Hbound) as Hfold.
-  change (Cost.value (dominating_edges_in_c ctx b)) with (dominating_edges_in ctx b).
+  intro Hbound; rewrite refined_fact_cost_equation.
+  pose proof (ticks_fold_left_c_le (fun a e => refine_fact_c P sigma_c e z a) k
+    (dominating_edges_in ctx b) (Cost.value (sigma_c (Sparse.UVal z))) Hbound) as Hfold.
   lia.
 Qed.
 
@@ -611,13 +792,25 @@ Qed.
 
 (** Occurrence contexts allow repeated client edge values without assuming a tree producer. *)
 Definition refined_fact_projected_c {N E V K G A} (P : Sparse.t N E V K G A)
-    (ctx : dom_context N (E * nat)) sigma b z :=
+    (ctx : dom_context N (E * nat))
+    (sigma_c : Sparse.unknown N E V -> Cost.t (option A)) b z :=
   let* es := dominating_edges_projected_c ctx b in
-  fold_left_c (fun a e => refine_fact_c P sigma e z a) es (sigma (Sparse.UVal z)).
+  let* a := Cost.step ;; sigma_c (Sparse.UVal z) in
+  fold_left_c (fun a e => refine_fact_c P sigma_c e z a) es a.
 
 Definition refined_fact_projected {N E V K G A} (P : Sparse.t N E V K G A)
     ctx sigma b z :=
-  Cost.value (refined_fact_projected_c P ctx sigma b z).
+  Cost.value (refined_fact_projected_c P ctx (fun u => Cost.ret (sigma u)) b z).
+
+(** The projected costed fold retains each query occurrence in order. *)
+Theorem refined_fact_projected_c_equation {N E V K G A} (P : Sparse.t N E V K G A)
+    ctx sigma_c b z :
+  Cost.value (refined_fact_projected_c P ctx sigma_c b z) =
+    fold_left (fun a e => Cost.value (refine_fact_c P sigma_c e z a))
+      (dominating_edges_projected ctx b) (Cost.value (sigma_c (Sparse.UVal z))).
+Proof.
+  unfold refined_fact_projected_c; autorewrite with galois_cost; reflexivity.
+Qed.
 
 (** Projected refinement preserves the query's order and multiplicity. *)
 Theorem refined_fact_projected_equation {N E V K G A} (P : Sparse.t N E V K G A)
@@ -626,23 +819,46 @@ Theorem refined_fact_projected_equation {N E V K G A} (P : Sparse.t N E V K G A)
     fold_left (fun a e => refine_fact P sigma e z a)
       (dominating_edges_projected ctx b) (sigma (Sparse.UVal z)).
 Proof.
-  unfold refined_fact_projected, refined_fact_projected_c.
-  rewrite Cost.value_bind, value_fold_left_c; reflexivity.
+  unfold refined_fact_projected; rewrite refined_fact_projected_c_equation; reflexivity.
+Qed.
+
+(** Pointwise reader agreement preserves projected-fold values without function equality. *)
+Theorem refined_fact_projected_c_agrees {N E V K G A} (P : Sparse.t N E V K G A)
+    ctx sigma_c sigma b z :
+  (forall u, Cost.value (sigma_c u) = sigma u) ->
+  Cost.value (refined_fact_projected_c P ctx sigma_c b z) =
+    refined_fact_projected P ctx sigma b z.
+Proof.
+  intro Hagrees; rewrite refined_fact_projected_c_equation, refined_fact_projected_equation.
+  rewrite Hagrees; apply fold_left_agrees; intros a e.
+  apply refine_fact_c_agrees; exact Hagrees.
+Qed.
+
+(** Projected folds retain the actual projection, initial read and edge callback costs. *)
+Theorem refined_fact_projected_cost_equation {N E V K G A} (P : Sparse.t N E V K G A)
+    ctx sigma_c b z :
+  Cost.ticks (refined_fact_projected_c P ctx sigma_c b z) =
+    (Cost.ticks (dominating_edges_projected_c ctx b) + 1 +
+      Cost.ticks (sigma_c (Sparse.UVal z)) +
+      Cost.ticks (fold_left_c (fun a e => refine_fact_c P sigma_c e z a)
+        (dominating_edges_projected ctx b) (Cost.value (sigma_c (Sparse.UVal z)))))%N.
+Proof.
+  unfold refined_fact_projected_c; autorewrite with galois_cost.
+  fold (dominating_edges_projected ctx b); lia.
 Qed.
 
 (** Projection retains its charged query before the same linearly bounded fold. *)
 Theorem refined_fact_projected_cost {N E V K G A} (P : Sparse.t N E V K G A)
-    ctx sigma b z k :
-  (forall a e, (Cost.ticks (refine_fact_c P sigma e z a) <= k)%N) ->
-  (Cost.ticks (refined_fact_projected_c P ctx sigma b z) <=
-    Cost.ticks (dominating_edges_projected_c ctx b) +
+    ctx sigma_c b z k :
+  (forall a e, (Cost.ticks (refine_fact_c P sigma_c e z a) <= k)%N) ->
+  (Cost.ticks (refined_fact_projected_c P ctx sigma_c b z) <=
+    Cost.ticks (dominating_edges_projected_c ctx b) + 1 +
+      Cost.ticks (sigma_c (Sparse.UVal z)) +
       N.of_nat (length (dominating_edges_projected ctx b)) * (k + 1))%N.
 Proof.
-  intro Hbound; unfold refined_fact_projected_c; rewrite Cost.ticks_bind.
-  pose proof (ticks_fold_left_c_le (fun a e => refine_fact_c P sigma e z a) k
-    (dominating_edges_projected ctx b) (sigma (Sparse.UVal z)) Hbound) as Hfold.
-  change (Cost.value (dominating_edges_projected_c ctx b))
-    with (dominating_edges_projected ctx b).
+  intro Hbound; rewrite refined_fact_projected_cost_equation.
+  pose proof (ticks_fold_left_c_le (fun a e => refine_fact_c P sigma_c e z a) k
+    (dominating_edges_projected ctx b) (Cost.value (sigma_c (Sparse.UVal z))) Hbound) as Hfold.
   lia.
 Qed.
 
