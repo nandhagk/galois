@@ -84,6 +84,13 @@ Definition find {K} (E : encoding K) x (uf : t K) := Cost.value (find_c E x uf).
 Definition equiv {K} (E : encoding K) (uf : t K) (x y : K) : Prop :=
   fst (find E x uf) = fst (find E y uf).
 
+(** Equivalence is observed through the representatives returned by public find. *)
+Theorem equiv_equation {K} (E : encoding K) (uf : t K) x y :
+  equiv E uf x y <-> fst (find E x uf) = fst (find E y uf).
+Proof.
+  reflexivity.
+Qed.
+
 (** Touch records an isolated key without changing any rank value. *)
 Definition touch_c {K} (E : encoding K) (x : K) (uf : t K) : Cost.t (t K) :=
   let* old := Map.get_c E x (ranks uf) in
