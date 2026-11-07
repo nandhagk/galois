@@ -9,14 +9,17 @@ From Galois.Cost Require Import CostMonad.
 From Galois.Lattice Require Import LatticeCore LatticeConcrete LatticeHeight LatticeKit.
 Import Cost.Notations.
 
-(** A reducer supplies a runtime step and an input-dependent number of rounds. *)
+(** A reducer supplies costed callbacks for a runtime step and its input-dependent count. *)
 Record reducer (A B : Type) : Type := Reducer {
   step_c : A -> B -> Cost.t (A * B);
-  rounds : A * B -> nat
+  rounds_c : A * B -> Cost.t nat
 }.
 
 Arguments step_c {A B}.
-Arguments rounds {A B}.
+Arguments rounds_c {A B}.
+
+(** The pure round count observes the value of the costed count callback. *)
+Definition rounds {A B} (R : reducer A B) x := Cost.value (rounds_c R x).
 
 (** The pure step observes the value of the costed callback. *)
 Definition step {A B} (R : reducer A B) (x : A * B) :=
@@ -37,12 +40,21 @@ Fixpoint reduce_steps_c {A B} (R : reducer A B) n (x : A * B) : Cost.t (A * B) :
 Definition reduce_steps {A B} (R : reducer A B) n x :=
   Cost.value (reduce_steps_c R n x).
 
-(** Reduction evaluates the round count once on the original input. *)
+(** Reduction charges one count invocation on the original input before running its steps. *)
 Definition reduce_c {A B} (R : reducer A B) x :=
-  reduce_steps_c R (rounds R x) x.
+  Cost.step ;;
+  let* n := rounds_c R x in
+  reduce_steps_c R n x.
 
 (** Reduction is the value projection of its costed runner. *)
 Definition reduce {A B} (R : reducer A B) x := Cost.value (reduce_c R x).
+
+(** Count instrumentation preserves reduction as iteration of the count's pure value. *)
+Theorem reduce_equation {A B} (R : reducer A B) x :
+  reduce R x = reduce_steps R (rounds R x) x.
+Proof.
+  reflexivity.
+Qed.
 
 (** The runner applies one step before processing the remaining rounds. *)
 Theorem reduce_steps_equation {A B} (R : reducer A B) n x :
@@ -114,7 +126,7 @@ Qed.
 (** Every concrete value of the input survives all reduction rounds. *)
 Theorem reduce_sound x c : gamma G x c -> gamma G (reduce R x) c.
 Proof.
-  unfold reduce, reduce_c; generalize (rounds R x) as n.
+  rewrite reduce_equation; generalize (rounds R x) as n.
   intros n; revert x; induction n as [|n IH]; intros x Hx.
   - exact Hx.
   - apply IH, (step_sound HR); exact Hx.
@@ -256,55 +268,75 @@ End Reduced.
 (** Two ticks per round cover the loop cell and the callback invocation. *)
 Definition reducer_k : N := 2.
 
-(** A uniform callback bound gives a traversal-plus-callback bound for reduction. *)
-Theorem reducer_cost {A B} (R : reducer A B) k :
+(** A uniform step bound covers traversal and invocation for the requested number of rounds. *)
+Theorem reduce_steps_cost {A B} (R : reducer A B) k :
   (forall a b, (Cost.ticks (step_c R a b) <= k)%N) ->
-  forall x, (Cost.ticks (reduce_c R x) <= N.of_nat (rounds R x) * (k + reducer_k))%N.
+  forall n x, (Cost.ticks (reduce_steps_c R n x) <= N.of_nat n * (k + reducer_k))%N.
 Proof.
-  intros Hk x; unfold reduce_c; generalize (rounds R x) as n.
-  intros n; revert x; induction n as [|n IH]; intro x.
+  intros Hk n; induction n as [|n IH]; intro x.
   - reflexivity.
   - cbn [reduce_steps_c]; autorewrite with galois_cost.
     specialize (IH (step R x)); specialize (Hk (fst x) (snd x)).
     rewrite Nat2N.inj_succ; unfold reducer_k in *; unfold step in IH; nia.
 Qed.
 
-(** A measure supplies runtime rounds without placing any law in the reducer data. *)
-Definition rounds_of_measure {A B} (mu : A * B -> nat)
+(** Reduction retains one count invocation, the full count charge and the resulting step run. *)
+Theorem reduce_cost_equation {A B} (R : reducer A B) x :
+  Cost.ticks (reduce_c R x) =
+    (1 + Cost.ticks (rounds_c R x) +
+      Cost.ticks (reduce_steps_c R (rounds R x) x))%N.
+Proof.
+  unfold reduce_c; autorewrite with galois_cost.
+  fold (rounds R x); lia.
+Qed.
+
+(** The full bound retains the count callback and invocation even when it returns zero. *)
+Theorem reducer_cost {A B} (R : reducer A B) k :
+  (forall a b, (Cost.ticks (step_c R a b) <= k)%N) ->
+  forall x, (Cost.ticks (reduce_c R x) <=
+    1 + Cost.ticks (rounds_c R x) + N.of_nat (rounds R x) * (k + reducer_k))%N.
+Proof.
+  intros Hk x; rewrite reduce_cost_equation.
+  pose proof (reduce_steps_cost R k Hk (rounds R x) x); lia.
+Qed.
+
+(** A costed measure supplies runtime rounds without placing any law in reducer data. *)
+Definition rounds_of_measure {A B} (mu_c : A * B -> Cost.t nat)
     (f : A -> B -> Cost.t (A * B)) : reducer A B :=
-  {| step_c := f; rounds := mu |}.
+  {| step_c := f; rounds_c := mu_c |}.
 
 (** Monotonicity preserves a stable state and strict measure decrease reaches one in time. *)
-Theorem stable_of_measure {A B} (P : lattice (A * B)) mu f :
-  let R := rounds_of_measure mu f in
+Theorem stable_of_measure {A B} (P : lattice (A * B)) mu_c f :
+  let R := rounds_of_measure mu_c f in
   (forall x y, leb P x y = true -> leb P (step R x) (step R y) = true) ->
-  (forall x, leb P x (step R x) = false -> mu (step R x) < mu x) ->
+  (forall x, leb P x (step R x) = false ->
+    Cost.value (mu_c (step R x)) < Cost.value (mu_c x)) ->
   forall x, leb P (reduce R x) (step R (reduce R x)) = true.
 Proof.
   cbn zeta; intros Hmono Hmu.
-  assert (Hstable : forall n x, leb P x (step (rounds_of_measure mu f) x) = true ->
-    leb P (reduce_steps (rounds_of_measure mu f) n x)
-      (step (rounds_of_measure mu f) (reduce_steps (rounds_of_measure mu f) n x)) = true).
+  assert (Hstable : forall n x, leb P x (step (rounds_of_measure mu_c f) x) = true ->
+    leb P (reduce_steps (rounds_of_measure mu_c f) n x)
+      (step (rounds_of_measure mu_c f) (reduce_steps (rounds_of_measure mu_c f) n x)) = true).
   { induction n as [|n IH]; intros x Hx; rewrite reduce_steps_equation.
     - exact Hx.
     - apply IH, Hmono; exact Hx. }
-  assert (Hbound : forall n x, mu x <= n ->
-    leb P (reduce_steps (rounds_of_measure mu f) n x)
-      (step (rounds_of_measure mu f) (reduce_steps (rounds_of_measure mu f) n x)) = true).
+  assert (Hbound : forall n x, Cost.value (mu_c x) <= n ->
+    leb P (reduce_steps (rounds_of_measure mu_c f) n x)
+      (step (rounds_of_measure mu_c f) (reduce_steps (rounds_of_measure mu_c f) n x)) = true).
   { induction n as [|n IH]; intros x Hx.
     - rewrite reduce_steps_equation.
-      destruct (leb P x (step (rounds_of_measure mu f) x)) eqn:Hstep; [reflexivity|].
+      destruct (leb P x (step (rounds_of_measure mu_c f) x)) eqn:Hstep; [reflexivity|].
       specialize (Hmu x Hstep); lia.
-    - destruct (leb P x (step (rounds_of_measure mu f) x)) eqn:Hstep.
+    - destruct (leb P x (step (rounds_of_measure mu_c f) x)) eqn:Hstep.
       + apply Hstable; exact Hstep.
       + rewrite reduce_steps_equation; apply IH.
         specialize (Hmu x Hstep); lia. }
   intro x; apply Hbound; reflexivity.
 Qed.
 
-(** Identity reduction performs no callbacks and keeps its argument exactly. *)
+(** Identity reduction invokes a constant zero count and no step callbacks. *)
 Definition identity_reducer {A B} : reducer A B :=
-  {| step_c := fun a b => Cost.ret (a, b); rounds := fun _ => O |}.
+  {| step_c := fun a b => Cost.ret (a, b); rounds_c := fun _ => Cost.ret O |}.
 
 (** The identity reducer has every reducer law for every lawful pair lattice and meaning. *)
 Theorem identity_reducer_laws {A B C} (P : lattice (A * B))

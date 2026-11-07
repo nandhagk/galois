@@ -105,7 +105,7 @@ Proof.
 Qed.
 
 Definition legacy_reducer : reducer bool bool :=
-  {| step_c := fun a b => Cost.ret (a, a && b); rounds := fun _ => 1 |}.
+  {| step_c := fun a b => Cost.ret (a, a && b); rounds_c := fun _ => Cost.ret 1 |}.
 
 Definition new_reduced := reduced legacy_reduce_pair legacy_reduce_slots legacy_reducer.
 Definition old_reduced :=

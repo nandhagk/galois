@@ -27,15 +27,15 @@ Qed.
 
 Definition clear_second n : reducer bool bool :=
   {| step_c := fun a b => Cost.step ;; Cost.ret (a, a && b);
-     rounds := fun _ => n |}.
+     rounds_c := fun _ => Cost.ret n |}.
 
 Definition clear_variable : reducer bool bool :=
   {| step_c := step_c (clear_second 1);
-     rounds := fun x => if snd x then 1 else 2 |}.
+     rounds_c := fun x => Cost.step ;; Cost.ret (if snd x then 1 else 2) |}.
 
 Definition clear_twice : reducer bool bool :=
   {| step_c := fun a b => Cost.step ;; Cost.ret (a && b, false);
-     rounds := fun _ => 2 |}.
+     rounds_c := fun _ => Cost.ret 2 |}.
 
 Definition reduce_meaning : concretisation (bool * bool) unit :=
   {| gamma := fun x _ => fst x = true |}.
@@ -130,15 +130,16 @@ Definition reduced_variable_top :=
   reduced_top reduce_pair reduce_pair_slots clear_variable
     (slots2_top reduce_pair_slots bool_top bool_top (true, true) eq_refl eq_refl).
 
-Definition clear_measure (x : bool * bool) : nat :=
-  if negb (fst x) && snd x then 1 else 0.
+(** This primitive boolean measure charges its constant-size test directly. *)
+Definition clear_measure_c (x : bool * bool) : Cost.t nat :=
+  Cost.step ;; Cost.ret (if negb (fst x) && snd x then 1 else 0).
 
 (** A runtime measure proves stability without a fixed global round count. *)
 Theorem clear_measure_stable :
   forall x, leb reduce_pair
-    (reduce (rounds_of_measure clear_measure (step_c (clear_second 1))) x)
-    (step (rounds_of_measure clear_measure (step_c (clear_second 1)))
-      (reduce (rounds_of_measure clear_measure (step_c (clear_second 1))) x)) = true.
+    (reduce (rounds_of_measure clear_measure_c (step_c (clear_second 1))) x)
+    (step (rounds_of_measure clear_measure_c (step_c (clear_second 1)))
+      (reduce (rounds_of_measure clear_measure_c (step_c (clear_second 1))) x)) = true.
 Proof.
   apply stable_of_measure.
   - intros [a b] [c d]; destruct a, b, c, d; vm_compute; intuition discriminate.
@@ -210,14 +211,67 @@ Example reducer_ticks :
     Cost.ticks (reduce_c clear_twice (true, true)),
     Cost.ticks (leb_c reduced_fixture (false, true) (false, false)),
     Cost.ticks (join_c reduced_fixture (false, true) (false, false))) =
-    (0%N, 3%N, 6%N, 6%N, 5%N).
+    (1%N, 4%N, 7%N, 7%N, 6%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
 
 (** The concrete callback bound instantiates the honest two-tick overhead theorem. *)
 Theorem reducer_fixture_cost x :
-  (Cost.ticks (reduce_c clear_twice x) <= 6)%N.
+  (Cost.ticks (reduce_c clear_twice x) <= 7)%N.
 Proof.
   exact (reducer_cost clear_twice 1%N (fun _ _ => N.le_refl _) x).
+Qed.
+
+(** The count inspects every list cell even when all cells select zero rounds. *)
+Fixpoint list_rounds_c (xs : list bool) : Cost.t nat :=
+  match xs with
+  | [] => Cost.ret 0
+  | b :: rest =>
+    Cost.step ;;
+    let* n := list_rounds_c rest in
+    Cost.ret (if b then 1 else n)
+  end.
+
+(** Count traversal charges every input cell independently of the resulting round count. *)
+Theorem list_rounds_cost xs : Cost.ticks (list_rounds_c xs) = N.of_nat (length xs).
+Proof.
+  induction xs as [|b rest IH]; [reflexivity|].
+  cbn [list_rounds_c length]; autorewrite with galois_cost.
+  rewrite IH, Nat2N.inj_succ; lia.
+Qed.
+
+Definition counted_list_reducer : reducer (list bool) bool :=
+  {| step_c := fun xs _ => Cost.tick 3 ;; Cost.ret (xs, false);
+     rounds_c := fun x => list_rounds_c (fst x) |}.
+
+Definition count_zero_input := ([false; false; false; false; false; false; false; false], true).
+Definition count_one_input := ([false; true; false; false; false; false; false; false], true).
+
+Example costly_zero_rounds :
+  (rounds counted_list_reducer count_zero_input,
+    Cost.ticks (rounds_c counted_list_reducer count_zero_input),
+    reduce counted_list_reducer count_zero_input,
+    Cost.ticks (reduce_c counted_list_reducer count_zero_input)) =
+    (0, 8%N, count_zero_input, 9%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example costly_nonzero_count_once :
+  (rounds counted_list_reducer count_one_input,
+    Cost.ticks (rounds_c counted_list_reducer count_one_input),
+    reduce counted_list_reducer count_one_input,
+    Cost.ticks (reduce_c counted_list_reducer count_one_input)) =
+    (1, 8%N, (fst count_one_input, false), 14%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example costed_measure_retains_count_work :
+  let R := rounds_of_measure (rounds_c counted_list_reducer) (step_c counted_list_reducer) in
+  (Cost.ticks (reduce_c R count_zero_input), Cost.ticks (reduce_c R count_one_input)) =
+    (9%N, 14%N).
+Proof.
+  vm_compute; reflexivity.
 Qed.

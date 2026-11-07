@@ -61,6 +61,35 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example partition_failed_test_preserves_returned_classes :
+  let tested := fixture_test 3 4 partition_three in
+  let compressed := snd tested in
+  (fst tested, fst (fixture_test 1 2 compressed), fst (fixture_test 1 3 compressed),
+    fst (fixture_test 3 4 compressed)) = (false, true, true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example partition_unknown_test_preserves_returned_classes :
+  let tested := fixture_test 99 3 partition_three in
+  let compressed := snd tested in
+  (fst tested, fst (fixture_test 1 2 compressed), fst (fixture_test 1 3 compressed),
+    fst (fixture_test 99 99 compressed), fst (fixture_test 99 1 compressed)) =
+    (false, true, true, true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example partition_reached_ticks :
+  (Cost.ticks (partition_join_c positive_encoding positive_encoding_laws
+      partition_two partition_three),
+    Cost.ticks (partition_forget_c positive_encoding positive_encoding_laws 2 partition_three),
+    Cost.ticks (partition_test_c positive_encoding positive_encoding_laws 3 1 partition_three)) =
+    (463%N, 198%N, 36%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example partition_update_ticks :
   (Cost.ticks (partition_union_c positive_encoding positive_encoding_laws 1 2 partition_discrete),
     Cost.ticks (partition_forget_c positive_encoding positive_encoding_laws 1 None),
