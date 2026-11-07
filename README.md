@@ -10,39 +10,44 @@ bottom. The library's intended solver returns a post-solution, and the view's so
 connects that result to the client's semantics. The While reference client exercises several dense
 analyses; the interval example describes the intended general client API.
 
-Read [design](docs/design.md) for the architecture, [catalogue](docs/catalogue.md) for the scope,
-[trust](docs/trust.md) for evidence, and [workflow](docs/workflow.md) to build. The binding public
-contracts are in [docs/api](docs/api/), with a [name index](docs/api/names.md). Contributors read
-[AGENTS.md](AGENTS.md) and their assigned card as well.
+## Packages
+
+The following table describes the target packages. Their interfaces are still being rebuilt.
 
 | Package | Purpose |
 | --- | --- |
-| Collections | Encodings, canonical tries, maps, sets and supporting structures |
-| Order | Lattices, domain combinators, concretisation and agreement |
-| Graph | Graph algorithms, certificates and checkers |
-| Fixpoint | Constraint systems, solvers, checkers and replay |
-| Rules | Stratified Datalog compiled to constraint systems |
-| Rewrite | Generic sorted rewriting, e-graphs and directly proved bounded saturation |
-| Bits | Fixed-width word operations and expressions |
-| Domains | Numeric, demand, address and equality domains |
-| Views | Language semantics, graph, SSA, structured, call and memory adapters |
-| Analyses | Compositions of the shared components |
-| Float | Optional floating-point domains using Flocq |
-| Examples | While and Ssa reference clients |
+| `Cost` | Cost monad, loops and bounds. |
+| `Base` | Keys, collections and shared utilities. |
+| `Lattice` | Orders, lattices and domain combinators. |
+| `Bits` | Fixed-width words and expressions. |
+| `Graph` | Graph algorithms and certificates. |
+| `Fixpoint` | Constraint systems and solvers. |
+| `Domains` | Value and state abstractions. |
+| `Program` | Program presentations and semantic links. |
+| `Datalog` | Stratified rules and evaluation. |
+| `Egraph` | Equality saturation and extraction. |
+| `Framework` | Reusable analysis frameworks. |
+| `Analyses` | Concrete analyses and specialised algorithms. |
+| `Float` | Optional floating-point domains using Flocq. |
+
+## Build
+
+Enter `nix develop` at the repository root and run `just build`, `just test` and `just check`.
+See the [workflow](docs/workflow.md) for commands and conventions.
+
+## Documentation
+
+- The [architecture](docs/architecture.md) describes the target design.
+- The [guarantees](docs/guarantees.md) state the proof and trust policy.
+- The [workflow](docs/workflow.md) covers development and checks.
+- The [decisions](docs/decisions/) record design rulings.
+- The [research notes](docs/research/) record historical investigations.
+- The [package guides](docs/guide/) describe landed packages.
+- The [performance guide](docs/performance.md) covers measurements.
+- `just doc` generates the API reference under `_build/`.
+- The [references](docs/references.md) list sources.
 
 ## Status
 
-At commit `63e352a` on 2026-10-30, milestones M2 through M7 are reached. Foundations, Graph,
-Fixpoint, domain components, stratified Rules solving and REW-1 through REW-7 with the ANA-6
-facade have landed. Analyses include dense and sparse dataflow, numeric SSA values, SSA liveness,
-sparse evaluation graphs, SSA PRE, GVN, scalar recurrences, calls, points-to and memory flow.
-Memory analyses include two MemorySSA builders, clobber walks and store-to-load forwarding.
-Float provides interval and NaN demand domains. The While and Ssa clients exercise landed analyses.
-Typed extraction and a benchmark harness have landed.
-
-At that snapshot, 100 of 102 cards have landed. EX-7 restores legacy-qualified SSA facade
-compatibility. Landed cards
-report checked claims and examples for their assigned contracts; they do not establish the whole
-library. See
-[catalogue](docs/catalogue.md) for scope and [trust](docs/trust.md) for evidence. Contracts not yet
-implemented are specifications, not compiled interfaces.
+The rebuild is in progress. A package has landed when its guide exists in `docs/guide/`.
+The previous library is kept under `legacy/`, builds as `GaloisLegacy`, and is removed when the rebuilt packages replace it.

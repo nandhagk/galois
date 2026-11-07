@@ -1,38 +1,77 @@
 # Workflow
 
-Use the pinned Nix development shell from the repository root:
+## Environment
 
-```sh
-systemd-run --user --scope --quiet --slice=galois.slice -- nix develop --no-update-lock-file
-just --list
-just slice-cap
-just build
-just test
-just check
-```
+Enter `nix develop` at the repository root. The pinned toolchain provides Rocq 9.3.0, Stdlib
+9.2.0, Flocq 4.2.2, OCaml 5.5.0, dune 3.23.1, ocamlformat 0.29.0 and just 1.58.0.
+Run builds, tests, checks and formatting through `just`.
 
-The pinned setup reports Rocq 9.3.0, Stdlib 9.2.0, Flocq 4.2.2, OCaml 5.5.0, dune 3.23.1,
-ocamlformat 0.29.0 and just 1.58.0. The shell enables the shared Dune cache in hardlink mode at
-`~/.cache/galois/dune` and unsets `LD_LIBRARY_PATH`.
+## Commands
 
-`just build` builds all default targets; pass targets to restrict it, for example
-`just build theories/Graph`. `just test` builds the tests, examples and inline tests. `just check`
-checks formatting, source hygiene, layout, theorem assumptions and the selected extraction
-artifacts, including their generated native compilation. `just fmt` formats sources; if it rewrites
-files, run it again to check the resulting state. `just bench -help` describes the bounded benchmark
-options and defaults; for example, `just bench -start 8 -steps 3 -repetitions 3` runs a small
-experiment.
+The recipes run in `galois.slice` with a default 10 GB shared memory cap and no swap. There is
+no build lock. `just doc` writes under `_build/`, which is never tracked or edited by hand.
 
-The recipes run in `galois.slice`; `build` and `test` use two jobs. `just slice-cap` sets the
-shared slice cap to 9,000,000,000 bytes and disables swap persistently; `just slice-cap 4G`
-lowers it for a competing workload. The current run uses that aggregate envelope without
-individual command caps. Agents follow C72 and the implementation runbook for manual coordination.
-A build can warn about dependency theories that do not yet contain a `.v` file and still succeed.
+| Command | Action |
+| --- | --- |
+| `just list` | List recipes. |
+| `just build` | Build the redesigned and legacy libraries and extraction clients. |
+| `just test` | Build both Rocq test suites and run OCaml inline tests. |
+| `just check` | Check formatting, hygiene, layout, assumptions and typed extraction. |
+| `just fmt` | Format OCaml and dune sources. |
+| `just doc` | Generate the redesigned API reference. |
+| `just bench` | Run generated benchmark workloads. |
+| `just clean` | Remove this worktree's build outputs. |
+| `just slice-cap` | Set the shared memory cap and disable swap. |
 
-Landed cards report their own focused builds and checks; they do not substitute for the planned
-fresh FINAL build. Run tests appropriate to each card and follow `run/RUNBOOK.md` for reviews,
-claims audits and landing. The examples layout checker repair has landed; individual example
-cards still require their own verification and review.
-Focused measurements may use the harness for a specific unresolved choice; benchmarks are not a
-completion gate. Its timings include workload construction and validation, and are experiments,
-not complexity proofs.
+`just build-new` and `just test-new` select the redesigned library and tests. `just
+build-legacy` selects the previous library.
+
+## Layout
+
+Each package lives in `theories/<Package>/` and declares its `Galois.<Package>` theory.
+The `Analyses` families each have their own theory. Every new `.v` basename starts with its
+package name and is unique among new theories, examples and tests. A new file may reuse a
+legacy basename, and a test importing both uses full logical paths.
+
+Tests mirror packages in `tests/<Package>/`. Differential tests live in `tests/legacy/`.
+Guides live in `docs/guide/`. The previous library lives under `legacy/` and has logical root
+`GaloisLegacy`. New code imports it only in `tests/legacy/`.
+
+## Rocq style
+
+Open each file with a documentation title, purpose, concrete example and `Builds on:` line.
+Group imports by origin, starting with Stdlib, and keep imports outside modules and sections.
+Use two-space indentation, lines of at most 100 columns and a final newline. Keep files under
+1,500 lines and aim for 800. Put each constructor, field and match branch on its own line.
+
+Comment each public theorem and contract definition. Use `Theorem` for public claims, `Lemma`
+for helpers and `Local Lemma` for file-private helpers. Split long proofs into named lemmas, name
+hypotheses by meaning, and use focused goals. Put `Proof.` and `Qed.` on separate lines. Do not
+use `timeout`. Keep interactive commands and extraction directives out of theories and examples.
+
+Dictionaries are explicit parametric records, and separate `Prop` records hold laws. Consumers
+use public names and specification lemmas without unfolding another package's definitions.
+See [guarantees](guarantees.md) for the proof policy.
+
+## Costed code
+
+The target cost discipline uses the following checklist.
+
+- Define `f_c` once and define `f` as its `Cost.value` projection. Prove `f_equation`.
+- Tick each recursion step, loop iteration and callback call. Charge nonconstant operations
+  through costed calls or `tick_bits`, and use literal tick amounts.
+- Give callback records costed fields and pure accessors. State their laws using pure accessors.
+- Prove `f_cost` using named measures and constants, and add a `bigO` corollary.
+- State amortised bounds as per-operation potential inequalities for persistent structures.
+- Use `CostLoop.iterate` for binary-fuel loops and `fix_wf` for well-founded recursion.
+- Account for key bits, preparation, callbacks and output in bounds.
+
+## Tests
+
+Rocq tests are `Example`s proved by `vm_compute`. Cover positive, negative and boundary cases.
+Test costed algorithms on small fixtures that compute ticks. Use checked hand-written fixtures
+when a test needs a result from another package. OCaml tests are inline expect tests.
+
+## Commits
+
+Write an imperative subject and a body that says what changed and why. Stage explicit paths.
