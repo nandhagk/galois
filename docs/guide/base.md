@@ -1,6 +1,6 @@
 # Base
 
-Base provides positive key encodings, decoders, reflected equality, labelled paths and
+Base provides key encodings, canonical containers, reflected equality, labelled paths and
 certification. Its computational dictionaries contain data and functions. Separate `Prop`
 records state injectivity, decoder round trips and numeric cost assumptions. A client can
 compute keys without supplying any of these proofs.
@@ -133,3 +133,181 @@ accepts and `None` when the checker rejects.
 `certify_or` returns a supplied certified fallback on rejection.
 `certify_or_sound` proves that the returned candidate satisfies the predicate.
 The checker needs soundness. Completeness is a separate client obligation when required.
+
+## Writing against the interface
+
+Use public operations, equations and specification theorems in proofs.
+Keep `wf` hypotheses and `encoding_laws E` available when a theorem requires them.
+`Map.ext` and `FinSet.ext` turn observational agreement into equality of well-formed values.
+The computational values contain no law proofs.
+
+Do not unfold container representations, list scans, heap selection or cost-monad definitions.
+Use `Cost.value_bind`, `Cost.value_map` and the public callback-projection equations when
+reasoning about a costed client. Replaceable operations carry `Arguments ... : simpl never`.
+Fixtures may use `vm_compute` to observe their executable results.
+
+The reference containers charge their list traversals and encoding callbacks.
+They do not satisfy the future trie or binomial-heap bounds.
+`Map.cost_laws` states separate assumptions on code lookup, insertion and removal.
+Each assumption bounds ticks by `N.pos (Pos.size p)` for every code and computational map.
+The reference implementation does not supply `Map.cost_laws_hold`.
+Consumers that need numeric trie bounds must take the law record as a premise.
+
+Costed callback forms retain the callback's full charge and add a call-overhead tick.
+Pure wrappers lift their callbacks as one-tick primitives.
+For example, use `Index.group_by_c` with a costed key conversion when computing a key requires
+a traversal. Use `Memo.get_or_c` when the reference computation has a nonconstant cost.
+Neither wrapper proves that an arbitrary client callback takes constant time.
+
+## Maps
+
+[`Map.t`](../../theories/Base/BaseMap.v#L84) stores code, key and value in a sorted list.
+`Map.wf E m` requires every stored code to equal its key's encoding and the codes to be
+strictly ascending under `Map.code_compare`.
+The order is the canonical trie's traversal order.
+Zero branches precede their root, and one branches follow it.
+Thus codes two, one and three enumerate in that order.
+<!-- Source: BaseMapTest.v, map_trie_order. -->
+
+`empty`, `get_code`, `get`, `mem` and `find_or` provide construction and lookup.
+`get_c` calls `encode_c` once before `get_code_c`.
+`set`, `remove` and `update` change a single encoded position.
+An update callback receives the previous `option V`.
+It returns `None` to delete or `Some v` to store a value.
+`get_set`, `get_remove` and `get_update` expose these observations through reflected key tests.
+The `_same` and `_other` theorems specialize equality and disequality.
+
+`map` changes values while retaining keys.
+`combine f m n` computes optional values pointwise when `f None None = None`.
+Its result takes an existing key from one of the input maps.
+`union_with` retains one-sided values and combines shared values.
+`inter_with` retains shared values, and `diff` retains left-only values.
+Dedicated intersection and difference names let the trie implementation skip one-sided subtrees.
+The reference combination uses repeated sorted insertion and removal and may be quadratic.
+Its costed implementation retains all of those scans.
+
+`elements_spec` relates enumeration to successful lookup, and `elements_sorted` fixes its order.
+`fold_elements` states that `fold` is a left fold over that enumeration.
+`size_elements` relates the count to enumeration length.
+`of_list_get` gives last-occurrence replacement for construction in input order.
+`forall2_spec` specifies a short-circuit relation on every left binding and its optional right value.
+`beq` tests value agreement in both directions and ignores stored keys.
+`Map.ext` proves canonical equality under `wf` and encoding injectivity.
+
+The [map fixtures](../../tests/Base/BaseMapTest.v#L12) cover replacement, absence,
+an absent-key update, deletion of the last binding, empty enumeration and list lookup ticks.
+The [differential fixtures](../../tests/legacy/Base/BaseMapLegacyTest.v#L12) compare legacy and
+new lookup results on the same probes and compare key enumeration order.
+
+## Finite sets
+
+[`FinSet.t`](../../theories/Base/BaseSet.v#L15) is `Map.t K unit`.
+Its `wf` predicate is the underlying map invariant.
+Every published set operation has a `_c` form and a pure `Cost.value` wrapper.
+`add`, `remove`, `union`, `inter` and `diff` implement the corresponding membership formulas.
+In particular, `inter_c` delegates to `Map.inter_with_c` and `diff_c` to `Map.diff_c`.
+
+`subset_spec` specifies pointwise membership implication.
+`equal_spec` identifies equal well-formed sets, and `ext` turns equal memberships into equality.
+`elements_spec` connects enumeration to membership, and `elements_sorted` retains map code order.
+`of_list` removes duplicate input keys.
+`mem_of_list` tests the input with encoded equality.
+The [set fixtures](../../tests/Base/BaseSetTest.v#L12) exercise duplicates, shared keys,
+left-only keys, absence, empty equality and membership ticks.
+
+## Group-by indexes
+
+[`Index.t`](../../theories/Base/BaseIndex.v#L15) maps keys to lists.
+`find` returns a stored bucket or `[]` for an absent key.
+`group_by_c E key_c xs` charges every input visit and the costed key callback.
+It uses `Map.update_c` to cons each item onto its bucket.
+It then reverses every bucket once through `Map.map_c`.
+Bucket construction therefore avoids repeatedly appending to a growing list.
+
+`find_group_by` proves that a bucket equals the matching input filter in input order.
+`wf_group_by` proves the underlying map invariant.
+The [index fixtures](../../tests/Base/BaseIndexTest.v#L12) include interleaved buckets,
+an absent bucket, empty input and the charge of a singleton group.
+
+## Priority queues
+
+[`Heap.t`](../../theories/Base/BaseHeap.v#L15) uses the live priority map as its reference state.
+`priority` returns an optional positive priority.
+`push` inserts an absent key or strictly decreases an existing priority.
+A larger or equal supplied priority leaves the queue unchanged.
+`size` counts live keys.
+`wf` is the live map invariant.
+
+`pop E q` returns `None` on an empty queue.
+A successful result is `Some (p, k, q')`.
+`pop_priority` proves that `k` had live priority `p`.
+`pop_min` proves that every other live `(r, a)` satisfies
+`p < r \/ (p = r /\ encode E k <= encode E a)`.
+The tie order uses numeric positive codes.
+It differs from the trie's enumeration order.
+`pop_removes` specifies the selected key's absence and every other key's unchanged priority.
+`size_pop` proves that a successful pop removes one live key.
+`wf_push` and `wf_pop` maintain the invariant.
+
+The reference pop charges map enumeration, a scan for the minimum and map removal.
+Tied comparisons retain both encoding callback costs and charge both code traversals.
+It makes no logarithmic or amortized cost claim.
+The [heap fixtures](../../tests/Base/BaseHeapTest.v#L12) distinguish numeric tie order from
+enumeration order and check decreases, ignored increases, empty pop and insertion ticks.
+
+## Interning
+
+[`Intern.t`](../../theories/Base/BaseIntern.v#L15) stores a forward `Map K positive`,
+an inverse `Map positive K` and the next unused positive ID.
+The inverse map uses the encoding of `positive_codec`, exposed as `positive_encoding`.
+`empty` starts allocating at one.
+`intern` returns an ID and the resulting table.
+`intern_found` returns an existing ID without changing the table.
+`intern_new` allocates the old frontier and advances it by one.
+<!-- Source: BaseIntern.v, empty_c and intern_new. -->
+
+`wf E s` requires both maps to be well formed.
+It also requires forward and inverse lookup to agree, each allocated ID to be below `next s`,
+and every positive ID below `next s` to belong to some key.
+`intern_wf` maintains these conditions.
+`find_intern`, `key_of_intern` and `key_of_find` connect forward lookup and reverse lookup.
+`find_intern_old` retains old allocations, and `ids_dense` characterizes the allocated interval.
+The reference `size_c` counts the forward map through `Map.size_c`.
+
+`of_list` allocates in first-occurrence order.
+`intern_list_spec` states that the resulting table contains exactly the input keys.
+The [interning fixtures](../../tests/Base/BaseInternTest.v#L12) check repeated keys,
+consecutive allocation, inverse lookup, absence, an empty inverse map and allocation ticks.
+
+## Memo tables
+
+[`Memo.t`](../../theories/Base/BaseMemo.v#L15) is an ordinary map.
+`valid E f m` says that every stored lookup result equals the reference result at its key.
+It is separate from `Map.wf E m`.
+Both predicates are premises of `get_or_agrees`.
+The agreement theorem proves the returned result equals `f k` and the returned cache stays valid.
+`wf_get_or` separately proves representation-invariant preservation.
+
+`get_or_c E f_c k m` returns a cached result without calling `f_c` on a hit.
+A miss charges the callback and stores its result.
+`map_memo_c` threads one cache through an input list.
+`map_memo_agrees` proves equality with `List.map f` and validity and well-formedness of the final cache.
+The [memo fixtures](../../tests/Base/BaseMemoTest.v#L12) cover a miss, a hit, an unrelated absent key,
+empty and repeated-key lists, and retention of an explicitly expensive callback's charge.
+
+## Container and option tactics
+
+Import `BaseTactics` for `simpl_map`, `simpl_set`, `set_solver` and `inv_option`.
+It reexports the `Map` and `FinSet` hints without importing their unqualified operation names.
+The named `galois_map` database contains lookup and membership rewrite laws.
+`simpl_map` rewrites observations and calls `case_key` when a matching encoding law is present.
+`simpl_set` also reduces the boolean membership connectives.
+`set_solver` reflects true-membership formulas to `In` propositions and runs bounded `firstorder`
+with `auto 4` for its propositional residue.
+`inv_option` repeatedly splits option-producing matches, inverts constructor equalities,
+substitutes option variables and discharges impossible constructor branches.
+
+The [tactic contracts](../../tests/Base/BaseTacticsTest.v#L10) have three symbolic goals each
+for map rewriting, set rewriting and set solving, and four for option inversion.
+An additional unsupported list goal checks that `set_solver` returns control with the residue.
+<!-- Source: the named Example declarations in BaseTacticsTest.v. -->
