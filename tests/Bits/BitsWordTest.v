@@ -48,3 +48,19 @@ Example word_boundaries :
 Proof.
   vm_compute. repeat split.
 Qed.
+
+(** The modulus and its logarithm cover width one and an eight-bit word. *)
+Example modulus_value_boundaries :
+  modulus 1%positive = 2 /\ modulus 8%positive = 256 /\
+  Z.log2 (modulus 1%positive) = 1 /\ Z.log2 (modulus 8%positive) = 8.
+Proof.
+  vm_compute. repeat split.
+Qed.
+
+(** A symbolic rank client derives the modulus logarithm through the public numeric equation. *)
+Example modulus_value_symbolic_client : forall w,
+  Z.log2 (modulus w) = Zpos w.
+Proof.
+  intro w. rewrite modulus_value.
+  apply Z.log2_pow2. apply Z.lt_le_incl. apply Pos2Z.is_pos.
+Qed.

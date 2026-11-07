@@ -14,6 +14,18 @@ Definition width := positive.
 (** The modulus is the first integer outside the unsigned word range. *)
 Definition modulus (w : width) : Z := 2 ^ Zpos w.
 
+(** The word modulus is two raised to its positive bit width. *)
+Theorem modulus_value : forall w, modulus w = 2 ^ Zpos w.
+Proof.
+  intro w. reflexivity.
+Qed.
+
+(** The binary logarithm of the word modulus is its bit width. *)
+Theorem modulus_log2 : forall w, Z.log2 (modulus w) = Zpos w.
+Proof.
+  intro w. rewrite modulus_value. apply Z.log2_pow2. lia.
+Qed.
+
 (** Wrapping keeps the low bits of an integer. *)
 Definition wrap (w : width) (z : Z) : Z := z mod modulus w.
 
