@@ -170,6 +170,21 @@ Proof.
   destruct outs as [|[x a] rest]; reflexivity.
 Qed.
 
+(** Output-fold cost adds each rule charge and one tick per visited output. *)
+Theorem apply_cost {X A} (EX : encoding X) (L : lattice A) op outs m :
+  Cost.ticks (apply_c EX L op outs m) =
+  match outs with
+  | [] => 0%N
+  | (x, a) :: rest =>
+    (1 + Cost.ticks (rule_c EX L op m x a) +
+      Cost.ticks (apply_c EX L op rest (fst (rule EX L op m x a))))%N
+  end.
+Proof.
+  destruct outs as [|[x a] rest]; [reflexivity|].
+  cbn [apply_c]; autorewrite with galois_cost.
+  fold (rule EX L op m x a); lia.
+Qed.
+
 (** Applying outputs maintains map well-formedness. *)
 Theorem apply_wf {X A} (EX : encoding X) (L : lattice A) op outs m :
   Map.wf EX m -> Map.wf EX (fst (apply EX L op outs m)).

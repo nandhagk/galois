@@ -510,6 +510,364 @@ Proof.
     cbn [result_potential] in Hcost; lia.
 Qed.
 
+(** Supported states contain no stored binding outside the finite declared output list. *)
+Definition supported {X C A} (a : Analysis.t X C A) (m : assignment X A) : Prop :=
+  Map.wf (Analysis.key_enc a) m /\
+  forall x b, Map.get (Analysis.key_enc a) x m = Some b ->
+    In x (output_keys (Analysis.system a) (Analysis.static a)
+      (System.constraints (Analysis.system a))).
+
+Section Support.
+Context {X C A : Type} (a : Analysis.t X C A)
+  (HE : encoding_laws (Analysis.key_enc a))
+  (HS : System.static_laws (Analysis.static a)).
+
+Let EX := Analysis.key_enc a.
+Let L := Analysis.lat a.
+Let S := Analysis.system a.
+Let U := output_keys S (Analysis.static a) (System.constraints S).
+
+(** The actual driver initial state has finite output support and is well formed. *)
+Theorem supported_empty : supported a Map.empty.
+Proof.
+  split; [apply Map.wf_empty|].
+  intros x b Hget; rewrite Map.get_empty in Hget; discriminate.
+Qed.
+
+Local Lemma rule_supported op m x b :
+  supported a m -> In x U ->
+  supported a (fst (Update.rule EX L op m x b)).
+Proof.
+  intros [Hwf Hsupport] Hx; split; [apply Update.rule_wf, Hwf|].
+  intros y d Hget; rewrite Update.rule_equation in Hget.
+  destruct (leb L b (lookup EX L m x)); [exact (Hsupport y d Hget)|].
+  cbn [fst] in Hget; rewrite Map.get_set in Hget by exact Hwf.
+  destruct (eqb EX y x) eqn:Hy; [|exact (Hsupport y d Hget)].
+  apply (eqb_true_iff EX HE) in Hy; now subst y.
+Qed.
+
+Local Lemma apply_supported op outs m :
+  supported a m -> (forall x b, In (x, b) outs -> In x U) ->
+  supported a (fst (Update.apply EX L op outs m)).
+Proof.
+  revert m; induction outs as [|[x b] outs IH]; intros m Hsupport Houts;
+    rewrite Update.apply_equation; [exact Hsupport|].
+  cbn [fst]; apply IH.
+  - apply rule_supported; [exact Hsupport|exact (Houts x b (or_introl eq_refl))].
+  - intros y d Hin; exact (Houts y d (or_intror Hin)).
+Qed.
+
+Local Lemma outputs_supported m c :
+  In c (System.constraints S) ->
+  forall x b, In (x, b) (fst (Eval.outputs S c (lookup EX L m))) -> In x U.
+Proof.
+  intros Hc x b Hin; unfold U; rewrite output_keys_spec, in_flat_map.
+  exists c; split; [exact Hc|].
+  rewrite Eval.outputs_spec in Hin; cbn [fst] in Hin.
+  destruct Hin as [Heq|Hin]; [injection Heq as <- <-; now left|].
+  right; apply (System.sides_within HS c (lookup EX L m)).
+  apply in_map_iff; exists (x, b); now split.
+Qed.
+
+Local Lemma raise_supported m c :
+  supported a m -> In c (System.constraints S) ->
+  supported a (fst (raise_result EX L S c m)).
+Proof.
+  intros Hsupport Hc; rewrite raise_equation.
+  apply apply_supported; [exact Hsupport|apply outputs_supported, Hc].
+Qed.
+
+(** Every listed round preserves the finite-support invariant through its actual updates. *)
+Theorem round_supported cs m :
+  incl cs (System.constraints S) -> supported a m ->
+  supported a (fst (round EX L S cs m)).
+Proof.
+  revert m; induction cs as [|c cs IH]; intros m Hlisted Hsupport; rewrite round_equation.
+  - exact Hsupport.
+  - cbn [fst]; apply IH.
+    + intros d Hd; apply Hlisted; now right.
+    + apply raise_supported; [exact Hsupport|apply Hlisted; now left].
+Qed.
+
+(** A binary-driver callback preserves support whether it continues or stops. *)
+Theorem step_supported m :
+  supported a m ->
+  match Cost.value (step_c a m) with
+  | inl n => supported a n
+  | inr n => supported a n
+  end.
+Proof.
+  intro Hsupport; rewrite step_result; fold EX L S.
+  destruct (snd (round EX L S (System.constraints S) m));
+    apply round_supported; [intros c Hc; exact Hc|exact Hsupport
+      |intros c Hc; exact Hc|exact Hsupport].
+Qed.
+
+Local Lemma runs_supported n m result :
+  runs (step_c a) n m result -> supported a m ->
+  match result with inl next => supported a next | inr done => supported a done end.
+Proof.
+  intro Hrun; induction Hrun as [m|n m r Hstop|n m next result Hnext Hrun IH];
+    intro Hsupport; [exact Hsupport| |].
+  - pose proof (step_supported m Hsupport) as Hstep; rewrite Hstop in Hstep; exact Hstep.
+  - apply IH; pose proof (step_supported m Hsupport) as Hstep.
+    rewrite Hnext in Hstep; exact Hstep.
+Qed.
+
+(** Actual binary runs from supported states return supported exhausted or solved maps. *)
+Theorem iterate_supported fuel m :
+  supported a m ->
+  match Cost.value (iterate (step_c a) fuel m) with
+  | inl next => supported a next
+  | inr done => supported a done
+  end.
+Proof.
+  intro Hsupport; apply (runs_supported _ _ _ (iterate_value (step_c a) fuel m) Hsupport).
+Qed.
+
+End Support.
+
+Module Budget.
+
+(** Scalar budgets describe primitive callbacks and each constraint's selected query path. *)
+Record t := Make {
+  query_nodes : nat;
+  output_count : nat;
+  continuation_ticks : N;
+  encoding_ticks : N;
+  key_digits : N;
+  lattice_ticks : N;
+  target_ticks : N;
+  rhs_ticks : N
+}.
+
+Definition lookup (b : t) count : N :=
+  (encoding_ticks b + Map.size_cost_k * (1 + N.of_nat count) * (1 + key_digits b))%N.
+
+Definition update (b : t) count : N :=
+  (2 + 2 * lookup b count + 2 * lattice_ticks b)%N.
+
+Definition evaluation (b : t) count : N :=
+  (2 + target_ticks b + rhs_ticks b +
+    N.of_nat (query_nodes b) * (3 + lookup b count + continuation_ticks b))%N.
+
+Definition row (b : t) count : N :=
+  (1 + evaluation b count + N.of_nat (output_count b) * (1 + update b count))%N.
+
+Definition round (b : t) count rows : N := (N.of_nat rows * row b count)%N.
+
+End Budget.
+
+(** Cost-relevant keys are declared outputs and declared inputs of listed constraints. *)
+Definition cost_key {X C A} (a : Analysis.t X C A) x : Prop :=
+  In x (output_keys (Analysis.system a) (Analysis.static a)
+    (System.constraints (Analysis.system a))) \/
+  exists c, In c (System.constraints (Analysis.system a)) /\ In x (deps (Analysis.static a) c).
+
+(** The cost model bounds primitive work on supported maps without assuming round costs. *)
+Record cost_model {X C A} (a : Analysis.t X C A) (b : Budget.t) : Prop := {
+  encoding_budget : forall x, cost_key a x ->
+    (Cost.ticks (encode_c (Analysis.key_enc a) x) <= Budget.encoding_ticks b)%N /\
+    (key_bits (Analysis.key_enc a) x <= Budget.key_digits b)%N;
+  lattice_budget : forall x y,
+    (Cost.ticks (leb_c (Analysis.lat a) x y) <= Budget.lattice_ticks b)%N /\
+    (Cost.ticks (join_c (Analysis.lat a) x y) <= Budget.lattice_ticks b)%N;
+  system_budget : forall c, In c (System.constraints (Analysis.system a)) ->
+    (Cost.ticks (System.target_c (Analysis.system a) c) <= Budget.target_ticks b)%N /\
+    (Cost.ticks (System.rhs_c (Analysis.system a) c) <= Budget.rhs_ticks b)%N;
+  query_budget : forall m c, supported a m -> In c (System.constraints (Analysis.system a)) ->
+    Query.within (Budget.continuation_ticks b)
+      (lookup (Analysis.key_enc a) (Analysis.lat a) m) (Budget.query_nodes b)
+      (System.rhs (Analysis.system a) c);
+  output_budget : forall m c, supported a m -> In c (System.constraints (Analysis.system a)) ->
+    length (fst (Eval.outputs (Analysis.system a) c
+      (lookup (Analysis.key_enc a) (Analysis.lat a) m))) <= Budget.output_count b
+}.
+
+Arguments encoding_budget {X C A a b}.
+Arguments lattice_budget {X C A a b}.
+Arguments system_budget {X C A a b}.
+Arguments query_budget {X C A a b}.
+Arguments output_budget {X C A a b}.
+
+Section SupportedCosts.
+Context {X C A : Type} (a : Analysis.t X C A)
+  (HE : encoding_laws (Analysis.key_enc a))
+  (HS : System.static_laws (Analysis.static a)) (b : Budget.t) (HB : cost_model a b).
+
+Let EX := Analysis.key_enc a.
+Let L := Analysis.lat a.
+Let S := Analysis.system a.
+Let U := output_keys S (Analysis.static a) (System.constraints S).
+
+Local Lemma nat_N_mono n m : (n <= m)%nat -> (N.of_nat n <= N.of_nat m)%N.
+Proof.
+  intro Hle; induction Hle; [reflexivity|].
+  rewrite Nat2N.inj_succ; lia.
+Qed.
+
+(** Supported states have a backend-neutral finite binding-count bound. *)
+Theorem supported_size m :
+  supported a m -> Map.size m <= length U.
+Proof.
+  intros [Hwf Hsupport]; apply (Map.size_support_bound EX HE U m Hwf Hsupport).
+Qed.
+
+Local Lemma primitive_size_cost m x :
+  supported a m -> cost_key a x ->
+  (Cost.ticks (lookup_c EX L m x) <= Budget.lookup b (length U))%N /\
+  forall value, (Cost.ticks (Map.set_c EX x value m) <= Budget.lookup b (length U))%N.
+Proof.
+  intros Hsupport Hkey.
+  destruct (encoding_budget HB x Hkey) as [Henc Hbits].
+  pose proof (nat_N_mono _ _ (supported_size m Hsupport)) as Hsize.
+  split.
+  - change (Cost.ticks (Map.find_or_c EX (bot L) x m) <= Budget.lookup b (length U))%N.
+    rewrite Map.find_or_cost; pose proof (Map.get_size_cost EX x m) as Hget.
+    eapply N.le_trans; [exact Hget|]; unfold Budget.lookup.
+    apply N.add_le_mono; [exact Henc|].
+    apply N.mul_le_mono.
+    + apply N.mul_le_mono_l, N.add_le_mono_l, Hsize.
+    + apply N.add_le_mono_l, Hbits.
+  - intro value; pose proof (Map.set_size_cost EX x value m) as Hset.
+    eapply N.le_trans; [exact Hset|]; unfold Budget.lookup.
+    apply N.add_le_mono; [exact Henc|].
+    apply N.mul_le_mono.
+    + apply N.mul_le_mono_l, N.add_le_mono_l, Hsize.
+    + apply N.add_le_mono_l, Hbits.
+Qed.
+
+Local Lemma rule_size_cost m x value :
+  supported a m -> In x U ->
+  (Cost.ticks (Update.rule_c EX L (join_c L) m x value) <=
+    Budget.update b (length U))%N.
+Proof.
+  intros Hsupport Hkey.
+  destruct (primitive_size_cost m x Hsupport (or_introl Hkey)) as [Hlookup Hwrite].
+  specialize (Hwrite (Cost.value (join_c L (lookup EX L m x) value))).
+  pose proof (proj1 (lattice_budget HB value (lookup EX L m x))) as Hcompare.
+  pose proof (proj2 (lattice_budget HB (lookup EX L m x) value)) as Hjoin.
+  fold L in Hcompare, Hjoin.
+  rewrite Update.rule_cost.
+  destruct (leb L value (lookup EX L m x)); unfold Budget.update; nia.
+Qed.
+
+Local Lemma apply_size_cost outs m :
+  supported a m -> (forall x value, In (x, value) outs -> In x U) ->
+  (Cost.ticks (Update.apply_c EX L (join_c L) outs m) <=
+    N.of_nat (length outs) * (1 + Budget.update b (length U)))%N.
+Proof.
+  revert m; induction outs as [|[x value] rest IH]; intros m Hsupport Hkeys.
+  - rewrite Update.apply_cost; cbn [length]; nia.
+  - assert (Hx : In x U) by exact (Hkeys x value (or_introl eq_refl)).
+    pose proof (rule_supported a HE (join_c L) m x value Hsupport Hx) as Hnext.
+    fold EX L in Hnext.
+    assert (Hrest : forall y v, In (y, v) rest -> In y U).
+    { intros y v Hin; exact (Hkeys y v (or_intror Hin)). }
+    specialize (IH _ Hnext Hrest).
+    pose proof (rule_size_cost m x value Hsupport Hx) as Hrule.
+    rewrite Update.apply_cost; cbn [length].
+    rewrite Nat2N.inj_succ; nia.
+Qed.
+
+Local Lemma evaluation_size_cost m c :
+  supported a m -> In c (System.constraints S) ->
+  (Cost.ticks (Eval.outputs_c S (lookup_c EX L m) c) <=
+    Budget.evaluation b (length U))%N.
+Proof.
+  intros Hsupport Hc.
+  assert (Hreads : forall x, In x (Query.reads (System.rhs S c) (lookup EX L m)) ->
+    (Cost.ticks (lookup_c EX L m x) <= Budget.lookup b (length U))%N).
+  { intros x Hx; assert (Hkey : cost_key a x).
+    { right; exists c; split; [exact Hc|].
+      exact (System.reads_within HS c (lookup EX L m) x Hx). }
+    exact (proj1 (primitive_size_cost m x Hsupport Hkey)). }
+  pose proof (Query.run_c_cost_on (System.rhs S c) (lookup_c EX L m)
+    (lookup EX L m) (Budget.query_nodes b) (Budget.continuation_ticks b)
+    (Budget.lookup b (length U)) (query_budget HB m c Hsupport Hc)
+    (fun _ => eq_refl) Hreads) as Hquery.
+  destruct (system_budget HB c Hc) as [Htarget Hrhs].
+  fold S in Htarget, Hrhs.
+  rewrite Eval.outputs_cost; unfold Budget.evaluation; nia.
+Qed.
+
+Local Lemma raise_size_cost m c :
+  supported a m -> In c (System.constraints S) ->
+  (Cost.ticks (raise_c EX L S c m) <= Budget.evaluation b (length U) +
+    N.of_nat (Budget.output_count b) * (1 + Budget.update b (length U)))%N.
+Proof.
+  intros Hsupport Hc.
+  pose proof (evaluation_size_cost m c Hsupport Hc) as Heval.
+  pose proof (apply_size_cost (fst (Eval.outputs S c (lookup EX L m))) m
+    Hsupport (outputs_supported a HS m c Hc)) as Happly.
+  pose proof (nat_N_mono _ _ (output_budget HB m c Hsupport Hc)) as Houtputs.
+  fold EX L S in Houtputs.
+  unfold raise_c; rewrite Cost.ticks_bind.
+  rewrite (Eval.outputs_c_spec S c _ (lookup EX L m)) by reflexivity.
+  apply N.add_le_mono; [exact Heval|].
+  eapply N.le_trans; [exact Happly|].
+  apply N.mul_le_mono_r, Houtputs.
+Qed.
+
+(** Each supported round's cost is derived from its primitive and query component budgets. *)
+Theorem round_size_cost cs m :
+  incl cs (System.constraints S) -> supported a m ->
+  (Cost.ticks (round_c EX L S cs m) <=
+    Budget.round b (length U) (length cs))%N.
+Proof.
+  revert m; induction cs as [|c cs IH]; intros m Hlisted Hsupport.
+  - cbn [round_c length]; autorewrite with galois_cost; unfold Budget.round; nia.
+  - assert (Hc : In c (System.constraints S)) by (apply Hlisted; now left).
+    pose proof (raise_supported a HE HS m c Hsupport Hc) as Hnext.
+    fold EX L S in Hnext.
+    assert (Htail : incl cs (System.constraints S)).
+    { intros d Hd; apply Hlisted; now right. }
+    specialize (IH _ Htail Hnext).
+    pose proof (raise_size_cost m c Hsupport Hc) as Hraise.
+    cbn [round_c length]; autorewrite with galois_cost.
+    fold (raise_result EX L S c m).
+    unfold Budget.round in *; rewrite Nat2N.inj_succ.
+    unfold Budget.row in *; nia.
+Qed.
+
+Local Lemma step_size_cost m :
+  supported a m ->
+  (Cost.ticks (step_c a m) <=
+    Budget.round b (length U) (length (System.constraints S)))%N.
+Proof.
+  intro Hsupport; unfold step_c; rewrite Cost.ticks_bind.
+  pose proof (round_size_cost (System.constraints S) m (fun _ H => H) Hsupport) as Hround.
+  fold EX L S.
+  destruct (snd (Cost.value (round_c EX L S (System.constraints S) m)));
+    rewrite Cost.ticks_ret, N.add_0_r; exact Hround.
+Qed.
+
+(** The reference run has an instantiable cost bound on its maintained finite support. *)
+Theorem kleene_supported_cost fuel :
+  (Cost.ticks (run_c a fuel) <=
+    (Budget.round b (length U) (length (System.constraints S)) + 2) * N.pos fuel)%N.
+Proof.
+  set (k := Budget.round b (length U) (length (System.constraints S))).
+  assert (Hstep : forall m, supported a m ->
+    (match Cost.value (step_c a m) with
+     | inl n => supported a n
+     | inr _ => True
+     end) /\
+    (Cost.ticks (step_c a m) +
+      result_potential (fun _ => 0%N) (Cost.value (step_c a m)) <= k + 0)%N).
+  { intros m Hsupport; pose proof (step_supported a HE HS m Hsupport) as Hnext.
+    pose proof (step_size_cost m Hsupport) as Hcost.
+    destruct (Cost.value (step_c a m)); cbn [result_potential] in *;
+      split; try assumption; try exact I; unfold k; lia. }
+  pose proof (iterate_cost_amortised (step_c a) (supported a) (fun _ => 0%N)
+    k Hstep fuel Map.empty (supported_empty a)) as [_ Hcost].
+  unfold run_c; rewrite Cost.ticks_bind, Cost.ticks_ret, N.add_0_r.
+  destruct (Cost.value (iterate (step_c a) fuel Map.empty));
+    cbn [result_potential] in Hcost; unfold k in *; lia.
+Qed.
+
+End SupportedCosts.
+
 Arguments round_c {X C A} EX L S cs m : simpl never.
 Arguments round {X C A} EX L S cs m : simpl never.
 Arguments run_c {X C A} a fuel : simpl never.

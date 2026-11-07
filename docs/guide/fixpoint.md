@@ -36,6 +36,8 @@ The certificates have different scopes.
   It requires every dynamic read to lie in that set and checks outputs whose destinations lie
   in the set.
   `check_partial_correct` assumes lawful encodings, a lawful index and a well-formed explored set.
+  Global extension arguments also need `System.static_laws` to cover actual side targets.
+  Index agreement alone describes the supplied metadata.
 - `expand_c` starts from the stored cut values and reconstructs planned unknowns.
   It rejects repeated or overlapping plan keys, uncovered outputs and reads ordered after their
   consumers.
@@ -60,6 +62,8 @@ Its separate `Solver.laws` establishes soundness of solved candidates and reacha
 candidates from bottom.
 `analyze_with` accepts any computational solver and independently certifies its candidate.
 A producer needs no solver-law proof to run, so a wrong candidate can be tested and rejected.
+`certify_checked_cost` charges one checker invocation tick and retains the checker's own charge
+on both acceptance and rejection.
 
 [`analyze_ref`](../../theories/Fixpoint/FixpointAnalyze.v#L16) runs the reference round-robin
 joining engine and certifies its answer.
@@ -79,13 +83,22 @@ Its proof inputs are separate from the computational `analyze` interface.
 `analyze_least` and `solve_least` additionally require least joins and monotone queries.
 Least solutions agree up to preorder equivalence.
 
+`Kleene.kleene_supported_cost` bounds the reference run on its maintained finite output support.
+`Kleene.supported` requires map well-formedness and forbids stored keys outside declared outputs.
+Initialization, shared updates, rounds and the binary driver preserve this invariant.
+`Kleene.cost_model` supplies encoding, lattice, system-callback, selected query-path and
+output-count budgets.
+The solver derives a round budget through public map-size and loose size-and-digit cost laws.
+The cycle fixture instantiates these premises for every supported boolean map.
+The generic `kleene_cost` remains a driver lemma whose all-maps callback premise need not hold.
+
 Widening engines need their own termination arguments.
 A widening rank alone does not bound propagation around a cycle.
 The widening worklist bound also depends on paths avoiding widening points and can be exponential.
 The worklist guide extension will supply that bound and its scheduling premises.
 
 The checked fixtures in
-[`tests/Fixpoint`](../../tests/Fixpoint/FixpointAnalyzeTest.v#L27) cover the cycle, repeated
+[`tests/Fixpoint`](../../tests/Fixpoint/FixpointAnalyzeTest.v#L29) cover the cycle, repeated
 side targets, empty systems, exhausted fuel, total solving and rejection of a bad solver.
 The differential tests compare the reference results with the legacy total solver on the
 empty and joining-cycle fixtures.

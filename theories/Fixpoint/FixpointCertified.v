@@ -4,7 +4,7 @@
     For example, a solver that returns bottom for a positive constant is rejected.
     Builds on: FixpointSolver, FixpointCheck and BaseCertify. *)
 
-From Stdlib Require Import Bool.
+From Stdlib Require Import Bool NArith Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseCertify.
 From Galois.Fixpoint Require Import FixpointSystem FixpointAnalysis FixpointSolver FixpointCheck.
@@ -14,6 +14,7 @@ Import Cost.Notations.
 Definition certify_checked_c {W} (P : W -> Prop) (check_c : W -> Cost.t bool)
     (sound : forall w, Cost.value (check_c w) = true -> P w) w
     : Cost.t (option {w | P w}) :=
+  Cost.step ;;
   let* checked := Cost.refine (check_c w)
     (P := fun b => Cost.value (check_c w) = b) eq_refl in
   Cost.ret
@@ -22,6 +23,14 @@ Definition certify_checked_c {W} (P : W -> Prop) (check_c : W -> Cost.t bool)
     | None => None
     | Some proof => Some (exist P w (proj2_sig proof))
     end).
+
+(** Certification charges one checker invocation tick and retains the entire callee charge. *)
+Theorem certify_checked_cost {W} (P : W -> Prop) check_c sound w :
+  Cost.ticks (certify_checked_c P check_c sound w) =
+    (1 + Cost.ticks (check_c w))%N.
+Proof.
+  unfold certify_checked_c; autorewrite with galois_cost; lia.
+Qed.
 
 (** Successful certification retains its original candidate exactly. *)
 Theorem certify_checked_spec {W} (P : W -> Prop) check_c sound w :
@@ -59,6 +68,15 @@ Definition candidate_c {X C A} (a : Analysis.t X C A) (m : assignment X A) :=
       (fun n => check_post_c (Analysis.lat a) (Analysis.system a)
         (lookup_c (Analysis.key_enc a) (Analysis.lat a) n))
       (map_check_sound a) m).
+
+(** Candidate certification adds exactly its checker invocation tick to full-check work. *)
+Theorem candidate_cost {X C A} (a : Analysis.t X C A) m :
+  Cost.ticks (candidate_c a m) =
+    (1 + Cost.ticks (check_post_c (Analysis.lat a) (Analysis.system a)
+      (lookup_c (Analysis.key_enc a) (Analysis.lat a) m)))%N.
+Proof.
+  unfold candidate_c; rewrite Cost.ticks_map, certify_checked_cost; reflexivity.
+Qed.
 
 (** Arbitrary candidates are checked independently of solver law evidence. *)
 Definition analyze_with_c {X C A} (sv : Solver.t X C A) (a : Analysis.t X C A) fuel

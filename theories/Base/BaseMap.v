@@ -1200,6 +1200,101 @@ Proof.
   - intro Hget. rewrite (IH Htail Hget). reflexivity.
 Qed.
 
+(** The loose backend-neutral size bound includes digit work even for an empty map. *)
+Definition size_cost_k : N := 2.
+
+(** The size-bound overhead constant is strictly positive. *)
+Theorem size_cost_k_positive : (0 < size_cost_k)%N.
+Proof.
+  reflexivity.
+Qed.
+
+Local Lemma size_length {K V} (m : t K V) : size m = length m.
+Proof.
+  rewrite size_elements, elements_equation, length_map; reflexivity.
+Qed.
+
+Local Lemma compare_bits_cost p q :
+  (Cost.ticks (code_compare_c p q) <= N.pos (Pos.size p))%N.
+Proof.
+  revert q; induction p as [p IH|p IH|]; intro q; destruct q;
+    cbn [code_compare_c Pos.size]; autorewrite with galois_cost;
+    try specialize (IH q); lia.
+Qed.
+
+Local Lemma get_scan_cost {K V} p (m : t K V) :
+  (Cost.ticks (get_code_c p m) <=
+    N.of_nat (length m) * (1 + N.pos (Pos.size p)))%N.
+Proof.
+  induction m as [|[q [k v]] rest IH]; cbn [get_code_c length];
+    autorewrite with galois_cost; [lia|].
+  pose proof (proj1 (positive_eqb_cost p q)) as Hdigits.
+  destruct (Cost.value (positive_eqb_c p q)); autorewrite with galois_cost;
+    rewrite Nat2N.inj_succ; nia.
+Qed.
+
+Local Lemma set_scan_cost {K V} p k (v : V) (m : t K V) :
+  (Cost.ticks (set_code_c p k v m) <=
+    N.of_nat (length m) * (1 + N.pos (Pos.size p)))%N.
+Proof.
+  induction m as [|[q kv] rest IH]; cbn [set_code_c length];
+    autorewrite with galois_cost; [lia|].
+  pose proof (compare_bits_cost p q) as Hdigits.
+  destruct (Cost.value (code_compare_c p q)); autorewrite with galois_cost;
+    rewrite Nat2N.inj_succ; nia.
+Qed.
+
+(** Lookup has a loose size-and-query-digit bound preserved by list and trie backends. *)
+Theorem get_size_cost {K V} (E : encoding K) k (m : t K V) :
+  (Cost.ticks (get_c E k m) <= Cost.ticks (encode_c E k) +
+    size_cost_k * (1 + N.of_nat (size m)) * (1 + key_bits E k))%N.
+Proof.
+  unfold get_c; autorewrite with galois_cost.
+  pose proof (get_scan_cost (Cost.value (encode_c E k)) m) as Hscan.
+  rewrite size_length; unfold size_cost_k, key_bits, encode; nia.
+Qed.
+
+(** Insertion has the same loose backend-neutral size-and-query-digit bound. *)
+Theorem set_size_cost {K V} (E : encoding K) k (v : V) (m : t K V) :
+  (Cost.ticks (set_c E k v m) <= Cost.ticks (encode_c E k) +
+    size_cost_k * (1 + N.of_nat (size m)) * (1 + key_bits E k))%N.
+Proof.
+  unfold set_c; autorewrite with galois_cost.
+  pose proof (set_scan_cost (Cost.value (encode_c E k)) k v m) as Hscan.
+  rewrite size_length; unfold size_cost_k, key_bits, encode; nia.
+Qed.
+
+(** Default lookup retains exactly the underlying lookup charge. *)
+Theorem find_or_cost {K V} (E : encoding K) (d : V) k (m : t K V) :
+  Cost.ticks (find_or_c E d k m) = Cost.ticks (get_c E k m).
+Proof.
+  unfold find_or_c; apply Cost.ticks_map.
+Qed.
+
+Local Lemma element_keys_nodup {K V} (E : encoding K) (m : t K V) :
+  wf E m -> NoDup (List.map fst (elements m)).
+Proof.
+  intro Hwf; pose proof (elements_sorted E m Hwf) as Hsorted.
+  induction Hsorted as [|[k v] rest Hsorted IH Hafter]; cbn [List.map fst].
+  - constructor.
+  - constructor; [|exact IH].
+    intro Hin; apply in_map_iff in Hin as [[a w] [Heq Hin]]; cbn in Heq; subst a.
+    rewrite Forall_forall in Hafter; specialize (Hafter _ Hin); cbn in Hafter.
+    rewrite compare_refl in Hafter; discriminate.
+Qed.
+
+(** A well-formed map storing only keys from a finite list has at most that many bindings. *)
+Theorem size_support_bound {K V} (E : encoding K) (HE : encoding_laws E)
+    (U : list K) (m : t K V) :
+  wf E m -> (forall k v, get E k m = Some v -> In k U) ->
+  (size m <= length U)%nat.
+Proof.
+  intros Hwf Hsupport; rewrite size_elements, <- (length_map fst (elements m)).
+  apply NoDup_incl_length; [apply (element_keys_nodup E m Hwf)|].
+  intros k Hin; apply in_map_iff in Hin as [[a v] [Heq Hin]]; cbn in Heq; subst a.
+  apply (Hsupport k v), (elements_spec E HE k v m Hwf), Hin.
+Qed.
+
 (** Costed update has the same result as its pure callback projection. *)
 Theorem update_c_value {K V} (E : encoding K) k f_c (m : t K V) :
   Cost.value (update_c E k f_c m) = update E k (fun o => Cost.value (f_c o)) m.

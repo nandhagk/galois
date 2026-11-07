@@ -150,6 +150,35 @@ Proof.
     eapply N.le_trans; [exact IH|apply N.mul_le_mono_r, Hnm].
 Qed.
 
+(** Lookup bounds are needed only for keys on the actual selected read trace. *)
+Theorem run_c_cost_on {X A} (q : t X A) look s nu tau w :
+  within tau s nu q ->
+  (forall x, Cost.value (look x) = s x) ->
+  (forall x, In x (reads q s) -> (Cost.ticks (look x) <= w)%N) ->
+  (Cost.ticks (run_c look q) <= N.of_nat nu * (3 + w + tau))%N.
+Proof.
+  intros Hwithin Hlook; induction Hwithin as
+    [a|n x k Hk Hwithin IH|n x a child Hwithin IH|n m child Hwithin IH Hle];
+    intro Hcost.
+  - cbn [run_c]; autorewrite with galois_cost; nia.
+  - assert (Hx : (Cost.ticks (look x) <= w)%N).
+    { apply Hcost; change (In x (x :: reads (Cost.value (k (s x))) s)); now left. }
+    assert (Htail : (Cost.ticks (run_c look (Cost.value (k (s x)))) <=
+      N.of_nat n * (3 + w + tau))%N).
+    { apply IH; intros y Hy; apply Hcost.
+      change (In y (x :: reads (Cost.value (k (s x))) s)); now right. }
+    cbn [run_c]; autorewrite with galois_cost.
+    rewrite Hlook, Nat2N.inj_succ; nia.
+  - change (forall x, In x (reads child s) -> (Cost.ticks (look x) <= w)%N) in Hcost.
+    specialize (IH Hcost); cbn [run_c]; autorewrite with galois_cost.
+    rewrite Nat2N.inj_succ; nia.
+  - specialize (IH Hcost).
+    assert (Hnm : (N.of_nat n <= N.of_nat m)%N).
+    { apply (proj1 (N.compare_le_iff _ _)).
+      rewrite <- Nat2N.inj_compare; apply (proj2 (Nat.compare_le_iff _ _)); exact Hle. }
+    eapply N.le_trans; [exact IH|apply N.mul_le_mono_r, Hnm].
+Qed.
+
 End Query.
 Import Query.
 
