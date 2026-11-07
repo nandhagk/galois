@@ -6,7 +6,7 @@
 
 From Stdlib Require Import NArith Arith List Lia.
 From Galois.Cost Require Import CostMonad CostList CostBound.
-From Galois.Base Require Import BaseTrie BaseTrieMerge.
+From Galois.Base Require Import BaseTrie BaseTrieMerge BaseMap.
 Import List.ListNotations.
 
 Module TrieCost.
@@ -932,6 +932,120 @@ Proof.
   pose proof (skeleton_width tr bits Hbits) as Hnodes.
   pose proof (key_mass_width tr bits Hbits) as Hkeys.
   unfold trie_k. nia.
+Qed.
+
+(** Code-free callback work follows the actual accumulator without constructing a path. *)
+Fixpoint values_work_ne {A B} (w : B -> A -> N) (f : B -> A -> Cost.t B)
+    (n : Trie.ne A) (b : B) : N :=
+  match n with
+  | Trie.N001 r => values_work_ne w f r b
+  | Trie.N010 v => w b v
+  | Trie.N011 v r => w b v + values_work_ne w f r (Cost.value (f b v))
+  | Trie.N100 l => values_work_ne w f l b
+  | Trie.N101 l r =>
+    values_work_ne w f l b +
+      values_work_ne w f r (Cost.value (TrieMerge.fold_values_ne_c f l b))
+  | Trie.N110 l v =>
+    values_work_ne w f l b + w (Cost.value (TrieMerge.fold_values_ne_c f l b)) v
+  | Trie.N111 l v r =>
+    let b' := Cost.value (TrieMerge.fold_values_ne_c f l b) in
+    values_work_ne w f l b + w b' v +
+      values_work_ne w f r (Cost.value (f b' v))
+  end.
+
+Definition values_work {A B} (w : B -> A -> N) (f : B -> A -> Cost.t B) tr b :=
+  match tr with
+  | Trie.Empty => 0%N
+  | Trie.Nodes n => values_work_ne w f n b
+  end.
+
+(** Code-free folding separates physical nodes, callback overhead and arbitrary callee work. *)
+Theorem fold_values_cost {A B} (f : B -> A -> Cost.t B) tr b :
+  Cost.ticks (TrieMerge.fold_values_c f tr b) =
+    (skeleton_nodes tr + N.of_nat (TrieMerge.size tr) +
+      values_work (fun b v => Cost.ticks (f b v)) f tr b)%N.
+Proof.
+  rewrite <- binding_count_size. destruct tr as [|n]; [reflexivity|].
+  unfold TrieMerge.fold_values_c, skeleton_nodes, binding_weight, values_work.
+  revert b. induction n; intro b; cbn [TrieMerge.fold_values_ne_c];
+    autorewrite with galois_cost; rewrite ?IHn, ?IHn1, ?IHn2;
+    cbn [nodes_ne binding_weight_ne values_work_ne]; nia.
+Qed.
+
+Local Lemma values_work_bound {A B} (w : B -> A -> N) (f : B -> A -> Cost.t B) tr b c :
+  (forall b v, (w b v <= c)%N) ->
+  (values_work w f tr b <= c * binding_weight (fun _ => 1) tr)%N.
+Proof.
+  intro Hweight. destruct tr as [|n]; [cbn [values_work binding_weight]; lia|].
+  unfold values_work, binding_weight. revert b. induction n; intro b;
+    cbn [values_work_ne binding_weight_ne].
+  all: try pose proof (IHn b) as Hchild.
+  all: try pose proof (IHn (Cost.value (f b v))) as Hchild'.
+  all: try pose proof (IHn1 b) as Hl.
+  all: try pose proof (IHn2 (Cost.value (TrieMerge.fold_values_ne_c f n1 b))) as Hr.
+  all: try pose proof (IHn2
+    (Cost.value (f (Cost.value (TrieMerge.fold_values_ne_c f n1 b)) v))) as Hr'.
+  all: try pose proof (Hweight b v) as Hroot.
+  all: try pose proof (Hweight (Cost.value (TrieMerge.fold_values_ne_c f n b)) v) as Hroot'.
+  all: try pose proof (Hweight (Cost.value (TrieMerge.fold_values_ne_c f n1 b)) v) as Hroot'.
+  all: nia.
+Qed.
+
+(** Numeric code-free folds have no emitted-key-size term. *)
+Theorem fold_values_cost_numeric {A B} (f : B -> A -> Cost.t B) tr b c :
+  (forall b v, (Cost.ticks (f b v) <= c)%N) ->
+  (Cost.ticks (TrieMerge.fold_values_c f tr b) <=
+    skeleton_nodes tr + (1 + c) * N.of_nat (TrieMerge.size tr))%N.
+Proof.
+  intro Hcallback. rewrite fold_values_cost.
+  pose proof (values_work_bound (fun b v => Cost.ticks (f b v)) f tr b c Hcallback) as Hwork.
+  rewrite binding_count_size in Hwork. nia.
+Qed.
+
+(** Map folding retains the actual callee work without materializing encoded keys. *)
+Theorem map_fold_cost {K V B} (f : B -> K -> V -> Cost.t B) (m : Map.t K V) b :
+  let g := fun b kv => f b (fst kv) (snd kv) in
+  Cost.ticks (Map.fold_c f m b) =
+    (skeleton_nodes m + N.of_nat (Map.size m) +
+      values_work (fun b kv => Cost.ticks (g b kv)) g m b)%N.
+Proof.
+  cbn zeta. apply fold_values_cost.
+Qed.
+
+(** Numeric Map fold costs are physical-node-linear under a separate callback premise. *)
+Theorem map_fold_cost_numeric {K V B} (f : B -> K -> V -> Cost.t B) (m : Map.t K V) b c :
+  (forall b k v, (Cost.ticks (f b k v) <= c)%N) ->
+  (Cost.ticks (Map.fold_c f m b) <=
+    skeleton_nodes m + (1 + c) * N.of_nat (Map.size m))%N.
+Proof.
+  intro Hcallback. apply fold_values_cost_numeric. intros acc [k v]. apply Hcallback.
+Qed.
+
+Local Lemma collect_values_length {A} (tr : Trie.t A) :
+  length (Cost.value (TrieMerge.fold_values_c
+    (fun acc v => Cost.ret (v :: acc)) tr [])) = TrieMerge.size tr.
+Proof.
+  rewrite TrieMerge.fold_values_entries, TrieMerge.size_elements, TrieMerge.elements_entries.
+  generalize (TrieMerge.entries tr). intro xs.
+  assert (Hlength : forall acc,
+    length (fold_left (fun acc pv => snd pv :: acc) xs acc) =
+      (length xs + length acc)%nat).
+  { induction xs as [|pv xs IH]; intro acc; [reflexivity|].
+    cbn [fold_left length]. rewrite IH. cbn [length]. lia. }
+  change (length (fold_left (fun acc pv => snd pv :: acc) xs []) = length xs).
+  rewrite Hlength. cbn [length]. lia.
+Qed.
+
+(** Stored-pair Map enumeration is physical-node-linear and reconstructs no trie codes. *)
+Theorem map_elements_cost {K V} (m : Map.t K V) :
+  (Cost.ticks (Map.elements_c m) <= trie_k * (1 + skeleton_nodes m))%N.
+Proof.
+  unfold Map.elements_c. rewrite Cost.ticks_bind, ticks_rev_c, collect_values_length.
+  pose proof (fold_values_cost_numeric
+    (fun acc (v : K * V) => Cost.ret (v :: acc)) m [] 0%N
+    (fun _ _ => N.le_refl 0)) as Hfold.
+  pose proof (bindings_nodes m) as Hbindings.
+  rewrite binding_count_size in Hbindings. unfold trie_k. nia.
 Qed.
 
 End TrieCost.
