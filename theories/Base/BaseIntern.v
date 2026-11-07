@@ -4,7 +4,7 @@
     For example, interning [a; b; a] allocates only IDs one and two.
     Builds on: BaseMap, BaseEncoding and BaseEq. *)
 
-From Stdlib Require Import List Bool NArith Lia.
+From Stdlib Require Import List Bool NArith PArith Lia Sorting.Sorted.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 Import List.ListNotations Cost.Notations.
@@ -241,6 +241,90 @@ Theorem ids_dense {K} (E : encoding K) i (s : t K) :
 Proof.
   intros [_ [_ [Hbound [_ Hdense]]]]. split; [apply Hdense|].
   intros [k H]. exact (Hbound k i H).
+Qed.
+
+Local Lemma sorted_ids_nodup {K} (E : encoding K) (xs : list (K * positive)) :
+  StronglySorted (fun a b => Map.code_compare (encode E (fst a)) (encode E (fst b)) = Lt)
+    xs ->
+  (forall k i a j, In (k, i) xs -> In (a, j) xs -> Pos.to_nat i = Pos.to_nat j -> k = a) ->
+  NoDup (List.map (fun kv => Pos.to_nat (snd kv)) xs).
+Proof.
+  intro Hsort. induction Hsort as [|[k i] xs Hsort IH Hafter]; intro Hunique;
+    cbn [List.map snd]; constructor.
+  - intro Hin. apply in_map_iff in Hin as [[a j] [Heq Hin]].
+    assert (Hka : k = a).
+    { apply (Hunique k i a j); [now left|now right|symmetry; exact Heq]. }
+    subst a. rewrite Forall_forall in Hafter.
+    specialize (Hafter (k, j) Hin). cbn [fst] in Hafter.
+    rewrite (proj2 (Map.code_compare_eq _ _) eq_refl) in Hafter. discriminate.
+  - apply IH. intros a j b l Ha Hb Heq.
+    apply (Hunique a j b l); [now right|now right|exact Heq].
+Qed.
+
+Local Lemma enumerated_ids_nodup {K} (E : encoding K) (HE : encoding_laws E) (s : t K) :
+  wf E s -> NoDup (List.map (fun kv => Pos.to_nat (snd kv)) (Map.elements (table s))).
+Proof.
+  intro Hwf. pose proof (proj1 (wf_maps E s Hwf)) as Hmap.
+  apply (sorted_ids_nodup E).
+  - now apply Map.elements_sorted.
+  - intros k i a j Hki Haj Hij. apply Pos2Nat.inj in Hij. subst j.
+    apply (Map.elements_spec E HE k i _ Hmap) in Hki.
+    apply (Map.elements_spec E HE a i _ Hmap) in Haj.
+    rewrite <- find_equation in Hki, Haj.
+    pose proof (key_of_find E k i s Hwf Hki) as Hk.
+    pose proof (key_of_find E a i s Hwf Haj) as Ha. congruence.
+Qed.
+
+Local Lemma enumerated_ids_range {K} (E : encoding K) (HE : encoding_laws E) (s : t K) n :
+  wf E s ->
+  (In n (List.map (fun kv => Pos.to_nat (snd kv)) (Map.elements (table s))) <->
+    1 <= n < Pos.to_nat (next s)).
+Proof.
+  intro Hwf. pose proof (proj1 (wf_maps E s Hwf)) as Hmap.
+  split.
+  - intro Hin. apply in_map_iff in Hin as [[k i] [Heq Hin]].
+    cbn [snd] in Heq. subst n.
+    apply (Map.elements_spec E HE k i _ Hmap) in Hin.
+    rewrite <- find_equation in Hin.
+    pose proof (proj2 (ids_dense E i s Hwf) (ex_intro _ k Hin)) as Hbound.
+    apply Pos2Nat.inj_lt in Hbound. pose proof (Pos2Nat.is_pos i). lia.
+  - intros [Hlower Hupper]. destruct n as [|n]; [lia|].
+    assert (Hid : (Pos.of_succ_nat n < next s)%positive).
+    { apply Pos2Nat.inj_lt. rewrite SuccNat2Pos.id_succ. exact Hupper. }
+    destruct (proj1 (ids_dense E _ s Hwf) Hid) as [k Hfind].
+    apply in_map_iff. exists (k, Pos.of_succ_nat n). split.
+    + cbn [snd]. apply SuccNat2Pos.id_succ.
+    + apply (Map.elements_spec E HE _ _ _ Hmap). now rewrite <- find_equation.
+Qed.
+
+(** The dense frontier is exactly one past the number of allocated keys in any well-formed table. *)
+Theorem next_size {K} (E : encoding K) (HE : encoding_laws E) (s : t K) :
+  wf E s -> Pos.to_nat (next s) = S (size s).
+Proof.
+  intro Hwf.
+  set (ids := List.map (fun kv => Pos.to_nat (snd kv)) (Map.elements (table s))).
+  assert (Hnodup : NoDup ids) by now apply (enumerated_ids_nodup E HE).
+  assert (Hrange : forall n, In n ids <-> In n (seq 1 (Nat.pred (Pos.to_nat (next s))))).
+  { intro n. unfold ids. rewrite (enumerated_ids_range E HE s n Hwf), in_seq.
+    pose proof (Pos2Nat.is_pos (next s)). lia. }
+  assert (Hupper : length ids <= length (seq 1 (Nat.pred (Pos.to_nat (next s))))).
+  { apply NoDup_incl_length; [exact Hnodup|].
+    intros n Hin. now apply Hrange. }
+  assert (Hlower : length (seq 1 (Nat.pred (Pos.to_nat (next s)))) <= length ids).
+  { apply NoDup_incl_length; [apply seq_NoDup|].
+    intros n Hin. now apply Hrange. }
+  unfold ids in Hupper, Hlower.
+  rewrite length_map, length_seq in Hupper, Hlower.
+  change (Pos.to_nat (next s) = S (Map.size (table s))).
+  rewrite Map.size_elements. pose proof (Pos2Nat.is_pos (next s)). lia.
+Qed.
+
+(** An ID is allocated exactly when its natural value is at most the interner's size. *)
+Theorem ids_size {K} (E : encoding K) (HE : encoding_laws E) i (s : t K) :
+  wf E s -> (Pos.to_nat i <= size s <-> exists k, find E k s = Some i).
+Proof.
+  intro Hwf. rewrite <- (ids_dense E i s Hwf), Pos2Nat.inj_lt, (next_size E HE s Hwf).
+  lia.
 Qed.
 
 (** List interning charges every input cell and threads allocation in input order. *)
