@@ -1143,7 +1143,7 @@ Proof.
 Qed.
 
 (** Each visited find frame charges one tick, its lookup, recursion and compression update. *)
-Theorem find_fuel_cost {K} (E : encoding K) fuel x uf :
+Local Lemma reference_find_fuel_ticks {K} (E : encoding K) fuel x uf :
   Cost.ticks (find_fuel_c E fuel x uf) =
   match fuel with
   | 0 => 0%N
@@ -1168,7 +1168,7 @@ Proof.
 Qed.
 
 (** Public find's exact cost is its first frame plus the charged tail and redirect calls. *)
-Theorem find_cost {K} (E : encoding K) x uf :
+Local Lemma reference_find_ticks {K} (E : encoding K) x uf :
   Cost.ticks (find_c E x uf) =
   (1 + Cost.ticks (Map.get_c E x (parents uf)) +
     match Map.get E x (parents uf) with
@@ -1179,11 +1179,11 @@ Theorem find_cost {K} (E : encoding K) x uf :
         Cost.ticks (Map.set_c E x root (parents compressed))
     end)%N.
 Proof.
-  exact (find_fuel_cost E (S (max_rank uf)) x uf).
+  exact (reference_find_fuel_ticks E (S (max_rank uf)) x uf).
 Qed.
 
 (** Union charges its two finds, equality, optional rank queries and selected touch or link. *)
-Theorem union_cost {K} (E : encoding K) x y uf :
+Local Lemma reference_union_ticks {K} (E : encoding K) x y uf :
   Cost.ticks (union_c E x y uf) =
   let '(rx, uf1) := find E x uf in
   let '(ry, uf2) := find E y uf1 in
