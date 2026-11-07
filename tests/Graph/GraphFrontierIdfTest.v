@@ -1,0 +1,113 @@
+(** * Frontier closure fixtures
+
+    Iterated queries use checked supplied trees and apply liveness at every step.
+    For example, a nonlive join never enters the pruned closure.
+    Builds on: GraphFrontierIdf and GraphFixtures. *)
+
+From Stdlib Require Import List PArith NArith Arith.
+From Galois.Cost Require Import CostMonad.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
+From Galois.Graph Require Import GraphFixtures GraphCheckDom GraphPrepared GraphFrontierSweep
+  GraphFrontierIdf.
+Import List.ListNotations.
+
+Example diamond_checked :
+  DomCheck.check Fixtures.Diamond.prepared Fixtures.Diamond.parents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example diamond_idf :
+  FinSet.elements (FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree [2]) =
+    [4]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example loop_checked :
+  DomCheck.check Fixtures.JoinLoop.prepared Fixtures.JoinLoop.parents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example loop_idf :
+  FinSet.elements (FrontierIdf.idf Fixtures.JoinLoop.prepared Fixtures.JoinLoop.tree [4]) =
+    [4]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example two_entry_checked :
+  DomCheck.check Fixtures.TwoEntry.prepared Fixtures.TwoEntry.parents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example two_entry_idf :
+  FinSet.elements (FrontierIdf.idf Fixtures.TwoEntry.prepared Fixtures.TwoEntry.tree [1; 2]) =
+    [3]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_seeds :
+  FinSet.elements (FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree []) = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example unknown_seed :
+  FinSet.elements (FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree [42]) = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example nonlive_join :
+  FinSet.elements (FrontierIdf.idf_pruned Fixtures.Diamond.prepared Fixtures.Diamond.tree [2]
+    (fun v => Cost.ret (negb (Pos.eqb v 4)))) = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example repeated_seed :
+  FinSet.elements (FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree [2; 2]) =
+    [4]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition reference_closure {V E} (p : Prepared.t V E) tree defs :=
+  let df := FrontierSweep.dominance_frontier p tree in
+  let next := fun d => FinSet.elements (Map.find_or positive_encoding FinSet.empty d df) in
+  FinSet.of_list positive_encoding
+    (Nat.iter 4 (fun xs => nodup Pos.eq_dec (xs ++ flat_map next xs)) (flat_map next defs)).
+
+Example diamond_closure_comparison :
+  FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree [2] =
+    reference_closure Fixtures.Diamond.prepared Fixtures.Diamond.tree [2]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example loop_closure_comparison :
+  FrontierIdf.idf Fixtures.JoinLoop.prepared Fixtures.JoinLoop.tree [4] =
+    reference_closure Fixtures.JoinLoop.prepared Fixtures.JoinLoop.tree [4]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example two_entry_closure_comparison :
+  FrontierIdf.idf Fixtures.TwoEntry.prepared Fixtures.TwoEntry.tree [1; 2] =
+    reference_closure Fixtures.TwoEntry.prepared Fixtures.TwoEntry.tree [1; 2]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example live_callback_charge_retained :
+  N.ltb (Cost.ticks (FrontierIdf.idf_pruned_c Fixtures.Diamond.prepared
+    Fixtures.Diamond.tree [2] (fun _ => Cost.ret true)))
+    (Cost.ticks (FrontierIdf.idf_pruned_c Fixtures.Diamond.prepared
+      Fixtures.Diamond.tree [2] (fun _ => Cost.lift (fun _ => 7%N) (fun _ => true) tt))) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
