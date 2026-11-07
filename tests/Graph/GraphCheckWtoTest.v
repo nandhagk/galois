@@ -2,10 +2,11 @@
 
     Every token list is hand-written and checked without a hierarchy producer.
     For example, the irreducible triangle admits an enclosing head at node 2.
-    Builds on: GraphCheckWto and GraphFixtures. *)
+    Builds on: GraphCheckWto, GraphFixtures and GraphReachTest. *)
 
 From Stdlib Require Import List PArith.
 From Galois.Graph Require Import GraphPrepared GraphHierSpec GraphCheckWto GraphFixtures.
+From Galois.Tests.Graph Require Import GraphReachTest.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -139,6 +140,36 @@ Qed.
 
 Example empty_forest_boundary :
   WtoCheck.check_forest Fixtures.Empty.prepared [] Hier.Nil = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition closed_inner_head :=
+  [Wto.WOpen 1; Wto.WOpen 2; Wto.WClose; Wto.WVertex 3; Wto.WVertex 4; Wto.WClose].
+
+Example closed_inner_head_shape :
+  (Wto.balanced_from 0 closed_inner_head, Wto.order closed_inner_head,
+    Wto.annotate [] closed_inner_head) =
+  (true, [1; 2; 3; 4], [(1, [1]); (2, [2; 1]); (3, [1]); (4, [1])]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_already_closed_inner_head :
+  WtoCheck.check Fixtures.NestedLoop.prepared [1] closed_inner_head = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example accepts_headed_parallel_edges :
+  WtoCheck.check ParallelLabels.prepared [1]
+    [Wto.WOpen 1; Wto.WVertex 2; Wto.WClose] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejects_unheaded_parallel_edges :
+  WtoCheck.check ParallelLabels.prepared [1] [Wto.WVertex 1; Wto.WVertex 2] = false.
 Proof.
   vm_compute. reflexivity.
 Qed.

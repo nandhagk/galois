@@ -108,3 +108,89 @@ Example diamond_stack_empties :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Module ParallelLabels.
+
+(** Distinct labels let two outgoing edges share their target without becoming duplicates. *)
+Inductive edge :=
+  | First
+  | Second
+  | Back.
+
+Definition source (e : edge) : positive :=
+  match e with
+  | First => 1
+  | Second => 1
+  | Back => 2
+  end.
+
+Definition target (e : edge) : positive :=
+  match e with
+  | First => 2
+  | Second => 2
+  | Back => 1
+  end.
+
+Definition edges := [First; Second; Back].
+
+(** First and Second label 1 -> 2, while Back labels 2 -> 1. *)
+Definition graph :=
+  Graph.of_pure [1] [1; 2] (fun v => filter (fun e => Pos.eqb (source e) v) edges)
+    source target.
+
+Definition prepared := Prepared.prepare positive_encoding graph.
+
+Example ready : Prepared.ready prepared.
+Proof.
+  apply Prepared.prepare_ready; [exact positive_encoding_laws| |].
+  - constructor.
+    + change (NoDup [1; 2]).
+      repeat (apply NoDup_cons; [cbn; intuition discriminate|]). apply NoDup_nil.
+    + intros v Hv. change (In v [1]) in Hv. change (In v [1; 2]).
+      cbn in Hv |- *. intuition congruence.
+    + intros v e Hin.
+      change (In e (filter (fun a => Pos.eqb (source a) v) edges)) in Hin.
+      apply filter_In in Hin. destruct Hin as [_ Hsame].
+      change (source e = v). now apply Pos.eqb_eq in Hsame.
+    + intros v e Hv He. change (In (target e) [1; 2]).
+      destruct e.
+      * right. left. reflexivity.
+      * right. left. reflexivity.
+      * left. reflexivity.
+  - intro v.
+    change (NoDup (filter (fun e => Pos.eqb (source e) v) edges)).
+    apply NoDup_filter. change (NoDup [First; Second; Back]).
+    repeat (apply NoDup_cons; [cbn; intuition discriminate|]). apply NoDup_nil.
+Qed.
+
+Example retains_parallel_successors :
+  (Prepared.succ_edges prepared 1, Prepared.succ_edges prepared 2) =
+  ([(First, 2); (Second, 2)], [(Back, 1)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example reaches_both_nodes :
+  map (fun v => FinSet.mem positive_encoding v (Reach.set prepared Reach.unrestricted [1]))
+    [1; 2; 9] = [true; true; false].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example exhausts_actual_pending_work :
+  let next := Reach.successors prepared Reach.unrestricted in
+  let all := Reach.universe prepared in
+  let initial := Reach.roots_in prepared Reach.unrestricted [1] in
+  let fuel := (Reach.credit next all + length initial)%nat in
+  Reach.loop next fuel initial all [] = ([], [2; 1]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example blocking_target_leaves_entry :
+  FinSet.elements (Reach.set prepared (Reach.blocked 2) [1]) = [1].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+End ParallelLabels.
