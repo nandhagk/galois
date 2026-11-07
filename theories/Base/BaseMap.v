@@ -991,7 +991,7 @@ Local Fixpoint of_list_from_c {K V} (E : encoding K) (xs : list (K * V)) (m : t 
     let* acc := set_c E k v m in of_list_from_c E rest acc
   end.
 Definition of_list_c {K V} (E : encoding K) (xs : list (K * V)) :=
-  of_list_from_c E xs (@empty K V).
+  let* initial := @empty_c K V in of_list_from_c E xs initial.
 Definition of_list {K V} (E : encoding K) (xs : list (K * V)) :=
   Cost.value (of_list_c E xs).
 
@@ -1040,7 +1040,10 @@ Theorem of_list_get {K V} (E : encoding K) k (xs : list (K * V)) :
   get E k (of_list E xs) =
   fold_left (fun old kv => if eqb E k (fst kv) then Some (snd kv) else old) xs None.
 Proof.
-  unfold of_list, of_list_c. rewrite get_of_list_from by apply wf_empty.
+  unfold of_list, of_list_c. rewrite Cost.value_bind.
+  change (get E k (Cost.value (of_list_from_c E xs empty)) =
+    fold_left (fun old kv => if eqb E k (fst kv) then Some (snd kv) else old) xs None).
+  rewrite get_of_list_from by apply wf_empty.
   rewrite get_empty. reflexivity.
 Qed.
 
