@@ -30,7 +30,11 @@ Definition of_pure {W} zero (plus : W -> W -> W) (better : W -> W -> bool) :=
   Make zero (fun a => Cost.lift (fun _ => 1%N) (plus a))
     (fun a => Cost.lift (fun _ => 1%N) (better a)).
 
-(** Weights form a monoid ordered by a monotone strict weak preference. *)
+(** Tied weights are incomparable in both directions of the strict preference. *)
+Definition tied {W} (w : t W) a b :=
+  better w a b = false /\ better w b a = false.
+
+(** Weights form a monoid whose extensions preserve strict preference and ties. *)
 Record laws {W} (w : t W) : Prop := {
   associative : forall a b c, plus w (plus w a b) c = plus w a (plus w b c);
   identity_left : forall a, plus w (zero w) a = a;
@@ -45,7 +49,11 @@ Record laws {W} (w : t W) : Prop := {
   monotone_left : forall a b c, better w a b = true ->
     better w (plus w c a) (plus w c b) = true;
   monotone_right : forall a b c, better w a b = true ->
-    better w (plus w a c) (plus w b c) = true
+    better w (plus w a c) (plus w b c) = true;
+  tie_preserved_left : forall a b c, tied w a b ->
+    tied w (plus w c a) (plus w c b);
+  tie_preserved_right : forall a b c, tied w a b ->
+    tied w (plus w a c) (plus w b c)
 }.
 
 Fixpoint path_weight_c {W E} (w : t W) (edge_weight_c : E -> Cost.t W) es : Cost.t W :=
@@ -83,8 +91,9 @@ Inductive outcome (W E : Type) :=
 Arguments Optimal {W E}.
 Arguments Cyclic {W E}.
 
-(** A cycle witness returns from the reported edge's target to its source. *)
+(** A cycle witness starts in the entry-reachable domain and returns through its edge. *)
 Definition cyclic_witness {V E} (p : Prepared.t V E) e :=
+  reachable (Prepared.graph p) (Graph.source (Prepared.graph p) e) /\
   In (Graph.source (Prepared.graph p) e) (Graph.nodes (Prepared.graph p)) /\
   In e (Graph.out (Prepared.graph p) (Graph.source (Prepared.graph p) e)) /\
   exists es, path (Prepared.graph p) (Graph.target (Prepared.graph p) e) es
@@ -118,13 +127,23 @@ Record optimal {V E W} (p : Prepared.t V E) (w : Weight.t W)
         Weight.plus w a (Cost.value (weight_c e)) = b;
   via_complete : forall n i, Prepared.id_of p n = Some i ->
     reachable (Prepared.graph p) n -> ~ In n (Graph.entries (Prepared.graph p)) ->
-    exists e, Map.get positive_encoding i via = Some e
+    exists e, Map.get positive_encoding i via = Some e;
+  (** Missing predecessors terminate reconstruction only at stored zero-weight entries. *)
+  via_base : forall i value, Map.get positive_encoding i best = Some value ->
+    Map.get positive_encoding i via = None ->
+    value = Weight.zero w /\
+      exists n, Prepared.id_of p n = Some i /\ In n (Graph.entries (Prepared.graph p))
 }.
 
-(** Outcome semantics keep cyclic evidence separate from computational outcome data. *)
+(** Only nonempty cycles in the entry-reachable domain prevent an optimal outcome. *)
+Definition reachable_acyclic {V E} (p : Prepared.t V E) :=
+  forall v es, reachable (Prepared.graph p) v ->
+    path (Prepared.graph p) v es v -> es = [].
+
+(** Both outcome branches concern the source graph's entry-reachable domain. *)
 Definition spec {V E W} (p : Prepared.t V E) (w : Weight.t W) f (r : outcome W E) :=
   match r with
-  | Optimal best via => acyclic (Prepared.graph p) /\ optimal p w f best via
+  | Optimal best via => reachable_acyclic p /\ optimal p w f best via
   | Cyclic e => cyclic_witness p e
   end.
 

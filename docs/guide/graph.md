@@ -70,6 +70,13 @@ An empty-body component emits an opening and closing token, so it represents a s
 `Chain.ForwardingCycle` carries prefix and cycle data.
 Its separate spec requires that the cycle is nonempty and reachable by forwarding.
 Running a computation never requires a cycle proof.
+`Weight.laws` requires both strict preference and ties to survive left and right extension.
+This lets path relaxation retain an incumbent on a tie.
+DAG outcomes concern reachability from the source graph's entries.
+Different roots require an explicitly re-rooted prepared graph.
+An unreachable cycle permits an optimal result and cannot justify a cyclic result.
+An absent predecessor at a stored best value denotes a zero-weight entry.
+An entry improved by an incoming path must retain its predecessor for route reconstruction.
 `Wto.valid_within` describes scoped hierarchy projections.
 `Wto.valid` specializes that contract to an unrestricted outer run.
 `Search.classify r u v` classifies endpoint relations.
