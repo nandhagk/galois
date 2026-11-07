@@ -268,6 +268,13 @@ Definition result_potential {S R} (Phi : S -> N) (result : S + R) : N :=
   | inr _ => 0
   end.
 
+(** A zero state potential leaves no residual credit for either loop outcome. *)
+Theorem result_potential_zero {S R} (result : S + R) :
+  result_potential (fun _ => 0) result = 0.
+Proof.
+  destruct result; reflexivity.
+Qed.
+
 (** Composition adds budgets and retains two units of credit before charging descent. *)
 Local Lemma continue_budget {S R} (I : S -> Prop) (Phi : S -> N) c d s
     (m : Cost.t (S + R)) next :
