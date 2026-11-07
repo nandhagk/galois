@@ -23,11 +23,11 @@ Proof.
   assert (Hcallback : forall s, True ->
     (match Cost.value (step s) with inl _ => True | inr _ => True end) /\
     Cost.ticks (step s) + result_potential (fun _ => 0) (Cost.value (step s)) <= 1 + 0).
-  { intros x _. destruct (Cost.value (step x)); cbn [result_potential]; rewrite Hstep.
-    all: split; [exact I|lia]. }
+  { intros x _. rewrite result_potential_zero, Hstep.
+    split; [destruct (Cost.value (step x)); exact I|lia]. }
   specialize (Hbound Hcallback fuel s I).
-  destruct Hbound as [_ Hbound]. destruct (Cost.value (iterate step fuel s));
-    cbn [result_potential] in Hbound; unfold tnum_mul_tick_k; lia.
+  destruct Hbound as [_ Hbound]. rewrite result_potential_zero in Hbound.
+  unfold tnum_mul_tick_k. lia.
 Qed.
 
 (** Every staged multiplication pays at most three ticks per width bit, including driver work. *)

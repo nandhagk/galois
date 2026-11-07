@@ -6,10 +6,11 @@
 
 From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Cost Require Import CostMonad.
+From Galois.Lattice Require Import LatticeCore.
 From Galois.Bits Require Import BitsWord BitsFun BitsOp.
 From Galois.Domains Require Import DomainsNumeric DomainsTagged DomainsTnum DomainsTnumArith
   DomainsTnumShift DomainsTnumExpand DomainsTnumBack DomainsTnumMul DomainsKnownBitsForward
-  DomainsKnownBits.
+  DomainsKnownBitsBack DomainsKnownBits.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.
@@ -333,4 +334,84 @@ Example kb_nonempty_builder_charge_control :
     [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Example kb_width_five_variable_cutoff_observations :
+  kb_forward bvshl [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 26 4)]
+    5%positive = Tnum 15 0 /\
+  kb_forward bvlshr [(5%positive, tnum_const 5%positive 16); (5%positive, Tnum 26 4)]
+    5%positive = Tnum 30 0 /\
+  kb_forward bvashr [(5%positive, tnum_const 5%positive 16); (5%positive, Tnum 23 0)]
+    5%positive = Tnum 0 16 /\
+  kb_forward bvrotl [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 23 0)]
+    5%positive = Tnum 22 0 /\
+  kb_forward bvrotr [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 23 0)]
+    5%positive = Tnum 26 0 /\
+  kb_forward bvshl [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 16 7)]
+    5%positive = Tnum 31 0 /\
+  kb_forward bvrotl [(5%positive, tnum_const 5%positive 1); (5%positive, Tnum 16 7)]
+    5%positive = Tnum 26 0.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Definition kb_test_contains (w : width) (a : tnum) (z : Z) : bool :=
+  (Z.land z (wrap w (zeros a)) =? 0) &&
+    (Z.land (wrap w (ones a)) (Z.lnot z) =? 0).
+
+Definition kb_test_width_five_words : list Z := map Z.of_nat (seq 0 32).
+
+(** Bounded enumeration checks counts around both the word width and the expansion cutoff. *)
+Example kb_width_five_variable_cutoff_soundness :
+  forallb (fun o => forallb (fun a => forallb (fun b =>
+    forallb (fun x => forallb (fun k =>
+      match eval_op o [(5%positive, x); (5%positive, k)] with
+      | Some (_, z) => kb_test_contains 5%positive
+          (kb_forward o [(5%positive, a); (5%positive, b)] 5%positive) z
+      | None => false
+      end) (filter (kb_test_contains 5%positive b) kb_test_width_five_words))
+      (filter (kb_test_contains 5%positive a) kb_test_width_five_words))
+    [Tnum 24 3; Tnum 26 4; Tnum 23 0; Tnum 16 7])
+    [tnum_const 5%positive 1; tnum_const 5%positive 16; Tnum 16 0])
+    [bvshl; bvlshr; bvashr; bvrotl; bvrotr] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition kb_test_malformed_inputs : list (width * tnum) :=
+  [(5%positive, Tnum (-4) 33); (3%positive, Tnum (-2) 8); (1%positive, Tnum 3 3)].
+
+Example kb_backward_malformed_arity_observations :
+  kb_assume bvadd [] 5%positive tnum_top = [] /\
+  kb_assume bvadd [(5%positive, Tnum (-4) 33)] 5%positive tnum_top = [Tnum 28 1] /\
+  kb_assume bvadd kb_test_malformed_inputs 5%positive tnum_top =
+    [Tnum 28 1; Tnum 6 0; Tnum 1 1].
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Example kb_refine_short_and_extra_result_observations :
+  tnum_refine kb_test_malformed_inputs [] =
+    [Tnum (-4) 33; Tnum (-2) 8; Tnum 3 3] /\
+  tnum_refine kb_test_malformed_inputs [tnum_top] =
+    [Tnum 28 1; Tnum (-2) 8; Tnum 3 3] /\
+  tnum_refine kb_test_malformed_inputs [tnum_top; tnum_top; tnum_top; Tnum 31 31] =
+    [Tnum 28 1; Tnum 6 0; Tnum 1 1] /\
+  tnum_refine [] [Tnum 31 31] = [].
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Definition kb_test_refines (xs : list (width * tnum)) (ys : list tnum) : bool :=
+  Nat.eqb (length xs) (length ys) &&
+    forallb (fun p => leb (tnum_lattice (fst (fst p))) (snd p) (snd (fst p))) (combine xs ys).
+
+Example kb_malformed_backward_length_and_reductivity :
+  forallb (fun xs => kb_test_refines xs (kb_assume bvadd xs 5%positive (Tnum 1 1)))
+    [[]; [(5%positive, Tnum (-4) 33)]; kb_test_malformed_inputs] = true /\
+  forallb (fun qs => kb_test_refines kb_test_malformed_inputs
+    (tnum_refine kb_test_malformed_inputs qs))
+    [[]; [tnum_top]; [tnum_top; tnum_top; tnum_top; Tnum 31 31]] = true.
+Proof.
+  vm_compute. auto.
 Qed.

@@ -175,3 +175,50 @@ Example multiplier_cost_bound_clients :
 Proof.
   vm_compute. intuition discriminate.
 Qed.
+
+Example multiplier_acc_raw_mask_observations :
+  tnum_mul_acc 5%positive (Tnum (-4) 35) (Tnum (-4) 33) = Tnum 16 1 /\
+  tnum_mul_acc 5%positive (Tnum (-4) 35) (Tnum (-8) 38) = Tnum 8 16 /\
+  tnum_mul_acc 5%positive (Tnum (-31) 33) (tnum_const 5%positive 0) = Tnum 31 31 /\
+  tnum_mul_acc 5%positive (tnum_const 5%positive 0) (Tnum (-31) 33) = Tnum 31 31.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+Definition mul_test_raw_equivalents : list (tnum * tnum) :=
+  [(Tnum (-4) 35, Tnum 28 3); (Tnum (-4) 33, Tnum 28 1);
+   (Tnum (-8) 38, Tnum 24 6); (Tnum 32 32, tnum_top); (Tnum (-31) 33, Tnum 1 1)].
+
+Example multiplier_raw_gamma_equivalence_controls :
+  forallb (fun p => forallb (fun z =>
+    Bool.eqb (mul_test_contains 5%positive (fst p) z)
+      (mul_test_contains 5%positive (snd p) z)) (mul_test_words 5%positive))
+    mul_test_raw_equivalents = true /\
+  filter (mul_test_contains 5%positive (Tnum (-31) 33)) (mul_test_words 5%positive) = [].
+Proof.
+  vm_compute. auto.
+Qed.
+
+(** All choices preserve gamma under equivalent raw masks, including conflicting masks. *)
+Example multiplier_all_choice_raw_gamma_controls :
+  forallb (fun p => forallb (fun q => forallb (fun choice => forallb (fun z =>
+    Bool.eqb (mul_test_contains 5%positive
+      (tnum_mul_with choice 5%positive (fst p) (fst q)) z)
+      (mul_test_contains 5%positive
+        (tnum_mul_with choice 5%positive (snd p) (snd q)) z))
+    (mul_test_words 5%positive)) [MulLow; MulStages; MulAcc; MulBoth])
+    mul_test_raw_equivalents) mul_test_raw_equivalents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Concrete products independently check soundness for every choice on the raw fixtures. *)
+Example multiplier_all_choice_raw_product_controls :
+  forallb (fun p => forallb (fun q => forallb (fun choice =>
+    forallb (mul_test_contains 5%positive
+      (tnum_mul_with choice 5%positive (fst p) (fst q)))
+      (mul_test_products 5%positive (fst p) (fst q))) [MulLow; MulStages; MulAcc; MulBoth])
+    mul_test_raw_equivalents) mul_test_raw_equivalents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
