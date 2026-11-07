@@ -243,25 +243,15 @@ Definition closure_c {F P} (C : Calls.t F P) :=
       Cost.ret (f, result)) (Calls.functions C) in
     Map.of_list_c EF rows) (Calls.functions C) initial.
 
-(** The SCC policy orders by reachable-set size and widens at the first code in each SCC. *)
+(** The reference SCC policy orders by reachable-set size and widens at every listed function.
+    This conservative cut does not require a recursive SCC or WTO producer. *)
 Definition policy_scc {F P} (C : Calls.t F P) : Policy.t F :=
   let EF := Calls.fn_enc C in
   let closure := Cost.value (closure_c C) in
   let rows := Cost.value (map_c (fun f =>
     let* reach := reach_get_c EF f closure in
     let* count := FinSet.size_c reach in
-    let* members := filter_c (fun g =>
-      let* rg := reach_get_c EF g closure in
-      let* fg := FinSet.mem_c EF g reach in
-      let* gf := FinSet.mem_c EF f rg in
-      Cost.ret (fg && gf)) (Calls.functions C) in
-    let* component := FinSet.of_list_c EF members in
-    let* members := FinSet.elements_c component in
-    let* head := match members with
-      | [] => Cost.ret false
-      | g :: _ => eqb_c EF f g
-      end in
-    Cost.ret (f, (Pos.of_succ_nat count, head))) (Calls.functions C)) in
+    Cost.ret (f, (Pos.of_succ_nat count, true))) (Calls.functions C)) in
   let table := Cost.value (Map.of_list_c EF rows) in
   Policy.Make
     (fun f =>

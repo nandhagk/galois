@@ -87,7 +87,7 @@ Example scc_heads :
   (Policy.order (summary_policy_scc calls) 0,
    Policy.order (summary_policy_scc calls) 1,
    Policy.widen_at (summary_policy_scc calls) 0,
-   Policy.widen_at (summary_policy_scc calls) 1) = (3%positive, 3%positive, false, true).
+   Policy.widen_at (summary_policy_scc calls) 1) = (3%positive, 3%positive, true, true).
 Proof.
   vm_compute; reflexivity.
 Qed.
