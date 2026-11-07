@@ -8,7 +8,8 @@ From Stdlib Require Import List Bool PeanoNat PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeCore LatticeSet.
-From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointSolver FixpointCertified.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointAnalysis FixpointAnalyze
+  FixpointSolver FixpointCertified FixpointKleene.
 From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogModel DatalogRelation
   DatalogFire DatalogCompile DatalogCompileProof DatalogSolve DatalogSolveProof.
 Import List.ListNotations.
@@ -362,6 +363,108 @@ Example compile_atom_order_and_fixed_lower :
   (Query.reads (System.rhs sys (Constraint.FromRule 0 2)) (fun _ => bot relation_lattice),
    FinSet.elements (set_raw (Query.eval (System.rhs sys (Constraint.FromRule 0 2))
      (fun _ => bot relation_lattice)))) = ([], [[2%positive]]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition outcome_tag {X A R} (outcome : Outcome.t X A R) :=
+  match outcome with
+  | Outcome.Solved _ => 0
+  | Outcome.OutOfFuel _ => 1
+  | Outcome.Rejected _ => 2
+  end.
+
+Definition empty_analysis := stratum_analysis empty_program [] (chosen_strata empty_program)
+  (fun _ => Cost.ret (bot relation_lattice)) 0.
+
+Example finish_stratum_invocation_controls :
+  let raw := Solver.run_c Kleene.solver empty_analysis 1%positive in
+  let success := finish_stratum_c empty_analysis 1%positive (Outcome.Solved tt) in
+  let exhausted := finish_stratum_c empty_analysis 1%positive
+    (Outcome.OutOfFuel Map.empty : Outcome.t nat relation unit) in
+  let rejected := finish_stratum_c empty_analysis 1%positive
+    (Outcome.Rejected Reason.Check_failed : Outcome.t nat relation unit) in
+  ((Cost.ticks success, outcome_tag (Cost.value success)),
+   (Cost.ticks exhausted, outcome_tag (Cost.value exhausted)),
+   (Cost.ticks rejected, outcome_tag (Cost.value rejected))) =
+  (((1 + Cost.ticks raw)%N, 0), (0%N, 1), (0%N, 2)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example solved_stratum_full_charge :
+  let st := chosen_strata empty_program in
+  let lower := fun _ : nat => Cost.ret (bot relation_lattice) in
+  let computed := solve_stratum_c empty_program [] st lower 0 1%positive in
+  (outcome_tag (Cost.value computed), Cost.ticks computed) =
+  (0, (Cost.ticks (stratum_analysis_c empty_program [] st lower 0) +
+    Cost.ticks (analyze_c empty_analysis 1%positive) + 1 +
+    Cost.ticks (Solver.run_c Kleene.solver empty_analysis 1%positive))%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example exhausted_stratum_skips_second_charge :
+  let st := chosen_strata empty_program in
+  let lower := fun _ : nat => Cost.ret (bot relation_lattice) in
+  let a := stratum_analysis empty_program recursive_facts st lower 0 in
+  let computed := solve_stratum_c empty_program recursive_facts st lower 0 1%positive in
+  (outcome_tag (analyze a 1%positive), outcome_tag (Cost.value computed), Cost.ticks computed) =
+  (1, 1, (Cost.ticks (stratum_analysis_c empty_program recursive_facts st lower 0) +
+    Cost.ticks (analyze_c a 1%positive))%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition ordered_read_rule := Rule (unary 4)
+  [LPos (unary 2); LPos (unary 0); LPos (unary 1); LPos (unary 2); LPos (unary 1);
+   LNeg (unary 3)].
+Definition ordered_read_program := nat_program (fun _ => 1) [ordered_read_rule].
+Definition ordered_read_strata := Stratification
+  (fun p : nat => Cost.ret (if Nat.eqb p 0 || Nat.eqb p 3 then 0 else 1)) 2.
+Definition ordered_read_lower := facts_at_c ordered_read_program
+  [(0, [2%positive]); (0, [3%positive]); (3, [3%positive])].
+Definition ordered_read_assignment (p : nat) : relation :=
+  if Nat.eqb p 1 || Nat.eqb p 2
+  then set_of_list tuple_encoding [[2%positive]; [3%positive]]
+  else bot relation_lattice.
+
+Example repeated_same_level_trace_and_fixed_lower :
+  let sys := stratum_system ordered_read_program [] ordered_read_strata ordered_read_lower 1 in
+  let summary := stratum_static ordered_read_program [] ordered_read_strata ordered_read_lower 1 in
+  let row := Constraint.FromRule 0 4 in
+  (System.deps summary row, Query.reads (System.rhs sys row) ordered_read_assignment,
+   FinSet.elements (set_raw (Query.eval (System.rhs sys row) ordered_read_assignment))) =
+  ([2; 1; 2; 1], [2; 1; 2; 1], [[2%positive]]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition independent_atoms : list (atom nat) :=
+  [Atom 1 [TVar 0]; Atom 2 [TVar 1]].
+Definition independent_program := nat_program (fun _ => 1) [].
+Definition independent_environment := facts_at_c independent_program
+  [(1, [1%positive]); (1, [2%positive]); (2, [3%positive]); (2, [4%positive])].
+Definition raw_binding_pairs ps :=
+  map (fun b => (binding_value b 0, binding_value b 1))
+    (join_positive_ref ps independent_environment [[]]).
+
+Example independent_raw_binding_order :
+  (raw_binding_pairs independent_atoms, raw_binding_pairs (rev independent_atoms)) =
+  ([(2%positive, 4%positive); (2%positive, 3%positive);
+    (1%positive, 4%positive); (1%positive, 3%positive)],
+   [(2%positive, 4%positive); (1%positive, 4%positive);
+    (2%positive, 3%positive); (1%positive, 3%positive)]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example independent_final_relations_agree :
+  let forward := Rule (Atom 0 [TVar 0; TVar 1]) (map LPos independent_atoms) in
+  let backward := Rule (Atom 0 [TVar 0; TVar 1]) (map LPos (rev independent_atoms)) in
+  FinSet.equal
+    (set_raw (fire_rule independent_program forward independent_environment))
+    (set_raw (fire_rule independent_program backward independent_environment)) = true.
 Proof.
   vm_compute; reflexivity.
 Qed.

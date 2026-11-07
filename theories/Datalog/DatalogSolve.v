@@ -54,16 +54,22 @@ Proof.
   unfold stratum_targets, stratum_targets_c; rewrite Cost.value_bind, value_map_c; reflexivity.
 Qed.
 
+(** Only a successful input invokes the second solver callback and retains its invocation charge. *)
+Definition finish_stratum_c {P R} (a : Analysis.t P (Constraint.t P) relation) fuel
+    (certified : Outcome.t P relation R)
+    : Cost.t (Outcome.t P relation (database P)) :=
+  match certified with
+  | Outcome.OutOfFuel have => Cost.ret (Outcome.OutOfFuel have)
+  | Outcome.Rejected why => Cost.ret (Outcome.Rejected why)
+  | Outcome.Solved _ => Cost.step ;; Solver.run_c Kleene.solver a fuel
+  end.
+
 (** The second reference run recovers a costed map because analyze exposes only a pure function. *)
 Definition solve_stratum_c {P} (prog : program P) facts st lower k fuel
     : Cost.t (Outcome.t P relation (database P)) :=
   let* a := stratum_analysis_c prog facts st lower k in
   let* certified := analyze_c a fuel in
-  match certified with
-  | Outcome.OutOfFuel have => Cost.ret (Outcome.OutOfFuel have)
-  | Outcome.Rejected why => Cost.ret (Outcome.Rejected why)
-  | Outcome.Solved _ => Solver.run_c Kleene.solver a fuel
-  end.
+  finish_stratum_c a fuel certified.
 
 Definition solve_stratum {P} prog facts st lower k fuel :=
   Cost.value (@solve_stratum_c P prog facts st lower k fuel).

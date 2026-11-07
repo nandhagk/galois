@@ -7,23 +7,38 @@
 From Stdlib Require Import List NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseMap.
-From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogCompile DatalogSolve.
+From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogRelation DatalogCompile
+  DatalogSolve.
 From Galois.Fixpoint Require Import FixpointAnalysis FixpointAnalyze FixpointSolver FixpointKleene.
 Import Cost.Notations.
 Local Open Scope N_scope.
 
-(** Each stratum solve retains preparation, analysis and the selected second-run charge. *)
+(** Only successful certification charges the second callback invocation and its complete work. *)
+Theorem finish_stratum_cost {P R} (a : Analysis.t P (Constraint.t P) relation)
+    fuel (certified : Outcome.t P relation R) :
+  Cost.ticks (finish_stratum_c a fuel certified) =
+    match certified with
+    | Outcome.Solved _ => 1 + Cost.ticks (Solver.run_c Kleene.solver a fuel)
+    | _ => 0
+    end.
+Proof.
+  destruct certified; [|reflexivity |reflexivity].
+  unfold finish_stratum_c; rewrite Cost.ticks_bind, Cost.ticks_step; reflexivity.
+Qed.
+
+(** Each stratum solve retains preparation, full analysis and the selected second invocation. *)
 Theorem solve_stratum_cost {P} (prog : program P) facts st lower k fuel :
   Cost.ticks (solve_stratum_c prog facts st lower k fuel) =
     Cost.ticks (DatalogCompile.stratum_analysis_c prog facts st lower k) +
     Cost.ticks (analyze_c (DatalogCompile.stratum_analysis prog facts st lower k) fuel) +
     match analyze (DatalogCompile.stratum_analysis prog facts st lower k) fuel with
-    | Outcome.Solved _ => Cost.ticks (Solver.run_c Kleene.solver
+    | Outcome.Solved _ => 1 + Cost.ticks (Solver.run_c Kleene.solver
         (DatalogCompile.stratum_analysis prog facts st lower k) fuel)
     | _ => 0
     end.
 Proof.
   unfold solve_stratum_c; repeat rewrite Cost.ticks_bind.
+  rewrite finish_stratum_cost.
   fold (DatalogCompile.stratum_analysis prog facts st lower k).
   fold (analyze (DatalogCompile.stratum_analysis prog facts st lower k) fuel).
   destruct (analyze (DatalogCompile.stratum_analysis prog facts st lower k) fuel);

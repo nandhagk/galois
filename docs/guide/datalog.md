@@ -91,7 +91,13 @@ The reference Datalog solver repeats the public reference run after successful c
 recover a map whose lookups retain their costs during database storage.
 `solved_stratum_least` bounds the reached map by the certified least solution.
 `DatalogPipelineCost` retains the charges of both runs.
+The second callback adds an invocation tick after successful certification.
+Exhaustion and rejection skip that invocation and its work.
 A public map-valued certified analysis entry point would remove this repeated work.
+
+The source-order fixtures observe repeated same-level query reads around fixed lower literals.
+They also compare raw binding lists from two independent multirow atoms.
+Reversing those atoms changes binding enumeration order while final relation sets agree.
 
 `DatalogCost` bounds nested-loop firing using local callback budgets and candidate counts.
 The bounds retain full environment, enumeration, negative-test, instantiation and set-construction
