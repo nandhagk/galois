@@ -1,0 +1,22 @@
+; Example-only theories checked by computation. A test of package P lives in tests/P/ and becomes
+; the module GaloisLegacy.Tests.P.<File>.
+
+(include_subdirs qualified)
+
+(rocq.theory
+ (name GaloisLegacy.Tests)
+ (flags :standard -w +default)
+ (theories
+  Stdlib
+  GaloisLegacy.Collections
+  GaloisLegacy.Order
+  GaloisLegacy.Graph
+  GaloisLegacy.Bits
+  GaloisLegacy.Fixpoint
+  GaloisLegacy.Rules
+  GaloisLegacy.Rewrite
+  GaloisLegacy.Domains
+  GaloisLegacy.Views
+  GaloisLegacy.Analyses
+  GaloisLegacy.Examples
+  GaloisLegacy.Float))

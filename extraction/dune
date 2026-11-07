@@ -7,11 +7,11 @@
   rules_solver.mli)
  (theories
   Stdlib
-  Galois.Collections
-  Galois.Order
-  Galois.Graph
-  Galois.Fixpoint
-  Galois.Rules))
+  GaloisLegacy.Collections
+  GaloisLegacy.Order
+  GaloisLegacy.Graph
+  GaloisLegacy.Fixpoint
+  GaloisLegacy.Rules))
 
 (rule
  (alias check)

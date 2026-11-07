@@ -169,17 +169,33 @@ module Lex = struct
 end
 
 module Source = struct
+  module Generation = struct
+    type t =
+      | New
+      | Legacy
+    [@@deriving enumerate, equal]
+  end
+
   module Root = struct
     type t =
       | Theories
       | Examples
       | Tests
+      | Legacy_theories [@rename "legacy/theories"]
+      | Legacy_examples [@rename "legacy/examples"]
+      | Legacy_tests [@rename "legacy/tests"]
     [@@deriving enumerate, equal, string ~capitalize:"kebab-case", sexp_of]
+
+    let generation : t -> Generation.t = function
+      | Theories | Examples | Tests -> New
+      | Legacy_theories | Legacy_examples | Legacy_tests -> Legacy
+    ;;
   end
 
   type t =
     { file : Filename.t
     ; root : Root.t
+    ; relative : Filename.t
     ; package : string
     ; source : string
     ; sentences : Lex.Sentence.t list
@@ -191,7 +207,7 @@ module Source = struct
   let rewrite_package = "Rewrite"
   let examples_package = "Examples"
 
-  let packages =
+  let legacy_packages =
     String.Set.of_list
       [ "Collections"
       ; "Order"
@@ -207,20 +223,66 @@ module Source = struct
       ]
   ;;
 
-  let example_directories = String.Set.of_list [ "While"; "Ssa" ]
+  let packages =
+    String.Set.of_list
+      [ "Cost"
+      ; "Base"
+      ; "Lattice"
+      ; "Bits"
+      ; "Graph"
+      ; "Fixpoint"
+      ; "Domains"
+      ; "Program"
+      ; "Datalog"
+      ; "Egraph"
+      ; "Framework"
+      ; "Next"
+      ; "Analyses"
+      ; float_package
+      ]
+  ;;
+
+  let analysis_families =
+    String.Set.of_list [ "Dataflow"; "Values"; "Ssa"; "Equality"; "Loops"; "Calls"; "Memory" ]
+  ;;
+
+  let legacy_example_directories = String.Set.of_list [ "While"; "Ssa" ]
+
+  let example_directories =
+    Set.union
+      legacy_example_directories
+      (String.Set.of_list [ "Tutorial"; "SsaValues"; "SsaMemory"; "SsaLoops"; "SsaFloat" ])
+  ;;
+
+  let new_package = function
+    | [ "Analyses"; family; _ ] when Set.mem analysis_families family -> "Analyses"
+    | [ "Next"; _extension; _ ] -> "Next"
+    | ("Analyses" | "Next") :: _ -> ""
+    | [ package; _ ] -> package
+    | _ -> ""
+  ;;
+
+  let test_package = function
+    | [ package; _ ] -> package
+    | parts -> new_package parts
+  ;;
 
   let package ~root relative =
     match root, String.split relative ~on:'/' with
-    | Root.Examples, directory :: _ :: _ when Set.mem example_directories directory ->
+    | Root.Examples, [ directory; _ ] when Set.mem example_directories directory -> examples_package
+    | Root.Legacy_examples, directory :: _ :: _ when Set.mem legacy_example_directories directory ->
       examples_package
-    | (Root.Theories | Root.Tests), package :: _ :: _ -> package
-    | Root.Examples, _ | (Root.Theories | Root.Tests), _ -> ""
+    | Root.Theories, parts -> new_package parts
+    | Root.Tests, "legacy" :: parts -> test_package parts
+    | Root.Tests, parts -> test_package parts
+    | (Root.Legacy_theories | Root.Legacy_tests), package :: _ :: _ -> package
+    | (Root.Examples | Root.Legacy_examples | Root.Legacy_theories | Root.Legacy_tests), _ -> ""
   ;;
 
-  let load ~root ~file ~package =
+  let load ~root ~file ~relative ~package =
     let%bind.Or_error source = Or_error.try_with (fun () -> In_channel.read_all file) in
     let%map.Or_error sentences = Lex.scan ~file source in
-    ({ file; root; package; source; sentences } : t)
+    ({ file; root; relative; package; source; sentences } : t)
   ;;
 
   let rec files directory =
@@ -247,20 +309,25 @@ module Source = struct
       List.map (List.sort paths ~compare:String.compare) ~f:(fun file ->
         let relative = String.chop_prefix_exn file ~prefix:[%string "%{directory}/"] in
         let package = package ~root relative in
-        load ~root ~file ~package)
+        load ~root ~file ~relative ~package)
       |> Or_error.combine_errors)
     |> Or_error.combine_errors
     |> Or_error.map ~f:List.concat
   ;;
 
-  let is_float ({ root; package; _ } : t) =
-    Root.equal root Theories && String.equal package float_package
+  let is_float_package ({ root; package; _ } : t) =
+    (Root.equal root Theories || Root.equal root Legacy_theories)
+    && String.equal package float_package
+  ;;
+
+  let is_legacy_comparison ({ root; relative; _ } : t) =
+    Root.equal root Tests && String.is_prefix relative ~prefix:"legacy/"
   ;;
 
   let is_production ({ root; _ } : t) =
     match root with
-    | Theories | Examples -> true
-    | Tests -> false
+    | Theories | Examples | Legacy_theories | Legacy_examples -> true
+    | Tests | Legacy_tests -> false
   ;;
 end
 
@@ -533,6 +600,34 @@ module Import_policy = struct
   ;;
 end
 
+module Float_boundary = struct
+  let roots = [ "Galois.Float"; "GaloisLegacy.Float" ]
+
+  let is_import name =
+    List.exists roots ~f:(fun root ->
+      String.equal name root || String.is_prefix name ~prefix:[%string "%{root}."])
+  ;;
+
+  let imports_float ({ sentences; _ } : Source.t) =
+    let%map.Or_error imports =
+      List.map sentences ~f:(fun sentence ->
+        let words = Lex.words sentence in
+        let controls =
+          List.take_while words ~f:(fun word ->
+            not (String.equal word "From" || String.equal word "Require"))
+        in
+        (* Test-control wrappers roll back commands, so they cannot establish a dependency. *)
+        if
+          List.exists controls ~f:(fun word ->
+            String.equal word "Fail" || String.equal word "Succeed")
+        then Ok []
+        else Import_policy.imports (Lex.head words))
+      |> Or_error.combine_errors
+    in
+    List.exists imports ~f:(List.exists ~f:is_import)
+  ;;
+end
+
 module Hygiene = struct
   let forbidden =
     String.Set.of_list
@@ -579,25 +674,25 @@ module Hygiene = struct
     prefix false words
   ;;
 
-  let import_problem ({ known; forbidden } : Import_policy.t) source name =
+  let import_problem ({ known; forbidden } : Import_policy.t) ~float_import source name =
     if String.is_prefix name ~prefix:Import_policy.stdlib_prefix
     then
       if not (Set.mem known name)
       then Some [%string "unknown pinned Stdlib module: %{name}"]
-      else if Set.mem forbidden name && not (Source.is_float source)
+      else if Set.mem forbidden name && not (Source.is_float_package source || float_import)
       then Some [%string "axiom-bearing Stdlib import outside Float: %{name}"]
       else None
-    else if String.is_prefix name ~prefix:"Galois."
-    then
-      if
-        String.is_prefix name ~prefix:"Galois.Float."
-        && Source.is_production source
-        && not (Source.is_float source)
-      then Some "only Galois.Float may depend on Float"
-      else None
-    else if String.is_prefix name ~prefix:"Flocq." && Source.is_float source
+    else if
+      String.is_prefix name ~prefix:"GaloisLegacy."
+      && Source.Generation.equal (Source.Root.generation source.root) New
+      && not (Source.is_legacy_comparison source)
+    then Some "new sources may import GaloisLegacy only in tests/legacy"
+    else if String.is_prefix name ~prefix:"Galois." || String.is_prefix name ~prefix:"GaloisLegacy."
     then None
-    else Some "dependency outside Stdlib/Galois (Flocq is Float-only)"
+    else if
+      String.is_prefix name ~prefix:"Flocq." && (Source.is_float_package source || float_import)
+    then None
+    else Some "dependency outside Stdlib/Galois/GaloisLegacy (Flocq requires Float)"
   ;;
 
   let record_problem words =
@@ -657,7 +752,12 @@ module Hygiene = struct
     |> Or_error.combine_errors_unit
   ;;
 
-  let sentence ~policy (source : Source.t) ({ tokens; line } as sentence : Lex.Sentence.t) =
+  let sentence
+        ~policy
+        ~float_import
+        (source : Source.t)
+        ({ tokens; line } as sentence : Lex.Sentence.t)
+    =
     let words = Lex.words sentence in
     let head = Lex.head words in
     let%bind.Or_error imports =
@@ -687,7 +787,7 @@ module Hygiene = struct
            Option.first_some
              (kernel_problem head)
              (Option.first_some
-                (List.find_map imports ~f:(import_problem policy source))
+                (List.find_map imports ~f:(import_problem policy ~float_import source))
                 (record_problem head)))
     in
     match problem with
@@ -696,6 +796,7 @@ module Hygiene = struct
   ;;
 
   let source ~policy (source : Source.t) =
+    let%bind.Or_error float_import = Float_boundary.imports_float source in
     let%bind.Or_error scopes =
       List.fold_result
         source.sentences
@@ -712,7 +813,7 @@ module Hygiene = struct
                 "global assumption; bind it in a Section or a theorem instead"
             | _ -> Ok ()
           in
-          let%bind.Or_error () = sentence ~policy source current in
+          let%bind.Or_error () = sentence ~policy ~float_import source current in
           Scope.advance ~file:source.file ~line scopes head)
     in
     if List.is_empty scopes
@@ -728,12 +829,33 @@ module Hygiene = struct
 end
 
 module Layout = struct
+  module Warning = struct
+    type t =
+      { file : Filename.t
+      ; lines : int
+      ; limit : int
+      }
+    [@@deriving sexp_of]
+  end
+
+  let line_limit = 1500
+
+  let warnings sources =
+    List.filter_map sources ~f:(fun ({ file; root; source; _ } : Source.t) ->
+      let lines = List.length (String.split_lines source) in
+      if Source.Generation.equal (Source.Root.generation root) New && lines > line_limit
+      then Some ({ file; lines; limit = line_limit } : Warning.t)
+      else None)
+  ;;
+
   let source ({ file; root; package; _ } : Source.t) =
     let allowed =
       match root with
       | Theories -> Source.packages
-      | Tests -> Set.add Source.packages Source.examples_package
-      | Examples -> String.Set.singleton Source.examples_package
+      | Tests -> Source.packages
+      | Legacy_theories -> Source.legacy_packages
+      | Legacy_tests -> Set.add Source.legacy_packages Source.examples_package
+      | Examples | Legacy_examples -> String.Set.singleton Source.examples_package
     in
     if not (Set.mem allowed package)
     then Diagnostic.error ~file ~line:1 "source must be placed under its declared package directory"
@@ -742,19 +864,26 @@ module Layout = struct
     else Ok ()
   ;;
 
-  let run sources =
+  let duplicates sources =
     let by_basename =
       List.map sources ~f:(fun ({ file; _ } : Source.t) -> Filename.basename file, file)
       |> String.Map.of_alist_multi
     in
+    Map.fold by_basename ~init:[] ~f:(fun ~key:basename ~data:files errors ->
+      match files with
+      | [] | [ _ ] -> errors
+      | _ ->
+        Or_error.error_s
+          [%message "duplicate Rocq basename" (basename : string) (files : Filename.t list)]
+        :: errors)
+  ;;
+
+  let run sources =
     let duplicates =
-      Map.fold by_basename ~init:[] ~f:(fun ~key:basename ~data:files errors ->
-        match files with
-        | [] | [ _ ] -> errors
-        | _ ->
-          Or_error.error_s
-            [%message "duplicate Rocq basename" (basename : string) (files : Filename.t list)]
-          :: errors)
+      List.concat_map Source.Generation.all ~f:(fun generation ->
+        List.filter sources ~f:(fun ({ root; _ } : Source.t) ->
+          Source.Generation.equal (Source.Root.generation root) generation)
+        |> duplicates)
     in
     Or_error.combine_errors_unit (List.map sources ~f:source @ duplicates)
   ;;
@@ -1081,6 +1210,47 @@ module Query = struct
             (transcript : string)]
   ;;
 
+  module Load_path = struct
+    type t =
+      { relative : Filename.t
+      ; logical : string
+      }
+  end
+
+  let package_paths =
+    let packages =
+      Set.to_list Source.packages
+      |> List.filter ~f:(fun package -> not (String.equal package "Analyses"))
+    in
+    List.map packages ~f:(fun package ->
+      ({ relative = [%string "theories/%{package}"]; logical = [%string "Galois.%{package}"] }
+       : Load_path.t))
+    @ List.map (Set.to_list Source.analysis_families) ~f:(fun family ->
+      ({ relative = [%string "theories/Analyses/%{family}"]
+       ; logical = [%string "Galois.Analyses.%{family}"]
+       }
+       : Load_path.t))
+    @ List.map (Set.to_list Source.legacy_packages) ~f:(fun package ->
+      ({ relative = [%string "legacy/theories/%{package}"]
+       ; logical = [%string "GaloisLegacy.%{package}"]
+       }
+       : Load_path.t))
+    @ List.concat_map (Set.to_list Source.packages) ~f:(fun package ->
+      [ ({ relative = [%string "tests/%{package}"]; logical = [%string "Galois.Tests.%{package}"] }
+         : Load_path.t)
+      ; { relative = [%string "tests/legacy/%{package}"]
+        ; logical = [%string "Galois.Tests.Legacy.%{package}"]
+        }
+      ])
+  ;;
+
+  let client_paths =
+    [ ({ relative = "examples"; logical = "Galois.Examples" } : Load_path.t)
+    ; { relative = "legacy/examples"; logical = "GaloisLegacy.Examples" }
+    ; { relative = "legacy/tests"; logical = "GaloisLegacy.Tests" }
+    ]
+  ;;
+
   let load_paths repository =
     let candidate = Filename.concat repository "_build/default" in
     let build =
@@ -1088,23 +1258,22 @@ module Query = struct
       | `Yes -> candidate
       | `No | `Unknown -> repository
     in
-    let theories =
-      Set.to_list Source.packages
-      |> List.filter_map ~f:(fun package ->
-        let directory = Filename.concat build [%string "theories/%{package}"] in
+    let packages =
+      package_paths
+      |> List.filter_map ~f:(fun ({ relative; logical } : Load_path.t) ->
+        let directory = Filename.concat build relative in
         if
           Sys_unix.is_directory directory
           |> function
           | `Yes -> true
           | `No | `Unknown -> false
-        then Some [ "-Q"; directory; [%string "Galois.%{package}"] ]
+        then Some [ "-Q"; directory; logical ]
         else None)
     in
     List.concat
-      (theories
-       @ [ [ "-Q"; Filename.concat build "examples"; "Galois.Examples" ]
-         ; [ "-Q"; Filename.concat build "tests"; "Galois.Tests" ]
-         ])
+      (packages
+       @ List.map client_paths ~f:(fun ({ relative; logical } : Load_path.t) ->
+         [ "-Q"; Filename.concat build relative; logical ]))
   ;;
 
   let delimiter index = [%string "%{marker}%{index#Int}__"]
@@ -1218,7 +1387,8 @@ module Claims = struct
   end
 
   let check_names (source : Source.t) (claim : Claim.t) names =
-    if List.is_empty names || Source.is_float source
+    let%bind.Or_error float_import = Float_boundary.imports_float source in
+    if List.is_empty names || float_import
     then Ok ()
     else
       Diagnostic.error
@@ -1417,7 +1587,11 @@ let run ~repository audits =
   List.map audits ~f:(fun (audit : Audit.t) ->
     match audit with
     | Hygiene -> Hygiene.run sources
-    | Layout -> Layout.run sources
+    | Layout ->
+      List.iter (Layout.warnings sources) ~f:(fun warning ->
+        eprint_s
+          [%message "warning: new Rocq source exceeds line limit" (warning : Layout.Warning.t)]);
+      Layout.run sources
     | Claims -> Claims.run ~repository sources)
   |> Or_error.combine_errors_unit
 ;;
@@ -1513,7 +1687,7 @@ let command =
 ;;
 
 module Fixture = struct
-  let file = "theories/Collections/CollectionsFixture.v"
+  let file = "legacy/theories/Collections/CollectionsFixture.v"
   let closed = "Theorem closed : True. Proof. exact I. Qed."
 
   let classical =
@@ -1539,15 +1713,19 @@ module Fixture = struct
   end
 
   let example_paths =
-    [ ({ root = Examples; relative = while_file } : Path.t)
-    ; ({ root = Examples; relative = ssa_file } : Path.t)
-    ; ({ root = Tests; relative = examples_test_file } : Path.t)
+    [ ({ root = Legacy_examples; relative = while_file } : Path.t)
+    ; ({ root = Legacy_examples; relative = ssa_file } : Path.t)
+    ; ({ root = Legacy_tests; relative = examples_test_file } : Path.t)
     ]
   ;;
 
-  let source ?(root = Source.Root.Theories) ?(package = "Collections") ?(file = file) source =
+  let source ?(root = Source.Root.Legacy_theories) ?(package = "Collections") ?(file = file) source =
     let sentences = Lex.scan ~file source |> Or_error.ok_exn in
-    ({ file; root; package; source; sentences } : Source.t)
+    let relative =
+      String.chop_prefix file ~prefix:[%string "%{Source.Root.to_string root}/"]
+      |> Option.value ~default:file
+    in
+    ({ file; root; relative; package; source; sentences } : Source.t)
   ;;
 
   let at ~root relative text =
@@ -1560,30 +1738,326 @@ module Fixture = struct
   ;;
 
   let with_repository ~f =
-    Core_unix.mkdir_p Query.scratch;
-    let directory = Filename_unix.temp_dir ~in_dir:Query.scratch "repository-" "" in
     let relative =
-      [ file; "tests/Collections/CollectionsTestFixture.v" ]
+      [ file
+      ; "legacy/tests/Collections/CollectionsTestFixture.v"
+      ; "theories/Base/BaseFixture.v"
+      ; "examples/Tutorial/ExamplesTutorialFixture.v"
+      ; "tests/Base/BaseTestFixture.v"
+      ; "tests/legacy/Base/BaseLegacyTestFixture.v"
+      ]
       @ List.map example_paths ~f:(fun ({ root; relative } : Path.t) ->
         Filename.concat (Source.Root.to_string root) relative)
     in
-    let files = List.map relative ~f:(Filename.concat directory) in
-    Exn.protect
-      ~f:(fun () ->
-        List.iter files ~f:(fun file ->
-          Core_unix.mkdir_p (Filename.dirname file);
-          Out_channel.write_all file ~data:closed);
-        f directory)
-      ~finally:(fun () ->
-        List.iter files ~f:Core_unix.unlink;
-        List.map files ~f:Filename.dirname
-        |> List.dedup_and_sort ~compare:String.compare
-        |> List.iter ~f:Core_unix.rmdir;
-        List.iter Source.Root.all ~f:(fun root ->
-          Core_unix.rmdir (Filename.concat directory (Source.Root.to_string root)));
-        Core_unix.rmdir directory)
+    Query.with_workspace ~f:(fun directory ->
+      List.iter Source.Root.all ~f:(fun root ->
+        Core_unix.mkdir_p (Filename.concat directory (Source.Root.to_string root)));
+      let files = List.map relative ~f:(Filename.concat directory) in
+      List.iter files ~f:(fun file ->
+        Core_unix.mkdir_p (Filename.dirname file);
+        Out_channel.write_all file ~data:closed);
+      f directory;
+      Ok ())
+    |> Or_error.ok_exn
+  ;;
+
+  let float_import = "From GaloisLegacy.Float Require Import FloatPrelude.\n"
+  let float_source text = source (String.concat [ float_import; text ])
+
+  let with_float_repository ~f =
+    Query.with_workspace ~f:(fun repository ->
+      let files =
+        List.map [ "theories/Float"; "legacy/theories/Float" ] ~f:(fun relative ->
+          let directory = Filename.concat repository relative in
+          Core_unix.mkdir_p directory;
+          let file = Filename.concat directory "FloatPrelude.v" in
+          Out_channel.write_all file ~data:"From Stdlib.Reals Require Export Reals.";
+          file)
+      in
+      let output = Filename.concat repository "Compile.log" in
+      let%bind.Or_error () =
+        List.map files ~f:(fun file ->
+          let%map.Or_error _ =
+            Query.run_process
+              ~mode:Compile
+              ~directory:repository
+              ~args:(Query.load_paths repository @ [ file ])
+              ~output
+          in
+          ())
+        |> Or_error.combine_errors_unit
+      in
+      f repository)
   ;;
 end
+
+let%expect_test "new package and family load paths resolve alongside reused legacy basenames" =
+  let sources =
+    [ Fixture.at ~root:Theories "Graph/GraphFixture.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_theories "Graph/GraphFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Analyses/Memory/AnalysesFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Next/Extension/NextFixture.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Graph/GraphTestFixture.v" Fixture.closed
+    ; Fixture.at ~root:Tests "legacy/Graph/GraphLegacyTestFixture.v" Fixture.closed
+    ; Fixture.at ~root:Examples "Tutorial/ExamplesTutorialFixture.v" Fixture.closed
+    ]
+  in
+  let result =
+    Query.with_workspace ~f:(fun repository ->
+      List.iter sources ~f:(fun ({ file; source; _ } : Source.t) ->
+        let file = Filename.concat repository file in
+        Core_unix.mkdir_p (Filename.dirname file);
+        Out_channel.write_all file ~data:source);
+      let args = Query.load_paths repository in
+      let output = Filename.concat repository "Compile.log" in
+      let%bind.Or_error () =
+        List.map sources ~f:(fun ({ file; _ } : Source.t) ->
+          let file = Filename.concat repository file in
+          let%map.Or_error _ =
+            Query.run_process ~mode:Compile ~directory:repository ~args:(args @ [ file ]) ~output
+          in
+          ())
+        |> Or_error.combine_errors_unit
+      in
+      let linked =
+        {|From Galois.Graph Require GraphFixture.
+From GaloisLegacy.Graph Require GraphFixture.
+From Galois.Analyses.Memory Require AnalysesFixture.
+From Galois.Next.Extension Require NextFixture.
+From Galois.Tests.Graph Require GraphTestFixture.
+From Galois.Tests.Legacy.Graph Require GraphLegacyTestFixture.
+From Galois.Examples.Tutorial Require ExamplesTutorialFixture.
+Theorem linked : True.
+Proof.
+  pose proof Galois.Graph.GraphFixture.closed.
+  pose proof GaloisLegacy.Graph.GraphFixture.closed.
+  pose proof AnalysesFixture.closed.
+  pose proof NextFixture.closed.
+  pose proof GraphTestFixture.closed.
+  pose proof GraphLegacyTestFixture.closed.
+  exact ExamplesTutorialFixture.closed.
+Qed.|}
+      in
+      let source = Fixture.at ~root:Tests "legacy/Graph/GraphLinkedTest.v" linked in
+      let%bind.Or_error () = Hygiene.run [ source ] in
+      Claims.source ~repository source)
+  in
+  print_s [%sexp (result : unit Or_error.t)];
+  [%expect {| (Ok ()) |}]
+;;
+
+let%expect_test "new package and client directories are accepted independently of legacy packages" =
+  print_s [%sexp (Source.packages : String.Set.t)];
+  print_s [%sexp (Source.legacy_packages : String.Set.t)];
+  let theories =
+    Set.to_list Source.packages
+    |> List.map ~f:(fun package ->
+      let directory =
+        if String.equal package "Analyses"
+        then "Analyses/Memory"
+        else if String.equal package "Next"
+        then "Next/Extension"
+        else package
+      in
+      Fixture.at ~root:Theories [%string "%{directory}/%{package}Fixture.v"] Fixture.closed)
+  in
+  let tests =
+    Set.to_list Source.packages
+    |> List.concat_map ~f:(fun package ->
+      List.map
+        [ package; [%string "legacy/%{package}"] ]
+        ~f:(fun directory ->
+          Fixture.at ~root:Tests [%string "%{directory}/%{package}TestFixture.v"] Fixture.closed))
+  in
+  let examples =
+    Set.to_list Source.example_directories
+    |> List.map ~f:(fun directory ->
+      Fixture.at
+        ~root:Examples
+        [%string "%{directory}/Examples%{directory}Fixture.v"]
+        Fixture.closed)
+  in
+  List.iter
+    (theories @ tests @ examples)
+    ~f:(fun source -> Layout.run [ source ] |> Or_error.ok_exn);
+  print_s [%sexp (Layout.run (theories @ examples) : unit Or_error.t)];
+  [%expect
+    {|
+    (Analyses Base Bits Cost Datalog Domains Egraph Fixpoint Float Framework
+     Graph Lattice Next Program)
+    (Analyses Bits Collections Domains Fixpoint Float Graph Order Rewrite Rules
+     Views)
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "new layout rejects legacy packages unknown families and misplaced extension files" =
+  List.iter
+    [ Fixture.at ~root:Theories "Collections/CollectionsFixture.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_theories "Base/BaseFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Analyses/Unknown/AnalysesFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Analyses/AnalysesFixture.v" Fixture.closed
+    ; Fixture.at ~root:Theories "Next/NextFixture.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_examples "Tutorial/ExamplesTutorialFixture.v" Fixture.closed
+    ; Fixture.at ~root:Tests "Unknown/UnknownTest.v" Fixture.closed
+    ]
+    ~f:(fun source -> print_s [%sexp (Result.is_error (Layout.run [ source ]) : bool)]);
+  [%expect
+    {|
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    |}]
+;;
+
+let%expect_test "Analyses families retain their package prefix" =
+  let sources =
+    Set.to_list Source.analysis_families
+    |> List.map ~f:(fun family ->
+      Fixture.at ~root:Theories [%string "Analyses/%{family}/Analyses%{family}.v"] Fixture.closed)
+  in
+  print_s [%sexp (Layout.run sources : unit Or_error.t)];
+  let wrong = Fixture.at ~root:Theories "Analyses/Memory/MemoryWalk.v" Fixture.closed in
+  print_s [%sexp (Layout.run [ wrong ] : unit Or_error.t)];
+  [%expect
+    {|
+    (Ok ())
+    (Error
+     ((file theories/Analyses/Memory/MemoryWalk.v) (line 1) (claim ())
+      (problem "Rocq basename must start with package Analyses")))
+    |}]
+;;
+
+let%expect_test "basename uniqueness separates generations and includes new differential tests" =
+  let legacy = Fixture.at ~root:Legacy_theories "Graph/GraphFixture.v" Fixture.closed in
+  let fresh = Fixture.at ~root:Theories "Graph/GraphFixture.v" Fixture.closed in
+  let comparison = Fixture.at ~root:Tests "legacy/Graph/GraphFixture.v" Fixture.closed in
+  print_s [%sexp (Layout.run [ legacy; fresh ] : unit Or_error.t)];
+  print_s [%sexp (Layout.run [ legacy; fresh; comparison ] : unit Or_error.t)];
+  [%expect
+    {|
+    (Ok ())
+    (Error
+     ("duplicate Rocq basename" (basename GraphFixture.v)
+      (files (theories/Graph/GraphFixture.v tests/legacy/Graph/GraphFixture.v))))
+    |}]
+;;
+
+let%expect_test "line limits warn for new files strictly above the boundary" =
+  let text lines = List.init lines ~f:(fun _ -> "(* source *)") |> String.concat ~sep:"\n" in
+  let at_limit = Fixture.at ~root:Theories "Base/BaseLimit.v" (text Layout.line_limit) in
+  let over_limit = Fixture.at ~root:Tests "Base/BaseLongTest.v" (text (Layout.line_limit + 1)) in
+  let legacy =
+    Fixture.at ~root:Legacy_theories "Collections/CollectionsLong.v" (text (Layout.line_limit + 1))
+  in
+  let sources = [ at_limit; over_limit; legacy ] in
+  print_s [%sexp (Layout.warnings sources : Layout.Warning.t list)];
+  print_s [%sexp (Layout.run sources : unit Or_error.t)];
+  [%expect
+    {|
+    (((file tests/Base/BaseLongTest.v) (lines 1501) (limit 1500)))
+    (Ok ())
+    |}]
+;;
+
+let%expect_test "Float boundaries inspect exact parsed imports in both namespaces" =
+  List.iter
+    [ "From Galois.Float Require Import FloatPrelude."
+    ; "From Galois Require Import Float.FloatPrelude."
+    ; "Require Export GaloisLegacy.Float.FloatPrelude."
+    ; "From GaloisLegacy Require Import Float.FloatPrelude."
+    ; "From Galois.FloatSpoof Require Import FloatPrelude."
+    ; "From GaloisLegacy.FloatSpoof Require Import FloatPrelude."
+    ; "(* From Galois.Float Require Import FloatPrelude. *)"
+    ; {|Definition message := "From Galois.Float Require Import FloatPrelude.".|}
+    ; "Fail From Galois.Float Require Import Missing."
+    ; "Succeed From Galois.Float Require Import FloatPrelude."
+    ]
+    ~f:(fun text ->
+      print_s [%sexp (Float_boundary.imports_float (Fixture.source text) : bool Or_error.t)]);
+  [%expect
+    {|
+    (Ok true)
+    (Ok true)
+    (Ok true)
+    (Ok true)
+    (Ok false)
+    (Ok false)
+    (Ok false)
+    (Ok false)
+    (Ok false)
+    (Ok false)
+    |}]
+;;
+
+let%expect_test "Float paths alone never grant an axiom allowance" =
+  List.iter [ Source.Root.Theories; Legacy_theories ] ~f:(fun root ->
+    let source = Fixture.at ~root "Float/FloatFixture.v" Fixture.classical in
+    print_s [%sexp (Claims.source ~repository:Fixture.repository source : unit Or_error.t)]);
+  [%expect
+    {|
+    (Error
+     ((file theories/Float/FloatFixture.v) (line 1) (claim (classical_claim))
+      (problem "theorem depends on axioms: Classical_Prop.classic")))
+    (Error
+     ((file legacy/theories/Float/FloatFixture.v) (line 1)
+      (claim (classical_claim))
+      (problem "theorem depends on axioms: Classical_Prop.classic")))
+    |}]
+;;
+
+let%expect_test "explicit Float clients replay approved axioms wherever the file lives" =
+  let paths =
+    [ ({ root = Theories; relative = "Graph/GraphFloat.v" } : Fixture.Path.t)
+    ; { root = Examples; relative = "SsaFloat/ExamplesSsaFloat.v" }
+    ; { root = Tests; relative = "Float/FloatTest.v" }
+    ; { root = Tests; relative = "legacy/Float/FloatLegacyTest.v" }
+    ; { root = Legacy_theories; relative = "Graph/GraphFloat.v" }
+    ; { root = Legacy_examples; relative = Fixture.while_file }
+    ; { root = Legacy_tests; relative = "Float/FloatTest.v" }
+    ]
+  in
+  let result =
+    Fixture.with_float_repository ~f:(fun repository ->
+      List.map paths ~f:(fun ({ root; relative } : Fixture.Path.t) ->
+        let namespace =
+          if
+            Source.Generation.equal (Source.Root.generation root) Legacy
+            || String.is_prefix relative ~prefix:"legacy/"
+          then "GaloisLegacy"
+          else "Galois"
+        in
+        let imports = [%string "From %{namespace}.Float Require Import FloatPrelude.\n"] in
+        let source = Fixture.at ~root relative (String.concat [ imports; Fixture.classical ]) in
+        let%bind.Or_error () = Hygiene.run [ source ] in
+        Claims.source ~repository source)
+      |> Or_error.combine_errors_unit)
+  in
+  print_s [%sexp (result : unit Or_error.t)];
+  [%expect {| (Ok ()) |}]
+;;
+
+let%expect_test "only differential tests may import the legacy library from new roots" =
+  let text = "From GaloisLegacy.Graph Require Import GraphCore." in
+  List.iter
+    [ Fixture.at ~root:Theories "Graph/GraphClient.v" text
+    ; Fixture.at ~root:Examples "Tutorial/ExamplesClient.v" text
+    ; Fixture.at ~root:Tests "Graph/GraphTest.v" text
+    ; Fixture.at ~root:Tests "legacy/Graph/GraphLegacyTest.v" text
+    ]
+    ~f:(fun source -> print_s [%sexp (Result.is_ok (Hygiene.run [ source ]) : bool)]);
+  [%expect
+    {|
+    false
+    false
+    false
+    true
+    |}]
+;;
 
 let%expect_test "clean source ignores nested comments and doubled quotes in strings" =
   let text =
@@ -1616,30 +2090,31 @@ let%expect_test "proof escapes declarations and unsafe checking identify their f
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "forbidden proof escape or declaration: Axiom")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "forbidden proof escape or declaration: admit")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "global instance; dictionaries must be explicit")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "disabled kernel checking")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
-      (problem "dependency outside Stdlib/Galois (Flocq is Float-only)")))
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+      (problem
+       "dependency outside Stdlib/Galois/GaloisLegacy (Flocq requires Float)")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "record carrier Type field; parameterize the dictionary instead")))
     |}]
 ;;
@@ -1656,7 +2131,7 @@ let%expect_test "explicitly local instances are distinguished from an instance n
     (Ok ())
     (Ok ())
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "global instance; dictionaries must be explicit")))
     |}]
 ;;
@@ -1669,13 +2144,13 @@ let%expect_test "malformed comments and strings fail discovery" =
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "unterminated Rocq comment")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "unterminated Rocq string")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "incomplete Rocq sentence (missing final period)")))
     |}]
 ;;
@@ -1683,9 +2158,12 @@ let%expect_test "malformed comments and strings fail discovery" =
 let%expect_test "layout checks duplicate names package prefixes and placement" =
   let clean = Fixture.source Fixture.closed in
   let duplicate =
-    Fixture.source ~root:Tests ~file:"tests/Collections/CollectionsFixture.v" Fixture.closed
+    Fixture.source
+      ~root:Legacy_tests
+      ~file:"legacy/tests/Collections/CollectionsFixture.v"
+      Fixture.closed
   in
-  let wrong_prefix = Fixture.source ~file:"theories/Collections/Wrong.v" Fixture.closed in
+  let wrong_prefix = Fixture.source ~file:"legacy/theories/Collections/Wrong.v" Fixture.closed in
   let wrong_package = Fixture.source ~package:"Unknown" Fixture.closed in
   print_s [%sexp (Layout.run [ clean ] : unit Or_error.t)];
   print_s [%sexp (Layout.run [ clean; duplicate ] : unit Or_error.t)];
@@ -1696,12 +2174,13 @@ let%expect_test "layout checks duplicate names package prefixes and placement" =
     (Error
      ("duplicate Rocq basename" (basename CollectionsFixture.v)
       (files
-       (theories/Collections/CollectionsFixture.v
-        tests/Collections/CollectionsFixture.v))))
+       (legacy/theories/Collections/CollectionsFixture.v
+        legacy/tests/Collections/CollectionsFixture.v))))
     (Error
-     (((file theories/Collections/Wrong.v) (line 1) (claim ())
+     (((file legacy/theories/Collections/Wrong.v) (line 1) (claim ())
        (problem "Rocq basename must start with package Collections"))
-      ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+      ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
+       (claim ())
        (problem "source must be placed under its declared package directory"))))
     |}]
 ;;
@@ -1710,12 +2189,12 @@ let%expect_test "Rewrite theory and test files have valid package placement" =
   let sources =
     [ Fixture.source
         ~package:Source.rewrite_package
-        ~file:"theories/Rewrite/RewriteSyntax.v"
+        ~file:"legacy/theories/Rewrite/RewriteSyntax.v"
         Fixture.closed
     ; Fixture.source
-        ~root:Tests
+        ~root:Legacy_tests
         ~package:Source.rewrite_package
-        ~file:"tests/Rewrite/RewriteSyntaxTest.v"
+        ~file:"legacy/tests/Rewrite/RewriteSyntaxTest.v"
         Fixture.closed
     ]
   in
@@ -1732,7 +2211,7 @@ let%expect_test "Rewrite logical load path resolves a compiled theorem dependenc
   let result =
     Query.with_workspace ~f:(fun repository ->
       let package = Source.rewrite_package in
-      let directory = Filename.concat repository [%string "theories/%{package}"] in
+      let directory = Filename.concat repository [%string "legacy/theories/%{package}"] in
       Core_unix.mkdir_p directory;
       let dependency = Filename.concat directory [%string "RewriteSyntax%{Source.extension}"] in
       Out_channel.write_all dependency ~data:Fixture.closed;
@@ -1747,10 +2226,10 @@ let%expect_test "Rewrite logical load path resolves a compiled theorem dependenc
       in
       let source =
         Fixture.source
-          ~root:Tests
+          ~root:Legacy_tests
           ~package
-          ~file:"tests/Rewrite/RewriteDependencyTest.v"
-          {|From Galois.Rewrite Require Import RewriteSyntax.
+          ~file:"legacy/tests/Rewrite/RewriteDependencyTest.v"
+          {|From GaloisLegacy.Rewrite Require Import RewriteSyntax.
 Theorem dependency_closed : True.
 Proof.
   exact closed.
@@ -1762,8 +2241,9 @@ Qed.|}
   print_s [%sexp (result : unit Or_error.t)];
   [%expect
     {|
-    (-Q <repository>/theories/Rewrite Galois.Rewrite -Q <repository>/examples
-     Galois.Examples -Q <repository>/tests Galois.Tests)
+    (-Q <repository>/legacy/theories/Rewrite GaloisLegacy.Rewrite -Q
+     <repository>/examples Galois.Examples -Q <repository>/legacy/examples
+     GaloisLegacy.Examples -Q <repository>/legacy/tests GaloisLegacy.Tests)
     (Ok ())
     |}]
 ;;
@@ -1804,16 +2284,25 @@ let%expect_test "every authored source root discovers and inspects its theorems"
     print_s [%sexp (Claims.run ~repository sources : unit Or_error.t)]);
   [%expect
     {|
-    ((file theories/Collections/CollectionsFixture.v) (root Theories)
-     (package Collections) (claims (((name closed) (line 1)))))
-    ((file examples/Ssa/ExamplesSsaFixture.v) (root Examples) (package Examples)
+    ((file theories/Base/BaseFixture.v) (root Theories) (package Base)
      (claims (((name closed) (line 1)))))
-    ((file examples/While/ExamplesWhileFixture.v) (root Examples)
+    ((file examples/Tutorial/ExamplesTutorialFixture.v) (root Examples)
      (package Examples) (claims (((name closed) (line 1)))))
-    ((file tests/Collections/CollectionsTestFixture.v) (root Tests)
-     (package Collections) (claims (((name closed) (line 1)))))
-    ((file tests/Examples/ExamplesTestFixture.v) (root Tests) (package Examples)
+    ((file tests/Base/BaseTestFixture.v) (root Tests) (package Base)
      (claims (((name closed) (line 1)))))
+    ((file tests/legacy/Base/BaseLegacyTestFixture.v) (root Tests) (package Base)
+     (claims (((name closed) (line 1)))))
+    ((file legacy/theories/Collections/CollectionsFixture.v)
+     (root Legacy_theories) (package Collections)
+     (claims (((name closed) (line 1)))))
+    ((file legacy/examples/Ssa/ExamplesSsaFixture.v) (root Legacy_examples)
+     (package Examples) (claims (((name closed) (line 1)))))
+    ((file legacy/examples/While/ExamplesWhileFixture.v) (root Legacy_examples)
+     (package Examples) (claims (((name closed) (line 1)))))
+    ((file legacy/tests/Collections/CollectionsTestFixture.v) (root Legacy_tests)
+     (package Collections) (claims (((name closed) (line 1)))))
+    ((file legacy/tests/Examples/ExamplesTestFixture.v) (root Legacy_tests)
+     (package Examples) (claims (((name closed) (line 1)))))
     (Ok ())
     |}]
 ;;
@@ -1830,7 +2319,7 @@ let%expect_test "a non Float theorem cannot inherit any axiom" =
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1)
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
       (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     |}]
@@ -1840,10 +2329,11 @@ let%expect_test "Float permits only the exact four qualified axiom identities" =
   Set.iter Query.allowed_axioms ~f:(fun name ->
     let line = [%string "Constant %{name}"] in
     print_s [%sexp (Query.resolve [ line ] : unit Or_error.t)]);
-  let source =
-    Fixture.source ~package:Source.float_package ~file:"theories/Float/FloatFixture.v" Fixture.reals
+  let result =
+    Fixture.with_float_repository ~f:(fun repository ->
+      Claims.source ~repository (Fixture.float_source Fixture.reals))
   in
-  print_s [%sexp (Claims.source ~repository:Fixture.repository source : unit Or_error.t)];
+  print_s [%sexp (result : unit Or_error.t)];
   [%expect
     {|
     (Ok ())
@@ -1856,20 +2346,23 @@ let%expect_test "Float permits only the exact four qualified axiom identities" =
 
 let%expect_test "Float rejects an unexpected kernel reported axiom" =
   let source =
-    Fixture.source
-      ~package:Source.float_package
-      ~file:"theories/Float/FloatFixture.v"
+    Fixture.float_source
       "From Stdlib.Logic Require Import ProofIrrelevance. Theorem unrelated_claim : forall (P : \
        Prop) (p q : P), p = q. Proof. exact proof_irrelevance. Qed."
   in
-  print_s [%sexp (Claims.source ~repository:Fixture.repository source : unit Or_error.t)];
+  let result =
+    Fixture.with_float_repository ~f:(fun repository -> Claims.source ~repository source)
+  in
+  print_s [%sexp (result : unit Or_error.t)];
   [%expect
     {|
     (Error
-     (("Float assumptions inspection" (source.file theories/Float/FloatFixture.v)
-       (claims (((name unrelated_claim) (line 1)))))
-      (("Float theorem assumption" (source.file theories/Float/FloatFixture.v)
-        (claim ((name unrelated_claim) (line 1))))
+     (("Float assumptions inspection"
+       (source.file legacy/theories/Collections/CollectionsFixture.v)
+       (claims (((name unrelated_claim) (line 2)))))
+      (("Float theorem assumption"
+        (source.file legacy/theories/Collections/CollectionsFixture.v)
+        (claim ((name unrelated_claim) (line 2))))
        ("unexpected Float axiom"
         (name Stdlib.Logic.ProofIrrelevance.proof_irrelevance)))))
     |}]
@@ -1888,8 +2381,11 @@ let%expect_test "Float claims resolve classic and every prior foundation through
        @functional_extensionality_dep. Qed."
     ]
     ~f:(fun text ->
-      let source = Fixture.at ~root:Theories "Float/FloatFixture.v" text in
-      print_s [%sexp (Claims.source ~repository:Fixture.repository source : unit Or_error.t)]);
+      let result =
+        Fixture.with_float_repository ~f:(fun repository ->
+          Claims.source ~repository (Fixture.float_source text))
+      in
+      print_s [%sexp (result : unit Or_error.t)]);
   [%expect
     {|
     (Ok ())
@@ -1932,10 +2428,10 @@ let%expect_test "Float axiom resolution rejects ambiguous unrecognized and spoof
 
 let%expect_test "actual non Float paths reject classic including Float tests" =
   let paths =
-    [ ({ root = Theories; relative = "Collections/CollectionsFixture.v" } : Fixture.Path.t)
-    ; ({ root = Examples; relative = Fixture.while_file } : Fixture.Path.t)
-    ; ({ root = Examples; relative = Fixture.ssa_file } : Fixture.Path.t)
-    ; ({ root = Tests; relative = "Float/FloatTestFixture.v" } : Fixture.Path.t)
+    [ ({ root = Legacy_theories; relative = "Collections/CollectionsFixture.v" } : Fixture.Path.t)
+    ; ({ root = Legacy_examples; relative = Fixture.while_file } : Fixture.Path.t)
+    ; ({ root = Legacy_examples; relative = Fixture.ssa_file } : Fixture.Path.t)
+    ; ({ root = Legacy_tests; relative = "Float/FloatTestFixture.v" } : Fixture.Path.t)
     ]
   in
   List.iter paths ~f:(fun ({ root; relative } : Fixture.Path.t) ->
@@ -1944,34 +2440,36 @@ let%expect_test "actual non Float paths reject classic including Float tests" =
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1)
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
       (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     (Error
-     ((file examples/While/ExamplesWhileFixture.v) (line 1)
+     ((file legacy/examples/While/ExamplesWhileFixture.v) (line 1)
       (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     (Error
-     ((file examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim (classical_claim))
+     ((file legacy/examples/Ssa/ExamplesSsaFixture.v) (line 1)
+      (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     (Error
-     ((file tests/Float/FloatTestFixture.v) (line 1) (claim (classical_claim))
+     ((file legacy/tests/Float/FloatTestFixture.v) (line 1)
+      (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     |}]
 ;;
 
 let%expect_test "the Float allowance does not extend to examples or tests" =
-  List.iter [ Source.Root.Examples; Source.Root.Tests ] ~f:(fun root ->
+  List.iter [ Source.Root.Legacy_examples; Source.Root.Legacy_tests ] ~f:(fun root ->
     let source = Fixture.source ~root ~package:Source.float_package Fixture.classical in
     print_s [%sexp (Claims.source ~repository:Fixture.repository source : unit Or_error.t)]);
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1)
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
       (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1)
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
       (claim (classical_claim))
       (problem "theorem depends on axioms: Classical_Prop.classic")))
     |}]
@@ -2033,7 +2531,7 @@ let%expect_test "dictionary parameters are accepted and parenthesized carrier fi
     {|
     (Ok ())
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "record carrier Type field; parameterize the dictionary instead")))
     |}]
 ;;
@@ -2044,7 +2542,7 @@ let%expect_test "claims reject disabled kernel checking before querying" =
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "disabled kernel checking")))
     |}]
 ;;
@@ -2103,10 +2601,10 @@ let%expect_test "section assumptions generalize but global hypotheses are axioms
     {|
     (Ok ())
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "global assumption; bind it in a Section or a theorem instead")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "global assumption; bind it in a Section or a theorem instead")))
     |}]
 ;;
@@ -2125,8 +2623,8 @@ let%expect_test "an aborted theorem cannot fall back to an imported closed const
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (I))
-      (problem "aborted theorem has no proof to inspect")))
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
+      (claim (I)) (problem "aborted theorem has no proof to inspect")))
     (Ok ())
     |}]
 ;;
@@ -2149,7 +2647,7 @@ let%expect_test "claim identity must be the exact source constant" =
       (lines
        ("Constructor Stdlib.Init.Logic.I" "Closed under the global context"))))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "proof editing command can remove discovered declarations")))
     |}]
 ;;
@@ -2257,7 +2755,7 @@ let%expect_test "wrapped identity passes axioms to the existing non Float policy
         Claims.check_names source claim names
       in
       print_s [%sexp (result : unit Or_error.t)];
-      let float_source = Fixture.source ~package:"Float" Fixture.closed in
+      let float_source = Fixture.float_source Fixture.closed in
       let float_result =
         let%bind.Or_error names =
           Query.claim_report ~name (identity @ [ Query.axioms; "Example.axiom : True" ])
@@ -2268,18 +2766,18 @@ let%expect_test "wrapped identity passes axioms to the existing non Float policy
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (claim))
-      (problem "theorem depends on axioms: Example.axiom")))
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
+      (claim (claim)) (problem "theorem depends on axioms: Example.axiom")))
     (Ok ())
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (claim))
-      (problem "theorem depends on axioms: Example.axiom")))
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
+      (claim (claim)) (problem "theorem depends on axioms: Example.axiom")))
     (Ok ())
     |}]
 ;;
 
 let%expect_test "strict replay captures the long wrapped source identity" =
-  let name = "audit_dfs_source_successor_correspondence_holds" in
+  let name = "graph_source_successor_correspondence_holds_with_a_wrapped_name" in
   let source = [%string "Theorem %{name} : True. Proof. exact I. Qed."] in
   let qualified = Query.qualified name in
   let command = [%string "Locate %{qualified}.\nPrint Assumptions %{qualified}."] in
@@ -2291,7 +2789,7 @@ let%expect_test "strict replay captures the long wrapped source identity" =
     {|
     __GALOIS_AUDIT_0__
     Constant
-    Top.GaloisAuditSource.audit_dfs_source_successor_correspondence_holds
+    Top.GaloisAuditSource.graph_source_successor_correspondence_holds_with_a_wrapped_name
     Closed under the global context
     __GALOIS_AUDIT_1__
     (Ok ())
@@ -2301,7 +2799,7 @@ let%expect_test "strict replay captures the long wrapped source identity" =
 let%expect_test "both source identity forms retain Float axiom resolution" =
   let name = "claim" in
   let claim = ({ name; line = 1 } : Claim.t) in
-  let source = Fixture.source ~package:Source.float_package Fixture.closed in
+  let source = Fixture.float_source Fixture.closed in
   let axiom = "classic" in
   List.iter
     [ [ [%string "Constant Top.%{Query.qualified name}"] ]
@@ -2345,7 +2843,7 @@ let%expect_test "Program admission is rejected without any theorem roots" =
     {|
     (Ok ())
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "admitted Program obligation")))
     (Ok ())
     |}]
@@ -2368,31 +2866,31 @@ let%expect_test "unused axiom imports are rejected in qualified and split spelli
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Logic.Classical_Prop")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Logic.Classical_Prop")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Logic.Classical_Prop")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Logic.Classical")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Logic.FunctionalExtensionality")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Classical_Prop")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem "axiom-bearing Stdlib import outside Float: Stdlib.Reals.Reals")))
     |}]
 ;;
@@ -2421,11 +2919,11 @@ let%expect_test "failed closure cannot hide an aborted theorem followed by a rep
   [%expect
     {|
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (I))
-      (problem "aborted theorem has no proof to inspect")))
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
+      (claim (I)) (problem "aborted theorem has no proof to inspect")))
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim (I))
-      (problem "aborted theorem has no proof to inspect")))
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1)
+      (claim (I)) (problem "aborted theorem has no proof to inspect")))
     |}]
 ;;
 
@@ -2442,14 +2940,13 @@ let%expect_test "unused classical import is a hygiene failure even for a kernel 
     {|
     (Ok ())
     (Error
-     ((file theories/Collections/CollectionsFixture.v) (line 1) (claim ())
+     ((file legacy/theories/Collections/CollectionsFixture.v) (line 1) (claim ())
       (problem
        "axiom-bearing Stdlib import outside Float: Stdlib.Logic.Classical_Prop")))
     |}]
 ;;
 
-let%expect_test "Examples production subdirectories and computed test directory use Examples prefix"
-  =
+let%expect_test "legacy examples and their computed tests retain the Examples prefix" =
   let sources = Fixture.examples Fixture.closed in
   print_s [%sexp (Layout.run sources : unit Or_error.t)];
   print_s [%sexp (Hygiene.run sources : unit Or_error.t)];
@@ -2460,60 +2957,60 @@ let%expect_test "Examples production subdirectories and computed test directory 
     |}]
 ;;
 
-let%expect_test "Examples paths reject language prefixes and wrong or unknown directories" =
+let%expect_test "legacy example paths reject language prefixes and wrong or unknown directories" =
   List.iter
-    [ Fixture.at ~root:Examples "While/WhileWrong.v" Fixture.closed
-    ; Fixture.at ~root:Examples "Ssa/SsaWrong.v" Fixture.closed
-    ; Fixture.at ~root:Tests "Examples/SsaWrongTest.v" Fixture.closed
-    ; Fixture.at ~root:Examples "Collections/ExamplesWrong.v" Fixture.closed
-    ; Fixture.at ~root:Examples "Unknown/ExamplesUnknown.v" Fixture.closed
-    ; Fixture.at ~root:Examples "ExamplesMisplaced.v" Fixture.closed
-    ; Fixture.at ~root:Theories "Examples/ExamplesWrongTheory.v" Fixture.closed
-    ; Fixture.at ~root:Tests "While/ExamplesWrongTest.v" Fixture.closed
-    ; Fixture.at ~root:Tests "Unknown/ExamplesUnknownTest.v" Fixture.closed
-    ; Fixture.at ~root:Theories "CollectionsMisplaced.v" Fixture.closed
-    ; Fixture.at ~root:Tests "ExamplesMisplacedTest.v" Fixture.closed
+    [ Fixture.at ~root:Legacy_examples "While/WhileWrong.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_examples "Ssa/SsaWrong.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_tests "Examples/SsaWrongTest.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_examples "Collections/ExamplesWrong.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_examples "Unknown/ExamplesUnknown.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_examples "ExamplesMisplaced.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_theories "Examples/ExamplesWrongTheory.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_tests "While/ExamplesWrongTest.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_tests "Unknown/ExamplesUnknownTest.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_theories "CollectionsMisplaced.v" Fixture.closed
+    ; Fixture.at ~root:Legacy_tests "ExamplesMisplacedTest.v" Fixture.closed
     ]
     ~f:(fun source -> print_s [%sexp (Layout.run [ source ] : unit Or_error.t)]);
   [%expect
     {|
     (Error
-     ((file examples/While/WhileWrong.v) (line 1) (claim ())
+     ((file legacy/examples/While/WhileWrong.v) (line 1) (claim ())
       (problem "Rocq basename must start with package Examples")))
     (Error
-     ((file examples/Ssa/SsaWrong.v) (line 1) (claim ())
+     ((file legacy/examples/Ssa/SsaWrong.v) (line 1) (claim ())
       (problem "Rocq basename must start with package Examples")))
     (Error
-     ((file tests/Examples/SsaWrongTest.v) (line 1) (claim ())
+     ((file legacy/tests/Examples/SsaWrongTest.v) (line 1) (claim ())
       (problem "Rocq basename must start with package Examples")))
     (Error
-     ((file examples/Collections/ExamplesWrong.v) (line 1) (claim ())
+     ((file legacy/examples/Collections/ExamplesWrong.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file examples/Unknown/ExamplesUnknown.v) (line 1) (claim ())
+     ((file legacy/examples/Unknown/ExamplesUnknown.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file examples/ExamplesMisplaced.v) (line 1) (claim ())
+     ((file legacy/examples/ExamplesMisplaced.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file theories/Examples/ExamplesWrongTheory.v) (line 1) (claim ())
+     ((file legacy/theories/Examples/ExamplesWrongTheory.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file tests/While/ExamplesWrongTest.v) (line 1) (claim ())
+     ((file legacy/tests/While/ExamplesWrongTest.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file tests/Unknown/ExamplesUnknownTest.v) (line 1) (claim ())
+     ((file legacy/tests/Unknown/ExamplesUnknownTest.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file theories/CollectionsMisplaced.v) (line 1) (claim ())
+     ((file legacy/theories/CollectionsMisplaced.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     (Error
-     ((file tests/ExamplesMisplacedTest.v) (line 1) (claim ())
+     ((file legacy/tests/ExamplesMisplacedTest.v) (line 1) (claim ())
       (problem "source must be placed under its declared package directory")))
     |}]
 ;;
 
-let%expect_test "Examples basename uniqueness spans both production subdirectories and tests" =
+let%expect_test "legacy example basenames are unique across both client directories and tests" =
   let basename = "ExamplesDuplicate.v" in
   let sources =
     List.map Fixture.example_paths ~f:(fun ({ root; relative } : Fixture.Path.t) ->
@@ -2526,14 +3023,18 @@ let%expect_test "Examples basename uniqueness spans both production subdirectori
     (Error
      ("duplicate Rocq basename" (basename ExamplesDuplicate.v)
       (files
-       (examples/While/ExamplesDuplicate.v examples/Ssa/ExamplesDuplicate.v
-        tests/Examples/ExamplesDuplicate.v))))
+       (legacy/examples/While/ExamplesDuplicate.v
+        legacy/examples/Ssa/ExamplesDuplicate.v
+        legacy/tests/Examples/ExamplesDuplicate.v))))
     |}]
 ;;
 
-let%expect_test "Examples production sources retain theory hygiene and Float dependency boundaries" =
+let%expect_test "legacy examples retain theory hygiene and accept explicit Float imports" =
   List.iter
-    [ "Print nat."; "Extraction Language OCaml."; "From Galois.Float Require Import FloatFixture." ]
+    [ "Print nat."
+    ; "Extraction Language OCaml."
+    ; "From GaloisLegacy.Float Require Import FloatFixture."
+    ]
     ~f:(fun text ->
       List.iter
         (List.take (Fixture.examples text) 2)
@@ -2541,31 +3042,27 @@ let%expect_test "Examples production sources retain theory hygiene and Float dep
   [%expect
     {|
     (Error
-     ((file examples/While/ExamplesWhileFixture.v) (line 1) (claim ())
+     ((file legacy/examples/While/ExamplesWhileFixture.v) (line 1) (claim ())
       (problem
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
-     ((file examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim ())
+     ((file legacy/examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim ())
       (problem
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
-     ((file examples/While/ExamplesWhileFixture.v) (line 1) (claim ())
+     ((file legacy/examples/While/ExamplesWhileFixture.v) (line 1) (claim ())
       (problem
        "theory extraction or query command belongs in a client or scratch file")))
     (Error
-     ((file examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim ())
+     ((file legacy/examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim ())
       (problem
        "theory extraction or query command belongs in a client or scratch file")))
-    (Error
-     ((file examples/While/ExamplesWhileFixture.v) (line 1) (claim ())
-      (problem "only Galois.Float may depend on Float")))
-    (Error
-     ((file examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim ())
-      (problem "only Galois.Float may depend on Float")))
+    (Ok ())
+    (Ok ())
     |}]
 ;;
 
-let%expect_test "Examples and computed test theorems reject the exact Float real axioms" =
+let%expect_test "legacy clients without Float imports reject the approved real axioms" =
   List.iter (Fixture.examples Fixture.reals) ~f:(fun source ->
     print_s [%sexp (Claim.discover source : Claim.t list Or_error.t)];
     print_s [%sexp (Claims.source ~repository:Fixture.repository source : unit Or_error.t)]);
@@ -2573,23 +3070,27 @@ let%expect_test "Examples and computed test theorems reject the exact Float real
     {|
     (Ok (((name real_claim) (line 1))))
     (Error
-     ((file examples/While/ExamplesWhileFixture.v) (line 1) (claim (real_claim))
+     ((file legacy/examples/While/ExamplesWhileFixture.v) (line 1)
+      (claim (real_claim))
       (problem
        "theorem depends on axioms: ClassicalDedekindReals.sig_forall_dec, FunctionalExtensionality.functional_extensionality_dep")))
     (Ok (((name real_claim) (line 1))))
     (Error
-     ((file examples/Ssa/ExamplesSsaFixture.v) (line 1) (claim (real_claim))
+     ((file legacy/examples/Ssa/ExamplesSsaFixture.v) (line 1)
+      (claim (real_claim))
       (problem
        "theorem depends on axioms: ClassicalDedekindReals.sig_forall_dec, FunctionalExtensionality.functional_extensionality_dep")))
     (Ok (((name real_claim) (line 1))))
     (Error
-     ((file tests/Examples/ExamplesTestFixture.v) (line 1) (claim (real_claim))
+     ((file legacy/tests/Examples/ExamplesTestFixture.v) (line 1)
+      (claim (real_claim))
       (problem
        "theorem depends on axioms: ClassicalDedekindReals.sig_forall_dec, FunctionalExtensionality.functional_extensionality_dep")))
     |}]
 ;;
 
-let%expect_test "Examples and test logical module paths resolve compiled theorem dependencies" =
+let%expect_test "legacy example and test logical module paths resolve compiled theorem dependencies"
+  =
   let result =
     Query.with_workspace ~f:(fun repository ->
       let sources = Fixture.examples Fixture.closed in
@@ -2606,9 +3107,9 @@ let%expect_test "Examples and test logical module paths resolve compiled theorem
           ())
       in
       let linked =
-        {|From Galois.Examples.While Require Import ExamplesWhileFixture.
-From Galois.Examples.Ssa Require Import ExamplesSsaFixture.
-From Galois.Tests.Examples Require Import ExamplesTestFixture.
+        {|From GaloisLegacy.Examples.While Require Import ExamplesWhileFixture.
+From GaloisLegacy.Examples.Ssa Require Import ExamplesSsaFixture.
+From GaloisLegacy.Tests.Examples Require Import ExamplesTestFixture.
 Theorem linked : True /\ True /\ True.
 Proof.
   exact (conj ExamplesWhileFixture.closed

@@ -1,0 +1,5 @@
+(rocq.theory
+ (name GaloisLegacy.Bits)
+ (package galois)
+ (flags :standard -w +default)
+ (theories Stdlib GaloisLegacy.Collections))

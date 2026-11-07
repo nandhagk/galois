@@ -1,0 +1,19 @@
+; The toy languages used as reference clients: examples/While/ and examples/Ssa/ become the
+; modules GaloisLegacy.Examples.While.<File> and GaloisLegacy.Examples.Ssa.<File>.
+
+(include_subdirs qualified)
+
+(rocq.theory
+ (name GaloisLegacy.Examples)
+ (flags :standard -w +default)
+ (theories
+  Stdlib
+  GaloisLegacy.Collections
+  GaloisLegacy.Order
+  GaloisLegacy.Graph
+  GaloisLegacy.Bits
+  GaloisLegacy.Fixpoint
+  GaloisLegacy.Rules
+  GaloisLegacy.Domains
+  GaloisLegacy.Views
+  GaloisLegacy.Analyses))

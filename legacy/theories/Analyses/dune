@@ -1,0 +1,15 @@
+(rocq.theory
+ (name GaloisLegacy.Analyses)
+ (package galois)
+ (flags :standard -w +default)
+ (theories
+  Stdlib
+  GaloisLegacy.Collections
+  GaloisLegacy.Order
+  GaloisLegacy.Graph
+  GaloisLegacy.Bits
+  GaloisLegacy.Fixpoint
+  GaloisLegacy.Rules
+  GaloisLegacy.Rewrite
+  GaloisLegacy.Domains
+  GaloisLegacy.Views))

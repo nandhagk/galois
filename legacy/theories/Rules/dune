@@ -1,0 +1,10 @@
+(rocq.theory
+ (name GaloisLegacy.Rules)
+ (package galois)
+ (flags :standard -w +default)
+ (theories
+  Stdlib
+  GaloisLegacy.Collections
+  GaloisLegacy.Order
+  GaloisLegacy.Graph
+  GaloisLegacy.Fixpoint))

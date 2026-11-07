@@ -1,5 +1,0 @@
-(rocq.theory
- (name Galois.Fixpoint)
- (package galois)
- (flags :standard -w +default)
- (theories Stdlib Galois.Collections Galois.Order Galois.Graph))

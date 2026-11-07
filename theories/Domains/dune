@@ -1,5 +1,0 @@
-(rocq.theory
- (name Galois.Domains)
- (package galois)
- (flags :standard -w +default)
- (theories Stdlib Galois.Collections Galois.Order Galois.Bits))
