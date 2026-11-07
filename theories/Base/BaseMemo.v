@@ -4,7 +4,7 @@
     For example, looking up an absent key computes and records its reference result.
     Builds on: BaseMap, BaseEncoding and BaseEq. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 Import List.ListNotations Cost.Notations.
@@ -143,6 +143,48 @@ Qed.
 
 Arguments empty_c {K V} : simpl never.
 Arguments empty {K V} : simpl never.
+(** A cache hit pays only lookup and a miss also pays callback overhead and insertion. *)
+Theorem get_or_cost_equation {K V} (E : encoding K) (f_c : K -> Cost.t V)
+    k (m : t K V) :
+  Cost.ticks (get_or_c E f_c k m) =
+    (Cost.ticks (Map.get_c E k m) +
+      match Map.get E k m with
+      | Some _ => 0
+      | None =>
+        1 + Cost.ticks (f_c k) +
+        Cost.ticks (Map.set_c E k (Cost.value (f_c k)) m)
+      end)%N.
+Proof.
+  unfold get_or_c. autorewrite with galois_cost. fold (Map.get E k m).
+  destruct (Map.get E k m); autorewrite with galois_cost; lia.
+Qed.
+
+(** Lookup, callback and one insertion bound every cache operation through public map calls. *)
+Theorem get_or_cost {K V} (E : encoding K) (f_c : K -> Cost.t V) k (m : t K V) :
+  (Cost.ticks (get_or_c E f_c k m) <=
+    Cost.ticks (Map.get_c E k m) + 1 + Cost.ticks (f_c k) +
+    Cost.ticks (Map.set_c E k (Cost.value (f_c k)) m))%N.
+Proof.
+  rewrite get_or_cost_equation. destruct (Map.get E k m); lia.
+Qed.
+
+(** Memoized traversal charges the head lookup and continues with its actual returned cache. *)
+Theorem map_memo_cost_equation {K V} (E : encoding K) (f_c : K -> Cost.t V)
+    xs (m : t K V) :
+  Cost.ticks (map_memo_c E f_c xs m) =
+    match xs with
+    | [] => 0%N
+    | k :: rest =>
+      (1 + Cost.ticks (get_or_c E f_c k m) +
+        Cost.ticks (map_memo_c E f_c rest
+          (snd (get_or E (fun a => Cost.value (f_c a)) k m))))%N
+    end.
+Proof.
+  destruct xs; [reflexivity|].
+  cbn [map_memo_c]. autorewrite with galois_cost.
+  rewrite get_or_c_value. lia.
+Qed.
+
 Arguments get_or_c {K V} E f_c k m : simpl never.
 Arguments get_or {K V} E f k m : simpl never.
 Arguments map_memo_c {K V} E f_c xs m : simpl never.

@@ -175,6 +175,62 @@ Proof.
   reflexivity.
 Qed.
 
+(** Costed collection observes only the values of its key callback. *)
+Theorem collect_c_value {K V} (E : encoding K) (key_c : V -> Cost.t K) xs idx :
+  Cost.value (collect_c E key_c xs idx) =
+    Cost.value (collect_c E
+      (Cost.lift (fun _ => 1%N) (fun x => Cost.value (key_c x))) xs idx).
+Proof.
+  apply collect_value_ext. reflexivity.
+Qed.
+
+(** Collection preserves map well-formedness for arbitrary costed key callbacks. *)
+Theorem wf_collect_c {K V} (E : encoding K) (key_c : V -> Cost.t K) xs idx :
+  wf E idx -> wf E (Cost.value (collect_c E key_c xs idx)).
+Proof.
+  intro Hwf. rewrite collect_c_value. now apply wf_collect.
+Qed.
+
+(** Every collected bucket is the reversed input filter followed by its original bucket. *)
+Theorem find_collect_c {K V} (E : encoding K) (key_c : V -> Cost.t K) k xs idx :
+  wf E idx ->
+  find E k (Cost.value (collect_c E key_c xs idx)) =
+    rev (filter (fun a => eqb E (Cost.value (key_c a)) k) xs) ++ find E k idx.
+Proof.
+  intro Hwf. rewrite collect_c_value. now apply find_collect.
+Qed.
+
+Local Lemma collect_support {K V} (E : encoding K) (HE : encoding_laws E)
+    (key : V -> K) xs idx k bucket :
+  wf E idx ->
+  Map.get E k (Cost.value
+    (collect_c E (Cost.lift (fun _ => 1%N) key) xs idx)) = Some bucket ->
+  (exists x, In x xs /\ key x = k) \/ exists old, Map.get E k idx = Some old.
+Proof.
+  revert idx. induction xs as [|x rest IH]; intros idx Hwf Hget.
+  - right. now exists bucket.
+  - rewrite collect_value in Hget.
+    destruct (IH _ (Map.wf_update E (key x) _ idx Hwf) Hget) as [Hinput|[old Hold]].
+    + left. destruct Hinput as [a [Ha Heq]]. exists a. split; [now right|exact Heq].
+    + rewrite Map.get_update in Hold by exact Hwf.
+      destruct (eqb_spec E HE k (key x)) as [Heq|Hne].
+      * left. exists x. split; [now left|symmetry; exact Heq].
+      * right. now exists old.
+Qed.
+
+(** Every stored bucket key comes from an actual visited callback value. *)
+Theorem collect_keys {K V} (E : encoding K) (HE : encoding_laws E)
+    (key_c : V -> Cost.t K) xs k bucket :
+  Map.get E k (Cost.value (collect_c E key_c xs Map.empty)) = Some bucket ->
+  exists x, In x xs /\ Cost.value (key_c x) = k.
+Proof.
+  intro Hget. rewrite collect_c_value in Hget.
+  destruct (collect_support E HE (fun x => Cost.value (key_c x))
+    xs Map.empty k bucket (Map.wf_empty E) Hget) as [Hinput|[old Hold]].
+  - exact Hinput.
+  - rewrite Map.get_empty in Hold. discriminate.
+Qed.
+
 (** Bucket lookup has exactly the charge of a map lookup. *)
 Theorem find_cost {K V} (E : encoding K) k (idx : t K V) :
   Cost.ticks (find_c E k idx) = Cost.ticks (Map.get_c E k idx).

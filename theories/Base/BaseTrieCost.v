@@ -972,6 +972,55 @@ Proof.
     cbn [nodes_ne binding_weight_ne values_work_ne]; nia.
 Qed.
 
+(** Mapping keeps every callback charge and visits physical nodes independently of bindings. *)
+Theorem map_cost_relative {A B} (f : A -> Cost.t B) tr :
+  (Cost.ticks (TrieMerge.map_c f tr) <=
+    2 * skeleton_nodes tr + binding_weight (fun v => Cost.ticks (f v)) tr)%N.
+Proof.
+  unfold TrieMerge.map_c. eapply N.le_trans; [apply filter_cost_relative|].
+  rewrite (binding_weight_ext (fun v => Cost.ticks (Cost.map (@Some B) (f v)))
+    (fun v => Cost.ticks (f v))) by (intro v; apply Cost.ticks_map).
+  reflexivity.
+Qed.
+
+Local Lemma binding_weight_node {A} (w : A -> N) l o r :
+  binding_weight w (Trie.node l o r) =
+    (binding_weight w l + (match o with None => 0 | Some v => w v end) +
+      binding_weight w r)%N.
+Proof.
+  destruct l, o, r; cbn [Trie.node binding_weight binding_weight_ne]; lia.
+Qed.
+
+Local Lemma weight_sum_app {A} (w : A -> N) (xs ys : list (positive * A)) :
+  fold_right (fun pv n => (w (snd pv) + n)%N) 0%N (xs ++ ys) =
+    (fold_right (fun pv n => (w (snd pv) + n)%N) 0%N xs +
+      fold_right (fun pv n => (w (snd pv) + n)%N) 0%N ys)%N.
+Proof.
+  induction xs as [|x xs IH]; cbn [app fold_right]; rewrite ?IH; lia.
+Qed.
+
+Local Lemma weight_sum_shift {A} (w : A -> N) (bit : positive -> positive)
+    (xs : list (positive * A)) :
+  fold_right (fun pv n => (w (snd pv) + n)%N) 0%N
+    (List.map (fun pv => (bit (fst pv), snd pv)) xs) =
+  fold_right (fun pv n => (w (snd pv) + n)%N) 0%N xs.
+Proof.
+  induction xs as [|[p v] xs IH]; cbn [List.map fold_right snd fst];
+    rewrite ?IH; reflexivity.
+Qed.
+
+(** Binding weights equal the sum over the actual public backend enumeration. *)
+Theorem binding_weight_elements {A} (w : A -> N) (tr : Trie.t A) :
+  binding_weight w tr =
+    fold_right (fun pv n => (w (snd pv) + n)%N) 0%N (TrieMerge.elements tr).
+Proof.
+  induction tr as [|l o r IHl IHr] using Trie.node_ind.
+  - rewrite TrieMerge.elements_entries. reflexivity.
+  - rewrite binding_weight_node, TrieMerge.elements_node,
+      !weight_sum_app, !weight_sum_shift.
+    rewrite <- IHl, <- IHr. destruct o; cbn [fold_right snd]; lia.
+Qed.
+
 Local Lemma values_work_bound {A B} (w : B -> A -> N) (f : B -> A -> Cost.t B) tr b c :
   (forall b v, (w b v <= c)%N) ->
   (values_work w f tr b <= c * binding_weight (fun _ => 1) tr)%N.

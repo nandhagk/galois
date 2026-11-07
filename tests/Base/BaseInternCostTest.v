@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List NArith.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseIntern.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseIntern BaseInternCost.
 Import List.ListNotations.
 
 Example intern_hit_cost_client {K} (E : encoding K) k i (s : Intern.t K) :
@@ -42,6 +42,45 @@ Example intern_allocation_counts :
     Cost.ticks (Intern.intern_c nat_encoding 0
       (Intern.of_list nat_encoding [0])),
     Cost.ticks (Intern.of_list_c nat_encoding [])) = (9, 3, 0)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example dense_bits_client {K} (E : encoding K) (HE : encoding_laws E)
+    k i (s : Intern.t K) :
+  Intern.wf E s -> Intern.find E k s = Some i ->
+  (key_bits positive_encoding i <=
+    N.pos (Pos.size (Pos.of_succ_nat (Intern.size s))))%N.
+Proof.
+  apply (InternCost.dense_id_bits E HE).
+Qed.
+
+Example dense_boundary_bits :
+  (key_bits positive_encoding 1%positive, key_bits positive_encoding 2%positive,
+    key_bits positive_encoding 3%positive, key_bits positive_encoding 4%positive) =
+    (1, 2, 2, 3)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_list_tick_count :
+  Cost.ticks (Intern.of_list_c nat_encoding [2; 1; 2]) = 30%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_numeric_bound_client :
+  (Cost.ticks (Intern.of_list_c nat_encoding [2; 1; 2]%nat) <= 42)%N.
+Proof.
+  apply (InternCost.of_list_cost Map.cost_laws_hold nat_encoding [2; 1; 2] 1 2).
+  intros k [Heq|[Heq|[Heq|Hfalse]]]; try contradiction; subst k;
+    vm_compute; split; discriminate.
+Qed.
+
+Example intern_missing_lookup_ticks :
+  (Intern.find nat_encoding 4 (Intern.of_list nat_encoding [2; 1; 2]),
+    Cost.ticks (Intern.find_c nat_encoding 4 (Intern.of_list nat_encoding [2; 1; 2]))) =
+    (None, 5%N).
 Proof.
   vm_compute. reflexivity.
 Qed.

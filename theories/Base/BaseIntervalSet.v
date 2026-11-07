@@ -4,7 +4,7 @@
     For example, [(0, 2)] contains zero and one but not two.
     Builds on: Stdlib and Cost. *)
 
-From Stdlib Require Import ZArith List Bool Lia Sorting.Sorted.
+From Stdlib Require Import ZArith NArith List Bool Lia Sorting.Sorted.
 From Galois.Cost Require Import CostMonad.
 Import List.ListNotations.
 
@@ -910,6 +910,232 @@ Proof.
     setoid_rewrite mem_singleton. repeat setoid_rewrite andb_true_iff.
     setoid_rewrite Z.leb_le. setoid_rewrite Z.ltb_lt. firstorder.
   - apply wf_inter; [apply wf_singleton|exact Hx].
+Qed.
+
+Local Lemma merge_length xs ys :
+  length (merge xs ys) = (length xs + length ys)%nat.
+Proof.
+  revert ys. induction xs as [|x xt IH]; intro ys.
+  - rewrite merge_equation. reflexivity.
+  - induction ys as [|y yt IHr].
+    + rewrite merge_equation. cbn [length]. lia.
+    + rewrite merge_equation. destruct (fst x <=? fst y);
+        cbn [length]; rewrite ?IH, ?IHr; cbn [length]; lia.
+Qed.
+
+Local Lemma merge_cost xs ys :
+  (Cost.ticks (merge_c xs ys) <= N.of_nat (length xs + length ys))%N.
+Proof.
+  revert ys. induction xs as [|x xt IH]; intro ys.
+  - cbn [merge_c]. rewrite Cost.ticks_ret. lia.
+  - induction ys as [|y yt IHr].
+    + cbn [merge_c]. rewrite Cost.ticks_ret. lia.
+    + change (Cost.ticks (Cost.bind Cost.step (fun _ =>
+        if (fst x <=? fst y)%Z then Cost.map (cons x) (merge_c xt (y :: yt))
+        else Cost.map (cons y) (merge_c (x :: xt) yt))) <=
+        N.of_nat (length (x :: xt) + length (y :: yt)))%N.
+      autorewrite with galois_cost. destruct (fst x <=? fst y);
+        rewrite Cost.ticks_map; cbn [length] in *;
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *;
+        specialize (IH (y :: yt)); cbn [length] in IH;
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in IH; lia.
+Qed.
+
+Local Lemma coalesce_from_cost rs r :
+  Cost.ticks (coalesce_from_c r rs) = N.of_nat (length rs).
+Proof.
+  revert r. induction rs as [|s rest IH]; intro r; [reflexivity|].
+  cbn [coalesce_from_c]. autorewrite with galois_cost.
+  destruct (snd r <? fst s); rewrite ?Cost.ticks_map, IH;
+    cbn [length]; rewrite Nat2N.inj_succ; lia.
+Qed.
+
+Local Lemma coalesce_cost rs :
+  Cost.ticks (coalesce_c rs) = N.of_nat (length rs).
+Proof.
+  destruct rs as [|r rest]; [reflexivity|].
+  unfold coalesce_c. autorewrite with galois_cost.
+  rewrite coalesce_from_cost. cbn [length]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Local Lemma cut_cost ys lo hi tail finish a :
+  (forall zs, (Cost.ticks (finish zs) <= a + N.of_nat (length zs))%N) ->
+  (Cost.ticks (cut_c lo hi tail finish ys) <= a + 1 + N.of_nat (length ys))%N.
+Proof.
+  revert lo hi. induction ys as [|[m n] rest IH]; intros lo hi Hfinish.
+  - cbn [cut_c]. rewrite Cost.ticks_ret. lia.
+  - cbn [cut_c]. autorewrite with galois_cost.
+    pose proof (IH lo hi Hfinish) as Hsame.
+    pose proof (IH n hi Hfinish) as Hsplit.
+    pose proof (Hfinish ((m, n) :: rest)) as Hstop.
+    destruct (n <=? lo), (hi <=? m), (m <=? lo), (hi <=? n);
+      rewrite ?Cost.ticks_map; cbn [length] in *;
+      rewrite Nat2N.inj_succ in *; try lia.
+    all: apply (proj1 (N.add_le_mono_l _ _ 1)) in Hstop.
+    all: eapply N.le_trans; [exact Hstop|]; lia.
+Qed.
+
+Local Lemma subtract_cost xs ys :
+  (Cost.ticks (subtract_c xs ys) <=
+    2 * N.of_nat (length xs) + N.of_nat (length ys))%N.
+Proof.
+  revert ys. induction xs as [|[lo hi] tail IH]; intro ys.
+  - cbn [subtract_c]. rewrite Cost.ticks_ret. lia.
+  - cbn [subtract_c]. autorewrite with galois_cost.
+    pose proof (cut_cost ys lo hi tail (subtract_c tail)
+      (2 * N.of_nat (length tail)) IH) as Hcut.
+    cbn [length]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Local Lemma cut_length ys lo hi tail finish :
+  (forall zs, (length (Cost.value (finish zs)) <= length tail + length zs)%nat) ->
+  (length (cut lo hi tail finish ys) <= 1 + length tail + length ys)%nat.
+Proof.
+  revert lo hi. induction ys as [|[m n] rest IH]; intros lo hi Hfinish.
+  - rewrite cut_equation. cbn [length]. lia.
+  - rewrite cut_equation.
+    pose proof (IH lo hi Hfinish) as Hsame.
+    pose proof (IH n hi Hfinish) as Hsplit.
+    pose proof (Hfinish ((m, n) :: rest)) as Hstop.
+    destruct (n <=? lo), (hi <=? m), (m <=? lo), (hi <=? n);
+      cbn [length] in *; try lia.
+    all: first
+      [eapply Nat.le_trans; [exact Hstop|]; lia
+      |eapply Nat.le_trans; [apply le_n_S; exact Hstop|]; lia].
+Qed.
+
+(** Difference can split ranges but emits at most one range per input endpoint pair. *)
+Theorem diff_length xs ys : (length (diff xs ys) <= length xs + length ys)%nat.
+Proof.
+  change (length (subtract xs ys) <= length xs + length ys)%nat.
+  revert ys. induction xs as [|[lo hi] tail IH]; intro ys.
+  - rewrite subtract_equation. cbn [length]. lia.
+  - rewrite subtract_equation. apply cut_length. exact IH.
+Qed.
+
+(** Membership inspects at most the original number of ranges, including raw noncanonical lists. *)
+Theorem mem_cost xs b :
+  (Cost.ticks (mem_c xs b) <= N.of_nat (length xs))%N.
+Proof.
+  induction xs as [|r rest IH]; [reflexivity|].
+  cbn [mem_c]. autorewrite with galois_cost.
+  destruct ((fst r <=? b) && (b <? snd r)); rewrite ?Cost.ticks_ret;
+    cbn [length]; rewrite Nat2N.inj_succ; lia.
+Qed.
+
+(** Union pays one merge traversal and one coalescing traversal of the merged ranges. *)
+Theorem union_cost xs ys :
+  (Cost.ticks (union_c xs ys) <= 2 * N.of_nat (length xs + length ys))%N.
+Proof.
+  unfold union_c. rewrite Cost.ticks_bind, coalesce_cost.
+  fold (merge xs ys). rewrite merge_length.
+  pose proof (merge_cost xs ys). lia.
+Qed.
+
+(** Difference consumes each left range and each skipped right range once. *)
+Theorem diff_cost xs ys :
+  (Cost.ticks (diff_c xs ys) <=
+    2 * N.of_nat (length xs) + N.of_nat (length ys))%N.
+Proof.
+  apply subtract_cost.
+Qed.
+
+(** Two differences remain linear because splitting increases length by at most the inputs' sum. *)
+Theorem inter_cost xs ys :
+  (Cost.ticks (inter_c xs ys) <=
+    5 * N.of_nat (length xs) + 2 * N.of_nat (length ys))%N.
+Proof.
+  unfold inter_c. rewrite Cost.ticks_bind. fold (diff xs ys).
+  pose proof (diff_cost xs ys) as Hfirst.
+  pose proof (diff_cost xs (diff xs ys)) as Hsecond.
+  pose proof (diff_length xs ys) as Hlength.
+  assert (Hn : (N.of_nat (length (diff xs ys)) <=
+    N.of_nat (length xs) + N.of_nat (length ys))%N).
+  { rewrite <- Nat2N.inj_add. lia. }
+  lia.
+Qed.
+
+(** Singleton construction emits at most one range and performs no traversal. *)
+Theorem singleton_length r : (length (singleton r) <= 1)%nat.
+Proof.
+  rewrite singleton_equation. destruct (fst r <? snd r); cbn [length]; lia.
+Qed.
+
+(** Empty construction allocates only a constant list constructor. *)
+Theorem empty_cost : Cost.ticks empty_c = 0%N.
+Proof.
+  reflexivity.
+Qed.
+
+(** Singleton construction performs only constant-size endpoint tests. *)
+Theorem singleton_cost r : Cost.ticks (singleton_c r) = 0%N.
+Proof.
+  reflexivity.
+Qed.
+
+(** Returning the range representation needs no traversal. *)
+Theorem elements_cost xs : Cost.ticks (elements_c xs) = 0%N.
+Proof.
+  reflexivity.
+Qed.
+
+(** Adding one range includes the coalescing work even when it bridges many existing ranges. *)
+Theorem add_cost r xs :
+  (Cost.ticks (add_c r xs) <= 2 * (1 + N.of_nat (length xs)))%N.
+Proof.
+  unfold add_c. rewrite Cost.ticks_bind. fold (singleton r).
+  rewrite singleton_cost. pose proof (union_cost (singleton r) xs) as Hcost.
+  pose proof (singleton_length r) as Hlength.
+  assert (Hn : (N.of_nat (length (singleton r)) <= 1)%N) by lia.
+  rewrite Nat2N.inj_add in Hcost. lia.
+Qed.
+
+(** Removing one range includes all split cases of the subtraction traversal. *)
+Theorem remove_cost r xs :
+  (Cost.ticks (remove_c r xs) <= 2 * N.of_nat (length xs) + 1)%N.
+Proof.
+  unfold remove_c. rewrite Cost.ticks_bind. fold (singleton r).
+  rewrite singleton_cost. pose proof (diff_cost xs (singleton r)) as Hcost.
+  pose proof (singleton_length r) as Hlength.
+  assert (Hn : (N.of_nat (length (singleton r)) <= 1)%N) by lia. lia.
+Qed.
+
+(** Emptiness inspects at most one root list constructor. *)
+Theorem is_empty_cost xs : (Cost.ticks (is_empty_c xs) <= 1)%N.
+Proof.
+  destruct xs; cbn [is_empty_c]; autorewrite with galois_cost; lia.
+Qed.
+
+(** Subset adds at most one emptiness tick to its difference traversal. *)
+Theorem subset_cost xs ys :
+  (Cost.ticks (subset_c xs ys) <=
+    2 * N.of_nat (length xs) + N.of_nat (length ys) + 1)%N.
+Proof.
+  unfold subset_c. rewrite Cost.ticks_bind.
+  pose proof (diff_cost xs ys) as Hdiff.
+  pose proof (is_empty_cost (Cost.value (diff_c xs ys))) as Hempty. lia.
+Qed.
+
+(** Coverage includes empty and reversed queries at the same linear bound. *)
+Theorem covers_cost xs r :
+  (Cost.ticks (covers_c xs r) <= 3 + N.of_nat (length xs))%N.
+Proof.
+  unfold covers_c. rewrite Cost.ticks_bind. fold (singleton r).
+  rewrite singleton_cost. pose proof (subset_cost (singleton r) xs) as Hcost.
+  pose proof (singleton_length r) as Hlength.
+  assert (Hn : (N.of_nat (length (singleton r)) <= 1)%N) by lia. lia.
+Qed.
+
+(** Intersection queries include the nonemptiness observation after both difference passes. *)
+Theorem intersects_cost xs r :
+  (Cost.ticks (intersects_c xs r) <= 6 + 2 * N.of_nat (length xs))%N.
+Proof.
+  unfold intersects_c. rewrite !Cost.ticks_bind, Cost.ticks_map, singleton_cost.
+  fold (singleton r).
+  pose proof (inter_cost (singleton r) xs) as Hcost.
+  pose proof (is_empty_cost (Cost.value (inter_c (singleton r) xs))) as Hempty.
+  pose proof (singleton_length r) as Hlength.
+  assert (Hn : (N.of_nat (length (singleton r)) <= 1)%N) by lia. lia.
 Qed.
 
 Arguments empty_c : simpl never.

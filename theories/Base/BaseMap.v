@@ -857,6 +857,50 @@ Proof.
     rewrite (proj2 (code_compare_eq _ _) eq_refl) in Hafter. discriminate.
 Qed.
 
+(** Costed update retains lookup, callback invocation and the selected write's full charge. *)
+Theorem update_cost {K V} (E : encoding K) k (f_c : option V -> Cost.t (option V))
+    (m : t K V) :
+  Cost.ticks (update_c E k f_c m) =
+    (Cost.ticks (get_c E k m) + 1 + Cost.ticks (f_c (get E k m)) +
+      match Cost.value (f_c (get E k m)) with
+      | Some v => Cost.ticks (set_c E k v m)
+      | None => Cost.ticks (remove_c E k m)
+      end)%N.
+Proof.
+  unfold update_c. autorewrite with galois_cost. fold (get E k m).
+  destruct (Cost.value (f_c (get E k m))); lia.
+Qed.
+
+(** Map mapping delegates its stored pairs to the backend's public costed mapping operation. *)
+Theorem map_backend {K V W} (f_c : V -> Cost.t W) (m : t K V) :
+  map_c f_c m =
+    TrieMerge.map_c (fun kv => Cost.map (fun w => (fst kv, w)) (f_c (snd kv))) m.
+Proof.
+  reflexivity.
+Qed.
+
+(** Public map enumeration drops only the code component of backend enumeration. *)
+Theorem elements_backend {K V} (m : t K V) :
+  elements m = List.map snd (TrieMerge.elements m).
+Proof.
+  apply elements_equation.
+Qed.
+
+(** A successful backend binding in a well-formed map is stored at its original key's code. *)
+Theorem stored_code {K V} (E : encoding K) (m : t K V) p k v :
+  wf E m -> Trie.get p m = Some (k, v) -> encode E k = p.
+Proof.
+  intros Hwf Hget. exact (Hwf p k v Hget).
+Qed.
+
+(** A stored binding in a well-formed map is visible through its original key. *)
+Theorem stored_get {K V} (E : encoding K) (m : t K V) p k v :
+  wf E m -> Trie.get p m = Some (k, v) -> get E k m = Some v.
+Proof.
+  intros Hwf Hget. rewrite get_equation, get_code_trie, (stored_code E m p k v Hwf Hget).
+  now rewrite Hget.
+Qed.
+
 (** A finite support list bounds the cardinality of a well-formed map. *)
 Theorem size_support_bound {K V} (E : encoding K) (HE : encoding_laws E)
     (U : list K) (m : t K V) :
