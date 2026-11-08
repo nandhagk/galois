@@ -8,7 +8,7 @@ From Stdlib Require Import List PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
-  GraphSccSpec GraphTarjan GraphTarjanState.
+  GraphSccSpec GraphTarjan GraphTarjanState GraphTarjanLow GraphTarjanTrace GraphTarjanPartition.
 Import List.ListNotations.
 
 Module TarjanExact.
@@ -111,6 +111,59 @@ Theorem compute_trace {V E} (p : Prepared.t V E) scope roots :
         (SearchRun.events p scope roots) Tarjan.initial).
 Proof.
   apply TarjanStateFacts.compute_trace.
+Qed.
+
+(** Every complete actual search leaves Tarjan's pending stack empty across all root boundaries. *)
+Theorem stack_empty {V E} (p : Prepared.t V E) scope roots :
+  Prepared.ready p ->
+  Tarjan.stack (snd (Cost.value
+    (SearchRun.run_c p Tarjan.visitor scope roots Tarjan.initial))) = [].
+Proof.
+  apply TarjanTrace.actual_stack_empty.
+Qed.
+
+(** The actual components form a duplicate-free flattened partition. *)
+Theorem partition_unique {V E} (p : Prepared.t V E) scope roots :
+  Prepared.ready p -> NoDup (concat (Scc.components (Tarjan.compute p scope roots))).
+Proof.
+  apply TarjanPartition.partition_unique.
+Qed.
+
+(** The actual partition covers exactly scoped reachability for arbitrary supplied roots. *)
+Theorem partition_complete {V E} (p : Prepared.t V E) scope roots v :
+  Prepared.ready p ->
+  (In v (concat (Scc.components (Tarjan.compute p scope roots))) <->
+    Search.scoped_reachable p scope roots v).
+Proof.
+  apply TarjanPartition.partition_complete.
+Qed.
+
+(** The actual owner map is exactly the one-based index of each containing output component. *)
+Theorem owners_exact {V E} (p : Prepared.t V E) scope roots v i :
+  Prepared.ready p ->
+  (Map.get positive_encoding v (Scc.comp_of (Tarjan.compute p scope roots)) = Some i <->
+    exists c, nth_error (Scc.components (Tarjan.compute p scope roots))
+      (Nat.pred (Pos.to_nat i)) = Some c /\ In v c).
+Proof.
+  apply TarjanPartition.owners_exact.
+Qed.
+
+(** Every scoped reachable vertex has its actual component owner without a default index. *)
+Theorem visited_has_component {V E} (p : Prepared.t V E) scope roots v :
+  Prepared.ready p -> Search.scoped_reachable p scope roots v ->
+  exists i, Map.get positive_encoding v (Scc.comp_of (Tarjan.compute p scope roots)) = Some i.
+Proof.
+  apply TarjanPartition.visited_has_component.
+Qed.
+
+(** Every pair of actual component members has scoped paths in both directions. *)
+Theorem components_mutual {V E} (p : Prepared.t V E) scope roots c u v :
+  Prepared.ready p -> In c (Scc.components (Tarjan.compute p scope roots)) ->
+  In u c -> In v c ->
+  (exists es, Search.scoped_path p scope u es v) /\
+    (exists es, Search.scoped_path p scope v es u).
+Proof.
+  apply TarjanPartition.components_mutual.
 Qed.
 
 End TarjanExact.

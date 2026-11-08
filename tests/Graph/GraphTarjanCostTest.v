@@ -7,7 +7,8 @@
 From Stdlib Require Import List PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphTarjan GraphCondense GraphTarjanCost.
+From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchCost GraphTarjan GraphCondense
+  GraphTarjanCost.
 From Galois.Tests.Graph Require Import GraphTarjanTest.
 Import List.ListNotations.
 
@@ -26,6 +27,38 @@ Qed.
 Example nested_tick_observation : nested_ticks = 437%N.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Example line_below_scc_cost :
+  (line_ticks <= TarjanCost.scc_k *
+    TarjanCost.scc_size TarjanFixtures.line [1]%positive 3)%N.
+Proof.
+  vm_compute. discriminate.
+Qed.
+
+Example nested_below_scc_cost :
+  (nested_ticks <= TarjanCost.scc_k *
+    TarjanCost.scc_size TarjanFixtures.nested [1]%positive 3)%N.
+Proof.
+  vm_compute. discriminate.
+Qed.
+
+(** Local preparation supplies the finite global-ID and supplied-root width budget. *)
+Example line_width : SearchCost.width_bound TarjanFixtures.line [1]%positive 3.
+Proof.
+  intros v [[name [Hin Hi]]|Hv].
+  - change (In name [1; 2; 3; 4]%nat) in Hin.
+    destruct Hin as [<-|[<-|[<-|[<-|Hfalse]]]]; [| | | |contradiction].
+    all: vm_compute in Hi; inversion Hi; subst v; vm_compute; discriminate.
+  - destruct Hv as [<-|Hfalse]; [vm_compute; discriminate|contradiction].
+Qed.
+
+(** The numeric cost theorem applies to the actual prepared line and its actual visitor computation. *)
+Example line_cost_client :
+  (Cost.ticks (Tarjan.compute_c TarjanFixtures.line TarjanFixtures.unrestricted [1]%positive) <=
+    TarjanCost.scc_k * TarjanCost.scc_size TarjanFixtures.line [1]%positive 3)%N.
+Proof.
+  apply TarjanCost.scc_cost; [exact (proj1 TarjanFixtures.fixtures_ready)|exact line_width].
 Qed.
 
 Definition condense_ticks {V E} (p : Prepared.t V E) :=
@@ -84,7 +117,7 @@ Example entry_local_amortisation :
       Tarjan.initial) +
     TarjanCost.potential 3 (Visitor.apply Tarjan.visitor
       (Search.Enter 1%positive (@None (nat * positive))) Tarjan.initial) <=
-    TarjanCost.scc_k * (1 + 3) + TarjanCost.potential 3 Tarjan.initial)%N.
+    TarjanCost.visitor_k * (1 + 3) + TarjanCost.potential 3 Tarjan.initial)%N.
 Proof.
   apply TarjanCost.amortised.
   - vm_compute. discriminate.

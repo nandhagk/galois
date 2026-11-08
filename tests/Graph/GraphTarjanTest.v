@@ -275,4 +275,49 @@ Proof.
   exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
 Qed.
 
+Example separate_root_invocations_components :
+  Scc.components (Tarjan.compute line unrestricted [3; 99; 1; 3]%positive) =
+    [[4]; [3]; [2]; [1]]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Separate actual root invocations finish with no shared pending Tarjan vertices. *)
+Example actual_multiple_root_stack_drained :
+  Tarjan.stack (snd (Cost.value
+    (SearchRun.run_c line Tarjan.visitor unrestricted [3; 99; 1; 3]%positive Tarjan.initial))) =
+    [].
+Proof.
+  apply TarjanExact.stack_empty. exact (proj1 fixtures_ready).
+Qed.
+
+(** The actual restricted partition has complete scoped coverage for each queried ID. *)
+Example actual_partition_coverage v :
+  In v (concat (Scc.components (Tarjan.compute nested unknown_within
+    [99; 2; 2; 1; 99]%positive))) <->
+  Search.scoped_reachable nested unknown_within [99; 2; 2; 1; 99]%positive v.
+Proof.
+  apply TarjanExact.partition_complete. exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+Qed.
+
+(** Each actual owner is the exact one-based position of its containing restricted component. *)
+Example actual_one_based_owner v i :
+  Map.get positive_encoding v (Scc.comp_of (Tarjan.compute nested unknown_within
+    [99; 2; 2; 1; 99]%positive)) = Some i <->
+  exists c, nth_error (Scc.components (Tarjan.compute nested unknown_within
+    [99; 2; 2; 1; 99]%positive)) (Nat.pred (Pos.to_nat i)) = Some c /\ In v c.
+Proof.
+  apply TarjanExact.owners_exact. exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+Qed.
+
+(** Every actual scoped reachable vertex has its proved component owner without a default index. *)
+Example actual_reachable_vertex_has_owner v :
+  Search.scoped_reachable nested unknown_within [99; 2; 2; 1; 99]%positive v ->
+  exists i, Map.get positive_encoding v (Scc.comp_of (Tarjan.compute nested unknown_within
+    [99; 2; 2; 1; 99]%positive)) = Some i.
+Proof.
+  apply TarjanExact.visited_has_component.
+  exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+Qed.
+
 End TarjanFixtures.
