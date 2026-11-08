@@ -325,7 +325,8 @@ Record laws {V E} (p : t V E) : Prop := {
 Definition ready {V E} (p : t V E) :=
   graph_wf (graph p) /\ (forall v, NoDup (Graph.out (graph p) v)) /\ laws p.
 
-Local Lemma present_spec {A B} (f : A -> option B) xs y :
+(** Present mapping contains exactly the successful callback results of input occurrences. *)
+Theorem present_spec {A B} (f : A -> option B) xs y :
   In y (present f xs) <-> exists x, In x xs /\ f x = Some y.
 Proof.
   induction xs as [|x rest IH]; cbn [present].

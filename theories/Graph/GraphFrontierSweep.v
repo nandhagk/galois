@@ -113,6 +113,19 @@ Definition successors_c {V E} (p : Prepared.t V E) scope all v :=
     let* valid := member_c x all in
     Cost.ret (admitted && valid)) targets.
 
+(** Successor filtering retains the charged lookup, target traversal and both predicates. *)
+Theorem successors_equation {V E} (p : Prepared.t V E) scope all v :
+  successors_c p scope all v =
+    (let* edges := Prepared.succ_edges_c p v in
+     let* targets := map_c (fun ej => Cost.ret (snd ej)) edges in
+     filter_c (fun x =>
+       let* admitted := Scope.admits_c scope x in
+       let* valid := member_c x all in
+       Cost.ret (admitted && valid)) targets).
+Proof.
+  reflexivity.
+Qed.
+
 (** Costed successor filtering preserves the reference checker adjacency. *)
 Theorem successors_value {V E} (p : Prepared.t V E) scope v :
   Cost.value (successors_c p scope (Reach.universe p) v) = Reach.successors p scope v.
@@ -127,6 +140,17 @@ Definition roots_c scope all roots :=
     let* root := member_c x roots in
     let* admitted := Scope.admits_c scope x in
     Cost.ret (root && admitted)) all.
+
+(** Root filtering visits the universe and retains both membership and admission charges. *)
+Theorem roots_equation scope all roots :
+  roots_c scope all roots =
+    filter_c (fun x =>
+      let* root := member_c x roots in
+      let* admitted := Scope.admits_c scope x in
+      Cost.ret (root && admitted)) all.
+Proof.
+  reflexivity.
+Qed.
 
 (** Costed root filtering preserves every reference root occurrence decision. *)
 Theorem roots_value {V E} (p : Prepared.t V E) scope roots :
@@ -209,6 +233,21 @@ Definition reach_c {V E} (p : Prepared.t V E) scope roots :=
   let* result := Walk.closure_c next member_c remove_c
     fuel initial all [] in
   FinSet.of_list_c positive_encoding (snd result).
+
+(** Reachability retains setup, budget construction, the shared closure and materialization. *)
+Theorem reach_equation {V E} (p : Prepared.t V E) scope roots :
+  reach_c p scope roots =
+    (let* all := universe_c p in
+     let next := successors_c p scope all in
+     let* initial := roots_c scope all roots in
+     let* credit := credit_c next all in
+     let* size := length_c initial in
+     let* fuel := Prepared.budget_c (credit + size) in
+     let* result := Walk.closure_c next member_c remove_c fuel initial all [] in
+     FinSet.of_list_c positive_encoding (snd result)).
+Proof.
+  reflexivity.
+Qed.
 
 Local Lemma loop_extra next n pending unseen seen :
   fst (Reach.loop next n pending unseen seen) = [] ->

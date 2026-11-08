@@ -5,11 +5,12 @@
     Builds on: GraphFrontierSweep and GraphFixtures. *)
 
 From Stdlib Require Import List PArith NArith.
-From Galois.Cost Require Import CostMonad.
+From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphFixtures GraphCheckDom
-  GraphFrontierSweep.
-Import List.ListNotations.
+  GraphVisitor GraphWalk GraphFrontierSweep.
+Import List.ListNotations Cost.Notations.
+Open Scope nat_scope.
 
 Definition row {V E} (p : Prepared.t V E) t i :=
   FinSet.elements (Map.find_or positive_encoding FinSet.empty i
@@ -112,4 +113,46 @@ Example unknown_row :
   row Fixtures.Diamond.prepared Fixtures.Diamond.tree 42 = [].
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** Arbitrary scoped successor costs can be composed without expanding the owner body. *)
+Example scoped_successor_cost_client {V E} (p : Prepared.t V E) scope all v :
+  Cost.ticks (FrontierSweep.successors_c p scope all v) =
+    Cost.ticks
+      (let* edges := Prepared.succ_edges_c p v in
+       let* targets := map_c (fun ej => Cost.ret (snd ej)) edges in
+       filter_c (fun x =>
+         let* admitted := Scope.admits_c scope x in
+         let* valid := FrontierSweep.member_c x all in
+         Cost.ret (admitted && valid)%bool) targets).
+Proof.
+  rewrite FrontierSweep.successors_equation. reflexivity.
+Qed.
+
+(** Arbitrary scoped roots retain the exact charged universe filter. *)
+Example scoped_roots_cost_client scope all roots :
+  Cost.ticks (FrontierSweep.roots_c scope all roots) =
+    Cost.ticks (filter_c (fun x =>
+      let* root := FrontierSweep.member_c x roots in
+      let* admitted := Scope.admits_c scope x in
+      Cost.ret (root && admitted)%bool) all).
+Proof.
+  rewrite FrontierSweep.roots_equation. reflexivity.
+Qed.
+
+(** The reachability equation exposes every actual setup and closure charge. *)
+Example scoped_reach_cost_client {V E} (p : Prepared.t V E) scope roots :
+  Cost.ticks (FrontierSweep.reach_c p scope roots) =
+    Cost.ticks
+      (let* all := FrontierSweep.universe_c p in
+       let next := FrontierSweep.successors_c p scope all in
+       let* initial := FrontierSweep.roots_c scope all roots in
+       let* credit := FrontierSweep.credit_c next all in
+       let* size := length_c initial in
+       let* fuel := Prepared.budget_c (credit + size) in
+       let* result := Walk.closure_c next FrontierSweep.member_c FrontierSweep.remove_c
+         fuel initial all [] in
+       FinSet.of_list_c positive_encoding (snd result)).
+Proof.
+  rewrite FrontierSweep.reach_equation. reflexivity.
 Qed.

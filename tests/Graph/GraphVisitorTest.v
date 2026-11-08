@@ -76,3 +76,24 @@ Example missing_numbers_rejected : Search.classify numbered 9%positive 1%positiv
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** The scope cost equation applies to arbitrary raw blocked and optional-region sets. *)
+Example scope_cost_client s v :
+  Cost.ticks (Scope.admits_c s v) =
+    (1 + Cost.ticks (FinSet.mem_c positive_encoding v (Scope.blocked s)) +
+      if FinSet.mem positive_encoding v (Scope.blocked s) then 0 else
+      match Scope.within s with
+      | None => 0
+      | Some region => Cost.ticks (FinSet.mem_c positive_encoding v region)
+      end)%N.
+Proof.
+  apply Scope.admits_cost_equation.
+Qed.
+
+Example scope_selected_query_ticks :
+  (Cost.ticks (Scope.admits_c restricted 1%positive),
+    Cost.ticks (Scope.admits_c restricted 2%positive),
+    Cost.ticks (Scope.admits_c restricted 3%positive)) = (4, 9, 9)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.

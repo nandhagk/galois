@@ -42,6 +42,23 @@ Proof.
   destruct (within s); reflexivity.
 Qed.
 
+(** Admission charges the blocked query and any selected region query. *)
+Theorem admits_cost_equation s v :
+  Cost.ticks (admits_c s v) =
+    (1 + Cost.ticks (FinSet.mem_c positive_encoding v (blocked s)) +
+      if FinSet.mem positive_encoding v (blocked s) then 0 else
+      match within s with
+      | None => 0
+      | Some region => Cost.ticks (FinSet.mem_c positive_encoding v region)
+      end)%N.
+Proof.
+  unfold admits_c. autorewrite with galois_cost.
+  fold (FinSet.mem positive_encoding v (blocked s)).
+  destruct (FinSet.mem positive_encoding v (blocked s)).
+  - autorewrite with galois_cost. lia.
+  - destruct (within s); autorewrite with galois_cost; lia.
+Qed.
+
 Arguments admits_c s v : simpl never.
 Arguments admits s v : simpl never.
 

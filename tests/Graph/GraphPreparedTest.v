@@ -5,6 +5,7 @@
     Builds on: GraphPrepared and GraphModelTest. *)
 
 From Stdlib Require Import List PArith.
+From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Graph Require Import GraphModel GraphPrepared.
 From Galois.Tests.Graph Require Import GraphModelTest.
@@ -107,4 +108,21 @@ Proof.
   apply Prepared.reverse_ready; [exact diamond_ready|].
   intros i [<-|Hfalse]; [|contradiction].
   exists 4. split; vm_compute; auto.
+Qed.
+
+(** Successful charged option results retain their actual input witnesses. *)
+Example present_membership_client {A B} (f : A -> Cost.t (option B)) xs y :
+  In y (Cost.value (Prepared.present_c f xs)) <->
+    exists x, In x xs /\ Cost.value (f x) = Some y.
+Proof.
+  rewrite Prepared.present_c_value.
+  apply Prepared.present_spec.
+Qed.
+
+Example present_duplicates_and_missing :
+  Cost.value (Prepared.present_c
+    (fun x : positive => Cost.ret (if Pos.eqb x 2 then None else Some x)) [1; 2; 1]) =
+    [1; 1].
+Proof.
+  vm_compute. reflexivity.
 Qed.
