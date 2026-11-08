@@ -1051,6 +1051,134 @@ Proof.
   assert (HN : (N.of_nat count <= N.of_nat N)%N) by lia. nia.
 Qed.
 
+(** Emptiness means that every key has no live priority, including keys outside support. *)
+Theorem is_empty_spec {K} (E : encoding K) (q : t K) :
+  wf E q -> (is_empty q = true <-> forall k, priority E k q = None).
+Proof.
+  intro Hwf.
+  change (Map.is_empty (live q) = true <-> forall k, Map.get E k (live q) = None).
+  apply Map.is_empty_spec. exact (proj1 (proj2 Hwf)).
+Qed.
+
+(** A failed pop proves that every key is absent through the public queue observations. *)
+Theorem pop_none_priority {K} (E : encoding K) (HE : encoding_laws E) (q : t K) :
+  wf E q -> pop E q = None -> forall k, priority E k q = None.
+Proof.
+  intros Hwf Hnone.
+  apply (proj1 (is_empty_spec E q Hwf)).
+  apply (proj1 (pop_none_empty E HE q Hwf)). exact Hnone.
+Qed.
+
+(** An absent-key push adds one pending entry without any representation or encoding premises. *)
+Theorem pending_count_push_absent {K} (E : encoding K) p k (q : t K) :
+  priority E k q = None -> pending_count (push E p k q) = S (pending_count q).
+Proof.
+  intro Habsent. rewrite push_equation, Habsent. reflexivity.
+Qed.
+
+(** Inserting an absent key preserves the stale count even when the input counters are raw. *)
+Theorem stale_push_absent {K} (E : encoding K) p k (q : t K) :
+  priority E k q = None -> stale (push E p k q) = stale q.
+Proof.
+  intro Habsent. rewrite push_equation, Habsent. reflexivity.
+Qed.
+
+(** The empty queue starts with zero stale entries. *)
+Theorem stale_empty {K} : stale (@empty K) = 0.
+Proof.
+  reflexivity.
+Qed.
+
+(** The empty pending support satisfies every finite key budget. *)
+Theorem key_budget_empty {K} (E : encoding K) w : key_budget E w (@empty K).
+Proof.
+  intros e Hin. contradiction.
+Qed.
+
+(** An absent push extends the pending key budget by the new query's actual encoder and width. *)
+Theorem key_budget_push_absent {K} (E : encoding K) p k (q : t K) w :
+  priority E k q = None -> key_budget E w q ->
+  (Cost.ticks (encode_c E k) <= w)%N ->
+  (N.pos (Pos.size (encode E k)) <= w)%N ->
+  key_budget E w (push E p k q).
+Proof.
+  intros Habsent Hbudget Hencode Hbits. rewrite push_equation, Habsent.
+  intros e Hin. apply HeapBinomial.entries_insert in Hin.
+  destruct Hin as [Hnew|Hold].
+  - cbn [HeapBinomial.tree_entries] in Hnew.
+    destruct Hnew as [Hequal|Hfalse]; [subst e; split; assumption|contradiction].
+  - exact (Hbudget e Hold).
+Qed.
+
+(** Zero count-level staleness is exact counter equality on a well-formed queue. *)
+Theorem stale_zero_counts {K} (E : encoding K) (HE : encoding_laws E) (q : t K) :
+  wf E q -> stale q = 0 -> pending_count q = live_count q.
+Proof.
+  intros Hwf Hzero.
+  pose proof (live_pending_bound E HE q Hwf) as Hbound.
+  unfold stale in Hzero. lia.
+Qed.
+
+Local Lemma pop_step_no_stale_no_continue {K} (E : encoding K) (HE : encoding_laws E) q :
+  wf E q -> stale q = 0 -> forall next,
+  Cost.value (pop_step_c E (live q) (live_count q) (pending q, pending_count q)) <> inl next.
+Proof.
+  intros Hwf Hzero next Hnext.
+  pose proof (stale_zero_counts E HE q Hwf Hzero) as Hcounts.
+  rewrite pop_step_equation in Hnext.
+  pose proof (HeapBinomial.remove_min_correct _ _ (proj1 Hwf)) as Hheap.
+  destruct (HeapBinomial.remove_min (pending q)) as [[[[p c] k] rest]|] eqn:Hremove;
+    [|discriminate].
+  assert (Hstale : Map.get E k (live q) <> Some p).
+  { intro Hlive. rewrite Hlive, Pos.eqb_refl in Hnext. discriminate. }
+  pose proof (wf_skip E (pending q) p c k rest (live q) (live_count q) (pending_count q)
+    Hwf Hremove Hstale) as Hskip.
+  pose proof (live_pending_bound E HE _ Hskip) as Hbound. cbn in Hbound.
+  destruct Hheap as [_ [_ [_ [Hremoved _]]]].
+  pose proof (proj2 (proj2 (proj2 (proj2 Hwf)))) as Htotal. lia.
+Qed.
+
+Local Lemma pop_no_stale_first_step {K} (E : encoding K) (HE : encoding_laws E) q q' p k :
+  wf E q -> stale q = 0 -> pop E q = Some (p, k, q') ->
+  Cost.value (pop_step_c E (live q) (live_count q) (pending q, pending_count q)) =
+    inr (Some (p, k, q')).
+Proof.
+  intros Hwf Hzero Hpop.
+  unfold pop, pop_c in Hpop. autorewrite with galois_cost in Hpop.
+  fold (HeapBinomial.sufficient_fuel (pending q)) in Hpop.
+  destruct (Cost.value (iterate (pop_step_c E (live q) (live_count q))
+    (HeapBinomial.sufficient_fuel (pending q)) (pending q, pending_count q)))
+    as [state|result] eqn:Hiteration; [discriminate|].
+  subst result.
+  destruct (iterate_inr_stops (pop_step_c E (live q) (live_count q))
+    (HeapBinomial.sufficient_fuel (pending q)) (pending q, pending_count q)
+    (Some (p, k, q')) Hiteration) as [used [last [Hused [Hprefix Hterminal]]]].
+  assert (Hlast : last = (pending q, pending_count q)).
+  { inversion Hprefix as [s|budget s result Hstop|budget s next final Hnext Htail]; subst.
+    - reflexivity.
+    - exfalso. exact (pop_step_no_stale_no_continue E HE q Hwf Hzero _ Hnext). }
+  rewrite Hlast in Hterminal. exact Hterminal.
+Qed.
+
+(** A successful no-stale pop retains zero staleness and removes exactly one pending entry. *)
+Theorem pop_no_stale {K} (E : encoding K) (HE : encoding_laws E) q q' p k :
+  wf E q -> stale q = 0 -> pop E q = Some (p, k, q') ->
+  stale q' = 0 /\ pending_count q' + 1 = pending_count q.
+Proof.
+  intros Hwf Hzero Hpop.
+  pose proof (stale_zero_counts E HE q Hwf Hzero) as Hcounts.
+  pose proof (size_pop E HE q q' p k Hwf Hpop) as Hsize.
+  change (live_count q = S (live_count q')) in Hsize.
+  pose proof (pop_no_stale_first_step E HE q q' p k Hwf Hzero Hpop) as Hstep.
+  rewrite pop_step_equation in Hstep.
+  destruct (HeapBinomial.remove_min (pending q)) as [[[[priority code] key] rest]|];
+    [|discriminate].
+  destruct (Map.get E key (live q)) as [current|]; [|discriminate].
+  destruct (Pos.eqb priority current); [|discriminate].
+  inversion Hstep; subst q'. unfold stale. cbn [pending_count live_count].
+  split; lia.
+Qed.
+
 Arguments empty_c {K} : simpl never.
 Arguments empty {K} : simpl never.
 Arguments priority_c {K} E k q : simpl never.

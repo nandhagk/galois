@@ -4,7 +4,7 @@
     For example, a known pending cap pays for a pop that discards several obsolete entries.
     Builds on: BaseHeap and the public Map cost laws. *)
 
-From Stdlib Require Import List NArith PeanoNat.
+From Stdlib Require Import List NArith PeanoNat Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Export BaseHeap.
 From Galois.Base Require Import BaseEncoding BaseMap BaseHeapBinomial BaseHeapBinomialCost.
@@ -105,6 +105,41 @@ Theorem push_cost_callee {K} (E : encoding K) p k q W :
     Cost.ticks (Map.set_c E k p (Heap.live q)) + W + N.of_nat (stale q) * W)%N.
 Proof.
   apply Heap.push_cost_callee.
+Qed.
+
+(** Count-level zero staleness gives zero potential without any representation premise. *)
+Theorem heap_potential_zero {K} P w (q : Heap.t K) :
+  Heap.stale q = 0%nat -> heap_potential P w q = 0%N.
+Proof.
+  intro Hzero. unfold heap_potential, Heap.heap_potential. rewrite Hzero. reflexivity.
+Qed.
+
+(** Zero input potential turns the actual amortised pop inequality into a worst-case bound. *)
+Theorem pop_cost_no_stale {K} (E : encoding K) (HE : encoding_laws E)
+    (laws : Map.cost_laws) q P w :
+  Heap.wf E q -> Heap.key_budget E w q -> Heap.stale q = 0%nat ->
+  (Heap.pending_count q <= P)%nat ->
+  (Cost.ticks (Heap.pop_c E q) <= heap_cost P w)%N.
+Proof.
+  intros Hwf Hbudget Hzero HP.
+  pose proof (pop_cost_total E HE laws q P w Hwf Hbudget HP) as Hcost.
+  rewrite (heap_potential_zero P w q Hzero) in Hcost. lia.
+Qed.
+
+(** Successful no-stale pop couples the bound and maintained counts to its actual returned queue. *)
+Theorem pop_cost_no_stale_result {K} (E : encoding K) (HE : encoding_laws E)
+    (laws : Map.cost_laws) q q' p k P w :
+  Heap.wf E q -> Heap.key_budget E w q -> Heap.stale q = 0%nat ->
+  (Heap.pending_count q <= P)%nat -> Heap.pop E q = Some (p, k, q') ->
+  Heap.wf E q' /\ Heap.stale q' = 0%nat /\
+  (Heap.pending_count q' + 1 = Heap.pending_count q)%nat /\
+  (Cost.ticks (Heap.pop_c E q) <= heap_cost P w)%N.
+Proof.
+  intros Hwf Hbudget Hzero HP Hpop.
+  destruct (Heap.pop_no_stale E HE q q' p k Hwf Hzero Hpop) as [Hzero' Hcount].
+  split; [exact (Heap.wf_pop E q q' p k Hwf Hpop)|].
+  split; [exact Hzero'|]. split; [exact Hcount|].
+  exact (pop_cost_no_stale E HE laws q P w Hwf Hbudget Hzero HP).
 Qed.
 
 End HeapCost.

@@ -4,7 +4,7 @@
     For example, removing a decreased key leaves two obsolete entries for a later pop.
     Builds on: BaseHeapCost and BaseHeapBinomialCost. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List NArith Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseHeapCost BaseHeapBinomial
   BaseHeapBinomialCost.
@@ -286,4 +286,66 @@ Example heap_successful_subsequent_credit :
     (Heap.heap_cost 130 2 + Heap.heap_potential 130 2 successful_stale_rest) = true.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** * Symbolic clients for absent-only worklist queues *)
+
+(** Empty construction establishes the maintained zero-stale and finite-key-budget facts. *)
+Theorem heap_empty_no_stale_client {K} (E : encoding K) w :
+  Heap.wf E (@Heap.empty K) /\ Heap.stale (@Heap.empty K) = 0%nat /\
+  Heap.key_budget E w (@Heap.empty K).
+Proof.
+  split; [apply Heap.wf_empty|].
+  split; [apply Heap.stale_empty|apply Heap.key_budget_empty].
+Qed.
+
+(** An absent-row insertion preserves the caller's no-stale invariant and raises pending count. *)
+Theorem heap_absent_push_no_stale_client {K} (E : encoding K) p k q :
+  Heap.wf E q -> Heap.stale q = 0%nat -> Heap.priority E k q = None ->
+  Heap.wf E (Heap.push E p k q) /\ Heap.stale (Heap.push E p k q) = 0%nat /\
+  Heap.pending_count (Heap.push E p k q) = S (Heap.pending_count q).
+Proof.
+  intros Hwf Hzero Habsent. split; [apply Heap.wf_push; exact Hwf|].
+  split.
+  - rewrite (Heap.stale_push_absent E p k q Habsent). exact Hzero.
+  - exact (Heap.pending_count_push_absent E p k q Habsent).
+Qed.
+
+(** The actual returned queue after an absent push and successful pop regains the old count. *)
+Theorem heap_absent_push_pop_no_stale_client {K} (E : encoding K) (HE : encoding_laws E)
+    (laws : Map.cost_laws) q p k q' popped_priority popped_key P w :
+  Heap.wf E q -> Heap.stale q = 0%nat -> Heap.key_budget E w q ->
+  Heap.priority E k q = None ->
+  (Cost.ticks (encode_c E k) <= w)%N ->
+  (N.pos (Pos.size (encode E k)) <= w)%N ->
+  (S (Heap.pending_count q) <= P)%nat ->
+  Heap.pop E (Heap.push E p k q) = Some (popped_priority, popped_key, q') ->
+  Heap.wf E q' /\ Heap.stale q' = 0%nat /\
+  Heap.pending_count q' = Heap.pending_count q /\
+  (Cost.ticks (Heap.pop_c E (Heap.push E p k q)) <= HeapCost.heap_cost P w)%N.
+Proof.
+  intros Hwf Hzero Hbudget Habsent Hencode Hbits HP Hpop.
+  destruct (heap_absent_push_no_stale_client E p k q Hwf Hzero Habsent)
+    as [Hwf_push [Hzero_push Hpending]].
+  pose proof (Heap.key_budget_push_absent E p k q w Habsent Hbudget Hencode Hbits)
+    as Hbudget_push.
+  assert (Hcap : (Heap.pending_count (Heap.push E p k q) <= P)%nat) by lia.
+  destruct (HeapCost.pop_cost_no_stale_result E HE laws (Heap.push E p k q) q'
+    popped_priority popped_key P w Hwf_push Hbudget_push Hzero_push Hcap Hpop)
+    as [Hwf' [Hzero' [Hpending' Hcost]]].
+  split; [exact Hwf'|]. split; [exact Hzero'|]. split; [lia|exact Hcost].
+Qed.
+
+(** A failed actual pop exposes absence at every key without inspecting the private live Map. *)
+Theorem heap_pop_none_priority_client {K} (E : encoding K) (HE : encoding_laws E) q :
+  Heap.wf E q -> Heap.pop E q = None -> forall k, Heap.priority E k q = None.
+Proof.
+  exact (Heap.pop_none_priority E HE q).
+Qed.
+
+(** The public emptiness characterization also needs no injectivity premise. *)
+Theorem heap_is_empty_priority_client {K} (E : encoding K) q :
+  Heap.wf E q -> (Heap.is_empty q = true <-> forall k, Heap.priority E k q = None).
+Proof.
+  exact (Heap.is_empty_spec E q).
 Qed.
