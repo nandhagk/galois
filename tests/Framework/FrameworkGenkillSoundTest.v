@@ -50,11 +50,25 @@ Proof.
   - intros s l t Hr Hstep Hbad; contradiction.
 Qed.
 
+(** Agreement permits either input y value and keeps x unconstrained. *)
+Definition read_m c : semantics state bool :=
+  Semantics (fun s => In (pc s) (Graph.entries (Cfg.graph c))) (step (m c)).
+
+Lemma read_link_ok c : graph_wf (Cfg.graph c) -> link_laws (read_m c) (Cfg.graph c) (lk c).
+Proof.
+  intro Hwf; constructor.
+  - exact Hwf.
+  - intros s Hentry; exact Hentry.
+  - intros s l t Hr [e He]; right; exists e; exact He.
+  - intros e s l t Hr Hstep [Hsource [Hout [-> Hlabel]]]; split; [exact Hout|reflexivity].
+  - intros s l t Hr Hstep Hbad; contradiction.
+Qed.
+
 Definition agree_problem (c : Cfg.t nat nat) :=
   Bitvector.of_pure c bool_encoding [false; true] Backward
     (fun _ => [true]) (fun _ => [false]) (fun _ => Some []).
 
-Lemma agree_laws c : bv_agree_laws (m c) (en c) (agree_problem c) (lk c) get.
+Lemma agree_laws c : bv_agree_laws (read_m c) (en c) (agree_problem c) (lk c) get.
 Proof.
   constructor.
   - intros s l t Hbad; contradiction.
@@ -74,32 +88,32 @@ Qed.
 
 Definition live_sigma (_ : nat) := set_of_list bool_encoding [true].
 
-Lemma agreement_client c :
+Lemma agreement_client c b :
   encoding_laws (Cfg.node_enc c) -> encoding_laws (Cfg.edge_enc c) ->
   graph_wf (Cfg.graph c) -> In 0 (Graph.entries (Cfg.graph c)) ->
   post_solution (Analysis.lat (Bitvector.may_analysis (agree_problem c)))
     (Analysis.system (Bitvector.may_analysis (agree_problem c))) live_sigma ->
-  same_behaviour (m c) (en c) (St 0 false false) (m c) (en c) (St 0 true false).
+  same_behaviour (read_m c) (en c) (St 0 false b) (read_m c) (en c) (St 0 true b).
 Proof.
   intros HN HE Hwf Hentry Hpost.
-  eapply (backward_may_sound (m c) (en c) (agree_problem c) (lk c) get live_sigma).
+  eapply (backward_may_sound (read_m c) (en c) (agree_problem c) (lk c) get live_sigma).
   - exact HN.
   - exact HE.
   - exact bool_encoding_laws.
   - reflexivity.
-  - apply link_ok; exact Hwf.
+  - apply read_link_ok; exact Hwf.
   - apply agree_laws.
   - exact Hpost.
-  - split; [exact Hentry|reflexivity].
-  - split; [exact Hentry|reflexivity].
+  - exact Hentry.
+  - exact Hentry.
   - reflexivity.
   - intros u Hu; apply (member_list _ bool_encoding_laws) in Hu.
     destruct Hu as [<-|Hbad]; [reflexivity|contradiction].
 Qed.
 
 Example agreement_diamond :
-  same_behaviour (m diamond) (en diamond) (St 0 false false)
-    (m diamond) (en diamond) (St 0 true false).
+  same_behaviour (read_m diamond) (en diamond) (St 0 false false)
+    (read_m diamond) (en diamond) (St 0 true false).
 Proof.
   apply agreement_client; try exact nat_encoding_laws;
     [exact diamond_wf|vm_compute; tauto|].
@@ -107,8 +121,8 @@ Proof.
 Qed.
 
 Example agreement_loop :
-  same_behaviour (m loop) (en loop) (St 0 false false)
-    (m loop) (en loop) (St 0 true false).
+  same_behaviour (read_m loop) (en loop) (St 0 false true)
+    (read_m loop) (en loop) (St 0 true true).
 Proof.
   apply agreement_client; try exact nat_encoding_laws;
     [exact loop_wf|vm_compute; tauto|].
@@ -128,6 +142,14 @@ Example agreement_boundary :
     get (St 3 false false) u = get (St 3 true true) u.
 Proof.
   intros [] Hu; vm_compute in Hu; discriminate.
+Qed.
+
+Example input_changes_observation :
+  step (read_m diamond) (St 0 false true) [true] (St 1 true true) /\
+    ~ taken diamond (St 0 false true) [false] (St 1 true true) 0.
+Proof.
+  split; [exists 0; vm_compute; tauto|].
+  intros [_ [_ [_ Hlabel]]]; discriminate.
 Qed.
 
 Definition inv_problem (c : Cfg.t nat nat) :=
