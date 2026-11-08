@@ -140,12 +140,49 @@ Qed.
 
 Definition parallel_graph :=
   Graph.of_pure [1] [1; 2]
-    (fun v => if Nat.eqb v 1 then [10; 11] else [12])
+    (fun v => filter (fun e => Nat.eqb (if Nat.eqb e 12 then 2 else 1) v) [10; 11; 12])
     (fun e => if Nat.eqb e 12 then 2 else 1)
     (fun e => if Nat.eqb e 12 then 1 else 2).
 Definition parallel := Prepared.prepare nat_encoding parallel_graph.
 
+(** The parallel-label graph is prepared from a well-formed, duplicate-free labelled adjacency. *)
+Example parallel_ready : Prepared.ready parallel.
+Proof.
+  unfold parallel, parallel_graph.
+  apply Prepared.prepare_ready; [exact nat_encoding_laws| |].
+  - constructor.
+    + cbn. repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+    + intros v Hv. vm_compute in Hv |- *. intuition congruence.
+    + intros v e He. rewrite Graph.of_pure_out, filter_In in He.
+      rewrite Graph.of_pure_source. now apply Nat.eqb_eq, (proj2 He).
+    + intros v e _ He. rewrite Graph.of_pure_out, filter_In in He.
+      rewrite Graph.of_pure_target.
+      destruct He as [He _]. cbn in He.
+      destruct He as [<-|[<-|[<-|Hfalse]]]; [vm_compute; auto|vm_compute; auto|
+        vm_compute; auto|contradiction].
+  - intro v. rewrite Graph.of_pure_out. apply NoDup_filter.
+    repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+Qed.
+
 Example parallel_labels_same_component : components parallel = [[2; 1]]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition pending_cross :=
+  prepare [1] [1; 2; 3] [(1, 2); (1, 3); (2, 1); (3, 2)].
+
+(** A finished sibling remains on Tarjan's stack until its enclosing SCC is emitted. *)
+Example pending_cross_ready : Prepared.ready pending_cross.
+Proof.
+  apply fixture_ready;
+    [ repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil
+    | intros x Hin; vm_compute in Hin |- *; intuition congruence
+    | repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil
+    | intros [a b] Hin; vm_compute in Hin |- *; intuition congruence ].
+Qed.
+
+Example cross_to_finished_pending_sibling : components pending_cross = [[3; 2; 1]]%positive.
 Proof.
   vm_compute. reflexivity.
 Qed.
