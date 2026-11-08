@@ -105,6 +105,26 @@ Definition idf_c {V E} (p : Prepared.t V E) t defs :=
   idf_pruned_c p t defs (fun _ => Cost.ret true).
 Definition idf {V E} (p : Prepared.t V E) t defs := Cost.value (idf_c p t defs).
 
+(** Pruned IDF always returns a canonical set, independently of semantic graph and tree duties. *)
+Theorem pruned_idf_wf {V E} (p : Prepared.t V E) t defs live :
+  FinSet.wf positive_encoding (idf_pruned p t defs live).
+Proof.
+  unfold idf_pruned, idf_pruned_c. rewrite Cost.value_bind.
+  fold (FrontierSweep.dominance_frontier p t). do 3 rewrite Cost.value_bind.
+  exact (FrontierSweep.closure_wf
+    (successors_c (FrontierSweep.dominance_frontier p t) live)
+    (Cost.value (FrontierSweep.universe_c p))
+    (Cost.value (initial_c (FrontierSweep.dominance_frontier p t) live
+      (Cost.value (seeds_c p defs))))).
+Qed.
+
+(** Ordinary IDF inherits canonical output from the same pruned closure computation. *)
+Theorem idf_wf {V E} (p : Prepared.t V E) t defs :
+  FinSet.wf positive_encoding (idf p t defs).
+Proof.
+  exact (pruned_idf_wf p t defs (fun _ => Cost.ret true)).
+Qed.
+
 (** Semantic liveness reads the same ID callback used by the executable closure. *)
 Definition live_on {V E} (p : Prepared.t V E) (live : positive -> Cost.t bool) n :=
   match Prepared.id_of p n with

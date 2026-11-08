@@ -7,8 +7,8 @@
 From Stdlib Require Import List PArith NArith Arith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Graph Require Import GraphFixtures GraphCheckDom GraphPrepared GraphFrontierSweep
-  GraphFrontierIdf.
+From Galois.Graph Require Import GraphFixtures GraphCheckDom GraphPrepared GraphDomSpec
+  GraphFrontierSweep GraphFrontierIdf.
 Import List.ListNotations.
 
 Example diamond_checked :
@@ -133,4 +133,28 @@ Example pruning_suppresses_further_propagation :
     ([4; 5], [4], [], [5])%positive.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** Public canonicality is available without readiness or exactness premises. *)
+Example public_idf_wf {V E} (p : Prepared.t V E) (tree : Dom.tree) defs :
+  FinSet.wf positive_encoding (FrontierIdf.idf p tree defs).
+Proof.
+  apply FrontierIdf.idf_wf.
+Qed.
+
+(** The pruned callback can be arbitrary when deriving representation validity. *)
+Example public_pruned_idf_wf {V E} (p : Prepared.t V E) (tree : Dom.tree) defs live :
+  FinSet.wf positive_encoding (FrontierIdf.idf_pruned p tree defs live).
+Proof.
+  apply FrontierIdf.pruned_idf_wf.
+Qed.
+
+(** The actual returned set can be enumerated through the public membership specification. *)
+Example diamond_idf_enumeration_client i :
+  In i (FinSet.elements (FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree [2])) <->
+    FinSet.mem positive_encoding i
+      (FrontierIdf.idf Fixtures.Diamond.prepared Fixtures.Diamond.tree [2]) = true.
+Proof.
+  apply (FinSet.elements_spec positive_encoding positive_encoding_laws).
+  apply FrontierIdf.idf_wf.
 Qed.

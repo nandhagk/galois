@@ -162,6 +162,13 @@ Definition closure_c (next : positive -> Cost.t (list positive)) all roots :=
     fuel roots all [] in
   FinSet.of_list_c positive_encoding (snd result).
 
+(** Closure materializes a canonical set even when its graph, roots or callback are raw. *)
+Theorem closure_wf next all roots :
+  FinSet.wf positive_encoding (Cost.value (closure_c next all roots)).
+Proof.
+  unfold closure_c. do 4 rewrite Cost.value_bind. apply FinSet.wf_of_list.
+Qed.
+
 (** A closed finite universe gives exact least-closure membership
     without a successful-run premise. *)
 Theorem closure_exact next all roots :
