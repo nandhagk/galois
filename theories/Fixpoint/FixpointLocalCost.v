@@ -30,7 +30,7 @@ Definition raw_support {X C A} (a : Analysis.t X C A) roots :=
 Definition support {X C A} (a : Analysis.t X C A) roots :=
   distinct (sum_encoding (Analysis.key_enc a) (Analysis.row_enc a)) (raw_support a roots).
 
-(** Canonical proof support contains each vertex key once independently of adjacency multiplicity. *)
+(** Canonical proof support contains each key once independently of adjacency multiplicity. *)
 Theorem support_nodup {X C A} (a : Analysis.t X C A) roots : NoDup (support a roots).
 Proof.
   apply distinct_nodup.

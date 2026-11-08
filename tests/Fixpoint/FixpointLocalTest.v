@@ -285,11 +285,20 @@ Qed.
 
 (** The checked cost client retains normalization and every public partial-certificate charge. *)
 Theorem checked_cost_client :
+  let E := FinSet.of_list nat_encoding (FinSet.elements (Local.explored cyclic)) in
   (Cost.ticks (Local.checked_c analysis termination [0%nat] 64%positive) <=
-    LocalCheckCost.checked_budget analysis termination [0%nat] 64%positive budget total_budget)%N.
+    LocalRunCost.run_budget analysis termination [0%nat] 64%positive budget total_budget +
+    Cost.ticks (FinSet.elements_c (Local.explored cyclic)) +
+    Cost.ticks (FinSet.of_list_c nat_encoding (FinSet.elements (Local.explored cyclic))) +
+    Cost.ticks (partial_rows_c nat_encoding nat_encoding ix E) +
+    fold_right (fun c n => 1 + Cost.ticks (partial_constraint_c nat_encoding bool_lattice
+      system E (lookup_c nat_encoding bool_lattice (Local.values cyclic)) c) + n)
+      0 (partial_rows nat_encoding nat_encoding ix E) +
+    fold_right (fun x n => 1 + Cost.ticks (FinSet.mem_c nat_encoding x E) + n) 0 [0%nat])%N.
 Proof.
-  exact (LocalCheckCost.local_checked_cost analysis laws termination [0] 64%positive budget
-    total_budget cost_model total_cost_model).
+  pose proof (LocalCheckCost.local_checked_cost analysis laws termination [0] 64%positive budget
+    total_budget cost_model total_cost_model) as Hcost.
+  cbn zeta in Hcost |- *; rewrite cyclic_run in Hcost; exact Hcost.
 Qed.
 
 (** Successful checked local production keeps original-system reachability. *)
