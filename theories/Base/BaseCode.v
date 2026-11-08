@@ -955,3 +955,203 @@ Theorem sum_codec_cost_laws {A B} (CA : codec A) (CB : codec B) ka kb :
 Proof.
   intros HA HB. constructor. intro x. now apply sum_codec_encode_cost_le.
 Qed.
+
+(** * Encoding-only pair and sum composition *)
+
+(** Pair encodings serialize two component atoms and charge each component callback. *)
+Definition pair_encoding {A B} (EA : encoding A) (EB : encoding B) : encoding (A * B) :=
+  Encoding (fun xy =>
+    Cost.step ;;
+    Cost.step ;;
+    let* p := encode_c EA (fst xy) in
+    Cost.step ;;
+    let* q := encode_c EB (snd xy) in
+    code_encode_c (Node [Atom p; Atom q])).
+
+(** Sum encodings serialize the selected atom under the existing direct or nested node tag. *)
+Definition sum_encoding {A B} (EA : encoding A) (EB : encoding B) : encoding (A + B) :=
+  Encoding (fun x =>
+    Cost.step ;;
+    Cost.step ;;
+    match x with
+    | inl a =>
+      let* p := encode_c EA a in
+      code_encode_c (Node [Atom p])
+    | inr b =>
+      let* p := encode_c EB b in
+      code_encode_c (Node [Node [Atom p]])
+    end).
+
+(** Pair encoding uses the same serialized two-atom layout as pair codecs. *)
+Theorem pair_encoding_equation {A B} (EA : encoding A) (EB : encoding B) a b :
+  encode (pair_encoding EA EB) (a, b) =
+    code_encode (Node [Atom (encode EA a); Atom (encode EB b)]).
+Proof.
+  reflexivity.
+Qed.
+
+(** Sum encoding uses the same serialized side tags as sum codecs. *)
+Theorem sum_encoding_equation {A B} (EA : encoding A) (EB : encoding B) x :
+  encode (sum_encoding EA EB) x =
+    code_encode
+      (match x with
+      | inl a => Node [Atom (encode EA a)]
+      | inr b => Node [Node [Atom (encode EB b)]]
+      end).
+Proof.
+  destruct x; reflexivity.
+Qed.
+
+Local Lemma serialized_code_injective c d : code_encode c = code_encode d -> c = d.
+Proof.
+  intro Hcode. apply (f_equal code_decode) in Hcode.
+  rewrite !code_decode_encode in Hcode. now injection Hcode.
+Qed.
+
+(** Pair injectivity requires the two component encoding laws and no component decoders. *)
+Theorem pair_encoding_laws {A B} (EA : encoding A) (EB : encoding B) :
+  encoding_laws EA -> encoding_laws EB -> encoding_laws (pair_encoding EA EB).
+Proof.
+  intros HA HB. constructor. intros [a b] [a' b'] Hcode.
+  rewrite !pair_encoding_equation in Hcode.
+  apply serialized_code_injective in Hcode. injection Hcode as Ha Hb.
+  f_equal.
+  - exact (encode_injective HA _ _ Ha).
+  - exact (encode_injective HB _ _ Hb).
+Qed.
+
+(** Sum tags distinguish the two sides even when their component codes coincide. *)
+Theorem sum_encoding_disjoint {A B} (EA : encoding A) (EB : encoding B) a b :
+  encode (sum_encoding EA EB) (inl a) <> encode (sum_encoding EA EB) (inr b).
+Proof.
+  intro Hcode. rewrite !sum_encoding_equation in Hcode.
+  apply serialized_code_injective in Hcode. discriminate.
+Qed.
+
+(** Sum injectivity requires the two component encoding laws and no component decoders. *)
+Theorem sum_encoding_laws {A B} (EA : encoding A) (EB : encoding B) :
+  encoding_laws EA -> encoding_laws EB -> encoding_laws (sum_encoding EA EB).
+Proof.
+  intros HA HB. constructor. intros [a|b] [a'|b'] Hcode;
+    rewrite !sum_encoding_equation in Hcode;
+    apply serialized_code_injective in Hcode; try discriminate.
+  - injection Hcode as Ha. f_equal. exact (encode_injective HA _ _ Ha).
+  - injection Hcode as Hb. f_equal. exact (encode_injective HB _ _ Hb).
+Qed.
+
+(** Pair width counts both component widths and all serializer tags without law premises. *)
+Theorem pair_encoding_bits {A B} (EA : encoding A) (EB : encoding B) a b :
+  key_bits (pair_encoding EA EB) (a, b) =
+    (7 + 2 * key_bits EA a + 2 * key_bits EB b)%N.
+Proof.
+  unfold key_bits. rewrite pair_encoding_equation, code_encode_bits.
+  cbn [code_weight].
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_succ, !size_nat_N. nia.
+Qed.
+
+(** Sum width counts the selected component and its side tag without law premises. *)
+Theorem sum_encoding_bits {A B} (EA : encoding A) (EB : encoding B) x :
+  key_bits (sum_encoding EA EB) x =
+    match x with
+    | inl a => (5 + 2 * key_bits EA a)%N
+    | inr b => (8 + 2 * key_bits EB b)%N
+    end.
+Proof.
+  unfold key_bits. rewrite sum_encoding_equation. destruct x as [a|b];
+    rewrite code_encode_bits; cbn [code_weight];
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_succ, size_nat_N; nia.
+Qed.
+
+(** Pair cost retains both actual component charges and the actual serializer charge. *)
+Theorem pair_encoding_cost_equation {A B} (EA : encoding A) (EB : encoding B) a b :
+  Cost.ticks (encode_c (pair_encoding EA EB) (a, b)) =
+    (3 + Cost.ticks (encode_c EA a) + Cost.ticks (encode_c EB b) +
+      Cost.ticks (code_encode_c (Node [Atom (encode EA a); Atom (encode EB b)])))%N.
+Proof.
+  unfold pair_encoding. cbn [encode_c fst snd]. autorewrite with galois_cost.
+  unfold encode. lia.
+Qed.
+
+(** Sum cost retains the selected component charge and the actual serializer charge. *)
+Theorem sum_encoding_cost_equation {A B} (EA : encoding A) (EB : encoding B) x :
+  Cost.ticks (encode_c (sum_encoding EA EB) x) =
+    match x with
+    | inl a =>
+      (2 + Cost.ticks (encode_c EA a) +
+        Cost.ticks (code_encode_c (Node [Atom (encode EA a)])))%N
+    | inr b =>
+      (2 + Cost.ticks (encode_c EB b) +
+        Cost.ticks (code_encode_c (Node [Node [Atom (encode EB b)]])))%N
+    end.
+Proof.
+  destruct x; unfold sum_encoding; cbn [encode_c]; autorewrite with galois_cost;
+    unfold encode; lia.
+Qed.
+
+(** Pair serialization overhead is bounded separately from arbitrary component charges. *)
+Theorem pair_encoding_cost {A B} (EA : encoding A) (EB : encoding B) a b :
+  (Cost.ticks (encode_c (pair_encoding EA EB) (a, b)) <=
+    3 + Cost.ticks (encode_c EA a) + Cost.ticks (encode_c EB b) +
+      encode_k * key_bits (pair_encoding EA EB) (a, b))%N.
+Proof.
+  rewrite pair_encoding_cost_equation.
+  pose proof (code_encode_cost (Node [Atom (encode EA a); Atom (encode EB b)])) as Hcode.
+  unfold key_bits. rewrite pair_encoding_equation. lia.
+Qed.
+
+(** Sum serialization overhead is bounded separately from the selected component charge. *)
+Theorem sum_encoding_cost {A B} (EA : encoding A) (EB : encoding B) x :
+  (Cost.ticks (encode_c (sum_encoding EA EB) x) <=
+    2 +
+      match x with
+      | inl a => Cost.ticks (encode_c EA a)
+      | inr b => Cost.ticks (encode_c EB b)
+      end +
+      encode_k * key_bits (sum_encoding EA EB) x)%N.
+Proof.
+  rewrite sum_encoding_cost_equation. unfold key_bits. rewrite sum_encoding_equation.
+  destruct x as [a|b].
+  - pose proof (code_encode_cost (Node [Atom (encode EA a)])) as Hcode. lia.
+  - pose proof (code_encode_cost (Node [Node [Atom (encode EB b)]])) as Hcode. lia.
+Qed.
+
+(** Numeric pair bounds require explicit numeric laws for both component encodings. *)
+Theorem pair_encoding_encode_cost_le {A B} (EA : encoding A) (EB : encoding B) ka kb a b :
+  encoding_cost_laws EA ka -> encoding_cost_laws EB kb ->
+  (Cost.ticks (encode_c (pair_encoding EA EB) (a, b)) <=
+    (ka + kb + encode_k + 3) * key_bits (pair_encoding EA EB) (a, b))%N.
+Proof.
+  intros HA HB.
+  pose proof (pair_encoding_cost EA EB a b) as Hcost.
+  pose proof (encode_cost_bound HA a) as Ha.
+  pose proof (encode_cost_bound HB b) as Hb.
+  rewrite pair_encoding_bits in *. nia.
+Qed.
+
+(** Numeric sum bounds require explicit numeric laws for both possible component encodings. *)
+Theorem sum_encoding_encode_cost_le {A B} (EA : encoding A) (EB : encoding B) ka kb x :
+  encoding_cost_laws EA ka -> encoding_cost_laws EB kb ->
+  (Cost.ticks (encode_c (sum_encoding EA EB) x) <=
+    (ka + kb + encode_k + 2) * key_bits (sum_encoding EA EB) x)%N.
+Proof.
+  intros HA HB. pose proof (sum_encoding_cost EA EB x) as Hcost.
+  destruct x as [a|b]; rewrite sum_encoding_bits in *.
+  - pose proof (encode_cost_bound HA a). nia.
+  - pose proof (encode_cost_bound HB b). nia.
+Qed.
+
+(** Pair composition propagates numeric laws independently of injectivity. *)
+Theorem pair_encoding_cost_laws {A B} (EA : encoding A) (EB : encoding B) ka kb :
+  encoding_cost_laws EA ka -> encoding_cost_laws EB kb ->
+  encoding_cost_laws (pair_encoding EA EB) (ka + kb + encode_k + 3).
+Proof.
+  intros HA HB. constructor. intros [a b]. now apply pair_encoding_encode_cost_le.
+Qed.
+
+(** Sum composition propagates numeric laws independently of injectivity. *)
+Theorem sum_encoding_cost_laws {A B} (EA : encoding A) (EB : encoding B) ka kb :
+  encoding_cost_laws EA ka -> encoding_cost_laws EB kb ->
+  encoding_cost_laws (sum_encoding EA EB) (ka + kb + encode_k + 2).
+Proof.
+  intros HA HB. constructor. intro x. now apply sum_encoding_encode_cost_le.
+Qed.

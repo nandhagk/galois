@@ -135,3 +135,154 @@ Example pair_accounts_for_component_ticks :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** * Encoding-only public clients *)
+
+(** Nested composition needs encoding laws without supplying any decoder. *)
+Example encoding_only_nested_injective {A B C D}
+    (EA : encoding A) (EB : encoding B) (EC : encoding C) (ED : encoding D)
+    (HA : encoding_laws EA) (HB : encoding_laws EB)
+    (HC : encoding_laws EC) (HD : encoding_laws ED)
+    (x y : (A + B) * (C * D)) :
+  encode (pair_encoding (sum_encoding EA EB) (pair_encoding EC ED)) x =
+    encode (pair_encoding (sum_encoding EA EB) (pair_encoding EC ED)) y -> x = y.
+Proof.
+  apply (encode_injective
+    (pair_encoding_laws _ _ (sum_encoding_laws _ _ HA HB) (pair_encoding_laws _ _ HC HD))).
+Qed.
+
+(** Pair clients can retain arbitrary component and serializer charges symbolically. *)
+Example encoding_only_pair_cost {A B} (EA : encoding A) (EB : encoding B) a b :
+  Cost.ticks (encode_c (pair_encoding EA EB) (a, b)) =
+    (3 + Cost.ticks (encode_c EA a) + Cost.ticks (encode_c EB b) +
+      Cost.ticks (code_encode_c (Node [Atom (encode EA a); Atom (encode EB b)])))%N.
+Proof.
+  apply pair_encoding_cost_equation.
+Qed.
+
+(** Sum clients retain the selected charge without a premise about the unused side. *)
+Example encoding_only_sum_cost {A B} (EA : encoding A) (EB : encoding B) b :
+  Cost.ticks (encode_c (sum_encoding EA EB) (inr b)) =
+    (2 + Cost.ticks (encode_c EB b) +
+      Cost.ticks (code_encode_c (Node [Node [Atom (encode EB b)]])))%N.
+Proof.
+  exact (sum_encoding_cost_equation EA EB (inr b)).
+Qed.
+
+(** Numeric laws compose through nested pair and sum encodings under component premises. *)
+Example encoding_only_nested_cost_laws {A B C}
+    (EA : encoding A) (EB : encoding B) (EC : encoding C) ka kb kc :
+  encoding_cost_laws EA ka -> encoding_cost_laws EB kb -> encoding_cost_laws EC kc ->
+  encoding_cost_laws (pair_encoding EA (sum_encoding EB EC))
+    (ka + (kb + kc + encode_k + 2) + encode_k + 3).
+Proof.
+  intros HA HB HC.
+  apply pair_encoding_cost_laws.
+  - exact HA.
+  - now apply sum_encoding_cost_laws.
+Qed.
+
+(** Pair wire agreement holds for arbitrary codecs without their law premises. *)
+Example encoding_pair_codec_wire {A B} (CA : codec A) (CB : codec B) a b :
+  encode (pair_encoding (codec_enc CA) (codec_enc CB)) (a, b) =
+    encode (codec_enc (pair_codec CA CB)) (a, b).
+Proof.
+  rewrite pair_encoding_equation, pair_codec_equation. reflexivity.
+Qed.
+
+(** Sum wire agreement holds for arbitrary codecs without their law premises. *)
+Example encoding_sum_codec_wire {A B} (CA : codec A) (CB : codec B) x :
+  encode (sum_encoding (codec_enc CA) (codec_enc CB)) x =
+    encode (codec_enc (sum_codec CA CB)) x.
+Proof.
+  rewrite sum_encoding_equation, sum_codec_equation. reflexivity.
+Qed.
+
+(** Side separation holds even when component encodings have no injectivity laws. *)
+Example encoding_only_tags {A B} (EA : encoding A) (EB : encoding B) a b :
+  encode (sum_encoding EA EB) (inl a) <> encode (sum_encoding EA EB) (inr b).
+Proof.
+  apply sum_encoding_disjoint.
+Qed.
+
+(** An encoding-only fixture returns positive inputs with a caller-chosen charge. *)
+Definition charged_encoding (charge : N) : encoding positive :=
+  Encoding (Cost.lift (fun _ => charge) (fun p => p)).
+
+(** The empty carrier supplies an encoding without constructing any input or decoder. *)
+Definition empty_encoding : encoding Empty_set :=
+  Encoding (fun x : Empty_set => match x with end).
+
+(** Encoding-only pair serialization keeps component order. *)
+Example encoding_only_pair_positive :
+  code_decode (encode (pair_encoding (charged_encoding 1) (charged_encoding 1)) (1, 2)) =
+    Some (Node [Atom 1; Atom 2]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Reversing distinct pair components changes the serialized code. *)
+Example encoding_only_pair_negative :
+  Pos.eqb
+    (encode (pair_encoding (charged_encoding 1) (charged_encoding 1)) (1, 2))
+    (encode (pair_encoding (charged_encoding 1) (charged_encoding 1)) (2, 1)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Equal component codes on different sum sides have different serialized keys. *)
+Example encoding_only_sum_negative :
+  Pos.eqb
+    (encode (sum_encoding (charged_encoding 1) (charged_encoding 1)) (inl 1))
+    (encode (sum_encoding (charged_encoding 1) (charged_encoding 1)) (inr 1)) = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Either inhabited sum side serializes when the other carrier is empty. *)
+Example encoding_only_empty_side :
+  (code_decode (encode (sum_encoding (charged_encoding 1) empty_encoding) (inl 1)),
+    code_decode (encode (sum_encoding empty_encoding (charged_encoding 1)) (inr 1))) =
+    (Some (Node [Atom 1]), Some (Node [Node [Atom 1]])).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Output widths include pair tags and both sum tag shapes at the smallest atom. *)
+Example encoding_only_widths :
+  (key_bits (pair_encoding (charged_encoding 1) (charged_encoding 1)) (1, 2),
+    key_bits (sum_encoding (charged_encoding 1) empty_encoding) (inl 1),
+    key_bits (sum_encoding empty_encoding (charged_encoding 1)) (inr 1)) =
+    (13%N, 7%N, 10%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Exact observations retain both pair calls and the single selected sum call. *)
+Example encoding_only_ticks :
+  (Cost.ticks (encode_c (pair_encoding (charged_encoding 1) (charged_encoding 1)) (1, 2)),
+    Cost.ticks (encode_c (sum_encoding (charged_encoding 1) empty_encoding) (inl 1)),
+    Cost.ticks (encode_c (sum_encoding empty_encoding (charged_encoding 1)) (inr 1))) =
+    (40%N, 22%N, 31%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Expensive encoders retain their charges at the same output widths. *)
+Example encoding_only_expensive_ticks :
+  (Cost.ticks (encode_c (pair_encoding (charged_encoding 1000) (charged_encoding 1000)) (1, 2)),
+    Cost.ticks (encode_c (sum_encoding (charged_encoding 1000) (charged_encoding 1)) (inl 1)),
+    Cost.ticks (encode_c (sum_encoding (charged_encoding 1) (charged_encoding 1000)) (inr 1))) =
+    (2038%N, 1021%N, 1030%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An expensive unused sum encoder contributes no charge. *)
+Example encoding_only_unused_ticks :
+  (Cost.ticks (encode_c (sum_encoding (charged_encoding 1000) (charged_encoding 1)) (inr 1)),
+    Cost.ticks (encode_c (sum_encoding (charged_encoding 1) (charged_encoding 1000)) (inl 1))) =
+    (31%N, 22%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
