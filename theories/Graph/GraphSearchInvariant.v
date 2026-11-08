@@ -258,8 +258,7 @@ Fixpoint pending_work {E} (stack : list (SearchRun.frame E)) :=
 Definition work_measure {V E} (p : Prepared.t V E) (w : SearchRun.work E) :=
   pending_work (fst w) + white_work p (vertices p) (SearchRun.seen (snd w)).
 
-(** Any finite white-work support is bounded by its complete frame-and-outgoing credit. *)
-Theorem white_bound {V E} (p : Prepared.t V E) todo seen :
+Local Lemma white_bound {V E} (p : Prepared.t V E) todo seen :
   white_work p todo seen <= fold_right (fun v n => vertex_work p v + n) 0 todo.
 Proof.
   induction todo as [|v rest IH]; cbn [white_work fold_right]; [lia|].
