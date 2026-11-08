@@ -60,8 +60,8 @@ Theorem find_fuel_cost_callee {K} (E : encoding K) fuel x uf (allowed : K -> Pro
   (let '(root, path) := Cost.value (UnionFindLoop.walk_c E (UnionFind.parents uf) fuel x) in
     compression_budget E root path uf u) ->
   Cost.ticks (UnionFind.find_fuel_c E fuel x uf) <=
-    (g + 2) * (N.of_nat fuel + 1) +
-    2 * N.pos (Pos.size (Pos.of_nat (S fuel))) + N.of_nat fuel * (1 + u).
+    Cost.ticks (UnionFindLoop.sufficient_fuel_c fuel) + (g + 2) * (N.of_nat fuel + 1) +
+    2 * N.pos (Pos.size (UnionFindLoop.sufficient_fuel fuel)) + N.of_nat fuel * (1 + u).
 Proof.
   intros Hx Hclosed Hget Hsets.
   pose proof (UnionFindLoop.walk_cost E (UnionFind.parents uf) fuel x allowed g
@@ -137,9 +137,10 @@ Proof.
       unfold key_bound in Hkeys; lia)) as Hwalkcost.
   pose proof (compression_cost E root path uf (1 + w) (Hsets uf)) as Hcompression.
   pose proof (UnionFindLoop.path_length E _ _ _ _ _ Hpath) as Hlength.
-  pose proof (fuel_width fuel) as Hwidth.
+  pose proof (UnionFindLoop.sufficient_fuel_width fuel) as Hwidth.
+  pose proof (UnionFindLoop.sufficient_fuel_cost fuel) as Hfuelcost.
   assert (HlengthN : N.of_nat (length path) <= N.of_nat fuel) by lia.
-  rewrite Hequation. nia.
+  rewrite Hequation. rewrite Nat2N.inj_succ in Hwidth. nia.
 Qed.
 
 (** A find's rank-relative bound composes its actual binary walk and compression path. *)
@@ -373,6 +374,92 @@ Proof.
     apply (proj1 (UnionFind.keys_spec E HE uf a Hwf)). exact Ha.
 Qed.
 
+(** An empty accumulator traversal performs no pair or union work on any raw forest. *)
+Theorem unions_from_cost_nil {K} (E : encoding K) (uf : UnionFind.t K) :
+  Cost.ticks (UnionFind.unions_from_c E [] uf) = 0.
+Proof.
+  reflexivity.
+Qed.
+
+(** Each pair pays one traversal tick and calls the next pair on the actual union result. *)
+Theorem unions_from_cost_cons {K} (E : encoding K) x y pairs (uf : UnionFind.t K) :
+  Cost.ticks (UnionFind.unions_from_c E ((x, y) :: pairs) uf) =
+    1 + Cost.ticks (UnionFind.union_c E x y uf) +
+    Cost.ticks (UnionFind.unions_from_c E pairs (UnionFind.union E x y uf)).
+Proof.
+  cbn [UnionFind.unions_from_c]. autorewrite with galois_cost.
+  fold (UnionFind.union E x y uf). lia.
+Qed.
+
+(** Pair-list construction retains its constructor charge and its actual initial accumulator. *)
+Theorem of_unions_cost_equation {K} (E : encoding K) (pairs : list (K * K)) :
+  Cost.ticks (UnionFind.of_unions_c E pairs) =
+    Cost.ticks (@UnionFind.make_c K) +
+    Cost.ticks (UnionFind.unions_from_c E pairs UnionFind.make).
+Proof.
+  unfold UnionFind.of_unions_c. rewrite Cost.ticks_bind. reflexivity.
+Qed.
+
+(** A callee budget on invariant accumulators composes along the actual remaining pair list. *)
+Theorem unions_from_cost_callee {K} (E : encoding K)
+    (I : list (K * K) -> UnionFind.t K -> Prop) b :
+  (forall x y rest uf, I ((x, y) :: rest) uf ->
+    Cost.ticks (UnionFind.union_c E x y uf) <= b /\
+    I rest (UnionFind.union E x y uf)) ->
+  forall pairs uf, I pairs uf ->
+  Cost.ticks (UnionFind.unions_from_c E pairs uf) <= N.of_nat (length pairs) * (1 + b).
+Proof.
+  intros Hstep pairs. induction pairs as [|[x y] rest IH]; intros uf HI.
+  - rewrite unions_from_cost_nil. reflexivity.
+  - destruct (Hstep x y rest uf HI) as [Hunion Hnext].
+    rewrite unions_from_cost_cons.
+    pose proof (IH _ Hnext) as Htail.
+    cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Initialization is linear relative to reached union callees without Map or encoding laws. *)
+Theorem of_unions_cost_callee {K} (E : encoding K)
+    (I : list (K * K) -> UnionFind.t K -> Prop) b pairs :
+  (forall x y rest uf, I ((x, y) :: rest) uf ->
+    Cost.ticks (UnionFind.union_c E x y uf) <= b /\
+    I rest (UnionFind.union E x y uf)) ->
+  I pairs UnionFind.make ->
+  Cost.ticks (UnionFind.of_unions_c E pairs) <= N.of_nat (length pairs) * (1 + b).
+Proof.
+  intros Hstep HI.
+  rewrite of_unions_cost_equation, UnionFind.make_cost, N.add_0_l.
+  exact (unions_from_cost_callee E I b Hstep pairs UnionFind.make HI).
+Qed.
+
+Local Definition builder_domain {K} (E : encoding K) U pairs (uf : UnionFind.t K) : Prop :=
+  Forall (fun xy => In (fst xy) U /\ In (snd xy) U) pairs /\
+  UnionFindRank.rank_size_inv E uf /\ within E uf U.
+
+Local Lemma builder_numeric_step {K} (E : encoding K) (HE : encoding_laws E)
+    (laws : Map.cost_laws) U w :
+  (forall a, In a U -> key_bound E w a) ->
+  forall x y rest uf, builder_domain E U ((x, y) :: rest) uf ->
+  Cost.ticks (UnionFind.union_c E x y uf) <=
+    64 * N.of_nat (S (Nat.log2 (length U))) * (1 + w) /\
+  builder_domain E U rest (UnionFind.union E x y uf).
+Proof.
+  intros Hkeys x y rest uf [Hpairs [Hinv Hwithin]].
+  inversion Hpairs as [|pair pairs [Hx Hy] Htail]; subst.
+  pose proof (UnionFindRank.forest_wf E uf Hinv) as Hwf.
+  assert (Hbudget : support_budget E w uf) by (intros a Ha; apply Hkeys, Hwithin, Ha).
+  pose proof (union_cost_sharp E HE laws x y uf w Hinv Hbudget
+    (Hkeys x Hx) (Hkeys y Hy)) as Hhead.
+  pose proof (within_size E HE uf U Hwf Hwithin) as Hsize.
+  pose proof (Nat.log2_le_mono _ _ Hsize) as Hlog.
+  split.
+  - assert (HlogN : N.of_nat (Nat.log2 (length (UnionFind.keys E uf))) <=
+      N.of_nat (Nat.log2 (length U))) by lia.
+    rewrite Nat2N.inj_succ in *. nia.
+  - split; [exact Htail|]. split.
+    + exact (UnionFindRank.union_rank_size_inv E HE uf x y Hinv).
+    + exact (within_union E HE uf x y U Hwf Hwithin Hx Hy).
+Qed.
+
 Local Lemma unions_from_cost {K} (E : encoding K) (HE : encoding_laws E)
     (laws : Map.cost_laws) pairs U w :
   (forall a, In a U -> key_bound E w a) ->
@@ -381,22 +468,12 @@ Local Lemma unions_from_cost {K} (E : encoding K) (HE : encoding_laws E)
   Cost.ticks (UnionFind.unions_from_c E pairs uf) <=
     N.of_nat (length pairs) * uf_k * N.of_nat (S (Nat.log2 (length U))) * (1 + w).
 Proof.
-  intros Hkeys Hpairs.
-  induction Hpairs as [|[x y] pairs [Hx Hy] Htail IH]; intros uf Hinv Hwithin.
-  - reflexivity.
-  - pose proof (UnionFindRank.forest_wf E uf Hinv) as Hwf.
-    assert (Hbudget : support_budget E w uf) by (intros a Ha; apply Hkeys, Hwithin, Ha).
-    pose proof (union_cost_sharp E HE laws x y uf w Hinv Hbudget
-      (Hkeys x Hx) (Hkeys y Hy)) as Hhead.
-    pose proof (within_size E HE uf U Hwf Hwithin) as Hsize.
-    pose proof (Nat.log2_le_mono _ _ Hsize) as Hlog.
-    pose proof (UnionFindRank.union_rank_size_inv E HE uf x y Hinv) as Hinv'.
-    specialize (IH _ Hinv' (within_union E HE uf x y U Hwf Hwithin Hx Hy)).
-    cbn [UnionFind.unions_from_c]. autorewrite with galois_cost.
-    fold (UnionFind.union E x y uf).
-    assert (HlogN : N.of_nat (Nat.log2 (length (UnionFind.keys E uf))) <=
-      N.of_nat (Nat.log2 (length U))) by lia.
-    unfold uf_k in *. cbn [length]. rewrite Nat2N.inj_succ in *. nia.
+  intros Hkeys Hpairs uf Hinv Hwithin.
+  pose proof (unions_from_cost_callee E (builder_domain E U)
+    (64 * N.of_nat (S (Nat.log2 (length U))) * (1 + w))
+    (builder_numeric_step E HE laws U w Hkeys) pairs uf
+    (conj Hpairs (conj Hinv Hwithin))) as Hrelative.
+  unfold uf_k. rewrite Nat2N.inj_succ in *. nia.
 Qed.
 
 (** Pair-list initialization is linear in the number of unions times the finite-universe bound. *)
@@ -408,14 +485,15 @@ Theorem of_unions_cost {K} (E : encoding K) (HE : encoding_laws E)
     N.of_nat (length pairs) * uf_k * N.of_nat (S (Nat.log2 (length U))) * (1 + w).
 Proof.
   intros Hkeys Hpairs.
-  unfold UnionFind.of_unions_c. rewrite Cost.ticks_bind, UnionFind.make_cost.
-  change (0 + Cost.ticks (UnionFind.unions_from_c E pairs UnionFind.make) <=
-    N.of_nat (length pairs) * uf_k * N.of_nat (S (Nat.log2 (length U))) * (1 + w)).
-  rewrite N.add_0_l. apply (unions_from_cost E HE laws pairs U w Hkeys Hpairs).
-  - apply UnionFindRank.rank_size_inv_make.
-  - intros a Ha. unfold UnionFind.support in Ha.
-    rewrite UnionFind.make_equation in Ha. cbn [UnionFind.parents UnionFind.ranks] in Ha.
-    rewrite !Map.get_empty in Ha. destruct Ha; contradiction.
+  assert (Hinitial : builder_domain E U pairs UnionFind.make).
+  { split; [exact Hpairs|]. split; [apply UnionFindRank.rank_size_inv_make|].
+    intros a Ha.
+    apply (proj2 (UnionFind.keys_spec E HE UnionFind.make a (UnionFind.wf_make E))) in Ha.
+    rewrite UnionFind.keys_make in Ha. contradiction. }
+  pose proof (of_unions_cost_callee E (builder_domain E U)
+    (64 * N.of_nat (S (Nat.log2 (length U))) * (1 + w)) pairs
+    (builder_numeric_step E HE laws U w Hkeys) Hinitial) as Hrelative.
+  unfold uf_k. rewrite Nat2N.inj_succ in *. nia.
 Qed.
 
 (** The numeric find bound also exposes the requested binary logarithm of known-key count. *)

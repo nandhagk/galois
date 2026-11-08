@@ -115,7 +115,7 @@ Proof.
 Qed.
 
 Example partition_scan_traversal_ticks :
-  Cost.ticks (partition_scan_c positive_encoding [1; 2] UnionFind.make UnionFind.make) = 46%N.
+  Cost.ticks (partition_scan_c positive_encoding [1; 2] UnionFind.make UnionFind.make) = 52%N.
 Proof.
   vm_compute; reflexivity.
 Qed.

@@ -98,9 +98,56 @@ Proof.
       * eapply Path_next; eassumption.
 Qed.
 
+(** Sufficient binary fuel is built by charging each natural prefix constructor once. *)
+Fixpoint sufficient_fuel_c (fuel : nat) : Cost.t positive :=
+  match fuel with
+  | 0 => Cost.ret xH
+  | S rest =>
+    Cost.step ;;
+    let* smaller := sufficient_fuel_c rest in Cost.ret (xO smaller)
+  end.
+
+Definition sufficient_fuel fuel := Cost.value (sufficient_fuel_c fuel).
+
+(** Each charged prefix constructor contributes one binary zero digit. *)
+Theorem sufficient_fuel_equation fuel :
+  sufficient_fuel fuel =
+    match fuel with 0 => xH | S rest => xO (sufficient_fuel rest) end.
+Proof.
+  destruct fuel; reflexivity.
+Qed.
+
+(** Fuel construction charges its complete natural traversal. *)
+Theorem sufficient_fuel_cost fuel :
+  Cost.ticks (sufficient_fuel_c fuel) = N.of_nat fuel.
+Proof.
+  induction fuel as [|fuel IH]; [reflexivity|].
+  cbn [sufficient_fuel_c]. autorewrite with galois_cost.
+  rewrite IH, Nat2N.inj_succ. lia.
+Qed.
+
+(** The constructed fuel's width includes its leading one digit. *)
+Theorem sufficient_fuel_width fuel :
+  N.pos (Pos.size (sufficient_fuel fuel)) = N.of_nat (S fuel).
+Proof.
+  induction fuel as [|fuel IH]; rewrite sufficient_fuel_equation; [reflexivity|].
+  cbn [Pos.size].
+  change (N.succ (N.pos (Pos.size (sufficient_fuel fuel))) = N.of_nat (S (S fuel))).
+  rewrite IH, !Nat2N.inj_succ. reflexivity.
+Qed.
+
+(** The constructed power of two can inspect the entire prefix and its stopping state. *)
+Theorem sufficient_fuel_capacity fuel :
+  fuel < Pos.to_nat (sufficient_fuel fuel).
+Proof.
+  induction fuel as [|fuel IH]; rewrite sufficient_fuel_equation; [cbn; lia|].
+  rewrite Pos2Nat.inj_xO. lia.
+Qed.
+
 (** The actual driver returns a root and the compression-order path for the requested prefix. *)
 Definition walk_c {K} (E : encoding K) parents fuel (x : K) : Cost.t (K * list K) :=
-  let* result := iterate (step_c E parents) (Pos.of_nat (S fuel)) (fuel, x, []) in
+  let* binary := sufficient_fuel_c fuel in
+  let* result := iterate (step_c E parents) binary (fuel, x, []) in
   Cost.ret
     (match result with
     | inl (_, current, path) => (current, path)
@@ -112,11 +159,12 @@ Theorem walk_correct {K} (E : encoding K) parents fuel (x : K) :
   let '(root, path) := Cost.value (walk_c E parents fuel x) in
   path_spec E parents fuel x root path.
 Proof.
-  pose proof (iterate_value (step_c E parents) (Pos.of_nat (S fuel)) (fuel, x, [])) as Hrun.
-  destruct (runs_path E parents (Pos.to_nat (Pos.of_nat (S fuel))) fuel x [] _
-    ltac:(rewrite Nat2Pos.id by lia; lia) Hrun)
+  pose proof (iterate_value (step_c E parents) (sufficient_fuel fuel) (fuel, x, [])) as Hrun.
+  destruct (runs_path E parents (Pos.to_nat (sufficient_fuel fuel)) fuel x [] _
+    (sufficient_fuel_capacity fuel) Hrun)
     as [root [frames [Hresult Hspec]]].
-  unfold walk_c. rewrite Cost.value_bind, Hresult. cbn. rewrite app_nil_r. exact Hspec.
+  unfold walk_c. rewrite !Cost.value_bind. fold (sufficient_fuel fuel).
+  rewrite Hresult. cbn. rewrite app_nil_r. exact Hspec.
 Qed.
 
 (** Recorded compression frames never exceed the queried parent-link budget. *)
@@ -158,14 +206,14 @@ Theorem walk_cost {K} (E : encoding K) parents fuel (x : K) (allowed : K -> Prop
   (forall a b, allowed a -> Map.get E a parents = Some b -> allowed b) ->
   (forall a, allowed a -> (Cost.ticks (Map.get_c E a parents) <= g)%N) ->
   (Cost.ticks (walk_c E parents fuel x) <=
-    (g + 2) * (N.of_nat fuel + 1) +
-    2 * N.pos (Pos.size (Pos.of_nat (S fuel))))%N.
+    Cost.ticks (sufficient_fuel_c fuel) + (g + 2) * (N.of_nat fuel + 1) +
+    2 * N.pos (Pos.size (sufficient_fuel fuel)))%N.
 Proof.
   intros Hx Hclosed Hcallee.
   pose proof (iterate_cost (step_c E parents)
     (fun s => let '(remaining, current, _) := s in allowed current)
     (fun s => let '(remaining, _, _) := s in N.of_nat remaining) g
-    (Pos.of_nat (S fuel)) (fuel, x, [])) as Hcost.
+    (sufficient_fuel fuel) (fuel, x, [])) as Hcost.
   assert (Hstep : forall s : state K,
     (let '(_, current, _) := s in allowed current) ->
     (Cost.ticks (step_c E parents s) <= g)%N /\
@@ -183,16 +231,17 @@ Proof.
       destruct (Map.get E current parents) as [next|] eqn:Hparent; [|exact I].
       split; [eapply Hclosed; eassumption|lia]. }
   assert (Hbound : (Cost.ticks
-      (iterate (step_c E parents) (Pos.of_nat (S fuel)) (fuel, x, [])) <=
+      (iterate (step_c E parents) (sufficient_fuel fuel) (fuel, x, [])) <=
     (g + 2) * (N.of_nat fuel + 1) +
-    2 * N.pos (Pos.size (Pos.of_nat (S fuel))))%N).
+    2 * N.pos (Pos.size (sufficient_fuel fuel)))%N).
   { apply Hcost; [|exact Hx]. intros [[remaining current] path] Hcurrent.
     destruct (Hstep (remaining, current, path) Hcurrent) as [Hticks Hnext].
     split; [exact Hticks|]. destruct (Cost.value (step_c E parents _)) as [s'|r].
     - destruct s' as [[remaining' current'] path']. cbn in *.
       destruct Hnext as [Hcurrent' Hdecrease]. split; [exact Hcurrent'|lia].
     - exact I. }
-  unfold walk_c. rewrite Cost.ticks_bind.
+  unfold walk_c. rewrite Cost.ticks_bind. fold (sufficient_fuel fuel).
+  rewrite Cost.ticks_bind.
   destruct (Cost.value (iterate _ _ _)); rewrite Cost.ticks_ret; lia.
 Qed.
 

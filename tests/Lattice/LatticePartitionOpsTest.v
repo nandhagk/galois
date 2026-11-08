@@ -85,7 +85,7 @@ Example partition_reached_ticks :
       partition_two partition_three),
     Cost.ticks (partition_forget_c positive_encoding positive_encoding_laws 2 partition_three),
     Cost.ticks (partition_test_c positive_encoding positive_encoding_laws 3 1 partition_three)) =
-    (489%N, 188%N, 26%N).
+    (521%N, 208%N, 32%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -94,7 +94,7 @@ Example partition_update_ticks :
   (Cost.ticks (partition_union_c positive_encoding positive_encoding_laws 1 2 partition_discrete),
     Cost.ticks (partition_forget_c positive_encoding positive_encoding_laws 1 None),
     Cost.ticks (partition_test_c positive_encoding positive_encoding_laws 1 2 None)) =
-    (34%N, 1%N, 1%N).
+    (36%N, 1%N, 1%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
