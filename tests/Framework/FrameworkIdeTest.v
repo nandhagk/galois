@@ -167,6 +167,26 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** An importing client can inspect prepared arc occurrences through the public equation. *)
+Example affine_prepared_arc :
+  In (Jump.Arc 1 (1, None) (2, None) Icfg.Internal (PVal 1)) (Jump.arcs affine).
+Proof.
+  rewrite Jump.arcs_equation; vm_compute; auto.
+Qed.
+
+(** An importing client observes initial and callee roots without opening preparation. *)
+Example affine_prepared_roots :
+  Cost.value (Jump.roots_c affine 0 (Jump.arcs affine)) = [(0, None); (1, None)].
+Proof.
+  rewrite Jump.roots_c_value, Jump.arcs_equation; vm_compute; reflexivity.
+Qed.
+
+(** An importing client uses the lookup equation to reason about missing bindings. *)
+Example affine_empty_lookup k : Jump.lookup affine Map.empty k = PBot.
+Proof.
+  rewrite Jump.lookup_equation, Map.find_or_equation, Map.get_empty; reflexivity.
+Qed.
+
 Example affine_jump_rejects_missing_return :
   check_jumps affine 0 (Map.remove positive_encoding
     (encode (Jump.enc affine) ((0, None), (3, None))) affine_jump) = false.

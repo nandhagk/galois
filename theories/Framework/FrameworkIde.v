@@ -74,6 +74,26 @@ Definition arcs_c {N E P D A F} (I : Ide.t N E P D A F) :=
 
 Definition arcs {N E P D A F} (I : Ide.t N E P D A F) := Cost.value (arcs_c I).
 
+(** Prepared arcs retain exactly the listed edge and flow-output occurrences. *)
+Theorem arcs_equation {N E P D A F} (I : Ide.t N E P D A F) :
+  arcs I =
+    flat_map (fun e =>
+      flat_map (fun d =>
+        map (fun d' =>
+          Arc e
+            (Graph.source (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) e, d)
+            (Graph.target (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) e, d')
+            (Icfg.edge_kind (Ifds.icfg (Ide.ifds I)) e) (Ide.weight I e d d'))
+          (Ifds.flow (Ide.ifds I) e d)) (fact_domain (Ide.ifds I)))
+      (Cfg.edges (Icfg.cfg (Ifds.icfg (Ide.ifds I)))).
+Proof.
+  unfold arcs, arcs_c; autorewrite with galois_cost.
+  rewrite fw_edges_value, !fw_flat_map_value.
+  apply flat_map_ext; intro e; autorewrite with galois_cost.
+  rewrite fw_flat_map_value.
+  apply flat_map_ext; intro d; autorewrite with galois_cost; reflexivity.
+Qed.
+
 (** Roots are start facts followed by call-target facts, retaining occurrences. *)
 Definition roots_c {N E P D A F} (I : Ide.t N E P D A F)
     (start : N) (as_ : list (arc N E P D F)) :=
@@ -82,6 +102,19 @@ Definition roots_c {N E P D A F} (I : Ide.t N E P D A F)
   let* callees := filter_map_c (fun a =>
     Cost.ret (match kind a with Icfg.Call _ => Some (target a) | _ => None end)) as_ in
   app_c initial callees.
+
+(** Root preparation retains every initial fact and every exploded call target. *)
+Theorem roots_c_value {N E P D A F} (I : Ide.t N E P D A F) start as_ :
+  Cost.value (roots_c I start as_) =
+    map (fun d => (start, d)) (fact_domain (Ide.ifds I)) ++
+    filter_map (fun a =>
+      match kind a with
+      | Icfg.Call _ => Some (target a)
+      | _ => None
+      end) as_.
+Proof.
+  unfold roots_c; autorewrite with galois_cost; reflexivity.
+Qed.
 
 (** Rules distinguish path edges, call entry identities and matched return summaries. *)
 Inductive row (N E P D F : Type) :=
@@ -189,6 +222,14 @@ Definition lookup_c {N E P D A F} (I : Ide.t N E P D A F) (J : Map.t positive F)
 
 Definition lookup {N E P D A F} (I : Ide.t N E P D A F) J k :=
   Cost.value (lookup_c I J k).
+
+(** Missing positive-key bindings denote the micro-function lattice bottom. *)
+Theorem lookup_equation {N E P D A F} (I : Ide.t N E P D A F) J k :
+  lookup I J k =
+    Map.find_or positive_encoding (bot (Micro.lat (Ide.micro I))) (encode (enc I) k) J.
+Proof.
+  reflexivity.
+Qed.
 
 End Jump.
 
