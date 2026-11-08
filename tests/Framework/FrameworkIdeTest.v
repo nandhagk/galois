@@ -502,3 +502,91 @@ Example matched_return_composition_is_not_reversed :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(** Public reflection extracts the actual affine rows from a checked comparison assignment. *)
+Example affine_rows_reflect :
+  let sigma := fun v : nat * option unit =>
+    match fst v with 0 | 1 => PVal 41 | _ => PVal 42 end in
+  leb point_lattice (PVal 41) (sigma (0, None)) = true /\
+  (forall root dst,
+    In root (Cost.value (Jump.roots_c affine 0 (Jump.arcs affine))) ->
+    In dst (IdeValue.vertices affine) ->
+    leb point_lattice
+      (Micro.apply translations (Cost.value (Jump.lookup_c affine affine_jump (root, dst)))
+        (sigma root)) (sigma dst) = true) /\
+  (forall a p, In a (Jump.arcs affine) -> Jump.kind a = Icfg.Call p ->
+    leb point_lattice
+      (Micro.apply translations (Jump.weight a) (sigma (Jump.source a)))
+      (sigma (Jump.target a)) = true).
+Proof.
+  cbn zeta.
+  apply (proj1 (value_analysis_post_solution_iff affine (Jump.lookup_c affine affine_jump)
+    (0, None) (PVal 41) _ nat_encoding_laws nat_encoding_laws unit_encoding_laws)).
+  apply check_post_sound; exact affine_hand_candidate.
+Qed.
+
+(** Reflection rejects an assignment that loses the actual seeded value. *)
+Example affine_reflection_rejects_bottom :
+  ~ post_solution point_lattice
+    (Analysis.system (value_analysis affine (Jump.lookup_c affine affine_jump)
+      (0, None) (PVal 41))) (fun _ => PBot).
+Proof.
+  intro Hpost.
+  apply (proj1 (value_analysis_post_solution_iff affine (Jump.lookup_c affine affine_jump)
+    (0, None) (PVal 41) (fun _ => PBot)
+    nat_encoding_laws nat_encoding_laws unit_encoding_laws)) in Hpost.
+  destruct Hpost as [Hseed Hrest]; discriminate Hseed.
+Qed.
+
+(** The single-node boundary needs neither micro laws nor any fact-flow closure premise. *)
+Example no_flow_value_reflection :
+  post_solution unit_lattice
+    (Analysis.system (value_analysis no_flow_ide (Jump.lookup_c no_flow_ide no_flow_jump)
+      (0, None) tt)) (fun _ => tt).
+Proof.
+  apply (proj2 (value_analysis_post_solution_iff no_flow_ide
+    (Jump.lookup_c no_flow_ide no_flow_jump) (0, None) tt (fun _ => tt)
+    nat_encoding_laws nat_encoding_laws unit_encoding_laws)).
+  split; [reflexivity|]; split; intros; reflexivity.
+Qed.
+
+Definition unlisted_call : Ifds.t nat nat nat unit :=
+  Ifds.of_pure
+    (Icfg.of_pure unsupported_cfg nat_encoding
+      (fun e => if Nat.eqb e 0 then Icfg.Call 7 else Icfg.Internal))
+    unit_encoding [] (fun e d => match e, d with 0, None => [Some tt] | _, _ => [] end).
+
+Definition unlisted_call_ide :=
+  Ide.Make unlisted_call bool_lattice reachability_micro (fun _ _ _ => Cost.ret true).
+
+Definition loses_unlisted_call (v : nat * option unit) :=
+  match v with
+  | (1, Some _) => false
+  | _ => true
+  end.
+
+(** Raw call rows retain a flow output outside the supplied ordinary-fact inventory. *)
+Example reflection_retains_unlisted_call_output :
+  ~ post_solution bool_lattice
+    (Analysis.system (value_analysis unlisted_call_ide (fun _ => Cost.ret true)
+      (0, None) true)) loses_unlisted_call.
+Proof.
+  intro Hpost.
+  apply (proj1 (value_analysis_post_solution_iff unlisted_call_ide (fun _ => Cost.ret true)
+    (0, None) true loses_unlisted_call
+    nat_encoding_laws nat_encoding_laws unit_encoding_laws)) in Hpost.
+  destruct Hpost as [Hseed [Hjumps Hcalls]].
+  assert (Harc : In (Jump.Arc 0 (0, None) (1, Some tt) (Icfg.Call 7) true)
+    (Jump.arcs unlisted_call_ide)).
+  { rewrite Jump.arcs_equation; vm_compute; auto. }
+  specialize (Hcalls _ 7 Harc eq_refl); discriminate Hcalls.
+Qed.
+
+(** Raw callee roots retain the same unlisted output even though destinations use listed facts. *)
+Example reflection_retains_unlisted_call_root :
+  In (1, Some tt)
+    (Cost.value (Jump.roots_c unlisted_call_ide 0 (Jump.arcs unlisted_call_ide))) /\
+  ~ In (1, Some tt) (IdeValue.vertices unlisted_call_ide).
+Proof.
+  rewrite Jump.roots_c_value, Jump.arcs_equation; vm_compute; split; intuition discriminate.
+Qed.

@@ -472,12 +472,318 @@ Definition analysis_c {N E P D A F} (I : Ide.t N E P D A F) jump_c start a0 :=
   Cost.ret (Analysis.Make (key_enc I) (row_enc I) (Ide.values I)
     (Rows.system cs get) (Rows.static cs get) (Policy.by_code (key_enc I))).
 
+(** Listed value vertices retain every supplied node and fact occurrence. *)
+Definition vertices {N E P D A F} (I : Ide.t N E P D A F) :=
+  flat_map (fun n => map (fun d => (n, d)) (Jump.fact_domain (Ide.ifds I)))
+    (Graph.nodes (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I))))).
+
+Local Definition model_plan {N E P D A F} (I : Ide.t N E P D A F)
+    (jump_c : jkey N D -> Cost.t F) start a0 (r : vrow N E D) :
+    Rows.t (N * option D) A :=
+  match r with
+  | VSeed => Rows.Make start [] (fun _ => Cost.ret a0)
+  | VJump from into => Rows.Make into [from] (fun fs =>
+      match fs with
+      | a :: _ =>
+        Cost.step ;; Micro.apply_c (Ide.micro I) (Cost.value (jump_c (from, into))) a
+      | [] => Cost.ret (bot (Ide.values I))
+      end)
+  | VCall e from into =>
+    Rows.Make
+      (Graph.target (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) e, into)
+      [(Graph.source (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) e, from)]
+      (fun fs =>
+        match fs with
+        | a :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Ide.weight I e from into) a
+        | [] => Cost.ret (bot (Ide.values I))
+        end)
+  end.
+
+Local Definition call_plan {N E P D A F} (I : Ide.t N E P D A F)
+    (a : Jump.arc N E P D F) :=
+  Rows.Make (Jump.target a) [Jump.source a] (fun fs =>
+    match fs with
+    | value :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Jump.weight a) value
+    | [] => Cost.ret (bot (Ide.values I))
+    end).
+
+Local Lemma vertices_value {N E P D A F} (I : Ide.t N E P D A F) :
+  Cost.value (fw_flat_map_c (fun n =>
+    map_c (fun d => Cost.ret (n, d))
+      (None :: map (fun d => Cost.value (Cost.ret (Some d))) (Ifds.facts (Ide.ifds I))))
+    (Graph.nodes (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))))) = vertices I.
+Proof.
+  rewrite fw_flat_map_value; unfold vertices.
+  apply flat_map_ext; intro n; rewrite value_map_c; reflexivity.
+Qed.
+
+Local Lemma summaries_value {N E P D A F} (I : Ide.t N E P D A F)
+    (jump_c : jkey N D -> Cost.t F) start a0 roots vs :
+  Cost.value (fw_flat_map_c (fun root =>
+    map_c (fun dst =>
+      Cost.step ;;
+      let* weight := jump_c (root, dst) in
+      Cost.ret (@VJump N E D root dst, Rows.Make dst [root] (fun fs =>
+        match fs with
+        | a :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) weight a
+        | [] => Cost.ret (bot (Ide.values I))
+        end))) vs) roots) =
+  flat_map (fun root => map (fun dst =>
+    (VJump root dst, model_plan I jump_c start a0 (VJump root dst))) vs) roots.
+Proof.
+  rewrite fw_flat_map_value; apply flat_map_ext; intro root.
+  rewrite value_map_c; apply map_ext; intro dst; reflexivity.
+Qed.
+
+Local Lemma prepare_value {N E P D A F} (I : Ide.t N E P D A F) jump_c start a0 :
+  Cost.value (prepare_c I jump_c start a0) =
+    (VSeed, model_plan I jump_c start a0 VSeed) ::
+    (flat_map (fun root => map (fun dst =>
+      (VJump root dst, model_plan I jump_c start a0 (VJump root dst))) (vertices I))
+      (Cost.value (Jump.roots_c I (fst start) (Jump.arcs I))) ++
+    filter_map (fun a =>
+      match Jump.kind a with
+      | Icfg.Call _ => Some
+          (VCall (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)), call_plan I a)
+      | _ => None
+      end) (Jump.arcs I)).
+Proof.
+  unfold prepare_c; rewrite Cost.value_bind; fold (Jump.arcs I).
+  remember (Jump.arcs I) as as_.
+  rewrite Cost.value_bind.
+  remember (Cost.value (Jump.roots_c I (fst start) as_)) as roots.
+  rewrite Cost.value_bind, value_map_c, Cost.value_bind, vertices_value.
+  autorewrite with galois_cost.
+  rewrite (summaries_value I jump_c start a0 roots (vertices I)); reflexivity.
+Qed.
+
+Local Lemma call_plan_model {N E P D A F} (I : Ide.t N E P D A F)
+    jump_c start a0 a :
+  In a (Jump.arcs I) ->
+  call_plan I a =
+    model_plan I jump_c start a0
+      (VCall (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a))).
+Proof.
+  rewrite Jump.arcs_equation; intro Ha; apply in_flat_map in Ha.
+  destruct Ha as [e [He Ha]]; apply in_flat_map in Ha.
+  destruct Ha as [x [Hx Ha]]; apply in_map_iff in Ha.
+  destruct Ha as [y [Heq Hy]]; subst a; reflexivity.
+Qed.
+
+Local Lemma prepared_models {N E P D A F} (I : Ide.t N E P D A F)
+    jump_c start a0 r plan :
+  In (r, plan) (Cost.value (prepare_c I jump_c start a0)) ->
+  plan = model_plan I jump_c start a0 r.
+Proof.
+  rewrite prepare_value; intros [Heq|Hin].
+  - injection Heq as Hr Hplan; subst r plan; reflexivity.
+  - apply in_app_iff in Hin; destruct Hin as [Hjump|Hcall].
+    + apply in_flat_map in Hjump; destruct Hjump as [root [Hroot Hjump]].
+      apply in_map_iff in Hjump; destruct Hjump as [dst [Heq Hdst]].
+      injection Heq as Hr Hplan; subst r plan; reflexivity.
+    + apply filter_map_spec in Hcall; destruct Hcall as [a [Ha Heq]].
+      destruct (Jump.kind a) eqn:Hkind; try discriminate.
+      injection Heq as Hr Hplan; subst r plan.
+      apply call_plan_model; exact Ha.
+Qed.
+
+Local Lemma prepared_rows {N E P D A F} (I : Ide.t N E P D A F)
+    jump_c start a0 r :
+  In r (map fst (Cost.value (prepare_c I jump_c start a0))) <->
+    r = VSeed \/
+    (exists root dst, In root (Cost.value (Jump.roots_c I (fst start) (Jump.arcs I))) /\
+      In dst (vertices I) /\ r = VJump root dst) \/
+    (exists a p, In a (Jump.arcs I) /\ Jump.kind a = Icfg.Call p /\
+      r = VCall (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a))).
+Proof.
+  rewrite in_map_iff, prepare_value; split.
+  - intros [[key plan] [Hr Hin]]; cbn [fst] in Hr; subst key.
+    destruct Hin as [Heq|Hin].
+    + left; injection Heq as Hkey Hplan; symmetry; exact Hkey.
+    + apply in_app_iff in Hin; destruct Hin as [Hjump|Hcall].
+      * apply in_flat_map in Hjump; destruct Hjump as [root [Hroot Hjump]].
+        apply in_map_iff in Hjump; destruct Hjump as [dst [Heq Hdst]].
+        right; left; exists root, dst; repeat split; try assumption; congruence.
+      * apply filter_map_spec in Hcall; destruct Hcall as [a [Ha Heq]].
+        destruct (Jump.kind a) as [|p|p] eqn:Hkind; try discriminate.
+        right; right; exists a, p; repeat split; try assumption; congruence.
+  - intros [Hr|[[root [dst [Hroot [Hdst Hr]]]]|[a [p [Ha [Hkind Hr]]]]]]; subst r.
+    + exists (VSeed, model_plan I jump_c start a0 VSeed); split; [reflexivity|left; reflexivity].
+    + exists (VJump root dst, model_plan I jump_c start a0 (VJump root dst)).
+      split; [reflexivity|right; apply in_app_iff; left; apply in_flat_map].
+      exists root; split; [exact Hroot|apply in_map_iff].
+      exists dst; split; [reflexivity|exact Hdst].
+    + exists (VCall (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)), call_plan I a).
+      split; [reflexivity|right; apply in_app_iff; right; apply filter_map_spec].
+      exists a; split; [exact Ha|rewrite Hkind; reflexivity].
+Qed.
+
+Local Lemma last_model {K V} (E : encoding K) (HE : encoding_laws E)
+    (model : K -> V) xs k old :
+  (forall key value, In (key, value) xs -> value = model key) ->
+  fold_left (fun old kv => if eqb E k (fst kv) then Some (snd kv) else old) xs old =
+    if existsb (fun kv => eqb E k (fst kv)) xs then Some (model k) else old.
+Proof.
+  revert old; induction xs as [|[key value] xs IH]; intros old Hmodel; cbn [fold_left existsb].
+  - reflexivity.
+  - rewrite IH by (intros q v Hin; apply Hmodel; right; exact Hin).
+    cbn [fst snd].
+    destruct (eqb E k key) eqn:Hkey; cbn [orb].
+    + apply (eqb_true_iff E HE) in Hkey; subst key.
+      rewrite (Hmodel k value (or_introl eq_refl)).
+      destruct (existsb (fun kv => eqb E k (fst kv)) xs); reflexivity.
+    + reflexivity.
+Qed.
+
+Local Lemma model_table_get {K V} (E : encoding K) (HE : encoding_laws E)
+    (model : K -> V) xs k :
+  (forall key value, In (key, value) xs -> value = model key) ->
+  In k (map fst xs) -> Map.get E k (Map.of_list E xs) = Some (model k).
+Proof.
+  intros Hmodel Hin; rewrite Map.of_list_get, (last_model E HE model xs k None Hmodel).
+  assert (Hfound : existsb (fun kv => eqb E k (fst kv)) xs = true).
+  { apply existsb_exists; apply in_map_iff in Hin.
+    destruct Hin as [[key value] [Heq Hpair]]; cbn [fst] in Heq; subst key.
+    exists (k, value); split; [exact Hpair|apply eqb_refl]. }
+  rewrite Hfound; reflexivity.
+Qed.
+
+(** Value-row meaning retains the supplied reader observation and actual call-edge weight. *)
+Definition holds {N E P D A F} (I : Ide.t N E P D A F)
+    (jump_c : jkey N D -> Cost.t F) start a0 sigma (r : vrow N E D) :=
+  match r with
+  | VSeed => leb (Ide.values I) a0 (sigma start) = true
+  | VJump from into =>
+    leb (Ide.values I)
+      (Micro.apply (Ide.micro I) (Cost.value (jump_c (from, into))) (sigma from))
+      (sigma into) = true
+  | VCall e from into =>
+    leb (Ide.values I)
+      (Micro.apply (Ide.micro I) (Ide.weight I e from into)
+        (sigma (Graph.source (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) e, from)))
+      (sigma (Graph.target (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) e, into)) = true
+  end.
+
+Local Lemma model_holds {N E P D A F} (I : Ide.t N E P D A F)
+    jump_c start a0 sigma r :
+  leb (Ide.values I)
+    (Cost.value (Rows.eval_c (model_plan I jump_c start a0 r)
+      (map sigma (Rows.reads (model_plan I jump_c start a0 r)))))
+    (sigma (Rows.target (model_plan I jump_c start a0 r))) = true <->
+  holds I jump_c start a0 sigma r.
+Proof.
+  destruct r; unfold model_plan, holds; autorewrite with galois_cost; reflexivity.
+Qed.
+
+Local Lemma analysis_rows_iff {N E P D A F} (I : Ide.t N E P D A F)
+    jump_c start a0 sigma :
+  encoding_laws (row_enc I) ->
+  (post_solution (Ide.values I) (Analysis.system (Cost.value (analysis_c I jump_c start a0)))
+    sigma <->
+    forall r, In r (map fst (Cost.value (prepare_c I jump_c start a0))) ->
+      holds I jump_c start a0 sigma r).
+Proof.
+  intro HE; unfold analysis_c; autorewrite with galois_cost.
+  remember (Cost.value (prepare_c I jump_c start a0)) as plans eqn:Hplans.
+  assert (Hlookup : forall r, In r (map fst plans) ->
+    Cost.value (Map.find_or_c (row_enc I)
+      (Rows.Make start [] (fun _ => Cost.ret (bot (Ide.values I)))) r
+      (Map.of_list (row_enc I) plans)) = model_plan I jump_c start a0 r).
+  { intros r Hr; fold (Map.find_or (row_enc I)
+      (Rows.Make start [] (fun _ => Cost.ret (bot (Ide.values I)))) r
+      (Map.of_list (row_enc I) plans)).
+    rewrite Map.find_or_equation.
+    rewrite (model_table_get (row_enc I) HE (model_plan I jump_c start a0) plans r).
+    - reflexivity.
+    - subst plans; intros key value Hin; apply prepared_models; exact Hin.
+    - exact Hr. }
+  cbn [Analysis.system]; rewrite Rows.post_solution_iff; split; intros H r Hr.
+  - specialize (H r Hr); rewrite Hlookup in H by exact Hr.
+    apply model_holds; exact H.
+  - rewrite Hlookup by exact Hr; apply model_holds, H; exact Hr.
+Qed.
+
+Local Lemma call_holds {N E P D A F} (I : Ide.t N E P D A F)
+    jump_c start a0 sigma a :
+  In a (Jump.arcs I) ->
+  (holds I jump_c start a0 sigma
+    (VCall (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a))) <->
+    leb (Ide.values I)
+      (Micro.apply (Ide.micro I) (Jump.weight a) (sigma (Jump.source a)))
+      (sigma (Jump.target a)) = true).
+Proof.
+  rewrite Jump.arcs_equation; intro Ha; apply in_flat_map in Ha.
+  destruct Ha as [e [He Ha]]; apply in_flat_map in Ha.
+  destruct Ha as [x [Hx Ha]]; apply in_map_iff in Ha.
+  destruct Ha as [y [Heq Hy]]; subst a; reflexivity.
+Qed.
+
+(** Value post-solutions are exactly the seed, prepared jump and actual call inequalities. *)
+Theorem post_solution_iff {N E P D A F} (I : Ide.t N E P D A F)
+    (jump_c : jkey N D -> Cost.t F) start a0 sigma :
+  encoding_laws (Cfg.node_enc (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) ->
+  encoding_laws (Cfg.edge_enc (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) ->
+  encoding_laws (Ifds.fact_enc (Ide.ifds I)) ->
+  (post_solution (Ide.values I)
+    (Analysis.system (Cost.value (analysis_c I jump_c start a0))) sigma <->
+    leb (Ide.values I) a0 (sigma start) = true /\
+    (forall root dst, In root (Cost.value (Jump.roots_c I (fst start) (Jump.arcs I))) ->
+      In dst (vertices I) ->
+      leb (Ide.values I)
+        (Micro.apply (Ide.micro I) (Cost.value (jump_c (root, dst))) (sigma root))
+        (sigma dst) = true) /\
+    (forall a p, In a (Jump.arcs I) -> Jump.kind a = Icfg.Call p ->
+      leb (Ide.values I)
+        (Micro.apply (Ide.micro I) (Jump.weight a) (sigma (Jump.source a)))
+        (sigma (Jump.target a)) = true)).
+Proof.
+  intros HN HE HD; rewrite analysis_rows_iff by (apply row_enc_laws; assumption).
+  split.
+  - intro Hrows; split.
+    + apply (Hrows VSeed), prepared_rows; left; reflexivity.
+    + split.
+      * intros root dst Hroot Hdst.
+        apply (Hrows (VJump root dst)), prepared_rows; right; left.
+        exists root, dst; repeat split; assumption || reflexivity.
+      * intros a p Ha Hkind; apply (proj1 (call_holds I jump_c start a0 sigma a Ha)).
+        apply Hrows, prepared_rows; right; right.
+        exists a, p; repeat split; assumption || reflexivity.
+  - intros [Hseed [Hjumps Hcalls]] r Hr; apply prepared_rows in Hr.
+    destruct Hr as [Hr|[[root [dst [Hroot [Hdst Hr]]]]|[a [p [Ha [Hkind Hr]]]]]];
+      subst r.
+    + exact Hseed.
+    + apply Hjumps; assumption.
+    + apply (proj2 (call_holds I jump_c start a0 sigma a Ha)).
+      apply Hcalls with (p := p); assumption.
+Qed.
+
 End IdeValue.
 
 (** The value phase captures charged jump reads once and runs without a jump-law proof. *)
 Definition value_analysis {N E P D A F} (I : Ide.t N E P D A F)
     (jump_c : jkey N D -> Cost.t F) start a0 :=
   Cost.value (IdeValue.analysis_c I jump_c start a0).
+
+(** Public value-analysis reflection retains every prepared root, vertex and actual call arc. *)
+Theorem value_analysis_post_solution_iff {N E P D A F} (I : Ide.t N E P D A F)
+    (jump_c : jkey N D -> Cost.t F) start a0 sigma :
+  encoding_laws (Cfg.node_enc (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) ->
+  encoding_laws (Cfg.edge_enc (Icfg.cfg (Ifds.icfg (Ide.ifds I)))) ->
+  encoding_laws (Ifds.fact_enc (Ide.ifds I)) ->
+  (post_solution (Ide.values I) (Analysis.system (value_analysis I jump_c start a0)) sigma <->
+    leb (Ide.values I) a0 (sigma start) = true /\
+    (forall root dst, In root (Cost.value (Jump.roots_c I (fst start) (Jump.arcs I))) ->
+      In dst (IdeValue.vertices I) ->
+      leb (Ide.values I)
+        (Micro.apply (Ide.micro I) (Cost.value (jump_c (root, dst))) (sigma root))
+        (sigma dst) = true) /\
+    (forall a p, In a (Jump.arcs I) -> Jump.kind a = Icfg.Call p ->
+      leb (Ide.values I)
+        (Micro.apply (Ide.micro I) (Jump.weight a) (sigma (Jump.source a)))
+        (sigma (Jump.target a)) = true)).
+Proof.
+  apply IdeValue.post_solution_iff.
+Qed.
 
 (** Value analysis laws need only key dictionaries and weak value-lattice laws. *)
 Theorem value_analysis_laws {N E P D A F} (I : Ide.t N E P D A F) jump_c start a0 :
