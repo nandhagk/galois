@@ -4,7 +4,7 @@
     For example, two occurrences of a declared side key add one bucket entry per constraint.
     Builds on: FixpointSystem, BaseIndex and BaseSet. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIndex.
 From Galois.Fixpoint Require Import FixpointSystem.
@@ -34,7 +34,8 @@ Definition distinct_c {X} (EX : encoding X) xs :=
   let* keys := FinSet.of_list_c EX xs in FinSet.elements_c keys.
 Definition distinct {X} (EX : encoding X) xs := Cost.value (distinct_c EX xs).
 
-Local Lemma distinct_equation {X} (EX : encoding X) xs :
+(** Distinct keys use the canonical enumeration of the constructed finite set. *)
+Theorem distinct_equation {X} (EX : encoding X) xs :
   distinct EX xs = FinSet.elements (FinSet.of_list EX xs).
 Proof.
   reflexivity.
@@ -124,13 +125,15 @@ Section IndexLaws.
 Context {X C A : Type} (EX : encoding X) (HE : encoding_laws EX)
   (S : System.t X C A) (SS : System.static S).
 
-Local Lemma push_equation (c : C) (x : X) (m : Map.t X (list C)) :
+(** Pushing one row prepends it to the actual existing bucket. *)
+Theorem push_equation (c : C) (x : X) (m : Map.t X (list C)) :
   push EX c x m = Map.set EX x (c :: Index.find EX x m) m.
 Proof.
   reflexivity.
 Qed.
 
-Local Lemma push_many_equation (c : C) (xs : list X) (m : Map.t X (list C)) :
+(** Multiple pushes process the suffix before the current key without altering multiplicities. *)
+Theorem push_many_equation (c : C) (xs : list X) (m : Map.t X (list C)) :
   push_many EX c xs m =
   match xs with
   | [] => m
@@ -228,6 +231,21 @@ Local Lemma rows_equation cs :
   end.
 Proof.
   destruct cs; reflexivity.
+Qed.
+
+(** A row is inserted once per distinct output or read key into the actual suffix index. *)
+Theorem index_rows_equation cs :
+  Cost.value (index_rows_c EX S SS cs) =
+  match cs with
+  | [] => SysIndex Map.empty Map.empty
+  | c :: rest =>
+    let ix := Cost.value (index_rows_c EX S SS rest) in
+    SysIndex
+      (push_many EX c (distinct EX (System.target S c :: side_targets SS c)) (contributors ix))
+      (push_many EX c (distinct EX (deps SS c)) (readers ix))
+  end.
+Proof.
+  apply rows_equation.
 Qed.
 
 Local Lemma rows_wf cs :
@@ -373,6 +391,64 @@ Proof.
 Qed.
 
 End IndexLaws.
+
+(** Distinct enumeration retains both the finite-set construction and actual enumeration costs. *)
+Theorem distinct_cost {X} (EX : encoding X) xs :
+  Cost.ticks (distinct_c EX xs) =
+    (Cost.ticks (FinSet.of_list_c EX xs) +
+      Cost.ticks (FinSet.elements_c (FinSet.of_list EX xs)))%N.
+Proof.
+  unfold distinct_c; rewrite Cost.ticks_bind; reflexivity.
+Qed.
+
+(** One push charges its real bucket lookup and the write of that returned bucket. *)
+Theorem push_cost {X C} (EX : encoding X) (c : C) x m :
+  Cost.ticks (push_c EX c x m) =
+    (Cost.ticks (Index.find_c EX x m) +
+      Cost.ticks (Map.set_c EX x (c :: Index.find EX x m) m))%N.
+Proof.
+  unfold push_c; rewrite Cost.ticks_bind; reflexivity.
+Qed.
+
+(** Push recursion retains its suffix cost and the push on the actual suffix result. *)
+Theorem push_many_cost_equation {X C} (EX : encoding X) (c : C) xs m :
+  Cost.ticks (push_many_c EX c xs m) =
+  match xs with
+  | [] => 0%N
+  | x :: rest =>
+    (1 + Cost.ticks (push_many_c EX c rest m) +
+      Cost.ticks (push_c EX c x (push_many EX c rest m)))%N
+  end.
+Proof.
+  destruct xs as [|x rest]; [reflexivity|].
+  cbn [push_many_c]; autorewrite with galois_cost; fold (push_many EX c rest m); lia.
+Qed.
+
+(** Row preparation charges every callback, distinct traversal and actual tail-index insertion. *)
+Theorem index_rows_cost_equation {X C A} (EX : encoding X) (S : System.t X C A)
+    (SS : System.static S) cs :
+  Cost.ticks (index_rows_c EX S SS cs) =
+  match cs with
+  | [] => 0%N
+  | c :: rest =>
+    let ix := Cost.value (index_rows_c EX S SS rest) in
+    (4 + Cost.ticks (index_rows_c EX S SS rest) +
+      Cost.ticks (System.target_c S c) +
+      Cost.ticks (System.side_targets_c SS c) +
+      Cost.ticks (System.deps_c SS c) +
+      Cost.ticks (distinct_c EX (System.target S c :: side_targets SS c)) +
+      Cost.ticks (distinct_c EX (deps SS c)) +
+      Cost.ticks (push_many_c EX c
+        (distinct EX (System.target S c :: side_targets SS c)) (contributors ix)) +
+      Cost.ticks (push_many_c EX c (distinct EX (deps SS c)) (readers ix)))%N
+  end.
+Proof.
+  destruct cs as [|c rest]; [reflexivity|].
+  cbn [index_rows_c]; autorewrite with galois_cost.
+  fold (System.target S c) (side_targets SS c) (deps SS c).
+  fold (distinct EX (System.target S c :: side_targets SS c)) (distinct EX (deps SS c)).
+  lia.
+Qed.
 
 (** Contributor lookup retains exactly the underlying map lookup charge. *)
 Theorem contributors_cost {X C} (EX : encoding X) (ix : sys_index X C) x :
