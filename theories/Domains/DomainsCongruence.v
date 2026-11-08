@@ -640,13 +640,11 @@ Proof.
   destruct Ha as [Hwordx Hx], Hb as [Hwordy Hy].
   rewrite Z.mod_0_r in Hy. assert (y = c) by lia. subst y.
   apply (proj2 (cong_norm_gamma w _ _)). split; [apply wurem_is_word|].
-  change (((if wrap w c =? 0 then wrap w x else wrap w x mod wrap w c) - r) mod
-    Z.gcd m c = 0).
-  rewrite (wrap_id w c Hwordy), (wrap_id w x Hwordx).
+  rewrite wurem_mod, (wrap_id w c Hwordy), (wrap_id w x Hwordx).
   apply cong_mod_divide in Hx. apply cong_mod_divide.
   destruct (Z.gcd_divide_l m c) as [k Hk], (Z.gcd_divide_r m c) as [j Hj].
-  destruct Hx as [i Hi]. destruct (c =? 0).
-  - exists (i * k). nia.
+  destruct Hx as [i Hi]. destruct (Z.eq_dec c 0) as [->|Hnonzero].
+  - rewrite Z.mod_0_r. exists (i * k). nia.
   - destruct (cong_residue_difference c x) as [l Hl]. exists (i * k - l * j). nia.
 Qed.
 

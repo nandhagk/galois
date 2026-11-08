@@ -108,14 +108,13 @@ Proof.
   assert (Hpow : 2 ^ wrap w y <> 0).
   { pose proof (wrap_is_word w y) as [Hnonnegative Hupper].
     apply Z.pow_nonzero; lia. }
-  rewrite wmul_value, wshl_value, wlshr_value, washr_value.
+  rewrite wmul_value, wshl_value, wlshr_value, washr_value, wurem_mod.
   rewrite wrap_0, msb_zero, signed_zero, Z.mul_0_l, wrap_0.
   rewrite Z.div_0_l by exact Hpow. rewrite wrap_0.
   split; [reflexivity|].
   destruct (Zpos w <=? wrap w y); cbn; repeat split; try reflexivity.
-  all: change ((if wrap w y =? 0 then wrap w 0 else wrap w 0 mod wrap w y) = 0);
-    rewrite wrap_0; destruct (wrap w y =? 0) eqn:Hz; [reflexivity|];
-    apply Z.eqb_neq in Hz; now apply Z.mod_0_l.
+  all: destruct (Z.eq_dec (wrap w y) 0) as [->|Hz];
+    [reflexivity|now apply Z.mod_0_l].
 Qed.
 
 Definition const_forward_entry o (_ : width) (xs : list (width * flat Z))

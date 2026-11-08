@@ -146,3 +146,37 @@ Example congruence_callback_cost :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example congruence_malformed_counts_nonpoint :
+  map (fun xs => pforward cong_word_domain bvadd xs 8%positive)
+    [[]; [(8%positive, Cong 4 1)];
+     [(8%positive, Cong 4 1); (8%positive, Cong 0 2); (8%positive, Cong 0 3)];
+     [(8%positive, Cong 4 1); (8%positive, Cong 0 2); (8%positive, Cong 0 3);
+      (8%positive, Cong 0 4)]] =
+    [CBot; Cong 1 0; Cong 1 0; Cong 1 0].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example congruence_malformed_counts_points :
+  map (fun xs => pforward cong_word_domain bvadd xs 8%positive)
+    [[]; [(8%positive, Cong 0 1)];
+     [(8%positive, Cong 0 1); (8%positive, Cong 0 2); (8%positive, Cong 0 3)];
+     [(8%positive, Cong 0 1); (8%positive, Cong 0 2); (8%positive, Cong 0 3);
+      (8%positive, Cong 0 4)]] =
+    repeat CBot 4.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example congruence_malformed_count_assumptions :
+  map (fun xs => passume cong_word_domain bvadd xs 8%positive CBot)
+    [[]; [(8%positive, Cong 4 1)]; [(8%positive, Cong 0 1)];
+     [(8%positive, Cong 4 1); (8%positive, Cong 0 2); (8%positive, Cong 0 3)];
+     [(8%positive, Cong 0 1); (8%positive, Cong 0 2); (8%positive, Cong 0 3);
+      (8%positive, Cong 0 4)]] =
+    [[]; [Cong 4 1]; [Cong 0 1]; [Cong 4 1; Cong 0 2; Cong 0 3];
+     [Cong 0 1; Cong 0 2; Cong 0 3; Cong 0 4]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
