@@ -844,6 +844,16 @@ Proof.
     exact (proj1 (proj2 (find_correct E HE a uf Hwf))).
 Qed.
 
+(** A root link redirects precisely the old child's representative to the selected root. *)
+Theorem link_rep_equation child root raise uf a :
+  wf E uf -> wf E (link E child root raise uf) -> child <> root ->
+  Map.get E child (parents uf) = None -> Map.get E root (parents uf) = None ->
+  fst (find E a (link E child root raise uf)) =
+    if eqb E (fst (find E a uf)) child then root else fst (find E a uf).
+Proof.
+  apply link_rep.
+Qed.
+
 Local Lemma find_state x uf root uf' :
   wf E uf -> find E x uf = (root, uf') ->
   wf E uf' /\ Map.get E root (parents uf') = None /\
@@ -1091,6 +1101,38 @@ Proof.
     + intros a b. unfold equiv. rewrite !touch_rep by exact Hwf. reflexivity.
     + intros a Ha. apply (proj2 (touch_support x uf a (proj1 (proj2 Hwf)))).
       right. exact Ha.
+Qed.
+
+(** Union collapses its rank-selected loser into its survivor and retains other representatives. *)
+Theorem union_rep_equation uf x y a :
+  wf E uf ->
+  fst (find E a (union E x y uf)) =
+  let '(rx, u1) := find E x uf in
+  let '(ry, u2) := find E y u1 in
+  if eqb E rx ry then fst (find E a uf)
+  else
+    match Nat.compare (rank_of E u2 rx) (rank_of E u2 ry) with
+    | Eq => if eqb E (fst (find E a uf)) ry then rx else fst (find E a uf)
+    | Lt => if eqb E (fst (find E a uf)) rx then ry else fst (find E a uf)
+    | Gt => if eqb E (fst (find E a uf)) ry then rx else fst (find E a uf)
+    end.
+Proof.
+  intro Hwf. pose proof (wf_union uf x y Hwf) as Hnew.
+  rewrite union_equation in Hnew |- *.
+  destruct (find E x uf) as [rx u1] eqn:Hx.
+  destruct (find E y u1) as [ry u2] eqn:Hy.
+  destruct (two_finds uf x y rx u1 ry u2 Hwf Hx Hy)
+    as [Hw2 [Hrx [Hry [Hrxrep [Hryrep [Hstable Hsupport]]]]]].
+  destruct (eqb E rx ry) eqn:Heq.
+  - rewrite touch_rep by exact Hw2. apply Hstable.
+  - apply (eqb_false_iff E HE) in Heq.
+    destruct (Nat.compare (rank_of E u2 rx) (rank_of E u2 ry)) eqn:Hcmp.
+    + rewrite (link_rep_equation ry rx true u2 a) by (try assumption; congruence).
+      rewrite Hstable. reflexivity.
+    + rewrite (link_rep_equation rx ry false u2 a) by assumption.
+      rewrite Hstable. reflexivity.
+    + rewrite (link_rep_equation ry rx false u2 a) by (try assumption; congruence).
+      rewrite Hstable. reflexivity.
 Qed.
 
 End SupportAndUnion.
