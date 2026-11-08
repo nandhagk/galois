@@ -338,6 +338,22 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example restriction_keeps_order_and_duplicate_rows :
+  match Local.discover direct_analysis [0; 99] 128%positive with
+  | inr region => Local.rows direct_analysis region
+  | _ => []
+  end = [1; 2; 0; 1].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example duplicate_roots_keep_the_result :
+  Local.checked direct_analysis direct_termination [0; 99; 0; 1] 128%positive =
+    Local.checked direct_analysis direct_termination [0; 99] 128%positive.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Definition charged_bool : lattice bool :=
   {| leb_c := leb_c bool_lattice;
      join_c := fun x y => Cost.step ;; join_c bool_lattice x y;

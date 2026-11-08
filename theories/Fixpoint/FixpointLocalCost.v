@@ -20,11 +20,28 @@ Definition metadata {X C A} (a : Analysis.t X C A) c :=
   System.target (Analysis.system a) c ::
     side_targets (Analysis.static a) c ++ deps (Analysis.static a) c.
 
-(** The mathematical support includes unconstrained roots and every declared metadata occurrence. *)
-Definition support {X C A} (a : Analysis.t X C A) roots :=
+(** Raw support retains roots and source metadata occurrences before key-domain deduplication. *)
+Definition raw_support {X C A} (a : Analysis.t X C A) roots :=
   map (@inl X C) roots ++ map (@inr X C) (System.constraints (Analysis.system a)) ++
   flat_map (fun c => map (@inl X C) (metadata a c))
     (System.constraints (Analysis.system a)).
+
+(** The proof-only support is a finite unique key domain, while adjacency retains multiplicity. *)
+Definition support {X C A} (a : Analysis.t X C A) roots :=
+  distinct (sum_encoding (Analysis.key_enc a) (Analysis.row_enc a)) (raw_support a roots).
+
+(** Canonical proof support contains each vertex key once independently of adjacency multiplicity. *)
+Theorem support_nodup {X C A} (a : Analysis.t X C A) roots : NoDup (support a roots).
+Proof.
+  apply distinct_nodup.
+Qed.
+
+Local Lemma support_member {X C A} (a : Analysis.t X C A) (HL : Analysis.laws a) roots v :
+  In v (support a roots) <-> In v (raw_support a roots).
+Proof.
+  unfold support; apply distinct_spec, sum_encoding_laws;
+    [exact (Analysis.key_laws HL)|exact (Analysis.row_laws HL)].
+Qed.
 
 Local Lemma projection_traversals {X C} (vs : list (X + C)) :
   Cost.ticks (Local.lefts_c vs) = N.of_nat (length vs) /\
@@ -39,10 +56,10 @@ Proof.
   - rewrite Hl, Hr, Nat2N.inj_succ; cbn [length]; repeat split; lia.
 Qed.
 
-Local Lemma row_support {X C A} (a : Analysis.t X C A) roots c :
+Local Lemma row_support {X C A} (a : Analysis.t X C A) (HL : Analysis.laws a) roots c :
   In (inr c) (support a roots) <-> In c (System.constraints (Analysis.system a)).
 Proof.
-  unfold support; rewrite !in_app_iff; split.
+  rewrite (support_member a HL); unfold raw_support; rewrite !in_app_iff; split.
   - intros [Hroot|[Hrow|Hmeta]].
     + apply in_map_iff in Hroot as [x [Heq _]]; discriminate.
     + apply in_map_iff in Hrow as [d [Heq Hd]]; injection Heq as <-; exact Hd.
@@ -52,10 +69,10 @@ Proof.
 Qed.
 
 (** Every original root belongs to the finite mathematical discovery support. *)
-Theorem roots_support {X C A} (a : Analysis.t X C A) roots :
+Theorem roots_support {X C A} (a : Analysis.t X C A) (HL : Analysis.laws a) roots :
   incl (map (@inl X C) roots) (support a roots).
 Proof.
-  intros v Hv; unfold support; apply in_or_app; now left.
+  intros v Hv; apply (support_member a HL); unfold raw_support; apply in_or_app; now left.
 Qed.
 
 (** Contributor laws and finite metadata establish support closure independently of runs. *)
@@ -66,11 +83,12 @@ Theorem support_closed {X C A} (a : Analysis.t X C A) (HL : Analysis.laws a) roo
       (support a roots).
 Proof.
   intros [x|c] Hv v Hedge; rewrite LocalDiscover.adjacent_equation in Hedge.
-  - apply in_map_iff in Hedge as [c [<- Hc]]; apply row_support.
+  - apply in_map_iff in Hedge as [c [<- Hc]]; apply (row_support a HL).
     exact (proj1 (proj1 (contributors_agree
       (index_system_laws _ (Analysis.key_laws HL) _ _) x c) Hc)).
-  - apply row_support in Hv; apply in_map_iff in Hedge as [x [<- Hx]].
-    unfold support; apply in_or_app; right; apply in_or_app; right.
+  - apply (row_support a HL) in Hv; apply in_map_iff in Hedge as [x [<- Hx]].
+    apply (support_member a HL); unfold raw_support.
+    apply in_or_app; right; apply in_or_app; right.
     apply in_flat_map; exists c; split; [exact Hv|apply in_map, Hx].
 Qed.
 
@@ -162,7 +180,7 @@ Proof.
     change (key_bits EX x <= Budget.key_digits b) in Hw.
     rewrite contributors_cost, Map.get_cost; fold EX; fold (key_bits EX x).
     unfold Budget.w; nia.
-  - apply row_support in Hv.
+  - apply (row_support a HL) in Hv.
     destruct (row_metadata HB c Hv) as [Ht [Hs Hd]].
     cbn [length]; rewrite !length_app, Nat2N.inj_succ, Nat2N.inj_add.
     unfold Budget.w; nia.
@@ -181,7 +199,7 @@ Theorem local_discover_cost fuel vertices :
 Proof.
   intro Hrun; unfold LocalDiscover.run, LocalDiscover.run_c in Hrun.
   rewrite Cost.value_bind, value_map_c in Hrun.
-  pose proof (LocalCredit.local_discover_cost EV next U entries (roots_support a roots)
+  pose proof (LocalCredit.local_discover_cost EV next U entries (roots_support a HL roots)
     (support_closed a HL roots) (Budget.w b) vertex_cost adjacent_cost fuel vertices Hrun)
     as Hcost.
   assert (Hmap : Cost.ticks (map_c (fun x => Cost.ret (@inl X C x)) roots) <=
@@ -205,7 +223,7 @@ Theorem local_discover_adequate fuel :
   exists vertices, LocalDiscover.run a ix roots fuel = inr vertices.
 Proof.
   intro Hfuel.
-  destruct (LocalCredit.adequate EV next U entries (roots_support a roots)
+  destruct (LocalCredit.adequate EV next U entries (roots_support a HL roots)
     (support_closed a HL roots) fuel) as [vertices Hloop].
   - unfold entries; rewrite length_map; exact Hfuel.
   - exists vertices; unfold LocalDiscover.run, LocalDiscover.run_c.
@@ -219,7 +237,7 @@ Theorem local_discover_full_cost fuel :
     (4 * Budget.w b + 10) * LocalCredit.sum (LocalCredit.weight next) U +
     N.pos (Pos.size fuel).
 Proof.
-  pose proof (LocalCredit.discover_full_cost EV next U entries (roots_support a roots)
+  pose proof (LocalCredit.discover_full_cost EV next U entries (roots_support a HL roots)
     (support_closed a HL roots) (Budget.w b) vertex_cost adjacent_cost fuel) as Hcost.
   assert (Hmap : Cost.ticks (map_c (fun x => Cost.ret (@inl X C x)) roots) <=
     N.of_nat (length roots)).
@@ -275,7 +293,7 @@ Proof.
       (Hvs (inl x) (proj1 (LocalProof.lefts_member vs x) Hx))). }
   assert (Hright : forall c, In c (Cost.value (Local.rights_c vs)) ->
     Cost.ticks (encode_c EC c) <= Budget.row_encoder b /\ key_bits EC c <= Budget.row_digits b).
-  { intros c Hc; exact (row_keys HB c (proj1 (row_support a roots c)
+  { intros c Hc; exact (row_keys HB c (proj1 (row_support a HL roots c)
       (Hvs (inr c) (proj1 (LocalProof.rights_member vs c) Hc)))). }
   pose proof (FinSet.of_list_numeric_cost Map.cost_laws_hold EX
     (Cost.value (Local.lefts_c vs)) _ _ Hleft) as Hkeys.
@@ -315,7 +333,7 @@ Proof.
     apply (project_cost marked Hwf).
     apply (LocalDiscover.completed_least EV HE next entries fuel marked
       (fun v => In v U)).
-    - split; [exact (roots_support a roots)|].
+    - split; [exact (roots_support a HL roots)|].
       intros v w Hv Hw; exact (support_closed a HL roots v Hv w Hw).
     - exact Hrun. }
   rewrite Local.discover_cost, Local.discover_indexed_cost.
