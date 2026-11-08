@@ -784,4 +784,34 @@ Proof.
     (0, None, []) 2 None [1; 0] calls_ok frame_sites (or_introl eq_refl) matched_prefix).
 Qed.
 
+Definition before_return : Stack.config nat unit nat := (3, None, [2; 1; 0]).
+
+Example semantic_matched_context_before_return :
+  exists k frames ks, SummarySound.ctx_frames calls (Ctx.call_string 2 calls)
+    (CallsLink.here link before_return) k frames ks /\
+    map snd frames = [2; 1; 0] /\
+    SummarySound.ctx_reachable calls (Ctx.call_string 2 calls)
+      (CallsLink.here link before_return) k.
+Proof.
+  exact (SummarySound.ctx_matched_path ifds roots calls link (Ctx.call_string 2 calls)
+    (0, None, []) 3 None [2; 1; 0] calls_ok
+    ltac:(intros p g k; eexists; apply SummarySound.ctx_call_string_enter)
+    frame_sites (or_introl eq_refl) SummarySoundFixture.matched_three_calls).
+Qed.
+
+Example semantic_matched_call_string_before_return :
+  SummarySound.ctx_reachable calls (Ctx.call_string 2 calls)
+    (CallsLink.here link before_return) [2; 1].
+Proof.
+  exact (SummarySound.ctx_matched_call_string ifds roots calls link 2
+    (0, None, []) 3 None [2; 1; 0] calls_ok frame_sites
+    (or_introl eq_refl) SummarySoundFixture.matched_three_calls).
+Qed.
+
+Example semantic_three_push_truncation :
+  Stack.truncate 2 [2; 1; 0] = [2; 1].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 End SummaryMatchedClient.
