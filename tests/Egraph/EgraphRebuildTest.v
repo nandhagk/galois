@@ -1,7 +1,7 @@
 (** * Raw leaf coverage for deferred rebuilding
 
-    The reference WF domain includes duplicate leaf classes and an empty memo.
-    For example, the reference rebuild merges those classes without any child incidence.
+    Structural WF includes duplicate leaf classes and an empty memo.
+    For example, duplicate leaves lack the snapshots needed by the maintained domain.
     Builds on: EgraphCoreDomain and EgraphSpec. *)
 
 From Stdlib Require Import List BinPos.

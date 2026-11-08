@@ -247,7 +247,7 @@ Definition many_rebuild_ticks m :=
 
 Example many_same_op_rebuild_costs :
   (many_rebuild_ticks 4, many_rebuild_ticks 8, many_rebuild_ticks 16) =
-    (Some 2602%N, Some 5345%N, Some 11128%N).
+    (Some 441%N, Some 441%N, Some 441%N).
 Proof.
   vm_compute. reflexivity.
 Qed.

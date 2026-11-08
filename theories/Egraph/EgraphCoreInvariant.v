@@ -111,6 +111,33 @@ Proof.
     destruct Hin as [<-|Hin]; [exact Hhead|exact (IH Htail child Hin)].
 Qed.
 
+Local Lemma allocation_cache_fresh {work} g :
+  Egraph.kernel_inv_on a g work ->
+  Map.get Egraph.id_encoding (Egraph.next g) (Egraph.nodes g) = None ->
+  Map.get Egraph.id_encoding (Egraph.next g) (Egraph.cached g) = None.
+Proof.
+  intros Hinv Hfresh.
+  destruct (Map.get Egraph.id_encoding (Egraph.next g) (Egraph.cached g))
+    as [old|] eqn:Hget; [|reflexivity].
+  destruct (Egraph.snapshot_correct a g Hinv _ old Hget) as [m [Hnode Hsame]].
+  congruence.
+Qed.
+
+Local Lemma fresh_set_retains {A B} (domain : Map.t Egraph.id A)
+    (table : Map.t Egraph.id B) fresh value :
+  Map.wf Egraph.id_encoding table ->
+  Map.get Egraph.id_encoding fresh domain = None ->
+  (forall i old, Map.get Egraph.id_encoding i table = Some old ->
+    exists n, Map.get Egraph.id_encoding i domain = Some n) ->
+  forall i old, Map.get Egraph.id_encoding i table = Some old ->
+    Map.get Egraph.id_encoding i (Map.set Egraph.id_encoding fresh value table) = Some old.
+Proof.
+  intros Htable Hfresh Hdomain i old Hget.
+  rewrite set_lookup by exact Htable.
+  destruct (Pos.eq_dec i fresh) as [->|Hne]; [|exact Hget].
+  destruct (Hdomain fresh old Hget) as [n Hnode]; congruence.
+Qed.
+
 (** Empty construction establishes all concrete parent, snapshot, queue, memo and edge duties. *)
 Theorem empty_kernel_inv : Egraph.kernel_inv a (@Egraph.empty K Sort V).
 Proof.
@@ -185,10 +212,7 @@ Proof.
   assert (Hcanon : forall m, Egraph.canonical a h m = Egraph.canonical a g m).
   { intro m; apply allocation_canonical; exact Hforest. }
   assert (Hcachefresh : Map.get Egraph.id_encoding (Egraph.next g) (Egraph.cached g) = None).
-  { destruct (Map.get Egraph.id_encoding (Egraph.next g) (Egraph.cached g))
-      as [old|] eqn:Hget; [|reflexivity].
-    destruct (Egraph.snapshot_correct a g Hinv _ old Hget) as [m [Hnode Hsame]].
-    congruence. }
+  { exact (allocation_cache_fresh g Hinv Hfresh). }
   assert (Hretain : forall i m, Map.get Egraph.id_encoding i (Egraph.nodes g) = Some m ->
     Map.get Egraph.id_encoding i (Egraph.nodes h) = Some m).
   { intros i m Hnode; rewrite Hns, set_lookup by exact Hnodes.
@@ -196,8 +220,10 @@ Proof.
   assert (Hretaincache : forall i old,
     Map.get Egraph.id_encoding i (Egraph.cached g) = Some old ->
     Map.get Egraph.id_encoding i (Egraph.cached h) = Some old).
-  { intros i old Hget; rewrite Hcache, set_lookup by exact (Egraph.snapshot_map_wf a g Hinv).
-    destruct (Pos.eq_dec i (Egraph.next g)) as [->|Hne]; congruence. }
+  { rewrite Hcache; apply (fresh_set_retains (Egraph.cached g) (Egraph.cached g)).
+    - exact (Egraph.snapshot_map_wf a g Hinv).
+    - exact Hcachefresh.
+    - intros i old Hget; exists old; exact Hget. }
   assert (Hnewnode : Map.get Egraph.id_encoding (Egraph.next g) (Egraph.nodes h) = Some n).
   { rewrite Hns; apply Map.get_set_same; exact Hnodes. }
   assert (Hnewcache : Map.get Egraph.id_encoding (Egraph.next g) (Egraph.cached h) = Some n).
@@ -270,7 +296,9 @@ Proof.
     rewrite Hcanon.
     destruct (Pos.eq_dec i (Egraph.next g)) as [->|Hne].
     + injection Hnode as <-; rewrite Hcanonical.
-      exists (Egraph.next g); split; [rewrite Htable; apply Map.get_set_same; exact Hmemo|reflexivity].
+      exists (Egraph.next g); split.
+      * rewrite Htable; apply Map.get_set_same; exact Hmemo.
+      * reflexivity.
     + destruct (Egraph.stable_memo a g Hinv i m Hnode (Hstable i Hnot))
         as [other [Hget Hsame]].
       exists other; split; [|rewrite !Hfind; exact Hsame].
@@ -296,7 +324,7 @@ Proof.
   apply UnionFind.find_rep_canonical; [exact positive_encoding_laws|exact Hforest].
 Qed.
 
-(** Successful node insertion maintains local kernel coverage under the actual map and forest duties. *)
+(** Node insertion maintains kernel coverage under the actual map and forest duties. *)
 Theorem add_node_kernel_inv {work} g n c h :
   Egraph.kernel_inv_on a g work ->
   UnionFind.wf Egraph.id_encoding (Egraph.uf g) ->
@@ -318,7 +346,8 @@ Proof.
     intro Hresult; injection Hresult as <- <-; exact Hnew.
 Qed.
 
-Local Lemma canonical_mono g h n m :
+(** Monotone class equality transports equality of canonical nodes to the new graph. *)
+Theorem canonical_mono g h n m :
   (forall c d, Egraph.find a g c = Egraph.find a g d ->
     Egraph.find a h c = Egraph.find a h d) ->
   Egraph.canonical a g n = Egraph.canonical a g m ->
@@ -334,7 +363,61 @@ Proof.
     injection Heq as Hhead Htail; f_equal; [apply Hclasses; exact Hhead|apply IH; exact Htail].
 Qed.
 
-(** Exact root collapse maintains parent, memo and explanation coverage without changing stored nodes. *)
+Local Lemma reason_path_same {work} g c d :
+  Egraph.kernel_inv_on a g work -> Egraph.edge_path (Egraph.edges g) c d ->
+  Egraph.find a g c = Egraph.find a g d.
+Proof.
+  intros Hinv Hwalk; induction Hwalk as [c|c d e Hin Hends target Hrest IH].
+  - reflexivity.
+  - pose proof (Egraph.reasons_correct a g Hinv e Hin) as Hedge.
+    destruct Hends as [[Hleft Hright]|[Hright Hleft]];
+      rewrite Hleft, Hright in Hedge; congruence.
+Qed.
+
+Local Lemma linked_queue_members {work} g (h : Egraph.t K Sort V) loser :
+  Egraph.kernel_inv_on a g work ->
+  Egraph.pending (Egraph.private h) =
+    (match EggParent.get (Egraph.parents g) loser with
+    | [] => Egraph.pending (Egraph.private g)
+    | _ :: _ => EggPending.push loser (Egraph.pending (Egraph.private g))
+    end) ->
+  EggPending.wf (Egraph.pending (Egraph.private h)) /\
+  (forall root, In root (Egraph.dirty g) -> In root (Egraph.dirty h)) /\
+  (forall root, In root (Egraph.dirty h) -> root = loser \/ In root (Egraph.dirty g)).
+Proof.
+  intros Hinv Hqueue; split.
+  - rewrite Hqueue; destruct (EggParent.get (Egraph.parents g) loser).
+    + exact (Egraph.pending_wf a g Hinv).
+    + apply EggPending.push_wf; exact (Egraph.pending_wf a g Hinv).
+  - split.
+    + intros root Hin; unfold Egraph.dirty; rewrite Hqueue.
+      destruct (EggParent.get (Egraph.parents g) loser); [exact Hin|].
+      apply (proj2 (EggPending.push_in _ _ _ (Egraph.pending_wf a g Hinv))).
+      right; exact Hin.
+    + intros root Hin; unfold Egraph.dirty in Hin; rewrite Hqueue in Hin.
+      destruct (EggParent.get (Egraph.parents g) loser); [right; exact Hin|].
+      exact (proj1 (EggPending.push_in _ _ _ (Egraph.pending_wf a g Hinv)) Hin).
+Qed.
+
+Local Lemma linked_queue_work {work} g (h : Egraph.t K Sort V) loser :
+  Egraph.kernel_inv_on a g work ->
+  Egraph.pending (Egraph.private h) =
+    (match EggParent.get (Egraph.parents g) loser with
+    | [] => Egraph.pending (Egraph.private g)
+    | _ :: _ => EggPending.push loser (Egraph.pending (Egraph.private g))
+    end) ->
+  forall root, In root (Egraph.dirty h) -> EggParent.get (Egraph.parents g) root <> [].
+Proof.
+  intros Hinv Hqueue root Hin; unfold Egraph.dirty in Hin; rewrite Hqueue in Hin.
+  destruct (EggParent.get (Egraph.parents g) loser) as [|parent rest] eqn:Hparents.
+  - exact (Egraph.pending_nonempty a g Hinv root Hin).
+  - apply (proj1 (EggPending.push_in _ _ _ (Egraph.pending_wf a g Hinv))) in Hin.
+    destruct Hin as [->|Hin].
+    + rewrite Hparents; discriminate.
+    + exact (Egraph.pending_nonempty a g Hinv root Hin).
+Qed.
+
+(** Exact root collapse maintains parent, memo and explanation coverage. *)
 Theorem linked_kernel_inv {work} g forest loser winner reason :
   Egraph.kernel_inv_on a g work ->
   loser <> winner ->
@@ -365,28 +448,8 @@ Proof.
   assert (Hedges : Egraph.edges h = Egraph.Edge loser winner reason :: Egraph.edges g).
   { unfold h, Egraph.edges; cbn [Egraph.private].
     rewrite Egraph.linked_kernel_equation; reflexivity. }
-  assert (Hqueuewf : EggPending.wf (Egraph.pending (Egraph.private h))).
-  { rewrite Hqueue; destruct (EggParent.get (Egraph.parents g) loser).
-    - exact (Egraph.pending_wf a g Hinv).
-    - apply EggPending.push_wf; exact (Egraph.pending_wf a g Hinv). }
-  assert (Hqmono : forall root, In root (Egraph.dirty g) -> In root (Egraph.dirty h)).
-  { intros root Hin; unfold Egraph.dirty; rewrite Hqueue.
-    destruct (EggParent.get (Egraph.parents g) loser); [exact Hin|].
-    apply (proj2 (EggPending.push_in _ _ _ (Egraph.pending_wf a g Hinv))); right; exact Hin. }
-  assert (Hqmember : forall root, In root (Egraph.dirty h) ->
-    root = loser \/ In root (Egraph.dirty g)).
-  { intros root Hin; unfold Egraph.dirty in Hin; rewrite Hqueue in Hin.
-    destruct (EggParent.get (Egraph.parents g) loser); [right; exact Hin|].
-    exact (proj1 (EggPending.push_in _ _ _ (Egraph.pending_wf a g Hinv)) Hin). }
-  assert (Hqwork : forall root, In root (Egraph.dirty h) ->
-    EggParent.get (Egraph.parents g) root <> []).
-  { intros root Hin; unfold Egraph.dirty in Hin; rewrite Hqueue in Hin.
-    destruct (EggParent.get (Egraph.parents g) loser) as [|parent rest] eqn:Hparents.
-    - exact (Egraph.pending_nonempty a g Hinv root Hin).
-    - apply (proj1 (EggPending.push_in _ _ _ (Egraph.pending_wf a g Hinv))) in Hin.
-      destruct Hin as [->|Hin].
-      + rewrite Hparents; discriminate.
-      + exact (Egraph.pending_nonempty a g Hinv root Hin). }
+  destruct (linked_queue_members g h loser Hinv Hqueue) as [Hqueuewf [Hqmono Hqmember]].
+  pose proof (linked_queue_work g h loser Hinv Hqueue) as Hqwork.
   assert (Hnewdirty : forall i, In i (EggParent.get (Egraph.parents g) loser) ->
     Egraph.pending_node h i).
   { intros i Hin; exists loser; split.
@@ -465,15 +528,7 @@ Proof.
     exists other; split; [exact Hget|apply Hclasses; exact Hsame].
   - rewrite Hedges; apply Egraph.forest_edge; [exact (Egraph.reasons_forest a g Hinv)|].
     intro Hpath.
-    assert (Hsame : Egraph.find a g loser = Egraph.find a g winner).
-    { assert (Hpaths : forall c d, Egraph.edge_path (Egraph.edges g) c d ->
-        Egraph.find a g c = Egraph.find a g d).
-      { intros c d Hwalk; induction Hwalk as [c|c d e Hin Hends target Hrest IH].
-        - reflexivity.
-        - pose proof (Egraph.reasons_correct a g Hinv e Hin) as Hedge.
-          destruct Hends as [[Hleft Hright]|[Hright Hleft]];
-            rewrite Hleft, Hright in Hedge; congruence. }
-      exact (Hpaths loser winner Hpath). }
+    pose proof (reason_path_same g loser winner Hinv Hpath) as Hsame.
     rewrite Hloser, Hwinner in Hsame; contradiction.
   - intros e Hin; rewrite Hedges in Hin; destruct Hin as [<-|Hin].
     + cbn [Egraph.left Egraph.right]; rewrite !Hfind, Hloser, Hwinner, Pos.eqb_refl.
@@ -482,7 +537,7 @@ Proof.
     + apply Hclasses; exact (Egraph.reasons_correct a g Hinv e Hin).
 Qed.
 
-(** Compression-only forest changes retain kernel obligations when every representative is unchanged. *)
+(** Compression retains kernel obligations when every representative is unchanged. *)
 Theorem kernel_inv_same_roots {work} g forest :
   Egraph.kernel_inv_on a g work ->
   (forall query, fst (UnionFind.find Egraph.id_encoding query forest) = Egraph.find a g query) ->
@@ -657,7 +712,7 @@ Proof.
       left; auto.
 Qed.
 
-(** Actual rank-selected UF union maintains kernel metadata using the public representative equation. *)
+(** Rank-selected union maintains kernel metadata through the public representative equation. *)
 Theorem merge_kernel_inv {work} g c d reason :
   Egraph.kernel_inv_on a g work ->
   UnionFind.wf Egraph.id_encoding (Egraph.uf g) ->
@@ -681,7 +736,7 @@ Proof.
   intros Hinv Hforest Hc Hd; exact (proj2 (merge_kernel_correct g c d reason Hinv Hforest Hc Hd)).
 Qed.
 
-(** Successful justified union preserves maintained coverage through its actual rank-selected merge. *)
+(** Justified union preserves maintained coverage through its actual rank-selected merge. *)
 Theorem union_j_kernel_inv {work} g c d reason h :
   Egraph.kernel_inv_on a g work ->
   UnionFind.wf Egraph.id_encoding (Egraph.uf g) ->
@@ -699,7 +754,7 @@ Proof.
   exact (merge_kernel_inv g c d reason Hinv Hforest Hc Hd).
 Qed.
 
-(** Every successful justified union preserves the explanation forest from maintained input duties. *)
+(** Justified union preserves the explanation forest from maintained input duties. *)
 Theorem edges_forest g c d reason h :
   Egraph.kernel_inv a g ->
   UnionFind.wf Egraph.id_encoding (Egraph.uf g) ->

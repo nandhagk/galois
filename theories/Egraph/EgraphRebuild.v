@@ -17,6 +17,16 @@ Context {K Sort V : Type} (a : EggAlg.t K Sort V).
 Definition repair_c (g : Egraph.t K Sort V) loser := Egraph.repair_c a g loser.
 Definition repair g loser := Cost.value (repair_c g loser).
 
+Definition rebuild_c (g : Egraph.t K Sort V) := Egraph.rebuild_c a g.
+Definition rebuild g := Cost.value (rebuild_c g).
+
+(** The support namespace observes exactly the computational owner's counted rebuild. *)
+Theorem rebuild_equation g :
+  rebuild g = fst (Cost.value (Egraph.rebuild_run_c a g)).
+Proof.
+  reflexivity.
+Qed.
+
 (** Repair's pure equation traverses exactly the selected loser's stored parent snapshot. *)
 Theorem repair_equation g loser :
   repair g loser =

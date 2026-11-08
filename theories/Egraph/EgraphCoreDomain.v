@@ -107,7 +107,7 @@ Proof.
     rewrite Map.get_empty in Hget; discriminate.
 Qed.
 
-(** The raw duplicate leaves fail maintained coverage because their signature snapshots are absent. *)
+(** Raw duplicate leaves lack the snapshots required by maintained coverage. *)
 Theorem duplicate_leaves_not_kernel_inv : ~ Egraph.kernel_inv a duplicate_leaves.
 Proof.
   intro Hinv.
@@ -167,7 +167,10 @@ Theorem duplicate_leaves_require_merge h :
 Proof.
   intros Hnodes Hclasses Hclean.
   assert (Hlookup : forall i, EggSpec.nodes_get h i = EggSpec.nodes_get duplicate_leaves i).
-  { intro i; unfold EggSpec.nodes_get; now rewrite Hnodes. }
+  { intro i.
+    change (Map.get Egraph.id_encoding i (Egraph.nodes h) =
+      Map.get Egraph.id_encoding i (Egraph.nodes duplicate_leaves)).
+    now rewrite Hnodes. }
   assert (Hone : EggSpec.nodes_get h 1%positive = Some leaf).
   { rewrite Hlookup, lookup.
     destruct (Pos.eq_dec 1%positive 2%positive);

@@ -66,7 +66,7 @@ Proof.
       destruct (EggParent.get (Egraph.parents g) loser); cbn [Egraph.pending_work]; auto.
 Qed.
 
-(** Removing a nonexistent node from the active batch cannot expose an uncovered stored production. *)
+(** Removing a nonexistent node from the batch preserves coverage of stored productions. *)
 Theorem absent_parent_kernel_inv g i work :
   Egraph.kernel_inv_on a g (i :: work) ->
   Map.get Egraph.id_encoding i (Egraph.nodes g) = None ->
@@ -166,7 +166,7 @@ Proof.
     apply Hnot; destruct work; cbn [Egraph.pending_work In] in *; tauto.
 Qed.
 
-(** A signature installation discharges its parent when the selected collision class is justified. *)
+(** Signature installation discharges its parent under justified collision-class duties. *)
 Theorem install_kernel_inv g i work n historical current :
   Egraph.kernel_inv_on a g (i :: work) ->
   Map.wf Egraph.id_encoding (Egraph.memo g) ->
@@ -205,7 +205,8 @@ Proof.
       (Map.set Egraph.id_encoding key i
         (Map.remove Egraph.id_encoding oldkey (Egraph.memo g))) =
       if Pos.eq_dec code key then Some i
-      else if Pos.eq_dec code oldkey then None else Map.get Egraph.id_encoding code (Egraph.memo g)).
+      else if Pos.eq_dec code oldkey then None
+      else Map.get Egraph.id_encoding code (Egraph.memo g)).
     rewrite set_lookup by (apply Map.wf_remove; exact Hmemo).
     destruct (Pos.eq_dec code key); [reflexivity|].
     destruct (Pos.eq_dec code oldkey) as [->|Hne].

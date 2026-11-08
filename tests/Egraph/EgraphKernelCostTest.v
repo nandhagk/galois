@@ -4,12 +4,12 @@
     For example, merging two singleton buckets retains both occurrences in the winning bucket.
     Builds on: EgraphCoreIndex and EgraphKernelCost. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseMap BaseUnionFind BaseUnionFindRank.
 From Galois.Egraph Require Import
   EgraphSyntax EgraphGraph EgraphSpec EgraphCoreIndex EgraphCoreInvariant
-  EgraphRebuild EgraphKernelCost.
+  EgraphCoreRepresentation EgraphCoreMaintained EgraphRebuild EgraphKernelCost.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 
@@ -100,7 +100,7 @@ Proof.
   apply EggKernelInv.empty_kernel_inv.
 Qed.
 
-(** Successful leaf insertion establishes maintained coverage through the public computational entry. *)
+(** Leaf insertion establishes maintained coverage through the public computational entry. *)
 Theorem inserted_leaf_kernel_inv c h :
   Egraph.add_node alg Egraph.empty (Egraph.NVar true 1) = Some (c, h) ->
   Egraph.kernel_inv alg h.
@@ -139,13 +139,14 @@ Proof.
   intros Hstruct Hkernel Hadded.
   apply (EggKernelInv.add_node_kernel_inv alg g n c h).
   - exact Hkernel.
-  - exact (EggSpec.forest_wf alg g Hstruct).
-  - exact (EggSpec.nodes_wf alg g Hstruct).
-  - exact (EggSpec.memo_wf alg g Hstruct).
+  - exact (EggRepresentation.forest_wf alg g Hstruct).
+  - exact (EggRepresentation.nodes_wf alg g Hstruct).
+  - exact (EggRepresentation.memo_wf alg g Hstruct).
   - destruct (Map.get Egraph.id_encoding (Egraph.next g) (Egraph.nodes g))
       as [old|] eqn:Hlookup; [|reflexivity].
     assert (Hbound : (Egraph.next g < Egraph.next g)%positive).
-    { apply (proj1 (EggSpec.allocation alg g Hstruct (Egraph.next g))); exists old; exact Hlookup. }
+    { apply (proj1 (EggRepresentation.allocation alg g Hstruct (Egraph.next g))).
+      exists old; exact Hlookup. }
     exact (False_rect _ (Pos.lt_irrefl _ Hbound)).
   - exact Hadded.
 Qed.
@@ -158,8 +159,9 @@ Theorem insert_parent_from_leaf c g d h :
 Proof.
   intros Hleaf Hparent.
   apply (structural_insertion_kernel_inv g (Egraph.NApp true 4 [c]) d h).
-  - exact (EggSpec.add_node_wf alg Egraph.empty (Egraph.NVar true 1) c g
-      alg_encoding_laws (EggSpec.empty_wf alg) Hleaf).
+  - exact (EggSpec.wf_structural alg g
+      (EggSpec.add_node_wf alg Egraph.empty (Egraph.NVar true 1) c g
+        alg_encoding_laws (EggSpec.empty_wf alg) Hleaf)).
   - exact (inserted_leaf_kernel_inv c g Hleaf).
   - exact Hparent.
 Qed.
@@ -219,6 +221,116 @@ Example dirty_callback_loop_exact_costs :
     (Some 442%N, Some 442%N, Some 442%N).
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Definition insertion_fixture m :=
+  Egraph.add_terms alg Egraph.empty
+    (map (fun i => EggTerm.Var true (S i)) (seq 0 m)).
+
+Definition insertion_ticks m :=
+  match insertion_fixture m with
+  | None => None
+  | Some (_, g) => Some (Cost.ticks (Egraph.add_node_c alg g (Egraph.NVar true 42)))
+  end.
+
+(** Each insertion fixture contains exactly its advertised number of stored nodes. *)
+Example insertion_fixture_sizes :
+  let size m := option_map (fun result => length (Map.elements (Egraph.nodes (snd result))))
+    (insertion_fixture m) in
+  (size 4, size 8, size 16) = (Some 4, Some 8, Some 16).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example insertion_exact_ticks :
+  (insertion_ticks 4, insertion_ticks 8, insertion_ticks 16) =
+    (Some 196%N, Some 203%N, Some 210%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Observed insertion growth consists of seven charged fresh-key paths per additional key bit. *)
+Example insertion_fixed_work_beyond_fresh_key_paths :
+  Forall (fun m => match insertion_fixture m, insertion_ticks m with
+    | Some (_, g), Some ticks => ticks =
+      (175 + 7 * N.pos (Pos.size (Egraph.next g)))%N
+    | _, _ => False
+    end) [4; 8; 16].
+Proof.
+  constructor; [vm_compute; reflexivity|].
+  constructor; [vm_compute; reflexivity|].
+  constructor; [vm_compute; reflexivity|constructor].
+Qed.
+
+Definition rebuild_observation m :=
+  match dirty_fixture m with
+  | None => None
+  | Some g => Some (Cost.ticks (Egraph.rebuild_c alg g), Egraph.rebuild_repairs alg g,
+      Egraph.dirty (Egraph.rebuild alg g))
+  end.
+
+(** Public fuel construction and the actual iterator cost 441 ticks and visit one parent. *)
+Example rebuild_exact_ticks_and_repairs :
+  (rebuild_observation 4, rebuild_observation 8, rebuild_observation 16) =
+    (Some (441%N, 1%N, []), Some (441%N, 1%N, []), Some (441%N, 1%N, [])).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The exact observations above give insertion ticks 196, 203 and 210 and rebuild ticks 441.
+    EgraphRebuildLegacyTest.legacy_quadratic_pair_preparation records 20, 72 and 272 legacy pairs.
+    Legacy has no Cost tick interface, so those pair counts are separate work observations.
+    No native timing comparison is claimed. *)
+
+(** These numerical bounds accompany the exact unchanged-input GraphTest observations. *)
+Example rebuild_observed_bounds :
+  Forall (fun m => match rebuild_observation m with
+    | Some (ticks, repairs, _) => (ticks <= 441 /\ repairs <= 1)%N
+    | None => False
+    end) [4; 8; 16].
+Proof.
+  constructor; [vm_compute; split; discriminate|].
+  constructor; [vm_compute; split; discriminate|].
+  constructor; [vm_compute; split; discriminate|constructor].
+Qed.
+
+(** Symbolic consumers supply primitive trace budgets separately from maintained WF. *)
+Theorem actual_loop_cost_client g f w p arity :
+  EggSpec.wf alg g -> EggCost.loop_budget alg g f w p arity ->
+  (Cost.ticks (Egraph.rebuild_c alg g) <=
+    3 + (((arity + 5) * (1 + f) + 32 * (1 + w) + p + 1) + 2) *
+      Egraph.rebuild_repairs alg g + N.pos (Pos.size (Egraph.rebuild_fuel g)))%N.
+Proof.
+  intros Hwf Hbudget.
+  apply (EggCost.rebuild_cost alg (EggSpec.node_code_injective alg alg_encoding_laws) g).
+  - exact (EggSpec.wf_kernel alg g Hwf).
+  - exact (EggMaintained.layout alg g (EggSpec.wf_structural alg g Hwf)).
+  - exact Hbudget.
+Qed.
+
+(** Total visits charge initial dirty work and the edges added by actual collision unions. *)
+Theorem actual_loop_repair_total_client g p :
+  EggCost.bucket_budget alg g p ->
+  (Egraph.rebuild_repairs alg g + p * N.of_nat (length (Egraph.edges g)) <=
+    p * (N.of_nat (length (Egraph.dirty g)) +
+      N.of_nat (length (Egraph.edges (Egraph.rebuild alg g)))))%N.
+Proof.
+  exact (EggCost.rebuild_repairs_total alg g p).
+Qed.
+
+(** Public term insertion supplies maintained WF and independent rank evidence for rebuilding. *)
+Theorem constructed_rebuild_client e c g :
+  Egraph.add_term alg Egraph.empty e = Some (c, g) ->
+  EggSpec.wf alg g /\ EggSpec.clean alg (Egraph.rebuild alg g) /\
+    EggCost.rank_inv (Egraph.rebuild alg g).
+Proof.
+  intro Hadded.
+  destruct (proj1 (EggSpec.add_term_represents alg Egraph.empty e
+    alg_encoding_laws (EggSpec.empty_wf alg)) c g Hadded) as [Hrep [Hwf Hext]].
+  split; [exact Hwf|]; split.
+  - exact (EggSpec.rebuild_clean alg g alg_encoding_laws Hwf).
+  - apply EggCost.rebuild_rank_inv.
+    exact (EggCost.add_term_rank_inv alg e Egraph.empty c g graph_empty_rank_inv Hadded).
 Qed.
 
 End EggKernelPrimitiveTest.

@@ -293,6 +293,14 @@ Proof.
   - cbn [entries In]; intuition congruence.
 Qed.
 
+(** A deduplicated push adds at most one queue entry on any raw flag table. *)
+Theorem push_length c q :
+  (length (entries (push c q)) <= S (length (entries q)))%nat.
+Proof.
+  rewrite push_equation; destruct (Map.get positive_encoding c (flags q)); cbn [entries length];
+    lia.
+Qed.
+
 (** Enqueueing preserves exact membership flags and duplicate-free scheduling. *)
 Theorem push_wf c q : wf q -> wf (push c q).
 Proof.

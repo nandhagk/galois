@@ -90,6 +90,13 @@ Definition find_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (c : id) :
 Definition find {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (c : id) :=
   Cost.value (find_c a g c).
 
+(** Graph find observes the representative returned by the public Base UF query. *)
+Theorem find_equation {K Sort V} (a : EggAlg.t K Sort V) g c :
+  find a g c = fst (UnionFind.find id_encoding c (uf g)).
+Proof.
+  reflexivity.
+Qed.
+
 Definition node_sort {K Sort V} (n : enode K Sort V) : Sort :=
   match n with
   | NVar s _ => s
@@ -199,7 +206,7 @@ Definition node_children {K Sort V} (n : enode K Sort V) : list id :=
 Definition pending_node {K Sort V} (g : t K Sort V) i : Prop :=
   exists loser, In loser (dirty g) /\ In i (EggParent.get (parents g) loser).
 
-(** A repair batch temporarily protects its unvisited parents in addition to queued dirty buckets. *)
+(** A repair batch protects its unvisited parents alongside queued dirty buckets. *)
 Definition pending_work {K Sort V} (g : t K Sort V) (work : list id) i : Prop :=
   match work with
   | [] => pending_node g i
@@ -550,6 +557,13 @@ Definition union_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (c d : id
 Definition union {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (c d : id) :=
   Cost.value (union_c a g c d).
 
+(** Ordinary union is the given-justification instance of annotated union. *)
+Theorem union_equation {K Sort V} (a : EggAlg.t K Sort V) g c d :
+  union a g c d = union_j a g c d JGiven.
+Proof.
+  reflexivity.
+Qed.
+
 Definition install_c {K Sort V} (g : t K Sort V) i current old_key key :
     Cost.t (t K Sort V) :=
   let* table := Map.remove_c id_encoding old_key (memo g) in
@@ -571,6 +585,34 @@ Proof.
   reflexivity.
 Qed.
 
+Definition repair_base_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) i key :
+    Cost.t (t K Sort V) :=
+  let* collision := Map.get_c id_encoding key (memo g) in
+  match collision with
+  | None => Cost.ret g
+  | Some other =>
+    let* merged := union_j_c a g i other (JCongruence i other) in
+    Cost.ret (match merged with Some h => h | None => g end)
+  end.
+
+Definition repair_base {K Sort V} (a : EggAlg.t K Sort V) g i key :=
+  Cost.value (repair_base_c a g i key).
+
+(** The collision base is the actual justified union result, or the original graph on failure. *)
+Theorem repair_base_equation {K Sort V} (a : EggAlg.t K Sort V) g i key :
+  repair_base a g i key =
+    match Map.get id_encoding key (memo g) with
+    | None => g
+    | Some other =>
+      match union_j a g i other (JCongruence i other) with Some h => h | None => g end
+    end.
+Proof.
+  unfold repair_base, repair_base_c; rewrite Cost.value_bind.
+  fold (Map.get id_encoding key (memo g)).
+  destruct (Map.get id_encoding key (memo g)) as [other|]; [|reflexivity].
+  rewrite Cost.value_bind; reflexivity.
+Qed.
+
 (** Repair rewrites one historical signature and justifies any collision by its two stored nodes. *)
 Definition repair_node_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (i : id) :
     Cost.t (t K Sort V) :=
@@ -581,14 +623,7 @@ Definition repair_node_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (i 
     let* current := canonical_c a g n in
     let* old_key := node_code_c a historical in
     let* key := node_code_c a current in
-    let* collision := Map.get_c id_encoding key (memo g) in
-    let* base :=
-      match collision with
-      | None => Cost.ret g
-      | Some other =>
-        let* merged := union_j_c a g i other (JCongruence i other) in
-        Cost.ret (match merged with Some h => h | None => g end)
-      end in
+    let* base := repair_base_c a g i key in
     install_c base i current old_key key
   | _, _ => Cost.ret g
   end.
@@ -596,7 +631,7 @@ Definition repair_node_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (i 
 Definition repair_node {K Sort V} (a : EggAlg.t K Sort V) g i :=
   Cost.value (repair_node_c a g i).
 
-(** Repair observes a collision before deleting its historical key and records the resulting union. *)
+(** Repair observes a collision before deleting its historical key and records the union. *)
 Theorem repair_node_equation {K Sort V} (a : EggAlg.t K Sort V) g i :
   repair_node a g i =
     match Map.get id_encoding i (nodes g), Map.get id_encoding i (cached g) with
@@ -620,11 +655,8 @@ Proof.
     (Map.get id_encoding i (cached g)) as [historical|]; [|reflexivity..].
   rewrite !Cost.value_bind.
   fold (canonical a g n) (node_code a historical) (node_code a (canonical a g n)).
-  fold (Map.get id_encoding (node_code a (canonical a g n)) (memo g)).
-  destruct (Map.get id_encoding (node_code a (canonical a g n)) (memo g)) as [other|];
-    [|reflexivity].
-  rewrite !Cost.value_bind; fold (union_j a g i other (JCongruence i other)).
-  destruct (union_j a g i other (JCongruence i other)); reflexivity.
+  fold (repair_base a g i (node_code a (canonical a g n))).
+  rewrite repair_base_equation; reflexivity.
 Qed.
 
 (** A repair batch counts each visited parent in the same fold that performs its update. *)
@@ -638,7 +670,7 @@ Definition repair_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) (loser :
 Definition repair {K Sort V} (a : EggAlg.t K Sort V) g loser :=
   Cost.value (repair_c a g loser).
 
-(** Replacing scheduling data leaves every production, class, memo entry and parent bucket unchanged. *)
+(** Replacing scheduling data preserves productions, classes, memo entries and parent buckets. *)
 Definition with_queue {K Sort V} (g : t K Sort V) queue : t K Sort V :=
   Make K Sort V (uf g) (nodes g) (memo g) (next g)
     (Kernel_data K Sort V (parents g) queue (cached g) (edges g)).
@@ -655,6 +687,32 @@ Definition dirty_step_c {K Sort V} (a : EggAlg.t K Sort V) (state : t K Sort V *
     let* result := repair_c a popped loser in
     Cost.ret (inl (fst result, N.add visits (snd result)))
   end.
+
+(** The original graph-only callback observes the same counted dirty-class transition. *)
+Definition rebuild_step_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) :
+    Cost.t (t K Sort V + t K Sort V) :=
+  Cost.map (fun result =>
+    match result with
+    | inl state => inl (fst state)
+    | inr state => inr (fst state)
+    end) (dirty_step_c a (g, 0%N)).
+
+Definition rebuild_fuel_c {K Sort V} (g : t K Sort V) : Cost.t positive :=
+  Cost.step ;;
+  let square := Pos.mul (next g) (next g) in
+  Cost.step ;;
+  let bound := Pos.add square (next g) in
+  Cost.step ;;
+  Cost.ret (Pos.succ bound).
+
+Definition rebuild_fuel {K Sort V} (g : t K Sort V) := Cost.value (rebuild_fuel_c g).
+
+(** Fuel construction charges three scalar operations without a natural-number conversion. *)
+Theorem rebuild_fuel_equation {K Sort V} (g : t K Sort V) :
+  rebuild_fuel g = Pos.succ (Pos.add (Pos.mul (next g) (next g)) (next g)).
+Proof.
+  reflexivity.
+Qed.
 
 (** A memo scan also detects the first collision between different current classes. *)
 Definition scan_step_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V)
@@ -686,35 +744,39 @@ Definition scan_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) :=
 
 Definition scan {K Sort V} (a : EggAlg.t K Sort V) g := Cost.value (scan_c a g).
 
-(** Each continuing rebuild step merges a congruent pair found by the charged scan. *)
-Definition rebuild_step_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) :
-    Cost.t (t K Sort V + t K Sort V) :=
-  let* result := scan_c a g in
-  let '(table, collision) := result in
-  let g' := Make K Sort V (uf g) (nodes g) table (next g) (private g) in
-  match collision with
-  | None => Cost.ret (inr g')
-  | Some (c, d) =>
-    let* merged := union_c a g' c d in
-    Cost.ret (match merged with Some g'' => inl g'' | None => inr g' end)
-  end.
+(** Rebuilding runs only dirty parent batches and returns the counter of those same updates. *)
+Definition rebuild_run_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) :
+    Cost.t (t K Sort V * N) :=
+  let* fuel := rebuild_fuel_c g in
+  let* result := iterate (dirty_step_c a) fuel (g, 0%N) in
+  Cost.ret (match result with inl state | inr state => state end).
 
-(** Squared node-count fuel bounds the number of unequal identifier pairs. *)
 Definition rebuild_c {K Sort V} (a : EggAlg.t K Sort V) (g : t K Sort V) :
-    Cost.t (t K Sort V) :=
-  let* count := Map.size_c (nodes g) in
-  Cost.step ;;
-  let* bound := encode_c (codec_enc nat_codec) count in
-  let* result := iterate (rebuild_step_c a) (Pos.mul bound bound) g in
-  match result with
-  | inr g' => Cost.ret g'
-  | inl g' =>
-    let* result := scan_c a g' in
-    Cost.ret (Make K Sort V (uf g') (nodes g') (fst result) (next g') (private g'))
-  end.
+    Cost.t (t K Sort V) := Cost.map fst (rebuild_run_c a g).
 
 Definition rebuild {K Sort V} (a : EggAlg.t K Sort V) g :=
   Cost.value (rebuild_c a g).
+
+(** Repair counts are observations of the actual graph-and-counter run, not a second runner. *)
+Definition rebuild_repairs {K Sort V} (a : EggAlg.t K Sort V) g :=
+  snd (Cost.value (rebuild_run_c a g)).
+
+(** The counted rebuild uses the charged allocation-bound fuel and its actual dirty iterator. *)
+Theorem rebuild_run_equation {K Sort V} (a : EggAlg.t K Sort V) g :
+  Cost.value (rebuild_run_c a g) =
+    match Cost.value (iterate (dirty_step_c a) (rebuild_fuel g) (g, 0%N)) with
+    | inl state | inr state => state
+    end.
+Proof.
+  unfold rebuild_run_c; rewrite !Cost.value_bind; reflexivity.
+Qed.
+
+(** Plain rebuild projects the graph produced by the counted dirty run. *)
+Theorem rebuild_equation {K Sort V} (a : EggAlg.t K Sort V) g :
+  rebuild a g = fst (Cost.value (rebuild_run_c a g)).
+Proof.
+  reflexivity.
+Qed.
 
 Arguments empty {K Sort V} : simpl never.
 Arguments empty_c {K Sort V} : simpl never.
