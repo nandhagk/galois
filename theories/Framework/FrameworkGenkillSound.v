@@ -94,7 +94,8 @@ Qed.
 Theorem must_member_antitone {U} (enc : encoding U) (HU : encoding_laws enc) :
   DenseWitness.holds_antitone (must enc) (@must_member U enc).
 Proof.
-  intros [|a] [|b] u Hab Hu; try exact I.
+  intros a b u Hab Hu; rewrite must_leb_equation in Hab.
+  destruct a as [|a], b as [|b]; try exact I.
   - discriminate.
   - exact (proj1 (may_leb enc HU b a) Hab u Hu).
 Qed.
@@ -425,7 +426,9 @@ Definition marked_member {U} {enc : encoding U} (a : must_t enc) (u : option U) 
 Lemma marked_member_antitone {U} enc (HU : encoding_laws enc) :
   DenseWitness.holds_antitone (must enc) (@marked_member U enc).
 Proof.
-  intros [|a] [|b] [u|] Hab Hu; try exact I; try contradiction; try discriminate.
+  intros a b v Hab Hu; rewrite must_leb_equation in Hab.
+  destruct a as [|a], b as [|b], v as [u|];
+    try exact I; try contradiction; try discriminate.
   exact (proj1 (may_leb enc HU b a) Hab u Hu).
 Qed.
 

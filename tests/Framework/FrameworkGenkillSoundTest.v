@@ -569,4 +569,237 @@ Proof.
   - vm_compute; discriminate.
 Qed.
 
+(** A selected future computation retains its generating edge and every un-killed prefix edge. *)
+Definition selected_future (P : Bitvector.t nat nat bool)
+    (_ : state) (es : list nat) (_ : state) u :=
+  exists pre e post, es = pre ++ e :: post /\
+    In u (Bitvector.gen P e) /\
+    forall d, In d pre -> ~ In u (Bitvector.kill P d).
+
+Lemma selected_witness_laws c (P : Bitvector.t nat nat bool) (Q : state -> Prop) :
+  (forall t, reachable_state (m c) t -> Q t -> Bitvector.boundary P (pc t) = Some []) ->
+  bv_witness_laws (m c) P (lk c) Q (selected_future P).
+Proof.
+  intro Hboundary; constructor.
+  - intros t Hr HQ; exists []; exact (Hboundary t Hr HQ).
+  - intros t xs u Hr HQ Hb Hu.
+    change (Bitvector.boundary P (pc t) = Some xs) in Hb.
+    rewrite (Hboundary t Hr HQ) in Hb.
+    inversion Hb; subst xs; contradiction.
+  - intros e es t u s l s' Hr Hstep Hrun HQ Htaken Hgen.
+    exists [], e, es; split; [reflexivity|]; split; [exact Hgen|].
+    intros d Hbad; contradiction.
+  - intros e es t u s l s' Hr Hstep Hrun HQ Htaken Hkill
+      [pre [d [post [Hes [Hgen Hprefix]]]]].
+    exists (e :: pre), d, post; split; [cbn; rewrite Hes; reflexivity|].
+    split; [exact Hgen|]; intros d' [<-|Hd].
+    + exact Hkill.
+    + exact (Hprefix d' Hd).
+  - intros es t u s l s' Hr Hstep Hrun HQ Hbad; contradiction.
+Qed.
+
+Lemma selected_witness_client (P : Bitvector.t nat nat bool) (Q : state -> Prop) sigma :
+  encoding_laws (Cfg.node_enc (Bitvector.cfg P)) ->
+  encoding_laws (Cfg.edge_enc (Bitvector.cfg P)) ->
+  encoding_laws (Bitvector.fact_enc P) -> Bitvector.dir P = Backward ->
+  graph_wf (Cfg.graph (Bitvector.cfg P)) ->
+  (forall t, reachable_state (m (Bitvector.cfg P)) t -> Q t ->
+    Bitvector.boundary P (pc t) = Some []) ->
+  post_solution (Analysis.lat (Bitvector.must_analysis P))
+    (Analysis.system (Bitvector.must_analysis P)) sigma ->
+  forall s es t u, reachable_state (m (Bitvector.cfg P)) s ->
+    run_edges (m (Bitvector.cfg P)) (lk (Bitvector.cfg P)) s es t ->
+    Q t -> must_member (sigma (pc s)) u -> selected_future P s es t u.
+Proof.
+  intros HN HE HU Hdir Hwf Hboundary Hpost.
+  eapply (backward_must_witness (m (Bitvector.cfg P)) P (lk (Bitvector.cfg P))
+    Q (selected_future P) sigma); try eassumption.
+  - apply link_ok; exact Hwf.
+  - apply selected_witness_laws; exact Hboundary.
+Qed.
+
+Definition invalidation_problem :=
+  Bitvector.of_pure diamond bool_encoding [false; true] Backward
+    (fun e => if Nat.eqb e 2 || Nat.eqb e 3 then [true] else [])
+    (fun e => if Nat.eqb e 0 then [true] else [])
+    (fun n => if Nat.eqb n 3 then Some [] else None).
+
+Definition invalidation_sigma n :=
+  Only (set_of_list bool_encoding (if Nat.eqb n 1 || Nat.eqb n 2 then [true] else [])).
+
+Lemma invalidation_boundary t :
+  reachable_state (m diamond) t -> pc t = 3 ->
+  Bitvector.boundary invalidation_problem (pc t) = Some [].
+Proof.
+  intros Hr HQ; rewrite HQ; reflexivity.
+Qed.
+
+Example invalidation_witness_client :
+  forall s es t u, reachable_state (m diamond) s ->
+    run_edges (m diamond) (lk diamond) s es t ->
+    pc t = 3 -> must_member (invalidation_sigma (pc s)) u ->
+    selected_future invalidation_problem s es t u.
+Proof.
+  apply (selected_witness_client invalidation_problem (fun t => pc t = 3));
+    try exact nat_encoding_laws; try exact bool_encoding_laws; try reflexivity.
+  - exact diamond_wf.
+  - exact invalidation_boundary.
+  - apply check_post_sound; vm_compute; reflexivity.
+Qed.
+
+Example invalidation_solver :
+  option_map (map (fun a => match a with
+    | All => None
+    | Only a => Some (FinSet.elements (set_raw a))
+    end))
+    (observe (Bitvector.must_analysis invalidation_problem) 16%positive [0; 1; 2; 3]) =
+      Some [Some []; Some [true]; Some [true]; Some []].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example killed_prefix_has_no_selected_future :
+  ~ selected_future invalidation_problem (St 0 false false) [0; 2] (St 3 true false) true.
+Proof.
+  intros [pre [e [post [Hes [Hgen Hprefix]]]]].
+  destruct pre as [|a pre].
+  - cbn in Hes; inversion Hes; subst e post.
+    change (In true []) in Hgen; contradiction.
+  - cbn in Hes; injection Hes as Hhead Hrest; subst a.
+    apply (Hprefix 0 (or_introl eq_refl)); vm_compute; tauto.
+Qed.
+
+Example un_killed_prefix_selects_generation :
+  selected_future invalidation_problem (St 0 false false) [1; 3] (St 3 true false) true.
+Proof.
+  exists [1], 3, []; split; [reflexivity|]; split; [vm_compute; tauto|].
+  intros d [<-|Hbad]; [vm_compute; tauto|contradiction].
+Qed.
+
+Definition internal_endpoint_problem :=
+  Bitvector.of_pure diamond bool_encoding [false; true] Backward
+    (fun e => if Nat.eqb e 0 then [true] else []) (fun _ => [])
+    (fun n => if Nat.eqb n 1 then Some [] else None).
+
+Definition internal_endpoint_sigma n :=
+  match n with
+  | 0 => Only (set_of_list bool_encoding [true])
+  | 1 => Only (set_empty bool_encoding)
+  | _ => All
+  end.
+
+Lemma internal_endpoint_boundary t :
+  reachable_state (m diamond) t -> pc t = 1 ->
+  Bitvector.boundary internal_endpoint_problem (pc t) = Some [].
+Proof.
+  intros Hr HQ; rewrite HQ; reflexivity.
+Qed.
+
+Lemma actual_diamond_prefix :
+  run_edges (m diamond) (lk diamond) (St 0 false false) [0] (St 1 true false).
+Proof.
+  eapply run_take; [exact actual_diamond_step|vm_compute; tauto|constructor].
+Qed.
+
+Lemma actual_diamond_suffix :
+  run_edges (m diamond) (lk diamond) (St 1 true false) [2] (St 3 true false).
+Proof.
+  eapply run_take with (l := [false]).
+  - exists 2; vm_compute; tauto.
+  - vm_compute; tauto.
+  - constructor.
+Qed.
+
+Example invalidation_on_actual_runs :
+  run_edges (m diamond) (lk diamond) (St 0 false false) [0; 2] (St 3 true false) /\
+    ~ selected_future invalidation_problem (St 0 false false) [0; 2] (St 3 true false) true /\
+    selected_future invalidation_problem (St 1 true false) [2] (St 3 true false) true.
+Proof.
+  split.
+  - eapply run_take; [exact actual_diamond_step|vm_compute; tauto|exact actual_diamond_suffix].
+  - split; [exact killed_prefix_has_no_selected_future|].
+    eapply (invalidation_witness_client (St 1 true false) [2] (St 3 true false) true).
+    + exists (St 0 false false), [false]; split.
+      * split; [vm_compute; tauto|reflexivity].
+      * eapply exec_step with (l := [false]) (tr := []);
+          [exact actual_diamond_step|constructor].
+    + exact actual_diamond_suffix.
+    + reflexivity.
+    + vm_compute; reflexivity.
+Qed.
+
+Example caller_selects_nonterminal_endpoint :
+  selected_future internal_endpoint_problem (St 0 false false) [0] (St 1 true false) true /\
+    Graph.out (Cfg.graph diamond) (pc (St 1 true false)) = [2].
+Proof.
+  assert (Hpost : post_solution (Analysis.lat (Bitvector.must_analysis internal_endpoint_problem))
+    (Analysis.system (Bitvector.must_analysis internal_endpoint_problem)) internal_endpoint_sigma).
+  { apply check_post_sound; vm_compute; reflexivity. }
+  split.
+  - eapply (selected_witness_client internal_endpoint_problem (fun t => pc t = 1)
+      internal_endpoint_sigma nat_encoding_laws nat_encoding_laws bool_encoding_laws
+      eq_refl diamond_wf internal_endpoint_boundary Hpost
+      (St 0 false false) [0] (St 1 true false) true).
+    + exists (St 0 false false), []; split;
+        [split; [vm_compute; tauto|reflexivity]|constructor].
+    + exact actual_diamond_prefix.
+    + reflexivity.
+    + vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+Qed.
+
+Definition no_boundary_cycle : Cfg.t nat nat :=
+  Cfg.Make (Graph.of_pure [0] [0]
+    (fun n => if Nat.eqb n 0 then [0] else [])
+    (fun _ => 0) (fun _ => 0)) nat_encoding nat_encoding.
+
+Definition no_boundary_problem :=
+  Bitvector.of_pure no_boundary_cycle bool_encoding [false; true] Backward
+    (fun _ => [true]) (fun _ => [true]) (fun _ => None).
+
+Lemma no_boundary_cycle_wf : graph_wf (Cfg.graph no_boundary_cycle).
+Proof.
+  constructor.
+  - repeat constructor; cbn; tauto.
+  - intros n Hn; exact Hn.
+  - intros n e He; destruct n; [reflexivity|contradiction].
+  - intros n e Hn He; vm_compute; tauto.
+Qed.
+
+Example no_boundary_all_certified :
+  post_solution (Analysis.lat (Bitvector.must_analysis no_boundary_problem))
+    (Analysis.system (Bitvector.must_analysis no_boundary_problem)) (fun _ => All).
+Proof.
+  apply check_post_sound; vm_compute; reflexivity.
+Qed.
+
+Example no_boundary_cycle_solver_all :
+  option_map (map (fun a => match a with All => true | Only _ => false end))
+    (observe (Bitvector.must_analysis no_boundary_problem) 8%positive [0]) = Some [true].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example no_boundary_cycle_lacks_required_law :
+  ~ bv_witness_laws (m no_boundary_cycle) no_boundary_problem (lk no_boundary_cycle)
+      (fun t => pc t = 0) (selected_future no_boundary_problem).
+Proof.
+  intros [Hboundary Hterminal Hgen Hframe Hstay].
+  assert (Hr : reachable_state (m no_boundary_cycle) (St 0 false false)).
+  { exists (St 0 false false), []; split;
+      [split; [vm_compute; tauto|reflexivity]|constructor]. }
+  destruct (Hboundary (St 0 false false) Hr eq_refl) as [xs Hbad]; discriminate.
+Qed.
+
+Example no_boundary_all_does_not_fabricate_future :
+  run_edges (m no_boundary_cycle) (lk no_boundary_cycle) (St 0 false false) [] (St 0 false false) /\
+    must_member (All : must_t bool_encoding) true /\
+    marked_member (All : must_t bool_encoding) None /\
+    ~ selected_future no_boundary_problem (St 0 false false) [] (St 0 false false) true.
+Proof.
+  split; [constructor|]; split; [exact I|]; split; [exact I|].
+  intros [pre [e [post [Hes [Hgen Hprefix]]]]].
+  symmetry in Hes; apply app_eq_nil in Hes as [_ Hbad]; discriminate.
+Qed.
+
 End TwoVariables.
