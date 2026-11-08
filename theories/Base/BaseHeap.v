@@ -143,8 +143,9 @@ Definition pop_step_c {K} (E : encoding K) (m : Map.t K positive) n
 
 (** Pop uses the public binary driver to discard at most all pending stale entries. *)
 Definition pop_c {K} (E : encoding K) (q : t K) : Cost.t (option (positive * K * t K)) :=
+  let* fuel := HeapBinomial.sufficient_fuel_c (pending q) in
   let* result := iterate (pop_step_c E (live q) (live_count q))
-    (Pos.of_nat (S (pending_count q))) (pending q, pending_count q) in
+    fuel (pending q, pending_count q) in
   Cost.ret (match result with inl _ => None | inr r => r end).
 Definition pop {K} (E : encoding K) (q : t K) := Cost.value (pop_c E q).
 
@@ -410,10 +411,12 @@ Local Lemma pop_correct {K} (E : encoding K) (q : t K) :
   wf E q -> pop_result E (live q) (size q) (pop E q).
 Proof.
   intro Hwf. unfold pop, pop_c. autorewrite with galois_cost.
-  apply (pop_runs_correct E (Pos.to_nat (Pos.of_nat (S (pending_count q))))
+  fold (HeapBinomial.sufficient_fuel (pending q)).
+  apply (pop_runs_correct E (Pos.to_nat (HeapBinomial.sufficient_fuel (pending q)))
     (live q) (live_count q) (pending q) (pending_count q)).
   - exact Hwf.
-  - rewrite Nat2Pos.id by lia. lia.
+  - pose proof (HeapBinomial.sufficient_fuel_capacity _ _ (proj1 Hwf)) as Hcapacity.
+    pose proof (proj2 (proj2 (proj2 (proj2 Hwf)))) as Hcount. lia.
   - apply iterate_value.
 Qed.
 
@@ -458,8 +461,9 @@ Local Lemma pop_live {K} (E : encoding K) q q' p k :
   pop E q = Some (p, k, q') -> live q' = Map.remove E k (live q).
 Proof.
   unfold pop, pop_c. autorewrite with galois_cost.
+  fold (HeapBinomial.sufficient_fuel (pending q)).
   pose proof (iterate_value (pop_step_c E (live q) (live_count q))
-    (Pos.of_nat (S (pending_count q))) (pending q, pending_count q)) as Hrun.
+    (HeapBinomial.sufficient_fuel (pending q)) (pending q, pending_count q)) as Hrun.
   pose proof (pop_runs_live E _ _ _ _ _ Hrun) as Hlive.
   destruct (Cost.value (iterate _ _ _)) as [s|r]; [discriminate|].
   intro H. subst r. exact Hlive.
@@ -806,8 +810,9 @@ Qed.
 Theorem pop_cost_credit {K} (E : encoding K) (HE : encoding_laws E) q P w :
   wf E q -> key_budget E w q -> pending_count q <= P ->
   (Cost.ticks (pop_c E q) + pop_output_potential P w (pop E q) <=
+    Cost.ticks (HeapBinomial.sufficient_fuel_c (pending q)) +
     heap_w P w + heap_potential P w q +
-    N.pos (Pos.size (Pos.of_nat (S (pending_count q)))))%N.
+    N.pos (Pos.size (HeapBinomial.sufficient_fuel (pending q))))%N.
 Proof.
   intros Hwf Hbudget HP.
   pose proof (HeapLoop.iterate_credit (pop_step_c E (live q) (live_count q))
@@ -817,7 +822,7 @@ Proof.
     (pop_state_potential (live_count q) P w) (pop_output_potential P w) (heap_w P w)
     ltac:(intros [h total] Hlocal;
       exact (pop_step_credit E HE (live q) (live_count q) P w (h, total) Hlocal))
-    (Pos.of_nat (S (pending_count q))) (pending q, pending_count q)) as Hcredit.
+    (HeapBinomial.sufficient_fuel (pending q)) (pending q, pending_count q)) as Hcredit.
   assert (Hinitial :
     wf E (Queue (pending q) (live q) (live_count q) (pending_count q)) /\
     key_budget E w (Queue (pending q) (live q) (live_count q) (pending_count q)) /\
@@ -825,11 +830,30 @@ Proof.
   specialize (Hcredit Hinitial).
   unfold pop_c, pop. autorewrite with galois_cost.
   unfold pop_c. autorewrite with galois_cost.
+  fold (HeapBinomial.sufficient_fuel (pending q)).
   unfold HeapLoop.potential in Hcredit.
   destruct (Cost.value (iterate _ _ _)) as [s|r].
   - cbn [pop_output_potential] in *. unfold heap_potential, stale, pop_state_potential in *.
     cbn [snd] in *. nia.
   - unfold heap_potential, stale, pop_state_potential in *. cbn [snd] in *. lia.
+Qed.
+
+(** Fuel construction and binary descent together remain logarithmic in the pending cap. *)
+Theorem pop_fuel_cost {K} (E : encoding K) (q : t K) P :
+  wf E q -> pending_count q <= P ->
+  (Cost.ticks (HeapBinomial.sufficient_fuel_c (pending q)) +
+    N.pos (Pos.size (HeapBinomial.sufficient_fuel (pending q))) <=
+    3 * N.of_nat (S (Nat.log2 P)))%N.
+Proof.
+  intros Hwf HP.
+  pose proof (HeapBinomial.forest_width _ _ (proj1 Hwf)) as Hwidth.
+  pose proof (proj2 (proj2 (proj2 (proj2 Hwf)))) as Hcount.
+  pose proof (Nat.log2_le_mono (pending_count q) P HP) as Hlog.
+  rewrite <- Hcount in Hwidth.
+  rewrite HeapBinomial.sufficient_fuel_cost, HeapBinomial.sufficient_fuel_width.
+  assert (HwidthN : (N.of_nat (length (pending q)) <= N.of_nat (S (Nat.log2 P)))%N)
+    by lia.
+  rewrite !Nat2N.inj_succ in *. nia.
 Qed.
 
 (** Pop's amortised bound holds for every caller-chosen pending cap on every persistent branch. *)
@@ -840,7 +864,7 @@ Theorem pop_cost {K} (E : encoding K) (HE : encoding_laws E) (laws : Map.cost_la
 Proof.
   intros Hwf Hbudget HP.
   pose proof (pop_cost_credit E HE q P w Hwf Hbudget HP) as Hcredit.
-  pose proof (pop_fuel_width (pending_count q) P HP) as Hwidth.
+  pose proof (pop_fuel_cost E q P Hwf HP) as Hfuel.
   unfold heap_w, heap_cost, heap_k in *. rewrite Nat2N.inj_succ in *. nia.
 Qed.
 
@@ -884,8 +908,9 @@ Theorem pop_cost_callee {K} (E : encoding K) (HE : encoding_laws E) q P w g r W 
      Cost.ticks (Map.remove_c E (snd e) (live q)) <= r)%N) ->
   (16 * N.of_nat (S (Nat.log2 P)) * (1 + w) + g + r + 3 <= W)%N ->
   (Cost.ticks (pop_c E q) + N.of_nat (output_stale (pop E q)) * W <=
+    Cost.ticks (HeapBinomial.sufficient_fuel_c (pending q)) +
     W + N.of_nat (stale q) * W +
-    N.pos (Pos.size (Pos.of_nat (S (pending_count q)))))%N.
+    N.pos (Pos.size (HeapBinomial.sufficient_fuel (pending q))))%N.
 Proof.
   intros Hwf HP Hwidth Hcallees HW.
   set (U := HeapBinomial.entries (pending q)).
@@ -944,8 +969,9 @@ Proof.
   assert (Hinitial : I (pending q, pending_count q)).
   { split; [destruct q; exact Hwf|]. split; [intros a Ha; exact Ha|exact HP]. }
   pose proof (HeapLoop.iterate_credit (pop_step_c E m n) I Phi Psi W Hstep
-    (Pos.of_nat (S (pending_count q))) (pending q, pending_count q) Hinitial) as Hcredit.
+    (HeapBinomial.sufficient_fuel (pending q)) (pending q, pending_count q) Hinitial) as Hcredit.
   unfold pop, pop_c. fold m n. autorewrite with galois_cost.
+  fold (HeapBinomial.sufficient_fuel (pending q)).
   unfold HeapLoop.potential in Hcredit.
   destruct (Cost.value (iterate _ _ _)) as [s|result].
   - unfold Phi, Psi, output_stale, stale in *. cbn [snd] in *.

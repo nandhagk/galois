@@ -89,8 +89,9 @@ Theorem pop_cost_callee {K} (E : encoding K) (HE : encoding_laws E) q P w g r W 
      Cost.ticks (Map.remove_c E (snd e) (Heap.live q)) <= r)%N) ->
   (16 * N.of_nat (S (Nat.log2 P)) * (1 + w) + g + r + 3 <= W)%N ->
   (Cost.ticks (Heap.pop_c E q) + N.of_nat (Heap.output_stale (Heap.pop E q)) * W <=
+    Cost.ticks (HeapBinomial.sufficient_fuel_c (Heap.pending q)) +
     W + N.of_nat (stale q) * W +
-    N.pos (Pos.size (Pos.of_nat (S (Heap.pending_count q)))))%N.
+    N.pos (Pos.size (HeapBinomial.sufficient_fuel (Heap.pending q))))%N.
 Proof.
   apply Heap.pop_cost_callee. exact HE.
 Qed.

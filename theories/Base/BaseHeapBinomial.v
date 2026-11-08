@@ -4,7 +4,7 @@
     For example, inserting two singleton trees creates one tree at rank one.
     Builds on: CostMonad, CostList and the standard positive order. *)
 
-From Stdlib Require Import List Bool NArith PeanoNat Lia.
+From Stdlib Require Import List Bool NArith PArith PeanoNat Lia.
 From Galois.Cost Require Import CostMonad CostList.
 Import List.ListNotations Cost.Notations.
 
@@ -778,6 +778,80 @@ Proof.
   destruct (forest_member_rank P 0 h t Hvalid Hin) as [rank [Ht Hrank]].
   pose proof (forest_width P h Hvalid).
   rewrite (proj2 (valid_children P rank t Ht)). lia.
+Qed.
+
+(** Sufficient binary fuel is built directly from the forest's rank-position spine. *)
+Fixpoint sufficient_fuel_c {K} (h : heap K) : Cost.t positive :=
+  match h with
+  | [] => Cost.ret xH
+  | _ :: rest =>
+    Cost.step ;;
+    let* smaller := sufficient_fuel_c rest in Cost.ret (xO smaller)
+  end.
+
+Definition sufficient_fuel {K} (h : heap K) := Cost.value (sufficient_fuel_c h).
+
+(** Each visited rank position contributes one charged zero digit. *)
+Theorem sufficient_fuel_equation {K} (h : heap K) :
+  sufficient_fuel h =
+    match h with [] => xH | _ :: rest => xO (sufficient_fuel rest) end.
+Proof.
+  destruct h; reflexivity.
+Qed.
+
+(** Fuel construction charges each visited forest slot once. *)
+Theorem sufficient_fuel_cost {K} (h : heap K) :
+  Cost.ticks (sufficient_fuel_c h) = N.of_nat (length h).
+Proof.
+  induction h as [|s rest IH]; [reflexivity|].
+  cbn [sufficient_fuel_c]. autorewrite with galois_cost.
+  rewrite IH. cbn [length]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** The returned fuel is a power of two with exponent equal to the visited spine length. *)
+Theorem sufficient_fuel_value {K} (h : heap K) :
+  Pos.to_nat (sufficient_fuel h) = 2 ^ length h.
+Proof.
+  induction h as [|s rest IH]; rewrite sufficient_fuel_equation; [reflexivity|].
+  rewrite Pos2Nat.inj_xO, IH. cbn [length]. rewrite Nat.pow_succ_r by lia. lia.
+Qed.
+
+(** The returned fuel has one leading digit beyond its charged spine traversal. *)
+Theorem sufficient_fuel_width {K} (h : heap K) :
+  N.pos (Pos.size (sufficient_fuel h)) = N.of_nat (S (length h)).
+Proof.
+  induction h as [|s rest IH]; rewrite sufficient_fuel_equation; [reflexivity|].
+  cbn [Pos.size length].
+  change (N.succ (N.pos (Pos.size (sufficient_fuel rest))) = N.of_nat (S (S (length rest)))).
+  rewrite IH, !Nat2N.inj_succ. reflexivity.
+Qed.
+
+(** Ranked positions bound their entry count by the capacity of their binary spine. *)
+Theorem forest_count_capacity {K} P start (h : heap K) :
+  forest_valid P start h -> heap_count h + 2 ^ start <= 2 ^ (start + length h).
+Proof.
+  revert start. induction h as [|[t|] rest IH]; intros start Hvalid.
+  - cbn [length]. rewrite Nat.add_0_r. unfold heap_count. cbn [entries length]. lia.
+  - destruct Hvalid as [Ht [Hrest Hlast]].
+    specialize (IH (S start) Hrest).
+    change (length (tree_entries t ++ entries rest) + 2 ^ start <=
+      2 ^ (start + S (length rest))).
+    rewrite length_app, (valid_size P start t Ht).
+    replace (start + S (length rest)) with (S start + length rest) by lia.
+    rewrite Nat.pow_succ_r in IH by lia. unfold heap_count in IH. lia.
+  - destruct Hvalid as [_ [Hrest Hlast]].
+    specialize (IH (S start) Hrest).
+    change (length (entries rest) + 2 ^ start <= 2 ^ (start + S (length rest))).
+    replace (start + S (length rest)) with (S start + length rest) by lia.
+    rewrite Nat.pow_succ_r in IH by lia. unfold heap_count in IH. lia.
+Qed.
+
+(** A valid forest's constructed fuel covers every pending entry and a stopping callback. *)
+Theorem sufficient_fuel_capacity {K} P (h : heap K) :
+  forest_valid P 0 h -> heap_count h + 1 <= Pos.to_nat (sufficient_fuel h).
+Proof.
+  intro Hvalid. rewrite sufficient_fuel_value.
+  exact (forest_count_capacity P 0 h Hvalid).
 Qed.
 
 (** Entry comparison charges one priority test and both cached widths on a tie. *)

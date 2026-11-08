@@ -64,13 +64,13 @@ Proof.
 Qed.
 
 Example heap_live_pop_ticks :
-  Cost.ticks (Heap.pop_c positive_encoding stale_queue) = 17%N.
+  Cost.ticks (Heap.pop_c positive_encoding stale_queue) = 22%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
 
 Example heap_stale_pop_ticks :
-  Cost.ticks (Heap.pop_c positive_encoding stale_after_live) = 37%N.
+  Cost.ticks (Heap.pop_c positive_encoding stale_after_live) = 39%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -133,7 +133,7 @@ Proof.
 Qed.
 
 Example heap_many_stale_ticks :
-  Cost.ticks (Heap.pop_c positive_encoding many_stale) = 2192%N.
+  Cost.ticks (Heap.pop_c positive_encoding many_stale) = 2199%N.
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -185,6 +185,105 @@ Example heap_raw_counter_removal :
     | Some _ => false
     end
   end = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition successful_stale_setup :=
+  Heap.push positive_encoding 257%positive 3%positive
+    (Heap.push positive_encoding 256%positive 2%positive many_decreases).
+
+Definition successful_stale_input :=
+  match Heap.pop positive_encoding successful_stale_setup with
+  | None => Heap.empty
+  | Some (_, _, q) => q
+  end.
+
+Definition successful_stale_result := Heap.pop positive_encoding successful_stale_input.
+
+Definition successful_stale_rest :=
+  match successful_stale_result with
+  | None => Heap.empty
+  | Some (_, _, q) => q
+  end.
+
+Definition subsequent_result := Heap.pop positive_encoding successful_stale_rest.
+
+Definition subsequent_rest :=
+  match subsequent_result with
+  | None => Heap.empty
+  | Some (_, _, q) => q
+  end.
+
+Example heap_decreases_keep_stale_credit_on_first_live_pop :
+  (Heap.stale successful_stale_setup, Heap.stale successful_stale_input) = (127, 127).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_decreases_charge_fuel_spine :
+  (Cost.value (HeapBinomial.sufficient_fuel_c (Heap.pending successful_stale_setup)),
+    Cost.ticks (HeapBinomial.sufficient_fuel_c (Heap.pending successful_stale_setup))) =
+    (256%positive, 8%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_stale_pop :
+  option_map (fun e => (fst (fst e), snd (fst e))) successful_stale_result =
+    Some (256, 2)%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_subsequent_pop :
+  option_map (fun e => (fst (fst e), snd (fst e))) subsequent_result =
+    Some (257, 3)%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_stale_exact_costs :
+  (Cost.ticks (Heap.pop_c positive_encoding successful_stale_input),
+    Cost.ticks (Heap.pop_c positive_encoding successful_stale_rest)) = (2500, 14)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_stale_residual_potentials :
+  (Heap.heap_potential 130 2 successful_stale_input,
+    Heap.heap_potential 130 2 successful_stale_rest,
+    Heap.heap_potential 130 2 subsequent_rest) = (97536, 0, 0)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_pop_exceeds_budget :
+  N.ltb (Heap.heap_cost 130 2)
+    (Cost.ticks (Heap.pop_c positive_encoding successful_stale_input)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_subsequent_pop_below_budget :
+  N.ltb (Cost.ticks (Heap.pop_c positive_encoding successful_stale_rest))
+    (Heap.heap_cost 130 2) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_stale_credit :
+  N.leb (Cost.ticks (Heap.pop_c positive_encoding successful_stale_input) +
+    Heap.heap_potential 130 2 successful_stale_rest)
+    (Heap.heap_cost 130 2 + Heap.heap_potential 130 2 successful_stale_input) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example heap_successful_subsequent_credit :
+  N.leb (Cost.ticks (Heap.pop_c positive_encoding successful_stale_rest) +
+    Heap.heap_potential 130 2 subsequent_rest)
+    (Heap.heap_cost 130 2 + Heap.heap_potential 130 2 successful_stale_rest) = true.
 Proof.
   vm_compute. reflexivity.
 Qed.
