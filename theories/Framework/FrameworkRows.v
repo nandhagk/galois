@@ -51,6 +51,34 @@ Definition system {X C A} cs (get_c : C -> Cost.t (t X A)) :=
     (fun c => Cost.step ;; Cost.map target (get_c c))
     (fun c => Cost.step ;; let* r := get_c c in query_c r).
 
+(** Post-solutions bound exactly each listed row evaluated on its ordered actual reader values. *)
+Theorem post_solution_iff {X C A} (L : lattice A) cs
+    (get_c : C -> Cost.t (t X A)) sigma :
+  post_solution L (system cs get_c) sigma <->
+    forall c, In c cs ->
+      leb L
+        (Cost.value (eval_c (Cost.value (get_c c))
+          (map sigma (reads (Cost.value (get_c c))))))
+        (sigma (target (Cost.value (get_c c)))) = true.
+Proof.
+  assert (Htarget : forall c,
+    System.target (system cs get_c) c = target (Cost.value (get_c c))) by reflexivity.
+  assert (Hrhs : forall c,
+    System.rhs (system cs get_c) c = query (Cost.value (get_c c))) by reflexivity.
+  unfold post_solution; split.
+  - intros Hpost c Hc; destruct (Hpost c Hc) as [Hvalue Hsides].
+    rewrite Htarget, Hrhs in Hvalue.
+    rewrite (proj1 (proj2 (query_spec (Cost.value (get_c c)) sigma))) in Hvalue.
+    exact Hvalue.
+  - intros Hrows c Hc; split.
+    + rewrite Htarget, Hrhs.
+      rewrite (proj1 (proj2 (query_spec (Cost.value (get_c c)) sigma))).
+      apply Hrows; exact Hc.
+    + intros x a Hin; rewrite Hrhs in Hin.
+      rewrite (proj2 (proj2 (query_spec (Cost.value (get_c c)) sigma))) in Hin.
+      inversion Hin.
+Qed.
+
 Definition static {X C A} cs (get_c : C -> Cost.t (t X A)) :
     System.static (system cs get_c) :=
   System.Static (fun c => Cost.step ;; Cost.map reads (get_c c))
