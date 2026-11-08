@@ -266,10 +266,11 @@ Proof.
     unfold SearchCost.step_k. nia.
   - destruct (stop_same p scope work final evs Htransition) as [-> [-> Hempty]].
     destruct work as [stack c]. cbn [fst] in Hempty. subst stack.
+    unfold SearchRun.step_c, SearchRun.transition_c, SearchRun.apply_events_c.
+    autorewrite with galois_cost.
     cbn [SearchRun.apply_events fold_left].
-    split; [split; [split; assumption|exact HI]|].
-    change (1 + state_credit p scope Phi w kv (([], c), s) <=
-      state_credit p scope Phi w kv (([], c), s) + 1). lia.
+    autorewrite with galois_cost.
+    split; [split; [split; assumption|exact HI]|lia].
 Qed.
 
 (** Both stopping and exhaustion retain the actual visitor invariant and all residual credit. *)

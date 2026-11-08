@@ -311,10 +311,11 @@ Proof.
     unfold step_k. nia.
   - destruct (stop_same p scope work final evs Htransition) as [-> [-> Hempty]].
     destruct work as [stack c]. cbn [fst] in Hempty. subst stack.
+    unfold SearchRun.step_c, SearchRun.transition_c, SearchRun.apply_events_c.
+    autorewrite with galois_cost.
     cbn [SearchRun.apply_events fold_left].
-    split; [split; assumption|].
-    change (1 + state_credit p Phi w kv (([], c), s) <=
-      state_credit p Phi w kv (([], c), s) + 1). lia.
+    autorewrite with galois_cost.
+    split; [split; assumption|lia].
 Qed.
 
 (** The real binary search loop telescopes graph credit and arbitrary visitor potential. *)
