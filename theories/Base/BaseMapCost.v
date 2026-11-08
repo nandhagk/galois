@@ -21,6 +21,13 @@ Proof.
   rewrite Map.size_backend. apply TrieCost.size_cost.
 Qed.
 
+(** Map enumeration traverses physical nodes and retains stored keys without rebuilding codes. *)
+Theorem elements_cost {K V} (m : Map.t K V) :
+  (Cost.ticks (Map.elements_c m) <= TrieCost.trie_k * (1 + skeleton_nodes m))%N.
+Proof.
+  apply TrieCost.map_elements_cost.
+Qed.
+
 Local Lemma callback_sum {K V W} (f : V -> Cost.t W) (xs : list (positive * (K * V))) :
   fold_right (fun pv n =>
     (Cost.ticks (Cost.map (fun w => (fst (snd pv), w)) (f (snd (snd pv)))) + n)%N)
@@ -54,6 +61,17 @@ Proof.
   pose proof (Map.stored_code E m p k v Hwf Hget) as Hcode.
   pose proof (Map.stored_get E m p k v Hwf Hget) as Hkey.
   specialize (Hbits k v Hkey). unfold key_bits in Hbits. now rewrite Hcode in Hbits.
+Qed.
+
+(** Finite stored-key widths give a cardinality bound for the actual map enumeration. *)
+Theorem elements_numeric_cost {K V} (E : encoding K) (m : Map.t K V) b :
+  Map.wf E m ->
+  (forall k v, Map.get E k m = Some v -> (key_bits E k <= b)%N) ->
+  (Cost.ticks (Map.elements_c m) <=
+    TrieCost.trie_k * (1 + N.of_nat (Map.size m) * b))%N.
+Proof.
+  intros Hwf Hbits. pose proof (elements_cost m) as Hcost.
+  pose proof (skeleton_width E m b Hwf Hbits) as Hnodes. nia.
 Qed.
 
 (** A finite stored-code-width premise gives the cardinality corollary with full callbacks. *)

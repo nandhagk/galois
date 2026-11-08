@@ -188,3 +188,28 @@ Example worklist_set_removal_cost_client {K} (E : encoding K) k (s : FinSet.t K)
 Proof.
   apply FinSet.remove_cost.
 Qed.
+
+Example worklist_set_enumeration_cost_client {K} (s : FinSet.t K) :
+  Cost.ticks (FinSet.elements_c s) =
+    (Cost.ticks (Map.elements_c s) + N.of_nat (FinSet.size s))%N.
+Proof.
+  apply FinSet.elements_cost_equation.
+Qed.
+
+Example worklist_map_enumeration_cost_client {K V} (E : encoding K) (m : Map.t K V) b :
+  Map.wf E m ->
+  (forall k v, Map.get E k m = Some v -> (key_bits E k <= b)%N) ->
+  (Cost.ticks (Map.elements_c m) <=
+    TrieCost.trie_k * (1 + N.of_nat (Map.size m) * b))%N.
+Proof.
+  apply MapCost.elements_numeric_cost.
+Qed.
+
+Example worklist_set_enumeration_overhead :
+  (Cost.ticks (FinSet.elements_c (@FinSet.empty positive)),
+    (Cost.ticks (FinSet.elements_c (FinSet.of_list positive_encoding [8; 8]%positive)) -
+      Cost.ticks (Map.elements_c (FinSet.of_list positive_encoding [8; 8]%positive)))%N) =
+    (0, 1)%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.

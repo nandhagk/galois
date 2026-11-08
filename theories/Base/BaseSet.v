@@ -99,12 +99,30 @@ Fixpoint keys_c {K} (xs : list (K * unit)) : Cost.t (list K) :=
   | (k, _) :: rest => Cost.step ;; Cost.map (cons k) (keys_c rest)
   end.
 
+(** Extracting stored keys pays one tick for each enumerated binding. *)
+Theorem keys_cost {K} (xs : list (K * unit)) :
+  Cost.ticks (keys_c xs) = N.of_nat (length xs).
+Proof.
+  induction xs as [|[k []] rest IH]; [reflexivity|].
+  cbn [keys_c]. autorewrite with galois_cost. rewrite IH.
+  cbn [length]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
 (** Enumeration includes both map enumeration and key extraction costs. *)
 Definition elements_c {K} (s : t K) :=
   let* xs := Map.elements_c s in keys_c xs.
 
 (** Enumeration retains the map's canonical key order. *)
 Definition elements {K} (s : t K) := Cost.value (elements_c s).
+
+(** Enumeration retains the map traversal and one key-extraction tick per stored binding. *)
+Theorem elements_cost_equation {K} (s : t K) :
+  Cost.ticks (elements_c s) =
+    (Cost.ticks (Map.elements_c s) + N.of_nat (size s))%N.
+Proof.
+  unfold elements_c. rewrite Cost.ticks_bind, keys_cost.
+  fold (Map.elements s). rewrite <- Map.size_elements. reflexivity.
+Qed.
 
 (** Construction prepares one unit binding per input key and charges each cell. *)
 Fixpoint pairs_c {K} (xs : list K) : Cost.t (list (K * unit)) :=

@@ -72,6 +72,13 @@ Proof.
   apply Map.find_or_equation.
 Qed.
 
+(** Assignment lookup retains the complete underlying map lookup charge. *)
+Theorem lookup_cost {X A} (EX : encoding X) (L : lattice A) m x :
+  Cost.ticks (lookup_c EX L m x) = Cost.ticks (Map.get_c EX x m).
+Proof.
+  unfold lookup_c. apply Map.find_or_cost.
+Qed.
+
 (** Empty assignments are pointwise bottom. *)
 Theorem lookup_empty {X A} (EX : encoding X) (L : lattice A) x :
   lookup EX L Map.empty x = bot L.

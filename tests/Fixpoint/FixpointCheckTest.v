@@ -7,7 +7,7 @@
 From Stdlib Require Import List Bool NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Lattice Require Import LatticeSimple.
+From Galois.Lattice Require Import LatticeCore LatticeSimple.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointIndex
   FixpointCheck FixpointPartial FixpointCut.
 Import List.ListNotations Cost.Notations.
@@ -140,6 +140,21 @@ Example empty_checker_ticks :
       empty_index FinSet.empty Map.empty),
     Cost.ticks (expand_c nat_encoding bool_lattice empty_system empty_static empty_index
       (CutCertificate FinSet.empty Map.empty []))) = (0%N, 0%N, 0%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example assignment_lookup_cost_client {X A} (EX : encoding X) (L : lattice A) m x :
+  Cost.ticks (lookup_c EX L m x) = Cost.ticks (Map.get_c EX x m).
+Proof.
+  apply lookup_cost.
+Qed.
+
+Example assignment_lookup_present_missing_ticks :
+  let m := Map.set nat_encoding 0 true Map.empty in
+  (lookup nat_encoding bool_lattice m 0, lookup nat_encoding bool_lattice m 1,
+    Cost.ticks (lookup_c nat_encoding bool_lattice m 0),
+    Cost.ticks (lookup_c nat_encoding bool_lattice m 1)) = (true, false, 3%N, 4%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
