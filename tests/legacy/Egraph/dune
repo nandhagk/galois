@@ -1,5 +1,11 @@
 (rocq.theory
  (name Galois.Tests.Legacy.Egraph)
  (flags :standard -w +default)
- (theories Stdlib Galois.Cost Galois.Base Galois.Lattice Galois.Egraph GaloisLegacy.Collections
+ (theories
+  Stdlib
+  Galois.Cost
+  Galois.Base
+  Galois.Lattice
+  Galois.Egraph
+  GaloisLegacy.Collections
   GaloisLegacy.Rewrite))

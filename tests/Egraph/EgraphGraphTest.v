@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List BinPos NArith.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap BaseUnionFind.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseUnionFind.
 From Galois.Egraph Require Import EgraphSyntax EgraphGraph EgraphSpec.
 Import List.ListNotations.
 
@@ -247,7 +247,7 @@ Definition many_rebuild_ticks m :=
 
 Example many_same_op_rebuild_costs :
   (many_rebuild_ticks 4, many_rebuild_ticks 8, many_rebuild_ticks 16) =
-    (Some 3248%N, Some 10661%N, Some 39222%N).
+    (Some 2552%N, Some 5295%N, Some 11078%N).
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -270,12 +270,25 @@ Qed.
 Theorem raw_no_leaf_cycle_no_representation :
   forall c e, ~ EggSpec.represents arith raw_no_leaf_cycle c e.
 Proof.
+  assert (Hlookup : forall i, EggSpec.nodes_get raw_no_leaf_cycle i =
+    if eqb positive_encoding i 1%positive
+    then Some (Egraph.NApp true 4 [1%positive]) else None).
+  { intro i.
+    change (Map.get positive_encoding i
+      (Map.set positive_encoding 1%positive
+        (@Egraph.NApp nat bool nat true 4 [1%positive]) Map.empty) =
+      if eqb positive_encoding i 1%positive
+      then Some (Egraph.NApp true 4 [1%positive]) else None).
+    rewrite Map.get_set by apply Map.wf_empty.
+    now rewrite Map.get_empty. }
   unfold not.
   fix IH 3.
   intros c e Hrep.
   destruct Hrep as [c i s v Hsame Hnode|c i s op cs args Hsame Hnode Hargs].
-  - destruct i as [i|i|]; vm_compute in Hnode; discriminate.
-  - destruct i as [i|i|]; vm_compute in Hnode; try discriminate.
+  - rewrite Hlookup in Hnode.
+    destruct (eqb positive_encoding i 1%positive); discriminate Hnode.
+  - rewrite Hlookup in Hnode.
+    destruct (eqb positive_encoding i 1%positive); [|discriminate Hnode].
     injection Hnode as Hsort Hop Hchildren; subst s op cs.
     inversion Hargs as [|d child ds children Hchild Hrest]; subst d ds.
     exact (IH 1%positive child Hchild).

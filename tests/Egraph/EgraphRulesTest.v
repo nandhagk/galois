@@ -110,7 +110,7 @@ Definition mapped_facts h :=
 
 Example map_lookup_charge_flows_through_guard :
   (Cost.ticks (mapped_facts true), Cost.ticks (EggRule.guard_c sample_rule mapped_facts),
-    Cost.ticks (EggRule.guard_c repeated_rule mapped_facts)) = (5%N, 6%N, 12%N).
+    Cost.ticks (EggRule.guard_c repeated_rule mapped_facts)) = (4%N, 5%N, 10%N).
 Proof.
   vm_compute. reflexivity.
 Qed.
