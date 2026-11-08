@@ -4,10 +4,11 @@
     For example, a cyclic search returns the first actual back-edge event.
     Builds on: GraphSearch, GraphSearchSpec and CostLoop. *)
 
-From Stdlib Require Import List Bool PArith NArith Lia Relation_Operators.
+From Stdlib Require Import List Bool PArith NArith Lia Permutation Relation_Operators.
 From Galois.Cost Require Import CostMonad CostList CostLoop.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec GraphSearch.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
+  GraphSearchInvariant GraphSearchExact.
 Import List.ListNotations Cost.Notations.
 
 Module SearchOrder.
@@ -84,6 +85,52 @@ Proof.
     { intros x Ha. induction Ha as [x Ha IH].
       intro Hget. apply (IH x); [now exists e|exact Hget]. }
     exact (Hself v Hacc Hparent).
+Qed.
+
+(** Every eligible edge from a discovered source goes forward in RPO or retreats to an ancestor. *)
+Theorem rpo_edge_spec {V E} (p : Prepared.t V E) scope roots u e v :
+  Prepared.ready p ->
+  let r := SearchRun.dfs p scope roots in
+  In u (Search.preorder r) -> Prepared.arc p u e v -> Scope.admits scope v = true ->
+    before (rpo r) u v \/ Search.ancestor r v u.
+Proof.
+  intros Hready.
+  pose proof (SearchExact.final_intervals p scope roots Hready) as Hinterval.
+  pose proof (SearchInvariant.roots_history p scope roots _ Hready
+    SearchInvariant.initial_representation SearchInvariant.initial_history) as Hhistory.
+  unfold SearchRun.dfs. rewrite SearchRun.run_equation.
+  destruct (SearchRun.reference_roots p scope roots SearchRun.initial) as [c evs].
+  cbn [fst] in Hinterval, Hhistory |- *. intros Hu Harc Hallowed.
+  rewrite SearchRun.result_equation in Hu. cbn [Search.preorder] in Hu.
+  apply (proj2 (in_rev _ _)) in Hu.
+  assert (Hpost : In u (SearchRun.post_rev c)).
+  { exact (Permutation_in u (SearchInvariant.partition _ Hhistory) Hu). }
+  destruct (SearchExact.finished_edges _ _ _ _ Hinterval u Hpost e v
+    (SearchInvariant.arc_successor p u e v Hready Harc) Hallowed)
+    as [[j [k [Hj [Hk Hlt]]]]|Hback].
+  - left. rewrite rpo_equation, SearchRun.result_equation.
+    cbn [Search.postorder]. rewrite rev_involutive.
+    pose proof (proj2 (SearchInvariant.numbering_order _ _ _
+      (SearchInvariant.post_numbering _ Hhistory) v u j k Hj Hk) Hlt) as Hbefore.
+    apply before_reverse in Hbefore. now rewrite rev_involutive in Hbefore.
+  - right. rewrite SearchRun.result_equation. exact Hback.
+Qed.
+
+(** Ready search orders parents before strict descendants and every semantically non-back edge forward. *)
+Theorem rpo_spec {V E} (p : Prepared.t V E) scope roots :
+  Prepared.ready p ->
+  let r := SearchRun.dfs p scope roots in
+  (forall u v, In u (Search.preorder r) -> In v (Search.preorder r) ->
+    Search.ancestor r u v -> u <> v -> before (rpo r) u v) /\
+  (forall u e v, In u (Search.preorder r) -> Prepared.arc p u e v ->
+    Scope.admits scope v = true -> ~ Search.ancestor r v u -> before (rpo r) u v).
+Proof.
+  intro Hready. split.
+  - intros u v Hu Hv Hancestor Hne.
+    exact (rpo_ancestor p scope roots _ u v (SearchExact.dfs_exact p scope roots Hready)
+      Hu Hv Hancestor Hne).
+  - intros u e v Hu Harc Hallowed Hnot.
+    destruct (rpo_edge_spec p scope roots u e v Hready Hu Harc Hallowed); tauto.
 Qed.
 
 (** The first back-edge inspection keeps its actual label and endpoints. *)
@@ -179,7 +226,8 @@ Definition tree_path_c {V E} (_p : Prepared.t V E) (r : Search.result E) v :=
   let* visited := FinSet.mem_c positive_encoding v (Search.visited r) in
   if visited then
     let* n := length_c (Search.preorder r) in
-    let* answer := iterate (path_step_c r) (Pos.of_succ_nat n) (v, []) in
+    let* budget := Prepared.budget_c n in
+    let* answer := iterate (path_step_c r) budget (v, []) in
     Cost.ret (match answer with inl _ => None | inr (_, es) => Some es end)
   else Cost.ret None.
 
@@ -200,7 +248,7 @@ Proof.
   unfold tree_path, tree_path_c. autorewrite with galois_cost.
   fold (FinSet.mem positive_encoding v (Search.visited r)).
   destruct (FinSet.mem positive_encoding v (Search.visited r)); [|reflexivity].
-  autorewrite with galois_cost. reflexivity.
+  autorewrite with galois_cost. rewrite Prepared.budget_value. reflexivity.
 Qed.
 
 Local Lemma scoped_path_end {V E} (p : Prepared.t V E) scope u es v :

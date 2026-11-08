@@ -437,6 +437,14 @@ Definition result_c {E} (c : core E) : Cost.t (Search.result E) :=
 
 Definition result {E} (c : core E) := Cost.value (result_c c).
 
+(** Finalization reverses both accumulated orders without changing maps or visited IDs. *)
+Theorem result_equation {E} (c : core E) :
+  result c = Search.Result (rev (pre_rev c)) (rev (post_rev c))
+    (parents c) (pre_index c) (post_index c) (seen c).
+Proof.
+  unfold result, result_c. autorewrite with galois_cost. reflexivity.
+Qed.
+
 Definition run_c {V E S} (p : Prepared.t V E) (vis : Visitor.t E S) scope roots s0 :=
   let* state := fold_left_c (root_c p vis scope) roots (initial, s0) in
   let* r := result_c (fst state) in Cost.ret (r, snd state).
@@ -478,5 +486,147 @@ Proof.
   unfold dfs. rewrite !run_equation.
   destruct (reference_roots p scope roots initial) as [c evs]. reflexivity.
 Qed.
+
+(** Temporal edge colors inspect current discovery and finishing observations, independently of labels. *)
+Inductive edge_color {E} (c : core E) u v : Search.kind -> Prop :=
+  | color_tree :
+      FinSet.mem positive_encoding v (seen c) = false -> edge_color c u v Search.Tree
+  | color_back :
+      FinSet.mem positive_encoding v (seen c) = true ->
+      Map.get positive_encoding v (post_index c) = None -> edge_color c u v Search.Back
+  | color_forward : forall finished a b,
+      FinSet.mem positive_encoding v (seen c) = true ->
+      Map.get positive_encoding v (post_index c) = Some finished ->
+      Map.get positive_encoding u (pre_index c) = Some a ->
+      Map.get positive_encoding v (pre_index c) = Some b ->
+      Pos.ltb a b = true -> edge_color c u v Search.Forward
+  | color_cross : forall finished,
+      FinSet.mem positive_encoding v (seen c) = true ->
+      Map.get positive_encoding v (post_index c) = Some finished ->
+      (match Map.get positive_encoding u (pre_index c),
+        Map.get positive_encoding v (pre_index c) with
+      | Some a, Some b => Pos.ltb a b = false
+      | _, _ => True
+      end) -> edge_color c u v Search.Cross.
+
+(** Runtime edge colors satisfy the temporal observation rules on arbitrary cores. *)
+Theorem edge_kind_color {E} (c : core E) u v : edge_color c u v (edge_kind c u v).
+Proof.
+  unfold edge_kind, edge_kind_c. rewrite Cost.value_bind.
+  fold (FinSet.mem positive_encoding v (seen c)).
+  destruct (FinSet.mem positive_encoding v (seen c)) eqn:Hseen; [|now apply color_tree].
+  rewrite Cost.value_bind. fold (Map.get positive_encoding v (post_index c)).
+  destruct (Map.get positive_encoding v (post_index c)) as [finished|] eqn:Hpost;
+    [|now apply color_back].
+  rewrite !Cost.value_bind. fold (Map.get positive_encoding u (pre_index c)).
+  fold (Map.get positive_encoding v (pre_index c)).
+  destruct (Map.get positive_encoding u (pre_index c)) as [a|] eqn:Ha;
+    destruct (Map.get positive_encoding v (pre_index c)) as [b|] eqn:Hb;
+    rewrite Cost.value_ret.
+  - destruct (Pos.ltb a b) eqn:Hlt.
+    + eapply color_forward; eassumption.
+    + eapply color_cross; [exact Hseen|exact Hpost|now rewrite ?Ha, ?Hb].
+  - eapply color_cross; [exact Hseen|exact Hpost|now rewrite ?Ha, ?Hb].
+  - eapply color_cross; [exact Hseen|exact Hpost|now rewrite ?Ha, ?Hb].
+  - eapply color_cross; [exact Hseen|exact Hpost|now rewrite ?Ha, ?Hb].
+Qed.
+
+(** DFS trace blocks inspect the next labelled occurrence, enter white targets and pop completed frames. *)
+Inductive trace_step {V E} (p : Prepared.t V E) scope :
+    work E -> list (Search.event E) -> work E -> Prop :=
+  | trace_exit : forall u rest c,
+      trace_step p scope ((u, []) :: rest, c)
+        [Search.Exit u (match rest with [] => None | (parent, _) :: _ => Some parent end)]
+        (rest, finish u c)
+  | trace_scope_skip : forall u e v pending rest c,
+      Scope.admits scope v = false ->
+      trace_step p scope ((u, (e, v) :: pending) :: rest, c) [] ((u, pending) :: rest, c)
+  | trace_unknown_skip : forall u e v pending rest c,
+      Scope.admits scope v = true -> Prepared.name_of p v = None ->
+      trace_step p scope ((u, (e, v) :: pending) :: rest, c) [] ((u, pending) :: rest, c)
+  | trace_tree : forall u e v pending rest c name,
+      Scope.admits scope v = true -> Prepared.name_of p v = Some name ->
+      edge_color c u v Search.Tree ->
+      trace_step p scope ((u, (e, v) :: pending) :: rest, c)
+        [Search.Edge e u v Search.Tree; Search.Enter v (Some (e, u))]
+        ((v, Prepared.succ_edges p v) :: (u, pending) :: rest, discover v (Some (e, u)) c)
+  | trace_seen : forall u e v pending rest c name k,
+      Scope.admits scope v = true -> Prepared.name_of p v = Some name ->
+      edge_color c u v k -> k <> Search.Tree ->
+      trace_step p scope ((u, (e, v) :: pending) :: rest, c)
+        [Search.Edge e u v k] ((u, pending) :: rest, c).
+
+(** A trace segment preserves ordered blocks and their exact intermediate frame/core states. *)
+Inductive trace_segment {V E} (p : Prepared.t V E) scope :
+    work E -> list (Search.event E) -> work E -> Prop :=
+  | trace_segment_nil : forall w, trace_segment p scope w [] w
+  | trace_segment_next : forall w here next later final,
+      trace_step p scope w here next -> trace_segment p scope next later final ->
+      trace_segment p scope w (here ++ later) final.
+
+(** Every continuing transition is one independently specified DFS trace block. *)
+Theorem transition_trace {V E} (p : Prepared.t V E) scope w next evs :
+  transition p scope w = (inl next, evs) -> trace_step p scope w evs next.
+Proof.
+  destruct w as [stack c]. rewrite step_equation.
+  destruct stack as [|[u [|[e v] pending]] rest]; [discriminate| |].
+  - intro H. inversion H; subst. apply trace_exit.
+  - destruct (Scope.admits scope v) eqn:Hscope.
+    + destruct (Prepared.name_of p v) as [name|] eqn:Hname.
+      * pose proof (edge_kind_color c u v) as Hcolor.
+        destruct (edge_kind c u v); intro H; inversion H; subst.
+        -- eapply trace_tree; eassumption.
+        -- eapply trace_seen; try eassumption; discriminate.
+        -- eapply trace_seen; try eassumption; discriminate.
+        -- eapply trace_seen; try eassumption; discriminate.
+      * intro H. inversion H; subst. now apply trace_unknown_skip.
+    + intro H. inversion H; subst. now apply trace_scope_skip.
+Qed.
+
+(** Reference segments keep every labelled event occurrence and exact intermediate state. *)
+Theorem reference_loop_trace {V E} (p : Prepared.t V E) scope n w :
+  trace_segment p scope w (snd (reference_loop p scope n w))
+    (fst (reference_loop p scope n w)).
+Proof.
+  revert w. induction n as [|n IH]; intro w; [apply trace_segment_nil|].
+  cbn [reference_loop].
+  destruct (transition p scope w) as [[next|final] here] eqn:Htransition.
+  - pose proof (IH next) as Htail.
+    destruct (reference_loop p scope n next) as [last later].
+    eapply trace_segment_next; [exact (transition_trace p scope w next here Htransition)|].
+    exact Htail.
+  - destruct w as [stack c]. rewrite step_equation in Htransition.
+    destruct stack as [|[u [|[e v] pending]] rest].
+    + inversion Htransition; subst. apply trace_segment_nil.
+    + discriminate.
+    + destruct (Scope.admits scope v); [|discriminate].
+      destruct (Prepared.name_of p v); [|discriminate].
+      destruct (edge_kind c u v); discriminate.
+Qed.
+
+(** Root traces either skip one rejected/seen occurrence or drain a fresh DFS tree completely. *)
+Inductive trace_root {V E} (p : Prepared.t V E) scope :
+    core E -> positive -> list (Search.event E) -> core E -> Prop :=
+  | trace_root_scope : forall c v,
+      Scope.admits scope v = false -> trace_root p scope c v [] c
+  | trace_root_seen : forall c v,
+      Scope.admits scope v = true -> FinSet.mem positive_encoding v (seen c) = true ->
+      trace_root p scope c v [] c
+  | trace_root_unknown : forall c v,
+      Scope.admits scope v = true -> FinSet.mem positive_encoding v (seen c) = false ->
+      Prepared.name_of p v = None -> trace_root p scope c v [] c
+  | trace_root_fresh : forall c v name evs final,
+      Scope.admits scope v = true -> FinSet.mem positive_encoding v (seen c) = false ->
+      Prepared.name_of p v = Some name ->
+      trace_segment p scope ([(v, Prepared.succ_edges p v)], discover v None c) evs ([], final) ->
+      trace_root p scope c v (Search.Enter v None :: evs) final.
+
+(** Root-sequence traces preserve duplicate roots, skip decisions and tree order. *)
+Inductive trace_roots {V E} (p : Prepared.t V E) scope :
+    list positive -> core E -> list (Search.event E) -> core E -> Prop :=
+  | trace_roots_nil : forall c, trace_roots p scope [] c [] c
+  | trace_roots_cons : forall v rest c here next later final,
+      trace_root p scope c v here next -> trace_roots p scope rest next later final ->
+      trace_roots p scope (v :: rest) c (here ++ later) final.
 
 End SearchRun.

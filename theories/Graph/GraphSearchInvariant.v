@@ -577,6 +577,55 @@ Proof.
   now subst k.
 Qed.
 
+(** Textual precedence is the strict order of two occurrence indices. *)
+Theorem before_indices {A} (xs : list A) u v :
+  before xs u v <-> exists i j,
+    (i < j)%nat /\ nth_error xs i = Some u /\ nth_error xs j = Some v.
+Proof.
+  split.
+  - intros [left [middle [right ->]]].
+    exists (length left), (length left + S (length middle)). split; [lia|]. split.
+    + rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity.
+    + rewrite nth_error_app2 by lia.
+      replace (length left + S (length middle) - length left)%nat with
+        (S (length middle)) by lia.
+      cbn [nth_error]. rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity.
+  - intros [i [j [Hlt [Hu Hv]]]]. revert i j Hlt Hu Hv.
+    induction xs as [|x rest IH]; intros [|i] [|j] Hlt Hu Hv;
+      cbn [nth_error] in *; try lia; try discriminate.
+    + inversion Hu; subst x.
+      destruct (nth_error_split rest j Hv) as [middle [right [Heq Hlength]]].
+      exists [], middle, right. now rewrite Heq.
+    + destruct (IH i j ltac:(lia) Hu Hv) as [left [middle [right Heq]]].
+      exists (x :: left), middle, right. cbn. now rewrite Heq.
+Qed.
+
+(** Strict numbering order agrees with textual order in the forward traversal. *)
+Theorem numbering_order xs m next :
+  numbering xs m next -> forall u v a b,
+  Map.get positive_encoding u m = Some a -> Map.get positive_encoding v m = Some b ->
+    (before (rev xs) u v <-> (a < b)%positive).
+Proof.
+  intros Hnum u v a b Ha Hb.
+  pose proof (numbering_nth xs m next Hnum u a Ha) as Hna.
+  pose proof (numbering_nth xs m next Hnum v b Hb) as Hnb.
+  pose proof (NoDup_rev (numbering_nodup xs m next Hnum)) as Hnodup.
+  pose proof (Pos2Nat.is_pos a). pose proof (Pos2Nat.is_pos b).
+  rewrite before_indices, Pos2Nat.inj_lt. split.
+  - intros [i [j [Hij [Hi Hj]]]].
+    assert (Hia : i = Nat.pred (Pos.to_nat a)).
+    { apply (proj1 (NoDup_nth_error _) Hnodup).
+      - apply nth_error_Some. congruence.
+      - congruence. }
+    assert (Hjb : j = Nat.pred (Pos.to_nat b)).
+    { apply (proj1 (NoDup_nth_error _) Hnodup).
+      - apply nth_error_Some. congruence.
+      - congruence. }
+    lia.
+  - intro Hlt. exists (Nat.pred (Pos.to_nat a)), (Nat.pred (Pos.to_nat b)).
+    split; [lia|auto].
+Qed.
+
 (** Unfinished frames and finished vertices partition the complete discovery history. *)
 Record history {E} (w : SearchRun.work E) : Prop := {
   pre_numbering : numbering (SearchRun.pre_rev (snd w))
@@ -618,7 +667,8 @@ Proof.
   - apply perm_skip. exact Hpartition.
 Qed.
 
-Local Lemma history_stack {E} stack stack' (c : SearchRun.core E) :
+(** Changing unread lists without changing frame IDs leaves numbered history unchanged. *)
+Theorem history_stack {E} stack stack' (c : SearchRun.core E) :
   map fst stack = map fst stack' -> history (stack, c) -> history (stack', c).
 Proof.
   intros Heq [Hpre Hpost Hpartition]. constructor; try assumption.
@@ -1105,7 +1155,8 @@ Proof.
   - exact Hclosed'.
 Qed.
 
-Local Lemma root_closed {V E} (p : Prepared.t V E) scope roots c v :
+(** Ready root processing retains closure of all already finished outgoing occurrences. *)
+Theorem root_closed {V E} (p : Prepared.t V E) scope roots c v :
   Prepared.ready p -> representation c -> sound_work p scope roots ([], c) ->
   closed_work p scope ([], c) -> In v roots ->
     closed_work p scope ([], fst (SearchRun.reference_root p scope c v)).
@@ -1130,6 +1181,16 @@ Proof.
     ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as [[stack final] evs].
   destruct Hloop as [Hfinished Hframes]. constructor; [exact Hfinished|].
   intros u es Hin. contradiction.
+Qed.
+
+(** Starting a root carries existing closure and begins with its full unread successor list. *)
+Theorem root_start_closed {V E} (p : Prepared.t V E) scope c v :
+  representation c -> closed_work p scope ([], c) ->
+    closed_work p scope ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c).
+Proof.
+  intros Hrep Hclosed. apply closed_push.
+  eapply closed_monotone; [now apply discover_seen| |exact Hclosed].
+  rewrite SearchRun.discover_equation. reflexivity.
 Qed.
 
 Local Lemma roots_closed {V E} (p : Prepared.t V E) scope roots todo c :
@@ -1260,6 +1321,44 @@ Proof.
   assert (Hstart : Prepared.valid_id p root /\ Scope.admits scope root = true).
   { inversion Hpath; subst; auto. }
   destruct Hstart as [Hvalid Hallowed]. apply (Hroots root Hvalid Hallowed). now left.
+Qed.
+
+(** Every ready reference root has the independently specified complete DFS trace. *)
+Theorem root_trace {V E} (p : Prepared.t V E) scope c v :
+  Prepared.ready p -> representation c ->
+    SearchRun.trace_root p scope c v (snd (SearchRun.reference_root p scope c v))
+      (fst (SearchRun.reference_root p scope c v)).
+Proof.
+  intros Hready Hrep. unfold SearchRun.reference_root.
+  destruct (Scope.admits scope v) eqn:Hallowed; [|now apply SearchRun.trace_root_scope].
+  destruct (FinSet.mem positive_encoding v (SearchRun.seen c)) eqn:Hfresh;
+    [now apply SearchRun.trace_root_seen|].
+  destruct (Prepared.name_of p v) as [name|] eqn:Hname;
+    [|now apply SearchRun.trace_root_unknown].
+  pose proof (reference_root_drains p scope c v name Hready Hrep Hname Hfresh) as Hdrain.
+  pose proof (SearchRun.reference_loop_trace p scope (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as Htrace.
+  destruct (SearchRun.reference_loop p scope (Pos.to_nat (Prepared.fuel p))
+    ([(v, Prepared.succ_edges p v)], SearchRun.discover v None c)) as [[stack final] evs].
+  cbn [fst] in Hdrain. subst stack.
+  eapply SearchRun.trace_root_fresh; eassumption.
+Qed.
+
+(** Every root occurrence belongs to the same ordered complete trace, including skipped duplicates. *)
+Theorem roots_trace {V E} (p : Prepared.t V E) scope roots c :
+  Prepared.ready p -> representation c ->
+    SearchRun.trace_roots p scope roots c (snd (SearchRun.reference_roots p scope roots c))
+      (fst (SearchRun.reference_roots p scope roots c)).
+Proof.
+  intro Hready. revert c. induction roots as [|v rest IH]; intros c Hrep;
+    [apply SearchRun.trace_roots_nil|].
+  pose proof (root_representation p scope c v Hrep) as Hrep'.
+  pose proof (root_trace p scope c v Hready Hrep) as Hroot.
+  cbn [SearchRun.reference_roots].
+  destruct (SearchRun.reference_root p scope c v) as [next here].
+  pose proof (IH next Hrep') as Htail.
+  destruct (SearchRun.reference_roots p scope rest next) as [final later].
+  eapply SearchRun.trace_roots_cons; eassumption.
 Qed.
 
 End SearchInvariant.
