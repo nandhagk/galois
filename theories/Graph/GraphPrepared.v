@@ -4,13 +4,14 @@
     For example, an absent client node has no ID and an absent ID has no adjacency.
     Builds on: GraphModel, BaseIntern, BaseMap and BaseIndex. *)
 
-From Stdlib Require Import List Bool PArith Arith Lia Permutation.
+From Stdlib Require Import List Bool PArith NArith Arith Lia Permutation.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseIntern BaseIndex.
 From Galois.Graph Require Import GraphModel.
 Import List.ListNotations Cost.Notations.
 
 Module Prepared.
+Local Open Scope nat_scope.
 
 (** The encoding travels with the table so all observations use the same key identity. *)
 Record t (V E : Type) := Make {
@@ -223,6 +224,31 @@ Proof.
   autorewrite with galois_cost. rewrite IH. reflexivity.
 Qed.
 
+(** Unary-to-positive budget conversion charges every traversed natural-number successor. *)
+Fixpoint budget_c (n : nat) : Cost.t positive :=
+  match n with
+  | O => Cost.ret 1%positive
+  | S rest =>
+    Cost.step ;;
+    let* p := budget_c rest in Cost.ret (Pos.succ p)
+  end.
+
+(** Charged budget construction preserves the original one-more-than-input positive value. *)
+Theorem budget_value n : Cost.value (budget_c n) = Pos.of_succ_nat n.
+Proof.
+  induction n as [|n IH]; [reflexivity|].
+  cbn [budget_c]. autorewrite with galois_cost.
+  rewrite IH, SuccNat2Pos.inj_succ. reflexivity.
+Qed.
+
+(** Budget construction retains its full linear unary conversion work. *)
+Theorem budget_cost n : Cost.ticks (budget_c n) = N.of_nat n.
+Proof.
+  induction n as [|n IH]; [reflexivity|].
+  cbn [budget_c]. autorewrite with galois_cost.
+  rewrite IH, Nat2N.inj_succ. lia.
+Qed.
+
 (** Preparation retains all accessor, interning, indexing and list traversal charges. *)
 Definition prepare_c {V E} (enc : encoding V) (g : Graph.t V E) : Cost.t (t V E) :=
   let* table := Intern.of_list_c enc (Graph.nodes g) in
@@ -238,8 +264,8 @@ Definition prepare_c {V E} (enc : encoding V) (g : Graph.t V E) : Cost.t (t V E)
   let* entries := ids_c enc table (Graph.entries g) in
   let* n := length_c (Graph.nodes g) in
   let* m := edge_count_c g in
-  Cost.ret (Make g enc table outgoing incoming entries
-    (Pos.of_succ_nat (2 * n + m + 1))).
+  let* budget := budget_c (2 * n + m + 1) in
+  Cost.ret (Make g enc table outgoing incoming entries budget).
 
 (** The public preparation is the value projection of its single costed implementation. *)
 Definition prepare {V E} (enc : encoding V) (g : Graph.t V E) : t V E :=
@@ -263,7 +289,7 @@ Proof.
   rewrite all_edges_c_value, Index.group_by_c_value.
   change (Cost.value (Intern.of_list_c enc (Graph.nodes g))) with
     (Intern.of_list enc (Graph.nodes g)).
-  rewrite !index_nodes_c_value, ids_c_value, edge_count_c_value.
+  rewrite !index_nodes_c_value, ids_c_value, edge_count_c_value, budget_value.
   f_equal; apply index_nodes_ext; intro v; autorewrite with galois_cost;
     rewrite tagged_c_value; reflexivity.
 Qed.

@@ -105,3 +105,16 @@ Example repeated_reversal_numeric_bound :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example empty_budget_conversion :
+  (Cost.value (Prepared.budget_c 0), Cost.ticks (Prepared.budget_c 0)) = (1%positive, 0%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example budget_conversion_retains_linear_work :
+  (Cost.value (Prepared.budget_c 37), Cost.ticks (Prepared.budget_c 37)) =
+    (38%positive, 37%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
