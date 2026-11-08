@@ -6,8 +6,8 @@
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Permutation.
 From Galois.Cost Require Import CostMonad CostList CostLoop.
-From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseRel.
-From Galois.Graph Require Import GraphModel.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseRel BaseIndex.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphReach GraphFrontierSweep.
 From Galois.Program Require Import ProgramCfg.
 From Galois.Framework Require Import FrameworkUtil.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext.
@@ -976,6 +976,234 @@ Proof.
     (Pre.seeds (Pre.input c), FinSet.empty))); nia.
 Qed.
 
+(** Lawful discovery exposes a successful outcome containing exactly its public universe. *)
+Theorem discover_success :
+  Pre.laws c -> discover = inr universe.
+Proof.
+  intro Hlaw; destruct (discover_adequate Hlaw) as [final Hfinal].
+  unfold discover at 1; unfold discover_c.
+  rewrite Cost.value_bind, Hfinal, Cost.value_map.
+  rewrite universe_state, Hfinal; reflexivity.
+Qed.
+
 End Discovery.
+
+(** Lawful set construction recognizes membership of the original list, including duplicates. *)
+Theorem set_member {X} (enc : encoding X) (HE : encoding_laws enc) xs :
+  forall x, FinSet.mem enc x (FinSet.of_list enc xs) = true <-> In x xs.
+Proof.
+  intro x; rewrite FinSet.mem_of_list, existsb_exists; split.
+  - intros [y [Hy Hkey]]; apply (eqb_true_iff _ HE) in Hkey; subst y; exact Hy.
+  - intro Hx; exists x; split; [exact Hx|apply eqb_refl].
+Qed.
+
+(** Canonicalization retains one representative per encoded key in the owning set order. *)
+Definition canonical_c {X} (enc : encoding X) xs :=
+  let* set := FinSet.of_list_c enc xs in FinSet.elements_c set.
+Definition canonical {X} (enc : encoding X) xs := Cost.value (canonical_c enc xs).
+
+(** Lawful canonicalization changes multiplicity and order without changing membership. *)
+Theorem canonical_member {X} (enc : encoding X) (HE : encoding_laws enc) xs :
+  forall x, In x (canonical enc xs) <-> In x xs.
+Proof.
+  intro x; unfold canonical, canonical_c; rewrite Cost.value_bind.
+  fold (FinSet.of_list enc xs); fold (FinSet.elements (FinSet.of_list enc xs)).
+  rewrite (FinSet.elements_spec enc HE) by apply FinSet.wf_of_list.
+  rewrite FinSet.mem_of_list, existsb_exists; split.
+  - intros [y [Hy Hkey]]; apply (eqb_true_iff _ HE) in Hkey; subst y; exact Hy.
+  - intro Hx; exists x; split; [exact Hx|apply eqb_refl].
+Qed.
+
+(** Constructed canonical lists never repeat a key, including on malformed dictionaries. *)
+Theorem canonical_nodup {X} (enc : encoding X) xs : NoDup (canonical enc xs).
+Proof.
+  unfold canonical, canonical_c; rewrite Cost.value_bind.
+  apply (FinSet.elements_nodup enc), FinSet.wf_of_list.
+Qed.
+
+(** Canonicalization pays both set construction and enumeration rather than hiding either scan. *)
+Theorem canonical_cost {X} (enc : encoding X) xs :
+  Cost.ticks (canonical_c enc xs) =
+    (Cost.ticks (FinSet.of_list_c enc xs) +
+      Cost.ticks (FinSet.elements_c (FinSet.of_list enc xs)))%N.
+Proof.
+  unfold canonical_c; rewrite Cost.ticks_bind; reflexivity.
+Qed.
+
+(** Grouped value queries visit one prepared bucket and retain its original duplicate values. *)
+Definition bucket_c {K A} (enc : encoding K) (index : Index.t K (K * A)) k :=
+  let* pairs := Index.find_c enc k index in map_c (fun pair => Cost.ret (snd pair)) pairs.
+Definition bucket {K A} (enc : encoding K) (index : Index.t K (K * A)) k :=
+  Cost.value (bucket_c enc index k).
+
+(** A projected bucket preserves the stable value order of the public group-by index. *)
+Theorem bucket_equation {K A} (enc : encoding K) (index : Index.t K (K * A)) k :
+  bucket enc index k = map snd (Index.find enc k index).
+Proof.
+  unfold bucket, bucket_c; rewrite Cost.value_bind, value_map_c; reflexivity.
+Qed.
+
+(** Grouped value membership is exactly membership of the original key/value occurrence. *)
+Theorem bucket_group_member {K A} (enc : encoding K) (HE : encoding_laws enc)
+    (pairs : list (K * A)) :
+  forall k v, In v (bucket enc (Index.group_by enc fst pairs) k) <-> In (k, v) pairs.
+Proof.
+  intros k v; rewrite bucket_equation, Index.find_group_by, in_map_iff; split.
+  - intros [[key value] [Hvalue Hin]]; cbn [snd] in Hvalue; subst value.
+    apply filter_In in Hin; destruct Hin as [Hin Hkey].
+    apply (eqb_true_iff _ HE) in Hkey; cbn [fst] in Hkey; subst key; exact Hin.
+  - intro Hin; exists (k, v); split; [reflexivity|].
+    apply filter_In; split; [exact Hin|apply eqb_refl].
+Qed.
+
+(** Bucket queries retain the index lookup and one traversal charge per returned value. *)
+Theorem bucket_cost {K A} (enc : encoding K) (index : Index.t K (K * A)) k :
+  Cost.ticks (bucket_c enc index k) =
+    (Cost.ticks (Index.find_c enc k index) + N.of_nat (length (Index.find enc k index)))%N.
+Proof.
+  unfold bucket_c; rewrite Cost.ticks_bind, ticks_map_c.
+  fold (Index.find enc k index).
+  induction (Index.find enc k index) as [|pair rest IH]; cbn [fold_right length];
+    rewrite ?Cost.ticks_ret, ?Nat2N.inj_succ; lia.
+Qed.
+
+(** An arc presentation canonicalizes each successor list while retaining its charged callback. *)
+Definition arc_graph {X} (enc : encoding X) nodes roots (next : X -> Cost.t (list X)) :=
+  Graph.Make roots nodes (fun x =>
+    Cost.step ;;
+    let* ys := next x in
+    let* targets := canonical_c enc ys in
+    map_c (fun y => Cost.ret (x, y)) targets)
+    (Cost.lift (fun _ => 1%N) (@fst X X)) (Cost.lift (fun _ => 1%N) (@snd X X)).
+
+(** Arc successors preserve the canonical target list and the exact source identity. *)
+Theorem arc_graph_out {X} (enc : encoding X) nodes roots next x :
+  Graph.out (arc_graph enc nodes roots next) x =
+    map (fun y => (x, y)) (canonical enc (Cost.value (next x))).
+Proof.
+  change (Cost.value (Cost.step ;;
+    let* ys := next x in
+    let* targets := canonical_c enc ys in map_c (fun y => Cost.ret (x, y)) targets) =
+    map (fun y => (x, y)) (canonical enc (Cost.value (next x)))).
+  autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Arc presentations expose their supplied source node without additional identity conventions. *)
+Theorem arc_graph_source {X} (enc : encoding X) nodes roots next (edge : X * X) :
+  Graph.source (arc_graph enc nodes roots next) edge = fst edge.
+Proof.
+  reflexivity.
+Qed.
+
+(** Arc presentations expose their supplied target node without additional identity conventions. *)
+Theorem arc_graph_target {X} (enc : encoding X) nodes roots next (edge : X * X) :
+  Graph.target (arc_graph enc nodes roots next) edge = snd edge.
+Proof.
+  reflexivity.
+Qed.
+
+(** An arc occurrence has exactly its listed source and one actual successor target. *)
+Theorem arc_graph_member {X} (enc : encoding X) (HE : encoding_laws enc) nodes :
+  forall roots next source a b,
+    In (a, b) (Graph.out (arc_graph enc nodes roots next) source) <->
+      a = source /\ In b (Cost.value (next source)).
+Proof.
+  intros roots next source a b; rewrite arc_graph_out, in_map_iff; split.
+  - intros [y [Heq Hy]]; inversion Heq; subst a y; split; [reflexivity|].
+    apply (canonical_member enc HE); exact Hy.
+  - intros [-> Hb]; exists b; split; [reflexivity|].
+    apply (canonical_member enc HE); exact Hb.
+Qed.
+
+(** Closed finite successor presentations satisfy both graph closure and outgoing uniqueness. *)
+Theorem arc_graph_ready_domain {X} (enc : encoding X) (HE : encoding_laws enc) nodes :
+  NoDup nodes ->
+  forall roots next, incl roots nodes ->
+    (forall x y, In x nodes -> In y (Cost.value (next x)) -> In y nodes) ->
+    graph_wf (arc_graph enc nodes roots next) /\
+      forall x, NoDup (Graph.out (arc_graph enc nodes roots next) x).
+Proof.
+  intros Hnodes roots next Hroots Hnext; split.
+  - constructor.
+    + exact Hnodes.
+    + exact Hroots.
+    + intros source [a b] Hin; apply (arc_graph_member enc HE nodes) in Hin.
+      rewrite arc_graph_source; exact (proj1 Hin).
+    + intros source [a b] Hsource Hin; apply (arc_graph_member enc HE nodes) in Hin.
+      rewrite arc_graph_target; exact (Hnext source b Hsource (proj2 Hin)).
+  - intro x; rewrite arc_graph_out.
+    pose proof (canonical_nodup enc (Cost.value (next x))) as Hnodup.
+    induction Hnodup as [|y ys Hfresh Hnodup IH]; cbn [map]; [constructor|].
+    constructor; [|exact IH].
+    intro Hin; apply in_map_iff in Hin; destruct Hin as [z [Heq Hz]].
+    inversion Heq; subst z; contradiction.
+Qed.
+
+Definition named_filter_c {X E} (p : Prepared.t X E) ids xs :=
+  filter_c (fun x =>
+    let* id := Prepared.id_of_c p x in
+    match id with
+    | None => Cost.ret false
+    | Some i => FinSet.mem_c positive_encoding i ids
+    end) xs.
+
+(** Named filtering keeps exactly the listed names whose actual prepared IDs belong to the set. *)
+Theorem named_filter_member {X E} (p : Prepared.t X E) ids xs :
+  forall x, In x (Cost.value (named_filter_c p ids xs)) <->
+    In x xs /\ exists i, Prepared.id_of p x = Some i /\
+      FinSet.mem positive_encoding i ids = true.
+Proof.
+  intro x; unfold named_filter_c; rewrite value_filter_c, filter_In.
+  rewrite Cost.value_bind; fold (Prepared.id_of p x).
+  destruct (Prepared.id_of p x) as [i|] eqn:Hid.
+  - split.
+    + intros [Hx Hmem]; split; [exact Hx|exists i; auto].
+    + intros [Hx [j [Hj Hmem]]]; inversion Hj; subst j; split; assumption.
+  - split.
+    + intros [_ Hfalse]; discriminate.
+    + intros [_ [i [Hfalse _]]]; discriminate.
+Qed.
+
+(** Finite product clients share the costed public graph-closure bridge and its exact value contract. *)
+Definition reachable_nodes_c {X E} (enc : encoding X) (g : Graph.t X E) :=
+  let* p := Prepared.prepare_c enc g in
+  let* ids := FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p) in
+  named_filter_c p ids (Graph.nodes g).
+Definition reachable_nodes {X E} (enc : encoding X) (g : Graph.t X E) :=
+  Cost.value (reachable_nodes_c enc g).
+
+(** The reachable-name wrapper preserves every prepared, closure and final membership-filter charge. *)
+Theorem reachable_nodes_cost {X E} (enc : encoding X) (g : Graph.t X E) :
+  let p := Prepared.prepare enc g in
+  let run := FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p) in
+  Cost.ticks (reachable_nodes_c enc g) =
+    (Cost.ticks (Prepared.prepare_c enc g) + Cost.ticks run +
+      Cost.ticks (named_filter_c p (Cost.value run) (Graph.nodes g)))%N.
+Proof.
+  cbn zeta; unfold reachable_nodes_c; rewrite !Cost.ticks_bind.
+  fold (Prepared.prepare enc g); lia.
+Qed.
+
+(** On finite well-formed graphs the shared costed wrapper returns exactly all entry-reachable names. *)
+Theorem reachable_nodes_exact {X E} (enc : encoding X) (HE : encoding_laws enc) (g : Graph.t X E) :
+  graph_wf g -> (forall x, NoDup (Graph.out g x)) ->
+  forall x, In x (reachable_nodes enc g) <-> reachable g x.
+Proof.
+  intros Hgraph Hout x.
+  assert (Hready : Prepared.ready (Prepared.prepare enc g)).
+  { apply Prepared.prepare_ready; assumption. }
+  unfold reachable_nodes, reachable_nodes_c; rewrite !Cost.value_bind, FrontierSweep.reach_value.
+  fold (Prepared.prepare enc g); rewrite named_filter_member; split.
+  - intros [_ [i [Hi Hmem]]].
+    apply (Reach.entries_exact _ _ _ Hready Hi) in Hmem.
+    rewrite Prepared.prepare_graph in Hmem; exact Hmem.
+  - intro Hreach.
+    pose proof (reachable_in_nodes _ _ Hgraph Hreach) as Hx.
+    assert (Hname : In x (Graph.nodes (Prepared.graph (Prepared.prepare enc g)))).
+    { rewrite Prepared.prepare_graph; exact Hx. }
+    destruct (proj1 (Prepared.ids_domain _ (proj2 (proj2 Hready)) x) Hname) as [i Hi].
+    split; [exact Hx|]; exists i; split; [exact Hi|].
+    apply (Reach.entries_exact _ _ _ Hready Hi); rewrite Prepared.prepare_graph; exact Hreach.
+Qed.
 
 End PreFamily.
