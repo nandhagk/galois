@@ -84,3 +84,9 @@ Example intern_missing_lookup_ticks :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example intern_forward_cardinality_client {K} (s : Intern.t K) :
+  Intern.size s = Map.size (Intern.table s).
+Proof.
+  apply Intern.size_equation.
+Qed.

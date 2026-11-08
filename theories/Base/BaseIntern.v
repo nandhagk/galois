@@ -68,6 +68,13 @@ Proof.
   reflexivity.
 Qed.
 
+(** Interner cardinality is the binding count of its forward map. *)
+Theorem size_equation {K} (s : t K) :
+  size s = Map.size (table s).
+Proof.
+  reflexivity.
+Qed.
+
 (** Well-formed interning supplies the invariant of each stored map. *)
 Theorem wf_maps {K} (E : encoding K) (s : t K) :
   wf E s -> Map.wf E (table s) /\ Map.wf positive_encoding (inverse s).
