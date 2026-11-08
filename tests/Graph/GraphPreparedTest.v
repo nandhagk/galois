@@ -126,3 +126,31 @@ Example present_duplicates_and_missing :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Charged option maps depend only on pointwise callback values through the public owner laws. *)
+Example present_ext_client {A B} (f g : A -> Cost.t (option B)) xs :
+  (forall x, Cost.value (f x) = Cost.value (g x)) ->
+  Cost.value (Prepared.present_c f xs) = Cost.value (Prepared.present_c g xs).
+Proof.
+  intro Hvalues. rewrite !Prepared.present_c_value.
+  now apply Prepared.present_ext.
+Qed.
+
+(** The public owner bounds charged option-map output length without exposing its recursion. *)
+Example present_length_client {A B} (f : A -> Cost.t (option B)) xs :
+  (length (Cost.value (Prepared.present_c f xs)) <= length xs)%nat.
+Proof.
+  rewrite Prepared.present_c_value. apply Prepared.present_length.
+Qed.
+
+Example present_reject_all :
+  Prepared.present (fun _ : positive => @None positive) [1; 2; 1] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example present_empty :
+  Prepared.present (fun x : positive => Some x) [] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.

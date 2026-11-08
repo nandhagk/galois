@@ -146,11 +146,20 @@ Definition tagged_c {V E} enc table (endpoint : E -> Cost.t V) es :=
     let* v := endpoint e in
     let* i := Intern.find_c enc v table in Cost.ret (option_map (fun i => (e, i)) i)) es.
 
-Local Lemma present_ext {A B} (f g : A -> option B) xs :
+(** Pointwise equal option observations preserve every retained occurrence and its order. *)
+Theorem present_ext {A B} (f g : A -> option B) xs :
   (forall x, f x = g x) -> present f xs = present g xs.
 Proof.
   intro Hfg. induction xs as [|x rest IH]; [reflexivity|].
   cbn [present]. rewrite Hfg, IH. reflexivity.
+Qed.
+
+(** Dropping absent option results cannot increase the number of input occurrences. *)
+Theorem present_length {A B} (f : A -> option B) xs :
+  (length (present f xs) <= length xs)%nat.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [present]. destruct (f x); cbn [length]; lia.
 Qed.
 
 (** Tagging preserves labels, order and absent-endpoint filtering. *)
