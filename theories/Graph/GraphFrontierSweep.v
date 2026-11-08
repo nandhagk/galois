@@ -618,15 +618,8 @@ Definition key_charge i :=
 Local Lemma add_cost m d x :
   Cost.ticks (add_c m (d, x)) = (2 * key_charge d + key_charge x)%N.
 Proof.
-  unfold add_c. rewrite !Cost.ticks_bind, Map.find_or_cost, !Map.get_cost, !Map.set_cost.
-  change ((1 + Cost.ticks (encode_c positive_encoding d) +
-    N.pos (Pos.size (encode positive_encoding d)) +
-    (Cost.ticks (Map.set_c positive_encoding x tt
-      (Cost.value (Map.find_or_c positive_encoding FinSet.empty d m))) +
-      (1 + Cost.ticks (encode_c positive_encoding d) +
-        N.pos (Pos.size (encode positive_encoding d)))) =
-    2 * key_charge d + key_charge x)%N).
-  rewrite Map.set_cost.
+  unfold add_c.
+  rewrite !Cost.ticks_bind, Map.find_or_cost, Map.get_cost, Map.set_cost, FinSet.add_cost.
   change ((2 + N.pos (Pos.size d) +
     (2 + N.pos (Pos.size x) + (2 + N.pos (Pos.size d)))) =
     2 * key_charge d + key_charge x)%N.
