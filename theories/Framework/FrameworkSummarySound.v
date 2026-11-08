@@ -532,7 +532,8 @@ Proof.
         -- exact Hcover.
 Qed.
 
-(** Context soundness covers all active frames under the client's matched context agreement. *)
+(** Lower-level context soundness uses an established matched annotation invariant.
+    Clients can derive that invariant from local duties through ctx_sound_local. *)
 Theorem ctx_sound {S O F P K A} (m : semantics S O) (C : Calls.t F P)
     (cl : CallsLink.t S F P) (cx : Ctx.t F P K) (sp : Summary.spec F P A)
     (sc : step_cover S O A) sigma (context : S -> K) (suspended : S -> list K) :
@@ -560,6 +561,73 @@ Proof.
     + exact (local_covers Hlaws s l t Hreach Hstep).
   - exact Hf.
   - exact Hk.
+Qed.
+
+(** Annotation duties describe initialization and each concrete step's context update.
+    Entry acceptance is required only in the push alternative of an actual reachable step. *)
+Record ctx_annotation_laws {S O F P K} (m : semantics S O) (C : Calls.t F P)
+    (cl : CallsLink.t S F P) (cx : Ctx.t F P K)
+    (context : S -> K) (suspended : S -> list K) : Prop := {
+  ctx_annotation_initial : forall s, initial m s ->
+    context s = Ctx.init cx (CallsLink.here cl s) /\ suspended s = [];
+  ctx_annotation_step : on_steps m (fun s _ t =>
+    (CallsLink.here cl t = CallsLink.here cl s /\
+      CallsLink.frames cl t = CallsLink.frames cl s /\
+      context t = context s /\ suspended t = suspended s) \/
+    (exists p, In p (Calls.sites_of C (CallsLink.here cl s)) /\
+      In (CallsLink.here cl t) (Calls.resolve C p) /\
+      CallsLink.frames cl t = (CallsLink.here cl s, p) :: CallsLink.frames cl s /\
+      Ctx.enter cx p (CallsLink.here cl t) (context s) = Some (context t) /\
+      suspended t = context s :: suspended s) \/
+    (exists f p k ks, CallsLink.frames cl s = (f, p) :: CallsLink.frames cl t /\
+      CallsLink.here cl t = f /\ suspended s = k :: ks /\
+      context t = k /\ suspended t = ks))
+}.
+Arguments ctx_annotation_initial {S O F P K m C cl cx context suspended}.
+Arguments ctx_annotation_step {S O F P K m C cl cx context suspended}.
+
+(** Initial and step-local annotation duties establish the reachable structural invariant. *)
+Theorem ctx_annotations_reachable {S O F P K} (m : semantics S O) (C : Calls.t F P)
+    (cl : CallsLink.t S F P) (cx : Ctx.t F P K) context suspended :
+  calls_laws m C cl -> ctx_annotation_laws m C cl cx context suspended ->
+  forall s, reachable_state m s ->
+    ctx_frames C cx (CallsLink.here cl s) (context s) (CallsLink.frames cl s) (suspended s).
+Proof.
+  intros Hcalls Hannotations; apply reachable_ind.
+  - intros s Hinit.
+    destruct (ctx_annotation_initial Hannotations s Hinit) as [Hcontext Hsaved].
+    destruct (initial_roots Hcalls s Hinit) as [Hroot Hframes].
+    rewrite Hcontext, Hsaved, Hframes; constructor; exact Hroot.
+  - intros s l t Hreach IH Hstep.
+    destruct (ctx_annotation_step Hannotations s l t Hreach Hstep) as
+      [[Hhere [Hframes [Hcontext Hsaved]]]|
+        [[p [Hp [Hg [Hframes [Henter Hsaved]]]]]|
+          [f [p [k [ks [Hframes [Hhere [Hsource [Hcontext Hsaved]]]]]]]]]].
+    + rewrite Hhere, Hframes, Hcontext, Hsaved; exact IH.
+    + rewrite Hframes, Hsaved; econstructor; eassumption.
+    + rewrite Hframes, Hsource in IH; inversion IH; subst; assumption.
+Qed.
+
+(** The generic client boundary proves contextual soundness from initial and local step duties.
+    It accepts partial entry policies and contains no global annotation or result assumption. *)
+Theorem ctx_sound_local {S O F P K A} (m : semantics S O) (C : Calls.t F P)
+    (cl : CallsLink.t S F P) (cx : Ctx.t F P K) (sp : Summary.spec F P A)
+    (sc : step_cover S O A) sigma context suspended :
+  encoding_laws (Calls.fn_enc C) -> encoding_laws (Calls.site_enc C) ->
+  encoding_laws (Ctx.ctx_enc cx) -> ctx_support C cx ->
+  calls_laws m C cl -> summary_laws m C cl sp sc ->
+  ctx_annotation_laws m C cl cx context suspended ->
+  post_solution (Summary.lat sp) (Analysis.system (ctx_summary_analysis C cx sp)) sigma ->
+  forall s l t i f k, reachable_state m s -> step m s l t ->
+    nth_error (Calls.active cl s) i = Some f ->
+    nth_error (context s :: suspended s) i = Some k ->
+    step_covers sc (sigma (f, k)) s l t.
+Proof.
+  intros HF HP HK Hsupport Hcalls Hsummary Hannotations Hpost.
+  apply (ctx_sound m C cl cx sp sc sigma context suspended
+    HF HP HK Hsupport Hcalls Hsummary).
+  - exact (ctx_annotations_reachable m C cl cx context suspended Hcalls Hannotations).
+  - exact Hpost.
 Qed.
 
 (** Call-string entry keeps exactly the bounded innermost sites. *)
