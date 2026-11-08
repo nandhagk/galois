@@ -477,6 +477,20 @@ Definition vertices {N E P D A F} (I : Ide.t N E P D A F) :=
   flat_map (fun n => map (fun d => (n, d)) (Jump.fact_domain (Ide.ifds I)))
     (Graph.nodes (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I))))).
 
+(** Vertex membership is exactly the supplied node and fact inventories without any laws. *)
+Theorem vertices_spec {N E P D A F} (I : Ide.t N E P D A F) n d :
+  In (n, d) (vertices I) <->
+    In n (Graph.nodes (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds I))))) /\
+    In d (Jump.fact_domain (Ide.ifds I)).
+Proof.
+  unfold vertices; rewrite in_flat_map; split.
+  - intros [node [Hnode Hin]]; apply in_map_iff in Hin.
+    destruct Hin as [fact [Heq Hfact]]; injection Heq as Hn Hd; subst node fact.
+    split; assumption.
+  - intros [Hnode Hfact]; exists n; split; [exact Hnode|].
+    apply in_map; exact Hfact.
+Qed.
+
 Local Definition model_plan {N E P D A F} (I : Ide.t N E P D A F)
     (jump_c : jkey N D -> Cost.t F) start a0 (r : vrow N E D) :
     Rows.t (N * option D) A :=

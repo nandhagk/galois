@@ -590,3 +590,24 @@ Example reflection_retains_unlisted_call_root :
 Proof.
   rewrite Jump.roots_c_value, Jump.arcs_equation; vm_compute; split; intuition discriminate.
 Qed.
+
+(** The public vertex contract retains the exact arbitrary raw inventory domain. *)
+Example unlisted_call_vertices_reflect n d :
+  In (n, d) (IdeValue.vertices unlisted_call_ide) <->
+    In n (Graph.nodes (Cfg.graph (Icfg.cfg (Ifds.icfg unlisted_call)))) /\
+    In d (Jump.fact_domain unlisted_call).
+Proof.
+  apply IdeValue.vertices_spec.
+Qed.
+
+Example unlisted_call_output_not_a_listed_vertex :
+  ~ In (1, Some tt) (IdeValue.vertices unlisted_call_ide).
+Proof.
+  rewrite IdeValue.vertices_spec; intros [Hnode Hfact]; vm_compute in Hfact; intuition discriminate.
+Qed.
+
+Example no_flow_singleton_vertex :
+  In (0, None) (IdeValue.vertices no_flow_ide).
+Proof.
+  rewrite IdeValue.vertices_spec; vm_compute; auto.
+Qed.
