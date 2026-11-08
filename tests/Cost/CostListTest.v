@@ -14,6 +14,13 @@ Definition even_c (x : nat) : Cost.t bool := Cost.tick 2 ;; Cost.ret (Nat.even x
 Definition present_c (x : nat) : Cost.t (option nat) :=
   Cost.tick 2 ;; Cost.ret (if Nat.even x then Some x else None).
 
+(** An importing client obtains witnesses for an arbitrary callback through the public contract. *)
+Example filter_map_arbitrary_callback {A B} (f : A -> option B) xs y :
+  In y (filter_map f xs) <-> exists x, In x xs /\ f x = Some y.
+Proof.
+  apply filter_map_spec.
+Qed.
+
 Example empty_traversals :
   (Cost.value (length_c ([] : list nat)), Cost.ticks (length_c ([] : list nat)),
    Cost.value (app_c [] [1%nat]), Cost.ticks (rev_c ([] : list nat)),

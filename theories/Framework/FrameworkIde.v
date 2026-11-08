@@ -162,20 +162,7 @@ Definition rows {N E P D A F} (I : Ide.t N E P D A F) start :=
 Local Lemma filter_map_in {X Y} (f : X -> option Y) xs y :
   In y (filter_map f xs) <-> exists x, In x xs /\ f x = Some y.
 Proof.
-  induction xs as [|x xs IH]; cbn [filter_map fold_right]; [firstorder|].
-  destruct (f x) as [z|] eqn:Hfx; cbn [In]; rewrite IH.
-  - split.
-    + intros [Heq|[a [Ha Hfa]]].
-      * subst y; exists x; auto.
-      * exists a; auto.
-    + intros [a [[Heq|Ha] Hfa]].
-      * subst a; rewrite Hfx in Hfa; inversion Hfa; auto.
-      * right; exists a; auto.
-  - split.
-    + intros [a [Ha Hfa]]; exists a; auto.
-    + intros [a [[Heq|Ha] Hfa]].
-      * subst a; rewrite Hfx in Hfa; discriminate.
-      * exists a; auto.
+  apply filter_map_spec.
 Qed.
 
 Local Lemma call_rows_in {N E P D F} (as_ : list (arc N E P D F)) r :

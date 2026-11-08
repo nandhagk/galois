@@ -188,6 +188,26 @@ Definition filter_map_c {A B} (f : A -> Cost.t (option B)) (l : list A) : Cost.t
 Definition filter_map {A B} (f : A -> option B) (l : list A) : list B :=
   fold_right (fun x xs => match f x with Some b => b :: xs | None => xs end) [] l.
 
+(** Filter-map membership is witnessed by an input whose callback returns that output. *)
+Theorem filter_map_spec {A B} (f : A -> option B) xs y :
+  In y (filter_map f xs) <-> exists x, In x xs /\ f x = Some y.
+Proof.
+  induction xs as [|x xs IH]; cbn [filter_map fold_right]; [firstorder|].
+  destruct (f x) as [z|] eqn:Hfx; cbn [In]; rewrite IH.
+  - split.
+    + intros [Heq|[a [Ha Hfa]]].
+      * subst y; exists x; auto.
+      * exists a; auto.
+    + intros [a [[Heq|Ha] Hfa]].
+      * subst a; rewrite Hfx in Hfa; inversion Hfa; auto.
+      * right; exists a; auto.
+  - split.
+    + intros [a [Ha Hfa]]; exists a; auto.
+    + intros [a [[Heq|Ha] Hfa]].
+      * subst a; rewrite Hfx in Hfa; discriminate.
+      * exists a; auto.
+Qed.
+
 (** The counter returns the ordinary list length. *)
 Theorem value_length_c {A} (l : list A) : Cost.value (length_c l) = length l.
 Proof.
