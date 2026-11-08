@@ -19,10 +19,14 @@ Local Open Scope N_scope.
 Definition inspected {V E} (p : Prepared.t V E) vs :=
   fold_right (fun u n => (length (Prepared.succ_edges p u) + n)%nat) 0%nat vs.
 
+(** Component keys fit within the bit width of their actual count plus one. *)
 Definition component_width r :=
   N.pos (Pos.size (Pos.of_succ_nat (length (Scc.components r)))).
 
+(** Positive-key encoding and trie descent fit in this per-operation budget. *)
 Definition id_cost w := 1 + 2 * w.
+
+(** This coefficient bounds collection, stable grouping, deduplication and row construction. *)
 Definition condense_k : N := 32.
 
 (** Condensation size separates node-key width from the actual component-index width. *)
@@ -352,6 +356,44 @@ Proof.
   destruct Hu as [root [es [_ Hpath]]]. induction Hpath; assumption.
 Qed.
 
+(** Each collected component endpoint fits the actual component-index width. *)
+Theorem cross_width {V E} (p : Prepared.t V E) scope roots r :
+  Prepared.ready p -> Scc.exact p scope roots r ->
+  forall ev, In ev (Condense.cross_edges p r) ->
+    key_bits positive_encoding (fst ev) <= component_width r /\
+    key_bits positive_encoding (snd ev) <= component_width r.
+Proof.
+  intros Hready Hexact [i j] He.
+  apply (Condense.cross_edges_spec p scope roots r i j Hready Hexact) in He.
+  destruct He as [_ [u [e [v [_ [Hi Hj]]]]]]. split; apply component_index_width.
+  - exact (proj2 (Condense.owner_member p scope roots r u i Hexact Hi)).
+  - exact (proj2 (Condense.owner_member p scope roots r v j Hexact Hj)).
+Qed.
+
+Local Lemma cross_group_cost {V E} (p : Prepared.t V E) scope roots r :
+  Prepared.ready p -> Scc.exact p scope roots r ->
+  Cost.ticks (Index.group_by_c positive_encoding
+    (fun ev : positive * positive => Cost.ret (fst ev)) (Condense.cross_edges p r)) <=
+    1 + N.of_nat (length (Condense.cross_edges p r)) * (6 + 6 * component_width r).
+Proof.
+  intros Hready Hexact.
+  pose proof (cross_width p scope roots r Hready Hexact) as Hpairs.
+  pose proof (IndexCost.group_by_cost Map.cost_laws_hold positive_encoding positive_encoding_laws
+    (fun ev : positive * positive => Cost.ret (fst ev)) (Condense.cross_edges p r)
+    (component_width r) (component_width r) 0) as Hgroup.
+  assert (Hkeys : forall ev, In ev (Condense.cross_edges p r) ->
+    Cost.ticks (Cost.ret (fst ev)) <= 0 /\
+    Cost.ticks (encode_c positive_encoding (Cost.value (Cost.ret (fst ev)))) <=
+      component_width r /\
+    key_bits positive_encoding (Cost.value (Cost.ret (fst ev))) <= component_width r).
+  { intros ev He. split; [reflexivity|]. cbn [Cost.value].
+    split; [|exact (proj1 (Hpairs ev He))].
+    change (Cost.ticks (encode_c positive_encoding (fst ev)) <= component_width r).
+    eapply N.le_trans; [exact (encode_cost_bound positive_encoding_cost_laws (fst ev))|].
+    rewrite N.mul_1_l. exact (proj1 (Hpairs ev He)). }
+  specialize (Hgroup Hkeys). nia.
+Qed.
+
 (** Exact scoped condensation has a numeric linear bound in all inspected work and both key widths. *)
 Theorem cost {V E} (p : Prepared.t V E) scope roots r w :
   Prepared.ready p -> Scc.exact p scope roots r ->
@@ -367,29 +409,10 @@ Proof.
     split; [apply Hwidth; now left|].
     intros e v He. apply Hwidth. left.
     exact (proj2 (SearchInvariant.successor_arc p u e v Hready Hvalid He)). }
-  assert (Hpairs : forall ev, In ev (Condense.cross_edges p r) ->
-    key_bits positive_encoding (fst ev) <= component_width r /\
-    key_bits positive_encoding (snd ev) <= component_width r).
-  { intros [i j] He. apply (Condense.cross_edges_spec p scope roots r i j Hready Hexact) in He.
-    destruct He as [_ [u [e [v [_ [Hi Hj]]]]]]. split; apply component_index_width.
-    - exact (proj2 (Condense.owner_member p scope roots r u i Hexact Hi)).
-    - exact (proj2 (Condense.owner_member p scope roots r v j Hexact Hj)). }
+  pose proof (cross_width p scope roots r Hready Hexact) as Hpairs.
   pose proof (cross_cost p r w Hnodekeys) as Hcross.
   pose proof (cross_length p r) as Hlength.
-  pose proof (IndexCost.group_by_cost Map.cost_laws_hold positive_encoding positive_encoding_laws
-    (fun ev : positive * positive => Cost.ret (fst ev)) (Condense.cross_edges p r)
-    (component_width r) (component_width r) 0) as Hgroup.
-  assert (Hgroupkeys : forall ev, In ev (Condense.cross_edges p r) ->
-    Cost.ticks (Cost.ret (fst ev)) <= 0 /\
-    Cost.ticks (encode_c positive_encoding (Cost.value (Cost.ret (fst ev)))) <=
-      component_width r /\
-    key_bits positive_encoding (Cost.value (Cost.ret (fst ev))) <= component_width r).
-  { intros ev He. split; [reflexivity|]. cbn [Cost.value].
-    split; [|exact (proj1 (Hpairs ev He))].
-    change (Cost.ticks (encode_c positive_encoding (fst ev)) <= component_width r).
-    eapply N.le_trans; [exact (encode_cost_bound positive_encoding_cost_laws (fst ev))|].
-    rewrite N.mul_1_l. exact (proj1 (Hpairs ev He)). }
-  specialize (Hgroup Hgroupkeys).
+  pose proof (cross_group_cost p scope roots r Hready Hexact) as Hgroup.
   pose proof (rows_cost (Scc.components r) 1%positive (Condense.cross_edges p r)
     (component_width r)) as Hrows.
   assert (Hindices : forall i, In i (indices (Scc.components r) 1%positive) ->

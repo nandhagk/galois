@@ -330,6 +330,59 @@ Proof.
   exact Htail.
 Qed.
 
+(** A prefix pop removes exactly its members from the low-link domain. *)
+Theorem pop_low_domain open s root i x :
+  bookkeeping open s ->
+  ((exists l, Map.get positive_encoding x (Tarjan.links (Tarjan.pop root i (Tarjan.stack s)
+    (Tarjan.low s) (Tarjan.on_stack s) (Tarjan.owners s))) = Some l) <->
+    In x (Tarjan.tail (Tarjan.pop root i (Tarjan.stack s)
+      (Tarjan.low s) (Tarjan.on_stack s) (Tarjan.owners s)))).
+Proof.
+  intro Hbook.
+  set (answer := Tarjan.pop root i (Tarjan.stack s) (Tarjan.low s)
+    (Tarjan.on_stack s) (Tarjan.owners s)).
+  destruct (TarjanStateFacts.pop_split root i (Tarjan.stack s) (Tarjan.low s)
+    (Tarjan.on_stack s) (Tarjan.owners s)) as [Hsplit _]. fold answer in Hsplit.
+  assert (Hdisjoint : forall y, In y (Tarjan.members answer) -> ~ In y (Tarjan.tail answer)).
+  { apply nodup_disjoint. rewrite <- Hsplit.
+    exact (proj1 (nodup_parts _ _ (distinct _ _ Hbook))). }
+  unfold answer at 1. rewrite TarjanStateFacts.pop_links. fold answer.
+  destruct (existsb (eqb positive_encoding x) (Tarjan.members answer)) eqn:Hmem.
+  - apply TarjanStateFacts.member_test in Hmem. split.
+    + intros [l Hfalse]. discriminate.
+    + intro Htail. exfalso. exact (Hdisjoint x Hmem Htail).
+  - rewrite (low_domain _ _ Hbook x), Hsplit, in_app_iff.
+    split; [intros [Hmember|Htail]; [|exact Htail]|auto].
+    apply TarjanStateFacts.member_test in Hmember. congruence.
+Qed.
+
+(** A prefix pop leaves exactly its surviving suffix in the on-stack set. *)
+Theorem pop_pending_exact open s root i x :
+  bookkeeping open s ->
+  (FinSet.mem positive_encoding x (Tarjan.pending (Tarjan.pop root i (Tarjan.stack s)
+    (Tarjan.low s) (Tarjan.on_stack s) (Tarjan.owners s))) = true <->
+    In x (Tarjan.tail (Tarjan.pop root i (Tarjan.stack s)
+      (Tarjan.low s) (Tarjan.on_stack s) (Tarjan.owners s)))).
+Proof.
+  intro Hbook.
+  set (answer := Tarjan.pop root i (Tarjan.stack s) (Tarjan.low s)
+    (Tarjan.on_stack s) (Tarjan.owners s)).
+  destruct (TarjanStateFacts.pop_split root i (Tarjan.stack s) (Tarjan.low s)
+    (Tarjan.on_stack s) (Tarjan.owners s)) as [Hsplit _]. fold answer in Hsplit.
+  assert (Hdisjoint : forall y, In y (Tarjan.members answer) -> ~ In y (Tarjan.tail answer)).
+  { apply nodup_disjoint. rewrite <- Hsplit.
+    exact (proj1 (nodup_parts _ _ (distinct _ _ Hbook))). }
+  unfold answer at 1. rewrite TarjanStateFacts.pop_pending. fold answer.
+  rewrite andb_true_iff, negb_true_iff, (pending_exact _ _ Hbook x), Hsplit, in_app_iff.
+  split.
+  - intros [Hnot [Hmember|Htail]]; [|exact Htail].
+    apply TarjanStateFacts.member_test in Hmember. congruence.
+  - intro Htail. split; [|auto].
+    destruct (existsb (eqb positive_encoding x) (Tarjan.members answer)) eqn:Hmem;
+      [|reflexivity].
+    apply TarjanStateFacts.member_test in Hmem. exfalso. exact (Hdisjoint x Hmem Htail).
+Qed.
+
 (** Emitting the top open root transfers exactly its pending prefix to the next component. *)
 Theorem emit_bookkeeping v open s :
   bookkeeping (v :: open) s -> bookkeeping open (Tarjan.emit v s).
@@ -343,9 +396,6 @@ Proof.
   assert (Hroot : In v (Tarjan.stack s)).
   { apply (stack_member _ _ (open_order _ _ Hbook)). now left. }
   pose proof (distinct _ _ Hbook) as Hdistinct.
-  assert (Hdisjoint : forall x, In x (Tarjan.members answer) ->
-    ~ In x (Tarjan.tail answer ++ concat (Tarjan.emitted_rev s))).
-  { apply nodup_disjoint. rewrite app_assoc, <- Hsplit. exact Hdistinct. }
   constructor.
   - apply TarjanStateFacts.emit_storage, (canonical _ _ Hbook).
   - rewrite Tarjan.emit_equation. fold answer.
@@ -356,26 +406,10 @@ Proof.
     rewrite (disc_domain _ _ Hbook x), Hsplit, !in_app_iff. tauto.
   - intro x. rewrite Tarjan.emit_equation. fold answer.
     cbn [Tarjan.low Tarjan.stack].
-    unfold answer at 1. rewrite TarjanStateFacts.pop_links. fold answer.
-    destruct (existsb (eqb positive_encoding x) (Tarjan.members answer)) eqn:Hmem.
-    + apply TarjanStateFacts.member_test in Hmem. split.
-      * intros [n Hfalse]. discriminate.
-      * intro Htail. exfalso. apply (Hdisjoint x Hmem). apply in_or_app. now left.
-    + rewrite (low_domain _ _ Hbook x), Hsplit, in_app_iff.
-      split; [intros [Hmember|Htail]; [|exact Htail]|auto].
-      apply TarjanStateFacts.member_test in Hmember. congruence.
+    exact (pop_low_domain _ s v (Tarjan.next_component s) x Hbook).
   - intro x. rewrite Tarjan.emit_equation. fold answer.
     cbn [Tarjan.on_stack Tarjan.stack].
-    unfold answer at 1. rewrite TarjanStateFacts.pop_pending. fold answer.
-    rewrite andb_true_iff, negb_true_iff, (pending_exact _ _ Hbook x), Hsplit, in_app_iff.
-    split.
-    + intros [Hnot [Hmember|Htail]]; [|exact Htail].
-      apply TarjanStateFacts.member_test in Hmember. congruence.
-    + intro Htail. split; [|auto].
-      destruct (existsb (eqb positive_encoding x) (Tarjan.members answer)) eqn:Hmem;
-        [|reflexivity].
-      apply TarjanStateFacts.member_test in Hmem.
-      exfalso. apply (Hdisjoint x Hmem). apply in_or_app. now left.
+    exact (pop_pending_exact _ s v (Tarjan.next_component s) x Hbook).
   - rewrite Tarjan.emit_equation. apply pop_open_suffix, Hbook.
   - apply emit_indexed; [exact (canonical _ _ Hbook)|exact (output_indexed _ _ Hbook)|
       exact Hroot|].

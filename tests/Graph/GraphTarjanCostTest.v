@@ -7,8 +7,8 @@
 From Stdlib Require Import List PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchCost GraphTarjan GraphCondense
-  GraphTarjanCost.
+From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchCost GraphSearchScopedCost
+  GraphTarjan GraphCondense GraphTarjanCost.
 From Galois.Tests.Graph Require Import GraphTarjanTest.
 Import List.ListNotations.
 
@@ -59,6 +59,49 @@ Example line_cost_client :
     TarjanCost.scc_k * TarjanCost.scc_size TarjanFixtures.line [1]%positive 3)%N.
 Proof.
   apply TarjanCost.scc_cost; [exact (proj1 TarjanFixtures.fixtures_ready)|exact line_width].
+Qed.
+
+Example scoped_work_counts_rejected_occurrence :
+  (ScopedSearchCost.node_count TarjanFixtures.nested TarjanFixtures.inner_scope,
+    ScopedSearchCost.edge_count TarjanFixtures.nested TarjanFixtures.inner_scope,
+    N.pos (Pos.size (Prepared.fuel TarjanFixtures.nested))) = (2%nat, 3%nat, 4%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example scoped_below_scc_scoped_cost :
+  (Cost.ticks (Tarjan.compute_c TarjanFixtures.nested TarjanFixtures.inner_scope [2]%positive) <=
+    TarjanCost.scc_k * TarjanCost.scc_scoped_size TarjanFixtures.nested
+      TarjanFixtures.inner_scope [2]%positive 3)%N.
+Proof.
+  vm_compute. discriminate.
+Qed.
+
+Example empty_graph_unknown_roots_below_scc_cost :
+  (Cost.ticks (Tarjan.compute_c TarjanFixtures.empty TarjanFixtures.unrestricted [99; 99]%positive) <=
+    TarjanCost.scc_k * TarjanCost.scc_size TarjanFixtures.empty [99; 99]%positive 7)%N.
+Proof.
+  vm_compute. discriminate.
+Qed.
+
+(** The prepared nested fixture supplies finite key widths independently of its restricted scope. *)
+Example nested_scope_width : SearchCost.width_bound TarjanFixtures.nested [2]%positive 3.
+Proof.
+  intros v [[name [Hin Hi]]|Hv].
+  - change (In name [1; 2; 3; 4]%nat) in Hin.
+    destruct Hin as [<-|[<-|[<-|[<-|Hfalse]]]]; [| | | |contradiction].
+    all: vm_compute in Hi; inversion Hi; subst v; vm_compute; discriminate.
+  - destruct Hv as [<-|Hfalse]; [vm_compute; discriminate|contradiction].
+Qed.
+
+(** Hierarchy-style restricted calls use all inspected outgoing occurrences and global fuel width. *)
+Example nested_scope_cost_client :
+  (Cost.ticks (Tarjan.compute_c TarjanFixtures.nested TarjanFixtures.inner_scope [2]%positive) <=
+    TarjanCost.scc_k * TarjanCost.scc_scoped_size TarjanFixtures.nested
+      TarjanFixtures.inner_scope [2]%positive 3)%N.
+Proof.
+  apply TarjanCost.scc_scoped_cost;
+    [exact (proj1 (proj2 (proj2 (proj2 TarjanFixtures.fixtures_ready))))|exact nested_scope_width].
 Qed.
 
 Definition condense_ticks {V E} (p : Prepared.t V E) :=

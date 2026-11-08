@@ -24,6 +24,7 @@ Record state := State {
   next_component : positive
 }.
 
+(** Initial storage is empty and both next one-based counters start at one. *)
 Definition initial :=
   State Map.empty Map.empty [] FinSet.empty [] Map.empty 1%positive 1%positive.
 
@@ -81,6 +82,7 @@ Proof.
   destruct (Map.code_compare v root); reflexivity.
 Qed.
 
+(** Entry charges the discovery, low-link and pending-set insertions before pushing the vertex. *)
 Definition enter_c v (s : state) :=
   Cost.step ;;
   let* numbers := Map.set_c positive_encoding v (clock s) (disc s) in
@@ -102,6 +104,7 @@ Proof.
   reflexivity.
 Qed.
 
+(** Lowering charges an existing low-link minimum update and leaves a missing link absent. *)
 Definition lower_c v n (s : state) :=
   Cost.step ;;
   let* old := Map.get_c positive_encoding v (low s) in
@@ -169,6 +172,7 @@ Proof.
   all: destruct (Map.get positive_encoding v (disc s)); reflexivity.
 Qed.
 
+(** Emission charges a real prefix pop and advances the chronological component counter. *)
 Definition emit_c root (s : state) :=
   Cost.step ;;
   let* answer := pop_c root (next_component s) (stack s) (low s) (on_stack s) (owners s) in
@@ -227,9 +231,11 @@ Proof.
   destruct (Pos.eqb l d); [reflexivity|]. destruct parent; reflexivity.
 Qed.
 
+(** The visitor dispatches Tarjan updates without inspecting or controlling Search frames. *)
 Definition visitor {E} : Visitor.t E state :=
   Visitor.Make (fun v _ => enter_c v) (fun _ => edge_c) exit_c.
 
+(** Result construction pays for reversing the emitted component accumulator. *)
 Definition result_c (s : state) :=
   let* components := rev_c (emitted_rev s) in Cost.ret (Scc.Result components (owners s)).
 
@@ -245,6 +251,7 @@ Qed.
 Definition compute_c {V E} (p : Prepared.t V E) scope roots :=
   let* answer := SearchRun.run_c p visitor scope roots initial in result_c (snd answer).
 
+(** The plain producer is exactly the value of its single costed computation. *)
 Definition compute {V E} (p : Prepared.t V E) scope roots :=
   Cost.value (compute_c p scope roots).
 

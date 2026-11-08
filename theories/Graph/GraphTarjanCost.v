@@ -33,9 +33,16 @@ Definition event_domain {E} w (ev : Search.event E) :=
       end
   end.
 
+(** Positive-key encoding and trie descent fit in this per-operation budget. *)
 Definition id_cost w := 1 + 2 * w.
+
+(** One pending-cell credit pays for all three pop updates and its key comparison. *)
 Definition pop_k w := 1 + 3 * id_cost w + w.
+
+(** This coefficient bounds local callback work and its reserved future credits. *)
 Definition visitor_k : N := 32.
+
+(** This coefficient includes the shared Search driver and every local Tarjan charge. *)
 Definition scc_k : N := 2112.
 
 (** The potential reserves per-stack-cell pop work and one reversal tick per emitted component. *)
@@ -506,6 +513,7 @@ Proof.
   apply scc_scoped_cost_root_restricted; try assumption. now apply scoped_root_count.
 Qed.
 
+(** The public condensation coefficient is the proved helper's numeric coefficient. *)
 Definition condense_k := TarjanCondenseCost.condense_k.
 
 (** Condensation size includes every inspected outgoing occurrence and actual component-key width. *)

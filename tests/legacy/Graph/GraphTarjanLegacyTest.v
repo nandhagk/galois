@@ -84,4 +84,39 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Definition agrees_within nodes edges region :=
+  let p := Prepared.prepare BaseEncoding.nat_encoding (new_graph nodes edges) in
+  let oldp := GraphPrepare.prepare CollectionsEncoding.nat_encoding (old_graph nodes edges) in
+  let old := GraphScc.scc_within oldp region in
+  let ids := Prepared.present (Prepared.id_of p) region in
+  let fresh := Tarjan.compute p
+    (Scope.Make BaseSet.FinSet.empty (Some (BaseSet.FinSet.of_list
+      BaseEncoding.positive_encoding ids))) ids in
+  (map (Prepared.present (Prepared.name_of p)) (Scc.components fresh),
+    map (fun v => match Prepared.id_of p v with
+      | None => None
+      | Some i => BaseMap.Map.get BaseEncoding.positive_encoding i (Scc.comp_of fresh)
+      end) nodes) =
+  (GraphScc.components old,
+    map (fun v => CollectionsMap.Map.get CollectionsEncoding.nat_encoding v
+      (GraphScc.comp_of old)) nodes).
+
+Example legacy_scoped_nested :
+  agrees_within [1; 2; 3; 4] [(1, 2); (2, 3); (3, 2); (3, 4); (4, 1)] [2; 3].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example legacy_scoped_distinct :
+  agrees_within [1; 2; 3; 4] [(1, 2); (2, 1); (2, 3); (3, 4); (4, 3)] [3; 4].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example legacy_scoped_nonidentity :
+  agrees_within [40; 10; 90] [(40, 10); (10, 90); (90, 10)] [10; 90].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 End TarjanDifferential.

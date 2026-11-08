@@ -320,4 +320,112 @@ Proof.
   exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
 Qed.
 
+(** The complete ready-only producer theorem proves the maximal nested-cycle partition. *)
+Example nested_exact :
+  Scc.exact nested unrestricted [1]%positive (Tarjan.compute nested unrestricted [1]%positive).
+Proof.
+  apply TarjanExact.compute_exact. exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+Qed.
+
+(** The outer cycle and its nested cycle form one proved maximal mutual-reachability class. *)
+Example nested_maximal_block : Scc.block nested unrestricted [1]%positive [4; 3; 2; 1]%positive.
+Proof.
+  apply TarjanExact.block_exact.
+  - exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+  - vm_compute. now left.
+Qed.
+
+(** Exactness permits repeated roots and IDs that the scope admits but preparation does not name. *)
+Example restricted_unknown_exact :
+  Scc.exact nested unknown_within [99; 2; 2; 1; 99]%positive
+    (Tarjan.compute nested unknown_within [99; 2; 2; 1; 99]%positive).
+Proof.
+  apply TarjanExact.compute_exact. exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+Qed.
+
+(** Blocking a vertex keeps the complete scoped SCC contract rather than unrestricted coverage. *)
+Example blocked_exact :
+  Scc.exact diamond block_two [1; 2; 99]%positive
+    (Tarjan.compute diamond block_two [1; 2; 99]%positive).
+Proof.
+  apply TarjanExact.compute_exact. exact (proj1 (proj2 fixtures_ready)).
+Qed.
+
+(** Independent actual root invocations satisfy every SCC specification field. *)
+Example separate_roots_exact :
+  Scc.exact line unrestricted [3; 99; 1; 3]%positive
+    (Tarjan.compute line unrestricted [3; 99; 1; 3]%positive).
+Proof.
+  apply TarjanExact.compute_exact. exact (proj1 fixtures_ready).
+Qed.
+
+(** An empty graph with supplied unknown roots still satisfies every ready-only SCC field. *)
+Example empty_graph_unknown_roots_exact :
+  Scc.exact empty unrestricted [99; 99]%positive
+    (Tarjan.compute empty unrestricted [99; 99]%positive).
+Proof.
+  apply TarjanExact.compute_exact.
+  exact (proj1 (proj2 (proj2 (proj2 (proj2 (proj2 fixtures_ready)))))).
+Qed.
+
+(** Actual cross-component arcs decrease the observed owners of the two distinct cycles. *)
+Example distinct_cross_owner_order i j :
+  Map.get positive_encoding 2%positive
+    (Scc.comp_of (Tarjan.compute distinct unrestricted [1]%positive)) = Some i ->
+  Map.get positive_encoding 3%positive
+    (Scc.comp_of (Tarjan.compute distinct unrestricted [1]%positive)) = Some j ->
+    (j < i)%positive.
+Proof.
+  intros Hi Hj.
+  apply (TarjanExact.reverse_topological distinct unrestricted [1]%positive
+    2%positive (2, 3)%nat 3%positive i j).
+  - exact (proj2 (proj2 (proj2 (proj2 (proj2 (proj2 fixtures_ready)))))).
+  - exists 2%nat, 3%nat. vm_compute. intuition congruence.
+  - exact Hi.
+  - exact Hj.
+  - vm_compute in Hi, Hj. inversion Hi; inversion Hj; subst. discriminate.
+Qed.
+
+Definition parallel_dag_graph :=
+  Graph.of_pure [1] [1; 2]
+    (fun v => filter (fun _ => Nat.eqb 1 v) [10; 11]) (fun _ => 1) (fun _ => 2).
+Definition parallel_dag := Prepared.prepare nat_encoding parallel_dag_graph.
+
+(** Parallel labels are distinct outgoing occurrences in a publicly prepared ready DAG. *)
+Example parallel_dag_ready : Prepared.ready parallel_dag.
+Proof.
+  unfold parallel_dag, parallel_dag_graph.
+  apply Prepared.prepare_ready; [exact nat_encoding_laws| |].
+  - constructor.
+    + repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+    + intros v Hv. vm_compute in Hv |- *. intuition congruence.
+    + intros v e He. rewrite Graph.of_pure_out, filter_In in He.
+      rewrite Graph.of_pure_source. now apply Nat.eqb_eq, (proj2 He).
+    + intros v e _ _. rewrite Graph.of_pure_target. vm_compute. auto.
+  - intro v. rewrite Graph.of_pure_out. apply NoDup_filter.
+    repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+Qed.
+
+Example parallel_dag_components : components parallel_dag = [[2]; [1]]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example parallel_dag_actual_labels :
+  SearchRun.events parallel_dag unrestricted [1]%positive =
+    [Search.Enter 1 None; Search.Edge 10%nat 1 2 Search.Tree;
+      Search.Enter 2 (Some (10%nat, 1)); Search.Exit 2 (Some 1);
+      Search.Edge 11%nat 1 2 Search.Forward; Search.Exit 1 None]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Parallel-label exactness uses the same actual selected-label trace as the component producer. *)
+Example parallel_dag_exact :
+  Scc.exact parallel_dag unrestricted [1]%positive
+    (Tarjan.compute parallel_dag unrestricted [1]%positive).
+Proof.
+  apply TarjanExact.compute_exact, parallel_dag_ready.
+Qed.
+
 End TarjanFixtures.

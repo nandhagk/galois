@@ -176,6 +176,45 @@ Proof.
   destruct parent; [now apply lower_output|exact Houtput].
 Qed.
 
+Local Lemma head_arc {V E} (p : Prepared.t V E) scope roots u e v pending rest c s :
+  Prepared.ready p -> invariant p scope roots ((u, (e, v) :: pending) :: rest, c) s ->
+    Prepared.arc p u e v /\ Prepared.valid_id p v.
+Proof.
+  intros Hready HI.
+  destruct (SearchInvariant.valid_frames _ _ _ _ (sound _ _ _ _ (search _ _ _ _ _ HI))
+    u ((e, v) :: pending) (or_introl eq_refl)) as [_ [Hu [_ Hedges]]].
+  exact (SearchInvariant.successor_arc p u e v Hready Hu (Hedges _ (or_introl eq_refl))).
+Qed.
+
+Local Lemma tree_step_invariant {V E} (p : Prepared.t V E) scope roots u e v pending rest c s :
+  Prepared.ready p -> invariant p scope roots ((u, (e, v) :: pending) :: rest, c) s ->
+  search_state p scope roots
+    ((v, Prepared.succ_edges p v) :: (u, pending) :: rest, SearchRun.discover v (Some (e, u)) c) ->
+  Scope.admits scope v = true -> SearchRun.edge_color c u v Search.Tree ->
+  invariant p scope roots
+    ((v, Prepared.succ_edges p v) :: (u, pending) :: rest, SearchRun.discover v (Some (e, u)) c)
+    (Tarjan.enter v s).
+Proof.
+  intros Hready HI Hsearch Hscope Hcolor.
+  destruct (head_arc p scope roots u e v pending rest c s Hready HI) as [Harc Hvalid].
+  assert (Hreach : TarjanLow.reaches p scope u v).
+  { eapply arc_reaches; [exact HI|now left|exact Harc|exact Hvalid|exact Hscope]. }
+  assert (Hwhite : FinSet.mem positive_encoding v (SearchRun.seen c) = false).
+  { apply (proj1 (SearchInvariant.tree_is_white c u v)). now apply SearchRun.color_edge_kind. }
+  pose proof (fresh_discovery p scope roots _ s v HI Hwhite) as Hfresh.
+  pose proof (low _ _ _ _ _ HI) as HL.
+  constructor; [exact Hsearch| | | |].
+  - apply (TarjanStateFacts.apply_discovery (Search.Enter v (Some (e, u)))).
+    exact (discovery _ _ _ _ _ HI).
+  - apply TarjanLowStep.enter_invariant; [exact HL|exact Hfresh|exact Hvalid|exact Hscope|].
+    intros w Hw. eapply TarjanLow.reaches_trans; [|exact Hreach].
+    exact (TarjanLow.pending_current p scope u (map fst rest) s
+      (TarjanLow.book _ _ _ _ HL) (TarjanLow.numbers _ _ _ _ HL) (TarjanLow.domain _ _ _ _ HL)
+      (TarjanLow.links _ _ _ _ HL) (TarjanLow.closed _ _ _ _ HL) (TarjanLow.paths _ _ _ _ HL) w Hw).
+  - split; [now exists e|exact (tree _ _ _ _ _ HI)].
+  - exact (output _ _ _ _ _ HI).
+Qed.
+
 (** Every real event block preserves the coupled low-link, ownership and strong-output invariant. *)
 Theorem step_invariant {V E} (p : Prepared.t V E) scope roots w here next s :
   Prepared.ready p -> invariant p scope roots w s ->
@@ -204,42 +243,8 @@ Proof.
       exact (tree _ _ _ _ _ HI)|exact (output _ _ _ _ _ HI)].
   - constructor; [exact Hsearch|exact (discovery _ _ _ _ _ HI)|exact (low _ _ _ _ _ HI)|
       exact (tree _ _ _ _ _ HI)|exact (output _ _ _ _ _ HI)].
-  - assert (Hvalid : Prepared.valid_id p v).
-    { apply SearchInvariant.vertices_spec.
-      exact (SearchInvariant.named_in_vertices p v name Hready Hname). }
-    destruct (SearchInvariant.valid_frames _ _ _ _ (sound _ _ _ _ (search _ _ _ _ _ HI))
-      u ((e, v) :: pending) (or_introl eq_refl)) as [_ [Hu [_ Hedges]]].
-    destruct (SearchInvariant.successor_arc p u e v Hready Hu (Hedges _ (or_introl eq_refl)))
-      as [Harc _].
-    assert (Hreach : TarjanLow.reaches p scope u v).
-    { eapply arc_reaches; [exact HI|now left|exact Harc|exact Hvalid|exact Hscope]. }
-    assert (Hwhite : FinSet.mem positive_encoding v (SearchRun.seen c) = false).
-    { apply (proj1 (SearchInvariant.tree_is_white c u v)).
-      now apply SearchRun.color_edge_kind. }
-    assert (Hfresh : Map.get positive_encoding v (Tarjan.disc s) = None) by
-      exact (fresh_discovery p scope roots _ s v HI Hwhite).
-    change (invariant p scope roots
-      ((v, Prepared.succ_edges p v) :: (u, pending) :: rest,
-        SearchRun.discover v (Some (e, u)) c) (Tarjan.enter v s)).
-    constructor; [exact Hsearch| | | |].
-    + apply (TarjanStateFacts.apply_discovery (Search.Enter v (Some (e, u)))).
-      exact (discovery _ _ _ _ _ HI).
-    + apply TarjanLowStep.enter_invariant; [exact (low _ _ _ _ _ HI)|exact Hfresh|
-        exact Hvalid|exact Hscope|].
-      intros w Hw. eapply TarjanLow.reaches_trans; [|exact Hreach].
-      exact (TarjanLow.pending_current p scope u (map fst rest) s
-        (TarjanLow.book _ _ _ _ (low _ _ _ _ _ HI))
-        (TarjanLow.numbers _ _ _ _ (low _ _ _ _ _ HI))
-        (TarjanLow.domain _ _ _ _ (low _ _ _ _ _ HI))
-        (TarjanLow.links _ _ _ _ (low _ _ _ _ _ HI))
-        (TarjanLow.closed _ _ _ _ (low _ _ _ _ _ HI))
-        (TarjanLow.paths _ _ _ _ (low _ _ _ _ _ HI)) w Hw).
-    + split; [now exists e|exact (tree _ _ _ _ _ HI)].
-    + exact (output _ _ _ _ _ HI).
-  - destruct (SearchInvariant.valid_frames _ _ _ _ (sound _ _ _ _ (search _ _ _ _ _ HI))
-      u ((e, v) :: pending) (or_introl eq_refl)) as [_ [Hu [_ Hedges]]].
-    destruct (SearchInvariant.successor_arc p u e v Hready Hu (Hedges _ (or_introl eq_refl)))
-      as [Harc Hv].
+  - exact (tree_step_invariant p scope roots u e v pending rest c s Hready HI Hsearch Hscope Hcolor).
+  - destruct (head_arc p scope roots u e v pending rest c s Hready HI) as [Harc Hv].
     assert (Hreach : TarjanLow.reaches p scope u v).
     { eapply arc_reaches; [exact HI|now left|exact Harc|exact Hv|exact Hscope]. }
     change (invariant p scope roots ((u, pending) :: rest, c) (Tarjan.edge u v k s)).
