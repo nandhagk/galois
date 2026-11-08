@@ -4,11 +4,12 @@
     For example, a phi definition is after parameter binding rather than at block entry.
     Builds on: AnalysesSsaPreFamily, ProgramSsaPoints and GraphFrontierSpec. *)
 
-From Stdlib Require Import List Bool.
-From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
+From Stdlib Require Import List Bool NArith.
+From Galois.Cost Require Import CostMonad CostList.
+From Galois.Base Require Import BaseEncoding BaseCode BaseEq BaseMap BaseSet BaseIndex.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphFrontierSpec.
 From Galois.Program Require Import ProgramCfg ProgramSsa ProgramSsaPoints.
+From Galois.Framework Require Import FrameworkUtil.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily.
 Import List.ListNotations Cost.Notations.
 
@@ -58,6 +59,80 @@ Definition version_expr {B E U} (d : version B E U) :=
   | Fresh _ u => u
   | Phi _ u => u
   end.
+
+Definition version_key {B E U} (d : version B E U) :
+    U + (U + ((E * U) + (B * U))) :=
+  match d with
+  | Unavailable u => inl u
+  | Initial u => inr (inl u)
+  | Fresh e u => inr (inr (inl (e, u)))
+  | Phi b u => inr (inr (inr (b, u)))
+  end.
+
+Section Encodings.
+Context {B BE N E V K G C U : Type}.
+Variable c : Pre.ctx B BE N E V K G C U.
+
+Definition phi_encoding := pair_encoding (Pre.eb (Pre.keys c)) (Pre.eu (Pre.keys c)).
+Definition link_encoding := pair_encoding phi_encoding (Pre.ebe (Pre.keys c)).
+Definition origin_encoding :=
+  sum_encoding (Pre.eu (Pre.keys c))
+    (sum_encoding (Pre.eu (Pre.keys c))
+      (sum_encoding (pair_encoding (Pre.ee (Pre.keys c)) (Pre.eu (Pre.keys c)))
+        phi_encoding)).
+Definition version_encoding : encoding (version B E U) :=
+  Encoding (fun d => Cost.step ;; encode_c origin_encoding (version_key d)).
+
+(** Version encoding delegates all component and serializer work to the owning derived encodings. *)
+Theorem version_encoding_equation d :
+  encode version_encoding d = encode origin_encoding (version_key d).
+Proof.
+  reflexivity.
+Qed.
+
+(** Each version retains the full charge of its derived constructor-tagged key. *)
+Theorem version_encoding_cost d :
+  Cost.ticks (encode_c version_encoding d) =
+    (1 + Cost.ticks (encode_c origin_encoding (version_key d)))%N.
+Proof.
+  unfold version_encoding; cbn [encode_c]; autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Phi keys preserve both their block and expression identities. *)
+Theorem phi_encoding_laws :
+  Pre.laws c -> encoding_laws phi_encoding.
+Proof.
+  intro Hlaw; apply pair_encoding_laws.
+  - exact (Pre.eb_laws c (Pre.graphs c Hlaw)).
+  - exact (Pre.eu_laws c (Pre.graphs c Hlaw)).
+Qed.
+
+(** Incoming link keys additionally preserve the individual parallel edge identity. *)
+Theorem link_encoding_laws :
+  Pre.laws c -> encoding_laws link_encoding.
+Proof.
+  intro Hlaw; apply pair_encoding_laws; [apply phi_encoding_laws; exact Hlaw|].
+  exact (Pre.ebe_laws c (Pre.graphs c Hlaw)).
+Qed.
+
+(** Tagged origins and lawful component dictionaries give injective version identities. *)
+Theorem version_encoding_laws :
+  Pre.laws c -> encoding_laws version_encoding.
+Proof.
+  intro Hlaw.
+  assert (Horigins : encoding_laws origin_encoding).
+  { apply sum_encoding_laws; [exact (Pre.eu_laws c (Pre.graphs c Hlaw))|].
+    apply sum_encoding_laws; [exact (Pre.eu_laws c (Pre.graphs c Hlaw))|].
+    apply sum_encoding_laws; [|apply phi_encoding_laws; exact Hlaw].
+    apply pair_encoding_laws.
+    - exact (Pre.ee_laws c (Pre.graphs c Hlaw)).
+    - exact (Pre.eu_laws c (Pre.graphs c Hlaw)). }
+  constructor; intros x y Hkey; rewrite !version_encoding_equation in Hkey.
+  apply (encode_injective Horigins) in Hkey.
+  destruct x, y; cbn [version_key] in Hkey; inversion Hkey; reflexivity.
+Qed.
+
+End Encodings.
 
 Section Definitions.
 Context {B BE N E V K G C U : Type}.
@@ -392,5 +467,196 @@ Proof.
 Qed.
 
 End PointDomains.
+
+Section DefinitionIndex.
+Context {B BE N E V K G C U : Type}.
+Variable c : Pre.ctx B BE N E V K G C U.
+
+Definition occurrence_pairs_c :=
+  let* es := fw_edges_c (Pre.point_cfg c) in
+  fw_flat_map_c (fun e =>
+    Cost.step ;;
+    let* instance := Pre.recomputed_c (Pre.input c) e in
+    match instance with
+    | None => Cost.ret []
+    | Some u =>
+      Cost.step ;;
+      let* eligible := Pre.pure_c (Pre.input c) u in
+      if eligible then
+        Cost.step ;;
+        let* n := Graph.source_c (Pre.pg c) e in
+        Cost.step ;;
+        let* b := SsaPoints.block_of_point_c (Pre.points (Pre.input c)) n in
+        Cost.ret [(u, b)]
+      else Cost.ret []
+    end) es.
+
+Definition home_pairs_c family :=
+  fw_flat_map_c (fun u =>
+    Cost.step ;;
+    let* xs := Pre.operands_c (Pre.input c) u in
+    map_c (fun x =>
+      Cost.step ;;
+      let* b := Ssa.home_c (Pre.ssa (Pre.input c)) x in Cost.ret (u, b)) xs) family.
+
+Definition entry_pairs_c (family : list U) :=
+  fw_flat_map_c (fun u =>
+    map_c (fun b => Cost.ret (u, b)) (Graph.entries (Pre.bg c))) family.
+
+(** Definition preparation visits the program and the family once before any per-expression query. *)
+Definition definition_index_c family :=
+  let* entries := entry_pairs_c family in
+  let* occurrences := occurrence_pairs_c in
+  let* homes := home_pairs_c family in
+  let* suffix := app_c occurrences homes in
+  let* pairs := app_c entries suffix in
+  Index.group_by_c (Pre.eu (Pre.keys c)) (fun pair => Cost.ret (fst pair)) pairs.
+Definition definition_index family := Cost.value (definition_index_c family).
+
+Definition defs_c (index : Index.t U (U * B)) u :=
+  let* pairs := Index.find_c (Pre.eu (Pre.keys c)) u index in
+  map_c (fun pair => Cost.ret (snd pair)) pairs.
+Definition defs index u := Cost.value (defs_c index u).
+
+(* Reference occurrence lists specify multiplicity and order and are never called by the core. *)
+Definition occurrence_pairs :=
+  flat_map (fun e =>
+    match Pre.recomputed c e with
+    | None => []
+    | Some u =>
+      if Pre.pure c u then
+        [(u, SsaPoints.block_of_point (Pre.points (Pre.input c)) (Graph.source (Pre.pg c) e))]
+      else []
+    end) (Cfg.edges (Pre.point_cfg c)).
+
+Definition home_pairs family :=
+  flat_map (fun u => map (fun x => (u, Ssa.home (Pre.ssa (Pre.input c)) x))
+    (Pre.operands c u)) family.
+
+Definition entry_pairs (family : list U) :=
+  flat_map (fun u => map (fun b => (u, b)) (Graph.entries (Pre.bg c))) family.
+
+Definition definition_pairs family :=
+  entry_pairs family ++ occurrence_pairs ++ home_pairs family.
+
+(** Prepared occurrence seeds retain actual source-block callbacks and pure recomputation identity. *)
+Theorem occurrence_pairs_value : Cost.value occurrence_pairs_c = occurrence_pairs.
+Proof.
+  unfold occurrence_pairs_c, occurrence_pairs.
+  rewrite Cost.value_bind, fw_edges_value, fw_flat_map_value.
+  induction (Cfg.edges (Pre.point_cfg c)) as [|e rest IH]; [reflexivity|].
+  cbn [flat_map]; rewrite IH; rewrite !Cost.value_bind.
+  fold (Pre.recomputed c e); destruct (Pre.recomputed c e) as [u|]; [|reflexivity].
+  rewrite !Cost.value_bind; fold (Pre.pure c u); destruct (Pre.pure c u);
+    autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Home preparation retains every ordered operand occurrence and its actual home-reader work. *)
+Theorem home_pairs_value family : Cost.value (home_pairs_c family) = home_pairs family.
+Proof.
+  unfold home_pairs_c, home_pairs; rewrite fw_flat_map_value.
+  induction family as [|u rest IH]; [reflexivity|].
+  cbn [flat_map]; rewrite IH, !Cost.value_bind, value_map_c.
+  f_equal; apply map_ext; intro x; autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Every family occurrence contributes each entry occurrence in the supplied order. *)
+Theorem entry_pairs_value family : Cost.value (entry_pairs_c family) = entry_pairs family.
+Proof.
+  unfold entry_pairs_c, entry_pairs; rewrite fw_flat_map_value.
+  induction family as [|u rest IH]; [reflexivity|].
+  cbn [flat_map]; rewrite IH, value_map_c; reflexivity.
+Qed.
+
+(** The index is exactly stable grouping of the specified entry, occurrence and home seeds. *)
+Theorem definition_index_equation family :
+  definition_index family =
+    Index.group_by (Pre.eu (Pre.keys c)) fst (definition_pairs family).
+Proof.
+  unfold definition_index, definition_index_c; rewrite !Cost.value_bind.
+  rewrite entry_pairs_value, occurrence_pairs_value, home_pairs_value.
+  rewrite !value_app_c, Index.group_by_c_value; reflexivity.
+Qed.
+
+(** Querying definitions uses only one prepared bucket and preserves its duplicate seed values. *)
+Theorem defs_equation family u :
+  defs (definition_index family) u =
+    map snd (filter (fun pair => eqb (Pre.eu (Pre.keys c)) (fst pair) u)
+      (definition_pairs family)).
+Proof.
+  unfold defs, defs_c; rewrite Cost.value_bind, value_map_c.
+  fold (Index.find (Pre.eu (Pre.keys c)) u (definition_index family)).
+  rewrite definition_index_equation, Index.find_group_by; reflexivity.
+Qed.
+
+(** Canonical definition indexes are constructed without assuming any client laws. *)
+Theorem definition_index_wf family :
+  Map.wf (Pre.eu (Pre.keys c)) (definition_index family).
+Proof.
+  rewrite definition_index_equation; apply Index.wf_group_by.
+Qed.
+
+Local Lemma occurrence_pairs_member u b :
+  In (u, b) occurrence_pairs <->
+    exists e, In e (Cfg.edges (Pre.point_cfg c)) /\ Pre.recomputed c e = Some u /\
+      Pre.pure c u = true /\
+      SsaPoints.block_of_point (Pre.points (Pre.input c)) (Graph.source (Pre.pg c) e) = b.
+Proof.
+  unfold occurrence_pairs; rewrite in_flat_map; split.
+  - intros [e [He Hin]]; destruct (Pre.recomputed c e) as [v|] eqn:Hcomputed;
+      [|contradiction].
+    destruct (Pre.pure c v) eqn:Hpure; [|contradiction].
+    destruct Hin as [Heq|[]]; inversion Heq; subst v b; exists e; auto.
+  - intros [e [He [Hcomputed [Hpure Hblock]]]].
+    exists e; split; [exact He|]; rewrite Hcomputed, Hpure, Hblock; now left.
+Qed.
+
+(** For a supplied family member, prepared seeds have exactly the legacy definition-block meaning. *)
+Theorem definition_pairs_spec family u :
+  In u family ->
+  forall b, In (u, b) (definition_pairs family) <-> definition_block c u b.
+Proof.
+  intros Hu b; unfold definition_pairs; rewrite !in_app_iff, occurrence_pairs_member.
+  unfold entry_pairs, home_pairs; rewrite !in_flat_map; split.
+  - intros [[v [Hv Hin]]|[Hreal|[v [Hv Hin]]]].
+    + apply in_map_iff in Hin; destruct Hin as [entry [Heq Hentry]].
+      inversion Heq; subst v entry; apply definition_entry; exact Hentry.
+    + destruct Hreal as [e [He [Hcomputed [Hpure <-]]]].
+      apply definition_occurrence; assumption.
+    + apply in_map_iff in Hin; destruct Hin as [x [Heq Hoperand]].
+      inversion Heq; subst v b; apply definition_operand; exact Hoperand.
+  - intro Hdefinition; destruct Hdefinition as [b Hentry|e He Hcomputed Hpure|x Hoperand].
+    + left; exists u; split; [exact Hu|].
+      apply in_map_iff; exists b; auto.
+    + right; left; exists e; auto.
+    + right; right; exists u; split; [exact Hu|].
+      apply in_map_iff; exists x; auto.
+Qed.
+
+Local Lemma bucket_member :
+  Pre.laws c ->
+  forall (pairs : list (U * B)) u b,
+    In b (map snd (filter (fun pair => eqb (Pre.eu (Pre.keys c)) (fst pair) u) pairs)) <->
+      In (u, b) pairs.
+Proof.
+  intros Hlaw pairs u b; rewrite in_map_iff; split.
+  - intros [[v target] [Htarget Hin]]; cbn [snd] in Htarget; subst target.
+    apply filter_In in Hin; destruct Hin as [Hin Hkey].
+    apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hkey.
+    cbn [fst] in Hkey; subst v; exact Hin.
+  - intro Hin; exists (u, b); split; [reflexivity|].
+    apply filter_In; split; [exact Hin|apply eqb_refl].
+Qed.
+
+(** Definition queries agree with the fixed source relation through public stable-index contracts. *)
+Theorem defs_exact family u :
+  Pre.laws c -> In u family ->
+  forall b, In b (defs (definition_index family) u) <-> definition_block c u b.
+Proof.
+  intros Hlaw Hu b; rewrite defs_equation, bucket_member by exact Hlaw.
+  apply definition_pairs_spec; exact Hu.
+Qed.
+
+End DefinitionIndex.
 
 End PreFrg.

@@ -7,7 +7,7 @@
 From Stdlib Require Import List Bool.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseMap.
-From Galois.Graph Require Import GraphModel GraphDomSpec.
+From Galois.Graph Require Import GraphModel GraphDomSpec GraphCheckDom.
 From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg.
 Import List.ListNotations Cost.Notations.
@@ -164,6 +164,28 @@ Proof.
   exists q, p; repeat split; try assumption.
   - exact (Hnearest' d q Hd Hexpr Hq Hdom).
   - exact (Hnearest other p Hother Hexpr' Hp Hdom').
+Qed.
+
+(** At a reachable point, eligible source definitions determine at most one nearest graph version. *)
+Theorem nearest_version_unique (g : PreFrg.frg B BE E U) :
+  Pre.laws c ->
+  (forall d, In d (PreFrg.versions g) -> PreFrg.definition_domain c d) ->
+  forall u n d other, reachable (Pre.pg c) n ->
+    nearest_version g u n d -> nearest_version g u n other -> d = other.
+Proof.
+  intros Hlaw Hdomain u n d other Hn Hd Hother.
+  destruct (nearest_points_mutual g u n d other Hd Hother)
+    as [q [p [Hq [Hp [Hqn [Hpn [Hqp Hpq]]]]]]].
+  assert (Hsame : q = p).
+  { apply (dominates_antisym_reachable (Pre.en (Pre.keys c))
+      (Pre.en_laws c (Pre.graphs c Hlaw)) (Pre.pg c) q p).
+    - exact (DomCheck.dominator_reachable (Pre.pg c) q n Hn Hqn).
+    - exact (DomCheck.dominator_reachable (Pre.pg c) p n Hn Hpn).
+    - exact Hqp.
+    - exact Hpq. }
+  subst p; destruct Hd as [Hd [Hexpr _]], Hother as [Hother [Hexpr' _]].
+  eapply PreFrg.definition_points_unique; [exact Hlaw|apply Hdomain; exact Hd|
+    apply Hdomain; exact Hother|congruence|exact Hq|exact Hp].
 Qed.
 
 End Paths.

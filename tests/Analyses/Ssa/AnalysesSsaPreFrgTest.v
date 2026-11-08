@@ -5,9 +5,15 @@
     Builds on: AnalysesSsaPreFrg and AnalysesSsaPreContextTest. *)
 
 From Stdlib Require Import List.
+From Galois.Base Require Import BaseEncoding.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreFrg.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest.
 Import List.ListNotations.
+
+Example version_encoding_client : encoding_laws (PreFrg.version_encoding One.ctx).
+Proof.
+  exact (PreFrg.version_encoding_laws One.ctx One.laws).
+Qed.
 
 Example unavailable_has_no_point :
   PreFrg.version_point One.ctx (PreFrg.Unavailable tt) = None.
@@ -31,6 +37,33 @@ Example phi_has_parameter_target :
   PreFrg.version_point One.ctx (PreFrg.Phi tt tt) = Some true.
 Proof.
   vm_compute; reflexivity.
+Qed.
+
+Example prepared_definition_entry :
+  PreFrg.defs One.ctx (PreFrg.definition_index One.ctx [tt]) tt = [tt].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example empty_definition_index :
+  PreFrg.defs One.ctx (PreFrg.definition_index One.ctx []) tt = [].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example duplicate_definition_values_retained :
+  PreFrg.defs Parallel.ctx (PreFrg.definition_index Parallel.ctx [false; false]) false =
+    [false; false; false; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** The prepared bucket denotes the same source relation on the actual inhabited model. *)
+Example prepared_definition_client :
+  forall b, In b (PreFrg.defs One.ctx (PreFrg.definition_index One.ctx [tt]) tt) <->
+    PreFrg.definition_block One.ctx tt b.
+Proof.
+  apply (PreFrg.defs_exact One.ctx [tt] tt One.laws); now left.
 Qed.
 
 (** The static definition identity theorem applies without assuming any built-graph result. *)

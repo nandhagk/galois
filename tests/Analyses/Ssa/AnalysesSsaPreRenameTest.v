@@ -65,6 +65,27 @@ Proof.
     apply dominates_refl.
 Qed.
 
+Example entry_definition_domain :
+  forall d, In d (PreFrg.versions entry_graph) -> PreFrg.definition_domain One.ctx d.
+Proof.
+  intros d [<-|[<-|[]]].
+  - apply Pre.family_seed; now left.
+  - split; [apply Pre.family_seed; now left|reflexivity].
+Qed.
+
+(** Reachable nearest-version uniqueness applies to the entry frame without a point-tree premise. *)
+Example initial_nearest_unique :
+  forall other, PreRename.nearest_version One.ctx entry_graph tt false other ->
+    other = PreFrg.Initial tt.
+Proof.
+  intros other Hother.
+  apply (PreRename.nearest_version_unique One.ctx entry_graph One.laws entry_definition_domain
+    tt false other (PreFrg.Initial tt)).
+  - apply reachable_entry; now left.
+  - exact Hother.
+  - exact initial_nearest.
+Qed.
+
 (** The entry-frame meaning carries a real nearest definition with no fictitious occurrence. *)
 Example initial_frame_meaning :
   PreCoverage.frame_laws One.ctx entry_graph tt false
