@@ -48,6 +48,14 @@ Proof.
   fold (key_bits positive_encoding v). unfold id_cost. nia.
 Qed.
 
+(** ID membership depends on the queried global width, not the set's support size. *)
+Theorem id_membership_cost w v s :
+  key_bits positive_encoding v <= w ->
+    Cost.ticks (FinSet.mem_c positive_encoding v s) <= id_cost w.
+Proof.
+  apply mem_cost_le.
+Qed.
+
 Local Lemma add_cost_le w v s :
   key_bits positive_encoding v <= w ->
     Cost.ticks (FinSet.add_c positive_encoding v s) <= id_cost w.
@@ -557,6 +565,14 @@ Proof.
 Qed.
 
 Definition search_k : N := 64.
+
+(** The published constant covers graph, root, final-list and binary-descent coefficients. *)
+Theorem search_coefficients n m r fuel_bits w kv :
+  step_k w kv * (n + m) + r * (root_k w kv + fuel_bits + 1) + 2 * n <=
+    search_k * ((n + m + r) * (1 + w + kv) + r * fuel_bits).
+Proof.
+  unfold step_k, root_k, id_cost, search_k. nia.
+Qed.
 
 (** The size term includes valid-ID/root width, all edge occurrences and binary root descent. *)
 Definition search_size {V E} (p : Prepared.t V E) (roots : list positive) w kv :=

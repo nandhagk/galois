@@ -122,6 +122,32 @@ Definition amortised {E S} (vis : t E S) (Phi : S -> N) (k : N) : Prop :=
   forall ev s,
     (Cost.ticks (apply_c vis ev s) + Phi (apply vis ev s) <= k + Phi s)%N.
 
+(** Local amortisation preserves a visitor-state invariant on a specified event domain. *)
+Definition amortised_on {E S} (vis : t E S) (I : S -> Prop)
+    (D : Search.event E -> Prop) (Phi : S -> N) (k : N) : Prop :=
+  forall ev s, I s -> D ev ->
+    I (apply vis ev s) /\
+    (Cost.ticks (apply_c vis ev s) + Phi (apply vis ev s) <= k + Phi s)%N.
+
+(** A global cost law restricts to any event domain whose callbacks preserve the invariant. *)
+Theorem amortised_on_of_global {E S} (vis : t E S) I D Phi k :
+  amortised vis Phi k ->
+  (forall ev s, I s -> D ev -> I (apply vis ev s)) ->
+    amortised_on vis I D Phi k.
+Proof.
+  intros Hcost Hpreserve ev s HI HD. split.
+  - exact (Hpreserve ev s HI HD).
+  - apply Hcost.
+Qed.
+
+(** A local callback law remains valid when its event domain is restricted. *)
+Theorem amortised_on_restrict {E S} (vis : t E S) I D D' Phi k :
+  amortised_on vis I D Phi k -> (forall ev, D' ev -> D ev) ->
+    amortised_on vis I D' Phi k.
+Proof.
+  intros Hlocal Hdomain ev s HI HD. apply Hlocal; [exact HI|now apply Hdomain].
+Qed.
+
 (** Pairing runs both visitors on their respective state components. *)
 Theorem pair_apply {E A B} (a : t E A) (b : t E B) ev x y :
   apply (pair a b) ev (x, y) = (apply a ev x, apply b ev y).
@@ -161,6 +187,26 @@ Theorem pair_amortised {E A B} (a : t E A) (b : t E B) Phi Psi ka kb :
 Proof.
   intros Ha Hb ev [x y]. specialize (Ha ev x). specialize (Hb ev y).
   rewrite pair_apply_cost, pair_apply. cbn [fst snd]. lia.
+Qed.
+
+(** The no-op visitor preserves every local invariant and retains its full potential. *)
+Theorem noop_amortised_on {E S} (I : S -> Prop) D (Phi : S -> N) :
+  amortised_on (@noop E S) I D Phi 1.
+Proof.
+  apply amortised_on_of_global; [apply noop_amortised|].
+  intros ev s HI HD. now rewrite (proj1 (noop_apply ev s)).
+Qed.
+
+(** Product visitors preserve both local invariants on the same event domain. *)
+Theorem pair_amortised_on {E A B} (a : t E A) (b : t E B) I J D Phi Psi ka kb :
+  amortised_on a I D Phi ka -> amortised_on b J D Psi kb ->
+    amortised_on (pair a b) (fun s => I (fst s) /\ J (snd s)) D
+      (fun s => (Phi (fst s) + Psi (snd s))%N) (1 + ka + kb).
+Proof.
+  intros Ha Hb ev [x y] [HI HJ] HD.
+  destruct (Ha ev x HI HD) as [HI' Hcost].
+  destruct (Hb ev y HJ HD) as [HJ' Hcost'].
+  rewrite pair_apply, pair_apply_cost. cbn [fst snd]. split; [auto|lia].
 Qed.
 
 Arguments apply_c {E S} vis event s : simpl never.
