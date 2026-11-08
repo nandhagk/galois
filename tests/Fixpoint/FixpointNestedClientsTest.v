@@ -10,7 +10,8 @@ From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSimple.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointIndex
   FixpointAnalysis FixpointCycles FixpointSolver FixpointKleene FixpointNested
-  FixpointNestedCost FixpointNestedWiden FixpointNestedPrimitive.
+  FixpointNestedCost FixpointNestedWiden FixpointNestedPrimitive FixpointNestedCredit
+  FixpointNestedDebt FixpointWorklistCost FixpointWorklistWiden.
 Import List.ListNotations Cost.Notations.
 
 Local Open Scope nat_scope.
@@ -430,6 +431,184 @@ Proof.
     ltac:(intro x; reflexivity) nested_feedback_code_ok feedback_index_budget) as Hcost.
   change (Cost.ticks (Nested.run_c feedback_analysis feedback_code fuel) <=
     7354 + 2 * N.pos (Pos.size fuel))%N in Hcost.
+  exact Hcost.
+Qed.
+
+(** The final primitive corollary consumes no computed or assumed index-price premise. *)
+Theorem feedback_primitive_cost_client fuel :
+  (Cost.ticks (Nested.run_c feedback_analysis feedback_code fuel) <=
+    NestedPrimitive.preparation_k feedback_analysis feedback_code feedback_budget +
+    (NestedPrimitive.step_k feedback_budget + 2) *
+      (N.of_nat (NestedPrimitive.driver_bound feedback_analysis feedback_terminates
+        feedback_code feedback_budget) + 1) +
+    2 * N.pos (Pos.size fuel))%N.
+Proof.
+  apply (NestedPrimitive.primitive_cost feedback_analysis feedback_code feedback_laws
+    feedback_terminates feedback_budget feedback_cost_model fuel).
+  - intro x; reflexivity.
+  - exact nested_feedback_code_ok.
+Qed.
+
+Definition body_system : System.t nat nat unbounded_value :=
+  System.Make [0; 1] (fun c => Cost.ret c)
+    (fun c => Cost.ret (if Nat.eqb c 0 then
+      Query.Ask 1 (fun v => Cost.ret (Query.Ret (increment v)))
+      else Query.Ask 0 (fun v => Cost.ret (Query.Ret v)))).
+
+Definition body_static : System.static body_system :=
+  System.Static (fun c => Cost.ret (if Nat.eqb c 0 then [1] else [0]))
+    (fun _ => Cost.ret []).
+
+Definition body_analysis :=
+  Analysis.Make nat_encoding nat_encoding unbounded_lattice body_system body_static
+    (Policy.Make (fun _ => Cost.ret 1%positive) (fun _ => Cost.ret true) 2 0).
+
+Definition body_code := Nested.Component 0 (Nested.Visit 1 Nested.End) Nested.End.
+
+Definition body_laws : Analysis.laws body_analysis.
+Proof.
+  constructor; try exact nat_encoding_laws; [exact unbounded_laws|].
+  constructor; intros c s x Hin;
+    unfold body_static, body_system, System.rhs, System.deps, System.side_targets in *;
+    cbn in *; destruct (Nat.eqb c 0); cbn in *; exact Hin.
+Qed.
+
+Definition body_cut : NestedWiden.selected_cuts body_analysis body_code.
+Proof.
+  intro start; apply (source_cut (flows body_static)
+    (NestedWiden.selected body_analysis body_code)).
+  intros x y [c [Hc [Hread Hout]]] Hno.
+  destruct Hout as [Hy|Hbad]; [subst y|exfalso; exact Hbad].
+  change (In c [0; 1]) in Hc; destruct Hc as [<-|[<-|Hbad]]; try contradiction.
+  - vm_compute in Hno; discriminate.
+  - change (In x [0]) in Hread; destruct Hread as [<-|Hbad];
+      [vm_compute; reflexivity|contradiction].
+Qed.
+
+Definition body_code_ok : Nested.code_ok body_analysis body_code.
+Proof.
+  split.
+  - intros c Hc; change (In c [0; 1]) in Hc.
+    destruct Hc as [<-|[<-|Hbad]]; try contradiction; vm_compute; auto.
+  - intro start; apply (source_cut (flows body_static)
+      (fun x => existsb (eqb nat_encoding x) (Nested.heads body_code))).
+    intros x y [c [Hc [Hread Hout]]] Hno.
+    destruct Hout as [Hy|Hbad]; [subst y|exfalso; exact Hbad].
+    change (In c [0; 1]) in Hc; destruct Hc as [<-|[<-|Hbad]]; try contradiction.
+    + vm_compute in Hno; discriminate.
+    + change (In x [0]) in Hread; destruct Hread as [<-|Hbad];
+        [vm_compute; reflexivity|contradiction].
+Qed.
+
+Example body_is_not_all_selected :
+  ~ NestedWiden.all_selected body_analysis body_code.
+Proof.
+  intro Hall; specialize (Hall 1 (or_intror (or_introl eq_refl))).
+  vm_compute in Hall; discriminate.
+Qed.
+
+Example unselected_body_joins_need_general_widening :
+  match Nested.run body_analysis body_code 400 with
+  | Outcome.Solved m => map (lookup nat_encoding unbounded_lattice m) [0; 1]
+  | _ => []
+  end = [Infinity; Infinity].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** The public unknown-weight equation derives the concrete non-head path budget. *)
+Theorem body_budget_value :
+  NestedDebt.initial_budget body_analysis body_code body_laws unbounded_wrank body_cut = 28.
+Proof.
+  set (adapted := NestedCredit.masked body_analysis (FinSet.of_list nat_encoding [0])).
+  set (ix := index_system nat_encoding body_system body_static).
+  set (HI := index_system_laws nat_encoding (Analysis.key_laws body_laws)
+    body_system body_static).
+  set (HC := NestedCredit.masked_cuts body_analysis body_code body_cut).
+  set (uw := WorklistWiden.unknown_weight adapted ix HI HC).
+  set (weight := NestedDebt.weight body_analysis body_code body_laws body_cut).
+  assert (Hread : readers_of nat_encoding ix 1 = [0]) by (vm_compute; reflexivity).
+  assert (Hsucc : WorklistWiden.successors adapted ix 1 = []) by (vm_compute; reflexivity).
+  assert (Huw : uw 1 = 1).
+  { pose proof (WorklistWiden.unknown_weight_equation adapted ix HI HC 1) as Heq.
+    change (uw 1 = length (readers_of nat_encoding ix 1) +
+      WorklistCost.sum uw (WorklistWiden.successors adapted ix 1)) in Heq.
+    rewrite Hread, Hsucc in Heq; exact Heq. }
+  assert (Hout0 : WorklistWiden.noncut_outputs adapted 0 = []) by (vm_compute; reflexivity).
+  assert (Hout1 : WorklistWiden.noncut_outputs adapted 1 = [1]) by (vm_compute; reflexivity).
+  assert (Hw0 : weight 0 = 1).
+  { change (1 + WorklistCost.sum uw (WorklistWiden.noncut_outputs adapted 0) = 1).
+    rewrite Hout0; reflexivity. }
+  assert (Hw1 : weight 1 = 2).
+  { change (1 + WorklistCost.sum uw (WorklistWiden.noncut_outputs adapted 1) = 2).
+    rewrite Hout1; change (1 + (uw 1 + 0) = 2); rewrite Huw; reflexivity. }
+  assert (Hrows : NestedDebt.rows body_analysis = [0; 1] \/
+    NestedDebt.rows body_analysis = [1; 0]) by (vm_compute; auto).
+  assert (Hcap : WorklistCost.sum weight (NestedDebt.rows body_analysis) = 3).
+  { destruct Hrows as [Hrows|Hrows]; rewrite Hrows.
+    - change (weight 0 + (weight 1 + 0) = 3); rewrite Hw0, Hw1; reflexivity.
+    - change (weight 1 + (weight 0 + 0) = 3); rewrite Hw0, Hw1; reflexivity. }
+  unfold NestedDebt.initial_budget, NestedDebt.debt_cap; fold weight.
+  rewrite Hcap; reflexivity.
+Qed.
+
+(** A genuine non-head join cycle instantiates the complete derived selected-cut fuel theorem. *)
+Theorem body_general_fuel_client :
+  exists m, Nested.run body_analysis body_code 400 = Outcome.Solved m.
+Proof.
+  apply (NestedDebt.fuel_enough body_analysis body_code body_laws
+    unbounded_wrank body_cut 400 body_code_ok).
+  rewrite body_budget_value; vm_compute; lia.
+Qed.
+
+Definition body_budget : NestedPrimitive.budget := NestedPrimitive.Budget 2 1 1 0 1 2 0 1 0 0.
+
+Local Lemma body_cost_key x :
+  NestedPrimitive.key body_analysis body_code x -> x = 0 \/ x = 1.
+Proof.
+  change ((In x [0; 1] \/ In x [0; 1] \/
+    exists c, In c [0; 1] /\ In x (if Nat.eqb c 0 then [1] else [0])) -> x = 0 \/ x = 1).
+  intros [Hx|[Hx|[c [Hc Hx]]]].
+  - cbn in Hx; intuition congruence.
+  - cbn in Hx; intuition congruence.
+  - destruct (Nat.eqb c 0); cbn in Hx; intuition congruence.
+Qed.
+
+Definition body_cost_model : NestedPrimitive.model body_analysis body_code body_budget.
+Proof.
+  constructor.
+  - intros x Hx; apply body_cost_key in Hx; destruct Hx as [Hx|Hx];
+      subst x; split; vm_compute; easy.
+  - intros x y; reflexivity.
+  - intros x y; reflexivity.
+  - intros x y; reflexivity.
+  - intros x Hx; reflexivity.
+  - intros c Hc; reflexivity.
+  - intros c Hc; reflexivity.
+  - intros c Hc; reflexivity.
+  - intros c Hc; reflexivity.
+  - intros c Hc; change (In c [0; 1]) in Hc.
+    destruct Hc as [<-|[<-|Hbad]]; try contradiction; reflexivity.
+  - intros c Hc; reflexivity.
+  - intros m c Hc; change (In c [0; 1]) in Hc.
+    destruct Hc as [<-|[<-|Hbad]]; try contradiction.
+    all: apply Query.within_ask; [reflexivity|apply Query.within_ret].
+  - intros m c Hc; change (In c [0; 1]) in Hc.
+    destruct Hc as [<-|[<-|Hbad]]; try contradiction; change (1 <= 1); lia.
+Qed.
+
+(** Derived path weights and primitive prices give a widening whole-run numeric client. *)
+Theorem body_numeric_widen_cost_client fuel :
+  (Cost.ticks (Nested.run_c body_analysis body_code fuel) <=
+    NestedPrimitive.preparation_k body_analysis body_code body_budget +
+    19600 + 2 * N.pos (Pos.size fuel))%N.
+Proof.
+  pose proof (NestedDebt.primitive_cost body_analysis body_code body_laws
+    unbounded_wrank body_cut body_budget body_cost_model fuel body_code_ok) as Hcost.
+  rewrite body_budget_value in Hcost.
+  change (Cost.ticks (Nested.run_c body_analysis body_code fuel) <=
+    NestedPrimitive.preparation_k body_analysis body_code body_budget +
+    19600 + 2 * N.pos (Pos.size fuel))%N in Hcost.
   exact Hcost.
 Qed.
 

@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostList CostLoop.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointIndex
-  FixpointAnalysis FixpointNested FixpointNestedProof FixpointNestedCost.
+  FixpointIndexCost FixpointAnalysis FixpointNested FixpointNestedProof FixpointNestedCost.
 Import List.ListNotations Cost.Notations.
 
 Local Open Scope nat_scope.
@@ -93,6 +93,18 @@ Definition non_index_k {X C A} (a : Analysis.t X C A) (p : Nested.code X) (b : b
     N.of_nat (length (System.constraints (Analysis.system a))) *
       (2 + system_ticks b + access_k b) +
     N.of_nat (Policy.delay (Analysis.policy a)))%N.
+
+(** Shared index budgets use the same primitive prices and declared occurrence counts. *)
+Definition index_budget (b : budget) : SystemIndexCost.Budget.t :=
+  SystemIndexCost.Budget.Make (encoding_ticks b) (key_digits b)
+    (system_ticks b) (system_ticks b) (system_ticks b)
+    (declared_reads b) (S (declared_sides b)).
+
+Definition preparation_k {X C A} (a : Analysis.t X C A) (p : Nested.code X) (b : budget) :=
+  (non_index_k a p b + SystemIndexCost.Budget.preparation (index_budget b)
+    (length (System.constraints (Analysis.system a))))%N.
+
+Definition step_k (b : budget) := (evaluation_k b + access_k b)%N.
 
 (** The driver bound uses code size and declared row/output counts without preparing an index. *)
 Definition driver_bound {X C A} (a : Analysis.t X C A) (HT : Terminates.t a)
@@ -464,6 +476,77 @@ Proof.
   unfold non_index_k; fold EX in Hvs, Hhs, Hcover; nia.
 Qed.
 
+(** Primitive nested inputs establish the shared owner's metadata-only index cost model. *)
+Theorem index_model :
+  SystemIndexCost.cost_model EX (Analysis.system a) (Analysis.static a)
+    (System.constraints (Analysis.system a)) (index_budget b).
+Proof.
+  constructor.
+  - intros c Hc x [Hout|Hread]; apply (key_budget _ _ _ HM x); right.
+    + left; unfold NestedCost.universe; apply in_flat_map; exists c; auto.
+    + right; exists c; auto.
+  - intros c Hc; split; [exact (target_budget _ _ _ HM c Hc)|].
+    split; [exact (deps_budget _ _ _ HM c Hc)|exact (sides_budget _ _ _ HM c Hc)].
+  - intros c Hc; split; [exact (deps_size _ _ _ HM c Hc)|].
+    pose proof (sides_size _ _ _ HM c Hc).
+    change (S (length (side_targets (Analysis.static a) c)) <= S (declared_sides b)); lia.
+Qed.
+
+(** The landed owner theorem closes index preparation from primitive callbacks and key widths. *)
+Theorem index_cost :
+  (Cost.ticks (index_system_c EX (Analysis.system a) (Analysis.static a)) <=
+    SystemIndexCost.Budget.preparation (index_budget b)
+      (length (System.constraints (Analysis.system a))))%N.
+Proof.
+  apply (SystemIndexCost.index_system_cost EX (Analysis.key_laws Hl)), index_model.
+Qed.
+
+(** Primitive metadata prices bound full preparation before the unchanged actual iterator. *)
+Theorem run_cost fuel :
+  Nested.code_ok a p ->
+  (Cost.ticks (Nested.run_c a p fuel) <= preparation_k a p b +
+    Cost.ticks (iterate (Nested.step_c a p ix hs delay) fuel (Nested.start p)))%N.
+Proof.
+  intros [Hcover Hcuts].
+  pose proof non_index_cost as Hsetup; pose proof index_cost as Hindex.
+  unfold Nested.run_c; autorewrite with galois_cost; rewrite Nested.vertices_equation.
+  fold EX; fold (FinSet.of_list EX (Nested.vertices p)).
+  pose proof (proj2 (NestedProof.cover_spec a p (Analysis.key_laws Hl)) Hcover) as Hcovered.
+  fold EX in Hcovered; rewrite Hcovered.
+  autorewrite with galois_cost; rewrite Nested.heads_equation, Nested.delay_equation.
+  fold (FinSet.of_list EX (Nested.heads p)).
+  fold (index_system EX (Analysis.system a) (Analysis.static a)); fold ix hs delay.
+  unfold preparation_k; fold EX in Hsetup, Hindex |- *; nia.
+Qed.
+
+(** Every reached callback step is priced directly by the primitive query and dispatch budgets. *)
+Theorem step_cost s :
+  NestedCost.prefix a p s ->
+  incl (Nested.State.ready s) (System.constraints (Analysis.system a)) ->
+  (Cost.ticks (Nested.step_c a p ix hs delay s) <= step_k b)%N.
+Proof.
+  intros Hprefix Hlisted; unfold Nested.step_c.
+  destruct (Nested.State.ready s) as [|c rest] eqn:Hready.
+  - destruct (Nested.State.pointer s) as [|x rest|h body rest] eqn:Hpointer.
+    + destruct (Nested.State.frames s) as [|f fs].
+      * destruct (N.eqb (Nested.State.outer s) (Nested.State.epoch s));
+          cbn; unfold step_k; lia.
+      * destruct (N.eqb (Nested.Frame.epoch f) (Nested.State.epoch s));
+          cbn; unfold step_k; lia.
+    + autorewrite with galois_cost.
+      pose proof (bucket_cost s x rest Hprefix Hpointer) as Hbucket.
+      unfold step_k; fold EX in Hbucket |- *; lia.
+    + cbn; unfold step_k; lia.
+  - rewrite Cost.ticks_bind.
+    rewrite (Eval.outputs_c_spec (Analysis.system a) c _
+      (lookup EX (Analysis.lat a) (Nested.State.values s))) by reflexivity.
+    rewrite Cost.ticks_bind, Cost.ticks_ret, N.add_0_r.
+    pose proof (evaluation_cost a p Hl b HM hs delay c
+      (Nested.State.values s) (Nested.State.counters s)
+      (Hlisted c (or_introl eq_refl))) as Hcost.
+    unfold step_k; fold EX in Hcost |- *; lia.
+Qed.
+
 End Preparation.
 
 Section Composition.
@@ -521,6 +604,24 @@ Proof.
   exact (NestedCost.nested_cost a Hl HT Hjoining p fuel
     (evaluation_k b) (access_k b) (non_index_k a p b + index_k)%N Hcode
     (relative_model index_k Hindex)).
+Qed.
+
+(** Primitive sizes and callbacks bound the complete run without any owned-helper cost premise. *)
+Theorem primitive_cost fuel :
+  Analysis.joining a -> Nested.code_ok a p ->
+  (Cost.ticks (Nested.run_c a p fuel) <= preparation_k a p b +
+    (step_k b + 2) * (N.of_nat (driver_bound a HT p b) + 1) +
+    2 * N.pos (Pos.size fuel))%N.
+Proof.
+  intros Hjoining Hcode.
+  pose proof (cost_from_index fuel
+    (SystemIndexCost.Budget.preparation (index_budget b)
+      (length (System.constraints (Analysis.system a)))) Hjoining Hcode
+    (index_cost a p Hl b HM)) as Hcost.
+  assert (Hsize : (N.of_nat (NestedCost.fuel_budget a HT p) <=
+    N.of_nat (driver_bound a HT p b))%N).
+  { pose proof fuel_budget_size; lia. }
+  unfold preparation_k, step_k; nia.
 Qed.
 
 End Composition.
