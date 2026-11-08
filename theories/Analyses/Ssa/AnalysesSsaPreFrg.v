@@ -7,7 +7,8 @@
 From Stdlib Require Import List Bool NArith.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseCode BaseEq BaseMap BaseSet BaseIndex.
-From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphFrontierSpec.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphCheckDom
+  GraphFrontierSpec GraphFrontierIdf GraphFrontierSweep GraphReach.
 From Galois.Program Require Import ProgramCfg ProgramSsa ProgramSsaPoints.
 From Galois.Framework Require Import FrameworkUtil.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily.
@@ -658,5 +659,144 @@ Proof.
 Qed.
 
 End DefinitionIndex.
+
+Section FrontierRows.
+Context {B BE N E V K G C U : Type}.
+Variable c : Pre.ctx B BE N E V K G C U.
+
+Local Lemma block_node_id :
+  Pre.laws c ->
+  forall b, In b (Graph.nodes (Pre.bg c)) ->
+    exists i, Prepared.id_of (Pre.blocks c) b = Some i.
+Proof.
+  intros Hlaw b Hb.
+  apply (Prepared.ids_domain (Pre.blocks c)
+    (proj2 (proj2 (Pre.blocks_ready c (Pre.graphs c Hlaw))))).
+  rewrite Pre.blocks_source by exact (Pre.graphs c Hlaw); exact Hb.
+Qed.
+
+Definition named_mem_c ids b :=
+  let* i := Prepared.id_of_c (Pre.blocks c) b in
+  match i with
+  | None => Cost.ret false
+  | Some id => FinSet.mem_c positive_encoding id ids
+  end.
+Definition named_mem ids b := Cost.value (named_mem_c ids b).
+
+(** Named membership rejects absent names and otherwise queries the same prepared ID. *)
+Theorem named_mem_equation ids b :
+  named_mem ids b =
+    match Prepared.id_of (Pre.blocks c) b with
+    | None => false
+    | Some id => FinSet.mem positive_encoding id ids
+    end.
+Proof.
+  unfold named_mem, named_mem_c; rewrite Cost.value_bind.
+  fold (Prepared.id_of (Pre.blocks c) b); destruct (Prepared.id_of (Pre.blocks c) b);
+    reflexivity.
+Qed.
+
+(** Static frontier rows use the public exact closure fallback and retain every preparation charge. *)
+Definition frontier_row_c d :=
+  let* ids := FrontierIdf.idf_c (Pre.blocks c) (Pre.dom c) [d] in
+  filter_c (named_mem_c ids) (Graph.nodes (Pre.bg c)).
+Definition frontier_row d := Cost.value (frontier_row_c d).
+
+(** Singleton IDF rows are observed through named membership on the supplied block inventory. *)
+Theorem frontier_row_equation d :
+  frontier_row d =
+    filter (named_mem (FrontierIdf.idf (Pre.blocks c) (Pre.dom c) [d]))
+      (Graph.nodes (Pre.bg c)).
+Proof.
+  unfold frontier_row, frontier_row_c; rewrite Cost.value_bind, value_filter_c; reflexivity.
+Qed.
+
+Local Lemma idf_target_listed {d b} :
+  Pre.laws c -> in_idf (Pre.bg c) [d] b -> In b (Graph.nodes (Pre.bg c)).
+Proof.
+  intros Hlaw Hclosure; destruct Hclosure; eapply frontier_target_listed; eassumption.
+Qed.
+
+Local Lemma idf_source_listed {d b} :
+  Pre.laws c -> in_idf (Pre.bg c) [d] b -> In d (Graph.nodes (Pre.bg c)).
+Proof.
+  intros Hlaw Hclosure.
+  induction Hclosure as [seed target Hseed Hdf|source target Hclosure IH Hdf];
+    [|exact IH].
+  destruct Hseed as [<-|[]].
+  destruct Hdf as [e [Hsource [Hedge [Htarget [Hdom Hnotstrict]]]]].
+  apply (reachable_in_nodes _ _ (blocks_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))).
+  exact (DomCheck.dominator_reachable (Pre.bg c) d (Graph.source (Pre.bg c) e) Hsource Hdom).
+Qed.
+
+(** Every named row is exactly the ordinary nonreflexive singleton iterated dominance frontier. *)
+Theorem frontier_row_exact d :
+  Pre.laws c ->
+  forall b, In b (frontier_row d) <-> in_idf (Pre.bg c) [d] b.
+Proof.
+  intros Hlaw b; rewrite frontier_row_equation, filter_In; split.
+  - intros [Hb Hmem]; destruct (block_node_id Hlaw b Hb) as [i Hi].
+    rewrite named_mem_equation, Hi in Hmem.
+    pose proof (FrontierIdf.idf_exact (Pre.blocks c) (Pre.dom c) [d] b i
+      (Pre.blocks_ready c (Pre.graphs c Hlaw)) (Pre.tree_exact c (Pre.graphs c Hlaw)) Hi)
+      as Hspec.
+    rewrite (Pre.blocks_source c (Pre.graphs c Hlaw)) in Hspec.
+    exact (proj1 Hspec Hmem).
+  - intro Hclosure.
+    pose proof (idf_target_listed Hlaw Hclosure) as Hb.
+    destruct (block_node_id Hlaw b Hb) as [i Hi].
+    split; [exact Hb|]; rewrite named_mem_equation, Hi.
+    pose proof (FrontierIdf.idf_exact (Pre.blocks c) (Pre.dom c) [d] b i
+      (Pre.blocks_ready c (Pre.graphs c Hlaw)) (Pre.tree_exact c (Pre.graphs c Hlaw)) Hi)
+      as Hspec.
+    rewrite (Pre.blocks_source c (Pre.graphs c Hlaw)) in Hspec.
+    exact (proj2 Hspec Hclosure).
+Qed.
+
+Definition frontier_rows_c :=
+  let* pairs := map_c (fun d =>
+    let* row := frontier_row_c d in Cost.ret (d, row)) (Graph.nodes (Pre.bg c)) in
+  Map.of_list_c (Pre.eb (Pre.keys c)) pairs.
+Definition frontier_rows := Cost.value frontier_rows_c.
+Definition cached_row_c (rows : Index.t B B) d := Index.find_c (Pre.eb (Pre.keys c)) d rows.
+Definition cached_row rows d := Cost.value (cached_row_c rows d).
+
+(** Static IDF preparation constructs one row for each listed source block. *)
+Theorem frontier_rows_equation :
+  frontier_rows = Map.of_list (Pre.eb (Pre.keys c))
+    (map (fun d => (d, frontier_row d)) (Graph.nodes (Pre.bg c))).
+Proof.
+  unfold frontier_rows, frontier_rows_c; rewrite Cost.value_bind, value_map_c.
+  assert (Hpairs : map (fun d =>
+    Cost.value (let* row := frontier_row_c d in Cost.ret (d, row))) (Graph.nodes (Pre.bg c)) =
+    map (fun d => (d, frontier_row d)) (Graph.nodes (Pre.bg c))).
+  { apply map_ext; intro d; rewrite Cost.value_bind, Cost.value_ret; reflexivity. }
+  rewrite Hpairs; reflexivity.
+Qed.
+
+(** Cached queries are exact even for absent source blocks, whose frontier must be empty. *)
+Theorem cached_row_exact :
+  Pre.laws c ->
+  forall d b, In b (cached_row frontier_rows d) <-> in_idf (Pre.bg c) [d] b.
+Proof.
+  intros Hlaw d b; unfold cached_row, cached_row_c.
+  fold (Index.find (Pre.eb (Pre.keys c)) d frontier_rows).
+  rewrite Index.find_equation, frontier_rows_equation.
+  pose proof (Pre.eb_laws c (Pre.graphs c Hlaw)) as HE.
+  destruct (in_dec (eqb_dec _ HE) d (Graph.nodes (Pre.bg c))) as [Hd|Hd].
+  - assert (Hnodup : NoDup (map fst
+      (map (fun d => (d, frontier_row d)) (Graph.nodes (Pre.bg c))))).
+    { rewrite map_map; cbn [fst]; rewrite map_id.
+      exact (nodes_nodup (blocks_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))). }
+    rewrite (Pre.assignment_member _ HE _ Hnodup d (frontier_row d)).
+    + apply frontier_row_exact; exact Hlaw.
+    + apply in_map_iff; exists d; auto.
+  - rewrite (Pre.assignment_frame _ HE).
+    + cbn [In]; split; [contradiction|].
+      intro Hclosure; exfalso; apply Hd; exact (idf_source_listed Hlaw Hclosure).
+    + rewrite map_map; cbn [fst]; rewrite map_id; exact Hd.
+Qed.
+
+End FrontierRows.
 
 End PreFrg.

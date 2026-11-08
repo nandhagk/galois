@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List.
 From Galois.Base Require Import BaseEncoding.
+From Galois.Graph Require Import GraphFrontierSpec.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreFrg.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest.
 Import List.ListNotations.
@@ -64,6 +65,25 @@ Example prepared_definition_client :
     PreFrg.definition_block One.ctx tt b.
 Proof.
   apply (PreFrg.defs_exact One.ctx [tt] tt One.laws); now left.
+Qed.
+
+Example singleton_frontier_row : PreFrg.frontier_row One.ctx tt = [].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example singleton_cached_frontier :
+  PreFrg.cached_row One.ctx (PreFrg.frontier_rows One.ctx) tt = [].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Cached singleton-IDF lookup consumes the supplied exact block tree through its public contract. *)
+Example cached_frontier_client :
+  forall b, In b (PreFrg.cached_row One.ctx (PreFrg.frontier_rows One.ctx) tt) <->
+    in_idf One.bg [tt] b.
+Proof.
+  apply (PreFrg.cached_row_exact One.ctx One.laws).
 Qed.
 
 (** The static definition identity theorem applies without assuming any built-graph result. *)
