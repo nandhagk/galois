@@ -241,4 +241,22 @@ Proof.
     Wto.annotate_equation, app_nil_r. reflexivity.
 Qed.
 
+(** A duplicate-free vertex order gives each annotated vertex one enclosing-header stack. *)
+Theorem annotation_functional w stack v first second :
+  NoDup (Wto.order w) ->
+  In (v, first) (Wto.annotate stack w) ->
+  In (v, second) (Wto.annotate stack w) -> first = second.
+Proof.
+  intros Hnodup Hfirst Hsecond.
+  apply In_nth_error in Hfirst, Hsecond.
+  destruct Hfirst as [i Hi], Hsecond as [j Hj].
+  assert (Hbound : i < length (Wto.order w)).
+  { rewrite <- (annotation_order w stack), length_map.
+    apply nth_error_Some. rewrite Hi. discriminate. }
+  assert (Hsame : nth_error (Wto.order w) i = nth_error (Wto.order w) j).
+  { rewrite <- (annotation_order w stack), !nth_error_map, Hi, Hj. reflexivity. }
+  pose proof (proj1 (NoDup_nth_error _) Hnodup i j Hbound Hsame) as Heq.
+  subst j. rewrite Hi in Hj. now inversion Hj.
+Qed.
+
 End WeakOrderFacts.

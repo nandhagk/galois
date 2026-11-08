@@ -7,7 +7,8 @@
 From Stdlib Require Import List PArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseSet.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphHierSpec GraphHier GraphFixtures.
+From Galois.Graph Require Import GraphPrepared GraphVisitor GraphHierSpec GraphHier GraphHierExact
+  GraphFixtures.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -37,4 +38,42 @@ Example actual_line_tokens :
   Wto.of_forest (HierRun.compute Fixtures.Line.prepared unrestricted [1]) = Fixtures.Line.wto.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Definition depth_three :=
+  Fixtures.prepare [1%nat] [1%nat; 2%nat; 3%nat; 4%nat; 5%nat; 6%nat; 7%nat]
+    [(1%nat, 2%nat); (1%nat, 6%nat); (2%nat, 3%nat); (3%nat, 2%nat);
+     (3%nat, 4%nat); (4%nat, 3%nat); (4%nat, 5%nat); (5%nat, 4%nat);
+     (6%nat, 7%nat); (7%nat, 6%nat)].
+
+Example actual_depth_three_and_separate_component :
+  Wto.of_forest (HierRun.compute depth_three unrestricted [1]) =
+    [Wto.WVertex 1; Wto.WOpen 6; Wto.WVertex 7; Wto.WClose;
+     Wto.WOpen 2; Wto.WOpen 3; Wto.WOpen 4; Wto.WVertex 5;
+     Wto.WClose; Wto.WClose; Wto.WClose].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example actual_depth_three_annotation :
+  In (5, [4; 3; 2])
+    (Wto.annotate [] (Wto.of_forest (HierRun.compute depth_three unrestricted [1]))).
+Proof.
+  vm_compute. tauto.
+Qed.
+
+Example nested_producer_exact :
+  Hier.exact Fixtures.NestedLoop.prepared unrestricted [1]
+    (HierRun.compute Fixtures.NestedLoop.prepared unrestricted [1]).
+Proof.
+  apply HierExact.compute_exact, Fixtures.NestedLoop.fixture_ready.
+Qed.
+
+Example scoped_unknown_repeated_producer_exact :
+  let scope := Scope.Make (FinSet.of_list positive_encoding [1])
+    (Some (FinSet.of_list positive_encoding [2; 3])) in
+  Hier.exact Fixtures.NestedLoop.prepared scope [99; 2; 2; 1]
+    (HierRun.compute Fixtures.NestedLoop.prepared scope [99; 2; 2; 1]).
+Proof.
+  apply HierExact.compute_exact, Fixtures.NestedLoop.fixture_ready.
 Qed.

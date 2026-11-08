@@ -23,6 +23,15 @@ Definition self_loop_c {V E} (p : Prepared.t V E) v :=
 
 Definition self_loop {V E} (p : Prepared.t V E) v := Cost.value (self_loop_c p v).
 
+(** The self-loop test inspects the cached target ID of each outgoing occurrence. *)
+Theorem self_loop_equation {V E} (p : Prepared.t V E) v :
+  self_loop p v = existsb (fun eb =>
+    match Map.code_compare v (snd eb) with Eq => true | _ => false end)
+    (Prepared.succ_edges p v).
+Proof.
+  unfold self_loop, self_loop_c. rewrite Cost.value_bind, value_existsb_c. reflexivity.
+Qed.
+
 (** The header index keeps the first witnessed entry for each actual component owner. *)
 Definition offer_c i v (entries : Map.t positive positive) :=
   let* old := Map.get_c positive_encoding i entries in
@@ -55,12 +64,93 @@ Definition vertex_entries_c {V E} (p : Prepared.t V E) owners entries u :=
   let* es := Prepared.succ_edges_c p u in
   fold_left_c (fun entries eb => edge_entry_c owners source entries (snd eb)) es entries.
 
+Definition component_entries_c {V E} (p : Prepared.t V E) owners entries c :=
+  fold_left_c (vertex_entries_c p owners) c entries.
+
 (** Entry setup scans every supplied root occurrence and every outgoing occurrence of every member. *)
 Definition entries_c {V E} (p : Prepared.t V E) roots (r : Scc.result) :=
   let* seeded := fold_left_c (root_entry_c (Scc.comp_of r)) roots Map.empty in
-  fold_left_c (fun entries c =>
-    fold_left_c (vertex_entries_c p (Scc.comp_of r)) c entries)
-    (Scc.components r) seeded.
+  fold_left_c (component_entries_c p (Scc.comp_of r)) (Scc.components r) seeded.
+
+Definition offer i v entries := Cost.value (offer_c i v entries).
+Definition root_entry owners entries v := Cost.value (root_entry_c owners entries v).
+Definition edge_entry owners source entries v :=
+  Cost.value (edge_entry_c owners source entries v).
+Definition vertex_entries {V E} (p : Prepared.t V E) owners entries u :=
+  Cost.value (vertex_entries_c p owners entries u).
+Definition component_entries {V E} (p : Prepared.t V E) owners entries c :=
+  Cost.value (component_entries_c p owners entries c).
+Definition entries {V E} (p : Prepared.t V E) roots r := Cost.value (entries_c p roots r).
+
+(** Offering an entry keeps an existing header and fills only a genuinely missing row. *)
+Theorem offer_equation i v entries :
+  offer i v entries =
+  match Map.get positive_encoding i entries with
+  | Some _ => entries
+  | None => Map.set positive_encoding i v entries
+  end.
+Proof.
+  unfold offer, offer_c. rewrite Cost.value_bind.
+  fold (Map.get positive_encoding i entries).
+  destruct (Map.get positive_encoding i entries); reflexivity.
+Qed.
+
+(** Root seeding ignores absent owners and offers each present root at its actual owner. *)
+Theorem root_entry_equation owners entries v :
+  root_entry owners entries v =
+  match Map.get positive_encoding v owners with
+  | None => entries
+  | Some i => offer i v entries
+  end.
+Proof.
+  unfold root_entry, root_entry_c. rewrite Cost.value_bind.
+  fold (Map.get positive_encoding v owners).
+  destruct (Map.get positive_encoding v owners); reflexivity.
+Qed.
+
+(** An outgoing occurrence offers its target exactly when both owners exist and differ. *)
+Theorem edge_entry_equation owners source entries v :
+  edge_entry owners source entries v =
+  match source, Map.get positive_encoding v owners with
+  | Some i, Some j =>
+    match Map.code_compare i j with Eq => entries | _ => offer j v entries end
+  | _, _ => entries
+  end.
+Proof.
+  unfold edge_entry, edge_entry_c. rewrite Cost.value_bind.
+  fold (Map.get positive_encoding v owners).
+  destruct source as [i|]; destruct (Map.get positive_encoding v owners) as [j|];
+    try reflexivity.
+  rewrite Cost.value_bind. fold (Map.code_compare i j).
+  destruct (Map.code_compare i j); reflexivity.
+Qed.
+
+(** Vertex setup scans every actual cached outgoing occurrence after reading its source owner. *)
+Theorem vertex_entries_equation {V E} (p : Prepared.t V E) owners entries u :
+  vertex_entries p owners entries u =
+    fold_left (fun index eb => edge_entry owners
+      (Map.get positive_encoding u owners) index (snd eb))
+      (Prepared.succ_edges p u) entries.
+Proof.
+  unfold vertex_entries, vertex_entries_c.
+  rewrite !Cost.value_bind, value_fold_left_c. reflexivity.
+Qed.
+
+(** Component setup scans its actual member list without examining unrelated graph nodes. *)
+Theorem component_entries_equation {V E} (p : Prepared.t V E) owners entries c :
+  component_entries p owners entries c = fold_left (vertex_entries p owners) c entries.
+Proof.
+  unfold component_entries, component_entries_c. rewrite value_fold_left_c. reflexivity.
+Qed.
+
+(** Header setup first scans supplied roots and then the actual component member rows. *)
+Theorem entries_equation {V E} (p : Prepared.t V E) roots r :
+  entries p roots r =
+    fold_left (component_entries p (Scc.comp_of r))
+      (Scc.components r) (fold_left (root_entry (Scc.comp_of r)) roots Map.empty).
+Proof.
+  unfold entries, entries_c. rewrite Cost.value_bind, !value_fold_left_c. reflexivity.
+Qed.
 
 (** Selection removes one listed occurrence and prefers the indexed header when it is present. *)
 Fixpoint select_c (preferred : option positive) (c : list positive) :
@@ -158,6 +248,25 @@ Proof.
     + intro Heq. inversion Heq; subst. reflexivity.
 Qed.
 
+(** A listed preferred header is selected rather than replaced by the fallback member. *)
+Theorem select_preferred h c :
+  In h c -> exists body, select (Some h) c = Some (h, body).
+Proof.
+  induction c as [|v rest IH]; intro Hin; [contradiction|].
+  rewrite select_equation. destruct (Map.code_compare v h) eqn:Hcompare.
+  - apply Map.code_compare_eq in Hcompare. subst v. now exists rest.
+  - assert (Hrest : In h rest).
+    { destruct Hin as [Heq|Hin]; [subst v|exact Hin].
+      pose proof (proj2 (Map.code_compare_eq h h) eq_refl). congruence. }
+    destruct (IH Hrest) as [body Hselected]. rewrite Hselected.
+    now exists (v :: body).
+  - assert (Hrest : In h rest).
+    { destruct Hin as [Heq|Hin]; [subst v|exact Hin].
+      pose proof (proj2 (Map.code_compare_eq h h) eq_refl). congruence. }
+    destruct (IH Hrest) as [body Hselected]. rewrite Hselected.
+    now exists (v :: body).
+Qed.
+
 (** A child scope retains inherited blocking and restricts admission to the selected body. *)
 Definition child_scope_c scope h body :=
   let* blocked := FinSet.add_c positive_encoding h (Scope.blocked scope) in
@@ -201,6 +310,23 @@ Fixpoint assemble_c (cs : list (list positive))
     let* forest := assemble_c rest (fun d Hin => expand d (or_intror Hin)) in
     Cost.ret (match tree with None => forest | Some tree => Hier.Cons tree forest end)
   end expand.
+
+(** Sibling assembly keeps exactly the successful tree values in their component order. *)
+Theorem assemble_value_equation cs expand :
+  Cost.value (assemble_c cs expand) =
+  match cs as current return
+      (forall c, In c current -> Cost.t (option Hier.tree)) -> Hier.forest with
+  | [] => fun _ => Hier.Nil
+  | c :: rest => fun next =>
+    let tail := Cost.value (assemble_c rest (fun d Hin => next d (or_intror Hin))) in
+    match Cost.value (next c (or_introl eq_refl)) with
+    | None => tail
+    | Some tree => Hier.Cons tree tail
+    end
+  end expand.
+Proof.
+  destruct cs; reflexivity.
+Qed.
 
 (** Extensional expansion callbacks produce the same sibling forest and cost. *)
 Theorem assemble_ext cs f g :
@@ -309,6 +435,50 @@ Theorem expand_equation {V E} (p : Prepared.t V E) x :
   expand_c p x = expand_layer p x (fun y _ => expand_c p y).
 Proof.
   apply fix_wf_unfold, expand_layer_ext.
+Qed.
+
+(** The value equation exposes the actual selected header, child SCCs and recursive forest projection. *)
+Theorem expand_value_equation {V E} (p : Prepared.t V E) scope index owners c :
+  Cost.value (expand_c p (scope, index, owners, c)) =
+  match c with
+  | [] => None
+  | v :: _ =>
+    let preferred :=
+      match Map.get positive_encoding v owners with
+      | None => None
+      | Some i => Map.get positive_encoding i index
+      end in
+    match select preferred c with
+    | None => None
+    | Some (h, []) =>
+      Some (if self_loop p h then Hier.Component h Hier.Nil else Hier.Vertex h)
+    | Some (h, body) =>
+      let child := child_scope scope h body in
+      let roots := rev body in
+      let r := Tarjan.compute p child roots in
+      Some (Hier.Component h
+        (Cost.value (assemble_c (rev (Scc.components r))
+          (fun d _ => expand_c p (child, entries p roots r, Scc.comp_of r, d)))))
+    end
+  end.
+Proof.
+  rewrite expand_equation. unfold expand_layer.
+  autorewrite with galois_cost.
+  destruct c as [|v rest]; [reflexivity|].
+  cbn beta iota zeta. autorewrite with galois_cost.
+  fold (Map.get positive_encoding v owners).
+  destruct (Map.get positive_encoding v owners) as [i|] eqn:Howner;
+    cbn beta iota zeta; autorewrite with galois_cost.
+  - fold (Map.get positive_encoding i index).
+    fold (select (Map.get positive_encoding i index) (v :: rest)).
+    destruct (select (Map.get positive_encoding i index) (v :: rest))
+      as [[h body]|] eqn:Hselected; [|reflexivity].
+    destruct body as [|b body]; autorewrite with galois_cost;
+      rewrite ?value_rev_c; reflexivity.
+  - fold (select None (v :: rest)).
+    destruct (select None (v :: rest)) as [[h body]|] eqn:Hselected; [|reflexivity].
+    destruct body as [|b body]; autorewrite with galois_cost;
+      rewrite ?value_rev_c; reflexivity.
 Qed.
 
 (** The outer layer accepts arbitrary scopes and root occurrences without caller proof arguments. *)
