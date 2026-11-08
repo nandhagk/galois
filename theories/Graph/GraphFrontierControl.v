@@ -8,12 +8,13 @@ From Stdlib Require Import List Bool PArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphFrontierSpec
-  GraphReach GraphFrontierSweep.
+  GraphPreparedCost GraphReach GraphFrontierSweep.
 Import List.ListNotations Cost.Notations.
 
 Module FrontierControl.
 
-(** Exit coverage applies to every listed graph node, including components unreachable from entries. *)
+(** Exit coverage applies to every listed graph node,
+    including components unreachable from entries. *)
 Definition exits_cover {V E} (g : Graph.t V E) exits :=
   forall v, In v (Graph.nodes g) -> exists es z, path g v es z /\ In z exits.
 
@@ -136,13 +137,16 @@ Theorem post_is_reverse {V E} (p : Prepared.t V E) exits d v :
 Proof.
   intros Hready Hv. split.
   - intros Hpost z es Hz Hpath.
+    rewrite Prepared.reverse_equation in Hz.
     pose proof (path_unreverse p exits z es v Hready Hpath) as Hforward.
     pose proof (Hpost z (rev es) Hz Hforward) as Hoccurs.
     apply (proj1 (reverse_occurrences p exits v (rev es) z d Hforward)) in Hoccurs.
     now rewrite rev_involutive in Hoccurs.
   - intros Hdom z es Hz Hpath.
     pose proof (path_reverse p exits v es z Hready Hv Hpath) as Hreverse.
-    pose proof (Hdom z (rev es) Hz Hreverse) as Hoccurs.
+    assert (Hentry : In z (Graph.entries (Prepared.graph (Prepared.reverse p exits)))).
+    { rewrite Prepared.reverse_equation. exact Hz. }
+    pose proof (Hdom z (rev es) Hentry Hreverse) as Hoccurs.
     now apply (proj2 (reverse_occurrences p exits v es z d Hpath)).
 Qed.
 
@@ -153,7 +157,8 @@ Local Lemma reverse_reachable {V E} (p : Prepared.t V E) exits v :
   reachable (Prepared.graph (Prepared.reverse p exits)) v.
 Proof.
   intros Hready Hcover Hv. destruct (Hcover v Hv) as [es [z [Hpath Hz]]].
-  apply reachable_iff_path. exists z, (rev es). split; [exact Hz|].
+  apply reachable_iff_path. exists z, (rev es).
+  split; [rewrite Prepared.reverse_equation; exact Hz|].
   now apply path_reverse.
 Qed.
 
@@ -237,7 +242,8 @@ Qed.
 
 (** Control construction consumes reversed sweep events without a second graph traversal. *)
 Definition control_deps_c {V E} (p : Prepared.t V E) exits t_post :=
-  let* es := FrontierSweep.events_c (Prepared.reverse p exits) t_post in
+  let* reversed := Prepared.reverse_c p exits in
+  let* es := FrontierSweep.events_c reversed t_post in
   fold_left_c add_c es Map.empty.
 
 Definition control_deps {V E} (p : Prepared.t V E) exits t_post :=
@@ -264,11 +270,13 @@ Qed.
 (** Control accounting retains the reversed sweep and every labelled list insertion. *)
 Theorem control_deps_cost {V E} (p : Prepared.t V E) exits t_post :
   Cost.ticks (control_deps_c p exits t_post) =
-    (Cost.ticks (FrontierSweep.events_c (Prepared.reverse p exits) t_post) +
+    (Cost.ticks (Prepared.reverse_c p exits) +
+      (Cost.ticks (FrontierSweep.events_c (Prepared.reverse p exits) t_post) +
       fold_right (fun event n => 2 * FrontierSweep.key_charge (fst event) + 2 + n)%N 0%N
-        (FrontierSweep.events (Prepared.reverse p exits) t_post))%N.
+        (FrontierSweep.events (Prepared.reverse p exits) t_post)))%N.
 Proof.
-  unfold control_deps_c. rewrite Cost.ticks_bind, accumulation_cost. reflexivity.
+  unfold control_deps_c. rewrite !Cost.ticks_bind, PreparedCost.reverse_c_value,
+    accumulation_cost. reflexivity.
 Qed.
 
 (** A controlling label occurs exactly when its reversed frontier sweep emits that label. *)
@@ -276,7 +284,8 @@ Theorem control_is_reverse_frontier {V E} (p : Prepared.t V E) exits t_post n e 
   control_at (control_deps p exits t_post) n e <->
     exists v, In (n, (e, v)) (FrontierSweep.events (Prepared.reverse p exits) t_post).
 Proof.
-  unfold control_deps, control_deps_c. rewrite Cost.value_bind, value_fold_left_c.
+  unfold control_deps, control_deps_c.
+  rewrite Cost.value_bind, PreparedCost.reverse_c_value, Cost.value_bind, value_fold_left_c.
   change (control_at (fold_left add
     (FrontierSweep.events (Prepared.reverse p exits) t_post) Map.empty) n e <->
     exists v, In (n, (e, v)) (FrontierSweep.events (Prepared.reverse p exits) t_post)).

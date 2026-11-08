@@ -4,10 +4,10 @@
     For example, either branch of a diamond contributes its join.
     Builds on: GraphWalk, GraphReach, GraphPrepared and GraphFrontierSpec. *)
 
-From Stdlib Require Import List Bool PArith NArith Lia.
+From Stdlib Require Import List Bool PArith NArith Arith Lia.
 From Stdlib.Relations Require Import Relation_Operators.
-From Galois.Cost Require Import CostMonad CostList.
-From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
+From Galois.Cost Require Import CostMonad CostList CostBound.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseMapCost BaseTrieCost.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphReach
   GraphDomSpec GraphCheckDom GraphFrontierSpec GraphWalk.
 Import List.ListNotations Cost.Notations.
@@ -113,7 +113,8 @@ Definition successors_c {V E} (p : Prepared.t V E) scope all v :=
     let* valid := member_c x all in
     Cost.ret (admitted && valid)) targets.
 
-Local Lemma successors_value {V E} (p : Prepared.t V E) scope v :
+(** Costed successor filtering preserves the reference checker adjacency. *)
+Theorem successors_value {V E} (p : Prepared.t V E) scope v :
   Cost.value (successors_c p scope (Reach.universe p) v) = Reach.successors p scope v.
 Proof.
   unfold successors_c, Reach.successors. autorewrite with galois_cost.
@@ -127,7 +128,8 @@ Definition roots_c scope all roots :=
     let* admitted := Scope.admits_c scope x in
     Cost.ret (root && admitted)) all.
 
-Local Lemma roots_value {V E} (p : Prepared.t V E) scope roots :
+(** Costed root filtering preserves every reference root occurrence decision. *)
+Theorem roots_value {V E} (p : Prepared.t V E) scope roots :
   Cost.value (roots_c scope (Reach.universe p) roots) = Reach.roots_in p scope roots.
 Proof.
   unfold roots_c, Reach.roots_in. rewrite value_filter_c.
@@ -142,7 +144,8 @@ Definition credit_c (next : positive -> Cost.t (list positive)) all :=
     let* size := length_c children in
     Cost.ret (S size + credit)%nat) O all.
 
-Local Lemma credit_value next all :
+(** The costed adjacency-credit pass computes the reference loop budget. *)
+Theorem credit_value next all :
   Cost.value (credit_c next all) = Reach.credit (fun v => Cost.value (next v)) all.
 Proof.
   unfold credit_c. rewrite value_fold_right_c.
@@ -154,11 +157,13 @@ Qed.
 Definition closure_c (next : positive -> Cost.t (list positive)) all roots :=
   let* credit := credit_c next all in
   let* size := length_c roots in
+  let* fuel := Prepared.budget_c (credit + size) in
   let* result := Walk.closure_c next member_c remove_c
-    (Pos.of_succ_nat (credit + size)) roots all [] in
+    fuel roots all [] in
   FinSet.of_list_c positive_encoding (snd result).
 
-(** A closed finite universe gives exact least-closure membership without a successful-run premise. *)
+(** A closed finite universe gives exact least-closure membership
+    without a successful-run premise. *)
 Theorem closure_exact next all roots :
   NoDup all -> incl roots all ->
   (forall u, incl (Cost.value (next u)) all) ->
@@ -168,6 +173,7 @@ Proof.
   intros Hnodup Hroots Hnext v.
   unfold closure_c. rewrite Cost.value_bind, credit_value,
     Cost.value_bind, value_length_c, Cost.value_bind.
+  rewrite Prepared.budget_value, Cost.value_bind.
   rewrite Walk.closure_spec by (intros; first [apply member_value|apply remove_value]).
   rewrite SuccNat2Pos.id_succ.
   change (FinSet.mem positive_encoding v (FinSet.of_list positive_encoding
@@ -192,8 +198,9 @@ Definition reach_c {V E} (p : Prepared.t V E) scope roots :=
   let* initial := roots_c scope all roots in
   let* credit := credit_c next all in
   let* size := length_c initial in
+  let* fuel := Prepared.budget_c (credit + size) in
   let* result := Walk.closure_c next member_c remove_c
-    (Pos.of_succ_nat (credit + size)) initial all [] in
+    fuel initial all [] in
   FinSet.of_list_c positive_encoding (snd result).
 
 Local Lemma loop_extra next n pending unseen seen :
@@ -229,6 +236,7 @@ Proof.
   unfold reach_c. rewrite Cost.value_bind, universe_value.
   rewrite Cost.value_bind, roots_value, Cost.value_bind, credit_value.
   rewrite Cost.value_bind, value_length_c, Cost.value_bind.
+  rewrite Prepared.budget_value, Cost.value_bind.
   rewrite Walk.closure_spec by (intros; first [apply member_value|apply remove_value]).
   rewrite SuccNat2Pos.id_succ.
   rewrite (credit_ext _ (Reach.successors p scope)) by apply successors_value.
@@ -243,7 +251,7 @@ Proof.
 Qed.
 
 Definition budget_c t :=
-  Cost.map Pos.of_succ_nat (Map.size_c (Dom.idom t)).
+  let* size := Map.size_c (Dom.idom t) in Prepared.budget_c size.
 
 Definition ancestors_c t q :=
   let* fuel := budget_c t in
@@ -266,7 +274,7 @@ Theorem ancestors_spec t q d :
     idom_ancestor (Dom.idom t) d q).
 Proof.
   intros Hmap Hforest. unfold ancestors, ancestors_c, budget_c.
-  rewrite !Cost.value_bind, Cost.value_map. fold (Map.size (Dom.idom t)).
+  rewrite !Cost.value_bind, Prepared.budget_value. fold (Map.size (Dom.idom t)).
   change (FinSet.mem positive_encoding d (FinSet.of_list positive_encoding
     (Walk.until (Walk.up_c t) (fun _ => Cost.ret false)
       (Pos.of_succ_nat (Map.size (Dom.idom t))) q)) = true <->
@@ -301,7 +309,7 @@ Theorem runner_exact t start boundary d :
       forall q, boundary = Some q -> ~ idom_ancestor (Dom.idom t) d q).
 Proof.
   intros Hmap Hforest. unfold runner, runner_c, budget_c.
-  rewrite !Cost.value_bind, Cost.value_map. fold (Map.size (Dom.idom t)).
+  rewrite !Cost.value_bind, Prepared.budget_value. fold (Map.size (Dom.idom t)).
   change (In d (Walk.until (Walk.up_c t)
     (fun v => FinSet.mem_c positive_encoding v (Cost.value (blocked_set_c t boundary)))
     (Pos.of_succ_nat (Map.size (Dom.idom t))) start) <->
@@ -728,6 +736,354 @@ Proof.
   pose proof (Prepared.succ_targets p (proj2 (proj2 Hready)) u e j Hedge) as Hj.
   exists (Graph.target (Prepared.graph p) e). split; [|exact Hj].
   apply (Prepared.ids_domain p (proj2 (proj2 Hready))). now exists j.
+Qed.
+
+(** Reference resource premises describe storage and genuine external accessor callbacks. *)
+Record resources {V E} (p : Prepared.t V E) t
+    (n m l b : nat) (w a q h s : N) : Prop := Resources {
+  nodes_bound : (length (Graph.nodes (Prepared.graph p)) <= n)%nat;
+  universe_bound : (length (Reach.universe p) <= n)%nat;
+  entries_bound : (length (Prepared.entry_ids p) <= l)%nat;
+  bindings_bound : (Map.size (Dom.idom t) <= b)%nat;
+  skeleton_bound : (MapCost.skeleton_nodes (Dom.idom t) <= s)%N;
+  width_bound : forall i, Prepared.valid_id p i -> (N.pos (Pos.size i) <= w)%N;
+  name_lookup_bound : forall v, In v (Graph.nodes (Prepared.graph p)) ->
+    (Cost.ticks (Prepared.id_of_c p v) <= a)%N;
+  successor_lookup_bound : forall i, Prepared.valid_id p i ->
+    (Cost.ticks (Prepared.succ_edges_c p i) <= q)%N;
+  predecessor_lookup_bound : forall i, Prepared.valid_id p i ->
+    (Cost.ticks (Prepared.pred_edges_c p i) <= q)%N;
+  successor_length_bound : forall i, Prepared.valid_id p i ->
+    (length (Prepared.succ_edges p i) <= m)%nat;
+  predecessor_length_bound : forall i, Prepared.valid_id p i ->
+    (length (Prepared.pred_edges p i) <= m)%nat;
+  admission_bound : forall i, Prepared.valid_id p i ->
+    (Cost.ticks (Scope.admits_c Reach.unrestricted i) <= h)%N
+}.
+
+Arguments nodes_bound {V E p t n m l b w a q h s} _.
+Arguments universe_bound {V E p t n m l b w a q h s} _.
+Arguments entries_bound {V E p t n m l b w a q h s} _.
+Arguments bindings_bound {V E p t n m l b w a q h s} _.
+Arguments skeleton_bound {V E p t n m l b w a q h s} _.
+Arguments width_bound {V E p t n m l b w a q h s} _ _ _.
+Arguments name_lookup_bound {V E p t n m l b w a q h s} _ _ _.
+Arguments successor_lookup_bound {V E p t n m l b w a q h s} _ _ _.
+Arguments predecessor_lookup_bound {V E p t n m l b w a q h s} _ _ _.
+Arguments successor_length_bound {V E p t n m l b w a q h s} _ _ _.
+Arguments predecessor_length_bound {V E p t n m l b w a q h s} _ _ _.
+Arguments admission_bound {V E p t n m l b w a q h s} _ _ _.
+
+(** Universe work includes callback lookup, list filtering and quadratic duplicate removal. *)
+Definition universe_work n w a := (n * (a + 2 + n * (w + 1)))%N.
+
+(** A reference successor query pays its index, admission and universe-membership traversals. *)
+Definition successor_work n m w q h := (q + m * (h + 2 + n * (w + 1)))%N.
+
+(** Reference reachability includes its complete adjacency-credit pass and bounded work stack. *)
+Definition reach_work n m l w a q h :=
+  let next := successor_work n m w q h in
+  (universe_work n w a + n * (1 + h + l * (w + 1)) +
+    n * (2 + next + m) + n +
+    (n * (m + 2) + 1) * (12 + next + m + 2 * n * (w + 1) + w))%N.
+
+(** Parent-budget construction scans the supplied physical map skeleton on every call. *)
+Definition scan_work s := (TrieCost.trie_k * (1 + s))%N.
+
+(** A boundary cache pays its full parent walk and set construction. *)
+Definition ancestor_work b w s := (scan_work s + (b + 1) * (2 * w + 13))%N.
+
+(** A stopped source walk also pays the boundary cache and both map-size scans. *)
+Definition runner_work b w s := (2 * scan_work s + (b + 1) * (4 * w + 25))%N.
+
+(** Event production includes reference reachability, all edge walks and every event-list copy. *)
+Definition events_work n m l b w a q h s :=
+  (reach_work n m l w a q h + universe_work n w a +
+    n * (1 + q + m * (5 + 2 * w + runner_work b w s + 3 * (b + 1))))%N.
+
+(** The delivered sweep has a coarse polynomial bound including complete event production. *)
+Definition sweep_work n m l b w a q h s :=
+  (events_work n m l b w a q h s + n * m * (b + 1) * (7 + 3 * w))%N.
+
+(** A list sum needs callback bounds on the traversed input domain alone. *)
+Theorem sum_bound_on {A} (f : A -> N) k xs :
+  (forall x, In x xs -> (f x <= k)%N) ->
+  (fold_right (fun x n => 1 + f x + n)%N 0%N xs <=
+    N.of_nat (length xs) * (k + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hf; cbn [fold_right length]; [lia|].
+  rewrite Nat2N.inj_succ.
+  pose proof (Hf x (or_introl eq_refl)) as Hhead.
+  specialize (IH ltac:(intros y Hy; apply Hf; now right)). nia.
+Qed.
+
+(** Charged right folds inherit callback bounds on their actual list domain. *)
+Theorem fold_right_bound_on {A B} (f : A -> B -> Cost.t B) k xs initial :
+  (forall x acc, In x xs -> (Cost.ticks (f x acc) <= k)%N) ->
+  (Cost.ticks (fold_right_c f initial xs) <= N.of_nat (length xs) * (k + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hf; [reflexivity|].
+  rewrite ticks_fold_right_c_cons.
+  pose proof (Hf x (Cost.value (fold_right_c f initial rest)) (or_introl eq_refl)) as Hhead.
+  specialize (IH ltac:(intros y acc Hy; apply Hf; now right)).
+  cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+Local Lemma filter_map_length {A B} (f : A -> option B) xs :
+  (length (filter_map f xs) <= length xs)%nat.
+Proof.
+  unfold filter_map. induction xs as [|x rest IH]; cbn [fold_right length]; [lia|].
+  destruct (f x); cbn [length]; lia.
+Qed.
+
+Local Lemma filter_map_forall {A B} (f : A -> option B) (P : B -> Prop) xs :
+  (forall x y, In x xs -> f x = Some y -> P y) -> Forall P (filter_map f xs).
+Proof.
+  unfold filter_map. induction xs as [|x rest IH]; intro Hf;
+    cbn [fold_right]; [constructor|].
+  destruct (f x) as [y|] eqn:Hy.
+  - constructor; [eapply Hf; [now left|exact Hy]|].
+    apply IH. intros a b Ha Hb. exact (Hf a b (or_intror Ha) Hb).
+  - apply IH. intros a b Ha Hb. exact (Hf a b (or_intror Ha) Hb).
+Qed.
+
+(** Valid prepared IDs are exactly the universe's finite support. *)
+Theorem universe_support {V E} (p : Prepared.t V E) :
+  Forall (Prepared.valid_id p) (Reach.universe p).
+Proof.
+  apply Forall_forall. intros i Hi. now apply Reach.universe_spec.
+Qed.
+
+(** Every cached successor target stays inside the valid prepared-ID domain. *)
+Theorem successor_support {V E} (p : Prepared.t V E) i :
+  Prepared.ready p ->
+  Forall (fun edge => Prepared.valid_id p (snd edge)) (Prepared.succ_edges p i).
+Proof.
+  intro Hready. apply Forall_forall. intros [e j] Hin. cbn [snd].
+  pose proof (Prepared.succ_targets p (proj2 (proj2 Hready)) i e j Hin) as Hj.
+  exists (Graph.target (Prepared.graph p) e). split; [|exact Hj].
+  apply (Prepared.ids_domain p (proj2 (proj2 Hready))). now exists j.
+Qed.
+
+(** Every cached predecessor source stays inside the valid prepared-ID domain. *)
+Theorem predecessor_support {V E} (p : Prepared.t V E) i :
+  Prepared.ready p -> Prepared.valid_id p i ->
+  Forall (fun edge => Prepared.valid_id p (snd edge)) (Prepared.pred_edges p i).
+Proof.
+  intros Hready [v [Hv Hi]]. apply Forall_forall. intros [e j] Hin. cbn [snd].
+  apply (Prepared.pred_agrees p (proj2 (proj2 Hready)) v i e j Hi) in Hin.
+  destruct Hin as [Hs [_ [_ Hj]]]. exists (Graph.source (Prepared.graph p) e). auto.
+Qed.
+
+(** Exact supplied trees keep every followed parent inside the prepared-ID domain. *)
+Theorem parent_support {V E} (p : Prepared.t V E) t i j :
+  Prepared.ready p -> Dom.exact p t ->
+  Map.get positive_encoding i (Dom.idom t) = Some j -> Prepared.valid_id p j.
+Proof.
+  intros Hready Htree Hget.
+  destruct (Dom.idom_domain p t Htree i j Hget)
+    as [v [d [_ [Hd _]]]].
+  pose proof (Prepared.id_of_name_of p j d (proj2 (proj2 Hready)) Hd) as Hj.
+  exists d. split; [|exact Hj].
+  apply (Prepared.ids_domain p (proj2 (proj2 Hready))). now exists j.
+Qed.
+
+(** List membership charges every visited comparison and its traversal overhead. *)
+Theorem member_cost v xs w :
+  (forall x, (Cost.ticks (Map.code_compare_c v x) <= w)%N) ->
+  (Cost.ticks (member_c v xs) <= N.of_nat (length xs) * (w + 1))%N.
+Proof.
+  intro Hcompare. unfold member_c. apply ticks_existsb_c_le.
+  intro x. unfold eq_c. rewrite Cost.ticks_map. apply Hcompare.
+Qed.
+
+(** List removal pays its complete traversal and cannot lengthen its input. *)
+Theorem remove_cost v xs w :
+  (forall x, (Cost.ticks (Map.code_compare_c v x) <= w)%N) ->
+  (Cost.ticks (remove_c v xs) <= N.of_nat (length xs) * (w + 1))%N /\
+    (length (Cost.value (remove_c v xs)) <= length xs)%nat.
+Proof.
+  intro Hcompare. induction xs as [|x rest [IHcost IHlength]].
+  - split; [reflexivity|cbn; lia].
+  - cbn [remove_c]. autorewrite with galois_cost.
+    pose proof (Hcompare x) as Hhead.
+    assert (Heqcost : (Cost.ticks (eq_c v x) <= w)%N)
+      by (unfold eq_c; rewrite Cost.ticks_map; exact Hhead).
+    cbn [length]. rewrite Nat2N.inj_succ.
+    destruct (Cost.value (eq_c v x)); cbn [length]; split; nia.
+Qed.
+
+Local Lemma nodup_cost (P : positive -> Prop) xs n w :
+  Forall P xs -> (length xs <= n)%nat ->
+  (forall v, P v -> forall x, (Cost.ticks (Map.code_compare_c v x) <= w)%N) ->
+  (Cost.ticks (nodup_c xs) <=
+    N.of_nat (length xs) * (1 + N.of_nat n * (w + 1)))%N /\
+  Forall P (Cost.value (nodup_c xs)) /\
+    (length (Cost.value (nodup_c xs)) <= length xs)%nat.
+Proof.
+  intros Hsupport Hlength Hcompare. induction Hsupport as [|v rest Hv Hrest IH].
+  - split; [reflexivity|]. split; [constructor|cbn; lia].
+  - cbn [length] in Hlength.
+    destruct (IH ltac:(lia)) as [IHcost [IHsupport IHlength]].
+    cbn [nodup_c]. autorewrite with galois_cost.
+    pose proof (member_cost v rest w (Hcompare v Hv)) as Hmember.
+    cbn [length]. rewrite Nat2N.inj_succ.
+    destruct (Cost.value (member_c v rest)); cbn [length]; split;
+      [nia|split; [exact IHsupport|lia]|nia|split; [constructor; assumption|lia]].
+Qed.
+
+(** Positive-key lookup charges are independent of map shape and stored values. *)
+Theorem positive_get_cost {A} (table : Map.t positive A) i w :
+  (N.pos (Pos.size i) <= w)%N ->
+  (Cost.ticks (Map.get_c positive_encoding i table) <= 2 + w)%N.
+Proof.
+  intro Hwidth. rewrite Map.get_cost.
+  change (2 + N.pos (Pos.size i) <= 2 + w)%N. lia.
+Qed.
+
+(** Positive set membership retains its encoder and full key traversal. *)
+Theorem positive_mem_cost table i w :
+  (N.pos (Pos.size i) <= w)%N ->
+  (Cost.ticks (FinSet.mem_c positive_encoding i table) <= 2 + w)%N.
+Proof.
+  intro Hwidth. rewrite FinSet.mem_cost.
+  change (2 + N.pos (Pos.size i) <= 2 + w)%N. lia.
+Qed.
+
+(** Universe cost includes every ID callback and the complete quadratic duplicate pass. *)
+Theorem universe_cost {V E} (p : Prepared.t V E) t n m l b w a q h s :
+  Prepared.ready p -> resources p t n m l b w a q h s ->
+  (forall v, Prepared.valid_id p v ->
+    forall x, (Cost.ticks (Map.code_compare_c v x) <= w)%N) ->
+  (Cost.ticks (universe_c p) <= universe_work (N.of_nat n) w a)%N.
+Proof.
+  intros Hready Hr Hcompare.
+  set (raw := Cost.value (filter_map_c (Prepared.id_of_c p)
+    (Graph.nodes (Prepared.graph p)))).
+  assert (Hrawsupport : Forall (Prepared.valid_id p) raw).
+  { unfold raw. rewrite value_filter_map_c.
+    apply filter_map_forall. intros v i Hv Hi. exists v. split; [exact Hv|exact Hi]. }
+  assert (Hrawlength : (length raw <= n)%nat).
+  { unfold raw. rewrite value_filter_map_c.
+    eapply Nat.le_trans; [apply filter_map_length|exact (nodes_bound Hr)]. }
+  assert (Hfilter : (Cost.ticks (filter_map_c (Prepared.id_of_c p)
+    (Graph.nodes (Prepared.graph p))) <= N.of_nat n * (a + 1))%N).
+  { rewrite ticks_filter_map_c.
+    eapply N.le_trans.
+    - apply sum_bound_on. intros v Hv. now apply (name_lookup_bound Hr).
+    - pose proof (nodes_bound Hr). nia. }
+  unfold universe_c. rewrite Cost.ticks_bind.
+  fold raw. destruct (nodup_cost (Prepared.valid_id p) raw n w
+    Hrawsupport Hrawlength Hcompare) as [Hnodup _].
+  assert (HrawN : (N.of_nat (length raw) <= N.of_nat n)%N) by lia.
+  assert (Hnodup' : (Cost.ticks (nodup_c raw) <=
+    N.of_nat n * (1 + N.of_nat n * (w + 1)))%N).
+  { eapply N.le_trans; [exact Hnodup|].
+    apply N.mul_le_mono; [exact HrawN|apply N.le_refl]. }
+  unfold universe_work.
+  nia.
+Qed.
+
+(** Successor cost expands index lookup, admission and list-membership work. *)
+Theorem successors_cost {V E} (p : Prepared.t V E) t n m l b w a q h s i :
+  Prepared.ready p -> resources p t n m l b w a q h s ->
+  (forall v, Prepared.valid_id p v ->
+    forall x, (Cost.ticks (Map.code_compare_c v x) <= w)%N) ->
+  Prepared.valid_id p i ->
+  (Cost.ticks (successors_c p Reach.unrestricted (Reach.universe p) i) <=
+    successor_work (N.of_nat n) (N.of_nat m) w q h)%N /\
+  Forall (Prepared.valid_id p)
+    (Cost.value (successors_c p Reach.unrestricted (Reach.universe p) i)) /\
+  (length (Cost.value (successors_c p Reach.unrestricted (Reach.universe p) i)) <= m)%nat.
+Proof.
+  intros Hready Hr Hcompare Hi.
+  assert (Htargets : Forall (Prepared.valid_id p) (map snd (Prepared.succ_edges p i))).
+  { apply Forall_forall. intros v Hv. apply in_map_iff in Hv.
+    destruct Hv as [[e j] [Heq Hin]]. cbn in Heq. subst j.
+    exact (proj1 (Forall_forall _ _) (successor_support p i Hready) (e, v) Hin). }
+  assert (Hlength := successor_length_bound Hr i Hi).
+  assert (Hmap : (Cost.ticks (map_c (fun edge => Cost.ret (snd edge))
+    (Prepared.succ_edges p i)) <= N.of_nat m)%N).
+  { pose proof (ticks_map_c_le (fun edge : E * positive => Cost.ret (snd edge))
+      0%N (Prepared.succ_edges p i) ltac:(intros; reflexivity)) as Hmap.
+    nia. }
+  assert (Hfilter : (Cost.ticks (filter_c (fun x =>
+    let* admitted := Scope.admits_c Reach.unrestricted x in
+    let* valid := member_c x (Reach.universe p) in
+    Cost.ret (admitted && valid)) (map snd (Prepared.succ_edges p i))) <=
+      N.of_nat m * (h + N.of_nat n * (w + 1) + 1))%N).
+  { rewrite ticks_filter_c. eapply N.le_trans.
+    - apply (sum_bound_on _ (h + N.of_nat n * (w + 1))%N). intros v Hv.
+      pose proof (proj1 (Forall_forall _ _) Htargets v Hv) as Hvalid.
+      pose proof (admission_bound Hr v Hvalid) as Hadmission.
+      pose proof (member_cost v (Reach.universe p) w (Hcompare v Hvalid)) as Hmember.
+      pose proof (universe_bound Hr).
+      rewrite !Cost.ticks_bind. autorewrite with galois_cost. nia.
+    - rewrite length_map. apply N.mul_le_mono; [lia|apply N.le_refl]. }
+  split.
+  - unfold successors_c. rewrite !Cost.ticks_bind, value_map_c.
+    fold (Prepared.succ_edges p i).
+    pose proof (successor_lookup_bound Hr i Hi). unfold successor_work.
+    replace (map (fun x : E * positive => Cost.value (Cost.ret (snd x)))
+      (Prepared.succ_edges p i)) with (map snd (Prepared.succ_edges p i)) by reflexivity.
+    nia.
+  - rewrite successors_value. unfold Reach.successors.
+    split.
+    + apply Forall_forall. intros v Hv. apply filter_In in Hv.
+      exact (proj1 (Forall_forall _ _) Htargets v (proj1 Hv)).
+    + eapply Nat.le_trans; [apply List.filter_length_le|].
+      rewrite length_map. exact Hlength.
+Qed.
+
+(** Root filtering pays supplied-root multiplicity even when duplicate IDs are rejected. *)
+Theorem roots_cost {V E} (p : Prepared.t V E) t n m l b w a q h s :
+  resources p t n m l b w a q h s ->
+  (forall v, Prepared.valid_id p v ->
+    forall x, (Cost.ticks (Map.code_compare_c v x) <= w)%N) ->
+  (Cost.ticks (roots_c Reach.unrestricted (Reach.universe p) (Prepared.entry_ids p)) <=
+    N.of_nat n * (1 + h + N.of_nat l * (w + 1)))%N /\
+  Forall (Prepared.valid_id p)
+    (Cost.value (roots_c Reach.unrestricted (Reach.universe p) (Prepared.entry_ids p))) /\
+  (length (Cost.value (roots_c Reach.unrestricted
+    (Reach.universe p) (Prepared.entry_ids p))) <= n)%nat.
+Proof.
+  intros Hr Hcompare. split.
+  - unfold roots_c. rewrite ticks_filter_c.
+    eapply N.le_trans.
+    + apply (sum_bound_on _ (h + N.of_nat l * (w + 1))%N). intros v Hv.
+      pose proof (proj1 (Reach.universe_spec p v) Hv) as Hvalid.
+      pose proof (member_cost v (Prepared.entry_ids p) w (Hcompare v Hvalid)) as Hmember.
+      pose proof (admission_bound Hr v Hvalid) as Hadmission.
+      pose proof (entries_bound Hr).
+      rewrite !Cost.ticks_bind. autorewrite with galois_cost. nia.
+    + apply N.mul_le_mono; [pose proof (universe_bound Hr); lia|lia].
+  - rewrite roots_value. unfold Reach.roots_in. split.
+    + apply Forall_forall. intros v Hv. apply filter_In in Hv.
+      now apply Reach.universe_spec, (proj1 Hv).
+    + eapply Nat.le_trans; [apply List.filter_length_le|exact (universe_bound Hr)].
+Qed.
+
+(** Budget construction visits every candidate adjacency and counts every successor cell. *)
+Theorem credit_cost next (P : positive -> Prop) all n m k :
+  Forall P all -> (length all <= n)%nat ->
+  (forall v, P v -> (length (Cost.value (next v)) <= m)%nat /\
+    (Cost.ticks (next v) <= k)%N) ->
+  (Cost.ticks (credit_c next all) <= N.of_nat n * (2 + k + N.of_nat m))%N /\
+  (Cost.value (credit_c next all) <= n * (m + 1))%nat.
+Proof.
+  intros Hsupport Hlength Hnext. split.
+  - unfold credit_c. eapply N.le_trans.
+    + apply (fold_right_bound_on _ (1 + k + N.of_nat m)%N). intros v credit Hv.
+      destruct (Hnext v (proj1 (Forall_forall _ _) Hsupport v Hv)) as [Hlen Hcost].
+      autorewrite with galois_cost. nia.
+    + apply N.mul_le_mono; lia.
+  - rewrite credit_value.
+    assert (Hcredit : (Reach.credit (fun v => Cost.value (next v)) all <=
+      length all * (m + 1))%nat).
+    { clear Hlength. induction Hsupport as [|v rest Hv Hrest IH];
+        cbn [Reach.credit length]; [lia|].
+      destruct (Hnext v Hv) as [Hlen _]. nia. }
+    nia.
 Qed.
 
 End FrontierSweep.

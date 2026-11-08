@@ -137,8 +137,8 @@ Proof.
     (fun _ => 0%N) (k + 3)%N) as Hcost.
   specialize (Hcost ltac:(intros s _;
     split; [destruct (Cost.value (step_c next stop s)); exact I|];
-    unfold result_potential; destruct (Cost.value (step_c next stop s));
-    pose proof (step_cost next stop k Hcallbacks s); cbn; lia) fuel (start, []) I).
+    rewrite result_potential_zero;
+    pose proof (step_cost next stop k Hcallbacks s); lia) fuel (start, []) I).
   destruct Hcost as [_ Hcost].
   unfold until_c. rewrite Cost.ticks_bind, ticks_rev_c.
   assert (Hlength : (length (trace_of (Cost.value (run_c next stop fuel start))) <=
@@ -152,9 +152,70 @@ Proof.
   assert (HlengthN : (N.of_nat (length (trace_of
     (Cost.value (run_c next stop fuel start)))) <= N.pos fuel)%N).
   { rewrite <- (N2Nat.id (N.pos fuel)). cbn [N.to_nat]. lia. }
-  unfold run_c in *. unfold result_potential in Hcost.
-  destruct (Cost.value (iterate (step_c next stop) fuel (start, [])));
-    cbn in Hcost; nia.
+  unfold run_c in *. rewrite result_potential_zero in Hcost. nia.
+Qed.
+
+(** A forward-closed callback domain suffices for the fuel-linear bound. *)
+Theorem until_cost_on next stop (P : positive -> Prop) k fuel start :
+  P start ->
+  (forall v u, P v -> Cost.value (next v) = Some u -> P u) ->
+  (forall v, P v -> (Cost.ticks (stop v) + Cost.ticks (next v) <= k)%N) ->
+  (Cost.ticks (until_c next stop fuel start) <= (k + 6) * N.pos fuel)%N.
+Proof.
+  intros Hstart Hclosed Hcallbacks.
+  assert (Hstep : forall s : state, P (fst s) ->
+    (match Cost.value (step_c next stop s) with
+     | inl s' => P (fst s')
+     | inr _ => True
+     end) /\
+    (Cost.ticks (step_c next stop s) +
+      result_potential (fun _ => 0%N) (Cost.value (step_c next stop s)) <= k + 3)%N).
+  { intros [v seen] Hv. cbn [fst] in Hv.
+    rewrite result_potential_zero.
+    pose proof (Hcallbacks v Hv) as Hcb.
+    cbn [step_c]. autorewrite with galois_cost.
+    destruct (Cost.value (stop v)); autorewrite with galois_cost;
+      [split; [exact I|lia]|].
+    destruct (Cost.value (next v)) as [u|] eqn:Hu; autorewrite with galois_cost.
+    - split; [cbn [fst]; eapply Hclosed; eassumption|lia].
+    - split; [exact I|lia]. }
+  pose proof (proj2 (iterate_cost_amortised (step_c next stop)
+    (fun s => P (fst s)) (fun _ => 0%N) (k + 3)%N
+    ltac:(intros s Hs; rewrite N.add_0_r; exact (Hstep s Hs)) fuel (start, []) Hstart))
+    as Hcost.
+  rewrite result_potential_zero in Hcost.
+  assert (Hlength : (length (trace_of
+    (Cost.value (run_c next stop fuel start))) <= Pos.to_nat fuel)%nat).
+  { pose proof (run_prefix next stop _ _ _
+      (iterate_value (step_c next stop) fuel (start, []))) as Htrace.
+    cbn [snd rev app] in Htrace. apply (f_equal (@length positive)) in Htrace.
+    rewrite length_rev in Htrace. unfold run_c. rewrite Htrace. apply prefix_length. }
+  assert (HlengthN : (N.of_nat (length (trace_of
+    (Cost.value (run_c next stop fuel start)))) <= N.pos fuel)%N).
+  { rewrite <- (N2Nat.id (N.pos fuel)). cbn [N.to_nat]. lia. }
+  unfold until_c. rewrite Cost.ticks_bind, ticks_rev_c.
+  unfold run_c in *. nia.
+Qed.
+
+(** Bounded prefixes contain at most one recorded node per unit of numeric fuel. *)
+Theorem until_length next stop fuel start :
+  (length (until next stop fuel start) <= Pos.to_nat fuel)%nat.
+Proof.
+  rewrite until_spec. apply prefix_length.
+Qed.
+
+(** A forward-closed node domain contains every recorded prefix node, including on exhaustion. *)
+Theorem until_closed next stop (P : positive -> Prop) fuel start :
+  P start -> (forall v u, P v -> Cost.value (next v) = Some u -> P u) ->
+  Forall P (until next stop fuel start).
+Proof.
+  intros Hstart Hclosed. rewrite until_spec.
+  generalize (Pos.to_nat fuel) as n. intro n. revert start Hstart.
+  induction n as [|n IH]; intros start Hstart; cbn [prefix]; [constructor|].
+  destruct (Cost.value (stop start)); [constructor|].
+  constructor; [exact Hstart|].
+  destruct (Cost.value (next start)) as [u|] eqn:Hu;
+    [apply IH; eapply Hclosed; eassumption|constructor].
 Qed.
 
 Definition up_c (t : Dom.tree) v := Map.get_c positive_encoding v (Dom.idom t).
@@ -383,6 +444,108 @@ Proof.
     (iterate (closure_step_c next member remove) fuel (pending, unseen, seen))))
     as [[pending' unseen'] seen'] in Hrun |- *.
   exact Hrun.
+Qed.
+
+Local Lemma closure_seen_runs next member remove (P : positive -> Prop) :
+  (forall v, P v -> Forall P (Cost.value (next v))) ->
+  forall n s r, runs (closure_step_c next member remove) n s r ->
+  let '(pending, _, seen) := s in
+  Forall P pending -> Forall P seen ->
+  let '(_, _, final) := closure_result r in
+  Forall P final /\ (length final <= length seen + n)%nat.
+Proof.
+  intros Hclosed n s r Hrun.
+  induction Hrun as [s|n [[pending unseen] seen] result Hstop|
+    n [[pending unseen] seen] s' r Hnext Hrun IH].
+  - destruct s as [[pending unseen] seen]. cbn [closure_result].
+    intros Hp Hs. split; [exact Hs|lia].
+  - intros Hp Hs. destruct pending as [|v rest].
+    + cbn [closure_step_c] in Hstop. inversion Hstop; subst result.
+      cbn [closure_result]. split; [exact Hs|lia].
+    + cbn [closure_step_c] in Hstop. autorewrite with galois_cost in Hstop.
+      destruct (Cost.value (member v unseen)); autorewrite with galois_cost in Hstop;
+        discriminate.
+  - intros Hp Hs. destruct pending as [|v rest]; [discriminate|].
+    inversion Hp as [|head tail Hv Hrest]; subst.
+    cbn [closure_step_c] in Hnext. autorewrite with galois_cost in Hnext.
+    destruct (Cost.value (member v unseen)).
+    + autorewrite with galois_cost in Hnext. inversion Hnext; subst s'.
+      cbn beta iota zeta in IH.
+      destruct (closure_result r) as [[pending' unseen'] final].
+      specialize (IH ltac:(apply Forall_app; split; [now apply Hclosed|exact Hrest])
+        ltac:(constructor; assumption)).
+      destruct IH as [Hfinal Hlength]. cbn [length] in Hlength.
+      split; [exact Hfinal|lia].
+    + inversion Hnext; subst s'. cbn beta iota zeta in IH.
+      destruct (closure_result r) as [[pending' unseen'] final].
+      destruct (IH Hrest Hs) as [Hfinal Hlength]. split; [exact Hfinal|lia].
+Qed.
+
+(** Closure output support and length are bounded by its input support and actual fuel. *)
+Theorem closure_seen next member remove (P : positive -> Prop) fuel pending unseen :
+  Forall P pending ->
+  (forall v, P v -> Forall P (Cost.value (next v))) ->
+  Forall P (snd (Cost.value (closure_c next member remove fuel pending unseen []))) /\
+    (length (snd (Cost.value (closure_c next member remove fuel pending unseen []))) <=
+      Pos.to_nat fuel)%nat.
+Proof.
+  intros Hpending Hclosed.
+  pose proof (closure_seen_runs next member remove P Hclosed _ _ _
+    (iterate_value (closure_step_c next member remove) fuel (pending, unseen, []))) as Hrun.
+  cbn beta iota zeta in Hrun.
+  specialize (Hrun Hpending (Forall_nil P)).
+  unfold closure_c. rewrite Cost.value_map.
+  destruct (closure_result (Cost.value
+    (iterate (closure_step_c next member remove) fuel (pending, unseen, []))))
+    as [[pending' unseen'] final] in Hrun |- *.
+  exact Hrun.
+Qed.
+
+(** Closure work has a numeric-fuel bound from primitive callback and adjacency budgets. *)
+Theorem closure_cost next member remove (P : positive -> Prop) n m kn km kr
+    fuel pending unseen :
+  Forall P pending -> (length unseen <= n)%nat ->
+  (forall v, P v -> Forall P (Cost.value (next v)) /\
+    (length (Cost.value (next v)) <= m)%nat /\ (Cost.ticks (next v) <= kn)%N) ->
+  (forall v xs, P v -> (length xs <= n)%nat ->
+    (Cost.ticks (member v xs) <= km)%N /\
+    (Cost.ticks (remove v xs) <= kr)%N /\
+    (length (Cost.value (remove v xs)) <= length xs)%nat) ->
+  (Cost.ticks (closure_c next member remove fuel pending unseen []) <=
+    (6 + kn + km + kr + N.of_nat m) * N.pos fuel)%N.
+Proof.
+  intros Hpending Hunseen Hnext Hlists.
+  set (I := fun s : closure_state =>
+    let '(todo, white, _) := s in Forall P todo /\ (length white <= n)%nat).
+  assert (Hstep : forall s, I s ->
+    (match Cost.value (closure_step_c next member remove s) with
+     | inl s' => I s'
+     | inr _ => True
+     end) /\
+    (Cost.ticks (closure_step_c next member remove s) +
+      result_potential (fun _ => 0%N)
+        (Cost.value (closure_step_c next member remove s)) <=
+      4 + kn + km + kr + N.of_nat m)%N).
+  { intros [[todo white] seen] [Htodo Hwhite].
+    rewrite result_potential_zero.
+    destruct todo as [|v rest].
+    - cbn [closure_step_c]. autorewrite with galois_cost. split; [constructor|lia].
+    - inversion Htodo as [|head tail Hv Hrest]; subst.
+      destruct (Hnext v Hv) as [Hchildren [Hlength Hnextcost]].
+      destruct (Hlists v white Hv Hwhite) as [Hmember [Hremove Hshort]].
+      cbn [closure_step_c]. autorewrite with galois_cost.
+      destruct (Cost.value (member v white)); autorewrite with galois_cost.
+      + split.
+        * unfold I. cbn beta iota zeta.
+          split; [apply Forall_app; auto|lia].
+        * nia.
+      + split; [unfold I; cbn beta iota zeta; auto|lia]. }
+  pose proof (proj2 (iterate_cost_amortised (closure_step_c next member remove)
+    I (fun _ => 0%N) (4 + kn + km + kr + N.of_nat m)%N
+    ltac:(intros s Hs; rewrite N.add_0_r; exact (Hstep s Hs))
+    fuel (pending, unseen, []) ltac:(unfold I; auto))) as Hcost.
+  rewrite result_potential_zero in Hcost.
+  unfold closure_c. rewrite Cost.ticks_map. nia.
 Qed.
 
 Local Lemma member_spec v xs : Reach.member v xs = true <-> In v xs.

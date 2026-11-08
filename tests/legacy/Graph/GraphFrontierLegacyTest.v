@@ -5,6 +5,7 @@
     Builds on: the new frontier family and legacy frontier, IDF and control dependence. *)
 
 From Stdlib Require Import List Bool Arith PArith.
+From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphFixtures GraphCheckDom
   GraphFrontierSweep GraphFrontierIdf GraphFrontierControl.
@@ -148,6 +149,47 @@ Qed.
 Example two_entry_legacy :
   new_observations Fixtures.TwoEntry.prepared Fixtures.TwoEntry.tree two_post
     [(1, 3); (2, 3); (3, 4)] = old_observations [1; 2] [(1, 3); (2, 3); (3, 4)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition pruning_edges := [(0, 1); (0, 4); (1, 2); (1, 3); (2, 3); (3, 4)].
+Definition pruning_prepared := Fixtures.prepare [0] [0; 1; 2; 3; 4] pruning_edges.
+Definition pruning_parents := Fixtures.parents [(2, 1); (3, 2); (4, 2); (5, 1)]%positive.
+Definition pruning_tree := DomCheck.of_parents pruning_prepared pruning_parents.
+Definition pruning_legacy := legacy_prepared [0] [0; 1; 2; 3; 4] pruning_edges.
+
+Example pruning_certificate : DomCheck.check pruning_prepared pruning_parents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition pruning_observe defs live :=
+  let result := FrontierIdf.idf_pruned pruning_prepared pruning_tree defs
+    (fun i => Cost.ret
+      (match Prepared.name_of pruning_prepared i with
+       | None => false
+       | Some n => live n
+       end)) in
+  map (fun n =>
+    match Prepared.id_of pruning_prepared n with
+    | None => false
+    | Some i => FinSet.mem positive_encoding i result
+    end) [0; 1; 2; 3; 4].
+
+Definition pruning_old_observe defs live :=
+  let result := GraphIdf.direct_pruned_idf pruning_legacy
+    (GraphDominators.dominator_tree pruning_legacy) defs live in
+  map (fun n => CollectionsFinSet.FinSet.mem CollectionsEncoding.nat_encoding n result)
+    [0; 1; 2; 3; 4].
+
+Example pruning_propagation_legacy :
+  (pruning_observe [2] (fun n => Nat.eqb n 3),
+   pruning_observe [2] (fun n => Nat.eqb n 4),
+   pruning_observe [3] (fun n => Nat.eqb n 4)) =
+    (pruning_old_observe [2] (fun n => Nat.eqb n 3),
+     pruning_old_observe [2] (fun n => Nat.eqb n 4),
+     pruning_old_observe [3] (fun n => Nat.eqb n 4)).
 Proof.
   vm_compute. reflexivity.
 Qed.

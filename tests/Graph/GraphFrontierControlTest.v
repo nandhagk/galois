@@ -4,7 +4,8 @@
     For example, a self-loop with no exits has an empty reversed sweep.
     Builds on: GraphFrontierControl and GraphFixtures. *)
 
-From Stdlib Require Import List PArith Arith.
+From Stdlib Require Import List PArith NArith Arith.
+From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphFixtures GraphCheckDom
   GraphDomSpec GraphFrontierSpec GraphFrontierControl.
@@ -48,6 +49,28 @@ Qed.
 Example parallel_control_labels :
   Map.find_or positive_encoding [] 2%positive
     (FrontierControl.control_deps labelled [4]%positive labelled_post) = [12; 11].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example duplicate_exit_values :
+  FrontierControl.control_deps Fixtures.Diamond.prepared [4; 4]%positive diamond_post =
+    FrontierControl.control_deps Fixtures.Diamond.prepared [4]%positive diamond_post.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example duplicate_exit_charge :
+  N.ltb (Cost.ticks (FrontierControl.control_deps_c Fixtures.Diamond.prepared
+    [4]%positive diamond_post))
+    (Cost.ticks (FrontierControl.control_deps_c Fixtures.Diamond.prepared
+      [4; 4]%positive diamond_post)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example inverse_exit_lookup_ticks :
+  Cost.ticks (Prepared.reverse_c Fixtures.Diamond.prepared [4; 4; 99]%positive) = 25%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

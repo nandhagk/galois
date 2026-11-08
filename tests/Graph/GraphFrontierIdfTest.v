@@ -111,3 +111,26 @@ Example live_callback_charge_retained :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Definition nested_joins := Fixtures.prepare [0] [0; 1; 2; 3; 4]
+  [(0, 1); (0, 4); (1, 2); (1, 3); (2, 3); (3, 4)].
+Definition nested_join_parents := Fixtures.parents [(2, 1); (3, 2); (4, 2); (5, 1)]%positive.
+Definition nested_join_tree := DomCheck.of_parents nested_joins nested_join_parents.
+
+Example nested_joins_checked : DomCheck.check nested_joins nested_join_parents = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example pruning_suppresses_further_propagation :
+  (FinSet.elements (FrontierIdf.idf nested_joins nested_join_tree [2]),
+   FinSet.elements (FrontierIdf.idf_pruned nested_joins nested_join_tree [2]
+     (fun i => Cost.ret (Pos.eqb i 4))),
+   FinSet.elements (FrontierIdf.idf_pruned nested_joins nested_join_tree [2]
+     (fun i => Cost.ret (Pos.eqb i 5))),
+   FinSet.elements (FrontierIdf.idf_pruned nested_joins nested_join_tree [3]
+     (fun i => Cost.ret (Pos.eqb i 5)))) =
+    ([4; 5], [4], [], [5])%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
