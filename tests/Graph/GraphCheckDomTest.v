@@ -292,3 +292,35 @@ Proof.
     Hforward Hbackward) as Hsame.
   discriminate Hsame.
 Qed.
+
+(** A graph/key client uses semantic antisymmetry without a supplied exact tree. *)
+Theorem public_semantic_dominance_antisymmetry {V E}
+    (enc : encoding V) (HE : encoding_laws enc) (g : Graph.t V E) d n :
+  graph_wf g -> reachable g d -> reachable g n ->
+  dominates g d n -> dominates g n d -> d = n.
+Proof.
+  intro Hgraph. exact (dominates_antisym_reachable enc HE g d n).
+Qed.
+
+(** A prepared point-graph client needs readiness and semantic reachability alone. *)
+Theorem public_prepared_semantic_antisymmetry {V E} (p : Prepared.t V E) d n :
+  Prepared.ready p -> reachable (Prepared.graph p) d -> reachable (Prepared.graph p) n ->
+  dominates (Prepared.graph p) d n -> dominates (Prepared.graph p) n d -> d = n.
+Proof.
+  exact (prepared_dominates_antisym p d n).
+Qed.
+
+(** The line's distinct endpoints cannot mutually dominate even without constructing a tree. *)
+Example semantic_line_endpoints_not_mutual :
+  ~ (dominates (Prepared.graph Fixtures.Line.prepared) 1%nat 4%nat /\
+    dominates (Prepared.graph Fixtures.Line.prepared) 4%nat 1%nat).
+Proof.
+  intros [Hforward Hbackward].
+  assert (Hentry : reachable (Prepared.graph Fixtures.Line.prepared) 1%nat).
+  { apply reachable_entry. vm_compute. now left. }
+  assert (Htail : reachable (Prepared.graph Fixtures.Line.prepared) 4%nat).
+  { eapply DomCheck.dominator_reachable; [exact Hentry|exact Hbackward]. }
+  pose proof (prepared_dominates_antisym Fixtures.Line.prepared 1%nat 4%nat
+    Fixtures.Line.fixture_ready Hentry Htail Hforward Hbackward) as Hsame.
+  discriminate Hsame.
+Qed.

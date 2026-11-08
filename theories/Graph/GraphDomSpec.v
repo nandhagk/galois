@@ -76,6 +76,80 @@ Proof.
     + right. exists aedge. split; [apply Hsub; exact Ha|exact Htargeta].
 Qed.
 
+Local Lemma first_arrival {V E} (enc : encoding V) (HE : encoding_laws enc)
+    (g : Graph.t V E) s es n :
+  path g s es n -> s <> n ->
+  exists pre e, path g s pre (Graph.source g e) /\
+    path g s (pre ++ [e]) n /\ Graph.target g e = n /\
+    forall a, In a pre -> Graph.target g a <> n.
+Proof.
+  intro Hpath. induction Hpath as [v|e rest n Hedge Htail IH]; intro Hstart.
+  - contradiction.
+  - destruct (eqb_dec enc HE (Graph.target g e) n) as [Htarget|Htarget].
+    + exists [], e. split; [constructor|]. split.
+      * cbn [app]. constructor; [exact Hedge|rewrite Htarget; constructor].
+      * split; [exact Htarget|intros a Hin; contradiction].
+    + destruct (IH Htarget) as [pre [a [Hpre [Hfirst [Harrival Hfree]]]]].
+      exists (e :: pre), a. split.
+      * constructor; [exact Hedge|exact Hpre].
+      * split.
+        -- cbn [app]. constructor; [exact Hedge|exact Hfirst].
+        -- split; [exact Harrival|].
+           intros b [<-|Hin]; [exact Htarget|now apply Hfree].
+Qed.
+
+Local Lemma mutual_dominators_on_first_arrival {V E} (g : Graph.t V E) d n s pre e :
+  In s (Graph.entries g) -> s <> n -> d <> n ->
+  path g s pre (Graph.source g e) -> path g s (pre ++ [e]) n ->
+  Graph.target g e = n ->
+  (forall a, In a pre -> Graph.target g a <> n) ->
+  dominates g d n -> dominates g n d -> False.
+Proof.
+  intros Hentry Hstart Hdistinct Hpre Hfirst Htarget Hfree Hdn Hnd.
+  destruct (Hdn s (pre ++ [e]) Hentry Hfirst) as [Heq|[a [Ha Had]]].
+  - subst d. destruct (Hnd s [] Hentry (path_nil s)) as [Heq|[a [Hin _]]].
+    + congruence.
+    + contradiction.
+  - apply in_app_iff in Ha. destruct Ha as [Ha|[Heq|Hfalse]].
+    + destruct (path_prefix_target g s pre (Graph.source g e) a Hpre Ha)
+        as [early [Hearly Hsub]].
+      rewrite Had in Hearly.
+      destruct (Hnd s early Hentry Hearly) as [Heq|[b [Hb Hbn]]].
+      * congruence.
+      * exact (Hfree b (Hsub b Hb) Hbn).
+    + subst a. congruence.
+    + contradiction.
+Qed.
+
+(** Mutual dominance identifies reachable nodes by a finite first-arrival entry path,
+    using injective node encoding without any dominator tree or numbering premise. *)
+Theorem dominates_antisym_reachable {V E} (enc : encoding V) (HE : encoding_laws enc)
+    (g : Graph.t V E) d n :
+  reachable g d -> reachable g n -> dominates g d n -> dominates g n d -> d = n.
+Proof.
+  intros Hd Hn Hdn Hnd.
+  destruct (eqb_dec enc HE d n) as [Heq|Hdistinct]; [exact Heq|].
+  apply reachable_iff_path in Hn. destruct Hn as [s [es [Hentry Hpath]]].
+  destruct (eqb_dec enc HE s n) as [Heq|Hstart].
+  - subst s. destruct (Hdn n [] Hentry (path_nil n)) as [Heq|[a [Hin _]]].
+    + exact Heq.
+    + contradiction.
+  - destruct (first_arrival enc HE g s es n Hpath Hstart)
+      as [pre [e [Hpre [Hfirst [Htarget Hfree]]]]].
+    exfalso. exact (mutual_dominators_on_first_arrival g d n s pre e
+      Hentry Hstart Hdistinct Hpre Hfirst Htarget Hfree Hdn Hnd).
+Qed.
+
+(** Prepared readiness supplies the encoding duty for semantic antisymmetry without an exact tree. *)
+Theorem prepared_dominates_antisym {V E} (p : Prepared.t V E) d n :
+  Prepared.ready p -> reachable (Prepared.graph p) d -> reachable (Prepared.graph p) n ->
+  dominates (Prepared.graph p) d n -> dominates (Prepared.graph p) n d -> d = n.
+Proof.
+  intro Hready.
+  exact (dominates_antisym_reachable (Prepared.node_enc p)
+    (Prepared.encoding_valid p (proj2 (proj2 Hready))) (Prepared.graph p) d n).
+Qed.
+
 Local Lemma path_last {V E} (g : Graph.t V E) s es n :
   path g s es n -> es <> [] ->
   exists pre e, es = pre ++ [e] /\ path g s pre (Graph.source g e) /\
