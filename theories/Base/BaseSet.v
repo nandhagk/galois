@@ -61,6 +61,21 @@ Definition diff_c {K} (s u : t K) := Map.diff_c s u.
 (** Difference retains members present only on the left. *)
 Definition diff {K} (s u : t K) := Cost.value (diff_c s u).
 
+(** Difference exposes its unit-map computation for public numerical cost composition. *)
+Theorem diff_backend {K} (s u : t K) : diff_c s u = Map.diff_c s u.
+Proof.
+  reflexivity.
+Qed.
+
+(** Union exposes the actual one-tick collision callback of the unit map. *)
+Theorem union_backend {K} (s u : t K) :
+  union_c s u =
+    Map.union_with_c (fun (_ _ : unit) =>
+      Cost.lift (fun _ => 1%N) (fun _ => tt) tt) s u.
+Proof.
+  reflexivity.
+Qed.
+
 (** Inclusion checks right-hand presence for every left binding. *)
 Definition subset_c {K} (s u : t K) :=
   Map.forall2_c (fun (_ : unit) o =>
@@ -85,6 +100,12 @@ Definition size_c {K} (s : t K) := Map.size_c s.
 
 (** Size counts members. *)
 Definition size {K} (s : t K) := Cost.value (size_c s).
+
+(** Set cardinality is the cardinality of its underlying unit map. *)
+Theorem size_backend {K} (s : t K) : size s = Map.size s.
+Proof.
+  reflexivity.
+Qed.
 
 (** Emptiness uses the map's constant-size root test. *)
 Definition is_empty_c {K} (s : t K) := Map.is_empty_c s.

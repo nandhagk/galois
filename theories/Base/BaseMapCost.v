@@ -86,4 +86,52 @@ Proof.
   pose proof (skeleton_width E m b Hwf Hbits) as Hnodes. nia.
 Qed.
 
+(** Difference charges only the left stored-key width product, for arbitrary right storage. *)
+Theorem diff_numeric_cost {K V W} (E : encoding K) (m : Map.t K V)
+    (n : Map.t K W) b :
+  Map.wf E m ->
+  (forall k v, Map.get E k m = Some v -> (key_bits E k <= b)%N) ->
+  (Cost.ticks (Map.diff_c m n) <=
+    TrieCost.trie_k * (1 + N.of_nat (Map.size m) * b))%N.
+Proof.
+  intros Hwf Hbits. rewrite Map.diff_backend.
+  pose proof (TrieCost.diff_cost m n) as Hcost.
+  pose proof (N.le_min_l (TrieCost.skeleton_nodes m) (TrieCost.skeleton_nodes n)) as Hleft.
+  pose proof (skeleton_width E m b Hwf Hbits) as Hnodes.
+  change (TrieCost.skeleton_nodes m <= N.of_nat (Map.size m) * b)%N in Hnodes.
+  nia.
+Qed.
+
+(** Union retains every collision callback and the physical overlap traversal separately. *)
+Theorem union_with_cost {K V} (f : V -> V -> Cost.t V) (m n : Map.t K V) :
+  (Cost.ticks (Map.union_with_c f m n) <=
+    TrieCost.trie_k * (1 + TrieCost.shared_nodes m n) +
+    TrieCost.overlap (TrieCost.callback_weight
+      (fun a b : K * V => Cost.ticks (f (snd a) (snd b)))) m n)%N.
+Proof.
+  rewrite Map.union_with_backend.
+  pose proof (TrieCost.union_with_cost
+    (fun a b => Cost.map (fun v => (fst a, v)) (f (snd a) (snd b))) m n) as Hcost.
+  exact Hcost.
+Qed.
+
+(** A right-operand width budget bounds union independently of arbitrary left storage. *)
+Theorem union_with_numeric_cost_right {K V} (E : encoding K)
+    (f : V -> V -> Cost.t V) (m n : Map.t K V) b c :
+  Map.wf E n ->
+  (forall k v, Map.get E k n = Some v -> (key_bits E k <= b)%N) ->
+  (forall v w, (Cost.ticks (f v w) <= c)%N) ->
+  (Cost.ticks (Map.union_with_c f m n) <=
+    (TrieCost.trie_k + c) * (1 + N.of_nat (Map.size n) * b))%N.
+Proof.
+  intros Hwf Hbits Hcallback. rewrite Map.union_with_backend.
+  pose proof (TrieCost.union_with_cost_numeric
+    (fun a b => Cost.map (fun v => (fst a, v)) (f (snd a) (snd b))) m n c
+    (fun a b => Hcallback (snd a) (snd b))) as Hcost.
+  pose proof (TrieCost.shared_nodes_right m n) as Hright.
+  pose proof (skeleton_width E n b Hwf Hbits) as Hnodes.
+  change (TrieCost.skeleton_nodes n <= N.of_nat (Map.size n) * b)%N in Hnodes.
+  nia.
+Qed.
+
 End MapCost.

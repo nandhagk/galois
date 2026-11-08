@@ -604,6 +604,22 @@ Definition inter_with {K V W U} (f : V -> W -> U) (m : t K V) (n : t K W) :=
 Definition diff_c {K V W} (m : t K V) (n : t K W) := TrieMerge.diff_c m n.
 Definition diff {K V W} (m : t K V) (n : t K W) := Cost.value (diff_c m n).
 
+(** Difference exposes its backend computation for independently owned cost proofs. *)
+Theorem diff_backend {K V W} (m : t K V) (n : t K W) :
+  diff_c m n = TrieMerge.diff_c m n.
+Proof.
+  reflexivity.
+Qed.
+
+(** Union exposes the stored-key-preserving collision callback and its complete charge. *)
+Theorem union_with_backend {K V} (f : V -> V -> Cost.t V) (m n : t K V) :
+  union_with_c f m n =
+    TrieMerge.union_with_c
+      (fun a b => Cost.map (fun v => (fst a, v)) (f (snd a) (snd b))) m n.
+Proof.
+  reflexivity.
+Qed.
+
 (** Union specializes optional combination to retaining one-sided values. *)
 Theorem union_with_equation {K V} f (m n : t K V) :
   union_with f m n = combine (union_opt f) m n.
