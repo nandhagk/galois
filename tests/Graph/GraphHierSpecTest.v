@@ -5,6 +5,7 @@
     Builds on: GraphHierSpec. *)
 
 From Stdlib Require Import List PArith.
+From Galois.Cost Require Import CostMonad.
 From Galois.Graph Require Import GraphHierSpec.
 Import List.ListNotations.
 Open Scope positive_scope.
@@ -54,4 +55,54 @@ Qed.
 Example rejected_close : Wto.balanced_from 0 [Wto.WClose] = false.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Example emit_vertex_client v tail :
+  Cost.value (Wto.emit_tree_c (Hier.Vertex v) tail) = Wto.WVertex v :: tail.
+Proof.
+  apply Wto.emit_tree_equation.
+Qed.
+
+Example emit_component_client h body tail :
+  Cost.value (Wto.emit_tree_c (Hier.Component h body) tail) =
+    Wto.WOpen h :: Cost.value (Wto.emit_forest_c body (Wto.WClose :: tail)).
+Proof.
+  apply Wto.emit_tree_equation.
+Qed.
+
+Example emit_cons_client t rest tail :
+  Cost.value (Wto.emit_forest_c (Hier.Cons t rest) tail) =
+    Cost.value (Wto.emit_tree_c t (Cost.value (Wto.emit_forest_c rest tail))).
+Proof.
+  apply Wto.emit_forest_equation.
+Qed.
+
+Example emit_empty_client tail :
+  Cost.value (Wto.emit_forest_c Hier.Nil tail) = tail.
+Proof.
+  apply Wto.emit_forest_equation.
+Qed.
+
+Example flatten_client f :
+  Wto.of_forest f = Cost.value (Wto.emit_forest_c f []).
+Proof.
+  apply Wto.of_forest_equation.
+Qed.
+
+Example annotate_open_client h stack rest :
+  Wto.annotate stack (Wto.WOpen h :: rest) =
+    (h, h :: stack) :: Wto.annotate (h :: stack) rest.
+Proof.
+  apply Wto.annotate_equation.
+Qed.
+
+Example annotate_close_client stack rest :
+  Wto.annotate stack (Wto.WClose :: rest) = Wto.annotate (tl stack) rest.
+Proof.
+  apply Wto.annotate_equation.
+Qed.
+
+Example order_close_client rest : Wto.order (Wto.WClose :: rest) = Wto.order rest.
+Proof.
+  apply Wto.order_equation.
 Qed.

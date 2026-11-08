@@ -104,6 +104,37 @@ with emit_forest_c (f : Hier.forest) (tail : list token) : Cost.t (list token) :
 Definition of_forest_c f := emit_forest_c f [].
 Definition of_forest f := Cost.value (of_forest_c f).
 
+(** Emitting a tree places its tokens before the supplied continuation. *)
+Theorem emit_tree_equation t tail :
+  Cost.value (emit_tree_c t tail) =
+  match t with
+  | Hier.Vertex v => WVertex v :: tail
+  | Hier.Component h body =>
+    WOpen h :: Cost.value (emit_forest_c body (WClose :: tail))
+  end.
+Proof.
+  destruct t; reflexivity.
+Qed.
+
+(** Emitting a forest processes its sibling continuation before its first tree. *)
+Theorem emit_forest_equation f tail :
+  Cost.value (emit_forest_c f tail) =
+  match f with
+  | Hier.Nil => tail
+  | Hier.Cons t rest =>
+    Cost.value (emit_tree_c t (Cost.value (emit_forest_c rest tail)))
+  end.
+Proof.
+  destruct f; reflexivity.
+Qed.
+
+(** Flattening starts the emitter with an empty continuation. *)
+Theorem of_forest_equation f :
+  of_forest f = Cost.value (emit_forest_c f []).
+Proof.
+  reflexivity.
+Qed.
+
 Fixpoint annotate_c (stack : list positive) (w : list token) :
     Cost.t (list (positive * list positive)) :=
   match w with
@@ -130,6 +161,32 @@ Fixpoint order_c (w : list token) : Cost.t (list positive) :=
   end.
 
 Definition order w := Cost.value (order_c w).
+
+(** Annotation records the current enclosing headers and updates them at delimiters. *)
+Theorem annotate_equation stack w :
+  annotate stack w =
+  match w with
+  | [] => []
+  | WVertex v :: rest => (v, stack) :: annotate stack rest
+  | WOpen h :: rest => (h, h :: stack) :: annotate (h :: stack) rest
+  | WClose :: rest => annotate (tl stack) rest
+  end.
+Proof.
+  destruct w as [|[v|h|] rest]; reflexivity.
+Qed.
+
+(** Token order counts every vertex and opening header and skips closing tokens. *)
+Theorem order_equation w :
+  order w =
+  match w with
+  | [] => []
+  | WVertex v :: rest => v :: order rest
+  | WOpen h :: rest => h :: order rest
+  | WClose :: rest => order rest
+  end.
+Proof.
+  destruct w as [|[v|h|] rest]; reflexivity.
+Qed.
 
 Fixpoint balanced_from d w :=
   match w with
