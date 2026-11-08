@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostLoop CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseHeapCost.
 From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSimple.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointIndex
-  FixpointAnalysis FixpointSolver FixpointLeast FixpointKleene FixpointWorklist
+  FixpointAnalysis FixpointSolver FixpointCertified FixpointLeast FixpointKleene FixpointWorklist
   FixpointWorklistProof FixpointIndexCost FixpointWorklistCost FixpointCycles FixpointWorklistWiden.
 From Galois.Tests.Fixpoint Require Import FixpointCheckTest FixpointAnalyzeTest.
 Import List.ListNotations Cost.Notations.
@@ -49,6 +49,35 @@ Example fuel_exhaustion_keeps_partial_assignment :
   | Outcome.OutOfFuel m => map (lookup nat_encoding bool_lattice m) [0; 1; 2]
   | _ => []
   end = [false; false; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition incomplete_summary_system : System.t nat nat bool :=
+  System.Make [0; 1] (fun c => Cost.ret c)
+    (fun c => Cost.ret
+      (if Nat.eqb c 0 then Query.Ask 1 (fun value => Cost.ret (Query.Ret value))
+       else Query.Ret true)).
+Definition incomplete_summary : System.static incomplete_summary_system :=
+  System.Static (fun _ => Cost.ret []) (fun _ => Cost.ret []).
+Definition incomplete_summary_analysis :=
+  Analysis.Make nat_encoding nat_encoding bool_lattice incomplete_summary_system
+    incomplete_summary (Policy.flat nat).
+
+Example incomplete_summary_leaves_reader_stale :
+  match Worklist.run incomplete_summary_analysis 3 with
+  | Outcome.Solved m => map (lookup nat_encoding bool_lattice m) [0; 1]
+  | _ => []
+  end = [false; true].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example worklist_certification_rejects_incomplete_summary :
+  match analyze_with Worklist.solver incomplete_summary_analysis 3 with
+  | Outcome.Rejected Reason.Check_failed => true
+  | _ => false
+  end = true.
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -134,6 +163,41 @@ Qed.
 Example delayed_operation_has_two_invocation_ticks :
   Cost.ticks (Worklist.operation_c (widening_analysis 1) 0 1
     (false, false) (true, false)) = 3%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition zero_callee_lattice : lattice bool :=
+  {| leb_c := fun a b => Cost.ret (negb a || b);
+     join_c := fun a b => Cost.ret (a || b);
+     widen_c := fun _ _ => Cost.ret true;
+     narrow_c := fun a b => Cost.ret (a && b);
+     bot := false |}.
+Definition zero_callee_analysis selected delay :=
+  Analysis.Make nat_encoding nat_encoding zero_callee_lattice self_system self_static
+    (Policy.Make (fun _ => Cost.ret 1%positive) (fun _ => Cost.ret selected) delay 0).
+
+Example zero_callee_join_pays_two_invocations :
+  Cost.ticks (Worklist.operation_c (zero_callee_analysis false 0) 0 0 false true) = 2%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example zero_callee_delayed_join_pays_two_invocations :
+  Cost.ticks (Worklist.operation_c (zero_callee_analysis true 1) 0 1 false true) = 2%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example zero_callee_widen_pays_two_invocations :
+  Cost.ticks (Worklist.operation_c (zero_callee_analysis true 0) 0 0 false true) = 2%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example zero_callee_skip_avoids_operation_invocation :
+  Cost.ticks (Update.rule_c nat_encoding zero_callee_lattice
+    (Worklist.operation_c (zero_callee_analysis true 0) 0 0) Map.empty 0 false) = 4%N.
 Proof.
   vm_compute; reflexivity.
 Qed.
