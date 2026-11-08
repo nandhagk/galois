@@ -181,3 +181,10 @@ Example frontier_set_retains_encoder_charge :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example worklist_set_removal_cost_client {K} (E : encoding K) k (s : FinSet.t K) :
+  Cost.ticks (FinSet.remove_c E k s) =
+    (1 + Cost.ticks (encode_c E k) + N.pos (Pos.size (encode E k)))%N.
+Proof.
+  apply FinSet.remove_cost.
+Qed.

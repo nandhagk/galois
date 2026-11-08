@@ -491,6 +491,14 @@ Proof.
   unfold add_c. apply Map.set_cost.
 Qed.
 
+(** Removal retains the sharp map encoder-plus-code-width equation. *)
+Theorem remove_cost {K} (E : encoding K) k (s : t K) :
+  Cost.ticks (remove_c E k s) =
+    (1 + Cost.ticks (encode_c E k) + N.pos (Pos.size (encode E k)))%N.
+Proof.
+  unfold remove_c. apply Map.remove_cost.
+Qed.
+
 #[export] Hint Rewrite @mem_empty @mem_add @mem_remove @mem_union @mem_inter @mem_diff
   @mem_of_list using solve [auto using wf_empty, wf_add, wf_remove, wf_union,
     wf_inter, wf_diff, wf_of_list] : galois_map.
