@@ -400,6 +400,99 @@ Proof.
   - exact Hcredit.
 Qed.
 
+Local Lemma continue_residual_credit {A} (I : A -> Prop) (credit : A -> N) d start
+    (m : Cost.t (A + A)) next :
+  (match Cost.value m with
+  | inl a => I a /\ Cost.ticks m + credit a + 1 <= credit start
+  | inr a => I a /\ Cost.ticks m + credit a <= credit start + d
+  end) ->
+  (forall a, I a ->
+    match Cost.value (next a) with
+    | inl b => I b /\ Cost.ticks (next a) + credit b + 1 <= credit a
+    | inr b => I b /\ Cost.ticks (next a) + credit b <= credit a + d
+    end) ->
+  match Cost.value (continue_c m next) with
+  | inl a => I a /\ 1 + Cost.ticks (continue_c m next) + credit a + 1 <= credit start
+  | inr a => I a /\ 1 + Cost.ticks (continue_c m next) + credit a <= credit start + d + 1
+  end.
+Proof.
+  intros Hfirst Hnext. rewrite value_continue_c, ticks_continue_c.
+  destruct (Cost.value m) as [a|a].
+  - destruct Hfirst as [Ha Hfirst]. specialize (Hnext a Ha).
+    destruct (Cost.value (next a)) as [b|b]; destruct Hnext as [Hb Hnext];
+      split; [exact Hb|nia|exact Hb|nia].
+  - destruct Hfirst as [Ha Hfirst]. split; [exact Ha|nia].
+Qed.
+
+Local Lemma continue_residual_plain_credit {A} (I : A -> Prop) (credit : A -> N) d start
+    (m : Cost.t (A + A)) next :
+  (match Cost.value m with
+  | inl a => I a /\ Cost.ticks m + credit a + 1 <= credit start
+  | inr a => I a /\ Cost.ticks m + credit a <= credit start + d
+  end) ->
+  (forall a, I a ->
+    match Cost.value (next a) with
+    | inl b => I b /\ Cost.ticks (next a) + credit b + 1 <= credit a
+    | inr b => I b /\ Cost.ticks (next a) + credit b <= credit a + d
+    end) ->
+  match Cost.value (continue_c m next) with
+  | inl a => I a /\ Cost.ticks (continue_c m next) + credit a + 1 <= credit start
+  | inr a => I a /\ Cost.ticks (continue_c m next) + credit a <= credit start + d
+  end.
+Proof.
+  intros Hfirst Hnext.
+  pose proof (continue_residual_credit I credit d start m next Hfirst Hnext) as Hcredit.
+  destruct (Cost.value (continue_c m next)); destruct Hcredit; split; try assumption; nia.
+Qed.
+
+(** Both outcomes retain their state invariant and residual credit, with an extra exhausted refund. *)
+Theorem iterate_residual_credit {A} (step : A -> Cost.t (A + A)) (I : A -> Prop)
+    (credit : A -> N) fuel start :
+  (forall a, I a ->
+    match Cost.value (step a) with
+    | inl b => I b /\ Cost.ticks (step a) + credit b + 3 <= credit a
+    | inr b => I b /\ Cost.ticks (step a) + credit b <= credit a + 1
+    end) ->
+  I start ->
+  match Cost.value (iterate step fuel start) with
+  | inl a => I a /\ Cost.ticks (iterate step fuel start) + credit a + 1 <= credit start
+  | inr a =>
+    I a /\ Cost.ticks (iterate step fuel start) + credit a <=
+      credit start + (1 + N.pos (Pos.size fuel))
+  end.
+Proof.
+  intros Hstep. revert start. induction fuel as [fuel IH|fuel IH|]; intros start HI.
+  - assert (Hfirst :
+      match Cost.value (Cost.step ;; step start) with
+      | inl b => I b /\ Cost.ticks (Cost.step ;; step start) + credit b + 1 <= credit start
+      | inr b => I b /\ Cost.ticks (Cost.step ;; step start) + credit b <=
+          credit start + (1 + N.pos (Pos.size fuel))
+      end).
+    { specialize (Hstep start HI). autorewrite with galois_cost.
+      destruct (Cost.value (step start)); destruct Hstep; split; try assumption; nia. }
+    pose proof (continue_residual_credit I credit (1 + N.pos (Pos.size fuel)) start
+      (Cost.step ;; step start)
+      (fun a => continue_c (iterate step fuel a) (iterate step fuel)) Hfirst
+      (fun a Ha => continue_residual_plain_credit I credit (1 + N.pos (Pos.size fuel)) a
+        (iterate step fuel a) (iterate step fuel) (IH a Ha) IH))
+      as Hcredit.
+    cbn [iterate]. autorewrite with galois_cost.
+    destruct (Cost.value (continue_c (Cost.step ;; step start)
+      (fun a => continue_c (iterate step fuel a) (iterate step fuel))));
+      destruct Hcredit; split; try assumption;
+      change (N.pos (Pos.size (xI fuel))) with (N.succ (N.pos (Pos.size fuel))); nia.
+  - pose proof (continue_residual_credit I credit (1 + N.pos (Pos.size fuel)) start
+      (iterate step fuel start) (iterate step fuel) (IH start HI) IH) as Hcredit.
+    cbn [iterate]. autorewrite with galois_cost.
+    destruct (Cost.value (continue_c (iterate step fuel start) (iterate step fuel)));
+      destruct Hcredit; split; try assumption;
+      change (N.pos (Pos.size (xO fuel))) with (N.succ (N.pos (Pos.size fuel))); nia.
+  - specialize (Hstep start HI). cbn [iterate]. autorewrite with galois_cost.
+    destruct (Cost.value (step start)); destruct Hstep; split; try assumption;
+      cbn [Pos.size].
+    all: nia.
+Qed.
+
 (** Well-founded recursion runs the functional without charging its proof arguments. *)
 Definition fix_wf {A B : Type} (measure : A -> nat)
     (F : forall x, (forall y, (measure y < measure x)%nat -> Cost.t B) -> Cost.t B)

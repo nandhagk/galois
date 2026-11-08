@@ -127,3 +127,49 @@ Proof.
   - reflexivity.
   - rewrite IH, Nat2N.inj_succ. reflexivity.
 Qed.
+
+Definition residual_step_c (n : nat) : Cost.t (nat + nat) :=
+  match n with
+  | O => Cost.step ;; Cost.ret (inr 0%nat)
+  | S next => Cost.tick 3 ;; Cost.ret (inl next)
+  end.
+
+Definition residual_credit n := 6 * N.of_nat n + 11.
+
+(** The symbolic client retains nonzero terminal credit and the stronger exhausted refund. *)
+Example residual_credit_client fuel n :
+  match Cost.value (iterate residual_step_c fuel n) with
+  | inl final =>
+    (final <= n)%nat /\
+    Cost.ticks (iterate residual_step_c fuel n) + residual_credit final + 1 <= residual_credit n
+  | inr final =>
+    (final <= n)%nat /\
+    Cost.ticks (iterate residual_step_c fuel n) + residual_credit final <=
+      residual_credit n + (1 + N.pos (Pos.size fuel))
+  end.
+Proof.
+  apply (iterate_residual_credit residual_step_c (fun state => (state <= n)%nat)
+    residual_credit fuel n).
+  - intros [|state] Hbound; cbn [residual_step_c]; autorewrite with galois_cost.
+    + split; [exact Hbound|unfold residual_credit; lia].
+    + split; [lia|unfold residual_credit; rewrite Nat2N.inj_succ; nia].
+  - apply Nat.le_refl.
+Qed.
+
+Example residual_credit_stopped :
+  (match Cost.value (iterate residual_step_c 8 0%nat) with
+  | inl final => (false, residual_credit final)
+  | inr final => (true, residual_credit final)
+  end) = (true, 11).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example residual_credit_exhausted :
+  (match Cost.value (iterate residual_step_c 1 2%nat) with
+  | inl final => (false, residual_credit final)
+  | inr final => (true, residual_credit final)
+  end) = (false, 17).
+Proof.
+  vm_compute. reflexivity.
+Qed.
