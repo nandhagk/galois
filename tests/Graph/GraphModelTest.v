@@ -41,6 +41,27 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Section ConstructedObservers.
+Context {V E : Type}.
+Variable roots nodes : list V.
+Variable outgoing : V -> Cost.t (list E).
+Variable source target : E -> Cost.t V.
+
+Example constructed_outgoing v :
+  Graph.out (Graph.Make roots nodes outgoing source target) v = Cost.value (outgoing v).
+Proof.
+  apply Graph.make_out.
+Qed.
+
+Example constructed_endpoints e :
+  Graph.source (Graph.Make roots nodes outgoing source target) e = Cost.value (source e) /\
+  Graph.target (Graph.Make roots nodes outgoing source target) e = Cost.value (target e).
+Proof.
+  split; [apply Graph.make_source|apply Graph.make_target].
+Qed.
+
+End ConstructedObservers.
+
 Example diamond_join_reachable : reachable diamond 4.
 Proof.
   apply reachable_iff_path. exists 1, [(1, 2); (2, 4)].

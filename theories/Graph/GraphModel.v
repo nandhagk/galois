@@ -30,6 +30,27 @@ Definition out {V E} (g : t V E) v := Cost.value (out_c g v).
 Definition source {V E} (g : t V E) e := Cost.value (source_c g e).
 Definition target {V E} (g : t V E) e := Cost.value (target_c g e).
 
+(** Outgoing observation of a constructed graph is the value of its supplied callback. *)
+Theorem make_out {V E} roots nodes (out_c : V -> Cost.t (list E)) source_c target_c v :
+  out (Make roots nodes out_c source_c target_c) v = Cost.value (out_c v).
+Proof.
+  reflexivity.
+Qed.
+
+(** Source observation of a constructed graph is the value of its supplied callback. *)
+Theorem make_source {V E} roots nodes (out_c : V -> Cost.t (list E)) source_c target_c e :
+  source (Make roots nodes out_c source_c target_c) e = Cost.value (source_c e).
+Proof.
+  reflexivity.
+Qed.
+
+(** Target observation of a constructed graph is the value of its supplied callback. *)
+Theorem make_target {V E} roots nodes (out_c : V -> Cost.t (list E)) source_c target_c e :
+  target (Make roots nodes out_c source_c target_c) e = Cost.value (target_c e).
+Proof.
+  reflexivity.
+Qed.
+
 (** Pure client primitives charge one tick on each accessor call. *)
 Definition of_pure {V E} entries nodes (out : V -> list E) (source target : E -> V) :=
   @Make V E entries nodes (Cost.lift (fun _ => 1%N) out)
