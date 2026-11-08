@@ -8,7 +8,7 @@ From Stdlib Require Import List Bool PArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostList CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
-  GraphSearchCost GraphSccSpec GraphTarjan GraphTarjanExact.
+  GraphSearchCost GraphSccSpec GraphTarjan GraphTarjanExact GraphCondense GraphTarjanCondenseCost.
 Import List.ListNotations Cost.Notations.
 
 Module TarjanCost.
@@ -308,6 +308,33 @@ Qed.
 Theorem result_cost w s : Cost.ticks (Tarjan.result_c s) <= potential w s.
 Proof.
   unfold Tarjan.result_c. autorewrite with galois_cost. unfold potential. nia.
+Qed.
+
+Definition condense_k := TarjanCondenseCost.condense_k.
+
+(** Condensation size includes every inspected outgoing occurrence and actual component-key width. *)
+Definition condense_size {V E} (p : Prepared.t V E) r w := TarjanCondenseCost.size p r w.
+
+(** Exact scoped condensation has a numeric linear bound without a second search or global scan. *)
+Theorem condense_cost {V E} (p : Prepared.t V E) scope roots r w :
+  Prepared.ready p -> Scc.exact p scope roots r -> SearchCost.width_bound p [] w ->
+  Cost.ticks (Condense.of_scc_c p scope r) <= condense_k * condense_size p r w.
+Proof.
+  apply TarjanCondenseCost.cost.
+Qed.
+
+(** The numeric condensation bound applies uniformly to families of exact scoped SCC partitions. *)
+Theorem condense_bigO {X V E} (p : X -> Prepared.t V E) scope roots r w :
+  (forall x, Prepared.ready (p x)) ->
+  (forall x, Scc.exact (p x) (scope x) (roots x) (r x)) ->
+  (forall x, SearchCost.width_bound (p x) [] (w x)) ->
+  bigO (fun x => condense_size (p x) (r x) (w x))
+    (fun x => Cost.ticks (Condense.of_scc_c (p x) (scope x) (r x))).
+Proof.
+  intros Hready Hexact Hwidth. exists condense_k. intro x.
+  pose proof (condense_cost (p x) (scope x) (roots x) (r x) (w x)
+    (Hready x) (Hexact x) (Hwidth x)).
+  unfold condense_k, TarjanCondenseCost.condense_k in *. nia.
 Qed.
 
 End TarjanCost.

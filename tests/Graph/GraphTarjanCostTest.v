@@ -7,7 +7,7 @@
 From Stdlib Require Import List PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphTarjan GraphTarjanCost.
+From Galois.Graph Require Import GraphPrepared GraphVisitor GraphTarjan GraphCondense GraphTarjanCost.
 From Galois.Tests.Graph Require Import GraphTarjanTest.
 Import List.ListNotations.
 
@@ -26,6 +26,36 @@ Qed.
 Example nested_tick_observation : nested_ticks = 437%N.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Definition condense_ticks {V E} (p : Prepared.t V E) :=
+  Cost.ticks (Condense.of_scc_c p TarjanFixtures.unrestricted
+    (Tarjan.compute p TarjanFixtures.unrestricted (Prepared.entry_ids p))).
+
+Example line_condense_tick_observation : condense_ticks TarjanFixtures.line = 175%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example nested_condense_tick_observation : condense_ticks TarjanFixtures.nested = 75%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example line_condense_below_numeric_bound :
+  (condense_ticks TarjanFixtures.line <=
+    TarjanCost.condense_k * TarjanCost.condense_size TarjanFixtures.line
+      (Tarjan.compute TarjanFixtures.line TarjanFixtures.unrestricted [1]%positive) 3)%N.
+Proof.
+  vm_compute. discriminate.
+Qed.
+
+Example nested_condense_below_numeric_bound :
+  (condense_ticks TarjanFixtures.nested <=
+    TarjanCost.condense_k * TarjanCost.condense_size TarjanFixtures.nested
+      (Tarjan.compute TarjanFixtures.nested TarjanFixtures.unrestricted [1]%positive) 3)%N.
+Proof.
+  vm_compute. discriminate.
 Qed.
 
 Example initial_potential : TarjanCost.potential 3 Tarjan.initial = 0%N.

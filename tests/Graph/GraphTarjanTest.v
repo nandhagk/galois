@@ -7,7 +7,8 @@
 From Stdlib Require Import List Bool Arith PArith NArith Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSccSpec GraphTarjan.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
+  GraphSearchExact GraphSccSpec GraphTarjan GraphTarjanExact.
 Import List.ListNotations.
 
 Module TarjanFixtures.
@@ -169,6 +170,26 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example parallel_actual_labelled_trace :
+  SearchRun.events parallel unrestricted [1]%positive =
+    [Search.Enter 1 None; Search.Edge 10%nat 1 2 Search.Tree;
+      Search.Enter 2 (Some (10%nat, 1)); Search.Edge 12%nat 2 1 Search.Back;
+      Search.Exit 2 (Some 1); Search.Edge 11%nat 1 2 Search.Forward;
+      Search.Exit 1 None]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example finished_child_is_still_on_tarjan_stack :
+  let s := SearchRun.apply_events Tarjan.visitor
+    (firstn 5 (SearchRun.events parallel unrestricted [1]%positive)) Tarjan.initial in
+  (Tarjan.stack s, FinSet.mem positive_encoding 2%positive (Tarjan.on_stack s),
+    Map.get positive_encoding 2%positive (Tarjan.low s), Tarjan.emitted_rev s) =
+    ([2; 1], true, Some 1, [])%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Definition pending_cross :=
   prepare [1] [1; 2; 3] [(1, 2); (1, 3); (2, 1); (3, 2)].
 
@@ -190,6 +211,68 @@ Qed.
 Example empty_roots : Tarjan.compute distinct unrestricted [] = Scc.Result [] Map.empty.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Definition unknown_within :=
+  Scope.Make FinSet.empty (Some (FinSet.of_list positive_encoding [2; 3; 99]%positive)).
+
+Example admitted_unknown_root_has_no_component :
+  let r := Tarjan.compute nested unknown_within [99; 2; 2; 1; 99]%positive in
+  (Scope.admits unknown_within 99%positive, Prepared.name_of nested 99%positive,
+    Scc.components r, owner_list r [1; 2; 3; 4; 99]%positive) =
+    (true, None, [[3; 2]], [None; Some 1; Some 1; None; None])%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Canonical owner storage is obtained for the actual arbitrary-scope visitor computation. *)
+Example actual_scoped_owner_storage :
+  Map.wf positive_encoding
+    (Scc.comp_of (Tarjan.compute nested unknown_within [99; 2; 2; 1; 99]%positive)).
+Proof.
+  apply TarjanExact.compute_owners_wf.
+Qed.
+
+(** Scope rejection has a universal producer guarantee on the actual owner map. *)
+Example actual_rejected_owner :
+  Map.get positive_encoding 1%positive
+    (Scc.comp_of (Tarjan.compute nested unknown_within [99; 2; 2; 1; 99]%positive)) = None.
+Proof.
+  apply TarjanExact.rejected_unowned.
+  - exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
+  - vm_compute. reflexivity.
+Qed.
+
+(** An admitted unknown ID is absent by the producer's valid-domain theorem. *)
+Example actual_unknown_owner :
+  Map.get positive_encoding 99%positive
+    (Scc.comp_of (Tarjan.compute nested unknown_within [99; 2; 2; 1; 99]%positive)) = None.
+Proof.
+  pose proof (proj1 (proj2 (proj2 (proj2 fixtures_ready)))) as Hready.
+  apply TarjanExact.unknown_unowned; [exact Hready|].
+  intros [v [_ Hi]].
+  pose proof (Prepared.name_of_id_of nested v 99%positive (proj2 (proj2 Hready)) Hi) as Hname.
+  vm_compute in Hname. discriminate.
+Qed.
+
+(** The full empty-root SCC contract is available independently of preparation readiness. *)
+Example empty_roots_exact : Scc.exact distinct unknown_within []
+  (Tarjan.compute distinct unknown_within []).
+Proof.
+  apply TarjanExact.empty_roots_exact.
+Qed.
+
+(** Discovery ranks refer to the same visitor run that returns Tarjan's actual state. *)
+Example actual_discovery_numbering :
+  Map.get positive_encoding 3%positive (Tarjan.disc (snd (Cost.value
+    (SearchRun.run_c nested Tarjan.visitor unknown_within [99; 2; 2; 1; 99]%positive
+      Tarjan.initial)))) = Some 2%positive <->
+  nth_error (Search.preorder (fst (Cost.value
+    (SearchRun.run_c nested Tarjan.visitor unknown_within [99; 2; 2; 1; 99]%positive
+      Tarjan.initial)))) (Nat.pred (Pos.to_nat 2%positive)) = Some 3%positive.
+Proof.
+  apply TarjanExact.discovery_index.
+  exact (proj1 (proj2 (proj2 (proj2 fixtures_ready)))).
 Qed.
 
 End TarjanFixtures.
