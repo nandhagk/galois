@@ -96,3 +96,45 @@ Proof.
   - exact (Intern.next_size E HE s Hwf).
   - exact (Intern.ids_size E HE i s Hwf).
 Qed.
+
+(** Numeric indexing is available for arbitrary lawful dictionaries and distinct input lists. *)
+Example intern_symbolic_index_client {K} (E : encoding K) (HE : encoding_laws E)
+    xs k v :
+  NoDup xs -> nth_error xs k = Some v ->
+  Intern.find E v (Intern.of_list E xs) = Some (Pos.of_succ_nat k).
+Proof.
+  apply Intern.of_list_index. exact HE.
+Qed.
+
+Example intern_numeric_first :
+  Intern.find nat_encoding 9 (Intern.of_list nat_encoding [9; 4; 7]) = Some 1%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_numeric_last :
+  Intern.find nat_encoding 7 (Intern.of_list nat_encoding [9; 4; 7]) = Some 3%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_empty_index :
+  Intern.find nat_encoding 9 (Intern.of_list nat_encoding []) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_fresh_last_client {K} (E : encoding K) (HE : encoding_laws E) xs v :
+  NoDup xs -> ~ In v xs ->
+  Intern.find E v (Intern.of_list E (xs ++ [v])) = Some (Pos.of_succ_nat (length xs)).
+Proof.
+  apply Intern.of_list_fresh_last. exact HE.
+Qed.
+
+Example intern_first_allocation_client {K} (E : encoding K) (HE : encoding_laws E) v :
+  Intern.find E v (Intern.of_list E ([] ++ [v])) = Some 1%positive.
+Proof.
+  apply (Intern.of_list_fresh_last E HE).
+  - constructor.
+  - cbn. tauto.
+Qed.

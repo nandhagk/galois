@@ -420,6 +420,98 @@ Proof.
   tauto.
 Qed.
 
+Local Lemma list_retains {K} (E : encoding K) (HE : encoding_laws E) xs a i :
+  forall s, wf E s -> find E a s = Some i ->
+  find E a (Cost.value (intern_list_c E xs s)) = Some i.
+Proof.
+  induction xs as [|k rest IH]; intros s Hwf Ha; [exact Ha|].
+  rewrite list_step. apply IH.
+  - now apply intern_wf.
+  - now apply find_intern_old.
+Qed.
+
+Local Lemma fresh_after_other {K} (E : encoding K) (HE : encoding_laws E) a k s :
+  wf E s -> find E a s = None -> a <> k ->
+  find E a (snd (intern E k s)) = None.
+Proof.
+  intros Hwf Ha Hne. rewrite intern_equation.
+  destruct (find E k s); [exact Ha|].
+  cbn [snd]. rewrite find_equation. cbn [table].
+  rewrite Map.get_set_other by (try exact HE; try exact (proj1 Hwf); exact Hne).
+  exact Ha.
+Qed.
+
+Local Lemma fresh_list_index {K} (E : encoding K) (HE : encoding_laws E) xs :
+  forall s start, wf E s -> Pos.to_nat (next s) = S start ->
+  (forall x, In x xs -> find E x s = None) -> NoDup xs ->
+  forall k v, nth_error xs k = Some v ->
+  find E v (Cost.value (intern_list_c E xs s)) = Some (Pos.of_succ_nat (start + k)).
+Proof.
+  induction xs as [|x rest IH]; intros s start Hwf Hnext Hfresh Hnodup [|k] v Hnth;
+    [discriminate|discriminate| |].
+  - cbn [nth_error] in Hnth. injection Hnth as <-.
+    rewrite list_step.
+    assert (Hmissing : find E x s = None) by (apply Hfresh; now left).
+    replace (start + 0)%nat with start by lia.
+    assert (Hid : next s = Pos.of_succ_nat start).
+    { apply Pos2Nat.inj. now rewrite SuccNat2Pos.id_succ. }
+    apply list_retains; [exact HE|now apply intern_wf|].
+    rewrite intern_equation, Hmissing. cbn [snd].
+    rewrite find_equation. cbn [table].
+    rewrite Map.get_set_same by exact (proj1 Hwf). now rewrite Hid.
+  - cbn [nth_error] in Hnth. rewrite list_step.
+    inversion Hnodup as [|a tail Hnot Hrest]; subst.
+    assert (Hmissing : find E x s = None) by (apply Hfresh; now left).
+    replace (start + S k) with (S start + k) by lia.
+    apply (IH (snd (intern E x s)) (S start)).
+    + now apply intern_wf.
+    + rewrite (proj2 (intern_new E x s Hmissing)), Pos2Nat.inj_succ, Hnext. reflexivity.
+    + intros y Hy. apply fresh_after_other.
+      * exact HE.
+      * exact Hwf.
+      * apply Hfresh. now right.
+      * intro Heq. subst y. contradiction.
+    + exact Hrest.
+    + exact Hnth.
+Qed.
+
+(** A duplicate-free input assigns each node exactly its one-based input position. *)
+Theorem of_list_index {K} (E : encoding K) (HE : encoding_laws E) xs k v :
+  NoDup xs -> nth_error xs k = Some v ->
+  find E v (of_list E xs) = Some (Pos.of_succ_nat k).
+Proof.
+  intros Hnodup Hnth. unfold of_list, of_list_c.
+  rewrite Cost.value_bind. fold (@empty K).
+  apply (fresh_list_index E HE xs empty 0); try assumption.
+  - apply wf_empty.
+  - reflexivity.
+  - intros x Hx. rewrite find_equation. apply Map.get_empty.
+Qed.
+
+Local Lemma nodup_snoc {K} (xs : list K) v :
+  NoDup xs -> ~ In v xs -> NoDup (xs ++ [v]).
+Proof.
+  intro Hnodup. induction Hnodup as [|x rest Hnot Hrest IH]; intro Hfresh.
+  - cbn. constructor; [tauto|constructor].
+  - cbn [app]. constructor.
+    + rewrite in_app_iff. intros [Hin|[Heq|Hfalse]].
+      * contradiction.
+      * subst v. apply Hfresh. now left.
+      * contradiction.
+    + apply IH. intro Hin. apply Hfresh. now right.
+Qed.
+
+(** A fresh last node receives the ID immediately after all preceding distinct nodes. *)
+Theorem of_list_fresh_last {K} (E : encoding K) (HE : encoding_laws E) xs v :
+  NoDup xs -> ~ In v xs ->
+  find E v (of_list E (xs ++ [v])) = Some (Pos.of_succ_nat (length xs)).
+Proof.
+  intros Hnodup Hfresh. apply (of_list_index E HE).
+  - now apply nodup_snoc.
+  - rewrite nth_error_app2 by lia.
+    replace (length xs - length xs)%nat with 0%nat by lia. reflexivity.
+Qed.
+
 Arguments empty_c {K} : simpl never.
 Arguments empty {K} : simpl never.
 (** Forward lookup has exactly the charge of the public forward-map lookup. *)
