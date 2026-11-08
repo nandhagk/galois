@@ -235,6 +235,18 @@ Qed.
 Definition visitor {E} : Visitor.t E state :=
   Visitor.Make (fun v _ => enter_c v) (fun _ => edge_c) exit_c.
 
+(** Tarjan dispatches exactly its entry, edge and exit state operations. *)
+Theorem apply_equation {E} (ev : Search.event E) s :
+  Visitor.apply visitor ev s =
+  match ev with
+  | Search.Enter v _ => enter v s
+  | Search.Edge _ u v k => edge u v k s
+  | Search.Exit v parent => exit v parent s
+  end.
+Proof.
+  destruct ev; reflexivity.
+Qed.
+
 (** Result construction pays for reversing the emitted component accumulator. *)
 Definition result_c (s : state) :=
   let* components := rev_c (emitted_rev s) in Cost.ret (Scc.Result components (owners s)).

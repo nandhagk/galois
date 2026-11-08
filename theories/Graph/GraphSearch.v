@@ -180,6 +180,20 @@ Definition apply_events_c {E S} (vis : Visitor.t E S) evs s :=
 Definition apply_events {E S} (vis : Visitor.t E S) evs s :=
   fold_left (fun s ev => Visitor.apply vis ev s) evs s.
 
+(** An empty event block leaves its visitor state unchanged. *)
+Theorem apply_events_nil {E S} (vis : Visitor.t E S) s :
+  apply_events vis [] s = s.
+Proof.
+  reflexivity.
+Qed.
+
+(** A nonempty event block applies its first callback before processing the tail. *)
+Theorem apply_events_cons {E S} (vis : Visitor.t E S) ev rest s :
+  apply_events vis (ev :: rest) s = apply_events vis rest (Visitor.apply vis ev s).
+Proof.
+  reflexivity.
+Qed.
+
 (** Event dispatch retains the complete callback cost and the list traversal charge. *)
 Theorem apply_events_value {E S} (vis : Visitor.t E S) evs s :
   Cost.value (apply_events_c vis evs s) = apply_events vis evs s.
@@ -236,6 +250,18 @@ Definition core_event {E} (c : core E) (ev : Search.event E) :=
   | Search.Exit v _ => finish v c
   | Search.Edge _ _ _ _ => c
   end.
+
+(** Core reconstruction changes discovery at entry and finishing at exit. *)
+Theorem core_event_equation {E} (c : core E) (ev : Search.event E) :
+  core_event c ev =
+  match ev with
+  | Search.Enter v via => discover v via c
+  | Search.Exit v _ => finish v c
+  | Search.Edge _ _ _ _ => c
+  end.
+Proof.
+  destruct ev; reflexivity.
+Qed.
 
 (** A transition's events reconstruct precisely its resulting core, including its selected label. *)
 Theorem transition_core {V E} (p : Prepared.t V E) scope (w : work E) :
@@ -340,6 +366,23 @@ Definition reference_root {V E} (p : Prepared.t V E) scope (c : core E) v
       end
   else (c, []).
 
+(** A reference root exposes admission and freshness before its possibly partial event segment. *)
+Theorem reference_root_equation {V E} (p : Prepared.t V E) scope (c : core E) v :
+  reference_root p scope c v =
+  if Scope.admits scope v then
+    if FinSet.mem positive_encoding v (seen c) then (c, []) else
+      match Prepared.name_of p v with
+      | None => (c, [])
+      | Some _ =>
+        let '(w, evs) := reference_loop p scope (Pos.to_nat (Prepared.fuel p))
+          ([(v, Prepared.succ_edges p v)], discover v None c) in
+        (snd w, Search.Enter v None :: evs)
+      end
+  else (c, []).
+Proof.
+  reflexivity.
+Qed.
+
 (** Every reference root's entry and loop events reconstruct the actual root result. *)
 Theorem reference_root_core {V E} (p : Prepared.t V E) scope (c : core E) v :
   fst (reference_root p scope c v) =
@@ -400,6 +443,20 @@ Fixpoint reference_roots {V E} (p : Prepared.t V E) scope roots (c : core E)
     let '(final, later) := reference_roots p scope rest c' in
     (final, here ++ later)
   end.
+
+(** Reference root sequences concatenate the actual event blocks of their supplied occurrences. *)
+Theorem reference_roots_equation {V E} (p : Prepared.t V E) scope roots (c : core E) :
+  reference_roots p scope roots c =
+  match roots with
+  | [] => (c, [])
+  | v :: rest =>
+    let '(c', here) := reference_root p scope c v in
+    let '(final, later) := reference_roots p scope rest c' in
+    (final, here ++ later)
+  end.
+Proof.
+  destruct roots; reflexivity.
+Qed.
 
 (** Root event concatenation reconstructs the actual final core without reselecting parents. *)
 Theorem reference_roots_core {V E} (p : Prepared.t V E) scope roots c :
