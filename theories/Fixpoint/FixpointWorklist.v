@@ -403,6 +403,15 @@ Proof.
     fuel (initial a))); autorewrite with galois_cost; lia.
 Qed.
 
+(** Empty constructors are free and initialization charges the complete original enqueue list. *)
+Theorem initial_cost {X C A} (a : Analysis.t X C A) :
+  Cost.ticks (initial_c a) =
+    Cost.ticks (enqueue_c a (System.constraints (Analysis.system a))
+      (State Map.empty Heap.empty FinSet.empty Map.empty 0)).
+Proof.
+  reflexivity.
+Qed.
+
 Arguments step_c {X C A} a ix s : simpl never.
 Arguments step {X C A} a ix s : simpl never.
 Arguments run_c {X C A} a fuel : simpl never.

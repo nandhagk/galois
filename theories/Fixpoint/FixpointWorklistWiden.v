@@ -10,8 +10,8 @@ From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseHeapCost.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointIndex
-  FixpointAnalysis FixpointSolver FixpointCycles FixpointKleene FixpointWorklist FixpointWorklistProof
-  FixpointWorklistCost.
+  FixpointAnalysis FixpointSolver FixpointCycles FixpointKleene FixpointWorklist
+  FixpointWorklistProof FixpointWorklistCost.
 Import List.ListNotations WorklistProof WorklistCost.
 
 Local Open Scope nat_scope.
@@ -345,6 +345,30 @@ Definition widening_budget {X C A} (a : Analysis.t X C A)
   (1 + length (unknowns a) * (Policy.delay (Analysis.policy a) + wbound W)) *
     (1 + sum weight (rows a)).
 
+(** Rank-or-delay credit is independent of a solver's state and scheduling representation. *)
+Definition local_credit {A} {L : lattice A} (W : widening_rank L) remaining value :=
+  match remaining with
+  | O => wrank W value
+  | S n => S n + wbound W
+  end.
+
+(** A selected strict update consumes credit through a delayed join or an immediate widening. *)
+Theorem delayed_rank_credit_progress {A} (L : lattice A) (W : widening_rank L)
+    remaining old value :
+  leb L value old = false ->
+  local_credit W (Nat.pred remaining)
+    (match remaining with
+     | O => widen L old value
+     | S _ => join L old value
+     end) <
+  local_credit W remaining old.
+Proof.
+  intro Hbelow; destruct remaining as [|[|n]]; cbn [Nat.pred local_credit].
+  - exact (widen_rank_progress W old value I I Hbelow).
+  - pose proof (wrank_bounded W (join L old value) I); lia.
+  - lia.
+Qed.
+
 Section RankCredits.
 Context {X C A : Type} (a : Analysis.t X C A) (HL : Analysis.laws a)
   (W : widening_rank (Analysis.lat a)).
@@ -353,26 +377,16 @@ Let L := Analysis.lat a.
 Let selected := Policy.widen_at (Analysis.policy a).
 Let look := lookup EX L.
 
-(** A delayed cut reserves its unused joining changes and a full bounded widening rank. *)
-Definition local_credit remaining value :=
-  match remaining with
-  | O => wrank W value
-  | S n => S n + wbound W
-  end.
-
 (** Every selected change consumes local rank-or-delay credit, including the last delayed join. *)
 Theorem local_credit_progress x remaining old value :
   selected x = true -> leb L value old = false ->
-  local_credit (Nat.pred remaining)
+  local_credit W (Nat.pred remaining)
     (Cost.value (Worklist.operation_c a x remaining old value)) <
-  local_credit remaining old.
+  local_credit W remaining old.
 Proof.
   intros Hselected Hbelow; rewrite Worklist.operation_equation.
   fold selected L; rewrite Hselected.
-  destruct remaining as [|[|n]]; cbn [Nat.pred local_credit].
-  - exact (widen_rank_progress W old value I I Hbelow).
-  - pose proof (wrank_bounded W (join L old value) I); lia.
-  - lia.
+  exact (delayed_rank_credit_progress L W remaining old value Hbelow).
 Qed.
 
 (** The proof-side delay observation uses the same default as the computational update. *)
@@ -381,7 +395,7 @@ Definition remaining (s : Worklist.state X C A) x :=
 
 (** Only cut sites contribute rank credit. *)
 Definition site_credit (s : Worklist.state X C A) x :=
-  if selected x then local_credit (remaining s x) (look (Worklist.current s) x) else 0.
+  if selected x then local_credit W (remaining s x) (look (Worklist.current s) x) else 0.
 
 (** Repeated declared outputs conservatively contribute repeated cut credits. *)
 Definition cut_credit s := sum (site_credit s) (unknowns a).
@@ -411,7 +425,7 @@ Proof.
       first [exact (Analysis.key_laws HL)|exact (values_wf Hs)|exact Hy].
     rewrite <- lookup_equation; reflexivity. }
   assert (Hself : site_credit next x =
-    if selected x then local_credit (Nat.pred n) raised else 0).
+    if selected x then local_credit W (Nat.pred n) raised else 0).
   { unfold site_credit, remaining, next; cbn [Worklist.current Worklist.delays].
     rewrite Map.find_or_equation, Map.get_set_same by exact (delays_wf Hs).
     unfold look; rewrite lookup_equation, Map.get_set_same by exact (values_wf Hs).
@@ -447,7 +461,7 @@ Proof.
   unfold site_credit, remaining; rewrite Hm, Hd; reflexivity.
 Qed.
 
-(** Propagation spends cut credit and newly added readers require a non-cut when credit is unchanged. *)
+(** Newly added readers require a non-cut site when propagation leaves cut credit unchanged. *)
 Theorem update_credit_support ix s x value :
   structural a s -> In x (unknowns a) ->
   let next := Worklist.update a ix s (x, value) in
@@ -489,7 +503,7 @@ Proof.
     + now left.
 Qed.
 
-(** An output fold can add cut readers at equal credit only when another occurrence pays for them. *)
+(** An output fold charges changed cut sites before adding their readers. *)
 Theorem updates_credit_support ix outs s :
   structural a s -> (forall x value, In (x, value) outs -> In x (unknowns a)) ->
   let next := Worklist.updates a ix outs s in
@@ -530,7 +544,7 @@ Let weight := constraint_weight a ix HI HC.
 Let debt_cap := sum weight (rows a).
 Let credits := cut_credit a W.
 
-(** Cut credits each reserve a complete queue refill and non-cut path debt decreases between refills. *)
+(** Each cut credit reserves the full queue debt while equal-credit steps decrease that debt. *)
 Definition widening_potential s := credits s * (1 + debt_cap) + queue_weight a weight s.
 
 Local Lemma step_widen_credit s next :

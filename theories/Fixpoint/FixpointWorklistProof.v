@@ -371,11 +371,8 @@ Proof.
     [discriminate|].
   injection Hstep as <-.
   assert (Hempty : forall c, Heap.priority EC c (Worklist.queue s) = None).
-  { pose proof (proj1 (Heap.pop_none_empty EC (Analysis.row_laws HL) _
-      (heap_wf (valid_state Hinv))) Hpop) as Hem.
-    change (Map.is_empty (Heap.live (Worklist.queue s)) = true) in Hem.
-    exact (proj1 (Map.is_empty_spec EC _
-      (proj1 (proj2 (heap_wf (valid_state Hinv)))) ) Hem). }
+  { exact (Heap.pop_none_priority EC (Analysis.row_laws HL) _
+      (heap_wf (valid_state Hinv)) Hpop). }
   intros c Hc.
   assert (Hnone : pending s c = false).
   { unfold pending; rewrite (queued_live (valid_state Hinv)); unfold present.
