@@ -192,7 +192,7 @@ Qed.
 
 End Agreement.
 
-(** Successful actual local solving agrees with the global least solution at every requested root. *)
+(** Successful local solving agrees with the global least solution at every requested root. *)
 Theorem local_least {X C A} (a : Analysis.t X C A) HT roots fuel result :
   Analysis.laws a -> lub_laws (Analysis.lat a) ->
   monotone_system (Analysis.lat a) (Analysis.system a) ->

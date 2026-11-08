@@ -12,13 +12,13 @@ From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval Fi
   FixpointIndexCost FixpointAnalysis FixpointTotalQueue FixpointTotalKernel
   FixpointTotalInvariant FixpointTotalPotential FixpointTotal.
 Import List.ListNotations Cost.Notations.
-Open Scope N_scope.
+Local Open Scope N_scope.
 
 Module TotalCost.
 
 Module Budget.
 
-(** Budgets bound primitive calls and selected query/output sizes, independently of complete runs. *)
+(** Budgets bound primitive calls and selected query/output sizes independently of complete runs. *)
 Record t := Make {
   metadata : SystemIndexCost.Budget.t;
   row_encoder : N;

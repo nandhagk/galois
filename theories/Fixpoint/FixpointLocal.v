@@ -86,6 +86,32 @@ Definition discover_c {X C A} (a : Analysis.t X C A) roots fuel :=
 Definition discover {X C A} (a : Analysis.t X C A) roots fuel :=
   Cost.value (discover_c a roots fuel).
 
+(** Indexed discovery retains the raw traversal and adds projection only after completion. *)
+Theorem discover_indexed_cost {X C A} (a : Analysis.t X C A) ix roots fuel :
+  Cost.ticks (discover_indexed_c a ix roots fuel) =
+    (Cost.ticks (LocalDiscover.run_c a ix roots fuel) +
+      match LocalDiscover.run a ix roots fuel with
+      | inl _ => 0%N
+      | inr marked => Cost.ticks (project_c (Analysis.key_enc a) (Analysis.row_enc a) marked)
+      end)%N.
+Proof.
+  unfold discover_indexed_c; rewrite Cost.ticks_bind.
+  fold (LocalDiscover.run a ix roots fuel).
+  destruct (LocalDiscover.run a ix roots fuel); rewrite ?Cost.ticks_ret, ?Cost.ticks_map;
+    reflexivity.
+Qed.
+
+(** Public discovery prepends exactly one original-system index construction. *)
+Theorem discover_cost {X C A} (a : Analysis.t X C A) roots fuel :
+  Cost.ticks (discover_c a roots fuel) =
+    (Cost.ticks (index_system_c (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) +
+      Cost.ticks (discover_indexed_c a
+        (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a))
+        roots fuel))%N.
+Proof.
+  unfold discover_c; rewrite Cost.ticks_bind; reflexivity.
+Qed.
+
 (** Restriction changes the row list and retains all original computational callbacks. *)
 Definition restrict {X C A} (a : Analysis.t X C A) cs : Analysis.t X C A :=
   Analysis.Make (Analysis.key_enc a) (Analysis.row_enc a) (Analysis.lat a)
@@ -106,6 +132,14 @@ Theorem rows_incl {X C A} (a : Analysis.t X C A) r :
 Proof.
   unfold rows, rows_c; rewrite value_filter_c.
   intros c Hc; apply filter_In in Hc; exact (proj1 Hc).
+Qed.
+
+(** A filtered row is an original occurrence with true selected-set membership. *)
+Theorem rows_spec {X C A} (a : Analysis.t X C A) r c :
+  In c (rows a r) <-> In c (System.constraints (Analysis.system a)) /\
+    FinSet.mem (Analysis.row_enc a) c (selected r) = true.
+Proof.
+  unfold rows, rows_c; rewrite value_filter_c, filter_In; reflexivity.
 Qed.
 
 (** Restricted evaluation has exactly the original outputs and read trace. *)
@@ -164,6 +198,28 @@ Proof.
     rewrite ?Cost.value_bind, ?Cost.value_ret; reflexivity.
 Qed.
 
+(** Local solving retains discovery, filtering and the actual restricted total computation. *)
+Theorem run_cost {X C A} (a : Analysis.t X C A) HT roots fuel :
+  Cost.ticks (run_c a HT roots fuel) =
+    (Cost.ticks (discover_c a roots fuel) +
+      match Cost.value (discover_indexed_c a
+        (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots fuel) with
+      | inl _ => 0%N
+      | inr r => Cost.ticks (rows_c a r) +
+          Cost.ticks (Total.run_c (restrict a (rows a r))
+            (restriction_termination a HT (rows a r) (rows_incl a r)))
+      end)%N.
+Proof.
+  rewrite discover_cost.
+  unfold run_c, run_indexed_c; rewrite !Cost.ticks_bind.
+  fold (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)).
+  destruct (Cost.value (discover_indexed_c a
+    (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots fuel))
+    as [state|r]; rewrite ?Cost.ticks_bind, ?Cost.ticks_ret.
+  - lia.
+  - fold (rows a r); lia.
+Qed.
+
 (** Public local solving uses the internally prepared original-system index. *)
 Theorem run_equation {X C A} (a : Analysis.t X C A) HT roots fuel :
   run a HT roots fuel =
@@ -199,6 +255,41 @@ Definition checked_c {X C A} (a : Analysis.t X C A) (HT : Terminates.t a) roots 
 
 Definition checked {X C A} (a : Analysis.t X C A) HT roots fuel :=
   Cost.value (checked_c a HT roots fuel).
+
+(** Checked solving reuses the index and adds its successful candidate's partial gate. *)
+Theorem checked_cost {X C A} (a : Analysis.t X C A) HT roots fuel :
+  Cost.ticks (checked_c a HT roots fuel) =
+    (Cost.ticks (run_c a HT roots fuel) +
+      match run a HT roots fuel with
+      | Outcome.Solved candidate => Cost.ticks (check_c a
+        (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots candidate)
+      | _ => 0%N
+      end)%N.
+Proof.
+  rewrite run_equation.
+  unfold checked_c, run_c; rewrite !Cost.ticks_bind.
+  fold (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)).
+  destruct (Cost.value (run_indexed_c a HT
+    (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots fuel));
+    rewrite ?Cost.ticks_ret; lia.
+Qed.
+
+(** Checked local outcomes apply the partial gate only to the successful producer result. *)
+Theorem checked_equation {X C A} (a : Analysis.t X C A) HT roots fuel :
+  checked a HT roots fuel =
+    match run a HT roots fuel with
+    | Outcome.Solved candidate => check a
+      (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots candidate
+    | Outcome.OutOfFuel have => Outcome.OutOfFuel have
+    | Outcome.Rejected why => Outcome.Rejected why
+    end.
+Proof.
+  unfold checked, checked_c; rewrite !Cost.value_bind, run_equation.
+  fold (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)).
+  destruct (Cost.value (run_indexed_c a HT
+    (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots fuel));
+    rewrite ?Cost.value_ret; reflexivity.
+Qed.
 
 (** The candidate equation exposes the existing partial checker and the explicit root guard. *)
 Theorem check_equation {X C A} (a : Analysis.t X C A) ix roots candidate :
@@ -239,8 +330,11 @@ Proof.
 Qed.
 
 Arguments discover_c {X C A} a roots fuel : simpl never.
+Arguments discover {X C A} a roots fuel : simpl never.
 Arguments run_c {X C A} a HT roots fuel : simpl never.
+Arguments run {X C A} a HT roots fuel : simpl never.
 Arguments checked_c {X C A} a HT roots fuel : simpl never.
+Arguments checked {X C A} a HT roots fuel : simpl never.
 
 End Local.
 Import Local.

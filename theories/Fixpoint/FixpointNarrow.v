@@ -36,6 +36,18 @@ Definition outputs_c {X C A} (a : Analysis.t X C A) :=
 
 Definition outputs {X C A} (a : Analysis.t X C A) := Cost.value (outputs_c a).
 
+(** Output construction retains every original target and side declaration occurrence. *)
+Theorem outputs_equation {X C A} (a : Analysis.t X C A) :
+  outputs a = flat_map (fun c => System.target (Analysis.system a) c ::
+    side_targets (Analysis.static a) c) (System.constraints (Analysis.system a)).
+Proof.
+  unfold outputs, outputs_c; rewrite value_fold_right_c.
+  induction (System.constraints (Analysis.system a)) as [|c cs IH].
+  - reflexivity.
+  - cbn [fold_right flat_map]; rewrite !Cost.value_bind, Cost.value_ret, value_app_c, IH.
+    reflexivity.
+Qed.
+
 (** An output reads its old value and aggregate, then invokes narrowing when the order permits. *)
 Definition output_c {X A} (EX : encoding X) (L : lattice A)
     (old sums acc : assignment X A) x :=
@@ -93,17 +105,19 @@ Definition checked {X C A} (a : Analysis.t X C A) n old :=
   Cost.value (checked_c a n old).
 
 (** Wrapping leaves exhaustion and rejection unchanged and checks a narrowed solved candidate. *)
+Definition wrap_run_c {X C A} (sv : Solver.t X C A) a fuel :=
+  Cost.step ;;
+  let* result := Solver.run_c sv a fuel in
+  match result with
+  | Outcome.Solved old =>
+    Cost.map (@Outcome.Solved X A (assignment X A))
+      (checked_c a (Policy.narrowing (Analysis.policy a)) old)
+  | Outcome.OutOfFuel have => Cost.ret (Outcome.OutOfFuel have)
+  | Outcome.Rejected why => Cost.ret (Outcome.Rejected why)
+  end.
+
 Definition wrap {X C A} (sv : Solver.t X C A) : Solver.t X C A :=
-  Solver.Make (fun a fuel =>
-    Cost.step ;;
-    let* result := Solver.run_c sv a fuel in
-    match result with
-    | Outcome.Solved old =>
-      Cost.map (@Outcome.Solved X A (assignment X A))
-        (checked_c a (Policy.narrowing (Analysis.policy a)) old)
-    | Outcome.OutOfFuel have => Cost.ret (Outcome.OutOfFuel have)
-    | Outcome.Rejected why => Cost.ret (Outcome.Rejected why)
-    end).
+  Solver.Make (wrap_run_c sv).
 
 (** Output updates expose their order guard and selected stored value. *)
 Theorem output_equation {X A} EX (L : lattice A) (old sums acc : assignment X A) x :
@@ -240,6 +254,67 @@ Proof.
   destruct (check_post _ _ _) eqn:Hcheck; [apply check_post_sound, Hcheck|exact Hpost].
 Qed.
 
+(** Repeated passes keep well-formedness and decrease from the original assignment. *)
+Theorem rounds_below {X C A} (a : Analysis.t X C A) n old :
+  encoding_laws (Analysis.key_enc a) -> lattice_laws (Analysis.lat a) ->
+  Map.wf (Analysis.key_enc a) old ->
+  Map.wf (Analysis.key_enc a) (rounds a n old) /\
+  fun_leb (Analysis.lat a)
+    (lookup (Analysis.key_enc a) (Analysis.lat a) (rounds a n old))
+    (lookup (Analysis.key_enc a) (Analysis.lat a) old).
+Proof.
+  intros HE HL Hwf; rewrite rounds_equation.
+  induction n as [|n IH]; cbn [Nat.iter].
+  - split; [exact Hwf|]; intro x; apply (leb_refl HL).
+  - destruct IH as [Hwn Hbelow].
+    destruct (pass_below a _ HE HL Hwn) as [Hw' Hbelow'].
+    split; [exact Hw'|]; intro x; eapply (leb_trans HL); [apply Hbelow'|apply Hbelow].
+Qed.
+
+(** The checked result decreases pointwise, including when the gate retains its input. *)
+Theorem checked_below {X C A} (a : Analysis.t X C A) n old :
+  encoding_laws (Analysis.key_enc a) -> lattice_laws (Analysis.lat a) ->
+  Map.wf (Analysis.key_enc a) old ->
+  fun_leb (Analysis.lat a)
+    (lookup (Analysis.key_enc a) (Analysis.lat a) (checked a n old))
+    (lookup (Analysis.key_enc a) (Analysis.lat a) old).
+Proof.
+  intros HE HL Hwf; rewrite checked_equation; destruct (check_post _ _ _).
+  - exact (proj2 (rounds_below a n old HE HL Hwf)).
+  - intro x; apply (leb_refl HL).
+Qed.
+
+(** The wrapper equation keeps underlying solver outcomes explicit. *)
+Theorem wrap_equation {X C A} (sv : Solver.t X C A) a fuel :
+  Solver.run (wrap sv) a fuel =
+    match Solver.run sv a fuel with
+    | Outcome.Solved old => Outcome.Solved (checked a (Policy.narrowing (Analysis.policy a)) old)
+    | Outcome.OutOfFuel have => Outcome.OutOfFuel have
+    | Outcome.Rejected why => Outcome.Rejected why
+    end.
+Proof.
+  assert (Heq : Solver.run (wrap sv) a fuel = Cost.value (wrap_run_c sv a fuel))
+    by reflexivity.
+  rewrite Heq; unfold wrap_run_c; rewrite !Cost.value_bind.
+  fold (Solver.run sv a fuel).
+  destruct (Solver.run sv a fuel); rewrite ?Cost.value_map, ?Cost.value_ret; reflexivity.
+Qed.
+
+(** Wrapping retains the solver invocation tick, its callee work and selected checked narrowing. *)
+Theorem wrap_cost {X C A} (sv : Solver.t X C A) a fuel :
+  Cost.ticks (wrap_run_c sv a fuel) =
+    (1 + Cost.ticks (Solver.run_c sv a fuel) +
+      match Solver.run sv a fuel with
+      | Outcome.Solved old =>
+        Cost.ticks (checked_c a (Policy.narrowing (Analysis.policy a)) old)
+      | _ => 0
+      end)%N.
+Proof.
+  unfold wrap_run_c; rewrite !Cost.ticks_bind, Cost.ticks_step.
+  fold (Solver.run sv a fuel).
+  destruct (Solver.run sv a fuel); rewrite ?Cost.ticks_map, ?Cost.ticks_ret; lia.
+Qed.
+
 (** The wrapper exports soundness alone because narrowing need not keep joining reachability. *)
 Theorem narrow_wrap_sound {X C A} (sv : Solver.t X C A) :
   (forall a fuel m, Analysis.laws a -> Solver.run sv a fuel = Outcome.Solved m ->
@@ -251,11 +326,9 @@ Theorem narrow_wrap_sound {X C A} (sv : Solver.t X C A) :
       (lookup (Analysis.key_enc a) (Analysis.lat a) m).
 Proof.
   intros Hsound a fuel m HL Hrun.
-  unfold Solver.run, wrap in Hrun; cbn [Solver.run_c] in Hrun.
-  autorewrite with galois_cost in Hrun.
-  fold (Solver.run sv a fuel) in Hrun.
+  rewrite wrap_equation in Hrun.
   destruct (Solver.run sv a fuel) as [old|have|why] eqn:Hsv;
-    autorewrite with galois_cost in Hrun; try discriminate.
+    try discriminate.
   injection Hrun as <-; apply checked_post; eapply Hsound; eassumption.
 Qed.
 

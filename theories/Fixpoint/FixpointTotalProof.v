@@ -12,11 +12,11 @@ From Galois.Fixpoint Require Import FixpointSystem FixpointIndex FixpointIndexCo
   FixpointTotalQueue FixpointTotalKernel FixpointTotalInvariant FixpointTotalPotential
   FixpointTotal FixpointTotalCost.
 Import List.ListNotations Cost.Notations.
-Open Scope N_scope.
+Local Open Scope N_scope.
 
 Module TotalProof.
 
-(** Setup retains index preparation, initial queue insertion, metadata traversal and fuel conversion. *)
+(** Setup retains index preparation, queue insertion, metadata traversal and fuel conversion. *)
 Definition setup (b : TotalCost.Budget.t) (C D H : nat) : N :=
   SystemIndexCost.Budget.preparation (TotalCost.Budget.metadata b) C +
   N.of_nat C * TotalCost.Budget.enqueue b +
@@ -112,7 +112,7 @@ Proof.
   unfold rows, cs, S in *; lia.
 Qed.
 
-(** The decreasing incidence potential bounds the actual prepared loop independently of excess fuel. *)
+(** The decreasing incidence potential bounds the prepared loop independently of excess fuel. *)
 Theorem loop_cost fuel :
   Cost.ticks (TotalKernel.loop_c a ix fuel) <=
     N.of_nat rows * TotalCost.Budget.enqueue b +

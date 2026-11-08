@@ -82,6 +82,35 @@ Proof.
   destruct v; unfold adjacent, adjacent_c; autorewrite with galois_cost; reflexivity.
 Qed.
 
+Local Lemma map_ret_cost {V W} (f : V -> W) xs :
+  Cost.ticks (map_c (fun v => Cost.ret (f v)) xs) = N.of_nat (length xs).
+Proof.
+  rewrite ticks_map_c; induction xs as [|v xs IH]; cbn [fold_right length].
+  - reflexivity.
+  - rewrite Cost.ticks_ret, IH, Nat2N.inj_succ; lia.
+Qed.
+
+(** Adjacency charges bucket enumeration, metadata callbacks and every copied list cell. *)
+Theorem adjacent_cost_equation {X C A} (a : Analysis.t X C A) ix v :
+  Cost.ticks (adjacent_c a ix v) =
+    match v with
+    | inl x => (Cost.ticks (contributors_of_c (Analysis.key_enc a) ix x) +
+        N.of_nat (length (contributors_of (Analysis.key_enc a) ix x)))%N
+    | inr c => (3 + Cost.ticks (System.target_c (Analysis.system a) c) +
+        Cost.ticks (System.side_targets_c (Analysis.static a) c) +
+        Cost.ticks (System.deps_c (Analysis.static a) c) +
+        N.of_nat (length (side_targets (Analysis.static a) c)) +
+        N.of_nat (length (System.target (Analysis.system a) c ::
+          side_targets (Analysis.static a) c ++ deps (Analysis.static a) c)))%N
+    end.
+Proof.
+  destruct v as [x|c]; unfold adjacent_c; rewrite !Cost.ticks_bind, ?Cost.ticks_step,
+    map_ret_cost, ?ticks_app_c, ?value_app_c.
+  - reflexivity.
+  - fold (System.target (Analysis.system a) c)
+      (side_targets (Analysis.static a) c) (deps (Analysis.static a) c); lia.
+Qed.
+
 (** Stack transitions expose membership and the returned adjacency list through public values. *)
 Theorem step_equation {V} EV next (s : state V) :
   step EV next s =

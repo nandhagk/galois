@@ -89,7 +89,7 @@ Fixpoint positive_c (n : nat) : Cost.t positive :=
   | S k => Cost.step ;; Cost.map Pos.succ (positive_c k)
   end.
 
-(** Numeric preparation charges row counting, read construction, incidence counting and conversion. *)
+(** Fuel setup charges row counting, read construction, incidence counting and conversion. *)
 Definition fuel_c {X C A} (a : Analysis.t X C A) (HT : Terminates.t a) :=
   let* cs := length_c (System.constraints (Analysis.system a)) in
   let* reads := read_keys_c a in

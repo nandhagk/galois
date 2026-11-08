@@ -15,7 +15,8 @@ Import List.ListNotations.
 
 Module LocalProof.
 
-Local Lemma lefts_member {X C} (vs : list (X + C)) x :
+(** Left projection retains precisely the unknown-tagged vertices. *)
+Theorem lefts_member {X C} (vs : list (X + C)) x :
   In x (Cost.value (Local.lefts_c vs)) <-> In (inl x) vs.
 Proof.
   induction vs as [|[y|c] vs IH]; cbn [Local.lefts_c]; autorewrite with galois_cost.
@@ -24,7 +25,8 @@ Proof.
   - cbn [In]; rewrite IH; intuition discriminate.
 Qed.
 
-Local Lemma rights_member {X C} (vs : list (X + C)) c :
+(** Right projection retains precisely the row-tagged vertices. *)
+Theorem rights_member {X C} (vs : list (X + C)) c :
   In c (Cost.value (Local.rights_c vs)) <-> In (inr c) vs.
 Proof.
   induction vs as [|[x|d] vs IH]; cbn [Local.rights_c]; autorewrite with galois_cost.
@@ -120,6 +122,18 @@ Proof.
       apply (Hedges (inr c)); [apply Hc, Hin|].
       fold (LocalDiscover.adjacent a ix (inr c)).
       rewrite LocalDiscover.adjacent_equation; apply in_map, Hout.
+Qed.
+
+(** Public completed discovery returns a well-formed closed region covering roots. *)
+Theorem public_discover_closed {X C A} (a : Analysis.t X C A) roots fuel r :
+  Analysis.laws a -> Local.discover a roots fuel = inr r ->
+  FinSet.wf (Analysis.key_enc a) (Local.unknowns r) /\
+  FinSet.wf (Analysis.row_enc a) (Local.selected r) /\
+  closed a (index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)) roots r.
+Proof.
+  intros HL Hrun; unfold Local.discover, Local.discover_c in Hrun.
+  rewrite Cost.value_bind in Hrun.
+  exact (local_discover_closed a _ roots fuel r HL Hrun).
 Qed.
 
 (** Every root-containing declared contributor closure contains the actual discovered region. *)

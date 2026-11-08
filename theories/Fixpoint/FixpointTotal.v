@@ -193,5 +193,32 @@ Definition solve_c {X C A} (a : Analysis.t X C A) (HL : Analysis.laws a)
 
 Definition solve {X C A} (a : Analysis.t X C A) HL HT := Cost.value (solve_c a HL HT).
 
+(** Certification observes the same executable assignment without a proof-driven recursion. *)
+Theorem solve_value {X C A} (a : Analysis.t X C A) HL HT :
+  proj1_sig (solve a HL HT) = lookup (Analysis.key_enc a) (Analysis.lat a) (run a HT).
+Proof.
+  reflexivity.
+Qed.
+
+(** The certified result is least under the separate least-join and monotonicity laws. *)
+Theorem solve_least {X C A} (a : Analysis.t X C A) HL HT :
+  lub_laws (Analysis.lat a) -> monotone_system (Analysis.lat a) (Analysis.system a) ->
+  least_solution (Analysis.lat a) (Analysis.system a) (proj1_sig (solve a HL HT)).
+Proof.
+  intros HJ HM; rewrite solve_value; exact (total_least a HL HT HJ HM).
+Qed.
+
+(** Certification adds no computational traversal to the already costed total result. *)
+Theorem solve_cost {X C A} (a : Analysis.t X C A) HL HT :
+  Cost.ticks (solve_c a HL HT) = Cost.ticks (run_c a HT).
+Proof.
+  apply Cost.ticks_map.
+Qed.
+
+Arguments run_c {X C A} a HT : simpl never.
+Arguments run {X C A} a HT : simpl never.
+Arguments solve_c {X C A} a HL HT : simpl never.
+Arguments solve {X C A} a HL HT : simpl never.
+
 End Total.
 Import Total.

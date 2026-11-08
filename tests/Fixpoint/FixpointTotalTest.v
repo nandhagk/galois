@@ -4,13 +4,15 @@
     For example, a repeated side target seeds a cycle whose rows also contain a duplicate.
     Builds on: FixpointTotal, FixpointKleene and the boolean height. *)
 
-From Stdlib Require Import List Bool Arith NArith PArith.
-From Galois.Cost Require Import CostMonad.
+From Stdlib Require Import List Bool Arith NArith PArith Lia.
+From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Lattice Require Import LatticeCore LatticeSimple.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointAnalysis FixpointSolver
-  FixpointLeast FixpointTotalKernel FixpointTotal FixpointKleene.
+  FixpointLeast FixpointIndexCost FixpointTotalKernel FixpointTotal FixpointTotalCost
+  FixpointTotalProof FixpointKleene.
 Import List.ListNotations.
+Local Close Scope N_scope.
 
 Module TotalTest.
 
@@ -125,10 +127,88 @@ Proof.
   exact (Total.total_solved analysis laws termination).
 Qed.
 
+(** Identity reads and fixed side contributions make the cyclic fixture monotone. *)
+Theorem monotone_client : monotone_system bool_lattice cycle.
+Proof.
+  intros c Hc; destruct c as [|[|c]]; split.
+  - intros s t Hle; exact (Hle 1%nat).
+  - intros s t Hle x v Hin; vm_compute in Hin; contradiction.
+  - intros s t Hle; exact (Hle 0%nat).
+  - intros s t Hle x v Hin; vm_compute in Hin; contradiction.
+  - intros s t Hle; apply (leb_refl bool_laws).
+  - intros s t Hle x v Hin; exists v; split; [exact Hin|apply (leb_refl bool_laws)].
+Qed.
+
+(** Certified cyclic solving discharges every premise of the least-solution client. *)
+Theorem least_client :
+  least_solution bool_lattice cycle (proj1_sig (Total.solve analysis laws termination)).
+Proof.
+  exact (Total.solve_least analysis laws termination bool_lub monotone_client).
+Qed.
+
 (** Total computation retains its nonzero setup and loop charges. *)
 Example total_is_charged : (0 < Cost.ticks (Total.run_c analysis termination))%N.
 Proof.
   vm_compute; reflexivity.
+Qed.
+
+Definition metadata_budget : SystemIndexCost.Budget.t :=
+  SystemIndexCost.Budget.Make 10 10 0 0 0 1 3.
+
+Definition budget : TotalCost.Budget.t :=
+  TotalCost.Budget.Make metadata_budget 10 10 1 0 3 0 3.
+
+(** This client discharges the numeric model on finite actual keys and primitive callbacks. *)
+Theorem cost_model : TotalCost.model analysis budget.
+Proof.
+  constructor.
+  - constructor.
+    + intros c Hc x Hx; vm_compute in Hc.
+      destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
+        vm_compute in Hx; intuition subst; vm_compute; congruence.
+    + intros c Hc; vm_compute; repeat split; congruence.
+    + intros c Hc; vm_compute in Hc.
+      destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
+        vm_compute; split; lia.
+  - intros c Hc; vm_compute in Hc.
+    destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
+      vm_compute; split; congruence.
+  - intros [] []; vm_compute; split; congruence.
+  - intros c Hc; vm_compute; congruence.
+  - intros c s Hc; vm_compute in Hc.
+    destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction.
+    + exists 2%nat; split; [vm_compute; lia|].
+      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+    + exists 2%nat; split; [vm_compute; lia|].
+      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+    + exists 3%nat; split; [vm_compute; lia|].
+      vm_compute; apply Query.within_side, Query.within_side, Query.within_ret.
+    + exists 2%nat; split; [vm_compute; lia|].
+      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+  - intros c s Hc; vm_compute in Hc.
+    destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
+      vm_compute; lia.
+Qed.
+
+(** The importing total-cost client uses proved primitive duties rather than a run-cost premise. *)
+Theorem numeric_cost_client :
+  (Cost.ticks (Total.run_c analysis termination) <=
+    (TotalProof.total_k budget 4 3 1 + 2) * 8 +
+    2 * N.pos (Pos.size (TotalKernel.fuel analysis termination)))%N.
+Proof.
+  exact (TotalProof.total_cost analysis laws termination budget cost_model).
+Qed.
+
+(** The numeric family theorem is imported with every primitive premise discharged. *)
+Theorem bigO_client :
+  bigO (fun _ : unit =>
+    (TotalProof.setup budget 4 3 1 +
+      (TotalCost.Budget.step budget 4 + 2) * 8 +
+      2 * N.pos (Pos.size (TotalKernel.fuel analysis termination)))%N)
+    (fun _ : unit => Cost.ticks (Total.run_c analysis termination)).
+Proof.
+  exact (TotalProof.total_bigO (fun _ : unit => analysis) (fun _ => laws)
+    (fun _ => termination) (fun _ => budget) (fun _ => cost_model)).
 Qed.
 
 End TotalTest.
