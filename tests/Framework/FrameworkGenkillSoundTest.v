@@ -5,7 +5,7 @@
     Builds on: FrameworkGenkillSound and FrameworkGenkillLeastTest. *)
 
 From Stdlib Require Import List Bool Arith PArith.
-From Galois.Base Require Import BaseEncoding BaseSet.
+From Galois.Base Require Import BaseEncoding BaseCode BaseSet.
 From Galois.Lattice Require Import LatticeCore LatticeSet LatticeConcrete.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramSemantics ProgramSteps ProgramLink ProgramRuns.
@@ -483,6 +483,90 @@ Example loop_semantic_instances_run_without_laws :
       Some [Some [true]; Some [true; false]; Some [true; false]].
 Proof.
   vm_compute; split; reflexivity.
+Qed.
+
+Definition writer_enc := codec_enc (pair_codec bool_codec nat_codec).
+
+Lemma writer_enc_laws : encoding_laws writer_enc.
+Proof.
+  apply codec_laws_injective, pair_codec_laws; [exact bool_codec_laws|exact nat_codec_laws].
+Qed.
+
+Definition reaching_problem (c : Cfg.t nat nat) :=
+  Bitvector.of_pure c writer_enc (map (fun e => (false, e)) (Cfg.edges c)) Forward
+    (fun e => [(false, e)]) (fun _ => map (fun e => (false, e)) (Cfg.edges c))
+    (fun _ => Some []).
+
+Definition last_writer (_ : state) (es : list nat) (_ : state) u :=
+  match rev es with
+  | [] => False
+  | e :: _ => u = (false, e)
+  end.
+
+Lemma reaching_laws c : bv_cover_laws (m c) (reaching_problem c) (lk c) last_writer.
+Proof.
+  constructor.
+  - intros n Hn; exists []; reflexivity.
+  - intros s xs u Hi Hb Hbad; contradiction.
+  - intros e s0 es u s l t Hr Hstep Hi Hrun Htaken Hw; right.
+    unfold last_writer in Hw; rewrite rev_app_distr in Hw; cbn in Hw.
+    left; symmetry; exact Hw.
+  - intros s0 es u s l t Hr Hstep Hi Hrun Hbad; contradiction.
+Qed.
+
+Lemma reaching_client c sigma :
+  encoding_laws (Cfg.node_enc c) -> encoding_laws (Cfg.edge_enc c) ->
+  graph_wf (Cfg.graph c) ->
+  post_solution (Analysis.lat (Bitvector.may_analysis (reaching_problem c)))
+    (Analysis.system (Bitvector.may_analysis (reaching_problem c))) sigma ->
+  forall s0 es s u, initial (m c) s0 -> run_edges (m c) (lk c) s0 es s ->
+    last_writer s0 es s u -> member (sigma (pc s)) u.
+Proof.
+  intros HN HE Hwf Hpost.
+  eapply (forward_may_cover (m c) (reaching_problem c) (lk c) last_writer sigma);
+    try exact HN; try exact HE; try exact writer_enc_laws; try reflexivity.
+  - apply link_ok; exact Hwf.
+  - apply reaching_laws.
+  - exact Hpost.
+Qed.
+
+Definition reaching_diamond_sigma n :=
+  set_of_list writer_enc (match n with
+    | 1 => [(false, 0)]
+    | 2 => [(false, 1)]
+    | 3 => [(false, 2); (false, 3)]
+    | _ => []
+    end).
+
+Definition reaching_loop_sigma n :=
+  set_of_list writer_enc (match n with
+    | 1 => [(false, 0); (false, 1)]
+    | 2 => [(false, 2)]
+    | _ => []
+    end).
+
+Example reaching_diamond :
+  forall s0 es s u, initial (m diamond) s0 -> run_edges (m diamond) (lk diamond) s0 es s ->
+    last_writer s0 es s u -> member (reaching_diamond_sigma (pc s)) u.
+Proof.
+  apply reaching_client; try exact nat_encoding_laws; [exact diamond_wf|].
+  apply check_post_sound; vm_compute; reflexivity.
+Qed.
+
+Example reaching_loop :
+  member (reaching_loop_sigma 2) (false, 2) /\ ~ member (reaching_loop_sigma 2) (false, 1).
+Proof.
+  split.
+  - assert (Hpost : post_solution
+      (Analysis.lat (Bitvector.may_analysis (reaching_problem loop)))
+      (Analysis.system (Bitvector.may_analysis (reaching_problem loop))) reaching_loop_sigma).
+    { apply check_post_sound; vm_compute; reflexivity. }
+    eapply (reaching_client loop reaching_loop_sigma nat_encoding_laws nat_encoding_laws
+      loop_wf Hpost (St 0 false false) [0; 1; 2] (St 2 true false) (false, 2)).
+    + split; [vm_compute; tauto|reflexivity].
+    + exact actual_loop_history.
+    + reflexivity.
+  - vm_compute; discriminate.
 Qed.
 
 End TwoVariables.
