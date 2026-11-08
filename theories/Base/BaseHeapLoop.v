@@ -19,29 +19,6 @@ Definition potential {S R} (Phi : S -> N) (Psi : R -> N) (r : S + R) :=
   | inr r => Psi r
   end.
 
-Local Definition credit {S R} (I : S -> Prop) (Phi : S -> N) (Psi : R -> N)
-    B d s (m : Cost.t (S + R)) : Prop :=
-  match Cost.value m with
-  | inl s' => I s' /\ Cost.ticks m + Phi s' + 1 <= Phi s
-  | inr r => Cost.ticks m + Psi r <= B + Phi s + d
-  end.
-
-Local Lemma continue_credit {S R} (I : S -> Prop) Phi Psi B d s
-    (m : Cost.t (S + R)) next :
-  credit I Phi Psi B d s m ->
-  (forall s', I s' -> credit I Phi Psi B d s' (next s')) ->
-  credit I Phi Psi B (d + 1) s (Cost.step ;; continue_c m next).
-Proof.
-  intros Hm Hnext. unfold credit in *.
-  autorewrite with galois_cost. rewrite value_continue_c, ticks_continue_c.
-  destruct (Cost.value m) as [s'|r].
-  - destruct Hm as [HI Hcost]. specialize (Hnext s' HI).
-    destruct (Cost.value (next s')) as [s''|r].
-    + destruct Hnext as [HI' Hcost']. split; [exact HI'|lia].
-    + lia.
-  - lia.
-Qed.
-
 (** Stale-step credit pays for arbitrary early termination and the returned result potential. *)
 Theorem iterate_credit {S R} (step : S -> Cost.t (S + R))
     (I : S -> Prop) (Phi : S -> N) (Psi : R -> N) B :
@@ -55,37 +32,7 @@ Theorem iterate_credit {S R} (step : S -> Cost.t (S + R))
     potential Phi Psi (Cost.value (iterate step fuel s)) <=
     B + Phi s + N.pos (Pos.size fuel).
 Proof.
-  intros Hstep.
-  assert (Hcredit : forall fuel s, I s ->
-    credit I Phi Psi B (N.pos (Pos.size fuel)) s (iterate step fuel s)).
-  { intro fuel. induction fuel as [p IH|p IH|]; intros s HI.
-    - pose proof (Hstep s HI) as Hlocal.
-      cbn [iterate]. unfold credit at 1.
-      autorewrite with galois_cost. rewrite value_continue_c, ticks_continue_c.
-      autorewrite with galois_cost.
-      destruct (Cost.value (step s)) as [s'|r].
-      + destruct Hlocal as [HI' Hcost].
-        pose proof (continue_credit I Phi Psi B (N.pos (Pos.size p)) s'
-          (iterate step p s') (iterate step p) (IH s' HI') IH) as Hblocks.
-        unfold credit in Hblocks. autorewrite with galois_cost in Hblocks.
-        destruct (Cost.value (continue_c (iterate step p s') (iterate step p))) as [s''|r].
-        * destruct Hblocks as [HI'' Hbound]. split; [exact HI''|lia].
-        * change (N.pos (Pos.size (xI p))) with (N.succ (N.pos (Pos.size p))). lia.
-      + change (N.pos (Pos.size (xI p))) with (N.succ (N.pos (Pos.size p))). lia.
-    - change (credit I Phi Psi B (N.succ (N.pos (Pos.size p))) s
-        (Cost.step ;; continue_c (iterate step p s) (iterate step p))).
-      replace (N.succ (N.pos (Pos.size p))) with (N.pos (Pos.size p) + 1) by lia.
-      apply continue_credit; [apply IH; exact HI|exact IH].
-    - pose proof (Hstep s HI) as Hlocal.
-      cbn [iterate]. unfold credit at 1. autorewrite with galois_cost.
-      destruct (Cost.value (step s)) as [s'|r].
-      + destruct Hlocal as [HI' Hcost]. split; [exact HI'|lia].
-      + change (N.pos (Pos.size xH)) with 1. lia. }
-  intros fuel s HI. specialize (Hcredit fuel s HI).
-  unfold credit in Hcredit.
-  destruct (Cost.value (iterate step fuel s)); cbn [potential] in *.
-  - destruct Hcredit as [_ Hcost]. lia.
-  - exact Hcredit.
+  unfold potential. apply iterate_terminal_credit.
 Qed.
 
 (** Natural and binary logarithms agree after conversion, including at zero. *)

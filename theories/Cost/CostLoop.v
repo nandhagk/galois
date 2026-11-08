@@ -329,6 +329,77 @@ Proof.
     change (N.pos xH) with 1. nia.
 Qed.
 
+Local Definition terminal_credit {S R} (I : S -> Prop) (Phi : S -> N) (Psi : R -> N)
+    B d s (m : Cost.t (S + R)) : Prop :=
+  match Cost.value m with
+  | inl s' => I s' /\ Cost.ticks m + Phi s' + 1 <= Phi s
+  | inr r => Cost.ticks m + Psi r <= B + Phi s + d
+  end.
+
+Local Lemma continue_terminal_credit {S R} (I : S -> Prop) Phi Psi B d s
+    (m : Cost.t (S + R)) next :
+  terminal_credit I Phi Psi B d s m ->
+  (forall s', I s' -> terminal_credit I Phi Psi B d s' (next s')) ->
+  terminal_credit I Phi Psi B (d + 1) s (Cost.step ;; continue_c m next).
+Proof.
+  intros Hm Hnext. unfold terminal_credit in *.
+  autorewrite with galois_cost. rewrite value_continue_c, ticks_continue_c.
+  destruct (Cost.value m) as [s'|r].
+  - destruct Hm as [HI Hcost]. specialize (Hnext s' HI).
+    destruct (Cost.value (next s')) as [s''|r].
+    + destruct Hnext as [HI' Hcost']. split; [exact HI'|lia].
+    + lia.
+  - lia.
+Qed.
+
+(** Continuing credit pays for binary descent and stopping retains the result's own potential. *)
+Theorem iterate_terminal_credit {S R} (step : S -> Cost.t (S + R))
+    (I : S -> Prop) (Phi : S -> N) (Psi : R -> N) B :
+  (forall s, I s ->
+    match Cost.value (step s) with
+    | inl s' => I s' /\ Cost.ticks (step s) + Phi s' + 2 <= Phi s
+    | inr r => Cost.ticks (step s) + Psi r <= B + Phi s
+    end) ->
+  forall fuel s, I s ->
+  Cost.ticks (iterate step fuel s) +
+    (match Cost.value (iterate step fuel s) with
+     | inl s' => Phi s'
+     | inr r => Psi r
+     end) <= B + Phi s + N.pos (Pos.size fuel).
+Proof.
+  intros Hstep.
+  assert (Hcredit : forall fuel s, I s ->
+    terminal_credit I Phi Psi B (N.pos (Pos.size fuel)) s (iterate step fuel s)).
+  { intro fuel. induction fuel as [p IH|p IH|]; intros s HI.
+    - pose proof (Hstep s HI) as Hlocal.
+      cbn [iterate]. unfold terminal_credit at 1.
+      autorewrite with galois_cost. rewrite value_continue_c, ticks_continue_c.
+      autorewrite with galois_cost.
+      destruct (Cost.value (step s)) as [s'|r].
+      + destruct Hlocal as [HI' Hcost].
+        pose proof (continue_terminal_credit I Phi Psi B (N.pos (Pos.size p)) s'
+          (iterate step p s') (iterate step p) (IH s' HI') IH) as Hblocks.
+        unfold terminal_credit in Hblocks. autorewrite with galois_cost in Hblocks.
+        destruct (Cost.value (continue_c (iterate step p s') (iterate step p))) as [s''|r].
+        * destruct Hblocks as [HI'' Hbound]. split; [exact HI''|lia].
+        * change (N.pos (Pos.size (xI p))) with (N.succ (N.pos (Pos.size p))). lia.
+      + change (N.pos (Pos.size (xI p))) with (N.succ (N.pos (Pos.size p))). lia.
+    - change (terminal_credit I Phi Psi B (N.succ (N.pos (Pos.size p))) s
+        (Cost.step ;; continue_c (iterate step p s) (iterate step p))).
+      replace (N.succ (N.pos (Pos.size p))) with (N.pos (Pos.size p) + 1) by lia.
+      apply continue_terminal_credit; [apply IH; exact HI|exact IH].
+    - pose proof (Hstep s HI) as Hlocal.
+      cbn [iterate]. unfold terminal_credit at 1. autorewrite with galois_cost.
+      destruct (Cost.value (step s)) as [s'|r].
+      + destruct Hlocal as [HI' Hcost]. split; [exact HI'|lia].
+      + change (N.pos (Pos.size xH)) with 1. lia. }
+  intros fuel s HI. specialize (Hcredit fuel s HI).
+  unfold terminal_credit in Hcredit.
+  destruct (Cost.value (iterate step fuel s)).
+  - destruct Hcredit as [_ Hcost]. lia.
+  - exact Hcredit.
+Qed.
+
 (** Well-founded recursion runs the functional without charging its proof arguments. *)
 Definition fix_wf {A B : Type} (measure : A -> nat)
     (F : forall x, (forall y, (measure y < measure x)%nat -> Cost.t B) -> Cost.t B)
