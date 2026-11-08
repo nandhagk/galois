@@ -5,7 +5,7 @@
     For example, repeated diamonds can double the number of non-widening paths at each level.
     Builds on: FixpointCycles, FixpointWorklistCost and LatticeHeight. *)
 
-From Stdlib Require Import List Bool Arith Lia Relations.Relation_Operators Init.Wf.
+From Stdlib Require Import List Bool Arith PArith Lia Relations.Relation_Operators Init.Wf.
 From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseHeapCost.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
@@ -344,6 +344,326 @@ Definition widening_budget {X C A} (a : Analysis.t X C A)
     (W : widening_rank (Analysis.lat a)) (weight : C -> nat) :=
   (1 + length (unknowns a) * (Policy.delay (Analysis.policy a) + wbound W)) *
     (1 + sum weight (rows a)).
+
+Section RankCredits.
+Context {X C A : Type} (a : Analysis.t X C A) (HL : Analysis.laws a)
+  (W : widening_rank (Analysis.lat a)).
+Let EX := Analysis.key_enc a.
+Let L := Analysis.lat a.
+Let selected := Policy.widen_at (Analysis.policy a).
+Let look := lookup EX L.
+
+(** A delayed cut reserves its unused joining changes and a full bounded widening rank. *)
+Definition local_credit remaining value :=
+  match remaining with
+  | O => wrank W value
+  | S n => S n + wbound W
+  end.
+
+(** Every selected change consumes local rank-or-delay credit, including the last delayed join. *)
+Theorem local_credit_progress x remaining old value :
+  selected x = true -> leb L value old = false ->
+  local_credit (Nat.pred remaining)
+    (Cost.value (Worklist.operation_c a x remaining old value)) <
+  local_credit remaining old.
+Proof.
+  intros Hselected Hbelow; rewrite Worklist.operation_equation.
+  fold selected L; rewrite Hselected.
+  destruct remaining as [|[|n]]; cbn [Nat.pred local_credit].
+  - exact (widen_rank_progress W old value I I Hbelow).
+  - pose proof (wrank_bounded W (join L old value) I); lia.
+  - lia.
+Qed.
+
+(** The proof-side delay observation uses the same default as the computational update. *)
+Definition remaining (s : Worklist.state X C A) x :=
+  Map.find_or EX (Policy.delay (Analysis.policy a)) x (Worklist.delays s).
+
+(** Only cut sites contribute rank credit. *)
+Definition site_credit (s : Worklist.state X C A) x :=
+  if selected x then local_credit (remaining s x) (look (Worklist.current s) x) else 0.
+
+(** Repeated declared outputs conservatively contribute repeated cut credits. *)
+Definition cut_credit s := sum (site_credit s) (unknowns a).
+
+Local Lemma changed_site_credit (s : Worklist.state X C A) x value :
+  structural a s -> In x (unknowns a) -> leb L value (look (Worklist.current s) x) = false ->
+  let n := remaining s x in
+  let raised := Cost.value (Worklist.operation_c a x n (look (Worklist.current s) x) value) in
+  let next := Worklist.State
+    (Map.set EX x raised (Worklist.current s)) (Worklist.queue s) (Worklist.queued s)
+    (Map.set EX x (Nat.pred n) (Worklist.delays s)) (Worklist.evaluations s) in
+  cut_credit next <= cut_credit s /\
+  (cut_credit next = cut_credit s -> selected x = false).
+Proof.
+  intros Hs Hx Hbelow; cbn zeta.
+  set (n := remaining s x).
+  set (raised := Cost.value (Worklist.operation_c a x n (look (Worklist.current s) x) value)).
+  set (next := Worklist.State
+    (Map.set EX x raised (Worklist.current s)) (Worklist.queue s) (Worklist.queued s)
+    (Map.set EX x (Nat.pred n) (Worklist.delays s)) (Worklist.evaluations s)).
+  assert (Hother : forall y, y <> x -> site_credit next y = site_credit s y).
+  { intros y Hy; unfold site_credit, remaining, next; cbn [Worklist.current Worklist.delays].
+    rewrite Map.find_or_equation, Map.get_set_other by
+      first [exact (Analysis.key_laws HL)|exact (delays_wf Hs)|exact Hy].
+    rewrite <- Map.find_or_equation.
+    unfold look; rewrite lookup_equation, Map.get_set_other by
+      first [exact (Analysis.key_laws HL)|exact (values_wf Hs)|exact Hy].
+    rewrite <- lookup_equation; reflexivity. }
+  assert (Hself : site_credit next x =
+    if selected x then local_credit (Nat.pred n) raised else 0).
+  { unfold site_credit, remaining, next; cbn [Worklist.current Worklist.delays].
+    rewrite Map.find_or_equation, Map.get_set_same by exact (delays_wf Hs).
+    unfold look; rewrite lookup_equation, Map.get_set_same by exact (values_wf Hs).
+    reflexivity. }
+  assert (Hpoint : forall y, In y (unknowns a) -> site_credit next y <= site_credit s y).
+  { intros y Hy; destruct (eqb EX y x) eqn:Hyx.
+    - apply (eqb_true_iff EX (Analysis.key_laws HL)) in Hyx; subst y.
+      rewrite Hself; unfold site_credit.
+      destruct (selected x) eqn:Hselected; [|reflexivity].
+      pose proof (local_credit_progress x n (look (Worklist.current s) x) value
+        Hselected Hbelow) as Hprogress.
+      fold raised in Hprogress; fold n; lia.
+    - apply (eqb_false_iff EX (Analysis.key_laws HL)) in Hyx.
+      rewrite Hother by exact Hyx; reflexivity. }
+  split; [apply sum_le, Hpoint|].
+  intro Heq; destruct (selected x) eqn:Hselected; [|reflexivity].
+  assert (Hstrict : site_credit next x + 1 <= site_credit s x).
+  { rewrite Hself; unfold site_credit; rewrite Hselected.
+    pose proof (local_credit_progress x n (look (Worklist.current s) x) value
+      Hselected Hbelow) as Hprogress.
+    fold raised in Hprogress; fold n; lia. }
+  pose proof (sum_drop (site_credit s) (site_credit next) (unknowns a) x 1
+    Hx Hpoint Hstrict) as Hdrop.
+  unfold cut_credit in Heq; lia.
+Qed.
+
+Local Lemma enqueue_credit cs s :
+  structural a s -> cut_credit (Worklist.enqueue a cs s) = cut_credit s.
+Proof.
+  intro Hs; destruct (enqueue_properties a (Analysis.row_laws HL) cs s Hs)
+    as [_ [Hm [Hd _]]].
+  unfold cut_credit; apply sum_ext; intros x Hx.
+  unfold site_credit, remaining; rewrite Hm, Hd; reflexivity.
+Qed.
+
+(** Propagation spends cut credit and newly added readers require a non-cut when credit is unchanged. *)
+Theorem update_credit_support ix s x value :
+  structural a s -> In x (unknowns a) ->
+  let next := Worklist.update a ix s (x, value) in
+  structural a next /\ cut_credit next <= cut_credit s /\
+  forall c, FinSet.mem (Analysis.row_enc a) c (Worklist.queued next) = true ->
+    FinSet.mem (Analysis.row_enc a) c (Worklist.queued s) = true \/
+    (In c (readers_of EX ix x) /\ (cut_credit next = cut_credit s -> selected x = false)).
+Proof.
+  intros Hs Hx; cbn zeta.
+  pose proof (proj1 (update_properties a HL ix s x value Hs)) as Hstruct.
+  split; [exact Hstruct|].
+  rewrite Worklist.update_equation; cbn zeta; fold EX L.
+  fold (remaining s x).
+  rewrite Update.rule_equation; fold look.
+  destruct (leb L value (look (Worklist.current s) x)) eqn:Hbelow.
+  - cbn [snd]; split; [reflexivity|]; intros c Hc; now left.
+  - cbn [fst snd].
+    set (n := remaining s x).
+    set (raised := Cost.value (Worklist.operation_c a x n (look (Worklist.current s) x) value)).
+    set (base := Worklist.State
+      (Map.set EX x raised (Worklist.current s)) (Worklist.queue s) (Worklist.queued s)
+      (Map.set EX x (Nat.pred n) (Worklist.delays s)) (Worklist.evaluations s)).
+    assert (Hb : structural a base).
+    { constructor; cbn [base Worklist.current Worklist.queue Worklist.queued Worklist.delays].
+      - apply Map.wf_set, (values_wf Hs).
+      - apply Map.wf_set, (delays_wf Hs).
+      - exact (heap_wf Hs).
+      - exact (queued_wf Hs).
+      - apply (queued_live Hs). }
+    destruct (changed_site_credit s x value Hs Hx Hbelow) as [Hle Hcut].
+    fold n raised base in Hle, Hcut.
+    rewrite (enqueue_credit (readers_of EX ix x) base Hb).
+    split; [exact Hle|].
+    intros c Hc.
+    destruct (enqueue_properties a (Analysis.row_laws HL) (readers_of EX ix x) base Hb)
+      as [_ [_ [_ [_ Hmem]]]].
+    apply Hmem in Hc; destruct Hc as [Hreader|Hold].
+    + right; split; [exact Hreader|exact Hcut].
+    + now left.
+Qed.
+
+(** An output fold can add cut readers at equal credit only when another occurrence pays for them. *)
+Theorem updates_credit_support ix outs s :
+  structural a s -> (forall x value, In (x, value) outs -> In x (unknowns a)) ->
+  let next := Worklist.updates a ix outs s in
+  structural a next /\ cut_credit next <= cut_credit s /\
+  forall c, FinSet.mem (Analysis.row_enc a) c (Worklist.queued next) = true ->
+    FinSet.mem (Analysis.row_enc a) c (Worklist.queued s) = true \/
+    exists x value, In (x, value) outs /\ In c (readers_of EX ix x) /\
+      (cut_credit next = cut_credit s -> selected x = false).
+Proof.
+  revert s; induction outs as [|[x value] outs IH]; intros s Hs Houts; cbn zeta;
+    rewrite Worklist.updates_equation.
+  - split; [exact Hs|]; split; [reflexivity|]; intros c Hc; now left.
+  - destruct (update_credit_support ix s x value Hs (Houts x value (or_introl eq_refl)))
+      as [Hmid [Hle1 Hsupport1]].
+    destruct (IH _ Hmid (fun y v Hy => Houts y v (or_intror Hy)))
+      as [Hnext [Hle2 Hsupport2]].
+    split; [exact Hnext|]; split; [lia|].
+    intros c Hc; destruct (Hsupport2 c Hc) as [Hkeep|[y [v [Hin [Hr Hcut]]]]].
+    + destruct (Hsupport1 c Hkeep) as [Hold|[Hr Hcut]]; [now left|].
+      right; exists x, value; split; [now left|]; split; [exact Hr|].
+      intro Heq; apply Hcut; lia.
+    + right; exists y, v; split; [now right|]; split; [exact Hr|].
+      intro Heq; apply Hcut; lia.
+Qed.
+
+End RankCredits.
+
+Section Widening.
+Context {X C A : Type} (a : Analysis.t X C A) (HL : Analysis.laws a)
+  (W : widening_rank (Analysis.lat a)) (ix : sys_index X C)
+  (HI : sys_index_laws (Analysis.key_enc a) (Analysis.system a) (Analysis.static a) ix)
+  (HC : cuts_every_cycle (Analysis.static a) (Policy.widen_at (Analysis.policy a))).
+Let EX := Analysis.key_enc a.
+Let EC := Analysis.row_enc a.
+Let L := Analysis.lat a.
+Let S := Analysis.system a.
+Let weight := constraint_weight a ix HI HC.
+Let debt_cap := sum weight (rows a).
+Let credits := cut_credit a W.
+
+(** Cut credits each reserve a complete queue refill and non-cut path debt decreases between refills. *)
+Definition widening_potential s := credits s * (1 + debt_cap) + queue_weight a weight s.
+
+Local Lemma step_widen_credit s next :
+  worklist_invariant a ix s -> Worklist.step a ix s = inl next ->
+  widening_potential next < widening_potential s.
+Proof.
+  intros Hinv Hstep; pose proof (valid_state Hinv) as Hs.
+  rewrite Worklist.step_equation in Hstep; fold EX EC L S in Hstep.
+  destruct (Heap.pop EC (Worklist.queue s)) as [[[p c] q]|] eqn:Hpop;
+    [|discriminate].
+  set (base := Worklist.State (Worklist.current s) q
+    (FinSet.remove EC c (Worklist.queued s)) (Worklist.delays s)
+    (Datatypes.S (Worklist.evaluations s))).
+  set (outs := fst (Eval.outputs S c (lookup EX L (Worklist.current s)))).
+  assert (Hresult : next = Worklist.updates a ix outs base).
+  { injection Hstep as Hresult; symmetry; exact Hresult. }
+  subst next.
+  assert (Hb : structural a base) by exact (popped_structural a s p c q Hs Hpop).
+  assert (Hc : In c (System.constraints S)).
+  { apply (queue_listed Hinv c); rewrite (queued_live Hs); unfold present; fold EC.
+    rewrite (Heap.pop_priority EC (Analysis.row_laws HL) _ _ _ _ (heap_wf Hs) Hpop).
+    reflexivity. }
+  destruct (updates_credit_support a HL W ix outs base Hb) as [_ [Hle Hsupport]].
+  - intros x value Hin; exact (output_unknown a HL c (Worklist.current s) x value Hc Hin).
+  - assert (Hbase : credits base = credits s) by reflexivity.
+    fold credits in Hle, Hsupport; rewrite Hbase in Hle.
+    destruct (Nat.lt_ge_cases (credits (Worklist.updates a ix outs base)) (credits s))
+      as [Hdrop|Hequal].
+    + pose proof (queue_weight_bound a weight (Worklist.updates a ix outs base)) as Hcap.
+      fold debt_cap in Hcap; unfold widening_potential; nia.
+    + assert (Heq : credits (Worklist.updates a ix outs base) = credits s) by lia.
+      assert (Hadds : queue_weight a weight (Worklist.updates a ix outs base) <=
+        queue_weight a weight base +
+        sum weight (flat_map (readers_of EX ix) (noncut_outputs a c))).
+      { apply queue_weight_adds; intros d Hd.
+        destruct (Hsupport d Hd) as [Hold|[x [value [Hin [Hr Hselected]]]]].
+        - now left.
+        - right; apply in_flat_map; exists x; split; [|exact Hr].
+          apply filter_In; split.
+          + unfold outs in Hin; rewrite Eval.outputs_spec in Hin; cbn [fst] in Hin.
+            destruct Hin as [Hprimary|Hside].
+            * injection Hprimary as <- <-; now left.
+            * right; apply (System.sides_within (Analysis.static_law HL) c
+                (lookup EX L (Worklist.current s))).
+              apply in_map_iff; exists (x, value); now split.
+          + apply negb_true_iff, Hselected; now rewrite Hbase. }
+      pose proof (popped_weight a (Analysis.row_laws HL) s p c q weight Hs Hc Hpop)
+        as Hpopweight.
+      fold EC base in Hpopweight.
+      pose proof (constraint_weight_dominates a ix HI HC c) as Hdominates.
+      fold EX weight in Hdominates.
+      unfold widening_potential; rewrite Heq; lia.
+Qed.
+
+Local Lemma sum_constant {B} (xs : list B) k : sum (fun _ => k) xs = length xs * k.
+Proof.
+  induction xs as [|x xs IH]; [reflexivity|].
+  change (k + sum (fun _ : B => k) xs = Datatypes.S (length xs) * k).
+  rewrite IH; lia.
+Qed.
+
+Local Lemma initial_credit :
+  credits (Worklist.initial a) <=
+    length (unknowns a) * (Policy.delay (Analysis.policy a) + wbound W).
+Proof.
+  unfold credits, cut_credit.
+  rewrite <- sum_constant.
+  apply sum_le; intros x Hx.
+  unfold site_credit, remaining.
+  rewrite (initial_delays a (Analysis.row_laws HL)).
+  rewrite Map.find_or_equation, Map.get_empty.
+  rewrite (proj1 (initial_frames a (Analysis.row_laws HL))).
+  rewrite lookup_empty.
+  destruct (Policy.widen_at (Analysis.policy a) x); [|lia].
+  destruct (Policy.delay (Analysis.policy a)); cbn [local_credit].
+  - exact (wrank_bounded W (bot L) I).
+  - lia.
+Qed.
+
+(** The initial potential is strictly below the explicit rank-and-path-weight budget. *)
+Theorem initial_widening_potential :
+  widening_potential (Worklist.initial a) < widening_budget a W weight.
+Proof.
+  pose proof initial_credit as Hcredit.
+  pose proof (queue_weight_bound a weight (Worklist.initial a)) as Hdebt.
+  unfold widening_potential, widening_budget, debt_cap in *; nia.
+Qed.
+
+Local Lemma widening_runs_credit n s next :
+  runs (Worklist.step_c a ix) n s (inl next) ->
+  worklist_invariant a ix s ->
+  widening_potential next + n <= widening_potential s.
+Proof.
+  intro Hrun; remember (inl next) as result eqn:Heq.
+  induction Hrun as [s|n s m Hstop|n s mid result Hnext Hrun IH]; intro Hinv.
+  - injection Heq as <-; lia.
+  - discriminate.
+  - pose proof (step_widen_credit s mid Hinv Hnext) as Hdrop.
+    pose proof (IH Heq (step_invariant a HL ix HI s mid Hinv Hnext)); lia.
+Qed.
+
+(** Every actual widening evaluation prefix is strictly below the rank-and-path budget. *)
+Theorem worklist_widen_evals_bound n next :
+  runs (Worklist.step_c a ix) n (Worklist.initial a) (inl next) ->
+  n < widening_budget a W weight.
+Proof.
+  intro Hrun.
+  pose proof (widening_runs_credit n _ next Hrun (initial_invariant a HL ix HI)).
+  pose proof initial_widening_potential; lia.
+Qed.
+
+End Widening.
+
+(** The widening budget includes the final empty-pop probe for the actual priority driver. *)
+Theorem worklist_widen_fuel_enough {X C A} (a : Analysis.t X C A) (HL : Analysis.laws a)
+    (W : widening_rank (Analysis.lat a))
+    (HC : cuts_every_cycle (Analysis.static a) (Policy.widen_at (Analysis.policy a))) fuel :
+  let ix := index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a) in
+  let HI := index_system_laws (Analysis.key_enc a) (Analysis.key_laws HL)
+    (Analysis.system a) (Analysis.static a) in
+  widening_budget a W (constraint_weight a ix HI HC) <= Pos.to_nat fuel ->
+  exists m, Worklist.run a fuel = Outcome.Solved m.
+Proof.
+  cbn zeta; intro Hfuel; rewrite Worklist.run_equation.
+  set (ix := index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)).
+  set (HI := index_system_laws (Analysis.key_enc a) (Analysis.key_laws HL)
+    (Analysis.system a) (Analysis.static a)).
+  pose proof (iterate_value (Worklist.step_c a ix) fuel (Worklist.initial a)) as Hrun.
+  destruct (Cost.value (iterate _ _ _)) as [next|done].
+  - pose proof (worklist_widen_evals_bound a HL W ix HI HC _ _ Hrun).
+    fold ix HI in Hfuel; lia.
+  - exists done; reflexivity.
+Qed.
 
 End WorklistWiden.
 Import WorklistWiden.

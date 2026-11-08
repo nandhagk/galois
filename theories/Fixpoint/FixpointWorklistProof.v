@@ -555,6 +555,24 @@ Proof.
   split; assumption.
 Qed.
 
+(** Every unknown begins with the policy delay because the initialized counter map is empty. *)
+Theorem initial_delays {X C A} (a : Analysis.t X C A) :
+  encoding_laws (Analysis.row_enc a) ->
+  Worklist.delays (Worklist.initial a) = Map.empty.
+Proof.
+  intro HE; rewrite Worklist.initial_equation.
+  set (s := @Worklist.State X C A Map.empty Heap.empty FinSet.empty Map.empty 0).
+  assert (Hs : structural a s).
+  { constructor; cbn.
+    - apply Map.wf_empty.
+    - apply Map.wf_empty.
+    - apply Heap.wf_empty.
+    - apply FinSet.wf_empty.
+    - intro c; rewrite FinSet.mem_empty; unfold present; now rewrite Heap.priority_empty. }
+  exact (proj1 (proj2 (proj2
+    (enqueue_properties a HE (System.constraints (Analysis.system a)) s Hs)))).
+Qed.
+
 (** Every solved priority run satisfies the full solver soundness and joining reachability laws. *)
 Theorem worklist_solver_laws {X C A} : Solver.laws (@Worklist.solver X C A).
 Proof.

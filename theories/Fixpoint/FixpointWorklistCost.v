@@ -83,6 +83,24 @@ Proof.
   - cbn [sum fold_right flat_map]; rewrite length_app, <- IH; reflexivity.
 Qed.
 
+(** A member's nonnegative contribution is bounded by the complete occurrence sum. *)
+Theorem sum_member {B} (f : B -> nat) xs x :
+  In x xs -> f x <= sum f xs.
+Proof.
+  induction xs as [|y xs IH]; intro Hin; [contradiction|].
+  change (f x <= f y + sum f xs).
+  destruct Hin as [Heq|Hin]; [subst y; lia|specialize (IH Hin); lia].
+Qed.
+
+(** Every mutable output's actual reader bucket length is bounded by D. *)
+Theorem reader_degree_bound {X C A} (a : Analysis.t X C A) ix x :
+  In x (unknowns a) ->
+  length (readers_of (Analysis.key_enc a) ix x) <= dependency_count a ix.
+Proof.
+  intro Hx; exact (sum_member
+    (fun y => length (readers_of (Analysis.key_enc a) ix y)) (unknowns a) x Hx).
+Qed.
+
 (** Structural enqueue adds at most one live entry per input occurrence. *)
 Theorem enqueue_size {X C A} (a : Analysis.t X C A)
     (HE : encoding_laws (Analysis.row_enc a)) cs s :
@@ -129,7 +147,8 @@ Definition credit m := sum (fun x => (bound R - rank R (look m x)) * degree x) U
 Definition potential (s : Worklist.state X C A) :=
   Heap.size (Worklist.queue s) + credit (Worklist.current s).
 
-Local Lemma output_unknown c m x value :
+(** Every actual primary or side output belongs to the declared occurrence support. *)
+Theorem output_unknown c m x value :
   In c (System.constraints S) ->
   In (x, value) (fst (Eval.outputs S c (look m))) -> In x U.
 Proof.
@@ -367,6 +386,214 @@ Proof.
   - pose proof (worklist_evals_bound a HL HT HJ ix HI _ _ Hrun); fold ix in Hfuel; lia.
   - exists done; reflexivity.
 Qed.
+
+(** A solved run exposes its actual evaluated prefix and final non-evaluating empty probe. *)
+Theorem worklist_actual_evaluations {X C A} (a : Analysis.t X C A)
+    (HL : Analysis.laws a) (HT : Terminates.t a) (HJ : Analysis.joining a) fuel m :
+  Worklist.run a fuel = Outcome.Solved m ->
+  let ix := index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a) in
+  exists used last,
+    used <= constraint_count a + bound (Terminates.hgt HT) * dependency_count a ix /\
+    Worklist.evaluations last = used /\
+    runs (Worklist.step_c a ix) used (Worklist.initial a) (inl last) /\
+    Worklist.step a ix last = inr m.
+Proof.
+  intro Hsolved; cbn zeta; rewrite Worklist.run_equation in Hsolved.
+  set (ix := index_system (Analysis.key_enc a) (Analysis.system a) (Analysis.static a)).
+  assert (HI : sys_index_laws (Analysis.key_enc a) (Analysis.system a) (Analysis.static a) ix).
+  { apply index_system_laws, (Analysis.key_laws HL). }
+  fold ix in Hsolved.
+  destruct (Cost.value (iterate (Worklist.step_c a ix) fuel (Worklist.initial a)))
+    as [next|done] eqn:Hresult; [discriminate|].
+  injection Hsolved as <-.
+  destruct (iterate_inr_stops (Worklist.step_c a ix) fuel (Worklist.initial a) done Hresult)
+    as [used [last [_ [Hprefix Hstop]]]].
+  exists used, last; split.
+  - exact (worklist_evals_bound a HL HT HJ ix HI used last Hprefix).
+  - destruct (runs_credit a HL HT HJ ix HI used _ last Hprefix
+      (initial_invariant a HL ix HI) (initial_good a HL HT ix HI))
+      as [_ [_ [_ Hevaluations]]].
+    rewrite (proj2 (initial_frames a (Analysis.row_laws HL))) in Hevaluations.
+    split; [exact Hevaluations|]; now split.
+Qed.
+
+Module Budget.
+
+(** Primitive budgets bound callbacks and encodings on the finite declared domains. *)
+Record t := Make {
+  query_nodes : nat;
+  output_count : nat;
+  continuation_ticks : N;
+  key_encoder : N;
+  key_digits : N;
+  row_encoder : N;
+  row_digits : N;
+  lattice_ticks : N;
+  target_ticks : N;
+  rhs_ticks : N;
+  order_ticks : N;
+  selected_ticks : N
+}.
+
+Definition key (b : t) : N := (1 + key_encoder b + key_digits b)%N.
+Definition row (b : t) : N := (1 + row_encoder b + row_digits b)%N.
+Definition heap (b : t) count :=
+  HeapCost.heap_cost (S count) (row_encoder b + row_digits b)%N.
+Definition evaluation (b : t) : N :=
+  (2 + target_ticks b + rhs_ticks b +
+    N.of_nat (query_nodes b) * (3 + key b + continuation_ticks b))%N.
+Definition enqueue (b : t) count : N :=
+  (3 + 2 * row b + target_ticks b + order_ticks b + heap b count)%N.
+Definition update (b : t) count dependencies : N :=
+  (5 * key b + 3 + 2 * lattice_ticks b + selected_ticks b +
+    N.of_nat dependencies * enqueue b count)%N.
+Definition step (b : t) count dependencies : N :=
+  (heap b count + row b + evaluation b +
+    N.of_nat (output_count b) * (1 + update b count dependencies))%N.
+
+End Budget.
+Import Budget.
+
+(** The cost model bounds primitive fields and selected query paths on invariant assignments. *)
+Record cost_model {X C A} (a : Analysis.t X C A) (HT : Terminates.t a) (b : Budget.t) : Prop := {
+  key_budget : forall x, Kleene.cost_key a x ->
+    (Cost.ticks (encode_c (Analysis.key_enc a) x) <= Budget.key_encoder b)%N /\
+    (key_bits (Analysis.key_enc a) x <= Budget.key_digits b)%N;
+  row_budget : forall c, In c (System.constraints (Analysis.system a)) ->
+    (Cost.ticks (encode_c (Analysis.row_enc a) c) <= Budget.row_encoder b)%N /\
+    (key_bits (Analysis.row_enc a) c <= Budget.row_digits b)%N;
+  lattice_budget : forall old value,
+    (Cost.ticks (leb_c (Analysis.lat a) value old) <= Budget.lattice_ticks b)%N /\
+    (Cost.ticks (join_c (Analysis.lat a) old value) <= Budget.lattice_ticks b)%N;
+  callback_budget : forall c, In c (System.constraints (Analysis.system a)) ->
+    (Cost.ticks (System.target_c (Analysis.system a) c) <= Budget.target_ticks b)%N /\
+    (Cost.ticks (System.rhs_c (Analysis.system a) c) <= Budget.rhs_ticks b)%N /\
+    (Cost.ticks (Policy.order_c (Analysis.policy a) (System.target (Analysis.system a) c)) <=
+      Budget.order_ticks b)%N;
+  selection_budget : forall x, In x (unknowns a) ->
+    (Cost.ticks (Policy.widen_at_c (Analysis.policy a) x) <= Budget.selected_ticks b)%N;
+  query_budget : forall m c, Map.wf (Analysis.key_enc a) m ->
+    (forall x, Terminates.inv HT (lookup (Analysis.key_enc a) (Analysis.lat a) m x)) ->
+    In c (System.constraints (Analysis.system a)) ->
+    Query.within (Budget.continuation_ticks b)
+      (lookup (Analysis.key_enc a) (Analysis.lat a) m)
+      (Budget.query_nodes b) (System.rhs (Analysis.system a) c);
+  outputs_budget : forall m c, Map.wf (Analysis.key_enc a) m ->
+    (forall x, Terminates.inv HT (lookup (Analysis.key_enc a) (Analysis.lat a) m x)) ->
+    In c (System.constraints (Analysis.system a)) ->
+    length (fst (Eval.outputs (Analysis.system a) c
+      (lookup (Analysis.key_enc a) (Analysis.lat a) m))) <= Budget.output_count b
+}.
+
+Arguments key_budget {X C A a HT b}.
+Arguments row_budget {X C A a HT b}.
+Arguments lattice_budget {X C A a HT b}.
+Arguments callback_budget {X C A a HT b}.
+Arguments selection_budget {X C A a HT b}.
+Arguments query_budget {X C A a HT b}.
+Arguments outputs_budget {X C A a HT b}.
+
+Section PrimitiveCosts.
+Context {X C A : Type} (a : Analysis.t X C A) (HL : Analysis.laws a)
+  (HT : Terminates.t a) (HJ : Analysis.joining a)
+  (b : Budget.t) (HB : cost_model a HT b).
+Let EX := Analysis.key_enc a.
+Let EC := Analysis.row_enc a.
+Let L := Analysis.lat a.
+Let S := Analysis.system a.
+
+(** Invariant key lookup is bounded independently of assignment size. *)
+Theorem lookup_cost m x :
+  Kleene.cost_key a x ->
+  (Cost.ticks (lookup_c EX L m x) <= Budget.key b)%N.
+Proof.
+  intro Hx; destruct (key_budget HB x Hx) as [Henc Hbits].
+  unfold lookup_c; rewrite Map.find_or_cost, Map.get_cost.
+  fold (key_bits EX x); fold EX in Henc, Hbits.
+  unfold Budget.key; lia.
+Qed.
+
+(** A write to a relevant key retains its encoder and full code-width charge. *)
+Theorem write_cost {V} (m : Map.t X V) x value :
+  Kleene.cost_key a x ->
+  (Cost.ticks (Map.set_c EX x value m) <= Budget.key b)%N.
+Proof.
+  intro Hx; destruct (key_budget HB x Hx) as [Henc Hbits].
+  rewrite Map.set_cost; fold (key_bits EX x); fold EX in Henc, Hbits.
+  unfold Budget.key; lia.
+Qed.
+
+(** Each selected evaluation budget retains all system callbacks, lookups and continuations. *)
+Theorem evaluation_cost m c :
+  Map.wf EX m ->
+  (forall x, Terminates.inv HT (lookup EX L m x)) ->
+  In c (System.constraints S) ->
+  (Cost.ticks (Eval.outputs_c S (lookup_c EX L m) c) <= Budget.evaluation b)%N.
+Proof.
+  intros Hwf Hinv Hc.
+  assert (Hreads : forall x, In x (Query.reads (System.rhs S c) (lookup EX L m)) ->
+    (Cost.ticks (lookup_c EX L m x) <= Budget.key b)%N).
+  { intros x Hx; apply lookup_cost.
+    right; exists c; split; [exact Hc|].
+    exact (System.reads_within (Analysis.static_law HL) c _ x Hx). }
+  pose proof (Query.run_c_cost_on (System.rhs S c) (lookup_c EX L m)
+    (lookup EX L m) (Budget.query_nodes b) (Budget.continuation_ticks b)
+    (Budget.key b) (query_budget HB m c Hwf Hinv Hc)
+    (fun _ => eq_refl) Hreads) as Hquery.
+  destruct (callback_budget HB c Hc) as [Htarget [Hrhs _]].
+  fold S in Htarget, Hrhs.
+  rewrite Eval.outputs_cost; unfold Budget.evaluation; lia.
+Qed.
+
+(** Joining keeps policy invocation ticks even though every policy answer selects join. *)
+Theorem operation_cost x n old value :
+  In x (unknowns a) ->
+  (Cost.ticks (Worklist.operation_c a x n old value) <=
+    1 + Budget.selected_ticks b + Budget.lattice_ticks b)%N.
+Proof.
+  intro Hx; rewrite Worklist.operation_cost, HJ.
+  pose proof (selection_budget HB x Hx) as Hselected.
+  pose proof (proj2 (lattice_budget HB old value)) as Hjoin.
+  fold L in Hjoin |- *; lia.
+Qed.
+
+(** The shared rule's numeric budget includes both actual encodings and the delayed policy call. *)
+Theorem rule_cost (s : Worklist.state X C A) x n value :
+  In x (unknowns a) ->
+  (Cost.ticks (Update.rule_c EX L (Worklist.operation_c a x n)
+    (Worklist.current s) x value) <=
+    2 * Budget.key b + 3 + 2 * Budget.lattice_ticks b + Budget.selected_ticks b)%N.
+Proof.
+  intro Hx.
+  assert (Hkey : Kleene.cost_key a x) by now left.
+  pose proof (lookup_cost (Worklist.current s) x Hkey) as Hlookup.
+  pose proof (write_cost (Worklist.current s) x
+    (Cost.value (Worklist.operation_c a x n (lookup EX L (Worklist.current s) x) value)) Hkey)
+    as Hwrite.
+  pose proof (proj1 (lattice_budget HB (lookup EX L (Worklist.current s) x) value))
+    as Hcompare.
+  pose proof (operation_cost x n (lookup EX L (Worklist.current s) x) value Hx) as Hop.
+  rewrite Update.rule_cost; fold EX L in Hcompare |- *.
+  destruct (leb L value (lookup EX L (Worklist.current s) x)); nia.
+Qed.
+
+(** Single-row enqueue separates public heap work from all other primitive charges. *)
+Theorem enqueue_one_callee_cost c s :
+  In c (System.constraints S) ->
+  (Cost.ticks (Worklist.enqueue_one_c a c s) <=
+    2 * Budget.row b + 2 + Budget.target_ticks b + Budget.order_ticks b +
+    Cost.ticks (Heap.push_c EC
+      (Policy.order (Analysis.policy a) (System.target S c)) c (Worklist.queue s)))%N.
+Proof.
+  intro Hc; destruct (row_budget HB c Hc) as [Henc Hbits].
+  destruct (callback_budget HB c Hc) as [Htarget [_ Horder]].
+  rewrite Worklist.enqueue_one_cost, FinSet.mem_cost, FinSet.add_cost.
+  fold S in Htarget, Horder |- *.
+  fold EC in Henc, Hbits |- *; fold (key_bits EC c).
+  destruct (FinSet.mem EC c (Worklist.queued s)); unfold Budget.row; nia.
+Qed.
+
+End PrimitiveCosts.
 
 End WorklistCost.
 Import WorklistCost.

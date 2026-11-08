@@ -4,13 +4,13 @@
     For example, a self-reading row needs a second evaluation and a final empty probe.
     Builds on: FixpointWorklist and the reference solver fixtures. *)
 
-From Stdlib Require Import List Bool NArith PArith.
+From Stdlib Require Import List Bool Arith NArith PArith Lia Relations.Relation_Operators.
 From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseHeapCost.
-From Galois.Lattice Require Import LatticeCore LatticeSimple.
+From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSimple.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointAnalysis
   FixpointSolver FixpointLeast FixpointKleene FixpointWorklist FixpointWorklistProof
-  FixpointWorklistCost.
+  FixpointWorklistCost FixpointCycles FixpointWorklistWiden.
 From Galois.Tests.Fixpoint Require Import FixpointCheckTest FixpointAnalyzeTest.
 Import List.ListNotations Cost.Notations.
 
@@ -138,6 +138,51 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Definition priority_policy : Policy.t nat :=
+  Policy.Make
+    (fun x => Cost.ret
+      (if Nat.eqb x 2 then 1%positive else if Nat.eqb x 1 then 2%positive else 3%positive))
+    (fun _ => Cost.ret false) 0 0.
+Definition priority_analysis :=
+  Analysis.Make nat_encoding nat_encoding bool_lattice cycle_system cycle_static priority_policy.
+
+Example target_priority_changes_the_evaluation_order :
+  worklist_observe cycle_analysis 4 = None /\
+  worklist_observe priority_analysis 4 = Some [true; true; false; false].
+Proof.
+  vm_compute; auto.
+Qed.
+
+Example duplicate_enqueue_charges_membership_without_reinvoking_priority :
+  let empty := @Worklist.State nat nat bool Map.empty Heap.empty FinSet.empty Map.empty 0 in
+  (Cost.ticks (Worklist.enqueue_c charged_analysis [0%nat; 0%nat] empty) -
+    Cost.ticks (Worklist.enqueue_c charged_analysis [0%nat] empty))%N = 4%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition output_order_system : System.t nat nat (bool * bool) :=
+  System.Make [0] (fun c => Cost.ret c)
+    (fun _ => Cost.ret (Query.Side 0 (true, false) (Query.Ret (true, true)))).
+Definition output_order_static : System.static output_order_system :=
+  System.Static (fun _ => Cost.ret []) (fun _ => Cost.ret [0; 0]).
+Definition output_order_analysis :=
+  Analysis.Make nat_encoding nat_encoding widening_lattice output_order_system output_order_static
+    (Policy.Make (fun _ => Cost.ret 1%positive) (fun _ => Cost.ret true) 2 0).
+
+Example primary_precedes_sides_and_below_side_does_not_spend_delay :
+  match Worklist.step output_order_analysis
+    (index_system nat_encoding output_order_system output_order_static)
+    (Worklist.initial output_order_analysis) with
+  | inl s =>
+    (lookup nat_encoding widening_lattice (Worklist.current s) 0,
+     Map.find_or nat_encoding 2 0 (Worklist.delays s))
+  | inr _ => ((false, false), 2)
+  end = ((true, true), 1).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example selected_query_and_queue_work_is_charged :
   (0 < Cost.ticks (Worklist.run_c self_analysis 3))%N.
 Proof.
@@ -213,4 +258,100 @@ Example chain_exhausts_before_empty_probe :
   end = [true; true; true; true; true].
 Proof.
   vm_compute; reflexivity.
+Qed.
+
+Definition counter_le (a b : option nat) :=
+  match a, b with
+  | Some x, Some y => Nat.leb x y
+  | None, Some _ => false
+  | _, None => true
+  end.
+Definition counter_join (a b : option nat) :=
+  match a, b with
+  | Some x, Some y => Some (Nat.max x y)
+  | _, _ => None
+  end.
+Definition counter_lattice :=
+  of_pure counter_le (Some 0) counter_join (fun _ _ => None) (fun _ b => b).
+
+Definition counter_laws : lattice_laws counter_lattice.
+Proof.
+  constructor.
+  - intros [x|]; cbn; [apply Nat.leb_refl|reflexivity].
+  - intros [x|] [y|] [z|]; cbn; try discriminate; try reflexivity.
+    intros Hxy Hyz; apply Nat.leb_le in Hxy; apply Nat.leb_le in Hyz; apply Nat.leb_le; lia.
+  - intros [x|]; reflexivity.
+  - intros [x|] [y|]; cbn; try reflexivity; apply Nat.leb_le, Nat.le_max_l.
+  - intros [x|] [y|]; cbn; try reflexivity; apply Nat.leb_le, Nat.le_max_r.
+  - intros [x|] [y|]; reflexivity.
+  - intros [x|] [y|]; reflexivity.
+  - intros x y Hxy; exact Hxy.
+  - intros [x|] [y|] Hxy; cbn; try reflexivity; apply Nat.leb_refl.
+Qed.
+
+Definition counter_wrank : widening_rank counter_lattice.
+Proof.
+  refine (@WideningRank _ counter_lattice (fun _ => True)
+    (fun value => match value with Some _ => 1 | None => 0 end) 1 _ _ _).
+  - intros [x|] _; cbn; lia.
+  - intros [x|] [y|] _ _ Hbelow; cbn; lia.
+  - intros [x|] [y|] _ _ Hbelow; cbn in *; try discriminate; lia.
+Defined.
+
+Definition counter_successor (value : option nat) :=
+  match value with
+  | Some n => Some (S n)
+  | None => None
+  end.
+Definition counter_system : System.t nat nat (option nat) :=
+  System.Make [0] (fun c => Cost.ret c)
+    (fun _ => Cost.ret (Query.Ask 0 (fun value => Cost.ret (Query.Ret (counter_successor value))))).
+Definition counter_static : System.static counter_system :=
+  System.Static (fun _ => Cost.ret [0]) (fun _ => Cost.ret []).
+Definition counter_analysis selected :=
+  Analysis.Make nat_encoding nat_encoding counter_lattice counter_system counter_static
+    (Policy.Make (fun _ => Cost.ret 1%positive) (fun _ => Cost.ret selected) 2 0).
+
+Definition counter_analysis_laws : Analysis.laws (counter_analysis true).
+Proof.
+  constructor.
+  - exact nat_encoding_laws.
+  - exact nat_encoding_laws.
+  - exact counter_laws.
+  - constructor; intros c s x Hin; exact Hin.
+Qed.
+
+Definition counter_cuts :
+  cuts_every_cycle counter_static (Policy.widen_at (Analysis.policy (counter_analysis true))).
+Proof.
+  intros x Hcycle; induction Hcycle as [y z [_ Hfalse]|y z w Hleft IHleft Hright IHright].
+  - discriminate.
+  - exact IHleft.
+Qed.
+
+Example delayed_counter_cut_terminates :
+  match Worklist.run (counter_analysis true) 5 with
+  | Outcome.Solved m => lookup nat_encoding counter_lattice m 0 = None
+  | _ => False
+  end.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example uncut_counter_keeps_growing :
+  match Worklist.run (counter_analysis false) 8 with
+  | Outcome.OutOfFuel _ => true
+  | _ => false
+  end = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Rank and delay credits instantiate the widening adequacy theorem on an unbounded counter. *)
+Theorem counter_widening_adequate fuel :
+  8 <= Pos.to_nat fuel ->
+  exists m, Worklist.run (counter_analysis true) fuel = Outcome.Solved m.
+Proof.
+  exact (WorklistWiden.worklist_widen_fuel_enough (counter_analysis true) counter_analysis_laws
+    counter_wrank counter_cuts fuel).
 Qed.
