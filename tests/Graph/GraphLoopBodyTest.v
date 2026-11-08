@@ -6,7 +6,8 @@
 
 From Stdlib Require Import List PArith.
 From Galois.Base Require Import BaseEncoding BaseSet.
-From Galois.Graph Require Import GraphPrepared GraphLoopBody GraphFixtures.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphLoopBody GraphFixtures.
+From Galois.Tests.Graph Require Import GraphReducibilityTest.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -59,4 +60,24 @@ Example natural_self_semantic_client :
 Proof.
   apply LoopBody.natural_loop_exact; [exact Fixtures.SelfLoop.fixture_ready|].
   exists 1%nat. split; vm_compute; auto.
+Qed.
+
+Example natural_inner_has_real_back_edge :
+  back_edge (Prepared.graph Fixtures.NestedLoop.prepared) (3%nat, 2%nat).
+Proof.
+  split; [vm_compute; auto|].
+  apply (proj1 exact_tree_dominance_client). vm_compute. reflexivity.
+Qed.
+
+Example exact_dominator_and_back_edge_control :
+  Dom.exact Fixtures.NestedLoop.prepared Fixtures.NestedLoop.tree /\
+  back_edge (Prepared.graph Fixtures.NestedLoop.prepared) (3%nat, 2%nat) /\
+  (forall v, FinSet.mem positive_encoding v
+      (LoopBody.natural_loop Fixtures.NestedLoop.prepared 2 3) = true <->
+    LoopBody.natural_loop_spec Fixtures.NestedLoop.prepared 2 3 v).
+Proof.
+  split; [exact Fixtures.NestedLoop.tree_exact|].
+  split; [exact natural_inner_has_real_back_edge|].
+  intro v. apply LoopBody.natural_loop_exact; [exact Fixtures.NestedLoop.fixture_ready|].
+  exists 3%nat. split; vm_compute; auto.
 Qed.

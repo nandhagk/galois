@@ -55,7 +55,7 @@ Proof.
   apply in_or_app. now right.
 Qed.
 
-(** Structural membership gives the same enclosing-header observation as the weak-order projection. *)
+(** Structural membership agrees with the weak-order projection's enclosing headers. *)
 Theorem member_annotation f h v :
   in_loop f h v ->
   exists stack, In (v, stack) (Wto.annotate [] (Wto.of_forest f)) /\ In h stack.

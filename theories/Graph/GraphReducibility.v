@@ -14,7 +14,7 @@ Import List.ListNotations Cost.Notations.
 
 Module Reducibility.
 
-(** Dominance queries retain all four optional interval lookups and return false on missing ranks. *)
+(** Dominance queries retain four optional interval lookups and reject missing ranks. *)
 Definition dominates_c (t : Dom.tree) d n :=
   let* a := Map.get_c positive_encoding d (Dom.tin t) in
   let* b := Map.get_c positive_encoding n (Dom.tin t) in
@@ -339,7 +339,8 @@ Qed.
 Local Lemma selected_not_back {V E} (p : Prepared.t V E) v e u :
   Prepared.ready p ->
   Map.get positive_encoding v
-    (Search.parent_edge (SearchRun.dfs p Reach.unrestricted (Prepared.entry_ids p))) = Some (e, u) ->
+    (Search.parent_edge (SearchRun.dfs p Reach.unrestricted (Prepared.entry_ids p))) =
+      Some (e, u) ->
     ~ back_edge (Prepared.graph p) e.
 Proof.
   intros Hready Hparent [_ Hdom].
@@ -353,7 +354,8 @@ Proof.
     (arc_source p u e v Harc) (HierCycles.arc_target p u e v Harc) Hdom) as Hancestor.
   destruct (pre_present p Reach.unrestricted _ r u Hexact Hu) as [a Ha].
   destruct (pre_present p Reach.unrestricted _ r v Hexact Hv) as [b Hb].
-  pose proof (SearchOrder.parent_rank p Reach.unrestricted _ r v e u a b Hexact Hparent Ha Hb) as Hlt.
+  pose proof (SearchOrder.parent_rank p Reach.unrestricted _ r v e u a b
+    Hexact Hparent Ha Hb) as Hlt.
   pose proof (ancestor_pre_le p Reach.unrestricted _ r v u b a Hexact Hv Hu Hancestor Hb Ha) as Hle.
   apply Pos2Nat.inj_lt in Hlt. apply Pos2Nat.inj_le in Hle. lia.
 Qed.
@@ -513,7 +515,8 @@ Proof.
     injection Hfirst as Hfirst. injection Hlast as Hlast.
     rewrite <- Hfirst, <- Hlast in Hlt.
     apply Pos2Nat.inj_lt in Hlt. apply Pos2Nat.inj_le in Hpre. lia.
-  - destruct Hkind as [first [last [exit [finish [Hfirst [Hlast [Hlt [Hexit [Hfinish Hexitlt]]]]]]]]].
+  - destruct Hkind as
+      [first [last [exit [finish [Hfirst [Hlast [Hlt [Hexit [Hfinish Hexitlt]]]]]]]]].
     rewrite Hpost_v in Hexit. rewrite Hpost_u in Hfinish.
     injection Hexit as Hexit. injection Hfinish as Hfinish.
     rewrite <- Hexit, <- Hfinish in Hexitlt.
@@ -543,7 +546,7 @@ Proof.
   - intros [_ Hdom]. now apply Hdominance.
 Qed.
 
-(** An exact dominator tree makes the one-search event test decide the fixed semantic reducibility predicate. *)
+(** With an exact dominator tree, the one-search test decides semantic reducibility. *)
 Theorem reducible_b_correct {V E} (p : Prepared.t V E) t :
   Prepared.ready p -> Dom.exact p t ->
     (test p t = true <-> reducible (Prepared.graph p)).

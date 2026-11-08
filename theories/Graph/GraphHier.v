@@ -4,7 +4,7 @@
     For example, deleting the outer header of a nested cycle exposes its inner cyclic component.
     Builds on: GraphTarjan, GraphTarjanOperational and CostLoop. *)
 
-From Stdlib Require Import List Bool PArith Arith Lia Permutation.
+From Stdlib Require Import List Bool PArith NArith Arith Lia Permutation.
 From Galois.Cost Require Import CostMonad CostList CostLoop.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSccSpec
@@ -67,7 +67,7 @@ Definition vertex_entries_c {V E} (p : Prepared.t V E) owners entries u :=
 Definition component_entries_c {V E} (p : Prepared.t V E) owners entries c :=
   fold_left_c (vertex_entries_c p owners) c entries.
 
-(** Entry setup scans every supplied root occurrence and every outgoing occurrence of every member. *)
+(** Entry setup scans all supplied roots and all outgoing occurrences at listed members. *)
 Definition entries_c {V E} (p : Prepared.t V E) roots (r : Scc.result) :=
   let* seeded := fold_left_c (root_entry_c (Scc.comp_of r)) roots Map.empty in
   fold_left_c (component_entries_c p (Scc.comp_of r)) (Scc.components r) seeded.
@@ -81,6 +81,38 @@ Definition vertex_entries {V E} (p : Prepared.t V E) owners entries u :=
 Definition component_entries {V E} (p : Prepared.t V E) owners entries c :=
   Cost.value (component_entries_c p owners entries c).
 Definition entries {V E} (p : Prepared.t V E) roots r := Cost.value (entries_c p roots r).
+
+(** Header lookup retains absence at either the member owner or its witnessed entry row. *)
+Definition preferred_c (owners index : Map.t positive positive) (c : list positive) :=
+  match c with
+  | [] => Cost.ret None
+  | v :: _ =>
+    let* owner := Map.get_c positive_encoding v owners in
+    match owner with
+    | None => Cost.ret None
+    | Some i => Map.get_c positive_encoding i index
+    end
+  end.
+
+Definition preferred owners index c := Cost.value (preferred_c owners index c).
+
+(** The preferred header is an optional query through the member's actual owner. *)
+Theorem preferred_equation owners index c :
+  preferred owners index c =
+  match c with
+  | [] => None
+  | v :: _ =>
+    match Map.get positive_encoding v owners with
+    | None => None
+    | Some i => Map.get positive_encoding i index
+    end
+  end.
+Proof.
+  destruct c as [|v rest]; [reflexivity|].
+  unfold preferred, preferred_c. rewrite Cost.value_bind.
+  fold (Map.get positive_encoding v owners).
+  destruct (Map.get positive_encoding v owners); reflexivity.
+Qed.
 
 (** Offering an entry keeps an existing header and fills only a genuinely missing row. *)
 Theorem offer_equation i v entries :
@@ -284,7 +316,7 @@ Proof.
   reflexivity.
 Qed.
 
-(** Every member emitted in a child scope belongs to the selected finite body, without graph laws. *)
+(** Every emitted child member belongs to the selected finite body without graph laws. *)
 Theorem child_support {V E} (p : Prepared.t V E) scope h body roots c :
   In c (Scc.components (Tarjan.compute p (child_scope scope h body) roots)) ->
     NoDup c /\ incl c body.
@@ -350,14 +382,7 @@ Definition expand_layer {V E} (p : Prepared.t V E) (x : job)
 Proof.
   destruct x as [[[scope entries] owners] c].
   refine (Cost.bind Cost.step (fun _ => _)).
-  refine (Cost.bind
-    (match c with
-    | [] => Cost.ret None
-    | v :: _ =>
-      let* owner := Map.get_c positive_encoding v owners in
-      match owner with None => Cost.ret None | Some i => Map.get_c positive_encoding i entries end
-    end)
-    (fun preferred => _)).
+  refine (Cost.bind (preferred_c owners entries c) (fun preferred => _)).
   refine (Cost.bind
     (Cost.refine (P := fun selection => selection = select preferred c)
       (select_c preferred c) eq_refl) (fun selected => _)).
@@ -437,7 +462,7 @@ Proof.
   apply fix_wf_unfold, expand_layer_ext.
 Qed.
 
-(** The value equation exposes the actual selected header, child SCCs and recursive forest projection. *)
+(** The value equation exposes the selected header, child SCCs and recursive forest projection. *)
 Theorem expand_value_equation {V E} (p : Prepared.t V E) scope index owners c :
   Cost.value (expand_c p (scope, index, owners, c)) =
   match c with
@@ -465,6 +490,7 @@ Proof.
   rewrite expand_equation. unfold expand_layer.
   autorewrite with galois_cost.
   destruct c as [|v rest]; [reflexivity|].
+  unfold preferred_c.
   cbn beta iota zeta. autorewrite with galois_cost.
   fold (Map.get positive_encoding v owners).
   destruct (Map.get positive_encoding v owners) as [i|] eqn:Howner;
@@ -479,6 +505,40 @@ Proof.
     destruct (select None (v :: rest)) as [[h body]|] eqn:Hselected; [|reflexivity].
     destruct body as [|b body]; autorewrite with galois_cost;
       rewrite ?value_rev_c; reflexivity.
+Qed.
+
+(** Expansion charges local queries, child preparation, SCCs, setup and sibling callbacks. *)
+Theorem expand_cost_equation {V E} (p : Prepared.t V E) scope index owners c :
+  Cost.ticks (expand_c p (scope, index, owners, c)) =
+  (1 + Cost.ticks (preferred_c owners index c) +
+    Cost.ticks (select_c (preferred owners index c) c) +
+    match select (preferred owners index c) c with
+    | None => 0
+    | Some (h, []) => Cost.ticks (self_loop_c p h)
+    | Some (h, body) =>
+      let child := child_scope scope h body in
+      let roots := rev body in
+      let r := Tarjan.compute p child roots in
+      Cost.ticks (child_scope_c scope h body) +
+      Cost.ticks (rev_c body) +
+      Cost.ticks (Tarjan.compute_c p child roots) +
+      Cost.ticks (entries_c p roots r) +
+      Cost.ticks (rev_c (Scc.components r)) +
+      Cost.ticks (assemble_c (rev (Scc.components r))
+        (fun d _ => expand_c p (child, entries p roots r, Scc.comp_of r, d)))
+    end)%N.
+Proof.
+  rewrite expand_equation. unfold expand_layer. autorewrite with galois_cost.
+  fold (preferred owners index c). fold (select (preferred owners index c) c).
+  destruct (select (preferred owners index c) c) as [[h body]|] eqn:Hselected.
+  - destruct body as [|v rest]; autorewrite with galois_cost;
+      cbn beta iota zeta; autorewrite with galois_cost; try lia.
+    fold (child_scope scope h (v :: rest)).
+    fold (Tarjan.compute p (child_scope scope h (v :: rest)) (rev (v :: rest))).
+    fold (entries p (rev (v :: rest))
+      (Tarjan.compute p (child_scope scope h (v :: rest)) (rev (v :: rest)))).
+    lia.
+  - autorewrite with galois_cost. lia.
 Qed.
 
 (** The outer layer accepts arbitrary scopes and root occurrences without caller proof arguments. *)

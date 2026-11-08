@@ -69,8 +69,9 @@ Proof.
   pose proof (removed_allowed p scope h body v es Hcycle Hmembers Hheader) as Hallowed.
   split.
   - exists v, []. split.
-    + destruct (Hmembers v (or_introl eq_refl)) as [Heq|Hin]; [subst v; exfalso; apply Hheader; now left|].
-      exact Hin.
+    + destruct (Hmembers v (or_introl eq_refl)) as [Heq|Hin].
+      * subst v. exfalso. apply Hheader. now left.
+      * exact Hin.
     + apply Search.scoped_nil.
       * exact (proj1 (HierFacts.path_target p scope v es v Hcycle)).
       * apply Hallowed. now left.
@@ -94,7 +95,7 @@ Scheme exact_mut := Induction for Hier.exact Sort Prop
 with blocks_mut := Induction for Hier.blocks_exact Sort Prop.
 Combined Scheme exact_blocks_mut from exact_mut, blocks_mut.
 
-(** Every exact hierarchy gives every scoped nonempty cycle a common enclosing header on that cycle. *)
+(** Exact hierarchies give each nonempty scoped cycle a common enclosing header on that cycle. *)
 Theorem exact_heads {V E} (p : Prepared.t V E) :
   (forall scope roots f, Hier.exact p scope roots f -> forest_heads p scope roots f) /\
   (forall scope roots f, Hier.blocks_exact p scope roots f ->

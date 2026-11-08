@@ -78,7 +78,7 @@ Proof.
     + apply Search.scoped_nil; [now apply Prepared.reverse_valid_id in Hu|exact Ha].
 Qed.
 
-(** For a valid tail, the actual stopped reverse search computes precisely natural-loop membership. *)
+(** For a valid tail, the stopped reverse search computes natural-loop membership. *)
 Theorem natural_loop_exact {V E} (p : Prepared.t V E) header tail v :
   Prepared.ready p -> Prepared.valid_id p tail ->
   (FinSet.mem positive_encoding v (natural_loop p header tail) = true <->

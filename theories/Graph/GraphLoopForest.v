@@ -350,7 +350,7 @@ Proof.
   - intros v h. rewrite of_forest_equation. now apply scan_innermost.
 Qed.
 
-(** Ready preparation gives every original exact-loop field for the actual shared-hierarchy projection. *)
+(** Ready preparation gives every exact-loop field for the shared-hierarchy projection. *)
 Theorem compute_exact {V E} (p : Prepared.t V E) roots :
   Prepared.ready p ->
   Loops.exact p (Scope.Make FinSet.empty None) roots

@@ -91,3 +91,12 @@ Proof.
     nested_two_reachable nested_inner_cycle).
   discriminate.
 Qed.
+
+Example enclosing_header_query_client :
+  WeakOrder.heads_of (WeakOrder.compute Fixtures.NestedLoop.prepared [1]) 3 =
+    Some [2; 1].
+Proof.
+  apply (proj2 (WeakOrder.heads_of_spec _ 3 [2; 1]
+    (Wto.unique _ _ _ _ (WeakOrder.compute_valid _ _ Fixtures.NestedLoop.fixture_ready)))).
+  vm_compute. tauto.
+Qed.

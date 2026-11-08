@@ -134,7 +134,7 @@ Proof.
   intros Htree Hrest. inversion Htree; subst; constructor; assumption.
 Qed.
 
-(** Successful component callbacks assemble their actual trees with aligned members and exact blocks. *)
+(** Successful callbacks assemble their actual trees with aligned members and exact blocks. *)
 Theorem assemble_exact {V E} (p : Prepared.t V E) scope roots cs expand :
   (forall c Hin, exists t, Cost.value (expand c Hin) = Some t /\
     Permutation c (Hier.members_tree t) /\

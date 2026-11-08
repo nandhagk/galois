@@ -54,10 +54,12 @@ Proof.
       * exists first. exact (path_scope p source target u first v Hscope Hfirst).
       * exists last. exact (path_scope p source target v last u Hscope Hlast).
     + split.
-      * exists first. apply (path_scope p target source u first v); [intro x; symmetry; apply Hscope|].
-        exact Hfirst.
-      * exists last. apply (path_scope p target source v last u); [intro x; symmetry; apply Hscope|].
-        exact Hlast.
+      * exists first. apply (path_scope p target source u first v).
+        -- intro x. symmetry. apply Hscope.
+        -- exact Hfirst.
+      * exists last. apply (path_scope p target source v last u).
+        -- intro x. symmetry. apply Hscope.
+        -- exact Hlast.
 Qed.
 
 (** Entry witnesses transport through the same rooted domain and root membership. *)

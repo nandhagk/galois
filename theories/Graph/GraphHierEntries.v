@@ -1,7 +1,7 @@
 (** * Witnesses in the hierarchy entry index
 
     Each inserted header retains its actual root or cross-component edge witness.
-    For example, an irreducible component can choose either witnessed entry without assuming dominance.
+    For example, an irreducible component can choose either witnessed entry.
     Builds on: GraphHier, GraphHierFacts and the public SCC specification. *)
 
 From Stdlib Require Import List PArith.
@@ -372,7 +372,8 @@ Proof.
     correct p scope roots r current ->
     correct p scope roots r (HierRun.component_entries p (Scc.comp_of r) current c) /\
       extends current (HierRun.component_entries p (Scc.comp_of r) current c)).
-  { intros current c Hc Hcurrent. apply component_step; [exact Hready|exact Hexact| |exact Hcurrent].
+  { intros current c Hc Hcurrent.
+    apply component_step; [exact Hready|exact Hexact| |exact Hcurrent].
     intros u Hu. exact (member_reachable p scope roots r c u Hexact Hc Hu). }
   exact (proj2 (fold_rows p scope roots r _ (Scc.components r) _ Hseed Hsteps) i h Hrow).
 Qed.
@@ -392,7 +393,8 @@ Proof.
   apply (fold_trigger p scope roots r _ (Scc.components r) _ c j).
   - apply root_fold_correct; [exact Hexact|intros x Hin; exact Hin|apply empty_correct].
   - exact Hc.
-  - intros current d Hd Hcurrent. apply component_step; [exact Hready|exact Hexact| |exact Hcurrent].
+  - intros current d Hd Hcurrent.
+    apply component_step; [exact Hready|exact Hexact| |exact Hcurrent].
     intros x Hx. exact (member_reachable p scope roots r d x Hexact Hd Hx).
   - intros current Hcurrent. rewrite HierRun.component_entries_equation.
     apply (fold_trigger p scope roots r _ c current u j Hcurrent Hu).
@@ -488,7 +490,7 @@ Proof.
   exists c. rewrite SuccNat2Pos.id_succ. exact (conj Hnth Hv).
 Qed.
 
-(** The actual ready-component header lookup selects a member satisfying the fixed entry condition. *)
+(** Ready-component header lookup selects a member satisfying the fixed entry condition. *)
 Theorem selection_entry {V E} (p : Prepared.t V E) scope roots r c v :
   Prepared.ready p -> Scc.exact p scope roots r ->
   In c (Scc.components r) -> In v c ->

@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith Arith Lia.
 From Galois.Cost Require Import CostMonad CostList.
-From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseTacticsInv.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec GraphHierSpec
   GraphHier GraphHierExact GraphWeakOrderFacts GraphSearchInvariant GraphHierCycles
   GraphHierCycleHeads GraphLoopStructure.
@@ -30,7 +30,7 @@ Proof.
   unfold compute, compute_c. rewrite Cost.value_bind. reflexivity.
 Qed.
 
-(** Ready preparation makes the actual weak-order producer valid for all supplied root occurrences. *)
+(** Ready preparation makes produced weak orders valid for all supplied root occurrences. *)
 Theorem compute_valid {V E} (p : Prepared.t V E) roots :
   Prepared.ready p -> Wto.valid p roots (compute p roots).
 Proof.
@@ -39,7 +39,7 @@ Proof.
   apply HierExact.compute_exact, Hready.
 Qed.
 
-(** Position construction increments one positive counter per listed vertex and retains no default. *)
+(** Positions use one positive counter per listed vertex and retain no default. *)
 Fixpoint rank_rows_c start (vs : list positive) : Cost.t (Map.t positive positive) :=
   match vs with
   | [] => Cost.ret Map.empty
@@ -163,6 +163,62 @@ Theorem heads_of_equation w v :
     (Map.of_list positive_encoding (Wto.annotate [] w)).
 Proof.
   reflexivity.
+Qed.
+
+Local Lemma lookup_rows_sound (rows : list (positive * list positive)) v stack :
+  Map.get positive_encoding v (Map.of_list positive_encoding rows) = Some stack ->
+    In (v, stack) rows.
+Proof.
+  rewrite Map.of_list_get. intro Hget.
+  pose proof (fold_left_invariant
+    (fun old (row : positive * list positive) =>
+      if eqb positive_encoding v (fst row) then Some (snd row) else old)
+    rows None
+    (fun old => old = None \/ exists heads, old = Some heads /\ In (v, heads) rows))
+    as Hfold.
+  assert (Hinvariant : forall old row, In row rows ->
+    (old = None \/ exists heads, old = Some heads /\ In (v, heads) rows) ->
+    ((if eqb positive_encoding v (fst row) then Some (snd row) else old) = None \/
+      exists heads,
+        (if eqb positive_encoding v (fst row) then Some (snd row) else old) = Some heads /\
+        In (v, heads) rows)).
+  { intros old [key heads] Hin Hold. cbn [fst snd].
+    destruct (eqb positive_encoding v key) eqn:Heq; [|exact Hold].
+    apply (eqb_true_iff positive_encoding positive_encoding_laws) in Heq. subst key.
+    right. exists heads. auto. }
+  destruct (Hfold (or_introl eq_refl) Hinvariant) as [Hnone|[heads [Heq Hin]]].
+  - congruence.
+  - rewrite Hget in Heq. inversion Heq; subst heads. exact Hin.
+Qed.
+
+Local Lemma lookup_annotation_complete w v stack :
+  NoDup (Wto.order w) -> In (v, stack) (Wto.annotate [] w) ->
+    Map.get positive_encoding v
+      (Map.of_list positive_encoding (Wto.annotate [] w)) = Some stack.
+Proof.
+  intros Hunique Hrow. rewrite Map.of_list_get.
+  destruct (in_split (v, stack) _ Hrow) as [first [last Hsplit]].
+  rewrite Hsplit, fold_left_app. cbn [fold_left fst snd].
+  rewrite (eqb_refl positive_encoding v).
+  apply (fold_left_invariant _ last (Some stack) (fun old => old = Some stack));
+    [reflexivity|].
+  intros old [key heads] Hin Hold. cbn [fst snd].
+  destruct (eqb positive_encoding v key) eqn:Heq; [|exact Hold].
+  apply (eqb_true_iff positive_encoding positive_encoding_laws) in Heq. subst key.
+  assert (Hsame : stack = heads).
+  { apply (WeakOrderFacts.annotation_functional w [] v stack heads Hunique Hrow).
+    rewrite Hsplit. apply in_or_app. right. now right. }
+  now subst heads.
+Qed.
+
+(** On a unique token order, a header query returns exactly that node's enclosing annotation. *)
+Theorem heads_of_spec w v stack :
+  NoDup (Wto.order w) ->
+  (heads_of w v = Some stack <-> In (v, stack) (Wto.annotate [] w)).
+Proof.
+  intro Hunique. rewrite heads_of_equation. split.
+  - apply lookup_rows_sound.
+  - apply lookup_annotation_complete, Hunique.
 Qed.
 
 (** Edges that do not return to an enclosing head have increasing actual partial ranks. *)

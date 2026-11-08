@@ -1,6 +1,6 @@
 (** * Public hierarchy exactness guarantees
 
-    The public owner connects exact forests to scoped weak orders through the structural proof helper.
+    The public owner connects the actual producer and exact forests to scoped weak orders.
     For example, readiness supplies the endpoint closure needed by the weak-order edge condition.
     Builds on: GraphHierFacts. *)
 
@@ -10,7 +10,7 @@ From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSear
 
 Module HierExact.
 
-(** The actual recursive producer is exact for arbitrary scopes and supplied roots from readiness alone. *)
+(** Readiness makes the recursive producer exact for arbitrary scopes and supplied roots. *)
 Theorem compute_exact {V E} (p : Prepared.t V E) scope roots :
   Prepared.ready p -> Hier.exact p scope roots (HierRun.compute p scope roots).
 Proof.

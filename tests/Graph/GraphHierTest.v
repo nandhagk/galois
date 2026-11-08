@@ -4,11 +4,11 @@
     For example, removing the first header of the nested fixture exposes its inner cycle.
     Builds on: GraphHier and GraphFixtures. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List Bool Arith PArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseSet.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphHierSpec GraphHier
-  GraphHierExact GraphFixtures.
+  GraphHierExact GraphFixtures GraphModel GraphCheckWto.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -100,4 +100,45 @@ Proof.
     + apply Search.scoped_nil.
       * exists 2%nat. split; vm_compute; auto.
       * vm_compute. reflexivity.
+Qed.
+
+Example depth_three_ready : Prepared.ready depth_three.
+Proof.
+  apply Prepared.prepare_ready; [exact nat_encoding_laws| |].
+  - constructor.
+    + vm_compute. repeat (apply NoDup_cons; [cbn; intuition congruence|]). apply NoDup_nil.
+    + intros v Hin. vm_compute in Hin |- *. tauto.
+    + intros v [a b] Hin.
+      apply filter_In in Hin. destruct Hin as [_ Hsame].
+      cbn [fst] in Hsame |- *.
+      now apply Nat.eqb_eq in Hsame.
+    + intros v [a b] Hv Hin.
+      apply filter_In in Hin. destruct Hin as [Hin _].
+      cbn [snd].
+      vm_compute in Hin |- *. intuition congruence.
+  - intro v. apply NoDup_filter.
+    vm_compute. repeat (apply NoDup_cons; [cbn; intuition congruence|]). apply NoDup_nil.
+Qed.
+
+Example depth_three_check_accepts :
+  WtoCheck.check depth_three [1]
+    (Wto.of_forest (HierRun.compute depth_three unrestricted [1])) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example cycle_with_multiple_supplied_entries :
+  Wto.of_forest (HierRun.compute Fixtures.Irreducible.prepared unrestricted [3; 2]) =
+    [Wto.WOpen 3; Wto.WVertex 2; Wto.WClose].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example rejected_and_unknown_supplied_roots :
+  let scope := Scope.Make (FinSet.of_list positive_encoding [1])
+    (Some (FinSet.of_list positive_encoding [2; 3])) in
+  Wto.of_forest (HierRun.compute Fixtures.NestedLoop.prepared scope [99; 1; 2; 2]) =
+    [Wto.WOpen 2; Wto.WVertex 3; Wto.WClose].
+Proof.
+  vm_compute. reflexivity.
 Qed.
