@@ -207,7 +207,8 @@ Proof.
       rewrite Hseen, orb_true_r; reflexivity.
 Qed.
 
-Local Lemma step_owned {index current next} :
+(** One continuing driver step preserves visited-block ownership of all written entries. *)
+Theorem step_owned {index current next} :
   owned current -> PreRename.step c index current = inl next -> owned next.
 Proof.
   intros Howned Hstep; rewrite PreRename.step_equation in Hstep.
@@ -426,6 +427,19 @@ Proof.
   - rewrite Map.get_set_same by exact (proj1 Hwf); rewrite Hfresh; reflexivity.
   - rewrite Map.get_set_same by exact (proj1 Hwf).
     rewrite FinSet.mem_add by exact (proj1 (proj2 Hwf)); rewrite eqb_refl; reflexivity.
+Qed.
+
+(** A skipped prepared evaluation leaves the current instruction's table stamp unchanged. *)
+Theorem skipped_packet_stamp {index b parameter work e info} :
+  Map.get (Pre.ee (Pre.keys c)) e (PreRename.events index) = Some info ->
+  PreRename.evaluation info = None ->
+    stamp e (snd (PreRename.instruction c index b parameter work e)) = stamp e (snd work).
+Proof.
+  intros Hinfo Hinstance; rewrite PreRename.instruction_equation, Hinfo, mark_exit_stamp.
+  cbn [snd].
+  rewrite (PreFrameStep.fold_observation (PreRename.alter c (PreRename.evaluation info))
+    (fun work => stamp e (snd work)) (fun work key => alter_stamp e _ work key)).
+  rewrite PreRename.occurrence_equation, Hinstance; reflexivity.
 Qed.
 
 Local Lemma block_body_stamp query index b frames acc :

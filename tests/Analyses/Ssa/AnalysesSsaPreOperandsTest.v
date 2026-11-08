@@ -5,12 +5,13 @@
     Builds on: AnalysesSsaPreOperands and the lawful diamond fixture. *)
 
 From Stdlib Require Import List Bool NArith.
-From Galois.Cost Require Import CostMonad.
+From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphDomSpec GraphCheckDom.
-From Galois.Program Require Import ProgramCfg.
+From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
-  AnalysesSsaPreRename AnalysesSsaPreOperands AnalysesSsaPreFrameInvariant.
+  AnalysesSsaPreRename AnalysesSsaPreOperands AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameStep
+  AnalysesSsaPreFrameWalk AnalysesSsaPreFrameEdges.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest AnalysesSsaPreFrgTest.
 Import List.ListNotations.
 
@@ -304,4 +305,47 @@ Example diamond_phi_source_client : PreFrg.phi_needed Diamond.ctx tt Diamond.Joi
 Proof.
   exact (proj2 (proj2 (proj1
     (PreOperands.build_frg_phi_exact Diamond.ctx Diamond.laws Diamond.Join tt) diamond_phi))).
+Qed.
+
+(** The complete actual diamond driver carries full semantic frame meaning at each processed block. *)
+Example diamond_full_frame_history_client :
+  exists data labels, PreFrg.phi_sites Diamond.ctx = inr data /\
+    let index := PreRename.prepare Diamond.ctx data in
+    PreFrameStep.history
+      (PreFrameWalk.checked_step Diamond.ctx data (g := PreOperands.build_frg Diamond.ctx))
+      (inl (PreRename.initial index)) labels
+      (Cost.value (iterate (PreRename.step_c Diamond.ctx index) (PreRename.walk_budget index)
+        (PreRename.initial index))).
+Proof.
+  exact (PreOperands.build_frg_frame_history Diamond.ctx Diamond.laws).
+Qed.
+
+(** Parallel incoming edge identities keep their distinct point-edge representatives. *)
+Example parallel_point_edge_index :
+  Map.get bool_encoding false (PreFrameEdges.point_edge_index Parallel.ctx) = Some false /\
+  Map.get bool_encoding true (PreFrameEdges.point_edge_index Parallel.ctx) = Some true.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example singleton_no_crossing_edge :
+  Map.get unit_encoding tt (PreFrameEdges.point_edge_index One.ctx) = None.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example crossing_callback_charge :
+  Cost.ticks (PreFrameEdges.edge_pair_c One.ctx tt) = 2%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** The exact point-edge theorem applies to the original lawful diamond presentation. *)
+Example diamond_point_edge_index_client :
+  forall be e, Map.get Diamond.be_enc be (PreFrameEdges.point_edge_index Diamond.ctx) =
+    Some e <->
+    In e (Cfg.edges (Pre.point_cfg Diamond.ctx)) /\
+    SsaPoints.block_edge_of Diamond.points e = Some be.
+Proof.
+  exact (PreFrameEdges.point_edge_index_exact Diamond.ctx Diamond.laws).
 Qed.

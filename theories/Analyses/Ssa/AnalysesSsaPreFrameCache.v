@@ -7,7 +7,7 @@
 From Stdlib Require Import List Bool.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIndex BaseIntern.
-From Galois.Graph Require Import GraphModel GraphPrepared.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec.
 From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Framework Require Import FrameworkBitvector FrameworkUtil.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily
@@ -35,7 +35,8 @@ Proof.
   apply Hfold; now right.
 Qed.
 
-Local Lemma assignment_sound {X Y} (enc : encoding X) (HE : encoding_laws enc)
+(** A successful constructed assignment lookup comes from an actual input pair. *)
+Theorem assignment_sound {X Y} (enc : encoding X) (HE : encoding_laws enc)
     (pairs : list (X * Y)) :
   forall x y, Map.get enc x (Map.of_list enc pairs) = Some y -> In (x, y) pairs.
 Proof.
@@ -538,6 +539,23 @@ Proof.
   split; [exact Hphi|]; split; [exact Hpure|]; split; [exact Hbe|].
   split; [exact Htarget|]; split; [exact Htranslate|]; split; [exact Hfamily|].
   split; [exact Hvpure|]; exists found; split; [congruence|exact Hfound].
+Qed.
+
+(** A prepared child bucket contains precisely actual child-to-parent bindings for that parent ID. *)
+Theorem child_parent data :
+  Pre.laws c ->
+  forall query child parent, In (child, parent)
+    (Index.find positive_encoding query (PreRename.children (PreRename.prepare c data))) ->
+    parent = query /\ Map.get positive_encoding child (Dom.idom (Pre.dom c)) = Some query.
+Proof.
+  intros Hlaw query child parent Hin.
+  destruct (PreRename.prepare_walk_equations c data) as [Hroots [Hparents [Hchildren Hbudget]]].
+  rewrite Hchildren, Index.find_group_by, filter_In in Hin.
+  destruct Hin as [Hin Hsame]; cbn [snd] in Hsame.
+  apply (eqb_true_iff _ positive_encoding_laws) in Hsame; subst parent.
+  split; [reflexivity|].
+  apply (Map.elements_spec positive_encoding positive_encoding_laws);
+    [exact (proj1 (Dom.maps_wf _ _ (Pre.tree_exact c (Pre.graphs c Hlaw))))|exact Hin].
 Qed.
 
 End Cache.

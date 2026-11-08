@@ -479,7 +479,8 @@ Proof.
   rewrite Map.get_empty in Hget; discriminate.
 Qed.
 
-Local Lemma initial_dominance : walk_dominance (PreRename.initial index).
+(** Prepared root tasks start with source-backed scopes dominating their actual entry point. *)
+Theorem initial_dominance : walk_dominance (PreRename.initial index).
 Proof.
   split; rewrite PreRename.initial_equation; cbn [PreRename.output PreRename.pending].
   - exact empty_output_dominance.
@@ -503,7 +504,8 @@ Proof.
         -- apply entry_dominance; exact Hentry.
 Qed.
 
-Local Lemma last_default {X} (xs : list X) a b :
+(** The last element of a nonempty list is independent of its fallback value. *)
+Theorem last_default {X} (xs : list X) a b :
   xs <> [] -> last xs a = last xs b.
 Proof.
   induction xs as [|head rest IH]; [contradiction|].
@@ -557,7 +559,8 @@ Definition result_dominance
   | inr final => output_dominance (PreRename.stop_output final)
   end.
 
-Local Lemma step_dominance current :
+(** One actual driver step preserves point provenance and the pending task domains. *)
+Theorem step_dominance current :
   walk_dominance current -> result_dominance (PreRename.step c index current).
 Proof.
   intros [Houtput Htasks]; rewrite PreRename.step_equation.

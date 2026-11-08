@@ -5,14 +5,15 @@
     Builds on: AnalysesSsaPreFrg, AnalysesSsaPreRename and the shared costed list operations. *)
 
 From Stdlib Require Import List Bool NArith Lia.
-From Galois.Cost Require Import CostMonad CostList.
-From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
+From Galois.Cost Require Import CostMonad CostList CostLoop.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIndex BaseIntern.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphCheckDom GraphCheckDomCost.
 From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily
   AnalysesSsaPreFrg AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep
   AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit
-  AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning AnalysesSsaPreFrameDominance AnalysesSsaPreFrameTables.
+  AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning AnalysesSsaPreFrameDominance AnalysesSsaPreFrameTables
+  AnalysesSsaPreFrameWalk.
 Import List.ListNotations Cost.Notations.
 
 Module PreOperands.
@@ -504,6 +505,337 @@ Proof.
       rewrite Hedge in Howner_parameter; congruence. }
     subst owner; pose proof (Hphi (eq_sym Hedge)) as Habsent.
     pose proof (proj1 (build_frg_versions_exact Hlaw (PreFrg.Phi b u)) Hd) as Hpresent; congruence.
+Qed.
+
+Local Lemma built_fresh_absent {e u} :
+  Pre.laws c ->
+  (FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = false \/
+    Pre.recomputed c e <> Some u) ->
+    ~ In (PreFrg.Fresh e u) (PreFrg.versions build_frg).
+Proof.
+  intros Hlaw Habsent Hin.
+  apply (proj1 (build_frg_versions_exact Hlaw (PreFrg.Fresh e u))) in Hin.
+  destruct Hin as [He [Hcomputed Hflag]]; destruct Habsent; congruence.
+Qed.
+
+Local Lemma built_frame_unchanged :
+  Pre.laws c ->
+  forall b e u frame, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    ~ In (PreFrg.Fresh e u) (PreFrg.versions build_frg) ->
+    (e = SsaPoints.parameter_edge (Pre.points (Pre.input c)) b ->
+      FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = false) ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) <>
+      Some (PreFrg.operand_version (PreRename.selected frame)) ->
+    PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) e) frame ->
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (if Pre.killed c e u then PreRename.Frame (PreRename.selected frame) false else frame).
+Proof.
+  intros Hlaw b e u [[d real] available] Hb Hin Hfresh Hphi Hnot Hframe.
+  pose proof (PreFrameStep.frame_instruction c build_frg Hlaw
+    (fun edge version Hget => proj1 (build_frg_occurrence_sources Hlaw edge version Hget))
+    u e d real available false (PreCoverage.instruction_edge_listed c Hlaw Hb Hin)
+    (instruction_edges_internal (Pre.point_laws c (Pre.graphs c Hlaw)) b e Hb Hin)
+    (build_frg_no_definition_target Hlaw b e u Hb Hin Hfresh Hphi)
+    ltac:(split; [discriminate|intro Hget; exfalso; exact (Hnot Hget)]) Hframe) as Htarget.
+  rewrite orb_false_r in Htarget.
+  destruct (Pre.killed c e u), available; exact Htarget.
+Qed.
+
+Local Lemma built_frame_reused :
+  Pre.laws c ->
+  forall b e u frame, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = false ->
+    e <> SsaPoints.parameter_edge (Pre.points (Pre.input c)) b ->
+    PreRename.available frame = true ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) =
+      Some (PreFrg.operand_version (PreRename.selected frame)) ->
+    PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) e) frame ->
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (PreRename.Frame (PreFrg.Operand
+        (PreFrg.operand_version (PreRename.selected frame)) true) (negb (Pre.killed c e u))).
+Proof.
+  intros Hlaw b e u [[d real] available] Hb Hin Hflag Hparameter Hav Hget Hframe.
+  cbn [PreRename.available] in Hav; subst available.
+  pose proof (PreFrameStep.frame_instruction c build_frg Hlaw
+    (fun edge version Hread => proj1 (build_frg_occurrence_sources Hlaw edge version Hread))
+    u e d real true true (PreCoverage.instruction_edge_listed c Hlaw Hb Hin)
+    (instruction_edges_internal (Pre.point_laws c (Pre.graphs c Hlaw)) b e Hb Hin)
+    (build_frg_no_definition_target Hlaw b e u Hb Hin
+      (built_fresh_absent Hlaw (or_introl Hflag)) ltac:(intro Heq; contradiction))
+    ltac:(split; [intros _; exact Hget|intros _; reflexivity]) Hframe) as Htarget.
+  rewrite orb_true_r in Htarget; exact Htarget.
+Qed.
+
+Local Lemma built_fresh_frame :
+  Pre.laws c ->
+  forall e u, In e (Cfg.edges (Pre.point_cfg c)) -> Pre.recomputed c e = Some u ->
+    FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = true ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some (PreFrg.Fresh e u) ->
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (PreRename.Frame (PreFrg.Operand (PreFrg.Fresh e u) true) true).
+Proof.
+  intros Hlaw e u He Hcomputed Hfresh Hget.
+  apply (PreFrameStep.definition_frame c build_frg Hlaw u _ (PreFrg.Fresh e u) true).
+  - destruct (PreCoverage.listed_edge_out c Hlaw He) as [Hsource Hout].
+    apply (Pre.reachable_points c (Pre.graphs c Hlaw)).
+    exact (out_target_in (points_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))
+      _ e Hsource Hout).
+  - apply (proj2 (build_frg_versions_exact Hlaw (PreFrg.Fresh e u))); auto.
+  - reflexivity.
+  - rewrite PreFrg.version_point_equation; reflexivity.
+  - split; [intros _; exists e; split; [exact Hget|apply dominates_refl]|intros _; reflexivity].
+Qed.
+
+Local Lemma built_different_selection :
+  Pre.laws c ->
+  forall e v u frame, Pre.recomputed c e = Some v -> u <> v ->
+    PreFrg.version_expr (PreFrg.operand_version (PreRename.selected frame)) = u ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) <>
+      Some (PreFrg.operand_version (PreRename.selected frame)).
+Proof.
+  intros Hlaw e v u frame Hcomputed Hne Hexpr Hget.
+  destruct (build_frg_occurrence_sources Hlaw e _ Hget) as [He [value [Hvalue
+    [Hpure [Hidentity Hrest]]]]].
+  apply Hne; congruence.
+Qed.
+
+Local Definition built_stamp e :=
+  (Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg),
+    FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg)).
+
+Local Lemma built_phi_absent :
+  Pre.laws c ->
+  forall data, PreFrameCache.placement_laws c data ->
+  forall b e u id, Intern.find (Pre.eu (Pre.keys c)) u (PreFrameCache.names c data) = Some id ->
+    eqb (Pre.ee (Pre.keys c)) e (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) &&
+      existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair)))
+        (Index.find (Pre.eb (Pre.keys c)) b
+          (PreRename.phi_definitions (PreRename.prepare c data))) = false ->
+    e = SsaPoints.parameter_edge (Pre.points (Pre.input c)) b ->
+      FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = false.
+Proof.
+  intros Hlaw data Hdata b e u id Hid Hnone Heq; subst e.
+  rewrite eqb_refl in Hnone; cbn [andb] in Hnone.
+  destruct (FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg)) eqn:Hphi;
+    [|reflexivity].
+  pose proof (proj2 (proj2 (proj1 (build_frg_phi_exact Hlaw b u) Hphi))) as Hneeded.
+  pose proof (proj2 (PreFrameInvariant.phi_bucket_test c data Hlaw Hdata b u id Hid) Hneeded);
+    congruence.
+Qed.
+
+Local Lemma built_skipped_frame :
+  Pre.laws c ->
+  forall data, PreFrameCache.placement_laws c data ->
+  forall frames acc b e, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    PreFrameInvariant.scope_source c data frames ->
+    PreRename.evaluation (PreFrameCache.event_description c (PreFrameCache.names c data) e) = None ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = None ->
+    FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = false ->
+    PreCoverage.scope_laws c build_frg (Graph.source (Pre.pg c) e) frames ->
+  forall u, PreFamily.in_family c u -> Pre.pure c u = true ->
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (PreRename.top c (fst (PreRename.instruction c (PreRename.prepare c data) b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) (frames, acc) e)) u).
+Proof.
+  intros Hlaw data Hdata frames acc b e Hb Hin Hsource Hskip Hget Hflag Hscope u Hu Hpure.
+  pose proof (PreCoverage.instruction_edge_listed c Hlaw Hb Hin) as He.
+  destruct (proj2 (PreFrameCache.names_domain c data Hlaw Hdata u) (conj Hu Hpure)) as [id Hid].
+  rewrite (PreFrameInvariant.instruction_top c data Hlaw Hdata frames acc b e Hsource He u id Hid).
+  cbn zeta; rewrite Hskip, PreRename.occurrence_equation; cbn [fst snd].
+  destruct (eqb (Pre.ee (Pre.keys c)) e (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) &&
+    existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair)))
+      (Index.find (Pre.eb (Pre.keys c)) b
+        (PreRename.phi_definitions (PreRename.prepare c data)))) eqn:Hphi.
+  - apply andb_true_iff in Hphi; destruct Hphi as [Hparameter Hneeded].
+    apply (eqb_true_iff _ (Pre.ee_laws c (Pre.graphs c Hlaw))) in Hparameter; subst e.
+    apply build_frg_phi_frame; [exact Hlaw|].
+    apply (proj2 (build_frg_phi_exact Hlaw b u)); split; [exact Hu|]; split; [exact Hpure|].
+    exact (proj1 (PreFrameInvariant.phi_bucket_test c data Hlaw Hdata b u id Hid) Hneeded).
+  - apply (built_frame_unchanged Hlaw b e u _ Hb Hin).
+    + exact (built_fresh_absent Hlaw (or_introl Hflag)).
+    + exact (built_phi_absent Hlaw data Hdata b e u id Hid Hphi).
+    + rewrite Hget; discriminate.
+    + exact (Hscope u Hu Hpure).
+Qed.
+
+Local Lemma built_other_frame :
+  Pre.laws c ->
+  forall b e v u frame, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    Pre.recomputed c e = Some v -> u <> v ->
+    PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) e) frame ->
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (if Pre.killed c e u then PreRename.Frame (PreRename.selected frame) false else frame).
+Proof.
+  intros Hlaw b e v u frame Hb Hin Hcomputed Hne Hframe.
+  apply (built_frame_unchanged Hlaw b e u frame Hb Hin).
+  - apply built_fresh_absent; [exact Hlaw|right; intro Heq; apply Hne; congruence].
+  - intro Heq; exfalso; exact (proj2 (Pre.real_internal c (Pre.kills c Hlaw) e v Hcomputed) b Heq).
+  - exact (built_different_selection Hlaw e v u frame Hcomputed Hne (proj1 Hframe)).
+  - exact Hframe.
+Qed.
+
+Local Lemma built_named_reuse :
+  Pre.laws c ->
+  forall data frames b e id u, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    PreFrameInvariant.scope_source c data frames ->
+    Intern.find (Pre.eu (Pre.keys c)) u (PreFrameCache.names c data) = Some id ->
+    PreRename.frame_reuse c (PreRename.top_id frames id u) u = true ->
+    e <> SsaPoints.parameter_edge (Pre.points (Pre.input c)) b ->
+    FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = false ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) =
+      Some (PreFrg.operand_version (PreRename.selected (PreRename.top_id frames id u))) ->
+    PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) e) (PreRename.top c frames u) ->
+    let used := PreRename.Frame (PreFrg.Operand
+      (PreFrg.operand_version (PreRename.selected (PreRename.top_id frames id u))) true) true in
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (if Pre.killed c e u then PreRename.Frame (PreRename.selected used) false else used).
+Proof.
+  intros Hlaw data frames b e id u Hb Hin Hsource Hfind Hreuse Hparameter Hflag Hget Hscope.
+  assert (Htop : PreRename.top_id frames id u = PreRename.top c frames u).
+  { symmetry; apply PreFrameCache.top_id_agrees.
+    rewrite (PreFrameInvariant.scope_symbols c data frames Hsource); exact Hfind. }
+  rewrite Htop in Hreuse, Hget |- *.
+  assert (Havailable : PreRename.available (PreRename.top c frames u) = true).
+  { unfold PreRename.frame_reuse in Hreuse.
+    destruct (PreRename.available (PreRename.top c frames u)); [reflexivity|discriminate]. }
+  pose proof (built_frame_reused Hlaw b e u _ Hb Hin Hflag Hparameter Havailable Hget Hscope)
+    as Hframe.
+  destruct (Pre.killed c e u); exact Hframe.
+Qed.
+
+Local Lemma built_real_frame :
+  Pre.laws c ->
+  forall data, PreFrameCache.placement_laws c data ->
+  forall frames acc b e id v, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    PreFrameInvariant.scope_source c data frames ->
+    PreRename.evaluation (PreFrameCache.event_description c (PreFrameCache.names c data) e) =
+      Some (id, v) ->
+    built_stamp e = (
+      let frame := PreRename.top_id frames id v in
+      let reuse := PreRename.frame_reuse c frame v in
+      (Some (if reuse then PreFrg.operand_version (PreRename.selected frame)
+        else PreFrg.Fresh e v), negb reuse)) ->
+    PreCoverage.scope_laws c build_frg (Graph.source (Pre.pg c) e) frames ->
+  forall u, PreFamily.in_family c u -> Pre.pure c u = true ->
+    PreCoverage.frame_laws c build_frg u (Graph.target (Pre.pg c) e)
+      (PreRename.top c (fst (PreRename.instruction c (PreRename.prepare c data) b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) (frames, acc) e)) u).
+Proof.
+  intros Hlaw data Hdata frames acc b e id v Hb Hin Hsource Hinstance Hstamp Hscope u Hu Hpure.
+  pose proof (PreCoverage.instruction_edge_listed c Hlaw Hb Hin) as He.
+  destruct (proj1 (PreFrameCache.evaluation_exact c (PreFrameCache.names c data) e) Hinstance)
+    as [Hcomputed [Hvpure Hfind]].
+  assert (Hparameter : eqb (Pre.ee (Pre.keys c)) e
+    (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) = false).
+  { apply (eqb_false_iff _ (Pre.ee_laws c (Pre.graphs c Hlaw))).
+    exact (proj2 (Pre.real_internal c (Pre.kills c Hlaw) e v Hcomputed) b). }
+  destruct (proj2 (PreFrameCache.names_domain c data Hlaw Hdata u) (conj Hu Hpure))
+    as [query Hquery].
+  rewrite (PreFrameInvariant.instruction_top c data Hlaw Hdata
+    frames acc b e Hsource He u query Hquery).
+  cbn zeta; rewrite Hinstance, PreRename.occurrence_equation, Hparameter; cbn [andb].
+  cbn zeta in Hstamp |- *.
+  destruct (PreRename.frame_reuse c (PreRename.top_id frames id v) v) eqn:Hreuse;
+    cbn [fst snd].
+  - rewrite (PreFrameCache.top_store c Hlaw frames v id _
+      (PreFrameInvariant.scope_representation c data frames Hsource)).
+    2: { rewrite (PreFrameInvariant.scope_symbols c data frames Hsource); exact Hfind. }
+    destruct (eqb (Pre.eu (Pre.keys c)) u v) eqn:Hsame.
+    + apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hsame; subst v.
+      apply (built_named_reuse Hlaw data frames b e id u Hb Hin Hsource Hfind Hreuse).
+      * exact (proj2 (Pre.real_internal c (Pre.kills c Hlaw) e u Hcomputed) b).
+      * exact (f_equal snd Hstamp).
+      * exact (f_equal fst Hstamp).
+      * exact (Hscope u Hu Hpure).
+    + apply built_other_frame with (b := b) (v := v); try assumption.
+      * apply (eqb_false_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))); exact Hsame.
+      * exact (Hscope u Hu Hpure).
+  - destruct (eqb (Pre.eu (Pre.keys c)) u v) eqn:Hsame.
+    + apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hsame; subst v.
+      apply (built_fresh_frame Hlaw e u He Hcomputed).
+      * exact (f_equal snd Hstamp).
+      * exact (f_equal fst Hstamp).
+    + apply built_other_frame with (b := b) (v := v); try assumption.
+      * apply (eqb_false_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))); exact Hsame.
+      * exact (Hscope u Hu Hpure).
+Qed.
+
+Local Lemma built_instruction_scope :
+  Pre.laws c ->
+  forall data, PreFrameCache.placement_laws c data ->
+  forall frames acc b e, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    PreFrameInvariant.scope_source c data frames -> PreFrameEnd.accumulator_wf c acc ->
+    PreFrameTables.stamp c e acc = (None, false) ->
+    built_stamp e = PreFrameTables.stamp c e
+      (snd (PreRename.instruction c (PreRename.prepare c data) b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) (frames, acc) e)) ->
+    PreCoverage.scope_laws c build_frg (Graph.source (Pre.pg c) e) frames ->
+    PreCoverage.scope_laws c build_frg (Graph.target (Pre.pg c) e)
+      (fst (PreRename.instruction c (PreRename.prepare c data) b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) (frames, acc) e)).
+Proof.
+  intros Hlaw data Hdata frames acc b e Hb Hin Hsource Hwf Hbefore Hpacket Hscope.
+  pose proof (PreCoverage.instruction_edge_listed c Hlaw Hb Hin) as He.
+  pose proof (PreFrameCache.event_lookup c data Hlaw e He) as Hlookup.
+  destruct (PreRename.evaluation
+    (PreFrameCache.event_description c (PreFrameCache.names c data) e))
+    as [[id v]|] eqn:Hinstance.
+  - rewrite (PreFrameTables.real_packet_stamp c (work := (frames, acc))
+      Hwf Hlookup Hinstance Hbefore) in Hpacket.
+    exact (built_real_frame Hlaw data Hdata frames acc b e id v
+      Hb Hin Hsource Hinstance Hpacket Hscope).
+  - rewrite (PreFrameTables.skipped_packet_stamp c (work := (frames, acc))
+      Hlookup Hinstance) in Hpacket.
+    cbn [snd] in Hpacket; rewrite Hbefore in Hpacket.
+    exact (built_skipped_frame Hlaw data Hdata frames acc b e Hb Hin Hsource Hinstance
+      (f_equal fst Hpacket) (f_equal snd Hpacket) Hscope).
+Qed.
+
+(** The actual producer's entire indexed execution maintains full nearest, availability and real-use frames. *)
+Theorem build_frg_frame_history :
+  Pre.laws c ->
+  exists data labels, PreFrg.phi_sites c = inr data /\
+    let index := PreRename.prepare c data in
+    PreFrameStep.history (PreFrameWalk.checked_step c data (g := build_frg))
+      (inl (PreRename.initial index)) labels
+      (Cost.value (iterate (PreRename.step_c c index) (PreRename.walk_budget index)
+        (PreRename.initial index))).
+Proof.
+  intro Hlaw; destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  set (index := PreRename.prepare c data).
+  set (final := PreRename.stop_output (PreRename.run c index)).
+  assert (Hstamp : forall e, built_stamp e = PreFrameTables.stamp c e final).
+  { intro e; unfold built_stamp, PreFrameTables.stamp.
+    rewrite build_frg_equation, Houtput, assemble_equation; reflexivity. }
+  assert (Hfinal : final = PreFrameTables.output_of
+    (Cost.value (iterate (PreRename.step_c c index) (PreRename.walk_budget index)
+      (PreRename.initial index)))).
+  { unfold final; rewrite PreRename.run_equation.
+    destruct (Cost.value (iterate (PreRename.step_c c index) (PreRename.walk_budget index)
+      (PreRename.initial index))); reflexivity. }
+  assert (Hhistory : exists labels,
+    PreFrameStep.history (PreFrameWalk.checked_step c data (g := build_frg))
+      (inl (PreRename.initial index)) labels
+      (Cost.value (iterate (PreRename.step_c c index) (PreRename.walk_budget index)
+        (PreRename.initial index)))).
+  { apply (PreFrameWalk.run_scope_history c data final Hlaw Hdata).
+    - intros d Hd; exact (proj2 (proj2 (build_frg_source_versions Hlaw d Hd))).
+    - intros e d Hget; destruct (build_frg_occurrence_sources Hlaw e d Hget)
+        as [He [u [Hcomputed Hother]]]; split; [exact He|now exists u].
+    - intros u Hu Hpure; rewrite (build_frg_versions_exact Hlaw (PreFrg.Initial u)); tauto.
+    - intros frames acc b e Hb Hin Hsource Hwf Hbefore Hpacket Hscope.
+      apply (built_instruction_scope Hlaw data Hdata frames acc b e
+        Hb Hin Hsource Hwf Hbefore); [rewrite Hstamp; exact Hpacket|exact Hscope].
+    - exact Hfinal. }
+  destruct Hhistory as [labels Hhistory]; exists data, labels; auto.
 Qed.
 
 (** The caller gate checks the supplied block-parent map and rejects every partial raw outcome.
