@@ -470,7 +470,8 @@ Proof.
     destruct Hin as [<-|Hin]; [exact Ht|now apply IH].
 Qed.
 
-Local Lemma dominator_reachable {V E} (g : Graph.t V E) d n :
+(** Every dominator of a reachable node is reachable in the same arbitrary graph. *)
+Theorem dominator_reachable {V E} (g : Graph.t V E) d n :
   reachable g n -> dominates g d n -> reachable g d.
 Proof.
   intros Hn Hdom. apply reachable_iff_path in Hn.
@@ -567,6 +568,32 @@ Proof.
   intros Hready Ht Hn Hv Hu. split.
   - intro Hanc. eapply exact_ancestor_sound; eauto.
   - intro Hdom. eapply exact_ancestor_complete; eauto.
+Qed.
+
+Local Lemma ancestor_antisym m :
+  well_founded (fun u v => parent m v = Some u) ->
+  forall u v, idom_ancestor m u v -> idom_ancestor m v u -> u = v.
+Proof.
+  intros Hforest u v Huv Hvu.
+  destruct (ancestor_cases m u v Huv) as [Heq|[q [Hparent Huq]]]; [exact Heq|].
+  exfalso. apply (acc_no_return m q (Hforest q) v Hparent).
+  eapply rt_trans; [exact Hvu|exact Huq].
+Qed.
+
+(** Mutual dominance identifies reachable named nodes through the exact finite parent forest. *)
+Theorem dominates_antisym {V E} (p : Prepared.t V E) t d n u v :
+  Prepared.ready p -> exact p t ->
+  reachable (Prepared.graph p) d -> reachable (Prepared.graph p) n ->
+  Prepared.id_of p d = Some u -> Prepared.id_of p n = Some v ->
+  dominates (Prepared.graph p) d n -> dominates (Prepared.graph p) n d ->
+  d = n.
+Proof.
+  intros Hready Htree Hd Hn Hu Hv Hdn Hnd.
+  pose proof (proj2 (ancestry_spec p t n d v u Hready Htree Hn Hv Hu) Hdn) as Huv.
+  pose proof (proj2 (ancestry_spec p t d n u v Hready Htree Hd Hu Hv) Hnd) as Hvu.
+  assert (Heq : u = v).
+  { eapply ancestor_antisym; [exact (parent_finite p t Htree)|exact Huv|exact Hvu]. }
+  subst v. eapply id_injective; [exact (proj2 (proj2 Hready))|exact Hu|exact Hv].
 Qed.
 
 (** Interval dominance is exact on the reachable named domain of an exact candidate tree. *)

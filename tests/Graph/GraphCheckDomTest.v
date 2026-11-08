@@ -6,7 +6,8 @@
 
 From Stdlib Require Import List PArith.
 From Galois.Base Require Import BaseEncoding BaseMap.
-From Galois.Graph Require Import GraphDomSpec GraphFixtures GraphCheckDom.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphReach GraphDomSpec
+  GraphFixtures GraphCheckDom.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -245,4 +246,49 @@ Proof.
   apply DomCheck.check_complete; [exact Fixtures.TwoEntry.fixture_ready|].
   exists Fixtures.TwoEntry.tree. split; [exact Fixtures.TwoEntry.tree_exact|].
   apply DomCheck.of_parents_idom.
+Qed.
+
+(** A public client transports reachability through semantic dominance without graph preparation. *)
+Theorem public_dominator_reachability {V E} (g : Graph.t V E) d n :
+  reachable g n -> dominates g d n -> reachable g d.
+Proof.
+  exact (DomCheck.dominator_reachable g d n).
+Qed.
+
+(** A symbolic client states every readiness, exactness, reachability and naming duty. *)
+Theorem public_dominance_antisymmetry {V E} (p : Prepared.t V E) t d n u v :
+  Prepared.ready p -> Dom.exact p t ->
+  reachable (Prepared.graph p) d -> reachable (Prepared.graph p) n ->
+  Prepared.id_of p d = Some u -> Prepared.id_of p n = Some v ->
+  dominates (Prepared.graph p) d n -> dominates (Prepared.graph p) n d ->
+  d = n.
+Proof.
+  exact (DomCheck.dominates_antisym p t d n u v).
+Qed.
+
+(** The supplied checked line separates its distinct entry and tail under mutual dominance. *)
+Example checked_line_endpoints_not_mutual :
+  ~ (dominates (Prepared.graph Fixtures.Line.prepared) 1%nat 4%nat /\
+    dominates (Prepared.graph Fixtures.Line.prepared) 4%nat 1%nat).
+Proof.
+  intros [Hforward Hbackward].
+  assert (Htree : Dom.exact Fixtures.Line.prepared
+    (DomCheck.of_parents Fixtures.Line.prepared Fixtures.Line.parents)).
+  { apply DomCheck.check_sound;
+      [exact Fixtures.Line.fixture_ready|exact Fixtures.Line.parents_wf|].
+    vm_compute. reflexivity. }
+  assert (Hentry : reachable (Prepared.graph Fixtures.Line.prepared) 1%nat).
+  { apply (proj1 (Reach.entries_exact Fixtures.Line.prepared 1%nat 1
+      Fixtures.Line.fixture_ready ltac:(vm_compute; reflexivity))).
+    vm_compute. reflexivity. }
+  assert (Htail : reachable (Prepared.graph Fixtures.Line.prepared) 4%nat).
+  { apply (proj1 (Reach.entries_exact Fixtures.Line.prepared 4%nat 4
+      Fixtures.Line.fixture_ready ltac:(vm_compute; reflexivity))).
+    vm_compute. reflexivity. }
+  pose proof (DomCheck.dominates_antisym Fixtures.Line.prepared
+    (DomCheck.of_parents Fixtures.Line.prepared Fixtures.Line.parents) 1%nat 4%nat 1 4
+    Fixtures.Line.fixture_ready Htree Hentry Htail
+    ltac:(vm_compute; reflexivity) ltac:(vm_compute; reflexivity)
+    Hforward Hbackward) as Hsame.
+  discriminate Hsame.
 Qed.
