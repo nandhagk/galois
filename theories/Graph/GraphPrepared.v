@@ -349,6 +349,21 @@ Proof.
       * intros [a [[<-|Hin] Ha]]; [congruence|exists a; auto].
 Qed.
 
+(** Dropping absent results preserves duplicate freedom when successful results identify their inputs. *)
+Theorem present_nodup {A B} (f : A -> option B) xs :
+  NoDup xs ->
+  (forall x y z, f x = Some z -> f y = Some z -> x = y) ->
+  NoDup (present f xs).
+Proof.
+  intros Hnodup Hinjective.
+  induction Hnodup as [|x rest Hfresh Hrest IH]; [constructor|].
+  cbn [present]. destruct (f x) as [y|] eqn:Hx; [|exact IH].
+  constructor; [|exact IH].
+  intro Hin. apply present_spec in Hin. destruct Hin as [other [Hother Hvalue]].
+  apply Hfresh. assert (x = other) by (eapply Hinjective; [exact Hx|exact Hvalue]).
+  now subst other.
+Qed.
+
 Local Lemma tagged_spec {V E} enc table (endpoint : E -> V) es e i :
   In (e, i) (tagged enc table endpoint es) <->
     In e es /\ Intern.find enc (endpoint e) table = Some i.

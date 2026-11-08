@@ -179,3 +179,41 @@ Example unknown_exits_do_not_change_validity :
 Proof.
   apply Prepared.reverse_valid_id. exists 4. split; vm_compute; auto.
 Qed.
+
+Example present_nodup_contract_client {A B} (f : A -> option B) xs :
+  NoDup xs ->
+  (forall x y z, f x = Some z -> f y = Some z -> x = y) ->
+  NoDup (Prepared.present f xs).
+Proof.
+  apply Prepared.present_nodup.
+Qed.
+
+Definition drop_two (x : positive) := if Pos.eqb x 2 then None else Some x.
+
+Example dropped_input_preserves_order :
+  Prepared.present drop_two [3; 2; 1] = [3; 1].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example dropped_input_remains_duplicate_free :
+  NoDup (Prepared.present drop_two [3; 2; 1]).
+Proof.
+  apply Prepared.present_nodup.
+  - repeat (constructor; [cbn; intuition congruence|]). constructor.
+  - intros x y z Hx Hy. unfold drop_two in Hx, Hy.
+    destruct (Pos.eqb x 2), (Pos.eqb y 2); congruence.
+Qed.
+
+Example distinct_inputs_can_have_duplicate_results :
+  Prepared.present (fun _ : positive => Some 1) [1; 2] = [1; 1].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example duplicate_results_are_not_nodup :
+  ~ NoDup (Prepared.present (fun _ : positive => Some 1) [1; 2]).
+Proof.
+  vm_compute. intro Hnodup. inversion Hnodup as [|x rest Hfresh Htail]; subst.
+  apply Hfresh. now left.
+Qed.
