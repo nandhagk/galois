@@ -4,7 +4,7 @@
     For example, an unreachable edge can generate a may fact at its target.
     Builds on: FrameworkBitvectorTest and FrameworkDenseTest. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool Arith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseSet BaseRel.
 From Galois.Lattice Require Import LatticeCore LatticeSet LatticeHeight.
@@ -468,4 +468,130 @@ Proof.
   apply (must_greatest_paths singleton_problem nat_encoding_laws nat_encoding_laws
     nat_encoding_laws singleton_must_sigma singleton_wf singleton_must_least).
   vm_compute; tauto.
+Qed.
+
+Definition backward_must_problem :=
+  Bitvector.of_pure diamond nat_encoding [7] Backward
+    (fun _ => [7]) (fun _ => [])
+    (fun n => if Nat.eqb n 3 then Some [] else None).
+
+Lemma backward_path_zero : path backward_must_problem 3 [2; 0] 0.
+Proof.
+  econstructor; [vm_compute; tauto|].
+  econstructor; [vm_compute; tauto|constructor].
+Qed.
+
+Lemma backward_path_one : path backward_must_problem 3 [2] 1.
+Proof.
+  econstructor; [vm_compute; tauto|constructor].
+Qed.
+
+Lemma backward_path_two : path backward_must_problem 3 [3] 2.
+Proof.
+  econstructor; [vm_compute; tauto|constructor].
+Qed.
+
+Definition backward_must_sigma n :=
+  match n with
+  | 0 => Only (path_value backward_must_problem [] [2; 0])
+  | 1 => Only (path_value backward_must_problem [] [2])
+  | 2 => Only (path_value backward_must_problem [] [3])
+  | 3 => Only (path_value backward_must_problem [] [])
+  | _ => All
+  end.
+
+Lemma backward_boundary_path n es :
+  path backward_must_problem 3 es n -> boundary_path backward_must_problem 3 [] es n.
+Proof.
+  intro Hpath; split; [vm_compute; tauto|].
+  split; [reflexivity|exact Hpath].
+Qed.
+
+Lemma backward_must_least :
+  least_solution (Analysis.lat (Bitvector.must_analysis backward_must_problem))
+    (Analysis.system (Bitvector.must_analysis backward_must_problem)) backward_must_sigma.
+Proof.
+  split.
+  - apply check_post_sound; vm_compute; reflexivity.
+  - intros candidate Hpost n; destruct n as [|[|[|[|n]]]].
+    + eapply (must_boundary_path_bound backward_must_problem nat_encoding_laws
+        nat_encoding_laws nat_encoding_laws candidate 3 [] [2; 0] 0 Hpost).
+      apply backward_boundary_path; exact backward_path_zero.
+    + eapply (must_boundary_path_bound backward_must_problem nat_encoding_laws
+        nat_encoding_laws nat_encoding_laws candidate 3 [] [2] 1 Hpost).
+      apply backward_boundary_path; exact backward_path_one.
+    + eapply (must_boundary_path_bound backward_must_problem nat_encoding_laws
+        nat_encoding_laws nat_encoding_laws candidate 3 [] [3] 2 Hpost).
+      apply backward_boundary_path; exact backward_path_two.
+    + eapply (must_boundary_path_bound backward_must_problem nat_encoding_laws
+        nat_encoding_laws nat_encoding_laws candidate 3 [] [] 3 Hpost).
+      apply backward_boundary_path; constructor.
+    + change (leb (must nat_encoding) All (candidate (S (S (S (S n))))) = true).
+      rewrite must_leb_equation; reflexivity.
+Qed.
+
+Example backward_must_path_client :
+  must_member (backward_must_sigma 0) 7 <-> keeps backward_must_problem 0 7.
+Proof.
+  apply (must_greatest_paths backward_must_problem nat_encoding_laws nat_encoding_laws
+    nat_encoding_laws backward_must_sigma diamond_wf backward_must_least).
+  vm_compute; tauto.
+Qed.
+
+Example backward_must_path_observations :
+  must_member (backward_must_sigma 0) 7 /\
+    ~ must_member (backward_must_sigma 0) 8 /\
+    ~ must_member (backward_must_sigma 3) 7.
+Proof.
+  vm_compute; split; [reflexivity|split; discriminate].
+Qed.
+
+Definition unlisted_source_cfg : Cfg.t nat nat :=
+  Cfg.Make (Graph.of_pure [0] [0; 1]
+    (fun n => if Nat.eqb n 99 then [5] else [])
+    (fun _ => 99) (fun _ => 1)) nat_encoding nat_encoding.
+
+Definition unlisted_source_problem :=
+  Bitvector.of_pure unlisted_source_cfg nat_encoding [7] Forward
+    (fun _ => [7]) (fun _ => []) (fun _ => None).
+
+Lemma unlisted_source_wf : graph_wf (Cfg.graph unlisted_source_cfg).
+Proof.
+  constructor.
+  - repeat constructor; cbn; intuition discriminate.
+  - intros n [<-|Hbad]; [vm_compute; tauto|contradiction].
+  - intros n e He.
+    change (In e (if Nat.eqb n 99 then [5] else [])) in He.
+    destruct (Nat.eqb n 99) eqn:Hn; [|contradiction].
+    apply Nat.eqb_eq in Hn; subst n; reflexivity.
+  - intros n e Hn He; change (0 = n \/ 1 = n \/ False) in Hn.
+    destruct Hn as [<-|[<-|Hbad]]; vm_compute in He; contradiction.
+Qed.
+
+(** This deliberately unindexed relation follows the raw forward outgoing callback. *)
+Definition callback_forward a e b :=
+  In e (Graph.out (Cfg.graph unlisted_source_cfg) a) /\
+    a = Graph.source (Cfg.graph unlisted_source_cfg) e /\
+    b = Graph.target (Cfg.graph unlisted_source_cfg) e.
+
+Example unlisted_source_has_callback_path :
+  Rel.lpath callback_forward 99 [5] 1 /\
+    Bitvector.gen unlisted_source_problem 5 = [7].
+Proof.
+  split; [econstructor; [vm_compute; tauto|constructor]|reflexivity].
+Qed.
+
+Example unlisted_source_has_no_indexed_path :
+  ~ path unlisted_source_problem 99 [5] 1.
+Proof.
+  intro Hpath; inversion Hpath as [|a e b es n Hstep Hsuffix].
+  destruct Hstep as [He _]; vm_compute in He; contradiction.
+Qed.
+
+Example unlisted_source_callback_is_not_an_equation :
+  Cfg.edges unlisted_source_cfg = [] /\
+    sets_observe (Bitvector.may_analysis unlisted_source_problem) [0; 1; 99] =
+      Some [[]; []; []].
+Proof.
+  vm_compute; split; reflexivity.
 Qed.

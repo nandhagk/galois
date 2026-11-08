@@ -330,6 +330,18 @@ Proof.
   destruct s, t; reflexivity.
 Qed.
 
+(** Must comparison exposes fresh All and reverses inclusion between finite facts. *)
+Theorem must_leb_equation {K} (E : encoding K) s t :
+  leb (must E) s t =
+  match s, t with
+  | All, _ => true
+  | Only _, All => false
+  | Only a, Only b => leb (may E) b a
+  end.
+Proof.
+  apply must_le.
+Qed.
+
 Local Lemma must_join {K} (E : encoding K) s t :
   join (must E) s t =
   match s, t with

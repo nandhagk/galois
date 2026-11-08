@@ -522,10 +522,8 @@ Local Lemma transfer_order e a b :
     (Bitvector.must_transfer (Bitvector.prepare P) e b) = true.
 Proof.
   intros He Hab; rewrite !must_transfer_equation.
+  rewrite must_leb_equation in Hab |- *.
   destruct a as [|a], b as [|b]; try reflexivity; try discriminate.
-  change (leb (may (Bitvector.fact_enc P))
-    (Bitvector.may_transfer (Bitvector.prepare P) e b)
-    (Bitvector.may_transfer (Bitvector.prepare P) e a) = true).
   apply (may_leb _ HU); eapply transfer_monotone; [exact HE|exact HU|exact He|].
   exact (proj1 (may_leb _ HU b a) Hab).
 Qed.
@@ -745,10 +743,7 @@ Proof.
     assert (Hr : r n = true).
     { rewrite <- Hreach by (apply seed_node; assumption).
       apply reach_close_spec; right; left; split; [exact Hn|exists xs; exact Hb]. }
-    unfold must_candidate; rewrite Hr.
-    change (leb (may (Bitvector.fact_enc P))
-      (set_of_list (Bitvector.fact_enc P) (if b n then [] else [x]))
-      (set_of_list (Bitvector.fact_enc P) xs) = true).
+    unfold must_candidate; rewrite Hr, must_leb_equation.
     apply (may_leb _ HU); intros y Hy; apply candidate_member in Hy as [Hbn ->].
     apply (member_list _ HU).
     destruct (in_dec (eqb_dec _ HU) x xs) as [Hx|Hx]; [exact Hx|].
@@ -761,16 +756,12 @@ Proof.
       (Bitvector.must_transfer (Bitvector.prepare P) e (must_candidate x r b (from P e)))
       (must_candidate x r b (into P e)) = true).
     unfold must_candidate.
-    rewrite must_transfer_equation.
+    rewrite must_transfer_equation, must_leb_equation.
     destruct (r (from P e)) eqn:Hfrom; [|reflexivity].
     assert (Hinto : r (into P e) = true).
     { rewrite <- Hreach by exact (proj2 (edge_nodes P Hwf e He)).
       apply reach_close_spec; right; right; exists e; auto. }
     rewrite Hinto.
-    change (leb (may (Bitvector.fact_enc P))
-      (set_of_list (Bitvector.fact_enc P) (if b (into P e) then [] else [x]))
-      (Bitvector.may_transfer (Bitvector.prepare P) e
-        (set_of_list (Bitvector.fact_enc P) (if b (from P e) then [] else [x]))) = true).
     apply (may_leb _ HU); intros y Hy; apply candidate_member in Hy as [Hbn ->].
     apply (transfer_member P e _ x HE HU He).
     destruct (in_dec (eqb_dec _ HU) x (Bitvector.gen P e)) as [Hgen|Hgen];
@@ -820,7 +811,7 @@ Proof.
     destruct (proj1 (Bitvector.must_source_post_iff P sigma HN HU) Hpost) as [Hseed Hflow].
     pose proof (must_path_bound sigma root es n Hpath Hflow _
       (Hseed root xs Hroot Hb)) as Hbound.
-    rewrite Hall in Hbound; discriminate.
+    rewrite Hall, must_leb_equation in Hbound; discriminate.
   - intro Hnone; destruct reach_closure as [r [Hr Hreach]].
     pose (candidate := fun n => if r n then Only (set_empty (Bitvector.fact_enc P)) else All).
     assert (Hcandidate : post_solution (Analysis.lat (Bitvector.must_analysis P))
@@ -830,26 +821,24 @@ Proof.
         assert (Hhit : r root = true).
         { rewrite <- Hreach by (apply seed_node; assumption).
           apply reach_close_spec; right; left; split; [exact Hroot|exists xs; exact Hb]. }
-        rewrite Hhit; change (leb (may (Bitvector.fact_enc P))
-          (set_empty (Bitvector.fact_enc P)) (set_of_list (Bitvector.fact_enc P) xs) = true).
+        rewrite Hhit, must_leb_equation.
         apply (bot_least (may_laws _ HU)).
       - intros e He.
         change (leb (must (Bitvector.fact_enc P))
           (Bitvector.must_transfer (Bitvector.prepare P) e (candidate (from P e)))
           (candidate (into P e)) = true).
-        unfold candidate; rewrite must_transfer_equation.
+        unfold candidate; rewrite must_transfer_equation, must_leb_equation.
         destruct (r (from P e)) eqn:Hfrom; [|reflexivity].
         assert (Hhit : r (into P e) = true).
         { rewrite <- Hreach by exact (proj2 (edge_nodes P Hwf e He)).
           apply reach_close_spec; right; right; exists e; auto. }
-        rewrite Hhit; change (leb (may (Bitvector.fact_enc P))
-          (set_empty (Bitvector.fact_enc P))
-          (Bitvector.may_transfer (Bitvector.prepare P) e (set_empty (Bitvector.fact_enc P))) =
-          true).
+        rewrite Hhit.
         apply (bot_least (may_laws _ HU)). }
     pose proof (Hleast candidate Hcandidate n) as Hbound.
+    change (leb (must (Bitvector.fact_enc P)) (sigma n) (candidate n) = true) in Hbound.
     unfold candidate in Hbound.
     destruct (r n) eqn:Hrn; [exfalso; apply Hnone; apply Hr; exact Hrn|].
+    rewrite must_leb_equation in Hbound.
     destruct (sigma n); [reflexivity|discriminate].
 Qed.
 
