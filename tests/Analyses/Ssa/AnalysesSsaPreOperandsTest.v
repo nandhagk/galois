@@ -8,8 +8,9 @@ From Stdlib Require Import List Bool NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphDomSpec GraphCheckDom.
+From Galois.Program Require Import ProgramCfg.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
-  AnalysesSsaPreRename AnalysesSsaPreOperands.
+  AnalysesSsaPreRename AnalysesSsaPreOperands AnalysesSsaPreFrameInvariant.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest AnalysesSsaPreFrgTest.
 Import List.ListNotations.
 
@@ -229,4 +230,49 @@ Example checked_exhaustion :
   PreOperands.build_frg_checked bad_capacity_ctx = None.
 Proof.
   vm_compute; split; reflexivity.
+Qed.
+
+(** The constructor-exact theorem excludes an initial version in the lawful diamond. *)
+Example diamond_no_initial_client :
+  ~ In (PreFrg.Initial tt) (PreFrg.versions (PreOperands.build_frg Diamond.ctx)).
+Proof.
+  intro Hin.
+  destruct (proj1 (PreOperands.build_frg_versions_exact Diamond.ctx Diamond.laws
+    (PreFrg.Initial tt)) Hin) as [_ [_ Hinitial]]; discriminate.
+Qed.
+
+(** Fresh membership uses the real source edge, recomputation and final fresh flag together. *)
+Example diamond_fresh_membership_client :
+  In (PreFrg.Fresh (Diamond.Real Diamond.Left) tt)
+    (PreFrg.versions (PreOperands.build_frg Diamond.ctx)).
+Proof.
+  apply (proj2 (PreOperands.build_frg_versions_exact Diamond.ctx Diamond.laws
+    (PreFrg.Fresh (Diamond.Real Diamond.Left) tt))).
+  split; [vm_compute; tauto|]; split; [reflexivity|exact (proj1 diamond_fresh_flags)].
+Qed.
+
+(** Every actual selected occurrence has a source definition, not merely a canonical map key. *)
+Example diamond_occurrence_source_client :
+  forall e d, Map.get Diamond.edge_enc e
+    (PreFrg.occurrences (PreOperands.build_frg Diamond.ctx)) = Some d ->
+      PreFrameInvariant.occurrence_source_at Diamond.ctx e d.
+Proof.
+  exact (PreOperands.build_frg_occurrence_sources Diamond.ctx Diamond.laws).
+Qed.
+
+(** Totality applies to every original diamond recomputation, not just the computed sample reads. *)
+Example diamond_occurrence_total_client :
+  forall e u, In e (Cfg.edges (Pre.point_cfg Diamond.ctx)) ->
+    Pre.recomputed Diamond.ctx e = Some u -> Pre.pure Diamond.ctx u = true ->
+      exists d, Map.get Diamond.edge_enc e
+        (PreFrg.occurrences (PreOperands.build_frg Diamond.ctx)) = Some d.
+Proof.
+  exact (PreOperands.build_frg_occurrence_total Diamond.ctx Diamond.laws).
+Qed.
+
+(** The phi-index theorem recovers the same four-clause source placement from actual output. *)
+Example diamond_phi_source_client : PreFrg.phi_needed Diamond.ctx tt Diamond.Join.
+Proof.
+  exact (proj2 (proj2 (proj1
+    (PreOperands.build_frg_phi_exact Diamond.ctx Diamond.laws Diamond.Join tt) diamond_phi))).
 Qed.

@@ -628,6 +628,109 @@ Definition prepare_c (data : PreFrg.phi_data) : Cost.t (prepared B BE N E U) :=
     child_index parents roots budget).
 Definition prepare data := Cost.value (prepare_c data).
 
+(** Expression preparation retains the same client value and its actual dense lookup result. *)
+Theorem lookup_expression_value names u :
+  Cost.value (lookup_expression_c names u) =
+    option_map (fun id => (id, u)) (Intern.find (Pre.eu (Pre.keys c)) u names).
+Proof.
+  unfold lookup_expression_c; rewrite Cost.value_bind, Cost.value_ret; reflexivity.
+Qed.
+
+(** Eligible event preparation uses the original recomputation and purity callbacks. *)
+Theorem evaluation_value names e :
+  Cost.value (evaluation_c names e) =
+    match Pre.recomputed c e with
+    | None => None
+    | Some u => if Pre.pure c u then
+        option_map (fun id => (id, u)) (Intern.find (Pre.eu (Pre.keys c)) u names)
+      else None
+    end.
+Proof.
+  unfold evaluation_c; rewrite !Cost.value_bind.
+  fold (Pre.recomputed c e); destruct (Pre.recomputed c e) as [u|]; [|reflexivity].
+  rewrite !Cost.value_bind; fold (Pre.pure c u); destruct (Pre.pure c u);
+    [apply lookup_expression_value|reflexivity].
+Qed.
+
+(** Event descriptions retain the ordered successful kill-ID lookups and actual endpoint. *)
+Theorem event_value names e :
+  Cost.value (event_c names e) =
+    Event (Cost.value (evaluation_c names e))
+      (Cost.value (Prepared.present_c (lookup_expression_c names)
+        (Bitvector.kill (Pre.expr (Pre.input c)) e))) (Graph.target (Pre.pg c) e).
+Proof.
+  unfold event_c; do 6 rewrite Cost.value_bind at 1.
+  rewrite Cost.value_ret; reflexivity.
+Qed.
+
+(** The event map is constructed from the original ordered point-edge occurrences. *)
+Theorem event_index_value names :
+  Cost.value (event_index_c names) = Map.of_list (Pre.ee (Pre.keys c))
+    (map (fun e => (e, Cost.value (event_c names e))) (Cfg.edges (Pre.point_cfg c))).
+Proof.
+  unfold event_index_c; rewrite Cost.value_bind, fw_edges_value, Cost.value_bind, value_map_c.
+  assert (Hpairs : map (fun e =>
+    Cost.value (let* description := event_c names e in Cost.ret (e, description)))
+      (Cfg.edges (Pre.point_cfg c)) =
+    map (fun e => (e, Cost.value (event_c names e))) (Cfg.edges (Pre.point_cfg c))).
+  { apply map_ext; intro e; rewrite Cost.value_bind, Cost.value_ret; reflexivity. }
+  rewrite Hpairs; reflexivity.
+Qed.
+
+(** Exit preparation retains the original short-circuiting exit and successor observations. *)
+Theorem exits_value :
+  Cost.value exits_c = FinSet.of_list (Pre.en (Pre.keys c))
+    (filter (fun n => Cost.value
+      (Cost.step ;;
+       let* ending := Pre.exit_point_c (Pre.input c) n in
+       if ending then Cost.ret true else
+         Cost.step ;;
+         let* outgoing := Graph.out_c (Pre.pg c) n in
+         Cost.ret (match outgoing with [] => true | _ :: _ => false end)))
+      (Graph.nodes (Pre.pg c))).
+Proof.
+  unfold exits_c; rewrite Cost.value_bind, value_filter_c; reflexivity.
+Qed.
+
+Definition argument_pairs names keys :=
+  flat_map (fun key => flat_map (fun be =>
+    match Pre.translate c be (snd key) with
+    | None => []
+    | Some u => [(Graph.source (Pre.bg c) be,
+        Argument key be u (Intern.find (Pre.eu (Pre.keys c)) u names))]
+    end) (Cost.value (Prepared.incoming_c (Pre.blocks c) (fst key)))) keys.
+
+(** Argument indexing preserves the ordered incoming-edge translations and optional dense IDs. *)
+Theorem arguments_value names keys :
+  Cost.value (arguments_c names keys) =
+    Index.group_by (Pre.eb (Pre.keys c)) fst (argument_pairs names keys).
+Proof.
+  unfold arguments_c; rewrite Cost.value_bind, Index.group_by_c_value.
+  assert (Hpairs : Cost.value (fw_flat_map_c (fun key =>
+    let* es := Prepared.incoming_c (Pre.blocks c) (fst key) in
+    fw_flat_map_c (fun be =>
+      Cost.step ;;
+      let* translated := Pre.translate_c (Pre.input c) be (snd key) in
+      match translated with
+      | None => Cost.ret []
+      | Some u =>
+        let* id := Intern.find_c (Pre.eu (Pre.keys c)) u names in
+        Cost.step ;;
+        let* source := Graph.source_c (Pre.bg c) be in
+        Cost.ret [(source, Argument key be u id)]
+      end) es) keys) = argument_pairs names keys).
+  { rewrite fw_flat_map_value; unfold argument_pairs.
+    induction keys as [|key rest IH]; [reflexivity|].
+    cbn [flat_map]; rewrite IH, Cost.value_bind, fw_flat_map_value; f_equal.
+    induction (Cost.value (Prepared.incoming_c (Pre.blocks c) (fst key)))
+      as [|be edges IHedges]; [reflexivity|].
+    cbn [flat_map]; rewrite IHedges; do 2 rewrite Cost.value_bind at 1.
+    fold (Pre.translate c be (snd key)).
+    destruct (Pre.translate c be (snd key)) as [u|]; [|reflexivity].
+    do 3 rewrite Cost.value_bind at 1; rewrite Cost.value_ret; reflexivity. }
+  rewrite Hpairs; reflexivity.
+Qed.
+
 (** The renaming budget is built in binary and leaves one step for the stopping callback. *)
 Theorem rename_budget_equation roots parents :
   Cost.value (rename_budget_c roots parents) =
@@ -636,6 +739,33 @@ Proof.
   unfold rename_budget_c; rewrite !Cost.value_bind.
   fold (PreFamily.count roots); fold (PreFamily.count parents).
   rewrite !PreFamily.count_value, PreFamily.add_value, Cost.value_ret; reflexivity.
+Qed.
+
+(** Preparation exposes its literal cached observations without recomputing a program index. *)
+Theorem prepare_equation data :
+  prepare data =
+    let family := filter (Pre.pure c) (PreFrg.all_family data) in
+    let scope := initial_scope c family in
+    let names := symbols scope in
+    let pairs := Cost.value (phi_pairs_c names (FinSet.elements (PreFrg.sites data))) in
+    let keys := map (fun pair => (fst pair, snd (snd pair))) pairs in
+    let parents := Map.elements (Dom.idom (Pre.dom c)) in
+    let roots := Prepared.entry_ids (Pre.blocks c) in
+    Prepared family keys scope (Map.elements (Intern.inverse names))
+      (Cost.value (event_index_c names)) (Cost.value exits_c)
+      (Index.group_by (Pre.eb (Pre.keys c)) fst pairs)
+      (Cost.value (arguments_c names keys))
+      (Index.group_by positive_encoding snd parents) parents roots
+      (N.succ_pos (N.of_nat (length roots) + N.of_nat (length parents)))%N.
+Proof.
+  unfold prepare, prepare_c.
+  do 13 rewrite Cost.value_bind at 1.
+  rewrite Cost.value_ret at 1.
+  rewrite !(value_filter_c (fun u => Cost.step ;; Pre.pure_c (Pre.input c) u)).
+  rewrite !(value_map_c (fun pair : B * (positive * U) =>
+    Cost.ret (fst pair, snd (snd pair)))).
+  rewrite (Index.group_by_c_value (Pre.eb (Pre.keys c))).
+  rewrite (Index.group_by_c_value positive_encoding), rename_budget_equation; reflexivity.
 Qed.
 
 (** Walk roots, parent occurrences, child buckets and fuel are the actual supplied tree indexes. *)

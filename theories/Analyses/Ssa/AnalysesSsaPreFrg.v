@@ -1135,7 +1135,8 @@ Proof.
       apply (cached_row_exact c Hlaw); exact Hrow.
 Qed.
 
-Local Lemma incoming_exact :
+(** The prepared predecessor bucket retains exactly the listed incoming edge identities. *)
+Lemma incoming_exact :
   Pre.laws c ->
   forall b, In b (Graph.nodes (Pre.bg c)) ->
   forall be, In be (incoming b) <->
@@ -1406,6 +1407,16 @@ Definition phi_sites_c : Cost.t (list U + phi_data) :=
   | inr family => Cost.map (fun index => inr (PhiData family index)) (phi_sites_for_c family)
   end.
 Definition phi_sites := Cost.value phi_sites_c.
+
+(** Lawful placement returns the same exact discovered family and canonical product-closure index. *)
+Theorem phi_sites_success :
+  Pre.laws c ->
+  phi_sites = inr (PhiData (PreFamily.universe c) (phi_sites_for (PreFamily.universe c))).
+Proof.
+  intro Hlaw; unfold phi_sites, phi_sites_c; rewrite Cost.value_bind.
+  fold (PreFamily.discover c); rewrite (PreFamily.discover_success c Hlaw), Cost.value_map.
+  reflexivity.
+Qed.
 
 (** Complete phi preparation discovers the exact family
     and computes all four legacy placement clauses. *)

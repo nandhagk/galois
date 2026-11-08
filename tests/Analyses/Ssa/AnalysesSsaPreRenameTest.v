@@ -6,10 +6,12 @@
 
 From Stdlib Require Import List Bool Arith PArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseMap.
+From Galois.Base Require Import BaseEncoding BaseMap BaseIndex BaseIntern.
 From Galois.Graph Require Import GraphModel GraphDomSpec.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
   AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep AnalysesSsaPreOperands.
+From Galois.Analyses.Ssa Require Import AnalysesSsaPreFamily AnalysesSsaPreFrameCache
+  AnalysesSsaPreFrameInvariant.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest AnalysesSsaPreFrgTest.
 Import List.ListNotations.
 
@@ -167,4 +169,62 @@ Proof.
   split; [exact diamond_phi_nearest|].
   exists (Diamond.Join, Diamond.Body); split; [reflexivity|].
   intros es _ _; apply Forall_forall; intros e _; vm_compute; reflexivity.
+Qed.
+
+Definition diamond_data := PreFrg.PhiData (PreFamily.universe Diamond.ctx)
+  (PreFrg.phi_sites_for Diamond.ctx (PreFamily.universe Diamond.ctx)).
+
+Example diamond_data_actual : PreFrg.phi_sites Diamond.ctx = inr diamond_data.
+Proof.
+  exact (PreFrg.phi_sites_success Diamond.ctx Diamond.laws).
+Qed.
+
+Example diamond_data_laws : PreFrameCache.placement_laws Diamond.ctx diamond_data.
+Proof.
+  exact (PreFrameCache.placement_from_output Diamond.ctx Diamond.laws _ diamond_data_actual).
+Qed.
+
+(** The actual entry cache, rather than a separately supplied scope, establishes source provenance. *)
+Example diamond_entry_source_client :
+  PreFrameInvariant.scope_source Diamond.ctx diamond_data
+    (PreRename.entry_scope (PreRename.prepare Diamond.ctx diamond_data)).
+Proof.
+  exact (PreFrameInvariant.entry_source Diamond.ctx diamond_data Diamond.laws diamond_data_laws).
+Qed.
+
+(** The same invariant survives the real ordered block transfer, with no output-correctness premise. *)
+Example diamond_left_transfer_source_client :
+  PreFrameInvariant.scope_source Diamond.ctx diamond_data
+    (fst (PreRename.block Diamond.ctx (PreRename.prepare Diamond.ctx diamond_data) Diamond.Left
+      (PreRename.entry_scope (PreRename.prepare Diamond.ctx diamond_data))
+      PreRename.empty_accumulator)).
+Proof.
+  apply (PreFrameInvariant.block_source Diamond.ctx diamond_data Diamond.laws diamond_data_laws).
+  exact diamond_entry_source_client.
+Qed.
+
+(** An available unavailable-sentinel frame violates the maintained availability distinction. *)
+Example forged_available_rejected :
+  ~ PreFrameInvariant.frame_source Diamond.ctx tt
+    (PreRename.Frame (PreFrg.Operand (PreFrg.Unavailable tt) false) true).
+Proof.
+  intros [_ [_ Hnot]]; exact (Hnot eq_refl eq_refl).
+Qed.
+
+(** Incoming argument preparation supplies a named translation in the actual source bucket. *)
+Example diamond_argument_cache_client :
+  exists v id, Pre.translate Diamond.ctx Diamond.LJ tt = Some v /\
+    Intern.find (Pre.eu (Pre.keys Diamond.ctx)) v
+      (PreFrameCache.names Diamond.ctx diamond_data) = Some id /\
+    In (Diamond.Left, PreRename.Argument (Diamond.Join, tt) Diamond.LJ v (Some id))
+      (Index.find (Pre.eb (Pre.keys Diamond.ctx)) Diamond.Left
+        (PreRename.arguments (PreRename.prepare Diamond.ctx diamond_data))).
+Proof.
+  apply (PreFrameCache.arguments_total Diamond.ctx diamond_data Diamond.laws diamond_data_laws).
+  - apply (PreFrameCache.placement_sites Diamond.ctx diamond_data diamond_data_laws).
+    pose proof Diamond.join_phi as Hjoin; rewrite diamond_data_actual in Hjoin.
+    exact (proj1 Hjoin).
+  - reflexivity.
+  - vm_compute; tauto.
+  - reflexivity.
 Qed.
