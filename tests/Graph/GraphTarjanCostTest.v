@@ -58,6 +58,22 @@ Proof.
   vm_compute. discriminate.
 Qed.
 
+Example supplied_unknown_root_occurrences_still_cost :
+  (Cost.ticks (Tarjan.compute_c TarjanFixtures.empty TarjanFixtures.unrestricted []) <
+    Cost.ticks (Tarjan.compute_c TarjanFixtures.empty TarjanFixtures.unrestricted
+      [99; 99]%positive))%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example repeated_and_unknown_roots_still_cost :
+  (Cost.ticks (Tarjan.compute_c TarjanFixtures.line TarjanFixtures.unrestricted [1]%positive) <
+    Cost.ticks (Tarjan.compute_c TarjanFixtures.line TarjanFixtures.unrestricted
+      [99; 1; 1; 99]%positive))%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example initial_potential : TarjanCost.potential 3 Tarjan.initial = 0%N.
 Proof.
   vm_compute. reflexivity.

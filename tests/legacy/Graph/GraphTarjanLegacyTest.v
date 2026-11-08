@@ -78,4 +78,10 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example legacy_cross_to_finished_pending_sibling :
+  agrees [1; 2; 3] [(1, 2); (1, 3); (2, 1); (3, 2)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 End TarjanDifferential.
