@@ -181,6 +181,32 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example raw_chain_equation_client fuel (m : Map.t positive positive) v :
+  DomCheck.chain (S fuel) m v =
+    v :: match Map.get positive_encoding v m with
+    | None => []
+    | Some u => DomCheck.chain fuel m u
+    end.
+Proof.
+  apply DomCheck.chain_equation.
+Qed.
+
+Example raw_ends_equation_client fuel (m : Map.t positive positive) v :
+  DomCheck.ends (S fuel) m v =
+    match Map.get positive_encoding v m with
+    | None => true
+    | Some u => DomCheck.ends fuel m u
+    end.
+Proof.
+  exact (DomCheck.ends_equation (S fuel) m v).
+Qed.
+
+Example raw_ancestor_equation_client (m : Map.t positive positive) d n :
+  DomCheck.ancestor_b m d n = existsb (Pos.eqb d) (DomCheck.chain (Map.size m) m n).
+Proof.
+  apply DomCheck.ancestor_b_equation.
+Qed.
+
 Example preserves_parent_map :
   Dom.idom (DomCheck.of_parents Fixtures.Line.prepared Fixtures.Line.parents) =
   Fixtures.Line.parents.

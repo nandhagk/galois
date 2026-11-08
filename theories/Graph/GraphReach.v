@@ -357,6 +357,13 @@ Definition unrestricted := Scope.Make FinSet.empty None.
 
 Definition blocked d := Scope.Make (FinSet.add positive_encoding d FinSet.empty) None.
 
+(** The blocked scope stores exactly the singleton produced by the public set constructor. *)
+Theorem blocked_equation d :
+  blocked d = Scope.Make (FinSet.add positive_encoding d FinSet.empty) None.
+Proof.
+  reflexivity.
+Qed.
+
 (** Every ID is admitted by the unrestricted scope. *)
 Theorem admits_unrestricted v : Scope.admits unrestricted v = true.
 Proof.

@@ -38,6 +38,43 @@ Fixpoint ends fuel m v :=
 
 Definition ancestor_b m d n := existsb (Pos.eqb d) (chain (Map.size m) m n).
 
+(** The bounded raw parent list starts at the queried node, including at zero fuel. *)
+Theorem chain_equation fuel m v :
+  chain fuel m v =
+    v :: match fuel with
+    | O => []
+    | S rest =>
+      match Map.get positive_encoding v m with
+      | None => []
+      | Some u => chain rest m u
+      end
+    end.
+Proof.
+  destruct fuel; reflexivity.
+Qed.
+
+(** Raw chain termination rejects exhausted fuel and stops at the first absent parent. *)
+Theorem ends_equation fuel m v :
+  ends fuel m v =
+    match fuel with
+    | O => false
+    | S rest =>
+      match Map.get positive_encoding v m with
+      | None => true
+      | Some u => ends rest m u
+      end
+    end.
+Proof.
+  destruct fuel; reflexivity.
+Qed.
+
+(** The raw ancestry test scans the bounded list using positive equality. *)
+Theorem ancestor_b_equation m d n :
+  ancestor_b m d n = existsb (Pos.eqb d) (chain (Map.size m) m n).
+Proof.
+  reflexivity.
+Qed.
+
 Local Lemma ancestor_cases m d n :
   idom_ancestor m d n ->
   d = n \/ exists u, parent m n = Some u /\ idom_ancestor m d u.
@@ -633,6 +670,22 @@ Definition check {V E} (p : Prepared.t V E) m :=
     let avoiding := Reach.set p (Reach.blocked d) (Prepared.entry_ids p) in
     forallb (fun n => Bool.eqb (ancestor_b m d n)
       (negb (FinSet.mem positive_encoding n avoiding))) vs) vs.
+
+(** The raw checker retains all three original tests without adding a storage-validity claim. *)
+Theorem check_equation {V E} (p : Prepared.t V E) m :
+  check p m =
+    let seen := Reach.set p Reach.unrestricted (Prepared.entry_ids p) in
+    let vs := FinSet.elements seen in
+    forallb (fun vu => FinSet.mem positive_encoding (fst vu) seen &&
+      FinSet.mem positive_encoding (snd vu) seen) (Map.elements m) &&
+    forallb (ends (S (Map.size m)) m) vs &&
+    forallb (fun d =>
+      let avoiding := Reach.set p (Reach.blocked d) (Prepared.entry_ids p) in
+      forallb (fun n => Bool.eqb (ancestor_b m d n)
+        (negb (FinSet.mem positive_encoding n avoiding))) vs) vs.
+Proof.
+  reflexivity.
+Qed.
 
 Local Lemma checked_domain {V E} (p : Prepared.t V E) m :
   Map.wf positive_encoding m -> check p m = true ->
