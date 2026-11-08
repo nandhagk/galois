@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List NArith.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 Import List.ListNotations.
 
 Definition sample := Map.of_list positive_encoding [(1%positive, 10); (2%positive, 20);
@@ -72,4 +72,35 @@ Example map_costed_comparison :
   (Cost.value checked, N.ltb 1000 (Cost.ticks checked)) = (true, true).
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Example raw_set_client {K V} (enc : encoding K) k a (v : V) m :
+  Map.get enc k (Map.set enc a v m) =
+    if eqb enc k a then Some v else Map.get enc k m.
+Proof.
+  apply Map.get_set_raw.
+Qed.
+
+Definition collision_encoding : encoding positive := of_pure (fun _ => 1%positive).
+Definition malformed_storage := Map.set collision_encoding 2%positive 10 Map.empty.
+
+Example malformed_storage_control : ~ Map.wf positive_encoding malformed_storage.
+Proof.
+  intro Hwf.
+  pose proof (Hwf 1%positive 2%positive 10 ltac:(vm_compute; reflexivity)) as Hcode.
+  vm_compute in Hcode. discriminate.
+Qed.
+
+Example malformed_storage_update_client :
+  Map.get positive_encoding 1%positive (Map.set positive_encoding 3%positive 30 malformed_storage) =
+    Some 10.
+Proof.
+  rewrite Map.get_set_raw. vm_compute. reflexivity.
+Qed.
+
+Example colliding_keys_update_client :
+  Map.get collision_encoding 1%positive
+    (Map.set collision_encoding 2%positive 20 malformed_storage) = Some 20.
+Proof.
+  rewrite Map.get_set_raw. vm_compute. reflexivity.
 Qed.

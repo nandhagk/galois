@@ -183,6 +183,20 @@ Proof.
   now rewrite Trie.get_empty.
 Qed.
 
+(** Updating an encoded position has its exact query effect on arbitrary stored labels. *)
+Theorem get_set_raw {K V} (E : encoding K) k a (v : V) m :
+  get E k (set E a v m) = if eqb E k a then Some v else get E k m.
+Proof.
+  rewrite eqb_equation.
+  change (option_map snd (Trie.get (encode E k)
+    (Trie.set (encode E a) (a, v) m)) =
+    if Pos.eqb (encode E k) (encode E a) then Some v
+    else option_map snd (Trie.get (encode E k) m)).
+  destruct (Pos.eqb_spec (encode E k) (encode E a)) as [Heq|Hne].
+  - rewrite Heq, Trie.get_set_same. reflexivity.
+  - rewrite Trie.get_set_other by congruence. reflexivity.
+Qed.
+
 (** Setting a key makes its new value readable. *)
 Theorem get_set_same {K V} (E : encoding K) k (v : V) m :
   wf E m -> get E k (set E k v m) = Some v.

@@ -265,6 +265,15 @@ Proof.
   now rewrite Map.get_empty.
 Qed.
 
+(** Adding a key has its encoded membership effect even on arbitrary stored labels. *)
+Theorem mem_add_raw {K} (E : encoding K) k a (s : t K) :
+  mem E k (add E a s) = (eqb E k a || mem E k s)%bool.
+Proof.
+  change (mem E k (Map.set E a tt s) = (eqb E k a || mem E k s)%bool).
+  rewrite mem_equation, Map.get_set_raw.
+  rewrite mem_equation. destruct (eqb E k a), (Map.get E k s); reflexivity.
+Qed.
+
 (** Adding a key takes the disjunction of equality and previous membership. *)
 Theorem mem_add {K} (E : encoding K) k a (s : t K) :
   wf E s -> mem E k (add E a s) = (eqb E k a || mem E k s)%bool.
