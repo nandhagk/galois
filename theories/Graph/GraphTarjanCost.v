@@ -43,7 +43,7 @@ Definition pop_k w := 1 + 3 * id_cost w + w.
 Definition visitor_k : N := 32.
 
 (** This coefficient includes the shared Search driver and every local Tarjan charge. *)
-Definition scc_k : N := 2112.
+Definition scc_k : N := SearchCost.search_k * (1 + visitor_k).
 
 (** The potential reserves per-stack-cell pop work and one reversal tick per emitted component. *)
 Definition potential w (s : Tarjan.state) :=
@@ -364,6 +364,27 @@ Proof.
   unfold Tarjan.compute_c. apply Cost.ticks_bind.
 Qed.
 
+Local Lemma size_factor n m r fuel_width w :
+  (n + m + r) * (1 + w + visitor_k * (1 + w)) + r * fuel_width <=
+    (1 + visitor_k) * ((n + m + r) * (1 + w) + r * fuel_width).
+Proof.
+  nia.
+Qed.
+
+Local Lemma search_size_factor {V E} (p : Prepared.t V E) roots w :
+  SearchCost.search_size p roots w (visitor_k * (1 + w)) <=
+    (1 + visitor_k) * scc_size p roots w.
+Proof.
+  unfold SearchCost.search_size, scc_size. apply size_factor.
+Qed.
+
+Local Lemma scoped_search_size_factor {V E} (p : Prepared.t V E) scope roots w :
+  ScopedSearchCost.search_size p scope roots w (visitor_k * (1 + w)) <=
+    (1 + visitor_k) * scc_scoped_size p scope roots w.
+Proof.
+  unfold ScopedSearchCost.search_size, scc_scoped_size. apply size_factor.
+Qed.
+
 (** Ready Tarjan has a total numeric bound for arbitrary scopes and every supplied root occurrence. *)
 Theorem scc_cost {V E} (p : Prepared.t V E) scope roots w :
   Prepared.ready p -> SearchCost.width_bound p roots w ->
@@ -377,8 +398,11 @@ Proof.
   rewrite (proj2 (initial_domain w)) in Hsearch.
   pose proof (result_cost w (snd (Cost.value
     (SearchRun.run_c p Tarjan.visitor scope roots Tarjan.initial)))) as Hfinish.
-  rewrite compute_cost_equation.
-  unfold scc_k, scc_size, SearchCost.search_k, SearchCost.search_size, visitor_k in *. nia.
+  assert (Htotal : Cost.ticks (Tarjan.compute_c p scope roots) <= SearchCost.search_k *
+    SearchCost.search_size p roots w (visitor_k * (1 + w))).
+  { rewrite compute_cost_equation. lia. }
+  eapply N.le_trans; [exact Htotal|]. unfold scc_k.
+  eapply N.le_trans; [apply N.mul_le_mono_l; apply search_size_factor|nia].
 Qed.
 
 (** Hierarchy calls pay only scoped source work and all their outgoing occurrences plus root overhead. *)
@@ -395,9 +419,11 @@ Proof.
   rewrite (proj2 (initial_domain w)) in Hsearch.
   pose proof (result_cost w (snd (Cost.value
     (SearchRun.run_c p Tarjan.visitor scope roots Tarjan.initial)))) as Hfinish.
-  rewrite compute_cost_equation.
-  unfold scc_k, scc_scoped_size, SearchCost.search_k, ScopedSearchCost.search_size, visitor_k in *.
-  nia.
+  assert (Htotal : Cost.ticks (Tarjan.compute_c p scope roots) <= SearchCost.search_k *
+    ScopedSearchCost.search_size p scope roots w (visitor_k * (1 + w))).
+  { rewrite compute_cost_equation. lia. }
+  eapply N.le_trans; [exact Htotal|]. unfold scc_k.
+  eapply N.le_trans; [apply N.mul_le_mono_l; apply scoped_search_size_factor|nia].
 Qed.
 
 (** The total numeric SCC bound lifts uniformly to input families with arbitrary roots and scopes. *)
@@ -408,8 +434,9 @@ Theorem scc_bigO {X V E} (p : X -> Prepared.t V E) scope roots w :
     (fun x => Cost.ticks (Tarjan.compute_c (p x) (scope x) (roots x))).
 Proof.
   intros Hready Hwidth. exists scc_k. intro x.
-  pose proof (scc_cost (p x) (scope x) (roots x) (w x) (Hready x) (Hwidth x)).
-  unfold scc_k in *. nia.
+  eapply N.le_trans; [exact (scc_cost (p x) (scope x) (roots x) (w x)
+    (Hready x) (Hwidth x))|].
+  apply N.mul_le_mono_l. lia.
 Qed.
 
 (** Component-sensitive SCC costs lift uniformly while preserving global key and fuel widths. *)
@@ -420,15 +447,9 @@ Theorem scc_scoped_bigO {X V E} (p : X -> Prepared.t V E) scope roots w :
     (fun x => Cost.ticks (Tarjan.compute_c (p x) (scope x) (roots x))).
 Proof.
   intros Hready Hwidth. exists scc_k. intro x.
-  pose proof (scc_scoped_cost (p x) (scope x) (roots x) (w x) (Hready x) (Hwidth x)).
-  unfold scc_k in *. nia.
-Qed.
-
-Local Lemma present_length {A B} (f : A -> option B) xs :
-  (length (Prepared.present f xs) <= length xs)%nat.
-Proof.
-  induction xs as [|x rest IH]; [reflexivity|].
-  cbn [Prepared.present]. destruct (f x); cbn [length]; lia.
+  eapply N.le_trans; [exact (scc_scoped_cost (p x) (scope x) (roots x) (w x)
+    (Hready x) (Hwidth x))|].
+  apply N.mul_le_mono_l. lia.
 Qed.
 
 (** Distinct valid root IDs satisfy the root-count restriction used by the n/m-only corollary. *)
@@ -441,7 +462,7 @@ Proof.
   { intros v Hv. apply SearchInvariant.vertices_spec. now apply Hvalid. }
   pose proof (NoDup_incl_length Hnodup Hincl) as Hcount.
   unfold SearchInvariant.vertices in Hcount.
-  pose proof (present_length (Prepared.id_of p) (Graph.nodes (Prepared.graph p))). lia.
+  pose proof (Prepared.present_length (Prepared.id_of p) (Graph.nodes (Prepared.graph p))). lia.
 Qed.
 
 (** Distinct admitted valid roots satisfy the component-sensitive root-count restriction. *)
@@ -467,10 +488,13 @@ Theorem scc_cost_root_restricted {V E} (p : Prepared.t V E) scope roots w :
   (length roots <= length (Graph.nodes (Prepared.graph p)))%nat ->
   Cost.ticks (Tarjan.compute_c p scope roots) <= 2 * scc_k * root_restricted_size p w.
 Proof.
-  intros Hready Hwidth Hroots. pose proof (scc_cost p scope roots w Hready Hwidth).
+  intros Hready Hwidth Hroots.
   assert (Hcount : N.of_nat (length roots) <=
     N.of_nat (length (Graph.nodes (Prepared.graph p)))) by lia.
-  unfold scc_k, scc_size, root_restricted_size in *. nia.
+  assert (Hsize : scc_size p roots w <= 2 * root_restricted_size p w).
+  { unfold scc_size, root_restricted_size. nia. }
+  eapply N.le_trans; [exact (scc_cost p scope roots w Hready Hwidth)|].
+  eapply N.le_trans; [apply N.mul_le_mono_l; exact Hsize|nia].
 Qed.
 
 (** Distinct valid roots discharge the root restriction without excluding roots in the main theorem. *)
@@ -496,10 +520,14 @@ Theorem scc_scoped_cost_root_restricted {V E} (p : Prepared.t V E) scope roots w
   Cost.ticks (Tarjan.compute_c p scope roots) <=
     2 * scc_k * scoped_root_restricted_size p scope w.
 Proof.
-  intros Hready Hwidth Hroots. pose proof (scc_scoped_cost p scope roots w Hready Hwidth).
+  intros Hready Hwidth Hroots.
   assert (Hcount : N.of_nat (length roots) <= N.of_nat (ScopedSearchCost.node_count p scope))
     by lia.
-  unfold scc_k, scc_scoped_size, scoped_root_restricted_size in *. nia.
+  assert (Hsize : scc_scoped_size p scope roots w <=
+    2 * scoped_root_restricted_size p scope w).
+  { unfold scc_scoped_size, scoped_root_restricted_size. nia. }
+  eapply N.le_trans; [exact (scc_scoped_cost p scope roots w Hready Hwidth)|].
+  eapply N.le_trans; [apply N.mul_le_mono_l; exact Hsize|nia].
 Qed.
 
 (** Distinct admitted valid roots discharge the hierarchy's component root restriction. *)
@@ -536,9 +564,9 @@ Theorem condense_bigO {X V E} (p : X -> Prepared.t V E) scope roots r w :
     (fun x => Cost.ticks (Condense.of_scc_c (p x) (scope x) (r x))).
 Proof.
   intros Hready Hexact Hwidth. exists condense_k. intro x.
-  pose proof (condense_cost (p x) (scope x) (roots x) (r x) (w x)
-    (Hready x) (Hexact x) (Hwidth x)).
-  unfold condense_k, TarjanCondenseCost.condense_k in *. nia.
+  eapply N.le_trans; [exact (condense_cost (p x) (scope x) (roots x) (r x) (w x)
+    (Hready x) (Hexact x) (Hwidth x))|].
+  apply N.mul_le_mono_l. lia.
 Qed.
 
 End TarjanCost.

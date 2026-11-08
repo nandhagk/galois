@@ -13,13 +13,6 @@ Import List.ListNotations Cost.Notations.
 
 Module Condense.
 
-Local Lemma present_ext {A B} (f g : A -> option B) xs :
-  (forall x, f x = g x) -> Prepared.present f xs = Prepared.present g xs.
-Proof.
-  intro Hfg. induction xs as [|x rest IH]; [reflexivity|].
-  cbn [Prepared.present]. rewrite Hfg, IH. reflexivity.
-Qed.
-
 (** Mapping an inspected occurrence retains it exactly when both owners exist and differ. *)
 Definition target_c {E} (r : Scc.result) i (ev : E * positive) :=
   let* owner := Map.get_c positive_encoding (snd ev) (Scc.comp_of r) in
@@ -72,7 +65,7 @@ Proof.
   fold (Map.get positive_encoding u (Scc.comp_of r)).
   destruct (Map.get positive_encoding u (Scc.comp_of r)); [|reflexivity].
   autorewrite with galois_cost. rewrite Prepared.present_c_value.
-  apply present_ext. intro ev. apply target_equation.
+  apply Prepared.present_ext. intro ev. apply target_equation.
 Qed.
 
 Definition vertices_c {V E} (p : Prepared.t V E) r vs :=
@@ -189,20 +182,6 @@ Proof.
   rewrite Index.group_by_c_value. reflexivity.
 Qed.
 
-Local Lemma present_spec {A B} (f : A -> option B) xs y :
-  In y (Prepared.present f xs) <-> exists x, In x xs /\ f x = Some y.
-Proof.
-  induction xs as [|x rest IH]; cbn [Prepared.present].
-  - split; [contradiction|intros [a [Hfalse _]]; contradiction].
-  - destruct (f x) as [b|] eqn:Hx; cbn [In]; rewrite IH.
-    + split.
-      * intros [<-|[a [Ha Heq]]]; [exists x; auto|exists a; auto].
-      * intros [a [[<-|Ha] Heq]]; [left; congruence|right; exists a; auto].
-    + split.
-      * intros [a [Ha Heq]]. exists a. auto.
-      * intros [a [[<-|Ha] Heq]]; [congruence|exists a; auto].
-Qed.
-
 (** Collected pairs correspond to inspected outgoing occurrences between existing distinct owners. *)
 Theorem vertex_spec {V E} (p : Prepared.t V E) r u i j :
   In (i, j) (vertex p r u) <->
@@ -212,7 +191,7 @@ Theorem vertex_spec {V E} (p : Prepared.t V E) r u i j :
 Proof.
   rewrite vertex_equation.
   destruct (Map.get positive_encoding u (Scc.comp_of r)) as [a|] eqn:Hu.
-  - rewrite present_spec. split.
+  - rewrite Prepared.present_spec. split.
     + intros [[e v] [He Hpair]]. cbn [snd] in Hpair.
       destruct (Map.get positive_encoding v (Scc.comp_of r)) as [b|] eqn:Hv;
         [|discriminate].

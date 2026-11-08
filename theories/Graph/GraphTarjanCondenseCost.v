@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIndex BaseIndexCost
   BaseInternCost.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSearchInvariant
-  GraphSearchCost GraphSccSpec GraphCondense.
+  GraphPreparedCost GraphSearchCost GraphSccSpec GraphCondense.
 Import List.ListNotations Cost.Notations.
 
 Module TarjanCondenseCost.
@@ -72,19 +72,12 @@ Proof.
   fold (key_bits positive_encoding v). unfold id_cost. nia.
 Qed.
 
-Local Lemma present_length {A B} (f : A -> option B) xs :
-  (length (Prepared.present f xs) <= length xs)%nat.
-Proof.
-  induction xs as [|x rest IH]; [reflexivity|].
-  cbn [Prepared.present]. destruct (f x); cbn [length]; lia.
-Qed.
-
-Local Lemma present_cost {A B} (f : A -> Cost.t (option B)) xs k :
-  (forall x, In x xs -> Cost.ticks (f x) <= k) ->
-  Cost.ticks (Prepared.present_c f xs) <= N.of_nat (length xs) * (2 + k).
+Local Lemma fold_cost_bound {A} (f : A -> N) xs k :
+  (forall x, In x xs -> f x <= k) ->
+  fold_right (fun x n => 2 + f x + n) 0 xs <= N.of_nat (length xs) * (2 + k).
 Proof.
   induction xs as [|x rest IH]; intro Hf; [reflexivity|].
-  cbn [Prepared.present_c]. autorewrite with galois_cost.
+  cbn [fold_right].
   specialize (IH ltac:(intros y Hy; apply Hf; now right)).
   pose proof (Hf x (or_introl eq_refl)).
   cbn [length]. rewrite Nat2N.inj_succ. nia.
@@ -94,7 +87,7 @@ Local Lemma vertex_length {V E} (p : Prepared.t V E) r u :
   (length (Condense.vertex p r u) <= length (Prepared.succ_edges p u))%nat.
 Proof.
   rewrite Condense.vertex_equation.
-  destruct (Map.get positive_encoding u (Scc.comp_of r)); [apply present_length|cbn; lia].
+  destruct (Map.get positive_encoding u (Scc.comp_of r)); [apply Prepared.present_length|cbn; lia].
 Qed.
 
 Local Lemma vertex_cost {V E} (p : Prepared.t V E) r u w :
@@ -111,8 +104,6 @@ Proof.
   destruct (Map.get positive_encoding u (Scc.comp_of r)) as [i|];
     autorewrite with galois_cost; [|nia].
   fold (Prepared.succ_edges p u).
-  pose proof (present_cost (Condense.target_c r i) (Prepared.succ_edges p u)
-    (id_cost w)) as Hpresent.
   assert (Hcallback : forall ev, In ev (Prepared.succ_edges p u) ->
     Cost.ticks (Condense.target_c r i ev) <= id_cost w).
   { intros [e v] He. unfold Condense.target_c. autorewrite with galois_cost.
@@ -120,7 +111,11 @@ Proof.
     destruct (Cost.value (Map.get_c positive_encoding v (Scc.comp_of r)));
       autorewrite with galois_cost; rewrite N.add_0_r;
       apply get_cost, (Htargets e v He). }
-  specialize (Hpresent Hcallback). unfold id_cost, SearchCost.id_cost in *. nia.
+  assert (Hpresent : Cost.ticks
+    (Prepared.present_c (Condense.target_c r i) (Prepared.succ_edges p u)) <=
+      N.of_nat (length (Prepared.succ_edges p u)) * (2 + id_cost w)).
+  { rewrite PreparedCost.present_cost. now apply fold_cost_bound. }
+  unfold id_cost, SearchCost.id_cost in *. nia.
 Qed.
 
 Local Lemma inspected_app {V E} (p : Prepared.t V E) xs ys :

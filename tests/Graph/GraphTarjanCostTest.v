@@ -4,11 +4,11 @@
     For example, a component emission spends stack credit on each owner insertion.
     Builds on: GraphTarjanCost and the local GraphTarjanTest fixtures. *)
 
-From Stdlib Require Import List PArith NArith.
-From Galois.Cost Require Import CostMonad.
+From Stdlib Require Import List Bool PArith NArith.
+From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchCost GraphSearchScopedCost
-  GraphTarjan GraphCondense GraphTarjanCost.
+  GraphSccSpec GraphTarjan GraphTarjanExact GraphCondense GraphTarjanCost.
 From Galois.Tests.Graph Require Import GraphTarjanTest.
 Import List.ListNotations.
 
@@ -165,6 +165,83 @@ Proof.
   apply TarjanCost.amortised.
   - vm_compute. discriminate.
   - constructor.
+Qed.
+
+Example composed_scc_coefficient : TarjanCost.scc_k = 2112%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition family_prepared (b : bool) :=
+  if b then TarjanFixtures.line else TarjanFixtures.nested.
+
+Definition family_result b :=
+  Tarjan.compute (family_prepared b) TarjanFixtures.unrestricted [1]%positive.
+
+(** Both members of the importing cost family have actual public-preparation readiness evidence. *)
+Example family_ready b : Prepared.ready (family_prepared b).
+Proof.
+  destruct b.
+  - exact (proj1 TarjanFixtures.fixtures_ready).
+  - exact (proj1 (proj2 (proj2 (proj2 TarjanFixtures.fixtures_ready)))).
+Qed.
+
+(** The family width budget covers every valid ID and its actual supplied root. *)
+Example family_width b : SearchCost.width_bound (family_prepared b) [1]%positive 3.
+Proof.
+  destruct b; [exact line_width|].
+  intros v [Hvalid|Hroot].
+  - apply nested_scope_width. now left.
+  - destruct Hroot as [<-|Hfalse]; [vm_compute; discriminate|contradiction].
+Qed.
+
+(** Condensation's width duty is discharged from the actual family's valid-ID budget. *)
+Example family_valid_width b : SearchCost.width_bound (family_prepared b) [] 3.
+Proof.
+  intros v [Hvalid|Hfalse]; [|contradiction].
+  apply (family_width b). now left.
+Qed.
+
+(** Every family result is certified by the actual ready-only SCC producer theorem. *)
+Example family_exact b :
+  Scc.exact (family_prepared b) TarjanFixtures.unrestricted [1]%positive (family_result b).
+Proof.
+  apply TarjanExact.compute_exact, family_ready.
+Qed.
+
+(** All public condensation cost duties come from the actual prepared producer family. *)
+Example condense_cost_client b :
+  (Cost.ticks (Condense.of_scc_c (family_prepared b)
+    TarjanFixtures.unrestricted (family_result b)) <=
+    TarjanCost.condense_k * TarjanCost.condense_size (family_prepared b) (family_result b) 3)%N.
+Proof.
+  apply TarjanCost.condense_cost with (roots := [1]%positive).
+  - exact (family_ready b).
+  - exact (family_exact b).
+  - exact (family_valid_width b).
+Qed.
+
+(** A varying prepared family discharges the public SCC big-O theorem's input duties. *)
+Example scc_bigO_family_client :
+  bigO (fun b : bool => TarjanCost.scc_size (family_prepared b) [1]%positive 3)
+    (fun b => Cost.ticks
+      (Tarjan.compute_c (family_prepared b) TarjanFixtures.unrestricted [1]%positive)).
+Proof.
+  apply TarjanCost.scc_bigO.
+  - exact family_ready.
+  - exact family_width.
+Qed.
+
+(** The same actual producer family discharges every public condensation big-O duty. *)
+Example condense_bigO_family_client :
+  bigO (fun b : bool => TarjanCost.condense_size (family_prepared b) (family_result b) 3)
+    (fun b => Cost.ticks
+      (Condense.of_scc_c (family_prepared b) TarjanFixtures.unrestricted (family_result b))).
+Proof.
+  apply TarjanCost.condense_bigO with (roots := fun _ : bool => [1]%positive).
+  - exact family_ready.
+  - exact family_exact.
+  - exact family_valid_width.
 Qed.
 
 End TarjanCostFixtures.
