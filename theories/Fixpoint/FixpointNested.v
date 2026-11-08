@@ -100,6 +100,7 @@ Fixpoint cover_c {X C A} (a : Analysis.t X C A) (vs : FinSet.t X) (cs : list C)
   | [] => Cost.ret true
   | c :: rest =>
     Cost.step ;;
+    Cost.step ;;
     let* x := System.target_c (Analysis.system a) c in
     let* covered := FinSet.mem_c (Analysis.key_enc a) x vs in
     if covered then cover_c a vs rest else Cost.ret false
