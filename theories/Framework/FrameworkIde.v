@@ -159,6 +159,124 @@ Definition rows_c {N E P D A F} (I : Ide.t N E P D A F) start :=
 Definition rows {N E P D A F} (I : Ide.t N E P D A F) start :=
   Cost.value (rows_c I start).
 
+Local Lemma filter_map_in {X Y} (f : X -> option Y) xs y :
+  In y (filter_map f xs) <-> exists x, In x xs /\ f x = Some y.
+Proof.
+  induction xs as [|x xs IH]; cbn [filter_map fold_right]; [firstorder|].
+  destruct (f x) as [z|] eqn:Hfx; cbn [In]; rewrite IH.
+  - split.
+    + intros [Heq|[a [Ha Hfa]]].
+      * subst y; exists x; auto.
+      * exists a; auto.
+    + intros [a [[Heq|Ha] Hfa]].
+      * subst a; rewrite Hfx in Hfa; inversion Hfa; auto.
+      * right; exists a; auto.
+  - split.
+    + intros [a [Ha Hfa]]; exists a; auto.
+    + intros [a [[Heq|Ha] Hfa]].
+      * subst a; rewrite Hfx in Hfa; discriminate.
+      * exists a; auto.
+Qed.
+
+Local Lemma call_rows_in {N E P D F} (as_ : list (arc N E P D F)) r :
+  In r (filter_map (fun a =>
+    match kind a with Icfg.Call _ => Some (Call a) | _ => None end) as_) <->
+    exists a p, In a as_ /\ kind a = Icfg.Call p /\ r = Call a.
+Proof.
+  rewrite filter_map_in; split.
+  - intros [a [Ha Hrow]]; destruct (kind a) as [|p|p] eqn:Hkind;
+      try discriminate.
+    inversion Hrow; exists a, p; auto.
+  - intros [a [p [Ha [Hkind Hrow]]]]; exists a; split; [exact Ha|].
+    rewrite Hkind, Hrow; reflexivity.
+Qed.
+
+Local Lemma path_rows_in {N E P D F} (rs : list (N * option D))
+    (as_ : list (arc N E P D F)) r :
+  In r (flat_map (fun root => filter_map (fun a =>
+    match kind a with Icfg.Internal => Some (Path root a) | _ => None end) as_) rs) <->
+    exists root a, In root rs /\ In a as_ /\ kind a = Icfg.Internal /\ r = Path root a.
+Proof.
+  rewrite in_flat_map; split.
+  - intros [root [Hroot Hr]]; apply filter_map_in in Hr.
+    destruct Hr as [a [Ha Hrow]]; destruct (kind a) eqn:Hkind; try discriminate.
+    inversion Hrow; exists root, a; auto.
+  - intros [root [a [Hroot [Ha [Hkind Hrow]]]]].
+    exists root; split; [exact Hroot|]; apply filter_map_in.
+    exists a; split; [exact Ha|]; rewrite Hkind, Hrow; reflexivity.
+Qed.
+
+Local Lemma return_rows_in {N E P D F} (EP : encoding P)
+    (rs : list (N * option D)) (as_ : list (arc N E P D F)) r :
+  In r (flat_map (fun root => flat_map (fun a => filter_map (fun b =>
+    if Cost.value (matches_c EP a b) then Some (Return root a b) else None) as_) as_) rs)
+    <-> exists root a b, In root rs /\ In a as_ /\ In b as_ /\
+      Cost.value (matches_c EP a b) = true /\ r = Return root a b.
+Proof.
+  rewrite in_flat_map; split.
+  - intros [root [Hroot Hr]]; apply in_flat_map in Hr.
+    destruct Hr as [a [Ha Hr]]; apply filter_map_in in Hr.
+    destruct Hr as [b [Hb Hrow]]; destruct (Cost.value (matches_c EP a b)) eqn:Hmatch;
+      try discriminate.
+    inversion Hrow; exists root, a, b; auto.
+  - intros [root [a [b [Hroot [Ha [Hb [Hmatch Hrow]]]]]]].
+    exists root; split; [exact Hroot|]; apply in_flat_map.
+    exists a; split; [exact Ha|]; apply filter_map_in.
+    exists b; split; [exact Hb|]; rewrite Hmatch, Hrow; reflexivity.
+Qed.
+
+Local Lemma path_rows_value {N E P D F} (rs : list (N * option D))
+    (as_ : list (arc N E P D F)) :
+  Cost.value (fw_flat_map_c (fun root =>
+    filter_map_c (fun a => Cost.ret
+      (match kind a with Icfg.Internal => Some (Path root a) | _ => None end)) as_) rs) =
+  flat_map (fun root => filter_map (fun a =>
+    match kind a with Icfg.Internal => Some (Path root a) | _ => None end) as_) rs.
+Proof.
+  rewrite fw_flat_map_value; apply flat_map_ext; intro root.
+  rewrite value_filter_map_c; reflexivity.
+Qed.
+
+Local Lemma return_rows_value {N E P D F} (EP : encoding P)
+    (rs : list (N * option D)) (as_ : list (arc N E P D F)) :
+  Cost.value (fw_flat_map_c (fun root => fw_flat_map_c (fun a =>
+    filter_map_c (fun b => let* yes := matches_c EP a b in
+      Cost.ret (if yes then Some (Return root a b) else None)) as_) as_) rs) =
+  flat_map (fun root => flat_map (fun a => filter_map (fun b =>
+    if Cost.value (matches_c EP a b) then Some (Return root a b) else None) as_) as_) rs.
+Proof.
+  rewrite fw_flat_map_value; apply flat_map_ext; intro root.
+  rewrite fw_flat_map_value; apply flat_map_ext; intro a.
+  rewrite value_filter_map_c; reflexivity.
+Qed.
+
+(** Ground-row membership retains the actual encoded matching test on arbitrary inputs. *)
+Theorem rows_spec {N E P D A F} (I : Ide.t N E P D A F) start r :
+  In r (rows I start) <->
+    (exists root, In root (map (fun d => (start, d)) (fact_domain (Ide.ifds I))) /\
+      r = Seed root) \/
+    (exists a p, In a (arcs I) /\ kind a = Icfg.Call p /\ r = Call a) \/
+    (exists root a, In root (Cost.value (roots_c I start (arcs I))) /\
+      In a (arcs I) /\ kind a = Icfg.Internal /\ r = Path root a) \/
+    (exists root a b, In root (Cost.value (roots_c I start (arcs I))) /\
+      In a (arcs I) /\ In b (arcs I) /\
+      Cost.value (matches_c (Icfg.site_enc (Ifds.icfg (Ide.ifds I))) a b) = true /\
+      r = Return root a b).
+Proof.
+  unfold rows, rows_c; rewrite Cost.value_bind; fold (arcs I).
+  remember (arcs I) as as_.
+  rewrite Cost.value_bind; remember (Cost.value (roots_c I start as_)) as rs.
+  autorewrite with galois_cost.
+  rewrite path_rows_value, return_rows_value.
+  replace (map (fun d => Cost.value (Cost.ret (Seed (start, d))))
+    (None :: map (fun d => Cost.value (Cost.ret (Some d))) (Ifds.facts (Ide.ifds I))))
+    with (map (@Seed N E P D F)
+      (map (fun d => (start, d)) (fact_domain (Ide.ifds I))))
+    by (rewrite map_map; reflexivity).
+  rewrite !in_app_iff, in_map_iff, call_rows_in, path_rows_in, return_rows_in.
+  firstorder congruence.
+Qed.
+
 Definition output {N E P D F} (r : row N E P D F) : jkey N D :=
   match r with
   | Seed root => (root, root)

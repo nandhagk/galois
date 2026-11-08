@@ -187,6 +187,44 @@ Proof.
   rewrite Jump.lookup_equation, Map.find_or_equation, Map.get_empty; reflexivity.
 Qed.
 
+(** Ground seed membership uses the supplied fact domain. *)
+Example affine_seed_row : In (Jump.Seed (0, None)) (Jump.rows affine 0).
+Proof.
+  apply Jump.rows_spec; left; exists (0, None); vm_compute; auto.
+Qed.
+
+(** Ground call membership uses an actual prepared call occurrence. *)
+Example affine_call_row :
+  In (Jump.Call (Jump.Arc 0 (0, None) (1, None) (Icfg.Call 7) (PVal 0)))
+    (Jump.rows affine 0).
+Proof.
+  apply Jump.rows_spec; right; left.
+  exists (Jump.Arc 0 (0, None) (1, None) (Icfg.Call 7) (PVal 0)), 7.
+  vm_compute; auto.
+Qed.
+
+(** Ground path membership retains the actual procedure-entry root. *)
+Example affine_path_row :
+  In (Jump.Path (1, None) (Jump.Arc 1 (1, None) (2, None) Icfg.Internal (PVal 1)))
+    (Jump.rows affine 0).
+Proof.
+  apply Jump.rows_spec; right; right; left.
+  exists (1, None), (Jump.Arc 1 (1, None) (2, None) Icfg.Internal (PVal 1)).
+  vm_compute; auto.
+Qed.
+
+(** Ground return membership checks the encoded site test without an injectivity premise. *)
+Example affine_return_row :
+  In (Jump.Return (0, None)
+    (Jump.Arc 0 (0, None) (1, None) (Icfg.Call 7) (PVal 0))
+    (Jump.Arc 2 (2, None) (3, None) (Icfg.Return 7) (PVal 0))) (Jump.rows affine 0).
+Proof.
+  apply Jump.rows_spec; right; right; right.
+  exists (0, None), (Jump.Arc 0 (0, None) (1, None) (Icfg.Call 7) (PVal 0)),
+    (Jump.Arc 2 (2, None) (3, None) (Icfg.Return 7) (PVal 0)).
+  vm_compute; repeat split; auto.
+Qed.
+
 Example affine_jump_rejects_missing_return :
   check_jumps affine 0 (Map.remove positive_encoding
     (encode (Jump.enc affine) ((0, None), (3, None))) affine_jump) = false.
