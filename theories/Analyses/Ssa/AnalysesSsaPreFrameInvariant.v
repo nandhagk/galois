@@ -29,7 +29,7 @@ Definition source_version (d : PreFrg.version B E U) : Prop :=
   PreFamily.in_family c (PreFrg.version_expr d) /\
   Pre.pure c (PreFrg.version_expr d) = true /\ PreFrg.definition_domain c d.
 
-(** A frame retains a source version of its queried expression; unavailable sentinels stay invalid. *)
+(** A frame retains a source version of its expression and keeps unavailable sentinels invalid. *)
 Definition frame_source u (frame : PreRename.frame B E U) : Prop :=
   PreFrg.version_expr (PreFrg.operand_version (PreRename.selected frame)) = u /\
   source_version (PreFrg.operand_version (PreRename.selected frame)) /\
@@ -228,7 +228,7 @@ Proof.
 Qed.
 
 (** Exit marking cannot change the current scope, even when it adds unsafe events. *)
-Theorem mark_exit_scope n work :
+Theorem mark_exit_scope n {work} :
   fst (PreRename.mark_exit c index n work) = fst work.
 Proof.
   rewrite PreRename.mark_exit_equation.
