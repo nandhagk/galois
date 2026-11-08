@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool ZArith NArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap.
 From Galois.Lattice Require Import LatticeCore LatticeSimple.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
@@ -223,6 +223,15 @@ Proof.
   exists (0, None), (Jump.Arc 0 (0, None) (1, None) (Icfg.Call 7) (PVal 0)),
     (Jump.Arc 2 (2, None) (3, None) (Icfg.Return 7) (PVal 0)).
   vm_compute; repeat split; auto.
+Qed.
+
+(** A same-site match uses reflexive encoded equality without an injectivity premise. *)
+Example affine_same_site_match :
+  Cost.value (Jump.matches_c nat_encoding
+    (Jump.Arc 0 (0, @None unit) (1, None) (Icfg.Call 7) (PVal 0))
+    (Jump.Arc 2 (2, None) (3, None) (Icfg.Return 7) (PVal 0))) = true.
+Proof.
+  rewrite Jump.matches_c_value; apply eqb_refl.
 Qed.
 
 Example affine_jump_rejects_missing_return :

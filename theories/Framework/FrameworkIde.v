@@ -134,6 +134,18 @@ Definition matches_c {N E P D F} (EP : encoding P)
   | _, _ => Cost.ret false
   end.
 
+(** Matching observes encoded site equality only for a call followed by a return. *)
+Theorem matches_c_value {N E P D F} (EP : encoding P)
+    (a b : arc N E P D F) :
+  Cost.value (matches_c EP a b) =
+    match kind a, kind b with
+    | Icfg.Call p, Icfg.Return q => eqb EP p q
+    | _, _ => false
+    end.
+Proof.
+  unfold matches_c; destruct (kind a), (kind b); reflexivity.
+Qed.
+
 (** Ground row preparation enumerates facts and arcs, never A or F. *)
 Definition rows_c {N E P D A F} (I : Ide.t N E P D A F) start :=
   let* as_ := arcs_c I in
