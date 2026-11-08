@@ -445,7 +445,7 @@ Proof.
   destruct (Cost.value (continue_c m next)); destruct Hcredit; split; try assumption; nia.
 Qed.
 
-(** Both outcomes retain their state invariant and residual credit, with an extra exhausted refund. *)
+(** Both outcomes retain their invariant and credit, with an extra exhausted refund. *)
 Theorem iterate_residual_credit {A} (step : A -> Cost.t (A + A)) (I : A -> Prop)
     (credit : A -> N) fuel start :
   (forall a, I a ->

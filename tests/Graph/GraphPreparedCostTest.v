@@ -5,7 +5,7 @@
     Builds on: GraphPreparedCost and GraphFixtures. *)
 
 From Stdlib Require Import List Bool PArith NArith.
-From Galois.Cost Require Import CostMonad.
+From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphPreparedCost GraphFixtures.
 Import List.ListNotations Cost.Notations.
@@ -150,4 +150,84 @@ Example preparation_bound_retains_nonunit_callees :
     PreparedCost.prepare_k * PreparedCost.prepare_size expensive_graph 1 2 100 200 300)%N = true.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+Definition repeated_entries_graph := Fixtures.graph [1; 99; 1] [1; 2] [(1, 2)].
+
+(** Repeated and unknown entries do not change the distinct source-node obligation. *)
+Example repeated_entry_nodes_distinct : NoDup (Graph.nodes repeated_entries_graph).
+Proof.
+  vm_compute. repeat (apply NoDup_cons; [cbn; intuition congruence|]). apply NoDup_nil.
+Qed.
+
+Local Lemma entry_fixture_bounds entries :
+  (forall v, In v entries -> v = 1 \/ v = 99) ->
+  PreparedCost.prepare_bounds nat_encoding (Fixtures.graph entries [1; 2] [(1, 2)])
+    1%N 7%N 1%N 1%N 1%N.
+Proof.
+  intro Hentries. constructor.
+  - intros v Hin. vm_compute in Hin.
+    destruct Hin as [<-|[<-|Hfalse]]; try contradiction; vm_compute; split; congruence.
+  - intros v Hin. destruct (Hentries v Hin) as [Hone|Hunknown];
+      subst v; vm_compute; split; congruence.
+  - intros v Hin. vm_compute. congruence.
+  - intros edge Hin. vm_compute in Hin.
+    destruct Hin as [<-|Hfalse]; [vm_compute; repeat split; congruence|contradiction].
+Qed.
+
+(** Primitive budgets are proved on the actual finite node, entry and endpoint occurrences. *)
+Example repeated_entry_prepare_bounds :
+  PreparedCost.prepare_bounds nat_encoding repeated_entries_graph 1%N 7%N 1%N 1%N 1%N.
+Proof.
+  apply entry_fixture_bounds.
+  intros v [<-|[<-|[<-|Hfalse]]]; auto; contradiction.
+Qed.
+
+Example cheap_prepare_bounds :
+  PreparedCost.prepare_bounds nat_encoding cheap_graph 1%N 7%N 1%N 1%N 1%N.
+Proof.
+  apply entry_fixture_bounds. intros v [<-|Hfalse]; auto; contradiction.
+Qed.
+
+(** The real preparation contract permits repeated entries while discharging node distinctness. *)
+Example repeated_entry_prepare_cost :
+  (Cost.ticks (Prepared.prepare_c nat_encoding repeated_entries_graph) <=
+    PreparedCost.prepare_k *
+      PreparedCost.prepare_size repeated_entries_graph 1 7 1 1 1)%N.
+Proof.
+  apply (PreparedCost.prepare_cost nat_encoding nat_encoding_laws).
+  - exact repeated_entry_nodes_distinct.
+  - exact repeated_entry_prepare_bounds.
+Qed.
+
+Example repeated_entry_values :
+  (Graph.entries repeated_entries_graph, Graph.nodes repeated_entries_graph,
+    Prepared.entry_ids (Prepared.prepare nat_encoding repeated_entries_graph)) =
+    ([1; 99; 1], [1; 2], [1; 1]%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The inverse-lookup width premise includes each duplicate and unknown exit occurrence. *)
+Example public_reverse_cost_bound :
+  (Cost.ticks (Prepared.reverse_c reverse_source [1; 99; 1]%positive) <=
+    N.of_nat 3 * (3 + 2 * 7))%N.
+Proof.
+  apply PreparedCost.reverse_cost_bound. intros i Hin. vm_compute in Hin.
+  destruct Hin as [<-|[<-|[<-|Hfalse]]]; try contradiction; vm_compute; congruence.
+Qed.
+
+Definition entry_graph_family (repeated : bool) :=
+  if repeated then repeated_entries_graph else cheap_graph.
+
+(** Both concrete entry domains satisfy the public preparation family corollary. *)
+Example repeated_entry_prepare_bigO :
+  bigO (fun repeated : bool =>
+    PreparedCost.prepare_size (entry_graph_family repeated) 1 7 1 1 1)%N
+    (fun repeated => Cost.ticks (Prepared.prepare_c nat_encoding (entry_graph_family repeated))).
+Proof.
+  apply (PreparedCost.prepare_bigO nat_encoding nat_encoding_laws entry_graph_family
+    (fun _ => 1%N) (fun _ => 7%N) (fun _ => 1%N) (fun _ => 1%N) (fun _ => 1%N)).
+  - intros []; exact repeated_entry_nodes_distinct.
+  - intros []; [exact repeated_entry_prepare_bounds|exact cheap_prepare_bounds].
 Qed.

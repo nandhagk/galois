@@ -246,7 +246,7 @@ Proof.
   repeat split; vm_compute; congruence.
 Qed.
 
-(** Interval-to-ancestry agreement uses both computed membership premises and ready-only exactness. *)
+(** Interval-to-ancestry agreement uses computed membership and ready-only exactness. *)
 Example restricted_ancestor_client :
   Search.ancestor (fst (Cost.value visitor_run)) 3%positive 4%positive.
 Proof.

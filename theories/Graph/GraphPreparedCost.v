@@ -180,9 +180,12 @@ Proof.
       Cost.step ;; let* es := Graph.out_c g v in app_c es tail) [] vs) =
       fold_right (fun v n => (2 + Cost.ticks (Graph.out_c g v) +
         N.of_nat (length (Graph.out g v))) + n) 0 vs).
-  { induction vs as [|v rest IH]; [reflexivity|].
-    cbn [fold_right_c fold_right]. autorewrite with galois_cost.
-    fold (Graph.out g v). rewrite IH. lia. }
+  { intro vs.
+    rewrite (ticks_fold_right_c_sum _
+      (fun v => 1 + Cost.ticks (Graph.out_c g v) + N.of_nat (length (Graph.out g v)))).
+    - induction vs as [|v rest IH]; [reflexivity|].
+      cbn [fold_right]. rewrite IH. lia.
+    - intros v tail. autorewrite with galois_cost. fold (Graph.out g v). lia. }
   rewrite Hcost.
   rewrite <- (proj1 (outgoing_mass g)).
   eapply N.le_trans; [apply (sum_weighted_le
@@ -205,9 +208,12 @@ Proof.
       let* m := length_c es in Cost.ret (m + n)%nat) 0%nat vs) =
       fold_right (fun v n => (2 + Cost.ticks (Graph.out_c g v) +
         N.of_nat (length (Graph.out g v))) + n) 0 vs).
-  { induction vs as [|v rest IH]; [reflexivity|].
-    cbn [fold_right_c fold_right]. autorewrite with galois_cost.
-    fold (Graph.out g v). rewrite IH. lia. }
+  { intro vs.
+    rewrite (ticks_fold_right_c_sum _
+      (fun v => 1 + Cost.ticks (Graph.out_c g v) + N.of_nat (length (Graph.out g v)))).
+    - induction vs as [|v rest IH]; [reflexivity|].
+      cbn [fold_right]. rewrite IH. lia.
+    - intros v count. autorewrite with galois_cost. fold (Graph.out g v). lia. }
   rewrite Hcost. rewrite <- (proj1 (outgoing_mass g)).
   eapply N.le_trans; [apply (sum_weighted_le
     (fun v => 2 + Cost.ticks (Graph.out_c g v) + N.of_nat (length (Graph.out g v)))
