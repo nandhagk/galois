@@ -154,3 +154,28 @@ Example present_empty :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example raw_reverse_lookup_client {V E} (p : Prepared.t V E) exits v :
+  Prepared.id_of (Prepared.reverse p exits) v = Prepared.id_of p v.
+Proof.
+  apply Prepared.reverse_id_of.
+Qed.
+
+Example raw_reverse_valid_client {V E} (p : Prepared.t V E) exits i :
+  Prepared.valid_id (Prepared.reverse p exits) i <-> Prepared.valid_id p i.
+Proof.
+  apply Prepared.reverse_valid_id.
+Qed.
+
+Example reverse_arc_client :
+  Prepared.arc (Prepared.reverse prepared_diamond [99; 99]) 4 (2, 4) 2.
+Proof.
+  apply (proj2 (Prepared.reverse_arc prepared_diamond [99; 99] 2 (2, 4) 4 diamond_ready)).
+  exists 2, 4. repeat split; vm_compute; auto.
+Qed.
+
+Example unknown_exits_do_not_change_validity :
+  Prepared.valid_id (Prepared.reverse prepared_diamond [99; 99]) 4.
+Proof.
+  apply Prepared.reverse_valid_id. exists 4. split; vm_compute; auto.
+Qed.

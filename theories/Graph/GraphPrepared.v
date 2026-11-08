@@ -857,6 +857,58 @@ Proof.
     rewrite reverse_edge_count by exact Hready. exact (fuel_value p Hp).
 Qed.
 
+(** Reversal keeps the original name-to-ID lookup even for arbitrary prepared records and exits. *)
+Theorem reverse_id_of {V E} (p : t V E) exits v :
+  id_of (reverse p exits) v = id_of p v.
+Proof.
+  rewrite reverse_equation, !id_of_equation. reflexivity.
+Qed.
+
+(** Reversal keeps the valid-ID domain independently of exit validity or preparation laws. *)
+Theorem reverse_valid_id {V E} (p : t V E) exits i :
+  valid_id (reverse p exits) i <-> valid_id p i.
+Proof.
+  unfold valid_id. split; intros [v [Hv Hi]]; exists v; split.
+  - exact Hv.
+  - rewrite reverse_id_of in Hi. exact Hi.
+  - exact Hv.
+  - rewrite reverse_id_of. exact Hi.
+Qed.
+
+(** Reversed interpreted arcs are exactly the original arcs with endpoints exchanged. *)
+Theorem reverse_arc {V E} (p : t V E) exits u e v :
+  ready p -> (arc (reverse p exits) v e u <-> arc p u e v).
+Proof.
+  intros [Hwf [Hnodup Hp]]. split.
+  - intros [a [b [Ha [Hia [Hib [Hsource [Htarget Hedge]]]]]]].
+    rewrite reverse_id_of in Hia, Hib.
+    assert (Hout : In e (Graph.out (reverse_graph p exits) a)) by exact Hedge.
+    rewrite reverse_out, Hia in Hout.
+    apply in_map_iff in Hout. destruct Hout as [[edge i] [Heq Hin]].
+    cbn [fst] in Heq. subst edge.
+    apply (pred_agrees p Hp a v e i Hia) in Hin.
+    destruct Hin as [Hlisted [He [Hendpoint Hid]]].
+    exists b, a. split.
+    + assert (Hswap : Graph.source (graph p) e = b) by exact Htarget.
+      now rewrite <- Hswap.
+    + split; [exact Hib|]. split; [exact Hia|].
+      split; [exact Htarget|]. split; [exact Hsource|].
+      assert (Hswap : Graph.source (graph p) e = b) by exact Htarget.
+      now rewrite <- Hswap.
+  - intros [a [b [Ha [Hia [Hib [Hsource [Htarget Hedge]]]]]]].
+    exists b, a. split.
+    + assert (Hb : In b (Graph.nodes (graph p))).
+      { rewrite <- Htarget. exact (out_target_in Hwf a e Ha Hedge). }
+      exact Hb.
+    + split; [now rewrite reverse_id_of|]. split; [now rewrite reverse_id_of|].
+      split; [exact Htarget|]. split; [exact Hsource|].
+      assert (Hout : In e (Graph.out (reverse_graph p exits) b)).
+      { rewrite reverse_out, Hib. apply in_map_iff. exists (e, u).
+        split; [reflexivity|]. apply (pred_agrees p Hp b v e u Hib).
+        rewrite Hsource. repeat split; assumption. }
+      exact Hout.
+Qed.
+
 (** Preparation exposes its source graph without requiring implementation unfolding. *)
 Theorem prepare_graph {V E} enc (g : Graph.t V E) : graph (prepare enc g) = g.
 Proof.
