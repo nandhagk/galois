@@ -108,7 +108,8 @@ Proof.
   rewrite Map.get_set_same by exact (pre_index_wf _ Hrep). auto.
 Qed.
 
-Local Lemma discover_parents {V E} (p : Prepared.t V E) roots stack c v via :
+(** Fresh discovery preserves selected parent provenance and strict parent ranks. *)
+Theorem discover_parents {V E} (p : Prepared.t V E) roots stack c v via :
   representation c -> history (stack, c) -> parent_laws p roots c ->
   ~ In v (SearchRun.pre_rev c) ->
   (match via with
@@ -437,7 +438,8 @@ Proof.
   apply (numbering_domain _ _ _ (post_numbering _ Hhistory)). now exists k.
 Qed.
 
-Local Lemma top_post_absent {E} u es rest (c : SearchRun.core E) :
+(** The active top frame has not yet received an exit rank. *)
+Theorem top_post_absent {E} u es rest (c : SearchRun.core E) :
   history ((u, es) :: rest, c) ->
     Map.get positive_encoding u (SearchRun.post_index c) = None.
 Proof.
@@ -605,7 +607,7 @@ Proof.
       by (first [exact (post_index_wf _ Hrep)|assumption]). reflexivity.
 Qed.
 
-(** Stack order, open ancestry intervals and finished-edge facts describe one evolving DFS forest. *)
+(** Stack order, open ancestry intervals and finished-edge facts describe the evolving DFS forest. *)
 Record interval_laws {V E} (p : Prepared.t V E) scope stack (c : SearchRun.core E) : Prop := {
   ordered_stack : stack_order stack c;
   interval_tree : forall u v, In u (SearchRun.pre_rev c) -> In v (SearchRun.pre_rev c) ->
@@ -617,7 +619,8 @@ Record interval_laws {V E} (p : Prepared.t V E) scope stack (c : SearchRun.core 
       ancestry c v u
 }.
 
-Local Lemma active_ancestor {V E} (p : Prepared.t V E) scope top es rest c u :
+(** A discovered node is an ancestor of the active top exactly while its frame remains open. *)
+Theorem active_ancestor {V E} (p : Prepared.t V E) scope top es rest c u :
   history ((top, es) :: rest, c) -> interval_laws p scope ((top, es) :: rest) c ->
   In u (SearchRun.pre_rev c) ->
     (ancestry c u top <-> Map.get positive_encoding u (SearchRun.post_index c) = None).
@@ -744,7 +747,8 @@ Proof.
     auto.
 Qed.
 
-Local Lemma discover_intervals {V E} (p : Prepared.t V E) scope roots stack c w via es :
+(** Fresh discovery preserves open ancestry intervals and prior finished-edge facts. *)
+Theorem discover_intervals {V E} (p : Prepared.t V E) scope roots stack c w via es :
   representation c -> history (stack, c) -> parent_laws p roots c ->
   interval_laws p scope stack c -> ~ In w (SearchRun.pre_rev c) ->
   (match via with
@@ -817,7 +821,8 @@ Proof.
   intros u v Hbefore. apply Horder. now rewrite Heq.
 Qed.
 
-Local Lemma initial_intervals {V E} (p : Prepared.t V E) scope :
+(** The empty search has an empty interval and finished-edge history. *)
+Theorem initial_intervals {V E} (p : Prepared.t V E) scope :
   interval_laws p scope [] (@SearchRun.initial E).
 Proof.
   constructor.

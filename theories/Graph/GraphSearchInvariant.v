@@ -81,7 +81,7 @@ Proof.
     fold (Map.get positive_encoding v (SearchRun.pre_index c)).
     destruct (Map.get positive_encoding u (SearchRun.pre_index c)) as [a|];
       destruct (Map.get positive_encoding v (SearchRun.pre_index c)) as [b|];
-      cbn [Cost.value Cost.ret]; try destruct (Pos.ltb a b); split; discriminate.
+      autorewrite with galois_cost; try destruct (Pos.ltb a b); split; discriminate.
   - split; discriminate.
 Qed.
 
@@ -411,7 +411,7 @@ Proof.
   cbn [fst snd pending_work SearchRun.seen]. unfold vertex_work in Hwhite. lia.
 Qed.
 
-(** The prepared fuel is adequate for every fresh root and every visitor, with no visitor premise. *)
+(** Prepared fuel is adequate for every fresh root and every visitor without visitor premises. *)
 Theorem root_loop_adequate {V E S} (p : Prepared.t V E) (vis : Visitor.t E S) scope
     (c : SearchRun.core E) v name s :
   Prepared.ready p -> representation c ->
@@ -1344,7 +1344,7 @@ Proof.
   eapply SearchRun.trace_root_fresh; eassumption.
 Qed.
 
-(** Every root occurrence belongs to the same ordered complete trace, including skipped duplicates. *)
+(** Every root occurrence belongs to the same complete ordered trace, including skipped duplicates. *)
 Theorem roots_trace {V E} (p : Prepared.t V E) scope roots c :
   Prepared.ready p -> representation c ->
     SearchRun.trace_roots p scope roots c (snd (SearchRun.reference_roots p scope roots c))

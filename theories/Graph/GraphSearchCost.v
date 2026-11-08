@@ -1,13 +1,13 @@
-(** * Search visitor credit
+(** * Global search cost bounds
 
-    Visitor potential bounds retain arbitrary callee charges along the actual event sequence.
+    Global graph credit and visitor potential bound the actual costed search.
     For example, a step that enters a child dispatches both its edge and its entry callback.
     Builds on: GraphSearch, GraphSearchExact and the costed list potential theorem. *)
 
 From Stdlib Require Import List NArith Lia Permutation.
 From Galois.Cost Require Import CostMonad CostList CostLoop CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseIntern BaseIndex.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
+From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
   GraphSearchInvariant GraphSearchExact.
 Import List.ListNotations Cost.Notations.
 
@@ -170,7 +170,7 @@ Proof.
     apply edge_transition_cost; apply Hwidth; now left.
 Qed.
 
-(** Visitor credits telescope over the actual events and retain each dispatch-list traversal tick. *)
+(** Visitor credits telescope over actual events and retain each dispatch-list traversal tick. *)
 Theorem apply_events_cost {E S} (vis : Visitor.t E S) Phi kv evs s :
   Visitor.amortised vis Phi kv ->
   (Cost.ticks (SearchRun.apply_events_c vis evs s) +
@@ -249,6 +249,27 @@ Proof.
   - destruct Hfirst as [Ha Hfirst]. split; [exact Ha|nia].
 Qed.
 
+Local Lemma continue_plain_credit {A} (I : A -> Prop) (credit : A -> N) d start
+    (m : Cost.t (A + A)) next :
+  (match Cost.value m with
+  | inl a => I a /\ Cost.ticks m + credit a + 1 <= credit start
+  | inr a => I a /\ Cost.ticks m + credit a <= credit start + d
+  end) ->
+  (forall a, I a ->
+    match Cost.value (next a) with
+    | inl b => I b /\ Cost.ticks (next a) + credit b + 1 <= credit a
+    | inr b => I b /\ Cost.ticks (next a) + credit b <= credit a + d
+    end) ->
+  match Cost.value (continue_c m next) with
+  | inl a => I a /\ Cost.ticks (continue_c m next) + credit a + 1 <= credit start
+  | inr a => I a /\ Cost.ticks (continue_c m next) + credit a <= credit start + d
+  end.
+Proof.
+  intros Hfirst Hnext.
+  pose proof (continue_credit I credit d start m next Hfirst Hnext) as Hcredit.
+  destruct (Cost.value (continue_c m next)); destruct Hcredit; split; try assumption; nia.
+Qed.
+
 (** Binary descent is paid separately from the conserved graph and visitor credit. *)
 Theorem iterate_credit {A} (step : A -> Cost.t (A + A)) (I : A -> Prop)
     (credit : A -> N) fuel start :
@@ -274,22 +295,11 @@ Proof.
       end).
     { specialize (Hstep start HI). autorewrite with galois_cost.
       destruct (Cost.value (step start)); destruct Hstep; split; try assumption; nia. }
-    assert (Hblocks : forall a, I a ->
-      match Cost.value (continue_c (iterate step fuel a) (iterate step fuel)) with
-      | inl b =>
-        I b /\ Cost.ticks (continue_c (iterate step fuel a) (iterate step fuel)) +
-          credit b + 1 <= credit a
-      | inr b =>
-        I b /\ Cost.ticks (continue_c (iterate step fuel a) (iterate step fuel)) +
-          credit b <= credit a + (1 + N.pos (Pos.size fuel))
-      end).
-    { intros a Ha. pose proof (continue_credit I credit (1 + N.pos (Pos.size fuel))
-        a (iterate step fuel a) (iterate step fuel) (IH a Ha) IH) as Hcredit.
-      destruct (Cost.value (continue_c (iterate step fuel a) (iterate step fuel)));
-        destruct Hcredit; split; try assumption; nia. }
     pose proof (continue_credit I credit (1 + N.pos (Pos.size fuel)) start
       (Cost.step ;; step start)
-      (fun a => continue_c (iterate step fuel a) (iterate step fuel)) Hfirst Hblocks)
+      (fun a => continue_c (iterate step fuel a) (iterate step fuel)) Hfirst
+      (fun a Ha => continue_plain_credit I credit (1 + N.pos (Pos.size fuel)) a
+        (iterate step fuel a) (iterate step fuel) (IH a Ha) IH))
       as Hcredit.
     cbn [iterate]. autorewrite with galois_cost.
     destruct (Cost.value (continue_c (Cost.step ;; step start)
@@ -448,12 +458,12 @@ Proof.
   fold (Visitor.apply vis (Search.Enter v None) s).
   fold (Prepared.succ_edges p v). fold loop.
   destruct (SearchRun.unwrap (Cost.value loop)) as [[stack final] sv] eqn:Hanswer.
-  cbn [Cost.value Cost.ret fst snd].
+  cbn [fst snd]. autorewrite with galois_cost.
   unfold state_credit in Hloop. cbn [fst snd] in Hloop.
   rewrite (SearchInvariant.root_work p c v name Hready Hrep Hname Hfresh) in Hloop.
   unfold core_credit. cbn [fst snd].
   unfold SearchInvariant.work_measure in Hloop. cbn [fst snd] in Hloop.
-  rewrite Nat2N.inj_add in Hloop. rewrite Cost.ticks_ret. nia.
+  rewrite Nat2N.inj_add in Hloop. nia.
 Qed.
 
 (** Root checks and launch work telescope against the same global white credit. *)
@@ -535,7 +545,7 @@ Qed.
 Theorem preorder_length {V E} (p : Prepared.t V E) scope roots :
   Prepared.ready p ->
     (length (Search.preorder (SearchRun.dfs p scope roots)) <=
-      length (GraphModel.Graph.nodes (Prepared.graph p)))%nat.
+      length (Graph.nodes (Prepared.graph p)))%nat.
 Proof.
   intro Hready.
   destruct (SearchExact.run_representation p scope roots) as [_ [_ [_ [_ [Hnodup Hseen]]]]].
@@ -547,7 +557,7 @@ Proof.
     induction Hpath; assumption. }
   pose proof (NoDup_incl_length Hnodup Hincl) as Hlength.
   pose proof (present_length (Prepared.id_of p)
-    (GraphModel.Graph.nodes (Prepared.graph p))) as Hvertices.
+    (Graph.nodes (Prepared.graph p))) as Hvertices.
   unfold SearchInvariant.vertices in Hlength. lia.
 Qed.
 
@@ -573,8 +583,8 @@ Local Lemma initial_credit {V E S} (p : Prepared.t V E) (Phi : S -> N) w kv s :
   Prepared.ready p ->
     core_credit p Phi w kv (SearchRun.initial, s) =
       step_k w kv *
-        (N.of_nat (length (GraphModel.Graph.nodes (Prepared.graph p))) +
-          N.of_nat (GraphModel.edge_count (Prepared.graph p))) + Phi s.
+        (N.of_nat (length (Graph.nodes (Prepared.graph p))) +
+          N.of_nat (edge_count (Prepared.graph p))) + Phi s.
 Proof.
   intro Hready. unfold core_credit. cbn [fst snd SearchRun.initial SearchRun.seen].
   assert (Hwhite : forall todo,
@@ -593,11 +603,11 @@ Theorem search_credit_cost {V E S} (p : Prepared.t V E) (vis : Visitor.t E S)
   Prepared.ready p -> width_bound p roots w -> Visitor.amortised vis Phi kv ->
   Cost.ticks (SearchRun.run_c p vis scope roots s) <=
     step_k w kv *
-      (N.of_nat (length (GraphModel.Graph.nodes (Prepared.graph p))) +
-        N.of_nat (GraphModel.edge_count (Prepared.graph p))) +
+      (N.of_nat (length (Graph.nodes (Prepared.graph p))) +
+        N.of_nat (edge_count (Prepared.graph p))) +
     N.of_nat (length roots) *
       (root_k w kv + N.pos (Pos.size (Prepared.fuel p)) + 1) +
-    2 * N.of_nat (length (GraphModel.Graph.nodes (Prepared.graph p))) + Phi s.
+    2 * N.of_nat (length (Graph.nodes (Prepared.graph p))) + Phi s.
 Proof.
   intros Hready Hwidth Hamortised.
   pose proof (roots_cost p vis Phi kv scope roots w SearchRun.initial s
@@ -624,8 +634,8 @@ Definition search_k : N := 64.
 
 (** The size term includes valid-ID/root width, all edge occurrences and binary root descent. *)
 Definition search_size {V E} (p : Prepared.t V E) (roots : list positive) w kv :=
-  (N.of_nat (length (GraphModel.Graph.nodes (Prepared.graph p))) +
-    N.of_nat (GraphModel.edge_count (Prepared.graph p)) + N.of_nat (length roots)) *
+  (N.of_nat (length (Graph.nodes (Prepared.graph p))) +
+    N.of_nat (edge_count (Prepared.graph p)) + N.of_nat (length roots)) *
     (1 + w + kv) + N.of_nat (length roots) * N.pos (Pos.size (Prepared.fuel p)).
 
 (** Ready search has the linear graph/root/width bound with all visitor callee charges retained. *)

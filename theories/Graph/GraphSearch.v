@@ -487,7 +487,7 @@ Proof.
   destruct (reference_roots p scope roots initial) as [c evs]. reflexivity.
 Qed.
 
-(** Temporal edge colors inspect current discovery and finishing observations, independently of labels. *)
+(** Temporal edge colors inspect current discovery and finishing observations independently of labels. *)
 Inductive edge_color {E} (c : core E) u v : Search.kind -> Prop :=
   | color_tree :
       FinSet.mem positive_encoding v (seen c) = false -> edge_color c u v Search.Tree
@@ -531,7 +531,29 @@ Proof.
   - eapply color_cross; [exact Hseen|exact Hpost|now rewrite ?Ha, ?Hb].
 Qed.
 
-(** DFS trace blocks inspect the next labelled occurrence, enter white targets and pop completed frames. *)
+(** Each temporal color rule determines the runtime classifier without consulting a label. *)
+Theorem color_edge_kind {E} (c : core E) u v k :
+  edge_color c u v k -> edge_kind c u v = k.
+Proof.
+  intro Hcolor.
+  destruct Hcolor as [Hseen|Hseen Hpost|finished a b Hseen Hpost Ha Hb Hlt|
+    finished Hseen Hpost Hcross]; unfold edge_kind, edge_kind_c;
+    rewrite Cost.value_bind; fold (FinSet.mem positive_encoding v (seen c));
+    rewrite Hseen;
+    try reflexivity; rewrite Cost.value_bind;
+    fold (Map.get positive_encoding v (post_index c));
+    rewrite Hpost;
+    try reflexivity; rewrite !Cost.value_bind;
+    fold (Map.get positive_encoding u (pre_index c));
+    fold (Map.get positive_encoding v (pre_index c)).
+  - rewrite Ha, Hb, Cost.value_ret, Hlt. reflexivity.
+  - destruct (Map.get positive_encoding u (pre_index c)) as [a|] eqn:Ha;
+      destruct (Map.get positive_encoding v (pre_index c)) as [b|] eqn:Hb;
+      rewrite Cost.value_ret; try reflexivity.
+    now rewrite Hcross.
+Qed.
+
+(** DFS trace blocks inspect labelled occurrences, enter white targets and pop completed frames. *)
 Inductive trace_step {V E} (p : Prepared.t V E) scope :
     work E -> list (Search.event E) -> work E -> Prop :=
   | trace_exit : forall u rest c,

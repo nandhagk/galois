@@ -4,13 +4,14 @@
     For example, the parallel-edge path uses the first label selected by DFS.
     Builds on: GraphSearchOrder and GraphSearchTest. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSearch
   GraphSearchOrder.
 From Galois.Tests.Graph Require Import GraphSearchTest.
 Import List.ListNotations.
+Local Open Scope nat_scope.
 
 Example diamond_rpo :
   SearchOrder.rpo
@@ -86,6 +87,20 @@ Definition malformed_result : Search.result nat :=
 
 Example cyclic_parent_map_rejected :
   SearchOrder.tree_path SearchFixtures.parallel malformed_result 1%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example topological_uses_one_search :
+  Cost.ticks (SearchOrder.topological_c SearchFixtures.diamond
+    SearchFixtures.unrestricted [1]%positive) = 227%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example dag_test_uses_one_search :
+  Cost.ticks (SearchOrder.dag_ok_c SearchFixtures.diamond
+    SearchFixtures.unrestricted [1]%positive) = 223%N.
 Proof.
   vm_compute. reflexivity.
 Qed.

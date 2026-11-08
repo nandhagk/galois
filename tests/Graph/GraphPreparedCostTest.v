@@ -118,3 +118,36 @@ Example budget_conversion_retains_linear_work :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example evaluated_prepare_constant : PreparedCost.prepare_k = 36%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example cheap_preparation_ticks :
+  Cost.ticks (Prepared.prepare_c nat_encoding cheap_graph) = 135%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example cheap_preparation_cost_bound :
+  (Cost.ticks (Prepared.prepare_c nat_encoding cheap_graph) <=?
+    PreparedCost.prepare_k * PreparedCost.prepare_size cheap_graph 1 2 1 1 1)%N = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example line_preparation_cost_bound :
+  (Cost.ticks (Prepared.prepare_c nat_encoding (Prepared.graph Fixtures.Line.prepared)) <=?
+    PreparedCost.prepare_k *
+      PreparedCost.prepare_size (Prepared.graph Fixtures.Line.prepared) 1 3 1 1 1)%N = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example preparation_bound_retains_nonunit_callees :
+  (Cost.ticks (Prepared.prepare_c nat_encoding expensive_graph) <=?
+    PreparedCost.prepare_k * PreparedCost.prepare_size expensive_graph 1 2 100 200 300)%N = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
