@@ -121,6 +121,26 @@ Proof.
   reflexivity.
 Qed.
 
+Example extensionality_client {A} (m n : Cost.t A) :
+  Cost.value m = Cost.value n -> Cost.ticks m = Cost.ticks n -> m = n.
+Proof.
+  apply Cost.ext.
+Qed.
+
+Example callback_congruence_client {A B} (m : Cost.t A) (f g : A -> Cost.t B) :
+  (forall a, f a = g a) -> Cost.bind m f = Cost.bind m g.
+Proof.
+  apply Cost.bind_ext.
+Qed.
+
+Example same_value_different_ticks :
+  Cost.value (Cost.tick 2) = Cost.value (Cost.tick 3) /\
+  Cost.tick 2 <> Cost.tick 3.
+Proof.
+  split; [reflexivity|].
+  intro Heq. apply (f_equal (@Cost.ticks unit)) in Heq. discriminate.
+Qed.
+
 (** * First-day query nesting check *)
 
 (** A query asks for a natural number and charges for constructing its next query. *)

@@ -195,6 +195,22 @@ Qed.
 
 (** * Monad laws *)
 
+(** Equal results and equal tick counts identify costed computations. *)
+Theorem ext {A : Type} (m n : t A) :
+  value m = value n -> ticks m = ticks n -> m = n.
+Proof.
+  destruct m as [a k], n as [b l]. cbn. intros -> ->. reflexivity.
+Qed.
+
+(** Pointwise equality of complete costed callbacks preserves sequencing. *)
+Theorem bind_ext {A B : Type} (m : t A) (f g : A -> t B) :
+  (forall a, f a = g a) -> bind m f = bind m g.
+Proof.
+  intro Hsame. apply ext.
+  - rewrite !value_bind, Hsame. reflexivity.
+  - rewrite !ticks_bind, Hsame. reflexivity.
+Qed.
+
 (** Returning before a continuation leaves the whole computation unchanged. *)
 Theorem bind_ret_l {A B : Type} (a : A) (f : A -> t B) :
   bind (ret a) f = f a.
