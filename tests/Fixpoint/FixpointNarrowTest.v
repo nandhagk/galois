@@ -2,13 +2,13 @@
 
     Actual narrowing passes distinguish frozen reads, accepted decrease and rejected candidates.
     For example, lowering a negated read invalidates a previously safe output.
-    Builds on: FixpointNarrow and the boolean lattice. *)
+    Builds on: FixpointNarrow, boolean controls and a test-local interval lattice. *)
 
-From Stdlib Require Import List Bool Arith NArith Lia.
+From Stdlib Require Import List Bool Arith NArith ZArith Lia.
 From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Lattice Require Import LatticeCore.
-From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointCheck
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointCheck
   FixpointAnalysis FixpointSolver FixpointNarrow FixpointIndexCost FixpointTotalCost
   FixpointNarrowCost.
 Import List.ListNotations Cost.Notations.
@@ -210,6 +210,29 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** The fixture's query syntax is public without reducing the shared evaluator. *)
+Local Lemma rhs_equation c :
+  System.rhs (Analysis.system (wrapping accepted)) c =
+    if Nat.eqb c 0 then Query.Side 2 false (Query.Ret false)
+    else Query.Ask 0 (fun b => Cost.ret (Query.Ret b)).
+Proof.
+  reflexivity.
+Qed.
+
+Local Lemma sides_equation c s :
+  Query.sides (System.rhs (Analysis.system (wrapping accepted)) c) s =
+    if Nat.eqb c 0 then [(2, false)] else [].
+Proof.
+  assert (Hrun : Query.run (System.rhs (Analysis.system (wrapping accepted)) c) s =
+    if Nat.eqb c 0 then Query.Trace false [] [(2, false)]
+    else Query.Trace (s 0) [0] []).
+  { rewrite rhs_equation; destruct (Nat.eqb c 0);
+      rewrite !Query.run_equation, ?Cost.value_ret, ?Query.run_equation; reflexivity. }
+  rewrite Query.run_spec in Hrun.
+  apply (f_equal (@Query.side_log nat bool)) in Hrun.
+  destruct (Nat.eqb c 0); cbn [Query.side_log] in Hrun; exact Hrun.
+Qed.
+
 (** The importing pass-cost model discharges all primitive and selected-query duties. *)
 Theorem cost_model : TotalCost.model (wrapping accepted) budget.
 Proof.
@@ -228,11 +251,13 @@ Proof.
   - intros c s Hc; vm_compute in Hc.
     destruct Hc as [<-|[<-|Hbad]]; try contradiction.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_side, Query.within_ret.
+      rewrite rhs_equation; apply Query.within_side, Query.within_ret.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
-  - intros c s Hc; vm_compute in Hc.
-    destruct Hc as [<-|[<-|Hbad]]; try contradiction; vm_compute; lia.
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
+  - intros c s _; rewrite Eval.outputs_spec, sides_equation.
+    destruct (Nat.eqb c 0); cbn [fst length budget TotalCost.Budget.outputs]; lia.
 Qed.
 
 (** Narrowing callback charges are discharged independently of any complete pass cost. *)
@@ -283,3 +308,122 @@ Qed.
 
 End NarrowTest.
 Import NarrowTest.
+
+Module NarrowIntervalTest.
+
+(** None is bottom and endpoint pairs describe closed integer intervals. *)
+Definition interval := option (Z * Z).
+
+Definition span (lower upper : Z) : interval := Some (lower, upper).
+
+Definition below (a b : interval) :=
+  match a, b with
+  | None, _ => true
+  | Some _, None => false
+  | Some (lo, hi), Some (lo', hi') => Z.leb lo' lo && Z.leb hi hi'
+  end.
+
+Definition hull (a b : interval) : interval :=
+  match a, b with
+  | None, other => other
+  | other, None => other
+  | Some (lo, hi), Some (lo', hi') => span (Z.min lo lo') (Z.max hi hi')
+  end.
+
+Definition shift (a : interval) : interval :=
+  match a with
+  | None => None
+  | Some (lo, hi) => span (Z.add lo 1%Z) (Z.add hi 1%Z)
+  end.
+
+Definition contains (a : interval) (z : Z) :=
+  match a with
+  | None => false
+  | Some (lo, hi) => Z.leb lo z && Z.leb z hi
+  end.
+
+Definition lat : lattice interval := of_pure below None hull hull (fun _ next => next).
+
+(** The second row shifts the old interval read from the first row. *)
+Definition system : System.t nat nat interval :=
+  System.Make [0; 1] (fun c => Cost.ret c)
+    (fun c => Cost.ret (if Nat.eqb c 0 then Query.Ret (span 0%Z 4%Z)
+      else Query.Ask 0 (fun value => Cost.ret (Query.Ret (shift value))))).
+
+Definition static : System.static system :=
+  System.Static (fun c => Cost.ret (if Nat.eqb c 0 then [] else [0]))
+    (fun _ => Cost.ret []).
+
+Definition analysis : Analysis.t nat nat interval :=
+  Analysis.Make nat_encoding nat_encoding lat system static
+    (Policy.Make (fun _ => Cost.ret 1%positive) (fun _ => Cost.ret false) 0 2).
+
+Definition old : assignment nat interval :=
+  Map.of_list nat_encoding
+    [(0, span (-10)%Z 10%Z); (1, span (-20)%Z 20%Z); (99, span (-7)%Z 9%Z)].
+
+Definition observe m := map (lookup nat_encoding lat m) [0; 1; 99].
+
+(** A checked coarse candidate supplies input; the actual wrapper performs all narrowing work. *)
+Definition coarse_c (a : Analysis.t nat nat interval) (_ : positive) :
+    Cost.t (Outcome.t nat interval (assignment nat interval)) :=
+  let* safe := check_post_c (Analysis.lat a) (Analysis.system a)
+    (lookup_c (Analysis.key_enc a) (Analysis.lat a) old) in
+  Cost.ret (if safe then Outcome.Solved old else Outcome.Rejected Reason.Check_failed).
+
+Definition coarse_source : Solver.t nat nat interval := Solver.Make coarse_c.
+
+Definition wrapped := Solver.run (Narrow.wrap coarse_source) analysis 1%positive.
+
+Example coarse_input_is_post :
+  check_post lat system (lookup nat_encoding lat old) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example first_pass_reads_old_endpoints :
+  observe (Narrow.pass analysis old) =
+    [span 0%Z 4%Z; span (-9)%Z 11%Z; span (-7)%Z 9%Z].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example first_pass_independent_full_check :
+  check_post lat system (lookup nat_encoding lat (Narrow.pass analysis old)) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example wrapped_endpoint_decrease :
+  match wrapped with
+  | Outcome.Solved m => Some (observe m)
+  | _ => None
+  end = Some [span 0%Z 4%Z; span 1%Z 5%Z; span (-7)%Z 9%Z].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example wrapped_strict_decrease_and_values :
+  match wrapped with
+  | Outcome.Solved m =>
+    let value := lookup nat_encoding lat m 1 in
+    [below value (lookup nat_encoding lat old 1);
+     below (lookup nat_encoding lat old 1) value;
+     contains value 0%Z; contains value 1%Z; contains value 5%Z; contains value 6%Z]
+  | _ => []
+  end = [true; false; false; true; true; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example wrapped_independent_full_check :
+  match wrapped with
+  | Outcome.Solved m => check_post lat system (lookup nat_encoding lat m)
+  | _ => false
+  end = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+End NarrowIntervalTest.
+Import NarrowIntervalTest.

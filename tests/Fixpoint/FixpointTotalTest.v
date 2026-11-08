@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Lattice Require Import LatticeCore LatticeSimple.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointAnalysis FixpointSolver
-  FixpointLeast FixpointIndexCost FixpointTotalKernel FixpointTotal FixpointTotalCost
+  FixpointEval FixpointLeast FixpointIndexCost FixpointTotalKernel FixpointTotal FixpointTotalCost
   FixpointTotalProof FixpointKleene.
 Import List.ListNotations.
 Local Close Scope N_scope.
@@ -158,6 +158,35 @@ Definition metadata_budget : SystemIndexCost.Budget.t :=
 Definition budget : TotalCost.Budget.t :=
   TotalCost.Budget.Make metadata_budget 10 10 1 0 3 0 3.
 
+(** The fixture exposes its query constructors independently of the evaluator implementation. *)
+Local Lemma rhs_equation c :
+  System.rhs (Analysis.system analysis) c =
+    match c with
+    | O => Query.Ask 1 (fun b => Cost.ret (Query.Ret b))
+    | S O => Query.Ask 0 (fun b => Cost.ret (Query.Ret b))
+    | _ => Query.Side 0 true (Query.Side 0 false (Query.Ret false))
+    end.
+Proof.
+  reflexivity.
+Qed.
+
+Local Lemma sides_equation c s :
+  Query.sides (System.rhs (Analysis.system analysis) c) s =
+    match c with O => [] | S O => [] | _ => [(0, true); (0, false)] end.
+Proof.
+  assert (Hrun : Query.run (System.rhs (Analysis.system analysis) c) s =
+    match c with
+    | O => Query.Trace (s 1) [1] []
+    | S O => Query.Trace (s 0) [0] []
+    | _ => Query.Trace false [] [(0, true); (0, false)]
+    end).
+  { rewrite rhs_equation; destruct c as [|[|c]];
+      rewrite !Query.run_equation, ?Cost.value_ret, ?Query.run_equation; reflexivity. }
+  rewrite Query.run_spec in Hrun.
+  apply (f_equal (@Query.side_log nat bool)) in Hrun.
+  destruct c as [|[|c]]; cbn [Query.side_log] in Hrun; exact Hrun.
+Qed.
+
 (** This client discharges the numeric model on finite actual keys and primitive callbacks. *)
 Theorem cost_model : TotalCost.model analysis budget.
 Proof.
@@ -178,16 +207,21 @@ Proof.
   - intros c s Hc; vm_compute in Hc.
     destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
     + exists 3%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_side, Query.within_side, Query.within_ret.
+      rewrite rhs_equation; apply Query.within_side, Query.within_side, Query.within_ret.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
-  - intros c s Hc; vm_compute in Hc.
-    destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
-      vm_compute; lia.
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
+  - intros c s _; rewrite Eval.outputs_spec, sides_equation.
+    destruct c as [|[|c]]; cbn [fst length budget TotalCost.Budget.outputs]; lia.
 Qed.
 
 (** The importing total-cost client uses proved primitive duties rather than a run-cost premise. *)

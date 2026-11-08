@@ -9,7 +9,8 @@ From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeCore LatticeSimple LatticeProduct.
 From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointAnalysis
-  FixpointSolver FixpointPartial FixpointTotal FixpointTotalKernel FixpointLocal FixpointLocalProof
+  FixpointEval FixpointSolver FixpointPartial FixpointTotal FixpointTotalKernel FixpointLocal
+  FixpointLocalProof
   FixpointLocalLeast FixpointLocalCost FixpointLocalCredit FixpointLocalDiscover
   FixpointLocalAdequacy FixpointLocalRunCost FixpointLocalCheckCost FixpointIndexCost
   FixpointTotalCost FixpointLeast.
@@ -165,21 +166,48 @@ Qed.
 Definition budget : LocalCost.Budget.t :=
   LocalCost.Budget.Make 10000 10000 10000 10000 10000 10000 0 0 0.
 
+(** This closed observation computes support preparation before any symbolic key is introduced. *)
+Example support_observation :
+  forallb (fun v : nat + nat =>
+    match v with
+    | inl x => existsb (Nat.eqb x) [0; 1; 2; 20]
+    | inr c => existsb (Nat.eqb c) [0; 1; 2; 3]
+    end) (LocalCost.support analysis [0]) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Local Lemma support_unknown_keys x :
+  In (inl x) (LocalCost.support analysis [0]) -> In x [0; 1; 2; 20].
+Proof.
+  intro Hin.
+  pose proof (proj1 (forallb_forall _ _) support_observation (inl x) Hin) as Hkey.
+  cbn beta iota in Hkey; apply existsb_exists in Hkey as [y [Hy Heq]].
+  apply Nat.eqb_eq in Heq; subst y; exact Hy.
+Qed.
+
+Local Lemma support_row_keys c :
+  In (inr c) (LocalCost.support analysis [0]) -> In c [0; 1; 2; 3].
+Proof.
+  intro Hin.
+  pose proof (proj1 (forallb_forall _ _) support_observation (inr c) Hin) as Hkey.
+  cbn beta iota in Hkey; apply existsb_exists in Hkey as [d [Hd Heq]].
+  apply Nat.eqb_eq in Heq; subst d; exact Hd.
+Qed.
+
 (** Tagged and original key duties hold on the finite actual metadata support. *)
 Theorem cost_model : LocalCost.model analysis [0] budget.
 Proof.
   constructor.
-  - intros [x|c] Hin; vm_compute in Hin;
-      repeat match goal with H : _ \/ _ |- _ => destruct H end;
-      try contradiction; try discriminate;
-      repeat match goal with
-      | H : inl _ = inl _ |- _ => injection H as H; subst
-      | H : inr _ = inr _ |- _ => injection H as H; subst
-      end; vm_compute; split; congruence.
-  - intros x Hin; vm_compute in Hin;
-      repeat match goal with H : _ \/ _ |- _ => destruct H end;
-      try contradiction; try discriminate;
-      repeat match goal with H : inl _ = inl _ |- _ => injection H as H; subst end;
+  - intros [x|c] Hin.
+    + apply support_unknown_keys in Hin.
+      destruct Hin as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
+        vm_compute; split; congruence.
+    + apply support_row_keys in Hin.
+      destruct Hin as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
+        vm_compute; split; congruence.
+  - intros x Hin; apply support_unknown_keys in Hin.
+    destruct Hin as [<-|[<-|[<-|[<-|Hbad]]]]; try contradiction;
       vm_compute; split; congruence.
   - intros c Hc; vm_compute in Hc.
     destruct Hc as [<-|[<-|[<-|[<-|[<-|Hbad]]]]]; try contradiction;
@@ -232,6 +260,37 @@ Definition preparation_budget : SystemIndexCost.Budget.t :=
 Definition total_budget : TotalCost.Budget.t :=
   TotalCost.Budget.Make preparation_budget 10000 10000 1 0 3 0 3.
 
+(** The fixture exposes query syntax independently of the shared evaluator. *)
+Local Lemma rhs_equation c :
+  System.rhs (Analysis.system analysis) c =
+    match c with
+    | O => Query.Ask 1 (fun b => Cost.ret (Query.Ret b))
+    | S O => Query.Ask 0 (fun b => Cost.ret (Query.Ret b))
+    | S (S O) => Query.Side 0 true (Query.Side 0 false (Query.Ret false))
+    | _ => Query.Ret true
+    end.
+Proof.
+  reflexivity.
+Qed.
+
+Local Lemma sides_equation c s :
+  Query.sides (System.rhs (Analysis.system analysis) c) s =
+    match c with S (S O) => [(0, true); (0, false)] | _ => [] end.
+Proof.
+  assert (Hrun : Query.run (System.rhs (Analysis.system analysis) c) s =
+    match c with
+    | O => Query.Trace (s 1) [1] []
+    | S O => Query.Trace (s 0) [0] []
+    | S (S O) => Query.Trace false [] [(0, true); (0, false)]
+    | _ => Query.Trace true [] []
+    end).
+  { rewrite rhs_equation; destruct c as [|[|[|c]]];
+      rewrite !Query.run_equation, ?Cost.value_ret, ?Query.run_equation; reflexivity. }
+  rewrite Query.run_spec in Hrun.
+  apply (f_equal (@Query.side_log nat bool)) in Hrun.
+  destruct c as [|[|[|c]]]; cbn [Query.side_log] in Hrun; exact Hrun.
+Qed.
+
 (** Restricted total solving inherits this independently discharged primitive source model. *)
 Theorem total_cost_model : TotalCost.model analysis total_budget.
 Proof.
@@ -251,17 +310,23 @@ Proof.
   - intros c Hc; vm_compute; congruence.
   - intros c s Hc; vm_compute in Hc.
     destruct Hc as [<-|[<-|[<-|[<-|[<-|Hbad]]]]]; try contradiction.
-    + exists 1%nat; split; [vm_compute; lia|vm_compute; apply Query.within_ret].
+    + exists 1%nat; split; [vm_compute; lia|rewrite rhs_equation; apply Query.within_ret].
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
     + exists 3%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_side, Query.within_side, Query.within_ret.
+      rewrite rhs_equation; apply Query.within_side, Query.within_side, Query.within_ret.
     + exists 2%nat; split; [vm_compute; lia|].
-      vm_compute; apply Query.within_ask; [vm_compute; congruence|apply Query.within_ret].
-  - intros c s Hc; vm_compute in Hc.
-    destruct Hc as [<-|[<-|[<-|[<-|[<-|Hbad]]]]]; try contradiction; vm_compute; lia.
+      rewrite rhs_equation; apply Query.within_ask.
+      * rewrite Cost.ticks_ret; vm_compute; congruence.
+      * rewrite Cost.value_ret; apply Query.within_ret.
+  - intros c s _; rewrite Eval.outputs_spec, sides_equation.
+    destruct c as [|[|[|c]]]; cbn [fst length total_budget TotalCost.Budget.outputs]; lia.
 Qed.
 
 (** The local-run budget includes original setup, projection, filtering and selected solving. *)
