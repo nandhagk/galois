@@ -7,11 +7,12 @@
 From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Graph Require Import GraphPrepared GraphDomSpec GraphCheckDom GraphCheckDomCost.
-From Galois.Program Require Import ProgramCfg.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphCheckDom GraphCheckDomCost.
+From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily
   AnalysesSsaPreFrg AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep
-  AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit.
+  AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit
+  AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning.
 Import List.ListNotations Cost.Notations.
 
 Module PreOperands.
@@ -300,6 +301,114 @@ Proof.
     (PreFrameCache.keys_exact c data Hlaw Hdata).
   split; [intros [Hphi Hpure]; repeat split; try assumption;
     exact (PreFrg.phi_needed_family c Hphi)|tauto].
+Qed.
+
+Local Lemma source_materialized :
+  Pre.laws c ->
+  forall data acc, PreFrameCache.placement_laws c data ->
+  forall d, PreFrameInvariant.source_version c d ->
+    PreFrameOrigins.origin (PreRename.created acc) d ->
+    In d (version_list (PreRename.eligible_family (PreRename.prepare c data))
+      (PreRename.phi_keys (PreRename.prepare c data)) acc).
+Proof.
+  intros Hlaw data acc Hdata d [Hfamily [Hpure Hdomain]] Horigin.
+  rewrite version_list_equation,
+    (PreFamily.canonical_member _ (PreFrg.version_encoding_laws c Hlaw)), !in_app_iff.
+  rewrite (PreFrameCache.cached_eligible c data _ (PreFrameCache.prepare_laws c data)),
+    (PreFrameCache.cached_phi_keys c data _ (PreFrameCache.prepare_laws c data)).
+  destruct d as [u|u|e u|b u].
+  - left; apply in_map; apply (PreFrameCache.eligible_exact c data Hdata); auto.
+  - right; left; apply in_map; apply filter_In; split; [|exact (proj2 Hdomain)].
+    apply (PreFrameCache.eligible_exact c data Hdata); auto.
+  - right; right; right; exact Horigin.
+  - right; right; left; apply in_map_iff; exists (b, u); split; [reflexivity|].
+    apply (PreFrameCache.keys_exact c data Hlaw Hdata); auto.
+Qed.
+
+(** Every selected occurrence version belongs to the actual final materialized version list. *)
+Theorem build_frg_occurrence_member :
+  Pre.laws c ->
+  forall e d, Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some d ->
+    In d (PreFrg.versions build_frg).
+Proof.
+  intros Hlaw e d Hget.
+  destruct (build_frg_occurrence_sources Hlaw e d Hget) as [He [u [Hcomputed
+    [Hpure [Hexpr [Hsource Hnonempty]]]]]].
+  destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  rewrite build_frg_equation, Houtput, assemble_equation in Hget |- *.
+  apply (source_materialized Hlaw data _ Hdata d Hsource).
+  exact (PreFrameOrigins.origins_occurrences c _
+    (PreFrameOrigins.run_prepared_origins c data) e d Hget).
+Qed.
+
+(** Every final incoming link retains its actual phi, incoming edge and translated source version. *)
+Theorem build_frg_operand_sources :
+  Pre.laws c ->
+  forall key op, Map.get (PreFrg.link_encoding c) key (PreFrg.operands build_frg) = Some op ->
+    PreFrameInvariant.link_source_at c key op.
+Proof.
+  intros Hlaw key op Hget.
+  destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  rewrite build_frg_equation, Houtput, assemble_equation in Hget.
+  exact (PreFrameInvariant.source_links c _
+    (PreFrameInvariant.run_links_source c data Hlaw Hdata) key op Hget).
+Qed.
+
+(** Every selected incoming operand version belongs to the same graph's final node inventory. *)
+Theorem build_frg_operand_member :
+  Pre.laws c ->
+  forall key op, Map.get (PreFrg.link_encoding c) key (PreFrg.operands build_frg) = Some op ->
+    In (PreFrg.operand_version op) (PreFrg.versions build_frg).
+Proof.
+  intros Hlaw key op Hget.
+  destruct (build_frg_operand_sources Hlaw key op Hget) as
+    [Hphi [Hpure [Hbe [Htarget [Htranslate Hsource]]]]].
+  destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  rewrite build_frg_equation, Houtput, assemble_equation in Hget |- *.
+  apply (source_materialized Hlaw data _ Hdata _ Hsource).
+  exact (PreFrameOrigins.origins_links c _
+    (PreFrameOrigins.run_prepared_origins c data) key op Hget).
+Qed.
+
+(** Every incoming operand key names a real phi site and a listed incoming edge to that site. *)
+Theorem build_frg_operand_domain :
+  Pre.laws c ->
+  forall b u be op,
+    Map.get (PreFrg.link_encoding c) ((b, u), be) (PreFrg.operands build_frg) = Some op ->
+    FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = true /\
+    In be (Cfg.edges (Pre.block_cfg c)) /\ Graph.target (Pre.bg c) be = b.
+Proof.
+  intros Hlaw b u be op Hget.
+  destruct (build_frg_operand_sources Hlaw _ _ Hget) as
+    [Hphi [Hpure [Hbe [Htarget [Htranslate Hsource]]]]].
+  split; [|exact (conj Hbe Htarget)].
+  apply (proj2 (build_frg_phi_exact Hlaw b u)).
+  exact (conj (PreFrg.phi_needed_family c Hphi) (conj Hpure Hphi)).
+Qed.
+
+(** The actual builder's prepared entry scope has full frame meaning for its final graph. *)
+Theorem build_frg_entry_scope_laws :
+  Pre.laws c ->
+  forall data, PreFrg.phi_sites c = inr data ->
+  forall b first, In b (Graph.nodes (Pre.bg c)) ->
+    nth_error (SsaPoints.points_in_block (Pre.points (Pre.input c)) b) 0 = Some first ->
+    Graph.entries (Pre.pg c) = [first] ->
+    PreCoverage.scope_laws c build_frg first (PreRename.entry_scope (PreRename.prepare c data)).
+Proof.
+  intros Hlaw data Houtput b first Hb Hfirst Hentry.
+  eapply (PreFrameMeaning.entry_scope_laws c build_frg Hlaw).
+  - intros d Hd; exact (proj2 (proj2 (build_frg_source_versions Hlaw d Hd))).
+  - intros e d Hget.
+    destruct (build_frg_occurrence_sources Hlaw e d Hget) as [He [u [Hcomputed Hrest]]].
+    split; [exact He|now exists u].
+  - exact (PreFrameCache.placement_from_output c Hlaw data Houtput).
+  - exact Hb.
+  - exact Hfirst.
+  - exact Hentry.
+  - intros u Hfamily Hpure; rewrite (build_frg_versions_exact Hlaw (PreFrg.Initial u)); tauto.
 Qed.
 
 (** The caller gate checks the supplied block-parent map and rejects every partial raw outcome.

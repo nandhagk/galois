@@ -260,6 +260,87 @@ Proof.
   - apply IH; apply alter_source; assumption.
 Qed.
 
+Local Lemma alter_top {instance frames acc id value} :
+  scope_source frames ->
+  Intern.find (Pre.eu (Pre.keys c)) value bank = Some id ->
+  forall u, PreRename.top c (fst (PreRename.alter c instance (frames, acc) (id, value))) u =
+    if eqb (Pre.eu (Pre.keys c)) u value then
+      PreRename.Frame (PreRename.selected (PreRename.top c frames u)) false
+    else PreRename.top c frames u.
+Proof.
+  intros Hframes Hid u; rewrite PreRename.alter_equation; cbn [fst snd].
+  rewrite (PreFrameCache.top_store c Hlaw frames value id _ (scope_representation _ Hframes)).
+  - destruct (eqb (Pre.eu (Pre.keys c)) u value) eqn:Hsame; [|reflexivity].
+    apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hsame; subst u.
+    rewrite (PreFrameCache.top_id_agrees c (frames := frames) (u := value) (id := id)).
+    + reflexivity.
+    + rewrite (scope_symbols _ Hframes); exact Hid.
+  - rewrite (scope_symbols _ Hframes); exact Hid.
+Qed.
+
+Local Lemma fold_alter_top instance :
+  forall changes frames acc, scope_source frames ->
+    Forall (fun pair => Intern.find (Pre.eu (Pre.keys c)) (snd pair) bank = Some (fst pair))
+      changes ->
+  forall u, PreRename.top c (fst (fold_left (PreRename.alter c instance) changes (frames, acc))) u =
+    if existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd pair)) changes
+    then PreRename.Frame (PreRename.selected (PreRename.top c frames u)) false
+    else PreRename.top c frames u.
+Proof.
+  intro changes; induction changes as [|[id value] rest IH];
+    intros frames acc Hframes Hchanges u; [reflexivity|].
+  inversion Hchanges as [|pair tail Hid Hrest]; subst pair tail; cbn [snd fst] in Hid.
+  cbn [fold_left existsb snd].
+  destruct (PreRename.alter c instance (frames, acc) (id, value)) as [next output] eqn:Halter.
+  assert (Hnext : scope_source next).
+  { pose proof (alter_source frames acc instance id value Hframes Hid) as Hsource.
+    rewrite Halter in Hsource; exact Hsource. }
+  rewrite (IH next output Hnext Hrest).
+  pose proof (alter_top (instance := instance) (frames := frames) (acc := acc)
+    (id := id) (value := value) Hframes Hid u) as Htop.
+  rewrite Halter in Htop; cbn [fst] in Htop; rewrite Htop.
+  destruct (eqb (Pre.eu (Pre.keys c)) u value),
+    (existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd pair)) rest); reflexivity.
+Qed.
+
+Local Lemma alteration_test {e u id} :
+  Intern.find (Pre.eu (Pre.keys c)) u bank = Some id ->
+    existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd pair))
+      (PreRename.alterations (PreFrameCache.event_description c bank e)) = Pre.killed c e u.
+Proof.
+  intro Hid.
+  assert (Hexact :
+    existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd pair))
+      (PreRename.alterations (PreFrameCache.event_description c bank e)) = true <->
+    Pre.killed c e u = true).
+  { rewrite existsb_exists; split.
+    - intros [[key value] [Hin Hsame]]; cbn [snd] in Hsame.
+      apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hsame; subst value.
+      apply (PreFrameCache.event_alterations c bank e Hlaw) in Hin; exact (proj1 Hin).
+    - intro Hkill; exists (id, u); split.
+      + apply (PreFrameCache.event_alterations c bank e Hlaw); auto.
+      + apply eqb_refl. }
+  destruct (existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd pair))
+    (PreRename.alterations (PreFrameCache.event_description c bank e))),
+    (Pre.killed c e u); intuition discriminate.
+Qed.
+
+(** The actual ordered alteration fold clears availability exactly for the callback's killing set. *)
+Theorem event_alters_top :
+  forall frames acc e instance, scope_source frames ->
+  forall u id, Intern.find (Pre.eu (Pre.keys c)) u bank = Some id ->
+    PreRename.top c (fst (fold_left (PreRename.alter c instance)
+      (PreRename.alterations (PreFrameCache.event_description c bank e)) (frames, acc))) u =
+    if Pre.killed c e u
+    then PreRename.Frame (PreRename.selected (PreRename.top c frames u)) false
+    else PreRename.top c frames u.
+Proof.
+  intros frames acc e instance Hframes u id Hid; rewrite fold_alter_top; [|exact Hframes|].
+  - rewrite (alteration_test Hid); reflexivity.
+  - apply Forall_forall; intros [key value] Hin; cbn [fst snd].
+    apply (PreFrameCache.event_alterations c bank e Hlaw) in Hin; exact (proj2 Hin).
+Qed.
+
 (** Each actual prepared instruction retains the shared symbol table and source frame domains. *)
 Theorem instruction_source b parameter work e :
   scope_source (fst work) ->
@@ -559,6 +640,230 @@ Proof.
   { split; [exact initial_tasks_source|].
     rewrite PreRename.initial_equation; exact empty_output_source. }
   specialize (Hrun Hinitial); rewrite PreRename.run_equation.
+  destruct (Cost.value (iterate (PreRename.step_c c index) (PreRename.walk_budget index)
+    (PreRename.initial index))); [exact (proj2 Hrun)|exact Hrun].
+Qed.
+
+(** Incoming selections retain their phi site, exact edge, translated expression and source origin. *)
+Definition link_source_at (key : (B * U) * BE) (op : PreFrg.operand B E U) : Prop :=
+  PreFrg.phi_needed c (snd (fst key)) (fst (fst key)) /\
+  Pre.pure c (snd (fst key)) = true /\
+  In (snd key) (Cfg.edges (Pre.block_cfg c)) /\
+  Graph.target (Pre.bg c) (snd key) = fst (fst key) /\
+  Pre.translate c (snd key) (snd (fst key)) =
+    Some (PreFrg.version_expr (PreFrg.operand_version op)) /\
+  source_version (PreFrg.operand_version op).
+
+(** Every accumulated incoming link has the static source meaning of its exact compound key. *)
+Record links_source (acc : PreRename.accumulator B BE E U) : Prop := LinksSource {
+  source_links_wf : Map.wf (PreFrg.link_encoding c) (PreRename.link_index acc);
+  source_links : forall key op,
+    Map.get (PreFrg.link_encoding c) key (PreRename.link_index acc) = Some op ->
+      link_source_at key op
+}.
+
+Local Lemma links_source_transport before after :
+  PreRename.link_index before = PreRename.link_index after ->
+    links_source before -> links_source after.
+Proof.
+  intros Heq [Hwf Hsource]; constructor; rewrite <- Heq; assumption.
+Qed.
+
+Local Lemma mark_links frames acc key :
+  PreRename.link_index (PreRename.mark c frames acc key) = PreRename.link_index acc.
+Proof.
+  rewrite PreRename.mark_equation.
+  destruct (PreRename.selected (PreRename.top_id frames (fst key) (snd key))) as [d real].
+  destruct d, real; reflexivity.
+Qed.
+
+Local Lemma fold_mark_links frames :
+  forall keys acc, PreRename.link_index (fold_left (PreRename.mark c frames) keys acc) =
+    PreRename.link_index acc.
+Proof.
+  intro keys; induction keys as [|key rest IH]; intro acc; cbn [fold_left]; [reflexivity|].
+  rewrite IH; apply mark_links.
+Qed.
+
+Local Lemma mark_exit_links n work :
+  PreRename.link_index (snd (PreRename.mark_exit c index n work)) =
+    PreRename.link_index (snd work).
+Proof.
+  rewrite PreRename.mark_exit_equation.
+  destruct (FinSet.mem (Pre.en (Pre.keys c)) n (PreRename.exit_points index));
+    [apply fold_mark_links|reflexivity].
+Qed.
+
+Local Lemma occurrence_links e instance work :
+  PreRename.link_index (snd (fst (PreRename.occurrence c e instance work))) =
+    PreRename.link_index (snd work).
+Proof.
+  rewrite PreRename.occurrence_equation; destruct instance as [[id u]|]; [|reflexivity].
+  destruct work as [frames acc]; cbn zeta.
+  destruct (PreRename.frame_reuse c (PreRename.top_id frames id u) u); reflexivity.
+Qed.
+
+Local Lemma alter_links instance work key :
+  PreRename.link_index (snd (PreRename.alter c instance work key)) =
+    PreRename.link_index (snd work).
+Proof.
+  rewrite PreRename.alter_equation; destruct work as [frames acc].
+  destruct instance as [current|]; cbn [snd].
+  - destruct (eqb positive_encoding (fst current) (fst key)); [reflexivity|apply mark_links].
+  - apply mark_links.
+Qed.
+
+Local Lemma fold_alter_links instance :
+  forall keys work, PreRename.link_index (snd (fold_left (PreRename.alter c instance) keys work)) =
+    PreRename.link_index (snd work).
+Proof.
+  intro keys; induction keys as [|key rest IH]; intro work; cbn [fold_left]; [reflexivity|].
+  rewrite IH; apply alter_links.
+Qed.
+
+(** Local instruction updates leave the incoming-link table unchanged. *)
+Theorem instruction_links b {parameter work e} :
+  PreRename.link_index (snd (PreRename.instruction c index b parameter work e)) =
+    PreRename.link_index (snd work).
+Proof.
+  rewrite PreRename.instruction_equation.
+  destruct (Map.get (Pre.ee (Pre.keys c)) e (PreRename.events index)) as [info|]; [|reflexivity].
+  rewrite mark_exit_links; cbn [snd]; rewrite fold_alter_links; apply occurrence_links.
+Qed.
+
+Local Lemma set_link_source acc key op :
+  links_source acc -> link_source_at key op ->
+    links_source (PreRename.Accumulator (PreRename.occurrence_index acc)
+      (PreRename.fresh_index acc)
+      (Map.set (PreFrg.link_encoding c) key op (PreRename.link_index acc))
+      (PreRename.unsafe_index acc) (PreRename.created acc)).
+Proof.
+  intros Hacc Hop; constructor.
+  - apply Map.wf_set; exact (source_links_wf _ Hacc).
+  - intros other value Hget; cbn [PreRename.link_index] in Hget.
+    rewrite Map.get_set in Hget by exact (source_links_wf _ Hacc).
+    destruct (eqb (PreFrg.link_encoding c) other key) eqn:Hsame.
+    + apply (eqb_true_iff _ (PreFrg.link_encoding_laws c Hlaw)) in Hsame.
+      inversion Hget; subst other value; exact Hop.
+    + exact (source_links _ Hacc other value Hget).
+Qed.
+
+Local Lemma argument_link_source source frames acc pair :
+  scope_source frames -> links_source acc ->
+  In pair (Index.find (Pre.eb (Pre.keys c)) source (PreRename.arguments index)) ->
+    links_source (PreRename.select_argument c frames acc (snd pair)).
+Proof.
+  intros Hframes Hacc Hin.
+  destruct (PreFrameCache.argument_bucket c data Hlaw Hdata source pair Hin)
+    as [Hsource Harg].
+  destruct pair as [owner [[b u] be v id]].
+  cbn [snd fst PreRename.argument_phi PreRename.argument_edge
+    PreRename.argument_input PreRename.argument_id] in Harg.
+  destruct Harg as [Hphi [Hpure [Hbe [Htarget [Htranslate [Hfamily [Hvpure
+    [found [Hid Hfind]]]]]]]]].
+  cbn [snd]; rewrite PreRename.select_argument_equation; cbn [PreRename.argument_id].
+  rewrite Hid; cbn [PreRename.argument_phi PreRename.argument_input PreRename.argument_edge].
+  apply set_link_source; [exact Hacc|].
+  destruct (dense_frame_source Hframes Hfind) as [Hexpr [Hversion Hnonempty]].
+  destruct (PreRename.available (PreRename.top_id frames found v)).
+  - destruct (eqb (Pre.eu (Pre.keys c))
+      (PreFrg.version_expr (PreFrg.operand_version (PreRename.selected
+        (PreRename.top_id frames found v)))) v).
+    + unfold link_source_at; cbn [fst snd]; rewrite Hexpr.
+      split; [exact Hphi|]; split; [exact Hpure|]; split; [exact Hbe|].
+      split; [exact Htarget|]; split; assumption.
+    + unfold link_source_at, source_version; cbn [fst snd PreFrg.operand_version
+        PreFrg.version_expr PreFrg.definition_domain]; tauto.
+  - unfold link_source_at, source_version; cbn [fst snd PreFrg.operand_version
+      PreFrg.version_expr PreFrg.definition_domain]; tauto.
+Qed.
+
+Local Lemma block_links_source b frames acc :
+  scope_source frames -> links_source acc ->
+    links_source (snd (PreRename.block c index b frames acc)).
+Proof.
+  intros Hframes Hacc; rewrite PreRename.block_equation.
+  set (entered := match SsaPoints.points_in_block (Pre.points (Pre.input c)) b with
+    | [] => (frames, acc)
+    | first :: _ => PreRename.mark_exit c index first (frames, acc)
+    end).
+  assert (Hentry_scope : scope_source (fst entered)).
+  { unfold entered; destruct (SsaPoints.points_in_block (Pre.points (Pre.input c)) b);
+      [exact Hframes|rewrite mark_exit_scope; exact Hframes]. }
+  assert (Hentry_links : links_source (snd entered)).
+  { unfold entered; destruct (SsaPoints.points_in_block (Pre.points (Pre.input c)) b);
+      [exact Hacc|].
+    eapply links_source_transport; [symmetry; apply mark_exit_links|exact Hacc]. }
+  set (body := fold_left (PreRename.instruction c index b
+    (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+    (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) entered).
+  assert (Hscope : scope_source (fst body)).
+  { apply fold_instruction_source; exact Hentry_scope. }
+  assert (Hbody : links_source (snd body)).
+  { apply (PreFrameStep.fold_preserves _ (fun work => links_source (snd work))).
+    - intros current e Hcurrent; eapply links_source_transport;
+        [symmetry; apply instruction_links|exact Hcurrent].
+    - exact Hentry_links. }
+  fold body; cbn [snd].
+  assert (Hfold : forall args current,
+    Forall (fun pair => In pair
+      (Index.find (Pre.eb (Pre.keys c)) b (PreRename.arguments index))) args ->
+    links_source current -> links_source
+      (fold_left (fun acc pair => PreRename.select_argument c (fst body) acc (snd pair))
+        args current)).
+  { intros args current Hargs; revert current.
+    induction Hargs as [|pair rest Hpair Hrest IH]; intros current Hcurrent; cbn [fold_left].
+    - exact Hcurrent.
+    - apply IH; exact (argument_link_source b (fst body) current pair Hscope Hcurrent Hpair). }
+  apply Hfold; [apply Forall_forall; auto|exact Hbody].
+Qed.
+
+Definition walk_links_source (current : PreRename.work B BE E U) :=
+  tasks_source current /\ links_source (PreRename.output current).
+
+Definition result_links_source (result : PreRename.work B BE E U + PreRename.stopped B BE E U) :=
+  match result with
+  | inl current => walk_links_source current
+  | inr final => links_source (PreRename.stop_output final)
+  end.
+
+Local Lemma step_links_source current :
+  walk_links_source current -> result_links_source (PreRename.step c index current).
+Proof.
+  intros [Htasks Hlinks]; pose proof (step_tasks_source current Htasks) as Hnext.
+  rewrite PreRename.step_equation in Hnext |- *.
+  destruct (PreRename.pending current) as [|[id frames] rest] eqn:Hpending; [exact Hlinks|].
+  destruct (FinSet.mem positive_encoding id (PreRename.visited current)); [split; assumption|].
+  destruct (Prepared.name_of (Pre.blocks c) id) as [b|]; [|exact Hlinks].
+  split; [exact Hnext|]; apply block_links_source; [|exact Hlinks].
+  unfold tasks_source in Htasks; rewrite Hpending in Htasks; inversion Htasks; assumption.
+Qed.
+
+Local Lemma runs_links_source :
+  forall budget current result, runs (PreRename.step_c c index) budget current result ->
+    walk_links_source current -> result_links_source result.
+Proof.
+  intros budget current result Hrun; induction Hrun as [current|
+    budget current final Hstop|budget current next result Hstep Hrun IH]; intro Hcurrent.
+  - exact Hcurrent.
+  - pose proof (step_links_source current Hcurrent) as Hfinal.
+    unfold PreRename.step in Hfinal; rewrite Hstop in Hfinal; exact Hfinal.
+  - apply IH; pose proof (step_links_source current Hcurrent) as Hnext.
+    unfold PreRename.step in Hnext; rewrite Hstep in Hnext; exact Hnext.
+Qed.
+
+(** Actual incoming selections retain source sites and translations through every walk outcome. *)
+Theorem run_links_source :
+  links_source (PreRename.stop_output (PreRename.run c index)).
+Proof.
+  assert (Hinitial : walk_links_source (PreRename.initial index)).
+  { split; [exact initial_tasks_source|]; rewrite PreRename.initial_equation; constructor.
+    - apply Map.wf_empty.
+    - intros key op Hget; cbn [PreRename.empty_accumulator PreRename.link_index
+        PreRename.output] in Hget; rewrite Map.get_empty in Hget; discriminate. }
+  pose proof (runs_links_source _ _ _ (iterate_value (PreRename.step_c c index)
+    (PreRename.walk_budget index) (PreRename.initial index)) Hinitial) as Hrun.
+  rewrite PreRename.run_equation.
   destruct (Cost.value (iterate (PreRename.step_c c index) (PreRename.walk_budget index)
     (PreRename.initial index))); [exact (proj2 Hrun)|exact Hrun].
 Qed.

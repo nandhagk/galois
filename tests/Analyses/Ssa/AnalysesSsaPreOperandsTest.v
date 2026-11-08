@@ -7,7 +7,7 @@
 From Stdlib Require Import List Bool NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Graph Require Import GraphDomSpec GraphCheckDom.
+From Galois.Graph Require Import GraphModel GraphDomSpec GraphCheckDom.
 From Galois.Program Require Import ProgramCfg.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
   AnalysesSsaPreRename AnalysesSsaPreOperands AnalysesSsaPreFrameInvariant.
@@ -268,6 +268,35 @@ Example diamond_occurrence_total_client :
         (PreFrg.occurrences (PreOperands.build_frg Diamond.ctx)) = Some d.
 Proof.
   exact (PreOperands.build_frg_occurrence_total Diamond.ctx Diamond.laws).
+Qed.
+
+(** Created-list accounting puts every selected occurrence in the actual final version inventory. *)
+Example diamond_selected_versions_client :
+  forall e d, Map.get Diamond.edge_enc e
+    (PreFrg.occurrences (PreOperands.build_frg Diamond.ctx)) = Some d ->
+    In d (PreFrg.versions (PreOperands.build_frg Diamond.ctx)).
+Proof.
+  exact (PreOperands.build_frg_occurrence_member Diamond.ctx Diamond.laws).
+Qed.
+
+(** The same accounting covers incoming selections, including the right-arm unavailable sentinel. *)
+Example diamond_operand_versions_client :
+  forall key op, Map.get (PreFrg.link_encoding Diamond.ctx) key
+    (PreFrg.operands (PreOperands.build_frg Diamond.ctx)) = Some op ->
+    In (PreFrg.operand_version op) (PreFrg.versions (PreOperands.build_frg Diamond.ctx)).
+Proof.
+  exact (PreOperands.build_frg_operand_member Diamond.ctx Diamond.laws).
+Qed.
+
+(** Every stored incoming key belongs to a real phi and an actual edge targeting its block. *)
+Example diamond_operand_domain_client :
+  forall b u be op, Map.get (PreFrg.link_encoding Diamond.ctx) ((b, u), be)
+    (PreFrg.operands (PreOperands.build_frg Diamond.ctx)) = Some op ->
+    FinSet.mem (PreFrg.phi_encoding Diamond.ctx) (b, u)
+      (PreFrg.phis (PreOperands.build_frg Diamond.ctx)) = true /\
+    In be (Cfg.edges (Pre.block_cfg Diamond.ctx)) /\ Graph.target Diamond.bg be = b.
+Proof.
+  exact (PreOperands.build_frg_operand_domain Diamond.ctx Diamond.laws).
 Qed.
 
 (** The phi-index theorem recovers the same four-clause source placement from actual output. *)

@@ -162,7 +162,8 @@ Proof.
   apply (points_covered Hpoints); exists b; auto.
 Qed.
 
-Local Lemma internal_target_not_first {e b first} :
+(** A completed internal instruction is strictly beyond every block's first point. *)
+Lemma internal_target_not_first {e b first} :
   Pre.laws c -> In e (Cfg.edges (Pre.point_cfg c)) ->
   SsaPoints.block_edge_of s e = None -> In b (Graph.nodes (Pre.bg c)) ->
   nth_error (SsaPoints.points_in_block s b) 0 = Some first ->

@@ -502,6 +502,44 @@ Proof.
   apply (arguments_exact data Hlaw Hdata); repeat split; try assumption; reflexivity.
 Qed.
 
+(** Every actual source bucket supplies a pure translated family member and its successful dense ID. *)
+Theorem argument_bucket data :
+  Pre.laws c -> placement_laws data ->
+  forall source pair,
+    In pair (Index.find (Pre.eb (Pre.keys c)) source
+      (PreRename.arguments (PreRename.prepare c data))) ->
+    fst pair = source /\
+    let arg := snd pair in
+    let key := PreRename.argument_phi arg in
+    PreFrg.phi_needed c (snd key) (fst key) /\ Pre.pure c (snd key) = true /\
+    In (PreRename.argument_edge arg) (Cfg.edges (Pre.block_cfg c)) /\
+    Graph.target (Pre.bg c) (PreRename.argument_edge arg) = fst key /\
+    Pre.translate c (PreRename.argument_edge arg) (snd key) = Some (PreRename.argument_input arg) /\
+    PreFamily.in_family c (PreRename.argument_input arg) /\
+    Pre.pure c (PreRename.argument_input arg) = true /\
+    exists id, PreRename.argument_id arg = Some id /\
+      Intern.find (Pre.eu (Pre.keys c)) (PreRename.argument_input arg) (names data) = Some id.
+Proof.
+  intros Hlaw Hdata source [owner [[b u] be v id]] Hin.
+  assert (Howner : owner = source).
+  { rewrite (cached_arguments data _ (prepare_laws data)), PreRename.arguments_value,
+      Index.find_group_by, filter_In in Hin.
+    cbn [fst] in Hin; exact (proj1
+      (eqb_true_iff _ (Pre.eb_laws c (Pre.graphs c Hlaw)) owner source) (proj2 Hin)). }
+  subst owner.
+  apply (arguments_exact data Hlaw Hdata) in Hin.
+  destruct Hin as [Hphi [Hpure [Hbe [Htarget [Hsource [Htranslate Hid]]]]]].
+  assert (Hfamily : PreFamily.in_family c v).
+  { eapply Pre.family_translate; [exact (PreFrg.phi_needed_family c Hphi)|eassumption|eassumption]. }
+  pose proof (Pre.translation_pure c (Pre.shapes c Hlaw) be u v Hpure Htranslate) as Hvpure.
+  destruct (proj2 (names_domain data Hlaw Hdata v) (conj Hfamily Hvpure)) as [found Hfound].
+  split; [reflexivity|]; cbn [snd fst PreRename.argument_phi PreRename.argument_edge
+    PreRename.argument_input PreRename.argument_id].
+  split; [exact Hphi|]; split; [exact Hpure|]; split; [exact Hbe|].
+  split; [exact Htarget|]; split; [exact Htranslate|]; split; [exact Hfamily|].
+  split; [exact Hvpure|]; exists found; split; [congruence|exact Hfound].
+Qed.
+
 End Cache.
 
 End PreFrameCache.

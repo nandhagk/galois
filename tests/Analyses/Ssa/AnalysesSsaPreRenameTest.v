@@ -5,13 +5,13 @@
     Builds on: AnalysesSsaPreRename, AnalysesSsaPreFrameStep and AnalysesSsaPreContextTest. *)
 
 From Stdlib Require Import List Bool Arith PArith Lia.
-From Galois.Cost Require Import CostMonad.
+From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseMap BaseIndex BaseIntern.
 From Galois.Graph Require Import GraphModel GraphDomSpec.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
   AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep AnalysesSsaPreOperands.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreFamily AnalysesSsaPreFrameCache
-  AnalysesSsaPreFrameInvariant.
+  AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameTables AnalysesSsaPreFrameEnd.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest AnalysesSsaPreFrgTest.
 Import List.ListNotations.
 
@@ -227,4 +227,72 @@ Proof.
   - reflexivity.
   - vm_compute; tauto.
   - reflexivity.
+Qed.
+
+(** Actual local transfer advances full frame meaning across the singleton's parameter instruction. *)
+Example singleton_instruction_frame_client :
+  PreCoverage.frame_laws One.ctx entry_graph tt true
+    (PreRename.Frame (PreFrg.Operand (PreFrg.Initial tt) false) true).
+Proof.
+  change (PreCoverage.frame_laws One.ctx entry_graph tt (Graph.target One.pg tt)
+    (PreRename.Frame (PreFrg.Operand (PreFrg.Initial tt) (false || false))
+      (true && negb (Pre.killed One.ctx tt tt)))).
+  apply (PreFrameStep.frame_instruction One.ctx entry_graph One.laws).
+  - intros e d Hget; cbn [entry_graph PreFrg.occurrences] in Hget.
+    rewrite Map.get_empty in Hget; discriminate.
+  - vm_compute; now left.
+  - reflexivity.
+  - intros other [<-|[<-|[]]] _; rewrite PreFrg.version_point_equation; discriminate.
+  - split; [discriminate|].
+    intro Hget; cbn [entry_graph PreFrg.occurrences] in Hget.
+    rewrite Map.get_empty in Hget; discriminate.
+  - exact initial_frame_meaning.
+Qed.
+
+(** A source block preserves a sibling edge's occurrence and fresh bit through the actual transfer. *)
+Example diamond_sibling_table_client :
+  let index := PreRename.prepare Diamond.ctx diamond_data in
+  let frames := PreRename.entry_scope index in
+  let left_output := snd (PreRename.block Diamond.ctx index Diamond.Left frames
+    PreRename.empty_accumulator) in
+  PreFrameTables.stamp Diamond.ctx (Diamond.Real Diamond.Left)
+    (snd (PreRename.block Diamond.ctx index Diamond.Right frames left_output)) =
+  PreFrameTables.stamp Diamond.ctx (Diamond.Real Diamond.Left) left_output.
+Proof.
+  cbn zeta; apply (PreFrameTables.block_other Diamond.ctx Diamond.laws).
+  - apply PreFrameEnd.block_wf; apply PreFrameEnd.empty_accumulator_wf.
+  - vm_compute; intuition discriminate.
+Qed.
+
+(** The actual raw walk accounts for fresh origins in both occurrence and incoming-operand tables. *)
+Example diamond_origin_accounting_client :
+  PreFrameOrigins.output_origins Diamond.ctx
+    (PreRename.stop_output (PreRename.run Diamond.ctx (PreRename.prepare Diamond.ctx diamond_data))).
+Proof.
+  exact (PreFrameOrigins.run_prepared_origins Diamond.ctx diamond_data).
+Qed.
+
+(** Entry initialization establishes full frame meaning relative to the actual final diamond graph. *)
+Example diamond_entry_meaning_client :
+  PreCoverage.scope_laws Diamond.ctx (PreOperands.build_frg Diamond.ctx)
+    (Diamond.Entry, Diamond.Before)
+    (PreRename.entry_scope (PreRename.prepare Diamond.ctx diamond_data)).
+Proof.
+  apply (PreOperands.build_frg_entry_scope_laws Diamond.ctx Diamond.laws
+    diamond_data diamond_data_actual Diamond.Entry (Diamond.Entry, Diamond.Before)).
+  - now left.
+  - reflexivity.
+  - reflexivity.
+Qed.
+
+(** Every actual driver prefix owns its written table entries through visited source blocks. *)
+Example diamond_prefix_table_owners_client :
+  forall budget current,
+    runs (PreRename.step_c Diamond.ctx (PreRename.prepare Diamond.ctx diamond_data)) budget
+      (PreRename.initial (PreRename.prepare Diamond.ctx diamond_data)) (inl current) ->
+    PreFrameTables.owned Diamond.ctx current.
+Proof.
+  intros budget current Hrun.
+  exact (PreFrameTables.runs_owned Diamond.ctx Diamond.laws Hrun
+    (PreFrameTables.initial_owned Diamond.ctx (PreRename.prepare Diamond.ctx diamond_data))).
 Qed.
