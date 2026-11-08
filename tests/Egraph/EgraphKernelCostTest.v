@@ -6,7 +6,8 @@
 
 From Stdlib Require Import List PArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostLoop.
-From Galois.Base Require Import BaseEncoding BaseMap BaseUnionFind BaseUnionFindRank.
+From Galois.Base Require Import
+  BaseEncoding BaseMap BaseUnionFind BaseUnionFindRank BaseUnionFindCost.
 From Galois.Egraph Require Import
   EgraphSyntax EgraphGraph EgraphSpec EgraphCoreIndex EgraphCoreInvariant
   EgraphCoreRepresentation EgraphCoreMaintained EgraphRebuild EgraphKernelCost.
@@ -334,3 +335,565 @@ Proof.
 Qed.
 
 End EggKernelPrimitiveTest.
+
+Import EggKernelPrimitiveTest.
+
+Module EggKernelConcreteClient.
+
+Definition first_term : EggTerm.t nat bool nat :=
+  EggTerm.App true 4 [EggTerm.Var true 1].
+
+Definition second_term : EggTerm.t nat bool nat :=
+  EggTerm.App true 4 [EggTerm.Var true 2].
+
+Definition first :=
+  match Egraph.add_term alg Egraph.empty first_term with
+  | Some (_, g) => g
+  | None => Egraph.empty
+  end.
+
+Definition before :=
+  match Egraph.add_term alg first second_term with
+  | Some (_, g) => g
+  | None => Egraph.empty
+  end.
+
+Definition dirty :=
+  match Egraph.union alg before 1%positive 3%positive with
+  | Some g => g
+  | None => before
+  end.
+
+Definition popped := Egraph.with_queue dirty EggPending.empty.
+Definition after := Egraph.repair_node alg popped 4%positive.
+Definition fresh_node : Egraph.enode nat bool nat := Egraph.NApp true 5 [1%positive].
+Definition support_ids := [4; 2; 1; 3]%positive.
+
+(** The shared fixture comes from two successful public nonempty term insertions. *)
+Example insertion_results :
+  Egraph.add_term alg Egraph.empty first_term = Some (2%positive, first) /\
+  Egraph.add_term alg first second_term = Some (4%positive, before).
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+(** The external union genuinely merges the two leaves and leaves one parent batch pending. *)
+Example union_result :
+  Egraph.union alg before 1%positive 3%positive = Some dirty.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Public preservation supplies maintained WF independently of all numerical budgets. *)
+Theorem before_wf : EggSpec.wf alg before.
+Proof.
+  destruct insertion_results as [Hfirst Hsecond].
+  destruct (proj1 (EggSpec.add_term_represents alg Egraph.empty first_term
+    alg_encoding_laws (EggSpec.empty_wf alg)) 2%positive first Hfirst)
+    as [Hrep [Hwf Hext]].
+  exact (proj1 (proj2 (proj1 (EggSpec.add_term_represents alg first second_term
+    alg_encoding_laws Hwf) 4%positive before Hsecond))).
+Qed.
+
+(** The dirty numerical client uses maintained WF proved by the actual successful union. *)
+Theorem dirty_wf : EggSpec.wf alg dirty.
+Proof.
+  exact (EggSpec.union_wf alg before 1%positive 3%positive dirty
+    alg_encoding_laws before_wf union_result).
+Qed.
+
+(** Rank evidence is carried through construction and is not inferred from semantic WF. *)
+Theorem before_rank : EggCost.rank_inv before.
+Proof.
+  destruct insertion_results as [Hfirst Hsecond].
+  exact (EggCost.add_term_rank_inv alg second_term first 4%positive before
+    (EggCost.add_term_rank_inv alg first_term Egraph.empty 2%positive first
+      graph_empty_rank_inv Hfirst) Hsecond).
+Qed.
+
+(** Actual union and queue replacement retain the independent certificate used by repair costs. *)
+Theorem dirty_rank : EggCost.rank_inv dirty.
+Proof.
+  exact (EggCost.union_rank_inv alg before 1%positive 3%positive dirty before_rank union_result).
+Qed.
+
+Local Lemma popped_rank : EggCost.rank_inv popped.
+Proof.
+  exact dirty_rank.
+Qed.
+
+(** Every queried dense identifier has an explicitly computed encoder-and-width budget. *)
+Example dense_queries :
+  Forall (EggCost.query_budget 256%N) [1; 2; 3; 4; 5]%positive.
+Proof.
+  constructor; [vm_compute; discriminate|].
+  constructor; [vm_compute; discriminate|].
+  constructor; [vm_compute; discriminate|].
+  constructor; [vm_compute; discriminate|].
+  constructor; [vm_compute; discriminate|constructor].
+Qed.
+
+Local Lemma dense_query key :
+  In key [1; 2; 3; 4; 5]%positive -> EggCost.query_budget 256%N key.
+Proof.
+  exact (proj1 (Forall_forall _ _) dense_queries key).
+Qed.
+
+(** Closed observations identify finite support for the external union and repair collision. *)
+Example forest_supports :
+  UnionFind.keys Egraph.id_encoding (Egraph.uf before) = support_ids /\
+  UnionFind.keys Egraph.id_encoding (Egraph.uf dirty) = support_ids /\
+  UnionFind.keys Egraph.id_encoding
+    (UnionFind.union Egraph.id_encoding 4%positive 2%positive (Egraph.uf popped)) = support_ids.
+Proof.
+  vm_compute; split; [reflexivity|split; reflexivity].
+Qed.
+
+Local Lemma support_from_keys forest :
+  UnionFind.wf Egraph.id_encoding forest ->
+  UnionFind.keys Egraph.id_encoding forest = support_ids ->
+  UnionFindCost.support_budget Egraph.id_encoding 256%N forest.
+Proof.
+  intros Hwf Hkeys key Hsupport.
+  apply dense_query.
+  apply (proj2 (UnionFind.keys_spec Egraph.id_encoding positive_encoding_laws
+    forest key Hwf)) in Hsupport.
+  rewrite Hkeys in Hsupport.
+  unfold support_ids in Hsupport; cbn [In] in Hsupport |- *; intuition.
+Qed.
+
+Local Lemma before_support : EggCost.support_budget 256%N before.
+Proof.
+  apply support_from_keys.
+  - exact (UnionFindRank.forest_wf _ _ before_rank).
+  - exact (proj1 forest_supports).
+Qed.
+
+Local Lemma dirty_support : EggCost.support_budget 256%N dirty.
+Proof.
+  apply support_from_keys.
+  - exact (UnionFindRank.forest_wf _ _ dirty_rank).
+  - exact (proj1 (proj2 forest_supports)).
+Qed.
+
+Local Lemma popped_support : EggCost.support_budget 256%N popped.
+Proof.
+  exact dirty_support.
+Qed.
+
+(** The logarithmic factors are obtained from these finite supports and their chosen key budget. *)
+Example logarithmic_factors :
+  EggCost.find_bound before 256%N = 98688%N /\
+  EggCost.find_bound dirty 256%N = 98688%N.
+Proof.
+  unfold EggCost.find_bound.
+  rewrite (proj1 forest_supports), (proj1 (proj2 forest_supports)).
+  vm_compute; split; reflexivity.
+Qed.
+
+(** Fixture opacity keeps numerical contracts separate from direct operation-price reduction. *)
+Local Opaque dirty.
+
+(** A nontrivial supported find consumes the public numerical theorem with discharged duties. *)
+Theorem concrete_find_cost :
+  (Cost.ticks (Egraph.find_c alg dirty 3%positive) <= 98688)%N.
+Proof.
+  eapply N.le_trans.
+  - exact (EggCost.find_cost alg dirty 3%positive 256%N dirty_rank dirty_support
+      (dense_query 3%positive ltac:(cbn [In]; intuition))).
+  - rewrite (proj2 logarithmic_factors); reflexivity.
+Qed.
+
+Local Transparent dirty.
+
+(** Symbol encoding, actual list serialization and memo-key encoding all fit concrete budgets. *)
+Example signature_budgets :
+  EggCost.node_budget alg fresh_node 256%N /\
+  EggCost.node_budget alg (Egraph.NApp true 4 [1%positive]) 256%N /\
+  EggCost.node_budget alg (Egraph.NApp true 4 [3%positive]) 256%N.
+Proof.
+  split; [constructor; vm_compute; discriminate|].
+  split; constructor; vm_compute; discriminate.
+Qed.
+
+(** Concrete shape validation reads the allocated child and actually accepts the new operator. *)
+Example fresh_node_observations :
+  Egraph.child_sorts alg before [1%positive] = Some [true] /\
+  Egraph.canonical alg before fresh_node = fresh_node /\
+  Egraph.next before = 5%positive /\
+  Map.get Egraph.id_encoding (Egraph.node_code alg fresh_node) (Egraph.memo before) = None /\
+  option_map fst (Egraph.add_node alg before fresh_node) = Some 5%positive.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Local Lemma fresh_validation : EggCost.validation_budget alg before fresh_node 256%N.
+Proof.
+  change (forall sorts, Egraph.child_sorts alg before [1%positive] = Some sorts ->
+    (Cost.ticks (EggAlg.op_shape_c alg 5%nat sorts true) <= 256)%N).
+  rewrite (proj1 fresh_node_observations).
+  intros sorts Hsorts; injection Hsorts as <-.
+  vm_compute; discriminate.
+Qed.
+
+Local Opaque first before.
+
+(** Nonempty insertion applies the public arity-linear contract after discharging every duty. *)
+Theorem concrete_add_node_cost :
+  (Cost.ticks (Egraph.add_node_c alg before fresh_node) <= 3166240)%N.
+Proof.
+  pose proof (proj1 (proj2 fresh_node_observations)) as Hcanonical.
+  assert (Hchildren : forall c, In c (Egraph.node_children fresh_node) ->
+    EggCost.query_budget 256%N c).
+  { intros c Hin; apply dense_query; cbn [fresh_node Egraph.node_children In] in *; intuition. }
+  pose proof (EggCost.add_node_cost alg before fresh_node 256%N before_rank before_support
+    fresh_validation Hchildren) as Hcost.
+  rewrite Hcanonical in Hcost.
+  specialize (Hcost Hchildren (proj1 signature_budgets)).
+  specialize (Hcost ltac:(rewrite (proj1 (proj2 (proj2 fresh_node_observations)));
+    apply dense_query; cbn [In]; intuition)).
+  assert (Hhit : forall c,
+    Map.get Egraph.id_encoding (Egraph.node_code alg fresh_node) (Egraph.memo before) = Some c ->
+    EggCost.query_budget 256%N c).
+  { intros c Hget.
+    rewrite (proj1 (proj2 (proj2 (proj2 fresh_node_observations)))) in Hget; discriminate. }
+  specialize (Hcost Hhit).
+  eapply N.le_trans; [exact Hcost|].
+  rewrite (proj1 logarithmic_factors); reflexivity.
+Qed.
+
+Local Transparent first before.
+
+(** These observations identify rank-selected roots and the two nonempty parent buckets. *)
+Example before_union_observations :
+  Egraph.uf dirty =
+    UnionFind.union Egraph.id_encoding 1%positive 3%positive (Egraph.uf before) /\
+  Egraph.find alg before 1%positive = 1%positive /\
+  Egraph.find alg before 3%positive = 3%positive /\
+  fst (UnionFind.find Egraph.id_encoding 1%positive
+    (UnionFind.union Egraph.id_encoding 1%positive 3%positive (Egraph.uf before))) =
+      1%positive /\
+  EggParent.get (Egraph.parents before) 1%positive = [2%positive] /\
+  EggParent.get (Egraph.parents before) 3%positive = [4%positive] /\
+  Egraph.sort_of alg before 1%positive = Some true /\
+  Egraph.sort_of alg before 3%positive = Some true.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+(** The union certificate discharges both forest supports and the observed root and sort duties. *)
+Theorem before_union_budget :
+  EggCost.union_budget alg before 1%positive 3%positive 100000%N 256%N 1%N.
+Proof.
+  destruct before_union_observations as
+    [Huf [Hleft [Hright [Hnew [Hparents_left [Hparents_right [Hsort_left Hsort_right]]]]]]].
+  constructor.
+  - exact before_rank.
+  - exact before_support.
+  - apply dense_query; cbn [In]; intuition.
+  - apply dense_query; cbn [In]; intuition.
+  - rewrite (proj1 logarithmic_factors); vm_compute; discriminate.
+  - rewrite <- Huf; exact dirty_support.
+  - rewrite <- Huf.
+    change (EggCost.find_bound dirty 256%N <= 100000)%N.
+    rewrite (proj2 logarithmic_factors); vm_compute; discriminate.
+  - intros root [-> | [-> | ->]]; rewrite ?Hleft, ?Hright, ?Hnew;
+      apply dense_query; cbn [In]; intuition.
+  - intros root [-> | ->]; rewrite ?Hleft, ?Hright, ?Hparents_left, ?Hparents_right;
+      reflexivity.
+  - intros key sort [-> | ->] Hsort; rewrite ?Hsort_left, ?Hsort_right in Hsort;
+      injection Hsort as <-; vm_compute; discriminate.
+Qed.
+
+Local Opaque first before.
+
+(** Nonempty ordinary union consumes its fully discharged public numerical contract. *)
+Theorem concrete_union_cost :
+  (Cost.ticks (Egraph.union_c alg before 1%positive 3%positive) <= 403856)%N.
+Proof.
+  exact (EggCost.union_cost alg before 1%positive 3%positive
+    100000%N 256%N 1%N before_union_budget).
+Qed.
+
+(** Annotation does not change the discharged budgets for the actual nonempty external union. *)
+Theorem concrete_union_j_cost :
+  (Cost.ticks (Egraph.union_j_c alg before 1%positive 3%positive Egraph.JGiven) <= 403856)%N.
+Proof.
+  exact (EggCost.union_j_cost alg before 1%positive 3%positive Egraph.JGiven
+    100000%N 256%N 1%N before_union_budget).
+Qed.
+
+Local Transparent first before.
+
+(** Repair's collision queries the allocated application roots and their actual parent buckets. *)
+Example collision_union_observations :
+  Egraph.find alg popped 4%positive = 4%positive /\
+  Egraph.find alg popped 2%positive = 2%positive /\
+  fst (UnionFind.find Egraph.id_encoding 4%positive
+    (UnionFind.union Egraph.id_encoding 4%positive 2%positive (Egraph.uf popped))) =
+      4%positive /\
+  EggParent.get (Egraph.parents popped) 4%positive = [] /\
+  EggParent.get (Egraph.parents popped) 2%positive = [] /\
+  Egraph.sort_of alg popped 4%positive = Some true /\
+  Egraph.sort_of alg popped 2%positive = Some true.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+(** The collision's old and resulting forests have finite certified numerical budgets. *)
+Theorem collision_union_budget :
+  EggCost.union_budget alg popped 4%positive 2%positive 100000%N 256%N 1%N.
+Proof.
+  destruct collision_union_observations as
+    [Hleft [Hright [Hnew [Hparents_left [Hparents_right [Hsort_left Hsort_right]]]]]].
+  constructor.
+  - exact popped_rank.
+  - exact popped_support.
+  - apply dense_query; cbn [In]; intuition.
+  - apply dense_query; cbn [In]; intuition.
+  - change (EggCost.find_bound dirty 256%N <= 100000)%N.
+    rewrite (proj2 logarithmic_factors); vm_compute; discriminate.
+  - apply support_from_keys.
+    + apply UnionFind.wf_union.
+      * exact positive_encoding_laws.
+      * exact (UnionFindRank.forest_wf _ _ popped_rank).
+    + exact (proj2 (proj2 forest_supports)).
+  - rewrite (proj2 (proj2 forest_supports)); vm_compute; discriminate.
+  - intros root [-> | [-> | ->]]; rewrite ?Hleft, ?Hright, ?Hnew;
+      apply dense_query; cbn [In]; intuition.
+  - intros root [-> | ->]; rewrite ?Hleft, ?Hright, ?Hparents_left, ?Hparents_right;
+      vm_compute; discriminate.
+  - intros key sort [-> | ->] Hsort; rewrite ?Hsort_left, ?Hsort_right in Hsort;
+      injection Hsort as <-; vm_compute; discriminate.
+Qed.
+
+Local Opaque popped.
+
+(** The actual congruence collision also instantiates the annotated numerical contract directly. *)
+Theorem concrete_collision_cost :
+  (Cost.ticks (Egraph.union_j_c alg popped 4%positive 2%positive
+    (Egraph.JCongruence 4%positive 2%positive)) <= 403856)%N.
+Proof.
+  exact (EggCost.union_j_cost alg popped 4%positive 2%positive
+    (Egraph.JCongruence 4%positive 2%positive) 100000%N 256%N 1%N collision_union_budget).
+Qed.
+
+Local Transparent popped.
+
+(** The selected parent has an old child, a current child and a memo collision with node two. *)
+Example parent_observations :
+  Map.get Egraph.id_encoding 4%positive (Egraph.nodes popped) =
+    Some (Egraph.NApp true 4 [3%positive]) /\
+  Map.get Egraph.id_encoding 4%positive (Egraph.cached popped) =
+    Some (Egraph.NApp true 4 [3%positive]) /\
+  Egraph.canonical alg popped (Egraph.NApp true 4 [3%positive]) =
+    Egraph.NApp true 4 [1%positive] /\
+  Map.get Egraph.id_encoding (Egraph.node_code alg (Egraph.NApp true 4 [1%positive]))
+    (Egraph.memo popped) = Some 2%positive /\
+  EggParent.get (Egraph.parents popped) 3%positive = [4%positive].
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+(** The repair parent discharges arity, children, signatures and its collision certificate. *)
+Theorem concrete_parent_budget :
+  EggCost.parent_budget alg popped 4%positive 100000%N 256%N 1%N 1%N.
+Proof.
+  destruct parent_observations as [Hnode [Hsnapshot [Hcanonical [Hcollision Hparents]]]].
+  constructor.
+  - apply dense_query; cbn [In]; intuition.
+  - exact popped_rank.
+  - exact popped_support.
+  - change (EggCost.find_bound dirty 256%N <= 100000)%N.
+    rewrite (proj2 logarithmic_factors); vm_compute; discriminate.
+  - intros n old Hn Ho; rewrite Hnode in Hn; rewrite Hsnapshot in Ho.
+    injection Hn as <-; injection Ho as <-.
+    split; [reflexivity|]; split.
+    + intros c Hin; apply dense_query; cbn [Egraph.node_children In] in *; intuition.
+    + split; [rewrite Hcanonical; exact (proj1 (proj2 signature_budgets))|].
+      split; [exact (proj2 (proj2 signature_budgets))|].
+      intros other Hhit; rewrite Hcanonical, Hcollision in Hhit; injection Hhit as <-.
+      exact collision_union_budget.
+Qed.
+
+Local Lemma concrete_batch_budget :
+  EggCost.batch_budget alg (EggParent.get (Egraph.parents popped) 3%positive)
+    popped 100000%N 256%N 1%N 1%N.
+Proof.
+  rewrite (proj2 (proj2 (proj2 (proj2 parent_observations)))).
+  split; [exact concrete_parent_budget|exact I].
+Qed.
+
+Local Opaque popped.
+
+(** The nonempty parent batch applies repair_cost with its concrete callback and bucket duties. *)
+Theorem concrete_repair_cost :
+  (Cost.ticks (Egraph.repair_c alg popped 3%positive) <= 607975)%N.
+Proof.
+  eapply N.le_trans.
+  - exact (EggCost.repair_cost alg popped 3%positive 100000%N 256%N 1%N 1%N
+      (dense_query 3%positive ltac:(cbn [In]; intuition)) concrete_batch_budget).
+  - rewrite (proj2 (proj2 (proj2 (proj2 parent_observations)))).
+    reflexivity.
+Qed.
+
+Local Transparent popped.
+
+(** The actual dirty queue selects one parent and the repaired graph has no remaining work. *)
+Example queue_observations :
+  EggPending.pop (Egraph.pending (Egraph.private dirty)) =
+    Some (3%positive, EggPending.empty) /\
+  EggPending.pop (Egraph.pending (Egraph.private after)) = None /\
+  Egraph.dirty dirty = [3%positive] /\
+  length (Egraph.edges dirty) = 1 /\
+  length (Egraph.edges after) = 2 /\
+  N.pos (Pos.size (Egraph.rebuild_fuel dirty)) = 5%N.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Local Lemma actual_batch_result : Egraph.repair alg popped 3%positive = (after, 1%N).
+Proof.
+  change (EggRebuild.repair alg popped 3%positive = (after, 1%N)).
+  rewrite EggRebuild.repair_equation.
+  rewrite (proj2 (proj2 (proj2 (proj2 parent_observations)))).
+  reflexivity.
+Qed.
+
+Local Lemma dirty_step_value count :
+  Cost.value (Egraph.dirty_step_c alg (dirty, count)) = inl (after, (count + 1)%N).
+Proof.
+  rewrite EggRebuild.dirty_step_equation, (proj1 queue_observations).
+  cbv zeta; fold popped.
+  change (inl (fst (Egraph.repair alg popped 3%positive),
+    N.add count (snd (Egraph.repair alg popped 3%positive))) =
+    (@inl (Egraph.t nat bool nat * N) (Egraph.t nat bool nat * N)
+      (after, (count + 1)%N))).
+  rewrite actual_batch_result; reflexivity.
+Qed.
+
+Local Lemma after_step_value count :
+  Cost.value (Egraph.dirty_step_c alg (after, count)) = inr (after, count).
+Proof.
+  rewrite EggRebuild.dirty_step_equation, (proj1 (proj2 queue_observations)); reflexivity.
+Qed.
+
+Local Lemma stopped_prefix used state final :
+  Cost.value (Egraph.dirty_step_c alg state) = inr state ->
+  runs (Egraph.dirty_step_c alg) used state (inl final) ->
+  used = 0 /\ final = state.
+Proof.
+  intros Hstop Hprefix.
+  inversion Hprefix as
+    [s|n s result Hstopped|n s next result Hnext Hrest]; subst.
+  - split; reflexivity.
+  - rewrite Hstop in Hnext; discriminate.
+Qed.
+
+(** Every continuing prefix of this same actual run is its input or its one repaired state. *)
+Theorem actual_prefix_states used state :
+  runs (Egraph.dirty_step_c alg) used (dirty, 0%N) (inl state) ->
+  (used = 0 /\ state = (dirty, 0%N)) \/
+    (used = 1 /\ state = (after, 1%N)).
+Proof.
+  intro Hprefix.
+  inversion Hprefix as
+    [s|n s result Hstopped|n s next result Hnext Hrest]; subst.
+  - left; split; reflexivity.
+  - rewrite (dirty_step_value 0%N) in Hnext; injection Hnext as <-.
+    destruct (stopped_prefix _ _ _ (after_step_value 1%N) Hrest) as [Hused Hstate].
+    right; split; [clear - Hused; lia|exact Hstate].
+Qed.
+
+(** All actual-prefix primitive duties are proved from the identified nonempty parent batch. *)
+Theorem concrete_loop_budget : EggCost.loop_budget alg dirty 100000%N 256%N 1%N 1%N.
+Proof.
+  intros used h count Hprefix Hfuel loser queue Hpop.
+  destruct (actual_prefix_states used (h, count) Hprefix)
+    as [[Hused Hstate]|[Hused Hstate]].
+  - injection Hstate as -> ->.
+    rewrite (proj1 queue_observations) in Hpop; injection Hpop as <- <-.
+    split; [apply dense_query; cbn [In]; intuition|].
+    split.
+    + change (N.of_nat (length (EggParent.get (Egraph.parents popped) 3%positive)) <= 1)%N.
+      rewrite (proj2 (proj2 (proj2 (proj2 parent_observations)))); reflexivity.
+    + exact concrete_batch_budget.
+  - injection Hstate as -> ->.
+    rewrite (proj1 (proj2 queue_observations)) in Hpop; discriminate.
+Qed.
+
+(** The proved concrete primitive trace certificate discharges the actual finite bucket cap. *)
+Theorem concrete_bucket_budget : EggCost.bucket_budget alg dirty 1%N.
+Proof.
+  exact (EggCost.loop_bucket_budget alg dirty 100000%N 256%N 1%N 1%N concrete_loop_budget).
+Qed.
+
+(** The public binary driver stops at the same state identified by the actual prefix theorem. *)
+Example actual_iterator_value :
+  Cost.value (iterate (Egraph.dirty_step_c alg) (Egraph.rebuild_fuel dirty) (dirty, 0%N)) =
+    inr (after, 1%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Public run and numerical clients consume observations without reducing the graph bodies. *)
+Local Opaque dirty after.
+
+(** The observed value is certified by the public driver's actual run relation. *)
+Theorem actual_run_stops :
+  runs (Egraph.dirty_step_c alg) (Pos.to_nat (Egraph.rebuild_fuel dirty))
+    (dirty, 0%N) (inr (after, 1%N)).
+Proof.
+  rewrite <- actual_iterator_value; apply iterate_value.
+Qed.
+
+Local Lemma actual_counted_result :
+  Cost.value (Egraph.rebuild_run_c alg dirty) = (after, 1%N).
+Proof.
+  rewrite Egraph.rebuild_run_equation, actual_iterator_value; reflexivity.
+Qed.
+
+(** Public projection equations identify both observations of the same counted rebuild. *)
+Theorem actual_rebuild_result :
+  Egraph.rebuild alg dirty = after /\ Egraph.rebuild_repairs alg dirty = 1%N.
+Proof.
+  split.
+  - rewrite Egraph.rebuild_equation, actual_counted_result; reflexivity.
+  - unfold Egraph.rebuild_repairs; rewrite actual_counted_result; reflexivity.
+Qed.
+
+(** The headline rebuild contract now yields a numerical price with no budget premises left. *)
+Theorem concrete_rebuild_cost :
+  (Cost.ticks (Egraph.rebuild_c alg dirty) <= 608242)%N.
+Proof.
+  eapply N.le_trans.
+  - exact (EggCost.rebuild_cost alg (EggSpec.node_code_injective alg alg_encoding_laws)
+      dirty (EggSpec.wf_kernel alg dirty dirty_wf)
+      (EggMaintained.layout alg dirty (EggSpec.wf_structural alg dirty dirty_wf))
+      100000%N 256%N 1%N 1%N concrete_loop_budget).
+  - rewrite (proj2 actual_rebuild_result),
+      (proj2 (proj2 (proj2 (proj2 (proj2 queue_observations))))).
+    reflexivity.
+Qed.
+
+(** The total-repair contract bounds visits using concrete queue and new-edge counts. *)
+Theorem concrete_rebuild_repairs_total :
+  (Egraph.rebuild_repairs alg dirty <= 2)%N.
+Proof.
+  pose proof (EggCost.rebuild_repairs_total alg dirty 1%N concrete_bucket_budget) as Htotal.
+  destruct queue_observations as [Hpop [Hstop [Hdirty [Hedges [Hafter Hfuel]]]]].
+  rewrite (proj1 actual_rebuild_result), Hedges, Hdirty, Hafter in Htotal.
+  cbn [length] in Htotal.
+  assert (Hlinear : forall n : N, (n + 1 <= 3 -> n <= 2)%N).
+  { intros n Hbound; lia. }
+  apply Hlinear; exact Htotal.
+Qed.
+
+(** The same actual numerical rebuild run visits its queued parent. *)
+Theorem concrete_rebuild_positive_repairs :
+  (0 < Egraph.rebuild_repairs alg dirty)%N.
+Proof.
+  rewrite (proj2 actual_rebuild_result); reflexivity.
+Qed.
+
+End EggKernelConcreteClient.
