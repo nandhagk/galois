@@ -186,6 +186,36 @@ Proof.
     intros [[_ Hin]|Hin]; [exact (Hnotin Hin)|exact (Hfresh x Hin)].
 Qed.
 
+Local Lemma exists_key xs x :
+  existsb (eqb EX x) xs = true <-> In x xs.
+Proof.
+  rewrite existsb_exists; split.
+  - intros [y [Hy Hsame]]; apply (eqb_true_iff EX HE) in Hsame; now subst y.
+  - intro Hin; exists x; split; [exact Hin|apply eqb_refl].
+Qed.
+
+Local Lemma push_many_occurrences (c : C) xs m y :
+  Map.wf EX m -> NoDup xs ->
+  Index.find EX y (push_many EX c xs m) =
+    if existsb (eqb EX y) xs then c :: Index.find EX y m else Index.find EX y m.
+Proof.
+  intros Hwf Hnodup; induction Hnodup as [|x xs Hfresh Hnodup IH];
+    rewrite push_many_equation; [reflexivity|].
+  rewrite find_push by now apply push_many_wf.
+  cbn [existsb]; destruct (eqb EX y x) eqn:Hsame; [|exact IH].
+  apply (eqb_true_iff EX HE) in Hsame; subst y.
+  rewrite IH.
+  assert (Habsent : existsb (eqb EX x) xs = false).
+  { apply not_true_iff_false; rewrite exists_key; exact Hfresh. }
+  now rewrite Habsent.
+Qed.
+
+Local Lemma exists_distinct xs x :
+  existsb (eqb EX x) (distinct EX xs) = existsb (eqb EX x) xs.
+Proof.
+  apply Bool.eq_true_iff_eq; rewrite !exists_key, distinct_spec by exact HE; reflexivity.
+Qed.
+
 Local Lemma rows_equation cs :
   Cost.value (index_rows_c EX S SS cs) =
   match cs with
@@ -207,6 +237,54 @@ Proof.
   induction cs as [|c cs [IHc IHr]]; rewrite rows_equation; cbn [contributors readers].
   - split; apply Map.wf_empty.
   - split; apply push_many_wf; assumption.
+Qed.
+
+Local Lemma rows_occurrences cs x :
+  contributors_of EX (Cost.value (index_rows_c EX S SS cs)) x =
+    filter (fun c => eqb EX x (System.target S c) ||
+      existsb (eqb EX x) (side_targets SS c)) cs.
+Proof.
+  induction cs as [|c cs IH].
+  - unfold contributors_of, contributors_of_c.
+    rewrite rows_equation; cbn [contributors].
+    change (Index.find EX x (@Map.empty X (list C)) = []).
+    rewrite Index.find_equation, Map.get_empty; reflexivity.
+  - unfold contributors_of, contributors_of_c at 1.
+    rewrite rows_equation; cbn [contributors].
+    change (Index.find EX x
+      (push_many EX c (distinct EX (System.target S c :: side_targets SS c))
+        (contributors (Cost.value (index_rows_c EX S SS cs)))) =
+      filter (fun d => eqb EX x (System.target S d) ||
+        existsb (eqb EX x) (side_targets SS d)) (c :: cs)).
+    rewrite push_many_occurrences by (apply rows_wf || apply distinct_nodup).
+    rewrite exists_distinct; cbn [existsb filter].
+    assert (Hfind : Index.find EX x (contributors (Cost.value (index_rows_c EX S SS cs))) =
+      filter (fun d => eqb EX x (System.target S d) ||
+        existsb (eqb EX x) (side_targets SS d)) cs) by exact IH.
+    rewrite Hfind; destruct (eqb EX x (System.target S c) ||
+      existsb (eqb EX x) (side_targets SS c)); reflexivity.
+Qed.
+
+Local Lemma reader_rows_occurrences cs x :
+  readers_of EX (Cost.value (index_rows_c EX S SS cs)) x =
+    filter (fun c => existsb (eqb EX x) (deps SS c)) cs.
+Proof.
+  induction cs as [|c cs IH].
+  - unfold readers_of, readers_of_c.
+    rewrite rows_equation; cbn [readers].
+    change (Index.find EX x (@Map.empty X (list C)) = []).
+    rewrite Index.find_equation, Map.get_empty; reflexivity.
+  - unfold readers_of, readers_of_c at 1.
+    rewrite rows_equation; cbn [readers].
+    change (Index.find EX x
+      (push_many EX c (distinct EX (deps SS c))
+        (readers (Cost.value (index_rows_c EX S SS cs)))) =
+      filter (fun d => existsb (eqb EX x) (deps SS d)) (c :: cs)).
+    rewrite push_many_occurrences by (apply rows_wf || apply distinct_nodup).
+    rewrite exists_distinct; cbn [filter].
+    assert (Hfind : Index.find EX x (readers (Cost.value (index_rows_c EX S SS cs))) =
+      filter (fun d => existsb (eqb EX x) (deps SS d)) cs) by exact IH.
+    rewrite Hfind; destruct (existsb (eqb EX x) (deps SS c)); reflexivity.
 Qed.
 
 Local Lemma rows_agree cs :
@@ -277,7 +355,40 @@ Proof.
   constructor; [exact Hwc|exact Hwr|exact Hc|exact Hr|apply rows_nodup].
 Qed.
 
+(** Contributor buckets preserve row order and exactly one occurrence per declared output key. *)
+Theorem contributors_occurrences x :
+  contributors_of EX (index_system EX S SS) x =
+    filter (fun c => eqb EX x (System.target S c) ||
+      existsb (eqb EX x) (side_targets SS c)) (System.constraints S).
+Proof.
+  apply rows_occurrences.
+Qed.
+
+(** Reader buckets preserve row order and one entry per distinct declared read key. *)
+Theorem readers_occurrences x :
+  readers_of EX (index_system EX S SS) x =
+    filter (fun c => existsb (eqb EX x) (deps SS c)) (System.constraints S).
+Proof.
+  apply reader_rows_occurrences.
+Qed.
+
 End IndexLaws.
+
+(** Contributor lookup retains exactly the underlying map lookup charge. *)
+Theorem contributors_cost {X C} (EX : encoding X) (ix : sys_index X C) x :
+  Cost.ticks (contributors_of_c EX ix x) =
+    Cost.ticks (Map.get_c EX x (contributors ix)).
+Proof.
+  unfold contributors_of_c; apply Index.find_cost.
+Qed.
+
+(** Reader lookup retains exactly the underlying map lookup charge. *)
+Theorem readers_cost {X C} (EX : encoding X) (ix : sys_index X C) x :
+  Cost.ticks (readers_of_c EX ix x) =
+    Cost.ticks (Map.get_c EX x (readers ix)).
+Proof.
+  unfold readers_of_c; apply Index.find_cost.
+Qed.
 
 Arguments index_system_c {X C A} EX S SS : simpl never.
 Arguments index_system {X C A} EX S SS : simpl never.
