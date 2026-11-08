@@ -618,7 +618,7 @@ Definition evaluation (b : t) : N :=
 Definition enqueue (b : t) count : N :=
   (3 + 2 * row b + target_ticks b + order_ticks b + heap b count)%N.
 Definition update (b : t) count dependencies : N :=
-  (5 * key b + 3 + 2 * lattice_ticks b + selected_ticks b +
+  (5 * key b + 4 + 2 * lattice_ticks b + selected_ticks b +
     N.of_nat dependencies * enqueue b count)%N.
 Definition step (b : t) count dependencies : N :=
   (heap b count + row b + evaluation b +
@@ -722,7 +722,7 @@ Qed.
 Theorem operation_cost x n old value :
   In x (unknowns a) ->
   (Cost.ticks (Worklist.operation_c a x n old value) <=
-    1 + Budget.selected_ticks b + Budget.lattice_ticks b)%N.
+    2 + Budget.selected_ticks b + Budget.lattice_ticks b)%N.
 Proof.
   intro Hx; rewrite Worklist.operation_cost, HJ.
   pose proof (selection_budget HB x Hx) as Hselected.
@@ -735,7 +735,7 @@ Theorem rule_cost (s : Worklist.state X C A) x n value :
   In x (unknowns a) ->
   (Cost.ticks (Update.rule_c EX L (Worklist.operation_c a x n)
     (Worklist.current s) x value) <=
-    2 * Budget.key b + 3 + 2 * Budget.lattice_ticks b + Budget.selected_ticks b)%N.
+    2 * Budget.key b + 4 + 2 * Budget.lattice_ticks b + Budget.selected_ticks b)%N.
 Proof.
   intro Hx.
   assert (Hkey : Kleene.cost_key a x) by now left.

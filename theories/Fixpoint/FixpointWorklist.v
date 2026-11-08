@@ -61,6 +61,7 @@ Definition enqueue {X C A} (a : Analysis.t X C A) cs s :=
 Definition operation_c {X C A} (a : Analysis.t X C A) x remaining old value :=
   Cost.step ;;
   let* selected := Policy.widen_at_c (Analysis.policy a) x in
+  Cost.step ;;
   if selected then
     match remaining with
     | O => widen_c (Analysis.lat a) old value
@@ -299,7 +300,7 @@ Qed.
 (** The selected operator pays the policy callback invocation and the chosen lattice callback. *)
 Theorem operation_cost {X C A} (a : Analysis.t X C A) x n old value :
   Cost.ticks (operation_c a x n old value) =
-    (1 + Cost.ticks (Policy.widen_at_c (Analysis.policy a) x) +
+    (2 + Cost.ticks (Policy.widen_at_c (Analysis.policy a) x) +
       if Policy.widen_at (Analysis.policy a) x then
         match n with
         | O => Cost.ticks (widen_c (Analysis.lat a) old value)

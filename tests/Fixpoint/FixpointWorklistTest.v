@@ -8,9 +8,9 @@ From Stdlib Require Import List Bool Arith NArith PArith Lia Relations.Relation_
 From Galois.Cost Require Import CostMonad CostLoop CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseHeapCost.
 From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSimple.
-From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointIndex FixpointAnalysis
-  FixpointSolver FixpointLeast FixpointKleene FixpointWorklist FixpointWorklistProof
-  FixpointIndexCost FixpointWorklistCost FixpointCycles FixpointWorklistWiden.
+From Galois.Fixpoint Require Import FixpointQuery FixpointSystem FixpointEval FixpointIndex
+  FixpointAnalysis FixpointSolver FixpointLeast FixpointKleene FixpointWorklist
+  FixpointWorklistProof FixpointIndexCost FixpointWorklistCost FixpointCycles FixpointWorklistWiden.
 From Galois.Tests.Fixpoint Require Import FixpointCheckTest FixpointAnalyzeTest.
 Import List.ListNotations Cost.Notations.
 
@@ -118,6 +118,26 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example joining_operation_has_two_invocation_ticks :
+  Cost.ticks (Worklist.operation_c self_analysis 0 0 false true) = 3%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example widening_operation_has_two_invocation_ticks :
+  Cost.ticks (Worklist.operation_c (widening_analysis 0) 0 0
+    (false, false) (true, false)) = 3%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example delayed_operation_has_two_invocation_ticks :
+  Cost.ticks (Worklist.operation_c (widening_analysis 1) 0 1
+    (false, false) (true, false)) = 3%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Definition charged_policy : Policy.t nat :=
   Policy.Make
     (fun _ => Cost.tick 7 ;; Cost.ret 1%positive)
@@ -128,6 +148,14 @@ Definition charged_analysis :=
 Example callback_charges_are_retained :
   (Cost.ticks (Worklist.run_c charged_analysis 3) -
     Cost.ticks (Worklist.run_c self_analysis 3))%N = 25%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example below_contribution_skips_nested_callbacks :
+  Cost.ticks (Update.rule_c nat_encoding bool_lattice
+    (Worklist.operation_c charged_analysis 0 0) Map.empty 0 false) =
+  Cost.ticks (Update.rule_c nat_encoding bool_lattice (join_c bool_lattice) Map.empty 0 false).
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -443,16 +471,22 @@ Qed.
 Definition priority_budget : WorklistCost.Budget.t :=
   WorklistCost.Budget.Make 3 3 0 1 2 1 2 1 0 0 0 0.
 
+Example cycle_declared_output_keys :
+  flat_map (fun c => System.target (Analysis.system cycle_analysis) c ::
+    side_targets (Analysis.static cycle_analysis) c)
+    (System.constraints (Analysis.system cycle_analysis)) = [0; 1; 2; 0; 0; 0].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Local Lemma cycle_relevant_key x :
   Kleene.cost_key cycle_analysis x -> x = 0 \/ x = 1 \/ x = 2.
 Proof.
-  change ((In x [0; 1; 2; 0; 0; 0] \/
-    exists c, In c [0; 1; 2; 0] /\
-      In x (if Nat.eqb c 0 then [1] else if Nat.eqb c 1 then [0] else [])) ->
-    x = 0 \/ x = 1 \/ x = 2).
   intros [Hout|[c [Hc Hread]]].
-  - cbn in Hout; intuition congruence.
-  - destruct Hc as [Hc|[Hc|[Hc|[Hc|Hbad]]]]; [| | | |contradiction];
+  - rewrite Kleene.output_keys_spec, cycle_declared_output_keys in Hout.
+    cbn in Hout; intuition congruence.
+  - change (In c [0; 1; 2; 0]) in Hc.
+    destruct Hc as [Hc|[Hc|[Hc|[Hc|Hbad]]]]; [| | | |contradiction];
       subst c; cbn in Hread; intuition congruence.
 Qed.
 
@@ -480,12 +514,11 @@ Proof.
     + eapply Query.within_bound with (n := 2).
       * apply Query.within_ask; [reflexivity|apply Query.within_ret].
       * change (2 <= 3); lia.
-  - intros m c Hwf Hinv Hc; change (In c [0; 1; 2; 0]) in Hc.
-    destruct Hc as [<-|[<-|[<-|[<-|Hbad]]]]; [| | | |contradiction].
-    + change (1 <= 3); lia.
-    + change (1 <= 3); lia.
-    + change (3 <= 3); reflexivity.
-    + change (1 <= 3); lia.
+  - intros m c Hwf Hinv Hc.
+    rewrite Eval.outputs_spec; cbn [fst].
+    rewrite cycle_sides_equation.
+    destruct c as [|[|c]];
+      cbn [Nat.eqb length priority_budget WorklistCost.Budget.output_count]; lia.
 Qed.
 
 Definition preparation_budget : SystemIndexCost.Budget.t :=
@@ -516,7 +549,7 @@ Qed.
 Example cycle_numeric_constants :
   (WorklistCost.worklist_k cycle_analysis cycle_index priority_budget,
    WorklistCost.worklist_size cycle_analysis cycle_terminates priority_budget preparation_budget) =
-    (14895%N, 167415%N).
+    (14898%N, 167448%N).
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -534,7 +567,7 @@ Qed.
 (** The full cost client discharges primitive budgets, including preparation and heap work. *)
 Theorem cycle_complete_priority_cost fuel :
   (Cost.ticks (Worklist.run_c cycle_analysis fuel) <=
-    167415 + 2 * N.pos (Pos.size fuel))%N.
+    167448 + 2 * N.pos (Pos.size fuel))%N.
 Proof.
   exact (WorklistCost.worklist_cost cycle_analysis cycle_laws cycle_terminates
     (fun _ => eq_refl) priority_budget priority_cost_model
