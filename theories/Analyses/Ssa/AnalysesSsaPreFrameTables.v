@@ -114,7 +114,8 @@ Proof.
       [exact Hwf|apply PreFrameEnd.mark_exit_wf; exact Hwf].
 Qed.
 
-Local Lemma instruction_owner {b e} :
+(** Every ordered instruction's actual source point belongs to that same source block. *)
+Theorem instruction_owner {b e} :
   In b (Graph.nodes (Pre.bg c)) ->
   In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
     SsaPoints.block_of_point (Pre.points (Pre.input c)) (Graph.source (Pre.pg c) e) = b.
@@ -328,6 +329,149 @@ Proof.
   rewrite (runs_seen_stamp Hrun Hnext id b Hname Hseen e He).
   rewrite PreRename.step_equation, Hpending, Hfresh, Hname in Hstep.
   inversion Hstep; reflexivity.
+Qed.
+
+(** Remaining instructions have no previous occurrence or fresh flag before their first visit. *)
+Definition unwritten es (acc : PreRename.accumulator B BE E U) :=
+  forall e, In e es -> stamp e acc = (None, false).
+
+(** A local instruction packet records its unwritten input and literal final-table agreement. *)
+Definition instruction_packet index b parameter final
+    (work : PreRename.scope B E U * PreRename.accumulator B BE E U) e : Prop :=
+  stamp e (snd work) = (None, false) /\
+  stamp e final = stamp e (snd (PreRename.instruction c index b parameter work e)).
+
+Local Lemma chain_edges_nodup {ns es} :
+  point_chain (Pre.pg c) ns es -> NoDup ns -> NoDup es.
+Proof.
+  intro Hchain; induction Hchain as [n|n next ns edge es Hedge Htarget Hchain IH];
+    intro Hunique; [constructor|].
+  apply NoDup_cons_iff in Hunique; destruct Hunique as [Hfresh Htail]; constructor.
+  - intro Hin.
+    destruct (PreFrg.chain_source _ Hchain Hin) as [point [Hpoint Hout]].
+    pose proof (out_source (points_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))
+      n edge Hedge) as Hsource.
+    pose proof (out_source (points_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))
+      point edge Hout) as Hsource'.
+    assert (Hn : point = n) by congruence; rewrite Hn in Hpoint; exact (Hfresh Hpoint).
+  - exact (IH Htail).
+Qed.
+
+(** The actual point ordering makes each block's instruction occurrence list duplicate-free. *)
+Theorem instructions_nodup :
+  forall b, In b (Graph.nodes (Pre.bg c)) ->
+    NoDup (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b).
+Proof.
+  intros b Hb; apply (chain_edges_nodup (points_ordered
+    (Pre.point_laws c (Pre.graphs c Hlaw)) b Hb)).
+  exact (points_unique (Pre.point_laws c (Pre.graphs c Hlaw)) b).
+Qed.
+
+Local Lemma instruction_preserves_unwritten index b parameter work e es :
+  PreFrameEnd.accumulator_wf c (snd work) -> ~ In e es -> unwritten es (snd work) ->
+    unwritten es (snd (PreRename.instruction c index b parameter work e)).
+Proof.
+  intros Hwf Hfresh Hunwritten query Hquery.
+  rewrite (instruction_other query Hwf).
+  - exact (Hunwritten query Hquery).
+  - intro Heq; subst query; exact (Hfresh Hquery).
+Qed.
+
+(** A duplicate-free ordered fold certifies every actual local packet against its final table. *)
+Theorem instruction_packets :
+  forall index b parameter final es work,
+    PreFrameEnd.accumulator_wf c (snd work) -> NoDup es -> unwritten es (snd work) ->
+    (forall e, In e es -> stamp e final =
+      stamp e (snd (fold_left (PreRename.instruction c index b parameter) es work))) ->
+    PreFrameStep.fold_enabled (PreRename.instruction c index b parameter)
+      (instruction_packet index b parameter final) es work.
+Proof.
+  intros index b parameter final es; induction es as [|e rest IH];
+    intros work Hwf Hunique Hunwritten Hfinal; [exact I|].
+  apply NoDup_cons_iff in Hunique; destruct Hunique as [Hfresh Htail].
+  split; [split|].
+  - exact (Hunwritten e (or_introl eq_refl)).
+  - specialize (Hfinal e (or_introl eq_refl)); cbn [fold_left] in Hfinal.
+    rewrite (fold_instruction_other e index b parameter rest _
+      (PreFrameEnd.instruction_wf c Hwf) Hfresh) in Hfinal; exact Hfinal.
+  - apply IH.
+    + apply PreFrameEnd.instruction_wf; exact Hwf.
+    + exact Htail.
+    + apply instruction_preserves_unwritten; [exact Hwf|exact Hfresh|].
+      intros query Hin; apply Hunwritten; now right.
+    + intros query Hin; exact (Hfinal query (or_intror Hin)).
+Qed.
+
+(** Successful real packets retain the exact selected version and freshly-created Boolean. *)
+Theorem real_packet_stamp :
+  forall {index b parameter work e info id u},
+    PreFrameEnd.accumulator_wf c (snd work) ->
+    Map.get (Pre.ee (Pre.keys c)) e (PreRename.events index) = Some info ->
+    PreRename.evaluation info = Some (id, u) -> stamp e (snd work) = (None, false) ->
+    stamp e (snd (PreRename.instruction c index b parameter work e)) =
+      let frame := PreRename.top_id (fst work) id u in
+      let reuse := PreRename.frame_reuse c frame u in
+      (Some (if reuse then PreFrg.operand_version (PreRename.selected frame)
+        else PreFrg.Fresh e u), negb reuse).
+Proof.
+  intros index b parameter work e info id u Hwf Hinfo Hinstance Hunwritten.
+  rewrite PreRename.instruction_equation, Hinfo, mark_exit_stamp; cbn [snd].
+  rewrite (PreFrameStep.fold_observation (PreRename.alter c (PreRename.evaluation info))
+    (fun work => stamp e (snd work)) (fun work key => alter_stamp e _ work key)).
+  rewrite PreRename.occurrence_equation, Hinstance.
+  destruct work as [frames acc]; cbn zeta; cbn [fst snd].
+  unfold stamp in Hunwritten; inversion Hunwritten as [[Hget Hfresh]].
+  destruct (PreRename.frame_reuse c (PreRename.top_id frames id u) u); unfold stamp;
+    cbn [fst snd PreRename.occurrence_index PreRename.fresh_index].
+  - rewrite Map.get_set_same by exact (proj1 Hwf); rewrite Hfresh; reflexivity.
+  - rewrite Map.get_set_same by exact (proj1 Hwf).
+    rewrite FinSet.mem_add by exact (proj1 (proj2 Hwf)); rewrite eqb_refl; reflexivity.
+Qed.
+
+Local Lemma block_body_stamp query index b frames acc :
+  stamp query (snd (PreRename.block c index b frames acc)) =
+    let entered := match SsaPoints.points_in_block (Pre.points (Pre.input c)) b with
+    | [] => (frames, acc)
+    | first :: _ => PreRename.mark_exit c index first (frames, acc)
+    end in
+    stamp query (snd (fold_left (PreRename.instruction c index b
+      (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+      (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) entered)).
+Proof.
+  rewrite PreRename.block_equation; cbn [snd].
+  apply PreFrameStep.fold_observation; intros current pair; apply argument_stamp.
+Qed.
+
+(** Actual block-body histories certify local packets using the same final table observation. *)
+Theorem block_packets :
+  forall index b frames acc final, In b (Graph.nodes (Pre.bg c)) ->
+    PreFrameEnd.accumulator_wf c acc ->
+    unwritten (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) acc ->
+    (forall e, In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+      stamp e final = stamp e (snd (PreRename.block c index b frames acc))) ->
+    let entered := match SsaPoints.points_in_block (Pre.points (Pre.input c)) b with
+    | [] => (frames, acc)
+    | first :: _ => PreRename.mark_exit c index first (frames, acc)
+    end in
+    PreFrameStep.history
+      (PreFrameStep.checked_step (PreRename.instruction c index b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+        (instruction_packet index b (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) final))
+      entered (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b)
+      (fold_left (PreRename.instruction c index b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+        (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) entered).
+Proof.
+  intros index b frames acc final Hb Hwf Hunwritten Hfinal entered.
+  apply (proj2 (PreFrameStep.checked_history_fold _ _)); split; [|reflexivity].
+  apply instruction_packets.
+  - unfold entered; destruct (SsaPoints.points_in_block (Pre.points (Pre.input c)) b);
+      [exact Hwf|apply PreFrameEnd.mark_exit_wf; exact Hwf].
+  - exact (instructions_nodup b Hb).
+  - intros e He; unfold entered.
+    destruct (SsaPoints.points_in_block (Pre.points (Pre.input c)) b);
+      [exact (Hunwritten e He)|rewrite mark_exit_stamp; exact (Hunwritten e He)].
+  - intros e He; unfold entered; rewrite <- block_body_stamp; exact (Hfinal e He).
 Qed.
 
 End Stability.

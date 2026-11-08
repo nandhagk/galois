@@ -12,7 +12,7 @@ From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily
   AnalysesSsaPreFrg AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep
   AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit
-  AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning.
+  AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning AnalysesSsaPreFrameDominance AnalysesSsaPreFrameTables.
 Import List.ListNotations Cost.Notations.
 
 Module PreOperands.
@@ -409,6 +409,101 @@ Proof.
   - exact Hfirst.
   - exact Hentry.
   - intros u Hfamily Hpure; rewrite (build_frg_versions_exact Hlaw (PreFrg.Initial u)); tauto.
+Qed.
+
+(** Actual selected definitions dominate occurrence targets and every nonfresh selection's source. *)
+Theorem build_frg_occurrence_dominance :
+  Pre.laws c ->
+  forall e d, Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some d ->
+    PreFrameDominance.occurrence_dominance c e d.
+Proof.
+  intros Hlaw e d Hget.
+  destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  rewrite build_frg_equation, Houtput, assemble_equation in Hget.
+  exact (PreFrameDominance.dominance_occurrences c _
+    (PreFrameDominance.run_dominance c data Hlaw Hdata) e d Hget).
+Qed.
+
+(** A built phi has no real use at its own completed parameter-definition point. *)
+Theorem build_frg_phi_no_real_use :
+  Pre.laws c ->
+  forall b u, In b (Graph.nodes (Pre.bg c)) ->
+    ~ PreCoverage.real_use_at c build_frg
+      (Graph.target (Pre.pg c) (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+      (PreFrg.Phi b u).
+Proof.
+  intros Hlaw b u Hb; eapply (PreFrameMeaning.phi_no_real_use c build_frg Hlaw).
+  - intros e d Hget; destruct (build_frg_occurrence_sources Hlaw e d Hget)
+      as [He [v [Hcomputed Hrest]]]; split; [exact He|now exists v].
+  - intros e d Hget q Hq.
+    destruct (build_frg_occurrence_dominance Hlaw e d Hget) as [point [Hpoint [Hdom Hreuse]]].
+    assert (point = q) by congruence; subst point; exact Hdom.
+  - exact Hb.
+Qed.
+
+(** Every materialized phi establishes a nearest available unused frame at its actual definition. *)
+Theorem build_frg_phi_frame :
+  Pre.laws c ->
+  forall b u, FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = true ->
+    PreCoverage.frame_laws c build_frg u
+      (Graph.target (Pre.pg c) (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+      (PreRename.Frame (PreFrg.Operand (PreFrg.Phi b u) false) true).
+Proof.
+  intros Hlaw b u Hphi.
+  pose proof (PreFrg.phi_needed_nodes c Hlaw (proj2 (proj2
+    (proj1 (build_frg_phi_exact Hlaw b u) Hphi)))) as Hb.
+  apply (PreFrameStep.definition_frame c build_frg Hlaw u _ (PreFrg.Phi b u) false).
+  - destruct (PreFrg.parameter_edge_listed c Hlaw Hb) as [He Hi].
+    destruct (PreCoverage.listed_edge_out c Hlaw He) as [Hsource Hout].
+    apply (Pre.reachable_points c (Pre.graphs c Hlaw)).
+    exact (out_target_in (points_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))
+      _ _ Hsource Hout).
+  - exact (proj2 (build_frg_versions_exact Hlaw (PreFrg.Phi b u)) Hphi).
+  - reflexivity.
+  - rewrite PreFrg.version_point_equation; reflexivity.
+  - split; [discriminate|intro Hreal].
+    exfalso; exact (build_frg_phi_no_real_use Hlaw b u Hb Hreal).
+Qed.
+
+(** A completed instruction has no other matching definition when its fresh and phi cases are absent. *)
+Theorem build_frg_no_definition_target :
+  Pre.laws c ->
+  forall b e u, In b (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+    ~ In (PreFrg.Fresh e u) (PreFrg.versions build_frg) ->
+    (e = SsaPoints.parameter_edge (Pre.points (Pre.input c)) b ->
+      FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = false) ->
+  forall d, In d (PreFrg.versions build_frg) -> PreFrg.version_expr d = u ->
+    PreFrg.version_point c d <> Some (Graph.target (Pre.pg c) e).
+Proof.
+  intros Hlaw b e u Hb Hin Hfresh Hphi d Hd Hu Hpoint.
+  pose proof (PreCoverage.instruction_edge_listed c Hlaw Hb Hin) as He.
+  pose proof (instruction_edges_internal (Pre.point_laws c (Pre.graphs c Hlaw)) b e Hb Hin) as Hi.
+  pose proof (proj2 (proj2 (build_frg_source_versions Hlaw d Hd))) as Hdomain.
+  destruct d as [v|v|other v|owner v]; cbn [PreFrg.version_expr] in Hu; subst v;
+    rewrite PreFrg.version_point_equation in Hpoint.
+  - discriminate.
+  - exact (PreFrg.internal_target_not_entry c Hlaw He Hi
+      (nth_error_In _ _ Hpoint) eq_refl).
+  - destruct Hdomain as [Hother Hcomputed].
+    assert (Htarget : Graph.target (Pre.pg c) other = Graph.target (Pre.pg c) e) by congruence.
+    pose proof (PreCoverage.internal_incoming_unique c Hlaw He Hi Hother Htarget) as Heq.
+    subst other; exact (Hfresh Hd).
+  - pose proof (PreFrg.phi_needed_nodes c Hlaw Hdomain) as Howner.
+    destruct (PreFrg.parameter_edge_listed c Hlaw Howner) as [Hparameter Hiparameter].
+    assert (Htarget : Graph.target (Pre.pg c)
+      (SsaPoints.parameter_edge (Pre.points (Pre.input c)) owner) = Graph.target (Pre.pg c) e)
+      by congruence.
+    pose proof (PreCoverage.internal_incoming_unique c Hlaw He Hi Hparameter Htarget) as Hedge.
+    assert (Hblock : owner = b).
+    { pose proof (PreFrameTables.instruction_owner c Hlaw Hb Hin) as Howner_e.
+      pose proof (PreFrameTables.instruction_owner c Hlaw Howner
+        (nth_error_In _ _ (parameter_edge_first (Pre.point_laws c (Pre.graphs c Hlaw))
+          owner Howner))) as Howner_parameter.
+      rewrite Hedge in Howner_parameter; congruence. }
+    subst owner; pose proof (Hphi (eq_sym Hedge)) as Habsent.
+    pose proof (proj1 (build_frg_versions_exact Hlaw (PreFrg.Phi b u)) Hd) as Hpresent; congruence.
 Qed.
 
 (** The caller gate checks the supplied block-parent map and rejects every partial raw outcome.

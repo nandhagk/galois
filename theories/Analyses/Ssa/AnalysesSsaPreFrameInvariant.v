@@ -236,7 +236,8 @@ Proof.
     reflexivity.
 Qed.
 
-Local Lemma occurrence_fresh {e instance work id u} :
+(** A pending fresh-definition token comes from the same actual eligible occurrence instance. *)
+Theorem occurrence_fresh {e instance work id u} :
   snd (PreRename.occurrence c e instance work) = Some (id, u) ->
     instance = Some (id, u).
 Proof.
@@ -246,7 +247,8 @@ Proof.
     cbn [snd]; [discriminate|congruence].
 Qed.
 
-Local Lemma fold_alter_source instance :
+(** An ordered list of actual named alterations preserves the shared source-frame representation. *)
+Theorem fold_alter_source instance :
   forall changes work,
     Forall (fun pair => Intern.find (Pre.eu (Pre.keys c)) (snd pair) bank = Some (fst pair))
       changes ->
@@ -339,6 +341,180 @@ Proof.
   - rewrite (alteration_test Hid); reflexivity.
   - apply Forall_forall; intros [key value] Hin; cbn [fst snd].
     apply (PreFrameCache.event_alterations c bank e Hlaw) in Hin; exact (proj2 Hin).
+Qed.
+
+(** A reused occurrence updates exactly its named expression's real-use frame. *)
+Theorem occurrence_top :
+  forall frames acc e instance, scope_source frames ->
+    (forall id u, instance = Some (id, u) ->
+      Intern.find (Pre.eu (Pre.keys c)) u bank = Some id) ->
+  forall u, PreRename.top c (fst (fst (PreRename.occurrence c e instance (frames, acc)))) u =
+    match instance with
+    | None => PreRename.top c frames u
+    | Some (id, v) =>
+      if PreRename.frame_reuse c (PreRename.top_id frames id v) v then
+        if eqb (Pre.eu (Pre.keys c)) u v then
+          PreRename.Frame (PreFrg.Operand (PreFrg.operand_version
+            (PreRename.selected (PreRename.top_id frames id v))) true) true
+        else PreRename.top c frames u
+      else PreRename.top c frames u
+    end.
+Proof.
+  intros frames acc e instance Hframes Hinstance u; rewrite PreRename.occurrence_equation.
+  destruct instance as [[id v]|]; [|reflexivity].
+  cbn zeta; destruct (PreRename.frame_reuse c (PreRename.top_id frames id v) v);
+    [|reflexivity].
+  cbn [fst]; apply PreFrameCache.top_store.
+  - exact Hlaw.
+  - exact (scope_representation _ Hframes).
+  - rewrite (scope_symbols _ Hframes); exact (Hinstance id v eq_refl).
+Qed.
+
+Local Lemma fold_phi_top b :
+  forall pairs frames, scope_source frames ->
+    Forall (fun pair => In pair
+      (Index.find (Pre.eb (Pre.keys c)) b (PreRename.phi_definitions index))) pairs ->
+  forall u, PreRename.top c (fold_left (PreRename.install_phi b) pairs frames) u =
+    if existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair))) pairs
+    then PreRename.Frame (PreFrg.Operand (PreFrg.Phi b u) false) true
+    else PreRename.top c frames u.
+Proof.
+  intro pairs; induction pairs as [|[owner [id v]] rest IH];
+    intros frames Hframes Hpairs u; [reflexivity|].
+  inversion Hpairs as [|pair tail Hpair Hrest]; subst pair tail.
+  destruct (phi_bucket_source Hpair) as [Howner [Hphi Hid]].
+  cbn [fold_left existsb snd]; rewrite IH.
+  - rewrite PreRename.install_phi_equation; cbn [snd fst].
+    rewrite (PreFrameCache.top_store c Hlaw frames v id _
+      (scope_representation _ Hframes)).
+    + destruct (eqb (Pre.eu (Pre.keys c)) u v) eqn:Hsame.
+      * apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hsame; subst v.
+        destruct (existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair))) rest);
+          reflexivity.
+      * destruct (existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair))) rest);
+          reflexivity.
+    + rewrite (scope_symbols _ Hframes); exact Hid.
+  - exact (install_phi_source b frames _ Hframes Hpair).
+  - exact Hrest.
+Qed.
+
+(** A named expression occurs in the actual phi bucket exactly when its placement is required. *)
+Theorem phi_bucket_test :
+  forall b u id, Intern.find (Pre.eu (Pre.keys c)) u bank = Some id ->
+    existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair)))
+      (Index.find (Pre.eb (Pre.keys c)) b (PreRename.phi_definitions index)) = true <->
+    PreFrg.phi_needed c u b.
+Proof.
+  intros b u id Hid; rewrite existsb_exists; split.
+  - intros [[owner [other v]] [Hin Hsame]]; cbn [snd] in Hsame.
+    apply (eqb_true_iff _ (Pre.eu_laws c (Pre.graphs c Hlaw))) in Hsame; subst v.
+    exact (proj1 (proj2 (phi_bucket_source Hin))).
+  - intro Hphi; exists (b, (id, u)); split.
+    + exact (proj2 (PreFrameCache.phi_definitions_exact c data Hlaw Hdata b id u)
+        (conj Hphi Hid)).
+    + apply eqb_refl.
+Qed.
+
+(** Definitions install the exact fresh slot and then any required phi at the parameter occurrence. *)
+Theorem definitions_top :
+  forall b parameter e fresh frames, scope_source frames ->
+    (forall id v, fresh = Some (id, v) ->
+      In e (Cfg.edges (Pre.point_cfg c)) /\ Pre.recomputed c e = Some v /\
+      Intern.find (Pre.eu (Pre.keys c)) v bank = Some id) ->
+  forall u, PreRename.top c (PreRename.definitions c index b parameter e fresh frames) u =
+    let before_phi := match fresh with
+    | None => PreRename.top c frames u
+    | Some (id, v) =>
+      if eqb (Pre.eu (Pre.keys c)) u v
+      then PreRename.Frame (PreFrg.Operand (PreFrg.Fresh e v) true) true
+      else PreRename.top c frames u
+    end in
+    if eqb (Pre.ee (Pre.keys c)) e parameter &&
+      existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair)))
+        (Index.find (Pre.eb (Pre.keys c)) b (PreRename.phi_definitions index))
+    then PreRename.Frame (PreFrg.Operand (PreFrg.Phi b u) false) true
+    else before_phi.
+Proof.
+  intros b parameter e fresh frames Hframes Hfresh u; rewrite PreRename.definitions_equation.
+  set (updated := match fresh with
+    | None => frames
+    | Some (id, v) => PreRename.store frames id
+        (PreRename.Frame (PreFrg.Operand (PreFrg.Fresh e v) true) true)
+    end).
+  assert (Hupdated : scope_source updated).
+  { unfold updated; destruct fresh as [[id v]|]; [|exact Hframes].
+    destruct (Hfresh id v eq_refl) as [He [Hcomputed Hid]].
+    apply (store_source frames Hframes v id); [exact Hid|].
+    unfold frame_source; cbn [PreRename.selected PreRename.available
+      PreFrg.operand_version PreFrg.version_expr].
+    split; [reflexivity|]; split; [exact (fresh_source He Hcomputed Hid)|discriminate]. }
+  assert (Htop : PreRename.top c updated u =
+    match fresh with
+    | None => PreRename.top c frames u
+    | Some (id, v) =>
+      if eqb (Pre.eu (Pre.keys c)) u v
+      then PreRename.Frame (PreFrg.Operand (PreFrg.Fresh e v) true) true
+      else PreRename.top c frames u
+    end).
+  { unfold updated; destruct fresh as [[id v]|]; [|reflexivity].
+    rewrite (PreFrameCache.top_store c Hlaw frames v id _
+      (scope_representation _ Hframes)); [reflexivity|].
+    rewrite (scope_symbols _ Hframes); exact (proj2 (proj2 (Hfresh id v eq_refl))). }
+  cbn zeta; fold updated.
+  destruct (eqb (Pre.ee (Pre.keys c)) e parameter); [|exact Htop].
+  rewrite (fold_phi_top b _ updated Hupdated (proj2 (Forall_forall _ _) (fun pair Hin => Hin)) u).
+  cbn [andb]; rewrite Htop; reflexivity.
+Qed.
+
+(** Every actual instruction top consists of occurrence use, exact invalidation and local definitions. *)
+Theorem instruction_top :
+  forall frames acc b e, scope_source frames -> In e (Cfg.edges (Pre.point_cfg c)) ->
+  forall u id, Intern.find (Pre.eu (Pre.keys c)) u bank = Some id ->
+    PreRename.top c (fst (PreRename.instruction c index b
+      (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) (frames, acc) e)) u =
+    let info := PreFrameCache.event_description c bank e in
+    let observed := PreRename.occurrence c e (PreRename.evaluation info) (frames, acc) in
+    let old := PreRename.top c (fst (fst observed)) u in
+    let altered := if Pre.killed c e u
+      then PreRename.Frame (PreRename.selected old) false else old in
+    let defined := match snd observed with
+    | None => altered
+    | Some (key, v) =>
+      if eqb (Pre.eu (Pre.keys c)) u v
+      then PreRename.Frame (PreFrg.Operand (PreFrg.Fresh e v) true) true
+      else altered
+    end in
+    if eqb (Pre.ee (Pre.keys c)) e
+      (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b) &&
+      existsb (fun pair => eqb (Pre.eu (Pre.keys c)) u (snd (snd pair)))
+        (Index.find (Pre.eb (Pre.keys c)) b (PreRename.phi_definitions index))
+    then PreRename.Frame (PreFrg.Operand (PreFrg.Phi b u) false) true else defined.
+Proof.
+  intros frames acc b e Hframes He u id Hid; rewrite PreRename.instruction_equation.
+  pose proof (PreFrameCache.event_lookup c data Hlaw e He) as Hlookup; fold index in Hlookup.
+  rewrite Hlookup; cbn zeta; unfold index at 1; rewrite mark_exit_scope; fold index.
+  cbn [fst].
+  set (instance := PreRename.evaluation (PreFrameCache.event_description c bank e)).
+  set (observed := PreRename.occurrence c e instance (frames, acc)).
+  assert (Hinstance : forall key v, instance = Some (key, v) ->
+    Pre.recomputed c e = Some v /\ Intern.find (Pre.eu (Pre.keys c)) v bank = Some key).
+  { intros key v Hvalue; apply PreFrameCache.evaluation_exact in Hvalue; tauto. }
+  assert (Hobserved : scope_source (fst (fst observed))).
+  { apply occurrence_source; [exact Hframes|].
+    intros key v Hvalue; exact (proj2 (Hinstance key v Hvalue)). }
+  assert (Hchanges : Forall (fun pair =>
+    Intern.find (Pre.eu (Pre.keys c)) (snd pair) bank = Some (fst pair))
+    (PreRename.alterations (PreFrameCache.event_description c bank e))).
+  { apply Forall_forall; intros [key v] Hin; cbn [fst snd].
+    apply (PreFrameCache.event_alterations c bank e Hlaw) in Hin; exact (proj2 Hin). }
+  rewrite definitions_top.
+  - cbn zeta; fold bank; fold instance; fold observed.
+    destruct (fst observed) as [current output] eqn:Hcurrent.
+    cbn [fst] in Hobserved; fold instance.
+    rewrite (event_alters_top current output e instance Hobserved u id Hid); reflexivity.
+  - apply fold_alter_source; assumption.
+  - intros key v Hfresh; apply occurrence_fresh in Hfresh.
+    destruct (Hinstance key v Hfresh) as [Hcomputed Hfind]; auto.
 Qed.
 
 (** Each actual prepared instruction retains the shared symbol table and source frame domains. *)

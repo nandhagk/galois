@@ -200,6 +200,36 @@ Proof.
   - apply (PreFrameCache.eligible_exact c data Hdata); auto.
 Qed.
 
+Hypothesis Hdominance :
+  forall e d, Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences g) = Some d ->
+  forall q, PreFrg.version_point c d = Some q ->
+    dominates (Pre.pg c) q (Graph.target (Pre.pg c) e).
+
+(** A phi has no completed real use at its own post-parameter definition point. *)
+Theorem phi_no_real_use :
+  forall b u, In b (Graph.nodes (Pre.bg c)) ->
+    ~ PreCoverage.real_use_at c g
+      (Graph.target (Pre.pg c) (SsaPoints.parameter_edge points b)) (PreFrg.Phi b u).
+Proof.
+  intros b u Hb [e [Hget Hback]].
+  destruct (Hoccurrences e (PreFrg.Phi b u) Hget) as [He [v Hcomputed]].
+  destruct (PreFrg.parameter_edge_listed c Hlaw Hb) as [Hparameter Hinternal].
+  pose proof (Hdominance e (PreFrg.Phi b u) Hget _
+    (PreFrg.version_point_equation c (PreFrg.Phi b u))) as Hforward.
+  assert (Htarget : forall edge, In edge (Cfg.edges (Pre.point_cfg c)) ->
+    reachable (Pre.pg c) (Graph.target (Pre.pg c) edge)).
+  { intros edge Hedge; destruct (PreCoverage.listed_edge_out c Hlaw Hedge) as [Hsource Hout].
+    apply (Pre.reachable_points c (Pre.graphs c Hlaw)).
+    exact (out_target_in (points_graph_wf (Pre.point_laws c (Pre.graphs c Hlaw)))
+      _ edge Hsource Hout). }
+  pose proof (dominates_antisym_reachable (Pre.en (Pre.keys c))
+    (Pre.en_laws c (Pre.graphs c Hlaw)) (Pre.pg c) _ _
+    (Htarget _ Hparameter) (Htarget _ He) Hforward Hback) as Heq.
+  pose proof (PreCoverage.internal_incoming_unique c Hlaw Hparameter Hinternal He (eq_sym Heq))
+    as Hedge.
+  exact (proj2 (Pre.real_internal c (Pre.kills c Hlaw) e v Hcomputed) b Hedge).
+Qed.
+
 End Boundaries.
 
 End PreFrameMeaning.

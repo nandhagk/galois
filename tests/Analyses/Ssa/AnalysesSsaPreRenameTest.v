@@ -6,12 +6,14 @@
 
 From Stdlib Require Import List Bool Arith PArith Lia.
 From Galois.Cost Require Import CostMonad CostLoop.
-From Galois.Base Require Import BaseEncoding BaseMap BaseIndex BaseIntern.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseIndex BaseIntern.
 From Galois.Graph Require Import GraphModel GraphDomSpec.
+From Galois.Program Require Import ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
   AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep AnalysesSsaPreOperands.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreFamily AnalysesSsaPreFrameCache
-  AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameTables AnalysesSsaPreFrameEnd.
+  AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameTables AnalysesSsaPreFrameEnd
+  AnalysesSsaPreFrameDominance.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest AnalysesSsaPreFrgTest.
 Import List.ListNotations.
 
@@ -295,4 +297,60 @@ Proof.
   intros budget current Hrun.
   exact (PreFrameTables.runs_owned Diamond.ctx Diamond.laws Hrun
     (PreFrameTables.initial_owned Diamond.ctx (PreRename.prepare Diamond.ctx diamond_data))).
+Qed.
+
+(** Every actual selected definition dominates its occurrence target and its nonfresh use source. *)
+Example diamond_occurrence_point_client :
+  forall e d, Map.get Diamond.edge_enc e
+    (PreFrg.occurrences (PreOperands.build_frg Diamond.ctx)) = Some d ->
+    PreFrameDominance.occurrence_dominance Diamond.ctx e d.
+Proof.
+  exact (PreOperands.build_frg_occurrence_dominance Diamond.ctx Diamond.laws).
+Qed.
+
+(** Definition dominance excludes a completed real use at the join phi's own definition point. *)
+Example diamond_phi_unused_at_definition_client :
+  ~ PreCoverage.real_use_at Diamond.ctx (PreOperands.build_frg Diamond.ctx)
+    (Diamond.Join, Diamond.Body) (PreFrg.Phi Diamond.Join tt).
+Proof.
+  exact (PreOperands.build_frg_phi_no_real_use Diamond.ctx Diamond.laws Diamond.Join tt
+    (or_intror (or_intror (or_intror (or_introl eq_refl))))).
+Qed.
+
+(** The computed join phi initializes the full nearest, available and unused frame invariant. *)
+Example diamond_phi_frame_meaning_client :
+  PreCoverage.frame_laws Diamond.ctx (PreOperands.build_frg Diamond.ctx) tt
+    (Diamond.Join, Diamond.Body)
+    (PreRename.Frame (PreFrg.Operand (PreFrg.Phi Diamond.Join tt) false) true).
+Proof.
+  apply (PreOperands.build_frg_phi_frame Diamond.ctx Diamond.laws).
+  vm_compute; reflexivity.
+Qed.
+
+(** The actual left-block fold has checked packets coupled to its literal final occurrence table. *)
+Example diamond_actual_packets_client :
+  forall frames,
+    let index := PreRename.prepare Diamond.ctx diamond_data in
+    let body := SsaPoints.instruction_edges Diamond.points Diamond.Left in
+    let parameter := SsaPoints.parameter_edge Diamond.points Diamond.Left in
+    let final := snd (PreRename.block Diamond.ctx index Diamond.Left frames
+      PreRename.empty_accumulator) in
+    let entered := match SsaPoints.points_in_block Diamond.points Diamond.Left with
+    | [] => (frames, PreRename.empty_accumulator)
+    | first :: _ => PreRename.mark_exit Diamond.ctx index first
+        (frames, PreRename.empty_accumulator)
+    end in
+    PreFrameStep.history
+      (PreFrameStep.checked_step (PreRename.instruction Diamond.ctx index Diamond.Left parameter)
+        (PreFrameTables.instruction_packet Diamond.ctx index Diamond.Left parameter final))
+      entered body
+      (fold_left (PreRename.instruction Diamond.ctx index Diamond.Left parameter) body entered).
+Proof.
+  intro frames; apply (PreFrameTables.block_packets Diamond.ctx Diamond.laws).
+  - now right; left.
+  - apply PreFrameEnd.empty_accumulator_wf.
+  - intros e He; unfold PreFrameTables.stamp.
+    cbn [PreRename.empty_accumulator PreRename.occurrence_index PreRename.fresh_index].
+    rewrite Map.get_empty, FinSet.mem_empty; reflexivity.
+  - intros e He; reflexivity.
 Qed.
