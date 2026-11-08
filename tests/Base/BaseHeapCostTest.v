@@ -349,3 +349,60 @@ Theorem heap_is_empty_priority_client {K} (E : encoding K) q :
 Proof.
   exact (Heap.is_empty_spec E q).
 Qed.
+
+(** A finite support client uses only public priorities and the public size observation. *)
+Theorem heap_size_support_client {K} (E : encoding K) (HE : encoding_laws E) U q :
+  Heap.wf E q ->
+  (forall k p, Heap.priority E k q = Some p -> In k U) ->
+  (Heap.size q <= length U)%nat.
+Proof.
+  exact (Heap.size_support_bound E HE U q).
+Qed.
+
+(** Empty size and zero potential are available without inspecting either queue representation. *)
+Theorem heap_empty_size_potential_client {K} P w :
+  Heap.size (@Heap.empty K) = 0%nat /\
+  HeapCost.heap_potential P w (@Heap.empty K) = 0%N.
+Proof.
+  split; [apply Heap.size_empty|].
+  apply HeapCost.heap_potential_zero. apply Heap.stale_empty.
+Qed.
+
+(** Live-priority premises establish the public key budget without inspecting pending trees. *)
+Theorem heap_live_priority_budget_client {K} (E : encoding K) (HE : encoding_laws E) U q w :
+  Heap.wf E q -> Heap.stale q = 0%nat ->
+  (forall k p, Heap.priority E k q = Some p -> In k U) ->
+  (forall k, In k U ->
+    (Cost.ticks (encode_c E k) <= w /\
+      N.pos (Pos.size (encode E k)) <= w)%N) ->
+  Heap.key_budget E w q.
+Proof.
+  intros Hwf Hzero Hsupport Hkeys.
+  apply (Heap.key_budget_live E HE q w Hwf Hzero).
+  intros k p Hpriority. apply Hkeys. exact (Hsupport k p Hpriority).
+Qed.
+
+(** A live-support client couples the returned queue, zero potential and worst-case pop cost. *)
+Theorem heap_live_support_pop_client {K} (E : encoding K) (HE : encoding_laws E)
+    (laws : Map.cost_laws) U q q' p k P w :
+  Heap.wf E q -> Heap.stale q = 0%nat ->
+  (forall key priority, Heap.priority E key q = Some priority -> In key U) ->
+  (forall key, In key U ->
+    (Cost.ticks (encode_c E key) <= w /\
+      N.pos (Pos.size (encode E key)) <= w)%N) ->
+  (Heap.pending_count q <= P)%nat -> Heap.pop E q = Some (p, k, q') ->
+  (Heap.size q <= length U)%nat /\ Heap.wf E q' /\ Heap.stale q' = 0%nat /\
+  HeapCost.heap_potential P w q' = 0%N /\
+  (Heap.pending_count q' + 1 = Heap.pending_count q)%nat /\
+  (Cost.ticks (Heap.pop_c E q) <= HeapCost.heap_cost P w)%N.
+Proof.
+  intros Hwf Hzero Hsupport Hkeys HP Hpop.
+  pose proof (Heap.size_support_bound E HE U q Hwf Hsupport) as Hsize.
+  pose proof (heap_live_priority_budget_client E HE U q w Hwf Hzero Hsupport Hkeys)
+    as Hbudget.
+  destruct (HeapCost.pop_cost_no_stale_result E HE laws q q' p k P w
+    Hwf Hbudget Hzero HP Hpop) as [Hwf' [Hzero' [Hcount Hcost]]].
+  split; [exact Hsize|]. split; [exact Hwf'|]. split; [exact Hzero'|].
+  split; [exact (HeapCost.heap_potential_zero P w q' Hzero')|].
+  split; assumption.
+Qed.

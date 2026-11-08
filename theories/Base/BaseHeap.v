@@ -1179,6 +1179,77 @@ Proof.
   split; lia.
 Qed.
 
+(** Empty construction has zero live size without any dictionary or representation premise. *)
+Theorem size_empty {K} : size (@empty K) = 0.
+Proof.
+  reflexivity.
+Qed.
+
+(** A finite list covering the live priorities bounds the public live size. *)
+Theorem size_support_bound {K} (E : encoding K) (HE : encoding_laws E) U (q : t K) :
+  wf E q -> (forall k p, priority E k q = Some p -> In k U) -> size q <= length U.
+Proof.
+  intros Hwf Hsupport.
+  change (live_count q <= length U).
+  rewrite (proj1 (proj2 (proj2 (proj2 Hwf)))).
+  exact (Map.size_support_bound E HE U (live q) (proj1 (proj2 Hwf)) Hsupport).
+Qed.
+
+Local Lemma live_entries_pending {K} (E : encoding K) (HE : encoding_laws E) q :
+  wf E q ->
+  incl (Map.elements (live q))
+    (List.map (fun e => (snd e, fst (fst e))) (HeapBinomial.entries (pending q))).
+Proof.
+  intros Hwf [k p] Hin.
+  apply (proj1 (Map.elements_spec E HE k p (live q) (proj1 (proj2 Hwf)))) in Hin.
+  destruct (proj1 (proj2 (proj2 Hwf)) k p Hin) as [a Hentry].
+  pose proof (HeapBinomial.forest_all _ _ _ (proj1 Hwf) _ Hentry) as Hcode.
+  cbn in Hcode. apply (encode_injective HE) in Hcode. subst a.
+  apply in_map_iff. exists (p, encode E k, k). split; [reflexivity|exact Hentry].
+Qed.
+
+(** On a well-formed zero-stale queue every pending entry has its live priority. *)
+Theorem pending_entry_live {K} (E : encoding K) (HE : encoding_laws E) q e :
+  wf E q -> stale q = 0 -> In e (HeapBinomial.entries (pending q)) ->
+  priority E (snd e) q = Some (fst (fst e)).
+Proof.
+  intros Hwf Hzero Hin.
+  pose proof (live_entries_pending E HE q Hwf) as Hcover.
+  pose proof (stale_zero_counts E HE q Hwf Hzero) as Hcounts.
+  assert (Hnodup : NoDup (Map.elements (live q))).
+  { exact (@NoDup_map_inv (K * positive)%type K (@fst K positive) (Map.elements (live q))
+      (Map.elements_nodup E (live q) (proj1 (proj2 Hwf)))). }
+  assert (Hlength :
+    length (List.map (fun e => (snd e, fst (fst e))) (HeapBinomial.entries (pending q))) <=
+    length (Map.elements (live q))).
+  { rewrite length_map, <- Map.size_elements.
+    change (HeapBinomial.heap_count (pending q) <= Map.size (live q)).
+    rewrite <- (proj2 (proj2 (proj2 (proj2 Hwf)))).
+    rewrite <- (proj1 (proj2 (proj2 (proj2 Hwf)))). lia. }
+  pose proof (@NoDup_length_incl (K * positive)%type (Map.elements (live q))
+    (List.map (fun e => (snd e, fst (fst e))) (HeapBinomial.entries (pending q)))
+    Hnodup Hlength Hcover) as Hreverse.
+  change (Map.get E (snd e) (live q) = Some (fst (fst e))).
+  apply (proj1 (Map.elements_spec E HE (snd e) (fst (fst e)) (live q)
+    (proj1 (proj2 Hwf)))).
+  apply Hreverse. apply in_map_iff. exists e. split; [reflexivity|exact Hin].
+Qed.
+
+(** Live-priority encoder and width budgets cover every pending entry of a zero-stale queue. *)
+Theorem key_budget_live {K} (E : encoding K) (HE : encoding_laws E) q w :
+  wf E q -> stale q = 0 ->
+  (forall k p, priority E k q = Some p ->
+    (Cost.ticks (encode_c E k) <= w /\
+      N.pos (Pos.size (encode E k)) <= w)%N) ->
+  key_budget E w q.
+Proof.
+  intros Hwf Hzero Hbudget e Hin.
+  pose proof (pending_entry_live E HE q e Hwf Hzero Hin) as Hlive.
+  pose proof (HeapBinomial.forest_all _ _ _ (proj1 Hwf) e Hin) as Hcode.
+  destruct (Hbudget (snd e) (fst (fst e)) Hlive) as [Hencode Hbits].
+  split; [exact Hencode|]. rewrite Hcode. exact Hbits.
+Qed.
+
 Arguments empty_c {K} : simpl never.
 Arguments empty {K} : simpl never.
 Arguments priority_c {K} E k q : simpl never.
