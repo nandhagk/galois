@@ -247,7 +247,7 @@ Definition many_rebuild_ticks m :=
 
 Example many_same_op_rebuild_costs :
   (many_rebuild_ticks 4, many_rebuild_ticks 8, many_rebuild_ticks 16) =
-    (Some 2552%N, Some 5295%N, Some 11078%N).
+    (Some 2602%N, Some 5345%N, Some 11128%N).
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -256,7 +256,7 @@ Qed.
 Definition raw_no_leaf_cycle : Egraph.t nat bool nat :=
   Egraph.Make nat bool nat UnionFind.make
     (Map.set positive_encoding 1%positive (Egraph.NApp true 4 [1%positive]) Map.empty)
-    Map.empty 2%positive.
+    Map.empty 2%positive Egraph.empty_kernel.
 
 Example raw_no_leaf_cycle_can_be_scanned :
   let g := Egraph.rebuild arith raw_no_leaf_cycle in

@@ -60,8 +60,8 @@ Definition memo_sound (g : Egraph.t K Sort V) : Prop :=
       Egraph.node_code a historical = key /\
       Egraph.canonical a g historical = Egraph.canonical a g n.
 
-(** WF carries the actual Base forest and map duties and finite witnesses for every allocation. *)
-Record wf (g : Egraph.t K Sort V) : Prop := Wf {
+(** Raw structural validity carries forest and map duties and finite witnesses for allocations. *)
+Record structural_wf (g : Egraph.t K Sort V) : Prop := Wf {
   forest_wf : UnionFind.wf Egraph.id_encoding (Egraph.uf g);
   nodes_wf : Map.wf Egraph.id_encoding (Egraph.nodes g);
   memo_wf : Map.wf Egraph.id_encoding (Egraph.memo g);
@@ -74,6 +74,9 @@ Record wf (g : Egraph.t K Sort V) : Prop := Wf {
   finite_witness : forall c n, nodes_get g c = Some n -> exists e, represents g c e;
   memo_correct : memo_sound g
 }.
+
+(** Structural operation laws retain the raw-state domain while maintained proofs are composed. *)
+Definition wf (g : Egraph.t K Sort V) : Prop := structural_wf g.
 
 (** Clean graphs have a current memo index and merge all equal canonical signatures. *)
 Record clean (g : Egraph.t K Sort V) : Prop := Clean {
@@ -313,7 +316,7 @@ Qed.
 
 Local Lemma empty_equation :
   @Egraph.empty K Sort V =
-    Egraph.Make K Sort V UnionFind.make Map.empty Map.empty 1%positive.
+    Egraph.Make K Sort V UnionFind.make Map.empty Map.empty 1%positive Egraph.empty_kernel.
 Proof.
   reflexivity.
 Qed.
@@ -407,15 +410,13 @@ Local Lemma union_equation g c d :
       match Map.code_compare
         (encode (EggAlg.sort_enc K Sort V a) sc)
         (encode (EggAlg.sort_enc K Sort V a) sd) with
-      | Eq => Some (Egraph.Make K Sort V
-        (UnionFind.union Egraph.id_encoding c d (Egraph.uf g))
-        (Egraph.nodes g) (Egraph.memo g) (Egraph.next g))
+      | Eq => Some (Egraph.merge a g c d Egraph.JGiven)
       | _ => None
       end
     | _, _ => None
     end.
 Proof.
-  unfold Egraph.union, Egraph.union_c; rewrite !Cost.value_bind.
+  unfold Egraph.union, Egraph.union_c, Egraph.union_j_c; rewrite !Cost.value_bind.
   fold (Egraph.sort_of a g c) (Egraph.sort_of a g d).
   destruct (Egraph.sort_of a g c), (Egraph.sort_of a g d); [|reflexivity..].
   rewrite !Cost.value_bind; fold (encode (EggAlg.sort_enc K Sort V a) s).
@@ -428,8 +429,7 @@ Qed.
 Local Lemma union_inv g c d h :
   encoding_laws -> Egraph.union a g c d = Some h ->
   exists s, Egraph.sort_of a g c = Some s /\ Egraph.sort_of a g d = Some s /\
-    h = Egraph.Make K Sort V (UnionFind.union Egraph.id_encoding c d (Egraph.uf g))
-      (Egraph.nodes g) (Egraph.memo g) (Egraph.next g).
+    h = Egraph.merge a g c d Egraph.JGiven.
 Proof.
   intros Hl; rewrite union_equation.
   destruct (Egraph.sort_of a g c) as [sc|] eqn:Hc; [|discriminate].
@@ -442,9 +442,7 @@ Qed.
 
 Local Lemma merged_classes g c d :
   wf g -> forall x y,
-    same_class
-      (Egraph.Make K Sort V (UnionFind.union Egraph.id_encoding c d (Egraph.uf g))
-        (Egraph.nodes g) (Egraph.memo g) (Egraph.next g)) x y <->
+    same_class (Egraph.merge a g c d Egraph.JGiven) x y <->
     same_class g x y \/ (same_class g x c /\ same_class g d y) \/
       (same_class g x d /\ same_class g c y).
 Proof.
@@ -461,9 +459,7 @@ Proof.
   intros Hl Hwf Hunion.
   destruct (union_inv g c d h Hl Hunion) as [s [Hc [Hd ->]]].
   assert (Hmono : forall x y, same_class g x y ->
-    same_class (Egraph.Make K Sort V
-      (UnionFind.union Egraph.id_encoding c d (Egraph.uf g))
-      (Egraph.nodes g) (Egraph.memo g) (Egraph.next g)) x y).
+    same_class (Egraph.merge a g c d Egraph.JGiven) x y).
   { intros x y Hsame; apply (proj2 (merged_classes g c d Hwf x y)); auto. }
   split; [apply represents_mono; [intros i n Hnode; exact Hnode|exact Hmono]|exact Hmono].
 Qed.
@@ -694,7 +690,7 @@ Local Lemma allocate_equation g n key :
       (UnionFind.union Egraph.id_encoding (Egraph.next g) (Egraph.next g) (Egraph.uf g))
       (Map.set Egraph.id_encoding (Egraph.next g) n (Egraph.nodes g))
       (Map.set Egraph.id_encoding key (Egraph.next g) (Egraph.memo g))
-      (Pos.succ (Egraph.next g))).
+      (Pos.succ (Egraph.next g)) (Egraph.allocation_kernel g n)).
 Proof.
   reflexivity.
 Qed.
@@ -1202,7 +1198,8 @@ Proof.
 Qed.
 
 Local Definition reindex g :=
-  Egraph.Make K Sort V (Egraph.uf g) (Egraph.nodes g) (fst (Egraph.scan a g)) (Egraph.next g).
+  Egraph.Make K Sort V (Egraph.uf g) (Egraph.nodes g) (fst (Egraph.scan a g))
+    (Egraph.next g) (Egraph.private g).
 
 Local Lemma reindex_represents g c e :
   represents (reindex g) c e <-> represents g c e.
@@ -1335,7 +1332,8 @@ Proof.
   unfold reindex; destruct (Egraph.scan a g) as [table [[c d]|]]; [|reflexivity].
   cbn [fst snd].
   rewrite Cost.value_bind; fold (Egraph.union a
-    (Egraph.Make K Sort V (Egraph.uf g) (Egraph.nodes g) table (Egraph.next g)) c d).
+    (Egraph.Make K Sort V (Egraph.uf g) (Egraph.nodes g) table (Egraph.next g)
+      (Egraph.private g)) c d).
   destruct (Egraph.union _ _ _ _); reflexivity.
 Qed.
 
@@ -1424,7 +1422,8 @@ Proof.
       (match Cost.value (iterate (Egraph.rebuild_step_c a) fuel g) with
       | inr j => Cost.ret j
       | inl j => let* result := Egraph.scan_c a j in
-        Cost.ret (Egraph.Make K Sort V (Egraph.uf j) (Egraph.nodes j) (fst result) (Egraph.next j))
+        Cost.ret (Egraph.Make K Sort V (Egraph.uf j) (Egraph.nodes j) (fst result)
+          (Egraph.next j) (Egraph.private j))
       end) = h).
     rewrite Hrun; reflexivity. }
   rewrite Hresult; destruct HI as [_ [_ [Hext Hsound]]]; auto.
@@ -1478,7 +1477,8 @@ Proof.
           (Pos.of_succ_nat (Map.size (Egraph.nodes g)))) g) with
       | inr j => Cost.ret j
       | inl j => let* result := Egraph.scan_c a j in
-        Cost.ret (Egraph.Make K Sort V (Egraph.uf j) (Egraph.nodes j) (fst result) (Egraph.next j))
+        Cost.ret (Egraph.Make K Sort V (Egraph.uf j) (Egraph.nodes j) (fst result)
+          (Egraph.next j) (Egraph.private j))
       end) = reindex g).
     rewrite Hrun; reflexivity. }
   rewrite Hresult; intros c d; reflexivity.

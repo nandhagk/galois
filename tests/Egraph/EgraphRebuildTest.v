@@ -36,20 +36,25 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
-Example reference_rebuild_merges_raw_duplicate_leaves :
-  let h := Egraph.rebuild alg raw in
-  Pos.eqb (Egraph.find alg h 1%positive) (Egraph.find alg h 2%positive) = true.
+Example raw_has_no_dirty_class :
+  Egraph.dirty raw = [].
 Proof.
   vm_compute. reflexivity.
 Qed.
 
-(** Finite witnesses and the full current WF predicate hold for the duplicate leaf graph. *)
-Theorem raw_wf : EggSpec.wf alg raw.
+(** Finite witnesses and structural WF hold for the duplicate leaf graph. *)
+Theorem raw_structural_wf : EggSpec.structural_wf alg raw.
 Proof.
-  apply EggCoreDomain.duplicate_leaves_wf; reflexivity.
+  apply EggCoreDomain.duplicate_leaves_structural_wf; reflexivity.
 Qed.
 
-(** The same WF graph fails congruence closure before rebuilding. *)
+(** The raw graph is outside the maintained kernel domain. *)
+Theorem raw_not_kernel_inv : ~ Egraph.kernel_inv alg raw.
+Proof.
+  apply EggCoreDomain.duplicate_leaves_not_kernel_inv.
+Qed.
+
+(** The structurally valid graph fails congruence closure before rebuilding. *)
 Theorem raw_not_clean : ~ EggSpec.clean alg raw.
 Proof.
   apply EggCoreDomain.duplicate_leaves_not_clean.

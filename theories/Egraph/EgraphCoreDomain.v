@@ -21,7 +21,7 @@ Definition duplicate_leaves : Egraph.t K Sort V :=
   Egraph.Make K Sort V UnionFind.make
     (Map.set Egraph.id_encoding 2%positive leaf
       (Map.set Egraph.id_encoding 1%positive leaf Map.empty))
-    Map.empty 3%positive.
+    Map.empty 3%positive Egraph.empty_kernel.
 
 Local Lemma id_laws : encoding_laws Egraph.id_encoding.
 Proof.
@@ -73,9 +73,9 @@ Proof.
     intros Hnode; congruence.
 Qed.
 
-(** The reference WF predicate accepts duplicate leaves without any prior union or memo entry. *)
-Theorem duplicate_leaves_wf :
-  EggAlg.var_sort a v = Some s -> EggSpec.wf a duplicate_leaves.
+(** Structural WF accepts duplicate leaves without any prior union or memo entry. *)
+Theorem duplicate_leaves_structural_wf :
+  EggAlg.var_sort a v = Some s -> EggSpec.structural_wf a duplicate_leaves.
 Proof.
   intro Hdeclared; constructor.
   - apply UnionFind.wf_make.
@@ -105,6 +105,21 @@ Proof.
   - intros key c Hget.
     change (Map.get Egraph.id_encoding key Map.empty = Some c) in Hget.
     rewrite Map.get_empty in Hget; discriminate.
+Qed.
+
+(** The raw duplicate leaves fail maintained coverage because their signature snapshots are absent. *)
+Theorem duplicate_leaves_not_kernel_inv : ~ Egraph.kernel_inv a duplicate_leaves.
+Proof.
+  intro Hinv.
+  assert (Hnode : Map.get Egraph.id_encoding 1%positive (Egraph.nodes duplicate_leaves) =
+    Some leaf).
+  { change (EggSpec.nodes_get duplicate_leaves 1%positive = Some leaf).
+    rewrite lookup; destruct (Pos.eq_dec 1%positive 2%positive);
+      destruct (Pos.eq_dec 1%positive 1%positive); congruence. }
+  destruct (Egraph.snapshot_complete a duplicate_leaves Hinv 1%positive leaf Hnode)
+    as [old Hsnapshot].
+  change (Map.get Egraph.id_encoding 1%positive Map.empty = Some old) in Hsnapshot.
+  rewrite Map.get_empty in Hsnapshot; discriminate.
 Qed.
 
 (** Both stored variables have equal canonical signatures and remain in distinct classes. *)
