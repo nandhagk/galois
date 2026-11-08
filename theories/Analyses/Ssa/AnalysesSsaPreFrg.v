@@ -36,6 +36,13 @@ Arguments Operand {B E U}.
 Arguments operand_version {B E U}.
 Arguments real_use {B E U}.
 
+(** Raw construction retains the actual discovery, naming and renaming engine outcome. *)
+Inductive completion :=
+  | Completed
+  | DiscoveryExhausted
+  | RenameExhausted
+  | MissingBlockName.
+
 (** The indexes distinguish incoming edge identities even when their endpoints coincide. *)
 Record frg (B BE E U : Type) := Frg {
   versions : list (version B E U);
@@ -43,7 +50,8 @@ Record frg (B BE E U : Type) := Frg {
   fresh : FinSet.t E;
   phis : FinSet.t (B * U);
   operands : Map.t ((B * U) * BE) (operand B E U);
-  unsafe : FinSet.t (B * U)
+  unsafe : FinSet.t (B * U);
+  status : completion
 }.
 Arguments Frg {B BE E U}.
 Arguments versions {B BE E U}.
@@ -52,6 +60,7 @@ Arguments fresh {B BE E U}.
 Arguments phis {B BE E U}.
 Arguments operands {B BE E U}.
 Arguments unsafe {B BE E U}.
+Arguments status {B BE E U}.
 
 Definition version_expr {B E U} (d : version B E U) :=
   match d with
@@ -240,7 +249,8 @@ Definition definition_domain (d : version B E U) : Prop :=
 
 End Definitions.
 
-Local Lemma tail_member {X} (x : X) xs : In x (tl xs) -> In x xs.
+(** Tail membership retains membership of the original ordered point list. *)
+Lemma tail_member {X} (x : X) xs : In x (tl xs) -> In x xs.
 Proof.
   destruct xs; cbn; tauto.
 Qed.
@@ -270,7 +280,8 @@ Proof.
   - apply IH; [constructor; assumption|exact He|exact He'|exact Heq].
 Qed.
 
-Local Lemma chain_source {N E} (g : Graph.t N E) {ns es e} :
+(** Every instruction-chain edge occurs in an outgoing list of one of the chain's points. *)
+Lemma chain_source {N E} (g : Graph.t N E) {ns es e} :
   point_chain g ns es -> In e es -> exists n, In n ns /\ In e (Graph.out g n).
 Proof.
   intro Hchain; induction Hchain as [n|n next ns edge es Hedge Htarget Hchain IH].
@@ -297,7 +308,8 @@ Proof.
   rewrite (points_owner Hpoints b n Hb Hpoint); auto.
 Qed.
 
-Local Lemma internal_edge_block {e} :
+(** Every listed internal edge belongs to its owner's ordered instruction chain. *)
+Lemma internal_edge_block {e} :
   Pre.laws c -> In e (Cfg.edges (Pre.point_cfg c)) ->
   SsaPoints.block_edge_of s e = None ->
   exists b, In b (Graph.nodes (Pre.bg c)) /\
@@ -504,7 +516,8 @@ Definition entry_pairs_c (family : list U) :=
   fw_flat_map_c (fun u =>
     map_c (fun b => Cost.ret (u, b)) (Graph.entries (Pre.bg c))) family.
 
-(** Definition preparation visits the program and the family once before any per-expression query. *)
+(** Definition preparation visits the program and the family once
+    before any per-expression query. *)
 Definition definition_index_c family :=
   let* entries := entry_pairs_c family in
   let* occurrences := occurrence_pairs_c in
@@ -540,7 +553,8 @@ Definition entry_pairs (family : list U) :=
 Definition definition_pairs family :=
   entry_pairs family ++ occurrence_pairs ++ home_pairs family.
 
-(** Prepared occurrence seeds retain actual source-block callbacks and pure recomputation identity. *)
+(** Prepared occurrence seeds retain actual source-block callbacks
+    and pure recomputation identity. *)
 Theorem occurrence_pairs_value : Cost.value occurrence_pairs_c = occurrence_pairs.
 Proof.
   unfold occurrence_pairs_c, occurrence_pairs.
@@ -612,7 +626,8 @@ Proof.
     exists e; split; [exact He|]; rewrite Hcomputed, Hpure, Hblock; now left.
 Qed.
 
-(** For a supplied family member, prepared seeds have exactly the legacy definition-block meaning. *)
+(** For a supplied family member, prepared seeds have exactly
+    the legacy definition-block meaning. *)
 Theorem definition_pairs_spec family u :
   In u family ->
   forall b, In (u, b) (definition_pairs family) <-> definition_block c u b.
@@ -649,7 +664,8 @@ Proof.
     apply filter_In; split; [exact Hin|apply eqb_refl].
 Qed.
 
-(** Definition queries agree with the fixed source relation through public stable-index contracts. *)
+(** Definition queries agree with the fixed source relation
+    through public stable-index contracts. *)
 Theorem defs_exact family u :
   Pre.laws c -> In u family ->
   forall b, In b (defs (definition_index family) u) <-> definition_block c u b.
@@ -664,7 +680,8 @@ Section FrontierRows.
 Context {B BE N E V K G C U : Type}.
 Variable c : Pre.ctx B BE N E V K G C U.
 
-Local Lemma block_node_id :
+(** Every listed source block has an ID in the supplied ready preparation. *)
+Lemma block_node_id :
   Pre.laws c ->
   forall b, In b (Graph.nodes (Pre.bg c)) ->
     exists i, Prepared.id_of (Pre.blocks c) b = Some i.
@@ -696,7 +713,8 @@ Proof.
     reflexivity.
 Qed.
 
-(** Static frontier rows use the public exact closure fallback and retain every preparation charge. *)
+(** Static frontier rows use the public exact closure fallback
+    and retain every preparation charge. *)
 Definition frontier_row_c d :=
   let* ids := FrontierIdf.idf_c (Pre.blocks c) (Pre.dom c) [d] in
   filter_c (named_mem_c ids) (Graph.nodes (Pre.bg c)).
@@ -1032,7 +1050,8 @@ Definition phi_next cache (key : U * B) :=
           (cached_row c (frontier_index cache) (Graph.source (Pre.bg c) be))
       end) (incoming b).
 
-(** Product edges include same-expression propagation and each incoming edge's translated frontier. *)
+(** Product edges include same-expression propagation
+    and each incoming edge's translated frontier. *)
 Theorem phi_next_value cache key : Cost.value (phi_next_c cache key) = phi_next cache key.
 Proof.
   destruct key as [u b]; unfold phi_next_c, phi_next.
@@ -1149,7 +1168,8 @@ Definition transition (source target : U * B) : Prop :=
     Pre.translate c be u = Some v /\
     in_idf (Pre.bg c) [Graph.source (Pre.bg c) be] block.
 
-(** Product successors preserve both same-expression IDF propagation and edge-specific translation. *)
+(** Product successors preserve both same-expression IDF propagation
+    and edge-specific translation. *)
 Theorem phi_next_exact family :
   Pre.laws c ->
   forall u b v target, In b (Graph.nodes (Pre.bg c)) ->
@@ -1232,7 +1252,10 @@ Proof.
   destruct Htransition as [[-> Hrow]|[be [Hbe [Htarget [Htranslate Hrow]]]]]; split.
   - exact Hu.
   - exact (idf_target_listed c Hlaw Hrow).
-  - apply Hfamily; eapply Pre.family_translate; [apply Hfamily; exact Hu|exact Hbe|exact Htranslate].
+  - apply Hfamily; eapply Pre.family_translate.
+    + apply Hfamily; exact Hu.
+    + exact Hbe.
+    + exact Htranslate.
   - exact (idf_target_listed c Hlaw Hrow).
 Qed.
 
@@ -1384,7 +1407,8 @@ Definition phi_sites_c : Cost.t (list U + phi_data) :=
   end.
 Definition phi_sites := Cost.value phi_sites_c.
 
-(** Complete phi preparation discovers the exact family and computes all four legacy placement clauses. *)
+(** Complete phi preparation discovers the exact family
+    and computes all four legacy placement clauses. *)
 Theorem phi_sites_exact :
   Pre.laws c ->
   exists data, phi_sites = inr data /\ NoDup (all_family data) /\

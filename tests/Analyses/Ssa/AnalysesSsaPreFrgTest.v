@@ -11,7 +11,8 @@ From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphChec
   GraphFrontierSpec.
 From Galois.Program Require Import ProgramCfg ProgramSsa ProgramSsaPoints.
 From Galois.Framework Require Import FrameworkDense FrameworkBitvector.
-From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily AnalysesSsaPreFrg.
+From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily
+  AnalysesSsaPreFrg.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest.
 Import List.ListNotations.
 
@@ -82,7 +83,8 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(** Cached singleton-IDF lookup consumes the supplied exact block tree through its public contract. *)
+(** Cached singleton-IDF lookup consumes the supplied exact block tree
+    through its public contract. *)
 Example cached_frontier_client :
   forall b, In b (PreFrg.cached_row One.ctx (PreFrg.frontier_rows One.ctx) tt) <->
     in_idf One.bg [tt] b.
@@ -123,7 +125,8 @@ Definition point_enc := pair_encoding block_enc stage_enc.
 Definition edge_codes := sum_encoding block_enc (sum_encoding block_enc be_enc).
 Definition edge_key e :=
   match e with Bind b => inl b | Real b => inr (inl b) | Cross be => inr (inr be) end.
-Definition edge_enc := Encoding (fun e => Cost.bind Cost.step (fun _ => encode_c edge_codes (edge_key e))).
+Definition edge_enc :=
+  Encoding (fun e => Cost.bind Cost.step (fun _ => encode_c edge_codes (edge_key e))).
 
 Example block_enc_laws : encoding_laws block_enc.
 Proof.
@@ -207,7 +210,8 @@ Definition point_graph := Prepared.prepare point_enc pg.
 Definition parents := Map.of_list positive_encoding [(2, 1); (3, 1); (4, 1)]%positive.
 Definition tree := DomCheck.of_parents blocks parents.
 Definition ctx := Pre.Context client
-  (Pre.Encs block_enc be_enc point_enc edge_enc unit_encoding unit_encoding) blocks point_graph tree.
+  (Pre.Encs block_enc be_enc point_enc edge_enc unit_encoding unit_encoding)
+  blocks point_graph tree.
 
 Example blocks_wf : graph_wf bg.
 Proof.
@@ -270,7 +274,10 @@ Proof.
   - intros b _; apply (point_chain_step (b, Before) (b, Body) [(b, After)] (Bind b) [Real b]).
     + now left.
     + reflexivity.
-    + apply (point_chain_step (b, Body) (b, After) [] (Real b) []); [now left|reflexivity|constructor].
+    + apply (point_chain_step (b, Body) (b, After) [] (Real b) []).
+      * now left.
+      * reflexivity.
+      * constructor.
   - intros b e _ H; destruct e as [owner|owner|be]; vm_compute in H |- *; intuition congruence.
   - intros [b s] e _ Hout Hinternal; destruct b, s; destruct e as [owner|owner|be];
       try destruct owner; try destruct be; vm_compute in Hout, Hinternal |- *; intuition congruence.

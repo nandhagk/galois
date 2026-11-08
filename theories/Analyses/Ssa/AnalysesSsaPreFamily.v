@@ -937,7 +937,8 @@ Proof.
   destruct (Cost.value (step_c m work)); [exact Hcredit|lia].
 Qed.
 
-(** Discovery work is linear in discovered members and ordered edges, plus construction and width. *)
+(** Discovery work is linear in discovered members and ordered edges,
+    plus construction and width. *)
 Theorem discover_cost (b : budgets) :
   Pre.laws c ->
   (forall u, in_family c u ->
@@ -1077,7 +1078,7 @@ Definition arc_graph {X} (enc : encoding X) nodes roots (next : X -> Cost.t (lis
     (Cost.lift (fun _ => 1%N) (@fst X X)) (Cost.lift (fun _ => 1%N) (@snd X X)).
 
 (** Arc successors preserve the canonical target list and the exact source identity. *)
-Theorem arc_graph_out {X} (enc : encoding X) nodes roots next x :
+Theorem arc_graph_out {X} (enc : encoding X) nodes {roots next x} :
   Graph.out (arc_graph enc nodes roots next) x =
     map (fun y => (x, y)) (canonical enc (Cost.value (next x))).
 Proof.
@@ -1089,14 +1090,14 @@ Proof.
 Qed.
 
 (** Arc presentations expose their supplied source node without additional identity conventions. *)
-Theorem arc_graph_source {X} (enc : encoding X) nodes roots next (edge : X * X) :
+Theorem arc_graph_source {X} (enc : encoding X) nodes {roots next} (edge : X * X) :
   Graph.source (arc_graph enc nodes roots next) edge = fst edge.
 Proof.
   reflexivity.
 Qed.
 
 (** Arc presentations expose their supplied target node without additional identity conventions. *)
-Theorem arc_graph_target {X} (enc : encoding X) nodes roots next (edge : X * X) :
+Theorem arc_graph_target {X} (enc : encoding X) nodes {roots next} (edge : X * X) :
   Graph.target (arc_graph enc nodes roots next) edge = snd edge.
 Proof.
   reflexivity.
@@ -1164,7 +1165,8 @@ Proof.
     + intros [_ [i [Hfalse _]]]; discriminate.
 Qed.
 
-(** Finite product clients share the costed public graph-closure bridge and its exact value contract. *)
+(** Finite product clients share the costed public graph-closure bridge
+    and its exact value contract. *)
 Definition reachable_nodes_c {X E} (enc : encoding X) (g : Graph.t X E) :=
   let* p := Prepared.prepare_c enc g in
   let* ids := FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p) in
@@ -1172,7 +1174,8 @@ Definition reachable_nodes_c {X E} (enc : encoding X) (g : Graph.t X E) :=
 Definition reachable_nodes {X E} (enc : encoding X) (g : Graph.t X E) :=
   Cost.value (reachable_nodes_c enc g).
 
-(** The reachable-name wrapper preserves every prepared, closure and final membership-filter charge. *)
+(** The reachable-name wrapper preserves every preparation, closure
+    and final membership-filter charge. *)
 Theorem reachable_nodes_cost {X E} (enc : encoding X) (g : Graph.t X E) :
   let p := Prepared.prepare enc g in
   let run := FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p) in
@@ -1184,7 +1187,8 @@ Proof.
   fold (Prepared.prepare enc g); lia.
 Qed.
 
-(** On finite well-formed graphs the shared costed wrapper returns exactly all entry-reachable names. *)
+(** On finite well-formed graphs the shared costed wrapper returns
+    exactly all entry-reachable names. *)
 Theorem reachable_nodes_exact {X E} (enc : encoding X) (HE : encoding_laws enc) (g : Graph.t X E) :
   graph_wf g -> (forall x, NoDup (Graph.out g x)) ->
   forall x, In x (reachable_nodes enc g) <-> reachable g x.

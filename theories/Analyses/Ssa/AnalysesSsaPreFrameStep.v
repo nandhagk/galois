@@ -107,14 +107,25 @@ Proof.
   intros s es mid tail target; apply Rel.lpath_app.
 Qed.
 
+(** A local transfer invariant covers the endpoint of the same ordered fold history. *)
+Theorem fold_preserves {S E} (transfer : S -> E -> S) (P : S -> Prop) :
+  (forall s e, P s -> P (transfer s e)) ->
+  forall es s, P s -> P (fold_left transfer es s).
+Proof.
+  intros Hstep es s HP.
+  eapply (history_invariant (transfer_step transfer) P).
+  - intros source e target Hsource Htransfer.
+    unfold transfer_step in Htransfer; subst target; apply Hstep; exact Hsource.
+  - apply fold_history.
+  - exact HP.
+Qed.
+
 (** Concatenating ordered graph paths preserves the shared intermediate point. *)
 Lemma path_app {N E} (g : Graph.t N E) :
   forall start es mid tail finish, path g start es mid -> path g mid tail finish ->
     path g start (es ++ tail) finish.
 Proof.
-  intros start es mid tail finish Hprefix Htail.
-  induction Hprefix as [n|e rest mid Hedge Hpath IH]; [exact Htail|].
-  cbn [app]; constructor; [exact Hedge|apply IH; exact Htail].
+  apply PreRename.path_app.
 Qed.
 
 (** A strict dominator of an edge's target already dominates the edge's source. *)
@@ -122,14 +133,7 @@ Theorem strict_target_dominates_source {N E} (g : Graph.t N E) :
   forall e q, In e (Graph.out g (Graph.source g e)) ->
     strictly_dominates g q (Graph.target g e) -> dominates g q (Graph.source g e).
 Proof.
-  intros e q Hedge [Hdom Hne] start es Hentry Hpath.
-  assert (Hsingle : path g (Graph.source g e) [e] (Graph.target g e)).
-  { constructor; [exact Hedge|constructor]. }
-  destruct (Hdom start (es ++ [e]) Hentry (path_app g _ _ _ _ _ Hpath Hsingle))
-    as [Heq|[edge [Hin Htarget]]]; [now left|].
-  apply in_app_iff in Hin; destruct Hin as [Hin|[<-|[]]].
-  - right; exists edge; auto.
-  - exfalso; apply Hne; symmetry; exact Htarget.
+  apply PreRename.strict_target_dominates_source.
 Qed.
 
 Section Advance.
@@ -137,7 +141,8 @@ Context {B BE N E V K G C U : Type}.
 Variable c : Pre.ctx B BE N E V K G C U.
 Variable g : PreFrg.frg B BE E U.
 
-(** A nearest definition advances through an immediate-dominance gap containing no new definition. *)
+(** A nearest definition advances through an immediate-dominance gap
+    containing no new definition. *)
 Theorem nearest_advance :
   forall u n target d, immediately_dominates (Pre.pg c) n target ->
     (forall other, In other (PreFrg.versions g) -> PreFrg.version_expr other = u ->
