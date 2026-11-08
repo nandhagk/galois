@@ -21,6 +21,12 @@ Definition width_bound {V E} (p : Prepared.t V E) roots w :=
 
 Definition id_cost w := 1 + 2 * w.
 
+(** The public primitive-key budget is one dispatch tick and two width budgets. *)
+Theorem id_cost_equation w : id_cost w = 1 + 2 * w.
+Proof.
+  reflexivity.
+Qed.
+
 Local Lemma get_cost_le {A} w v (m : Map.t positive A) :
   key_bits positive_encoding v <= w ->
     Cost.ticks (Map.get_c positive_encoding v m) <= id_cost w.
