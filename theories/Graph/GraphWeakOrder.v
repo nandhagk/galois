@@ -8,7 +8,8 @@ From Stdlib Require Import List PArith Arith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphVisitor GraphSearchSpec GraphHierSpec
-  GraphHier GraphHierExact GraphWeakOrderFacts GraphSearchInvariant.
+  GraphHier GraphHierExact GraphWeakOrderFacts GraphSearchInvariant GraphHierCycles
+  GraphHierCycleHeads GraphLoopStructure.
 Import List.ListNotations Cost.Notations.
 Local Open Scope nat_scope.
 
@@ -177,6 +178,23 @@ Proof.
   destruct (Wto.edges _ _ _ _ Hvalid u e v Harc Hu Hallowed) as [Hbefore|[stack [Hin Hv]]].
   - exact Hbefore.
   - exfalso. exact (Hnothead stack Hin Hv).
+Qed.
+
+(** Every nonempty rooted cycle passes through a head enclosing every actual point of that cycle. *)
+Theorem cycles_have_head {V E} (p : Prepared.t V E) roots v es :
+  Prepared.ready p ->
+  Search.scoped_reachable p (Scope.Make FinSet.empty None) roots v ->
+  Search.scoped_path p (Scope.Make FinSet.empty None) v es v -> es <> [] ->
+  exists h, In h (HierCycles.points p v es) /\
+    forall x, In x (HierCycles.points p v es) ->
+      exists stack, In (x, stack) (Wto.annotate [] (compute p roots)) /\ In h stack.
+Proof.
+  intros Hready Hreach Hcycle Hnonempty.
+  pose proof (HierExact.compute_exact p (Scope.Make FinSet.empty None) roots Hready) as Hexact.
+  destruct (proj1 (HierCycleHeads.exact_heads p) _ _ _ Hexact v es Hreach Hcycle Hnonempty)
+    as [h [Hpoint Hmembers]].
+  exists h. split; [exact Hpoint|]. intros x Hx. rewrite compute_equation.
+  apply LoopStructure.member_annotation. exact (Hmembers x Hx).
 Qed.
 
 End WeakOrder.

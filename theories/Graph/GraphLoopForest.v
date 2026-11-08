@@ -7,8 +7,8 @@
 From Stdlib Require Import List PArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphHierSpec GraphHier GraphHierExact
-  GraphWeakOrderFacts.
+From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphHierSpec GraphHier
+  GraphHierExact GraphWeakOrderFacts GraphHierCycles GraphLoopStructure.
 Import List.ListNotations Cost.Notations.
 
 Module LoopForest.
@@ -358,6 +358,53 @@ Theorem compute_exact {V E} (p : Prepared.t V E) roots :
 Proof.
   intro Hready. rewrite compute_equation.
   apply of_forest_exact, HierExact.compute_exact, Hready.
+Qed.
+
+(** Loop membership reads the component subtree rather than a materialized per-loop set. *)
+Definition in_loop := LoopStructure.in_loop.
+
+(** The actual producer's component subtrees are nested or disjoint. *)
+Theorem nested {V E} (p : Prepared.t V E) roots :
+  Prepared.ready p ->
+  let f := HierRun.compute p (Scope.Make FinSet.empty None) roots in
+  forall h body k inside,
+  LoopStructure.component f h body -> LoopStructure.component f k inside ->
+  incl (h :: Hier.members body) (k :: Hier.members inside) \/
+  incl (k :: Hier.members inside) (h :: Hier.members body) \/
+  (forall v, In v (h :: Hier.members body) -> ~ In v (k :: Hier.members inside)).
+Proof.
+  intros Hready f. apply LoopStructure.nested_occurrences.
+  pose proof (HierExact.compute_exact p (Scope.Make FinSet.empty None) roots Hready) as Hexact.
+  now destruct Hexact.
+Qed.
+
+(** Every nonempty scoped cycle of an exact forest lies under one of its actual loop headers. *)
+Theorem forest_covers {V E} (p : Prepared.t V E) scope roots f v es :
+  Hier.exact p scope roots f ->
+  Search.scoped_reachable p scope roots v -> Search.scoped_path p scope v es v ->
+  es <> [] -> exists h, In h (Loops.headers (of_forest f)) /\ in_loop f h v.
+Proof.
+  intros Hexact Hreach Hcycle Hnonempty.
+  destruct (LoopStructure.covers p scope roots f v es Hexact Hreach Hcycle Hnonempty)
+    as [h [body [Hcomponent Hmember]]].
+  exists h. split.
+  - rewrite of_forest_equation, scan_headers. exact (LoopStructure.component_open _ _ _ Hcomponent).
+  - exists body. auto.
+Qed.
+
+(** Every rooted node on a nonempty cycle belongs to a loop of the actual hierarchy projection. *)
+Theorem covers {V E} (p : Prepared.t V E) roots v es :
+  Prepared.ready p ->
+  Search.scoped_reachable p (Scope.Make FinSet.empty None) roots v ->
+  Search.scoped_path p (Scope.Make FinSet.empty None) v es v ->
+  es <> [] ->
+  exists h, In h (Loops.headers (compute p roots)) /\
+    in_loop (HierRun.compute p (Scope.Make FinSet.empty None) roots) h v.
+Proof.
+  intros Hready Hreach Hcycle Hnonempty. rewrite compute_equation.
+  apply (forest_covers p (Scope.Make FinSet.empty None) roots _ v es);
+    [apply HierExact.compute_exact, Hready|exact Hreach|exact Hcycle|].
+  exact Hnonempty.
 Qed.
 
 End LoopForest.

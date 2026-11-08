@@ -7,7 +7,8 @@
 From Stdlib Require Import List Bool PArith.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Graph Require Import GraphPrepared GraphHierSpec GraphWeakOrder GraphCheckWto
-  GraphFixtures.
+  GraphFixtures GraphHierCycles.
+From Galois.Tests.Graph Require Import GraphHierTest.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -75,4 +76,18 @@ Example nested_producer_valid :
     (WeakOrder.compute Fixtures.NestedLoop.prepared [1]).
 Proof.
   apply WeakOrder.compute_valid, Fixtures.NestedLoop.fixture_ready.
+Qed.
+
+Example inner_cycle_common_head_client :
+  exists h, In h (HierCycles.points Fixtures.NestedLoop.prepared 2
+      [(2%nat, 3%nat); (3%nat, 2%nat)]) /\
+    forall x, In x (HierCycles.points Fixtures.NestedLoop.prepared 2
+      [(2%nat, 3%nat); (3%nat, 2%nat)]) ->
+      exists stack, In (x, stack)
+        (Wto.annotate [] (WeakOrder.compute Fixtures.NestedLoop.prepared [1])) /\ In h stack.
+Proof.
+  apply (WeakOrder.cycles_have_head Fixtures.NestedLoop.prepared [1] 2
+    [(2%nat, 3%nat); (3%nat, 2%nat)] Fixtures.NestedLoop.fixture_ready
+    nested_two_reachable nested_inner_cycle).
+  discriminate.
 Qed.

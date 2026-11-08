@@ -6,7 +6,8 @@
 
 From Stdlib Require Import List PArith.
 From Galois.Base Require Import BaseMap.
-From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphReducibility GraphFixtures.
+From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphHierSpec
+  GraphReducibility GraphFixtures.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -66,4 +67,28 @@ Proof.
       (1%nat, 2%nat) [] 2%nat); [vm_compute; auto|constructor].
   - vm_compute. reflexivity.
   - vm_compute. reflexivity.
+Qed.
+
+Example nested_semantically_reducible : reducible (Prepared.graph Fixtures.NestedLoop.prepared).
+Proof.
+  apply (Reducibility.reducible_b_sound Fixtures.NestedLoop.prepared Fixtures.NestedLoop.tree
+    Fixtures.NestedLoop.fixture_ready Fixtures.NestedLoop.tree_exact).
+  exact nested_reducible.
+Qed.
+
+Example irreducible_semantic_rejection :
+  ~ reducible (Prepared.graph Fixtures.Irreducible.prepared).
+Proof.
+  intro Hreducible.
+  apply (proj2 (Reducibility.reducible_b_correct Fixtures.Irreducible.prepared
+    Fixtures.Irreducible.tree Fixtures.Irreducible.fixture_ready
+    Fixtures.Irreducible.tree_exact)) in Hreducible.
+  rewrite irreducible_rejected in Hreducible. discriminate.
+Qed.
+
+Example empty_semantically_reducible : reducible (Prepared.graph Fixtures.Empty.prepared).
+Proof.
+  apply (Reducibility.reducible_b_sound Fixtures.Empty.prepared Fixtures.Empty.tree
+    Fixtures.Empty.fixture_ready Fixtures.Empty.tree_exact).
+  exact empty_reducible.
 Qed.

@@ -7,8 +7,8 @@
 From Stdlib Require Import List PArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseSet.
-From Galois.Graph Require Import GraphPrepared GraphVisitor GraphHierSpec GraphHier GraphHierExact
-  GraphFixtures.
+From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphHierSpec GraphHier
+  GraphHierExact GraphFixtures.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -76,4 +76,28 @@ Example scoped_unknown_repeated_producer_exact :
     (HierRun.compute Fixtures.NestedLoop.prepared scope [99; 2; 2; 1]).
 Proof.
   apply HierExact.compute_exact, Fixtures.NestedLoop.fixture_ready.
+Qed.
+
+Example nested_two_reachable :
+  Search.scoped_reachable Fixtures.NestedLoop.prepared unrestricted [1] 2.
+Proof.
+  apply (proj1 (Wto.covers _ _ _ _ Fixtures.NestedLoop.wto_valid 2)).
+  vm_compute. tauto.
+Qed.
+
+Example nested_inner_cycle :
+  Search.scoped_path Fixtures.NestedLoop.prepared unrestricted 2
+    [(2%nat, 3%nat); (3%nat, 2%nat)] 2.
+Proof.
+  eapply Search.scoped_cons with (v := 3).
+  - exists 2%nat. split; vm_compute; auto.
+  - vm_compute. reflexivity.
+  - exists 2%nat, 3%nat. repeat split; vm_compute; auto.
+  - eapply Search.scoped_cons with (v := 2).
+    + exists 3%nat. split; vm_compute; auto.
+    + vm_compute. reflexivity.
+    + exists 3%nat, 2%nat. repeat split; vm_compute; auto.
+    + apply Search.scoped_nil.
+      * exists 2%nat. split; vm_compute; auto.
+      * vm_compute. reflexivity.
 Qed.

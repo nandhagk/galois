@@ -8,6 +8,7 @@ From Stdlib Require Import List PArith.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphPrepared GraphVisitor GraphSearchSpec GraphSccSpec
   GraphHierSpec GraphHier GraphHierExact GraphLoopForest GraphTarjan GraphTarjanExact GraphFixtures.
+From Galois.Tests.Graph Require Import GraphHierTest.
 Import List.ListNotations.
 Open Scope positive_scope.
 
@@ -114,4 +115,14 @@ Example nested_producer_exact :
     (LoopForest.compute Fixtures.NestedLoop.prepared [1]).
 Proof.
   apply LoopForest.compute_exact, Fixtures.NestedLoop.fixture_ready.
+Qed.
+
+Example inner_cycle_covered_client :
+  exists h, In h (Loops.headers (LoopForest.compute Fixtures.NestedLoop.prepared [1])) /\
+    LoopForest.in_loop (HierRun.compute Fixtures.NestedLoop.prepared unrestricted [1]) h 2.
+Proof.
+  apply (LoopForest.covers Fixtures.NestedLoop.prepared [1] 2
+    [(2%nat, 3%nat); (3%nat, 2%nat)] Fixtures.NestedLoop.fixture_ready
+    nested_two_reachable nested_inner_cycle).
+  discriminate.
 Qed.
