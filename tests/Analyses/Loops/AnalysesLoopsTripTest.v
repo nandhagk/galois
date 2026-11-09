@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List Bool NArith ZArith.
 From Galois.Cost Require Import CostMonad.
+From Galois.Bits Require Import BitsWord.
 From Galois.Analyses.Loops Require Import
   AnalysesLoopsChrec AnalysesLoopsFailure AnalysesLoopsFloor AnalysesLoopsTrip.
 Import List.ListNotations.
@@ -16,6 +17,28 @@ Definition option_count_eqb (left right : option N) : bool :=
   | None, None => true
   | _, _ => false
   end.
+
+Example wide_search_operand_qualification :
+  (Trip.search_primitive_bits 128%positive Unsigned CmpLt 0%Z 1%Z
+    340282366920938463463374607431768211455%Z
+    (Trip.Interval 0%N (N.pos (Failure.word_period 128%positive))) <= 131)%N.
+Proof.
+  apply Trip.search_primitive_bits_bound.
+  split; [apply N.le_0_l|reflexivity].
+Qed.
+
+Example wide_word_representative_budget :
+  (Trip.numeric_word_bits 128%positive 0%Z 1%Z 340282366920938463463374607431768211455%Z <=
+    515 * (128 + 1))%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+Example unbounded_representatives_are_not_erased_from_the_word_budget :
+  (256 <= Trip.numeric_word_bits 8%positive (2 ^ 256)%Z (-1)%Z 1%Z)%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
 
 Definition fast_agreement_case w sg cmp (a step bound : Z) : bool :=
   option_count_eqb (Cost.value (Trip.first_failure_fast w sg cmp a step bound))

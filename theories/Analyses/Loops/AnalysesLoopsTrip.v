@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostLoop CostBound.
 From Galois.Bits Require Import BitsWord.
 From Galois.Analyses.Loops Require Import
   AnalysesLoopsChrec AnalysesLoopsFailure AnalysesLoopsFloor.
-Import Cost.Notations Failure Floor.
+Import List.ListNotations Cost.Notations Failure Floor.
 Local Open Scope N_scope.
 
 Module Trip.
@@ -339,6 +339,320 @@ Proof.
   exists (4 * first_failure_fast_k); intro w.
   pose proof (first_failure_fast_cost w sg cmp a step bound).
   nia.
+Qed.
+
+(** Physical search bounds retain every endpoint inside the actual word period. *)
+Definition interval_bounded w s : Prop :=
+  lower s <= upper s /\ upper s <= N.pos (word_period w).
+
+Local Lemma search_step_bounded w sg cmp a step bound s :
+  interval_bounded w s ->
+  match Cost.value (search_step_c w sg cmp a step bound s) with
+  | inl next => interval_bounded w next
+  | inr t => t <= N.pos (word_period w)
+  end.
+Proof.
+  destruct s as [lo hi]; intros [Hordered Hperiod].
+  rewrite search_step_value; cbn [lower upper] in *.
+  destruct (hi - lo <=? 1) eqn:Hfinished; [lia|].
+  apply N.leb_gt in Hfinished.
+  destruct (midpoint_bounds lo hi ltac:(lia)) as [Hmid _].
+  destruct (mod_count w sg cmp a step bound ((lo + hi) / 2) =? 0);
+    unfold interval_bounded; cbn [lower upper]; lia.
+Qed.
+
+(** Every actual search prefix has bounded endpoints, independently of its failure observations. *)
+Theorem search_runs_bounded w sg cmp a step bound used s result :
+  runs (search_step_c w sg cmp a step bound) used s result -> interval_bounded w s ->
+  match result with
+  | inl next => interval_bounded w next
+  | inr t => t <= N.pos (word_period w)
+  end.
+Proof.
+  intro Hrun; induction Hrun as [s|used s t Hstop|used s next result Hnext Hrun IH];
+    intro Hbounded.
+  - exact Hbounded.
+  - pose proof (search_step_bounded w sg cmp a step bound s Hbounded) as Hstep.
+    rewrite Hstop in Hstep; exact Hstep.
+  - pose proof (search_step_bounded w sg cmp a step bound s Hbounded) as Hstep.
+    rewrite Hnext in Hstep; apply IH; exact Hstep.
+Qed.
+
+(** These are the arithmetic operands and results of the possible midpoint branch. *)
+Definition search_intermediates w sg cmp a step bound s : list N :=
+  let mid := (lower s + upper s) / 2 in
+  [lower s; upper s; upper s - lower s; 1; lower s + upper s; mid; 2;
+    mod_count w sg cmp a step bound mid; 0].
+
+Definition search_primitive_bits w sg cmp a step bound s :=
+  fold_right (fun x bits => N.max (N.size x) bits) 0
+    (search_intermediates w sg cmp a step bound s).
+
+(** Actual search arithmetic, including the returned prefix count, uses linearly many width bits. *)
+Theorem search_primitive_bits_bound w sg cmp a step bound s :
+  interval_bounded w s ->
+  search_primitive_bits w sg cmp a step bound s <= N.pos w + 3.
+Proof.
+  intros [Hordered Hperiod].
+  assert (Hlower : lower s <= N.pos (word_period w)) by lia.
+  assert (Hgap : upper s - lower s <= N.pos (word_period w)) by lia.
+  assert (Hsum : lower s + upper s <= 2 * N.pos (word_period w)) by lia.
+  assert (Hmid : (lower s + upper s) / 2 <= N.pos (word_period w)).
+  { apply N.Div0.div_le_upper_bound; nia. }
+  pose proof (floor_size_mono _ _ Hlower).
+  pose proof (floor_size_mono _ _ Hperiod).
+  pose proof (floor_size_mono _ _ Hgap).
+  pose proof (floor_size_mono _ _ Hsum).
+  pose proof (floor_size_mono _ _ Hmid).
+  pose proof (floor_size_mono _ _ (N.le_trans _ _ _
+    (mod_count_bound w sg cmp a step bound _) Hmid)).
+  pose proof (floor_size_mul 2 (N.pos (word_period w))) as Hdouble.
+  change (N.size (2 * N.pos (word_period w)) <= 2 + N.size (N.pos (word_period w))) in Hdouble.
+  rewrite period_size in *.
+  cbv beta iota zeta delta [search_primitive_bits search_intermediates fold_right].
+  repeat apply N.max_lub; try lia.
+  all: cbn [N.size Pos.size]; lia.
+Qed.
+
+(** A reached interval is an actual continuing prefix of the same fast-search callback. *)
+Definition search_reached w sg cmp a step bound s : Prop :=
+  exists used, runs (search_step_c w sg cmp a step bound) used
+    (Interval 0 (N.pos (word_period w))) (inl s).
+
+(** Reachable midpoint prefixes satisfy the real floor-call input bounds without a caller interval law. *)
+Theorem reached_midpoint_bound w sg cmp a step bound s :
+  search_reached w sg cmp a step bound s ->
+  interval_bounded w s /\ (lower s + upper s) / 2 <= N.pos (word_period w) /\
+    search_primitive_bits w sg cmp a step bound s <= N.pos w + 3.
+Proof.
+  intros [used Hrun].
+  assert (Hbounded : interval_bounded w s).
+  { exact (search_runs_bounded w sg cmp a step bound _ _ _ Hrun
+      (conj (N.le_0_l _) (N.le_refl _))). }
+  split; [exact Hbounded|]; split; [|apply search_primitive_bits_bound; exact Hbounded].
+  destruct Hbounded as [Hordered Hperiod].
+  apply N.Div0.div_le_upper_bound; lia.
+Qed.
+
+(** Floor prefixes include the terminal state and use the fuel constructed by the actual counter. *)
+Definition floor_prefix w n a b current : Prop :=
+  exists used result, N.of_nat used <= 2 * N.size (N.pos (word_period w)) + 1 /\
+    runs floor_next_c used (Floor.State n (N.pos (word_period w)) a b 0 false 0) result /\
+    current = match result with inl st | inr st => st end.
+
+(** Each actual reached floor prefix inherits the proved temporary and counter operand bounds. *)
+Theorem floor_prefix_primitive_bits w n a b current :
+  n <= N.pos (word_period w) -> a <= N.pos (word_period w) ->
+  b <= 2 * N.pos (word_period w) -> floor_prefix w n a b current ->
+  floor_primitive_bits current <= 500 * (N.pos w + 1).
+Proof.
+  intros Hn Ha Hb [used [result [Hused [Hrun ->]]]].
+  rewrite (floor_runs_agrees _ _ _ Hrun).
+  apply word_floor_primitive_bits; assumption.
+Qed.
+
+(** Both floor calls at every reached midpoint fit the width bound, including signed normalization. *)
+Theorem reached_count_floor_bits w sg cmp a step bound s used threshold :
+  search_reached w sg cmp a step bound s ->
+  used <= 2 * N.size (N.pos (word_period w)) + 1 ->
+  (threshold = Z.to_N (wrap w (bound + sign_bias w sg)) \/
+    threshold = N.succ (Z.to_N (wrap w (bound + sign_bias w sg)))) ->
+  let n := (lower s + upper s) / 2 in
+  let delta := Z.to_N (wrap w step) in
+  let start := Z.to_N (wrap w (a + sign_bias w sg)) in
+  floor_primitive_bits (N.iter used floor_step
+    (Floor.State n (N.pos (word_period w)) delta
+      (start + N.pos (word_period w) - threshold) 0 false 0)) <= 500 * (N.pos w + 1) /\
+  floor_primitive_bits (N.iter used floor_step
+    (Floor.State n (N.pos (word_period w)) delta start 0 false 0)) <= 500 * (N.pos w + 1).
+Proof.
+  intros Hreached Hused Hthreshold.
+  apply (mod_count_primitive_bits w sg a step bound ((lower s + upper s) / 2) used threshold);
+    try assumption.
+  exact (proj1 (proj2 (reached_midpoint_bound w sg cmp a step bound s Hreached))).
+Qed.
+
+(** Representative size counts magnitude bits before normalization, including negative inputs. *)
+Definition magnitude_bits z := N.size (Z.to_N (Z.abs z)).
+
+Local Lemma magnitude_add a b :
+  magnitude_bits (a + b) <= magnitude_bits a + magnitude_bits b + 1.
+Proof.
+  assert (Habs : Z.to_N (Z.abs (a + b)) <= Z.to_N (Z.abs a) + Z.to_N (Z.abs b)).
+  { apply N2Z.inj_le; rewrite N2Z.inj_add, !Z2N.id by apply Z.abs_nonneg.
+    apply Z.abs_triangle. }
+  eapply N.le_trans; [apply floor_size_mono; exact Habs|apply floor_size_add].
+Qed.
+
+Local Lemma modulus_magnitude w : magnitude_bits (modulus w) = N.pos w + 1.
+Proof.
+  unfold magnitude_bits.
+  rewrite <- word_period_modulus, Z.abs_eq by apply N2Z.is_nonneg.
+  rewrite N2Z.id; apply period_size.
+Qed.
+
+Local Lemma wrap_magnitude w z : magnitude_bits (wrap w z) <= N.pos w + 1.
+Proof.
+  pose proof (wrap_is_word w z) as Hword; unfold is_word in Hword.
+  unfold magnitude_bits; rewrite Z.abs_eq by lia.
+  pose proof (floor_size_mono _ _ (N.lt_le_incl _ _ (wrapped_count_bound w z))) as Hsize.
+  rewrite period_size in Hsize; exact Hsize.
+Qed.
+
+Local Lemma bias_magnitude w sg : magnitude_bits (sign_bias w sg) <= N.pos w + 1.
+Proof.
+  assert (Hbias : (0 <= sign_bias w sg <= modulus w)%Z).
+  { destruct sg; cbn [sign_bias].
+    - pose proof (modulus_pos w); lia.
+    - split.
+      + apply Z.div_pos; [pose proof (modulus_pos w); lia|lia].
+      + apply Z.div_le_upper_bound; pose proof (modulus_pos w); lia. }
+  assert (Hnatural : Z.to_N (Z.abs (sign_bias w sg)) <= Z.to_N (Z.abs (modulus w))).
+  { apply N2Z.inj_le; rewrite !Z2N.id by apply Z.abs_nonneg.
+    rewrite !Z.abs_eq by (pose proof (modulus_pos w); lia); lia. }
+  pose proof (floor_size_mono _ _ Hnatural) as Hsize.
+  change (magnitude_bits (sign_bias w sg) <= magnitude_bits (modulus w)) in Hsize.
+  rewrite modulus_magnitude in Hsize; exact Hsize.
+Qed.
+
+(** These include every signed normalization input and temporary before the natural floor calls. *)
+Definition normalization_intermediates w sg a step bound : list Z :=
+  let m := Z.of_N (N.pos (word_period w)) in
+  let shift := sign_bias w sg in
+  [a; step; bound; m; shift; 2%Z; (a + shift)%Z; (bound + shift)%Z;
+    ((a + shift) mod m)%Z; ((bound + shift) mod m)%Z; (step mod m)%Z].
+
+Definition normalization_primitive_bits w sg a step bound :=
+  fold_right (fun z bits => N.max (magnitude_bits z) bits) 0
+    (normalization_intermediates w sg a step bound).
+
+(** Arbitrary representative sizes are retained in the bound for actual signed normalization operands. *)
+Theorem normalization_primitive_bits_bound w sg a step bound :
+  normalization_primitive_bits w sg a step bound <=
+    magnitude_bits a + magnitude_bits step + magnitude_bits bound + N.pos w + 3.
+Proof.
+  pose proof (magnitude_add a (sign_bias w sg)).
+  pose proof (magnitude_add bound (sign_bias w sg)).
+  pose proof (bias_magnitude w sg).
+  pose proof (modulus_magnitude w).
+  pose proof (wrap_magnitude w (a + sign_bias w sg)).
+  pose proof (wrap_magnitude w (bound + sign_bias w sg)).
+  pose proof (wrap_magnitude w step).
+  cbv beta iota zeta delta [normalization_primitive_bits normalization_intermediates fold_right].
+  rewrite word_period_modulus, <- !wrap_mod.
+  repeat apply N.max_lub; try lia.
+  change (2 <= magnitude_bits a + magnitude_bits step + magnitude_bits bound + N.pos w + 3); lia.
+Qed.
+
+(** Repeated-squaring envelopes contain actual partial powers, products and width-counter inputs. *)
+Fixpoint period_primitive_bits (w : width) : N :=
+  match w with
+  | xH => 2
+  | xO p =>
+    let half := Cost.value (period_c p) in
+    N.max (period_primitive_bits p)
+      (N.max (N.size (N.pos w)) (N.max (N.size half) (N.size (half * half))))
+  | xI p =>
+    let half := Cost.value (period_c p) in
+    N.max (period_primitive_bits p)
+      (N.max (N.size (N.pos w)) (N.max (N.size half)
+        (N.max (N.size (half * half)) (N.size (2 * (half * half))))))
+  end.
+
+(** Every actual power-construction operand has linearly many bits in the numeric width. *)
+Theorem period_primitive_bits_bound w : period_primitive_bits w <= 2 * (N.pos w + 1).
+Proof.
+  induction w as [p IH|p IH|]; [| |cbn [period_primitive_bits]; lia].
+  - cbv beta iota zeta delta [period_primitive_bits].
+    fold (period_primitive_bits p).
+    rewrite period_value.
+    pose proof (floor_size_mul (N.pos (word_period p)) (N.pos (word_period p))) as Hsquare.
+    pose proof (floor_size_mul 2 (N.pos (word_period p) * N.pos (word_period p))) as Hdouble.
+    pose proof (floor_size_le (N.pos (xI p))) as Hcounter.
+    rewrite period_size in Hsquare |- *.
+    change (N.size (2 * (N.pos (word_period p) * N.pos (word_period p))) <=
+      2 + N.size (N.pos (word_period p) * N.pos (word_period p))) in Hdouble.
+    repeat apply N.max_lub; change (N.pos (xI p)) with (2 * N.pos p + 1) in *; lia.
+  - cbv beta iota zeta delta [period_primitive_bits].
+    fold (period_primitive_bits p).
+    rewrite period_value.
+    pose proof (floor_size_mul (N.pos (word_period p)) (N.pos (word_period p))) as Hsquare.
+    pose proof (floor_size_le (N.pos (xO p))) as Hcounter.
+    rewrite period_size in Hsquare |- *.
+    repeat apply N.max_lub; change (N.pos (xO p)) with (2 * N.pos p) in *; lia.
+Qed.
+
+(** A numeric RAM word must also contain the original representatives, not only wrapped residues. *)
+Definition numeric_word_bits w a step bound :=
+  magnitude_bits a + magnitude_bits step + magnitude_bits bound + 512 * (N.pos w + 1).
+
+(** The operation-count theorem is qualified by normalization, modulus and reached-search operand sizes. *)
+Theorem first_failure_fast_numeric_contract w sg cmp a step bound :
+  Cost.ticks (first_failure_fast w sg cmp a step bound) <=
+    first_failure_fast_k * (N.pos w + 1) * (N.pos w + 1) /\
+  normalization_primitive_bits w sg a step bound <= numeric_word_bits w a step bound /\
+  period_primitive_bits w <= numeric_word_bits w a step bound /\
+  forall s, search_reached w sg cmp a step bound s ->
+    search_primitive_bits w sg cmp a step bound s <= numeric_word_bits w a step bound /\
+    (lower s + upper s) / 2 <= N.pos (word_period w).
+Proof.
+  split; [apply first_failure_fast_cost|].
+  pose proof (normalization_primitive_bits_bound w sg a step bound) as Hnormal.
+  pose proof (period_primitive_bits_bound w) as Hperiod.
+  unfold numeric_word_bits; split; [lia|]; split; [lia|].
+  intros s Hreached.
+  destruct (reached_midpoint_bound w sg cmp a step bound s Hreached) as [_ [Hmid Hbits]].
+  split; [lia|exact Hmid].
+Qed.
+
+(** Counter lengths come from the initial full-period query or an actual reached midpoint query. *)
+Definition counter_length w sg cmp a step bound n : Prop :=
+  n = N.pos (word_period w) \/
+    exists s, search_reached w sg cmp a step bound s /\ n = (lower s + upper s) / 2.
+
+(** Every selected floor prefix fits the numeric RAM envelope, including both threshold offsets. *)
+Theorem counter_floor_word_bits w sg cmp a step bound n threshold offset current :
+  counter_length w sg cmp a step bound n ->
+  (offset = Z.to_N (wrap w (a + sign_bias w sg)) \/
+    offset = Z.to_N (wrap w (a + sign_bias w sg)) + N.pos (word_period w) - threshold) ->
+  floor_prefix w n (Z.to_N (wrap w step)) offset current ->
+  floor_primitive_bits current <= numeric_word_bits w a step bound.
+Proof.
+  intros Hlength Hoffset Hprefix.
+  assert (Hn : n <= N.pos (word_period w)).
+  { destruct Hlength as [->|[s [Hreached ->]]]; [reflexivity|].
+    exact (proj1 (proj2 (reached_midpoint_bound w sg cmp a step bound s Hreached))). }
+  assert (Ha : Z.to_N (wrap w step) <= N.pos (word_period w))
+    by (pose proof (wrapped_count_bound w step); lia).
+  assert (Hb : offset <= 2 * N.pos (word_period w)).
+  { pose proof (wrapped_count_bound w (a + sign_bias w sg)).
+    destruct Hoffset; subst offset; lia. }
+  pose proof (floor_prefix_primitive_bits w n (Z.to_N (wrap w step)) offset current
+    Hn Ha Hb Hprefix) as Hfloor.
+  unfold numeric_word_bits; lia.
+Qed.
+
+Local Lemma representative_magnitude w z :
+  (Z.abs z < modulus w)%Z -> magnitude_bits z <= N.pos w + 1.
+Proof.
+  intro Hrepresentative.
+  assert (Hbound : Z.to_N (Z.abs z) <= N.pos (word_period w)).
+  { apply N2Z.inj_le; rewrite Z2N.id by apply Z.abs_nonneg.
+    rewrite word_period_modulus; lia. }
+  pose proof (floor_size_mono _ _ Hbound) as Hsize.
+  rewrite period_size in Hsize; exact Hsize.
+Qed.
+
+(** Word-sized signed or unsigned representatives specialize the numeric RAM envelope to linear width. *)
+Theorem numeric_word_bits_representatives w a step bound :
+  (Z.abs a < modulus w)%Z -> (Z.abs step < modulus w)%Z -> (Z.abs bound < modulus w)%Z ->
+  numeric_word_bits w a step bound <= 515 * (N.pos w + 1).
+Proof.
+  intros Ha Hstep Hbound.
+  pose proof (representative_magnitude w a Ha).
+  pose proof (representative_magnitude w step Hstep).
+  pose proof (representative_magnitude w bound Hbound).
+  unfold numeric_word_bits; lia.
 Qed.
 
 (** Fast trip counting changes only the affine first-failure engine. *)
