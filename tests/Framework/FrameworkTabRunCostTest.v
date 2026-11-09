@@ -6,14 +6,14 @@
 
 From Stdlib Require Import List NArith.
 From Galois.Cost Require Import CostMonad CostBound.
-From Galois.Base Require Import BaseEncoding.
+From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Lattice Require Import LatticeCore LatticeHeight.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Framework Require Import FrameworkUtil FrameworkMicro FrameworkIfds FrameworkIde
   FrameworkTabulate FrameworkTabEncodingCost FrameworkTabPrepareCost FrameworkTabRunCost
   FrameworkTabJumpProgress FrameworkTabCheckCost FrameworkTabValues FrameworkTabValueRunCost
-  FrameworkTabValueProgress.
+  FrameworkTabValueProgress FrameworkTabValueCheckCost.
 From Galois.Tests.Framework Require Import FrameworkTabAffineTest.
 Import List.ListNotations.
 
@@ -216,6 +216,39 @@ Proof.
   - exact (value_duties n).
   - exact (vertex_laws n).
   - exact (callback_duties n).
+Qed.
+
+(** Value certification imports plan-table and selected-query costs for arbitrary raw jump maps. *)
+Example certified_value_family n J a0 :
+  (Cost.ticks (TabValueProgress.complete_c
+    (problem n) J (tt, None) a0 LawfulAffine.value_height) <=
+    TabValueRunCost.complete_charge (problem n) 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.value_height)) +
+    TabValueCheckCost.checker_charge (problem n) 1 1 1 1 1 1 1 1 1 1)%N.
+Proof.
+  apply TabValueCheckCost.complete_cost.
+  - exact (value_duties n).
+  - exact (vertex_laws n).
+  - intros a Ha; apply unit_budget.
+  - exact (callback_duties n).
+Qed.
+
+(** The complete value asymptotic client closes all primitive duties over the varying affine family. *)
+Example certified_value_family_bigO (J : nat -> Map.t positive LawfulAffine.function)
+    (a0 : nat -> LawfulAffine.value) :
+  bigO
+    (fun n => (TabValueRunCost.complete_charge (problem n) 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.value_height)) +
+      TabValueCheckCost.checker_charge (problem n) 1 1 1 1 1 1 1 1 1 1)%N)
+    (fun n => Cost.ticks
+      (TabValueProgress.complete_c (problem n) (J n) (tt, None) (a0 n)
+        LawfulAffine.value_height)).
+Proof.
+  apply TabValueCheckCost.tabulate_bigO.
+  - exact value_duties.
+  - exact vertex_laws.
+  - intros n a Ha; apply unit_budget.
+  - exact callback_duties.
 Qed.
 
 Example supplied_outgoing_occurrences n :

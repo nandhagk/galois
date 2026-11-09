@@ -73,7 +73,8 @@ Proof.
   - rewrite pair_bits; unfold pair_width; lia.
 Qed.
 
-Local Lemma sum_bits {X Y} (EX : encoding X) (EY : encoding Y) v :
+(** Tagged sums retain the selected component width and its actual serialization tags. *)
+Theorem sum_bits {X Y} (EX : encoding X) (EY : encoding Y) v :
   key_bits (FrameworkKey.sum EX EY) v =
     match v with
     | inl x => (5 + 2 * key_bits EX x)%N
@@ -90,7 +91,8 @@ Proof.
     rewrite sum_codec_bits; reflexivity.
 Qed.
 
-Local Lemma sum_cost {X Y} (EX : encoding X) (EY : encoding Y) v :
+(** Tagged sums price only their selected original component callback and emitted binary code. *)
+Theorem sum_cost {X Y} (EX : encoding X) (EY : encoding Y) v :
   (Cost.ticks (encode_c (FrameworkKey.sum EX EY) v) <=
     6 + match v with
         | inl x => Cost.ticks (encode_c EX x)
@@ -128,6 +130,25 @@ Proof.
         (inr (encode EY y))) <=
       6 + Cost.ticks (encode_c EY y) + encode_k * (8 + 2 * key_bits EY y))%N.
     lia.
+Qed.
+
+Definition sum_width w := (8 + 2 * w)%N.
+Definition sum_charge e w := (6 + e + encode_k * sum_width w)%N.
+
+(** A selected tagged alternative satisfies a uniform budget from that component's primitive bound. *)
+Theorem sum_bounded {X Y} (EX : encoding X) (EY : encoding Y) v e w :
+  (match v with
+   | inl x => bounded EX x e w
+   | inr y => bounded EY y e w
+   end) ->
+  bounded (FrameworkKey.sum EX EY) v (sum_charge e w) (sum_width w).
+Proof.
+  intro Hbound; pose proof (sum_cost EX EY v) as Hcost.
+  split.
+  - rewrite sum_bits in Hcost; destruct v as [x|y]; destruct Hbound as [He Hw];
+      unfold sum_charge, sum_width; nia.
+  - rewrite sum_bits; destruct v as [x|y]; destruct Hbound as [He Hw];
+      unfold sum_width; lia.
 Qed.
 
 (** Optional facts retain the zero tag and the selected fact code. *)
