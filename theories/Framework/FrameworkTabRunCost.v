@@ -262,6 +262,22 @@ Proof.
   exact (TabPrepareCost.roots_length I start (Jump.arcs I)).
 Qed.
 
+Local Lemma call_replay_cost s root a t :
+  TabRecords.valid I start s -> In root (TabPaths.roots I start) -> In a (Jump.arcs I) ->
+  (Cost.ticks (fold_left_c (fun t kv => Tab.return_c I root a (snd kv) t)
+    (Map.elements (TabRecords.ends I s (Jump.target a))) t) <=
+    TabPrepareCost.arc_count I * (1 + replay e w m))%N.
+Proof.
+  intros Hvalid Hr Ha.
+  eapply N.le_trans.
+  - apply fold_cost with (P := fun _ => True); [|exact Logic.I].
+    intros u [code b] Hu Hb; split; [exact Logic.I|].
+    apply return_cost; [exact Hr|exact Ha|].
+    exact (proj1 (proj2 (TabRecords.end_element I start s (Jump.target a) code b Hvalid Hb))).
+  - apply N.mul_le_mono_r, nat_N_le.
+    exact (TabRecordCost.end_length I start s (Jump.target a) Hvalid).
+Qed.
+
 Local Lemma call_cost s root a :
   TabRecords.valid I start s -> In root (TabPaths.roots I start) -> In a (Jump.arcs I) ->
   (Cost.ticks (Tab.call_c I root a s) <= call_charge I e w m)%N.
@@ -271,18 +287,7 @@ Proof.
   destruct (incoming_budget root a Hr Ha) as [Hi Hiw].
   pose proof (TabRecordCost.end_enumeration_cost I start s (Jump.target a) (aw w)
     Hvalid (fun b Hb => proj2 (arc_budget b Hb))) as Henum.
-  pose proof (TabRecordCost.end_length I start s (Jump.target a) Hvalid) as Hlen.
-  apply nat_N_le in Hlen.
-  fold (TabPrepareCost.arc_count I) in Henum, Hlen.
-  assert (Hfold : forall t,
-    (Cost.ticks (fold_left_c (fun t kv => Tab.return_c I root a (snd kv) t)
-      (Map.elements (TabRecords.ends I s (Jump.target a))) t) <=
-      N.of_nat (length (Map.elements (TabRecords.ends I s (Jump.target a)))) *
-        (1 + replay e w m))%N).
-  { intro t; apply fold_cost with (P := fun _ => True); [|exact Logic.I].
-    intros u [code b] Hu Hb; split; [exact Logic.I|].
-    apply return_cost; [exact Hr|exact Ha|].
-    exact (proj1 (proj2 (TabRecords.end_element I start s (Jump.target a) code b Hvalid Hb))). }
+  fold (TabPrepareCost.arc_count I) in Henum.
   unfold Tab.call_c; rewrite !Cost.ticks_bind.
   fold (TabRecords.callers I s (Jump.target a)).
   fold (TabRecords.ends I s (Jump.target a)).
@@ -299,15 +304,31 @@ Proof.
   fold (key_bits (IdeValue.key_enc I) (Jump.target a)).
   fold (key_bits (Tab.incoming_enc I) (root, Tab.arc_key a)).
   match goal with
-  | |- context [Cost.ticks (fold_left_c _ _ ?t)] => specialize (Hfold t)
+  | |- context [Cost.ticks (fold_left_c _ _ ?t)] =>
+    pose proof (call_replay_cost s root a t Hvalid Hr Ha) as Hbodycost
   end.
-  assert (Hscan :
-    (N.of_nat (length (Map.elements (TabRecords.ends I s (Jump.target a)))) *
-      (1 + replay e w m) <= TabPrepareCost.arc_count I * (1 + replay e w m))%N).
-  { apply N.mul_le_mono_r; exact Hlen. }
-  pose proof (N.le_trans _ _ _ Hfold Hscan) as Hbodycost.
   eapply N.le_trans; [add_budgets|].
   unfold call_charge; lia.
+Qed.
+
+Local Lemma end_replay_cost s root a t :
+  TabRecords.valid I start s -> In a (Jump.arcs I) ->
+  (Cost.ticks (fold_left_c (fun t kv =>
+    Tab.return_c I (fst (snd kv)) (snd (snd kv)) a t)
+    (Map.elements (TabRecords.callers I s root)) t) <=
+    roots I * TabPrepareCost.arc_count I * (1 + replay e w m))%N.
+Proof.
+  intros Hvalid Ha.
+  pose proof (TabRecordCost.caller_length I start s root Hvalid) as Hlen.
+  apply nat_N_le in Hlen; rewrite Nat2N.inj_mul in Hlen.
+  eapply N.le_trans.
+  - apply fold_cost with (P := fun _ => True); [|exact Logic.I].
+    intros u [code [outer call]] Hu Hcall; split; [exact Logic.I|].
+    destruct (TabRecords.caller_element I start s root code outer call Hvalid Hcall)
+      as [Hroot [Harc Hrest]].
+    apply return_cost; assumption.
+  - apply N.mul_le_mono_r; eapply N.le_trans; [exact Hlen|].
+    apply N.mul_le_mono_r; exact root_count.
 Qed.
 
 Local Lemma end_cost s root a :
@@ -319,20 +340,6 @@ Proof.
   destruct (arc_budget a Ha) as [Haenc Haw].
   pose proof (TabRecordCost.caller_enumeration_cost I start s root (iw w)
     Hvalid (fun r b Hroot Hb => proj2 (incoming_budget r b Hroot Hb))) as Henum.
-  pose proof (TabRecordCost.caller_length I start s root Hvalid) as Hlen.
-  apply nat_N_le in Hlen; rewrite Nat2N.inj_mul in Hlen.
-  fold (TabPrepareCost.arc_count I) in Henum, Hlen.
-  assert (Hfold : forall t,
-    (Cost.ticks (fold_left_c (fun t kv =>
-      Tab.return_c I (fst (snd kv)) (snd (snd kv)) a t)
-      (Map.elements (TabRecords.callers I s root)) t) <=
-      N.of_nat (length (Map.elements (TabRecords.callers I s root))) *
-        (1 + replay e w m))%N).
-  { intro t; apply fold_cost with (P := fun _ => True); [|exact Logic.I].
-    intros u [code [outer call]] Hu Hcall; split; [exact Logic.I|].
-    destruct (TabRecords.caller_element I start s root code outer call Hvalid Hcall)
-      as [Hroot [Harc Hrest]].
-    apply return_cost; assumption. }
   unfold Tab.end_c; rewrite !Cost.ticks_bind.
   fold (TabRecords.ends I s root).
   fold (TabRecords.callers I s root).
@@ -349,24 +356,15 @@ Proof.
   fold (key_bits (IdeValue.key_enc I) root).
   fold (key_bits (Tab.arc_enc I) (Tab.arc_key a)).
   match goal with
-  | |- context [Cost.ticks (fold_left_c _ _ ?t)] => specialize (Hfold t)
+  | |- context [Cost.ticks (fold_left_c _ _ ?t)] =>
+    pose proof (end_replay_cost s root a t Hvalid Ha) as Hbodycost
   end.
-  assert (Hsize :
-    (N.of_nat (length (Map.elements (TabRecords.callers I s root))) <=
-      roots I * TabPrepareCost.arc_count I)%N).
-  { eapply N.le_trans; [exact Hlen|].
-    apply N.mul_le_mono_r; exact root_count. }
-  assert (Hscan :
-    (N.of_nat (length (Map.elements (TabRecords.callers I s root))) *
-      (1 + replay e w m) <= roots I * TabPrepareCost.arc_count I * (1 + replay e w m))%N).
-  { apply N.mul_le_mono_r; exact Hsize. }
   assert (Htrie :
     (TrieCost.trie_k * (1 + N.of_nat (length (TabPaths.roots I start)) *
       N.of_nat (length (Jump.arcs I)) * iw w) <=
       TrieCost.trie_k * (1 + roots I * TabPrepareCost.arc_count I * iw w))%N).
   { apply N.mul_le_mono_l, N.add_le_mono_l, N.mul_le_mono_r, N.mul_le_mono_r.
     exact root_count. }
-  pose proof (N.le_trans _ _ _ Hfold Hscan) as Hbodycost.
   pose proof (N.le_trans _ _ _ Henum Htrie) as Henumeration.
   eapply N.le_trans; [add_budgets|].
   unfold end_charge; lia.
@@ -573,7 +571,7 @@ Definition complete_charge {N E P D A F} (I : Ide.t N E P D A F)
     initial_charge I e w m + h + keys I + 1 +
     (step_charge I e w m + 2) * (1 + (1 + h) * keys I))%N.
 
-(** Constructed raw completion composes the same bounded raw run and its charged fuel constructor. *)
+(** Constructed raw completion pays for the same raw run and its charged fuel constructor. *)
 Theorem complete_raw_numeric {N E P D A F} (I : Ide.t N E P D A F) start e w m
     ko ks kt kk kf kw q (H : height (Micro.lat (Ide.micro I))) :
   primitives I start e w m ->

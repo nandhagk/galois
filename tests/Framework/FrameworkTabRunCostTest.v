@@ -85,7 +85,7 @@ Proof.
   intro Hd; inversion Hd.
 Qed.
 
-(** Every fuel and every family size import the complete raw-run contract with primitive duties closed. *)
+(** Every fuel and family size import the raw-run bound with primitive duties closed. *)
 Example raw_family n fuel :
   (Cost.ticks (Tab.raw_c (problem n) tt fuel) <=
     TabPrepareCost.prepare_charge (problem n) 1 1 1 1 1 1 1 1 1 1 1 +
