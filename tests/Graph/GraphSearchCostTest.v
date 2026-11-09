@@ -17,6 +17,11 @@ Definition charged_visitor {E} : Visitor.t E unit :=
     (fun _ _ _ _ s => Cost.tick 37 ;; Cost.ret s)
     (fun _ _ s => Cost.tick 37 ;; Cost.ret s).
 
+Example primitive_budget_client w : SearchCost.id_cost w = (1 + 2 * w)%N.
+Proof.
+  apply SearchCost.id_cost_equation.
+Qed.
+
 Example singleton_ticks :
   Cost.ticks (SearchRun.run_c SearchFixtures.single Visitor.noop
     SearchFixtures.unrestricted [1]%positive tt) = 36%N.

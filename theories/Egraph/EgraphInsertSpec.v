@@ -27,7 +27,7 @@ Local Lemma allocate_equation g n key :
       (UnionFind.union Egraph.id_encoding (Egraph.next g) (Egraph.next g) (Egraph.uf g))
       (Map.set Egraph.id_encoding (Egraph.next g) n (Egraph.nodes g))
       (Map.set Egraph.id_encoding key (Egraph.next g) (Egraph.memo g))
-      (Pos.succ (Egraph.next g))).
+      (Pos.succ (Egraph.next g)) (Egraph.allocation_kernel g n)).
 Proof.
   reflexivity.
 Qed.
