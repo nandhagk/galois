@@ -192,6 +192,42 @@ Definition bool_encoding := codec_enc bool_codec.
 (** The unit encoding exposes the scalar codec's costed computation. *)
 Definition unit_encoding := codec_enc unit_codec.
 
+(** The positive scalar adapter returns its input without changing the code. *)
+Theorem positive_encoding_equation p : encode positive_encoding p = p.
+Proof.
+  apply of_pure_equation.
+Qed.
+
+(** The positive scalar adapter charges exactly one primitive invocation tick. *)
+Theorem positive_encoding_cost p : Cost.ticks (encode_c positive_encoding p) = 1%N.
+Proof.
+  apply of_pure_cost.
+Qed.
+
+(** The positive scalar adapter retains the input's exact binary width. *)
+Theorem positive_encoding_bits p : key_bits positive_encoding p = N.pos (Pos.size p).
+Proof.
+  unfold key_bits; rewrite positive_encoding_equation; reflexivity.
+Qed.
+
+(** The unit scalar adapter returns the unique one-bit code for every unit input. *)
+Theorem unit_encoding_equation x : encode unit_encoding x = 1%positive.
+Proof.
+  apply of_pure_equation.
+Qed.
+
+(** The unit scalar adapter charges exactly one primitive invocation tick. *)
+Theorem unit_encoding_cost x : Cost.ticks (encode_c unit_encoding x) = 1%N.
+Proof.
+  apply of_pure_cost.
+Qed.
+
+(** The unit scalar adapter emits exactly one binary digit. *)
+Theorem unit_encoding_bits x : key_bits unit_encoding x = 1%N.
+Proof.
+  unfold key_bits; rewrite unit_encoding_equation; reflexivity.
+Qed.
+
 (** The positive scalar encoding is injective. *)
 Theorem positive_encoding_laws : encoding_laws positive_encoding.
 Proof.
