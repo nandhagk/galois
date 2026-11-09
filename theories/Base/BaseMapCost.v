@@ -11,6 +11,12 @@ Import List.ListNotations.
 
 Module MapCost.
 
+(** Raw-map emptiness is a zero-tick root observation without a well-formedness premise. *)
+Theorem is_empty_cost {K V} (m : Map.t K V) : Cost.ticks (Map.is_empty_c m) = 0%N.
+Proof.
+  reflexivity.
+Qed.
+
 (** Physical nodes count branching and unary nodes independently of binding cardinality. *)
 Definition skeleton_nodes {K V} (m : Map.t K V) : N := TrieCost.skeleton_nodes m.
 

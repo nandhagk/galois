@@ -173,3 +173,45 @@ Example residual_credit_exhausted :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Symbolic clients observe the complete costed recurrence through the public equation. *)
+Example public_iterate_one {S R} (step : S -> Cost.t (S + R)) s :
+  iterate step 1 s = (Cost.step ;; step s).
+Proof.
+  rewrite iterate_equation; reflexivity.
+Qed.
+
+Example public_iterate_even {S R} (step : S -> Cost.t (S + R)) fuel s :
+  iterate step (xO fuel) s =
+    (Cost.step ;; continue_c (iterate step fuel s) (iterate step fuel)).
+Proof.
+  rewrite iterate_equation; reflexivity.
+Qed.
+
+Example public_iterate_odd {S R} (step : S -> Cost.t (S + R)) fuel s :
+  iterate step (xI fuel) s =
+    (Cost.step ;; continue_c (Cost.step ;; step s)
+      (fun next => continue_c (iterate step fuel next) (iterate step fuel))).
+Proof.
+  rewrite iterate_equation; reflexivity.
+Qed.
+
+(** An unselected continuation contributes no cost even when its callback price is unbounded. *)
+Example public_stopped_continuation {S R} (r : R) charge (next : S -> Cost.t (S + R)) :
+  Cost.ticks (continue_c (Cost.tick charge ;; Cost.ret (inr r)) next) = charge.
+Proof.
+  rewrite ticks_continue_c; autorewrite with galois_cost; lia.
+Qed.
+
+Example public_selected_continuation {S R} (s : S) charge (next : S -> Cost.t (S + R)) :
+  Cost.ticks (continue_c (Cost.tick charge ;; Cost.ret (inl s)) next) =
+    charge + Cost.ticks (next s).
+Proof.
+  rewrite ticks_continue_c; autorewrite with galois_cost; lia.
+Qed.
+
+Example public_even_early_stop :
+  Cost.ticks (iterate countdown_c 2 0%nat) = 5.
+Proof.
+  rewrite iterate_equation; vm_compute; reflexivity.
+Qed.

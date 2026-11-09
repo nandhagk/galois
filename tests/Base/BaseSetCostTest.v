@@ -70,3 +70,22 @@ Proof.
   rewrite N.mul_0_r, N.add_0_r, N.mul_1_r in Hcost; exact Hcost.
 Qed.
 
+Example symbolic_raw_set_emptiness {K} (s : FinSet.t K) :
+  Cost.ticks (FinSet.is_empty_c s) = 0%N.
+Proof.
+  apply FinSetCost.is_empty_cost.
+Qed.
+
+Example empty_set_root_control :
+  (FinSet.is_empty (@FinSet.empty positive),
+   Cost.ticks (FinSet.is_empty_c (@FinSet.empty positive))) = (true, 0%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example nonempty_set_root_control :
+  (FinSet.is_empty small_candidates, Cost.ticks (FinSet.is_empty_c small_candidates)) = (false, 0%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+

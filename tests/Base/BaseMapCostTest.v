@@ -44,3 +44,23 @@ Example map_union_disjoint_ticks :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Example symbolic_raw_map_emptiness {K V} (m : Map.t K V) :
+  Cost.ticks (Map.is_empty_c m) = 0%N.
+Proof.
+  apply MapCost.is_empty_cost.
+Qed.
+
+Example empty_map_root_control :
+  (Map.is_empty (@Map.empty positive nat),
+   Cost.ticks (Map.is_empty_c (@Map.empty positive nat))) = (true, 0%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example nonempty_map_root_control :
+  let m := Map.set positive_encoding 2%positive 7%nat Map.empty in
+  (Map.is_empty m, Cost.ticks (Map.is_empty_c m)) = (false, 0%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.

@@ -41,6 +41,21 @@ Fixpoint iterate {S R} (step : S -> Cost.t (S + R)) (fuel : positive) (s : S)
       (fun s' => continue_c (iterate step p s') (iterate step p))
   end.
 
+(** One public unfolding layer exposes the same costed binary blocks and selected continuations. *)
+Theorem iterate_equation {S R} (step : S -> Cost.t (S + R)) fuel s :
+  iterate step fuel s =
+  match fuel with
+  | xH => Cost.step ;; step s
+  | xO p =>
+    Cost.step ;; continue_c (iterate step p s) (iterate step p)
+  | xI p =>
+    Cost.step ;; continue_c (Cost.step ;; step s)
+      (fun next => continue_c (iterate step p next) (iterate step p))
+  end.
+Proof.
+  destruct fuel; reflexivity.
+Qed.
+
 (** Sequential run budgets add when the first block continues. *)
 Theorem runs_append {S R} (step : S -> Cost.t (S + R)) n m s result :
   runs step n s result ->

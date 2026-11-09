@@ -10,6 +10,12 @@ From Galois.Base Require Import BaseEncoding BaseMap BaseMapCost BaseSet BaseTri
 
 Module FinSetCost.
 
+(** Raw-set emptiness inherits the Map owner's zero-tick root-observation price. *)
+Theorem is_empty_cost {K} (s : FinSet.t K) : Cost.ticks (FinSet.is_empty_c s) = 0%N.
+Proof.
+  apply MapCost.is_empty_cost.
+Qed.
+
 (** Difference requires well-formedness and key widths only for its candidate operand. *)
 Theorem diff_numeric_cost {K} (E : encoding K) (candidates accumulated : FinSet.t K) w :
   FinSet.wf E candidates ->
