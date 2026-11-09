@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool ZArith NArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseIntervalSet.
+From Galois.Base Require Import BaseEncoding BaseEq BaseTrieCost BaseMap BaseMapCost BaseIntervalSet.
 Import Cost.Notations.
 Local Open Scope Z_scope.
 
@@ -158,6 +158,17 @@ Theorem footprint_add_member_same {T} (E : encoding T) (f : footprint T) m b :
 Proof.
   intro Hwf. rewrite footprint_add_lookup_same.
   apply IntervalSet.mem_add, footprint_lookup_wf, Hwf.
+Qed.
+
+(** One insertion increases any site's range count by at most one. *)
+Theorem footprint_add_lookup_length {T} (E : encoding T) (HE : encoding_laws E)
+    (f : footprint T) m site :
+  (length (footprint_lookup E site (footprint_add E f m)) <=
+    S (length (footprint_lookup E site m)))%nat.
+Proof.
+  destruct (eqb_spec E HE site (footprint_site f)) as [Heq|Hne].
+  - subst site. rewrite footprint_add_lookup_same. apply IntervalSet.add_length.
+  - rewrite footprint_add_lookup_other by assumption. lia.
 Qed.
 
 (** The insertion price includes the encoding twice and the visited interval ranges. *)
@@ -415,6 +426,16 @@ Definition footprint_inter_c {T} (m n : footprint_index T) :=
 Definition footprint_inter {T} (m n : footprint_index T) :=
   Cost.value (footprint_inter_c m n).
 
+(** Intersection charges both physical map skeletons and each interval callback. *)
+Theorem footprint_inter_cost {T} (m n : footprint_index T) :
+  (Cost.ticks (footprint_inter_c m n) <=
+    TrieCost.trie_k * (1 + MapCost.skeleton_nodes m + MapCost.skeleton_nodes n) +
+      TrieCost.combine_work
+        (fun a b => Cost.ticks (Map.combine_pair_c footprint_inter_payload_c a b)) m n)%N.
+Proof.
+  unfold footprint_inter_c. apply MapCost.combine_cost.
+Qed.
+
 (** Map combination exposes the payload's value at each site. *)
 Theorem footprint_inter_get {T} (E : encoding T) m n site :
   footprint_index_wf E m -> footprint_index_wf E n ->
@@ -535,4 +556,68 @@ Proof.
   pose proof (encode_cost_bound Henc (footprint_site f)) as Hencode.
   unfold key_bits in Hwidth, Hencode.
   nia.
+Qed.
+
+(** A range-count budget bounds every site's current list representation. *)
+Definition footprint_range_cap {T} (E : encoding T) (m : footprint_index T) (cap : N) : Prop :=
+  forall site, (N.of_nat (length (footprint_lookup E site m)) <= cap)%N.
+
+(** One insertion increases a uniform site budget by at most one. *)
+Theorem footprint_add_range_cap {T} (E : encoding T) (HE : encoding_laws E)
+    f m cap :
+  footprint_range_cap E m cap -> footprint_range_cap E (footprint_add E f m) (cap + 1)%N.
+Proof.
+  intros Hcap site.
+  pose proof (footprint_add_lookup_length E HE f m site) as Hlength.
+  pose proof (Hcap site) as Hprior.
+  assert (Hconverted :
+    (N.of_nat (length (footprint_lookup E site (footprint_add E f m))) <=
+      N.of_nat (S (length (footprint_lookup E site m))))%N) by lia.
+  rewrite Nat2N.inj_succ in Hconverted. lia.
+Qed.
+
+(** A uniform family of writes pays linear traversal and a quadratic range budget. *)
+Theorem footprints_add_family_cost {T} (E : encoding T) (HE : encoding_laws E) k
+    (Henc : encoding_cost_laws E k) fs m width cap :
+  (forall f, In f fs -> (key_bits E (footprint_site f) <= width)%N) ->
+  footprint_range_cap E m cap ->
+  (Cost.ticks (footprints_add_c E fs m) <=
+    N.of_nat (length fs) *
+      (1 + 2 * (1 + k * width + width) +
+        2 * (1 + cap + N.of_nat (length fs))))%N.
+Proof.
+  revert m cap. induction fs as [|f rest IH]; intros m cap Hwidth Hcap.
+  - cbn [footprints_add_c length]. rewrite Cost.ticks_ret. lia.
+  - cbn [footprints_add_c]. rewrite !Cost.ticks_bind, Cost.ticks_step.
+    fold (footprint_add E f m).
+    pose proof (footprint_add_family_cost E k Henc f m width cap
+      (Hwidth f (or_introl eq_refl)) (Hcap (footprint_site f))) as Hfirst.
+    pose proof (IH (footprint_add E f m) (cap + 1)%N
+      (fun g Hg => Hwidth g (or_intror Hg))
+      (footprint_add_range_cap E HE f m cap Hcap)) as Hrest.
+    cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** An empty index has a zero range-count budget. *)
+Theorem footprint_empty_range_cap {T} (E : encoding T) :
+  footprint_range_cap E (@Map.empty T IntervalSet.t) 0.
+Proof.
+  intro site.
+  change (N.of_nat (length (Map.find_or E IntervalSet.empty site Map.empty)) <= 0)%N.
+  rewrite Map.find_or_equation, Map.get_empty, IntervalSet.empty_equation. reflexivity.
+Qed.
+
+(** Normalization has a uniform quadratic range bound under primitive encoding duties. *)
+Theorem footprints_normalise_family_cost {T} (E : encoding T) (HE : encoding_laws E) k
+    (Henc : encoding_cost_laws E k) fs width :
+  (forall f, In f fs -> (key_bits E (footprint_site f) <= width)%N) ->
+  (Cost.ticks (footprints_normalise_c E fs) <=
+    N.of_nat (length fs) *
+      (1 + 2 * (1 + k * width + width) +
+        2 * (1 + N.of_nat (length fs))))%N.
+Proof.
+  intro Hwidth. unfold footprints_normalise_c.
+  pose proof (footprints_add_family_cost E HE k Henc fs Map.empty width 0
+    Hwidth (footprint_empty_range_cap E)) as Hcost.
+  lia.
 Qed.

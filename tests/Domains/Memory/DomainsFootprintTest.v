@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith NArith.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap.
+From Galois.Base Require Import BaseEncoding BaseTrieCost BaseMap BaseMapCost.
 From Galois.Domains.Memory Require Import DomainsFootprint.
 Import List.ListNotations.
 Local Open Scope Z_scope.
@@ -90,4 +90,25 @@ Example footprint_coverage_boundaries :
     (true, false, true).
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** A positive-site client inherits the normalization family bound at arbitrary widths. *)
+Example footprint_positive_normalise_bound (fs : list (footprint positive)) width :
+  (forall f, In f fs -> (key_bits positive_encoding (footprint_site f) <= width)%N) ->
+  (Cost.ticks (footprints_normalise_c positive_encoding fs) <=
+    N.of_nat (length fs) *
+      (1 + 2 * (1 + 1 * width + width) + 2 * (1 + N.of_nat (length fs))))%N.
+Proof.
+  apply (footprints_normalise_family_cost positive_encoding positive_encoding_laws 1
+    positive_encoding_cost_laws).
+Qed.
+
+(** An importing client retains both skeletons and interval callback work. *)
+Example footprint_inter_cost_client (m n : footprint_index positive) :
+  (Cost.ticks (footprint_inter_c m n) <=
+    TrieCost.trie_k * (1 + MapCost.skeleton_nodes m + MapCost.skeleton_nodes n) +
+      TrieCost.combine_work
+        (fun a b => Cost.ticks (Map.combine_pair_c footprint_inter_payload_c a b)) m n)%N.
+Proof.
+  apply footprint_inter_cost.
 Qed.
