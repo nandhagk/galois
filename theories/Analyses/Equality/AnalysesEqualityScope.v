@@ -71,6 +71,7 @@ Qed.
 (** A block visit extends its local symbols and threads the global interner and candidate. *)
 Record local_state : Type := Local {
   symbols : symbols_t;
+  leaders : Map.t V V;
   interned : Intern.t sig_key;
   candidate : part
 }.
@@ -78,20 +79,28 @@ Record local_state : Type := Local {
 (** Local states retain the actual Map, interner and partition certificates. *)
 Definition local_wf s : Prop :=
   symbols_wf (symbols s) /\
+  Map.wf EV (leaders s) /\
   Intern.wf sig_encoding (interned s) /\
   NumberingRefine.supported np (candidate s).
 
+(** Stable source leaders keep symbol keys independent of union-find root choices. *)
+Definition leader_class_c table x : Cost.t positive :=
+  let* leader := Map.find_or_c EV x x table in
+  Cost.step ;; encode_c EV leader.
+
 Definition visit_value_c forms s x : Cost.t local_state :=
-  let* key := signature_c np forms (class_c EV (candidate s)) x in
+  let* key := signature_c np forms (leader_class_c (leaders s)) x in
   let* allocated := Intern.intern_c sig_encoding key (interned s) in
   let* leader := Map.get_c positive_encoding (fst allocated) (symbols s) in
   match leader with
   | Some y =>
+    let* assignments := Map.set_c EV x y (leaders s) in
     let* joined := partition_union_c EV HV y x (candidate s) in
-    Cost.ret (Local (symbols s) (snd allocated) joined)
+    Cost.ret (Local (symbols s) assignments (snd allocated) joined)
   | None =>
     let* table := Map.set_c positive_encoding (fst allocated) x (symbols s) in
-    Cost.ret (Local table (snd allocated) (candidate s))
+    let* assignments := Map.set_c EV x x (leaders s) in
+    Cost.ret (Local table assignments (snd allocated) (candidate s))
   end.
 
 Definition visit_value forms s x := Cost.value (visit_value_c forms s x).
@@ -100,24 +109,25 @@ Definition visit_value forms s x := Cost.value (visit_value_c forms s x).
 Theorem visit_value_equation forms s x :
   visit_value forms s x =
   let allocated := Intern.intern sig_encoding
-    (signature np forms (class_c EV (candidate s)) x) (interned s) in
+    (signature np forms (leader_class_c (leaders s)) x) (interned s) in
   match Map.get positive_encoding (fst allocated) (symbols s) with
   | Some y =>
-    Local (symbols s) (snd allocated) (partition_union EV HV y x (candidate s))
+    Local (symbols s) (Map.set EV x y (leaders s))
+      (snd allocated) (partition_union EV HV y x (candidate s))
   | None =>
     Local (Map.set positive_encoding (fst allocated) x (symbols s))
-      (snd allocated) (candidate s)
+      (Map.set EV x x (leaders s)) (snd allocated) (candidate s)
   end.
 Proof.
   unfold visit_value, visit_value_c; autorewrite with galois_cost.
-  fold (signature np forms (class_c EV (candidate s)) x).
+  fold (signature np forms (leader_class_c (leaders s)) x).
   fold (Intern.intern sig_encoding
-    (signature np forms (class_c EV (candidate s)) x) (interned s)).
+    (signature np forms (leader_class_c (leaders s)) x) (interned s)).
   fold (@Map.get positive V positive_encoding
-    (fst (Intern.intern sig_encoding (signature np forms (class_c EV (candidate s)) x)
+    (fst (Intern.intern sig_encoding (signature np forms (leader_class_c (leaders s)) x)
       (interned s))) (symbols s)).
   destruct (Map.get positive_encoding
-    (fst (Intern.intern sig_encoding (signature np forms (class_c EV (candidate s)) x)
+    (fst (Intern.intern sig_encoding (signature np forms (leader_class_c (leaders s)) x)
       (interned s))) (symbols s)); reflexivity.
 Qed.
 
@@ -125,17 +135,17 @@ Qed.
 Theorem visit_value_wf forms s x :
   local_wf s -> In x values -> local_wf (visit_value forms s x).
 Proof.
-  intros [Hsymbols [Hintern Hcandidate]] Hx; rewrite visit_value_equation.
+  intros [Hsymbols [Hleaders [Hintern Hcandidate]]] Hx; rewrite visit_value_equation.
   set (allocated := Intern.intern sig_encoding
-    (signature np forms (class_c EV (candidate s)) x) (interned s)).
+    (signature np forms (leader_class_c (leaders s)) x) (interned s)).
   assert (Hallocated : Intern.wf sig_encoding (snd allocated)).
   { apply Intern.intern_wf; [apply sig_encoding_laws|exact Hintern]. }
   cbn zeta.
   destruct (Map.get positive_encoding (fst allocated) (symbols s)) as [y|] eqn:Hget.
-  - split; [exact Hsymbols|split; [exact Hallocated|]].
+  - split; [exact Hsymbols|split; [now apply Map.wf_set|split; [exact Hallocated|]]].
     apply union_supported; [exact Hcandidate| |exact Hx].
     exact (proj2 Hsymbols _ _ Hget).
-  - split; [apply symbols_set; assumption|split; assumption].
+  - split; [apply symbols_set; assumption|split; [now apply Map.wf_set|split; assumption]].
 Qed.
 
 Definition visit_block_c forms xs s : Cost.t local_state :=
@@ -166,24 +176,25 @@ Record environment : Type := Environment {
 Definition environment_wf env : Prop :=
   forall b x, In x (Index.find EN b (home_table env)) -> In x values.
 
-Definition block_c env id table dictionary p : Cost.t local_state :=
+Definition block_c env id table assignments dictionary p : Cost.t local_state :=
   let* name := Prepared.name_of_c (prepared_graph env) id in
   let* xs := match name with
     | None => Cost.ret []
     | Some b => Index.find_c EN b (home_table env)
     end in
-  visit_block_c (templates env) xs (Local table dictionary p).
+  visit_block_c (templates env) xs (Local table assignments dictionary p).
 
-Definition block env id table dictionary p := Cost.value (block_c env id table dictionary p).
+Definition block env id table assignments dictionary p :=
+  Cost.value (block_c env id table assignments dictionary p).
 
 (** Block processing reads its prepared home bucket and inherits the supplied parent scope. *)
-Theorem block_equation env id table dictionary p :
-  block env id table dictionary p =
+Theorem block_equation env id table assignments dictionary p :
+  block env id table assignments dictionary p =
   visit_block (templates env)
     (match Prepared.name_of (prepared_graph env) id with
      | None => []
      | Some b => Index.find EN b (home_table env)
-     end) (Local table dictionary p).
+     end) (Local table assignments dictionary p).
 Proof.
   unfold block, block_c; rewrite Cost.value_bind.
   fold (Prepared.name_of (prepared_graph env) id).
@@ -191,9 +202,9 @@ Proof.
 Qed.
 
 (** A prepared block preserves all local certificates and leader origins. *)
-Theorem block_wf env id table dictionary p :
-  environment_wf env -> local_wf (Local table dictionary p) ->
-  local_wf (block env id table dictionary p).
+Theorem block_wf env id table assignments dictionary p :
+  environment_wf env -> local_wf (Local table assignments dictionary p) ->
+  local_wf (block env id table assignments dictionary p).
 Proof.
   intros Henv Hlocal; rewrite block_equation; apply visit_block_wf; [|exact Hlocal].
   destruct (Prepared.name_of (prepared_graph env) id) as [b|]; [|constructor].
@@ -206,6 +217,7 @@ Definition task := (positive * symbols_t)%type.
 Record walk_state : Type := Walk {
   todo : list task;
   seen : FinSet.t positive;
+  assignments : Map.t V V;
   dictionary : Intern.t sig_key;
   partition : part
 }.
@@ -213,6 +225,7 @@ Record walk_state : Type := Walk {
 Definition walk_wf s : Prop :=
   Forall (fun entry => symbols_wf (snd entry)) (todo s) /\
   FinSet.wf positive_encoding (seen s) /\
+  Map.wf EV (assignments s) /\
   Intern.wf sig_encoding (dictionary s) /\
   NumberingRefine.supported np (partition s).
 
@@ -221,14 +234,16 @@ Definition walk_step_c env s : Cost.t (walk_state + walk_state) :=
   | [] => Cost.ret (inr s)
   | (id, table) :: rest =>
     let* visited := FinSet.mem_c positive_encoding id (seen s) in
-    if visited then Cost.ret (inl (Walk rest (seen s) (dictionary s) (partition s)))
+    if visited then Cost.ret (inl
+      (Walk rest (seen s) (assignments s) (dictionary s) (partition s)))
     else
-      let* finished := block_c env id table (dictionary s) (partition s) in
+      let* finished := block_c env id table (assignments s) (dictionary s) (partition s) in
       let* children := Index.find_c positive_encoding id (child_table env) in
       let* tasks := map_c (fun edge => Cost.ret (fst edge, symbols finished)) children in
       let* pending := app_c tasks rest in
       let* marked := FinSet.add_c positive_encoding id (seen s) in
-      Cost.ret (inl (Walk pending marked (interned finished) (candidate finished)))
+      Cost.ret (inl
+        (Walk pending marked (leaders finished) (interned finished) (candidate finished)))
   end.
 
 (** The traversal equation preserves child order and snapshots the same completed parent table. *)
@@ -238,14 +253,14 @@ Theorem walk_step_equation env s :
   | [] => inr s
   | (id, table) :: rest =>
     if FinSet.mem positive_encoding id (seen s)
-    then inl (Walk rest (seen s) (dictionary s) (partition s))
+    then inl (Walk rest (seen s) (assignments s) (dictionary s) (partition s))
     else
-      let finished := block env id table (dictionary s) (partition s) in
+      let finished := block env id table (assignments s) (dictionary s) (partition s) in
       inl (Walk
         (map (fun edge => (fst edge, symbols finished))
           (Index.find positive_encoding id (child_table env)) ++ rest)
         (FinSet.add positive_encoding id (seen s))
-        (interned finished) (candidate finished))
+        (leaders finished) (interned finished) (candidate finished))
   end.
 Proof.
   unfold walk_step_c; destruct (todo s) as [|[id table] rest]; [reflexivity|].
@@ -262,21 +277,26 @@ Theorem walk_step_wf env s :
   | inr final => walk_wf final
   end.
 Proof.
-  intros Henv [Htasks [Hseen [Hdictionary Hpartition]]]; rewrite walk_step_equation.
+  intros Henv [Htasks [Hseen [Hleaders [Hdictionary Hpartition]]]].
+  rewrite walk_step_equation.
   destruct (todo s) as [|[id table] rest] eqn:Htodo.
   - split; [rewrite Htodo; exact Htasks|].
-    split; [exact Hseen|split; [exact Hdictionary|exact Hpartition]].
+    split; [exact Hseen|split; [exact Hleaders|split; [exact Hdictionary|exact Hpartition]]].
   - inversion Htasks as [|entry tail Htable Hrest]; subst.
     destruct (FinSet.mem positive_encoding id (seen s)).
-    + split; [exact Hrest|split; [exact Hseen|split; [exact Hdictionary|exact Hpartition]]].
-    + assert (Hblock : local_wf (block env id table (dictionary s) (partition s))).
-      { apply block_wf; [exact Henv|split; [exact Htable|split; assumption]]. }
-      destruct Hblock as [Hsymbols [Hintern Hcandidate]].
+    + split; [exact Hrest|].
+      split; [exact Hseen|split; [exact Hleaders|split; [exact Hdictionary|exact Hpartition]]].
+    + assert (Hblock : local_wf
+        (block env id table (assignments s) (dictionary s) (partition s))).
+      { apply block_wf; [exact Henv|].
+        split; [exact Htable|split; [exact Hleaders|split; assumption]]. }
+      destruct Hblock as [Hsymbols [Hassignments [Hintern Hcandidate]]].
       split.
       * apply Forall_app; split; [|exact Hrest].
         apply Forall_forall; intros entry Hin; apply in_map_iff in Hin as [edge [<- _]].
         exact Hsymbols.
-      * split; [now apply FinSet.wf_add|split; assumption].
+      * split; [now apply FinSet.wf_add|].
+        split; [exact Hassignments|split; assumption].
 Qed.
 
 (** The generic run relation transports the proved traversal invariant through either outcome. *)
@@ -305,7 +325,7 @@ Proof.
 Qed.
 
 Definition initial roots : walk_state :=
-  Walk (map (fun id => (id, Map.empty)) roots) FinSet.empty Intern.empty discrete.
+  Walk (map (fun id => (id, Map.empty)) roots) FinSet.empty Map.empty Intern.empty discrete.
 
 (** Preparation establishes the complete traversal invariant for every root list. *)
 Theorem initial_wf roots : walk_wf (initial roots).
@@ -313,7 +333,8 @@ Proof.
   split.
   - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin as [id [<- _]].
     apply symbols_empty.
-  - split; [apply FinSet.wf_empty|split; [apply Intern.wf_empty|apply discrete_supported]].
+  - split; [apply FinSet.wf_empty|split; [apply Map.wf_empty|]].
+    split; [apply Intern.wf_empty|apply discrete_supported].
 Qed.
 
 Definition prepare_scope_c (tree : Dom.tree) : Cost.t (environment * list positive * positive) :=
@@ -361,7 +382,7 @@ Proof.
   pose proof (walk_runs_wf env _ _ _ Henv
     (iterate_value (walk_step_c env) fuel (initial roots)) (initial_wf roots)) as Hwf.
   unfold walk_c; destruct (Cost.value (iterate (walk_step_c env) fuel (initial roots)));
-    exact (proj2 (proj2 (proj2 Hwf))).
+    exact (proj2 (proj2 (proj2 (proj2 Hwf)))).
 Qed.
 
 (** The raw candidate retains traversal exhaustion instead of hiding skipped work. *)
