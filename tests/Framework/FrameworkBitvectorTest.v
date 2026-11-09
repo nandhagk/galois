@@ -4,14 +4,14 @@
     For example, a fact generated on only one diamond arm is unavailable at the join.
     Builds on: FrameworkBitvector and FrameworkDenseTest. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseSet.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeCore LatticeSet.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg.
 From Galois.Fixpoint Require Import FixpointSystem FixpointCheck FixpointAnalysis FixpointAnalyze.
-From Galois.Framework Require Import FrameworkDense FrameworkBitvector.
+From Galois.Framework Require Import FrameworkUtil FrameworkDense FrameworkBitvector.
 From Galois.Tests.Framework Require Import FrameworkDenseTest.
 Import List.ListNotations Cost.Notations.
 
@@ -342,3 +342,112 @@ Qed.
 
 End BitvectorConstruction.
 Import BitvectorConstruction.
+
+Module BitvectorPreparationCost.
+
+Definition priced_encoding {K} (E : encoding K) price : encoding K :=
+  Encoding (fun x => Cost.tick price ;; encode_c E x).
+
+(** Symbolic encoder prices retain the actual delegated encoder charge. *)
+Theorem priced_encoding_cost {K} (E : encoding K) price x :
+  Cost.ticks (encode_c (priced_encoding E price) x) =
+    (price + Cost.ticks (encode_c E x))%N.
+Proof.
+  unfold priced_encoding; cbn [encode_c].
+  rewrite Cost.ticks_bind, Cost.ticks_tick; reflexivity.
+Qed.
+
+Definition priced_problem es :=
+  Bitvector.Make
+    (Cfg.Make (Graph.Make [0; 0] [0]
+      (fun _ => Cost.tick 5 ;; Cost.ret es)
+      (fun _ => Cost.ret 0) (fun _ => Cost.ret 0))
+      (priced_encoding nat_encoding 3) (priced_encoding nat_encoding 7))
+    (priced_encoding nat_encoding 11) [0] Forward
+    (fun _ => Cost.tick 13 ;; Cost.ret [0; 0])
+    (fun _ => Cost.tick 17 ;; Cost.ret [])
+    (fun _ => Cost.tick 19 ;; Cost.ret None).
+
+Definition none_boundary price :=
+  Bitvector.Make singleton nat_encoding [] Forward
+    (fun _ => Cost.ret []) (fun _ => Cost.ret [])
+    (fun _ => Cost.tick price ;; Cost.ret None).
+
+Definition some_boundary price :=
+  Bitvector.Make singleton nat_encoding [7] Forward
+    (fun _ => Cost.ret []) (fun _ => Cost.ret [])
+    (fun _ => Cost.tick price ;; Cost.ret (Some [7; 7])).
+
+(** An absent boundary retains its symbolic reader price and performs no set construction. *)
+Theorem absent_boundary_symbolic price :
+  Cost.ticks (Bitvector.boundary_rows_c (none_boundary price)) = (2 + price)%N.
+Proof.
+  assert (Hseeds : Bitvector.seeds (none_boundary price) = [0]) by reflexivity.
+  assert (Hboundary : Bitvector.boundary (none_boundary price) 0 = None) by reflexivity.
+  rewrite Bitvector.boundary_rows_cost, Hseeds; cbn [fold_right].
+  rewrite Hboundary; cbn [none_boundary Bitvector.boundary_c].
+  rewrite Cost.ticks_bind, Cost.ticks_tick, Cost.ticks_ret; lia.
+Qed.
+
+(** A present boundary retains the same symbolic reader and its full duplicate-list conversion. *)
+Theorem present_boundary_symbolic price :
+  Cost.ticks (Bitvector.boundary_rows_c (some_boundary price)) =
+    (2 + price + Cost.ticks (set_of_list_c nat_encoding [7%nat; 7%nat]))%N.
+Proof.
+  assert (Hseeds : Bitvector.seeds (some_boundary price) = [0]) by reflexivity.
+  assert (Hboundary : Bitvector.boundary (some_boundary price) 0 = Some [7; 7]) by reflexivity.
+  rewrite Bitvector.boundary_rows_cost, Hseeds; cbn [fold_right].
+  rewrite Hboundary; cbn [some_boundary Bitvector.boundary_c Bitvector.fact_enc].
+  rewrite Cost.ticks_bind, Cost.ticks_tick, Cost.ticks_ret; lia.
+Qed.
+
+Example duplicate_absent_boundaries_pay_both_readers :
+  Cost.ticks (Bitvector.boundary_rows_c (priced_problem [0])) = 42%N.
+Proof.
+  rewrite Bitvector.boundary_rows_cost; vm_compute; reflexivity.
+Qed.
+
+Example duplicate_emission_retains_reader_and_pair_work :
+  Bitvector.occurrences (priced_problem [0; 0]) [0; 0]
+    (Bitvector.gen_c (priced_problem [0; 0])) = [(0, 0); (0, 0); (0, 0); (0, 0)].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example duplicate_nonunit_input_costs_more :
+  N.ltb (Cost.ticks (Bitvector.prepare_c (priced_problem [0])))
+    (Cost.ticks (Bitvector.prepare_c (priced_problem [0; 0]))) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example present_boundary_retains_duplicate_work :
+  N.ltb (Cost.ticks (Bitvector.boundary_rows_c (none_boundary 19)))
+    (Cost.ticks (Bitvector.boundary_rows_c (some_boundary 19))) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example empty_preparation_retains_no_hidden_work :
+  Cost.ticks (Bitvector.prepare_c empty_problem) = 0%N.
+Proof.
+  rewrite Bitvector.prepare_cost, !Bitvector.prepare_sets_cost, Bitvector.boundary_rows_cost.
+  vm_compute; reflexivity.
+Qed.
+
+(** An importing caller can compose the exact graph, edge-index and boundary-map charges. *)
+Theorem preparation_cost_client {N E U} (P : Bitvector.t N E U) :
+  Cost.ticks (Bitvector.prepare_c P) =
+    (Cost.ticks (fw_edges_c (Bitvector.cfg P)) +
+      Cost.ticks (Bitvector.prepare_sets_c P (Cfg.edges (Bitvector.cfg P)) (Bitvector.gen_c P)) +
+      Cost.ticks (Bitvector.prepare_sets_c P (Cfg.edges (Bitvector.cfg P)) (Bitvector.kill_c P)) +
+      Cost.ticks (Bitvector.boundary_rows_c P) +
+      Cost.ticks (Map.of_list_c (Cfg.node_enc (Bitvector.cfg P))
+        (map (fun n => (n, option_map (set_of_list (Bitvector.fact_enc P))
+          (Bitvector.boundary P n))) (Bitvector.seeds P))))%N.
+Proof.
+  apply Bitvector.prepare_cost.
+Qed.
+
+End BitvectorPreparationCost.
+Import BitvectorPreparationCost.
