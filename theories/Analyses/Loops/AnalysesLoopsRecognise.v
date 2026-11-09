@@ -197,7 +197,8 @@ Proof.
     + exact (Hreference k found Hfound).
 Qed.
 
-Local Lemma memo_result_forget_side {K R S} E reference P key
+(** Dropping the side-state obligation retains the result and both table invariants. *)
+Theorem memo_result_forget_side {K R S} E reference P key
     (result : memo_result K R S) :
   memo_result_valid E reference P key result ->
   let '((value, table), _) := result in
@@ -404,7 +405,8 @@ Definition list_key_encoding {A} (EA : encoding A) : encoding (list A) :=
     Cost.map Node (map_c (fun x =>
       Cost.step ;; Cost.map Atom (encode_c EA x)) xs)).
 
-Local Lemma list_key_encoding_laws {A} (EA : encoding A) :
+(** Lists of lawful encoded keys retain their order and multiplicity in serialized keys. *)
+Theorem list_key_encoding_laws {A} (EA : encoding A) :
   encoding_laws EA -> encoding_laws (list_key_encoding EA).
 Proof.
   intro HE; apply tree_encoding_injective; intros xs ys Hcode.
@@ -424,7 +426,8 @@ Definition context_key V A := (scev_expr V * list (V * A))%type.
 Definition context_encoding {V A} (EV : encoding V) (EA : encoding A) :=
   pair_encoding (scev_expr_encoding EV) (list_key_encoding (pair_encoding EV EA)).
 
-Local Lemma context_encoding_laws {V A} (EV : encoding V) (EA : encoding A) :
+(** Context keys are injective in both their source tree and projected observations. *)
+Theorem context_encoding_laws {V A} (EV : encoding V) (EA : encoding A) :
   encoding_laws EV -> encoding_laws EA -> encoding_laws (context_encoding EV EA).
 Proof.
   intros HE HA; apply pair_encoding_laws.
@@ -451,7 +454,8 @@ Fixpoint expression_phis_c {V} (e : scev_expr V) : Cost.t (list V) :=
   | _ => Cost.ret []
   end.
 
-Local Lemma expression_phis_value {V} (e : scev_expr V) :
+(** Charged support collection returns every phi occurrence in source order. *)
+Theorem expression_phis_value {V} (e : scev_expr V) :
   Cost.value (expression_phis_c e) = scev_expression_phis e.
 Proof.
   induction e; cbn [expression_phis_c scev_expression_phis];
@@ -466,7 +470,8 @@ Definition context_prepare_c {V A} (EV : encoding V) (EA : encoding A)
     Cost.map (fun value => (x, value)) (observe_c x)) phis in
   PreparedKey.prepare_c (context_encoding EV EA) (e, entries).
 
-Local Lemma context_prepare_value {V A} (EV : encoding V) (EA : encoding A)
+(** Context preparation stores the source and the current observations at all its phi leaves. *)
+Theorem context_prepare_value {V A} (EV : encoding V) (EA : encoding A)
     (observe_c : V -> Cost.t A) e :
   Cost.value (context_prepare_c EV EA observe_c e) =
     PreparedKey.prepare (context_encoding EV EA)
@@ -476,7 +481,8 @@ Proof.
   rewrite expression_phis_value; reflexivity.
 Qed.
 
-Local Lemma context_lookup_project {V A} (EV : encoding V) (HE : encoding_laws EV)
+(** Projected contexts reproduce each observed value on their named support. *)
+Theorem context_lookup_project {V A} (EV : encoding V) (HE : encoding_laws EV)
     (default : A) (observe : V -> A) xs x :
   In x xs ->
   context_lookup EV default (List.map (fun y => (y, observe y)) xs) x = observe x.
@@ -727,7 +733,8 @@ Definition binding_tree_c {V} (EV : encoding V) (b : scev_binding V) : Cost.t co
 
 Definition binding_encoding {V} (EV : encoding V) := tree_encoding (binding_tree_c EV).
 
-Local Lemma binding_encoding_laws {V} (EV : encoding V) :
+(** Binding keys distinguish every source identity, update shape and operand position. *)
+Theorem binding_encoding_laws {V} (EV : encoding V) :
   encoding_laws EV -> encoding_laws (binding_encoding EV).
 Proof.
   intro HE; apply tree_encoding_injective.
