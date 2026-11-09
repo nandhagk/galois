@@ -4,7 +4,7 @@
     For example, flattening two singleton callback results copies both cells.
     Builds on: CostList, BaseCode and ProgramCfg. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseCode.
 From Galois.Graph Require Import GraphModel.
@@ -37,6 +37,44 @@ Theorem fw_edges_value {N E} (c : Cfg.t N E) :
   Cost.value (fw_edges_c c) = Cfg.edges c.
 Proof.
   unfold fw_edges_c; rewrite fw_flat_map_value; reflexivity.
+Qed.
+
+(** Flattening charges each input cell, each callback and each copied output occurrence. *)
+Theorem fw_flat_map_cost {A B} (f : A -> Cost.t (list B)) xs :
+  Cost.ticks (fw_flat_map_c f xs) =
+    fold_right (fun x total =>
+      (2 + Cost.ticks (f x) + N.of_nat (length (Cost.value (f x))) + total)%N) 0%N xs.
+Proof.
+  unfold fw_flat_map_c.
+  rewrite (ticks_fold_right_c_sum _
+    (fun x => (1 + Cost.ticks (f x) + N.of_nat (length (Cost.value (f x))))%N)).
+  - induction xs; cbn [fold_right]; nia.
+  - intros x rest; rewrite !Cost.ticks_bind, ticks_app_c, Cost.ticks_step; lia.
+Qed.
+
+(** Primitive callback budgets bound flattening while retaining duplicate output occurrences. *)
+Theorem fw_flat_map_cost_bound {A B} (f : A -> Cost.t (list B)) xs price :
+  (forall x, In x xs -> (Cost.ticks (f x) <= price)%N) ->
+  (Cost.ticks (fw_flat_map_c f xs) <=
+    N.of_nat (length xs) * (2 + price) +
+      N.of_nat (length (flat_map (fun x => Cost.value (f x)) xs)))%N.
+Proof.
+  rewrite fw_flat_map_cost.
+  induction xs as [|x rest IH]; intro Hprice; [reflexivity|].
+  pose proof (Hprice x (or_introl eq_refl)) as Hhead.
+  specialize (IH (fun y Hy => Hprice y (or_intror Hy))).
+  cbn [fold_right flat_map length]; rewrite length_app, Nat2N.inj_add, Nat2N.inj_succ; nia.
+Qed.
+
+(** Edge enumeration charges all outgoing readers, node visits and copied edge occurrences. *)
+Theorem fw_edges_cost {N E} (c : Cfg.t N E) price :
+  (forall n, In n (Graph.nodes (Cfg.graph c)) ->
+    (Cost.ticks (Graph.out_c (Cfg.graph c) n) <= price)%N) ->
+  (Cost.ticks (fw_edges_c c) <=
+    N.of_nat (length (Graph.nodes (Cfg.graph c))) * (2 + price) +
+      N.of_nat (length (Cfg.edges c)))%N.
+Proof.
+  unfold fw_edges_c; apply fw_flat_map_cost_bound.
 Qed.
 
 (** Indexed selection charges every traversed list cell. *)
