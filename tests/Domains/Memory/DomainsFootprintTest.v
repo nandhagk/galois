@@ -61,3 +61,33 @@ Example footprint_remove_ticks_positive :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Normalization merges adjacent writes while retaining another site. *)
+Example footprint_normalise_sites :
+  let m := footprints_normalise footprint_test_encoding
+    [Footprint 1%positive 2 4; Footprint 2%positive 8 10;
+     Footprint 1%positive 0 2] in
+  (footprint_lookup footprint_test_encoding 1%positive m,
+   footprint_lookup footprint_test_encoding 2%positive m) = ([(0, 4)], [(8, 10)]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The must intersection retains only bytes written on both paths. *)
+Example footprint_inter_keeps_overlap :
+  let left := footprints_normalise footprint_test_encoding [Footprint 1%positive 0 6] in
+  let right := footprints_normalise footprint_test_encoding [Footprint 1%positive 2 8] in
+  footprint_lookup footprint_test_encoding 1%positive (footprint_inter left right) = [(2, 6)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Coverage rejects gaps and accepts empty queries. *)
+Example footprint_coverage_boundaries :
+  (footprint_covers footprint_test_encoding footprint_test_index (Footprint 1%positive 1 4),
+   footprint_covers footprint_test_encoding footprint_test_index (Footprint 1%positive 1 6),
+   footprint_covers footprint_test_encoding Map.empty (Footprint 1%positive 7 7)) =
+    (true, false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
