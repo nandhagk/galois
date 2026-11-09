@@ -4,12 +4,12 @@
     For example, an unlisted pure nullary operation is recognized after one round.
     Builds on: AnalysesEqualityLoopReference and AnalysesEqualityProblemTest. *)
 
-From Stdlib Require Import List Bool Arith NArith.
+From Stdlib Require Import List Bool Arith Lia NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseIndex.
 From Galois.Program Require Import ProgramSsa.
 From Galois.Analyses.Equality Require Import AnalysesEqualityProblem
-  AnalysesEqualityLoopReference AnalysesEqualityLoopWorklist.
+  AnalysesEqualityLoopReference AnalysesEqualityLoopWorklist AnalysesEqualityLoopCorrect.
 From Galois.Tests.Analyses.Equality Require Import AnalysesEqualityProblemTest.
 Import List.ListNotations.
 
@@ -150,4 +150,29 @@ Proof.
     countdown_nodes countdown_rules
     (FinSet.wf_of_list nat_encoding [0; 1; 2; 3; 4; 5])
     (Map.wf_of_list nat_encoding [(0, []); (1, [0; 0]); (2, [1]); (3, [4]); (4, [3])])).
+Qed.
+
+Local Lemma countdown_rules_supported :
+  NumberingLoopCorrect.rules_supported nat_encoding countdown_nodes countdown_rules.
+Proof.
+  intros x deps Hget.
+  pose proof (proj2 (Map.elements_spec nat_encoding nat_encoding_laws x deps countdown_rules
+    (Map.wf_of_list nat_encoding [(0, []); (1, [0; 0]); (2, [1]); (3, [4]); (4, [3])])) Hget)
+    as Hin.
+  vm_compute in Hin.
+  destruct Hin as [Hpair|[Hpair|[Hpair|[Hpair|[Hpair|Hfalse]]]]]; try contradiction;
+    injection Hpair as <- <-; vm_compute; reflexivity.
+Qed.
+
+Example universal_countdown_reference_agreement :
+  forall x,
+    FinSet.mem nat_encoding x (NumberingLoopWorklist.marked countdown_final) =
+      NumberingLoopWorklist.reference nat_encoding countdown_rules 6 x.
+Proof.
+  apply (NumberingLoopCorrect.solve_agrees nat_encoding nat_encoding_laws
+    countdown_nodes countdown_rules 6).
+  - exact (FinSet.wf_of_list nat_encoding [0; 1; 2; 3; 4; 5]).
+  - exact (Map.wf_of_list nat_encoding [(0, []); (1, [0; 0]); (2, [1]); (3, [4]); (4, [3])]).
+  - exact countdown_rules_supported.
+  - vm_compute; lia.
 Qed.
