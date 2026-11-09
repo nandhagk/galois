@@ -1121,7 +1121,8 @@ Proof.
   reflexivity.
 Qed.
 
-Local Lemma prepare_ranks_mem {V} (EV : encoding V) (HV : encoding_laws EV) bs :
+(** Rank membership names exactly a phi in the original binding inventory. *)
+Theorem prepare_ranks_mem {V} (EV : encoding V) (HV : encoding_laws EV) bs :
   forall start x, Map.mem EV x (ranks (prepare_ranks EV start bs)) = true <->
     In x (List.map sb_phi bs).
 Proof.
@@ -1270,6 +1271,177 @@ Proof.
   rewrite prepare_index_equation at 1 2; cbn [phi_index].
   rewrite prepare_ranks_distinct by exact HV.
   rewrite prepare_ranks_final; reflexivity.
+Qed.
+
+(** A prepared value lookup retains membership and both exact source-reader observations. *)
+Theorem prepared_value_source {N E V K G} (lv : loop_view N E V K G)
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) inventory p x data :
+  Map.get (Ssa.val_enc (lssa lv)) x (indexed_values (prepare_index lv inventory p)) = Some data ->
+  In x inventory /\ data = (Ssa.home (lssa lv) x, Ssa.def (lssa lv) x).
+Proof.
+  rewrite prepare_index_equation; cbn [indexed_values].
+  rewrite scev_inventory_index_get by exact HV.
+  destruct (existsb _ inventory) eqn:Hlisted; [|discriminate].
+  intro Heq; injection Heq as <-; split; [|reflexivity].
+  apply existsb_exists in Hlisted; destruct Hlisted as [y [Hin Hequal]].
+  apply eqb_true_iff in Hequal; [subst y; exact Hin|exact HV].
+Qed.
+
+(** Positional argument lookup gives the original incoming value at every valid list position. *)
+Theorem argument_index_get {V} (xs : list V) :
+  forall start i, Map.get nat_encoding (start + i)%nat (argument_index start xs) = nth_error xs i.
+Proof.
+  induction xs as [|x rest IH]; intros start [|i].
+  - apply Map.get_empty.
+  - apply Map.get_empty.
+  - change (Map.get nat_encoding (start + 0)%nat (Map.set nat_encoding start x
+      (argument_index (S start) rest)) = Some x).
+    rewrite Nat.add_0_r, Map.get_set_raw.
+    destruct (eqb_spec nat_encoding nat_encoding_laws start start); congruence.
+  - change (Map.get nat_encoding (start + S i)%nat (Map.set nat_encoding start x
+      (argument_index (S start) rest)) = nth_error rest i).
+    rewrite Map.get_set_raw.
+    destruct (eqb_spec nat_encoding nat_encoding_laws (start + S i)%nat start); [lia|].
+    replace (start + S i)%nat with (S start + i)%nat by lia; apply IH.
+Qed.
+
+Local Lemma prepare_ranks_get {V} (EV : encoding V) (HV : encoding_laws EV) bs :
+  forall start i b, NoDup (List.map sb_phi bs) -> nth_error bs i = Some b ->
+  Map.get EV (sb_phi b) (ranks (prepare_ranks EV start bs)) = Some (start + i)%nat.
+Proof.
+  induction bs as [|head rest IH]; intros start [|i] b Hdistinct Hnth; try discriminate.
+  - injection Hnth as <-; rewrite prepare_ranks_equation; cbn [ranks].
+    rewrite Map.get_set_raw, Nat.add_0_r.
+    destruct (eqb_spec EV HV (sb_phi head) (sb_phi head)); congruence.
+  - inversion Hdistinct as [|phi phis Hfresh Htail]; subst.
+    rewrite prepare_ranks_equation; cbn [ranks]; rewrite Map.get_set_raw.
+    destruct (eqb_spec EV HV (sb_phi b) (sb_phi head)) as [Hequal|Hdifferent].
+    + exfalso; apply Hfresh; rewrite <- Hequal; apply in_map.
+      eapply nth_error_In; exact Hnth.
+    + replace (start + S i)%nat with (S start + i)%nat by lia; apply IH; assumption.
+Qed.
+
+Local Lemma expression_prior {N V K C} (EV : encoding V) body_c
+    (values : Map.t V (N * definition N V K))
+    (so : scev_ops K C) before e :
+  expression_conditions EV body_c values so before e ->
+  forall x, In x (scev_expression_phis e) -> before x = true.
+Proof.
+  intro Hconditions; induction Hconditions; intros y Hin; cbn [scev_expression_phis] in Hin;
+    try contradiction.
+  - destruct Hin as [Hequal|Hbad]; [subst y; assumption|contradiction].
+  - apply in_app_iff in Hin; destruct Hin; [apply IHHconditions1|apply IHHconditions2]; assumption.
+  - apply in_app_iff in Hin; destruct Hin; [apply IHHconditions1|apply IHHconditions2]; assumption.
+Qed.
+
+Local Lemma binding_prior {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
+    ix before b :
+  binding_conditions lv so ix before b ->
+  forall x, In x (scev_binding_phis b) -> before x = true.
+Proof.
+  intros [_ [_ Hexpr]]; destruct b as [phi base update kind [e|] first]; destruct kind;
+    cbn [sb_kind sb_other scev_binding_phis] in *; try contradiction.
+  all: try (intros x Hfalse; contradiction).
+  all: exact (expression_prior (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix)
+    so before e Hexpr).
+Qed.
+
+(** Checked source ranks exclude every own or later phi from each compiled binding's support. *)
+Theorem checked_future_independent {N E V K G C} (lv : loop_view N E V K G)
+    (HN : encoding_laws (Cfg.node_enc (Ssa.cfg (lssa lv))))
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) inventory p :
+  scev_plan_check lv so inventory p = true -> future_independent (sp_bindings p).
+Proof.
+  rewrite scev_plan_check_correct by assumption.
+  intros [_ [Hdistinct [_ [Hbindings _]]]].
+  assert (Hsuffix : forall suffix prefix, sp_bindings p = prefix ++ suffix ->
+    bindings_conditions lv so (prepare_index lv inventory p) (length prefix) suffix ->
+    future_independent suffix).
+  { intro suffix; induction suffix as [|b rest IH]; intros prefix Hfull Hconditions;
+      [exact I|].
+    destruct Hconditions as [Hbinding Hrest]; split.
+    - intros x Hx Hlate.
+      pose proof (binding_prior lv so _ _ b Hbinding x Hx) as Hprior.
+      apply in_map_iff in Hlate; destruct Hlate as [later [Hphi Hin]].
+      apply In_nth_error in Hin; destruct Hin as [i Hnth].
+      assert (Hposition : nth_error (sp_bindings p) (length prefix + i) = Some later).
+      { rewrite Hfull, nth_error_app2 by lia; replace (length prefix + i - length prefix)%nat
+          with i by lia; exact Hnth. }
+      pose proof (prepare_ranks_get (Ssa.val_enc (lssa lv)) HV _ O _ _ Hdistinct Hposition)
+        as Hrank.
+      cbn [Nat.add] in Hrank; rewrite Hphi in Hrank.
+      unfold phi_before, phi_before_c in Hprior; autorewrite with galois_cost in Hprior.
+      fold (Map.get (Ssa.val_enc (lssa lv)) x (ranks (phi_index
+        (prepare_index lv inventory p)))) in Hprior.
+      rewrite prepare_index_equation in Hprior; cbn [phi_index] in Hprior.
+      rewrite Hrank in Hprior; apply Nat.ltb_lt in Hprior; lia.
+    - apply (IH (prefix ++ [b])).
+      + rewrite Hfull, <- app_assoc; reflexivity.
+      + rewrite length_app; cbn [length]; replace (length prefix + 1)%nat
+          with (S (length prefix)) by lia; exact Hrest. }
+  apply (Hsuffix (sp_bindings p) []); [reflexivity|exact Hbindings].
+Qed.
+
+(** Indexed expression conditions imply the corresponding actual source-definition conditions. *)
+Theorem prepared_expression_source {N E V K G C} (lv : loop_view N E V K G)
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) inventory p before e :
+  expression_conditions (Ssa.val_enc (lssa lv)) (lbody_c lv)
+    (indexed_values (prepare_index lv inventory p)) so before e ->
+  source_expression (lssa lv) (lbody lv) so (fun x => before x = true) e.
+Proof.
+  intro Hconditions.
+  induction Hconditions as [x n d Hget Houtside|x n d Hget Hbefore|
+    x a b Hshape Ha IHa Hb IHb|x a b Hshape Ha IHa Hb IHb|
+    x z n o Hget Hinside Hliteral].
+  - destruct (prepared_value_source lv HV inventory p x _ Hget) as [_ Hsource].
+    inversion Hsource; subst; constructor; exact Houtside.
+  - constructor; exact Hbefore.
+  - destruct Hshape as [n [o [Hget [Hinside Hflag]]]].
+    destruct (prepared_value_source lv HV inventory p x _ Hget) as [_ Hsource].
+    injection Hsource as Hhome Hdef.
+    eapply SourceAdd; [rewrite <- Hhome; exact Hinside|symmetry; exact Hdef|exact Hflag|assumption|
+      assumption].
+  - destruct Hshape as [n [o [Hget [Hinside Hflag]]]].
+    destruct (prepared_value_source lv HV inventory p x _ Hget) as [_ Hsource].
+    injection Hsource as Hhome Hdef.
+    eapply SourceMul; [rewrite <- Hhome; exact Hinside|symmetry; exact Hdef|exact Hflag|assumption|
+      assumption].
+  - destruct (prepared_value_source lv HV inventory p x _ Hget) as [_ Hsource].
+    injection Hsource as Hhome Hdef.
+    eapply SourceConst; [rewrite <- Hhome; exact Hinside|symmetry; exact Hdef|exact Hliteral].
+Qed.
+
+(** Header conditions retain the actual parameter home and both original incoming argument positions. *)
+Theorem prepared_header_source {N E V K G} (lv : loop_view N E V K G)
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) inventory p b :
+  header_conditions lv (prepare_index lv inventory p) b ->
+  Ssa.home (lssa lv) (sb_phi b) = lheader lv /\
+    lbody lv (Ssa.home (lssa lv) (sb_base b)) = false /\
+    lbody lv (Ssa.home (lssa lv) (sb_update_value b)) = true /\
+    exists i, Ssa.def (lssa lv) (sb_phi b) = Param (lheader lv) i /\
+      nth_error (Ssa.args (lssa lv) (lentry lv)) i = Some (sb_base b) /\
+      nth_error (Ssa.args (lssa lv) (lback lv)) i = Some (sb_update_value b).
+Proof.
+  intro Hconditions; unfold header_conditions in Hconditions.
+  destruct (Map.get _ (sb_phi b) _) as [[n d]|] eqn:Hphi; [|contradiction].
+  destruct (Map.get _ (sb_base b) _) as [[base_n base_d]|] eqn:Hbase;
+    [|destruct d; contradiction].
+  destruct (Map.get _ (sb_update_value b) _) as [[update_n update_d]|] eqn:Hupdate;
+    [|destruct d; contradiction].
+  destruct d as [o args|header i|]; try contradiction.
+  destruct Hconditions as [Hhome [Hheader [Houtside [Hinside [Hentry Hback]]]]].
+  destruct (prepared_value_source lv HV inventory p _ _ Hphi) as [_ Hphi_source].
+  destruct (prepared_value_source lv HV inventory p _ _ Hbase) as [_ Hbase_source].
+  destruct (prepared_value_source lv HV inventory p _ _ Hupdate) as [_ Hupdate_source].
+  injection Hphi_source as Hphi_home Hphi_def.
+  injection Hbase_source as Hbase_home Hbase_def.
+  injection Hupdate_source as Hupdate_home Hupdate_def.
+  rewrite prepare_index_equation in Hentry, Hback; cbn [entry_args back_args] in Hentry, Hback.
+  rewrite (argument_index_get _ O i) in Hentry.
+  rewrite (argument_index_get _ O i) in Hback.
+  split; [congruence|]; split; [rewrite <- Hbase_home; exact Houtside|].
+  split; [rewrite <- Hupdate_home; exact Hinside|].
+  exists i; split; [rewrite <- Hheader; symmetry; exact Hphi_def|auto].
 Qed.
 
 End PlanCheck.

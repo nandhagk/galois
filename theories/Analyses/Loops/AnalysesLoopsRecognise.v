@@ -7,6 +7,7 @@
 From Stdlib Require Import List Bool Arith NArith ZArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseCode BaseEq BaseMap BaseSet BaseMemo BasePrepared.
+From Galois.Bits Require Import BitsWord.
 From Galois.Program Require Import ProgramCfg ProgramSsa.
 From Galois.Analyses.Loops Require Import AnalysesLoopsChrec AnalysesLoopsIdioms.
 Import List.ListNotations Cost.Notations Chrec.
@@ -65,6 +66,17 @@ Definition to_Z {K C} (so : scev_ops K C) c := Cost.value (to_Z_c so c).
 Definition add_op {K C} (so : scev_ops K C) o := Cost.value (add_op_c so o).
 Definition mul_op {K C} (so : scev_ops K C) o := Cost.value (mul_op_c so o).
 Definition const_op {K C} (so : scev_ops K C) o := Cost.value (const_op_c so o).
+
+(** Recognized primitive operations agree with canonical wrapped observations of actual results. *)
+Record scev_ops_laws {K C} (so : scev_ops K C) (op_eval : K -> list C -> option C) : Prop := {
+  observation_canonical : forall c, to_Z so c = wrap (width_of so) (to_Z so c);
+  addition_sound : forall o a b r, add_op so o = true -> op_eval o [a; b] = Some r ->
+    to_Z so r = wrap (width_of so) (to_Z so a + to_Z so b);
+  multiplication_sound : forall o a b r, mul_op so o = true -> op_eval o [a; b] = Some r ->
+    to_Z so r = wrap (width_of so) (to_Z so a * to_Z so b);
+  literal_sound : forall o z r, const_op so o = Some z -> op_eval o [] = Some r ->
+    to_Z so r = wrap (width_of so) z
+}.
 
 (** Pure client primitives have an explicit one-tick lifting boundary. *)
 Definition ops_of_pure {K C} w (observe : C -> Z) add mul literal : scev_ops K C :=
@@ -903,6 +915,69 @@ Fixpoint scev_translate_bindings {V} (EV : encoding V) (bs : list (scev_binding 
     end
   end.
 
+(** Future independence forbids each binding from reading its own phi or a later phi. *)
+Fixpoint future_independent {V} (bs : list (scev_binding V)) : Prop :=
+  match bs with
+  | [] => True
+  | b :: rest =>
+    (forall x, In x (scev_binding_phis b) -> ~ In x (List.map sb_phi (b :: rest))) /\
+      future_independent rest
+  end.
+
+Local Lemma translate_binding_support {V} (a b : V -> option (Chrec.t V)) binding :
+  (forall x, In x (scev_binding_phis binding) -> a x = b x) ->
+  scev_translate_binding a binding = scev_translate_binding b binding.
+Proof.
+  intro Hagree; destruct binding as [phi base update kind [e|] first]; destruct kind;
+    cbn [scev_translate_binding sb_kind sb_other sb_base]; try reflexivity.
+  all: rewrite (scev_translate_expr_support a b e); [reflexivity|].
+  all: intros x Hin; apply Hagree; exact Hin.
+Qed.
+
+Local Lemma translated_suffix_preserves {V} (EV : encoding V) (HV : encoding_laws EV) bs :
+  forall before after, scev_translate_bindings EV bs before = Some after ->
+  forall x, ~ In x (List.map sb_phi bs) -> Map.get EV x after = Map.get EV x before.
+Proof.
+  induction bs as [|b rest IH]; intros before after Hrun x Hfresh.
+  - injection Hrun as <-; reflexivity.
+  - cbn [scev_translate_bindings] in Hrun.
+    destruct (scev_translate_binding (fun y => Map.get EV y before) b) as [c|];
+      [|discriminate].
+    rewrite (IH _ _ Hrun x) by (intro Hin; apply Hfresh; right; exact Hin).
+    rewrite Map.get_set_raw.
+    destruct (eqb_spec EV HV x (sb_phi b)) as [Hequal|Hdifferent]; [|reflexivity].
+    subst x; exfalso; apply Hfresh; left; reflexivity.
+Qed.
+
+(** Completed compilation gives every binding its final recurrence and final-environment equation. *)
+Theorem translated_bindings_equations {V} (EV : encoding V) (HV : encoding_laws EV) bs :
+  NoDup (List.map sb_phi bs) -> future_independent bs ->
+  forall before after, scev_translate_bindings EV bs before = Some after ->
+  forall b, In b bs -> exists c, Map.get EV (sb_phi b) after = Some c /\
+    scev_translate_binding (fun x => Map.get EV x after) b = Some c.
+Proof.
+  induction bs as [|head rest IH]; intros Hdistinct Hindependent before after Hrun b Hin;
+    [contradiction|].
+  inversion Hdistinct as [|phi phis Hfresh Htail]; subst.
+  destruct Hindependent as [Hhead Hrest].
+  cbn [scev_translate_bindings] in Hrun.
+  destruct (scev_translate_binding (fun x => Map.get EV x before) head) as [c|] eqn:Hbinding;
+    [|discriminate].
+  destruct Hin as [Hequal|Hin].
+  - subst b; exists c; split.
+    + rewrite (translated_suffix_preserves EV HV rest _ _ Hrun _ Hfresh), Map.get_set_raw.
+      destruct (eqb_spec EV HV (sb_phi head) (sb_phi head)); congruence.
+    + rewrite (translate_binding_support _ (fun x => Map.get EV x before) head);
+        [exact Hbinding|].
+      intros x Hx.
+      rewrite (translated_suffix_preserves EV HV rest _ _ Hrun x)
+        by (intro Hlate; apply (Hhead x Hx); right; exact Hlate).
+      rewrite Map.get_set_raw.
+      destruct (eqb_spec EV HV x (sb_phi head)) as [Hequal|Hdifferent]; [|reflexivity].
+      subst x; exfalso; apply (Hhead _ Hx); left; reflexivity.
+  - eapply IH; eassumption.
+Qed.
+
 (** Compiling a later binding retains both tables and keys its queries by the extended environment. *)
 Fixpoint scev_compile_bindings_c {V} (EV : encoding V) (bs : list (scev_binding V))
     (env : Map.t V (Chrec.t V)) (m : binding_memo V) (expressions : compile_memo V)
@@ -1002,6 +1077,129 @@ Proof.
     Map.empty Memo.empty Memo.empty)) as [[result bindings] expressions].
   destruct Hcompile as [Hresult _]; unfold scev_translate_plan; rewrite <- Hresult.
   destruct result; autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** A compiled future-independent plan supplies all completed equations in one actual final map. *)
+Theorem compiled_plan_equations {V} (EV : encoding V) (HV : encoding_laws EV) p c :
+  NoDup (List.map sb_phi (sp_bindings p)) -> future_independent (sp_bindings p) ->
+  scev_compile_plan EV p = Some c ->
+  exists env, Map.get EV (sp_target p) env = Some c /\
+    forall b, In b (sp_bindings p) -> exists own,
+      Map.get EV (sb_phi b) env = Some own /\
+      scev_translate_binding (fun x => Map.get EV x env) b = Some own.
+Proof.
+  intros Hdistinct Hindependent Hcompiled.
+  rewrite scev_compile_plan_correct in Hcompiled by exact HV.
+  unfold scev_translate_plan in Hcompiled.
+  destruct (scev_translate_bindings EV (sp_bindings p) Map.empty) as [env|] eqn:Hrun;
+    [|discriminate].
+  exists env; split; [exact Hcompiled|].
+  eapply translated_bindings_equations; eassumption.
+Qed.
+
+(** Semantic expression conditions name actual source definitions and already established phi values. *)
+Inductive source_expression {N E V K G C} (sv : Ssa.t N E V K G) (body : N -> bool)
+    (so : scev_ops K C) (phis : V -> Prop) : scev_expr V -> Prop :=
+  | SourceOutside : forall x, body (Ssa.home sv x) = false ->
+      source_expression sv body so phis (SOutside x)
+  | SourcePhi : forall x, phis x -> source_expression sv body so phis (SPhi x)
+  | SourceAdd : forall x a b o, body (Ssa.home sv x) = true ->
+      Ssa.def sv x = Op o [scev_expr_root a; scev_expr_root b] -> add_op so o = true ->
+      source_expression sv body so phis a -> source_expression sv body so phis b ->
+      source_expression sv body so phis (SAdd x a b)
+  | SourceMul : forall x a b o, body (Ssa.home sv x) = true ->
+      Ssa.def sv x = Op o [scev_expr_root a; scev_expr_root b] -> mul_op so o = true ->
+      source_expression sv body so phis a -> source_expression sv body so phis b ->
+      source_expression sv body so phis (SMul x a b)
+  | SourceConst : forall x z o, body (Ssa.home sv x) = true ->
+      Ssa.def sv x = Op o [] -> const_op so o = Some z ->
+      source_expression sv body so phis (SConst x z).
+
+Definition inv_env {S O N E V K C} (sl : SsaLink.t S O N E V C) (so : scev_ops K C) s x :=
+  match SsaLink.val sl s x with Some c => to_Z so c | None => 0%Z end.
+
+(** Local operation equations expose actual same-state operand values and primitive evaluation. *)
+Definition operation_equations {S O N E V K G C} (sv : Ssa.t N E V K G)
+    (sl : SsaLink.t S O N E V C) (op_eval : K -> list C -> option C) s operations : Prop :=
+  forall x o args d, In x operations -> Ssa.def sv x = Op o args ->
+    SsaLink.val sl s x = Some d ->
+    exists cs, Forall2 (fun y c => SsaLink.val sl s y = Some c) args cs /\
+      op_eval o cs = Some d.
+
+Local Lemma operation_equations_subset {S O N E V K G C} (sv : Ssa.t N E V K G)
+    (sl : SsaLink.t S O N E V C) op_eval s small large :
+  operation_equations sv sl op_eval s large -> incl small large ->
+  operation_equations sv sl op_eval s small.
+Proof.
+  intros Hlocal Hin x o args d Hx Hdef Hvalue; apply (Hlocal x o args d (Hin x Hx) Hdef Hvalue).
+Qed.
+
+(** A two-operand source equation provides exactly two ordered concrete values. *)
+Theorem forall2_pair {A B} (R : A -> B -> Prop) a b cs :
+  Forall2 R [a; b] cs -> exists va vb, cs = [va; vb] /\ R a va /\ R b vb.
+Proof.
+  intro Hvalues; inversion Hvalues as [|a' va tail values Ha Htail]; subst.
+  inversion Htail as [|b' vb tail' values' Hb Hnil]; subst.
+  inversion Hnil; subst; exists va, vb; auto.
+Qed.
+
+(** Source expressions evaluate to their wrapped translations under actual local operation equations. *)
+Theorem expression_value_sound {S O N E V K G C} (sv : Ssa.t N E V K G)
+    (sl : SsaLink.t S O N E V C) (so : scev_ops K C) op_eval body phis lookup inv k s e :
+  scev_ops_laws so op_eval ->
+  (forall x, body (Ssa.home sv x) = false -> inv x = inv_env sl so s x) ->
+  (forall x c d, phis x -> lookup x = Some c -> SsaLink.val sl s x = Some d ->
+    to_Z so d = wrap (width_of so) (Chrec.eval inv c k)) ->
+  source_expression sv body so phis e -> forall c,
+  scev_translate_expr lookup e = Some c ->
+  operation_equations sv sl op_eval s (scev_expr_operations e) -> forall d,
+  SsaLink.val sl s (scev_expr_root e) = Some d ->
+  to_Z so d = wrap (width_of so) (Chrec.eval inv c k).
+Proof.
+  intros Hops Hinv Hphis Hsource.
+  induction Hsource as [x Houtside|x Hphi|
+    x a b o Hinside Hdef Hflag Ha IHa Hb IHb|
+    x a b o Hinside Hdef Hflag Ha IHa Hb IHb|
+    x z o Hinside Hdef Hliteral]; intros c Htranslation Hlocal d Hvalue.
+  - injection Htranslation as <-; cbn [Chrec.eval eval_iexpr scev_expr_root] in *.
+    rewrite Hinv by exact Houtside; unfold inv_env; rewrite Hvalue.
+    apply (observation_canonical _ _ Hops).
+  - exact (Hphis x c d Hphi Htranslation Hvalue).
+  - cbn [scev_translate_expr] in Htranslation.
+    destruct (scev_translate_expr lookup a) as [ca|] eqn:Hca; [|discriminate].
+    destruct (scev_translate_expr lookup b) as [cb|] eqn:Hcb; [|discriminate].
+    injection Htranslation as <-.
+    destruct (Hlocal x o _ d (or_introl eq_refl) Hdef Hvalue) as [cs [Hcs Heval]].
+    destruct (forall2_pair _ _ _ _ Hcs) as [va [vb [-> [Hva Hvb]]]].
+    assert (Hleft : to_Z so va = wrap (width_of so) (Chrec.eval inv ca k)).
+    { apply (IHa ca eq_refl); [|exact Hva].
+      eapply operation_equations_subset; [exact Hlocal|].
+      intros y Hy; right; apply in_app_iff; left; exact Hy. }
+    assert (Hright : to_Z so vb = wrap (width_of so) (Chrec.eval inv cb k)).
+    { apply (IHb cb eq_refl); [|exact Hvb].
+      eapply operation_equations_subset; [exact Hlocal|].
+      intros y Hy; right; apply in_app_iff; right; exact Hy. }
+    rewrite (addition_sound _ _ Hops o va vb d Hflag Heval), eval_add, Hleft, Hright.
+    symmetry; apply wrap_add.
+  - cbn [scev_translate_expr] in Htranslation.
+    destruct (scev_translate_expr lookup a) as [ca|] eqn:Hca; [|discriminate].
+    destruct (scev_translate_expr lookup b) as [cb|] eqn:Hcb; [|discriminate].
+    injection Htranslation as <-.
+    destruct (Hlocal x o _ d (or_introl eq_refl) Hdef Hvalue) as [cs [Hcs Heval]].
+    destruct (forall2_pair _ _ _ _ Hcs) as [va [vb [-> [Hva Hvb]]]].
+    assert (Hleft : to_Z so va = wrap (width_of so) (Chrec.eval inv ca k)).
+    { apply (IHa ca eq_refl); [|exact Hva].
+      eapply operation_equations_subset; [exact Hlocal|].
+      intros y Hy; right; apply in_app_iff; left; exact Hy. }
+    assert (Hright : to_Z so vb = wrap (width_of so) (Chrec.eval inv cb k)).
+    { apply (IHb cb eq_refl); [|exact Hvb].
+      eapply operation_equations_subset; [exact Hlocal|].
+      intros y Hy; right; apply in_app_iff; right; exact Hy. }
+    rewrite (multiplication_sound _ _ Hops o va vb d Hflag Heval), eval_mul, Hleft, Hright.
+    symmetry; apply wrap_mul.
+  - injection Htranslation as <-.
+    destruct (Hlocal x o [] d (or_introl eq_refl) Hdef Hvalue) as [cs [Hcs Heval]].
+    inversion Hcs; subst cs; exact (literal_sound _ _ Hops o z d Hliteral Heval).
 Qed.
 
 (** * Charged source inventory preparation *)

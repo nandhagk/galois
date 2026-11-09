@@ -4,11 +4,13 @@
     For example, direct self-addition keeps the idiom-owned geometric coefficient two.
     Builds on: AnalysesLoopsSound and the indexed checker fixtures. *)
 
-From Stdlib Require Import List Bool Arith ZArith NArith.
+From Stdlib Require Import List Bool Arith ZArith NArith Lia.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding.
 From Galois.Bits Require Import BitsWord.
-From Galois.Program Require Import ProgramCfg ProgramSsa.
+From Galois.Graph Require Import GraphModel GraphDomSpec.
+From Galois.Program Require Import ProgramSemantics ProgramSteps ProgramCfg ProgramLink ProgramRuns
+  ProgramSsa ProgramStrict.
 From Galois.Analyses.Loops Require Import AnalysesLoopsChrec AnalysesLoopsFailure
   AnalysesLoopsRecognise AnalysesLoopsCheck AnalysesLoopsSound.
 From Galois.Tests.Analyses.Loops Require Import AnalysesLoopsCheckTest.
@@ -209,3 +211,225 @@ Example scev_integrated_shared_plan_checked :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(** * A nonempty semantic client *)
+
+Module SemanticClient.
+
+Inductive state := Start | HeaderZero | HeaderOne.
+Inductive transition : state -> list unit -> state -> Prop :=
+  | Enter : transition Start [] HeaderZero
+  | Back : transition HeaderZero [] HeaderOne
+  | Stay : transition HeaderZero [] HeaderZero.
+
+Definition model : semantics state unit := Semantics (fun s => s = Start) transition.
+Definition point (s : state) := match s with Start => false | _ => true end.
+Definition taken s (_ : list unit) t e :=
+  match s, t with
+  | Start, HeaderZero => e = false
+  | HeaderZero, HeaderOne => e = true
+  | _, _ => False
+  end.
+Definition stays s (_ : list unit) t := s = HeaderZero /\ t = HeaderZero.
+Definition graph : Graph.t bool bool :=
+  Graph.of_pure [false] [false; true] (fun n => [n]) (fun e => e) (fun _ => true).
+Definition cfg := Cfg.Make graph bool_encoding bool_encoding.
+Definition definition (x : nat) : ProgramSsa.definition bool nat nat :=
+  match x with
+  | 1 => Param true 0
+  | 3 => Op 0 [1; 2]
+  | _ => Arbitrary
+  end.
+Definition home (x : nat) := Nat.eqb x 1 || Nat.eqb x 3.
+Definition inventory := [0; 1; 2; 3].
+Definition ssa : Ssa.t bool bool nat nat unit :=
+  Ssa.of_pure cfg nat_encoding inventory definition home
+    (fun b => if b then [1] else []) (fun e => if e then [3] else [0]) (fun _ => []).
+Definition value s (x : nat) : option Z :=
+  match x with
+  | 0 => Some 0%Z
+  | 1 => Some (match s with HeaderOne => 1%Z | _ => 0%Z end)
+  | 2 | 3 => Some 1%Z
+  | _ => None
+  end.
+Definition link : SsaLink.t state unit bool bool nat Z :=
+  SsaLink.Make (Link.Make point taken stays) value.
+Definition eval (o : nat) (args : list Z) :=
+  match o, args with
+  | 0, [a; b] => Some (wrap 4%positive (a + b))
+  | 1, [a; b] => Some (wrap 4%positive (a * b))
+  | _, _ => None
+  end.
+Definition holds (_ : unit) (_ : list Z) := True.
+Definition ops : scev_ops nat Z :=
+  ops_of_pure 4%positive (wrap 4%positive) (Nat.eqb 0) (Nat.eqb 1) (fun _ => None).
+Definition test := LoopTest CmpLt Unsigned 1 (IConst 1).
+Definition loop : loop_view bool bool nat nat unit :=
+  LoopView ssa true (Cost.lift (fun _ => 1%N) (fun b => b)) false true (Some test).
+
+Lemma graph_laws : graph_wf graph.
+Proof.
+  constructor.
+  - repeat constructor; cbn; intuition discriminate.
+  - intros v [<-|Hbad]; [change (In false [false; true]); left; reflexivity|contradiction].
+  - intros v e Hin; change (In e [v]) in Hin.
+    destruct Hin as [<-|Hbad]; [reflexivity|contradiction].
+  - intros v e Hin Hout; change (In true [false; true]); right; left; reflexivity.
+Qed.
+
+Lemma link_laws_hold : link_laws model graph (SsaLink.link link).
+Proof.
+  constructor.
+  - exact graph_laws.
+  - intros s ->; change (In false [false]); left; reflexivity.
+  - intros s tr t Hreach Hstep; inversion Hstep; subst.
+    + right; exists false; reflexivity.
+    + right; exists true; reflexivity.
+    + left; split; reflexivity.
+  - intros e s tr t Hreach Hstep Htaken; inversion Hstep; subst;
+      cbn [link SsaLink.link Link.taken Link.point taken point] in Htaken |- *;
+      try contradiction; subst e; (split; [left; reflexivity|reflexivity]).
+  - intros s tr t Hreach Hstep [-> ->]; reflexivity.
+Qed.
+
+Lemma values_change_only_at_phi s tr t x :
+  transition s tr t -> value t x <> value s x -> s = HeaderZero /\ t = HeaderOne /\ x = 1.
+Proof.
+  intros Hstep Hchange; inversion Hstep; subst; destruct x as [|[|[|[|x]]]];
+    cbn [value] in Hchange; try congruence; auto.
+Qed.
+
+Lemma ssa_laws_hold : ssa_laws model ssa link eval holds.
+Proof.
+  constructor.
+  - exact link_laws_hold.
+  - intros x b i Hdef; change (definition x = Param b i) in Hdef.
+    destruct x as [|[|[|[|x]]]]; cbn [definition] in Hdef; try discriminate.
+    injection Hdef as <- <-; reflexivity.
+  - intros e s tr t Hreach Hstep Htaken g ys Hin; contradiction.
+  - intros e s tr t Hreach Hstep Htaken g ys x o args Hin; contradiction.
+  - intros x c s tr t Hreach Hstep Hvalue.
+    change (value t x = Some c) in Hvalue.
+    inversion Hstep; subst; try (left; exact Hvalue).
+    destruct x as [|[|[|[|x]]]]; try (left; exact Hvalue).
+    cbn [value] in Hvalue; injection Hvalue as <-.
+    right; right; left; exists true, true, 0, 3; repeat split; reflexivity.
+  - intros s x c Hreach Hvalue; change (value s x = Some c) in Hvalue.
+    change (In x inventory).
+    destruct x as [|[|[|[|x]]]]; cbn [value] in Hvalue; cbn [inventory In];
+      intuition discriminate.
+Qed.
+
+Lemma strict_laws_hold : strict_ssa_laws model ssa link.
+Proof.
+  constructor.
+  - intros x s tr t Hreach Hstep [-> ->] Hchange; contradiction.
+  - intros e x s tr t Hreach Hstep Htaken Hchange.
+    destruct (values_change_only_at_phi s tr t x Hstep Hchange) as [-> [-> ->]]; reflexivity.
+  - intros x s tr t Hreach Hstep [-> ->] Hhome; reflexivity.
+  - intros e x s tr t Hreach Hstep Htaken Hhome.
+    inversion Hstep; subst; try reflexivity.
+    destruct x as [|[|[|[|x]]]]; try reflexivity; exfalso; apply Hhome; reflexivity.
+  - intros e g ys x Hlisted Hin; contradiction.
+  - intros x o args y Hdef Hin; change (definition x = Op o args) in Hdef.
+    destruct x as [|[|[|[|x]]]]; cbn [definition] in Hdef; try discriminate.
+    injection Hdef as <- <-; destruct Hin as [<-|[<-|Hbad]]; [apply dominates_refl| |contradiction].
+    intros root es [<-|Hbad] Hpath; [left; reflexivity|contradiction].
+Qed.
+
+Lemma ops_laws_hold : scev_ops_laws ops eval.
+Proof.
+  constructor.
+  - intro c; change (wrap 4%positive c = wrap 4%positive (wrap 4%positive c)).
+    symmetry; apply wrap_wrap.
+  - intros o a b r Hflag Heval; change (Nat.eqb 0 o = true) in Hflag.
+    apply Nat.eqb_eq in Hflag; subst o; cbn [eval] in Heval; injection Heval as <-.
+    change (wrap 4%positive (wrap 4%positive (a + b)) =
+      wrap 4%positive (wrap 4%positive a + wrap 4%positive b)).
+    rewrite wrap_wrap; apply wrap_add.
+  - intros o a b r Hflag Heval; change (Nat.eqb 1 o = true) in Hflag.
+    apply Nat.eqb_eq in Hflag; subst o; cbn [eval] in Heval; injection Heval as <-.
+    change (wrap 4%positive (wrap 4%positive (a * b)) =
+      wrap 4%positive (wrap 4%positive a * wrap 4%positive b)).
+    rewrite wrap_wrap; apply wrap_mul.
+  - intros o z r Hliteral; discriminate.
+Qed.
+
+Lemma back_source s tr t :
+  transition s tr t -> taken s tr t true -> s = HeaderZero /\ t = HeaderOne.
+Proof.
+  intros Hstep Htaken; inversion Hstep; subst; cbn [taken] in Htaken; intuition discriminate.
+Qed.
+
+Lemma loop_laws_hold : loop_laws model loop ops link eval holds inventory.
+Proof.
+  constructor.
+  - exact nat_encoding_laws.
+  - exact bool_encoding_laws.
+  - exact bool_encoding_laws.
+  - exact ssa_laws_hold.
+  - exact strict_laws_hold.
+  - change (~ In true [false]); cbn [In]; intuition discriminate.
+  - vm_compute; auto.
+  - vm_compute; auto.
+  - intros e Hlisted Htarget; destruct e; [right|left]; reflexivity.
+  - reflexivity.
+  - intros n [<-|Hbad]; [reflexivity|contradiction].
+  - intros e Hlisted Houtside Hinside; destruct e; [discriminate|reflexivity].
+  - intros e x i s tr t Hreach Hstep Htaken Htarget Hdef.
+    change (definition x = Param true i) in Hdef.
+    destruct x as [|[|[|[|x]]]]; cbn [definition] in Hdef; try discriminate.
+    injection Hdef as <-; inversion Hstep; subst; destruct e;
+      cbn [link SsaLink.link Link.taken taken] in Htaken; try discriminate; try contradiction;
+      reflexivity.
+  - intros x i s tr t Hreach Hstep [-> ->] Hpoint Hdef; reflexivity.
+  - intros tst y Htest Hin; injection Htest as <-; contradiction.
+  - intros s tr t Hreach Hstep Htaken tst Htest.
+    injection Htest as <-.
+    destruct (back_source s tr t Hstep Htaken) as [-> ->].
+    exists 0%Z; split; reflexivity || (vm_compute; lia).
+  - intros p x o args c s tr t Hreach Hstep Htaken Hcheck Hin Hdef Hvalue.
+    destruct (back_source s tr t Hstep Htaken) as [-> ->].
+    change (definition x = Op o args) in Hdef.
+    destruct x as [|[|[|[|x]]]]; cbn [definition] in Hdef; try discriminate.
+    injection Hdef as <- <-; change (Some 1%Z = Some c) in Hvalue; injection Hvalue as <-.
+    exists [0%Z; 1%Z]; split; [repeat constructor|]; reflexivity.
+Qed.
+
+Lemma history : run_edges model (SsaLink.link link) Start [false; true] HeaderOne.
+Proof.
+  eapply run_take; [constructor|reflexivity|].
+  eapply run_stay; [apply Stay|split; reflexivity|].
+  eapply run_take; [apply Back|reflexivity|constructor].
+Qed.
+
+Definition recurrence : Chrec.t nat := CRec (CInv (IVar 0)) (CInv (IVar 2)).
+
+Example program_recurrence_at_header :
+  to_Z ops 1%Z = wrap (width_of ops)
+    (Chrec.eval (inv_env link ops HeaderOne) recurrence (stay_arrivals loop [false; true])).
+Proof.
+  eapply (scev_sound model loop ops link eval holds inventory loop_laws_hold ops_laws_hold
+    1 recurrence).
+  - vm_compute; reflexivity.
+  - reflexivity.
+  - exact history.
+  - reflexivity.
+  - reflexivity.
+Qed.
+
+Example program_trip_bound :
+  (N.of_nat (stay_arrivals loop [false; true]) <= 1)%N.
+Proof.
+  eapply (loop_trip_sound model loop ops link eval holds inventory loop_laws_hold ops_laws_hold
+    test recurrence 1%N).
+  - reflexivity.
+  - vm_compute; reflexivity.
+  - reflexivity.
+  - exact history.
+  - reflexivity.
+  - vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+Qed.
+
+End SemanticClient.

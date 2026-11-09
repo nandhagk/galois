@@ -141,6 +141,27 @@ Proof.
   destruct wanted, other; reflexivity.
 Qed.
 
+(** Selected table construction satisfies its initial and successor evaluation laws. *)
+Theorem apply_sound {V} wanted (base : Chrec.t V) other c :
+  apply wanted base other = Some c -> forall inv : V -> Z,
+  Chrec.eval inv c O = Chrec.eval inv base O /\
+  forall k,
+    match wanted, other with
+    | SAdd, Some step =>
+      Chrec.eval inv c (S k) = (Chrec.eval inv c k + Chrec.eval inv step k)%Z
+    | SMul, Some ratio =>
+      Chrec.eval inv c (S k) = (Chrec.eval inv c k * Chrec.eval inv ratio k)%Z
+    | SDouble, None =>
+      Chrec.eval inv c (S k) = (Chrec.eval inv c k + Chrec.eval inv c k)%Z
+    | _, _ => False
+    end.
+Proof.
+  destruct wanted; intros Happly inv.
+  - exact (add_laws base other c Happly inv).
+  - exact (mul_laws base other c Happly inv).
+  - exact (double_laws base other c Happly inv).
+Qed.
+
 (** The concrete table pays at most its three row visits and two callback ticks. *)
 Theorem apply_cost {V} wanted (base : Chrec.t V) other :
   (Cost.ticks (apply_c wanted base other) <= 5)%N.
