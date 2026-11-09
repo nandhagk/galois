@@ -250,6 +250,15 @@ Definition positive_atoms_c {P} (ls : list (literal P)) :=
 
 Definition positive_atoms {P} ls := Cost.value (@positive_atoms_c P ls).
 
+(** Positive collection charges every supplied literal occurrence, including negative literals. *)
+Theorem positive_atoms_cost {P} (ls : list (literal P)) :
+  Cost.ticks (positive_atoms_c ls) = N.of_nat (length ls).
+Proof.
+  unfold positive_atoms_c; rewrite ticks_filter_map_c.
+  induction ls as [|l ls IH]; cbn [fold_right length]; [reflexivity |].
+  rewrite Cost.ticks_ret, Nat2N.inj_succ; lia.
+Qed.
+
 Lemma positive_atoms_spec {P} (ls : list (literal P)) a :
   In a (positive_atoms ls) <-> In (LPos a) ls.
 Proof.

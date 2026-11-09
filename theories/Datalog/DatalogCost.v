@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PeanoNat NArith Lia.
 From Galois.Cost Require Import CostMonad CostList CostBound.
-From Galois.Base Require Import BaseSet.
+From Galois.Base Require Import BaseEncoding BaseEq BaseSet.
 From Galois.Lattice Require Import LatticeSet.
 From Galois.Datalog Require Import DatalogSyntax DatalogRelation DatalogFire.
 Import List.ListNotations Cost.Notations.
@@ -63,6 +63,109 @@ Lemma filter_length_bound {A} (f : A -> bool) xs :
 Proof.
   induction xs as [|x xs IH]; cbn [filter length]; [lia |].
   destruct (f x); cbn [length]; lia.
+Qed.
+
+Lemma bind_term_length b t c b' :
+  bind_term b t c = Some b' -> (length b' <= S (length b))%nat.
+Proof.
+  rewrite bind_term_equation; destruct t as [v | d].
+  - destruct (binding_get b v) as [d |]; [destruct (Pos.eqb c d) |];
+      intro Hsome; try discriminate; injection Hsome as <-; cbn [length]; lia.
+  - destruct (Pos.eqb c d); intro Hsome; [injection Hsome as <-; lia | discriminate].
+Qed.
+
+(** Matching a term charges the binding lookup and the actual positive component width. *)
+Theorem bind_term_cost b t c v :
+  N.pos (Pos.size c) <= v ->
+  Cost.ticks (bind_term_c b t c) <= 1 + N.of_nat (length b) + v.
+Proof.
+  intro Hbits; unfold bind_term_c; rewrite Cost.ticks_bind, Cost.ticks_step.
+  destruct t as [x | d].
+  - rewrite Cost.ticks_bind; fold (binding_get b x).
+    pose proof (binding_get_cost b x) as Hget.
+    destruct (binding_get b x) as [d |].
+    + rewrite Cost.ticks_bind; pose proof (proj1 (positive_eqb_cost c d)).
+      destruct (Cost.value (positive_eqb_c c d)); rewrite Cost.ticks_ret; lia.
+    + rewrite Cost.ticks_ret; lia.
+  - rewrite Cost.ticks_bind; pose proof (proj1 (positive_eqb_cost c d)).
+    destruct (Cost.value (positive_eqb_c c d)); rewrite Cost.ticks_ret; lia.
+Qed.
+
+(** Row matching retains term count, maximum reached binding length and row-component widths. *)
+Theorem bind_terms_cost ts row b h v :
+  (length b + length ts <= h)%nat ->
+  (forall c, In c row -> N.pos (Pos.size c) <= v) ->
+  Cost.ticks (bind_terms_c ts row b) <=
+    (N.of_nat (length ts) + 1) * (2 + N.of_nat h + v).
+Proof.
+  revert row b; induction ts as [|t ts IH]; intros [|c row] b Hlength Hbits.
+  - cbn [bind_terms_c length]; autorewrite with galois_cost; nia.
+  - cbn [bind_terms_c length]; autorewrite with galois_cost; nia.
+  - cbn [bind_terms_c length]; autorewrite with galois_cost; nia.
+  - cbn [bind_terms_c]; repeat rewrite Cost.ticks_bind; rewrite Cost.ticks_step.
+    pose proof (bind_term_cost b t c v (Hbits c (or_introl eq_refl))) as Hterm.
+    pose proof (nat_N_le (length b) h ltac:(cbn [length] in Hlength; lia)) as Hlen.
+    fold (bind_term b t c); destruct (bind_term b t c) as [b' |] eqn:Hbind.
+    + pose proof (bind_term_length _ _ _ _ Hbind) as Hnext.
+      specialize (IH row b' ltac:(cbn [length] in Hlength; lia)
+        (fun d Hd => Hbits d (or_intror Hd))).
+      cbn [length]; rewrite Nat2N.inj_succ; nia.
+    + rewrite Cost.ticks_ret; cbn [length]; rewrite Nat2N.inj_succ; nia.
+Qed.
+
+(** Instantiation charges the term traversal and every partial-valuation lookup. *)
+Theorem instantiate_cost b ts :
+  Cost.ticks (instantiate_c b ts) <=
+    N.of_nat (length ts) * (1 + N.of_nat (length b)).
+Proof.
+  replace (1 + N.of_nat (length b)) with (N.of_nat (length b) + 1) by lia.
+  unfold instantiate_c; rewrite ticks_map_c.
+  apply traversal_bound_on; intros [v | c] _.
+  - unfold binding_value_c; rewrite Cost.ticks_map; apply binding_get_cost.
+  - rewrite Cost.ticks_ret; lia.
+Qed.
+
+Lemma forallb_bound_on {A} (f : A -> Cost.t bool) xs k :
+  (forall x, In x xs -> Cost.ticks (f x) <= k) ->
+  Cost.ticks (forallb_c f xs) <= N.of_nat (length xs) * (k + 1).
+Proof.
+  induction xs as [|x xs IH]; intro Hbounds.
+  - rewrite ticks_forallb_c_nil; reflexivity.
+  - rewrite ticks_forallb_c_cons.
+    specialize (IH (fun y Hy => Hbounds y (or_intror Hy))).
+    pose proof (Hbounds x (or_introl eq_refl)).
+    cbn [length]; rewrite Nat2N.inj_succ.
+    destruct (Cost.value (f x)); nia.
+Qed.
+
+(** Negative testing retains body inventory, binding scans, callbacks and actual key budgets. *)
+Theorem negative_cost {P} (r : rule P) env b a h c e w :
+  (length b <= h)%nat ->
+  (forall atom, In (LNeg atom) (body r) ->
+    (length (args atom) <= a)%nat /\
+    Cost.ticks (env (pred atom)) <= c /\
+    Cost.ticks (encode_c tuple_encoding
+      (map (inst (binding_value b)) (args atom))) <= e /\
+    key_bits tuple_encoding (map (inst (binding_value b)) (args atom)) <= w) ->
+  Cost.ticks (negative_ok_c r env b) <=
+    N.of_nat (length (body r)) * (3 + N.of_nat a * (1 + N.of_nat h) + c + e + w).
+Proof.
+  intros Hbinding Hnegative; unfold negative_ok_c.
+  replace (3 + N.of_nat a * (1 + N.of_nat h) + c + e + w) with
+    ((2 + N.of_nat a * (1 + N.of_nat h) + c + e + w) + 1) by lia.
+  apply forallb_bound_on; intros [atom | atom] Hatom.
+  - rewrite Cost.ticks_ret; lia.
+  - destruct (Hnegative atom Hatom) as [Hargs [Henv [Henc Hwidth]]].
+    repeat rewrite Cost.ticks_bind.
+    rewrite Cost.ticks_step, Cost.ticks_map, FinSet.mem_cost, instantiate_equation.
+    fold (key_bits tuple_encoding (map (inst (binding_value b)) (args atom))).
+    pose proof (instantiate_cost b (args atom)) as Hinstantiate.
+    pose proof (nat_N_le _ _ Hbinding) as HbindingN.
+    pose proof (nat_N_le _ _ Hargs) as HargsN.
+    assert (Hscaled : N.of_nat (length (args atom)) * (1 + N.of_nat (length b)) <=
+      N.of_nat a * (1 + N.of_nat h)).
+    { apply N.mul_le_mono; [exact HargsN | lia]. }
+    lia.
 Qed.
 
 Lemma join_atom_list {P} (a : atom P) env bs :
