@@ -55,6 +55,15 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Example scev_checker_nested_independent_conditions :
+  scev_plan_conditions (scev_shape_loop scev_shape_defs [0; 1]) scev_shape_ops
+    scev_shape_inventory scev_shape_nested_plan.
+Proof.
+  apply (proj1 (scev_plan_check_correct (scev_shape_loop scev_shape_defs [0; 1])
+    nat_encoding_laws nat_encoding_laws scev_shape_ops scev_shape_inventory scev_shape_nested_plan)).
+  exact scev_checker_ranked_nested_phi.
+Qed.
+
 Example scev_checker_geometric :
   scev_plan_check
     (scev_shape_loop (fun x => if Nat.eqb x 5 then Op 1 [3; 2] else scev_shape_defs x) [0; 1])

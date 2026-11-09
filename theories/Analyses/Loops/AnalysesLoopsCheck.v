@@ -740,6 +740,196 @@ Proof.
   - split; [split; assumption|exact Hexprs].
 Qed.
 
+(** * Independent binding conditions *)
+
+(** Header conditions identify the indexed parameter, outside base and selected incoming values. *)
+Definition header_conditions {N E V K G} (lv : loop_view N E V K G)
+    (ix : static_index N V K) (b : scev_binding V) : Prop :=
+  let EV := Ssa.val_enc (lssa lv) in
+  match Map.get EV (sb_phi b) (indexed_values ix),
+      Map.get EV (sb_base b) (indexed_values ix),
+      Map.get EV (sb_update_value b) (indexed_values ix) with
+  | Some (n, Param header i), Some (base_n, _), Some (update_n, _) =>
+    n = lheader lv /\ header = lheader lv /\ lbody lv base_n = false /\
+      lbody lv update_n = true /\
+      Map.get nat_encoding i (entry_args ix) = Some (sb_base b) /\
+      Map.get nat_encoding i (back_args ix) = Some (sb_update_value b)
+  | _, _, _ => False
+  end.
+
+(** Header checking decides the indexed source-header conditions. *)
+Theorem binding_gate_correct {N E V K G} (lv : loop_view N E V K G)
+    (HN : encoding_laws (Cfg.node_enc (Ssa.cfg (lssa lv))))
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) ix b :
+  binding_gate lv ix b = true <-> header_conditions lv ix b.
+Proof.
+  unfold binding_gate, binding_gate_c, header_conditions; autorewrite with galois_cost.
+  fold (Map.get (Ssa.val_enc (lssa lv)) (sb_phi b) (indexed_values ix)).
+  fold (Map.get (Ssa.val_enc (lssa lv)) (sb_base b) (indexed_values ix)).
+  fold (Map.get (Ssa.val_enc (lssa lv)) (sb_update_value b) (indexed_values ix)).
+  destruct (Map.get _ (sb_phi b) (indexed_values ix)) as [[n d]|];
+    [|autorewrite with galois_cost; intuition discriminate].
+  destruct (Map.get _ (sb_base b) (indexed_values ix)) as [[base_n base_d]|];
+    [|destruct d; autorewrite with galois_cost; intuition discriminate].
+  destruct (Map.get _ (sb_update_value b) (indexed_values ix)) as [[update_n update_d]|];
+    [|destruct d; autorewrite with galois_cost; intuition discriminate].
+  destruct d as [o args|header i|]; autorewrite with galois_cost;
+    try (intuition discriminate).
+  autorewrite with galois_cost.
+  fold (Map.get nat_encoding i (entry_args ix)).
+  fold (Map.get nat_encoding i (back_args ix)).
+  destruct (Map.get nat_encoding i (entry_args ix)) as [a|] eqn:Hentry;
+    destruct (Map.get nat_encoding i (back_args ix)) as [u|] eqn:Hback;
+    autorewrite with galois_cost; try (split; [discriminate|intuition discriminate]).
+  change ((eqb (Cfg.node_enc (Ssa.cfg (lssa lv))) n (lheader lv) &&
+    eqb (Cfg.node_enc (Ssa.cfg (lssa lv))) header (lheader lv) &&
+    negb (lbody lv base_n) && lbody lv update_n &&
+    eqb (Ssa.val_enc (lssa lv)) a (sb_base b) &&
+    eqb (Ssa.val_enc (lssa lv)) u (sb_update_value b)) = true <->
+    n = lheader lv /\ header = lheader lv /\ lbody lv base_n = false /\
+      lbody lv update_n = true /\ Some a = Some (sb_base b) /\
+      Some u = Some (sb_update_value b)).
+  rewrite !Bool.andb_true_iff, Bool.negb_true_iff,
+    !eqb_true_iff by assumption.
+  intuition congruence.
+Qed.
+
+(** Update conditions retain the ordinary operand order and the distinguished doubling shape. *)
+Definition update_conditions {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
+    (ix : static_index N V K) (b : scev_binding V) : Prop :=
+  let EV := Ssa.val_enc (lssa lv) in
+  match sb_kind b, sb_other b with
+  | SDoubleUpdate, None =>
+    sb_phi_first b = true /\ binary_shape EV (lbody_c lv) (indexed_values ix) (add_op_c so)
+      (sb_update_value b) (sb_phi b) (sb_phi b)
+  | SAddUpdate, Some e | SMulUpdate, Some e =>
+    let root := scev_expr_root e in
+    root <> sb_phi b /\
+      binary_shape EV (lbody_c lv) (indexed_values ix)
+        (match sb_kind b with SAddUpdate => add_op_c so | _ => mul_op_c so end)
+        (sb_update_value b) (if sb_phi_first b then sb_phi b else root)
+        (if sb_phi_first b then root else sb_phi b)
+  | _, _ => False
+  end.
+
+(** Update checking decides its independent operand-shape conditions for all binding forms. *)
+Theorem update_gate_correct {N E V K G C} (lv : loop_view N E V K G)
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) ix b :
+  update_gate lv so ix b = true <-> update_conditions lv so ix b.
+Proof.
+  unfold update_gate, update_gate_c, update_conditions.
+  destruct b as [phi base update kind [e|] first]; destruct kind;
+    cbn [sb_kind sb_other sb_phi_first sb_update_value sb_phi];
+    autorewrite with galois_cost; try (intuition discriminate).
+  all: repeat match goal with
+  | |- context [Cost.value (eqb_c ?EV ?x ?y)] =>
+    change (Cost.value (eqb_c EV x y)) with (eqb EV x y)
+  | |- context [Cost.value (@binary_c ?N ?V ?K ?EV ?body ?values ?flag ?x ?a ?b)] =>
+    change (Cost.value (@binary_c N V K EV body values flag x a b))
+      with (@binary N V K EV body values flag x a b)
+  end.
+  all: rewrite ?Bool.andb_true_iff, ?Bool.negb_true_iff,
+    ?eqb_false_iff, ?binary_correct by exact HV.
+  all: reflexivity.
+Qed.
+
+Fixpoint expression_dependencies {V} (EV : encoding V) (e : scev_expr V) : FinSet.t V :=
+  match e with
+  | SPhi x => FinSet.add EV x FinSet.empty
+  | SAdd _ a b | SMul _ a b =>
+    FinSet.union (expression_dependencies EV a) (expression_dependencies EV b)
+  | _ => FinSet.empty
+  end.
+
+Definition binding_dependencies {V} (EV : encoding V) (b : scev_binding V) : FinSet.t V :=
+  match sb_other b with Some e => expression_dependencies EV e | None => FinSet.empty end.
+
+(** Accepted expression results contain the dependency set computed independently from syntax. *)
+Theorem expression_dependencies_correct {N V K C} (EV : encoding V) body_c values
+    (so : scev_ops K C) before e :
+  fst (@expression_reference N V K C EV body_c values so before e) = true ->
+  snd (expression_reference EV body_c values so before e) = expression_dependencies EV e.
+Proof.
+  induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z]; try (intro H; reflexivity).
+  all: cbn [expression_reference expression_dependencies].
+  all: destruct (binary EV body_c values _ x (scev_expr_root a) (scev_expr_root b));
+    [|discriminate].
+  all: destruct (expression_reference EV body_c values so before a) as [va da] eqn:Ha;
+    destruct va; [|discriminate].
+  all: destruct (expression_reference EV body_c values so before b) as [vb db] eqn:Hb;
+    cbn [fst snd]; intro Haccepted; subst vb.
+  all: specialize (IHa eq_refl); specialize (IHb eq_refl);
+    cbn [snd] in IHa, IHb; rewrite IHa, IHb; reflexivity.
+Qed.
+
+(** Binding conditions combine independent header, update and expression conditions. *)
+Definition binding_conditions {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
+    (ix : static_index N V K) before (b : scev_binding V) : Prop :=
+  header_conditions lv ix b /\ update_conditions lv so ix b /\
+  match sb_kind b, sb_other b with
+  | SDoubleUpdate, None => True
+  | SAddUpdate, Some e | SMulUpdate, Some e =>
+    expression_conditions (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so before e
+  | _, _ => False
+  end.
+
+(** Binding results use the independently syntax-derived dependency sets on every accepted branch. *)
+Theorem binding_dependencies_correct {N E V K G C} (lv : loop_view N E V K G)
+    (so : scev_ops K C) ix before b :
+  binding_reference lv so ix before b =
+    if binding_gate lv ix b && update_gate lv so ix b then
+      match sb_kind b, sb_other b with
+      | SDoubleUpdate, None => Some (binding_dependencies (Ssa.val_enc (lssa lv)) b)
+      | SAddUpdate, Some e | SMulUpdate, Some e =>
+        if fst (expression_reference (Ssa.val_enc (lssa lv)) (lbody_c lv)
+          (indexed_values ix) so before e)
+        then Some (binding_dependencies (Ssa.val_enc (lssa lv)) b) else None
+      | _, _ => None
+      end
+    else None.
+Proof.
+  unfold binding_reference.
+  destruct (binding_gate lv ix b && update_gate lv so ix b); [|reflexivity].
+  destruct b as [phi base update kind [e|] first]; destruct kind;
+    cbn [sb_kind sb_other binding_dependencies]; try reflexivity.
+  all: destruct (fst (expression_reference (Ssa.val_enc (lssa lv)) (lbody_c lv)
+    (indexed_values ix) so before e)) eqn:Haccepted; [|reflexivity].
+  all: f_equal; apply expression_dependencies_correct; exact Haccepted.
+Qed.
+
+(** A binding reference returns the syntax-derived set if and only if its source conditions hold. *)
+Theorem binding_conditions_correct {N E V K G C} (lv : loop_view N E V K G)
+    (HN : encoding_laws (Cfg.node_enc (Ssa.cfg (lssa lv))))
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) ix before b :
+  binding_reference lv so ix before b =
+    Some (binding_dependencies (Ssa.val_enc (lssa lv)) b) <->
+  binding_conditions lv so ix before b.
+Proof.
+  rewrite binding_dependencies_correct.
+  unfold binding_conditions.
+  rewrite <- (binding_gate_correct lv HN HV ix b), <- (update_gate_correct lv HV so ix b).
+  destruct (binding_gate lv ix b), (update_gate lv so ix b); cbn;
+    try (split; [discriminate|intuition discriminate]).
+  destruct b as [phi base update kind [e|] first]; destruct kind;
+    cbn [sb_kind sb_other]; try (intuition discriminate).
+  all: rewrite <- expression_conditions_correct by exact HV.
+  all: destruct (fst (expression_reference (Ssa.val_enc (lssa lv)) (lbody_c lv)
+    (indexed_values ix) so before e)); intuition discriminate.
+Qed.
+
+Local Lemma binding_result_cases {N E V K G C} (lv : loop_view N E V K G)
+    (so : scev_ops K C) ix before b :
+  binding_reference lv so ix before b = None \/
+  binding_reference lv so ix before b =
+    Some (binding_dependencies (Ssa.val_enc (lssa lv)) b).
+Proof.
+  rewrite binding_dependencies_correct.
+  destruct (binding_gate lv ix b && update_gate lv so ix b); [|auto].
+  destruct b as [phi base update kind [e|] first]; destruct kind; cbn [sb_kind sb_other]; auto.
+  all: destruct (fst (expression_reference (Ssa.val_enc (lssa lv)) (lbody_c lv)
+    (indexed_values ix) so before e)); auto.
+Qed.
+
 (** * Whole-plan traversal *)
 
 Fixpoint bindings_reference {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
@@ -771,6 +961,45 @@ Fixpoint check_bindings_c {N E V K G C} (lv : loop_view N E V K G) (so : scev_op
       check_bindings_c lv so ix (S rank) rest ((sb_phi b, deps) :: checked) updated expressions'
     end
   end.
+
+(** Binding-list conditions describe each source binding at its original ordered position. *)
+Fixpoint bindings_conditions {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
+    ix rank (bs : list (scev_binding V)) : Prop :=
+  match bs with
+  | [] => True
+  | b :: rest =>
+    binding_conditions lv so ix (phi_before (Ssa.val_enc (lssa lv)) ix rank) b /\
+      bindings_conditions lv so ix (S rank) rest
+  end.
+
+Definition dependency_rows {V} (EV : encoding V) (bs : list (scev_binding V)) :=
+  List.map (fun b => (sb_phi b, binding_dependencies EV b)) bs.
+
+(** Accepted reference rows are exactly the syntax-derived reverse rows under the source conditions. *)
+Theorem bindings_conditions_correct {N E V K G C} (lv : loop_view N E V K G)
+    (HN : encoding_laws (Cfg.node_enc (Ssa.cfg (lssa lv))))
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) ix bs :
+  forall rank checked rows,
+  bindings_reference lv so ix rank bs checked = Some rows <->
+  bindings_conditions lv so ix rank bs /\
+    rows = rev (dependency_rows (Ssa.val_enc (lssa lv)) bs) ++ checked.
+Proof.
+  induction bs as [|b rest IH]; intros rank checked rows.
+  - cbn [bindings_reference bindings_conditions dependency_rows List.map rev app].
+    split; [intro Heq; split; [exact I|congruence]|intros [_ ->]; reflexivity].
+  - cbn [bindings_reference bindings_conditions].
+    destruct (binding_result_cases lv so ix
+      (phi_before (Ssa.val_enc (lssa lv)) ix rank) b) as [Hnone|Hsome].
+    + rewrite Hnone; split; [discriminate|intros [[Hbinding _] _]].
+      apply (proj2 (binding_conditions_correct lv HN HV so ix _ b)) in Hbinding.
+      congruence.
+    + rewrite Hsome, IH.
+      assert (Hbinding : binding_conditions lv so ix
+        (phi_before (Ssa.val_enc (lssa lv)) ix rank) b).
+      { apply binding_conditions_correct; assumption. }
+      cbn [dependency_rows List.map rev].
+      rewrite <- app_assoc; cbn [app]; tauto.
+Qed.
 
 (** Ordered binding checks agree on both full reverse dependency rows and rejected prefixes. *)
 Theorem check_bindings_correct {N E V K G C} (lv : loop_view N E V K G)
@@ -871,5 +1100,167 @@ Definition scev_plan_check_c {N E V K G C} (lv : loop_view N E V K G)
 
 Definition scev_plan_check {N E V K G C} lv so inventory p :=
   Cost.value (@scev_plan_check_c N E V K G C lv so inventory p).
+
+(** Prepared index observations are the original source inventory, incoming lists and plan ranks. *)
+Theorem prepare_index_equation {N E V K G} (lv : loop_view N E V K G) inventory p :
+  prepare_index lv inventory p =
+    Index (scev_inventory_index (lssa lv) inventory)
+      (argument_index O (Ssa.args (lssa lv) (lentry lv)))
+      (argument_index O (Ssa.args (lssa lv) (lback lv)))
+      (prepare_ranks (Ssa.val_enc (lssa lv)) O (sp_bindings p)).
+Proof.
+  reflexivity.
+Qed.
+
+Local Lemma prepare_ranks_mem {V} (EV : encoding V) (HV : encoding_laws EV) bs :
+  forall start x, Map.mem EV x (ranks (prepare_ranks EV start bs)) = true <->
+    In x (List.map sb_phi bs).
+Proof.
+  induction bs as [|b rest IH]; intros start x; rewrite prepare_ranks_equation;
+    cbn [ranks List.map].
+  - rewrite Map.mem_spec; split; [intros [v Hget]; rewrite Map.get_empty in Hget; discriminate|
+      contradiction].
+  - rewrite Map.mem_spec, Map.get_set_raw.
+    destruct (eqb_spec EV HV x (sb_phi b)) as [Hequal|Hdifferent].
+    + subst x; split; [intro; left; reflexivity|intro; exists start; reflexivity].
+    + rewrite <- Map.mem_spec, IH; cbn [In]; intuition congruence.
+Qed.
+
+(** The prepared duplicate flag reflects uniqueness of the actual binding-phi list. *)
+Theorem prepare_ranks_distinct {V} (EV : encoding V) (HV : encoding_laws EV) bs :
+  forall start, distinct (prepare_ranks EV start bs) = true <->
+    NoDup (List.map sb_phi bs).
+Proof.
+  induction bs as [|b rest IH]; intro start; rewrite prepare_ranks_equation;
+    cbn [distinct List.map].
+  - split; [intro; constructor|intro; reflexivity].
+  - rewrite Bool.andb_true_iff, Bool.negb_true_iff, IH.
+    split.
+    + intros [Hfresh Hdistinct]; constructor; [|exact Hdistinct].
+      intro Hin; apply (proj2 (prepare_ranks_mem EV HV rest (S start) (sb_phi b))) in Hin.
+      congruence.
+    + intro Hnodup; inversion Hnodup as [|phi phis Hfresh Hdistinct]; subst.
+      split; [|exact Hdistinct].
+      destruct (Map.mem EV (sb_phi b) (ranks (prepare_ranks EV (S start) rest))) eqn:Hmember;
+        [|reflexivity].
+      apply prepare_ranks_mem in Hmember; [contradiction|exact HV].
+Qed.
+
+Fixpoint last_phi {V} (bs : list (scev_binding V)) : option V :=
+  match bs with
+  | [] => None
+  | b :: rest => match last_phi rest with Some x => Some x | None => Some (sb_phi b) end
+  end.
+
+(** The final indexed phi is the last phi in the original source-order binding list. *)
+Theorem prepare_ranks_final {V} (EV : encoding V) bs :
+  forall start, final (prepare_ranks EV start bs) = last_phi bs.
+Proof.
+  induction bs as [|b rest IH]; intro start; rewrite prepare_ranks_equation;
+    cbn [final last_phi]; [reflexivity|rewrite IH; reflexivity].
+Qed.
+
+Local Lemma prepare_index_member {N E V K G} (lv : loop_view N E V K G)
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) inventory p x :
+  Map.mem (Ssa.val_enc (lssa lv)) x (indexed_values (prepare_index lv inventory p)) = true <->
+    In x inventory.
+Proof.
+  rewrite prepare_index_equation; cbn [indexed_values].
+  rewrite Map.mem_spec, scev_inventory_index_get by exact HV.
+  assert (Hlisted : existsb (eqb (Ssa.val_enc (lssa lv)) x) inventory = true <-> In x inventory).
+  { rewrite existsb_exists; split.
+    - intros [y [Hin Heq]]; apply eqb_true_iff in Heq; [subst y; exact Hin|exact HV].
+    - intro Hin; exists x; split; [exact Hin|apply eqb_true_iff; [exact HV|reflexivity]]. }
+  rewrite <- Hlisted; destruct (existsb _ inventory).
+  - split; [intro; reflexivity|intro; eexists; reflexivity].
+  - split; [intros [value Hget]; discriminate|discriminate].
+Qed.
+
+(** Plan conditions require source membership, unique ordered phis and exact source connectivity. *)
+Definition scev_plan_conditions {N E V K G C} (lv : loop_view N E V K G)
+    (so : scev_ops K C) inventory (p : scev_plan V) : Prop :=
+  let ix := prepare_index lv inventory p in
+  In (sp_target p) inventory /\ NoDup (List.map sb_phi (sp_bindings p)) /\
+    last_phi (sp_bindings p) = Some (sp_target p) /\
+    bindings_conditions lv so ix O (sp_bindings p) /\
+    dependency_chain (Ssa.val_enc (lssa lv))
+      (rev (dependency_rows (Ssa.val_enc (lssa lv)) (sp_bindings p)))
+      (FinSet.add (Ssa.val_enc (lssa lv)) (sp_target p) FinSet.empty).
+
+(** The indexed checker decides target, binding-source and syntax-connectivity conditions. *)
+Theorem scev_plan_check_index_correct {N E V K G C} (lv : loop_view N E V K G)
+    (HN : encoding_laws (Cfg.node_enc (Ssa.cfg (lssa lv))))
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) ix p :
+  fst (fst (Cost.value (scev_plan_check_index_c lv so ix p))) = true <->
+  Map.mem (Ssa.val_enc (lssa lv)) (sp_target p) (indexed_values ix) = true /\
+    distinct (phi_index ix) = true /\ final (phi_index ix) = Some (sp_target p) /\
+    bindings_conditions lv so ix O (sp_bindings p) /\
+    dependency_chain (Ssa.val_enc (lssa lv))
+      (rev (dependency_rows (Ssa.val_enc (lssa lv)) (sp_bindings p)))
+      (FinSet.add (Ssa.val_enc (lssa lv)) (sp_target p) FinSet.empty).
+Proof.
+  assert (Hbindings : check_binding_valid lv so ix Memo.empty).
+  { split.
+    - change (Map.wf (check_binding_encoding (Ssa.val_enc (lssa lv)))
+        (@Map.empty (check_binding_key V) (option (FinSet.t V)))); apply Map.wf_empty.
+    - apply Memo.valid_empty. }
+  assert (Hexpressions : check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv)
+      (indexed_values ix) so Memo.empty).
+  { split.
+    - change (Map.wf (check_encoding (Ssa.val_enc (lssa lv)))
+        (@Map.empty (context_key V bool) (check_result V))); apply Map.wf_empty.
+    - apply Memo.valid_empty. }
+  pose proof (check_bindings_correct lv HV so ix (sp_bindings p) O []
+    Memo.empty Memo.empty Hbindings Hexpressions) as Hrun.
+  unfold scev_plan_check_index_c; autorewrite with galois_cost.
+  fold (@Memo.empty (check_binding_key V) (option (FinSet.t V))).
+  fold (@Memo.empty (context_key V bool) (check_result V)).
+  fold (Map.mem (Ssa.val_enc (lssa lv)) (sp_target p) (indexed_values ix)).
+  destruct (Map.mem _ (sp_target p) (indexed_values ix)), (distinct (phi_index ix));
+    cbn; try (intuition discriminate).
+  destruct (final (phi_index ix)) as [last|]; [|intuition discriminate].
+  autorewrite with galois_cost.
+  change (Cost.value (eqb_c (Ssa.val_enc (lssa lv)) last (sp_target p)))
+    with (eqb (Ssa.val_enc (lssa lv)) last (sp_target p)).
+  destruct (eqb_spec _ HV last (sp_target p)) as [Hequal|Hdifferent];
+    [subst last|autorewrite with galois_cost; cbn [fst]; intuition congruence].
+  autorewrite with galois_cost.
+  destruct (Cost.value (check_bindings_c lv so ix O (sp_bindings p) []
+    Memo.empty Memo.empty)) as [[rows bindings] expressions].
+  destruct Hrun as [Hrows _]; destruct rows as [rows|].
+  - autorewrite with galois_cost.
+    assert (Hsource : bindings_conditions lv so ix O (sp_bindings p) /\
+      rows = rev (dependency_rows (Ssa.val_enc (lssa lv)) (sp_bindings p))).
+    { symmetry in Hrows.
+      apply (proj1 (bindings_conditions_correct lv HN HV so ix (sp_bindings p)
+        O [] rows)) in Hrows.
+      destruct Hrows as [Hsource Hrows]; rewrite app_nil_r in Hrows; auto. }
+    destruct Hsource as [Hsource ->].
+    cbn [fst]; fold (@FinSet.empty V).
+    rewrite dependencies_correct; intuition.
+  - autorewrite with galois_cost; split; [discriminate|].
+    intros [_ [_ [_ [Hsource _]]]].
+    assert (Hsome : bindings_reference lv so ix O (sp_bindings p) [] =
+      Some (rev (dependency_rows (Ssa.val_enc (lssa lv)) (sp_bindings p)))).
+    { apply bindings_conditions_correct; [exact HN|exact HV|].
+      split; [exact Hsource|symmetry; apply app_nil_r]. }
+    congruence.
+Qed.
+
+(** Public plan checking decides independent source, uniqueness and target-connectivity conditions. *)
+Theorem scev_plan_check_correct {N E V K G C} (lv : loop_view N E V K G)
+    (HN : encoding_laws (Cfg.node_enc (Ssa.cfg (lssa lv))))
+    (HV : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) inventory p :
+  scev_plan_check lv so inventory p = true <-> scev_plan_conditions lv so inventory p.
+Proof.
+  unfold scev_plan_check, scev_plan_check_c; autorewrite with galois_cost.
+  fold (prepare_index lv inventory p).
+  rewrite scev_plan_check_index_correct by assumption.
+  unfold scev_plan_conditions.
+  rewrite prepare_index_member by exact HV.
+  rewrite prepare_index_equation at 1 2; cbn [phi_index].
+  rewrite prepare_ranks_distinct by exact HV.
+  rewrite prepare_ranks_final; reflexivity.
+Qed.
 
 End PlanCheck.
