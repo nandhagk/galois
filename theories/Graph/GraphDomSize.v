@@ -21,6 +21,34 @@ Proof.
     [reflexivity|now rewrite length_app, IH].
 Qed.
 
+(** Virtual edges retain all original occurrences and add one per distinct supplied entry. *)
+Theorem virtual_edges {V E} enc (g : Graph.t V E) :
+  edge_count (DomVirtual.graph enc g) =
+    (edge_count g + length (DomVirtual.entries enc g))%nat.
+Proof.
+  assert (Hnodes : Graph.nodes (DomVirtual.graph enc g) =
+    map (@Some V) (Graph.nodes g) ++ [None]).
+  { rewrite DomVirtual.graph_equation. reflexivity. }
+  unfold edge_count at 1. rewrite Hnodes, fold_right_app.
+  clear Hnodes.
+  cbn [fold_right]. rewrite DomVirtual.out_root, length_map.
+  unfold edge_count.
+  induction (Graph.nodes g) as [|v rest IH]; cbn [map fold_right].
+  - lia.
+  - rewrite DomVirtual.out_real, length_map, IH. lia.
+Qed.
+
+(** Raw entry occurrences give an input-only upper bound on the actual augmented edge count. *)
+Theorem virtual_edges_bound {V E} enc (g : Graph.t V E) :
+  encoding_laws enc ->
+  (edge_count (DomVirtual.graph enc g) <= edge_count g + length (Graph.entries g))%nat.
+Proof.
+  intro Henc. rewrite virtual_edges. apply Nat.add_le_mono_l.
+  destruct (DomVirtual.entries_exact enc g Henc) as [Hnodup Hmembers].
+  apply NoDup_incl_length; [exact Hnodup|].
+  intros v Hv. exact (proj1 (Hmembers v) Hv).
+Qed.
+
 Local Lemma parents_edge_bound {V E} (p : Prepared.t V E) scope roots (result : Search.result E) :
   Search.exact p scope roots result ->
   (Map.size (Search.parent_edge result) <= edge_count (Prepared.graph p))%nat.

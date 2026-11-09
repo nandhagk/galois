@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Graph Require Import GraphPrepared GraphDomSpec GraphCheckDom GraphCheckDomCost
   GraphDomCheckBound GraphFrontierSweep GraphDomBackend GraphDomGlobalCost GraphDomFastCheck
-  GraphDomFastCheckCost GraphDomFiniteCost GraphDomFiniteView GraphDomCheckedCost.
+  GraphDomFastCheckCost GraphDomFiniteCost GraphDomFiniteView GraphDomCheckedCost GraphDomInputCost.
 
 Module DomCost.
 

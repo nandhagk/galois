@@ -9,7 +9,8 @@ From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphPreparedCost GraphFixtures
   GraphDomCost GraphDomGlobalCost GraphDomBackend GraphDomVirtualCost GraphDomLayoutCost
-  GraphDomPrologueCost GraphDomLtCost GraphDomOutputCost.
+  GraphDomPrologueCost GraphDomLtCost GraphDomOutputCost GraphDomInputCost GraphDomSize
+  GraphDomVirtual.
 Import List.ListNotations Cost.Notations.
 
 Local Lemma callbacks_from_nodes {V E} (p : Prepared.t V E) w :
@@ -195,4 +196,47 @@ Proof.
   apply DomCost.lt_cost.
   - exact Fixtures.Empty.fixture_ready.
   - exact empty_bounds.
+Qed.
+
+Example original_input_widths extra : DomInputCost.bounds (weighted_line extra) (extra + 8)%N.
+Proof.
+  constructor.
+  - exact (weighted_callbacks extra).
+  - change (3 <= extra + 8)%N. lia.
+  - change (5 <= extra + 8)%N. lia.
+  - change (6 <= extra + 8)%N. lia.
+Qed.
+
+Example input_only_nonempty_lt_family :
+  bigO (fun extra : N => DomGlobalCost.work
+    (DomInputCost.nodes (weighted_line extra))
+    (DomInputCost.augmented_edges (weighted_line extra))
+    (DomInputCost.roots (weighted_line extra)) (extra + 8))
+    (fun extra => Cost.ticks (DomBackend.compute_c DomBackend.lt (weighted_line extra))).
+Proof.
+  apply DomInputCost.lt_bigO.
+  - exact weighted_line_ready.
+  - exact original_input_widths.
+Qed.
+
+Example input_only_nonempty_nca_bound extra :
+  (Cost.ticks (DomBackend.compute_c DomBackend.semi_nca (weighted_line extra)) <=
+    DomGlobalCost.lt_k * DomGlobalCost.work
+      (DomInputCost.nodes (weighted_line extra))
+      (DomInputCost.augmented_edges (weighted_line extra))
+      (DomInputCost.roots (weighted_line extra)) (extra + 8))%N.
+Proof.
+  apply DomInputCost.semi_nca_cost.
+  - exact (weighted_line_ready extra).
+  - exact (original_input_widths extra).
+Qed.
+
+Example multi_entry_augmented_budget_from_input :
+  (edge_count (DomVirtual.graph (Prepared.node_enc Fixtures.TwoEntry.prepared)
+    (Prepared.graph Fixtures.TwoEntry.prepared)) <=
+    edge_count (Prepared.graph Fixtures.TwoEntry.prepared) +
+      length (Graph.entries (Prepared.graph Fixtures.TwoEntry.prepared)))%nat.
+Proof.
+  apply DomSize.virtual_edges_bound.
+  exact (Prepared.encoding_valid _ (proj2 (proj2 Fixtures.TwoEntry.fixture_ready))).
 Qed.
