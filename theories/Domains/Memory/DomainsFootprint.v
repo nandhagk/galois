@@ -332,6 +332,16 @@ Definition footprint_contains_c {T} (E : encoding T) (f : footprint T) site b :=
 Definition footprint_contains {T} (E : encoding T) f site b :=
   Cost.value (footprint_contains_c E f site b).
 
+(** The byte test pays for the encoded site comparison. *)
+Theorem footprint_contains_cost {T} (E : encoding T) (f : footprint T) site b :
+  (Cost.ticks (footprint_contains_c E f site b) <=
+    2 + Cost.ticks (encode_c E site) + Cost.ticks (encode_c E (footprint_site f)) +
+      N.min (key_bits E site) (key_bits E (footprint_site f)))%N.
+Proof.
+  unfold footprint_contains_c. rewrite Cost.ticks_bind, Cost.ticks_ret, N.add_0_r.
+  apply eqb_cost.
+Qed.
+
 (** A matching write adds its bytes and leaves all other bytes unchanged. *)
 Theorem footprint_add_member {T} (E : encoding T) (HE : encoding_laws E)
     (f : footprint T) m site b :
@@ -495,4 +505,34 @@ Proof.
   pose proof (IntervalSet.covers_cost (footprint_lookup E (footprint_site f) m)
     (footprint_lower f, footprint_upper f)) as Hcost.
   lia.
+Qed.
+
+(** A family bound follows from encoder price, encoded key width and stored range count. *)
+Theorem footprint_add_family_cost {T} (E : encoding T) k
+    (Henc : encoding_cost_laws E k) (f : footprint T) m width ranges :
+  (key_bits E (footprint_site f) <= width)%N ->
+  (N.of_nat (length (footprint_lookup E (footprint_site f) m)) <= ranges)%N ->
+  (Cost.ticks (footprint_add_c E f m) <=
+    2 * (1 + k * width + width) + 2 * (1 + ranges))%N.
+Proof.
+  intros Hwidth Hranges.
+  pose proof (footprint_add_cost E f m) as Hcost.
+  pose proof (encode_cost_bound Henc (footprint_site f)) as Hencode.
+  unfold key_bits in Hwidth, Hencode.
+  nia.
+Qed.
+
+(** The same primitive duties bound coverage uniformly over a family of queries. *)
+Theorem footprint_covers_family_cost {T} (E : encoding T) k
+    (Henc : encoding_cost_laws E k) (f : footprint T) m width ranges :
+  (key_bits E (footprint_site f) <= width)%N ->
+  (N.of_nat (length (footprint_lookup E (footprint_site f) m)) <= ranges)%N ->
+  (Cost.ticks (footprint_covers_c E m f) <=
+    1 + k * width + width + 3 + ranges)%N.
+Proof.
+  intros Hwidth Hranges.
+  pose proof (footprint_covers_cost E m f) as Hcost.
+  pose proof (encode_cost_bound Henc (footprint_site f)) as Hencode.
+  unfold key_bits in Hwidth, Hencode.
+  nia.
 Qed.
