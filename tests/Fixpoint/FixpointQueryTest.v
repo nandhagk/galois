@@ -48,3 +48,38 @@ Example bulk_order :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Example imported_bulk_nil {X A} (k : list A -> Cost.t (Query.t X A)) :
+  ask_all_c [] k = (Cost.step ;; k []).
+Proof.
+  apply ask_all_c_nil.
+Qed.
+
+Example imported_bulk_cons {X A} x xs (k : list A -> Cost.t (Query.t X A)) :
+  ask_all_c (x :: xs) k =
+    (Cost.step ;;
+      Cost.ret (Query.Ask x (fun a => ask_all_c xs (fun values => k (a :: values))))).
+Proof.
+  apply ask_all_c_cons.
+Qed.
+
+Definition selected_bulk : Query.t nat nat :=
+  ask_all [0] (fun values =>
+    Cost.tick (if Nat.eqb (hd 0 values) 3 then 7 else 2) ;;
+    Cost.ret (Query.Ret (hd 0 values))).
+
+Example selected_nonunit_bulk_continuation :
+  (Query.run selected_bulk (fun _ => 3),
+    Cost.ticks (Query.run_c (fun _ => Cost.ret 3) selected_bulk)) =
+    (Query.Trace 3 [0] [], 12%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example other_nonunit_bulk_continuation :
+  (Query.run selected_bulk (fun _ => 4),
+    Cost.ticks (Query.run_c (fun _ => Cost.ret 4) selected_bulk)) =
+    (Query.Trace 4 [0] [], 7%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.

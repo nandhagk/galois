@@ -195,6 +195,22 @@ Fixpoint ask_all_c {X A} (xs : list X) (k : list A -> Cost.t (Query.t X A))
 Definition ask_all {X A} xs (k : list A -> Cost.t (Query.t X A)) :=
   Cost.value (ask_all_c xs k).
 
+(** An empty bulk read pays its construction tick before calling its actual continuation. *)
+Theorem ask_all_c_nil {X A} (k : list A -> Cost.t (Query.t X A)) :
+  ask_all_c [] k = (Cost.step ;; k []).
+Proof.
+  reflexivity.
+Qed.
+
+(** A nonempty bulk read retains the selected answer in the same costed continuation. *)
+Theorem ask_all_c_cons {X A} x xs (k : list A -> Cost.t (Query.t X A)) :
+  ask_all_c (x :: xs) k =
+    (Cost.step ;;
+      Cost.ret (Query.Ask x (fun a => ask_all_c xs (fun values => k (a :: values))))).
+Proof.
+  reflexivity.
+Qed.
+
 (** Sequenced contributions keep their original order. *)
 Fixpoint side_all_c {X A} (xs : list (X * A)) (q : Query.t X A) : Cost.t (Query.t X A) :=
   match xs with
