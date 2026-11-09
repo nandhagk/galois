@@ -9,7 +9,7 @@ From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseCertify.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphCheckDom
   GraphDomSemi GraphDomLt GraphDomNca GraphDomNumber GraphDomPath GraphDomCut
-  GraphDomLtProof GraphDomNcaProof GraphDomOutput GraphReach GraphFrontierSweep GraphCheckDomCost.
+  GraphDomLtProof GraphDomNcaProof GraphDomOutput GraphReach GraphFrontierSweep GraphDomFastCheck.
 Import Cost.Notations.
 
 Module DomBackend.
@@ -205,7 +205,7 @@ Qed.
 
 (** Rejection runs the actual selected backend, retaining its full prologue, finisher and annotation work. *)
 Definition compute_checked_c {V E} b (p : Prepared.t V E) (candidate : Dom.tree) :=
-  let* accepted := DomCheckCost.check_c p (Dom.idom candidate) in
+  let* accepted := DomFastCheck.check_c p (Dom.idom candidate) in
   if accepted then checked_candidate_c p (Dom.idom candidate) else compute_c b p.
 
 (** Checked computation chooses actual charged candidate annotation or the actual selected fallback. *)
@@ -214,7 +214,7 @@ Theorem compute_checked_value {V E} b (p : Prepared.t V E) candidate :
     if DomCheck.check p (Dom.idom candidate)
     then Cost.value (checked_candidate_c p (Dom.idom candidate)) else compute b p.
 Proof.
-  unfold compute_checked_c. rewrite Cost.value_bind, DomCheckCost.check_c_value.
+  unfold compute_checked_c. rewrite Cost.value_bind, DomFastCheck.check_c_value.
   destruct (DomCheck.check p (Dom.idom candidate)); reflexivity.
 Qed.
 
@@ -227,6 +227,62 @@ Proof.
   destruct (DomCheck.check p (Dom.idom candidate)) eqn:Hcheck.
   - exact (checked_candidate_exact p _ Hready Hmap Hcheck).
   - exact (compute_exact b p Hlaws Hready).
+Qed.
+
+(** Certification refines the single charged computation using explicit input and fallback duties. *)
+Definition compute_checked {V E} b (p : Prepared.t V E) candidate
+    (Hlaws : backend_laws b) (Hready : Prepared.ready p)
+    (Hmap : Map.wf positive_encoding (Dom.idom candidate))
+    : Cost.t {result : Dom.tree | Dom.exact p result} :=
+  Cost.refine (compute_checked_c b p candidate)
+    (compute_checked_exact b p candidate Hlaws Hready Hmap).
+
+(** Erasing the certified proof returns the same actual checked computation's tree. *)
+Theorem compute_checked_projection {V E} b (p : Prepared.t V E) candidate Hlaws Hready Hmap :
+  proj1_sig (Cost.value (compute_checked b p candidate Hlaws Hready Hmap)) =
+    Cost.value (compute_checked_c b p candidate).
+Proof.
+  reflexivity.
+Qed.
+
+(** The certified computation carries exactness for its actual accepted or fallback tree. *)
+Theorem compute_checked_result_exact {V E} b (p : Prepared.t V E) candidate Hlaws Hready Hmap :
+  Dom.exact p (proj1_sig (Cost.value (compute_checked b p candidate Hlaws Hready Hmap))).
+Proof.
+  exact (proj2_sig (Cost.value (compute_checked b p candidate Hlaws Hready Hmap))).
+Qed.
+
+(** Accepted parents select the charged canonical annotation without running the fallback. *)
+Theorem compute_checked_accepted {V E} b (p : Prepared.t V E) candidate :
+  DomCheck.check p (Dom.idom candidate) = true ->
+  compute_checked_c b p candidate =
+    (DomFastCheck.check_c p (Dom.idom candidate) ;;
+      checked_candidate_c p (Dom.idom candidate)).
+Proof.
+  intro Hcheck. unfold compute_checked_c.
+  apply Cost.ext.
+  - rewrite !Cost.value_bind, DomFastCheck.check_c_value, Hcheck. reflexivity.
+  - rewrite !Cost.ticks_bind, DomFastCheck.check_c_value, Hcheck. reflexivity.
+Qed.
+
+(** Rejection retains one checker followed by the same selected backend computation. *)
+Theorem compute_checked_rejected {V E} b (p : Prepared.t V E) candidate :
+  DomCheck.check p (Dom.idom candidate) = false ->
+  compute_checked_c b p candidate =
+    (DomFastCheck.check_c p (Dom.idom candidate) ;; compute_c b p).
+Proof.
+  intro Hcheck. unfold compute_checked_c.
+  apply Cost.ext.
+  - rewrite !Cost.value_bind, DomFastCheck.check_c_value, Hcheck. reflexivity.
+  - rewrite !Cost.ticks_bind, DomFastCheck.check_c_value, Hcheck. reflexivity.
+Qed.
+
+(** Candidate interval maps affect neither returned values nor charges at the checked boundary. *)
+Theorem compute_checked_ignores_intervals {V E} b (p : Prepared.t V E) first second :
+  Dom.idom first = Dom.idom second ->
+  compute_checked_c b p first = compute_checked_c b p second.
+Proof.
+  intro Hparents. unfold compute_checked_c. now rewrite Hparents.
 Qed.
 
 (** Accepted-candidate accounting retains every reachability, enumeration and annotation charge. *)
@@ -244,13 +300,24 @@ Qed.
 (** Checked accounting includes one actual checker and the full selected branch, including rejection fallback. *)
 Theorem compute_checked_cost_equation {V E} b (p : Prepared.t V E) candidate :
   Cost.ticks (compute_checked_c b p candidate) =
-    (Cost.ticks (DomCheckCost.check_c p (Dom.idom candidate)) +
+    (Cost.ticks (DomFastCheck.check_c p (Dom.idom candidate)) +
       if DomCheck.check p (Dom.idom candidate)
       then Cost.ticks (checked_candidate_c p (Dom.idom candidate))
       else Cost.ticks (compute_c b p))%N.
 Proof.
-  unfold compute_checked_c. rewrite Cost.ticks_bind, DomCheckCost.check_c_value.
+  unfold compute_checked_c. rewrite Cost.ticks_bind, DomFastCheck.check_c_value.
   destruct (DomCheck.check p (Dom.idom candidate)); reflexivity.
+Qed.
+
+(** Proof refinement retains the checker and every charge of the selected branch. *)
+Theorem compute_checked_ticks {V E} b (p : Prepared.t V E) candidate Hlaws Hready Hmap :
+  Cost.ticks (compute_checked b p candidate Hlaws Hready Hmap) =
+    (Cost.ticks (DomFastCheck.check_c p (Dom.idom candidate)) +
+      if DomCheck.check p (Dom.idom candidate)
+      then Cost.ticks (checked_candidate_c p (Dom.idom candidate))
+      else Cost.ticks (compute_c b p))%N.
+Proof.
+  unfold compute_checked. rewrite Cost.ticks_refine. apply compute_checked_cost_equation.
 Qed.
 
 (** A candidate's semantic certificate is about canonical numbering of its actual parent map. *)

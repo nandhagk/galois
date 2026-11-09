@@ -14,6 +14,34 @@ Open Scope positive_scope.
 
 Definition diamond_expected := Fixtures.parents [(1, 4); (2, 4); (3, 4)].
 
+Example diamond_exit_valid :
+  forall i, In i [4] -> Prepared.valid_id Fixtures.Diamond.prepared i.
+Proof.
+  intros i [<-|Habsent].
+  - exists 4%nat. split; [vm_compute; tauto|vm_compute; reflexivity].
+  - contradiction.
+Qed.
+
+Example post_exact_lt_client :
+  Dom.exact (Prepared.reverse Fixtures.Diamond.prepared [4])
+    (DomPost.post DomBackend.lt Fixtures.Diamond.prepared [4]).
+Proof.
+  apply DomPost.post_exact.
+  - exact DomBackend.lt_laws.
+  - exact Fixtures.Diamond.fixture_ready.
+  - exact diamond_exit_valid.
+Qed.
+
+Example post_exact_nca_client :
+  Dom.exact (Prepared.reverse Fixtures.Diamond.prepared [4])
+    (DomPost.post DomBackend.semi_nca Fixtures.Diamond.prepared [4]).
+Proof.
+  apply DomPost.post_exact.
+  - exact DomBackend.semi_nca_laws.
+  - exact Fixtures.Diamond.fixture_ready.
+  - exact diamond_exit_valid.
+Qed.
+
 Example diamond_post_backends :
   (DomPost.parents DomBackend.lt Fixtures.Diamond.prepared [4],
    DomPost.parents DomBackend.semi_nca Fixtures.Diamond.prepared [4]) =

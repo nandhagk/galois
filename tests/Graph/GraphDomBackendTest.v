@@ -8,7 +8,7 @@ From Stdlib Require Import List Bool PArith NArith.
 From Galois.Cost Require Import CostMonad.
 From Galois.Base Require Import BaseEncoding BaseMap.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphFixtures
-  GraphCheckDom GraphDomBackend GraphDomNumber.
+  GraphCheckDom GraphDomFastCheck GraphDomBackend GraphDomNumber.
 Import List.ListNotations Cost.Notations.
 Open Scope positive_scope.
 
@@ -52,6 +52,130 @@ Example accepted_exact_client result :
   Dom.exact Fixtures.Diamond.prepared (proj1_sig result).
 Proof.
   intros _. exact (proj2_sig result).
+Qed.
+
+Example builtin_lt_laws_client : DomBackend.backend_laws DomBackend.lt.
+Proof.
+  exact DomBackend.lt_laws.
+Qed.
+
+Example builtin_nca_laws_client : DomBackend.backend_laws DomBackend.semi_nca.
+Proof.
+  exact DomBackend.semi_nca_laws.
+Qed.
+
+Example actual_lt_exact_client :
+  Dom.exact Fixtures.Diamond.prepared
+    (DomBackend.compute DomBackend.lt Fixtures.Diamond.prepared).
+Proof.
+  apply DomBackend.compute_exact.
+  - exact DomBackend.lt_laws.
+  - exact Fixtures.Diamond.fixture_ready.
+Qed.
+
+Example actual_nca_exact_client :
+  Dom.exact Fixtures.TwoEntry.prepared
+    (DomBackend.compute DomBackend.semi_nca Fixtures.TwoEntry.prepared).
+Proof.
+  apply DomBackend.compute_exact.
+  - exact DomBackend.semi_nca_laws.
+  - exact Fixtures.TwoEntry.fixture_ready.
+Qed.
+
+Example full_backend_agreement_client :
+  DomBackend.compute DomBackend.lt Fixtures.Unreachable.prepared =
+    DomBackend.compute DomBackend.semi_nca Fixtures.Unreachable.prepared.
+Proof.
+  apply DomBackend.backends_agree. exact Fixtures.Unreachable.fixture_ready.
+Qed.
+
+Definition certified_diamond :=
+  DomBackend.compute_checked DomBackend.lt Fixtures.Diamond.prepared unnumbered_diamond
+    DomBackend.lt_laws Fixtures.Diamond.fixture_ready Fixtures.Diamond.parents_wf.
+
+Example certified_accepted_exact_client :
+  Dom.exact Fixtures.Diamond.prepared (proj1_sig (Cost.value certified_diamond)).
+Proof.
+  apply DomBackend.compute_checked_result_exact.
+Qed.
+
+Example accepted_checked_branch_client :
+  DomBackend.compute_checked_c DomBackend.lt Fixtures.Diamond.prepared unnumbered_diamond =
+    (DomFastCheck.check_c Fixtures.Diamond.prepared Fixtures.Diamond.parents ;;
+      DomBackend.checked_candidate_c Fixtures.Diamond.prepared Fixtures.Diamond.parents).
+Proof.
+  apply DomBackend.compute_checked_accepted. vm_compute. reflexivity.
+Qed.
+
+Example certified_accepted_parents :
+  Dom.idom (proj1_sig (Cost.value certified_diamond)) = Fixtures.Diamond.parents.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition certified_fallback :=
+  DomBackend.compute_checked DomBackend.semi_nca Fixtures.Line.prepared bad_line
+    DomBackend.semi_nca_laws Fixtures.Line.fixture_ready bad_line_wf.
+
+Example certified_fallback_exact_client :
+  Dom.exact Fixtures.Line.prepared (proj1_sig (Cost.value certified_fallback)).
+Proof.
+  apply DomBackend.compute_checked_result_exact.
+Qed.
+
+Example rejected_checked_branch_client :
+  DomBackend.compute_checked_c DomBackend.semi_nca Fixtures.Line.prepared bad_line =
+    (DomFastCheck.check_c Fixtures.Line.prepared (Dom.idom bad_line) ;;
+      DomBackend.compute_c DomBackend.semi_nca Fixtures.Line.prepared).
+Proof.
+  apply DomBackend.compute_checked_rejected. vm_compute. reflexivity.
+Qed.
+
+Example certified_fallback_value :
+  proj1_sig (Cost.value certified_fallback) =
+    DomBackend.compute DomBackend.semi_nca Fixtures.Line.prepared.
+Proof.
+  unfold certified_fallback.
+  rewrite DomBackend.compute_checked_projection, DomBackend.compute_checked_value.
+  vm_compute. reflexivity.
+Qed.
+
+Example certified_fallback_ticks_client :
+  Cost.ticks certified_fallback =
+    (Cost.ticks (DomFastCheck.check_c Fixtures.Line.prepared (Dom.idom bad_line)) +
+      Cost.ticks (DomBackend.compute_c DomBackend.semi_nca Fixtures.Line.prepared))%N.
+Proof.
+  unfold certified_fallback. rewrite DomBackend.compute_checked_ticks.
+  reflexivity.
+Qed.
+
+Definition corrupt_diamond_intervals :=
+  Dom.Tree Fixtures.Diamond.parents
+    (Map.of_list positive_encoding [(1, 99); (2, 99); (3, 99); (4, 99)])
+    (Map.of_list positive_encoding [(1, 1); (2, 1); (3, 1); (4, 1)]).
+
+Example supplied_intervals_are_unused :
+  DomBackend.compute_checked_c DomBackend.lt Fixtures.Diamond.prepared
+    corrupt_diamond_intervals =
+  DomBackend.compute_checked_c DomBackend.lt Fixtures.Diamond.prepared unnumbered_diamond.
+Proof.
+  apply DomBackend.compute_checked_ignores_intervals. reflexivity.
+Qed.
+
+Example accepted_intervals_are_rebuilt :
+  let tree := Cost.value (DomBackend.compute_checked_c DomBackend.lt
+    Fixtures.Diamond.prepared corrupt_diamond_intervals) in
+  (DomCheck.dominates_b tree 1 4, DomCheck.dominates_b tree 2 4,
+    DomCheck.dominates_b tree 3 4) = (true, false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example checked_boundary_empty :
+  Cost.value (DomBackend.compute_checked_c DomBackend.lt
+    Fixtures.Empty.prepared Fixtures.Empty.tree) = Fixtures.Empty.tree.
+Proof.
+  vm_compute. reflexivity.
 Qed.
 
 Definition malformed_line :=
