@@ -5,14 +5,16 @@
     Builds on: DatalogSemiNaive and DatalogEngine. *)
 
 From Stdlib Require Import List Bool PeanoNat PArith NArith Lia.
-From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseSet.
+From Galois.Cost Require Import CostMonad CostBound.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeSet.
 From Galois.Fixpoint Require Import FixpointSolver.
 From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogRelation DatalogFire
-  DatalogModel DatalogCompileProof DatalogSolve DatalogSemiNaive DatalogSemiNaiveProof
-  DatalogSemiNaiveFinite DatalogEngine DatalogEngineProof.
-Import List.ListNotations SemiNaive SemiNaiveProof SemiNaiveFinite.
+  DatalogModel DatalogCompile DatalogCompileProof DatalogSolve DatalogJoin DatalogSemiNaive
+  DatalogSemiNaiveProof
+  DatalogSemiNaiveIndex DatalogSemiNaiveFinite DatalogSemiNaiveCost
+  DatalogEngine DatalogEngineProof.
+Import List.ListNotations SemiNaive SemiNaiveIndex SemiNaiveProof SemiNaiveFinite SemiNaiveCost.
 Local Open Scope nat_scope.
 
 Definition engine_zero : stratification nat := Stratification (fun _ => Cost.ret 0) 1.
@@ -242,7 +244,7 @@ Proof.
       [change (0 <= 0); lia | contradiction | change (0 <= 0); lia | contradiction].
 Qed.
 
-(** This client varies the complete source fact inventory, including repeated and absent constants. *)
+(** The client varies the source fact inventory including repeated and absent constants. *)
 Example semantic_cycle_family cs fuel db :
   solve_program_fast engine_cycle (engine_cycle_facts cs) fuel = Outcome.Solved db ->
   represents (rel_of engine_cycle db) (least_model engine_cycle (engine_cycle_facts cs)).
@@ -274,4 +276,213 @@ Proof.
   { vm_compute; eexists; reflexivity. }
   destruct Hrun as [db Hdb]; exists db; split; [exact Hdb |].
   apply (semantic_cycle_family _ _ _ Hdb).
+Qed.
+
+(** * New-batch numerical clients *)
+
+Definition engine_cost_batch :=
+  FinSet.of_list (ground_encoding engine_empty) [(7%nat, [2%positive])].
+
+Definition engine_cost_state old : state nat :=
+  State old FinSet.empty Map.empty Map.empty [].
+
+Lemma engine_cost_batch_keys f :
+  FinSet.mem (ground_encoding engine_empty) f engine_cost_batch = true ->
+  (key_bits (ground_encoding engine_empty) f <= 1000)%N /\
+  key_budget (penc engine_empty) 200 200 (fst f) /\
+  key_budget tuple_encoding 200 200 (snd f).
+Proof.
+  intro Hf; apply (mem_of_list (ground_encoding engine_empty)
+    (ground_encoding_laws engine_empty nat_encoding_laws)) in Hf.
+  destruct Hf as [<- | Hbad]; [|contradiction].
+  repeat split; vm_compute; discriminate.
+Qed.
+
+(** This numerical client accepts arbitrary old storage while inserting a nonempty indexed batch. *)
+Example nonempty_advance_numeric old :
+  (Cost.ticks (advance_c engine_empty (engine_cost_state old) engine_cost_batch) <=
+    advance_charge (engine_cost_state old) engine_cost_batch 1 1 200 200 200 200 1000)%N.
+Proof.
+  apply advance_cost.
+  - apply nat_encoding_laws.
+  - apply FinSet.wf_of_list.
+  - apply engine_cost_batch_keys.
+  - intros j Hbad; contradiction.
+Qed.
+
+(** Accumulated cardinality varies without entering the fresh-side advancement domain. *)
+Example varying_accumulated_advance :
+  bigO (fun old : FinSet.t (ground_atom nat) =>
+    advance_charge (engine_cost_state old) engine_cost_batch 1 1 200 200 200 200 1000)
+    (fun old => Cost.ticks (advance_c engine_empty (engine_cost_state old) engine_cost_batch)).
+Proof.
+  apply advance_bigO.
+  - intro old; apply nat_encoding_laws.
+  - intro old; apply FinSet.wf_of_list.
+  - intros old; apply engine_cost_batch_keys.
+  - intros old j Hbad; contradiction.
+Qed.
+
+(** A prepared ground-pivot plan starts empty and receives the new batch through maintenance. *)
+Definition engine_cost_recursive_rule : rule nat :=
+  Rule (Atom 7 [TConst 2%positive]) [LPos (Atom 7 [TConst 2%positive])].
+
+Definition engine_cost_job : job nat :=
+  Job engine_cost_recursive_rule 0 (tag_rule engine_cost_recursive_rule 0)
+    (Join.prepare (tag_program engine_empty) [Atom (7, true) [TConst 2%positive]]
+      (fun _ => Cost.ret (set_empty tuple_encoding))).
+
+Lemma engine_cost_frontier_rows row :
+  member row (rel_of engine_empty
+    (add_atoms engine_empty (FinSet.elements engine_cost_batch) Map.empty) 7) = true ->
+  row = [2%positive].
+Proof.
+  rewrite (add_atoms_exact engine_empty nat_encoding_laws) by apply Map.wf_empty.
+  rewrite rel_empty.
+  change ((false = true \/ In (7, row) [(7, [2%positive])]) -> row = [2%positive]).
+  intros [Hbad | [Heq | Hbad]]; [discriminate | congruence | contradiction].
+Qed.
+
+Lemma engine_cost_job_data :
+  maintenance_data engine_empty
+    (add_atoms engine_empty (FinSet.elements engine_cost_batch) Map.empty)
+    (plan engine_cost_job) 1 1 200 200 200 200.
+Proof.
+  intros node Hnode; vm_compute in Hnode; destruct Hnode as [<- | Hbad]; [|contradiction].
+  split; [reflexivity | split].
+  - split; vm_compute; discriminate.
+  - split; [vm_compute; discriminate | split].
+    + intros row Hrow; apply engine_cost_frontier_rows in Hrow; subst row;
+        vm_compute; discriminate.
+    + intros row key Hrow Hselect; apply engine_cost_frontier_rows in Hrow; subst row.
+      vm_compute in Hselect; injection Hselect as <-.
+      split; vm_compute; discriminate.
+Qed.
+
+Definition engine_cost_inventory_state (n : nat) old : state nat :=
+  State old FinSet.empty Map.empty Map.empty (repeat engine_cost_job n).
+
+(** The family varies the cached job inventory and arbitrary accumulated storage together. *)
+Example varying_inventory_advance :
+  bigO (fun x : nat * FinSet.t (ground_atom nat) =>
+    advance_charge (engine_cost_inventory_state (fst x) (snd x))
+      engine_cost_batch 1 1 200 200 200 200 1000)
+    (fun x => Cost.ticks (advance_c engine_empty
+      (engine_cost_inventory_state (fst x) (snd x)) engine_cost_batch)).
+Proof.
+  apply advance_bigO.
+  - intro x; apply nat_encoding_laws.
+  - intro x; apply FinSet.wf_of_list.
+  - intros x; apply engine_cost_batch_keys.
+  - intros x j Hj; apply repeat_spec in Hj; subst j; apply engine_cost_job_data.
+Qed.
+
+Example nonempty_inventory_numeric old :
+  (Cost.ticks (advance_c engine_empty (engine_cost_inventory_state 2 old) engine_cost_batch) <=
+    advance_charge (engine_cost_inventory_state 2 old)
+      engine_cost_batch 1 1 200 200 200 200 1000)%N.
+Proof.
+  apply advance_cost.
+  - apply nat_encoding_laws.
+  - apply FinSet.wf_of_list.
+  - apply engine_cost_batch_keys.
+  - intros j Hj; apply repeat_spec in Hj; subst j; apply engine_cost_job_data.
+Qed.
+
+(** Updating the prepared frontier plan makes its nonempty matching binding observable. *)
+Example maintained_frontier_plan_runs :
+  Join.run (plan (Cost.value (update_job_c engine_empty
+    (add_atoms engine_empty (FinSet.elements engine_cost_batch) Map.empty)
+    engine_cost_job))) = [[]].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** * Chain tick controls *)
+
+Definition engine_linear_chain : program nat :=
+  Program nat_encoding (fun p => Cost.ret (if Nat.eqb p 0 then 2 else 1))
+    [Rule (Atom 1 [TVar 1])
+      [LPos (Atom 1 [TVar 0]); LPos (Atom 0 [TVar 0; TVar 1])]].
+
+Definition engine_chain_four : list (ground_atom nat) :=
+  [(1, [1%positive]); (0, [1%positive; 2%positive]); (0, [2%positive; 3%positive]);
+   (0, [3%positive; 4%positive])].
+
+Definition engine_chain_eight : list (ground_atom nat) :=
+  engine_chain_four ++
+  [(0, [4%positive; 5%positive]); (0, [5%positive; 6%positive]);
+   (0, [6%positive; 7%positive]); (0, [7%positive; 8%positive])].
+
+Example four_fact_chain_computes :
+  engine_observe engine_linear_chain engine_chain_four 4%positive
+    [(1, [1%positive]); (1, [2%positive]); (1, [3%positive]); (1, [4%positive]);
+     (1, [5%positive])] = Some [true; true; true; true; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example eight_fact_chain_computes :
+  engine_observe engine_linear_chain engine_chain_eight 8%positive
+    [(1, [1%positive]); (1, [4%positive]); (1, [7%positive]); (1, [8%positive]);
+     (1, [9%positive])] = Some [true; true; true; true; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** These computed tick observations are a finite control and supply no asymptotic theorem. *)
+Example chain_tick_growth_control :
+  (0 < Cost.ticks (solve_program_fast_c engine_linear_chain engine_chain_four 4%positive) /\
+   Cost.ticks (solve_program_fast_c engine_linear_chain engine_chain_eight 8%positive) <=
+     3 * Cost.ticks (solve_program_fast_c engine_linear_chain engine_chain_four 4%positive))%N.
+Proof.
+  vm_compute; split; [reflexivity | discriminate].
+Qed.
+
+Definition engine_chain_strata : stratification nat :=
+  Stratification (fun p => Cost.ret (if Nat.eqb p 0 then 0 else 1)) 2.
+
+Definition engine_chain_lower facts p :=
+  if Nat.eqb p 0 then facts_at_c engine_linear_chain facts p
+  else Cost.ret (set_empty tuple_encoding).
+
+Lemma engine_chain_stratified : stratified engine_linear_chain engine_chain_strata.
+Proof.
+  split.
+  - intro p; change ((if Nat.eqb p 0 then 0 else 1) < 2).
+    destruct (Nat.eqb p 0); lia.
+  - intros r l [<- | Hbad] Hl; [|contradiction].
+    destruct Hl as [<- | [<- | Hbad]]; [| |contradiction].
+    + change (1 <= 1); lia.
+    + change (0 <= 1); lia.
+Qed.
+
+(** The manually stratified chain has one reachability pivot and a fixed lower edge relation. *)
+Example single_pivot_chain_inventory :
+  map pivot (jobs (initial engine_linear_chain engine_chain_eight engine_chain_strata
+    (engine_chain_lower engine_chain_eight) 1)) = [0].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Both tick-control runs close their stratum and perform the stationary probe. *)
+Example single_pivot_chain_solved :
+  (engine_tag (stratum engine_linear_chain engine_chain_four engine_chain_strata
+     (engine_chain_lower engine_chain_four) 1 4%positive),
+   engine_tag (stratum engine_linear_chain engine_chain_eight engine_chain_strata
+     (engine_chain_lower engine_chain_eight) 1 8%positive)) = (0, 0).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Doubling facts uses at most three times the ticks in this nonempty stratum control. *)
+Example single_pivot_chain_tick_control :
+  (0 < Cost.ticks (stratum_c engine_linear_chain engine_chain_four engine_chain_strata
+     (engine_chain_lower engine_chain_four) 1 4%positive) /\
+   Cost.ticks (stratum_c engine_linear_chain engine_chain_eight engine_chain_strata
+     (engine_chain_lower engine_chain_eight) 1 8%positive) <=
+     3 * Cost.ticks (stratum_c engine_linear_chain engine_chain_four engine_chain_strata
+       (engine_chain_lower engine_chain_four) 1 4%positive))%N.
+Proof.
+  vm_compute; split; [reflexivity | discriminate].
 Qed.

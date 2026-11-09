@@ -99,7 +99,7 @@ Definition tagged_c {P} (prog : program P) st k lower acc front (q : P * bool) :
 Definition tagged {P} prog st k lower acc front q :=
   Cost.value (@tagged_c P prog st k lower acc front q).
 
-(** Adding a batch visits supplied rows and updates the predicate index without enumerating old rows. *)
+(** Batch insertion updates the predicate index from supplied rows without enumerating old rows. *)
 Definition add_atoms_c {P} (prog : program P) (xs : list (ground_atom P))
     (db : database P) :=
   fold_right_c (fun f acc =>
@@ -153,7 +153,7 @@ Definition seed_rules_c {P} (prog : program P) (rs : list (rule P)) lower :=
     let* here := map_c (fun row => Cost.ret (pred (head r), row)) rows in
     app_c here acc) [] rs.
 
-(** Facts and rules without same-level positives form both the first accumulated set and frontier. *)
+(** Facts and rules without same-level positives seed the accumulated set and frontier. *)
 Definition initial_c {P} (prog : program P) (facts : list (ground_atom P)) st lower k :=
   let* classified := classify_c st k (rules prog) in
   let* seeds := filter_c (fun f =>
@@ -183,7 +183,7 @@ Definition candidates_c {P} (prog : program P) st lower k (s : state P) :=
 Definition candidates {P} prog st lower k s :=
   Cost.value (@candidates_c P prog st lower k s).
 
-(** Difference traverses candidates as its chosen operand, independently of accumulated cardinality. *)
+(** Difference traverses candidates independently of accumulated cardinality. *)
 Definition new_c {P} prog st lower k (s : state P) :=
   let* offered := candidates_c prog st lower k s in
   FinSet.diff_c offered (accumulated s).
@@ -198,7 +198,7 @@ Definition update_job_c {P} (prog : program P) (batch : database P) (j : job P) 
     (batch_rows_c prog batch) (plan j) in
   Cost.ret (Job (source_rule j) (pivot j) (tagged_rule j) next).
 
-(** Advancement resets frontier indexes and extends accumulated indexes from the fresh batch only. *)
+(** Advancement resets frontier indexes and extends accumulated indexes from the fresh batch. *)
 Definition advance_c {P} (prog : program P) (s : state P) batch :=
   let* rows := FinSet.elements_c batch in
   let* known := FinSet.union_c (accumulated s) batch in

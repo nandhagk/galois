@@ -169,7 +169,7 @@ Proof.
       rewrite Habsent; intuition discriminate.
 Qed.
 
-(** Advancing a same-level batch preserves every predicate index and cached occurrence-pivot plan. *)
+(** A same-level batch preserves every predicate index and cached occurrence-pivot plan. *)
 Theorem advance_ready st lower k s batch :
   ready prog st lower k s -> FinSet.wf E batch ->
   (forall f, FinSet.mem E f batch = true -> level st (fst f) = k) ->

@@ -156,7 +156,7 @@ Proof.
     specialize (IH Hresult Hcorrect_next); lia.
 Qed.
 
-(** Fuel greater than source capacity solves this same Cost.iterate runtime, including its stop probe. *)
+(** Fuel above source capacity solves the same Cost.iterate runtime including its stop probe. *)
 Theorem semi_naive_solved_enough fuel :
   capacity prog facts < Pos.to_nat fuel ->
   exists db, stratum prog facts st lower k fuel = Outcome.Solved db.

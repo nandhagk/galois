@@ -44,7 +44,7 @@ Proof.
   - apply (IH position); assumption.
 Qed.
 
-(** Every source positive atom has an occurrence and each occurrence names a source positive atom. *)
+(** Each source positive atom has an occurrence and each occurrence names a source positive atom. *)
 Theorem occurrences_spec {P} position (ls : list (literal P)) a :
   (exists i, In (i, a) (occurrences position ls)) <-> In (LPos a) ls.
 Proof.
@@ -123,7 +123,7 @@ Proof.
   repeat rewrite Cost.value_bind; rewrite value_app_c, value_map_c; reflexivity.
 Qed.
 
-(** Classification selects exactly same-level source rules without recursive positive occurrences. *)
+(** Classification selects same-level source rules without recursive positive occurrences. *)
 Theorem classify_seeds {P} (st : stratification P) k rs r :
   In r (fst (classify st k rs)) <->
     In r rs /\ level st (pred (head r)) = k /\ pivots st k r = [].
@@ -136,7 +136,7 @@ Proof.
     + apply Nat.eqb_neq in Hx; cbn [In]; rewrite IH; intuition congruence.
 Qed.
 
-(** Classification retains exactly every same-level rule and each of its recursive pivot positions. *)
+(** Classification retains every same-level rule and each of its recursive pivot positions. *)
 Theorem classify_jobs {P} (st : stratification P) k rs r i :
   In (r, i) (snd (classify st k rs)) <->
     In r rs /\ level st (pred (head r)) = k /\ In i (pivots st k r).

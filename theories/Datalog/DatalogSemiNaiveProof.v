@@ -1,6 +1,6 @@
 (** * Semi-naive provenance and pivot completeness
 
-    Reachable states contain derivations and account for every enabled valuation by a known head or pivot.
+    Reachable states contain derivations and account for enabled valuations by a head or pivot.
     For example, a newly satisfied nonlinear body retains one of its fresh premises in the frontier.
     Builds on: DatalogSemiNaivePivot and the compiled stratum exactness interface. *)
 
@@ -40,7 +40,7 @@ Definition facts_present (s : state P) :=
   forall f, In f facts -> level st (fst f) = k ->
     FinSet.mem E f (accumulated s) = true.
 
-(** Each enabled source valuation is already known or owns an actual recursive frontier occurrence. *)
+(** An enabled source valuation is known or owns an actual recursive frontier occurrence. *)
 Definition pending (s : state P) :=
   forall r sigma, In r (rules prog) -> level st (pred (head r)) = k ->
     body_holds r (env s) sigma ->
@@ -385,7 +385,7 @@ Proof.
   intros Heq; injection Heq as <-; exists stopped; tauto.
 Qed.
 
-(** Successful stratum evaluation returns only inductive derivations over the represented lower model. *)
+(** Successful stratum evaluation returns inductive derivations over the represented lower model. *)
 Theorem semi_naive_sound fuel db :
   stratum prog facts st lower k fuel = Outcome.Solved db ->
   forall p row, member row (rel_of prog db p) = true -> derivation (p, row).
@@ -395,7 +395,7 @@ Proof.
   rewrite <- (accumulated_exact _ _ _ _ _ Hready); exact Hmem.
 Qed.
 
-(** Successful stratum evaluation satisfies the compiled system without a final-invariant premise. *)
+(** Successful stratum evaluation satisfies the compiled system from established invariants. *)
 Theorem semi_naive_complete fuel db :
   stratum prog facts st lower k fuel = Outcome.Solved db ->
   post_solution relation_lattice (stratum_system prog facts st lower k) (rel_of prog db).
@@ -403,7 +403,7 @@ Proof.
   intro Hsolve; destruct (solved_state fuel db Hsolve) as [s [_ [_ Hpost]]]; exact Hpost.
 Qed.
 
-(** Successful stratum evaluation agrees with declarative derivation at every predicate and tuple. *)
+(** Successful stratum evaluation agrees with derivation at every predicate and tuple. *)
 Theorem semi_naive_agrees fuel db :
   stratum prog facts st lower k fuel = Outcome.Solved db ->
   forall p row, member row (rel_of prog db p) = true <-> derivation (p, row).
@@ -414,7 +414,7 @@ Proof.
       (rel_of prog db) (semi_naive_complete fuel db Hsolve) (p, row)).
 Qed.
 
-(** Provenance and compiled closure make the returned assignment the least compiled post-solution. *)
+(** Provenance and compiled closure give the least compiled post-solution. *)
 Theorem semi_naive_least fuel db :
   stratum prog facts st lower k fuel = Outcome.Solved db ->
   least_solution relation_lattice (stratum_system prog facts st lower k) (rel_of prog db).

@@ -108,7 +108,7 @@ Proof.
   apply fast_bounded_is_total; destruct strategy; vm_compute; reflexivity.
 Qed.
 
-(** The negative-cycle fixture observes rejection from the fast and actual legacy total entry points. *)
+(** The negative cycle is rejected by the fast and actual legacy total entry points. *)
 Example fast_delta_negative_cycle strategy :
   solve_program_fast engine_negative_cycle [] 8%positive =
     Outcome.Rejected Reason.Bad_stratification /\

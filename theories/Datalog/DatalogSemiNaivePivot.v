@@ -1,6 +1,6 @@
 (** * Exact occurrence-pivot firing
 
-    A cached job reads its selected positive occurrence from the frontier and all others from current.
+    A cached job reads its selected occurrence from the frontier and all others from current.
     For example, one newly enabled premise supplies the matching job even in a nonlinear rule.
     Builds on: DatalogSemiNaiveReady and public Join firing exactness. *)
 
@@ -98,7 +98,7 @@ Proof.
   rewrite <- (frontier_exact _ _ _ _ _ Hready); exact Hmem.
 Qed.
 
-(** Every satisfied body with a selected frontier premise is emitted by an actual cached pivot job. *)
+(** A satisfied body with a selected frontier premise is emitted by an actual cached pivot job. *)
 Theorem candidates_cover s r sigma i a :
   ready prog st lower k s -> In r (rules prog) -> level st (pred (head r)) = k ->
   safe_rule r -> In (i, a) (occurrences 0 (body r)) -> level st (pred a) = k ->
