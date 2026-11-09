@@ -138,12 +138,8 @@ Proof.
           (Scope.Make (FinSet.add positive_encoding d FinSet.empty) None) Hb Hfuel
           ltac:(intros v Hv; eapply N.le_trans; [apply SearchCost.admits_cost;
             exact (DomFiniteCost.universe_width Hb v Hv)|unfold SearchCost.id_cost; lia])) as Hreach.
-        rewrite FinSet.add_cost.
-        change (1 + 1 + key_bits positive_encoding d +
-          Cost.ticks (DomFiniteReach.reach_c
-            (DomFiniteView.prepared p (Prepared.entry_ids p))
-            (Scope.Make (FinSet.add positive_encoding d FinSet.empty) None)) <=
-          2 + w + query_bound n m r w f).
+        rewrite FinSet.add_cost, positive_encoding_cost.
+        fold (key_bits positive_encoding d).
         pose proof (Hwidth d Hd). unfold query_bound. lia. }
       assert (Hinner : forall avoiding,
         Cost.ticks (forallb_c (DomFastCheck.pair_c index avoiding d) nodes) <=

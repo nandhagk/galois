@@ -31,7 +31,7 @@ Proof.
   intros [Hmap Hvalues] Hkeys Hsize Hrename Hwidth.
   pose proof (MapCost.elements_numeric_cost positive_encoding m
     (key_bits positive_encoding limit) Hmap
-    ltac:(intros v u Hget; apply InternCost.bits_monotone; now apply (Hkeys v u))) as Hscan.
+    ltac:(intros v u Hget; apply DomCostBasis.bits_monotone; now apply (Hkeys v u))) as Hscan.
   pose proof (DomCostBasis.fold_right_cost (DomErase.binding_c rename) (Map.elements m) Map.empty
     (4 + 2 * k + wo)
     ltac:(intros [v u] tail Hbinding; cbn beta;
@@ -128,7 +128,7 @@ Proof.
     (fun rank => Map.get_c positive_encoding rank (DomSemi.real_ids ranked)) count
     (2 + rank_width) original_width Hvalues Hkeys Hsize
     ltac:(intros rank Hrank; cbn beta; rewrite DomCostBasis.get_cost;
-      pose proof (InternCost.bits_monotone rank limit Hrank) as Hwidth;
+      pose proof (DomCostBasis.bits_monotone rank limit Hrank) as Hwidth;
       change (key_bits positive_encoding rank <= rank_width) in Hwidth; lia)
     ltac:(intros rank v Hget;
       change (Map.get positive_encoding rank (DomSemi.real_ids ranked) = Some v) in Hget;
@@ -198,7 +198,7 @@ Proof.
     (rev (DomSemi.reverse_order ranked)) (2 + rank_width)
     ltac:(intros rank Hrank; cbn beta; rewrite DomCostBasis.get_cost;
       apply in_rev in Hrank;
-      pose proof (InternCost.bits_monotone rank limit
+      pose proof (DomCostBasis.bits_monotone rank limit
         (DomSemiCost.actual_rank_bound p rank Hready Hrank)) as Hwidth;
       change (key_bits positive_encoding rank <= rank_width) in Hwidth; lia)) as Hlive.
   rewrite length_rev, Hlength in Hlive.

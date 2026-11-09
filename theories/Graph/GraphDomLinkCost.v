@@ -120,8 +120,7 @@ Proof.
   change (1 + (Cost.ticks (score u) + (1 + (Cost.ticks (score v) +
     (Cost.ticks (DomRank.compare_c (Cost.value (score u)) (Cost.value (score v))) + 0)))) <=
     2 + 2 * ks + ws).
-  change (Cost.ticks (DomRank.compare_c (Cost.value (score u)) (Cost.value (score v))) <=
-    key_bits positive_encoding (Cost.value (score u))) in Hcompare.
+  rewrite <- positive_encoding_bits in Hcompare.
   lia.
 Qed.
 
@@ -161,7 +160,7 @@ Proof.
   induction v as [v IH] using (well_founded_induction (well_founded_ltof _ Pos.to_nat)).
   intro Hv.
   assert (Hwidth : key_bits positive_encoding v <= key_bits positive_encoding limit).
-  { apply InternCost.bits_monotone. exact Hv. }
+  { apply DomCostBasis.bits_monotone. exact Hv. }
   assert (Hpositive : 0 < N.pos v) by reflexivity.
   rewrite DomLink.compress_equation. unfold DomLink.compress_body_c.
   rewrite (Cost.ticks_bind Cost.step), Cost.ticks_step,
@@ -170,6 +169,7 @@ Proof.
   fold (Map.get positive_encoding v (DomLink.shortcut st)).
   destruct (Map.get positive_encoding v (DomLink.shortcut st)) as [a|] eqn:Hparent.
   - pose proof (proj2 (DomRank.compare_cont_cost Eq a v)) as Hcompare.
+    rewrite <- positive_encoding_bits in Hcompare.
     change (Cost.ticks (DomRank.smaller_c a v) <= key_bits positive_encoding v) in Hcompare.
     rewrite (Cost.ticks_bind (DomRank.smaller_c a v)).
     destruct (Cost.value (DomRank.smaller_c a v)) as [Hsmaller|Hstop].
@@ -242,10 +242,9 @@ Theorem identity_score_bounds limit m :
     (2 + key_bits positive_encoding limit) (key_bits positive_encoding limit).
 Proof.
   intros Hmap v Hv. split.
-  - rewrite identity_cost. pose proof (InternCost.bits_monotone v limit Hv) as Hwidth.
-    change (key_bits positive_encoding v <= key_bits positive_encoding limit) in Hwidth.
+  - rewrite identity_cost. pose proof (DomCostBasis.bits_monotone v limit Hv) as Hwidth.
     lia.
-  - apply InternCost.bits_monotone. exact (identity_bounded limit m v Hmap Hv).
+  - apply DomCostBasis.bits_monotone. exact (identity_bounded limit m v Hmap Hv).
 Qed.
 
 (** The production evaluator with identity scores has a closed rank/width bound from finite map support. *)

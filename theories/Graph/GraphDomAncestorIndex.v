@@ -165,7 +165,8 @@ Proof.
   destruct (chain_resources fuel parents n w Hparents Hn) as [Hlength Hwidth].
   pose proof (FinSet.of_list_numeric_cost Map.cost_laws_hold positive_encoding
     (DomCheck.chain fuel parents n) 1 w
-    ltac:(intros v Hv; split; [reflexivity|exact (proj1 (Forall_forall _ _) Hwidth v Hv)]))
+    ltac:(intros v Hv; split; [rewrite positive_encoding_cost; reflexivity|
+      exact (proj1 (Forall_forall _ _) Hwidth v Hv)]))
     as Hset.
   unfold row_c. rewrite Cost.ticks_bind, DomCheckCost.chain_c_value.
   assert (Hscale : N.of_nat (length (DomCheck.chain fuel parents n)) * (4 + w) <=
@@ -193,9 +194,8 @@ Proof.
   { intros n index Hn.
     pose proof (row_cost fuel parents n w Hparents (Hwidth n Hn)) as Hrow.
     pose proof (Hwidth n Hn) as Hbits.
-    unfold step. rewrite Cost.ticks_bind, Map.set_cost.
-    change (Cost.ticks (row_c fuel parents n) +
-      (1 + 1 + key_bits positive_encoding n) <= k).
+    unfold step. rewrite Cost.ticks_bind, Map.set_cost, positive_encoding_cost.
+    fold (key_bits positive_encoding n).
     unfold k, DomCheckCost.id_get_budget in *. nia. }
   pose proof (proj2 (ticks_fold_right_c_potential step (fun _ => True) (fun _ => 0) k
     nodes Map.empty ltac:(intros n index Hn _; split; [exact I|];
@@ -235,14 +235,12 @@ Theorem contains_cost index d n w :
 Proof.
   intros Hd Hn. unfold contains_c. rewrite Cost.ticks_bind.
   fold (Map.get positive_encoding n index).
-  pose proof (encode_cost_bound positive_encoding_cost_laws n) as Hencode.
   destruct (Map.get positive_encoding n index) as [ancestors|];
-    autorewrite with galois_cost; rewrite Map.get_cost.
-  - rewrite FinSet.mem_cost.
-    change (1 + 1 + key_bits positive_encoding n +
-      (1 + 1 + key_bits positive_encoding d) <= 2 * (2 + w)).
+    autorewrite with galois_cost; rewrite Map.get_cost, positive_encoding_cost.
+  - rewrite FinSet.mem_cost, positive_encoding_cost.
+    fold (key_bits positive_encoding n) (key_bits positive_encoding d).
     lia.
-  - change (1 + 1 + key_bits positive_encoding n + 0 <= 2 * (2 + w)). lia.
+  - fold (key_bits positive_encoding n). lia.
 Qed.
 
 End DomAncestorIndex.

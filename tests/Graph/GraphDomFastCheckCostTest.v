@@ -35,7 +35,9 @@ Local Lemma encoder_cost extra v :
   Cost.ticks (encode_c (Prepared.node_enc (charged_line extra)) v) = (extra + 1)%N.
 Proof.
   change (Cost.ticks (Cost.tick extra ;; encode_c nat_encoding v) = (extra + 1)%N).
-  autorewrite with galois_cost. reflexivity.
+  rewrite Cost.ticks_bind, Cost.ticks_tick.
+  change (extra + Cost.ticks (encode_c (of_pure Pos.of_succ_nat) v) = extra + 1)%N.
+  now rewrite of_pure_cost.
 Qed.
 
 Local Lemma encoder_bits extra v :

@@ -127,7 +127,7 @@ Local Lemma materialize_cost {V E} (p : Prepared.t V E) t n m l b w a q h s
 Proof.
   intro Hsupport. eapply N.le_trans.
   - apply (FinSet.of_list_numeric_cost Map.cost_laws_hold positive_encoding xs 1 w).
-    intros i Hi. split; [reflexivity|].
+    intros i Hi. split; [rewrite positive_encoding_cost; reflexivity|].
     exact (FrontierSweep.width_bound Hr i
       (proj1 (Forall_forall _ _) Hsupport i Hi)).
   - apply N.mul_le_mono; [reflexivity|nia].

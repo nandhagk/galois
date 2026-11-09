@@ -8,7 +8,7 @@ From Stdlib Require Import List PArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseMap BaseInternCost.
 From Galois.Graph Require Import GraphFixtures GraphDomLink GraphDomLinkCost GraphDomSemi
-  GraphDomSemiCost.
+  GraphDomSemiCost GraphDomCostBasis.
 Import Cost.Notations.
 
 Definition linked_chain :=
@@ -65,12 +65,11 @@ Example varying_score_callbacks_have_finite_prices extra :
 Proof.
   intros v Hv. split.
   - unfold expensive_score. rewrite Cost.ticks_bind, Cost.ticks_tick, DomLinkCost.identity_cost.
-    pose proof (InternCost.bits_monotone v 4 Hv) as Hwidth.
-    change (key_bits positive_encoding v <= key_bits positive_encoding 4%positive)%N in Hwidth.
+    pose proof (DomCostBasis.bits_monotone v 4 Hv) as Hwidth.
     lia.
   - change (key_bits positive_encoding (DomLink.identity_value scores v) <=
       key_bits positive_encoding 4%positive)%N.
-    apply InternCost.bits_monotone.
+    apply DomCostBasis.bits_monotone.
     exact (DomLinkCost.identity_bounded 4 scores v scores_bounded Hv).
 Qed.
 

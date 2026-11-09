@@ -117,8 +117,9 @@ Local Lemma singleton_cost d w :
   key_bits positive_encoding d <= w ->
   Cost.ticks (FinSet.add_c positive_encoding d FinSet.empty) <= singleton_bound w.
 Proof.
-  intro Hwidth. rewrite FinSet.add_cost.
-  pose proof (encode_cost_bound positive_encoding_cost_laws d).
+  intro Hwidth. rewrite FinSet.add_cost, positive_encoding_cost.
+  pose proof (encode_cost_bound positive_encoding_cost_laws d) as Hencoding.
+  rewrite positive_encoding_cost in Hencoding.
   fold (key_bits positive_encoding d). unfold singleton_bound. nia.
 Qed.
 

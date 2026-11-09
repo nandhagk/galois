@@ -99,7 +99,7 @@ Proof.
   apply (Search.pre_num_index _ _ _ _ (search_exact Hready)) in Hrank.
   assert (Hindex : (Nat.pred (Pos.to_nat rank) < length (Search.preorder result))%nat).
   { apply nth_error_Some. rewrite Hrank. discriminate. }
-  unfold rank_width. apply InternCost.bits_monotone, Pos2Nat.inj_le.
+  unfold rank_width. apply DomCostBasis.bits_monotone, Pos2Nat.inj_le.
   change (Pos.to_nat rank <=
     Pos.to_nat (Pos.of_succ_nat (length (Search.preorder result))))%nat.
   rewrite SuccNat2Pos.id_succ.

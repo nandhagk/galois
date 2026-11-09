@@ -68,11 +68,10 @@ Proof.
   destruct Hquery as [Hlinks' Hchosen].
   assert (Hcandidate : (DomLink.identity_value settled chosen <= limit)%positive).
   { exact (DomLinkCost.identity_bounded limit settled chosen Hsettled Hchosen). }
-  pose proof (InternCost.bits_monotone chosen limit Hchosen) as Hwidth.
-  change (key_bits positive_encoding chosen <= key_bits positive_encoding limit) in Hwidth.
+  pose proof (DomCostBasis.bits_monotone chosen limit Hchosen) as Hwidth.
   pose proof (DomLinkCost.minimum_cost limit (fun rank => Cost.ret rank) 0
     (key_bits positive_encoding limit) best (DomLink.identity_value settled chosen)
-    ltac:(intros v Hv; split; [reflexivity|now apply InternCost.bits_monotone])
+    ltac:(intros v Hv; split; [reflexivity|now apply DomCostBasis.bits_monotone])
     Hbest Hcandidate) as Hminimum.
   rewrite (Cost.ticks_bind (DomLink.identity_value_c settled chosen)).
   fold (DomLink.identity_value settled chosen).
@@ -130,8 +129,7 @@ Theorem settle_cost {L} limit (ranked : DomSemi.layout L) st w :
     Cost.ticks (DomSemi.settle_c ranked st w) <= settle_bound limit ranked w.
 Proof.
   intros Hparents [Hsemis Hlinks] Hw Hsources.
-  pose proof (InternCost.bits_monotone w limit Hw) as Hwidth.
-  change (key_bits positive_encoding w <= key_bits positive_encoding limit) in Hwidth.
+  pose proof (DomCostBasis.bits_monotone w limit Hw) as Hwidth.
   unfold DomSemi.settle_c.
   rewrite Cost.value_bind.
   fold (Map.get positive_encoding w (DomSemi.parents ranked)).

@@ -43,7 +43,7 @@ Proof.
   pose proof (DomLinkCost.eval_identity_cost limit semis (DomLt.links st) v Hsemis Hlinks Hv)
     as Heval.
   assert (Hv_width : key_bits positive_encoding v <= key_bits positive_encoding limit)
-    by (apply InternCost.bits_monotone; exact Hv).
+    by (apply DomCostBasis.bits_monotone; exact Hv).
   unfold DomLt.member_c.
   rewrite (Cost.value_bind (DomLink.eval_c (DomLink.identity_value_c semis) (DomLt.links st) v)).
   destruct (Cost.value (DomLink.eval_c (DomLink.identity_value_c semis) (DomLt.links st) v))
@@ -68,15 +68,11 @@ Proof.
     fold (DomLink.identity_value semis chosen).
     rewrite (Cost.ticks_bind (DomRank.compare_c (DomLink.identity_value semis chosen) s)),
       return_set_cost, DomLinkCost.identity_cost.
-    pose proof (InternCost.bits_monotone chosen limit Hchosen) as Hchosen_width.
-    pose proof (InternCost.bits_monotone (DomLink.identity_value semis chosen) limit Hscore)
+    pose proof (DomCostBasis.bits_monotone chosen limit Hchosen) as Hchosen_width.
+    pose proof (DomCostBasis.bits_monotone (DomLink.identity_value semis chosen) limit Hscore)
       as Hscore_width.
     pose proof (DomRank.compare_cost (DomLink.identity_value semis chosen) s) as Hcompare.
-    change (Cost.ticks (DomRank.compare_c (DomLink.identity_value semis chosen) s) <=
-      key_bits positive_encoding (DomLink.identity_value semis chosen)) in Hcompare.
-    change (key_bits positive_encoding chosen <= key_bits positive_encoding limit) in Hchosen_width.
-    change (key_bits positive_encoding (DomLink.identity_value semis chosen) <=
-      key_bits positive_encoding limit) in Hscore_width.
+    rewrite <- positive_encoding_bits in Hcompare.
     unfold member_bound, DomSemiCost.eval_bound in *. lia.
 Qed.
 
@@ -119,7 +115,7 @@ Proof.
   pose proof (members_cost limit semis s (Index.find positive_encoding s buckets) st
     Hsemis Hst Hs Hmembers) as Hfold.
   assert (Hs_width : key_bits positive_encoding s <= key_bits positive_encoding limit)
-    by (apply InternCost.bits_monotone; exact Hs).
+    by (apply DomCostBasis.bits_monotone; exact Hs).
   unfold DomLt.reverse_step_c.
   rewrite (Cost.value_bind (Index.find_c positive_encoding s buckets)).
   fold (Index.find positive_encoding s buckets).
@@ -200,14 +196,12 @@ Theorem correct_step_cost limit semis provisional corrected v :
   Cost.ticks (DomLt.correct_step_c semis provisional corrected v) <= correct_bound limit.
 Proof.
   intros Hprovisional Hcorrected Hv.
-  pose proof (InternCost.bits_monotone v limit Hv) as Hv_width.
-  change (key_bits positive_encoding v <= key_bits positive_encoding limit) in Hv_width.
+  pose proof (DomCostBasis.bits_monotone v limit Hv) as Hv_width.
   rewrite DomLt.correct_step_value.
   destruct (Map.get positive_encoding v provisional) as [parent|] eqn:Hparent.
   - assert (Hparent_bound : (parent <= limit)%positive)
       by exact (proj2 Hprovisional v parent Hparent).
-    pose proof (InternCost.bits_monotone parent limit Hparent_bound) as Hparent_width.
-    change (key_bits positive_encoding parent <= key_bits positive_encoding limit) in Hparent_width.
+    pose proof (DomCostBasis.bits_monotone parent limit Hparent_bound) as Hparent_width.
     split.
     + apply DomLinkCost.values_set; [exact Hcorrected|].
       destruct (Pos.eqb parent (DomLink.identity_value semis v)).
@@ -231,8 +225,7 @@ Proof.
       pose proof
         (Htail (Cost.value (positive_eqb_c parent (DomLink.identity_value semis v)))) as Hremaining.
       pose proof (proj1 (positive_eqb_cost parent (DomLink.identity_value semis v))) as Hequality.
-      change (Cost.ticks (positive_eqb_c parent (DomLink.identity_value semis v)) <=
-        key_bits positive_encoding parent) in Hequality.
+      rewrite <- positive_encoding_bits in Hequality.
       rewrite DomCostBasis.get_cost, DomLinkCost.identity_cost.
       unfold correct_bound. lia.
   - split; [exact Hcorrected|].

@@ -91,6 +91,7 @@ Local Lemma rank_width :
   Prepared.ready p -> bounds p n m r w -> DomLayoutCost.rank_width p <= w.
 Proof.
   intros Hready Hb. eapply N.le_trans; [|exact (allocation_width Hb)].
+  unfold DomLayoutCost.rank_width. rewrite positive_encoding_bits.
   apply bits_monotone_nat. exact (proj1 (count_caps Hready Hb)).
 Qed.
 
@@ -419,7 +420,9 @@ Proof.
     + replace (product * (33 * unit) + (2 * product) * (31 * unit)) with
         (95 * product * unit) by ring.
       apply N.mul_le_mono; [apply N.mul_le_mono; lia|reflexivity].
-  - change (16 * (c * (1 + c) * (1 + DomLayoutCost.rank_width p)) <= 128 * product * unit).
+  - unfold DomNcaCost.actual_work, DomNcaCost.width. cbn zeta.
+    rewrite <- positive_encoding_bits.
+    change (16 * (c * (1 + c) * (1 + DomLayoutCost.rank_width p)) <= 128 * product * unit).
     replace (16 * (c * (1 + c) * (1 + DomLayoutCost.rank_width p))) with
       (16 * (c * (c + 1)) * (1 + DomLayoutCost.rank_width p)) by ring.
     eapply N.le_trans with (m := (16 * (2 * product)) * unit).

@@ -6,12 +6,20 @@
 
 From Stdlib Require Import List Bool PArith NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
-From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseMapCost BaseTrieCost.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseMapCost BaseTrieCost
+  BaseInternCost.
 From Galois.Graph Require Import GraphPrepared GraphPreparedCost.
 Import Cost.Notations.
 
 Module DomCostBasis.
 Local Open Scope N_scope.
+
+(** Positive-key width monotonicity uses the public scalar adapter width equation. *)
+Theorem bits_monotone v limit :
+  (v <= limit)%positive -> key_bits positive_encoding v <= key_bits positive_encoding limit.
+Proof.
+  rewrite !positive_encoding_bits. apply InternCost.bits_monotone.
+Qed.
 
 (** Positive-key operations retain the call overhead, unit encoder and actual code width. *)
 Theorem get_cost {A} (m : Map.t positive A) v :
@@ -161,7 +169,7 @@ Theorem of_list_cost xs w :
 Proof.
   intro Hwidth.
   apply (FinSet.of_list_numeric_cost Map.cost_laws_hold positive_encoding xs 1 w).
-  intros v Hv. split; [reflexivity|now apply Hwidth].
+  intros v Hv. split; [rewrite positive_encoding_cost; reflexivity|now apply Hwidth].
 Qed.
 
 (** Canonical set construction cannot create more bindings than its supplied occurrences. *)

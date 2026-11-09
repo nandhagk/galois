@@ -87,14 +87,12 @@ Theorem insert_cost limit semis buckets v :
   Cost.ticks (DomLt.bucket_insert_c semis buckets v) <= 6 + 3 * key_bits positive_encoding limit.
 Proof.
   intros Hsemis Hv.
-  pose proof (InternCost.bits_monotone v limit Hv) as Hwidth.
-  change (key_bits positive_encoding v <= key_bits positive_encoding limit) in Hwidth.
+  pose proof (DomCostBasis.bits_monotone v limit Hv) as Hwidth.
   unfold DomLt.bucket_insert_c.
   rewrite (Cost.ticks_bind (Map.get_c positive_encoding v semis)).
   fold (Map.get positive_encoding v semis).
   destruct (Map.get positive_encoding v semis) as [s|] eqn:Hsemi.
-  - pose proof (InternCost.bits_monotone s limit (proj2 Hsemis v s Hsemi)) as Hscore.
-    change (key_bits positive_encoding s <= key_bits positive_encoding limit) in Hscore.
+  - pose proof (DomCostBasis.bits_monotone s limit (proj2 Hsemis v s Hsemi)) as Hscore.
     rewrite (Cost.ticks_bind (Index.find_c positive_encoding s buckets)),
       Index.find_cost, !DomCostBasis.get_cost, DomCostBasis.set_cost. lia.
   - rewrite Cost.ticks_ret, DomCostBasis.get_cost. lia.

@@ -222,8 +222,9 @@ Local Lemma id_get_cost {A} (m : Map.t positive A) v w :
   (key_bits positive_encoding v <= w)%N ->
   (Cost.ticks (Map.get_c positive_encoding v m) <= id_get_budget w)%N.
 Proof.
-  intro Hwidth. rewrite Map.get_cost.
+  intro Hwidth. rewrite Map.get_cost, positive_encoding_cost.
   pose proof (encode_cost_bound positive_encoding_cost_laws v) as Hencoding.
+  rewrite positive_encoding_cost in Hencoding.
   fold (key_bits positive_encoding v). unfold id_get_budget. nia.
 Qed.
 

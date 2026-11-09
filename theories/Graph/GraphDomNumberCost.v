@@ -75,12 +75,13 @@ Proof.
   pose proof (IndexCost.group_by_cost Map.cost_laws_hold positive_encoding positive_encoding_laws
     (fun vu : positive * positive => Cost.ret (snd vu)) (Map.elements parents) 1 wo 0
     ltac:(intros vu Hvu; split; [reflexivity|];
-      split; [reflexivity|exact (proj2 (stored_width c wo vu Hb Hvu))]))
+      split; [rewrite positive_encoding_cost; reflexivity|
+        exact (proj2 (stored_width c wo vu Hb Hvu))]))
     as Hgroup.
   pose proof (DomCostBasis.filter_cost (fun v =>
     Cost.map negb (Map.mem_c positive_encoding v parents)) live (2 + wo)
-    ltac:(intros v Hv; cbn beta; rewrite Cost.ticks_map, Map.mem_cost;
-      change (1 + 1 + key_bits positive_encoding v <= 2 + wo);
+    ltac:(intros v Hv; cbn beta; rewrite Cost.ticks_map, Map.mem_cost, positive_encoding_cost;
+      fold (key_bits positive_encoding v);
       pose proof (live_width Hb v Hv); lia)) as Hroots.
   pose proof (parent_size c wo Hb) as Hsize.
   pose proof (live_length Hb) as Hlength.
