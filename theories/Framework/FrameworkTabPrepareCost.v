@@ -21,7 +21,8 @@ Proof.
   rewrite <- Nat2N.inj_compare; apply (proj2 (Nat.compare_le_iff _ _)); exact Hle.
 Qed.
 
-Local Lemma map_cost_on {X Y} (f : X -> Cost.t Y) xs k :
+(** Mapping prices callbacks only on their actual supplied occurrences. *)
+Theorem map_cost_on {X Y} (f : X -> Cost.t Y) xs k :
   (forall x, In x xs -> (Cost.ticks (f x) <= k)%N) ->
   (Cost.ticks (map_c f xs) <= N.of_nat (length xs) * (1 + k))%N.
 Proof.
@@ -46,7 +47,8 @@ Proof.
     destruct (Hbound x (or_introl eq_refl)) as [Hcost Hlength]; nia.
 Qed.
 
-Local Lemma flat_length {X Y} (f : X -> list Y) xs q :
+(** Flattening multiplies supplied occurrences by the maximum actual callback output length. *)
+Theorem flat_length {X Y} (f : X -> list Y) xs q :
   (forall x, In x xs -> (N.of_nat (length (f x)) <= q)%N) ->
   (N.of_nat (length (flat_map f xs)) <= N.of_nat (length xs) * q)%N.
 Proof.
@@ -57,14 +59,16 @@ Proof.
     specialize (Hbound x (or_introl eq_refl)); nia.
 Qed.
 
-Local Lemma filter_map_length {X Y} (f : X -> option Y) xs :
+(** Filtering and optional mapping emit at most one item per supplied occurrence. *)
+Theorem filter_map_length {X Y} (f : X -> option Y) xs :
   (length (filter_map f xs) <= length xs)%nat.
 Proof.
   unfold filter_map; induction xs as [|x xs IH]; cbn [fold_right length]; [lia|].
   destruct (f x); cbn [length]; lia.
 Qed.
 
-Local Lemma pure_map_cost {X Y} (f : X -> Y) xs :
+(** A returned constant-time mapping body retains one traversal tick per occurrence. *)
+Theorem pure_map_cost {X Y} (f : X -> Y) xs :
   Cost.ticks (map_c (fun x => Cost.ret (f x)) xs) = N.of_nat (length xs).
 Proof.
   rewrite ticks_map_c; induction xs as [|x xs IH]; cbn [fold_right length].
@@ -72,7 +76,8 @@ Proof.
   - rewrite Cost.ticks_ret, Nat2N.inj_succ; lia.
 Qed.
 
-Local Lemma pure_filter_map_cost {X Y} (f : X -> option Y) xs :
+(** A returned optional body retains one traversal tick even for rejected occurrences. *)
+Theorem pure_filter_map_cost {X Y} (f : X -> option Y) xs :
   Cost.ticks (filter_map_c (fun x => Cost.ret (f x)) xs) = N.of_nat (length xs).
 Proof.
   rewrite ticks_filter_map_c; induction xs as [|x xs IH]; cbn [fold_right length].

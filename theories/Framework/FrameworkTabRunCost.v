@@ -152,7 +152,8 @@ Proof.
   intro Ha; right; exists a; split; [exact Ha|right; reflexivity].
 Qed.
 
-Local Lemma vertex_budget v :
+(** Vertex budgets derive from the original callbacks on the explicit coordinate domain. *)
+Theorem vertex_budget v :
   coordinate I start v -> TabEncodingCost.bounded (IdeValue.key_enc I) v (ve e w) (vw w).
 Proof.
   intro Hv; destruct v as [n d]; apply TabEncodingCost.vertex_bounded.
@@ -160,7 +161,8 @@ Proof.
   - exact (fact HP (n, d) Hv).
 Qed.
 
-Local Lemma jump_budget r v :
+(** Jump budgets retain both actual coordinate encodings and their serialization. *)
+Theorem jump_budget r v :
   coordinate I start r -> coordinate I start v ->
   TabEncodingCost.bounded (Jump.enc I) (r, v) (je e w) (jw w).
 Proof.
@@ -185,7 +187,8 @@ Proof.
   - apply arc_budget; exact Ha.
 Qed.
 
-Local Lemma lookup_cost js r v :
+(** A jump probe prices its composite encoder and the public positive-map traversal. *)
+Theorem lookup_cost js r v :
   coordinate I start r -> coordinate I start v ->
   (Cost.ticks (Jump.lookup_c I js (r, v)) <= probe e w)%N.
 Proof.
@@ -216,7 +219,8 @@ Proof.
   - unfold update; lia.
 Qed.
 
-Local Lemma matches_cost a b :
+(** Actual matching prices original site encoders and the public encoded comparison. *)
+Theorem matches_cost a b :
   In a (Jump.arcs I) -> In b (Jump.arcs I) ->
   (Cost.ticks (Jump.matches_c (Icfg.site_enc (Ifds.icfg (Ide.ifds I))) a b) <=
     2 + 2 * e + w)%N.
@@ -256,7 +260,8 @@ Proof.
   - autorewrite with galois_cost; unfold replay; lia.
 Qed.
 
-Local Lemma root_count :
+(** Supplied initial facts and exploded call occurrences bound the actual root list. *)
+Theorem root_count :
   (N.of_nat (length (TabPaths.roots I start)) <= roots I)%N.
 Proof.
   exact (TabPrepareCost.roots_length I start (Jump.arcs I)).

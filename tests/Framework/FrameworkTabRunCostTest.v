@@ -12,7 +12,7 @@ From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Framework Require Import FrameworkUtil FrameworkMicro FrameworkIfds FrameworkIde
   FrameworkTabulate FrameworkTabEncodingCost FrameworkTabPrepareCost FrameworkTabRunCost
-  FrameworkTabJumpProgress.
+  FrameworkTabJumpProgress FrameworkTabCheckCost.
 From Galois.Tests.Framework Require Import FrameworkTabAffineTest.
 Import List.ListNotations.
 
@@ -138,6 +138,40 @@ Example complete_family_bigO :
       (TabJumpProgress.complete_raw_c (problem n) tt LawfulAffine.function_height)).
 Proof.
   apply TabRunCost.complete_raw_bigO.
+  - exact primitive_duties.
+  - exact vertex_laws.
+  - exact jump_laws.
+  - exact callback_duties.
+  - exact source_duties.
+  - exact fact_duties.
+Qed.
+
+(** Certification imports every reached ground-checker charge on the same varying family. *)
+Example certified_family n :
+  (Cost.ticks (TabJumpProgress.complete_c (problem n) tt LawfulAffine.function_height) <=
+    TabRunCost.complete_charge (problem n) 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.function_height)) +
+    TabCheckCost.checker_charge (problem n) 1 1 1 1 1 1 1 1 1 1)%N.
+Proof.
+  apply TabCheckCost.complete_cost.
+  - exact (primitive_duties n).
+  - exact (vertex_laws n).
+  - exact (jump_laws n).
+  - exact (callback_duties n).
+  - exact (source_duties n).
+  - exact (fact_duties n).
+Qed.
+
+(** The full certified jump asymptotic bound has all primitive duties discharged uniformly. *)
+Example certified_family_bigO :
+  bigO
+    (fun n => (TabRunCost.complete_charge (problem n) 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.function_height)) +
+      TabCheckCost.checker_charge (problem n) 1 1 1 1 1 1 1 1 1 1)%N)
+    (fun n => Cost.ticks
+      (TabJumpProgress.complete_c (problem n) tt LawfulAffine.function_height)).
+Proof.
+  apply TabCheckCost.tabulate_bigO.
   - exact primitive_duties.
   - exact vertex_laws.
   - exact jump_laws.

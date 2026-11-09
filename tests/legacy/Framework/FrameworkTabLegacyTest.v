@@ -11,7 +11,8 @@ From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Framework Require Import FrameworkIfds FrameworkIde FrameworkStack FrameworkTabulate
   FrameworkTabValues FrameworkTabJumpProgress FrameworkTabValueProgress FrameworkTabReach.
-From Galois.Tests.Framework Require Import FrameworkIdeTest FrameworkTabSoundTest.
+From Galois.Tests.Framework Require Import FrameworkIdeTest FrameworkTabSoundTest
+  FrameworkTabulateTest FrameworkTabReachTest.
 From GaloisLegacy.Collections Require CollectionsEncoding.
 From GaloisLegacy.Analyses Require AnalysesInterprocedural.
 Import List.ListNotations.
@@ -146,6 +147,39 @@ Proof.
   - apply path_backward.
 Qed.
 
+(** Modern graph closure and explicit legacy site and zero-flow duties establish adapter validity. *)
+Theorem problem_wf {N E P D} (I : Ifds.t N E P D) sites :
+  graph_wf (Cfg.graph (Icfg.cfg (Ifds.icfg I))) ->
+  NoDup sites -> NoDup (Ifds.facts I) -> Ifds.flow_closed I ->
+  (forall e, In e (Cfg.edges (Icfg.cfg (Ifds.icfg I))) ->
+    In None (Ifds.flow I e None)) ->
+  (forall e, In e (Cfg.edges (Icfg.cfg (Ifds.icfg I))) ->
+    match Icfg.edge_kind (Ifds.icfg I) e with
+    | Icfg.Internal => True
+    | Icfg.Call p | Icfg.Return p => In p sites
+    end) ->
+  Old.ip_problem_wf (problem I sites).
+Proof.
+  intros HG Hsites Hfacts Hclosed Hzero Hkind.
+  split; [exact (nodes_nodup HG)|].
+  split; [exact Hsites|]; split; [exact Hfacts|].
+  intros old Hold; apply in_map_iff in Hold; destruct Hold as [e [Heq He]]; subst old.
+  apply Cfg.edges_spec in He; destruct He as [n [Hn He]].
+  assert (Hlisted : In e (Cfg.edges (Icfg.cfg (Ifds.icfg I)))).
+  { apply Cfg.edges_spec; exists n; split; assumption. }
+  split.
+  - change (In (Graph.source (Cfg.graph (Icfg.cfg (Ifds.icfg I))) e)
+      (Graph.nodes (Cfg.graph (Icfg.cfg (Ifds.icfg I))))).
+    rewrite (out_source HG n e He); exact Hn.
+  - split; [exact (out_target_in HG n e Hn He)|].
+    split; [apply pairs_spec; split; [exact Logic.I|apply Hzero; exact Hlisted]|].
+    split.
+    + specialize (Hkind e Hlisted); unfold edge; cbn [Old.ip_action].
+      destruct (Icfg.edge_kind (Ifds.icfg I) e); exact Hkind.
+    + intros x y Hpair; apply pairs_spec in Hpair; destruct Hpair as [Hx Hy].
+      split; [exact Hx|exact (Hclosed e x y Hlisted Hx Hy)].
+Qed.
+
 (** Actual constructed modern completion agrees with the legacy solver on its finite lawful domain. *)
 Theorem completed_results_agree {N E P D} (I : Ifds.t N E P D) sites start
     (EN : CollectionsEncoding.encoding N) (EP : CollectionsEncoding.encoding P)
@@ -184,6 +218,83 @@ Proof.
     try reflexivity.
   - pose proof (proj1 Hsame eq_refl); discriminate.
   - pose proof (proj2 Hsame eq_refl); discriminate.
+Qed.
+
+Definition legacy_reached (I : Ifds.t nat nat nat unit) sites n d :=
+  Old.ifds_solve CollectionsEncoding.nat_encoding CollectionsEncoding.nat_encoding
+    CollectionsEncoding.unit_encoding (problem I sites) 0 None n d.
+
+Example taint_adapter_is_lawful : Old.ip_problem_wf (problem taint [7]).
+Proof.
+  apply problem_wf.
+  - exact taint_graph_wf.
+  - constructor; [intro Hbad; inversion Hbad|constructor].
+  - constructor; [intro Hbad; inversion Hbad|constructor].
+  - exact taint_flow_closed.
+  - intros e He; change (In e [0; 1; 2]) in He.
+    destruct He as [He|[He|[He|He]]]; try contradiction; subst e;
+      vm_compute; auto.
+  - intros e He; change (In e [0; 1; 2]) in He.
+    destruct He as [He|[He|[He|He]]]; try contradiction; subst e;
+      vm_compute; auto.
+Qed.
+
+(** The actual legacy result theorem applies to the completed two-phase taint engine. *)
+Example actual_taint_results_agree :
+  exists jumps values,
+    TabJumpProgress.complete (TabValues.reach_ide taint) 0 bool_height =
+      Tab.Certified jumps /\
+    TabValueProgress.complete (TabValues.reach_ide taint) (proj1_sig jumps)
+      (0, None) true bool_height = TabValues.Certified values /\
+    forall n d, TabValues.lookup (TabValues.reach_ide taint) (proj1_sig values) (n, d) =
+      legacy_reached taint [7] n d.
+Proof.
+  unfold legacy_reached.
+  apply (completed_results_agree taint [7] (0, None)
+    CollectionsEncoding.nat_encoding CollectionsEncoding.nat_encoding
+    CollectionsEncoding.unit_encoding).
+  - exact nat_encoding_laws.
+  - exact nat_encoding_laws.
+  - exact unit_encoding_laws.
+  - exact nat_encoding_laws.
+  - exact taint_graph_wf.
+  - exact taint_flow_closed.
+  - exact Logic.I.
+  - exact taint_adapter_is_lawful.
+  - left; reflexivity.
+Qed.
+
+Local Lemma taint_queries_agree n d :
+  reached taint n d = Some (legacy_reached taint [7] n d).
+Proof.
+  destruct actual_taint_results_agree as [jumps [values [Hjump [Hvalue Hagree]]]].
+  unfold reached; rewrite Hjump, Hvalue, Hagree; reflexivity.
+Qed.
+
+Example pending_call_results_agree :
+  (reached taint 2 (Some tt), legacy_reached taint [7] 2 (Some tt)) = (Some true, true).
+Proof.
+  pose proof (taint_queries_agree 2 (Some tt)) as Hagree.
+  rewrite pending_call_is_reached in Hagree.
+  injection Hagree as Hold; rewrite <- Hold, pending_call_is_reached; reflexivity.
+Qed.
+
+Example unlisted_destination_results_agree :
+  (reached taint 99 None, legacy_reached taint [7] 99 None) = (Some false, false).
+Proof.
+  assert (Hnew : reached taint 99 None = Some false) by (vm_compute; reflexivity).
+  pose proof (taint_queries_agree 99 None) as Hagree.
+  rewrite Hnew in Hagree; injection Hagree as Hold.
+  rewrite Hnew, <- Hold; reflexivity.
+Qed.
+
+Example seed_results_agree :
+  (reached taint 0 None, legacy_reached taint [7] 0 None) = (Some true, true).
+Proof.
+  assert (Hnew : reached taint 0 None = Some true) by (vm_compute; reflexivity).
+  pose proof (taint_queries_agree 0 None) as Hagree.
+  rewrite Hnew in Hagree; injection Hagree as Hold.
+  rewrite Hnew, <- Hold; reflexivity.
 Qed.
 
 End TabLegacy.
