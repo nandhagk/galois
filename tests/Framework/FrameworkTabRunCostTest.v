@@ -12,7 +12,8 @@ From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Framework Require Import FrameworkUtil FrameworkMicro FrameworkIfds FrameworkIde
   FrameworkTabulate FrameworkTabEncodingCost FrameworkTabPrepareCost FrameworkTabRunCost
-  FrameworkTabJumpProgress FrameworkTabCheckCost.
+  FrameworkTabJumpProgress FrameworkTabCheckCost FrameworkTabValues FrameworkTabValueRunCost
+  FrameworkTabValueProgress.
 From Galois.Tests.Framework Require Import FrameworkTabAffineTest.
 Import List.ListNotations.
 
@@ -67,6 +68,17 @@ Proof.
   - intros edge d Hedge Hd; reflexivity.
   - intros edge d Hedge Hd; reflexivity.
   - intros edge x y Hedge Hx Hy; apply N.le_0_l.
+Qed.
+
+Local Lemma value_duties n :
+  TabValueRunCost.primitives (problem n) (tt, None) 1%N 1%N 1%N.
+Proof.
+  constructor.
+  - intros [[] d] Hv; apply unit_budget.
+  - intros [[] [[]|]] Hv; [apply unit_budget|exact Logic.I].
+  - intros f a; reflexivity.
+  - intros a b; reflexivity.
+  - intros a b; reflexivity.
 Qed.
 
 Local Lemma source_duties n edge :
@@ -178,6 +190,32 @@ Proof.
   - exact callback_duties.
   - exact source_duties.
   - exact fact_duties.
+Qed.
+
+(** Arbitrary raw jump readers and affine seeds satisfy the actual value-run numerical bound. *)
+Example raw_value_family n J a0 fuel :
+  (Cost.ticks (TabValues.raw_c (problem n) J (tt, None) a0 fuel) <=
+    TabValueRunCost.prepare_charge (problem n) 1 1 1 1 1 1 1 1 1 +
+    TabValueRunCost.initial_charge (problem n) 1 1 1 +
+    (TabValueRunCost.step_charge (problem n) 1 1 1 + 2) * N.pos fuel)%N.
+Proof.
+  apply TabValueRunCost.raw_cost.
+  - exact (value_duties n).
+  - exact (vertex_laws n).
+  - exact (callback_duties n).
+Qed.
+
+(** The value phase constructs and charges its own value-height fuel on the same family. *)
+Example complete_raw_value_family n J a0 :
+  (Cost.ticks (TabValueProgress.complete_raw_c
+    (problem n) J (tt, None) a0 LawfulAffine.value_height) <=
+    TabValueRunCost.complete_charge (problem n) 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.value_height)))%N.
+Proof.
+  apply TabValueRunCost.complete_raw_cost.
+  - exact (value_duties n).
+  - exact (vertex_laws n).
+  - exact (callback_duties n).
 Qed.
 
 Example supplied_outgoing_occurrences n :

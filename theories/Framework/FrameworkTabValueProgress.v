@@ -249,7 +249,8 @@ Proof.
     rewrite TabValues.prepare_equation; left; reflexivity.
 Qed.
 
-Local Lemma step_invariant s :
+(** Each actual value callback retains coherent work and finite stored and scheduled key support. *)
+Theorem step_invariant s :
   invariant I (TabValues.prepare I J start) s ->
   match Cost.value (TabValues.step_c I (TabValues.prepare I J start) s) with
   | inl next | inr next => invariant I (TabValues.prepare I J start) next
