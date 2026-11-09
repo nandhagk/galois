@@ -508,6 +508,14 @@ Definition filter_map_c {K V W} (f_c : V -> Cost.t (option W)) (m : t K V) :=
 Definition filter_map {K V W} (f : V -> option W) (m : t K V) :=
   Cost.value (filter_map_c (Cost.lift (fun _ => 1%N) f) m).
 
+(** Cost composition observes the native filter without introducing a second traversal. *)
+Theorem filter_map_backend {K V W} (f_c : V -> Cost.t (option W)) (m : t K V) :
+  filter_map_c f_c m = TrieMerge.filter_map_c
+    (fun kv => Cost.map (option_map (fun w => (fst kv, w))) (f_c (snd kv))) m.
+Proof.
+  reflexivity.
+Qed.
+
 (** Filtering mapped values maintains code consistency. *)
 Theorem wf_filter_map {K V W} (E : encoding K) (f : V -> option W) (m : t K V) :
   wf E m -> wf E (filter_map f m).

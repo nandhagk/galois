@@ -99,6 +99,50 @@ Proof.
   rewrite tabulate_equation; apply Map.wf_of_list.
 Qed.
 
+Local Lemma tabulate_insert_cost {A B} (E : encoding A) (f : A -> Cost.t B) xs acc e w :
+  (forall x, In x xs ->
+    (Cost.ticks (encode_c E x) <= e)%N /\ (key_bits E x <= w)%N) ->
+  (Cost.ticks (fold_left_c (fun m row => Map.set_c E (fst row) (snd row) m)
+    (map (fun x => (x, Cost.value (f x))) xs) acc) <=
+    N.of_nat (length xs) * (2 + e + w))%N.
+Proof.
+  revert acc; induction xs as [|x rest IH]; intros acc Hprices; [reflexivity|].
+  cbn [map]; rewrite ticks_fold_left_c_cons; cbn [fst snd].
+  rewrite Map.set_cost; fold (key_bits E x).
+  destruct (Hprices x (or_introl eq_refl)) as [Hencode Hwidth].
+  specialize (IH (Map.set E x (Cost.value (f x)) acc)
+    (fun y Hy => Hprices y (or_intror Hy))).
+  cbn [length]; rewrite Nat2N.inj_succ.
+  change (1 + (1 + Cost.ticks (encode_c E x) + key_bits E x) +
+    Cost.ticks (fold_left_c (fun m row => Map.set_c E (fst row) (snd row) m)
+      (map (fun y => (y, Cost.value (f y))) rest) (Map.set E x (Cost.value (f x)) acc)) <=
+    N.succ (N.of_nat (length rest)) * (2 + e + w))%N; nia.
+Qed.
+
+(** Tabulation retains each supplied callback, encoder call and native map insertion. *)
+Theorem tabulate_cost {A B} (E : encoding A) (f : A -> Cost.t B) xs e w c :
+  (forall x, In x xs ->
+    (Cost.ticks (encode_c E x) <= e)%N /\ (key_bits E x <= w)%N /\
+    (Cost.ticks (f x) <= c)%N) ->
+  (Cost.ticks (tabulate_c E f xs) <= N.of_nat (length xs) * (4 + e + w + c))%N.
+Proof.
+  intro Hprices; unfold tabulate_c; rewrite Cost.ticks_bind, value_map_c.
+  rewrite Map.of_list_cost_equation.
+  pose proof (tabulate_insert_cost E f xs Map.empty e w
+    (fun x Hx => conj (proj1 (Hprices x Hx)) (proj1 (proj2 (Hprices x Hx))))) as Hinsert.
+  assert (Hcallbacks : (Cost.ticks
+    (map_c (fun x => Cost.step ;; Cost.map (fun y => (x, y)) (f x)) xs) <=
+    N.of_nat (length xs) * (2 + c))%N).
+  { clear Hinsert; rewrite ticks_map_c; induction xs as [|x rest IH]; [reflexivity|].
+    cbn [fold_right length]; autorewrite with galois_cost; rewrite Nat2N.inj_succ.
+    pose proof (proj2 (proj2 (Hprices x (or_introl eq_refl)))) as Hhead.
+    specialize (IH (fun y Hy => Hprices y (or_intror Hy))); nia. }
+  change (Cost.ticks (map_c (fun x => Cost.step ;; Cost.map (fun y => (x, y)) (f x)) xs) +
+    (0 + Cost.ticks (fold_left_c (fun m row => Map.set_c E (fst row) (snd row) m)
+      (map (fun x => (x, Cost.value (f x))) xs) Map.empty)) <=
+    N.of_nat (length xs) * (4 + e + w + c))%N; nia.
+Qed.
+
 Local Lemma tabulate_lookup_fold {A B} (E : encoding A) (HE : encoding_laws E)
     (f : A -> B) xs x old :
   fold_left (fun previous kv =>

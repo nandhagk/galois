@@ -242,6 +242,45 @@ Definition closed_loop_ssa : Ssa.t nat (nat * nat) nat nat unit :=
 Definition closed_loop_problem :=
   Numbering.of_pure closed_loop_ssa nat_encoding (Nat.eqb 0).
 
+Local Lemma closed_loop_primitive_prices :
+  NumberingLoop.primitive_prices closed_loop_problem reference_loop
+    (FinSet.of_list nat_encoding [0; 1; 2; 3; 4; 5; 6]) 1%N 3%N 1%N 2.
+Proof.
+  constructor.
+  - intros x Hin; vm_compute in Hin.
+    destruct Hin as [<-|[<-|[<-|[<-|[<-|[<-|[<-|Hin]]]]]]]; try contradiction;
+      vm_compute; repeat split; discriminate.
+  - intros x op args Hin Hdef; vm_compute in Hin.
+    destruct Hin as [<-|[<-|[<-|[<-|[<-|[<-|[<-|Hin]]]]]]]; try contradiction;
+      vm_compute in Hdef; try discriminate; injection Hdef as <- <-.
+    all: split; [vm_compute; discriminate|].
+    all: split; [cbn; lia|].
+    all: intros y Hy; cbn in Hy;
+      repeat (destruct Hy as [<-|Hy]; [vm_compute; repeat split; discriminate|]); contradiction.
+Qed.
+
+Local Lemma closed_loop_inventory :
+  NumberingLoop.closed_inventory closed_loop_problem reference_loop
+    (FinSet.of_list nat_encoding [0; 1; 2; 3; 4; 5; 6]).
+Proof.
+  intros x deps Hget.
+  pose proof (proj2 (Map.elements_spec nat_encoding nat_encoding_laws x deps
+    (NumberingLoop.rules_of closed_loop_problem reference_loop
+      (FinSet.of_list nat_encoding [0; 1; 2; 3; 4; 5; 6]))
+    (NumberingLoop.rules_wf _ _ _)) Hget) as Hin.
+  vm_compute in Hin.
+  repeat (destruct Hin as [Heq|Hin];
+    [injection Heq as <- <-; vm_compute; reflexivity|]); contradiction.
+Qed.
+
+Example importing_full_public_invariant_numeric_contract :
+  (Cost.ticks (NumberingLoop.invariant_in_c closed_loop_problem reference_loop 2%nat) <=
+    NumberingLoop.invariant_k * (1 + 7) * (1 + 2) * (1 + 1 + 3 + 1))%N.
+Proof.
+  exact (NumberingLoop.invariant_in_cost closed_loop_problem reference_loop nat_encoding_laws 2
+    1%N 3%N 1%N 2 closed_loop_primitive_prices closed_loop_inventory eq_refl).
+Qed.
+
 Example indexed_public_chain_cycle_and_impurity :
   (NumberingLoop.invariant_in closed_loop_problem reference_loop 0,
     NumberingLoop.invariant_in closed_loop_problem reference_loop 1,

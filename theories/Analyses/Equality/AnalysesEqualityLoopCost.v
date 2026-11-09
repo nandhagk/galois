@@ -299,7 +299,8 @@ Proof.
   rewrite Nat2N.inj_succ; nia.
 Qed.
 
-Local Lemma traversal_sum {A} (f : A -> Cost.t bool) xs k :
+(** Filtering needs callback budgets only at the finite list elements it actually visits. *)
+Theorem filter_visited_cost {A} (f : A -> Cost.t bool) xs k :
   (forall x, In x xs -> (Cost.ticks (f x) <= k)%N) ->
   (Cost.ticks (filter_c f xs) <= N.of_nat (length xs) * (k + 1))%N.
 Proof.
@@ -380,7 +381,7 @@ Proof.
   { rewrite rows_length; apply length_sum. }
   rewrite Hsum in Hcounts.
   set (counts := Cost.value (Map.map_c length_c definitions)).
-  pose proof (traversal_sum (fun x =>
+  pose proof (filter_visited_cost (fun x =>
     let* count := Map.get_c E x counts in
     Cost.ret (match count with Some 0%nat => true | _ => false end))
     (FinSet.elements universe) (key_price e w)) as Hseeds.
@@ -505,6 +506,20 @@ Proof.
     apply N.add_le_mono; [exact Hinitial|].
     apply N.add_le_mono_l; exact Hrun.
   - apply kernel_sum; rewrite Nat2N.inj_succ in Hbits; lia.
+Qed.
+
+(** A prepared solve inherits the complete kernel bound while retaining all initialization work. *)
+Theorem solve_prepared_cost universe definitions e w :
+  FinSet.wf E universe -> Map.wf E definitions ->
+  rules_supported E universe definitions -> primitive_prices universe definitions e w ->
+  (Cost.ticks (solve_prepared_c E (prepare E universe definitions)) <=
+    kernel_k * (1 + N.of_nat (FinSet.size universe) + N.of_nat (length (rows definitions))) *
+      (1 + e + w))%N.
+Proof.
+  intros Huniverse Hdefinitions Hsupport Hprices.
+  pose proof (solve_cost universe definitions e w Huniverse Hdefinitions Hsupport Hprices) as Hcost.
+  unfold solve_c in Hcost; rewrite Cost.ticks_bind in Hcost; exact (N.le_trans _ _ _
+    (N.le_add_l _ _) Hcost).
 Qed.
 
 (** Varying finite instances retain their own sizes, encoder budgets and actual key widths. *)

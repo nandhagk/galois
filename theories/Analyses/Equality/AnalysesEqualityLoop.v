@@ -6,12 +6,13 @@
     Builds on: AnalysesEqualityLoopCorrect, AnalysesEqualityLoopReference and BaseMap. *)
 
 From Stdlib Require Import List Bool Arith Lia PArith NArith.
-From Galois.Cost Require Import CostMonad CostList.
-From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
+From Galois.Cost Require Import CostMonad CostList CostBound.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseMapCost BaseSet BaseTrieCost.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramSsa ProgramSemantics ProgramLink ProgramStrict.
 From Galois.Analyses.Equality Require Import AnalysesEqualityProblem AnalysesEqualitySignature
-  AnalysesEqualityLoopReference AnalysesEqualityLoopWorklist AnalysesEqualityLoopCorrect.
+  AnalysesEqualityLoopReference AnalysesEqualityLoopWorklist AnalysesEqualityLoopCorrect
+  AnalysesEqualityLoopCost.
 Import List.ListNotations Cost.Notations Numbering.
 
 Local Open Scope nat_scope.
@@ -383,9 +384,451 @@ Proof.
     apply NumberingLoopReference.reference_outside; exact Hinside.
 Qed.
 
+(** Primitive budgets concern finite listed values and their actual operand callbacks. *)
+Record primitive_prices nodes (e w c : BinNums.N) (arity : nat) : Prop := LoopPrices {
+  listed_prices : forall x, In x (FinSet.elements nodes) ->
+    (Cost.ticks (encode_c EV x) <= e)%N /\ (key_bits EV x <= w)%N /\
+    (Cost.ticks (Ssa.home_c syntax x) <= c)%N /\
+    (Cost.ticks (body_c lp (Ssa.home syntax x)) <= c)%N /\
+    (Cost.ticks (Ssa.def_c syntax x) <= c)%N;
+  operand_prices : forall x op args, In x (FinSet.elements nodes) ->
+    Ssa.def syntax x = Op op args ->
+    (Cost.ticks (pure_c np op) <= c)%N /\ length args <= arity /\
+    forall y, In y args ->
+      (Cost.ticks (encode_c EV y) <= e)%N /\ (key_bits EV y <= w)%N /\
+      (Cost.ticks (Ssa.home_c syntax y) <= c)%N /\
+      (Cost.ticks (body_c lp (Ssa.home syntax y)) <= c)%N
+}.
+
+(** A body observation includes the home and body dictionary invocations and their callee costs. *)
+Theorem inside_cost x c :
+  (Cost.ticks (Ssa.home_c syntax x) <= c)%N ->
+  (Cost.ticks (body_c lp (Ssa.home syntax x)) <= c)%N ->
+  (Cost.ticks (NumberingLoopReference.inside_c np lp x) <= 2 + 2 * c)%N.
+Proof.
+  intros Hhome Hbody; unfold NumberingLoopReference.inside_c.
+  autorewrite with galois_cost; fold syntax; fold (Ssa.home syntax x); lia.
+Qed.
+
+(** Rule classification accounts for the static definition, purity and every operand observation. *)
+Definition rule_price (c : BinNums.N) (arity : nat) : BinNums.N :=
+  4 + 4 * c + N.of_nat arity * (4 + 2 * c).
+
+(** Finite primitive budgets derive the price of the owned rule computation. *)
+Theorem rule_cost nodes e w c arity x :
+  primitive_prices nodes e w c arity -> In x (FinSet.elements nodes) ->
+  (Cost.ticks (rule_c x) <= rule_price c arity)%N.
+Proof.
+  intros Hprices Hx.
+  destruct (listed_prices _ _ _ _ _ Hprices x Hx) as [_ [_ [Hhome [Hbody Hdef]]]].
+  pose proof (inside_cost x c Hhome Hbody) as Hinside.
+  unfold rule_c; rewrite Cost.ticks_bind, NumberingLoopReference.inside_value.
+  fold syntax; fold (inside x); destruct (inside x);
+    [|rewrite Cost.ticks_ret; unfold rule_price; lia].
+  autorewrite with galois_cost; fold (Ssa.def syntax x).
+  destruct (Ssa.def syntax x) as [op args|block index|] eqn:Hdefinition;
+    try (rewrite Cost.ticks_ret; unfold rule_price; lia).
+  destruct (operand_prices _ _ _ _ _ Hprices x op args Hx Hdefinition)
+    as [Hpure [Harity Hargs]].
+  autorewrite with galois_cost.
+  destruct (Cost.value (pure_c np op));
+    [rewrite Cost.ticks_map|rewrite Cost.ticks_ret; unfold rule_price; lia].
+  pose proof (NumberingLoopCost.filter_visited_cost
+    (fun y => Cost.step ;; NumberingLoopReference.inside_c np lp y) args (3 + 2 * c)%N)
+    as Hfilter.
+  assert (Hcallbacks : forall y, In y args ->
+    (Cost.ticks (Cost.step ;; NumberingLoopReference.inside_c np lp y) <= 3 + 2 * c)%N).
+  { intros y Hy; destruct (Hargs y Hy) as [_ [_ [Hyhome Hybody]]].
+    pose proof (inside_cost y c Hyhome Hybody) as Hyinside; autorewrite with galois_cost; lia. }
+  specialize (Hfilter Hcallbacks); unfold rule_price; nia.
+Qed.
+
+Local Lemma present_rule nodes x deps :
+  FinSet.wf EV nodes -> Map.get EV x (rules_of nodes) = Some deps ->
+  exists op args, In x (FinSet.elements nodes) /\ Ssa.def syntax x = Op op args /\
+    deps = filter inside args.
+Proof.
+  intros Hwf Hget.
+  pose proof (rules_supported nodes Hwf x deps Hget) as Hmember.
+  assert (Hx : In x (FinSet.elements nodes)).
+  { exact (proj2 (FinSet.elements_spec EV HV x nodes Hwf) Hmember). }
+  rewrite (rules_get nodes x Hwf Hmember) in Hget.
+  unfold rule in Hget; destruct (inside x); [|discriminate].
+  destruct (Ssa.def syntax x) as [op args|block index|] eqn:Hdef; try discriminate.
+  destruct (pure np op); [|discriminate].
+  injection Hget as <-; exists op, args; now repeat split.
+Qed.
+
+Local Lemma rule_arity nodes e w c arity x deps :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  Map.get EV x (rules_of nodes) = Some deps -> length deps <= arity.
+Proof.
+  intros Hwf Hprices Hget.
+  destruct (present_rule nodes x deps Hwf Hget) as [op [args [Hx [Hdef ->]]]].
+  destruct (operand_prices _ _ _ _ _ Hprices x op args Hx Hdef) as [_ [Harity _]].
+  pose proof (filter_length inside args); lia.
+Qed.
+
+(** Primitive prices for the countdown engine follow from the actual finite SSA rule map. *)
+Theorem kernel_prices nodes e w c arity :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  NumberingLoopCost.primitive_prices EV nodes (rules_of nodes) e w.
+Proof.
+  intros Hwf Hprices x [Hx|Hx].
+  - destruct (listed_prices _ _ _ _ _ Hprices x Hx) as [He [Hw _]]; now split.
+  - apply in_map_iff in Hx as [[dependency user] [Heq Hrow]]; cbn [fst] in Heq; subst dependency.
+    unfold NumberingLoopCost.rows in Hrow; apply in_flat_map in Hrow
+      as [[owner deps] [Hentry Hrow]].
+    apply in_map_iff in Hrow as [dependency [Heq Hin]]; injection Heq as <- <-.
+    apply (Map.elements_spec EV HV owner deps _ (rules_wf nodes)) in Hentry.
+    destruct (present_rule nodes owner deps Hwf Hentry) as [op [args [Howner [Hdef Hdeps]]]].
+    rewrite Hdeps in Hin; apply filter_In in Hin as [Hin _].
+    destruct (operand_prices _ _ _ _ _ Hprices owner op args Howner Hdef)
+      as [_ [_ Hargs]].
+    destruct (Hargs dependency Hin) as [He [Hw _]]; now split.
+Qed.
+
+(** The actual finite rule map has at most one arity budget per distinct listed value. *)
+Theorem rule_mass nodes e w c arity :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  (N.of_nat (length (NumberingLoopCost.rows (rules_of nodes))) <=
+    N.of_nat (FinSet.size nodes) * N.of_nat arity)%N.
+Proof.
+  intros Hwf Hprices.
+  pose proof (NumberingLoopCost.definitions_size EV HV nodes (rules_of nodes)
+    Hwf (rules_wf nodes) (rules_supported nodes Hwf)) as Hsize.
+  assert (Hmass : (NumberingLoopCost.dependency_mass (Map.elements (rules_of nodes)) <=
+    N.of_nat (length (Map.elements (rules_of nodes))) * N.of_nat arity)%N).
+  { assert (Hentries : forall x deps, In (x, deps) (Map.elements (rules_of nodes)) ->
+      length deps <= arity).
+    { intros x deps Hin; apply (rule_arity nodes e w c arity x deps Hwf Hprices).
+      exact (proj1 (Map.elements_spec EV HV x deps _ (rules_wf nodes)) Hin). }
+    clear Hsize; generalize dependent (Map.elements (rules_of nodes)); intros entries Hentries.
+    induction entries as [|[x deps] rest IH]; [reflexivity|].
+    cbn [NumberingLoopCost.dependency_mass fold_right snd length]; rewrite Nat2N.inj_succ.
+    fold (NumberingLoopCost.dependency_mass rest).
+    pose proof (Hentries x deps (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun y args Hin => Hentries y args (or_intror Hin))); nia. }
+  rewrite <- Map.size_elements in Hmass.
+  rewrite NumberingLoopCost.rows_length; nia.
+Qed.
+
+Local Lemma rule_dependency_prices nodes e w c arity x deps y :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  Map.get EV x (rules_of nodes) = Some deps -> In y deps ->
+  (Cost.ticks (encode_c EV y) <= e)%N /\ (key_bits EV y <= w)%N.
+Proof.
+  intros Hwf Hprices Hget Hy.
+  destruct (present_rule nodes x deps Hwf Hget) as [op [args [Hx [Hdef ->]]]].
+  apply filter_In in Hy as [Hy _].
+  destruct (operand_prices _ _ _ _ _ Hprices x op args Hx Hdef) as [_ [_ Hargs]].
+  destruct (Hargs y Hy) as [He [Hw _]]; now split.
+Qed.
+
+Local Lemma forallb_visited_cost {A} (f : A -> Cost.t bool) xs k :
+  (forall x, In x xs -> (Cost.ticks (f x) <= k)%N) ->
+  (Cost.ticks (forallb_c f xs) <= N.of_nat (length xs) * (k + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hprices; [reflexivity|].
+  rewrite ticks_forallb_c_cons; cbn [length]; rewrite Nat2N.inj_succ.
+  pose proof (Hprices x (or_introl eq_refl)) as Hhead.
+  specialize (IH (fun y Hy => Hprices y (or_intror Hy))).
+  destruct (Cost.value (f x)); nia.
+Qed.
+
+Local Lemma closed_entries_cost nodes e w c arity :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  (Cost.ticks (closed_entries_c nodes (Map.elements (rules_of nodes))) <=
+    N.of_nat (FinSet.size nodes) *
+      (2 + N.of_nat arity * (2 + NumberingLoopCost.key_price e w)))%N.
+Proof.
+  intros Hwf Hprices.
+  pose proof (NumberingLoopCost.definitions_size EV HV nodes (rules_of nodes)
+    Hwf (rules_wf nodes) (rules_supported nodes Hwf)) as Hsize.
+  unfold closed_entries_c.
+  eapply N.le_trans; [apply (forallb_visited_cost _
+    _ (1 + N.of_nat arity * (2 + NumberingLoopCost.key_price e w))%N)|].
+  - intros [x deps] Hin; autorewrite with galois_cost; cbn [snd].
+    pose proof (proj1 (Map.elements_spec EV HV x deps _ (rules_wf nodes)) Hin) as Hget.
+    pose proof (rule_arity nodes e w c arity x deps Hwf Hprices Hget) as Harity.
+    pose proof (forallb_visited_cost (fun y => Cost.step ;; FinSet.mem_c EV y nodes)
+      deps (1 + NumberingLoopCost.key_price e w)%N) as Hdeps.
+    assert (Hdep_prices : forall y, In y deps ->
+      (Cost.ticks (Cost.step ;; FinSet.mem_c EV y nodes) <=
+        1 + NumberingLoopCost.key_price e w)%N).
+    { intros y Hy; destruct (rule_dependency_prices nodes e w c arity x deps y
+        Hwf Hprices Hget Hy) as [He Hw].
+      autorewrite with galois_cost; unfold FinSet.mem_c; rewrite Map.mem_cost.
+      fold (key_bits EV y); unfold NumberingLoopCost.key_price; lia. }
+    specialize (Hdeps Hdep_prices); nia.
+  - rewrite <- Map.size_elements.
+    replace (1 + N.of_nat arity * (2 + NumberingLoopCost.key_price e w) + 1)%N with
+      (2 + N.of_nat arity * (2 + NumberingLoopCost.key_price e w))%N by lia.
+    apply N.mul_le_mono_r; lia.
+Qed.
+
+Local Lemma classified_member nodes x result :
+  Map.get EV x (NumberingSignature.tabulate EV rule_c (FinSet.elements nodes)) = Some result ->
+  In x (FinSet.elements nodes).
+Proof.
+  intro Hget; destruct (in_dec (eqb_dec EV HV) x (FinSet.elements nodes)) as [Hin|Hnot];
+    [exact Hin|].
+  rewrite (NumberingSignature.tabulate_absent EV HV rule_c _ x Hnot) in Hget; discriminate.
+Qed.
+
+Local Lemma zero_sum {A B} (entries : list (A * option B)) :
+  fold_right (fun entry total => Cost.ticks (Cost.ret (snd entry)) + total)%N 0%N entries = 0%N.
+Proof.
+  induction entries as [|entry rest IH]; cbn [fold_right]; rewrite ?Cost.ticks_ret, ?IH;
+    reflexivity.
+Qed.
+
+Local Lemma of_nat_le n m : n <= m -> (N.of_nat n <= N.of_nat m)%N.
+Proof.
+  intro Hle; induction Hle; [reflexivity|rewrite Nat2N.inj_succ; lia].
+Qed.
+
+(** The preparation constant includes SSA callbacks, native filtering and countdown preparation. *)
+Definition preparation_k : BinNums.N :=
+  128 + 16 * TrieCost.trie_k + 4 * NumberingLoopCost.prepare_k.
+
+Local Lemma preparation_sum n a e w c :
+  (TrieCost.trie_k * (1 + n * w) + n +
+    (n * (4 + e + w + (4 + 4 * c + a * (4 + 2 * c))) +
+    (2 * n * w + (TrieCost.trie_k * (1 + n * w) +
+    (n * (2 + a * (2 + NumberingLoopCost.key_price e w)) +
+      NumberingLoopCost.prepare_k * (1 + n + n * a) * (1 + e + w))))) <=
+    preparation_k * (1 + n) * (1 + a) * (1 + e + w + c))%N.
+Proof.
+  unfold preparation_k, NumberingLoopCost.key_price; nia.
+Qed.
+
+(** Complete finite preparation is priced from finite SSA primitives, even when closure rejects. *)
+Theorem preparation_cost nodes e w c arity :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  (Cost.ticks (prepare_finite_c nodes) <= preparation_k *
+    (1 + N.of_nat (FinSet.size nodes)) * (1 + N.of_nat arity) * (1 + e + w + c))%N.
+Proof.
+  intros Hwf Hprices.
+  set (classified := NumberingSignature.tabulate EV rule_c (FinSet.elements nodes)).
+  assert (Hclassified : Map.wf EV classified) by apply NumberingSignature.tabulate_wf.
+  assert (Hsize : Map.size classified <= FinSet.size nodes).
+  { rewrite FinSet.size_elements.
+    apply (Map.size_support_bound EV HV (FinSet.elements nodes) classified Hclassified).
+    intros x result Hget; exact (classified_member nodes x result Hget). }
+  assert (Hwidth : forall x result, Map.get EV x classified = Some result ->
+    (key_bits EV x <= w)%N).
+  { intros x result Hget.
+    exact (proj1 (proj2 (listed_prices _ _ _ _ _ Hprices x
+      (classified_member nodes x result Hget)))). }
+  pose proof (MapCost.elements_numeric_cost EV nodes w Hwf) as Hnodes.
+  assert (Hnode_width : forall x (u : unit), Map.get EV x nodes = Some u ->
+    (key_bits EV x <= w)%N).
+  { intros x [] Hget.
+    pose proof (proj2 (FinSet.mem_spec EV x nodes) Hget) as Hmem.
+    exact (proj1 (proj2 (listed_prices _ _ _ _ _ Hprices x
+      (proj2 (FinSet.elements_spec EV HV x nodes Hwf) Hmem)))). }
+  specialize (Hnodes Hnode_width); rewrite <- FinSet.size_backend in Hnodes.
+  pose proof (NumberingSignature.tabulate_cost EV rule_c (FinSet.elements nodes)
+    e w (rule_price c arity)) as Htabulate.
+  specialize (Htabulate (fun x Hx => conj
+    (proj1 (listed_prices _ _ _ _ _ Hprices x Hx))
+    (conj (proj1 (proj2 (listed_prices _ _ _ _ _ Hprices x Hx)))
+      (rule_cost nodes e w c arity x Hprices Hx)))).
+  rewrite <- FinSet.size_elements in Htabulate.
+  pose proof (MapCost.filter_map_numeric_cost EV (fun result => Cost.ret result)
+    classified w Hclassified Hwidth) as Hfilter.
+  rewrite zero_sum in Hfilter.
+  assert (Hfiltered : Cost.value (Map.filter_map_c (fun result => Cost.ret result) classified) =
+    rules_of nodes).
+  { rewrite Map.filter_map_c_value; reflexivity. }
+  pose proof (NumberingLoopCost.definitions_size EV HV nodes (rules_of nodes)
+    Hwf (rules_wf nodes) (rules_supported nodes Hwf)) as Hrule_size.
+  pose proof (of_nat_le _ _ Hrule_size) as Hrule_size_N.
+  pose proof (MapCost.elements_numeric_cost EV (rules_of nodes) w (rules_wf nodes))
+    as Hentries.
+  specialize (Hentries (fun x deps Hget => Hnode_width x tt
+    (proj1 (FinSet.mem_spec EV x nodes) (rules_supported nodes Hwf x deps Hget)))).
+  pose proof (closed_entries_cost nodes e w c arity Hwf Hprices) as Hclosed.
+  assert (Hfilter_bound : (Cost.ticks (Map.filter_map_c (fun result => Cost.ret result)
+    classified) <= 2 * N.of_nat (FinSet.size nodes) * w)%N).
+  { rewrite N.add_0_r in Hfilter; eapply N.le_trans; [exact Hfilter|].
+    apply N.mul_le_mono_r, N.mul_le_mono_l.
+    exact (of_nat_le _ _ Hsize). }
+  assert (Hentries_bound : (Cost.ticks (Map.elements_c (rules_of nodes)) <=
+    TrieCost.trie_k * (1 + N.of_nat (FinSet.size nodes) * w))%N).
+  { eapply N.le_trans; [exact Hentries|].
+    apply N.mul_le_mono_l, N.add_le_mono_l, N.mul_le_mono_r; exact Hrule_size_N. }
+  pose proof (NumberingLoopCost.prepare_cost EV HV nodes (rules_of nodes) e w
+    Hwf (rules_wf nodes) (rules_supported nodes Hwf) (kernel_prices nodes e w c arity Hwf Hprices))
+    as Hcountdown.
+  pose proof (rule_mass nodes e w c arity Hwf Hprices) as Hmass.
+  assert (Hcountdown_bound :
+    (Cost.ticks (NumberingLoopWorklist.prepare_c EV nodes (rules_of nodes)) <=
+      NumberingLoopCost.prepare_k * (1 + N.of_nat (FinSet.size nodes) +
+        N.of_nat (FinSet.size nodes) * N.of_nat arity) * (1 + e + w))%N) by nia.
+  unfold prepare_finite_c; rewrite !Cost.ticks_bind.
+  fold (FinSet.elements nodes).
+  fold (NumberingSignature.tabulate EV rule_c (FinSet.elements nodes)).
+  fold classified; rewrite Hfiltered; fold (Map.elements (rules_of nodes)).
+  assert (Hrest :
+    (Cost.ticks
+      (if Cost.value (closed_entries_c nodes (Map.elements (rules_of nodes))) then
+         let* prepared := NumberingLoopWorklist.prepare_c EV nodes (rules_of nodes) in
+         Cost.ret (Accepted (Finite nodes (rules_of nodes) prepared))
+       else Cost.ret Rejected) <=
+      NumberingLoopCost.prepare_k * (1 + N.of_nat (FinSet.size nodes) +
+        N.of_nat (FinSet.size nodes) * N.of_nat arity) * (1 + e + w))%N).
+  { destruct (Cost.value (closed_entries_c nodes (Map.elements (rules_of nodes))));
+      autorewrite with galois_cost; lia. }
+  eapply N.le_trans.
+  - apply N.add_le_mono.
+    + rewrite FinSet.elements_cost_equation; apply N.add_le_mono_r; exact Hnodes.
+    + apply N.add_le_mono; [exact Htabulate|].
+      apply N.add_le_mono.
+      * exact Hfilter_bound.
+      * apply N.add_le_mono.
+        -- exact Hentries_bound.
+        -- apply N.add_le_mono; [exact Hclosed|exact Hrest].
+  - unfold rule_price; apply preparation_sum.
+Qed.
+
+(** The fast domain requires closure only for the finite stored inside-body dependencies. *)
+Definition closed_inventory nodes : Prop :=
+  forall x deps, Map.get EV x (rules_of nodes) = Some deps ->
+    forallb (fun y => FinSet.mem EV y nodes) deps = true.
+
+(** The actual closure validator accepts every inventory in the explicit finite fast domain. *)
+Theorem closed_preparation nodes :
+  closed_inventory nodes -> exists data, prepare_finite nodes = Accepted data.
+Proof.
+  intro Hclosed; rewrite prepare_finite_equation; cbn zeta; fold (rules_of nodes).
+  assert (Htest : forallb (fun entry =>
+    forallb (fun y => FinSet.mem EV y nodes) (snd entry))
+    (Map.elements (rules_of nodes)) = true).
+  { apply forallb_forall; intros [x deps] Hin; apply (Hclosed x deps).
+    exact (proj1 (Map.elements_spec EV HV x deps _ (rules_wf nodes)) Hin). }
+  rewrite Htest; eexists; reflexivity.
+Qed.
+
+(** Accepted finite data runs the same occurrence-bounded kernel without assuming an outcome. *)
+Theorem prepared_result_cost nodes data e w c arity :
+  FinSet.wf EV nodes -> primitive_prices nodes e w c arity ->
+  prepare_finite nodes = Accepted data ->
+  (Cost.ticks (NumberingLoopWorklist.solve_prepared_c EV (countdown data)) <=
+    NumberingLoopCost.kernel_k * (1 + N.of_nat (FinSet.size nodes)) *
+      (1 + N.of_nat arity) * (1 + e + w))%N.
+Proof.
+  intros Hwf Hprices Haccepted.
+  pose proof (prepare_finite_laws nodes data Haccepted) as Hdata.
+  rewrite (countdown_same _ _ Hdata), (definitions_same _ _ Hdata).
+  pose proof (NumberingLoopCost.solve_prepared_cost EV HV nodes (rules_of nodes) e w
+    Hwf (rules_wf nodes) (rules_supported nodes Hwf) (kernel_prices nodes e w c arity Hwf Hprices))
+    as Hkernel.
+  pose proof (rule_mass nodes e w c arity Hwf Hprices) as Hmass; nia.
+Qed.
+
+(** The public fast-entry constant includes inventory construction, validation and final lookup. *)
+Definition invariant_k : BinNums.N :=
+  32 + preparation_k + NumberingLoopCost.kernel_k.
+
+Local Lemma query_sum n a e w c :
+  (2 + 2 * c + (n * (3 + e + w) + (NumberingLoopCost.key_price e w +
+    (preparation_k * (1 + n) * (1 + a) * (1 + e + w + c) +
+    (NumberingLoopCost.kernel_k * (1 + n) * (1 + a) * (1 + e + w) +
+      NumberingLoopCost.key_price e w)))) <=
+    invariant_k * (1 + n) * (1 + a) * (1 + e + w + c))%N.
+Proof.
+  unfold invariant_k, NumberingLoopCost.key_price; nia.
+Qed.
+
+(** The public indexed query has a full linear arity/width/callback bound on closed listed inputs.
+    Arbitrary unlisted or malformed queries retain their separately charged reference fallback. *)
+Theorem invariant_in_cost x e w c arity :
+  primitive_prices (FinSet.of_list EV values) e w c arity ->
+  closed_inventory (FinSet.of_list EV values) ->
+  FinSet.mem EV x (FinSet.of_list EV values) = true ->
+  (Cost.ticks (invariant_in_c x) <= invariant_k *
+    (1 + N.of_nat (length values)) * (1 + N.of_nat arity) * (1 + e + w + c))%N.
+Proof.
+  intros Hprices Hclosed Hmember; set (nodes := FinSet.of_list EV values).
+  fold nodes in Hmember.
+  assert (Hwf : FinSet.wf EV nodes) by apply FinSet.wf_of_list.
+  assert (Hx : In x (FinSet.elements nodes)).
+  { exact (proj2 (FinSet.elements_spec EV HV x nodes Hwf) Hmember). }
+  destruct (listed_prices _ _ _ _ _ Hprices x Hx) as [Hex [Hwx [Hhx [Hbx _]]]].
+  pose proof (inside_cost x c Hhx Hbx) as Hinside.
+  pose proof (FinSet.of_list_numeric_cost Map.cost_laws_hold EV values e w) as Hinventory.
+  assert (Hvalue_prices : forall y, In y values ->
+    (Cost.ticks (encode_c EV y) <= e)%N /\ (key_bits EV y <= w)%N).
+  { intros y Hy.
+    pose proof (proj2 (NumberingSignature.listed_spec EV HV values y) Hy) as Hmem.
+    destruct (listed_prices _ _ _ _ _ Hprices y
+      (proj2 (FinSet.elements_spec EV HV y nodes Hwf) Hmem)) as [He [Hw _]]; now split. }
+  specialize (Hinventory Hvalue_prices).
+  destruct (closed_preparation nodes Hclosed) as [data Haccepted].
+  pose proof (prepare_finite_laws nodes data Haccepted) as Hdata.
+  destruct (finite_finishes data Hdata) as [final Hsolve].
+  pose proof (preparation_cost nodes e w c arity Hwf Hprices) as Hprepare.
+  pose proof (prepared_result_cost nodes data e w c arity Hwf Hprices Haccepted) as Hkernel.
+  pose proof (of_nat_le _ _ universe_bound) as Hsize.
+  fold nodes in Hsize.
+  assert (Hprepare_bound : (Cost.ticks (prepare_finite_c nodes) <=
+    preparation_k * (1 + N.of_nat (length values)) * (1 + N.of_nat arity) *
+      (1 + e + w + c))%N) by nia.
+  assert (Hkernel_bound :
+    (Cost.ticks (NumberingLoopWorklist.solve_prepared_c EV (countdown data)) <=
+    NumberingLoopCost.kernel_k * (1 + N.of_nat (length values)) * (1 + N.of_nat arity) *
+      (1 + e + w))%N) by nia.
+  assert (Hlookup : forall set, (Cost.ticks (FinSet.mem_c EV x set) <=
+    NumberingLoopCost.key_price e w)%N).
+  { intro set; unfold FinSet.mem_c; rewrite Map.mem_cost; fold (key_bits EV x).
+    unfold NumberingLoopCost.key_price; lia. }
+  unfold invariant_in_c; rewrite Cost.ticks_map.
+  unfold query_c; rewrite Cost.ticks_bind, NumberingLoopReference.inside_value.
+  fold syntax; fold (inside x); destruct (inside x).
+  - rewrite Cost.ticks_bind; fold (FinSet.of_list EV values); fold nodes.
+    rewrite Cost.ticks_bind; fold (FinSet.mem EV x nodes); rewrite Hmember.
+    rewrite Cost.ticks_bind; fold (prepare_finite nodes); rewrite Haccepted.
+    rewrite Cost.ticks_bind, Hsolve, Cost.ticks_bind, Cost.ticks_ret.
+    eapply N.le_trans.
+    + apply N.add_le_mono; [exact Hinside|].
+      apply N.add_le_mono; [exact Hinventory|].
+      apply N.add_le_mono; [apply Hlookup|].
+      apply N.add_le_mono; [exact Hprepare_bound|].
+      apply N.add_le_mono; [exact Hkernel_bound|].
+      rewrite N.add_0_r; apply Hlookup.
+    + apply query_sum.
+  - rewrite Cost.ticks_ret.
+    eapply N.le_trans; [|apply (query_sum (N.of_nat (length values)) (N.of_nat arity))].
+    eapply N.le_trans; [|apply N.le_add_r]; lia.
+Qed.
+
 End Laws.
 
 End Invariance.
+
+(** Families of closed listed queries retain varying programs, inventories and primitive budgets. *)
+Theorem invariant_in_bigO {X N E V K G}
+    (problems : X -> problem N E V K G) (loops : X -> loop_info N) (queries : X -> V)
+    (encoder width callback : X -> BinNums.N) (arity : X -> nat) :
+  (forall x, encoding_laws (Ssa.val_enc (ssa (problems x)))) ->
+  (forall x, primitive_prices (problems x) (loops x)
+    (FinSet.of_list (Ssa.val_enc (ssa (problems x))) (Ssa.values (ssa (problems x))))
+    (encoder x) (width x) (callback x) (arity x)) ->
+  (forall x, closed_inventory (problems x) (loops x)
+    (FinSet.of_list (Ssa.val_enc (ssa (problems x))) (Ssa.values (ssa (problems x))))) ->
+  (forall x, FinSet.mem (Ssa.val_enc (ssa (problems x))) (queries x)
+    (FinSet.of_list (Ssa.val_enc (ssa (problems x))) (Ssa.values (ssa (problems x)))) = true) ->
+  bigO (fun x => ((1 + N.of_nat (length (Ssa.values (ssa (problems x))))) *
+    (1 + N.of_nat (arity x)) * (1 + encoder x + width x + callback x))%N)
+    (fun x => Cost.ticks (invariant_in_c (problems x) (loops x) (queries x))).
+Proof.
+  intros Hencoding Hprices Hclosed Hlisted; exists invariant_k; intro x.
+  pose proof (invariant_in_cost (problems x) (loops x) (Hencoding x) (queries x)
+    (encoder x) (width x) (callback x) (arity x) (Hprices x) (Hclosed x) (Hlisted x)) as Hcost.
+  nia.
+Qed.
 
 (** Once a recognized invariant changes, stable direct operands prevent a second change.
     The three-run and option-valued statement is the unchanged legacy semantic contract. *)
