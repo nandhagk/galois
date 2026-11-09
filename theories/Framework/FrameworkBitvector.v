@@ -4,7 +4,7 @@
     For example, liveness is backward may with uses generated after definitions are killed.
     Builds on: FrameworkDense, BaseIndex and LatticeSet. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIndex.
 From Galois.Lattice Require Import LatticeCore LatticeSet.
@@ -104,9 +104,71 @@ Proof.
   apply Map.wf_map, Index.wf_group_by.
 Qed.
 
+Local Lemma map_return_cost {A B} (f : A -> B) xs :
+  Cost.ticks (map_c (fun x => Cost.ret (f x)) xs) = N.of_nat (length xs).
+Proof.
+  rewrite ticks_map_c; induction xs as [|x rest IH]; [reflexivity|].
+  cbn [fold_right length]; rewrite Cost.ticks_ret, IH, Nat2N.inj_succ; lia.
+Qed.
+
 (** The occurrence model retains repeated edge/fact occurrences in input order. *)
 Definition occurrences {N E U} (P : t N E U) es (reader : E -> Cost.t (list U)) :=
   flat_map (fun e => map (fun x => (e, x)) (Cost.value (reader e))) es.
+
+(** Charged occurrence construction returns every reader occurrence in its original order. *)
+Theorem prepare_occurrences_value {N E U} (P : t N E U) (es : list E)
+    (reader : E -> Cost.t (list U)) :
+  Cost.value (fw_flat_map_c (fun e =>
+    Cost.step ;; let* xs := reader e in map_c (fun x => Cost.ret (e, x)) xs) es) =
+    occurrences P es reader.
+Proof.
+  rewrite fw_flat_map_value; unfold occurrences.
+  induction es as [|e rest IH]; cbn [flat_map]; [reflexivity|].
+  autorewrite with galois_cost; rewrite IH; reflexivity.
+Qed.
+
+(** Occurrence work retains reader charges, list traversal and every emitted and copied pair. *)
+Theorem prepare_occurrences_cost {N E U} (P : t N E U) (es : list E)
+    (reader : E -> Cost.t (list U)) :
+  Cost.ticks (fw_flat_map_c (fun e =>
+    Cost.step ;; let* xs := reader e in map_c (fun x => Cost.ret (e, x)) xs) es) =
+    fold_right (fun e total =>
+      (3 + Cost.ticks (reader e) + 2 * N.of_nat (length (Cost.value (reader e))) + total)%N)
+      0%N es.
+Proof.
+  rewrite fw_flat_map_cost; induction es as [|e rest IH]; cbn [fold_right]; [reflexivity|].
+  rewrite !Cost.ticks_bind, Cost.ticks_step, map_return_cost.
+  rewrite !Cost.value_bind, value_map_c, length_map, IH; lia.
+Qed.
+
+(** Edge-set preparation retains occurrence work, actual grouping and every bucket conversion. *)
+Theorem prepare_sets_cost {N E U} (P : t N E U) es reader :
+  Cost.ticks (prepare_sets_c P es reader) =
+    (fold_right (fun e total =>
+      (3 + Cost.ticks (reader e) + 2 * N.of_nat (length (Cost.value (reader e))) + total)%N)
+      0%N es +
+    Cost.ticks (Index.group_by_c (Cfg.edge_enc (cfg P))
+      (fun pair : E * U => Cost.ret (fst pair)) (occurrences P es reader)) +
+    Cost.ticks (Map.map_c (fun bucket =>
+      let* xs := map_c (fun pair : E * U => Cost.ret (snd pair)) bucket in
+      set_of_list_c (fact_enc P) xs)
+      (Index.group_by (Cfg.edge_enc (cfg P)) (@fst E U) (occurrences P es reader))))%N.
+Proof.
+  unfold prepare_sets_c; rewrite !Cost.ticks_bind, (prepare_occurrences_value P es reader).
+  rewrite (prepare_occurrences_cost P es reader), Index.group_by_c_value.
+  rewrite N.add_assoc; reflexivity.
+Qed.
+
+(** Each actual bucket pays for projection of all pairs and conversion of its complete fact list. *)
+Theorem prepare_bucket_cost {N E U} (P : t N E U) (bucket : list (E * U)) :
+  Cost.ticks
+    (let* xs := map_c (fun pair : E * U => Cost.ret (snd pair)) bucket in
+     set_of_list_c (fact_enc P) xs) =
+    (N.of_nat (length bucket) +
+      Cost.ticks (set_of_list_c (fact_enc P) (map snd bucket)))%N.
+Proof.
+  rewrite Cost.ticks_bind, map_return_cost, value_map_c; reflexivity.
+Qed.
 
 (** Prepared edge sets are the stable grouped source occurrences converted to valid sets. *)
 Theorem prepare_sets_equation {N E U} (P : t N E U) es reader e :
@@ -161,6 +223,37 @@ Proof.
   unfold boundary_rows_c; rewrite value_map_c; apply map_ext; intro n.
   autorewrite with galois_cost; fold (boundary P n).
   destruct (boundary P n); reflexivity.
+Qed.
+
+(** Boundary conversion retains every seed occurrence, reader and selected Some-list conversion. *)
+Theorem boundary_rows_cost {N E U} (P : t N E U) :
+  Cost.ticks (boundary_rows_c P) =
+    fold_right (fun n total =>
+      (2 + Cost.ticks (boundary_c P n) +
+        match boundary P n with
+        | None => 0
+        | Some xs => Cost.ticks (set_of_list_c (fact_enc P) xs)
+        end + total)%N) 0%N (seeds P).
+Proof.
+  unfold boundary_rows_c; rewrite ticks_map_c.
+  induction (seeds P) as [|n rest IH]; cbn [fold_right]; [reflexivity|].
+  rewrite !Cost.ticks_bind, Cost.ticks_step; fold (boundary P n).
+  destruct (boundary P n); rewrite ?Cost.ticks_map, ?Cost.ticks_ret, IH; lia.
+Qed.
+
+(** Complete preparation composes graph enumeration, both edge indexes and the actual boundary map. *)
+Theorem prepare_cost {N E U} (P : t N E U) :
+  Cost.ticks (prepare_c P) =
+    (Cost.ticks (fw_edges_c (cfg P)) +
+      Cost.ticks (prepare_sets_c P (Cfg.edges (cfg P)) (gen_c P)) +
+      Cost.ticks (prepare_sets_c P (Cfg.edges (cfg P)) (kill_c P)) +
+      Cost.ticks (boundary_rows_c P) +
+      Cost.ticks (Map.of_list_c (Cfg.node_enc (cfg P))
+        (map (fun n => (n, option_map (set_of_list (fact_enc P)) (boundary P n)))
+          (seeds P))))%N.
+Proof.
+  unfold prepare_c; rewrite !Cost.ticks_bind, fw_edges_value, boundary_rows_value.
+  rewrite Cost.ticks_ret; lia.
 Qed.
 
 (** The prepared boundary cache is the public map constructor on converted seed occurrences. *)
