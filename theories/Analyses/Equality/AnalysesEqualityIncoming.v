@@ -7,7 +7,7 @@
 From Stdlib Require Import List Bool Arith Lia NArith.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseIndex.
-From Galois.Graph Require Import GraphModel.
+From Galois.Graph Require Import GraphModel GraphPrepared.
 From Galois.Program Require Import ProgramCfg ProgramSsa.
 Import List.ListNotations Cost.Notations.
 
@@ -76,27 +76,12 @@ Definition row N V := (N * Map.t nat V)%type.
 
 (** CFG edge enumeration charges every outgoing callback and copied edge occurrence. *)
 Definition edges_c {N E} (c : Cfg.t N E) : Cost.t (list E) :=
-  fold_right_c (fun n tail =>
-    Cost.step ;;
-    let* outgoing := Graph.out_c (Cfg.graph c) n in
-    app_c outgoing tail) [] (Graph.nodes (Cfg.graph c)).
+  Prepared.all_edges_c (Cfg.graph c).
 
 (** Costed enumeration keeps the exact public CFG edge order and multiplicities. *)
 Theorem edges_value {N E} (c : Cfg.t N E) : Cost.value (edges_c c) = Cfg.edges c.
 Proof.
-  unfold edges_c; rewrite value_fold_right_c.
-  change (fold_right (fun n tail =>
-    Cost.value (Cost.step ;;
-      (let* outgoing := Graph.out_c (Cfg.graph c) n in app_c outgoing tail))) []
-    (Graph.nodes (Cfg.graph c)) = Cfg.edges c).
-  change (fold_right (fun n tail =>
-    Cost.value (Cost.step ;;
-      (let* outgoing := Graph.out_c (Cfg.graph c) n in app_c outgoing tail))) []
-    (Graph.nodes (Cfg.graph c)) =
-    flat_map (Graph.out (Cfg.graph c)) (Graph.nodes (Cfg.graph c))).
-  induction (Graph.nodes (Cfg.graph c)) as [|n rest IH]; [reflexivity|].
-  cbn [fold_right flat_map]; autorewrite with galois_cost.
-  fold (Graph.out (Cfg.graph c) n); now rewrite IH.
+  unfold edges_c; rewrite Prepared.all_edges_c_value; reflexivity.
 Qed.
 
 (** Each edge row calls the target and argument dictionaries once. *)

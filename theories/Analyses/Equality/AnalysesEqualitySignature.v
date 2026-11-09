@@ -336,6 +336,64 @@ Proof.
   rewrite prepare_equation, (tabulate_get _ HV) by exact Hx; reflexivity.
 Qed.
 
+(** A template lookup has the same complete signature on missing entries as a singleton form. *)
+Theorem signature_lookup {N E V K G} (np : problem N E V K G) forms cls x :
+  signature np forms cls x =
+  Cost.value (instantiate_c cls
+    (match Map.get (Ssa.val_enc (ssa np)) x forms with
+     | Some t => t
+     | None => TSingle (encode (Ssa.val_enc (ssa np)) x)
+     end)).
+Proof.
+  unfold signature, signature_c; rewrite Cost.value_bind.
+  fold (@Map.get V (template V) (Ssa.val_enc (ssa np)) x forms).
+  destruct (Map.get (Ssa.val_enc (ssa np)) x forms); reflexivity.
+Qed.
+
+Local Lemma map_classes_refine {V} (f g : V -> Cost.t positive) xs ys :
+  (forall a b, Cost.value (f a) = Cost.value (f b) -> Cost.value (g a) = Cost.value (g b)) ->
+  map (fun x => Cost.value (f x)) xs = map (fun x => Cost.value (f x)) ys ->
+  map (fun x => Cost.value (g x)) xs = map (fun x => Cost.value (g x)) ys.
+Proof.
+  intros Hcoarse; revert ys; induction xs as [|x rest IH]; intros [|y tail] Heq;
+    cbn [map] in *; try discriminate; [reflexivity|].
+  injection Heq as Hhead Htail; f_equal; [now apply Hcoarse|now apply IH].
+Qed.
+
+(** Template signature equality is preserved when operand classes are coarsened. *)
+Theorem instantiate_monotone {V} (f g : V -> Cost.t positive) a b :
+  (forall x y, Cost.value (f x) = Cost.value (f y) -> Cost.value (g x) = Cost.value (g y)) ->
+  Cost.value (instantiate_c f a) = Cost.value (instantiate_c f b) ->
+  Cost.value (instantiate_c g a) = Cost.value (instantiate_c g b).
+Proof.
+  intros Hcoarse; rewrite !instantiate_equation.
+  destruct a as [op xs|block xs|value], b as [other ys|other ys|other];
+    try discriminate; intro Heq; injection Heq as Hcode Hargs || injection Heq as Hcode;
+    subst other; try reflexivity.
+  - f_equal; eapply map_classes_refine; eassumption.
+  - f_equal; eapply map_classes_refine; eassumption.
+Qed.
+
+(** Complete cached-template signatures are monotone under arbitrary operand-class coarsening. *)
+Theorem signature_monotone {N E V K G} (np : problem N E V K G) forms f g x y :
+  (forall a b, Cost.value (f a) = Cost.value (f b) -> Cost.value (g a) = Cost.value (g b)) ->
+  signature np forms f x = signature np forms f y ->
+  signature np forms g x = signature np forms g y.
+Proof.
+  intros Hcoarse; rewrite !signature_lookup.
+  apply instantiate_monotone; exact Hcoarse.
+Qed.
+
+(** Pointwise equal class callbacks give pointwise equal complete signatures. *)
+Theorem signature_ext {N E V K G} (np : problem N E V K G) forms f g x :
+  (forall a, Cost.value (f a) = Cost.value (g a)) ->
+  signature np forms f x = signature np forms g x.
+Proof.
+  intro Hsame; rewrite !signature_lookup.
+  destruct (Map.get (Ssa.val_enc (ssa np)) x forms) as [t|]; [destruct t|];
+    rewrite !instantiate_equation; try reflexivity; f_equal; apply map_ext; exact Hsame.
+Qed.
+
 (** Class lookup calls the actual supplied partition's UnionFind with its own dictionary. *)
 Definition class_c {V} (EV : encoding V) (p : partition_t EV) x : Cost.t positive :=
   match p with
@@ -413,10 +471,9 @@ Section Check.
 Context {N E V K G : Type} (np : problem N E V K G).
 Let EV := Ssa.val_enc (ssa np).
 
-(** Check preparation performs each full-domain pass once before per-value comparisons. *)
-Definition prepare_check_c forms (p : partition_t EV) : Cost.t (prepared V) :=
-  let* values := domain_c EV (Ssa.values (ssa np)) p in
-  let* classes := tabulate_c EV (class_c EV p) values in
+(** One shared preparation pipeline accepts a domain and its class-query callback. *)
+Definition prepare_with_c forms values (query : V -> Cost.t positive) : Cost.t (prepared V) :=
+  let* classes := tabulate_c EV query values in
   let cls := cached_class_c EV classes in
   let* keys := tabulate_c EV (signature_c np forms cls) values in
   let key := fun x => Map.find_or_c EV (SigSingle 1%positive) x keys in
@@ -428,7 +485,39 @@ Definition prepare_check_c forms (p : partition_t EV) : Cost.t (prepared V) :=
   let* heads := Index.group_by_c positive_encoding cls values in
   Cost.ret (Prepared values classes keys signatures intern heads).
 
+Definition prepare_with forms values query := Cost.value (prepare_with_c forms values query).
+
+(** Check preparation performs each full-domain pass once before per-value comparisons. *)
+Definition prepare_check_c forms (p : partition_t EV) : Cost.t (prepared V) :=
+  let* values := domain_c EV (Ssa.values (ssa np)) p in
+  prepare_with_c forms values (class_c EV p).
+
 Definition prepare_check forms p := Cost.value (prepare_check_c forms p).
+
+(** A partition check uses the common preparation on its inventory-plus-support domain. *)
+Theorem prepare_check_with forms p :
+  prepare_check forms p =
+    prepare_with forms (domain EV (Ssa.values (ssa np)) p) (class_c EV p).
+Proof.
+  reflexivity.
+Qed.
+
+(** The shared pipeline exposes its cached passes through public container value contracts. *)
+Theorem prepare_with_equation forms values query :
+  prepare_with forms values query =
+  let classes := tabulate EV query values in
+  let cls := cached_class_c EV classes in
+  let keys := tabulate EV (signature_c np forms cls) values in
+  let key := fun x => Map.find_or_c EV (SigSingle 1%positive) x keys in
+  let intern := Intern.of_list sig_encoding (map (fun x => Cost.value (key x)) values) in
+  Prepared values classes keys
+    (tabulate EV (fun x => Cost.step ;;
+      let* sig := key x in Intern.find_c sig_encoding sig intern) values)
+    intern (Index.group_by positive_encoding (fun x => Cost.value (cls x)) values).
+Proof.
+  unfold prepare_with, prepare_with_c; autorewrite with galois_cost.
+  rewrite ?value_map_c, Index.group_by_c_value; reflexivity.
+Qed.
 
 (** Preparation exposes its cached passes through public container value contracts. *)
 Theorem prepare_check_equation forms p :
@@ -444,8 +533,8 @@ Theorem prepare_check_equation forms p :
       let* sig := key x in Intern.find_c sig_encoding sig intern) values)
     intern (Index.group_by positive_encoding (fun x => Cost.value (cls x)) values).
 Proof.
-  unfold prepare_check, prepare_check_c; autorewrite with galois_cost.
-  rewrite ?value_map_c, Index.group_by_c_value; reflexivity.
+  unfold prepare_check, prepare_check_c; rewrite Cost.value_bind.
+  apply prepare_with_equation.
 Qed.
 
 (** Cached class lookup agrees with the actual forest on the whole prepared domain. *)
@@ -458,6 +547,28 @@ Proof.
   fold (@Map.get V positive EV x
     (tabulate EV (class_c EV p) (domain EV (Ssa.values (ssa np)) p))).
   rewrite (tabulate_get EV HV) by exact Hx; reflexivity.
+Qed.
+
+(** A reached class snapshot agrees everywhere, including singleton keys outside its domain. *)
+Theorem cached_class_total (HV : encoding_laws EV) p x :
+  p <> None ->
+  cached_class EV (tabulate EV (class_c EV p) (domain EV (Ssa.values (ssa np)) p)) x =
+    class EV p x.
+Proof.
+  intro Hp.
+  destruct (in_dec (eqb_dec EV HV) x (domain EV (Ssa.values (ssa np)) p)) as [Hin|Hnot].
+  - now apply cached_class_agrees.
+  - unfold cached_class, cached_class_c; rewrite Cost.value_bind.
+    fold (@Map.get V positive EV x
+      (tabulate EV (class_c EV p) (domain EV (Ssa.values (ssa np)) p))).
+    rewrite (tabulate_absent EV HV) by exact Hnot.
+    destruct p as [u|]; [|contradiction].
+    change (encode EV x = encode EV (fst (UnionFind.find EV x (proj1_sig u)))).
+    f_equal; symmetry.
+    apply (UnionFind.keys_support EV HV (proj1_sig u) x _ (proj2_sig u)).
+    + intro Hkey; apply Hnot.
+      unfold domain, domain_c; rewrite Cost.value_bind, value_app_c; apply in_or_app; now right.
+    + exact (proj1 (UnionFind.find_equiv EV HV (proj1_sig u) x (proj2_sig u))).
 Qed.
 
 (** A successful interner lookup recovers its complete original signature key. *)
@@ -487,17 +598,47 @@ Definition check_value_c (pr : prepared V) x : Cost.t bool :=
     end
   end.
 
+(** A prepared checker compares cached IDs without rebuilding syntax or classes. *)
+Definition check_prepared_c (pr : prepared V) :=
+  forallb_c (fun x => Cost.step ;; check_value_c pr x) (checked_values pr).
+
+Definition check_prepared pr := Cost.value (check_prepared_c pr).
+
+(** Checking with a supplied static table retains all per-partition preparation charges. *)
+Definition check_with_c forms (p : partition_t EV) : Cost.t bool :=
+  match p with
+  | None => Cost.ret false
+  | Some _ =>
+    let* pr := prepare_check_c forms p in check_prepared_c pr
+  end.
+
 (** None is unreachable and is explicitly rejected as a numbering candidate. *)
 Definition check_c (p : partition_t EV) : Cost.t bool :=
   match p with
   | None => Cost.ret false
   | Some _ =>
-    let* forms := prepare_c np in
-    let* prepared := prepare_check_c forms p in
-    forallb_c (fun x => Cost.step ;; check_value_c prepared x) (checked_values prepared)
+    let* forms := prepare_c np in check_with_c forms p
   end.
 
 Definition check p := Cost.value (check_c p).
+
+(** A static table is prepared once by the public checker and may be reused by a producer. *)
+Theorem check_with_prepared p :
+  check p = Cost.value (check_with_c (prepare np) p).
+Proof.
+  destruct p; reflexivity.
+Qed.
+
+(** Reached checking reuses exactly the snapshot returned by common preparation. *)
+Theorem check_with_equation forms p :
+  Cost.value (check_with_c forms p) =
+  match p with
+  | None => false
+  | Some _ => check_prepared (prepare_check forms p)
+  end.
+Proof.
+  destruct p; reflexivity.
+Qed.
 
 (** Per-value comparisons have no syntax traversal and compare cached dense IDs only. *)
 Theorem check_value_equation pr x :
@@ -534,7 +675,7 @@ Theorem check_equation p :
   end.
 Proof.
   destruct p as [u|]; [|reflexivity].
-  unfold check, check_c; autorewrite with galois_cost.
+  unfold check, check_c, check_with_c, check_prepared_c; autorewrite with galois_cost.
   reflexivity.
 Qed.
 
@@ -607,6 +748,219 @@ Qed.
 Theorem check_unreached : check None = false.
 Proof.
   reflexivity.
+Qed.
+
+(** The semantic key of a prepared occurrence uses its cached operand classes. *)
+Definition prepared_key forms values query x :=
+  signature np forms (cached_class_c EV (tabulate EV query values)) x.
+
+(** Grouping reads the cached interned signature slot and never reconstructs a signature. *)
+Definition slot_c (pr : prepared V) x :=
+  Map.find_or_c EV None x (signature_table pr).
+
+Definition slot pr x := Cost.value (slot_c pr x).
+
+(** A prepared domain is precisely the supplied occurrence list. *)
+Theorem prepared_values forms values query :
+  checked_values (prepare_with forms values query) = values.
+Proof.
+  rewrite prepare_with_equation; reflexivity.
+Qed.
+
+(** Listed cached class queries agree with the supplied costed class callback. *)
+Theorem prepared_class (HV : encoding_laws EV) forms values query x :
+  In x values ->
+  cached_class EV (class_table (prepare_with forms values query)) x = Cost.value (query x).
+Proof.
+  intro Hx; rewrite prepare_with_equation; cbn [class_table].
+  unfold cached_class, cached_class_c; rewrite Cost.value_bind.
+  fold (@Map.get V positive EV x (tabulate EV query values)).
+  rewrite (tabulate_get EV HV) by exact Hx; reflexivity.
+Qed.
+
+(** Prepared interners satisfy their actual encoded-key and inverse-map invariants. *)
+Theorem prepared_intern_wf forms values query :
+  Intern.wf sig_encoding (signature_intern (prepare_with forms values query)).
+Proof.
+  rewrite prepare_with_equation; apply Intern.wf_of_list, sig_encoding_laws.
+Qed.
+
+(** Every prepared occurrence's complete signature is present in the same prepared interner. *)
+Theorem prepared_intern_member (HV : encoding_laws EV) forms values query x :
+  In x values -> exists id,
+    Intern.find sig_encoding (prepared_key forms values query x)
+      (signature_intern (prepare_with forms values query)) = Some id.
+Proof.
+  intro Hx; rewrite prepare_with_equation; cbn [signature_intern].
+  apply (proj1 (Intern.intern_list_spec sig_encoding sig_encoding_laws _ _)).
+  apply in_map_iff; exists x; split; [|exact Hx].
+  rewrite (tabulate_find_or EV HV) by exact Hx; reflexivity.
+Qed.
+
+(** A prepared slot reads the interner ID of the complete cached signature. *)
+Theorem slot_equation (HV : encoding_laws EV) forms values query x :
+  In x values ->
+  slot (prepare_with forms values query) x =
+    Intern.find sig_encoding (prepared_key forms values query x)
+      (signature_intern (prepare_with forms values query)).
+Proof.
+  intro Hx; unfold slot, slot_c.
+  change (Map.find_or EV None x (signature_table (prepare_with forms values query)) =
+    Intern.find sig_encoding (prepared_key forms values query x)
+      (signature_intern (prepare_with forms values query))).
+  rewrite Map.find_or_equation, prepare_with_equation; cbn [signature_table signature_intern].
+  rewrite (tabulate_get EV HV) by exact Hx; autorewrite with galois_cost.
+  fold (@Intern.find sig_key sig_encoding).
+  rewrite (tabulate_find_or EV HV) by exact Hx; reflexivity.
+Qed.
+
+(** The signature table contains every listed slot, rather than relying on its fallback. *)
+Theorem prepared_slot_get (HV : encoding_laws EV) forms values query x :
+  In x values ->
+  Map.get EV x (signature_table (prepare_with forms values query)) =
+    Some (slot (prepare_with forms values query) x).
+Proof.
+  intro Hx; rewrite (slot_equation HV forms values query x Hx), prepare_with_equation.
+  cbn [signature_table signature_intern].
+  rewrite (tabulate_get EV HV) by exact Hx; autorewrite with galois_cost.
+  fold (@Intern.find sig_key sig_encoding).
+  rewrite (tabulate_find_or EV HV) by exact Hx; reflexivity.
+Qed.
+
+(** Every listed slot is present and carries an actual allocated signature ID. *)
+Theorem prepared_slot_present (HV : encoding_laws EV) forms values query x :
+  In x values -> exists id, slot (prepare_with forms values query) x = Some id.
+Proof.
+  intro Hx; rewrite (slot_equation HV forms values query x Hx).
+  now apply prepared_intern_member.
+Qed.
+
+(** Equality of cached slots is equivalent to equality of the complete prepared keys. *)
+Theorem slot_spec (HV : encoding_laws EV) forms values query x y :
+  In x values -> In y values ->
+  (slot (prepare_with forms values query) x = slot (prepare_with forms values query) y <->
+    prepared_key forms values query x = prepared_key forms values query y).
+Proof.
+  intros Hx Hy; rewrite !slot_equation by assumption; split.
+  - intro Heq.
+    destruct (prepared_intern_member HV forms values query x Hx) as [id Hid].
+    rewrite Hid in Heq.
+    eapply intern_same; [apply prepared_intern_wf|exact Hid|symmetry; exact Heq].
+  - intros ->; reflexivity.
+Qed.
+
+(** Each supplied occurrence has a listed anchor with the same cached class code. *)
+Theorem prepared_anchor (HV : encoding_laws EV) forms values query x :
+  In x values ->
+  let pr := prepare_with forms values query in
+  exists anchor rest,
+    Index.find positive_encoding (cached_class EV (class_table pr) x) (anchors pr) =
+      anchor :: rest /\
+    In anchor values /\
+    cached_class EV (class_table pr) anchor = cached_class EV (class_table pr) x.
+Proof.
+  intro Hx; rewrite prepare_with_equation; cbn [anchors class_table].
+  rewrite Index.find_group_by.
+  set (cls := cached_class EV (tabulate EV query values)).
+  change (exists anchor rest,
+    filter (fun y => eqb positive_encoding (cls y) (cls x)) values = anchor :: rest /\
+    In anchor values /\ cls anchor = cls x).
+  assert (Hin : In x (filter (fun y => eqb positive_encoding (cls y) (cls x)) values)).
+  { apply filter_In; split; [exact Hx|apply eqb_refl]. }
+  destruct (filter (fun y => eqb positive_encoding (cls y) (cls x)) values)
+    as [|anchor rest] eqn:Hbucket; [contradiction|].
+  exists anchor, rest; split; [reflexivity|].
+  assert (Hhead : In anchor (filter
+    (fun y => eqb positive_encoding (cls y) (cls x)) values)).
+  { rewrite Hbucket; now left. }
+  apply filter_In in Hhead as [Ha Hsame]; split; [exact Ha|].
+  apply (eqb_true_iff positive_encoding positive_encoding_laws); exact Hsame.
+Qed.
+
+(** The prepared checker decides complete-key constancy on each cached class. *)
+Theorem check_prepared_spec (HV : encoding_laws EV) forms values query :
+  check_prepared (prepare_with forms values query) = true <->
+  forall x y, In x values -> In y values ->
+    Cost.value (query x) = Cost.value (query y) ->
+    prepared_key forms values query x = prepared_key forms values query y.
+Proof.
+  set (pr := prepare_with forms values query).
+  unfold check_prepared, check_prepared_c; rewrite value_forallb_c.
+  change (forallb (fun x => Cost.value (check_value_c pr x)) (checked_values pr) = true <->
+    forall x y, In x values -> In y values -> Cost.value (query x) = Cost.value (query y) ->
+    prepared_key forms values query x = prepared_key forms values query y).
+  split.
+  - intros Hall x y Hx Hy Hsame.
+    assert (Hclass : cached_class EV (class_table pr) x =
+      cached_class EV (class_table pr) y).
+    { unfold pr; rewrite !prepared_class by assumption; exact Hsame. }
+    destruct (check_ids_equal pr x y Hall
+      ltac:(unfold pr; rewrite prepared_values; exact Hx)
+      ltac:(unfold pr; rewrite prepared_values; exact Hy) Hclass) as [id [Hix Hiy]].
+    apply (proj1 (slot_spec HV forms values query x y Hx Hy)).
+    unfold slot, slot_c; change (Map.find_or EV None x (signature_table pr) =
+      Map.find_or EV None y (signature_table pr)).
+    rewrite !Map.find_or_equation, Hix, Hiy; reflexivity.
+  - intro Hkeys; apply forallb_forall; intros x Hx.
+    unfold pr in Hx; rewrite prepared_values in Hx.
+    destruct (prepared_anchor HV forms values query x Hx)
+      as [anchor [rest [Hbucket [Ha Hclass]]]].
+    fold pr in Hbucket, Hclass.
+    change (Cost.value (check_value_c pr x) = true).
+    rewrite check_value_equation, Hbucket.
+    assert (Hsame : slot pr x = slot pr anchor).
+    { apply (proj2 (slot_spec HV forms values query x anchor Hx Ha)).
+      apply Hkeys; [exact Hx|exact Ha|].
+      pose proof (prepared_class HV forms values query x Hx) as Hcx.
+      pose proof (prepared_class HV forms values query anchor Ha) as Hca.
+      fold pr in Hcx, Hca; congruence. }
+    pose proof (prepared_slot_get HV forms values query x Hx) as Hgetx.
+    pose proof (prepared_slot_get HV forms values query anchor Ha) as Hgeta.
+    fold pr in Hgetx, Hgeta; rewrite Hgetx, Hgeta.
+    destruct (prepared_slot_present HV forms values query x Hx) as [id Hid].
+    change (slot pr x = Some id) in Hid.
+    rewrite <- Hsame, Hid; apply Pos.eqb_refl.
+Qed.
+
+Local Lemma forallb_bad {A} (f : A -> bool) xs :
+  forallb f xs = false -> exists x, In x xs /\ f x = false.
+Proof.
+  induction xs as [|x rest IH]; [discriminate|].
+  cbn [forallb]; destruct (f x) eqn:Hx.
+  - intro Hrest; destruct (IH Hrest) as [y [Hy Hbad]]; exists y; split; [now right|exact Hbad].
+  - intros _; exists x; split; [now left|exact Hx].
+Qed.
+
+(** Rejection exposes an actual same-class pair whose complete signatures differ. *)
+Theorem check_prepared_bad (HV : encoding_laws EV) forms values query :
+  check_prepared (prepare_with forms values query) = false ->
+  exists x y, In x values /\ In y values /\
+    Cost.value (query x) = Cost.value (query y) /\
+    prepared_key forms values query x <> prepared_key forms values query y.
+Proof.
+  set (pr := prepare_with forms values query).
+  unfold check_prepared, check_prepared_c; rewrite value_forallb_c.
+  intro Hbad.
+  change (forallb (fun x => Cost.value (check_value_c pr x)) (checked_values pr) = false) in Hbad.
+  apply forallb_bad in Hbad as [x [Hx Hbad]].
+  unfold pr in Hx; rewrite prepared_values in Hx.
+  destruct (prepared_anchor HV forms values query x Hx)
+    as [anchor [rest [Hbucket [Ha Hclass]]]].
+  fold pr in Hbucket, Hclass.
+  exists x, anchor; split; [exact Hx|split; [exact Ha|split]].
+  - pose proof (prepared_class HV forms values query x Hx) as Hcx.
+    pose proof (prepared_class HV forms values query anchor Ha) as Hca.
+    fold pr in Hcx, Hca; congruence.
+  - intro Hkey.
+    pose proof (proj2 (slot_spec HV forms values query x anchor Hx Ha) Hkey) as Hsame.
+    fold pr in Hsame.
+    change (Cost.value (check_value_c pr x) = false) in Hbad.
+    rewrite check_value_equation, Hbucket in Hbad.
+    pose proof (prepared_slot_get HV forms values query x Hx) as Hgetx.
+    pose proof (prepared_slot_get HV forms values query anchor Ha) as Hgeta.
+    fold pr in Hgetx, Hgeta; rewrite Hgetx, Hgeta in Hbad.
+    destruct (prepared_slot_present HV forms values query x Hx) as [id Hid].
+    fold pr in Hid; rewrite <- Hsame, Hid, Pos.eqb_refl in Hbad; discriminate.
 Qed.
 
 End Check.
