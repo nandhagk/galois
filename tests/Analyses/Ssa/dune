@@ -1,0 +1,15 @@
+(rocq.theory
+ (name Galois.Tests.Analyses.Ssa)
+ (flags :standard -w +default)
+ (theories
+  Stdlib
+  Galois.Cost
+  Galois.Base
+  Galois.Lattice
+  Galois.Bits
+  Galois.Graph
+  Galois.Fixpoint
+  Galois.Domains
+  Galois.Program
+  Galois.Framework
+  Galois.Analyses.Ssa))
