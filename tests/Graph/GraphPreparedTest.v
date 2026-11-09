@@ -217,3 +217,49 @@ Proof.
   vm_compute. intro Hnodup. inversion Hnodup as [|x rest Hfresh Htail]; subst.
   apply Hfresh. now left.
 Qed.
+
+(** Public flattening membership requires no well-formedness or source-consistency premise. *)
+Example all_edges_membership_client {V E} (g : Graph.t V E) e :
+  In e (Prepared.all_edges g) <->
+    exists v, In v (Graph.nodes g) /\ In e (Graph.out g v).
+Proof.
+  apply Prepared.all_edges_spec.
+Qed.
+
+(** Public edge counting includes all source and edge occurrences on arbitrary graphs. *)
+Example edge_count_client {V E} (g : Graph.t V E) :
+  edge_count g = length (Prepared.all_edges g).
+Proof.
+  apply Prepared.count_edges.
+Qed.
+
+Definition duplicate_inventory : Graph.t positive (positive * positive) :=
+  Graph.of_pure [] [1; 1] (fun _ => [(1, 2); (1, 2)]) fst snd.
+
+Example repeated_nodes_and_edges_are_counted :
+  Prepared.all_edges duplicate_inventory = [(1, 2); (1, 2); (1, 2); (1, 2)] /\
+    edge_count duplicate_inventory = 4%nat.
+Proof.
+  vm_compute. split; reflexivity.
+Qed.
+
+(** Reversal's count observation retains its readiness domain and imposes no exit-validity duty. *)
+Example reverse_edge_count_client {V E} (p : Prepared.t V E) exits :
+  Prepared.ready p ->
+  edge_count (Prepared.reverse_graph p exits) = edge_count (Prepared.graph p).
+Proof.
+  apply Prepared.reverse_edge_count.
+Qed.
+
+Example reverse_unknown_and_empty_exit_counts :
+  edge_count (Prepared.reverse_graph prepared_diamond [99; 99]) = 4%nat /\
+    edge_count (Prepared.reverse_graph prepared_diamond []) = 4%nat.
+Proof.
+  split; rewrite Prepared.reverse_edge_count by exact diamond_ready; vm_compute; reflexivity.
+Qed.
+
+Example reverse_empty_graph_count :
+  edge_count (Prepared.reverse_graph prepared_empty [99; 99]) = 0%nat.
+Proof.
+  vm_compute. reflexivity.
+Qed.
