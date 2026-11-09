@@ -92,17 +92,17 @@ Proof.
 Qed.
 
 Example map_combine_shared_callback :
-  (19 <= Cost.ticks (Map.combine_c combine_nonunit
+  Cost.ticks (Map.combine_c combine_nonunit
     (Map.set positive_encoding 2%positive 5%nat Map.empty)
-    (Map.set positive_encoding 2%positive 7%nat Map.empty)))%N.
+    (Map.set positive_encoding 2%positive 7%nat Map.empty)) = 23%N.
 Proof.
   vm_compute; reflexivity.
 Qed.
 
 Example map_combine_one_sided_callbacks :
-  (38 <= Cost.ticks (Map.combine_c combine_nonunit
+  Cost.ticks (Map.combine_c combine_nonunit
     (Map.set positive_encoding 2%positive 5%nat Map.empty)
-    (Map.set positive_encoding 3%positive 7%nat Map.empty)))%N.
+    (Map.set positive_encoding 3%positive 7%nat Map.empty)) = 45%N.
 Proof.
   vm_compute; reflexivity.
 Qed.
