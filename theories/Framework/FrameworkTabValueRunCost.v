@@ -176,9 +176,9 @@ Proof.
     (vertex_budget root Hr) (vertex_budget dst Hd)) as [He Hw].
   fold (TabRunCost.je e w) in He; fold (TabRunCost.jw w) in Hw.
   unfold Jump.lookup_c; rewrite !Cost.ticks_bind, Cost.ticks_step.
-  rewrite Map.find_or_cost, Map.get_cost.
-  change (1 + (Cost.ticks (encode_c (Jump.enc I) (root, dst)) +
-    (1 + 1 + key_bits (Jump.enc I) (root, dst))) <= TabRunCost.probe e w)%N.
+  rewrite Map.find_or_cost, Map.get_cost, positive_encoding_cost, positive_encoding_equation.
+  fold (encode (Jump.enc I) (root, dst)).
+  fold (key_bits (Jump.enc I) (root, dst)).
   unfold TabRunCost.probe; lia.
 Qed.
 
@@ -493,6 +493,24 @@ Qed.
 
 End Run.
 
+(** Supplied-fuel raw value families retain actual preparation, initialization and driver work. *)
+Theorem raw_bigO {X N E P D A F} (I : X -> Ide.t N E P D A F)
+    (J : X -> Map.t positive F) (start : X -> N * option D) (a0 : X -> A)
+    (fuel : X -> positive) (e w m ko ks kt kk kf kw q : X -> BinNums.N) :
+  (forall x, primitives (I x) (start x) (e x) (w x) (m x)) ->
+  (forall x, encoding_laws (IdeValue.key_enc (I x))) ->
+  (forall x, TabPrepareCost.callbacks (I x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x)) ->
+  bigO
+    (fun x => (prepare_charge (I x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x)
+      (e x) (w x) + initial_charge (I x) (e x) (w x) (m x) +
+      (step_charge (I x) (e x) (w x) (m x) + 2) * N.pos (fuel x))%N)
+    (fun x => Cost.ticks (TabValues.raw_c (I x) (J x) (start x) (a0 x) (fuel x))).
+Proof.
+  intros HP HV HC; exists 1%N; intro x.
+  pose proof (raw_cost (I x) (J x) (start x) (e x) (w x) (m x) (HP x) (HV x)
+    (a0 x) (fuel x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x) (HC x)); lia.
+Qed.
+
 (** Constructed fuel pays the separate value height and both transition endpoint inventories. *)
 Definition complete_charge {N E P D A F} (I : Ide.t N E P D A F)
     ko ks kt kk kf kw q e w m h :=
@@ -529,6 +547,24 @@ Proof.
   { apply N.mul_le_mono_l; exact Hfuel. }
   rewrite Hequation, TabCost.inventory_fuel_cost.
   unfold complete_charge; lia.
+Qed.
+
+(** Constructed raw value families retain their own height and complete primitive-derived bound. *)
+Theorem complete_raw_bigO {X N E P D A F} (I : X -> Ide.t N E P D A F)
+    (J : X -> Map.t positive F) (start : X -> N * option D) (a0 : X -> A)
+    (e w m ko ks kt kk kf kw q : X -> BinNums.N)
+    (H : forall x, height (Ide.values (I x))) :
+  (forall x, primitives (I x) (start x) (e x) (w x) (m x)) ->
+  (forall x, encoding_laws (IdeValue.key_enc (I x))) ->
+  (forall x, TabPrepareCost.callbacks (I x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x)) ->
+  bigO
+    (fun x => complete_charge (I x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x)
+      (e x) (w x) (m x) (N.of_nat (bound (H x))))
+    (fun x => Cost.ticks (TabValueProgress.complete_raw_c (I x) (J x) (start x) (a0 x) (H x))).
+Proof.
+  intros HP HV HC; exists 1%N; intro x.
+  pose proof (complete_raw_cost (I x) (J x) (start x) (a0 x) (e x) (w x) (m x)
+    (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x) (H x) (HP x) (HV x) (HC x)); lia.
 Qed.
 
 End TabValueRunCost.

@@ -123,7 +123,7 @@ Qed.
 Local Lemma code_set_cost {V} code (v : V) bucket :
   Cost.ticks (Map.set_c positive_encoding code v bucket) = (2 + N.pos (Pos.size code))%N.
 Proof.
-  rewrite Map.set_cost; reflexivity.
+  rewrite Map.set_cost, positive_encoding_cost, positive_encoding_equation; reflexivity.
 Qed.
 
 (** Sum bounds use named leaf budgets before descending through the surrounding additions. *)
@@ -194,9 +194,9 @@ Theorem lookup_cost js r v :
 Proof.
   intros Hr Hv; destruct (jump_budget r v Hr Hv) as [He Hw].
   unfold Jump.lookup_c; autorewrite with galois_cost.
-  rewrite Map.find_or_cost, Map.get_cost.
-  change (1 + (Cost.ticks (encode_c (Jump.enc I) (r, v)) +
-    (1 + 1 + key_bits (Jump.enc I) (r, v))) <= probe e w)%N.
+  rewrite Map.find_or_cost, Map.get_cost, positive_encoding_cost, positive_encoding_equation.
+  fold (encode (Jump.enc I) (r, v)).
+  fold (key_bits (Jump.enc I) (r, v)).
   unfold probe; lia.
 Qed.
 
@@ -213,8 +213,8 @@ Proof.
     + exact (compare HP _ _).
     + exact (joining HP _ _).
     + exact He.
-    + intros joined js; rewrite Map.set_cost.
-      change (1 + 1 + key_bits (Jump.enc I) (r, v) <= 2 + jw w)%N; lia.
+    + intros joined js; rewrite Map.set_cost, positive_encoding_cost, positive_encoding_equation.
+      fold (key_bits (Jump.enc I) (r, v)); lia.
     + exact Hw.
   - unfold update; lia.
 Qed.
@@ -568,6 +568,32 @@ Proof.
 Qed.
 
 End Run.
+
+(** Raw families with supplied fuel retain the preparation, initialization and driver polynomial. *)
+Theorem raw_bigO {X N E P D A F} (I : X -> Ide.t N E P D A F)
+    (start : X -> N) (fuel : X -> positive)
+    (e w m ko ks kt kk kf kw q : X -> BinNums.N) :
+  (forall x, primitives (I x) (start x) (e x) (w x) (m x)) ->
+  (forall x, encoding_laws (IdeValue.key_enc (I x))) ->
+  (forall x, encoding_laws (Jump.enc (I x))) ->
+  (forall x, TabPrepareCost.callbacks (I x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x)) ->
+  (forall x edge, In edge (Cfg.edges (Icfg.cfg (Ifds.icfg (Ide.ifds (I x))))) ->
+    TabEncodingCost.bounded (Cfg.node_enc (Icfg.cfg (Ifds.icfg (Ide.ifds (I x)))))
+      (Graph.source (Cfg.graph (Icfg.cfg (Ifds.icfg (Ide.ifds (I x))))) edge) (e x) (w x)) ->
+  (forall x d, In d (Ifds.facts (Ide.ifds (I x))) ->
+    TabEncodingCost.bounded (Ifds.fact_enc (Ide.ifds (I x))) d (e x) (w x)) ->
+  bigO
+    (fun x => (TabPrepareCost.prepare_charge (I x) (ko x) (ks x) (kt x) (kk x)
+      (kf x) (kw x) (q x) (e x) (e x) (w x) (w x) +
+      initial_charge (I x) (e x) (w x) (m x) +
+      (step_charge (I x) (e x) (w x) (m x) + 2) * N.pos (fuel x))%N)
+    (fun x => Cost.ticks (Tab.raw_c (I x) (start x) (fuel x))).
+Proof.
+  intros HP HV HK HC Hnodes Hfacts; exists 1%N; intro x.
+  pose proof (raw_numeric (I x) (start x) (e x) (w x) (m x) (HP x) (HV x) (HK x)
+    (fuel x) (ko x) (ks x) (kt x) (kk x) (kf x) (kw x) (q x)
+    (HC x) (Hnodes x) (Hfacts x)); lia.
+Qed.
 
 (** Constructed-height work pays separately for the height numeral and full inventory traversal. *)
 Definition complete_charge {N E P D A F} (I : Ide.t N E P D A F)

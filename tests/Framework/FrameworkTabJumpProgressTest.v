@@ -45,11 +45,12 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-Definition completed_chain_ticks n :=
-  Cost.ticks (TabJumpProgress.complete_c (Ifds.as_ide (call_chain n)) 0 bool_height).
+Definition completed_chain_c n :=
+  TabJumpProgress.complete_c (Ifds.as_ide (call_chain n)) 0 bool_height.
 
 Example actual_constructed_call_cost_controls :
-  (0 < completed_chain_ticks 2%nat /\ completed_chain_ticks 2%nat < completed_chain_ticks 4%nat)%N.
+  (0 < Cost.ticks (completed_chain_c 2%nat) /\
+    Cost.ticks (completed_chain_c 2%nat) < Cost.ticks (completed_chain_c 4%nat))%N.
 Proof.
   vm_compute; split; reflexivity.
 Qed.

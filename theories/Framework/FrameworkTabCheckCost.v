@@ -24,7 +24,7 @@ Proof.
 Qed.
 
 (** A list budget retains both callback work and the actual number of emitted occurrences. *)
-Definition list_bound {X} (c : Cost.t (list X)) k n :=
+Definition list_bound {X} (c : Cost.t (list X)) k n : Prop :=
   (Cost.ticks c <= k)%N /\ (N.of_nat (length (Cost.value c)) <= n)%N.
 
 (** Optional callbacks are charged only on the actual supplied input list. *)

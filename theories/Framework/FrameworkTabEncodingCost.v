@@ -31,7 +31,7 @@ Proof.
   unfold FrameworkKey.pair, key_bits at 1; rewrite encoding_comap_equation.
   change (key_bits (codec_enc (pair_codec positive_codec positive_codec))
     (encode EX x, encode EY y) = pair_width (key_bits EX x) (key_bits EY y)).
-  rewrite pair_codec_bits; reflexivity.
+  rewrite pair_codec_bits, !positive_encoding_bits; reflexivity.
 Qed.
 
 (** Pair construction pays component conversion before the public binary serializer. *)
@@ -43,11 +43,8 @@ Proof.
   unfold FrameworkKey.pair; rewrite encoding_comap_cost.
   pose proof (pair_codec_cost positive_codec positive_codec (encode EX x) (encode EY y))
     as Hserialize.
-  change (Cost.ticks (encode_c (codec_enc (pair_codec positive_codec positive_codec))
-    (encode EX x, encode EY y)) <=
-    5 + encode_k * key_bits (codec_enc (pair_codec positive_codec positive_codec))
-      (encode EX x, encode EY y))%N in Hserialize.
-  rewrite pair_codec_bits in Hserialize.
+  rewrite !positive_encoding_cost, pair_codec_bits, !positive_encoding_bits in Hserialize.
+  fold (key_bits EX x) (key_bits EY y) in Hserialize.
   cbn [FrameworkKey.pair_c fst snd]; autorewrite with galois_cost.
   unfold pair_charge, pair_width; change
     (2 + (1 + (Cost.ticks (encode_c EX x) + (1 + (Cost.ticks (encode_c EY y) + 0)))) +
@@ -55,9 +52,6 @@ Proof.
         (encode EX x, encode EY y)) <=
       9 + Cost.ticks (encode_c EX x) + Cost.ticks (encode_c EY y) +
         encode_k * (7 + 2 * key_bits EX x + 2 * key_bits EY y))%N.
-  change (Cost.ticks (encode_c (codec_enc (pair_codec positive_codec positive_codec))
-    (encode EX x, encode EY y)) <=
-    5 + encode_k * (7 + 2 * key_bits EX x + 2 * key_bits EY y))%N in Hserialize.
   lia.
 Qed.
 
@@ -85,10 +79,10 @@ Proof.
   destruct v as [x|y].
   - change (key_bits (codec_enc (sum_codec positive_codec positive_codec))
       (inl (encode EX x)) = (5 + 2 * key_bits EX x)%N).
-    rewrite sum_codec_bits; reflexivity.
+    rewrite sum_codec_bits, positive_encoding_bits; reflexivity.
   - change (key_bits (codec_enc (sum_codec positive_codec positive_codec))
       (inr (encode EY y)) = (8 + 2 * key_bits EY y)%N).
-    rewrite sum_codec_bits; reflexivity.
+    rewrite sum_codec_bits, positive_encoding_bits; reflexivity.
 Qed.
 
 (** Tagged sums price only their selected original component callback and emitted binary code. *)
@@ -104,13 +98,10 @@ Proof.
     cbn [FrameworkKey.sum_c]; autorewrite with galois_cost.
   - pose proof (sum_codec_cost positive_codec positive_codec (inl (encode EX x)))
       as Hserialize.
-    change (Cost.ticks (encode_c (codec_enc (sum_codec positive_codec positive_codec))
-      (inl (encode EX x))) <=
-      3 + encode_k * key_bits (codec_enc (sum_codec positive_codec positive_codec))
-        (inl (encode EX x)))%N in Hserialize.
-    rewrite sum_codec_bits in Hserialize.
-    change (Cost.ticks (encode_c (codec_enc (sum_codec positive_codec positive_codec))
-      (inl (encode EX x))) <= 3 + encode_k * (5 + 2 * key_bits EX x))%N in Hserialize.
+    cbn beta iota zeta in Hserialize.
+    rewrite positive_encoding_cost, sum_codec_bits in Hserialize.
+    cbn beta iota zeta in Hserialize; rewrite positive_encoding_bits in Hserialize.
+    fold (key_bits EX x) in Hserialize.
     change (2 + (1 + Cost.ticks (encode_c EX x)) +
       Cost.ticks (encode_c (codec_enc (sum_codec positive_codec positive_codec))
         (inl (encode EX x))) <=
@@ -118,13 +109,10 @@ Proof.
     lia.
   - pose proof (sum_codec_cost positive_codec positive_codec (inr (encode EY y)))
       as Hserialize.
-    change (Cost.ticks (encode_c (codec_enc (sum_codec positive_codec positive_codec))
-      (inr (encode EY y))) <=
-      3 + encode_k * key_bits (codec_enc (sum_codec positive_codec positive_codec))
-        (inr (encode EY y)))%N in Hserialize.
-    rewrite sum_codec_bits in Hserialize.
-    change (Cost.ticks (encode_c (codec_enc (sum_codec positive_codec positive_codec))
-      (inr (encode EY y))) <= 3 + encode_k * (8 + 2 * key_bits EY y))%N in Hserialize.
+    cbn beta iota zeta in Hserialize.
+    rewrite positive_encoding_cost, sum_codec_bits in Hserialize.
+    cbn beta iota zeta in Hserialize; rewrite positive_encoding_bits in Hserialize.
+    fold (key_bits EY y) in Hserialize.
     change (2 + (1 + Cost.ticks (encode_c EY y)) +
       Cost.ticks (encode_c (codec_enc (sum_codec positive_codec positive_codec))
         (inr (encode EY y))) <=
@@ -135,7 +123,7 @@ Qed.
 Definition sum_width w := (8 + 2 * w)%N.
 Definition sum_charge e w := (6 + e + encode_k * sum_width w)%N.
 
-(** A selected tagged alternative satisfies a uniform budget from that component's primitive bound. *)
+(** A selected alternative satisfies a uniform budget from that component's primitive bound. *)
 Theorem sum_bounded {X Y} (EX : encoding X) (EY : encoding Y) v e w :
   (match v with
    | inl x => bounded EX x e w
@@ -165,7 +153,7 @@ Proof.
       option_width (key_bits ED x)).
     rewrite sum_bits; reflexivity.
   - change (key_bits (FrameworkKey.sum unit_encoding ED) (inl tt) = 7%N).
-    rewrite sum_bits; reflexivity.
+    rewrite sum_bits, unit_encoding_bits; reflexivity.
 Qed.
 
 (** Optional encoding budgets concern the selected fact alone, including the zero boundary. *)
@@ -177,14 +165,13 @@ Proof.
   - unfold FrameworkKey.option; rewrite encoding_comap_cost, Cost.ticks_ret.
     pose proof (sum_cost unit_encoding ED
       (match d with None => inl tt | Some x => inr x end)) as Hcost.
-    destruct d as [x|]; cbn [Cost.value] in *; rewrite sum_bits in Hcost.
+    destruct d as [x|]; rewrite sum_bits in Hcost.
     + change (2 + 0 + Cost.ticks (encode_c (FrameworkKey.sum unit_encoding ED) (inr x)) <=
         option_charge e w)%N.
       change (Cost.ticks (encode_c (FrameworkKey.sum unit_encoding ED) (inr x)) <=
         6 + Cost.ticks (encode_c ED x) + encode_k * (8 + 2 * key_bits ED x))%N in Hcost.
       destruct Hd as [He Hw]; unfold option_charge, option_width in *; nia.
-    + change (Cost.ticks (encode_c (FrameworkKey.sum unit_encoding ED) (inl tt)) <=
-        7 + encode_k * 7)%N in Hcost.
+    + rewrite unit_encoding_cost, unit_encoding_bits in Hcost.
       change (2 + 0 + Cost.ticks (encode_c (FrameworkKey.sum unit_encoding ED) (inl tt)) <=
         option_charge e w)%N.
       unfold option_charge, option_width; nia.

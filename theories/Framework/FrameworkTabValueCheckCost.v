@@ -80,8 +80,8 @@ Proof.
     assert (Hunit : TabEncodingCost.bounded unit_encoding tt
       (1 + inner_charge e w)%N (1 + inner_width w)%N).
     { split.
-      - change (1 <= 1 + inner_charge e w)%N; lia.
-      - change (1 <= 1 + inner_width w)%N; lia. }
+      - rewrite unit_encoding_cost; lia.
+      - rewrite unit_encoding_bits; lia. }
     destruct (Hsum Hunit) as [Hcost Hbits].
     change (2 + 0 + Cost.ticks (encode_c
       (FrameworkKey.sum unit_encoding (FrameworkKey.sum (Jump.enc I) (Tab.arc_enc I)))
@@ -89,8 +89,7 @@ Proof.
     eapply N.le_trans; [add_budgets|]; unfold row_charge; lia.
   - change (key_bits (FrameworkKey.sum unit_encoding
       (FrameworkKey.sum (Jump.enc I) (Tab.arc_enc I))) (inl tt) <= row_width w)%N.
-    rewrite TabEncodingCost.sum_bits.
-    change (5 + 2 * 1 <= row_width w)%N.
+    rewrite TabEncodingCost.sum_bits, unit_encoding_bits.
     unfold row_width, TabEncodingCost.sum_width; lia.
 Qed.
 

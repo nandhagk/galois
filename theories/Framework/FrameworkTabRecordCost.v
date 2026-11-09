@@ -122,7 +122,7 @@ Proof.
   { intros code [root a] Hget.
     destruct (TabRecords.caller_payload Hvalid entry code root a Hget) as
       [Hroot [Ha [Hkind [Hentry Hcode]]]].
-    subst code; exact (Hwidth root a Hroot Ha). }
+    subst code; rewrite positive_encoding_bits; exact (Hwidth root a Hroot Ha). }
   specialize (Hcost Hbits).
   pose proof (caller_size I start s entry Hvalid) as Hsize.
   apply nat_N_le in Hsize; rewrite Nat2N.inj_mul in Hsize.
@@ -146,7 +146,7 @@ Proof.
   { intros code a Hget.
     destruct (TabRecords.end_payload Hvalid entry code a Hget) as
       [Hentry [Ha [Hkind Hcode]]].
-    subst code; exact (Hwidth a Ha). }
+    subst code; rewrite positive_encoding_bits; exact (Hwidth a Ha). }
   specialize (Hcost Hbits).
   pose proof (end_size I start s entry Hvalid) as Hsize.
   apply nat_N_le in Hsize.

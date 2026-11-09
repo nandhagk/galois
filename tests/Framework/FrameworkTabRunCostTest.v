@@ -31,7 +31,7 @@ Definition problem n : Ide.t unit unit unit unit LawfulAffine.value LawfulAffine
 
 Local Lemma unit_budget x : TabEncodingCost.bounded unit_encoding x 1%N 1%N.
 Proof.
-  destruct x; split; reflexivity.
+  split; [rewrite unit_encoding_cost|rewrite unit_encoding_bits]; reflexivity.
 Qed.
 
 Local Lemma vertex_laws n : encoding_laws (IdeValue.key_enc (problem n)).
@@ -111,6 +111,23 @@ Proof.
   - exact (callback_duties n).
   - exact (source_duties n).
   - exact (fact_duties n).
+Qed.
+
+(** Raw jump families import the supplied-fuel asymptotic bound with primitive duties closed. *)
+Example raw_family_bigO (fuel : nat -> positive) :
+  bigO
+    (fun n => (TabPrepareCost.prepare_charge (problem n) 1 1 1 1 1 1 1 1 1 1 1 +
+      TabRunCost.initial_charge (problem n) 1 1 1 +
+      (TabRunCost.step_charge (problem n) 1 1 1 + 2) * N.pos (fuel n))%N)
+    (fun n => Cost.ticks (Tab.raw_c (problem n) tt (fuel n))).
+Proof.
+  apply TabRunCost.raw_bigO.
+  - exact primitive_duties.
+  - exact vertex_laws.
+  - exact jump_laws.
+  - exact callback_duties.
+  - exact source_duties.
+  - exact fact_duties.
 Qed.
 
 (** Constructed fuel retains the full occurrence inventory on the same infinite symbolic carrier. *)
@@ -205,6 +222,21 @@ Proof.
   - exact (callback_duties n).
 Qed.
 
+(** Raw value families retain arbitrary supplied fuel, jump readers and affine seeds. *)
+Example raw_value_family_bigO (J : nat -> Map.t positive LawfulAffine.function)
+    (a0 : nat -> LawfulAffine.value) (fuel : nat -> positive) :
+  bigO
+    (fun n => (TabValueRunCost.prepare_charge (problem n) 1 1 1 1 1 1 1 1 1 +
+      TabValueRunCost.initial_charge (problem n) 1 1 1 +
+      (TabValueRunCost.step_charge (problem n) 1 1 1 + 2) * N.pos (fuel n))%N)
+    (fun n => Cost.ticks (TabValues.raw_c (problem n) (J n) (tt, None) (a0 n) (fuel n))).
+Proof.
+  apply TabValueRunCost.raw_bigO.
+  - exact value_duties.
+  - exact vertex_laws.
+  - exact callback_duties.
+Qed.
+
 (** The value phase constructs and charges its own value-height fuel on the same family. *)
 Example complete_raw_value_family n J a0 :
   (Cost.ticks (TabValueProgress.complete_raw_c
@@ -216,6 +248,21 @@ Proof.
   - exact (value_duties n).
   - exact (vertex_laws n).
   - exact (callback_duties n).
+Qed.
+
+(** Constructed raw values import their own uniform height-based asymptotic bound. *)
+Example complete_raw_value_family_bigO (J : nat -> Map.t positive LawfulAffine.function)
+    (a0 : nat -> LawfulAffine.value) :
+  bigO
+    (fun n => TabValueRunCost.complete_charge (problem n) 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.value_height)))
+    (fun n => Cost.ticks (TabValueProgress.complete_raw_c
+      (problem n) (J n) (tt, None) (a0 n) LawfulAffine.value_height)).
+Proof.
+  apply TabValueRunCost.complete_raw_bigO.
+  - exact value_duties.
+  - exact vertex_laws.
+  - exact callback_duties.
 Qed.
 
 (** Value certification imports plan-table and selected-query costs for arbitrary raw jump maps. *)
@@ -347,22 +394,22 @@ Qed.
 
 End TabRunFamily.
 
-Definition chain_complete_ticks n :=
-  Cost.ticks (TabComplete.complete_c (Ifds.as_ide (call_chain n)) (0%nat, None) tt
-    bool_height unit_height).
+Definition chain_complete_c n :=
+  TabComplete.complete_c (Ifds.as_ide (call_chain n)) (0%nat, None) tt
+    bool_height unit_height.
 
 Definition chain_complete_bound n :=
   TabComplete.charge (Ifds.as_ide (call_chain n)) 1 1 1 1 1 0 1 1 8 1 1
     (N.of_nat (bound bool_height)) (N.of_nat (bound unit_height)).
 
 Example complete_short_chain_fits_derived_bound :
-  (chain_complete_ticks 2 <= chain_complete_bound 2)%N.
+  (Cost.ticks (chain_complete_c 2) <= chain_complete_bound 2)%N.
 Proof.
   vm_compute; discriminate.
 Qed.
 
 Example complete_doubled_chain_fits_derived_bound :
-  (chain_complete_ticks 4 <= chain_complete_bound 4)%N.
+  (Cost.ticks (chain_complete_c 4) <= chain_complete_bound 4)%N.
 Proof.
   vm_compute; discriminate.
 Qed.
