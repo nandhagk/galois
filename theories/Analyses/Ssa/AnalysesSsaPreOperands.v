@@ -13,7 +13,7 @@ From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFami
   AnalysesSsaPreFrg AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep
   AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit
   AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning AnalysesSsaPreFrameDominance AnalysesSsaPreFrameTables
-  AnalysesSsaPreFrameWalk.
+  AnalysesSsaPreFrameWalk AnalysesSsaPreFrameOccurrence.
 Import List.ListNotations Cost.Notations.
 
 Module PreOperands.
@@ -836,6 +836,224 @@ Proof.
         Hb Hin Hsource Hwf Hbefore); [rewrite Hstamp; exact Hpacket|exact Hscope].
     - exact Hfinal. }
   destruct Hhistory as [labels Hhistory]; exists data, labels; auto.
+Qed.
+
+Local Lemma build_output_equation {data} :
+  PreFrg.phi_sites c = inr data ->
+  forall e, built_stamp e = PreFrameTables.stamp c e
+    (PreFrameTables.output_of (Cost.value (iterate (PreRename.step_c c (PreRename.prepare c data))
+      (PreRename.walk_budget (PreRename.prepare c data))
+      (PreRename.initial (PreRename.prepare c data))))).
+Proof.
+  intros Houtput e; unfold built_stamp, PreFrameTables.stamp.
+  rewrite build_frg_equation, Houtput, assemble_equation, PreRename.run_equation.
+  destruct (Cost.value (iterate (PreRename.step_c c (PreRename.prepare c data))
+    (PreRename.walk_budget (PreRename.prepare c data))
+    (PreRename.initial (PreRename.prepare c data)))); reflexivity.
+Qed.
+
+Local Lemma built_block_history :
+  Pre.laws c ->
+  forall data final, PreFrameCache.placement_laws c data ->
+    (forall e, built_stamp e = PreFrameTables.stamp c e final) ->
+  forall b first frames acc, In b (Graph.nodes (Pre.bg c)) ->
+    nth_error (SsaPoints.points_in_block (Pre.points (Pre.input c)) b) 0 = Some first ->
+    PreFrameInvariant.scope_source c data frames -> PreFrameEnd.accumulator_wf c acc ->
+    PreCoverage.scope_laws c build_frg first frames ->
+    PreFrameTables.unwritten c
+      (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) acc ->
+    (forall e, In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) ->
+      PreFrameTables.stamp c e final =
+        PreFrameTables.stamp c e (snd (PreRename.block c (PreRename.prepare c data) b frames acc))) ->
+    let entered := match SsaPoints.points_in_block (Pre.points (Pre.input c)) b with
+    | [] => (frames, acc)
+    | point :: _ => PreRename.mark_exit c (PreRename.prepare c data) point (frames, acc)
+    end in
+    PreFrameStep.history (PreFrameWalk.instruction_step c data (g := build_frg) final b)
+      entered (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b)
+      (fold_left (PreRename.instruction c (PreRename.prepare c data) b
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) b))
+        (SsaPoints.instruction_edges (Pre.points (Pre.input c)) b) entered).
+Proof.
+  intros Hlaw data final Hdata Hstamp.
+  apply (PreFrameWalk.block_history c data final Hlaw Hdata).
+  intros frames acc b e Hb Hin Hsource Hwf Hbefore Hpacket Hscope.
+  apply (built_instruction_scope Hlaw data Hdata frames acc b e
+    Hb Hin Hsource Hwf Hbefore); [rewrite Hstamp; exact Hpacket|exact Hscope].
+Qed.
+
+(** Every final occurrence is selected from a full source frame in its actual instruction history. *)
+Theorem build_frg_occurrence_selection :
+  Pre.laws c ->
+  forall e u, In e (Cfg.edges (Pre.point_cfg c)) ->
+    Pre.recomputed c e = Some u -> Pre.pure c u = true ->
+    exists frame, PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) e) frame /\
+      (Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg),
+        FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg)) =
+      (Some (if PreRename.available frame
+        then PreFrg.operand_version (PreRename.selected frame) else PreFrg.Fresh e u),
+        negb (PreRename.available frame)).
+Proof.
+  intros Hlaw e u He Hcomputed Hpure.
+  destruct (build_frg_frame_history Hlaw) as [data [labels [Houtput Hhistory]]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  pose proof (build_output_equation Houtput) as Hstamp.
+  set (final := PreFrameTables.output_of (Cost.value (iterate
+    (PreRename.step_c c (PreRename.prepare c data)) (PreRename.walk_budget (PreRename.prepare c data))
+    (PreRename.initial (PreRename.prepare c data))))) in *.
+  assert (Hwritten : PreFrameTables.stamp c e final <> (None, false)).
+  { rewrite <- Hstamp; destruct (build_frg_occurrence_total Hlaw e u He Hcomputed Hpure) as [d Hget].
+    unfold built_stamp; rewrite Hget; discriminate. }
+  destruct (PreFrameOccurrence.writing_block c data Hlaw Hhistory Hwritten)
+    as [b [first [frames [acc [Hb [Hfirst [Hin [Hsource [Hwf [Hscope [Hunwritten Htable]]]]]]]]]]].
+  pose proof (built_block_history Hlaw data final Hdata Hstamp b first frames acc
+    Hb Hfirst Hsource Hwf Hscope Hunwritten Htable) as Hbody.
+  destruct (PreFrameOccurrence.instruction_input c data Hbody Hin)
+    as [input [before [Hinput [Hbefore [Hmeaning Hpacket]]]]].
+  exists (PreRename.top c input u).
+  pose proof (PreFrameOccurrence.packet_selection c Hlaw Hdata He Hcomputed Hpure
+    Hinput Hbefore Hmeaning Hpacket) as [Hframe Hselection].
+  split; [exact Hframe|]; fold (built_stamp e).
+  rewrite Hstamp; exact Hselection.
+Qed.
+
+Local Lemma built_observed_availability :
+  Pre.laws c ->
+  forall u n frame, PreFamily.in_family c u -> Pre.pure c u = true ->
+    PreCoverage.observed c n -> PreCoverage.frame_laws c build_frg u n frame ->
+    (PreRename.available frame = true <-> exists d, PreRename.reusable c build_frg u n d) /\
+    (PreRename.available frame = true ->
+      PreRename.reusable c build_frg u n (PreFrg.operand_version (PreRename.selected frame))).
+Proof.
+  intros Hlaw u n frame Hfamily Hpure Hobserved Hframe.
+  apply (PreCoverage.frame_availability c Hlaw build_frg u n frame Hfamily Hobserved).
+  - intros b Hphi; apply (proj2 (build_frg_versions_exact Hlaw (PreFrg.Phi b u))).
+    apply (proj2 (build_frg_phi_exact Hlaw b u)); auto.
+  - exact Hframe.
+Qed.
+
+Local Lemma built_occurrence_availability {e u frame} :
+  Pre.laws c -> In e (Cfg.edges (Pre.point_cfg c)) ->
+  Pre.recomputed c e = Some u -> Pre.pure c u = true ->
+  PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) e) frame ->
+    (PreRename.available frame = true <->
+      exists d, PreRename.reusable c build_frg u (Graph.source (Pre.pg c) e) d) /\
+    (PreRename.available frame = true ->
+      PreRename.reusable c build_frg u (Graph.source (Pre.pg c) e)
+        (PreFrg.operand_version (PreRename.selected frame))).
+Proof.
+  intros Hlaw He Hcomputed Hpure Hframe; apply (built_observed_availability Hlaw).
+  - apply Pre.family_seed; exact (Pre.occurrences_seeded c (Pre.shapes c Hlaw) e u Hcomputed).
+  - exact Hpure.
+  - left; exists e, u; auto.
+  - exact Hframe.
+Qed.
+
+(** Each eligible occurrence selects its own fresh definition or a reusable nearest definition. *)
+Theorem build_frg_occurrence_exact :
+  Pre.laws c ->
+  forall e u, In e (Cfg.edges (Pre.point_cfg c)) ->
+    Pre.recomputed c e = Some u -> Pre.pure c u = true ->
+    exists d, Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some d /\
+      In d (PreFrg.versions build_frg) /\ PreFrg.version_expr d = u /\
+      (d = PreFrg.Fresh e u \/
+        PreRename.reusable c build_frg u (Graph.source (Pre.pg c) e) d).
+Proof.
+  intros Hlaw e u He Hcomputed Hpure.
+  destruct (build_frg_occurrence_selection Hlaw e u He Hcomputed Hpure)
+    as [frame [Hframe Hstamp]].
+  pose proof (f_equal fst Hstamp) as Hget; cbn [fst] in Hget.
+  pose proof (built_occurrence_availability Hlaw He Hcomputed Hpure Hframe) as [Havailable Hreuse].
+  destruct (PreRename.available frame) eqn:Hflag.
+  - exists (PreFrg.operand_version (PreRename.selected frame)).
+    split; [exact Hget|]; split; [exact (build_frg_occurrence_member Hlaw _ _ Hget)|].
+    split; [exact (proj1 Hframe)|right; exact (Hreuse eq_refl)].
+  - exists (PreFrg.Fresh e u); split; [exact Hget|].
+    split; [exact (build_frg_occurrence_member Hlaw _ _ Hget)|]; split; [reflexivity|now left].
+Qed.
+
+(** Fresh flags mark precisely the eligible occurrences with no reusable incoming definition. *)
+Theorem build_frg_fresh_required :
+  Pre.laws c ->
+  forall e u, In e (Cfg.edges (Pre.point_cfg c)) ->
+    Pre.recomputed c e = Some u -> Pre.pure c u = true ->
+    (FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = true <->
+      ~ exists d, PreRename.reusable c build_frg u (Graph.source (Pre.pg c) e) d).
+Proof.
+  intros Hlaw e u He Hcomputed Hpure.
+  destruct (build_frg_occurrence_selection Hlaw e u He Hcomputed Hpure)
+    as [frame [Hframe Hstamp]].
+  pose proof (f_equal snd Hstamp) as Hflag; cbn [snd] in Hflag.
+  pose proof (proj1 (built_occurrence_availability Hlaw He Hcomputed Hpure Hframe)) as Havail.
+  rewrite Hflag; destruct (PreRename.available frame); cbn [negb] in *; split.
+  - discriminate.
+  - intro Hnone; exfalso; apply Hnone; apply Havail; reflexivity.
+  - intros _ Hexists; apply Havail in Hexists; discriminate.
+  - intros _; reflexivity.
+Qed.
+
+Local Lemma built_fresh_source {e} :
+  Pre.laws c -> FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = true ->
+    In e (Cfg.edges (Pre.point_cfg c)) /\
+      exists u, Pre.recomputed c e = Some u /\ Pre.pure c u = true.
+Proof.
+  intros Hlaw Hfresh.
+  destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  rewrite build_frg_equation, Houtput, assemble_equation in Hfresh.
+  apply (proj2 (PreFrameEnd.run_fresh_ledger c Hlaw (PreRename.prepare c data)) e) in Hfresh.
+  destruct Hfresh as [u Hcreated].
+  destruct (PreFrameInvariant.source_created c _
+    (PreFrameInvariant.run_output_source c data Hlaw Hdata) _ Hcreated)
+    as [[Hfamily [Hpure [He Hcomputed]]] Horigin].
+  split; [exact He|]; exists u; auto.
+Qed.
+
+(** Every fresh flag belongs to an original finite point-edge occurrence. *)
+Theorem build_frg_fresh_domain :
+  Pre.laws c ->
+  forall e, FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = true ->
+    In e (Cfg.edges (Pre.point_cfg c)).
+Proof.
+  intros Hlaw e Hfresh; exact (proj1 (built_fresh_source Hlaw Hfresh)).
+Qed.
+
+Local Lemma built_fresh_selection {e u} :
+  Pre.laws c -> In e (Cfg.edges (Pre.point_cfg c)) ->
+  Pre.recomputed c e = Some u -> Pre.pure c u = true ->
+    (FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = true <->
+      Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some (PreFrg.Fresh e u)).
+Proof.
+  intros Hlaw He Hcomputed Hpure.
+  destruct (build_frg_occurrence_selection Hlaw e u He Hcomputed Hpure)
+    as [frame [Hframe Hstamp]].
+  pose proof (f_equal fst Hstamp) as Hget; cbn [fst] in Hget.
+  pose proof (f_equal snd Hstamp) as Hflag; cbn [snd] in Hflag.
+  pose proof (proj2 (built_occurrence_availability Hlaw He Hcomputed Hpure Hframe)) as Hreuse.
+  rewrite Hflag, Hget; destruct (PreRename.available frame); cbn [negb]; split.
+  - discriminate.
+  - intro Heq; inversion Heq as [Hsame].
+    exfalso; apply (PreFrameOccurrence.current_not_reusable c (g := build_frg) Hlaw He Hcomputed).
+    rewrite <- Hsame; exact (Hreuse eq_refl).
+  - intros _; reflexivity.
+  - intros _; reflexivity.
+Qed.
+
+(** For every recomputation, its fresh flag agrees with selection of its own fresh version. *)
+Theorem build_frg_fresh_exact :
+  Pre.laws c ->
+  forall e u, Pre.recomputed c e = Some u ->
+    (FinSet.mem (Pre.ee (Pre.keys c)) e (PreFrg.fresh build_frg) = true <->
+      Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some (PreFrg.Fresh e u)).
+Proof.
+  intros Hlaw e u Hcomputed; split.
+  - intro Hflag; destruct (built_fresh_source Hlaw Hflag) as [He [v [Hv Hpure]]].
+    assert (Hsame : v = u) by congruence; subst v.
+    exact (proj1 (built_fresh_selection Hlaw He Hcomputed Hpure) Hflag).
+  - intro Hget.
+    destruct (build_frg_occurrence_sources Hlaw e _ Hget) as [He [v [Hv [Hpure [Hexpr Hrest]]]]].
+    cbn [PreFrg.version_expr] in Hexpr; subst v.
+    exact (proj2 (built_fresh_selection Hlaw He Hcomputed Hpure) Hget).
 Qed.
 
 (** The caller gate checks the supplied block-parent map and rejects every partial raw outcome.

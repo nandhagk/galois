@@ -10,7 +10,8 @@ From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphDomSpec GraphCheckDom.
 From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFrg
-  AnalysesSsaPreRename AnalysesSsaPreOperands AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameStep
+  AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreOperands
+  AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameStep
   AnalysesSsaPreFrameWalk AnalysesSsaPreFrameEdges.
 From Galois.Tests.Analyses.Ssa Require Import AnalysesSsaPreContextTest AnalysesSsaPreFrgTest.
 Import List.ListNotations.
@@ -348,4 +349,30 @@ Example diamond_point_edge_index_client :
     SsaPoints.block_edge_of Diamond.points e = Some be.
 Proof.
   exact (PreFrameEdges.point_edge_index_exact Diamond.ctx Diamond.laws).
+Qed.
+
+(** The lawful diamond's full-history occurrence contract requires no semantic-result premise. *)
+Example diamond_occurrence_exact_client :
+  forall e u, In e (Cfg.edges (Pre.point_cfg Diamond.ctx)) ->
+    Pre.recomputed Diamond.ctx e = Some u -> Pre.pure Diamond.ctx u = true ->
+    exists d, Map.get (Pre.ee (Pre.keys Diamond.ctx)) e
+      (PreFrg.occurrences (PreOperands.build_frg Diamond.ctx)) = Some d /\
+      In d (PreFrg.versions (PreOperands.build_frg Diamond.ctx)) /\
+      PreFrg.version_expr d = u /\
+      (d = PreFrg.Fresh e u \/ PreRename.reusable Diamond.ctx
+        (PreOperands.build_frg Diamond.ctx) u (Graph.source (Pre.pg Diamond.ctx) e) d).
+Proof.
+  exact (PreOperands.build_frg_occurrence_exact Diamond.ctx Diamond.laws).
+Qed.
+
+(** The lawful diamond's fresh flags decide the absence of every reusable source definition. *)
+Example diamond_fresh_required_client :
+  forall e u, In e (Cfg.edges (Pre.point_cfg Diamond.ctx)) ->
+    Pre.recomputed Diamond.ctx e = Some u -> Pre.pure Diamond.ctx u = true ->
+    (FinSet.mem (Pre.ee (Pre.keys Diamond.ctx)) e
+      (PreFrg.fresh (PreOperands.build_frg Diamond.ctx)) = true <->
+      ~ exists d, PreRename.reusable Diamond.ctx (PreOperands.build_frg Diamond.ctx)
+        u (Graph.source (Pre.pg Diamond.ctx) e) d).
+Proof.
+  exact (PreOperands.build_frg_fresh_required Diamond.ctx Diamond.laws).
 Qed.
