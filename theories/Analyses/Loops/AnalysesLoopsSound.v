@@ -551,8 +551,10 @@ Record execution (V : Type) := Execution {
   prepared_nodes : list V;
   checker_bindings : check_binding_memo V;
   checker_expressions : check_memo V;
+  checker_events : trace;
   compiler_bindings : binding_memo V;
-  compiler_expressions : compile_memo V
+  compiler_expressions : compile_memo V;
+  compiler_events : trace
 }.
 Arguments Execution {V}.
 Arguments recurrence {V}.
@@ -561,8 +563,10 @@ Arguments preparation_reuses {V}.
 Arguments prepared_nodes {V}.
 Arguments checker_bindings {V}.
 Arguments checker_expressions {V}.
+Arguments checker_events {V}.
 Arguments compiler_bindings {V}.
 Arguments compiler_expressions {V}.
+Arguments compiler_events {V}.
 
 (** Checked recognition prepares source metadata once and retains the actual checker/compiler tables. *)
 Definition run_execution_c {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
@@ -584,7 +588,9 @@ Definition run_execution_c {N E V K G C} (lv : loop_view N E V K G) (so : scev_o
       match found with
       | None => Cost.ret None
       | Some c => Cost.ret (Some (Execution c p (preparation_hits state) (preparation_nodes state)
-          check_bindings check_expressions compile_bindings compile_expressions))
+          check_bindings (fst check_expressions) (snd check_expressions)
+          compile_bindings (fst compile_expressions)
+          (snd compile_expressions)))
       end
     else Cost.ret None
   end.

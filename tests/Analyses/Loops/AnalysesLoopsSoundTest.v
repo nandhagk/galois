@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool Arith ZArith NArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding.
+From Galois.Base Require Import BaseEncoding BaseMemo.
 From Galois.Bits Require Import BitsWord.
 From Galois.Graph Require Import GraphModel GraphDomSpec.
 From Galois.Program Require Import ProgramSemantics ProgramSteps ProgramCfg ProgramLink ProgramRuns
@@ -210,6 +210,86 @@ Example scev_integrated_shared_plan_checked :
   scev_plan_check scev_shared_loop scev_shape_ops scev_shared_inventory scev_shared_plan = true.
 Proof.
   vm_compute; reflexivity.
+Qed.
+
+Example scev_integrated_dag_checker_and_compiler_reuse :
+  match Cost.value (run_execution_c scev_shared_loop scev_shape_ops scev_shared_inventory 13) with
+  | Some out =>
+    length (trace_hits (checker_events out)) = 5 /\
+    length (trace_misses (checker_events out)) = 8 /\
+    length (trace_hits (compiler_events out)) = 5 /\
+    length (trace_misses (compiler_events out)) = 8 /\
+    hd 1%positive (trace_hits (checker_events out)) =
+      scev_expr_code nat_encoding scev_shared_e11 /\
+    hd 1%positive (trace_hits (compiler_events out)) =
+      scev_expr_code nat_encoding scev_shared_e11
+  | None => False
+  end.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Definition scev_shared_index :=
+  prepare_index scev_shared_loop scev_shared_inventory scev_shared_plan.
+
+Example scev_checker_rank_change_invalidates_then_reuses :
+  let e := SPhi 3 in
+  let '((r0, m0), t0) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
+    (indexed_values scev_shared_index) scev_shape_ops
+    (phi_before_c nat_encoding scev_shared_index 0) e Memo.empty trace_empty) in
+  let '((r1, m1), t1) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
+    (indexed_values scev_shared_index) scev_shape_ops
+    (phi_before_c nat_encoding scev_shared_index 1) e m0 t0) in
+  let '((r2, _), t2) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
+    (indexed_values scev_shared_index) scev_shape_ops
+    (phi_before_c nat_encoding scev_shared_index 2) e m1 t1) in
+  fst r0 = false /\ fst r1 = true /\ fst r2 = true /\
+    length (trace_misses t2) = 2 /\ length (trace_hits t2) = 1.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Definition scev_shared_lookup (z : Z) (extra : bool) (x : nat) : option (Chrec.t nat) :=
+  if Nat.eqb x 3 then Some (CInv (IConst z)) else
+    if extra && Nat.eqb x 6 then Some (CInv (IConst 9)) else None.
+
+Example scev_compiler_environment_change_invalidates_then_reuses :
+  let lookup z extra := Cost.lift (fun _ => 1%N) (scev_shared_lookup z extra) in
+  let e := SPhi 3 in
+  let '((r0, m0), t0) := Cost.value (scev_compile_expr_trace_c nat_encoding (lookup 0%Z false)
+    e Memo.empty trace_empty) in
+  let '((r1, m1), t1) := Cost.value (scev_compile_expr_trace_c nat_encoding (lookup 1%Z false)
+    e m0 t0) in
+  let '((r2, _), t2) := Cost.value (scev_compile_expr_trace_c nat_encoding (lookup 1%Z true)
+    e m1 t1) in
+  r0 = Some (CInv (IConst 0)) /\ r1 = Some (CInv (IConst 1)) /\
+    r2 = Some (CInv (IConst 1)) /\ length (trace_misses t2) = 2 /\ length (trace_hits t2) = 1.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Example scev_checker_same_root_malformed_tree_is_distinct :
+  let before := phi_before_c nat_encoding scev_shared_index 1 in
+  let '((r0, m0), t0) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
+    (indexed_values scev_shared_index) scev_shape_ops before scev_shared_e8 Memo.empty trace_empty) in
+  let '((r1, _), t1) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
+    (indexed_values scev_shared_index) scev_shape_ops before
+    (SAdd 8 (SOutside 2) (SOutside 2)) m0 t0) in
+  fst r0 = true /\ fst r1 = false /\ length (trace_misses t1) = 4 /\ length (trace_hits t1) = 0.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Example scev_compiler_same_root_different_tree_is_distinct :
+  let lookup := Cost.lift (fun _ => 1%N) (fun _ : nat => @None (Chrec.t nat)) in
+  let '((_, m0), t0) := Cost.value (scev_compile_expr_trace_c nat_encoding lookup
+    (SAdd 8 (SOutside 2) (SOutside 2)) Memo.empty trace_empty) in
+  let '((c, _), t1) := Cost.value (scev_compile_expr_trace_c nat_encoding lookup
+    (SAdd 8 (SOutside 2) (SConst 9 7)) m0 t0) in
+  c = Some (CInv (IAdd (IVar 2) (IWordConst 7))) /\
+    length (trace_misses t1) = 4 /\ length (trace_hits t1) = 2.
+Proof.
+  vm_compute; repeat split; reflexivity.
 Qed.
 
 (** * A nonempty semantic client *)

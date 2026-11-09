@@ -280,7 +280,7 @@ Definition check_valid {N V K C} EV body_c values (so : scev_ops K C) (m : check
   Map.wf (check_encoding EV) m /\
     Memo.valid (check_encoding EV) (@check_reference N V K C EV body_c values so) m.
 
-Definition check_run_result V := memo_result (context_key V bool) (check_result V) unit.
+Definition check_run_result V := memo_result (context_key V bool) (check_result V) trace.
 
 (** A result couples the complete tree-reference observation to validity of its returned table. *)
 Definition expression_result_valid {N V K C} EV body_c values (so : scev_ops K C)
@@ -290,28 +290,30 @@ Definition expression_result_valid {N V K C} EV body_c values (so : scev_ops K C
     check_valid EV body_c values so table.
 
 Definition check_binary_c {V} (EV : encoding V) (local_c : Cost.t bool)
-    (ra_c rb_c : check_memo V -> Cost.t (check_run_result V)) (m : check_memo V) :=
+    (ra_c rb_c : check_memo V -> trace -> Cost.t (check_run_result V)) (m : check_memo V)
+    (events : trace) :=
   let* accepted := local_c in
   if accepted then
     Cost.step ;;
-    let* first := ra_c m in
-    let '((ra, ma), _) := first in
+    let* first := ra_c m events in
+    let '((ra, ma), events_a) := first in
     if fst ra then
       Cost.step ;;
-      let* second := rb_c ma in
-      let '((rb, mb), _) := second in
+      let* second := rb_c ma events_a in
+      let '((rb, mb), events_b) := second in
       let* deps := FinSet.union_c (snd ra) (snd rb) in
-      Cost.ret (((fst rb, deps), mb), tt)
-    else Cost.ret ((failed, ma), tt)
-  else Cost.ret ((failed, m), tt).
+      Cost.ret (((fst rb, deps), mb), events_b)
+    else Cost.ret ((failed, ma), events_a)
+  else Cost.ret ((failed, m), events).
 
 (** Every checker miss threads the actual child-returned table through the next child. *)
-Fixpoint scev_check_expr_c {N V K C} (EV : encoding V) body_c
+Fixpoint scev_check_expr_trace_c {N V K C} (EV : encoding V) body_c
     (values : Map.t V (N * definition N V K)) (so : scev_ops K C)
-    (before_c : V -> Cost.t bool) (e : scev_expr V) (m : check_memo V)
+    (before_c : V -> Cost.t bool) (e : scev_expr V) (m : check_memo V) (events : trace)
     : Cost.t (check_run_result V) :=
   Cost.step ;;
   let* key := context_prepare_c EV bool_encoding before_c e in
+  let* code := scev_expr_code_c EV e in
   let* out := memo_run_c key (fun table side =>
     match e with
     | SOutside x =>
@@ -336,19 +338,22 @@ Fixpoint scev_check_expr_c {N V K C} (EV : encoding V) body_c
     | SAdd x a b | SMul x a b =>
       let flag_c := match e with SAdd _ _ _ => add_op_c so | _ => mul_op_c so end in
       check_binary_c EV (binary_c EV body_c values flag_c x (scev_expr_root a) (scev_expr_root b))
-        (scev_check_expr_c EV body_c values so before_c a)
-        (scev_check_expr_c EV body_c values so before_c b) table
-    end) m tt in
-  Cost.ret (fst out).
+        (scev_check_expr_trace_c EV body_c values so before_c a)
+        (scev_check_expr_trace_c EV body_c values so before_c b) table side
+    end) m events in
+  Cost.ret (memo_note code out).
+
+Definition scev_check_expr_c {N V K C} EV body_c values so before_c e m :=
+  @scev_check_expr_trace_c N V K C EV body_c values so before_c e m trace_empty.
 
 Local Lemma check_binary_correct {N V K C} (EV : encoding V) body_c values
-    (so : scev_ops K C) before local_c ra_c rb_c a b m :
-  (forall table, check_valid EV body_c values so table ->
-    expression_result_valid EV body_c values so before a (Cost.value (ra_c table))) ->
-  (forall table, check_valid EV body_c values so table ->
-    expression_result_valid EV body_c values so before b (Cost.value (rb_c table))) ->
+    (so : scev_ops K C) before local_c ra_c rb_c a b m events :
+  (forall table events, check_valid EV body_c values so table ->
+    expression_result_valid EV body_c values so before a (Cost.value (ra_c table events))) ->
+  (forall table events, check_valid EV body_c values so table ->
+    expression_result_valid EV body_c values so before b (Cost.value (rb_c table events))) ->
   @check_valid N V K C EV body_c values so m ->
-  let '((result, table), _) := Cost.value (check_binary_c EV local_c ra_c rb_c m) in
+  let '((result, table), _) := Cost.value (check_binary_c EV local_c ra_c rb_c m events) in
   result = (if Cost.value local_c then
     let ra := expression_reference EV body_c values so before a in
     if fst ra then
@@ -359,26 +364,26 @@ Proof.
   intros Ha Hb Hm; unfold check_binary_c; autorewrite with galois_cost.
   destruct (Cost.value local_c); [|split; [reflexivity|exact Hm]].
   autorewrite with galois_cost.
-  specialize (Ha m Hm).
-  destruct (Cost.value (ra_c m)) as [[[va da] ma] []].
+  specialize (Ha m events Hm).
+  destruct (Cost.value (ra_c m events)) as [[[va da] ma] events_a].
   destruct Ha as [Ha Hma]; cbn [fst].
   rewrite <- Ha; cbn [fst snd]; destruct va.
-  - autorewrite with galois_cost; specialize (Hb ma Hma).
-    destruct (Cost.value (rb_c ma)) as [[[vb db] mb] []].
+  - autorewrite with galois_cost; specialize (Hb ma events_a Hma).
+    destruct (Cost.value (rb_c ma events_a)) as [[[vb db] mb] events_b].
     destruct Hb as [Hb Hmb]; autorewrite with galois_cost.
     rewrite <- Hb; split; [reflexivity|exact Hmb].
   - autorewrite with galois_cost; split; [reflexivity|exact Hma].
 Qed.
 
-(** Expression checking equals the full independent reference and maintains the shared Memo. *)
-Theorem scev_check_expr_correct {N V K C} (EV : encoding V) (HE : encoding_laws EV)
-    body_c values (so : scev_ops K C) before_c e m :
+(** Traced expression checking equals the full independent reference and maintains its shared Memo. *)
+Theorem scev_check_expr_trace_correct {N V K C} (EV : encoding V) (HE : encoding_laws EV)
+    body_c values (so : scev_ops K C) before_c e m events :
   check_valid EV body_c values so m ->
   expression_result_valid EV body_c values so (fun x => Cost.value (before_c x)) e
-    (Cost.value (@scev_check_expr_c N V K C EV body_c values so before_c e m)).
+    (Cost.value (@scev_check_expr_trace_c N V K C EV body_c values so before_c e m events)).
 Proof.
-  revert m; induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z];
-    intros m [Hwf Hvalid]; cbn [scev_check_expr_c]; autorewrite with galois_cost;
+  revert m events; induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z];
+    intros m events [Hwf Hvalid]; cbn [scev_check_expr_trace_c]; autorewrite with galois_cost;
     rewrite context_prepare_value.
   all: match goal with
   | |- expression_result_valid _ _ _ _ ?before ?source ?result =>
@@ -386,12 +391,13 @@ Proof.
     pose proof (query_reference EV HE body_c values so before source) as Href;
     unfold expression_result_valid; rewrite <- Href;
     apply (memo_result_forget_side (check_encoding EV)
-      (check_reference EV body_c values so) (fun _ : unit => True) (query before source) result)
+      (check_reference EV body_c values so) (fun _ : trace => True) (query before source) result)
   end.
+  all: apply memo_note_valid.
   all: eapply memo_run_agrees;
     [apply context_encoding_laws; [exact HE|exact bool_encoding_laws] |
       apply PreparedKey.prepare_valid | exact Hwf | exact Hvalid | exact I |].
-  all: intros table [] Htable Hreference _;
+  all: intros table side Htable Hreference _;
     rewrite PreparedKey.prepare_key; unfold memo_result_valid.
   - autorewrite with galois_cost; fold (Map.get EV x values).
     destruct (Map.get EV x values) as [[n d]|] eqn:Hfound; autorewrite with galois_cost;
@@ -404,30 +410,42 @@ Proof.
     exact (conj Htable (conj Hreference I)).
   - pose proof (check_binary_correct EV body_c values so (fun y => Cost.value (before_c y))
       (binary_c EV body_c values (add_op_c so) x (scev_expr_root a) (scev_expr_root b))
-      (scev_check_expr_c EV body_c values so before_c a)
-      (scev_check_expr_c EV body_c values so before_c b) a b table
+      (scev_check_expr_trace_c EV body_c values so before_c a)
+      (scev_check_expr_trace_c EV body_c values so before_c b) a b table side
       IHa IHb (conj Htable Hreference)) as Hpair.
     destruct (Cost.value (check_binary_c EV
       (binary_c EV body_c values (add_op_c so) x (scev_expr_root a) (scev_expr_root b))
-      (scev_check_expr_c EV body_c values so before_c a)
-      (scev_check_expr_c EV body_c values so before_c b) table)) as [[result updated] []].
+      (scev_check_expr_trace_c EV body_c values so before_c a)
+      (scev_check_expr_trace_c EV body_c values so before_c b) table side))
+      as [[result updated] events'].
     destruct Hpair as [Hresult [Hupdated Hmeaning]].
     split; [etransitivity; [exact Hresult|symmetry; exact Hquery]|].
     exact (conj Hupdated (conj Hmeaning I)).
   - pose proof (check_binary_correct EV body_c values so (fun y => Cost.value (before_c y))
       (binary_c EV body_c values (mul_op_c so) x (scev_expr_root a) (scev_expr_root b))
-      (scev_check_expr_c EV body_c values so before_c a)
-      (scev_check_expr_c EV body_c values so before_c b) a b table
+      (scev_check_expr_trace_c EV body_c values so before_c a)
+      (scev_check_expr_trace_c EV body_c values so before_c b) a b table side
       IHa IHb (conj Htable Hreference)) as Hpair.
     destruct (Cost.value (check_binary_c EV
       (binary_c EV body_c values (mul_op_c so) x (scev_expr_root a) (scev_expr_root b))
-      (scev_check_expr_c EV body_c values so before_c a)
-      (scev_check_expr_c EV body_c values so before_c b) table)) as [[result updated] []].
+      (scev_check_expr_trace_c EV body_c values so before_c a)
+      (scev_check_expr_trace_c EV body_c values so before_c b) table side))
+      as [[result updated] events'].
     destruct Hpair as [Hresult [Hupdated Hmeaning]].
     split; [etransitivity; [exact Hresult|symmetry; exact Hquery]|].
     exact (conj Hupdated (conj Hmeaning I)).
   - autorewrite with galois_cost; split; [symmetry; exact Hquery|].
     exact (conj Htable (conj Hreference I)).
+Qed.
+
+(** Ordinary expression checking initializes diagnostics and retains the complete reference result. *)
+Theorem scev_check_expr_correct {N V K C} (EV : encoding V) (HE : encoding_laws EV)
+    body_c values (so : scev_ops K C) before_c e m :
+  check_valid EV body_c values so m ->
+  expression_result_valid EV body_c values so (fun x => Cost.value (before_c x)) e
+    (Cost.value (@scev_check_expr_c N V K C EV body_c values so before_c e m)).
+Proof.
+  apply scev_check_expr_trace_correct; exact HE.
 Qed.
 
 (** * Indexed source and plan metadata *)
@@ -630,6 +648,11 @@ Proof.
 Qed.
 
 Definition check_binding_memo V := Memo.t (check_binding_key V) (option (FinSet.t V)).
+Definition check_state V := (check_memo V * trace)%type.
+
+(** Diagnostic state leaves the checker table's source-reference meaning unchanged. *)
+Definition check_state_valid {N V K C} EV body_c values (so : scev_ops K C) (state : check_state V) :=
+  @check_valid N V K C EV body_c values so (fst state).
 
 (** A binding table stores source checks under the projected earlier-phi observations. *)
 Definition check_binding_valid {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
@@ -640,17 +663,17 @@ Definition check_binding_valid {N E V K G C} (lv : loop_view N E V K G) (so : sc
 
 Definition check_binding_miss_c {N E V K G C} (lv : loop_view N E V K G)
     (so : scev_ops K C) (ix : static_index N V K) before_c (b : scev_binding V)
-    (m : check_binding_memo V) (expressions : check_memo V) :=
+    (m : check_binding_memo V) (expressions : check_state V) :=
   let* header := binding_gate_c lv ix b in
   let* update := update_gate_c lv so ix b in
   if header && update then
     match sb_kind b, sb_other b with
     | SDoubleUpdate, None => Cost.ret ((Some FinSet.empty, m), expressions)
     | SAddUpdate, Some e | SMulUpdate, Some e =>
-      let* checked := scev_check_expr_c (Ssa.val_enc (lssa lv))
-        (lbody_c lv) (indexed_values ix) so before_c e expressions in
-      let '((result, table), _) := checked in
-      Cost.ret (((if fst result then Some (snd result) else None), m), table)
+      let* checked := scev_check_expr_trace_c (Ssa.val_enc (lssa lv))
+        (lbody_c lv) (indexed_values ix) so before_c e (fst expressions) (snd expressions) in
+      let '((result, table), events) := checked in
+      Cost.ret (((if fst result then Some (snd result) else None), m), (table, events))
     | _, _ => Cost.ret ((None, m), expressions)
     end
   else Cost.ret ((None, m), expressions).
@@ -665,26 +688,27 @@ Local Lemma check_binding_miss_correct {N E V K G C} (lv : loop_view N E V K G)
     (HE : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C)
     ix before_c b m expressions :
   check_binding_valid lv so ix m ->
-  check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions ->
+  check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions ->
   let '((result, updated), expressions') := Cost.value
     (check_binding_miss_c lv so ix before_c b m expressions) in
   result = binding_reference lv so ix (fun x => Cost.value (before_c x)) b /\
     check_binding_valid lv so ix updated /\
-    check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions'.
+    check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions'.
 Proof.
+  destruct expressions as [expressions initial_events].
   intros Hbinding Hexpressions.
   unfold check_binding_miss_c, binding_reference; autorewrite with galois_cost.
   fold (binding_gate lv ix b); fold (update_gate lv so ix b).
   destruct (binding_gate lv ix b && update_gate lv so ix b);
     [|split; [reflexivity|split; assumption]].
   destruct b as [phi base update kind [e|] first]; destruct kind;
-    cbn [sb_kind sb_other]; autorewrite with galois_cost;
+    cbn [sb_kind sb_other fst snd]; autorewrite with galois_cost;
     try (split; [reflexivity|split; assumption]).
-  all: pose proof (scev_check_expr_correct (Ssa.val_enc (lssa lv)) HE
-      (lbody_c lv) (indexed_values ix) so before_c e expressions Hexpressions) as Hexpr;
-    destruct (Cost.value (scev_check_expr_c (Ssa.val_enc (lssa lv))
-      (lbody_c lv) (indexed_values ix) so before_c e expressions))
-      as [[result table] []]; destruct Hexpr as [Hresult Htable];
+  all: pose proof (scev_check_expr_trace_correct (Ssa.val_enc (lssa lv)) HE
+      (lbody_c lv) (indexed_values ix) so before_c e expressions initial_events Hexpressions) as Hexpr;
+    destruct (Cost.value (scev_check_expr_trace_c (Ssa.val_enc (lssa lv))
+      (lbody_c lv) (indexed_values ix) so before_c e expressions initial_events))
+      as [[result table] events]; destruct Hexpr as [Hresult Htable];
     autorewrite with galois_cost; rewrite <- Hresult.
   all: split; [reflexivity|split; assumption].
 Qed.
@@ -694,12 +718,12 @@ Theorem scev_check_binding_correct {N E V K G C} (lv : loop_view N E V K G)
     (HE : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C)
     ix before_c b m expressions :
   check_binding_valid lv so ix m ->
-  check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions ->
+  check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions ->
   let '((result, updated), expressions') := Cost.value
     (scev_check_binding_c lv so ix before_c b m expressions) in
   result = binding_reference lv so ix (fun x => Cost.value (before_c x)) b /\
     check_binding_valid lv so ix updated /\
-    check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions'.
+    check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions'.
 Proof.
   intros [Hwf Hvalid] Hexpressions.
   unfold scev_check_binding_c; autorewrite with galois_cost.
@@ -708,7 +732,7 @@ Proof.
     ltac:(apply pair_encoding_laws; [apply binding_encoding_laws; exact HE |
       apply list_key_encoding_laws, pair_encoding_laws; [exact HE|exact bool_encoding_laws]])
     (binding_context_reference lv so ix)
-    (check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so)
+    (check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so)
     (PreparedKey.prepare _ (check_binding_query (fun x => Cost.value (before_c x)) b))
     (check_binding_miss_c lv so ix before_c b) m expressions
     (PreparedKey.prepare_valid _ _) Hwf Hvalid Hexpressions) as Hrun.
@@ -716,10 +740,10 @@ Proof.
     Map.wf (check_binding_encoding (Ssa.val_enc (lssa lv))) table ->
     Memo.valid (check_binding_encoding (Ssa.val_enc (lssa lv)))
       (binding_context_reference lv so ix) table ->
-    check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so exprs ->
+    check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so exprs ->
     memo_result_valid (check_binding_encoding (Ssa.val_enc (lssa lv)))
       (binding_context_reference lv so ix)
-      (check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so)
+      (check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so)
       (check_binding_query (fun x => Cost.value (before_c x)) b)
       (Cost.value (check_binding_miss_c lv so ix before_c b table exprs))).
   { intros table exprs Htable Hreference Hexprs.
@@ -945,8 +969,8 @@ Fixpoint bindings_reference {N E V K G C} (lv : loop_view N E V K G) (so : scev_
 
 Fixpoint check_bindings_c {N E V K G C} (lv : loop_view N E V K G) (so : scev_ops K C)
     ix rank (bs : list (scev_binding V)) (checked : list (V * FinSet.t V))
-    (m : check_binding_memo V) (expressions : check_memo V)
-    : Cost.t ((option (list (V * FinSet.t V)) * check_binding_memo V) * check_memo V) :=
+    (m : check_binding_memo V) (expressions : check_state V)
+    : Cost.t ((option (list (V * FinSet.t V)) * check_binding_memo V) * check_state V) :=
   match bs with
   | [] => Cost.ret ((Some checked, m), expressions)
   | b :: rest =>
@@ -1005,12 +1029,12 @@ Qed.
 Theorem check_bindings_correct {N E V K G C} (lv : loop_view N E V K G)
     (HE : encoding_laws (Ssa.val_enc (lssa lv))) (so : scev_ops K C) ix bs :
   forall rank checked m expressions, check_binding_valid lv so ix m ->
-  check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions ->
+  check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions ->
   let '((result, updated), expressions') :=
     Cost.value (check_bindings_c lv so ix rank bs checked m expressions) in
   result = bindings_reference lv so ix rank bs checked /\
     check_binding_valid lv so ix updated /\
-    check_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions'.
+    check_state_valid (Ssa.val_enc (lssa lv)) (lbody_c lv) (indexed_values ix) so expressions'.
 Proof.
   induction bs as [|b rest IH]; intros rank checked m expressions Hm Hexpressions.
   - split; [reflexivity|split; assumption].
@@ -1078,7 +1102,8 @@ Definition scev_plan_check_index_c {N E V K G C} (lv : loop_view N E V K G)
     | Some target =>
       let* same := eqb_c EV target (sp_target p) in
       if same then
-        let* checked := check_bindings_c lv so ix O (sp_bindings p) [] bindings expressions in
+        let* checked := check_bindings_c lv so ix O (sp_bindings p) [] bindings
+          (expressions, trace_empty) in
         let '((rows, bindings'), expressions') := checked in
         match rows with
         | None => Cost.ret ((false, bindings'), expressions')
@@ -1088,10 +1113,10 @@ Definition scev_plan_check_index_c {N E V K G C} (lv : loop_view N E V K G)
           Cost.map (fun accepted => ((accepted, bindings'), expressions'))
             (dependencies_c EV rows target)
         end
-      else Cost.ret ((false, bindings), expressions)
-    | None => Cost.ret ((false, bindings), expressions)
+      else Cost.ret ((false, bindings), (expressions, trace_empty))
+    | None => Cost.ret ((false, bindings), (expressions, trace_empty))
     end
-  else Cost.ret ((false, bindings), expressions).
+  else Cost.ret ((false, bindings), (expressions, trace_empty)).
 
 Definition scev_plan_check_c {N E V K G C} (lv : loop_view N E V K G)
     (so : scev_ops K C) inventory p :=
@@ -1221,7 +1246,7 @@ Proof.
         (@Map.empty (context_key V bool) (check_result V))); apply Map.wf_empty.
     - apply Memo.valid_empty. }
   pose proof (check_bindings_correct lv HV so ix (sp_bindings p) O []
-    Memo.empty Memo.empty Hbindings Hexpressions) as Hrun.
+    Memo.empty (Memo.empty, trace_empty) Hbindings Hexpressions) as Hrun.
   unfold scev_plan_check_index_c; autorewrite with galois_cost.
   fold (@Memo.empty (check_binding_key V) (option (FinSet.t V))).
   fold (@Memo.empty (context_key V bool) (check_result V)).
@@ -1236,7 +1261,7 @@ Proof.
     [subst last|autorewrite with galois_cost; cbn [fst]; intuition congruence].
   autorewrite with galois_cost.
   destruct (Cost.value (check_bindings_c lv so ix O (sp_bindings p) []
-    Memo.empty Memo.empty)) as [[rows bindings] expressions].
+    Memo.empty (Memo.empty, trace_empty))) as [[rows bindings] expressions].
   destruct Hrun as [Hrows _]; destruct rows as [rows|].
   - autorewrite with galois_cost.
     assert (Hsource : bindings_conditions lv so ix O (sp_bindings p) /\

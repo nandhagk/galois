@@ -157,6 +157,19 @@ Definition scev_plan_operations {V} (p : scev_plan V) : list V :=
 (** A miss threads the same shared table through its actual recursive child computations. *)
 Definition memo_result K R S := ((R * Memo.t K R) * S)%type.
 
+(** Diagnostics contain actual expression query events and are separate from Memo entries. *)
+Definition trace := (list positive * list positive)%type.
+Definition trace_empty : trace := ([], []).
+Definition trace_hits (events : trace) := fst events.
+Definition trace_misses (events : trace) := snd events.
+Definition trace_note (code : positive) (hit : bool) (events : trace) : trace :=
+  if hit then (code :: trace_hits events, trace_misses events)
+  else (trace_hits events, code :: trace_misses events).
+
+Definition memo_note {K R} code (result : memo_result K R trace * bool) :=
+  let '(((value, table), events), hit) := result in
+  ((value, table), trace_note code hit events).
+
 Definition memo_run_c {K R S} (key : PreparedKey.t K)
     (miss_c : Memo.t K R -> S -> Cost.t (memo_result K R S))
     (table : Memo.t K R) (side : S) : Cost.t (memo_result K R S * bool) :=
@@ -217,6 +230,15 @@ Theorem memo_result_forget_side {K R S} E reference P key
   value = reference key /\ Map.wf E table /\ Memo.valid E reference table.
 Proof.
   destruct result as [[value table] side].
+  intros [Hvalue [Hwf [Hvalid _]]]; repeat split; assumption.
+Qed.
+
+(** Recording a query observation changes neither its result nor either table invariant. *)
+Theorem memo_note_valid {K R} E reference key code (result : memo_result K R trace * bool) :
+  memo_result_valid E reference (fun _ : trace => True) key (fst result) ->
+  memo_result_valid E reference (fun _ : trace => True) key (memo_note code result).
+Proof.
+  destruct result as [[[value table] events] hit].
   intros [Hvalue [Hwf [Hvalid _]]]; repeat split; assumption.
 Qed.
 
@@ -580,7 +602,7 @@ Definition compile_memo V := Memo.t (compile_key V) (option (Chrec.t V)).
 Definition compile_valid {V} (EV : encoding V) (m : compile_memo V) : Prop :=
   Map.wf (compile_encoding EV) m /\ Memo.valid (compile_encoding EV) (compile_reference EV) m.
 
-Definition compile_result {V} := memo_result (compile_key V) (option (Chrec.t V)) unit.
+Definition compile_result {V} := memo_result (compile_key V) (option (Chrec.t V)) trace.
 
 (** Expression results couple the current translation to validity of the same returned table. *)
 Definition compile_expr_result_valid {V} (EV : encoding V) lookup e
@@ -590,32 +612,33 @@ Definition compile_expr_result_valid {V} (EV : encoding V) lookup e
 
 Definition compile_pair_c {V}
     (combine_c : Chrec.t V -> Chrec.t V -> Cost.t (Chrec.t V))
-    (recurse_a recurse_b : compile_memo V -> Cost.t (@compile_result V))
-    (m : compile_memo V) : Cost.t (@compile_result V) :=
+    (recurse_a recurse_b : compile_memo V -> trace -> Cost.t (@compile_result V))
+    (m : compile_memo V) (events : trace) : Cost.t (@compile_result V) :=
   Cost.step ;;
-  let* first := recurse_a m in
-  let '((ca, ma), _) := first in
+  let* first := recurse_a m events in
+  let '((ca, ma), events_a) := first in
   match ca with
-  | None => Cost.ret ((None, ma), tt)
+  | None => Cost.ret ((None, ma), events_a)
   | Some a =>
     Cost.step ;;
-    let* second := recurse_b ma in
-    let '((cb, mb), _) := second in
+    let* second := recurse_b ma events_a in
+    let '((cb, mb), events_b) := second in
     match cb with
-    | None => Cost.ret ((None, mb), tt)
+    | None => Cost.ret ((None, mb), events_b)
     | Some b =>
       Cost.step ;;
       let* result := combine_c a b in
-      Cost.ret ((Some result, mb), tt)
+      Cost.ret ((Some result, mb), events_b)
     end
   end.
 
 (** Every recursive miss receives the table returned by the preceding child. *)
-Fixpoint scev_compile_expr_c {V} (EV : encoding V)
+Fixpoint scev_compile_expr_trace_c {V} (EV : encoding V)
     (lookup_c : V -> Cost.t (option (Chrec.t V))) (e : scev_expr V)
-    (m : compile_memo V) : Cost.t (@compile_result V) :=
+    (m : compile_memo V) (events : trace) : Cost.t (@compile_result V) :=
   Cost.step ;;
   let* key := context_prepare_c EV (optional_chrec_encoding EV) lookup_c e in
+  let* code := scev_expr_code_c EV e in
   let* result := memo_run_c key (fun table side =>
     match e with
     | SOutside x => Cost.ret ((Some (CInv (IVar x)), table), side)
@@ -625,26 +648,29 @@ Fixpoint scev_compile_expr_c {V} (EV : encoding V)
       Cost.ret ((found, table), side)
     | SConst _ z => Cost.ret ((Some (CInv (IWordConst z)), table), side)
     | SAdd _ a b =>
-      compile_pair_c chrec_add_c (scev_compile_expr_c EV lookup_c a)
-        (scev_compile_expr_c EV lookup_c b) table
+      compile_pair_c chrec_add_c (scev_compile_expr_trace_c EV lookup_c a)
+        (scev_compile_expr_trace_c EV lookup_c b) table side
     | SMul _ a b =>
-      compile_pair_c chrec_mul_c (scev_compile_expr_c EV lookup_c a)
-        (scev_compile_expr_c EV lookup_c b) table
-    end) m tt in
-  Cost.ret (fst result).
+      compile_pair_c chrec_mul_c (scev_compile_expr_trace_c EV lookup_c a)
+        (scev_compile_expr_trace_c EV lookup_c b) table side
+    end) m events in
+  Cost.ret (memo_note code result).
+
+Definition scev_compile_expr_c {V} (EV : encoding V) lookup_c e m :=
+  @scev_compile_expr_trace_c V EV lookup_c e m trace_empty.
 
 Definition scev_compile_expr {V} (EV : encoding V) lookup_c e m :=
   Cost.value (@scev_compile_expr_c V EV lookup_c e m).
 
 Local Lemma compile_pair_correct {V} (EV : encoding V)
-    (lookup : V -> option (Chrec.t V)) combine_c combine a b ra rb m :
+    (lookup : V -> option (Chrec.t V)) combine_c combine a b ra rb m events :
   (forall x y, Cost.value (combine_c x y) = combine x y) ->
-  (forall table, compile_valid EV table ->
-    compile_expr_result_valid EV lookup a (Cost.value (ra table))) ->
-  (forall table, compile_valid EV table ->
-    compile_expr_result_valid EV lookup b (Cost.value (rb table))) ->
+  (forall table events, compile_valid EV table ->
+    compile_expr_result_valid EV lookup a (Cost.value (ra table events))) ->
+  (forall table events, compile_valid EV table ->
+    compile_expr_result_valid EV lookup b (Cost.value (rb table events))) ->
   compile_valid EV m ->
-  let '((result, table), _) := Cost.value (compile_pair_c combine_c ra rb m) in
+  let '((result, table), _) := Cost.value (compile_pair_c combine_c ra rb m events) in
   result =
     match scev_translate_expr lookup a, scev_translate_expr lookup b with
     | Some ca, Some cb => Some (combine ca cb)
@@ -652,13 +678,13 @@ Local Lemma compile_pair_correct {V} (EV : encoding V)
     end /\ compile_valid EV table.
 Proof.
   intros Hcombine Ha Hb Hm.
-  specialize (Ha m Hm).
+  specialize (Ha m events Hm).
   unfold compile_pair_c; autorewrite with galois_cost.
-  destruct (Cost.value (ra m)) as [[[ca|] ma] []];
+  destruct (Cost.value (ra m events)) as [[[ca|] ma] events_a];
     destruct Ha as [Hca [Hwf Hvalid]].
-  - specialize (Hb ma (conj Hwf Hvalid)).
+  - specialize (Hb ma events_a (conj Hwf Hvalid)).
     autorewrite with galois_cost.
-    destruct (Cost.value (rb ma)) as [[[cb|] mb] []];
+    destruct (Cost.value (rb ma events_a)) as [[[cb|] mb] events_b];
       destruct Hb as [Hcb [Hwf' Hvalid']]; autorewrite with galois_cost;
       cbn [fst snd]; rewrite <- Hca, <- Hcb.
     + split.
@@ -669,18 +695,18 @@ Proof.
     rewrite <- Hca; split; [reflexivity|exact (conj Hwf Hvalid)].
 Qed.
 
-(** Compilation returns the full reference option and maintains the recursively shared Memo. *)
-Theorem scev_compile_expr_correct {V} (EV : encoding V) (HE : encoding_laws EV)
-    (lookup_c : V -> Cost.t (option (Chrec.t V))) e m :
+(** Traced compilation returns the full reference option and maintains the actual shared Memo. *)
+Theorem scev_compile_expr_trace_correct {V} (EV : encoding V) (HE : encoding_laws EV)
+    (lookup_c : V -> Cost.t (option (Chrec.t V))) e m events :
   compile_valid EV m ->
   compile_expr_result_valid EV (fun x => Cost.value (lookup_c x))
-    e (scev_compile_expr EV lookup_c e m).
+    e (Cost.value (scev_compile_expr_trace_c EV lookup_c e m events)).
 Proof.
   assert (Hencoding : encoding_laws (compile_encoding EV)).
   { apply context_encoding_laws; [exact HE|apply optional_chrec_encoding_laws; exact HE]. }
-  revert m; induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z];
-    intros m [Hwf Hvalid]; unfold scev_compile_expr at 1;
-    cbn [scev_compile_expr_c]; autorewrite with galois_cost;
+  revert m events; induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z];
+    intros m events [Hwf Hvalid];
+    cbn [scev_compile_expr_trace_c]; autorewrite with galois_cost;
     rewrite context_prepare_value.
   all: match goal with
   | |- compile_expr_result_valid _ ?lookup ?source ?result =>
@@ -689,34 +715,45 @@ Proof.
     unfold compile_expr_result_valid;
     rewrite <- Href;
     apply (memo_result_forget_side (compile_encoding EV) (compile_reference EV)
-      (fun _ : unit => True) (compile_query lookup source) result)
+      (fun _ : trace => True) (compile_query lookup source) result)
   end.
+  all: apply memo_note_valid.
   all: eapply memo_run_agrees;
     [exact Hencoding | apply PreparedKey.prepare_valid | exact Hwf | exact Hvalid | exact I |].
-  all: intros table [] Htable Hreference _.
+  all: intros table side Htable Hreference _.
   all: rewrite PreparedKey.prepare_key; unfold memo_result_valid.
   - split; [symmetry; exact Hquery|]; repeat split; assumption.
   - autorewrite with galois_cost.
     split; [symmetry; exact Hquery|]; repeat split; assumption.
   - pose proof (compile_pair_correct EV _ chrec_add_c chrec_add a b
-      (scev_compile_expr_c EV lookup_c a) (scev_compile_expr_c EV lookup_c b) table
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b) table side
       (fun _ _ => eq_refl) IHa IHb (conj Htable Hreference)) as Hpair.
     destruct (Cost.value (compile_pair_c chrec_add_c
-      (scev_compile_expr_c EV lookup_c a) (scev_compile_expr_c EV lookup_c b) table))
-      as [[result updated] []].
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b)
+      table side)) as [[result updated] events'].
     destruct Hpair as [Hresult [Hupdated Hmeaning]].
     split; [etransitivity; [exact Hresult|symmetry; exact Hquery]|].
     repeat split; assumption.
   - pose proof (compile_pair_correct EV _ chrec_mul_c chrec_mul a b
-      (scev_compile_expr_c EV lookup_c a) (scev_compile_expr_c EV lookup_c b) table
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b) table side
       (fun _ _ => eq_refl) IHa IHb (conj Htable Hreference)) as Hpair.
     destruct (Cost.value (compile_pair_c chrec_mul_c
-      (scev_compile_expr_c EV lookup_c a) (scev_compile_expr_c EV lookup_c b) table))
-      as [[result updated] []].
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b)
+      table side)) as [[result updated] events'].
     destruct Hpair as [Hresult [Hupdated Hmeaning]].
     split; [etransitivity; [exact Hresult|symmetry; exact Hquery]|].
     repeat split; assumption.
   - split; [symmetry; exact Hquery|]; repeat split; assumption.
+Qed.
+
+(** Ordinary compilation initializes diagnostics without changing its reference agreement. *)
+Theorem scev_compile_expr_correct {V} (EV : encoding V) (HE : encoding_laws EV)
+    (lookup_c : V -> Cost.t (option (Chrec.t V))) e m :
+  compile_valid EV m ->
+  compile_expr_result_valid EV (fun x => Cost.value (lookup_c x)) e
+    (scev_compile_expr EV lookup_c e m).
+Proof.
+  apply scev_compile_expr_trace_correct; exact HE.
 Qed.
 
 (** * Memo-threaded binding and plan compilation *)
@@ -803,6 +840,11 @@ Proof.
 Qed.
 
 Definition binding_memo V := Memo.t (binding_key V) (option (Chrec.t V)).
+Definition compile_state V := (compile_memo V * trace)%type.
+
+(** Diagnostic state does not change the expression table's reference meaning. *)
+Definition compile_state_valid {V} (EV : encoding V) (state : compile_state V) :=
+  compile_valid EV (fst state).
 
 (** Binding summaries retain a context-independent reference meaning and a map invariant. *)
 Definition binding_valid {V} (EV : encoding V) (m : binding_memo V) : Prop :=
@@ -811,21 +853,21 @@ Definition binding_valid {V} (EV : encoding V) (m : binding_memo V) : Prop :=
 
 Definition binding_miss_c {V} (EV : encoding V)
     (lookup_c : V -> Cost.t (option (Chrec.t V))) (b : scev_binding V)
-    (m : binding_memo V) (expressions : compile_memo V)
-    : Cost.t (memo_result (binding_key V) (option (Chrec.t V)) (compile_memo V)) :=
+    (m : binding_memo V) (expressions : compile_state V)
+    : Cost.t (memo_result (binding_key V) (option (Chrec.t V)) (compile_state V)) :=
   let base := CInv (IVar (sb_base b)) in
   match sb_kind b, sb_other b with
   | SDoubleUpdate, None =>
     Cost.step ;;
     Cost.map (fun result => ((result, m), expressions)) (Idiom.apply_c SDoubleUpdate base None)
   | SAddUpdate, Some e | SMulUpdate, Some e =>
-    let* compiled := scev_compile_expr_c EV lookup_c e expressions in
-    let '((other, updated), _) := compiled in
+    let* compiled := scev_compile_expr_trace_c EV lookup_c e (fst expressions) (snd expressions) in
+    let '((other, updated), events) := compiled in
     match other with
-    | None => Cost.ret ((None, m), updated)
+    | None => Cost.ret ((None, m), (updated, events))
     | Some c =>
       Cost.step ;;
-      Cost.map (fun result => ((result, m), updated))
+      Cost.map (fun result => ((result, m), (updated, events)))
         (Idiom.apply_c (sb_kind b) base (Some c))
     end
   | _, _ => Cost.ret ((None, m), expressions)
@@ -833,26 +875,27 @@ Definition binding_miss_c {V} (EV : encoding V)
 
 (** Binding compilation uses the same Memo operation and threads the expression table as side data. *)
 Definition scev_compile_binding_c {V} (EV : encoding V) lookup_c (b : scev_binding V)
-    (m : binding_memo V) (expressions : compile_memo V) :=
+    (m : binding_memo V) (expressions : compile_state V) :=
   let* key := binding_prepare_c EV lookup_c b in
   Cost.map fst (memo_run_c key (binding_miss_c EV lookup_c b) m expressions).
 
 Local Lemma binding_miss_correct {V} (EV : encoding V) (HE : encoding_laws EV)
     lookup_c b m expressions :
-  binding_valid EV m -> compile_valid EV expressions ->
+  binding_valid EV m -> compile_state_valid EV expressions ->
   let '((result, updated), expressions') := Cost.value
     (binding_miss_c EV lookup_c b m expressions) in
   result = scev_translate_binding (fun x => Cost.value (lookup_c x)) b /\
-    binding_valid EV updated /\ compile_valid EV expressions'.
+    binding_valid EV updated /\ compile_state_valid EV expressions'.
 Proof.
+  destruct expressions as [expressions initial_events].
   intros Hbinding Hexpressions.
   destruct b as [phi base update kind [e|] first]; destruct kind;
     cbn [binding_miss_c sb_kind sb_other sb_base scev_translate_binding];
-    autorewrite with galois_cost; try (split; [reflexivity|split; assumption]).
-  all: pose proof (scev_compile_expr_correct EV HE lookup_c e expressions Hexpressions) as Hexpr;
-    unfold scev_compile_expr in Hexpr;
-    destruct (Cost.value (scev_compile_expr_c EV lookup_c e expressions))
-      as [[[c|] table] []]; destruct Hexpr as [Hresult Htable];
+    cbn [fst snd]; autorewrite with galois_cost; try (split; [reflexivity|split; assumption]).
+  all: pose proof (scev_compile_expr_trace_correct EV HE lookup_c e expressions initial_events
+      Hexpressions) as Hexpr;
+    destruct (Cost.value (scev_compile_expr_trace_c EV lookup_c e expressions initial_events))
+      as [[[c|] table] events]; destruct Hexpr as [Hresult Htable];
     autorewrite with galois_cost; rewrite <- Hresult.
   all: split; [reflexivity|split; assumption].
 Qed.
@@ -860,11 +903,11 @@ Qed.
 (** Binding compilation returns the reference option and maintains both actual shared tables. *)
 Theorem scev_compile_binding_correct {V} (EV : encoding V) (HE : encoding_laws EV)
     lookup_c b m expressions :
-  binding_valid EV m -> compile_valid EV expressions ->
+  binding_valid EV m -> compile_state_valid EV expressions ->
   let '((result, updated), expressions') := Cost.value
     (scev_compile_binding_c EV lookup_c b m expressions) in
   result = scev_translate_binding (fun x => Cost.value (lookup_c x)) b /\
-    binding_valid EV updated /\ compile_valid EV expressions'.
+    binding_valid EV updated /\ compile_state_valid EV expressions'.
 Proof.
   intros [Hwf Hvalid] Hexpressions.
   unfold scev_compile_binding_c; autorewrite with galois_cost.
@@ -873,7 +916,7 @@ Proof.
     ltac:(apply pair_encoding_laws; [apply binding_encoding_laws; exact HE |
       apply list_key_encoding_laws, pair_encoding_laws;
         [exact HE|apply optional_chrec_encoding_laws; exact HE]])
-    (binding_reference EV) (compile_valid EV)
+    (binding_reference EV) (compile_state_valid EV)
     (PreparedKey.prepare (binding_context_encoding EV)
       (binding_query (fun x => Cost.value (lookup_c x)) b))
     (binding_miss_c EV lookup_c b) m expressions
@@ -881,8 +924,8 @@ Proof.
   assert (Hmiss : forall table exprs,
     Map.wf (binding_context_encoding EV) table ->
     Memo.valid (binding_context_encoding EV) (binding_reference EV) table ->
-    compile_valid EV exprs ->
-    memo_result_valid (binding_context_encoding EV) (binding_reference EV) (compile_valid EV)
+    compile_state_valid EV exprs ->
+    memo_result_valid (binding_context_encoding EV) (binding_reference EV) (compile_state_valid EV)
       (binding_query (fun x => Cost.value (lookup_c x)) b)
       (Cost.value (binding_miss_c EV lookup_c b table exprs))).
   { intros table exprs Htable Hreference Hexprs.
@@ -980,8 +1023,8 @@ Qed.
 
 (** Compiling a later binding retains both tables and keys its queries by the extended environment. *)
 Fixpoint scev_compile_bindings_c {V} (EV : encoding V) (bs : list (scev_binding V))
-    (env : Map.t V (Chrec.t V)) (m : binding_memo V) (expressions : compile_memo V)
-    : Cost.t ((option (Map.t V (Chrec.t V)) * binding_memo V) * compile_memo V) :=
+    (env : Map.t V (Chrec.t V)) (m : binding_memo V) (expressions : compile_state V)
+    : Cost.t ((option (Map.t V (Chrec.t V)) * binding_memo V) * compile_state V) :=
   match bs with
   | [] => Cost.ret ((Some env, m), expressions)
   | b :: rest =>
@@ -998,11 +1041,11 @@ Fixpoint scev_compile_bindings_c {V} (EV : encoding V) (bs : list (scev_binding 
 
 (** Whole binding-list compilation agrees on failures as well as successful environments. *)
 Theorem scev_compile_bindings_correct {V} (EV : encoding V) (HE : encoding_laws EV) bs :
-  forall env m expressions, binding_valid EV m -> compile_valid EV expressions ->
+  forall env m expressions, binding_valid EV m -> compile_state_valid EV expressions ->
   let '((result, updated), expressions') := Cost.value
     (scev_compile_bindings_c EV bs env m expressions) in
   result = scev_translate_bindings EV bs env /\
-    binding_valid EV updated /\ compile_valid EV expressions'.
+    binding_valid EV updated /\ compile_state_valid EV expressions'.
 Proof.
   induction bs as [|b rest IH]; intros env m expressions Hbinding Hexpressions.
   - split; [reflexivity|split; assumption].
@@ -1031,7 +1074,8 @@ Definition scev_compile_plan_execution_c {V} (EV : encoding V) (p : scev_plan V)
   let* env := @Map.empty_c V (Chrec.t V) in
   let* bindings := @Memo.empty_c (binding_key V) (option (Chrec.t V)) in
   let* expressions := @Memo.empty_c (compile_key V) (option (Chrec.t V)) in
-  let* compiled := scev_compile_bindings_c EV (sp_bindings p) env bindings expressions in
+  let* compiled := scev_compile_bindings_c EV (sp_bindings p) env bindings
+    (expressions, trace_empty) in
   let '((result, bindings), expressions) := compiled in
   match result with
   | None => Cost.ret ((None, bindings), expressions)
@@ -1067,14 +1111,14 @@ Proof.
       apply Map.wf_empty.
     - apply Memo.valid_empty. }
   pose proof (scev_compile_bindings_correct EV HE (sp_bindings p) Map.empty
-    Memo.empty Memo.empty Hbindings Hexpressions) as Hcompile.
+    Memo.empty (Memo.empty, trace_empty) Hbindings Hexpressions) as Hcompile.
   unfold scev_compile_plan, scev_compile_plan_c, scev_compile_plan_execution_c.
   autorewrite with galois_cost.
   change (Cost.value (@Map.empty_c V (Chrec.t V))) with (@Map.empty V (Chrec.t V)).
   fold (@Memo.empty (binding_key V) (option (Chrec.t V))).
   fold (@Memo.empty (compile_key V) (option (Chrec.t V))).
   destruct (Cost.value (scev_compile_bindings_c EV (sp_bindings p)
-    Map.empty Memo.empty Memo.empty)) as [[result bindings] expressions].
+    Map.empty Memo.empty (Memo.empty, trace_empty))) as [[result bindings] expressions].
   destruct Hcompile as [Hresult _]; unfold scev_translate_plan; rewrite <- Hresult.
   destruct result; autorewrite with galois_cost; reflexivity.
 Qed.
