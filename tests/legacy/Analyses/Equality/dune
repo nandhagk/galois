@@ -1,0 +1,6 @@
+(rocq.theory
+ (name Galois.Tests.Legacy.Analyses.Equality)
+ (flags :standard -w +default)
+ (theories Stdlib Galois.Cost Galois.Base Galois.Lattice Galois.Bits Galois.Graph Galois.Program
+  Galois.Analyses.Equality GaloisLegacy.Collections GaloisLegacy.Bits
+  GaloisLegacy.Rewrite GaloisLegacy.Analyses))
