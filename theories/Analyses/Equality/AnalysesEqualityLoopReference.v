@@ -104,8 +104,34 @@ Proof.
   cbn [after]; apply IH; intro y; now apply round_ext.
 Qed.
 
+(** The tail-iterated reference also satisfies its ordinary outer-round equation. *)
+Theorem after_round count previous x :
+  after (S count) previous x = round (after count previous) x.
+Proof.
+  revert previous; induction count as [|count IH]; intro previous; [reflexivity|].
+  change (after (S count) (round previous) x = round (after (S count) previous) x).
+  rewrite (IH (round previous)); apply round_ext; intro y; reflexivity.
+Qed.
+
+Local Lemma after_outside count previous x :
+  body lp (Ssa.home syntax x) = false -> previous x = true -> after count previous x = true.
+Proof.
+  revert previous; induction count as [|count IH]; intros previous Houtside Hprevious;
+    [exact Hprevious|].
+  cbn [after]; apply IH; [exact Houtside|].
+  unfold round; now rewrite Houtside.
+Qed.
+
 (** The total reference performs exactly one round per supplied inventory occurrence. *)
 Definition invariant_in_ref x := after (length (Ssa.values syntax)) initial x.
+
+(** Outside-body values remain invariant at every reference depth, including unlisted values. *)
+Theorem reference_outside count x :
+  body lp (Ssa.home syntax x) = false -> after count initial x = true.
+Proof.
+  intro Houtside; apply after_outside; [exact Houtside|].
+  unfold initial; now rewrite Houtside.
+Qed.
 
 Definition function := V -> Cost.t bool.
 
