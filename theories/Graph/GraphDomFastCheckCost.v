@@ -31,7 +31,8 @@ Definition checker_bound (n m r b : nat) ek bk w wc f s :=
   2 * TrieCost.trie_k * (1 + s) + N.of_nat b * (5 + 2 * wc) +
   ends_bound n w + cache_bound n w + pairs_bound n m r w f.
 
-Local Lemma live_support {V E} (p : Prepared.t V E) roots v :
+(** Every compatibility reachable member belongs to the same raw finite universe. *)
+Theorem live_support {V E} (p : Prepared.t V E) roots v :
   FinSet.mem positive_encoding v (Reach.set p Reach.unrestricted roots) = true ->
   In v (Reach.universe p).
 Proof.
@@ -39,7 +40,8 @@ Proof.
   now apply DomFiniteClosure.raw_support in Hv.
 Qed.
 
-Local Lemma live_length {V E} (p : Prepared.t V E) roots n m r ek bk w :
+(** Canonical reachable enumeration fits the finite universe before any candidate is checked. *)
+Theorem live_length {V E} (p : Prepared.t V E) roots n m r ek bk w :
   DomFiniteCost.bounds p roots n m r ek bk w ->
   (length (FinSet.elements (Reach.set p Reach.unrestricted roots)) <= n)%nat.
 Proof.

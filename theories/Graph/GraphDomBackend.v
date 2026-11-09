@@ -9,7 +9,8 @@ From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseCertify.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphCheckDom
   GraphDomSemi GraphDomLt GraphDomNca GraphDomNumber GraphDomPath GraphDomCut
-  GraphDomLtProof GraphDomNcaProof GraphDomOutput GraphReach GraphFrontierSweep GraphDomFastCheck.
+  GraphDomLtProof GraphDomNcaProof GraphDomOutput GraphReach GraphDomFastCheck
+  GraphDomFiniteView GraphDomFiniteReach.
 Import Cost.Notations.
 
 Module DomBackend.
@@ -175,7 +176,8 @@ Qed.
 
 (** Accepted external parents are numbered through charged reachability, enumeration and forest annotation. *)
 Definition checked_candidate_c {V E} (p : Prepared.t V E) m :=
-  let* reachable := FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p) in
+  let* normalized := DomFiniteView.prepare_c p (Prepared.entry_ids p) in
+  let* reachable := DomFiniteReach.reach_c normalized Reach.unrestricted in
   let* listed := FinSet.elements_c reachable in
   DomNumber.of_parents_c listed m.
 
@@ -185,8 +187,16 @@ Theorem checked_candidate_value {V E} (p : Prepared.t V E) m :
     DomNumber.of_parents
       (FinSet.elements (Reach.set p Reach.unrestricted (Prepared.entry_ids p))) m.
 Proof.
-  unfold checked_candidate_c. autorewrite with galois_cost.
-  now rewrite FrontierSweep.reach_value.
+  unfold checked_candidate_c. rewrite Cost.value_bind.
+  change (Cost.value
+    (let* reachable := DomFiniteReach.reach_c
+       (DomFiniteView.prepared p (Prepared.entry_ids p)) Reach.unrestricted in
+     let* listed := FinSet.elements_c reachable in
+     DomNumber.of_parents_c listed m) =
+    DomNumber.of_parents
+      (FinSet.elements (Reach.set p Reach.unrestricted (Prepared.entry_ids p))) m).
+  rewrite Cost.value_bind, DomFiniteReach.reach_value.
+  autorewrite with galois_cost. reflexivity.
 Qed.
 
 (** Boolean acceptance certifies charged candidate numbering only with separate parent-storage validity. *)
@@ -288,13 +298,29 @@ Qed.
 (** Accepted-candidate accounting retains every reachability, enumeration and annotation charge. *)
 Theorem checked_candidate_cost_equation {V E} (p : Prepared.t V E) m :
   Cost.ticks (checked_candidate_c p m) =
-    (Cost.ticks (FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p)) +
+    (Cost.ticks (DomFiniteView.prepare_c p (Prepared.entry_ids p)) +
+      Cost.ticks (DomFiniteReach.reach_c
+        (DomFiniteView.prepared p (Prepared.entry_ids p)) Reach.unrestricted) +
       Cost.ticks (FinSet.elements_c (Reach.set p Reach.unrestricted (Prepared.entry_ids p))) +
       Cost.ticks (DomNumber.of_parents_c
         (FinSet.elements (Reach.set p Reach.unrestricted (Prepared.entry_ids p))) m))%N.
 Proof.
-  unfold checked_candidate_c. rewrite !Cost.ticks_bind, FrontierSweep.reach_value.
-  autorewrite with galois_cost. rewrite N.add_assoc. reflexivity.
+  unfold checked_candidate_c. rewrite (Cost.ticks_bind
+    (DomFiniteView.prepare_c p (Prepared.entry_ids p))).
+  change (Cost.ticks (DomFiniteView.prepare_c p (Prepared.entry_ids p)) +
+    Cost.ticks
+      (let* reachable := DomFiniteReach.reach_c
+         (DomFiniteView.prepared p (Prepared.entry_ids p)) Reach.unrestricted in
+       let* listed := FinSet.elements_c reachable in
+       DomNumber.of_parents_c listed m) =
+    Cost.ticks (DomFiniteView.prepare_c p (Prepared.entry_ids p)) +
+      Cost.ticks (DomFiniteReach.reach_c
+        (DomFiniteView.prepared p (Prepared.entry_ids p)) Reach.unrestricted) +
+      Cost.ticks (FinSet.elements_c (Reach.set p Reach.unrestricted (Prepared.entry_ids p))) +
+      Cost.ticks (DomNumber.of_parents_c
+        (FinSet.elements (Reach.set p Reach.unrestricted (Prepared.entry_ids p))) m))%N.
+  rewrite !Cost.ticks_bind, DomFiniteReach.reach_value.
+  autorewrite with galois_cost. now rewrite !N.add_assoc.
 Qed.
 
 (** Checked accounting includes one actual checker and the full selected branch, including rejection fallback. *)

@@ -45,11 +45,7 @@ Theorem present_cost {A B} (f : A -> Cost.t (option B)) xs k :
   (forall x, In x xs -> Cost.ticks (f x) <= k) ->
   Cost.ticks (Prepared.present_c f xs) <= N.of_nat (length xs) * (2 + k).
 Proof.
-  rewrite PreparedCost.present_cost.
-  induction xs as [|x rest IH]; intro Hcost; [reflexivity|].
-  cbn [fold_right length]. rewrite Nat2N.inj_succ.
-  pose proof (Hcost x (or_introl eq_refl)).
-  specialize (IH ltac:(intros y Hy; apply Hcost; now right)). nia.
+  apply DomCostBasis.present_cost.
 Qed.
 
 Local Lemma set_members {V E} (p : Prepared.t V E) v :
