@@ -205,6 +205,48 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Local Lemma unlisted_nullary_reference_prices :
+  NumberingLoopReference.primitive_prices unlisted_nullary_problem reference_loop 1 1 1%N 0.
+Proof.
+  cbn [NumberingLoopReference.primitive_prices].
+  split; [vm_compute; discriminate|].
+  split; [vm_compute; discriminate|].
+  split; [vm_compute; discriminate|].
+  intros op args Hdef; vm_compute in Hdef; injection Hdef as <- <-.
+  split; [vm_compute; discriminate|split; [constructor|intros y Hy; contradiction]].
+Qed.
+
+Local Lemma unlisted_nullary_finite_prices :
+  NumberingLoop.primitive_prices unlisted_nullary_problem reference_loop
+    (FinSet.of_list nat_encoding [2]) 1%N 2%N 1%N 0.
+Proof.
+  constructor.
+  - intros x Hin; vm_compute in Hin; destruct Hin as [<-|Hin]; [|contradiction].
+    vm_compute; repeat split; discriminate.
+  - intros x op args Hin Hdef; vm_compute in Hin; destruct Hin as [<-|Hin]; [|contradiction].
+    vm_compute in Hdef; discriminate.
+Qed.
+
+Example importing_unlisted_reference_numeric_contract :
+  (Cost.ticks (NumberingLoopReference.reference_c unlisted_nullary_problem reference_loop 1%nat) <=
+    3 * 1 + 1 + NumberingLoopReference.tree_price 1%nat 1 0%nat)%N.
+Proof.
+  exact (NumberingLoopReference.reference_cost unlisted_nullary_problem reference_loop 1 1%N 0
+    unlisted_nullary_reference_prices).
+Qed.
+
+Example importing_general_public_fallback_numeric_contract :
+  (Cost.ticks (NumberingLoop.invariant_in_c unlisted_nullary_problem reference_loop 1%nat) <=
+    NumberingLoop.invariant_k * (1 + 1) * (1 + 0) * (1 + 1 + 2 + 1 + 1) +
+      3 * 1 + 1 + NumberingLoopReference.tree_price 1%nat 1 0%nat)%N.
+Proof.
+  apply (NumberingLoop.invariant_in_general_cost unlisted_nullary_problem reference_loop
+    nat_encoding_laws 1 1%N 2%N 1%N 0 1%N 0 unlisted_nullary_finite_prices).
+  - vm_compute; discriminate.
+  - vm_compute; discriminate.
+  - exact unlisted_nullary_reference_prices.
+Qed.
+
 Example public_malformed_operand_fallback :
   (NumberingLoop.invariant_in malformed_operand_problem reference_loop 0,
     NumberingLoop.route (Cost.value

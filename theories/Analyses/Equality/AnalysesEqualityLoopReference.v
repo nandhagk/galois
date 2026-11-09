@@ -5,7 +5,7 @@
     Builds on: AnalysesEqualityProblem and CostLoop. *)
 
 From Stdlib Require Import List Bool Arith Lia PArith NArith.
-From Galois.Cost Require Import CostMonad CostList CostLoop.
+From Galois.Cost Require Import CostMonad CostList CostLoop CostBound.
 From Galois.Program Require Import ProgramSemantics ProgramSteps ProgramCfg ProgramLink ProgramSsa
   ProgramStrict.
 From Galois.Analyses.Equality Require Import AnalysesEqualityProblem.
@@ -195,6 +195,178 @@ Proof.
   apply count_value.
 Qed.
 
+(** Reference budgets cover the finite demanded operand tree, including arbitrary unlisted values. *)
+Fixpoint primitive_prices (depth : nat) x (callback : BinNums.N) (arity : nat) : Prop :=
+  (Cost.ticks (Ssa.home_c syntax x) <= callback)%N /\
+  (Cost.ticks (body_c lp (Ssa.home syntax x)) <= callback)%N /\
+  match depth with
+  | 0 => True
+  | S n =>
+    (Cost.ticks (Ssa.def_c syntax x) <= callback)%N /\
+    forall op args, Ssa.def syntax x = Op op args ->
+      (Cost.ticks (pure_c np op) <= callback)%N /\ length args <= arity /\
+      forall y, In y args -> primitive_prices n y callback arity
+  end.
+
+(** This numeric recurrence prices an expanding reference tree without identifying it with ticks. *)
+Fixpoint tree_price (depth : nat) (callback : BinNums.N) (arity : nat) : BinNums.N :=
+  match depth with
+  | 0 => 2 + 2 * callback
+  | S n => 4 + 4 * callback + N.of_nat arity * (2 + tree_price n callback arity)
+  end.
+
+(** Body-query prices include both dictionary invocation ticks and both callee charges. *)
+Theorem inside_cost x callback :
+  (Cost.ticks (Ssa.home_c syntax x) <= callback)%N ->
+  (Cost.ticks (body_c lp (Ssa.home syntax x)) <= callback)%N ->
+  (Cost.ticks (inside_c x) <= 2 + 2 * callback)%N.
+Proof.
+  intros Hhome Hbody; unfold inside_c; autorewrite with galois_cost.
+  fold (Ssa.home syntax x); lia.
+Qed.
+
+Local Lemma forallb_finite_cost {A} (f : A -> Cost.t bool) xs k :
+  (forall x, In x xs -> (Cost.ticks (f x) <= k)%N) ->
+  (Cost.ticks (forallb_c f xs) <= N.of_nat (length xs) * (k + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hprices; [reflexivity|].
+  rewrite ticks_forallb_c_cons; cbn [length]; rewrite Nat2N.inj_succ.
+  pose proof (Hprices x (or_introl eq_refl)) as Hhead.
+  specialize (IH (fun y Hy => Hprices y (or_intror Hy))).
+  destruct (Cost.value (f x)); nia.
+Qed.
+
+(** One round inherits only the budgets of its finite operand-query subtree. *)
+Theorem round_cost depth previous x callback arity :
+  (forall y, primitive_prices depth y callback arity ->
+    (Cost.ticks (previous y) <= tree_price depth callback arity)%N) ->
+  primitive_prices (S depth) x callback arity ->
+  (Cost.ticks (round_c previous x) <= tree_price (S depth) callback arity)%N.
+Proof.
+  intros Hprevious [Hhome [Hbody [Hdef Hoperations]]].
+  pose proof (inside_cost x callback Hhome Hbody) as Hinside.
+  unfold round_c; rewrite Cost.ticks_bind, inside_value.
+  destruct (body lp (Ssa.home syntax x)); [|rewrite Cost.ticks_ret; cbn [tree_price]; nia].
+  autorewrite with galois_cost; fold (Ssa.def syntax x).
+  destruct (Ssa.def syntax x) as [op args|block index|] eqn:Hdefinition;
+    try (rewrite Cost.ticks_ret; cbn [tree_price]; nia).
+  destruct (Hoperations op args eq_refl) as [Hpure [Harity Hargs]].
+  autorewrite with galois_cost.
+  destruct (Cost.value (pure_c np op)); [|rewrite Cost.ticks_ret; cbn [tree_price]; nia].
+  pose proof (forallb_finite_cost (fun y => Cost.step ;; previous y) args
+    (1 + tree_price depth callback arity)%N) as Hoperands.
+  assert (Hcallbacks : forall y, In y args ->
+    (Cost.ticks (Cost.step ;; previous y) <= 1 + tree_price depth callback arity)%N).
+  { intros y Hy; autorewrite with galois_cost.
+    apply N.add_le_mono_l; exact (Hprevious y (Hargs y Hy)). }
+  specialize (Hoperands Hcallbacks).
+  change (Cost.ticks (inside_c x) +
+    (1 + (Cost.ticks (Ssa.def_c syntax x) + (1 + (Cost.ticks (pure_c np op) +
+      Cost.ticks (forallb_c (fun y => Cost.step ;; previous y) args))))) <=
+    tree_price (S depth) callback arity)%N.
+  cbn [tree_price]; nia.
+Qed.
+
+(** Every closure built by the common run relation has the numeric depth price it represents. *)
+Theorem runs_cost count previous result :
+  runs advance_c count previous result ->
+  forall depth callback arity,
+    (forall x, primitive_prices depth x callback arity ->
+      (Cost.ticks (previous x) <= tree_price depth callback arity)%N) ->
+    forall x, primitive_prices (depth + count) x callback arity ->
+      (Cost.ticks (selected result x) <= tree_price (depth + count) callback arity)%N.
+Proof.
+  intro Hrun; induction Hrun as [previous|count previous final Hstop|
+    count previous next result Hnext Hrun IH]; intros depth callback arity Hprevious x Hprices.
+  - rewrite Nat.add_0_r in *; exact (Hprevious x Hprices).
+  - discriminate.
+  - change (@inl function function (round_c previous) = inl next) in Hnext.
+    injection Hnext as <-.
+    replace (depth + S count) with (S depth + count) in * by lia.
+    apply (IH (S depth) callback arity); [|exact Hprices].
+    intros y Hy; exact (round_cost depth previous y callback arity Hprevious Hy).
+Qed.
+
+(** Building round closures charges the existing driver, even before any operand query is forced. *)
+Theorem builder_cost fuel :
+  (Cost.ticks (iterate advance_c fuel initial_c) <= 2 * N.pos fuel)%N.
+Proof.
+  pose proof (iterate_cost_amortised advance_c (fun _ => True) (fun _ => 0%N) 0%N)
+    as Hdriver.
+  assert (Hstep : forall previous, True ->
+    (match Cost.value (advance_c previous) with inl _ => True | inr _ => True end) /\
+    (Cost.ticks (advance_c previous) +
+      result_potential (fun _ => 0%N) (Cost.value (advance_c previous)) <= 0 + 0)%N).
+  { intros previous _; split; [exact I|reflexivity]. }
+  destruct (Hdriver Hstep fuel initial_c I) as [_ Hcost].
+  rewrite result_potential_zero in Hcost; lia.
+Qed.
+
+(** Arbitrary total reference queries retain their full finite callback-tree and builder prices. *)
+Theorem count_cost count x callback arity :
+  primitive_prices count x callback arity ->
+  (Cost.ticks (count_c count x) <=
+    2 * N.of_nat count + 1 + tree_price count callback arity)%N.
+Proof.
+  intro Hprices; destruct count as [|n].
+  - unfold count_c, initial_c; rewrite Cost.ticks_map.
+    destruct Hprices as [Hhome [Hbody _]].
+    pose proof (inside_cost x callback Hhome Hbody); cbn [tree_price]; lia.
+  - pose proof (runs_cost _ _ _ (iterate_value advance_c (Pos.of_succ_nat n) initial_c)
+      0 callback arity) as Hquery.
+    assert (Hinitial : forall y, primitive_prices 0 y callback arity ->
+      (Cost.ticks (initial_c y) <= tree_price 0 callback arity)%N).
+    { intros y [Hhome [Hbody _]]; unfold initial_c; rewrite Cost.ticks_map.
+      exact (inside_cost y callback Hhome Hbody). }
+    specialize (Hquery Hinitial x).
+    cbn [Nat.add] in Hquery; rewrite SuccNat2Pos.id_succ in Hquery.
+    specialize (Hquery Hprices).
+    pose proof (builder_cost (Pos.of_succ_nat n)) as Hbuilder.
+    assert (Hfuel : N.pos (Pos.of_succ_nat n) = N.of_nat (S n)).
+    { apply N2Nat.inj; rewrite Nat2N.id; change (Pos.to_nat (Pos.of_succ_nat n) = S n).
+      apply SuccNat2Pos.id_succ. }
+    rewrite Hfuel in Hbuilder.
+    unfold count_c; rewrite Cost.ticks_bind; autorewrite with galois_cost; lia.
+Qed.
+
+(** A raw fallback's general domain is its depth-bounded query tree, independently of inventory closure. *)
+Theorem reference_cost x callback arity :
+  primitive_prices (length (Ssa.values syntax)) x callback arity ->
+  (Cost.ticks (reference_c x) <= 3 * N.of_nat (length (Ssa.values syntax)) + 1 +
+    tree_price (length (Ssa.values syntax)) callback arity)%N.
+Proof.
+  intro Hprices; unfold reference_c; rewrite Cost.ticks_bind, ticks_length_c, value_length_c.
+  pose proof (count_cost (length (Ssa.values syntax)) x callback arity Hprices); lia.
+Qed.
+
+(** The finite query-tree domain includes the root's actual observation callback prices. *)
+Theorem primitive_inside depth x callback arity :
+  primitive_prices depth x callback arity ->
+  (Cost.ticks (inside_c x) <= 2 + 2 * callback)%N.
+Proof.
+  destruct depth; intros [Hhome [Hbody _]]; now apply inside_cost.
+Qed.
+
+(** A geometric envelope exposes the general reference fallback's expanding-query cost domain. *)
+Definition geometric_price depth (callback : BinNums.N) arity : BinNums.N :=
+  (8 + 6 * callback + 2 * N.of_nat arity) *
+    N.pow (1 + N.of_nat arity) (N.of_nat depth).
+
+(** The numeric tree recurrence is bounded by its geometric envelope, including arity zero. *)
+Theorem tree_price_geometric depth callback arity :
+  (tree_price depth callback arity <= geometric_price depth callback arity)%N.
+Proof.
+  assert (Hpositive : forall n, (1 <= N.pow (1 + N.of_nat arity) (N.of_nat n))%N).
+  { intro n; induction n as [|n IH]; [reflexivity|].
+    rewrite Nat2N.inj_succ, N.pow_succ_r; nia. }
+  induction depth as [|depth IH].
+  - change (2 + 2 * callback <= (8 + 6 * callback + 2 * N.of_nat arity) * 1)%N; nia.
+  - change (4 + 4 * callback + N.of_nat arity * (2 + tree_price depth callback arity) <=
+      geometric_price (S depth) callback arity)%N.
+    unfold geometric_price in *; rewrite Nat2N.inj_succ, N.pow_succ_r by lia.
+    pose proof (Hpositive depth); nia.
+Qed.
+
 (** A recognized inside-body value is always an actually pure operation definition. *)
 Definition shape x : Prop :=
   body lp (Ssa.home syntax x) = false \/
@@ -226,6 +398,23 @@ Proof.
 Qed.
 
 End Reference.
+
+(** Varying raw reference queries retain their own finite callback trees and geometric envelopes. *)
+Theorem reference_bigO {X N E V K G}
+    (problems : X -> problem N E V K G) (loops : X -> loop_info N) (queries : X -> V)
+    (callback : X -> BinNums.N) (arity : X -> nat) :
+  (forall x, primitive_prices (problems x) (loops x)
+    (length (Ssa.values (ssa (problems x)))) (queries x) (callback x) (arity x)) ->
+  bigO (fun x => (N.of_nat (length (Ssa.values (ssa (problems x)))) +
+    geometric_price (length (Ssa.values (ssa (problems x)))) (callback x) (arity x))%N)
+    (fun x => Cost.ticks (reference_c (problems x) (loops x) (queries x))).
+Proof.
+  intro Hprices; exists 3%N; intro x.
+  pose proof (reference_cost (problems x) (loops x) (queries x) (callback x) (arity x)
+    (Hprices x)) as Hcost.
+  pose proof (tree_price_geometric (length (Ssa.values (ssa (problems x))))
+    (callback x) (arity x)) as Hgeometric; nia.
+Qed.
 
 Section Semantics.
 Context {S O N E V K G C : Type} (m : semantics S O)

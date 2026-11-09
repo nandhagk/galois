@@ -406,8 +406,7 @@ Theorem inside_cost x c :
   (Cost.ticks (body_c lp (Ssa.home syntax x)) <= c)%N ->
   (Cost.ticks (NumberingLoopReference.inside_c np lp x) <= 2 + 2 * c)%N.
 Proof.
-  intros Hhome Hbody; unfold NumberingLoopReference.inside_c.
-  autorewrite with galois_cost; fold syntax; fold (Ssa.home syntax x); lia.
+  exact (NumberingLoopReference.inside_cost np lp x c).
 Qed.
 
 (** Rule classification accounts for the static definition, purity and every operand observation. *)
@@ -802,6 +801,127 @@ Proof.
   - rewrite Cost.ticks_ret.
     eapply N.le_trans; [|apply (query_sum (N.of_nat (length values)) (N.of_nat arity))].
     eapply N.le_trans; [|apply N.le_add_r]; lia.
+Qed.
+
+(** A reference fallback retains its actual finite-depth callback-tree price. *)
+Theorem fallback_cost branch x callback arity :
+  NumberingLoopReference.primitive_prices np lp (length values) x callback arity ->
+  (Cost.ticks (fallback_c branch x) <= 3 * N.of_nat (length values) + 1 +
+    NumberingLoopReference.tree_price (length values) callback arity)%N.
+Proof.
+  intro Hprices; unfold fallback_c; rewrite Cost.ticks_map.
+  exact (NumberingLoopReference.reference_cost np lp x callback arity Hprices).
+Qed.
+
+Local Lemma general_sum n a e w c rc reference :
+  (2 + 2 * rc + (n * (3 + e + w) + (NumberingLoopCost.key_price e w +
+    (preparation_k * (1 + n) * (1 + a) * (1 + e + w + c) +
+    (NumberingLoopCost.kernel_k * (1 + n) * (1 + a) * (1 + e + w) +
+      NumberingLoopCost.key_price e w)))) + reference <=
+    invariant_k * (1 + n) * (1 + a) * (1 + e + w + c + rc) + reference)%N.
+Proof.
+  unfold invariant_k, NumberingLoopCost.key_price; nia.
+Qed.
+
+Local Lemma malformed_price i n q p k r :
+  (i + (n + (q + (p + r))) <= i + (n + (q + (p + (k + q)))) + r)%N.
+Proof.
+  nia.
+Qed.
+
+Local Lemma unlisted_price i n q p k r :
+  (i + (n + (q + r)) <= i + (n + (q + (p + (k + q)))) + r)%N.
+Proof.
+  nia.
+Qed.
+
+Local Lemma outside_price i n q p k r :
+  (i + 0 <= i + (n + (q + (p + (k + q)))) + r)%N.
+Proof.
+  nia.
+Qed.
+
+(** General public queries include the full indexed preparation and a distinct reference-tree budget.
+    The finite reference domain covers arbitrary total unlisted definitions without closure assumptions. *)
+Theorem invariant_in_general_cost x e w c arity reference_callback reference_arity :
+  primitive_prices (FinSet.of_list EV values) e w c arity ->
+  (Cost.ticks (encode_c EV x) <= e)%N -> (key_bits EV x <= w)%N ->
+  NumberingLoopReference.primitive_prices np lp (length values) x
+    reference_callback reference_arity ->
+  (Cost.ticks (invariant_in_c x) <= invariant_k *
+    (1 + N.of_nat (length values)) * (1 + N.of_nat arity) *
+      (1 + e + w + c + reference_callback) +
+    3 * N.of_nat (length values) + 1 +
+    NumberingLoopReference.tree_price (length values) reference_callback reference_arity)%N.
+Proof.
+  intros Hprices Hex Hwx Hreference; set (nodes := FinSet.of_list EV values).
+  assert (Hwf : FinSet.wf EV nodes) by apply FinSet.wf_of_list.
+  pose proof (NumberingLoopReference.primitive_inside np lp (length values) x
+    reference_callback reference_arity Hreference) as Hinside.
+  pose proof (FinSet.of_list_numeric_cost Map.cost_laws_hold EV values e w) as Hinventory.
+  assert (Hvalue_prices : forall y, In y values ->
+    (Cost.ticks (encode_c EV y) <= e)%N /\ (key_bits EV y <= w)%N).
+  { intros y Hy.
+    pose proof (proj2 (NumberingSignature.listed_spec EV HV values y) Hy) as Hmem.
+    destruct (listed_prices _ _ _ _ _ Hprices y
+      (proj2 (FinSet.elements_spec EV HV y nodes Hwf) Hmem)) as [He [Hw _]]; now split. }
+  specialize (Hinventory Hvalue_prices).
+  pose proof (preparation_cost nodes e w c arity Hwf Hprices) as Hprepare.
+  pose proof (of_nat_le _ _ universe_bound) as Hsize; fold nodes in Hsize.
+  assert (Hprepare_bound : (Cost.ticks (prepare_finite_c nodes) <=
+    preparation_k * (1 + N.of_nat (length values)) * (1 + N.of_nat arity) *
+      (1 + e + w + c))%N) by nia.
+  assert (Hlookup : forall set, (Cost.ticks (FinSet.mem_c EV x set) <=
+    NumberingLoopCost.key_price e w)%N).
+  { intro set; unfold FinSet.mem_c; rewrite Map.mem_cost; fold (key_bits EV x).
+    unfold NumberingLoopCost.key_price; lia. }
+  assert (Hfallback : forall branch, (Cost.ticks (fallback_c branch x) <=
+    3 * N.of_nat (length values) + 1 +
+      NumberingLoopReference.tree_price (length values) reference_callback reference_arity)%N).
+  { intro branch; exact (fallback_cost branch x reference_callback reference_arity Hreference). }
+  eapply N.le_trans with (m :=
+    (2 + 2 * reference_callback + (N.of_nat (length values) * (3 + e + w) +
+    (NumberingLoopCost.key_price e w +
+    (preparation_k * (1 + N.of_nat (length values)) * (1 + N.of_nat arity) * (1 + e + w + c) +
+    (NumberingLoopCost.kernel_k * (1 + N.of_nat (length values)) * (1 + N.of_nat arity) *
+      (1 + e + w) + NumberingLoopCost.key_price e w)))) +
+    (3 * N.of_nat (length values) + 1 +
+      NumberingLoopReference.tree_price (length values) reference_callback reference_arity))%N).
+  - unfold invariant_in_c; rewrite Cost.ticks_map.
+    unfold query_c; rewrite Cost.ticks_bind, NumberingLoopReference.inside_value.
+    fold syntax; fold (inside x); destruct (inside x).
+    + rewrite Cost.ticks_bind; fold (FinSet.of_list EV values); fold nodes.
+      rewrite Cost.ticks_bind; fold (FinSet.mem EV x nodes).
+      destruct (FinSet.mem EV x nodes).
+      * rewrite Cost.ticks_bind; fold (prepare_finite nodes).
+        destruct (prepare_finite nodes) as [data|] eqn:Haccepted.
+        -- pose proof (prepare_finite_laws nodes data Haccepted) as Hdata.
+           destruct (finite_finishes data Hdata) as [final Hsolve].
+           pose proof (prepared_result_cost nodes data e w c arity Hwf Hprices Haccepted) as Hkernel.
+           assert (Hkernel_bound :
+             (Cost.ticks (NumberingLoopWorklist.solve_prepared_c EV (countdown data)) <=
+             NumberingLoopCost.kernel_k * (1 + N.of_nat (length values)) *
+               (1 + N.of_nat arity) * (1 + e + w))%N) by nia.
+           rewrite Cost.ticks_bind, Hsolve, Cost.ticks_bind, Cost.ticks_ret.
+           eapply N.le_trans; [|apply N.le_add_r].
+           apply N.add_le_mono; [exact Hinside|].
+           apply N.add_le_mono; [exact Hinventory|].
+           apply N.add_le_mono; [apply Hlookup|].
+           apply N.add_le_mono; [exact Hprepare_bound|].
+           apply N.add_le_mono; [exact Hkernel_bound|].
+           rewrite N.add_0_r; apply Hlookup.
+        -- eapply N.le_trans; [|apply malformed_price].
+           apply N.add_le_mono; [exact Hinside|].
+           apply N.add_le_mono; [exact Hinventory|].
+           apply N.add_le_mono; [apply Hlookup|].
+           apply N.add_le_mono; [exact Hprepare_bound|apply Hfallback].
+      * eapply N.le_trans; [|apply unlisted_price].
+        apply N.add_le_mono; [exact Hinside|].
+        apply N.add_le_mono; [exact Hinventory|].
+        apply N.add_le_mono; [apply Hlookup|apply Hfallback].
+    + rewrite Cost.ticks_ret; eapply N.le_trans; [|apply outside_price].
+      apply N.add_le_mono_r; exact Hinside.
+  - eapply N.le_trans; [apply general_sum|]; lia.
 Qed.
 
 End Laws.
