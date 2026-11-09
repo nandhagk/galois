@@ -13,7 +13,8 @@ From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFami
   AnalysesSsaPreFrg AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameStep
   AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit
   AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning AnalysesSsaPreFrameDominance AnalysesSsaPreFrameTables
-  AnalysesSsaPreFrameWalk AnalysesSsaPreFrameOccurrence.
+  AnalysesSsaPreFrameWalk AnalysesSsaPreFrameOccurrence AnalysesSsaPreFrameIncoming
+  AnalysesSsaPreFrameEdges.
 Import List.ListNotations Cost.Notations.
 
 Module PreOperands.
@@ -1054,6 +1055,168 @@ Proof.
     destruct (build_frg_occurrence_sources Hlaw e _ Hget) as [He [v [Hv [Hpure [Hexpr Hrest]]]]].
     cbn [PreFrg.version_expr] in Hexpr; subst v.
     exact (proj2 (built_fresh_selection Hlaw He Hcomputed Hpure) Hget).
+Qed.
+
+(** Every occurrence entry names an original pure recomputation of its selected expression. *)
+Theorem build_frg_occurrence_domain :
+  Pre.laws c ->
+  forall e d, Map.get (Pre.ee (Pre.keys c)) e (PreFrg.occurrences build_frg) = Some d ->
+    In e (Cfg.edges (Pre.point_cfg c)) /\
+    Pre.recomputed c e = Some (PreFrg.version_expr d) /\
+    Pre.pure c (PreFrg.version_expr d) = true.
+Proof.
+  intros Hlaw e d Hget.
+  destruct (build_frg_occurrence_sources Hlaw e d Hget)
+    as [He [u [Hcomputed [Hpure [Hexpr Hrest]]]]].
+  rewrite Hexpr; auto.
+Qed.
+
+(** Every listed incoming edge to a built phi receives an actual operand entry. *)
+Theorem build_frg_operand_total :
+  Pre.laws c ->
+  forall b u be, FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = true ->
+    In be (Cfg.edges (Pre.block_cfg c)) -> Graph.target (Pre.bg c) be = b ->
+    exists op, Map.get (PreFrg.link_encoding c) ((b, u), be) (PreFrg.operands build_frg) = Some op.
+Proof.
+  intros Hlaw b u be Hphi Hbe Htarget.
+  destruct (proj1 (build_frg_phi_exact Hlaw b u) Hphi) as [Hfamily [Hpure Hneeded]].
+  destruct (PreFrg.phi_sites_exact c Hlaw) as [data [Houtput Hrest]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  rewrite build_frg_equation, Houtput, assemble_equation.
+  exact (PreFrameIncoming.run_total c data Hlaw Hdata b u be Hneeded Hpure Hbe Htarget).
+Qed.
+
+(** Every actual operand retains a full block-end source frame at its indexed crossing point. *)
+Theorem build_frg_operand_frames :
+  Pre.laws c ->
+  forall key op, Map.get (PreFrg.link_encoding c) key (PreFrg.operands build_frg) = Some op ->
+    PreFrameIncoming.link_meaning c (g := build_frg) key op.
+Proof.
+  intros Hlaw key op Hget.
+  destruct (build_frg_frame_history Hlaw) as [data [labels [Houtput Hhistory]]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  pose proof (build_output_equation Houtput) as Hstamp.
+  set (final := PreFrameTables.output_of (Cost.value (iterate
+    (PreRename.step_c c (PreRename.prepare c data)) (PreRename.walk_budget (PreRename.prepare c data))
+    (PreRename.initial (PreRename.prepare c data))))) in *.
+  assert (Hlinks : PreFrg.operands build_frg = PreRename.link_index final).
+  { rewrite build_frg_equation, Houtput, assemble_equation, PreRename.run_equation.
+    unfold final; destruct (Cost.value (iterate (PreRename.step_c c (PreRename.prepare c data))
+      (PreRename.walk_budget (PreRename.prepare c data))
+      (PreRename.initial (PreRename.prepare c data)))); reflexivity. }
+  rewrite Hlinks in Hget.
+  assert (Hmeaning : PreFrameIncoming.output_meaning c (g := build_frg) final).
+  { eapply (PreFrameIncoming.run_meaning c data final Hlaw Hdata) with (labels := labels).
+    - intros frames acc b e Hb Hin Hsource Hwf Hbefore Hpacket Hscope.
+      apply (built_instruction_scope Hlaw data Hdata frames acc b e
+        Hb Hin Hsource Hwf Hbefore); [rewrite Hstamp; exact Hpacket|exact Hscope].
+    - exact Hhistory.
+    - reflexivity. }
+  exact (Hmeaning key op Hget).
+Qed.
+
+Local Lemma built_crossing_availability {u pe frame} :
+  Pre.laws c -> PreFamily.in_family c u -> Pre.pure c u = true ->
+  (exists be, Map.get (Pre.ebe (Pre.keys c)) be (PreFrameEdges.point_edge_index c) = Some pe) ->
+  PreCoverage.frame_laws c build_frg u (Graph.source (Pre.pg c) pe) frame ->
+    (PreRename.available frame = true <->
+      exists d, PreRename.reusable c build_frg u (Graph.source (Pre.pg c) pe) d) /\
+    (PreRename.available frame = true ->
+      PreRename.reusable c build_frg u (Graph.source (Pre.pg c) pe)
+        (PreFrg.operand_version (PreRename.selected frame))).
+Proof.
+  intros Hlaw Hfamily Hpure [be Hpe] Hframe.
+  apply (built_observed_availability Hlaw u _ frame Hfamily Hpure); [|exact Hframe].
+  destruct (proj1 (PreFrameEdges.point_edge_index_exact c Hlaw be pe) Hpe) as [He Hcross].
+  right; exists pe, be; auto.
+Qed.
+
+(** Incoming sentinels mean no reusable source version and every nonsentinel is reusable there. *)
+Theorem build_frg_operand_selection :
+  Pre.laws c ->
+  forall b u be op pe v,
+    Map.get (PreFrg.link_encoding c) ((b, u), be) (PreFrg.operands build_frg) = Some op ->
+    Map.get (Pre.ebe (Pre.keys c)) be (PreFrameEdges.point_edge_index c) = Some pe ->
+    Pre.translate c be u = Some v ->
+    (PreFrg.operand_version op = PreFrg.Unavailable v <->
+      ~ exists d, PreRename.reusable c build_frg v (Graph.source (Pre.pg c) pe) d) /\
+    (PreFrg.operand_version op <> PreFrg.Unavailable v ->
+      PreRename.reusable c build_frg v (Graph.source (Pre.pg c) pe) (PreFrg.operand_version op)).
+Proof.
+  intros Hlaw b u be op pe v Hget Hpe Htranslate.
+  destruct (build_frg_operand_frames Hlaw _ _ Hget)
+    as [edge [value [frame [Hedge [Hvalue [Hfamily [Hpure [Hframe Hop]]]]]]]].
+  cbn [fst snd] in Hedge, Hvalue.
+  assert (Hsame_edge : edge = pe) by congruence; subst edge.
+  assert (Hsame_value : value = v) by congruence; subst value.
+  destruct (built_crossing_availability Hlaw Hfamily Hpure (ex_intro _ be Hpe) Hframe)
+    as [Havailable Hreuse].
+  destruct (PreRename.available frame) eqn:Hflag; subst op; cbn [PreFrg.operand_version].
+  - assert (Hnonmissing : PreFrg.operand_version (PreRename.selected frame) <> PreFrg.Unavailable v).
+    { intro Heq; destruct (Hreuse eq_refl) as [[Hd [Hexpr [q [Hq Hrest]]]] Hsafe].
+      rewrite Heq, PreFrg.version_point_equation in Hq; discriminate. }
+    split.
+    + split; [intro Heq; contradiction|intro Hnone; exfalso; apply Hnone; apply Havailable; reflexivity].
+    + intros _; exact (Hreuse eq_refl).
+  - split.
+    + split; [intros _ Hexists; apply Havailable in Hexists; discriminate|intros _; reflexivity].
+    + intro Hne; contradiction.
+Qed.
+
+Local Lemma built_unavailable_no_use u n :
+  Pre.laws c -> ~ PreCoverage.real_use_at c build_frg n (PreFrg.Unavailable u).
+Proof.
+  intros Hlaw [e [Hget Hdom]].
+  destruct (build_frg_occurrence_sources Hlaw e _ Hget)
+    as [He [v [Hcomputed [Hpure [Hexpr [Hsource Hnonmissing]]]]]].
+  cbn [PreFrg.version_expr] in Hexpr; subst v; exact (Hnonmissing eq_refl).
+Qed.
+
+(** Incoming real-use bits describe real selected occurrences dominating the same crossing source. *)
+Theorem build_frg_operand_real_use_exact :
+  Pre.laws c ->
+  forall b u be op pe,
+    Map.get (PreFrg.link_encoding c) ((b, u), be) (PreFrg.operands build_frg) = Some op ->
+    Map.get (Pre.ebe (Pre.keys c)) be (PreFrameEdges.point_edge_index c) = Some pe ->
+    (PreFrg.real_use op = true <->
+      PreCoverage.real_use_at c build_frg (Graph.source (Pre.pg c) pe) (PreFrg.operand_version op)).
+Proof.
+  intros Hlaw b u be op pe Hget Hpe.
+  destruct (build_frg_operand_frames Hlaw _ _ Hget)
+    as [edge [v [frame [Hedge [Htranslate [Hfamily [Hpure [Hframe Hop]]]]]]]].
+  cbn [fst snd] in Hedge; assert (Hsame : edge = pe) by congruence; subst edge.
+  destruct (PreRename.available frame); subst op.
+  - exact (proj1 (proj2 Hframe)).
+  - cbn [PreFrg.real_use PreFrg.operand_version]; split; [discriminate|].
+    intro Huse; exfalso; exact (built_unavailable_no_use v _ Hlaw Huse).
+Qed.
+
+(** Every required operand has its exact translation and an unavailable or source-dominating version. *)
+Theorem build_frg_operand_exact :
+  Pre.laws c ->
+  forall b u be, FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.phis build_frg) = true ->
+    In be (Cfg.edges (Pre.block_cfg c)) -> Graph.target (Pre.bg c) be = b ->
+    exists op v, Pre.translate c be u = Some v /\
+      Map.get (PreFrg.link_encoding c) ((b, u), be) (PreFrg.operands build_frg) = Some op /\
+      PreFrg.version_expr (PreFrg.operand_version op) = v /\
+      (PreFrg.operand_version op = PreFrg.Unavailable v \/
+        exists n pe, PreFrg.version_point c (PreFrg.operand_version op) = Some n /\
+          Map.get (Pre.ebe (Pre.keys c)) be (PreFrameEdges.point_edge_index c) = Some pe /\
+          dominates (Pre.pg c) n (Graph.source (Pre.pg c) pe)).
+Proof.
+  intros Hlaw b u be Hphi Hbe Htarget.
+  destruct (build_frg_operand_total Hlaw b u be Hphi Hbe Htarget) as [op Hget].
+  destruct (build_frg_operand_frames Hlaw _ _ Hget)
+    as [pe [v [frame [Hpe [Htranslate [Hfamily [Hpure [Hframe Hop]]]]]]]].
+  cbn [fst snd] in Hpe, Htranslate.
+  exists op, v; split; [exact Htranslate|]; split; [exact Hget|].
+  pose proof (PreCoverage.frame_laws_sound c build_frg v _ frame Hframe)
+    as [Hexpr [Hdominates Hdefined]].
+  destruct (PreRename.available frame) eqn:Hflag; subst op.
+  - split; [exact Hexpr|]; right.
+    destruct (Hdefined eq_refl) as [n Hn]; exists n, pe.
+    split; [exact Hn|]; split; [exact Hpe|exact (Hdominates n Hn)].
+  - split; [reflexivity|now left].
 Qed.
 
 (** The caller gate checks the supplied block-parent map and rejects every partial raw outcome.

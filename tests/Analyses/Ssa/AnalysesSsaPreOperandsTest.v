@@ -376,3 +376,84 @@ Example diamond_fresh_required_client :
 Proof.
   exact (PreOperands.build_frg_fresh_required Diamond.ctx Diamond.laws).
 Qed.
+
+(** Incoming selection uses the actual point-edge index and the final graph's reusable versions. *)
+Example diamond_operand_selection_client :
+  forall b u be op pe v,
+    Map.get (PreFrg.link_encoding Diamond.ctx) ((b, u), be)
+      (PreFrg.operands (PreOperands.build_frg Diamond.ctx)) = Some op ->
+    Map.get (Pre.ebe (Pre.keys Diamond.ctx)) be
+      (PreFrameEdges.point_edge_index Diamond.ctx) = Some pe ->
+    Pre.translate Diamond.ctx be u = Some v ->
+    (PreFrg.operand_version op = PreFrg.Unavailable v <->
+      ~ exists d, PreRename.reusable Diamond.ctx (PreOperands.build_frg Diamond.ctx)
+        v (Graph.source (Pre.pg Diamond.ctx) pe) d) /\
+    (PreFrg.operand_version op <> PreFrg.Unavailable v ->
+      PreRename.reusable Diamond.ctx (PreOperands.build_frg Diamond.ctx)
+        v (Graph.source (Pre.pg Diamond.ctx) pe) (PreFrg.operand_version op)).
+Proof.
+  exact (PreOperands.build_frg_operand_selection Diamond.ctx Diamond.laws).
+Qed.
+
+(** Incoming real-use bits use the same selected occurrences as the completed producer. *)
+Example diamond_operand_real_use_client :
+  forall b u be op pe,
+    Map.get (PreFrg.link_encoding Diamond.ctx) ((b, u), be)
+      (PreFrg.operands (PreOperands.build_frg Diamond.ctx)) = Some op ->
+    Map.get (Pre.ebe (Pre.keys Diamond.ctx)) be
+      (PreFrameEdges.point_edge_index Diamond.ctx) = Some pe ->
+    (PreFrg.real_use op = true <->
+      PreCoverage.real_use_at Diamond.ctx (PreOperands.build_frg Diamond.ctx)
+        (Graph.source (Pre.pg Diamond.ctx) pe) (PreFrg.operand_version op)).
+Proof.
+  exact (PreOperands.build_frg_operand_real_use_exact Diamond.ctx Diamond.laws).
+Qed.
+
+Definition unused_phi_client :
+    Pre.client Diamond.block Diamond.block_edge (Diamond.block * Diamond.stage) Diamond.edge
+      unit unit unit nat unit :=
+  Pre.Client Diamond.points Diamond.ssa Diamond.expr
+    (Pre.pure_c Diamond.client)
+    (Cost.lift (fun _ => 1%N)
+      (fun e => match e with Diamond.Real Diamond.Left => Some tt | _ => None end))
+    [tt] [] (Pre.shape_c Diamond.client) (Pre.operands_c Diamond.client) (Pre.eval Diamond.client)
+    (Pre.translate_c Diamond.client) (Pre.initial_c Diamond.client) (Pre.exit_point_c Diamond.client).
+Definition unused_phi_ctx :=
+  Pre.Context unused_phi_client (Pre.keys Diamond.ctx)
+    Diamond.blocks Diamond.point_graph Diamond.tree.
+
+(** Removing the join's recomputation retains every supported expression and graph law. *)
+Example unused_phi_laws : Pre.laws unused_phi_ctx.
+Proof.
+  constructor.
+  - constructor.
+    + exact (Pre.params_nodup Diamond.ctx Diamond.shapes).
+    + intros e [] Hcomputed; now left.
+    + exact (Pre.initials_in_family Diamond.ctx Diamond.shapes).
+    + exact (Pre.finite_operands Diamond.ctx Diamond.shapes).
+    + exact (Pre.shape_identity Diamond.ctx Diamond.shapes).
+    + exact (Pre.shape_arity Diamond.ctx Diamond.shapes).
+    + exact (Pre.closed_translation Diamond.ctx Diamond.shapes).
+    + exact (Pre.translation_shape Diamond.ctx Diamond.shapes).
+    + exact (Pre.translation_operands Diamond.ctx Diamond.shapes).
+    + exact (Pre.translation_pure Diamond.ctx Diamond.shapes).
+  - destruct Diamond.graphs; constructor; assumption.
+  - constructor.
+    + exact (Pre.kill_operand Diamond.ctx Diamond.kills).
+    + exact (Pre.def_home Diamond.ctx Diamond.kills).
+    + exact (Pre.cross_no_defs Diamond.ctx Diamond.kills).
+    + intros e [] Hcomputed; destruct e as [owner|owner|be]; try destruct owner;
+        vm_compute in Hcomputed; try discriminate.
+      split; [reflexivity|intros b Hbad; discriminate].
+  - destruct Diamond.runtime; constructor; assumption.
+Qed.
+
+(** The unused join phi becomes unsafe at its exit while the used-phi control stays safe. *)
+Example unused_phi_exit_is_unsafe :
+  FinSet.mem (PreFrg.phi_encoding unused_phi_ctx) (Diamond.Join, tt)
+    (PreFrg.phis (PreOperands.build_frg unused_phi_ctx)) = true /\
+  FinSet.mem (PreFrg.phi_encoding unused_phi_ctx) (Diamond.Join, tt)
+    (PreFrg.unsafe (PreOperands.build_frg unused_phi_ctx)) = true.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.

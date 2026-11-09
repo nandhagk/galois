@@ -861,7 +861,8 @@ Proof.
   rewrite IH; apply mark_links.
 Qed.
 
-Local Lemma mark_exit_links n work :
+(** Exit marking leaves the incoming-link table unchanged. *)
+Theorem mark_exit_links n work :
   PreRename.link_index (snd (PreRename.mark_exit c index n work)) =
     PreRename.link_index (snd work).
 Proof.

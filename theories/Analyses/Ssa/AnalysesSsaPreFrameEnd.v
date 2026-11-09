@@ -94,7 +94,8 @@ Proof.
   apply mark_exit_wf; exact Haltered.
 Qed.
 
-Local Lemma argument_wf {frames acc arg} :
+(** Selecting one incoming operand retains canonical output indexes. *)
+Theorem argument_wf {frames acc arg} :
   accumulator_wf acc -> accumulator_wf (PreRename.select_argument c frames acc arg).
 Proof.
   intros [Hocc [Hfresh [Hlinks Hunsafe]]]; rewrite PreRename.select_argument_equation.
