@@ -82,6 +82,13 @@ Fixpoint present {A B} (f : A -> option B) (xs : list A) : list B :=
 
 Definition all_edges {V E} (g : Graph.t V E) := flat_map (Graph.out g) (Graph.nodes g).
 
+(** Flattened edge membership retains a listed source occurrence on arbitrary graph inputs. *)
+Theorem all_edges_spec {V E} (g : Graph.t V E) e :
+  In e (all_edges g) <-> exists v, In v (Graph.nodes g) /\ In e (Graph.out g v).
+Proof.
+  unfold all_edges. apply in_flat_map.
+Qed.
+
 Definition incoming {V E} enc (g : Graph.t V E) v :=
   filter (fun e => eqb enc (Graph.target g e) v) (all_edges g).
 
@@ -771,14 +778,16 @@ Proof.
     rewrite (out_source Hwf u e Hin). auto.
 Qed.
 
-Local Lemma count_edges {V E} (g : Graph.t V E) : edge_count g = length (all_edges g).
+(** Edge counting retains every listed node and outgoing edge occurrence without law premises. *)
+Theorem count_edges {V E} (g : Graph.t V E) : edge_count g = length (all_edges g).
 Proof.
   unfold edge_count, all_edges. induction (Graph.nodes g) as [|v rest IH]; cbn.
   - reflexivity.
   - rewrite length_app, IH. reflexivity.
 Qed.
 
-Local Lemma reverse_edge_count {V E} (p : t V E) exits :
+(** Reversal preserves a ready graph's edge count even for missing or repeated exit IDs. *)
+Theorem reverse_edge_count {V E} (p : t V E) exits :
   ready p -> edge_count (reverse_graph p exits) = edge_count (graph p).
 Proof.
   intro Hready. rewrite !count_edges. apply Permutation_length, NoDup_Permutation.
