@@ -574,11 +574,13 @@ Definition compile_pair_c {V}
     (combine_c : Chrec.t V -> Chrec.t V -> Cost.t (Chrec.t V))
     (recurse_a recurse_b : compile_memo V -> Cost.t (@compile_result V))
     (m : compile_memo V) : Cost.t (@compile_result V) :=
+  Cost.step ;;
   let* first := recurse_a m in
   let '((ca, ma), _) := first in
   match ca with
   | None => Cost.ret ((None, ma), tt)
   | Some a =>
+    Cost.step ;;
     let* second := recurse_b ma in
     let '((cb, mb), _) := second in
     match cb with
@@ -944,7 +946,10 @@ Definition scev_translate_plan {V} (EV : encoding V) (p : scev_plan V) :=
 
 (** A plan execution exposes the actual compiler tables used to build its recurrence. *)
 Definition scev_compile_plan_execution_c {V} (EV : encoding V) (p : scev_plan V) :=
-  let* compiled := scev_compile_bindings_c EV (sp_bindings p) Map.empty Memo.empty Memo.empty in
+  let* env := @Map.empty_c V (Chrec.t V) in
+  let* bindings := @Memo.empty_c (binding_key V) (option (Chrec.t V)) in
+  let* expressions := @Memo.empty_c (compile_key V) (option (Chrec.t V)) in
+  let* compiled := scev_compile_bindings_c EV (sp_bindings p) env bindings expressions in
   let '((result, bindings), expressions) := compiled in
   match result with
   | None => Cost.ret ((None, bindings), expressions)
@@ -976,6 +981,9 @@ Proof.
     Memo.empty Memo.empty Hbindings Hexpressions) as Hcompile.
   unfold scev_compile_plan, scev_compile_plan_c, scev_compile_plan_execution_c.
   autorewrite with galois_cost.
+  change (Cost.value (@Map.empty_c V (Chrec.t V))) with (@Map.empty V (Chrec.t V)).
+  fold (@Memo.empty (binding_key V) (option (Chrec.t V))).
+  fold (@Memo.empty (compile_key V) (option (Chrec.t V))).
   destruct (Cost.value (scev_compile_bindings_c EV (sp_bindings p)
     Map.empty Memo.empty Memo.empty)) as [[result bindings] expressions].
   destruct Hcompile as [Hresult _]; unfold scev_translate_plan; rewrite <- Hresult.
