@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List.
 From Galois.Cost Require Import CostMonad CostList.
-From Galois.Base Require Import BaseEncoding BaseMap BaseSet.
+From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet.
 From Galois.Lattice Require Import LatticeCore.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg.
@@ -84,6 +84,50 @@ Definition dense {N E X K G St A} (P : t N E X K G)
     (fun e s =>
       let* xs := Map.find_or_c (Cfg.edge_enc (cfg P)) [] e table in
       apply_actions_c D xs s).
+
+(** Prepared actions retain the original ordered lists for every edge occurrence. *)
+Theorem prepare_equation {N E X K G} (P : t N E X K G) :
+  Cost.value (prepare_c P) = Map.of_list (Cfg.edge_enc (cfg P))
+    (map (fun e => (e, actions P e)) (Cfg.edges (cfg P))).
+Proof.
+  unfold prepare_c; rewrite !Cost.value_bind, fw_edges_value, value_map_c.
+  reflexivity.
+Qed.
+
+Local Lemma actions_lookup {N E X K G} (P : t N E X K G) e :
+  encoding_laws (Cfg.edge_enc (cfg P)) -> In e (Cfg.edges (cfg P)) ->
+  Map.get (Cfg.edge_enc (cfg P)) e (Cost.value (prepare_c P)) = Some (actions P e).
+Proof.
+  intros HE Hin; rewrite prepare_equation, Map.of_list_get.
+  assert (Hfold : forall es old, old = Some (actions P e) \/ In e es ->
+    fold_left (fun old kv =>
+      if eqb (Cfg.edge_enc (cfg P)) e (fst kv) then Some (snd kv) else old)
+      (map (fun k => (k, actions P k)) es) old = Some (actions P e)).
+  { induction es as [|k es IH]; intros old Hhit; cbn [map fold_left fst snd].
+    - destruct Hhit as [->|[]]; reflexivity.
+    - destruct (eqb (Cfg.edge_enc (cfg P)) e k) eqn:Hsame.
+      + apply (eqb_true_iff _ HE) in Hsame; subst k.
+        apply IH; left; reflexivity.
+      + apply IH; destruct Hhit as [Hhit|[Hequal|Hhit]].
+        * left; exact Hhit.
+        * subst k; rewrite eqb_refl in Hsame; discriminate.
+        * right; exact Hhit. }
+  apply Hfold; right; exact Hin.
+Qed.
+
+(** A listed edge transfers its source action list without a default-cache approximation. *)
+Theorem dense_transfer {N E X K G St A} (P : t N E X K G)
+    (D : StateAbs.t St A X K G) entry e s :
+  encoding_laws (Cfg.edge_enc (cfg P)) -> In e (Cfg.edges (cfg P)) ->
+  Dense.transfer (dense P D entry) e s = apply_actions D (actions P e) s.
+Proof.
+  intros HE Hin; unfold dense, Dense.transfer; cbn [Dense.transfer_c].
+  rewrite Cost.value_bind.
+  change (apply_actions D
+    (Map.find_or (Cfg.edge_enc (cfg P)) [] e (Cost.value (prepare_c P))) s =
+    apply_actions D (actions P e) s).
+  rewrite Map.find_or_equation, (actions_lookup P e HE Hin); reflexivity.
+Qed.
 
 (** Entry states and ordered actions generate ordinary dense constraints. *)
 Definition analysis {N E X K G St A} (P : t N E X K G)
