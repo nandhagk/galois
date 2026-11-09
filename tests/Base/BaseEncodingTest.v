@@ -51,3 +51,47 @@ Example arbitrary_component_ticks :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example imported_positive_scalar_value p : encode (codec_enc positive_codec) p = p.
+Proof.
+  apply positive_encoding_equation.
+Qed.
+
+Example imported_positive_scalar_cost p :
+  Cost.ticks (encode_c (codec_enc positive_codec) p) = 1%N.
+Proof.
+  apply positive_encoding_cost.
+Qed.
+
+Example imported_positive_scalar_width p :
+  key_bits (codec_enc positive_codec) p = N.pos (Pos.size p).
+Proof.
+  apply positive_encoding_bits.
+Qed.
+
+Example imported_unit_scalar_value x : encode (codec_enc unit_codec) x = 1%positive.
+Proof.
+  apply unit_encoding_equation.
+Qed.
+
+Example imported_unit_scalar_cost x : Cost.ticks (encode_c (codec_enc unit_codec) x) = 1%N.
+Proof.
+  apply unit_encoding_cost.
+Qed.
+
+Example imported_unit_scalar_width x : key_bits (codec_enc unit_codec) x = 1%N.
+Proof.
+  apply unit_encoding_bits.
+Qed.
+
+Example positive_scalar_boundary_widths :
+  (key_bits positive_encoding 1, key_bits positive_encoding 2) = (1%N, 2%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example scalar_adapter_charges :
+  (Cost.ticks (encode_c positive_encoding 7), Cost.ticks (encode_c unit_encoding tt)) = (1%N, 1%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
