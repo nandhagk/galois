@@ -44,6 +44,13 @@ Definition run_c {R S} i
 Definition run {R S} i miss_c (table : Memo.t positive R) (state : S) :=
   Cost.value (run_c i miss_c table state).
 
+(** The costed operation and plain wrapper expose the same returned state and hit flag. *)
+Theorem run_c_value {R S} i miss_c (table : Memo.t positive R) (state : S) :
+  Cost.value (run_c i miss_c table state) = run i miss_c table state.
+Proof.
+  reflexivity.
+Qed.
+
 (** A miss retains both components returned by its callback before storing the parent. *)
 Theorem run_equation {R S} i miss_c (table : Memo.t positive R) (state : S) :
   run i miss_c table state =
@@ -114,7 +121,8 @@ Definition result_valid {R S} (meaning : S -> positive -> option R) (P : S -> Pr
 Theorem run_agrees {R S} (meaning : S -> positive -> option R) (P : S -> Prop)
     i expected miss_c (table : Memo.t positive R) state :
   valid meaning state table -> P state -> meaning state i = Some expected ->
-  result_valid meaning P state expected (Cost.value (miss_c table state)) ->
+  (Map.get positive_encoding i table = None ->
+    result_valid meaning P state expected (Cost.value (miss_c table state))) ->
   result_valid meaning P state expected (fst (run i miss_c table state)).
 Proof.
   intros Hvalid Hstate Hmeaning Hmiss. rewrite run_equation.
@@ -124,6 +132,7 @@ Proof.
     cbn [fst result_valid]. split; [exact Heq|].
     split; [exact Hvalid|]. split; [exact Hstate|apply extends_refl].
   - destruct (Cost.value (miss_c table state)) as [[value updated] state'].
+    specialize (Hmiss eq_refl).
     destruct Hmiss as [Hvalue [Hupdated [Hstate' Hextends]]].
     cbn [fst result_valid]. split; [exact Hvalue|].
     split; [|now split].
