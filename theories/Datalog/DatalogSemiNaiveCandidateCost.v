@@ -81,7 +81,7 @@ Proof.
 Qed.
 
 (** Job data duties concern actual probes, bindings, primitive inputs and emitted ground keys. *)
-Definition candidate_data {P} (prog : program P) st lower k s b :=
+Definition candidate_data {P} (prog : program P) st lower k s b : Prop :=
   forall j, In j (jobs s) ->
     firing_data (tagged_rule j)
       (tagged_c prog st k lower (accumulated_index s) (frontier_index s)) (plan j) b /\

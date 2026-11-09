@@ -89,16 +89,13 @@ Proof.
   destruct (IH _ _ Htail0) as [Hresult Hvisited]; split; [exact Hresult | congruence].
 Qed.
 
-(** Each callback pays two units of binary-driver credit in addition to its actual ticks. *)
-Definition charge {S R} (step : S -> Cost.t (S + R)) visited :=
-  sum (fun s => Cost.ticks (step s) + 2) visited.
-
 (** Exhausted blocks refund one unit while stopped blocks retain a logarithmic descent allowance. *)
-Definition accounted {S R} (step : S -> Cost.t (S + R)) n d s (m : Cost.t (S + R)) :=
+Definition accounted {S R} (step : S -> Cost.t (S + R)) n d s
+    (m : Cost.t (S + R)) : Prop :=
   exists visited, trace step n s (Cost.value m) visited /\
     match Cost.value m with
-    | inl _ => Cost.ticks m + 1 <= charge step visited
-    | inr _ => Cost.ticks m <= charge step visited + d
+    | inl _ => Cost.ticks m + 1 <= sum (fun state => Cost.ticks (step state) + 2) visited
+    | inr _ => Cost.ticks m <= sum (fun state => Cost.ticks (step state) + 2) visited + d
     end.
 
 Lemma continue_credit {S R} (step : S -> Cost.t (S + R)) n q d s m next :
@@ -106,8 +103,10 @@ Lemma continue_credit {S R} (step : S -> Cost.t (S + R)) n q d s m next :
   (forall middle, accounted step q d middle (next middle)) ->
   exists visited, trace step (n + q)%nat s (Cost.value (continue_c m next)) visited /\
     match Cost.value (continue_c m next) with
-    | inl _ => Cost.ticks (continue_c m next) + 2 <= charge step visited
-    | inr _ => Cost.ticks (continue_c m next) <= charge step visited + d
+    | inl _ => Cost.ticks (continue_c m next) + 2 <=
+        sum (fun state => Cost.ticks (step state) + 2) visited
+    | inr _ => Cost.ticks (continue_c m next) <=
+        sum (fun state => Cost.ticks (step state) + 2) visited + d
     end.
 Proof.
   intros [xs [Htrace Hcost]] Hnext.
@@ -115,8 +114,7 @@ Proof.
   destruct (Cost.value m) as [middle | result].
   - destruct (Hnext middle) as [ys [Htail Htailcost]].
     exists (xs ++ ys); split; [eapply trace_append; eassumption |].
-    unfold charge; rewrite sum_app.
-    unfold charge in Hcost, Htailcost.
+    rewrite sum_app.
     destruct (Cost.value (next middle)); lia.
   - exists xs; split; [apply trace_extend_stop, Htrace | lia].
 Qed.
@@ -147,7 +145,7 @@ Lemma callback_accounted {S R} (step : S -> Cost.t (S + R)) d s :
   accounted step 1%nat d s (Cost.step ;; step s).
 Proof.
   exists [s]; autorewrite with galois_cost.
-  unfold charge, sum; cbn [fold_right].
+  unfold sum; cbn [fold_right].
   destruct (Cost.value (step s)) as [next | result] eqn:Hstep; split; try lia.
   - apply trace_next with (next := next); [exact Hstep | apply trace_exhausted].
   - apply trace_stopped, Hstep.
@@ -158,7 +156,7 @@ Theorem iterate_accounted {S R} (step : S -> Cost.t (S + R)) fuel s :
   accounted step (Pos.to_nat fuel) (N.pos (Pos.size fuel)) s (iterate step fuel s).
 Proof.
   revert s; induction fuel as [p IH | p IH |]; intro s.
-  - cbn [iterate].
+  - rewrite iterate_equation.
     change (N.pos (Pos.size (xI p))) with (N.succ (N.pos (Pos.size p))).
     replace (N.succ (N.pos (Pos.size p))) with (N.pos (Pos.size p) + 1) by lia.
     rewrite Pos2Nat.inj_xI.
@@ -170,7 +168,7 @@ Proof.
         (fun middle => continue_c (iterate step p middle) (iterate step p)))).
     apply tick_continue_accounted; [apply callback_accounted |].
     intro middle; apply continue_accounted; apply IH.
-  - cbn [iterate].
+  - rewrite iterate_equation.
     change (N.pos (Pos.size (xO p))) with (N.succ (N.pos (Pos.size p))).
     replace (N.succ (N.pos (Pos.size p))) with (N.pos (Pos.size p) + 1) by lia.
     rewrite Pos2Nat.inj_xO.
@@ -178,7 +176,7 @@ Proof.
     change (accounted step (Pos.to_nat p + Pos.to_nat p)%nat (N.pos (Pos.size p) + 1) s
       (Cost.step ;; continue_c (iterate step p s) (iterate step p))).
     apply tick_continue_accounted; apply IH.
-  - apply callback_accounted.
+  - rewrite iterate_equation; apply callback_accounted.
 Qed.
 
 (** A primitive callback bound sums over the same actual trace for either iterator outcome. *)
@@ -190,8 +188,9 @@ Theorem iterate_cost_trace {S R} (step : S -> Cost.t (S + R)) fuel s :
 Proof.
   destruct (iterate_accounted step fuel s) as [visited [Htrace Hcost]].
   exists visited; split; [exact Htrace |]; intros price Hprice.
-  assert (Hsum : charge step visited <= sum (fun state => price state + 2) visited).
-  { clear Htrace Hcost; unfold charge, sum; revert Hprice.
+  assert (Hsum : sum (fun state => Cost.ticks (step state) + 2) visited <=
+    sum (fun state => price state + 2) visited).
+  { clear Htrace Hcost; unfold sum; revert Hprice.
     induction visited as [|state rest IH]; intro Hprice; cbn [fold_right]; [lia |].
     pose proof (Hprice state (or_introl eq_refl)).
     specialize (IH (fun x Hx => Hprice x (or_intror Hx))); lia. }

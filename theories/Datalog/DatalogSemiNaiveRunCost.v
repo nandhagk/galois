@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool PeanoNat NArith Lia.
 From Galois.Cost Require Import CostMonad CostLoop CostBound.
-From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseTrieCost.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseSetCost BaseTrieCost.
 From Galois.Lattice Require Import LatticeSet.
 From Galois.Datalog Require Import DatalogSyntax DatalogStratify DatalogRelation
   DatalogSemiNaive DatalogSemiNaiveIndex DatalogSemiNaiveReady DatalogSemiNaiveBudget
@@ -19,7 +19,7 @@ Local Open Scope N_scope.
 Module SemiNaiveRunCost.
 
 (** Round duties are independent primitive data bounds on actual emitted and inserted rows. *)
-Definition round_data {P} (prog : program P) st lower k b s :=
+Definition round_data {P} (prog : program P) st lower k b s : Prop :=
   candidate_data prog st lower k s b /\
   (FinSet.is_empty (fresh prog st lower k s) = false ->
   (forall f, FinSet.mem (ground_encoding prog) f (fresh prog st lower k s) = true ->
@@ -51,9 +51,7 @@ Proof.
     (candidates_width prog st lower k s b HE Hcandidates)) as Hnew.
   unfold step_c; repeat rewrite Cost.ticks_bind.
   fold (@fresh P prog st lower k s).
-  assert (Hempty : Cost.ticks (FinSet.is_empty_c (fresh prog st lower k s)) = 0).
-  { reflexivity. }
-  rewrite Hempty; fold (FinSet.is_empty (fresh prog st lower k s)).
+  rewrite FinSetCost.is_empty_cost; fold (FinSet.is_empty (fresh prog st lower k s)).
   unfold round_charge; destruct (FinSet.is_empty (fresh prog st lower k s)) eqn:Hstop.
   - rewrite Cost.ticks_ret; lia.
   - destruct (Hadvance eq_refl) as [Hkeys Hmaintenance].

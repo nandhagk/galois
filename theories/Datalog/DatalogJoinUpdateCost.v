@@ -55,7 +55,7 @@ Qed.
 
 (** Maintenance duties mention callbacks, supplied row counts and selected-key encoding only. *)
 Definition insert_primitives {P} (plan : plan_state P)
-    (reset : P -> Cost.t bool) (rows : P -> Cost.t (list tuple)) a r z c e w :=
+    (reset : P -> Cost.t bool) (rows : P -> Cost.t (list tuple)) a r z c e w : Prop :=
   forall n, In n plan ->
     (length (mask n) <= a)%nat /\
     Cost.ticks (reset (pred (source n))) <= z /\

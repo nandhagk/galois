@@ -26,7 +26,8 @@ Fixpoint sum_levels (price : nat -> N) n :=
   end.
 
 (** Each actual solved prefix supplies only value and primitive-key duties for its next stratum. *)
-Definition level_data {P} (prog : program P) facts st fuel b (visited : nat -> list (state P)) :=
+Definition level_data {P} (prog : program P) facts st fuel b
+    (visited : nat -> list (state P)) : Prop :=
   forall k, (k < count st)%nat ->
     match solve_levels_fast prog facts st fuel k with
     | Outcome.Solved db =>

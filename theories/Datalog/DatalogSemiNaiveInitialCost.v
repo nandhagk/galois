@@ -163,7 +163,7 @@ Definition seed_plan {P} (prog : program P) lower r :=
   Join.prepare prog (positive_atoms (body r)) lower.
 
 (** Seed data duties cover preparation, firing and primitive lower-environment callbacks. *)
-Definition seed_data {P} (prog : program P) st lower b r :=
+Definition seed_data {P} (prog : program P) st lower b r : Prop :=
   preparation_data [] (positive_atoms (body r)) lower b /\
   firing_data r lower (seed_plan prog lower r) b /\
   forall atom, In atom (positive_atoms (body r)) \/ In (LNeg atom) (body r) ->
@@ -212,7 +212,7 @@ Definition indexed {P} (prog : program P) facts st lower k :=
   add_atoms prog (FinSet.elements (known prog facts st lower k)) Map.empty.
 
 (** Setup duties concern primitive source callbacks, emitted keys and actual preparation data. *)
-Definition initial_data {P} (prog : program P) facts st lower k b :=
+Definition initial_data {P} (prog : program P) facts st lower k b : Prop :=
   (forall r, In r (rules prog) ->
     Cost.ticks (level_c st (pred (head r))) <= level_bound b /\
     forall atom, In (LPos atom) (body r) ->

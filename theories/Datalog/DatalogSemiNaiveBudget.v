@@ -35,7 +35,7 @@ Record budget : Type := Budget {
 
 (** Primitive input duties contain no engine-helper cost or semantic result. *)
 Definition input {P} (prog : program P) (st : stratification P)
-    (lower : P -> Cost.t relation) b p :=
+    (lower : P -> Cost.t relation) b p : Prop :=
   Cost.ticks (level_c st p) <= level_bound b /\
   Cost.ticks (lower p) <= lower_bound b /\
   key_budget (penc prog) (predicate_encode b) (predicate_width b) p.
@@ -67,7 +67,7 @@ Proof.
 Qed.
 
 (** Erased callback charges isolate preparation's row, mask, length and key duties. *)
-Definition preparation_data {P} bound ps (env : P -> Cost.t relation) b :=
+Definition preparation_data {P} bound ps (env : P -> Cost.t relation) b : Prop :=
   JoinPrepareCost.prepare_primitives bound ps (fun p => Cost.ret (Cost.value (env p)))
     (args_bound b) (variables_bound b) (rows_bound b) 0
     (tuple_width b) (tuple_encode b) (tuple_width b).
@@ -88,7 +88,7 @@ Proof.
 Qed.
 
 (** Erased callback charges isolate firing's reached binding, probe and head-key duties. *)
-Definition firing_data {P} (r : rule P) (env : P -> Cost.t relation) plan b :=
+Definition firing_data {P} (r : rule P) (env : P -> Cost.t relation) plan b : Prop :=
   JoinFireCost.fire_primitives r (fun p => Cost.ret (Cost.value (env p))) plan
     (args_bound b) (binding_bound b) (component_bound b) 0 (tuple_encode b) (tuple_width b).
 

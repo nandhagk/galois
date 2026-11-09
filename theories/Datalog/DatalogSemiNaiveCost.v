@@ -18,7 +18,7 @@ Local Open Scope N_scope.
 Module SemiNaiveCost.
 
 (** A primitive key budget keeps encoding computation and trie width separate. *)
-Definition key_budget {A} (E : encoding A) e w x :=
+Definition key_budget {A} (E : encoding A) e w x : Prop :=
   Cost.ticks (encode_c E x) <= e /\ key_bits E x <= w.
 
 (** New-batch construction adds a candidate-side difference charge to candidate generation. *)
@@ -124,7 +124,7 @@ Qed.
 
 (** Maintenance duties concern stored row data and primitive keys without a helper-price premise. *)
 Definition maintenance_data {P} (prog : program P) batch (plan : Join.plan_state (P * bool))
-    a rows ep wp et wt :=
+    a rows ep wp et wt : Prop :=
   forall node, In node plan ->
     (length (Join.mask node) <= a)%nat /\
     key_budget (penc prog) ep wp (fst (pred (Join.source node))) /\

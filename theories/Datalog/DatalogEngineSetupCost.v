@@ -21,7 +21,7 @@ Definition predicate_inventory {P} (prog : program P) (facts : list (ground_atom
   rule_nodes prog ++ map fst facts.
 
 (** Only predicates in the finite source inventory need uniform primitive key budgets. *)
-Definition predicate_keys {P} (prog : program P) facts ep wp :=
+Definition predicate_keys {P} (prog : program P) facts ep wp : Prop :=
   forall p, In p (predicate_inventory prog facts) -> key_budget (penc prog) ep wp p.
 
 Lemma head_support {P} (prog : program P) facts r :
@@ -135,7 +135,7 @@ Proof.
 Qed.
 
 (** Source key duties cover the two endpoints of every listed stratifier edge. *)
-Definition stratifier_keys {P} (prog : program P) ep wp :=
+Definition stratifier_keys {P} (prog : program P) ep wp : Prop :=
   forall p, In p (rule_nodes prog) -> key_budget (penc prog) ep wp p.
 
 Lemma endpoints {P} (prog : program P) ep wp e :

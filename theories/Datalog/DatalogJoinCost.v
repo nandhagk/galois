@@ -74,7 +74,7 @@ Definition probe_work {P} (n : node P) bs :=
 
 (** Primitive budgets concern lengths, actual probe keys and enumerated row components.
     They contain no premise about the cost or result of a join operation. *)
-Definition probe_primitives {P} (n : node P) bs (a h : nat) (v e w : N) :=
+Definition probe_primitives {P} (n : node P) bs (a h : nat) (v e w : N) : Prop :=
   (length (args (source n)) <= a)%nat /\
   (length (key_terms n) <= a)%nat /\
   forall b, In b bs ->

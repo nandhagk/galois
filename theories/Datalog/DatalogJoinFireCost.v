@@ -84,7 +84,7 @@ Qed.
 
 (** Firing duties bound source lengths, reached binding lengths and actual negative and head keys. *)
 Definition fire_primitives {P} (r : rule P) (env : P -> Cost.t relation) (plan : plan_state P)
-    (a h : nat) (v c e w : N) :=
+    (a h : nat) (v c e w : N) : Prop :=
   run_primitives plan [[]] a h v e w /\
   (length (args (head r)) <= a)%nat /\
   forall b, In b (run plan) ->

@@ -20,7 +20,7 @@ Local Open Scope N_scope.
 Module EngineValueCost.
 
 (** These data duties remove all level and lower-environment price premises from initialization. *)
-Definition initial_values {P} (prog : program P) facts st lower k b :=
+Definition initial_values {P} (prog : program P) facts st lower k b : Prop :=
   (forall r, In r (fst (classify st k (rules prog))) ->
     preparation_data [] (positive_atoms (body r)) lower b /\
     firing_data r lower (seed_plan prog lower r) b) /\
@@ -34,7 +34,7 @@ Definition initial_values {P} (prog : program P) facts st lower k b :=
         (indexed prog facts st lower k)) b.
 
 (** Round values retain probes, emitted ground keys and fresh-index data without helper prices. *)
-Definition round_values {P} (prog : program P) st lower k b s :=
+Definition round_values {P} (prog : program P) st lower k b s : Prop :=
   (forall j, In j (jobs s) ->
     firing_data (tagged_rule j)
       (tagged_c prog st k lower (accumulated_index s) (frontier_index s)) (plan j) b /\
