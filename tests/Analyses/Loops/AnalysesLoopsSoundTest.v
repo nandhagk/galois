@@ -12,7 +12,7 @@ From Galois.Graph Require Import GraphModel GraphDomSpec.
 From Galois.Program Require Import ProgramSemantics ProgramSteps ProgramCfg ProgramLink ProgramRuns
   ProgramSsa ProgramStrict.
 From Galois.Analyses.Loops Require Import AnalysesLoopsChrec AnalysesLoopsFailure
-  AnalysesLoopsRecognise AnalysesLoopsCheck AnalysesLoopsSound.
+  AnalysesLoopsPrepared AnalysesLoopsRecognise AnalysesLoopsCheck AnalysesLoopsSound.
 From Galois.Tests.Analyses.Loops Require Import AnalysesLoopsCheckTest.
 Import List.ListNotations Chrec Recognise PlanCheck LoopSound Failure.
 Local Open Scope nat_scope.
@@ -236,7 +236,7 @@ Example scev_checker_rank_change_invalidates_then_reuses :
   let e := SPhi 3 in
   let '((r0, m0), t0) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
     (indexed_values scev_shared_index) scev_shape_ops
-    (phi_before_c nat_encoding scev_shared_index 0) e Memo.empty trace_empty) in
+    (phi_before_c nat_encoding scev_shared_index 0) e ScevPrepared.session_empty trace_empty) in
   let '((r1, m1), t1) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
     (indexed_values scev_shared_index) scev_shape_ops
     (phi_before_c nat_encoding scev_shared_index 1) e m0 t0) in
@@ -257,7 +257,7 @@ Example scev_compiler_environment_change_invalidates_then_reuses :
   let lookup z extra := Cost.lift (fun _ => 1%N) (scev_shared_lookup z extra) in
   let e := SPhi 3 in
   let '((r0, m0), t0) := Cost.value (scev_compile_expr_trace_c nat_encoding (lookup 0%Z false)
-    e Memo.empty trace_empty) in
+    e ScevPrepared.session_empty trace_empty) in
   let '((r1, m1), t1) := Cost.value (scev_compile_expr_trace_c nat_encoding (lookup 1%Z false)
     e m0 t0) in
   let '((r2, _), t2) := Cost.value (scev_compile_expr_trace_c nat_encoding (lookup 1%Z true)
@@ -271,7 +271,8 @@ Qed.
 Example scev_checker_same_root_malformed_tree_is_distinct :
   let before := phi_before_c nat_encoding scev_shared_index 1 in
   let '((r0, m0), t0) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
-    (indexed_values scev_shared_index) scev_shape_ops before scev_shared_e8 Memo.empty trace_empty) in
+    (indexed_values scev_shared_index) scev_shape_ops before scev_shared_e8
+    ScevPrepared.session_empty trace_empty) in
   let '((r1, _), t1) := Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c scev_shared_loop)
     (indexed_values scev_shared_index) scev_shape_ops before
     (SAdd 8 (SOutside 2) (SOutside 2)) m0 t0) in
@@ -283,7 +284,7 @@ Qed.
 Example scev_compiler_same_root_different_tree_is_distinct :
   let lookup := Cost.lift (fun _ => 1%N) (fun _ : nat => @None (Chrec.t nat)) in
   let '((_, m0), t0) := Cost.value (scev_compile_expr_trace_c nat_encoding lookup
-    (SAdd 8 (SOutside 2) (SOutside 2)) Memo.empty trace_empty) in
+    (SAdd 8 (SOutside 2) (SOutside 2)) ScevPrepared.session_empty trace_empty) in
   let '((c, _), t1) := Cost.value (scev_compile_expr_trace_c nat_encoding lookup
     (SAdd 8 (SOutside 2) (SConst 9 7)) m0 t0) in
   c = Some (CInv (IAdd (IVar 2) (IWordConst 7))) /\

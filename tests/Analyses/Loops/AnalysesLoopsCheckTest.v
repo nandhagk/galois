@@ -6,12 +6,12 @@
 
 From Stdlib Require Import List Bool Arith ZArith NArith.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseMap BaseMemo.
+From Galois.Base Require Import BaseEncoding BaseIntern BaseMap BaseMemo BaseSet.
 From Galois.Bits Require Import BitsWord.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramSsa.
-From Galois.Analyses.Loops Require Import AnalysesLoopsChrec AnalysesLoopsRecognise
-  AnalysesLoopsCheck.
+From Galois.Analyses.Loops Require Import AnalysesLoopsChrec AnalysesLoopsPrepared
+  AnalysesLoopsRecognise AnalysesLoopsCheck.
 Import List.ListNotations Chrec Recognise PlanCheck.
 Local Open Scope nat_scope.
 
@@ -164,12 +164,61 @@ Example scev_checker_rank_observation_invalidates_then_reuses :
   let ix := prepare_index lv scev_shape_inventory scev_shape_nested_plan in
   let e := SPhi 3 in
   let '((r0, m0), _) := Cost.value (scev_check_expr_c nat_encoding (lbody_c lv)
-    (indexed_values ix) scev_shape_ops (phi_before_c nat_encoding ix 0) e Memo.empty) in
+    (indexed_values ix) scev_shape_ops (phi_before_c nat_encoding ix 0) e
+    ScevPrepared.session_empty) in
   let '((r1, m1), _) := Cost.value (scev_check_expr_c nat_encoding (lbody_c lv)
     (indexed_values ix) scev_shape_ops (phi_before_c nat_encoding ix 1) e m0) in
   let '((r2, m2), _) := Cost.value (scev_check_expr_c nat_encoding (lbody_c lv)
     (indexed_values ix) scev_shape_ops (phi_before_c nat_encoding ix 2) e m1) in
-  fst r0 = false /\ fst r1 = true /\ fst r2 = true /\ Map.size m1 = 2 /\ Map.size m2 = 2.
+  fst r0 = false /\ fst r1 = true /\ fst r2 = true /\
+    Map.size (fst m1) = 2 /\ Map.size (fst m2) = 2.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Definition check_pilot_loop := scev_shape_loop scev_shape_defs [0; 1].
+Definition check_pilot_index :=
+  prepare_index check_pilot_loop scev_shape_inventory scev_shape_nested_plan.
+Definition check_pilot_before := phi_before_c nat_encoding check_pilot_index 1.
+Definition check_pilot_seed := Cost.value (scev_check_expr_c nat_encoding (lbody_c check_pilot_loop)
+  (indexed_values check_pilot_index) scev_shape_ops check_pilot_before (SOutside 2)
+  ScevPrepared.session_empty).
+Definition check_pilot_cache := snd (fst check_pilot_seed).
+Definition check_pilot_source := SAdd 5 (SPhi 3) (SOutside 2).
+
+Example nonempty_checker_pilot_initial_validity :
+  check_valid nat_encoding (lbody_c check_pilot_loop) (indexed_values check_pilot_index)
+    scev_shape_ops check_pilot_cache.
+Proof.
+  exact (proj2 (scev_check_expr_correct nat_encoding nat_encoding_laws
+    (lbody_c check_pilot_loop) (indexed_values check_pilot_index) scev_shape_ops
+    check_pilot_before (SOutside 2) ScevPrepared.session_empty
+    (ScevPrepared.session_empty_valid _ _ _ _))).
+Qed.
+
+Example nonempty_checker_pilot_agreement :
+  expression_state_valid nat_encoding (lbody_c check_pilot_loop) (indexed_values check_pilot_index)
+    scev_shape_ops (fun x => Cost.value (check_pilot_before x))
+    check_pilot_source check_pilot_cache
+    (Cost.value (scev_check_expr_trace_c nat_encoding (lbody_c check_pilot_loop)
+      (indexed_values check_pilot_index) scev_shape_ops check_pilot_before
+      check_pilot_source check_pilot_cache trace_empty)).
+Proof.
+  apply scev_check_expr_state_correct; [exact nat_encoding_laws|].
+  exact nonempty_checker_pilot_initial_validity.
+Qed.
+
+Example nonempty_checker_pilot_retains_child_allocations :
+  let '((value, (cache, names)), events) := Cost.value (scev_check_expr_trace_c nat_encoding
+    (lbody_c check_pilot_loop) (indexed_values check_pilot_index) scev_shape_ops check_pilot_before
+    check_pilot_source check_pilot_cache trace_empty) in
+  fst value = true /\ FinSet.mem nat_encoding 3 (snd value) = true /\
+  Map.mem positive_encoding 1%positive cache = true /\
+  Map.mem positive_encoding 3%positive cache = true /\
+  Intern.size (ScevPrepared.codes (ScevPrepared.source_names names)) = 3 /\
+  Intern.size (ScevPrepared.value_names names) = 1 /\
+  Intern.size (ScevPrepared.context_names names) = 3 /\
+  length (trace_hits events) = 1 /\ length (trace_misses events) = 2.
 Proof.
   vm_compute; repeat split; reflexivity.
 Qed.

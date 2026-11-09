@@ -152,7 +152,9 @@ Qed.
 (** Raw callers pay their source encoding and support traversal once at preparation. *)
 Definition prepare_c {A D} (E : encoding A) (support_c : A -> Cost.t (list D))
     source (s : sources A) :=
+  Cost.step ;;
   let* code := encode_c E source in
+  Cost.step ;;
   let* support := support_c source in
   intern_node_c source code support s.
 
@@ -447,91 +449,6 @@ Proof.
   - now apply intern_key_of_preserved; [exact query_encoding_laws|].
 Qed.
 
-(** Query execution carries the growing context registry and arbitrary consumer side data together. *)
-Definition memo_c {A D R S} observe_c (p : node A D)
-    (miss_c : Memo.t positive R -> (Intern.t query * S) ->
-      Cost.t (MemoState.result R (Intern.t query * S)))
-    table (state : Intern.t query * S) :=
-  let* registered := register_c observe_c p (fst state) in
-  MemoState.run_c (fst registered) miss_c table (snd registered, snd state).
-
-(** A context's semantic interpretation ignores diagnostic and child-cache side data. *)
-Definition memo_meaning {A D B R S} (support : A -> list D)
-    (reference : A -> list (D * B) -> R) source_rows values (state : Intern.t query * S) :=
-  context_meaning support reference source_rows values (fst state).
-
-(** Shared agreement derives the allocated-query premise and transports the same child-returned state. *)
-Theorem memo_agrees {A D B R S} (E : encoding A) (support : A -> list D)
-    (reference : A -> list (D * B) -> R) source_rows values
-    (side_valid : S -> Prop) observe_c observe p miss_c table state :
-  node_valid E support source_rows p ->
-  Intern.wf query_encoding (fst state) -> side_valid (snd state) ->
-  MemoState.valid (memo_meaning support reference source_rows values) state table ->
-  (forall d, In d (dependencies p) ->
-    Intern.key_of (Cost.value (observe_c d)) values = Some (observe d)) ->
-  (forall m current i,
-    MemoState.valid (memo_meaning support reference source_rows values) current m ->
-    Intern.wf query_encoding (fst current) -> side_valid (snd current) ->
-    Intern.key_of i (fst current) = Some (Cost.value (query_c observe_c p)) ->
-    Map.get positive_encoding i m = None ->
-    MemoState.result_valid (memo_meaning support reference source_rows values)
-      (fun s => Intern.wf query_encoding (fst s) /\ side_valid (snd s))
-      current (reference (original p) (List.map (fun d => (d, observe d)) (dependencies p)))
-      (Cost.value (miss_c m current))) ->
-  MemoState.result_valid (memo_meaning support reference source_rows values)
-    (fun s => Intern.wf query_encoding (fst s) /\ side_valid (snd s))
-    state (reference (original p) (List.map (fun d => (d, observe d)) (dependencies p)))
-    (fst (Cost.value (memo_c observe_c p miss_c table state))).
-Proof.
-  intros Hnode Hwf Hside Hvalid Hobserve Hmiss.
-  pose proof (register_preserved support reference source_rows values observe_c p
-    (fst state) Hwf) as Hextend.
-  pose proof (register_meaning E support reference source_rows values observe_c observe p
-    (fst state) Hnode Hwf Hobserve) as Hmeaning.
-  pose proof (Intern.intern_wf query_encoding query_encoding_laws
-    (Cost.value (query_c observe_c p)) (fst state) Hwf) as Hregistered.
-  pose proof (Intern.key_of_intern query_encoding query_encoding_laws
-    (Cost.value (query_c observe_c p)) (fst state) Hwf) as Hkey.
-  rewrite <- register_value in Hregistered.
-  rewrite <- register_value in Hkey.
-  unfold memo_c. rewrite Cost.value_bind.
-  remember (Cost.value (register_c observe_c p (fst state))) as registered.
-  assert (Hstate : MemoState.extends (memo_meaning support reference source_rows values)
-    state (snd registered, snd state)).
-  { intros i value Hvalue. exact (Hextend i value Hvalue). }
-  pose proof (MemoState.valid_transport _ _ _ _ Hstate Hvalid) as Hcache.
-  pose proof (MemoState.run_agrees (memo_meaning support reference source_rows values)
-    (fun s => Intern.wf query_encoding (fst s) /\ side_valid (snd s))
-    (fst registered) _ miss_c table (snd registered, snd state)
-    Hcache (conj Hregistered Hside) Hmeaning
-    (fun Habsent => Hmiss table _ (fst registered)
-      Hcache Hregistered Hside Hkey Habsent)) as Hagrees.
-  rewrite <- MemoState.run_c_value in Hagrees.
-  destruct (Cost.value (MemoState.run_c (fst registered) miss_c table
-    (snd registered, snd state))) as [[[result updated] final] hit].
-  change (MemoState.result_valid (memo_meaning support reference source_rows values)
-    (fun s => Intern.wf query_encoding (fst s) /\ side_valid (snd s))
-    (snd registered, snd state)
-    (reference (original p) (List.map (fun d => (d, observe d)) (dependencies p)))
-    ((result, updated), final)) in Hagrees.
-  destruct Hagrees as [Hresult [Hupdated [Hfinal Hextension]]].
-  split; [exact Hresult|]. split; [exact Hupdated|]. split; [exact Hfinal|].
-  exact (MemoState.extends_trans _ _ _ _ Hstate Hextension).
-Qed.
-
-(** Query execution exposes registration, lookup, selected miss and insertion as the actual costs. *)
-Theorem memo_cost_equation {A D R S} observe_c (p : node A D)
-    (miss_c : Memo.t positive R -> (Intern.t query * S) ->
-      Cost.t (MemoState.result R (Intern.t query * S))) table state :
-  Cost.ticks (memo_c observe_c p miss_c table state) =
-    (Cost.ticks (register_c observe_c p (fst state)) +
-      let registered := Cost.value (register_c observe_c p (fst state)) in
-      Cost.ticks (MemoState.run_c (fst registered) miss_c table
-        (snd registered, snd state)))%N.
-Proof.
-  unfold memo_c. rewrite Cost.ticks_bind. reflexivity.
-Qed.
-
 (** Source registration pays interning of the supplied diagnostic and the dense payload insertion. *)
 Theorem intern_node_cost {A D} (source : A) code (support : list D) s :
   Cost.ticks (intern_node_c source code support s) =
@@ -546,11 +463,351 @@ Qed.
 (** Raw preparation charges the source encoder, support callback and the actual registry update. *)
 Theorem prepare_cost {A D} (E : encoding A) (support_c : A -> Cost.t (list D)) source s :
   Cost.ticks (prepare_c E support_c source s) =
-    (Cost.ticks (encode_c E source) + Cost.ticks (support_c source) +
+    (2 + Cost.ticks (encode_c E source) + Cost.ticks (support_c source) +
       Cost.ticks (intern_node_c source (encode E source)
         (Cost.value (support_c source)) s))%N.
 Proof.
   unfold prepare_c. autorewrite with galois_cost. fold (encode E source). lia.
+Qed.
+
+(** A recursive consumer retains source, observation and context allocations together. *)
+Record registry (A B : Type) := Registry {
+  source_names : sources A;
+  value_names : Intern.t B;
+  context_names : Intern.t query
+}.
+Arguments Registry {A B}.
+Arguments source_names {A B}.
+Arguments value_names {A B}.
+Arguments context_names {A B}.
+
+(** Registry well-formedness concerns allocation and decoding independently of any compiler. *)
+Definition registry_wf {A B} (EA : encoding A) (EB : encoding B) (r : registry A B) :=
+  sources_wf EA (source_names r) /\ Intern.wf EB (value_names r) /\
+    Intern.wf query_encoding (context_names r).
+
+(** Extensions preserve the actual public observations of all three registries. *)
+Definition registry_extends {A B} (a b : registry A B) : Prop :=
+  sources_extend (source_names a) (source_names b) /\
+  MemoState.extends (fun s i => Intern.key_of i s) (value_names a) (value_names b) /\
+  MemoState.extends (fun s i => Intern.key_of i s) (context_names a) (context_names b).
+
+(** An unchanged registry preserves all its observations. *)
+Theorem registry_extends_refl {A B} (r : registry A B) : registry_extends r r.
+Proof.
+  split; [intros i source Hget; exact Hget|].
+  split; apply MemoState.extends_refl.
+Qed.
+
+(** Consecutive actual allocation extensions compose. *)
+Theorem registry_extends_trans {A B} (a b c : registry A B) :
+  registry_extends a b -> registry_extends b c -> registry_extends a c.
+Proof.
+  intros [Hab [Hvalues Hcontexts]] [Hbc [Hvalues' Hcontexts']].
+  split; [intros i source Hget; apply Hbc, Hab, Hget|].
+  split; eapply MemoState.extends_trans; eassumption.
+Qed.
+
+(** Registry meanings decode the immutable observations named by each cached context. *)
+Definition registry_meaning {A D B R} (support : A -> list D)
+    (reference : A -> list (D * B) -> R) (r : registry A B) :=
+  context_meaning support reference (source_names r) (value_names r) (context_names r).
+
+(** The previously proved three-registry transport supplies every consumer's cache transport. *)
+Theorem registry_meaning_preserved {A D B R} support reference (a b : registry A B) :
+  registry_extends a b ->
+  MemoState.extends (@registry_meaning A D B R support reference) a b.
+Proof.
+  intros [Hsource [Hvalues Hcontexts]] i value Hmeaning.
+  exact (context_meaning_preserved support reference _ _ _ _ _ _ _ _
+    Hsource Hvalues Hcontexts Hmeaning).
+Qed.
+
+(** Snapshot capture interns each actual observation and threads the returned value registry. *)
+Fixpoint capture_c {D B} (EB : encoding B) (observe_c : D -> Cost.t B)
+    (deps : list D) (values : Intern.t B) : Cost.t (list positive * Intern.t B) :=
+  match deps with
+  | [] => Cost.ret ([], values)
+  | d :: rest =>
+    Cost.step ;;
+    Cost.step ;;
+    let* observed := observe_c d in
+    let* allocated := Intern.intern_c EB observed values in
+    let* tail := capture_c EB observe_c rest (snd allocated) in
+    Cost.ret (fst allocated :: fst tail, snd tail)
+  end.
+
+(** Capture charges each occurrence and continues from its actual returned observation registry. *)
+Theorem capture_cost_equation {D B} (EB : encoding B) (observe_c : D -> Cost.t B) deps values :
+  Cost.ticks (capture_c EB observe_c deps values) =
+    match deps with
+    | [] => 0%N
+    | d :: rest =>
+      (2 + Cost.ticks (observe_c d) +
+        Cost.ticks (Intern.intern_c EB (Cost.value (observe_c d)) values) +
+        Cost.ticks (capture_c EB observe_c rest
+          (snd (Intern.intern EB (Cost.value (observe_c d)) values))))%N
+    end.
+Proof.
+  destruct deps as [|d rest]; cbn [capture_c]; autorewrite with galois_cost;
+    [reflexivity|fold (Intern.intern EB (Cost.value (observe_c d)) values); lia].
+Qed.
+
+(** Actual snapshot IDs decode in the final value registry and every earlier value survives. *)
+Theorem capture_correct {D B} (EB : encoding B) (HB : encoding_laws EB)
+    (observe_c : D -> Cost.t B) deps values :
+  Intern.wf EB values ->
+  let captured := Cost.value (capture_c EB observe_c deps values) in
+  Intern.wf EB (snd captured) /\
+  MemoState.extends (fun s i => Intern.key_of i s) values (snd captured) /\
+  decode_ids (snd captured) (fst captured) =
+    Some (List.map (fun d => Cost.value (observe_c d)) deps).
+Proof.
+  revert values; induction deps as [|d rest IH]; intros values Hwf.
+  - split; [exact Hwf|]. split; [apply MemoState.extends_refl|reflexivity].
+  - cbn [capture_c]. autorewrite with galois_cost.
+    fold (Intern.intern EB (Cost.value (observe_c d)) values).
+    pose proof (Intern.intern_wf EB HB (Cost.value (observe_c d)) values Hwf) as Hfirst.
+    pose proof (intern_key_of_preserved EB HB (Cost.value (observe_c d)) values Hwf)
+      as Hextend.
+    pose proof (Intern.key_of_intern EB HB (Cost.value (observe_c d)) values Hwf) as Hkey.
+    specialize (IH _ Hfirst).
+    destruct (Cost.value (capture_c EB observe_c rest
+      (snd (Intern.intern EB (Cost.value (observe_c d)) values)))) as [ids final].
+    destruct IH as [Hfinal [Htail Hdecode]].
+    cbn [fst snd] in Hfinal, Htail, Hdecode.
+    split; [exact Hfinal|]. split.
+    + exact (MemoState.extends_trans _ _ _ _ Hextend Htail).
+    + cbn [fst snd List.map decode_ids].
+      rewrite (Htail _ _ Hkey), Hdecode. reflexivity.
+Qed.
+
+(** Query preparation charges the raw boundary, observation capture and compact context allocation. *)
+Definition prepare_query_c {A D B} (EA : encoding A) (EB : encoding B)
+    (support_c : A -> Cost.t (list D)) (observe_c : D -> Cost.t B)
+    source (r : registry A B) :=
+  let* prepared := prepare_c EA support_c source (source_names r) in
+  let* captured := capture_c EB observe_c (dependencies (fst prepared)) (value_names r) in
+  let* context := Intern.intern_c query_encoding
+    (node_id (fst prepared), fst captured) (context_names r) in
+  Cost.ret (fst context, Registry (snd prepared) (snd captured) (snd context)).
+
+(** Query preparation retains raw boundary, observed-value interning and compact-context charges. *)
+Theorem prepare_query_cost_equation {A D B} (EA : encoding A) (EB : encoding B)
+    (support_c : A -> Cost.t (list D)) (observe_c : D -> Cost.t B) source (r : registry A B) :
+  Cost.ticks (prepare_query_c EA EB support_c observe_c source r) =
+    let prepared := Cost.value (prepare_c EA support_c source (source_names r)) in
+    let captured :=
+      Cost.value (capture_c EB observe_c (dependencies (fst prepared)) (value_names r)) in
+    (Cost.ticks (prepare_c EA support_c source (source_names r)) +
+      Cost.ticks (capture_c EB observe_c (dependencies (fst prepared)) (value_names r)) +
+      Cost.ticks (Intern.intern_c query_encoding
+        (node_id (fst prepared), fst captured) (context_names r)))%N.
+Proof.
+  unfold prepare_query_c. autorewrite with galois_cost. lia.
+Qed.
+
+(** The allocated query has its decoded meaning before any miss callback runs. *)
+Theorem prepare_query_correct {A D B R} (EA : encoding A) (HA : encoding_laws EA)
+    (EB : encoding B) (HB : encoding_laws EB) (support_c : A -> Cost.t (list D))
+    (reference : A -> list (D * B) -> R) observe_c source r :
+  registry_wf EA EB r ->
+  let prepared := Cost.value (prepare_query_c EA EB support_c observe_c source r) in
+  registry_wf EA EB (snd prepared) /\ registry_extends r (snd prepared) /\
+  registry_meaning (fun a => Cost.value (support_c a)) reference (snd prepared) (fst prepared) =
+    Some (reference source
+      (List.map (fun d => (d, Cost.value (observe_c d))) (Cost.value (support_c source)))).
+Proof.
+  intros [Hsources [Hvalues Hcontexts]].
+  pose proof (prepare_correct EA HA support_c source (source_names r) Hsources) as Hsource.
+  unfold prepare_query_c. autorewrite with galois_cost.
+  destruct (Cost.value (prepare_c EA support_c source (source_names r))) as [p sources'].
+  destruct Hsource as [Hsources' [Hsource_ext [Hnode Horiginal]]].
+  cbn [fst snd] in Hsources', Hsource_ext, Hnode, Horiginal |- *.
+  pose proof (capture_correct EB HB observe_c (dependencies p) (value_names r) Hvalues) as Hcap.
+  destruct (Cost.value (capture_c EB observe_c (dependencies p) (value_names r)))
+    as [ids values'].
+  destruct Hcap as [Hvalues' [Hvalue_ext Hdecode]].
+  cbn [fst snd] in Hvalues', Hvalue_ext, Hdecode |- *.
+  fold (Intern.intern query_encoding (node_id p, ids) (context_names r)).
+  pose proof (Intern.intern_wf query_encoding query_encoding_laws
+    (node_id p, ids) (context_names r) Hcontexts) as Hcontexts'.
+  pose proof (intern_key_of_preserved query_encoding query_encoding_laws
+    (node_id p, ids) (context_names r) Hcontexts) as Hcontext_ext.
+  pose proof (Intern.key_of_intern query_encoding query_encoding_laws
+    (node_id p, ids) (context_names r) Hcontexts) as Hcontext_key.
+  split; [exact (conj Hsources' (conj Hvalues' Hcontexts'))|].
+  split; [exact (conj Hsource_ext (conj Hvalue_ext Hcontext_ext))|].
+  unfold registry_meaning; cbn [fst snd source_names value_names context_names].
+  unfold context_meaning. rewrite Hcontext_key.
+  unfold query_meaning. cbn [fst snd].
+  destruct Hnode as [Hrow [Hcode Hdeps]].
+  rewrite Hrow. cbv beta iota zeta.
+  transitivity (Some (reference (original p)
+    (combine (Cost.value (support_c (original p)))
+      (List.map (fun d => Cost.value (observe_c d)) (dependencies p))))).
+  - exact (f_equal (fun observations =>
+      option_map (fun xs => reference (original p)
+        (combine (Cost.value (support_c (original p))) xs)) observations) Hdecode).
+  - rewrite <- Hdeps, combine_observed, Horiginal, Hdeps, Horiginal. reflexivity.
+Qed.
+
+(** Sessions pair the dense cache with the registry that gives every stored ID its meaning. *)
+Definition session A B R := (Memo.t positive R * registry A B)%type.
+Definition answer A B R S := ((R * session A B R) * S)%type.
+
+(** Session validity is independent of the consumer's current environment and diagnostic trace. *)
+Definition session_valid {A D B R} EA EB support reference (m : session A B R) : Prop :=
+  registry_wf EA EB (snd m) /\
+    MemoState.valid (@registry_meaning A D B R support reference) (snd m) (fst m).
+
+(** A result retains its actual allocation extension beside semantic cache validity. *)
+Definition answer_valid {A D B R S} EA EB support reference (P : S -> Prop)
+    (initial : session A B R) expected (out : answer A B R S) : Prop :=
+  let '((value, updated), side) := out in
+  value = expected /\ @session_valid A D B R EA EB support reference updated /\
+    registry_extends (snd initial) (snd updated) /\ P side.
+
+(** Forgetting extension and side evidence retains the result and its returned cache validity. *)
+Theorem answer_forget {A D B R S} EA EB support reference (P : S -> Prop)
+    (initial : session A B R) expected (out : answer A B R S) :
+  @answer_valid A D B R S EA EB support reference P initial expected out ->
+  let '((value, updated), _) := out in
+  value = expected /\ session_valid EA EB support reference updated.
+Proof.
+  destruct out as [[value updated] side].
+  intros [Hvalue [Hvalid _]]. exact (conj Hvalue Hvalid).
+Qed.
+
+(** Empty sessions construct all owned registries and the shared cache through costed interfaces. *)
+Definition session_empty_c {A B R} : Cost.t (session A B R) :=
+  let* rows := @empty_c A in
+  let* values := @Intern.empty_c B in
+  let* contexts := @Intern.empty_c query in
+  let* table := @Memo.empty_c positive R in
+  Cost.ret (table, Registry rows values contexts).
+
+Definition session_empty {A B R} : session A B R := Cost.value session_empty_c.
+
+Arguments session_empty_c {A B R} : simpl never.
+Arguments session_empty {A B R} : simpl never.
+
+(** Empty-session validity needs neither a semantic environment nor any allocated query. *)
+Theorem session_empty_valid {A D B R} EA EB support reference :
+  @session_valid A D B R EA EB support reference session_empty.
+Proof.
+  split.
+  - split; [apply empty_wf|]. split; apply Intern.wf_empty.
+  - apply MemoState.valid_empty.
+Qed.
+
+Definition unpack {A B R S} (out : answer A B R S)
+    : MemoState.result R (registry A B * S) :=
+  let '((value, (table, names)), side) := out in ((value, table), (names, side)).
+
+Local Lemma answer_unpack_valid {A D B R S} EA EB support reference (P : S -> Prop)
+    (protected : registry A B) (current : session A B R) events expected out :
+  registry_extends protected (snd current) ->
+  @answer_valid A D B R S EA EB support reference P current expected out ->
+  MemoState.result_valid
+    (fun state => registry_meaning support reference (fst state))
+    (fun state => registry_wf EA EB (fst state) /\ P (snd state) /\
+      registry_extends protected (fst state))
+    (snd current, events) expected (unpack out).
+Proof.
+  intros Hprotected Hout.
+  destruct out as [[value [table names]] side].
+  destruct Hout as [Hvalue [[Hnames Htable] [Hextends Hside]]].
+  split; [exact Hvalue|]. split; [exact Htable|]. split.
+  - split; [exact Hnames|]. split; [exact Hside|].
+    exact (registry_extends_trans _ _ _ Hprotected Hextends).
+  - exact (registry_meaning_preserved _ _ _ _ Hextends).
+Qed.
+
+Definition pack {A B R S} (out : MemoState.result R (registry A B * S))
+    : answer A B R S :=
+  let '((value, table), (names, side)) := out in ((value, (table, names)), side).
+
+(** A selected miss retains the recursively returned source, value and context registries. *)
+Definition run_c {A D B R S} EA EB support_c observe_c source
+    (miss_c : session A B R -> S -> Cost.t (answer A B R S)) m side :=
+  let* prepared := @prepare_query_c A D B EA EB support_c observe_c source (snd m) in
+  let* out := MemoState.run_c (fst prepared)
+    (fun table current => Cost.map unpack (miss_c (table, fst current) (snd current)))
+    (fst m) (snd prepared, side) in
+  Cost.ret (pack (fst out), snd out).
+
+(** Dense-cache execution retains its prepared state, selected callback and insertion charges. *)
+Theorem run_cost_equation {A D B R S} EA EB support_c observe_c source
+    (miss_c : session A B R -> S -> Cost.t (answer A B R S)) m side :
+  Cost.ticks (@run_c A D B R S EA EB support_c observe_c source miss_c m side) =
+    let prepared := Cost.value (prepare_query_c EA EB support_c observe_c source (snd m)) in
+    (Cost.ticks (prepare_query_c EA EB support_c observe_c source (snd m)) +
+      Cost.ticks (MemoState.run_c (fst prepared)
+        (fun table current => Cost.map unpack (miss_c (table, fst current) (snd current)))
+        (fst m) (snd prepared, side)))%N.
+Proof.
+  unfold run_c. autorewrite with galois_cost. lia.
+Qed.
+
+(** One agreement theorem derives the query meaning and all actual registry transports. *)
+Theorem run_agrees {A D B R S} (EA : encoding A) (HA : encoding_laws EA)
+    (EB : encoding B) (HB : encoding_laws EB) (support_c : A -> Cost.t (list D))
+    (reference : A -> list (D * B) -> R) (P : S -> Prop) observe_c source miss_c m side :
+  session_valid EA EB (fun a => Cost.value (support_c a)) reference m -> P side ->
+  (forall current events i,
+    session_valid EA EB (fun a => Cost.value (support_c a)) reference current -> P events ->
+    registry_meaning (fun a => Cost.value (support_c a)) reference (snd current) i =
+      Some (reference source
+        (List.map (fun d => (d, Cost.value (observe_c d))) (Cost.value (support_c source)))) ->
+    Map.get positive_encoding i (fst current) = None ->
+    answer_valid EA EB (fun a => Cost.value (support_c a)) reference P current
+      (reference source
+        (List.map (fun d => (d, Cost.value (observe_c d))) (Cost.value (support_c source))))
+      (Cost.value (miss_c current events))) ->
+  answer_valid EA EB (fun a => Cost.value (support_c a)) reference P m
+    (reference source
+      (List.map (fun d => (d, Cost.value (observe_c d))) (Cost.value (support_c source))))
+    (fst (Cost.value (@run_c A D B R S EA EB support_c observe_c source miss_c m side))).
+Proof.
+  intros [Hwf Hvalid] Hside Hmiss.
+  pose proof (prepare_query_correct EA HA EB HB support_c reference observe_c source (snd m) Hwf)
+    as Hprepared.
+  unfold run_c. rewrite Cost.value_bind.
+  remember (Cost.value (prepare_query_c EA EB support_c observe_c source (snd m))) as prepared.
+  destruct Hprepared as [Hprepared [Hextension Hmeaning]].
+  pose proof (registry_meaning_preserved (fun a => Cost.value (support_c a)) reference
+    _ _ Hextension) as Htransport.
+  pose proof (MemoState.valid_transport _ _ _ _ Htransport Hvalid) as Hcache.
+  set (meaning := fun current : registry A B * S =>
+    registry_meaning (fun a => Cost.value (support_c a)) reference (fst current)).
+  set (invariant := fun current : registry A B * S =>
+    registry_wf EA EB (fst current) /\ P (snd current) /\
+      registry_extends (snd m) (fst current)).
+  assert (Hlocal : Map.get positive_encoding (fst prepared) (fst m) = None ->
+    MemoState.result_valid meaning invariant (snd prepared, side)
+      (reference source
+        (List.map (fun d => (d, Cost.value (observe_c d))) (Cost.value (support_c source))))
+      (Cost.value (Cost.map unpack (miss_c (fst m, snd prepared) side)))).
+  { intro Habsent.
+    specialize (Hmiss (fst m, snd prepared) side (fst prepared)
+      (conj Hprepared Hcache) Hside Hmeaning Habsent).
+    rewrite Cost.value_map.
+    exact (answer_unpack_valid EA EB _ reference P (snd m) (fst m, snd prepared) side _ _
+      Hextension Hmiss). }
+  pose proof (MemoState.run_agrees meaning invariant (fst prepared) _
+    (fun table current => Cost.map unpack (miss_c (table, fst current) (snd current))) (fst m)
+    (snd prepared, side) Hcache (conj Hprepared (conj Hside Hextension))
+    Hmeaning Hlocal) as Hagrees.
+  rewrite <- MemoState.run_c_value in Hagrees.
+  rewrite Cost.value_bind.
+  destruct (Cost.value (MemoState.run_c (fst prepared)
+    (fun table current => Cost.map unpack (miss_c (table, fst current) (snd current)))
+    (fst m) (snd prepared, side))) as [[[value table] [names events]] hit].
+  autorewrite with galois_cost.
+  destruct Hagrees as [Hvalue [Htable [[Hnames [Hevents Hextends]] _]]].
+  split; [exact Hvalue|]. split; [exact (conj Hnames Htable)|].
+  exact (conj Hextends Hevents).
 Qed.
 
 End ScevPrepared.

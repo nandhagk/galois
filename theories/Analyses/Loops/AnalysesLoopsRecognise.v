@@ -9,7 +9,8 @@ From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseCode BaseEq BaseMap BaseSet BaseMemo BasePrepared.
 From Galois.Bits Require Import BitsWord.
 From Galois.Program Require Import ProgramCfg ProgramSsa.
-From Galois.Analyses.Loops Require Import AnalysesLoopsChrec AnalysesLoopsIdioms.
+From Galois.Analyses.Loops Require Import
+  AnalysesLoopsChrec AnalysesLoopsIdioms AnalysesLoopsPrepared.
 Import List.ListNotations Cost.Notations Chrec.
 
 Module Recognise.
@@ -166,9 +167,23 @@ Definition trace_note (code : positive) (hit : bool) (events : trace) : trace :=
   if hit then (code :: trace_hits events, trace_misses events)
   else (trace_hits events, code :: trace_misses events).
 
-Definition memo_note {K R} code (result : memo_result K R trace * bool) :=
+Definition memo_note {M R} code (result : ((R * M) * trace) * bool) :=
   let '(((value, table), events), hit) := result in
   ((value, table), trace_note code hit events).
+
+(** Recording diagnostics leaves every returned cache and allocation observation unchanged. *)
+Theorem session_note_valid {A D B R} EA EB support reference initial expected code
+    (out : ScevPrepared.answer A B R trace * bool) :
+  @ScevPrepared.answer_valid A D B R trace EA EB support reference (fun _ => True)
+    initial expected (fst out) ->
+  ScevPrepared.answer_valid EA EB support reference (fun _ => True)
+    initial expected (memo_note code out).
+Proof.
+  destruct out as [[[value table] events] hit].
+  intros [Hvalue [Hvalid [Hextends _]]].
+  split; [exact Hvalue|]. split; [exact Hvalid|].
+  split; [exact Hextends|exact I].
+Qed.
 
 Definition memo_run_c {K R S} (key : PreparedKey.t K)
     (miss_c : Memo.t K R -> S -> Cost.t (memo_result K R S))
@@ -220,26 +235,6 @@ Proof.
     destruct (eqb_spec E HE k (PreparedKey.key key)) as [Heq|Hdifferent].
     + subst k; injection Hfound as Heq; subst found; exact Hvalue.
     + exact (Hreference k found Hfound).
-Qed.
-
-(** Dropping the side-state obligation retains the result and both table invariants. *)
-Theorem memo_result_forget_side {K R S} E reference P key
-    (result : memo_result K R S) :
-  memo_result_valid E reference P key result ->
-  let '((value, table), _) := result in
-  value = reference key /\ Map.wf E table /\ Memo.valid E reference table.
-Proof.
-  destruct result as [[value table] side].
-  intros [Hvalue [Hwf [Hvalid _]]]; repeat split; assumption.
-Qed.
-
-(** Recording a query observation changes neither its result nor either table invariant. *)
-Theorem memo_note_valid {K R} E reference key code (result : memo_result K R trace * bool) :
-  memo_result_valid E reference (fun _ : trace => True) key (fst result) ->
-  memo_result_valid E reference (fun _ : trace => True) key (memo_note code result).
-Proof.
-  destruct result as [[[value table] events] hit].
-  intros [Hvalue [Hwf [Hvalid _]]]; repeat split; assumption.
 Qed.
 
 (** Reference translation interprets precisely the declared expression tree. *)
@@ -457,18 +452,6 @@ Qed.
 (** A context key keeps only the observations at phi leaves, including missing values. *)
 Definition context_key V A := (scev_expr V * list (V * A))%type.
 
-Definition context_encoding {V A} (EV : encoding V) (EA : encoding A) :=
-  pair_encoding (scev_expr_encoding EV) (list_key_encoding (pair_encoding EV EA)).
-
-(** Context keys are injective in both their source tree and projected observations. *)
-Theorem context_encoding_laws {V A} (EV : encoding V) (EA : encoding A) :
-  encoding_laws EV -> encoding_laws EA -> encoding_laws (context_encoding EV EA).
-Proof.
-  intros HE HA; apply pair_encoding_laws.
-  - apply scev_expr_encoding_laws; exact HE.
-  - apply list_key_encoding_laws, pair_encoding_laws; assumption.
-Qed.
-
 Fixpoint context_lookup {V A} (EV : encoding V) (default : A) (entries : list (V * A))
     (x : V) : A :=
   match entries with
@@ -494,25 +477,6 @@ Theorem expression_phis_value {V} (e : scev_expr V) :
 Proof.
   induction e; cbn [expression_phis_c scev_expression_phis];
     autorewrite with galois_cost; rewrite ?value_app_c, ?IHe1, ?IHe2; reflexivity.
-Qed.
-
-Definition context_prepare_c {V A} (EV : encoding V) (EA : encoding A)
-    (observe_c : V -> Cost.t A) (e : scev_expr V) : Cost.t (PreparedKey.t (context_key V A)) :=
-  let* phis := expression_phis_c e in
-  let* entries := map_c (fun x =>
-    Cost.step ;;
-    Cost.map (fun value => (x, value)) (observe_c x)) phis in
-  PreparedKey.prepare_c (context_encoding EV EA) (e, entries).
-
-(** Context preparation stores the source and the current observations at all its phi leaves. *)
-Theorem context_prepare_value {V A} (EV : encoding V) (EA : encoding A)
-    (observe_c : V -> Cost.t A) e :
-  Cost.value (context_prepare_c EV EA observe_c e) =
-    PreparedKey.prepare (context_encoding EV EA)
-      (e, List.map (fun x => (x, Cost.value (observe_c x))) (scev_expression_phis e)).
-Proof.
-  unfold context_prepare_c; autorewrite with galois_cost.
-  rewrite expression_phis_value; reflexivity.
 Qed.
 
 (** Projected contexts reproduce each observed value on their named support. *)
@@ -578,9 +542,6 @@ Qed.
 
 Definition compile_key V := context_key V (option (Chrec.t V)).
 
-Definition compile_encoding {V} (EV : encoding V) :=
-  context_encoding EV (optional_chrec_encoding EV).
-
 Definition compile_query {V} (lookup : V -> option (Chrec.t V)) e : compile_key V :=
   (e, List.map (fun x => (x, lookup x)) (scev_expression_phis e)).
 
@@ -596,19 +557,31 @@ Proof.
   apply context_lookup_project; assumption.
 Qed.
 
-Definition compile_memo V := Memo.t (compile_key V) (option (Chrec.t V)).
+Definition compile_memo V :=
+  ScevPrepared.session (scev_expr V) (option (Chrec.t V)) (option (Chrec.t V)).
 
-(** Context-keyed validity is independent of the current environment. *)
+(** Dense-cache validity retains the growing registries independently of the current environment. *)
 Definition compile_valid {V} (EV : encoding V) (m : compile_memo V) : Prop :=
-  Map.wf (compile_encoding EV) m /\ Memo.valid (compile_encoding EV) (compile_reference EV) m.
+  ScevPrepared.session_valid (scev_expr_encoding EV) (optional_chrec_encoding EV)
+    (fun e => Cost.value (expression_phis_c e))
+    (fun e entries => compile_reference EV (e, entries)) m.
 
-Definition compile_result {V} := memo_result (compile_key V) (option (Chrec.t V)) trace.
+Definition compile_result {V} :=
+  ScevPrepared.answer (scev_expr V) (option (Chrec.t V)) (option (Chrec.t V)) trace.
 
 (** Expression results couple the current translation to validity of the same returned table. *)
 Definition compile_expr_result_valid {V} (EV : encoding V) lookup e
     (result : @compile_result V) : Prop :=
   let '((value, table), _) := result in
   value = scev_translate_expr lookup e /\ compile_valid EV table.
+
+(** Recursive compilation also retains each registry's actual earlier allocation observations. *)
+Definition compile_expr_state_valid {V} (EV : encoding V) lookup e (initial : compile_memo V)
+    (out : @compile_result V) :=
+  ScevPrepared.answer_valid (scev_expr_encoding EV) (optional_chrec_encoding EV)
+    (fun e => Cost.value (expression_phis_c e))
+    (fun e entries => compile_reference EV (e, entries)) (fun _ : trace => True)
+    initial (scev_translate_expr lookup e) out.
 
 Definition compile_pair_c {V}
     (combine_c : Chrec.t V -> Chrec.t V -> Cost.t (Chrec.t V))
@@ -637,9 +610,9 @@ Fixpoint scev_compile_expr_trace_c {V} (EV : encoding V)
     (lookup_c : V -> Cost.t (option (Chrec.t V))) (e : scev_expr V)
     (m : compile_memo V) (events : trace) : Cost.t (@compile_result V) :=
   Cost.step ;;
-  let* key := context_prepare_c EV (optional_chrec_encoding EV) lookup_c e in
   let* code := scev_expr_code_c EV e in
-  let* result := memo_run_c key (fun table side =>
+  let* result := ScevPrepared.run_c (scev_expr_encoding EV) (optional_chrec_encoding EV)
+    expression_phis_c lookup_c e (fun table side =>
     match e with
     | SOutside x => Cost.ret ((Some (CInv (IVar x)), table), side)
     | SPhi x =>
@@ -666,84 +639,108 @@ Local Lemma compile_pair_correct {V} (EV : encoding V)
     (lookup : V -> option (Chrec.t V)) combine_c combine a b ra rb m events :
   (forall x y, Cost.value (combine_c x y) = combine x y) ->
   (forall table events, compile_valid EV table ->
-    compile_expr_result_valid EV lookup a (Cost.value (ra table events))) ->
+    compile_expr_state_valid EV lookup a table (Cost.value (ra table events))) ->
   (forall table events, compile_valid EV table ->
-    compile_expr_result_valid EV lookup b (Cost.value (rb table events))) ->
+    compile_expr_state_valid EV lookup b table (Cost.value (rb table events))) ->
   compile_valid EV m ->
   let '((result, table), _) := Cost.value (compile_pair_c combine_c ra rb m events) in
   result =
     match scev_translate_expr lookup a, scev_translate_expr lookup b with
     | Some ca, Some cb => Some (combine ca cb)
     | _, _ => None
-    end /\ compile_valid EV table.
+    end /\ compile_valid EV table /\ ScevPrepared.registry_extends (snd m) (snd table).
 Proof.
   intros Hcombine Ha Hb Hm.
   specialize (Ha m events Hm).
   unfold compile_pair_c; autorewrite with galois_cost.
   destruct (Cost.value (ra m events)) as [[[ca|] ma] events_a];
-    destruct Ha as [Hca [Hwf Hvalid]].
-  - specialize (Hb ma events_a (conj Hwf Hvalid)).
+    destruct Ha as [Hca [Hma [Hextend_a _]]].
+  - specialize (Hb ma events_a Hma).
     autorewrite with galois_cost.
     destruct (Cost.value (rb ma events_a)) as [[[cb|] mb] events_b];
-      destruct Hb as [Hcb [Hwf' Hvalid']]; autorewrite with galois_cost;
+      destruct Hb as [Hcb [Hmb [Hextend_b _]]]; autorewrite with galois_cost;
       cbn [fst snd]; rewrite <- Hca, <- Hcb.
     + split.
       * cbn; rewrite Hcombine; reflexivity.
-      * exact (conj Hwf' Hvalid').
-    + split; [reflexivity|exact (conj Hwf' Hvalid')].
+      * split; [exact Hmb|].
+        exact (ScevPrepared.registry_extends_trans _ _ _ Hextend_a Hextend_b).
+    + split; [reflexivity|]. split; [exact Hmb|].
+      exact (ScevPrepared.registry_extends_trans _ _ _ Hextend_a Hextend_b).
   - autorewrite with galois_cost.
-    rewrite <- Hca; split; [reflexivity|exact (conj Hwf Hvalid)].
+    rewrite <- Hca; split; [reflexivity|exact (conj Hma Hextend_a)].
 Qed.
 
-(** Traced compilation returns the full reference option and maintains the actual shared Memo. *)
+Local Lemma compile_note_valid {V} EV lookup e initial code
+    (out : @compile_result V * bool) :
+  compile_expr_state_valid EV lookup e initial (fst out) ->
+  compile_expr_state_valid EV lookup e initial (memo_note code out).
+Proof.
+  apply session_note_valid.
+Qed.
+
+(** Traced compilation preserves actual allocation observations through every recursive miss. *)
+Theorem scev_compile_expr_state_correct {V} (EV : encoding V) (HE : encoding_laws EV)
+    (lookup_c : V -> Cost.t (option (Chrec.t V))) e m events :
+  compile_valid EV m ->
+  compile_expr_state_valid EV (fun x => Cost.value (lookup_c x))
+    e m (Cost.value (scev_compile_expr_trace_c EV lookup_c e m events)).
+Proof.
+  revert m events; induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z];
+    intros m events Hvalid;
+    cbn [scev_compile_expr_trace_c]; autorewrite with galois_cost.
+  all: apply compile_note_valid.
+  all: match goal with
+  | |- compile_expr_state_valid _ ?lookup ?source ?initial ?result =>
+    let Href := fresh "Hquery" in
+    pose proof (compile_query_reference EV HE lookup source) as Href;
+    unfold compile_expr_state_valid;
+    replace (scev_translate_expr lookup source) with
+      (compile_reference EV (source, List.map (fun d => (d, lookup d))
+        (Cost.value (expression_phis_c source)))) by
+      (rewrite expression_phis_value; exact Href)
+  end.
+  all: eapply (ScevPrepared.run_agrees _ (scev_expr_encoding_laws EV HE)
+    _ (optional_chrec_encoding_laws EV HE) expression_phis_c
+    (fun e entries => compile_reference EV (e, entries)) (fun _ : trace => True) lookup_c);
+    [exact Hvalid|exact I|].
+  all: intros table side i Htable _ Hmeaning Habsent.
+  all: cbv beta.
+  all: rewrite expression_phis_value; unfold compile_query in Hquery; rewrite Hquery.
+  - split; [reflexivity|]. split; [exact Htable|].
+    split; [apply ScevPrepared.registry_extends_refl|exact I].
+  - autorewrite with galois_cost.
+    split; [reflexivity|]. split; [exact Htable|].
+    split; [apply ScevPrepared.registry_extends_refl|exact I].
+  - pose proof (compile_pair_correct EV _ chrec_add_c chrec_add a b
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b) table side
+      (fun _ _ => eq_refl) IHa IHb Htable) as Hpair.
+    destruct (Cost.value (compile_pair_c chrec_add_c
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b)
+      table side)) as [[result updated] events'].
+    destruct Hpair as [Hresult [Hupdated Hextends]].
+    split; [exact Hresult|]. split; [exact Hupdated|]. now split.
+  - pose proof (compile_pair_correct EV _ chrec_mul_c chrec_mul a b
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b) table side
+      (fun _ _ => eq_refl) IHa IHb Htable) as Hpair.
+    destruct (Cost.value (compile_pair_c chrec_mul_c
+      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b)
+      table side)) as [[result updated] events'].
+    destruct Hpair as [Hresult [Hupdated Hextends]].
+    split; [exact Hresult|]. split; [exact Hupdated|]. now split.
+  - split; [reflexivity|]. split; [exact Htable|].
+    split; [apply ScevPrepared.registry_extends_refl|exact I].
+Qed.
+
+(** Traced compilation returns the full reference option and maintains the actual dense session. *)
 Theorem scev_compile_expr_trace_correct {V} (EV : encoding V) (HE : encoding_laws EV)
     (lookup_c : V -> Cost.t (option (Chrec.t V))) e m events :
   compile_valid EV m ->
   compile_expr_result_valid EV (fun x => Cost.value (lookup_c x))
     e (Cost.value (scev_compile_expr_trace_c EV lookup_c e m events)).
 Proof.
-  assert (Hencoding : encoding_laws (compile_encoding EV)).
-  { apply context_encoding_laws; [exact HE|apply optional_chrec_encoding_laws; exact HE]. }
-  revert m events; induction e as [x|x|x a IHa b IHb|x a IHa b IHb|x z];
-    intros m events [Hwf Hvalid];
-    cbn [scev_compile_expr_trace_c]; autorewrite with galois_cost;
-    rewrite context_prepare_value.
-  all: match goal with
-  | |- compile_expr_result_valid _ ?lookup ?source ?result =>
-    let Href := fresh "Hquery" in
-    pose proof (compile_query_reference EV HE lookup source) as Href;
-    unfold compile_expr_result_valid;
-    rewrite <- Href;
-    apply (memo_result_forget_side (compile_encoding EV) (compile_reference EV)
-      (fun _ : trace => True) (compile_query lookup source) result)
-  end.
-  all: apply memo_note_valid.
-  all: eapply memo_run_agrees;
-    [exact Hencoding | apply PreparedKey.prepare_valid | exact Hwf | exact Hvalid | exact I |].
-  all: intros table side Htable Hreference _.
-  all: rewrite PreparedKey.prepare_key; unfold memo_result_valid.
-  - split; [symmetry; exact Hquery|]; repeat split; assumption.
-  - autorewrite with galois_cost.
-    split; [symmetry; exact Hquery|]; repeat split; assumption.
-  - pose proof (compile_pair_correct EV _ chrec_add_c chrec_add a b
-      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b) table side
-      (fun _ _ => eq_refl) IHa IHb (conj Htable Hreference)) as Hpair.
-    destruct (Cost.value (compile_pair_c chrec_add_c
-      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b)
-      table side)) as [[result updated] events'].
-    destruct Hpair as [Hresult [Hupdated Hmeaning]].
-    split; [etransitivity; [exact Hresult|symmetry; exact Hquery]|].
-    repeat split; assumption.
-  - pose proof (compile_pair_correct EV _ chrec_mul_c chrec_mul a b
-      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b) table side
-      (fun _ _ => eq_refl) IHa IHb (conj Htable Hreference)) as Hpair.
-    destruct (Cost.value (compile_pair_c chrec_mul_c
-      (scev_compile_expr_trace_c EV lookup_c a) (scev_compile_expr_trace_c EV lookup_c b)
-      table side)) as [[result updated] events'].
-    destruct Hpair as [Hresult [Hupdated Hmeaning]].
-    split; [etransitivity; [exact Hresult|symmetry; exact Hquery]|].
-    repeat split; assumption.
-  - split; [symmetry; exact Hquery|]; repeat split; assumption.
+  intro Hvalid.
+  exact (ScevPrepared.answer_forget _ _ _ _ _ _ _ _
+    (scev_compile_expr_state_correct EV HE lookup_c e m events Hvalid)).
 Qed.
 
 (** Ordinary compilation initializes diagnostics without changing its reference agreement. *)
@@ -1073,7 +1070,8 @@ Definition scev_translate_plan {V} (EV : encoding V) (p : scev_plan V) :=
 Definition scev_compile_plan_execution_c {V} (EV : encoding V) (p : scev_plan V) :=
   let* env := @Map.empty_c V (Chrec.t V) in
   let* bindings := @Memo.empty_c (binding_key V) (option (Chrec.t V)) in
-  let* expressions := @Memo.empty_c (compile_key V) (option (Chrec.t V)) in
+  let* expressions :=
+    @ScevPrepared.session_empty_c (scev_expr V) (option (Chrec.t V)) (option (Chrec.t V)) in
   let* compiled := scev_compile_bindings_c EV (sp_bindings p) env bindings
     (expressions, trace_empty) in
   let '((result, bindings), expressions) := compiled in
@@ -1105,20 +1103,19 @@ Proof.
     - change (Map.wf (binding_context_encoding EV) (@Map.empty _ (option (Chrec.t V)))).
       apply Map.wf_empty.
     - apply Memo.valid_empty. }
-  assert (Hexpressions : compile_valid EV (@Memo.empty (compile_key V) (option (Chrec.t V)))).
-  { split.
-    - change (Map.wf (compile_encoding EV) (@Map.empty _ (option (Chrec.t V)))).
-      apply Map.wf_empty.
-    - apply Memo.valid_empty. }
+  assert (Hexpressions : compile_valid EV
+    (@ScevPrepared.session_empty (scev_expr V) (option (Chrec.t V)) (option (Chrec.t V)))).
+  { apply ScevPrepared.session_empty_valid. }
   pose proof (scev_compile_bindings_correct EV HE (sp_bindings p) Map.empty
-    Memo.empty (Memo.empty, trace_empty) Hbindings Hexpressions) as Hcompile.
+    Memo.empty (ScevPrepared.session_empty, trace_empty) Hbindings Hexpressions) as Hcompile.
   unfold scev_compile_plan, scev_compile_plan_c, scev_compile_plan_execution_c.
   autorewrite with galois_cost.
   change (Cost.value (@Map.empty_c V (Chrec.t V))) with (@Map.empty V (Chrec.t V)).
   fold (@Memo.empty (binding_key V) (option (Chrec.t V))).
-  fold (@Memo.empty (compile_key V) (option (Chrec.t V))).
+  fold (@ScevPrepared.session_empty (scev_expr V) (option (Chrec.t V)) (option (Chrec.t V))).
   destruct (Cost.value (scev_compile_bindings_c EV (sp_bindings p)
-    Map.empty Memo.empty (Memo.empty, trace_empty))) as [[result bindings] expressions].
+    Map.empty Memo.empty (ScevPrepared.session_empty, trace_empty)))
+    as [[result bindings] expressions].
   destruct Hcompile as [Hresult _]; unfold scev_translate_plan; rewrite <- Hresult.
   destruct result; autorewrite with galois_cost; reflexivity.
 Qed.
