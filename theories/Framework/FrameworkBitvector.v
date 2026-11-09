@@ -4,7 +4,7 @@
     For example, liveness is backward may with uses generated after definitions are killed.
     Builds on: FrameworkDense, BaseIndex and LatticeSet. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List Bool NArith.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseSet BaseIndex.
 From Galois.Lattice Require Import LatticeCore LatticeSet.
@@ -343,15 +343,57 @@ Definition must_dense {N E U} (P : t N E U) (p : prepared P) :=
   Dense.Make (cfg P) (dir P) (must (fact_enc P))
     (fun n => Cost.map (option_map Only) (boundary_set_c p n)) (must_transfer_c p).
 
+(** Charged may construction binds the actual prepared indexes before building the dense system. *)
+Definition may_analysis_c {N E U} (P : t N E U) :=
+  let* p := prepare_c P in
+  Dense.analysis_c (may_dense P p) (Policy.by_code (Cfg.node_enc (cfg P))).
+
 (** May analysis captures its prepared indexes once. *)
 Definition may_analysis {N E U} (P : t N E U) :=
-  let p := prepare P in
-  Dense.analysis (may_dense P p) (Policy.by_code (Cfg.node_enc (cfg P))).
+  Cost.value (may_analysis_c P).
+
+(** Charged must construction uses the same preparation and preserves the All/Only lattice. *)
+Definition must_analysis_c {N E U} (P : t N E U) :=
+  let* p := prepare_c P in
+  Dense.analysis_c (must_dense P p) (Policy.by_code (Cfg.node_enc (cfg P))).
 
 (** Must analysis uses All as fresh bottom and intersection as the library join. *)
 Definition must_analysis {N E U} (P : t N E U) :=
-  let p := prepare P in
-  Dense.analysis (must_dense P p) (Policy.by_code (Cfg.node_enc (cfg P))).
+  Cost.value (must_analysis_c P).
+
+(** The charged may constructor returns exactly the original prepared analysis record. *)
+Theorem may_analysis_equation {N E U} (P : t N E U) :
+  may_analysis P =
+    Dense.analysis (may_dense P (prepare P)) (Policy.by_code (Cfg.node_enc (cfg P))).
+Proof.
+  unfold may_analysis, may_analysis_c; rewrite Cost.value_bind; reflexivity.
+Qed.
+
+(** The charged must constructor returns exactly the original prepared analysis record. *)
+Theorem must_analysis_equation {N E U} (P : t N E U) :
+  must_analysis P =
+    Dense.analysis (must_dense P (prepare P)) (Policy.by_code (Cfg.node_enc (cfg P))).
+Proof.
+  unfold must_analysis, must_analysis_c; rewrite Cost.value_bind; reflexivity.
+Qed.
+
+(** May construction retains preparation and the actual prepared dense-system charge once. *)
+Theorem may_analysis_cost {N E U} (P : t N E U) :
+  Cost.ticks (may_analysis_c P) =
+    (Cost.ticks (prepare_c P) +
+      Cost.ticks (Dense.system_c (may_dense P (prepare P))))%N.
+Proof.
+  unfold may_analysis_c; rewrite Cost.ticks_bind, Dense.analysis_cost; reflexivity.
+Qed.
+
+(** Must construction retains preparation and the actual prepared dense-system charge once. *)
+Theorem must_analysis_cost {N E U} (P : t N E U) :
+  Cost.ticks (must_analysis_c P) =
+    (Cost.ticks (prepare_c P) +
+      Cost.ticks (Dense.system_c (must_dense P (prepare P))))%N.
+Proof.
+  unfold must_analysis_c; rewrite Cost.ticks_bind, Dense.analysis_cost; reflexivity.
+Qed.
 
 (** May analysis laws reuse the reviewed collection lattice and dense summary. *)
 Theorem may_analysis_laws {N E U} (P : t N E U) :
@@ -454,6 +496,8 @@ Qed.
 
 Arguments prepare_c {N E U} P : simpl never.
 Arguments prepare {N E U} P : simpl never.
+Arguments may_analysis_c {N E U} P : simpl never.
+Arguments must_analysis_c {N E U} P : simpl never.
 Arguments may_analysis {N E U} P : simpl never.
 Arguments must_analysis {N E U} P : simpl never.
 

@@ -4,7 +4,7 @@
     For example, backward liveness may observe a variable at a nonterminal node.
     Builds on: FrameworkUtil, ProgramCfg and FixpointAnalysis. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad CostList.
 From Galois.Base Require Import BaseEncoding.
 From Galois.Lattice Require Import LatticeCore.
@@ -153,14 +153,19 @@ Proof.
   - autorewrite with galois_cost; rewrite Query.run_equation; reflexivity.
 Qed.
 
-(** Static dependencies contain the single flow input and no side outputs. *)
-Definition static {N E A} (D : t N E A) : System.static (system D) :=
+(** The summary constructor uses the actually prepared system without inspecting or rebuilding it. *)
+Definition static_for {N E A} (D : t N E A) (S : System.t N (constraint N E) A)
+    : System.static S :=
   System.Static
     (fun c => match c with
       | Seed _ => Cost.ret []
       | Flow e => Cost.step ;; Cost.map (fun n => [n]) (from_c D e)
       end)
     (fun _ => Cost.ret []).
+
+(** Static dependencies contain the single flow input and no side outputs. *)
+Definition static {N E A} (D : t N E A) : System.static (system D) :=
+  static_for D (system D).
 
 (** The summary covers every selected read for every assignment. *)
 Theorem static_laws {N E A} (D : t N E A) : System.static_laws (static D).
@@ -184,11 +189,51 @@ Proof.
       rewrite <- Hsides; apply incl_refl.
 Qed.
 
+(** Charged construction prepares the system once and attaches its computational summary. *)
+Definition analysis_c {N E A} (D : t N E A) (pol : Policy.t N) :=
+  let* sys := system_c D in
+  Cost.ret (Analysis.Make (Cfg.node_enc (cfg D))
+    (constraint_enc (Cfg.node_enc (cfg D)) (Cfg.edge_enc (cfg D)))
+    (lat D) sys (static_for D sys) pol).
+
 (** Analyses take a computational scheduling policy and need no law record to run. *)
 Definition analysis {N E A} (D : t N E A) (pol : Policy.t N) :=
-  Analysis.Make (Cfg.node_enc (cfg D))
-    (constraint_enc (Cfg.node_enc (cfg D)) (Cfg.edge_enc (cfg D)))
-    (lat D) (system D) (static D) pol.
+  Cost.value (analysis_c D pol).
+
+(** Charged construction returns the original analysis record, including its exact static data. *)
+Theorem analysis_equation {N E A} (D : t N E A) pol :
+  analysis D pol =
+    Analysis.Make (Cfg.node_enc (cfg D))
+      (constraint_enc (Cfg.node_enc (cfg D)) (Cfg.edge_enc (cfg D)))
+      (lat D) (system D) (static D) pol.
+Proof.
+  unfold analysis, analysis_c; rewrite Cost.value_bind, Cost.value_ret; reflexivity.
+Qed.
+
+(** Analysis assembly retains precisely the system preparation charge. *)
+Theorem analysis_cost {N E A} (D : t N E A) pol :
+  Cost.ticks (analysis_c D pol) = Cost.ticks (system_c D).
+Proof.
+  unfold analysis_c; rewrite Cost.ticks_bind, Cost.ticks_ret, N.add_0_r; reflexivity.
+Qed.
+
+Local Lemma map_ret_cost {X Y} (f : X -> Y) xs :
+  Cost.ticks (map_c (fun x => Cost.ret (f x)) xs) = N.of_nat (length xs).
+Proof.
+  rewrite ticks_map_c; induction xs as [|x xs IH]; [reflexivity|].
+  cbn [fold_right length]; rewrite Cost.ticks_ret, IH, Nat2N.inj_succ; lia.
+Qed.
+
+(** System preparation charges edge enumeration and all seed, flow and append cell visits. *)
+Theorem system_cost {N E A} (D : t N E A) :
+  Cost.ticks (system_c D) =
+    (Cost.ticks (fw_edges_c (cfg D)) + 2 * N.of_nat (length (seeds D)) +
+      N.of_nat (length (Cfg.edges (cfg D))))%N.
+Proof.
+  unfold system_c; rewrite !Cost.ticks_bind, !value_map_c, fw_edges_value.
+  rewrite !map_ret_cost, ticks_app_c, !length_map, Cost.ticks_ret.
+  nia.
+Qed.
 
 (** Lawful node, row and lattice dictionaries give all generated analysis laws. *)
 Theorem analysis_laws {N E A} (D : t N E A) pol :
@@ -245,6 +290,7 @@ Qed.
 
 Arguments system_c {N E A} D : simpl never.
 Arguments system {N E A} D : simpl never.
+Arguments analysis_c {N E A} D pol : simpl never.
 Arguments analysis {N E A} D pol : simpl never.
 
 End Dense.

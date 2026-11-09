@@ -171,3 +171,70 @@ Example flow_retains_endpoints_transfer_and_continuation :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Module DenseConstruction.
+
+Definition duplicate_cfg : Cfg.t nat nat :=
+  Cfg.Make (Graph.Make [0; 0] [0; 1]
+    (fun n => Cost.tick 11 ;; Cost.ret (if Nat.eqb n 0 then [0; 0] else []))
+    (fun _ => Cost.tick 5 ;; Cost.ret 0)
+    (fun _ => Cost.tick 7 ;; Cost.ret 1)) nat_encoding nat_encoding.
+
+Definition input :=
+  Dense.Make duplicate_cfg Forward bool_lattice
+    (fun _ => Cost.tick 17 ;; Cost.ret (Some true))
+    (fun _ b => Cost.tick 23 ;; Cost.ret b).
+
+Example charged_constructor_keeps_duplicate_rows :
+  System.constraints (Analysis.system
+    (Cost.value (Dense.analysis_c input (Policy.by_code nat_encoding)))) =
+    [Dense.Seed 0; Dense.Seed 0; Dense.Flow 0; Dense.Flow 0].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example charged_constructor_counts_actual_nonunit_outgoing_calls :
+  Cost.ticks (Dense.analysis_c input (Policy.by_code nat_encoding)) = 34%N.
+Proof.
+  rewrite Dense.analysis_cost, Dense.system_cost; vm_compute; reflexivity.
+Qed.
+
+Example charged_constructor_defers_boundary_and_transfer_calls :
+  (Cost.ticks (Dense.rhs_c input (Dense.Seed 0)),
+   Cost.ticks (Dense.transfer_c input 0 true)) = (18%N, 23%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example charged_empty_constructor :
+  Cost.ticks (Dense.analysis_c (forward empty) (Policy.by_code nat_encoding)) = 0%N.
+Proof.
+  rewrite Dense.analysis_cost, Dense.system_cost; vm_compute; reflexivity.
+Qed.
+
+Example charged_constructor_preserves_actual_execution :
+  observe (Cost.value (Dense.analysis_c input (Policy.by_code nat_encoding))) 8 [0; 1; 99] =
+    Some [true; true; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** An importing client retains equality of the entire original analysis record. *)
+Theorem original_record_client {N E A} (D : Dense.t N E A) pol :
+  Cost.value (Dense.analysis_c D pol) =
+    Analysis.Make (Cfg.node_enc (Dense.cfg D))
+      (Dense.constraint_enc (Cfg.node_enc (Dense.cfg D)) (Cfg.edge_enc (Dense.cfg D)))
+      (Dense.lat D) (Dense.system D) (Dense.static D) pol.
+Proof.
+  apply Dense.analysis_equation.
+Qed.
+
+(** An importing cost client obtains the unchanged system-construction charge. *)
+Theorem constructor_cost_client {N E A} (D : Dense.t N E A) pol :
+  Cost.ticks (Dense.analysis_c D pol) = Cost.ticks (Dense.system_c D).
+Proof.
+  apply Dense.analysis_cost.
+Qed.
+
+End DenseConstruction.
+Import DenseConstruction.
