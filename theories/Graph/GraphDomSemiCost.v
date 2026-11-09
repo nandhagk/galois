@@ -16,11 +16,11 @@ Module DomSemiCost.
 Local Open Scope N_scope.
 
 (** Numeric state support is independent of any desired semidominator result. *)
-Definition state_bounded limit st :=
+Definition state_bounded limit st : Prop :=
   DomLinkCost.values_bounded limit (DomSemi.semis st) /\
     DomLinkCost.bounded limit (DomSemi.links st).
 
-Definition accumulator_bounded limit (acc : DomLink.t * positive) :=
+Definition accumulator_bounded limit (acc : DomLink.t * positive) : Prop :=
   DomLinkCost.bounded limit (fst acc) /\ (snd acc <= limit)%positive.
 
 Definition eval_bound limit :=

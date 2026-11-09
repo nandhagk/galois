@@ -424,7 +424,7 @@ Definition semi_c {V E} (p : Prepared.t V E) : Cost.t (semi V E) :=
 Definition compute {V E} (p : Prepared.t V E) := Cost.value (semi_c p).
 
 (** A ranked arc observes an actual retained labelled predecessor occurrence. *)
-Definition ranked_arc {V E} (shared : semi V E) u e v :=
+Definition ranked_arc {V E} (shared : semi V E) u e v : Prop :=
   In (e, u) (Index.find positive_encoding v (predecessors (ranked shared))).
 
 (** The shared settlement always constructs canonical semidominator-map storage. *)

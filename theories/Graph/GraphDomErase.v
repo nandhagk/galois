@@ -74,7 +74,7 @@ Proof.
 Qed.
 
 (** A partial endpoint conversion is injective on the successful conversion domain. *)
-Definition injective (rename : positive -> option positive) :=
+Definition injective (rename : positive -> option positive) : Prop :=
   forall i j v, rename i = Some v -> rename j = Some v -> i = j.
 
 Local Lemma list_get rename xs :

@@ -119,9 +119,9 @@ Theorem callback_bounds c wo :
     (2 + wo + N.of_nat c) (2 + wo) 0.
 Proof.
   intro Hb. constructor.
-  - intros v Hv. split; [reflexivity|].
+  - intros v Hv. split; [rewrite positive_encoding_cost; reflexivity|].
     apply (live_width Hb v). exact Hv.
-  - intros v Hv. split; [reflexivity|].
+  - intros v Hv. split; [rewrite positive_encoding_cost; reflexivity|].
     apply (live_width Hb v). now apply DomNumber.forest_roots in Hv as [Hv Hparent].
   - intros u Hu.
     pose proof (child_row_length u c wo Hb) as Hlength.
@@ -149,8 +149,11 @@ Proof.
     assert (Hedge_live : In edge live).
     { rewrite DomNumber.forest_target in Htarget. exact Htarget. }
     change (Cost.ticks (DomNumber.source_c parents edge) <= 2 + wo /\ 0 <= 0 /\
-      1 <= 1 /\ key_bits positive_encoding (Graph.source forest edge) <= wo /\
-      1 <= 1 /\ key_bits positive_encoding (Graph.target forest edge) <= wo).
+      Cost.ticks (encode_c positive_encoding (Graph.source forest edge)) <= 1 /\
+      key_bits positive_encoding (Graph.source forest edge) <= wo /\
+      Cost.ticks (encode_c positive_encoding (Graph.target forest edge)) <= 1 /\
+      key_bits positive_encoding (Graph.target forest edge) <= wo).
+    rewrite !positive_encoding_cost.
     split.
     + unfold DomNumber.source_c.
       rewrite (Cost.ticks_bind (Map.get_c positive_encoding edge parents)), Cost.ticks_ret,

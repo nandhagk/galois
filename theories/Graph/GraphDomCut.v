@@ -17,12 +17,12 @@ Definition score {V E} (p : Prepared.t V E) :=
   DomLink.identity_value (DomSemi.semis (DomSemi.settled (DomSemi.compute p))).
 
 (** A closed ancestor cut admits no higher ancestor whose semidominator falls below the cut. *)
-Definition cut {V E} (p : Prepared.t V E) d n :=
+Definition cut {V E} (p : Prepared.t V E) d n : Prop :=
   DomDfs.ancestor p d n /\
     forall w, DomDfs.ancestor p w n -> (d < w)%positive -> (d <= score p w)%positive.
 
 (** A strict parent is discovered, decreases rank and represents exactly its child's strict cuts. *)
-Definition parent_property {V E} (p : Prepared.t V E) v a :=
+Definition parent_property {V E} (p : Prepared.t V E) v a : Prop :=
   DomPath.vertex (DomSemi.compute p) a /\ (a < v)%positive /\
     forall d, cut p d v /\ d <> v <-> cut p d a.
 

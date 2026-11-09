@@ -13,7 +13,7 @@ Import List.ListNotations.
 Module DomPath.
 
 (** A ranked vertex denotes a present discovery number in the shared labelled search. *)
-Definition vertex {V E} (shared : DomSemi.semi V E) rank :=
+Definition vertex {V E} (shared : DomSemi.semi V E) rank : Prop :=
   exists v, Map.get positive_encoding v (Search.pre_num (DomSemi.search shared)) = Some rank.
 
 (** Paths retain every original edge label and both actual ranked endpoints. *)

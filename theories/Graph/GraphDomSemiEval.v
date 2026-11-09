@@ -15,7 +15,7 @@ Import List.ListNotations.
 Module DomSemiEval.
 
 (** At a cutoff, original links are exactly the actual DFS parents of higher-ranked vertices. *)
-Definition cut_forest {V E} (p : Prepared.t V E) cutoff st :=
+Definition cut_forest {V E} (p : Prepared.t V E) cutoff st : Prop :=
   forall v parent,
   Map.get positive_encoding v (DomLink.original st) = Some parent <->
     Map.get positive_encoding v (DomSemi.parents (DomSemi.ranked (DomSemi.compute p))) =

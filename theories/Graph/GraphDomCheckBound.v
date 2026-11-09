@@ -17,7 +17,7 @@ Local Open Scope N_scope.
 Definition singleton_bound w := 1 + 2 * w.
 
 (** Stored endpoint widths cover raw displayed keys independently of the queried code paths. *)
-Definition stored_width (m : Map.t positive positive) w :=
+Definition stored_width (m : Map.t positive positive) w : Prop :=
   forall vu, In vu (Map.elements m) ->
     key_bits positive_encoding (fst vu) <= w /\ key_bits positive_encoding (snd vu) <= w.
 

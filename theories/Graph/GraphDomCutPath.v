@@ -14,7 +14,7 @@ Import List.ListNotations.
 Module DomCutPath.
 
 (** A rank dominates a target when no actual root path avoids that rank at every visited vertex. *)
-Definition no_avoiding {V E} (p : Prepared.t V E) d n :=
+Definition no_avoiding {V E} (p : Prepared.t V E) d n : Prop :=
   forall es, DomSemiExact.bounded_path (DomSemi.compute p) (fun x => x <> d) 1%positive es n ->
     1%positive <> d -> False.
 

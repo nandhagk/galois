@@ -205,7 +205,7 @@ Proof.
 Qed.
 
 (** Prefixes describe membership in the same root-to-node parent path. *)
-Definition prefix {A} (xs ys : list A) := exists tail, ys = xs ++ tail.
+Definition prefix {A} (xs ys : list A) : Prop := exists tail, ys = xs ++ tail.
 
 Local Lemma chain_suffix m :
   (forall n, ends (S (Map.size m)) m n = true) ->
@@ -410,7 +410,7 @@ Proof.
 Qed.
 
 (** A parent forest has reachable endpoints and no infinite ascending parent chain. *)
-Definition forest {V E} (p : Prepared.t V E) m :=
+Definition forest {V E} (p : Prepared.t V E) m : Prop :=
   (forall v u, parent m v = Some u -> In v (live p) /\ In u (live p)) /\
   well_founded (fun u v => parent m v = Some u).
 

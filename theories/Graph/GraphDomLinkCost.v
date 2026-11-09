@@ -14,16 +14,16 @@ Module DomLinkCost.
 Local Open Scope N_scope.
 
 (** Finite values and canonical storage are separate from linked-path semantic validity. *)
-Definition values_bounded limit (m : Map.t positive positive) :=
+Definition values_bounded limit (m : Map.t positive positive) : Prop :=
   Map.wf positive_encoding m /\
     forall v a, Map.get positive_encoding v m = Some a -> (a <= limit)%positive.
 
 (** Numeric compression needs finite shortcut and label data and no semidominator-result assumption. *)
-Definition bounded limit st :=
+Definition bounded limit st : Prop :=
   values_bounded limit (DomLink.shortcut st) /\ values_bounded limit (DomLink.labels st).
 
 (** Query support constrains the actual returned state, root and optional selected label. *)
-Definition query_bounded limit (answer : DomLink.query) :=
+Definition query_bounded limit (answer : DomLink.query) : Prop :=
   let '(st, (root, part)) := answer in
   bounded limit st /\ (root <= limit)%positive /\
     match part with
@@ -104,7 +104,7 @@ Proof.
 Qed.
 
 (** Primitive score callbacks have finite prices and output widths on the actual finite rank domain. *)
-Definition score_bounds limit (score : positive -> Cost.t positive) ks ws :=
+Definition score_bounds limit (score : positive -> Cost.t positive) ks ws : Prop :=
   forall v, (v <= limit)%positive ->
     Cost.ticks (score v) <= ks /\ key_bits positive_encoding (Cost.value (score v)) <= ws.
 

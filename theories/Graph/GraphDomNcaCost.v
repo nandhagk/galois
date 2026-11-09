@@ -8,7 +8,7 @@ From Stdlib Require Import List PArith NArith Arith Lia Wf_nat.
 From Galois.Cost Require Import CostMonad CostList CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseInternCost.
 From Galois.Graph Require Import GraphPrepared GraphSearchSpec GraphDomSemi GraphDomNca
-  GraphDomRank GraphDomLink GraphDomDfs.
+  GraphDomRank GraphDomLink GraphDomDfs GraphDomCostBasis.
 Import Cost.Notations.
 
 Module DomNcaCost.
@@ -20,16 +20,14 @@ Definition width v := N.pos (Pos.size v).
 Theorem get_cost {A} (m : Map.t positive A) v :
   Cost.ticks (Map.get_c positive_encoding v m) = 2 + width v.
 Proof.
-  rewrite Map.get_cost.
-  change (1 + 1 + N.pos (Pos.size v) = 2 + width v). reflexivity.
+  rewrite DomCostBasis.get_cost, positive_encoding_bits. reflexivity.
 Qed.
 
 (** Parent insertion charges its key independently of the stored parent's numeric size. *)
 Theorem set_cost {A} (m : Map.t positive A) v value :
   Cost.ticks (Map.set_c positive_encoding v value m) = 2 + width v.
 Proof.
-  rewrite Map.set_cost.
-  change (1 + 1 + N.pos (Pos.size v) = 2 + width v). reflexivity.
+  rewrite DomCostBasis.set_cost, positive_encoding_bits. reflexivity.
 Qed.
 
 (** Rank-descent testing also bounds its charge by the current rank's width. *)

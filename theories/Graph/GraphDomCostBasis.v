@@ -17,21 +17,24 @@ Local Open Scope N_scope.
 Theorem get_cost {A} (m : Map.t positive A) v :
   Cost.ticks (Map.get_c positive_encoding v m) = 2 + key_bits positive_encoding v.
 Proof.
-  rewrite Map.get_cost. reflexivity.
+  rewrite Map.get_cost, positive_encoding_cost, positive_encoding_equation,
+    positive_encoding_bits. reflexivity.
 Qed.
 
 (** Insertion has the same key price independently of the stored value and existing support. *)
 Theorem set_cost {A} (m : Map.t positive A) v a :
   Cost.ticks (Map.set_c positive_encoding v a m) = 2 + key_bits positive_encoding v.
 Proof.
-  rewrite Map.set_cost. reflexivity.
+  rewrite Map.set_cost, positive_encoding_cost, positive_encoding_equation,
+    positive_encoding_bits. reflexivity.
 Qed.
 
 (** Set membership charges the actual queried code even when it is absent. *)
 Theorem mem_cost s v :
   Cost.ticks (FinSet.mem_c positive_encoding v s) = 2 + key_bits positive_encoding v.
 Proof.
-  rewrite FinSet.mem_cost. reflexivity.
+  rewrite FinSet.mem_cost, positive_encoding_cost, positive_encoding_equation,
+    positive_encoding_bits. reflexivity.
 Qed.
 
 (** Sequencing a uniformly bounded continuation retains both complete actual callee prices. *)

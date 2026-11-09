@@ -269,9 +269,9 @@ Theorem preparation_bounds {V E} (p : Prepared.t V E) roots n m r ek bk w :
     1 w (out_bound n w) 0 0.
 Proof.
   intro Hb. constructor.
-  - intros v Hv. split; [reflexivity|].
+  - intros v Hv. split; [rewrite positive_encoding_cost; reflexivity|].
     apply (universe_width Hb v). now apply DomFiniteView.graph_nodes in Hv.
-  - intros v Hv. split; [reflexivity|].
+  - intros v Hv. split; [rewrite positive_encoding_cost; reflexivity|].
     apply (universe_width Hb v). apply DomFiniteView.graph_entries in Hv. exact (proj2 Hv).
   - intros v Hv. apply outgoing_cost with (1 := Hb).
     now apply DomFiniteView.graph_nodes in Hv.
@@ -279,9 +279,11 @@ Proof.
     apply in_flat_map in Hedge. destruct Hedge as [u [Hu Hedge]].
     apply DomFiniteView.graph_edge in Hedge.
     destruct Hedge as [Hsource [Hsource_live [Htarget_live Hoccurrence]]].
-    change (0 <= 0 /\ 0 <= 0 /\ 1 <= 1 /\
-      key_bits positive_encoding (fst edge) <= w /\ 1 <= 1 /\
+    change (0 <= 0 /\ 0 <= 0 /\ Cost.ticks (encode_c positive_encoding (fst edge)) <= 1 /\
+      key_bits positive_encoding (fst edge) <= w /\
+      Cost.ticks (encode_c positive_encoding (snd edge)) <= 1 /\
       key_bits positive_encoding (snd edge) <= w).
+    rewrite !positive_encoding_cost.
     split; [reflexivity|]. split; [reflexivity|]. split; [reflexivity|].
     split; [rewrite Hsource; exact (universe_width Hb u Hsource_live)|].
     split; [reflexivity|exact (universe_width Hb (snd edge) Htarget_live)].

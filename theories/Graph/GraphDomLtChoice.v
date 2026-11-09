@@ -14,7 +14,7 @@ From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSemi GraphDomP
 Module DomLtChoice.
 
 (** The chosen representative minimizes settled scores on the actual branch below the bucket root. *)
-Definition segment_minimum {V E} (p : Prepared.t V E) s v u :=
+Definition segment_minimum {V E} (p : Prepared.t V E) s v u : Prop :=
   DomDfs.ancestor p u v /\ (s < u)%positive /\
     forall w, DomDfs.ancestor p w v -> (s < w)%positive ->
       (DomCut.score p u <= DomCut.score p w)%positive.
@@ -82,7 +82,7 @@ Proof.
 Qed.
 
 (** A provisional parent either settles to the semidominator or inherits an earlier nonroot's strict cuts. *)
-Definition parent_choice {V E} (p : Prepared.t V E) v a :=
+Definition parent_choice {V E} (p : Prepared.t V E) v a : Prop :=
   (a = DomCut.score p v /\ forall d, DomCut.cut p d v /\ d <> v <-> DomCut.cut p d a) \/
   (a <> DomCut.score p v /\ DomPath.vertex (DomSemi.compute p) a /\ a <> 1%positive /\
     (a < v)%positive /\ forall d, DomCut.cut p d v /\ d <> v <-> DomCut.cut p d a /\ d <> a).

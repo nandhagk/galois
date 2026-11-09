@@ -15,7 +15,7 @@ Import List.ListNotations.
 Module DomLtProof.
 
 (** A corrected parent's cuts are precisely its child's strict cuts. *)
-Definition parent_property {V E} (p : Prepared.t V E) v a :=
+Definition parent_property {V E} (p : Prepared.t V E) v a : Prop :=
   DomCut.parent_property p v a.
 
 (** The increasing prefix stores exactly processed nonroots with their proved corrected parent laws. *)

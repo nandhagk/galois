@@ -228,7 +228,7 @@ Proof.
 Qed.
 
 (** Candidate-chain widths include every stored parent value, independently of its stored key. *)
-Definition parent_width (m : Map.t positive positive) w :=
+Definition parent_width (m : Map.t positive positive) w : Prop :=
   forall v u, Map.get positive_encoding v m = Some u ->
     (key_bits positive_encoding u <= w)%N.
 

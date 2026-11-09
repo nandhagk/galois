@@ -19,7 +19,7 @@ Inductive segment (m : Map.t positive positive) : positive -> positive -> list p
       segment m a root xs -> segment m v root (v :: xs).
 
 (** A minimum is an actual segment member and bounds every member's score. *)
-Definition minimum (score : positive -> positive) best xs :=
+Definition minimum (score : positive -> positive) best xs : Prop :=
   In best xs /\ forall v, In v xs -> (score best <= score v)%positive.
 
 (** Every shortcut represents its original segment and both forests have the same roots. *)
@@ -231,7 +231,7 @@ Proof.
 Qed.
 
 (** Compression's result describes its actual original path and root-excluding selected minimum. *)
-Definition query_valid (score : positive -> positive) st v (answer : DomLink.query) :=
+Definition query_valid (score : positive -> positive) st v (answer : DomLink.query) : Prop :=
   let '(st', (root, part)) := answer in
   DomLink.original st' = DomLink.original st /\ valid score st' /\
     Map.get positive_encoding root (DomLink.original st) = None /\

@@ -15,7 +15,7 @@ Import Cost.Notations.
 Module DomLtCost.
 Local Open Scope N_scope.
 
-Definition bounded limit st :=
+Definition bounded limit st : Prop :=
   DomLinkCost.bounded limit (DomLt.links st) /\
     DomLinkCost.values_bounded limit (DomLt.provisional st).
 

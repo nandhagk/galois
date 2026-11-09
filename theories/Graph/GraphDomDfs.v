@@ -311,7 +311,7 @@ Proof.
 Qed.
 
 (** Ranked DFS ancestry is the closure of the actual converted labelled-parent map. *)
-Definition ancestor {V E} (p : Prepared.t V E) :=
+Definition ancestor {V E} (p : Prepared.t V E) : positive -> positive -> Prop :=
   idom_ancestor (DomSemi.parents (DomSemi.ranked (DomSemi.compute p))).
 
 Local Lemma ordered_closure (parent : positive -> positive -> Prop) :

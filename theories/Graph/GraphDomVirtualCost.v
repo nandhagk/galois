@@ -43,9 +43,7 @@ Theorem root_key_bounds {V} (enc : encoding V) e b :
     key_bits (DomVirtual.node_encoding enc) None <= node_width b.
 Proof.
   pose proof (sum_encoding_cost enc unit_encoding (inr tt)) as Hsum.
-  rewrite sum_encoding_bits in Hsum.
-  change (Cost.ticks (encode_c (sum_encoding enc unit_encoding) (inr tt)) <=
-    2 + 1 + encode_k * (8 + 2 * 1)) in Hsum.
+  rewrite sum_encoding_bits, unit_encoding_cost, unit_encoding_bits in Hsum.
   split.
   - change (1 + Cost.ticks (encode_c (sum_encoding enc unit_encoding) (inr tt)) <= node_price e b).
     unfold node_price, node_width.
@@ -54,7 +52,7 @@ Proof.
     lia.
   - unfold key_bits at 1. rewrite DomVirtual.node_encoding_equation.
     change (key_bits (sum_encoding enc unit_encoding) (inr tt) <= node_width b).
-    rewrite sum_encoding_bits. change (8 + 2 * 1 <= node_width b). unfold node_width. lia.
+    rewrite sum_encoding_bits, unit_encoding_bits. unfold node_width. lia.
 Qed.
 
 Local Lemma entries_length {V E} enc (g : Graph.t V E) :

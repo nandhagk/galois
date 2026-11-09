@@ -26,11 +26,11 @@ Inductive high_path {V E} (shared : DomSemi.semi V E) (cutoff : positive) :
       high_path shared cutoff v es z -> high_path shared cutoff u (e :: es) z.
 
 (** A semidominator candidate has a nonempty actual ranked path above its endpoint cutoff. *)
-Definition semidom_path {V E} (p : Prepared.t V E) u n :=
+Definition semidom_path {V E} (p : Prepared.t V E) u n : Prop :=
   exists es, high_path (DomSemi.compute p) n u es n.
 
 (** Semidominators minimize start rank among all such actual search paths. *)
-Definition semidominator {V E} (p : Prepared.t V E) u n :=
+Definition semidominator {V E} (p : Prepared.t V E) u n : Prop :=
   semidom_path p u n /\ forall v, semidom_path p v n -> (u <= v)%positive.
 
 (** A bounded path requires its guard at every edge target, including the endpoint. *)
@@ -438,7 +438,7 @@ Proof.
 Qed.
 
 (** A current minimum bounds a predecessor and all previously settled ancestors of that predecessor. *)
-Definition incoming_bound {V E} (p : Prepared.t V E) cutoff semis source best :=
+Definition incoming_bound {V E} (p : Prepared.t V E) cutoff semis source best : Prop :=
   (best <= source)%positive /\
     forall u, (cutoff < u)%positive -> DomDfs.ancestor p u source ->
       (best <= DomLink.identity_value semis u)%positive.

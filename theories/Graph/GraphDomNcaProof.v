@@ -16,7 +16,7 @@ Import List.ListNotations.
 Module DomNcaProof.
 
 (** A produced parent's cuts are precisely the strict cuts of its child. *)
-Definition parent_property {V E} (p : Prepared.t V E) v a :=
+Definition parent_property {V E} (p : Prepared.t V E) v a : Prop :=
   DomCut.parent_property p v a.
 
 (** Every stored binding has its proved cut law and every processed nonroot is present. *)

@@ -347,7 +347,7 @@ Proof.
 Qed.
 
 (** A candidate's semantic certificate is about canonical numbering of its actual parent map. *)
-Definition candidate_exact {V E} (p : Prepared.t V E) (m : Map.t positive positive) :=
+Definition candidate_exact {V E} (p : Prepared.t V E) (m : Map.t positive positive) : Prop :=
   Dom.exact p (DomCheck.of_parents p m).
 
 (** Certification receives storage validity separately from the boolean graph checks. *)
