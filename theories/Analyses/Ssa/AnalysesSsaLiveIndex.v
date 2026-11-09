@@ -66,6 +66,217 @@ Proof.
   - rewrite SearchOrder.rpo_equation; apply before_reverse; exact Hpost.
 Qed.
 
+(** Interval queries keep missing ranks distinct from both Boolean answers. *)
+Definition interval_c {E} (r : Search.result E) u v : Cost.t (option bool) :=
+  let* a := Map.get_c positive_encoding u (Search.pre_num r) in
+  let* b := Map.get_c positive_encoding v (Search.pre_num r) in
+  let* c := Map.get_c positive_encoding v (Search.post_num r) in
+  let* d := Map.get_c positive_encoding u (Search.post_num r) in
+  match a, b, c, d with
+  | Some a, Some b, Some c, Some d =>
+    Cost.step ;;
+    let left := Pos.leb a b in
+    Cost.step ;;
+    let right := Pos.leb c d in
+    Cost.step ;;
+    Cost.ret (Some (left && right))
+  | _, _, _, _ => Cost.ret None
+  end.
+
+Definition interval {E} (r : Search.result E) u v := Cost.value (interval_c r u v).
+
+(** The optional answer uses the actual four maps and substitutes no rank. *)
+Theorem interval_equation {E} (r : Search.result E) u v :
+  interval r u v =
+    match Map.get positive_encoding u (Search.pre_num r),
+        Map.get positive_encoding v (Search.pre_num r),
+        Map.get positive_encoding v (Search.post_num r),
+        Map.get positive_encoding u (Search.post_num r) with
+    | Some a, Some b, Some c, Some d => Some (Pos.leb a b && Pos.leb c d)
+    | _, _, _, _ => None
+    end.
+Proof.
+  unfold interval, interval_c; rewrite !Cost.value_bind.
+  fold (Map.get positive_encoding u (Search.pre_num r)).
+  fold (Map.get positive_encoding v (Search.pre_num r)).
+  fold (Map.get positive_encoding v (Search.post_num r)).
+  fold (Map.get positive_encoding u (Search.post_num r)).
+  destruct (Map.get positive_encoding u (Search.pre_num r)),
+    (Map.get positive_encoding v (Search.pre_num r)),
+    (Map.get positive_encoding v (Search.post_num r)),
+    (Map.get positive_encoding u (Search.post_num r)); reflexivity.
+Qed.
+
+Local Lemma recorded_numbered {N E} (p : Prepared.t N E) scope roots r u :
+  Search.exact p scope roots r -> In u (Search.preorder r) ->
+  exists a b, Map.get positive_encoding u (Search.pre_num r) = Some a /\
+    Map.get positive_encoding u (Search.post_num r) = Some b.
+Proof.
+  intros Hexact Hu.
+  pose proof (proj2 (Search.ancestor_iff _ _ _ _ Hexact u u Hu Hu)
+    (rt_refl _ _ u)) as Hinterval.
+  destruct Hinterval as [a [b [c [d [Ha [_ [Hc _]]]]]]].
+  exists a, c; split; assumption.
+Qed.
+
+(** Certified recorded endpoints have a Boolean interval answer that reflects tree ancestry. *)
+Theorem interval_exact {N E} (p : Prepared.t N E) scope roots r u v :
+  Search.exact p scope roots r ->
+  In u (Search.preorder r) -> In v (Search.preorder r) ->
+  exists answer, interval r u v = Some answer /\
+    (answer = true <-> Search.ancestor r u v).
+Proof.
+  intros Hexact Hu Hv.
+  destruct (recorded_numbered p scope roots r u Hexact Hu) as [a [d [Ha Hd]]].
+  destruct (recorded_numbered p scope roots r v Hexact Hv) as [b [c [Hb Hc]]].
+  exists (Pos.leb a b && Pos.leb c d); split.
+  - rewrite interval_equation, Ha, Hb, Hc, Hd; reflexivity.
+  - rewrite andb_true_iff, !Pos.leb_le.
+    rewrite <- (Search.ancestor_iff _ _ _ _ Hexact u v Hu Hv); split.
+    + intros Hab; exists a, b, c, d; repeat split; tauto.
+    + intros [a' [b' [c' [d' [Ha' [Hb' [Hc' [Hd' Hle]]]]]]]].
+      assert (Hsame : a' = a /\ b' = b /\ c' = c /\ d' = d) by intuition congruence.
+      destruct Hsame as [-> [-> [-> ->]]]; exact Hle.
+Qed.
+
+(** Interval work retains four scalar-ID lookups and every selected rank comparison. *)
+Theorem interval_cost {E} (r : Search.result E) u v :
+  (Cost.ticks (interval_c r u v) <=
+    11 + 2 * (key_bits positive_encoding u + key_bits positive_encoding v))%N.
+Proof.
+  unfold interval_c; rewrite !Cost.ticks_bind, !Map.get_cost.
+  rewrite !positive_encoding_cost, !positive_encoding_equation, <- !positive_encoding_bits.
+  fold (Map.get positive_encoding u (Search.pre_num r)).
+  fold (Map.get positive_encoding v (Search.pre_num r)).
+  fold (Map.get positive_encoding v (Search.post_num r)).
+  fold (Map.get positive_encoding u (Search.post_num r)).
+  destruct (Map.get positive_encoding u (Search.pre_num r)),
+    (Map.get positive_encoding v (Search.pre_num r)),
+    (Map.get positive_encoding v (Search.post_num r)),
+    (Map.get positive_encoding u (Search.post_num r));
+    autorewrite with galois_cost; lia.
+Qed.
+
+(** Successor partitioning records non-back and back targets once and rejects missing ranks. *)
+Definition split_successors_c {E} (r : Search.result E) n (edges : list (E * positive)) :=
+  fold_right_c (fun edge result =>
+    match result with
+    | None => Cost.ret None
+    | Some (forward, back) =>
+      Cost.step ;;
+      let* answer := interval_c r (snd edge) n in
+      Cost.ret
+        (match answer with
+        | None => None
+        | Some true => Some (forward, snd edge :: back)
+        | Some false => Some (snd edge :: forward, back)
+        end)
+    end) (Some ([], [])) edges.
+
+Definition split_successors {E} (r : Search.result E) n edges :=
+  Cost.value (split_successors_c r n edges).
+
+(** Partitioning preserves occurrence order and propagates the first observed missing-rank result. *)
+Theorem split_successors_equation {E} (r : Search.result E) n edges :
+  split_successors r n edges =
+    match edges with
+    | [] => Some ([], [])
+    | (_, target) :: rest =>
+      match split_successors r n rest with
+      | None => None
+      | Some (forward, back) =>
+        match interval r target n with
+        | None => None
+        | Some true => Some (forward, target :: back)
+        | Some false => Some (target :: forward, back)
+        end
+      end
+    end.
+Proof.
+  destruct edges as [|[edge target] rest]; unfold split_successors, split_successors_c;
+    rewrite !value_fold_right_c; [reflexivity|].
+  cbn [fold_right].
+  destruct (fold_right _ _ rest) as [[forward back]|]; [|reflexivity].
+  rewrite !Cost.value_bind; reflexivity.
+Qed.
+
+(** Certified recorded targets partition completely by actual tree ancestry without defaults. *)
+Theorem split_successors_exact {N E} (p : Prepared.t N E) scope roots r n edges :
+  Search.exact p scope roots r -> In n (Search.preorder r) ->
+  (forall e v, In (e, v) edges -> In v (Search.preorder r)) ->
+  exists forward back, split_successors r n edges = Some (forward, back) /\
+    (forall v, In v forward <->
+      exists e, In (e, v) edges /\ ~ Search.ancestor r v n) /\
+    (forall v, In v back <->
+      exists e, In (e, v) edges /\ Search.ancestor r v n).
+Proof.
+  intros Hexact Hn; induction edges as [|[edge target] rest IH]; intro Htargets.
+  - exists [], []; split; [apply split_successors_equation|].
+    split; intro v; split; [contradiction|intros [e [Hnone _]]; contradiction|
+      contradiction|intros [e [Hnone _]]; contradiction].
+  - destruct (IH (fun e v Hv => Htargets e v (or_intror Hv)))
+      as [forward [back [Hsplit [Hforward Hback]]]].
+    destruct (interval_exact p scope roots r target n Hexact
+      (Htargets edge target (or_introl eq_refl)) Hn) as [answer [Hinterval Hancestor]].
+    rewrite split_successors_equation, Hsplit, Hinterval.
+    destruct answer.
+    + exists forward, (target :: back); split; [reflexivity|].
+      assert (Hanc : Search.ancestor r target n) by (apply Hancestor; reflexivity).
+      split; intro v.
+      * rewrite Hforward; split.
+        -- intros [e [He Hnot]]; exists e; split; [now right|exact Hnot].
+        -- intros [e [[He|He] Hnot]]; [injection He as -> ->; contradiction|].
+           exists e; auto.
+      * cbn [In]; rewrite Hback; split.
+        -- intros [<-|[e [He Hancv]]].
+           ++ exists edge; split; [now left|exact Hanc].
+           ++ exists e; split; [now right|exact Hancv].
+        -- intros [e [[He|He] Hancv]].
+           ++ injection He as -> ->; now left.
+           ++ right; exists e; auto.
+    + exists (target :: forward), back; split; [reflexivity|].
+      assert (Hnot : ~ Search.ancestor r target n).
+      { intro Hanc; apply Hancestor in Hanc; discriminate. }
+      split; intro v.
+      * cbn [In]; rewrite Hforward; split.
+        -- intros [<-|[e [He Hnotv]]].
+           ++ exists edge; split; [now left|exact Hnot].
+           ++ exists e; split; [now right|exact Hnotv].
+        -- intros [e [[He|He] Hnotv]].
+           ++ injection He as -> ->; now left.
+           ++ right; exists e; auto.
+      * rewrite Hback; split.
+        -- intros [e [He Hancv]]; exists e; split; [now right|exact Hancv].
+        -- intros [e [[He|He] Hancv]]; [injection He as -> ->; contradiction|].
+           exists e; auto.
+Qed.
+
+(** Partition work includes each visited cell, query dispatch and all actual interval lookups. *)
+Theorem split_successors_cost {E} (r : Search.result E) n edges width :
+  (key_bits positive_encoding n <= width)%N ->
+  (forall e v, In (e, v) edges -> (key_bits positive_encoding v <= width)%N) ->
+  (Cost.ticks (split_successors_c r n edges) <=
+    N.of_nat (length edges) * (13 + 4 * width))%N.
+Proof.
+  intros Hn Hedges; unfold split_successors_c.
+  match goal with
+  | |- context [fold_right_c ?step _ _] => set (callback := step)
+  end.
+  pose proof (ticks_fold_right_c_potential callback
+    (fun _ => True) (fun _ => 0%N) (12 + 4 * width)%N edges
+    (Some (([], []) : list positive * list positive))) as Hfold.
+  assert (Hstep : forall edge result, In edge edges -> True ->
+    True /\
+    (Cost.ticks (callback edge result) + 0 <= 12 + 4 * width + 0)%N).
+  { intros [edge target] [[forward back]|] Hedge _; split; [exact I| |exact I|].
+    - unfold callback; rewrite !Cost.ticks_bind, Cost.ticks_step, Cost.ticks_ret.
+      pose proof (interval_cost r target n) as Hcost.
+      pose proof (Hedges edge target Hedge) as Htarget.
+      cbn [snd]; lia.
+    - unfold callback; rewrite Cost.ticks_ret; lia. }
+  destruct (Hfold Hstep I) as [_ Hcost]; cbn beta in Hcost; nia.
+Qed.
+
 (** Missing reduced rows denote the empty set and retain the map lookup charge. *)
 Definition row_c (rows : Map.t positive (FinSet.t positive)) n :=
   Map.find_or_c positive_encoding FinSet.empty n rows.

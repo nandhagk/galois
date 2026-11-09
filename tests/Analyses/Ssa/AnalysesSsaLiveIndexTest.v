@@ -6,13 +6,73 @@
 
 From Stdlib Require Import List Bool PArith NArith Lia.
 From Galois.Cost Require Import CostMonad.
-From Galois.Base Require Import BaseEncoding BaseSet BaseRel.
+From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseRel.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphSearchSpec GraphSearchOrder.
 From Galois.Analyses.Ssa Require Import AnalysesSsaLiveIndex.
 Import List.ListNotations Cost.Notations.
 Local Open Scope positive_scope.
 
 Module ReducedFixture.
+
+Definition supplied_ranks : Search.result unit :=
+  Search.Result [1; 2] [2; 1] (Map.of_list positive_encoding [(2, (tt, 1))])
+    (Map.of_list positive_encoding [(1, 1); (2, 2)])
+    (Map.of_list positive_encoding [(1, 2); (2, 1)])
+    (FinSet.of_list positive_encoding [1; 2]).
+
+Example optional_interval_answers :
+  (LiveIndex.interval supplied_ranks 1 2,
+   LiveIndex.interval supplied_ranks 2 1,
+   LiveIndex.interval supplied_ranks 2 2,
+   LiveIndex.interval supplied_ranks 1 99) =
+    (Some true, Some false, Some true, None).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example interval_lookup_width_controls :
+  (Cost.ticks (LiveIndex.interval_c supplied_ranks 1 2),
+   Cost.ticks (LiveIndex.interval_c supplied_ranks 2 2),
+   Cost.ticks (LiveIndex.interval_c supplied_ranks 1 3)) = (17%N, 19%N, 14%N).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example successor_partition_keeps_self_and_parallel_back_targets :
+  LiveIndex.split_successors supplied_ranks 2 [(tt, 1); (tt, 2); (tt, 1)] =
+    Some ([], [1; 2; 1]).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example forward_successor_partition :
+  LiveIndex.split_successors supplied_ranks 1 [(tt, 2)] = Some ([2], []).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example missing_rank_rejects_successor_preparation :
+  LiveIndex.split_successors supplied_ranks 1 [(tt, 2); (tt, 99)] = None.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example successor_partition_empty_and_tick_controls :
+  LiveIndex.split_successors supplied_ranks 1 [] = Some ([], []) /\
+  Cost.ticks (LiveIndex.split_successors_c supplied_ranks 2
+    [(tt, 1); (tt, 2); (tt, 1)]) = 59%N /\
+  Cost.ticks (LiveIndex.split_successors_c supplied_ranks 1 []) = 0%N.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+(** The query's importing cost theorem keeps endpoint widths independently visible. *)
+Theorem interval_numeric_client {E} (r : Search.result E) u v :
+  (Cost.ticks (LiveIndex.interval_c r u v) <=
+    11 + 2 * (key_bits positive_encoding u + key_bits positive_encoding v))%N.
+Proof.
+  apply LiveIndex.interval_cost.
+Qed.
 
 Definition next_c (n : positive) :=
   Cost.tick 7 ;;
