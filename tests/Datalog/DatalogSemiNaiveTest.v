@@ -475,6 +475,33 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** The tick controls finish with four and eight reachability tuples respectively. *)
+Example single_pivot_chain_cardinalities :
+  let size facts fuel :=
+    match stratum engine_linear_chain facts engine_chain_strata
+      (engine_chain_lower facts) 1 fuel with
+    | Outcome.Solved db => FinSet.size (set_raw (rel_of engine_linear_chain db 1))
+    | _ => 0
+    end in
+  (size engine_chain_four 4%positive, size engine_chain_eight 8%positive) = (4, 8).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Each chain needs its growth rounds and the final stationary probe. *)
+Example single_pivot_chain_exact_rounds :
+  (engine_tag (stratum engine_linear_chain engine_chain_four engine_chain_strata
+     (engine_chain_lower engine_chain_four) 1 3%positive),
+   engine_tag (stratum engine_linear_chain engine_chain_four engine_chain_strata
+     (engine_chain_lower engine_chain_four) 1 4%positive),
+   engine_tag (stratum engine_linear_chain engine_chain_eight engine_chain_strata
+     (engine_chain_lower engine_chain_eight) 1 7%positive),
+   engine_tag (stratum engine_linear_chain engine_chain_eight engine_chain_strata
+     (engine_chain_lower engine_chain_eight) 1 8%positive)) = (1, 0, 1, 0).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 (** Doubling facts uses at most three times the ticks in this nonempty stratum control. *)
 Example single_pivot_chain_tick_control :
   (0 < Cost.ticks (stratum_c engine_linear_chain engine_chain_four engine_chain_strata
