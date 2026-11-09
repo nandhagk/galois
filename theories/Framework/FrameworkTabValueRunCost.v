@@ -21,7 +21,7 @@ Module TabValueRunCost.
 Definition coordinate {N E P D A F} (I : Ide.t N E P D A F) start v :=
   v = start \/ TabRunCost.coordinate I (fst start) v \/ In v (IdeValue.vertices I).
 
-(** Primitive value duties use the finite key domain and the entire closed value/function domains. *)
+(** Primitive value duties use the finite key domain and the entire value/function domains. *)
 Record primitives {N E P D A F} (I : Ide.t N E P D A F) start e w m : Prop := {
   node : forall v, coordinate I start v ->
     TabEncodingCost.bounded (Cfg.node_enc (Icfg.cfg (Ifds.icfg (Ide.ifds I))))
@@ -246,14 +246,15 @@ Proof.
     (Cost.ticks (Cost.ret (fst (fst a))) <= 0)%N /\
     (Cost.ticks (encode_c (IdeValue.key_enc I) (fst (fst a))) <= TabRunCost.ve e w)%N /\
     (key_bits (IdeValue.key_enc I) (fst (fst a)) <= TabRunCost.vw w)%N).
-  { intros a Ha; split; [reflexivity|]; apply vertex_budget; exact (proj1 (transition_domain a Ha)). }
+  { intros a Ha; split; [reflexivity|].
+    apply vertex_budget; exact (proj1 (transition_domain a Ha)). }
   specialize (Hgroup Hbody).
   pose proof (transitions_length I J start) as Hlength.
   eapply N.le_trans; [exact Hgroup|].
   apply N.add_le_mono_l, N.mul_le_mono_r; exact Hlength.
 Qed.
 
-(** Value preparation retains jump-reader work, actual calls, both inventories and index reversal. *)
+(** Value preparation retains jump reads, actual calls, both inventories and index reversal. *)
 Theorem prepare_cost ko ks kt kk kf kw q :
   TabPrepareCost.callbacks I ko ks kt kk kf kw q ->
   (Cost.ticks (TabValues.prepare_c I J start) <=
@@ -450,7 +451,7 @@ Proof.
   unfold initial_charge; lia.
 Qed.
 
-(** Raw value propagation retains preparation, inventory initialization and every binary-driver tick. *)
+(** Raw value propagation retains preparation, initialization and every binary-driver tick. *)
 Theorem raw_cost a0 fuel ko ks kt kk kf kw q :
   TabPrepareCost.callbacks I ko ks kt kk kf kw q ->
   (Cost.ticks (TabValues.raw_c I J start a0 fuel) <=
@@ -492,13 +493,13 @@ Qed.
 
 End Run.
 
-(** Constructed value fuel pays the separate value height and both transition endpoint inventories. *)
+(** Constructed fuel pays the separate value height and both transition endpoint inventories. *)
 Definition complete_charge {N E P D A F} (I : Ide.t N E P D A F)
     ko ks kt kk kf kw q e w m h :=
   (prepare_charge I ko ks kt kk kf kw q e w + initial_charge I e w m +
     h + keys I + 1 + (step_charge I e w m + 2) * (1 + (1 + h) * keys I))%N.
 
-(** Constructed raw value execution composes primitive preparation, updates and actual height fuel. *)
+(** Constructed raw values compose primitive preparation, updates and actual height fuel. *)
 Theorem complete_raw_cost {N E P D A F} (I : Ide.t N E P D A F) J start a0 e w m
     ko ks kt kk kf kw q (H : height (Ide.values I)) :
   primitives I start e w m -> encoding_laws (IdeValue.key_enc I) ->

@@ -259,7 +259,7 @@ Proof.
   - cbn [length] in Hlen; lia.
 Qed.
 
-(** Every default lookup in a constructed plan table returns an actual safe payload or its default. *)
+(** A constructed plan table returns an actual safe payload or its default. *)
 Theorem of_list_payload {K V} (EK : encoding K) (P : V -> Prop) xs key fallback :
   P fallback -> (forall kv, In kv xs -> P (snd kv)) ->
   P (Map.find_or EK fallback key (Map.of_list EK xs)).
@@ -301,6 +301,12 @@ Definition checker_charge {N E P D A F} (I : Ide.t N E P D A F)
   (analysis_charge I ko ks kt kk kf kw q e w +
     rows I * (1 + constraint_charge e w m))%N.
 
+Local Lemma returned_filter_value {X Y} (f : X -> option Y) xs :
+  Cost.value (filter_map_c (fun x => Cost.ret (f x)) xs) = filter_map f xs.
+Proof.
+  rewrite value_filter_map_c; reflexivity.
+Qed.
+
 Section Preparation.
 Context {N E P D A F} (I : Ide.t N E P D A F) (J : Map.t positive F)
   (start : N * option D) (a0 : A) (e w m : BinNums.N).
@@ -341,6 +347,22 @@ Proof.
   - eapply N.le_trans; [exact Hlength|apply N.mul_le_mono_r; exact Hroots].
 Qed.
 
+Local Lemma call_plans_length :
+  (N.of_nat (length (filter_map (fun a : Jump.arc N E P D F =>
+    match Jump.kind a with
+    | Icfg.Call _ => Some
+        (@VCall N E D (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)),
+        Rows.Make (Jump.target a) [Jump.source a] (fun values =>
+          match values with
+          | value :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Jump.weight a) value
+          | [] => Cost.ret (bot (Ide.values I))
+          end))
+    | _ => None
+    end) (Jump.arcs I))) <= TabPrepareCost.arc_count I)%N.
+Proof.
+  apply nat_N_le, TabPrepareCost.filter_map_length.
+Qed.
+
 (** Actual certificate plan generation retains captured jump-reader costs and row occurrences. *)
 Theorem prepare_cost ko ks kt kk kf kw q :
   TabPrepareCost.callbacks I ko ks kt kk kf kw q ->
@@ -357,28 +379,7 @@ Proof.
       | a :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) weight a
       | [] => Cost.ret (bot (Ide.values I))
       end)))) as [Hsummary Hsummary_length].
-  pose proof (TabPrepareCost.filter_map_length (fun a : Jump.arc N E P D F =>
-    match Jump.kind a with
-    | Icfg.Call _ => Some
-        (@VCall N E D (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)),
-        Rows.Make (Jump.target a) [Jump.source a] (fun values =>
-          match values with
-          | value :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Jump.weight a) value
-          | [] => Cost.ret (bot (Ide.values I))
-          end))
-    | _ => None
-    end) (Jump.arcs I)) as Hcalls.
-  assert (HcallsN : (N.of_nat (length (filter_map (fun a : Jump.arc N E P D F =>
-    match Jump.kind a with
-    | Icfg.Call _ => Some
-        (@VCall N E D (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)),
-        Rows.Make (Jump.target a) [Jump.source a] (fun values =>
-          match values with
-          | value :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Jump.weight a) value
-          | [] => Cost.ret (bot (Ide.values I))
-          end))
-    | _ => None
-    end) (Jump.arcs I))) <= TabPrepareCost.arc_count I)%N) by (apply nat_N_le; exact Hcalls).
+  pose proof call_plans_length as Hcalls.
   unfold TabCheckCost.list_bound; split.
   - unfold IdeValue.prepare_c; rewrite !Cost.ticks_bind.
     change (Cost.value (Jump.arcs_c I)) with (Jump.arcs I).
@@ -402,28 +403,7 @@ Proof.
     change (None :: map (@Some D) (Ifds.facts (Ide.ifds I)))
       with (Jump.fact_domain (Ide.ifds I)).
     rewrite TabValueRunCost.vertices_value.
-    rewrite !Cost.value_ret, value_app_c, value_filter_map_c.
-    change (fun a : Jump.arc N E P D F => Cost.value (Cost.ret
-      (match Jump.kind a with
-       | Icfg.Call _ => Some
-           (@VCall N E D (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)),
-           Rows.Make (Jump.target a) [Jump.source a] (fun values =>
-             match values with
-             | value :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Jump.weight a) value
-             | [] => Cost.ret (bot (Ide.values I))
-             end))
-       | _ => None
-       end))) with (fun a : Jump.arc N E P D F =>
-       match Jump.kind a with
-       | Icfg.Call _ => Some
-           (@VCall N E D (Jump.edge a) (snd (Jump.source a)) (snd (Jump.target a)),
-           Rows.Make (Jump.target a) [Jump.source a] (fun values =>
-             match values with
-             | value :: _ => Cost.step ;; Micro.apply_c (Ide.micro I) (Jump.weight a) value
-             | [] => Cost.ret (bot (Ide.values I))
-             end))
-       | _ => None
-       end).
+    rewrite !Cost.value_ret, value_app_c, returned_filter_value.
     match goal with
     | |- (N.of_nat (length (_ :: ?tail)) <= _)%N =>
       change (N.of_nat (S (length tail)) <= rows I)%N
@@ -463,6 +443,34 @@ Proof.
   fold plans in Hlength; unfold analysis_charge; lia.
 Qed.
 
+(** Each queried row retains its own code price and retrieves an actual bounded plan or default. *)
+Theorem table_get_bound row :
+  let plans := Cost.value (IdeValue.prepare_c I (Jump.lookup_c I J) start a0) in
+  let fallback := Rows.Make start [] (fun _ => Cost.ret (bot (Ide.values I))) in
+  let get := Map.find_or_c (IdeValue.row_enc I) fallback row
+    (Map.of_list (IdeValue.row_enc I) plans) in
+  In row (map fst plans) ->
+  (Cost.ticks get <= row_probe e w)%N /\ plan_bound I start m (Cost.value get).
+Proof.
+  cbn zeta; intro Hrow; apply in_map_iff in Hrow.
+  destruct Hrow as [[key plan] [Hkey Hin]]; cbn [fst] in Hkey; subst key.
+  destruct (prepared_plans I J start a0 e w m HP HE row plan Hin)
+    as [Hplan [Henc Hbits]]; split.
+  - rewrite Map.find_or_cost, Map.get_cost.
+    fold (key_bits (IdeValue.row_enc I) row); unfold row_probe; lia.
+  - change (plan_bound I start m (Map.find_or (IdeValue.row_enc I)
+      (Rows.Make start [] (fun _ => Cost.ret (bot (Ide.values I)))) row
+      (Map.of_list (IdeValue.row_enc I)
+        (Cost.value (IdeValue.prepare_c I (Jump.lookup_c I J) start a0))))).
+    apply of_list_payload.
+    + constructor.
+      * left; reflexivity.
+      * intros v Hv; inversion Hv.
+      * cbn [Rows.reads length]; lia.
+      * intro values; cbn [Rows.eval_c]; rewrite Cost.ticks_ret; lia.
+    + intros [r p] Hentry; exact (proj1 (prepared_plans I J start a0 e w m HP HE r p Hentry)).
+Qed.
+
 End Preparation.
 
 Local Lemma sum_on {X} (f : X -> BinNums.N) xs k :
@@ -473,6 +481,27 @@ Proof.
   - lia.
   - rewrite Nat2N.inj_succ; specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
     specialize (Hbound x (or_introl eq_refl)); nia.
+Qed.
+
+(** A fixed-read system emits its primary target and evaluator result without side outputs. *)
+Theorem outputs_singleton {X C A} (cs : list C) (get : C -> Cost.t (Rows.t X A))
+    (look : X -> Cost.t A) c :
+  fst (Cost.value (Eval.outputs_c (Rows.system cs get) look c)) =
+    [(Rows.target (Cost.value (get c)),
+      Cost.value (Rows.eval_c (Cost.value (get c))
+        (map (fun v => Cost.value (look v)) (Rows.reads (Cost.value (get c))))))].
+Proof.
+  rewrite (Eval.outputs_c_spec _ _ look (fun v => Cost.value (look v))) by reflexivity.
+  rewrite Eval.outputs_spec.
+  change ((Rows.target (Cost.value (get c)),
+    Query.eval (Rows.query (Cost.value (get c))) (fun v => Cost.value (look v))) ::
+    Query.sides (Rows.query (Cost.value (get c))) (fun v => Cost.value (look v)) =
+    [(Rows.target (Cost.value (get c)),
+      Cost.value (Rows.eval_c (Cost.value (get c))
+        (map (fun v => Cost.value (look v)) (Rows.reads (Cost.value (get c))))))]).
+  destruct (Rows.query_spec (Cost.value (get c)) (fun v => Cost.value (look v)))
+    as [Hreads [Heval Hsides]].
+  rewrite Heval, Hsides; reflexivity.
 Qed.
 
 (** Fixed-read system checking derives evaluation charges from actual plans and primitive reads. *)
@@ -520,13 +549,7 @@ Proof.
   assert (Houtputs :
     fst (Cost.value (Eval.outputs_c (Rows.system cs get) look c)) =
       [(Rows.target plan, Cost.value (Rows.eval_c plan (map sigma (Rows.reads plan))))]).
-  { rewrite (Eval.outputs_c_spec _ _ look sigma) by reflexivity.
-    rewrite Eval.outputs_spec.
-    change ((Rows.target plan, Query.eval (Rows.query plan) sigma) ::
-      Query.sides (Rows.query plan) sigma =
-      [(Rows.target plan, Cost.value (Rows.eval_c plan (map sigma (Rows.reads plan))))]).
-    destruct (Rows.query_spec plan sigma) as [Hreads [Heval Hsides]].
-    rewrite Heval, Hsides; reflexivity. }
+  { exact (outputs_singleton cs get look c). }
   rewrite Houtputs; cbn [fold_right fst snd].
   pose proof (Hlook (Rows.target plan) (target_supported Hplan)) as Htargetlook.
   pose proof (Hcompare
@@ -556,26 +579,9 @@ Proof.
   set (fallback := Rows.Make start [] (fun _ => Cost.ret (bot (Ide.values I)))).
   set (get := fun row => Map.find_or_c (IdeValue.row_enc I) fallback row
     (Map.of_list (IdeValue.row_enc I) plans)).
-  assert (Hplans : forall row plan, In (row, plan) plans ->
-    plan_bound I start m plan /\
-      TabEncodingCost.bounded (IdeValue.row_enc I) row (row_charge e w) (row_width w)).
-  { intros row plan Hin; exact (prepared_plans I J start a0 e w m HP HE row plan Hin). }
   assert (Hget : forall row, In row (map fst plans) ->
     (Cost.ticks (get row) <= row_probe e w)%N /\ plan_bound I start m (Cost.value (get row))).
-  { intros row Hrow; apply in_map_iff in Hrow.
-    destruct Hrow as [[key plan] [Hkey Hin]]; cbn [fst] in Hkey; subst key.
-    destruct (Hplans row plan Hin) as [Hplan [Henc Hbits]]; split.
-    - unfold get; rewrite Map.find_or_cost, Map.get_cost.
-      fold (key_bits (IdeValue.row_enc I) row); unfold row_probe; lia.
-    - change (plan_bound I start m (Map.find_or (IdeValue.row_enc I) fallback row
-        (Map.of_list (IdeValue.row_enc I) plans))).
-      apply of_list_payload.
-      + unfold fallback; constructor.
-        * left; reflexivity.
-        * intros v Hv; inversion Hv.
-        * cbn [Rows.reads length]; lia.
-        * intro values; cbn [Rows.eval_c]; rewrite Cost.ticks_ret; lia.
-      + intros [r p] Hentry; exact (proj1 (Hplans r p Hentry)). }
+  { intros row Hrow; exact (table_get_bound I J start a0 e w m HP HE row Hrow). }
   assert (Hlookup : forall v, TabValueRunCost.coordinate I start v ->
     (Cost.ticks (TabValues.lookup_c I (TabValues.values s) v) <=
       TabValueRunCost.probe e w)%N).
@@ -625,7 +631,7 @@ Proof.
   - pose proof (certify_cost I J start a0 e w m stopped ko ks kt kk kf kw q HP HE HC); lia.
 Qed.
 
-(** Constructed value certification includes separate height fuel, actual row plans and query costs. *)
+(** Constructed value certification retains separate height fuel, row plans and query costs. *)
 Theorem complete_cost {N E P D A F} (I : Ide.t N E P D A F) J start a0 e w m
     ko ks kt kk kf kw q (H : height (Ide.values I)) :
   TabValueRunCost.primitives I start e w m -> encoding_laws (IdeValue.key_enc I) ->

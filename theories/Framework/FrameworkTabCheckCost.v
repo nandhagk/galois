@@ -327,7 +327,7 @@ Qed.
 
 End Check.
 
-(** The charged jump wrapper includes full row generation and checking on every stopped candidate. *)
+(** The jump wrapper includes full row generation and checking on every stopped candidate. *)
 Theorem tabulate_cost {N E P D A F} (I : Ide.t N E P D A F) start fuel e w m
     ko ks kt kk kf kw q :
   TabRunCost.primitives I start e w m ->
@@ -374,7 +374,7 @@ Proof.
   pose proof (checker_cost I start e w m HP (Tab.jumps stopped) ko ks kt kk kf kw q HC); lia.
 Qed.
 
-(** A family of certified jump runs has the complete primitive-derived polynomial as its big-O bound. *)
+(** Certified jump families have the complete primitive-derived polynomial as their big-O bound. *)
 Theorem tabulate_bigO {X N E P D A F}
     (I : X -> Ide.t N E P D A F) (start : X -> N)
     (e w m ko ks kt kk kf kw q : X -> BinNums.N)

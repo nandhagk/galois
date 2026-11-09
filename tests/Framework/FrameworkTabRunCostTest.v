@@ -4,17 +4,17 @@
     For example, doubling the family retains the extra preparation even when all jumps are equal.
     Builds on: FrameworkTabRunCost and the lawful affine micro algebra. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List NArith ZArith.
 From Galois.Cost Require Import CostMonad CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap.
-From Galois.Lattice Require Import LatticeCore LatticeHeight.
+From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSimple LatticeFlat.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Framework Require Import FrameworkUtil FrameworkMicro FrameworkIfds FrameworkIde
   FrameworkTabulate FrameworkTabEncodingCost FrameworkTabPrepareCost FrameworkTabRunCost
   FrameworkTabJumpProgress FrameworkTabCheckCost FrameworkTabValues FrameworkTabValueRunCost
-  FrameworkTabValueProgress FrameworkTabValueCheckCost.
-From Galois.Tests.Framework Require Import FrameworkTabAffineTest.
+  FrameworkTabValueProgress FrameworkTabValueCheckCost FrameworkTabComplete.
+From Galois.Tests.Framework Require Import FrameworkTabAffineTest FrameworkTabCostTest.
 Import List.ListNotations.
 
 Module TabRunFamily.
@@ -233,7 +233,7 @@ Proof.
   - exact (callback_duties n).
 Qed.
 
-(** The complete value asymptotic client closes all primitive duties over the varying affine family. *)
+(** The value asymptotic client closes all primitive duties over the varying affine family. *)
 Example certified_value_family_bigO (J : nat -> Map.t positive LawfulAffine.function)
     (a0 : nat -> LawfulAffine.value) :
   bigO
@@ -249,6 +249,58 @@ Proof.
   - exact vertex_laws.
   - intros n a Ha; apply unit_budget.
   - exact callback_duties.
+Qed.
+
+(** The same actual combined run has the sum of both primitive-derived certified phase bounds. *)
+Example two_phase_family n a0 :
+  (Cost.ticks (TabComplete.complete_c (problem n) (tt, None) a0
+    LawfulAffine.function_height LawfulAffine.value_height) <=
+    TabComplete.charge (problem n) 1 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.function_height))
+      (N.of_nat (bound LawfulAffine.value_height)))%N.
+Proof.
+  apply TabComplete.tabulate_cost.
+  - exact (primitive_duties n).
+  - exact (value_duties n).
+  - exact (vertex_laws n).
+  - exact (jump_laws n).
+  - exact (callback_duties n).
+  - exact (source_duties n).
+  - exact (fact_duties n).
+Qed.
+
+(** Constructed heights establish both certificates without assuming either successful result. *)
+Example two_phase_family_certifies n a0 :
+  exists jumps values,
+    TabComplete.complete (problem n) (tt, None) a0
+      LawfulAffine.function_height LawfulAffine.value_height =
+      TabComplete.Values jumps (TabValues.Certified values).
+Proof.
+  apply TabComplete.complete_certified.
+  - exact unit_encoding_laws.
+  - exact unit_encoding_laws.
+  - exact unit_encoding_laws.
+  - exact (lat_ok _ _ LawfulAffine.micro_laws).
+  - exact (flat_laws Z.eqb ltac:(intros x y; apply Z.eqb_eq)).
+Qed.
+
+(** The combined infinite-carrier family discharges both sets of primitive duties uniformly. *)
+Example two_phase_family_bigO (a0 : nat -> LawfulAffine.value) :
+  bigO
+    (fun n => TabComplete.charge (problem n) 1 1 1 1 1 1 1 1 1 1 1
+      (N.of_nat (bound LawfulAffine.function_height))
+      (N.of_nat (bound LawfulAffine.value_height)))
+    (fun n => Cost.ticks (TabComplete.complete_c (problem n) (tt, None) (a0 n)
+      LawfulAffine.function_height LawfulAffine.value_height)).
+Proof.
+  apply TabComplete.tabulate_bigO.
+  - exact primitive_duties.
+  - exact value_duties.
+  - exact vertex_laws.
+  - exact jump_laws.
+  - exact callback_duties.
+  - exact source_duties.
+  - exact fact_duties.
 Qed.
 
 Example supplied_outgoing_occurrences n :
@@ -294,3 +346,23 @@ Proof.
 Qed.
 
 End TabRunFamily.
+
+Definition chain_complete_ticks n :=
+  Cost.ticks (TabComplete.complete_c (Ifds.as_ide (call_chain n)) (0%nat, None) tt
+    bool_height unit_height).
+
+Definition chain_complete_bound n :=
+  TabComplete.charge (Ifds.as_ide (call_chain n)) 1 1 1 1 1 0 1 1 8 1 1
+    (N.of_nat (bound bool_height)) (N.of_nat (bound unit_height)).
+
+Example complete_short_chain_fits_derived_bound :
+  (chain_complete_ticks 2 <= chain_complete_bound 2)%N.
+Proof.
+  vm_compute; discriminate.
+Qed.
+
+Example complete_doubled_chain_fits_derived_bound :
+  (chain_complete_ticks 4 <= chain_complete_bound 4)%N.
+Proof.
+  vm_compute; discriminate.
+Qed.

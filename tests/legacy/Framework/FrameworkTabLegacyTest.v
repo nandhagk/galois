@@ -14,6 +14,7 @@ From Galois.Framework Require Import FrameworkIfds FrameworkIde FrameworkStack F
 From Galois.Tests.Framework Require Import FrameworkIdeTest FrameworkTabSoundTest
   FrameworkTabulateTest FrameworkTabReachTest.
 From GaloisLegacy.Collections Require CollectionsEncoding.
+From GaloisLegacy.Order Require OrderLattice OrderBasic.
 From GaloisLegacy.Analyses Require AnalysesInterprocedural.
 Import List.ListNotations.
 
@@ -147,7 +148,7 @@ Proof.
   - apply path_backward.
 Qed.
 
-(** Modern graph closure and explicit legacy site and zero-flow duties establish adapter validity. *)
+(** Modern graph closure and legacy site and zero-flow duties establish adapter validity. *)
 Theorem problem_wf {N E P D} (I : Ifds.t N E P D) sites :
   graph_wf (Cfg.graph (Icfg.cfg (Ifds.icfg I))) ->
   NoDup sites -> NoDup (Ifds.facts I) -> Ifds.flow_closed I ->
@@ -180,7 +181,7 @@ Proof.
       split; [exact Hx|exact (Hclosed e x y Hlisted Hx Hy)].
 Qed.
 
-(** Actual constructed modern completion agrees with the legacy solver on its finite lawful domain. *)
+(** Constructed modern completion agrees with the legacy solver on its finite lawful domain. *)
 Theorem completed_results_agree {N E P D} (I : Ifds.t N E P D) sites start
     (EN : CollectionsEncoding.encoding N) (EP : CollectionsEncoding.encoding P)
     (ED : CollectionsEncoding.encoding D) :
@@ -298,3 +299,139 @@ Proof.
 Qed.
 
 End TabLegacy.
+
+Module TabLegacyIde.
+
+(** The finite Boolean identity fragment is distributive and retains every matched execution. *)
+Definition problem {N E P D} (I : Ifds.t N E P D) sites :=
+  Old.IdeProblem (TabLegacy.problem I sites) OrderBasic.bool_lattice [false; true]
+    (fun _ _ _ value => value).
+
+Local Lemma problem_laws {N E P D} (I : Ifds.t N E P D) sites :
+  Old.ip_problem_wf (TabLegacy.problem I sites) -> Old.ide_laws (problem I sites).
+Proof.
+  intro Hwf; constructor.
+  - exact Hwf.
+  - intros []; [right; left; reflexivity|left; reflexivity].
+  - exact OrderBasic.bool_laws.
+  - exact OrderBasic.bool_lub.
+  - intros edge x y a b Hedge Hpair; split; destruct a, b; reflexivity.
+Qed.
+
+Local Lemma path_weighted {N E P D} (I : Ifds.t N E P D) sites c next value :
+  Old.ip_path (TabLegacy.problem I sites) c next ->
+  Old.ide_path (problem I sites) c value next value.
+Proof.
+  intro Hpath; induction Hpath as [c|c edge mid next Hstep Hpath IH].
+  - apply Old.ide_path_refl.
+  - destruct c as [[n x] stack], mid as [[n' y] stack'].
+    eapply Old.ide_path_step; [exact Hstep|exact IH].
+Qed.
+
+(** Actual finite IDE execution agrees with actual IFDS execution on the identity fragment. *)
+Theorem old_results_agree {N E P D} (I : Ifds.t N E P D) sites start
+    (EN : CollectionsEncoding.encoding N) (EP : CollectionsEncoding.encoding P)
+    (ED : CollectionsEncoding.encoding D) :
+  Old.ip_problem_wf (TabLegacy.problem I sites) ->
+  In (fst start) (Old.ip_nodes (TabLegacy.problem I sites)) ->
+  Ifds.fact_supported I (snd start) ->
+  forall n d,
+    Old.ide_solve EN EP ED CollectionsEncoding.bool_encoding
+      (problem I sites) (fst start) (snd start) true n d =
+    Old.ifds_solve EN EP ED (TabLegacy.problem I sites) (fst start) (snd start) n d.
+Proof.
+  intros Hwf Hstart Hseed n d.
+  destruct (Old.ide_solve_exact EN EP ED CollectionsEncoding.bool_encoding (problem I sites)
+    (fst start) (snd start) true (problem_laws I sites Hwf) Hstart Hseed n d)
+    as [Hupper Hleast].
+  destruct (Old.ifds_solve EN EP ED (TabLegacy.problem I sites)
+    (fst start) (snd start) n d) eqn:Hreachable.
+  - apply (proj1 (Old.ifds_solve_exact EN EP ED (TabLegacy.problem I sites)
+      (fst start) (snd start) Hwf Hstart Hseed n d)) in Hreachable.
+    destruct Hreachable as [stack Hpath].
+    pose proof (Hupper stack true (path_weighted I sites _ _ true Hpath)) as Hbound.
+    change (implb true (Old.ide_solve EN EP ED CollectionsEncoding.bool_encoding
+      (problem I sites) (fst start) (snd start) true n d) = true) in Hbound.
+    exact Hbound.
+  - assert (Hnone : forall stack b,
+      Old.ide_path (problem I sites) (fst start, snd start, []) true (n, d, stack) b ->
+      OrderLattice.leb OrderBasic.bool_lattice b false = true).
+    { intros stack b Hpath.
+      pose proof (Old.ide_path_graph _ _ _ _ _ Hpath) as Hgraph.
+      assert (Htrue : Old.ifds_solve EN EP ED (TabLegacy.problem I sites)
+        (fst start) (snd start) n d = true).
+      { apply (proj2 (Old.ifds_solve_exact EN EP ED (TabLegacy.problem I sites)
+          (fst start) (snd start) Hwf Hstart Hseed n d)).
+        exists stack; exact Hgraph. }
+      rewrite Hreachable in Htrue; discriminate. }
+    specialize (Hleast false Hnone).
+    change (implb (Old.ide_solve EN EP ED CollectionsEncoding.bool_encoding
+      (problem I sites) (fst start) (snd start) true n d) false = true) in Hleast.
+    destruct (Old.ide_solve EN EP ED CollectionsEncoding.bool_encoding
+      (problem I sites) (fst start) (snd start) true n d); [discriminate|reflexivity].
+Qed.
+
+(** Constructed modern values agree with actual legacy IDE on the Boolean identity fragment. *)
+Theorem completed_results_agree {N E P D} (I : Ifds.t N E P D) sites start
+    (EN : CollectionsEncoding.encoding N) (EP : CollectionsEncoding.encoding P)
+    (ED : CollectionsEncoding.encoding D) :
+  encoding_laws (Cfg.node_enc (Icfg.cfg (Ifds.icfg I))) ->
+  encoding_laws (Cfg.edge_enc (Icfg.cfg (Ifds.icfg I))) ->
+  encoding_laws (Ifds.fact_enc I) -> encoding_laws (Icfg.site_enc (Ifds.icfg I)) ->
+  graph_wf (Cfg.graph (Icfg.cfg (Ifds.icfg I))) ->
+  Ifds.flow_closed I -> Ifds.seed_supported I start ->
+  Old.ip_problem_wf (TabLegacy.problem I sites) ->
+  In (fst start) (Old.ip_nodes (TabLegacy.problem I sites)) ->
+  exists jumps values,
+    TabJumpProgress.complete (TabValues.reach_ide I) (fst start) bool_height =
+      Tab.Certified jumps /\
+    TabValueProgress.complete (TabValues.reach_ide I) (proj1_sig jumps) start true bool_height =
+      TabValues.Certified values /\
+    forall n d, TabValues.lookup (TabValues.reach_ide I) (proj1_sig values) (n, d) =
+      Old.ide_solve EN EP ED CollectionsEncoding.bool_encoding
+        (problem I sites) (fst start) (snd start) true n d.
+Proof.
+  intros HN HE HD HS HG Hclosed Hseed Hlegacy Hstart.
+  destruct (TabLegacy.completed_results_agree I sites start EN EP ED
+    HN HE HD HS HG Hclosed Hseed Hlegacy Hstart) as
+    [jumps [values [Hjump [Hvalue Hagree]]]].
+  exists jumps, values; split; [exact Hjump|]; split; [exact Hvalue|].
+  intros n d; rewrite Hagree, (old_results_agree I sites start EN EP ED
+    Hlegacy Hstart Hseed n d); reflexivity.
+Qed.
+
+Definition taint_result n d :=
+  Old.ide_solve CollectionsEncoding.nat_encoding CollectionsEncoding.nat_encoding
+    CollectionsEncoding.unit_encoding CollectionsEncoding.bool_encoding
+    (problem taint [7]) 0 None true n d.
+
+Local Lemma taint_agrees n d : reached taint n d = Some (taint_result n d).
+Proof.
+  assert (Hsame : taint_result n d = TabLegacy.legacy_reached taint [7] n d).
+  { apply (old_results_agree taint [7] (0, None)
+      CollectionsEncoding.nat_encoding CollectionsEncoding.nat_encoding
+      CollectionsEncoding.unit_encoding).
+    - exact TabLegacy.taint_adapter_is_lawful.
+    - left; reflexivity.
+    - exact Logic.I. }
+  destruct TabLegacy.actual_taint_results_agree as [jumps [values [Hjump [Hvalue Hagree]]]].
+  unfold reached; rewrite Hjump, Hvalue, Hagree, Hsame; reflexivity.
+Qed.
+
+Example finite_ide_pending_call :
+  (reached taint 2 (Some tt), taint_result 2 (Some tt)) = (Some true, true).
+Proof.
+  pose proof (taint_agrees 2 (Some tt)) as Hsame.
+  rewrite pending_call_is_reached in Hsame; injection Hsame as Hold.
+  rewrite pending_call_is_reached, <- Hold; reflexivity.
+Qed.
+
+Example finite_ide_unlisted_destination :
+  (reached taint 99 None, taint_result 99 None) = (Some false, false).
+Proof.
+  assert (Hnew : reached taint 99 None = Some false) by (vm_compute; reflexivity).
+  pose proof (taint_agrees 99 None) as Hsame; rewrite Hnew in Hsame.
+  injection Hsame as Hold; rewrite Hnew, <- Hold; reflexivity.
+Qed.
+
+End TabLegacyIde.
