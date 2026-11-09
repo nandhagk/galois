@@ -49,7 +49,8 @@ Proof.
   tauto.
 Qed.
 
-Local Lemma initial_visit_laws : visit_laws (PreRename.initial index).
+(** The initial task list satisfies root and child scheduling obligations. *)
+Theorem initial_visit_laws : visit_laws (PreRename.initial index).
 Proof.
   constructor; rewrite PreRename.initial_equation; cbn [PreRename.visited].
   - apply FinSet.wf_empty.
@@ -129,7 +130,8 @@ Proof.
     + apply Hadvance; exact (visit_children _ Hvisit child parent Hparent Hseen).
 Qed.
 
-Local Lemma step_visit_laws current next :
+(** Continuing a driver step preserves root and child scheduling obligations. *)
+Theorem step_visit_laws current next :
   visit_laws current -> PreRename.step c index current = inl next -> visit_laws next.
 Proof.
   intros Hvisit Hstep; rewrite PreRename.step_equation in Hstep.
@@ -202,7 +204,8 @@ Proof.
     intros start es Hstart Hpath; rewrite Hentry in Hstart; destruct Hstart as [<-|[]]; now left.
 Qed.
 
-Local Lemma completed_stop_empty current final :
+(** A completed stopping callback has an empty worklist and retains its current output. *)
+Theorem completed_stop_empty current final :
   PreRename.step c index current = inr final ->
   PreRename.stop_status final = PreFrg.Completed ->
     PreRename.pending current = [] /\ PreRename.stop_output final = PreRename.output current.

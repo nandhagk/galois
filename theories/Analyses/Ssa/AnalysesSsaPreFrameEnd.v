@@ -32,7 +32,8 @@ Proof.
   repeat split; first [apply Map.wf_empty|apply FinSet.wf_empty].
 Qed.
 
-Local Lemma mark_wf {frames acc key} :
+(** Marking an unused phi retains canonical output indexes. *)
+Theorem mark_wf {frames acc key} :
   accumulator_wf acc -> accumulator_wf (PreRename.mark c frames acc key).
 Proof.
   intro Hwf; rewrite PreRename.mark_equation.
@@ -52,7 +53,8 @@ Proof.
   intros acc key Hacc; apply mark_wf; exact Hacc.
 Qed.
 
-Local Lemma occurrence_wf {e instance work} :
+(** Selecting a real occurrence retains canonical output indexes. *)
+Theorem occurrence_wf {e instance work} :
   accumulator_wf (snd work) ->
   accumulator_wf (snd (fst (PreRename.occurrence c e instance work))).
 Proof.
@@ -66,7 +68,8 @@ Proof.
   all: first [apply Map.wf_set; exact Hocc|apply FinSet.wf_add; exact Hfresh].
 Qed.
 
-Local Lemma alter_wf {instance work key} :
+(** Invalidating a frame retains canonical output indexes. *)
+Theorem alter_wf {instance work key} :
   accumulator_wf (snd work) -> accumulator_wf (snd (PreRename.alter c instance work key)).
 Proof.
   intro Hwf; rewrite PreRename.alter_equation; destruct work as [frames acc].

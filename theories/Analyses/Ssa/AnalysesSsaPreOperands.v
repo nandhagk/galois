@@ -14,7 +14,7 @@ From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFami
   AnalysesSsaPreFrameEnd AnalysesSsaPreFrameCache AnalysesSsaPreFrameInvariant AnalysesSsaPreFrameVisit
   AnalysesSsaPreFrameOrigins AnalysesSsaPreFrameMeaning AnalysesSsaPreFrameDominance AnalysesSsaPreFrameTables
   AnalysesSsaPreFrameWalk AnalysesSsaPreFrameOccurrence AnalysesSsaPreFrameIncoming
-  AnalysesSsaPreFrameEdges.
+  AnalysesSsaPreFrameEdges AnalysesSsaPreFrameUnsafe AnalysesSsaPreFrameWf.
 Import List.ListNotations Cost.Notations.
 
 Module PreOperands.
@@ -1217,6 +1217,78 @@ Proof.
     destruct (Hdefined eq_refl) as [n Hn]; exists n, pe.
     split; [exact Hn|]; split; [exact Hpe|exact (Hdominates n Hn)].
   - split; [reflexivity|now left].
+Qed.
+
+(** Unsafe seeds are exactly nearest unused phis observed at original exits or unmatched kills. *)
+Theorem build_frg_unsafe_exact :
+  Pre.laws c ->
+  forall b u,
+    (FinSet.mem (PreFrg.phi_encoding c) (b, u) (PreFrg.unsafe build_frg) = true <->
+      exists n, In n (Graph.nodes (Pre.pg c)) /\
+        PreRename.nearest_version c build_frg u n (PreFrg.Phi b u) /\
+        PreRename.no_dominating_real_use c build_frg n (PreFrg.Phi b u) /\
+        (Pre.exit_point c n = true \/ Graph.out (Pre.pg c) n = [] \/
+          exists e, In e (Graph.out (Pre.pg c) n) /\
+            Pre.killed c e u = true /\ Pre.recomputed c e <> Some u)).
+Proof.
+  intros Hlaw b u.
+  destruct (build_frg_frame_history Hlaw) as [data [labels [Houtput Hhistory]]].
+  pose proof (PreFrameCache.placement_from_output c Hlaw data Houtput) as Hdata.
+  pose proof (build_output_equation Houtput) as Hstamp.
+  set (result := Cost.value (iterate (PreRename.step_c c (PreRename.prepare c data))
+    (PreRename.walk_budget (PreRename.prepare c data))
+    (PreRename.initial (PreRename.prepare c data)))) in *.
+  set (final := PreFrameTables.output_of result) in *.
+  assert (Hunsafe : PreFrg.unsafe build_frg = PreRename.unsafe_index final).
+  { rewrite build_frg_equation, Houtput, assemble_equation, PreRename.run_equation.
+    fold result; unfold final; destruct result; reflexivity. }
+  assert (Hcompleted : match result with
+    | inl _ => False
+    | inr stopped => PreRename.stop_status stopped = PreFrg.Completed
+    end).
+  { pose proof (PreRename.run_completed c (PreRename.prepare c data)
+      (PreRename.prepare_walk_domain c data Hlaw)) as Hcomplete.
+    rewrite PreRename.run_equation in Hcomplete; fold result in Hcomplete.
+    destruct result; [discriminate|exact Hcomplete]. }
+  assert (Hexact := PreFrameUnsafe.run_exact c data Hlaw Hdata
+    (fun d Hd => build_frg_source_versions Hlaw d Hd) final).
+  assert (Htransfer : forall frames acc owner e, In owner (Graph.nodes (Pre.bg c)) ->
+    In e (SsaPoints.instruction_edges (Pre.points (Pre.input c)) owner) ->
+    PreFrameInvariant.scope_source c data frames -> PreFrameEnd.accumulator_wf c acc ->
+    PreFrameTables.stamp c e acc = (None, false) ->
+    PreFrameTables.stamp c e final = PreFrameTables.stamp c e
+      (snd (PreRename.instruction c (PreRename.prepare c data) owner
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) owner) (frames, acc) e)) ->
+    PreCoverage.scope_laws c build_frg (Graph.source (Pre.pg c) e) frames ->
+    PreCoverage.scope_laws c build_frg (Graph.target (Pre.pg c) e)
+      (fst (PreRename.instruction c (PreRename.prepare c data) owner
+        (SsaPoints.parameter_edge (Pre.points (Pre.input c)) owner) (frames, acc) e))).
+  { intros frames acc owner e Hb Hin Hsource Hwf Hbefore Hpacket Hscope.
+    apply (built_instruction_scope Hlaw data Hdata frames acc owner e
+      Hb Hin Hsource Hwf Hbefore); [rewrite Hstamp; exact Hpacket|exact Hscope]. }
+  specialize (Hexact Htransfer labels result Hhistory eq_refl Hcompleted b u).
+  rewrite Hunsafe; fold (PreFrameUnsafe.marked c final b u).
+  rewrite Hexact; unfold PreFrameUnsafe.phi_unused, PreFrameUnsafe.unsafe_event.
+  split; intros [n Hn]; exists n; tauto.
+Qed.
+
+(** The same actual producer satisfies every adopted legacy graph well-formedness clause. *)
+Theorem build_frg_wf : Pre.laws c -> PreFrameWf.frg_wf c build_frg.
+Proof.
+  intro Hlaw; constructor.
+  - exact build_frg_versions_nodup.
+  - exact (build_frg_versions_exact Hlaw).
+  - exact (build_frg_phi_exact Hlaw).
+  - exact (build_frg_occurrence_exact Hlaw).
+  - exact (build_frg_occurrence_domain Hlaw).
+  - exact (build_frg_fresh_exact Hlaw).
+  - exact (build_frg_fresh_domain Hlaw).
+  - exact (build_frg_fresh_required Hlaw).
+  - exact (build_frg_operand_exact Hlaw).
+  - exact (build_frg_operand_domain Hlaw).
+  - exact (build_frg_operand_selection Hlaw).
+  - exact (build_frg_operand_real_use_exact Hlaw).
+  - exact (build_frg_unsafe_exact Hlaw).
 Qed.
 
 (** The caller gate checks the supplied block-parent map and rejects every partial raw outcome.

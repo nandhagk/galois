@@ -262,7 +262,8 @@ Proof.
   - apply IH; apply alter_source; assumption.
 Qed.
 
-Local Lemma alter_top {instance frames acc id value} :
+(** An alteration changes availability and retains every selected operand. *)
+Theorem alter_top {instance frames acc id value} :
   scope_source frames ->
   Intern.find (Pre.eu (Pre.keys c)) value bank = Some id ->
   forall u, PreRename.top c (fst (PreRename.alter c instance (frames, acc) (id, value))) u =
