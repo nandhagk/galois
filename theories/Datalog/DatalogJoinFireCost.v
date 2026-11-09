@@ -19,13 +19,7 @@ Lemma forallb_bound_on {A} (f : A -> Cost.t bool) xs k :
   (forall x, In x xs -> Cost.ticks (f x) <= k) ->
   Cost.ticks (forallb_c f xs) <= N.of_nat (length xs) * (k + 1).
 Proof.
-  induction xs as [|x xs IH]; intro Hbounds.
-  - rewrite ticks_forallb_c_nil; reflexivity.
-  - rewrite ticks_forallb_c_cons.
-    specialize (IH (fun y Hy => Hbounds y (or_intror Hy))).
-    pose proof (Hbounds x (or_introl eq_refl)).
-    cbn [length]; rewrite Nat2N.inj_succ.
-    destruct (Cost.value (f x)); nia.
+  apply DatalogCost.forallb_bound_on.
 Qed.
 
 (** One binding's negative tests retain the full body inventory and actual instantiated-key widths. *)
@@ -40,23 +34,7 @@ Theorem negative_cost {P} (r : rule P) env b a h c e w :
   Cost.ticks (negative_ok_c r env b) <=
     N.of_nat (length (body r)) * (3 + N.of_nat a * (1 + N.of_nat h) + c + e + w).
 Proof.
-  intros Hbinding Hnegative.
-  unfold negative_ok_c.
-  replace (3 + N.of_nat a * (1 + N.of_nat h) + c + e + w) with
-    ((2 + N.of_nat a * (1 + N.of_nat h) + c + e + w) + 1) by lia.
-  apply forallb_bound_on; intros [atom | atom] Hatom.
-  - rewrite Cost.ticks_ret; lia.
-  - destruct (Hnegative atom Hatom) as [Hargs [Henv [Henc Hwidth]]].
-    repeat rewrite Cost.ticks_bind.
-    rewrite Cost.ticks_step, Cost.ticks_map, FinSet.mem_cost, instantiate_equation.
-    fold (key_bits tuple_encoding (map (inst (binding_value b)) (args atom))).
-    pose proof (instantiate_cost b (args atom)) as Hinstantiate.
-    pose proof (nat_N_le _ _ Hbinding) as HbindingN.
-    pose proof (nat_N_le _ _ Hargs) as HargsN.
-    assert (Hscaled : N.of_nat (length (args atom)) * (1 + N.of_nat (length b)) <=
-      N.of_nat a * (1 + N.of_nat h)).
-    { apply N.mul_le_mono; [exact HargsN | lia]. }
-    lia.
+  apply DatalogCost.negative_cost.
 Qed.
 
 (** Attaching the erased validity certificate leaves the primitive set-construction cost unchanged. *)

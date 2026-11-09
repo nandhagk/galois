@@ -30,10 +30,7 @@ Qed.
 Lemma bind_term_length b t c b' :
   bind_term b t c = Some b' -> (length b' <= S (length b))%nat.
 Proof.
-  rewrite bind_term_equation; destruct t as [v | d].
-  - destruct (binding_get b v) as [d |]; [destruct (Pos.eqb c d) |];
-      intro Hsome; try discriminate; injection Hsome as <-; cbn [length]; lia.
-  - destruct (Pos.eqb c d); intro Hsome; [injection Hsome as <-; lia | discriminate].
+  apply DatalogCost.bind_term_length.
 Qed.
 
 (** Matching one term charges a binding lookup or positive comparison, including the call tick. *)
@@ -41,16 +38,7 @@ Theorem bind_term_cost b t c v :
   N.pos (Pos.size c) <= v ->
   Cost.ticks (bind_term_c b t c) <= 1 + N.of_nat (length b) + v.
 Proof.
-  intro Hbits; unfold bind_term_c; rewrite Cost.ticks_bind, Cost.ticks_step.
-  destruct t as [x | d].
-  - rewrite Cost.ticks_bind; fold (binding_get b x).
-    pose proof (binding_get_cost b x) as Hget.
-    destruct (binding_get b x) as [d |].
-    + rewrite Cost.ticks_bind; pose proof (proj1 (positive_eqb_cost c d)).
-      destruct (Cost.value (positive_eqb_c c d)); rewrite Cost.ticks_ret; lia.
-    + rewrite Cost.ticks_ret; lia.
-  - rewrite Cost.ticks_bind; pose proof (proj1 (positive_eqb_cost c d)).
-    destruct (Cost.value (positive_eqb_c c d)); rewrite Cost.ticks_ret; lia.
+  apply DatalogCost.bind_term_cost.
 Qed.
 
 (** Matching a row has a numeric bound from term count, binding length and row-component widths. *)
@@ -60,19 +48,7 @@ Theorem bind_terms_cost ts row b h v :
   Cost.ticks (bind_terms_c ts row b) <=
     (N.of_nat (length ts) + 1) * (2 + N.of_nat h + v).
 Proof.
-  revert row b; induction ts as [|t ts IH]; intros [|c row] b Hlength Hbits.
-  - cbn [bind_terms_c length]; autorewrite with galois_cost; nia.
-  - cbn [bind_terms_c length]; autorewrite with galois_cost; nia.
-  - cbn [bind_terms_c length]; autorewrite with galois_cost; nia.
-  - cbn [bind_terms_c]; repeat rewrite Cost.ticks_bind; rewrite Cost.ticks_step.
-    pose proof (bind_term_cost b t c v (Hbits c (or_introl eq_refl))) as Hterm.
-    pose proof (nat_N_le (length b) h ltac:(cbn [length] in Hlength; lia)) as Hlen.
-    fold (bind_term b t c); destruct (bind_term b t c) as [b' |] eqn:Hbind.
-    + pose proof (bind_term_length _ _ _ _ Hbind) as Hnext.
-      specialize (IH row b' ltac:(cbn [length] in Hlength; lia)
-        (fun d Hd => Hbits d (or_intror Hd))).
-      cbn [length]; rewrite Nat2N.inj_succ; nia.
-    + rewrite Cost.ticks_ret; cbn [length]; rewrite Nat2N.inj_succ; nia.
+  apply DatalogCost.bind_terms_cost.
 Qed.
 
 (** Instantiation retains the list traversal and the cost of each partial-valuation lookup. *)
@@ -80,11 +56,7 @@ Theorem instantiate_cost b ts :
   Cost.ticks (instantiate_c b ts) <=
     N.of_nat (length ts) * (1 + N.of_nat (length b)).
 Proof.
-  replace (1 + N.of_nat (length b)) with (N.of_nat (length b) + 1) by lia.
-  unfold instantiate_c; rewrite ticks_map_c.
-  apply traversal_bound_on; intros [v | c] _.
-  - unfold binding_value_c; rewrite Cost.ticks_map; apply binding_get_cost.
-  - rewrite Cost.ticks_ret; lia.
+  apply DatalogCost.instantiate_cost.
 Qed.
 
 (** A bucket probe has the public map lookup's encoding and key-width charges. *)

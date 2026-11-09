@@ -48,10 +48,7 @@ Qed.
 Lemma positive_atoms_cost {P} (ls : list (literal P)) :
   Cost.ticks (positive_atoms_c ls) = N.of_nat (length ls).
 Proof.
-  unfold positive_atoms_c; rewrite ticks_filter_map_c.
-  induction ls as [|l ls IH]; cbn [fold_right length].
-  - reflexivity.
-  - rewrite Cost.ticks_ret, Nat2N.inj_succ; lia.
+  apply DatalogFire.positive_atoms_cost.
 Qed.
 
 (** The source pipeline retains its body scan, all prepared atom occurrences and actual join work. *)

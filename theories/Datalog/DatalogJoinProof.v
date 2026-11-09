@@ -243,10 +243,9 @@ Proof.
   destruct (Hcovers v Hw) as [d Hd].
   pose proof (Hext v d Hd) as Hd'.
   change (binding_value b v = binding_value b' v).
-  unfold binding_value, binding_value_c; rewrite !Cost.value_map.
-  change ((match binding_get b v with Some c => c | None => 1%positive end) =
-    (match binding_get b' v with Some c => c | None => 1%positive end)).
-  rewrite Hd, Hd'; reflexivity.
+  transitivity d.
+  - exact (binding_value_agrees b v d Hd).
+  - symmetry; exact (binding_value_agrees b' v d Hd').
 Qed.
 
 Lemma matching_key bound ts row b b' :
