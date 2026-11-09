@@ -21,6 +21,39 @@ Proof.
   apply filter_map_spec.
 Qed.
 
+(** The importing cardinality contract permits duplicates and arbitrary option callbacks. *)
+Example filter_map_length_client {A B} (f : A -> option B) xs :
+  (length (filter_map f xs) <= length xs)%nat.
+Proof.
+  apply filter_map_length.
+Qed.
+
+(** Costed filter-map cardinality follows through the public value observation. *)
+Example filter_map_costed_length_client {A B} (f : A -> Cost.t (option B)) xs :
+  (length (Cost.value (filter_map_c f xs)) <= length xs)%nat.
+Proof.
+  rewrite value_filter_map_c. apply filter_map_length.
+Qed.
+
+Example filter_map_retains_ordered_duplicates :
+  filter_map (fun n : nat => if Nat.even n then Some n else None)
+    [2%nat; 1%nat; 2%nat; 4%nat] = [2%nat; 2%nat; 4%nat].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example filter_map_rejects_every_occurrence :
+  filter_map (fun _ : nat => @None nat) [2%nat; 2%nat] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example filter_map_empty_length :
+  length (filter_map (fun n : nat => Some n) []) = 0%nat.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example empty_traversals :
   (Cost.value (length_c ([] : list nat)), Cost.ticks (length_c ([] : list nat)),
    Cost.value (app_c [] [1%nat]), Cost.ticks (rev_c ([] : list nat)),

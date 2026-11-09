@@ -208,6 +208,15 @@ Proof.
       * exists a; auto.
 Qed.
 
+(** Keeping at most one result per input occurrence cannot increase the list length. *)
+Theorem filter_map_length {A B} (f : A -> option B) xs :
+  (length (filter_map f xs) <= length xs)%nat.
+Proof.
+  induction xs as [|x rest IH]; cbn [filter_map fold_right length]; [reflexivity|].
+  fold (filter_map f rest).
+  destruct (f x); cbn [length]; lia.
+Qed.
+
 (** The counter returns the ordinary list length. *)
 Theorem value_length_c {A} (l : list A) : Cost.value (length_c l) = length l.
 Proof.
