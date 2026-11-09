@@ -13,7 +13,7 @@ From Galois.Program Require Import ProgramCfg.
 From Galois.Fixpoint Require Import FixpointSystem FixpointCheck FixpointAnalysis FixpointAnalyze.
 From Galois.Framework Require Import FrameworkDense FrameworkBitvector.
 From Galois.Tests.Framework Require Import FrameworkDenseTest.
-Import List.ListNotations.
+Import List.ListNotations Cost.Notations.
 
 Definition live_problem :=
   Bitvector.of_pure loop nat_encoding [0; 1] Backward
@@ -243,3 +243,102 @@ Theorem source_must_client {N E U} (P : Bitvector.t N E U) s :
 Proof.
   intros HN HU Hpost; exact (proj1 ((proj1 (Bitvector.must_source_post_iff P s HN HU)) Hpost)).
 Qed.
+
+Module BitvectorConstruction.
+
+Definition nonunit_problem :=
+  Bitvector.Make (Bitvector.cfg (tick_problem [0])) nat_encoding [0] Forward
+    (fun _ => Cost.tick 11 ;; Cost.ret [0])
+    (fun _ => Cost.tick 13 ;; Cost.ret [])
+    (fun _ => Cost.tick 17 ;; Cost.ret None).
+
+Example may_constructor_counts_prepare_and_system :
+  Cost.ticks (Bitvector.may_analysis_c nonunit_problem) = 86%N.
+Proof.
+  rewrite Bitvector.may_analysis_cost, Dense.system_cost; vm_compute; reflexivity.
+Qed.
+
+Example must_constructor_counts_prepare_and_system :
+  Cost.ticks (Bitvector.must_analysis_c nonunit_problem) = 86%N.
+Proof.
+  rewrite Bitvector.must_analysis_cost, Dense.system_cost; vm_compute; reflexivity.
+Qed.
+
+Example duplicate_constructor_costs :
+  (Cost.ticks (Bitvector.may_analysis_c (tick_problem [0])),
+   Cost.ticks (Bitvector.may_analysis_c (tick_problem [0; 0])),
+   Cost.ticks (Bitvector.must_analysis_c (tick_problem [0; 0; 0; 0]))) =
+    (48%N, 77%N, 135%N).
+Proof.
+  rewrite !Bitvector.may_analysis_cost, Bitvector.must_analysis_cost, !Dense.system_cost.
+  vm_compute; reflexivity.
+Qed.
+
+Example duplicate_constructor_keeps_flow_occurrences :
+  System.constraints (Analysis.system
+    (Cost.value (Bitvector.may_analysis_c (tick_problem [0; 0])))) =
+    [Dense.Seed 0; Dense.Flow 0; Dense.Flow 0].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example empty_constructors_have_no_setup_work :
+  (Cost.ticks (Bitvector.may_analysis_c empty_problem),
+   Cost.ticks (Bitvector.must_analysis_c empty_problem)) = (0%N, 0%N).
+Proof.
+  rewrite Bitvector.may_analysis_cost, Bitvector.must_analysis_cost, !Dense.system_cost.
+  vm_compute; reflexivity.
+Qed.
+
+Example charged_may_constructor_runs :
+  sets_observe (Cost.value (Bitvector.may_analysis_c live_problem)) [0; 1; 2] =
+    Some [[1]; [1; 0]; []].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example charged_must_constructor_runs :
+  must_observe (Cost.value (Bitvector.must_analysis_c available_problem)) [0; 1; 2; 3; 99] =
+    Some [Some []; Some [7]; Some []; Some []; None].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** An importing may client sees exactly the original analysis record. *)
+Theorem original_may_client {N E U} (P : Bitvector.t N E U) :
+  Cost.value (Bitvector.may_analysis_c P) =
+    Dense.analysis (Bitvector.may_dense P (Bitvector.prepare P))
+      (Policy.by_code (Cfg.node_enc (Bitvector.cfg P))).
+Proof.
+  apply Bitvector.may_analysis_equation.
+Qed.
+
+(** An importing must client sees exactly the original analysis record. *)
+Theorem original_must_client {N E U} (P : Bitvector.t N E U) :
+  Cost.value (Bitvector.must_analysis_c P) =
+    Dense.analysis (Bitvector.must_dense P (Bitvector.prepare P))
+      (Policy.by_code (Cfg.node_enc (Bitvector.cfg P))).
+Proof.
+  apply Bitvector.must_analysis_equation.
+Qed.
+
+(** May callers compose the actual preparation and dense-construction charges. *)
+Theorem may_cost_client {N E U} (P : Bitvector.t N E U) :
+  Cost.ticks (Bitvector.may_analysis_c P) =
+    (Cost.ticks (Bitvector.prepare_c P) +
+      Cost.ticks (Dense.system_c (Bitvector.may_dense P (Bitvector.prepare P))))%N.
+Proof.
+  apply Bitvector.may_analysis_cost.
+Qed.
+
+(** Must callers compose the actual preparation and dense-construction charges. *)
+Theorem must_cost_client {N E U} (P : Bitvector.t N E U) :
+  Cost.ticks (Bitvector.must_analysis_c P) =
+    (Cost.ticks (Bitvector.prepare_c P) +
+      Cost.ticks (Dense.system_c (Bitvector.must_dense P (Bitvector.prepare P))))%N.
+Proof.
+  apply Bitvector.must_analysis_cost.
+Qed.
+
+End BitvectorConstruction.
+Import BitvectorConstruction.
