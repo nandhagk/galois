@@ -970,6 +970,13 @@ Definition scev_compile_plan_c {V} (EV : encoding V) (p : scev_plan V) :=
 Definition scev_compile_plan {V} (EV : encoding V) p :=
   Cost.value (@scev_compile_plan_c V EV p).
 
+(** Public compilation observes the recurrence returned by the same table-threaded execution. *)
+Theorem scev_compile_plan_execution_equation {V} (EV : encoding V) p :
+  scev_compile_plan EV p = fst (fst (Cost.value (scev_compile_plan_execution_c EV p))).
+Proof.
+  reflexivity.
+Qed.
+
 (** Public compilation initializes both Memo invariants and returns the entire reference option. *)
 Theorem scev_compile_plan_correct {V} (EV : encoding V) (HE : encoding_laws EV) p :
   scev_compile_plan EV p = scev_translate_plan EV p.

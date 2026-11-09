@@ -1101,6 +1101,15 @@ Definition scev_plan_check_c {N E V K G C} (lv : loop_view N E V K G)
 Definition scev_plan_check {N E V K G C} lv so inventory p :=
   Cost.value (@scev_plan_check_c N E V K G C lv so inventory p).
 
+(** Public checking observes its single prepared-index execution and the tables returned by it. *)
+Theorem scev_plan_check_equation {N E V K G C} (lv : loop_view N E V K G)
+    (so : scev_ops K C) inventory p :
+  scev_plan_check lv so inventory p =
+    fst (fst (Cost.value (scev_plan_check_index_c lv so (prepare_index lv inventory p) p))).
+Proof.
+  reflexivity.
+Qed.
+
 (** Prepared index observations are the original source inventory, incoming lists and plan ranks. *)
 Theorem prepare_index_equation {N E V K G} (lv : loop_view N E V K G) inventory p :
   prepare_index lv inventory p =
