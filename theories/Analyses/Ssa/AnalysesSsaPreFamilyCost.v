@@ -5,7 +5,7 @@
     Builds on: AnalysesSsaPreFamily, BaseMapCost and the owning framework traversal contracts. *)
 
 From Stdlib Require Import List Bool NArith Lia.
-From Galois.Cost Require Import CostMonad CostList.
+From Galois.Cost Require Import CostMonad CostList CostBound.
 From Galois.Base Require Import BaseEncoding BaseMap BaseSet BaseMapCost BaseTrieCost BaseInternCost.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg.
@@ -387,5 +387,50 @@ Proof.
 Qed.
 
 End Family.
+
+Section Uniform.
+Context {X B BE N E V K G C U : Type}.
+Variable contexts : X -> Pre.ctx B BE N E V K G C U.
+Variable budgets : X -> prices.
+
+Hypothesis Hlaws : forall x, Pre.laws (contexts x).
+Hypothesis Hkeys : forall x u, PreFamily.in_family (contexts x) u ->
+  1 + Cost.ticks (encode_c (Pre.eu (Pre.keys (contexts x))) u) +
+    key_bits (Pre.eu (Pre.keys (contexts x))) u <= key_price (budgets x).
+Hypothesis Htranslate : forall x be u,
+  In be (Cfg.edges (Pre.block_cfg (contexts x))) -> PreFamily.in_family (contexts x) u ->
+  Cost.ticks (Pre.translate_c (Pre.input (contexts x)) be u) <= translation_price (budgets x).
+Hypothesis Hoperands : forall x u, In u (Pre.seeds (Pre.input (contexts x))) ->
+  (length (Pre.operands (contexts x) u) <= max_arity (budgets x))%nat /\
+  Cost.ticks (Pre.operands_c (Pre.input (contexts x)) u) <= operand_price (budgets x).
+Hypothesis Hout : forall x n, In n (Graph.nodes (Pre.bg (contexts x))) ->
+  Cost.ticks (Graph.out_c (Pre.bg (contexts x)) n) <= outgoing_price (budgets x).
+
+(** One constant bounds complete discovery uniformly over varying contexts and primitive prices. *)
+Theorem discover_bigO :
+  bigO
+    (fun x => discovery_bound (contexts x) (budgets x) (PreFamily.discovered_count (contexts x)))
+    (fun x => Cost.ticks (PreFamily.discover_c (contexts x))).
+Proof.
+  exists 1; intro x.
+  pose proof (discover_cost (contexts x) (budgets x)
+    (Hlaws x) (Hkeys x) (Htranslate x) (Hoperands x) (Hout x)) as Hbound.
+  nia.
+Qed.
+
+(** The input-capacity bound also holds uniformly when presentations and all primitive prices vary. *)
+Theorem discover_input_bigO :
+  bigO
+    (fun x => discovery_bound (contexts x) (budgets x)
+      (seeds (contexts x) * power_limit (values (contexts x)) (max_arity (budgets x))))
+    (fun x => Cost.ticks (PreFamily.discover_c (contexts x))).
+Proof.
+  exists 1; intro x.
+  pose proof (discover_input_cost (contexts x) (budgets x)
+    (Hlaws x) (Hkeys x) (Htranslate x) (Hoperands x) (Hout x)) as Hbound.
+  nia.
+Qed.
+
+End Uniform.
 
 End PreFamilyCost.

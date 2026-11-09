@@ -5,7 +5,7 @@
     Builds on: AnalysesSsaPreFamily and AnalysesSsaPreContextTest. *)
 
 From Stdlib Require Import List Bool NArith Lia.
-From Galois.Cost Require Import CostMonad CostLoop.
+From Galois.Cost Require Import CostMonad CostLoop CostBound.
 From Galois.Base Require Import BaseEncoding BaseSet.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg.
@@ -225,6 +225,22 @@ Qed.
 Example nonempty_family price : PreFamily.discover (ctx price) = inr [tt].
 Proof.
   vm_compute; reflexivity.
+Qed.
+
+(** One big-O constant covers this nonempty family as its actual operand callback price varies. *)
+Example uniform_bigO_client :
+  bigO (fun price => PreFamilyCost.discovery_bound (ctx price) (prices price)
+      (PreFamily.discovered_count (ctx price)))
+    (fun price => Cost.ticks (PreFamily.discover_c (ctx price))).
+Proof.
+  apply (PreFamilyCost.discover_bigO ctx prices).
+  - exact laws.
+  - intros price [] Hfamily; vm_compute; congruence.
+  - intros price [] [] Hedge Hfamily; vm_compute in Hedge; contradiction.
+  - intros price [] Hseed; split.
+    + change (1 <= 1)%nat; apply le_n.
+    + change (price <= price)%N; apply N.le_refl.
+  - intros price [] Hnode; change (1 <= 1)%N; apply N.le_refl.
 Qed.
 
 End Primitive.
