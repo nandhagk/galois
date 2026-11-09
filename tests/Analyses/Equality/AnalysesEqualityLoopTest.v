@@ -12,7 +12,7 @@ From Galois.Program Require Import ProgramSemantics ProgramSteps ProgramCfg Prog
   ProgramStrict.
 From Galois.Analyses.Equality Require Import AnalysesEqualityProblem
   AnalysesEqualityLoopReference AnalysesEqualityLoopWorklist AnalysesEqualityLoopCorrect
-  AnalysesEqualityLoop.
+  AnalysesEqualityLoopCost AnalysesEqualityLoop.
 From Galois.Tests.Analyses.Equality Require Import AnalysesEqualityProblemTest.
 Import List.ListNotations.
 
@@ -165,6 +165,22 @@ Proof.
   vm_compute in Hin.
   destruct Hin as [Hpair|[Hpair|[Hpair|[Hpair|[Hpair|Hfalse]]]]]; try contradiction;
     injection Hpair as <- <-; vm_compute; reflexivity.
+Qed.
+
+Local Lemma countdown_primitive_prices :
+  NumberingLoopCost.primitive_prices nat_encoding countdown_nodes countdown_rules 1%N 3%N.
+Proof.
+  intros x [Hin|Hin]; vm_compute in Hin;
+    repeat (destruct Hin as [<-|Hin]; [vm_compute; split; discriminate|]); contradiction.
+Qed.
+
+Example importing_nonempty_countdown_numeric_contract :
+  (Cost.ticks (NumberingLoopWorklist.solve_c nat_encoding countdown_nodes countdown_rules) <=
+    NumberingLoopCost.kernel_k * (1 + 6 + 5) * (1 + 1 + 3))%N.
+Proof.
+  exact (NumberingLoopCost.solve_cost nat_encoding nat_encoding_laws countdown_nodes
+    countdown_rules 1%N 3%N (FinSet.wf_of_list nat_encoding _)
+    (Map.wf_of_list nat_encoding _) countdown_rules_supported countdown_primitive_prices).
 Qed.
 
 Example universal_countdown_reference_agreement :
