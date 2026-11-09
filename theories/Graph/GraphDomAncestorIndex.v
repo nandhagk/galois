@@ -174,6 +174,43 @@ Proof.
   lia.
 Qed.
 
+(** Reusing a charged cutoff prices every chain, ancestor-set insertion and cache write. *)
+Theorem build_with_cost fuel parents nodes w :
+  DomCheckCost.parent_width parents w ->
+  (forall n, In n nodes -> key_bits positive_encoding n <= w) ->
+  Cost.ticks (build_with_c fuel parents nodes) <=
+    N.of_nat (length nodes) *
+      (2 + DomCheckCost.id_get_budget w +
+        N.of_nat (S fuel) * (5 + DomCheckCost.id_get_budget w + w)).
+Proof.
+  intros Hparents Hwidth.
+  set (step := fun v (index : Map.t positive (FinSet.t positive)) =>
+    let* ancestors := row_c fuel parents v in
+    Map.set_c positive_encoding v ancestors index).
+  set (k := 1 + DomCheckCost.id_get_budget w +
+    N.of_nat (S fuel) * (5 + DomCheckCost.id_get_budget w + w)).
+  assert (Hstep : forall n index, In n nodes -> Cost.ticks (step n index) <= k).
+  { intros n index Hn.
+    pose proof (row_cost fuel parents n w Hparents (Hwidth n Hn)) as Hrow.
+    pose proof (Hwidth n Hn) as Hbits.
+    unfold step. rewrite Cost.ticks_bind, Map.set_cost.
+    change (Cost.ticks (row_c fuel parents n) +
+      (1 + 1 + key_bits positive_encoding n) <= k).
+    unfold k, DomCheckCost.id_get_budget in *. nia. }
+  pose proof (proj2 (ticks_fold_right_c_potential step (fun _ => True) (fun _ => 0) k
+    nodes Map.empty ltac:(intros n index Hn _; split; [exact I|];
+      pose proof (Hstep n index Hn); cbn beta; lia) I)) as Hfold.
+  change (Cost.ticks (fold_right_c step Map.empty nodes) <=
+    N.of_nat (length nodes) *
+      (2 + DomCheckCost.id_get_budget w +
+        N.of_nat (S fuel) * (5 + DomCheckCost.id_get_budget w + w))).
+  cbn beta in Hfold. unfold k in Hfold.
+  rewrite (N.add_comm
+    (1 + DomCheckCost.id_get_budget w +
+      N.of_nat (S fuel) * (5 + DomCheckCost.id_get_budget w + w)) 1) in Hfold.
+  rewrite !N.add_assoc in Hfold. lia.
+Qed.
+
 (** Index construction retains one physical size scan and every row and index-key charge. *)
 Theorem build_cost parents nodes w :
   DomCheckCost.parent_width parents w ->
@@ -184,36 +221,11 @@ Theorem build_cost parents nodes w :
       (2 + DomCheckCost.id_get_budget w +
         N.of_nat (S (Map.size parents)) * (5 + DomCheckCost.id_get_budget w + w)).
 Proof.
-  intros Hparents Hwidth.
-  pose proof (MapCost.size_cost parents) as Hsize.
-  set (step := fun v (index : Map.t positive (FinSet.t positive)) =>
-    let* ancestors := row_c (Map.size parents) parents v in
-    Map.set_c positive_encoding v ancestors index).
-  set (k := 1 + DomCheckCost.id_get_budget w +
-    N.of_nat (S (Map.size parents)) * (5 + DomCheckCost.id_get_budget w + w)).
-  assert (Hstep : forall n index, In n nodes -> Cost.ticks (step n index) <= k).
-  { intros n index Hn.
-    pose proof (row_cost (Map.size parents) parents n w Hparents (Hwidth n Hn)) as Hrow.
-    pose proof (Hwidth n Hn) as Hbits.
-    unfold step. rewrite Cost.ticks_bind, Map.set_cost.
-    change (Cost.ticks (row_c (Map.size parents) parents n) +
-      (1 + 1 + key_bits positive_encoding n) <= k).
-    unfold k, DomCheckCost.id_get_budget in *. nia. }
-  pose proof (proj2 (ticks_fold_right_c_potential step (fun _ => True) (fun _ => 0) k
-    nodes Map.empty ltac:(intros n index Hn _; split; [exact I|];
-      pose proof (Hstep n index Hn); cbn beta; lia) I)) as Hfold.
-  unfold build_c, build_with_c. rewrite Cost.ticks_bind. cbn beta. fold (Map.size parents).
-  change (Cost.ticks (Map.size_c parents) +
-    Cost.ticks (fold_right_c step Map.empty nodes) <=
-    TrieCost.trie_k * (1 + MapCost.skeleton_nodes parents) +
-    N.of_nat (length nodes) *
-      (2 + DomCheckCost.id_get_budget w +
-        N.of_nat (S (Map.size parents)) * (5 + DomCheckCost.id_get_budget w + w))).
-  cbn beta in Hfold. unfold k in Hfold.
-  rewrite (N.add_comm
-    (1 + DomCheckCost.id_get_budget w +
-      N.of_nat (S (Map.size parents)) * (5 + DomCheckCost.id_get_budget w + w)) 1) in Hfold.
-  rewrite !N.add_assoc in Hfold. lia.
+  intros Hparents Hwidth. unfold build_c.
+  rewrite (Cost.ticks_bind (Map.size_c parents)).
+  fold (Map.size parents). apply N.add_le_mono.
+  - apply MapCost.size_cost.
+  - now apply build_with_cost.
 Qed.
 
 (** Indexed ancestry uses two width-priced queries regardless of the stored chain's length. *)

@@ -127,7 +127,8 @@ Proof.
   cbn [fold_right]. now apply Map.wf_set.
 Qed.
 
-Local Lemma rows_get {V E} (p : Prepared.t V E) all xs u :
+(** Every listed source retrieves its actual constructed target set, even if source occurrences repeat. *)
+Theorem rows_get {V E} (p : Prepared.t V E) all xs u :
   In u xs ->
   Map.get positive_encoding u
     (fold_right (fun u rows =>
