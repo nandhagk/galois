@@ -1143,6 +1143,250 @@ Proof.
   lia.
 Qed.
 
+(** Incidence construction pays the stored-link enumeration and both copied arc cells. *)
+Theorem incidence_ticks f :
+  Cost.ticks (incidence_c f) =
+    (Cost.ticks (Map.elements_c (PreFrg.operands f)) +
+      fold_right (fun binding n => 2 + N.of_nat (length (link_arcs binding)) + n)
+        0 (Map.elements (PreFrg.operands f)))%N.
+Proof.
+  unfold incidence_c. rewrite Cost.ticks_bind.
+  fold (Map.elements (PreFrg.operands f)).
+  rewrite (ticks_fold_right_c_sum _
+    (fun binding => (1 + N.of_nat (length (link_arcs binding)))%N)).
+  - f_equal. induction (Map.elements (PreFrg.operands f)); cbn [fold_right];
+      rewrite ?IHl; lia.
+  - intros binding rest. autorewrite with galois_cost. lia.
+Qed.
+
+(** An operand contributes its user arc and at most one selected-phi arc. *)
+Theorem link_arcs_length binding :
+  (length (link_arcs binding) <= 2)%nat.
+Proof.
+  destruct binding as [key [version real]]. destruct version;
+    cbn [link_arcs PreFrg.operand_version length]; lia.
+Qed.
+
+(** Arc inventory is canonical enumeration of the single incidence pass. *)
+Theorem edge_inventory_equation f :
+  edge_inventory f = FinSet.elements (FinSet.of_list arc_encoding (incidence f)).
+Proof.
+  reflexivity.
+Qed.
+
+(** Node inventory canonicalises source sites, unsafe seeds and both incidence endpoints. *)
+Theorem node_inventory_equation f :
+  node_inventory f = FinSet.elements (FinSet.of_list vertex_encoding
+    (map (fun k => inl k : vertex)
+      (FinSet.elements (PreFrg.phis f) ++ FinSet.elements (PreFrg.unsafe f)) ++
+      flat_map (fun ab => [fst ab; snd ab]) (edge_inventory f))).
+Proof.
+  reflexivity.
+Qed.
+
+(** Graph setup exposes all canonicalisation, enumeration, copying and indexing charges. *)
+Theorem graph_ticks f :
+  let raw := incidence f in
+  let edge_set := FinSet.of_list arc_encoding raw in
+  let es := FinSet.elements edge_set in
+  let phis := FinSet.elements (PreFrg.phis f) in
+  let unsafe := FinSet.elements (PreFrg.unsafe f) in
+  let all := map (fun k => inl k : vertex) (phis ++ unsafe) ++
+    flat_map (fun ab => [fst ab; snd ab]) es in
+  let node_set := FinSet.of_list vertex_encoding all in
+  Cost.ticks (graph_c f) =
+    (Cost.ticks (incidence_c f) + Cost.ticks (FinSet.of_list_c arc_encoding raw) +
+      Cost.ticks (FinSet.elements_c edge_set) + N.of_nat (length es) +
+      Cost.ticks (FinSet.elements_c (PreFrg.phis f)) +
+      Cost.ticks (FinSet.elements_c (PreFrg.unsafe f)) + N.of_nat (length phis) +
+      2 * N.of_nat (length (phis ++ unsafe)) +
+      Cost.ticks (FinSet.of_list_c vertex_encoding all) +
+      Cost.ticks (FinSet.elements_c node_set) +
+      Cost.ticks (Index.group_by_c vertex_encoding
+        (Cost.lift (fun _ => 1%N) (@fst vertex vertex)) es))%N.
+Proof.
+  assert (Hends : forall es, Cost.ticks (endpoints_c es) = N.of_nat (length es)).
+  { intro es. unfold endpoints_c.
+    rewrite (ticks_fold_right_c_sum _ (fun _ => 0%N)) by (intros; reflexivity).
+    induction es; cbn [fold_right length]; rewrite ?Nat2N.inj_succ, ?IHes; lia. }
+  assert (Hnames : forall ks,
+    Cost.ticks (map_c (fun k => Cost.ret (inl k : vertex)) ks) = N.of_nat (length ks)).
+  { intro ks. rewrite ticks_map_c.
+    induction ks; cbn [fold_right length]; rewrite ?Nat2N.inj_succ, ?IHks;
+      autorewrite with galois_cost; lia. }
+  cbn zeta. unfold graph_c. rewrite !Cost.ticks_bind, Cost.ticks_ret, Hends.
+  fold (incidence f).
+  fold (FinSet.of_list arc_encoding (incidence f)).
+  fold (FinSet.elements (FinSet.of_list arc_encoding (incidence f))).
+  rewrite endpoints_equation.
+  fold (FinSet.elements (PreFrg.phis f)).
+  fold (FinSet.elements (PreFrg.unsafe f)).
+  rewrite value_app_c, value_map_c, !value_app_c, !ticks_app_c, Hnames, length_map.
+  cbn [Cost.value Cost.ret].
+  fold (FinSet.of_list vertex_encoding
+    (map (fun k => inl k : vertex)
+      (FinSet.elements (PreFrg.phis f) ++ FinSet.elements (PreFrg.unsafe f)) ++
+      flat_map (fun ab => [fst ab; snd ab])
+        (FinSet.elements (FinSet.of_list arc_encoding (incidence f))))).
+  repeat rewrite N.add_assoc.
+  rewrite !N.add_0_r.
+  f_equal. f_equal. f_equal.
+  assert (Htwice : forall n : BinNums.N, (2 * n = n + n)%N) by (intro n; lia).
+  rewrite Htwice, N.add_assoc. reflexivity.
+Qed.
+
+(** Shared preparation adds only the public preparation call after graph setup. *)
+Theorem arcs_ticks f :
+  Cost.ticks (arcs_c f) =
+    (Cost.ticks (graph_c f) + Cost.ticks (Prepared.prepare_c vertex_encoding (graph f)))%N.
+Proof.
+  unfold arcs_c. rewrite Cost.ticks_bind. reflexivity.
+Qed.
+
+(** Flag reads retain the underlying primitive map-lookup charge. *)
+Theorem flag_ticks m k :
+  Cost.ticks (flag_c m k) = Cost.ticks (Map.get_c (PreFrg.phi_encoding c) k m).
+Proof.
+  unfold flag_c. apply Map.find_or_cost.
+Qed.
+
+(** Query admission charges only a site flag read or the indexed operand read. *)
+Theorem admits_ticks f which down can v :
+  Cost.ticks (admits_c f which down can v) =
+    match v, which with
+    | inl _, Down | inr _, Later => 0%N
+    | inl k, Cannot => Cost.ticks (flag_c down k)
+    | inl k, Later => Cost.ticks (flag_c can k)
+    | inr key, _ => Cost.ticks (Map.get_c (PreFrg.link_encoding c) key (PreFrg.operands f))
+    end.
+Proof.
+  destruct v, which; unfold admits_c; autorewrite with galois_cost;
+    rewrite ?N.add_0_r; reflexivity.
+Qed.
+
+(** Scope construction pays every admission test and canonicalises only the denied dense IDs. *)
+Theorem scope_ticks p f which down can :
+  let denied := filter_map (fun v => Cost.value
+    (Cost.step ;; let* keep := admits_c f which down can v in
+      if keep then Cost.ret None else Prepared.id_of_c p v))
+      (Graph.nodes (Prepared.graph p)) in
+  Cost.ticks (scope_c p f which down can) =
+    (fold_right (fun v n => 2 + Cost.ticks (admits_c f which down can v) +
+      (if admits f which down can v then 0 else Cost.ticks (Prepared.id_of_c p v)) + n)
+      0 (Graph.nodes (Prepared.graph p)) +
+      Cost.ticks (FinSet.of_list_c positive_encoding denied))%N.
+Proof.
+  cbn zeta. unfold scope_c. rewrite !Cost.ticks_bind, Cost.ticks_ret, value_filter_map_c.
+  rewrite N.add_0_r.
+  rewrite ticks_filter_map_c. f_equal.
+  induction (Graph.nodes (Prepared.graph p)) as [|v rest IH]; [reflexivity|].
+  cbn [fold_right]. rewrite !Cost.ticks_bind.
+  fold (admits f which down can v).
+  destruct (admits f which down can v); autorewrite with galois_cost; lia.
+Qed.
+
+(** Query composition retains seed conversion, scoped search and the zero-copy orientation view. *)
+Theorem reset_closure_ticks p f which down can :
+  let roots := seeds f which down can in
+  let named := map (fun k => inl k : vertex) roots in
+  let ids := Prepared.present (Prepared.id_of p) named in
+  Cost.ticks (reset_closure_c p f which down can) =
+    (Cost.ticks (seeds_c f which down can) + N.of_nat (length roots) +
+      Cost.ticks (Prepared.present_c (Prepared.id_of_c p) named) +
+      Cost.ticks (scope_c p f which down can) + Cost.ticks (directed_c p which) +
+      Cost.ticks (SearchRun.run_c (directed p which) Visitor.noop
+        (scope p f which down can) ids tt))%N.
+Proof.
+  assert (Hnames : forall ks,
+    Cost.ticks (map_c (fun k => Cost.ret (inl k : vertex)) ks) = N.of_nat (length ks)).
+  { intro ks. rewrite ticks_map_c.
+    induction ks; cbn [fold_right length]; rewrite ?Nat2N.inj_succ, ?IHks;
+      autorewrite with galois_cost; lia. }
+  cbn zeta. unfold reset_closure_c. rewrite !Cost.ticks_bind, Cost.ticks_ret.
+  fold (seeds f which down can). rewrite value_map_c, Hnames, Prepared.present_c_value.
+  repeat rewrite N.add_assoc. rewrite N.add_0_r.
+  reflexivity.
+Qed.
+
+(** Seed callbacks charge the relevant flag read only after the original operand guard passes. *)
+Theorem seed_ticks which down can binding :
+  let '(key, op) := binding in
+  Cost.ticks (seed_c which down can binding) =
+    match which, PreFrg.operand_version op with
+    | Cannot, PreFrg.Unavailable _ => Cost.ticks (flag_c down (fst key))
+    | Later, PreFrg.Unavailable _ => 0%N
+    | Later, _ => if PreFrg.real_use op then Cost.ticks (flag_c can (fst key)) else 0%N
+    | _, _ => 0%N
+    end.
+Proof.
+  destruct binding as [key [version real]]. destruct which, version, real;
+    unfold seed_c; cbn [PreFrg.operand_version PreFrg.real_use fst];
+    autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Seed enumeration retains the map traversal, predicate calls and successful key copying. *)
+Theorem seeds_ticks f which down can :
+  Cost.ticks (seeds_c f which down can) =
+    match which with
+    | Down => Cost.ticks (FinSet.elements_c (PreFrg.unsafe f))
+    | _ => (Cost.ticks (Map.elements_c (PreFrg.operands f)) +
+        fold_right (fun binding n => 1 + Cost.ticks (seed_c which down can binding) + n)
+          0 (Map.elements (PreFrg.operands f)) +
+        N.of_nat (length (filter
+          (fun binding => Cost.value (seed_c which down can binding))
+          (Map.elements (PreFrg.operands f)))))%N
+    end.
+Proof.
+  assert (Hcopy : forall bs : list (((B * U) * BE) * PreFrg.operand B E U),
+    Cost.ticks (map_c (fun binding => Cost.ret (fst (fst binding))) bs) =
+      N.of_nat (length bs)).
+  { intro bs. rewrite ticks_map_c.
+    induction bs; cbn [fold_right length]; rewrite ?Nat2N.inj_succ, ?IHbs;
+      autorewrite with galois_cost; lia. }
+  destruct which; [reflexivity| |].
+  all: unfold seeds_c; rewrite !Cost.ticks_bind, Hcopy, value_filter_c, ticks_filter_c.
+  all: rewrite N.add_assoc; reflexivity.
+Qed.
+
+(** Flag materialisation exposes its lookups, dense membership and actual output-key serializer. *)
+Theorem flags_ticks p keys base use_base reset :
+  Cost.ticks (flags_c p keys base use_base reset) =
+    fold_right (fun k n =>
+      (2 + Cost.ticks (Prepared.id_of_c p (inl k : vertex)) +
+      (match Prepared.id_of p (inl k : vertex) with
+       | None => 0
+       | Some id => Cost.ticks (FinSet.mem_c positive_encoding id reset)
+       end) +
+      (if use_base then Cost.ticks (flag_c base k) else 0) +
+      Cost.ticks (encode_c (PreFrg.phi_encoding c) k) +
+      key_bits (PreFrg.phi_encoding c) k + n)%N) 0 keys.
+Proof.
+  unfold flags_c.
+  rewrite (ticks_fold_right_c_sum _ (fun k =>
+    (1 + Cost.ticks (Prepared.id_of_c p (inl k : vertex)) +
+      (match Prepared.id_of p (inl k : vertex) with
+       | None => 0
+       | Some id => Cost.ticks (FinSet.mem_c positive_encoding id reset)
+       end) +
+      (if use_base then Cost.ticks (flag_c base k) else 0) +
+      Cost.ticks (encode_c (PreFrg.phi_encoding c) k) +
+      key_bits (PreFrg.phi_encoding c) k)%N)).
+  - induction keys; cbn [fold_right]; rewrite ?IHkeys; lia.
+  - intros k result. rewrite !Cost.ticks_bind, Map.set_cost.
+    fold (Prepared.id_of p (inl k : vertex)).
+    destruct (Prepared.id_of p (inl k : vertex)), use_base;
+      autorewrite with galois_cost;
+      fold (key_bits (PreFrg.phi_encoding c) k); lia.
+Qed.
+
+(** Query orientation exchanges existing indexes and converts no exit entries. *)
+Theorem directed_ticks p which :
+  Cost.ticks (directed_c p which) = 0%N.
+Proof.
+  destruct which; [|reflexivity|reflexivity].
+  unfold directed_c. rewrite Prepared.reverse_c_equation. reflexivity.
+Qed.
+
 End Context.
 
 End PreReset.
