@@ -26,6 +26,29 @@ Definition accumulator_wf (acc : PreRename.accumulator B BE E U) : Prop :=
   Map.wf (PreFrg.link_encoding c) (PreRename.link_index acc) /\
   FinSet.wf (PreFrg.phi_encoding c) (PreRename.unsafe_index acc).
 
+(** Marking an unsafe phi leaves the selected occurrence table unchanged. *)
+Theorem mark_occurrences frames acc key :
+  PreRename.occurrence_index (PreRename.mark c frames acc key) =
+    PreRename.occurrence_index acc.
+Proof.
+  rewrite PreRename.mark_equation.
+  destruct (PreRename.selected (PreRename.top_id frames (fst key) (snd key))) as [d real].
+  destruct d, real; reflexivity.
+Qed.
+
+(** Every stopping callback retains the current accumulator. *)
+Theorem terminal_output {index current stopped} :
+  PreRename.step c index current = inr stopped ->
+    PreRename.stop_output stopped = PreRename.output current.
+Proof.
+  intro Hstep; rewrite PreRename.step_equation in Hstep.
+  destruct (PreRename.pending current) as [|[id frames] rest].
+  - inversion Hstep; reflexivity.
+  - destruct (FinSet.mem positive_encoding id (PreRename.visited current)); [discriminate|].
+    destruct (Prepared.name_of (Pre.blocks c) id); [discriminate|].
+    inversion Hstep; reflexivity.
+Qed.
+
 (** Empty scoped output starts with canonical indexes. *)
 Theorem empty_accumulator_wf : accumulator_wf PreRename.empty_accumulator.
 Proof.

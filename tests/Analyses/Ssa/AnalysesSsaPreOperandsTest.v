@@ -4,7 +4,7 @@
     For example, the join occurrence selects its phi while the two edge identities stay distinct.
     Builds on: AnalysesSsaPreOperands and the lawful diamond fixture. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool NArith Lia.
 From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseCode BaseEq BaseMap BaseSet.
 From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec GraphCheckDom.
@@ -588,7 +588,8 @@ Definition pg (bg : Graph.t Diamond.block positive) :=
       | 0%nat => [bind b]
       | 1%nat => [compute b]
       | 2%nat => [again b]
-      | _ => map cross (Graph.out bg b)
+      | 3%nat => map cross (Graph.out bg b)
+      | _ => []
       end)
     (fun e => match e with
       | inl b => (b, 0%nat)
@@ -780,9 +781,15 @@ Definition rename (bg : Graph.t Diamond.block positive) args be x :=
   end.
 Definition translate bg args be (u : expression) :=
   Some (rename bg args be (fst u), rename bg args be (snd u)).
+Definition uses args occurs (e : Flow.edge) :=
+  match e with
+  | inl _ => []
+  | inr (inr (inr be)) => args be
+  | _ => match occurs e with Some u => operands u | None => [] end
+  end.
 Definition client bg args occurs :
     Pre.client Diamond.block positive (Diamond.block * nat) Flow.edge value unit unit nat expression :=
-  let vars := Vars.of_pure (Flow.pc bg) Diamond.block_enc (fun _ => []) defs (fun _ => []) in
+  let vars := Vars.of_pure (Flow.pc bg) Diamond.block_enc (uses args occurs) defs (fun _ => []) in
   let points := SsaPoints.of_pure vars (Flow.bc bg)
     (SsaPoints.points_in_block (Flow.points bg)) (SsaPoints.instruction_edges (Flow.points bg))
     Flow.bind fst (SsaPoints.block_edge_of (Flow.points bg)) parameters args
@@ -915,6 +922,358 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+Definition graph (kind : option bool) :=
+  match kind with None => loop_bg | Some two => parallel_bg two end.
+Definition args (kind : option bool) :=
+  match kind with None => arguments | Some _ => parallel_args end.
+Definition occurs (kind : option bool) :=
+  match kind with None => occurrence | Some _ => parallel_occurs end.
+Definition law_ctx kind := context (graph kind) (args kind) (occurs kind).
+Definition model kind := Pre.points (Pre.input (law_ctx kind)).
+
+Example point_graph_wf kind : graph_wf (Flow.pg (graph kind)).
+Proof.
+  constructor.
+  - destruct kind as [[|]|]; vm_compute;
+      repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+  - intros [b stage] Hentry; vm_compute in Hentry; inversion Hentry as [Heq|[]].
+    inversion Heq; subst b stage; destruct kind as [[|]|]; vm_compute; tauto.
+  - intros [b stage] e Hout; destruct kind as [[|]|], b;
+      destruct stage as [|[|[|[|stage]]]]; vm_compute in Hout |- *; intuition (subst; reflexivity).
+  - intros [b stage] e Hnode Hout; destruct kind as [[|]|], b;
+      destruct stage as [|[|[|[|stage]]]]; vm_compute in Hout |- *; intuition (subst; tauto).
+Qed.
+
+Example block_graph_wf kind : graph_wf (graph kind).
+Proof.
+  constructor.
+  - destruct kind as [[|]|]; vm_compute;
+      repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+  - intros b Hentry; destruct kind as [[|]|], b; vm_compute in Hentry |- *; intuition congruence.
+  - intros b e Hout; destruct kind as [[|]|], b; vm_compute in Hout |- *; intuition (subst; reflexivity).
+  - intros b e Hnode Hout; destruct kind as [[|]|], b;
+      vm_compute in Hout |- *; intuition (subst; tauto).
+Qed.
+
+Example point_laws kind : ssa_point_laws (model kind).
+Proof.
+  constructor.
+  - exact (point_graph_wf kind).
+  - intros [b stage]; destruct kind as [[|]|], b; destruct stage as [|[|[|[|stage]]]];
+      vm_compute; repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+  - exact (block_graph_wf kind).
+  - intros b; destruct kind as [[|]|], b; vm_compute;
+      repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+  - intros [b stage]; split.
+    + intro Hnode; exists b; destruct kind as [[|]|], b;
+        destruct stage as [|[|[|[|stage]]]]; vm_compute in Hnode |- *; intuition congruence.
+    + intros [owner [Howner Hpoint]]; destruct kind as [[|]|], b, owner;
+        destruct stage as [|[|[|[|stage]]]]; vm_compute in Hpoint |- *; intuition congruence.
+  - intros b; vm_compute; repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+  - intros b [owner stage] Hb Hpoint; destruct b, owner;
+      destruct stage as [|[|[|[|stage]]]]; vm_compute in Hpoint |- *; intuition congruence.
+  - intros b Hb; vm_compute; discriminate.
+  - intros b Hb.
+    change (point_chain (Flow.pg (graph kind))
+      [(b, 0%nat); (b, 1%nat); (b, 2%nat); (b, 3%nat)]
+      [Flow.bind b; Flow.compute b; Flow.again b]).
+    econstructor; [now left|reflexivity|].
+    econstructor; [now left|reflexivity|].
+    econstructor; [now left|reflexivity|constructor].
+  - intros b e Hb Hin; destruct Hin as [<-|[<-|[<-|[]]]]; reflexivity.
+  - intros [b stage] e Hnode Hout Hinternal; destruct kind as [[|]|], b;
+      destruct stage as [|[|[|[|stage]]]]; vm_compute in Hout, Hinternal |- *;
+      intuition (subst; simpl in *; try discriminate; tauto).
+  - intros b Hb; reflexivity.
+  - intros b x Hb; reflexivity.
+  - intros [b stage] e Hnode Hout; destruct kind as [[|]|], b;
+      destruct stage as [|[|[|[|stage]]]]; vm_compute in Hout |- *;
+      intuition (subst; vm_compute; tauto).
+  - intros be Hbe; destruct kind as [[|]|]; vm_compute in Hbe |- *;
+      intuition (subst; vm_compute; reflexivity).
+  - intros n e be Hnode Hout Hcross x Harg.
+    destruct e as [b|[b|[b|edge]]]; cbn in Hcross; try discriminate.
+    inversion Hcross; subst edge; exact Harg.
+  - intros be Hbe; exists (Graph.source (graph kind) be, 3%nat), (Flow.cross be).
+    destruct kind as [[|]|]; vm_compute in Hbe |- *; intuition (subst; vm_compute; tauto).
+  - intros e other be He Ho Hcross Hcross'.
+    destruct e as [b|[b|[b|edge]]]; destruct other as [owner|[owner|[owner|other]]];
+      cbn in Hcross, Hcross'; congruence.
+Qed.
+
+Lemma after_reachable kind b :
+  reachable (Flow.pg (graph kind)) (b, 0%nat) ->
+  reachable (Flow.pg (graph kind)) (b, 3%nat).
+Proof.
+  intro Hbefore.
+  exact (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.again b)
+    (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.compute b)
+      (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.bind b) Hbefore (or_introl eq_refl))
+      (or_introl eq_refl)) (or_introl eq_refl)).
+Qed.
+
+Lemma cross_reachable kind be source target :
+  Graph.source (graph kind) be = source -> Graph.target (graph kind) be = target ->
+  In be (Graph.out (graph kind) source) ->
+  reachable (Flow.pg (graph kind)) (source, 0%nat) ->
+  reachable (Flow.pg (graph kind)) (target, 0%nat).
+Proof.
+  intros Hsource Htarget Hout Hbefore.
+  assert (Hstart : reachable (Flow.pg (graph kind))
+    (Graph.source (Flow.pg (graph kind)) (Flow.cross be))).
+  { change (reachable (Flow.pg (graph kind)) (Graph.source (graph kind) be, 3%nat)).
+    rewrite Hsource; apply after_reachable; exact Hbefore. }
+  assert (Hedge : In (Flow.cross be) (Graph.out (Flow.pg (graph kind))
+    (Graph.source (Flow.pg (graph kind)) (Flow.cross be)))).
+  { change (In (Flow.cross be) (map Flow.cross (Graph.out (graph kind)
+      (Graph.source (graph kind) be)))).
+    rewrite Hsource; apply in_map; exact Hout. }
+  pose proof (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.cross be) Hstart Hedge) as Hnext.
+  change (reachable (Flow.pg (graph kind)) (Graph.target (graph kind) be, 0%nat)) in Hnext.
+  rewrite Htarget in Hnext; exact Hnext.
+Qed.
+
+Example before_reachable kind : forall b, reachable (Flow.pg (graph kind)) (b, 0%nat).
+Proof.
+  assert (Hentry : reachable (Flow.pg (graph kind)) (Diamond.Entry, 0%nat)).
+  { apply reachable_entry; now left. }
+  assert (Hleft : reachable (Flow.pg (graph kind)) (Diamond.Left, 0%nat)).
+  { apply (cross_reachable kind 1%positive Diamond.Entry Diamond.Left);
+      try (destruct kind as [[|]|]; vm_compute; tauto); exact Hentry. }
+  assert (Hright : reachable (Flow.pg (graph kind)) (Diamond.Right, 0%nat)).
+  { apply (cross_reachable kind 2%positive Diamond.Left Diamond.Right);
+      try (destruct kind as [[|]|]; vm_compute; tauto); exact Hleft. }
+  assert (Hjoin : reachable (Flow.pg (graph kind)) (Diamond.Join, 0%nat)).
+  { apply (cross_reachable kind 3%positive Diamond.Right Diamond.Join);
+      try (destruct kind as [[|]|]; vm_compute; tauto); exact Hright. }
+  intros []; assumption.
+Qed.
+
+Example points_reachable kind n :
+  In n (Graph.nodes (Flow.pg (graph kind))) -> reachable (Flow.pg (graph kind)) n.
+Proof.
+  intros Hnode; destruct n as [b stage].
+  destruct stage as [|[|[|[|stage]]]].
+  - apply before_reachable.
+  - exact (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.bind b)
+      (before_reachable kind b) (or_introl eq_refl)).
+  - exact (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.compute b)
+      (@reachable_step _ _ (Flow.pg (graph kind)) (Flow.bind b)
+        (before_reachable kind b) (or_introl eq_refl)) (or_introl eq_refl)).
+  - apply after_reachable, before_reachable.
+  - destruct kind as [[|]|], b; vm_compute in Hnode; intuition congruence.
+Qed.
+
+Lemma previous_dominates kind b stage :
+  (stage < 3)%nat -> dominates (Flow.pg (graph kind)) (b, stage) (b, S stage).
+Proof.
+  intro Hstage; apply dominates_unique_predecessor.
+  - change (~ In (b, S stage) [(Diamond.Entry, 0%nat)]); intros [Hbad|[]]; discriminate.
+  - intros e Hout Htarget.
+    change (match e with
+        | inl block => (block, 1%nat)
+        | inr (inl block) => (block, 2%nat)
+        | inr (inr (inl block)) => (block, 3%nat)
+        | inr (inr (inr edge)) => (Graph.target (graph kind) edge, 0%nat)
+        end = (b, S stage)) in Htarget.
+    destruct stage as [|[|[|stage]]]; try lia;
+      destruct e as [owner|[owner|[owner|be]]];
+      cbn in Htarget; inversion Htarget; subst; reflexivity.
+Qed.
+
+Lemma first_dominates kind b stage :
+  (0 < stage <= 3)%nat -> dominates (Flow.pg (graph kind)) (b, 0%nat) (b, stage).
+Proof.
+  intro Hstage; destruct stage as [|[|[|[|stage]]]]; try lia.
+  - apply previous_dominates; lia.
+  - eapply dominates_trans; apply previous_dominates; lia.
+  - eapply dominates_trans; [eapply dominates_trans|]; apply previous_dominates; lia.
+Qed.
+
+Definition home x :=
+  match x with Diamond.Entry | Diamond.Left => Diamond.Entry | _ => Diamond.Join end.
+
+Lemma use_location kind b stage x :
+  point_use_at (SsaPoints.point_model (model kind)) (b, stage) x ->
+  (home x = Diamond.Entry /\ (b, stage) <> (Diamond.Entry, 0%nat)) \/
+    (home x = Diamond.Join /\ b = Diamond.Join /\ (0 < stage <= 3)%nat).
+Proof.
+  intros [Hexit|[e [Hout Huse]]]; [contradiction|].
+  destruct kind as [[|]|], b, x; destruct stage as [|[|[|[|stage]]]];
+    vm_compute in Hout, Huse |- *;
+    intuition (subst; vm_compute in Huse; intuition (try lia; congruence)).
+Qed.
+
+Example strict_points kind : reachable_point_ssa (model kind).
+Proof.
+  constructor.
+  - exists (Diamond.Entry, 0%nat); reflexivity.
+  - intros [b stage] x Hreach Huse; exists (home x, 0%nat); split; [destruct x; reflexivity|].
+    split; [apply before_reachable|].
+    destruct (use_location kind b stage x Huse) as [[Hhome Hne]|[Hhome [-> Hstage]]]; rewrite Hhome.
+    + split; [|congruence].
+      intros start es Hentry Hpath; change (In start [(Diamond.Entry, 0%nat)]) in Hentry.
+      destruct Hentry as [<-|[]]; now left.
+    + split; [apply first_dominates; exact Hstage|intro Hbad; inversion Hbad; lia].
+  - intros n e x Hreach Hout Hdef.
+    pose proof (out_source (point_graph_wf kind) n e Hout) as Hsource.
+    destruct e as [b|[b|[b|be]]]; try contradiction.
+    assert (Hhome : home x = b) by
+      (destruct b, x; vm_compute in Hdef |- *; intuition congruence).
+    rewrite <- Hsource; destruct x, b; vm_compute in Hhome |- *; congruence.
+  - intros x d e Hdef Hreach Hout.
+    change (Some (home x, 0%nat) = Some d) in Hdef; inversion Hdef; subst d.
+    change (In e [Flow.bind (home x)]) in Hout; destruct Hout as [<-|[]].
+    destruct x; vm_compute; tauto.
+Qed.
+
+Example blocks_reachable kind : forall b, reachable (graph kind) b.
+Proof.
+  assert (Hentry : reachable (graph kind) Diamond.Entry).
+  { apply reachable_entry; destruct kind as [[|]|]; now left. }
+  assert (Hleft : reachable (graph kind) Diamond.Left).
+  { destruct kind as [[|]|];
+      exact (@reachable_step _ _ _ 1%positive Hentry (or_introl eq_refl)). }
+  assert (Hright : reachable (graph kind) Diamond.Right).
+  { destruct kind as [[|]|];
+      exact (@reachable_step _ _ _ 2%positive Hleft (or_introl eq_refl)). }
+  assert (Hjoin : reachable (graph kind) Diamond.Join).
+  { destruct kind as [[|]|];
+      exact (@reachable_step _ _ _ 3%positive Hright (or_introl eq_refl)). }
+  intros []; assumption.
+Qed.
+
+Example blocks_ready kind : Prepared.ready (Pre.blocks (law_ctx kind)).
+Proof.
+  apply Prepared.prepare_ready; [exact Diamond.block_enc_laws|exact (block_graph_wf kind)|].
+  exact (blocks_out_nodup (point_laws kind)).
+Qed.
+
+Example points_ready kind : Prepared.ready (Pre.point_graph (law_ctx kind)).
+Proof.
+  apply Prepared.prepare_ready; [|exact (point_graph_wf kind)|].
+  - apply pair_encoding_laws; [exact Diamond.block_enc_laws|exact nat_encoding_laws].
+  - exact (points_out_nodup (point_laws kind)).
+Qed.
+
+Lemma operand_agrees kind be x :
+  Pre.phi_operand (law_ctx kind) be x = rename (graph kind) (args kind) be x.
+Proof.
+  destruct kind as [[|]|], x; destruct be as [p|p|]; try destruct p as [q|q|];
+    try destruct q as [r|r|]; vm_compute; reflexivity.
+Qed.
+
+Example shapes kind : Pre.shape_laws (law_ctx kind).
+Proof.
+  constructor.
+  - intros b; destruct b; vm_compute;
+      repeat (apply NoDup_cons; [cbn; intuition congruence|]); apply NoDup_nil.
+  - intros e u Hcomputed; destruct kind as [[|]|]; destruct e as [b|[b|[b|be]]];
+      try destruct b; vm_compute in Hcomputed; try discriminate;
+      inversion Hcomputed; subst u; vm_compute; tauto.
+  - intros u Hfalse; discriminate.
+  - intros [x y] Hfamily z Hz; change (In z [x; y]) in Hz.
+    destruct Hz as [<-|[<-|[]]]; [destruct x|destruct y]; vm_compute; tauto.
+  - intros [x y] [z w] Hfamily Hfamily' Hshape Hoperands.
+    change ([x; y] = [z; w]) in Hoperands; inversion Hoperands; reflexivity.
+  - intros [x y] [z w] Hfamily Hfamily' Hshape; reflexivity.
+  - intros be [x y] Hbe Hfamily; eexists; reflexivity.
+  - intros be [x y] v Hfamily Htranslate; reflexivity.
+  - intros be [x y] v Hfamily Hbe Htranslate.
+    change (Some (rename (graph kind) (args kind) be x, rename (graph kind) (args kind) be y) =
+      Some v) in Htranslate.
+    inversion Htranslate; subst v.
+    change ([rename (graph kind) (args kind) be x; rename (graph kind) (args kind) be y] =
+      [Pre.phi_operand (law_ctx kind) be x; Pre.phi_operand (law_ctx kind) be y]).
+    rewrite !operand_agrees; reflexivity.
+  - intros be u v Hpure Htranslate; reflexivity.
+Qed.
+
+Example graphs kind : Pre.graph_laws (law_ctx kind).
+Proof.
+  constructor.
+  - exact Diamond.block_enc_laws.
+  - exact positive_encoding_laws.
+  - apply pair_encoding_laws; [exact Diamond.block_enc_laws|exact nat_encoding_laws].
+  - repeat apply sum_encoding_laws; first [exact Diamond.block_enc_laws|exact positive_encoding_laws].
+  - exact Diamond.block_enc_laws.
+  - apply pair_encoding_laws; exact Diamond.block_enc_laws.
+  - exact (point_laws kind).
+  - exact (strict_points kind).
+  - reflexivity.
+  - reflexivity.
+  - apply Prepared.prepare_graph.
+  - apply Prepared.prepare_graph.
+  - exact (blocks_ready kind).
+  - exact (points_ready kind).
+  - apply DomCheck.check_sound; [exact (blocks_ready kind)|apply Map.wf_of_list|].
+    destruct kind as [[|]|]; vm_compute; reflexivity.
+  - intros b Hb; apply blocks_reachable.
+  - intros n Hn; apply points_reachable; exact Hn.
+  - exists Diamond.Entry, (Diamond.Entry, 0%nat); destruct kind as [[|]|]; repeat split; reflexivity.
+  - intros b be Hb Hbe; destruct kind as [[|]|];
+      change (In b [Diamond.Entry]) in Hb; destruct Hb as [<-|[]];
+      vm_compute in Hbe |- *; intuition (subst; discriminate).
+Qed.
+
+Example kills kind : Pre.kill_laws (law_ctx kind).
+Proof.
+  constructor.
+  - intros e u He Hfamily Hkill.
+    rewrite Pre.killed_equation in Hkill; apply existsb_exists in Hkill.
+    destruct Hkill as [v [Hin Hsame]].
+    change (eqb expression_enc u v = true) in Hsame.
+    apply (eqb_true_iff _ (pair_encoding_laws _ _ Diamond.block_enc_laws Diamond.block_enc_laws))
+      in Hsame; subst v.
+    change (In u (filter (fun candidate => existsb (fun x =>
+      existsb (eqb Diamond.block_enc x) (defs e)) (operands candidate)) [ab; ba; cd; dc])) in Hin.
+    apply filter_In in Hin; destruct Hin as [Hcandidate Htest].
+    apply existsb_exists in Htest; destruct Htest as [x [Hx Hdefined]].
+    apply existsb_exists in Hdefined; destruct Hdefined as [y [Hy Hsame]].
+    apply (eqb_true_iff _ Diamond.block_enc_laws) in Hsame; subst y.
+    exists x; auto.
+  - intros e x He Hdef; change (In x (defs e)) in Hdef.
+    destruct e as [b|[b|[b|be]]]; try contradiction.
+    destruct b, x; vm_compute in Hdef |- *; intuition congruence.
+  - intros e be He Hcross; destruct e as [b|[b|[b|edge]]]; cbn in Hcross;
+      try discriminate; reflexivity.
+  - intros e u Hcomputed; destruct kind as [[|]|]; destruct e as [b|[b|[b|be]]];
+      try destruct b; vm_compute in Hcomputed; try discriminate.
+    all: split; [reflexivity|intros owner Hbad; discriminate].
+Qed.
+
+Example runtime kind : Pre.runtime_laws (law_ctx kind).
+Proof.
+  constructor.
+  - intros [x y] first second Hagree.
+    change (eval (x, y) first = eval (x, y) second); unfold eval; cbn [fst snd].
+    rewrite (Hagree x (or_introl eq_refl)), (Hagree y (or_intror (or_introl eq_refl))); reflexivity.
+  - intros be [x y] v env Hbe Hfamily Htranslate.
+    change (Some (rename (graph kind) (args kind) be x, rename (graph kind) (args kind) be y) =
+      Some v) in Htranslate.
+    inversion Htranslate; subst v.
+    change (eval (x, y) (Pre.phi_env (law_ctx kind) be env) =
+      eval (rename (graph kind) (args kind) be x, rename (graph kind) (args kind) be y) env).
+    unfold eval; cbn [fst snd]; rewrite !Pre.phi_env_substitution, !operand_agrees; reflexivity.
+Qed.
+
+(** Cyclic exchange, parallel edges and one-predecessor parameters each inhabit the full domain. *)
+Example laws kind : Pre.laws (law_ctx kind).
+Proof.
+  exact (Pre.Laws _ (shapes kind) (graphs kind) (kills kind) (runtime kind)).
+Qed.
+
+Example aggregate_wf kind : PreFrameWf.frg_wf (law_ctx kind) (PreOperands.build_frg (law_ctx kind)).
+Proof.
+  exact (PreOperands.build_frg_wf _ (laws kind)).
+Qed.
+
+Example unknown_stage_has_no_outgoing :
+  Graph.out (Flow.pg loop_bg) (Diamond.Join, 17%nat) = [].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 End Pair.
 
 Module KillCycle.
@@ -979,3 +1338,71 @@ Example unused_phi_aggregate_wf : PreFrameWf.frg_wf unused_phi_ctx (PreOperands.
 Proof.
   exact (PreOperands.build_frg_wf unused_phi_ctx unused_phi_laws).
 Qed.
+
+Module InitialKill.
+
+Definition client : Pre.client Diamond.block Diamond.block_edge (Diamond.block * Diamond.stage)
+    Diamond.edge unit unit unit nat unit :=
+  Pre.Client Kill.points Kill.ssa Kill.expr (Pre.pure_c Kill.client)
+    (Cost.lift (fun _ => 1%N) (fun _ => None)) [tt] [tt]
+    (Pre.shape_c Kill.client) (Pre.operands_c Kill.client) (Pre.eval Kill.client)
+    (Pre.translate_c Kill.client) (Cost.lift (fun _ => 1%N) (fun _ => true))
+    (Pre.exit_point_c Kill.client).
+Definition ctx :=
+  Pre.Context client (Pre.keys Kill.ctx) Diamond.blocks Diamond.point_graph Diamond.tree.
+
+(** This invalidation control has a lawful initially available expression and no join real use. *)
+Example laws : Pre.laws ctx.
+Proof.
+  constructor.
+  - constructor.
+    + exact (Pre.params_nodup Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + intros e [] Hcomputed; discriminate.
+    + intros [] Hinitial; apply Pre.family_seed; now left.
+    + exact (Pre.finite_operands Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + exact (Pre.shape_identity Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + exact (Pre.shape_arity Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + exact (Pre.closed_translation Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + exact (Pre.translation_shape Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + exact (Pre.translation_operands Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+    + exact (Pre.translation_pure Kill.ctx (Pre.shapes Kill.ctx Kill.laws)).
+  - destruct (Pre.graphs Kill.ctx Kill.laws); constructor; assumption.
+  - constructor.
+    + exact (Pre.kill_operand Kill.ctx (Pre.kills Kill.ctx Kill.laws)).
+    + exact (Pre.def_home Kill.ctx (Pre.kills Kill.ctx Kill.laws)).
+    + exact (Pre.cross_no_defs Kill.ctx (Pre.kills Kill.ctx Kill.laws)).
+    + intros e [] Hcomputed; discriminate.
+  - destruct (Pre.runtime Kill.ctx Kill.laws); constructor; assumption.
+Qed.
+
+Example initially_available :
+  PreRename.selected (PreRename.top ctx (PreRename.initial_scope ctx [tt]) tt) =
+    PreFrg.Operand (PreFrg.Initial tt) false /\
+  PreRename.available (PreRename.top ctx (PreRename.initial_scope ctx [tt]) tt) = true.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+(** The unaffected arm retains Initial, the killed arm is unavailable and the unused join is unsafe. *)
+Example available_to_unavailable :
+  Map.get (PreFrg.link_encoding ctx) ((Diamond.Join, tt), Diamond.LJ)
+    (PreFrg.operands (PreOperands.build_frg ctx)) =
+      Some (PreFrg.Operand (PreFrg.Initial tt) false) /\
+  Map.get (PreFrg.link_encoding ctx) ((Diamond.Join, tt), Diamond.RJ)
+    (PreFrg.operands (PreOperands.build_frg ctx)) =
+      Some (PreFrg.Operand (PreFrg.Unavailable tt) false) /\
+  Pre.killed ctx (Diamond.Real Diamond.Right) tt = true /\
+  Map.get Diamond.edge_enc (Diamond.Real Diamond.Join)
+    (PreFrg.occurrences (PreOperands.build_frg ctx)) = None /\
+  FinSet.mem (PreFrg.phi_encoding ctx) (Diamond.Join, tt)
+    (PreFrg.unsafe (PreOperands.build_frg ctx)) = true.
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Example aggregate_wf : PreFrameWf.frg_wf ctx (PreOperands.build_frg ctx).
+Proof.
+  exact (PreOperands.build_frg_wf ctx laws).
+Qed.
+
+End InitialKill.

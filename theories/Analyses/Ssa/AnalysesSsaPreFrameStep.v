@@ -5,6 +5,7 @@
     Builds on: BaseRel and Stdlib lists. *)
 
 From Stdlib Require Import List Bool.
+From Galois.Cost Require Import CostMonad CostLoop.
 From Galois.Base Require Import BaseEncoding BaseEq BaseMap BaseRel.
 From Galois.Graph Require Import GraphModel GraphDomSpec.
 From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
@@ -16,6 +17,18 @@ Module PreFrameStep.
 
 (** Histories use the shared relation closure for any chosen local transfer relation. *)
 Definition history {S E} (step : S -> E -> S -> Prop) := Rel.lpath step.
+
+(** A result predicate closed by the actual callback is preserved by every bounded raw run. *)
+Theorem runs_invariant {S R} (step : S -> Cost.t (S + R)) (P : S + R -> Prop) :
+  (forall source, P (inl source) -> P (Cost.value (step source))) ->
+  forall budget source target, runs step budget source target -> P (inl source) -> P target.
+Proof.
+  intros Hstep budget source target Hrun; induction Hrun as
+    [source|budget source stopped Hstop|budget source next result Hnext Hrun IH]; intro Hsource.
+  - exact Hsource.
+  - pose proof (Hstep source Hsource) as Htarget; rewrite Hstop in Htarget; exact Htarget.
+  - apply IH; pose proof (Hstep source Hsource) as Htarget; rewrite Hnext in Htarget; exact Htarget.
+Qed.
 
 Section Histories.
 Context {S E : Type}.

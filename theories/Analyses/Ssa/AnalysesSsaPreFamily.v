@@ -727,7 +727,8 @@ Definition universe :=
   | inr complete => complete
   end.
 
-Local Lemma universe_state :
+(** The public family enumerates the actual final memo set for either raw outcome. *)
+Theorem universe_state :
   universe = FinSet.elements (snd (result_state (Cost.value discover_state_c))).
 Proof.
   unfold universe, discover, discover_c; rewrite Cost.value_bind.
@@ -790,7 +791,8 @@ Proof.
   change (N.to_nat 1%N) with 1 in Hbound; nia.
 Qed.
 
-Local Lemma discovered_valid :
+(** The actual final memo set is canonical and contains only supported family members. *)
+Theorem discovered_valid :
   Pre.laws c ->
   valid (engine_for (Cfg.edges (Pre.block_cfg c))) (in_family c)
     (result_state (Cost.value discover_state_c)).
@@ -846,9 +848,6 @@ Record budgets := Budgets {
   callback_budget : BinNums.N
 }.
 
-Definition construction_work := Cost.ticks setup_c.
-Definition materialization_work :=
-  Cost.ticks (FinSet.elements_c (snd (result_state (Cost.value discover_state_c)))).
 Definition discovered_count := N.of_nat (length universe).
 Definition edge_count := N.of_nat (length (Cfg.edges (Pre.block_cfg c))).
 Definition seed_count := N.of_nat (length (Pre.seeds (Pre.input c))).
@@ -877,12 +876,13 @@ Proof.
   apply Hsum; intros be Hbe; exact Hbe.
 Qed.
 
-Local Lemma discover_ticks :
+(** Discovery charges setup, the same binary loop and enumeration of its actual final memo set. *)
+Theorem discover_ticks :
   Cost.ticks discover_c =
-    (construction_work +
+    (Cost.ticks setup_c +
       Cost.ticks (iterate (step_c (engine_for (fst setup))) (snd setup)
         (Pre.seeds (Pre.input c), FinSet.empty)) +
-      materialization_work)%N.
+      Cost.ticks (FinSet.elements_c (snd (result_state (Cost.value discover_state_c)))))%N.
 Proof.
   unfold discover_c; rewrite Cost.ticks_bind.
   assert (Hfinish :
@@ -890,8 +890,9 @@ Proof.
       (match Cost.value discover_state_c with
        | inl work => Cost.map (@inl (list U) (list U)) (FinSet.elements_c (snd work))
        | inr work => Cost.map (@inr (list U) (list U)) (FinSet.elements_c (snd work))
-       end) = materialization_work).
-  { unfold materialization_work; destruct (Cost.value discover_state_c);
+       end) = Cost.ticks
+        (FinSet.elements_c (snd (result_state (Cost.value discover_state_c))))).
+  { destruct (Cost.value discover_state_c);
       rewrite Cost.ticks_map; reflexivity. }
   rewrite Hfinish; unfold discover_state_c; rewrite Cost.ticks_bind; reflexivity.
 Qed.
@@ -939,14 +940,15 @@ Qed.
 
 (** Discovery work is linear in discovered members and ordered edges,
     plus construction and width. *)
-Theorem discover_cost (b : budgets) :
+Theorem discover_relative_cost (b : budgets) :
   Pre.laws c ->
   (forall u, in_family c u ->
     (1 + Cost.ticks (encode_c (Pre.eu (Pre.keys c)) u) +
       key_bits (Pre.eu (Pre.keys c)) u <= key_budget b)%N) ->
   (forall be u, In be (Cfg.edges (Pre.block_cfg c)) -> in_family c u ->
     (Cost.ticks (Pre.translate_c (Pre.input c) be u) <= callback_budget b)%N) ->
-  (Cost.ticks discover_c <= construction_work + materialization_work +
+  (Cost.ticks discover_c <= Cost.ticks setup_c +
+    Cost.ticks (FinSet.elements_c (snd (result_state (Cost.value discover_state_c)))) +
     discovered_count *
       (key_budget b + edge_count * (2 + callback_budget b) + 1 +
         edge_count * (key_budget b + 3)) +

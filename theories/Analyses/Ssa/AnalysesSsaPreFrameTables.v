@@ -283,12 +283,7 @@ Local Lemma terminal_output {index current final} :
   PreRename.step c index current = inr final ->
     PreRename.stop_output final = PreRename.output current.
 Proof.
-  intro Hstep; rewrite PreRename.step_equation in Hstep.
-  destruct (PreRename.pending current) as [|[id frames] rest].
-  - inversion Hstep; reflexivity.
-  - destruct (FinSet.mem positive_encoding id (PreRename.visited current)); [discriminate|].
-    destruct (Prepared.name_of (Pre.blocks c) id); [discriminate|].
-    inversion Hstep; reflexivity.
+  apply PreFrameEnd.terminal_output.
 Qed.
 
 (** Every later raw driver outcome preserves the occurrence and fresh flag of a visited block. *)

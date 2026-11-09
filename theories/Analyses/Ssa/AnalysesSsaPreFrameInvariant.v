@@ -798,13 +798,8 @@ Local Lemma runs_source :
   forall budget current result, runs (PreRename.step_c c index) budget current result ->
     walk_source current -> result_source result.
 Proof.
-  intros budget current result Hrun; induction Hrun as [current|
-    budget current final Hstop|budget current next result Hstep Hrun IH]; intro Hcurrent.
-  - exact Hcurrent.
-  - pose proof (step_source current Hcurrent) as Hfinal.
-    unfold PreRename.step in Hfinal; rewrite Hstop in Hfinal; exact Hfinal.
-  - apply IH; pose proof (step_source current Hcurrent) as Hnext.
-    unfold PreRename.step in Hnext; rewrite Hstep in Hnext; exact Hnext.
+  apply (PreFrameStep.runs_invariant (PreRename.step_c c index) result_source).
+  exact step_source.
 Qed.
 
 (** Every actual run, including partial outcomes, contains only source-backed occurrences/creations. *)
@@ -1021,13 +1016,8 @@ Local Lemma runs_links_source :
   forall budget current result, runs (PreRename.step_c c index) budget current result ->
     walk_links_source current -> result_links_source result.
 Proof.
-  intros budget current result Hrun; induction Hrun as [current|
-    budget current final Hstop|budget current next result Hstep Hrun IH]; intro Hcurrent.
-  - exact Hcurrent.
-  - pose proof (step_links_source current Hcurrent) as Hfinal.
-    unfold PreRename.step in Hfinal; rewrite Hstop in Hfinal; exact Hfinal.
-  - apply IH; pose proof (step_links_source current Hcurrent) as Hnext.
-    unfold PreRename.step in Hnext; rewrite Hstep in Hnext; exact Hnext.
+  apply (PreFrameStep.runs_invariant (PreRename.step_c c index) result_links_source).
+  exact step_links_source.
 Qed.
 
 (** Actual incoming selections retain source sites and translations through every walk outcome. *)

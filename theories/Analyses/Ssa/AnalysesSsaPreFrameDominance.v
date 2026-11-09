@@ -11,7 +11,7 @@ From Galois.Graph Require Import GraphModel GraphPrepared GraphDomSpec.
 From Galois.Program Require Import ProgramCfg ProgramSsaPoints.
 From Galois.Analyses.Ssa Require Import AnalysesSsaPreContext AnalysesSsaPreFamily
   AnalysesSsaPreFrg AnalysesSsaPreRename AnalysesSsaPreCoverage AnalysesSsaPreFrameCache
-  AnalysesSsaPreFrameStep AnalysesSsaPreFrameInvariant.
+  AnalysesSsaPreFrameStep AnalysesSsaPreFrameEnd AnalysesSsaPreFrameInvariant.
 Import List.ListNotations.
 
 Module PreFrameDominance.
@@ -236,9 +236,7 @@ Local Lemma mark_output frames acc key :
   PreRename.occurrence_index (PreRename.mark c frames acc key) =
     PreRename.occurrence_index acc.
 Proof.
-  rewrite PreRename.mark_equation.
-  destruct (PreRename.selected (PreRename.top_id frames (fst key) (snd key))) as [d real].
-  destruct d, real; reflexivity.
+  apply PreFrameEnd.mark_occurrences.
 Qed.
 
 Local Lemma mark_exit_dominance n endpoint work :
@@ -581,13 +579,8 @@ Local Lemma runs_dominance :
   forall budget current result, runs (PreRename.step_c c index) budget current result ->
     walk_dominance current -> result_dominance result.
 Proof.
-  intros budget current result Hrun; induction Hrun as [current|budget current final Hstop|
-    budget current next result Hstep Hrun IH]; intro Hcurrent.
-  - exact Hcurrent.
-  - pose proof (step_dominance current Hcurrent) as Hfinal.
-    unfold PreRename.step in Hfinal; rewrite Hstop in Hfinal; exact Hfinal.
-  - apply IH; pose proof (step_dominance current Hcurrent) as Hnext.
-    unfold PreRename.step in Hnext; rewrite Hstep in Hnext; exact Hnext.
+  apply (PreFrameStep.runs_invariant (PreRename.step_c c index) result_dominance).
+  exact step_dominance.
 Qed.
 
 (** The same actual indexed run preserves occurrence-target and reused-source definition dominance. *)

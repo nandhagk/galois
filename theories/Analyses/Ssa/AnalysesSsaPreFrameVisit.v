@@ -262,9 +262,7 @@ Local Lemma mark_occurrences frames acc key :
   PreRename.occurrence_index (PreRename.mark c frames acc key) =
     PreRename.occurrence_index acc.
 Proof.
-  rewrite PreRename.mark_equation.
-  destruct (PreRename.selected (PreRename.top_id frames (fst key) (snd key))) as [d real].
-  destruct d, real; reflexivity.
+  apply PreFrameEnd.mark_occurrences.
 Qed.
 
 Local Lemma fold_mark_occurrences frames :
