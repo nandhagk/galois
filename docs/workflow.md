@@ -18,9 +18,9 @@ no build lock. `just doc` writes under `_build/`, which is never tracked or edit
 | `just list` | List recipes. |
 | `just build` | Build the theories and extraction clients. |
 | `just test` | Build the Rocq tests and examples and run OCaml inline tests. |
-| `just check` | Check formatting, build, test, then run `checker/main.exe check`. |
-| `just audit` | Build, then run `checker/main.exe check --final`. Extra arguments go to the checker. |
-| `just admits` | Run `checker/main.exe admits`. |
+| `just check` | Check formatting, build, test, run `just lint` and check the frozen files. |
+| `just audit` | Build, then check every compiled module with `rocqchk`. Package names limit the modules. |
+| `just admits` | Count `Admitted.` and `Admit Obligations` in each package. |
 | `just fmt` | Format OCaml and dune sources. |
 | `just doc` | Generate the API reference. |
 | `just clean` | Remove this worktree's build outputs. |

@@ -31,7 +31,7 @@ every line you change. This file and `docs/workflow.md` take precedence over a s
   directives.
 - Every claim is proved. No axioms, `Admitted`, `admit`, `give_up` or unproved statement
   definitions. The one exception: a theorem whose file imports `Galois.Float` may depend on
-  exactly the four approved axioms listed in `docs/guarantees.md`. The checker in `checker/` enforces this through `just check`.
+  exactly the four approved axioms listed in `docs/guarantees.md`. `just check` enforces the style rules and frozen files, `just admits` reports progress and `just audit` enforces the proof policy.
 
 ## Work and verification
 

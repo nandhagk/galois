@@ -1,0 +1,2 @@
+# Axioms that `just audit` accepts, one fully qualified name per line.
+# Blank lines and lines starting with # are ignored. Only the first word of a line is read.

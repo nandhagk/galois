@@ -9,8 +9,8 @@ that is not yet done.
 ## Proof policy
 
 Source contains no `Axiom`, `Parameter`, `Admitted`, `admit`, `give_up` or `Abort`. Every
-`Theorem` is closed under the global context, subject to the Float rule below. `just check`
-enforces the proof policy.
+`Theorem` is closed under the global context, subject to the Float rule below.
+`just lint` rejects the forbidden tactics and commands in source, and `just audit` checks the assumptions of every compiled theorem.
 
 ## Float axioms
 
@@ -36,7 +36,7 @@ A tick count is not a time measurement.
 
 ## Checks
 
-`just check` checks formatting, source hygiene, layout, theorem assumptions and typed extraction.
+`just check` checks formatting, the build, the tests, source style and frozen files. `just audit` checks theorem assumptions.
 The target cost checks forbid direct inspection of cost records outside their implementation
 except in proofs and propositions. They also forbid calls to a plain function from its costed
 counterpart. The target includes a `vm_compute` slowdown gate and extraction and nested query

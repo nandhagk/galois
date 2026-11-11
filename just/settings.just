@@ -7,3 +7,6 @@ cap := if env("GALOIS_NO_SYSTEMD", "") != "" { "" } else { `systemd-run --user -
 
 # Parallel dune jobs.
 jobs := env("GALOIS_JOBS", "2")
+
+# The logical root of theories/.
+root := "Galois"
