@@ -31,19 +31,8 @@ test *args:
 check: fmt-check build test lint frozen
 
 # Print the words that just/lint.rules forbids in code and fail if there are any.
-[script("bash", "-euo", "pipefail")]
 lint:
-    failed=0
-    while IFS= read -r line; do
-        case "$line" in ''|'#'*) continue ;; esac
-        words=${line#* :: }; message=${words#* :: }; words=${words%% :: *}
-        # The pathspecs are split on purpose.
-        mapfile -t files < <(git ls-files -co --exclude-standard -- ${line%% :: *} | grep '\.v$' || true)
-        [ "${#files[@]}" -gt 0 ] || continue
-        matches=$(awk -v words="$words" -f just/lint.awk "${files[@]}")
-        [ -z "$matches" ] || { printf '%s\n%s\n' "$message" "$matches"; failed=1; }
-    done < just/lint.rules
-    exit "$failed"
+    @awk -f just/lint.awk just/lint.rules $(git ls-files -co --exclude-standard -- '*.v')
 
 # Count the admitted statements in each package.
 [script("bash", "-euo", "pipefail")]
