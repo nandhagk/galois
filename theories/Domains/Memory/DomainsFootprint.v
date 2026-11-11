@@ -523,29 +523,32 @@ Proof.
       change (IntervalSet.subset xs
         (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end) = true)
         in Hsubset.
-      apply (proj1 (IntervalSet.subset_spec xs
+      assert (Hright : IntervalSet.wf
+        (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end)).
+      { destruct (Map.get E site n) as [ys|] eqn:Hy.
+        - exact (proj2 Hn site ys Hy).
+        - apply IntervalSet.wf_empty. }
+      exact (proj1 (IntervalSet.subset_spec xs
         (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end)
-        (proj2 Hm site xs Hx) _)) in Hsubset.
-      * now apply Hsubset.
-      * destruct (Map.get E site n) as [ys|] eqn:Hy.
-        -- exact (proj2 Hn site ys Hy).
-        -- apply IntervalSet.wf_empty.
+        (proj2 Hm site xs Hx) Hright) Hsubset b Hmember).
     + rewrite IntervalSet.mem_empty in Hmember. discriminate.
   - intros Hsubset site xs Hx.
     unfold footprint_subset_payload_c.
     change (IntervalSet.subset xs
       (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end) = true).
-    apply (proj2 (IntervalSet.subset_spec xs
+    assert (Hright : IntervalSet.wf
+      (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end)).
+    { destruct (Map.get E site n) as [ys|] eqn:Hy.
+      - exact (proj2 Hn site ys Hy).
+      - apply IntervalSet.wf_empty. }
+    refine (proj2 (IntervalSet.subset_spec xs
       (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end)
-      (proj2 Hm site xs Hx) _)).
-    + intros b Hmember.
-      specialize (Hsubset site b).
-      change (IntervalSet.mem (Map.find_or E IntervalSet.empty site m) b = true ->
-        IntervalSet.mem (Map.find_or E IntervalSet.empty site n) b = true) in Hsubset.
-      rewrite !Map.find_or_equation, Hx in Hsubset. now apply Hsubset.
-    + destruct (Map.get E site n) as [ys|] eqn:Hy.
-      * exact (proj2 Hn site ys Hy).
-      * apply IntervalSet.wf_empty.
+      (proj2 Hm site xs Hx) Hright) _).
+    intros b Hmember.
+    specialize (Hsubset site b).
+    change (IntervalSet.mem (Map.find_or E IntervalSet.empty site m) b = true ->
+      IntervalSet.mem (Map.find_or E IntervalSet.empty site n) b = true) in Hsubset.
+    rewrite !Map.find_or_equation, Hx in Hsubset. now apply Hsubset.
 Qed.
 
 (** Coverage checks the entire half-open query range at one site. *)
