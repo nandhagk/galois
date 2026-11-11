@@ -148,3 +148,61 @@ Example must_empty_universe_still_has_a_step :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Module SetWrapperCosts.
+
+(** Arbitrary dictionaries and duplicate inventories retain the actual finite-set price. *)
+Theorem list_wrapper_client {K} (E : encoding K) xs :
+  Cost.ticks (set_of_list_c E xs) = Cost.ticks (FinSet.of_list_c E xs).
+Proof.
+  apply set_of_list_cost.
+Qed.
+
+(** Union clients need no validity premise beyond the existing set carrier. *)
+Theorem union_wrapper_client {K} (E : encoding K) (s t : set_t E) :
+  Cost.ticks (set_union_c E s t) =
+    Cost.ticks (FinSet.union_c (set_raw s) (set_raw t)).
+Proof.
+  apply set_union_cost.
+Qed.
+
+Definition nonunit_encoding : encoding positive :=
+  Encoding (fun p => Cost.tick 9 ;; encode_c positive_encoding p).
+
+Definition duplicate_set := set_of_list nonunit_encoding [1%positive; 1%positive].
+
+Example nonunit_encoder_and_duplicate_cells_are_charged :
+  Cost.ticks (set_of_list_c nonunit_encoding [1%positive; 1%positive]) = 28%N.
+Proof.
+  rewrite set_of_list_cost; vm_compute; reflexivity.
+Qed.
+
+Example duplicate_values_keep_the_original_set :
+  FinSet.elements (set_raw duplicate_set) = [1%positive].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example empty_conversion_does_not_call_nonunit_encoder :
+  Cost.ticks (set_of_list_c nonunit_encoding []) = 0%N.
+Proof.
+  rewrite set_of_list_cost; vm_compute; reflexivity.
+Qed.
+
+Example empty_union_retains_backend_overhead :
+  Cost.ticks (set_union_c nonunit_encoding
+    (set_empty nonunit_encoding) (set_empty nonunit_encoding)) = 1%N.
+Proof.
+  rewrite set_union_cost; vm_compute; reflexivity.
+Qed.
+
+Example nonempty_union_retains_members_and_charges :
+  FinSet.elements (set_raw (Cost.value (set_union_c positive_encoding s1 s2))) =
+    [2%positive; 1%positive] /\
+  N.leb 1 (Cost.ticks (set_union_c positive_encoding s1 s2)) = true.
+Proof.
+  rewrite set_union_cost; vm_compute; split; reflexivity.
+Qed.
+
+End SetWrapperCosts.
+Import SetWrapperCosts.

@@ -26,6 +26,13 @@ Definition set_of_list_c {K} (E : encoding K) xs : Cost.t (set_t E) :=
 
 Definition set_of_list {K} (E : encoding K) xs := Cost.value (set_of_list_c E xs).
 
+(** List conversion retains exactly the underlying charged finite-set construction. *)
+Theorem set_of_list_cost {K} (E : encoding K) xs :
+  Cost.ticks (set_of_list_c E xs) = Cost.ticks (FinSet.of_list_c E xs).
+Proof.
+  unfold set_of_list_c; apply Cost.ticks_refine.
+Qed.
+
 Definition set_add_c {K} (E : encoding K) k (s : set_t E) : Cost.t (set_t E) :=
   Cost.refine (FinSet.add_c E k (set_raw s)) (FinSet.wf_add E k _ (proj2_sig s)).
 
@@ -34,6 +41,14 @@ Definition set_add {K} (E : encoding K) k s := Cost.value (set_add_c E k s).
 Definition set_union_c {K} (E : encoding K) (s t : set_t E) : Cost.t (set_t E) :=
   Cost.refine (FinSet.union_c (set_raw s) (set_raw t))
     (FinSet.wf_union E _ _ (proj2_sig s) (proj2_sig t)).
+
+(** Union retains exactly the finite-set operation on the actual valid stored sets. *)
+Theorem set_union_cost {K} (E : encoding K) (s t : set_t E) :
+  Cost.ticks (set_union_c E s t) =
+    Cost.ticks (FinSet.union_c (set_raw s) (set_raw t)).
+Proof.
+  unfold set_union_c; apply Cost.ticks_refine.
+Qed.
 
 Definition set_inter_c {K} (E : encoding K) (s t : set_t E) : Cost.t (set_t E) :=
   Cost.refine (FinSet.inter_c (set_raw s) (set_raw t))
