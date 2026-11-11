@@ -1,14 +1,13 @@
 # Agent instructions
 
 Galois is a Rocq library of verified program analyses, being rebuilt as described in
-`run/design/architecture.md` (in the primary checkout, `/home/nandhagk/Projects/galois/run/`).
-Read `README.md`, `run/design/architecture.md`, `run/design/conventions.md` and your card before
-working. Run mechanics are in `run/RUNBOOK.md`.
+`docs/architecture.md`. Read `README.md`, `docs/architecture.md` and `docs/workflow.md` before
+working.
 
 ## Skills
 
 Before editing a matching file, read the skill and the references it requires, and apply it to
-every line you change. This file and `run/design/conventions.md` take precedence over a skill.
+every line you change. This file and `docs/workflow.md` take precedence over a skill.
 
 | Files | Skill |
 | --- | --- |
@@ -26,13 +25,13 @@ every line you change. This file and `run/design/conventions.md` take precedence
 - Computational records hold data and functions; semantic links and laws are separate `Prop`
   records. Running an analysis needs no semantics and no termination proof.
 - The core algorithms are written in the cost monad of `theories/Cost` and carry cost theorems,
-  following `run/design/cost.md`.
+  following `docs/guide/cost.md`.
 - Consumers use other packages only through their public names and spec lemmas.
 - Every `.v` basename is unique and starts with its package name. Theories contain no `Extract`
   directives.
 - Every claim is proved. No axioms, `Admitted`, `admit`, `give_up` or unproved statement
   definitions. The one exception: a theorem whose file imports `Galois.Float` may depend on
-  exactly the four approved axioms listed in `docs/guarantees.md`. `just check` enforces this.
+  exactly the four approved axioms listed in `docs/guarantees.md`. The checker in `checker/` enforces this through `just check`.
 
 ## Work and verification
 
@@ -41,6 +40,6 @@ every line you change. This file and `run/design/conventions.md` take precedence
   lock.
 - Rocq tests are `Example`s in `tests/`, checked by `vm_compute`. OCaml tests are inline expect
   tests at the bottom of the module's own `.ml`.
-- Work on your card's branch and owned paths. Stage and commit explicit paths. Never rewrite
+- Work on your own branch. Stage and commit explicit paths. Never rewrite
   `main`, force-push or push to `origin`.
 - Do not use Python.

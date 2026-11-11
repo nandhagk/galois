@@ -243,7 +243,7 @@ Key generation uses binary successor, so it avoids repeated unary conversion.
 Both workload examples compare the entire ordered lookup list against the same
 expected list.
 
-Build the tests first with `just test-new`. Create two scratch Rocq clients that
+Build the tests first with `just test`. Create two scratch Rocq clients that
 import the compiled gate test. Give each client one of its workload examples,
 using the shared `gate_size`. Compile each client three times through a temporary
 Just recipe under the same `galois.slice` cap. Alternate pure and costed runs,

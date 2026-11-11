@@ -8,34 +8,32 @@ Run builds, tests, checks and formatting through `just`.
 
 ## Commands
 
-The recipes run in `galois.slice` with a default 10 GB shared memory cap and no swap. There is
+The recipes run in `galois.slice` with a default 10 GB shared memory cap and no swap when a
+systemd user session exists. Without one, such as in a container, they run directly. The
+environment variable `GALOIS_JOBS` sets the number of parallel jobs and defaults to 2. There is
 no build lock. `just doc` writes under `_build/`, which is never tracked or edited by hand.
 
 | Command | Action |
 | --- | --- |
 | `just list` | List recipes. |
-| `just build` | Build the redesigned and legacy libraries and extraction clients. |
-| `just test` | Build both Rocq test suites and run OCaml inline tests. |
-| `just check` | Check formatting, hygiene, layout, assumptions and typed extraction. |
+| `just build` | Build the theories and extraction clients. |
+| `just test` | Build the Rocq tests and examples and run OCaml inline tests. |
+| `just check` | Check formatting, build, test, then run `checker/main.exe check`. |
+| `just audit` | Build, then run `checker/main.exe check --final`. Extra arguments go to the checker. |
+| `just admits` | Run `checker/main.exe admits`. |
 | `just fmt` | Format OCaml and dune sources. |
-| `just doc` | Generate the redesigned API reference. |
-| `just bench` | Run generated benchmark workloads. |
+| `just doc` | Generate the API reference. |
 | `just clean` | Remove this worktree's build outputs. |
 | `just slice-cap` | Set the shared memory cap and disable swap. |
-
-`just build-new` and `just test-new` select the redesigned library and tests. `just
-build-legacy` selects the previous library.
 
 ## Layout
 
 Each package lives in `theories/<Package>/` and declares its `Galois.<Package>` theory.
-The `Analyses` families each have their own theory. Every new `.v` basename starts with its
-package name and is unique among new theories, examples and tests. A new file may reuse a
-legacy basename, and a test importing both uses full logical paths.
+The `Analyses` families each have their own theory. Every `.v` basename starts with its
+package name and is unique among theories, examples and tests.
 
-Tests mirror packages in `tests/<Package>/`. Differential tests live in `tests/legacy/`.
-Guides live in `docs/guide/`. The previous library lives under `legacy/` and has logical root
-`GaloisLegacy`. New code imports it only in `tests/legacy/`.
+Tests mirror packages in `tests/<Package>/`.
+Guides live in `docs/guide/`.
 
 ## Rocq style
 

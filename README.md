@@ -50,4 +50,3 @@ See the [workflow](docs/workflow.md) for commands and conventions.
 ## Status
 
 The rebuild is in progress. A package has landed when its guide exists in `docs/guide/`.
-The previous library is kept under `legacy/`, builds as `GaloisLegacy`, and is removed when the rebuilt packages replace it.

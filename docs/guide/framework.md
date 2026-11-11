@@ -262,6 +262,6 @@ key/fact support fixed. Its exact observations concern the reference backend. Th
 establish a general linear bound for list-backed maps or grouping. Framework tabulation
 cost theorems belong to its later implementation card.
 
-The card's checks are `just build-new`, `just test-new` and the exact staged forbidden-proof
+The card's checks are `just build`, `just test` and the exact staged forbidden-proof
 grep under the owner's command policy. The full stage-one claims, formatting and extraction
 audits remain the master's gate.

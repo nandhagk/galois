@@ -57,9 +57,8 @@ Analyses/{Dataflow,Values,Ssa,Equality,Loops,Calls,Memory}    Float
 | `Float` | Optional Flocq-based domains. |
 
 `Analyses` contains `Dataflow`, `Values`, `Ssa`, `Equality`, `Loops`, `Calls` and `Memory`
-families. `examples/` holds client programs, `tools/` holds checks and benchmarks, and
+families. `examples/` holds client programs, `checker/` holds the checker, and
 `extraction/` contains extraction clients. Tests mirror the theories under `tests/`.
-Differential tests against the previous library live under `tests/legacy/`.
 
 ## Core interfaces
 

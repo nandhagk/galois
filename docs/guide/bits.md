@@ -49,7 +49,7 @@ Add an operator by adding its constructor and one entry in `op_desc`.
 Choose an existing helper, its kind, a fresh code tag and the correct symmetry flag.
 The computational projections need no edits.
 Prove any new word-function facts needed by the table's proof cases.
-Extend the representative fixtures and the temporary legacy adapter when applicable.
+Extend the representative fixtures.
 [`op_cases`](../../theories/Bits/BitsTactics.v#L11) splits constructors and removes only
 the cases that the client's `op_default` solves.
 The `by` form supplies a default explicitly, and `kind_cases` provides the same contract
@@ -67,13 +67,3 @@ the target evaluator enforces arity and client values map to unsigned words.
 The bridge environment uses a one-bit zero default.
 [`BitsBridge`](../../theories/Bits/BitsBridge.v#L80) also contains the expression-dependent
 extension, truncation and concatenation theorems.
-
-The [differential grid](../../tests/legacy/Bits/BitsOpLegacyTest.v#L126) checks every operator
-against legacy evaluation, width checking, arity, commutativity and code.
-It samples widths one, two, three and eight and raw values around zero and each modulus,
-plus 255 and 1000. It includes malformed arities, width mismatches, valid selections and
-parameter boundaries. The word-function comparison covers every pair of four-bit values
-and population count on every ten-bit value.
-<!-- Sources: BitsOpLegacyTest.widths, samples, grid and parameter_cases;
-     BitsFunLegacyTest.word_functions_agree and popcount_width_ten_agrees. -->
-These computed fixtures complement the universal theorems.

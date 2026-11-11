@@ -60,7 +60,7 @@ Use `on_steps` for transition clauses.
 Keep state-only and unrestricted clauses on their original domains.
 For example, `var_laws.no_stays` forbids stationary classifications on all transitions.
 `var_laws.exits_determine` compares reachable states without requiring either state to step.
-Restricting either clause to `on_steps` would lose part of the legacy contract.
+Restricting either clause to `on_steps` would weaken the contract.
 
 ## CFGs and variables
 
@@ -104,7 +104,6 @@ by the value inventory.
 `value_origin` permits a preserved binding, a computed operation, a taken-edge argument for a
 parameter, or an arbitrary definition.
 The operator-guard clause applies to every operand of a client guard.
-It specializes to the legacy singleton-subject clause.
 
 [`SsaPoints.t`](../../theories/Program/ProgramSsaPoints.v#L90) relates an ordered point-level
 variable presentation to a block CFG.
@@ -142,7 +141,7 @@ jump effects.
 `skeleton_not_stuck` additionally requires successful root label validation and reachability.
 It makes no progress claim for arbitrary malformed machine states.
 `skeleton_machine C prog` is the client-first constructor.
-The legacy-order `skeleton_semantics prog C` remains available.
+`skeleton_semantics prog C` is the program-first form.
 
 [`skeleton_cfg`](../../theories/Program/ProgramSkeletonCfg.v#L648) provides entry and exit
 points and source/slot edge keys.
@@ -206,7 +205,7 @@ Returns require the matching site at the stack top.
 [`Effects.t`](../../theories/Program/ProgramEffects.v#L14) carries charged flags for reads,
 writes, traps, divergence, stops, allocation, freeing, calls and observations.
 `EffectsLink.t` supplies the concrete instruction, heap image, heap agreement relation and depth.
-`effects_laws` retains the legacy transition, ending and comparison-state domains.
+`effects_laws` covers the transition, ending and comparison-state domains.
 `silent_exec_in` proves that a restricted run through non-observing instructions emits no events.
 
 [`Alias.t`](../../theories/Program/ProgramMemory.v#L16) supplies charged disjointness and
@@ -238,7 +237,5 @@ They also observe primitive callback charges.
 The [skeleton fixtures](../../tests/Program/ProgramSkeletonTest.v#L15) cover all statement
 constructors, good and bad labels, invalid points and slots, cached positions and ranks, and
 machine resume and ending observations.
-The [differential suite](../../tests/legacy/Program/ProgramSkeletonLegacyTest.v#L61) compares
-ordered endpoints, edge counts and label checks with the legacy implementation.
 These computed examples complement the generic theorems.
 They do not establish the later forward or cut theory.

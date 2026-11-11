@@ -20,7 +20,7 @@ A decoder may accept additional codes. The law requires it to recover every enco
 The scalar codecs are `positive_codec`, `N_codec`, `nat_codec`, `Z_codec`, `bool_codec` and
 `unit_codec`. Each has a `_laws` theorem and an encoding alias such as `nat_encoding`.
 Each alias has separate `_laws` and `_cost_laws` theorems.
-Scalars retain the legacy layouts. Positive numbers encode as themselves, naturals as their
+Positive numbers encode as themselves, naturals as their
 positive successor, and signed numbers use low-bit sign tags. Booleans use one for false and
 two for true. Unit uses one. Boolean and unit decoders reject other codes.
 
@@ -51,7 +51,7 @@ right. Arbitrary component tick counts flow through these compositions.
 
 ## Serialization and costs
 
-The serializer keeps the legacy delimited positive symbols and adds a tree grammar.
+The serializer uses delimited positive symbols and a tree grammar.
 An atom begins with false and then emits its positive code. A node begins with true and then
 emits its child list. A child list uses false for nil and true followed by a tree and the
 rest of the list for cons. Positive symbols use false,false for a zero digit, true,true for a
@@ -91,13 +91,6 @@ The option and sum size theorems give the corresponding branch-specific formulas
 `derive_encode_cost_le` additionally requires a bound on the client conversion.
 `encoding_comap` likewise takes a costed conversion and exposes its cost independently.
 Its injectivity theorem takes the conversion's injectivity as a separate premise.
-
-The [differential fixtures](../../tests/legacy/Base/BaseEncodingLegacyTest.v#L16) compare
-`[]`, `[1]`, `[1;2]`, `(1,2)`, `None` and `Some 3` with the legacy codes.
-Both layouts distinguish the fixtures within each type.
-The new layout uses at most six extra bits on these fixtures.
-<!-- Source: differential_fixture_bits and differential_size_bounds in the fixture file. -->
-This is a fixture bound. Lists of arbitrary length have tag overhead proportional to length.
 
 ## Equality and tactics
 
@@ -201,8 +194,6 @@ Its costed implementation retains all of those scans.
 
 The [map fixtures](../../tests/Base/BaseMapTest.v#L12) cover replacement, absence,
 an absent-key update, deletion of the last binding, empty enumeration and list lookup ticks.
-The [differential fixtures](../../tests/legacy/Base/BaseMapLegacyTest.v#L12) compare legacy and
-new lookup results on the same probes and compare key enumeration order.
 
 ## Finite sets
 
