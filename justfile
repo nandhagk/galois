@@ -12,7 +12,7 @@ slice-cap size="10000000000":
 # Run a command under the memory cap, or directly when no systemd user session exists.
 [private]
 capped +args:
-    {{ capped }} "$@"
+    @{{ cap }} "$@"
 
 # Check the formatting of every source file.
 [private]
