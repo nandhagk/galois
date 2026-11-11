@@ -488,6 +488,66 @@ Proof.
   - rewrite IntervalSet.mem_empty. reflexivity.
 Qed.
 
+(** A missing right-hand site denotes an empty set in an inclusion query. *)
+Definition footprint_subset_payload_c (xs : IntervalSet.t) (right : option IntervalSet.t) :=
+  IntervalSet.subset_c xs
+    (match right with
+     | Some ys => ys
+     | None => IntervalSet.empty
+     end).
+
+(** Inclusion checks all occupied sites and charges the interval comparisons. *)
+Definition footprint_subset_c {T} (m n : footprint_index T) :=
+  Map.forall2_c footprint_subset_payload_c m n.
+
+Definition footprint_subset {T} (m n : footprint_index T) :=
+  Cost.value (footprint_subset_c m n).
+
+(** Inclusion means every byte in the left index also belongs to the right index. *)
+Theorem footprint_subset_spec {T} (E : encoding T) (HE : encoding_laws E) m n :
+  footprint_index_wf E m -> footprint_index_wf E n ->
+  (footprint_subset m n = true <->
+    forall site b, IntervalSet.mem (footprint_lookup E site m) b = true ->
+      IntervalSet.mem (footprint_lookup E site n) b = true).
+Proof.
+  intros Hm Hn. unfold footprint_subset, footprint_subset_c.
+  rewrite Map.forall2_c_value, (Map.forall2_spec E HE) by exact (proj1 Hm).
+  split.
+  - intros Hsubset site b Hmember.
+    change (IntervalSet.mem (Map.find_or E IntervalSet.empty site m) b = true) in Hmember.
+    change (IntervalSet.mem (Map.find_or E IntervalSet.empty site n) b = true).
+    rewrite !Map.find_or_equation in *.
+    destruct (Map.get E site m) as [xs|] eqn:Hx.
+    + specialize (Hsubset site xs Hx).
+      unfold footprint_subset_payload_c in Hsubset.
+      change (IntervalSet.subset xs
+        (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end) = true)
+        in Hsubset.
+      apply (proj1 (IntervalSet.subset_spec xs
+        (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end)
+        (proj2 Hm site xs Hx) _)) in Hsubset.
+      * now apply Hsubset.
+      * destruct (Map.get E site n) as [ys|] eqn:Hy.
+        -- exact (proj2 Hn site ys Hy).
+        -- apply IntervalSet.wf_empty.
+    + rewrite IntervalSet.mem_empty in Hmember. discriminate.
+  - intros Hsubset site xs Hx.
+    unfold footprint_subset_payload_c.
+    change (IntervalSet.subset xs
+      (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end) = true).
+    apply (proj2 (IntervalSet.subset_spec xs
+      (match Map.get E site n with Some ys => ys | None => IntervalSet.empty end)
+      (proj2 Hm site xs Hx) _)).
+    + intros b Hmember.
+      specialize (Hsubset site b).
+      change (IntervalSet.mem (Map.find_or E IntervalSet.empty site m) b = true ->
+        IntervalSet.mem (Map.find_or E IntervalSet.empty site n) b = true) in Hsubset.
+      rewrite !Map.find_or_equation, Hx in Hsubset. now apply Hsubset.
+    + destruct (Map.get E site n) as [ys|] eqn:Hy.
+      * exact (proj2 Hn site ys Hy).
+      * apply IntervalSet.wf_empty.
+Qed.
+
 (** Coverage checks the entire half-open query range at one site. *)
 Definition footprint_covers_c {T} (E : encoding T) (m : footprint_index T)
     (f : footprint T) :=
