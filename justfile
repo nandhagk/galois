@@ -9,42 +9,44 @@ list:
 slice-cap size="10000000000":
     systemctl --user set-property galois.slice MemoryMax="$1" MemorySwapMax=0
 
-# Build the redesigned theories and their extraction clients.
-build-new *args:
-    {{ capped }} dune build -j 2 @build-new "$@"
+# Run a command under the memory cap, or directly when no systemd user session exists.
+[private]
+capped +args:
+    {{ capped }} "$@"
 
-# Build the reference library, clients and tests.
-build-legacy *args:
-    {{ capped }} dune build -j 2 @legacy/default "$@"
+# Check the formatting of every source file.
+[private]
+fmt-check:
+    @just capped dune build -j {{ jobs }} @fmt
 
-# Build both libraries and the legacy extraction client.
+# Build the theories and the extraction clients.
 build *args:
-    {{ capped }} dune build -j 2 @build-new @legacy/default @extraction/default "$@"
+    @just capped dune build -j {{ jobs }} @theories/default @extraction/default "$@"
 
-# Build the new Rocq tests and clients and run the OCaml inline tests.
-test-new *args:
-    {{ capped }} dune build -j 2 @test-new @runtest "$@"
-
-# Build both Rocq test suites and clients and run the OCaml inline tests.
+# Build the Rocq tests and examples and run the OCaml inline tests.
 test *args:
-    {{ capped }} dune build -j 2 @test-new @legacy/tests/default @legacy/examples/default @runtest "$@"
+    @just capped dune build -j {{ jobs }} @tests/default @examples/default @runtest "$@"
 
-# Check formatting, source hygiene, layout, theorem assumptions and typed extraction.
-check *args:
-    {{ capped }} bash -c 'dune build -j 2 @fmt @build-new @test-new @legacy/default @extraction/check @runtest tools/galois.exe "$@" && exec dune exec --no-build tools/galois.exe -- check' -- "$@"
+# Check formatting, then build, then test, then run the checker.
+check *args: fmt-check build test
+    @just capped dune exec -j {{ jobs }} checker/main.exe -- check "$@"
 
-# Generate the HTML API reference for the redesigned theories.
+# Build, then run the final checker audit. Arguments go to the checker, for example --only Cost,Bits.
+audit *args: build
+    @just capped dune exec -j {{ jobs }} checker/main.exe -- check --final "$@"
+
+# List the admitted statements the checker finds.
+admits *args:
+    @just capped dune exec -j {{ jobs }} checker/main.exe -- admits "$@"
+
+# Generate the HTML API reference for the theories.
 doc *args:
-    {{ capped }} dune build -j 2 @rocq-api "$@"
-
-# Remove this worktree's build outputs.
-clean:
-    {{ capped }} dune clean
-
-# Run reproducible generated workloads and report experimental sizes and timings.
-bench *args:
-    {{ capped }} dune exec -j 2 tools/galois.exe -- bench "$@"
+    @just capped dune build -j {{ jobs }} @rocq-api "$@"
 
 # Format every source file in place.
 fmt:
-    {{ capped }} dune fmt
+    @just capped dune fmt
+
+# Remove this worktree's build outputs.
+clean:
+    @just capped dune clean

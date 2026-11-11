@@ -16,11 +16,3 @@
  (modules cost_erased)
  (libraries galois_cost_runtime)
  (flags :standard -w -a))
-
-(rule
- (alias check)
- (deps
-  (:artifacts cost_erased.ml cost_erased.mli)
-  galois_cost_erased.cmxa)
- (action
-  (run %{exe:../../../tools/galois.exe} check cost-extraction %{artifacts})))

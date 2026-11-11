@@ -2,20 +2,6 @@
 
 (dirs :standard \ build run)
 
-; Recursive aliases also succeed before a package card adds its first dune file.
-
-(alias
- (name build-new)
- (deps
-  (alias_rec theories/default)
-  (alias_rec extraction/new/default)))
-
-(alias
- (name test-new)
- (deps
-  (alias_rec tests/default)
-  (alias_rec examples/default)))
-
 (alias
  (name rocq-api)
  (deps
