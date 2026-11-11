@@ -92,6 +92,39 @@ Proof.
   pose proof (skeleton_width E m b Hwf Hbits) as Hnodes. nia.
 Qed.
 
+(** Filtering separates its physical traversal and every actual optional callback charge. *)
+Theorem filter_map_cost {K V W} (f : V -> Cost.t (option W)) (m : Map.t K V) :
+  (Cost.ticks (Map.filter_map_c f m) <= 2 * skeleton_nodes m +
+    fold_right (fun kv n => Cost.ticks (f (snd kv)) + n)%N 0%N (Map.elements m))%N.
+Proof.
+  rewrite Map.filter_map_backend.
+  pose proof (TrieCost.filter_cost_relative
+    (fun kv => Cost.map (option_map (fun w => (fst kv, w))) (f (snd kv))) m) as Hcost.
+  rewrite TrieCost.binding_weight_elements in Hcost.
+  assert (Hsum : fold_right (fun pv n =>
+    Cost.ticks (Cost.map (option_map (fun w => (fst (snd pv), w))) (f (snd (snd pv)))) +
+      n)%N 0%N (TrieMerge.elements m) =
+    fold_right (fun kv n => Cost.ticks (f (snd kv)) + n)%N 0%N
+      (List.map snd (TrieMerge.elements m))).
+  { clear Hcost; induction (TrieMerge.elements m) as [|pv rest IH]; cbn [fold_right List.map];
+      rewrite ?Cost.ticks_map, ?IH; reflexivity. }
+  rewrite Hsum in Hcost.
+  rewrite Map.elements_backend; exact Hcost.
+Qed.
+
+(** A finite stored-key width bounds filtering without dropping any callback work. *)
+Theorem filter_map_numeric_cost {K V W} (E : encoding K)
+    (f : V -> Cost.t (option W)) (m : Map.t K V) b :
+  Map.wf E m ->
+  (forall k v, Map.get E k m = Some v -> (key_bits E k <= b)%N) ->
+  (Cost.ticks (Map.filter_map_c f m) <= 2 * N.of_nat (Map.size m) * b +
+    fold_right (fun kv n => Cost.ticks (f (snd kv)) + n)%N 0%N (Map.elements m))%N.
+Proof.
+  intros Hwf Hbits.
+  pose proof (filter_map_cost f m) as Hcost.
+  pose proof (skeleton_width E m b Hwf Hbits) as Hnodes; nia.
+Qed.
+
 (** Difference charges only the left stored-key width product, for arbitrary right storage. *)
 Theorem diff_numeric_cost {K V W} (E : encoding K) (m : Map.t K V)
     (n : Map.t K W) b :

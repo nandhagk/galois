@@ -508,6 +508,14 @@ Definition filter_map_c {K V W} (f_c : V -> Cost.t (option W)) (m : t K V) :=
 Definition filter_map {K V W} (f : V -> option W) (m : t K V) :=
   Cost.value (filter_map_c (Cost.lift (fun _ => 1%N) f) m).
 
+(** Cost composition observes the native filter without introducing a second traversal. *)
+Theorem filter_map_backend {K V W} (f_c : V -> Cost.t (option W)) (m : t K V) :
+  filter_map_c f_c m = TrieMerge.filter_map_c
+    (fun kv => Cost.map (option_map (fun w => (fst kv, w))) (f_c (snd kv))) m.
+Proof.
+  reflexivity.
+Qed.
+
 (** Filtering mapped values maintains code consistency. *)
 Theorem wf_filter_map {K V W} (E : encoding K) (f : V -> option W) (m : t K V) :
   wf E m -> wf E (filter_map f m).
@@ -516,6 +524,50 @@ Proof.
   destruct (Trie.get p m) as [[k v]|] eqn:Hget; [|discriminate].
   cbn. destruct (f v) as [u|]; cbn; intro Hpair; try discriminate.
   injection Hpair as <- <-. now apply (Hwf p k v).
+Qed.
+
+(** Costed filtering reads the callback result at each present source binding. *)
+Theorem get_filter_map_c {K V W} (E : encoding K) (f_c : V -> Cost.t (option W)) k
+    (m : t K V) :
+  get E k (Cost.value (filter_map_c f_c m)) =
+    match get E k m with Some v => Cost.value (f_c v) | None => None end.
+Proof.
+  unfold filter_map_c.
+  change (option_map snd
+    (Trie.get (encode E k) (Cost.value (TrieMerge.filter_map_c
+      (fun kv => Cost.map (option_map (fun w => (fst kv, w))) (f_c (snd kv))) m))) =
+    match option_map snd (Trie.get (encode E k) m) with
+    | Some v => Cost.value (f_c v)
+    | None => None
+    end).
+  rewrite TrieMerge.get_filter.
+  destruct (Trie.get (encode E k) m) as [[stored v]|]; [|reflexivity].
+  autorewrite with galois_cost; cbn [option_map fst snd].
+  destruct (Cost.value (f_c v)); reflexivity.
+Qed.
+
+(** Pure mapped filtering has exactly the optional callback's lookup behaviour. *)
+Theorem get_filter_map {K V W} (E : encoding K) (f : V -> option W) k (m : t K V) :
+  get E k (filter_map f m) =
+    match get E k m with Some v => f v | None => None end.
+Proof.
+  apply get_filter_map_c.
+Qed.
+
+(** Costed filtering depends only on callback values and preserves the native traversal. *)
+Theorem filter_map_c_value {K V W} (f_c : V -> Cost.t (option W)) (m : t K V) :
+  Cost.value (filter_map_c f_c m) = filter_map (fun v => Cost.value (f_c v)) m.
+Proof.
+  unfold filter_map, filter_map_c; apply Trie.extensionality; intro p.
+  rewrite !TrieMerge.get_filter.
+  destruct (Trie.get p m) as [[k v]|]; autorewrite with galois_cost; reflexivity.
+Qed.
+
+(** Arbitrary costed filter callbacks preserve the source map's representation invariant. *)
+Theorem wf_filter_map_c {K V W} (E : encoding K) (f_c : V -> Cost.t (option W)) (m : t K V) :
+  wf E m -> wf E (Cost.value (filter_map_c f_c m)).
+Proof.
+  rewrite filter_map_c_value; apply wf_filter_map.
 Qed.
 
 (** Pair combination selects the first available stored key and cannot invent a key. *)
