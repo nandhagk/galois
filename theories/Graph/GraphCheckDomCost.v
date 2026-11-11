@@ -123,6 +123,50 @@ Definition check_c {V E} (p : Prepared.t V E) m :=
     forallb_c (pair_ok_c m avoiding d) vs) vs in
   Cost.ret (domains && forests && pairs).
 
+(** The checker equation exposes every charged scan and selected closure call. *)
+Theorem check_c_equation {V E} (p : Prepared.t V E) m :
+  check_c p m =
+    (let* seen := FrontierSweep.reach_c p Reach.unrestricted (Prepared.entry_ids p) in
+     let* vs := FinSet.elements_c seen in
+     let* bindings := Map.elements_c m in
+     let* domains := forallb_c (binding_ok_c seen) bindings in
+     let* size := Map.size_c m in
+     let* forests := forallb_c (ends_c (S size) m) vs in
+     let* pairs := forallb_c (fun d =>
+       let* avoiding := avoiding_c p d in
+       forallb_c (pair_ok_c m avoiding d) vs) vs in
+     Cost.ret (domains && forests && pairs)).
+Proof.
+  reflexivity.
+Qed.
+
+(** Candidate-domain testing retains both membership queries. *)
+Theorem binding_ok_cost seen vu :
+  Cost.ticks (binding_ok_c seen vu) =
+    (Cost.ticks (FinSet.mem_c positive_encoding (fst vu) seen) +
+      Cost.ticks (FinSet.mem_c positive_encoding (snd vu) seen))%N.
+Proof.
+  unfold binding_ok_c. autorewrite with galois_cost. lia.
+Qed.
+
+(** Pair testing retains ancestry construction, scanning and avoiding-set membership. *)
+Theorem pair_ok_cost m avoiding d n :
+  Cost.ticks (pair_ok_c m avoiding d n) =
+    (Cost.ticks (ancestor_b_c m d n) +
+      Cost.ticks (FinSet.mem_c positive_encoding n avoiding))%N.
+Proof.
+  unfold pair_ok_c. autorewrite with galois_cost. lia.
+Qed.
+
+(** Avoiding reachability includes singleton construction before the shared closure. *)
+Theorem avoiding_cost {V E} (p : Prepared.t V E) d :
+  Cost.ticks (avoiding_c p d) =
+    (Cost.ticks (FinSet.add_c positive_encoding d FinSet.empty) +
+      Cost.ticks (FrontierSweep.reach_c p (Reach.blocked d) (Prepared.entry_ids p)))%N.
+Proof.
+  unfold avoiding_c. rewrite Cost.ticks_bind, Reach.blocked_equation. reflexivity.
+Qed.
+
 Local Lemma binding_ok_value seen vu :
   Cost.value (binding_ok_c seen vu) =
     (FinSet.mem positive_encoding (fst vu) seen &&
@@ -178,13 +222,14 @@ Local Lemma id_get_cost {A} (m : Map.t positive A) v w :
   (key_bits positive_encoding v <= w)%N ->
   (Cost.ticks (Map.get_c positive_encoding v m) <= id_get_budget w)%N.
 Proof.
-  intro Hwidth. rewrite Map.get_cost.
+  intro Hwidth. rewrite Map.get_cost, positive_encoding_cost.
   pose proof (encode_cost_bound positive_encoding_cost_laws v) as Hencoding.
+  rewrite positive_encoding_cost in Hencoding.
   fold (key_bits positive_encoding v). unfold id_get_budget. nia.
 Qed.
 
 (** Candidate-chain widths include every stored parent value, independently of its stored key. *)
-Definition parent_width (m : Map.t positive positive) w :=
+Definition parent_width (m : Map.t positive positive) w : Prop :=
   forall v u, Map.get positive_encoding v m = Some u ->
     (key_bits positive_encoding u <= w)%N.
 
@@ -262,6 +307,30 @@ Proof.
       N.of_nat (S (Map.size m)) * (w + 1))%N).
   { apply N.mul_le_mono; [lia|reflexivity]. }
   nia.
+Qed.
+
+(** The ancestry budget keeps both candidate cardinality and physical skeleton size. *)
+Definition ancestor_bound b w s :=
+  (TrieCost.trie_k * (1 + s) + (N.of_nat b + 1) * (2 + id_get_budget w + w))%N.
+
+(** Finite candidate storage measures bound ancestry without map-validity premises. *)
+Theorem ancestor_numeric_cost m d n w b s :
+  parent_width m w ->
+  (key_bits positive_encoding d <= w)%N ->
+  (key_bits positive_encoding n <= w)%N ->
+  (Map.size m <= b)%nat -> (MapCost.skeleton_nodes m <= s)%N ->
+  (Cost.ticks (ancestor_b_c m d n) <= ancestor_bound b w s)%N.
+Proof.
+  intros Hparents Hd Hn Hsize Hskeleton.
+  pose proof (ancestor_cost m d n w Hparents Hd Hn) as Hcost.
+  unfold ancestor_budget, ancestor_bound in *. rewrite Nat2N.inj_succ in Hcost.
+  assert (Hcard : (N.of_nat (Map.size m) <= N.of_nat b)%N) by lia.
+  assert (Hscan : (TrieCost.trie_k * (1 + MapCost.skeleton_nodes m) <=
+    TrieCost.trie_k * (1 + s))%N) by (apply N.mul_le_mono; lia).
+  assert (Hwalk : ((N.of_nat (Map.size m) + 1) * (2 + id_get_budget w + w) <=
+    (N.of_nat b + 1) * (2 + id_get_budget w + w))%N)
+    by (apply N.mul_le_mono; lia).
+  lia.
 Qed.
 
 (** A checked parent representation remains a separate premise after cost instrumentation. *)
