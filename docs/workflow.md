@@ -19,6 +19,7 @@ no build lock. `just doc` writes under `_build/`, which is never tracked or edit
 | `just build` | Build the theories and extraction clients. |
 | `just test` | Build the Rocq tests and examples and run OCaml inline tests. |
 | `just check` | Check formatting, build, test, run `just lint` and check the frozen files. |
+| `just lint` | Report the words that `just/lint.rules` forbids in code, outside comments and string literals. |
 | `just audit` | Build, then check every compiled module with `rocqchk`. Package names limit the modules. |
 | `just admits` | Count `Admitted.` and `Admit Obligations` in each package. |
 | `just fmt` | Format OCaml and dune sources. |

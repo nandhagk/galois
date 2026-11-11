@@ -30,21 +30,18 @@ test *args:
 # Check formatting, build, test, lint and the frozen files.
 check: fmt-check build test lint frozen
 
-# Print every lint rule match from just/lint.rules and fail if there is any.
+# Print the words that just/lint.rules forbids in code and fail if there are any.
 [script("bash", "-euo", "pipefail")]
 lint:
     failed=0
     while IFS= read -r line; do
         case "$line" in ''|'#'*) continue ;; esac
-        paths=${line%% :: *}
-        rest=${line#* :: }
-        regex=${rest%% :: *}
-        message=${rest#* :: }
+        words=${line#* :: }; message=${words#* :: }; words=${words%% :: *}
         # The pathspecs are split on purpose.
-        if matches=$(git grep -nE --untracked "$regex" -- $paths); then
-            printf '%s\n%s\n' "$message" "$matches"
-            failed=1
-        fi
+        mapfile -t files < <(git ls-files -co --exclude-standard -- ${line%% :: *} | grep '\.v$' || true)
+        [ "${#files[@]}" -gt 0 ] || continue
+        matches=$(awk -v words="$words" -f just/lint.awk "${files[@]}")
+        [ -z "$matches" ] || { printf '%s\n%s\n' "$message" "$matches"; failed=1; }
     done < just/lint.rules
     exit "$failed"
 

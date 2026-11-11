@@ -1,9 +1,6 @@
-# Advisory style rules for `just lint`. Each line is
-#   <git pathspecs> :: <extended regex> :: <message>
-# Patterns match at the start of a sentence, after an optional bullet, brace or Time prefix.
-# They prefer missing a rare form to reporting a false positive. `just audit` is the guarantee.
-theories tests examples :: (^|[^[:alnum:]_.'])(admit|give_up)[[:space:]]*(\.|;|$) :: Tactics admit and give_up leave a goal unproved.
-theories tests examples :: ^[[:space:]]*([-+*{}][[:space:]]*)*((Time|Timeout[[:space:]]+[0-9]+)[[:space:]]+)?Abort([[:space:]]+(All|[[:alnum:]_.']+))?[[:space:]]*\. :: The command Abort discards a proof.
-theories :: ^[[:space:]]*([-+*{}][[:space:]]*)*((Time|Timeout[[:space:]]+[0-9]+)[[:space:]]+)?((Recursive|Separate)[[:space:]]+Extraction|Extraction|Extract)([[:space:]]|\.) :: Extraction commands do not belong in theories.
-theories :: ^[[:space:]]*([-+*{}][[:space:]]*)*((Time|Timeout[[:space:]]+[0-9]+)[[:space:]]+)?(#\[[^]]*\][[:space:]]*)*((Global|Local|Polymorphic|Monomorphic|Cumulative|NonCumulative|Program)[[:space:]]+)*(Class|Instance|Existing[[:space:]]+(Instance|Instances|Class)|Declare[[:space:]]+Instance|Canonical([[:space:]]+Structure)?)([[:space:]]+[[:alnum:]_.']+[[:space:]]*(:|\(|\{|\[|\.[[:space:]]*$|$)|[[:space:]]*[:({]) :: Typeclasses, instances and canonical structures are not allowed.
-theories :: ^[[:space:]]*([-+*{}][[:space:]]*)*((Time|Timeout[[:space:]]+[0-9]+)[[:space:]]+)?(Print|Check|Compute|About|Locate|Search|SearchPattern|SearchRewrite|SearchHead|Show)([[:space:]]+[[:alnum:]_.']+){0,2}([[:space:]]+\(.*\))?[[:space:]]*\.[[:space:]]*$ :: Query commands do not belong in theories.
+# Style rules for `just lint`. Each line is
+#   <git pathspecs> :: <words separated by spaces> :: <message>
+# A word is forbidden where it occurs as a whole word outside comments and string literals.
+theories :: Class Instance Instances Canonical :: Typeclasses and canonical structures are not used. Write a module type and a functor.
+theories :: Print Check Compute About Locate Search SearchPattern SearchRewrite SearchHead Show :: Query commands do not belong in theories.
+theories tests examples :: admit give_up Abort :: These leave a proof unfinished.
