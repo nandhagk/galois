@@ -217,6 +217,14 @@ Proof.
   destruct (f x); cbn [length]; lia.
 Qed.
 
+(** Pointwise equal option readers retain the same results in the same input order. *)
+Theorem filter_map_ext {A B} (f g : A -> option B) xs :
+  (forall x, f x = g x) -> filter_map f xs = filter_map g xs.
+Proof.
+  intro Hvalues. induction xs as [|x rest IH]; cbn [filter_map fold_right]; [reflexivity|].
+  fold (filter_map f rest). fold (filter_map g rest). now rewrite Hvalues, IH.
+Qed.
+
 (** The counter returns the ordinary list length. *)
 Theorem value_length_c {A} (l : list A) : Cost.value (length_c l) = length l.
 Proof.

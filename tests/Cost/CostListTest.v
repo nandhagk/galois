@@ -54,6 +54,28 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The public extensionality observation needs only pointwise equality of option results. *)
+Example filter_map_ext_client {A B} (f g : A -> option B) xs :
+  (forall x, f x = g x) -> filter_map f xs = filter_map g xs.
+Proof.
+  apply filter_map_ext.
+Qed.
+
+(** Costed normalization preserves original order and duplicate occurrences through owner facts. *)
+Example filter_map_costed_ext_client {A B} (f g : A -> Cost.t (option B)) xs :
+  (forall x, Cost.value (f x) = Cost.value (g x)) ->
+  Cost.value (filter_map_c f xs) = Cost.value (filter_map_c g xs).
+Proof.
+  intro Hvalues. rewrite !value_filter_map_c. apply filter_map_ext. exact Hvalues.
+Qed.
+
+Example filter_map_projection_keeps_order_and_duplicates :
+  Cost.value (filter_map_c (fun n : nat => Cost.ret (Some n)) [3%nat; 1%nat; 3%nat]) =
+    [3%nat; 1%nat; 3%nat].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example empty_traversals :
   (Cost.value (length_c ([] : list nat)), Cost.ticks (length_c ([] : list nat)),
    Cost.value (app_c [] [1%nat]), Cost.ticks (rev_c ([] : list nat)),
