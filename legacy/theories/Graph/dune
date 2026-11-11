@@ -1,5 +1,0 @@
-(rocq.theory
- (name GaloisLegacy.Graph)
- (package galois)
- (flags :standard -w +default)
- (theories Stdlib GaloisLegacy.Collections))
