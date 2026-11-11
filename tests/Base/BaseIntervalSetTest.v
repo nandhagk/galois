@@ -78,6 +78,28 @@ Example add_reversed :
   IntervalSet.add (5, -5) [(0, 2)] = [(0, 2)].
 Proof. vm_compute. reflexivity. Qed.
 
+(** The public bounds apply without a canonicality premise on either raw input. *)
+Example raw_union_length_bound xs ys :
+  (length (IntervalSet.union xs ys) <= length xs + length ys)%nat.
+Proof.
+  apply IntervalSet.union_length.
+Qed.
+
+(** The public addition bound applies to arbitrary raw input and query ranges. *)
+Example raw_add_length_bound r xs :
+  (length (IntervalSet.add r xs) <= S (length xs))%nat.
+Proof.
+  apply IntervalSet.add_length.
+Qed.
+
+Example raw_union_length_controls :
+  (length (IntervalSet.union [] []),
+   length (IntervalSet.union [(7, 2); (0, 4)] [(1, 3)]),
+   length (IntervalSet.add (2, 4) [(0, 2); (4, 6)])) = (0, 2, 1)%nat.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example diff_split :
   IntervalSet.diff [(0, 8)] [(3, 5)] = [(0, 3); (5, 8)].
 Proof. vm_compute. reflexivity. Qed.

@@ -64,3 +64,45 @@ Example nonempty_map_root_control :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(** Combination retains arbitrary callback charges and counts both physical skeletons. *)
+Example map_combine_symbolic_contract {K V W U}
+    (f : option V -> option W -> Cost.t (option U)) (m : Map.t K V) (n : Map.t K W) :
+  (Cost.ticks (Map.combine_c f m n) <=
+    TrieCost.trie_k * (1 + MapCost.skeleton_nodes m + MapCost.skeleton_nodes n) +
+      TrieCost.combine_work (fun a b => Cost.ticks (Map.combine_pair_c f a b)) m n)%N.
+Proof.
+  apply MapCost.combine_cost.
+Qed.
+
+(** The combination callback charges nineteen ticks even on one-sided entries. *)
+Definition combine_nonunit (a b : option nat) : Cost.t (option nat) :=
+  Cost.lift (fun _ => 19%N) (fun _ =>
+    match a, b with
+    | Some x, Some y => Some (x + y)%nat
+    | Some x, None | None, Some x => Some x
+    | None, None => None
+    end) tt.
+
+Example map_combine_empty_ticks :
+  Cost.ticks (Map.combine_c combine_nonunit
+    (@Map.empty positive nat) (@Map.empty positive nat)) = 1%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example map_combine_shared_callback :
+  Cost.ticks (Map.combine_c combine_nonunit
+    (Map.set positive_encoding 2%positive 5%nat Map.empty)
+    (Map.set positive_encoding 2%positive 7%nat Map.empty)) = 23%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example map_combine_one_sided_callbacks :
+  Cost.ticks (Map.combine_c combine_nonunit
+    (Map.set positive_encoding 2%positive 5%nat Map.empty)
+    (Map.set positive_encoding 3%positive 7%nat Map.empty)) = 45%N.
+Proof.
+  vm_compute; reflexivity.
+Qed.

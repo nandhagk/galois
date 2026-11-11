@@ -56,6 +56,17 @@ Proof.
   rewrite Map.elements_backend. unfold skeleton_nodes. lia.
 Qed.
 
+(** Combination counts both physical skeletons and every actual callback charge. *)
+Theorem combine_cost {K V W U} (f : option V -> option W -> Cost.t (option U))
+    (m : Map.t K V) (n : Map.t K W) :
+  (Cost.ticks (Map.combine_c f m n) <=
+    TrieCost.trie_k * (1 + skeleton_nodes m + skeleton_nodes n) +
+      TrieCost.combine_work (fun a b => Cost.ticks (Map.combine_pair_c f a b)) m n)%N.
+Proof.
+  unfold Map.combine_c, skeleton_nodes.
+  apply TrieCost.combine_cost.
+Qed.
+
 (** Actual stored-key widths bound physical skeleton size under map well-formedness. *)
 Theorem skeleton_width {K V} (E : encoding K) (m : Map.t K V) b :
   Map.wf E m ->

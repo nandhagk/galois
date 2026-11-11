@@ -923,6 +923,33 @@ Proof.
         cbn [length]; rewrite ?IH, ?IHr; cbn [length]; lia.
 Qed.
 
+(** Coalescing can emit at most the current range and one range per input. *)
+Local Lemma coalesce_from_length r rs :
+  (length (coalesce_from r rs) <= S (length rs))%nat.
+Proof.
+  revert r. induction rs as [|s rest IH]; intro r; rewrite coalesce_from_equation.
+  - cbn. lia.
+  - destruct (snd r <? fst s).
+    + cbn [length]. specialize (IH s). lia.
+    + specialize (IH (fst r, Z.max (snd r) (snd s))). cbn [length]. lia.
+Qed.
+
+(** Coalescing does not increase the number of input ranges, even for raw inputs. *)
+Local Lemma coalesce_length rs : (length (coalesce rs) <= length rs)%nat.
+Proof.
+  destruct rs as [|r rest]; rewrite coalesce_equation; cbn [length].
+  - lia.
+  - apply coalesce_from_length.
+Qed.
+
+(** Union emits no more ranges than its two input lists, including malformed inputs. *)
+Theorem union_length xs ys :
+  (length (union xs ys) <= length xs + length ys)%nat.
+Proof.
+  rewrite union_equation. pose proof (coalesce_length (merge xs ys)) as Hlength.
+  now rewrite merge_length in Hlength.
+Qed.
+
 Local Lemma merge_cost xs ys :
   (Cost.ticks (merge_c xs ys) <= N.of_nat (length xs + length ys))%N.
 Proof.
@@ -1059,6 +1086,14 @@ Qed.
 Theorem singleton_length r : (length (singleton r) <= 1)%nat.
 Proof.
   rewrite singleton_equation. destruct (fst r <? snd r); cbn [length]; lia.
+Qed.
+
+(** Adding one range increases the output length by at most one, for any input list. *)
+Theorem add_length r xs : (length (add r xs) <= S (length xs))%nat.
+Proof.
+  rewrite add_equation.
+  pose proof (union_length (singleton r) xs) as Hunion.
+  pose proof (singleton_length r) as Hsingle. lia.
 Qed.
 
 (** Empty construction allocates only a constant list constructor. *)
