@@ -10,7 +10,8 @@ From Galois.Base Require Import BaseEncoding.
 From Galois.Graph Require Import GraphModel.
 From Galois.Program Require Import ProgramCfg ProgramIcfg.
 From Galois.Lattice Require Import LatticeCore LatticeHeight LatticeSimple.
-From Galois.Framework Require Import FrameworkMicro FrameworkIfds FrameworkTabulate FrameworkTabCost.
+From Galois.Framework Require Import FrameworkMicro FrameworkIfds FrameworkTabulate
+  FrameworkTabCost.
 Import List.ListNotations.
 
 Definition call_chain (n : nat) : Ifds.t nat nat nat unit :=
@@ -23,16 +24,17 @@ Definition call_chain (n : nat) : Ifds.t nat nat nat unit :=
       (fun e => if Nat.even e then Icfg.Call (Nat.div2 e) else Icfg.Return (Nat.div2 e)))
     unit_encoding [] (fun _ d => [d]).
 
-Definition call_chain_ticks n :=
-  Cost.ticks (Tab.tabulate_c (Ifds.as_ide (call_chain n)) 0 1024%positive).
+Definition call_chain_run_c n :=
+  Tab.tabulate_c (Ifds.as_ide (call_chain n)) 0 1024%positive.
 
 Example doubled_chain_cost_increases :
-  (0 < call_chain_ticks 2 /\ call_chain_ticks 2 < call_chain_ticks 4)%N.
+  (0 < Cost.ticks (call_chain_run_c 2) /\
+    Cost.ticks (call_chain_run_c 2) < Cost.ticks (call_chain_run_c 4))%N.
 Proof.
   vm_compute; split; reflexivity.
 Qed.
 
-Example empty_chain_cost_is_nonzero : (0 < call_chain_ticks 0)%N.
+Example empty_chain_cost_is_nonzero : (0 < Cost.ticks (call_chain_run_c 0))%N.
 Proof.
   vm_compute; reflexivity.
 Qed.

@@ -98,77 +98,132 @@ Context (HW : TabWeight.laws (Ide.micro I)).
 Context (Hclosed : Ifds.flow_closed (Ide.ifds I)).
 Context (Hpost : jump_post I start J).
 
+Local Lemma marker_internal c a next total :
+  marker I start J origin c total ->
+  TabPaths.annotation I c a next -> In a (Jump.arcs I) ->
+  Jump.kind a = Icfg.Internal ->
+  marker I start J origin next (Micro.compose (Ide.micro I) (Jump.weight a) total).
+Proof.
+  intros [current [f [fs [Hroot [Hsupported [Hf [Hsaved Htotal]]]]]]]
+    Hannotation Ha Hkind.
+  destruct (TabPaths.annotation_shape I c a next Hannotation) as [Hsource [Htarget Hstack]].
+  pose proof (TabPaths.annotation_supported I c a next Hclosed Hsupported Hannotation)
+    as Hnext.
+  rewrite Hkind in Hstack; rewrite <- Hsource in Hf.
+  exists current, (Micro.compose (Ide.micro I) (Jump.weight a) f), fs.
+  split; [exact Hroot|]; split; [exact Hnext|]; split.
+  - rewrite <- Htarget.
+    eapply leb_trans; [exact (lat_ok _ _ HM)| |].
+    + apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|exact Hf].
+    + apply (Hpost (Jump.Path current a)), Jump.rows_spec; right; right; left.
+      exists current, a; repeat split; assumption || reflexivity.
+  - split; [rewrite Hstack; exact Hsaved|].
+    eapply leb_trans; [exact (lat_ok _ _ HM)| |].
+    + apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|exact Htotal].
+    + exact (proj2 (plug_compose (Ide.values I) (Ide.micro I) HM HW fs
+        (Jump.weight a) f)).
+Qed.
+
+Local Lemma marker_call c a next total p :
+  marker I start J origin c total ->
+  TabPaths.annotation I c a next -> In a (Jump.arcs I) ->
+  Jump.kind a = Icfg.Call p ->
+  marker I start J origin next (Micro.compose (Ide.micro I) (Jump.weight a) total).
+Proof.
+  intros [current [f [fs [Hroot [Hsupported [Hf [Hsaved Htotal]]]]]]]
+    Hannotation Ha Hkind.
+  destruct (TabPaths.annotation_shape I c a next Hannotation) as [Hsource [Htarget Hstack]].
+  pose proof (TabPaths.annotation_supported I c a next Hclosed Hsupported Hannotation)
+    as Hnext.
+  rewrite Hkind in Hstack; rewrite <- Hsource in Hf.
+  assert (Hentry : In (Jump.target a) (TabPaths.roots I start)).
+  { apply TabPaths.call_target_root with (p := p); assumption. }
+  exists (Jump.target a), (Micro.id (Ide.micro I)), (Frame current f a :: fs).
+  split; [exact Hentry|]; split; [exact Hnext|]; split.
+  - rewrite <- Htarget; exact (TabPaths.root_identity I start J (Jump.target a) Hpost Hentry).
+  - split.
+    + cbn [saved]; exists p, (snd c); repeat split; assumption || reflexivity.
+    + cbn [plug before call].
+      eapply leb_trans; [exact (lat_ok _ _ HM)| |].
+      * apply (compose_mono _ _ HM);
+          [apply leb_refl; exact (lat_ok _ _ HM)|exact Htotal].
+      * eapply leb_trans; [exact (lat_ok _ _ HM)| |].
+        -- exact (proj2 (plug_compose (Ide.values I) (Ide.micro I) HM HW fs
+             (Jump.weight a) f)).
+        -- apply (plug_mono (Ide.values I) (Ide.micro I) HM).
+           exact (proj2 (TabWeight.unit_left HW
+             (Micro.compose (Ide.micro I) (Jump.weight a) f))).
+Qed.
+
+Local Lemma return_segment_bound fr a f p :
+  In (outer fr) (TabPaths.roots I start) -> In (call fr) (Jump.arcs I) ->
+  In a (Jump.arcs I) -> Jump.kind (call fr) = Icfg.Call p ->
+  Jump.kind a = Icfg.Return p ->
+  leb (Micro.lat (Ide.micro I)) f (J (Jump.target (call fr), Jump.source a)) = true ->
+  leb (Micro.lat (Ide.micro I)) (before fr) (J (outer fr, Jump.source (call fr))) = true ->
+  leb (Micro.lat (Ide.micro I))
+    (Micro.compose (Ide.micro I) (Jump.weight a)
+      (Micro.compose (Ide.micro I) f
+        (Micro.compose (Ide.micro I) (Jump.weight (call fr)) (before fr))))
+    (J (outer fr, Jump.target a)) = true.
+Proof.
+  intros Houter Hcall Ha Hcallkind Hkind Hf Hbefore.
+  eapply leb_trans; [exact (lat_ok _ _ HM)| |].
+  - apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|].
+    apply (compose_mono _ _ HM); [exact Hf|].
+    apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|exact Hbefore].
+  - apply (Hpost (Jump.Return (outer fr) (call fr) a)), Jump.rows_spec.
+    right; right; right.
+    exists (outer fr), (call fr), a; repeat split; try assumption; try reflexivity.
+    rewrite Jump.matches_c_value, Hcallkind, Hkind; apply eqb_refl.
+Qed.
+
+Local Lemma marker_return c a next total p :
+  marker I start J origin c total ->
+  TabPaths.annotation I c a next -> In a (Jump.arcs I) ->
+  Jump.kind a = Icfg.Return p ->
+  marker I start J origin next (Micro.compose (Ide.micro I) (Jump.weight a) total).
+Proof.
+  intros [current [f [fs [Hroot [Hsupported [Hf [Hsaved Htotal]]]]]]]
+    Hannotation Ha Hkind.
+  destruct (TabPaths.annotation_shape I c a next Hannotation) as [Hsource [Htarget Hstack]].
+  pose proof (TabPaths.annotation_supported I c a next Hclosed Hsupported Hannotation)
+    as Hnext.
+  rewrite Hkind in Hstack; rewrite <- Hsource in Hf.
+  destruct fs as [|fr rest].
+  - cbn [saved] in Hsaved; destruct Hsaved as [Hempty Hcurrent].
+    rewrite Hstack in Hempty; discriminate.
+  - cbn [saved] in Hsaved.
+    destruct Hsaved as
+      [q [tail [Hstackcall [Hcallkind [Hcurrent [Houter [Hcall [Hbefore Hrest]]]]]]]].
+    rewrite Hstack in Hstackcall; injection Hstackcall as Hsite Htail.
+    subst q tail current.
+    exists (outer fr),
+      (Micro.compose (Ide.micro I) (Jump.weight a)
+        (Micro.compose (Ide.micro I) f
+          (Micro.compose (Ide.micro I) (Jump.weight (call fr)) (before fr)))), rest.
+    split; [exact Houter|]; split; [exact Hnext|]; split.
+    + rewrite <- Htarget; apply (return_segment_bound fr a f p); assumption.
+    + split; [exact Hrest|].
+      cbn [plug] in Htotal.
+      eapply leb_trans; [exact (lat_ok _ _ HM)| |].
+      * apply (compose_mono _ _ HM);
+          [apply leb_refl; exact (lat_ok _ _ HM)|exact Htotal].
+      * exact (proj2 (plug_compose (Ide.values I) (Ide.micro I) HM HW rest
+          (Jump.weight a) (Micro.compose (Ide.micro I) f
+            (Micro.compose (Ide.micro I) (Jump.weight (call fr)) (before fr))))).
+Qed.
+
 Local Lemma marker_step c a next total :
   marker I start J origin c total ->
   TabPaths.annotation I c a next -> In a (Jump.arcs I) ->
   marker I start J origin next (Micro.compose (Ide.micro I) (Jump.weight a) total).
 Proof.
-  intros [current [f [fs [Hroot [Hsupported [Hf [Hsaved Htotal]]]]]]] Hannotation Ha.
-  destruct (TabPaths.annotation_shape I c a next Hannotation) as [Hsource [Htarget Hstack]].
-  pose proof (TabPaths.annotation_supported I c a next Hclosed Hsupported Hannotation)
-    as Hnext.
-  rewrite <- Hsource in Hf.
+  intros Hmarker Hannotation Ha.
   destruct (Jump.kind a) as [|p|p] eqn:Hkind.
-  - exists current, (Micro.compose (Ide.micro I) (Jump.weight a) f), fs.
-    split; [exact Hroot|]; split; [exact Hnext|]; split.
-    + rewrite <- Htarget.
-      eapply leb_trans; [exact (lat_ok _ _ HM)| |].
-      * apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|exact Hf].
-      * apply (Hpost (Jump.Path current a)), Jump.rows_spec; right; right; left.
-        exists current, a; repeat split; assumption || reflexivity.
-    + split; [rewrite Hstack; exact Hsaved|].
-      eapply leb_trans; [exact (lat_ok _ _ HM)| |].
-      * apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|exact Htotal].
-      * exact (proj2 (plug_compose (Ide.values I) (Ide.micro I) HM HW fs
-          (Jump.weight a) f)).
-  - assert (Hentry : In (Jump.target a) (TabPaths.roots I start)).
-    { apply TabPaths.call_target_root with (p := p); assumption. }
-    exists (Jump.target a), (Micro.id (Ide.micro I)), (Frame current f a :: fs).
-    split; [exact Hentry|]; split; [exact Hnext|]; split.
-    + rewrite <- Htarget; exact (TabPaths.root_identity I start J (Jump.target a) Hpost Hentry).
-    + split.
-      * cbn [saved]; exists p, (snd c); repeat split; assumption || reflexivity.
-      * cbn [plug before call].
-        eapply leb_trans; [exact (lat_ok _ _ HM)| |].
-        -- apply (compose_mono _ _ HM);
-             [apply leb_refl; exact (lat_ok _ _ HM)|exact Htotal].
-        -- eapply leb_trans; [exact (lat_ok _ _ HM)| |].
-           ++ exact (proj2 (plug_compose (Ide.values I) (Ide.micro I) HM HW fs
-                (Jump.weight a) f)).
-           ++ apply (plug_mono (Ide.values I) (Ide.micro I) HM).
-              exact (proj2 (TabWeight.unit_left HW
-                (Micro.compose (Ide.micro I) (Jump.weight a) f))).
-  - destruct fs as [|fr rest].
-    + cbn [saved] in Hsaved; destruct Hsaved as [Hempty Hcurrent].
-      rewrite Hstack in Hempty; discriminate.
-    + cbn [saved] in Hsaved.
-      destruct Hsaved as
-        [q [tail [Hstackcall [Hcallkind [Hcurrent [Houter [Hcall [Hbefore Hrest]]]]]]]].
-      rewrite Hstack in Hstackcall; injection Hstackcall as Hsite Htail.
-      subst q tail current.
-      exists (outer fr),
-        (Micro.compose (Ide.micro I) (Jump.weight a)
-          (Micro.compose (Ide.micro I) f
-            (Micro.compose (Ide.micro I) (Jump.weight (call fr)) (before fr)))), rest.
-      split; [exact Houter|]; split; [exact Hnext|]; split.
-      * rewrite <- Htarget.
-        eapply leb_trans; [exact (lat_ok _ _ HM)| |].
-        -- apply (compose_mono _ _ HM); [apply leb_refl; exact (lat_ok _ _ HM)|].
-           apply (compose_mono _ _ HM); [exact Hf|].
-           apply (compose_mono _ _ HM);
-             [apply leb_refl; exact (lat_ok _ _ HM)|exact Hbefore].
-        -- apply (Hpost (Jump.Return (outer fr) (call fr) a)), Jump.rows_spec.
-           right; right; right.
-           exists (outer fr), (call fr), a; repeat split; try assumption; try reflexivity.
-           rewrite Jump.matches_c_value, Hcallkind, Hkind; apply eqb_refl.
-      * split; [exact Hrest|].
-        cbn [plug] in Htotal.
-        eapply leb_trans; [exact (lat_ok _ _ HM)| |].
-        -- apply (compose_mono _ _ HM);
-             [apply leb_refl; exact (lat_ok _ _ HM)|exact Htotal].
-        -- exact (proj2 (plug_compose (Ide.values I) (Ide.micro I) HM HW rest
-             (Jump.weight a) (Micro.compose (Ide.micro I) f
-               (Micro.compose (Ide.micro I) (Jump.weight (call fr)) (before fr))))).
+  - apply (marker_internal c a next total); assumption.
+  - apply (marker_call c a next total p); assumption.
+  - apply (marker_return c a next total p); assumption.
 Qed.
 
 Local Lemma trace_marker c as_ next :

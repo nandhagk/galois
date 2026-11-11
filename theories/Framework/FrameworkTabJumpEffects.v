@@ -33,7 +33,8 @@ Definition frontier {N E P D A F} (I : Ide.t N E P D A F)
     (s : Tab.state N E P D F) (row : Jump.row N E P D F) :=
   Jump.holds I (Jump.lookup I (Tab.jumps s)) row \/ pending I s row.
 
-Local Lemma lookup_set {N E P D A F} (I : Ide.t N E P D A F) m key f query :
+(** Updating a canonical encoded jump key changes exactly the corresponding lawful query. *)
+Theorem lookup_set {N E P D A F} (I : Ide.t N E P D A F) m key f query :
   Map.wf positive_encoding m ->
   Jump.lookup I (Map.set positive_encoding (encode (Jump.enc I) key) f m) query =
     if eqb (Jump.enc I) query key then f else Jump.lookup I m query.
@@ -57,6 +58,15 @@ Proof.
   - split; [reflexivity|]; split; [intros q Hq; exact Hq|].
     exact (TabQueue.queued_in_work (Jump.enc I) key (Tab.work s) (Tab.pending s) Hqueue Hqueued).
   - split; [reflexivity|]; split; [intros q Hq; right; exact Hq|left; reflexivity].
+Qed.
+
+(** Scheduling keeps every previous key and ensures its own key is pending in the actual worklist. *)
+Theorem schedule_work {N E P D A F} (I : Ide.t N E P D A F) key s :
+  TabQueue.coherent (Jump.enc I) (Tab.work s) (Tab.pending s) ->
+  incl (Tab.work s) (Tab.work (Tab.schedule I key s)) /\
+    In key (Tab.work (Tab.schedule I key s)).
+Proof.
+  intro Hqueue; exact (proj2 (schedule_effect I key s Hqueue)).
 Qed.
 
 (** Actual joined updates ascend, retain queued work and schedule any changed queried dependency. *)
