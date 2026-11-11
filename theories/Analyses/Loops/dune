@@ -1,0 +1,11 @@
+(rocq.theory
+ (name Galois.Analyses.Loops)
+ (package galois)
+ (flags :standard -w +default)
+ (theories
+  Stdlib
+  Galois.Cost
+  Galois.Base
+  Galois.Bits
+  Galois.Graph
+  Galois.Program))
