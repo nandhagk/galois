@@ -28,7 +28,7 @@ Module SystemKey (L : LATTICE) (S : SYSTEM L) <: KEY.
 
   (** Equality of codes decides equality of system keys. *)
   Theorem eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End SystemKey.
 
 (** Row operations use codes whose injectivity is scoped to each program's listed rows.

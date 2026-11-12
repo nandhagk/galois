@@ -48,13 +48,13 @@ Module Interp (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
   Proof. exact N.encode_inj. Qed.
 
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma eval_total : forall p r look, wf p -> In r (rows p) -> eval p r look <> None.
   Proof. intros p [n|e] look _ _; discriminate. Qed.
@@ -77,7 +77,7 @@ Module Interp (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
 
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma rows_spec : forall p, rows p = map Seed (C.entries p) ++ map Flow (C.edges p).
   Proof. reflexivity. Qed.

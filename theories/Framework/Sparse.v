@@ -83,56 +83,56 @@ Module Sparse (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Key equality decides equality of system keys. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions fit the declared occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Value keys retain the supplied key encoding. *)
   Lemma key_code_spec : key_code = X.encode.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Value equality retains the supplied key test. *)
   Lemma key_eqb_specification : key_eqb = X.eqb.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Rows retain entry, definition and incoming-operand occurrence order. *)
   Lemma rows_spec : forall p, rows p =
     map SparseSeed (flat_map (S.params p) (C.entries p)) ++
     map SparseDef (S.values p) ++
     flat_map (fun e => map (fun xy => SparseArg e (fst xy) (snd xy)) (S.args p e))
       (C.edges p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Seed rows target their value. *)
   Lemma target_seed : forall p x, target p (SparseSeed x) = x.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Definition rows target their defined value. *)
   Lemma target_def : forall p x, target p (SparseDef x) = x.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Incoming-operand rows target the destination parameter. *)
   Lemma target_arg : forall p e x y, target p (SparseArg e x y) = x.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Seeds have no dependencies and return their client's entry fact. *)
   Lemma eval_seed : forall p x look, eval p (SparseSeed x) look = Some (T.seed p x, nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Definitions apply the domain transfer or supply top for arbitrary bindings. *)
   Lemma eval_def : forall p x look, eval p (SparseDef x) look = Some
     (match S.def p x with
@@ -140,11 +140,11 @@ Module Sparse (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
      | Param _ _ => V.bot
      | Arbitrary => V.top
      end, nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Incoming operands contribute their value to the destination parameter. *)
   Lemma eval_arg : forall p e x y look,
     eval p (SparseArg e x y) look = Some (look y, nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Sparse.
 
 Module SparseT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)

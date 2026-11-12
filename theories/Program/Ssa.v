@@ -273,40 +273,40 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
         In (home p y) route).
 
   Lemma cfg_wf : forall p, wf p -> C.wf p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma values_nodup : forall p, wf p -> NoDup (values p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma homes_listed : forall p x, wf p -> In x (values p) -> In (home p x) (C.nodes p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma param_defs : forall p x b i, wf p ->
     (def p x = Param b i <-> nth_error (params p b) i = Some x).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma param_home : forall p b x, wf p -> In x (params p b) -> home p x = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma params_listed : forall p b x, wf p -> In b (C.nodes p) ->
     In x (params p b) -> In x (values p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma args_params : forall p e, wf p -> In e (C.edges p) ->
     map fst (args p e) = params p (C.dst p e).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma args_dominate : forall p e x y, wf p -> In e (C.edges p) ->
     In (x, y) (args p e) -> In y (values p) /\ forall entry route,
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
       In (home p y) route.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma guards_dominate : forall p e g xs x, wf p -> In e (C.edges p) ->
     In (g, xs) (guards p e) -> In x xs -> In x (values p) /\ forall entry route,
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
       In (home p x) route.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma op_args_dominate : forall p x op xs y, wf p -> In x (values p) ->
     def p x = Op op xs -> In y xs -> In y (values p) /\ forall entry route,
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
       In (home p y) route.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Ssa.
 
 Module SsaT (P : TYPE) (N : KEY_T) (E : TYPE)
@@ -367,38 +367,38 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
     block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2).
 
   Lemma graphs_wf : forall p, wf p -> C.wf p /\ BC.wf p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_out_nodup : forall p n, wf p -> NoDup (C.out p n).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma blocks_out_nodup : forall p b, wf p -> NoDup (BC.out p b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_covered : forall p n, wf p ->
     (In n (C.nodes p) <-> exists b, In b (BC.nodes p) /\ In n (points_in_block p b)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_unique : forall p b, wf p -> NoDup (points_in_block p b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_owner : forall p b n, wf p -> In b (BC.nodes p) ->
     In n (points_in_block p b) -> block_of_point p n = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma blocks_nonempty : forall p b, wf p -> In b (BC.nodes p) ->
     points_in_block p b <> nil.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_ordered : forall p b, wf p -> In b (BC.nodes p) ->
     presentation_chain (C.edges p) (C.src p) (C.dst p)
       (points_in_block p b) (instruction_edges p b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma instruction_edges_internal : forall p b e, wf p -> In b (BC.nodes p) ->
     In e (instruction_edges p b) -> block_edge_of p e = None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma instruction_edges_complete : forall p e, wf p -> In e (C.edges p) ->
     block_edge_of p e = None -> In e (instruction_edges p (block_of_point p (C.src p e))).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma parameter_edge_first : forall p b, wf p -> In b (BC.nodes p) ->
     nth_error (instruction_edges p b) 0 = Some (parameter_edge p b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma parameter_edge_defs : forall p b x, wf p -> In b (BC.nodes p) ->
     (In x (U.defs p (parameter_edge p b)) <-> In x (block_params p b)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma point_edge_projection : forall p e, wf p -> In e (C.edges p) ->
     match block_edge_of p e with
     | None => block_of_point p (C.src p e) = block_of_point p (C.dst p e)
@@ -407,20 +407,20 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
         last (points_in_block p (block_of_point p (C.src p e))) (C.src p e) = C.src p e /\
         nth_error (points_in_block p (BC.dst p be)) 0 = Some (C.dst p e)
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma phi_args_length : forall p be, wf p -> In be (BC.edges p) ->
     length (block_edge_args p be) = length (block_params p (BC.dst p be)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma phi_edge_use : forall p e be x, wf p -> In e (C.edges p) ->
     block_edge_of p e = Some be -> In x (block_edge_args p be) -> In x (U.uses p e).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma block_edge_covered : forall p be, wf p -> In be (BC.edges p) ->
     exists e, In e (C.edges p) /\ block_edge_of p e = Some be.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma block_edge_unique : forall p e1 e2 be, wf p ->
     In e1 (C.edges p) -> In e2 (C.edges p) ->
     block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End SsaPoints.
 
 Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : TYPE)

@@ -115,25 +115,25 @@ Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
 
   (** Preparation establishes the cache and node correspondence used by the laws. *)
   Lemma prepare_wf : forall p, wf (Code.prepare p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma nodes_nodup : forall p, wf p -> NoDup (nodes p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma edges_nodes : forall p e, wf p -> In e (edges p) ->
     In (src p e) (nodes p) /\ In (dst p e) (nodes p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma out_spec : forall p n e, wf p ->
     (In e (out p n) <-> In e (edges p) /\ src p e = n).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma inc_spec : forall p n e, wf p ->
     (In e (inc p n) <-> In e (edges p) /\ dst p e = n).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   End Laws.
   Include Laws.
 End PreparedCfgLaws.

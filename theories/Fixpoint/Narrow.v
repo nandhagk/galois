@@ -54,27 +54,27 @@ Module Narrow (L : WLATTICE) (S : SYSTEM L) (C : CHECK L S) <: NARROW L S C.
         (let a := C.look m x in let b := contrib p m x in
          if L.leb b a then L.narrow a b else a)
       else C.look m x.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma narrow_pass_spec : forall p m,
     narrow_pass p m = if C.check p (narrow_candidate p m) then narrow_candidate p m else m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma refine_spec : forall p n m, refine p n m = Nat.iter n (narrow_pass p) m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma narrow_pass_post : forall p m, S.post_solution p (C.look m) ->
     S.post_solution p (C.look (narrow_pass p m)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma narrow_pass_below : forall p m x,
     L.leb (C.look (narrow_pass p m) x) (C.look m x) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma narrow_pass_exact_mono : forall p, S.monotone p -> forall m,
     S.post_solution p (C.look m) -> C.check p (narrow_candidate p m) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma refine_post : forall p n m, S.post_solution p (C.look m) ->
     S.post_solution p (C.look (refine p n m)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma refine_below : forall p n m x,
     L.leb (C.look (refine p n m) x) (C.look m x) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Narrow.
 
 Module NarrowT (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) (B : BUDGET L S)

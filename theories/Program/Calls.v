@@ -95,15 +95,15 @@ Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
     (forall site f, In f (resolve p site) -> In f (functions p)).
 
   Lemma functions_nodup : forall p, wf p -> NoDup (functions p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma roots_listed : forall p, wf p -> incl (roots p) (functions p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma sites_caller : forall p f site, wf p -> In site (sites_of p f) ->
     caller_of p site = f /\ In f (functions p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma resolve_listed : forall p site f, wf p -> In f (resolve p site) ->
     In f (functions p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma call_graph_nodes : forall p, verts (call_graph p) = map F.encode (functions p).
   Proof.
     reflexivity.

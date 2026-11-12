@@ -54,50 +54,50 @@ Module GenKillMayDomain (F : KEY) (S : SET F) <: GENKILL_MAY_DOMAIN F S.
   Include GenKillMayDomainCode F S.
   (** Every value is below itself. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End GenKillMayDomain.
 
 Module GenKillMustDomain (F : KEY) (S : SET F) <: GENKILL_MUST_DOMAIN F S.
   Include GenKillMustDomainCode F S.
   (** Every value is below itself. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End GenKillMustDomain.
 
 Module GenKillMayCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
@@ -153,7 +153,7 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma may_boundary_covers : forall p look, G.may = true -> May.post_solution p look ->
     forall entry path n d, In entry (C.entries p) -> route p entry path n ->
       S.mem d (path_facts p path) = true -> S.mem d (look n) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A reached must post-solution contains facts present on every boundary path. *)
   Lemma must_covers : forall p look, G.may = false -> Must.post_solution p look ->
     forall entry path n facts d, In entry (C.entries p) -> route p entry path n ->
@@ -163,7 +163,7 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma must_reached : forall p look, G.may = false -> Must.post_solution p look ->
     forall entry path n, In entry (C.entries p) -> route p entry path n ->
       exists facts, look n = Some facts.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A least may post-solution equals production from empty listed starts and boundaries. *)
   Lemma may_exact : forall p look, C.wf p -> G.may = true -> May.post_solution p look ->
     (forall other, May.post_solution p other -> forall n, S.subset (look n) (other n) = true) ->
