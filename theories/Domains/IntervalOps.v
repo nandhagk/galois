@@ -349,8 +349,28 @@ Definition interval_exclude (a : itv) (c : Z) : itv :=
   end.
 
 Definition interval_assume_neq (a b : itv) : itv * itv :=
-  (match Scalar.interval_singleton b with Some c => interval_exclude a c | None => a end,
-   match Scalar.interval_singleton a with Some c => interval_exclude b c | None => b end).
+  (match Scalar.interval_singleton b with
+   | Some c =>
+     match interval_finite_helper a with
+     | Some (lo, hi) =>
+       if Z.eqb lo c then Scalar.interval_meet a (I (Fin (c + 1)) PosInf)
+       else if Z.eqb hi c then Scalar.interval_meet a (I NegInf (Fin (c - 1)))
+       else a
+     | None => a
+     end
+   | None => a
+   end,
+   match Scalar.interval_singleton a with
+   | Some c =>
+     match interval_finite_helper b with
+     | Some (lo, hi) =>
+       if Z.eqb lo c then Scalar.interval_meet b (I (Fin (c + 1)) PosInf)
+       else if Z.eqb hi c then Scalar.interval_meet b (I NegInf (Fin (c - 1)))
+       else b
+     | None => b
+     end
+   | None => b
+   end).
 
 Definition interval_assume_signed (w : width) (strict result : bool)
     (a b : itv) : itv * itv :=

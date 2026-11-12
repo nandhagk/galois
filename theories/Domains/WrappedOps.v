@@ -8,7 +8,7 @@ From Stdlib Require Import ZArith List Bool.
 From Argent Require Import Time.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig Wrapped IntervalSig IntervalBack
-  Thresholds.
+  Thresholds BitsLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -22,14 +22,65 @@ Module WrappedIntervalBack.
   TimeFun interval_urem.
   TimeFun interval_assume_add.
   TimeFun interval_assume_sub.
+  TimeFun interval_assume_rewrap.
   TimeFun interval_is_point.
   TimeFun interval_assume_equal.
+  TimeFun interval_assume_ult.
+  TimeFun interval_assume_ule.
+  TimeFun interval_swap.
+  TimeFun interval_assume_neq.
+  TimeFun interval_assume_signed.
+  TimeFun interval_assume_pair.
 End WrappedIntervalBack.
+
+Module WrappedIntervalPayload := IntervalPayloadCode WordLanguageCode ThresholdsCode WrappedScalar.
+Module WrappedIntervalTable.
+  Include (IntervalWordTableCode WordLanguageCode ThresholdsCode WrappedScalar
+    WrappedIntervalPayload).
+  TimeFun interval_top.
+  TimeFun interval_const.
+  TimeFun interval_clip.
+  TimeFun interval_checked.
+  TimeFun interval_add.
+  TimeFun interval_add_modular.
+  TimeFun interval_sub.
+  TimeFun interval_mul.
+  TimeFun interval_neg.
+  TimeFun interval_concat.
+  TimeFun interval_rewrap.
+  TimeFun interval_counts.
+  TimeFun interval_udiv.
+  TimeFun interval_urem.
+  TimeFun interval_not.
+  TimeFun interval_and.
+  TimeFun interval_mask.
+  TimeFun interval_or_xor.
+  TimeFun interval_truth.
+  TimeFun interval_bool_not.
+  TimeFun interval_ult.
+  TimeFun interval_ule.
+  TimeFun interval_eq.
+  TimeFun interval_shl.
+  TimeFun interval_lshr.
+  TimeFun interval_sign.
+  TimeFun interval_signed.
+  TimeFun interval_sext.
+  TimeFun interval_signed_compare.
+  TimeFun interval_sdiv.
+  TimeFun interval_srem.
+  TimeFun interval_mod_choice.
+  TimeFun interval_smod_base.
+  TimeFun interval_smod.
+  TimeFun interval_ashr_small.
+  TimeFun interval_ashr.
+  TimeFun wfwd.
+End WrappedIntervalTable.
 
 Definition wrapped_project (target source : width) (q : wrapped) : wrapped :=
   let pieces := wrapped_parts source q in
   wrapped_join target
     (wrapped_of_interval target (fst pieces)) (wrapped_of_interval target (snd pieces)).
+TimeFun wrapped_project.
 
 Definition wrapped_signed_piece (division : bool) (w : width) (a b : itv) : wrapped :=
   match a, b with
@@ -46,9 +97,11 @@ Definition wrapped_signed_piece (division : bool) (w : width) (a b : itv) : wrap
     | _, _ => WFull
     end
   end.
+TimeFun wrapped_signed_piece.
 
 Definition wrapped_pair_join (wa wb : width) (a b : wrapped * wrapped) : wrapped * wrapped :=
   (wrapped_join wa (fst a) (fst b), wrapped_join wb (snd a) (snd b)).
+TimeFun wrapped_pair_join.
 
 Module WrappedOpsCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L).
   Module IP := IntervalPayloadCode L ThresholdsCode WrappedScalar.
@@ -56,7 +109,7 @@ Module WrappedOpsCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L).
 
   Definition piece_forward (o : op) (xs : list (width * itv)) (rw : width) : wrapped :=
     if existsb (fun x => match snd x with IBot => true | _ => false end) xs then WBot else
-    match IT.wfwd o rw xs with
+    match WrappedIntervalTable.wfwd o rw xs with
     | Some result => wrapped_of_interval rw result
     | None => WFull
     end.
@@ -111,7 +164,7 @@ Module WrappedOpsCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L).
   Definition assume_consistent (o : op) (wa wb : width) (a b q : itv) : bool :=
     match result_width o [wa; wb] with
     | Some rw =>
-      let result := match IT.wfwd o rw [(wa, a); (wb, b)] with
+      let result := match WrappedIntervalTable.wfwd o rw [(wa, a); (wb, b)] with
         | Some r => r | None => WrappedIntervalBack.interval_top rw end in
       match WrappedScalar.interval_meet result q with IBot => false | _ => true end
     | None => false
@@ -195,8 +248,9 @@ End WrappedOpsCode.
 
 Module WrappedTableCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L) <: WORD_TABLE_OPS L W.
   Module Ops := WrappedOpsCode L W.
-  Definition wfwd := Ops.forward_raw.
-  Definition wbwd := Ops.backward_raw.
+  Include Ops.
+  Definition wfwd := forward_raw.
+  Definition wbwd := backward_raw.
 End WrappedTableCode.
 
 Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
@@ -214,6 +268,27 @@ Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* SIG-QUESTION: W.pgamma is not linked to arc_gamma in WRAPPED. *)
 End WrappedTable.
+
+Module WrappedTableClock (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
+  Include WrappedTable L W.
+  TimeFun piece_forward.
+  TimeFun forward_unary.
+  TimeFun piece_binary.
+  TimeFun piece_cut.
+  TimeFun forward_binary.
+  TimeFun forward_raw.
+  TimeFun wfwd.
+  TimeFun assume_consistent.
+  TimeFun assume_piece_raw.
+  TimeFun assume_piece.
+  TimeFun assume_result.
+  TimeFun assume_binary_base.
+  TimeFun assume_binary.
+  TimeFun assume_trunc.
+  TimeFun assume_unary.
+  TimeFun backward_raw.
+  TimeFun wbwd.
+End WrappedTableClock.
 
 Theorem wrapped_project_sound target source q z :
   wrapped_gamma source q z ->
