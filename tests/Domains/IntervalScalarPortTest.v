@@ -2,11 +2,11 @@
 
     These examples exercise clipping, arithmetic and comparisons.
     For example, clipping at width one retains the interval from zero to one.
-    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig. *)
+    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang. *)
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Word Op.
-From Galois.Domains Require Import ValueSig IntervalSig Thresholds ThresholdsSig Interval IntervalOps IntervalBack BitsLang Tagged Harness WordSig.
+From Galois.Domains Require Import ValueSig IntervalSig Thresholds ThresholdsSig Interval IntervalOps IntervalBack BitsLang Tagged Harness WordSig ZLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -15,6 +15,7 @@ Module Ops := IntervalOpsCode ThresholdsCode Scalar.
 Import Ops.
 Module Payload := IntervalPayloadCode WordLanguageCode ThresholdsCode Scalar.
 Module PayloadPlain := IntervalPayload WordLanguage Thresholds Scalar.
+Module ScalarPlain := Interval ZLang Thresholds.
 Module Table := IntervalWordTableCode WordLanguageCode ThresholdsCode Scalar Payload.
 Module Base := TaggedCode WordLanguageCode Payload.
 Module TaggedTable := TaggedTableCode WordLanguageCode Payload Table.
@@ -324,4 +325,9 @@ Example interval_backward_malformed_preserves_raw_inputs :
   map (fun xs => interval_back bvadd xs 1%positive (I (Fin 1) (Fin 1)))
     interval_malformed_backward_inputs =
   [[]; [I NegInf PosInf]; [I NegInf PosInf; I (Fin (-3)) (Fin 20); I PosInf PosInf]].
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_rank_counts_duplicates :
+  ScalarPlain.wrank (TNode (TNode TLeaf 0 TLeaf) 0 (TNode TLeaf 5 TLeaf))
+    (I (Fin 1) (Fin 3)) = 5%nat.
 Proof. vm_compute. reflexivity. Qed.
