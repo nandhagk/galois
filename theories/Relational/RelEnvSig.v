@@ -48,6 +48,12 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   Parameter T_eval_components : forall e r s, (T_eval e (r, s) <= c_rel_env *
     (R.T_range e r + E.T_eval e s +
       RR.T_refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s) + 1))%N.
+  (* SIG-QUESTION: REL_RANGE_REFINE_T wires an actual clock without a declared-work
+     bound for T_refine_range or an output-size bound for refine_range. NUM_STATE_T
+     also has no bound on the endpoint bits returned by range. T_eval_components
+     therefore does not derive inherited T_eval_le for a declared eval_work measure.
+     A provider relating the composed costs to that measure is still required.
+     An input-size route would additionally need the range endpoint-size budget. *)
   (** Assignment charges both component updates. *)
   Parameter T_assign_components : forall x e r s, (T_assign x e (r, s) <=
     c_rel_env * (R.T_assign x e r + E.T_assign x e s + 1))%N.
