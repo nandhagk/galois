@@ -537,6 +537,24 @@ Module Type WTO_PLAN (Import W : WTO_T).
       N.of_nat (length (wto_order (wto_partial st)) +
         source_mass g (concat (map task_members (firstn 1 (wto_tasks st)))) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
+
+  (** Building pays the initial phases, the task list and each recorded step once. *)
+  Parameter T16_build : forall g roots,
+    (T_build g roots <= k_build * (T_wto_components g roots +
+      T_wto_entries g roots (wto_components g roots) +
+      N.of_nat (length (concat (comps (wto_components g roots)))) +
+      execution_cost g (history g roots) + 1))%N.
+
+  (** Close and terminal steps at one depth reverse disjoint partial outputs. *)
+  Parameter F21_partial_mass : forall g roots level,
+    fold_right (fun st n =>
+      if Nat.eqb (length (wto_parents st)) level then
+        match wto_tasks st with
+        | [] | WtoClose _ :: _ => length (wto_order (wto_partial st)) + n
+        | _ => n
+        end
+      else n) 0 (history g roots) <=
+    length (concat (comps (wto_components g roots))).
 End WTO_PLAN.
 
 Module Type WTO_ALL := WTO_T <+ WTO_PLAN.
