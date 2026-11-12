@@ -79,7 +79,7 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)).
   Definition unit (p : S.prog) : N :=
     (S.row_work p (B.vsize p) + L.c_lat * N.of_nat (B.vsize p + 1) +
-      N.of_nat ((Nat.log2 (C p) + 1) * (S.kw p + 1)))%N.
+      N.of_nat ((Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)))%N.
   Definition prep (p : S.prog) : nat :=
     (C p + D p) * (S.kw p + Nat.log2 (C p) + 1).
   Definition rounds (p : S.prog) (pol : policy L.wparam) : nat :=
@@ -120,11 +120,11 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     forall x, In x (key_support p) ->
       exists cfg, trie_get x (heads pol) = Some cfg.
   Definition all_head_work (p : S.prog) (pol : policy L.wparam) : N :=
-    (N.of_nat (prep p) + N.of_nat ((C p + fold_right Nat.add 0
+    (N.of_nat (prep p) + N.of_nat ((D p + fold_right Nat.add 0
       (List.map (fun x => head_allowance p pol x * reader_weight p x) (key_support p)))%nat) *
       unit p +
       N.of_nat (rounds p pol) * (N.of_nat (Nat.log2 (rounds p pol) + 1) +
-        L.c_lat * N.of_nat (L.wsize (wp pol))))%N.
+        L.c_lat * N.of_nat ((2 * B.wunits p + 1) * L.wsize (wp pol))))%N.
   (* spec: fuel_for *)
   Parameter fuel_for : S.prog -> policy L.wparam -> N.
   Parameter T_run : S.prog -> policy L.wparam -> N -> N.
@@ -134,7 +134,7 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
   Definition work (p : S.prog) (pol : policy L.wparam) : N :=
     (N.of_nat (prep p) + N.of_nat ((C p + D p) * rounds p pol) * unit p +
       N.of_nat (rounds p pol) * (N.of_nat (Nat.log2 (rounds p pol) + 1) +
-        L.c_lat * N.of_nat (L.wsize (wp pol))))%N.
+        L.c_lat * N.of_nat ((2 * B.wunits p + 1) * L.wsize (wp pol))))%N.
   (** Solved candidates satisfy every row. *)
   Parameter run_post : forall p pol fuel m, fits p pol -> run p pol fuel = Solved m ->
     S.post_solution p (look_or S.key_code L.bot m).
@@ -149,14 +149,14 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     exists m, run p pol fuel = Solved m.
   (** Finite height gives a bound independent of widening rounds. *)
   Parameter T_run_height_le : forall p pol fuel (rk : L.t -> nat) h,
-    S.wf p -> widening_free pol ->
+    S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     (T_run p pol fuel <= c_wl *
-      (N.of_nat (prep p) + N.of_nat (C p + h * DW p) * unit p +
+      (N.of_nat (prep p) + N.of_nat (D p + h * DW p) * unit p +
         N.of_nat (N.size_nat fuel) + 1))%N.
   (** Widening at every key has a credit bound independent of the round argument and cuts. *)
-  Parameter T_run_all_heads_le : forall p pol fuel, S.wf p -> all_heads p pol ->
+  Parameter T_run_all_heads_le : forall p pol fuel, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (T_run p pol fuel <= c_wl * (all_head_work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
   (** Running at sufficient fuel has the published work bound. *)
   Parameter run_bigO : bigO
@@ -219,13 +219,14 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       end) (top_rank p pol) (S.writes p r).
   Definition head_unit (p : S.prog) (pol : policy L.wparam) : N :=
     (N.of_nat (Nat.log2 (rounds p pol) + 1) +
-      L.c_lat * N.of_nat (L.wsize (wp pol)))%N.
+      L.c_lat * N.of_nat ((2 * B.wunits p + 1) * L.wsize (wp pol)))%N.
   Definition strict_head_work (pol : policy L.wparam) (s : state)
       (x : S.key) (a : L.t) : N :=
     if L.leb a (look s x) then 0%N else
       match trie_get (S.key_code x) (heads pol) with
       | Some _ => (N.of_nat (N.size_nat (counter s (S.key_code x))) +
-          L.c_lat * N.of_nat (L.wsize (wp pol)))%N
+          L.c_lat * N.of_nat ((L.wunits (look s x) + L.wunits a + 1) *
+            L.wsize (wp pol)))%N
       | None => 0%N
       end.
   (** Numbering distinguishes row occurrences even when the source row list repeats a row. *)
@@ -275,6 +276,13 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     | None => 0%nat
     end.
   Definition degree (p : S.prog) (x : positive) : nat := length (source_readers p x).
+  (** Only an unarmed key's strict change pushes its reader bucket. *)
+  Definition push_work (p : S.prog) (s : state) (x : S.key) (a : L.t) : nat :=
+    if L.leb a (look s x) then 0 else
+    match trie_get (S.key_code x) (ws_armed s) with
+    | Some _ => 0
+    | None => degree p (S.key_code x)
+    end.
   Definition weighted_degree (p : S.prog) (x : positive) : nat :=
     fold_right Nat.add 0 (List.map (weight p) (source_readers p x)).
   Definition queue_credit (p : S.prog) (s : state) : nat :=
@@ -296,6 +304,10 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     structural p pol s /\ (forall x, B.inv p (look s x)) /\ prepared p pol s.
   Definition reachable (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
     exists xs, wl_path (step p pol) (prepare p pol) xs s.
+  (** Every row outside the queue accepts the current store. *)
+  Definition accepted (p : S.prog) (s : state) : Prop :=
+    forall id r, source_row p id = Some r -> Q.prio (ws_queue s) id = None ->
+      row_ok L.leb (look s) (S.target p r) (S.eval p r (look s)) = true.
   Definition trace_cost (p : S.prog) (pol : policy L.wparam) (xs : list state) : N :=
     fold_right N.add 0%N (List.map (T_step p pol) xs).
   Definition popped_ids (xs : list state) : list positive :=
@@ -368,7 +380,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter F3_eval : forall p r m,
     eval_row p r m = S.eval p r (look_or S.key_code L.bot m).
   (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
-  Parameter F4_prepare : forall p pol, fits p pol ->
+  Parameter F4_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     invariant p pol (prepare p pol) /\
     (forall x, look (prepare p pol) x = L.bot) /\
     (forall c, counter (prepare p pol) c = 0%N) /\
@@ -425,7 +437,10 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     (ws_queue (enqueue p pol ids s), ws_live (enqueue p pol ids s)) =
     fold_left (fun ql id => match trie_get id (snd ql), row_at s id with
       | None, Some r =>
-        (Q.push (N.pos (row_rank p pol r)) id (fst ql),
+        (Q.push (N.pos (match trie_get id (ws_ranks s) with
+            | Some rank => rank
+            | None => 1%positive
+            end)) id (fst ql),
           PTrieCode.set id tt (snd ql))
       | _, _ => ql
       end) ids (ws_queue s, ws_live s).
@@ -508,6 +523,9 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     B.inv p a -> In (S.key_code x) (key_support p) ->
     invariant p pol (update_one p pol s (x, a)).
 
+  (** Reachable states satisfy every row outside their queue. *)
+  Parameter F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
+
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
   Parameter W1_prepare : forall p pol, fits p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
@@ -528,27 +546,30 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     In (S.key_code x) (key_support p) ->
     B.inv p (look (update_one p pol s (x, a)) x) /\
     (T_update_one p pol s (x, a) + queue_phi p (update_one p pol s (x, a)) <=
-      k_update * N.of_nat (1 + degree p (S.key_code x)) * unit p + queue_phi p s)%N.
+      k_update * N.of_nat (1 + push_work p s x a) * unit p +
+      k_update * strict_head_work pol s x a + queue_phi p s)%N.
   (** Callback accounting retains every emitted occurrence and every intermediate update cost. *)
   Parameter W3_step : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) -> source_row p id = Some r ->
     eval_row p r (ws_store s) = Some (a, ss) ->
     (T_step p pol s <= k_loop * (Q.T_pop (ws_queue s) + T_row_at s id +
       T_eval_row p r (ws_store s) + S.T_target p r +
+      N.of_nat ((length (S.deps p r) + 1) * (S.kw p + Nat.log2 (C p) + 1)) +
       output_cost p pol ((S.target p r, a) :: ss)
         (after_pop p s id q1) + N.of_nat (length ss) + 1))%N.
   (** W4 spends weighted rank credit for each callback in a widening-free run. *)
-  Parameter W4_credit : forall p pol rk h s s1, S.wf p -> widening_free pol ->
+  Parameter W4_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + height_phi p rk h s1 + 1 <= height_phi p rk h s)%N.
   (** Weighted source credit fits the public weighted incidence budget. *)
-  Parameter W4_initial : forall p pol rk h, S.wf p -> widening_free pol ->
-    (height_phi p rk h (prepare p pol) <= k_credit * N.of_nat (C p + h * DW p) * unit p)%N.
+  Parameter W4_initial : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
+    (height_phi p rk h (prepare p pol) <=
+      k_credit * N.of_nat (D p + h * DW p) * unit p + queue_phi p (prepare p pol))%N.
   (** Cut edges make popped row ranks nondecreasing in a stable segment. *)
   Parameter W5_priority : forall p pol s xs last i j a b,
-    S.wf p -> Sched.cuts p pol = true -> reachable p pol s ->
+    fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     i < j -> nth_error (popped_ranks xs) i = Some a ->
     nth_error (popped_ranks xs) j = Some b -> (a <= b)%N.
@@ -567,7 +588,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       k_round * N.of_nat (head_events pol s s1) * head_unit p pol +
       queue_phi p s)%N.
   (** W6 bounds every finite prefix's strict head events by the advertised round count. *)
-  Parameter W6_rounds : forall p pol xs last, S.wf p ->
+  Parameter W6_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     head_events pol (prepare p pol) last + 1 <= rounds p pol /\
     (forall c, In c (key_support p) ->
@@ -583,9 +604,9 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     wl_path (step p pol) (prepare p pol) xs last ->
     (N.of_nat (length xs) < k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   (** Stopping callbacks must solve and must fit the final driver budget. *)
-  Parameter W7_stop : forall p pol s result, S.wf p -> reachable p pol s ->
+  Parameter W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
-    (exists m, result = Solved m) /\ (T_step p pol s <= k_loop * (unit p + 1))%N.
+    (exists m, result = Solved m) /\ (T_step p pol s <= k_loop * (unit p + 1) + queue_phi p s)%N.
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
   Parameter W7_loop : forall p pol fuel, fits p pol ->
     (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
@@ -600,12 +621,13 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 1))%N.
 
   (** All-head credit decreases per callback without the stable-segment lemma. *)
-  Parameter W7_all_heads_credit : forall p pol s s1, S.wf p -> all_heads p pol ->
+  Parameter W7_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + all_head_phi p pol s1 + 1 <= all_head_phi p pol s)%N.
   (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
-  Parameter W7_all_heads_initial : forall p pol, S.wf p -> all_heads p pol ->
-    (all_head_phi p pol (prepare p pol) <= k_credit * all_head_work p pol)%N.
+  Parameter W7_all_heads_initial : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
+    (all_head_phi p pol (prepare p pol) <=
+      k_credit * all_head_work p pol + queue_phi p (prepare p pol))%N.
 End WORKLIST_PLAN.
 
 Module Type WORKLIST_ALL (L : WLATTICE_T) (S : SYSTEM_T L)

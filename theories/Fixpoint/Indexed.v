@@ -65,9 +65,9 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
   Proof. Admitted.
-  Lemma row_code_inj : forall p a b, In a (rows p) -> In b (rows p) ->
+  Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
-  Proof. Admitted. (* SIG-QUESTION: arbitrary indexed records can repeat a row code. *)
+  Proof. Admitted.
   Lemma rows_of_spec : forall p x r, wf p ->
     (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
   Proof. Admitted.

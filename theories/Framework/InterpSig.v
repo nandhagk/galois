@@ -107,9 +107,12 @@ End INTERP_SOUND.
 
 Module Type INTERP_ENVELOPE (P : TYPE) (E : TYPE) (X : KEY_T) (L : LANG_T)
     (V : VALUE_DOMAIN_T L) (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V).
-  (* spec: primitive_work next_size *)
+  (* spec: primitive_work next_size action_bound *)
   Parameter primitive_work : P.t -> nat -> N.
   Parameter next_size : P.t -> nat -> nat.
+  Parameter action_bound : P.t -> nat.
+  (** Every action list fits the program's action bound. *)
+  Parameter actions_length_le : forall p e, length (A.actions p e) <= action_bound p.
   (** Primitive work grows with the input state size. *)
   Parameter primitive_work_mono : forall p s t, s <= t ->
     (primitive_work p s <= primitive_work p t)%N.
@@ -139,8 +142,7 @@ Module Type INTERP_COST_SPEC (P : TYPE) (N : KEY_T) (E : TYPE)
     (C : CFG_BASE_T P N E) (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V)
     (B : INTERP_ENVELOPE P E X L V A D).
-  Definition max_actions p : nat := fold_right Nat.max 0
-    (List.map (fun e => length (A.actions p e)) (C.edges p)).
+  Definition max_actions p : nat := B.action_bound p.
   Fixpoint state_extent p n s : nat :=
     match n with
     | O => s

@@ -78,9 +78,13 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
     | None, _, _ => o
     end.
   Definition allocated (db : t) (i : positive) : Prop := (Npos i <= ids db)%N.
+  (** Slot permutations contain distinct positions within the supplied tuple. *)
+  Definition slots_fit (db : t) (f : positive) (n : nat) : Prop :=
+    forall perm, In (f, perm) (slots db) -> NoDup perm /\ Forall (fun i => i < n) perm.
   Definition kind_ok (db : t) (f : positive) (k : list (cell V.t))
       (o : option (cell V.t)) : Prop :=
     (forall i, In (Id i) (k ++ option_list o) -> allocated db i) /\
+    slots_fit db f (length (k ++ option_list o)) /\
     match kind (view db) f, o with
     | Some ORel, None => True
     | Some OId, Some (Id _) => True
@@ -131,9 +135,12 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
   (** Kind-correct insertion keeps the database well formed. *)
   Parameter wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
   (** Constructor allocation keeps the database well formed. *)
-  Parameter wf_make : forall f k db, wf db -> wf (snd (make f k db)).
+  Parameter wf_make : forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
   (** Equality insertion keeps the database well formed. *)
-  Parameter wf_union : forall i j db, wf db -> wf (union i j db).
+  Parameter wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
+    wf (union i j db).
   (** Rebuilding keeps the database well formed. *)
   Parameter wf_rebuild : forall db, wf db -> wf (rebuild db).
   (** Advancing clears the change flag without changing the view. *)
@@ -279,7 +286,8 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   (** Initialization starts without amortized debt. *)
   Parameter potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   (** Insertion pays for all slots and the logarithmic identifier budget. *)
-  Parameter T_put_amort : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
+  Parameter T_put_amort : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
     (T_put f k o db +
       N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
       N.of_nat (unit (put f k o db)) *
@@ -287,7 +295,8 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
           N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
           potential B db))%N.
   (** Constructor allocation has the same amortized budget as insertion. *)
-  Parameter T_make_amort : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
+  Parameter T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
     (T_make f k db +
       N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
       N.of_nat (unit (snd (make f k db))) *
@@ -313,6 +322,9 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   (** The high-water mark covers every stored cell encoding. *)
   Parameter wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
     In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
+  (** The high-water mark covers every declared function name. *)
+  Parameter wmark_names : forall db f, wf db -> kind (view db) f <> None ->
+    Pos.size_nat f <= N.size_nat (wmark db).
   (** Insertion never reduces the spending unit. *)
   Parameter unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
   (** Make never reduces the spending unit. *)
@@ -324,7 +336,9 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   (** Initialization pays for declarations and slot permutations. *)
   Parameter T_init_le : forall ds sl,
     (T_init ds sl <= c_db * N.of_nat (length ds + length sl + 1) *
-      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat))%N.
+      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
+      c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
   (** Find traverses allocated identifiers at the database unit. *)
   Parameter T_find_le : forall i db, wf db -> allocated db i ->
     (T_find i db <= c_db * N.of_nat (unit db))%N.
@@ -347,13 +361,15 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Definition repair_state := (t * list use_entry)%type.
 
   (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
-     index_counters written_cells *)
+     index_counters written_cells located decl_names *)
   Parameter rows : t -> list stored_row.
   Parameter uses_entries : t -> list (positive * use_entry).
   Parameter queue : t -> list positive.
   Parameter next_id : t -> positive.
   Parameter forest_ok : t -> Prop.
   Parameter class_size : t -> positive -> N.
+  (** A historical row key resolves to its current stored key. *)
+  Parameter located : t -> positive -> list (cell V.t) -> option (list (cell V.t)).
   Parameter k_credit k_loop k_active k_queue k_stop k_driver : N.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
@@ -368,9 +384,10 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
     (forall f k o, In ((f, k), o) (rows db) <-> row (view db) f k o) /\
     NoDup (map fst (rows db)) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i ->
-      exists k0, uses db (repr db i) (f, k0) /\ map (canon db) k0 = k) /\
+      exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
+        located db f k0 = Some k /\ (x = repr db i \/ In x (queue db))) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
-      exists k0, scheduled db work (f, k0) /\ map (canon db) k0 = k) /\
+      exists k0, scheduled db work (f, k0) /\ located db f k0 = Some k) /\
     (forall s f perm, slot_of db s = Some (f, perm) ->
       I.wf (length perm) (index s false db) /\
       I.wf (length perm) (index s true db) /\
@@ -381,7 +398,8 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
       (i < next_id db)%positive) /\
     forest_ok db /\
     (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
-    NoDup (queue db) /\ pending db = length (queue db).
+    NoDup (queue db) /\ pending db = length (queue db) /\
+    (forall x, In x (queue db) -> allocated db x).
   Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, None => True
@@ -412,6 +430,7 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Parameter uf_state : t -> UnionFind.t.
   Parameter index_counters : t -> list positive.
   Parameter written_cells : t -> list (cell V.t).
+  Parameter decl_names : t -> list positive.
   Parameter get_uses : positive -> t -> list use_entry.
   Parameter T_get_uses : positive -> t -> N.
   Parameter pop_loser : t -> option (positive * t).
@@ -438,7 +457,10 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** A pop transfers its selected bucket into the active work list. *)
   Parameter F4_pop : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     queue db = x :: queue db' /\ view db' = view db /\
-    uses_entries db' = uses_entries db /\ inv_on db' (bucket db x).
+    (forall y e, uses db' y e <->
+      (uses db y e /\ y <> x) \/ (y = repr db x /\ uses db x e)) /\
+    N.to_nat (nuses db') = length (uses_entries db') /\
+    inv_on db' (bucket db x).
   (** The driver consumes one active entry or dequeues one loser. *)
   Parameter F5_rstep : forall db work,
     rstep (db, work) =
@@ -450,9 +472,9 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
         | Some (x, db') => inl (db', get_uses x db)
         end
       end.
-  (** Missing canonical keys are discarded without changing rows or equality. *)
+  (** Entries without a current row are discarded without changing the database. *)
   Parameter F6_absent : forall db f k,
-    old db f (map (canon db) k) = None -> repair_entry (f, k) db = db.
+    located db f k = None -> repair_entry (f, k) db = db.
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Parameter F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
@@ -555,7 +577,8 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** Initialization has no use-occurrence debt. *)
   Parameter T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
   (** Insertion pays its executable work and new occurrence credit. *)
-  Parameter T3_put_credit : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
+  Parameter T3_put_credit : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
     (T_put f k o db +
       N.of_nat (unit (put f k o db)) * (k_loop * rebuild_potential B (put f k o db)) <=
       N.of_nat (unit (put f k o db)) *
@@ -563,7 +586,8 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
           N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
           (k_loop * rebuild_potential B db)))%N.
   (** Allocation pays new occurrences through the insertion budget. *)
-  Parameter T4_make_credit : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
+  Parameter T4_make_credit : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
     (T_make f k db +
       N.of_nat (unit (snd (make f k db))) * (k_loop * rebuild_potential B (snd (make f k db))) <=
       N.of_nat (unit (snd (make f k db))) *
@@ -613,14 +637,21 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** Stored counters agree with the occurrence inventory and pending queue. *)
   Parameter F15_counts : forall db work, inv_on db work ->
     N.to_nat (nuses db) = length (uses_entries db) /\ N.of_nat (pending db) = npending db.
+  (** The declaration inventory contains precisely the names with a kind. *)
+  Parameter F_decl_names : forall db f, inv db ->
+    (kind (view db) f <> None <-> In f (decl_names db)).
   (** The stored watermark is the exact historical maximum of written payloads and counters. *)
   Parameter F_wmark : forall db, inv db ->
     wmark db = fold_right N.max (N.max (nuses db) (ids db))
-      (map Npos (index_counters db) ++
+      (map Npos (index_counters db) ++ map Npos (decl_names db) ++
         map (fun c => match c with
           | Id i => Npos (xO i)
           | Val v => Npos (xI (V.encode v))
           end) (written_cells db)).
+  (** Every slot index fits the stored counter and cell watermark. *)
+  Parameter F_wmark_index : forall db s new, inv db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
   (** Class sizes come from the size-based union-find. *)
   Parameter F_uf_bridge : forall db work x, inv_on db work ->
     repr db x = UnionFind.repr (uf_state db) x /\

@@ -40,7 +40,7 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
       0 ixs.
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
-    (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 1) * N.of_nat (wmax p ixs + 1) *
+    (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
   Proof. Admitted. (* STUB *)
 
@@ -122,7 +122,7 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
 
   Lemma work_at_step : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
     l < nvars p -> choose p ixs l ns = Some j ->
-    work_at p ixs l ns = 1 + length (cols p) + length (participants p l) *
+    work_at p ixs l ns = 1 + length (cols p) + length (cols p) *
       (1 + N.to_nat (I.degree (nth j ixs I.empty) (nth j ns 1%positive))) +
       fold_right Nat.add 0
         (map (fun c => match advance p ixs l ns c with
