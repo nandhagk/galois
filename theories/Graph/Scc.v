@@ -108,7 +108,7 @@ Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
       (scc_trace g) tarjan_initial in
-    Scc (tarjan_owners result) (rev (tarjan_emitted result)).
+    Scc (tarjan_owners result) (rev_append (tarjan_emitted result) []).
 End SccCode.
 
 Opaque search_trace.

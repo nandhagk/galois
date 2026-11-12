@@ -12,7 +12,7 @@ Import List.ListNotations.
 
 Definition search_step (g : digraph) (s : search_state) : search_state + (list event) :=
   match s with
-  | SearchState [] _ es => inr (rev es)
+  | SearchState [] _ es => inr (rev_append es [])
   | SearchState (task :: tasks) colours es =>
     match task with
     | SearchRoot v =>
@@ -42,7 +42,7 @@ TimeFun raw_search_budget.
 Definition search_trace (g : digraph) (roots : list positive) : list event :=
   match loopN (search_step g) (raw_search_budget g roots)
       (SearchState (map SearchRoot roots) Empty []) with
-  | inl s => rev (search_events s)
+  | inl s => rev_append (search_events s) []
   | inr es => es
   end.
 TimeFun search_trace.
@@ -54,7 +54,7 @@ TimeFun search_budget.
 Definition prepared_search_trace (g : prepared) (roots : list positive) : list event :=
   match loopN (search_step (base g)) (search_budget g roots)
       (SearchState (map SearchRoot roots) Empty []) with
-  | inl s => rev (search_events s)
+  | inl s => rev_append (search_events s) []
   | inr es => es
   end.
 TimeFun prepared_search_trace.
@@ -324,6 +324,12 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
         N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof. Admitted. (* STUB *)
+
+  (** Each entered vertex contributes at most two events and its row on every input. *)
+  Lemma F7b_events_raw : forall g roots,
+      length (trace g roots) <= 2 * n_reach g roots + e_reach g roots.
+  Proof. Admitted. (* STUB *)
+
 End SearchT.
 
 Transparent search_trace.
