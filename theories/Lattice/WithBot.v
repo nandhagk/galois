@@ -73,8 +73,14 @@ Module WithBotT (L : LATTICE_T) <: LATTICE_T.
   Proof. Admitted. (* STUB *)
 End WithBotT.
 
-Module WithBotHeight (L : LATTICE) (H : HEIGHT L).
-  Module Lat := WithBot L.
+Module WithBotHeight (L : LATTICE) (H : HEIGHT L)
+    (Lat : LATTICE with Definition t := option L.t
+                    with Definition leb :=
+                      (fun x y => match x, y with
+                                  | None, _ => true
+                                  | Some a, Some b => L.leb a b
+                                  | Some _, None => false
+                                  end)) <: HEIGHT Lat.
   Definition rank (x : option L.t) := match x with None => 0 | Some a => S (H.rank a) end.
   Definition height := S H.height.
   Lemma rank_le : forall a, rank a <= height.
@@ -86,10 +92,4 @@ Module WithBotHeight (L : LATTICE) (H : HEIGHT L).
       try discriminate; try lia.
     pose proof (H.rank_strict a b Hab Hba); lia.
   Qed.
-  Module Check <: HEIGHT Lat.
-    Definition rank := rank.
-    Definition height := height.
-    Definition rank_le := rank_le.
-    Definition rank_strict := rank_strict.
-  End Check.
 End WithBotHeight.
