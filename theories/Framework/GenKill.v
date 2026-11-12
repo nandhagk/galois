@@ -126,3 +126,54 @@ Module GenKillMust (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
     <: GENKILL_MUST P N E C F S G L T.
   Include Dense P N E C L T.
 End GenKillMust.
+
+Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (F : KEY) (S : SET F) (G : GENKILL_OPS P E F S)
+    (ML : GENKILL_MAY_DOMAIN_OPS F S) (UL : GENKILL_MUST_DOMAIN_OPS F S)
+    (MT : GENKILL_MAY_FLOW_OPS P N E F S G ML)
+    (UT : GENKILL_MUST_FLOW_OPS P N E F S G UL)
+    (May : DENSE_SYSTEM P N E C ML MT) (Must : DENSE_SYSTEM P N E C UL UT)
+    <: GENKILL_SOUND P N E C F S G ML UL MT UT May Must.
+  Definition route p entry path n := genkill_route (C.edges p)
+    (fun e => match G.dir with Forward => C.src p e | Backward => C.dst p e end)
+    (fun e => match G.dir with Forward => C.dst p e | Backward => C.src p e end)
+    entry path n.
+  Definition path_facts p path :=
+    genkill_path S.union S.diff (G.gen p) (G.kill p) (G.init p) path.
+  Definition produces p n d := exists root initial path,
+    genkill_may_start (C.nodes p) (C.entries p) S.empty (G.init p) root initial /\
+    route p root path n /\
+    S.mem d (genkill_path S.union S.diff (G.gen p) (G.kill p) initial path) = true.
+  (** Every produced path fact belongs to a may post-solution. *)
+  Lemma may_covers : forall p look, G.may = true -> May.post_solution p look ->
+    forall n d, produces p n d -> S.mem d (look n) = true.
+  Proof. Admitted. (* CONVERT: produces_in_post: The reference Bitvector.may_source_post_iff was not found *)
+  (** Every fact generated on an actual boundary path belongs to a may post-solution. *)
+  Lemma may_boundary_covers : forall p look, G.may = true -> May.post_solution p look ->
+    forall entry path n d, In entry (C.entries p) -> route p entry path n ->
+      S.mem d (path_facts p path) = true -> S.mem d (look n) = true.
+  Proof. Admitted.
+  (** A reached must post-solution contains facts present on every boundary path. *)
+  Lemma must_covers : forall p look, G.may = false -> Must.post_solution p look ->
+    forall entry path n facts d, In entry (C.entries p) -> route p entry path n ->
+      look n = Some facts -> S.mem d facts = true -> S.mem d (path_facts p path) = true.
+  Proof. Admitted. (* CONVERT: must_post_keeps: The reference Bitvector.must_source_post_iff was not found *)
+  (** A boundary path has a reached must value in every post-solution. *)
+  Lemma must_reached : forall p look, G.may = false -> Must.post_solution p look ->
+    forall entry path n, In entry (C.entries p) -> route p entry path n ->
+      exists facts, look n = Some facts.
+  Proof. Admitted.
+  (** A least may post-solution equals production from empty listed starts and boundaries. *)
+  Lemma may_exact : forall p look, C.wf p -> G.may = true -> May.post_solution p look ->
+    (forall other, May.post_solution p other -> forall n, S.subset (look n) (other n) = true) ->
+    forall n d, In n (C.nodes p) -> (S.mem d (look n) = true <-> produces p n d).
+  Proof. Admitted. (* CONVERT: may_least_paths: The variable may_closure was not found *)
+  (** A least reached must post-solution contains exactly the facts on all boundary paths. *)
+  Lemma must_exact : forall p look, C.wf p -> G.may = false -> Must.post_solution p look ->
+    (forall other, Must.post_solution p other -> forall n,
+      genkill_must_leb S.subset (look n) (other n) = true) ->
+    forall n facts, In n (C.nodes p) -> look n = Some facts -> forall d,
+      S.mem d facts = true <-> forall entry path,
+        In entry (C.entries p) -> route p entry path n -> S.mem d (path_facts p path) = true.
+  Proof. Admitted. (* CONVERT: must_greatest_paths: The variable must_post_keeps was not found *)
+End GenKillSound.
