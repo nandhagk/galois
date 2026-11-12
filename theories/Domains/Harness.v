@@ -9,7 +9,16 @@ From Galois.Domains Require Import LangSig HarnessSig.
 
 Module HarnessCode (L : LANG_OPS) (B : HARNESS_BASE_OPS L) (T : TABLE_OPS L B)
     <: HARNESS_OPS L B T.
-  Include B.
+  Definition t := B.t.
+  Definition leb := B.leb.
+  Definition bot := B.bot.
+  Definition is_bot := B.is_bot.
+  Definition join := B.join.
+  Definition top := B.top.
+  Definition meet := B.meet.
+  Definition wparam := B.wparam.
+  Definition widen := B.widen.
+  Definition narrow := B.narrow.
 
   Fixpoint points (xs : list B.t) : option (list L.val) :=
     match xs with
