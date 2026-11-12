@@ -70,6 +70,7 @@ Record compiled (V : Type) : Type := Compiled {
   seminaive : list (cplan V)
 }.
 
+TimeFun name.
 TimeFun out.
 TimeFun actions.
 TimeFun decls.

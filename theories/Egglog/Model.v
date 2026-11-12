@@ -121,6 +121,103 @@ Fixpoint present (w : view) (s : env) (acts : list (action V)) : Prop :=
 Definition closed (p : program V) (w : view) : Prop :=
   forall r s, In r (rules V p) -> matches w (query V r) s -> present w s (actions V r).
 
+Definition model_env (M : model) := positive -> option (carrier M + V).
+
+Definition model_term (M : model) (s : model_env M) (t : term V)
+    (c : carrier M + V) : Prop :=
+  match t with
+  | Var x => s x = Some c
+  | Lit v => c = inr v
+  end.
+
+Definition model_values (M : model) (cs : list (carrier M + V)) (vs : list V) : Prop :=
+  Forall2 (fun c v => c = inr v) cs vs.
+
+Definition model_atom (M : model) (kinds : positive -> option output)
+    (s : model_env M) (a : atom V) : Prop :=
+  match a with
+  | Fun _ f args res =>
+      exists k, Forall2 (model_term M s) args k /\
+        match kinds f, res with
+        | Some ORel, None => rel M f k
+        | Some OId, Some t => model_term M s t (inl (con M f k))
+        | Some (OLat _), Some t => exists v, model_term M s t (inr v) /\ lat M f k v
+        | _, _ => False
+        end
+  | Prim _ p args res =>
+      exists k vs v, Forall2 (model_term M s) args k /\ model_values M k vs /\
+        prim p vs = Some v /\ model_term M s res (inr v)
+  end.
+
+Definition model_update (M : model) (s : model_env M) (x : positive)
+    (c : carrier M + V) : model_env M :=
+  fun y => if Pos.eqb x y then Some c else s y.
+
+Fixpoint model_actions (M : model) (kinds : positive -> option output)
+    (s : model_env M) (acts : list (action V)) : Prop :=
+  match acts with
+  | [] => True
+  | a :: rest =>
+      match a with
+      | Make x f args =>
+          exists k, Forall2 (model_term M s) args k /\ kinds f = Some OId /\
+            model_actions M kinds (model_update M s x (inl (con M f k))) rest
+      | Put f args res =>
+          exists k, Forall2 (model_term M s) args k /\
+            (match kinds f, res with
+             | Some ORel, None => rel M f k
+             | Some OId, Some t => model_term M s t (inl (con M f k))
+             | Some (OLat _), Some t => exists v, model_term M s t (inr v) /\ lat M f k v
+             | _, _ => False
+             end) /\ model_actions M kinds s rest
+      | Union a b =>
+          exists c, model_term M s a c /\ model_term M s b c /\
+            model_actions M kinds s rest
+      | Let x p args =>
+          exists k vs, Forall2 (model_term M s) args k /\ model_values M k vs /\
+            match prim p vs with
+            | None => True
+            | Some v => model_actions M kinds (model_update M s x (inr v)) rest
+            end
+      end
+  end.
+
+Fixpoint lookup_kind (ds : list decl) (f : positive) : option output :=
+  match ds with
+  | [] => None
+  | d :: rest => if Pos.eqb (name d) f then Some (out d) else lookup_kind rest f
+  end.
+
+Definition program_kind (p : program V) (f : positive) : option output :=
+  lookup_kind (decls V p) f.
+
+Definition valid (M : model) (p : program V) : Prop :=
+  forall r s, In r (rules V p) ->
+    Forall (model_atom M (program_kind p) s) (query V r) ->
+    model_actions M (program_kind p) s (actions V r).
+
+Inductive derivation_action : env -> list (action V) -> positive -> list (cell V) -> Prop :=
+  | derive_put s f args k rest : terms_value s args k ->
+      derivation_action s (Put f args None :: rest) f k
+  | derive_put_later s f args input rest g k : terms_value s args input ->
+      derivation_action s rest g k -> derivation_action s (Put f args None :: rest) g k
+  | derive_let s x q args k vs v rest f out : terms_value s args k -> values k vs ->
+      prim q vs = Some v -> derivation_action (update s x (Val v)) rest f out ->
+      derivation_action s (Let x q args :: rest) f out.
+
+Inductive derives (p : program V) (w0 : view) : positive -> list (cell V) -> Prop :=
+  | derive_fact f k : row w0 f k None -> derives p w0 f k
+  | derive_rule r s f k : In r (rules V p) ->
+      derivation_body p w0 s (query V r) ->
+      derivation_action s (actions V r) f k -> derives p w0 f k
+with derivation_body (p : program V) (w0 : view) : env -> list (atom V) -> Prop :=
+  | derive_body_nil s : derivation_body p w0 s []
+  | derive_body_fun s f args k rest : terms_value s args k -> derives p w0 f k ->
+      derivation_body p w0 s rest -> derivation_body p w0 s (Fun V f args None :: rest)
+  | derive_body_prim s q args res k vs v rest : terms_value s args k -> values k vs ->
+      prim q vs = Some v -> term_value s res (Val v) -> derivation_body p w0 s rest ->
+      derivation_body p w0 s (Prim V q args res :: rest).
+
 Scheme All for list.
 
 Inductive expr : Type :=
@@ -144,3 +241,6 @@ End Model.
 
 TimeFun den.
 TimeFun update.
+TimeFun model_update.
+TimeFun lookup_kind.
+TimeFun program_kind.
