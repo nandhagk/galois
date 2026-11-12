@@ -88,6 +88,16 @@ TimeFun wto_check_ranks.
 TimeFun wto_check_intervals.
 TimeFun wto_check_vertices.
 
+(** The checker indexes the listed vertices before inspecting a candidate. *)
+Definition listed_of (g : prepared) : ptrie bool :=
+  fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty.
+TimeFun listed_of.
+
+(** The index loop allows four transitions per listed occurrence and its stopping step. *)
+Definition check_fuel (g : prepared) : N :=
+  (N.double (N.double (N.of_nat (graph_n (base g)))) + 2)%N.
+TimeFun check_fuel.
+
 Module Type WTO_OPS.
   Parameter build : prepared -> list positive -> wto.
   Parameter check : prepared -> list positive -> wto -> bool.
@@ -164,9 +174,9 @@ Module Type WTO_T := WTO <+ WTO_TIME.
 
     The functional chain checks the supplied order independently of the producer.
     [GraphHierWork] and [GraphHierCost] at [87192fe] supply additive source mass
-    and depth charging for scoped SCC expansion. The converted scope materializes
-    filtered rows by list membership. The selected checker also scans suffix lists.
-    Their costs are kept in [scope_work] and [check_work] before the public targets. *)
+    and depth charging for scoped SCC expansion. The checker prices its bounded
+    rank-interval index and its final edge scan separately, then uses filtered search
+    and trie contracts for coverage. *)
 
 Module Type WTO_PLAN (Import W : WTO_T).
   Parameter wto_key_fits : nat -> positive -> bool.
@@ -178,6 +188,8 @@ Module Type WTO_PLAN (Import W : WTO_T).
     ptrie N -> ptrie (N * N) -> list positive -> N.
   Parameter wto_interval_edge : ptrie N -> ptrie (N * N) -> positive -> positive -> bool.
   Parameter T_wto_interval_edge : ptrie N -> ptrie (N * N) -> positive -> positive -> N.
+  Parameter wto_edges_ok : digraph -> ptrie N -> ptrie (N * N) -> list positive -> bool.
+  Parameter T_wto_edges_ok : digraph -> ptrie N -> ptrie (N * N) -> list positive -> N.
   Parameter wto_member : positive -> list positive -> bool.
   Parameter wto_unique : list positive -> bool.
   Parameter wto_annotate : list positive -> wto -> list (positive * list positive).
@@ -409,20 +421,36 @@ Module Type WTO_PLAN (Import W : WTO_T).
     (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
       N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
 
-  (** Index construction retains the quadratic suffix materialization cost. *)
-  Parameter T2_index : forall rows,
-    (T_wto_positions rows <= k_index * N.of_nat (length rows + 1) *
-      N.of_nat (length rows + vertex_width (map fst rows) + 1))%N.
-
   (** Materialized filtering pays a list membership scan for each outgoing occurrence. *)
   Parameter T3_scope : forall g vs,
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
 
-  (** The selected checker has a candidate-sensitive scan budget before any public absorption. *)
-  Parameter T4_check_scans : forall g roots w,
-    (T_check g roots w <= k_check * check_work g roots w)%N.
+  (** The index loop checks each key's width and listing before it reads a trie. *)
+  Parameter T4a_index : forall g w,
+    (T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty [] <=
+    k_index * N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1))%N.
 
-  (** The public checker target needs a linear checker and a candidate rejection boundary. *)
+  (** An index result lists distinct listed vertices. *)
+  Parameter F4a_index : forall g w ranks intervals vs,
+    wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+    NoDup vs /\ (forall v, In v vs -> In v (nodes g)).
+
+  (** The edge scan is the final conjunct of the checker. *)
+  Parameter F4b_edges : forall b ranks intervals vs,
+    wto_edges_ok b ranks intervals vs =
+      forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
+
+  (** The edge scan reads the rows of distinct listed vertices once each. *)
+  Parameter T4b_edges : forall g w ranks intervals vs,
+    wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+    (T_wto_edges_ok (base g) ranks intervals vs <=
+     k_check * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+       N.of_nat (graph_width (base g) + 1))%N.
+
+  (** Index and edge phases combine with trie coverage and the raw search bound. *)
   Parameter T5_check_public : forall g roots w,
     (T_check g roots w <= c_wto *
       N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
