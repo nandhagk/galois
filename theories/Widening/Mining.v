@@ -10,6 +10,10 @@ From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 From Galois.Widening Require Import MiningSig.
 
+Module List.
+  TimeFun Stdlib.Lists.List.flat_map.
+End List.
+
 Module MiningCode (X : KEY_OPS) (L : LANG_OPS) (T : THRESHOLDS_OPS)
     <: MINING_OPS X L T.
   Fixpoint lits_acc (e : term L.op X.t) (acc : list Z) : list Z :=
@@ -45,4 +49,46 @@ Module Mining (X : KEY) (L : LANG) (T : THRESHOLDS) <: MINING X L T.
   Lemma mine_ordered : forall es extra, T.ordered (mine es extra).
   Proof. Admitted.
 End Mining.
+
+Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
+    <: MINING_ALL X L T.
+  Include Mining X L T.
+
+  TimeFun lits_acc.
+  TimeFun lits.
+  TimeFun mine.
+
+  Definition c_mining : N := 1%N. (* STUB *)
+
+  Definition seeds es extra := flat_map lits es ++ extra.
+  Definition expanded es extra := flat_map (fun z => ((z - 1)%Z :: z :: (z + 1)%Z :: nil))
+    (seeds es extra).
+
+  Lemma T_lits_le : forall e,
+    (T_lits e <= c_mining * N.of_nat (tsize e))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_mine_le : forall es extra,
+    (T_mine es extra <= c_mining *
+      (N.of_nat ((fold_right Nat.add 0 (map tsize es) +
+        fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
+      T.T_make (expanded es extra) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_mining : N := 1%N. (* STUB *)
+
+  Lemma F3_lits_acc : forall e acc, lits_acc e acc = lits e ++ acc.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_lits_acc : forall e acc,
+    (T_lits_acc e acc <= k_mining * N.of_nat (tsize e))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F1_mine : forall es extra, mine es extra = T.make (expanded es extra).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F2_expanded_length : forall es extra,
+    length (expanded es extra) = 3 * length (seeds es extra).
+  Proof. Admitted. (* STUB *)
+End MiningT.
 
