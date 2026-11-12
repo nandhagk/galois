@@ -57,7 +57,7 @@ Module ZLangT <: Z_LANGUAGE_T.
   TimeFun eval.
   TimeFun literal.
 
-  Definition c_lang : N := 1%N.
+  Definition c_lang : N := 1%N. (* STUB *)
   (** STUB: constant-factor cost obligation for viewed integer evaluation. *)
   Lemma T_eval_le : forall o vs,
     (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.

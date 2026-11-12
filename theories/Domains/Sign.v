@@ -278,7 +278,7 @@ Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
     c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition c_sign : N := 1%N.
+  Definition c_sign : N := 1%N. (* STUB *)
   Lemma T_sign_not_le : forall a, (T_sign_not a <= c_sign)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_sign_neg_le : forall a, (T_sign_neg a <= c_sign)%N.
