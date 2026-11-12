@@ -134,6 +134,9 @@ Module FlatHeight (K : KEY)
   Definition height : nat := 2.
   Lemma rank_le : forall a, rank a <= height.
   Proof. intros [|a|]; cbv [rank height]; auto. Qed.
+  (** The flat order never lowers rank. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
   Lemma rank_strict : forall a b, flat_leb K.eqb a b = true -> flat_leb K.eqb b a = false ->
     rank a < rank b.
   Proof.

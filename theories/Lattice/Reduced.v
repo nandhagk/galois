@@ -43,7 +43,8 @@ Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
   Proof. Admitted.
 End Reduced.
 
-Module ReducedT (A B : BLATTICE_T) (R : REDUCER_T A B) <: BLATTICE_T.
+Module ReducedT (A B : BLATTICE_T) (SA : JOIN_SIZE A) (SB : JOIN_SIZE B)
+    (R : REDUCER_T A B) <: BLATTICE_T.
   Include Reduced A B R.
 
   TimeFun leb.
@@ -80,7 +81,11 @@ Module ReducedHeight (A B : BLATTICE) (R : REDUCER A B)
   Lemma rank_le : forall a, rank a <= height.
   Proof. intro a; apply H.rank_le. Qed.
 
+  (** Reduction preserves the rank order of comparable pairs. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
+
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
-  Proof. Admitted. (* CONVERT: reduced_height: missing rank_monotone in HEIGHT *)
+  Proof. Admitted. (* CONVERT: reduced_height: the dictionary carrier changed *)
 End ReducedHeight.
