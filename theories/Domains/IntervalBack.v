@@ -67,6 +67,10 @@ Module IntervalPayloadCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
   Definition pis_bot w a := match interval_clip w a with IBot => true | _ => false end.
   Definition pconst w z := interval_const w z.
   Definition ppoint w a := interval_singleton (interval_clip w a).
+  Definition pwparam := ttree.
+  Definition pwiden ts w a b :=
+    if pleb w b a then a else interval_widen ts a b.
+  Definition pnarrow (_ : positive) a b := interval_narrow a b.
 End IntervalPayloadCode.
 
 Module IntervalWordTableCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)

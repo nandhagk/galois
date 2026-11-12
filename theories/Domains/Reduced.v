@@ -21,7 +21,7 @@ Module ReducedCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L)
   Definition wparam := P.wparam.
   Definition widen := P.widen.
   Definition narrow := P.narrow.
-  Definition red (x : t) : t := Nat.iter K.rounds R.reduce x.
+  Definition red (x : t) : t := P.normalize (Nat.iter K.rounds R.reduce x).
   Definition forward (o : L.op) (xs : list t) : t := red (P.forward o xs).
   Definition backward (o : L.op) (r : t) (xs : list t) : list t :=
     map red (P.backward o r xs).

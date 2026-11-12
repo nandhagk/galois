@@ -127,7 +127,7 @@ Module Type WORD_PAYLOAD (L : WORD_LANGUAGE) :=
   WORD_PAYLOAD_OPS L <+ WORD_PAYLOAD_LAWS L.
 
 Module Type WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T) (Import W : WORD_PAYLOAD L).
-  (* spec: psize *)
+  (* spec: psize pwsize *)
   Parameter psize : positive -> p -> nat.
   Parameter pwsize : pwparam -> nat.
   Parameter T_pwiden : pwparam -> positive -> p -> p -> N.
@@ -208,6 +208,11 @@ Module Type WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) :=
 
 Module Type WORD_PLAN (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     (T : WORD_TABLE_T L W).
+  Definition tagged_wrank (q : W.pwparam) (a : tagged W.p) : nat :=
+    match a with
+    | TBot | TAny => 0
+    | TVal w p => 1 + W.pwrank q w p
+    end.
   Parameter untag : list (tagged W.p) -> option (list (positive * W.p)).
   Parameter retag : list positive -> list W.p -> list (tagged W.p).
   Parameter T_untag : list (tagged W.p) -> N.

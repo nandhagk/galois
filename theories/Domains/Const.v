@@ -91,6 +91,9 @@ Module ConstWordCode (L : WORD_LANGUAGE_OPS)
   Definition pconst (w : positive) (z : Z) : p := FVal (L.wrap w z).
   Definition ppoint (_ : positive) (a : p) : option Z :=
     match a with FVal z => Some z | _ => None end.
+  Definition pwparam := unit.
+  Definition pwiden (_ : pwparam) w a b := pjoin w a b.
+  Definition pnarrow w a b := pmeet w a b.
 End ConstWordCode.
 
 Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
