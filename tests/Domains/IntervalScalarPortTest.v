@@ -1,0 +1,201 @@
+(** * Fixed-width interval operations
+
+    These examples exercise clipping, arithmetic and comparisons.
+    For example, clipping at width one retains the interval from zero to one.
+    Builds on: IntervalOps IntervalBack BitsLang Tagged Harness WordSig. *)
+
+From Stdlib Require Import ZArith List.
+From Galois.Bits Require Import Word Op.
+From Galois.Domains Require Import ValueSig IntervalSig Thresholds ThresholdsSig Interval IntervalOps IntervalBack BitsLang Tagged Harness WordSig.
+Import List.ListNotations.
+Local Open Scope Z_scope.
+
+Module Scalar := IntervalBaseCode ThresholdsCode.
+Module Ops := IntervalOpsCode ThresholdsCode Scalar.
+Import Ops.
+Module Payload := IntervalPayloadCode WordLanguageCode ThresholdsCode Scalar.
+Module Table := IntervalWordTableCode WordLanguageCode ThresholdsCode Scalar Payload.
+Module Base := TaggedCode WordLanguageCode Payload.
+Module TaggedTable := TaggedTableCode WordLanguageCode Payload Table.
+Module Domain := HarnessCode BitsLangCode Base TaggedTable.
+Definition interval_fwd o xs rw :=
+  match Domain.forward (BOp o) (map (fun wp => TVal (fst wp) (snd wp)) xs) with
+  | TBot => IBot | TVal _ p => p | TAny => Payload.ptop rw
+  end.
+Example interval_operand_clip :
+  interval_clip 8%positive (I NegInf PosInf) = I (Fin 0) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_one_bit_clip :
+  interval_clip 1%positive (I (Fin (-1)) (Fin 2)) = I (Fin 0) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_add_in_range :
+  interval_add 8%positive (I (Fin 1) (Fin 4)) (I (Fin 2) (Fin 5)) =
+  I (Fin 3) (Fin 9).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_add_wrap_fallback :
+  interval_add 8%positive (I (Fin 250) (Fin 255)) (I (Fin 1) (Fin 2)) =
+  I (Fin 0) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_arithmetic_bottom_fallback :
+  interval_add 1%positive IBot (I (Fin 0) (Fin 1)) = I (Fin 0) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_assume_comparison :
+  interval_assume_ult (I (Fin 0) (Fin 20)) (I (Fin 5) (Fin 10)) =
+  (I (Fin 0) (Fin 9), I (Fin 5) (Fin 10)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_comparison_decided :
+  interval_ult (I (Fin 0) (Fin 3)) (I (Fin 5) (Fin 10)) = I (Fin 1) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_comparison_overlap :
+  interval_ult (I (Fin 0) (Fin 10)) (I (Fin 5) (Fin 10)) = I (Fin 0) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_comparison_equal_singletons :
+  interval_eq (I (Fin 1) (Fin 1)) (I (Fin 1) (Fin 1)) = I (Fin 1) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_udiv_zero :
+  interval_udiv 8%positive (I (Fin 1) (Fin 3)) (I (Fin 0) (Fin 0)) =
+  I (Fin 255) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_urem_constant_quotient :
+  interval_urem 4%positive (I (Fin 5) (Fin 5)) (I (Fin 2) (Fin 2)) =
+  I (Fin 1) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_assume_add_inverse :
+  interval_assume_add 8%positive (I (Fin 0) (Fin 10)) (I (Fin 2) (Fin 2))
+    (I (Fin 5) (Fin 7)) = (I (Fin 3) (Fin 5), I (Fin 2) (Fin 2)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_assume_sub_inverse :
+  interval_assume_sub (I (Fin 5) (Fin 10)) (I (Fin 2) (Fin 2))
+    (I (Fin 4) (Fin 5)) = (I (Fin 6) (Fin 7), I (Fin 2) (Fin 2)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_assume_resize_operand_width :
+  interval_assume_rewrap 4%positive (I (Fin 0) (Fin 10)) (I (Fin 3) (Fin 5)) =
+  I (Fin 3) (Fin 5).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_and_mask :
+  interval_and 8%positive (I (Fin 240) (Fin 255)) (I (Fin 15) (Fin 15)) =
+  I (Fin 0) (Fin 15).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_or_xor_mask :
+  interval_or_xor 8%positive (I (Fin 1) (Fin 2)) (I (Fin 4) (Fin 4)) =
+  I (Fin 0) (Fin 7).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_complement :
+  interval_not 8%positive (I (Fin 250) (Fin 255)) = I (Fin 0) (Fin 5).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_bitwise_empty_scalar_fallback :
+  interval_and 1%positive IBot (I (Fin 1) (Fin 1)) = I (Fin 0) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_neq_singleton :
+  interval_assume_neq (I (Fin 0) (Fin 0)) (I (Fin 0) (Fin 0)) = (IBot, IBot).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+
+Example interval_signed_mod_singletons :
+  interval_fwd bvsmod [(8%positive, I (Fin 251) (Fin 251));
+                       (8%positive, I (Fin 3) (Fin 3))] 8%positive = I (Fin 1) (Fin 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_mod_positive_divisor :
+  interval_fwd bvsmod [(8%positive, I (Fin 251) (Fin 252));
+                       (8%positive, I (Fin 2) (Fin 3))] 8%positive = I (Fin 0) (Fin 2).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_shift :
+  interval_fwd bvashr [(8%positive, I (Fin 248) (Fin 252));
+                       (8%positive, I (Fin 1) (Fin 2))] 8%positive =
+  I (Fin 252) (Fin 255).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_division_zero_and_minimum :
+  (interval_fwd bvsdiv [(8%positive, I (Fin 128) (Fin 129));
+                        (8%positive, I (Fin 0) (Fin 1))] 8%positive,
+    interval_fwd bvsdiv [(8%positive, I (Fin 128) (Fin 129));
+                         (8%positive, I (Fin 255) (Fin 255))] 8%positive) =
+  (I (Fin 1) (Fin 129), I (Fin 127) (Fin 128)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_shift_saturation :
+  (interval_fwd bvashr [(8%positive, I (Fin 248) (Fin 252));
+                        (8%positive, I (Fin 7) (Fin 8))] 8%positive,
+    interval_fwd bvashr [(8%positive, I (Fin 2) (Fin 4));
+                         (8%positive, I (Fin 8) (Fin 9))] 8%positive) =
+  (I (Fin 255) (Fin 255), I (Fin 0) (Fin 0)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_signed_remainder_precision_gap :
+  (interval_fwd bvsrem [(8%positive, I (Fin 5) (Fin 5));
+                        (8%positive, I (Fin 2) (Fin 3))] 8%positive,
+    eval_op bvsrem [(8%positive, 5); (8%positive, 2)],
+    eval_op bvsrem [(8%positive, 5); (8%positive, 3)]) =
+  (I (Fin 0) (Fin 2), Some (8%positive, 1), Some (8%positive, 2)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
