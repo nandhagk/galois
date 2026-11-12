@@ -4,10 +4,18 @@
     For example, repeated targets produce repeated graph successors.
     Builds on: Program.CallsSig and Base.Trie. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Graph Require Import Data Spec.
 From Galois.Program Require Import SemanticsSig CallsSig.
+
+Definition call_edge_target {F S} (edge : call_edge F S) : F :=
+  match edge with
+  | CallEdge _ target => target
+  end.
+
+TimeFun call_edge_target.
 
 Record calls_tables (F S : Type) := CallsTables {
   call_functions : list F;
@@ -26,9 +34,24 @@ Arguments call_callers {F S}.
 Arguments call_default_caller {F S}.
 Arguments call_targets {F S}.
 
+TimeFun call_functions.
+TimeFun call_roots.
+TimeFun call_sites.
+TimeFun call_callers.
+TimeFun call_default_caller.
+TimeFun call_targets.
+
 Module Type CALLS_DATA (P : TYPE) (F S : KEY_OPS).
   Parameter tables : P.t -> calls_tables F.t S.t.
 End CALLS_DATA.
+
+Module Type CALLS_DATA_TIME (P : TYPE) (F S : KEY_T)
+    (Import D : CALLS_DATA P F S).
+  Parameter T_tables : P.t -> N.
+End CALLS_DATA_TIME.
+
+Module Type CALLS_DATA_T (P : TYPE) (F S : KEY_T) :=
+  CALLS_DATA P F S <+ CALLS_DATA_TIME P F S.
 
 Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
     <: CALLS_OPS P F S.
@@ -52,7 +75,8 @@ Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
   Definition call_graph p :=
     Digraph (map F.encode (functions p))
       (fold_left (fun adj f => PTrieCode.set (F.encode f)
-        (map (fun e => F.encode (edge_callee e)) (call_edges (resolve p) (sites_of p f))) adj)
+        (map (fun e => F.encode (call_edge_target e))
+          (call_edges (resolve p) (sites_of p f))) adj)
         (functions p) PTrieCode.empty).
 End CallsCode.
 
@@ -100,3 +124,39 @@ Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
     reach (C.call_graph p) (C.graph_roots p) (F.encode f).
   Proof. Admitted. (* CONVERT: active_reachable_in_call_graph: Unable to unify the induction goal. *)
 End CallsSound.
+
+Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
+    <: CALLS_ALL P F S.
+  Include Calls P F S D.
+  TimeFun functions.
+  TimeFun roots.
+  TimeFun sites_of.
+  TimeFun caller_of.
+  TimeFun resolve.
+  TimeFun call_graph.
+
+  Definition call_graph_work p :=
+    (T_functions p +
+      fold_right N.add 0%N (map (fun f => T_sites_of p f + F.T_encode f)%N (functions p)) +
+      fold_right N.add 0%N (map (T_resolve p) (sites p)) +
+      fold_right N.add 0%N (map F.T_encode (targets p)) +
+      N.of_nat (length (functions p) + length (sites p) + length (targets p) + 1) *
+        N.of_nat (function_width p + 1))%N.
+
+  Definition c_calls : N := 1%N. (* STUB *)
+
+  (** Graph construction charges the inventory readers and encoded adjacency work. *)
+  Lemma T_call_graph_le : forall p,
+    (T_call_graph p <= c_calls * call_graph_work p)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Call graph construction has the aggregate reader and bit-width bound. *)
+  Lemma call_graph_bigO : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
+  Proof. Admitted. (* STUB *)
+
+  (** A site contributes exactly its resolver targets to its outgoing list. *)
+  Lemma F1_call_edge : forall p f site target,
+    In site (sites_of p f) -> In target (resolve p site) ->
+    In (CallEdge site target) (out_edges p f).
+  Proof. Admitted. (* STUB *)
+End CallsT.
