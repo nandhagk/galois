@@ -176,6 +176,13 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (entails a (LCons _ (map (fun p => (fst p, (- snd p)%Z)) (lhs r)) RLe
             (- rhs r)%Z))
       end) b.
+  (** State size charges all stored numeric data. *)
+  Parameter F_size : forall s, size s = (terms s + n (prows s) + 1) * (nell s + 1).
+  (** Range work charges the numeric query and its linearization. *)
+  Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
+    N.of_nat (terms s * (nell s + 1) +
+      fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
+        (length (prows s) + 2) (nell s + F.bits_e e + 1)) + F.T_lin_of e)%N.
 End POLY_PLAN.
 
 Module Type POLY_ALL (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

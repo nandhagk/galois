@@ -29,7 +29,7 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
   (* STUB-CODE *)
   Definition meet (_ _ : t) : t := Unreached.
   (* STUB-CODE *)
-  Definition widen (_ : wparam) (_ _ : t) : t := Unreached.
+  Definition widen (_ : wparam) (a b : t) : t := if leb b a then a else join a b.
   (* STUB-CODE *)
   Definition narrow (_ _ : t) : t := Unreached.
   (* STUB-CODE *)
@@ -51,7 +51,9 @@ End KarrCode.
 Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     (F : LINEARIZE X L N) (C : LINCERT X) <: KARR X L N F C.
   Include KarrCode X L F C.
-  Definition wrank (_ : wparam) (_ : t) : nat := 0.
+  (* STUB-CODE *)
+  Definition wrank (_ : wparam) (s : t) : nat :=
+    match s with Unreached => 0 | Reached P => length P end.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
   Lemma leb_refl  : forall a, leb a a = true.
@@ -114,7 +116,6 @@ End Karr.
 Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: KARR_ALL X L N F C.
   Include Karr X L N F C.
-  Definition size (_ : t) : nat := 0.
   Definition wsize (_ : wparam) : nat := 0.
   Definition normal (P : list (lcons X.t)) : Prop :=
     Forall (fun r => NoDup (map fst (lhs r))) P.
@@ -136,6 +137,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
   Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
+  Definition size (s : t) : nat := (terms s + n s + 1) * (nell s + 1).
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2 +
@@ -147,7 +149,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     terms s * (nell s + 1) + (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
       (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
         (nell s + F.bits_es g es) + 1)^2 + N.to_nat (F.T_atoms_of g es).
-  Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
+  Definition range_work (e : term L.op X.t) (s : t) : nat :=
+    terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2 + N.to_nat (F.T_lin_of e).
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -242,9 +246,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma F_wunits : forall s, wunits s = 0.
   Proof. Admitted. (* STUB *)
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
+    In r P \/
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
       (forall v : X.t -> Z, eval_coef v (lhs s) = (sc * eval_coef v (lhs r))%Z) /\
-      rhs s = (sc * rhs r)%Z.
+      match lrel r with
+      | REq => rhs s = (sc * rhs r)%Z
+      | RLe => (rhs s <= sc * rhs r)%Z
+      end.
+  (** Join emits equality rows. *)
+  Lemma join_eq : forall a b P, join (Reached a) (Reached b) = Reached P ->
+    Forall (fun r => lrel r = REq) P.
+  Proof. Admitted. (* STUB *)
+
   Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
   Proof. Admitted. (* STUB *)
   Lemma join_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
@@ -287,9 +300,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   Proof. Admitted. (* STUB *)
-  Lemma widen_join : forall p a b, widen p a b = join a b.
+  Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
   Proof. Admitted. (* STUB *)
   Lemma entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
+  Proof. Admitted. (* STUB *)
+  (** State size charges all stored numeric data. *)
+  Lemma F_size : forall s, size s = (terms s + n s + 1) * (nell s + 1).
+  Proof. Admitted. (* STUB *)
+  (** Range work charges the numeric query and its linearization. *)
+  Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
+    N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
   Proof. Admitted. (* STUB *)
 End KarrT.

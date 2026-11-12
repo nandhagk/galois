@@ -26,24 +26,6 @@ Module Type LINCERT_OPS (X : KEY_OPS).
   Parameter check_empty : list (lcons X.t) -> list Z -> bool.
 End LINCERT_OPS.
 
-Module Type LINCERT_LAWS (X : KEY) (Import C : LINCERT_OPS X).
-  (** Accepted certificates entail their integer conclusion. *)
-  Parameter check_entails_sound : forall P c k, check_entails P c k = true ->
-    forall v, Forall (sat v) P -> sat v c.
-  (** Certificates without integer cuts also entail their rational conclusion. *)
-  Parameter check_entails_sound_Q : forall P c k,
-    check_entails P c k = true -> cut k = false ->
-    forall v, Forall (satQ v) P -> satQ v c.
-  (** Accepted contradictions exclude every integer model. *)
-  Parameter check_empty_sound : forall P ms, check_empty P ms = true ->
-    forall v, ~ Forall (sat v) P.
-  (** An accepted contradiction entails every conclusion. *)
-  Parameter check_entails_empty : forall P c k,
-    check_empty P (mults k) = true -> check_entails P c k = true.
-End LINCERT_LAWS.
-
-Module Type LINCERT (X : KEY) := LINCERT_OPS X <+ LINCERT_LAWS X.
-
 Module Type LINCERT_SPEC (X : KEY_OPS).
   Definition row_bits (c : lcons X.t) : nat :=
     fold_right Nat.max (Z.size_nat (rhs c)) (map (fun p => Z.size_nat (snd p)) (lhs c)).
@@ -62,10 +44,66 @@ Module Type LINCERT_SPEC (X : KEY_OPS).
     fold_right Nat.max 0
       (map (fun pm => Z.size_nat (snd pm) + row_bits (fst pm)) (List.combine P ms)) +
     Nat.log2 (length P) + 1.
+  Definition coef_of (x : X.t) (xs : list (X.t * Z)) : Z :=
+    fold_right (fun p z => if X.eqb x (fst p) then (snd p + z)%Z else z) 0%Z xs.
+  Definition comb_coef (P : list (lcons X.t)) (ms : list Z) (x : X.t) : Z :=
+    fold_right Z.add 0%Z
+      (map (fun pm => (snd pm * coef_of x (lhs (fst pm)))%Z) (List.combine P ms)).
+  Definition comb_rhs (P : list (lcons X.t)) (ms : list Z) : Z :=
+    fold_right Z.add 0%Z (map (fun pm => (snd pm * rhs (fst pm))%Z) (List.combine P ms)).
+  Definition comb_eq (P : list (lcons X.t)) (ms : list Z) : bool :=
+    forallb (fun pm => match lrel (fst pm) with REq => true | RLe => Z.eqb (snd pm) 0 end)
+      (List.combine P ms).
+  Definition admissible (P : list (lcons X.t)) (ms : list Z) : Prop :=
+    length P = length ms /\ Forall2 (fun p m => lrel p = RLe -> (0 <= m)%Z) P ms.
+
 End LINCERT_SPEC.
 
+Module Type LINCERT_BASE (X : KEY) := LINCERT_OPS X <+ LINCERT_SPEC X.
+
+Module Type LINCERT_LAWS (X : KEY) (Import C : LINCERT_BASE X).
+  (** Accepted certificates entail their integer conclusion. *)
+  Parameter check_entails_sound : forall P c k, check_entails P c k = true ->
+    forall v, Forall (sat v) P -> sat v c.
+  (** Certificates without integer cuts also entail their rational conclusion. *)
+  Parameter check_entails_sound_Q : forall P c k,
+    check_entails P c k = true -> cut k = false ->
+    forall v, Forall (satQ v) P -> satQ v c.
+  (** Accepted contradictions exclude every integer model. *)
+  Parameter check_empty_sound : forall P ms, check_empty P ms = true ->
+    forall v, ~ Forall (sat v) P.
+  (** An accepted contradiction entails every conclusion. *)
+  Parameter check_entails_empty : forall P c k,
+    check_empty P (mults k) = true -> check_entails P c k = true.
+  (** Admissible multipliers combine to the weighted sum of the rows. *)
+  Parameter combine_spec : forall P ms, admissible P ms ->
+    exists s, combine P ms = Some s /\
+      (forall x, coef_of x (lhs s) = comb_coef P ms x) /\ rhs s = comb_rhs P ms /\
+      lrel s = (if comb_eq P ms then REq else RLe).
+  (** Combination succeeds only on admissible multipliers. *)
+  Parameter combine_admissible : forall P ms s, combine P ms = Some s -> admissible P ms.
+  (** Exact cut-free certificates are accepted. *)
+  Parameter check_entails_complete : forall P c ms sc, admissible P ms -> (0 < sc)%Z ->
+    (forall x, comb_coef P ms x = (sc * coef_of x (lhs c))%Z) ->
+    match lrel c with
+    | REq => comb_eq P ms = true /\ comb_rhs P ms = (sc * rhs c)%Z
+    | RLe => (comb_rhs P ms <= sc * rhs c)%Z
+    end ->
+    check_entails P c (Cert ms sc false) = true.
+  (** Rational contradictions are accepted. *)
+  Parameter check_empty_complete : forall P ms, admissible P ms ->
+    (forall x, comb_coef P ms x = 0%Z) ->
+    (comb_rhs P ms < 0)%Z \/ (comb_eq P ms = true /\ comb_rhs P ms <> 0%Z) ->
+    check_empty P ms = true.
+End LINCERT_LAWS.
+
+Module Type LINCERT (X : KEY) := LINCERT_OPS X <+ LINCERT_SPEC X <+ LINCERT_LAWS X.
+
 Module Type LINCERT_TIME (X : KEY_T) (Import C : LINCERT X).
-  Include LINCERT_SPEC X.
+  Parameter T_coef_of : X.t -> list (X.t * Z) -> N.
+  Parameter T_comb_coef : list (lcons X.t) -> list Z -> X.t -> N.
+  Parameter T_comb_rhs : list (lcons X.t) -> list Z -> N.
+  Parameter T_comb_eq : list (lcons X.t) -> list Z -> N.
   Parameter T_combine : list (lcons X.t) -> list Z -> N.
   Parameter T_check_entails : list (lcons X.t) -> lcons X.t -> cert -> N.
   Parameter T_check_empty : list (lcons X.t) -> list Z -> N.
@@ -111,13 +149,6 @@ Module Type LINCERT_PLAN (X : KEY_T) (Import C : LINCERT_T X).
   (** Combination without cuts is valid over rational stores. *)
   Parameter combine_sound_Q : forall P ms s, combine P ms = Some s ->
     forall v, Forall (satQ v) P -> satQ v s.
-  (** Combination rejects multiplier vectors of the wrong length. *)
-  Parameter combine_length : forall P ms s,
-    combine P ms = Some s -> length P = length ms.
-  (** Inequality rows require nonnegative multipliers. *)
-  Parameter combine_nonnegative : forall P ms s,
-    combine P ms = Some s ->
-    Forall2 (fun p m => lrel p = RLe -> (0 <= m)%Z) P ms.
 End LINCERT_PLAN.
 
 Module Type LINCERT_ALL (X : KEY_T) := LINCERT_T X <+ LINCERT_PLAN X.

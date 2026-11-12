@@ -239,7 +239,6 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
     end.
   (** Request size records the largest request or stored value met by refinement. *)
   Parameter F_rsize : forall s g es, rsize s g es = assume_size s g es.
-  (** Assumption checks bottoms at written leaves and charges cached two-pass refinement. *)
   Fixpoint ann_work (n : ann L.op X.t V.t) : nat :=
     match n with
     | ALeaf x _ => X.bits x + 1
@@ -259,6 +258,7 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter T2_refine_checked : forall q n m,
     (T_refine_checked q n m <= k_env_refine *
       N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N.
+  (** Assumption checks bottoms at written leaves and charges cached two-pass refinement. *)
   Parameter T1_assume : forall g es m,
     (T_assume g es (Reached m) <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost m) es) +
@@ -310,16 +310,22 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter tcost_node : forall m o es, tcost m (Node o es) =
     fold_right Nat.add 0 (map (tcost m) es) +
     V.work o (map (fun e => root (annotate m e)) es) + 1.
+  (** Environment size agrees with its raw stored-value measure. *)
   Parameter F_size : forall s, size s = esize s.
+  (** Environment widening parameters use the value-domain parameter size. *)
   Parameter F_wsize : forall p, wsize p = V.wsize p.
+  (** Assignment work charges annotation and the current environment. *)
   Parameter F_assign_work : forall x e s, assign_work x e s =
     match s with
     | Unreached => tsize e + X.bits x + 1
     | Reached m => tcost m e + esize s + X.bits x + 1
     end.
+  (** Havoc work charges the environment and the selected key. *)
   Parameter F_havoc_work : forall x s, havoc_work x s = esize s + X.bits x + 1.
+  (** Evaluation work charges its cached forward pass. *)
   Parameter F_eval_work : forall e s, eval_work e s =
     match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
+  (** Assumption work charges the forward pass, guard and checked refinement. *)
   Parameter F_assume_work : forall g es s, assume_work g es s =
     fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
       fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.

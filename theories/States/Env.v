@@ -602,21 +602,27 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     fold_right Nat.add 0 (map (tcost m) es) +
     V.work o (map (fun e => root (annotate m e)) es) + 1.
   Proof. Admitted. (* STUB *)
+  (** Environment size agrees with its raw stored-value measure. *)
   Lemma F_size : forall s, size s = esize s.
   Proof. Admitted. (* STUB *)
+  (** Environment widening parameters use the value-domain parameter size. *)
   Lemma F_wsize : forall p, wsize p = V.wsize p.
   Proof. Admitted. (* STUB *)
+  (** Assignment work charges annotation and the current environment. *)
   Lemma F_assign_work : forall x e s, assign_work x e s =
     match s with
     | Unreached => tsize e + X.bits x + 1
     | Reached m => tcost m e + esize s + X.bits x + 1
     end.
   Proof. Admitted. (* STUB *)
+  (** Havoc work charges the environment and the selected key. *)
   Lemma F_havoc_work : forall x s, havoc_work x s = esize s + X.bits x + 1.
   Proof. Admitted. (* STUB *)
+  (** Evaluation work charges its cached forward pass. *)
   Lemma F_eval_work : forall e s, eval_work e s =
     match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
   Proof. Admitted. (* STUB *)
+  (** Assumption work charges the forward pass, guard and checked refinement. *)
   Lemma F_assume_work : forall g es s, assume_work g es s =
     fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
       fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.

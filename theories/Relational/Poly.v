@@ -51,7 +51,9 @@ End PolyCode.
 Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     (F : LINEARIZE X L N) (C : LINCERT X) <: POLY X L N F C.
   Include PolyCode X L F C.
-  Definition wrank (_ : wparam) (_ : t) : nat := 0.
+  (* STUB-CODE *)
+  Definition wrank (_ : wparam) (s : t) : nat :=
+    match s with Unreached => 0 | Reached P => length P end.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
   Lemma leb_refl  : forall a, leb a a = true.
@@ -114,7 +116,6 @@ End Poly.
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: POLY_ALL X L N F C.
   Include Poly X L N F C.
-  Definition size (_ : t) : nat := 0.
   Definition wsize (_ : wparam) : nat := 0.
   Definition normal (P : list (lcons X.t)) : Prop :=
     Forall (fun r => NoDup (map fst (lhs r))) P.
@@ -133,6 +134,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (prows s)).
   Definition nell (s : t) : nat := ell (prows s) + Nat.log2 (terms s) + 1.
+  Definition size (s : t) : nat := (terms s + n (prows s) + 1) * (nell s + 1).
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) +
       (length (prows s) + 3)^2 * (n (prows s) + tsize e + length (prows s) + 3) *
@@ -144,7 +146,10 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
     (length (prows s) + 1) * (fold_right Nat.add 0%nat (map tsize es) + 1) *
       (F.bits_es g es + 1) + N.to_nat (F.T_atoms_of g es).
-  Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
+  Definition range_work (e : term L.op X.t) (s : t) : nat :=
+    terms s * (nell s + 1) +
+      fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
+        (length (prows s) + 2) (nell s + F.bits_e e + 1) + N.to_nat (F.T_lin_of e).
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -277,5 +282,14 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (entails a (LCons _ (map (fun p => (fst p, (- snd p)%Z)) (lhs r)) RLe
             (- rhs r)%Z))
       end) b.
+  Proof. Admitted. (* STUB *)
+  (** State size charges all stored numeric data. *)
+  Lemma F_size : forall s, size s = (terms s + n (prows s) + 1) * (nell s + 1).
+  Proof. Admitted. (* STUB *)
+  (** Range work charges the numeric query and its linearization. *)
+  Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
+    N.of_nat (terms s * (nell s + 1) +
+      fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
+        (length (prows s) + 2) (nell s + F.bits_e e + 1)) + F.T_lin_of e)%N.
   Proof. Admitted. (* STUB *)
 End PolyT.

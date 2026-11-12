@@ -223,22 +223,28 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* CONVERT: sign_shape_laws: Not an inductive definition. *)
+  (** Payload concretization reads the sign flags. *)
   Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
   Proof. Admitted. (* STUB *)
+  (** Bitwise negation retains every normalized concrete result. *)
   Lemma F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
   Proof. Admitted. (* STUB *)
+  (** Arithmetic negation retains every normalized concrete result. *)
   Lemma F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_neg a) (L.wrap w (- x)).
   Proof. Admitted. (* STUB *)
+  (** Bitwise conjunction retains every normalized concrete result. *)
   Lemma F5_sign_and_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
   Proof. Admitted. (* STUB *)
+  (** Bitwise disjunction retains every normalized concrete result. *)
   Lemma F6_sign_or_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
   Proof. Admitted. (* STUB *)
+  (** Bitwise exclusive disjunction retains every normalized concrete result. *)
   Lemma F7_sign_xor_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
@@ -268,7 +274,7 @@ Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
 
   Definition psize (w : positive) (_ : p) : nat := Pos.to_nat w.
   Definition pwsize (_ : pwparam) : nat := 1.
-  Definition c_payload : N := 1%N.
+  Definition c_payload : N := 1%N. (* STUB *)
   (** STUB: sign payload size and cost obligations. *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
