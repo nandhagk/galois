@@ -11,8 +11,10 @@ From Galois.Graph Require Import Data SearchSig Search Dom.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 Import Code.List.
 
-Record ssa_tables (N V K G : Type) := SsaTables {
+Record ssa_tables (N E V K G : Type) := SsaTables {
   ssa_values : list V;
+  ssa_entry_params : list V;
+  ssa_arg_rows : list (E * (V * V));
   ssa_defs : ptrie (definition N V K);
   ssa_homes : ptrie N;
   ssa_default_home : N;
@@ -21,16 +23,20 @@ Record ssa_tables (N V K G : Type) := SsaTables {
   ssa_guards : ptrie (list (G * list V))
 }.
 
-Arguments SsaTables {N V K G}.
-Arguments ssa_values {N V K G}.
-Arguments ssa_defs {N V K G}.
-Arguments ssa_homes {N V K G}.
-Arguments ssa_default_home {N V K G}.
-Arguments ssa_params {N V K G}.
-Arguments ssa_args {N V K G}.
-Arguments ssa_guards {N V K G}.
+Arguments SsaTables {N E V K G}.
+Arguments ssa_values {N E V K G}.
+Arguments ssa_entry_params {N E V K G}.
+Arguments ssa_arg_rows {N E V K G}.
+Arguments ssa_defs {N E V K G}.
+Arguments ssa_homes {N E V K G}.
+Arguments ssa_default_home {N E V K G}.
+Arguments ssa_params {N E V K G}.
+Arguments ssa_args {N E V K G}.
+Arguments ssa_guards {N E V K G}.
 
 TimeFun ssa_values.
+TimeFun ssa_entry_params.
+TimeFun ssa_arg_rows.
 TimeFun ssa_defs.
 TimeFun ssa_homes.
 TimeFun ssa_default_home.
@@ -38,24 +44,26 @@ TimeFun ssa_params.
 TimeFun ssa_args.
 TimeFun ssa_guards.
 
-Module Type SSA_DATA (P : TYPE) (N V : KEY_OPS) (K G : TYPE).
-  Parameter tables : P.t -> ssa_tables N.t V.t K.t G.t.
+Module Type SSA_DATA (P : TYPE) (N E V : KEY_OPS) (K G : TYPE).
+  Parameter tables : P.t -> ssa_tables N.t E.t V.t K.t G.t.
 End SSA_DATA.
 
-Module Type SSA_DATA_TIME (P : TYPE) (N V : KEY_T) (K G : TYPE)
-    (Import D : SSA_DATA P N V K G).
+Module Type SSA_DATA_TIME (P : TYPE) (N E V : KEY_T) (K G : TYPE)
+    (Import D : SSA_DATA P N E V K G).
   Parameter T_tables : P.t -> N.
   Parameter c_tables : N.
   Parameter T_tables_le : forall p, (T_tables p <= c_tables)%N.
 End SSA_DATA_TIME.
 
-Module Type SSA_DATA_T (P : TYPE) (N V : KEY_T) (K G : TYPE) :=
-  SSA_DATA P N V K G <+ SSA_DATA_TIME P N V K G.
+Module Type SSA_DATA_T (P : TYPE) (N E V : KEY_T) (K G : TYPE) :=
+  SSA_DATA P N E V K G <+ SSA_DATA_TIME P N E V K G.
 
 Module SsaCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     (C : CFG_INDEXED_OPS P N E) (V : KEY_OPS) (K G : TYPE)
-    (D : SSA_DATA P N V K G) <: SSA_OPS P N E C V K G.
+    (D : SSA_DATA P N E V K G) <: SSA_OPS P N E C V K G.
   Definition values p := ssa_values (D.tables p).
+  Definition entry_params p := ssa_entry_params (D.tables p).
+  Definition arg_rows p := ssa_arg_rows (D.tables p).
   Definition def p x :=
     match trie_get (V.encode x) (ssa_defs (D.tables p)) with
     | Some d => d
@@ -82,6 +90,25 @@ Module SsaCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     | None => nil
     end.
 End SsaCode.
+
+Module Type SSA_DATA_LAWS (P : TYPE) (N : KEY) (E : KEY) (C : CFG P N E)
+    (V : KEY) (K G : TYPE) (Import D : SSA_DATA P N E V K G).
+  Parameter entry_params_valid : forall p,
+    ssa_entry_params (tables p) = flat_map (fun n =>
+      match trie_get (N.encode n) (ssa_params (tables p)) with
+      | Some xs => xs | None => nil end) (C.entries p).
+  Parameter arg_rows_valid : forall p,
+    ssa_arg_rows (tables p) = flat_map (fun e => map (pair e)
+      (match trie_get (E.encode e) (ssa_args (tables p)) with
+      | Some xs => xs | None => nil end)) (C.edges p).
+End SSA_DATA_LAWS.
+
+Module Type SSA_DATA_VALID (P : TYPE) (N : KEY) (E : KEY) (C : CFG P N E)
+    (V : KEY) (K G : TYPE) := SSA_DATA P N E V K G <+ SSA_DATA_LAWS P N E C V K G.
+
+Module Type SSA_DATA_VALID_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
+    (V : KEY_T) (K G : TYPE) :=
+  SSA_DATA_VALID P N E C V K G <+ SSA_DATA_TIME P N E V K G.
 
 Record ssa_point_tables (B BE N E V : Type) := SsaPointTables {
   point_lists : ptrie (list N);
@@ -251,10 +278,13 @@ Definition dominating_edges_projected {E} (ctx : strict_context (E * nat))
 TimeFun dominating_edges_projected.
 
 Module Ssa (P : TYPE) (N : KEY) (E : KEY)
-    (C : CFG P N E) (V : KEY) (K G : TYPE) (D : SSA_DATA P N V K G)
+    (C : CFG P N E) (V : KEY) (K G : TYPE) (D : SSA_DATA_VALID P N E C V K G)
     <: SSA P N E C V K G.
   Include SsaCode P N E C V K G D.
   Include SSA_SPEC P N E C V K G.
+
+  Definition entry_params_spec := D.entry_params_valid.
+  Definition arg_rows_spec := D.arg_rows_valid.
 
   Definition wf p :=
     C.wf p /\ NoDup (values p) /\
@@ -321,9 +351,11 @@ End Ssa.
 
 Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T)
-    (K G : TYPE) (D : SSA_DATA_T P N V K G) <: SSA_T P N E C V K G.
+    (K G : TYPE) (D : SSA_DATA_VALID_T P N E C V K G) <: SSA_T P N E C V K G.
   Include Ssa P N E C V K G D.
   TimeFun values.
+  TimeFun entry_params.
+  TimeFun arg_rows.
   TimeFun def.
   TimeFun home.
   TimeFun params.
@@ -332,6 +364,12 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   TimeFun edge_uses.
   TimeFun operands.
   Definition c_ssa : N := 1%N. (* STUB *)
+  Lemma T_entry_params_le : forall p,
+    (T_entry_params p <= c_ssa * N.of_nat (length (entry_params p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_arg_rows_le : forall p,
+    (T_arg_rows p <= c_ssa * N.of_nat (length (arg_rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T_values_le : forall p,
     (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
   Proof. Admitted. (* STUB *)
