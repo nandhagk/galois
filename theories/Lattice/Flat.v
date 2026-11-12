@@ -122,8 +122,9 @@ Module FlatT (K : KEY_T) <: BLATTICE_T.
   Proof. Admitted. (* STUB *)
 End FlatT.
 
-Module FlatHeight (K : KEY).
-  Module Lat := Flat K.
+Module FlatHeight (K : KEY)
+    (Lat : BLATTICE with Definition t := flat K.t
+                     with Definition leb := flat_leb K.eqb) <: HEIGHT Lat.
   Definition rank (x : flat K.t) : nat :=
     match x with
     | FBot => 0
@@ -133,6 +134,9 @@ Module FlatHeight (K : KEY).
   Definition height : nat := 2.
   Lemma rank_le : forall a, rank a <= height.
   Proof. intros [|a|]; cbv [rank height]; auto. Qed.
+  (** The flat order never lowers rank. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
   Lemma rank_strict : forall a b, flat_leb K.eqb a b = true -> flat_leb K.eqb b a = false ->
     rank a < rank b.
   Proof.
@@ -141,10 +145,4 @@ Module FlatHeight (K : KEY).
     destruct (K.eqb_spec a b); try discriminate; subst b.
     destruct (K.eqb_spec a a); congruence.
   Qed.
-  Module Check <: HEIGHT Lat.
-    Definition rank := rank.
-    Definition height := height.
-    Definition rank_le := rank_le.
-    Definition rank_strict := rank_strict.
-  End Check.
 End FlatHeight.

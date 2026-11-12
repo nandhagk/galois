@@ -87,12 +87,21 @@ Module WithTopT (L : LATTICE_T) <: TOP_LATTICE_T.
   Proof. Admitted. (* STUB *)
 End WithTopT.
 
-Module WithTopHeight (L : LATTICE) (H : HEIGHT L).
-  Module Lat := WithTop L.
+Module WithTopHeight (L : LATTICE) (H : HEIGHT L)
+    (Lat : TOP_LATTICE with Definition t := lift_top L.t
+                        with Definition leb :=
+                          (fun x y => match x, y with
+                                      | _, Unknown => true
+                                      | Elem a, Elem b => L.leb a b
+                                      | Unknown, Elem _ => false
+                                      end)) <: HEIGHT Lat.
   Definition rank (x : lift_top L.t) := match x with Elem a => H.rank a | Unknown => S H.height end.
   Definition height := S H.height.
   Lemma rank_le : forall a, rank a <= height.
   Proof. intros [a|]; cbv [rank height]; [pose proof (H.rank_le a); lia|reflexivity]. Qed.
+  (** The lifted order never lowers rank. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
   Proof.
@@ -100,10 +109,4 @@ Module WithTopHeight (L : LATTICE) (H : HEIGHT L).
       try discriminate; try (pose proof (H.rank_le a); lia).
     apply H.rank_strict; assumption.
   Qed.
-  Module Check <: HEIGHT Lat.
-    Definition rank := rank.
-    Definition height := height.
-    Definition rank_le := rank_le.
-    Definition rank_strict := rank_strict.
-  End Check.
 End WithTopHeight.

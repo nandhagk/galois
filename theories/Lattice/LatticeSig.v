@@ -6,6 +6,7 @@
 
 From Stdlib Require Import Arith NArith Bool.
 From Argent Require Import Time.
+From Galois.Base Require Import KeySig SetSig.
 
 Module Type LATTICE_OPS.
   Parameter t : Type.
@@ -50,6 +51,18 @@ Module Type LATTICE_TIME (Import L : LATTICE_OPS).
 End LATTICE_TIME.
 
 Module Type LATTICE_T := LATTICE <+ LATTICE_TIME.
+
+Module Type JOIN_SIZE (Import L : LATTICE_T).
+  (** A join has size bounded by the sizes of its operands. *)
+  Parameter join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
+End JOIN_SIZE.
+
+Module Type UNIVERSE (K : KEY) (S : SET K).
+  Parameter u : S.t.
+  (** The universe enumerates precisely its stored keys. *)
+  Parameter u_wf : S.wf u.
+End UNIVERSE.
 
 (* extensions; each is a layer over LATTICE_OPS and composes with <+ *)
 Module Type HAS_TOP_OPS (Import L : LATTICE_OPS).
@@ -104,13 +117,15 @@ Module Type WIDENING_LAWS (Import L : LATTICE_OPS) (Import W : WIDENING_OPS L).
 End WIDENING_LAWS.
 
 Module Type WIDENING_TIME (Import L : LATTICE_T) (Import W : WIDENING_OPS L).
-  (* spec: wsize *)
+  (* spec: wsize wunits *)
   Parameter wsize : wparam -> nat.
+  Parameter wunits : t -> nat.
   Parameter T_widen : wparam -> t -> t -> N.
   Parameter T_narrow : t -> t -> N.
   (** Widening time is bounded by value and parameter sizes. *)
   Parameter T_widen_le : forall p a b,
-    (T_widen p a b <= c_lat * N.of_nat (size a + size b + wsize p + 1))%N.
+    (T_widen p a b <= c_lat *
+      N.of_nat ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   (** Narrowing time is bounded by both value sizes. *)
   Parameter T_narrow_le : forall a b, (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
 End WIDENING_TIME.
@@ -121,6 +136,8 @@ Module Type HEIGHT (Import L : LATTICE).
   Parameter height : nat.
   (** Every rank is bounded by the height. *)
   Parameter rank_le : forall a, rank a <= height.
+  (** An order step never lowers the rank. *)
+  Parameter rank_mono : forall a b, leb a b = true -> (rank a <= rank b)%nat.
   (** A strict order step increases rank. *)
   Parameter rank_strict : forall a b, leb a b = true -> leb b a = false -> rank a < rank b.
 End HEIGHT.
