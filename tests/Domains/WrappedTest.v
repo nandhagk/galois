@@ -62,3 +62,7 @@ Example wrapped_rank_progress :
 Proof. vm_compute. reflexivity. Qed.
 Example wrapped_full_rank : WF.pwrank tt w8 (WItv 10 9) = 0%nat.
 Proof. vm_compute. reflexivity. Qed.
+
+Example wrapped_two_arcs_do_not_refine_right :
+  W.pleb w8 (W.pmeet w8 (WItv 0 200) (WItv 150 50)) (WItv 150 50) = false.
+Proof. vm_compute. reflexivity. Qed.
