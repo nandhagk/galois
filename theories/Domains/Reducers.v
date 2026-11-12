@@ -270,24 +270,6 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Proof. Admitted. (* STUB *)
 End WrappedBitsT.
 
-Module WrappedBitsPin (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
-    (A0 : WRAPPED_T L) (B0 : KNOWN_BITS_T L C)
-    (A : VALUE_DOMAIN_T BitsLangT with Definition t := tagged A0.p
-      with Definition size := tagged_size A0.psize)
-    (B : VALUE_DOMAIN_T BitsLangT with Definition t := tagged B0.p
-      with Definition size := tagged_size B0.psize)
-    (R : WRAPPED_BITS_T A B) <: WRAPPED_BITS_PIN L C A0 B0 A B R.
-  Lemma F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
-    (TVal w (A0.pmeet w a (bits_hull w b)), TVal w b).
-  Proof. Admitted. (* STUB *)
-  Lemma F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
-    (TVal w a, TVal w (B0.pmeet w b (arc_prefix w a))).
-  Proof. Admitted. (* STUB *)
-  Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
-    R.to_left x = x /\ R.to_right x = x.
-  Proof. Admitted. (* STUB *)
-End WrappedBitsPin.
-
 Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     (S : INTERVAL_SCALAR_T T)
     (A0 : INTERVAL_PAYLOAD_PINNED_T L T S)
@@ -345,24 +327,6 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof. Admitted. (* STUB *)
 End IntervalCongrT.
 
-Module IntervalCongrPin (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T) (S : INTERVAL_SCALAR_T T)
-    (A0 : INTERVAL_PAYLOAD_PINNED_T L T S) (B0 : CONGRUENCE_T L)
-    (A : VALUE_DOMAIN_T BitsLangT with Definition t := tagged A0.p
-      with Definition size := tagged_size A0.psize)
-    (B : VALUE_DOMAIN_T BitsLangT with Definition t := tagged B0.p
-      with Definition size := tagged_size B0.psize)
-    (R : INTERVAL_CONGR_T A B) <: INTERVAL_CONGR_PIN L A0 B0 A B R.
-  Lemma F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
-    (TVal w (A0.pmeet w a (congr_interval w a b)), TVal w b).
-  Proof. Admitted. (* STUB *)
-  Lemma F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
-    (TVal w a, TVal w (B0.pmeet w b (interval_congr a))).
-  Proof. Admitted. (* STUB *)
-  Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
-    R.to_left x = x /\ R.to_right x = x.
-  Proof. Admitted. (* STUB *)
-End IntervalCongrPin.
-
 Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
     (S : INTERVAL_SCALAR_T T) (A0 : INTERVAL_PAYLOAD_PINNED_T L T S)
     (B0 : KNOWN_BITS_T L C)
@@ -418,22 +382,3 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof. Admitted. (* STUB *)
 End IntervalBitsT.
-
-Module IntervalBitsPin (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
-    (S : INTERVAL_SCALAR_T T) (A0 : INTERVAL_PAYLOAD_PINNED_T L T S)
-    (B0 : KNOWN_BITS_T L C)
-    (A : VALUE_DOMAIN_T BitsLangT with Definition t := tagged A0.p
-      with Definition size := tagged_size A0.psize)
-    (B : VALUE_DOMAIN_T BitsLangT with Definition t := tagged B0.p
-      with Definition size := tagged_size B0.psize)
-    (R : INTERVAL_BITS_T A B) <: INTERVAL_BITS_PIN L C A0 B0 A B R.
-  Lemma F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
-    (TVal w (A0.pmeet w a (bits_interval w b)), TVal w b).
-  Proof. Admitted. (* STUB *)
-  Lemma F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
-    (TVal w a, TVal w (B0.pmeet w b (interval_prefix w a))).
-  Proof. Admitted. (* STUB *)
-  Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
-    R.to_left x = x /\ R.to_right x = x.
-  Proof. Admitted. (* STUB *)
-End IntervalBitsPin.

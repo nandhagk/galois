@@ -83,3 +83,29 @@ Proof. vm_compute. reflexivity. Qed.
 Module WPin <: WRAPPED_BITS_PIN WordLanguage Config WF KF WDomain.Domain KDomain.Domain WRF := WRF.
 Module IPin <: INTERVAL_CONGR_PIN WordLanguage IF GF IDomain.Domain GDomain.Domain IRF := IRF.
 Module BPin <: INTERVAL_BITS_PIN WordLanguage Config IF KF IDomain.Domain KDomain.Domain BRF := BRF.
+
+Module WTTime := WrappedT WordLanguageT.
+Module KTTime := KnownBitsT WordLanguageT Config.
+Module GTTime := CongruenceT WordLanguageT.
+Module STTime := IntervalBaseT ThresholdsT.
+Module ITTime := IntervalPayloadT WordLanguageT ThresholdsT STTime.
+Module WTTTime := WrappedTableT WordLanguageT WTTime.
+Module KTTTime := KnownBitsTableT WordLanguageT Config KTTime.
+Module GTTTime := CongruenceTableT WordLanguageT GTTime.
+Module ITTTime := IntervalWordTableT WordLanguageT ThresholdsT STTime ITTime.
+Module WDomainTime := WordDomainT WordLanguageT WTTime WTTTime.
+Module KDomainTime := WordDomainT WordLanguageT KTTime KTTTime.
+Module GDomainTime := WordDomainT WordLanguageT GTTime GTTTime.
+Module IDomainTime := WordDomainT WordLanguageT ITTime ITTTime.
+Module WRT := WrappedBitsT WordLanguageT Config WTTime KTTime
+  WDomainTime.Domain KDomainTime.Domain.
+Module IRT := IntervalCongrT WordLanguageT ThresholdsT STTime ITTime GTTime
+  IDomainTime.Domain GDomainTime.Domain.
+Module BRT := IntervalBitsT WordLanguageT Config ThresholdsT STTime ITTime KTTime
+  IDomainTime.Domain KDomainTime.Domain.
+Module WPinTime <: WRAPPED_BITS_PIN WordLanguage Config WTTime KTTime
+  WDomainTime.Domain KDomainTime.Domain WRT := WRT.
+Module IPinTime <: INTERVAL_CONGR_PIN WordLanguage ITTime GTTime
+  IDomainTime.Domain GDomainTime.Domain IRT := IRT.
+Module BPinTime <: INTERVAL_BITS_PIN WordLanguage Config ITTime KTTime
+  IDomainTime.Domain KDomainTime.Domain BRT := BRT.
