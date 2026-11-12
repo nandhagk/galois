@@ -35,6 +35,11 @@ Definition cert_size (c : cert) : nat :=
     fold_right (fun row n => 1 + length (snd row) + n) 0 (snd c).
 TimeFun cert_size.
 
+Definition cert_ids (c : cert) : list positive :=
+  flat_map (fun row => fst row :: flat_map (fun xy => [fst xy; snd xy]) (snd row)) (fst c) ++
+  flat_map (fun row => fst row :: snd row) (snd c).
+TimeFun cert_ids.
+
 Definition cfg_graph {E} (vs : list positive) (es : list E)
     (src dst : E -> positive) : digraph :=
   Digraph vs (fold_right (fun e rows =>
@@ -143,7 +148,7 @@ Module Type VALIDATE (O : OPS)
 
 Module Type VALIDATE_TIME (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
     (B : LANG_SSA_LINK O K G P E C S)
@@ -153,10 +158,19 @@ Module Type VALIDATE_TIME (O : OPS)
   Parameter c_val : N.
   Definition dom_bound s := N.of_nat ((graph_n (base (graph s)) +
     graph_e (base (graph s)) + 1) * (Nat.log2 (graph_n (base (graph s))) + 1)).
+  Definition check_width (p s : P.t) (c : cert) :=
+    function_width p + function_width s + vertex_width (cert_ids c).
+  Definition op_bits (p : P.t) :=
+    fold_right (fun item n =>
+      fold_right (fun i m => K.bits (snd (fst i)) + m) 0 (code _ _ _ (snd item)) +
+      match term _ _ _ (snd item) with
+      | Branch g _ _ _ _ _ => G.bits g
+      | _ => 0
+      end + n) 0 (blocks _ _ _ p).
   (** Translation checking charges both functions and the supplied certificate. *)
   Parameter T_check_le : forall p s c,
     (T_check p s c <= c_val * N.of_nat (function_size p + function_size s + cert_size c + 1) *
-      N.of_nat (function_width p + 1))%N.
+      N.of_nat (check_width p s c + 1) + c_val * N.of_nat (op_bits p + 1))%N.
   (** SSA checking includes the core dominator construction budget. *)
   Parameter T_check_ssa_le : forall s,
     (T_check_ssa s <= c_val * (N.of_nat (function_size s + 1) + dom_bound s) *
@@ -164,7 +178,7 @@ Module Type VALIDATE_TIME (O : OPS)
   (** Translation checking has the published certificate-sensitive bit-cost bound. *)
   Parameter check_bigO : bigO (fun _ : P.t * P.t * cert => True)
     (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
-      (function_width p + 1))) (fun '(p, s, c) => T_check p s c).
+      (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
   (** SSA checking has the published syntax and dominator bit-cost bound. *)
   Parameter check_ssa_bigO : bigO (fun _ : P.t => True)
     (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
@@ -173,7 +187,7 @@ End VALIDATE_TIME.
 
 Module Type VALIDATE_T (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
     (B : LANG_SSA_LINK O K G P E C S) :=
@@ -181,7 +195,7 @@ Module Type VALIDATE_T (O : OPS)
 
 Module Type VALIDATE_PLAN (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
     (B : LANG_SSA_LINK O K G P E C S)
@@ -255,22 +269,54 @@ Module Type VALIDATE_PLAN (O : OPS)
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
         N.of_nat (function_width s + 1))%N.
-  (** All entry, statement and edge checks fit the public translation budget. *)
+  (** Entry checking charges both input lists and the indexed certificate row. *)
+  Parameter T2b_entry : forall p s c,
+    (T_check_entry p s c <= k_entry *
+      N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
+        length (cert_live c (entry _ _ _ p)) + 1) *
+      N.of_nat (check_width p s c + 1))%N.
+  (** Code checking indexes its initial renaming and reads both instruction streams once. *)
+  Parameter T2c_code : forall ic sc rho live,
+    (T_check_code ic sc rho live <= k_code *
+      N.of_nat (length rho + length live + length ic + length sc +
+        fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (ic ++ sc) + 1) *
+      N.of_nat (vertex_width (live ++
+        flat_map (fun xy => [fst xy; snd xy]) rho ++
+        flat_map (fun i => fst (fst i) :: snd i) (ic ++ sc)) + 1) +
+      k_code * N.of_nat
+        (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic + 1))%N.
+  (** Indexed edge checking charges the two exits and the destination certificate row. *)
+  Parameter T2d_edge : forall p s c b target rho ib sb,
+    find_block b (blocks _ _ _ p) = Some ib ->
+    find_block b (blocks _ _ _ s) = Some sb ->
+    (T_check_edge p s c b target rho <= k_edge *
+      N.of_nat (length rho + length (exit_uses (term _ _ _ ib)) +
+        length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
+      N.of_nat (check_width p s c +
+        vertex_width (flat_map (fun xy => [fst xy; snd xy]) rho) + 1))%N.
+  (** Translation checking indexes the certificate, checks the entry and every source block. *)
   Parameter T2_checks : forall p s c,
-    (T_check p s c <= k_blocks *
-      N.of_nat (function_size p + function_size s + cert_size c + 1) *
-      N.of_nat (function_width p + 1))%N.
-  (** Combining dominance and strict local-order checks gives the public SSA budget. *)
+    (T_check p s c <= k_blocks * N.of_nat (cert_size c + function_size s + 1) *
+      N.of_nat (check_width p s c + 1) + T_check_entry p s c +
+      fold_right N.add 0%N (map (fun item => T_check_block p s c (fst item)) (blocks _ _ _ p)))%N.
+  (** One block check charges its two bodies, its exit and its operators. *)
+  Parameter T2a_block : forall p s c b ib,
+    find_block b (blocks _ _ _ p) = Some ib ->
+    (T_check_block p s c b <= k_code *
+      N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
+        length (code _ _ _ ib) + 1) * N.of_nat (check_width p s c + 1) +
+      k_code * N.of_nat (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat
+        (code _ _ _ ib) + 1))%N.
+  (** SSA checking adds the strict local-order and dominance queries to the graph phase. *)
   Parameter T3_ssa : forall s,
-    (T_check_ssa s <= k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
-      N.of_nat (function_width s + 1))%N.
-  (* SIG-QUESTION: arbitrary target and certificate keys can be wider than the source width.
-     Core SSA reader costs and operator/guard encodings also need a composition budget. *)
+    (T_check_ssa s <= T_graph s + T_dom_cert s +
+      D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+      k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
 End VALIDATE_PLAN.
 
 Module Type VALIDATE_ALL (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
     (B : LANG_SSA_LINK O K G P E C S) :=

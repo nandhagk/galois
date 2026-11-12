@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Std.
+From Galois.Base Require Import Trie.
 
 Import List.ListNotations.
 
@@ -48,6 +49,10 @@ Module Type PARMOVE_LAWS (Import P : PARMOVE_OPS).
       x <> tmp -> exec_seq sq env x = exec_par par env x.
   (** Sequentialisation emits at most twice the number of parallel moves. *)
   Parameter seq_length : forall par tmp, length (seq par tmp) <= 2 * length par.
+  (** Emitted moves write parallel destinations or the temporary and read sources or it. *)
+  Parameter seq_ids : forall par tmp m, In m (seq par tmp) ->
+    (In (fst m) (map fst par) \/ fst m = tmp) /\
+    (In (snd m) (map snd par) \/ snd m = tmp).
 End PARMOVE_LAWS.
 
 Module Type PARMOVE := PARMOVE_OPS <+ PARMOVE_LAWS.
@@ -68,10 +73,24 @@ End PARMOVE_TIME.
 Module Type PARMOVE_T := PARMOVE <+ PARMOVE_TIME.
 
 Module Type PARMOVE_PLAN (Import P : PARMOVE_T).
+  Parameter symbolic_all : moves -> ptrie positive.
+  Parameter T_symbolic_all : moves -> N.
   Parameter symbolic : moves -> positive -> option positive.
-  Parameter T_symbolic : moves -> positive -> N.
-  Parameter k_symbolic : N.
+  Parameter k_symbolic k_cycle : N.
+  Parameter cycle_search : moves -> list positive.
+  Parameter T_cycle_search : moves -> N.
+  (** Every cycle representative is a distinct parallel destination. *)
+  Parameter F0_cycle_search : forall par,
+    NoDup (cycle_search par) /\ forall x, In x (cycle_search par) -> In x (map fst par).
+  (** Cycle search visits each move at its identifier width. *)
+  Parameter T0_cycle_search : forall par,
+    (T_cycle_search par <= k_cycle * N.of_nat (length par + 1) *
+      N.of_nat (bits_of par + 1))%N.
   Definition relevant (par sq : moves) := map fst par ++ map snd par ++ map fst sq ++ map snd sq.
+  (** One pass records the original source of every written variable. *)
+  Parameter F1_symbolic_all : forall sq x,
+    exec_seq sq (@Some positive) x =
+      match trie_get x (symbolic_all sq) with Some y => Some y | None => Some x end.
   (** Symbolic execution records the original variable supplying each final value. *)
   Parameter F1_symbolic : forall sq x, symbolic sq x = exec_seq sq (@Some positive) x.
   (** Acceptance compares symbolic values at every affected non-temporary variable. *)
@@ -85,13 +104,18 @@ Module Type PARMOVE_PLAN (Import P : PARMOVE_T).
   Parameter F4_symbolic_transport : forall par sq x,
     exec_seq sq (@Some positive) x = exec_par par (@Some positive) x ->
     forall A (env : positive -> option A), exec_seq sq env x = exec_par par env x.
-  (** Symbolic sequence construction has the public linear budget. *)
+  (** The table pass charges each move at the sequence width. *)
+  Parameter T1_symbolic_all : forall sq,
+    (T_symbolic_all sq <= k_symbolic * N.of_nat (length sq + 1) *
+      N.of_nat (bits_of sq + 1))%N.
+  (** Sequentialisation charges cycle discovery and indexed move emission. *)
   Parameter T1_seq : forall par tmp,
-    (T_seq par tmp <= c_pm * N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
-  (** Aggregating symbolic comparisons gives the public checker budget. *)
+    (T_seq par tmp <= T_cycle_search par + k_cycle *
+      N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
+  (** Checking builds two tables and compares them on the relevant variables. *)
   Parameter T2_check : forall par tmp sq,
-    (T_check_moves par tmp sq <= c_pm * N.of_nat (length par + length sq + 1) *
-      N.of_nat (bits_of (par ++ sq) + 1))%N.
+    (T_check_moves par tmp sq <= T_symbolic_all sq + k_symbolic *
+      N.of_nat (length par + length sq + 1) * N.of_nat (bits_of (par ++ sq) + 1))%N.
 End PARMOVE_PLAN.
 
 Module Type PARMOVE_ALL := PARMOVE_T <+ PARMOVE_PLAN.

@@ -66,7 +66,7 @@ Module Type DESTROY (O : OPS)
 
 Module Type DESTROY_TIME (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (PM : PARMOVE_T)
     (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
@@ -85,7 +85,7 @@ End DESTROY_TIME.
 
 Module Type DESTROY_T (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (PM : PARMOVE_T)
     (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
@@ -93,7 +93,7 @@ Module Type DESTROY_T (O : OPS)
 
 Module Type DESTROY_PLAN (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (PM : PARMOVE_T)
     (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
@@ -157,21 +157,29 @@ Module Type DESTROY_PLAN (O : OPS)
   (** Splitting charges each source block and each parameter-carrying branch edge. *)
   Parameter T1_split : forall s,
     (T_split s <= k_split * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
-  (** Copy production and checking fit the original argument-occurrence budget. *)
+  (** Each checked problem is the emitted sequence of one edge, within the source budget. *)
+  Parameter F9_moves_size : forall s split_s, split s = Some split_s ->
+    fold_right (fun mc n => length (fst (fst mc)) + 1 + n) 0 (checked_moves split_s) <=
+      destroy_work s /\
+    forall par tmp sq, In (par, tmp, sq) (checked_moves split_s) ->
+      sq = PM.seq par tmp /\ bits_of par + Pos.size_nat tmp <= 2 * (function_width s + 1).
+  (** Copy insertion charges its index, its rewriting and the actual move calls. *)
   Parameter T2_copies : forall s split_s, split s = Some split_s ->
     (T_copies split_s <= k_copies * N.of_nat (destroy_work s) *
-      N.of_nat (function_width s + 1))%N.
+      N.of_nat (function_width s + 1) +
+      fold_right N.add 0%N (map (fun mc =>
+        PM.T_seq (fst (fst mc)) (snd (fst mc)) +
+        PM.T_check_moves (fst (fst mc)) (snd (fst mc)) (snd mc))%N
+        (checked_moves split_s)))%N.
   (** The wrapper charges exactly the selected transformation phases. *)
   Parameter T3_wrapper : forall s,
     (T_destroy s <= T_split s +
       match split s with None => k_wrap | Some split_s => T_copies split_s + k_wrap end)%N.
-  (* SIG-QUESTION: fresh block/value/temporary widths, indexed block lookups and the actual
-     parallel-move calls need composition budgets at the published source-only width. *)
 End DESTROY_PLAN.
 
 Module Type DESTROY_ALL (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (PM : PARMOVE_T)
     (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
