@@ -133,16 +133,20 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition elimination_work (a b : t) : nat :=
     (n a + n b + 1)^3 * (ellB (n a + n b + 1) (ell a + ell b) + 1)^2.
   Definition wunits (_ : t) : nat := 0.
+  Definition terms (s : t) : nat :=
+    fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
+  Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
-    (n s + tsize e + 1)^3 *
-      (ellB (n s + tsize e + 1) (ell s + X.bits x + F.bits_e e) + 1)^2 +
+    terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2 +
       N.to_nat (F.T_lin_of e).
   Definition havoc_work (x : X.t) (s : t) : nat :=
-    (n s + 1)^3 * (ellB (n s + 1) (ell s + X.bits x) + 1)^2.
+    terms s * (nell s + 1) +
+      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
   Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
-    (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+    terms s * (nell s + 1) + (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
       (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
-        (ell s + F.bits_es g es) + 1)^2 + N.to_nat (F.T_atoms_of g es).
+        (nell s + F.bits_es g es) + 1)^2 + N.to_nat (F.T_atoms_of g es).
   Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
   TimeFun bot.
   TimeFun top.
@@ -194,21 +198,23 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
     N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
   Proof. Admitted. (* STUB *)
-  (** Assignment charges fraction-free elimination after linearization. *)
+  (** Assignment charges row normalization and elimination after linearization. *)
   Lemma F_assign_work : forall x e s,
-    (N.of_nat (assign_work x e s) = N.of_nat ((n s + tsize e + 1)^3 *
-      (ellB (n s + tsize e + 1) (ell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
+    (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
+      (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
   Proof. Admitted. (* STUB *)
-  (** Havoc charges fraction-free elimination of the selected variable. *)
+  (** Havoc charges row normalization and elimination of the selected variable. *)
   Lemma F_havoc_work : forall x s,
-    havoc_work x s = (n s + 1)^3 * (ellB (n s + 1) (ell s + X.bits x) + 1)^2.
+    havoc_work x s = terms s * (nell s + 1) +
+      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
   Proof. Admitted. (* STUB *)
-  (** Assumption charges elimination of the state and all newly linearized rows. *)
+  (** Assumption charges row normalization and elimination with the new rows. *)
   Lemma F_assume_work : forall g es s,
-    (N.of_nat (assume_work g es s) =
-      N.of_nat ((n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+    (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
+      (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
         (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
-          (ell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
+          (nell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
   Proof. Admitted. (* STUB *)
   (** Top has no repeated coefficients. *)
   Lemma normal_top : normal_s top.

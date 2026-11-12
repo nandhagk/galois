@@ -99,15 +99,20 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : POLY_T X L N F C).
   Definition prows (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
-  (** Assignment charges one elimination after linearization. *)
+  Definition terms (s : t) : nat :=
+    fold_right Nat.add 0 (map (fun r => length (lhs r)) (prows s)).
+  Definition nell (s : t) : nat := ell (prows s) + Nat.log2 (terms s) + 1.
+  (** Assignment charges row normalization and one elimination after linearization. *)
   Parameter F_assign_work : forall x e s,
-    (N.of_nat (assign_work x e s) = N.of_nat ((length (prows s) + 3)^2 *
+    (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
+      (length (prows s) + 3)^2 *
       (n (prows s) + tsize e + length (prows s) + 3) *
-      (ell (prows s) + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
-  (** Havoc charges one elimination of the selected variable. *)
+      (nell s + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
+  (** Havoc charges row normalization and one elimination of the selected variable. *)
   Parameter F_havoc_work : forall x s,
-    havoc_work x s = (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
-      (ell (prows s) + X.bits x + 1)^2.
+    havoc_work x s = terms s * (nell s + 1) +
+      (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (nell s + X.bits x + 1)^2.
   (** Assumption charges appending the rows emitted by linearization. *)
   Parameter F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
