@@ -55,3 +55,14 @@ Example wrapped_unsigned_zero_divisor :
 Proof. vm_compute. reflexivity. Qed.
 Example wrapped_mul_both_poles : wrapped_mul w8 (WItv 100 50) (WItv 2 2) = WItv 0 254.
 Proof. vm_compute. reflexivity. Qed.
+
+Module WF := Wrapped WordLanguage.
+Example wrapped_rank_progress :
+  Nat.ltb (WF.pwrank tt w8 (WItv 8 13)) (WF.pwrank tt w8 (WItv 10 11)) = true.
+Proof. vm_compute. reflexivity. Qed.
+Example wrapped_full_rank : WF.pwrank tt w8 (WItv 10 9) = 0%nat.
+Proof. vm_compute. reflexivity. Qed.
+
+Example wrapped_two_arcs_do_not_refine_right :
+  W.pleb w8 (W.pmeet w8 (WItv 0 200) (WItv 150 50)) (WItv 150 50) = false.
+Proof. vm_compute. reflexivity. Qed.

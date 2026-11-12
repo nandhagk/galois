@@ -7,8 +7,8 @@
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.
 From Galois.Lattice Require Import Disjunction.
-From Galois.Domains Require Import Interval ThresholdsSig Thresholds ZLang.
-From Galois.States Require Import Env Disjunction.
+From Galois.Domains Require Import ValueSig IntervalSig Interval ThresholdsSig Thresholds ZLang.
+From Galois.States Require Import EnvSig Env Disjunction.
 Import List.ListNotations.
 
 Module NatMap := TrieMapCode NatKeyCode.
@@ -34,7 +34,50 @@ Example havoc_preserves_alternative_count :
 Proof. vm_compute. reflexivity. Qed.
 
 (* The old shared lattice rank client expected (3, 3, 0) on [false; false] and its
-   widening by [true]. It used a flat Boolean lattice as the component, while this
+   widening by [true]. It used a Boolean lattice as the component, while this
    state component requires a STATE_DOMAIN with assignment, havoc, assume and eval.
-   No corresponding flat Boolean state instance is provided here. The old cap-zero
+   No corresponding Boolean state instance is provided here, and the two-element input
+   does not fit the cap-one bounded carrier. The old cap-zero
    empty widening is also outside the positive-cap functional interface. *)
+
+(* The exact landed client used the raw-list carrier, which allowed two entries
+   at cap one. The bounded carrier rejects that input.
+Example disjunction_measure_client :
+  let W := disjunction_wrank bool_lattice (fun _ => True) bool_closed
+    bool_laws bool_wrank 1 in
+  (wbound W, wrank W [false; false],
+   wrank W (widen (disjunction 1 bool_lattice) [false; false] [true])) = (3, 3, 0).
+Proof. vm_compute; reflexivity. Qed.
+*)
+
+(* These landed raw-list widening fixtures use the flat Boolean lattice directly.
+   The state disjunction requires a STATE_DOMAIN instance, and no such flat-Boolean
+   state instance is available among the landed real implementations.
+Example disjunction_collapse :
+  widen (disjunction 2 flat_bool) [FVal false] [FVal true] = [FTop].
+Proof. vm_compute; reflexivity. Qed.
+Example disjunction_covered :
+  widen (disjunction 2 flat_bool) [FTop; FVal true] [FVal false] = [FTop; FVal true].
+Proof. vm_compute; reflexivity. Qed.
+Example disjunction_empty :
+  (join (disjunction 0 flat_bool) [] [],
+   leb (disjunction 0 flat_bool) [] [],
+   widen (disjunction 0 flat_bool) [] []) = ([], true, []).
+Proof. vm_compute; reflexivity. Qed.
+*)
+
+Module Cap2.
+  Definition k := 2%nat.
+End Cap2.
+Module Shared2 := DisjunctionCode State Cap2.
+Module D2 := StateDisjunctionCode NatKeyCode ZLangCode Values State Cap2 Shared2.
+
+Definition interval_state (lo hi : Z) : State.t :=
+  Reached (NatMap.set 1%nat (I (Fin lo) (Fin hi)) NatMap.empty).
+Definition meet_left := Shared2.clip [interval_state 0 10; interval_state 20 30].
+Definition meet_right := Shared2.clip [interval_state 5 25; interval_state 27 28].
+
+Example capped_meet_does_not_refine_right :
+  (proj1_sig (D2.meet meet_left meet_right), D2.leb (D2.meet meet_left meet_right) meet_right) =
+    ([interval_state 5 10; interval_state 20 28], false).
+Proof. vm_compute. reflexivity. Qed.

@@ -334,7 +334,7 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof. Admitted. (* STUB *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: The landed guarded meet can return a value not below its right operand. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
   Proof. Admitted. (* STUB *)
@@ -617,3 +617,95 @@ Proof.
   - exact Hword.
   - split; [exact Hword|]. pose proof (wrapped_offset_range w lo z). lia.
 Qed.
+
+Theorem wrapped_add_sound w a b x y :
+  wrapped_gamma w a x -> wrapped_gamma w b y ->
+  wrapped_gamma w (wrapped_add w a b) (wrap w (x + y)).
+Proof. Admitted. (* CONVERT: wrapped_add_sound: The variable wrapped_offset_sum was not found in the current *)
+
+Theorem wrapped_neg_sound w a x :
+  wrapped_gamma w a x -> wrapped_gamma w (wrapped_neg w a) (wrap w (- x)).
+Proof. Admitted. (* CONVERT: wrapped_neg_sound: The variable wrapped_offset_neg was not found in the current *)
+
+Theorem wrapped_sub_sound w a b x y :
+  wrapped_gamma w a x -> wrapped_gamma w b y ->
+  wrapped_gamma w (wrapped_sub w a b) (wrap w (x - y)).
+Proof.
+  intros Hx Hy. unfold wrapped_sub.
+  replace (wrap w (x - y)) with (wrap w (x + wrap w (- y))).
+  - apply wrapped_add_sound; [exact Hx|now apply wrapped_neg_sound].
+  - replace (x - y) with (x + - y) by ring.
+    rewrite (wrap_add w x (- y)), (wrap_add w x (wrap w (- y))), wrap_wrap. reflexivity.
+Qed.
+
+Theorem wrapped_mul_sound w a b x y :
+  wrapped_gamma w a x -> wrapped_gamma w b y ->
+  wrapped_gamma w (wrapped_mul w a b) (wmul w x y).
+Proof. Admitted. (* CONVERT: wrapped_mul_sound: The variable wrapped_mul_both_parts_sound was not found in the current *)
+
+Theorem wrapped_point_sound w a x z :
+  wrapped_gamma w a x -> wrapped_point w a = Some z -> x = z.
+Proof.
+  intros Ha Hpoint. unfold wrapped_point in Hpoint.
+  pose proof (proj2 (wrapped_norm_gamma w a x) Ha) as Hnormal.
+  destruct (wrapped_norm w a) as [| |lo hi] eqn:Hnorm; try discriminate.
+  pose proof (wrapped_norm_endpoints w a lo hi Hnorm) as [Hlo Hhi].
+  destruct (Z.eqb lo hi) eqn:Heq; [|discriminate].
+  apply Z.eqb_eq in Heq. subst hi. inversion Hpoint; subst z.
+  destruct Hnormal as [Hx Hoffset]. rewrite wrapped_offset_self in Hoffset.
+  rewrite (wrapped_offset_word_cases w lo x Hlo Hx) in Hoffset.
+  destruct (lo <=? x) eqn:Horder;
+    [apply Z.leb_le in Horder|apply Z.leb_gt in Horder]; destruct Hlo, Hx; lia.
+Qed.
+
+Definition interval_pgamma (w : width) (a : itv) (z : Z) : Prop :=
+  is_word w z /\ match a with IBot => False | I lo hi => in_bnd lo hi z end.
+Theorem wrapped_parts_spec w a z :
+  wrapped_gamma w a z <->
+  interval_pgamma w (fst (wrapped_parts w a)) z \/
+  interval_pgamma w (snd (wrapped_parts w a)) z.
+Proof. Admitted. (* CONVERT: wrapped_parts_spec: The variable wrapped_parts_raw_spec was not found in the current environment. *)
+
+Definition interval_meaning (a : itv) (z : Z) : Prop :=
+  match a with IBot => False | I lo hi => in_bnd lo hi z end.
+
+Theorem wrapped_of_interval_sound w i z :
+  interval_meaning i z -> wrapped_gamma w (wrapped_of_interval w i) (wrap w z).
+Proof. Admitted. (* CONVERT: wrapped_of_interval_sound: The reference interval_gamma was not found in the current environment. *)
+Theorem wrapped_interval_value_sound w i z :
+  interval_pgamma w i z -> wrapped_gamma w (wrapped_of_interval w i) z.
+Proof.
+  intros [Hword Hz]. rewrite <- (wrap_id w z Hword).
+  now apply wrapped_of_interval_sound.
+Qed.
+
+(* The landed bundle statements used lattice, concretisation and widening-rank
+   records that are absent from the current signatures. Their operations and
+   individual obligations are now exposed through WRAPPED and WORD_PAYLOAD_LAWS.
+Theorem wrapped_laws w : lattice_laws (wrapped_lattice w).
+Theorem wrapped_gamma_laws w :
+  concretisation_laws (wrapped_lattice w) (Concretisation wrapped Z (wrapped_gamma w)).
+Theorem wrapped_widening_rank_on w :
+  widening_rank_on (wrapped_lattice w) (fun _ => True).
+*)
+
+Theorem wrapped_mul_cut_sound pole a z :
+  interval_meaning a z ->
+  interval_meaning (fst (wrapped_mul_cut pole a)) z \/
+  interval_meaning (snd (wrapped_mul_cut pole a)) z.
+Proof. Admitted. (* CONVERT: wrapped_mul_cut_sound: The variable wrapped_interval_meet_gamma was not found in the current *)
+
+Theorem wrapped_mul_piece_sound w a b x y :
+  interval_meaning a x -> interval_meaning b y ->
+  wrapped_gamma w (wrapped_mul_piece w a b) (wrap w (x * y)).
+Proof. Admitted. (* CONVERT: wrapped_mul_piece_sound: The reference interval_gamma was not found in the current environment. *)
+
+Theorem wrapped_shift_interval_sound delta a z :
+  interval_meaning a z -> interval_meaning (wrapped_shift_interval delta a) (z + delta).
+Proof. Admitted. (* CONVERT: wrapped_shift_interval_sound: The reference interval_gamma was not found in the current environment. *)
+
+Theorem wrapped_signed_parts_sound w a z :
+  wrapped_gamma w a z ->
+  interval_meaning (fst (wrapped_signed_parts w a)) (signed w z) \/
+  interval_meaning (snd (wrapped_signed_parts w a)) (signed w z).
+Proof. Admitted. (* CONVERT: wrapped_signed_parts_sound: The variable wrapped_signed_bias was not found in the current *)

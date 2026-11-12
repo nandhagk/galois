@@ -149,7 +149,104 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* STUB *)
   Lemma compact_covers : forall n d x, In x d ->
     exists y, In y (compact n d) /\ S.leb x y = true.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* CONVERT: compact_covers: The variable compact_equation was not found in the current environment. *)
   Lemma compact_len : forall n d, length (compact n d) <= Nat.max n 1.
   Proof. Admitted. (* STUB *)
 End StateDisjunction.
+
+(* The landed lattice source exposed the following raw-list equations. The shared
+   bounded carrier now supplies P.clip. Its laws allow different oversized-list
+   covers, so the exact raw suffix equation is not implied by the reviewed P.
+Theorem compact_equation {A} k (L : lattice A) xs :
+  compact k L xs =
+    if Nat.leb (length xs) k then xs
+    else firstn (k - 1) xs ++ [join_all L (skipn (k - 1) xs)].
+
+   The state widening follows the reviewed aligned-pair algorithm. The landed lattice
+   widening used a single collapse and its exact equation is therefore a different claim.
+Theorem widen_disjunction {A} k (L : lattice A) xs ys :
+  widen (disjunction k L) xs ys =
+    if disjunction_leb L ys xs then xs
+    else [widen L (join_all L xs) (join_all L (xs ++ ys))].
+
+   The old selective-join and invariant-based rank bundles used lattice_laws,
+   lub_laws, concretisation_laws and widening_rank_on records, which are no longer
+   the shared bounded component interface. Their original claims were:
+Theorem disjunction_lub k :
+  (forall a b, leb L (join L a b) a = true \/ leb L (join L a b) b = true) ->
+  lub_laws (disjunction k L).
+Theorem monotone_join_all {A} (L : lattice A) xs ys :
+  lattice_laws L -> lub_laws L ->
+  Forall2 (fun x y => leb L x y = true) xs ys ->
+  leb L (join_all L xs) (join_all L ys) = true.
+Theorem disjunction_gamma_laws {A C} k (L : lattice A) (G : concretisation A C) :
+  concretisation_laws L G ->
+  concretisation_laws (disjunction k L) (disjunction_gamma G).
+Theorem disjunction_bot_empty {A C} k (L : lattice A) (G : concretisation A C) :
+  bottom_empty (disjunction k L) (disjunction_gamma G).
+Theorem disjunction_wrank k : widening_rank_on (disjunction k L) (Forall inv).
+*)
+
+(* The landed cost statements below refer to the removed Cost monad and raw-list
+   lattice. The later timing part derives clocks for the reviewed bounded carrier.
+Theorem compact_ticks k xs :
+  Cost.ticks (compact_c k L xs) =
+    (N.of_nat (length xs) + 1 +
+      if Nat.leb (length xs) k then 0 else
+        Cost.ticks (compact_tail_c (k - 1) L xs))%N.
+Theorem disjunction_cost_bounded k m :
+  cost_bounded_on (disjunction k L) (fun xs => Forall inv xs /\ length xs <= m)
+    (((2 * N.of_nat m + 1) * (2 * N.of_nat m + 1)) * (c + 6))%N.
+Theorem disjunction_cost_bigO {X} k (xs ys : X -> list A) :
+  (forall x, Forall inv (xs x)) -> (forall x, Forall inv (ys x)) ->
+  bigO
+    (fun x => let n := (N.of_nat (length (xs x)) + N.of_nat (length (ys x)) + 1)%N in
+      (n * n)%N)
+    (fun x =>
+      (Cost.ticks (leb_c (disjunction k L) (xs x) (ys x)) +
+       Cost.ticks (join_c (disjunction k L) (xs x) (ys x)) +
+       Cost.ticks (widen_c (disjunction k L) (xs x) (ys x)) +
+       Cost.ticks (narrow_c (disjunction k L) (xs x) (ys x)))%N).
+*)
+
+Module StateDisjunctionClaims (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
+    (S : STATE_DOMAIN X L V) (C : POS_CAP) (P : SharedDisjunction.DISJUNCTION S C).
+  Include StateDisjunction X L V S C P.
+
+  Theorem join_all_equation xs :
+    collapse xs = match xs with [] => S.bot | x :: rest => fold_left S.join rest x end.
+  Proof. destruct xs; reflexivity. Qed.
+
+  Theorem disjunction_leb_equation a b : leb a b =
+    forallb (fun x => existsb (S.leb x) (proj1_sig b)) (proj1_sig a).
+  Proof. Admitted. (* CONVERT: disjunction_leb_equation: The reference disjunction_leb was not found in the current *)
+
+  Theorem disjunction_leb_spec a b : leb a b = true <->
+    forall x, In x (proj1_sig a) ->
+      exists y, In y (proj1_sig b) /\ S.leb x y = true.
+Proof.
+  rewrite disjunction_leb_equation, forallb_forall.
+  split; intros H x Hin; specialize (H x Hin); now apply existsb_exists in H.
+Qed.
+
+  Theorem join_disjunction a b : join a b = P.clip (proj1_sig a ++ proj1_sig b).
+  Proof. Admitted. (* CONVERT: join_disjunction: The reference Cost.value_bind was not found in the current *)
+
+  Theorem disjunction_join_size a b : length (proj1_sig (join a b)) <= C.k.
+  Proof. Admitted. (* CONVERT: disjunction_join_size: No product even after head-reduction. *)
+
+  Theorem join_all_upper xs x : In x xs -> S.leb x (collapse xs) = true.
+  Proof. Admitted. (* CONVERT: join_all_upper: The variable fold_upper_start was not found in the current environment. *)
+End StateDisjunctionClaims.
+
+(* The old fold equation named a charged helper whose pure value is now collapse.
+Theorem fold_join_equation {A} (L : lattice A) xs a :
+  Cost.value (fold_join_c L xs a) = fold_left (join L) xs a.
+
+   The old closure statements quantified over closed_on and lattice_laws record
+   bundles. The reviewed bounded state interface supplies neither such invariant
+   provider nor its preservation contract for an arbitrary P.clip.
+Theorem join_all_closed xs : Forall inv xs -> inv (join_all L xs).
+Theorem disjunction_closed k : closed_on (disjunction k L) (Forall inv).
+Theorem disjunction_laws k : lattice_laws (disjunction k L).
+*)

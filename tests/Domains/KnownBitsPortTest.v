@@ -4,7 +4,7 @@
     For example, a variable shift joins the possible bit positions.
     Builds on: KnownBitsBack, Tagged and Harness. *)
 
-From Stdlib Require Import ZArith List Bool.
+From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import BitsLang WordSig KnownBitsSig KnownBits KnownBitsOps
   KnownBitsBack Tagged Harness.
@@ -451,3 +451,35 @@ Example kb_payload_malformed_backward :
   kb_payload_assume bvadd kb_test_malformed_inputs 5%positive tnum_top =
     [Tnum 28 1; Tnum 6 0; Tnum 1 1].
 Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* The charged Cost interface was removed. These source clock claims are deferred to
+   timing and are not executable tests of generated clocks.
+Example kb_variable_expansion_cost :
+  Cost.ticks (tnum_variable_c bvshl 8%positive (tnum_const 8%positive 1) (Tnum 252 0)) =
+    2%N /\
+  Cost.ticks (tnum_back_variable_shift_c bvshl 8%positive (Tnum 252 0) (Tnum 0 1)) =
+    4%N.
+Proof. vm_compute. auto. Qed.
+Example kb_nonempty_builder_charge_control :
+  pforward_c (known_bits_word_domain known_bits_default_options) bvadd
+    [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive =
+  pforward_c (known_bits_word_builder known_bits_default_options) bvadd
+    [(8%positive, Tnum 240 7); (8%positive, tnum_const 8%positive 1)] 8%positive.
+Proof. vm_compute. reflexivity. Qed.
+*)
+Example kb_extract_symbolic_client : forall w x,
+  (6 <= Pos.to_nat w)%nat ->
+  eval_op (bvextract 5 2) [(w, x)] =
+    Some (4%positive, wrap 4%positive (wrap w x / 4)).
+Proof.
+  intros w x Hwidth. rewrite eval_op_extract.
+  assert (Hslice : (2 <=? 5)%nat && (5 <? Pos.to_nat w)%nat = true).
+  { apply andb_true_iff. split; [reflexivity|]. apply Nat.ltb_lt. lia. }
+  rewrite Hslice. reflexivity.
+Qed.
+
+Example kb_rotr_symbolic_client : forall w x y,
+  wrotr w x y = wrotl w x (Zpos w - wrap w y mod Zpos w).
+Proof.
+  apply wrotr_value.
+Qed.
