@@ -109,6 +109,10 @@ Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) 
 
 Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (Import E : ENV_T X M L V).
+  (** Unreachable environments widen no stored component. *)
+  Parameter F_wunits_unreached : wunits Unreached = 0.
+  (** Reached environments visit every stored binding during widening. *)
+  Parameter F_wunits_reached : forall m, wunits (Reached m) = length (M.codes m).
   (** Environment bottom is unreachable. *)
   Parameter F_bot : bot = Unreached.
   (** Environment top is an empty reached map. *)
