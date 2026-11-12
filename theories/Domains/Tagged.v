@@ -123,18 +123,9 @@ Module TaggedTableCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
       : option (list (tagged W.p)) := None.
 End TaggedTableCode.
 
-Module TaggedBitsLang <: LANG.
-  Include BitsLangCode.
-  Definition holds (g : guard) (vs : list val) : Prop :=
-    match g, vs with
-    | BTruth b, (w, z) :: nil => w = 1%positive /\ z = (if b then 1 else 0)%Z
-    | _, _ => False
-    end.
-End TaggedBitsLang.
-
-Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE TaggedBitsLang.
+Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Include TaggedCode L W.
-  Definition gamma (a : t) (c : TaggedBitsLang.val) : Prop :=
+  Definition gamma (a : t) (c : BitsLang.val) : Prop :=
     match a with
     | TBot => False
     | TAny => True
@@ -200,21 +191,21 @@ Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
   Include TaggedTableCode L W T.
 
   Lemma fwd_sound : forall o xs cs c r, fwd o xs = Some r ->
-    Forall2 B.gamma xs cs -> TaggedBitsLang.eval o cs = Some c -> B.gamma r c.
+    Forall2 B.gamma xs cs -> BitsLang.eval o cs = Some c -> B.gamma r c.
   Proof. Admitted.
 
   Lemma bwd_sound : forall o r xs ys cs c, bwd o r xs = Some ys ->
-    Forall2 B.gamma xs cs -> TaggedBitsLang.eval o cs = Some c -> B.gamma r c ->
+    Forall2 B.gamma xs cs -> BitsLang.eval o cs = Some c -> B.gamma r c ->
     Forall2 B.gamma ys cs.
   Proof. Admitted.
 
   Lemma grd_sound : forall g xs ys cs, grd g xs = Some ys ->
-    Forall2 B.gamma xs cs -> TaggedBitsLang.holds g cs -> Forall2 B.gamma ys cs.
+    Forall2 B.gamma xs cs -> BitsLang.holds g cs -> Forall2 B.gamma ys cs.
   Proof. Admitted.
 End TaggedTable.
 
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
   Module B := Tagged L W.
   Module Table := TaggedTable L W T.
-  Module Domain := Harness TaggedBitsLang B Table.
+  Module Domain := Harness BitsLang B Table.
 End WordDomain.

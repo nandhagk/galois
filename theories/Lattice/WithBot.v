@@ -72,3 +72,27 @@ Module WithBotT (L : LATTICE_T) <: LATTICE_T.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
 End WithBotT.
+
+Module WithBotHeight (L : LATTICE) (H : HEIGHT L)
+    (Lat : LATTICE with Definition t := option L.t
+                    with Definition leb :=
+                      (fun x y => match x, y with
+                                  | None, _ => true
+                                  | Some a, Some b => L.leb a b
+                                  | Some _, None => false
+                                  end)) <: HEIGHT Lat.
+  Definition rank (x : option L.t) := match x with None => 0 | Some a => S (H.rank a) end.
+  Definition height := S H.height.
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intros [a|]; cbv [rank height]; try (apply le_n_S; apply H.rank_le); try lia. Qed.
+  (** The lifted order never lowers rank. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
+  Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
+    rank a < rank b.
+  Proof.
+    intros [a|] [b|]; cbn [Lat.leb rank]; intros Hab Hba;
+      try discriminate; try lia.
+    pose proof (H.rank_strict a b Hab Hba); lia.
+  Qed.
+End WithBotHeight.

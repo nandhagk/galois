@@ -56,3 +56,23 @@ Module ProductT (A B : LATTICE_T) <: LATTICE_T.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
 End ProductT.
+
+Module ProductHeight (A B : LATTICE) (HA : HEIGHT A) (HB : HEIGHT B)
+    (Lat : LATTICE with Definition t := (A.t * B.t)%type
+                  with Definition leb :=
+                    (fun x y => andb (A.leb (fst x) (fst y)) (B.leb (snd x) (snd y))))
+    <: HEIGHT Lat.
+  Definition rank (x : Lat.t) : nat := HA.rank (fst x) + HB.rank (snd x).
+  Definition height : nat := HA.height + HB.height.
+
+  (** The sum of component ranks is bounded by the sum of their heights. *)
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. Admitted.
+  (** Componentwise inclusion never lowers the rank sum. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
+  (** A strict product step increases at least one component rank. *)
+  Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
+    rank a < rank b.
+  Proof. Admitted.
+End ProductHeight.

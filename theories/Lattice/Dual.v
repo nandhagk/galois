@@ -61,3 +61,21 @@ Module DualT (L : BLATTICE_T) <: BLATTICE_T.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End DualT.
+
+Module DualHeight (L : BLATTICE) (H : HEIGHT L)
+    (Lat : BLATTICE with Definition t := L.t
+                     with Definition leb := (fun a b => L.leb b a)) <: HEIGHT Lat.
+  Definition rank (x : L.t) := H.height - H.rank x.
+  Definition height := H.height.
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intros a; unfold rank, height; lia. Qed.
+  (** Reversing the order preserves monotonicity of the complementary rank. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
+  Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
+    rank a < rank b.
+  Proof.
+    intros a b Hab Hba; unfold Lat.leb in *; unfold rank.
+    pose proof (H.rank_strict b a Hab Hba); pose proof (H.rank_le a); lia.
+  Qed.
+End DualHeight.

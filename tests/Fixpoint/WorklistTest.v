@@ -96,3 +96,36 @@ Example certified_cycle : observe (A.analyze true flat 8%N) = Some [true; true; 
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(* assignment_lookup_present_missing_ticks had (true, false, 3 ticks, 4 ticks).
+   The lookup values stay the same after shifting the natural keys by one. *)
+Example assignment_lookup_present_missing :
+  let m := PTrieCode.set 1%positive (1%positive, true) PTrieCode.empty in
+  (C.look m 1%positive, C.look m 2%positive) = (true, false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(* FixpointCheckTest's full_accept, full_reject and full_empty run above.
+   index_repeated_sides runs in IndexedTest and WorklistOrderTest.
+   partial_accept, partial_reject_open_read, partial_empty and partial_visits_once
+   use the deleted Partial family. cut_accept, cut_reject_order,
+   cut_reject_duplicate, cut_reject_value and cut_empty use the deleted Cut family.
+
+   FixpointAnalyzeTest's bad_candidate_rejected runs in IndexedTest.
+   cycle_solved, cycle_exhausted, total_cycle, cycle_driver_preserves_support,
+   unrelated_binding_is_not_supported, empty_solved and joining_unbounded_exhausts
+   use the deleted Kleene reference or total-solver families.
+   charged_certification_accepts and charged_certification_rejects observe the
+   deleted certify_checked_c wrapper. CertifiedCode now accepts solver outcomes
+   and assignments. It has no Boolean-to-subtype certification operation.
+
+   FixpointWorklistTest's cycle_matches_reference compares against deleted Kleene.
+   cycle_evaluation_prefix_bound, cycle_adequate, cycle_priority_least,
+   counter_widening_adequate and counter_widening_prefix_bound are proof clients.
+   cycle_eval_equation and cycle_sides_equation are universal query equations.
+   The cycle run above retains their propagated values and ordered side effects.
+   cycle_dependency_occurrences had ([0; 1; 2; 0; 0; 0], [1], [0; 0], 6).
+   WorklistOrderTest retains the writes with keys shifted by one. Its reader lists
+   [2] and [1; 4] identify distinct row occurrences. WorklistCode exposes no
+   WorklistCost.dependency_count or WorklistCost.unknowns operation. *)
