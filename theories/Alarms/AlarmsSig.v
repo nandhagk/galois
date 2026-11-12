@@ -4,7 +4,7 @@
     For example, a missing invariant is read as the unreachable state.
     Builds on: MapSig, ChecksSig, StateSig and InterpSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -49,21 +49,23 @@ Module Type ALARMS (N X : KEY) (MN : MAP N) (L : LANG)
 Module Type ALARMS_TIME (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     (V : VALUE_DOMAIN_T L) (S : STATE_DOMAIN_T X L V) (C : CHECKS_T L V)
     (Import A : ALARMS N X MN L V S C).
-  Parameter T_inv_at : MN.t S.t -> N.t -> nat.
-  Parameter T_alarm : MN.t S.t -> check N.t L.op X.t C.kd -> nat.
-  Parameter T_alarms : MN.t S.t -> list (check N.t L.op X.t C.kd) -> nat.
-  Parameter c_alarms : nat.
+  Parameter T_inv_at : MN.t S.t -> N.t -> N.
+  Parameter T_alarm : MN.t S.t -> check N.t L.op X.t C.kd -> N.
+  Parameter T_alarms : MN.t S.t -> list (check N.t L.op X.t C.kd) -> N.
+  Parameter c_alarms : N.
   Definition check_work inv (k : check N.t L.op X.t C.kd) : nat :=
     let s := inv_at inv (site k) in
     fold_right Nat.add 0 (map (fun e => S.eval_work e s + 1) (args k)) +
     C.work (ckind k) (map (fun e => S.eval e s) (args k)) + N.bits (site k) + 1.
   (** Invariant lookup charges the site key. *)
-  Parameter T_inv_at_le : forall inv n, T_inv_at inv n <= c_alarms * (N.bits n + 1).
+  Parameter T_inv_at_le : forall inv n, (T_inv_at inv n <= c_alarms * N.of_nat ((N.bits n +
+    1)%nat))%N.
   (** One alarm charges operand evaluation, checking and site lookup. *)
-  Parameter T_alarm_le : forall inv k, T_alarm inv k <= c_alarms * check_work inv k.
+  Parameter T_alarm_le : forall inv k, (T_alarm inv k <= c_alarms * N.of_nat ((check_work inv
+    k)%nat))%N.
   (** Reporting charges the sum of its checks' work. *)
-  Parameter T_alarms_le : forall inv ks, T_alarms inv ks <=
-    c_alarms * (fold_right Nat.add 0 (map (check_work inv) ks)).
+  Parameter T_alarms_le : forall inv ks, (T_alarms inv ks <=
+    c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks))%nat))%N.
 End ALARMS_TIME.
 
 Module Type ALARMS_T (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)

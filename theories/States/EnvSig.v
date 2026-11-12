@@ -4,7 +4,7 @@
     For example, an absent binding denotes the value domain's top.
     Builds on: MapSig, StateSig and ValueSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -82,19 +82,20 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
     | Reached m => fold_right Nat.add 0
       (map (fun kv => X.bits (fst kv) + V.size (snd kv) + 1) (M.elements m))
     end.
-  Parameter T_read : M.t V.t -> X.t -> nat.
-  Parameter T_annotate : M.t V.t -> term L.op X.t -> nat.
-  Parameter T_root : ann L.op X.t V.t -> nat.
-  Parameter T_refine : V.t -> ann L.op X.t V.t -> M.t V.t -> nat.
-  Parameter T_join_map : M.t V.t -> M.t V.t -> nat.
-  Parameter c_env : nat.
+  Parameter T_read : M.t V.t -> X.t -> N.
+  Parameter T_annotate : M.t V.t -> term L.op X.t -> N.
+  Parameter T_root : ann L.op X.t V.t -> N.
+  Parameter T_refine : V.t -> ann L.op X.t V.t -> M.t V.t -> N.
+  Parameter T_join_map : M.t V.t -> M.t V.t -> N.
+  Parameter c_env : N.
   (** Annotation charges each visited transfer and leaf lookup. *)
-  Parameter T_annotate_le : forall m e, T_annotate m e <= c_env * tcost m e.
+  Parameter T_annotate_le : forall m e, (T_annotate m e <= c_env * N.of_nat ((tcost m e)%nat))%N.
   (** Assumption charges both passes and guard work. *)
-  Parameter T_assume_env_le : forall g es s, T_assume g es s <= c_env *
-    (fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) + 1).
+  Parameter T_assume_env_le : forall g es s, (T_assume g es s <= c_env *
+    N.of_nat ((fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) + 1)%nat))%N.
   (** Join charges the weighted sizes of both environments. *)
-  Parameter T_join_env_le : forall a b, T_join a b <= c_env * (esize a + esize b + 1).
+  Parameter T_join_env_le : forall a b,
+    (T_join a b <= c_env * N.of_nat ((esize a + esize b + 1)%nat))%N.
 End ENV_TIME.
 
 Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) :=

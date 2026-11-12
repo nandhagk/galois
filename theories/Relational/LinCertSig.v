@@ -59,18 +59,19 @@ End LINCERT_SPEC.
 
 Module Type LINCERT_TIME (X : KEY_T) (Import C : LINCERT X).
   Include LINCERT_SPEC X.
-  Parameter T_combine : list (lcons X.t) -> list Z -> nat.
-  Parameter T_check_entails : list (lcons X.t) -> lcons X.t -> cert -> nat.
-  Parameter T_check_empty : list (lcons X.t) -> list Z -> nat.
-  Parameter c_lc : nat.
+  Parameter T_combine : list (lcons X.t) -> list Z -> N.
+  Parameter T_check_entails : list (lcons X.t) -> lcons X.t -> cert -> N.
+  Parameter T_check_empty : list (lcons X.t) -> list Z -> N.
+  Parameter c_lc : N.
   (** Combination charges certificate-weighted row sizes. *)
-  Parameter T_combine_le : forall P ms, T_combine P ms <= c_lc * (csize P ms + 1).
+  Parameter T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
+    1)%nat))%N.
   (** Entailment checking charges the certificate and conclusion. *)
   Parameter T_check_entails_le : forall P c k,
-    T_check_entails P c k <= c_lc * (csize P (mults k) + lsize c + 1).
+    (T_check_entails P c k <= c_lc * N.of_nat ((csize P (mults k) + lsize c + 1)%nat))%N.
   (** Contradiction checking charges the certificate-weighted input. *)
   Parameter T_check_empty_le : forall P ms,
-    T_check_empty P ms <= c_lc * (csize P ms + 1).
+    (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
 End LINCERT_TIME.
 
 Module Type LINCERT_T (X : KEY_T) := LINCERT X <+ LINCERT_TIME X.

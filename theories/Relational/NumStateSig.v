@@ -56,16 +56,16 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter wsize : wparam -> nat.
   Parameter transfer_work : t -> nat.
   Parameter range_work : term L.op X.t -> t -> nat.
-  Parameter T_leb T_join T_narrow : t -> t -> nat.
-  Parameter T_is_bot : t -> nat.
-  Parameter T_widen : wparam -> t -> t -> nat.
-  Parameter T_assign : X.t -> term L.op X.t -> t -> nat.
-  Parameter T_havoc : X.t -> t -> nat.
-  Parameter T_assume : L.guard -> list (term L.op X.t) -> t -> nat.
-  Parameter T_range : term L.op X.t -> t -> nat.
-  Parameter c_num : nat.
+  Parameter T_leb T_join T_narrow : t -> t -> N.
+  Parameter T_is_bot : t -> N.
+  Parameter T_widen : wparam -> t -> t -> N.
+  Parameter T_assign : X.t -> term L.op X.t -> t -> N.
+  Parameter T_havoc : X.t -> t -> N.
+  Parameter T_assume : L.guard -> list (term L.op X.t) -> t -> N.
+  Parameter T_range : term L.op X.t -> t -> N.
+  Parameter c_num : N.
   (** Range queries charge their stated numeric work. *)
-  Parameter T_range_le : forall e s, T_range e s <= c_num * (range_work e s + 1).
+  Parameter T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
 End NUM_STATE_TIME.
 
 Module Type NUM_STATE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

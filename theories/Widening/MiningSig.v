@@ -34,19 +34,19 @@ Module Type MINING (X : KEY) (L : LANG) (T : THRESHOLDS) :=
 
 Module Type MINING_TIME (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
     (Import M : MINING X L T).
-  Parameter T_lits : term L.op X.t -> nat.
-  Parameter T_mine : list (term L.op X.t) -> list Z -> nat.
-  Parameter c_mining : nat.
+  Parameter T_lits : term L.op X.t -> N.
+  Parameter T_mine : list (term L.op X.t) -> list Z -> N.
+  Parameter c_mining : N.
   Definition seeds es extra := flat_map lits es ++ extra.
   Definition expanded es extra := flat_map (fun z => ((z-1)%Z :: z :: (z+1)%Z :: nil))
     (seeds es extra).
   (** Literal collection charges one traversal of the term. *)
-  Parameter T_lits_le : forall e, T_lits e <= c_mining * tsize e.
+  Parameter T_lits_le : forall e, (T_lits e <= c_mining * N.of_nat ((tsize e)%nat))%N.
   (** Mining charges traversal, neighbor arithmetic and threshold construction. *)
-  Parameter T_mine_le : forall es extra, T_mine es extra <= c_mining *
-    (fold_right Nat.add 0 (map tsize es) +
-     fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)) +
-     T.T_make (expanded es extra) + 1).
+  Parameter T_mine_le : forall es extra, (T_mine es extra <= c_mining *
+    (N.of_nat ((fold_right Nat.add 0 (map tsize es) +
+     fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
+     T.T_make (expanded es extra) + 1))%N.
 End MINING_TIME.
 
 Module Type MINING_T (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T) :=

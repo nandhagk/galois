@@ -59,65 +59,72 @@ Module Type INTERVAL (L : Z_LANGUAGE) (T : THRESHOLDS) :=
 Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     (Import D : INTERVAL L T).
   Include VALUE_DOMAIN_TIME L D.
-  Parameter T_point : itv -> nat.
-  Parameter T_abst : Z -> nat.
-  Parameter T_add T_sub T_mul T_udiv T_urem T_bitand T_bitor T_shl : itv -> itv -> nat.
+  Parameter T_point : itv -> N.
+  Parameter T_abst : Z -> N.
+  Parameter T_add T_sub T_mul T_udiv T_urem T_bitand T_bitor T_shl : itv -> itv -> N.
   Parameter T_add_back T_sub_back T_mul_back T_udiv_back T_urem_back T_ult_back :
-    itv -> itv -> itv -> nat.
-  Parameter T_signed_split : positive -> itv -> nat.
-  Parameter T_cmp : comparison -> itv -> itv -> nat.
-  Parameter c_interval : nat.
+    itv -> itv -> itv -> N.
+  Parameter T_signed_split : positive -> itv -> N.
+  Parameter T_cmp : comparison -> itv -> itv -> N.
+  Parameter c_interval : N.
   (** Interval size records the largest endpoint bit size. *)
   Parameter size_bits : forall a, size a = itv_bits a.
   (** Point recognition charges both endpoint comparisons. *)
-  Parameter T_point_le : forall a, T_point a <= c_interval * (size a + 1).
+  Parameter T_point_le : forall a, (T_point a <= c_interval * N.of_nat ((size a + 1)%nat))%N.
   (** A singleton interval shares its integer argument. *)
-  Parameter T_abst_le : forall z, T_abst z <= c_interval.
+  Parameter T_abst_le : forall z, (T_abst z <= c_interval)%N.
   (** Addition charges linear endpoint arithmetic. *)
-  Parameter T_add_le : forall a b, T_add a b <= c_interval * (size a + size b + 1).
+  Parameter T_add_le : forall a b, (T_add a b <= c_interval * N.of_nat ((size a + size b +
+    1)%nat))%N.
   (** Subtraction charges linear endpoint arithmetic. *)
-  Parameter T_sub_le : forall a b, T_sub a b <= c_interval * (size a + size b + 1).
+  Parameter T_sub_le : forall a b, (T_sub a b <= c_interval * N.of_nat ((size a + size b +
+    1)%nat))%N.
   (** Multiplication has the published quadratic endpoint bound. *)
-  Parameter T_mul_le : forall a b, T_mul a b <= c_interval * binary_work a b.
+  Parameter T_mul_le : forall a b, (T_mul a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
   (** Unsigned division has the published quadratic endpoint bound. *)
-  Parameter T_udiv_le : forall a b, T_udiv a b <= c_interval * binary_work a b.
+  Parameter T_udiv_le : forall a b, (T_udiv a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
   (** Unsigned remainder has the published quadratic endpoint bound. *)
-  Parameter T_urem_le : forall a b, T_urem a b <= c_interval * binary_work a b.
+  Parameter T_urem_le : forall a b, (T_urem a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
   (** Bitwise conjunction has the published quadratic endpoint bound. *)
-  Parameter T_bitand_le : forall a b, T_bitand a b <= c_interval * binary_work a b.
+  Parameter T_bitand_le : forall a b, (T_bitand a b <= c_interval * N.of_nat ((binary_work a
+    b)%nat))%N.
   (** Bitwise disjunction has the published quadratic endpoint bound. *)
-  Parameter T_bitor_le : forall a b, T_bitor a b <= c_interval * binary_work a b.
+  Parameter T_bitor_le : forall a b, (T_bitor a b <= c_interval * N.of_nat ((binary_work a
+    b)%nat))%N.
   (** Shift transfer has the published quadratic endpoint bound. *)
-  Parameter T_shl_le : forall a b, T_shl a b <= c_interval * binary_work a b.
+  Parameter T_shl_le : forall a b, (T_shl a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
   (** Comparison charges linear endpoint comparisons. *)
-  Parameter T_cmp_le : forall c a b, T_cmp c a b <= c_interval * (size a + size b + 1).
+  Parameter T_cmp_le : forall c a b, (T_cmp c a b <= c_interval * N.of_nat ((size a + size b +
+    1)%nat))%N.
   (** Backward addition charges the result and both operands. *)
-  Parameter T_add_back_le : forall r a b, T_add_back r a b <=
-    c_interval * (size r + size a + size b + 1) ^ 2.
+  Parameter T_add_back_le : forall r a b, (T_add_back r a b <=
+    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
   (** Backward subtraction charges the result and both operands. *)
-  Parameter T_sub_back_le : forall r a b, T_sub_back r a b <=
-    c_interval * (size r + size a + size b + 1) ^ 2.
+  Parameter T_sub_back_le : forall r a b, (T_sub_back r a b <=
+    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
   (** Backward multiplication charges the result and both operands. *)
-  Parameter T_mul_back_le : forall r a b, T_mul_back r a b <=
-    c_interval * (size r + size a + size b + 1) ^ 2.
+  Parameter T_mul_back_le : forall r a b, (T_mul_back r a b <=
+    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
   (** Backward unsigned division charges the result and both operands. *)
-  Parameter T_udiv_back_le : forall r a b, T_udiv_back r a b <=
-    c_interval * (size r + size a + size b + 1) ^ 2.
+  Parameter T_udiv_back_le : forall r a b, (T_udiv_back r a b <=
+    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
   (** Backward unsigned remainder charges the result and both operands. *)
-  Parameter T_urem_back_le : forall r a b, T_urem_back r a b <=
-    c_interval * (size r + size a + size b + 1) ^ 2.
+  Parameter T_urem_back_le : forall r a b, (T_urem_back r a b <=
+    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
   (** Backward comparison charges the result and both operands. *)
-  Parameter T_ult_back_le : forall r a b, T_ult_back r a b <=
-    c_interval * (size r + size a + size b + 1) ^ 2.
+  Parameter T_ult_back_le : forall r a b, (T_ult_back r a b <=
+    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
   (** Signed splitting charges the width and endpoints. *)
-  Parameter T_signed_split_le : forall w a, T_signed_split w a <=
-    c_interval * (Pos.to_nat w + size a + 1) ^ 2.
+  Parameter T_signed_split_le : forall w a, (T_signed_split w a <=
+    c_interval * N.of_nat (((Pos.to_nat w + size a + 1) ^ 2)%nat))%N.
   (** Threshold widening charges a search path and endpoint bit sizes. *)
-  Parameter T_widen_thresholds_le : forall ts a b, T_widen ts a b <=
-    c_interval * (T.depth ts + 1) * (T.tree_bits ts + size a + size b + 1).
+  Parameter T_widen_thresholds_le : forall ts a b, (T_widen ts a b <=
+    c_interval * N.of_nat ((T.depth ts + 1)%nat) * N.of_nat ((T.tree_bits ts + size a + size b +
+    1)%nat))%N.
   (** Multiplication has the published quadratic endpoint bound. *)
-  Parameter mul_bigO : bigO (fun _ => True)
-    (fun ab => binary_work (fst ab) (snd ab)) (fun ab => T_mul (fst ab) (snd ab)).
+  Parameter mul_bigO : (bigO (fun _ => True)
+    (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
+    (fun ab => T_mul (fst ab) (snd ab)))%N.
 End INTERVAL_TIME.
 
 Module Type INTERVAL_T (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=
@@ -125,7 +132,7 @@ Module Type INTERVAL_T (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=
 
 Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     (Import D : INTERVAL_T L T).
-  Parameter k_interval_arith k_interval_back k_interval_widen : nat.
+  Parameter k_interval_arith k_interval_back k_interval_widen : N.
   (** Interval concretization is inclusive endpoint membership. *)
   Parameter F1_gamma : forall a z, gamma a z <-> in_itv a z.
   (** Widening uses the count of thresholds beyond each finite endpoint. *)
@@ -196,10 +203,11 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     in_itv r (if (x <? y)%Z then 1 else 0) ->
     in_itv (fst (ult_back r a b)) x /\ in_itv (snd (ult_back r a b)) y.
   (** Endpoint arithmetic bounds multiplication before dispatch overhead. *)
-  Parameter T1_mul : forall a b, T_mul a b <= k_interval_arith * binary_work a b.
+  Parameter T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   (** Threshold searches bound widening before dispatch overhead. *)
-  Parameter T2_widen : forall ts a b, T_widen ts a b <= k_interval_widen *
-    (T.depth ts + 1) * (T.tree_bits ts + size a + size b + 1).
+  Parameter T2_widen : forall ts a b,
+    (T_widen ts a b <= k_interval_widen * N.of_nat (T.depth ts + 1) *
+      N.of_nat (T.tree_bits ts + size a + size b + 1))%N.
 End INTERVAL_PLAN.
 
 Module Type INTERVAL_ALL (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=
