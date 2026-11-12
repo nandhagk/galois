@@ -145,16 +145,14 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
   Parameter rules_valid : forall q, valid V.prim V.merge (andersen_model q) (compile q).
   (** Seeds contain exactly the source constraints and initial pointer facts. *)
   Parameter seed_rows : forall q f k o, row (D.view (seed q)) f k o <-> pointer_seed_row q f k o.
-  (** Seed relation kinds agree with the compiled declaration list. *)
-  Parameter seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
-  (** Seed slots use the checked program's compiled layout. *)
+  (** Seeds carry the compiled declarations, the layout of the compiled plan and
+      well-sorted rows. *)
   Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   (** Seed construction produces a well-formed canonical relational database. *)
   Parameter seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q) /\ R.no_ids (seed q).
-  (** A plan is checked before the run starts. *)
-  Parameter solve_checked : forall q lim, let cp := R.plan (compile q) in
-    solve q lim = if R.check_plan (compile q) cp then R.run (compile q) cp lim (seed q)
-      else (IterLimit, seed q).
+  (** The solver runs the engine with the planned program on the seed. *)
+  Parameter solve_run : forall q lim,
+    solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   (** Points-to queries reflect canonical relation membership. *)
   Parameter points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (row (D.view db) 5 [Val x; Val a] None) (points db x a).
@@ -196,9 +194,9 @@ Module Type ANDERSEN_TIME (V : VALUE_T with Definition t := positive)
     (T_points db x a <= c_andersen * (N.of_nat (3 * D.unit db) +
       N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
 
-  (** The driver pays for compilation, seeding, planning, checking and the selected engine run. *)
+  (** The driver pays for compilation, seeding, planning and the engine run. *)
   Parameter T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
+    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_andersen)%N.
 End ANDERSEN_TIME.
 
@@ -238,7 +236,7 @@ Module Type ANDERSEN_PLAN (V : VALUE_T with Definition t := positive)
     pointer_exec instruction before = Some after -> memory_covered r after.
   (** Wrapper composition retains each actual primitive cost. *)
   Parameter T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
+    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
 End ANDERSEN_PLAN.
 

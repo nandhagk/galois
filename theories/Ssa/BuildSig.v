@@ -38,30 +38,32 @@ Record rename_state (K G : Type) := RenameState {
 
 Module Type BUILD_OPS (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E : TYPE) (N : KEY_OPS)
-    (BC : CFG_INDEXED_OPS P PosKeyCode BE) (C : CFG_INDEXED_OPS P N E)
-    (U : VARS_OPS P N E C PosKeyCode)
-    (SP : SSA_POINTS_OPS P PosKeyCode BE BC N E C PosKeyCode U)
-    (S : SSA_OPS P PosKeyCode BE BC PosKeyCode K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (BE E : TYPE) (N : KEY_OPS)
+    (BC : CFG_INDEXED_OPS Q PosKeyCode BE) (C : CFG_INDEXED_OPS Q N E)
+    (U : VARS_OPS Q N E C PosKeyCode)
+    (SP : SSA_POINTS_OPS Q PosKeyCode BE BC N E C PosKeyCode U)
+    (S : SSA_OPS Q PosKeyCode BE BC PosKeyCode K G)
     (DG : DIGRAPH_OPS) (D : DOM_OPS) (F : FRONTIER_OPS)
-    (L : LIVE_OPS O P BE E N BC C U SP)
-    (Va : VALIDATE_OPS O K G P BE BC S DG D).
+    (L : LIVE_OPS O P Q R BE E N BC C U SP)
+    (Va : VALIDATE_OPS O K G P Q R BE BC S DG D).
   Parameter produce : P.t -> option (P.t * cert).
   Parameter build : P.t -> option P.t.
 End BUILD_OPS.
 
 Module Type BUILD_LAWS (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E : TYPE) (N : KEY)
-    (BC : CFG P PosKey BE) (C : CFG P N E)
-    (U : VARS P N E C PosKey)
-    (SP : SSA_POINTS P PosKey BE BC N E C PosKey U)
-    (S : SSA P PosKey BE BC PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (BE E : TYPE) (N : KEY)
+    (BC : CFG Q PosKey BE) (C : CFG Q N E)
+    (U : VARS Q N E C PosKey)
+    (SP : SSA_POINTS Q PosKey BE BC N E C PosKey U)
+    (S : SSA Q PosKey BE BC PosKey K G)
     (DG : DIGRAPH) (D : DOM) (F : FRONTIER)
-    (L : LIVE O P BE E N BC C U SP)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE O K G P BE BC S DG D B)
-    (Import A : BUILD_OPS O K G P BE E N BC C U SP S DG D F L Va).
+    (L : LIVE O P Q R BE E N BC C U SP)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE O K G P Q R BE BC S DG D B)
+    (Import A : BUILD_OPS O K G P Q R BE E N BC C U SP S DG D F L Va).
   (** The wrapper returns a candidate exactly when both validators accept it. *)
   Parameter build_checked : forall p, build p =
     match produce p with
@@ -75,35 +77,38 @@ End BUILD_LAWS.
 
 Module Type BUILD (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E : TYPE) (N : KEY)
-    (BC : CFG P PosKey BE) (C : CFG P N E)
-    (U : VARS P N E C PosKey)
-    (SP : SSA_POINTS P PosKey BE BC N E C PosKey U)
-    (S : SSA P PosKey BE BC PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (BE E : TYPE) (N : KEY)
+    (BC : CFG Q PosKey BE) (C : CFG Q N E)
+    (U : VARS Q N E C PosKey)
+    (SP : SSA_POINTS Q PosKey BE BC N E C PosKey U)
+    (S : SSA Q PosKey BE BC PosKey K G)
     (DG : DIGRAPH) (D : DOM) (F : FRONTIER)
-    (L : LIVE O P BE E N BC C U SP)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE O K G P BE BC S DG D B) :=
-  BUILD_OPS O K G P BE E N BC C U SP S DG D F L Va <+
-  BUILD_LAWS O K G P BE E N BC C U SP S DG D F L B Va.
+    (L : LIVE O P Q R BE E N BC C U SP)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE O K G P Q R BE BC S DG D B) :=
+  BUILD_OPS O K G P Q R BE E N BC C U SP S DG D F L Va <+
+  BUILD_LAWS O K G P Q R BE E N BC C U SP S DG D F L B Va.
 
 Module Type BUILD_TIME (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E N : KEY_T)
-    (BC : CFG_T P PosKeyT BE) (C : CFG_T P N E)
-    (U : VARS_T P N E C PosKeyT)
-    (SP : SSA_POINTS_T P PosKeyT BE BC N E C PosKeyT U)
-    (PB : LANG_PRESENT_BUDGET O P BE E N BC C U SP)
-    (S : SSA_T P PosKeyT BE BC PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (BE E N : KEY_T)
+    (BC : CFG_T Q PosKeyT BE) (C : CFG_T Q N E)
+    (U : VARS_T Q N E C PosKeyT)
+    (SP : SSA_POINTS_T Q PosKeyT BE BC N E C PosKeyT U)
+    (PB : LANG_PRESENT_BUDGET O Q R BE E N BC C U SP)
+    (S : SSA_T Q PosKeyT BE BC PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T) (F : FRONTIER_T)
-    (L : LIVE_T O P BE E N BC C U SP PB)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE_T O K G P BE BC S DG D B)
-    (Import A : BUILD O K G P BE E N BC C U SP S DG D F L B Va).
+    (L : LIVE_T O P Q R BE E N BC C U SP PB)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE_T O K G P Q R BE BC S DG D B)
+    (Import A : BUILD O K G P Q R BE E N BC C U SP S DG D F L B Va).
   Parameter T_produce : P.t -> N.
   Parameter T_build : P.t -> N.
   Parameter c_build : N.
-  Definition graph p := DG.prepare (cfg_graph (BC.nodes p) (BC.edges p) (BC.src p) (BC.dst p)).
+  Definition graph p := DG.prepare (cfg_graph (BC.nodes (R.prepare p))
+    (BC.edges (R.prepare p)) (BC.src (R.prepare p)) (BC.dst (R.prepare p))).
   Definition dom_result p := D.build (graph p) (entry _ _ _ p).
   Definition dom_tree p := D.tree (graph p) (entry _ _ _ p)
     (fst (dom_result p)) (snd (dom_result p)).
@@ -112,14 +117,15 @@ Module Type BUILD_TIME (O : OPS)
   Definition phi_sites p x := F.idf (frontiers p) (definition_blocks p x).
   Definition placement_work p := fold_right (fun x n =>
     fold_right (fun b m => 1 + length (frontier_row (frontiers p) b) + m) 0 (phi_sites p x) + n)
-    0 (U.universe p).
+    0 (U.universe (R.prepare p)).
   Definition phi_args p :=
     match produce p with Some (s, _) => function_edge_args s | None => 0 end.
   Definition dom_work p :=
     (graph_n (base (graph p)) + graph_e (base (graph p)) + 1) *
       (Nat.log2 (graph_n (base (graph p))) + 1).
-  Definition build_work p := function_size p + length (BC.nodes p) + length (BC.edges p) +
-    dom_work p + df_size p + placement_work p + L.live_size p + phi_args p + 1.
+  Definition build_work p := function_size p + length (BC.nodes (R.prepare p)) +
+    length (BC.edges (R.prepare p)) + dom_work p + df_size p + placement_work p +
+    L.live_size p + phi_args p + 1.
   (** Construction keeps the published dominator, placement, liveness and argument budget. *)
   Parameter T_build_le : forall p,
     (T_build p <= c_build * N.of_nat (build_work p) * N.of_nat (function_width p + 1) +
@@ -130,33 +136,34 @@ End BUILD_TIME.
 
 Module Type BUILD_T (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E N : KEY_T)
-    (BC : CFG_T P PosKeyT BE) (C : CFG_T P N E)
-    (U : VARS_T P N E C PosKeyT)
-    (SP : SSA_POINTS_T P PosKeyT BE BC N E C PosKeyT U)
-    (PB : LANG_PRESENT_BUDGET O P BE E N BC C U SP)
-    (S : SSA_T P PosKeyT BE BC PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (BE E N : KEY_T)
+    (BC : CFG_T Q PosKeyT BE) (C : CFG_T Q N E)
+    (U : VARS_T Q N E C PosKeyT)
+    (SP : SSA_POINTS_T Q PosKeyT BE BC N E C PosKeyT U)
+    (PB : LANG_PRESENT_BUDGET O Q R BE E N BC C U SP)
+    (S : SSA_T Q PosKeyT BE BC PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T) (F : FRONTIER_T)
-    (L : LIVE_T O P BE E N BC C U SP PB)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE_T O K G P BE BC S DG D B) :=
-  BUILD O K G P BE E N BC C U SP S DG D F L B Va <+
-  BUILD_TIME O K G P BE E N BC C U SP PB S DG D F L B Va.
+    (L : LIVE_T O P Q R BE E N BC C U SP PB)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE_T O K G P Q R BE BC S DG D B) :=
+  BUILD O K G P Q R BE E N BC C U SP S DG D F L B Va <+
+  BUILD_TIME O K G P Q R BE E N BC C U SP PB S DG D F L B Va.
 
 Module Type BUILD_PLAN (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E N : KEY_T)
-    (BC : CFG_T P PosKeyT BE) (C : CFG_T P N E)
-    (U : VARS_T P N E C PosKeyT)
-    (SP : SSA_POINTS_T P PosKeyT BE BC N E C PosKeyT U)
-    (PB : LANG_PRESENT_BUDGET O P BE E N BC C U SP)
-    (S : SSA_T P PosKeyT BE BC PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (BE E N : KEY_T)
+    (BC : CFG_T Q PosKeyT BE) (C : CFG_T Q N E)
+    (U : VARS_T Q N E C PosKeyT)
+    (SP : SSA_POINTS_T Q PosKeyT BE BC N E C PosKeyT U)
+    (PB : LANG_PRESENT_BUDGET O Q R BE E N BC C U SP)
+    (S : SSA_T Q PosKeyT BE BC PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T) (F : FRONTIER_T)
-    (L : LIVE_T O P BE E N BC C U SP PB)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE_T O K G P BE BC S DG D B)
-    (Import A : BUILD_T O K G P BE E N BC C U SP PB S DG D F L B Va).
-  Parameter graph_ok : P.t -> bool.
+    (L : LIVE_T O P Q R BE E N BC C U SP PB)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE_T O K G P Q R BE BC S DG D B)
+    (Import A : BUILD_T O K G P Q R BE E N BC C U SP PB S DG D F L B Va).
   Parameter def_index : P.t -> ptrie (list positive).
   Parameter live_sets : list (positive * list positive) -> ptrie (ptrie unit).
   Parameter place_var : ptrie (list positive) -> ptrie (list positive) ->
@@ -173,7 +180,6 @@ Module Type BUILD_PLAN (O : OPS)
   Parameter rename_step : P.t -> domtree -> ptrie (list positive) ->
     list (positive * list positive) -> rename_state O.K O.G ->
       rename_state O.K O.G + option (P.t * cert).
-  Parameter T_graph_ok : P.t -> N.
   Parameter T_rename : P.t -> domtree -> ptrie (list positive) ->
     list (positive * list positive) -> N.
   Parameter T_rename_init : P.t -> N.
@@ -183,8 +189,8 @@ Module Type BUILD_PLAN (O : OPS)
   Definition placed p x :=
     place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x.
 
-  (** The producer rejects malformed block graphs before frontier construction. *)
-  Parameter F1_graph_checked : forall p, graph_ok p = true -> wf_graph (base (graph p)).
+  (** The graph of every prepared function is well formed. *)
+  Parameter F1_graph_wf : forall p, wf_graph (base (graph p)).
   (** The definition index lists each variable's definition blocks. *)
   Parameter F2a_def_index : forall p x,
     frontier_row (def_index p) x = definition_blocks p x.
@@ -199,17 +205,18 @@ Module Type BUILD_PLAN (O : OPS)
     In b (phi_sites p x) /\ In x (cert_live ([], L.live_in p) b).
   (** The placement table lists exactly the placed variables of each block. *)
   Parameter F3a_placement : forall p b x,
-    In x (frontier_row (placement p) b) <-> In x (U.universe p) /\ In b (placed p x).
-  (** Renaming uses a bounded explicit stack with one entering and one leaving visit per block. *)
+    In x (frontier_row (placement p) b) <->
+      In x (U.universe (R.prepare p)) /\ In b (placed p x).
+  (** Renaming uses a bounded explicit stack with two visits per listed block. *)
   Parameter F4_rename_loop : forall p t rows live,
     rename p t rows live =
-      match loop_fuel (rename_step p t rows live) (2 * length (BC.nodes p) + 1) (rename_init p) with
+      match loop_fuel (rename_step p t rows live) (2 * length (blocks _ _ _ p) + 1)
+        (rename_init p) with
       | inl _ => None
       | inr answer => answer
       end.
   (** The producer checks dominators before using their numbered tree. *)
   Parameter F5_produce_checked : forall p s c, produce p = Some (s, c) ->
-    graph_ok p = true /\
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
     rename p (dom_tree p) (placement p) (L.live_in p) = Some (s, c).
   (** The two indexes charge syntax and emitted live rows once. *)
@@ -228,22 +235,23 @@ Module Type BUILD_PLAN (O : OPS)
       N.of_nat (function_width p + 1) +
       fold_right N.add 0%N (map
         (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)))
-        (U.universe p)))%N.
+        (U.universe (R.prepare p))))%N.
   (** Initialization charges the source inventory at its syntax width. *)
   Parameter T2a_rename_init : forall p,
     (T_rename_init p <= k_rename * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
-  (** The driver charges the clock of its actual bounded rename loop. *)
+  (** The driver counts the blocks for its fuel and runs its bounded rename loop. *)
   Parameter T2b_rename_driver : forall p,
     (T_rename p (dom_tree p) (placement p) (L.live_in p) <= T_rename_init p +
       T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
         (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-        (2 * length (BC.nodes p) + 1) (rename_init p) + k_rename)%N.
+        (2 * length (blocks _ _ _ p) + 1) (rename_init p) +
+      k_rename * N.of_nat (length (blocks _ _ _ p) + 1))%N.
   (** Both visits to each block charge their statements and emitted incoming arguments. *)
   Parameter T2c_rename_loop : forall p,
     (T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
       (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-      (2 * length (BC.nodes p) + 1) (rename_init p) <=
+      (2 * length (blocks _ _ _ p) + 1) (rename_init p) <=
       k_rename * N.of_nat (function_size p + placement_work p + phi_args p + 1) *
         N.of_nat (function_width p + 1))%N.
   (** Renaming charges statements and the incoming arguments it emits. *)
@@ -257,24 +265,22 @@ Module Type BUILD_PLAN (O : OPS)
     (N.of_nat (function_size s + cert_size c) <= k_size * N.of_nat (build_work p))%N /\
     (N.of_nat (function_width s + vertex_width (cert_ids c)) <=
       k_size * N.of_nat (function_width p + 1))%N.
-  (** The producer checks the graph before preparing it and stops at the first rejection. *)
+  (** The producer prepares once, builds and prepares the graph, and stops when the
+      dominator check rejects. *)
   Parameter T3_produce : forall p,
-    (T_produce p <= T_graph_ok p + k_graph +
-      if graph_ok p then
-        DG.T_prepare (cfg_graph (BC.nodes p) (BC.edges p) (BC.src p) (BC.dst p)) +
-        D.T_build (graph p) (entry _ _ _ p) +
-        D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-        (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p))
-         then D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-           F.T_df (graph p) (dom_tree p) + L.T_live_in p + T_def_index p +
-           T_live_sets (L.live_in p) + T_placement p +
-           T_rename p (dom_tree p) (placement p) (L.live_in p)
-         else 0)
-      else 0)%N.
-  (** Graph screening reads the block presentation once. *)
-  Parameter T3a_graph_ok : forall p,
-    (T_graph_ok p <= k_graph * N.of_nat (length (BC.nodes p) + length (BC.edges p) + 1) *
-      N.of_nat (function_width p + 1))%N.
+    (T_produce p <= R.T_prepare p + k_graph +
+      k_graph * N.of_nat (length (BC.nodes (R.prepare p)) +
+        length (BC.edges (R.prepare p)) + 1) * N.of_nat (function_width p + 1) +
+      DG.T_prepare (cfg_graph (BC.nodes (R.prepare p)) (BC.edges (R.prepare p))
+        (BC.src (R.prepare p)) (BC.dst (R.prepare p))) +
+      D.T_build (graph p) (entry _ _ _ p) +
+      D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
+      (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p))
+       then D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
+         F.T_df (graph p) (dom_tree p) + L.T_live_in p + T_def_index p +
+         T_live_sets (L.live_in p) + T_placement p +
+         T_rename p (dom_tree p) (placement p) (L.live_in p)
+       else 0))%N.
   (** The wrapper charges the actual certificate and candidate validators. *)
   Parameter T4_wrapper : forall p,
     (T_build p <= T_produce p +
@@ -286,15 +292,16 @@ End BUILD_PLAN.
 
 Module Type BUILD_ALL (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E N : KEY_T)
-    (BC : CFG_T P PosKeyT BE) (C : CFG_T P N E)
-    (U : VARS_T P N E C PosKeyT)
-    (SP : SSA_POINTS_T P PosKeyT BE BC N E C PosKeyT U)
-    (PB : LANG_PRESENT_BUDGET O P BE E N BC C U SP)
-    (S : SSA_T P PosKeyT BE BC PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (BE E N : KEY_T)
+    (BC : CFG_T Q PosKeyT BE) (C : CFG_T Q N E)
+    (U : VARS_T Q N E C PosKeyT)
+    (SP : SSA_POINTS_T Q PosKeyT BE BC N E C PosKeyT U)
+    (PB : LANG_PRESENT_BUDGET O Q R BE E N BC C U SP)
+    (S : SSA_T Q PosKeyT BE BC PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T) (F : FRONTIER_T)
-    (L : LIVE_T O P BE E N BC C U SP PB)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE_T O K G P BE BC S DG D B) :=
-  BUILD_T O K G P BE E N BC C U SP PB S DG D F L B Va <+
-  BUILD_PLAN O K G P BE E N BC C U SP PB S DG D F L B Va.
+    (L : LIVE_T O P Q R BE E N BC C U SP PB)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE_T O K G P Q R BE BC S DG D B) :=
+  BUILD_T O K G P Q R BE E N BC C U SP PB S DG D F L B Va <+
+  BUILD_PLAN O K G P Q R BE E N BC C U SP PB S DG D F L B Va.

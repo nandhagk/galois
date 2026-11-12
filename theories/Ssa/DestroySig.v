@@ -7,7 +7,6 @@
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Std BigO.
 From Galois.Base Require Import KeySig Key.
-From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig.
 Import List.ListNotations.
 
@@ -34,19 +33,17 @@ Definition move_check := (moves * positive * moves)%type.
 
 Module Type DESTROY_OPS (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_INDEXED_OPS P PosKeyCode E) (S : SSA_OPS P PosKeyCode E C PosKeyCode K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_OPS).
   Parameter destroy : P.t -> option P.t.
 End DESTROY_OPS.
 
 Module Type DESTROY_LAWS (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    (Import A : DESTROY_OPS O K G P E C S PM).
+    (OL : LAWS O)
+    (Import A : DESTROY_OPS O K G P PM).
   (** Every returned program has imperative form. *)
   Parameter destroy_imp : forall s p, destroy s = Some p -> imp_form p.
   (** Destruction adds at most one block step per original edge and retains finite results. *)
@@ -58,19 +55,17 @@ End DESTROY_LAWS.
 
 Module Type DESTROY (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
-  DESTROY_OPS O K G P E C S PM <+ DESTROY_LAWS O K G P E C S PM OL B.
+    (OL : LAWS O) :=
+  DESTROY_OPS O K G P PM <+ DESTROY_LAWS O K G P PM OL.
 
 Module Type DESTROY_TIME (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    (Import A : DESTROY O K G P E C S PM OL B).
+    (OL : LAWS O)
+    (Import A : DESTROY O K G P PM OL).
   Parameter T_destroy : P.t -> N.
   Parameter c_ds : N.
   Definition destroy_work (s : P.t) :=
@@ -85,19 +80,17 @@ End DESTROY_TIME.
 
 Module Type DESTROY_T (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
-  DESTROY O K G P E C S PM OL B <+ DESTROY_TIME O K G P E C S PM OL B.
+    (OL : LAWS O) :=
+  DESTROY O K G P PM OL <+ DESTROY_TIME O K G P PM OL.
 
 Module Type DESTROY_PLAN (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    (Import A : DESTROY_T O K G P E C S PM OL B).
+    (OL : LAWS O)
+    (Import A : DESTROY_T O K G P PM OL).
   Parameter split : P.t -> option P.t.
   Parameter copies : P.t -> option P.t.
   Parameter checked_moves : P.t -> list move_check.
@@ -179,8 +172,7 @@ End DESTROY_PLAN.
 
 Module Type DESTROY_ALL (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
-  DESTROY_T O K G P E C S PM OL B <+ DESTROY_PLAN O K G P E C S PM OL B.
+    (OL : LAWS O) :=
+  DESTROY_T O K G P PM OL <+ DESTROY_PLAN O K G P PM OL.

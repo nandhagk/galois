@@ -59,30 +59,34 @@ TimeFun edge_choice.
 
 (** The supplied core readers describe this block language and its path relation. *)
 Module Type LANG_SSA_LINK (O : OPS) (K : KEY with Definition t := O.K)
-    (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G).
-  (** The core entry is the language entry. *)
-  Parameter entries_agree : forall p, C.entries p = [entry _ _ _ p].
-  (** The core node inventory retains the listed block order. *)
-  Parameter nodes_agree : forall p, C.nodes p = map fst (blocks _ _ _ p).
-  (** Core paths and language paths traverse the same block identifiers. *)
-  Parameter paths_agree : forall p a route b,
-    presentation_path (C.edges p) (C.src p) (C.dst p) a route b <-> Lang.path p a route b.
+    (G : KEY with Definition t := O.G) (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG Q PosKey E) (S : SSA Q PosKey E C PosKey K G).
+  (** A listed entry is the core entry. *)
+  Parameter entries_agree : forall p, In (entry _ _ _ p) (map fst (blocks _ _ _ p)) ->
+    C.entries (R.prepare p) = [entry _ _ _ p].
+  (** The core node inventory lists the first block of each identifier in block order. *)
+  Parameter nodes_agree : forall p,
+    C.nodes (R.prepare p) = map fst (first_blocks (blocks _ _ _ p)).
+  (** Core paths and language paths agree when identifiers are distinct and targets listed. *)
+  Parameter paths_agree : forall p a route b, NoDup (map fst (blocks _ _ _ p)) ->
+    targets_listed p ->
+    (presentation_path (C.edges (R.prepare p)) (C.src (R.prepare p))
+      (C.dst (R.prepare p)) a route b <-> Lang.path p a route b).
   (** Parameter readers use the language's first matching block. *)
-  Parameter params_agree : forall p b, S.params p b =
+  Parameter params_agree : forall p b, S.params (R.prepare p) b =
     match find_block b (blocks _ _ _ p) with
     | Some body => params _ _ _ body
     | None => []
     end.
   (** Language SSA well-formedness supplies the public core SSA laws. *)
-  Parameter wf_from_lang : forall p, ssa_wf p -> S.wf p.
+  Parameter wf_from_lang : forall p, ssa_wf p -> S.wf (R.prepare p).
 End LANG_SSA_LINK.
 
 Module Type VALIDATE_OPS (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_INDEXED_OPS P PosKeyCode E) (S : SSA_OPS P PosKeyCode E C PosKeyCode K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG_INDEXED_OPS Q PosKeyCode E) (S : SSA_OPS Q PosKeyCode E C PosKeyCode K G)
     (DG : DIGRAPH_OPS) (D : DOM_OPS).
   Parameter check : P.t -> P.t -> cert -> bool.
   Parameter check_ssa : P.t -> bool.
@@ -90,11 +94,13 @@ End VALIDATE_OPS.
 
 Module Type VALIDATE_SPEC (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_INDEXED_OPS P PosKeyCode E) (S : SSA_OPS P PosKeyCode E C PosKeyCode K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG_INDEXED_OPS Q PosKeyCode E) (S : SSA_OPS Q PosKeyCode E C PosKeyCode K G)
     (DG : DIGRAPH_OPS) (D : DOM_OPS)
-    (Import V : VALIDATE_OPS O K G P E C S DG D).
-  Definition graph p := DG.prepare (cfg_graph (C.nodes p) (C.edges p) (C.src p) (C.dst p)).
+    (Import V : VALIDATE_OPS O K G P Q R E C S DG D).
+  Definition graph p := DG.prepare (cfg_graph (C.nodes (R.prepare p))
+    (C.edges (R.prepare p)) (C.src (R.prepare p)) (C.dst (R.prepare p))).
   Definition sim (c : cert) b (ss si : env O.C) := forall x, In x (cert_live c b) ->
     exists y, cert_env c b x = Some y /\ lookup y ss = lookup x si.
   Definition state_sim (p s : P.t) (c : cert)
@@ -123,36 +129,39 @@ End VALIDATE_SPEC.
 
 Module Type VALIDATE_LAWS (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG Q PosKey E) (S : SSA Q PosKey E C PosKey K G)
     (DG : DIGRAPH) (D : DOM)
-    (B : LANG_SSA_LINK O K G P E C S)
-    (Import V : VALIDATE_OPS O K G P E C S DG D).
+    (B : LANG_SSA_LINK O K G Q R E C S)
+    (Import V : VALIDATE_OPS O K G P Q R E C S DG D).
   (** An accepted translation has the same result at every fuel and input list. *)
   Parameter check_sound : forall p s c, imp_form p -> check p s c = true ->
     forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
   (** Acceptance of the SSA checker establishes the language's strict definition discipline. *)
   Parameter check_ssa_sound : forall s, check_ssa s = true -> ssa_wf s.
   (** Accepted SSA functions also meet the supplied core presentation's laws. *)
-  Parameter check_core_ssa_sound : forall s, check_ssa s = true -> S.wf s.
+  Parameter check_core_ssa_sound : forall s, check_ssa s = true -> S.wf (R.prepare s).
 End VALIDATE_LAWS.
 
 Module Type VALIDATE (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG Q PosKey E) (S : SSA Q PosKey E C PosKey K G)
     (DG : DIGRAPH) (D : DOM)
-    (B : LANG_SSA_LINK O K G P E C S) :=
-  VALIDATE_OPS O K G P E C S DG D <+ VALIDATE_SPEC O K G P E C S DG D <+
-  VALIDATE_LAWS O K G P E C S DG D B.
+    (B : LANG_SSA_LINK O K G Q R E C S) :=
+  VALIDATE_OPS O K G P Q R E C S DG D <+ VALIDATE_SPEC O K G P Q R E C S DG D <+
+  VALIDATE_LAWS O K G P Q R E C S DG D B.
 
 Module Type VALIDATE_TIME (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (E : KEY_T)
+    (C : CFG_T Q PosKeyT E) (S : SSA_T Q PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
-    (B : LANG_SSA_LINK O K G P E C S)
-    (Import V : VALIDATE O K G P E C S DG D B).
+    (B : LANG_SSA_LINK O K G Q R E C S)
+    (Import V : VALIDATE O K G P Q R E C S DG D B).
   Parameter T_check : P.t -> P.t -> cert -> N.
   Parameter T_check_ssa : P.t -> N.
   Parameter c_val : N.
@@ -187,19 +196,21 @@ End VALIDATE_TIME.
 
 Module Type VALIDATE_T (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (E : KEY_T)
+    (C : CFG_T Q PosKeyT E) (S : SSA_T Q PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
-    (B : LANG_SSA_LINK O K G P E C S) :=
-  VALIDATE O K G P E C S DG D B <+ VALIDATE_TIME O K G P E C S DG D B.
+    (B : LANG_SSA_LINK O K G Q R E C S) :=
+  VALIDATE O K G P Q R E C S DG D B <+ VALIDATE_TIME O K G P Q R E C S DG D B.
 
 Module Type VALIDATE_PLAN (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (E : KEY_T)
+    (C : CFG_T Q PosKeyT E) (S : SSA_T Q PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
-    (B : LANG_SSA_LINK O K G P E C S)
-    (Import V : VALIDATE_T O K G P E C S DG D B).
+    (B : LANG_SSA_LINK O K G Q R E C S)
+    (Import V : VALIDATE_T O K G P Q R E C S DG D B).
   Parameter check_entry : P.t -> P.t -> cert -> bool.
   Parameter check_block : P.t -> P.t -> cert -> positive -> bool.
   Parameter check_code : list (positive * O.K * list positive) ->
@@ -322,8 +333,9 @@ End VALIDATE_PLAN.
 
 Module Type VALIDATE_ALL (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (E : KEY_T)
+    (C : CFG_T Q PosKeyT E) (S : SSA_T Q PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T)
-    (B : LANG_SSA_LINK O K G P E C S) :=
-  VALIDATE_T O K G P E C S DG D B <+ VALIDATE_PLAN O K G P E C S DG D B.
+    (B : LANG_SSA_LINK O K G Q R E C S) :=
+  VALIDATE_T O K G P Q R E C S DG D B <+ VALIDATE_PLAN O K G P Q R E C S DG D B.

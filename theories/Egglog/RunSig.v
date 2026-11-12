@@ -7,7 +7,7 @@
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
 From Argent Require Import Time Std.
 From Galois.Base Require Import Loop Code.
-From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model.
+From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts.
 
 Import List.ListNotations.
 
@@ -185,9 +185,12 @@ Module Type RUN_SPEC (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     (Import X : RUN_OPS V I J D).
   Definition plans_ok (p : program V.t) (cp : compiled V.t) : Prop :=
     check_plan p cp = true.
-  (** A database carries the declarations and slot layout of a checked program. *)
+  (** A database carries the declarations and the slot layout of a checked program, and its
+      rows have the sorts of their declarations. *)
   Definition loaded (p : program V.t) (cp : compiled V.t) (db : D.t) : Prop :=
-    (forall f, kind (D.view db) f = program_kind p f) /\ D.slots db = Syntax.slots V.t cp.
+    (forall f, kind (D.view db) f = program_kind p f) /\
+    D.slots db = Syntax.slots V.t cp /\
+    view_sorted (program_sorts p) (D.view db).
   Definition grows (db db' : D.t) : Prop :=
     (forall i j, same (D.view db) i j -> same (D.view db') i j) /\
     (forall f k o, row (D.view db) f k o -> exists o',
@@ -251,11 +254,10 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
       NoDup perm /\ Forall (fun i => i <
         length (arg_sorts d) + match out d with ORel => 0 | _ => 1 end) perm.
-  (** Planning a relational program yields a plan that the checker accepts. *)
-  Parameter plan_checked : forall p, relational_fragment p = true ->
-    check_plan p (plan p) = true.
-  (* SIG-QUESTION: malformed relational actions conflict with check_plan_scope and
-     check_plan_arities. The universal planning law awaits the reviewer's ruling. *)
+  (** A checked plan belongs to a well-sorted program. *)
+  Parameter plans_ok_sorted : forall p cp, plans_ok p cp -> program_ok p.
+  (** The planner gives every well-sorted program a plan that the checker accepts. *)
+  Parameter plan_checked : forall p, program_ok p -> plans_ok p (plan p).
   (** Loading initializes precisely the declarations and compiled index slots. *)
   Parameter load_spec : forall p cp,
     load p cp = D.init (decls V.t p) (Syntax.slots V.t cp).
@@ -266,9 +268,10 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   (** Every old equality and row persists modulo the final canonicalization. *)
   Parameter run_grows : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     grows db (snd (run p cp lim db)).
-  (** Running valid rules keeps every satisfying model and old allocated identifier meaning. *)
+  (** Running rules that are valid on well-sorted environments keeps every satisfying model and
+      the meaning of every old allocated identifier. *)
   Parameter run_sat : forall p cp lim db (M : model (V := V.t)) nu,
-    plans_ok p cp -> D.wf db -> loaded p cp db -> valid V.prim V.merge M p ->
+    plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
     sat V.merge M nu (D.view db) -> exists nu',
       (forall i, D.allocated db i -> nu' i = nu i) /\
       sat V.merge M nu' (D.view (snd (run p cp lim db))).
@@ -299,18 +302,13 @@ Module Type RUN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) :=
 
 Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (D : DATABASE_T V I) (Import X : RUN V I J D).
-  (* spec: trace round_work size_program size_compiled wbits *)
+  (* spec: trace round_work size_compiled wbits *)
   Parameter trace : program V.t -> compiled V.t -> limits -> D.t -> list (bool * D.t).
   Parameter round_work : program V.t -> compiled V.t -> bool -> D.t -> nat.
-  Parameter size_program : program V.t -> nat.
+  (** The size of a program is the bits of its text. *)
+  Definition size_program (p : program V.t) : nat := program_bits p.
   Parameter size_compiled : compiled V.t -> nat.
   Parameter wbits : program V.t -> nat.
-  (** Program size counts syntax words, declarations, rules, atoms, actions and arities. *)
-  Parameter size_program_spec : forall p,
-    size_program p = length (program_words V.encode p) + length (decls V.t p) +
-      fold_right (fun d n => length (arg_sorts d) + n) 0 (decls V.t p) +
-      fold_right (fun r n => length (query V.t r) + length (actions V.t r) + 1 + n)
-        0 (rules V.t p).
   (** Compiled size counts slots, permutation positions, joins, sources and post filters. *)
   Parameter size_compiled_spec : forall cp,
     size_compiled cp =
@@ -336,6 +334,20 @@ Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   Parameter T_round : program V.t -> compiled V.t -> bool -> D.t -> N.
   Parameter T_run : program V.t -> compiled V.t -> limits -> D.t -> N.
   Parameter c_run : N.
+  (** Planning is cubic in the program text at most. *)
+  Parameter T_plan_le : forall p,
+    (T_plan p <= c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
+      N.of_nat (size_program p + 1))%N.
+  (** The plan's slots stay within the same cube. *)
+  Parameter plan_slots_le : forall p,
+    (N.of_nat (fold_right (fun s n =>
+      (Pos.size_nat (fst s) + length (snd s) + 1 + n)%nat) 0%nat
+      (Syntax.slots V.t (plan p))) <=
+      c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
+        N.of_nat (size_program p + 1))%N.
+  (** Loading pays for initialising the declared functions and the plan's slots. *)
+  Parameter T_load_le : forall p cp,
+    (T_load p cp <= D.T_init (decls V.t p) (Syntax.slots V.t cp) + c_run)%N.
   (** Running pays for traced work, binary fuel overhead and scaled initial credit. *)
   Parameter T_run_le : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
@@ -357,9 +369,9 @@ Module Type RUN_T (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
 
 Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (D : DATABASE_T V I) (Import X : RUN_T V I J D).
-  Parameter apply : program V.t -> list (action V.t) -> Model.env (V := V.t) -> D.t -> D.t.
+  Parameter apply : list (action V.t) -> Model.env (V := V.t) -> D.t -> D.t.
   Definition query_vars (r : rule V.t) : list positive := flat_map atom_vars (query V.t r).
-  Parameter T_apply : program V.t -> list (action V.t) -> Model.env (V := V.t) ->
+  Parameter T_apply : list (action V.t) -> Model.env (V := V.t) ->
     (positive -> N) -> D.t -> N.
   Parameter driver : program V.t -> compiled V.t -> limits ->
     (bool * D.t) -> (bool * D.t) + (stop * D.t).
@@ -386,29 +398,32 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     exists c b, In c (naive V.t cp) /\
       nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r /\
       In b (bindings cp c db) /\ agrees (env_of c b) s (query_vars r).
-  (** Applying actions keeps the maintained database invariant. *)
+  (** Applying a checked rule in a well-sorted environment keeps the invariant, the layout,
+      the sorts of rows and allocation. *)
   Parameter F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    In r (rules V.t p) -> env_allocated db s ->
-    D.wf (apply p (actions V.t r) s db) /\ loaded p cp (apply p (actions V.t r) s db) /\
-    (D.ids db <= D.ids (apply p (actions V.t r) s db))%N.
+    In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
+    env_allocated db s ->
+    D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
+    (D.ids db <= D.ids (apply (actions V.t r) s db))%N.
   (** A database match gives a model match. *)
   Parameter F4a_match_model : forall (M : model (V := V.t)) nu p cp db q s,
     D.wf db -> loaded p cp db -> sat V.merge M nu (D.view db) ->
     matches V.prim (D.view db) q s ->
     Forall (model_atom V.prim M (program_kind p) (fun x => option_map (den nu) (s x))) q.
-  (** A matched valid rule keeps satisfaction and the meanings of old identifiers. *)
+  (** A rule whose query holds in the model keeps satisfaction and old identifier meanings. *)
   Parameter F4_apply_sat : forall (M : model (V := V.t)) nu p cp r s db,
     plans_ok p cp -> D.wf db -> loaded p cp db -> env_allocated db s ->
-    valid V.prim V.merge M p -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s ->
+    valid_sorted V.prim V.merge M p -> In r (rules V.t p) ->
     Forall (model_atom V.prim M (program_kind p) (fun x => option_map (den nu) (s x)))
       (query V.t r) ->
     sat V.merge M nu (D.view db) ->
     exists nu', extends db M nu nu' /\
-      sat V.merge M nu' (D.view (apply p (actions V.t r) s db)).
-  (** A quiet action sequence is already present in the old view. *)
+      sat V.merge M nu' (D.view (apply (actions V.t r) s db)).
+  (** A quiet application of a matched rule is already present. *)
   Parameter F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
-    D.changed db = false -> D.changed (apply p (actions V.t r) s db) = false ->
+    D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
     present V.prim V.merge (D.view db) s (actions V.t r).
   (** Rows and equalities persist up to the current identifier equality. *)
   Definition grows_upto (db db' : D.t) : Prop :=
@@ -419,8 +434,9 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
 
   (** Action application retains old rows and equalities up to identifier equality. *)
   Parameter F6_apply_grows : forall p cp r s db, plans_ok p cp -> D.wf db ->
-    loaded p cp db -> In r (rules V.t p) -> env_allocated db s ->
-    grows_upto db (apply p (actions V.t r) s db).
+    loaded p cp db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    grows_upto db (apply (actions V.t r) s db).
   (** A rebuild turns growth up to equality into growth at canonical keys. *)
   Parameter F6a_rebuild_grows : forall db0 db, D.wf db -> grows_upto db0 db ->
     grows db0 (D.rebuild db).
@@ -429,7 +445,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   Parameter F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
     no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
     derivation_body V.prim p (D.view initial) s (query V.t r) ->
-    derived p initial (apply p (actions V.t r) s db).
+    derived p initial (apply (actions V.t r) s db).
   (** A quiet naive round establishes closure of the current view. *)
   Parameter F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
@@ -509,6 +525,55 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
               (env_of c binding))%N)
           (bindings cp c db)))
         (if nv then naive V.t cp else seminaive V.t cp)).
+
+
+  (** Inserting a well-sorted row keeps every row well sorted. *)
+  Parameter F21_put_sorted : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
+    view_sorted sorts (D.view db) -> row_sorted sorts (kind (D.view db)) f k o ->
+    view_sorted sorts (D.view (D.put f k o db)).
+  (** Making a constructor row on well-sorted arguments keeps every row well sorted. *)
+  Parameter F22_make_sorted : forall sorts f k db, D.wf db -> kind (D.view db) f = Some OId ->
+    sorts f = Some (map cell_sort k) -> view_sorted sorts (D.view db) ->
+    view_sorted sorts (D.view (snd (D.make f k db))).
+  (** Union keeps every row well sorted. *)
+  Parameter F23_union_sorted : forall sorts i j db, D.wf db ->
+    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.union i j db)).
+  (** Rebuilding keeps every row well sorted. *)
+  Parameter F24_rebuild_sorted : forall sorts db, D.wf db ->
+    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.rebuild db)).
+  (** Advancing keeps every row well sorted. *)
+  Parameter F25_advance_sorted : forall sorts db, D.wf db ->
+    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.advance db)).
+  (** Every binding of a checked plan is a well-sorted environment of allocated identifiers. *)
+  Parameter F26_bindings_env : forall p cp db c b r, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In c (all_plans cp) ->
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
+    rule_env (program_sorts p) (program_kind p) r (env_of c b) /\ env_allocated db (env_of c b).
+
+  Parameter check_shape : program V.t -> compiled V.t -> bool.
+  Parameter T_check_shape : program V.t -> compiled V.t -> N.
+  Parameter k_check : N.
+  (** Plan checking runs the sort checker and then the shape check of the plan. *)
+  Parameter F27_check_plan_split : forall p cp,
+    check_plan p cp = check_program p && check_shape p cp.
+  (** The planner gives every well-sorted program a plan of the checked shape. *)
+  Parameter F28_plan_shape : forall p, program_ok p -> check_shape p (plan p) = true.
+  (** A checked plan lays out each slot of a declared function within its row width. *)
+  Parameter F29_shape_slots : forall p cp f ss out perm, plans_ok p cp ->
+    program_sorts p f = Some ss -> program_kind p f = Some out ->
+    In (f, perm) (Syntax.slots V.t cp) ->
+    NoDup perm /\ Forall (fun i => i < length ss +
+      match out_sort out with
+      | Some _ => 1
+      | None => 0
+      end) perm.
+  (** Plan checking pays for the sort check, the shape check and a constant. *)
+  Parameter T4_check_plan_split : forall p cp,
+    (T_check_plan p cp <= T_check_program p + T_check_shape p cp + k_check)%N.
+  (** The shape check pays for program and plan syntax at the identifier width. *)
+  Parameter T5_check_shape_le : forall p cp,
+    (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
+      N.of_nat (wbits p + 1))%N.
 
   (** The driver reads the rebuilt flag before advancing to the next round. *)
   Parameter F21_driver_step : forall p cp lim nv db,

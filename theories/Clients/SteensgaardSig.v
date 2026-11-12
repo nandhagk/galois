@@ -101,16 +101,14 @@ Module Type STEENSGAARD_LAWS (V : VALUE with Definition t := positive)
   (** Seeding includes source constraints and treats initial pointers as address equations. *)
   Parameter seed_rows : forall q f k o,
     row (D.view (seed q)) f k o <-> steensgaard_seed_row q f k o.
-  (** Seed relation and constructor kinds agree with the compiled declarations. *)
-  Parameter seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
-  (** Seed slots use the checked program's compiled layout. *)
+  (** Seeds carry the compiled declarations, the layout of the compiled plan and
+      well-sorted rows. *)
   Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   (** Seeding produces a canonical well-formed database. *)
   Parameter seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q).
-  (** A plan is checked before the engine is called. *)
-  Parameter solve_checked : forall q lim, let cp := R.plan (compile q) in
-    solve q lim = if R.check_plan (compile q) cp then R.run (compile q) cp lim (seed q)
-      else (IterLimit, seed q).
+  (** The solver runs the engine with the planned program on the seed. *)
+  Parameter solve_run : forall q lim,
+    solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   (** Queries test whether the pointee term equals the addressed cell in the final congruence. *)
   Parameter points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (exists i j, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x))) /\
@@ -150,7 +148,7 @@ Module Type STEENSGAARD_TIME (V : VALUE_T with Definition t := positive)
 
   (** The driver retains the costs of rule compilation, seeding, planning and the engine. *)
   Parameter T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
+    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
 End STEENSGAARD_TIME.
 
@@ -188,7 +186,7 @@ Module Type STEENSGAARD_PLAN (V : VALUE_T with Definition t := positive)
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
   (** Wrapper composition includes every actual engine and database primitive. *)
   Parameter T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
+    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
 End STEENSGAARD_PLAN.
 
