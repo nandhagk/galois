@@ -65,8 +65,9 @@ Module Type SPARSE_LAWS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Parameter key_code_spec : key_code = X.encode.
   (** Value equality retains the supplied key test. *)
   Parameter key_eqb_specification : key_eqb = X.eqb.
-  (** Rows retain entry, definition and incoming-operand occurrence order. *)
-  Parameter rows_spec : forall p, rows p =
+  (** On a well-formed presentation, rows retain entry, definition and incoming-operand
+      occurrence order. *)
+  Parameter rows_spec : forall p, S.wf p -> rows p =
     map SparseSeed (flat_map (S.params p) (C.entries p)) ++
     map SparseDef (S.values p) ++
     flat_map (fun e => map (fun xy => SparseArg e (fst xy) (snd xy)) (S.args p e))
@@ -172,8 +173,9 @@ Module Type SPARSE_SOUND (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (M : SEMANTICS P) (CL : CFG_LINK P N E C M)
     (SL : SSA_LINK P N E C X K G Val S M CL)
     (IL : SPARSE_INITIAL_LINK P N E C X L K G Val S V T M CL SL).
-  (** Sparse post-solutions describe every defined binding in each reachable state. *)
-  Parameter covers : forall p look, A.post_solution p look ->
+  (** Sparse post-solutions of a well-formed presentation describe every defined binding
+      in each reachable state. *)
+  Parameter covers : forall p look, S.wf p -> A.post_solution p look ->
     forall s, reachable (M.initial p) (M.step p) s ->
       forall x c, SL.venv s x = Some c -> V.gamma (look x) c.
 End SPARSE_SOUND.
