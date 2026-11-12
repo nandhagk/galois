@@ -39,4 +39,29 @@ Example empty_comparison :
   PTrieCode.forall2 (fun (_ : nat) (_ : option nat) => false) PTrieCode.empty right_map = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Specialized operations and law examples are in BaseTrieMergeTest.v at 87192fe. *)
+Example union_empty : PTrieCode.merge union_add left_map PTrieCode.empty = left_map.
+Proof. vm_compute. reflexivity. Qed.
+Example inter_empty : PTrieCode.merge inter_add left_map PTrieCode.empty = PTrieCode.empty.
+Proof. vm_compute. reflexivity. Qed.
+Example diff_empty :
+  PTrieCode.merge difference left_map (PTrieCode.empty : PTrieCode.t bool) = left_map.
+Proof. vm_compute. reflexivity. Qed.
+Example inter_disjoint :
+  PTrieCode.merge inter_add (PTrieCode.set 2 20 PTrieCode.empty)
+    (PTrieCode.set 3 30 PTrieCode.empty) = PTrieCode.empty.
+Proof. vm_compute. reflexivity. Qed.
+Example diff_equal : PTrieCode.merge difference left_map left_map = PTrieCode.empty.
+Proof. vm_compute. reflexivity. Qed.
+Example inter_equal :
+  PTrieCode.merge (fun a b => match a, b with Some x, Some _ => Some x | _, _ => None end)
+    left_map left_map = left_map.
+Proof. vm_compute. reflexivity. Qed.
+Example union_equal :
+  PTrieCode.merge (fun a b => match a with Some _ => a | None => b end)
+    left_map left_map = left_map.
+Proof. vm_compute. reflexivity. Qed.
+Example empty_left :
+  (PTrieCode.elements (PTrieCode.merge inter_add PTrieCode.empty right_map),
+    PTrieCode.elements (PTrieCode.merge difference (PTrieCode.empty : PTrieCode.t nat) right_map)) =
+  ([], []).
+Proof. vm_compute. reflexivity. Qed.

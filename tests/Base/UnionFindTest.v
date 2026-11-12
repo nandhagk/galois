@@ -15,6 +15,22 @@ Definition uf_pair := snd (UnionFindCode.union 1%positive 2%positive UnionFindCo
 
 Example uf_successful_find : fst (UnionFindCode.find 4%positive uf_sample) = 1%positive.
 Proof. vm_compute. reflexivity. Qed.
+Example uf_successful_union :
+  Pos.eqb (fst (UnionFindCode.find 2%positive uf_sample))
+    (fst (UnionFindCode.find 4%positive uf_sample)) = true.
+Proof. vm_compute. reflexivity. Qed.
+Example uf_unrelated :
+  Pos.eqb (fst (UnionFindCode.find 1%positive uf_pair))
+    (fst (UnionFindCode.find 3%positive uf_pair)) = false.
+Proof. vm_compute. reflexivity. Qed.
+Example uf_unknown :
+  Pos.eqb (fst (UnionFindCode.find 4%positive uf_sample))
+    (fst (UnionFindCode.find 5%positive uf_sample)) = false.
+Proof. vm_compute. reflexivity. Qed.
+Example uf_unknown_reflexive :
+  Pos.eqb (fst (UnionFindCode.find 5%positive uf_sample))
+    (fst (UnionFindCode.find 5%positive uf_sample)) = true.
+Proof. vm_compute. reflexivity. Qed.
 Example uf_unknown_find :
   UnionFindCode.find 5%positive uf_sample = (5%positive, uf_sample).
 Proof. vm_compute. reflexivity. Qed.
@@ -28,6 +44,11 @@ Proof. vm_compute. reflexivity. Qed.
 Example uf_right_lower_rank :
   fst (UnionFindCode.find 3%positive (snd (UnionFindCode.union 1%positive 3%positive uf_pair))) =
     1%positive.
+Proof. vm_compute. reflexivity. Qed.
+Example uf_compression_classes :
+  let compressed := snd (UnionFindCode.find 4%positive uf_sample) in
+  Pos.eqb (fst (UnionFindCode.find 2%positive compressed))
+    (fst (UnionFindCode.find 4%positive compressed)) = true.
 Proof. vm_compute. reflexivity. Qed.
 
 (* Other operations, representation and cost examples are in BaseUnionFindTest.v at 87192fe. *)

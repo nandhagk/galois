@@ -7,6 +7,13 @@ signature takes precedence over other text, and `just frozen` must pass. Do not 
 definition fixed by a signature. Replace code bodies only where marked `STUB-CODE`.
 Extra lemmas, helper definitions and internal modules in owned files are allowed.
 
+The design copies record the original design. The released signatures and implementations
+govern their interfaces when they differ from those copies. `DOM_OPS.build` returns a parent
+map and a low-high order, and `DOM_OPS.check` takes both. `NatKey` has no timed instance.
+System row codes have program-scoped injectivity, so there is no global `SystemRowT`. Policy
+update clocks use `N`. The worklist tracks armed readers and live queue entries. Word domains
+use `Bits/Word.v` and `Bits/Op.v`, and `EnvBudget` supplies a canonical word budget functor.
+
 The reviewed helpers `Base/Code.v`, `Base/Loop.v` and `Fixpoint/Query.v` are excluded from
 `just/frozen.sha256` so that their owners can prove existing lemmas. Keep their reviewed
 statements and definitions unchanged. Every file listed in the checksum stays unchanged.

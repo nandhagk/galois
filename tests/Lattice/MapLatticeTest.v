@@ -20,4 +20,9 @@ Example bottom_default_operations :
   (true, false, [(2%positive, true); (1%positive, true)]).
 Proof. vm_compute. reflexivity. Qed.
 
+Example constructed_bottom_default_comparison_reflexive :
+  let m := PosMap.set 1%positive true (PosMap.set 1%positive false PosMap.empty) in
+  Env.leb m m = true.
+Proof. vm_compute. reflexivity. Qed.
+
 (* Top-default, widening, narrowing, cost and law examples are in LatticeEnvTest.v at 87192fe. *)
