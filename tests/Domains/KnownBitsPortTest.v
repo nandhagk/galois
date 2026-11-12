@@ -431,3 +431,23 @@ Example kb_malformed_width :
     [TVal 8%positive tnum_top; TVal 4%positive tnum_top] = TBot.
 Proof. vm_compute. reflexivity. Qed.
 *)
+
+(** The direct payload computations retain the landed singleton and nullary observations. *)
+Example kb_payload_singleton_legacy :
+  LowOps.tnum_forward_raw bvsdiv [(8%positive, tnum_const 8%positive 7);
+    (8%positive, tnum_const 8%positive 2)] 8%positive = Tnum 0 0 /\
+  LowOps.tnum_forward_raw bvclz [(5%positive, tnum_const 5%positive 0)]
+    5%positive = Tnum 24 0 /\
+  LowOps.tnum_forward_raw bvadd [] 8%positive = tnum_top /\
+  StagesOps.tnum_forward_raw bvmul [] 4%positive = tnum_top.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+Definition kb_payload_assume (o : op) (xs : list (width * tnum)) (rw : width) (q : tnum) :=
+  tnum_refine xs (tnum_backward_raw o xs rw q).
+
+Example kb_payload_malformed_backward :
+  kb_payload_assume bvadd [] 5%positive tnum_top = [] /\
+  kb_payload_assume bvadd [(5%positive, Tnum (-4) 33)] 5%positive tnum_top = [Tnum 28 1] /\
+  kb_payload_assume bvadd kb_test_malformed_inputs 5%positive tnum_top =
+    [Tnum 28 1; Tnum 6 0; Tnum 1 1].
+Proof. vm_compute. repeat split; reflexivity. Qed.

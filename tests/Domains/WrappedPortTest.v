@@ -335,3 +335,13 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 *)
+
+Module Ops := WrappedOpsCode WordLanguageCode W.
+Example wrapped_payload_malformed_backward :
+  map (fun xs =>
+    let ys := Ops.backward bvadd w1 (WItv 1 1) xs in
+    (ys, Nat.eqb (length ys) (length xs),
+     forallb (fun p => W.pleb (fst (fst p)) (snd p) (snd (fst p))) (combine xs ys)))
+    malformed_backward_inputs =
+  [([], true, true); ([WFull; WItv 15 1; WFull], true, true)].
+Proof. vm_compute. reflexivity. Qed.

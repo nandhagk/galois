@@ -130,3 +130,48 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* STUB *)
 End KnownBitsTable.
+Theorem tnum_refine_equation : forall wps qs,
+  tnum_refine wps qs =
+  match wps, qs with
+  | [], _ => []
+  | (w, a) :: rest, q :: tail => tnum_meet w a q :: tnum_refine rest tail
+  | (_, a) :: rest, [] => a :: tnum_refine rest []
+  end.
+Proof. Admitted. (* CONVERT: tnum_refine_equation: The reference tnum_refine_c was not found in the current environment. *)
+Theorem tnum_refine_length : forall wps qs, length (tnum_refine wps qs) = length wps.
+Proof.
+  intro wps. induction wps as [|[w a] rest IH]; intros [|q tail];
+    rewrite tnum_refine_equation; cbn [length]; [reflexivity|reflexivity| |];
+    f_equal; apply IH.
+Qed.
+
+Theorem tnum_refine_refines : forall wps qs,
+  Forall2 (fun wp q => tnum_leb (fst wp) q (snd wp) = true)
+    wps (tnum_refine wps qs).
+Proof. Admitted. (* CONVERT: tnum_refine_refines: Unable to unify the Forall2 constructor with the empty case. *)
+
+Definition kb_payload_sound (wp : width * tnum) (y : word) : Prop :=
+  fst wp = fst y /\ is_word (fst y) (snd y) /\ tnum_gamma (fst wp) (snd wp) (snd y).
+
+Theorem tnum_backward_raw_sound : forall o wps ys rw z q,
+  Forall2 kb_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
+  tnum_gamma rw q z ->
+  Forall2 (fun wp_y p => tnum_gamma (fst (fst wp_y)) p (snd (snd wp_y)))
+    (combine wps ys) (tnum_backward_raw o wps rw q).
+Proof. Admitted. (* CONVERT: tnum_backward_raw_sound: The variable tnum_backward_one_sound was not found in the current environment. *)
+Theorem tnum_refine_sound : forall wps ys qs,
+  Forall2 kb_payload_sound wps ys ->
+  Forall2 (fun wp_y q => tnum_gamma (fst (fst wp_y)) q (snd (snd wp_y)))
+    (combine wps ys) qs ->
+  Forall2 (fun p y => tnum_gamma (fst p) (snd p) (snd y))
+    (combine (map fst wps) (tnum_refine wps qs)) ys.
+Proof.
+  intros wps ys qs Hgamma. revert qs.
+  induction Hgamma as [|[w a] [v x] rest tail Hhead Htail IH]; intros qs Hqs.
+  - destruct qs; constructor.
+  - inversion Hqs as [|wp_y q rest' qs' Hq Hrest]; subst qs.
+    destruct Hhead as [Hwv [Hx Ha]]. cbn in Hwv, Hx, Ha, Hq. subst v.
+    rewrite tnum_refine_equation. cbn [combine map fst snd]. constructor.
+    + now apply tnum_meet_sound.
+    + now apply IH.
+Qed.
