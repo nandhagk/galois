@@ -301,7 +301,12 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. Admitted.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted.
+  Proof.
+    intros w a b.
+    destruct a as [|x|], b as [|y|]; cbn [pmeet pleb];
+      try reflexivity; try apply Z.eqb_refl.
+    destruct (Z.eqb x y); cbn [pleb]; auto using Z.eqb_refl.
+  Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
@@ -318,7 +323,12 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted.
+  Proof.
+    intros w a b z.
+    destruct a as [|x|], b as [|y|]; cbn [pgamma pmeet];
+      intros Ha Hb; try contradiction; try assumption.
+    subst x y. now rewrite Z.eqb_refl.
+  Qed.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted.
