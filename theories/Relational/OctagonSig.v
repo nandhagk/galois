@@ -124,12 +124,8 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
       match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end
     | None => 0
     end.
-  Definition entries (m : dbm) : nat :=
-    fold_right Nat.add 0%nat (map (fun code =>
-      match M.find code m with Some row => length (M.codes row) | None => 0 end) (M.codes m)).
-  (** Widening visits each raw matrix entry. *)
-  Parameter F_wunits : forall s, wunits s =
-    match s with Unreached => 0 | Reached m => entries m end.
+  (** Widening units cover the squared support size. *)
+  Parameter F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
   (** Assumption work charges incremental closure for every emitted atom. *)
   Parameter F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
