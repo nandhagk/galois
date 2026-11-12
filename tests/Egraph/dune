@@ -2,4 +2,11 @@
  (name Galois.Tests.Egraph)
  (package galois)
  (flags :standard -w +default)
- (theories Stdlib elpi elpi_elpi Argent Galois.Base Galois.Egglog Galois.Egraph))
+ (theories
+  Stdlib
+  elpi
+  elpi_elpi
+  Argent
+  Galois.Base
+  Galois.Egglog
+  Galois.Egraph))

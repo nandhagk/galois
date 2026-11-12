@@ -2,4 +2,15 @@
  (name Galois.Tests.States)
  (package galois)
  (flags :standard -w +default)
- (theories Stdlib elpi elpi_elpi Argent Galois.Base Galois.Lattice Galois.Graph Galois.Fixpoint Galois.Bits Galois.Domains Galois.States))
+ (theories
+  Stdlib
+  elpi
+  elpi_elpi
+  Argent
+  Galois.Base
+  Galois.Lattice
+  Galois.Graph
+  Galois.Fixpoint
+  Galois.Bits
+  Galois.Domains
+  Galois.States))
