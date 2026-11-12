@@ -81,7 +81,7 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Definition esize (s : t) : nat :=
     match s with
     | Unreached => 0
-    | Reached m => fold_right Nat.add 0
+    | Reached m => M.nodes m + fold_right Nat.add 0
       (map (fun kv => X.bits (fst kv) + V.size (snd kv) + 1) (M.elements m))
     end.
   Definition env_wf (s : t) : Prop :=
@@ -130,8 +130,9 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
     | Unreached, s | s, Unreached => s
     | Reached a, Reached b => Reached (join_map a b)
     end.
-  (** Widening merges common bindings and omits recognized bottom results. *)
+  (** Widening keeps stable states and otherwise merges common bindings. *)
   Parameter F_widen : forall p a b, widen p a b =
+    if leb b a then a else
     match a, b with
     | Unreached, s | s, Unreached => s
     | Reached a, Reached b => Reached (M.merge (fun x y => match x, y with
@@ -139,6 +140,24 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
         | _, _ => None
         end) a b)
     end.
+  Parameter k_env_widen : N.
+  (** Widening pays for inclusion before its conditional merge. *)
+  Parameter T_widen_split : forall p a b,
+    (T_widen p a b <= T_leb b a + k_env_widen *
+      (1 + if leb b a then 0 else
+        match a, b with
+        | Reached ma, Reached mb => M.T_merge
+            (fun x y => match x, y with
+             | Some a, Some b =>
+               let v := V.widen p a b in if V.is_bot v then None else Some v
+             | _, _ => None
+             end)
+            (fun x y => match x, y with
+             | Some a, Some b => V.T_widen p a b + V.T_is_bot (V.widen p a b) + 1
+             | _, _ => 1
+             end) ma mb
+        | _, _ => 0
+        end))%N.
   (** Narrowing retains one-sided bindings and narrows common bindings. *)
   Parameter F_narrow : forall a b, narrow a b =
     match a, b with

@@ -170,6 +170,9 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Definition wunits (_ : t) : nat := 0.
   Definition c_val : N := 1%N. (* STUB *)
   Definition c_lat : N := c_val.
+  (** The lattice constant pays for at least one call. *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
   Definition c_red : N := 1%N. (* STUB *)
 
   Lemma T_leb_le : forall a b,
