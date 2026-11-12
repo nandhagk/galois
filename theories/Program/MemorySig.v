@@ -9,33 +9,6 @@ From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import CfgSig SemanticsSig.
 
-Module Type ALIAS_OPS (R : KEY_OPS).
-  Parameter disjoint covers : R.t -> R.t -> bool.
-  Parameter all : R.t.
-End ALIAS_OPS.
-
-Module Type ALIAS_LAWS (R : KEY) (Import A : ALIAS_OPS R).
-  (* spec: state loc holds *)
-  Parameter state loc : Type.
-  Parameter holds : state -> R.t -> loc -> Prop.
-  (** A successful disjointness answer excludes every shared location. *)
-  Parameter disjoint_sound : forall s r q l, disjoint r q = true ->
-    holds s r l -> holds s q l -> False.
-  (** A successful coverage answer includes the second region in the first. *)
-  Parameter covers_sound : forall s r q l, covers r q = true -> holds s q l -> holds s r l.
-  (** The all-memory region contains every location. *)
-  Parameter all_full : forall s l, holds s all l.
-End ALIAS_LAWS.
-
-Module Type ALIAS (R : KEY) := ALIAS_OPS R <+ ALIAS_LAWS R.
-
-Module Type ALIAS_TIME (R : KEY_T) (Import A : ALIAS R).
-  Parameter T_disjoint T_covers : R.t -> R.t -> N.
-  (* SIG-QUESTION: the alias interface specifies sound answers but no reader complexity. *)
-End ALIAS_TIME.
-
-Module Type ALIAS_T (R : KEY_T) := ALIAS R <+ ALIAS_TIME R.
-
 Inductive effect (R : Type) : Type :=
   | Read (region : R)
   | Write (region : R)
@@ -104,6 +77,39 @@ Inductive effect_trace {R B} (next : B -> effect R -> B -> Prop) :
   | Effect_trace_nil : forall b, effect_trace next b nil b
   | Effect_trace_cons : forall b a b' rest b'',
       next b a b' -> effect_trace next b' rest b'' -> effect_trace next b (a :: rest) b''.
+
+(** A within-frame divergence never drops below the supplied frame depth. *)
+CoInductive diverges_within {S O} (step : S -> list O -> S -> Prop)
+    (depth : S -> nat) (d : nat) : S -> Prop :=
+  | Within_step : forall s tr t, step s tr t -> d <= depth t ->
+      diverges_within step depth d t -> diverges_within step depth d s.
+
+Module Type ALIAS_OPS (R : KEY_OPS).
+  Parameter disjoint covers : R.t -> R.t -> bool.
+  Parameter all : R.t.
+End ALIAS_OPS.
+
+Module Type ALIAS_LAWS (R : KEY) (Import A : ALIAS_OPS R).
+  (* spec: state loc holds *)
+  Parameter state loc : Type.
+  Parameter holds : state -> R.t -> loc -> Prop.
+  (** A successful disjointness answer excludes every shared location. *)
+  Parameter disjoint_sound : forall s r q l, disjoint r q = true ->
+    holds s r l -> holds s q l -> False.
+  (** A successful coverage answer includes the second region in the first. *)
+  Parameter covers_sound : forall s r q l, covers r q = true -> holds s q l -> holds s r l.
+  (** The all-memory region contains every location. *)
+  Parameter all_full : forall s l, holds s all l.
+End ALIAS_LAWS.
+
+Module Type ALIAS (R : KEY) := ALIAS_OPS R <+ ALIAS_LAWS R.
+
+Module Type ALIAS_TIME (R : KEY_T) (Import A : ALIAS R).
+  Parameter T_disjoint T_covers : R.t -> R.t -> N.
+  (* SIG-QUESTION: the alias interface specifies sound answers but no reader complexity. *)
+End ALIAS_TIME.
+
+Module Type ALIAS_T (R : KEY_T) := ALIAS R <+ ALIAS_TIME R.
 
 Module Type MEMORY_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE)
     (C : CFG_OPS P N E) (R : KEY_OPS) (A : ALIAS_OPS R).
@@ -249,12 +255,6 @@ Module Type EFFECTS_TIME (I : TYPE) (Import E : EFFECTS_OPS I).
 End EFFECTS_TIME.
 
 Module Type EFFECTS_T (I : TYPE) := EFFECTS_OPS I <+ EFFECTS_TIME I.
-
-(** A within-frame divergence never drops below the supplied frame depth. *)
-CoInductive diverges_within {S O} (step : S -> list O -> S -> Prop)
-    (depth : S -> nat) (d : nat) : S -> Prop :=
-  | Within_step : forall s tr t, step s tr t -> d <= depth t ->
-      diverges_within step depth d t -> diverges_within step depth d s.
 
 Module Type EFFECTS_LINK (P I H : TYPE) (E : EFFECTS_OPS I)
     (M : SEMANTICS P) (T : TRACES P M).

@@ -17,13 +17,21 @@ Arguments Op {N V K}.
 Arguments Param {N V K}.
 Arguments Arbitrary {N V K}.
 
-(** Paths retain edge identity and include both endpoint nodes. *)
+(** Paths follow concrete edges and include both endpoint nodes. *)
 Inductive presentation_path {N E : Type} (edges : list E) (src dst : E -> N) :
     N -> list N -> N -> Prop :=
   | Presentation_here : forall n, presentation_path edges src dst n (n :: nil) n
   | Presentation_next : forall e rest target, In e edges ->
       presentation_path edges src dst (dst e) rest target ->
       presentation_path edges src dst (src e) (src e :: rest) target.
+
+(** A chain pairs each adjacent point with its concrete edge occurrence. *)
+Inductive presentation_chain {N E : Type} (edges : list E) (src dst : E -> N) :
+    list N -> list E -> Prop :=
+  | Chain_one : forall n, presentation_chain edges src dst (n :: nil) nil
+  | Chain_next : forall n m rest e es, In e edges -> src e = n -> dst e = m ->
+      presentation_chain edges src dst (m :: rest) es ->
+      presentation_chain edges src dst (n :: m :: rest) (e :: es).
 
 Module Type SSA_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE)
     (C : CFG_INDEXED_OPS P N E) (V : KEY_OPS) (K G : TYPE).
@@ -154,14 +162,6 @@ Module Type SSA_LINK (P : TYPE) (N : KEY) (E : TYPE)
     S.home p x <> L.point t -> venv t x = venv s x.
 End SSA_LINK.
 
-(** A chain pairs each adjacent point with its concrete edge occurrence. *)
-Inductive presentation_chain {N E : Type} (edges : list E) (src dst : E -> N) :
-    list N -> list E -> Prop :=
-  | Chain_one : forall n, presentation_chain edges src dst (n :: nil) nil
-  | Chain_next : forall n m rest e es, In e edges -> src e = n -> dst e = m ->
-      presentation_chain edges src dst (m :: rest) es ->
-      presentation_chain edges src dst (n :: m :: rest) (e :: es).
-
 Module Type SSA_POINTS_OPS (P : TYPE) (B : KEY_OPS) (BE : TYPE)
     (BC : CFG_INDEXED_OPS P B BE) (N : KEY_OPS) (E : TYPE)
     (C : CFG_INDEXED_OPS P N E) (V : KEY_OPS) (U : VARS_OPS P N E C V).
@@ -183,6 +183,10 @@ Module Type SSA_POINTS_LAWS (P : TYPE) (B : KEY) (BE : TYPE)
   Parameter wf : P.t -> Prop.
   (** Point and block presentations have well-formed underlying graphs. *)
   Parameter graphs_wf : forall p, wf p -> C.wf p /\ BC.wf p.
+  (** Point adjacency contains no duplicate edge identity. *)
+  Parameter points_out_nodup : forall p n, wf p -> NoDup (C.out p n).
+  (** Block adjacency contains no duplicate edge identity. *)
+  Parameter blocks_out_nodup : forall p b, wf p -> NoDup (BC.out p b).
   (** The block inventories cover exactly the point domain. *)
   Parameter points_covered : forall p n, wf p ->
     (In n (C.nodes p) <-> exists b, In b (BC.nodes p) /\ In n (points_in_block p b)).
