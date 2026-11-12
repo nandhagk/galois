@@ -134,6 +134,10 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   Lemma size_le : forall p a, inv p a -> E.size a <= vsize p.
   Proof. Admitted.
 
+  (** Canonical environments store at most one binding per declared variable. *)
+  Lemma wunits_le : forall p a, inv p a -> E.wunits a <= wunits p.
+  Proof. Admitted.
+
   (** Canonical payload ranks fit the program's sum of parameter-dependent rank envelopes. *)
   Lemma wrank_le : forall p w a, inv p a -> E.wrank w a <= wmax p w.
   Proof. Admitted.

@@ -94,3 +94,103 @@ Module SignTableCode (L : WORD_LANGUAGE_OPS) (S : SIGN_OPS L)
   Definition wbwd (_ : L.op) (_ : positive) (_ : S.p)
       (_ : list (positive * S.p)) : option (list S.p) := None.
 End SignTableCode.
+
+Module Sign (L : WORD_LANGUAGE) <: SIGN L.
+  Include SignCode L.
+  Include SIGN_SPEC L.
+  Definition pgamma := sign_gamma.
+  Definition pwrank (_ : pwparam) (_ : positive) (a : p) : nat := 3 - sign_level a.
+  (** Widening contains both payloads. *)
+  Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
+  Proof. Admitted.
+  Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
+  Proof. Admitted.
+  (** Stable widening retains the previous payload. *)
+  Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
+  Proof. Admitted.
+  (** An unstable nonbottom widening strictly lowers the rank. *)
+  Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
+    (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
+  Proof. Admitted.
+  (** Nonbottom widening does not increase rank. *)
+  Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
+    (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
+  Proof. Admitted.
+  (** Narrowing lies between ordered inputs. *)
+  Lemma pnarrow_between : forall w a b, pleb w b a = true ->
+    pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
+  Proof. Admitted.
+  (** Width-specific inclusion is reflexive. *)
+  Lemma pleb_refl : forall w a, pleb w a a = true.
+  Proof. Admitted.
+  (** Width-specific inclusion is transitive. *)
+  Lemma pleb_trans : forall w a b c,
+    pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
+  Proof. Admitted.
+  (** Bottom is below every payload. *)
+  Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
+  Proof. Admitted.
+  (** Top is above every payload. *)
+  Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
+  Proof. Admitted.
+  (** The bottom test recognizes bottom. *)
+  Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
+  Proof. Admitted.
+  (** Recognized bottoms are below every payload. *)
+  Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
+  Proof. Admitted.
+  (** Join contains the left payload. *)
+  Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
+  Proof. Admitted.
+  (** Join contains the right payload. *)
+  Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
+  Proof. Admitted.
+  (** Meet refines the left payload. *)
+  Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
+  Proof. Admitted.
+  (** Meet refines the right payload. *)
+  Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
+  Proof. Admitted.
+  (** Inclusion retains represented integers. *)
+  Lemma pgamma_mono : forall w a b z,
+    pleb w a b = true -> pgamma w a z -> pgamma w b z.
+  Proof. Admitted.
+  (** Bottom represents no integer. *)
+  Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
+  Proof. Admitted.
+  (** Top contains every normalized integer at its width. *)
+  Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
+  Proof. Admitted.
+  (** Meet retains every common integer. *)
+  Lemma pgamma_meet : forall w a b z,
+    pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
+  Proof. Admitted.
+  (** Recognized bottoms contain no integer. *)
+  Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
+  Proof. Admitted.
+  (** A constant payload contains the wrapped integer. *)
+  Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
+  Proof. Admitted.
+  (** A recognized point identifies all represented integers. *)
+  Lemma ppoint_sound : forall w a z v,
+    ppoint w a = Some v -> pgamma w a z -> z = v.
+  Proof. Admitted.
+End Sign.
+
+Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
+  Include SignTableCode L W.
+  (** A forward word entry retains each concrete result at its checked width. *)
+  Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
+  Proof. Admitted.
+  (** A backward word entry retains each concrete operand in its original position. *)
+  Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst wps) ys) cs.
+  Proof. Admitted.
+End SignTable.

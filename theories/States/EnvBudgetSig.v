@@ -287,6 +287,7 @@ Module Type ENV_BUDGET_SPEC (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
   Definition wmax (p : S.prog) (q : E.wparam) : nat :=
     fold_right Nat.add 0 (map (fun x =>
       1 + C.payload_rank_bound q (P.width_of p x)) (P.variables p)).
+  Definition wunits (p : S.prog) : nat := length (P.variables p).
 End ENV_BUDGET_SPEC.
 
 (* The fallback WORKLIST_TIME.T_run_all_heads_le still requires an actual BUDGET.

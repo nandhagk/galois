@@ -74,13 +74,15 @@ End STATE_TRANSFER_TIME.
 Module Type STATE_LATTICE_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (Import D : STATE_DOMAIN X L V).
   Include LATTICE_TIME D.
-  (* spec: wsize *)
+  (* spec: wsize wunits *)
   Parameter wsize : wparam -> nat.
+  Parameter wunits : t -> nat.
   Parameter T_widen : wparam -> t -> t -> N.
   Parameter T_narrow : t -> t -> N.
   (** Widening charges both states and its parameters. *)
   Parameter T_widen_le : forall p a b,
-    (T_widen p a b <= c_lat * N.of_nat (size a + size b + wsize p + 1))%N.
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   (** Narrowing charges both states. *)
   Parameter T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
