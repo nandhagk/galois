@@ -164,7 +164,10 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
   (** White credit covers each emitted ancestor once, even with parallel predecessors. *)
   Definition df_potential g t y st : N :=
     N.of_nat (2 * length (filter (fun x =>
-      match trie_get x (df_seen st) with None => true | Some _ => false end)
+      match trie_get x (df_seen st) with
+      | None => true
+      | Some _ => false
+      end)
       (df_column g t y)) + length (df_pending st)).
 
   Definition df_credit g t y st :=
