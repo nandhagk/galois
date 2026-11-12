@@ -5,7 +5,7 @@
     Builds on: Word. *)
 
 From Stdlib Require Import ZArith List Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Bits Require Import Word.
 Open Scope Z_scope.
 
@@ -328,3 +328,40 @@ Theorem wsle_value : forall w x y, wsle w x y = (signed w x <=? signed w y).
 Proof.
   intros w x y. reflexivity.
 Qed.
+
+Module Pos.
+  TimeFun Pos.size.
+End Pos.
+
+Module Z.
+  TimeFun Z.log2.
+End Z.
+
+TimeFun wnot.
+TimeFun wneg.
+TimeFun wadd.
+TimeFun wsub.
+TimeFun wmul.
+TimeFun wand.
+TimeFun wor.
+TimeFun wxor.
+TimeFun wudiv.
+TimeFun wurem.
+TimeFun wsdiv.
+TimeFun wsrem.
+TimeFun wsmod.
+TimeFun wshl.
+TimeFun wlshr.
+TimeFun washr.
+TimeFun wrotl.
+TimeFun wrotr.
+TimeFun wclz.
+TimeFun wctz.
+TimeFun popcount_pos.
+TimeFun popcount.
+TimeFun wpopcnt.
+TimeFun popcount_steps_pos.
+TimeFun wult.
+TimeFun wule.
+TimeFun wslt.
+TimeFun wsle.
