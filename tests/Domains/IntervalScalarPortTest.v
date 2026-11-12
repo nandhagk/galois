@@ -253,3 +253,43 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+
+Example interval_hull :
+  Scalar.interval_join (I (Fin 1) (Fin 3)) (I (Fin 2) (Fin 5)) = I (Fin 1) (Fin 5).
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_thresholds :
+  Scalar.interval_stable_widen (ThresholdsCode.make [0; 10; 20])
+    (I (Fin 2) (Fin 4)) (I (Fin 1) (Fin 12)) = I (Fin 0) (Fin 20).
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_narrow_infinities :
+  Scalar.interval_narrow (I NegInf PosInf) (I (Fin 0) (Fin 8)) = I (Fin 0) (Fin 8).
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_unsorted_thresholds :
+  Scalar.interval_stable_widen (ThresholdsCode.make [20; 0; 10; 10])
+    (I (Fin 8) (Fin 9)) (I (Fin 7) (Fin 11)) = I (Fin 0) (Fin 20).
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_sorted_threshold_index :
+  ThresholdsCode.make [1; 2; 3] = TNode (TNode TLeaf 1 TLeaf) 2 (TNode TLeaf 3 TLeaf).
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_threshold_infinity :
+  Scalar.interval_stable_widen (ThresholdsCode.make [0; 10])
+    (I (Fin 0) (Fin 10)) (I (Fin (-1)) (Fin 11)) = I NegInf PosInf.
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_empty_meet :
+  Scalar.interval_meet (I (Fin 1) (Fin 2)) (I (Fin 3) (Fin 4)) = IBot.
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_infinite_empty_meet :
+  (Scalar.interval_meet (I PosInf PosInf) (I NegInf PosInf),
+   Scalar.interval_meet (I NegInf NegInf) (I NegInf PosInf)) = (IBot, IBot).
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_duplicate_threshold_index :
+  ThresholdsCode.make [10; 10; 10] = TNode TLeaf 10 TLeaf.
+Proof. vm_compute. reflexivity. Qed.
