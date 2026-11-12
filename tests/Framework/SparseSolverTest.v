@@ -7,6 +7,7 @@
 From Stdlib Require Import List Bool NArith PArith ZArith.
 From Galois.Base Require Import KeySig Key Trie Heap.
 From Galois.Bits Require Import Word Op.
+From Galois.Graph Require Import Data Digraph Dom.
 From Galois.Domains Require Import LangSig ValueSig ConstSig Const WordSig BitsLang.
 From Galois.Fixpoint Require Import PolicySig SolverSig Policy Check Narrow Worklist Certified.
 From Galois.Program Require Import CfgSig SsaSig.
@@ -126,4 +127,27 @@ Proof. vm_compute; reflexivity. Qed.
 Example unknown_width_truth :
   (map tagged_value (V.guard (BTruth true) [FTop]),
    map tagged_value (V.guard (BTruth false) [FTop])) = ([TAny], [TAny]).
+Proof. vm_compute; reflexivity. Qed.
+
+Definition graph_fixture (vertices : list positive) (edges : list (positive * positive)) :=
+  Digraph vertices (fold_right (fun u tr =>
+    PTrieCode.set u (map snd (filter (fun e => Pos.eqb (fst e) u) edges)) tr) Empty vertices).
+Definition parents (pairs : list (positive * positive)) :=
+  fold_right (fun p m => PTrieCode.set (fst p) (snd p) m) Empty pairs.
+
+Example supplied_tree_checker_accepts :
+  DomCode.check (DigraphCode.prepare (graph_fixture [1; 2; 3; 4]%positive
+    [(1, 2); (1, 3); (2, 4); (3, 4)]%positive)) 1%positive
+    (parents [(2, 1); (3, 1); (4, 1)]%positive) [1; 2; 4; 3]%positive = true.
+Proof. vm_compute; reflexivity. Qed.
+
+Example numeric_supplied_tree_checker_accepts :
+  DomCode.check (DigraphCode.prepare (graph_fixture [1; 2; 3]%positive
+    [(1, 2); (1, 3); (2, 3)]%positive)) 1%positive
+    (parents [(2, 1); (3, 1)]%positive) [1; 2; 3]%positive = true.
+Proof. vm_compute; reflexivity. Qed.
+
+Example repeated_tree_checked :
+  DomCode.check (DigraphCode.prepare (graph_fixture [1; 2]%positive
+    [(1, 2); (1, 2)]%positive)) 1%positive (parents [(2, 1)]%positive) [1; 2]%positive = true.
 Proof. vm_compute; reflexivity. Qed.
