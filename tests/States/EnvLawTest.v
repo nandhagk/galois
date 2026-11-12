@@ -36,3 +36,8 @@ Example guard_sound_client : forall g es s st cs,
   IntEnv.gamma s st -> eval_terms ZLang.eval st es = Some cs -> ZLang.holds g cs ->
   IntEnv.gamma (IntEnv.assume g es s) st.
 Proof. exact IntEnv.assume_sound. Qed.
+
+Example havoc_both_concrete_replacements :
+  (upd BoolKey.eqb (fun _ => 1) false 3 false,
+   upd BoolKey.eqb (fun _ => 1) false 8 false) = (3, 8).
+Proof. vm_compute. reflexivity. Qed.
