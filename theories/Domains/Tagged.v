@@ -249,6 +249,43 @@ Module TaggedTableTimingHelpers (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   TimeFun grd.
 End TaggedTableTimingHelpers.
 
+Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
+    (T : WORD_TABLE_T L W) <: WORD_PLAN L W T.
+  Include TaggedTableCode L W T.
+  TimeFun untag.
+  TimeFun retag.
+
+  Definition tagged_wrank (q : W.pwparam) (a : tagged W.p) : nat :=
+    match a with
+    | TBot | TAny => 0
+    | TVal w p => 1 + W.pwrank q w p
+    end.
+  Definition k_untag : N := 1%N. (* STUB *)
+  Definition k_retag : N := 1%N. (* STUB *)
+  Definition tagged_gamma (a : tagged W.p) (c : positive * Z) : Prop :=
+    match a with
+    | TBot => False
+    | TAny => True
+    | TVal w p => fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)
+    end.
+  Lemma F1_untag_sound : forall xs cs wps,
+    Forall2 tagged_gamma xs cs -> untag xs = Some wps ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_retag_sound : forall ws ps cs,
+    Forall2 (fun w c => fst c = w /\ L.is_word w (snd c)) ws cs ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
+    length ps = length ws -> Forall2 tagged_gamma (retag ws ps) cs.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_untag : forall xs,
+    (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_retag : forall ws ps,
+    (T_retag ws ps <= k_retag * N.of_nat ((length ws + length ps + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+End TaggedWordPlan.
+
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
   Module B := Tagged L W.
   Module Table := TaggedTable L W T B.
