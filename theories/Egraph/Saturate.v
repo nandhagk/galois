@@ -30,25 +30,25 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Lemma add_expr_represents : forall e db t, D.wf db ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_expr e db))) (Id (fst (add_expr e db))) t.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma saturate_sound : forall (M : model (V := V.t)) rws lim es st db cs i j e1 e2,
     Forall (valid_rw V.prim V.merge M (lookup_kind (map snd (declarations rws es)))) rws ->
     saturate rws lim es = (st, db, cs) ->
     represents (D.view db) (Id i) e1 -> represents (D.view db) (Id j) e2 ->
     same (D.view db) i j -> denote M e1 = denote M e2.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ematch_complete : forall db rw tau c e, D.wf db -> D.canonical db ->
     C.instantiates tau (lhs V.t rw) e -> represents (D.view db) (Id c) e ->
     cond_in_db db tau (cond V.t rw) -> exists s,
       matches V.prim (D.view db) (C.flatten_lhs rw) s /\
       s (C.root_var rw) = Some (Id (D.repr db c)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma saturated_closed : forall rws lim es db cs rw tau c l r,
     saturate rws lim es = (Saturated, db, cs) -> In rw rws ->
     C.instantiates tau (lhs V.t rw) l -> C.instantiates tau (rhs V.t rw) r ->
     represents (D.view db) (Id c) l -> cond_in_db db tau (cond V.t rw) ->
     represents (D.view db) (Id c) r.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Saturate.
 
 Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)

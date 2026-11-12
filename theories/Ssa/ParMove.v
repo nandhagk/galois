@@ -24,9 +24,9 @@ Module ParMove <: PARMOVE.
     NoDup (map fst par) -> ~ In tmp (map fst par ++ map snd par) ->
     check_moves par tmp sq = true -> forall A (env : positive -> option A) x,
       x <> tmp -> exec_seq sq env x = exec_par par env x.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seq_length : forall par tmp, length (seq par tmp) <= 2 * length par.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End ParMove.
 
 Module ParMoveT <: PARMOVE_ALL.

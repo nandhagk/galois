@@ -45,10 +45,10 @@ Module Build (O : OPS)
     | None => None
     | Some (s, c) => if andb (Va.check p s c) (Va.check_ssa s) then Some s else None
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma build_correct : forall p s, imp_form p -> build p = Some s ->
     ssa_wf s /\ forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Build.
 
 Module BuildT (O : OPS)

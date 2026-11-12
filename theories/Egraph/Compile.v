@@ -27,12 +27,12 @@ Module Compile (V : VALUE) <: COMPILE V.
   Lemma compile_valid : forall (M : model (V := V.t)) ds rws,
     Forall (valid_rw V.prim V.merge M (lookup_kind (map snd ds))) rws ->
     valid V.prim V.merge M (compile ds rws).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma flatten_sound : forall w rw s, matches V.prim w (flatten_lhs rw) s ->
     exists tau c e, s (root_var rw) = Some (Id c) /\
       instantiates tau (lhs V.t rw) e /\ represents w (Id c) e /\
       cond_in_view w tau (cond V.t rw).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Compile.
 
 Module CompileT (V : VALUE_T) <: COMPILE_ALL V.

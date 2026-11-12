@@ -33,11 +33,11 @@ Module Validate (O : OPS)
   Include VALIDATE_SPEC O K G P E C S DG D.
   Lemma check_sound : forall p s c, imp_form p -> check p s c = true ->
     forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma check_ssa_sound : forall s, check_ssa s = true -> ssa_wf s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma check_core_ssa_sound : forall s, check_ssa s = true -> S.wf s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Validate.
 
 Module ValidateT (O : OPS)

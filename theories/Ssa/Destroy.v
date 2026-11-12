@@ -28,12 +28,12 @@ Module Destroy (O : OPS)
     <: DESTROY O K G P E C S PM OL B.
   Include DestroyCode O K G P E C S PM.
   Lemma destroy_imp : forall s p, destroy s = Some p -> imp_form p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma destroy_correct : forall s p, ssa_wf s -> destroy s = Some p ->
     forall n ins r, r <> Timeout ->
       (run_with O.eval O.test n s ins = r -> run_with O.eval O.test (2 * n) p ins = r) /\
       (run_with O.eval O.test n p ins = r -> run_with O.eval O.test n s ins = r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Destroy.
 
 Module DestroyT (O : OPS)

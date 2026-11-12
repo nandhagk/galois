@@ -71,31 +71,31 @@ Module Restricted (L : LATTICE) (S : LOCAL_SYSTEM L) <: SYSTEM L.
     Forall (fun r => In r (S.rows (original _ _ _ _ p))) (selected _ _ _ _ p).
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Key equality decides equality of system keys. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions fit the declared occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
 End Restricted.
 
@@ -174,21 +174,21 @@ Module Restrict (L : LATTICE) (S : LOCAL_SYSTEM L).
   Lemma restrict_post : forall p fz rs s, RS.post_solution (mk p fz rs) s ->
     (forall r, In r rs -> row_ok L.leb s (S.target p r) (S.eval p r s) = true) /\
     (forall x v, In (x, v) fz -> L.leb v (s x) = true).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma restrict_complete : forall p fz rs s, S.post_solution p s ->
     (forall r, In r rs -> In r (S.rows p)) ->
     (forall x v, In (x, v) fz -> L.leb v (s x) = true) ->
     RS.post_solution (mk p fz rs) s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mk_monotone : forall p fz rs, S.monotone p ->
     (forall r, In r rs -> In r (S.rows p)) -> RS.monotone (mk p fz rs).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mk_wf : forall p fz rs, S.wf p ->
     (forall r, In r rs -> In r (S.rows p)) -> RS.wf (mk p fz rs).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   End Impl.
 End Restrict.

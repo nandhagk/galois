@@ -39,64 +39,64 @@ Module Index (V : VALUE) <: INDEX V.
   Definition node (_ : t) (_ : positive) (_ : list (cell V.t)) : Prop := False.
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Insertion allocates at most one node per tuple cell. *)
   Lemma next_insert : forall a r ix, wf a ix ->
     (next (insert r ix) <= next ix + Pos.of_nat (length r))%positive.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Removal keeps the fresh node counter. *)
   Lemma next_remove : forall a r ix, wf a ix -> next (remove r ix) = next ix.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mem_empty : forall u, ~ mem empty u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma wf_empty : forall a, wf a empty.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma wf_insert : forall a r ix, wf a ix -> length r = a -> wf a (insert r ix).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma wf_remove : forall a r ix, wf a ix -> wf a (remove r ix).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mem_insert : forall a r ix u, wf a ix -> length r = a ->
     (mem (insert r ix) u <-> u = r \/ mem ix u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mem_remove : forall a r ix u, wf a ix ->
     (mem (remove r ix) u <-> u <> r /\ mem ix u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mem_arity : forall a ix u, wf a ix -> mem ix u -> length u = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma node_root : forall a ix, wf a ix -> node ix (root ix) [].
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma node_live : forall a ix n pre, wf a ix -> node ix n pre -> pre <> [] ->
     exists suf, mem ix (pre ++ suf).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma node_fun : forall a ix n m pre, wf a ix ->
     node ix n pre -> node ix m pre -> n = m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma child_spec : forall a ix n pre c, wf a ix -> node ix n pre ->
     (forall m, child ix n c = Some m <-> node ix m (pre ++ [c])) /\
     (child ix n c = None <-> ~ exists suf, mem ix (pre ++ c :: suf)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma children_spec : forall a ix n pre c, wf a ix -> node ix n pre ->
     (In c (children ix n) <-> exists m, child ix n c = Some m) /\
     NoDup (children ix n).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma degree_spec : forall a ix n pre, wf a ix -> node ix n pre ->
     N.to_nat (degree ix n) = length (children ix n).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
 End Index.
 
