@@ -41,18 +41,13 @@ check: fmt-check build test lint frozen
 lint:
     @awk -f just/lint.awk just/lint.rules $(git ls-files -co --exclude-standard -- '*.v')
 
-# Count the admitted statements in each package.
-[script("bash", "-euo", "pipefail")]
+# Count admitted statements and placeholder code by package and tag.
 admits:
-    total=0
-    for dir in theories/*/; do
-        count=$({ grep -rhoE --include='*.v' 'Admitted\.|Admit Obligations' "$dir" || true; } | wc -l)
-        if [ "$count" -gt 0 ]; then
-            echo "${dir%/} $count"
-            total=$((total + count))
-        fi
-    done
-    echo "total $total"
+    @mapfile -d '' -t files < <(git ls-files -co --exclude-standard -z -- 'theories/**/*.v' 'tests/**/*.v' 'examples/**/*.v'); awk -f just/admits.awk /dev/null "${files[@]}"
+
+# Print changed files outside a session's owned paths.
+owned id range:
+    @bash just/owned.sh "$@"
 
 # Build, then check the compiled modules with rocqchk. Package names limit the modules checked.
 [script("bash", "-euo", "pipefail")]
