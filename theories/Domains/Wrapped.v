@@ -4,7 +4,7 @@
     For example, the eight-bit arc from 250 to 3 contains zero.
     Builds on: WrappedSig, Interval and the bit-vector operations. *)
 
-From Stdlib Require Import ZArith List Bool.
+From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps Thresholds.
 Import List.ListNotations.
@@ -356,3 +356,264 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* STUB *)
 End Wrapped.
+
+Theorem wrapped_offset_range w c x : 0 <= wrapped_offset w c x < modulus w.
+Proof.
+  apply Z.mod_pos_bound. apply modulus_pos.
+Qed.
+
+Theorem wrapped_offset_self w c : wrapped_offset w c c = 0.
+Proof.
+  unfold wrapped_offset. rewrite Z.sub_diag.
+  apply Z.mod_0_l. apply modulus_nonzero.
+Qed.
+
+Theorem wrapped_offset_wrap w c x :
+  wrapped_offset w (wrap w c) (wrap w x) = wrapped_offset w c x.
+Proof.
+  unfold wrapped_offset. rewrite !wrap_mod. symmetry. apply Zminus_mod.
+Qed.
+
+Theorem wrapped_offset_word w c x :
+  wrapped_offset w c (wrap w x) = wrapped_offset w c x.
+Proof.
+  unfold wrapped_offset. rewrite !wrap_mod.
+  rewrite Zminus_mod, Z.mod_mod by apply modulus_nonzero.
+  symmetry. apply Zminus_mod.
+Qed.
+
+Theorem wrapped_offset_origin w c x :
+  wrapped_offset w (wrap w c) x = wrapped_offset w c x.
+Proof.
+  unfold wrapped_offset. rewrite !wrap_mod.
+  rewrite Zminus_mod, Z.mod_mod by apply modulus_nonzero.
+  symmetry. apply Zminus_mod.
+Qed.
+
+Theorem wrapped_offset_add w c a x :
+  wrapped_offset w c x =
+  (wrapped_offset w c a + wrapped_offset w a x) mod modulus w.
+Proof.
+  unfold wrapped_offset.
+  replace (x - c) with ((a - c) + (x - a)) by ring.
+  apply Z.add_mod. apply modulus_nonzero.
+Qed.
+
+Theorem wrapped_offset_sub w c a x :
+  wrapped_offset w a x =
+  (wrapped_offset w c x - wrapped_offset w c a) mod modulus w.
+Proof.
+  unfold wrapped_offset.
+  replace (x - a) with ((x - c) - (a - c)) by ring.
+  apply Zminus_mod.
+Qed.
+
+Theorem wrapped_offset_step w c k :
+  0 <= k < modulus w -> wrapped_offset w c (wrap w (c + k)) = k.
+Proof.
+  intro Hk. rewrite wrapped_offset_word.
+  unfold wrapped_offset. replace (c + k - c) with k by ring.
+  apply Z.mod_small. exact Hk.
+Qed.
+
+Theorem wrapped_gamma_word w a z : wrapped_gamma w a z -> is_word w z.
+Proof.
+  destruct a; cbn; tauto.
+Qed.
+
+Theorem wrapped_norm_gamma w a z :
+  wrapped_gamma w (wrapped_norm w a) z <-> wrapped_gamma w a z.
+Proof.
+  destruct a as [| |lo hi]; cbn [wrapped_norm]; try tauto.
+  destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull.
+  - apply Z.eqb_eq in Hfull. cbn [wrapped_gamma].
+    pose proof (wrapped_offset_range w lo z) as Hrange. split; [|tauto].
+    intro Hz. split; [exact Hz|lia].
+  - cbn [wrapped_gamma].
+    rewrite wrapped_offset_origin, wrapped_offset_wrap. reflexivity.
+Qed.
+
+Theorem wrapped_norm_size w a : wrapped_size w (wrapped_norm w a) = wrapped_size w a.
+Proof.
+  destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
+  destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull.
+  - apply Z.eqb_eq in Hfull. cbn [wrapped_size]. lia.
+  - cbn [wrapped_size]. now rewrite wrapped_offset_wrap.
+Qed.
+
+Theorem wrapped_size_bounds w a : 0 <= wrapped_size w a <= modulus w.
+Proof.
+  destruct a as [| |lo hi]; cbn [wrapped_size];
+    pose proof (modulus_pos w); try lia.
+  pose proof (wrapped_offset_range w lo hi). lia.
+Qed.
+
+Theorem wrapped_leb_spec w left right :
+  wrapped_leb w left right = true <->
+  forall z, wrapped_gamma w left z -> wrapped_gamma w right z.
+Proof. Admitted. (* CONVERT: wrapped_leb_spec: The variable wrapped_arc_inclusion was not found in the current *)
+
+Theorem wrapped_leb_refl w a : wrapped_leb w a a = true.
+Proof.
+  apply wrapped_leb_spec. tauto.
+Qed.
+
+Theorem wrapped_leb_trans w a b c :
+  wrapped_leb w a b = true -> wrapped_leb w b c = true -> wrapped_leb w a c = true.
+Proof.
+  intros Hab Hbc. apply wrapped_leb_spec.
+  pose proof (proj1 (wrapped_leb_spec w a b) Hab) as Hab_gamma.
+  pose proof (proj1 (wrapped_leb_spec w b c) Hbc) as Hbc_gamma. auto.
+Qed.
+
+Theorem wrapped_norm_leb w a :
+  wrapped_leb w a (wrapped_norm w a) = true /\
+  wrapped_leb w (wrapped_norm w a) a = true.
+Proof.
+  split; apply wrapped_leb_spec; intros z Hz.
+  - exact (proj2 (wrapped_norm_gamma w a z) Hz).
+  - exact (proj1 (wrapped_norm_gamma w a z) Hz).
+Qed.
+
+Theorem wrapped_size_monotone w left right :
+  wrapped_leb w left right = true -> wrapped_size w left <= wrapped_size w right.
+Proof.
+  intro Hle.
+  pose proof (wrapped_size_bounds w left) as Ha.
+  pose proof (wrapped_size_bounds w right) as Hb.
+  destruct left as [| |a b], right as [| |c d];
+    cbn [wrapped_leb wrapped_size] in *; try discriminate;
+    try (apply Z.eqb_eq in Hle); try lia.
+  apply Bool.orb_true_iff in Hle as [Hfull|Hspan].
+  - apply Z.eqb_eq in Hfull. lia.
+  - apply Z.leb_le in Hspan. pose proof (wrapped_offset_range w c a). lia.
+Qed.
+
+Theorem wrapped_join_cover w a b : wrapped_cover w a b (wrapped_join w a b) = true.
+Proof. Admitted. (* CONVERT: wrapped_join_cover: The variable wrapped_choose_cover was not found in the current *)
+
+Theorem wrapped_offset_linear w c a x :
+  wrapped_offset w c a + wrapped_offset w a x < modulus w ->
+  wrapped_offset w c x = wrapped_offset w c a + wrapped_offset w a x.
+Proof.
+  intro Hbound. rewrite (wrapped_offset_add w c a x).
+  apply Z.mod_small. pose proof (wrapped_offset_range w c a).
+  pose proof (wrapped_offset_range w a x). lia.
+Qed.
+
+Theorem wrapped_offset_difference w c a x :
+  wrapped_offset w c a <= wrapped_offset w c x ->
+  wrapped_offset w a x = wrapped_offset w c x - wrapped_offset w c a.
+Proof.
+  intro Hle. rewrite (wrapped_offset_sub w c a x).
+  apply Z.mod_small. pose proof (wrapped_offset_range w c a).
+  pose proof (wrapped_offset_range w c x). lia.
+Qed.
+
+Theorem wrapped_double_upper w a : wrapped_leb w a (wrapped_double w a) = true.
+Proof. Admitted. (* CONVERT: wrapped_double_upper: The variable wrapped_expand_span was not found in the current *)
+
+Theorem wrapped_double_size w a :
+  wrapped_size w (wrapped_double w a) =
+  Z.min (modulus w) (3 * wrapped_size w a).
+Proof. Admitted. (* CONVERT: wrapped_double_size: The variable wrapped_expand_size was not found in the current *)
+
+Theorem wrapped_join_minimal w a b c :
+  wrapped_leb w a c = true -> wrapped_leb w b c = true ->
+  wrapped_size w (wrapped_join w a b) <= wrapped_size w c.
+Proof. Admitted. (* CONVERT: wrapped_join_minimal: The variable wrapped_join_size was not found in the current *)
+
+Theorem wrapped_range_sound w lo hi z :
+  lo <= z <= hi -> wrapped_gamma w (wrapped_range w lo hi) (wrap w z).
+Proof.
+  intro Hz. unfold wrapped_range.
+  destruct (hi <? lo) eqn:Hempty; [apply Z.ltb_lt in Hempty; lia|].
+  destruct (modulus w - 1 <=? hi - lo) eqn:Hfull; [apply wrap_is_word|].
+  apply Z.leb_gt in Hfull. apply (proj2 (wrapped_norm_gamma w (WItv lo hi) _)).
+  split; [apply wrap_is_word|].
+  rewrite wrapped_offset_word. unfold wrapped_offset.
+  rewrite !Z.mod_small by lia. lia.
+Qed.
+
+Theorem wrapped_offset_word_cases w c z :
+  is_word w c -> is_word w z ->
+  wrapped_offset w c z = if c <=? z then z - c else z - c + modulus w.
+Proof.
+  intros Hc Hz. unfold wrapped_offset.
+  destruct (c <=? z) eqn:Hle.
+  - apply Z.leb_le in Hle. apply Z.mod_small. destruct Hc, Hz. lia.
+  - apply Z.leb_gt in Hle. symmetry. apply Z.mod_unique with (q := -1);
+      destruct Hc, Hz; lia.
+Qed.
+
+Theorem wrapped_norm_idempotent w a :
+  wrapped_norm w (wrapped_norm w a) = wrapped_norm w a.
+Proof.
+  destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
+  destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull; [reflexivity|].
+  cbn [wrapped_norm]. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap. reflexivity.
+Qed.
+
+Theorem wrapped_norm_endpoints w a lo hi :
+  wrapped_norm w a = WItv lo hi -> is_word w lo /\ is_word w hi.
+Proof.
+  destruct a as [| |l h]; cbn [wrapped_norm]; try discriminate.
+  destruct (wrapped_offset w l h =? modulus w - 1); [discriminate|].
+  intro Hnorm. inversion Hnorm; subst lo hi. split; apply wrap_is_word.
+Qed.
+
+Theorem wrapped_parts_normalized w a :
+  wrapped_parts w (wrapped_norm w a) = wrapped_parts w a.
+Proof.
+  unfold wrapped_parts. now rewrite wrapped_norm_idempotent.
+Qed.
+
+Theorem wrapped_join_sound w a b z :
+  wrapped_gamma w a z \/ wrapped_gamma w b z -> wrapped_gamma w (wrapped_join w a b) z.
+Proof. Admitted. (* CONVERT: wrapped_join_sound: The variable gamma_monotone was not found in the current environment. *)
+
+Theorem wrapped_join_four_sound w a b c d z :
+  wrapped_gamma w a z \/ wrapped_gamma w b z \/
+  wrapped_gamma w c z \/ wrapped_gamma w d z ->
+  wrapped_gamma w (wrapped_join_four w a b c d) z.
+Proof.
+  intro Hcases. unfold wrapped_join_four.
+  apply wrapped_join_sound. destruct Hcases as [Ha|[Hb|[Hc|Hd]]].
+  - left. apply wrapped_join_sound. now left.
+  - left. apply wrapped_join_sound. now right.
+  - right. apply wrapped_join_sound. now left.
+  - right. apply wrapped_join_sound. now right.
+Qed.
+
+Theorem wrapped_meet_sound w a b z :
+  wrapped_gamma w a z -> wrapped_gamma w b z -> wrapped_gamma w (wrapped_meet w a b) z.
+Proof. Admitted. (* CONVERT: wrapped_meet_sound: The variable wrapped_parts_spec was not found in the current *)
+
+Theorem wrapped_meet_lower_left w a b : wrapped_leb w (wrapped_meet w a b) a = true.
+Proof.
+  unfold wrapped_meet.
+  match goal with
+  | |- context [if ?test then _ else _] => destruct test eqn:Hleft
+  end.
+  - exact Hleft.
+  - exact (proj2 (wrapped_norm_leb w a)).
+Qed.
+
+Theorem wrapped_size_zero w a : wrapped_size w a = 0 <-> a = WBot.
+Proof.
+  destruct a as [| |lo hi]; cbn [wrapped_size].
+  - tauto.
+  - pose proof (modulus_pos w). split; [lia|discriminate].
+  - pose proof (wrapped_offset_range w lo hi). split; [lia|discriminate].
+Qed.
+
+Theorem wrapped_full_contains w a b :
+  wrapped_size w a = modulus w -> wrapped_leb w b a = true.
+Proof.
+  intro Hsize. apply wrapped_leb_spec. intros z Hz.
+  pose proof (wrapped_gamma_word w b z Hz) as Hword.
+  destruct a as [| |lo hi]; cbn [wrapped_size wrapped_gamma] in *.
+  - pose proof (modulus_pos w). lia.
+  - exact Hword.
+  - split; [exact Hword|]. pose proof (wrapped_offset_range w lo z). lia.
+Qed.
