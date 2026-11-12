@@ -4,9 +4,11 @@
     For example, an environment budget bounds every binding by a fixed interval size.
     Builds on: Fixpoint.SystemSig and Lattice.LatticeSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith Arith.
+From Argent Require Import BigO.
+From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Fixpoint Require Import SystemSig.
+From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig ScheduleSig.
 
 Module Type BUDGET (L : WLATTICE_T) (S : SYSTEM_T L).
   (* spec: inv vsize wmax *)
@@ -29,3 +31,55 @@ Module Type BUDGET (L : WLATTICE_T) (S : SYSTEM_T L).
   (** The invariant bounds widening rank for every parameter. *)
   Parameter wrank_le : forall p w a, inv p a -> L.wrank w a <= wmax p w.
 End BUDGET.
+
+Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
+    (Sched : SCHEDULE_OPS L S) (B : BUDGET L S) (Import V : SOLVER_OPS L S).
+  Definition C (p : S.prog) : nat := length (S.rows p).
+  Definition D (p : S.prog) : nat := fold_right Nat.add 0
+    (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)).
+  Definition unit (p : S.prog) : nat :=
+    S.row_work p (B.vsize p) + L.c_lat * (B.vsize p + 1) +
+      (Nat.log2 (C p) + 1) * (S.kw p + 1).
+  Definition prep (p : S.prog) : nat :=
+    (C p + D p) * (S.kw p + Nat.log2 (C p) + 1).
+  Definition rounds (p : S.prog) (pol : policy L.wparam) : nat :=
+    1 + fold_right Nat.add 0
+      (List.map (fun ch => delay (snd ch) + B.wmax p (wp pol) + 2)
+        (PTrieCode.elements (heads pol))).
+  (** Fitting inputs have a well-formed system and a policy cutting every dependency cycle. *)
+  Definition fits (p : S.prog) (pol : policy L.wparam) : Prop :=
+    S.wf p /\ Sched.cuts p pol = true.
+  (** Work combines preparation and bounded rounds of row evaluation. *)
+  Definition work (p : S.prog) (pol : policy L.wparam) : nat :=
+    prep p + (C p + D p) * rounds p pol * unit p.
+  (** A widening-free policy has no configured heads. *)
+  Definition widening_free (pol : policy L.wparam) : Prop :=
+    forall c, trie_get c (heads pol) = None.
+  (* spec: fuel_for *)
+  Parameter fuel_for : S.prog -> policy L.wparam -> N.
+  Parameter T_run : S.prog -> policy L.wparam -> N -> nat.
+  Parameter c_wl : nat.
+  Definition c_solve : nat := c_wl.
+  (** Worklist running pays for bounded work and the bit length of fuel. *)
+  Parameter T_run_le : forall p pol fuel, fits p pol ->
+    T_run p pol fuel <= c_wl * (work p pol + N.size_nat fuel + 1).
+  (** Sufficient fuel finishes the worklist on fitting inputs. *)
+  Parameter run_enough : forall p pol fuel, fits p pol -> (fuel_for p pol <= fuel)%N ->
+    exists m, run p pol fuel = Solved m.
+  (** Finite height gives a bound independent of widening rounds. *)
+  Parameter T_run_height_le : forall p pol fuel (rk : L.t -> nat) h,
+    S.wf p -> widening_free pol ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) ->
+    T_run p pol fuel <= c_wl *
+      (prep p + (C p + h * D p) * unit p + N.size_nat fuel + 1).
+  (** Running at sufficient fuel has the published work bound. *)
+  Parameter run_bigO : bigO
+    (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
+    (fun x => work (fst x) (snd x))
+    (fun x => T_run (fst x) (snd x) (fuel_for (fst x) (snd x))).
+End WORKLIST_TIME.
+
+Module Type WORKLIST_T (L : WLATTICE_T) (S : SYSTEM_T L)
+    (Sched : SCHEDULE_OPS L S) (B : BUDGET L S) :=
+  SOLVER_OPS L S <+ WORKLIST_TIME L S Sched B.
