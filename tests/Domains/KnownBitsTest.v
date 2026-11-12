@@ -5,7 +5,7 @@
     Builds on: DomainsTnum and DomainsTnumArith. *)
 
 From Stdlib Require Import ZArith Bool.
-From Galois.Domains Require Import KnownBitsSig KnownBits.
+From Galois.Domains Require Import KnownBitsSig KnownBits BitsLang.
 
 Local Open Scope Z_scope.
 
@@ -60,4 +60,16 @@ Example tnum_division_zero_boundary :
   tnum_urem 8%positive (Tnum 240 0) = Tnum 240 0.
 Proof.
   vm_compute. auto.
+Qed.
+
+Module LowMultiplier <: TNUM_CONFIG.
+  Definition multiplier := MulLow.
+End LowMultiplier.
+Module MaskCode := KnownBitsCode WordLanguageCode LowMultiplier.
+
+(** The old unguarded join returned Tnum 0 0 for this input. *)
+Example tnum_raw_widen_stable :
+  MaskCode.pwiden tt 4%positive (Tnum 16 0) (Tnum 0 0) = Tnum 16 0.
+Proof.
+  vm_compute. reflexivity.
 Qed.
