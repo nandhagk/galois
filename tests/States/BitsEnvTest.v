@@ -98,3 +98,29 @@ Proof. vm_compute. reflexivity. Qed.
 Example differ_rejected_current :
   observe 0%nat (State.assume (BTruth true) [differs_one] (one_bit 1)) = p 1 1.
 Proof. vm_compute. reflexivity. Qed.
+
+Definition differs_zero := Node (BOp bvne) [Leaf 0%nat; Node (BConst 1%positive 0) []].
+Example differ_positive :
+  observe 0%nat (State.assume (BTruth true) [differs_zero] (one_bit 1)) = p 1 1.
+Proof. vm_compute. reflexivity. Qed.
+
+Example test_boundary :
+  let e := Node (BOp (bvtrunc 1%positive)) [Leaf 0%nat] in
+  observe 0%nat (State.assume (BTruth false) [e] (one_value 2)) = p 32 2.
+Proof. vm_compute. reflexivity. Qed.
+
+Example comparison_truth :
+  let e := Node (BOp bvult) [Leaf 0%nat; Leaf 1%nat] in
+  let m := Vars.set 1%nat (p 32 2) (Vars.set 0%nat (p 32 1) Vars.empty) in
+  let s := State.assume (BTruth true) [e] (Reached m) in
+  (observe 0%nat s, observe 1%nat s) = (p 32 1, p 32 2).
+Proof. vm_compute. reflexivity. Qed.
+
+Example empty_guard_support : State.assume (BTruth true) [] State.top = State.top.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition differs_seven :=
+  Node (BOp bvne) [Leaf 0%nat; Node (BConst 32%positive 7) []].
+Example differ_mixed_width_fallback :
+  observe 0%nat (State.assume (BTruth true) [differs_seven] (one_bit 1)) = p 1 1.
+Proof. vm_compute. reflexivity. Qed.
