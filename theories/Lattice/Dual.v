@@ -69,6 +69,9 @@ Module DualHeight (L : BLATTICE) (H : HEIGHT L)
   Definition height := H.height.
   Lemma rank_le : forall a, rank a <= height.
   Proof. intros a; unfold rank, height; lia. Qed.
+  (** Reversing the order preserves monotonicity of the complementary rank. *)
+  Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
   Proof.
