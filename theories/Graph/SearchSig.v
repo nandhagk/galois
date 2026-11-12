@@ -64,6 +64,37 @@ Definition event_kind_correct (prefix : list event) (kind : edge_kind) (v : posi
   | Done => In (Leave v) prefix
   end.
 
+(** DFS derivations preserve successor order and pair tree edges with recursive visits. *)
+Inductive dfs_visit (g : digraph) :
+    list positive -> list positive -> positive -> list event -> list positive -> Prop :=
+  | dfs_visit_node : forall active seen v inside final,
+      ~ In v seen ->
+      dfs_rows g (v :: active) (v :: seen) v (succs g v) inside final ->
+      dfs_visit g active seen v (Enter v :: inside ++ [Leave v]) final
+with dfs_rows (g : digraph) : list positive -> list positive -> positive ->
+    list positive -> list event -> list positive -> Prop :=
+  | dfs_rows_nil : forall active seen u, dfs_rows g active seen u [] [] seen
+  | dfs_rows_tree : forall active seen u v rest inside middle outside final,
+      ~ In v seen -> dfs_visit g active seen v inside middle ->
+      dfs_rows g active middle u rest outside final ->
+      dfs_rows g active seen u (v :: rest) (Edge Tree u v :: inside ++ outside) final
+  | dfs_rows_seen : forall active seen u v rest kind outside final,
+      In v seen ->
+      ((kind = Back /\ In v active) \/ (kind = Done /\ ~ In v active)) ->
+      dfs_rows g active seen u rest outside final ->
+      dfs_rows g active seen u (v :: rest) (Edge kind u v :: outside) final.
+
+(** Root traversal skips roots that an earlier traversal has already visited. *)
+Inductive dfs_roots (g : digraph) :
+    list positive -> list positive -> list event -> list positive -> Prop :=
+  | dfs_roots_nil : forall seen, dfs_roots g seen [] [] seen
+  | dfs_roots_seen : forall seen v rest es final,
+      In v seen -> dfs_roots g seen rest es final -> dfs_roots g seen (v :: rest) es final
+  | dfs_roots_new : forall seen v rest inside middle outside final,
+      ~ In v seen -> dfs_visit g [] seen v inside middle ->
+      dfs_roots g middle rest outside final ->
+      dfs_roots g seen (v :: rest) (inside ++ outside) final.
+
 Module Type VISITOR_OPS.
   Parameter state : Type.
   Parameter enter : positive -> state -> state.
@@ -97,6 +128,9 @@ End SEARCH_OPS.
 Module Type SEARCH_LAWS (V : VISITOR) (Import S : SEARCH_OPS V).
   (* spec: trace *)
   Parameter trace : prepared -> list positive -> list event.
+  (** The trace follows graph successor order and the supplied root order. *)
+  Parameter trace_depth_first : forall g roots,
+    exists final, dfs_roots (base g) [] roots (trace g roots) final.
   (** The visitor observes precisely the trace, in order. *)
   Parameter dfs_fold : forall g roots s,
     dfs g roots s = fold_events V.enter V.leave V.edge (trace g roots) s.
