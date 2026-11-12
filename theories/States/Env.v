@@ -5,10 +5,23 @@
     Builds on: EnvSig and the keyed map operations. *)
 
 From Stdlib Require Import List Bool.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 Import List.ListNotations.
+
+(** Variable collection prepends the leaves in their expression order. *)
+Fixpoint env_vars_into {K X} (e : term K X) (acc : list X) : list X :=
+  match e with
+  | Leaf x => x :: acc
+  | Node _ es => fold_right (fun e acc => env_vars_into e acc) acc es
+  end.
+TimeFun env_vars_into.
+
+(** Variable collection traverses each expression constructor once. *)
+Definition env_vars {K X} (e : term K X) : list X := env_vars_into e [].
+TimeFun env_vars.
 
 Module EnvCode (X : KEY_OPS) (M : MAP_OPS X) (L : LANG_OPS)
     (V : VALUE_DOMAIN_OPS L) <: ENV_OPS X M L V.
@@ -54,6 +67,7 @@ Module EnvCode (X : KEY_OPS) (M : MAP_OPS X) (L : LANG_OPS)
     | _, _ => Unreached
     end.
   Definition widen p (a b : t) :=
+    if leb b a then a else
     match a, b with
     | Unreached, s | s, Unreached => s
     | Reached a, Reached b => Reached (M.merge (fun x y => match x, y with
@@ -107,11 +121,7 @@ Module EnvCode (X : KEY_OPS) (M : MAP_OPS X) (L : LANG_OPS)
     match s with Unreached => Unreached | Reached m => Reached (M.set x (eval e s) m) end.
   Definition havoc x (s : t) :=
     match s with Unreached => Unreached | Reached m => Reached (M.set x V.top m) end.
-  Fixpoint vars (e : term L.op X.t) : list X.t :=
-    match e with
-    | Leaf x => [x]
-    | Node _ es => flat_map vars es
-    end.
+  Definition vars (e : term L.op X.t) : list X.t := env_vars e.
   Definition materialize (m : M.t V.t) (xs : list X.t) :=
     fold_left (fun acc x => M.set x (read acc x) acc) xs m.
   Definition assume g es (s : t) :=
@@ -176,7 +186,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* SIG-QUESTION: Q17: widening an explicit top binding against an empty map drops that stable binding. *)
+  Proof. Admitted.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
