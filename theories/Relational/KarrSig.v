@@ -91,6 +91,18 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
   Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
+  Parameter k_cert : N.
+  (** The hull has at most one row per input dimension within the Hadamard bound. *)
+  Parameter affine_hull_size : forall a b, normal a -> normal b ->
+    length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
+    ell (Reached (affine_hull a b)) <=
+      ellB (n (Reached a) + n (Reached b) + 1) (ell (Reached a) + ell (Reached b)).
+  (** A produced certificate costs no more to check than to produce. *)
+  Parameter entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
+    entail_cert P r = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize r + C.cbits P (mults k) + 1)) <=
+      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
   (** Assignment charges row normalization and elimination after linearization. *)
   Parameter F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +

@@ -79,6 +79,10 @@ Module Type POLY_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_fm_elim : X.t -> list (lcons X.t) -> N.
   Parameter T_entail_cert : list (lcons X.t) -> lcons X.t -> N.
   Parameter c_poly : N.
+  (** Substitution charges both coefficient lists and their arithmetic widths. *)
+  Parameter T_subst_le : forall x f r,
+    (T_subst x f r <= c_poly * N.of_nat
+      ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
   (** One elimination charges all row pairs and their tracked multipliers. *)
   Parameter T_fm_elim_le : forall x P, normal P ->
     (T_fm_elim x P <= c_poly * N.of_nat (((length P + 1)^2)%nat) *
@@ -102,22 +106,44 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (prows s)).
   Definition nell (s : t) : nat := ell (prows s) + Nat.log2 (terms s) + 1.
-  (** Assignment charges row normalization and one elimination after linearization. *)
+  (** Assignment charges row normalization, one elimination and the check of every output row. *)
   Parameter F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
       (length (prows s) + 3)^2 *
-      (n (prows s) + tsize e + length (prows s) + 3) *
+      (n (prows s) + terms s + tsize e + length (prows s) + 3) *
       (nell s + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
-  (** Havoc charges row normalization and one elimination of the selected variable. *)
+  (** Havoc charges row normalization, one elimination and the check of every output row. *)
   Parameter F_havoc_work : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
-      (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (length (prows s) + 1)^2 * (n (prows s) + terms s + length (prows s) + 1) *
       (nell s + X.bits x + 1)^2.
-  (** Assumption charges appending the rows emitted by linearization. *)
+  (** Assumption charges every emitted atom and the bits of its merged coefficients. *)
   Parameter F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
-      N.of_nat ((length (prows s) + 1) * (fold_right Nat.add 0%nat (map tsize es) + 1) *
-        (F.bits_es g es + 1)) + F.T_atoms_of g es)%N.
+      N.of_nat ((length (prows s) + 1) * (length (F.atoms_of g es) + 1) *
+        (fold_right Nat.add 0%nat (map tsize es) + 1) *
+        (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1)) +
+      F.T_atoms_of g es)%N.
+
+  Parameter k_cert : N.
+  (** Certificate production on raw rows pays normalization and the recurrence. *)
+  Parameter T_entail_cert_raw : forall P c,
+    (T_entail_cert P c <= k_cert * N.of_nat
+      (terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
+       fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
+         (length P + 1) (nell (Reached (c :: P)))))%N.
+  (** A produced certificate costs no more to check than to produce. *)
+  Parameter entail_cert_size : forall P c k, entail_cert P c = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize c + C.cbits P (mults k) + 1)) <=
+      k_cert * N.of_nat
+        (terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
+         fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
+           (length P + 1) (nell (Reached (c :: P)))))%N.
+  (** The tracked multipliers of one elimination are coefficients of its rows. *)
+  Parameter fm_mults_size : forall x P r, normal P -> In r (fm_elim x P) ->
+    length (mults_of r) = length P /\
+    Forall (fun m => Z.size_nat m <= ell P + 1) (mults_of r).
   (** Top has no repeated coefficients. *)
   Parameter normal_top : normal_s top.
   (** Join keeps rows free of repeated keys. *)
