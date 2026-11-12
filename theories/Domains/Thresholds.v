@@ -53,7 +53,7 @@ Module ThresholdsCode <: THRESHOLDS_OPS.
     match tree with
     | TLeaf => None
     | TNode lhs value rhs =>
-      if Z.leb z value then
+      if negb (Z.ltb value z) then
         match above lhs z with
         | Some x => Some (Z.min value x)
         | None => Some value

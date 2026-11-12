@@ -135,6 +135,8 @@ Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
     pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
   (** The requested congruence rank is bounded by width plus two. *)
   Parameter F13_wrank_le : forall w a, congr_wrank w a <= Pos.to_nat w + 2.
+  (** Payload widening uses the normalized congruence rank. *)
+  Parameter F14_pwrank : forall q w a, pwrank q w a = congr_wrank w a.
   (** Gcd-based joining has the published quadratic arithmetic bound. *)
   Parameter T1_join : forall w a b,
     (T_pjoin w a b <= k_congr_gcd * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
