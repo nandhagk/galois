@@ -4,7 +4,7 @@
     For example, cap one joins two alternatives into one state.
     Builds on: DisjunctionSig, StateSig and the lattice interfaces. *)
 
-From Stdlib Require Import List Arith Bool.
+From Stdlib Require Import List NArith Arith Bool.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -119,8 +119,8 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted. (* STUB *)
   (** An unstable widening from a nonbottom strictly decreases rank. *)
-  (* The former aligned-pair widening left collapse rank and component bounds unspecified.
-     The current widening keeps the previous alternatives and gives bottom lists rank credit. *)
+  (* F2-22 replaced the former twoStateDisj aligned-pair rank route with uncovered
+     alternatives, and F2-30 supplies the size and widening-unit capabilities it needs. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
   Proof. Admitted. (* STUB *)
@@ -178,13 +178,16 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* STUB *)
 End StateDisjunction.
 
-Module StateDisjunctionClock (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
-    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (C : POS_CAP)
-    (P : SharedDisjunction.DISJUNCTION_T S JS C).
-  Include StateDisjunction X L V S C P.
-  TimeFun leb.
-  TimeFun is_bot.
-  TimeFun join.
+Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (JU : JOIN_UNITS X L V S) (C : POS_CAP)
+    (P : SharedDisjunction.DISJUNCTION_T S JS C)
+    <: DISJUNCTION_ALL X L V S JS JU C P.
+  Module Plain := StateDisjunction X L V S C P.
+  Include Plain.
+  Definition T_leb : t -> t -> N := P.T_leb.
+  Definition T_join : t -> t -> N := P.T_join.
+  Definition T_is_bot : t -> N := P.T_is_bot.
+  TimeFun top.
   TimeFun collapse.
   TimeFun compact_tail.
   TimeFun compact.
@@ -195,7 +198,118 @@ Module StateDisjunctionClock (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   TimeFun havoc.
   TimeFun assume.
   TimeFun eval.
-End StateDisjunctionClock.
+  Definition size : t -> nat := P.size.
+  Definition c_lat : N := 1%N. (* STUB *)
+  Definition c_state : N := 1%N. (* STUB *)
+  Definition c_disjunction : N := 1%N. (* STUB *)
+  Definition wsize : wparam -> nat := S.wsize.
+  Definition wunits (d : t) : nat :=
+    fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
+  Definition assign_work (x : X.t) (e : term L.op X.t) (d : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
+  Definition havoc_work (x : X.t) (d : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun s => S.havoc_work x s + 1) (proj1_sig d)).
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (d : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun s => S.assume_work g es s + 1) (proj1_sig d)).
+  Definition eval_work (e : term L.op X.t) (d : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun s =>
+      S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
+
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assign_le : forall x e s,
+    (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_le : forall x s,
+    (T_havoc x s <= c_state * N.of_nat (havoc_work x s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_le : forall g es s,
+    (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eval_le : forall e s,
+    (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assign_alternatives : forall x e d,
+    (T_assign x e d <= c_disjunction *
+      (fold_right N.add 0%N (map (fun s => S.T_assign x e s + 1) (proj1_sig d)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_alternatives : forall x d,
+    (T_havoc x d <= c_disjunction *
+      (fold_right N.add 0%N (map (fun s => S.T_havoc x s + 1) (proj1_sig d)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_alternatives : forall g es d,
+    (T_assume g es d <= c_disjunction *
+      (fold_right N.add 0%N (map (fun s => S.T_assume g es s + 1) (proj1_sig d)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma c_lat_shared : (P.c_lat <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wunits_alternatives : forall d,
+    wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
+  Proof. Admitted. (* STUB *)
+  Lemma wsize_component : forall p, wsize p = S.wsize p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_collapse_le : forall xs, length xs <= C.k + 1 ->
+    (T_collapse xs <= c_disjunction * N.of_nat
+      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma collapse_size : forall xs, length xs <= C.k + 1 ->
+    (N.of_nat (S.size (collapse xs)) <= c_disjunction * N.of_nat
+      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma collapse_wunits : forall xs, length xs <= C.k + 1 ->
+    (N.of_nat (S.wunits (collapse xs)) <= c_disjunction * N.of_nat
+      (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_disjunction : N := 1%N. (* STUB *)
+  Lemma F2_widen : forall p a b, proj1_sig (widen p a b) =
+    if leb b a then proj1_sig a else
+    if forallb S.is_bot (proj1_sig a) then [S.top] else
+    replace_first S.is_bot
+      (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
+      (proj1_sig a).
+  Proof. Admitted. (* STUB *)
+  Lemma F3_rank : forall p d, wrank p d =
+    fold_right Nat.add 0%nat (map (S.wrank p) (proj1_sig d)) +
+      if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_assign : forall x e d,
+    proj1_sig (assign x e d) = map (S.assign x e) (proj1_sig d).
+  Proof. Admitted. (* STUB *)
+  Lemma F5_havoc : forall x d,
+    proj1_sig (havoc x d) = map (S.havoc x) (proj1_sig d).
+  Proof. Admitted. (* STUB *)
+  Lemma F6_assume : forall g es d,
+    proj1_sig (assume g es d) = map (S.assume g es) (proj1_sig d).
+  Proof. Admitted. (* STUB *)
+  Lemma T1_widen : forall p a b,
+    (T_widen p a b <= k_disjunction *
+      (T_leb b a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
+       fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
+       fold_right N.add 0%N (map (fun y => fold_right N.add 0%N
+         (map (fun x => S.T_leb y x + 1) (proj1_sig a))) (proj1_sig b)) +
+       fold_right N.add 0%N (map (fun x =>
+         let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
+         T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
+         (proj1_sig a))))%N.
+  Proof. Admitted. (* STUB *)
+End StateDisjunctionT.
 
 (* The landed lattice source exposed the following raw-list equations. The shared
    bounded carrier now supplies P.clip. Its laws allow different oversized-list

@@ -90,25 +90,6 @@ Module Specif.
   TimeFun proj1_sig.
 End Specif.
 
-Module PartitionClock (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
-    (S : STATE_DOMAIN_T X L V) (C : CAP).
-  Include PartitionCode X Tk L V S C.
-  TimeFun fit.
-  TimeFun leb.
-  TimeFun is_bot.
-  TimeFun join.
-  TimeFun widen.
-  TimeFun narrow.
-  TimeFun inject.
-  TimeFun merge.
-  TimeFun retag.
-  TimeFun map_bounded.
-  TimeFun assign.
-  TimeFun havoc.
-  TimeFun assume.
-  TimeFun eval.
-End PartitionClock.
-
 Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     (S : STATE_DOMAIN X L V) (C : POS_CAP) <: PARTITION X Tk L V S C.
   Include PartitionCode X Tk L V S C.
@@ -220,3 +201,251 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma merge_sound : forall k a st, gamma a st -> gamma (merge k a) st.
   Proof. Admitted. (* STUB *)
 End Partition.
+
+Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (JU : JOIN_UNITS X L V S)
+    (C : POS_CAP) <: PARTITION_ALL X Tk L V S JS JU C.
+  Module Plain := Partition X Tk L V S C.
+  Include Plain.
+  TimeFun fit.
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun top.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun inject.
+  TimeFun merge.
+  TimeFun retag.
+  TimeFun map_bounded.
+  TimeFun assign.
+  TimeFun havoc.
+  TimeFun assume.
+  TimeFun eval.
+
+  Definition size (a : t) : nat := parts_size Tk.bits S.size (proj1_sig a).
+  Definition wunits (a : t) : nat := parts_units S.wunits (proj1_sig a).
+  Definition wsize : wparam -> nat := S.wsize.
+  Definition assign_work (x : X.t) (e : term L.op X.t) (a : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun q => S.assign_work x e (snd q) + 1) (proj1_sig a)).
+  Definition havoc_work (x : X.t) (a : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun q => S.havoc_work x (snd q) + 1) (proj1_sig a)).
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (a : t) : nat :=
+    fold_right Nat.add 0%nat
+      (map (fun q => S.assume_work g es (snd q) + 1) (proj1_sig a)).
+  Definition eval_work (e : term L.op X.t) (a : t) : nat :=
+    fold_right Nat.add 0%nat (map (fun q =>
+      S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
+  Definition c_lat : N := 1%N. (* STUB *)
+  Definition c_state : N := 1%N. (* STUB *)
+  Definition c_partition : N := 1%N. (* STUB *)
+
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assign_le : forall x e a,
+    (T_assign x e a <= c_state * N.of_nat (assign_work x e a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_le : forall x a,
+    (T_havoc x a <= c_state * N.of_nat (havoc_work x a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_le : forall g es a,
+    (T_assume g es a <= c_state * N.of_nat (assume_work g es a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eval_le : forall e a,
+    (T_eval e a <= c_state * N.of_nat (eval_work e a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma size_parts : forall a, size a = parts_size Tk.bits S.size (proj1_sig a).
+  Proof. Admitted. (* STUB *)
+  Lemma wunits_parts : forall a, wunits a = parts_units S.wunits (proj1_sig a).
+  Proof. Admitted. (* STUB *)
+  Lemma wsize_component : forall p, wsize p = S.wsize p.
+  Proof. Admitted. (* STUB *)
+  Lemma assign_work_parts : forall x e a, assign_work x e a =
+    fold_right Nat.add 0%nat (map (fun q => S.assign_work x e (snd q) + 1) (proj1_sig a)).
+  Proof. Admitted. (* STUB *)
+  Lemma havoc_work_parts : forall x a, havoc_work x a =
+    fold_right Nat.add 0%nat (map (fun q => S.havoc_work x (snd q) + 1) (proj1_sig a)).
+  Proof. Admitted. (* STUB *)
+  Lemma assume_work_parts : forall g es a, assume_work g es a =
+    fold_right Nat.add 0%nat
+      (map (fun q => S.assume_work g es (snd q) + 1) (proj1_sig a)).
+  Proof. Admitted. (* STUB *)
+  Lemma eval_work_parts : forall e a, eval_work e a = fold_right Nat.add 0%nat (map (fun q =>
+    S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
+  Proof. Admitted. (* STUB *)
+  Lemma T_inject_le : forall k s,
+    (T_inject k s <= c_partition * N.of_nat (Tk.bits k + S.size s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_merge_le : forall k a,
+    (T_merge k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_retag_le : forall k a,
+    (T_retag k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_wunits : forall a b,
+    (N.of_nat (wunits (join a b)) <= c_lat * N.of_nat (wunits a + wunits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma merge_size : forall k a,
+    (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_partition : N := 1%N. (* STUB *)
+  Definition route_time (p : S.wparam) (old new : list (option Tk.t * S.t)) : N :=
+    let fresh := fresh_parts S.leb S.bot old new in
+    (T_fresh_parts S.leb S.T_leb S.bot old new +
+     T_stray_parts Tk.eqb Tk.T_eqb S.leb S.T_leb S.bot old fresh +
+     T_absorb Tk.eqb Tk.T_eqb S.leb S.T_leb S.bot S.join S.T_join
+       (S.widen p) (S.T_widen p) (stray_parts Tk.eqb S.leb S.bot old fresh) fresh old)%N.
+  Definition eval_joins (e : term L.op X.t) (ps : list (option Tk.t * S.t)) : N :=
+    fst (fold_left (fun acc q =>
+      ((fst acc + V.T_join (snd acc) (S.eval e (snd q)) + 1)%N,
+       V.join (snd acc) (S.eval e (snd q)))) ps (0%N, V.bot)).
+
+  Lemma F1_assign : forall x e a, proj1_sig (assign x e a) =
+    map (fun q => (fst q, S.assign x e (snd q))) (proj1_sig a).
+  Proof. Admitted. (* STUB *)
+  Lemma F2_havoc : forall x a, proj1_sig (havoc x a) =
+    map (fun q => (fst q, S.havoc x (snd q))) (proj1_sig a).
+  Proof. Admitted. (* STUB *)
+  Lemma F3_assume : forall g es a, proj1_sig (assume g es a) =
+    map (fun q => (fst q, S.assume g es (snd q))) (proj1_sig a).
+  Proof. Admitted. (* STUB *)
+  Lemma F4_eval : forall e a,
+    eval e a = fold_left (fun v q => V.join v (S.eval e (snd q))) (proj1_sig a) V.bot.
+  Proof. Admitted. (* STUB *)
+  Lemma F5_widen : forall p a b, proj1_sig (widen p a b) =
+    if leb b a then proj1_sig a else
+    if is_bot a then proj1_sig b else
+    let old := proj1_sig a in
+    let fresh := fresh_parts S.leb S.bot old (proj1_sig b) in
+    absorb Tk.eqb S.leb S.bot S.join (S.widen p)
+      (stray_parts Tk.eqb S.leb S.bot old fresh) fresh old.
+  Proof. Admitted. (* STUB *)
+  Lemma F6_narrow : forall a b, narrow a b = a.
+  Proof. Admitted. (* STUB *)
+  Lemma F7_merge_parts_length : forall ps qs,
+    length (merge_parts Tk.eqb S.join ps qs) <= length ps + length qs.
+  Proof. Admitted. (* STUB *)
+  Lemma F8_collapse_size : forall xs, length xs <= 2 * C.k + 1 ->
+    (N.of_nat (S.size (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
+      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F9_collapse_units : forall xs, length xs <= 2 * C.k + 1 ->
+    (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
+      (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F10_merge_parts_size : forall ps qs,
+    length ps <= C.k -> length qs <= C.k ->
+    (N.of_nat (parts_size Tk.bits S.size
+      (merge_parts Tk.eqb S.join ps qs)) <= k_partition * N.of_nat
+        (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F11_merge_parts_units : forall ps qs,
+    length ps <= C.k -> length qs <= C.k ->
+    (N.of_nat (parts_units S.wunits
+      (merge_parts Tk.eqb S.join ps qs)) <= k_partition * N.of_nat
+        (parts_units S.wunits ps + parts_units S.wunits qs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F12_fit_size : forall ps, length ps <= 2 * C.k ->
+    (N.of_nat (parts_size Tk.bits S.size
+      (fit_parts S.bot S.join C.k ps)) <= k_partition * N.of_nat
+        (parts_size Tk.bits S.size ps + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F13_fit_units : forall (ps : list (option Tk.t * S.t)), length ps <= 2 * C.k ->
+    (N.of_nat (parts_units S.wunits
+      (fit_parts S.bot S.join C.k ps)) <= k_partition * N.of_nat
+        (parts_units S.wunits ps + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_leb : forall a b,
+    (T_leb a b <= k_partition *
+      (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot +
+        fold_right N.add 0%N (map (fun r => S.T_leb (snd q) (snd r) + 1) (proj1_sig b)) + 1)
+        (proj1_sig a)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_is_bot : forall a,
+    (T_is_bot a <= k_partition *
+      (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot + 1) (proj1_sig a)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_join : forall a b,
+    (T_join a b <= k_partition *
+      (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join (proj1_sig a) (proj1_sig b) +
+       T_fit_parts S.bot S.join S.T_join C.k
+         (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T4_merge_parts : forall ps qs, length ps <= C.k -> length qs <= C.k ->
+    (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join ps qs <= k_partition *
+      N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T5_fit_parts : forall ps, length ps <= 2 * C.k ->
+    (T_fit_parts S.bot S.join S.T_join C.k ps <= k_partition *
+      N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T6_widen : forall p a b,
+    (T_widen p a b <= k_partition *
+      (T_leb b a + T_is_bot a + route_time p (proj1_sig a) (proj1_sig b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T7_route : forall p old new,
+    length old <= C.k -> length new <= C.k ->
+    (route_time p old new <= k_partition * N.of_nat
+      ((parts_units S.wunits old + parts_units S.wunits new + 1) * S.wsize p +
+       (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + S.wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T8_collapse : forall xs, length xs <= 2 * C.k + 1 ->
+    (T_collapse_with S.bot S.join S.T_join xs <= k_partition * N.of_nat
+      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T9_merge : forall k a,
+    (T_merge k a <= k_partition *
+      (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
+       T_inject k (collapse_with S.bot S.join (map snd (proj1_sig a))) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T10_retag : forall k a,
+    (T_retag k a <= k_partition * (T_merge k a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T11_inject : forall k s, (T_inject k s <= k_partition)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T12_eval : forall e a,
+    (T_eval e a <= k_partition *
+      (fold_right N.add 0%N (map (fun q => S.T_eval e (snd q) + 1) (proj1_sig a)) +
+       eval_joins e (proj1_sig a) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T13_eval_joins : forall e ps, length ps <= C.k ->
+    (eval_joins e ps <= k_partition * N.of_nat (fold_right Nat.add 0%nat
+      (map (fun q => (V.size (S.eval e (snd q)) + 1)%nat) ps) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T14_assign : forall x e a,
+    (T_assign x e a <= k_partition *
+      (fold_right N.add 0%N
+        (map (fun q => S.T_assign x e (snd q) + 1) (proj1_sig a)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T15_havoc : forall x a,
+    (T_havoc x a <= k_partition *
+      (fold_right N.add 0%N (map (fun q => S.T_havoc x (snd q) + 1) (proj1_sig a)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T16_assume : forall g es a,
+    (T_assume g es a <= k_partition *
+      (fold_right N.add 0%N
+        (map (fun q => S.T_assume g es (snd q) + 1) (proj1_sig a)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T17_narrow : forall a b, (T_narrow a b <= k_partition)%N.
+  Proof. Admitted. (* STUB *)
+End PartitionT.
