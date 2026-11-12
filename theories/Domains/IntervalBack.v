@@ -479,3 +479,77 @@ Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* CONVERT: interval_table_laws: Unexpected name (no introduction patterns were expected in the *)
 End IntervalWordTable.
+
+Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
+    (Scalar : INTERVAL_SCALAR_T T)
+    (W : INTERVAL_PAYLOAD_PINNED_T L T Scalar)
+    <: INTERVAL_WORD_TABLE_T L W.
+  Include IntervalWordTable L T Scalar W.
+  TimeFun interval_top.
+  TimeFun interval_const.
+  TimeFun interval_clip.
+  TimeFun interval_checked.
+  TimeFun interval_add.
+  TimeFun interval_add_modular.
+  TimeFun interval_sub.
+  TimeFun interval_mul.
+  TimeFun interval_neg.
+  TimeFun interval_concat.
+  TimeFun interval_rewrap.
+  TimeFun interval_counts.
+  TimeFun interval_udiv.
+  TimeFun interval_urem.
+  TimeFun interval_not.
+  TimeFun interval_and.
+  TimeFun interval_mask.
+  TimeFun interval_or_xor.
+  TimeFun interval_truth.
+  TimeFun interval_bool_not.
+  TimeFun interval_ult.
+  TimeFun interval_ule.
+  TimeFun interval_eq.
+  TimeFun interval_shl.
+  TimeFun interval_lshr.
+  TimeFun interval_sign.
+  TimeFun interval_signed.
+  TimeFun interval_sext.
+  TimeFun interval_signed_compare.
+  TimeFun interval_sdiv.
+  TimeFun interval_srem.
+  TimeFun interval_mod_choice.
+  TimeFun interval_smod_base.
+  TimeFun interval_smod.
+  TimeFun interval_ashr_small.
+  TimeFun interval_ashr.
+  TimeFun interval_swap.
+  TimeFun interval_assume_equal.
+  TimeFun interval_assume_ult.
+  TimeFun interval_assume_ule.
+  TimeFun interval_assume_add.
+  TimeFun interval_assume_sub.
+  TimeFun interval_assume_rewrap.
+  TimeFun interval_exclude.
+  TimeFun interval_assume_neq.
+  TimeFun interval_assume_signed.
+  TimeFun interval_is_point.
+  TimeFun interval_assume_pair.
+  TimeFun interval_bwd1.
+  TimeFun interval_bwd2.
+  TimeFun wfwd.
+  TimeFun wbwd.
+
+  Definition c_word_table : N := 1%N. (* STUB *)
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End IntervalWordTableT.
