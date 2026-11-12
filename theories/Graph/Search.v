@@ -297,6 +297,31 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
         N.of_nat (length (trace g roots)) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** A continuing step taken within the fuel costs one key width of the run. *)
+  Lemma T1_raw_step : forall g roots n st next,
+    (N.of_nat n < search_budget g roots)%N ->
+    Nat.iter n (advance (base g)) (initial roots) = st ->
+    search_step (base g) st = inl next ->
+    (T_search_step (base g) st <= k_step * N.of_nat (run_width g roots + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Steps taken within the fuel emit an event, retire a root or finish a row. *)
+  Lemma F9_raw_count : forall g roots n,
+    (N.of_nat n <= search_budget g roots)%N ->
+    (forall i, i < n -> exists next,
+      search_step (base g) (Nat.iter i (advance (base g)) (initial roots)) = inl next) ->
+    n <= length (trace g roots) + length roots + n_reach g roots.
+  Proof. Admitted. (* STUB *)
+
+  (** The truncated loop pays its steps, one stop and the binary fuel width. *)
+  Lemma T3_raw_loop : forall g roots,
+    (T_loopN (search_step (base g)) (T_search_step (base g))
+      (search_budget g roots) (initial roots) <=
+    c_loopN * (k_step * N.of_nat (run_width g roots + 1) *
+      N.of_nat (length (trace g roots) + length roots + n_reach g roots + 1) +
+      stop_budget g roots + N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
   (** Every step emits an event or retires a root or row task, at the width of the run. *)
   Lemma T4_raw : forall g roots,
     (T_search_trace g roots <= k_trace *
