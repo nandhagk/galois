@@ -4,7 +4,8 @@
     For example, a source operator can dispatch to a target operator before transfer.
     Builds on: LangSig and ValueSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
+From Argent Require Import Time.
 From Galois.Domains Require Import LangSig ValueSig.
 
 Module Type LANG_MORPHISM_OPS := LangSig.LANG_MORPHISM_OPS.
@@ -66,3 +67,85 @@ Module Translate (L1 L2 : LANG) (F : LANG_MORPHISM L1 L2)
   Proof. Admitted. (* CONVERT: rename_laws: The term "cs" has type "list L1.val" while it is expected to have type *)
   Definition guard_refines g := D.guard_refines (F.guard g).
 End Translate.
+
+Module TranslateT (L1 L2 : LANG_T) (F : LANG_MORPHISM_T L1 L2)
+    (D : VALUE_DOMAIN_T L2) <: VALUE_DOMAIN_T L1.
+  Include Translate L1 L2 F D.
+  TimeFun leb.
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun forward.
+  TimeFun backward.
+  TimeFun guard.
+
+  Definition size (a : t) : nat := D.size a.
+  Definition work (o : L1.op) (xs : list t) : nat :=
+    F.op_work o + D.work (F.op o) xs + 1.
+  Definition gwork (g : L1.guard) (xs : list t) : nat :=
+    F.guard_work g + D.gwork (F.guard g) xs + 1.
+  Definition wsize (p : wparam) : nat := D.wsize p.
+  Definition wunits (a : t) : nat := D.wunits a.
+  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_lat : N := c_val.
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b,
+    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forward_le : forall o xs,
+    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_guard_le : forall g xs,
+    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma widen_size : forall p a b,
+    (N.of_nat (size (widen p a b)) <=
+      c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma work_sizes : forall o xs,
+    fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof. Admitted. (* STUB *)
+  Lemma gwork_sizes : forall g xs,
+    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof. Admitted. (* STUB *)
+End TranslateT.
