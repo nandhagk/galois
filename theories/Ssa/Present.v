@@ -4,9 +4,9 @@
     For example, two arms aimed at the same block remain distinct.
     Builds on: Ssa.Lang. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Tactics Std BigO.
-From Galois.Base Require Import Code KeySig Key.
+From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
 From Galois.Ssa Require Import Lang ValidateSig.
 Import List.ListNotations.
@@ -38,13 +38,76 @@ TimeFun language_edges.
 
 TimeFun edge_source.
 TimeFun edge_target.
+TimeFun edge_arm.
+TimeFun edge_arguments.
 
 Module LangProgram (O : OPS) <: TYPE.
   Definition t := func positive O.K O.G.
 End LangProgram.
 
-Module BlockEdge <: TYPE.
+Module ArmKeyCode <: KEY_OPS.
+  Definition t := exit_arm.
+  Definition encode a := match a with Jump_arm => 1%positive | True_arm => 2%positive
+    | False_arm => 3%positive end.
+  Definition eqb a b := match a, b with
+    | Jump_arm, Jump_arm | True_arm, True_arm | False_arm, False_arm => true
+    | _, _ => false
+    end.
+End ArmKeyCode.
+
+Module ArmKey <: KEY.
+  Include ArmKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* STUB *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* STUB *)
+End ArmKey.
+
+Module ArmKeyT <: KEY_T.
+  Include ArmKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : N := 1. (* STUB *)
+  Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End ArmKeyT.
+
+Module EdgeArgsKey := ListKeyT PosKeyT.
+Module EdgeTargetArgsKey := PairKeyT PosKeyT EdgeArgsKey.
+Module EdgeArmTargetArgsKey := PairKeyT ArmKeyT EdgeTargetArgsKey.
+Module EdgeTupleKey := PairKeyT PosKeyT EdgeArmTargetArgsKey.
+
+Definition block_edge_tuple (e : block_edge) : EdgeTupleKey.t :=
+  (edge_source e, (edge_arm e, (edge_target e, edge_arguments e))).
+TimeFun block_edge_tuple.
+
+Module BlockEdgeCode <: KEY_OPS.
   Definition t := block_edge.
+  Definition encode e := EdgeTupleKey.encode (block_edge_tuple e).
+  Definition eqb a b := EdgeTupleKey.eqb (block_edge_tuple a) (block_edge_tuple b).
+End BlockEdgeCode.
+
+Module BlockEdgeKey <: KEY.
+  Include BlockEdgeCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* STUB *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* STUB *)
+End BlockEdgeKey.
+
+Module BlockEdge <: KEY_T.
+  Include BlockEdgeKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : N := 1. (* STUB *)
+  Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
 End BlockEdge.
 
 Module BlockCfgCode (O : OPS)
@@ -97,7 +160,7 @@ Module BlockCfgT (O : OPS) (P : TYPE with Definition t := func positive O.K O.G)
   Proof. Admitted. (* STUB *)
   Lemma T_edges_le : forall p,
     (T_edges p <= c_cfg * N.of_nat (length (edges p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: scanning return blocks is not bounded by output edges *)
   Lemma T_src_le : forall p e, (T_src p e <= c_cfg)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_dst_le : forall p e, (T_dst p e <= c_cfg)%N.
@@ -107,10 +170,10 @@ Module BlockCfgT (O : OPS) (P : TYPE with Definition t := func positive O.K O.G)
   Proof. Admitted. (* STUB *)
   Lemma T_out_le : forall p n,
     (T_out p n <= c_cfg_adj * N.of_nat (PosKeyT.bits n + length (out p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: filtering scans edges absent from the output *)
   Lemma T_inc_le : forall p n,
     (T_inc p n <= c_cfg_adj * N.of_nat (PosKeyT.bits n + length (inc p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: filtering scans edges absent from the output *)
 End BlockCfgT.
 
 Module BlockSsaCode (O : OPS)
@@ -177,6 +240,10 @@ Module BlockSsa (O : OPS)
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
       In (home p y) route.
   Proof. Admitted. (* STUB *)
+  Lemma op_args_acyclic : forall p, wf p ->
+    well_founded (fun y x => In x (values p) /\ home p y = home p x /\
+      exists op xs, def p x = Op op xs /\ In y xs).
+  Proof. Admitted. (* STUB *)
 End BlockSsa.
 
 Module BlockSsaT (O : OPS)
@@ -190,6 +257,30 @@ Module BlockSsaT (O : OPS)
   TimeFun params.
   TimeFun args.
   TimeFun guards.
+  Definition c_ssa : N := 1. (* STUB *)
+  (** The value inventory pays for its output. *)
+  Lemma T_values_le : forall p,
+    (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Definition lookup pays for the value key and the returned operands. *)
+  Lemma T_def_le : forall p x,
+    (T_def p x <= c_ssa * N.of_nat (PosKeyT.bits x + length (operands p x) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Home lookup pays for the value key. *)
+  Lemma T_home_le : forall p x, (T_home p x <= c_ssa * N.of_nat (PosKeyT.bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Parameter lookup pays for the node key and the returned values. *)
+  Lemma T_params_le : forall p n,
+    (T_params p n <= c_ssa * N.of_nat (PosKeyT.bits n + length (params p n) + 1))%N.
+  Proof. Admitted. (* SIG-QUESTION: linear block lookup exceeds this key and output budget *)
+  (** Incoming operands pay for the edge key and the returned pairs. *)
+  Lemma T_args_le : forall p e,
+    (T_args p e <= c_ssa * N.of_nat (BlockEdge.bits e + length (args p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Guards pay for the edge key and the returned guard list. *)
+  Lemma T_guards_le : forall p e,
+    (T_guards p e <= c_ssa * N.of_nat (BlockEdge.bits e + length (guards p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
 End BlockSsaT.
 
 Module PointKey := PairKeyT PosKeyT NKeyT.
@@ -203,10 +294,38 @@ Record point_edge := PointEdge {
 TimeFun point_src.
 TimeFun point_dst.
 TimeFun point_block_edge.
-TimeFun edge_arguments.
+Module OptionalBlockEdgeKey := OptionKeyT BlockEdge.
+Module PointTargetEdgeKey := PairKeyT PointKey OptionalBlockEdgeKey.
+Module PointEdgeTupleKey := PairKeyT PointKey PointTargetEdgeKey.
 
-Module PointEdge <: TYPE.
+Definition point_edge_tuple (e : point_edge) : PointEdgeTupleKey.t :=
+  (point_src e, (point_dst e, point_block_edge e)).
+TimeFun point_edge_tuple.
+
+Module PointEdgeCode <: KEY_OPS.
   Definition t := point_edge.
+  Definition encode e := PointEdgeTupleKey.encode (point_edge_tuple e).
+  Definition eqb a b := PointEdgeTupleKey.eqb (point_edge_tuple a) (point_edge_tuple b).
+End PointEdgeCode.
+
+Module PointEdgeKey <: KEY.
+  Include PointEdgeCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* STUB *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* STUB *)
+End PointEdgeKey.
+
+Module PointEdge <: KEY_T.
+  Include PointEdgeKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : N := 1. (* STUB *)
+  Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
 End PointEdge.
 
 Module PointCfgCode (O : OPS)
@@ -313,6 +432,15 @@ Module PointVarsT (O : OPS) (P : TYPE with Definition t := func positive O.K O.G
   TimeFun exits.
   TimeFun universe.
   Definition c_vars : N := 1. (* STUB *)
+  Lemma T_uses_le : forall p e,
+    (T_uses p e <= c_vars * N.of_nat (PointEdge.bits e + length (uses p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_defs_le : forall p e,
+    (T_defs p e <= c_vars * N.of_nat (PointEdge.bits e + length (defs p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_exits_le : forall p n,
+    (T_exits p n <= c_vars * N.of_nat (PointKey.bits n + length (exits p n) + 1))%N.
+  Proof. Admitted. (* STUB *)
   Definition universe_work p :=
     (C.T_edges p + C.T_nodes p +
       fold_right N.add 0%N (map (fun e => T_uses p e + T_defs p e)%N (C.edges p)) +
@@ -327,6 +455,24 @@ Module PointVarsT (O : OPS) (P : TYPE with Definition t := func positive O.K O.G
   Lemma F1_occurrences : forall p x, In x (occurrences p) <-> occurs p x.
   Proof. Admitted. (* STUB *)
   Lemma F2_universe : forall p x, In x (universe p) <-> In x (occurrences p).
+  Proof. Admitted. (* STUB *)
+  (* STUB-CODE *)
+  Definition seen (_ : P.t) : ptrie positive := Empty.
+  TimeFun seen.
+  Definition k_seen : N := 1. (* STUB *)
+  Definition k_collect : N := 1. (* STUB *)
+  Lemma F3_seen : forall p,
+    seen p = fold_left (fun s x => PTrieCode.set (PosKeyT.encode x) x s) (occurrences p)
+      PTrieCode.empty.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_seen_nodes : forall p,
+    PTrie.nodes (seen p) <= length (occurrences p) * occurrence_width p.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_seen : forall p, (T_seen p <= k_seen * universe_work p)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_universe : forall p,
+    (T_universe p <= k_collect * (T_seen p +
+      N.of_nat (length (occurrences p) + 1) * N.of_nat (occurrence_width p + 1)))%N.
   Proof. Admitted. (* STUB *)
 End PointVarsT.
 
@@ -427,6 +573,43 @@ Module PointsT (O : OPS) (P : TYPE with Definition t := func positive O.K O.G)
   TimeFun block_params.
   TimeFun block_edge_args.
   TimeFun point_definition.
+  Definition c_points : N := 1. (* STUB *)
+  (** Block point lists pay for the key and the returned points. *)
+  Lemma T_points_in_block_le : forall p b,
+    (T_points_in_block p b <=
+      c_points * N.of_nat (PosKeyT.bits b + length (points_in_block p b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Instruction edge lists pay for the key and the returned edges. *)
+  Lemma T_instruction_edges_le : forall p b,
+    (T_instruction_edges p b <=
+      c_points * N.of_nat (PosKeyT.bits b + length (instruction_edges p b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The parameter edge lookup pays for the block key. *)
+  Lemma T_parameter_edge_le : forall p b,
+    (T_parameter_edge p b <= c_points * N.of_nat (PosKeyT.bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The owner lookup pays for the point key. *)
+  Lemma T_block_of_point_le : forall p n,
+    (T_block_of_point p n <= c_points * N.of_nat (PointKey.bits n + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The edge projection pays for the edge key. *)
+  Lemma T_block_edge_of_le : forall p e,
+    (T_block_edge_of p e <= c_points * N.of_nat (PointEdge.bits e + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Block parameters pay for the key and the returned values. *)
+  Lemma T_block_params_le : forall p b,
+    (T_block_params p b <=
+      c_points * N.of_nat (PosKeyT.bits b + length (block_params p b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Phi operands pay for the block-edge key and the returned values. *)
+  Lemma T_block_edge_args_le : forall p be,
+    (T_block_edge_args p be <=
+      c_points * N.of_nat (BlockEdge.bits be + length (block_edge_args p be) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The definition point lookup pays for the value key. *)
+  Lemma T_point_definition_le : forall p x,
+    (T_point_definition p x <= c_points * N.of_nat (PosKeyT.bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
 End PointsT.
 
 Module LanguageLink (O : OPS)
