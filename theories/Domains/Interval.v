@@ -488,4 +488,19 @@ Module IntervalTimingHelpers (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
   TimeFun urem.
   TimeFun bitand.
   TimeFun bitor.
+  TimeFun code_bnd_bits.
+  TimeFun code_itv_bits.
+  TimeFun shl.
+  TimeFun truth.
+  TimeFun cmp.
+  TimeFun add_back.
+  TimeFun sub_back.
+  TimeFun mul_preimage.
+  TimeFun mul_back.
+  TimeFun unsigned_back.
+  TimeFun udiv_back.
+  TimeFun urem_back.
+  TimeFun ult_back.
+  TimeFun signed_split.
+  TimeFun strict_back.
 End IntervalTimingHelpers.
