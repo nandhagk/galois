@@ -38,18 +38,6 @@ Module Type SATURATE_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I)
     (Import SS : SATURATE_SPEC V I J D E C S).
   (* spec: declarations *)
   Parameter declarations : list (rewrite V.t) -> list (fexpr V.t) -> list (positive * decl).
-  (** The front end declares constructors only. *)
-  Parameter declarations_kind : forall rws es f o,
-    lookup_kind (map snd (declarations rws es)) f = Some o -> o = OId.
-  (** Every input node is declared. *)
-  Parameter declarations_inputs : forall rws es e f args, In e es ->
-    In (EApp f args) (expr_nodes V.t e) ->
-    lookup_kind (map snd (declarations rws es)) f = Some OId.
-  (** Every pattern node is declared. *)
-  Parameter declarations_rewrites : forall rws es rw f args, In rw rws ->
-    In (PApp f args) (nodes V.t (lhs V.t rw) ++ nodes V.t (rhs V.t rw)) ->
-    lookup_kind (map snd (declarations rws es)) f = Some OId.
-
   (** Every unfolding of an added expression is represented by its returned class. *)
   Parameter add_expr_represents : forall e db t, D.wf db -> expr_ok db e ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->

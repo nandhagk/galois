@@ -226,7 +226,7 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     forall f k, In (f, k) (universe p db) <->
       program_kind p f = Some ORel /\
       (exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
-        length k = arity d) /\
+        length k = length (arg_sorts d)) /\
       Forall (fun c => exists v, c = Val v /\ active_value p db v) k.
   (** The Herbrand budget counts the pinned finite universe. *)
   Parameter herbrand : program V.t -> D.t -> nat.
@@ -242,7 +242,7 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     match a with
     | Make _ f args | Put f args _ =>
       exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
-        length args = arity d
+        length args = length (arg_sorts d)
     | _ => True
     end.
   (** Each checked slot selects distinct positions within its declared tuple. *)
@@ -250,7 +250,7 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     In (f, perm) (Syntax.slots V.t cp) ->
     exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
       NoDup perm /\ Forall (fun i => i <
-        arity d + match out d with ORel => 0 | _ => 1 end) perm.
+        length (arg_sorts d) + match out d with ORel => 0 | _ => 1 end) perm.
   (** Planning a relational program yields a plan that the checker accepts. *)
   Parameter plan_checked : forall p, relational_fragment p = true ->
     check_plan p (plan p) = true.
@@ -308,7 +308,7 @@ Module Type RUN_TIME (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   (** Program size counts syntax words, declarations, rules, atoms, actions and arities. *)
   Parameter size_program_spec : forall p,
     size_program p = length (program_words V.encode p) + length (decls V.t p) +
-      fold_right (fun d n => arity d + n) 0 (decls V.t p) +
+      fold_right (fun d n => length (arg_sorts d) + n) 0 (decls V.t p) +
       fold_right (fun r n => length (query V.t r) + length (actions V.t r) + 1 + n)
         0 (rules V.t p).
   (** Compiled size counts slots, permutation positions, joins, sources and post filters. *)
