@@ -124,9 +124,17 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** This widening has no repeated threshold search. *)
   Parameter F_wunits : forall s, wunits s = 0.
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
+    In r P \/
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
       (forall v : X.t -> Z, eval_coef v (lhs s) = (sc * eval_coef v (lhs r))%Z) /\
-      rhs s = (sc * rhs r)%Z.
+      match lrel r with
+      | REq => rhs s = (sc * rhs r)%Z
+      | RLe => (rhs s <= sc * rhs r)%Z
+      end.
+  (** Join emits equality rows. *)
+  Parameter join_eq : forall a b P, join (Reached a) (Reached b) = Reached P ->
+    Forall (fun r => lrel r = REq) P.
+
   (** Rank counts the old equality rows. *)
   Parameter wrank_rows : forall p P, wrank p (Reached P) = length P.
   (** Join emits independent rows. *)
@@ -164,10 +172,16 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** Every fraction-free intermediate entry is an input minor. *)
   Parameter bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   (** Widening uses affine hull join. *)
-  Parameter widen_join : forall p a b, widen p a b = join a b.
+  Parameter widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
   (** Every successful entailment certificate is accepted. *)
   Parameter entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
+  (** State size charges all stored numeric data. *)
+  Parameter F_size : forall s, size s = (terms s + n s + 1) * (nell s + 1).
+  (** Range work charges the numeric query and its linearization. *)
+  Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
+    N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
 End KARR_PLAN.
 
 Module Type KARR_ALL (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

@@ -20,25 +20,24 @@ End POS_CAP.
 
 Module Type DISJUNCTION_OPS (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (S : STATE_DOMAIN_OPS X L V) (C : CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam).
+    (P : LATTICE_OPS with Definition t := list S.t).
   Include STATE_DOMAIN_OPS X L V with Definition t := list S.t
     with Definition leb := P.leb with Definition bot := P.bot
     with Definition is_bot := P.is_bot with Definition join := P.join
-    with Definition wparam := S.wparam with Definition widen := P.widen
-    with Definition narrow := P.narrow.
+    with Definition wparam := S.wparam.
   Parameter compact : nat -> t -> t.
   Parameter collapse : t -> S.t.
 End DISJUNCTION_OPS.
 
 Module Type DISJUNCTION_BASE (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     (S : STATE_DOMAIN X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam) :=
+    (P : LATTICE with Definition t := list S.t) :=
   DISJUNCTION_OPS X L V S C P <+ LATTICE_LAWS <+ HAS_TOP_LAWS <+
   WIDENING_LAWS <+ STATE_DOMAIN_LAWS X L V.
 
 Module Type DISJUNCTION_LAWS (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     (S : STATE_DOMAIN X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam)
+    (P : LATTICE with Definition t := list S.t)
     (Import D : DISJUNCTION_BASE X L V S C P).
   (** List concretization is the union of its alternatives. *)
   Parameter gamma_alternatives : forall d st, gamma d st <-> Exists (fun s => S.gamma s st) d.
@@ -55,12 +54,12 @@ End DISJUNCTION_LAWS.
 
 Module Type DISJUNCTION (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     (S : STATE_DOMAIN X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam) :=
+    (P : LATTICE with Definition t := list S.t) :=
   DISJUNCTION_BASE X L V S C P <+ DISJUNCTION_LAWS X L V S C P.
 
 Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (S : STATE_DOMAIN_T X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam)
+    (P : LATTICE with Definition t := list S.t)
     (Import D : DISJUNCTION X L V S C P).
   Include STATE_DOMAIN_TIME X L V D.
   Parameter T_compact : nat -> t -> N.
@@ -83,12 +82,12 @@ End DISJUNCTION_TIME.
 
 Module Type DISJUNCTION_T (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (S : STATE_DOMAIN_T X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam) :=
+    (P : LATTICE with Definition t := list S.t) :=
   DISJUNCTION X L V S C P <+ DISJUNCTION_TIME X L V S C P.
 
 Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (S : STATE_DOMAIN_T X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam)
+    (P : LATTICE with Definition t := list S.t)
     (Import D : DISJUNCTION_T X L V S C P).
   Parameter pair_widen : S.wparam -> list S.t -> list S.t -> list S.t.
   Parameter T_pair_widen : S.wparam -> list S.t -> list S.t -> N.
@@ -107,12 +106,18 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** The proposed credit adds component ranks and a collapse credit. *)
   Parameter F3_rank : forall p d, wrank p d =
     fold_right Nat.add 0 (map (S.wrank p) d) + if Nat.eqb (length d) 1 then 0 else C.k.
-  (* SIG-QUESTION: Lattice.DisjunctionCode exposes only WLATTICE_OPS and always collapses
-     unstable widening. It cannot supply F2_widen as written. A functional shared lattice
-     bundle and an algorithm ruling are required before freezing this interface. *)
+  (* SIG-QUESTION: The shared disjunction supplies a lattice with the Hoare order and
+     capped join. The state component owns widening and narrowing, including the
+     requested F2_widen algorithm. F2 must rule its bounded-rank capability and carrier. *)
   (* SIG-QUESTION: The collapse rank has no bound in terms of the component rank sum.
      Equivalent raw representatives can have unrelated ranks. The fixed C.k credit does
      not establish the inherited wrank_widen law for arbitrary S. *)
+  (* SIG-QUESTION: A component rank bound under an invariant needs a corresponding
+     prepared carrier, initialization and preservation route for the unconditional
+     STATE_DOMAIN widening laws. Raw lists admit [bottom] and fresh alternatives of
+     unbounded rank, as in F1-332. Adding an invariant premise to a rank lemma does not
+     establish those unconditional laws. The current wf predicate supplies neither a
+     component invariant nor a bound. F2 must rule the capability and its public route. *)
   (** Assignment maps its transfer over the alternatives. *)
   Parameter F4_assign : forall x e d, assign x e d = map (S.assign x e) d.
   (** Havoc maps its transfer over the alternatives. *)
@@ -123,11 +128,16 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter T1_pair_widen : forall p a b, (T_pair_widen p a b <= k_disjunction *
     (fold_right N.add 0%N (map (fun xy => S.T_widen p (fst xy) (snd xy) + 1)
       (combine a b)) + 1))%N.
-  (* SIG-QUESTION: The stated O(k squared times component join) join bound needs an
-     intermediate join-size capability. Current STATE_DOMAIN_T does not supply one. *)
+  (* SIG-QUESTION: P supplies lattice operations and laws without clocks. Q30 refutes
+     the proposed unconditional raw-list LATTICE_TIME join bound even with JOIN_SIZE.
+     An unbounded collapse tail can grow intermediate values exponentially, or charge
+     quadratic traversal with additive size growth. Thus neither a genuine shared
+     clock path nor inherited T_join_le follows from this P header. F2 must rule the
+     prepared carrier or actual-fold work route and its initialization/preservation
+     before selecting a timed shared bundle. The proposed k-squared bound is pending. *)
 End DISJUNCTION_PLAN.
 
 Module Type DISJUNCTION_ALL (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (S : STATE_DOMAIN_T X L V) (C : POS_CAP)
-    (P : WLATTICE_OPS with Definition t := list S.t with Definition wparam := S.wparam) :=
+    (P : LATTICE with Definition t := list S.t) :=
   DISJUNCTION_T X L V S C P <+ DISJUNCTION_PLAN X L V S C P.

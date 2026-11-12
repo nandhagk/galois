@@ -21,6 +21,7 @@ End LinCertCode.
 
 Module LinCert (X : KEY) <: LINCERT X.
   Include LinCertCode X.
+  Include LINCERT_SPEC X.
   Lemma check_entails_sound : forall P c k, check_entails P c k = true ->
     forall v, Forall (sat v) P -> sat v c.
   Proof. Admitted. (* STUB *)
@@ -37,11 +38,38 @@ Module LinCert (X : KEY) <: LINCERT X.
   Lemma check_entails_empty : forall P c k,
     check_empty P (mults k) = true -> check_entails P c k = true.
   Proof. Admitted. (* STUB *)
+  (** Admissible multipliers combine to the weighted sum of the rows. *)
+  Lemma combine_spec : forall P ms, admissible P ms ->
+    exists s, combine P ms = Some s /\
+      (forall x, coef_of x (lhs s) = comb_coef P ms x) /\ rhs s = comb_rhs P ms /\
+      lrel s = (if comb_eq P ms then REq else RLe).
+  Proof. Admitted. (* STUB *)
+  (** Combination succeeds only on admissible multipliers. *)
+  Lemma combine_admissible : forall P ms s, combine P ms = Some s -> admissible P ms.
+  Proof. Admitted. (* STUB *)
+  (** Exact cut-free certificates are accepted. *)
+  Lemma check_entails_complete : forall P c ms sc, admissible P ms -> (0 < sc)%Z ->
+    (forall x, comb_coef P ms x = (sc * coef_of x (lhs c))%Z) ->
+    match lrel c with
+    | REq => comb_eq P ms = true /\ comb_rhs P ms = (sc * rhs c)%Z
+    | RLe => (comb_rhs P ms <= sc * rhs c)%Z
+    end ->
+    check_entails P c (Cert ms sc false) = true.
+  Proof. Admitted. (* STUB *)
+  (** Rational contradictions are accepted. *)
+  Lemma check_empty_complete : forall P ms, admissible P ms ->
+    (forall x, comb_coef P ms x = 0%Z) ->
+    (comb_rhs P ms < 0)%Z \/ (comb_eq P ms = true /\ comb_rhs P ms <> 0%Z) ->
+    check_empty P ms = true.
+  Proof. Admitted. (* STUB *)
 End LinCert.
 
 Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Include LinCert X.
-  Include LINCERT_SPEC X.
+  TimeFun coef_of.
+  TimeFun comb_coef.
+  TimeFun comb_rhs.
+  TimeFun comb_eq.
   TimeFun combine.
   TimeFun check_entails.
   TimeFun check_empty.
@@ -84,14 +112,5 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   (** Combination without cuts is valid over rational stores. *)
   Lemma combine_sound_Q : forall P ms s, combine P ms = Some s ->
     forall v, Forall (satQ v) P -> satQ v s.
-  Proof. Admitted. (* STUB *)
-  (** Combination rejects multiplier vectors of the wrong length. *)
-  Lemma combine_length : forall P ms s,
-    combine P ms = Some s -> length P = length ms.
-  Proof. Admitted. (* STUB *)
-  (** Inequality rows require nonnegative multipliers. *)
-  Lemma combine_nonnegative : forall P ms s,
-    combine P ms = Some s ->
-    Forall2 (fun p m => lrel p = RLe -> (0 <= m)%Z) P ms.
   Proof. Admitted. (* STUB *)
 End LinCertT.

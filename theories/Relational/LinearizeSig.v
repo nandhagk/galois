@@ -5,6 +5,7 @@
     Builds on: KeySig, LangSig, ValueSig and LinForm. *)
 
 From Stdlib Require Import List ZArith.
+From Argent Require Import Std.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Relational Require Import LinForm.
@@ -36,6 +37,21 @@ Module Type LINEARIZE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter bits_es : L.guard -> list (term L.op X.t) -> nat.
   Parameter T_lin_of : term L.op X.t -> N.
   Parameter T_atoms_of : L.guard -> list (term L.op X.t) -> N.
+  Definition form_bits (f : lin X.t) : nat :=
+    fold_right Nat.max (Z.size_nat (cst f))
+      (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) (coef f)).
+  Definition wrap_bits (r : wrapr) : nat :=
+    match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end.
+  (** Recognized forms fit the charged term size and bit size. *)
+  Parameter lin_of_size : forall e f r, lin_of e = Some (f, r) ->
+    length (coef f) <= tsize e /\ form_bits f + wrap_bits r <= bits_e e.
+  (** Emitted atoms fit the charged operand sizes and bit size. *)
+  Parameter atoms_of_size : forall g es,
+    length (atoms_of g es) <= 2 * fold_right Nat.add 1 (map tsize es) /\
+    Forall (fun a =>
+      length (coef (al a)) + length (coef (ar a)) <= fold_right Nat.add 0 (map tsize es) /\
+      form_bits (al a) + wrap_bits (alw a) + form_bits (ar a) + wrap_bits (arw a) <=
+        bits_es g es) (atoms_of g es).
   Parameter c_linearize : N.
   (** Linearization charges the term size and maximum coefficient or key size. *)
   Parameter T_lin_of_le : forall e,

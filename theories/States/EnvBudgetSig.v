@@ -254,8 +254,8 @@ Module Type ENV_WORD_PROGRAM (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
        end, nil).
   (** Raw environment size charges every stored payload and the map skeleton. *)
   Parameter size_environment : forall m, E.size (Reached m) =
-    M.nodes m + fold_right Nat.add 0
-      (map (fun code => match M.find code m with Some a => V.size a | None => 0 end)
+    M.nodes m + fold_right Nat.add 1
+      (map (fun code => match M.find code m with Some a => V.size a + 1 | None => 0 end)
         (M.codes m)).
   (** Unreachable environments carry no stored payloads. *)
   Parameter size_unreached : E.size Unreached = 0%nat.
@@ -282,8 +282,8 @@ Module Type ENV_BUDGET_SPEC (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
           value_inv p (fst xa) (snd xa)) (M.elements m)
     end.
   Definition vsize (p : S.prog) : nat :=
-    fold_right Nat.add 0 (map (fun x => X.bits x + Pos.to_nat (P.width_of p x) +
-      C.payload_size_bound (P.width_of p x) + 2) (P.variables p)).
+    fold_right Nat.add 1 (map (fun x => X.bits x + Pos.to_nat (P.width_of p x) +
+      C.payload_size_bound (P.width_of p x) + 3) (P.variables p)).
   Definition wmax (p : S.prog) (q : E.wparam) : nat :=
     fold_right Nat.add 0 (map (fun x =>
       1 + C.payload_rank_bound q (P.width_of p x)) (P.variables p)).

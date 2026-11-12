@@ -223,3 +223,11 @@ Theorem value_laws_fixture : value_laws values sem gam.
 Theorem state_laws_fixture :
   state_laws SD sem (StateEnv.semantics bool_encoding) gam gs.
 *)
+
+(** Narrowing keeps a candidate recognized through its stored bottom. *)
+Example narrowing_stored_bottom_candidate :
+  E.narrow (stored [(false, FVal 5); (true, FVal 0)])
+    (stored [(false, FBot); (true, FTop)]) = stored [(false, FBot); (true, FTop)].
+Proof.
+  vm_compute. reflexivity.
+Qed.

@@ -5,8 +5,8 @@
     Builds on: MapSig, EnvSig and NumStateSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std.
-From Galois.Base Require Import KeySig MapSig.
+From Argent Require Import Time Std.
+From Galois.Base Require Import KeySig MapSig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
@@ -56,15 +56,25 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : OCTAGON X K M L N F).
   Include NUM_STATE_TIME X L N F D.
-  Definition support (m : dbm) : list K.t :=
+  Definition rows (m : dbm) : list (M.t Z) :=
+    flat_map (fun p => match M.find p m with Some r => r :: nil | None => nil end) (M.codes m).
+  Definition support (m : dbm) : list positive :=
+    fold_left (fun acc p => if existsb (Pos.eqb p) acc then acc else p :: acc)
+      (M.codes m ++ flat_map M.codes (rows m)) nil.
+  Definition supp (m : dbm) : nat := length (support m).
+  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map Pos.size_nat (support m)).
+  Definition ell (m : dbm) : nat := fold_right Nat.max 0 (flat_map (fun r =>
+    map (fun q => match M.find q r with Some z => Z.size_nat z | None => 0 end) (M.codes r))
+    (rows m)).
+  Definition skel (m : dbm) : nat := M.nodes m + fold_right Nat.add 0 (map M.nodes (rows m)).
+  Definition skels (s : t) : nat := match s with Unreached => 0 | Reached m => skel m end.
+  Definition keys (m : dbm) : list K.t :=
     fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
       (map fst (M.elements m) ++
        flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) nil.
-  Definition supp (m : dbm) : nat := length (support m).
-  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map K.bits (support m)).
-  Definition ell (m : dbm) : nat := fold_right Nat.max 0
-    (flat_map (fun kv => map (fun p => Z.size_nat (snd p))
-      (M.elements (snd kv))) (M.elements m)).
+  TimeFun keys.
+  Definition dbm_wf (m : dbm) : Prop :=
+    M.wf m /\ forall p r, M.find p m = Some r -> M.wf r.
   Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
   Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
   Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
@@ -78,13 +88,16 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (T_add_cons i j d m <= c_octagon * N.of_nat
       (K.bits i + K.bits j + Z.size_nat d + 1))%N.
   Definition binary_work (a z : t) : nat :=
-    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1).
+    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1) + skels a + skels z.
   (** Tight closure charges cubic updates and logarithmic entry growth. *)
-  Parameter T_tclose_le : forall m, (T_tclose m <= c_octagon * N.of_nat (((supp m + 1)^3)%nat) *
+  Parameter T_tclose_le : forall m, dbm_wf m ->
+    (T_tclose m <= c_octagon * N.of_nat (((supp m + 1)^3)%nat) *
     N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
   (** Incremental closure charges quadratic updates. *)
   Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
-    c_octagon * N.of_nat (((supp m + 1)^2)%nat) * N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
+    c_octagon * N.of_nat (((supp m + 1)^2)%nat) *
+      N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
+    c_octagon * N.of_nat (skel m))%N.
   (** Join charges both input supports and entry sizes. *)
   Parameter T_join_octagon_le : forall a z,
     (T_join a z <= c_octagon * N.of_nat (binary_work a z))%N.
@@ -114,6 +127,7 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     | _, _ => False
     end.
   Parameter fw_round : K.t -> dbm -> dbm.
+  Parameter T_fw_round : K.t -> dbm -> N.
   Parameter k_octagon : N.
   (** Linear-form size charges coefficients, the constant and wrap bounds. *)
   Definition lin_bits (e : term L.op X.t) : nat :=
@@ -131,16 +145,17 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (N.of_nat (assume_work g es s) =
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
-        (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1)) +
+        (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
+        length (F.atoms_of g es) * skels s) +
       F.T_atoms_of g es)%N.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Parameter F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
       N.of_nat ((ns s + 1)^2 *
-        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1)) + F.T_lin_of e)%N.
+        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s) + F.T_lin_of e)%N.
   (** Havoc visits the affected signed rows and columns. *)
   Parameter F_havoc_work : forall x s,
-    havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).
+    havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
   (** Top starts coherent. *)
   Parameter coh_top : coh top.
   (** Join keeps coherent matrices coherent. *)
@@ -161,7 +176,7 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   (** Floyd-Warshall charges cubic entry updates. *)
-  Parameter T1_fw : forall m,
+  Parameter T1_fw : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * N.of_nat
       ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
   (** Tightening charges quadratic entry updates. *)
@@ -177,7 +192,7 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
   Definition strongly_closed (m : dbm) : Prop :=
     coherent m /\
-    (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
+    (forall i, In (K.encode i) (support m) -> entry m i i = Some 0%Z) /\
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
       exists d, entry m i j = Some d /\ (d <= a + z)%Z) /\
     (forall i j a z, entry m i (bar i) = Some a -> entry m (bar j) j = Some z ->
@@ -198,14 +213,50 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter incr_close_sound : forall i j d m v,
     models m v -> (vl v j - vl v i <= d)%Z -> ngamma (incr_close i j d m) v.
   (** Successful integer closure is tightly closed. *)
-  Parameter tclose_tight : forall m m', coherent m ->
+  Parameter tclose_tight : forall m m', dbm_wf m -> coherent m ->
     tclose m = Reached m' -> tightly_closed m'.
   (** Incremental closure agrees with tight closure on tightly closed input. *)
-  Parameter incr_close_eq : forall m i j d, tightly_closed m ->
+  Parameter incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   (** Successful tight closure bounds finite entry growth. *)
   Parameter bits_tclose_le : forall m m', tclose m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
+  (** State size charges all stored numeric data. *)
+  Parameter F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
+  (** Range work charges the numeric query and its linearization. *)
+  Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
+    N.of_nat ((tsize e + 1) * (bs s + ells s + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
+  Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
+    match ks with
+    | nil => nil
+    | k :: ks =>
+      let m' := fw_round k m in
+      (k, m) ::
+        match entry m' k k with
+        | Some d => if (d <? 0)%Z then nil else fw_trace ks m'
+        | None => fw_trace ks m'
+        end
+    end.
+  TimeFun fw_trace.
+  (** A round keeps the support and its key bits. *)
+  Parameter supp_fw_round : forall k m,
+    supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
+  (** A consistent matrix has no more pivot keys than codes in its support. *)
+  Parameter keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
+  (** Floyd-Warshall runs the traced rounds over the pivot keys. *)
+  Parameter F_fw : forall m, fw m =
+    fold_left (fun a km => fw_round (fst km) a) (fw_trace (keys m) m) m.
+  Definition diag_ok (m : dbm) : bool :=
+    forallb (fun k => match entry m k k with Some d => (0 <=? d)%Z | None => true end) (keys m).
+  TimeFun diag_ok.
+  (** Tight closure tightens and strengthens only a consistent closed matrix. *)
+  Parameter T4_tclose : forall m, dbm_wf m ->
+    (T_tclose m <= T_fw m + k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
+      if diag_ok (fw m) then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0)%N.
+  (** Tightening and strengthening keep the support. *)
+  Parameter supp_tighten_strengthen : forall m,
+    supp (tighten m) = supp m /\ b (tighten m) = b m /\
+    supp (strengthen m) = supp m /\ b (strengthen m) = b m.
 End OCTAGON_PLAN.
 
 Module Type OCTAGON_ALL (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)

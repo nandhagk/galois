@@ -77,6 +77,7 @@ Module EnvCode (X : KEY_OPS) (M : MAP_OPS X) (L : LANG_OPS)
         end) a b)
     end.
   Definition narrow (a b : t) :=
+    if is_bot b then b else
     match a, b with
     | Unreached, _ => Unreached
     | s, Unreached => s
@@ -144,7 +145,8 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Definition wrank (p : wparam) (s : t) : nat :=
     match s with
     | Unreached => 0
-    | Reached m => fold_right Nat.add 0 (map (fun kv => V.wrank p (snd kv)) (M.elements m))
+    | Reached m => fold_right Nat.add 0 (map (fun c =>
+        match M.find c m with Some a => V.wrank p a | None => 0 end) (M.codes m))
     end.
   Definition gamma (s : t) (st : X.t -> L.val) : Prop :=
     match s with
@@ -466,6 +468,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         end))%N.
   Proof. Admitted. (* STUB *)
   Lemma F_narrow : forall a b, narrow a b =
+    if is_bot b then b else
     match a, b with
     | Unreached, _ => Unreached
     | s, Unreached => s
@@ -522,6 +525,28 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma F_rsize : forall s g es, rsize s g es = assume_size s g es.
   Proof. Admitted. (* STUB *)
+  Fixpoint ann_work (n : ann L.op X.t V.t) : nat :=
+    match n with
+    | ALeaf x _ => X.bits x + 1
+    | ANode o _ ns => fold_right Nat.add 0 (map ann_work ns) + V.work o (map root ns) + 1
+    end.
+  Fixpoint ann_size (n : ann L.op X.t V.t) : nat :=
+    match n with
+    | ALeaf _ _ => 1
+    | ANode _ _ ns => S (fold_right Nat.add 0 (map ann_size ns))
+    end.
+  Definition k_env_refine : N := 1%N. (* STUB *)
+  (** Annotation records the work of its term. *)
+  Lemma F_ann_work : forall m e, ann_work (annotate m e) = tcost m e.
+  Proof. Admitted. (* STUB *)
+  (** Annotation keeps the shape of its term. *)
+  Lemma F_ann_size : forall m e, ann_size (annotate m e) = tsize e.
+  Proof. Admitted. (* STUB *)
+  (** Checked refinement charges cached transfers, leaf lookups and the requests it meets. *)
+  Lemma T2_refine_checked : forall q n m,
+    (T_refine_checked q n m <= k_env_refine *
+      N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T1_assume : forall g es m,
     (T_assume g es (Reached m) <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost m) es) +
@@ -576,5 +601,30 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma tcost_node : forall m o es, tcost m (Node o es) =
     fold_right Nat.add 0 (map (tcost m) es) +
     V.work o (map (fun e => root (annotate m e)) es) + 1.
+  Proof. Admitted. (* STUB *)
+  (** Environment size agrees with its raw stored-value measure. *)
+  Lemma F_size : forall s, size s = esize s.
+  Proof. Admitted. (* STUB *)
+  (** Environment widening parameters use the value-domain parameter size. *)
+  Lemma F_wsize : forall p, wsize p = V.wsize p.
+  Proof. Admitted. (* STUB *)
+  (** Assignment work charges annotation and the current environment. *)
+  Lemma F_assign_work : forall x e s, assign_work x e s =
+    match s with
+    | Unreached => tsize e + X.bits x + 1
+    | Reached m => tcost m e + esize s + X.bits x + 1
+    end.
+  Proof. Admitted. (* STUB *)
+  (** Havoc work charges the environment and the selected key. *)
+  Lemma F_havoc_work : forall x s, havoc_work x s = esize s + X.bits x + 1.
+  Proof. Admitted. (* STUB *)
+  (** Evaluation work charges its cached forward pass. *)
+  Lemma F_eval_work : forall e s, eval_work e s =
+    match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
+  Proof. Admitted. (* STUB *)
+  (** Assumption work charges the forward pass, guard and checked refinement. *)
+  Lemma F_assume_work : forall g es s, assume_work g es s =
+    fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
+      fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.
   Proof. Admitted. (* STUB *)
 End EnvT.
