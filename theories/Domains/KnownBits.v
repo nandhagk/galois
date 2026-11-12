@@ -1831,3 +1831,124 @@ Proof. Admitted. (* CONVERT: tnum_rank_monotone: The variable tnum_unknown_monot
 
 Theorem tnum_rank_bounded : forall w a, tnum_rank w a <= 2 * Pos.to_nat w.
 Proof. Admitted. (* CONVERT: tnum_rank_bounded: The variable tnum_unknown_from_equation was not found in the current *)
+Lemma tnum_filter_count_monotone : forall (A : Type) (f g : A -> bool) xs,
+  (forall x, In x xs -> f x = true -> g x = true) ->
+  length (filter f xs) <= length (filter g xs).
+Proof.
+  intros A f g xs. induction xs as [|x xs IH]; intro Hsub; [reflexivity|].
+  assert (Htail : length (filter f xs) <= length (filter g xs)).
+  { apply IH. intros y Hy. apply Hsub. now right. }
+  specialize (Hsub x (or_introl eq_refl)). cbn [filter].
+  destruct (f x), (g x); cbn in *; try discriminate; lia.
+Qed.
+
+Lemma tnum_unknown_monotone : forall w a b,
+  tnum_subset w b a = true -> tnum_unknown w a <= tnum_unknown w b.
+Proof. Admitted. (* CONVERT: tnum_unknown_monotone: The variable tnum_unknown_from_equation was not found in the current environment. *)
+
+
+(** A finite sequence records the pure counterpart of the landed charged driver. *)
+Inductive tnum_runs {S R : Type} (step : S -> S + R) : nat -> S -> S + R -> Prop :=
+  | tnum_runs_zero s : tnum_runs step O s (inl s)
+  | tnum_runs_stop n s r : step s = inr r -> tnum_runs step (Datatypes.S n) s (inr r)
+  | tnum_runs_next n s s' result : step s = inl s' -> tnum_runs step n s' result ->
+      tnum_runs step (Datatypes.S n) s result.
+
+Fixpoint tnum_unknown_from (n i : nat) (m : Z) : nat :=
+  match n with
+  | O => O
+  | S n => let rest := tnum_unknown_from n (S i) m in
+    if Z.testbit m (Z.of_nat i) then rest else S rest
+  end.
+
+Local Open Scope Z_scope.
+
+Lemma tnum_mul_step_sound : forall w a b x y i r,
+  0 <= i < Zpos w -> is_word w x -> tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w r (wrap w (x * (y mod 2 ^ i))) ->
+  match tnum_mul_stage_step w a b (i, r) with
+  | inl (j, q) => j = i + 1 /\ tnum_gamma w q (wrap w (x * (y mod 2 ^ (i + 1))))
+  | inr _ => False
+  end.
+Proof.
+  intros w a b x y i r Hi Hx Ha Hb Hr.
+  pose proof (tnum_shl_scalar_sound w i a x ltac:(lia) Hx Ha) as Hshift.
+  pose proof (tnum_add_sound w r _ _ _ Hr Hshift) as Hsum.
+  apply tnum_gamma_bits in Hb. destruct Hb as [Hz Ho].
+  change (Z.succ i = i + 1 /\
+    tnum_gamma w
+      (if Z.testbit (zeros b) i then r else
+        if Z.testbit (ones b) i then tnum_add w r (tnum_shl_scalar w i a)
+        else tnum_join w r (tnum_add w r (tnum_shl_scalar w i a)))
+      (wrap w (x * (y mod 2 ^ (i + 1))))).
+  split; [lia|]. rewrite tnum_mul_partial_add by assumption.
+  destruct (Z.testbit (zeros b) i) eqn:Hbz.
+  - rewrite (Hz i Hi Hbz). exact Hr.
+  - destruct (Z.testbit (ones b) i) eqn:Hbo.
+    + rewrite (Ho i Hi Hbo). exact Hsum.
+    + apply tnum_join_sound. destruct (Z.testbit y i); auto.
+Qed.
+
+Lemma tnum_mul_runs_index : forall w a b n s result,
+  tnum_runs (tnum_mul_stage_step w a b) n s result ->
+  match result with
+  | inl s' => fst s' = fst s + Z.of_nat n
+  | inr _ => False
+  end.
+Proof.
+  intros w a b n s result Hrun.
+  induction Hrun as [s|n s r Hstop|n s next result Hnext Hrun IH].
+  - cbn. lia.
+  - destruct s as [i q]. discriminate Hstop.
+  - destruct s as [i q], next as [j q']. injection Hnext as Hj Hq.
+    cbn [fst] in Hj. destruct result as [[k q'']|r]; [|exact IH].
+    cbn [fst] in *. rewrite Nat2Z.inj_succ. lia.
+Qed.
+
+Lemma tnum_mul_runs_sound : forall w a b x y,
+  is_word w x -> tnum_gamma w a x -> tnum_gamma w b y ->
+  forall n s result, tnum_runs (tnum_mul_stage_step w a b) n s result ->
+  0 <= fst s -> fst s + Z.of_nat n <= Zpos w ->
+  tnum_gamma w (snd s) (wrap w (x * (y mod 2 ^ fst s))) ->
+  match result with
+  | inl s' => tnum_gamma w (snd s') (wrap w (x * (y mod 2 ^ fst s')))
+  | inr _ => False
+  end.
+Proof.
+  intros w a b x y Hx Ha Hb n s result Hrun.
+  induction Hrun as [s|n s r Hstop|n s next result Hnext Hrun IH];
+    intros Hnonneg Hbound Hgamma.
+  - exact Hgamma.
+  - destruct s as [i q]. discriminate Hstop.
+  - destruct s as [i q], next as [j q']. cbn [fst snd] in *.
+    pose proof (tnum_mul_step_sound w a b x y i q ltac:(lia) Hx Ha Hb Hgamma) as Hstep.
+    rewrite Hnext in Hstep. cbn [fst snd] in Hstep. destruct Hstep as [Hj Hq].
+    apply IH; rewrite ?Hj; try lia.
+    exact Hq.
+Qed.
+
+Theorem tnum_mul_acc_runs_sound : forall w a b x y,
+  is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
+  forall n s result, tnum_runs (tnum_mul_acc_step w a b) n s result ->
+  0 <= fst s -> fst s + Z.of_nat n <= Zpos w ->
+  tnum_gamma w (snd s) (wrap w (tnum_mul_residual w a b x y (fst s))) ->
+  match result with
+  | inl s' =>
+    fst s' = fst s + Z.of_nat n /\
+    tnum_gamma w (snd s') (wrap w (tnum_mul_residual w a b x y (fst s')))
+  | inr r =>
+    tnum_gamma w r (wrap w (x * y - tnum_min w a * tnum_min w b))
+  end.
+Proof. Admitted. (* CONVERT: tnum_mul_acc_runs_sound: The reference tnum_mul_acc_step_c was not found in the current *)
+
+Theorem tnum_unknown_from_equation : forall n i m,
+  tnum_unknown_from n i m =
+  length (filter (fun j => negb (Z.testbit m (Z.of_nat j))) (seq i n)).
+Proof. Admitted. (* CONVERT: tnum_unknown_from_equation: The reference tnum_unknown_from_c was not found in the current *)
+
+(* The old bundled dictionary statements below used the removed lattice_laws and
+   lub_laws records. Their inclusion, bottom and join obligations now appear in
+   WORD_PAYLOAD_LAWS; the reviewed payload interface does not include leastness.
+Theorem tnum_laws : forall w, lattice_laws (tnum_lattice w).
+Theorem tnum_lub : forall w, lub_laws (tnum_lattice w).
+*)
