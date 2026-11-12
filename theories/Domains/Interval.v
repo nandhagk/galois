@@ -267,7 +267,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Definition gamma := in_itv.
 
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_refl was not found. *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof. Admitted.
