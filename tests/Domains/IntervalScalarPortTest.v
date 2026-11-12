@@ -18,6 +18,9 @@ Module Table := IntervalWordTableCode WordLanguageCode ThresholdsCode Scalar Pay
 Module Base := TaggedCode WordLanguageCode Payload.
 Module TaggedTable := TaggedTableCode WordLanguageCode Payload Table.
 Module Domain := HarnessCode BitsLangCode Base TaggedTable.
+Definition interval_back o xs rw q :=
+  map (fun a => match a with TBot => IBot | TVal _ p => p | TAny => Payload.ptop rw end)
+    (Domain.backward (BOp o) (TVal rw q) (map (fun wp => TVal (fst wp) (snd wp)) xs)).
 Definition interval_fwd o xs rw :=
   match Domain.forward (BOp o) (map (fun wp => TVal (fst wp) (snd wp)) xs) with
   | TBot => IBot | TVal _ p => p | TAny => Payload.ptop rw
@@ -195,6 +198,57 @@ Example interval_signed_remainder_precision_gap :
     eval_op bvsrem [(8%positive, 5); (8%positive, 2)],
     eval_op bvsrem [(8%positive, 5); (8%positive, 3)]) =
   (I (Fin 0) (Fin 2), Some (8%positive, 1), Some (8%positive, 2)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_forward_clips_operand :
+  interval_fwd bvadd [(8%positive, I NegInf (Fin 3));
+                      (8%positive, I (Fin 2) (Fin 4))] 8%positive =
+  I (Fin 2) (Fin 7).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_forward_empty :
+  interval_fwd bvadd [(8%positive, IBot); (8%positive, I NegInf PosInf)] 8%positive = IBot.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_assume_unsigned_false :
+  interval_back bvult [(8%positive, I (Fin 0) (Fin 20));
+                       (8%positive, I (Fin 5) (Fin 10))] 1%positive
+    (I (Fin 0) (Fin 0)) = [I (Fin 5) (Fin 20); I (Fin 5) (Fin 10)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_popcnt_point :
+  interval_fwd bvpopcnt [(1%positive, I (Fin 0) (Fin 0))] 1%positive =
+  I (Fin 0) (Fin 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_ite_forward :
+  interval_fwd bvite
+    [(1%positive, I (Fin 0) (Fin 1)); (8%positive, I (Fin 2) (Fin 4));
+     (8%positive, I (Fin 11) (Fin 12))] 8%positive = I (Fin 2) (Fin 12).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_backward_resize_operand_width :
+  interval_back (bvtrunc 4%positive) [(8%positive, I (Fin 0) (Fin 10))] 4%positive
+    (I (Fin 3) (Fin 5)) = [I (Fin 3) (Fin 5)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example interval_invalid_width_point_rejected :
+  interval_fwd bvadd [(1%positive, I (Fin 0) (Fin 0));
+                      (4%positive, I (Fin 1) (Fin 1))] 1%positive = IBot.
 Proof.
   vm_compute. reflexivity.
 Qed.
