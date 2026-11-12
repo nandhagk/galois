@@ -105,3 +105,10 @@ Example dense_exhausted :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Example dense_candidate_accepted :
+  BC.check true (PTrieCode.set (NatKeyCode.encode 1) (1, true)
+    (PTrieCode.set (NatKeyCode.encode 0) (0, true) PTrieCode.empty)) = true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
