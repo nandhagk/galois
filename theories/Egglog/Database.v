@@ -115,9 +115,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     | None, _, _ => o
     end.
   Definition allocated (db : t) (i : positive) : Prop := (Npos i <= ids db)%N.
+  (** Slot permutations contain distinct positions within the supplied tuple. *)
+  Definition slots_fit (db : t) (f : positive) (n : nat) : Prop :=
+    forall perm, In (f, perm) (slots db) -> NoDup perm /\ Forall (fun i => i < n) perm.
   Definition kind_ok (db : t) (f : positive) (k : list (cell V.t))
       (o : option (cell V.t)) : Prop :=
     (forall i, In (Id i) (k ++ option_list o) -> allocated db i) /\
+    slots_fit db f (length (k ++ option_list o)) /\
     match kind (view db) f, o with
     | Some ORel, None => True
     | Some OId, Some (Id _) => True
@@ -174,11 +178,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof. Admitted.
 
   (** Constructor allocation keeps the database well formed. *)
-  Lemma wf_make : forall f k db, wf db -> wf (snd (make f k db)).
+  Lemma wf_make : forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
   Proof. Admitted.
 
   (** Equality insertion keeps the database well formed. *)
-  Lemma wf_union : forall i j db, wf db -> wf (union i j db).
+  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
+    wf (union i j db).
   Proof. Admitted.
 
   (** Rebuilding keeps the database well formed. *)
@@ -391,7 +398,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
   (** Insertion pays for all slots and the logarithmic identifier budget. *)
-  Lemma T_put_amort : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
+  Lemma T_put_amort : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
     (T_put f k o db +
       N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
       N.of_nat (unit (put f k o db)) *
@@ -401,7 +409,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
   (** Constructor allocation has the same amortized budget as insertion. *)
-  Lemma T_make_amort : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
+  Lemma T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
     (T_make f k db +
       N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
       N.of_nat (unit (snd (make f k db))) *
@@ -439,6 +448,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
   Proof. Admitted. (* STUB *)
 
+  (** The high-water mark covers every declared function name. *)
+  Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
+    Pos.size_nat f <= N.size_nat (wmark db).
+  Proof. Admitted. (* STUB *)
+
   (** Insertion never reduces the spending unit. *)
   Lemma unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
   Proof. Admitted. (* STUB *)
@@ -458,7 +472,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Initialization pays for declarations and slot permutations. *)
   Lemma T_init_le : forall ds sl,
     (T_init ds sl <= c_db * N.of_nat (length ds + length sl + 1) *
-      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat))%N.
+      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
+      c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
   Proof. Admitted. (* STUB *)
 
   (** Find traverses allocated identifiers at the database unit. *)
@@ -499,6 +515,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition class_size (db : t) (x : positive) : N :=
     N.of_nat (UnionFind.size_of (uf_state db) x).
+  (** A historical row key resolves to its current stored key. *)
+  (* STUB-CODE *)
+  Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
+      : option (list (cell V.t)) := None.
   (* STUB-CODE *)
   Definition forest_ok : t -> Prop := fun _ => True.
   Definition k_credit : N := 1. (* STUB *)
@@ -520,9 +540,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall f k o, In ((f, k), o) (rows db) <-> row (view db) f k o) /\
     NoDup (map fst (rows db)) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i ->
-      exists k0, uses db (repr db i) (f, k0) /\ map (canon db) k0 = k) /\
+      exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
+        located db f k0 = Some k /\ (x = repr db i \/ In x (queue db))) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
-      exists k0, scheduled db work (f, k0) /\ map (canon db) k0 = k) /\
+      exists k0, scheduled db work (f, k0) /\ located db f k0 = Some k) /\
     (forall s f perm, slot_of db s = Some (f, perm) ->
       I.wf (length perm) (index s false db) /\
       I.wf (length perm) (index s true db) /\
@@ -533,7 +554,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (i < next_id db)%positive) /\
     forest_ok db /\
     (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
-    NoDup (queue db) /\ pending db = length (queue db).
+    NoDup (queue db) /\ pending db = length (queue db) /\
+    (forall x, In x (queue db) -> allocated db x).
   Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, None => True
@@ -568,6 +590,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition index_counters (db : t) : list positive := db_index_counters db.
   (* STUB-CODE *)
   Definition written_cells (db : t) : list (cell V.t) := db_written_cells db.
+  (* STUB-CODE *)
+  Definition decl_names (_ : t) : list positive := [].
   (* STUB-CODE *)
   Definition get_uses : positive -> t -> list use_entry := fun _ _ => [].
   TimeFun get_uses.
@@ -610,7 +634,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** A pop transfers its selected bucket into the active work list. *)
   Lemma F4_pop : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     queue db = x :: queue db' /\ view db' = view db /\
-    uses_entries db' = uses_entries db /\ inv_on db' (bucket db x).
+    (forall y e, uses db' y e <->
+      (uses db y e /\ y <> x) \/ (y = repr db x /\ uses db x e)) /\
+    N.to_nat (nuses db') = length (uses_entries db') /\
+    inv_on db' (bucket db x).
   Proof. Admitted. (* STUB *)
 
   (** The driver consumes one active entry or dequeues one loser. *)
@@ -626,9 +653,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       end.
   Proof. Admitted. (* STUB *)
 
-  (** Missing canonical keys are discarded without changing rows or equality. *)
+  (** Entries without a current row are discarded without changing the database. *)
   Lemma F6_absent : forall db f k,
-    old db f (map (canon db) k) = None -> repair_entry (f, k) db = db.
+    located db f k = None -> repair_entry (f, k) db = db.
   Proof. Admitted. (* STUB *)
 
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
@@ -776,7 +803,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
   (** Insertion pays its executable work and new occurrence credit. *)
-  Lemma T3_put_credit : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
+  Lemma T3_put_credit : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
     (T_put f k o db +
       N.of_nat (unit (put f k o db)) * (k_loop * rebuild_potential B (put f k o db)) <=
       N.of_nat (unit (put f k o db)) *
@@ -786,7 +814,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
   (** Allocation pays new occurrences through the insertion budget. *)
-  Lemma T4_make_credit : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
+  Lemma T4_make_credit : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
     (T_make f k db +
       N.of_nat (unit (snd (make f k db))) * (k_loop * rebuild_potential B (snd (make f k db))) <=
       N.of_nat (unit (snd (make f k db))) *
@@ -858,14 +887,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     N.to_nat (nuses db) = length (uses_entries db) /\ N.of_nat (pending db) = npending db.
   Proof. Admitted. (* STUB *)
 
+  (** The declaration inventory contains precisely the names with a kind. *)
+  Lemma F_decl_names : forall db f, inv db ->
+    (kind (view db) f <> None <-> In f (decl_names db)).
+  Proof. Admitted. (* STUB *)
+
   (** The stored watermark is the exact historical maximum of written payloads and counters. *)
   Lemma F_wmark : forall db, inv db ->
     wmark db = fold_right N.max (N.max (nuses db) (ids db))
-      (map Npos (index_counters db) ++
+      (map Npos (index_counters db) ++ map Npos (decl_names db) ++
         map (fun c => match c with
           | Id i => Npos (xO i)
           | Val v => Npos (xI (V.encode v))
           end) (written_cells db)).
+  Proof. Admitted. (* STUB *)
+
+  (** Every slot index fits the stored counter and cell watermark. *)
+  Lemma F_wmark_index : forall db s new, inv db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
   Proof. Admitted. (* STUB *)
 
   (** Class sizes come from the size-based union-find. *)
