@@ -57,7 +57,8 @@ Module Type INDEXED_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import I : INDEXED L 
     (T_prepare p <= c_idx *
       N.of_nat ((length (S.rows p) +
         fold_right Nat.add 0
-          (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *
+          (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+            (S.rows p)) + 1)%nat) *
       N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1))%N.
 End INDEXED_TIME.
 
