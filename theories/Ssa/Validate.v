@@ -14,9 +14,10 @@ Import List.ListNotations.
 
 Module ValidateCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_INDEXED_OPS P PosKeyCode E) (S : SSA_OPS P PosKeyCode E C PosKeyCode K G)
-    (DG : DIGRAPH_OPS) (D : DOM_OPS) <: VALIDATE_OPS O K G P E C S DG D.
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG_INDEXED_OPS Q PosKeyCode E) (S : SSA_OPS Q PosKeyCode E C PosKeyCode K G)
+    (DG : DIGRAPH_OPS) (D : DOM_OPS) <: VALIDATE_OPS O K G P Q R E C S DG D.
   (* STUB-CODE *)
   Definition check (_ _ : P.t) (_ : cert) : bool := false.
   (* STUB-CODE *)
@@ -25,28 +26,30 @@ End ValidateCode.
 
 Module Validate (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
-    (DG : DIGRAPH) (D : DOM) (B : LANG_SSA_LINK O K G P E C S)
-    <: VALIDATE O K G P E C S DG D B.
-  Include ValidateCode O K G P E C S DG D.
-  Include VALIDATE_SPEC O K G P E C S DG D.
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (E : TYPE)
+    (C : CFG Q PosKey E) (S : SSA Q PosKey E C PosKey K G)
+    (DG : DIGRAPH) (D : DOM) (B : LANG_SSA_LINK O K G Q R E C S)
+    <: VALIDATE O K G P Q R E C S DG D B.
+  Include ValidateCode O K G P Q R E C S DG D.
+  Include VALIDATE_SPEC O K G P Q R E C S DG D.
   Lemma check_sound : forall p s c, imp_form p -> check p s c = true ->
     forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
   Proof. Admitted. (* STUB *)
   Lemma check_ssa_sound : forall s, check_ssa s = true -> ssa_wf s.
   Proof. Admitted. (* STUB *)
-  Lemma check_core_ssa_sound : forall s, check_ssa s = true -> S.wf s.
+  Lemma check_core_ssa_sound : forall s, check_ssa s = true -> S.wf (R.prepare s).
   Proof. Admitted. (* STUB *)
 End Validate.
 
 Module ValidateT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
-    (DG : DIGRAPH_T) (D : DOM_T) (B : LANG_SSA_LINK O K G P E C S)
-    <: VALIDATE_ALL O K G P E C S DG D B.
-  Include Validate O K G P E C S DG D B.
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (E : KEY_T)
+    (C : CFG_T Q PosKeyT E) (S : SSA_T Q PosKeyT E C PosKeyT K G)
+    (DG : DIGRAPH_T) (D : DOM_T) (B : LANG_SSA_LINK O K G Q R E C S)
+    <: VALIDATE_ALL O K G P Q R E C S DG D B.
+  Include Validate O K G P Q R E C S DG D B.
   TimeFun check.
   TimeFun check_ssa.
   TimeFun graph.
