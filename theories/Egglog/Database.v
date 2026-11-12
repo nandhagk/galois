@@ -203,48 +203,48 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every representative represents itself. *)
   Lemma repr_idem : forall db i, wf db -> repr db (repr db i) = repr db i.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Initialization creates a well-formed database. *)
   Lemma wf_init : forall ds sl, wf (init ds sl).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Kind-correct insertion keeps the database well formed. *)
   Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Constructor allocation keeps the database well formed. *)
   Lemma wf_make : forall f k db, wf db ->
     (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
     wf (snd (make f k db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Equality insertion keeps the database well formed. *)
   Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
     wf (union i j db).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Advancing clears the change flag without changing the view. *)
   Lemma wf_advance : forall db, wf db ->
     wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Find returns the representative without changing the view. *)
   Lemma find_spec : forall i db, wf db ->
     fst (find i db) = repr db i /\ view (snd (find i db)) = view db.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Each function key has one output. *)
   Lemma row_functional : forall db f k o1 o2, wf db ->
     row (view db) f k o1 -> row (view db) f k o2 -> o1 = o2.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Insertion changes precisely the canonical key and combines its output. *)
   Lemma put_rows : forall f k o db, wf db -> kind_ok db f k o ->
@@ -252,20 +252,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     forall f' k' o', row (view (put f k o db)) f' k' o' <->
       (row (view db) f' k' o' /\ (f', k') <> (f, ck)) \/
       (f' = f /\ k' = ck /\ combine db f (old db f ck) co = o').
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Identifier output conflicts add precisely their equality closure. *)
   Lemma put_same : forall f k o db i j, wf db -> kind_ok db f k o ->
     (same (view (put f k o db)) i j <->
       clos_refl_sym_trans positive
         (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** A quiet insertion already has its requested row represented. *)
   Lemma put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
     changed db = false -> changed (put f k o db) = false ->
     view (put f k o db) = view db /\ present_put (view db) f (map (canon db) k) o.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Make reuses a canonical constructor output or allocates a fresh identifier. *)
   Lemma make_spec : forall f k db, wf db -> kind (view db) f = Some OId ->
@@ -274,34 +274,34 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       i = repr db j /\ db' = db) \/
     (fresh_id db i /\ row (view db') f (map (canon db) k) (Some (Id i)) /\
       extends_by db db' f k i).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Union adds precisely the requested equality closure. *)
   Lemma union_same : forall i j db k l, wf db ->
     (same (view (union i j db)) k l <->
       clos_refl_sym_trans positive (fun a b => same (view db) a b \/ (a, b) = (i, j)) k l).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Union queues equality work without changing rows. *)
   Lemma union_rows : forall i j db, wf db ->
     row (view (union i j db)) = row (view db).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
     canonical (rebuild db) /\ pending (rebuild db) = 0.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Rebuilding computes functional-dependency congruence. *)
   Lemma rebuild_same : forall db i j, wf db ->
     (same (view (rebuild db)) i j <-> cong db i j).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Every old row survives canonicalization and output merging. *)
   Lemma rebuild_keeps : forall db f k o, wf db -> row (view db) f k o ->
     exists o', row (view (rebuild db)) f (map (canon (rebuild db)) k) o' /\
       out_le (rebuild db) f (option_map (canon (rebuild db)) o) o'.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Every rebuilt row comes from a nonempty group of old rows. *)
   Lemma rebuild_from : forall db f k' o', wf db -> row (view (rebuild db)) f k' o' ->
@@ -309,45 +309,45 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       Forall (fun ko => row (view db) f (fst ko) (snd ko) /\
         map (canon (rebuild db)) (fst ko) = k') srcs /\
       o' = merged (rebuild db) f (map snd srcs).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Canonical databases without pending work rebuild to themselves. *)
   Lemma rebuild_idle : forall db, wf db -> canonical db -> pending db = 0 -> rebuild db = db.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** A database without pending work respects constructor congruence. *)
   Lemma rebuild_congruent : forall db f k1 k2 i j, wf db -> pending db = 0 ->
     row (view db) f k1 (Some (Id i)) -> row (view db) f k2 (Some (Id j)) ->
     Forall2 (cell_rel (same (view db))) k1 k2 -> same (view db) i j.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Every indexed tuple comes from a row in its declared slot. *)
   Lemma index_all : forall db s new u, wf db -> I.mem (index s new db) u ->
     exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
       u = permute perm (k ++ option_list o).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** The full index contains every row in its slot. *)
   Lemma index_all_complete : forall db s f perm k o, wf db ->
     slot_of db s = Some (f, perm) -> row (view db) f k o ->
     I.mem (index s false db) (permute perm (k ++ option_list o)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Slot indexes have the declared permutation arity. *)
   Lemma index_wf : forall db s new f perm, wf db -> slot_of db s = Some (f, perm) ->
     I.wf (length perm) (index s new db).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Stored lookup agrees with the public row observation. *)
   Lemma old_row : forall db f k o, wf db ->
     (old db f k = Some o <-> row (view db) f k o).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Lookup canonicalizes its query and keeps the view and invariant. *)
   Lemma lookup_spec : forall f k db, wf db ->
     fst (lookup f k db) = old db f (map (canon db) k) /\
     view (snd (lookup f k db)) = view db /\ wf (snd (lookup f k db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Initialization records declarations and slots and starts empty. *)
   Lemma init_view : forall ds sl f k o i j,
@@ -355,13 +355,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (same (view (init ds sl)) i j <-> i = j) /\
     kind (view (init ds sl)) f = lookup_kind ds f /\
     slots (init ds sl) = sl /\ ids (init ds sl) = 0%N /\ pending (init ds sl) = 0.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Insertion keeps layout and allocation and queues at most one loser. *)
   Lemma layout_put : forall f k o db, wf db ->
     kind (view (put f k o db)) = kind (view db) /\ slots (put f k o db) = slots db /\
     ids (put f k o db) = ids db /\ pending (put f k o db) <= pending db + 1.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Make keeps layout and returns an allocated identifier. *)
   Lemma layout_make : forall f k db, wf db ->
@@ -370,61 +370,61 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (ids (snd (make f k db)) <= N.succ (ids db))%N /\
     allocated (snd (make f k db)) (fst (make f k db)) /\
     pending (snd (make f k db)) = pending db.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Union keeps layout and allocation and queues at most one loser. *)
   Lemma layout_union : forall i j db, wf db ->
     kind (view (union i j db)) = kind (view db) /\ slots (union i j db) = slots db /\
     ids (union i j db) = ids db /\ pending (union i j db) <= pending db + 1.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Rebuilding keeps layout and allocation. *)
   Lemma layout_rebuild : forall db, wf db ->
     kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
     ids (rebuild db) = ids db.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Advancing keeps the slot layout. *)
   Lemma layout_advance : forall db, slots (advance db) = slots db.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Advancing keeps allocation, pending work and representatives. *)
   Lemma advance_keeps : forall db, wf db ->
     ids (advance db) = ids db /\ pending (advance db) = pending db /\
     repr (advance db) = repr db.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** A quiet union already holds in the old view. *)
   Lemma union_quiet : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = false -> same (view db) i j.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** A quiet make reuses a constructor row. *)
   Lemma make_quiet : forall f k db, wf db -> changed db = false ->
     changed (snd (make f k db)) = false ->
     exists j, row (view db) f (map (canon db) k) (Some (Id j)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Every row identifier is allocated. *)
   Lemma row_allocated : forall db f k o i, wf db -> row (view db) f k o ->
     In (Id i) (k ++ option_list o) -> allocated db i.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Rebuilding keeps every satisfying model and identifier interpretation. *)
   Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
     sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Inserting a true, kind-correct row keeps the model. *)
   Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
     sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** A justified identifier union keeps the model. *)
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
@@ -434,7 +434,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
 End Database.
 
@@ -594,8 +594,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
       : option (list (cell V.t)) := None.
-  (* STUB-CODE *)
-  Definition forest_ok : t -> Prop := fun _ => True.
+  (** Located keys resolve to stored rows of declared functions. *)
+  Definition forest_ok (db : t) : Prop :=
+    forall f k0 k, located db f k0 = Some k ->
+      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
   Definition k_credit : N := 1. (* STUB *)
   Definition k_loop : N := 1. (* STUB *)
   Definition k_active : N := 1. (* STUB *)
@@ -609,6 +611,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     In e work \/ exists x, In x (queue db) /\ uses db x e.
   Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
     In (Id i) (k ++ option_list o).
+
+  (** Located historical keys resolve to stored rows of declared functions. *)
+  Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
+    exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
+  Proof. Admitted. (* STUB *)
 
   (** Active entries retain coverage after their loser has left the queue. *)
   Definition inv_on (db : t) (work : list use_entry) : Prop :=
@@ -627,6 +634,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (forall u, I.mem (index s true db) u -> I.mem (index s false db) u)) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i ->
       (i < next_id db)%positive) /\
+    (forall e, In e work -> exists x, uses db x e) /\
     forest_ok db /\
     (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
     NoDup (queue db) /\ pending db = length (queue db) /\
@@ -748,13 +756,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       N.of_nat (unit (repair_entry e db)))%N.
   Proof. Admitted. (* STUB *)
 
-  (* spec: slot_place group_of group_slots proj_count *)
+  (* spec: slot_place group_of group_slots proj_count slots_ok *)
   (* STUB-CODE *)
   Definition slot_place (_ : t) (_ : N) : option (bool * N * N) := None.
   (* STUB-CODE *)
   Definition group_of (_ : t) (_ : positive) : option N := None.
   (* STUB-CODE *)
   Definition group_slots (_ : t) (_ : bool) (_ : N) : list N := [].
+  (** Slot facts survive changes to the row store between projection updates. *)
+  Definition slots_ok (db : t) : Prop :=
+    (forall s f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s false db) /\
+      I.wf (length perm) (index s true db) /\
+      exists d g j, slot_place db s = Some (d, g, j) /\ (g <= s)%N /\ (j <= s)%N /\
+        nth_error (group_slots db d g) (N.to_nat j) = Some s /\
+        (d = true <-> kind (view db) f <> None) /\
+        (d = true -> group_of db f = Some g /\ (g < wmark db)%N)) /\
+    (forall f g, group_of db f = Some g ->
+      NoDup (group_slots db true g) /\
+      forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm)) /\
+    (forall s f perm new, slot_of db s = Some (f, perm) ->
+      (Npos (I.next (index s new db)) <= wmark db)%N).
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
   Lemma F_slot_place : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
@@ -786,11 +808,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** One update of every slot of a declared function walks its group once. *)
-  Lemma T_slots_update_le : forall db work b f u, inv_on db work ->
+  Lemma T_slots_update_le : forall db b f u, slots_ok db ->
     kind (view db) f <> None -> slots_fit db f (length u) ->
     (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
     (T_slots_update b f u db <= k_slots * N.of_nat (slots_of db f + 1) *
-      N.of_nat ((length u + 1) * (length u + 1)) *
+      N.of_nat (length u + 1) *
       N.of_nat (unit (slots_update b f u db)))%N.
   Proof. Admitted. (* STUB *)
 
@@ -820,6 +842,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** The counter of the empty index is recorded. *)
   Lemma F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
+  Proof. Admitted. (* STUB *)
+
+  (** The maintained invariant gives the slot facts that an update reads. *)
+  Lemma F_slots_ok : forall db work, inv_on db work -> slots_ok db.
+  Proof. Admitted. (* STUB *)
+  (** A slot update keeps those facts. *)
+  Lemma F_slots_ok_update : forall db b f u, slots_ok db ->
+    slots_fit db f (length u) -> slots_ok (slots_update b f u db).
   Proof. Admitted. (* STUB *)
 
   (** A driver step costs its repair, or its pop and bucket read, plus a constant. *)

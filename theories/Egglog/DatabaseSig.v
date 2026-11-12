@@ -408,6 +408,10 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
     In (Id i) (k ++ option_list o).
 
+  (** Located historical keys resolve to stored rows of declared functions. *)
+  Parameter F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
+    exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
+
   (** Active entries retain coverage after their loser has left the queue. *)
   Definition inv_on (db : t) (work : list use_entry) : Prop :=
     (forall f k o, In ((f, k), o) (rows db) <-> row (view db) f k o) /\
@@ -425,6 +429,7 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
       (forall u, I.mem (index s true db) u -> I.mem (index s false db) u)) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i ->
       (i < next_id db)%positive) /\
+    (forall e, In e work -> exists x, uses db x e) /\
     forest_ok db /\
     (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
     NoDup (queue db) /\ pending db = length (queue db) /\
@@ -517,7 +522,8 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
     (T_repair_entry e db <= k_repair * N.of_nat (entry_weight db e) *
       N.of_nat (unit (repair_entry e db)))%N.
 
-  (* spec: slot_place group_of group_slots proj_count *)
+  (* spec: slot_place group_of group_slots proj_count slots_ok *)
+  Parameter slots_ok : t -> Prop.
   Parameter slot_place : t -> N -> option (bool * N * N).
   Parameter group_of : t -> positive -> option N.
   Parameter group_slots : t -> bool -> N -> list N.
@@ -551,11 +557,11 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
         N.of_nat ((fold_right (fun s n => length (snd s) + n) 0%nat sl + 1)%nat) +
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds)%nat))%N.
   (** One update of every slot of a declared function walks its group once. *)
-  Parameter T_slots_update_le : forall db work b f u, inv_on db work ->
+  Parameter T_slots_update_le : forall db b f u, slots_ok db ->
     kind (view db) f <> None -> slots_fit db f (length u) ->
     (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
     (T_slots_update b f u db <= k_slots * N.of_nat (slots_of db f + 1) *
-      N.of_nat ((length u + 1) * (length u + 1)) *
+      N.of_nat (length u + 1) *
       N.of_nat (unit (slots_update b f u db)))%N.
 
   (** A union finds both roots and links only distinct ones. *)
@@ -580,6 +586,12 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
 
   (** The counter of the empty index is recorded. *)
   Parameter F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
+
+  (** The maintained invariant gives the slot facts that an update reads. *)
+  Parameter F_slots_ok : forall db work, inv_on db work -> slots_ok db.
+  (** A slot update keeps those facts. *)
+  Parameter F_slots_ok_update : forall db b f u, slots_ok db ->
+    slots_fit db f (length u) -> slots_ok (slots_update b f u db).
 
   (** A driver step costs its repair, or its pop and bucket read, plus a constant. *)
   Parameter T_rstep_split : forall db work,
