@@ -54,5 +54,9 @@ Proof. vm_compute. reflexivity. Qed.
    (D1.leb [FVal false] [FVal false; FVal true],
     D1.leb [FVal true] [FVal false; FVal true],
     D1.leb (D1.join [FVal false] [FVal true]) [FVal false; FVal true]) =
-     (true, true, false). Its two-element target lies outside the carrier. The old raw widening examples belong
-   to the D1 state-disjunction component. Cost.ticks examples are retired. *)
+     (true, true, false). Its two-element target lies outside the carrier.
+   The old raw widening examples are deferred to the D1 state-disjunction component.
+   Their expected results were [FTop] for widening [FVal false] by [FVal true],
+   [FTop; FVal true] for widening [FTop; FVal true] by [FVal false], and []
+   for widening [] by [] at cap zero. The old rank client expected (3, 3, 0)
+   on [false; false] and its widening by [true]. Cost.ticks examples are retired. *)
