@@ -351,3 +351,47 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
     block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2.
   Proof. Admitted.
 End SsaPoints.
+
+Module Type SSA_POINTS_STRICT_WITNESS (P : TYPE) (B : KEY) (BE : TYPE)
+    (BC : CFG P B BE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (V : KEY) (U : VARS P N E C V) (S : SSA_POINTS P B BE BC N E C V U).
+  Definition point_reachable p n := exists entry route, In entry (C.entries p) /\
+    presentation_path (C.edges p) (C.src p) (C.dst p) entry route n.
+  Definition point_dominates p d n := forall entry route, In entry (C.entries p) ->
+    presentation_path (C.edges p) (C.src p) (C.dst p) entry route n -> In d route.
+  Definition point_use_at p n x := In x (U.exits p n) \/
+    exists e, In e (C.out p n) /\ In x (U.uses p e).
+  Parameter single_entry : forall p, S.wf p -> exists entry, C.entries p = entry :: nil.
+  Parameter uses_defined : forall p n x, S.wf p -> point_reachable p n ->
+    point_use_at p n x -> exists d, S.point_definition p x = Some d /\
+      point_reachable p d /\ point_dominates p d n /\ d <> n.
+  Parameter defs_at_home : forall p n e x, S.wf p -> point_reachable p n ->
+    In e (C.out p n) -> In x (U.defs p e) -> S.point_definition p x = Some n.
+  Parameter home_kills : forall p x d e, S.wf p -> S.point_definition p x = Some d ->
+    point_reachable p d -> In e (C.out p d) -> In x (U.defs p e).
+End SSA_POINTS_STRICT_WITNESS.
+
+Module SsaPointsStrict (P : TYPE) (B : KEY) (BE : TYPE)
+    (BC : CFG P B BE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (V : KEY) (U : VARS P N E C V) (S : SSA_POINTS P B BE BC N E C V U)
+    (W : SSA_POINTS_STRICT_WITNESS P B BE BC N E C V U S)
+    <: SSA_POINTS_STRICT_LAWS P B BE BC N E C V U S.
+  Definition point_reachable := W.point_reachable.
+  Definition point_dominates := W.point_dominates.
+  Definition point_use_at := W.point_use_at.
+  Definition single_entry := W.single_entry.
+  Definition uses_defined := W.uses_defined.
+  Definition defs_at_home := W.defs_at_home.
+  Definition home_kills := W.home_kills.
+
+  Lemma definitions_unique : forall p n1 n2 e1 e2 x, S.wf p ->
+    point_reachable p n1 -> point_reachable p n2 ->
+    In e1 (C.out p n1) -> In e2 (C.out p n2) ->
+    In x (U.defs p e1) -> In x (U.defs p e2) -> n1 = n2.
+  Proof.
+    intros p n1 n2 e1 e2 x Hwf Hn1 Hn2 He1 He2 Hdef1 Hdef2.
+    pose proof (defs_at_home p n1 e1 x Hwf Hn1 He1 Hdef1) as Hhome1.
+    pose proof (defs_at_home p n2 e2 x Hwf Hn2 He2 Hdef2) as Hhome2.
+    rewrite Hhome1 in Hhome2; inversion Hhome2; reflexivity.
+  Qed.
+End SsaPointsStrict.
