@@ -157,13 +157,17 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_mono: Attempt to save an incomplete proof. *)
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_bot_empty: Not an inductive product. *)
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted.
+  Proof.
+    intros w z _. unfold pgamma, sign_gamma, ptop.
+    destruct (L.signed w z <? 0); [reflexivity|].
+    destruct (L.signed w z =? 0); reflexivity.
+  Qed.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
