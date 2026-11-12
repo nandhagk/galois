@@ -173,7 +173,7 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
       (forall a r, In a (V.effects p e) -> In r (effect_writes A.all a) ->
         A.disjoint region r = true) ->
       B.effect_value (B.effect_snapshot t) l = B.effect_value (B.effect_snapshot s) l.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma transition_read_covered : forall p s tr t e l,
     reachable (M.initial p) (M.step p) s -> T.lstep p s tr t -> L.taken p s t e ->
@@ -183,7 +183,7 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
       nth_error (V.effects p e) i = Some a /\ B.effect_read b a l /\
       forall address, B.effect_address b l = Some address ->
         exists r, In r (effect_reads A.all a) /\ B.region_holds r address.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma transition_write_covered : forall p s tr t e address,
     reachable (M.initial p) (M.step p) s -> T.lstep p s tr t -> L.taken p s t e ->
@@ -192,5 +192,5 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
         (B.effect_snapshot t) /\ nth_error states i = Some b /\
       nth_error (V.effects p e) i = Some a /\ B.effect_write b a address /\
       In r (effect_writes A.all a) /\ B.region_holds r address.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End MemorySound.

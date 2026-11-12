@@ -34,7 +34,7 @@ Module Certified (L : WLATTICE) (S : SYSTEM L) (V : SOLVER_OPS L S)
       | OutOfFuel m => OutOfFuel m
       | Rejected why => Rejected why
       end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma analyze_sound : forall p pol fuel m,
     analyze p pol fuel = Solved m -> S.post_solution p (C.look m).
   Proof.

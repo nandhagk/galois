@@ -67,50 +67,50 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Key equality decides equality of system keys. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions fit the declared occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Row codes distinguish rows within each program. *)
   Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The index lists exactly the rows that may write the requested key. *)
   Lemma rows_of_spec : forall p x r, wf p ->
     (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Include IDE_RULE_SPEC P N E C Site I F V M FL.
   (** The path-edge encoding retains all three components. *)
   Lemma key_code_spec : key_code = path_edge_code N.encode F.encode.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Row codes retain binary occurrence identities. *)
   Lemma row_code_spec : row_code = path_row_code.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Rows contain exactly the enabled finite rules. *)
   Lemma rows_spec : forall p rule,
     (exists r, In r (rows p) /\ path_row_rule r = rule) <-> enabled p rule.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every rule writes its destination path edge. *)
   Lemma target_spec : forall p r, target p r =
     match path_row_rule r with
@@ -118,7 +118,7 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     | PathStep d0 e _ y => (d0, (C.dst p e, y))
     | PathReturn d0 _ ret _ _ _ y => (d0, (C.dst p ret, y))
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Matched returns compose caller, call, callee and return effects in that order. *)
   Lemma eval_spec : forall p r look, eval p r look = Some
     (match path_row_rule r with
@@ -128,7 +128,7 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
          (M.compose (look (a, (C.src p ret, b)))
            (M.compose (FL.weight p call x a) (look (d0, (C.src p call, x)))))
      end, nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Ide.
 
 Module IdeT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)

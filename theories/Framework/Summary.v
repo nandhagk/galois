@@ -50,56 +50,56 @@ Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Key equality decides equality of system keys. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions fit the declared occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Function keys use the client's encoding. *)
   Lemma key_code_spec : key_code = F.encode.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Function keys use the client's equality test. *)
   Lemma key_eqb_specification : key_eqb = F.eqb.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Local rows precede calls in function, site and resolver order. *)
   Lemma rows_spec : forall p, rows p = map SummaryLocal (CL.functions p) ++
     flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
       (CL.sites_of p f)) (CL.functions p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A local row targets its own function. *)
   Lemma target_local : forall p f, target p (SummaryLocal f) = f.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A lifted row targets its call site's caller. *)
   Lemma target_call : forall p site g, target p (SummaryCall site g) = CL.caller_of p site.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Local summaries have no side contributions. *)
   Lemma eval_local : forall p f look,
     eval p (SummaryLocal f) look = Some (B.local p f, nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Calls lift their callee summary and contribute a callee entry fact. *)
   Lemma eval_call : forall p site g look, eval p (SummaryCall site g) look =
     Some (B.via_call p site g (look g), (g, B.entry p site g) :: nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Summary.
 
 Module SummaryT (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
@@ -129,10 +129,10 @@ Module SummarySound (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
     forall s t site, reachable (M.initial p) (M.step p) s -> M.step p s t ->
       In site (CL.sites_of p (K.here s)) -> In (K.here t) (CL.resolve p site) ->
       K.frames t = (K.here s, site) :: K.frames s -> SL.gamma_entry (look (K.here t)) t.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma covers_finished : forall p look f s t, CL.wf p -> A.post_solution p look ->
     covered_run (M.step p)
       (fun u _ => reachable (M.initial p) (M.step p) u /\ In f (K.active u)) s t ->
     covered_run (M.step p) (SL.gamma_step (look f)) s t.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End SummarySound.

@@ -115,25 +115,25 @@ Module IfdsLattice <: IFDS_LATTICE.
   Include IfdsLatticeCode.
   (** Every value is below itself. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End IfdsLattice.
 
 Module IfdsLatticeT <: IFDS_LATTICE_T.
@@ -165,50 +165,50 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Key equality decides equality of system keys. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Side contributions fit the declared occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Row codes distinguish rows within each program. *)
   Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The index lists exactly the rows that may write the requested key. *)
   Lemma rows_of_spec : forall p x r, wf p ->
     (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Include IFDS_SPEC P N E C Site I F FL L.
   (** The system encodes all three path-edge components. *)
   Lemma key_code_spec : key_code = path_edge_code N.encode F.encode.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The row identifier is its assigned binary occurrence identity. *)
   Lemma row_code_spec : row_code = path_row_code.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The row inventory contains exactly the enabled finite rules. *)
   Lemma rows_spec : forall p rule,
     (exists r, In r (rows p) /\ path_row_rule r = rule) <-> enabled p rule.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Rule targets follow their destination edge or identity point. *)
   Lemma target_spec : forall p r, target p r =
     match path_row_rule r with
@@ -216,7 +216,7 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     | PathStep d0 e _ y => (d0, (C.dst p e, y))
     | PathReturn d0 _ ret _ _ _ y => (d0, (C.dst p ret, y))
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Boolean rules combine the caller and callee at a matched return. *)
   Lemma eval_spec : forall p r look, eval p r look = Some
     (match path_row_rule r with
@@ -225,7 +225,7 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
      | PathReturn d0 call ret x a b _ =>
          look (d0, (C.src p call, x)) && look (a, (C.src p ret, b))
      end, nil).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Ifds.
 
 Module IfdsT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)

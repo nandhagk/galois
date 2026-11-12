@@ -617,7 +617,8 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   (** Stopping callbacks must solve and must fit the final driver budget. *)
   Parameter W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
-    (exists m, result = Solved m) /\ (T_step p pol s <= k_loop * (unit p + 1) + queue_phi p s)%N.
+    (exists m, result = Solved m) /\
+    (T_step p pol s <= k_loop * (N.of_nat (C p) * unit p + 1) + queue_phi p s)%N.
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
   Parameter W7_loop : forall p pol fuel, fits p pol ->
     (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *

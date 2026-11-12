@@ -76,7 +76,7 @@ Module Vars (P : TYPE) (N : KEY) (E : KEY)
       (exists n, In n (C.nodes p) /\ In x (exits p n)).
   Proof. Admitted. (* CONVERT: universe_spec: The reference FinSet.elements_spec was not found. *)
   Lemma universe_nodup : forall p, NoDup (universe p).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Vars.
 
 Module VarsT (P : TYPE) (N : KEY_T) (E : TYPE)

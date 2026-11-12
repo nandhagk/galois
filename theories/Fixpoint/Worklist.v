@@ -690,7 +690,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Stopping callbacks must solve and must fit the final driver budget. *)
   Lemma W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
-    (exists m, result = Solved m) /\ (T_step p pol s <= k_loop * (unit p + 1) + queue_phi p s)%N.
+    (exists m, result = Solved m) /\
+    (T_step p pol s <= k_loop * (N.of_nat (C p) * unit p + 1) + queue_phi p s)%N.
   Proof. Admitted. (* STUB *)
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
   Lemma W7_loop : forall p pol fuel, fits p pol ->
@@ -767,5 +768,5 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
   Lemma run_least : forall p pol fuel m s', S.wf p -> S.monotone p ->
     widening_free pol -> V.run p pol fuel = Solved m -> S.post_solution p s' ->
     forall x, L.leb (look_or S.key_code L.bot m x) (s' x) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End WorklistLeast.

@@ -40,49 +40,49 @@ Module Schedule (L : WLATTICE) (S : SYSTEM L) (G : DIGRAPH) (W : WTO)
   (** The dependency graph has exactly the declared dependency edges. *)
   Lemma dep_graph_edges : forall p u v,
     edge (dep_graph p) u v <-> dependency_edge p u v.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The graph lists exactly the key codes read or written by a row. *)
   Lemma dep_graph_vertices : forall p c,
     In c (verts (dep_graph p)) <->
       exists r x, In r (S.rows p) /\ In x ((S.target p r :: S.sides p r) ++ S.deps p r) /\
         S.key_code x = c.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** WTO priorities use the WTO's public rank projection. *)
   Lemma of_wto_prio : forall w cfg wp n, prio (of_wto w cfg wp n) = W.ranks w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** WTO loop heads receive the supplied head configuration. *)
   Lemma of_wto_heads : forall w cfg wp n c,
     trie_get c (heads (of_wto w cfg wp n)) =
       if existsb (Pos.eqb c) (W.heads w) then Some cfg else None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Schedule construction retains widening parameters. *)
   Lemma of_wto_wp : forall w cfg wp n, PolicySig.wp (of_wto w cfg wp n) = wp.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Schedule construction retains the requested narrowing pass count. *)
   Lemma of_wto_passes : forall w cfg wp n, passes (of_wto w cfg wp n) = n.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Planning accepts a built WTO only when its checker accepts it. *)
   Lemma plan_spec : forall p cfg wp n,
     let g := G.prepare (dep_graph p) in
     let roots := verts (dep_graph p) in
     let w := W.build g roots in
     plan p cfg wp n = if W.check g roots w then Some (of_wto w cfg wp n) else None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every non-increasing dependency edge enters a configured head. *)
   Lemma cuts_spec : forall p pol,
     cuts p pol = true <-> forall u v, dependency_edge p u v ->
       (priority pol u < priority pol v)%positive \/
       exists cfg, trie_get v (heads pol) = Some cfg.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A checked WTO cuts every non-increasing dependency edge. *)
   Lemma of_wto_cuts : forall p w cfg wp n,
     W.check (G.prepare (dep_graph p)) (verts (dep_graph p)) w = true ->
     cuts p (of_wto w cfg wp n) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every accepted schedule cuts the program's dependency edges. *)
   Lemma plan_cuts : forall p cfg wp n pol,
     plan p cfg wp n = Some pol -> cuts p pol = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Schedule.
 
 Module ScheduleT (L : WLATTICE_T) (S : SYSTEM_T L)
