@@ -42,3 +42,7 @@ Definition priority (pol : policy unit) n :=
 
 (* The old singleton SCC policy returned (2%positive, true, false).
    The dependency WTO policy returns (1%positive, false, false). *)
+
+Example zero_self_edge :
+  call_edges (AllCalls.resolve 0) (AllCalls.sites_of 0 0) = [CallEdge 0 0; CallEdge 0 1].
+Proof. vm_compute; reflexivity. Qed.
