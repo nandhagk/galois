@@ -28,7 +28,7 @@ Definition tree_step (g : prepared) (t : domtree) (st : loop_tree_state) :
     loop_tree_state + loop_scan :=
   match st with
   | LoopTreeState [] _ _ (LoopScan order latches backs) =>
-    inr (LoopScan (rev order) latches backs)
+    inr (LoopScan (rev_append order []) latches backs)
   | LoopTreeState (task :: rest) stack active scan =>
     match task with
     | LoopTreeRoot v =>
@@ -67,7 +67,7 @@ Definition classify (g : prepared) (t : domtree) : loop_scan :=
   let initial := LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty) in
   match loopN (tree_step g t) (8 * (nv g + ne g + 1))%N initial with
   | inl st => let '(LoopScan order latches backs) := loop_tree_output st in
-      LoopScan (rev order) latches backs
+      LoopScan (rev_append order []) latches backs
   | inr scan => scan
   end.
 TimeFun classify.
@@ -75,7 +75,7 @@ TimeFun classify.
 Definition body_step (g : prepared) (t : domtree) (_ : positive) (st : loop_body_state) :
     loop_body_state + list positive :=
   match st with
-  | LoopBodyState [] _ answer => inr (rev answer)
+  | LoopBodyState [] _ answer => inr (rev_append answer [])
   | LoopBodyState (v :: rest) seen answer =>
     match trie_get v seen, trie_get v (pre t) with
     | None, Some _ =>
@@ -91,7 +91,7 @@ TimeFun body_step.
 Definition collect (g : prepared) (t : domtree) (h : positive) (sources : list positive) :=
   let initial := LoopBodyState sources (PTrieCode.set h tt Empty) [h] in
   match loopN (body_step g t h) (4 * (nv g + ne g + N.of_nat (length sources) + 1))%N initial with
-  | inl st => rev (loop_body_answer st)
+  | inl st => rev_append (loop_body_answer st) []
   | inr answer => answer
   end.
 TimeFun collect.
@@ -479,7 +479,7 @@ Module LoopsT <: LOOPS_ALL.
   Lemma T1_tree_step : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
-    (T_tree_step g t st + tree_credit g t next < tree_credit g t st)%N.
+    (T_tree_step g t st + tree_credit g t next + c_loopN <= tree_credit g t st)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T2_tree_stop : forall g t r st scan,
@@ -498,7 +498,7 @@ Module LoopsT <: LOOPS_ALL.
   Lemma T4_body_step : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
-    (T_body_step g t h st + body_credit g t h next < body_credit g t h st)%N.
+    (T_body_step g t h st + body_credit g t h next + c_loopN <= body_credit g t h st)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T5_body_stop : forall g t r h st result,

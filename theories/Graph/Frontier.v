@@ -13,7 +13,7 @@ Import List.ListNotations.
 Definition df_step (g : prepared) (t : domtree) (y : positive) (st : df_state) :
     df_state + list positive :=
   match st with
-  | DfState [] _ answer => inr (rev answer)
+  | DfState [] _ answer => inr (rev_append answer [])
   | DfState (x :: rest) seen answer =>
     match trie_get x (pre t), trie_get x seen with
     | Some _, None =>
@@ -38,7 +38,7 @@ TimeFun df_step.
 Definition df_column (g : prepared) (t : domtree) (y : positive) : list positive :=
   let initial := DfState (preds g y) Empty [] in
   match loopN (df_step g t y) (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N initial with
-  | inl st => rev (df_column_answer st)
+  | inl st => rev_append (df_column_answer st) []
   | inr answer => answer
   end.
 TimeFun df_column.
@@ -66,7 +66,7 @@ TimeFun df.
 Definition idf_step (rows : ptrie (list positive)) (st : idf_state) :
     idf_state + list positive :=
   match st with
-  | IdfState [] _ _ answer => inr (rev answer)
+  | IdfState [] _ _ answer => inr (rev_append answer [])
   | IdfState (task :: rest) expanded discovered answer =>
     let '(v, target) := match task with
       | IdfSeed v => (v, false)
@@ -310,7 +310,7 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma T1_df_step : forall g t r y st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inl next ->
-    (T_df_step g t y st + df_credit g t y next < df_credit g t y st)%N.
+    (T_df_step g t y st + df_credit g t y next + c_loopN <= df_credit g t y st)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T2_df_stop : forall g t r y st result,
