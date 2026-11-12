@@ -151,9 +151,11 @@ Proof. vm_compute; reflexivity. Qed.
 Module NoFlowIfds := IfdsCode Prog NatKeyCode Edge Singleton NatKeyCode SingleIcfg Fact
   NoFlow IfdsLatticeCode.
 
+Definition no_flow_lookup k := NoFlowIfds.key_eqb k (None, (0, None)).
+
 Example no_flow_identity : forallb (fun r =>
-  row_ok IfdsLatticeCode.leb (fun _ => true) (NoFlowIfds.target tt r)
-    (eval_query (NoFlowIfds.resume tt) (fun _ => true)
+  row_ok IfdsLatticeCode.leb no_flow_lookup (NoFlowIfds.target tt r)
+    (eval_query (NoFlowIfds.resume tt) no_flow_lookup
       (S (length (NoFlowIfds.deps tt r))) (NoFlowIfds.start tt r)))
   (NoFlowIfds.rows tt) = true.
 Proof. vm_compute; reflexivity. Qed.
