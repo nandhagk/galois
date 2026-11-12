@@ -124,6 +124,76 @@ Local Close Scope Z_scope.
 
 Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD L.
   Include IntervalPayloadCode L T.
+  (** Every bound is below itself. *)
+  Theorem bound_leb_refl : forall a, bound_leb a a = true.
+  Proof.
+    intros [|z|]; cbn; try reflexivity.
+    apply Z.leb_refl.
+  Qed.
+  
+  (** Bound comparison is transitive. *)
+  Theorem bound_leb_trans : forall a b c,
+    bound_leb a b = true -> bound_leb b c = true -> bound_leb a c = true.
+  Proof.
+    intros [|x|] [|y|] [|z|]; cbn; try discriminate; try reflexivity.
+    intros Hxy Hyz. apply Z.leb_le in Hxy. apply Z.leb_le in Hyz.
+    apply Z.leb_le. lia.
+  Qed.
+  
+  (** Any two bounds are comparable. *)
+  Theorem bound_leb_total : forall a b, bound_leb a b = true \/ bound_leb b a = true.
+  Proof.
+    intros [|x|] [|y|]; cbn; try (now left); try (now right).
+    destruct (Z.leb x y) eqn:Hxy; [now left|right].
+    apply Z.leb_gt in Hxy. apply Z.leb_le. lia.
+  Qed.
+  
+  (** The minimum is below its left input. *)
+  Theorem bound_min_lower_l : forall a b, bound_leb (bound_min a b) a = true.
+  Proof.
+    intros a b. unfold bound_min. destruct (bound_leb a b) eqn:Hab.
+    - apply bound_leb_refl.
+    - destruct (bound_leb_total a b) as [H|H]; congruence.
+  Qed.
+  
+  (** The minimum is below its right input. *)
+  Theorem bound_min_lower_r : forall a b, bound_leb (bound_min a b) b = true.
+  Proof.
+    intros a b. unfold bound_min. destruct (bound_leb a b) eqn:Hab.
+    - exact Hab.
+    - apply bound_leb_refl.
+  Qed.
+  
+  (** A common lower bound is below the minimum. *)
+  Theorem bound_min_greatest : forall a b c,
+    bound_leb c a = true -> bound_leb c b = true -> bound_leb c (bound_min a b) = true.
+  Proof.
+    intros a b c Ha Hb. unfold bound_min. destruct (bound_leb a b); assumption.
+  Qed.
+  
+  (** The maximum is above its left input. *)
+  Theorem bound_max_upper_l : forall a b, bound_leb a (bound_max a b) = true.
+  Proof.
+    intros a b. unfold bound_max. destruct (bound_leb a b) eqn:Hab.
+    - exact Hab.
+    - apply bound_leb_refl.
+  Qed.
+  
+  (** The maximum is above its right input. *)
+  Theorem bound_max_upper_r : forall a b, bound_leb b (bound_max a b) = true.
+  Proof.
+    intros a b. unfold bound_max. destruct (bound_leb a b) eqn:Hab.
+    - apply bound_leb_refl.
+    - destruct (bound_leb_total a b) as [H|H]; congruence.
+  Qed.
+  
+  (** The maximum is below every common upper bound. *)
+  Theorem bound_max_least : forall a b c,
+    bound_leb a c = true -> bound_leb b c = true -> bound_leb (bound_max a b) c = true.
+  Proof.
+    intros a b c Ha Hb. unfold bound_max. destruct (bound_leb a b); assumption.
+  Qed.
+
   Definition pgamma (w : positive) (a : p) (z : Z) : Prop :=
     L.is_word w z /\ match a with IBot => False | I lo hi => in_bnd lo hi z end.
   Definition pwrank (ts : pwparam) (_ : positive) (a : p) : nat :=
@@ -137,55 +207,84 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
     end.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: In environment *)
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: In environment *)
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof. Admitted.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_widening_rank_on: The variable interval_rank was not found in the current environment. *)
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_widening_rank_on: No product even after head-reduction. *)
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted.
+  Proof.
+    intro w.   intros a b Hba. split.
+    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
+      try (intros _; now rewrite !bound_leb_refl).
+    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
+    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
+    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
+    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
+      try (intros _; now rewrite !bound_leb_refl).
+    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
+    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
+    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
+  Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_refl was not found in the current environment. *)
+  Proof.
+    intro w. intros [|l h]; cbn; [reflexivity|].
+    now rewrite !bound_leb_refl.
+  Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_trans was not found in the current environment. *)
+  Proof.
+    intro w. intros [|la ha] [|lb hb] [|lc hc]; cbn; try discriminate; try reflexivity.
+    intros Hab Hbc. apply andb_true_iff in Hab as [Hlb Hhb].
+    apply andb_true_iff in Hbc as [Hlc Hhc]. apply andb_true_iff. split;
+      eapply bound_leb_trans; eassumption.
+  Qed.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
   Proof.
-  intro w. intros [|l h]; reflexivity.
-
+    intro w. intros [|l h]; reflexivity.
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q18: at width 1, raw interval [2,3] is not below top [0,1]. *)
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
   Proof. Admitted.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q18: at width 1, [2,3] clips to bottom but is not below IBot in raw order. *)
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_l was not found in the current *)
+  Proof.
+    intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply bound_min_lower_l|apply bound_max_upper_l].
+  Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_r was not found in the current *)
+  Proof.
+    intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply bound_min_lower_r|apply bound_max_upper_r].
+  Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted. (* CONVERT: interval_meet_lower_left: The variable bound_max_upper_l was not found. *)
+  Proof.
+    intros w [|la ha] [|lb hb]; cbn; try reflexivity.
+    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
+    apply andb_true_iff. split; [apply bound_max_upper_l|apply bound_min_lower_l].
+  Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
@@ -196,8 +295,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof.
-intros w z [_ Hempty]. exact Hempty.
-
+    intros w z [_ Hempty]. exact Hempty.
   Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
@@ -209,7 +307,7 @@ intros w z [_ Hempty]. exact Hempty.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* CONVERT: interval_meet_sound: The variable bound_max_least was not found. *)
+  Proof. Admitted. (* CONVERT: interval_meet_sound: No such assumption. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted. (* CONVERT: interval_shape_laws: Expects a disjunctive pattern with 3 branches. *)

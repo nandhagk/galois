@@ -6,8 +6,9 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Time Tactics Std.
-From Galois.Base Require Import KeySig Trie.
+From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig SemanticsSig MemorySig.
+Import Code.List.
 
 Module Type MEMORY_DATA (P : TYPE) (R : KEY_OPS).
   Parameter effect_table : P.t -> ptrie (list (effect R.t)).
@@ -43,6 +44,8 @@ Module MemoryT (P : TYPE) (N : KEY_T) (E : TYPE)
     (A : ALIAS_T R) (D : MEMORY_DATA_T P R) <: MEMORY_T P N E C R A.
   Include Memory P N EKey C R A D.
   TimeFun effects.
+  TimeFun reads.
+  TimeFun writes.
 End MemoryT.
 
 Record effect_flags := EffectFlags {

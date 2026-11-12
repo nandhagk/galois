@@ -103,13 +103,11 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
-  intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
-
+    intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
   Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
   Proof.
-  intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
-
+    intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
   Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
@@ -117,11 +115,17 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof.
+    intros q w [a b c] [d e f] Hbot Hstrict. destruct a, b, c, d, e, f;
+      cbn in Hstrict |- *; try discriminate; lia.
+  Qed.
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof.
+    intros q w [a b c] [d e f] Hbot. destruct a, b, c, d, e, f;
+      cbn; lia.
+  Qed.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
@@ -157,8 +161,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof.
-intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
-
+    intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
   Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
@@ -183,7 +186,9 @@ intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
   Proof. Admitted. (* CONVERT: sign_meet_sound: Not an inductive product. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted.
+  Proof.
+    intros w [n q p] x Hempty Hg. destruct n, q, p; cbn in Hempty; try discriminate. exact (pgamma_bot w x Hg).
+  Qed.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.

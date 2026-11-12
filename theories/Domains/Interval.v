@@ -4,7 +4,7 @@
     For example, meeting disjoint finite intervals returns bottom.
     Builds on: IntervalSig and ThresholdsSig. *)
 
-From Stdlib Require Import ZArith Bool List.
+From Stdlib Require Import ZArith Bool List Lia.
 From Argent Require Import Std.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
 Import List.ListNotations.
@@ -264,19 +264,96 @@ Local Close Scope Z_scope.
 Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Include IntervalCode L T.
   Include INTERVAL_SPEC L T.
+  (** Every bound is below itself. *)
+  Theorem bound_leb_refl : forall a, bound_leb a a = true.
+  Proof.
+    intros [|z|]; cbn; try reflexivity.
+    apply Z.leb_refl.
+  Qed.
+  
+  (** Bound comparison is transitive. *)
+  Theorem bound_leb_trans : forall a b c,
+    bound_leb a b = true -> bound_leb b c = true -> bound_leb a c = true.
+  Proof.
+    intros [|x|] [|y|] [|z|]; cbn; try discriminate; try reflexivity.
+    intros Hxy Hyz. apply Z.leb_le in Hxy. apply Z.leb_le in Hyz.
+    apply Z.leb_le. lia.
+  Qed.
+  
+  (** Any two bounds are comparable. *)
+  Theorem bound_leb_total : forall a b, bound_leb a b = true \/ bound_leb b a = true.
+  Proof.
+    intros [|x|] [|y|]; cbn; try (now left); try (now right).
+    destruct (Z.leb x y) eqn:Hxy; [now left|right].
+    apply Z.leb_gt in Hxy. apply Z.leb_le. lia.
+  Qed.
+  
+  (** The minimum is below its left input. *)
+  Theorem bound_min_lower_l : forall a b, bound_leb (bound_min a b) a = true.
+  Proof.
+    intros a b. unfold bound_min. destruct (bound_leb a b) eqn:Hab.
+    - apply bound_leb_refl.
+    - destruct (bound_leb_total a b) as [H|H]; congruence.
+  Qed.
+  
+  (** The minimum is below its right input. *)
+  Theorem bound_min_lower_r : forall a b, bound_leb (bound_min a b) b = true.
+  Proof.
+    intros a b. unfold bound_min. destruct (bound_leb a b) eqn:Hab.
+    - exact Hab.
+    - apply bound_leb_refl.
+  Qed.
+  
+  (** A common lower bound is below the minimum. *)
+  Theorem bound_min_greatest : forall a b c,
+    bound_leb c a = true -> bound_leb c b = true -> bound_leb c (bound_min a b) = true.
+  Proof.
+    intros a b c Ha Hb. unfold bound_min. destruct (bound_leb a b); assumption.
+  Qed.
+  
+  (** The maximum is above its left input. *)
+  Theorem bound_max_upper_l : forall a b, bound_leb a (bound_max a b) = true.
+  Proof.
+    intros a b. unfold bound_max. destruct (bound_leb a b) eqn:Hab.
+    - exact Hab.
+    - apply bound_leb_refl.
+  Qed.
+  
+  (** The maximum is above its right input. *)
+  Theorem bound_max_upper_r : forall a b, bound_leb b (bound_max a b) = true.
+  Proof.
+    intros a b. unfold bound_max. destruct (bound_leb a b) eqn:Hab.
+    - apply bound_leb_refl.
+    - destruct (bound_leb_total a b) as [H|H]; congruence.
+  Qed.
+  
+  (** The maximum is below every common upper bound. *)
+  Theorem bound_max_least : forall a b c,
+    bound_leb a c = true -> bound_leb b c = true -> bound_leb (bound_max a b) c = true.
+  Proof.
+    intros a b c Ha Hb. unfold bound_max. destruct (bound_leb a b); assumption.
+  Qed.
+
   Definition wrank := interval_wrank.
   Definition gamma := in_itv.
 
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_refl was not found. *)
+  Proof.
+    intros [|l h]; cbn; [reflexivity|].
+    now rewrite !bound_leb_refl.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_trans was not found in the current environment. *)
+  Proof.
+    intros [|la ha] [|lb hb] [|lc hc]; cbn; try discriminate; try reflexivity.
+    intros Hab Hbc. apply andb_true_iff in Hab as [Hlb Hhb].
+    apply andb_true_iff in Hbc as [Hlc Hhc]. apply andb_true_iff. split;
+      eapply bound_leb_trans; eassumption.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
-intros [|l h]; reflexivity.
-
+    intros [|l h]; reflexivity.
   Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
@@ -286,16 +363,26 @@ intros [|l h]; reflexivity.
   Proof. Admitted.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_l was not found in the current *)
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply bound_min_lower_l|apply bound_max_upper_l].
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_r was not found in the current *)
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply bound_min_lower_r|apply bound_max_upper_r].
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof. Admitted.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted. (* CONVERT: interval_meet_lower_left: The variable bound_max_upper_l was not found in the current *)
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; try reflexivity.
+    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
+    apply andb_true_iff. split; [apply bound_max_upper_l|apply bound_min_lower_l].
+  Qed.
   (** Meet is below its right operand. *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
@@ -312,18 +399,30 @@ intros [|l h]; reflexivity.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q16: thresholds [0] widen [PosInf,PosInf] to [0,PosInf], growing rank 0 to 1. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q16: thresholds [0] widen [PosInf,PosInf] to [0,PosInf], growing rank 0 to 1. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof.
+    intros a b Hba. split.
+    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
+      try (intros _; now rewrite !bound_leb_refl).
+    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
+    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
+    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
+    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
+      try (intros _; now rewrite !bound_leb_refl).
+    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
+    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
+    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
+  Qed.
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted. (* CONVERT: interval_gamma_laws: The variable bound_leb_trans was not found in the current environment. *)
+  Proof. Admitted. (* CONVERT: interval_gamma_laws: Unable to unify "bound_leb ?a ?c = true" with *)
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
@@ -334,10 +433,12 @@ intros [|l h]; reflexivity.
   Proof. Admitted.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_meet_sound: Not an inductive product. *)
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted.
+  Proof.
+    intros [|lo hi] z Hempty Hgamma; try discriminate. exact Hgamma.
+  Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.

@@ -55,14 +55,14 @@ Module Translate (L1 L2 : LANG) (F : LANG_MORPHISM L1 L2)
   Definition is_bot_below := D.is_bot_below.
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L1.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: rename_laws: The term "cs" has type "list L1.val" while it is expected to have type *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L1.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: rename_laws: The term "cs" has type "list L1.val" while it is expected to have type *)
   Definition backward_refines o := D.backward_refines (F.op o).
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L1.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: rename_laws: The term "cs" has type "list L1.val" while it is expected to have type *)
   Definition guard_refines g := D.guard_refines (F.guard g).
 End Translate.
