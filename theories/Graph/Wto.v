@@ -228,13 +228,19 @@ Definition wto_interval_edge (ranks : ptrie N) (intervals : ptrie (N * N))
   end.
 TimeFun wto_interval_edge.
 
+(** The edge scan is the final conjunct of the checker. *)
+Definition wto_edges_ok (b : digraph) (ranks : ptrie N) (intervals : ptrie (N * N))
+    (vs : list positive) : bool :=
+  forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
+TimeFun wto_edges_ok.
+
 (** The checker builds its own listed-row graph and never reads prepared caches. *)
 Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : bool :=
   let b := base g in
-  let listed := fold_left (fun acc v => PTrieCode.set v true acc) (verts b) Empty in
+  let listed := listed_of g in
   if forallb (fun v => match trie_get v listed with Some _ => true | None => false end) roots
   then
-    match wto_check_index (N.double (N.double (N.of_nat (graph_n b))) + 2)%N (graph_width b) listed
+    match wto_check_index (check_fuel g) (graph_width b) listed
         [WtoCheckVisit w] 0%N Empty Empty [] with
     | None => false
     | Some (ranks, intervals, vs) =>
@@ -243,7 +249,7 @@ Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : b
       let reached := fold_left (fun acc v => PTrieCode.set v true acc) live Empty in
       forallb (fun v => match trie_get v reached with Some _ => true | None => false end) vs &&
       forallb (fun v => match trie_get v ranks with Some _ => true | None => false end) live &&
-      forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs
+      wto_edges_ok b ranks intervals vs
     end
   else false.
 TimeFun wto_check_linear.
@@ -314,6 +320,8 @@ Module WtoT <: WTO_ALL.
   TimeFun wto_check_index.
   Definition wto_interval_edge := wto_interval_edge.
   TimeFun wto_interval_edge.
+  Definition wto_edges_ok := wto_edges_ok.
+  TimeFun wto_edges_ok.
   TimeFun build.
   TimeFun check.
   TimeFun heads.
@@ -579,17 +587,37 @@ Module WtoT <: WTO_ALL.
       N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T2_index : forall rows,
-    (T_wto_positions rows <= k_index * N.of_nat (length rows + 1) *
-      N.of_nat (length rows + vertex_width (map fst rows) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
   Lemma T3_scope : forall g vs,
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T4_check_scans : forall g roots w,
-    (T_check g roots w <= k_check * check_work g roots w)%N.
+  (** The index loop checks each key's width and listing before it reads a trie. *)
+  Lemma T4a_index : forall g w,
+    (T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty [] <=
+    k_index * N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** An index result lists distinct listed vertices. *)
+  Lemma F4a_index : forall g w ranks intervals vs,
+    wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+    NoDup vs /\ (forall v, In v vs -> In v (nodes g)).
+  Proof. Admitted. (* STUB *)
+
+  (** The edge scan is the final conjunct of the checker. *)
+  Lemma F4b_edges : forall b ranks intervals vs,
+    wto_edges_ok b ranks intervals vs =
+      forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs b u)) vs.
+  Proof. Admitted. (* STUB *)
+
+  (** The edge scan reads the rows of distinct listed vertices once each. *)
+  Lemma T4b_edges : forall g w ranks intervals vs,
+    wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+    (T_wto_edges_ok (base g) ranks intervals vs <=
+     k_check * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+       N.of_nat (graph_width (base g) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T5_check_public : forall g roots w,

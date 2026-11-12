@@ -176,6 +176,13 @@ Module Type SCC_PLAN (Import S : SCC_T).
     trace_stack [] (tarjan_trace g) [] /\
     length (tarjan_trace g) = 2 * graph_n (base g) + graph_e (base g).
 
+  (** The filtered traversal is nested, duplicate-free and graph-sized on every input. *)
+  Parameter F1b_trace_size : forall g,
+    NoDup (entered (tarjan_trace g)) /\
+    (forall v, In v (entered (tarjan_trace g)) -> In v (nodes g)) /\
+    trace_stack [] (tarjan_trace g) [] /\
+    length (tarjan_trace g) <= 2 * graph_n (base g) + graph_e (base g).
+
   (** The wrapper returns the owner map and reverses emitted blocks from the final state. *)
   Parameter F2_run : forall g,
     run g = let result := prefix_state (tarjan_trace g) in
@@ -189,6 +196,12 @@ Module Type SCC_PLAN (Import S : SCC_T).
   Parameter F4_prefix : forall g prefix suffix,
     wf_graph (base g) -> tarjan_trace g = prefix ++ suffix ->
     invariant g prefix (prefix_state prefix).
+
+  (** Actual prefixes keep the inventory and widths that the cost proof reads. *)
+  Parameter F4b_prefix_cost : forall g prefix suffix,
+    tarjan_trace g = prefix ++ suffix ->
+    inventory prefix (prefix_state prefix) /\
+    width_domain (graph_width (base g)) (prefix_state prefix).
 
   (** Popping consumes an ordered prefix and updates every consumed owner once. *)
   Parameter F5_pop : forall root index pending low active owners members tail low' active' owners',
@@ -222,14 +235,14 @@ Module Type SCC_PLAN (Import S : SCC_T).
 
   (** Actual callbacks transfer pending-cell credit and emitted-reversal credit. *)
   Parameter T2_callback : forall g prefix e suffix,
-    wf_graph (base g) -> tarjan_trace g = prefix ++ e :: suffix ->
+    tarjan_trace g = prefix ++ e :: suffix ->
     let w := graph_width (base g) in
     let s := prefix_state prefix in
     (callback_cost e s + potential w (apply_event s e) <=
       k_callback * N.of_nat (w + 1) + potential w s)%N.
 
   (** Folding telescopes actual callback credits across the complete search trace. *)
-  Parameter T3_fold : forall g, wf_graph (base g) ->
+  Parameter T3_fold : forall g,
     (T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
       tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
       potential (graph_width (base g)) (prefix_state (tarjan_trace g)) <=
@@ -247,7 +260,7 @@ Module Type SCC_PLAN (Import S : SCC_T).
         tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
       N.of_nat (length (tarjan_emitted (prefix_state (tarjan_trace g)))) + 1))%N.
 
-  (** The unrestricted target needs raw-graph accounting beyond well-formed runs. *)
+  (** Filtered trace size and callback credit yield the unrestricted public bound. *)
   Parameter T6_public : forall g,
     (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.

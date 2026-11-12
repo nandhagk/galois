@@ -72,47 +72,47 @@ Module Search (V : VISITOR) <: SEARCH V.
   Definition trace (g : prepared) (roots : list positive) := prepared_search_trace g roots.
 
   Lemma trace_depth_first : forall g roots,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     exists final, dfs_roots (base g) [] roots (trace g roots) final.
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma dfs_fold : forall g roots s,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     dfs g roots s = fold_events V.enter V.leave V.edge (trace g roots) s.
   Proof. Admitted. (* CONVERT: GraphSearch: preserve the visitor-fold equation. *)
 
   Lemma trace_reach : forall g roots v,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     In v (entered (trace g roots)) <-> reach (base g) roots v.
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_unique : forall g roots,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) -> NoDup (entered (trace g roots)).
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_nested : forall g roots,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) -> trace_stack [] (trace g roots) [].
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_edges : forall g roots u,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) -> reach (base g) roots u ->
     Permutation (edge_targets u (trace g roots)) (succs (base g) u).
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_edges_sound : forall g roots kind u v,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     In (Edge kind u v) (trace g roots) -> reach (base g) roots u /\ edge (base g) u v.
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_kinds : forall g roots prefix kind u v suffix,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     trace g roots = prefix ++ Edge kind u v :: suffix -> event_kind_correct prefix kind v.
   Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
@@ -221,7 +221,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Proof. Admitted. (* STUB *)
 
   Lemma F3_initial : forall g roots,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots (initial roots) /\
     potential g roots (initial roots) =
@@ -229,40 +229,40 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Proof. Admitted. (* STUB *)
 
   Lemma F4_step : forall g roots st next,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inl next ->
     invariant g roots next /\ (potential g roots next < potential g roots st)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma F5_stop : forall g roots st es,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     search_tasks st = [] /\ es = trace g roots.
   Proof. Admitted. (* STUB *)
 
   Lemma F6_width : forall g roots st,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width (run_width g roots)) (search_events st).
   Proof. Admitted. (* STUB *)
 
   Lemma F7_events : forall g roots,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     length (trace g roots) = 2 * n_reach g roots + e_reach g roots.
   Proof. Admitted. (* STUB *)
 
   Lemma F8_fuel : forall g roots,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     exists es, loopN (search_step (base g)) (search_budget g roots)
       (initial roots) = inr es.
   Proof. Admitted. (* STUB *)
 
   Lemma T1_step : forall g roots st next w,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width w) (trace g roots) ->
     vertex_width roots <= w -> search_step (base g) st = inl next ->
@@ -270,14 +270,14 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Proof. Admitted. (* STUB *)
 
   Lemma T2_stop : forall g roots st es,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     (T_search_step (base g) st <= stop_budget g roots)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T3_loop : forall g roots w,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
     (T_loopN (search_step (base g)) (T_search_step (base g))
@@ -287,7 +287,7 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Proof. Admitted. (* STUB *)
 
   Lemma T4_trace : forall g roots w,
-    prepared_ok g -> wf_graph (base g) ->
+    counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
     (T_search_trace g roots <= k_trace *
@@ -295,6 +295,14 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
         T_loopN (search_step (base g)) (T_search_step (base g))
           (search_budget g roots) (initial roots) +
         N.of_nat (length (trace g roots)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Every step emits an event or retires a root or row task, at the width of the run. *)
+  Lemma T4_raw : forall g roots,
+    (T_search_trace g roots <= k_trace *
+      (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+        N.of_nat (run_width g roots + 1) +
+       N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T5_fold : forall g roots s B,
