@@ -91,25 +91,6 @@ Module SsaCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     end.
 End SsaCode.
 
-Module Type SSA_DATA_LAWS (P : TYPE) (N : KEY) (E : KEY) (C : CFG P N E)
-    (V : KEY) (K G : TYPE) (Import D : SSA_DATA P N E V K G).
-  Parameter entry_params_valid : forall p,
-    ssa_entry_params (tables p) = flat_map (fun n =>
-      match trie_get (N.encode n) (ssa_params (tables p)) with
-      | Some xs => xs | None => nil end) (C.entries p).
-  Parameter arg_rows_valid : forall p,
-    ssa_arg_rows (tables p) = flat_map (fun e => map (pair e)
-      (match trie_get (E.encode e) (ssa_args (tables p)) with
-      | Some xs => xs | None => nil end)) (C.edges p).
-End SSA_DATA_LAWS.
-
-Module Type SSA_DATA_VALID (P : TYPE) (N : KEY) (E : KEY) (C : CFG P N E)
-    (V : KEY) (K G : TYPE) := SSA_DATA P N E V K G <+ SSA_DATA_LAWS P N E C V K G.
-
-Module Type SSA_DATA_VALID_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
-    (V : KEY_T) (K G : TYPE) :=
-  SSA_DATA_VALID P N E C V K G <+ SSA_DATA_TIME P N E V K G.
-
 Record ssa_point_tables (B BE N E V : Type) := SsaPointTables {
   point_lists : ptrie (list N);
   instruction_lists : ptrie (list E);
@@ -278,13 +259,10 @@ Definition dominating_edges_projected {E} (ctx : strict_context (E * nat))
 TimeFun dominating_edges_projected.
 
 Module Ssa (P : TYPE) (N : KEY) (E : KEY)
-    (C : CFG P N E) (V : KEY) (K G : TYPE) (D : SSA_DATA_VALID P N E C V K G)
+    (C : CFG P N E) (V : KEY) (K G : TYPE) (D : SSA_DATA P N E V K G)
     <: SSA P N E C V K G.
   Include SsaCode P N E C V K G D.
   Include SSA_SPEC P N E C V K G.
-
-  Definition entry_params_spec := D.entry_params_valid.
-  Definition arg_rows_spec := D.arg_rows_valid.
 
   Definition wf p :=
     C.wf p /\ NoDup (values p) /\
@@ -306,7 +284,16 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
         presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
         In (home p y) route) /\
     well_founded (fun y x => In x (values p) /\ home p y = home p x /\
-      exists op xs, def p x = Op op xs /\ In y xs).
+      exists op xs, def p x = Op op xs /\ In y xs) /\
+    entry_params p = flat_map (params p) (C.entries p) /\
+    arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
+
+  Lemma entry_params_spec : forall p, wf p ->
+    entry_params p = flat_map (params p) (C.entries p).
+  Proof. Admitted. (* STUB *)
+  Lemma arg_rows_spec : forall p, wf p ->
+    arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
+  Proof. Admitted. (* STUB *)
 
   Lemma cfg_wf : forall p, wf p -> C.wf p.
   Proof. Admitted. (* STUB *)
@@ -351,7 +338,7 @@ End Ssa.
 
 Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T)
-    (K G : TYPE) (D : SSA_DATA_VALID_T P N E C V K G) <: SSA_T P N E C V K G.
+    (K G : TYPE) (D : SSA_DATA_T P N E V K G) <: SSA_T P N E C V K G.
   Include Ssa P N E C V K G D.
   TimeFun values.
   TimeFun entry_params.

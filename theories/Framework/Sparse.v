@@ -114,7 +114,7 @@ Module Sparse (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma key_eqb_specification : key_eqb = X.eqb.
   Proof. Admitted. (* STUB *)
   (** Rows retain entry, definition and incoming-operand occurrence order. *)
-  Lemma rows_spec : forall p, rows p =
+  Lemma rows_spec : forall p, S.wf p -> rows p =
     map SparseSeed (flat_map (S.params p) (C.entries p)) ++
     map SparseDef (S.values p) ++
     flat_map (fun e => map (fun xy => SparseArg e (fst xy) (snd xy)) (S.args p e))
@@ -222,7 +222,7 @@ Module SparseSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (CL : CFG_LINK P N E C M) (SL : SSA_LINK P N E C X K G Val S M CL)
     (IL : SPARSE_INITIAL_LINK P N E C X L K G Val S V T M CL SL)
     <: SPARSE_SOUND P N E C X L K G Val S V T A M CL SL IL.
-  Lemma covers : forall p look, A.post_solution p look ->
+  Lemma covers : forall p look, S.wf p -> A.post_solution p look ->
     forall s, reachable (M.initial p) (M.step p) s ->
       forall x c, SL.venv s x = Some c -> V.gamma (look x) c.
   Proof. Admitted. (* CONVERT: sparse_sound: The variable sparse_reachable_invariant was not found *)

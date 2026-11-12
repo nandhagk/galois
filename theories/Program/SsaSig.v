@@ -63,14 +63,16 @@ End SSA_SPEC.
 Module Type SSA_LAWS (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG P N E) (V : KEY) (K G : TYPE)
     (Import S : SSA_OPS P N E C V K G).
-  (** The entry inventory follows entry and parameter order. *)
-  Parameter entry_params_spec : forall p,
-    entry_params p = flat_map (params p) (C.entries p).
-  (** The operand inventory follows edge and operand order. *)
-  Parameter arg_rows_spec : forall p,
-    arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
   (* spec: wf *)
   Parameter wf : P.t -> Prop.
+  (** The entry inventory of a well-formed presentation follows entry and parameter
+      order. *)
+  Parameter entry_params_spec : forall p, wf p ->
+    entry_params p = flat_map (params p) (C.entries p).
+  (** The operand inventory of a well-formed presentation follows edge and operand
+      order. *)
+  Parameter arg_rows_spec : forall p, wf p ->
+    arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
   (** A well-formed SSA presentation has a well-formed underlying CFG. *)
   Parameter cfg_wf : forall p, wf p -> C.wf p.
   (** A value has one entry in the definition inventory. *)

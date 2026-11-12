@@ -6,3 +6,5 @@ theories/Egraph/Compile.v
 tests/Egraph/CompileTest.v
 theories/Egraph/Saturate.v
 tests/Egraph/SaturateTest.v
+theories/Egglog/Sorts.v
+tests/Egglog/SortsTest.v
