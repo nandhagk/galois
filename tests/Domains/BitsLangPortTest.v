@@ -41,3 +41,7 @@ Proof. vm_compute. reflexivity. Qed.
 Example truth_rejected : Domain.guard (BTruth true) [p 32 0] = [TBot].
 Proof. vm_compute. reflexivity. Qed.
 *)
+
+Example point_empty_operand :
+  Domain.forward (BOp bvadd) [TVal 1%positive FBot] = TBot.
+Proof. vm_compute. reflexivity. Qed.
