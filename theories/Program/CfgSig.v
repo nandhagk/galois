@@ -29,6 +29,8 @@ Module Type CFG_LAWS (P : TYPE) (N : KEY) (E : TYPE)
     (Import C : CFG_INDEXED_OPS P N E).
   (* spec: wf *)
   Parameter wf : P.t -> Prop.
+  (** Node enumeration contains no duplicate. *)
+  Parameter nodes_nodup : forall p, wf p -> NoDup (nodes p).
   (** Entries belong to the node domain. *)
   Parameter entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
   (** Listed edges have both endpoints in the node domain. *)
@@ -96,3 +98,15 @@ Module Type CFG_LINK (P : TYPE) (N : KEY) (E : TYPE)
     exists e, taken p s s1 e /\ In e (C.edges p) /\
       C.src p e = point s /\ C.dst p e = point s1.
 End CFG_LINK.
+
+Module Type CFG_PREPARE_TIME (P PT : TYPE) (N : KEY_T) (E : TYPE)
+    (Import C : CFG_OPS P N E).
+  Parameter prepare : P.t -> PT.t.
+  Parameter T_prepare : P.t -> N.
+  Parameter c_cfg_prep : N.
+  (** Preparation charges every entry and edge endpoint at the largest key width. *)
+  Parameter T_prepare_le : forall p,
+    (T_prepare p <= c_cfg_prep * N.of_nat (length (entries p) + length (edges p) + 1) *
+      N.of_nat (fold_right Nat.max 0%nat (List.map N.bits (entries p ++
+        flat_map (fun e => src p e :: dst p e :: nil) (edges p))) + 1))%N.
+End CFG_PREPARE_TIME.

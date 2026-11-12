@@ -4,7 +4,7 @@
     For example, a row can read a predecessor and contribute to its target and an alarm key.
     Builds on: Fixpoint.Query and Lattice.LatticeSig. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query.
@@ -12,6 +12,7 @@ From Galois.Fixpoint Require Import Query.
 Module Type SYSTEM_OPS (L : LATTICE_OPS).
   Parameter prog key row frame : Type.
   Parameter key_code : key -> positive.
+  Parameter key_eqb : key -> key -> bool.
   Parameter rows : prog -> list row.
   Parameter target : prog -> row -> key.
   Parameter start : prog -> row -> query key L.t frame.
@@ -46,6 +47,8 @@ Module Type SYSTEM_LAWS (L : LATTICE) (Import S : SYSTEM_OPS L)
   Parameter wf : prog -> Prop.
   (** Codes distinguish all system keys. *)
   Parameter key_code_inj : forall a b, key_code a = key_code b -> a = b.
+  (** Key equality decides equality of system keys. *)
+  Parameter key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
   (** Declared rows finish within their dependency-derived fuel. *)
   Parameter eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
@@ -55,6 +58,9 @@ Module Type SYSTEM_LAWS (L : LATTICE) (Import S : SYSTEM_OPS L)
   (** Side contributions use declared side keys. *)
   Parameter sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
+  (** Side contributions fit the declared occurrence budget. *)
+  Parameter sides_count : forall p r look a ss, wf p -> In r (rows p) ->
+    eval p r look = Some (a, ss) -> length ss <= length (sides p r).
 End SYSTEM_LAWS.
 
 Module Type SYSTEM (L : LATTICE) :=
@@ -62,6 +68,7 @@ Module Type SYSTEM (L : LATTICE) :=
 
 Module Type SYSTEM_TIME (L : LATTICE_T) (Import S : SYSTEM L).
   Parameter T_key_code : key -> N.
+  Parameter T_key_eqb : key -> key -> N.
   Parameter T_rows : prog -> N.
   Parameter T_target : prog -> row -> N.
   Parameter T_start : prog -> row -> N.
@@ -79,6 +86,9 @@ Module Type SYSTEM_TIME (L : LATTICE_T) (Import S : SYSTEM L).
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
   (** Encoding costs are linear in the resulting code size. *)
   Parameter T_key_code_le : forall x, (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  (** Equality costs are bounded by the first key's code size. *)
+  Parameter T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
   (** Enumerating rows costs linear time in the output length. *)
   Parameter T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
@@ -97,9 +107,38 @@ Module Type SYSTEM_TIME (L : LATTICE_T) (Import S : SYSTEM L).
   (** Side enumeration pays for every key occurrence. *)
   Parameter T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) * N.of_nat (kw p + 1))%N.
+  (** Row output sizes fit the transfer budget. *)
+  Parameter eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (L.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
 End SYSTEM_TIME.
 
 Module Type SYSTEM_T (L : LATTICE_T) := SYSTEM L <+ SYSTEM_TIME L.
+
+Module Type BUDGET (L : WLATTICE_T) (S : SYSTEM_T L).
+  (* spec: inv vsize wmax *)
+  Parameter inv : S.prog -> L.t -> Prop.
+  Parameter vsize : S.prog -> nat.
+  Parameter wmax : S.prog -> L.wparam -> nat.
+  (** Bottom satisfies the client's invariant. *)
+  Parameter inv_bot : forall p, inv p L.bot.
+  (** Join keeps the invariant. *)
+  Parameter inv_join : forall p a b, inv p a -> inv p b -> inv p (L.join a b).
+  (** Narrowing keeps the invariant. *)
+  Parameter inv_narrow : forall p a b, inv p a -> inv p b -> inv p (L.narrow a b).
+  (** Widening keeps the invariant. *)
+  Parameter inv_widen : forall p w a b,
+    inv p a -> inv p b -> inv p (L.widen w a b).
+  (** Every row contribution satisfies the invariant on invariant lookups. *)
+  Parameter inv_rows : forall p r look a ss, S.wf p -> In r (S.rows p) ->
+    (forall x, inv p (look x)) -> S.eval p r look = Some (a, ss) ->
+    inv p a /\ Forall (fun xa => inv p (snd xa)) ss.
+  (** The invariant bounds representation size. *)
+  Parameter size_le : forall p a, inv p a -> L.size a <= vsize p.
+  (** The invariant bounds widening rank for every parameter. *)
+  Parameter wrank_le : forall p w a, inv p a -> L.wrank w a <= wmax p w.
+End BUDGET.
 
 Module Type LOCAL_OPS (L : LATTICE_OPS) (Import S : SYSTEM_OPS L).
   Parameter row_code : row -> positive.

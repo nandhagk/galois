@@ -28,6 +28,8 @@ Module Type INDEXED_OPS (L : LATTICE_OPS) (S : SYSTEM_OPS L).
   Include LOCAL_SYSTEM_OPS L
     with Definition prog := indexed S.prog S.row
     with Definition key := S.key
+    with Definition key_code := S.key_code
+    with Definition key_eqb := S.key_eqb
     with Definition row := (positive * S.row)%type
     with Definition frame := S.frame.
   Parameter prepare : S.prog -> prog.
@@ -47,6 +49,18 @@ Module Type INDEXED_LAWS (L : LATTICE) (S : SYSTEM L)
     eval (prepare p) r look = S.eval p (snd r) look.
   (** Prepared well-formedness follows from the original system. *)
   Parameter wf_prepare : forall p, S.wf p -> wf (prepare p).
+  (** Prepared targets agree with the original rows. *)
+  Parameter prepare_target : forall p r, In r (rows (prepare p)) ->
+    target (prepare p) r = S.target p (snd r).
+  (** Prepared dependencies agree with the original rows. *)
+  Parameter prepare_deps : forall p r, In r (rows (prepare p)) ->
+    deps (prepare p) r = S.deps p (snd r).
+  (** Prepared side declarations agree with the original rows. *)
+  Parameter prepare_sides : forall p r, In r (rows (prepare p)) ->
+    sides (prepare p) r = S.sides p (snd r).
+  (** Preparation keeps precisely the original post-solutions. *)
+  Parameter prepare_post : forall p look,
+    post_solution (prepare p) look <-> S.post_solution p look.
 End INDEXED_LAWS.
 
 Module Type INDEXED (L : LATTICE) (S : SYSTEM L) :=
@@ -59,12 +73,13 @@ Module Type INDEXED_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import I : INDEXED L 
   Parameter c_idx : N.
   (** Preparation pays for rows, dependency occurrences and encoded keys. *)
   Parameter T_prepare_le : forall p, S.wf p ->
-    (T_prepare p <= c_idx *
+    (T_prepare p <= c_idx * (
       N.of_nat ((length (S.rows p) +
         fold_right Nat.add 0
           (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
             (S.rows p)) + 1)%nat) *
-      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1))%N.
+      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
+      N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1)))%N.
 End INDEXED_TIME.
 
 Module Type INDEXED_T (L : LATTICE_T) (S : SYSTEM_T L) :=
