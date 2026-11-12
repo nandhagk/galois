@@ -107,6 +107,10 @@ Record search_state := SearchState {
   search_events : list event
 }.
 
+TimeFun search_tasks.
+TimeFun search_colours.
+TimeFun search_events.
+
 Module Type VISITOR_OPS.
   Parameter state : Type.
   Parameter enter : positive -> state -> state.

@@ -22,6 +22,7 @@ Record digraph := Digraph {
 }.
 
 TimeFun verts.
+TimeFun succ.
 
 Record prepared := Prepared {
   base : digraph;
@@ -29,6 +30,8 @@ Record prepared := Prepared {
   nv : N;
   ne : N
 }.
+
+TimeFun base.
 
 Definition succs (g : digraph) (v : positive) : list positive :=
   match g with
