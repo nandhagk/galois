@@ -5,7 +5,7 @@
     Builds on: Stdlib lists and positive identifiers. *)
 
 From Stdlib Require Import List PArith.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std Loop.
 
 Inductive exit (X G : Type) : Type :=
   | Jump (b : positive) (args : list X)
@@ -121,64 +121,66 @@ Fixpoint exec_code {K C} (eval : K -> list C -> option C)
 
 TimeFun exec_code.
 
-Fixpoint steps {K G C} (eval : K -> list C -> option C)
-    (test : G -> list C -> option bool) (fuel : nat) (p : func positive K G) (b : positive)
-    (args : list C) (s : env C) : result C :=
-    match fuel with
-    | O => Timeout
-    | S remaining =>
+Definition step {K G C} (eval : K -> list C -> option C)
+    (test : G -> list C -> option bool) (p : func positive K G)
+    (state : positive * list C * env C) : (positive * list C * env C) + result C :=
+    let (pair, s) := state in
+    let (b, args) := pair in
         match find_block b (blocks _ _ _ p) with
-        | None => Wrong
+        | None => inr Wrong
         | Some body =>
             match bind_vars (params _ _ _ body) args s with
-            | None => Wrong
+            | None => inr Wrong
             | Some entered =>
                 match exec_code eval (code _ _ _ body) entered with
-                | None => Wrong
+                | None => inr Wrong
                 | Some finished =>
                     match term _ _ _ body with
                     | Jump next actuals =>
                         match read_vars finished actuals with
-                        | Some values => steps eval test remaining p next values finished
-                        | None => Wrong
+                        | Some values => inl (next, values, finished)
+                        | None => inr Wrong
                         end
                     | Branch guard operands yes yes_args no no_args =>
                         match read_vars finished operands with
-                        | None => Wrong
+                        | None => inr Wrong
                         | Some values =>
                             match test guard values with
-                            | None => Wrong
+                            | None => inr Wrong
                             | Some choice =>
                                 let next := if choice then yes else no in
                                 let actuals := if choice then yes_args else no_args in
                                 match read_vars finished actuals with
-                                | Some passed => steps eval test remaining p next passed finished
-                                | None => Wrong
+                                | Some passed => inl (next, passed, finished)
+                                | None => inr Wrong
                                 end
                             end
                         end
                     | Return values =>
                         match read_vars finished values with
-                        | Some returned => Returned returned
-                        | None => Wrong
+                        | Some returned => inr (Returned returned)
+                        | None => inr Wrong
                         end
                     end
                 end
             end
-        end
-    end.
+        end.
 
 TimeFun blocks.
 TimeFun params.
 TimeFun code.
 TimeFun term.
-TimeFun steps.
+TimeFun step.
 
 Definition run_with {K G C} (eval : K -> list C -> option C)
     (test : G -> list C -> option bool) (fuel : nat)
     (p : func positive K G) (args : list C) : result C :=
   match bind_vars (inputs _ _ _ p) args nil with
-  | Some s => steps eval test fuel p (entry _ _ _ p) nil s
+  | Some s =>
+      match loop_fuel (step eval test p) fuel (entry _ _ _ p, nil, s) with
+      | inl _ => Timeout
+      | inr out => out
+      end
   | None => Wrong
   end.
 
