@@ -5,17 +5,22 @@
     Builds on: trie code and Argent fuelled loops. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Loop.
+From Argent Require Import Time Loop Std.
 From Galois.Base Require Import Trie UnionFindSig.
 Import ListNotations.
 
 Record uf : Type := UF { parents : PTrieCode.t positive; sizes : PTrieCode.t N; count : N }.
+
+TimeFun parents.
+TimeFun sizes.
+TimeFun count.
 
 Module UnionFindCode <: UNION_FIND_OPS.
   Definition t := uf.
   Definition empty : t := UF PTrieCode.empty PTrieCode.empty 0.
   Definition parent_of (x : positive) (u : t) : positive :=
     match PTrieCode.get x (parents u) with Some p => p | None => x end.
+  TimeFun parent_of.
   Definition size_at (r : positive) (u : t) : N :=
     match PTrieCode.get r (sizes u) with Some n => n | None => 1%N end.
   Definition add (x : positive) (u : t) : t :=
@@ -27,12 +32,16 @@ Module UnionFindCode <: UNION_FIND_OPS.
       : positive * list positive + positive * list positive :=
     let p := parent_of (fst s) u in
     if Pos.eqb p (fst s) then inr s else inl (p, fst s :: snd s).
+  TimeFun walk_step.
   Definition walk (x : positive) (u : t) : positive * list positive :=
     match loop_fuel (walk_step u) (S (N.size_nat (count u))) (x, []) with inl s => s | inr s => s end.
+  TimeFun walk.
   Definition compress (root : positive) (path : list positive) (u : t) : t :=
     UF (fold_left (fun m y => PTrieCode.set y root m) path (parents u)) (sizes u) (count u).
+  TimeFun compress.
   Definition find (x : positive) (u : t) : positive * t :=
     let r := walk x u in (fst r, compress (fst r) (snd r) u).
+  TimeFun find.
   Definition link (w l : positive) (u : t) : t :=
     UF (PTrieCode.set l w (parents u)) (PTrieCode.set w (size_at w u + size_at l u)%N (sizes u)) (count u).
   Definition union (x y : positive) (u : t) : option (positive * positive) * t :=

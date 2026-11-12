@@ -5,7 +5,7 @@
     Builds on: HeapSig, MapSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith PArith PeanoNat Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import HeapSig KeySig MapSig.
 From Stdlib Require Import List NArith PArith.
 From Galois.Base Require Import Trie Loop.
@@ -24,22 +24,32 @@ Record priority_queue := Queue {
 }.
 
 Definition heap_root (t : heap_tree) := match t with HeapTree e _ => e end.
+TimeFun pending.
+TimeFun live.
+TimeFun live_count.
+TimeFun pending_count.
+TimeFun heap_root.
+
 Definition heap_before (a b : heap_entry) :=
   if N.ltb (fst a) (fst b) then true
   else if N.eqb (fst a) (fst b) then Pos.leb (snd a) (snd b) else false.
+TimeFun heap_before.
 Definition heap_link (a b : heap_tree) :=
   match a, b with
   | HeapTree e cs, HeapTree e' cs' =>
     if heap_before e e' then HeapTree e (b :: cs) else HeapTree e' (a :: cs')
   end.
+TimeFun heap_link.
 Definition heap_digit (s : option heap_tree) (hs : heap_forest) :=
   match s, hs with None, [] => [] | _, _ => s :: hs end.
+TimeFun heap_digit.
 Fixpoint heap_insert (t : heap_tree) (h : heap_forest) : heap_forest :=
   match h with
   | [] => [Some t]
   | None :: hs => Some t :: hs
   | Some u :: hs => None :: heap_insert (heap_link t u) hs
   end.
+TimeFun heap_insert.
 Fixpoint heap_meld (a b : heap_forest) (carry : option heap_tree) {struct a} : heap_forest :=
   match a with
   | [] => match carry with None => b | Some t => heap_insert t b end
@@ -56,6 +66,7 @@ Fixpoint heap_meld (a b : heap_forest) (carry : option heap_tree) {struct a} : h
       end
     end
   end.
+TimeFun heap_meld.
 Fixpoint heap_select (h : heap_forest) : option (heap_tree * heap_forest) :=
   match h with
   | [] => None
@@ -70,13 +81,17 @@ Fixpoint heap_select (h : heap_forest) : option (heap_tree * heap_forest) :=
       end
     end
   end.
+TimeFun heap_select.
 Definition heap_remove_min (h : heap_forest) : option (heap_entry * heap_forest) :=
   match heap_select h with
   | None => None
   | Some (HeapTree e cs, rest) => Some (e, heap_meld (map (@Some heap_tree) (rev cs)) rest None)
   end.
+TimeFun heap_remove_min.
 Fixpoint heap_fuel (h : heap_forest) : positive :=
   match h with [] => xH | _ :: rest => xO (heap_fuel rest) end.
+
+TimeFun heap_fuel.
 
 Module HeapCode <: PQ_OPS.
   Definition t := priority_queue.
@@ -104,12 +119,14 @@ Module HeapCode <: PQ_OPS.
       | None => inl (rest, N.pred total)
       end
     end.
+  TimeFun pop_step.
   Definition pop (q : t) : option (N * positive * t) :=
     match loopN (pop_step (live q) (live_count q)) (N.pos (heap_fuel (pending q)))
       (pending q, pending_count q) with
     | inl _ => None
     | inr result => result
     end.
+  TimeFun pop.
 End HeapCode.
 
 Fixpoint heap_tree_entries (tr : heap_tree) : list heap_entry :=

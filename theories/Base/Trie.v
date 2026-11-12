@@ -86,6 +86,11 @@ Module PTrieCode <: TRIE_OPS.
   Arguments right {A} tr.
   Arguments get {A} p tr.
 
+  TimeFun left.
+  TimeFun value.
+  TimeFun right.
+  TimeFun get.
+
   Definition node {A} (l : t A) (o : option A) (r : t A) : t A :=
     match l, o, r with
     | Empty, None, Empty => Empty
@@ -98,6 +103,8 @@ Module PTrieCode <: TRIE_OPS.
     | Nodes l, Some v, Nodes r => Nodes (N111 l v r)
     end.
 
+  TimeFun node.
+
   Fixpoint replace {A} (p : positive) (o : option A) (tr : t A) : t A :=
     match p with
     | xH => node (left tr) o (right tr)
@@ -105,8 +112,12 @@ Module PTrieCode <: TRIE_OPS.
     | xI q => node (left tr) (value tr) (replace q o (right tr))
     end.
 
+  TimeFun replace.
+
   Definition set {A} p (v : A) tr := replace p (Some v) tr.
+  TimeFun set.
   Definition remove {A} p (tr : t A) := replace p None tr.
+  TimeFun remove.
 
   Definition filter_value {A B} (f : A -> option B) (o : option A) : option B :=
     match o with
