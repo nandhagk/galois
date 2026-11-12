@@ -28,6 +28,7 @@ Module Graph <: CFG_OPS Prog NatKeyCode Edge.
     | 2 | 8 => [0; 1; 2; 3]
     | 6 | 9 | 10 => [0]
     | 11 => [0; 1]
+    | 13 => [0; 0]
     | _ => []
     end.
   Definition src p e := match p with
@@ -229,3 +230,7 @@ Proof. vm_compute; split; reflexivity. Qed.
 Example unlisted_source_callback_is_not_an_equation :
   Graph.edges 12 = [] /\ observe_may 12 [0; 1; 99] = Some [[]; []; []].
 Proof. vm_compute; split; reflexivity. Qed.
+
+Example duplicate_constructor_keeps_flow_occurrences :
+  MS.rows 13 = [Seed 0; Flow 0; Flow 0].
+Proof. vm_compute; reflexivity. Qed.
