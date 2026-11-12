@@ -96,10 +96,15 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   Proof. Admitted.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof.
+    intros c [Ha Hb]. exact (A.gamma_bot c Ha).
+  Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted.
+  Proof.
+    intro c. change (A.gamma A.top c /\ B.gamma B.top c).
+    split; [apply A.gamma_top|apply B.gamma_top].
+  Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
   Proof. Admitted.
