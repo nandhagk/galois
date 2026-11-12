@@ -121,3 +121,25 @@ Module FlatT (K : KEY_T) <: BLATTICE_T.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End FlatT.
+
+Module FlatHeight (K : KEY)
+    (Lat : BLATTICE with Definition t := flat K.t
+                     with Definition leb := flat_leb K.eqb) <: HEIGHT Lat.
+  Definition rank (x : flat K.t) : nat :=
+    match x with
+    | FBot => 0
+    | FVal _ => 1
+    | FTop => 2
+    end.
+  Definition height : nat := 2.
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intros [|a|]; cbv [rank height]; auto. Qed.
+  Lemma rank_strict : forall a b, flat_leb K.eqb a b = true -> flat_leb K.eqb b a = false ->
+    rank a < rank b.
+  Proof.
+    intros [|a|] [|b|]; cbn [flat_leb rank]; intros Hab Hba;
+      try discriminate; try lia.
+    destruct (K.eqb_spec a b); try discriminate; subst b.
+    destruct (K.eqb_spec a a); congruence.
+  Qed.
+End FlatHeight.
