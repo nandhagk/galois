@@ -5,6 +5,7 @@
     Builds on: CongruenceSig and the fixed-width word operations. *)
 
 From Stdlib Require Import ZArith List Bool.
+From Argent Require Import Time Std.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import CongruenceSig WordSig.
 Import List.ListNotations.
@@ -47,7 +48,7 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
   Definition pbot (_ : positive) := CBot.
   Definition ptop (_ : positive) := C 1 0.
   Definition pis_bot w a := match congr_norm w a with CBot => true | _ => false end.
-  Definition pconst w z := C 0 (L.wrap w z).
+  Definition pconst w z := C 0 (Word.wrap w z).
   Definition ppoint w a :=
     match congr_norm w a with C 0 r => Some r | _ => None end.
   Definition pwparam := unit.
@@ -224,3 +225,26 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
       (combine (map fst wps) ys) cs.
   Proof. intros o rw q wps ys cs z Hf. discriminate Hf. Qed.
 End CongruenceTable.
+
+Module CongruenceTimingHelpers (L : WORD_LANGUAGE_T).
+  Include Congruence L.
+  TimeFun wordb.
+  TimeFun congr_norm.
+  TimeFun raw_leb.
+  TimeFun pleb.
+  TimeFun pjoin.
+  TimeFun pbot.
+  TimeFun ptop.
+  TimeFun pis_bot.
+  TimeFun pconst.
+  TimeFun ppoint.
+  TimeFun pwiden.
+  TimeFun wrap_class.
+  TimeFun congr_neg.
+  TimeFun congr_add.
+  TimeFun congr_sub.
+  TimeFun congr_mul.
+  TimeFun congr_project.
+  TimeFun congr_shl.
+  TimeFun congr_urem.
+End CongruenceTimingHelpers.
