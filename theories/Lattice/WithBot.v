@@ -29,3 +29,24 @@ Module WithBotCode (L : LATTICE_OPS) <: LATTICE_OPS.
     | Some a, Some b => Some (L.join a b)
     end.
 End WithBotCode.
+
+Module WithBot (L : LATTICE) <: LATTICE.
+  Include WithBotCode L.
+  Lemma leb_refl : forall a, leb a a = true.
+  Proof. intros [a|]; cbn; try reflexivity; apply L.leb_refl. Qed.
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof.
+    intros [a|] [b|] [c|]; cbn; intros Hab Hbc;
+      try discriminate; try reflexivity; eapply L.leb_trans; eassumption.
+  Qed.
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof. intros [a|]; reflexivity. Qed.
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof. Admitted.
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof. Admitted.
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof. intros [a|] [b|]; cbn; try reflexivity; try apply L.leb_refl; apply L.join_ub_l. Qed.
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof. intros [a|] [b|]; cbn; try reflexivity; try apply L.leb_refl; apply L.join_ub_r. Qed.
+End WithBot.
