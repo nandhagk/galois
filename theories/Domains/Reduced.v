@@ -10,22 +10,24 @@ From Galois.Domains Require Import LangSig ValueSig ProductSig Product.
 
 Module ReducedCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L)
     (R : REDUCER_OPS A B) (K : ROUNDS) <: REDUCED_OPS L A B R K.
-  Module P := ProductCode L A B.
-  Definition t := P.t.
-  Definition leb := P.leb.
-  Definition bot := P.bot.
-  Definition is_bot := P.is_bot.
-  Definition join := P.join.
-  Definition top := P.top.
-  Definition meet := P.meet.
-  Definition wparam := P.wparam.
-  Definition widen := P.widen.
-  Definition narrow := P.narrow.
-  Definition red (x : t) : t := P.normalize (Nat.iter K.rounds R.reduce x).
-  Definition forward (o : L.op) (xs : list t) : t := red (P.forward o xs).
+  Definition t := (A.t * B.t)%type.
+  Definition bot : t := (A.bot, B.bot).
+  Definition is_bot := product_is_bot A.is_bot B.is_bot.
+  Definition leb := product_leb A.is_bot B.is_bot A.leb B.leb.
+  Definition join := product_pair A.join B.join.
+  Definition normalize := product_normalize A.is_bot B.is_bot A.bot B.bot.
+  Definition top : t := (A.top, B.top).
+  Definition meet (x y : t) : t := normalize (product_pair A.meet B.meet x y).
+  Definition wparam := (A.wparam * B.wparam)%type.
+  Definition widen := product_widen A.is_bot B.is_bot A.widen B.widen.
+  Definition narrow := product_narrow A.is_bot B.is_bot A.narrow B.narrow.
+  Definition red (x : t) : t := normalize (Nat.iter K.rounds R.reduce x).
+  Definition forward (o : L.op) (xs : list t) : t :=
+    red (product_forward A.is_bot B.is_bot A.bot B.bot A.forward B.forward o xs).
   Definition backward (o : L.op) (r : t) (xs : list t) : list t :=
-    map red (P.backward o r xs).
-  Definition guard (g : L.guard) (xs : list t) : list t := map red (P.guard g xs).
+    map red (product_backward A.is_bot B.is_bot A.bot B.bot A.backward B.backward o r xs).
+  Definition guard (g : L.guard) (xs : list t) : list t :=
+    map red (product_guard A.is_bot B.is_bot A.bot B.bot A.guard B.guard g xs).
 End ReducedCode.
 
 Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
@@ -35,13 +37,13 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
     A.wrank (fst p) (fst a) + B.wrank (snd p) (snd a).
   Definition gamma (a : t) (c : L.val) : Prop := A.gamma (fst a) c /\ B.gamma (snd a) c.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
@@ -50,10 +52,10 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Proof. Admitted.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof. Admitted.
@@ -66,28 +68,28 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_gamma_laws: The variable slots_leb was not found in the current environment. *)
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
@@ -111,12 +113,12 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
@@ -124,7 +126,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.

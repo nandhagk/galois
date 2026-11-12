@@ -124,7 +124,7 @@ Module Type WORD_PAYLOAD_LAWS (L : WORD_LANGUAGE) (Import W : WORD_PAYLOAD_OPS L
   Parameter pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   (** A recognized point identifies all represented integers. *)
   Parameter ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
 End WORD_PAYLOAD_LAWS.
 
 Module Type WORD_PAYLOAD (L : WORD_LANGUAGE) :=
