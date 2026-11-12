@@ -183,7 +183,7 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
   Proof. Admitted.
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof. intros c Hg. exact Hg. Qed.
   Lemma gamma_top : forall c, gamma top c.
   Proof. Admitted.
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
