@@ -66,13 +66,11 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* The design expects the exit value 10. The computed interval is I NegInf PosInf
-   when the greater-than edge is included, so it does not establish that value. *)
 Example count_exit_interval :
   match Run.analyze count pol 100%N with
   | Solved m => Dom.eval (Leaf i) (Chk.look m 4%positive)
   | _ => IBot
-  end = I NegInf PosInf.
+  end = I (Fin 10) (Fin 10).
 Proof.
   vm_compute; reflexivity.
 Qed.
