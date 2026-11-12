@@ -108,3 +108,36 @@ Example site_sensitive_ordinary_results :
   | _ => None
   end = Some [13; 11; 7; 1].
 Proof. vm_compute; reflexivity. Qed.
+
+Module AntiBody <: BODY_OPS Prog NatKeyCode NatKeyCode Lat.
+  Definition local (_ _ : nat) := false.
+  Definition via_call (_ _ _ : nat) (a : bool) := negb a.
+  Definition entry (_ _ _ : nat) := false.
+End AntiBody.
+Module AntiS := SummaryCode Prog NatKeyCode NatKeyCode Calls Lat AntiBody.
+Module AntiC := CheckCode Lat AntiS.
+Module AntiW := WorklistCode Lat AntiS P HeapCode.
+Module AntiR := NarrowCode Lat AntiS AntiC.
+Module AntiA := CertifiedCode Lat AntiS AntiW AntiC AntiR.
+Definition first_zero : policy unit := Policy unit
+  (PTrieCode.set (NatKeyCode.encode 0) 1%positive
+    (PTrieCode.set (NatKeyCode.encode 1) 2%positive PTrieCode.empty)) PTrieCode.empty tt 0.
+Definition first_one : policy unit := Policy unit
+  (PTrieCode.set (NatKeyCode.encode 0) 2%positive
+    (PTrieCode.set (NatKeyCode.encode 1) 1%positive PTrieCode.empty)) PTrieCode.empty tt 0.
+Definition anti_observe pol := match AntiA.analyze 0 pol 16%N with
+  | Solved m => Some (map (AntiC.look m) [0; 1])
+  | _ => None
+  end.
+
+(* The old policy-ordered round produced ([true; false], [false; true]).
+   The certified worklist produces (Some [true; false], Some [true; false]). *)
+
+Definition anti_checked pol := match AntiA.analyze 0 pol 16%N with
+  | Solved m => AntiC.check 0 m
+  | _ => false
+  end.
+
+Example both_schedules_are_checked_post_solutions :
+  (anti_checked first_zero, anti_checked first_one) = (true, true).
+Proof. vm_compute; reflexivity. Qed.
