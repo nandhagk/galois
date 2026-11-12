@@ -5,6 +5,7 @@
     Builds on: Fixpoint.CertifiedSig. *)
 
 From Stdlib Require Import NArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig CheckSig NarrowSig CertifiedSig.
@@ -43,3 +44,20 @@ Module Certified (L : WLATTICE) (S : SYSTEM L) (V : SOLVER_OPS L S)
     injection Hrun as <-. apply R.refine_post. apply C.check_sound. exact Hcheck.
   Qed.
 End Certified.
+
+Module CertifiedT (L : WLATTICE_T) (S : SYSTEM_T L) (V : SOLVER_T L S)
+    (C : CHECK_T L S) (R : NARROW_T L S C) <: CERTIFIED_T L S V C R.
+  Include Certified L S V C R.
+  Definition candidate_work p pol fuel : N :=
+    match V.run p pol fuel with
+    | Solved m => (C.T_check p m + R.T_eval_all p m)%N
+    | OutOfFuel _ => 0%N
+    | Rejected _ => 0%N
+    end.
+  TimeFun analyze.
+
+  Lemma T_analyze_le : forall p pol fuel,
+    (T_analyze p pol fuel <= V.T_run p pol fuel +
+      N.of_nat (passes pol + 1) * (candidate_work p pol fuel + 1))%N.
+  Proof. Admitted. (* STUB *)
+End CertifiedT.

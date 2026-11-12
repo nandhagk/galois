@@ -4,7 +4,8 @@
     For example, repeated writes by one row occupy one index entry per key.
     Builds on: Fixpoint.IndexedSig and Base.Trie. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith Arith NArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig IndexedSig.
@@ -74,3 +75,71 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Lemma wf_prepare : forall p, S.wf p -> wf (prepare p).
   Proof. Admitted.
 End Indexed.
+
+Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
+  Include Indexed L S.
+  Definition row_work (p : prog) (B : nat) : N := S.row_work (program p) B.
+  Definition kw (p : prog) : nat := S.kw (program p).
+  TimeFun key_code.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+  TimeFun row_code.
+  TimeFun rows_of.
+  TimeFun number_from.
+  TimeFun index_row.
+  TimeFun prepare.
+
+  Definition c_sys : N := 1. (* STUB *)
+  Definition c_loc : N := 1. (* STUB *)
+
+  Lemma row_work_mono : forall p s s', s <= s' ->
+    (row_work p s <= row_work p s')%N.
+  Proof. Admitted. (* STUB *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_resume_le : forall p f a, wf p ->
+    (T_resume p f a <= c_sys * (row_work p (L.size a) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_row_code_le : forall r,
+    (T_row_code r <= c_loc * N.of_nat (Pos.size_nat (row_code r) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_of_le : forall p x, wf p ->
+    (T_rows_of p x <= c_loc * N.of_nat (length (rows_of p x) + key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition c_idx : N := 1. (* STUB *)
+
+  Lemma T_prepare_le : forall p, S.wf p ->
+    (T_prepare p <= c_idx *
+      N.of_nat ((length (S.rows p) +
+        fold_right Nat.add 0
+          (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+            (S.rows p)) + 1)%nat) *
+      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+End IndexedT.

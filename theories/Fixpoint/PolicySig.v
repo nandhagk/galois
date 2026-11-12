@@ -9,6 +9,10 @@ From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 
+Module Nat.
+  TimeFun Stdlib.Arith.PeanoNat.Nat.ltb.
+End Nat.
+
 Record head_cfg := HeadCfg {
   delay : nat;
   narrow_passes : nat
@@ -25,6 +29,13 @@ Arguments prio {W} _.
 Arguments heads {W} _.
 Arguments wp {W} _.
 Arguments passes {W} _.
+
+TimeFun prio.
+TimeFun heads.
+TimeFun wp.
+TimeFun passes.
+TimeFun delay.
+TimeFun narrow_passes.
 
 (** The delay boundary counts strict updates and skips stable contributions. *)
 Fixpoint value_at_counter {A W : Type}
