@@ -238,6 +238,23 @@ Module PTrieCode <: TRIE_OPS.
   Definition fold {A B} (f : B -> positive -> A -> B) (tr : t A) (b : B) :=
     fold_path f (fun p => p) tr b.
 
+  Fixpoint fold_values_ne {A B} (f : B -> A -> B) (n : ne A) (b : B) : B :=
+    match n with
+    | N001 r => fold_values_ne f r b
+    | N010 v => f b v
+    | N011 v r => fold_values_ne f r (f b v)
+    | N100 l => fold_values_ne f l b
+    | N101 l r => fold_values_ne f r (fold_values_ne f l b)
+    | N110 l v => f (fold_values_ne f l b) v
+    | N111 l v r => fold_values_ne f r (f (fold_values_ne f l b) v)
+    end.
+
+  Definition fold_values {A B} (f : B -> A -> B) (tr : t A) (b : B) : B :=
+    match tr with
+    | Empty => b
+    | Nodes n => fold_values_ne f n b
+    end.
+
   Definition elements {A} (tr : t A) : list (positive * A) :=
     List.rev (fold (fun acc p v => (p, v) :: acc) tr nil).
 End PTrieCode.
