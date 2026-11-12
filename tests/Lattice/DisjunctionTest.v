@@ -45,7 +45,8 @@ Proof. vm_compute. reflexivity. Qed.
 Example disjunction_covered : D2.widen tt [FTop; FVal true] [FVal false] = [FTop; FVal true].
 Proof. vm_compute. reflexivity. Qed.
 
-(* Cost, height and symbolic law examples are in LatticeDisjunctionTest.v at 87192fe. *)
+(* The old disjunction widening bound was 3. Its rank for [false; false] was 3,
+   and the rank after widening by [true] was 0. No disjunction rank is exported. *)
 
 Example disjunction_bottom_test : (D1.is_bot [], D1.is_bot [FBot]) = (true, false).
 Proof. vm_compute. reflexivity. Qed.

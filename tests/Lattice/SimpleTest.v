@@ -71,5 +71,5 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
-(* Widening, narrowing, cost, height and gamma examples are in
-   LatticeSimpleTest.v at 87192fe. *)
+(* The old lifted height ranks [None; Some false; Some true] as [0; 1; 2] and the
+   widening rank as [2; 1; 0]. No lifted height constructor is exported. *)

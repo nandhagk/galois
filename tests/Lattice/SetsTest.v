@@ -52,4 +52,7 @@ Example duplicate_values_keep_the_original_set :
   PosSet.elements (PosSet.add 1%positive (PosSet.add 1%positive PosSet.empty)) = [1%positive].
 Proof. vm_compute. reflexivity. Qed.
 
-(* Cost, height and raw representation examples are in LatticeSetTest.v at 87192fe. *)
+(* The old may height ranks the four-set chain [0; 1; 2; 3] with bound 3.
+   The old must height ranks [All; Only s123; Only s12; Only s1; Only s0] as
+   [0; 1; 2; 3; 4] with bound 4, and its empty-universe ranks are 0 and 1 with bound 1.
+   No may or must height constructor is exported. *)
