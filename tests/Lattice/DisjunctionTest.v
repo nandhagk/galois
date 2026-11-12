@@ -6,27 +6,17 @@
 
 From Stdlib Require Import List Bool.
 From Galois.Base Require Import Key.
-From Galois.Lattice Require Import Disjunction Flat Simple JoinWidening.
+From Galois.Lattice Require Import Disjunction Flat Simple.
 Import List.ListNotations.
 
 Module FlatBool := FlatCode BoolKeyCode.
-Module FlatWide.
-  Include FlatBool.
-  Definition wparam := unit.
-  Definition widen (_ : wparam) := join.
-  Definition narrow (x _ : t) := x.
-End FlatWide.
 Module Cap0. Definition k := 0. End Cap0.
 Module Cap1. Definition k := 1. End Cap1.
 Module Cap2. Definition k := 2. End Cap2.
-Module D0 := DisjunctionCode FlatWide Cap0.
-Module D1 := DisjunctionCode FlatWide Cap1.
-Module D2 := DisjunctionCode FlatWide Cap2.
-Module BoolWide.
-  Include BoolLatCode.
-  Include JoinWideningCode BoolLatCode.
-End BoolWide.
-Module BoolDisjunction := DisjunctionCode BoolWide Cap1.
+Module D0 := DisjunctionCode FlatBool Cap0.
+Module D1 := DisjunctionCode FlatBool Cap1.
+Module D2 := DisjunctionCode FlatBool Cap2.
+Module BoolDisjunction := DisjunctionCode BoolLatCode Cap1.
 
 Example disjunction_cap_one : D1.join [FVal false] [FVal true; FBot] = [FTop].
 Proof. vm_compute. reflexivity. Qed.
@@ -39,16 +29,17 @@ Example disjunction_nonleast_counterexample :
 Proof. vm_compute. reflexivity. Qed.
 Example disjunction_negative : D2.leb [FVal true] [FVal false] = false.
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_empty : (D0.join [] [], D0.leb [] [], D0.widen tt [] []) = ([], true, []).
+Example disjunction_empty : (D0.join [] [], D0.leb [] []) = ([], true).
 Proof. vm_compute. reflexivity. Qed.
 Example disjunction_cap_zero : D0.join [FVal false] [] = [FVal false].
 Proof. vm_compute. reflexivity. Qed.
 Example disjunction_empty_right : D1.leb [FBot] [] = false.
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_collapse : D2.widen tt [FVal false] [FVal true] = [FTop].
-Proof. vm_compute. reflexivity. Qed.
-Example disjunction_covered : D2.widen tt [FTop; FVal true] [FVal false] = [FTop; FVal true].
-Proof. vm_compute. reflexivity. Qed.
+(* The old raw-list widening examples are deferred to the D1 state-disjunction
+   component. Their prior expected values were [FTop] for
+   D2.widen tt [FVal false] [FVal true] and [FTop; FVal true] for
+   D2.widen tt [FTop; FVal true] [FVal false]. The empty case expected
+   D0.widen tt [] [] = []. *)
 
 Example selective_leastness :
   BoolDisjunction.leb (BoolDisjunction.join [false] [true]) [false; true] = true.
