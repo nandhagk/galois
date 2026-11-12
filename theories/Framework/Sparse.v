@@ -163,9 +163,11 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   TimeFun resume.
   TimeFun deps.
   TimeFun sides.
+  Definition value_bits (p : prog) : nat :=
+    fold_right Nat.max 0 (map (fun r => X.bits (target p r)) (rows p)).
   Definition row_work p s := N.of_nat
     (B.op_work p s + (B.op_arity p + 1) * (s + 1) + T.seed_work p +
-      V.size V.top + V.size V.bot + 1).
+      value_bits p + V.size V.top + V.size V.bot + 1).
   Definition kw (p : prog) : nat := fold_right Nat.max 0
     (List.map X.bits (S.entry_params p ++ S.values p ++
       flat_map (fun r => fst (snd r) :: snd (snd r) :: nil) (S.arg_rows p))).
@@ -190,7 +192,7 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Proof. Admitted. (* STUB *)
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* SIG-QUESTION: seed key bits are absent from row_work *)
+  Proof. Admitted. (* STUB: F2-108 Q8 adds target key width to row_work *)
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, V.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
