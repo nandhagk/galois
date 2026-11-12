@@ -260,3 +260,30 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
       M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x).
   Proof. Admitted.
 End Env.
+
+Module EnvTimingHelpers (X : KEY_T) (M : MAP_T X) (L : LANG_T)
+    (V : VALUE_DOMAIN_T L).
+  Include Env X M L V.
+  TimeFun read.
+  TimeFun bot.
+  TimeFun top.
+  TimeFun is_bot.
+  TimeFun option_leb.
+  TimeFun leb.
+  TimeFun join_map.
+  TimeFun join.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun root.
+  TimeFun annotate.
+  TimeFun erase.
+  TimeFun refine_checked.
+  TimeFun refine.
+  TimeFun eval.
+  TimeFun assign.
+  TimeFun havoc.
+  TimeFun vars.
+  TimeFun materialize.
+  TimeFun assume.
+End EnvTimingHelpers.
