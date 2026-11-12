@@ -14,6 +14,16 @@ System row codes have program-scoped injectivity, so there is no global `SystemR
 update clocks use `N`. The worklist tracks armed readers and live queue entries. Word domains
 use `Bits/Word.v` and `Bits/Op.v`, and `EnvBudget` supplies a canonical word budget functor.
 
+`HEIGHT.rank_mono` supports sum ranks for products. `ReducedT` takes `JOIN_SIZE`
+instances for both components as well as `REDUCER_T`. Widening time charges `wsize` per
+component through `wunits`, and `BUDGET.wunits_le` bounds those units for invariant states.
+Value domains and their bases have downward bottom-recognition laws. Product and reduced
+product recognize a bottom in either component with `orb` and treat recognized bottoms as
+least. `Env` concretization of a reached map requires no recognized bottom in the map.
+Karr and Poly state `normal` and `normal_s` premises on the relevant time contracts and
+preserve these properties in their plans. A normal row has distinct coefficient keys.
+Word evaluation charges raw integer operand sizes as well as widths.
+
 The reviewed helpers `Base/Code.v`, `Base/Loop.v` and `Fixpoint/Query.v` are excluded from
 `just/frozen.sha256` so that their owners can prove existing lemmas. Keep their reviewed
 statements and definitions unchanged. Every file listed in the checksum stays unchanged.
@@ -56,11 +66,12 @@ module type.
 
 ## 5. Design rules R1 to R13
 
-The rules are copied without change from core §1, lines 65–129. Three later decisions amend
-them.
+The rules are copied from core §1, lines 65–129. Later decisions amend them.
 
 - R8 and the paragraph on the extraction shape name `Exec/Instances.v`. The lint forbids the word
   `Instances`, so that file is `Exec/Kit.v` (plan conflict 6). Nothing in this run writes it.
+- `BoundedSetCode` takes `SET` laws to construct its Boolean subtype proof. Extraction erases
+  that proof. This is the sole exception to operations-only code dependencies.
 - R11 binds the batch sessions. Groundwork writes the `Sig` files, and §3 of this file is its
   rule for wrong statements.
 - The first lint of R13 concerns `Include` inside a module (a `Module ... End` body), where a
@@ -101,7 +112,7 @@ Module FooT    (K : KEY_T)   <: FOO_ALL K.   Include Foo K. (* TimeFun, contract
 
 **R3. A client states the layers it needs by the type of each parameter.** `(L : LATTICE_OPS)` to run, `(L : LATTICE)` to prove, `(L : LATTICE_T)` to bound. Each dependency is one module argument. Time fields are never passed as a separate argument (V9).
 
-**R4. Running without law proofs stays possible, by construction.** The code tower takes `_OPS` arguments, so a domain with no proofs runs and extracts with no `Admitted` anywhere. Certification needs no laws either: `check` reflects `post_solution` definitionally. A client proves only what its theorem uses.
+**R4. Running without law proofs stays possible, by construction.** Code functors take `_OPS` arguments, apart from the approved `BoundedSetCode` exception stated above. A domain with no proofs can otherwise run and extract with no `Admitted` anywhere. Certification needs no laws either: `check` reflects `post_solution` definitionally. A client proves only what its theorem uses.
 
 **R5. Value-dependent parameters are values.**
 - A program, a policy and widening parameters are ordinary data. A signature that needs one declares an abstract type for it: `prog`, `wparam`.
@@ -360,7 +371,7 @@ Steps 1, 2 and 7 are textual (Luna). Steps 3 to 6 need a model that reads Rocq (
    - `(L : lattice A)` becomes `L : LATTICE_OPS`; `leb L a b` becomes `L.leb a b`; `A` becomes `L.t`.
    - A hypothesis `encoding_laws E` or `lattice_laws L` disappears: the plain functor takes `K : KEY`, `L : LATTICE`, and a use `(leb_refl H)` becomes `L.leb_refl`.
    - A record of closures (a visitor, a graph's `out_c`, a policy's `order_c`) becomes the functor parameter or the first-order data named in the `Sig`.
-5. **Place the code.** Move every `Inductive` and `Record` above the first functor. Put the definitions in `Module <Name>Code (…_OPS) <: <NAME>_OPS … .` Compile this module alone before going on.
+5. **Place the code.** Move every `Inductive` and `Record` above the first functor. Put the definitions in `Module <Name>Code (…_OPS) <: <NAME>_OPS … .` Apply the `BoundedSetCode` exception in §5 where its subtype requires it. Compile this module alone before going on.
 6. **Port the value lemmas** into `Module <Name> (…) <: <NAME> … .`, after `Include <Name>Code … .` and `Include <NAME>_SPEC … .` Rename to the `Sig`'s names. In each proof delete `autorewrite with galois_cost`, `cost_simpl`, `rewrite Cost.value_bind` and its relatives, and `change (Cost.value …)`; replace `rewrite f_equation` by `unfold f` or `cbn [f]`.
 7. **Time tower.** `Module <Name>T (…_T) <: <NAME>_ALL … .`, `Include <Name> … .`, one `TimeFun` per definition of the code module in dependency order, each constant as `Definition c_x : N := 1. (* STUB *)`, and every `_TIME` and `_PLAN` lemma stated and closed with `Proof. Admitted.`
 8. **Gate.** The file compiles. The ported test file gives, under `vm_compute`, the values the old tests gave. Paste the old expected values; do not recompute them.
