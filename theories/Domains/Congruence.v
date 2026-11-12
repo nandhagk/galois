@@ -216,5 +216,5 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted.
+  Proof. intros o rw q wps ys cs z Hf. discriminate Hf. Qed.
 End CongruenceTable.
