@@ -269,7 +269,8 @@ TimeFun dom_lt_correct_step.
 
 Definition dom_lt_buckets (numeric : dom_lt_numeric) (semis : ptrie N)
     : dom_lt_bucket_state :=
-  let buckets := fold_left (dom_lt_bucket_add semis) (rev_append (lt_numeric_order numeric) []) Empty in
+  let buckets := fold_left (dom_lt_bucket_add semis)
+    (rev_append (lt_numeric_order numeric) []) Empty in
   fold_left (dom_lt_bucket_step numeric semis buckets) (lt_numeric_order numeric)
     (DomLtBucketState (DomLtLinks Empty Empty []) Empty).
 TimeFun dom_lt_buckets.
