@@ -26,7 +26,7 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* The narrowing example in LatticeLiftTest.v at 87192fe has no current operation. *)
+(* The old lift_narrow_unknown returned Elem false. JoinWideningCode keeps Unknown. *)
 
 Example lift_bottom :
   TopBool.bot = Elem false.
@@ -34,4 +34,6 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* Cost and height examples are in LatticeLiftTest.v at 87192fe. *)
+(* The old top-lift height had bound 2 and ranked Unknown and Elem false as 2 and 0.
+   Its widening bound was 2 and its corresponding ranks were 0 and 2.
+   No top-lift height or widening-rank constructor is exported. *)

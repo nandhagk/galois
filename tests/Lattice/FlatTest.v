@@ -30,4 +30,5 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* Cost and height examples are in LatticeFlatTest.v at 87192fe. *)
+(* The old flat height ranked FBot, FVal false and FTop as 0, 1 and 2.
+   No flat height constructor is exported. *)

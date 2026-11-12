@@ -19,4 +19,10 @@ Example scalar_zero_boundary :
   (1%positive, 1%positive, 1%positive, 1%positive, 1%positive, 1%positive).
 Proof. vm_compute. reflexivity. Qed.
 
-(* Decoder, cost, width and symbolic law examples are in BaseEncodingTest.v at 87192fe. *)
+Example positive_scalar_boundary_widths : (PosKey.bits 1, PosKey.bits 2) = (1, 2)%nat.
+Proof. vm_compute. reflexivity. Qed.
+
+Example unit_scalar_width : UnitKey.bits tt = 1%nat.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Decoder and cost APIs from BaseEncodingTest.v at 87192fe have been removed. *)

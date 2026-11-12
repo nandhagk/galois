@@ -35,4 +35,5 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* Cost and height examples are in LatticeProductTest.v at 87192fe. *)
+(* The old product height and widening bound were 3. Its rank at (FTop, true)
+   and widening rank at (FBot, false) were both 3. No product height is exported. *)

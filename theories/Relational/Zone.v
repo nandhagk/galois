@@ -1,0 +1,267 @@
+(** * Difference-bound matrix placeholders
+
+    These modules provide the zone state interface.
+    For example, closure returns an unreachable placeholder state.
+    Builds on: ZoneSig. *)
+From Stdlib Require Import List ZArith.
+From Argent Require Import Time Std.
+From Galois.Base Require Import KeySig MapSig.
+From Galois.Lattice Require Import LatticeSig.
+From Galois.Domains Require Import LangSig ValueSig.
+From Galois.States Require Import EnvSig.
+From Galois.Relational Require Import LinearizeSig NumStateSig ZoneSig.
+Local Open Scope nat_scope.
+
+Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t)
+    (M : MAP_OPS K) (L : LANG_OPS) (F : LINEARIZE_OPS X L) <: ZONE_OPS X K M L F.
+  Definition dbm := M.t (M.t Z).
+  Definition t := reach dbm.
+  Definition wparam := nat.
+  (* STUB-CODE *)
+  Definition leb (_ _ : t) := false.
+  (* STUB-CODE *)
+  Definition bot : t := Unreached.
+  (* STUB-CODE *)
+  Definition is_bot (_ : t) := false.
+  (* STUB-CODE *)
+  Definition join (_ _ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition top : t := Reached M.empty.
+  (* STUB-CODE *)
+  Definition meet (_ _ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition widen (_ : wparam) (_ _ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition narrow (_ _ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition havoc (_ : X.t) (_ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
+  (* STUB-CODE *)
+  Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
+  (* STUB-CODE *)
+  Definition entry (_ : dbm) (_ _ : K.t) : option Z := None.
+  (* STUB-CODE *)
+  Definition fw_round (_ : K.t) (m : dbm) : dbm := m.
+  (* STUB-CODE *)
+  Definition close (_ : dbm) : t := Unreached.
+  (* STUB-CODE *)
+  Definition add_cons (_ _ : K.t) (_ : Z) (m : dbm) : dbm := m.
+  (* STUB-CODE *)
+  Definition incr_close (_ _ : K.t) (_ : Z) (_ : dbm) : t := Unreached.
+End ZoneCode.
+
+Module Zone (X : KEY) (K : KEY with Definition t := option X.t)
+    (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) <: ZONE X K M L N F.
+  Include ZoneCode X K M L F.
+  Definition wrank (_ : wparam) (_ : t) : nat := 0.
+  Definition vz (v : X.t -> Z) (i : K.t) : Z :=
+    match i with None => 0%Z | Some x => v x end.
+  Definition models (m : dbm) (v : X.t -> Z) : Prop :=
+    forall i j d, entry m i j = Some d -> (vz v j - vz v i <= d)%Z.
+  Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
+    match s with Unreached => False | Reached m => models m v end.
+  Lemma leb_refl  : forall a, leb a a = true.
+  Proof. Admitted.
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof. Admitted.
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof. Admitted.
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof. Admitted.
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof. Admitted.
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof. Admitted.
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof. Admitted.
+  Lemma top_greatest : forall a, leb a top = true.
+  Proof. Admitted.
+  Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
+  Proof. Admitted.
+  Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
+  Proof. Admitted.
+  Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
+  Proof. Admitted.
+  Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
+    wrank p (widen p a b) < wrank p a.
+  Proof. Admitted.
+  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
+  Proof. Admitted.
+  Lemma narrow_between : forall a b, leb b a = true ->
+    leb b (narrow a b) = true /\ leb (narrow a b) a = true.
+  Proof. Admitted.
+  Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
+  Proof. Admitted.
+  Lemma ngamma_bot : forall v, ~ ngamma bot v.
+  Proof. Admitted.
+  Lemma ngamma_top : forall v, ngamma top v.
+  Proof. Admitted.
+  Lemma assign_sound : forall x e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof. Admitted.
+  Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
+    ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof. Admitted.
+  Lemma assume_sound : forall g es s st cs,
+    ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
+    L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
+  Proof. Admitted.
+  Lemma range_sound : forall e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
+  Proof. Admitted.
+  Lemma entry_spec : forall m i j,
+    entry m i j = match M.get i m with Some row => M.get j row | None => None end.
+  Proof. Admitted.
+  Lemma ngamma_reached : forall m v, ngamma (Reached m) v <-> models m v.
+  Proof. Admitted.
+  Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
+  Proof. Admitted.
+End Zone.
+
+Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t)
+    (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
+    <: ZONE_ALL X K M L N F.
+  Include Zone X K M L N F.
+  Definition size (_ : t) : nat := 0.
+  Definition wsize (_ : wparam) : nat := 0.
+  Definition assign_work (_ : X.t) (_ : term L.op X.t) (_ : t) : nat := 0.
+  Definition havoc_work (_ : X.t) (_ : t) : nat := 0.
+  Definition assume_work (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : nat := 0.
+  Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
+  TimeFun bot.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun is_bot.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun assign.
+  TimeFun havoc.
+  TimeFun assume.
+  TimeFun range.
+  TimeFun entry.
+  TimeFun fw_round.
+  TimeFun close.
+  TimeFun add_cons.
+  TimeFun incr_close.
+  Definition c_num : N := 1. (* STUB *)
+  Lemma T_assign_le : forall x e s,
+    (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_le : forall x s,
+    (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_le : forall g es s,
+    (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall s,
+    (T_is_bot s <= c_num * N.of_nat (size s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_num * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Definition support (m : dbm) : list K.t :=
+    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
+      (map fst (M.elements m) ++
+       flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) nil.
+  Definition supp (m : dbm) : nat := length (support m).
+  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map K.bits (support m)).
+  Definition ell (m : dbm) : nat := fold_right Nat.max 0
+    (flat_map (fun kv => map (fun p => Z.size_nat (snd p))
+      (M.elements (snd kv))) (M.elements m)).
+  Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
+  Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
+  Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
+  Definition binary_work (a z : t) : nat :=
+    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1).
+  Definition c_zone : N := 1. (* STUB *)
+  Lemma T_close_le : forall m,
+    (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
+      N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
+    c_zone * N.of_nat (((supp m + 1)^2)%nat) * N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_zone_le : forall a z, (T_join a z <= c_zone * N.of_nat (binary_work a z))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_zone_le : forall a z, (T_leb a z <= c_zone * N.of_nat ((binary_work a z)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_zone_le : forall p a z,
+    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + wsize p))%N.
+  Proof. Admitted. (* STUB *)
+  Definition closed (m : dbm) : Prop :=
+    (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z).
+  Fixpoint chain_weight (m : dbm) (i : K.t) (ks : list K.t) (j : K.t) : option Z :=
+    match ks with
+    | nil => entry m i j
+    | k :: ks =>
+      match entry m i k, chain_weight m k ks j with
+      | Some a, Some z => Some (a + z)%Z
+      | _, _ => None
+      end
+    end.
+  Definition same_entries (a b : t) : Prop :=
+    match a, b with
+    | Reached ma, Reached mb => forall i j, entry ma i j = entry mb i j
+    | Unreached, Unreached => True
+    | _, _ => False
+    end.
+  Definition k_zone : N := 1. (* STUB *)
+  (** Assignment work pays for linearization and quadratic matrix updates. *)
+  Lemma F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) =
+      N.of_nat ((ns s + 1)^2 * (bs s + ells s + X.bits x + 1)) + F.T_lin_of e)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F_havoc_work : forall x s,
+    havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma F_join_entry : forall ma mb i j,
+    match join (Reached ma) (Reached mb) with
+    | Reached mj => entry mj i j =
+        match entry ma i j, entry mb i j with
+        | Some x, Some y => Some (Z.max x y)
+        | _, _ => None
+        end
+    | Unreached => False
+    end.
+  Proof. Admitted. (* STUB *)
+  Lemma fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
+  Proof. Admitted. (* STUB *)
+  Lemma close_sound : forall m v, models m v -> ngamma (close m) v.
+  Proof. Admitted. (* STUB *)
+  Lemma close_bot : forall m, close m = Unreached -> forall v, ~ models m v.
+  Proof. Admitted. (* STUB *)
+  Lemma incr_close_sound : forall i j d m v,
+    models m v -> (vz v j - vz v i <= d)%Z -> ngamma (incr_close i j d m) v.
+  Proof. Admitted. (* STUB *)
+  Lemma close_shortest : forall m m' i j, close m = Reached m' -> i <> j ->
+    (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
+    (forall ks d, chain_weight m i ks j = Some d ->
+       exists d', entry m' i j = Some d' /\ (d' <= d)%Z).
+  Proof. Admitted. (* STUB *)
+  Lemma incr_close_eq : forall m i j d, closed m ->
+    same_entries (incr_close i j d m) (close (add_cons i j d m)).
+  Proof. Admitted. (* STUB *)
+  Lemma bits_fw_round_le : forall ks m,
+    (forall k, In k ks -> forall d,
+      entry (fold_left (fun a k => fw_round k a) ks m) k k = Some d -> (0 <= d)%Z) ->
+    ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_fw_round : forall k m,
+    (T_fw_round k m <= k_zone * N.of_nat
+      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma bits_close_le : forall m m', close m = Reached m' ->
+    ell m' <= ell m + Nat.log2 (supp m) + 1.
+  Proof. Admitted. (* STUB *)
+End ZoneT.

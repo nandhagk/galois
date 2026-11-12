@@ -5,7 +5,7 @@
     Builds on: Reduced and Simple. *)
 
 From Stdlib Require Import Bool.
-From Galois.Lattice Require Import Reduced Simple.
+From Galois.Lattice Require Import Reduced Simple JoinWidening.
 
 Module ClearSecond.
   Definition reduce (x : bool * bool) := (fst x, andb (fst x) (snd x)).
@@ -15,6 +15,7 @@ Module ClearTwice.
   Definition reduce (x : bool * bool) := step (step x).
 End ClearTwice.
 Module ReducedBool := ReducedCode BoolLatCode BoolLatCode ClearSecond.
+Module ReducedWide := JoinWideningCode ReducedBool.
 
 Example reduce_positive :
   (ClearSecond.reduce (false, true), ClearTwice.reduce (true, true)) =
@@ -23,6 +24,9 @@ Proof. vm_compute. reflexivity. Qed.
 Example reduce_negative :
   (ReducedBool.leb (false, true) (false, false),
     ReducedBool.leb (true, true) (false, false)) = (true, false).
+Proof. vm_compute. reflexivity. Qed.
+Example reduced_narrow :
+  ReducedWide.narrow (true, true) (false, true) = (true, true).
 Proof. vm_compute. reflexivity. Qed.
 Example reduced_join_is_not_an_exact_slot :
   (snd (ReducedBool.join (false, true) (false, false)), BoolLatCode.join true false) =
@@ -35,4 +39,7 @@ Example reduced_join_needs_compatibility :
     (true, true, false).
 Proof. vm_compute. reflexivity. Qed.
 
-(* Round counts, height, cost and symbolic law examples are in LatticeReducedTest.v at 87192fe. *)
+(* The old reduced widening of (false, true) and (false, false) returned (false, true).
+   JoinWideningCode widens by ReducedBool.join and returns (false, false).
+   The reducer interface has no round count. The old reduced height ranked (false, true)
+   and (true, true) as 0 and 2. No reduced height combinator is exported. *)
