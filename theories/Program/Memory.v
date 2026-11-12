@@ -4,13 +4,22 @@
     For example, an absent binding gives an empty effect sequence.
     Builds on: Program.MemorySig and Base.Trie. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import CfgSig SemanticsSig MemorySig.
 
 Module Type MEMORY_DATA (P : TYPE) (R : KEY_OPS).
   Parameter effect_table : P.t -> ptrie (list (effect R.t)).
 End MEMORY_DATA.
+
+Module Type MEMORY_DATA_TIME (P : TYPE) (R : KEY_T)
+    (Import D : MEMORY_DATA P R).
+  Parameter T_effect_table : P.t -> N.
+End MEMORY_DATA_TIME.
+
+Module Type MEMORY_DATA_T (P : TYPE) (R : KEY_T) :=
+  MEMORY_DATA P R <+ MEMORY_DATA_TIME P R.
 
 Module MemoryCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     (C : CFG_OPS P N E) (R : KEY_OPS) (A : ALIAS_OPS R)
@@ -29,6 +38,13 @@ Module Memory (P : TYPE) (N : KEY) (E : KEY)
   Include MEMORY_SPEC P N E C R A.
 End Memory.
 
+Module MemoryT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (EKey : KEY_T with Definition t := E.t) (C : CFG_T P N E) (R : KEY_T)
+    (A : ALIAS_T R) (D : MEMORY_DATA_T P R) <: MEMORY_T P N E C R A.
+  Include Memory P N EKey C R A D.
+  TimeFun effects.
+End MemoryT.
+
 Record effect_flags := EffectFlags {
   flag_reads : bool;
   flag_writes : bool;
@@ -41,9 +57,25 @@ Record effect_flags := EffectFlags {
   flag_observes : bool
 }.
 
+TimeFun flag_reads.
+TimeFun flag_writes.
+TimeFun flag_may_trap.
+TimeFun flag_may_diverge.
+TimeFun flag_may_stop.
+TimeFun flag_allocates.
+TimeFun flag_frees.
+TimeFun flag_calls.
+TimeFun flag_observes.
+
 Module Type EFFECTS_DATA (I : TYPE).
   Parameter flags : I.t -> effect_flags.
 End EFFECTS_DATA.
+
+Module Type EFFECTS_DATA_TIME (I : TYPE) (Import D : EFFECTS_DATA I).
+  Parameter T_flags : I.t -> N.
+End EFFECTS_DATA_TIME.
+
+Module Type EFFECTS_DATA_T (I : TYPE) := EFFECTS_DATA I <+ EFFECTS_DATA_TIME I.
 
 Module EffectsCode (I : TYPE) (D : EFFECTS_DATA I) <: EFFECTS_OPS I.
   Definition reads i := flag_reads (D.flags i).
@@ -56,6 +88,19 @@ Module EffectsCode (I : TYPE) (D : EFFECTS_DATA I) <: EFFECTS_OPS I.
   Definition calls i := flag_calls (D.flags i).
   Definition observes i := flag_observes (D.flags i).
 End EffectsCode.
+
+Module EffectsT (I : TYPE) (D : EFFECTS_DATA_T I) <: EFFECTS_T I.
+  Include EffectsCode I D.
+  TimeFun reads.
+  TimeFun writes.
+  TimeFun may_trap.
+  TimeFun may_diverge.
+  TimeFun may_stop.
+  TimeFun allocates.
+  TimeFun frees.
+  TimeFun calls.
+  TimeFun observes.
+End EffectsT.
 
 Module MemoryEffectLaws (R : KEY) (A : ALIAS R) <: MEMORY_EFFECT_LAWS R A.
   Lemma barrier_read_write :

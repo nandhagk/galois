@@ -5,6 +5,7 @@
     Builds on: Program.SsaSig and Base.Trie. *)
 
 From Stdlib Require Import List Bool NArith PArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie Loop.
 From Galois.Graph Require Import Data SearchSig Search Dom.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
@@ -28,9 +29,25 @@ Arguments ssa_params {N V K G}.
 Arguments ssa_args {N V K G}.
 Arguments ssa_guards {N V K G}.
 
+TimeFun ssa_values.
+TimeFun ssa_defs.
+TimeFun ssa_homes.
+TimeFun ssa_default_home.
+TimeFun ssa_params.
+TimeFun ssa_args.
+TimeFun ssa_guards.
+
 Module Type SSA_DATA (P : TYPE) (N V : KEY_OPS) (K G : TYPE).
   Parameter tables : P.t -> ssa_tables N.t V.t K.t G.t.
 End SSA_DATA.
+
+Module Type SSA_DATA_TIME (P : TYPE) (N V : KEY_T) (K G : TYPE)
+    (Import D : SSA_DATA P N V K G).
+  Parameter T_tables : P.t -> N.
+End SSA_DATA_TIME.
+
+Module Type SSA_DATA_T (P : TYPE) (N V : KEY_T) (K G : TYPE) :=
+  SSA_DATA P N V K G <+ SSA_DATA_TIME P N V K G.
 
 Module SsaCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     (C : CFG_INDEXED_OPS P N E) (V : KEY_OPS) (K G : TYPE)
@@ -88,9 +105,30 @@ Arguments point_params {B BE N E V}.
 Arguments point_args {B BE N E V}.
 Arguments definitions {B BE N E V}.
 
+TimeFun point_lists.
+TimeFun instruction_lists.
+TimeFun parameter_edges.
+TimeFun default_parameter_edge.
+TimeFun point_blocks.
+TimeFun default_block.
+TimeFun edge_blocks.
+TimeFun point_params.
+TimeFun point_args.
+TimeFun definitions.
+
 Module Type SSA_POINTS_DATA (P : TYPE) (B BE N E V : KEY_OPS).
   Parameter tables : P.t -> ssa_point_tables B.t BE.t N.t E.t V.t.
 End SSA_POINTS_DATA.
+
+Module Type SSA_POINTS_DATA_TIME (P : TYPE) (B : KEY_T) (BE : KEY_OPS)
+    (N : KEY_T) (E : KEY_OPS) (V : KEY_T)
+    (Import D : SSA_POINTS_DATA P B BE N E V).
+  Parameter T_tables : P.t -> N.
+End SSA_POINTS_DATA_TIME.
+
+Module Type SSA_POINTS_DATA_T (P : TYPE) (B : KEY_T) (BE : KEY_OPS)
+    (N : KEY_T) (E : KEY_OPS) (V : KEY_T) :=
+  SSA_POINTS_DATA P B BE N E V <+ SSA_POINTS_DATA_TIME P B BE N E V.
 
 Module SsaPointsCode (P : TYPE) (B : KEY_OPS) (BE : KEY_OPS)
     (BC : CFG_INDEXED_OPS P B BE) (N : KEY_OPS) (E : KEY_OPS)
@@ -252,6 +290,18 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
   Proof. Admitted.
 End Ssa.
 
+Module SsaT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (EKey : KEY_T with Definition t := E.t) (C : CFG_T P N E) (V : KEY_T)
+    (K G : TYPE) (D : SSA_DATA_T P N V K G) <: SSA_T P N E C V K G.
+  Include Ssa P N EKey C V K G D.
+  TimeFun values.
+  TimeFun def.
+  TimeFun home.
+  TimeFun params.
+  TimeFun args.
+  TimeFun guards.
+End SsaT.
+
 Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
     (BC : CFG P B BE) (N : KEY) (E : KEY) (C : CFG P N E)
     (V : KEY) (U : VARS P N E C V) (D : SSA_POINTS_DATA P B BE N E V)
@@ -351,6 +401,23 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
     block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2.
   Proof. Admitted.
 End SsaPoints.
+
+Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : TYPE)
+    (BEKey : KEY_T with Definition t := BE.t) (BC : CFG_T P B BE)
+    (N : KEY_T) (E : TYPE) (EKey : KEY_T with Definition t := E.t)
+    (C : CFG_T P N E) (V : KEY_T) (U : VARS_T P N E C V)
+    (D : SSA_POINTS_DATA_T P B BEKey N EKey V)
+    <: SSA_POINTS_T P B BE BC N E C V U.
+  Include SsaPoints P B BEKey BC N EKey C V U D.
+  TimeFun points_in_block.
+  TimeFun instruction_edges.
+  TimeFun parameter_edge.
+  TimeFun block_of_point.
+  TimeFun block_edge_of.
+  TimeFun block_params.
+  TimeFun block_edge_args.
+  TimeFun point_definition.
+End SsaPointsT.
 
 Module Type SSA_POINTS_STRICT_WITNESS (P : TYPE) (B : KEY) (BE : TYPE)
     (BC : CFG P B BE) (N : KEY) (E : TYPE) (C : CFG P N E)
