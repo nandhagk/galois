@@ -37,4 +37,8 @@ Proof. vm_compute. reflexivity. Qed.
 Example must_operations : option_map PosSet.elements (Must.join (Some s1) (Some s2)) = Some [].
 Proof. vm_compute. reflexivity. Qed.
 
+Example duplicate_values_keep_the_original_set :
+  PosSet.elements (PosSet.add 1%positive (PosSet.add 1%positive PosSet.empty)) = [1%positive].
+Proof. vm_compute. reflexivity. Qed.
+
 (* Cost, height, narrowing and raw representation examples are in LatticeSetTest.v at 87192fe. *)
