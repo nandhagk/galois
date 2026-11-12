@@ -90,7 +90,7 @@ Module TranslateT (L1 L2 : LANG_T) (F : LANG_MORPHISM_T L1 L2)
     F.guard_work g + D.gwork (F.guard g) xs + 1.
   Definition wsize (p : wparam) : nat := D.wsize p.
   Definition wunits (a : t) : nat := D.wunits a.
-  Definition c_val : N := D.c_val + F.c_morphism + 1%N. (* STUB *)
+  Definition c_val : N := 1%N. (* STUB *)
   Definition c_lat : N := c_val.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)

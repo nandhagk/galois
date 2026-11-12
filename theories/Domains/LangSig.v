@@ -123,8 +123,10 @@ Module Type LANG_MORPHISM_TIME (L1 L2 : LANG_T)
   Parameter T_op : L1.op -> N.
   Parameter T_guard : L1.guard -> N.
   Parameter c_morphism : N.
+  (** Operator mapping time is bounded by its mapping-work measure. *)
   Parameter T_op_le : forall o,
     (T_op o <= c_morphism * N.of_nat (op_work o + 1))%N.
+  (** Guard mapping time is bounded by its mapping-work measure. *)
   Parameter T_guard_le : forall g,
     (T_guard g <= c_morphism * N.of_nat (guard_work g + 1))%N.
 End LANG_MORPHISM_TIME.
