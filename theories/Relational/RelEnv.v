@@ -83,14 +83,14 @@ Module RelEnv (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
