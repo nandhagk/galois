@@ -458,6 +458,27 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     (T_interval_payload_clip Scalar.interval_meet Scalar.T_interval_meet w a <=
       k_payload_clip * N.of_nat (psize w a + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma T_ptop_le : forall w,
+    (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma T_pbot_le : forall w,
+    (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma ptop_size : forall w,
+    (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma pbot_size : forall w,
+    (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma pconst_size : forall w z,
+    (N.of_nat (psize w (pconst w z)) <=
+      c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
 End IntervalPayloadT.
 
 Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T)
@@ -547,6 +568,23 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof. Admitted. (* STUB *)
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +

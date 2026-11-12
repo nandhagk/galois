@@ -84,6 +84,37 @@ Module SignTableCode (L : WORD_LANGUAGE_OPS) (S : SIGN_OPS L)
     | bvsle => sign_cmp_le (sign_lo w a) (sign_hi w a) (sign_lo w b) (sign_hi w b)
     | _ => sign_bool_top
     end.
+  Definition sign_half_class (w : positive) : Z :=
+    match w with
+    | xH => 1
+    | xO xH => 2
+    | _ => 4
+    end.
+  Definition sign_lo_sym w a :=
+    if neg a then - sign_half_class w else if zero a then 0 else 1.
+  Definition sign_hi_sym w a :=
+    if pos a then sign_half_class w - 1 else if zero a then 0 else -1.
+  Definition sign_ulo_sym w a :=
+    if zero a then 0 else if pos a then 1 else sign_half_class w.
+  Definition sign_uhi_sym w a :=
+    if neg a then 2 * sign_half_class w - 1
+    else if pos a then sign_half_class w - 1 else 0.
+  Definition sign_cmp_sym o w a b :=
+    match o with
+    | bveq => sign_cmp_eq (sign_lo_sym w a) (sign_hi_sym w a)
+        (sign_lo_sym w b) (sign_hi_sym w b)
+    | bvne => sign_bool_not (sign_cmp_eq (sign_lo_sym w a) (sign_hi_sym w a)
+        (sign_lo_sym w b) (sign_hi_sym w b))
+    | bvult => sign_cmp_lt (sign_ulo_sym w a) (sign_uhi_sym w a)
+        (sign_ulo_sym w b) (sign_uhi_sym w b)
+    | bvule => sign_cmp_le (sign_ulo_sym w a) (sign_uhi_sym w a)
+        (sign_ulo_sym w b) (sign_uhi_sym w b)
+    | bvslt => sign_cmp_lt (sign_lo_sym w a) (sign_hi_sym w a)
+        (sign_lo_sym w b) (sign_hi_sym w b)
+    | bvsle => sign_cmp_le (sign_lo_sym w a) (sign_hi_sym w a)
+        (sign_lo_sym w b) (sign_hi_sym w b)
+    | _ => sign_bool_top
+    end.
   Definition wfwd (o : L.op) (rw : positive) (xs : list (positive * S.p)) : option S.p :=
     match o, xs with
     | bvnot, [(_, a)] => Some (S.sign_not a)
@@ -94,7 +125,7 @@ Module SignTableCode (L : WORD_LANGUAGE_OPS) (S : SIGN_OPS L)
     | bvor, [(_, a); (_, b)] => Some (S.sign_or a b)
     | bvxor, [(_, a); (_, b)] => Some (S.sign_xor a b)
     | (bveq | bvne | bvult | bvule | bvslt | bvsle), [(w, a); (_, b)] =>
-        Some (sign_cmp o w a b)
+        Some (sign_cmp_sym o w a b)
     | bvite, [_; (_, a); (_, b)] => Some (S.pjoin rw a b)
     | _, _ => None
     end.
@@ -279,6 +310,15 @@ Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
   Proof. Admitted. (* STUB *)
 
   Definition c_sign : N := 1%N. (* STUB *)
+  (** Flag inclusion takes constant time. *)
+  Lemma T_pleb_const : forall w a b, (T_pleb w a b <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  (** Flag join takes constant time. *)
+  Lemma T_pjoin_const : forall w a b, (T_pjoin w a b <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  (** Flag meet takes constant time. *)
+  Lemma T_pmeet_const : forall w a b, (T_pmeet w a b <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
   Lemma T_sign_not_le : forall a, (T_sign_not a <= c_sign)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_sign_neg_le : forall a, (T_sign_neg a <= c_sign)%N.
@@ -290,6 +330,27 @@ Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
   Lemma T_sign_xor_le : forall a b, (T_sign_xor a b <= c_sign)%N.
   Proof. Admitted. (* STUB *)
   Lemma psize_width : forall w a, psize w a = Pos.to_nat w.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma T_ptop_le : forall w,
+    (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma T_pbot_le : forall w,
+    (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma ptop_size : forall w,
+    (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma pbot_size : forall w,
+    (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma pconst_size : forall w z,
+    (N.of_nat (psize w (pconst w z)) <=
+      c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
   Proof. Admitted. (* STUB *)
 End SignT.
 
@@ -346,7 +407,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
   Proof. intros o rw q wps ys cs z Hf. discriminate Hf. Qed.
 End SignTable.
 
-Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_T L S.
+Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Include SignTable L S.
   TimeFun sign_nonneg.
   TimeFun sign_lo.
@@ -360,10 +421,19 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_T L S.
   TimeFun sign_cmp_le.
   TimeFun sign_cmp_eq.
   TimeFun sign_cmp.
+  TimeFun sign_half_class.
+  TimeFun sign_lo_sym.
+  TimeFun sign_hi_sym.
+  TimeFun sign_ulo_sym.
+  TimeFun sign_uhi_sym.
+  TimeFun sign_cmp_sym.
   TimeFun wfwd.
   TimeFun wbwd.
   Definition c_sign_table : N := 1%N. (* STUB *)
   Definition c_word_table : N := 1%N. (* STUB *)
+  (** The bounded flag comparison keeps every numeric comparator result. *)
+  Lemma F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
+  Proof. Admitted.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -378,5 +448,22 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_T L S.
         fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (S.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The result stays within its declared work budget. *)
+  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => S.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        S.psize rw q +
+        fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
   Proof. Admitted. (* STUB *)
 End SignTableT.

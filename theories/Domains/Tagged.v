@@ -136,6 +136,23 @@ Module Type TAGGED_BASE (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) :=
   HARNESS_BASE BitsLang with Definition t := tagged W.p
     with Definition gamma := tagged_gamma L.is_word W.pgamma.
 
+Definition tagged_size {P : Type} (psize : positive -> P -> nat) (a : tagged P) : nat :=
+  match a with
+  | TVal w p => Pos.to_nat w + psize w p + 1
+  | _ => 1
+  end.
+
+Definition tagged_abst_work (v : positive * Z) : nat :=
+  (Pos.to_nat (fst v) + Z.size_nat (snd v) + 1) ^ 2.
+
+Module Type TAGGED_BASE_T (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) :=
+  HARNESS_BASE_T BitsLangT with Definition t := tagged W.p
+    with Definition wparam := W.pwparam
+    with Definition gamma := tagged_gamma L.is_word W.pgamma
+    with Definition bsize := tagged_size W.psize
+    with Definition wsize := W.pwsize
+    with Definition abst_work := tagged_abst_work.
+
 Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Include TaggedCode L W.
   Definition gamma := tagged_gamma L.is_word W.pgamma.
@@ -221,6 +238,60 @@ Module TaggedTimingHelpers (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L).
 
 End TaggedTimingHelpers.
 
+Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
+    <: TAGGED_BASE_T L W.
+  Include TaggedTimingHelpers L W.
+  Definition bsize := tagged_size W.psize.
+  Definition wsize := W.pwsize.
+  Definition abst_work := tagged_abst_work.
+  Definition c_base : N := 1%N. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_base * N.of_nat ((bsize a + bsize b + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_join_le : forall a b, (T_join a b <= c_base * N.of_nat ((bsize a + bsize b +
+    1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_base * N.of_nat ((bsize a + bsize b +
+    1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_narrow_le : forall a b, (T_narrow a b <= c_base * N.of_nat ((bsize a + bsize b +
+    1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_point_le : forall a, (T_point a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_base * N.of_nat ((bsize a + bsize b + wsize p + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma meet_size_le : forall a b,
+    (N.of_nat (bsize (meet a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma join_size_le : forall a b,
+    (N.of_nat (bsize (join a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma widen_size_le : forall p a b,
+    (N.of_nat (bsize (widen p a b)) <= c_base * N.of_nat (bsize a + bsize b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma T_abst_le : forall v,
+    (T_abst v <= c_base * N.of_nat (abst_work v + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The operation stays within the declared work budget. *)
+  Lemma abst_size_le : forall v,
+    (N.of_nat (bsize (abst v)) <= c_base * N.of_nat (abst_work v + 1))%N.
+  Proof. Admitted. (* STUB *)
+End TaggedT.
+
 Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
     (B : TAGGED_BASE L W) <: TABLE BitsLang B.
   Include TaggedTableCode L W T.
@@ -291,3 +362,63 @@ Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
   Module Table := TaggedTable L W T B.
   Module Domain := Harness BitsLang B Table.
 End WordDomain.
+
+Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
+    (T : WORD_TABLE_T L W) (B : TAGGED_BASE_T L W) <: TABLE_T BitsLangT B.
+  Include TaggedTable L W T B.
+  TimeFun untag.
+  TimeFun retag.
+  TimeFun fwd.
+  TimeFun bwd.
+  TimeFun grd.
+
+  Definition operand_sizes (xs : list B.t) : nat :=
+    fold_right Nat.add 0%nat (map B.bsize xs).
+  Definition operand_widths (xs : list B.t) : nat :=
+    fold_right Nat.add 0%nat
+      (map (fun x => match x with TVal w _ => Pos.to_nat w | _ => 0%nat end) xs).
+  Definition twork (o : BitsLangT.op) (xs : list B.t) : nat :=
+    operand_sizes xs + length xs +
+    match o with
+    | BConst w z => (Pos.to_nat w + Z.size_nat z + 1%nat) ^ 2
+    | BOp o => (Op.op_widths o + operand_widths xs + 1%nat) ^ 2
+    end.
+  Definition tgwork (_ : BitsLangT.guard) (xs : list B.t) : nat :=
+    operand_sizes xs + length xs + 1%nat.
+  Definition c_tab : N := 1%N. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma T_fwd_le : forall o xs, (T_fwd o xs <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma T_bwd_le : forall o r xs,
+    (T_bwd o r xs <= c_tab * N.of_nat ((twork o xs + B.bsize r + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma T_grd_le : forall g xs, (T_grd g xs <= c_tab * N.of_nat ((tgwork g xs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma T_abst_le : forall v xs o cs, BitsLangT.eval o cs = Some v ->
+    Forall2 (fun x c => B.point x = Some c) xs cs ->
+    (N.of_nat (B.abst_work v) <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma fwd_size_le : forall o xs r, fwd o xs = Some r ->
+    (N.of_nat (B.bsize r) <= c_tab * N.of_nat (twork o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma bwd_size_le : forall o r xs ys, bwd o r xs = Some ys ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
+      c_tab * N.of_nat (twork o xs + B.bsize r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The entry stays within its declared work budget. *)
+  Lemma grd_size_le : forall g xs ys, grd g xs = Some ys ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
+      c_tab * N.of_nat (tgwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+End TaggedTableT.
+
+Module WordDomainT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) (T : WORD_TABLE_T L W).
+  Module B := TaggedT L W.
+  Module Table := TaggedTableT L W T B.
+  Module Domain := HarnessT BitsLangT B Table.
+End WordDomainT.

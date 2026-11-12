@@ -36,6 +36,12 @@ Module Type SIGN_TIME (L : WORD_LANGUAGE_T) (Import S : SIGN L).
   Parameter T_sign_not T_sign_neg : sgn -> N.
   Parameter T_sign_and T_sign_or T_sign_xor : sgn -> sgn -> N.
   Parameter c_sign : N.
+  (** Flag inclusion takes constant time. *)
+  Parameter T_pleb_const : forall w a b, (T_pleb w a b <= c_sign)%N.
+  (** Flag join takes constant time. *)
+  Parameter T_pjoin_const : forall w a b, (T_pjoin w a b <= c_sign)%N.
+  (** Flag meet takes constant time. *)
+  Parameter T_pmeet_const : forall w a b, (T_pmeet w a b <= c_sign)%N.
   (** Sign negation charges a constant number of flag operations. *)
   Parameter T_sign_not_le : forall a, (T_sign_not a <= c_sign)%N.
   (** Arithmetic negation charges a constant number of flag operations. *)
@@ -98,3 +104,13 @@ Module Type SIGN_TABLE_TIME (L : WORD_LANGUAGE_T) (S : SIGN_T L)
 End SIGN_TABLE_TIME.
 Module Type SIGN_TABLE_T (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=
   SIGN_TABLE L S <+ SIGN_TABLE_TIME L S.
+
+Module Type SIGN_TABLE_PLAN (L : WORD_LANGUAGE_T) (S : SIGN_T L)
+    (Import T : SIGN_TABLE_T L S).
+  Parameter sign_cmp sign_cmp_sym : L.op -> positive -> sgn -> sgn -> sgn.
+  (** The bounded flag comparison keeps every numeric comparator result. *)
+  Parameter F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
+End SIGN_TABLE_PLAN.
+
+Module Type SIGN_TABLE_ALL (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=
+  SIGN_TABLE_T L S <+ SIGN_TABLE_PLAN L S.

@@ -41,9 +41,10 @@ Module Type HARNESS_BASE (L : LANG) :=
   WIDENING_LAWS <+ HARNESS_BASE_LAWS L.
 
 Module Type HARNESS_BASE_TIME (L : LANG_T) (Import B : HARNESS_BASE L).
-  (* spec: bsize wsize *)
+  (* spec: bsize wsize abst_work *)
   Parameter bsize : t -> nat.
   Parameter wsize : wparam -> nat.
+  Parameter abst_work : L.val -> nat.
   Parameter T_leb T_join T_meet T_narrow : t -> t -> N.
   Parameter T_is_bot T_point : t -> N.
   Parameter T_abst : L.val -> N.
@@ -76,9 +77,12 @@ Module Type HARNESS_BASE_TIME (L : LANG_T) (Import B : HARNESS_BASE L).
   (** Widening results fit within the operand and parameter sizes. *)
   Parameter widen_size_le : forall p a b,
     (N.of_nat (bsize (widen p a b)) <= c_base * N.of_nat (bsize a + bsize b + wsize p + 1))%N.
-  (** Abstraction results fit within their abstraction time. *)
+  (** Abstraction time charges declared work. *)
+  Parameter T_abst_le : forall v,
+    (T_abst v <= c_base * N.of_nat (abst_work v + 1))%N.
+  (** Abstraction results fit within their declared work. *)
   Parameter abst_size_le : forall v,
-    (N.of_nat (bsize (abst v)) <= c_base * (T_abst v + 1))%N.
+    (N.of_nat (bsize (abst v)) <= c_base * N.of_nat (abst_work v + 1))%N.
 End HARNESS_BASE_TIME.
 
 Module Type HARNESS_BASE_T (L : LANG_T) := HARNESS_BASE L <+ HARNESS_BASE_TIME L.
@@ -121,7 +125,7 @@ Module Type TABLE_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (Import T : TABLE L B
   (** Abstracting an evaluated singleton is charged to the same table work. *)
   Parameter T_abst_le : forall v xs o cs, L.eval o cs = Some v ->
     Forall2 (fun x c => B.point x = Some c) xs cs ->
-    (B.T_abst v <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
+    (N.of_nat (B.abst_work v) <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
   (** Forward table results fit within the charged table work. *)
   Parameter fwd_size_le : forall o xs r, fwd o xs = Some r ->
     (N.of_nat (B.bsize r) <= c_tab * N.of_nat (twork o xs + 1))%N.

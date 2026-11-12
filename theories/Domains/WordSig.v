@@ -140,7 +140,24 @@ Module Type WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T) (Import W : WORD_PAYLOAD L).
   Parameter T_pjoin T_pmeet : positive -> p -> p -> N.
   Parameter T_pis_bot T_ppoint : positive -> p -> N.
   Parameter T_pconst : positive -> Z -> N.
+  Parameter T_ptop T_pbot : positive -> N.
   Parameter c_payload : N.
+  (** Constructing top charges the squared width budget. *)
+  Parameter T_ptop_le : forall w,
+    (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  (** Constructing bottom charges the squared width budget. *)
+  Parameter T_pbot_le : forall w,
+    (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  (** Top fits within the squared width budget. *)
+  Parameter ptop_size : forall w,
+    (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  (** Bottom fits within the squared width budget. *)
+  Parameter pbot_size : forall w,
+    (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  (** Constant payloads fit within their declared construction work. *)
+  Parameter pconst_size : forall w z,
+    (N.of_nat (psize w (pconst w z)) <=
+      c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
   (** Joined payloads fit within the combined operand sizes. *)
   Parameter pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
@@ -220,6 +237,21 @@ Module Type WORD_TABLE_TIME (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   (** Backward table time additionally charges the requested payload size. *)
   Parameter T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  (** Forward results fit within the declared table work. *)
+  Parameter wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  (** Backward results fit within the work and request budget. *)
+  Parameter wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
