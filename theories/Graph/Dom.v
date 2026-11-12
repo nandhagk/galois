@@ -157,7 +157,7 @@ Definition dom_add_size (m : ptrie positive) (sizes : ptrie N) (v : positive) : 
 TimeFun dom_add_size.
 
 Definition dom_sizes (m : ptrie positive) (o : list positive) : ptrie N :=
-  fold_left (dom_add_size m) (rev o) Empty.
+  fold_left (dom_add_size m) (rev_append o []) Empty.
 TimeFun dom_sizes.
 
 Definition dom_interval (pos sizes : ptrie N) (u v : positive) : bool :=
@@ -256,7 +256,7 @@ Module DomCode <: DOM_OPS.
         | None => ends
         | Some pv => PTrieCode.set v (N.pred (N.add pv (dom_size_get sizes v))) ends
         end) o Empty in
-      DomTree m (PTrieCode.map (@rev positive) children) pos ends.
+      DomTree m (PTrieCode.map (fun vs => rev_append vs []) children) pos ends.
 
   Definition dominates_b (t : domtree) (u v : positive) : bool :=
     match trie_get u (pre t), trie_get u (post t),
@@ -307,6 +307,8 @@ Module DomT <: DOM_ALL.
   TimeFun map_check.
   Definition sizes := dom_sizes.
   TimeFun sizes.
+  Definition sizes_ok := dom_sizes_ok.
+  TimeFun sizes_ok.
   Definition edges g m o :=
     match dom_read g (match o with [] => 1%positive | h :: _ => h end) o with
     | None => false
@@ -344,6 +346,8 @@ Module DomT <: DOM_ALL.
   Definition k_semi : N := 1%N. (* STUB *)
   Definition k_le : N := 1%N. (* STUB *)
   Definition k_order : N := 1%N. (* STUB *)
+  Definition k_build : N := 1%N. (* STUB *)
+  Definition k_check : N := 1%N. (* STUB *)
 
   Lemma F0_path_last : forall g a vs b, path g a vs b ->
   (vs = [b] /\ a = b) \/
@@ -513,4 +517,40 @@ Module DomT <: DOM_ALL.
       (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r) => T_build g r).
   Proof. Admitted. (* STUB *)
+
+  (** A successful read lists distinct listed vertices within the budget, headed by the root. *)
+  Lemma F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
+    NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
+    (forall v, In v o -> In v (nodes g)) /\
+    (forall v, In v o -> exists i, trie_get v pos = Some i).
+  Proof. Admitted. (* STUB *)
+
+  (** A successful parent check keeps every parent of an ordered vertex in the order. *)
+  Lemma F2d_map : forall g r m o, map_check (scan g) r m o = true ->
+    forall v p, In v o -> trie_get v m = Some p -> In p o.
+  Proof. Admitted. (* STUB *)
+
+  (** Parent containment tests charge each accepted order entry. *)
+  Lemma T4b_sizes_ok : forall g r m o pos,
+      read (scan g) r o = Some pos -> map_check (scan g) r m o = true ->
+      (T_sizes_ok m pos (sizes m o) o <= k_size * N.of_nat ((graph_n (base g) + 1) *
+        (graph_width (base g) + 1)))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Building runs the search, the semidominator phases and the order phase. *)
+  Lemma T11b_build : forall g r, prepared_ok g ->
+      (T_build g r <= T_lt_dfs g r + T_lt_semi g r + T_lt_order g r + k_build)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** The checker runs its phases in order and stops at the first rejection. *)
+  Lemma T11_check : forall g r m o,
+      (T_check g r m o <= k_check * (T_scan g + T_read (scan g) r o +
+        T_map_check (scan g) r m o +
+        match read (scan g) r o with
+        | Some pos => if map_check (scan g) r m o
+            then T_sizes m o + T_sizes_ok m pos (sizes m o) o + T_edges g m o else 0
+        | None => 0
+        end + 1))%N.
+  Proof. Admitted. (* STUB *)
+
 End DomT.

@@ -197,6 +197,8 @@ Module Type WTO_PLAN (Import W : WTO_T).
     ptrie (list positive * list positive).
   Parameter wto_edge_b : ptrie (list positive * list positive) -> positive -> positive -> bool.
   Parameter wto_rank_rows : positive -> list positive -> ptrie positive.
+  Parameter wto_heads_into wto_order_into : wto -> list positive -> list positive.
+  Parameter T_wto_heads_into T_wto_order_into : wto -> list positive -> N.
   Parameter wto_scoped : prepared -> option (list positive) -> prepared.
   Parameter wto_components : prepared -> list positive -> scc.
   Parameter wto_entries : prepared -> list positive -> scc -> ptrie positive.
@@ -473,23 +475,68 @@ Module Type WTO_PLAN (Import W : WTO_T).
       N.of_nat (wto_depth (build g roots) + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
 
-  (** The current structural head traversal retains the cost of each body-list append. *)
-  Parameter T8_heads_source : forall w,
-    (T_heads w <= k_heads * (T_wto_heads w + 1))%N.
+  (** Accumulating traversals compute the structural lists. *)
+  Parameter F20_into : forall w acc,
+    wto_heads_into w acc = wto_heads w ++ acc /\
+    wto_order_into w acc = wto_order w ++ acc.
 
-  (** The linear head target needs an append-accounting or accumulator implementation argument. *)
+  (** Head projection is one accumulating traversal. *)
+  Parameter T8_heads_source : forall w,
+    (T_heads w <= k_heads * (T_wto_heads_into w [] + 1))%N.
+
+  (** An accumulating traversal visits each constructor once. *)
+  Parameter T8b_heads_into : forall w acc,
+    (T_wto_heads_into w acc <= k_heads * N.of_nat (2 * length (wto_order w) + 2))%N.
+
+  (** The accumulating head traversal meets the linear target. *)
   Parameter T9_heads_public : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
 
-  (** Ranking pays structural flattening before inserting binary positions. *)
+  (** Ranking flattens by accumulation before inserting binary positions. *)
   Parameter T10_ranks_source : forall w,
-    (T_ranks w <= k_ranks * (T_wto_order w +
+    (T_ranks w <= k_ranks * (T_wto_order_into w [] +
       T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
 
-  (** The public rank target must absorb structural flattening as well as trie insertion. *)
+  (** Flattening by accumulation visits each constructor once. *)
+  Parameter T10b_order_into : forall w acc,
+    (T_wto_order_into w acc <= k_ranks * N.of_nat (2 * length (wto_order w) + 2))%N.
+
+  (** Rank insertion pays each key and an amortised binary successor. *)
+  Parameter T10c_rank_rows : forall vs,
+    (T_wto_rank_rows 1%positive vs <= k_ranks * N.of_nat (length vs + 1) *
+      N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
+
+  (** Accumulating flattening and trie insertion meet the public rank target. *)
   Parameter T11_ranks_public : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
+
+  (** Scoped components and entries read the materialized rows once. *)
+  Parameter T12_scoped : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+    (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
+      T_wto_entries (wto_scoped g (Some vs)) (rev vs)
+        (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
+    k_scope * N.of_nat (scope_work g vs))%N.
+  (** Initial components and entries pay the listed graph and the supplied roots. *)
+  Parameter T13_initial : forall g roots,
+    (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
+      k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  (** Preference and selection scan an actual component once. *)
+  Parameter T14_select : forall g roots st within entries owners c tasks,
+    In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
+    (T_wto_preferred owners entries c + T_wto_select (wto_preferred owners entries c) c <=
+      k_expand * N.of_nat (scope_work g c))%N.
+  (** Close, terminal and singleton steps pay the reversed partial order and one row. *)
+  Parameter T15_short_step : forall g roots st,
+    In st (history g roots) ->
+    (forall within entries owners c tasks h body,
+      wto_tasks st = WtoExpand within entries owners c :: tasks ->
+      wto_select (wto_preferred owners entries c) c = Some (h, body) -> body = []) ->
+    (T_wto_step g st <= k_expand *
+      N.of_nat (length (wto_order (wto_partial st)) +
+        source_mass g (concat (map task_members (firstn 1 (wto_tasks st)))) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
 End WTO_PLAN.
 
 Module Type WTO_ALL := WTO_T <+ WTO_PLAN.

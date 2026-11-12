@@ -352,6 +352,10 @@ Module Type SEARCH_PLAN (V : VISITOR_T) (Import S : SEARCH_T V).
     (forall r, In r roots -> In r (nodes g)) ->
     length (trace g roots) = 2 * n_reach g roots + e_reach g roots.
 
+  (** Each entered vertex contributes at most two events and its row on every input. *)
+  Parameter F7b_events_raw : forall g roots,
+    length (trace g roots) <= 2 * n_reach g roots + e_reach g roots.
+
   (** The concrete task fuel needs a step-count proof separate from the compact design fuel. *)
   Parameter F8_fuel : forall g roots,
     counts_ok g -> wf_graph (base g) ->

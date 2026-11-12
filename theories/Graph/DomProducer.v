@@ -62,7 +62,7 @@ Definition dom_lt_layout_of (g : prepared) (r : positive) : dom_lt_layout :=
 TimeFun dom_lt_layout_of.
 
 Definition dom_lt_dfs (g : prepared) (r : positive) : list positive :=
-  rev (lt_reverse_order (dom_lt_layout_of g r)).
+  rev_append (lt_reverse_order (dom_lt_layout_of g r)) [].
 TimeFun dom_lt_dfs.
 
 Record dom_lt_links := DomLtLinks {
@@ -178,7 +178,7 @@ TimeFun dom_lt_numeric_add.
 
 Definition dom_lt_numeric_of (g : prepared) (r : positive) : dom_lt_numeric :=
   let layout := dom_lt_layout_of g r in
-  fold_left (dom_lt_numeric_add g layout) (rev (lt_reverse_order layout))
+  fold_left (dom_lt_numeric_add g layout) (rev_append (lt_reverse_order layout) [])
     (DomLtNumeric [] Empty Empty Empty (lt_next layout)).
 TimeFun dom_lt_numeric_of.
 
@@ -269,13 +269,14 @@ TimeFun dom_lt_correct_step.
 
 Definition dom_lt_buckets (numeric : dom_lt_numeric) (semis : ptrie N)
     : dom_lt_bucket_state :=
-  let buckets := fold_left (dom_lt_bucket_add semis) (rev (lt_numeric_order numeric)) Empty in
+  let buckets := fold_left (dom_lt_bucket_add semis)
+    (rev_append (lt_numeric_order numeric) []) Empty in
   fold_left (dom_lt_bucket_step numeric semis buckets) (lt_numeric_order numeric)
     (DomLtBucketState (DomLtLinks Empty Empty []) Empty).
 TimeFun dom_lt_buckets.
 
 Definition dom_lt_correct (numeric : dom_lt_numeric) (semis relative : ptrie N) : ptrie N :=
-  fold_left (dom_lt_correct_step semis relative) (rev (lt_numeric_order numeric)) Empty.
+  fold_left (dom_lt_correct_step semis relative) (rev_append (lt_numeric_order numeric) []) Empty.
 TimeFun dom_lt_correct.
 
 Definition dom_lt_erase (numeric : dom_lt_numeric) (parents : ptrie N) : ptrie positive :=

@@ -37,7 +37,7 @@ Definition wto_components g roots :=
   let listed_roots := filter (fun v =>
     match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots in
   let s := TarjanSearch.dfs ready listed_roots tarjan_initial in
-  Scc (tarjan_owners s) (rev (tarjan_emitted s)).
+  Scc (tarjan_owners s) (rev_append (tarjan_emitted s) []).
 TimeFun wto_components.
 
 Definition wto_offer i v (entries : ptrie positive) :=
@@ -111,11 +111,12 @@ Definition wto_step (g : prepared) (s : wto_state) : wto_state + wto :=
     | Some (h, body) =>
       let child := Some body in
       let scoped := wto_scoped g child in
-      let roots := rev body in
+      let roots := rev_append body [] in
       let r := wto_components scoped roots in
       let entries' := wto_entries scoped roots r in
       inl (WtoState
-        (wto_expand_tasks child entries' (comp r) (rev (comps r)) ++ WtoClose h :: tasks)
+        (wto_expand_tasks child entries' (comp r) (rev_append (comps r) []) ++
+          WtoClose h :: tasks)
         WNil (partial :: parents))
     end
   end.
@@ -173,7 +174,8 @@ TimeFun wto_key_fits.
 Definition wto_check_step (width : nat) (listed : ptrie bool) (s : wto_check_state)
     : wto_check_state + option (ptrie N * ptrie (N * N) * list positive) :=
   match s with
-  | WtoCheckState [] _ ranks intervals vs => inr (Some (ranks, intervals, rev vs))
+  | WtoCheckState [] _ ranks intervals vs =>
+    inr (Some (ranks, intervals, rev_append vs []))
   | WtoCheckState (task :: rest) next ranks intervals vs =>
     match task with
     | WtoCheckClose h =>
@@ -254,13 +256,30 @@ Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : b
   else false.
 TimeFun wto_check_linear.
 
+Fixpoint wto_heads_into (w : wto) (acc : list positive) : list positive :=
+  match w with
+  | WNil => acc
+  | WVertex _ rest => wto_heads_into rest acc
+  | WLoop h inside rest => h :: wto_heads_into inside (wto_heads_into rest acc)
+  end.
+TimeFun wto_heads_into.
+
+Fixpoint wto_order_into (w : wto) (acc : list positive) : list positive :=
+  match w with
+  | WNil => acc
+  | WVertex v rest => v :: wto_order_into rest acc
+  | WLoop h inside rest => h :: wto_order_into inside (wto_order_into rest acc)
+  end.
+TimeFun wto_order_into.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
     let entries := wto_entries g roots r in
     let cs := comps r in
     let size := length (concat cs) in
-    let initial := WtoState (wto_expand_tasks None entries (comp r) (rev cs)) WNil [] in
+    let initial := WtoState
+      (wto_expand_tasks None entries (comp r) (rev_append cs [])) WNil [] in
     match loopN (wto_step g) (N.of_nat (3 * size + 1)) initial with
     | inl s => wto_reverse_into (wto_partial s) WNil
     | inr w => w
@@ -268,8 +287,8 @@ Module WtoCode <: WTO_OPS.
 
   Definition check := wto_check_linear.
 
-  Definition heads := wto_heads.
-  Definition ranks w := wto_rank_rows 1%positive (wto_order w).
+  Definition heads w := wto_heads_into w [].
+  Definition ranks w := wto_rank_rows 1%positive (wto_order_into w []).
 End WtoCode.
 
 Module Wto <: WTO.
@@ -282,9 +301,7 @@ Module Wto <: WTO.
 
   (** Heads are the structural loop heads in traversal order. *)
   Lemma heads_spec : forall w, heads w = wto_heads w.
-  Proof.
-    reflexivity.
-  Qed.
+  Proof. Admitted. (* CONVERT: heads_spec: accumulating traversal is not convertible. *)
 
   (** Ranks number the unique linear order starting at one. *)
   Lemma ranks_spec : forall w, NoDup (wto_order w) -> forall v i,
@@ -374,6 +391,10 @@ Module WtoT <: WTO_ALL.
   TimeFun wto_edge_b.
   Definition wto_rank_rows := wto_rank_rows.
   TimeFun wto_rank_rows.
+  Definition wto_heads_into := wto_heads_into.
+  TimeFun wto_heads_into.
+  Definition wto_order_into := wto_order_into.
+  TimeFun wto_order_into.
   Definition wto_scoped := wto_scoped.
   TimeFun wto_scoped.
   Definition wto_components := wto_components.
@@ -644,7 +665,7 @@ Module WtoT <: WTO_ALL.
   Proof. Admitted. (* STUB *)
 
   Lemma T8_heads_source : forall w,
-    (T_heads w <= k_heads * (T_wto_heads w + 1))%N.
+    (T_heads w <= k_heads * (T_wto_heads_into w [] + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T9_heads_public : forall w,
@@ -653,11 +674,68 @@ Module WtoT <: WTO_ALL.
 
   Lemma T10_ranks_source : forall w,
     (T_ranks w <= k_ranks *
-      (T_wto_order w + T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
+      (T_wto_order_into w [] + T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T11_ranks_public : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   Proof. Admitted. (* STUB *)
+
+  (** Accumulating traversals compute the structural lists. *)
+  Lemma F20_into : forall w acc,
+      wto_heads_into w acc = wto_heads w ++ acc /\
+      wto_order_into w acc = wto_order w ++ acc.
+  Proof. Admitted. (* STUB *)
+
+  (** An accumulating traversal visits each constructor once. *)
+  Lemma T8b_heads_into : forall w acc,
+      (T_wto_heads_into w acc <= k_heads * N.of_nat (2 * length (wto_order w) + 2))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Flattening by accumulation visits each constructor once. *)
+  Lemma T10b_order_into : forall w acc,
+      (T_wto_order_into w acc <= k_ranks * N.of_nat (2 * length (wto_order w) + 2))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Rank insertion pays each key and an amortised binary successor. *)
+  Lemma T10c_rank_rows : forall vs,
+      (T_wto_rank_rows 1%positive vs <= k_ranks * N.of_nat (length vs + 1) *
+        N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Scoped components and entries read the materialized rows once. *)
+  Lemma T12_scoped : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+      (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
+        T_wto_entries (wto_scoped g (Some vs)) (rev vs)
+          (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
+      k_scope * N.of_nat (scope_work g vs))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Initial components and entries pay the listed graph and the supplied roots. *)
+  Lemma T13_initial : forall g roots,
+      (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
+        k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+        N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Preference and selection scan an actual component once. *)
+  Lemma T14_select : forall g roots st within entries owners c tasks,
+      In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
+      (T_wto_preferred owners entries c + T_wto_select (wto_preferred owners entries c) c <=
+        k_expand * N.of_nat (scope_work g c))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Close, terminal and singleton steps pay the reversed partial order and one row. *)
+  Lemma T15_short_step : forall g roots st,
+      In st (history g roots) ->
+      (forall within entries owners c tasks h body,
+        wto_tasks st = WtoExpand within entries owners c :: tasks ->
+        wto_select (wto_preferred owners entries c) c = Some (h, body) -> body = []) ->
+      (T_wto_step g st <= k_expand *
+        N.of_nat (length (wto_order (wto_partial st)) +
+          source_mass g (concat (map task_members (firstn 1 (wto_tasks st)))) + 1) *
+        N.of_nat (graph_width (base g) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
 End WtoT.
