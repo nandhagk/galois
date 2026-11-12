@@ -22,3 +22,5 @@ tests/Domains/CongruenceCRTTest.v
 tests/Domains/Review12Test.v
 tests/Domains/TransferTest.v
 tests/Domains/ValueCombineTest.v
+tests/Domains/BitsLangPortTest.v
+tests/Domains/ValueLawTest.v
