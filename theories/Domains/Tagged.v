@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith.
 From Galois.Bits Require Import Word.
-From Galois.Domains Require Import LangSig WordSig HarnessSig BitsLang.
+From Galois.Domains Require Import LangSig WordSig HarnessSig Harness BitsLang.
 
 Module TaggedCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
     <: HARNESS_BASE_OPS BitsLangCode.
@@ -212,3 +212,9 @@ Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
     Forall2 B.gamma xs cs -> TaggedBitsLang.holds g cs -> Forall2 B.gamma ys cs.
   Proof. Admitted.
 End TaggedTable.
+
+Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
+  Module B := Tagged L W.
+  Module Table := TaggedTable L W T.
+  Module Domain := Harness TaggedBitsLang B Table.
+End WordDomain.
