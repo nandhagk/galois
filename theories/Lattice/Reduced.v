@@ -63,3 +63,24 @@ Module ReducedT (A B : BLATTICE_T) (R : REDUCER_T A B) <: BLATTICE_T.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End ReducedT.
+
+Module ReducedHeight (A B : BLATTICE) (R : REDUCER A B)
+    (P : LATTICE with Definition t := (A.t * B.t)%type
+                  with Definition leb :=
+                    (fun x y => andb (A.leb (fst x) (fst y)) (B.leb (snd x) (snd y))))
+    (H : HEIGHT P)
+    (Lat : BLATTICE with Definition t := (A.t * B.t)%type
+                     with Definition leb :=
+                       (fun x y => let r := R.reduce x in
+                         andb (A.leb (fst r) (fst y)) (B.leb (snd r) (snd y))))
+    <: HEIGHT Lat.
+  Definition rank (x : Lat.t) := H.rank (R.reduce x).
+  Definition height := H.height.
+
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intro a; apply H.rank_le. Qed.
+
+  Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
+    rank a < rank b.
+  Proof. Admitted. (* CONVERT: reduced_height: missing rank_monotone in HEIGHT *)
+End ReducedHeight.

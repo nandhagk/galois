@@ -120,3 +120,23 @@ Module UnitLatT <: BLATTICE_T.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End UnitLatT.
+
+Module BoolLatHeight <: HEIGHT BoolLat.
+  Definition rank (a : BoolLat.t) : nat := if a then 1 else 0.
+  Definition height : nat := 1.
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intros []; cbv [rank height]; auto. Qed.
+  Lemma rank_strict : forall a b, BoolLat.leb a b = true -> BoolLat.leb b a = false ->
+    rank a < rank b.
+  Proof. intros [] []; cbn [BoolLat.leb Bool.implb rank]; intros; try discriminate; lia. Qed.
+End BoolLatHeight.
+
+Module UnitLatHeight <: HEIGHT UnitLat.
+  Definition rank (_ : UnitLat.t) : nat := 0.
+  Definition height : nat := 0.
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intros []; reflexivity. Qed.
+  Lemma rank_strict : forall a b, UnitLat.leb a b = true -> UnitLat.leb b a = false ->
+    rank a < rank b.
+  Proof. intros [] [] _ H; discriminate. Qed.
+End UnitLatHeight.
