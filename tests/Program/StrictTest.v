@@ -4,10 +4,10 @@
     For example, neither arm of a diamond dominates its join.
     Builds on: Program.Ssa and graph fixtures. *)
 
-From Stdlib Require Import List PArith.
-From Galois.Base Require Import Trie.
+From Stdlib Require Import List PArith Bool.
+From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Digraph Dom.
-From Galois.Program Require Import Ssa.
+From Galois.Program Require Import CfgSig SsaSig Ssa.
 Import List.ListNotations.
 Open Scope positive_scope.
 Definition fixture_graph (vertices : list positive) (edges : list (positive * positive)) : digraph :=
@@ -73,4 +73,30 @@ Definition repeated_context := make_strict_context (fun e => fst (snd e)) (fun e
 Example repeated_query_is_conservative : dominating_edges_in repeated_context 2 = [].
 Proof. vm_compute; reflexivity. Qed.
 Example empty_walk_boundary : strict_walk_step diamond_context (None, []) = inr [].
+Proof. vm_compute; reflexivity. Qed.
+
+Module ProgramType <: TYPE. Definition t := bool. End ProgramType.
+Module OpType <: TYPE. Definition t := unit. End OpType.
+Module EdgeKey := PairKeyCode NatKeyCode NatKeyCode.
+Module DiamondCfg <: CFG_INDEXED_OPS ProgramType NatKeyCode EdgeKey.
+  Definition entries (_ : bool) := [1%nat].
+  Definition edges (_ : bool) := [(1%nat, 2%nat); (1%nat, 3%nat); (2%nat, 4%nat); (3%nat, 4%nat)].
+  Definition src (_ : bool) (e : EdgeKey.t) := fst e.
+  Definition dst (_ : bool) (e : EdgeKey.t) := snd e.
+  Definition nodes (_ : bool) := [1%nat; 2%nat; 3%nat; 4%nat].
+  Definition out (p : bool) (n : nat) := filter (fun e => Nat.eqb (src p e) n) (edges p).
+  Definition inc (p : bool) (n : nat) := filter (fun e => Nat.eqb (dst p e) n) (edges p).
+End DiamondCfg.
+Module DiamondData <: SSA_DATA ProgramType NatKeyCode NatKeyCode OpType OpType.
+  Definition tables (_ : bool) := SsaTables [0%nat; 1%nat]
+    (PTrieCode.set (NatKeyCode.encode 0%nat) (Op tt [])
+      (PTrieCode.set (NatKeyCode.encode 1%nat) (Param 4%nat 0%nat) Empty))
+    Empty 1%nat Empty Empty
+    (PTrieCode.set (EdgeKey.encode (1%nat, 2%nat)) [(tt, [0%nat])] Empty).
+End DiamondData.
+Module DiamondSsa := SsaCode ProgramType NatKeyCode EdgeKey DiamondCfg NatKeyCode
+  OpType OpType DiamondData.
+Example diamond_guard : DiamondSsa.guards true (1%nat, 2%nat) = [(tt, [0%nat])].
+Proof. vm_compute; reflexivity. Qed.
+Example diamond_parameter : DiamondSsa.def true 1%nat = Param 4%nat 0%nat.
 Proof. vm_compute; reflexivity. Qed.
