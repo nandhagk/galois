@@ -1329,6 +1329,7 @@ Fixpoint tnum_choices (p : positive) (c : Z) : Prop :=
 Definition tnum_unknown (w : width) (m : Z) : nat :=
   length (filter (fun i => negb (Z.testbit m (Z.of_nat i))) (seq 0 (Pos.to_nat w))).
 
+(** This legacy two-mask count is separate from the payload rank based on known_count. *)
 Definition tnum_rank (w : width) (a : tnum) : nat :=
   (tnum_unknown w (zeros a) + tnum_unknown w (ones a))%nat.
 
