@@ -15,6 +15,7 @@ From Galois.Framework Require Import IfdsSig Ifds IdeSig.
 Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     (Site : KEY_OPS) (I : ICFG_OPS P N E C Site) (F : KEY_OPS)
     (V : LATTICE_OPS) (M : MICRO_OPS V) (FL : IDE_FLOW_OPS P N E F V M)
+    (R : IFDS_RULES_OPS P N E F)
     <: IDE_OPS P N E F V M.
   Definition prog := P.t.
   Definition key := path_edge N.t F.t.
@@ -25,9 +26,7 @@ Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     F.eqb (fst x) (fst y) && N.eqb (fst (snd x)) (fst (snd y)) &&
       F.eqb (snd (snd x)) (snd (snd y)).
   Definition rows p : list row := path_number 1%positive
-    (path_rules Site.eqb (I.kind p) (C.dst p) (FL.facts p) (FL.flow p)
-      (FL.seeds p) (C.edges p)).
-  Definition row_code (r : row) := path_row_code r.
+    (R.rules p).
   Definition target p (r : row) : key := match path_row_rule r with
     | PathIdentity n d => (d, (n, d))
     | PathStep d0 e _ y => (d0, (C.dst p e, y))
@@ -55,14 +54,12 @@ Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     match f with
     | PathFrame _ _ _ _ rule pending received => path_query (finish p) rule pending (a :: received)
     end.
-  Definition rows_of p (x : key) : list row :=
-    filter (fun r => key_eqb x (target p r)) (rows p).
 End IdeCode.
 
 Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (V : LATTICE) (M : MICRO V)
-    (FL : IDE_FLOW P N E C F V M) <: IDE P N E C Site I F V M FL.
-  Include IdeCode P N E C Site I F V M FL.
+    (FL : IDE_FLOW P N E C F V M) (R : IFDS_RULES P N E C Site I F FL) <: IDE P N E C Site I F V M FL.
+  Include IdeCode P N E C Site I F V M FL R.
   Include SYSTEM_SPEC M.
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
@@ -92,20 +89,9 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
   Proof. Admitted. (* STUB *)
-  (** Row codes distinguish rows within each program. *)
-  Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
-    row_code a = row_code b -> a = b.
-  Proof. Admitted. (* STUB *)
-  (** The index lists exactly the rows that may write the requested key. *)
-  Lemma rows_of_spec : forall p x r, wf p ->
-    (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
-  Proof. Admitted. (* STUB *)
   Include IDE_RULE_SPEC P N E C Site I F V M FL.
   (** The path-edge encoding retains all three components. *)
   Lemma key_code_spec : key_code = path_edge_code N.encode F.encode.
-  Proof. Admitted. (* STUB *)
-  (** Row codes retain binary occurrence identities. *)
-  Lemma row_code_spec : row_code = path_row_code.
   Proof. Admitted. (* STUB *)
   (** Rows contain exactly the enabled finite rules. *)
   Lemma rows_spec : forall p rule,
@@ -131,22 +117,68 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Proof. Admitted. (* STUB *)
 End Ide.
 
-Module IdeT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
-    (V : LATTICE_T) (M : MICRO_T V) (FL : IDE_FLOW_T P N E C F V M).
-  Include Ide P N E C Site I F V M FL.
+    (V : LATTICE_T) (M : MICRO_T V) (FL : IDE_FLOW_T P N E C F V M)
+    (R : IFDS_RULES_T P N E C Site I F FL)
+    <: IDE_T P N E C Site I F V M FL.
+  Include Ide P N E C Site I F V M FL R.
 
   TimeFun key_code.
   TimeFun key_eqb.
   TimeFun rows.
-  TimeFun row_code.
   TimeFun target.
   TimeFun deps.
   TimeFun sides.
   TimeFun finish.
   TimeFun start.
   TimeFun resume.
-  TimeFun rows_of.
+  Definition row_work p s := N.of_nat
+    (FL.weight_work p + length (R.rules p) + s + M.size M.identity + M.size M.bot + 1).
+  Definition kw (p : prog) : nat := fold_right Nat.max 0
+    (map N.bits (C.nodes p) ++ map F.bits (FL.facts p) ++
+      map (fun nd => N.bits (fst nd) + F.bits (snd nd)) (FL.seeds p)).
+  Definition c_sys : N := 1%N. (* STUB *)
+  Lemma row_work_mono : forall p s t, s <= t ->
+    (row_work p s <= row_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, M.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, M.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (M.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (M.size (snd xb)) <= row_work p s)%N) ss.
+  Proof. Admitted. (* STUB *)
 End IdeT.
 
 Module IdeSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)

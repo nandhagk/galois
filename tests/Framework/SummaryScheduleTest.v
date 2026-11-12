@@ -20,6 +20,8 @@ Module AllCalls <: CALLS_OPS Prog NatKeyCode NatKeyCode.
   Definition caller_of (_ : nat) (site : nat) := site.
   Definition resolve (_ : nat) site := match site with 0 | 1 => [0; 1] | _ => [] end.
   Definition call_graph (_ : nat) := Digraph [] Empty.
+  Definition calls p := flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
 End AllCalls.
 Module SAll := SummaryCode Prog NatKeyCode NatKeyCode AllCalls Lat Body.
 Module H := ScheduleCode Lat SAll DigraphCode WtoCode.

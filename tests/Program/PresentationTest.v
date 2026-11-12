@@ -38,14 +38,17 @@ Proof. vm_compute; reflexivity. Qed.
 Example empty_variable_universe : V.universe false = [].
 Proof. vm_compute; reflexivity. Qed.
 
-Module SsaData <: SSA_DATA Prog NatKeyCode NatKeyCode Unit BoolType.
-  Definition tables (_ : bool) := SsaTables [0; 1]
+Module SsaData <: SSA_DATA Prog NatKeyCode NatKeyCode NatKeyCode Unit BoolType.
+  Definition tables (p : bool) : ssa_tables nat nat nat unit bool := SsaTables [0; 1] (if p then [0] else []) []
     (PTrieCode.set (NatKeyCode.encode 0) (Param 0 0)
       (PTrieCode.set (NatKeyCode.encode 1) (Op tt [0]) Empty))
     Empty 0 (PTrieCode.set (NatKeyCode.encode 0) [0] Empty) Empty
     (PTrieCode.set (NatKeyCode.encode 0) [(true, [0; 1])] Empty).
 End SsaData.
 Module S := SsaCode Prog NatKeyCode NatKeyCode Cfg NatKeyCode Unit BoolType SsaData.
+Example prepared_ssa_inventories :
+  (S.entry_params true, S.entry_params false, S.arg_rows true) = ([0], [], []).
+Proof. vm_compute; reflexivity. Qed.
 Example multi_operand_guard : S.guards true 0 = [(true, [0; 1])].
 Proof. vm_compute; reflexivity. Qed.
 Example ssa_definition : S.def true 1 = Op tt [0].
@@ -66,11 +69,13 @@ Example point_definition_absent : SP.point_definition true 0 = None.
 Proof. vm_compute; reflexivity. Qed.
 
 Module CallData <: CALLS_DATA Prog NatKeyCode NatKeyCode.
-  Definition tables (_ : bool) := CallsTables [0; 1] [0]
+  Definition tables (_ : bool) := CallsTables [0; 1] [(0, 0); (0, 1)] [0]
     (PTrieCode.set (NatKeyCode.encode 0) [0; 1] Empty) Empty 0
     (PTrieCode.set (NatKeyCode.encode 0) [0; 1] Empty).
 End CallData.
 Module CallView := CallsCode Prog NatKeyCode NatKeyCode CallData.
+Example prepared_call_inventory : CallView.calls true = [(0, 0); (0, 1)].
+Proof. vm_compute; reflexivity. Qed.
 Example recursive_call_edges :
   call_edges (CallView.resolve true) (CallView.sites_of true 0) = [CallEdge 0 0; CallEdge 0 1].
 Proof. vm_compute; reflexivity. Qed.

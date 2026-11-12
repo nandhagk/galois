@@ -23,6 +23,7 @@ TimeFun call_edge_target.
 
 Record calls_tables (F S : Type) := CallsTables {
   call_functions : list F;
+  call_inventory : list (S * F);
   call_roots : list F;
   call_sites : ptrie (list S);
   call_callers : ptrie F;
@@ -32,6 +33,7 @@ Record calls_tables (F S : Type) := CallsTables {
 
 Arguments CallsTables {F S}.
 Arguments call_functions {F S}.
+Arguments call_inventory {F S}.
 Arguments call_roots {F S}.
 Arguments call_sites {F S}.
 Arguments call_callers {F S}.
@@ -39,6 +41,7 @@ Arguments call_default_caller {F S}.
 Arguments call_targets {F S}.
 
 TimeFun call_functions.
+TimeFun call_inventory.
 TimeFun call_roots.
 TimeFun call_sites.
 TimeFun call_callers.
@@ -62,6 +65,7 @@ Module Type CALLS_DATA_T (P : TYPE) (F S : KEY_T) :=
 Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
     <: CALLS_OPS P F S.
   Definition functions p := call_functions (D.tables p).
+  Definition calls p := call_inventory (D.tables p).
   Definition roots p := call_roots (D.tables p).
   Definition sites_of p f :=
     match trie_get (F.encode f) (call_sites (D.tables p)) with
@@ -86,9 +90,26 @@ Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
         (functions p) PTrieCode.empty).
 End CallsCode.
 
-Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
+Module Type CALLS_DATA_LAWS (P : TYPE) (F S : KEY) (Import D : CALLS_DATA P F S).
+  Parameter calls_valid : forall p, call_inventory (tables p) = flat_map (fun f =>
+    flat_map (fun site => map (pair site)
+      (match trie_get (S.encode site) (call_targets (tables p)) with
+      | Some fs => fs | None => nil end))
+      (match trie_get (F.encode f) (call_sites (tables p)) with
+      | Some sites => sites | None => nil end)) (call_functions (tables p)).
+End CALLS_DATA_LAWS.
+
+Module Type CALLS_DATA_VALID (P : TYPE) (F S : KEY) :=
+  CALLS_DATA P F S <+ CALLS_DATA_LAWS P F S.
+
+Module Type CALLS_DATA_VALID_T (P : TYPE) (F S : KEY_T) :=
+  CALLS_DATA_VALID P F S <+ CALLS_DATA_TIME P F S.
+
+Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA_VALID P F S) <: CALLS P F S.
   Include CallsCode P F S D.
   Include CALLS_SPEC P F S.
+
+  Definition calls_spec := D.calls_valid.
 
   Definition wf p :=
     NoDup (functions p) /\ incl (roots p) (functions p) /\
@@ -131,10 +152,11 @@ Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
   Proof. Admitted. (* CONVERT: active_reachable_in_call_graph: Unable to unify the induction goal. *)
 End CallsSound.
 
-Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
+Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_VALID_T P F S)
     <: CALLS_ALL P F S.
   Include Calls P F S D.
   TimeFun functions.
+  TimeFun calls.
   TimeFun roots.
   TimeFun sites_of.
   TimeFun caller_of.
@@ -155,6 +177,10 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
         N.of_nat (function_width p + 1))%N.
 
   Definition c_calls : N := 1%N. (* STUB *)
+
+  Lemma T_calls_le : forall p,
+    (T_calls p <= c_calls * N.of_nat (length (calls p) + 1))%N.
+  Proof. Admitted. (* STUB *)
 
   (** Graph construction charges the inventory readers and encoded adjacency work. *)
   Lemma T_call_graph_le : forall p,

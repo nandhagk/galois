@@ -4,7 +4,7 @@
     For example, a call row emits its callee entry as a side contribution.
     Builds on: Framework.SummarySig and Fixpoint.Query. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List Bool NArith.
 From Argent Require Import Time Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -21,8 +21,7 @@ Module SummaryCode (P : TYPE) (F Site : KEY_OPS) (CL : CALLS_OPS P F Site)
   Definition key_code := F.encode.
   Definition key_eqb := F.eqb.
   Definition rows p : list row := map SummaryLocal (CL.functions p) ++
-    flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
-      (CL.sites_of p f)) (CL.functions p).
+    map (fun sg => SummaryCall (fst sg) (snd sg)) (CL.calls p).
   Definition target p (r : row) : key := match r with
     | SummaryLocal f => f
     | SummaryCall site _ => CL.caller_of p site
@@ -103,7 +102,8 @@ Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
 End Summary.
 
 Module SummaryT (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
-    (L : LATTICE_T) (B : BODY_T P F Site L).
+    (L : LATTICE_T) (B : BODY_T P F Site L)
+    <: SUMMARY_T P F Site CL L B.
   Include Summary P F Site CL L B.
 
   TimeFun key_code.
@@ -114,6 +114,50 @@ Module SummaryT (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
   TimeFun resume.
   TimeFun deps.
   TimeFun sides.
+  Definition row_work p s := (B.body_work p s + N.of_nat
+    (fold_right Nat.max 0%nat (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N.
+  Definition kw := CL.function_width.
+  Definition c_sys : N := 1%N. (* STUB *)
+  Lemma row_work_mono : forall p s t, s <= t ->
+    (row_work p s <= row_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, L.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (L.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
+  Proof. Admitted. (* STUB *)
 End SummaryT.
 
 Module SummarySound (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)

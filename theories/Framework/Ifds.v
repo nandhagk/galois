@@ -59,21 +59,27 @@ Definition path_query {N E F A} (finish : path_rule N E F -> list A -> A)
   end.
 TimeFun path_query.
 
+Definition bool_query {N F} (pending : list (path_edge N F)) (acc : bool)
+    : query (path_edge N F) bool (bool_frame N F) :=
+  match pending with
+  | nil => Ret acc
+  | x :: xs => Ask x (BoolFrame N F xs acc)
+  end.
+TimeFun bool_query.
+
 Module IfdsCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     (Site : KEY_OPS) (I : ICFG_OPS P N E C Site) (F : KEY_OPS)
-    (FL : FLOW_FUN_OPS P N E F) (L : IFDS_LATTICE_OPS) <: IFDS_OPS P N E F L.
+    (FL : FLOW_FUN_OPS P N E F) (R : IFDS_RULES_OPS P N E F) (L : IFDS_LATTICE_OPS) <: IFDS_OPS P N E F L.
   Definition prog := P.t.
   Definition key := path_edge N.t F.t.
   Definition row := path_row N.t E.t F.t.
-  Definition frame := path_frame N.t E.t F.t bool.
+  Definition frame := bool_frame N.t F.t.
   Definition key_code := path_edge_code N.encode F.encode.
   Definition key_eqb (x y : key) :=
     F.eqb (fst x) (fst y) && N.eqb (fst (snd x)) (fst (snd y)) &&
       F.eqb (snd (snd x)) (snd (snd y)).
   Definition rows p : list row := path_number 1%positive
-    (path_rules Site.eqb (I.kind p) (C.dst p) (FL.facts p) (FL.flow p)
-      (FL.seeds p) (C.edges p)).
-  Definition row_code (r : row) := path_row_code r.
+    (R.rules p).
   Definition target p (r : row) : key := match path_row_rule r with
     | PathIdentity n d => (d, (n, d))
     | PathStep d0 e _ y => (d0, (C.dst p e, y))
@@ -86,21 +92,9 @@ Module IfdsCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
         (d0, (C.src p call, x)) :: (a, (C.src p ret, b)) :: nil
     end.
   Definition sides (_ : prog) (_ : row) : list key := nil.
-  Definition finish (r : path_rule N.t E.t F.t) (xs : list bool) : bool :=
-    match r, xs with
-    | PathIdentity _ _, _ => true
-    | PathStep _ _ _ _, a :: _ => a
-    | PathReturn _ _ _ _ _ _ _, a :: b :: _ => a && b
-    | _, _ => false
-    end.
-  Definition start p (r : row) : query key bool frame :=
-    path_query finish (path_row_rule r) (deps p r) nil.
+  Definition start p (r : row) : query key bool frame := bool_query (deps p r) true.
   Definition resume (_ : prog) (f : frame) (a : bool) : query key bool frame :=
-    match f with
-    | PathFrame _ _ _ _ rule pending received => path_query finish rule pending (a :: received)
-    end.
-  Definition rows_of p (x : key) : list row :=
-    filter (fun r => key_eqb x (target p r)) (rows p).
+    bool_query (bool_frame_pending _ _ f) (bool_frame_acc _ _ f && a).
 End IfdsCode.
 
 Module IfdsLatticeCode <: IFDS_LATTICE_OPS.
@@ -159,8 +153,8 @@ End IfdsLatticeT.
 
 Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY)
-    (FL : FLOW_FUN P N E C F) (L : IFDS_LATTICE) <: IFDS P N E C Site I F FL L.
-  Include IfdsCode P N E C Site I F FL L.
+    (FL : FLOW_FUN P N E C F) (R : IFDS_RULES P N E C Site I F FL) (L : IFDS_LATTICE) <: IFDS P N E C Site I F FL L.
+  Include IfdsCode P N E C Site I F FL R L.
   Include SYSTEM_SPEC L.
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
@@ -190,20 +184,9 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
   Proof. Admitted. (* STUB *)
-  (** Row codes distinguish rows within each program. *)
-  Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
-    row_code a = row_code b -> a = b.
-  Proof. Admitted. (* STUB *)
-  (** The index lists exactly the rows that may write the requested key. *)
-  Lemma rows_of_spec : forall p x r, wf p ->
-    (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
-  Proof. Admitted. (* STUB *)
   Include IFDS_SPEC P N E C Site I F FL L.
   (** The system encodes all three path-edge components. *)
   Lemma key_code_spec : key_code = path_edge_code N.encode F.encode.
-  Proof. Admitted. (* STUB *)
-  (** The row identifier is its assigned binary occurrence identity. *)
-  Lemma row_code_spec : row_code = path_row_code.
   Proof. Admitted. (* STUB *)
   (** The row inventory contains exactly the enabled finite rules. *)
   Lemma rows_spec : forall p rule,
@@ -228,22 +211,65 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Proof. Admitted. (* STUB *)
 End Ifds.
 
-Module IfdsT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
-    (FL : FLOW_FUN_T P N E C F) (L : IFDS_LATTICE_T).
-  Include Ifds P N E C Site I F FL L.
+    (FL : FLOW_FUN_T P N E C F) (R : IFDS_RULES_T P N E C Site I F FL)
+    (L : IFDS_LATTICE_T) <: IFDS_T P N E C Site I F FL L.
+  Include Ifds P N E C Site I F FL R L.
 
   TimeFun key_code.
   TimeFun key_eqb.
   TimeFun rows.
-  TimeFun row_code.
   TimeFun target.
   TimeFun deps.
   TimeFun sides.
-  TimeFun finish.
   TimeFun start.
   TimeFun resume.
-  TimeFun rows_of.
+  Definition row_work p s := N.of_nat (length (R.rules p) + s + 1).
+  Definition kw (p : prog) : nat := fold_right Nat.max 0
+    (map N.bits (C.nodes p) ++ map F.bits (FL.facts p) ++
+      map (fun nd => N.bits (fst nd) + F.bits (snd nd)) (FL.seeds p)).
+  Definition c_sys : N := 1%N. (* STUB *)
+  Lemma row_work_mono : forall p s t, s <= t ->
+    (row_work p s <= row_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, L.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (L.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
+  Proof. Admitted. (* STUB *)
 End IfdsT.
 
 Module IfdsSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)

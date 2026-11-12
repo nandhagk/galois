@@ -40,6 +40,8 @@ Module Ssa <: SSA_OPS Prog NatKeyCode Edge Graph NatKeyCode K G.
   Definition params p n := if Nat.eqb n 0 then [0] else if Nat.eqb p 1 && Nat.eqb n 3 then [2] else [].
   Definition args p e := if Nat.eqb p 1 && (Nat.eqb e 2 || Nat.eqb e 3) then [(2, 1)] else [].
   Definition guards (_ _ : nat) : list (BitsLangCode.guard * list nat) := [].
+  Definition entry_params p := flat_map (params p) (Graph.entries p).
+  Definition arg_rows p := flat_map (fun e => map (pair e) (args p e)) (Graph.edges p).
 End Ssa.
 Module WordEq <: VAL_EQ_OPS BitsLangCode.
   Definition eqb (a b : word) := Pos.eqb (fst a) (fst b) && Z.eqb (snd a) (snd b).
@@ -193,6 +195,8 @@ Module EqualSsa <: SSA_OPS Prog NatKeyCode Edge EqualGraph NatKeyCode IdentityOp
   Definition params (_ : nat) n := if Nat.eqb n 1 then [0] else [].
   Definition args (_ _ : nat) : list (nat * nat) := [].
   Definition guards (_ _ : nat) : list (unit * list nat) := [].
+  Definition entry_params p := flat_map (params p) (EqualGraph.entries p).
+  Definition arg_rows p := flat_map (fun e => map (pair e) (args p e)) (EqualGraph.edges p).
 End EqualSsa.
 Module EqualV := ConstCode IdentityLang WordEq.
 Module EqualTransfer <: SSA_TRANSFER_OPS Prog NatKeyCode IdentityLang EqualV.
