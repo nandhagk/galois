@@ -34,9 +34,9 @@ Module KnownBitsOpsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     | (bveq | bvne | bvult | bvule | bvslt | bvsle), [(w, a); (_, b)] =>
       tnum_compare o w a b
     | bvite, [(_, c); (_, a); (_, b)] => tnum_ite rw c a b
-    | (bvzext _ | bvtrunc _), [(w, a)] => tnum_map w rw (wrap rw) a
-    | bvsext _, [(w, a)] => tnum_map w rw (fun x => wrap rw (signed w x)) a
-    | bvextract _ lo, [(w, a)] => tnum_map w rw (fun x => wrap rw (x / 2 ^ Z.of_nat lo)) a
+    | (bvzext _ | bvtrunc _), [(w, a)] => tnum_map w rw (tnum_wrap rw) a
+    | bvsext _, [(w, a)] => tnum_map w rw (fun x => tnum_wrap rw (signed w x)) a
+    | bvextract _ lo, [(w, a)] => tnum_map w rw (fun x => tnum_wrap rw (x / 2 ^ Z.of_nat lo)) a
     | bvconcat, [(w, a); (v, b)] => tnum_concat w v a b
     | _, _ => tnum_top
     end.

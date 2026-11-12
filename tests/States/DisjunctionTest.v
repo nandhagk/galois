@@ -8,7 +8,7 @@ From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.
 From Galois.Lattice Require Import Disjunction.
 From Galois.Domains Require Import ValueSig IntervalSig Interval ThresholdsSig Thresholds ZLang.
-From Galois.States Require Import EnvSig Env Disjunction.
+From Galois.States Require Import EnvSig Env Disjunction Partition.
 Import List.ListNotations.
 
 Module NatMap := TrieMapCode NatKeyCode.
@@ -80,4 +80,26 @@ Definition meet_right := Shared2.clip [interval_state 5 25; interval_state 27 28
 Example capped_meet_does_not_refine_right :
   (proj1_sig (D2.meet meet_left meet_right), D2.leb (D2.meet meet_left meet_right) meet_right) =
     ([interval_state 5 10; interval_state 20 28], false).
+Proof. vm_compute. reflexivity. Qed.
+
+Module Parts := PartitionCode NatKeyCode NatKeyCode ZLangCode Values State Cap2.
+
+Example partition_ignores_null_parts :
+  Parts.leb (Parts.inject 1%nat State.bot) Parts.bot = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example partition_merges_equal_labels :
+  map fst (proj1_sig (Parts.join (Parts.inject 1%nat State.top)
+    (Parts.inject 1%nat State.bot))) = [Some 1%nat].
+Proof. vm_compute. reflexivity. Qed.
+
+Example partition_overflow_keeps_first_label :
+  map fst (proj1_sig (Parts.join (Parts.join (Parts.inject 1%nat State.top)
+    (Parts.inject 2%nat State.top)) (Parts.inject 3%nat State.top))) = [Some 1%nat; None].
+Proof. vm_compute. reflexivity. Qed.
+
+Example partition_stray_widens_first_nonnull :
+  Parts.leb (Parts.inject 3%nat (interval_state 5 5))
+    (Parts.widen TLeaf (Parts.join (Parts.inject 1%nat (interval_state 0 0))
+      (Parts.inject 2%nat State.bot)) (Parts.inject 3%nat (interval_state 5 5))) = true.
 Proof. vm_compute. reflexivity. Qed.

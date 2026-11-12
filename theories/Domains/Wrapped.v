@@ -13,8 +13,18 @@ Local Open Scope Z_scope.
 
 Module WrappedScalar := IntervalBaseT ThresholdsT.
 
+Definition arc_wrap (w : width) (z : Z) : Z := Z.land z (Z.ones (Zpos w)).
+TimeFun arc_wrap.
+
+(** The mask agrees with modular word reduction. *)
+Lemma arc_wrap_agrees : forall w z, arc_wrap w z = wrap w z.
+Proof.
+  intros w z. unfold arc_wrap, wrap, modulus.
+  apply Z.land_ones. lia.
+Qed.
+
 Definition wrapped_offset (w : width) (origin x : Z) : Z :=
-  (x - origin) mod modulus w.
+  arc_wrap w (x - origin).
 TimeFun wrapped_offset.
 
 Definition wrapped_size (w : width) (a : wrapped) : Z :=
@@ -36,7 +46,7 @@ Definition wrapped_norm (w : width) (a : wrapped) : wrapped :=
   match a with
   | WItv lo hi =>
     if wrapped_offset w lo hi =? modulus w - 1
-    then WFull else WItv (wrap w lo) (wrap w hi)
+    then WFull else WItv (arc_wrap w lo) (arc_wrap w hi)
   | _ => a
   end.
 TimeFun wrapped_norm.
@@ -117,8 +127,8 @@ Definition wrapped_parts_raw (w : width) (a : wrapped) : itv * itv :=
   | WBot => (IBot, IBot)
   | WFull => (I (Fin 0) (Fin (modulus w - 1)), IBot)
   | WItv lo hi =>
-    let lo' := wrap w lo in
-    let hi' := wrap w hi in
+    let lo' := arc_wrap w lo in
+    let hi' := arc_wrap w hi in
     if lo' <=? hi' then (I (Fin lo') (Fin hi'), IBot)
     else (I (Fin lo') (Fin (modulus w - 1)), I (Fin 0) (Fin hi'))
   end.
@@ -392,6 +402,26 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* STUB *)
+  Lemma gamma_arc : forall w a z, pgamma w a z <-> arc_gamma w a z.
+  Proof. intros; reflexivity. Qed.
+  Lemma wrapped_neg_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
+    L.eval_op Op.bvneg ((w, x) :: nil) = Some (w, z) -> pgamma w (wrapped_neg w a) z.
+  Proof. Admitted. (* STUB *)
+  Lemma wrapped_add_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvadd ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (wrapped_add w a b) z.
+  Proof. Admitted. (* STUB *)
+  Lemma wrapped_sub_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvsub ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (wrapped_sub w a b) z.
+  Proof. Admitted. (* STUB *)
+  Lemma wrapped_mul_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvmul ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (wrapped_mul w a b) z.
+  Proof. Admitted. (* STUB *)
 End Wrapped.
 
 Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
@@ -501,58 +531,58 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   (** Arc normalization charges raw endpoints and output width. *)
   Lemma T_wrapped_norm_le : forall w a,
     (T_wrapped_norm w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Arc expansion charges raw endpoints and output width. *)
   Lemma T_wrapped_double_le : forall w a,
     (T_wrapped_double w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Arithmetic negation charges raw endpoints and output width. *)
   Lemma T_wrapped_neg_le : forall w a,
     (T_wrapped_neg w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Bitwise negation charges raw endpoints and output width. *)
   Lemma T_wrapped_not_le : forall w a,
     (T_wrapped_not w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Circular multiplication charges width and both endpoint sets. *)
   Lemma T_wrapped_mul_le : forall w a b,
     (T_wrapped_mul w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Circular addition charges width and both endpoint sets. *)
   Lemma T_wrapped_add_le : forall w a b,
     (T_wrapped_add w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Circular subtraction charges width and both endpoint sets. *)
   Lemma T_wrapped_sub_le : forall w a b,
     (T_wrapped_sub w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Arc splitting charges endpoint normalization at both poles. *)
   Lemma T_wrapped_split_le : forall w a,
     (T_wrapped_split w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Unsigned division charges width and both endpoint sets. *)
   Lemma T_wrapped_udiv_le : forall w a b,
     (T_wrapped_udiv w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Unsigned remainder charges width and both endpoint sets. *)
   Lemma T_wrapped_urem_le : forall w a b,
     (T_wrapped_urem w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Circular multiplication has the published quadratic work bound. *)
   Lemma mul_bigO : bigO (fun _ => True)
     (fun x : positive * (wrapped * wrapped) => N.of_nat
-      ((Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x)) + 1)
-        ^ 2))
+      ((Pos.to_nat (fst x) + 1) ^ 2 + wrapped_bits (fst (snd x)) +
+        wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
   Proof. Admitted. (* STUB *)
 
@@ -564,9 +594,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Definition k_split : N := 1. (* STUB *)
   Definition k_mul_piece : N := 1. (* STUB *)
 
-  (** Payload membership is clockwise arc membership. *)
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> arc_gamma w a z.
-  Proof. Admitted. (* STUB *)
+  (* Gamma and multiplication laws now live in WRAPPED_LAWS. *)
   (** Arc cardinality lies between zero and the modulus. *)
   Lemma F2_card : forall w a, (0 <= card w a <= Word.modulus w)%Z.
   Proof. Admitted. (* STUB *)
@@ -582,11 +610,6 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
     pgamma w (mul_piece w (lo, hi) (lo', hi')) (L.wrap w (x * y)).
   Proof. Admitted. (* STUB *)
-  (** Circular multiplication retains every normalized represented product. *)
-  Lemma F6_mul_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y ->
-    pgamma w (wrapped_mul w a b) (L.wrap w (x * y)).
-  Proof. Admitted. (* STUB *)
   (** Widening retains a contained candidate and otherwise expands first. *)
   Lemma F7_widen : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w (wrapped_double w a) b.
@@ -595,6 +618,13 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Lemma F8_double_card : forall w a,
     card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
   Proof. Admitted. (* STUB *)
+  (** Expansion contains the old arc. *)
+  Lemma F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
+  Proof. Admitted. (* STUB *)
+  (** Cardinality is monotone in the payload order. *)
+  Lemma F8b_card_mono : forall w a b,
+    pleb w a b = true -> (card w a <= card w b)%Z.
+  Proof. Admitted. (* STUB *)
   (** Widening rank is determined by arc cardinality. *)
   Lemma F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
   Proof. Admitted. (* STUB *)
@@ -602,8 +632,20 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Lemma F10_rank_bound : forall q w a, (pwrank q w a <= Pos.to_nat w + 2)%nat.
   Proof. Admitted. (* STUB *)
   (** Payload storage charges width and endpoint bit lengths. *)
-  Lemma F11_size : forall w a,
+  Lemma psize_bits : forall w a,
     psize w a = (Pos.to_nat w + wrapped_bits a + 1)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Arithmetic transfer results have endpoints within the word width. *)
+  Lemma wrapped_result_bits : forall w a b,
+    (wrapped_bits (wrapped_add w a b) <= 2 * Pos.to_nat w)%nat /\
+    (wrapped_bits (wrapped_sub w a b) <= 2 * Pos.to_nat w)%nat /\
+    (wrapped_bits (wrapped_mul w a b) <= 2 * Pos.to_nat w)%nat /\
+    (wrapped_bits (wrapped_neg w a) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Every split piece has endpoints within the word width. *)
+  Lemma wrapped_split_bits : forall w a lo hi,
+    In (lo, hi) (wrapped_split w a) ->
+    (Z.size_nat lo + Z.size_nat hi <= 2 * Pos.to_nat w)%nat.
   Proof. Admitted. (* STUB *)
   (** Multiplication pieces charge width and all endpoint bit lengths. *)
   Lemma T1_mul_piece : forall w lo hi lo' hi',
@@ -615,25 +657,26 @@ End WrappedT.
 
 Theorem wrapped_offset_range w c x : 0 <= wrapped_offset w c x < modulus w.
 Proof.
+  unfold wrapped_offset; rewrite arc_wrap_agrees, wrap_mod.
   apply Z.mod_pos_bound. apply modulus_pos.
 Qed.
 
 Theorem wrapped_offset_self w c : wrapped_offset w c c = 0.
 Proof.
-  unfold wrapped_offset. rewrite Z.sub_diag.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite Z.sub_diag.
   apply Z.mod_0_l. apply modulus_nonzero.
 Qed.
 
 Theorem wrapped_offset_wrap w c x :
   wrapped_offset w (wrap w c) (wrap w x) = wrapped_offset w c x.
 Proof.
-  unfold wrapped_offset. rewrite !wrap_mod. symmetry. apply Zminus_mod.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite !wrap_mod. symmetry. apply Zminus_mod.
 Qed.
 
 Theorem wrapped_offset_word w c x :
   wrapped_offset w c (wrap w x) = wrapped_offset w c x.
 Proof.
-  unfold wrapped_offset. rewrite !wrap_mod.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite !wrap_mod.
   rewrite Zminus_mod, Z.mod_mod by apply modulus_nonzero.
   symmetry. apply Zminus_mod.
 Qed.
@@ -641,7 +684,7 @@ Qed.
 Theorem wrapped_offset_origin w c x :
   wrapped_offset w (wrap w c) x = wrapped_offset w c x.
 Proof.
-  unfold wrapped_offset. rewrite !wrap_mod.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite !wrap_mod.
   rewrite Zminus_mod, Z.mod_mod by apply modulus_nonzero.
   symmetry. apply Zminus_mod.
 Qed.
@@ -650,7 +693,7 @@ Theorem wrapped_offset_add w c a x :
   wrapped_offset w c x =
   (wrapped_offset w c a + wrapped_offset w a x) mod modulus w.
 Proof.
-  unfold wrapped_offset.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees.
   replace (x - c) with ((a - c) + (x - a)) by ring.
   apply Z.add_mod. apply modulus_nonzero.
 Qed.
@@ -659,7 +702,7 @@ Theorem wrapped_offset_sub w c a x :
   wrapped_offset w a x =
   (wrapped_offset w c x - wrapped_offset w c a) mod modulus w.
 Proof.
-  unfold wrapped_offset.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees.
   replace (x - a) with ((x - c) - (a - c)) by ring.
   apply Zminus_mod.
 Qed.
@@ -668,7 +711,7 @@ Theorem wrapped_offset_step w c k :
   0 <= k < modulus w -> wrapped_offset w c (wrap w (c + k)) = k.
 Proof.
   intro Hk. rewrite wrapped_offset_word.
-  unfold wrapped_offset. replace (c + k - c) with k by ring.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. replace (c + k - c) with k by ring.
   apply Z.mod_small. exact Hk.
 Qed.
 
@@ -683,9 +726,11 @@ Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try tauto.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull.
   - apply Z.eqb_eq in Hfull. cbn [wrapped_gamma].
+    try rewrite !arc_wrap_agrees.
     pose proof (wrapped_offset_range w lo z) as Hrange. split; [|tauto].
     intro Hz. split; [exact Hz|lia].
   - cbn [wrapped_gamma].
+    try rewrite !arc_wrap_agrees.
     rewrite wrapped_offset_origin, wrapped_offset_wrap. reflexivity.
 Qed.
 
@@ -694,7 +739,7 @@ Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull.
   - apply Z.eqb_eq in Hfull. cbn [wrapped_size]. lia.
-  - cbn [wrapped_size]. now rewrite wrapped_offset_wrap.
+  - cbn [wrapped_size]. rewrite !arc_wrap_agrees. now rewrite wrapped_offset_wrap.
 Qed.
 
 Theorem wrapped_size_bounds w a : 0 <= wrapped_size w a <= modulus w.
@@ -787,7 +832,7 @@ Proof.
   destruct (modulus w - 1 <=? hi - lo) eqn:Hfull; [apply wrap_is_word|].
   apply Z.leb_gt in Hfull. apply (proj2 (wrapped_norm_gamma w (WItv lo hi) _)).
   split; [apply wrap_is_word|].
-  rewrite wrapped_offset_word. unfold wrapped_offset.
+  rewrite wrapped_offset_word. unfold wrapped_offset; rewrite !arc_wrap_agrees, !wrap_mod.
   rewrite !Z.mod_small by lia. lia.
 Qed.
 
@@ -795,7 +840,7 @@ Theorem wrapped_offset_word_cases w c z :
   is_word w c -> is_word w z ->
   wrapped_offset w c z = if c <=? z then z - c else z - c + modulus w.
 Proof.
-  intros Hc Hz. unfold wrapped_offset.
+  intros Hc Hz. unfold wrapped_offset; rewrite !arc_wrap_agrees.
   destruct (c <=? z) eqn:Hle.
   - apply Z.leb_le in Hle. apply Z.mod_small. destruct Hc, Hz. lia.
   - apply Z.leb_gt in Hle. symmetry. apply Z.mod_unique with (q := -1);
@@ -807,7 +852,7 @@ Theorem wrapped_norm_idempotent w a :
 Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull; [reflexivity|].
-  cbn [wrapped_norm]. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap. reflexivity.
+  cbn [wrapped_norm]. rewrite !arc_wrap_agrees. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap. reflexivity.
 Qed.
 
 Theorem wrapped_norm_endpoints w a lo hi :
@@ -815,7 +860,7 @@ Theorem wrapped_norm_endpoints w a lo hi :
 Proof.
   destruct a as [| |l h]; cbn [wrapped_norm]; try discriminate.
   destruct (wrapped_offset w l h =? modulus w - 1); [discriminate|].
-  intro Hnorm. inversion Hnorm; subst lo hi. split; apply wrap_is_word.
+  intro Hnorm. inversion Hnorm; subst lo hi. rewrite !arc_wrap_agrees. split; apply wrap_is_word.
 Qed.
 
 Theorem wrapped_parts_normalized w a :
