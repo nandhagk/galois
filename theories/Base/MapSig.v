@@ -4,7 +4,7 @@
     For example, enumeration returns the client key stored by insertion.
     Builds on: KeySig, Trie and Argent time interfaces. *)
 
-From Stdlib Require Import PArith List Bool.
+From Stdlib Require Import NArith PArith List Bool.
 From Argent Require Import Time.
 From Galois.Base Require Import KeySig Trie.
 
@@ -81,42 +81,42 @@ End MAP_LAWS.
 Module Type MAP (K : KEY) := MAP_OPS K <+ MAP_SPEC K <+ MAP_LAWS K.
 
 Module Type MAP_TIME (K : KEY_T) (Import M : MAP K).
-  Parameter T_get : forall {A}, K.t -> t A -> nat.
-  Parameter T_set : forall {A}, K.t -> A -> t A -> nat.
-  Parameter T_remove : forall {A}, K.t -> t A -> nat.
+  Parameter T_get : forall {A}, K.t -> t A -> N.
+  Parameter T_set : forall {A}, K.t -> A -> t A -> N.
+  Parameter T_remove : forall {A}, K.t -> t A -> N.
   Parameter T_merge : forall {A B C}, (option A -> option B -> option C) ->
-    (option A -> option B -> nat) -> t A -> t B -> nat.
+    (option A -> option B -> N) -> t A -> t B -> N.
   Parameter T_forall2b : forall {A B}, (option A -> option B -> bool) ->
-    (option A -> option B -> nat) -> t A -> t B -> nat.
-  Parameter T_existsb : forall {A}, (A -> bool) -> (A -> nat) -> t A -> nat.
+    (option A -> option B -> N) -> t A -> t B -> N.
+  Parameter T_existsb : forall {A}, (A -> bool) -> (A -> N) -> t A -> N.
   Parameter T_fold : forall {A B}, (B -> K.t -> A -> B) ->
-    (B -> K.t -> A -> nat) -> t A -> B -> nat.
-  Parameter T_elements : forall {A}, t A -> nat.
-  Parameter c_map : nat.
+    (B -> K.t -> A -> N) -> t A -> B -> N.
+  Parameter T_elements : forall {A}, t A -> N.
+  Parameter c_map : N.
   (** Lookup takes time bounded by the encoded key length. *)
-  Parameter T_get_le : forall A k (m : t A), T_get k m <= c_map * (K.bits k + 1).
+  Parameter T_get_le : forall A k (m : t A), (T_get k m <= c_map * N.of_nat (K.bits k + 1))%N.
   (** Insertion takes time bounded by the encoded key length. *)
-  Parameter T_set_le : forall A k (a : A) m, T_set k a m <= c_map * (K.bits k + 1).
+  Parameter T_set_le : forall A k (a : A) m, (T_set k a m <= c_map * N.of_nat (K.bits k + 1))%N.
   (** Removal takes time bounded by the encoded key length. *)
-  Parameter T_remove_le : forall A k (m : t A), T_remove k m <= c_map * (K.bits k + 1).
+  Parameter T_remove_le : forall A k (m : t A), (T_remove k m <= c_map * N.of_nat (K.bits k + 1))%N.
   (** Merging charges bounded callbacks over both skeletons. *)
   Parameter T_merge_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2 c,
-    (forall a b, T_f a b <= c) ->
-    T_merge f T_f m1 m2 <= c_map * (c + 1) * (nodes m1 + nodes m2 + 1).
+    ((forall a b, T_f a b <= c) ->
+    T_merge f T_f m1 m2 <= c_map * (c + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
   (** Relational checking charges bounded callbacks over both skeletons. *)
   Parameter T_forall2b_le : forall A B (f : option A -> option B -> bool) T_f m1 m2 c,
-    (forall a b, T_f a b <= c) ->
-    T_forall2b f T_f m1 m2 <= c_map * (c + 1) * (nodes m1 + nodes m2 + 1).
+    ((forall a b, T_f a b <= c) ->
+    T_forall2b f T_f m1 m2 <= c_map * (c + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
   (** Existential checking charges bounded callbacks over one skeleton. *)
   Parameter T_existsb_le : forall A (f : A -> bool) T_f m c,
-    (forall a, T_f a <= c) -> T_existsb f T_f m <= c_map * (c + 1) * (nodes m + 1).
+    ((forall a, T_f a <= c) -> T_existsb f T_f m <= c_map * (c + 1) * N.of_nat (nodes m + 1))%N.
   (** Folding charges bounded callbacks over one skeleton. *)
   Parameter T_fold_le : forall A B (f : B -> K.t -> A -> B) T_f m b c,
-    (forall acc k a, T_f acc k a <= c) ->
-    T_fold f T_f m b <= c_map * (c + 1) * (nodes m + 1).
+    ((forall acc k a, T_f acc k a <= c) ->
+    T_fold f T_f m b <= c_map * (c + 1) * N.of_nat (nodes m + 1))%N.
   (** Enumeration charges the encoded keys returned by a consistent map. *)
   Parameter T_elements_le : forall A (m : t A),
-    wf m -> T_elements m <= c_map * (weight m + 1).
+    (wf m -> T_elements m <= c_map * N.of_nat (weight m + 1))%N.
 End MAP_TIME.
 
 Module Type MAP_T (K : KEY_T) := MAP K <+ MAP_TIME K.

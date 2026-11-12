@@ -61,26 +61,26 @@ End PQ_LAWS.
 Module Type PQ := PQ_OPS <+ PQ_LAWS.
 
 Module Type PQ_TIME (Import Q : PQ).
-  Parameter T_push : N -> positive -> t -> nat.
-  Parameter T_pop : t -> nat.
-  Parameter T_size : t -> nat.
+  Parameter T_push : N -> positive -> t -> N.
+  Parameter T_pop : t -> N.
+  Parameter T_size : t -> N.
   (* spec: phi *)
-  Parameter phi : nat -> nat -> t -> nat.
-  Parameter c_pq : nat.
+  Parameter phi : nat -> nat -> t -> N.
+  Parameter c_pq : N.
   (** One operation pays for logarithmically many comparisons of bounded width. *)
   Definition unit_pq (P w : nat) : nat := (Nat.log2 P + 1) * (w + 1).
   (** Push pays for its work and the potential of its returned queue. *)
-  Parameter T_push_amort : forall P w p x q, wf q -> pending q < P ->
-    Pos.size_nat x + N.size_nat p <= w ->
-    T_push p x q + phi P w (push p x q) <= c_pq * unit_pq P w + phi P w q.
+  Parameter T_push_amort : forall P w p x q, (wf q -> (pending q < P)%nat ->
+    (Pos.size_nat x + N.size_nat p <= w)%nat ->
+    T_push p x q + phi P w (push p x q) <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** Pop pays for discarded stale entries by refunding input potential. *)
-  Parameter T_pop_amort : forall P w q, wf q -> pending q <= P ->
+  Parameter T_pop_amort : forall P w q, (wf q -> (pending q <= P)%nat ->
     T_pop q + match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end
-      <= c_pq * unit_pq P w + phi P w q.
+      <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** Empty queues carry zero potential. *)
-  Parameter phi_empty : forall P w, phi P w empty = 0.
+  Parameter phi_empty : forall P w, (phi P w empty = 0)%N.
   (** Reading cached live size takes constant time. *)
-  Parameter T_size_le : forall q, T_size q <= c_pq.
+  Parameter T_size_le : forall q, (T_size q <= c_pq)%N.
 End PQ_TIME.
 
 Module Type PQ_T := PQ <+ PQ_TIME.
@@ -94,10 +94,10 @@ Module Type PQ_PLAN (Import Q : PQ_T).
   Parameter insert : N -> positive -> heap -> heap.
   Parameter remove_min : heap -> option (N * positive * heap).
   Parameter pop_step : t -> t + option (N * positive * t).
-  Parameter T_insert : N -> positive -> heap -> nat.
-  Parameter T_remove_min : heap -> nat.
-  Parameter T_pop_step : t -> nat.
-  Parameter k_insert k_remove k_step k_credit k_driver : nat.
+  Parameter T_insert : N -> positive -> heap -> N.
+  Parameter T_remove_min : heap -> N.
+  Parameter T_pop_step : t -> N.
+  Parameter k_insert k_remove k_step k_credit k_driver : N.
 
   (** Width budgets include stale entries because removal compares their cached keys. *)
   Definition bounded (w : nat) (q : t) : Prop :=
@@ -107,13 +107,14 @@ Module Type PQ_PLAN (Import Q : PQ_T).
   Definition stale (q : t) : nat := pending q - N.to_nat (size q).
 
   (** Each stale entry carries the cost of one removal and one live lookup. *)
-  Definition credit (P w : nat) : nat := k_credit * unit_pq P w.
+  Definition credit (P w : nat) : N := (k_credit * N.of_nat (unit_pq P w))%N.
 
   (** The landed potential charges each stale entry at a fixed branch-local budget. *)
-  Definition stale_phi (P w : nat) (q : t) : nat := stale q * credit P w.
+  Definition stale_phi (P w : nat) (q : t) : N :=
+    (N.of_nat (stale q) * credit P w)%N.
 
   (** Stopping exposes the potential of the returned queue or zero on failure. *)
-  Definition output_phi (P w : nat) (r : option (N * positive * t)) : nat :=
+  Definition output_phi (P w : nat) (r : option (N * positive * t)) : N :=
     match r with
     | Some (_, _, q1) => phi P w q1
     | None => 0
@@ -142,29 +143,29 @@ Module Type PQ_PLAN (Import Q : PQ_T).
     N.size_nat p + Pos.size_nat x <= w -> bounded w (push p x q).
 
   (** Insertion traverses the occupied rank positions and compares bounded entries. *)
-  Parameter T1_insert : forall P w p x q, wf q -> bounded w q -> pending q < P ->
-    N.size_nat p + Pos.size_nat x <= w ->
-    T_insert p x (forest q) <= k_insert * unit_pq P w.
+  Parameter T1_insert : forall P w p x q, (wf q -> bounded w q -> (pending q < P)%nat ->
+    (N.size_nat p + Pos.size_nat x <= w)%nat ->
+    T_insert p x (forest q) <= k_insert * N.of_nat (unit_pq P w))%N.
   (** Removing a minimum scans and melds logarithmically many rank positions. *)
-  Parameter T2_remove_min : forall P w q, wf q -> bounded w q -> pending q <= P ->
-    T_remove_min (forest q) <= k_remove * unit_pq P w.
+  Parameter T2_remove_min : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
+    T_remove_min (forest q) <= k_remove * N.of_nat (unit_pq P w))%N.
   (** A skipped stale entry pays for its step and the strict loop decrease. *)
-  Parameter T3_skip_credit : forall P w q q1, wf q -> bounded w q -> pending q <= P ->
+  Parameter T3_skip_credit : forall P w q q1, (wf q -> bounded w q -> (pending q <= P)%nat ->
     pop_step q = inl q1 ->
-    T_pop_step q + phi P w q1 + 1 <= phi P w q.
+    T_pop_step q + phi P w q1 + 1 <= phi P w q)%N.
   (** A stopping step pays its work and its actual output potential. *)
-  Parameter T4_stop_credit : forall P w q r, wf q -> bounded w q -> pending q <= P ->
+  Parameter T4_stop_credit : forall P w q r, (wf q -> bounded w q -> (pending q <= P)%nat ->
     pop_step q = inr r ->
-    T_pop_step q + output_phi P w r <= k_step * unit_pq P w + phi P w q.
+    T_pop_step q + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** The binary loop driver absorbs initial fuel width into the operation budget. *)
-  Parameter T5_pop_bounded : forall P w q, wf q -> bounded w q -> pending q <= P ->
+  Parameter T5_pop_bounded : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_pop q + output_phi P w (pop q) <=
-      k_driver * unit_pq P w + phi P w q.
+      k_driver * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** Width-bounded pushing pays its returned stale credit. *)
-  Parameter T6_push_bounded : forall P w p x q, wf q -> bounded w q -> pending q < P ->
-    N.size_nat p + Pos.size_nat x <= w ->
+  Parameter T6_push_bounded : forall P w p x q, (wf q -> bounded w q -> (pending q < P)%nat ->
+    (N.size_nat p + Pos.size_nat x <= w)%nat ->
     T_push p x q + phi P w (push p x q) <=
-      (k_insert + k_step + k_credit) * unit_pq P w + phi P w q.
+      (k_insert + k_step + k_credit) * N.of_nat (unit_pq P w) + phi P w q)%N.
 
   (* The landed chain above requires bounded w q. The public amortised contracts omit
      that premise. A potential accounting for stored widths outside bounded queues may
