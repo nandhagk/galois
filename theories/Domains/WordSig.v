@@ -6,6 +6,7 @@
 
 From Stdlib Require Import ZArith List.
 From Argent Require Import Std BigO.
+From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig HarnessSig.
 
 Inductive tagged (P : Type) : Type :=
@@ -17,17 +18,17 @@ Arguments TBot {P}.
 Arguments TVal {P} w p.
 Arguments TAny {P}.
 
-(** Temporary Bits dependency until Bits.Word and Bits.Op are converted. *)
+(** The concrete word language uses the fixed-width bit operations. *)
 Module Type WORD_LANGUAGE_OPS.
-  Parameter op : Type.
-  Parameter wrap : positive -> Z -> Z.
-  Parameter signed : positive -> Z -> Z.
-  Parameter eval_op : op -> list (positive * Z) -> option (positive * Z).
-  Parameter result_width : op -> list positive -> option positive.
+  Definition op := Op.op.
+  Definition wrap := Word.wrap.
+  Definition signed := Word.signed.
+  Definition eval_op := Op.eval_op.
+  Definition result_width := Op.result_width.
 End WORD_LANGUAGE_OPS.
 
 Module Type WORD_LANGUAGE_LAWS (Import L : WORD_LANGUAGE_OPS).
-  Definition is_word (w : positive) (z : Z) : Prop := (0 <= z < 2 ^ Zpos w)%Z.
+  Definition is_word := Word.is_word.
   (** Every wrapped integer is a normalized word. *)
   Parameter wrap_is_word : forall w z, is_word w (wrap w z).
   (** Concrete evaluation returns a normalized result of the checked width. *)
