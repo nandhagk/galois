@@ -14,7 +14,7 @@ Local Open Scope Z_scope.
 Module IntervalBackCode (T : THRESHOLDS_OPS) (Scalar : INTERVAL_SCALAR_OPS T).
   Include IntervalOpsCode T Scalar.
 Definition interval_is_point (i : itv) (z : Z) : bool :=
-  match interval_finite i with
+  match interval_finite_helper i with
   | Some (lo, hi) => Z.eqb lo z && Z.eqb hi z
   | None => false
   end.
@@ -112,7 +112,7 @@ Module IntervalWordTableCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
         | _ => interval_concat rw wb a b
         end)
     | bvite, [_; (wa, a); (wb, b)] =>
-      Some (interval_join (interval_clip wa a) (interval_clip wb b))
+      Some (Scalar.interval_join (interval_clip wa a) (interval_clip wb b))
     | _, _ => None
     end.
   Definition wbwd (o : L.op) (rw : positive) (q : D.p)
