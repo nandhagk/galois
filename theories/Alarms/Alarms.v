@@ -20,7 +20,8 @@ Module AlarmsCode (N X : KEY_OPS) (MN : MAP_OPS N) (L : LANG_OPS)
     match MN.get n inv with Some s => s | None => S.bot end.
 
   Definition alarm (inv : MN.t S.t) (k : check N.t L.op X.t C.kd) : bool :=
-    C.may_fail (ckind k) (map (fun e => S.eval e (inv_at inv (site k))) (args k)).
+    let s := inv_at inv (site k) in
+    C.may_fail (ckind k) (map (fun e => S.eval e s) (args k)).
 
   Definition alarms (inv : MN.t S.t) (ks : list (check N.t L.op X.t C.kd)) :=
     filter (alarm inv) ks.
