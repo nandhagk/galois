@@ -172,3 +172,26 @@ Example missing_top_order_breaks_transitivity :
   (BadEnv.leb upper BadEnv.top, BadEnv.leb BadEnv.top point, BadEnv.leb upper point) =
     (true, true, false).
 Proof. vm_compute. reflexivity. Qed.
+
+(* The old optional/default layer exposed env_default, env_optional and
+   env_default_laws. EnvCode uses reached maps directly and exposes no corresponding
+   optional/default contract. These old clients therefore have no current statement
+   with the same operations.
+
+Example widening_only_compatibility :
+  forall a b,
+    env_default PTop (env_optional Top_default PTop point_lattice Env_widen a b) =
+    widen point_lattice (env_default PTop a) (env_default PTop b).
+
+Example full_narrowing_compatibility_rejected :
+  ~ env_default_laws Top_default PTop point_lattice.
+
+Example widening_observation_without_narrowing :
+  forall x s r, StateEnv.observe bool_encoding values x (widen (StateAbs.lat SD) s r) =
+    widen (lift_bot point_lattice)
+      (StateEnv.observe bool_encoding values x s) (StateEnv.observe bool_encoding values x r).
+
+The old semantic_value_laws example used Point as a semantically full top even though
+Upper was not below it. VALUE_DOMAIN now requires top_greatest, so that same fixture
+cannot inhabit the current law interface. The two executable order observations above
+retain its original counterexample. *)

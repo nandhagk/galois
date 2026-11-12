@@ -45,3 +45,33 @@ Proof. vm_compute. reflexivity. Qed.
 Example point_empty_operand :
   Domain.forward (BOp bvadd) [TVal 1%positive FBot] = TBot.
 Proof. vm_compute. reflexivity. Qed.
+
+(* The old op_bridge carried conversion and guard capability callbacks. BitsLangCode
+   now exposes BTruth and fixed-width word evaluation; it has no partial conversion,
+   Equal, Differ or Test guard constructors. The term-based probes are in BitsEnvTest.
+   These old capability statements have no corresponding current bridge interface.
+
+Theorem bool_bridge_laws :
+  op_bridge_laws bool_bridge (fun _ _ => None) (fun b => b).
+
+Theorem bool_value_laws :
+  value_laws bool_values (bits_sem bool_bridge (fun _ _ => None) (fun b => b))
+    (numeric_conc point_numeric point_meaning bool_bridge).
+
+Example partial_truth_fallback :
+  ValueAbs.guard (bits_values point_numeric partial_bridge TAny) (Truth true) [p 32 0] =
+    [p 32 0].
+
+Example partial_differ_fallback :
+  ValueAbs.guard (bits_values point_numeric partial_bridge TAny) (Differ None) [TAny] = [TAny].
+*)
+
+Example truth_rejected_current : Domain.guard (BTruth true) [p 32 0] = [p 32 0].
+Proof. vm_compute. reflexivity. Qed.
+
+(* The old point dictionary bundled the following client. WORD_PAYLOAD now states
+   point meaning, inclusion, meet and constant laws separately; BitsLawTest cites
+   those current interfaces.
+Example numeric_instance_laws : numeric_laws point_numeric point_meaning.
+Proof. exact (tagged_numeric_laws point_word_domain point_gamma point_word_laws). Qed.
+*)
