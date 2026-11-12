@@ -150,8 +150,12 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_resume_le : forall p f a, wf p ->
-    (T_resume p f a <= c_sys * (row_work p (L.size a) + 1))%N.
+  (** Resuming a frame that a listed row reaches pays for the sizes of the lookup values. *)
+  Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, L.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *

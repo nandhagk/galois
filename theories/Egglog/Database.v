@@ -368,6 +368,39 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
   Proof. Admitted. (* STUB *)
 
+  (** A raised change flag stays raised until the database advances. *)
+  Lemma changed_put : forall f k o db, changed db = true -> changed (put f k o db) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma changed_make : forall f k db,
+    changed db = true -> changed (snd (make f k db)) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma changed_union : forall i j db, changed db = true -> changed (union i j db) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
+  Proof. Admitted. (* STUB *)
+  (** Find and lookup leave the change flag alone. *)
+  Lemma changed_find : forall i db, changed (snd (find i db)) = changed db.
+  Proof. Admitted. (* STUB *)
+  Lemma changed_lookup : forall f k db, changed (snd (lookup f k db)) = changed db.
+  Proof. Admitted. (* STUB *)
+  (** An insertion raises the flag only when its row was not represented. *)
+  Lemma put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
+    changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
+  Proof. Admitted. (* STUB *)
+  (** A union raises the flag only when it adds an equality. *)
+  Lemma union_changed : forall i j db, wf db -> changed db = false ->
+    changed (union i j db) = true -> ~ same (view db) i j.
+  Proof. Admitted. (* STUB *)
+  (** A make raises the flag only when it allocates. *)
+  Lemma make_changed : forall f k db, wf db -> changed db = false ->
+    changed (snd (make f k db)) = true ->
+    ~ exists j, row (view db) f (map (canon db) k) (Some (Id j)).
+  Proof. Admitted. (* STUB *)
+  (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
+  Lemma rebuild_quiet : forall db, wf db -> canonical db ->
+    (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
+  Proof. Admitted. (* STUB *)
+
   (** A quiet insertion already has its requested row represented. *)
   Lemma put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
     changed db = false -> changed (put f k o db) = false ->
@@ -629,6 +662,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** The high-water mark covers every declared function name. *)
   Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
     Pos.size_nat f <= N.size_nat (wmark db).
+  Proof. Admitted. (* STUB *)
+
+  (** The high-water mark covers every slot index. *)
+  Lemma wmark_index : forall db s new, wf db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
   Proof. Admitted. (* STUB *)
 
   (** Insertion never reduces the spending unit. *)
