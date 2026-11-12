@@ -54,6 +54,9 @@ End KNOWN_BITS_SPEC.
 
 Module Type KNOWN_BITS_LAWS (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
     (Import K : KNOWN_BITS_OPS L C).
+  (** Widening keeps an already contained raw mask and otherwise joins. *)
+  Parameter F_pwiden : forall q w a b,
+    pwiden q w a b = if pleb w b a then a else pjoin w a b.
   (** Multiplication uses the fixed configuration of the extracted program. *)
   Parameter multiplier_selected : forall w a b,
     tnum_mul w a b = tnum_mul_with C.multiplier w a b.
