@@ -77,12 +77,12 @@ Module WithTopT (L : LATTICE_T) <: TOP_LATTICE_T.
     | Elem a => L.size a + 1
     | Unknown => 1
     end.
-  Definition c_lat : nat := 1. (* STUB *)
+  Definition c_lat : N := 1. (* STUB *)
 
-  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
 End WithTopT.

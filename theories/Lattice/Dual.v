@@ -50,14 +50,14 @@ Module DualT (L : BLATTICE_T) <: BLATTICE_T.
   TimeFun meet.
 
   Definition size (x : t) : nat := L.size x.
-  Definition c_lat : nat := 1. (* STUB *)
+  Definition c_lat : N := 1. (* STUB *)
 
-  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End DualT.
