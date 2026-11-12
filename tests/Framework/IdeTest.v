@@ -9,7 +9,9 @@ From Galois.Base Require Import Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import ConstSig.
 From Galois.Fixpoint Require Import Query.
-From Galois.Framework Require Import IfdsSig IdeSig Ide.
+From Galois.Program Require Import CfgSig IcfgSig.
+From Galois.Base Require Import KeySig.
+From Galois.Framework Require Import IfdsSig Ifds IdeSig Ide.
 From Galois.Tests.Framework Require Import IfdsTest.
 Import List.ListNotations.
 
@@ -105,4 +107,53 @@ Example affine_jump_rejects_missing_return :
 Proof. vm_compute; reflexivity. Qed.
 
 Example affine_different_unlisted_integer : Translation.apply (FVal 1%Z) 1000000%Z = 1000001%Z.
+Proof. vm_compute; reflexivity. Qed.
+
+Module Singleton <: CFG_OPS Prog NatKeyCode Edge.
+  Definition entries (_ : unit) := [0].
+  Definition edges (_ : unit) : list nat := [].
+  Definition src (_ : unit) (e : nat) := e.
+  Definition dst (_ : unit) (e : nat) := e.
+End Singleton.
+Module SingleIcfg <: ICFG_OPS Prog NatKeyCode Edge Singleton NatKeyCode.
+  Definition kind (_ : unit) (_ : nat) : edge_kind nat := Intra.
+End SingleIcfg.
+Module BadMicro <: MICRO_OPS IfdsLatticeCode.
+  Definition t := bool.
+  Definition leb (_ _ : bool) := true.
+  Definition bot := false.
+  Definition is_bot := negb.
+  Definition join (_ _ : bool) := true.
+  Definition identity := true.
+  Definition compose := andb.
+  Definition apply := andb.
+End BadMicro.
+Module NoFlow <: IDE_FLOW_OPS Prog NatKeyCode Edge Fact IfdsLatticeCode BadMicro.
+  Definition facts (_ : unit) : list (option unit) := [None].
+  Definition flow (_ : unit) (_ : nat) (_ : option unit) : list (option unit) := [].
+  Definition seeds (_ : unit) : list (nat * option unit) := [(0, None)].
+  Definition weight (_ : unit) (_ : nat) (_ _ : option unit) := true.
+End NoFlow.
+Module Bad := IdeCode Prog NatKeyCode Edge Singleton NatKeyCode SingleIcfg Fact
+  IfdsLatticeCode BadMicro NoFlow.
+Definition bad_check lookup := forallb (fun r =>
+  row_ok BadMicro.leb lookup (Bad.target tt r)
+    (eval_query (Bad.resume tt) lookup (S (length (Bad.deps tt r))) (Bad.start tt r)))
+  (Bad.rows tt).
+
+Example bad_order_empty_jump_passes_enumerated_checker : bad_check (fun _ => false) = true.
+Proof. vm_compute; reflexivity. Qed.
+
+Example bad_order_accepted_bound_loses_identity_application :
+  (BadMicro.apply BadMicro.identity true, BadMicro.apply false true) = (true, false).
+Proof. vm_compute; reflexivity. Qed.
+
+Module NoFlowIfds := IfdsCode Prog NatKeyCode Edge Singleton NatKeyCode SingleIcfg Fact
+  NoFlow IfdsLatticeCode.
+
+Example no_flow_identity : forallb (fun r =>
+  row_ok IfdsLatticeCode.leb (fun _ => true) (NoFlowIfds.target tt r)
+    (eval_query (NoFlowIfds.resume tt) (fun _ => true)
+      (S (length (NoFlowIfds.deps tt r))) (NoFlowIfds.start tt r)))
+  (NoFlowIfds.rows tt) = true.
 Proof. vm_compute; reflexivity. Qed.
