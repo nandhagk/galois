@@ -123,12 +123,26 @@ Module RelEnv (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
 
 End RelEnv.
 
-Module RelEnvClock (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
+Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     (F : LINEARIZE_T X L N) (R : NUM_STATE_T X L N F) (E : STATE_DOMAIN_T X L V)
     (RR : REL_RANGE_REFINE_T L N V)
-    (P : LATTICE_T with Definition t := (R.t * E.t)%type)
-    (PL : REL_PAIR_LINK X L N V F R E P).
+    (P : LATTICE_T with Definition t := (R.t * E.t)%type
+      with Definition size := fun a => R.size (fst a) + E.size (snd a))
+    (PL : REL_PAIR_LINK X L N V F R E P)
+    <: REL_ENV_ALL X L N V F R E RR P PL.
   Include RelEnv X L N V F R E RR P PL.
+  Definition size (a : t) : nat := R.size (fst a) + E.size (snd a).
+  Definition wsize (p : wparam) : nat := R.wsize (fst p) + E.wsize (snd p).
+  Definition wunits (a : t) : nat := R.wunits (fst a) + E.wunits (snd a).
+  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
+    R.assign_work x e (fst s) + E.assign_work x e (snd s).
+  Definition havoc_work (x : X.t) (s : t) : nat :=
+    R.havoc_work x (fst s) + E.havoc_work x (snd s).
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
+    R.assume_work g es (fst s) + E.assume_work g es (snd s).
+  Definition eval_work (e : term L.op X.t) (s : t) : nat :=
+    R.range_work e (fst s) + R.range_bits e (fst s) + E.eval_work e (snd s) +
+      V.size (E.eval e (snd s)) + 1.
   TimeFun leb.
   TimeFun bot.
   TimeFun is_bot.
@@ -140,4 +154,83 @@ Module RelEnvClock (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T
   TimeFun havoc.
   TimeFun assume.
   TimeFun eval.
-End RelEnvClock.
+  Definition c_rel_env : N := 1. (* STUB *)
+  Definition c_lat : N := R.c_lat + E.c_lat + P.c_lat + 1.
+  Definition c_state : N := R.c_num + E.c_state + RR.c_refine + 1.
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assign_le : forall x e s,
+    (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_le : forall x s,
+    (T_havoc x s <= c_state * N.of_nat (havoc_work x s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_le : forall g es s,
+    (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eval_le : forall e s,
+    (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eval_components : forall e r s, (T_eval e (r, s) <= c_rel_env *
+    (R.T_range e r + E.T_eval e s +
+      RR.T_refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assign_components : forall x e r s, (T_assign x e (r, s) <=
+    c_rel_env * (R.T_assign x e r + E.T_assign x e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_components : forall x r s, (T_havoc x (r, s) <=
+    c_rel_env * (R.T_havoc x r + E.T_havoc x s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_components : forall g es r s, (T_assume g es (r, s) <=
+    c_rel_env * (R.T_assume g es r + E.T_assume g es s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_work_components : forall e r s, eval_work e (r, s) =
+    R.range_work e r + R.range_bits e r + E.eval_work e s + V.size (E.eval e s) + 1.
+  Proof. reflexivity. Qed.
+  Lemma c_lat_pair : (P.c_lat <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
+  Proof. reflexivity. Qed.
+  Lemma F1_gamma : forall r s st,
+    gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_eval : forall e r s, eval e (r, s) =
+    RR.refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s).
+  Proof. Admitted. (* STUB *)
+  Lemma F3_assign : forall x e r s, assign x e (r, s) =
+    (R.assign x e r, E.assign x e s).
+  Proof. Admitted. (* STUB *)
+  Lemma F4_havoc : forall x r s, havoc x (r, s) = (R.havoc x r, E.havoc x s).
+  Proof. Admitted. (* STUB *)
+  Lemma F5_assume : forall g es r s,
+    assume g es (r, s) = (R.assume g es r, E.assume g es s).
+  Proof. Admitted. (* STUB *)
+  Lemma F6_widen : forall p r s r' s', widen p (r, s) (r', s') =
+    if is_bot (r', s') then (r, s)
+    else (R.widen (fst p) r r', E.widen (snd p) s s').
+  Proof. Admitted. (* STUB *)
+  Lemma F6a_narrow : forall a b, narrow a b =
+    if is_bot b then b else (R.narrow (fst a) (fst b), E.narrow (snd a) (snd b)).
+  Proof. Admitted. (* STUB *)
+  Lemma F7_rank : forall p r s,
+    wrank p (r, s) = R.wrank (fst p) r + E.wrank (snd p) s.
+  Proof. Admitted. (* STUB *)
+  Lemma F8_size : forall r s, size (r, s) = R.size r + E.size s.
+  Proof. reflexivity. Qed.
+End RelEnvT.

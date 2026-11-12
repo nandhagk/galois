@@ -115,8 +115,43 @@ Module BitsChecks (V : VALUE_DOMAIN BitsLang)
   Proof. Admitted. (* STUB *)
 End BitsChecks.
 
-Module BitsChecksClock (V : VALUE_DOMAIN_T BitsLangT)
-    (Q : BITS_RANGE_T NumU V) (QS : BITS_RANGE_T NumS V) (W : BITS_WIDTH_T V).
+Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
+    (Q : BITS_RANGE_T NumU V) (QS : BITS_RANGE_T NumS V) (W : BITS_WIDTH_T V)
+    <: BITS_CHECKS_ALL V Q QS W.
   Include BitsChecks V Q QS W.
+  Definition work (_ : kd) (xs : list V.t) : nat :=
+    ((fold_right Nat.add 0%nat (map V.size xs) + length xs + 1) ^ 2)%nat.
   TimeFun may_fail.
-End BitsChecksClock.
+  Definition c_bits_checks : N := 1. (* STUB *)
+  Definition c_checks : N := c_bits_checks.
+  Definition k_bits_checks : N := 1. (* STUB *)
+  Lemma T_may_fail_le : forall k xs,
+    (T_may_fail k xs <= c_checks * N.of_nat (work k xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_divzero_le : forall d,
+    (T_may_fail DivZero [d] <= c_bits_checks *
+      (Q.T_range d + N.of_nat (range_bits (Q.range d) + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_null_le : forall d,
+    (T_may_fail NullDeref [d] <= c_bits_checks *
+      (Q.T_range d + N.of_nat (range_bits (Q.range d) + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_bounds_le : forall i len,
+    (T_may_fail Bounds [i; len] <= c_bits_checks *
+      (Q.T_range i + Q.T_range len +
+        N.of_nat (range_bits (Q.range i) + range_bits (Q.range len) + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma work_sizes : forall k xs, work k xs =
+    ((fold_right Nat.add 0%nat (map V.size xs) + length xs + 1) ^ 2)%nat.
+  Proof. reflexivity. Qed.
+  Lemma F1_zero : forall a c, V.gamma a c -> range_zero (Q.range a) = false ->
+    snd c <> 0%Z.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_bounds : forall a b i len, V.gamma a i -> V.gamma b len ->
+    range_nonnegative (Q.range a) = true ->
+    bound_lt (snd (Q.range a)) (fst (Q.range b)) = true -> (0 <= snd i < snd len)%Z.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_zero : forall r,
+    (T_range_zero r <= k_bits_checks * N.of_nat (range_bits r + 1))%N.
+  Proof. Admitted. (* STUB *)
+End BitsChecksT.
