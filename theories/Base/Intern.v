@@ -116,15 +116,15 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   TimeFun size.
   TimeFun intern.
 
-  Definition c_intern : nat := 1. (* STUB *)
+  Definition c_intern : N := 1. (* STUB *)
 
-  Lemma T_intern_le : forall k s, wf s ->
-    T_intern k s <= c_intern * (K.bits k + N.size_nat (size s) + 1).
+  Lemma T_intern_le : forall k s, (wf s ->
+    T_intern k s <= c_intern * N.of_nat (K.bits k + N.size_nat (size s) + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_find_le : forall k s,
-    T_find k s <= c_intern * (K.bits k + N.size_nat (size s) + 1).
+    (T_find k s <= c_intern * N.of_nat (K.bits k + N.size_nat (size s) + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_name_le : forall i s,
-    T_name i s <= c_intern * (Pos.size_nat i + N.size_nat (size s) + 1).
+    (T_name i s <= c_intern * N.of_nat (Pos.size_nat i + N.size_nat (size s) + 1))%N.
   Proof. Admitted. (* STUB *)
 End InternT.
