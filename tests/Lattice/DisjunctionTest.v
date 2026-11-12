@@ -18,44 +18,41 @@ Module D1 := DisjunctionCode FlatBool Cap1.
 Module D2 := DisjunctionCode FlatBool Cap2.
 Module BoolDisjunction := DisjunctionCode BoolLatCode Cap1.
 
-Example disjunction_cap_one : D1.join [FVal false] [FVal true; FBot] = [FTop].
+Example disjunction_cap_one :
+  proj1_sig (D1.join (D1.clip [FVal false]) (D1.clip [FVal true; FBot])) = [FTop].
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_cap_two : D2.join [FVal false] [FVal true; FBot] = [FVal false; FVal true].
+Example disjunction_cap_two :
+  proj1_sig (D2.join (D2.clip [FVal false]) (D2.clip [FVal true; FBot])) =
+    [FVal false; FVal true].
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_nonleast_counterexample :
-  (D1.leb [FVal false] [FVal false; FVal true],
-   D1.leb [FVal true] [FVal false; FVal true],
-   D1.leb (D1.join [FVal false] [FVal true]) [FVal false; FVal true]) = (true, true, false).
+Example disjunction_nonleast_counterexample_bounded :
+  (D2.leb (D2.clip [FVal false; FVal true]) (D2.clip [FVal false; FVal true]),
+   D2.leb (D2.clip [FVal false]) (D2.clip [FVal false; FVal true]),
+   D2.leb (D2.join (D2.clip [FVal false; FVal true]) (D2.clip [FVal false]))
+     (D2.clip [FVal false; FVal true])) = (true, true, false).
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_negative : D2.leb [FVal true] [FVal false] = false.
+Example disjunction_negative : D2.leb (D2.clip [FVal true]) (D2.clip [FVal false]) = false.
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_empty : (D0.join [] [], D0.leb [] []) = ([], true).
+Example disjunction_empty : (proj1_sig (D0.join D0.bot D0.bot), D0.leb D0.bot D0.bot) =
+  ([], true).
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_cap_zero : D0.join [FVal false] [] = [FVal false].
+Example disjunction_cap_zero : proj1_sig (D0.clip [FVal false]) = [].
 Proof. vm_compute. reflexivity. Qed.
-Example disjunction_empty_right : D1.leb [FBot] [] = false.
+Example disjunction_empty_right : D1.leb (D1.clip [FBot]) D1.bot = false.
 Proof. vm_compute. reflexivity. Qed.
-(* The old raw-list widening examples are deferred to the D1 state-disjunction
-   component. Their prior expected values were [FTop] for
-   D2.widen tt [FVal false] [FVal true] and [FTop; FVal true] for
-   D2.widen tt [FTop; FVal true] [FVal false]. The empty case expected
-   D0.widen tt [] [] = []. *)
-
 Example selective_leastness :
-  BoolDisjunction.leb (BoolDisjunction.join [false] [true]) [false; true] = true.
-Proof.
-  vm_compute. reflexivity.
-Qed.
-
-(* LatticeDisjunctionTest.disjunction_measure_client expects (3, 3, 0) from
-   disjunction_wrank on [false; false] and its widening by [true]. DisjunctionCode
-   exports operations without a rank or bound, and there is no public disjunction
-   height or widening-rank adapter. The old invariant-guarded wrank dictionary
-   has no counterpart in this interface.
-   disjunction_empty_costs, disjunction_leb_ticks, disjunction_join_ticks,
-   fixed_cap_long_tail and widening_callback_ticks retire with Cost.ticks.
-   bool_join_selective and selective_disjunction_client are proof clients of the
-   retired lub_laws dictionary. The concrete selective_leastness is checked above. *)
-
-Example disjunction_bottom_test : (D1.is_bot [], D1.is_bot [FBot]) = (true, false).
+  BoolDisjunction.leb (BoolDisjunction.join (BoolDisjunction.clip [false])
+    (BoolDisjunction.clip [true])) (BoolDisjunction.clip [false; true]) = true.
 Proof. vm_compute. reflexivity. Qed.
+Example disjunction_bottom_test : (D1.is_bot D1.bot, D1.is_bot (D1.clip [FBot])) =
+  (true, false).
+Proof. vm_compute. reflexivity. Qed.
+
+(* At cap zero the old raw join [FVal false] [] returned [FVal false].
+   That input is outside the bounded carrier, and clipping it now returns [].
+   The old cap-one nonleast counterexample was
+   (D1.leb [FVal false] [FVal false; FVal true],
+    D1.leb [FVal true] [FVal false; FVal true],
+    D1.leb (D1.join [FVal false] [FVal true]) [FVal false; FVal true]) =
+     (true, true, false). Its two-element target lies outside the carrier. The old raw widening examples belong
+   to the D1 state-disjunction component. Cost.ticks examples are retired. *)
