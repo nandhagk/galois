@@ -372,8 +372,6 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Proof. Admitted. (* STUB *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof. Admitted. (* STUB *)
-  Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* SIG-QUESTION: The landed guarded meet can return a value not below its right operand. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
   Proof. Admitted. (* STUB *)

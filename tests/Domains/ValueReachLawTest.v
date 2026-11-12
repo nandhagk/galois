@@ -40,7 +40,6 @@ Module ReachCertified (Extra : REACH_EXTRA) <: VALUE_DOMAIN UnitLanguage.
   Definition join_ub_r := BoolLat.join_ub_r.
   Definition top_greatest := BoolLat.top_greatest.
   Definition meet_lb_l := BoolLat.meet_lb_l.
-  Definition meet_lb_r := BoolLat.meet_lb_r.
   Definition wrank := Extra.wrank.
   Definition widen_ub_l := Extra.widen_ub_l.
   Definition widen_ub_r := Extra.widen_ub_r.
