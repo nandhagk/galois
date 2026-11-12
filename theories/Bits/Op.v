@@ -678,3 +678,47 @@ Proof.
   - exact (resize_wf 0 (1%positive, 1%positive) check (fun _ x => x)).
   - exact (concat_wf 0).
 Qed.
+
+Module Pos.
+  TimeFun Corelib.BinNums.PosDef.Pos.of_succ_nat.
+  TimeFun Pos.iter_op.
+  TimeFun Pos.to_nat.
+  TimeFun Pos.of_nat.
+End Pos.
+
+Module Nat.
+  TimeFun Nat.sub.
+  TimeFun Nat.ltb.
+End Nat.
+
+Module Z.
+  TimeFun Z.of_nat.
+End Z.
+
+TimeFun op_widths.
+TimeFun eval_unary_tag.
+TimeFun eval_binary_tag.
+TimeFun eval_comparison_tag.
+TimeFun word_fun1.
+TimeFun word_fun2.
+TimeFun word_cmp.
+TimeFun arity.
+TimeFun commutative.
+TimeFun result_width.
+TimeFun op_value.
+TimeFun op_code.
+TimeFun normalize_word.
+TimeFun eval_op.
+TimeFun unary_width.
+TimeFun binary_width.
+TimeFun compare_width.
+TimeFun select_width.
+TimeFun resize_width.
+TimeFun concat_width.
+TimeFun unary_value.
+TimeFun binary_value.
+TimeFun compare_value.
+TimeFun select_value.
+TimeFun concat_value.
+TimeFun shape_arity.
+TimeFun shape_width.
