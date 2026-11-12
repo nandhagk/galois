@@ -5,11 +5,18 @@
     Builds on: SignSig and the fixed-width word operations. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
+From Argent Require Import Time Std.
 From Galois.Bits Require Import Word Op Arith.
 From Galois.Domains Require Import SignSig WordSig.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.
+
+Module SignSig.
+  TimeFun Galois.Domains.SignSig.neg.
+  TimeFun Galois.Domains.SignSig.zero.
+  TimeFun Galois.Domains.SignSig.pos.
+End SignSig.
 
 Module SignCode (L : WORD_LANGUAGE_OPS) <: SIGN_OPS L.
   Definition p := sgn.
@@ -209,6 +216,118 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted. (* CONVERT: sign_shape_laws: Not an inductive definition. *)
 End Sign.
 
+Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
+  Include Sign L.
+
+  TimeFun pleb.
+  TimeFun pjoin.
+  TimeFun pmeet.
+  TimeFun pbot.
+  TimeFun ptop.
+  TimeFun pis_bot.
+  TimeFun pconst.
+  TimeFun ppoint.
+  TimeFun pwiden.
+  TimeFun pnarrow.
+  TimeFun sign_nonneg.
+  TimeFun sign_bits.
+  TimeFun sign_not.
+  TimeFun sign_neg.
+  TimeFun sign_and.
+  TimeFun sign_or.
+  TimeFun sign_xor.
+
+  Definition psize (_ : positive) (_ : p) : nat := 1.
+  Definition pwsize (_ : pwparam) : nat := 1.
+  Definition c_payload : N := 1%N.
+  (** STUB: sign payload size and cost obligations. *)
+  Lemma pjoin_size : forall w a b,
+    (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pmeet_size : forall w a b,
+    (N.of_nat (psize w (pmeet w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pwiden_size : forall q w a b,
+    (N.of_nat (psize w (pwiden q w a b)) <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pnarrow_size : forall w a b,
+    (N.of_nat (psize w (pnarrow w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pwiden_le : forall q w a b,
+    (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pnarrow_le : forall w a b,
+    (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pleb_le : forall w a b,
+    (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pjoin_le : forall w a b,
+    (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pmeet_le : forall w a b,
+    (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pis_bot_le : forall w a,
+    (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_ppoint_le : forall w a,
+    (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pconst_le : forall w z, (T_pconst w z <=
+    c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition c_sign : N := 1%N.
+  Lemma T_sign_not_le : forall a, (T_sign_not a <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sign_neg_le : forall a, (T_sign_neg a <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sign_and_le : forall a b, (T_sign_and a b <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sign_or_le : forall a b, (T_sign_or a b <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sign_xor_le : forall a b, (T_sign_xor a b <= c_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma psize_width : forall w a, psize w a = Pos.to_nat w.
+  Proof. Admitted. (* STUB *)
+End SignT.
+
+Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
+  Include SignT L.
+  Definition k_sign : N := 1%N. (* STUB *)
+  Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_level : forall a, (sign_level a <= 3)%nat.
+  Proof. Admitted. (* STUB *)
+  Lemma F_pwrank : forall q w a, pwrank q w a = Nat.sub 3 (sign_level a).
+  Proof. Admitted. (* STUB *)
+  Lemma F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+    pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
+  Proof. Admitted. (* STUB *)
+  Lemma F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+    pgamma w (sign_neg a) (L.wrap w (- x)).
+  Proof. Admitted. (* STUB *)
+  Lemma F5_sign_and_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
+  Proof. Admitted. (* STUB *)
+  Lemma F6_sign_or_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
+  Proof. Admitted. (* STUB *)
+  Lemma F7_sign_xor_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
+  Proof. Admitted. (* STUB *)
+  Lemma T1_pleb : forall w a b, (T_pleb w a b <= k_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_pjoin : forall w a b, (T_pjoin w a b <= k_sign)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_pmeet : forall w a b, (T_pmeet w a b <= k_sign)%N.
+  Proof. Admitted. (* STUB *)
+End SignAll.
+
 Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
   Include SignTableCode L W.
   (** A forward word entry retains each concrete result at its checked width. *)
@@ -226,3 +345,38 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
       (combine (map fst wps) ys) cs.
   Proof. intros o rw q wps ys cs z Hf. discriminate Hf. Qed.
 End SignTable.
+
+Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_T L S.
+  Include SignTable L S.
+  TimeFun sign_nonneg.
+  TimeFun sign_lo.
+  TimeFun sign_hi.
+  TimeFun sign_ulo.
+  TimeFun sign_uhi.
+  TimeFun sign_boolean.
+  TimeFun sign_bool_top.
+  TimeFun sign_bool_not.
+  TimeFun sign_cmp_lt.
+  TimeFun sign_cmp_le.
+  TimeFun sign_cmp_eq.
+  TimeFun sign_cmp.
+  TimeFun wfwd.
+  TimeFun wbwd.
+  Definition c_sign_table : N := 1%N. (* STUB *)
+  Definition c_word_table : N := 1%N. (* STUB *)
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        S.psize rw q +
+        fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
+  Proof. Admitted. (* STUB *)
+End SignTableT.
