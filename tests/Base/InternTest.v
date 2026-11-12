@@ -5,7 +5,7 @@
     Builds on: Intern, Map and Key. *)
 
 From Stdlib Require Import List NArith.
-From Galois.Base Require Import Key Map Intern.
+From Galois.Base Require Import Key Map Intern Trie.
 Import List.ListNotations.
 
 Module NatMap := TrieMapCode NatKeyCode.
@@ -40,4 +40,28 @@ Proof. vm_compute. reflexivity. Qed.
 Example intern_empty_index : NatIntern.find 9 (intern_list []) = None.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Cost, representation and symbolic law examples are in BaseInternTest.v at 87192fe. *)
+Example intern_map_observations :
+  (NatIntern.find 1 interned, NatIntern.name 2%positive interned) =
+  (NatMap.get 1 (intern_forward interned),
+   PTrieCode.get 2%positive (Intern.intern_inverse interned)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_empty_frontier_size :
+  (Pos.to_nat (intern_next NatIntern.empty), N.to_nat (NatIntern.size NatIntern.empty)) = (1, 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example intern_repeated_frontier_size :
+  (Pos.to_nat (intern_next interned), S (N.to_nat (NatIntern.size interned))) = (3, 3).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* BaseInternTest.intern_ticks retires with Cost.ticks. The size observations use
+   N.to_nat where the old size was nat. intern_symbolic_size_client is replaced
+   by the public find_range, dense and intern_new laws. intern_symbolic_index_client,
+   intern_fresh_last_client and intern_first_allocation_client use the old of_list
+   laws. List construction now composes intern through fold_left, as above. *)

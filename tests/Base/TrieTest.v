@@ -45,6 +45,27 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
-(* The update operation from BaseTrieTest.v at 87192fe has no current interface. *)
+Example update_present :
+  PTrieCode.get 13 (PTrieCode.set 13 131 full) = Some 131.
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
-(* The cost-only example exact_bits is in BaseTrieTest.v at 87192fe. *)
+Example update_absent : PTrieCode.get 12 (PTrieCode.set 12 120 full) = Some 120.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example update_remove :
+  PTrieCode.get 1 (PTrieCode.remove 1 full) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* BaseTrieTest.update_present and update_absent use constant Some callbacks.
+   Their public composition is set. update_remove uses a constant None callback,
+   whose public composition is remove. The old equality to remove is definitional
+   after this substitution. The get observation also checks that the key is absent. *)
+
+(* BaseTrieTest.exact_bits expects (4%N, 4%N, 4%N) from Cost.ticks.
+   It retires with Cost. *)

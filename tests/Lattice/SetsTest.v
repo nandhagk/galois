@@ -5,7 +5,7 @@
     Builds on: Sets, TrieSet and Key. *)
 
 From Stdlib Require Import List NArith.
-From Galois.Base Require Import Key TrieSet.
+From Galois.Base Require Import Key TrieSet Trie.
 From Galois.Lattice Require Import Sets JoinWidening.
 Import List.ListNotations.
 
@@ -52,7 +52,39 @@ Example duplicate_values_keep_the_original_set :
   PosSet.elements (PosSet.add 1%positive (PosSet.add 1%positive PosSet.empty)) = [1%positive].
 Proof. vm_compute. reflexivity. Qed.
 
-(* The old may height ranks the four-set chain [0; 1; 2; 3] with bound 3.
-   The old must height ranks [All; Only s123; Only s12; Only s1; Only s0] as
-   [0; 1; 2; 3; 4] with bound 4, and its empty-universe ranks are 0 and 1 with bound 1.
-   No may or must height constructor is exported. *)
+Definition constructed_set := PosSet.add 2%positive (PosSet.add 2%positive s0).
+
+Example constructed_enumeration_comparison_reflexive :
+  PosSet.subset constructed_set constructed_set = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example empty_enumeration_comparison : PosSet.subset s0 constructed_set = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition mismatched_raw_set := PTrieCode.set 1%positive 2%positive PTrieCode.empty.
+
+Example raw_enumeration_differs_from_membership :
+  (PosSet.elements mismatched_raw_set, PosSet.mem 1%positive mismatched_raw_set,
+   PosSet.mem 2%positive mismatched_raw_set) = ([2%positive], true, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* LatticeSetTest.raw_enumeration_comparison_not_reflexive expects false from its
+   local list model. TrieSet.subset compares stored codes and returns true on the
+   corresponding mismatched_raw_set compared with itself. The list-model fixture
+   retires because it is not an operation of the replacement set implementation.
+   may_height_reaches_bound is bounded_chain_reaches_bound in BoundedTest. It uses
+   BoundedHeight on clipped values of the public restricted carrier.
+   must_height_fresh_bottom_overhead expects ([0; 1; 2; 3; 4], 4), and
+   must_empty_universe_still_has_a_step expects (0, 1, 1). MustSet has an unrestricted
+   option carrier and no HEIGHT adapter. Its elements can exceed any fixed finite
+   universe, so a total HEIGHT cannot reuse the old invariant-guarded measure.
+   may_cost_observations, nonunit_encoder_and_duplicate_cells_are_charged,
+   empty_conversion_does_not_call_nonunit_encoder and empty_union_retains_backend_overhead
+   retire with Cost.ticks. nonempty_union_retains_members_and_charges keeps its
+   elements coordinate in may_operations. Its tick predicate retires with Cost. *)

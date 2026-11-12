@@ -20,6 +20,8 @@ Single file: just vo theories/<Pkg>/<File>.v
 - You own only: {PATHS}. Do not touch anything else: no *Sig.v, dune, just/, docs/, AGENTS.md.
 - Never edit a *Sig.v. `just frozen` must pass. The Sig wins over any other text.
 - The released source and signatures govern interfaces that differ from the design copies.
+- Code functors take operations-only dependencies. `BoundedSetCode` alone takes `SET` laws
+  to construct its Boolean subtype proof, which extraction erases.
 - No Axiom, admit, give_up, Abort. Admitted only with a tag from section 5.
 - Do not change a definition fixed by a Sig. Replace code bodies only where marked STUB-CODE.
 - Extra lemmas, helper definitions and internal modules in your own files are free.

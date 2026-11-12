@@ -9,6 +9,8 @@ From Galois.Base Require Import Key.
 From Galois.Lattice Require Import Flat.
 
 Module FlatBool := FlatCode BoolKeyCode.
+Module FlatBoolLat := Flat BoolKey.
+Module FlatBoolHeight := FlatHeight BoolKey FlatBoolLat.
 
 Example flat_positive : FlatBool.join (FVal true) (FVal true) = FVal true.
 Proof.
@@ -30,5 +32,11 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* The old flat height ranked FBot, FVal false and FTop as 0, 1 and 2.
-   No flat height constructor is exported. *)
+Example flat_rank_levels :
+  (FlatBoolHeight.rank FBot, FlatBoolHeight.rank (FVal false), FlatBoolHeight.rank FTop) =
+  (0, 1, 2).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* LatticeFlatTest.flat_leb_ticks and flat_join_ticks retire with Cost.ticks. *)

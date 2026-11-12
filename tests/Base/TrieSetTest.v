@@ -27,7 +27,29 @@ Proof. vm_compute. reflexivity. Qed.
 Example set_empty : PosSet.equal PosSet.empty PosSet.empty = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Cost and law examples are in BaseSetTest.v at 87192fe. *)
+Definition malformed_storage : PosSet.t := PTrieCode.set 1%positive 2%positive PTrieCode.empty.
+Module CollisionKey.
+  Definition t := positive.
+  Definition encode (_ : t) := 1%positive.
+  Definition eqb (_ _ : t) := true.
+End CollisionKey.
+Module CollisionSet := TrieSetCode CollisionKey.
+
+Example malformed_set_update_client :
+  PosSet.mem 1%positive (PosSet.add 3%positive malformed_storage) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example colliding_membership_client :
+  CollisionSet.mem 1%positive (CollisionSet.add 2%positive CollisionSet.empty) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* BaseSetTest.set_ticks retires with Cost.ticks. raw_add_client and
+   malformed_set_control are symbolic law clients. colliding_membership_client
+   uses a constant encoder through the operations layer, which needs no laws. *)
 
 Module UnitSet := TrieSetCode UnitKeyCode.
 Definition raw_unit_set : UnitSet.t := PTrieCode.set 2%positive tt PTrieCode.empty.
