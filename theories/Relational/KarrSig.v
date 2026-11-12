@@ -88,6 +88,7 @@ Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : KARR_T X L N F C).
+  Parameter F_swf : forall s, swf s.
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
   Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.

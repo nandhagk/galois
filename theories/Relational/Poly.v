@@ -116,6 +116,7 @@ End Poly.
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: POLY_ALL X L N F C.
   Include Poly X L N F C.
+  Definition swf (_ : t) : Prop := True.
   Definition wsize (_ : wparam) : nat := 0.
   Definition normal (P : list (lcons X.t)) : Prop :=
     Forall (fun r => NoDup (map fst (lhs r))) P.
@@ -166,13 +167,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun fm_elim.
   TimeFun entail_cert.
   Definition c_num : N := 1. (* STUB *)
+  Lemma swf_top : swf top.
+  Proof. Admitted. (* STUB *)
+  Lemma swf_join : forall a b, swf a -> swf b -> swf (join a b).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_widen : forall p a b, swf a -> swf b -> swf (widen p a b).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_narrow : forall a b, swf a -> swf b -> swf (narrow a b).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_assign : forall x e s, swf s -> swf (assign x e s).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_havoc : forall x s, swf s -> swf (havoc x s).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_assume : forall g es s, swf s -> swf (assume g es s).
+  Proof. Admitted. (* STUB *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_assume_le : forall g es s,
+  Lemma T_assume_le : forall g es s, swf s ->
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_is_bot_le : forall s,
@@ -184,6 +199,8 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
   Definition c_poly : N := 1. (* STUB *)
+  Lemma F_swf : forall s, swf s.
+  Proof. Admitted. (* STUB *)
   Lemma T_fm_elim_le : forall x P, normal P ->
     (T_fm_elim x P <= c_poly * N.of_nat (((length P + 1)^2)%nat) *
       N.of_nat ((n P + length P + 1)%nat) * N.of_nat (((ell P + 1)^2)%nat))%N.

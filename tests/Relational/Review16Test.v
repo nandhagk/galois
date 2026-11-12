@@ -21,7 +21,7 @@ Module Polyhedra := Poly PosKey ZLang Numeric Forms Certificates.
 Module ZoneKey := OptionKey PosKey.
 Module ZoneMap := TrieMap ZoneKey.
 Module Zones := Zone PosKey ZoneKey ZoneMap ZLang Numeric Forms.
-Module OctKey := LitKey PosKey.
+Module OctKey := PairKey PosKey BoolKey.
 Module OctMap := TrieMap OctKey.
 Module Octagons := Octagon PosKey OctKey OctMap ZLang Numeric Forms.
 

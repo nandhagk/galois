@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith.
 From Argent Require Import Time Std.
-From Galois.Base Require Import KeySig MapSig Code.
+From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
@@ -15,7 +15,8 @@ From Galois.Relational Require Import LinForm LinearizeSig NumStateSig.
 Local Open Scope nat_scope.
 
 Module Type OCTAGON_OPS (X : KEY_OPS)
-    (K : KEY_OPS with Definition t := (X.t * bool)%type) (M : MAP_OPS K)
+    (K : KEY_OPS with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode) (M : MAP_OPS K)
     (L : LANG_OPS) (F : LINEARIZE_OPS X L).
   Definition dbm := M.t (M.t Z).
   Include NUM_STATE_OPS X L F with Definition t := reach dbm.
@@ -26,12 +27,14 @@ Module Type OCTAGON_OPS (X : KEY_OPS)
   Parameter incr_close : K.t -> K.t -> Z -> dbm -> t.
 End OCTAGON_OPS.
 
-Module Type OCTAGON_BASE (X : KEY) (K : KEY with Definition t := (X.t * bool)%type)
+Module Type OCTAGON_BASE (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) :=
   OCTAGON_OPS X K M L F <+ LATTICE_LAWS <+ HAS_TOP_LAWS <+ WIDENING_LAWS <+
   NUM_STATE_LAWS X L N F.
 
-Module Type OCTAGON_LAWS (X : KEY) (K : KEY with Definition t := (X.t * bool)%type)
+Module Type OCTAGON_LAWS (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N)
     (Import D : OCTAGON_BASE X K M L N F).
   Definition bar (i : K.t) : K.t := (fst i, negb (snd i)).
@@ -48,11 +51,13 @@ Module Type OCTAGON_LAWS (X : KEY) (K : KEY with Definition t := (X.t * bool)%ty
   Parameter ngamma_unreached : forall v, ~ ngamma Unreached v.
 End OCTAGON_LAWS.
 
-Module Type OCTAGON (X : KEY) (K : KEY with Definition t := (X.t * bool)%type)
+Module Type OCTAGON (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) :=
   OCTAGON_BASE X K M L N F <+ OCTAGON_LAWS X K M L N F.
 
-Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
+Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : OCTAGON X K M L N F).
   Include NUM_STATE_TIME X L N F D.
@@ -93,11 +98,11 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter T_tclose_le : forall m, dbm_wf m ->
     (T_tclose m <= c_octagon * N.of_nat (((supp m + 1)^3)%nat) *
     N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
-  (** Incremental closure charges quadratic updates. *)
+  (** Incremental closure charges quadratic updates and one row merge per row. *)
   Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
     c_octagon * N.of_nat (((supp m + 1)^2)%nat) *
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
-    c_octagon * N.of_nat (skel m))%N.
+    c_octagon * N.of_nat ((supp m + 1) * skel m))%N.
   (** Join charges both input supports and entry sizes. *)
   Parameter T_join_octagon_le : forall a z,
     (T_join a z <= c_octagon * N.of_nat (binary_work a z))%N.
@@ -109,11 +114,13 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (T_widen p a z <= c_octagon * N.of_nat (binary_work a z + (ns a + ns z + 1)^2 * wsize p))%N.
 End OCTAGON_TIME.
 
-Module Type OCTAGON_T (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
+Module Type OCTAGON_T (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N) :=
   OCTAGON X K M L N F <+ OCTAGON_TIME X K M L N F.
 
-Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
+Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : OCTAGON_T X K M L N F).
   Definition coherent (m : dbm) : Prop :=
@@ -129,6 +136,8 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter fw_round : K.t -> dbm -> dbm.
   Parameter T_fw_round : K.t -> dbm -> N.
   Parameter k_octagon : N.
+  Parameter F_swf : forall s,
+    swf s <-> match s with Unreached => True | Reached m => dbm_wf m end.
   (** Linear-form size charges coefficients, the constant and wrap bounds. *)
   Definition lin_bits (e : term L.op X.t) : nat :=
     match F.lin_of e with
@@ -146,7 +155,8 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-        length (F.atoms_of g es) * skels s) +
+        length (F.atoms_of g es) *
+          (ns s + 2 * length (F.atoms_of g es) + 1) * skels s) +
       F.T_atoms_of g es)%N.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Parameter F_assign_work : forall x e s,
@@ -175,15 +185,22 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   (** Constraint insertion writes both signed twins. *)
   Parameter F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
+  (** Inserting both signed twins keeps a well-formed matrix well formed. *)
+  Parameter wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
+  (** Incremental closure keeps a well-formed matrix well formed. *)
+  Parameter wf_incr_close : forall i j d m, dbm_wf m ->
+    match incr_close i j d m with Unreached => True | Reached m' => dbm_wf m' end.
+  (** A round keeps a well-formed matrix well formed. *)
+  Parameter wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
   (** Floyd-Warshall charges cubic entry updates. *)
   Parameter T1_fw : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * N.of_nat
       ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
   (** Tightening charges quadratic entry updates. *)
-  Parameter T2_tighten : forall m,
+  Parameter T2_tighten : forall m, dbm_wf m ->
     (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   (** Strengthening charges quadratic entry updates. *)
-  Parameter T3_strengthen : forall m,
+  Parameter T3_strengthen : forall m, dbm_wf m ->
     (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   (** Diagonal checks limit intermediate entry growth. *)
   Parameter bits_fw_round_le : forall ks m,
@@ -205,6 +222,12 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter strengthen_implied : forall m v, models m v -> models (strengthen m) v.
   (** Even rounding retains integer models. *)
   Parameter tighten_implied : forall m v, models m v -> models (tighten m) v.
+  (** Floyd-Warshall keeps consistent matrices consistent. *)
+  Parameter wf_fw : forall m, dbm_wf m -> dbm_wf (fw m).
+  (** Tightening keeps consistent matrices consistent. *)
+  Parameter wf_tighten : forall m, dbm_wf m -> dbm_wf (tighten m).
+  (** Strengthening keeps a well-formed matrix well formed. *)
+  Parameter wf_strengthen : forall m, dbm_wf m -> dbm_wf (strengthen m).
   (** Tight closure retains all integer models. *)
   Parameter tclose_sound : forall m v, models m v -> ngamma (tclose m) v.
   (** A failed tight closure certifies inconsistency. *)
@@ -259,6 +282,7 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     supp (strengthen m) = supp m /\ b (strengthen m) = b m.
 End OCTAGON_PLAN.
 
-Module Type OCTAGON_ALL (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
+Module Type OCTAGON_ALL (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N) :=
   OCTAGON_T X K M L N F <+ OCTAGON_PLAN X K M L N F.
