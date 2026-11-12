@@ -23,6 +23,35 @@ Arguments wl_store {K A Q} _.
 Arguments wl_counters {K A Q} _.
 Arguments wl_queue {K A Q} _.
 
+(** Prepared states carry immutable row indexes and a mutable live-entry set. *)
+Record worklist_state (K A R Q : Type) := WorklistState {
+  ws_store : kmap K A;
+  ws_counters : ptrie nat;
+  ws_queue : Q;
+  ws_live : ptrie unit;
+  ws_rows : ptrie R;
+  ws_readers : ptrie (list positive)
+}.
+
+Arguments WorklistState {K A R Q} _ _ _ _ _ _.
+Arguments ws_store {K A R Q} _.
+Arguments ws_counters {K A R Q} _.
+Arguments ws_queue {K A R Q} _.
+Arguments ws_live {K A R Q} _.
+Arguments ws_rows {K A R Q} _.
+Arguments ws_readers {K A R Q} _.
+
+(** The projection retains every component of the original worklist state. *)
+Definition wl_view {K A R Q} (s : worklist_state K A R Q) : wl_state K A Q :=
+  WlState (ws_store s) (ws_counters s) (ws_queue s).
+
+(** Binary successors enumerate occurrences without rebuilding unary prefixes. *)
+Fixpoint wl_ids_from (n : nat) (id : positive) : list positive :=
+  match n with
+  | O => nil
+  | S n1 => id :: wl_ids_from n1 (Pos.succ id)
+  end.
+
 (** A path records the input state of every continuing callback in order. *)
 Inductive wl_path {A R : Type} (step : A -> A + R) : A -> list A -> A -> Prop :=
   | WlPath_nil s : wl_path step s nil s
@@ -130,19 +159,29 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     (P : POLICY_T L) (Q : PQ_T) (G : DIGRAPH_T) (W : WTO_T)
     (Sched : SCHEDULE_T L S G W) (B : BUDGET L S)
     (Import V : WORKLIST_T L S Sched B).
-  Definition state := wl_state S.key L.t Q.t.
+  Definition state := worklist_state S.key L.t S.row Q.t.
+  Definition reference_state := wl_state S.key L.t Q.t.
   Parameter prepare : S.prog -> policy L.wparam -> state.
-  Parameter row_at : S.prog -> positive -> option S.row.
-  Parameter readers : S.prog -> positive -> list positive.
+  (* spec: source_row source_readers reference_enqueue reference_update reference_step *)
+  Parameter source_row : S.prog -> positive -> option S.row.
+  Parameter row_at : state -> positive -> option S.row.
+  Parameter source_readers : S.prog -> positive -> list positive.
+  Parameter readers : state -> positive -> list positive.
   Parameter eval_row : S.prog -> S.row -> kmap S.key L.t ->
     option (L.t * list (S.key * L.t)).
   Parameter enqueue : S.prog -> policy L.wparam -> list positive -> state -> state.
   Parameter update_one : S.prog -> policy L.wparam -> state -> S.key * L.t -> state.
   Parameter step : S.prog -> policy L.wparam -> state ->
     state + outcome (kmap S.key L.t).
+  Parameter reference_enqueue :
+    S.prog -> policy L.wparam -> list positive -> reference_state -> reference_state.
+  Parameter reference_update :
+    S.prog -> policy L.wparam -> reference_state -> S.key * L.t -> reference_state.
+  Parameter reference_step : S.prog -> policy L.wparam -> reference_state ->
+    reference_state + outcome (kmap S.key L.t).
   Parameter T_prepare : S.prog -> policy L.wparam -> nat.
-  Parameter T_row_at : S.prog -> positive -> nat.
-  Parameter T_readers : S.prog -> positive -> nat.
+  Parameter T_row_at : state -> positive -> nat.
+  Parameter T_readers : state -> positive -> nat.
   Parameter T_eval_row : S.prog -> S.row -> kmap S.key L.t -> nat.
   Parameter T_enqueue : S.prog -> policy L.wparam -> list positive -> state -> nat.
   Parameter T_update_one : S.prog -> policy L.wparam -> state -> S.key * L.t -> nat.
@@ -150,47 +189,73 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter k_prepare k_eval k_update k_credit k_round k_loop k_fuel : nat.
 
   Definition look (s : state) (x : S.key) : L.t :=
-    look_or S.key_code L.bot (wl_store s) x.
+    look_or S.key_code L.bot (ws_store s) x.
   Definition counter (s : state) (c : positive) : nat :=
-    match trie_get c (wl_counters s) with Some n => n | None => 0 end.
+    match trie_get c (ws_counters s) with Some n => n | None => 0 end.
   Definition priority (pol : policy L.wparam) (c : positive) : positive :=
     match trie_get c (prio pol) with Some n => n | None => 1%positive end.
   (** Numbering distinguishes row occurrences even when the source row list repeats a row. *)
   Definition row_ids (p : S.prog) : list positive :=
-    List.map Pos.of_succ_nat (seq 0 (C p)).
+    wl_ids_from (C p) 1%positive.
+  Definition reference_look (s : reference_state) (x : S.key) : L.t :=
+    look_or S.key_code L.bot (wl_store s) x.
+  Definition reference_counter (s : reference_state) (c : positive) : nat :=
+    match trie_get c (wl_counters s) with Some n => n | None => 0 end.
+  (** Prepared indexes retain row occurrences and the exact ordered reader buckets. *)
+  Definition metadata (p : S.prog) (s : state) : Prop :=
+    (forall id, row_at s id = source_row p id) /\
+    (forall c, readers s c = source_readers p c).
+  (** Live membership agrees with the queue's specification lookup at every identifier. *)
+  Definition live_agrees (s : state) : Prop :=
+    forall id, trie_get id (ws_live s) = Some tt <->
+      exists pr, Q.prio (ws_queue s) id = Some pr.
+  (** Guarded pushes leave no stale pending entries to consume the row-count cap. *)
+  Definition queue_exact (s : state) : Prop :=
+    Q.pending (ws_queue s) = N.to_nat (Q.size (ws_queue s)).
+  Definition prepared (p : S.prog) (s : state) : Prop :=
+    metadata p s /\ live_agrees s /\ Q.wf (ws_queue s) /\ queue_exact s.
+  Definition after_pop (s : state) (id : positive) (q : Q.t) : state :=
+    WorklistState (ws_store s) (ws_counters s) q
+      (PTrieCode.remove id (ws_live s)) (ws_rows s) (ws_readers s).
+  Definition view_result (result : state + outcome (kmap S.key L.t))
+      : reference_state + outcome (kmap S.key L.t) :=
+    match result with
+    | inl s => inl (wl_view s)
+    | inr result => inr result
+    end.
   Definition weight (p : S.prog) (id : positive) : nat :=
-    match row_at p id with Some r => length (S.deps p r) + 1 | None => 0 end.
-  Definition degree (p : S.prog) (x : positive) : nat := length (readers p x).
+    match source_row p id with Some r => length (S.deps p r) + 1 | None => 0 end.
+  Definition degree (p : S.prog) (x : positive) : nat := length (source_readers p x).
   Definition weighted_degree (p : S.prog) (x : positive) : nat :=
-    fold_right Nat.add 0 (List.map (weight p) (readers p x)).
+    fold_right Nat.add 0 (List.map (weight p) (source_readers p x)).
   Definition queue_credit (p : S.prog) (s : state) : nat :=
     fold_right Nat.add 0 (List.map
-      (fun id => match Q.prio (wl_queue s) id with
+      (fun id => match Q.prio (ws_queue s) id with
         | Some _ => weight p id
         | None => 0
         end) (row_ids p)).
   Definition queue_phi (p : S.prog) (s : state) : nat :=
-    Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 2) (wl_queue s).
+    Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 2) (ws_queue s).
   (** Support couples live row identifiers to their target priorities and bounds pending entries. *)
   Definition structural (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
-    Q.wf (wl_queue s) /\ Q.pending (wl_queue s) <= C p /\
-    (forall pr id, Q.prio (wl_queue s) id = Some pr ->
-      In id (row_ids p) /\ exists r, row_at p id = Some r /\
+    Q.wf (ws_queue s) /\ Q.pending (ws_queue s) <= C p /\
+    (forall pr id, Q.prio (ws_queue s) id = Some pr ->
+      In id (row_ids p) /\ exists r, source_row p id = Some r /\
         pr = N.pos (priority pol (S.key_code (S.target p r)))).
   Definition invariant (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
-    structural p pol s /\ forall x, B.inv p (look s x).
+    structural p pol s /\ (forall x, B.inv p (look s x)) /\ prepared p s.
   Definition reachable (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
     exists xs, wl_path (step p pol) (prepare p pol) xs s.
   Definition trace_cost (p : S.prog) (pol : policy L.wparam) (xs : list state) : nat :=
     fold_right Nat.add 0 (List.map (T_step p pol) xs).
   Definition popped_ids (xs : list state) : list positive :=
-    flat_map (fun s => match Q.pop (wl_queue s) with
+    flat_map (fun s => match Q.pop (ws_queue s) with
       | Some (_, id, _) => id :: nil
       | None => nil
       end) xs.
   Definition nonhead_priorities (p : S.prog) (pol : policy L.wparam)
       (xs : list state) : list positive :=
-    flat_map (fun id => match row_at p id with
+    flat_map (fun id => match source_row p id with
       | Some r =>
         let c := S.key_code (S.target p r) in
         match trie_get c (heads pol) with
@@ -231,12 +296,19 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       (update_one p pol (fst sn) xa, snd sn + T_update_one p pol (fst sn) xa))
       outs (s, 0)).
 
+  (** Binary enumeration retains the original observable identifiers and occurrence order. *)
+  Parameter F0_row_ids : forall p,
+    row_ids p = List.map Pos.of_succ_nat (seq 0 (C p)).
+  (** Projecting a prepared state retains every lookup in the original store. *)
+  Parameter F0_view_look : forall s x, reference_look (wl_view s) x = look s x.
+  (** Projecting a prepared state retains every strict-update counter. *)
+  Parameter F0_view_counter : forall s c, reference_counter (wl_view s) c = counter s c.
   (** Numbered lookup agrees with the corresponding original row occurrence. *)
   Parameter F1_numbering : forall p n,
-    row_at p (Pos.of_succ_nat n) = nth_error (S.rows p) n.
+    source_row p (Pos.of_succ_nat n) = nth_error (S.rows p) n.
   (** Reader buckets retain every reading row occurrence once. *)
   Parameter F2_readers : forall p c,
-    readers p c = filter (fun id => match row_at p id with
+    source_readers p c = filter (fun id => match source_row p id with
       | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
       | None => false
       end) (row_ids p).
@@ -248,45 +320,125 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     invariant p pol (prepare p pol) /\
     (forall x, look (prepare p pol) x = L.bot) /\
     (forall c, counter (prepare p pol) c = 0) /\
-    (forall id, In id (row_ids p) -> exists pr, Q.prio (wl_queue (prepare p pol)) id = Some pr).
+    (forall id, In id (row_ids p) -> exists pr, Q.prio (ws_queue (prepare p pol)) id = Some pr).
   (** Enqueue changes the queue alone and guards every push by live absence. *)
   Parameter F5_enqueue : forall p pol ids s,
-    wl_store (enqueue p pol ids s) = wl_store s /\
-    wl_counters (enqueue p pol ids s) = wl_counters s /\
-    wl_queue (enqueue p pol ids s) = fold_left
-      (fun q id => match Q.prio q id, row_at p id with
+    wl_store (reference_enqueue p pol ids s) = wl_store s /\
+    wl_counters (reference_enqueue p pol ids s) = wl_counters s /\
+    wl_queue (reference_enqueue p pol ids s) = fold_left
+      (fun q id => match Q.prio q id, source_row p id with
         | None, Some r => Q.push (N.pos (priority pol (S.key_code (S.target p r)))) id q
         | _, _ => q
         end) ids (wl_queue s).
   (** An update writes the policy result and enqueues its readers after a strict value change. *)
   Parameter F6_update : forall p pol s x a,
     let c := S.key_code x in
-    let ac := P.update pol c (counter s c) (look s x) a in
+    let ac := P.update pol c (reference_counter s c) (reference_look s x) a in
     let s1 := WlState (PTrieCode.set c (x, fst ac) (wl_store s))
       (PTrieCode.set c (snd ac) (wl_counters s)) (wl_queue s) in
-    update_one p pol s (x, a) =
-      if L.leb a (look s x) then s else enqueue p pol (readers p c) s1.
+    reference_update p pol s (x, a) =
+      if L.leb a (reference_look s x) then s else reference_enqueue p pol (source_readers p c) s1.
   (** Each callback pops one row and processes its primary and side outputs in occurrence order. *)
   Parameter F7_step : forall p pol s,
-    step p pol s = match Q.pop (wl_queue s) with
+    reference_step p pol s = match Q.pop (wl_queue s) with
     | None => inr (Solved (wl_store s))
     | Some (_, id, q1) =>
-      match row_at p id with
+      match source_row p id with
       | None => inr (Rejected Bad_policy)
       | Some r =>
         match eval_row p r (wl_store s) with
         | None => inr (Rejected Check_failed)
-        | Some (a, ss) => inl (fold_left (update_one p pol)
+        | Some (a, ss) => inl (fold_left (reference_update p pol)
             ((S.target p r, a) :: ss) (WlState (wl_store s) (wl_counters s) q1))
         end
       end
     end.
+  (** Indexed lookup reads the prepared row table without traversing the source rows. *)
+  Parameter F1_row_at : forall s id, row_at s id = trie_get id (ws_rows s).
+  (** Reader lookup reads the prepared bucket and maps an absent bucket to the empty list. *)
+  Parameter F2_reader_at : forall s c,
+    readers s c = match trie_get c (ws_readers s) with Some ids => ids | None => nil end.
+  (** Preparation establishes all cache and live facts within the solver. *)
+  Parameter F4_metadata : forall p pol, prepared p (prepare p pol).
+  (** Enqueue preserves the immutable indexes and the original value components. *)
+  Parameter F5_fields : forall p pol ids s,
+    ws_store (enqueue p pol ids s) = ws_store s /\
+    ws_counters (enqueue p pol ids s) = ws_counters s /\
+    ws_rows (enqueue p pol ids s) = ws_rows s /\
+    ws_readers (enqueue p pol ids s) = ws_readers s.
+  (** Guarded pushes update the queue and live set together in occurrence order. *)
+  Parameter F5_indexed : forall p pol ids s,
+    (ws_queue (enqueue p pol ids s), ws_live (enqueue p pol ids s)) =
+    fold_left (fun ql id => match trie_get id (snd ql), row_at s id with
+      | None, Some r =>
+        (Q.push (N.pos (priority pol (S.key_code (S.target p r)))) id (fst ql),
+          PTrieCode.set id tt (snd ql))
+      | _, _ => ql
+      end) ids (ws_queue s, ws_live s).
+  (** Enqueue agrees with the original helper after projection from prepared states. *)
+  Parameter F5_agreement : forall p pol ids s, prepared p s ->
+    wl_view (enqueue p pol ids s) = reference_enqueue p pol ids (wl_view s).
+  (** Enqueue maintains the metadata and live facts that justify projected agreement. *)
+  Parameter F5_prepared : forall p pol ids s, prepared p s ->
+    prepared p (enqueue p pol ids s).
+  (** Indexed updates retain metadata while writing the policy result and enqueueing readers. *)
+  Parameter F6_indexed : forall p pol s x a,
+    let c := S.key_code x in
+    let ac := P.update pol c (counter s c) (look s x) a in
+    let s1 := WorklistState (PTrieCode.set c (x, fst ac) (ws_store s))
+      (PTrieCode.set c (snd ac) (ws_counters s)) (ws_queue s) (ws_live s)
+      (ws_rows s) (ws_readers s) in
+    update_one p pol s (x, a) =
+      if L.leb a (look s x) then s else enqueue p pol (readers s c) s1.
+  (** Indexed updates preserve both tables independently of the input cache validity. *)
+  Parameter F6_tables : forall p pol s xa,
+    ws_rows (update_one p pol s xa) = ws_rows s /\
+    ws_readers (update_one p pol s xa) = ws_readers s.
+  (** Every update has the original projected behavior on prepared states. *)
+  Parameter F6_agreement : forall p pol s xa, prepared p s ->
+    wl_view (update_one p pol s xa) = reference_update p pol (wl_view s) xa.
+  (** Every intermediate update maintains prepared-state agreement without client duties. *)
+  Parameter F6_prepared : forall p pol s xa, prepared p s ->
+    prepared p (update_one p pol s xa).
+  (** A successful pop removes its live identifier before any primary or side update. *)
+  Parameter F7_indexed : forall p pol s,
+    step p pol s = match Q.pop (ws_queue s) with
+    | None => inr (Solved (ws_store s))
+    | Some (_, id, q1) =>
+      match row_at s id with
+      | None => inr (Rejected Bad_policy)
+      | Some r =>
+        match eval_row p r (ws_store s) with
+        | None => inr (Rejected Check_failed)
+        | Some (a, ss) => inl (fold_left (update_one p pol)
+            ((S.target p r, a) :: ss) (after_pop s id q1))
+        end
+      end
+    end.
+  (** Popping preserves cache agreement and restores live agreement for the residual queue. *)
+  Parameter F7_pop_prepared : forall p s pr id q1, prepared p s ->
+    Q.pop (ws_queue s) = Some (pr, id, q1) -> prepared p (after_pop s id q1).
+  (** The full callback retains every observable behavior of the original callback. *)
+  Parameter F7_agreement : forall p pol s, prepared p s ->
+    view_result (step p pol s) = reference_step p pol (wl_view s).
+  (** Continuing callbacks retain both tables and all prepared-state facts. *)
+  Parameter F7_prepared : forall p pol s s1, prepared p s -> step p pol s = inl s1 ->
+    prepared p s1 /\ ws_rows s1 = ws_rows s /\ ws_readers s1 = ws_readers s.
   (** The public solver is the binary-fuel loop over these callbacks. *)
   Parameter F8_run : forall p pol fuel,
     run p pol fuel = match loopN (step p pol) fuel (prepare p pol) with
+    | inl s => OutOfFuel (ws_store s)
+    | inr result => result
+    end.
+  (** The original three-field loop has the same public result for every fuel. *)
+  Parameter F8_reference_run : forall p pol fuel,
+    run p pol fuel =
+    match loopN (reference_step p pol) fuel (wl_view (prepare p pol)) with
     | inl s => OutOfFuel (wl_store s)
     | inr result => result
     end.
+  (** Every state reached by the public solver satisfies its internal preparation duties. *)
+  Parameter F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p s.
   (** Every continuing callback keeps the structural and client value invariants. *)
   Parameter F9_step_inv : forall p pol s s1, S.wf p -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
@@ -305,7 +457,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     queue_phi p (prepare p pol) <= k_prepare * (C p + D p) * unit p.
   (** W2 charges every dependency-resume occurrence on invariant stores. *)
   Parameter W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
-    T_eval_row p r (wl_store s) <= k_eval * (length (S.deps p r) + 1) * unit p.
+    T_eval_row p r (ws_store s) <= k_eval * (length (S.deps p r) + 1) * unit p.
   (** Guarded enqueue pays each supplied reader occurrence even when it is already live. *)
   Parameter W3_enqueue : forall p pol ids s, S.wf p -> invariant p pol s ->
     incl ids (row_ids p) ->
@@ -319,12 +471,12 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
       k_update * (1 + degree p (S.key_code x)) * unit p + queue_phi p s.
   (** Callback accounting retains every emitted occurrence and every intermediate update cost. *)
   Parameter W3_step : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
-    Q.pop (wl_queue s) = Some (pr, id, q1) -> row_at p id = Some r ->
-    eval_row p r (wl_store s) = Some (a, ss) ->
-    T_step p pol s <= k_loop * (Q.T_pop (wl_queue s) + T_row_at p id +
-      T_eval_row p r (wl_store s) + S.T_target p r +
+    Q.pop (ws_queue s) = Some (pr, id, q1) -> source_row p id = Some r ->
+    eval_row p r (ws_store s) = Some (a, ss) ->
+    T_step p pol s <= k_loop * (Q.T_pop (ws_queue s) + T_row_at s id +
+      T_eval_row p r (ws_store s) + S.T_target p r +
       output_cost p pol ((S.target p r, a) :: ss)
-        (WlState (wl_store s) (wl_counters s) q1) + length ss + 1).
+        (after_pop s id q1) + length ss + 1).
   (** W4 spends weighted rank credit for each callback in a widening-free run. *)
   Parameter W4_credit : forall p pol rk h s s1, S.wf p -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
@@ -351,7 +503,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter W5_round : forall p pol s xs last,
     S.wf p -> Sched.cuts p pol = true -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
-    (forall id r, row_at p id = Some r ->
+    (forall id r, source_row p id = Some r ->
       count_occ Pos.eq_dec (popped_ids xs) id <=
         match trie_get (S.key_code (S.target p r)) (heads pol) with
         | Some _ => length (S.deps p r) + 1
