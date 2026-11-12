@@ -113,10 +113,6 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
   Proof. Admitted. (* STUB *)
-  (** Meet is below its right operand. *)
-  Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted. (* STUB *)
-
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
   Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)

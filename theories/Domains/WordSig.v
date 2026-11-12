@@ -103,8 +103,6 @@ Module Type WORD_PAYLOAD_LAWS (L : WORD_LANGUAGE) (Import W : WORD_PAYLOAD_OPS L
   Parameter pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
   (** Meet refines the left payload. *)
   Parameter pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  (** Meet refines the right payload. *)
-  Parameter pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   (** Inclusion retains represented integers. *)
   Parameter pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.

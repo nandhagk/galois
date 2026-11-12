@@ -117,6 +117,16 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
       with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : OCTAGON_T X K M L N F).
+  (** Join takes entrywise maxima without closing its arguments. *)
+  Parameter F_join_entry : forall ma mb i j,
+    match join (Reached ma) (Reached mb) with
+    | Reached mj => entry mj i j =
+        match entry ma i j, entry mb i j with
+        | Some x, Some y => Some (Z.max x y)
+        | _, _ => None
+        end
+    | Unreached => False
+    end.
   Definition coherent (m : dbm) : Prop :=
     forall i j, entry m i j = entry m (bar j) (bar i).
   Definition coh (s : t) : Prop :=
