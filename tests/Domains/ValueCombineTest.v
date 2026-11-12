@@ -37,3 +37,36 @@ Qed.
 
 
 *)
+
+Inductive weak_fact : Type := WBot | WPoint | WTop.
+Module WeakJoin.
+  Definition bot := WBot.
+  Definition join (_ _ : weak_fact) := WTop.
+End WeakJoin.
+Module OrderedJoin.
+  Definition bot := 0%nat.
+  Definition join (a b : nat) := (2 * a + b + 1)%nat.
+End OrderedJoin.
+
+Definition join_all {A} (bot : A) (join : A -> A -> A) (xs : list A) :=
+  match xs with
+  | [] => bot
+  | x :: rest => fold_left join rest x
+  end.
+
+Example weak_singleton_keeps_point : join_all WeakJoin.bot WeakJoin.join [WPoint] = WPoint.
+Proof. vm_compute. reflexivity. Qed.
+
+Example weak_empty_uses_bottom : join_all WeakJoin.bot WeakJoin.join [] = WBot.
+Proof. vm_compute. reflexivity. Qed.
+
+Example ordered_join_is_left_fold : join_all OrderedJoin.bot OrderedJoin.join [1; 2; 3] = 14.
+Proof. vm_compute. reflexivity. Qed.
+
+Example ordered_join_retains_input_order :
+  join_all OrderedJoin.bot OrderedJoin.join [3; 2; 1] = 20.
+Proof. vm_compute. reflexivity. Qed.
+
+Example product_join_all :
+  join_all ReachProduct.bot ReachProduct.join [(false, true); (true, false)] = (true, true).
+Proof. vm_compute. reflexivity. Qed.
