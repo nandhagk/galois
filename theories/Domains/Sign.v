@@ -86,8 +86,6 @@ Module SignTableCode (L : WORD_LANGUAGE_OPS) (S : SIGN_OPS L)
     | (bveq | bvne | bvult | bvule | bvslt | bvsle), [(w, a); (_, b)] =>
         Some (sign_cmp o w a b)
     | bvite, [_; (_, a); (_, b)] => Some (S.pjoin rw a b)
-    | (bvnot | bvneg | bvzext _ | bvsext _ | bvand | bvor | bvxor |
-       bveq | bvne | bvult | bvule | bvslt | bvsle | bvite), _ => Some (S.ptop rw)
     | _, _ => None
     end.
   Definition wbwd (_ : L.op) (_ : positive) (_ : S.p)
