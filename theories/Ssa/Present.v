@@ -8,7 +8,7 @@ From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Code KeySig Key.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
-From Galois.Ssa Require Import Lang.
+From Galois.Ssa Require Import Lang ValidateSig.
 Import List.ListNotations.
 
 Inductive exit_arm :=
@@ -124,8 +124,11 @@ Module BlockSsaCode (O : OPS)
   Definition def (_ : P.t) (_ : positive) : definition positive positive O.K := Arbitrary.
   (* STUB-CODE *)
   Definition home (_ : P.t) (_ : positive) : positive := 1%positive.
-  (* STUB-CODE *)
-  Definition params (_ : P.t) (_ : positive) : list positive := [].
+  Definition params (p : P.t) (b : positive) : list positive :=
+    match find_block b (blocks _ _ _ p) with
+    | Some body => Lang.params _ _ _ body
+    | None => []
+    end.
   (* STUB-CODE *)
   Definition args (_ : P.t) (_ : block_edge) : list (positive * positive) := [].
   (* STUB-CODE *)
@@ -425,3 +428,37 @@ Module PointsT (O : OPS) (P : TYPE with Definition t := func positive O.K O.G)
   TimeFun block_edge_args.
   TimeFun point_definition.
 End PointsT.
+
+Module LanguageLink (O : OPS)
+    (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (C : CFG P PosKey BlockEdge
+      with Definition entries := fun (p : P.t) => [entry _ _ _ p]
+      with Definition nodes := fun (p : P.t) => map fst (blocks _ _ _ p)
+      with Definition edges := fun (p : P.t) => language_edges p
+      with Definition src := fun (_ : P.t) (e : block_edge) => edge_source e
+      with Definition dst := fun (_ : P.t) (e : block_edge) => edge_target e)
+    (S : SSA P PosKey BlockEdge C PosKey K G
+      with Definition wf := fun (p : P.t) => ssa_wf p
+      with Definition params := fun (p : P.t) (b : positive) =>
+        match find_block b (blocks _ _ _ p) with
+        | Some body => Lang.params _ _ _ body
+        | None => []
+        end)
+    <: LANG_SSA_LINK O K G P BlockEdge C S.
+  Lemma entries_agree : forall p, C.entries p = [entry _ _ _ p].
+  Proof. Admitted.
+  Lemma nodes_agree : forall p, C.nodes p = map fst (blocks _ _ _ p).
+  Proof. Admitted.
+  Lemma paths_agree : forall p a route b,
+    presentation_path (C.edges p) (C.src p) (C.dst p) a route b <-> Lang.path p a route b.
+  Proof. Admitted.
+  Lemma params_agree : forall p b, S.params p b =
+    match find_block b (blocks _ _ _ p) with
+    | Some body => Lang.params _ _ _ body
+    | None => []
+    end.
+  Proof. Admitted.
+  Lemma wf_from_lang : forall p, ssa_wf p -> S.wf p.
+  Proof. Admitted.
+End LanguageLink.
