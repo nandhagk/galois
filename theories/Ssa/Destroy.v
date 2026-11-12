@@ -13,20 +13,18 @@ Import List.ListNotations.
 
 Module DestroyCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_INDEXED_OPS P PosKeyCode E) (S : SSA_OPS P PosKeyCode E C PosKeyCode K G)
-    (PM : PARMOVE_OPS) <: DESTROY_OPS O K G P E C S PM.
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (PM : PARMOVE_OPS) <: DESTROY_OPS O K G P PM.
   (* STUB-CODE *)
   Definition destroy (_ : P.t) : option P.t := None.
 End DestroyCode.
 
 Module Destroy (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
-    (PM : PARMOVE) (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    <: DESTROY O K G P E C S PM OL B.
-  Include DestroyCode O K G P E C S PM.
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (PM : PARMOVE) (OL : LAWS O)
+    <: DESTROY O K G P PM OL.
+  Include DestroyCode O K G P PM.
   Lemma destroy_imp : forall s p, destroy s = Some p -> imp_form p.
   Proof. Admitted. (* STUB *)
   Lemma destroy_correct : forall s p, ssa_wf s -> destroy s = Some p ->
@@ -38,11 +36,10 @@ End Destroy.
 
 Module DestroyT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
-    (PM : PARMOVE_T) (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    <: DESTROY_ALL O K G P E C S PM OL B.
-  Include Destroy O K G P E C S PM OL B.
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (PM : PARMOVE_T) (OL : LAWS O)
+    <: DESTROY_ALL O K G P PM OL.
+  Include Destroy O K G P PM OL.
   TimeFun destroy.
   Definition c_ds : N := 1. (* STUB *)
   Definition destroy_work (s : P.t) :=
