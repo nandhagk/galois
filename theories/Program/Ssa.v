@@ -251,3 +251,103 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
       In (home p y) route.
   Proof. Admitted.
 End Ssa.
+
+Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
+    (BC : CFG P B BE) (N : KEY) (E : KEY) (C : CFG P N E)
+    (V : KEY) (U : VARS P N E C V) (D : SSA_POINTS_DATA P B BE N E V)
+    <: SSA_POINTS P B BE BC N E C V U.
+  Include SsaPointsCode P B BE BC N E C V U D.
+  Definition wf p :=
+    (C.wf p /\ BC.wf p) /\
+    (forall n, NoDup (C.out p n)) /\
+    (forall b, NoDup (BC.out p b)) /\
+    (forall n, (In n (C.nodes p) <-> exists b, In b (BC.nodes p) /\ In n (points_in_block p b))) /\
+    (forall b, NoDup (points_in_block p b)) /\
+    (forall b n, In b (BC.nodes p) ->
+    In n (points_in_block p b) -> block_of_point p n = b) /\
+    (forall b, In b (BC.nodes p) ->
+    points_in_block p b <> nil) /\
+    (forall b, In b (BC.nodes p) ->
+    presentation_chain (C.edges p) (C.src p) (C.dst p)
+      (points_in_block p b) (instruction_edges p b)) /\
+    (forall b e, In b (BC.nodes p) ->
+    In e (instruction_edges p b) -> block_edge_of p e = None) /\
+    (forall e, In e (C.edges p) ->
+    block_edge_of p e = None -> In e (instruction_edges p (block_of_point p (C.src p e)))) /\
+    (forall b, In b (BC.nodes p) ->
+    nth_error (instruction_edges p b) 0 = Some (parameter_edge p b)) /\
+    (forall b x, In b (BC.nodes p) ->
+    (In x (U.defs p (parameter_edge p b)) <-> In x (block_params p b))) /\
+    (forall e, In e (C.edges p) ->
+    match block_edge_of p e with
+    | None => block_of_point p (C.src p e) = block_of_point p (C.dst p e)
+    | Some be => In be (BC.edges p) /\ BC.src p be = block_of_point p (C.src p e) /\
+        BC.dst p be = block_of_point p (C.dst p e) /\
+        last (points_in_block p (block_of_point p (C.src p e))) (C.src p e) = C.src p e /\
+        nth_error (points_in_block p (BC.dst p be)) 0 = Some (C.dst p e)
+    end) /\
+    (forall be, In be (BC.edges p) ->
+    length (block_edge_args p be) = length (block_params p (BC.dst p be))) /\
+    (forall e be x, In e (C.edges p) ->
+    block_edge_of p e = Some be -> In x (block_edge_args p be) -> In x (U.uses p e)) /\
+    (forall be, In be (BC.edges p) ->
+    exists e, In e (C.edges p) /\ block_edge_of p e = Some be) /\
+    (forall e1 e2 be, In e1 (C.edges p) -> In e2 (C.edges p) ->
+    block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2).
+
+  Lemma graphs_wf : forall p, wf p -> C.wf p /\ BC.wf p.
+  Proof. Admitted.
+  Lemma points_out_nodup : forall p n, wf p -> NoDup (C.out p n).
+  Proof. Admitted.
+  Lemma blocks_out_nodup : forall p b, wf p -> NoDup (BC.out p b).
+  Proof. Admitted.
+  Lemma points_covered : forall p n, wf p ->
+    (In n (C.nodes p) <-> exists b, In b (BC.nodes p) /\ In n (points_in_block p b)).
+  Proof. Admitted.
+  Lemma points_unique : forall p b, wf p -> NoDup (points_in_block p b).
+  Proof. Admitted.
+  Lemma points_owner : forall p b n, wf p -> In b (BC.nodes p) ->
+    In n (points_in_block p b) -> block_of_point p n = b.
+  Proof. Admitted.
+  Lemma blocks_nonempty : forall p b, wf p -> In b (BC.nodes p) ->
+    points_in_block p b <> nil.
+  Proof. Admitted.
+  Lemma points_ordered : forall p b, wf p -> In b (BC.nodes p) ->
+    presentation_chain (C.edges p) (C.src p) (C.dst p)
+      (points_in_block p b) (instruction_edges p b).
+  Proof. Admitted.
+  Lemma instruction_edges_internal : forall p b e, wf p -> In b (BC.nodes p) ->
+    In e (instruction_edges p b) -> block_edge_of p e = None.
+  Proof. Admitted.
+  Lemma instruction_edges_complete : forall p e, wf p -> In e (C.edges p) ->
+    block_edge_of p e = None -> In e (instruction_edges p (block_of_point p (C.src p e))).
+  Proof. Admitted.
+  Lemma parameter_edge_first : forall p b, wf p -> In b (BC.nodes p) ->
+    nth_error (instruction_edges p b) 0 = Some (parameter_edge p b).
+  Proof. Admitted.
+  Lemma parameter_edge_defs : forall p b x, wf p -> In b (BC.nodes p) ->
+    (In x (U.defs p (parameter_edge p b)) <-> In x (block_params p b)).
+  Proof. Admitted.
+  Lemma point_edge_projection : forall p e, wf p -> In e (C.edges p) ->
+    match block_edge_of p e with
+    | None => block_of_point p (C.src p e) = block_of_point p (C.dst p e)
+    | Some be => In be (BC.edges p) /\ BC.src p be = block_of_point p (C.src p e) /\
+        BC.dst p be = block_of_point p (C.dst p e) /\
+        last (points_in_block p (block_of_point p (C.src p e))) (C.src p e) = C.src p e /\
+        nth_error (points_in_block p (BC.dst p be)) 0 = Some (C.dst p e)
+    end.
+  Proof. Admitted.
+  Lemma phi_args_length : forall p be, wf p -> In be (BC.edges p) ->
+    length (block_edge_args p be) = length (block_params p (BC.dst p be)).
+  Proof. Admitted.
+  Lemma phi_edge_use : forall p e be x, wf p -> In e (C.edges p) ->
+    block_edge_of p e = Some be -> In x (block_edge_args p be) -> In x (U.uses p e).
+  Proof. Admitted.
+  Lemma block_edge_covered : forall p be, wf p -> In be (BC.edges p) ->
+    exists e, In e (C.edges p) /\ block_edge_of p e = Some be.
+  Proof. Admitted.
+  Lemma block_edge_unique : forall p e1 e2 be, wf p ->
+    In e1 (C.edges p) -> In e2 (C.edges p) ->
+    block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2.
+  Proof. Admitted.
+End SsaPoints.
