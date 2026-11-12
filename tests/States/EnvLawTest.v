@@ -5,7 +5,7 @@
     Builds on: Env, Interval and ZLang. *)
 
 From Stdlib Require Import List Bool ZArith.
-From Galois.Base Require Import Key Map.
+From Galois.Base Require Import Key KeySig Map.
 From Galois.Domains Require Import LangSig ValueSig IntervalSig Interval Thresholds ZLang.
 From Galois.States Require Import Env EnvSig.
 Import List.ListNotations.
@@ -41,3 +41,16 @@ Example havoc_both_concrete_replacements :
   (upd BoolKey.eqb (fun _ => 1) false 3 false,
    upd BoolKey.eqb (fun _ => 1) false 8 false) = (3, 8).
 Proof. vm_compute. reflexivity. Qed.
+
+Module EmptyKeyClients (K : (KEY with Definition t := Empty_set)).
+  Module M := TrieMap K.
+  Module E := Env K M ZLang IntValues.
+
+  Example empty_key_fresh_bottom_has_empty_meaning :
+    forall st : Empty_set -> Z, ~ E.gamma E.bot st.
+  Proof. intros st Hbot. exact Hbot. Qed.
+
+  Example empty_key_reached_map_has_full_meaning :
+    forall st : Empty_set -> Z, E.gamma E.top st.
+  Proof. intros st. split; [reflexivity | intros []]. Qed.
+End EmptyKeyClients.
