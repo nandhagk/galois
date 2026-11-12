@@ -110,7 +110,8 @@ synthetic-root fixture. Direct-root tests retain their public parent and query e
 `build g r` returns a parent map and a list in low-high order. The reviewed producer runs
 simple Lengauer and Tarjan, then constructs the order from divergent spanning trees.
 The producer remains untrusted under R9. Acceptance by `check g r m o` certifies its result.
-The producer bodies in `Dom.v` are marked `STUB-CODE` until the following phases are ported.
+The executable phases are in `DomProducer.v` and `DomOrder.v`, and `Dom.v` wires them into
+`build`. Checker soundness and all time-plan obligations remain admitted in groundwork.
 
 The Lengauer and Tarjan phase numbers reached vertices by binary counters. It records
 DFS parents, semidominators, relative dominators and the predecessor whose evaluation
@@ -228,7 +229,7 @@ The time chain follows F1-50 §4.5.
 The aggregate forest potential sums logarithms of subtree sizes and charges each link by a
 logarithmic increment. It does not promise a logarithmic cost for each evaluation.
 All time values, coefficients and potentials use `N` under RULES §8. The checker and tree
-proofs, producer implementation and aggregate evaluator proof remain conversion obligations.
+proofs and the aggregate evaluator proof remain conversion obligations.
 
 `T4_sizes` requires duplicate-free listed entries, a graph-sized order and parents within
 that order. `T5_edges` also requires parents of ordered entries to belong to the order.

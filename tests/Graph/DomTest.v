@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith.
 From Galois.Base Require Import Trie.
-From Galois.Graph Require Import Data Digraph Dom.
+From Galois.Graph Require Import Data Digraph DomProducer Dom.
 From Galois.Tests.Graph Require Import Fixtures.
 Import List.ListNotations.
 Open Scope positive_scope.
@@ -75,6 +75,38 @@ Example ancestor_queries :
   (DomCode.dominates_b t 1 4, DomCode.dominates_b t 2 4,
     DomCode.dominates_b t 4 1, DomCode.dominates_b t 9 4) =
     (true, true, false, false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example simple_lt_line_parents :
+  dom_lt_parents (DigraphCode.prepare Line.graph) 1 = parent_map Line.parents.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example simple_lt_diamond_parents :
+  dom_lt_parents (DigraphCode.prepare Diamond.graph) 1 = parent_map Diamond.parents.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example producer_certificates_accept :
+  forallb (fun g =>
+    let p := DigraphCode.prepare g in
+    let '(m, o) := DomCode.build p 1 in DomCode.check p 1 m o)
+    [Line.graph; Diamond.graph; JoinLoop.graph; NestedLoop.graph; SelfLoop.graph;
+      Irreducible.graph; Singleton.graph; Unreachable.graph] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition derived_sources_graph := fixture_graph [1; 2; 3; 4; 5; 6; 7]
+  [(1, 2); (1, 3); (2, 4); (3, 5); (4, 6); (5, 6); (6, 7)].
+
+Example producer_derives_sources_from_sibling_subtrees :
+  let p := DigraphCode.prepare derived_sources_graph in
+  let '(m, o) := DomCode.build p 1 in DomCode.check p 1 m o = true.
 Proof.
   vm_compute. reflexivity.
 Qed.

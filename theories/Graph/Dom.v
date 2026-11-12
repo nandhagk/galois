@@ -6,8 +6,8 @@
 
 From Stdlib Require Import List Bool PArith NArith Sorting.Sorted.
 From Argent Require Import Time Tactics Std BigO.
-From Galois.Base Require Import Trie.
-From Galois.Graph Require Import Data Spec DigraphSig DomSig.
+From Galois.Base Require Import Trie Loop.
+From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer DomOrder.
 Import List.ListNotations.
 
 Module N.
@@ -51,24 +51,42 @@ Definition dom_scan (g : prepared) : dom_scan_data :=
     (graph_n (base g)) (graph_e (base g)) (graph_width (base g)).
 TimeFun dom_scan.
 
-Fixpoint dom_read_order (fuel width : nat) (listed : ptrie bool) (o : list positive)
-    (next : N) (pos : ptrie N) : option (ptrie N) :=
-  match o with
-  | [] => Some pos
-  | v :: rest =>
-    match fuel with
-    | O => None
-    | S remaining =>
+Record dom_read_state := DomReadState {
+  read_remaining : list positive;
+  read_budget : N;
+  read_next : N;
+  read_positions : ptrie N
+}.
+TimeFun read_remaining.
+TimeFun read_budget.
+TimeFun read_next.
+TimeFun read_positions.
+
+Definition dom_read_step (width : nat) (listed : ptrie bool) (s : dom_read_state)
+    : dom_read_state + option (ptrie N) :=
+  match s with
+  | DomReadState [] _ _ pos => inr (Some pos)
+  | DomReadState (v :: rest) budget next pos =>
+    if N.eqb budget 0%N then inr None else
       if dom_key_fits width v then
         match trie_get v listed, trie_get v pos with
-        | Some _, None => dom_read_order remaining width listed rest (N.succ next)
-            (PTrieCode.set v next pos)
-        | _, _ => None
+        | Some _, None => inl (DomReadState rest (N.pred budget) (N.succ next)
+            (PTrieCode.set v next pos))
+        | _, _ => inr None
         end
-      else None
-    end
+      else inr None
+  end.
+TimeFun dom_read_step.
+
+Definition dom_read_order (count width : nat) (listed : ptrie bool) (o : list positive)
+    (next : N) (pos : ptrie N) : option (ptrie N) :=
+  let budget := N.of_nat count in
+  match loopN (dom_read_step width listed) (N.succ budget) (DomReadState o budget next pos) with
+  | inl _ => None
+  | inr result => result
   end.
 TimeFun dom_read_order.
+
 
 Definition dom_read_known (info : dom_scan_data) (r : positive)
     (o : list positive) : option (ptrie N) :=
@@ -211,9 +229,7 @@ Definition dom_positions (o : list positive) : ptrie N :=
 TimeFun dom_positions.
 
 Module DomCode <: DOM_OPS.
-  (* STUB-CODE *)
-  Definition build (_ : prepared) (_ : positive) : ptrie positive * list positive :=
-    (Empty, []).
+  Definition build := dom_build_candidate.
 
   Definition check (g : prepared) (r : positive) (m : ptrie positive)
       (o : list positive) : bool :=
@@ -305,22 +321,18 @@ Module DomT <: DOM_ALL.
   TimeFun pos_of.
   Definition size_of m o v := dom_size_get (dom_sizes m o) v.
   TimeFun size_of.
-  (* STUB-CODE *)
-  Definition lt_dfs (_ : prepared) (_ : positive) : list positive := [].
+  Definition lt_dfs := dom_lt_dfs.
   TimeFun lt_dfs.
-  (* STUB-CODE *)
-  Definition lt_semi (_ : prepared) (_ : positive) : ptrie positive := Empty.
+  Definition lt_semi := dom_lt_parents.
   TimeFun lt_semi.
-  (* STUB-CODE *)
-  Definition lt_order (_ : prepared) (_ : positive) : list positive := [].
+  Definition lt_order := dom_build_order.
   TimeFun lt_order.
-  (* STUB-CODE *)
-  Definition lt_ops (_ : prepared) (_ : positive) : list lt_op := [].
-  Definition lt_forest := ptrie N.
-  (* STUB-CODE *)
-  Definition lt_init (_ : prepared) (_ : positive) : lt_forest := Empty.
-  (* STUB-CODE *)
-  Definition run_ops (_ : list lt_op) (forest : lt_forest) : lt_forest := forest.
+  Definition lt_ops := dom_lt_ops.
+  TimeFun lt_ops.
+  Definition lt_forest := dom_lt_replay.
+  Definition lt_init := dom_lt_replay_initial.
+  TimeFun lt_init.
+  Definition run_ops := dom_lt_run_ops.
   TimeFun run_ops.
   Definition k_scan : N := 1%N. (* STUB *)
   Definition k_read : N := 1%N. (* STUB *)
