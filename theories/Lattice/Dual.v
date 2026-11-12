@@ -40,3 +40,24 @@ Module Dual (L : BLATTICE) <: BLATTICE.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. intros a b; apply L.join_ub_r. Qed.
 End Dual.
+
+Module DualT (L : BLATTICE_T) <: BLATTICE_T.
+  Include Dual L.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun meet.
+
+  Definition size (x : t) : nat := L.size x.
+  Definition c_lat : nat := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+End DualT.

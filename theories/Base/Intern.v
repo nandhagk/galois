@@ -5,7 +5,7 @@
     Builds on: InternSig, MapSig and KeySig. *)
 
 From Stdlib Require Import List Bool NArith PArith Lia Sorting.Sorted.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import InternSig KeySig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -18,6 +18,10 @@ Arguments InternTable {K M} _ _ _.
 Arguments intern_forward {K M} _.
 Arguments intern_inverse {K M} _.
 Arguments intern_next {K M} _.
+
+TimeFun intern_forward.
+TimeFun intern_inverse.
+TimeFun intern_next.
 
 Module InternCode (K : KEY_OPS) (M : MAP_OPS K) <: INTERN_OPS K.
   Definition t := intern_table K.t M.t.
@@ -103,3 +107,24 @@ Module Intern (K : KEY) (M : MAP K) <: INTERN K.
       match find k s with Some _ => size s | None => N.succ (size s) end.
   Proof. Admitted.
 End Intern.
+
+Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
+  Include Intern K M.
+
+  TimeFun find.
+  TimeFun name.
+  TimeFun size.
+  TimeFun intern.
+
+  Definition c_intern : nat := 1. (* STUB *)
+
+  Lemma T_intern_le : forall k s, wf s ->
+    T_intern k s <= c_intern * (K.bits k + N.size_nat (size s) + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_find_le : forall k s,
+    T_find k s <= c_intern * (K.bits k + N.size_nat (size s) + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_name_le : forall i s,
+    T_name i s <= c_intern * (Pos.size_nat i + N.size_nat (size s) + 1).
+  Proof. Admitted. (* STUB *)
+End InternT.
