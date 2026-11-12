@@ -337,12 +337,17 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter W4_initial : forall p pol rk h, S.wf p -> widening_free pol ->
     height_phi p rk h (prepare p pol) <= k_credit * (C p + h * D p) * unit p.
   (** Cut edges make successive non-head target priorities nondecreasing in a stable segment. *)
+  (* SIG-QUESTION: With no heads, a dependency-free row targeting priority 3 can
+     write side key 1 after a row targeting 2 and reading 1 has run. The only edge
+     1 -> 2 passes cuts, yet the popped target priorities are 2, 3, 2. *)
   Parameter W5_priority : forall p pol s xs last i j a b,
     S.wf p -> Sched.cuts p pol = true -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     i < j -> nth_error (nonhead_priorities p pol xs) i = Some a ->
     nth_error (nonhead_priorities p pol xs) j = Some b -> (a <= b)%positive.
   (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
+  (* SIG-QUESTION: The side-write example above visits the non-head row targeting 2
+     twice within one stable segment. Target-only row priority does not order side writes. *)
   Parameter W5_round : forall p pol s xs last,
     S.wf p -> Sched.cuts p pol = true -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
