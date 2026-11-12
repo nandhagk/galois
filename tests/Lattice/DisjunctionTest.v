@@ -25,6 +25,12 @@ Example disjunction_cap_two :
   proj1_sig (D2.join (D2.clip [FVal false]) (D2.clip [FVal true; FBot])) =
     [FVal false; FVal true].
 Proof. vm_compute. reflexivity. Qed.
+Example disjunction_nonleast_counterexample_bounded :
+  (D2.leb (D2.clip [FVal false; FVal true]) (D2.clip [FVal false; FVal true]),
+   D2.leb (D2.clip [FVal false]) (D2.clip [FVal false; FVal true]),
+   D2.leb (D2.join (D2.clip [FVal false; FVal true]) (D2.clip [FVal false]))
+     (D2.clip [FVal false; FVal true])) = (true, true, false).
+Proof. vm_compute. reflexivity. Qed.
 Example disjunction_negative : D2.leb (D2.clip [FVal true]) (D2.clip [FVal false]) = false.
 Proof. vm_compute. reflexivity. Qed.
 Example disjunction_empty : (proj1_sig (D0.join D0.bot D0.bot), D0.leb D0.bot D0.bot) =
@@ -44,6 +50,9 @@ Proof. vm_compute. reflexivity. Qed.
 
 (* At cap zero the old raw join [FVal false] [] returned [FVal false].
    That input is outside the bounded carrier, and clipping it now returns [].
-   The old cap-one nonleast counterexample used a two-element right operand,
-   which also lies outside the carrier. The old raw widening examples belong
+   The old cap-one nonleast counterexample was
+   (D1.leb [FVal false] [FVal false; FVal true],
+    D1.leb [FVal true] [FVal false; FVal true],
+    D1.leb (D1.join [FVal false] [FVal true]) [FVal false; FVal true]) =
+     (true, true, false). Its two-element target lies outside the carrier. The old raw widening examples belong
    to the D1 state-disjunction component. Cost.ticks examples are retired. *)
