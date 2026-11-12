@@ -91,34 +91,34 @@ End WTO_LAWS.
 Module Type WTO := WTO_OPS <+ WTO_LAWS.
 
 Module Type WTO_TIME (Import W : WTO).
-  Parameter T_build : prepared -> list positive -> nat.
-  Parameter T_check : prepared -> list positive -> wto -> nat.
-  Parameter T_heads : wto -> nat.
-  Parameter T_ranks : wto -> nat.
-  Parameter c_wto : nat.
+  Parameter T_build : prepared -> list positive -> N.
+  Parameter T_check : prepared -> list positive -> wto -> N.
+  Parameter T_heads : wto -> N.
+  Parameter T_ranks : wto -> N.
+  Parameter c_wto : N.
   (** Checking has the published linear graph bit-cost bound, including rejection. *)
   Parameter T_check_le : forall g roots w,
-    T_check g roots w <= c_wto * (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1).
+    (T_check g roots w <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
   (** Building charges each graph occurrence once per nesting level. *)
   Parameter T_build_le : forall g roots,
-    T_build g roots <= c_wto * (graph_n (base g) + graph_e (base g) + 1) *
-      (wto_depth (build g roots) + 1) * (graph_width (base g) + 1).
+    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Head projection charges the supplied order. *)
   Parameter T_heads_le : forall w,
-    T_heads w <= c_wto * (length (wto_order w) + 1).
+    (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
   (** Ranking charges emitted keys and binary positions. *)
   Parameter T_ranks_le : forall w,
-    T_ranks w <= c_wto * (length (wto_order w) + 1) *
-      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1).
+    (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
+      N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   (** Checking is linear in graph size and identifier width. *)
   Parameter check_bigO : bigO (fun _ : prepared * list positive * wto => True)
-    (fun '(g, _, _) => (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1)) (fun '(g, roots, w) => T_check g roots w).
+    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) (fun '(g, roots, w) => T_check g roots w).
   (** Building has the published nesting-sensitive bound. *)
   Parameter build_bigO : bigO (fun _ : prepared * list positive => True)
-    (fun '(g, roots) => (graph_n (base g) + graph_e (base g) + 1) *
-      (wto_depth (build g roots) + 1) * (graph_width (base g) + 1))
+    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (wto_depth (build g roots) + 1) * (graph_width (base g) + 1)))
     (fun '(g, roots) => T_build g roots).
 End WTO_TIME.
 

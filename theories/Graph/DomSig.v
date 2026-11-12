@@ -95,41 +95,42 @@ End DOM_LAWS.
 Module Type DOM := DOM_OPS <+ DOM_SPEC <+ DOM_LAWS.
 
 Module Type DOM_TIME (Import D : DOM).
-  Parameter T_build : prepared -> positive -> nat.
-  Parameter T_check : prepared -> positive -> ptrie positive -> nat.
-  Parameter T_tree : prepared -> positive -> ptrie positive -> nat.
-  Parameter T_dominates_b : domtree -> positive -> positive -> nat.
-  Parameter c_dom : nat.
+  Parameter T_build : prepared -> positive -> N.
+  Parameter T_check : prepared -> positive -> ptrie positive -> N.
+  Parameter T_tree : prepared -> positive -> ptrie positive -> N.
+  Parameter T_dominates_b : domtree -> positive -> positive -> N.
+  Parameter c_dom : N.
   (** Checking keeps the published linear bound for arbitrary candidates, including rejection. *)
   Parameter T_check_le : forall g r m,
-    T_check g r m <= c_dom * (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1).
+    (T_check g r m <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
   (** Tree construction keeps the published linear graph bound. *)
   Parameter T_tree_le : forall g r m,
-    T_tree g r m <= c_dom * (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1).
+    (T_tree g r m <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
   (** Interval queries charge their queried key and interval widths. *)
   Parameter T_dominates_b_le : forall t u v,
-    T_dominates_b t u v <= c_dom * (query_width t u v + 1).
+    (T_dominates_b t u v <= c_dom * N.of_nat (query_width t u v + 1))%N.
   (** Simple Lengauer--Tarjan has the aggregate logarithmic producer target. *)
   Parameter T_build_le : forall g r,
-    T_build g r <= c_dom * (graph_n (base g) + graph_e (base g) + 1) *
-      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1).
+    (T_build g r <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (Nat.log2 (graph_n (base g)) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Checking has the published linear bit-cost bound. *)
   Parameter check_bigO : bigO (fun _ : prepared * positive * ptrie positive => True)
-    (fun '(g, _, _) => (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1)) (fun '(g, r, m) => T_check g r m).
+    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) (fun '(g, r, m) => T_check g r m).
   (** Numbering has the published linear bit-cost bound. *)
   Parameter tree_bigO : bigO (fun _ : prepared * positive * ptrie positive => True)
-    (fun '(g, _, _) => (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1)) (fun '(g, r, m) => T_tree g r m).
+    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) (fun '(g, r, m) => T_tree g r m).
   (** Query costs depend on the supplied interval and key widths. *)
   Parameter dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
-    (fun '(t, u, v) => query_width t u v + 1) (fun '(t, u, v) => T_dominates_b t u v).
+    (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
+    (fun '(t, u, v) => T_dominates_b t u v).
   (** Building keeps the graph-size times logarithmic bit-cost target. *)
   Parameter build_bigO : bigO (fun _ : prepared * positive => True)
-    (fun '(g, _) => (graph_n (base g) + graph_e (base g) + 1) *
-      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1))
+    (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r) => T_build g r).
 End DOM_TIME.
 
