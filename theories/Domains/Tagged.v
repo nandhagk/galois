@@ -182,8 +182,6 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Proof. Admitted. (* STUB *)
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
   Proof. Admitted. (* CONVERT: tagged_meet_lower: The variable tagged_val_lower was not found in the current *)
-  Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted. (* STUB *)
   Lemma widen_ub_l : forall q a b, leb a (widen q a b) = true.
   Proof. Admitted. (* CONVERT: tagged_laws: In environment *)
   Lemma widen_ub_r : forall q a b, leb b (widen q a b) = true.

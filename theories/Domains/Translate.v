@@ -41,7 +41,6 @@ Module Translate (L1 L2 : LANG) (F : LANG_MORPHISM L1 L2)
   Definition join_ub_r := D.join_ub_r.
   Definition top_greatest := D.top_greatest.
   Definition meet_lb_l := D.meet_lb_l.
-  Definition meet_lb_r := D.meet_lb_r.
   Definition widen_ub_l := D.widen_ub_l.
   Definition widen_ub_r := D.widen_ub_r.
   Definition widen_stable := D.widen_stable.
