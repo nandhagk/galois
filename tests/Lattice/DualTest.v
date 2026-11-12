@@ -28,4 +28,5 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* Cost and height examples are in LatticeDualTest.v at 87192fe. *)
+(* The old dual height had bound 1 and ranked true and false as 0 and 1.
+   No dual height constructor is exported. *)
