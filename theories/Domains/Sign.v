@@ -4,8 +4,8 @@
     For example, a zero-only payload represents the integer zero.
     Builds on: SignSig and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith List Bool.
-From Galois.Bits Require Import Word Op.
+From Stdlib Require Import ZArith List Bool Lia.
+From Galois.Bits Require Import Word Op Arith.
 From Galois.Domains Require Import SignSig WordSig.
 Import List.ListNotations.
 
@@ -181,7 +181,14 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted.
+  Proof.
+    intros w z. unfold pgamma, sign_gamma, pconst.
+    rewrite signed_wrap.
+    destruct (Word.signed w z <? 0) eqn:Hneg; cbn; [exact Hneg|].
+    destruct (Word.signed w z =? 0) eqn:Hzero; cbn; [exact Hzero|].
+    apply Z.ltb_lt. change (0 < Word.signed w z).
+    apply Z.ltb_ge in Hneg. apply Z.eqb_neq in Hzero. lia.
+  Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> pgamma w a z -> z = v.
