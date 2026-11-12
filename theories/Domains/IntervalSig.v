@@ -106,8 +106,16 @@ Module Type INTERVAL_SPEC (L : Z_LANGUAGE_OPS) (T : THRESHOLDS)
     match a with
     | IBot => 0
     | I lo hi =>
-      (match hi with Fin z => 1 + count_gt ts z | _ => 0 end) +
-      (match lo with Fin z => 1 + count_lt ts z | _ => 0 end)
+      (match hi with
+       | Fin z => 1 + count_gt ts z
+       | NegInf => S (length (T.vals ts))
+       | PosInf => 0
+       end) +
+      (match lo with
+       | Fin z => 1 + count_lt ts z
+       | PosInf => S (length (T.vals ts))
+       | NegInf => 0
+       end)
     end.
   Definition binary_work (a b : itv) : nat := (itv_bits a + itv_bits b + 1) ^ 2.
   Definition shift_cutoff (a b : itv) : itv :=
@@ -215,7 +223,7 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   Parameter F1_gamma : forall a z, gamma a z <-> in_itv a z.
   (** Widening uses the count of thresholds beyond each finite endpoint. *)
   Parameter F2_wrank : forall ts a, wrank ts a = interval_wrank ts a.
-  (** Each finite endpoint contributes at most one plus the threshold count. *)
+  (** Each endpoint contributes at most one plus the threshold count. *)
   Parameter F3_wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
   (** Raising a finite upper endpoint to its next threshold removes one rank unit. *)
   Parameter F4_count_gt : forall ts z u, In u (T.vals ts) ->
