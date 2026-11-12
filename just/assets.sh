@@ -23,7 +23,7 @@ export DUNE_CACHE=enabled DUNE_CACHE_STORAGE_MODE=copy
 export DUNE_CACHE_ROOT="$HOME/.cache/galois/dune"
 unset LD_LIBRARY_PATH
 ENV
-grep -o '/nix/store/[a-z0-9]\{32\}-[^/:" ]*' "$dir/galois-env.sh" | sort -u | xargs nix-store -qR | sort -u > "$tmp/closure.txt"
+grep -o '/nix/store/[a-z0-9]\{32\}-[-a-zA-Z0-9+._?=]*' "$dir/galois-env.sh" | sort -u | xargs nix-store -qR | sort -u > "$tmp/closure.txt"
 tar --zstd -cPf "$dir/galois-toolchain.tar.zst" -T "$tmp/closure.txt"
 (cd "$tmp/tree" && DUNE_CACHE_ROOT="$tmp/cache/dune" DUNE_CACHE_STORAGE_MODE=copy GALOIS_JOBS=6 just session-check)
 tar --zstd -cf "$dir/galois-dune-cache.tar.zst" -C "$tmp/cache" dune
