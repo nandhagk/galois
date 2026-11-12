@@ -215,6 +215,10 @@ Module Type CUT_INTERVAL_ALL (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) :=
   CUT_INTERVAL_T C L T <+ CUT_INTERVAL_PLAN C L T R.
 
-(* A state budget additionally needs finite variable support, canonical map storage and
-   row equations. The carrier bounds every stored value by C.bits for every threshold tree.
-   A generic ENV implementation does not bound its number of stored variables. *)
+(* SIG-QUESTION: Which integer-program interface supplies finite variable support,
+   canonical map skeleton bounds and actual system row instruction equations for BUDGET?
+   EnvCode.havoc in States/Env.v stores V.top with M.set. Applying it to arbitrarily many
+   fresh keys grows storage although every value satisfies this fixed endpoint budget.
+   ENV_WORD_PROGRAM in States/EnvBudgetSig.v supplies variables, row_execution and
+   size_environment for words. An integer connection needs corresponding facts and support
+   preservation for assign, havoc, assume, join, narrow and every widening parameter. *)
