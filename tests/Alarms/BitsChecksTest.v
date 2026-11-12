@@ -5,7 +5,7 @@
     Builds on: BitsChecks and the constant value domain. *)
 
 From Stdlib Require Import List ZArith Bool.
-From Galois.Bits Require Import Word.
+From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import ConstSig Const BitsLang ValueSig.
 From Galois.Alarms Require Import BitsChecksSig BitsChecks.
 Import List.ListNotations.
@@ -21,7 +21,11 @@ Module Range.
     | _ => (NegInf, PosInf)
     end.
 End Range.
-Module Checks := BitsChecksCode Values Range Range.
+Module Width.
+  Definition width (v : Values.t) : option positive :=
+    match v with FVal (w, _) => Some w | _ => None end.
+End Width.
+Module Checks := BitsChecksCode Values Range Range Width.
 
 Example positive_divisor : Checks.may_fail DivZero [FVal (8%positive, 2%Z)] = false.
 Proof. vm_compute. reflexivity. Qed.
@@ -32,4 +36,17 @@ Proof. vm_compute. reflexivity. Qed.
 Example at_bound : Checks.may_fail Bounds [FVal (8%positive, 3%Z); FVal (8%positive, 3%Z)] = true.
 Proof. vm_compute. reflexivity. Qed.
 Example unknown_pointer : Checks.may_fail NullDeref [FTop] = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example addition_fits :
+  Checks.may_fail (Overflow bvadd false) [FVal (8%positive, 2%Z); FVal (8%positive, 3%Z)] = false.
+Proof. vm_compute. reflexivity. Qed.
+Example addition_overflows :
+  Checks.may_fail (Overflow bvadd false) [FVal (8%positive, 255%Z); FVal (8%positive, 1%Z)] = true.
+Proof. vm_compute. reflexivity. Qed.
+Example different_widths_alarm :
+  Checks.may_fail (Overflow bvadd false) [FVal (8%positive, 2%Z); FVal (4%positive, 3%Z)] = true.
+Proof. vm_compute. reflexivity. Qed.
+Example multiplication_fits :
+  Checks.may_fail (Overflow bvmul false) [FVal (8%positive, 2%Z); FVal (8%positive, 3%Z)] = false.
 Proof. vm_compute. reflexivity. Qed.

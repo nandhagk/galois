@@ -51,3 +51,7 @@ Proof. vm_compute. reflexivity. Qed.
 Example assigned_variable_evaluates :
   Composed.eval (Leaf 1%nat) (Composed.assign 1%nat three Composed.top) = I (Fin 3) (Fin 3).
 Proof. vm_compute. reflexivity. Qed.
+
+Example narrow_returns_bottom_candidate :
+  Composed.narrow Composed.top (Numeric.bot, State.top) = (Numeric.bot, State.top).
+Proof. vm_compute. reflexivity. Qed.

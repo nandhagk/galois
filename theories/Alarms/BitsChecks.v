@@ -12,7 +12,7 @@ From Galois.Alarms Require Import ChecksSig BitsChecksSig.
 Import List.ListNotations.
 
 Module BitsChecksCode (V : VALUE_DOMAIN_OPS BitsLangCode)
-    (Q QS : BITS_RANGE_OPS V) <: BITS_CHECKS_OPS V Q QS.
+    (Q QS : BITS_RANGE_OPS V) (W : BITS_WIDTH_OPS V) <: BITS_CHECKS_OPS V Q QS W.
   Definition kd := kind.
 
   Definition may_fail (k : kd) (xs : list V.t) : bool :=
@@ -21,14 +21,21 @@ Module BitsChecksCode (V : VALUE_DOMAIN_OPS BitsLangCode)
     | NullDeref, [p] => range_zero (Q.range p)
     | Bounds, [i; len] =>
         negb (range_nonnegative (Q.range i) && bound_lt (snd (Q.range i)) (fst (Q.range len)))
+    | Overflow o s, [a; b] =>
+        match W.width a, W.width b,
+          range_result o (if s then QS.range a else Q.range a)
+            (if s then QS.range b else Q.range b) with
+        | Some w, Some v, Some r => negb (Pos.eqb w v && range_fits s w r)
+        | _, _, _ => true
+        end
     | _, _ => true
     end.
 End BitsChecksCode.
 
 Module BitsChecks (V : VALUE_DOMAIN BitsLang)
     (Q : RANGE_QUERY BitsLang NumU V) (QS : RANGE_QUERY BitsLang NumS V)
-    <: BITS_CHECKS V Q QS.
-  Include BitsChecksCode V Q QS.
+    (W : BITS_WIDTH V) <: BITS_CHECKS V Q QS W.
+  Include BitsChecksCode V Q QS W.
 
   Definition mathematical_result (o : Op.op) (s : bool) (a b : word) : option Z :=
     let x := if s then NumS.num a else NumU.num a in
@@ -89,10 +96,27 @@ Module BitsChecks (V : VALUE_DOMAIN BitsLang)
   Lemma may_fail_bounds : forall i len, may_fail Bounds [i; len] =
     negb (range_nonnegative (Q.range i) && bound_lt (snd (Q.range i)) (fst (Q.range len))).
   Proof. Admitted. (* STUB *)
+  Lemma result_other : forall o s a b,
+    ~ In o (bvadd :: bvsub :: bvmul :: nil) -> mathematical_result o s a b = None.
+  Proof. Admitted. (* STUB *)
+  Lemma may_fail_overflow : forall o s a b, may_fail (Overflow o s) [a; b] =
+    match W.width a, W.width b,
+      range_result o (if s then QS.range a else Q.range a)
+        (if s then QS.range b else Q.range b) with
+    | Some w, Some v, Some r => negb (Pos.eqb w v && range_fits s w r)
+    | _, _, _ => true
+    end.
+  Proof. Admitted. (* STUB *)
+  Lemma may_fail_other : forall k xs,
+    match k, xs with
+    | DivZero, [_] | NullDeref, [_] | Bounds, [_; _] | Overflow _ _, [_; _] => True
+    | _, _ => may_fail k xs = true
+    end.
+  Proof. Admitted. (* STUB *)
 End BitsChecks.
 
 Module BitsChecksClock (V : VALUE_DOMAIN_T BitsLangT)
-    (Q : BITS_RANGE_T NumU V) (QS : BITS_RANGE_T NumS V).
-  Include BitsChecks V Q QS.
+    (Q : BITS_RANGE_T NumU V) (QS : BITS_RANGE_T NumS V) (W : BITS_WIDTH_T V).
+  Include BitsChecks V Q QS W.
   TimeFun may_fail.
 End BitsChecksClock.
