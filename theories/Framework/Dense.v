@@ -1,5 +1,5 @@
 (** * Dense dataflow systems *)
-From Stdlib Require Import List.
+From Stdlib Require Import List Relation_Operators.
 From Argent Require Import Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -92,3 +92,18 @@ Module DenseSound (P : TYPE) (N : KEY) (E : TYPE)
   End Sound.
   Include Sound.
 End DenseSound.
+
+Module DenseBackwardSound (P : TYPE) (N : KEY) (E : TYPE)
+    (C : CFG_OPS P N E) (L : LATTICE) (T : FLOW_OPS P N E L)
+    (M : SEMANTICS P) (K : BACKWARD_LINK P N E C L T M).
+  Module S := Dense P N E C L T.
+  Include Dense P N E C L T.
+  Module Sound <: DENSE_BACKWARD_SOUND P N E C L T S M K.
+  (** Backward post-solutions cover finite suffixes ending at a terminal state. *)
+  Lemma covers_backward : forall p look, T.dir = Backward -> post_solution p look ->
+    forall s t, clos_refl_trans M.state (M.step p) s t -> K.terminal p t ->
+      K.gamma (look (K.point s)) s.
+  Proof. Admitted. (* CONVERT: backward_witness_sound: No product even after head-reduction. *)
+  End Sound.
+  Include Sound.
+End DenseBackwardSound.
