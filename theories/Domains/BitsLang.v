@@ -44,3 +44,12 @@ Module BitsLangCode <: LANG_OPS.
     | BOp _ => None
     end.
 End BitsLangCode.
+
+Module BitsLang <: LANG.
+  Include BitsLangCode.
+  Definition holds (g : guard) (vs : list val) : Prop :=
+    match g, vs with
+    | BTruth b, (w, z) :: nil => w = 1%positive /\ z = (if b then 1 else 0)%Z
+    | _, _ => False
+    end.
+End BitsLang.
