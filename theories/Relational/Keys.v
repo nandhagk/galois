@@ -8,11 +8,6 @@ From Stdlib Require Import PArith Bool.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Key.
 
-Module Bool.
-  TimeFun Bool.eqb.
-End Bool.
-Import Bool.
-
 Module LitKeyCode (X : KEY_OPS) <: KEY_OPS.
   Definition t := (X.t * bool)%type.
   Definition encode (x : t) : positive :=
