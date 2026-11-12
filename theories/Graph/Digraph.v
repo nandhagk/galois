@@ -5,6 +5,7 @@
     Builds on: graph data and the public preparation signature. *)
 
 From Stdlib Require Import List NArith PArith.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data DigraphSig.
 
@@ -29,3 +30,19 @@ Module Digraph <: DIGRAPH.
   Lemma prepare_correct : forall g, prepared_ok (prepare g).
   Proof. Admitted. (* SIG-QUESTION: prepare_ready assumes a well-formed source graph. *)
 End Digraph.
+
+Module DigraphT <: DIGRAPH_T.
+  Include Digraph.
+  TimeFun add_pred.
+  TimeFun prepare.
+  Definition c_prepare : N := 1. (* STUB *)
+
+  Lemma T_prepare_le : forall g,
+    (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
+      N.of_nat (graph_width g + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma prepare_bigO : bigO (fun _ => True)
+    (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
+  Proof. Admitted. (* STUB *)
+End DigraphT.
