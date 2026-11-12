@@ -4,7 +4,7 @@
     For example, an optional value uses a low zero bit and absence uses 1.
     Builds on: Stdlib binary arithmetic and Argent time derivation. *)
 
-From Stdlib Require Import PArith List.
+From Stdlib Require Import NArith PArith List.
 From Argent Require Import Time Std.
 
 Fixpoint glue (a b : positive) : positive :=
@@ -55,8 +55,8 @@ Lemma glue_bits : forall a b,
   Pos.size_nat (glue a b) = 2 * Pos.size_nat a + Pos.size_nat b - 1.
 Proof. Admitted.
 
-Definition c_glue : nat := 1. (* STUB *)
+Definition c_glue : N := 1. (* STUB *)
 
 (** Gluing takes time bounded by the first component's bit length. *)
-Lemma T_glue_le : forall a b, T_glue a b <= c_glue * (Pos.size_nat a + 1).
+Lemma T_glue_le : forall a b, (T_glue a b <= c_glue * N.of_nat (Pos.size_nat a + 1))%N.
 Proof. Admitted. (* STUB *)

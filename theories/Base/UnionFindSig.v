@@ -79,25 +79,26 @@ End UNION_FIND_LAWS.
 Module Type UNION_FIND := UNION_FIND_OPS <+ UNION_FIND_LAWS.
 
 Module Type UNION_FIND_TIME (Import U : UNION_FIND).
-  Parameter T_add   : positive -> t -> nat.
-  Parameter T_find  : positive -> t -> nat.
-  Parameter T_union : positive -> positive -> t -> nat.
-  Parameter c_uf : nat.
+  Parameter T_add   : positive -> t -> N.
+  Parameter T_find  : positive -> t -> N.
+  Parameter T_union : positive -> positive -> t -> N.
+  Parameter c_uf : N.
   (** Adding charges the queried key and the membership counter width. *)
-  Parameter T_add_le : forall x u, wf u ->
-    T_add x u <= c_uf * (Pos.size_nat x + Nat.log2 (card u) + 2).
+  Parameter T_add_le : forall x u, (wf u ->
+    T_add x u <= c_uf * N.of_nat (Pos.size_nat x + Nat.log2 (card u) + 2))%N.
   (** Finding charges a logarithmic path at the maximum encountered key width. *)
-  Parameter T_find_le : forall x u, wf u ->
-    T_find x u <= c_uf * (Nat.log2 (card u) + 1) * (Nat.max (width u) (Pos.size_nat x) + 1).
+  Parameter T_find_le : forall x u, (wf u ->
+    T_find x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
   (** Union charges two finds and a root link at the resulting membership width. *)
-  Parameter T_union_le : forall x y u, wf u ->
-    T_union x y u <= c_uf * (Nat.log2 (card u + 2) + 1)
-                          * (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1).
+  Parameter T_union_le : forall x y u, (wf u ->
+    T_union x y u <= c_uf * N.of_nat (Nat.log2 (card u + 2) + 1) *
+      N.of_nat (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1))%N.
   (* Published asymptotic bound. *)
   (** Finding has logarithmic path length and per-bit lookup cost. *)
   Parameter find_bigO : bigO (fun xu : positive * t => wf (snd xu))
-    (fun xu => (Nat.log2 (card (snd xu)) + 1) *
-      (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1))
+    (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
+      (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
     (fun xu => T_find (fst xu) (snd xu)).
 End UNION_FIND_TIME.
 
@@ -111,12 +112,12 @@ Module Type UNION_FIND_PLAN (Import U : UNION_FIND_T).
   Parameter walk      : positive -> t -> positive * list positive.
   Parameter compress  : positive -> list positive -> t -> t.
   Parameter link      : positive -> positive -> t -> t.
-  Parameter T_parent_of : positive -> t -> nat.
-  Parameter T_walk_step : t -> positive * list positive -> nat.
-  Parameter T_walk      : positive -> t -> nat.
-  Parameter T_compress  : positive -> list positive -> t -> nat.
-  Parameter T_link      : positive -> positive -> t -> nat.
-  Parameter k_get k_step k_walk k_comp k_link : nat.
+  Parameter T_parent_of : positive -> t -> N.
+  Parameter T_walk_step : t -> positive * list positive -> N.
+  Parameter T_walk      : positive -> t -> N.
+  Parameter T_compress  : positive -> list positive -> t -> N.
+  Parameter T_link      : positive -> positive -> t -> N.
+  Parameter k_get k_step k_walk k_comp k_link : N.
   (** A root has no parent edge to a different key. *)
   Definition is_root (u : t) (x : positive) : Prop := parent_of x u = x.
   (** Ghost ranks increase along parent edges and fit within root class sizes. *)
@@ -145,19 +146,20 @@ Module Type UNION_FIND_PLAN (Import U : UNION_FIND_T).
     ranked (link w l u) (fun x => if Pos.eqb x w then Nat.max (rk w) (S (rk l)) else rk x).
   (* T: time chain; T_find_le follows from T3, T4 and F4, T_union_le from T_find_le twice and T5 *)
   (** Reading a parent charges the queried positive key bits. *)
-  Parameter T1_parent_of : forall x u, T_parent_of x u <= k_get * (Pos.size_nat x + 1).
+  Parameter T1_parent_of : forall x u, (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
   (** A member walk step charges the stored width budget. *)
-  Parameter T2_walk_step : forall u s, wf u -> mem u (fst s) ->
-    T_walk_step u s <= k_step * (width u + 1).
+  Parameter T2_walk_step : forall u s, (wf u -> mem u (fst s) ->
+    T_walk_step u s <= k_step * N.of_nat (width u + 1))%N.
   (** A logarithmic rank potential pays the bounded walk loop. *)
-  Parameter T3_walk      : forall x u, wf u ->
-    T_walk x u <= k_walk * (Nat.log2 (card u) + 1) * (Nat.max (width u) (Pos.size_nat x) + 1).
+  Parameter T3_walk      : forall x u, (wf u ->
+    T_walk x u <= k_walk * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
   (** Compression charges each path update at the stored width budget. *)
-  Parameter T4_compress  : forall r path u, wf u -> (forall y, In y path -> mem u y) ->
-    T_compress r path u <= k_comp * (length path + 1) * (width u + 1).
+  Parameter T4_compress  : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
+    T_compress r path u <= k_comp * N.of_nat (length path + 1) * N.of_nat (width u + 1))%N.
   (** Linking charges root keys and the class size counter width. *)
-  Parameter T5_link      : forall w l u, wf u -> mem u w -> mem u l ->
-    T_link w l u <= k_link * (width u + Nat.log2 (card u) + 2).
+  Parameter T5_link      : forall w l u, (wf u -> mem u w -> mem u l ->
+    T_link w l u <= k_link * N.of_nat (width u + Nat.log2 (card u) + 2))%N.
 End UNION_FIND_PLAN.
 
 Module Type UNION_FIND_ALL := UNION_FIND_T <+ UNION_FIND_PLAN.

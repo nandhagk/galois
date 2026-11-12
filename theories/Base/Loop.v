@@ -36,7 +36,7 @@ Definition loopN {S R : Type} (step : S -> S + R) (fuel : N) (s : S) : S + R :=
 
 TimeFun loopN.
 
-Definition c_loopN : nat := 1. (* STUB *)
+Definition c_loopN : N := 1. (* STUB *)
 
 (** A decreasing state potential guarantees completion with sufficient fuel. *)
 Lemma loopN_done : forall S R (step : S -> S + R) (Inv : S -> Prop) (Phi : S -> nat)
@@ -47,8 +47,8 @@ Proof. Admitted. (* STUB *)
 
 (** State potential pays callback work and amortised decrements after the first borrow. *)
 Lemma T_loopN_le : forall S R (step : S -> S + R) T_step Inv Phi Tstop fuel s,
-  (forall s s1, Inv s -> step s = inl s1 -> Inv s1 /\ T_step s + Phi s1 < Phi s) ->
+  ((forall s s1, Inv s -> step s = inl s1 -> Inv s1 /\ T_step s + Phi s1 < Phi s) ->
   (forall s r, Inv s -> step s = inr r -> T_step s <= Tstop) ->
   Inv s -> T_loopN step T_step fuel s <=
-    c_loopN * (Phi s + Tstop + N.size_nat fuel + 1).
+    c_loopN * (Phi s + Tstop + N.of_nat (N.size_nat fuel) + 1))%N.
 Proof. Admitted. (* STUB *)
