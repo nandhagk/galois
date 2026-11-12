@@ -5,7 +5,7 @@
     Builds on: LatticeSig and MapSig. *)
 
 From Stdlib Require Import Bool List Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -15,7 +15,9 @@ Module MapLatticeCode (K : KEY_OPS) (M : MAP_OPS K) (L : LATTICE_OPS)
   Definition default (x : option L.t) : L.t :=
     match x with Some a => a | None => L.bot end.
   Definition leb (x y : t) : bool :=
-    M.forall2b (fun a b => L.leb (default a) (default b)) x y.
+    M.forall2b (fun a b =>
+      L.leb (match a with Some v => v | None => L.bot end)
+        (match b with Some v => v | None => L.bot end)) x y.
   Definition bot : t := M.empty.
   Definition is_bot (x : t) : bool := negb (M.existsb (fun a => negb (L.is_bot a)) x).
   Definition join (x y : t) : t :=
@@ -66,3 +68,25 @@ Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
       try apply L.leb_refl; try apply L.bot_least; apply L.join_ub_r.
   Qed.
 End MapLattice.
+
+Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
+  Include MapLattice K M L.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (m : t) : nat :=
+    M.fold (fun acc _ a => acc + L.size a) m 1.
+  Definition c_lat : N := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End MapLatticeT.

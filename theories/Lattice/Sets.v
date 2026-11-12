@@ -5,7 +5,7 @@
     Builds on: LatticeSig, SetSig and MapSig. *)
 
 From Stdlib Require Import Bool List Arith NArith Lia Sorting.Sorted Sorting.Permutation.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig MapSig SetSig.
 From Galois.Lattice Require Import LatticeSig Simple WithBot.
 
@@ -89,3 +89,46 @@ Module MustSet (K : KEY) (S : SET K) <: LATTICE.
     apply andb_true_iff in Hk; tauto.
   Qed.
 End MustSet.
+
+Module MaySetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
+  Include MaySet K S.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (s : t) : nat := S.weight s.
+  Definition c_lat : N := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End MaySetT.
+
+Module MustSetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
+  Include MustSet K S.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (s : t) : nat :=
+    match s with None => 1 | Some members => S.weight members + 1 end.
+  Definition c_lat : N := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End MustSetT.

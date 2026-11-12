@@ -4,7 +4,8 @@
     For example, widening two values may return their join.
     Builds on: LatticeSig. *)
 
-From Argent Require Import Time.
+From Stdlib Require Import NArith.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module JoinWideningCode (L : LATTICE_OPS) <: WIDENING_OPS L.
@@ -33,3 +34,19 @@ Module JoinWidening (L : LATTICE) (H : HEIGHT L) <: WIDENING L.
     L.leb b (narrow a b) = true /\ L.leb (narrow a b) a = true.
   Proof. Admitted.
 End JoinWidening.
+
+Module JoinWideningT (L : LATTICE_T) (H : HEIGHT L) <: WIDENING_T L.
+  Include JoinWidening L H.
+
+  TimeFun widen.
+  TimeFun narrow.
+
+  Definition wsize (_ : wparam) : nat := 1.
+
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= L.c_lat * N.of_nat (L.size a + L.size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= L.c_lat * N.of_nat (L.size a + L.size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+End JoinWideningT.
