@@ -66,11 +66,13 @@ Module Type SATURATE_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I)
   Parameter add_expr_represents : forall ds e db t, D.wf db -> expr_ok ds db e ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_expr e db))) (Id (fst (add_expr e db))) t.
-  (** A result is well formed, canonical and well sorted, and carries the declarations. *)
+  (** A result is well formed, canonical and well sorted, and carries the declarations and
+      the planned layout. *)
   Parameter saturate_wf : forall ds rws ans lim es st db cs,
     saturate ds rws ans lim es = inr (st, db, cs) ->
     D.wf db /\ D.canonical db /\ (forall f, kind (D.view db) f = lookup_kind ds f) /\
-    view_sorted (lookup_sorts ds) (D.view db).
+    view_sorted (lookup_sorts ds) (D.view db) /\
+    D.slots db = Egglog.Syntax.slots V.t (E.plan (C.compile ds rws ans)).
   (** The class returned for an input represents every unfolding of the input in the
       result. *)
   Parameter saturate_represents : forall ds rws ans lim es st db cs n e c t,

@@ -258,6 +258,10 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Parameter plans_ok_sorted : forall p cp, plans_ok p cp -> program_ok p.
   (** The planner gives every well-sorted program a plan that the checker accepts. *)
   Parameter plan_checked : forall p, program_ok p -> plans_ok p (plan p).
+  (** The plan gives every declared identifier function a slot in declaration order. *)
+  Parameter plan_full_slots : forall p f ss, program_kind p f = Some OId ->
+    program_sorts p f = Some ss ->
+    In (f, seq 0 (S (length ss))) (Syntax.slots V.t (plan p)).
   (** Loading initializes precisely the declarations and compiled index slots. *)
   Parameter load_spec : forall p cp,
     load p cp = D.init (decls V.t p) (Syntax.slots V.t cp).
