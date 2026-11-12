@@ -1,6 +1,6 @@
 # Prefixed basenames
 
-Status: in force
+Status: superseded by [the core design](../design/core.md)
 
 Every `.v` basename is unique and begins with its package name (formerly ruling C8). Theories
 contain no `Extract` directive.
