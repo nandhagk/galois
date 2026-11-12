@@ -102,9 +102,12 @@ Module Type SYSTEM_TIME (L : LATTICE_T) (Import S : SYSTEM L).
   (** Starting a row fits the row budget. *)
   Parameter T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  (** Resuming a frame accounts for the size of the supplied abstract value. *)
-  Parameter T_resume_le : forall p f a, wf p ->
-    (T_resume p f a <= c_sys * (row_work p (L.size a) + 1))%N.
+  (** Resuming a frame that a listed row reaches pays for the sizes of the lookup values. *)
+  Parameter T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, L.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
   (** Dependency enumeration pays for every key occurrence. *)
   Parameter T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) * N.of_nat (kw p + 1))%N.
