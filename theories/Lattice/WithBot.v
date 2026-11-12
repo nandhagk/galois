@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module WithBotCode (L : LATTICE_OPS) <: LATTICE_OPS.
@@ -50,3 +50,25 @@ Module WithBot (L : LATTICE) <: LATTICE.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof. intros [a|] [b|]; cbn; try reflexivity; try apply L.leb_refl; apply L.join_ub_r. Qed.
 End WithBot.
+
+Module WithBotT (L : LATTICE_T) <: LATTICE_T.
+  Include WithBot L.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (x : t) : nat :=
+    match x with
+    | None => 1
+    | Some a => L.size a + 1
+    end.
+  Definition c_lat : nat := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+End WithBotT.
