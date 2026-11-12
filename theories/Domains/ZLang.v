@@ -42,9 +42,22 @@ End ZLang.
 Module ZLangT <: Z_LANGUAGE_T.
   Include ZLang.
 
+  Definition operand_bits (xs : list val) : nat :=
+    fold_right Nat.add 0 (map Z.size_nat xs).
+  Definition quadratic_work (xs : list val) : nat :=
+    (operand_bits xs + 1) ^ 2.
+  Definition shift_work (xs : list val) : nat :=
+    match xs with
+    | x :: y :: _ =>
+      operand_bits xs + (N.to_nat (Z.abs_N y) + 1) * (Z.size_nat x + 5) + 1
+    | _ => operand_bits xs + 1
+    end.
   Definition work (o : op) (xs : list val) : nat :=
-    S (fold_right Nat.add 0 (map Z.size_nat xs)).
-  TimeFun work.
+    match o with
+    | ZMul | ZDiv | ZRem => quadratic_work xs
+    | ZShl => shift_work xs
+    | _ => operand_bits xs + 1
+    end.
   TimeFun eval.
   TimeFun literal.
 
