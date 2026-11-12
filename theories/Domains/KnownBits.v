@@ -1797,7 +1797,7 @@ Theorem tnum_shift_sound : forall o w a x k f,
   (o = bvshl \/ o = bvlshr \/ o = bvashr) ->
   word_fun2 o = Some f -> is_word w x -> is_word w k -> tnum_gamma w a x ->
   tnum_gamma w (tnum_shift o w a k) (eval_binary_tag f w x k).
-Proof. Admitted. (* CONVERT: tnum_shift_sound: Illegal application (Non-functional construction):  *)
+Proof. Admitted. (* CONVERT: tnum_shift_sound: Illegal application (Non-functional construction): *)
 
 Theorem tnum_scalar_agrees : forall o w f k x,
   tnum_shift_op o -> word_fun2 o = Some f -> is_word w k -> is_word w x ->
