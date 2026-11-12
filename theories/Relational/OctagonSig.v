@@ -56,9 +56,18 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : OCTAGON X K M L N F).
   Include NUM_STATE_TIME X L N F D.
-  (* spec: supp b ell ns bs ells *)
-  Parameter supp b ell : dbm -> nat.
-  Parameter ns bs ells : t -> nat.
+  Definition support (m : dbm) : list K.t :=
+    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
+      (map fst (M.elements m) ++
+       flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) nil.
+  Definition supp (m : dbm) : nat := length (support m).
+  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map K.bits (support m)).
+  Definition ell (m : dbm) : nat := fold_right Nat.max 0
+    (flat_map (fun kv => map (fun p => Z.size_nat (snd p))
+      (M.elements (snd kv))) (M.elements m)).
+  Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
+  Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
+  Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
   Parameter T_entry : dbm -> K.t -> K.t -> nat.
   Parameter T_fw T_strengthen T_tighten T_close T_tclose : dbm -> nat.
   Parameter T_add_cons : K.t -> K.t -> Z -> dbm -> nat.
@@ -89,8 +98,15 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (Import D : OCTAGON_T X K M L N F).
   Definition coherent (m : dbm) : Prop :=
     forall i j, entry m i j = entry m (bar j) (bar i).
-  (* spec: strongly_closed tightly_closed *)
-  Parameter strongly_closed tightly_closed : dbm -> Prop.
+  Definition strongly_closed (m : dbm) : Prop :=
+    coherent m /\
+    (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z) /\
+    (forall i j a z, entry m i (bar i) = Some a -> entry m (bar j) j = Some z ->
+      exists d, entry m i j = Some d /\ (2 * d <= a + z)%Z).
+  Definition tightly_closed (m : dbm) : Prop := strongly_closed m /\
+    (forall i d, entry m i (bar i) = Some d -> (d mod 2 = 0)%Z).
   (** Floyd-Warshall adds only implied constraints. *)
   Parameter fw_implied : forall m v, models m v -> models (fw m) v.
   (** Strengthening adds only integer-implied constraints. *)
@@ -106,10 +122,10 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     models m v -> (vl v j - vl v i <= d)%Z -> ngamma (incr_close i j d m) v.
   (** Full rational closure strengthens one Floyd-Warshall result. *)
   Parameter close_spec : forall m, close m = strengthen (fw m).
-  (** Coherent rational closure is strongly closed. *)
-  Parameter close_strong : forall m, coherent m -> strongly_closed (close m).
-  (** Successful coherent integer closure is tightly closed. *)
-  Parameter tclose_tight : forall m m', coherent m ->
+  (** Rational closure is strongly closed. *)
+  Parameter close_strong : forall m, strongly_closed (close m).
+  (** Successful integer closure is tightly closed. *)
+  Parameter tclose_tight : forall m m',
     tclose m = Reached m' -> tightly_closed m'.
   (** Incremental closure agrees with tight closure on tightly closed input. *)
   Parameter incr_close_eq : forall m i j d, tightly_closed m ->

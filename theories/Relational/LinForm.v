@@ -51,6 +51,14 @@ Arguments ar {X} _.
 Arguments arw {X} _.
 TimeFun coef.
 TimeFun cst.
+TimeFun lhs.
+TimeFun lrel.
+TimeFun rhs.
+TimeFun al.
+TimeFun alw.
+TimeFun acmp.
+TimeFun ar.
+TimeFun arw.
 
 (** Coefficient evaluation sums every stored occurrence of a variable. *)
 Definition eval_coef {X} (v : X -> Z) (xs : list (X * Z)) : Z :=

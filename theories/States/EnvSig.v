@@ -50,6 +50,15 @@ Module Type ENV_LAWS (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Reading an absent key returns top. *)
   Parameter read_spec : forall m x,
     read m x = match M.get x m with Some a => a | None => V.top end.
+  (** Leaf roots expose their stored abstract value. *)
+  Parameter root_leaf : forall x a, root (ALeaf x a) = a.
+  (** Node roots expose their stored abstract value. *)
+  Parameter root_node : forall o a ns, root (ANode o a ns) = a.
+  (** Leaf annotation reads the current environment. *)
+  Parameter annotate_leaf : forall m x, annotate m (Leaf x) = ALeaf x (read m x).
+  (** Node annotation transfers the annotated child roots. *)
+  Parameter annotate_node : forall m o es, annotate m (Node o es) =
+    ANode o (V.forward o (map (fun e => root (annotate m e)) es)) (map (annotate m) es).
   (** Unreachable states describe no stores. *)
   Parameter gamma_unreached : forall st, ~ gamma Unreached st.
   (** Reached maps describe stores pointwise. *)
@@ -63,9 +72,10 @@ Module Type ENV (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L) :=
 Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (Import E : ENV X M L V).
   Include STATE_DOMAIN_TIME X L V E.
-  (* spec: tcost tcost_s *)
+  (* spec: tcost *)
   Parameter tcost : M.t V.t -> term L.op X.t -> nat.
-  Parameter tcost_s : t -> term L.op X.t -> nat.
+  Definition tcost_s (s : t) (e : term L.op X.t) : nat :=
+    match s with Unreached => 0 | Reached m => tcost m e end.
   Definition esize (s : t) : nat :=
     match s with
     | Unreached => 0
@@ -93,8 +103,20 @@ Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) 
 Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (Import E : ENV_T X M L V).
   Definition models m st := forall x, V.gamma (read m x) (st x).
-  (* spec: ann_models *)
-  Parameter ann_models : (X.t -> L.val) -> ann L.op X.t V.t -> term L.op X.t -> Prop.
+  Fixpoint ann_models (st : X.t -> L.val) (n : ann L.op X.t V.t)
+      (e : term L.op X.t) {struct n} : Prop :=
+    (forall c, eval_term L.eval st e = Some c -> V.gamma (root n) c) /\
+    match n, e with
+    | ALeaf x _, Leaf y => x = y
+    | ANode o _ ns, Node p es => o = p /\
+      (fix children (ns : list (ann L.op X.t V.t)) (es : list (term L.op X.t)) :=
+        match ns, es with
+        | nil, nil => True
+        | n :: ns, e :: es => ann_models st n e /\ children ns es
+        | _, _ => False
+        end) ns es
+    | _, _ => False
+    end.
   (** Annotation records values covering each concrete subterm. *)
   Parameter annotate_sound : forall m st e c,
     models m st -> eval_term L.eval st e = Some c ->
@@ -109,7 +131,7 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter join_models : forall a b st,
     models a st \/ models b st -> models (join_map a b) st.
   (** Environment rank sums component ranks over stored bindings. *)
-  Parameter wrank_env : forall p m, wrank p (Reached m) =
+  Parameter wrank_env : forall p m, M.wf m -> wrank p (Reached m) =
     fold_right Nat.add 0 (map (fun kv => V.wrank p (snd kv)) (M.elements m)).
   (** Annotation work counts one leaf lookup. *)
   Parameter tcost_leaf : forall m x, tcost m (Leaf x) = X.bits x + 1.

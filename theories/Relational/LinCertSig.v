@@ -5,7 +5,7 @@
     Builds on: KeySig and LinForm. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Std.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig.
 From Galois.Relational Require Import LinForm.
 Local Open Scope nat_scope.
@@ -15,6 +15,10 @@ Record cert := Cert {
   scale : Z;
   cut : bool
 }.
+
+TimeFun mults.
+TimeFun scale.
+TimeFun cut.
 
 Module Type LINCERT_OPS (X : KEY_OPS).
   Parameter combine : list (lcons X.t) -> list Z -> option (lcons X.t).

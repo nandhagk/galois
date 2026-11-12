@@ -61,8 +61,12 @@ Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : KARR_T X L N F C).
-  (* spec: echelon affine_dim bareiss_entries input_minors *)
-  Parameter echelon : list (lcons X.t) -> Prop.
+  Definition echelon (P : list (lcons X.t)) : Prop :=
+    Forall (fun r => lrel r = REq) P /\
+    (forall i r, nth_error P i = Some r -> exists x a, In (x, a) (lhs r) /\ a <> 0%Z /\
+      forall j s, nth_error P j = Some s -> i <> j ->
+        forall b, In (x, b) (lhs s) -> b = 0%Z).
+  (* spec: affine_dim bareiss_entries input_minors *)
   Parameter affine_dim : nat -> t -> nat.
   Parameter bareiss_entries input_minors : list (lcons X.t) -> list Z.
   (** Substitution agrees with a concrete update. *)

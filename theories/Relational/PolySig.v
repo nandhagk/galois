@@ -5,7 +5,7 @@
     Builds on: EnvSig, NumStateSig and LinCertSig. *)
 
 From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Std.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -21,6 +21,8 @@ Record tracked (X : Type) := Tracked {
 
 Arguments row_of {X} _.
 Arguments mults_of {X} _.
+TimeFun row_of.
+TimeFun mults_of.
 
 (** Fourier-Motzkin work keeps the original dimension in every elimination charge. *)
 Fixpoint fmcost (dim fuel rows bits : nat) : nat :=
@@ -29,6 +31,7 @@ Fixpoint fmcost (dim fuel rows bits : nat) : nat :=
   | S k => rows^2 * (dim + rows) * (bits + 1)^2 +
       fmcost dim k (rows^2 / 4 + rows) (2 * bits + 1)
   end.
+
 
 Module Type POLY_OPS (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X).

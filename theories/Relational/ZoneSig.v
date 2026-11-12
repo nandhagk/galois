@@ -54,9 +54,18 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : ZONE X K M L N F).
   Include NUM_STATE_TIME X L N F D.
-  (* spec: supp b ell ns bs ells *)
-  Parameter supp b ell : dbm -> nat.
-  Parameter ns bs ells : t -> nat.
+  Definition support (m : dbm) : list K.t :=
+    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
+      (map fst (M.elements m) ++
+       flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) nil.
+  Definition supp (m : dbm) : nat := length (support m).
+  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map K.bits (support m)).
+  Definition ell (m : dbm) : nat := fold_right Nat.max 0
+    (flat_map (fun kv => map (fun p => Z.size_nat (snd p))
+      (M.elements (snd kv))) (M.elements m)).
+  Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
+  Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
+  Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
   Parameter T_entry : dbm -> K.t -> K.t -> nat.
   Parameter T_fw_round : K.t -> dbm -> nat.
   Parameter T_close : dbm -> nat.
@@ -86,8 +95,11 @@ Module Type ZONE_T (X : KEY_T) (K : KEY_T with Definition t := option X.t)
 Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : ZONE_T X K M L N F).
-  (* spec: closed min_path_weight *)
-  Parameter closed : dbm -> Prop.
+  Definition closed (m : dbm) : Prop :=
+    (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z).
+  (* spec: min_path_weight *)
   Parameter min_path_weight : dbm -> K.t -> K.t -> option Z.
   (** A Floyd-Warshall round adds only implied constraints. *)
   Parameter fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.

@@ -5,6 +5,7 @@
     Builds on: LangSig and ValueSig. *)
 
 From Stdlib Require Import List.
+From Argent Require Import Time Std.
 From Galois.Domains Require Import LangSig ValueSig.
 
 Record check (N K X Kd : Type) := MkCheck {
@@ -16,6 +17,9 @@ Record check (N K X Kd : Type) := MkCheck {
 Arguments site {N K X Kd} _.
 Arguments ckind {N K X Kd} _.
 Arguments args {N K X Kd} _.
+TimeFun site.
+TimeFun ckind.
+TimeFun args.
 
 Module Type CHECKS_OPS (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L).
   Parameter kd : Type.
