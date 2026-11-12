@@ -4,7 +4,7 @@
     For example, an incoming operand is copied to its destination parameter.
     Builds on: Framework.SparseSig and Fixpoint.Query. *)
 
-From Stdlib Require Import List Bool Arith.
+From Stdlib Require Import List Bool Arith NArith.
 From Argent Require Import Time Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -150,7 +150,9 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (X : KEY_T) (L : LANG_T) (K : TYPE with Definition t := L.op)
     (G : TYPE with Definition t := L.guard)
     (S : SSA_T P N E C X K G) (V : VALUE_DOMAIN_T L)
-    (T : SSA_TRANSFER_T P X L V).
+    (T : SSA_TRANSFER_T P X L V)
+    (B : SPARSE_ENVELOPE P N E C X L K G S V)
+    <: SPARSE_T P N E C X L K G S V T B.
   Include Sparse P N E C X L K G S V T.
 
   TimeFun key_code.
@@ -161,6 +163,53 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   TimeFun resume.
   TimeFun deps.
   TimeFun sides.
+  Definition row_work p s := N.of_nat
+    (B.op_work p s + (B.op_arity p + 1) * (s + 1) + T.seed_work p +
+      V.size V.top + V.size V.bot + 1).
+  Definition kw (p : prog) : nat := fold_right Nat.max 0
+    (List.map X.bits (S.entry_params p ++ S.values p ++
+      flat_map (fun r => fst (snd r) :: snd (snd r) :: nil) (S.arg_rows p))).
+  Definition c_sys : N := 1%N. (* STUB *)
+  Lemma row_work_mono : forall p s t, s <= t ->
+    (row_work p s <= row_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* SIG-QUESTION: seed key bits are absent from row_work *)
+  Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, V.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, V.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (V.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (V.size (snd xb)) <= row_work p s)%N) ss.
+  Proof. Admitted. (* STUB *)
 End SparseT.
 
 Module SparseSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)

@@ -213,7 +213,8 @@ End Ifds.
 
 Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
-    (FL : FLOW_FUN_T P N E C F) (R : IFDS_RULES_T P N E C Site I F FL) (L : IFDS_LATTICE_T).
+    (FL : FLOW_FUN_T P N E C F) (R : IFDS_RULES_T P N E C Site I F FL)
+    (L : IFDS_LATTICE_T) <: IFDS_T P N E C Site I F FL L.
   Include Ifds P N E C Site I F FL R L.
 
   TimeFun key_code.
@@ -224,6 +225,51 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   TimeFun sides.
   TimeFun start.
   TimeFun resume.
+  Definition row_work p s := N.of_nat (length (R.rules p) + s + 1).
+  Definition kw (p : prog) : nat := fold_right Nat.max 0
+    (map N.bits (C.nodes p) ++ map F.bits (FL.facts p) ++
+      map (fun nd => N.bits (fst nd) + F.bits (snd nd)) (FL.seeds p)).
+  Definition c_sys : N := 1%N. (* STUB *)
+  Lemma row_work_mono : forall p s t, s <= t ->
+    (row_work p s <= row_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
+    (forall y, L.size (look y) <= s) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
+      N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (L.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
+  Proof. Admitted. (* STUB *)
 End IfdsT.
 
 Module IfdsSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
