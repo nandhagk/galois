@@ -5,16 +5,24 @@
     Builds on: ValueSig and Syntax. *)
 
 From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Egglog Require Import ValueSig Syntax.
 
 Import List.ListNotations.
+
+Definition cell_bits {V : Type} (encode : V -> positive) (c : cell V) : nat :=
+  match c with
+  | Id i => Pos.size_nat (xO i)
+  | Val v => Pos.size_nat (xI (encode v))
+  end.
+TimeFun cell_bits.
 
 Module Type INDEX_OPS (V : VALUE_OPS).
   Parameter t : Type.
   Parameter empty : t.
   Parameter insert : list (cell V.t) -> t -> t.
   Parameter remove : list (cell V.t) -> t -> t.
+  Parameter next : t -> positive.
   Parameter root : t -> positive.
   Parameter child : t -> positive -> cell V.t -> option positive.
   Parameter children : t -> positive -> list (cell V.t).
@@ -30,6 +38,8 @@ Module Type INDEX_LAWS (V : VALUE) (Import X : INDEX_OPS V).
   Parameter mem : t -> list (cell V.t) -> Prop.
   Parameter node : t -> positive -> list (cell V.t) -> Prop.
   (** Empty indexes accept every arity. *)
+  (** Empty indexes contain no tuple. *)
+  Parameter mem_empty : forall u, ~ mem empty u.
   Parameter wf_empty : forall a, wf a empty.
   (** Insertion keeps the declared arity. *)
   Parameter wf_insert : forall a r ix, wf a ix -> length r = a -> wf a (insert r ix).
@@ -68,9 +78,16 @@ Module Type INDEX (V : VALUE) := INDEX_OPS V <+ INDEX_SPEC V <+ INDEX_LAWS V.
 
 Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   (* spec: width *)
+  (** The largest encoded cell width stored on an index edge. *)
+  Parameter max_cell_bits : t -> nat.
   Parameter width : t -> list (cell V.t) -> nat.
+  (** Width charges the fresh node counter and the largest query and stored cells. *)
+  Parameter width_le : forall ix r,
+    width ix r <= Pos.size_nat (next ix) +
+      fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
   Parameter T_empty : N.
   Parameter T_insert T_remove : list (cell V.t) -> t -> N.
+  Parameter T_next : t -> N.
   Parameter T_root : t -> N.
   Parameter T_child : t -> positive -> cell V.t -> N.
   Parameter T_children T_degree : t -> positive -> N.
@@ -110,6 +127,38 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   (** A path step uses at most four map operations and constant bookkeeping. *)
   Parameter T_insert_step_le : forall ix n c,
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
+  Definition walk_state := (t * positive)%type.
+  Parameter start : t -> walk_state.
+  Parameter insert_step_st remove_step_st : walk_state -> cell V.t -> walk_state.
+  Parameter insert_finish remove_finish : list (cell V.t) -> t -> walk_state -> t.
+  Parameter T_start : t -> N.
+  Parameter T_insert_step_st T_remove_step_st : walk_state -> cell V.t -> N.
+  Parameter T_insert_finish T_remove_finish : list (cell V.t) -> t -> walk_state -> N.
+  (** Insertion follows its named state walk. *)
+  Parameter F_insert_steps : forall r ix, inv ix ->
+    insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
+  (** Removal follows its named state walk. *)
+  Parameter F_remove_steps : forall r ix, inv ix ->
+    remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
+  (** Insertion aggregates the path-step charges. *)
+  Parameter T_insert_steps : forall r ix, inv ix ->
+    (T_insert r ix <= N.of_nat (length r + 1) *
+      (4 * c_map * N.of_nat (width ix r + 1) + 4) + c_ix)%N.
+  (** Removal aggregates the path-step charges. *)
+  Parameter T_remove_steps : forall r ix, inv ix ->
+    (T_remove r ix <= N.of_nat (length r + 1) *
+      (4 * c_map * N.of_nat (width ix r + 1) + 4) + c_ix)%N.
+  (** Child lookup aggregates its map operations. *)
+  Parameter T_child_steps : forall ix n c,
+    (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
+  (** Enumeration aggregates the stored children. *)
+  Parameter T_children_steps : forall ix n,
+    (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
+      N.of_nat (width ix [] + 1))%N.
+  (** Degree lookup aggregates its map operations. *)
+  Parameter T_degree_steps : forall ix n,
+    (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
+
 End INDEX_PLAN.
 
 Module Type INDEX_ALL (V : VALUE_T) := INDEX_T V <+ INDEX_PLAN V.
