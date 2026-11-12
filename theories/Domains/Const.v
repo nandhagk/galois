@@ -195,7 +195,12 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Proof. intros [|a|]; reflexivity. Qed.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted.
+  Proof.
+    intros [|x|] [|y|]; cbn [meet leb]; try reflexivity;
+      try (apply E.eqb_spec; reflexivity).
+    destruct (E.eqb x y); cbn [leb]; auto.
+    apply E.eqb_spec. reflexivity.
+  Qed.
   (** Meet is below its right operand. *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
