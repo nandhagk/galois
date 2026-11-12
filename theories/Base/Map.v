@@ -126,6 +126,21 @@ Module TrieMap (K : KEY) <: MAP K.
   Proof. Admitted. (* STUB *)
   Lemma codes_nodup : forall A (m : t A), NoDup (codes m).
   Proof. Admitted. (* STUB *)
+  Lemma nodes_le_codes : forall A (m : t A),
+    nodes m <= fold_right Nat.add 0 (List.map (fun p => Pos.size_nat p + 1) (codes m)).
+  Proof.
+    intros A m.
+    unfold nodes, codes.
+    rewrite List.map_map.
+    exact (PTrie.nodes_le_weight (K.t * A) m).
+  Qed.
+  Lemma weight_set : forall A k (a : A) m, weight (set k a m) <= weight m + K.bits k + 1.
+  Proof. Admitted. (* STUB *)
+  Lemma weight_remove : forall A k (m : t A), weight (remove k m) <= weight m.
+  Proof. Admitted. (* STUB *)
+  Lemma weight_merge_l : forall A B C (f : option A -> option B -> option C) m1 m2,
+    (forall b, f None b = None) -> weight (merge f m1 m2) <= weight m1.
+  Proof. Admitted. (* STUB *)
 End TrieMap.
 
 Module TrieMapT (K : KEY_T) <: MAP_T K.

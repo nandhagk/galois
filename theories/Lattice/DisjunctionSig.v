@@ -48,6 +48,9 @@ Module Type DISJUNCTION_TIME (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   Parameter T_clip_le : forall xs, length xs <= 2 * C.k ->
     (T_clip xs <= c_lat * N.of_nat
       (length xs + fold_right (fun a n => L.size a + n) 0 xs + 1)%nat)%N.
+  (** A join has size bounded by the sizes of its operands. *)
+  Parameter join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
 End DISJUNCTION_TIME.
 
 Module Type DISJUNCTION_T (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP) :=
