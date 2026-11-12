@@ -1,40 +1,117 @@
-(** * Join layer headers
+(** * Generic joins over tuple indexes
 
-    These headers pass engine dependencies at the layer each client needs.
-    Operations and contracts are placeholders for task 5.3.
+    Joins enumerate the assignments that satisfy every indexed projection.
+    For example, a shared column binds the same cell in two relation indexes.
+    Builds on: ValueSig, IndexSig and Syntax. *)
 
-    For example, a timed join takes a bundled VALUE_T dependency.
-    Builds on: ValueSig and IndexSig. *)
+From Stdlib Require Import List PArith Arith Sorting.Sorted.
+From Argent Require Import Time Std.
+From Galois.Egglog Require Import ValueSig IndexSig Syntax.
 
-From Argent Require Import Time.
+Import List.ListNotations.
 
-From Galois.Egglog Require Import ValueSig IndexSig.
+Definition project_cells {V : Type} (lv : list nat) (b : list (cell V))
+    : option (list (cell V)) :=
+  fold_right (fun i acc =>
+    match nth_error b i, acc with
+    | Some c, Some cs => Some (c :: cs)
+    | _, _ => None
+    end) (Some []) lv.
+TimeFun project_cells.
 
 Module Type JOIN_OPS (V : VALUE_OPS) (I : INDEX_OPS V).
-  Parameter t : Type.
+  Parameter run : jplan -> list I.t -> list (list (cell V.t)).
 End JOIN_OPS.
 
-Module Type JOIN_SPEC (V : VALUE_OPS) (I : INDEX_OPS V)
-    (Import X : JOIN_OPS V I).
+Module Type JOIN_SPEC (V : VALUE) (I : INDEX V) (Import X : JOIN_OPS V I).
+  Definition project := @project_cells V.t.
+  Definition answer (p : jplan) (ixs : list I.t) (b : list (cell V.t)) : Prop :=
+    length b = nvars p /\
+    Forall2 (fun lv ix => exists u, project lv b = Some u /\ I.mem ix u) (cols p) ixs.
+  Definition wf_plan (p : jplan) (ixs : list I.t) : Prop :=
+    length (cols p) = length ixs /\
+    Forall2 (fun lv ix => StronglySorted lt lv /\
+      Forall (fun i => i < nvars p) lv /\ I.wf (length lv) ix) (cols p) ixs /\
+    (forall i, i < nvars p -> exists lv, In lv (cols p) /\ In i lv).
 End JOIN_SPEC.
 
-Module Type JOIN_LAWS (V : VALUE) (I : INDEX V)
-    (Import X : JOIN_OPS V I).
+Module Type JOIN_LAWS (V : VALUE) (I : INDEX V) (Import X : JOIN_OPS V I)
+    (Import XS : JOIN_SPEC V I X).
+  (** Every emitted assignment satisfies every input index. *)
+  Parameter run_sound : forall p ixs b, wf_plan p ixs ->
+    In b (run p ixs) -> answer p ixs b.
+  (** Every satisfying assignment is emitted. *)
+  Parameter run_complete : forall p ixs b, wf_plan p ixs ->
+    answer p ixs b -> In b (run p ixs).
+  (** Assignments are emitted once. *)
+  Parameter run_nodup : forall p ixs, wf_plan p ixs -> NoDup (run p ixs).
 End JOIN_LAWS.
 
 Module Type JOIN (V : VALUE) (I : INDEX V) :=
   JOIN_OPS V I <+ JOIN_SPEC V I <+ JOIN_LAWS V I.
 
-Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V)
-    (Import X : JOIN V I).
+Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
+  (* spec: work wmax *)
+  Parameter work wmax : jplan -> list I.t -> nat.
+  Parameter T_run : jplan -> list I.t -> nat.
+  Parameter c_join : nat.
+  (** Running pays for recursive probe work at the maximum index width. *)
+  Parameter T_run_le : forall p ixs, wf_plan p ixs ->
+    T_run p ixs <= c_join * (work p ixs + 1) * (wmax p ixs + 1).
+  (** Recursive probe work is a lower bound on running time. *)
+  Parameter T_run_ge : forall p ixs, wf_plan p ixs -> work p ixs <= T_run p ixs.
 End JOIN_TIME.
 
-Module Type JOIN_T (V : VALUE_T) (I : INDEX_T V) :=
-  JOIN V I <+ JOIN_TIME V I.
+Module Type JOIN_T (V : VALUE_T) (I : INDEX_T V) := JOIN V I <+ JOIN_TIME V I.
 
-Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V)
-    (Import X : JOIN_T V I).
+Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
+  (** Current nodes represent the columns already bound by the reversed prefix. *)
+  Definition nodes_ok (p : jplan) (ixs : list I.t) (lvl : nat)
+      (pre : list (cell V.t)) (ns : list positive) : Prop :=
+    wf_plan p ixs /\ length pre = lvl /\ lvl <= nvars p /\
+    Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i lvl) (fst lvix)) (rev pre) = Some u /\
+      I.node (snd lvix) n u) (combine (cols p) ixs) ns.
+  Parameter advance : jplan -> list I.t -> nat -> list positive -> cell V.t ->
+    option (list positive).
+  Parameter go : nat -> jplan -> list I.t -> list positive -> list (cell V.t) ->
+    list (list (cell V.t)) -> list (list (cell V.t)).
+  Parameter T_advance : jplan -> list I.t -> nat -> list positive -> cell V.t -> nat.
+  Parameter T_go : nat -> jplan -> list I.t -> list positive -> list (cell V.t) ->
+    list (list (cell V.t)) -> nat.
+  (* spec: work_at *)
+  Parameter work_at : jplan -> list I.t -> nat -> list positive -> nat.
+  (** Root nodes represent the initial empty assignment. *)
+  Parameter nodes_ok_root : forall p ixs, wf_plan p ixs ->
+    nodes_ok p ixs 0 [] (map I.root ixs).
+  (** Successful probes extend every participating prefix. *)
+  Parameter step_ok : forall p ixs l pre ns c ns', wf_plan p ixs ->
+    nodes_ok p ixs l pre ns -> advance p ixs l ns c = Some ns' ->
+    nodes_ok p ixs (S l) (c :: pre) ns'.
+  (** A failed probe rules out all assignments extending that cell. *)
+  Parameter advance_none : forall p ixs l pre ns c, wf_plan p ixs ->
+    nodes_ok p ixs l pre ns -> advance p ixs l ns c = None ->
+    forall b, firstn (S l) b = rev (c :: pre) -> ~ answer p ixs b.
+  (** Recursive output comes from the accumulator or satisfies the current prefix. *)
+  Parameter go_sound : forall p ixs l pre ns acc b, nodes_ok p ixs l pre ns ->
+    In b (go (nvars p - l) p ixs ns pre acc) ->
+    In b acc \/ (answer p ixs b /\ firstn l b = rev pre).
+  (** Every answer extending the current prefix is emitted. *)
+  Parameter go_complete : forall p ixs l pre ns acc b, nodes_ok p ixs l pre ns ->
+    answer p ixs b -> firstn l b = rev pre ->
+    In b (go (nvars p - l) p ixs ns pre acc).
+  (** Disjoint answer prefixes and a duplicate-free accumulator give duplicate-free output. *)
+  Parameter go_nodup : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
+    NoDup acc ->
+    (forall b, answer p ixs b -> firstn l b = rev pre -> ~ In b acc) ->
+    NoDup (go (nvars p - l) p ixs ns pre acc).
+  (** Public work starts at the root nodes. *)
+  Parameter work_root : forall p ixs,
+    work p ixs = work_at p ixs 0 (map I.root ixs).
+  (** Recursive cost pays for probes and all surviving subtrees. *)
+  Parameter T_go_le : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
+    T_go (nvars p - l) p ixs ns pre acc <=
+      c_join * (work_at p ixs l ns + 1) * (wmax p ixs + 1).
 End JOIN_PLAN.
 
-Module Type JOIN_ALL (V : VALUE_T) (I : INDEX_T V) :=
-  JOIN_T V I <+ JOIN_PLAN V I.
+Module Type JOIN_ALL (V : VALUE_T) (I : INDEX_T V) := JOIN_T V I <+ JOIN_PLAN V I.
