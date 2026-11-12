@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 Import List.ListNotations.
 
@@ -149,3 +149,12 @@ Module Disjunction (L : WLATTICE) (C : CAP) <: LATTICE.
   Proof. cbn [narrow]; intros Hcover; split; [exact Hcover | apply leb_refl]. Qed.
 
 End Disjunction.
+
+Module DisjunctionT (L : WLATTICE_T) (C : CAP).
+  Include Disjunction L C.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join_all.
+  TimeFun compact_tail.
+End DisjunctionT.
