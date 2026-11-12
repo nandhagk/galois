@@ -224,17 +224,6 @@ Module ZKeyT <: KEY_T.
   Proof. Admitted. (* STUB *)
 End ZKeyT.
 
-Module NatKeyT <: KEY_T.
-  Include NatKey.
-  TimeFun encode.
-  TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
-  Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
-End NatKeyT.
-
 Module BoolKeyT <: KEY_T.
   Include BoolKey.
   TimeFun encode.

@@ -52,3 +52,16 @@ Lemma T_loopN_le : forall S R (step : S -> S + R) T_step Inv Phi Tstop fuel s,
   Inv s -> T_loopN step T_step fuel s <=
     c_loopN * (Phi s + Tstop + N.of_nat (N.size_nat fuel) + 1))%N.
 Proof. Admitted. (* STUB *)
+
+(** The loop spends input credit once and keeps credit in its returned result. *)
+Lemma T_loopN_amort : forall S R (step : S -> S + R) T_step (Inv : S -> Prop)
+    (Phi : S -> N) (Psi : R -> N) fuel s,
+  ((forall s s1, Inv s -> step s = inl s1 ->
+     Inv s1 /\ T_step s + c_loopN + Phi s1 <= Phi s) ->
+  (forall s r, Inv s -> step s = inr r ->
+     T_step s + c_loopN + Psi r <= Phi s) ->
+  Inv s ->
+  T_loopN step T_step fuel s +
+    match loopN step fuel s with inr r => Psi r | inl _ => 0 end
+  <= Phi s + c_loopN * N.of_nat (N.size_nat fuel + 1))%N.
+Proof. Admitted. (* STUB *)
