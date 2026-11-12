@@ -248,13 +248,13 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
       | LoopTreeEdges _ vs => length vs + 1 + n
       end) 0 (loop_tree_pending st).
 
-  (** White credit reserves successor and child-row cursors for each unentered listed vertex. *)
+  (** White credit reserves successor and doubled child-row cursors for each unentered vertex. *)
   Definition tree_white g t st : nat :=
     fold_right (fun v n =>
       if existsb (Pos.eqb v) (loop_order (loop_tree_output st)) then n
-      else 4 + length (succs (base g) v) + length (children t v) + n) 0 (nodes g).
+      else 4 + length (succs (base g) v) + 2 * length (children t v) + n) 0 (nodes g).
 
-  Definition tree_potential g t st := N.of_nat (2 * tree_white g t st + tree_pending st).
+  Definition tree_potential g t st := N.of_nat (tree_white g t st + tree_pending st).
 
   Definition tree_credit g t st :=
     ((k_tree_step * N.of_nat (graph_width (base g) + 1) + 1) *
