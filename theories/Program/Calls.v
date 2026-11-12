@@ -7,7 +7,7 @@
 From Stdlib Require Import List.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Graph Require Import Data Spec.
-From Galois.Program Require Import CallsSig.
+From Galois.Program Require Import SemanticsSig CallsSig.
 
 Record calls_tables (F S : Type) := CallsTables {
   call_functions : list F;
@@ -85,5 +85,18 @@ Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
       map (fun e => F.encode (edge_callee e)) (call_edges (resolve p) (sites_of p f)).
   Proof. Admitted. (* CONVERT: graph_out: The reference Graph.out was not found. *)
   Lemma call_graph_wf : forall p, wf p -> wf_graph (call_graph p).
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: call_graph_wf: Hnodes has type NoDup (functions p). *)
 End Calls.
+
+Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
+    (M : SEMANTICS P) (L : CALLS_LINK P F S C M) <: CALLS_SOUND P F S C M L.
+  Lemma reachable_frames_linked : forall p s, C.wf p ->
+    reachable (M.initial p) (M.step p) s ->
+    frames_linked (C.sites_of p) (C.caller_of p) (C.resolve p) (L.here s) (L.frames s).
+  Proof. Admitted. (* CONVERT: reachable_frames_linked: Unable to unify the induction goal. *)
+
+  Lemma active_reachable : forall p s f, C.wf p ->
+    reachable (M.initial p) (M.step p) s -> In f (L.active s) ->
+    reach (C.call_graph p) (C.graph_roots p) (F.encode f).
+  Proof. Admitted. (* CONVERT: active_reachable_in_call_graph: Unable to unify the induction goal. *)
+End CallsSound.
