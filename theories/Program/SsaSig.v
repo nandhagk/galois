@@ -98,13 +98,17 @@ Module Type SSA_LAWS (P : TYPE) (N : KEY) (E : TYPE)
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
       In (home p y) route.
+  (** Operations that share a home depend on each other without a cycle. *)
+  Parameter op_args_acyclic : forall p, wf p ->
+    well_founded (fun y x => In x (values p) /\ home p y = home p x /\
+      exists op xs, def p x = Op op xs /\ In y xs).
 End SSA_LAWS.
 
 Module Type SSA (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG P N E) (V : KEY) (K G : TYPE) :=
   SSA_OPS P N E C V K G <+ SSA_SPEC P N E C V K G <+ SSA_LAWS P N E C V K G.
 
-Module Type SSA_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type SSA_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T) (K G : TYPE)
     (Import S : SSA P N E C V K G).
   Parameter T_values : P.t -> N.
@@ -113,10 +117,27 @@ Module Type SSA_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
   Parameter T_params : P.t -> N.t -> N.
   Parameter T_args : P.t -> E.t -> N.
   Parameter T_guards : P.t -> E.t -> N.
-  (* SIG-QUESTION: the design and landed arbitrary readers specify no numeric reader bounds. *)
+  Parameter c_ssa : N.
+  (** The value inventory pays for its output. *)
+  Parameter T_values_le : forall p,
+    (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
+  (** Definition lookup pays for the value key and the returned operands. *)
+  Parameter T_def_le : forall p x,
+    (T_def p x <= c_ssa * N.of_nat (V.bits x + length (operands p x) + 1))%N.
+  (** Home lookup pays for the value key. *)
+  Parameter T_home_le : forall p x, (T_home p x <= c_ssa * N.of_nat (V.bits x + 1))%N.
+  (** Parameter lookup pays for the node key and the returned values. *)
+  Parameter T_params_le : forall p n,
+    (T_params p n <= c_ssa * N.of_nat (N.bits n + length (params p n) + 1))%N.
+  (** Incoming operands pay for the edge key and the returned pairs. *)
+  Parameter T_args_le : forall p e,
+    (T_args p e <= c_ssa * N.of_nat (E.bits e + length (args p e) + 1))%N.
+  (** Guards pay for the edge key and the returned guard list. *)
+  Parameter T_guards_le : forall p e,
+    (T_guards p e <= c_ssa * N.of_nat (E.bits e + length (guards p e) + 1))%N.
 End SSA_TIME.
 
-Module Type SSA_T (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type SSA_T (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T) (K G : TYPE) :=
   SSA P N E C V K G <+ SSA_TIME P N E C V K G.
 
@@ -145,7 +166,7 @@ Module Type SSA_LINK (P : TYPE) (N : KEY) (E : TYPE)
     reachable (M.initial p) (M.step p) s -> M.step p s t -> venv t x = Some c ->
     venv s x = Some c \/
     (exists op xs cs, S.def p x = Op op xs /\
-      Forall2 (fun y d => venv s y = Some d) xs cs /\ eval op cs = Some c) \/
+      Forall2 (fun y d => venv t y = Some d) xs cs /\ eval op cs = Some c) \/
     (exists e b i y, S.def p x = Param b i /\ L.taken p s t e /\
       C.dst p e = b /\ nth_error (S.args p e) i = Some (x, y) /\ venv s y = Some c) \/
     S.def p x = Arbitrary.
@@ -243,8 +264,8 @@ Module Type SSA_POINTS (P : TYPE) (B : KEY) (BE : TYPE)
     (C : CFG P N E) (V : KEY) (U : VARS P N E C V) :=
   SSA_POINTS_OPS P B BE BC N E C V U <+ SSA_POINTS_LAWS P B BE BC N E C V U.
 
-Module Type SSA_POINTS_TIME (P : TYPE) (B : KEY_T) (BE : TYPE)
-    (BC : CFG_T P B BE) (N : KEY_T) (E : TYPE)
+Module Type SSA_POINTS_TIME (P : TYPE) (B : KEY_T) (BE : KEY_T)
+    (BC : CFG_T P B BE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T) (U : VARS_T P N E C V)
     (Import S : SSA_POINTS P B BE BC N E C V U).
   Parameter T_points_in_block T_instruction_edges T_parameter_edge : P.t -> B.t -> N.
@@ -253,10 +274,39 @@ Module Type SSA_POINTS_TIME (P : TYPE) (B : KEY_T) (BE : TYPE)
   Parameter T_block_params : P.t -> B.t -> N.
   Parameter T_block_edge_args : P.t -> BE.t -> N.
   Parameter T_point_definition : P.t -> V.t -> N.
+  Parameter c_points : N.
+  (** Block point lists pay for the key and the returned points. *)
+  Parameter T_points_in_block_le : forall p b,
+    (T_points_in_block p b <=
+      c_points * N.of_nat (B.bits b + length (points_in_block p b) + 1))%N.
+  (** Instruction edge lists pay for the key and the returned edges. *)
+  Parameter T_instruction_edges_le : forall p b,
+    (T_instruction_edges p b <=
+      c_points * N.of_nat (B.bits b + length (instruction_edges p b) + 1))%N.
+  (** The parameter edge lookup pays for the block key. *)
+  Parameter T_parameter_edge_le : forall p b,
+    (T_parameter_edge p b <= c_points * N.of_nat (B.bits b + 1))%N.
+  (** The owner lookup pays for the point key. *)
+  Parameter T_block_of_point_le : forall p n,
+    (T_block_of_point p n <= c_points * N.of_nat (N.bits n + 1))%N.
+  (** The edge projection pays for the edge key. *)
+  Parameter T_block_edge_of_le : forall p e,
+    (T_block_edge_of p e <= c_points * N.of_nat (E.bits e + 1))%N.
+  (** Block parameters pay for the key and the returned values. *)
+  Parameter T_block_params_le : forall p b,
+    (T_block_params p b <=
+      c_points * N.of_nat (B.bits b + length (block_params p b) + 1))%N.
+  (** Phi operands pay for the block-edge key and the returned values. *)
+  Parameter T_block_edge_args_le : forall p be,
+    (T_block_edge_args p be <=
+      c_points * N.of_nat (BE.bits be + length (block_edge_args p be) + 1))%N.
+  (** The definition point lookup pays for the value key. *)
+  Parameter T_point_definition_le : forall p x,
+    (T_point_definition p x <= c_points * N.of_nat (V.bits x + 1))%N.
 End SSA_POINTS_TIME.
 
-Module Type SSA_POINTS_T (P : TYPE) (B : KEY_T) (BE : TYPE)
-    (BC : CFG_T P B BE) (N : KEY_T) (E : TYPE)
+Module Type SSA_POINTS_T (P : TYPE) (B : KEY_T) (BE : KEY_T)
+    (BC : CFG_T P B BE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T) (U : VARS_T P N E C V) :=
   SSA_POINTS P B BE BC N E C V U <+ SSA_POINTS_TIME P B BE BC N E C V U.
 

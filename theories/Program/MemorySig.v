@@ -106,7 +106,8 @@ Module Type ALIAS (R : KEY) := ALIAS_OPS R <+ ALIAS_LAWS R.
 
 Module Type ALIAS_TIME (R : KEY_T) (Import A : ALIAS R).
   Parameter T_disjoint T_covers : R.t -> R.t -> N.
-  (* SIG-QUESTION: the alias interface specifies sound answers but no reader complexity. *)
+  (* Alias clocks are composition fields: a consumer charges the sum of the
+     clocks of the queries it makes, as CALLS_TIME.call_graph_work does. *)
 End ALIAS_TIME.
 
 Module Type ALIAS_T (R : KEY_T) := ALIAS R <+ ALIAS_TIME R.
@@ -131,7 +132,8 @@ Module Type MEMORY_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
     (C : CFG_T P N E) (R : KEY_T) (A : ALIAS_T R)
     (Import M : MEMORY P N E C R A).
   Parameter T_effects : P.t -> E.t -> N.
-  (* SIG-QUESTION: the memory presentation leaves the effect-reader complexity unspecified. *)
+  (* The effect clock is a composition field until a consumer needs a bound of
+     the form T_effects p e <= c * N.of_nat (E.bits e + length (effects p e) + 1). *)
 End MEMORY_TIME.
 
 Module Type MEMORY_T (P : TYPE) (N : KEY_T) (E : TYPE)
@@ -178,7 +180,6 @@ Module Type MEMORY_LINK (P : TYPE) (N : KEY) (E : TYPE)
   Parameter effect_write_covered : forall b a address,
     effect_write b a address ->
     exists r, In r (effect_writes A.all a) /\ region_holds r address.
-  (* SIG-QUESTION: actual-write coverage has no landed provider beyond changed existing bytes. *)
   (** Existing historical addresses stay identifiable through each effect. *)
   Parameter effect_site_stable : forall b a b' l address,
     effect_step b a b' -> effect_address b l = Some address ->

@@ -86,6 +86,21 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   Parameter T_resolve : P.t -> S.t -> N.
   Parameter T_call_graph : P.t -> N.
   Parameter c_calls : N.
+  (** The function inventory pays for its output. *)
+  Parameter T_functions_le : forall p,
+    (T_functions p <= c_calls * N.of_nat (length (functions p) + 1))%N.
+  (** The root inventory pays for its output. *)
+  Parameter T_roots_le : forall p,
+    (T_roots p <= c_calls * N.of_nat (length (roots p) + 1))%N.
+  (** Site lookup pays for the function key and the returned sites. *)
+  Parameter T_sites_of_le : forall p f,
+    (T_sites_of p f <= c_calls * N.of_nat (F.bits f + length (sites_of p f) + 1))%N.
+  (** Caller lookup pays for the site key. *)
+  Parameter T_caller_of_le : forall p site,
+    (T_caller_of p site <= c_calls * N.of_nat (S.bits site + 1))%N.
+  (** Resolution pays for the site key and the returned targets. *)
+  Parameter T_resolve_le : forall p site,
+    (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
   Definition call_graph_work p :=
     (T_functions p +
       fold_right N.add 0%N (map (fun f => T_sites_of p f + F.T_encode f)%N (functions p)) +
@@ -107,6 +122,19 @@ Module Type CALLS_PLAN (P : TYPE) (F S : KEY_T) (Import C : CALLS_T P F S).
   Parameter F1_call_edge : forall p f site target,
     In site (sites_of p f) -> In target (resolve p site) ->
     In (CallEdge site target) (out_edges p f).
+  Parameter T_out_edges : P.t -> F.t -> N.
+  Parameter k_edges k_adj : N.
+  (** One function's successor list pays its sites, resolutions and target encodings. *)
+  Parameter T1_out_edges : forall p f,
+    (T_out_edges p f <= k_edges * (T_sites_of p f +
+      fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+      N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N.
+  (** The adjacency fold pays each row and one insertion path per listed function. *)
+  Parameter T2_adjacency : forall p,
+    (T_call_graph p <= k_adj * (T_functions p +
+      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f)%N (functions p)) +
+      N.of_nat (length (functions p) + 1) * N.of_nat (function_width p + 1)))%N.
 End CALLS_PLAN.
 
 Module Type CALLS_ALL (P : TYPE) (F S : KEY_T) := CALLS_T P F S <+ CALLS_PLAN P F S.

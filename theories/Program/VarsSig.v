@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List NArith.
 From Argent Require Import Time BigO.
-From Galois.Base Require Import KeySig.
+From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import SemanticsSig CfgSig.
 
 Module Type VARS_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE)
@@ -43,12 +43,21 @@ Module Type VARS (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG P N E) (X : KEY) :=
   VARS_OPS P N E C X <+ VARS_SPEC P N E C X <+ VARS_LAWS P N E C X.
 
-Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (X : KEY_T) (Import V : VARS P N E C X).
   Parameter T_uses T_defs : P.t -> E.t -> N.
   Parameter T_exits : P.t -> N.t -> N.
   Parameter T_universe : P.t -> N.
   Parameter c_vars : N.
+  (** Edge uses pay for the edge key and the returned variables. *)
+  Parameter T_uses_le : forall p e,
+    (T_uses p e <= c_vars * N.of_nat (E.bits e + length (uses p e) + 1))%N.
+  (** Edge definitions pay for the edge key and the returned variables. *)
+  Parameter T_defs_le : forall p e,
+    (T_defs p e <= c_vars * N.of_nat (E.bits e + length (defs p e) + 1))%N.
+  (** Exit observations pay for the node key and the returned variables. *)
+  Parameter T_exits_le : forall p n,
+    (T_exits p n <= c_vars * N.of_nat (N.bits n + length (exits p n) + 1))%N.
   Definition universe_work p :=
     (C.T_edges p + C.T_nodes p +
       fold_right N.add 0%N (map (fun e => T_uses p e + T_defs p e)%N (C.edges p)) +
@@ -62,19 +71,36 @@ Module Type VARS_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
   Parameter universe_bigO : bigO (fun _ : P.t => True) universe_work T_universe.
 End VARS_TIME.
 
-Module Type VARS_T (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type VARS_T (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (X : KEY_T) :=
   VARS P N E C X <+ VARS_TIME P N E C X.
 
-Module Type VARS_PLAN (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type VARS_PLAN (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (X : KEY_T) (Import V : VARS_T P N E C X).
   (** Flattening syntax preserves exactly the edge and exit occurrences. *)
   Parameter F1_occurrences : forall p x, In x (occurrences p) <-> occurs p x.
   (** Deduplicating the occurrence scan gives the prepared universe. *)
   Parameter F2_universe : forall p x, In x (universe p) <-> In x (occurrences p).
+  Parameter seen : P.t -> ptrie X.t.
+  Parameter T_seen : P.t -> N.
+  Parameter k_seen k_collect : N.
+  (** The deduplicating trie stores each occurrence at its own encoding. *)
+  Parameter F3_seen : forall p,
+    seen p = fold_left (fun s x => PTrieCode.set (X.encode x) x s) (occurrences p)
+      PTrieCode.empty.
+  (** The deduplicating trie has at most one skeleton node per occurrence key bit. *)
+  Parameter F4_seen_nodes : forall p,
+    PTrie.nodes (seen p) <= length (occurrences p) * occurrence_width p.
+  (** Building the trie pays each reader, encoding and insertion path. *)
+  Parameter T1_seen : forall p,
+    (T_seen p <= k_seen * universe_work p)%N.
+  (** Collecting values pays one skeleton walk and one reversal. *)
+  Parameter T2_universe : forall p,
+    (T_universe p <= k_collect * (T_seen p +
+      N.of_nat (length (occurrences p) + 1) * N.of_nat (occurrence_width p + 1)))%N.
 End VARS_PLAN.
 
-Module Type VARS_ALL (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type VARS_ALL (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (X : KEY_T) :=
   VARS_T P N E C X <+ VARS_PLAN P N E C X.
 
