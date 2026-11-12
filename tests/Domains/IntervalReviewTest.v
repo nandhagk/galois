@@ -11,6 +11,7 @@ Import List.ListNotations.
 
 Module Scalar := Interval ZLang Thresholds.
 Module ScalarCode := IntervalBaseCode ThresholdsCode.
+Module ScalarTransfer := IntervalCode ZLangCode ThresholdsCode.
 Module WordIntervals := IntervalOpsCode ThresholdsCode ScalarCode.
 Module Payload := IntervalPayload WordLanguage Thresholds ScalarCode.
 
@@ -107,4 +108,18 @@ Example payload_clipped_join_meet :
   Payload.pjoin 1%positive a b = b /\ Payload.pmeet 1%positive a b = IBot.
 Proof.
   vm_compute. split; reflexivity.
+Qed.
+
+(** A negative raw upper shift endpoint takes the constant fallback. *)
+Example shift_negative_upper_fallback :
+  ScalarTransfer.shl (I (Fin 0) (Fin 0)) (I (Fin 0) (Fin (-8))) = I (Fin 0) PosInf.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Ordered shift endpoints below the cutoff retain finite results. *)
+Example shift_ordered_endpoints :
+  ScalarTransfer.shl (I (Fin 1) (Fin 2)) (I (Fin 0) (Fin 1)) = I (Fin 1) (Fin 4).
+Proof.
+  vm_compute. reflexivity.
 Qed.

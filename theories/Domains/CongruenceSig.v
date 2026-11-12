@@ -48,8 +48,43 @@ Module Type CONGRUENCE_SPEC (L : WORD_LANGUAGE_OPS) (Import D : CONGRUENCE_OPS L
     end.
 End CONGRUENCE_SPEC.
 
-Module Type CONGRUENCE (L : WORD_LANGUAGE) :=
+Module Type CONGRUENCE_BASE (L : WORD_LANGUAGE) :=
   CONGRUENCE_OPS L <+ CONGRUENCE_SPEC L <+ WORD_PAYLOAD_LAWS L.
+
+Module Type CONGRUENCE_LAWS (L : WORD_LANGUAGE) (Import D : CONGRUENCE_BASE L).
+  (** Payload concretization agrees with residue-class membership. *)
+  Parameter F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
+  (** Normalization keeps precisely the same represented integers. *)
+  Parameter F2_norm_gamma : forall w a z,
+    pgamma w (congr_norm w a) z <-> pgamma w a z.
+  (** Negation retains wrapped concrete negation. *)
+  Parameter F6_congr_neg_sound : forall w a x,
+    pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
+  (** Addition retains wrapped concrete addition. *)
+  Parameter F7_congr_add_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
+  (** Subtraction retains wrapped concrete subtraction. *)
+  Parameter F8_congr_sub_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
+  (** Multiplication retains wrapped concrete multiplication. *)
+  Parameter F9_congr_mul_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
+  (** Projection retains truncations to smaller widths. *)
+  Parameter F10_congr_project_sound : forall source target a x,
+    (target <= source)%positive -> pgamma source a x ->
+    pgamma target (congr_project source target a) (L.wrap target x).
+  (** Shift transfer retains the wrapped concrete shift. *)
+  Parameter F11_congr_shl_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y ->
+    pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
+  (** Remainder transfer retains unsigned remainder, including a zero divisor. *)
+  Parameter F12_congr_urem_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y ->
+    pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
+End CONGRUENCE_LAWS.
+
+Module Type CONGRUENCE (L : WORD_LANGUAGE) :=
+  CONGRUENCE_BASE L <+ CONGRUENCE_LAWS L.
 
 Module Type CONGRUENCE_TIME (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE L).
   Include WORD_PAYLOAD_TIME L D.
@@ -60,6 +95,22 @@ Module Type CONGRUENCE_TIME (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE L).
   Parameter c_congruence : N.
   (** Payload size uses the tagged width. *)
   Parameter psize_congr : forall w a, psize w a = (Pos.to_nat w + congr_bits a + 1) ^ 2.
+  (** Normalized payloads fit two words of the width. *)
+  Parameter congr_norm_bits : forall w a,
+    (congr_bits (congr_norm w a) <= 2 * Pos.to_nat w)%nat.
+  (** Negation results fit two words of the width. *)
+  Parameter congr_neg_bits : forall w a,
+    (congr_bits (congr_neg w a) <= 2 * Pos.to_nat w)%nat.
+  (** Binary transfer results fit two words of the width. *)
+  Parameter congr_binary_bits : forall w a b,
+    (congr_bits (congr_add w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_sub w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_mul w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_shl w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_urem w a b) <= 2 * Pos.to_nat w)%nat.
+  (** Projection results fit two words of the target width. *)
+  Parameter congr_project_bits : forall source target a,
+    (congr_bits (congr_project source target a) <= 2 * Pos.to_nat target)%nat.
   (** Normalization has the published quadratic arithmetic bound. *)
   Parameter T_congr_norm_le : forall w a,
     (T_congr_norm w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
@@ -120,11 +171,6 @@ Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
     (T_extgcd a b <= k_gcd *
       N.of_nat ((Z.size_nat a + Z.size_nat b + 1) ^ 2))%N.
   Parameter k_congr_gcd k_congr_crt k_congr_transfer : N.
-  (** Payload concretization agrees with residue-class membership. *)
-  Parameter F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
-  (** Normalization keeps precisely the same represented integers. *)
-  Parameter F2_norm_gamma : forall w a z,
-    pgamma w (congr_norm w a) z <-> pgamma w a z.
   (** Normalization produces a canonical representation. *)
   Parameter F3_norm_canonical : forall w a, canonical w (congr_norm w a).
   (** Normalization is idempotent. *)
@@ -133,30 +179,6 @@ Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
   (** Chinese remainder meet retains each shared integer. *)
   Parameter F5_crt_meet_sound : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  (** Negation retains wrapped concrete negation. *)
-  Parameter F6_congr_neg_sound : forall w a x,
-    pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
-  (** Addition retains wrapped concrete addition. *)
-  Parameter F7_congr_add_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
-  (** Subtraction retains wrapped concrete subtraction. *)
-  Parameter F8_congr_sub_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
-  (** Multiplication retains wrapped concrete multiplication. *)
-  Parameter F9_congr_mul_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
-  (** Projection retains truncations to smaller widths. *)
-  Parameter F10_congr_project_sound : forall source target a x,
-    (target <= source)%positive -> pgamma source a x ->
-    pgamma target (congr_project source target a) (L.wrap target x).
-  (** Shift transfer retains the wrapped concrete shift. *)
-  Parameter F11_congr_shl_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y ->
-    pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
-  (** Remainder transfer retains every defined unsigned remainder. *)
-  Parameter F12_congr_urem_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> y <> 0%Z ->
-    pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
   (** The requested congruence rank is bounded by width plus two. *)
   Parameter F13_wrank_le : forall w a, congr_wrank w a <= Pos.to_nat w + 2.
   (** Payload widening uses the normalized congruence rank. *)

@@ -223,6 +223,26 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* CONVERT: sign_shape_laws: Not an inductive definition. *)
+  Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+    pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
+  Proof. Admitted. (* STUB *)
+  Lemma F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+    pgamma w (sign_neg a) (L.wrap w (- x)).
+  Proof. Admitted. (* STUB *)
+  Lemma F5_sign_and_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
+  Proof. Admitted. (* STUB *)
+  Lemma F6_sign_or_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
+  Proof. Admitted. (* STUB *)
+  Lemma F7_sign_xor_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
+  Proof. Admitted. (* STUB *)
 End Sign.
 
 Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
@@ -246,7 +266,7 @@ Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
   TimeFun sign_or.
   TimeFun sign_xor.
 
-  Definition psize (_ : positive) (_ : p) : nat := 1.
+  Definition psize (w : positive) (_ : p) : nat := Pos.to_nat w.
   Definition pwsize (_ : pwparam) : nat := 1.
   Definition c_payload : N := 1%N.
   (** STUB: sign payload size and cost obligations. *)
@@ -334,29 +354,9 @@ End SignT.
 
 Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
   Include SignT L.
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
-  Proof. Admitted. (* STUB *)
   Lemma F2_level : forall a, (sign_level a <= 3)%nat.
   Proof. Admitted. (* STUB *)
   Lemma F_pwrank : forall q w a, pwrank q w a = Nat.sub 3 (sign_level a).
-  Proof. Admitted. (* STUB *)
-  Lemma F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
-    pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
-  Proof. Admitted. (* STUB *)
-  Lemma F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
-    pgamma w (sign_neg a) (L.wrap w (- x)).
-  Proof. Admitted. (* STUB *)
-  Lemma F5_sign_and_sound : forall w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
-  Proof. Admitted. (* STUB *)
-  Lemma F6_sign_or_sound : forall w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
-  Proof. Admitted. (* STUB *)
-  Lemma F7_sign_xor_sound : forall w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
   Proof. Admitted. (* STUB *)
 End SignAll.
 

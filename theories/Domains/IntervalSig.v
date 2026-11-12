@@ -277,7 +277,7 @@ Module Type INTERVAL_SPEC (L : Z_LANGUAGE_OPS) (T : THRESHOLDS)
       if andb (0 <=? la)%Z (0 <=? lb)%Z then
         match ha, hb with
         | Fin ha, Fin hb =>
-          if andb (lb <=? k)%Z (hb <=? k)%Z then
+          if andb (lb <=? hb)%Z (hb <=? k)%Z then
             I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
           else I (Fin la) PosInf
         | _, _ => I (Fin la) PosInf
@@ -335,22 +335,22 @@ Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     1)%nat))%N.
   (** Backward addition charges the result and both operands. *)
   Parameter T_add_back_le : forall r a b, (T_add_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   (** Backward subtraction charges the result and both operands. *)
   Parameter T_sub_back_le : forall r a b, (T_sub_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   (** Backward multiplication charges the result and both operands. *)
   Parameter T_mul_back_le : forall r a b, (T_mul_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   (** Backward unsigned division charges the result and both operands. *)
   Parameter T_udiv_back_le : forall r a b, (T_udiv_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   (** Backward unsigned remainder charges the result and both operands. *)
   Parameter T_urem_back_le : forall r a b, (T_urem_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   (** Backward comparison charges the result and both operands. *)
   Parameter T_ult_back_le : forall r a b, (T_ult_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   (** Signed splitting charges the width and endpoints. *)
   Parameter T_signed_split_le : forall w a, (T_signed_split w a <=
     c_interval * N.of_nat (((Pos.to_nat w + size a + 1) ^ 2)%nat))%N.

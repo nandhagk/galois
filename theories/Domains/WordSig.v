@@ -288,7 +288,7 @@ Module Type WORD_PLAN (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Parameter F2_retag_sound : forall ws ps cs,
     Forall2 (fun w c => fst c = w /\ L.is_word w (snd c)) ws cs ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
-    length ps = length ws -> Forall2 tagged_gamma (retag ws ps) cs.
+    (length ws <= length ps)%nat -> Forall2 tagged_gamma (retag ws ps) cs.
   (** Untagging charges one constant step per tag. *)
   Parameter T1_untag : forall xs, (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
   (** Retagging charges one constant step per operand. *)

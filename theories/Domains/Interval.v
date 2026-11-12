@@ -153,7 +153,7 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
       if (Z.leb 0 la && Z.leb 0 lb)%bool then
         match ha, hb with
         | Fin ha, Fin hb =>
-          if andb (Z.leb lb k) (Z.leb hb k) then
+          if andb (Z.leb lb hb) (Z.leb hb k) then
             I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
           else I (Fin la) PosInf
         | _, _ => I (Fin la) PosInf
@@ -631,27 +631,27 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Proof. Admitted. (* STUB *)
   (** Backward addition charges the result and both operands. *)
   Lemma T_add_back_le : forall r a b, (T_add_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Backward subtraction charges the result and both operands. *)
   Lemma T_sub_back_le : forall r a b, (T_sub_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Backward multiplication charges the result and both operands. *)
   Lemma T_mul_back_le : forall r a b, (T_mul_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Backward unsigned division charges the result and both operands. *)
   Lemma T_udiv_back_le : forall r a b, (T_udiv_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Backward unsigned remainder charges the result and both operands. *)
   Lemma T_urem_back_le : forall r a b, (T_urem_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Backward comparison charges the result and both operands. *)
   Lemma T_ult_back_le : forall r a b, (T_ult_back r a b <=
-    c_interval * N.of_nat (((size r + size a + size b + 1) ^ 2)%nat))%N.
+    c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Signed splitting charges the width and endpoints. *)
   Lemma T_signed_split_le : forall w a, (T_signed_split w a <=
