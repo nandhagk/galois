@@ -164,7 +164,7 @@ Definition schedule_graph {R K} (code : K -> positive) (target : R -> K)
     (deps sides : R -> list K) (rows : list R) : digraph :=
   match fold_left (schedule_graph_row code target deps sides) rows
     (ScheduleGraphState nil Empty Empty) with
-  | ScheduleGraphState vs _ adjacency => Digraph (rev vs) adjacency
+  | ScheduleGraphState vs _ adjacency => Digraph (rev_append vs nil) adjacency
   end.
 
 TimeFun schedule_graph.

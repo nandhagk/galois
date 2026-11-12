@@ -170,6 +170,13 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
 
   Definition c_idx : N := 1. (* STUB *)
 
+  (** Preparation keeps the original key-width budget. *)
+  Lemma prepare_kw : forall p, kw (prepare p) = S.kw p.
+  Proof. Admitted. (* STUB *)
+  (** Preparation keeps the original row-work budget. *)
+  Lemma prepare_row_work : forall p s, row_work (prepare p) s = S.row_work p s.
+  Proof. Admitted. (* STUB *)
+
   Lemma T_prepare_le : forall p, S.wf p ->
     (T_prepare p <= c_idx * (
       N.of_nat ((length (S.rows p) +

@@ -297,6 +297,8 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   Definition structural (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
     Q.wf (ws_queue s) /\
     Q.fits (S.kw p + Nat.log2 (C p) + 3) (ws_queue s) /\ Q.pending (ws_queue s) <= C p /\
+    N.to_nat (Q.size (ws_queue s)) = length (filter (fun id =>
+      match Q.prio (ws_queue s) id with Some _ => true | None => false end) (row_ids p)) /\
     (forall pr id, Q.prio (ws_queue s) id = Some pr ->
       In id (row_ids p) /\ exists r, source_row p id = Some r /\
         pr = N.pos (row_rank p pol r)).
@@ -512,14 +514,17 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     end.
   (** Every state reached by the public solver satisfies its internal preparation duties. *)
   Parameter F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
+  (** Every reachable store satisfies the client invariant with arbitrary priorities. *)
+  Parameter F9_reachable_inv : forall p pol s, S.wf p -> reachable p pol s ->
+    forall x, B.inv p (look s x).
   (** Prepared ranks equal each row's least non-head write priority. *)
   Parameter F4_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
     trie_get id (ws_ranks (prepare p pol)) = Some (row_rank p pol r).
   (** Every continuing callback keeps the structural and client value invariants. *)
-  Parameter F9_step_inv : forall p pol s s1, S.wf p -> invariant p pol s ->
+  Parameter F9_step_inv : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
   (** Each intermediate primary or side update keeps the same invariant. *)
-  Parameter F9_update_inv : forall p pol s x a, S.wf p -> invariant p pol s ->
+  Parameter F9_update_inv : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     invariant p pol (update_one p pol s (x, a)).
 
@@ -536,14 +541,20 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
     (T_eval_row p r (ws_store s) <=
       k_eval * N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
+  (** Reading a numbered row pays for the bits of its identifier. *)
+  Parameter W2_row_at : forall p s id, In id (row_ids p) ->
+    (T_row_at s id <= k_eval * unit p)%N.
+  (** Reading a reader bucket pays for the bits of its declared key code. *)
+  Parameter W2_readers : forall p s c, S.wf p -> In c (key_support p) ->
+    (T_readers s c <= k_update * unit p)%N.
   (** Guarded enqueue pays each supplied reader occurrence even when it is already live. *)
-  Parameter W3_enqueue : forall p pol ids s, S.wf p -> invariant p pol s ->
+  Parameter W3_enqueue : forall p pol ids s, S.wf p -> prio_ok p pol -> invariant p pol s ->
     incl ids (row_ids p) ->
     (T_enqueue p pol ids s + queue_phi p (enqueue p pol ids s) <=
       k_update * N.of_nat (length ids + 1) * unit p + queue_phi p s)%N.
   (** W3 keeps the value invariant and charges reader pushes against queue potential. *)
-  Parameter W3_update : forall p pol s x a, S.wf p -> invariant p pol s -> B.inv p a ->
-    In (S.key_code x) (key_support p) ->
+  Parameter W3_update : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
+    B.inv p a -> In (S.key_code x) (key_support p) ->
     B.inv p (look (update_one p pol s (x, a)) x) /\
     (T_update_one p pol s (x, a) + queue_phi p (update_one p pol s (x, a)) <=
       k_update * N.of_nat (1 + push_work p s x a) * unit p +
@@ -562,7 +573,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     reachable p pol s -> step p pol s = inl s1 ->
-    (T_step p pol s + height_phi p rk h s1 + 1 <= height_phi p rk h s)%N.
+    (T_step p pol s + height_phi p rk h s1 + c_loopN <= height_phi p rk h s)%N.
   (** Weighted source credit fits the public weighted incidence budget. *)
   Parameter W4_initial : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
     (height_phi p rk h (prepare p pol) <=
@@ -583,7 +594,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   (** A callback that ends a stable segment is charged to its strict head events. *)
   Parameter W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
     step p pol s = inl s1 -> 0 < head_events pol s s1 ->
-    (T_step p pol s + 1 + queue_phi p s1 <=
+    (T_step p pol s + c_loopN + queue_phi p s1 <=
       k_round * N.of_nat (head_events pol s s1) * N.of_nat (C p + D p) * unit p +
       k_round * N.of_nat (head_events pol s s1) * head_unit p pol +
       queue_phi p s)%N.
@@ -596,7 +607,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
   Parameter W7_trace : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
-    (trace_cost p pol xs + N.of_nat (length xs) + queue_phi p last <=
+    (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
       k_loop * work p pol +
       queue_phi p (prepare p pol))%N.
   (** The visit count supplies fuel without charging abstract value sizes to fuel construction. *)
@@ -623,7 +634,7 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   (** All-head credit decreases per callback without the stable-segment lemma. *)
   Parameter W7_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
     reachable p pol s -> step p pol s = inl s1 ->
-    (T_step p pol s + all_head_phi p pol s1 + 1 <= all_head_phi p pol s)%N.
+    (T_step p pol s + all_head_phi p pol s1 + c_loopN <= all_head_phi p pol s)%N.
   (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
   Parameter W7_all_heads_initial : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (all_head_phi p pol (prepare p pol) <=
@@ -634,3 +645,13 @@ Module Type WORKLIST_ALL (L : WLATTICE_T) (S : SYSTEM_T L)
     (P : POLICY_T L) (Q : PQ_T) (G : DIGRAPH_T) (W : WTO_T)
     (Sched : SCHEDULE_T L S G W) (B : BUDGET L S) :=
   WORKLIST_T L S Sched B <+ WORKLIST_PLAN L S P Q G W Sched B.
+
+Module Type WORKLIST_LEAST_PLAN (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
+    (P : POLICY_T L) (Q : PQ_T) (G : DIGRAPH_T) (W : WTO_T)
+    (Sched : SCHEDULE_T L S G W) (B : BUDGET L S)
+    (Import V : WORKLIST_ALL L S P Q G W Sched B).
+  (** Widening-free reachable stores lie below every post-solution of a monotone system. *)
+  Parameter F10_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
+    reachable p pol s -> S.post_solution p s' ->
+    forall x, L.leb (look s x) (s' x) = true.
+End WORKLIST_LEAST_PLAN.

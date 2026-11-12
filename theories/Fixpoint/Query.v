@@ -30,7 +30,7 @@ Definition eval_step {K A F} (resume : F -> A -> query K A F) (look : K -> A)
     (s : query K A F * list (K * A))
     : query K A F * list (K * A) + A * list (K * A) :=
   match peel (fst s) (snd s) with
-  | (inl a, acc) => inr (a, rev acc)
+  | (inl a, acc) => inr (a, rev_append acc nil)
   | (inr (x, f), acc) => inl (resume f (look x), acc)
   end.
 TimeFun eval_step.

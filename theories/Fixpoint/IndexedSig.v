@@ -71,6 +71,10 @@ Module Type INDEXED_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import I : INDEXED L 
   Include LOCAL_TIME L I.
   Parameter T_prepare : S.prog -> N.
   Parameter c_idx : N.
+  (** Preparation keeps the original key-width budget. *)
+  Parameter prepare_kw : forall p, kw (prepare p) = S.kw p.
+  (** Preparation keeps the original row-work budget. *)
+  Parameter prepare_row_work : forall p s, row_work (prepare p) s = S.row_work p s.
   (** Preparation pays for rows, dependency occurrences and encoded keys. *)
   Parameter T_prepare_le : forall p, S.wf p ->
     (T_prepare p <= c_idx * (
