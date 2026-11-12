@@ -9,7 +9,12 @@ From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
 
 Module ProductCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L) <: PRODUCT_OPS L A B.
-  Include Product.ProductCode A B.
+  Definition t := (A.t * B.t)%type.
+  Definition bot : t := (A.bot, B.bot).
+  Definition is_bot (x : t) := orb (A.is_bot (fst x)) (B.is_bot (snd x)).
+  Definition leb (x y : t) :=
+    orb (is_bot x) (andb (A.leb (fst x) (fst y)) (B.leb (snd x) (snd y))).
+  Definition join (x y : t) : t := (A.join (fst x) (fst y), B.join (snd x) (snd y)).
   Definition normalize (x : t) : t :=
     if orb (A.is_bot (fst x)) (B.is_bot (snd x)) then bot else x.
   Definition top : t := (A.top, B.top).
@@ -17,9 +22,10 @@ Module ProductCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L) <: PRODUCT_OPS L A 
     normalize (A.meet (fst x) (fst y), B.meet (snd x) (snd y)).
   Definition wparam := (A.wparam * B.wparam)%type.
   Definition widen (p : wparam) (x y : t) : t :=
-    (A.widen (fst p) (fst x) (fst y), B.widen (snd p) (snd x) (snd y)).
+    if is_bot y then x
+    else (A.widen (fst p) (fst x) (fst y), B.widen (snd p) (snd x) (snd y)).
   Definition narrow (x y : t) : t :=
-    (A.narrow (fst x) (fst y), B.narrow (snd x) (snd y)).
+    if is_bot y then y else (A.narrow (fst x) (fst y), B.narrow (snd x) (snd y)).
   Definition forward (o : L.op) (xs : list t) : t :=
     normalize (A.forward o (map fst xs), B.forward o (map snd xs)).
   Definition backward (o : L.op) (r : t) (xs : list t) : list t :=
@@ -76,7 +82,7 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* SIG-QUESTION: raw half-bottom product can prevent rank decrease *)
+  Proof. Admitted.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
   Proof. Admitted.
@@ -99,6 +105,9 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   Proof. Admitted.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
+  Proof. Admitted.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,

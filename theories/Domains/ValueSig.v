@@ -28,6 +28,8 @@ Module Type VALUE_DOMAIN_LAWS (L : LANG) (Import V : VALUE_DOMAIN_OPS L).
   Parameter gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
   (** A positive bottom test excludes every concrete value. *)
   Parameter is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Parameter is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   (** Forward transfer contains every successful concrete result. *)
   Parameter forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.

@@ -139,7 +139,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Definition gamma (s : t) (st : X.t -> L.val) : Prop :=
     match s with
     | Unreached => False
-    | Reached m => forall x, V.gamma (read m x) (st x)
+    | Reached m => M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x)
     end.
 
   Lemma leb_refl : forall a, leb a a = true.
@@ -189,7 +189,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
-  Proof. Admitted. (* SIG-QUESTION: raw hidden bottom conflicts with pointwise gamma *)
+  Proof. Admitted.
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
   Proof. Admitted.
@@ -235,8 +235,9 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Unreachable states describe no stores. *)
   Lemma gamma_unreached : forall st, ~ gamma Unreached st.
   Proof. Admitted.
-  (** Reached maps describe stores pointwise. *)
+  (** Reached maps without recognized bottoms describe stores pointwise. *)
   Lemma gamma_reached : forall m st,
-    gamma (Reached m) st <-> forall x, V.gamma (read m x) (st x).
+    gamma (Reached m) st <->
+      M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x).
   Proof. Admitted.
 End Env.

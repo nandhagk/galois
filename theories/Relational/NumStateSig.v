@@ -51,9 +51,10 @@ Module Type NUM_STATE (X : KEY) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N
 
 Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (Import D : NUM_STATE X L N F).
-  (* spec: size wsize assign_work havoc_work assume_work range_work *)
+  (* spec: size wsize wunits assign_work havoc_work assume_work range_work *)
   Parameter size : t -> nat.
   Parameter wsize : wparam -> nat.
+  Parameter wunits : t -> nat.
   Parameter assign_work : X.t -> term L.op X.t -> t -> nat.
   Parameter havoc_work : X.t -> t -> nat.
   Parameter assume_work : L.guard -> list (term L.op X.t) -> t -> nat.

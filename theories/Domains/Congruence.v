@@ -188,6 +188,10 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted.
+  (** Every payload below a recognized bottom is recognized as bottom. *)
+  Lemma pis_bot_below : forall w a b,
+    pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
+  Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof. Admitted.

@@ -59,18 +59,22 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Lemma T_check_empty_le : forall P ms,
     (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
-  Definition accumulate_term (m : Z) (acc : PTrieCode.t Z) (p : X.t * Z)
-      : PTrieCode.t Z :=
+  Definition accumulate_term (m : Z) (acc : PTrieCode.t (Z * Z)) (p : X.t * Z)
+      : PTrieCode.t (Z * Z) :=
     let key := X.encode (fst p) in
-    let previous := match PTrieCode.get key acc with Some z => z | None => 0%Z end in
-    PTrieCode.set key (previous + m * snd p)%Z acc.
-  Definition coefficient_trie (P : list (lcons X.t)) (ms : list Z) : PTrieCode.t Z :=
+    let previous := match PTrieCode.get key acc with
+      | Some z => z | None => (0%Z, 0%Z) end in
+    let d := (snd p * m)%Z in
+    PTrieCode.set key
+      (if (0 <=? d)%Z then (fst previous + d, snd previous)%Z
+       else (fst previous, snd previous - d)%Z) acc.
+  Definition coefficient_trie (P : list (lcons X.t)) (ms : list Z) : PTrieCode.t (Z * Z) :=
     fold_left (fun acc pm => fold_left (accumulate_term (snd pm)) (lhs (fst pm)) acc)
       (List.combine P ms) PTrieCode.empty.
   (** A successful combination agrees with the concrete trie accumulation at every key. *)
   Lemma combine_trie : forall P ms s, combine P ms = Some s -> forall x,
     (match PTrieCode.get (X.encode x) (coefficient_trie P ms) with
-     | Some z => z | None => 0%Z end) =
+     | Some z => (fst z - snd z)%Z | None => 0%Z end) =
     fold_right (fun p z => if X.eqb x (fst p) then (snd p + z)%Z else z) 0%Z (lhs s).
   Proof. Admitted. (* STUB *)
   (** Successful combination retains the consequences of all input rows. *)
