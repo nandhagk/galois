@@ -4,11 +4,30 @@
     For example, an environment budget bounds every binding by a fixed interval size.
     Builds on: Fixpoint.SystemSig and Lattice.LatticeSig. *)
 
-From Stdlib Require Import List NArith Arith.
+From Stdlib Require Import List NArith Arith PArith.
 From Argent Require Import BigO.
-From Galois.Base Require Import MapSig Trie.
+From Galois.Base Require Import MapSig Trie HeapSig Loop.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Fixpoint Require Import SystemSig PolicySig SolverSig ScheduleSig.
+From Galois.Graph Require Import DigraphSig WtoSig.
+From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig ScheduleSig.
+
+(** Worklist states keep values, strict head counters and the priority queue as data. *)
+Record wl_state (K A Q : Type) := WlState {
+  wl_store : kmap K A;
+  wl_counters : PTrieCode.t nat;
+  wl_queue : Q
+}.
+
+Arguments WlState {K A Q} _ _ _.
+Arguments wl_store {K A Q} _.
+Arguments wl_counters {K A Q} _.
+Arguments wl_queue {K A Q} _.
+
+(** A path records the input state of every continuing callback in order. *)
+Inductive wl_path {A R : Type} (step : A -> A + R) : A -> list A -> A -> Prop :=
+  | WlPath_nil s : wl_path step s nil s
+  | WlPath_cons s s1 xs last :
+      step s = inl s1 -> wl_path step s1 xs last -> wl_path step s (s :: xs) last.
 
 Module Type BUDGET (L : WLATTICE_T) (S : SYSTEM_T L).
   (* spec: inv vsize wmax *)
@@ -55,6 +74,26 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
   (** A widening-free policy has no configured heads. *)
   Definition widening_free (pol : policy L.wparam) : Prop :=
     forall c, trie_get c (heads pol) = None.
+  (** The fallback charges each declared key once for its actual reader occurrences. *)
+  Definition key_support (p : S.prog) : list positive :=
+    nodup Pos.eq_dec (List.map S.key_code
+      (flat_map (fun r => S.writes p r ++ S.deps p r) (S.rows p))).
+  Definition reader_degree (p : S.prog) (x : positive) : nat :=
+    length (filter (fun r => existsb
+      (fun y => Pos.eqb x (S.key_code y)) (S.deps p r)) (S.rows p)).
+  Definition head_allowance (p : S.prog) (pol : policy L.wparam) (x : positive) : nat :=
+    match trie_get x (heads pol) with
+    | Some cfg => delay cfg + B.wmax p (wp pol) + 2
+    | None => 0
+    end.
+  (** Every declared read and write receives a widening head in the fallback. *)
+  Definition all_heads (p : S.prog) (pol : policy L.wparam) : Prop :=
+    forall x, In x (key_support p) ->
+      exists cfg, trie_get x (heads pol) = Some cfg.
+  Definition all_head_work (p : S.prog) (pol : policy L.wparam) : nat :=
+    prep p + (C p + fold_right Nat.add 0
+      (List.map (fun x => head_allowance p pol x * reader_degree p x) (key_support p))) *
+      unit p.
   (* spec: fuel_for *)
   Parameter fuel_for : S.prog -> policy L.wparam -> N.
   Parameter T_run : S.prog -> policy L.wparam -> N -> nat.
@@ -73,6 +112,9 @@ Module Type WORKLIST_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
       rk a < rk b /\ rk b <= h) ->
     T_run p pol fuel <= c_wl *
       (prep p + (C p + h * D p) * unit p + N.size_nat fuel + 1).
+  (** Widening at every key has a credit bound independent of the round argument and cuts. *)
+  Parameter T_run_all_heads_le : forall p pol fuel, S.wf p -> all_heads p pol ->
+    T_run p pol fuel <= c_wl * (all_head_work p pol + N.size_nat fuel + 1).
   (** Running at sufficient fuel has the published work bound. *)
   Parameter run_bigO : bigO
     (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
@@ -83,3 +125,291 @@ End WORKLIST_TIME.
 Module Type WORKLIST_T (L : WLATTICE_T) (S : SYSTEM_T L)
     (Sched : SCHEDULE_OPS L S) (B : BUDGET L S) :=
   SOLVER_OPS L S <+ WORKLIST_TIME L S Sched B.
+
+Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
+    (P : POLICY_T L) (Q : PQ_T) (G : DIGRAPH_T) (W : WTO_T)
+    (Sched : SCHEDULE_T L S G W) (B : BUDGET L S)
+    (Import V : WORKLIST_T L S Sched B).
+  Definition state := wl_state S.key L.t Q.t.
+  Parameter prepare : S.prog -> policy L.wparam -> state.
+  Parameter row_at : S.prog -> positive -> option S.row.
+  Parameter readers : S.prog -> positive -> list positive.
+  Parameter eval_row : S.prog -> S.row -> kmap S.key L.t ->
+    option (L.t * list (S.key * L.t)).
+  Parameter enqueue : S.prog -> policy L.wparam -> list positive -> state -> state.
+  Parameter update_one : S.prog -> policy L.wparam -> state -> S.key * L.t -> state.
+  Parameter step : S.prog -> policy L.wparam -> state ->
+    state + outcome (kmap S.key L.t).
+  Parameter T_prepare : S.prog -> policy L.wparam -> nat.
+  Parameter T_row_at : S.prog -> positive -> nat.
+  Parameter T_readers : S.prog -> positive -> nat.
+  Parameter T_eval_row : S.prog -> S.row -> kmap S.key L.t -> nat.
+  Parameter T_enqueue : S.prog -> policy L.wparam -> list positive -> state -> nat.
+  Parameter T_update_one : S.prog -> policy L.wparam -> state -> S.key * L.t -> nat.
+  Parameter T_step : S.prog -> policy L.wparam -> state -> nat.
+  Parameter k_prepare k_eval k_update k_credit k_round k_loop k_fuel : nat.
+
+  Definition look (s : state) (x : S.key) : L.t :=
+    look_or S.key_code L.bot (wl_store s) x.
+  Definition counter (s : state) (c : positive) : nat :=
+    match trie_get c (wl_counters s) with Some n => n | None => 0 end.
+  Definition priority (pol : policy L.wparam) (c : positive) : positive :=
+    match trie_get c (prio pol) with Some n => n | None => 1%positive end.
+  (** Numbering distinguishes row occurrences even when the source row list repeats a row. *)
+  Definition row_ids (p : S.prog) : list positive :=
+    List.map Pos.of_succ_nat (seq 0 (C p)).
+  Definition weight (p : S.prog) (id : positive) : nat :=
+    match row_at p id with Some r => length (S.deps p r) + 1 | None => 0 end.
+  Definition degree (p : S.prog) (x : positive) : nat := length (readers p x).
+  Definition weighted_degree (p : S.prog) (x : positive) : nat :=
+    fold_right Nat.add 0 (List.map (weight p) (readers p x)).
+  Definition queue_credit (p : S.prog) (s : state) : nat :=
+    fold_right Nat.add 0 (List.map
+      (fun id => match Q.prio (wl_queue s) id with
+        | Some _ => weight p id
+        | None => 0
+        end) (row_ids p)).
+  Definition queue_phi (p : S.prog) (s : state) : nat :=
+    Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 2) (wl_queue s).
+  (** Support couples live row identifiers to their target priorities and bounds pending entries. *)
+  Definition structural (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
+    Q.wf (wl_queue s) /\ Q.pending (wl_queue s) <= C p /\
+    (forall pr id, Q.prio (wl_queue s) id = Some pr ->
+      In id (row_ids p) /\ exists r, row_at p id = Some r /\
+        pr = N.pos (priority pol (S.key_code (S.target p r)))).
+  Definition invariant (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
+    structural p pol s /\ forall x, B.inv p (look s x).
+  Definition reachable (p : S.prog) (pol : policy L.wparam) (s : state) : Prop :=
+    exists xs, wl_path (step p pol) (prepare p pol) xs s.
+  Definition trace_cost (p : S.prog) (pol : policy L.wparam) (xs : list state) : nat :=
+    fold_right Nat.add 0 (List.map (T_step p pol) xs).
+  Definition popped_ids (xs : list state) : list positive :=
+    flat_map (fun s => match Q.pop (wl_queue s) with
+      | Some (_, id, _) => id :: nil
+      | None => nil
+      end) xs.
+  Definition nonhead_priorities (p : S.prog) (pol : policy L.wparam)
+      (xs : list state) : list positive :=
+    flat_map (fun id => match row_at p id with
+      | Some r =>
+        let c := S.key_code (S.target p r) in
+        match trie_get c (heads pol) with
+        | None => priority pol c :: nil
+        | Some _ => nil
+        end
+      | None => nil
+      end) (popped_ids xs).
+  Definition heads_unchanged (pol : policy L.wparam) (s s1 : state) : Prop :=
+    forall c cfg, trie_get c (heads pol) = Some cfg -> counter s1 c = counter s c.
+  (** Stable segments exclude every strict head update, including repeated side updates. *)
+  Definition stable_segment (p : S.prog) (pol : policy L.wparam)
+      (xs : list state) : Prop :=
+    forall s s1, In s xs -> step p pol s = inl s1 -> heads_unchanged pol s s1.
+  Definition head_events (pol : policy L.wparam) (s s1 : state) : nat :=
+    fold_right Nat.add 0 (List.map
+      (fun ch => counter s1 (fst ch) - counter s (fst ch))
+      (PTrieCode.elements (heads pol))).
+  (** Height credit pays the whole evaluation weight of every reader that a change can enqueue. *)
+  Definition height_phi (p : S.prog) (rk : L.t -> nat) (h : nat) (s : state) : nat :=
+    k_credit * (queue_credit p s + fold_right Nat.add 0
+      (List.map (fun x => (h - rk (look s x)) * weighted_degree p (S.key_code x))
+        (flat_map (S.writes p) (S.rows p)))) * unit p + queue_phi p s.
+  (** Head credit pays reader propagation from unused strict-update allowances. *)
+  Definition all_head_phi (p : S.prog) (pol : policy L.wparam) (s : state) : nat :=
+    k_credit * (queue_credit p s + fold_right Nat.add 0
+      (List.map (fun c => (head_allowance p pol c - counter s c) *
+        weighted_degree p c) (key_support p))) * unit p + queue_phi p s.
+  (** At phase boundaries each unused round pays a full sweep and the queued reader credit. *)
+  Definition round_phi (p : S.prog) (pol : policy L.wparam)
+      (used : nat) (s : state) : nat :=
+    k_round * ((rounds p pol - used) * (C p + D p) + queue_credit p s) * unit p +
+      queue_phi p s.
+  (** Output cost follows the intermediate states of the ordered update fold. *)
+  Definition output_cost (p : S.prog) (pol : policy L.wparam)
+      (outs : list (S.key * L.t)) (s : state) : nat :=
+    snd (fold_left (fun sn xa =>
+      (update_one p pol (fst sn) xa, snd sn + T_update_one p pol (fst sn) xa))
+      outs (s, 0)).
+
+  (** Numbered lookup agrees with the corresponding original row occurrence. *)
+  Parameter F1_numbering : forall p n,
+    row_at p (Pos.of_succ_nat n) = nth_error (S.rows p) n.
+  (** Reader buckets retain every reading row occurrence once. *)
+  Parameter F2_readers : forall p c,
+    readers p c = filter (fun id => match row_at p id with
+      | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+      | None => false
+      end) (row_ids p).
+  (** Evaluation observes the current store through the system's public evaluator. *)
+  Parameter F3_eval : forall p r m,
+    eval_row p r m = S.eval p r (look_or S.key_code L.bot m).
+  (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
+  Parameter F4_prepare : forall p pol, S.wf p ->
+    invariant p pol (prepare p pol) /\
+    (forall x, look (prepare p pol) x = L.bot) /\
+    (forall c, counter (prepare p pol) c = 0) /\
+    (forall id, In id (row_ids p) -> exists pr, Q.prio (wl_queue (prepare p pol)) id = Some pr).
+  (** Enqueue changes the queue alone and guards every push by live absence. *)
+  Parameter F5_enqueue : forall p pol ids s,
+    wl_store (enqueue p pol ids s) = wl_store s /\
+    wl_counters (enqueue p pol ids s) = wl_counters s /\
+    wl_queue (enqueue p pol ids s) = fold_left
+      (fun q id => match Q.prio q id, row_at p id with
+        | None, Some r => Q.push (N.pos (priority pol (S.key_code (S.target p r)))) id q
+        | _, _ => q
+        end) ids (wl_queue s).
+  (** An update writes the policy result and enqueues its readers after a strict value change. *)
+  Parameter F6_update : forall p pol s x a,
+    let c := S.key_code x in
+    let ac := P.update pol c (counter s c) (look s x) a in
+    let s1 := WlState (PTrieCode.set c (x, fst ac) (wl_store s))
+      (PTrieCode.set c (snd ac) (wl_counters s)) (wl_queue s) in
+    update_one p pol s (x, a) =
+      if L.leb a (look s x) then s else enqueue p pol (readers p c) s1.
+  (** Each callback pops one row and processes its primary and side outputs in occurrence order. *)
+  Parameter F7_step : forall p pol s,
+    step p pol s = match Q.pop (wl_queue s) with
+    | None => inr (Solved (wl_store s))
+    | Some (_, id, q1) =>
+      match row_at p id with
+      | None => inr (Rejected Bad_policy)
+      | Some r =>
+        match eval_row p r (wl_store s) with
+        | None => inr (Rejected Check_failed)
+        | Some (a, ss) => inl (fold_left (update_one p pol)
+            ((S.target p r, a) :: ss) (WlState (wl_store s) (wl_counters s) q1))
+        end
+      end
+    end.
+  (** The public solver is the binary-fuel loop over these callbacks. *)
+  Parameter F8_run : forall p pol fuel,
+    run p pol fuel = match loopN (step p pol) fuel (prepare p pol) with
+    | inl s => OutOfFuel (wl_store s)
+    | inr result => result
+    end.
+  (** Every continuing callback keeps the structural and client value invariants. *)
+  Parameter F9_step_inv : forall p pol s s1, S.wf p -> invariant p pol s ->
+    step p pol s = inl s1 -> invariant p pol s1.
+  (** Each intermediate primary or side update keeps the same invariant. *)
+  Parameter F9_update_inv : forall p pol s x a, S.wf p -> invariant p pol s ->
+    B.inv p a -> In (S.key_code x) (key_support p) ->
+    invariant p pol (update_one p pol s (x, a)).
+
+  (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
+  (* SIG-QUESTION: Empty row lists give prep = 0 although preparation has driver cost.
+     Raw priority widths also remain outside prep. The requested bound is unchanged. *)
+  Parameter W1_prepare : forall p pol, S.wf p ->
+    T_prepare p pol <= k_prepare * prep p.
+  (** Initial guarded pushes supply the potential consumed by later queue operations. *)
+  Parameter W1_queue_phi : forall p pol, S.wf p ->
+    queue_phi p (prepare p pol) <= k_prepare * (C p + D p) * unit p.
+  (** W2 charges every dependency-resume occurrence on invariant stores. *)
+  Parameter W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
+    T_eval_row p r (wl_store s) <= k_eval * (length (S.deps p r) + 1) * unit p.
+  (** Guarded enqueue pays each supplied reader occurrence even when it is already live. *)
+  Parameter W3_enqueue : forall p pol ids s, S.wf p -> invariant p pol s ->
+    incl ids (row_ids p) ->
+    T_enqueue p pol ids s + queue_phi p (enqueue p pol ids s) <=
+      k_update * (length ids + 1) * unit p + queue_phi p s.
+  (** W3 keeps the value invariant and charges reader pushes against queue potential. *)
+  Parameter W3_update : forall p pol s x a, S.wf p -> invariant p pol s -> B.inv p a ->
+    In (S.key_code x) (key_support p) ->
+    B.inv p (look (update_one p pol s (x, a)) x) /\
+    T_update_one p pol s (x, a) + queue_phi p (update_one p pol s (x, a)) <=
+      k_update * (1 + degree p (S.key_code x)) * unit p + queue_phi p s.
+  (** Callback accounting retains every emitted occurrence and every intermediate update cost. *)
+  Parameter W3_step : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
+    Q.pop (wl_queue s) = Some (pr, id, q1) -> row_at p id = Some r ->
+    eval_row p r (wl_store s) = Some (a, ss) ->
+    T_step p pol s <= k_loop * (Q.T_pop (wl_queue s) + T_row_at p id +
+      T_eval_row p r (wl_store s) + S.T_target p r +
+      output_cost p pol ((S.target p r, a) :: ss)
+        (WlState (wl_store s) (wl_counters s) q1) + length ss + 1).
+  (** W4 spends weighted rank credit for each callback in a widening-free run. *)
+  Parameter W4_credit : forall p pol rk h s s1, S.wf p -> widening_free pol ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) ->
+    reachable p pol s -> step p pol s = inl s1 ->
+    T_step p pol s + height_phi p rk h s1 + 1 <= height_phi p rk h s.
+  (** Weighted source credit must fit the unchanged public incidence budget. *)
+  (* SIG-QUESTION: The landed credit weights output occurrences by reader degree.
+     Evaluation adds reader weights. The public D counts declared incidences alone. *)
+  Parameter W4_initial : forall p pol rk h, S.wf p -> widening_free pol ->
+    height_phi p rk h (prepare p pol) <= k_credit * (C p + h * D p) * unit p.
+  (** Cut edges make successive non-head target priorities nondecreasing in a stable segment. *)
+  Parameter W5_priority : forall p pol s xs last i j a b,
+    S.wf p -> Sched.cuts p pol = true -> reachable p pol s ->
+    wl_path (step p pol) s xs last -> stable_segment p pol xs ->
+    i < j -> nth_error (nonhead_priorities p pol xs) i = Some a ->
+    nth_error (nonhead_priorities p pol xs) j = Some b -> (a <= b)%positive.
+  (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
+  Parameter W5_round : forall p pol s xs last,
+    S.wf p -> Sched.cuts p pol = true -> reachable p pol s ->
+    wl_path (step p pol) s xs last -> stable_segment p pol xs ->
+    (forall id r, row_at p id = Some r ->
+      count_occ Pos.eq_dec (popped_ids xs) id <=
+        match trie_get (S.key_code (S.target p r)) (heads pol) with
+        | Some _ => length (S.deps p r) + 1
+        | None => 1
+        end) /\
+    trace_cost p pol xs + queue_phi p last <=
+      k_round * (C p + D p) * unit p + queue_phi p s.
+  (** A callback that ends a stable segment is charged to its strict head events. *)
+  (* SIG-QUESTION: Absorbing W3_step here still requires the missing side multiplicity,
+     policy parameter size, unary counter and raw priority accounting. *)
+  Parameter W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
+    step p pol s = inl s1 -> 0 < head_events pol s s1 ->
+    T_step p pol s + 1 + queue_phi p s1 <=
+      k_round * head_events pol s s1 * (C p + D p) * unit p + queue_phi p s.
+  (** W6 bounds every finite prefix's strict head events by the advertised round count. *)
+  (* SIG-QUESTION: The unchanged Policy.head_updates_le and head_strict_steps
+     have source counterexamples recorded for F1. No rank hypothesis is added here. *)
+  Parameter W6_rounds : forall p pol xs last, S.wf p ->
+    wl_path (step p pol) (prepare p pol) xs last ->
+    head_events pol (prepare p pol) last + 1 <= rounds p pol /\
+    (forall c, In c (key_support p) ->
+      counter last c <= head_allowance p pol c).
+  (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
+  Parameter W7_trace : forall p pol xs last, fits p pol ->
+    wl_path (step p pol) (prepare p pol) xs last ->
+    trace_cost p pol xs + length xs + queue_phi p last <=
+      k_loop * (C p + D p) * rounds p pol * unit p + queue_phi p (prepare p pol).
+  (** The visit count supplies fuel without charging abstract value sizes to fuel construction. *)
+  Parameter W7_visits : forall p pol xs last, fits p pol ->
+    wl_path (step p pol) (prepare p pol) xs last ->
+    length xs < k_fuel * ((C p + D p) * rounds p pol + 1).
+  (** Stopping callbacks must solve and must fit the final driver budget. *)
+  Parameter W7_stop : forall p pol s result, S.wf p -> reachable p pol s ->
+    step p pol s = inr result ->
+    (exists m, result = Solved m) /\ T_step p pol s <= k_loop * (unit p + 1).
+  (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
+  Parameter W7_loop : forall p pol fuel, fits p pol ->
+    T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
+      ((C p + D p) * rounds p pol * unit p + queue_phi p (prepare p pol) +
+        N.size_nat fuel + 1).
+  (** Fuel is chosen from the row-visit budget and includes the final empty pop. *)
+  Parameter W7_fuel : forall p pol,
+    fuel_for p pol = N.of_nat (k_fuel * ((C p + D p) * rounds p pol + 1)).
+  (** W7 connects the derived solver time to preparation and the derived binary-loop time. *)
+  Parameter W7_run : forall p pol fuel,
+    T_run p pol fuel <= k_loop * (T_prepare p pol +
+      T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 1).
+
+  (** All-head credit decreases per callback without the stable-segment lemma. *)
+  Parameter W7_all_heads_credit : forall p pol s s1, S.wf p -> all_heads p pol ->
+    reachable p pol s -> step p pol s = inl s1 ->
+    T_step p pol s + all_head_phi p pol s1 + 1 <= all_head_phi p pol s.
+  (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
+  (* SIG-QUESTION: Reader evaluation weights, emitted side multiplicity, raw priority
+     widths and unary policy counters need accounting within the unchanged unit. *)
+  Parameter W7_all_heads_initial : forall p pol, S.wf p -> all_heads p pol ->
+    all_head_phi p pol (prepare p pol) <= k_credit *
+      (C p + fold_right Nat.add 0
+        (List.map (fun c => head_allowance p pol c * reader_degree p c) (key_support p))) *
+      unit p.
+End WORKLIST_PLAN.
+
+Module Type WORKLIST_ALL (L : WLATTICE_T) (S : SYSTEM_T L)
+    (P : POLICY_T L) (Q : PQ_T) (G : DIGRAPH_T) (W : WTO_T)
+    (Sched : SCHEDULE_T L S G W) (B : BUDGET L S) :=
+  WORKLIST_T L S Sched B <+ WORKLIST_PLAN L S P Q G W Sched B.
