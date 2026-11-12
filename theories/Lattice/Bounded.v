@@ -80,6 +80,9 @@ Module BoundedSetT (K : KEY_T) (S : SET_T K) (U : UNIVERSE K S) <: LATTICE_T.
 
   Definition size (a : t) : nat := S.weight (proj1_sig a).
   Definition c_lat : N := 1. (* STUB *)
+  (** The lattice constant pays for at least one call. *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
 
   (** Restricted inclusion has the time bound of the underlying set operation. *)
   Lemma T_leb_le : forall a b,

@@ -111,6 +111,9 @@ Module FlatT (K : KEY_T) <: BLATTICE_T.
     | FVal a => K.bits a + 1
     end.
   Definition c_lat : N := 1. (* STUB *)
+  (** The lattice constant pays for at least one call. *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
 
   Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
