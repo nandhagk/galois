@@ -194,7 +194,13 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.
   Lemma point_sound : forall a v c, point a = Some v -> gamma a c -> c = v.
-  Proof. Admitted.
+  Proof.
+    intros [|w p|] [v x] [u z] Hpoint Hgamma; cbn in Hpoint; try discriminate.
+    destruct (W.ppoint w p) as [value|] eqn:Hpayload; [|discriminate].
+    inversion Hpoint; subst v x.
+    destruct Hgamma as [Hwidth [Hword Hpayload_gamma]]. cbn in Hwidth. subst u.
+    f_equal. exact (W.ppoint_sound w p z value Hpayload Hword Hpayload_gamma).
+  Qed.
   Lemma abst_sound : forall v, gamma (abst v) v.
   Proof. Admitted.
 End Tagged.
