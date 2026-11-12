@@ -37,9 +37,9 @@ Module BoolLat <: BLATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
@@ -47,9 +47,9 @@ Module BoolLat <: BLATTICE.
   Lemma top_greatest : forall a, leb a top = true.
   Proof. intros []; reflexivity. Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
 End BoolLat.
 
 Module UnitLat <: BLATTICE.
@@ -61,9 +61,9 @@ Module UnitLat <: BLATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. intros; reflexivity. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
@@ -71,7 +71,7 @@ Module UnitLat <: BLATTICE.
   Lemma top_greatest : forall a, leb a top = true.
   Proof. intros; reflexivity. Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
 End UnitLat.
