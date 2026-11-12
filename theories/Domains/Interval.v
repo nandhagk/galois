@@ -399,10 +399,10 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q16: thresholds [0] widen [PosInf,PosInf] to [0,PosInf], growing rank 0 to 1. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q16: thresholds [0] widen [PosInf,PosInf] to [0,PosInf], growing rank 0 to 1. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
