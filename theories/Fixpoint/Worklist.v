@@ -258,7 +258,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (N.of_nat (prep p) + N.of_nat ((C p + D p) * rounds p pol) * unit p +
       N.of_nat (rounds p pol) * (N.of_nat (Nat.log2 (rounds p pol) + 1) +
         L.c_lat * N.of_nat (L.wsize (wp pol))))%N.
-  Definition fuel_for (p : S.prog) (pol : policy L.wparam) : N := work p pol.
+  Definition fuel_for (p : S.prog) (pol : policy L.wparam) : N :=
+    (k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   Definition look (s : state) (x : S.key) : L.t :=
     look_or S.key_code L.bot (ws_store s) x.
   Definition counter (s : state) (c : positive) : N :=
