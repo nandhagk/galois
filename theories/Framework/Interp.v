@@ -1,5 +1,6 @@
 (** * Abstract interpretation of ordered actions *)
-From Stdlib Require Import List.
+From Stdlib Require Import List Bool NArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -16,6 +17,7 @@ Module InterpCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
   Definition row := dense_row N.t E.t.
   Definition frame := E.t.
   Definition key_code := N.encode.
+  Definition key_eqb := N.eqb.
   Definition rows p : list row := map Seed (C.entries p) ++ map Flow (C.edges p).
   Definition target p (r : row) : key :=
     match r with Seed n => n | Flow e => C.dst p e end.
@@ -45,6 +47,9 @@ Module Interp (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
   Proof. exact N.encode_inj. Qed.
 
+  Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
+  Proof. Admitted.
+
   Lemma eval_total : forall p r look, wf p -> In r (rows p) -> eval p r look <> None.
   Proof. intros p [n|e] look _ _; discriminate. Qed.
 
@@ -63,6 +68,10 @@ Module Interp (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
       unfold eval, deps, start, resume in Heval; simpl in Heval;
       inversion Heval; subst; contradiction.
   Qed.
+
+  Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
+    eval p r look = Some (a, ss) -> length ss <= length (sides p r).
+  Proof. Admitted.
 
   Lemma rows_spec : forall p, rows p = map Seed (C.entries p) ++ map Flow (C.edges p).
   Proof. reflexivity. Qed.
@@ -94,3 +103,66 @@ Module InterpSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
   End Sound.
   Include Sound.
 End InterpSound.
+
+Module InterpT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_BASE_T P N E) (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V)
+    (B : INTERP_ENVELOPE P E X L V A D) <: INTERP_T P N E C X L V A D B.
+  Include Interp P N E C X L V A D.
+  Include INTERP_COST_SPEC P N E C X L V A D B.
+  Definition row_work := interp_work.
+  Definition kw := interp_kw.
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+  Definition c_sys : N := 1%N. (* STUB *)
+  (** Step budgets grow with the size of abstract values. *)
+  Lemma row_work_mono : forall p s s', s <= s' -> (row_work p s <= row_work p s')%N.
+  Proof. Admitted. (* STUB *)
+  (** The program key budget covers all declared reads and writes. *)
+  Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
+    In x (writes p r ++ deps p r) -> key_bits x <= kw p.
+  Proof. Admitted. (* STUB *)
+  (** Encoding costs are linear in the resulting code size. *)
+  Lemma T_key_code_le : forall x, (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Equality costs are bounded by the first key's code size. *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Enumerating rows costs linear time in the output length. *)
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Target lookup fits the row budget. *)
+  Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Starting a row fits the row budget. *)
+  Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Resuming a frame accounts for the size of the supplied abstract value. *)
+  Lemma T_resume_le : forall p f a, wf p ->
+    (T_resume p f a <= c_sys * (row_work p (D.size a) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Dependency enumeration pays for every key occurrence. *)
+  Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) * N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Side enumeration pays for every key occurrence. *)
+  Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) * N.of_nat (kw p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Row output sizes fit the transfer budget. *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, D.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (D.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (D.size (snd xb)) <= row_work p s)%N) ss.
+  Proof. Admitted. (* STUB *)
+End InterpT.

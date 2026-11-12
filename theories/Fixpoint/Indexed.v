@@ -4,7 +4,7 @@
     For example, repeated writes by one row occupy one index entry per key.
     Builds on: Fixpoint.IndexedSig and Base.Trie. *)
 
-From Stdlib Require Import List PArith Arith NArith.
+From Stdlib Require Import List PArith Arith NArith Bool.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -16,6 +16,7 @@ Module IndexedCode (L : LATTICE_OPS) (S : SYSTEM_OPS L) <: INDEXED_OPS L S.
   Definition row := (positive * S.row)%type.
   Definition frame := S.frame.
   Definition key_code := S.key_code.
+  Definition key_eqb := S.key_eqb.
   Definition rows (p : prog) := numbered_rows p.
   Definition target (p : prog) (r : row) := S.target (program p) (snd r).
   Definition start (p : prog) (r : row) := S.start (program p) (snd r).
@@ -51,6 +52,8 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Definition wf (p : prog) := S.wf (program p) /\ p = prepare (program p).
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
   Proof. Admitted.
+  Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
+  Proof. Admitted.
   Lemma eval_total : forall p r look, wf p -> In r (rows p) -> eval p r look <> None.
   Proof. Admitted.
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
@@ -58,6 +61,9 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Proof. Admitted.
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
+  Proof. Admitted.
+  Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
+    eval p r look = Some (a, ss) -> length ss <= length (sides p r).
   Proof. Admitted.
   Lemma row_code_inj : forall p a b, In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
@@ -74,6 +80,22 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Proof. Admitted.
   Lemma wf_prepare : forall p, S.wf p -> wf (prepare p).
   Proof. Admitted.
+  (** Prepared targets agree with the original rows. *)
+  Lemma prepare_target : forall p r, In r (rows (prepare p)) ->
+    target (prepare p) r = S.target p (snd r).
+  Proof. Admitted.
+  (** Prepared dependencies agree with the original rows. *)
+  Lemma prepare_deps : forall p r, In r (rows (prepare p)) ->
+    deps (prepare p) r = S.deps p (snd r).
+  Proof. Admitted.
+  (** Prepared side declarations agree with the original rows. *)
+  Lemma prepare_sides : forall p r, In r (rows (prepare p)) ->
+    sides (prepare p) r = S.sides p (snd r).
+  Proof. Admitted.
+  (** Preparation keeps precisely the original post-solutions. *)
+  Lemma prepare_post : forall p look,
+    post_solution (prepare p) look <-> S.post_solution p look.
+  Proof. Admitted.
 End Indexed.
 
 Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
@@ -81,6 +103,7 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   Definition row_work (p : prog) (B : nat) : N := S.row_work (program p) B.
   Definition kw (p : prog) : nat := S.kw (program p).
   TimeFun key_code.
+  TimeFun key_eqb.
   TimeFun rows.
   TimeFun target.
   TimeFun start.
@@ -104,6 +127,14 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   Proof. Admitted. (* STUB *)
   Lemma T_key_code_le : forall x,
     (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (L.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
   Proof. Admitted. (* STUB *)
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
@@ -135,11 +166,12 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   Definition c_idx : N := 1. (* STUB *)
 
   Lemma T_prepare_le : forall p, S.wf p ->
-    (T_prepare p <= c_idx *
+    (T_prepare p <= c_idx * (
       N.of_nat ((length (S.rows p) +
         fold_right Nat.add 0
           (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
             (S.rows p)) + 1)%nat) *
-      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1))%N.
+      N.of_nat (S.kw p + Nat.log2 (length (S.rows p)) + 1) +
+      N.of_nat (length (S.rows p)) * (S.row_work p 0 + 1)))%N.
   Proof. Admitted. (* STUB *)
 End IndexedT.

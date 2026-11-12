@@ -4,7 +4,7 @@
     For example, a forward flow row reads its edge source and writes its destination.
     Builds on: Program.CfgSig, Program.SemanticsSig and Fixpoint.SystemSig. *)
 
-From Stdlib Require Import List Relation_Operators.
+From Stdlib Require Import List Relation_Operators NArith.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -105,3 +105,48 @@ Module Type DENSE_BACKWARD_SOUND (P : TYPE) (N : KEY) (E : TYPE)
     forall s t, clos_refl_trans M.state (M.step p) s t -> K.terminal p t ->
       K.gamma (look (K.point s)) s.
 End DENSE_BACKWARD_SOUND.
+
+Module Type FLOW_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (L : LATTICE_T)
+    (Import T : FLOW_OPS P N E L).
+  (* spec: flow_work *)
+  Parameter flow_work : P.t -> nat -> N.
+  Parameter T_boundary : P.t -> N.t -> N.
+  Parameter T_transfer : P.t -> E.t -> L.t -> N.
+  Parameter c_flow : N.
+  (** Transfer budgets grow with the size of their input. *)
+  Parameter flow_work_mono : forall p s s', s <= s' ->
+    (flow_work p s <= flow_work p s')%N.
+  (** Reading the boundary fits its transfer budget. *)
+  Parameter T_boundary_le : forall p n,
+    (T_boundary p n <= c_flow * (flow_work p 0 + 1))%N.
+  (** Transfers fit their size-dependent budget. *)
+  Parameter T_transfer_le : forall p e a,
+    (T_transfer p e a <= c_flow * (flow_work p (L.size a) + 1))%N.
+  (** Boundary values fit the zero-input transfer budget. *)
+  Parameter boundary_size_le : forall p n,
+    (N.of_nat (L.size (boundary p n)) <= flow_work p 0)%N.
+  (** Transfer outputs fit their input-size budget. *)
+  Parameter transfer_size_le : forall p e a,
+    (N.of_nat (L.size (transfer p e a)) <= flow_work p (L.size a))%N.
+End FLOW_TIME.
+
+Module Type FLOW_T (P : TYPE) (N : KEY_T) (E : TYPE) (L : LATTICE_T) :=
+  FLOW_OPS P N E L <+ FLOW_TIME P N E L.
+
+Module Type DENSE (P : TYPE) (N : KEY) (E : TYPE)
+    (C : CFG_OPS P N E) (L : LATTICE) (T : FLOW_OPS P N E L) :=
+  DENSE_SYSTEM P N E C L T <+ SYSTEM_LAWS L.
+
+Module Type DENSE_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_BASE_T P N E) (L : LATTICE_T) (T : FLOW_T P N E L)
+    (Import S : DENSE P N E C L T).
+  Include SYSTEM_TIME L S
+    with Definition row_work := T.flow_work
+    with Definition kw := fun p => fold_right Nat.max 0
+      (List.map N.bits (C.entries p ++
+        flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))).
+End DENSE_TIME.
+
+Module Type DENSE_T (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_BASE_T P N E) (L : LATTICE_T) (T : FLOW_T P N E L) :=
+  DENSE P N E C L T <+ DENSE_TIME P N E C L T.

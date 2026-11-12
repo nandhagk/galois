@@ -58,7 +58,7 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
     (forall x, L.size (look m x) <= B) ->
     (T_check_rows p rs m <= c_chk *
       N.of_nat ((fold_right Nat.add 0
-        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs))%nat) *
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_check_le : forall p m B, S.wf p ->
@@ -66,7 +66,7 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
     (T_check p m <= c_chk *
       N.of_nat ((fold_right Nat.add 0
         (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
-          (S.rows p)))%nat) *
+          (S.rows p)) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
   Proof. Admitted. (* STUB *)
 End CheckT.

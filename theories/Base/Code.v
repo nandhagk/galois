@@ -10,6 +10,15 @@ Module List.
   TimeFun flat_map.
 End List.
 
+Module Pos.
+  TimeFun BinPos.Pos.size.
+End Pos.
+
+Module N.
+  TimeFun BinNat.N.mul.
+  TimeFun BinNat.N.size.
+End N.
+
 Fixpoint glue (a b : positive) : positive :=
   match a with
   | xH => xO b
