@@ -4,7 +4,7 @@
     For example, havoc permits every value for the selected variable.
     Builds on: KeySig, LatticeSig, LangSig and ValueSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -54,21 +54,21 @@ Module Type STATE_TRANSFER_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter havoc_work : X.t -> t -> nat.
   Parameter assume_work : L.guard -> list (term L.op X.t) -> t -> nat.
   Parameter eval_work : term L.op X.t -> t -> nat.
-  Parameter T_assign : X.t -> term L.op X.t -> t -> nat.
-  Parameter T_havoc : X.t -> t -> nat.
-  Parameter T_assume : L.guard -> list (term L.op X.t) -> t -> nat.
-  Parameter T_eval : term L.op X.t -> t -> nat.
-  Parameter c_state : nat.
+  Parameter T_assign : X.t -> term L.op X.t -> t -> N.
+  Parameter T_havoc : X.t -> t -> N.
+  Parameter T_assume : L.guard -> list (term L.op X.t) -> t -> N.
+  Parameter T_eval : term L.op X.t -> t -> N.
+  Parameter c_state : N.
   (** Assignment charges its domain-specific traversal and transfer work. *)
   Parameter T_assign_le : forall x e s,
-    T_assign x e s <= c_state * (assign_work x e s + 1).
+    (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
   (** Havoc charges its domain-specific update work. *)
-  Parameter T_havoc_le : forall x s, T_havoc x s <= c_state * (havoc_work x s + 1).
+  Parameter T_havoc_le : forall x s, (T_havoc x s <= c_state * N.of_nat (havoc_work x s + 1))%N.
   (** Assumption charges its domain-specific guard and refinement work. *)
   Parameter T_assume_le : forall g es s,
-    T_assume g es s <= c_state * (assume_work g es s + 1).
+    (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
   (** Evaluation charges its domain-specific traversal and transfer work. *)
-  Parameter T_eval_le : forall e s, T_eval e s <= c_state * (eval_work e s + 1).
+  Parameter T_eval_le : forall e s, (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
 End STATE_TRANSFER_TIME.
 
 Module Type STATE_LATTICE_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
@@ -76,14 +76,14 @@ Module Type STATE_LATTICE_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Include LATTICE_TIME D.
   (* spec: wsize *)
   Parameter wsize : wparam -> nat.
-  Parameter T_widen : wparam -> t -> t -> nat.
-  Parameter T_narrow : t -> t -> nat.
+  Parameter T_widen : wparam -> t -> t -> N.
+  Parameter T_narrow : t -> t -> N.
   (** Widening charges both states and its parameters. *)
   Parameter T_widen_le : forall p a b,
-    T_widen p a b <= c_lat * (size a + size b + wsize p + 1).
+    (T_widen p a b <= c_lat * N.of_nat (size a + size b + wsize p + 1))%N.
   (** Narrowing charges both states. *)
   Parameter T_narrow_le : forall a b,
-    T_narrow a b <= c_lat * (size a + size b + 1).
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
 End STATE_LATTICE_TIME.
 
 Module Type STATE_DOMAIN_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)

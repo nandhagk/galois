@@ -30,13 +30,13 @@ Module Type SOLVER_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     (Import V : SOLVER_OPS L S).
   (* spec: fits work fuel_for *)
   Parameter fits : S.prog -> policy L.wparam -> Prop.
-  Parameter work : S.prog -> policy L.wparam -> nat.
+  Parameter work : S.prog -> policy L.wparam -> N.
   Parameter fuel_for : S.prog -> policy L.wparam -> N.
-  Parameter T_run : S.prog -> policy L.wparam -> N -> nat.
-  Parameter c_solve : nat.
+  Parameter T_run : S.prog -> policy L.wparam -> N -> N.
+  Parameter c_solve : N.
   (** Running pays for bounded work and the bit length of fuel. *)
   Parameter T_run_le : forall p pol fuel, fits p pol ->
-    T_run p pol fuel <= c_solve * (work p pol + N.size_nat fuel + 1).
+    (T_run p pol fuel <= c_solve * (work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
   (** Sufficient fuel produces a candidate on fitting inputs. *)
   Parameter run_enough : forall p pol fuel, fits p pol -> (fuel_for p pol <= fuel)%N ->
     exists m, run p pol fuel = Solved m.

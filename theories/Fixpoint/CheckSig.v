@@ -4,7 +4,7 @@
     For example, an absent binding is read as bottom.
     Builds on: Fixpoint.SystemSig, Fixpoint.Query and Base.MapSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -30,28 +30,28 @@ End CHECK_LAWS.
 Module Type CHECK (L : LATTICE) (S : SYSTEM L) := CHECK_OPS L S <+ CHECK_LAWS L S.
 
 Module Type CHECK_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import C : CHECK L S).
-  Parameter T_look : kmap S.key L.t -> S.key -> nat.
-  Parameter T_check_rows : S.prog -> list S.row -> kmap S.key L.t -> nat.
-  Parameter T_check : S.prog -> kmap S.key L.t -> nat.
-  Parameter c_chk : nat.
+  Parameter T_look : kmap S.key L.t -> S.key -> N.
+  Parameter T_check_rows : S.prog -> list S.row -> kmap S.key L.t -> N.
+  Parameter T_check : S.prog -> kmap S.key L.t -> N.
+  Parameter c_chk : N.
   (** Lookup accounts for encoding and trie traversal. *)
   Parameter T_look_le : forall m x,
-    T_look m x <= c_chk * (S.key_bits x + 1).
+    (T_look m x <= c_chk * N.of_nat (S.key_bits x + 1))%N.
   (** Row checking accounts for each declared read and side contribution. *)
   Parameter T_check_rows_le : forall p rs m B, S.wf p ->
     (forall r, In r rs -> In r (S.rows p)) ->
     (forall x, L.size (look m x) <= B) ->
-    T_check_rows p rs m <= c_chk *
-      fold_right Nat.add 0
-        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs) *
-      (S.row_work p B + S.kw p + L.c_lat * (B + 1) + 1).
+    (T_check_rows p rs m <= c_chk *
+      N.of_nat ((fold_right Nat.add 0
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs))%nat) *
+      (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
   (** Whole-program checking uses the same row budget. *)
   Parameter T_check_le : forall p m B, S.wf p ->
     (forall x, L.size (look m x) <= B) ->
-    T_check p m <= c_chk *
-      fold_right Nat.add 0
-        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) *
-      (S.row_work p B + S.kw p + L.c_lat * (B + 1) + 1).
+    (T_check p m <= c_chk *
+      N.of_nat ((fold_right Nat.add 0
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)))%nat) *
+      (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
 End CHECK_TIME.
 
 Module Type CHECK_T (L : LATTICE_T) (S : SYSTEM_T L) := CHECK L S <+ CHECK_TIME L S.
