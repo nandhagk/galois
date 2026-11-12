@@ -165,10 +165,6 @@ End ConstWordTableCode.
 
 Local Close Scope Z_scope.
 
-Module Z.
-  TimeFun Z.size_nat.
-End Z.
-
 Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Include ConstCode L E.
   Include CONST_SPEC L E.

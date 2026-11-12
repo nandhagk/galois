@@ -61,6 +61,7 @@ Module N.
 End N.
 
 Module Z.
+  TimeFun Z.size_nat.
   TimeFun Z.odd.
   TimeFun Z.pow_pos.
   TimeFun Z.pow.
