@@ -5,9 +5,14 @@
     Builds on: KeySig, TrieSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith Lia Sorting.Sorted.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig TrieSig MapSig.
 From Galois.Base Require Import Trie.
+
+
+Module Datatypes.
+  TimeFun option_map.
+End Datatypes.
 
 Module TrieMapCode (K : KEY_OPS) <: MAP_OPS K.
   Definition t := kmap K.t.
@@ -31,3 +36,11 @@ Module TrieMapCode (K : KEY_OPS) <: MAP_OPS K.
   Definition elements {A} (x : t A) : list (K.t * A) :=
     List.rev (fold (fun acc k a => (k, a) :: acc) x nil).
 End TrieMapCode.
+
+Module TrieMapTimePilot (K : KEY_T).
+  Include TrieMapCode K.
+  TimeFun get.
+  TimeFun set.
+  Definition lookup_again {A} (k : K.t) (m : t A) := get k m.
+  TimeFun lookup_again.
+End TrieMapTimePilot.
