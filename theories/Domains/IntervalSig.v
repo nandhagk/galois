@@ -118,7 +118,7 @@ Module Type INTERVAL_SPEC (L : Z_LANGUAGE_OPS) (T : THRESHOLDS)
       if andb (0 <=? la)%Z (0 <=? lb)%Z then
         match ha, hb with
         | Fin ha, Fin hb =>
-          if (hb <=? k)%Z then
+          if andb (lb <=? k)%Z (hb <=? k)%Z then
             I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
           else I (Fin la) PosInf
         | _, _ => I (Fin la) PosInf
@@ -265,15 +265,18 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   (** Unsigned remainder retains each defined remainder of nonnegative operands. *)
   Parameter F10_urem_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (urem a b) (Z.modulo x y).
-  (** Bitwise conjunction retains represented nonnegative operands. *)
+  (** Bitwise conjunction retains every represented pair of operands. *)
   Parameter F11_and_sound : forall a b x y, in_itv a x -> in_itv b y ->
-    (0 <= x)%Z -> (0 <= y)%Z -> in_itv (bitand a b) (Z.land x y).
-  (** Bitwise disjunction retains represented nonnegative operands. *)
+    in_itv (bitand a b) (Z.land x y).
+  (** Bitwise disjunction retains every represented pair of operands. *)
   Parameter F12_or_sound : forall a b x y, in_itv a x -> in_itv b y ->
-    (0 <= x)%Z -> (0 <= y)%Z -> in_itv (bitor a b) (Z.lor x y).
-  (** Left shifting retains represented nonnegative operands. *)
+    in_itv (bitor a b) (Z.lor x y).
+  (** Left shifting retains represented operands for every nonnegative shift. *)
   Parameter F13_shl_sound : forall a b x y, in_itv a x -> in_itv b y ->
-    (0 <= x)%Z -> (0 <= y)%Z -> in_itv (shl a b) (Z.shiftl x y).
+    (0 <= y)%Z -> in_itv (shl a b) (Z.shiftl x y).
+  (** Unsigned comparison refinement descends in both operands. *)
+  Parameter F22_ult_back_lower : forall r a b,
+    leb (fst (ult_back r a b)) a = true /\ leb (snd (ult_back r a b)) b = true.
   (** Comparison contains the Boolean result as zero or one. *)
   Parameter F14_cmp_sound : forall c a b x y, in_itv a x -> in_itv b y ->
     in_itv (cmp c a b) (match Z.compare x y, c with Eq, Eq | Lt, Lt | Gt, Gt => 1 | _, _ => 0 end).

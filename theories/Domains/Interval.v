@@ -168,7 +168,8 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
       if (Z.leb 0 la && Z.leb 0 lb)%bool then
         match ha, hb with
         | Fin ha, Fin hb =>
-          if Z.leb hb k then I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
+          if andb (Z.leb lb k) (Z.leb hb k) then
+            I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
           else I (Fin la) PosInf
         | _, _ => I (Fin la) PosInf
         end
@@ -333,6 +334,9 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Proof. Admitted.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
+  Proof. Admitted.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,

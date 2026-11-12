@@ -28,6 +28,8 @@ Module Type HARNESS_BASE_LAWS (L : LANG) (Import B : HARNESS_BASE_OPS L).
   Parameter gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
   (** Recognized bottoms represent no value. *)
   Parameter is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Parameter is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   (** A recognized singleton identifies every represented value. *)
   Parameter point_sound : forall a v c, point a = Some v -> gamma a c -> c = v.
   (** Abstraction retains its concrete argument. *)
@@ -68,6 +70,9 @@ Module Type HARNESS_BASE_TIME (L : LANG_T) (Import B : HARNESS_BASE L).
   (** Meet results fit within the charged operand sizes. *)
   Parameter meet_size_le : forall a b,
     (N.of_nat (bsize (meet a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
+  (** Join results fit within the charged operand sizes. *)
+  Parameter join_size_le : forall a b,
+    (N.of_nat (bsize (join a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
   (** Abstraction results fit within their abstraction time. *)
   Parameter abst_size_le : forall v,
     (N.of_nat (bsize (abst v)) <= c_base * (T_abst v + 1))%N.
@@ -169,6 +174,8 @@ Module Type HARNESS_PLAN (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Parameter F0_gamma : forall a c, gamma a c <-> B.gamma a c.
   (** Harness inclusion uses the base order. *)
   Parameter F0_leb : forall a b, leb a b = B.leb a b.
+  (** Harness join uses the base join. *)
+  Parameter F0_join : forall a b, join a b = B.join a b.
   (** Harness meet uses the base meet. *)
   Parameter F0_meet : forall a b, meet a b = B.meet a b.
   (** Harness sizes use the base sizes. *)
