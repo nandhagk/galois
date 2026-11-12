@@ -58,6 +58,8 @@ Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
   Parameter F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
   (** Sign height is at most three. *)
   Parameter F2_level : forall a, sign_level a <= 3.
+  (** Sign widening rank counts the flags that can still be enabled. *)
+  Parameter F_pwrank : forall q w a, pwrank q w a = 3 - sign_level a.
   (** Bitwise negation retains every normalized concrete result. *)
   Parameter F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
