@@ -5,11 +5,19 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 Import List.ListNotations.
 
-Module DisjunctionCode (L : WLATTICE_OPS) (C : CAP) <: WLATTICE_OPS.
+Definition cap_predecessor (n : nat) : nat :=
+  match n with
+  | 0 => 0
+  | S k => k
+  end.
+
+TimeFun cap_predecessor.
+
+Module DisjunctionCode (L : LATTICE_OPS) (C : CAP) <: LATTICE_OPS.
   Definition t := list L.t.
   Definition leb (xs ys : t) := forallb (fun x => existsb (L.leb x) ys) xs.
   Definition bot : t := [].
@@ -25,15 +33,11 @@ Module DisjunctionCode (L : WLATTICE_OPS) (C : CAP) <: WLATTICE_OPS.
     | _, _ => [join_all xs]
     end.
   Definition compact (xs : t) :=
-    if Nat.leb (length xs) C.k then xs else compact_tail (C.k - 1) xs.
+    if Nat.leb (length xs) C.k then xs else compact_tail (cap_predecessor C.k) xs.
   Definition join (xs ys : t) := compact (xs ++ ys).
-  Definition wparam := L.wparam.
-  Definition widen (p : wparam) (xs ys : t) :=
-    if leb ys xs then xs else [L.widen p (join_all xs) (join_all (xs ++ ys))].
-  Definition narrow (xs _ : t) := xs.
 End DisjunctionCode.
 
-Module Disjunction (L : WLATTICE) (C : CAP) <: LATTICE.
+Module Disjunction (L : LATTICE) (C : CAP) <: LATTICE.
   Include DisjunctionCode L C.
 
   Lemma leb_spec xs ys : leb xs ys = true <->
@@ -97,10 +101,10 @@ Module Disjunction (L : WLATTICE) (C : CAP) <: LATTICE.
   Proof.
     unfold compact; destruct (Nat.leb (length xs) C.k); [apply leb_refl |].
     rewrite compact_tail_equation. apply leb_spec; intros x Hin.
-    rewrite <- (firstn_skipn (C.k - 1) xs) in Hin; apply in_app_iff in Hin.
+    rewrite <- (firstn_skipn (cap_predecessor C.k) xs) in Hin; apply in_app_iff in Hin.
     destruct Hin as [Hp | Hs].
     - exists x; split; [apply in_app_iff; auto | apply L.leb_refl].
-    - exists (join_all (skipn (C.k - 1) xs)); split.
+    - exists (join_all (skipn (cap_predecessor C.k) xs)); split.
       + apply in_app_iff; right; now left.
       + apply join_all_upper; exact Hs.
   Qed.
@@ -120,32 +124,15 @@ Module Disjunction (L : WLATTICE) (C : CAP) <: LATTICE.
   Proof.
     unfold join. eapply leb_trans; [exact (proj2 (append_covers xs ys)) | apply compact_covers].
   Qed.
-  Local Lemma collapse_covers p xs ys :
-    leb (xs ++ ys) [L.widen p (join_all xs) (join_all (xs ++ ys))] = true.
-  Proof.
-    apply leb_spec; intros x Hin.
-    exists (L.widen p (join_all xs) (join_all (xs ++ ys))); split; [now left |].
-    eapply L.leb_trans; [apply join_all_upper; exact Hin | apply L.widen_ub_r].
-  Qed.
-
-  Lemma widen_ub_l p xs ys : leb xs (widen p xs ys) = true.
-  Proof.
-    unfold widen; destruct (leb ys xs).
-    - apply leb_refl.
-    - eapply leb_trans; [exact (proj1 (append_covers xs ys)) | apply collapse_covers].
-  Qed.
-
-  Lemma widen_ub_r p xs ys : leb ys (widen p xs ys) = true.
-  Proof.
-    unfold widen; destruct (leb ys xs) eqn:Hcover; [exact Hcover |].
-    eapply leb_trans; [exact (proj2 (append_covers xs ys)) | apply collapse_covers].
-  Qed.
-
-  Lemma widen_stable p xs ys : leb ys xs = true -> widen p xs ys = xs.
-  Proof. unfold widen; intros Hcover; now rewrite Hcover. Qed.
-
-  Lemma narrow_between xs ys : leb ys xs = true ->
-    leb ys (narrow xs ys) = true /\ leb (narrow xs ys) xs = true.
-  Proof. cbn [narrow]; intros Hcover; split; [exact Hcover | apply leb_refl]. Qed.
-
 End Disjunction.
+
+Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP).
+  Include Disjunction L C.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join_all.
+  TimeFun compact_tail.
+  TimeFun compact.
+  TimeFun join.
+End DisjunctionT.
