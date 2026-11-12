@@ -80,9 +80,13 @@ Module Type HAS_MEET_OPS (Import L : LATTICE_OPS).
   Parameter meet : t -> t -> t.
 End HAS_MEET_OPS.
 
-Module Type HAS_MEET_LAWS (Import L : LATTICE_OPS) (Import M : HAS_MEET_OPS L).
+Module Type HAS_MEET_LOWER (Import L : LATTICE_OPS) (Import M : HAS_MEET_OPS L).
   (** Meet is below its left operand. *)
   Parameter meet_lb_l : forall a b, leb (meet a b) a = true.
+End HAS_MEET_LOWER.
+
+Module Type HAS_MEET_LAWS (Import L : LATTICE_OPS) (Import M : HAS_MEET_OPS L).
+  Include HAS_MEET_LOWER L M.
   (** Meet is below its right operand. *)
   Parameter meet_lb_r : forall a b, leb (meet a b) b = true.
 End HAS_MEET_LAWS.
@@ -185,10 +189,14 @@ Module Type REDUCER_OPS (A B : LATTICE_OPS).
   Parameter reduce : A.t * B.t -> A.t * B.t.
 End REDUCER_OPS.
 
-Module Type REDUCER_LAWS (A B : LATTICE) (Import R : REDUCER_OPS A B).
+Module Type REDUCER_LOWER (A B : LATTICE) (Import R : REDUCER_OPS A B).
   (** Reduction lowers both components in their respective orders. *)
   Parameter reduce_lower : forall a b,
     A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
+End REDUCER_LOWER.
+
+Module Type REDUCER_LAWS (A B : LATTICE) (Import R : REDUCER_OPS A B).
+  Include REDUCER_LOWER A B R.
   Parameter reduce_mono : forall a b a' b',
   A.leb a a' = true -> B.leb b b' = true ->
   A.leb (fst (reduce (a, b))) (fst (reduce (a', b'))) = true /\
