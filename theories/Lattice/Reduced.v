@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module ReducedCode (A B : BLATTICE_OPS) (R : REDUCER_OPS A B) <: BLATTICE_OPS.
@@ -42,3 +42,24 @@ Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
 End Reduced.
+
+Module ReducedT (A B : BLATTICE_T) (R : REDUCER_T A B) <: BLATTICE_T.
+  Include Reduced A B R.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun meet.
+
+  Definition size (x : t) : nat := A.size (fst x) + B.size (snd x) + 1.
+  Definition c_lat : N := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+End ReducedT.

@@ -181,6 +181,20 @@ End REDUCER_LAWS.
 
 Module Type REDUCER (A B : LATTICE) := REDUCER_OPS A B <+ REDUCER_LAWS A B.
 
+Module Type REDUCER_TIME (A B : LATTICE_T) (R : REDUCER A B).
+  Parameter T_reduce : A.t * B.t -> N.
+  Parameter c_reduce : N.
+  (** Reduction time is bounded by the combined component sizes. *)
+  Parameter T_reduce_le : forall a b,
+    (T_reduce (a, b) <= c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
+  (** The reduced pair has bounded combined component size. *)
+  Parameter reduce_size_le : forall a b,
+    (N.of_nat (A.size (fst (R.reduce (a, b))) + B.size (snd (R.reduce (a, b)))) <=
+      c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
+End REDUCER_TIME.
+
+Module Type REDUCER_T (A B : LATTICE_T) := REDUCER A B <+ REDUCER_TIME A B.
+
 (** * Fixed disjunction cap *)
 
 Module Type CAP.
