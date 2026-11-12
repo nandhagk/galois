@@ -86,8 +86,33 @@ Module Type SIGN_SPEC (L : WORD_LANGUAGE_OPS) (Import S : SIGN_OPS L).
     (if neg a then 1 else 0) + (if zero a then 1 else 0) + (if pos a then 1 else 0).
 End SIGN_SPEC.
 
-Module Type SIGN (L : WORD_LANGUAGE) :=
+Module Type SIGN_BASE (L : WORD_LANGUAGE) :=
   SIGN_OPS L <+ SIGN_SPEC L <+ WORD_PAYLOAD_LAWS L.
+
+Module Type SIGN_LAWS (L : WORD_LANGUAGE) (Import S : SIGN_BASE L).
+  (** Payload concretization reads the sign flags. *)
+  Parameter F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
+  (** Bitwise negation retains every normalized concrete result. *)
+  Parameter F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+    pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
+  (** Arithmetic negation retains every normalized concrete result. *)
+  Parameter F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
+    pgamma w (sign_neg a) (L.wrap w (- x)).
+  (** Bitwise conjunction retains every normalized concrete result. *)
+  Parameter F5_sign_and_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
+  (** Bitwise disjunction retains every normalized concrete result. *)
+  Parameter F6_sign_or_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
+  (** Bitwise exclusive disjunction retains every normalized concrete result. *)
+  Parameter F7_sign_xor_sound : forall w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
+End SIGN_LAWS.
+
+Module Type SIGN (L : WORD_LANGUAGE) := SIGN_BASE L <+ SIGN_LAWS L.
 
 Module Type SIGN_TIME (L : WORD_LANGUAGE_T) (Import S : SIGN L).
   Include WORD_PAYLOAD_TIME L S.
@@ -117,30 +142,10 @@ End SIGN_TIME.
 Module Type SIGN_T (L : WORD_LANGUAGE_T) := SIGN L <+ SIGN_TIME L.
 
 Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
-  (** Payload concretization reads the sign flags. *)
-  Parameter F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
   (** Sign height is at most three. *)
   Parameter F2_level : forall a, sign_level a <= 3.
   (** Sign widening rank counts the flags that can still be enabled. *)
   Parameter F_pwrank : forall q w a, pwrank q w a = 3 - sign_level a.
-  (** Bitwise negation retains every normalized concrete result. *)
-  Parameter F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
-    pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
-  (** Arithmetic negation retains every normalized concrete result. *)
-  Parameter F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
-    pgamma w (sign_neg a) (L.wrap w (- x)).
-  (** Bitwise conjunction retains every normalized concrete result. *)
-  Parameter F5_sign_and_sound : forall w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
-  (** Bitwise disjunction retains every normalized concrete result. *)
-  Parameter F6_sign_or_sound : forall w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
-  (** Bitwise exclusive disjunction retains every normalized concrete result. *)
-  Parameter F7_sign_xor_sound : forall w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
 End SIGN_PLAN.
 
 Module Type SIGN_ALL (L : WORD_LANGUAGE_T) := SIGN_T L <+ SIGN_PLAN L.

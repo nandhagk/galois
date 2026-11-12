@@ -338,6 +338,44 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* CONVERT: cong_shape_laws: Expects a disjunctive pattern with 3 branches. *)
+  (** Payload concretization agrees with residue-class membership. *)
+  Lemma F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
+  Proof. Admitted. (* STUB *)
+  (** Normalization keeps precisely the same represented integers. *)
+  Lemma F2_norm_gamma : forall w a z,
+    pgamma w (congr_norm w a) z <-> pgamma w a z.
+  Proof. Admitted. (* STUB *)
+  (** Negation retains wrapped concrete negation. *)
+  Lemma F6_congr_neg_sound : forall w a x,
+    pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
+  Proof. Admitted. (* STUB *)
+  (** Addition retains wrapped concrete addition. *)
+  Lemma F7_congr_add_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
+  Proof. Admitted. (* STUB *)
+  (** Subtraction retains wrapped concrete subtraction. *)
+  Lemma F8_congr_sub_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
+  Proof. Admitted. (* STUB *)
+  (** Multiplication retains wrapped concrete multiplication. *)
+  Lemma F9_congr_mul_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
+  Proof. Admitted. (* STUB *)
+  (** Projection retains truncations to smaller widths. *)
+  Lemma F10_congr_project_sound : forall source target a x,
+    (target <= source)%positive -> pgamma source a x ->
+    pgamma target (congr_project source target a) (L.wrap target x).
+  Proof. Admitted. (* STUB *)
+  (** Shift transfer retains the wrapped concrete shift. *)
+  Lemma F11_congr_shl_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y ->
+    pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
+  Proof. Admitted. (* STUB *)
+  (** Remainder transfer retains unsigned remainder, including a zero divisor. *)
+  Lemma F12_congr_urem_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y ->
+    pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
+  Proof. Admitted. (* STUB *)
 End Congruence.
 
 Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABLE L W.
@@ -452,6 +490,26 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Payload size uses the tagged width. *)
   Lemma psize_congr : forall w a, psize w a = ((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat.
   Proof. Admitted. (* STUB *)
+  (** Normalized payloads fit two words of the width. *)
+  Lemma congr_norm_bits : forall w a,
+    (congr_bits (congr_norm w a) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Negation results fit two words of the width. *)
+  Lemma congr_neg_bits : forall w a,
+    (congr_bits (congr_neg w a) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Binary transfer results fit two words of the width. *)
+  Lemma congr_binary_bits : forall w a b,
+    (congr_bits (congr_add w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_sub w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_mul w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_shl w a b) <= 2 * Pos.to_nat w /\
+     congr_bits (congr_urem w a b) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Projection results fit two words of the target width. *)
+  Lemma congr_project_bits : forall source target a,
+    (congr_bits (congr_project source target a) <= 2 * Pos.to_nat target)%nat.
+  Proof. Admitted. (* STUB *)
   (** Normalization has the published quadratic arithmetic bound. *)
   Lemma T_congr_norm_le : forall w a,
     (T_congr_norm w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
@@ -497,13 +555,6 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
   Proof. Admitted. (* STUB *)
-  (** Payload concretization agrees with residue-class membership. *)
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
-  Proof. Admitted. (* STUB *)
-  (** Normalization keeps precisely the same represented integers. *)
-  Lemma F2_norm_gamma : forall w a z,
-    pgamma w (congr_norm w a) z <-> pgamma w a z.
-  Proof. Admitted. (* STUB *)
   (** Normalization produces a canonical representation. *)
   Lemma F3_norm_canonical : forall w a, canonical w (congr_norm w a).
   Proof. Admitted. (* STUB *)
@@ -514,37 +565,6 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Chinese remainder meet retains each shared integer. *)
   Lemma F5_crt_meet_sound : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* STUB *)
-  (** Negation retains wrapped concrete negation. *)
-  Lemma F6_congr_neg_sound : forall w a x,
-    pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
-  Proof. Admitted. (* STUB *)
-  (** Addition retains wrapped concrete addition. *)
-  Lemma F7_congr_add_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
-  Proof. Admitted. (* STUB *)
-  (** Subtraction retains wrapped concrete subtraction. *)
-  Lemma F8_congr_sub_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
-  Proof. Admitted. (* STUB *)
-  (** Multiplication retains wrapped concrete multiplication. *)
-  Lemma F9_congr_mul_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
-  Proof. Admitted. (* STUB *)
-  (** Projection retains truncations to smaller widths. *)
-  Lemma F10_congr_project_sound : forall source target a x,
-    (target <= source)%positive -> pgamma source a x ->
-    pgamma target (congr_project source target a) (L.wrap target x).
-  Proof. Admitted. (* STUB *)
-  (** Shift transfer retains the wrapped concrete shift. *)
-  Lemma F11_congr_shl_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y ->
-    pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
-  Proof. Admitted. (* STUB *)
-  (** Remainder transfer retains every defined unsigned remainder. *)
-  Lemma F12_congr_urem_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y -> y <> 0%Z ->
-    pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
   Proof. Admitted. (* STUB *)
   (** The requested congruence rank is bounded by width plus two. *)
   Lemma F13_wrank_le : forall w a, (congr_wrank w a <= Pos.to_nat w + 2)%nat.

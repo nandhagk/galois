@@ -188,3 +188,10 @@ Example congruence_malformed_count_assumptions :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A zero divisor retains the dividend in the unsigned remainder table. *)
+Example congruence_remainder_zero :
+  forward_payload bvurem [(8%positive, C 0 5); (8%positive, C 0 0)] 8%positive = C 0 5.
+Proof.
+  vm_compute. reflexivity.
+Qed.
