@@ -144,11 +144,14 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
     | TVal w p => S (W.pwrank q w p)
     end.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof.
+    intros [|w p|]; cbn [leb]; try reflexivity.
+    rewrite Pos.eqb_refl. apply W.pleb_refl.
+  Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: The variable v was not found. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. intros []; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
