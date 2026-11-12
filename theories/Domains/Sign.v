@@ -122,14 +122,17 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted.
+  Proof. intros w [a b c]. destruct a, b, c; reflexivity. Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted.
+  Proof.
+    intros w [a b c] [d e f] [g h i]. destruct a, b, c, d, e, f, g, h, i;
+      cbn; intros; try discriminate; reflexivity.
+  Qed.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
-  Proof. Admitted.
+  Proof. intros w [a b c]. reflexivity. Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
   Proof. Admitted.
@@ -141,10 +144,10 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof. Admitted.
@@ -164,7 +167,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_meet_sound: Not an inductive product. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted.
