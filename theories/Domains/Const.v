@@ -294,17 +294,21 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. Admitted.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted.
+  Proof. intros w [|a|]; cbn [pleb]; auto using Z.eqb_refl. Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted.
+  Proof.
+    intros w [|a|] [|b|] [|c|]; cbn [pleb]; intros Hab Hbc;
+      try discriminate; try reflexivity.
+    apply Z.eqb_eq in Hab. subst b. exact Hbc.
+  Qed.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
-  Proof. Admitted.
+  Proof. intros w [|a|]; reflexivity. Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted.
+  Proof. intros w [|a|]; reflexivity. Qed.
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
   Proof. Admitted.
@@ -313,10 +317,18 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. Admitted.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof.
+    intros w [|a|] [|b|]; cbn [pleb pjoin]; try reflexivity; try apply Z.eqb_refl.
+    destruct (Z.eqb a b); cbn [pleb]; auto using Z.eqb_refl.
+  Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof.
+    intros w [|a|] [|b|]; cbn [pleb pjoin]; try reflexivity; try apply Z.eqb_refl.
+    destruct (Z.eqb a b) eqn:Hab; cbn [pleb].
+    - apply Z.eqb_eq in Hab. subst b. apply Z.eqb_refl.
+    - reflexivity.
+  Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof.
@@ -331,7 +343,11 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted.
+  Proof.
+    intros w [|a|] [|b|] z Hab Hc; cbn [pleb pgamma] in *;
+      try contradiction; try discriminate; try exact I.
+    apply Z.eqb_eq in Hab. subst b. exact Hc.
+  Qed.
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof. Admitted.
