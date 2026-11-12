@@ -4,7 +4,7 @@
     For example, incoming adjacency lists the edges whose destination is the requested node.
     Builds on: Base.KeySig and Program.SemanticsSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import KeySig.
 From Galois.Program Require Import SemanticsSig.
 
@@ -47,33 +47,35 @@ Module Type CFG (P : TYPE) (N : KEY) (E : TYPE) :=
 
 Module Type CFG_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
     (Import C : CFG_OPS P N E).
-  Parameter T_entries T_edges : P.t -> nat.
-  Parameter T_src T_dst : P.t -> E.t -> nat.
-  Parameter c_cfg : nat.
+  Parameter T_entries T_edges : P.t -> N.
+  Parameter T_src T_dst : P.t -> E.t -> N.
+  Parameter c_cfg : N.
   (** Entry enumeration pays for its output. *)
-  Parameter T_entries_le : forall p, T_entries p <= c_cfg * (length (entries p) + 1).
+  Parameter T_entries_le : forall p,
+    (T_entries p <= c_cfg * N.of_nat (length (entries p) + 1))%N.
   (** Edge enumeration pays for its output. *)
-  Parameter T_edges_le : forall p, T_edges p <= c_cfg * (length (edges p) + 1).
+  Parameter T_edges_le : forall p,
+    (T_edges p <= c_cfg * N.of_nat (length (edges p) + 1))%N.
   (** Source projection has bounded cost. *)
-  Parameter T_src_le : forall p e, T_src p e <= c_cfg.
+  Parameter T_src_le : forall p e, (T_src p e <= c_cfg)%N.
   (** Destination projection has bounded cost. *)
-  Parameter T_dst_le : forall p e, T_dst p e <= c_cfg.
+  Parameter T_dst_le : forall p e, (T_dst p e <= c_cfg)%N.
 End CFG_TIME.
 
 Module Type CFG_ADJ_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
     (Import C : CFG_INDEXED_OPS P N E).
-  Parameter T_nodes : P.t -> nat.
-  Parameter T_out T_inc : P.t -> N.t -> nat.
-  Parameter c_cfg_adj : nat.
+  Parameter T_nodes : P.t -> N.
+  Parameter T_out T_inc : P.t -> N.t -> N.
+  Parameter c_cfg_adj : N.
   (** Node enumeration pays for its output. *)
   Parameter T_nodes_le : forall p,
-    T_nodes p <= c_cfg_adj * (length (nodes p) + 1).
+    (T_nodes p <= c_cfg_adj * N.of_nat (length (nodes p) + 1))%N.
   (** Outgoing lookup pays for the key and its output. *)
   Parameter T_out_le : forall p n,
-    T_out p n <= c_cfg_adj * (N.bits n + length (out p n) + 1).
+    (T_out p n <= c_cfg_adj * N.of_nat (N.bits n + length (out p n) + 1))%N.
   (** Incoming lookup pays for the key and its output. *)
   Parameter T_inc_le : forall p n,
-    T_inc p n <= c_cfg_adj * (N.bits n + length (inc p n) + 1).
+    (T_inc p n <= c_cfg_adj * N.of_nat (N.bits n + length (inc p n) + 1))%N.
 End CFG_ADJ_TIME.
 
 Module Type CFG_BASE_T (P : TYPE) (N : KEY_T) (E : TYPE) :=

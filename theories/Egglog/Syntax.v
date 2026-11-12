@@ -136,9 +136,9 @@ Module CellKeyT (V : KEY_T) <: KEY_T.
   Include CellKey V.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : nat := 1. (* STUB *)
-  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Definition c_key : N := 1. (* STUB *)
+  Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
   Proof. Admitted. (* STUB *)
 End CellKeyT.

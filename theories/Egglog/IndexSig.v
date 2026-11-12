@@ -69,25 +69,28 @@ Module Type INDEX (V : VALUE) := INDEX_OPS V <+ INDEX_SPEC V <+ INDEX_LAWS V.
 Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   (* spec: width *)
   Parameter width : t -> list (cell V.t) -> nat.
-  Parameter T_empty : nat.
-  Parameter T_insert T_remove : list (cell V.t) -> t -> nat.
-  Parameter T_root : t -> nat.
-  Parameter T_child : t -> positive -> cell V.t -> nat.
-  Parameter T_children T_degree : t -> positive -> nat.
-  Parameter c_ix : nat.
+  Parameter T_empty : N.
+  Parameter T_insert T_remove : list (cell V.t) -> t -> N.
+  Parameter T_root : t -> N.
+  Parameter T_child : t -> positive -> cell V.t -> N.
+  Parameter T_children T_degree : t -> positive -> N.
+  Parameter c_ix : N.
   (** Insertion pays for one path through the tuple. *)
   Parameter T_insert_le : forall r ix,
-    T_insert r ix <= c_ix * (length r + 1) * (width ix r + 1).
+    (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   (** Removal pays for one path through the tuple. *)
   Parameter T_remove_le : forall r ix,
-    T_remove r ix <= c_ix * (length r + 1) * (width ix r + 1).
+    (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   (** Child lookup pays for the encoded edge. *)
-  Parameter T_child_le : forall ix n c, T_child ix n c <= c_ix * (width ix [c] + 1).
+  Parameter T_child_le : forall ix n c,
+    (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
   (** Child enumeration pays for each child. *)
   Parameter T_children_le : forall ix n,
-    T_children ix n <= c_ix * (N.to_nat (degree ix n) + 1) * (width ix [] + 1).
+    (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
+      N.of_nat (width ix [] + 1))%N.
   (** Degree lookup pays for the encoded node. *)
-  Parameter T_degree_le : forall ix n, T_degree ix n <= c_ix * (width ix [] + 1).
+  Parameter T_degree_le : forall ix n,
+    (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
 End INDEX_TIME.
 
 Module Type INDEX_T (V : VALUE_T) := INDEX V <+ INDEX_TIME V.
@@ -102,11 +105,11 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   (** Unlinking zero-count nodes keeps edge and count consistency. *)
   Parameter remove_path : forall ix r, inv ix -> inv (remove r ix).
   Parameter insert_step : t -> positive -> cell V.t -> t.
-  Parameter T_insert_step : t -> positive -> cell V.t -> nat.
-  Parameter c_map : nat.
+  Parameter T_insert_step : t -> positive -> cell V.t -> N.
+  Parameter c_map : N.
   (** A path step uses at most four map operations and constant bookkeeping. *)
   Parameter T_insert_step_le : forall ix n c,
-    T_insert_step ix n c <= 4 * c_map * (width ix [c] + 1) + 4.
+    (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
 End INDEX_PLAN.
 
 Module Type INDEX_ALL (V : VALUE_T) := INDEX_T V <+ INDEX_PLAN V.

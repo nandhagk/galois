@@ -39,18 +39,18 @@ Module Type CERTIFIED (L : WLATTICE) (S : SYSTEM L)
 Module Type CERTIFIED_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     (V : SOLVER_T L S) (C : CHECK_T L S) (R : NARROW_T L S C)
     (Import A : CERTIFIED L S V C R).
-  Parameter T_analyze : S.prog -> policy L.wparam -> N -> nat.
+  Parameter T_analyze : S.prog -> policy L.wparam -> N -> N.
   (** Only solved candidates incur checking and narrowing row evaluations. *)
-  Definition candidate_work p pol fuel : nat :=
+  Definition candidate_work p pol fuel : N :=
     match V.run p pol fuel with
-    | Solved m => C.T_check p m + R.T_eval_all p m
-    | OutOfFuel _ => 0
-    | Rejected _ => 0
+    | Solved m => (C.T_check p m + R.T_eval_all p m)%N
+    | OutOfFuel _ => 0%N
+    | Rejected _ => 0%N
     end.
   (** Certification pays for solving and the requested checks and row evaluations. *)
   Parameter T_analyze_le : forall p pol fuel,
-    T_analyze p pol fuel <= V.T_run p pol fuel +
-      (passes pol + 1) * (candidate_work p pol fuel + 1).
+    (T_analyze p pol fuel <= V.T_run p pol fuel +
+      N.of_nat (passes pol + 1) * (candidate_work p pol fuel + 1))%N.
 End CERTIFIED_TIME.
 
 Module Type CERTIFIED_T (L : WLATTICE_T) (S : SYSTEM_T L)

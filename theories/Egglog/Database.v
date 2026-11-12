@@ -210,40 +210,42 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun ids.
   Definition unit (_ : t) : nat := 0.
   Definition slots_of (_ : t) (_ : positive) : nat := 0.
-  Definition potential (_ : N) (_ : t) : nat := 0.
+  Definition potential (_ : N) (_ : t) : N := 0%N.
   Definition num_slots (_ : t) : nat := 0.
-  Definition c_db : nat := 1. (* STUB *)
+  Definition c_db : N := 1. (* STUB *)
   
                               
-    Lemma potential_init : forall B ds sl, potential B (init ds sl) = 0.
+    Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T_put_amort : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
-    T_put f k o db + potential B (put f k o db) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      potential B db.
+    (T_put f k o db + potential B (put f k o db) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T_make_amort : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
-    T_make f k db + potential B (snd (make f k db)) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      potential B db.
+    (T_make f k db + potential B (snd (make f k db)) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T_union_amort : forall B i j db, wf db ->
-    T_union i j db + potential B (union i j db) <= c_db * unit db + potential B db.
+    (T_union i j db + potential B (union i j db) <= c_db * N.of_nat (unit db) + potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    T_rebuild db + potential B (rebuild db) <=
-      c_db * (pending db + 1) * unit db + potential B db.
+    (T_rebuild db + potential B (rebuild db) <=
+      c_db * N.of_nat (pending db + 1) * N.of_nat (unit db) + potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T_index_le : forall s new db,
-    T_index s new db <= c_db * (Nat.log2 (S s) + 1).
+    (T_index s new db <= c_db * N.of_nat (Nat.log2 (S s) + 1))%N.
   Proof. Admitted. (* STUB *)
   
-    Lemma T_advance_le : forall db, T_advance db <= c_db * (num_slots db + 1).
+    Lemma T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Definition use_entry := (positive * list (cell V.t))%type.
@@ -267,12 +269,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition live_use : t -> positive * use_entry -> bool := fun _ _ => false.
     (* STUB-CODE *)
   Definition max_bits : t -> nat := fun _ => 0.
-  Definition k_credit := 1. (* STUB *)
-  Definition k_stale := 1. (* STUB *)
-  Definition k_active := 1. (* STUB *)
-  Definition k_queue := 1. (* STUB *)
-  Definition k_stop := 1. (* STUB *)
-  Definition k_driver := 1. (* STUB *)
+  Definition k_credit : N := 1. (* STUB *)
+  Definition k_stale : N := 1. (* STUB *)
+  Definition k_active : N := 1. (* STUB *)
+  Definition k_queue : N := 1. (* STUB *)
+  Definition k_stop : N := 1. (* STUB *)
+  Definition k_driver : N := 1. (* STUB *)
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
     In (x, e) (uses_entries db).
@@ -321,9 +323,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition stale_count (db : t) : nat :=
     length (filter (fun xe => negb (live_use db xe)) (uses_entries db)).
   
-  Definition rebuild_potential (B : N) (db : t) : nat :=
-    k_credit * fold_right (fun xe n => use_credit B db xe + n) 0 (uses_entries db) +
-    k_stale * stale_count db.
+  Definition rebuild_potential (B : N) (db : t) : N :=
+    (k_credit * N.of_nat
+      ((fold_right (fun xe n => use_credit B db xe + n) 0 (uses_entries db))%nat) +
+     k_stale * N.of_nat (stale_count db))%N.
   Definition work_weight (db : t) (work : list use_entry) : nat :=
     fold_right (fun e n => entry_weight db e + n) 0 work.
     (* STUB-CODE *)
@@ -348,7 +351,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     Lemma F1_inv_wf : forall db, wf db <-> inv db.
   Proof. Admitted. (* STUB *)
   
-    Lemma F2_potential : forall B db, potential B db = rebuild_potential B db.
+    Lemma F2_potential : forall B db, (potential B db = rebuild_potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma F3_unit : forall db,
@@ -503,53 +506,55 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (2 * class_size db x <= class_size (union i j db) (repr (union i j db) x))%N.
   Proof. Admitted. (* STUB *)
   
-    Lemma T2_init_credit : forall B ds sl, rebuild_potential B (init ds sl) = 0.
+    Lemma T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T3_put_credit : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
-    T_put f k o db + rebuild_potential B (put f k o db) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      rebuild_potential B db.
+    (T_put f k o db + rebuild_potential B (put f k o db) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      rebuild_potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T4_make_credit : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
-    T_make f k db + rebuild_potential B (snd (make f k db)) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      rebuild_potential B db.
+    (T_make f k db + rebuild_potential B (snd (make f k db)) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      rebuild_potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T5_union_credit : forall B i j db, wf db ->
-    T_union i j db + rebuild_potential B (union i j db) <=
-      c_db * unit db + rebuild_potential B db.
+    (T_union i j db + rebuild_potential B (union i j db) <=
+      c_db * N.of_nat (unit db) + rebuild_potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T6_rstep_go : forall B s s', state_inv s -> (ids (fst s') <= B)%N ->
     rstep s = inl s' ->
-    T_rstep s + potential B (fst s') < potential B (fst s) + c_db * unit (fst s).
+    (T_rstep s + potential B (fst s') < potential B (fst s) + c_db * N.of_nat (unit (fst s)))%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
-    T_rstep s <= k_stop * unit (fst s).
+    (T_rstep s <= k_stop * N.of_nat (unit (fst s)))%N.
   Proof. Admitted. (* STUB *)
   
   
     Lemma T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    T_rebuild_fuel db +
+    (T_rebuild_fuel db +
       T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
       potential B (rebuild db) <=
-      c_db * (pending db + 1) * unit db + potential B db.
+      c_db * N.of_nat (pending db + 1) * N.of_nat (unit db) + potential B db)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T9_rebuild_driver : forall db,
-    T_rebuild db <= T_rebuild_fuel db +
-      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver.
+    (T_rebuild db <= T_rebuild_fuel db +
+      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
   Proof. Admitted. (* STUB *)
   
     Lemma T10_index : forall s new db,
-    T_index s new db <= c_db * (Nat.log2 (S s) + 1).
+    (T_index s new db <= c_db * N.of_nat (Nat.log2 (S s) + 1))%N.
   Proof. Admitted. (* STUB *)
   
-    Lemma T11_advance : forall db, T_advance db <= c_db * (num_slots db + 1).
+    Lemma T11_advance : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
   Proof. Admitted. (* STUB *)
 
 

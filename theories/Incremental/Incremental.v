@@ -92,21 +92,21 @@ Module IncrementalT (L : WLATTICE_T) (S : LOCAL_SYSTEM_T L)
   Definition frozen (_ : S.prog) (_ : list S.key) (_ : state) : list (S.key * L.t) := [].
   Definition infl_deg (_ : state) (_ : S.key) : nat := 0.
   Definition width (_ : S.prog) (_ : state) : nat := 0.
-  Definition c_inc : nat := 1. (* STUB *)
+  Definition c_inc : N := 1. (* STUB *)
   Lemma T_demand_le : forall p pol roots fuel st, inv p st ->
-    T_demand p pol roots fuel st <=
-      c_inc * (fold_right Nat.add 0
+    (T_demand p pol roots fuel st <=
+      c_inc * N.of_nat ((fold_right Nat.add 0
         (map (fun r => length (S.deps p r) + 1) (region p roots st)) +
-        length roots + 1) * (width p st + 1) +
+        length roots + 1)%nat) * N.of_nat (width p st + 1) +
       Sol.c_solve * (Sol.work (R.mk p (frozen p roots st) (region p roots st)) pol +
-        N.size_nat fuel + 1).
+        N.of_nat (N.size_nat fuel) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_edit_le : forall p p' ch st,
-    T_edit p p' ch st <= c_inc *
-      (fold_right Nat.add 0 (map (fun x => infl_deg st x + 1) (invalidated p' ch st)) +
-       fold_right Nat.add 0 (map (fun r => length (S.deps p' r) + 1) ch) + 1) *
-      (width p' st + 1).
+    (T_edit p p' ch st <= c_inc *
+      N.of_nat ((fold_right Nat.add 0 (map (fun x => infl_deg st x + 1) (invalidated p' ch st)) +
+       fold_right Nat.add 0 (map (fun r => length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p' st + 1))%N.
   Proof. Admitted. (* STUB *)
 
   (* STUB-CODE *)

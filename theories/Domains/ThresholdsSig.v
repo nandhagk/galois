@@ -59,21 +59,23 @@ End THRESHOLDS_LAWS.
 Module Type THRESHOLDS := THRESHOLDS_OPS <+ THRESHOLDS_SPEC <+ THRESHOLDS_LAWS.
 
 Module Type THRESHOLDS_TIME (Import T : THRESHOLDS).
-  Parameter T_make : list Z -> nat.
-  Parameter T_above T_below : ttree -> Z -> nat.
-  Parameter c_thresholds : nat.
+  Parameter T_make : list Z -> N.
+  Parameter T_above T_below : ttree -> Z -> N.
+  Parameter c_thresholds : N.
   (** Construction charges comparison sorting and the largest threshold size. *)
-  Parameter T_make_le : forall zs, T_make zs <= c_thresholds *
-    (length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1).
+  Parameter T_make_le : forall zs,
+    (T_make zs <= c_thresholds * N.of_nat (length zs * (Nat.log2 (length zs) + 1) + 1) *
+      N.of_nat (zb zs + 1))%N.
   (** Upper search charges a path and comparison bit sizes. *)
-  Parameter T_above_le : forall t z, T_above t z <=
-    c_thresholds * (depth t + 1) * (tree_bits t + zbits z + 1).
+  Parameter T_above_le : forall t z, (T_above t z <=
+    c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
   (** Lower search charges a path and comparison bit sizes. *)
-  Parameter T_below_le : forall t z, T_below t z <=
-    c_thresholds * (depth t + 1) * (tree_bits t + zbits z + 1).
+  Parameter T_below_le : forall t z, (T_below t z <=
+    c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
   (** Construction has the published comparison-sort bound. *)
-  Parameter make_bigO : bigO (fun _ => True)
-    (fun zs => (length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1)) T_make.
+  Parameter make_bigO : (bigO (fun _ => True)
+    (fun zs => N.of_nat
+      (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
 End THRESHOLDS_TIME.
 
 Module Type THRESHOLDS_T := THRESHOLDS <+ THRESHOLDS_TIME.
@@ -81,9 +83,9 @@ Module Type THRESHOLDS_T := THRESHOLDS <+ THRESHOLDS_TIME.
 Module Type THRESHOLDS_PLAN (Import T : THRESHOLDS_T).
   Parameter msort dedup_sorted : list Z -> list Z.
   Parameter build : nat -> list Z -> ttree.
-  Parameter T_msort T_dedup_sorted : list Z -> nat.
-  Parameter T_build : nat -> list Z -> nat.
-  Parameter k_sort k_dedup k_build k_search : nat.
+  Parameter T_msort T_dedup_sorted : list Z -> N.
+  Parameter T_build : nat -> list Z -> N.
+  Parameter k_sort k_dedup k_build k_search : N.
   (** Sorting orders the input. *)
   Parameter F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
   (** Sorting keeps the input multiset. *)
@@ -103,20 +105,21 @@ Module Type THRESHOLDS_PLAN (Import T : THRESHOLDS_T).
   Parameter F7_make_eq : forall zs,
     make zs = build (length zs) (dedup_sorted (msort zs)).
   (** Sorting charges logarithmically many comparison levels. *)
-  Parameter T1_msort : forall zs, T_msort zs <= k_sort *
-    (length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1).
+  Parameter T1_msort : forall zs,
+    (T_msort zs <= k_sort * N.of_nat (length zs * (Nat.log2 (length zs) + 1) + 1) *
+      N.of_nat (zb zs + 1))%N.
   (** Deduplication charges one pass of integer comparisons. *)
-  Parameter T2_dedup : forall zs, T_dedup_sorted zs <=
-    k_dedup * (length zs + 1) * (zb zs + 1).
+  Parameter T2_dedup : forall zs, (T_dedup_sorted zs <=
+    k_dedup * N.of_nat ((length zs + 1)%nat) * N.of_nat ((zb zs + 1)%nat))%N.
   (** Median construction charges one logarithmic splitting pass per level. *)
-  Parameter T3_build : forall fuel zs, length zs <= fuel -> T_build fuel zs <=
-    k_build * (length zs * (Nat.log2 (length zs) + 1) + fuel + 1).
+  Parameter T3_build : forall fuel zs, length zs <= fuel -> (T_build fuel zs <=
+    k_build * N.of_nat ((length zs * (Nat.log2 (length zs) + 1) + fuel + 1)%nat))%N.
   (** Upper search charges one comparison per visited level. *)
-  Parameter T4_above : forall t z, T_above t z <=
-    k_search * (depth t + 1) * (tree_bits t + zbits z + 1).
+  Parameter T4_above : forall t z, (T_above t z <=
+    k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
   (** Lower search charges one comparison per visited level. *)
-  Parameter T5_below : forall t z, T_below t z <=
-    k_search * (depth t + 1) * (tree_bits t + zbits z + 1).
+  Parameter T5_below : forall t z, (T_below t z <=
+    k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
 End THRESHOLDS_PLAN.
 
 Module Type THRESHOLDS_ALL := THRESHOLDS_T <+ THRESHOLDS_PLAN.

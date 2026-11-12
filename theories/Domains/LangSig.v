@@ -85,13 +85,13 @@ Module Type LANG := LANG_OPS <+ LANG_LAWS.
 Module Type LANG_TIME (Import L : LANG).
   (* spec: work *)
   Parameter work : op -> list val -> nat.
-  Parameter T_eval : op -> list val -> nat.
-  Parameter T_literal : op -> nat.
-  Parameter c_lang : nat.
+  Parameter T_eval : op -> list val -> N.
+  Parameter T_literal : op -> N.
+  Parameter c_lang : N.
   (** Evaluation time is bounded by the language's operator work. *)
-  Parameter T_eval_le : forall o vs, T_eval o vs <= c_lang * (work o vs + 1).
+  Parameter T_eval_le : forall o vs, (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.
   (** Literal recognition has a uniform bound. *)
-  Parameter T_literal_le : forall o, T_literal o <= c_lang.
+  Parameter T_literal_le : forall o, (T_literal o <= c_lang)%N.
 End LANG_TIME.
 
 Module Type LANG_T := LANG <+ LANG_TIME.

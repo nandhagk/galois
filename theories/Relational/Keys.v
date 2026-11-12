@@ -4,7 +4,7 @@
     For example, positive and negative occurrences of x have different encodings.
     Builds on: KeySig and the core OptionKey towers in Key. *)
 
-From Stdlib Require Import PArith Bool.
+From Stdlib Require Import PArith Bool NArith.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Key.
 
@@ -36,12 +36,12 @@ Module LitKeyT (X : KEY_T) <: KEY_T.
   Include LitKey X.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : nat := 1. (* STUB *)
+  Definition c_key : N := 1. (* STUB *)
   (** Encoding adds one sign bit to the variable encoding. *)
-  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Literal equality charges the first variable and its sign. *)
-  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
   Proof. Admitted. (* STUB *)
 End LitKeyT.
 

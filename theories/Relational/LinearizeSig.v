@@ -34,15 +34,16 @@ Module Type LINEARIZE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (* spec: bits_e bits_es *)
   Parameter bits_e : term L.op X.t -> nat.
   Parameter bits_es : L.guard -> list (term L.op X.t) -> nat.
-  Parameter T_lin_of : term L.op X.t -> nat.
-  Parameter T_atoms_of : L.guard -> list (term L.op X.t) -> nat.
-  Parameter c_linearize : nat.
+  Parameter T_lin_of : term L.op X.t -> N.
+  Parameter T_atoms_of : L.guard -> list (term L.op X.t) -> N.
+  Parameter c_linearize : N.
   (** Linearization charges the term size and maximum coefficient or key size. *)
   Parameter T_lin_of_le : forall e,
-    T_lin_of e <= c_linearize * tsize e * (bits_e e + 1).
+    (T_lin_of e <= c_linearize * N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat))%N.
   (** Guard linearization charges all operand terms. *)
-  Parameter T_atoms_of_le : forall g es, T_atoms_of g es <= c_linearize *
-    (fold_right Nat.add 0 (map tsize es) + 1) * (bits_es g es + 1).
+  Parameter T_atoms_of_le : forall g es,
+    (T_atoms_of g es <= c_linearize * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+      N.of_nat ((bits_es g es + 1)%nat))%N.
 End LINEARIZE_TIME.
 
 Module Type LINEARIZE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) :=

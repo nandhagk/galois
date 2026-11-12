@@ -1,0 +1,8 @@
+theories/Egglog/Index.v
+tests/Egglog/IndexTest.v
+theories/Egglog/Join.v
+tests/Egglog/JoinTest.v
+theories/Egglog/Database.v
+tests/Egglog/DatabaseTest.v
+theories/Egglog/ModelFacts.v
+tests/Egglog/ModelFactsTest.v

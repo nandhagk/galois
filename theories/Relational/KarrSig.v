@@ -45,14 +45,14 @@ Module Type KARR_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Include NUM_STATE_TIME X L N F D.
   (* spec: n ell *)
   Parameter n ell : t -> nat.
-  Parameter T_subst : X.t -> lin X.t -> lcons X.t -> nat.
-  Parameter T_affine_hull : list (lcons X.t) -> list (lcons X.t) -> nat.
-  Parameter T_entail_cert : list (lcons X.t) -> lcons X.t -> nat.
-  Parameter c_karr : nat.
+  Parameter T_subst : X.t -> lin X.t -> lcons X.t -> N.
+  Parameter T_affine_hull : list (lcons X.t) -> list (lcons X.t) -> N.
+  Parameter T_entail_cert : list (lcons X.t) -> lcons X.t -> N.
+  Parameter c_karr : N.
   Definition ellB (dim bits : nat) : nat := dim * (bits + Nat.log2 dim + 1).
   (** Join charges cubic fraction-free elimination at the Hadamard bit bound. *)
-  Parameter T_join_karr_le : forall a b, T_join a b <= c_karr * (n a + n b)^3 *
-    (ellB (n a + n b) (ell a + ell b) + 1)^2.
+  Parameter T_join_karr_le : forall a b, (T_join a b <= c_karr * N.of_nat (((n a + n b)^3)%nat) *
+    N.of_nat (((ellB (n a + n b) (ell a + ell b) + 1)^2)%nat))%N.
 End KARR_TIME.
 
 Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

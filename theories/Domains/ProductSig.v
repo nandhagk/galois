@@ -4,7 +4,7 @@
     For example, a value belongs to a product when both components describe it.
     Builds on: ValueSig and LatticeSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Argent Require Import BigO.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -21,11 +21,11 @@ Module Type VALUE_REDUCER (L : LANG) (A B : VALUE_DOMAIN L) :=
 
 Module Type VALUE_REDUCER_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER L A B).
-  Parameter T_reduce : A.t * B.t -> nat.
-  Parameter c_reduce : nat.
+  Parameter T_reduce : A.t * B.t -> N.
+  Parameter c_reduce : N.
   (** One reduction charges the combined component sizes. *)
   Parameter T_reduce_le : forall a b,
-    T_reduce (a, b) <= c_reduce * (A.size a + B.size b + 1).
+    (T_reduce (a, b) <= c_reduce * N.of_nat ((A.size a + B.size b + 1)%nat))%N.
 End VALUE_REDUCER_TIME.
 
 Module Type VALUE_REDUCER_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -47,20 +47,20 @@ Module Type PRODUCT (L : LANG) (A B : VALUE_DOMAIN L) :=
 Module Type PRODUCT_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (Import P : PRODUCT L A B).
   Include VALUE_DOMAIN_TIME L P.
-  Parameter c_product : nat.
+  Parameter c_product : N.
   (** Product forward transfer charges both component transfers. *)
-  Parameter T_forward_components : forall o xs, T_forward o xs <= c_product *
-    (length xs + A.T_forward o (map fst xs) + B.T_forward o (map snd xs) + 1).
+  Parameter T_forward_components : forall o xs, (T_forward o xs <= c_product *
+    (N.of_nat ((length xs)%nat) + A.T_forward o (map fst xs) + B.T_forward o (map snd xs) + 1))%N.
   (** Product backward transfer charges both component transfers and list assembly. *)
-  Parameter T_backward_components : forall o r xs, T_backward o r xs <= c_product *
-    (length xs + A.T_backward o (fst r) (map fst xs) +
-     B.T_backward o (snd r) (map snd xs) + 1).
+  Parameter T_backward_components : forall o r xs, (T_backward o r xs <= c_product *
+    (N.of_nat ((length xs)%nat) + A.T_backward o (fst r) (map fst xs) +
+     B.T_backward o (snd r) (map snd xs) + 1))%N.
   (** Product guards charge both component guards and list assembly. *)
-  Parameter T_guard_components : forall g xs, T_guard g xs <= c_product *
-    (length xs + A.T_guard g (map fst xs) + B.T_guard g (map snd xs) + 1).
+  Parameter T_guard_components : forall g xs, (T_guard g xs <= c_product *
+    (N.of_nat ((length xs)%nat) + A.T_guard g (map fst xs) + B.T_guard g (map snd xs) + 1))%N.
   (** Product forward transfer has the published work bound. *)
-  Parameter forward_bigO : bigO (fun _ => True)
-    (fun ox => work (fst ox) (snd ox)) (fun ox => T_forward (fst ox) (snd ox)).
+  Parameter forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
 End PRODUCT_TIME.
 
 Module Type PRODUCT_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -68,7 +68,7 @@ Module Type PRODUCT_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
 
 Module Type PRODUCT_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (Import P : PRODUCT_T L A B).
-  Parameter k_product_lists : nat.
+  Parameter k_product_lists : N.
   (** Product concretization is intersection. *)
   Parameter F1_gamma : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   (** Product inclusion compares both components. *)
@@ -83,8 +83,8 @@ Module Type PRODUCT_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** Product size adds the component sizes. *)
   Parameter F5_size : forall a b, size (a, b) = A.size a + B.size b.
   (** Inclusion charges the component tests. *)
-  Parameter T1_leb : forall a b, T_leb a b <= k_product_lists *
-    (A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1).
+  Parameter T1_leb : forall a b, (T_leb a b <= k_product_lists *
+    (A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
 End PRODUCT_PLAN.
 
 Module Type PRODUCT_ALL (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -103,13 +103,14 @@ Module Type REDUCED (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
 Module Type REDUCED_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER_T L A B) (K : ROUNDS) (Import D : REDUCED L A B R K).
   Include VALUE_DOMAIN_TIME L D.
-  Parameter T_red : t -> nat.
+  Parameter T_red : t -> N.
   (** Iterated reduction charges the configured number of rounds. *)
   Parameter T_red_le : forall a b,
-    T_red (a, b) <= K.rounds * R.c_reduce * (A.size a + B.size b + 1).
+    (T_red (a, b) <= N.of_nat K.rounds * R.c_reduce *
+      N.of_nat ((A.size a + B.size b + 1)%nat))%N.
   (** Reduced transfer has the published work bound. *)
-  Parameter forward_bigO : bigO (fun _ => True)
-    (fun ox => work (fst ox) (snd ox)) (fun ox => T_forward (fst ox) (snd ox)).
+  Parameter forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
 End REDUCED_TIME.
 
 Module Type REDUCED_T (L : LANG_T) (A B : VALUE_DOMAIN_T L)
@@ -118,7 +119,7 @@ Module Type REDUCED_T (L : LANG_T) (A B : VALUE_DOMAIN_T L)
 
 Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER_T L A B) (K : ROUNDS) (Import D : REDUCED_T L A B R K).
-  Parameter k_red : nat.
+  Parameter k_red : N.
   (** Reduction is precisely the configured fixed iteration. *)
   Parameter F1_red_eq : forall x, red x = Nat.iter K.rounds R.reduce x.
   (** Product concretization is intersection. *)
@@ -132,9 +133,9 @@ Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Parameter F5_widen : forall p a b, widen p a b =
     (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   (** Iteration time charges reduction at every intermediate value. *)
-  Parameter T1_red_steps : forall x, T_red x <= k_red *
-    (fold_right Nat.add 0
-      (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1) (seq 0 K.rounds)) + 1).
+  Parameter T1_red_steps : forall x, (T_red x <= k_red *
+    (fold_right N.add 0
+      (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1) (seq 0 K.rounds)) + 1))%N.
 End REDUCED_PLAN.
 
 Module Type REDUCED_ALL (L : LANG_T) (A B : VALUE_DOMAIN_T L)

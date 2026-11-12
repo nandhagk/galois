@@ -56,35 +56,36 @@ Module Type VALUE_DOMAIN_TIME (L : LANG_T) (Import D : VALUE_DOMAIN L).
   Parameter work : L.op -> list t -> nat.
   Parameter gwork : L.guard -> list t -> nat.
   Parameter wsize : wparam -> nat.
-  Parameter T_leb T_join T_meet : t -> t -> nat.
-  Parameter T_is_bot : t -> nat.
-  Parameter T_widen : wparam -> t -> t -> nat.
-  Parameter T_narrow : t -> t -> nat.
-  Parameter T_forward : L.op -> list t -> nat.
-  Parameter T_backward : L.op -> t -> list t -> nat.
-  Parameter T_guard : L.guard -> list t -> nat.
-  Parameter c_val : nat.
-  Definition c_lat : nat := c_val.
+  Parameter T_leb T_join T_meet : t -> t -> N.
+  Parameter T_is_bot : t -> N.
+  Parameter T_widen : wparam -> t -> t -> N.
+  Parameter T_narrow : t -> t -> N.
+  Parameter T_forward : L.op -> list t -> N.
+  Parameter T_backward : L.op -> t -> list t -> N.
+  Parameter T_guard : L.guard -> list t -> N.
+  Parameter c_val : N.
+  Definition c_lat : N := c_val.
   (** Inclusion testing costs at most the combined abstract sizes. *)
-  Parameter T_leb_le : forall a b, T_leb a b <= c_val * (size a + size b + 1).
+  Parameter T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
   (** Join costs at most the combined abstract sizes. *)
-  Parameter T_join_le : forall a b, T_join a b <= c_val * (size a + size b + 1).
+  Parameter T_join_le : forall a b, (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
   (** Meet costs at most the combined abstract sizes. *)
-  Parameter T_meet_le : forall a b, T_meet a b <= c_val * (size a + size b + 1).
+  Parameter T_meet_le : forall a b, (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
   (** Bottom testing costs at most the abstract size. *)
-  Parameter T_is_bot_le : forall a, T_is_bot a <= c_val * (size a + 1).
+  Parameter T_is_bot_le : forall a, (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
   (** Widening charges both values and the widening parameters. *)
   Parameter T_widen_le : forall p a b,
-    T_widen p a b <= c_val * (size a + size b + wsize p + 1).
+    (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
   (** Narrowing charges both abstract values. *)
-  Parameter T_narrow_le : forall a b, T_narrow a b <= c_val * (size a + size b + 1).
+  Parameter T_narrow_le : forall a b,
+    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
   (** Forward transfer is bounded by operator work. *)
-  Parameter T_forward_le : forall o xs, T_forward o xs <= c_val * (work o xs + 1).
+  Parameter T_forward_le : forall o xs, (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
   (** Backward transfer additionally charges the requested result. *)
   Parameter T_backward_le : forall o r xs,
-    T_backward o r xs <= c_val * (work o xs + size r + 1).
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
   (** Guard transfer is bounded by guard work. *)
-  Parameter T_guard_le : forall g xs, T_guard g xs <= c_val * (gwork g xs + 1).
+  Parameter T_guard_le : forall g xs, (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
 End VALUE_DOMAIN_TIME.
 
 Module Type VALUE_DOMAIN_T (L : LANG_T) := VALUE_DOMAIN L <+ VALUE_DOMAIN_TIME L.
