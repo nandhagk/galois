@@ -150,8 +150,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
-intros [|a]; reflexivity.
-
+    intros [|a]; reflexivity.
   Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
@@ -167,7 +166,7 @@ intros [|a]; reflexivity.
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_top: The variable leb_lift_bot was not found in the current environment. *)
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
@@ -181,10 +180,10 @@ intros [|a]; reflexivity.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_core_wrank: The variable U was not found in the current environment. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_core_wrank: The variable msum_bounded was not found in the current environment. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
@@ -196,8 +195,7 @@ intros [|a]; reflexivity.
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
   Proof.
-intros st Hbot. exact Hbot.
-
+    intros st Hbot. exact Hbot.
   Qed.
   (** Top describes every concrete environment. *)
   Lemma gamma_top : forall st, gamma top st.
@@ -225,9 +223,8 @@ intros st Hbot. exact Hbot.
   Lemma read_spec : forall m x,
     read m x = match M.get x m with Some a => a | None => V.top end.
   Proof.
-  intros m x. 
-  reflexivity.
-
+    intros m x.
+    reflexivity.
   Qed.
   (** Leaf roots expose their stored abstract value. *)
   Lemma root_leaf : forall x a, root (ALeaf x a) = a.
@@ -245,8 +242,7 @@ intros st Hbot. exact Hbot.
   (** Unreachable states describe no stores. *)
   Lemma gamma_unreached : forall st, ~ gamma Unreached st.
   Proof.
-intros st Hbot. exact Hbot.
-
+    intros st Hbot. exact Hbot.
   Qed.
   (** Reached maps without recognized bottoms describe stores pointwise. *)
   Lemma gamma_reached : forall m st,

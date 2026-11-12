@@ -58,7 +58,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_top: The variable slots_leb was not found in the current environment. *)
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
   Proof. Admitted.

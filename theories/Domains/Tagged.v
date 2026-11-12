@@ -167,9 +167,9 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
   Lemma widen_ub_l : forall q a b, leb a (widen q a b) = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: q is already used. *)
+  Proof. Admitted. (* CONVERT: tagged_laws: In environment *)
   Lemma widen_ub_r : forall q a b, leb b (widen q a b) = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: q is already used. *)
+  Proof. Admitted. (* CONVERT: tagged_laws: Found no subterm matching "(?M1523 =? ?M1523)%positive" *)
   Lemma widen_stable : forall q a b, leb b a = true -> widen q a b = a.
   Proof. Admitted.
   Lemma wrank_widen : forall q a b, is_bot a = false -> leb b a = false ->
@@ -179,7 +179,7 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Proof. Admitted.
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: The variable w was not found in the current environment. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
   Proof. Admitted. (* CONVERT: tagged_numeric_laws: The variable tagged_lattice was not found in the current environment. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
@@ -202,7 +202,7 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
     f_equal. exact (W.ppoint_sound w p z value Hpayload Hword Hpayload_gamma).
   Qed.
   Lemma abst_sound : forall v, gamma (abst v) v.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_numeric_laws: No product even after head-reduction. *)
 End Tagged.
 
 Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
