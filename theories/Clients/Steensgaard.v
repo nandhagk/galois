@@ -28,28 +28,28 @@ Module Steensgaard (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D) <: STEENSGAARD V I J D R.
   Include SteensgaardCode V I J D R.
   Lemma compile_rules : forall q, compile q = steensgaard_program.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seed_rows : forall q f k o,
     row (D.view (seed q)) f k o <-> steensgaard_seed_row q f k o.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma solve_checked : forall q lim, let cp := R.plan (compile q) in
     solve q lim = if R.check_plan (compile q) cp then R.run (compile q) cp lim (seed q)
       else (IterLimit, seed q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (exists i j, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x))) /\
       represents (D.view db) (Id j) (pointer_expression (Cell a)) /\ same (D.view db) i j)
       (points db x a).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma solve_unifies : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Steensgaard.
 
 Module SteensgaardT (V : VALUE_T with Definition t := positive)

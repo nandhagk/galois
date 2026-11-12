@@ -28,27 +28,27 @@ Module Andersen (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D) <: ANDERSEN V I J D R.
   Include AndersenCode V I J D R.
   Lemma compile_rules : forall q, compile q = andersen_program.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma rules_valid : forall q, valid V.prim V.merge (andersen_model q) (compile q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seed_rows : forall q f k o, row (D.view (seed q)) f k o <-> pointer_seed_row q f k o.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q) /\ R.no_ids (seed q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma solve_checked : forall q lim, let cp := R.plan (compile q) in
     solve q lim = if R.check_plan (compile q) cp then R.run (compile q) cp lim (seed q)
       else (IterLimit, seed q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (row (D.view db) 5 [Val x; Val a] None) (points db x a).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> may_points q x a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Andersen.
 
 Module AndersenT (V : VALUE_T with Definition t := positive)

@@ -32,39 +32,39 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Definition herbrand (_ : program V.t) (_ : D.t) : nat := 0.
   Lemma load_spec : forall p cp,
     load p cp = D.init (decls V.t p) (Syntax.slots V.t cp).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db ->
     D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_grows : forall p cp lim db, plans_ok p cp -> D.wf db ->
     grows db (snd (run p cp lim db)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_sat : forall p cp lim db (M : model (V := V.t)) nu,
     plans_ok p cp -> D.wf db -> valid V.prim V.merge M p ->
     sat V.merge M nu (D.view db) -> exists nu',
       (forall i, D.allocated db i -> nu' i = nu i) /\
       sat V.merge M nu' (D.view (snd (run p cp lim db))).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_closed : forall p cp lim db db', plans_ok p cp -> D.wf db ->
     run p cp lim db = (Saturated, db') -> closed V.prim V.merge p (D.view db').
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_derives : forall p cp lim db f k o, plans_ok p cp -> D.wf db ->
     relational_fragment p = true -> no_ids db ->
     row (D.view (snd (run p cp lim db))) f k o -> derives V.prim p (D.view db) f k.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_least : forall p cp lim db db', plans_ok p cp -> D.wf db ->
     relational_fragment p = true -> no_ids db -> run p cp lim db = (Saturated, db') ->
     forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
       includes (D.view db') w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     relational_fragment p = true -> no_ids db ->
     N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
     fst (run p cp lim db) = Saturated.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma run_limits : forall p cp lim db, fst (run p cp lim db) = IdLimit ->
     (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Run.
 
 Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)

@@ -28,28 +28,28 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
   Definition unfold (_ : extraction_dag V.t) (_ : positive) : option (@Model.expr V.t) := None.
   Lemma unfold_spec : forall g c e, NoDup (map fst g) ->
     (unfold g c = Some e <-> dag_represents g c e).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma best_row : forall db c n f k, D.wf db -> D.canonical db ->
     In (c, (n, (f, k))) (best db) ->
     row (D.view db) f k (Some (Id c)) /\
       n = C.fn_cost f (map (cost_of (best db)) k).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma best_optimal : forall db c e, D.wf db -> D.canonical db ->
     represents (D.view db) (Id c) e ->
     exists n ch, In (c, (n, ch)) (best db) /\ (n <= tree_cost e)%N.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma best_attained : forall db c n ch, D.wf db -> D.canonical db ->
     In (c, (n, ch)) (best db) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma check_dag_sound : forall db c g n, D.wf db -> check_dag db c g = Some n ->
     dag_valid (D.view db) c g /\ n = dag_cost g /\
     exists e, represents (D.view db) (Id c) e /\ unfold g c = Some e.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma extract_checked : forall db c g, D.wf db -> D.canonical db ->
     extract db c = Some g -> exists n m ch,
       check_dag db c g = Some n /\ In (c, (m, ch)) (best db) /\ (n <= m)%N.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Extract.
 
 Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V)

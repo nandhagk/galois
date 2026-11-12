@@ -20,14 +20,14 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
   Include JOIN_SPEC V I.
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma run_complete : forall p ixs b, wf_plan p ixs ->
     answer p ixs b -> In b (run p ixs).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma run_nodup : forall p ixs, wf_plan p ixs -> NoDup (run p ixs).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
 End Join.
 
