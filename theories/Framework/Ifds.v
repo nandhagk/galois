@@ -136,6 +136,27 @@ Module IfdsLattice <: IFDS_LATTICE.
   Proof. Admitted.
 End IfdsLattice.
 
+Module IfdsLatticeT <: IFDS_LATTICE_T.
+  Include IfdsLattice.
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (_ : t) := 1%nat.
+  Definition c_lat : N := 1%N. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End IfdsLatticeT.
+
 Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY)
     (FL : FLOW_FUN P N E C F) (L : IFDS_LATTICE) <: IFDS P N E C Site I F FL L.
@@ -206,6 +227,24 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
      end, nil).
   Proof. Admitted.
 End Ifds.
+
+Module IfdsT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+    (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
+    (FL : FLOW_FUN_T P N E C F) (L : IFDS_LATTICE_T).
+  Include Ifds P N E C Site I F FL L.
+
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun row_code.
+  TimeFun target.
+  TimeFun deps.
+  TimeFun sides.
+  TimeFun finish.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun rows_of.
+End IfdsT.
 
 Module IfdsSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (FL : FLOW_FUN P N E C F)

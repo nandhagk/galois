@@ -5,6 +5,7 @@
     Builds on: Framework.GenKillSig and Framework.Dense. *)
 
 From Stdlib Require Import List Bool NArith.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig SetSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import SystemSig.
@@ -177,3 +178,99 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
         In entry (C.entries p) -> route p entry path n -> S.mem d (path_facts p path) = true.
   Proof. Admitted. (* CONVERT: must_greatest_paths: The variable must_post_keeps was not found *)
 End GenKillSound.
+
+Module GenKillMayDomainT (F : KEY_T) (S : SET_T F)
+    <: GENKILL_MAY_DOMAIN_T F S.
+  Include GenKillMayDomain F S.
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size := S.nodes.
+  Definition c_lat : N := 1%N. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End GenKillMayDomainT.
+
+Module GenKillMustDomainT (F : KEY_T) (S : SET_T F)
+    <: GENKILL_MUST_DOMAIN_T F S.
+  Include GenKillMustDomain F S.
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (a : t) :=
+    match a with
+    | None => 0
+    | Some facts => S.nodes facts
+    end.
+  Definition c_lat : N := 1%N. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End GenKillMustDomainT.
+
+Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (F : KEY_T) (S : SET_T F) (G : GENKILL_T P E F S)
+    (L : GENKILL_MAY_DOMAIN_T F S).
+  Include GenKillMayFlowCode P N E F S G L.
+  TimeFun dir.
+  TimeFun boundary.
+  TimeFun transfer.
+End GenKillMayFlowT.
+
+Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (F : KEY_T) (S : SET_T F) (G : GENKILL_T P E F S)
+    (L : GENKILL_MUST_DOMAIN_T F S).
+  Include GenKillMustFlowCode P N E F S G L.
+  TimeFun dir.
+  TimeFun boundary.
+  TimeFun transfer.
+End GenKillMustFlowT.
+
+Module GenKillMayOperationalT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_T P N E) (F : KEY_T) (S : SET_T F)
+    (G : GENKILL_T P E F S) (L : GENKILL_MAY_DOMAIN_T F S).
+  Module Flow := GenKillMayFlowT P N E F S G L.
+  Include GenKillMay P N E C F S G L Flow.
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+End GenKillMayOperationalT.
+
+Module GenKillMustOperationalT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_T P N E) (F : KEY_T) (S : SET_T F)
+    (G : GENKILL_T P E F S) (L : GENKILL_MUST_DOMAIN_T F S).
+  Module Flow := GenKillMustFlowT P N E F S G L.
+  Include GenKillMust P N E C F S G L Flow.
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+End GenKillMustOperationalT.

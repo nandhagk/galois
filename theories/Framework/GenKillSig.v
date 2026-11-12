@@ -64,6 +64,9 @@ Module Type GENKILL_TIME (P E : TYPE) (F : KEY_T) (S : SET_T F)
     (Import G : GENKILL_OPS P E F S).
   Parameter T_gen T_kill : P.t -> E.t -> N.
   Parameter T_init : P.t -> N.
+  (* SIG-QUESTION: GENKILL_T has no numerical edge or size envelopes for these
+     readers. FLOW_TIME needs a bound independent of e, but E has no finite
+     presentation here. *)
 End GENKILL_TIME.
 
 Module Type GENKILL_T (P E : TYPE) (F : KEY_T) (S : SET_T F) :=

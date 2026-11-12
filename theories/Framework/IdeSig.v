@@ -153,8 +153,9 @@ Module Type IDE_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
     (FL : IDE_FLOW_T P N E C F V M) (Import A : IDE P N E C Site I F V M FL).
   Include SYSTEM_TIME M A.
   Include LOCAL_TIME M A.
-  (* SIG-QUESTION: flow, weight and composition readers need numeric budgets and
-     a prepared index to discharge the inherited system and local contracts. *)
+  (* SIG-QUESTION: arbitrary path_frame pending and received lists escape row_work's
+     size input. rows_of scans the full row list, while LOCAL_TIME requires a bound
+     by returned rows and key bits. Flow, weight and composition also need numeric budgets. *)
 End IDE_TIME.
 
 Module Type IDE_T (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)

@@ -5,7 +5,7 @@
     Builds on: Framework.IdeSig and Framework.Ifds. *)
 
 From Stdlib Require Import List Bool NArith PArith.
-From Argent Require Import Loop.
+From Argent Require Import Time Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -130,6 +130,24 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
      end, nil).
   Proof. Admitted.
 End Ide.
+
+Module IdeT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+    (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
+    (V : LATTICE_T) (M : MICRO_T V) (FL : IDE_FLOW_T P N E C F V M).
+  Include Ide P N E C Site I F V M FL.
+
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun row_code.
+  TimeFun target.
+  TimeFun deps.
+  TimeFun sides.
+  TimeFun finish.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun rows_of.
+End IdeT.
 
 Module IdeSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (V : LATTICE) (M : MICRO V)

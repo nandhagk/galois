@@ -61,6 +61,9 @@ Arguments PathRow {N E F}.
 Arguments path_row_code {N E F}.
 Arguments path_row_rule {N E F}.
 
+TimeFun path_row_code.
+TimeFun path_row_rule.
+
 Record path_frame (N E F A : Type) := PathFrame {
   path_frame_rule : path_rule N E F;
   path_frame_pending : list (path_edge N F);
@@ -171,8 +174,9 @@ Module Type IFDS_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
     (L : IFDS_LATTICE_T) (Import A : IFDS P N E C Site I F FL L).
   Include SYSTEM_TIME L A.
   Include LOCAL_TIME L A.
-  (* SIG-QUESTION: reader budgets and a prepared rule index must supply the linear
-     enumeration and rows_of contracts; arbitrary FLOW_FUN clocks have no such bound. *)
+  (* SIG-QUESTION: arbitrary path_frame pending and received lists escape row_work's
+     size input. rows_of scans the full row list, while LOCAL_TIME requires a bound
+     by returned rows and key bits. Reader budgets and a prepared rule index are missing. *)
 End IFDS_TIME.
 
 Module Type IFDS_T (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)

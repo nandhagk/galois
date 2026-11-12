@@ -98,8 +98,9 @@ Module Type SPARSE_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
     (V : VALUE_DOMAIN_T L) (T : SSA_TRANSFER_T P X L V)
     (Import A : SPARSE P N E C X L K G S V T).
   Include SYSTEM_TIME V A.
-  (* SIG-QUESTION: arbitrary SSA readers need preparation or numeric reader budgets
-     before the linear row enumeration and dependency contracts can be implemented. *)
+  (* SIG-QUESTION: arbitrary SSA readers need numeric budgets or preparation for
+     row enumeration and dependency contracts. T_resume also sees arbitrary
+     pending and received lists in sparse_frame, while row_work omits frame size. *)
 End SPARSE_TIME.
 
 Module Type SPARSE_T (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
