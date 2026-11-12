@@ -135,3 +135,40 @@ Example materialization_does_not_recompute_old_bindings :
   trace_get true (TraceEnv.assume [[1%nat]; [2%nat]] [Leaf false; Leaf false] trace_input) =
     [8%nat].
 Proof. vm_compute. reflexivity. Qed.
+
+Inductive fact := Bot | Point | Upper.
+Module TopBoundary.
+  Definition t := fact.
+  Definition leb a b :=
+    match a, b with Bot, _ => true | _, Upper => true | Point, Point => true | _, _ => false end.
+  Definition bot := Bot.
+  Definition is_bot a := match a with Bot => true | _ => false end.
+  Definition join a b :=
+    match a, b with Bot, _ => b | _, Bot => a | Point, Point => Point | _, _ => Upper end.
+  Definition top := Point.
+  Definition meet (a _ : t) := a.
+  Definition wparam := unit.
+  Definition widen (_ : unit) := join.
+  Definition narrow (a _ : t) := a.
+  Definition forward (_ : unit) (_ : list t) := Point.
+  Definition backward (_ : unit) (_ : t) (xs : list t) := xs.
+  Definition guard (_ : unit) (xs : list t) := xs.
+End TopBoundary.
+Module UnitLanguage.
+  Definition op := unit.
+  Definition guard := unit.
+  Definition val := unit.
+  Definition eval (_ : op) (_ : list val) := Some tt.
+  Definition literal (_ : op) : option Z := None.
+End UnitLanguage.
+Module BadEnv := EnvCode BoolKeyCode BoolMap UnitLanguage TopBoundary.
+Definition upper := Reached (BoolMap.set false Upper BoolMap.empty).
+Definition point := Reached (BoolMap.set false Point BoolMap.empty).
+
+Example top_order_premise_is_not_semantic_fullness :
+  TopBoundary.leb Upper TopBoundary.top = false.
+Proof. vm_compute. reflexivity. Qed.
+Example missing_top_order_breaks_transitivity :
+  (BadEnv.leb upper BadEnv.top, BadEnv.leb BadEnv.top point, BadEnv.leb upper point) =
+    (true, true, false).
+Proof. vm_compute. reflexivity. Qed.
