@@ -166,7 +166,7 @@ Definition dom_order_source_maps (numeric : dom_lt_numeric) (semis minimizer rel
   let walk := dom_order_number_tree (lt_numeric_limit numeric) rows in
   let indexes := dom_order_indexes (lt_numeric_order numeric) rows (order_pre walk) in
   fold_left (dom_order_colour numeric semis minimizer relative parents indexes walk)
-    (rev (lt_numeric_order numeric)) (DomOrderSources Empty Empty Empty).
+    (rev_append (lt_numeric_order numeric) []) (DomOrderSources Empty Empty Empty).
 TimeFun dom_order_source_maps.
 
 Record dom_source_tree := DomSourceTree {
@@ -324,7 +324,7 @@ Definition dom_anchor_sizes (parents : ptrie N) (removed : list (N * N * N)) : p
     let sizes := PTrieCode.set (dom_lt_key v) own sizes in
     if N.eqb anchor (dom_lt_identity parents v) then sizes else
       PTrieCode.set (dom_lt_key anchor) (N.add own (dom_anchor_size sizes anchor)) sizes)
-    (rev removed) Empty.
+    (rev_append removed []) Empty.
 TimeFun dom_anchor_sizes.
 
 Definition dom_anchor_capacity (parents sizes : ptrie N) (removed : list (N * N * N))
@@ -396,8 +396,8 @@ TimeFun merge_reverse.
 Definition dom_order_merge_step (positions : ptrie (N * N)) (st : dom_order_merge_state)
     : dom_order_merge_state + list N :=
   match merge_lower st, merge_upper st with
-  | [], ys => inr (rev (merge_reverse st) ++ ys)
-  | xs, [] => inr (rev (merge_reverse st) ++ xs)
+  | [], ys => inr (rev_append (merge_reverse st) ys)
+  | xs, [] => inr (rev_append (merge_reverse st) xs)
   | x :: xt, y :: yt =>
     if N.leb (dom_anchor_start positions x) (dom_anchor_start positions y)
     then inl (DomOrderMergeState xt (merge_upper st) (x :: merge_reverse st))
@@ -409,7 +409,7 @@ Definition dom_order_merge (positions : ptrie (N * N)) (xs ys : list N) : list N
   match loopN (dom_order_merge_step positions) (N.of_nat (length xs + length ys + 1))
       (DomOrderMergeState xs ys []) with
   | inr vs => vs
-  | inl st => rev (merge_reverse st) ++ merge_lower st ++ merge_upper st
+  | inl st => rev_append (merge_reverse st) (merge_lower st ++ merge_upper st)
   end.
 TimeFun dom_order_merge.
 
@@ -442,7 +442,7 @@ TimeFun emit_reverse.
 Definition dom_order_emit_step (vertices : ptrie positive) (rows : ptrie (list N))
     (st : dom_order_emit_state) : dom_order_emit_state + list positive :=
   match emit_pending st with
-  | [] => inr (rev (emit_reverse st))
+  | [] => inr (rev_append (emit_reverse st) [])
   | v :: remaining =>
     if dom_order_active (emit_seen st) v then
       inl (DomOrderEmitState remaining (emit_seen st) (emit_reverse st))
@@ -460,7 +460,7 @@ Definition dom_order_emit (numeric : dom_lt_numeric) (rows : ptrie (list N)) : l
   match loopN (dom_order_emit_step (lt_numeric_vertex numeric) rows)
       (N.double (lt_numeric_limit numeric) + 3)%N (DomOrderEmitState [1%N] Empty []) with
   | inr order => order
-  | inl st => rev (emit_reverse st)
+  | inl st => rev_append (emit_reverse st) []
   end.
 TimeFun dom_order_emit.
 
@@ -506,8 +506,8 @@ TimeFun dom_build_order.
 
 Definition dom_lt_ops (g : prepared) (r : positive) : list lt_op :=
   let result := dom_lt_pipeline g r in
-  rev (lt_operations (lt_semi_links (result_semi result))) ++
-    rev (lt_operations (lt_bucket_links (result_bucket result))).
+  rev_append (lt_operations (lt_semi_links (result_semi result)))
+    (rev_append (lt_operations (lt_bucket_links (result_bucket result))) []).
 TimeFun dom_lt_ops.
 
 Record dom_lt_replay := DomLtReplay {

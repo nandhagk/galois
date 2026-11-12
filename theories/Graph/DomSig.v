@@ -47,6 +47,8 @@ Definition preorder_before (t : domtree) (u v : positive) : Prop :=
 Definition domtree_exact (g : prepared) (r : positive) (t : domtree) : Prop :=
   In r (verts (base g)) /\
   dom_exact g r (idom t) /\
+  (forall v a, (trie_get v (pre t) = Some a \/ trie_get v (post t) = Some a) ->
+    N.size_nat a <= graph_width (base g)) /\
   (forall u v, In v (children t u) <-> trie_get v (idom t) = Some u) /\
   (forall u, NoDup (children t u) /\ StronglySorted (preorder_before t) (children t u)) /\
   (forall v, (exists a, trie_get v (pre t) = Some a) <-> reach (base g) [r] v) /\
@@ -198,6 +200,8 @@ Module Type DOM_PLAN (Import D : DOM_T).
   Parameter T_map_check : dom_scan_data -> positive -> ptrie positive -> list positive -> N.
   Parameter sizes : ptrie positive -> list positive -> ptrie N.
   Parameter T_sizes : ptrie positive -> list positive -> N.
+  Parameter sizes_ok : ptrie positive -> ptrie N -> ptrie N -> list positive -> bool.
+  Parameter T_sizes_ok : ptrie positive -> ptrie N -> ptrie N -> list positive -> N.
   Parameter edges : prepared -> ptrie positive -> list positive -> bool.
   Parameter T_edges : prepared -> ptrie positive -> list positive -> N.
   Parameter lt_dfs : prepared -> positive -> list positive.
@@ -206,7 +210,8 @@ Module Type DOM_PLAN (Import D : DOM_T).
   Parameter T_lt_semi : prepared -> positive -> N.
   Parameter lt_order : prepared -> positive -> list positive.
   Parameter T_lt_order : prepared -> positive -> N.
-  Parameter k_scan k_read k_map k_size k_edge k_tree k_dfs k_semi k_le k_order : N.
+  Parameter k_scan k_read k_map k_size k_edge k_tree k_dfs k_semi k_le k_order
+    k_build k_check : N.
 
 (** A path ends with an edge into its target, unless it is a single vertex. *)
 Parameter F0_path_last : forall g a vs b, path g a vs b ->
@@ -223,6 +228,16 @@ Parameter F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base
 (** An accepted order holds listed vertices only. *)
 Parameter F2b_check_listed : forall g r m o, check g r m o = true ->
   forall v, In v o -> In v (verts (base g)).
+
+(** A successful read lists distinct listed vertices within the budget, headed by the root. *)
+Parameter F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
+  NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
+  (forall v, In v o -> In v (nodes g)) /\
+  (forall v, In v o -> exists i, trie_get v pos = Some i).
+
+(** A successful parent check keeps every parent of an ordered vertex in the order. *)
+Parameter F2d_map : forall g r m o, map_check (scan g) r m o = true ->
+  forall v p, In v o -> trie_get v m = Some p -> In p o.
 
 (** Ancestors precede their proper descendants. *)
 Parameter F3_anc_before : forall g r m o u v, dom_cert g r m o ->
@@ -300,6 +315,11 @@ Parameter F12_tree_exact : forall g r m o, check g r m o = true ->
     (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_sizes m o <= k_size * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
+  (** Parent containment tests charge each accepted order entry. *)
+  Parameter T4b_sizes_ok : forall g r m o pos,
+    read (scan g) r o = Some pos -> map_check (scan g) r m o = true ->
+    (T_sizes_ok m pos (sizes m o) o <= k_size * N.of_nat ((graph_n (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
   (** Edge checks read only rows whose sources are listed. *)
   Parameter T5_edges : forall g m o, length o <= graph_n (base g) ->
     (forall v, In v o -> In v (verts (base g))) ->
@@ -331,6 +351,18 @@ Parameter F12_tree_exact : forall g r m o, check g r m o = true ->
     (T_lt_order g r <= k_order *
       N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+  (** Building runs the search, the semidominator phases and the order phase. *)
+  Parameter T11b_build : forall g r, prepared_ok g ->
+    (T_build g r <= T_lt_dfs g r + T_lt_semi g r + T_lt_order g r + k_build)%N.
+  (** The checker runs its phases in order and stops at the first rejection. *)
+  Parameter T11_check : forall g r m o,
+    (T_check g r m o <= k_check * (T_scan g + T_read (scan g) r o +
+      T_map_check (scan g) r m o +
+      match read (scan g) r o with
+      | Some pos => if map_check (scan g) r m o
+          then T_sizes m o + T_sizes_ok m pos (sizes m o) o + T_edges g m o else 0
+      | None => 0
+      end + 1))%N.
 End DOM_PLAN.
 
 Module Type DOM_ALL := DOM_T <+ DOM_PLAN.
