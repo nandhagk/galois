@@ -29,6 +29,8 @@ Module Calls <: CALLS_OPS Prog NatKeyCode NatKeyCode.
   Definition caller_of (_ : unit) (site : nat) := site.
   Definition resolve (_ : unit) site := match site with 0 => [1] | 1 => [0] | _ => [] end.
   Definition call_graph (_ : unit) := Digraph [] Empty.
+  Definition calls p := flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
 End Calls.
 Module Body <: BODY_OPS Prog NatKeyCode NatKeyCode BoolOps.
   Definition local (_ : unit) f := Nat.eqb f 1.

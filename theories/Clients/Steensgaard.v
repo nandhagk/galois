@@ -29,27 +29,34 @@ Module Steensgaard (V : VALUE with Definition t := positive)
   Include SteensgaardCode V I J D R.
   Lemma compile_rules : forall q, compile q = steensgaard_program.
   Proof. Admitted. (* STUB *)
+
   Lemma seed_rows : forall q f k o,
     row (D.view (seed q)) f k o <-> steensgaard_seed_row q f k o.
   Proof. Admitted. (* STUB *)
-  Lemma seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
+
+  Lemma seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   Proof. Admitted. (* STUB *)
+
   Lemma seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q).
   Proof. Admitted. (* STUB *)
-  Lemma solve_checked : forall q lim, let cp := R.plan (compile q) in
-    solve q lim = if R.check_plan (compile q) cp then R.run (compile q) cp lim (seed q)
-      else (IterLimit, seed q).
+
+  Lemma solve_run : forall q lim,
+    solve q lim = R.run (compile q) (R.plan (compile q)) lim (seed q).
   Proof. Admitted. (* STUB *)
+
   Lemma points_spec : forall db x a, D.wf db -> D.canonical db ->
     reflect (exists i j, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x))) /\
       represents (D.view db) (Id j) (pointer_expression (Cell a)) /\ same (D.view db) i j)
       (points db x a).
   Proof. Admitted. (* STUB *)
+
   Lemma solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
   Proof. Admitted. (* STUB *)
-  Lemma solve_unifies : forall q lim db, solve q lim = (Saturated, db) ->
-    forall x a, points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
+
+  Lemma solve_covers : forall q lim db, solve q lim = (Saturated, db) ->
+    forall x a, pointer_congruence q (Deref (Cell x)) (Cell a) -> points db x a = true.
   Proof. Admitted. (* STUB *)
+
 End Steensgaard.
 
 Module SteensgaardT (V : VALUE_T with Definition t := positive)
@@ -60,42 +67,58 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   TimeFun solve.
   TimeFun points.
   Definition c_steensgaard : N := 1. (* STUB *)
-  Lemma T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
-      R.T_run p cp lim (seed q) + c_steensgaard)%N.
-  Proof. Admitted. (* STUB *)
   Definition k_rules : N := 1. (* STUB *)
   Definition k_seed : N := 1. (* STUB *)
   Definition k_wrap : N := 1. (* STUB *)
+  Lemma T_seed_le : forall q,
+    (T_seed q <= c_steensgaard *
+      N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
+      N.of_nat (D.unit (seed q)) * N.of_nat (N.to_nat (N.log2 (D.ids (seed q))) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_compile_le : forall q, (T_compile q <= c_steensgaard)%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_points_le : forall db x a, D.wf db ->
+    (T_points db x a <= c_steensgaard * (N.of_nat (8 * D.unit db) +
+      N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
+    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
+      R.T_run p cp lim (seed q) + c_steensgaard)%N.
+  Proof. Admitted. (* STUB *)
+
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
   Proof. Admitted. (* STUB *)
+
   Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
   Proof. Admitted. (* STUB *)
+
   Lemma F3_saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
     forall t u, pointer_congruence q t u ->
     forall i j, represents (D.view db) (Id i) (pointer_expression t) ->
       represents (D.view db) (Id j) (pointer_expression u) -> same (D.view db) i j.
   Proof. Admitted. (* STUB *)
+
   Lemma F4_endpoints_represented : forall q lim db x a,
     solve q lim = (Saturated, db) -> pointer_congruence q (Deref (Cell x)) (Cell a) ->
     (exists i, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x)))) /\
     (exists j, represents (D.view db) (Id j) (pointer_expression (Cell a))).
   Proof. Admitted. (* STUB *)
-  Lemma F5_equalities_source : forall q lim db t u i j,
-    solve q lim = (Saturated, db) -> represents (D.view db) (Id i) (pointer_expression t) ->
-    represents (D.view db) (Id j) (pointer_expression u) -> same (D.view db) i j ->
-    pointer_congruence q t u.
-  Proof. Admitted. (* STUB *)
+
   Lemma F6_step_covered : forall q instruction before after,
     In instruction (constraints q) ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
     pointer_exec instruction before = Some after ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
   Proof. Admitted. (* STUB *)
+
   Lemma T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
-    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
+    (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
   Proof. Admitted. (* STUB *)
+
 End SteensgaardT.

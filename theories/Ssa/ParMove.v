@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Tactics Std.
+From Galois.Base Require Import Trie.
 From Galois.Ssa Require Import ParMoveSig.
 
 Import List.ListNotations.
@@ -27,6 +28,10 @@ Module ParMove <: PARMOVE.
   Proof. Admitted. (* STUB *)
   Lemma seq_length : forall par tmp, length (seq par tmp) <= 2 * length par.
   Proof. Admitted. (* STUB *)
+  Lemma seq_ids : forall par tmp m, In m (seq par tmp) ->
+    (In (fst m) (map fst par) \/ fst m = tmp) /\
+    (In (snd m) (map snd par) \/ snd m = tmp).
+  Proof. Admitted. (* STUB *)
 End ParMove.
 
 Module ParMoveT <: PARMOVE_ALL.
@@ -45,8 +50,26 @@ Module ParMoveT <: PARMOVE_ALL.
   (* STUB-CODE *)
   Definition symbolic (_ : moves) (_ : positive) : option positive := None.
   TimeFun symbolic.
+  (* STUB-CODE *)
+  Definition symbolic_all (_ : moves) : ptrie positive := Empty.
+  TimeFun symbolic_all.
+  (* STUB-CODE *)
+  Definition cycle_search (_ : moves) : list positive := [].
+  TimeFun cycle_search.
   Definition k_symbolic : N := 1. (* STUB *)
+  Definition k_cycle : N := 1. (* STUB *)
+  Lemma F0_cycle_search : forall par,
+    NoDup (cycle_search par) /\ forall x, In x (cycle_search par) -> In x (map fst par).
+  Proof. Admitted. (* STUB *)
+  Lemma T0_cycle_search : forall par,
+    (T_cycle_search par <= k_cycle * N.of_nat (length par + 1) *
+      N.of_nat (bits_of par + 1))%N.
+  Proof. Admitted. (* STUB *)
   Definition relevant (par sq : moves) := map fst par ++ map snd par ++ map fst sq ++ map snd sq.
+  Lemma F1_symbolic_all : forall sq x,
+    exec_seq sq (@Some positive) x =
+      match trie_get x (symbolic_all sq) with Some y => Some y | None => Some x end.
+  Proof. Admitted. (* STUB *)
   Lemma F1_symbolic : forall sq x, symbolic sq x = exec_seq sq (@Some positive) x.
   Proof. Admitted. (* STUB *)
   Lemma F2_check_symbolic : forall par tmp sq, check_moves par tmp sq = true ->
@@ -60,11 +83,16 @@ Module ParMoveT <: PARMOVE_ALL.
     exec_seq sq (@Some positive) x = exec_par par (@Some positive) x ->
     forall A (env : positive -> option A), exec_seq sq env x = exec_par par env x.
   Proof. Admitted. (* STUB *)
+  Lemma T1_symbolic_all : forall sq,
+    (T_symbolic_all sq <= k_symbolic * N.of_nat (length sq + 1) *
+      N.of_nat (bits_of sq + 1))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T1_seq : forall par tmp,
-    (T_seq par tmp <= c_pm * N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
+    (T_seq par tmp <= T_cycle_search par + k_cycle *
+      N.of_nat (length par + 1) * N.of_nat (bits_of par + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T2_check : forall par tmp sq,
-    (T_check_moves par tmp sq <= c_pm * N.of_nat (length par + length sq + 1) *
+    (T_check_moves par tmp sq <= T_symbolic_all sq + k_symbolic * N.of_nat (length par + length sq + 1) *
       N.of_nat (bits_of (par ++ sq) + 1))%N.
   Proof. Admitted. (* STUB *)
 End ParMoveT.

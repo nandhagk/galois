@@ -23,6 +23,7 @@ TimeFun call_edge_target.
 
 Record calls_tables (F S : Type) := CallsTables {
   call_functions : list F;
+  call_inventory : list (S * F);
   call_roots : list F;
   call_sites : ptrie (list S);
   call_callers : ptrie F;
@@ -32,6 +33,7 @@ Record calls_tables (F S : Type) := CallsTables {
 
 Arguments CallsTables {F S}.
 Arguments call_functions {F S}.
+Arguments call_inventory {F S}.
 Arguments call_roots {F S}.
 Arguments call_sites {F S}.
 Arguments call_callers {F S}.
@@ -39,6 +41,7 @@ Arguments call_default_caller {F S}.
 Arguments call_targets {F S}.
 
 TimeFun call_functions.
+TimeFun call_inventory.
 TimeFun call_roots.
 TimeFun call_sites.
 TimeFun call_callers.
@@ -52,6 +55,8 @@ End CALLS_DATA.
 Module Type CALLS_DATA_TIME (P : TYPE) (F S : KEY_T)
     (Import D : CALLS_DATA P F S).
   Parameter T_tables : P.t -> N.
+  Parameter c_tables : N.
+  Parameter T_tables_le : forall p, (T_tables p <= c_tables)%N.
 End CALLS_DATA_TIME.
 
 Module Type CALLS_DATA_T (P : TYPE) (F S : KEY_T) :=
@@ -60,6 +65,7 @@ Module Type CALLS_DATA_T (P : TYPE) (F S : KEY_T) :=
 Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
     <: CALLS_OPS P F S.
   Definition functions p := call_functions (D.tables p).
+  Definition calls p := call_inventory (D.tables p).
   Definition roots p := call_roots (D.tables p).
   Definition sites_of p f :=
     match trie_get (F.encode f) (call_sites (D.tables p)) with
@@ -84,9 +90,26 @@ Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
         (functions p) PTrieCode.empty).
 End CallsCode.
 
-Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
+Module Type CALLS_DATA_LAWS (P : TYPE) (F S : KEY) (Import D : CALLS_DATA P F S).
+  Parameter calls_valid : forall p, call_inventory (tables p) = flat_map (fun f =>
+    flat_map (fun site => map (pair site)
+      (match trie_get (S.encode site) (call_targets (tables p)) with
+      | Some fs => fs | None => nil end))
+      (match trie_get (F.encode f) (call_sites (tables p)) with
+      | Some sites => sites | None => nil end)) (call_functions (tables p)).
+End CALLS_DATA_LAWS.
+
+Module Type CALLS_DATA_VALID (P : TYPE) (F S : KEY) :=
+  CALLS_DATA P F S <+ CALLS_DATA_LAWS P F S.
+
+Module Type CALLS_DATA_VALID_T (P : TYPE) (F S : KEY_T) :=
+  CALLS_DATA_VALID P F S <+ CALLS_DATA_TIME P F S.
+
+Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA_VALID P F S) <: CALLS P F S.
   Include CallsCode P F S D.
   Include CALLS_SPEC P F S.
+
+  Definition calls_spec := D.calls_valid.
 
   Definition wf p :=
     NoDup (functions p) /\ incl (roots p) (functions p) /\
@@ -129,10 +152,11 @@ Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
   Proof. Admitted. (* CONVERT: active_reachable_in_call_graph: Unable to unify the induction goal. *)
 End CallsSound.
 
-Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
+Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_VALID_T P F S)
     <: CALLS_ALL P F S.
   Include Calls P F S D.
   TimeFun functions.
+  TimeFun calls.
   TimeFun roots.
   TimeFun sites_of.
   TimeFun caller_of.
@@ -154,6 +178,10 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
 
   Definition c_calls : N := 1%N. (* STUB *)
 
+  Lemma T_calls_le : forall p,
+    (T_calls p <= c_calls * N.of_nat (length (calls p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
   (** Graph construction charges the inventory readers and encoded adjacency work. *)
   Lemma T_call_graph_le : forall p,
     (T_call_graph p <= c_calls * call_graph_work p)%N.
@@ -167,5 +195,40 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Lemma F1_call_edge : forall p f site target,
     In site (sites_of p f) -> In target (resolve p site) ->
     In (CallEdge site target) (out_edges p f).
+  Proof. Admitted. (* STUB *)
+  Definition k_edges : N := 1%N. (* STUB *)
+  Definition k_adj : N := 1%N. (* STUB *)
+
+  Lemma T_functions_le : forall p,
+    (T_functions p <= c_calls * N.of_nat (length (functions p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_roots_le : forall p,
+    (T_roots p <= c_calls * N.of_nat (length (roots p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_sites_of_le : forall p f,
+    (T_sites_of p f <= c_calls * N.of_nat (F.bits f + length (sites_of p f) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_caller_of_le : forall p site,
+    (T_caller_of p site <= c_calls * N.of_nat (S.bits site + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_resolve_le : forall p site,
+    (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_out_edges : forall p f,
+    (T_out_edges p f <= k_edges * (T_sites_of p f +
+      fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+      N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T2_adjacency : forall p,
+    (T_call_graph p <= k_adj * (T_functions p +
+      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f)%N (functions p)) +
+      N.of_nat (length (functions p) + 1) * N.of_nat (function_width p + 1)))%N.
   Proof. Admitted. (* STUB *)
 End CallsT.

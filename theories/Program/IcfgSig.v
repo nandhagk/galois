@@ -42,12 +42,15 @@ Module Type ICFG (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG P N E) (S : KEY) :=
   ICFG_OPS P N E C S <+ ICFG_SPEC P N E C S.
 
-Module Type ICFG_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type ICFG_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (S : KEY_T) (Import I : ICFG P N E C S).
   Parameter T_kind : P.t -> E.t -> N.
+  Parameter c_icfg : N.
+  (** Edge classification pays for the edge key. *)
+  Parameter T_kind_le : forall p e, (T_kind p e <= c_icfg * N.of_nat (E.bits e + 1))%N.
 End ICFG_TIME.
 
-Module Type ICFG_T (P : TYPE) (N : KEY_T) (E : TYPE)
+Module Type ICFG_T (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (S : KEY_T) :=
   ICFG P N E C S <+ ICFG_TIME P N E C S.
 

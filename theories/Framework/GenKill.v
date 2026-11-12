@@ -187,6 +187,8 @@ Module GenKillMayDomainT (F : KEY_T) (S : SET_T F)
   TimeFun join.
 
   Definition size := S.nodes.
+  Lemma size_nodes : forall a, size a = S.nodes a.
+  Proof. reflexivity. Qed.
   Definition c_lat : N := 1%N. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -213,6 +215,9 @@ Module GenKillMustDomainT (F : KEY_T) (S : SET_T F)
     | None => 0
     | Some facts => S.nodes facts
     end.
+  Lemma size_nodes : forall a,
+    size a = match a with None => 0 | Some facts => S.nodes facts end.
+  Proof. reflexivity. Qed.
   Definition c_lat : N := 1%N. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -229,20 +234,54 @@ End GenKillMustDomainT.
 
 Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
     (F : KEY_T) (S : SET_T F) (G : GENKILL_T P E F S)
-    (L : GENKILL_MAY_DOMAIN_T F S).
+    (L : GENKILL_MAY_DOMAIN_T F S) <: GENKILL_MAY_FLOW_T P N E F S G L.
   Include GenKillMayFlowCode P N E F S G L.
   TimeFun dir.
   TimeFun boundary.
   TimeFun transfer.
+  Definition flow_work p s := N.of_nat (G.gk_work p + s).
+  Definition c_flow : N := 1%N. (* STUB *)
+  Lemma flow_work_mono : forall p s t, s <= t ->
+    (flow_work p s <= flow_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_boundary_le : forall p n,
+    (T_boundary p n <= c_flow * (flow_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_transfer_le : forall p e a,
+    (T_transfer p e a <= c_flow * (flow_work p (L.size a) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma boundary_size_le : forall p n,
+    (N.of_nat (L.size (boundary p n)) <= flow_work p 0)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma transfer_size_le : forall p e a,
+    (N.of_nat (L.size (transfer p e a)) <= flow_work p (L.size a))%N.
+  Proof. Admitted. (* STUB *)
 End GenKillMayFlowT.
 
 Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
     (F : KEY_T) (S : SET_T F) (G : GENKILL_T P E F S)
-    (L : GENKILL_MUST_DOMAIN_T F S).
+    (L : GENKILL_MUST_DOMAIN_T F S) <: GENKILL_MUST_FLOW_T P N E F S G L.
   Include GenKillMustFlowCode P N E F S G L.
   TimeFun dir.
   TimeFun boundary.
   TimeFun transfer.
+  Definition flow_work p s := N.of_nat (G.gk_work p + s).
+  Definition c_flow : N := 1%N. (* STUB *)
+  Lemma flow_work_mono : forall p s t, s <= t ->
+    (flow_work p s <= flow_work p t)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_boundary_le : forall p n,
+    (T_boundary p n <= c_flow * (flow_work p 0 + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_transfer_le : forall p e a,
+    (T_transfer p e a <= c_flow * (flow_work p (L.size a) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma boundary_size_le : forall p n,
+    (N.of_nat (L.size (boundary p n)) <= flow_work p 0)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma transfer_size_le : forall p e a,
+    (N.of_nat (L.size (transfer p e a)) <= flow_work p (L.size a))%N.
+  Proof. Admitted. (* STUB *)
 End GenKillMustFlowT.
 
 Module GenKillMayOperationalT (P : TYPE) (N : KEY_T) (E : TYPE)

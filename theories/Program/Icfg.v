@@ -15,6 +15,8 @@ End ICFG_DATA.
 
 Module Type ICFG_DATA_TIME (P : TYPE) (S : KEY_T) (Import D : ICFG_DATA P S).
   Parameter T_kinds : P.t -> N.
+  Parameter c_kinds : N.
+  Parameter T_kinds_le : forall p, (T_kinds p <= c_kinds)%N.
 End ICFG_DATA_TIME.
 
 Module Type ICFG_DATA_T (P : TYPE) (S : KEY_T) :=
@@ -36,9 +38,13 @@ Module Icfg (P : TYPE) (N : KEY) (E : KEY)
   Include ICFG_SPEC P N E C S.
 End Icfg.
 
-Module IcfgT (P : TYPE) (N : KEY_T) (E : TYPE)
-    (EKey : KEY_T with Definition t := E.t) (C : CFG_T P N E) (S : KEY_T)
+Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
+    (C : CFG_T P N E) (S : KEY_T)
     (D : ICFG_DATA_T P S) <: ICFG_T P N E C S.
-  Include Icfg P N EKey C S D.
+  Include Icfg P N E C S D.
   TimeFun kind.
+  Definition c_icfg : N := 1%N. (* STUB *)
+
+  Lemma T_kind_le : forall p e, (T_kind p e <= c_icfg * N.of_nat (E.bits e + 1))%N.
+  Proof. Admitted. (* STUB *)
 End IcfgT.

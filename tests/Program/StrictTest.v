@@ -87,8 +87,8 @@ Module DiamondCfg <: CFG_INDEXED_OPS ProgramType NatKeyCode EdgeKey.
   Definition out (p : bool) (n : nat) := filter (fun e => Nat.eqb (src p e) n) (edges p).
   Definition inc (p : bool) (n : nat) := filter (fun e => Nat.eqb (dst p e) n) (edges p).
 End DiamondCfg.
-Module DiamondData <: SSA_DATA ProgramType NatKeyCode NatKeyCode OpType OpType.
-  Definition tables (_ : bool) := SsaTables [0%nat; 1%nat]
+Module DiamondData <: SSA_DATA ProgramType NatKeyCode EdgeKey NatKeyCode OpType OpType.
+  Definition tables (_ : bool) : ssa_tables nat EdgeKey.t nat unit unit := SsaTables [0%nat; 1%nat] [] []
     (PTrieCode.set (NatKeyCode.encode 0%nat) (Op tt [])
       (PTrieCode.set (NatKeyCode.encode 1%nat) (Param 4%nat 0%nat) Empty))
     Empty 1%nat Empty Empty

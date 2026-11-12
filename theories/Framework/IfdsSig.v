@@ -70,6 +70,31 @@ Record path_frame (N E F A : Type) := PathFrame {
   path_frame_received : list A
 }.
 
+(** A rule is enabled by the listed seeds, edges, facts and flows of one program. *)
+Definition path_enabled {N E F Site} (edges : list E) (dst : E -> N)
+    (kind : E -> edge_kind Site) (facts : list F) (flow : E -> F -> list F)
+    (seeds : list (N * F)) (r : path_rule N E F) : Prop :=
+  match r with
+  | PathIdentity n d => In (n, d) seeds \/
+      exists e site x, In e edges /\ kind e = Call site /\ dst e = n /\
+        In x facts /\ In d (flow e x)
+  | PathStep d0 e x y => In d0 facts /\ In e edges /\
+      (kind e = Intra \/ exists site, kind e = CallToReturn site) /\
+      In x facts /\ In y (flow e x)
+  | PathReturn d0 call ret x a b y => In d0 facts /\ In call edges /\ In ret edges /\
+      (exists site, kind call = Call site /\ kind ret = Return site) /\
+      In x facts /\ In a (flow call x) /\ In b facts /\ In y (flow ret b)
+  end.
+
+(** A Boolean frame keeps the conjunction of the answers received so far. *)
+Record bool_frame (N F : Type) := BoolFrame {
+  bool_frame_pending : list (path_edge N F);
+  bool_frame_acc : bool
+}.
+
+TimeFun bool_frame_pending.
+TimeFun bool_frame_acc.
+
 Module Type FLOW_FUN_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE) (F : KEY_OPS).
   Parameter facts : P.t -> list F.t.
   Parameter flow : P.t -> E.t -> F.t -> list F.t.
@@ -78,9 +103,11 @@ End FLOW_FUN_OPS.
 
 Module Type FLOW_FUN_LAWS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (F : KEY) (Import FL : FLOW_FUN_OPS P N E F).
-  (** Seed points and facts belong to the finite presentation. *)
-  Parameter seeds_listed : forall p n d, In (n, d) (seeds p) ->
-    In n (C.nodes p) /\ In d (facts p).
+  (** Seed facts belong to the finite fact presentation. *)
+  Parameter seeds_facts : forall p n d, In (n, d) (seeds p) -> In d (facts p).
+  (** Seed points of a well-formed graph are listed nodes. *)
+  Parameter seeds_nodes : forall p n d, C.wf p ->
+    In (n, d) (seeds p) -> In n (C.nodes p).
   (** Listed edges map supported facts to supported facts. *)
   Parameter flow_closed : forall p e x y, In e (C.edges p) -> In x (facts p) ->
     In y (flow p e x) -> In y (facts p).
@@ -95,8 +122,38 @@ Module Type FLOW_FUN_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (F : KEY_T)
   Parameter T_flow : P.t -> E.t -> F.t -> N.
 End FLOW_FUN_TIME.
 
-Module Type FLOW_FUN_T (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module Type FLOW_FUN_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (F : KEY_T) := FLOW_FUN P N E C F <+ FLOW_FUN_TIME P N E F.
+
+Module Type IFDS_RULES_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE) (F : KEY_OPS).
+  Parameter rules : P.t -> list (path_rule N.t E.t F.t).
+End IFDS_RULES_OPS.
+
+Module Type IFDS_RULES_LAWS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (FL : FLOW_FUN P N E C F)
+    (Import R : IFDS_RULES_OPS P N E F).
+  (** The prepared rule list contains exactly the enabled rules. *)
+  Parameter rules_enabled : forall p r, In r (rules p) <->
+    path_enabled (C.edges p) (C.dst p) (I.kind p) (FL.facts p) (FL.flow p) (FL.seeds p) r.
+End IFDS_RULES_LAWS.
+
+Module Type IFDS_RULES_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (F : KEY_T)
+    (Import R : IFDS_RULES_OPS P N E F).
+  Parameter T_rules : P.t -> N.
+  Parameter c_rules : N.
+  (** Reading the prepared rules pays for its output. *)
+  Parameter T_rules_le : forall p,
+    (T_rules p <= c_rules * N.of_nat (length (rules p) + 1))%N.
+End IFDS_RULES_TIME.
+
+Module Type IFDS_RULES (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (FL : FLOW_FUN P N E C F) :=
+  IFDS_RULES_OPS P N E F <+ IFDS_RULES_LAWS P N E C Site I F FL.
+
+Module Type IFDS_RULES_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
+    (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
+    (FL : FLOW_FUN_T P N E C F) :=
+  IFDS_RULES P N E C Site I F FL <+ IFDS_RULES_TIME P N E F.
 
 Module Type IFDS_LATTICE_OPS.
   Include LATTICE_OPS with Definition t := bool
@@ -109,9 +166,9 @@ Module Type IFDS_LATTICE_T := IFDS_LATTICE <+ LATTICE_TIME.
 
 Module Type IFDS_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE) (F : KEY_OPS)
     (L : IFDS_LATTICE_OPS).
-  Include LOCAL_SYSTEM_OPS L with Definition prog := P.t
+  Include SYSTEM_OPS L with Definition prog := P.t
     with Definition key := path_edge N.t F.t with Definition row := path_row N.t E.t F.t
-    with Definition frame := path_frame N.t E.t F.t bool.
+    with Definition frame := bool_frame N.t F.t.
 End IFDS_OPS.
 
 Module Type IFDS_SPEC (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
@@ -122,17 +179,8 @@ Module Type IFDS_SPEC (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
   Definition identity p n d := In (n, d) (FL.seeds p) \/
     exists e site x, In e (C.edges p) /\ I.kind p e = Call site /\
       C.dst p e = n /\ In x (FL.facts p) /\ In d (FL.flow p e x).
-  Definition enabled p (r : path_rule N.t E.t F.t) :=
-    match r with
-    | PathIdentity n d => identity p n d
-    | PathStep d0 e x y => In d0 (FL.facts p) /\ In e (C.edges p) /\ internal p e /\
-        In x (FL.facts p) /\ In y (FL.flow p e x)
-    | PathReturn d0 call ret x a b y =>
-        In d0 (FL.facts p) /\ In call (C.edges p) /\ In ret (C.edges p) /\
-        (exists site, I.kind p call = Call site /\ I.kind p ret = Return site) /\
-        In x (FL.facts p) /\ In a (FL.flow p call x) /\
-        In b (FL.facts p) /\ In y (FL.flow p ret b)
-    end.
+  Definition enabled p :=
+    path_enabled (C.edges p) (C.dst p) (I.kind p) (FL.facts p) (FL.flow p) (FL.seeds p).
 End IFDS_SPEC.
 
 Module Type IFDS_LAWS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
@@ -141,8 +189,6 @@ Module Type IFDS_LAWS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Import AS : SYSTEM_SPEC L A) (IS : IFDS_SPEC P N E C Site I F FL L A).
   (** The system encodes all three path-edge components. *)
   Parameter key_code_spec : key_code = path_edge_code N.encode F.encode.
-  (** The row identifier is its assigned binary occurrence identity. *)
-  Parameter row_code_spec : row_code = path_row_code.
   (** The row inventory contains exactly the enabled finite rules. *)
   Parameter rows_spec : forall p rule,
     (exists r, In r (rows p) /\ path_row_rule r = rule) <-> IS.enabled p rule.
@@ -166,20 +212,16 @@ End IFDS_LAWS.
 Module Type IFDS (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (FL : FLOW_FUN P N E C F)
     (L : IFDS_LATTICE) := IFDS_OPS P N E F L <+ SYSTEM_SPEC L <+ SYSTEM_LAWS L <+
-  LOCAL_LAWS L <+ IFDS_SPEC P N E C Site I F FL L <+
+  IFDS_SPEC P N E C Site I F FL L <+
   IFDS_LAWS P N E C Site I F FL L.
 
-Module Type IFDS_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module Type IFDS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T) (FL : FLOW_FUN_T P N E C F)
     (L : IFDS_LATTICE_T) (Import A : IFDS P N E C Site I F FL L).
   Include SYSTEM_TIME L A.
-  Include LOCAL_TIME L A.
-  (* SIG-QUESTION: arbitrary path_frame pending and received lists escape row_work's
-     size input. rows_of scans the full row list, while LOCAL_TIME requires a bound
-     by returned rows and key bits. Reader budgets and a prepared rule index are missing. *)
 End IFDS_TIME.
 
-Module Type IFDS_T (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module Type IFDS_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T) (FL : FLOW_FUN_T P N E C F)
     (L : IFDS_LATTICE_T) := IFDS P N E C Site I F FL L <+
   IFDS_TIME P N E C Site I F FL L.

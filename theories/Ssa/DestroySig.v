@@ -7,7 +7,6 @@
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Std BigO.
 From Galois.Base Require Import KeySig Key.
-From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig.
 Import List.ListNotations.
 
@@ -34,19 +33,17 @@ Definition move_check := (moves * positive * moves)%type.
 
 Module Type DESTROY_OPS (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_INDEXED_OPS P PosKeyCode E) (S : SSA_OPS P PosKeyCode E C PosKeyCode K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_OPS).
   Parameter destroy : P.t -> option P.t.
 End DESTROY_OPS.
 
 Module Type DESTROY_LAWS (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    (Import A : DESTROY_OPS O K G P E C S PM).
+    (OL : LAWS O)
+    (Import A : DESTROY_OPS O K G P PM).
   (** Every returned program has imperative form. *)
   Parameter destroy_imp : forall s p, destroy s = Some p -> imp_form p.
   (** Destruction adds at most one block step per original edge and retains finite results. *)
@@ -58,19 +55,17 @@ End DESTROY_LAWS.
 
 Module Type DESTROY (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG P PosKey E) (S : SSA P PosKey E C PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
-  DESTROY_OPS O K G P E C S PM <+ DESTROY_LAWS O K G P E C S PM OL B.
+    (OL : LAWS O) :=
+  DESTROY_OPS O K G P PM <+ DESTROY_LAWS O K G P PM OL.
 
 Module Type DESTROY_TIME (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    (Import A : DESTROY O K G P E C S PM OL B).
+    (OL : LAWS O)
+    (Import A : DESTROY O K G P PM OL).
   Parameter T_destroy : P.t -> N.
   Parameter c_ds : N.
   Definition destroy_work (s : P.t) :=
@@ -85,19 +80,17 @@ End DESTROY_TIME.
 
 Module Type DESTROY_T (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
-  DESTROY O K G P E C S PM OL B <+ DESTROY_TIME O K G P E C S PM OL B.
+    (OL : LAWS O) :=
+  DESTROY O K G P PM OL <+ DESTROY_TIME O K G P PM OL.
 
 Module Type DESTROY_PLAN (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S)
-    (Import A : DESTROY_T O K G P E C S PM OL B).
+    (OL : LAWS O)
+    (Import A : DESTROY_T O K G P PM OL).
   Parameter split : P.t -> option P.t.
   Parameter copies : P.t -> option P.t.
   Parameter checked_moves : P.t -> list move_check.
@@ -157,22 +150,29 @@ Module Type DESTROY_PLAN (O : OPS)
   (** Splitting charges each source block and each parameter-carrying branch edge. *)
   Parameter T1_split : forall s,
     (T_split s <= k_split * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
-  (** Copy production and checking fit the original argument-occurrence budget. *)
+  (** Each checked problem is the emitted sequence of one edge, within the source budget. *)
+  Parameter F9_moves_size : forall s split_s, split s = Some split_s ->
+    fold_right (fun mc n => length (fst (fst mc)) + 1 + n) 0 (checked_moves split_s) <=
+      destroy_work s /\
+    forall par tmp sq, In (par, tmp, sq) (checked_moves split_s) ->
+      sq = PM.seq par tmp /\ bits_of par + Pos.size_nat tmp <= 2 * (function_width s + 1).
+  (** Copy insertion charges its index, its rewriting and the actual move calls. *)
   Parameter T2_copies : forall s split_s, split s = Some split_s ->
     (T_copies split_s <= k_copies * N.of_nat (destroy_work s) *
-      N.of_nat (function_width s + 1))%N.
+      N.of_nat (function_width s + 1) +
+      fold_right N.add 0%N (map (fun mc =>
+        PM.T_seq (fst (fst mc)) (snd (fst mc)) +
+        PM.T_check_moves (fst (fst mc)) (snd (fst mc)) (snd mc))%N
+        (checked_moves split_s)))%N.
   (** The wrapper charges exactly the selected transformation phases. *)
   Parameter T3_wrapper : forall s,
     (T_destroy s <= T_split s +
       match split s with None => k_wrap | Some split_s => T_copies split_s + k_wrap end)%N.
-  (* SIG-QUESTION: fresh block/value/temporary widths, indexed block lookups and the actual
-     parallel-move calls need composition budgets at the published source-only width. *)
 End DESTROY_PLAN.
 
 Module Type DESTROY_ALL (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
-    (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
     (PM : PARMOVE_T)
-    (OL : LAWS O) (B : LANG_SSA_LINK O K G P E C S) :=
-  DESTROY_T O K G P E C S PM OL B <+ DESTROY_PLAN O K G P E C S PM OL B.
+    (OL : LAWS O) :=
+  DESTROY_T O K G P PM OL <+ DESTROY_PLAN O K G P PM OL.
