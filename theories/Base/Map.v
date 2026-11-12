@@ -35,7 +35,7 @@ Module TrieMapCode (K : KEY_OPS) <: MAP_OPS K.
   Definition fold {A B} (f : B -> K.t -> A -> B) (x : t A) (b : B) :=
     PTrieCode.fold_values (fun acc kv => f acc (fst kv) (snd kv)) x b.
   Definition elements {A} (x : t A) : list (K.t * A) :=
-    List.rev (fold (fun acc k a => (k, a) :: acc) x nil).
+    List.rev_append (fold (fun acc k a => (k, a) :: acc) x nil) nil.
 End TrieMapCode.
 
 Module TrieMapTimePilot (K : KEY_T).

@@ -267,7 +267,7 @@ Module PTrieCode <: TRIE_OPS.
     end.
 
   Definition elements {A} (tr : t A) : list (positive * A) :=
-    List.rev (fold (fun acc p v => (p, v) :: acc) tr nil).
+    List.rev_append (fold (fun acc p v => (p, v) :: acc) tr nil) nil.
 End PTrieCode.
 
 Module PTrie <: TRIE.

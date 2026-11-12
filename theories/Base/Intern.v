@@ -161,7 +161,7 @@ TimeFun collect_groups.
 
 (** Grouping reverses each collected bucket to preserve input order. *)
 Definition group_by {K V} (encode : K -> positive) (key : V -> K) (xs : list V) :=
-  PTrieT.map (@rev V) (collect_groups encode key xs PTrieCode.empty).
+  PTrieT.map (fun bucket => rev_append bucket nil) (collect_groups encode key xs PTrieCode.empty).
 
 TimeFun group_by.
 

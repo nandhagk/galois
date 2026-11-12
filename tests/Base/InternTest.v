@@ -40,6 +40,14 @@ Proof. vm_compute. reflexivity. Qed.
 Example intern_empty_index : NatIntern.find 9 (intern_list []) = None.
 Proof. vm_compute. reflexivity. Qed.
 
+Example grouped_values_keep_input_order :
+  find_group NatKeyCode.encode 2
+    (group_by NatKeyCode.encode fst [(2, 10); (1, 11); (2, 12); (1, 13)]) =
+  [(2, 10); (2, 12)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example intern_map_observations :
   (NatIntern.find 1 interned, NatIntern.name 2%positive interned) =
   (NatMap.get 1 (intern_forward interned),

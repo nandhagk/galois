@@ -89,7 +89,8 @@ TimeFun heap_select.
 Definition heap_remove_min (h : heap_forest) : option (heap_entry * heap_forest) :=
   match heap_select h with
   | None => None
-  | Some (HeapTree e cs, rest) => Some (e, heap_meld (map (@Some heap_tree) (rev cs)) rest None)
+  | Some (HeapTree e cs, rest) =>
+    Some (e, heap_meld (rev_append (map (@Some heap_tree) cs) []) rest None)
   end.
 TimeFun heap_remove_min.
 Fixpoint heap_fuel (h : heap_forest) : positive :=
@@ -133,8 +134,19 @@ Module HeapCode <: PQ_OPS.
   TimeFun pop.
 End HeapCode.
 
-Fixpoint heap_tree_entries (tr : heap_tree) : list heap_entry :=
-  match tr with HeapTree e cs => e :: flat_map heap_tree_entries cs end.
+(** Entry traversal prepends each subtree to an already prepared suffix. *)
+Fixpoint heap_tree_entries_into (tr : heap_tree) (acc : list heap_entry) : list heap_entry :=
+  match tr with
+  | HeapTree e cs =>
+    e :: (fix children_into (children : list heap_tree) (suffix : list heap_entry) :=
+      match children with
+      | [] => suffix
+      | child :: rest => heap_tree_entries_into child (children_into rest suffix)
+      end) cs acc
+  end.
+
+Definition heap_tree_entries (tr : heap_tree) : list heap_entry :=
+  heap_tree_entries_into tr [].
 
 Definition heap_precedes (a b : heap_entry) : Prop :=
   (fst a < fst b)%N \/ (fst a = fst b /\ (snd a <= snd b)%positive).
@@ -149,7 +161,8 @@ Inductive heap_valid : nat -> heap_tree -> Prop :=
 Fixpoint heap_entries (h : heap_forest) : list heap_entry :=
   match h with
   | [] => []
-  | s :: hs => (match s with None => [] | Some tr => heap_tree_entries tr end) ++ heap_entries hs
+  | None :: hs => heap_entries hs
+  | Some tr :: hs => heap_tree_entries_into tr (heap_entries hs)
   end.
 
 Fixpoint heap_forest_valid (r : nat) (h : heap_forest) : Prop :=
