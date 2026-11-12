@@ -88,7 +88,6 @@ Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : KARR_T X L N F C).
-  Parameter F_swf : forall s, swf s.
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
   Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
@@ -178,7 +177,28 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   (** State size charges all stored numeric data. *)
-  Parameter F_size : forall s, size s = (terms s + n s + 1) * (nell s + 1).
+  Parameter k_karr : N.
+  Definition mu (s : t) : nat := terms s + n s + nell s.
+  Definition lat (m : nat) : nat :=
+    (m + 2) * ((m + 1)^3 * (ellB (m + 1) m + 1)^2 + m^2 + 1).
+  (** State size is lattice work at twice the state measure. *)
+  Parameter F_size : forall s, size s = lat (2 * mu s).
+  (** Lattice work on two states fits their sizes. *)
+  Parameter lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
+  (** Leb charges lattice work on both states. *)
+  Parameter T1_leb : forall a b,
+    (T_leb a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  (** Join charges lattice work on both states. *)
+  Parameter T1_join : forall a b,
+    (T_join a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  (** Widen charges lattice work on both states. *)
+  Parameter T1_widen : forall p a b,
+    (T_widen p a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  (** Narrow charges lattice work on both states. *)
+  Parameter T1_narrow : forall a b,
+    (T_narrow a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  (** A range endpoint fits its declared work. *)
+  Parameter F_range_bits : forall e s, range_bits e s = range_work e s.
   (** Range work charges the numeric query and its linearization. *)
   Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *

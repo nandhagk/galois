@@ -5,6 +5,7 @@
     Builds on: LatticeSig, LinearizeSig and ValueSig. *)
 
 From Stdlib Require Import List ZArith.
+From Argent Require Import Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -51,32 +52,29 @@ Module Type NUM_STATE (X : KEY) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N
 
 Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (Import D : NUM_STATE X L N F).
-  (* spec: size wsize wunits assign_work havoc_work assume_work range_work *)
-  Parameter size : t -> nat.
+  Include LATTICE_TIME D.
+  (* spec: wsize wunits assign_work havoc_work assume_work range_work range_bits *)
   Parameter wsize : wparam -> nat.
   Parameter wunits : t -> nat.
   Parameter assign_work : X.t -> term L.op X.t -> t -> nat.
   Parameter havoc_work : X.t -> t -> nat.
   Parameter assume_work : L.guard -> list (term L.op X.t) -> t -> nat.
   Parameter range_work : term L.op X.t -> t -> nat.
-  (* spec: swf *)
-  Parameter swf : t -> Prop.
-  (** Top and every operation keep the time invariant. *)
-  Parameter swf_top : swf top.
-  Parameter swf_join : forall a b, swf a -> swf b -> swf (join a b).
-  Parameter swf_widen : forall p a b, swf a -> swf b -> swf (widen p a b).
-  Parameter swf_narrow : forall a b, swf a -> swf b -> swf (narrow a b).
-  Parameter swf_assign : forall x e s, swf s -> swf (assign x e s).
-  Parameter swf_havoc : forall x s, swf s -> swf (havoc x s).
-  Parameter swf_assume : forall g es s, swf s -> swf (assume g es s).
-  Parameter T_leb T_join T_narrow : t -> t -> N.
-  Parameter T_is_bot : t -> N.
+  Parameter range_bits : term L.op X.t -> t -> nat.
+  Parameter T_narrow : t -> t -> N.
   Parameter T_widen : wparam -> t -> t -> N.
   Parameter T_assign : X.t -> term L.op X.t -> t -> N.
   Parameter T_havoc : X.t -> t -> N.
   Parameter T_assume : L.guard -> list (term L.op X.t) -> t -> N.
   Parameter T_range : term L.op X.t -> t -> N.
   Parameter c_num : N.
+  (** Widening charges both states and its parameter. *)
+  Parameter T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  (** Narrowing charges both states. *)
+  Parameter T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   (** Assignment charges its stated numeric work. *)
   Parameter T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
@@ -84,16 +82,17 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   (** Assumption charges its stated numeric work. *)
-  Parameter T_assume_le : forall g es s, swf s ->
+  Parameter T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  (** Bottom testing charges the numeric state size. *)
-  Parameter T_is_bot_le : forall s,
-    (T_is_bot s <= c_num * N.of_nat (size s + 1))%N.
-  (** Narrowing charges both numeric state sizes. *)
-  Parameter T_narrow_le : forall a b,
-    (T_narrow a b <= c_num * N.of_nat (size a + size b + 1))%N.
   (** Range queries charge their stated numeric work. *)
-  Parameter T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
+  Parameter T_range_le : forall e s,
+    (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
+  (** The endpoints of a range fit the declared bits. *)
+  Parameter range_size : forall e s,
+    (N.of_nat
+      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
+     c_num * N.of_nat (range_bits e s + 1))%N.
 End NUM_STATE_TIME.
 
 Module Type NUM_STATE_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

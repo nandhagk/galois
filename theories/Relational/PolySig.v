@@ -97,7 +97,6 @@ Module Type POLY_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : POLY_T X L N F C).
-  Parameter F_swf : forall s, swf s.
   Definition prows (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
   Definition terms (s : t) : nat :=
@@ -178,7 +177,28 @@ Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
             (- rhs r)%Z))
       end) b.
   (** State size charges all stored numeric data. *)
-  Parameter F_size : forall s, size s = (terms s + n (prows s) + 1) * (nell s + 1).
+  Parameter k_poly : N.
+  Definition mu (s : t) : nat := terms s + n (prows s) + nell s.
+  Definition lat (m : nat) : nat :=
+    2 * (m + 1) * (fmcost m (m + 1) m (m + 1) (m + 1) + m^2 + 1).
+  (** State size is lattice work at twice the state measure. *)
+  Parameter F_size : forall s, size s = lat (2 * mu s).
+  (** Lattice work on two states fits their sizes. *)
+  Parameter lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
+  (** Leb charges lattice work on both states. *)
+  Parameter T1_leb : forall a b,
+    (T_leb a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
+  (** Join charges lattice work on both states. *)
+  Parameter T1_join : forall a b,
+    (T_join a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
+  (** Widen charges lattice work on both states. *)
+  Parameter T1_widen : forall p a b,
+    (T_widen p a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
+  (** Narrow charges lattice work on both states. *)
+  Parameter T1_narrow : forall a b,
+    (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
+  (** A range endpoint fits its declared work. *)
+  Parameter F_range_bits : forall e s, range_bits e s = range_work e s.
   (** Range work charges the numeric query and its linearization. *)
   Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) +

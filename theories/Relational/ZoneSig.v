@@ -87,8 +87,13 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Parameter T_add_cons : K.t -> K.t -> Z -> dbm -> N.
   Parameter T_incr_close : K.t -> K.t -> Z -> dbm -> N.
   Parameter c_zone : N.
-  Definition binary_work (a z : t) : nat :=
-    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1) + skels a + skels z.
+  (** Entry lookup charges both keys. *)
+  Parameter T_entry_le : forall m i j,
+    (T_entry m i j <= c_zone * N.of_nat (K.bits i + K.bits j + 1))%N.
+  (** Inserting a constraint charges both keys and the bound. *)
+  Parameter T_add_cons_le : forall i j d m,
+    (T_add_cons i j d m <= c_zone * N.of_nat
+      (K.bits i + K.bits j + Z.size_nat d + 1))%N.
   (** Closure charges cubic updates and the logarithmic entry-growth allowance. *)
   Parameter T_close_le : forall m, dbm_wf m ->
     (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
@@ -96,15 +101,7 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t
   (** Incremental closure charges quadratic updates and one row merge per row. *)
   Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
     c_zone * N.of_nat (((supp m + 1)^2)%nat) *
-      N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
-    c_zone * N.of_nat ((supp m + 1) * skel m))%N.
-  (** Join charges the combined matrix support and entry sizes. *)
-  Parameter T_join_zone_le : forall a z, (T_join a z <= c_zone * N.of_nat (binary_work a z))%N.
-  (** Inclusion charges the combined matrix support and entry sizes. *)
-  Parameter T_leb_zone_le : forall a z, (T_leb a z <= c_zone * N.of_nat ((binary_work a z)%nat))%N.
-  (** Widening charges the combined matrix support and entry sizes. *)
-  Parameter T_widen_zone_le : forall p a z,
-    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + (ns a + ns z + 1)^2 * wsize p))%N.
+      N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
 End ZONE_TIME.
 
 Module Type ZONE_T (X : KEY_T) (K : KEY_T with Definition t := option X.t
@@ -136,8 +133,13 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
     | _, _ => False
     end.
   Parameter k_zone : N.
-  Parameter F_swf : forall s,
-    swf s <-> match s with Unreached => True | Reached m => dbm_wf m end.
+  (** The codes of a matrix cover its skeleton. *)
+  Parameter skel_le : forall m, skel m <= (supp m + 1)^2 * (b m + 1).
+  (** Incremental closure adds at most two keys and two bits. *)
+  Parameter grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
+    supp m' <= supp m + 2 /\
+    b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
+    ell m' <= Nat.max (ell m) (Z.size_nat d) + 2.
   (** Linear-form size charges coefficients, the constant and wrap bounds. *)
   Definition lin_bits (e : term L.op X.t) : nat :=
     match F.lin_of e with
@@ -154,15 +156,14 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
     (N.of_nat (assume_work g es s) =
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
-        (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-        length (F.atoms_of g es) *
-          (ns s + 2 * length (F.atoms_of g es) + 1) * skels s) +
+        (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1)) +
       F.T_atoms_of g es)%N.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Parameter F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
       N.of_nat ((ns s + 1)^2 *
-        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s) + F.T_lin_of e)%N.
+        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s +
+        (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
   (** Havoc visits the affected row and column. *)
   Parameter F_havoc_work : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
@@ -200,11 +201,6 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
   (** Incremental closure agrees with full closure on closed input. *)
   Parameter incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
     same_entries (incr_close i j d m) (close (add_cons i j d m)).
-  (** Nonnegative diagonal checks limit intermediate Floyd-Warshall entry growth. *)
-  Parameter bits_fw_round_le : forall ks m,
-    (forall k, In k ks -> forall d,
-      entry (fold_left (fun a k => fw_round k a) ks m) k k = Some d -> (0 <= d)%Z) ->
-    ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
   (** Each Floyd-Warshall round charges quadratic entry updates. *)
   Parameter T1_fw_round : forall k m, dbm_wf m ->
     (T_fw_round k m <= k_zone * N.of_nat
@@ -216,7 +212,11 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Parameter F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   (** Range work charges the numeric query and its linearization. *)
   Parameter F_range_work : forall e s, (N.of_nat (range_work e s) =
-    N.of_nat ((tsize e + 1) * (bs s + ells s + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
+    N.of_nat ((tsize e + 1) *
+      (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
+  (** A range endpoint is a sum of coefficient-entry products. *)
+  Parameter F_range_bits : forall e s,
+    range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
     match ks with
     | nil => nil
@@ -229,6 +229,15 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
         end
     end.
   TimeFun fw_trace.
+  (** A pivot key of a consistent matrix has its code in the support. *)
+  Parameter keys_support : forall m k, dbm_wf m -> In k (keys m) ->
+    In (K.encode k) (support m).
+  (** One round adds at most one bit. *)
+  Parameter bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
+  (** Every traced round reads a matrix within the entry-growth bound. *)
+  Parameter bits_fw_trace_le : forall ks m k a, dbm_wf m ->
+    In (k, a) (fw_trace ks m) ->
+    ell a <= ell m + Nat.log2 (supp m) + 1.
   (** A round keeps the support and its key bits. *)
   Parameter supp_fw_round : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
