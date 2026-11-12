@@ -5,7 +5,7 @@
     Builds on: ValueSig, IndexSig, Syntax and Model. *)
 
 From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
-From Argent Require Import Time.
+From Argent Require Import Time Loop.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model.
 
 Import List.ListNotations.
@@ -231,6 +231,256 @@ End DATABASE_TIME.
 Module Type DATABASE_T (V : VALUE_T) (I : INDEX_T V) := DATABASE V I <+ DATABASE_TIME V I.
 
 Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V I).
+  Definition use_entry := (positive * list (cell V.t))%type.
+  Definition stored_row := (use_entry * option (cell V.t))%type.
+  Definition repair_state := (t * list use_entry)%type.
+
+  (* spec: rows uses_entries queue next_id forest_ok class_size live_use max_bits *)
+  Parameter rows : t -> list stored_row.
+  Parameter uses_entries : t -> list (positive * use_entry).
+  Parameter queue : t -> list positive.
+  Parameter next_id : t -> positive.
+  Parameter forest_ok : t -> Prop.
+  Parameter class_size : t -> positive -> N.
+  Parameter live_use : t -> positive * use_entry -> bool.
+  Parameter max_bits : t -> nat.
+  Parameter k_credit k_stale k_active k_queue k_stop k_driver : nat.
+
+  Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
+    In (x, e) (uses_entries db).
+  Definition scheduled (db : t) (work : list use_entry) (e : use_entry) : Prop :=
+    In e work \/ exists x, In x (queue db) /\ uses db x e.
+  Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
+    In (Id i) (k ++ option_list o).
+
+  (** Active entries retain coverage after their loser has left the queue. *)
+  Definition inv_on (db : t) (work : list use_entry) : Prop :=
+    (forall f k o, In ((f, k), o) (rows db) <-> row (view db) f k o) /\
+    NoDup (map fst (rows db)) /\
+    (forall f k o i, row (view db) f k o -> row_ids k o i ->
+      uses db (repr db i) (f, k)) /\
+    (forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
+      scheduled db work (f, k)) /\
+    (forall s f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s false db) /\
+      I.wf (length perm) (index s true db) /\
+      (forall u, I.mem (index s false db) u <->
+        exists k o, row (view db) f k o /\ u = permute perm (k ++ option_list o)) /\
+      (forall u, I.mem (index s true db) u -> I.mem (index s false db) u)) /\
+    (forall f k o i, row (view db) f k o -> row_ids k o i ->
+      (i < next_id db)%positive) /\
+    forest_ok db /\
+    (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
+    NoDup (queue db) /\ pending db = length (queue db).
+  Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
+    match a, b with
+    | None, None => True
+    | Some c, Some d => cell_rel (same (view db)) c d
+    | _, _ => False
+    end.
+  Definition inv (db : t) : Prop := inv_on db [].
+  Definition state_inv (s : repair_state) : Prop := inv_on (fst s) (snd s).
+
+  Definition entry_weight (db : t) (e : use_entry) : nat :=
+    (length (snd e) + 1) * (slots_of db (fst e) + 1).
+  Definition bucket (db : t) (x : positive) : list use_entry :=
+    map snd (filter (fun xe => Pos.eqb (fst xe) x) (uses_entries db)).
+  Definition use_credit (B : N) (db : t) (xe : positive * use_entry) : nat :=
+    if live_use db xe then
+      N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe)))) *
+        entry_weight db (snd xe)
+    else 0.
+  Definition stale_count (db : t) : nat :=
+    length (filter (fun xe => negb (live_use db xe)) (uses_entries db)).
+  (** Live occurrences carry relabeling credit and stale occurrences carry deletion credit. *)
+  Definition rebuild_potential (B : N) (db : t) : nat :=
+    k_credit * fold_right (fun xe n => use_credit B db xe + n) 0 (uses_entries db) +
+    k_stale * stale_count db.
+  Definition work_weight (db : t) (work : list use_entry) : nat :=
+    fold_right (fun e n => entry_weight db e + n) 0 work.
+  Parameter get_uses : positive -> t -> list use_entry.
+  Parameter T_get_uses : positive -> t -> nat.
+  Parameter pop_loser : t -> option (positive * t).
+  Parameter repair_entry : use_entry -> t -> t.
+  Parameter rstep : repair_state -> repair_state + t.
+  Parameter rebuild_fuel : t -> nat.
+  Parameter rebuild_measure : repair_state -> nat.
+  Parameter T_pop_loser : t -> nat.
+  Parameter T_repair_entry : use_entry -> t -> nat.
+  Parameter T_rstep : repair_state -> nat.
+  Parameter T_rebuild_fuel : t -> nat.
+
+  (** Public well-formedness is the maintained invariant at an empty active batch. *)
+  Parameter F1_inv_wf : forall db, wf db <-> inv db.
+  (** The public potential is the weighted occurrence credit. *)
+  Parameter F2_potential : forall B db, potential B db = rebuild_potential B db.
+  (** The unit charges identifier traversal and cell encoding widths. *)
+  Parameter F3_unit : forall db,
+    unit db = (N.to_nat (N.log2 (ids db)) + 1) * (max_bits db + 1).
+  (** Direct bucket lookup agrees with the occurrence inventory. *)
+  Parameter F4_bucket : forall db work x, inv_on db work -> get_uses x db = bucket db x.
+  (** An empty pop detects an empty pending queue. *)
+  Parameter F4_pop_none : forall db, inv db -> (pop_loser db = None <-> queue db = []).
+  (** A pop transfers its selected bucket into the active work list. *)
+  Parameter F4_pop : forall db x db', inv db -> pop_loser db = Some (x, db') ->
+    queue db = x :: queue db' /\ view db' = view db /\
+    uses_entries db' = uses_entries db /\ inv_on db' (bucket db x).
+  (** The driver consumes one active entry or dequeues one loser. *)
+  Parameter F5_rstep : forall db work,
+    rstep (db, work) =
+      match work with
+      | e :: rest => inl (repair_entry e db, rest)
+      | [] =>
+        match pop_loser db with
+        | None => inr db
+        | Some (x, db') => inl (db', get_uses x db)
+        end
+      end.
+  (** Missing stale keys are discarded without changing rows or equality. *)
+  Parameter F6_absent : forall db f k, old db f k = None -> repair_entry (f, k) db = db.
+  (** Repair discharges one active occurrence and retains coverage of affected rows. *)
+  Parameter F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
+    inv_on (repair_entry e db) rest.
+  (** Continuing steps retain the queue and active-batch invariant. *)
+  Parameter F8_rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.
+  (** Repair retains kinds and identifier allocation. *)
+  Parameter F9_rstep_layout : forall s s', state_inv s -> rstep s = inl s' ->
+    kind (view (fst s')) = kind (view (fst s)) /\ ids (fst s') = ids (fst s).
+  (** Collision unions keep the same functional-dependency closure. *)
+  Parameter F10_rstep_cong : forall s s' i j, state_inv s -> rstep s = inl s' ->
+    (cong (fst s') i j <-> cong (fst s) i j).
+  (** Every old row survives one step at an equivalent, possibly unfinished key. *)
+  Parameter F11_rstep_keeps : forall s s' f k o, state_inv s -> rstep s = inl s' ->
+    row (view (fst s)) f k o ->
+    exists k' o', row (view (fst s')) f k' o' /\
+      Forall2 (cell_rel (same (view (fst s')))) k k' /\
+      out_le (fst s') f (option_map (canon (fst s')) o) o'.
+  (** Every repaired row groups a nonempty list of rows from before the step. *)
+  Parameter F12_rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
+    row (view (fst s')) f k' o' ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view (fst s)) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view (fst s')))) (fst ko) k') srcs /\
+      output_equiv (fst s') o' (merged (fst s') f (map snd srcs)).
+  (** A stopped driver exposes canonical rows and constructor closure. *)
+  Parameter F13_rstep_done : forall s r, state_inv s -> rstep s = inr r ->
+    r = fst s /\ snd s = [] /\ inv r /\ canonical r /\ pending r = 0 /\
+    (forall f k1 k2 i j, row (view r) f k1 (Some (Id i)) ->
+      row (view r) f k2 (Some (Id j)) ->
+      Forall2 (cell_rel (same (view r))) k1 k2 -> same (view r) i j).
+  (** Continuing steps strictly decrease a measure that includes active work. *)
+  Parameter F14_rstep_measure : forall s s', state_inv s -> rstep s = inl s' ->
+    rebuild_measure s' < rebuild_measure s.
+  (** Fuel budgets logarithmic relabelings of all stored use occurrences. *)
+  Parameter F15_fuel_formula : forall db, rebuild_fuel db =
+    (N.to_nat (N.log2 (ids db)) + 2) * (length (uses_entries db) + 1) + pending db + 1.
+  (** Computed fuel includes the final stop call. *)
+  Parameter F15_fuel_enough : forall db, inv db ->
+    rebuild_measure (db, []) < rebuild_fuel db.
+  (** The rebuild operation runs the same step and fuel as the plan. *)
+  Parameter F16_rebuild_run : forall db, wf db ->
+    loop_fuel rstep (rebuild_fuel db) (db, []) = inr (rebuild db).
+
+  (** Congruent cells have equal denotations in every satisfying model. *)
+  Parameter F17_cong_den : forall (M : model V.merge) nu db i j, wf db ->
+    sat V.merge M nu (view db) -> cong db i j -> nu i = nu j.
+  (** Nonempty output groups keep their model meaning through the actual merge fold. *)
+  Parameter F18_merged_holds : forall (M : model V.merge) nu db f k os,
+    wf db -> os <> [] -> (forall i, nu (repr db i) = nu i) ->
+    Forall (holds V.merge M nu (view db) f k) os ->
+    holds V.merge M nu (view db) f k (merged db f os).
+  (** Repair preserves satisfaction through its collision, lattice and index branches. *)
+  Parameter F19_rstep_sat : forall (M : model V.merge) nu s s',
+    state_inv s -> rstep s = inl s' -> sat V.merge M nu (view (fst s)) ->
+    sat V.merge M nu (view (fst s')).
+  (** Lineage retains original row groups throughout repeated deletion and reinsertion. *)
+  Definition lineage (initial current : t) : Prop :=
+    forall f k o, row (view current) f k o ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view current))) (fst ko) k) srcs /\
+      output_equiv current o (merged current f (map snd srcs)).
+  (** Singleton source groups establish lineage before the first repair. *)
+  Parameter F20_lineage_initial : forall db, inv db -> lineage db db.
+  (** Actual repair flattens source groups through canonicalization and lattice merging. *)
+  Parameter F21_lineage_step : forall initial s s', state_inv s ->
+    rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
+  (** Stopped lineage gives the exact public output equation for each original group. *)
+  Parameter F22_lineage_done : forall initial s r, inv initial -> state_inv s ->
+    rstep s = inr r -> lineage initial r ->
+    forall f k o, row (view r) f k o ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
+
+  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
+  Parameter rebuild_sat : forall (M : model V.merge) nu db,
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
+  (** Inserting a true, kind-correct row keeps the model. *)
+  Parameter put_sat : forall (M : model V.merge) nu db f k o, wf db -> kind_ok db f k o ->
+    sat V.merge M nu (view db) -> holds V.merge M nu (view db) f k o ->
+    sat V.merge M nu (view (put f k o db)).
+  (** A justified identifier union keeps the model. *)
+  Parameter union_sat : forall (M : model V.merge) nu db i j, wf db ->
+    sat V.merge M nu (view db) -> nu i = nu j ->
+    sat V.merge M nu (view (union i j db)).
+  (** Make extends the interpretation at its fresh output and keeps old allocated meanings. *)
+  Parameter make_sat : forall (M : model V.merge) nu db f k, wf db ->
+    kind (view db) f = Some OId ->
+    (forall j, In (Id j) k -> (j < next_id db)%positive) ->
+    sat V.merge M nu (view db) ->
+    let '(i, db') := make f k db in
+    exists nu', (forall j, (j < next_id db)%positive -> nu' j = nu j) /\
+      nu' i = con V.merge M f (map (den V.merge nu) k) /\ sat V.merge M nu' (view db').
+
+  (* The source kernel proves semantics for immutable productions.  Row deletion,
+     lattice aggregation and maintained indexes require new proofs.
+     Rank-selected source union does not establish the following size lemma. *)
+  (** A losing root enters a class at least twice as large. *)
+  Parameter T1_doubling : forall db i j x, inv db -> repr db x = x ->
+    repr (union i j db) x <> x ->
+    (2 * class_size db x <= class_size (union i j db) (repr (union i j db) x))%N.
+  (** Initialization has no use-occurrence debt. *)
+  Parameter T2_init_credit : forall B ds sl, rebuild_potential B (init ds sl) = 0.
+  (** Insertion pays its executable work and new occurrence credit. *)
+  Parameter T3_put_credit : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
+    T_put f k o db + rebuild_potential B (put f k o db) <=
+      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
+      rebuild_potential B db.
+  (** Allocation pays new occurrences through the insertion budget. *)
+  Parameter T4_make_credit : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
+    T_make f k db + rebuild_potential B (snd (make f k db)) <=
+      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
+      rebuild_potential B db.
+  (** Union pays its root link and queued repair credit. *)
+  Parameter T5_union_credit : forall B i j db, wf db ->
+    T_union i j db + rebuild_potential B (union i j db) <=
+      c_db * unit db + rebuild_potential B db.
+  (** The design's local step estimate exposes its additive per-step allowance. *)
+  Parameter T6_rstep_go : forall B s s', state_inv s -> (ids (fst s') <= B)%N ->
+    rstep s = inl s' ->
+    T_rstep s + potential B (fst s') < potential B (fst s) + c_db * unit (fst s).
+  (** Stopping charges one unit of the final database. *)
+  Parameter T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
+    T_rstep s <= k_stop * unit (fst s).
+  (* T6 accumulates an allowance per active entry.  It does not imply T8.
+     T8 is the missing aggregate charging obligation, including fuel construction,
+     lattice-value growth, queued buckets and the final public potential. *)
+  (** The actual loop must fit the public budget after all use-entry charges are summed. *)
+  Parameter T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
+    T_rebuild_fuel db +
+      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
+      potential B (rebuild db) <=
+      c_db * (pending db + 1) * unit db + potential B db.
+  (** The wrapper exposes fuel construction and driver overhead. *)
+  Parameter T9_rebuild_driver : forall db,
+    T_rebuild db <= T_rebuild_fuel db +
+      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver.
+  (** Slot lookup charges its binary slot code. *)
+  Parameter T10_index : forall s new db,
+    T_index s new db <= c_db * (Nat.log2 (S s) + 1).
+  (** Advancing clears each maintained slot once. *)
+  Parameter T11_advance : forall db, T_advance db <= c_db * (num_slots db + 1).
 End DATABASE_PLAN.
 
 Module Type DATABASE_ALL (V : VALUE_T) (I : INDEX_T V) :=
