@@ -147,25 +147,41 @@ Module Type SEARCH_LAWS (V : VISITOR) (Import S : SEARCH_OPS V).
   Parameter trace : prepared -> list positive -> list event.
   (** The trace follows graph successor order and the supplied root order. *)
   Parameter trace_depth_first : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     exists final, dfs_roots (base g) [] roots (trace g roots) final.
   (** The visitor observes precisely the trace, in order. *)
   Parameter dfs_fold : forall g roots s,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     dfs g roots s = fold_events V.enter V.leave V.edge (trace g roots) s.
   (** Entered vertices are precisely the vertices reachable from the supplied roots. *)
   Parameter trace_reach : forall g roots v,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     In v (entered (trace g roots)) <-> reach (base g) roots v.
   (** Each reachable vertex is entered once. *)
-  Parameter trace_unique : forall g roots, NoDup (entered (trace g roots)).
+  Parameter trace_unique : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) -> NoDup (entered (trace g roots)).
   (** Every entering event has a properly nested leaving event. *)
-  Parameter trace_nested : forall g roots, trace_stack [] (trace g roots) [].
+  Parameter trace_nested : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) -> trace_stack [] (trace g roots) [].
   (** Visited adjacency rows retain every successor occurrence. *)
-  Parameter trace_edges : forall g roots u, reach (base g) roots u ->
+  Parameter trace_edges : forall g roots u,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) -> reach (base g) roots u ->
     Permutation (edge_targets u (trace g roots)) (succs (base g) u).
   (** Every edge event comes from a reachable source and a real successor. *)
   Parameter trace_edges_sound : forall g roots kind u v,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     In (Edge kind u v) (trace g roots) -> reach (base g) roots u /\ edge (base g) u v.
   (** Edge colours agree with the preceding entering and leaving events. *)
   Parameter trace_kinds : forall g roots prefix kind u v suffix,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     trace g roots = prefix ++ Edge kind u v :: suffix -> event_kind_correct prefix kind v.
 End SEARCH_LAWS.
 
@@ -179,7 +195,9 @@ Module Type SEARCH_TIME (V : VISITOR_T) (Import S : SEARCH V).
   Definition e_reach (g : prepared) (roots : list positive) : nat :=
     fold_right (fun u n => length (succs (base g) u) + n) 0 (entered (trace g roots)).
   Definition run_width (g : prepared) (roots : list positive) : nat :=
-    graph_max (graph_width (base g)) (vertex_width roots).
+    graph_max (vertex_width roots)
+      (fold_right (fun u w => graph_max (vertex_width (succs (base g) u)) w) 0
+        (entered (trace g roots))).
   (** Every prefix includes the callback state before its next event. *)
   Definition work_bounded (g : prepared) (roots : list positive) (s : V.state) (B : nat) :=
     forall prefix suffix, trace g roots = prefix ++ suffix ->
@@ -187,14 +205,16 @@ Module Type SEARCH_TIME (V : VISITOR_T) (Import S : SEARCH V).
   (** Search charges each visited vertex, edge occurrence, root and callback. *)
   Parameter T_dfs_le : forall g roots s B, work_bounded g roots s B ->
     (T_dfs g roots s <=
-      c_dfs * N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N.
+      c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   (** Search has the reachable-size bound when visitor work stays bounded. *)
   Parameter dfs_bigO : bigO
     (fun '(g, roots, s, B) => work_bounded g roots s B)
     (fun '(g, roots, _, B) =>
       (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N)
+        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+          N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
     (fun '(g, roots, s, _) => T_dfs g roots s).
 End SEARCH_TIME.
 
@@ -205,16 +225,15 @@ Module Type SEARCH_T (V : VISITOR_T) := SEARCH V <+ SEARCH_TIME V.
     The weighted white work comes from [GraphSearchScopedCost] at [87192fe].
     The task machine also charges root, empty-row and leave tasks.
     Its continuing-step credit is distinct from the design's compact-machine fuel.
-    The current fuel constructor scans every stored successor row.
-    [T7_public] is therefore an open implementation obligation. *)
+    The driver computes binary fuel from the prepared vertex and edge counts. *)
 
 Module Type SEARCH_PLAN (V : VISITOR_T) (Import S : SEARCH_T V).
   Parameter search_step : digraph -> search_state -> search_state + list event.
   Parameter T_search_step : digraph -> search_state -> N.
-  Parameter search_budget : digraph -> list positive -> N.
-  Parameter T_search_budget : digraph -> list positive -> N.
-  Parameter search_trace : digraph -> list positive -> list event.
-  Parameter T_search_trace : digraph -> list positive -> N.
+  Parameter search_budget : prepared -> list positive -> N.
+  Parameter T_search_budget : prepared -> list positive -> N.
+  Parameter search_trace : prepared -> list positive -> list event.
+  Parameter T_search_trace : prepared -> list positive -> N.
   Parameter k_step k_trace k_fold k_budget : N.
 
   Definition initial (roots : list positive) : search_state :=
@@ -282,74 +301,94 @@ Module Type SEARCH_PLAN (V : VISITOR_T) (Import S : SEARCH_T V).
   (** The stopping step reverses at most the whole final event trace. *)
   Definition stop_budget g roots := (k_trace * N.of_nat (length (trace g roots) + 1))%N.
 
-  (** The code uses all stored rows to construct its binary fuel. *)
+  (** The task driver uses cached counts and the supplied root length. *)
   Parameter F1_budget : forall g roots,
-    search_budget g roots = N.of_nat (4 * (length roots + all_rows g + 1)).
+    search_budget g roots = (4 * (nv g + ne g + N.of_nat (length roots) + 1))%N.
 
   (** The trace is the loop result and retains the partial prefix on exhaustion. *)
   Parameter F2_trace : forall g roots,
-    trace g roots = search_trace (base g) roots /\
-    search_trace (base g) roots =
-      match loopN (search_step (base g)) (search_budget (base g) roots) (initial roots) with
+    trace g roots = search_trace g roots /\
+    search_trace g roots =
+      match loopN (search_step (base g)) (search_budget g roots) (initial roots) with
       | inl st => rev (search_events st)
       | inr es => es
       end.
 
   (** Initialization supplies all white work and the ordered root tasks. *)
   Parameter F3_initial : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots (initial roots) /\
     potential g roots (initial roots) =
       N.of_nat (4 * n_reach g roots + 2 * e_reach g roots + length roots).
 
   (** Continuing steps maintain colour and prefix agreement and spend task credit. *)
   Parameter F4_step : forall g roots st next,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inl next ->
     invariant g roots next /\ (potential g roots next < potential g roots st)%N.
 
   (** A terminal state has no tasks and emits the full trace. *)
   Parameter F5_stop : forall g roots st es,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     search_tasks st = [] /\ es = trace g roots.
 
   (** Identifier bounds must cover every reachable key, including unlisted successors. *)
   Parameter F6_width : forall g roots st,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width (run_width g roots)) (search_events st).
 
   (** Event counts include two events per reached vertex and every successor occurrence. *)
   Parameter F7_events : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     length (trace g roots) = 2 * n_reach g roots + e_reach g roots.
 
   (** The concrete task fuel needs a step-count proof separate from the compact design fuel. *)
   Parameter F8_fuel : forall g roots,
-    exists es, loopN (search_step (base g)) (search_budget (base g) roots)
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
+    exists es, loopN (search_step (base g)) (search_budget g roots)
       (initial roots) = inr es.
 
   (** Continuing steps have bounded local trie work before visitor folding. *)
   Parameter T1_step : forall g roots st next w,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width w) (trace g roots) ->
     vertex_width roots <= w -> search_step (base g) st = inl next ->
     (T_search_step (base g) st <= k_step * N.of_nat (w + 1))%N.
 
   (** The stopping callback pays the final event reversal. *)
   Parameter T2_stop : forall g roots st es,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     (T_search_step (base g) st <= stop_budget g roots)%N.
 
   (** The loop theorem adds the actual fuel width once. *)
   Parameter T3_loop : forall g roots w,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
     (T_loopN (search_step (base g)) (T_search_step (base g))
-      (search_budget (base g) roots) (initial roots) <=
+      (search_budget g roots) (initial roots) <=
     c_loopN * (driver_credit g roots w (initial roots) + stop_budget g roots +
-      N.of_nat (N.size_nat (search_budget (base g) roots)) + 1))%N.
+      N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
 
-  (** Constructing fuel also pays the raw successor-trie traversal. *)
+  (** Trace construction pays binary cache arithmetic and task initialization. *)
   Parameter T4_trace : forall g roots w,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
-    (T_search_trace (base g) roots <= k_trace *
-      (T_search_budget (base g) roots + N.of_nat (length roots) +
+    (T_search_trace g roots <= k_trace *
+      (T_search_budget g roots + N.of_nat (length roots) +
         T_loopN (search_step (base g)) (T_search_step (base g))
-          (search_budget (base g) roots) (initial roots) +
+          (search_budget g roots) (initial roots) +
         N.of_nat (length (trace g roots)) + 1))%N.
 
   (** Prefix work bounds pay each callback and the event-fold driver. *)
@@ -361,14 +400,15 @@ Module Type SEARCH_PLAN (V : VISITOR_T) (Import S : SEARCH_T V).
 
   (** The wrapper composes trace construction and the callback fold. *)
   Parameter T6_dfs : forall g roots s,
-    (T_dfs g roots s <= k_trace * (T_search_trace (base g) roots +
+    (T_dfs g roots s <= k_trace * (T_search_trace g roots +
       T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
         (trace g roots) s + 1))%N.
 
-  (** The unchanged public target needs fuel-scan, width and zero-factor repairs in the code. *)
+  (** The public bound includes the widths of both binary count caches. *)
   Parameter T7_public : forall g roots s B, work_bounded g roots s B ->
-    (T_dfs g roots s <= c_dfs * N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N.
+    (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
 End SEARCH_PLAN.
 
 Module Type SEARCH_ALL (V : VISITOR_T) := SEARCH_T V <+ SEARCH_PLAN V.
