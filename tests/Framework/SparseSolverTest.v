@@ -103,3 +103,27 @@ Proof. vm_compute; reflexivity. Qed.
 
 Example one_block_entry_parameter_value : observe 3 4%N [0] = Some [Some (number 7)].
 Proof. vm_compute; reflexivity. Qed.
+
+Definition tagged_value (a : V.t) : tagged (flat Z) := match a with
+  | FBot => TBot
+  | FVal (w, z) => TVal w (FVal z)
+  | FTop => TAny
+  end.
+
+Example constant_arithmetic :
+  tagged_value (V.forward (BOp bvadd) [FVal (32%positive, 1%Z); FVal (32%positive, 1%Z)]) =
+    number 2.
+Proof. vm_compute; reflexivity. Qed.
+
+Example malformed_expression_has_bottom_forward_result :
+  tagged_value (V.forward (BOp bvadd) [FVal (32%positive, 1%Z)]) = TBot.
+Proof. vm_compute; reflexivity. Qed.
+
+Example false_zero_subject :
+  map tagged_value (V.guard (BTruth false) [FVal (32%positive, 0%Z)]) = [number 0].
+Proof. vm_compute; reflexivity. Qed.
+
+Example unknown_width_truth :
+  (map tagged_value (V.guard (BTruth true) [FTop]),
+   map tagged_value (V.guard (BTruth false) [FTop])) = ([TAny], [TAny]).
+Proof. vm_compute; reflexivity. Qed.
