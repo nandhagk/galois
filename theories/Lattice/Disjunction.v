@@ -179,7 +179,8 @@ Module Disjunction (L : LATTICE) (C : CAP) <: DISJUNCTION L C.
   Qed.
 End Disjunction.
 
-Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP).
+Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
+    <: DISJUNCTION_ALL L J C.
   Include Disjunction L C.
   TimeFun raw_leb.
   TimeFun leb.
@@ -189,4 +190,29 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP).
   TimeFun compact.
   TimeFun clip.
   TimeFun join.
+
+  Definition size (xs : t) : nat :=
+    fold_right (fun a n => (L.size a + 1 + n)%nat) 1 (proj1_sig xs).
+  Definition c_lat : N := 1. (* STUB *)
+  (** The lattice constant pays for at least one call. *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Order testing takes time bounded by both disjunction sizes. *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Joining takes time bounded by both disjunction sizes. *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Bottom testing takes time bounded by the disjunction size. *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Clipping charges raw length and component sizes within twice the cap. *)
+  Lemma T_clip_le : forall xs, length xs <= 2 * C.k ->
+    (T_clip xs <= c_lat * N.of_nat
+      (length xs + fold_right (fun a n => (L.size a + n)%nat) 0%nat xs + 1)%nat)%N.
+  Proof. Admitted. (* STUB *)
 End DisjunctionT.
