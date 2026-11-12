@@ -68,3 +68,10 @@ Example unsupported_jump_passes_enumerated_checker : forallb (fun r =>
       (S (length (Unsupported.deps tt r))) (Unsupported.start tt r)))
   (Unsupported.rows tt) = true.
 Proof. vm_compute; reflexivity. Qed.
+
+Example unsupported_seed_rejected :
+  existsb (Fact.eqb (Some tt)) (UnsupportedFlow.facts tt) = false.
+Proof. vm_compute; reflexivity. Qed.
+
+Example zero_seed_supported : existsb (Fact.eqb None) (UnsupportedFlow.facts tt) = true.
+Proof. vm_compute; reflexivity. Qed.
