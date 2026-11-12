@@ -37,6 +37,19 @@ Module Index (V : VALUE) <: INDEX V.
   Definition wf (_ : nat) (_ : t) : Prop := True.
   Definition mem (_ : t) (_ : list (cell V.t)) : Prop := False.
   Definition node (_ : t) (_ : positive) (_ : list (cell V.t)) : Prop := False.
+  (** The initial node counter starts at one. *)
+  Lemma next_empty : next empty = 1%positive.
+  Proof. Admitted.
+
+  (** Insertion allocates at most one node per tuple cell. *)
+  Lemma next_insert : forall a r ix, wf a ix ->
+    (next (insert r ix) <= next ix + Pos.of_nat (length r))%positive.
+  Proof. Admitted.
+
+  (** Removal keeps the fresh node counter. *)
+  Lemma next_remove : forall a r ix, wf a ix -> next (remove r ix) = next ix.
+  Proof. Admitted.
+
   Lemma mem_empty : forall u, ~ mem empty u.
   Proof. Admitted.
 
@@ -101,12 +114,32 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     fold_right (fun r n => fold_right
       (fun c m => Nat.max (cell_bits V.encode c) m) n r) 0 ix.
   Definition width (_ : t) (_ : list (cell V.t)) : nat := 0.
+  (** Empty indexes have no encoded cells. *)
+  Lemma max_cell_bits_empty : max_cell_bits empty = 0.
+  Proof. Admitted. (* STUB *)
+
+  (** Insertion adds at most the encoded width of its tuple. *)
+  Lemma max_cell_bits_insert : forall r ix,
+    max_cell_bits (insert r ix) <=
+      Nat.max (max_cell_bits ix)
+        (fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r).
+  Proof. Admitted. (* STUB *)
+
+  (** Removal never increases the stored cell width. *)
+  Lemma max_cell_bits_remove : forall r ix,
+    max_cell_bits (remove r ix) <= max_cell_bits ix.
+  Proof. Admitted. (* STUB *)
+
   Lemma width_le : forall ix r,
-    width ix r <= Pos.size_nat (next ix) +
+    width ix r <= Pos.size_nat (next ix + Pos.of_nat (length r)) +
       fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
   Proof. Admitted. (* STUB *)
 
   Definition c_ix : N := 1. (* STUB *)
+  (** The fresh node counter is stored. *)
+  Lemma T_next_le : forall ix, (T_next ix <= c_ix)%N.
+  Proof. Admitted. (* STUB *)
+
   Lemma T_insert_le : forall r ix,
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -171,9 +204,22 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   (** The public constant absorbs the aggregate path and wrapper charges. *)
   Lemma c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
   Proof. Admitted. (* STUB *)
-  (** Each removal step pays for its edge-map operations. *)
-  Lemma T_remove_step_st_le : forall st c,
-    (T_remove_step_st st c <= 4 * c_map * N.of_nat (width (fst st) [c] + 1) + 4)%N.
+  (** Each insertion step uses the width of the complete original walk. *)
+  Lemma T_insert_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
+    (T_insert_step_st (fold_left insert_step_st pre (start ix)) c <=
+      4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Each removal step uses the width of the complete original walk. *)
+  Lemma T_remove_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
+    (T_remove_step_st (fold_left remove_step_st pre (start ix)) c <=
+      4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Initialization and both finishing passes fit the original walk budget. *)
+  Lemma T_walk_ends : forall r ix st, inv ix ->
+    (T_start ix + T_insert_finish r ix st + T_remove_finish r ix st <=
+      k_walk * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
   (** Insertion follows its named state walk. *)
@@ -189,29 +235,13 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   (** Insertion aggregates the path-step charges. *)
   Lemma T_insert_steps : forall r ix, inv ix ->
     (T_insert r ix <= N.of_nat (length r + 1) *
-      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
+      ((4 * c_map + k_walk) * N.of_nat (width ix r + 1) + 4))%N.
   Proof. Admitted. (* STUB *)
 
   (** Removal aggregates the path-step charges. *)
   Lemma T_remove_steps : forall r ix, inv ix ->
     (T_remove r ix <= N.of_nat (length r + 1) *
-      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Child lookup aggregates its map operations. *)
-  Lemma T_child_steps : forall ix n c,
-    (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Enumeration aggregates the stored children. *)
-  Lemma T_children_steps : forall ix n,
-    (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
-      N.of_nat (width ix [] + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Degree lookup aggregates its map operations. *)
-  Lemma T_degree_steps : forall ix n,
-    (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
+      ((4 * c_map + k_walk) * N.of_nat (width ix r + 1) + 4))%N.
   Proof. Admitted. (* STUB *)
 
 End IndexT.

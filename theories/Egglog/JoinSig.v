@@ -60,7 +60,7 @@ Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
   Parameter c_join : N.
   (** Running pays for recursive probe work at the maximum index width. *)
   Parameter T_run_le : forall p ixs, wf_plan p ixs ->
-    (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 1) * N.of_nat (wmax p ixs + 1) *
+    (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
   (** Recursive probe work is a lower bound on running time. *)
   Parameter T_run_ge : forall p ixs, wf_plan p ixs ->
@@ -136,7 +136,7 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
   (** A level pays for pivot enumeration, all probes and every surviving subtree. *)
   Parameter work_at_step : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
     l < nvars p -> choose p ixs l ns = Some j ->
-    work_at p ixs l ns = 1 + length (cols p) + length (participants p l) *
+    work_at p ixs l ns = 1 + length (cols p) + length (cols p) *
       (1 + N.to_nat (I.degree (nth j ixs I.empty) (nth j ns 1%positive))) +
       fold_right Nat.add 0
         (map (fun c => match advance p ixs l ns c with
