@@ -9,18 +9,40 @@ From Galois.Domains Require Import ThresholdsSig.
 Import List.ListNotations.
 
 Module ThresholdsCode <: THRESHOLDS_OPS.
-  Fixpoint insert (z : Z) (xs : list Z) : list Z :=
-    match xs with
-    | [] => [z]
-    | x :: rest =>
-      if Z.eqb z x then xs
-      else if Z.ltb z x then z :: xs else x :: insert z rest
+  Fixpoint merge (fuel : nat) (xs ys : list Z) : list Z :=
+    match fuel with
+    | 0 => []
+    | S fuel =>
+      match xs, ys with
+      | [], _ => ys
+      | _, [] => xs
+      | x :: xt, y :: yt =>
+        if Z.leb x y then x :: merge fuel xt ys else y :: merge fuel xs yt
+      end
     end.
 
-  Fixpoint sort (xs : list Z) : list Z :=
+  Fixpoint sort_fuel (fuel : nat) (xs : list Z) : list Z :=
+    match fuel with
+    | 0 => xs
+    | S fuel =>
+      match xs with
+      | [] | [_] => xs
+      | _ =>
+        let middle := length xs / 2 in
+        let lhs := sort_fuel fuel (firstn middle xs) in
+        let rhs := sort_fuel fuel (skipn middle xs) in
+        merge (length xs) lhs rhs
+      end
+    end.
+
+  Definition msort (xs : list Z) := sort_fuel (length xs) xs.
+
+  Fixpoint dedup_sorted (xs : list Z) : list Z :=
     match xs with
     | [] => []
-    | x :: rest => insert x (sort rest)
+    | [x] => [x]
+    | x :: (y :: _ as rest) =>
+      if Z.eqb x y then dedup_sorted rest else x :: dedup_sorted rest
     end.
 
   Fixpoint build (fuel : nat) (xs : list Z) : ttree :=
@@ -35,7 +57,7 @@ Module ThresholdsCode <: THRESHOLDS_OPS.
     end.
 
   Definition make (xs : list Z) : ttree :=
-    let sorted := sort xs in build (length sorted) sorted.
+    let sorted := dedup_sorted (msort xs) in build (length sorted) sorted.
 
   Fixpoint below (tree : ttree) (z : Z) : option Z :=
     match tree with
