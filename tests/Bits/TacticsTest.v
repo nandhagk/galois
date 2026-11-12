@@ -10,7 +10,6 @@ Import List.ListNotations.
 
 Ltac op_default ::= left; reflexivity.
 
-(** The hook closes exactly the bitwise cases and every remaining goal is non-bitwise. *)
 
 (** An explicit failing default leaves every constructor available to the client. *)
 Example explicit_default_residue : forall o, arity o = arity o.
@@ -27,7 +26,7 @@ Proof.
   all: right; discriminate.
 Qed.
 
-(** The operator and descriptor remain directly computable in a tactic client. *)
+(** The operator width checks remain directly computable in a tactic client. *)
 Example tactic_client_boundary :
   result_width bvnot [] = None /\ result_width bvand [1%positive; 2%positive] = None /\
   result_width bvand [1%positive; 1%positive] = Some 1%positive.
