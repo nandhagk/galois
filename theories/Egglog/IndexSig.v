@@ -116,16 +116,16 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   (** The fresh node counter is stored. *)
   Parameter T_next_le : forall ix, (T_next ix <= c_ix)%N.
   (** Insertion pays for one path through the tuple. *)
-  Parameter T_insert_le : forall r ix,
+  Parameter T_insert_le : forall a r ix, wf a ix ->
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   (** Removal pays for one path through the tuple. *)
-  Parameter T_remove_le : forall r ix,
+  Parameter T_remove_le : forall a r ix, wf a ix ->
     (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   (** Child lookup pays for the encoded edge. *)
   Parameter T_child_le : forall ix n c,
     (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
   (** Child enumeration pays for each child. *)
-  Parameter T_children_le : forall ix n,
+  Parameter T_children_le : forall a ix n, wf a ix ->
     (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
       N.of_nat (width ix [] + 1))%N.
   (** Degree lookup pays for the encoded node. *)
