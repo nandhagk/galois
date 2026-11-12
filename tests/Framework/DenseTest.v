@@ -112,3 +112,36 @@ Example dense_candidate_accepted :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Module Duplicate <: CFG_OPS Prog NatKeyCode Edge.
+  Definition entries (_ : bool) := [0; 0].
+  Definition edges (_ : bool) := [0; 1].
+  Definition src (_ : bool) (_ : nat) := 0.
+  Definition dst (_ : bool) (_ : nat) := 1.
+End Duplicate.
+Module Dup := DenseCode Prog NatKeyCode Edge Duplicate BoolOps ForwardFlow.
+Module DupC := CheckCode BoolOps Dup.
+Module DupR := NarrowCode BoolOps Dup DupC.
+Module DupW := WorklistCode BoolOps Dup P HeapCode.
+Module DupA := CertifiedCode BoolOps Dup DupW DupC DupR.
+
+(* charged_constructor_keeps_duplicate_rows had
+   [Seed 0; Seed 0; Flow 0; Flow 0] from duplicate outgoing occurrences.
+   Dense now reads the listed edges [0; 1], so it produces the rows below. *)
+Example listed_duplicate_entries :
+  Dup.rows false = [Seed 0; Seed 0; Flow 0; Flow 1].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example charged_constructor_preserves_actual_execution :
+  match DupA.analyze false flat 8%N with
+  | Solved m => Some (map (DupC.look m) [0; 1; 99])
+  | _ => None
+  end = Some [true; true; false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(* original_record_client equated the retired Analysis.Make dictionary with
+   Dense.analysis. Programs and policies are separate inputs to the new functors. *)

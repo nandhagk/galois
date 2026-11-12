@@ -60,3 +60,24 @@ Example exhausted_query : eval_query resume (fun _ => 0) 1 nested_query = None.
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+Definition selected_resume (_ : unit) (a : nat) : query nat nat unit := Ret a.
+
+(* selected_nonunit_bulk_continuation had Trace 3 [0] [] and 12 ticks.
+   The value is retained. eval_query exposes no read trace or callback charge. *)
+Example selected_nonunit_bulk_continuation :
+  eval_query selected_resume (fun _ => 3) 2 (Ask 0 tt) = Some (3, []).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(* other_nonunit_bulk_continuation had Trace 4 [0] [] and 7 ticks.
+   The value is retained. eval_query exposes no read trace or callback charge. *)
+Example other_nonunit_bulk_continuation :
+  eval_query selected_resume (fun _ => 4) 2 (Ask 0 tt) = Some (4, []).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(* imported_bulk_nil and imported_bulk_cons specified the retired ask_all_c
+   constructor equations. Explicit frames replace its stored continuations. *)

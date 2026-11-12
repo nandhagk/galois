@@ -42,3 +42,9 @@ Example final_probe_is_required :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(* self_change_requeues_popped_row had (true, 1, true), including an evaluation
+   counter. The new state exposes the queued occurrence and its stored value
+   above. worklist_state has no evaluation-count field.
+   final_probe_is_required had None at fuel two and Some [true; false; false;
+   false] at fuel three. The Boolean solved projections above retain that boundary. *)
