@@ -39,10 +39,9 @@ Module SparseCode (P : TYPE) (N : KEY_OPS) (E : TYPE)
   Definition key_code := X.encode.
   Definition key_eqb := X.eqb.
   Definition rows p : list row :=
-    map SparseSeed (flat_map (S.params p) (C.entries p)) ++
+    map SparseSeed (S.entry_params p) ++
     map SparseDef (S.values p) ++
-    flat_map (fun e => map (fun xy => SparseArg e (fst xy) (snd xy)) (S.args p e))
-      (C.edges p).
+    map (fun r => SparseArg (fst r) (fst (snd r)) (snd (snd r))) (S.arg_rows p).
   Definition target (_ : prog) (r : row) : key :=
     match r with
     | SparseSeed x => x
@@ -147,7 +146,7 @@ Module Sparse (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Proof. Admitted. (* STUB *)
 End Sparse.
 
-Module SparseT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (X : KEY_T) (L : LANG_T) (K : TYPE with Definition t := L.op)
     (G : TYPE with Definition t := L.guard)
     (S : SSA_T P N E C X K G) (V : VALUE_DOMAIN_T L)

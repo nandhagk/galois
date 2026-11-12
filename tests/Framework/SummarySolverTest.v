@@ -35,6 +35,8 @@ Module Calls <: CALLS_OPS Prog NatKeyCode NatKeyCode.
     | 1, 0 => [1] | 1, 1 => [2] | 1, 2 => [1]
     | _, _ => [] end.
   Definition call_graph (_ : nat) := Digraph [] Empty.
+  Definition calls p := flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
 End Calls.
 Module Body <: BODY_OPS Prog NatKeyCode NatKeyCode Lat.
   Definition local p f := Nat.eqb f (if Nat.eqb p 0 then 1 else 2).
@@ -86,6 +88,8 @@ Module Chain <: CALLS_OPS Prog NatKeyCode NatKeyCode.
   Definition caller_of (_ : nat) site := if Nat.eqb site 3 then 0 else site.
   Definition resolve (_ : nat) site := match site with 0 => [1] | 1 => [2] | 2 | 3 => [3] | _ => [] end.
   Definition call_graph (_ : nat) := Digraph [] Empty.
+  Definition calls p := flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
 End Chain.
 Module ChainBody <: BODY_OPS Prog NatKeyCode NatKeyCode NatLat.
   Definition local (_ : nat) f := match f with 2 => 2 | 3 => 1 | _ => 0 end.

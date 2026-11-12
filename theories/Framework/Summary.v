@@ -21,8 +21,7 @@ Module SummaryCode (P : TYPE) (F Site : KEY_OPS) (CL : CALLS_OPS P F Site)
   Definition key_code := F.encode.
   Definition key_eqb := F.eqb.
   Definition rows p : list row := map SummaryLocal (CL.functions p) ++
-    flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
-      (CL.sites_of p f)) (CL.functions p).
+    map (fun sg => SummaryCall (fst sg) (snd sg)) (CL.calls p).
   Definition target p (r : row) : key := match r with
     | SummaryLocal f => f
     | SummaryCall site _ => CL.caller_of p site

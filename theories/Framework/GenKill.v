@@ -187,6 +187,8 @@ Module GenKillMayDomainT (F : KEY_T) (S : SET_T F)
   TimeFun join.
 
   Definition size := S.nodes.
+  Lemma size_nodes : forall a, size a = S.nodes a.
+  Proof. reflexivity. Qed.
   Definition c_lat : N := 1%N. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -213,6 +215,9 @@ Module GenKillMustDomainT (F : KEY_T) (S : SET_T F)
     | None => 0
     | Some facts => S.nodes facts
     end.
+  Lemma size_nodes : forall a,
+    size a = match a with None => 0 | Some facts => S.nodes facts end.
+  Proof. reflexivity. Qed.
   Definition c_lat : N := 1%N. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)

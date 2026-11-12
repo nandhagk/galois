@@ -39,6 +39,8 @@ Module Ssa <: SSA_OPS Prog NatKeyCode Edge Graph NatKeyCode Ops Guards.
   Definition params (_ : unit) (_ : nat) := [0].
   Definition args (_ : unit) (_ : nat) : list (nat * nat) := [].
   Definition guards (_ : unit) (_ : nat) : list (unit * list nat) := [].
+  Definition entry_params p := flat_map (params p) (Graph.entries p).
+  Definition arg_rows p := flat_map (fun e => map (pair e) (args p e)) (Graph.edges p).
 End Ssa.
 Module Values <: VALUE_DOMAIN_OPS Lang.
   Definition t := nat.
