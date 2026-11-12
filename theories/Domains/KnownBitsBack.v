@@ -167,6 +167,25 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
   Proof. Admitted. (* STUB *)
 End KnownBitsTableClock.
 
+Module KnownBitsTableT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS_T L C) <: KNOWN_BITS_TABLE_T L C K.
+  Include KnownBitsTableClock L C K.
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (K.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End KnownBitsTableT.
+
 Theorem tnum_refine_equation : forall wps qs,
   tnum_refine wps qs =
   match wps, qs with
