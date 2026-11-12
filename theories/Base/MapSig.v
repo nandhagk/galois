@@ -96,6 +96,16 @@ Module Type MAP_LAWS (K : KEY) (Import M : MAP_OPS K) (Import S : MAP_SPEC K M).
   Parameter codes : forall {A}, t A -> list positive.
   Parameter codes_spec : forall A (m : t A) p, In p (codes m) <-> find p m <> None.
   Parameter codes_nodup : forall A (m : t A), NoDup (codes m).
+  (** The stored codes cover the skeleton nodes of every map. *)
+  Parameter nodes_le_codes : forall A (m : t A),
+    nodes m <= fold_right Nat.add 0 (List.map (fun p => Pos.size_nat p + 1) (codes m)).
+  (** Insertion adds at most the weight of its key. *)
+  Parameter weight_set : forall A k (a : A) m, weight (set k a m) <= weight m + K.bits k + 1.
+  (** Removal adds no label. *)
+  Parameter weight_remove : forall A k (m : t A), weight (remove k m) <= weight m.
+  (** A merge that keeps nothing of the right map alone keeps left labels. *)
+  Parameter weight_merge_l : forall A B C (f : option A -> option B -> option C) m1 m2,
+    (forall b, f None b = None) -> weight (merge f m1 m2) <= weight m1.
 End MAP_LAWS.
 
 Module Type MAP (K : KEY) := MAP_OPS K <+ MAP_SPEC K <+ MAP_LAWS K.
