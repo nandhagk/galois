@@ -36,3 +36,25 @@ Inductive result (C : Type) : Type :=
 Arguments Returned {C}.
 Arguments Wrong {C}.
 Arguments Timeout {C}.
+
+(** Imperative exits pass no block arguments. *)
+Definition imp_exit {X G} (e : exit X G) : Prop :=
+  match e with
+  | Jump _ args => args = nil
+  | Branch _ _ _ a1 _ a2 => a1 = nil /\ a2 = nil
+  | Return _ => True
+  end.
+
+(** An imperative function has no block parameters or edge arguments. *)
+Definition imp_form {K G} (p : func positive K G) : Prop :=
+  Forall (fun item => params _ _ _ (snd item) = nil /\ imp_exit (term _ _ _ (snd item)))
+    (blocks _ _ _ p).
+
+Module Type OPS.
+  Parameter K G C : Type.
+  Parameter eval : K -> list C -> option C.
+  Parameter test : G -> list C -> option bool.
+  Parameter mov : K.
+  (** The move operator returns its sole operand. *)
+  Parameter eval_mov : forall c, eval mov (c :: nil) = Some c.
+End OPS.
