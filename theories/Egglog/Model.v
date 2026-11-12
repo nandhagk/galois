@@ -110,8 +110,7 @@ Fixpoint present (w : view) (s : env) (acts : list (action V)) : Prop :=
           exists c d, term_value s a c /\ term_value s b d /\
             (match c, d with
              | Id i, Id j => same w i j
-             | Val v, Val v' => v = v'
-             | _, _ => False
+             | _, _ => True
              end) /\ present w s rest
       | Let x p args =>
           exists k vs, terms_value s args k /\ values k vs /\
@@ -175,8 +174,11 @@ Fixpoint model_actions (M : model) (kinds : positive -> option output)
              | _, _ => False
              end) /\ model_actions M kinds s rest
       | Union a b =>
-          exists c, model_term M s a c /\ model_term M s b c /\
-            model_actions M kinds s rest
+          exists c d, model_term M s a c /\ model_term M s b d /\
+            (match c, d with
+             | inl x, inl y => x = y
+             | _, _ => True
+             end) /\ model_actions M kinds s rest
       | Let x p args =>
           exists k vs, Forall2 (model_term M s) args k /\ model_values M k vs /\
             match prim p vs with
