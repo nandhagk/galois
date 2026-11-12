@@ -51,6 +51,12 @@ Module Dense (P : TYPE) (N : KEY) (E : TYPE)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
   Proof. Admitted.
 
+  (** A row asks only its declared dependencies. *)
+  Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) -> In x (deps p r).
+  Proof. Admitted.
+
   Lemma eval_total : forall p r look, wf p -> In r (rows p) -> eval p r look <> None.
   Proof. intros p [n|e] look _ _; discriminate. Qed.
 
