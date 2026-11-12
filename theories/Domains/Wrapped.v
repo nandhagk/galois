@@ -11,7 +11,7 @@ From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Inter
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module WrappedScalar := IntervalBaseCode ThresholdsCode.
+Module WrappedScalar := IntervalBaseT ThresholdsT.
 
 Definition wrapped_offset (w : width) (origin x : Z) : Z :=
   (x - origin) mod modulus w.
@@ -141,6 +141,7 @@ Definition wrapped_meet (w : width) (a b : wrapped) : wrapped :=
     (wrapped_of_interval w (WrappedScalar.interval_meet (snd pa) (fst pb)))
     (wrapped_of_interval w (WrappedScalar.interval_meet (snd pa) (snd pb))) in
   if wrapped_leb w candidate a then candidate else wrapped_norm w a.
+TimeFun wrapped_meet.
 
 Definition wrapped_size_rank (w : width) (size : Z) : Z :=
   if size =? 0 then Zpos w + 2 else
@@ -188,11 +189,13 @@ Definition wrapped_shift_interval (delta : Z) (a : itv) : itv :=
   | IBot => IBot
   | I lo hi => I (shift lo) (shift hi)
   end.
+TimeFun wrapped_shift_interval.
 
 Definition wrapped_signed_parts (w : width) (a : wrapped) : itv * itv :=
   let biased := wrapped_parts w (wrapped_add w a (WItv (half w) (half w))) in
   (wrapped_shift_interval (- half w) (fst biased),
    wrapped_shift_interval (- half w) (snd biased)).
+TimeFun wrapped_signed_parts.
 
 Definition wrapped_mul_parts (w : width) (a b : itv * itv) : wrapped :=
   wrapped_join_four w
@@ -205,6 +208,7 @@ TimeFun wrapped_mul_parts.
 Definition wrapped_mul_cut (pole : Z) (a : itv) : itv * itv :=
   (WrappedScalar.interval_meet a (I NegInf (Fin (pole - 1))),
    WrappedScalar.interval_meet a (I (Fin pole) PosInf)).
+TimeFun wrapped_mul_cut.
 
 Definition wrapped_mul_both_parts (w : width) (pole : Z) (a b : itv * itv) : wrapped :=
   let a0 := wrapped_mul_cut pole (fst a) in
@@ -214,15 +218,18 @@ Definition wrapped_mul_both_parts (w : width) (pole : Z) (a b : itv * itv) : wra
   wrapped_join_four w
     (wrapped_mul_parts w a0 b0) (wrapped_mul_parts w a0 b1)
     (wrapped_mul_parts w a1 b0) (wrapped_mul_parts w a1 b1).
+TimeFun wrapped_mul_both_parts.
 
 Definition wrapped_mul (w : width) (a b : wrapped) : wrapped :=
   let unsigned := wrapped_mul_both_parts w (half w) (wrapped_parts w a) (wrapped_parts w b) in
   let signed := wrapped_mul_both_parts w 0 (wrapped_signed_parts w a) (wrapped_signed_parts w b) in
   if wrapped_size w unsigned <=? wrapped_size w signed then unsigned else signed.
+TimeFun wrapped_mul.
 
 Definition wrapped_pole_cut (w : width) (a : itv) : itv * itv :=
   (WrappedScalar.interval_meet a (I (Fin 0) (Fin (half w - 1))),
    WrappedScalar.interval_meet a (I (Fin (half w)) (Fin (modulus w - 1)))).
+TimeFun wrapped_pole_cut.
 
 Definition wrapped_point w a : option Z :=
   match wrapped_norm w a with
@@ -231,22 +238,25 @@ Definition wrapped_point w a : option Z :=
   end.
 TimeFun wrapped_point.
 
-Module WrappedIntervalOps := IntervalOpsCode ThresholdsCode WrappedScalar.
+Module WrappedIntervalOps := IntervalOpsT ThresholdsT WrappedScalar.
 
 Definition wrapped_interval_pair (w : width) (a : itv * itv) : wrapped :=
   wrapped_join w (wrapped_of_interval w (fst a)) (wrapped_of_interval w (snd a)).
+TimeFun wrapped_interval_pair.
 
 Definition wrapped_not_piece (w : width) (a : itv) : wrapped :=
   match a with
   | IBot => WBot
   | _ => wrapped_of_interval w (WrappedIntervalOps.interval_not w a)
   end.
+TimeFun wrapped_not_piece.
 
 Definition wrapped_not (w : width) (a : wrapped) : wrapped :=
   let parts := wrapped_parts w a in
   wrapped_join w
     (wrapped_not_piece w (fst parts))
     (wrapped_not_piece w (snd parts)).
+TimeFun wrapped_not.
 
 Definition wrapped_div_piece (remainder : bool) (w : width) (a b : itv) : wrapped :=
   match a, b with
@@ -255,6 +265,7 @@ Definition wrapped_div_piece (remainder : bool) (w : width) (a b : itv) : wrappe
       (if remainder then WrappedIntervalOps.interval_urem w a b
        else WrappedIntervalOps.interval_udiv w a b)
   end.
+TimeFun wrapped_div_piece.
 
 Definition wrapped_div_cut (remainder : bool) (w : width) (a b : itv) : wrapped :=
   let pa := wrapped_pole_cut w a in
@@ -264,6 +275,7 @@ Definition wrapped_div_cut (remainder : bool) (w : width) (a b : itv) : wrapped 
     (wrapped_div_piece remainder w (fst pa) (snd pb))
     (wrapped_div_piece remainder w (snd pa) (fst pb))
     (wrapped_div_piece remainder w (snd pa) (snd pb)).
+TimeFun wrapped_div_cut.
 
 Definition wrapped_div (remainder : bool) (w : width) (a b : wrapped) : wrapped :=
   let pa := wrapped_parts w a in
@@ -273,15 +285,19 @@ Definition wrapped_div (remainder : bool) (w : width) (a b : wrapped) : wrapped 
     (wrapped_div_cut remainder w (fst pa) (snd pb))
     (wrapped_div_cut remainder w (snd pa) (fst pb))
     (wrapped_div_cut remainder w (snd pa) (snd pb)).
+TimeFun wrapped_div.
 
 Definition wrapped_udiv := wrapped_div false.
 Definition wrapped_urem := wrapped_div true.
+TimeFun wrapped_udiv.
+TimeFun wrapped_urem.
 
 Definition wrapped_interval_list (a : itv) : list (Z * Z) :=
   match a with
   | I (Fin lo) (Fin hi) => [(lo, hi)]
   | _ => []
   end.
+TimeFun wrapped_interval_list.
 
 Definition wrapped_split (w : width) (a : wrapped) : list (Z * Z) :=
   let parts := wrapped_parts w a in
@@ -289,6 +305,7 @@ Definition wrapped_split (w : width) (a : wrapped) : list (Z * Z) :=
   let hi := wrapped_pole_cut w (snd parts) in
   wrapped_interval_list (fst lo) ++ wrapped_interval_list (snd lo) ++
   wrapped_interval_list (fst hi) ++ wrapped_interval_list (snd hi).
+TimeFun wrapped_split.
 
 Module WrappedCode (L : WORD_LANGUAGE_OPS) <: WRAPPED_OPS L.
   Definition p := wrapped.
@@ -379,10 +396,11 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Proof. Admitted. (* STUB *)
 End Wrapped.
 
-Module WrappedClock (L : WORD_LANGUAGE_T).
+Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Include Wrapped L.
   TimeFun pleb.
   TimeFun pjoin.
+  TimeFun pmeet.
   TimeFun pbot.
   TimeFun ptop.
   TimeFun pis_bot.
@@ -393,9 +411,209 @@ Module WrappedClock (L : WORD_LANGUAGE_T).
   TimeFun wrapped_norm.
   TimeFun wrapped_double.
   TimeFun wrapped_neg.
+  TimeFun wrapped_not.
   TimeFun wrapped_add.
   TimeFun wrapped_sub.
-End WrappedClock.
+  TimeFun wrapped_mul.
+  TimeFun wrapped_udiv.
+  TimeFun wrapped_urem.
+  TimeFun wrapped_split.
+
+  Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + wrapped_bits a + 1.
+  Definition pwsize (_ : pwparam) : nat := 0.
+  Definition c_payload : N := 1. (* STUB *)
+  Definition c_wrapped : N := 1. (* STUB *)
+
+  (** Constructing top fits the published width cost. *)
+  Lemma T_ptop_le : forall w,
+    (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Constructing bottom fits the published width cost. *)
+  Lemma T_pbot_le : forall w,
+    (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Top payload storage fits the published width cost. *)
+  Lemma ptop_size : forall w,
+    (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Bottom payload storage fits the published width cost. *)
+  Lemma pbot_size : forall w,
+    (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Constant payload storage fits its construction budget. *)
+  Lemma pconst_size : forall w z,
+    (N.of_nat (psize w (pconst w z)) <=
+      c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Joined payload storage fits the combined input budget. *)
+  Lemma pjoin_size : forall w a b,
+    (N.of_nat (psize w (pjoin w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Met payload storage fits the combined input budget. *)
+  Lemma pmeet_size : forall w a b,
+    (N.of_nat (psize w (pmeet w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Widened storage fits both inputs and its parameter. *)
+  Lemma pwiden_size : forall q w a b,
+    (N.of_nat (psize w (pwiden q w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Narrowed storage fits both inputs. *)
+  Lemma pnarrow_size : forall w a b,
+    (N.of_nat (psize w (pnarrow w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload widening charges both values and the parameter. *)
+  Lemma T_pwiden_le : forall q w a b,
+    (T_pwiden q w a b <=
+      c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload narrowing charges both input values. *)
+  Lemma T_pnarrow_le : forall w a b,
+    (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload comparison charges both values. *)
+  Lemma T_pleb_le : forall w a b,
+    (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload join charges both values. *)
+  Lemma T_pjoin_le : forall w a b,
+    (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload meet charges both values. *)
+  Lemma T_pmeet_le : forall w a b,
+    (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Bottom recognition charges the stored value. *)
+  Lemma T_pis_bot_le : forall w a,
+    (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Point recognition charges the stored value. *)
+  Lemma T_ppoint_le : forall w a,
+    (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Constant construction charges width and literal size. *)
+  Lemma T_pconst_le : forall w z,
+    (T_pconst w z <= c_payload *
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Arc normalization charges raw endpoints and output width. *)
+  Lemma T_wrapped_norm_le : forall w a,
+    (T_wrapped_norm w a <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Arc expansion charges raw endpoints and output width. *)
+  Lemma T_wrapped_double_le : forall w a,
+    (T_wrapped_double w a <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Arithmetic negation charges raw endpoints and output width. *)
+  Lemma T_wrapped_neg_le : forall w a,
+    (T_wrapped_neg w a <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Bitwise negation charges raw endpoints and output width. *)
+  Lemma T_wrapped_not_le : forall w a,
+    (T_wrapped_not w a <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Circular multiplication charges width and both endpoint sets. *)
+  Lemma T_wrapped_mul_le : forall w a b,
+    (T_wrapped_mul w a b <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Circular addition charges width and both endpoint sets. *)
+  Lemma T_wrapped_add_le : forall w a b,
+    (T_wrapped_add w a b <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Circular subtraction charges width and both endpoint sets. *)
+  Lemma T_wrapped_sub_le : forall w a b,
+    (T_wrapped_sub w a b <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Arc splitting charges endpoint normalization at both poles. *)
+  Lemma T_wrapped_split_le : forall w a,
+    (T_wrapped_split w a <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Unsigned division charges width and both endpoint sets. *)
+  Lemma T_wrapped_udiv_le : forall w a b,
+    (T_wrapped_udiv w a b <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Unsigned remainder charges width and both endpoint sets. *)
+  Lemma T_wrapped_urem_le : forall w a b,
+    (T_wrapped_urem w a b <= c_wrapped *
+      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Circular multiplication has the published quadratic work bound. *)
+  Lemma mul_bigO : bigO (fun _ => True)
+    (fun x : positive * (wrapped * wrapped) => N.of_nat
+      ((Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x)) + 1)
+        ^ 2))
+    (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
+  Definition mul_piece (w : positive) (a b : Z * Z) : wrapped :=
+    wrapped_mul_piece w
+      (I (Fin (fst a)) (Fin (snd a)))
+      (I (Fin (fst b)) (Fin (snd b))).
+  TimeFun mul_piece.
+  Definition k_split : N := 1. (* STUB *)
+  Definition k_mul_piece : N := 1. (* STUB *)
+
+  (** Payload membership is clockwise arc membership. *)
+  Lemma F1_gamma : forall w a z, pgamma w a z <-> arc_gamma w a z.
+  Proof. Admitted. (* STUB *)
+  (** Arc cardinality lies between zero and the modulus. *)
+  Lemma F2_card : forall w a, (0 <= card w a <= Word.modulus w)%Z.
+  Proof. Admitted. (* STUB *)
+  (** Pole splitting returns at most four pieces. *)
+  Lemma F3_split_len : forall w a, (length (wrapped_split w a) <= 4)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Every represented word belongs to a returned split interval. *)
+  Lemma F4_split_covers : forall w a z, pgamma w a z ->
+    exists lo hi, In (lo, hi) (wrapped_split w a) /\ (lo <= z <= hi)%Z.
+  Proof. Admitted. (* STUB *)
+  (** A multiplication piece contains every product from its intervals. *)
+  Lemma F5_mul_piece : forall w lo hi lo' hi' x y,
+    (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
+    pgamma w (mul_piece w (lo, hi) (lo', hi')) (L.wrap w (x * y)).
+  Proof. Admitted. (* STUB *)
+  (** Circular multiplication retains every normalized represented product. *)
+  Lemma F6_mul_sound : forall w a b x y,
+    pgamma w a x -> pgamma w b y ->
+    pgamma w (wrapped_mul w a b) (L.wrap w (x * y)).
+  Proof. Admitted. (* STUB *)
+  (** Widening retains a contained candidate and otherwise expands first. *)
+  Lemma F7_widen : forall q w a b,
+    pwiden q w a b = if pleb w b a then a else pjoin w (wrapped_double w a) b.
+  Proof. Admitted. (* STUB *)
+  (** Expansion triples cardinality until it reaches the modulus. *)
+  Lemma F8_double_card : forall w a,
+    card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
+  Proof. Admitted. (* STUB *)
+  (** Widening rank is determined by arc cardinality. *)
+  Lemma F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
+  Proof. Admitted. (* STUB *)
+  (** Arc widening credit is at most width plus two. *)
+  Lemma F10_rank_bound : forall q w a, (pwrank q w a <= Pos.to_nat w + 2)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Payload storage charges width and endpoint bit lengths. *)
+  Lemma F11_size : forall w a,
+    psize w a = (Pos.to_nat w + wrapped_bits a + 1)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Multiplication pieces charge width and all endpoint bit lengths. *)
+  Lemma T1_mul_piece : forall w lo hi lo' hi',
+    (T_mul_piece w (lo, hi) (lo', hi') <= k_mul_piece * N.of_nat
+      ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
+        ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+End WrappedT.
 
 Theorem wrapped_offset_range w c x : 0 <= wrapped_offset w c x < modulus w.
 Proof.

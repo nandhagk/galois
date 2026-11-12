@@ -5,13 +5,26 @@
     Builds on: Wrapped, IntervalBack and WordSig. *)
 
 From Stdlib Require Import ZArith List Bool.
+From Argent Require Import Time.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig Wrapped IntervalSig IntervalBack
   Thresholds.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module WrappedIntervalBack := IntervalBackCode ThresholdsCode WrappedScalar.
+Module WrappedIntervalBack.
+  Include (IntervalBackCode ThresholdsCode WrappedScalar).
+  TimeFun interval_top.
+  TimeFun interval_checked.
+  TimeFun interval_sign.
+  TimeFun interval_neg.
+  TimeFun interval_udiv.
+  TimeFun interval_urem.
+  TimeFun interval_assume_add.
+  TimeFun interval_assume_sub.
+  TimeFun interval_is_point.
+  TimeFun interval_assume_equal.
+End WrappedIntervalBack.
 
 Definition wrapped_project (target source : width) (q : wrapped) : wrapped :=
   let pieces := wrapped_parts source q in
@@ -201,6 +214,7 @@ Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* SIG-QUESTION: W.pgamma is not linked to arc_gamma in WRAPPED. *)
 End WrappedTable.
+
 Theorem wrapped_project_sound target source q z :
   wrapped_gamma source q z ->
   wrapped_gamma target (wrapped_project target source q) (wrap target z).
