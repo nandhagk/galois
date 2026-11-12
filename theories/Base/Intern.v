@@ -132,3 +132,41 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
     (T_size s <= c_intern * N.of_nat (N.size_nat (size s) + 1))%N.
   Proof. Admitted. (* STUB *)
 End InternT.
+
+(** A bucket lookup returns the values associated with the encoded key. *)
+Definition find_group {K V} (encode : K -> positive) (k : K)
+    (groups : PTrieCode.t (list V)) : list V :=
+  match PTrieCode.get (encode k) groups with
+  | Some xs => xs
+  | None => nil
+  end.
+
+TimeFun find_group.
+
+(** Collection prepends each value to its encoded key's bucket. *)
+Fixpoint collect_groups {K V} (encode : K -> positive) (key : V -> K)
+    (xs : list V) (groups : PTrieCode.t (list V)) : PTrieCode.t (list V) :=
+  match xs with
+  | nil => groups
+  | x :: rest =>
+    let p := encode (key x) in
+    let bucket := match PTrieCode.get p groups with
+                  | Some ys => ys
+                  | None => nil
+                  end in
+    collect_groups encode key rest (PTrieCode.set p (x :: bucket) groups)
+  end.
+
+TimeFun collect_groups.
+
+(** Grouping reverses each collected bucket to preserve input order. *)
+Definition group_by {K V} (encode : K -> positive) (key : V -> K) (xs : list V) :=
+  PTrieT.map (@rev V) (collect_groups encode key xs PTrieCode.empty).
+
+TimeFun group_by.
+
+(** Group lookup returns the input values whose keys have the same encoding. *)
+Lemma find_group_by {K V} (encode : K -> positive) (key : V -> K) k xs :
+  find_group encode k (group_by encode key xs) =
+  filter (fun a => Pos.eqb (encode (key a)) (encode k)) xs.
+Proof. Admitted. (* CONVERT: find_group_by: The reference Map.get_map was not found. *)
