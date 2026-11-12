@@ -236,7 +236,12 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Proof. Admitted.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted.
+  Proof.
+    intros a b c.
+    destruct a as [|x|], b as [|y|]; cbn [gamma flat_gamma meet];
+      intros Ha Hb; try contradiction; try assumption.
+    subst x y. rewrite (proj2 (E.eqb_spec c c) eq_refl). reflexivity.
+  Qed.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
   Proof. Admitted.
