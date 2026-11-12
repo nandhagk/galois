@@ -51,9 +51,11 @@ Module ThresholdsCode <: THRESHOLDS_OPS.
   Fixpoint dedup_sorted (xs : list Z) : list Z :=
     match xs with
     | [] => []
-    | [x] => [x]
-    | x :: (y :: _ as rest) =>
-      if Z.eqb x y then dedup_sorted rest else x :: dedup_sorted rest
+    | x :: rest =>
+      match rest with
+      | [] => [x]
+      | y :: _ => if Z.eqb x y then dedup_sorted rest else x :: dedup_sorted rest
+      end
     end.
 
   Fixpoint build (fuel : nat) (xs : list Z) : ttree :=
