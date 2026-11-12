@@ -49,3 +49,25 @@ Example no_edges : View.Ops.edges (Prep.prepare false) = [].
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(* rejects_merged_occurrences had [7; 7] <> [(7, 0)] after numbering.
+   The exact two occurrences are observed here because tests use equality. *)
+Example two_occurrences : occurrences [7; 7] 0 = [(7, 0); (7, 1)].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example outgoing_order : View.Adj.out (Prep.prepare true) 1 = [1; 2].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Example incoming_order : View.Adj.inc (Prep.prepare true) 1 = [0; 1].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(* ProgramCfgTest's variable_universe, empty_variable_universe, multi_operand_guard,
+   ssa_definition, point_projection, point_definition_absent, recursive_call_edges,
+   unresolved_site, empty_calls, icfg_kinds, effect_flags, barrier_regions and
+   pure_write_has_no_read belong to the D1 presentation families. *)
