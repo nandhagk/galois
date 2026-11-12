@@ -11,8 +11,8 @@ From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSi
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module IntervalBackCode (T : THRESHOLDS_OPS) (S : INTERVAL_SCALAR_OPS T).
-  Include IntervalOpsCode T S.
+Module IntervalBackCode (T : THRESHOLDS_OPS) (Scalar : INTERVAL_SCALAR_OPS T).
+  Include IntervalOpsCode T Scalar.
 Definition interval_is_point (i : itv) (z : Z) : bool :=
   match interval_finite i with
   | Some (lo, hi) => Z.eqb lo z && Z.eqb hi z
@@ -57,31 +57,30 @@ Definition interval_assume_pair (o : op) (w : width) (a b q : itv) : itv * itv :
 End IntervalBackCode.
 
 Module IntervalPayloadCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
-    (S : INTERVAL_SCALAR_OPS T)
+    (Scalar : INTERVAL_SCALAR_OPS T)
     <: (WORD_PAYLOAD_OPS L with Definition p := itv).
-  Include S.
   Definition p := itv.
   Definition interval_top (w : positive) := I (Fin 0) (Fin (Word.modulus w - 1)).
-  Definition interval_clip w a := interval_payload_clip interval_meet w a.
-  Definition pleb w a b := interval_leb (interval_clip w a) (interval_clip w b).
-  Definition pjoin w a b := interval_join (interval_clip w a) (interval_clip w b).
-  Definition pmeet w a b := interval_meet (interval_clip w a) (interval_clip w b).
+  Definition interval_clip w a := interval_payload_clip Scalar.interval_meet w a.
+  Definition pleb w a b := Scalar.interval_leb (interval_clip w a) (interval_clip w b).
+  Definition pjoin w a b := Scalar.interval_join (interval_clip w a) (interval_clip w b).
+  Definition pmeet w a b := Scalar.interval_meet (interval_clip w a) (interval_clip w b).
   Definition pbot (_ : positive) := IBot.
   Definition ptop w := interval_top w.
-  Definition pis_bot w a := interval_is_bot (interval_clip w a).
+  Definition pis_bot w a := Scalar.interval_is_bot (interval_clip w a).
   Definition pconst w z := I (Fin (Word.wrap w z)) (Fin (Word.wrap w z)).
-  Definition ppoint w a := interval_singleton (interval_clip w a).
+  Definition ppoint w a := Scalar.interval_singleton (interval_clip w a).
   Definition pwparam := ttree.
   Definition pwiden ts w a b :=
     if pleb w b a then a else interval_clip w
-      (interval_stable_widen ts (interval_clip w a) (interval_clip w b)).
-  Definition pnarrow w a b := interval_narrow (interval_clip w a) (interval_clip w b).
+      (Scalar.interval_stable_widen ts (interval_clip w a) (interval_clip w b)).
+  Definition pnarrow w a b := Scalar.interval_narrow (interval_clip w a) (interval_clip w b).
 End IntervalPayloadCode.
 
 Module IntervalWordTableCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
-    (S : INTERVAL_SCALAR_OPS T)
+    (Scalar : INTERVAL_SCALAR_OPS T)
     (D : WORD_PAYLOAD_OPS L with Definition p := itv) <: WORD_TABLE_OPS L D.
-  Include IntervalBackCode T S.
+  Include IntervalBackCode T Scalar.
   Definition wfwd (o : L.op) (rw : positive) (xs : list (positive * D.p)) : option D.p :=
     match o, xs with
     | (bvnot | bvneg | bvclz | bvctz | bvpopcnt | bvzext _ | bvtrunc _ | bvsext _),
@@ -128,10 +127,11 @@ End IntervalWordTableCode.
 
 Local Close Scope Z_scope.
 
-Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR_OPS T)
-    <: INTERVAL_PAYLOAD_PINNED L T S.
-  Include IntervalPayloadCode L T S.
-  Include INTERVAL_PAYLOAD_SPEC T S.
+Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T)
+    <: INTERVAL_PAYLOAD_PINNED L T Scalar.
+  Include IntervalPayloadCode L T Scalar.
+  Include Scalar.
+  Include INTERVAL_PAYLOAD_SPEC T Scalar.
   (** Every bound is below itself. *)
   Theorem bound_leb_refl : forall a, bound_leb a a = true.
   Proof.
@@ -224,7 +224,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* CONVERT: pnarrow_between: clipped operands prevent the raw interval case split. *)
+  Proof. Admitted. (* CONVERT: pnarrow_between: Unable to apply lemma of type andb_true_iff. *)
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
@@ -308,30 +308,34 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR
   Proof. Admitted. (* CONVERT: interval_is_point_sound: The reference interval_is_point was not found in the current *)
 
   (** Payload inclusion reads both operands through the word range. *)
-  Lemma F_pleb : forall w a b, pleb w a b = S.interval_leb
-    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Lemma F_pleb : forall w a b, pleb w a b = Scalar.interval_leb
+    (interval_payload_clip Scalar.interval_meet w a)
+    (interval_payload_clip Scalar.interval_meet w b).
   Proof. Admitted.
   (** Payload bottom recognition reads the clipped interval. *)
   Lemma F_pis_bot : forall w a, pis_bot w a =
-    S.interval_is_bot (interval_payload_clip S.interval_meet w a).
+    Scalar.interval_is_bot (interval_payload_clip Scalar.interval_meet w a).
   Proof. Admitted.
   (** Payload join combines clipped operands. *)
-  Lemma F_pjoin : forall w a b, pjoin w a b = S.interval_join
-    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Lemma F_pjoin : forall w a b, pjoin w a b = Scalar.interval_join
+    (interval_payload_clip Scalar.interval_meet w a)
+    (interval_payload_clip Scalar.interval_meet w b).
   Proof. Admitted.
   (** Payload meet combines clipped operands. *)
-  Lemma F_pmeet : forall w a b, pmeet w a b = S.interval_meet
-    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Lemma F_pmeet : forall w a b, pmeet w a b = Scalar.interval_meet
+    (interval_payload_clip Scalar.interval_meet w a)
+    (interval_payload_clip Scalar.interval_meet w b).
   Proof. Admitted.
   (** Payload widening retains stable raw values and clips unstable results. *)
   Lemma F_pwiden : forall q w a b, pwiden q w a b =
-    if pleb w b a then a else interval_payload_clip S.interval_meet w
-      (S.interval_stable_widen q (interval_payload_clip S.interval_meet w a)
-        (interval_payload_clip S.interval_meet w b)).
+    if pleb w b a then a else interval_payload_clip Scalar.interval_meet w
+      (Scalar.interval_stable_widen q (interval_payload_clip Scalar.interval_meet w a)
+        (interval_payload_clip Scalar.interval_meet w b)).
   Proof. Admitted.
   (** Payload narrowing combines clipped operands. *)
-  Lemma F_pnarrow : forall w a b, pnarrow w a b = S.interval_narrow
-    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Lemma F_pnarrow : forall w a b, pnarrow w a b = Scalar.interval_narrow
+    (interval_payload_clip Scalar.interval_meet w a)
+    (interval_payload_clip Scalar.interval_meet w b).
   Proof. Admitted.
   (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
   Lemma F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
@@ -347,7 +351,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR
   Proof. Admitted.
   (** Payload points are recognized after clipping. *)
   Lemma F_ppoint : forall w a, ppoint w a =
-    S.interval_singleton (interval_payload_clip S.interval_meet w a).
+    Scalar.interval_singleton (interval_payload_clip Scalar.interval_meet w a).
   Proof. Admitted.
   (** Payload concretization intersects raw endpoints with normalized words. *)
   Lemma F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
@@ -355,10 +359,111 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR
   Proof. Admitted.
 End IntervalPayload.
 
-Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR_OPS T)
-    (W : INTERVAL_PAYLOAD_PINNED L T S)
+Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
+    (Scalar : INTERVAL_SCALAR_T T) <: INTERVAL_PAYLOAD_ALL L T Scalar.
+  Include IntervalPayload L T Scalar.
+
+  TimeFun interval_top.
+  TimeFun interval_clip.
+  TimeFun pleb.
+  TimeFun pjoin.
+  TimeFun pmeet.
+  TimeFun pbot.
+  TimeFun ptop.
+  TimeFun pis_bot.
+  TimeFun pconst.
+  TimeFun ppoint.
+  TimeFun pwiden.
+  TimeFun pnarrow.
+
+  Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + interval_bits a + 1.
+  Definition pwsize (q : pwparam) : nat := (T.depth q + 1) * (T.tree_bits q + 1).
+  Definition c_payload : N := 1%N. (* STUB *)
+  Definition k_payload_clip : N := 1%N. (* STUB *)
+
+  (** Joined payloads fit within the combined operand sizes. *)
+  Lemma pjoin_size : forall w a b,
+    (N.of_nat (psize w (pjoin w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Met payloads fit within the combined operand sizes. *)
+  Lemma pmeet_size : forall w a b,
+    (N.of_nat (psize w (pmeet w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Widened payloads fit within the operand and parameter sizes. *)
+  Lemma pwiden_size : forall q w a b,
+    (N.of_nat (psize w (pwiden q w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Narrowed payloads fit within the combined operand sizes. *)
+  Lemma pnarrow_size : forall w a b,
+    (N.of_nat (psize w (pnarrow w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload widening charges both operands and its parameters. *)
+  Lemma T_pwiden_le : forall q w a b,
+    (T_pwiden q w a b <=
+      c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload narrowing charges both raw payload sizes. *)
+  Lemma T_pnarrow_le : forall w a b,
+    (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload inclusion charges both raw payload sizes. *)
+  Lemma T_pleb_le : forall w a b,
+    (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload join charges both raw payload sizes. *)
+  Lemma T_pjoin_le : forall w a b,
+    (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload meet charges both raw payload sizes. *)
+  Lemma T_pmeet_le : forall w a b,
+    (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload bottom recognition charges the raw endpoint bits and width. *)
+  Lemma T_pis_bot_le : forall w a,
+    (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload point recognition charges the raw endpoint bits and width. *)
+  Lemma T_ppoint_le : forall w a,
+    (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Constant abstraction charges the width and raw literal bits. *)
+  Lemma T_pconst_le : forall w z,
+    (T_pconst w z <= c_payload *
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Payload size charges its width and the raw endpoint bits. *)
+  Lemma F_psize : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
+  Proof. Admitted. (* STUB *)
+  (** Widening parameter size charges a threshold search path. *)
+  Lemma F_pwsize : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
+  Proof. Admitted. (* STUB *)
+  (** Payload rank never exceeds the scalar threshold envelope. *)
+  Lemma F_pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
+  Proof. Admitted. (* STUB *)
+  (** Constructing the unsigned modulus charges the resulting word width. *)
+  Lemma T_modulus_le : forall w,
+    (Word.T_modulus w <= k_payload_clip * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Concrete wrapping charges the width and raw literal bits. *)
+  Lemma T_wrap_le : forall w z,
+    (Word.T_wrap w z <= k_payload_clip *
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  (** Clipping pays for the word bound and the raw endpoint bits. *)
+  Lemma T_clip_le : forall w a,
+    (T_interval_payload_clip Scalar.interval_meet Scalar.T_interval_meet w a <=
+      k_payload_clip * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+End IntervalPayloadT.
+
+Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T)
+    (W : INTERVAL_PAYLOAD_PINNED L T Scalar)
     <: INTERVAL_WORD_TABLE L W.
-  Include IntervalWordTableCode L T S W.
+  Include IntervalWordTableCode L T Scalar W.
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\

@@ -10,8 +10,8 @@ From Galois.Domains Require Import Interval IntervalSig ThresholdsSig ValueSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module IntervalOpsCode (T : THRESHOLDS_OPS) (S : INTERVAL_SCALAR_OPS T).
-  Include S.
+Module IntervalOpsCode (T : THRESHOLDS_OPS) (Scalar : INTERVAL_SCALAR_OPS T).
+  Include Scalar.
   Definition interval_top (w : width) : itv := I (Fin 0) (Fin (modulus w - 1)).
   Definition interval_const (w : width) (z : Z) : itv :=
     I (Fin (wrap w z)) (Fin (wrap w z)).
