@@ -5,6 +5,7 @@
     Builds on: KnownBitsSig and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Domains Require Import WordSig KnownBitsSig KnownBits KnownBitsOps.
 Import List.ListNotations.
@@ -12,6 +13,7 @@ Local Open Scope Z_scope.
 
 Definition tnum_project (sw rw : width) (g : Z -> Z) (q : tnum) : tnum :=
   Tnum (wrap sw (g (wrap rw (zeros q)))) (wrap sw (g (wrap rw (ones q)))).
+TimeFun tnum_project.
 
 Definition tnum_inverse_shift (o : op) : op :=
   match o with
@@ -21,16 +23,20 @@ Definition tnum_inverse_shift (o : op) : op :=
   | bvrotr => bvrotl
   | _ => o
   end.
+TimeFun tnum_inverse_shift.
 
 Definition tnum_and_back (w : width) (q b : tnum) : tnum :=
   Tnum (wand w (zeros q) (ones b)) (wrap w (ones q)).
+TimeFun tnum_and_back.
 
 Definition tnum_or_back (w : width) (q b : tnum) : tnum :=
   Tnum (wrap w (zeros q)) (wand w (ones q) (zeros b)).
+TimeFun tnum_or_back.
 
 Definition tnum_sign_project (sw rw : width) (n : Z) (q : tnum) : tnum :=
   Tnum (if Z.shiftr (wrap rw (zeros q)) n =? 0 then 0 else half sw)
     (if Z.shiftr (wrap rw (ones q)) n =? 0 then 0 else half sw).
+TimeFun tnum_sign_project.
 
 Definition tnum_back_shift (o : op) (w : width) (k : Z) (q : tnum) : tnum :=
   let copied := tnum_project w w (tnum_scalar_value (tnum_inverse_shift o) w k) q in
@@ -38,13 +44,16 @@ Definition tnum_back_shift (o : op) (w : width) (k : Z) (q : tnum) : tnum :=
   | bvashr => tnum_meet w copied (tnum_sign_project w w (Z.max 0 (Zpos w - 1 - k)) q)
   | _ => copied
   end.
+TimeFun tnum_back_shift.
 
 Definition tnum_back_sext (sw rw : width) (q : tnum) : tnum :=
   tnum_meet sw (tnum_project sw rw (fun m => m) q)
     (tnum_sign_project sw rw (Zpos sw - 1) q).
+TimeFun tnum_back_sext.
 
 Definition tnum_lower (w : width) (l : Z) : tnum :=
   tnum_not w (tnum_upper w (wnot w l)).
+TimeFun tnum_lower.
 
 Definition tnum_order_back (strict : bool) (w : width) (q a b : tnum) : tnum * tnum :=
   let d := if strict then 1 else 0 in
@@ -53,12 +62,14 @@ Definition tnum_order_back (strict : bool) (w : width) (q a b : tnum) : tnum * t
   else if Z.testbit (zeros q) 0 then
     (tnum_lower w (tnum_min w b + (1 - d)), tnum_upper w (tnum_max w a - (1 - d)))
   else (tnum_top, tnum_top).
+TimeFun tnum_order_back.
 
 Definition tnum_project_variable (o : op) (w : width) (b q : tnum) : tnum :=
   let inv := tnum_inverse_shift o in
   let zero := tnum_variable_raw inv w (Tnum 0 (zeros q)) b in
   let one := tnum_variable_raw inv w (Tnum 0 (ones q)) b in
   Tnum (ones zero) (ones one).
+TimeFun tnum_project_variable.
 
 Definition tnum_back_variable_shift (o : op) (w : width) (b q : tnum) : tnum :=
   let copied := tnum_project_variable o w b q in
@@ -67,6 +78,7 @@ Definition tnum_back_variable_shift (o : op) (w : width) (b q : tnum) : tnum :=
       (tnum_sign_project w w (Z.max 0 (Zpos w - 1 - tnum_min w b)) q)
   | _ => copied
   end.
+TimeFun tnum_back_variable_shift.
 
 Definition tnum_backward_raw (o : op) (wps : list (width * tnum))
     (rw : width) (q : tnum) : list tnum :=
@@ -95,6 +107,7 @@ Definition tnum_backward_raw (o : op) (wps : list (width * tnum))
       tnum_project v rw (fun m => m) q]
   | _, _ => map snd wps
   end.
+TimeFun tnum_backward_raw.
 
 Fixpoint tnum_refine (wps : list (width * tnum)) (qs : list tnum) : list tnum :=
   match wps, qs with
@@ -102,6 +115,7 @@ Fixpoint tnum_refine (wps : list (width * tnum)) (qs : list tnum) : list tnum :=
   | (w, a) :: rest, q :: tail => tnum_meet w a q :: tnum_refine rest tail
   | (_, a) :: rest, [] => a :: tnum_refine rest []
   end.
+TimeFun tnum_refine.
 
 Module KnownBitsTableCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_OPS L C) <: WORD_TABLE_OPS L K.
@@ -130,6 +144,26 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* SIG-QUESTION: K.pgamma is not linked to tnum_gamma in KNOWN_BITS. *)
 End KnownBitsTable.
+
+Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
+  Include KnownBitsTable L C K.
+  TimeFun wbwd.
+  Definition c_word_table : N := 1. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        K.psize rw q + fold_right Nat.add 0 (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => K.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+          K.psize rw q + fold_right Nat.add 0
+            (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End KnownBitsTableClock.
+
 Theorem tnum_refine_equation : forall wps qs,
   tnum_refine wps qs =
   match wps, qs with

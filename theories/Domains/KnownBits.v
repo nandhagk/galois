@@ -168,6 +168,7 @@ TimeFun tnum_scalar.
 Definition tnum_concat (w v : width) (a b : tnum) : tnum :=
   Tnum (wrap (w + v)%positive (wrap w (zeros a) * modulus v + wrap v (zeros b)))
     (wrap (w + v)%positive (wrap w (ones a) * modulus v + wrap v (ones b))).
+TimeFun tnum_concat.
 
 Definition tnum_rotation (o : op) : bool :=
   match o with
@@ -303,6 +304,7 @@ Definition tnum_shift (o : op) (w : width) (a : tnum) (k : Z) : tnum :=
   | Some f => tnum_map w w (fun x => eval_binary_tag f w x k) a
   | None => tnum_top
   end.
+TimeFun tnum_shift.
 
 Definition tnum_source (o : op) (w : width) (k i : Z) : option Z :=
   match o with
@@ -313,6 +315,7 @@ Definition tnum_source (o : op) (w : width) (k i : Z) : option Z :=
   | bvrotr => Some ((i + k) mod Zpos w)
   | _ => Some i
   end.
+TimeFun tnum_source.
 
 Definition tnum_order (strict : bool) (w : width) (a b : tnum) : tnum :=
   if (if strict then tnum_max w a <? tnum_min w b
@@ -320,6 +323,7 @@ Definition tnum_order (strict : bool) (w : width) (a b : tnum) : tnum :=
   else if (if strict then tnum_max w b <=? tnum_min w a
            else tnum_max w b <? tnum_min w a) then tnum_const 1%positive 0
   else tnum_top.
+TimeFun tnum_order.
 
 Definition tnum_equal (w : width) (a b : tnum) : tnum :=
   if tnum_empty w (tnum_meet w a b) then tnum_const 1%positive 0 else
@@ -327,9 +331,11 @@ Definition tnum_equal (w : width) (a b : tnum) : tnum :=
   | Some x, Some y => tnum_const 1%positive (if x =? y then 1 else 0)
   | _, _ => tnum_top
   end.
+TimeFun tnum_equal.
 
 Definition tnum_bias (w : width) (a : tnum) : tnum :=
   tnum_xor w a (tnum_const w (half w)).
+TimeFun tnum_bias.
 
 Definition tnum_compare (o : op) (w : width) (a b : tnum) : tnum :=
   match o with
@@ -341,20 +347,25 @@ Definition tnum_compare (o : op) (w : width) (a b : tnum) : tnum :=
   | bvsle => tnum_order false w (tnum_bias w a) (tnum_bias w b)
   | _ => tnum_top
   end.
+TimeFun tnum_compare.
 
 Definition tnum_count (w : width) : tnum := tnum_upper w (Zpos w).
+TimeFun tnum_count.
 
 Definition tnum_srem (w : width) (a : tnum) : tnum :=
   Tnum (wand w (zeros a) (half w)) 0.
+TimeFun tnum_srem.
 
 Definition tnum_ite (w : width) (c a b : tnum) : tnum :=
   match tnum_constant 1%positive c with
   | Some k => tnum_normalise w (if k =? 1 then a else b)
   | None => tnum_join w a b
   end.
+TimeFun tnum_ite.
 
 Definition tnum_leb (w : width) (a b : tnum) : bool :=
   tnum_subset w (zeros b) (zeros a) && tnum_subset w (ones b) (ones a).
+TimeFun tnum_leb.
 
 Definition tnum_gamma (w : width) (a : tnum) (z : Z) : Prop :=
   Z.land z (wrap w (zeros a)) = 0 /\ Z.land (wrap w (ones a)) (Z.lnot z) = 0.

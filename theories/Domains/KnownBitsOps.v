@@ -5,6 +5,7 @@
     Builds on: KnownBits and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith List Bool.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import WordSig KnownBitsSig KnownBits.
 Import List.ListNotations.
@@ -40,6 +41,11 @@ Module KnownBitsOpsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     | _, _ => tnum_top
     end.
 End KnownBitsOpsCode.
+
+Module KnownBitsOpsClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
+  Include KnownBitsOpsCode L C K.
+  TimeFun tnum_forward_raw.
+End KnownBitsOpsClock.
 
 Definition tnum_payload_sound (wp : width * tnum) (y : word) : Prop :=
   fst wp = fst y /\ is_word (fst y) (snd y) /\ tnum_gamma (fst wp) (snd wp) (snd y).
