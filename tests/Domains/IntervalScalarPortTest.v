@@ -14,6 +14,7 @@ Module Scalar := IntervalBaseCode ThresholdsCode.
 Module Ops := IntervalOpsCode ThresholdsCode Scalar.
 Import Ops.
 Module Payload := IntervalPayloadCode WordLanguageCode ThresholdsCode Scalar.
+Module PayloadPlain := IntervalPayload WordLanguage Thresholds Scalar.
 Module Table := IntervalWordTableCode WordLanguageCode ThresholdsCode Scalar Payload.
 Module Base := TaggedCode WordLanguageCode Payload.
 Module TaggedTable := TaggedTableCode WordLanguageCode Payload Table.
@@ -292,4 +293,35 @@ Proof. vm_compute. reflexivity. Qed.
 
 Example interval_duplicate_threshold_index :
   ThresholdsCode.make [10; 10; 10] = TNode TLeaf 10 TLeaf.
+Proof. vm_compute. reflexivity. Qed.
+
+Example interval_rank_prepared_duplicates :
+  PayloadPlain.pwrank (ThresholdsCode.make [0; 0; 5]) 8%positive
+    (I (Fin 1) (Fin 3)) = 4%nat.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition interval_malformed_backward_inputs : list (list (width * itv)) :=
+  [[]; [(8%positive, I NegInf PosInf)];
+   [(1%positive, I NegInf PosInf); (4%positive, I (Fin (-3)) (Fin 20));
+    (8%positive, I PosInf PosInf)]].
+
+(* Old results clip each input as shown below. Current results are
+   [([], true, true); ([I NegInf PosInf], true, true);
+    ([I NegInf PosInf; I (Fin (-3)) (Fin 20); I PosInf PosInf], true, true)].
+Example interval_backward_malformed_fallback_count_and_refinement :
+  map (fun xs =>
+    let ys := interval_back bvadd xs 1%positive (I (Fin 1) (Fin 1)) in
+    (ys, Nat.eqb (length ys) (length xs),
+     forallb (fun p => Payload.pleb (fst (fst p)) (snd p) (snd (fst p))) (combine xs ys)))
+    interval_malformed_backward_inputs =
+  [([], true, true); ([I (Fin 0) (Fin 255)], true, true);
+   ([I (Fin 0) (Fin 1); I (Fin 0) (Fin 15); IBot], true, true)].
+Proof. vm_compute. reflexivity. Qed.
+
+*)
+
+Example interval_backward_malformed_preserves_raw_inputs :
+  map (fun xs => interval_back bvadd xs 1%positive (I (Fin 1) (Fin 1)))
+    interval_malformed_backward_inputs =
+  [[]; [I NegInf PosInf]; [I NegInf PosInf; I (Fin (-3)) (Fin 20); I PosInf PosInf]].
 Proof. vm_compute. reflexivity. Qed.
