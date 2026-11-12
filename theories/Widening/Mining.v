@@ -4,7 +4,8 @@
     For example, the literal four contributes three, four and five to the threshold tree.
     Builds on: MiningSig and ThresholdsSig. *)
 
-From Stdlib Require Import List ZArith.
+From Stdlib Require Import List NArith ZArith.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ThresholdsSig.
 From Galois.Widening Require Import MiningSig.
@@ -25,3 +26,23 @@ Module MiningCode (X : KEY_OPS) (L : LANG_OPS) (T : THRESHOLDS_OPS)
     let seeds := fold_right (fun e acc => lits_acc e acc) extra es in
     T.make (flat_map (fun z => (z - 1)%Z :: z :: (z + 1)%Z :: nil) seeds).
 End MiningCode.
+
+Module Mining (X : KEY) (L : LANG) (T : THRESHOLDS) <: MINING X L T.
+  Include MiningCode X L T.
+
+  Lemma lits_leaf : forall x, lits (Leaf x) = nil.
+  Proof. reflexivity. Qed.
+
+  Lemma lits_node : forall o es, lits (Node o es) =
+    (match L.literal o with Some z => z :: nil | None => nil end) ++ flat_map lits es.
+  Proof. Admitted.
+
+  Lemma mine_vals : forall es extra z, In z (T.vals (mine es extra)) <->
+    exists q, In q (flat_map lits es ++ extra) /\
+      (z = (q - 1)%Z \/ z = q \/ z = (q + 1)%Z).
+  Proof. Admitted.
+
+  Lemma mine_ordered : forall es extra, T.ordered (mine es extra).
+  Proof. Admitted.
+End Mining.
+
