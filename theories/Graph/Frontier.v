@@ -133,8 +133,9 @@ Defined.
 
 Definition idf_accessible rows seeds (st : idf_private_state rows seeds) :
     Acc (idf_private_lt rows seeds) st :=
-  Wellfounded.Inverse_Image.wf_inverse_image _ N N.lt
-    (fun state => idf_measure rows seeds (proj1_sig state)) N.lt_wf_0 st.
+  Acc_intro_generator 32
+    (Wellfounded.Inverse_Image.wf_inverse_image _ N N.lt
+      (fun state => idf_measure rows seeds (proj1_sig state)) N.lt_wf_0) st.
 
 Definition idf (rows : ptrie (list positive)) (seeds : list positive) : list positive :=
   let initial := exist _ (idf_initial seeds) (idf_reachable_initial rows seeds) in
