@@ -68,7 +68,6 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
   Definition join_ub_r := B.join_ub_r.
   Definition top_greatest := B.top_greatest.
   Definition meet_lb_l := B.meet_lb_l.
-  Definition meet_lb_r := B.meet_lb_r.
   Definition wrank := B.wrank.
   Definition widen_ub_l := B.widen_ub_l.
   Definition widen_ub_r := B.widen_ub_r.
