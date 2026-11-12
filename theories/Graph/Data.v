@@ -30,6 +30,8 @@ Record prepared := Prepared {
 }.
 
 TimeFun base.
+TimeFun nv.
+TimeFun ne.
 
 Definition succs (g : digraph) (v : positive) : list positive :=
   match g with
@@ -70,12 +72,20 @@ Record scc := Scc {
   comps : list (list positive)
 }.
 
+TimeFun comp.
+TimeFun comps.
+
 Record domtree := DomTree {
   idom : ptrie positive;
   kids : ptrie (list positive);
   pre : ptrie N;
   post : ptrie N
 }.
+
+TimeFun idom.
+TimeFun kids.
+TimeFun pre.
+TimeFun post.
 
 Record loops := Loops {
   header : ptrie positive;

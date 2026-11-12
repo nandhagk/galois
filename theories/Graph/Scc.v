@@ -87,9 +87,27 @@ Module TarjanSearch.
   TimeFun dfs.
 End TarjanSearch.
 
+(** Rebuild the search graph from listed rows and exclude every unlisted successor. *)
+Definition scc_graph (g : prepared) : prepared :=
+  let vs := nodes g in
+  let listed := fold_left (fun acc v => PTrieCode.set v true acc) vs Empty in
+  let rows := fold_left (fun acc v => PTrieCode.set v
+    (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (succs (base g) v)) acc) vs Empty in
+  let b := Digraph vs rows in
+  Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b)).
+TimeFun scc_graph.
+
+(** The filtered traversal reads neither predecessor nor count caches of its input. *)
+Definition scc_trace (g : prepared) : list event :=
+  let ready := scc_graph g in
+  prepared_search_trace ready (nodes ready).
+TimeFun scc_trace.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
-    let result := TarjanSearch.dfs g (nodes g) tarjan_initial in
+    let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial in
     Scc (tarjan_owners result) (rev (tarjan_emitted result)).
 End SccCode.
 
@@ -103,26 +121,26 @@ Module Scc <: SCC.
     (exists i, trie_get u (comp (run g)) = Some i /\
       trie_get v (comp (run g)) = Some i) <->
     In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
-  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
 
   Lemma comps_partition : forall g, wf_graph (base g) ->
     NoDup (concat (comps (run g))) /\
     (forall v, In v (concat (comps (run g))) <-> In v (nodes g)).
-  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
 
   Lemma comps_nonempty : forall g, wf_graph (base g) ->
     Forall (fun vs => vs <> []) (comps (run g)).
-  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
 
   Lemma owners_spec : forall g, wf_graph (base g) -> forall v i,
     trie_get v (comp (run g)) = Some i <->
     exists vs, nth_error (comps (run g)) (Nat.pred (Pos.to_nat i)) = Some vs /\ In v vs.
-  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
 
   Lemma comps_order : forall g, wf_graph (base g) -> forall u v i j,
     edge (base g) u v -> trie_get u (comp (run g)) = Some i ->
     trie_get v (comp (run g)) = Some j -> (j <= i)%positive.
-  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
 End Scc.
 
 Transparent search_trace.
@@ -151,7 +169,7 @@ Module SccT <: SCC_ALL.
   TimeFun tarjan_edge.
   Definition tarjan_pop := tarjan_pop.
   TimeFun tarjan_pop.
-  Definition tarjan_trace (g : prepared) : list event := search_trace (base g) (nodes g).
+  Definition tarjan_trace := scc_trace.
   TimeFun tarjan_trace.
   Definition k_pop : N := 1%N. (* STUB *)
   Definition k_callback : N := 1%N. (* STUB *)

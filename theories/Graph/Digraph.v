@@ -35,7 +35,7 @@ Module DigraphT <: DIGRAPH_T.
   Include Digraph.
   TimeFun add_pred.
   TimeFun prepare.
-  Definition c_prepare : N := 1. (* STUB *)
+  Definition c_prepare : N := 1%N. (* STUB *)
 
   Lemma T_prepare_le : forall g,
     (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
