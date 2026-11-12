@@ -164,10 +164,10 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
@@ -186,7 +186,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
@@ -238,17 +238,17 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Qed.
   (** Leaf roots expose their stored abstract value. *)
   Lemma root_leaf : forall x a, root (ALeaf x a) = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Node roots expose their stored abstract value. *)
   Lemma root_node : forall o a ns, root (ANode o a ns) = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Leaf annotation reads the current environment. *)
   Lemma annotate_leaf : forall m x, annotate m (Leaf x) = ALeaf x (read m x).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Node annotation transfers the annotated child roots. *)
   Lemma annotate_node : forall m o es, annotate m (Node o es) =
     ANode o (V.forward o (map (fun e => root (annotate m e)) es)) (map (annotate m) es).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Unreachable states describe no stores. *)
   Lemma gamma_unreached : forall st, ~ gamma Unreached st.
   Proof.
@@ -258,7 +258,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma gamma_reached : forall m st,
     gamma (Reached m) st <->
       M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Env.
 
 Module EnvTimingHelpers (X : KEY_T) (M : MAP_T X) (L : LANG_T)
@@ -317,8 +317,9 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Definition size (s : t) : nat :=
     match s with
     | Unreached => 0
-    | Reached m => M.nodes m + fold_right Nat.add 0
-      (map (fun kv => X.bits (fst kv) + V.size (snd kv) + 1) (M.elements m))
+    | Reached m => M.nodes m + fold_right Nat.add 1
+      (map (fun p =>
+        match M.find p m with Some a => V.size a + 1 | None => 0 end) (M.codes m))
     end.
   Definition wsize (p : wparam) : nat := V.wsize p.
   Definition wunits (s : t) : nat :=

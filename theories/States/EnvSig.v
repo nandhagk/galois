@@ -81,8 +81,9 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Definition esize (s : t) : nat :=
     match s with
     | Unreached => 0
-    | Reached m => M.nodes m + fold_right Nat.add 0
-      (map (fun kv => X.bits (fst kv) + V.size (snd kv) + 1) (M.elements m))
+    | Reached m => M.nodes m + fold_right Nat.add 1
+      (map (fun p =>
+        match M.find p m with Some a => V.size a + 1 | None => 0 end) (M.codes m))
     end.
   Definition env_wf (s : t) : Prop :=
     match s with Unreached => True | Reached m => M.wf m end.
