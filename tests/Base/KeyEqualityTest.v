@@ -28,3 +28,9 @@ Proof.
 Qed.
 
 (* The cost example is in BaseEqTest.v at 87192fe. *)
+
+Example key_positive : PosKeyCode.eqb 1 1 = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example key_negative : PosKeyCode.eqb 1 2 = false.
+Proof. vm_compute. reflexivity. Qed.
