@@ -145,6 +145,14 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma T_next_le : forall ix, (T_next ix <= c_ix)%N.
   Proof. Admitted. (* STUB *)
 
+  (** The empty index is a constant. *)
+  Lemma T_empty_le : (T_empty <= c_ix)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** The root is stored. *)
+  Lemma T_root_le : forall ix, (T_root ix <= c_ix)%N.
+  Proof. Admitted. (* STUB *)
+
   Lemma T_insert_le : forall a r ix, wf a ix ->
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)

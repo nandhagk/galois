@@ -153,6 +153,11 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter T_demand : S.prog -> policy L.wparam -> list S.key -> N -> state -> N.
   Parameter T_edit : S.prog -> S.prog -> list S.row -> state -> N.
   Parameter c_inc : N.
+  (** The initial state is a constant. *)
+  Parameter T_init_le : (T_init <= c_inc)%N.
+  (** Reading a value pays for the key code. *)
+  Parameter T_value_le : forall st x,
+    (T_value st x <= c_inc * N.of_nat (S.key_bits x + 1))%N.
   (** Regional checking restores the frozen values in the solver candidate. *)
   Definition checked (p : S.prog) (roots : list S.key) (st : state)
       (m : kmap S.key L.t) : kmap S.key L.t :=
