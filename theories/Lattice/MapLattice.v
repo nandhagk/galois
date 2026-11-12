@@ -77,7 +77,7 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   TimeFun join.
 
   Definition size (m : t) : nat :=
-    M.fold (fun acc _ a => acc + L.size a) m 1.
+    M.nodes m + M.fold (fun acc _ a => acc + L.size a) m 1.
   Definition c_lat : N := 1. (* STUB *)
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.

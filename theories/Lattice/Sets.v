@@ -97,7 +97,7 @@ Module MaySetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
   TimeFun is_bot.
   TimeFun join.
 
-  Definition size (s : t) : nat := S.weight s.
+  Definition size (s : t) : nat := S.nodes s + S.weight s + 1.
   Definition c_lat : N := 1. (* STUB *)
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
@@ -122,7 +122,7 @@ Module MustSetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
   TimeFun join.
 
   Definition size (s : t) : nat :=
-    match s with None => 1 | Some members => S.weight members + 1 end.
+    match s with None => 1 | Some members => S.nodes members + S.weight members + 1 end.
   Definition c_lat : N := 1. (* STUB *)
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
