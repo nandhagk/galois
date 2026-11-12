@@ -62,11 +62,23 @@ End GENKILL_OPS.
 
 Module Type GENKILL_TIME (P E : TYPE) (F : KEY_T) (S : SET_T F)
     (Import G : GENKILL_OPS P E F S).
+  (* spec: gk_work *)
+  Parameter gk_work : P.t -> nat.
   Parameter T_gen T_kill : P.t -> E.t -> N.
   Parameter T_init : P.t -> N.
-  (* SIG-QUESTION: GENKILL_T has no numerical edge or size envelopes for these
-     readers. FLOW_TIME needs a bound independent of e, but E has no finite
-     presentation here. *)
+  Parameter c_gk : N.
+  (** Reading a gen set fits the program budget for every edge value. *)
+  Parameter T_gen_le : forall p e, (T_gen p e <= c_gk * N.of_nat (gk_work p + 1))%N.
+  (** Reading a kill set fits the program budget for every edge value. *)
+  Parameter T_kill_le : forall p e, (T_kill p e <= c_gk * N.of_nat (gk_work p + 1))%N.
+  (** Reading the initial set fits the program budget. *)
+  Parameter T_init_le : forall p, (T_init p <= c_gk * N.of_nat (gk_work p + 1))%N.
+  (** Gen sets fit the program budget for every edge value. *)
+  Parameter gen_nodes : forall p e, S.nodes (gen p e) <= gk_work p.
+  (** Kill sets fit the program budget for every edge value. *)
+  Parameter kill_nodes : forall p e, S.nodes (kill p e) <= gk_work p.
+  (** The initial set fits the program budget. *)
+  Parameter init_nodes : forall p, S.nodes (init p) <= gk_work p.
 End GENKILL_TIME.
 
 Module Type GENKILL_T (P E : TYPE) (F : KEY_T) (S : SET_T F) :=
@@ -113,11 +125,20 @@ Module Type GENKILL_MAY_DOMAIN (F : KEY) (S : SET F) :=
 Module Type GENKILL_MUST_DOMAIN (F : KEY) (S : SET F) :=
   GENKILL_MUST_DOMAIN_OPS F S <+ LATTICE_LAWS.
 
-Module Type GENKILL_MAY_DOMAIN_T (F : KEY_T) (S : SET_T F) :=
-  GENKILL_MAY_DOMAIN F S <+ LATTICE_TIME.
+Module Type GENKILL_MAY_DOMAIN_T (F : KEY_T) (S : SET_T F).
+  Include GENKILL_MAY_DOMAIN F S.
+  Include LATTICE_TIME.
+  (** May-domain sizes are set skeleton sizes. *)
+  Parameter size_nodes : forall a, size a = S.nodes a.
+End GENKILL_MAY_DOMAIN_T.
 
-Module Type GENKILL_MUST_DOMAIN_T (F : KEY_T) (S : SET_T F) :=
-  GENKILL_MUST_DOMAIN F S <+ LATTICE_TIME.
+Module Type GENKILL_MUST_DOMAIN_T (F : KEY_T) (S : SET_T F).
+  Include GENKILL_MUST_DOMAIN F S.
+  Include LATTICE_TIME.
+  (** Unreached values have size zero and reached values have their set skeleton size. *)
+  Parameter size_nodes : forall a,
+    size a = match a with None => 0 | Some facts => S.nodes facts end.
+End GENKILL_MUST_DOMAIN_T.
 
 Module Type GENKILL_MAY_FLOW_T (P : TYPE) (N : KEY_T) (E : TYPE)
     (F : KEY_T) (S : SET_T F) (G : GENKILL_T P E F S)

@@ -31,7 +31,15 @@ End SSA_TRANSFER_OPS.
 
 Module Type SSA_TRANSFER_TIME (P : TYPE) (X : KEY_T) (L : LANG_T)
     (V : VALUE_DOMAIN_T L) (Import T : SSA_TRANSFER_OPS P X L V).
+  (* spec: seed_work *)
+  Parameter seed_work : P.t -> nat.
   Parameter T_seed : P.t -> X.t -> N.
+  Parameter c_seed : N.
+  (** Seed lookup pays for the value key and the program seed budget. *)
+  Parameter T_seed_le : forall p x,
+    (T_seed p x <= c_seed * N.of_nat (X.bits x + seed_work p + 1))%N.
+  (** Seed facts fit the program seed budget. *)
+  Parameter seed_size : forall p x, V.size (seed p x) <= seed_work p.
 End SSA_TRANSFER_TIME.
 
 Module Type SSA_TRANSFER_T (P : TYPE) (X : KEY_T) (L : LANG_T)
@@ -91,24 +99,43 @@ Module Type SPARSE (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   SPARSE_OPS P E X L V <+ SYSTEM_SPEC V <+ SYSTEM_LAWS V <+
   SPARSE_LAWS P N E C X L K G S V T.
 
-Module Type SPARSE_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module Type SPARSE_ENVELOPE (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
+    (X : KEY_T) (L : LANG_T) (K : TYPE with Definition t := L.op)
+    (G : TYPE with Definition t := L.guard)
+    (S : SSA_T P N E C X K G) (V : VALUE_DOMAIN_T L).
+  (* spec: op_work op_arity *)
+  Parameter op_work : P.t -> nat -> nat.
+  Parameter op_arity : P.t -> nat.
+  (** Operator envelopes grow with the operand size. *)
+  Parameter op_work_mono : forall p s t, s <= t -> op_work p s <= op_work p t.
+  (** Every listed operation has at most the program's operand count. *)
+  Parameter op_arity_le : forall p x op xs, In x (S.values p) ->
+    S.def p x = Op op xs -> length xs <= op_arity p.
+  (** Every listed operation fits the envelope on operands of bounded size. *)
+  Parameter op_work_le : forall p x op xs vs s, In x (S.values p) ->
+    S.def p x = Op op xs -> length vs = length xs ->
+    Forall (fun v => V.size v <= s) vs -> V.work op vs <= op_work p s.
+End SPARSE_ENVELOPE.
+
+Module Type SPARSE_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (X : KEY_T) (L : LANG_T) (K : TYPE with Definition t := L.op)
     (G : TYPE with Definition t := L.guard)
     (S : SSA_T P N E C X K G)
     (V : VALUE_DOMAIN_T L) (T : SSA_TRANSFER_T P X L V)
+    (B : SPARSE_ENVELOPE P N E C X L K G S V)
     (Import A : SPARSE P N E C X L K G S V T).
-  Include SYSTEM_TIME V A.
-  (* SIG-QUESTION: arbitrary SSA readers need numeric budgets or preparation for
-     row enumeration and dependency contracts. T_resume also sees arbitrary
-     pending and received lists in sparse_frame, while row_work omits frame size. *)
+  Include SYSTEM_TIME V A with Definition row_work := fun p s =>
+    N.of_nat (B.op_work p s + (B.op_arity p + 1) * (s + 1) + T.seed_work p +
+      V.size V.top + V.size V.bot + 1).
 End SPARSE_TIME.
 
-Module Type SPARSE_T (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module Type SPARSE_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (X : KEY_T) (L : LANG_T) (K : TYPE with Definition t := L.op)
     (G : TYPE with Definition t := L.guard)
     (S : SSA_T P N E C X K G)
-    (V : VALUE_DOMAIN_T L) (T : SSA_TRANSFER_T P X L V) :=
-  SPARSE P N E C X L K G S V T <+ SPARSE_TIME P N E C X L K G S V T.
+    (V : VALUE_DOMAIN_T L) (T : SSA_TRANSFER_T P X L V)
+    (B : SPARSE_ENVELOPE P N E C X L K G S V) :=
+  SPARSE P N E C X L K G S V T <+ SPARSE_TIME P N E C X L K G S V T B.
 
 Module Type SPARSE_INITIAL_LINK (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (X : KEY) (L : LANG) (K : TYPE with Definition t := L.op)
@@ -120,9 +147,11 @@ Module Type SPARSE_INITIAL_LINK (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (SL : SSA_LINK P N E C X K G Val S M CL).
   (** Concrete operation evaluation agrees with the domain's language. *)
   Parameter eval_agrees : SL.eval = L.eval.
-  (** Initial bindings come from entry seeds or arbitrary definitions. *)
+  (** Initial bindings come from entry seeds, operations or arbitrary definitions. *)
   Parameter initial_binding : forall p s x c, M.initial p s -> SL.venv s x = Some c ->
     (exists b, In b (C.entries p) /\ In x (S.params p b) /\ V.gamma (T.seed p x) c) \/
+    (exists op xs cs, S.def p x = Op op xs /\
+      Forall2 (fun y d => SL.venv s y = Some d) xs cs /\ SL.eval op cs = Some c) \/
     S.def p x = Arbitrary.
   (** Edges selected by value origins belong to the executable edge inventory. *)
   Parameter taken_listed : forall p s t e,

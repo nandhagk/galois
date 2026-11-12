@@ -31,9 +31,30 @@ End BODY_OPS.
 
 Module Type BODY_TIME (P : TYPE) (F Site : KEY_T) (L : LATTICE_T)
     (Import B : BODY_OPS P F Site L).
+  (* spec: body_work *)
+  Parameter body_work : P.t -> nat -> N.
   Parameter T_local : P.t -> F.t -> N.
   Parameter T_via_call : P.t -> Site.t -> F.t -> L.t -> N.
   Parameter T_entry : P.t -> Site.t -> F.t -> N.
+  Parameter c_body : N.
+  (** Body budgets grow with the size of the lifted value. *)
+  Parameter body_work_mono : forall p s s', s <= s' -> (body_work p s <= body_work p s')%N.
+  (** Local summaries fit the zero-input budget. *)
+  Parameter T_local_le : forall p f, (T_local p f <= c_body * (body_work p 0 + 1))%N.
+  (** Entry facts fit the zero-input budget. *)
+  Parameter T_entry_le : forall p site g,
+    (T_entry p site g <= c_body * (body_work p 0 + 1))%N.
+  (** Lifting pays for the size of the callee value at every site and callee. *)
+  Parameter T_via_call_le : forall p site g a,
+    (T_via_call p site g a <= c_body * (body_work p (L.size a) + 1))%N.
+  (** Local summaries fit the zero-input budget in size. *)
+  Parameter local_size : forall p f, (N.of_nat (L.size (local p f)) <= body_work p 0)%N.
+  (** Entry facts fit the zero-input budget in size. *)
+  Parameter entry_size : forall p site g,
+    (N.of_nat (L.size (entry p site g)) <= body_work p 0)%N.
+  (** Lifted values fit the budget of their input size. *)
+  Parameter via_call_size : forall p site g a,
+    (N.of_nat (L.size (via_call p site g a)) <= body_work p (L.size a))%N.
 End BODY_TIME.
 
 Module Type BODY_T (P : TYPE) (F Site : KEY_T) (L : LATTICE_T) :=
@@ -78,10 +99,10 @@ Module Type SUMMARY (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
 Module Type SUMMARY_TIME (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
     (L : LATTICE_T) (B : BODY_T P F Site L)
     (Import A : SUMMARY P F Site CL L B).
-  Include SYSTEM_TIME L A.
-  (* SIG-QUESTION: CALLS_T readers need numeric budgets or a prepared presentation.
-     T_resume calls B.via_call on an arbitrary lattice value, but BODY_T supplies
-     no work bound as a function of that value's size. *)
+  Include SYSTEM_TIME L A with Definition row_work := fun p s =>
+    (B.body_work p s + N.of_nat (fold_right Nat.max 0%nat
+      (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N
+    with Definition kw := CL.function_width.
 End SUMMARY_TIME.
 
 Module Type SUMMARY_T (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
