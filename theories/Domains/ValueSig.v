@@ -56,6 +56,7 @@ Module Type VALUE_DOMAIN_TIME (L : LANG_T) (Import D : VALUE_DOMAIN L).
   Parameter work : L.op -> list t -> nat.
   Parameter gwork : L.guard -> list t -> nat.
   Parameter wsize : wparam -> nat.
+  Definition wunits (_ : t) : nat := 0.
   Parameter T_leb T_join T_meet : t -> t -> N.
   Parameter T_is_bot : t -> N.
   Parameter T_widen : wparam -> t -> t -> N.

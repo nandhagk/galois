@@ -7,7 +7,7 @@
 From Stdlib Require Import List ZArith.
 From Argent Require Import Std.
 From Galois.Bits Require Import Word Op.
-From Galois.Domains Require Import LangSig.
+From Galois.Domains Require Import LangSig WordSig.
 Import List.ListNotations.
 
 Inductive bop : Type :=
@@ -44,3 +44,30 @@ Module BitsLangCode <: LANG_OPS.
     | BOp _ => None
     end.
 End BitsLangCode.
+
+Module BitsLang <: LANG.
+  Include BitsLangCode.
+  Definition holds (g : guard) (vs : list val) : Prop :=
+    match g, vs with
+    | BTruth b, (w, z) :: nil => w = 1%positive /\ z = (if b then 1 else 0)%Z
+    | _, _ => False
+    end.
+End BitsLang.
+
+Module WordLanguageCode <: WORD_LANGUAGE_OPS.
+  Definition op := Op.op.
+  Definition wrap := Word.wrap.
+  Definition signed := Word.signed.
+  Definition eval_op := Op.eval_op.
+  Definition result_width := Op.result_width.
+End WordLanguageCode.
+
+Module WordLanguage <: WORD_LANGUAGE.
+  Include WordLanguageCode.
+  Definition is_word := Word.is_word.
+  Lemma wrap_is_word : forall w z, is_word w (wrap w z).
+  Proof. exact Word.wrap_is_word. Qed.
+  Lemma eval_op_is_word : forall o cs w z, eval_op o cs = Some (w, z) ->
+    is_word w z /\ result_width o (map fst cs) = Some w.
+  Proof. Admitted.
+End WordLanguage.

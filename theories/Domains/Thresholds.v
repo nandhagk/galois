@@ -83,3 +83,41 @@ Module ThresholdsCode <: THRESHOLDS_OPS.
       else above rhs z
     end.
 End ThresholdsCode.
+
+Module Thresholds <: THRESHOLDS.
+  Include ThresholdsCode.
+  Include THRESHOLDS_SPEC.
+  (** Construction retains precisely the supplied thresholds. *)
+  Lemma make_vals : forall zs x, In x (vals (make zs)) <-> In x zs.
+  Proof. Admitted.
+  (** Construction orders and deduplicates thresholds. *)
+  Lemma make_ordered : forall zs, ordered (make zs).
+  Proof. Admitted.
+  (** Construction produces a logarithmic-depth tree. *)
+  Lemma make_depth : forall zs, depth (make zs) <= Nat.log2 (length zs) + 1.
+  Proof. Admitted.
+  (** Upper search returns the least eligible threshold or proves none exists. *)
+  Lemma above_spec : forall t z, ordered t ->
+    match above t z with
+    | Some u => In u (vals t) /\ (z <= u)%Z /\
+      forall v, In v (vals t) -> (z <= v)%Z -> (u <= v)%Z
+    | None => forall v, In v (vals t) -> (v < z)%Z
+    end.
+  Proof. Admitted.
+  (** Lower search returns the greatest eligible threshold or proves none exists. *)
+  Lemma below_spec : forall t z, ordered t ->
+    match below t z with
+    | Some u => In u (vals t) /\ (u <= z)%Z /\
+      forall v, In v (vals t) -> (v <= z)%Z -> (v <= u)%Z
+    | None => forall v, In v (vals t) -> (z < v)%Z
+    end.
+  Proof. Admitted.
+  (** Upper search is sound even when the tree is unordered. *)
+  Lemma above_sound : forall t z u,
+    above t z = Some u -> In u (vals t) /\ (z <= u)%Z.
+  Proof. Admitted.
+  (** Lower search is sound even when the tree is unordered. *)
+  Lemma below_sound : forall t z u,
+    below t z = Some u -> In u (vals t) /\ (u <= z)%Z.
+  Proof. Admitted.
+End Thresholds.

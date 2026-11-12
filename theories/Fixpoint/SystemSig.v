@@ -117,9 +117,10 @@ End SYSTEM_TIME.
 Module Type SYSTEM_T (L : LATTICE_T) := SYSTEM L <+ SYSTEM_TIME L.
 
 Module Type BUDGET (L : WLATTICE_T) (S : SYSTEM_T L).
-  (* spec: inv vsize wmax *)
+  (* spec: inv vsize wunits wmax *)
   Parameter inv : S.prog -> L.t -> Prop.
   Parameter vsize : S.prog -> nat.
+  Parameter wunits : S.prog -> nat.
   Parameter wmax : S.prog -> L.wparam -> nat.
   (** Bottom satisfies the client's invariant. *)
   Parameter inv_bot : forall p, inv p L.bot.
@@ -136,6 +137,8 @@ Module Type BUDGET (L : WLATTICE_T) (S : SYSTEM_T L).
     inv p a /\ Forall (fun xa => inv p (snd xa)) ss.
   (** The invariant bounds representation size. *)
   Parameter size_le : forall p a, inv p a -> L.size a <= vsize p.
+  (** The invariant bounds the number of widened components. *)
+  Parameter wunits_le : forall p a, inv p a -> L.wunits a <= wunits p.
   (** The invariant bounds widening rank for every parameter. *)
   Parameter wrank_le : forall p w a, inv p a -> L.wrank w a <= wmax p w.
 End BUDGET.

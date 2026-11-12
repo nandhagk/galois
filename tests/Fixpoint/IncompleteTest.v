@@ -39,3 +39,8 @@ Example incomplete_summary_rejected :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(* incomplete_summary_leaves_reader_stale is the old solver observation [false;
+   true]. worklist_certification_rejects_incomplete_summary is the old rejection.
+   incomplete_summary_rejected records the new early evaluator rejection and
+   the unchanged certified rejection. *)
