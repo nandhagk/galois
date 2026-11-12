@@ -55,3 +55,35 @@ Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
         (map (fun e => F.encode (edge_callee e)) (call_edges (resolve p) (sites_of p f))) adj)
         (functions p) PTrieCode.empty).
 End CallsCode.
+
+Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
+  Include CallsCode P F S D.
+  Include CALLS_SPEC P F S.
+
+  Definition wf p :=
+    NoDup (functions p) /\ incl (roots p) (functions p) /\
+    (forall f site, In site (sites_of p f) ->
+      caller_of p site = f /\ In f (functions p)) /\
+    (forall site f, In f (resolve p site) -> In f (functions p)).
+
+  Lemma functions_nodup : forall p, wf p -> NoDup (functions p).
+  Proof. Admitted.
+  Lemma roots_listed : forall p, wf p -> incl (roots p) (functions p).
+  Proof. Admitted.
+  Lemma sites_caller : forall p f site, wf p -> In site (sites_of p f) ->
+    caller_of p site = f /\ In f (functions p).
+  Proof. Admitted.
+  Lemma resolve_listed : forall p site f, wf p -> In f (resolve p site) ->
+    In f (functions p).
+  Proof. Admitted.
+  Lemma call_graph_nodes : forall p, verts (call_graph p) = map F.encode (functions p).
+  Proof.
+    reflexivity.
+  Qed.
+  Lemma call_graph_out : forall p f, wf p -> In f (functions p) ->
+    succs (call_graph p) (F.encode f) =
+      map (fun e => F.encode (edge_callee e)) (call_edges (resolve p) (sites_of p f)).
+  Proof. Admitted. (* CONVERT: graph_out: The reference Graph.out was not found. *)
+  Lemma call_graph_wf : forall p, wf p -> wf_graph (call_graph p).
+  Proof. Admitted.
+End Calls.
