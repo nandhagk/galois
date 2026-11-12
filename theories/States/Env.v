@@ -126,3 +126,117 @@ Module EnvCode (X : KEY_OPS) (M : MAP_OPS X) (L : LANG_OPS)
       if snd result then Unreached else Reached (fst result)
     end.
 End EnvCode.
+
+Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
+    <: ENV X M L V.
+  Include EnvCode X M L V.
+  Include ENV_SPEC X M L V.
+  Definition wrank (p : wparam) (s : t) : nat :=
+    match s with
+    | Unreached => 0
+    | Reached m => fold_right Nat.add 0 (map (fun kv => V.wrank p (snd kv)) (M.elements m))
+    end.
+  Definition gamma (s : t) (st : X.t -> L.val) : Prop :=
+    match s with
+    | Unreached => False
+    | Reached m => forall x, V.gamma (read m x) (st x)
+    end.
+
+  Lemma leb_refl : forall a, leb a a = true.
+  Proof. Admitted.
+  (** The order composes through an intermediate value. *)
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof. Admitted.
+  (** Bottom is below every value. *)
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof. Admitted.
+  (** The bottom test recognizes bottom. *)
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof. Admitted.
+  (** Every recognized bottom is below every value. *)
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof. Admitted.
+  (** Join is above its left operand. *)
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof. Admitted.
+  (** Join is above its right operand. *)
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof. Admitted.
+
+  Lemma top_greatest : forall a, leb a top = true.
+  Proof. Admitted.
+
+  (** Widening is above its previous value. *)
+  Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
+  Proof. Admitted.
+  (** Widening is above its candidate value. *)
+  Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
+  Proof. Admitted.
+  (** A candidate below the previous value leaves widening unchanged. *)
+  Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
+  Proof. Admitted.
+  (** An unstable widening from a nonbottom strictly decreases rank. *)
+  Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
+    wrank p (widen p a b) < wrank p a.
+  Proof. Admitted.
+  (** Widening from a nonbottom does not increase rank. *)
+  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
+  Proof. Admitted.
+  (** Narrowing stays between an ordered candidate and previous value. *)
+  Lemma narrow_between : forall a b, leb b a = true ->
+    leb b (narrow a b) = true /\ leb (narrow a b) a = true.
+  Proof. Admitted.
+
+  (** Abstract inclusion entails inclusion of concrete environments. *)
+  Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
+  Proof. Admitted. (* SIG-QUESTION: raw hidden bottom conflicts with pointwise gamma *)
+  (** Bottom describes no concrete environment. *)
+  Lemma gamma_bot : forall st, ~ gamma bot st.
+  Proof. Admitted.
+  (** Top describes every concrete environment. *)
+  Lemma gamma_top : forall st, gamma top st.
+  Proof. Admitted.
+  (** Assignment contains each successful concrete update. *)
+  Lemma assign_sound : forall x e s st c,
+    gamma s st -> eval_term L.eval st e = Some c ->
+    gamma (assign x e s) (upd X.eqb st x c).
+  Proof. Admitted.
+  (** Havoc contains every concrete update of the selected variable. *)
+  Lemma havoc_sound : forall x s st c,
+    gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
+  Proof. Admitted.
+  (** Assuming a true guard retains its concrete environment. *)
+  Lemma assume_sound : forall g es s st cs,
+    gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
+    gamma (assume g es s) st.
+  Proof. Admitted.
+  (** Abstract evaluation describes every successful concrete result. *)
+  Lemma eval_sound : forall e s st c,
+    gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
+  Proof. Admitted.
+
+  (** Reading an absent key returns top. *)
+  Lemma read_spec : forall m x,
+    read m x = match M.get x m with Some a => a | None => V.top end.
+  Proof. Admitted.
+  (** Leaf roots expose their stored abstract value. *)
+  Lemma root_leaf : forall x a, root (ALeaf x a) = a.
+  Proof. Admitted.
+  (** Node roots expose their stored abstract value. *)
+  Lemma root_node : forall o a ns, root (ANode o a ns) = a.
+  Proof. Admitted.
+  (** Leaf annotation reads the current environment. *)
+  Lemma annotate_leaf : forall m x, annotate m (Leaf x) = ALeaf x (read m x).
+  Proof. Admitted.
+  (** Node annotation transfers the annotated child roots. *)
+  Lemma annotate_node : forall m o es, annotate m (Node o es) =
+    ANode o (V.forward o (map (fun e => root (annotate m e)) es)) (map (annotate m) es).
+  Proof. Admitted.
+  (** Unreachable states describe no stores. *)
+  Lemma gamma_unreached : forall st, ~ gamma Unreached st.
+  Proof. Admitted.
+  (** Reached maps describe stores pointwise. *)
+  Lemma gamma_reached : forall m st,
+    gamma (Reached m) st <-> forall x, V.gamma (read m x) (st x).
+  Proof. Admitted.
+End Env.
