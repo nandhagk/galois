@@ -26,6 +26,16 @@ Record tarjan_state := TarjanState {
   tarjan_next : positive
 }.
 
+TimeFun tarjan_disc.
+TimeFun tarjan_low.
+TimeFun tarjan_pending.
+TimeFun tarjan_active.
+TimeFun tarjan_frames.
+TimeFun tarjan_emitted.
+TimeFun tarjan_owners.
+TimeFun tarjan_clock.
+TimeFun tarjan_next.
+
 Module Type SCC_OPS.
   Parameter run : prepared -> scc.
 End SCC_OPS.

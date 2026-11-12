@@ -6,12 +6,21 @@
 
 From Stdlib Require Import PArith NArith List.
 From Argent Require Import Time Std.
-From Galois.Base Require Import Trie.
+From Galois.Base Require Import Key Trie.
+
+Module TimeHelpers.
+  Module N.
+    TimeFun BinNat.N.of_nat.
+  End N.
+End TimeHelpers.
 
 Record digraph := Digraph {
   verts : list positive;
   succ : ptrie (list positive)
 }.
+
+TimeFun verts.
+TimeFun succ.
 
 Record prepared := Prepared {
   base : digraph;
@@ -19,6 +28,8 @@ Record prepared := Prepared {
   nv : N;
   ne : N
 }.
+
+TimeFun base.
 
 Definition succs (g : digraph) (v : positive) : list positive :=
   match g with
