@@ -65,6 +65,12 @@ Module Type HARNESS_BASE_TIME (L : LANG_T) (Import B : HARNESS_BASE L).
   (** Widening charges its parameters and both input sizes. *)
   Parameter T_widen_le : forall p a b,
     (T_widen p a b <= c_base * N.of_nat ((bsize a + bsize b + wsize p + 1)%nat))%N.
+  (** Meet results fit within the charged operand sizes. *)
+  Parameter meet_size_le : forall a b,
+    (N.of_nat (bsize (meet a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
+  (** Abstraction results fit within their abstraction time. *)
+  Parameter abst_size_le : forall v,
+    (N.of_nat (bsize (abst v)) <= c_base * (T_abst v + 1))%N.
 End HARNESS_BASE_TIME.
 
 Module Type HARNESS_BASE_T (L : LANG_T) := HARNESS_BASE L <+ HARNESS_BASE_TIME L.
@@ -108,6 +114,17 @@ Module Type TABLE_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (Import T : TABLE L B
   Parameter T_abst_le : forall v xs o cs, L.eval o cs = Some v ->
     Forall2 (fun x c => B.point x = Some c) xs cs ->
     (B.T_abst v <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
+  (** Forward table results fit within the charged table work. *)
+  Parameter fwd_size_le : forall o xs r, fwd o xs = Some r ->
+    (N.of_nat (B.bsize r) <= c_tab * N.of_nat (twork o xs + 1))%N.
+  (** Backward table results charge their payload sizes and list length. *)
+  Parameter bwd_size_le : forall o r xs ys, bwd o r xs = Some ys ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
+      c_tab * N.of_nat (twork o xs + B.bsize r + 1))%N.
+  (** Guard table results charge their payload sizes and list length. *)
+  Parameter grd_size_le : forall g xs ys, grd g xs = Some ys ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
+      c_tab * N.of_nat (tgwork g xs + 1))%N.
 End TABLE_TIME.
 
 Module Type TABLE_T (L : LANG_T) (B : HARNESS_BASE_T L) :=
@@ -132,12 +149,12 @@ Module Type HARNESS_TIME (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   (** Singleton collection charges a linear scan of all operands. *)
   Parameter T_points_le : forall xs,
     (T_points xs <= c_harness *
-      N.of_nat ((fold_right Nat.add 0 (map B.bsize xs) + length xs + 1)%nat))%N.
+      N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1)%nat))%N.
   (** Positional meet charges both lists. *)
   Parameter T_meet_all_le : forall xs ys,
     (T_meet_all xs ys <= c_harness *
-      N.of_nat ((fold_right Nat.add 0 (map B.bsize xs) +
-        fold_right Nat.add 0 (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
+      N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) +
+        fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
 End HARNESS_TIME.
 
 Module Type HARNESS_T (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B) :=
@@ -158,11 +175,11 @@ Module Type HARNESS_PLAN (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Parameter F0_size : forall a, size a = B.bsize a.
   (** Harness forward work charges operands, concrete evaluation and the table. *)
   Parameter F0_work : forall o xs, work o xs =
-    fold_right Nat.add 0 (map B.bsize xs) + length xs +
+    fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
     L.work o (opt_vals xs) + T.twork o xs.
   (** Harness guard work charges operands and the table. *)
   Parameter F0_gwork : forall g xs, gwork g xs =
-    fold_right Nat.add 0 (map B.bsize xs) + length xs + T.tgwork g xs.
+    fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
   (** Collected singletons agree with every represented concrete list. *)
   Parameter F1_points_sound : forall xs cs vs,
     Forall2 B.gamma xs cs -> points xs = Some vs -> vs = cs.
@@ -181,7 +198,7 @@ Module Type HARNESS_PLAN (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   (** Forward transfer charges collection, concrete evaluation and the table. *)
   Parameter T2_forward : forall o xs,
     (T_forward o xs <= k_forward *
-      N.of_nat ((fold_right Nat.add 0 (map B.bsize xs) + length xs +
+      N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
         L.work o (opt_vals xs) + T.twork o xs + 1)%nat))%N.
   (** Backward transfer charges the table, lengths and positional meets. *)
   Parameter T3_backward : forall o r xs, (T_backward o r xs <= k_backward *
