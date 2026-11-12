@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool PArith NArith.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec SearchSig Search Scc WtoSig.
+From Galois.Graph Require Import Data Spec SearchSig Search SccSig Scc WtoSig.
 Import List.ListNotations.
 
 Definition wto_member (v : positive) xs := existsb (Pos.eqb v) xs.

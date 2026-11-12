@@ -67,7 +67,6 @@ Record wto_state := WtoState {
   wto_parents : list wto
 }.
 
-
 Module Type WTO_OPS.
   Parameter build : prepared -> list positive -> wto.
   Parameter check : prepared -> list positive -> wto -> bool.
@@ -162,24 +161,24 @@ Module Type WTO_PLAN (Import W : WTO_T).
     list (list positive) -> list wto_task.
   Parameter wto_step : prepared -> wto_state -> wto_state + wto.
   Parameter search_trace : digraph -> list positive -> list event.
-  Parameter T_wto_member : positive -> list positive -> nat.
-  Parameter T_wto_unique : list positive -> nat.
-  Parameter T_wto_annotate : list positive -> wto -> nat.
-  Parameter T_wto_positions : list (positive * list positive) -> nat.
-  Parameter T_wto_edge_b : ptrie (list positive * list positive) -> positive -> positive -> nat.
-  Parameter T_wto_rank_rows : positive -> list positive -> nat.
-  Parameter T_wto_scoped : prepared -> option (list positive) -> nat.
-  Parameter T_wto_components : prepared -> list positive -> nat.
-  Parameter T_wto_entries : prepared -> list positive -> scc -> nat.
-  Parameter T_wto_preferred : ptrie positive -> ptrie positive -> list positive -> nat.
-  Parameter T_wto_select : option positive -> list positive -> nat.
-  Parameter T_wto_reverse_into : wto -> wto -> nat.
+  Parameter T_wto_member : positive -> list positive -> N.
+  Parameter T_wto_unique : list positive -> N.
+  Parameter T_wto_annotate : list positive -> wto -> N.
+  Parameter T_wto_positions : list (positive * list positive) -> N.
+  Parameter T_wto_edge_b : ptrie (list positive * list positive) -> positive -> positive -> N.
+  Parameter T_wto_rank_rows : positive -> list positive -> N.
+  Parameter T_wto_scoped : prepared -> option (list positive) -> N.
+  Parameter T_wto_components : prepared -> list positive -> N.
+  Parameter T_wto_entries : prepared -> list positive -> scc -> N.
+  Parameter T_wto_preferred : ptrie positive -> ptrie positive -> list positive -> N.
+  Parameter T_wto_select : option positive -> list positive -> N.
+  Parameter T_wto_reverse_into : wto -> wto -> N.
   Parameter T_wto_expand_tasks : option (list positive) -> ptrie positive -> ptrie positive ->
-    list (list positive) -> nat.
-  Parameter T_wto_step : prepared -> wto_state -> nat.
-  Parameter T_search_trace : digraph -> list positive -> nat.
+    list (list positive) -> N.
+  Parameter T_wto_step : prepared -> wto_state -> N.
+  Parameter T_search_trace : digraph -> list positive -> N.
   Parameter history : prepared -> list positive -> list wto_state.
-  Parameter k_member k_index k_check k_scope k_expand k_build k_heads k_ranks : nat.
+  Parameter k_member k_index k_check k_scope k_expand k_build k_heads k_ranks : N.
 
   Definition live (g : prepared) roots := entered (search_trace (base g) roots).
   Definition checked_index w := wto_positions (wto_annotate [] w).
@@ -214,7 +213,8 @@ Module Type WTO_PLAN (Import W : WTO_T).
   Definition task_mass (g : prepared) task :=
     match task with WtoExpand _ _ _ c => 3 * length c | WtoClose _ => 1 end.
 
-  (** Header removal spends one vertex and reserves one matching close task. *)
+  (** Header removal spends one vertex and reserves one matching close task.
+      This nat measure counts transitions for termination. *)
   Definition potential g st :=
     fold_right (fun task n => task_mass g task + n) 0 (wto_tasks st).
 
@@ -261,8 +261,8 @@ Module Type WTO_PLAN (Import W : WTO_T).
       | _ => n
       end) 0 states.
 
-  Definition execution_cost g states :=
-    fold_right (fun st n => T_wto_step g st + n) 0 states.
+  Definition execution_cost g states : N :=
+    fold_right (fun st n => (T_wto_step g st + n)%N) 0%N states.
 
   (** List scans are charged even for candidates that the checker rejects. *)
   Definition check_work g roots w :=
@@ -270,10 +270,10 @@ Module Type WTO_PLAN (Import W : WTO_T).
     let ls := live g roots in
     let width := graph_max (graph_width (base g))
       (graph_max (vertex_width roots) (vertex_width vs)) in
-    T_search_trace (base g) roots + T_wto_order w + T_wto_annotate [] w +
+    (T_search_trace (base g) roots + T_wto_order w + T_wto_annotate [] w +
       T_wto_positions (wto_annotate [] w) +
-      (length vs * length vs + length vs * length ls + length ls * length vs +
-        source_mass g vs * (length vs + 1) + 1) * (width + 1).
+      N.of_nat ((length vs * length vs + length vs * length ls + length ls * length vs +
+        source_mass g vs * (length vs + 1) + 1) * (width + 1)))%N.
 
   (** Membership and duplicate checking describe the supplied lists. *)
   Parameter F1_lists :
@@ -326,7 +326,7 @@ Module Type WTO_PLAN (Import W : WTO_T).
   Parameter F11_select : forall preferred c h body,
     wto_select preferred c = Some (h, body) -> Permutation c (h :: body).
 
-  (** Materialized child scopes keep the allowed vertices and their filtered successor occurrences. *)
+  (** Child scopes keep the allowed vertices and their filtered successor occurrences. *)
   Parameter F12_scope : forall g vs,
     nodes (wto_scoped g (Some vs)) = vs /\
     forall v, In v vs -> succs (base (wto_scoped g (Some vs))) v =
@@ -376,56 +376,60 @@ Module Type WTO_PLAN (Import W : WTO_T).
 
   (** Each membership query scans at most its list length and the compared key widths. *)
   Parameter T1_member : forall v vs,
-    T_wto_member v vs <= k_member * (length vs + 1) *
-      (graph_max (Pos.size_nat v) (vertex_width vs) + 1).
+    (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
+      N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
 
   (** Index construction retains the quadratic suffix materialization cost. *)
   Parameter T2_index : forall rows,
-    T_wto_positions rows <= k_index * (length rows + 1) *
-      (length rows + vertex_width (map fst rows) + 1).
+    (T_wto_positions rows <= k_index * N.of_nat (length rows + 1) *
+      N.of_nat (length rows + vertex_width (map fst rows) + 1))%N.
 
   (** Materialized filtering pays a list membership scan for each outgoing occurrence. *)
-  Parameter T3_scope : forall g vs, T_wto_scoped g (Some vs) <= k_scope * scope_work g vs.
+  Parameter T3_scope : forall g vs,
+    (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
 
   (** The selected checker has a candidate-sensitive scan budget before any public absorption. *)
-  Parameter T4_check_scans : forall g roots w, T_check g roots w <= k_check * check_work g roots w.
+  Parameter T4_check_scans : forall g roots w,
+    (T_check g roots w <= k_check * check_work g roots w)%N.
 
-  (** The public checker target still needs a linear checker and raw-candidate rejection boundary. *)
+  (** The public checker target needs a linear checker and a candidate rejection boundary. *)
   Parameter T5_check_public : forall g roots w,
-    T_check g roots w <= c_wto * (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1).
+    (T_check g roots w <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
 
   (** A child expansion pays scope materialization, SCC, entries and task assembly separately. *)
   Parameter T6_expand : forall g within entries owners c tasks partial parents h body,
     wto_select (wto_preferred owners entries c) c = Some (h, body) -> body <> [] ->
-    T_wto_step g (WtoState (WtoExpand within entries owners c :: tasks) partial parents) <=
+    (T_wto_step g (WtoState (WtoExpand within entries owners c :: tasks) partial parents) <=
       k_expand * (T_wto_preferred owners entries c +
         T_wto_select (wto_preferred owners entries c) c + T_wto_scoped g (Some body) +
         T_wto_components (wto_scoped g (Some body)) (rev body) +
         T_wto_entries (wto_scoped g (Some body)) (rev body)
           (wto_components (wto_scoped g (Some body)) (rev body)) +
-        length body + length c + 1).
+        N.of_nat (length body) + N.of_nat (length c) + 1))%N.
 
   (** The unchanged builder target needs depth charging for materialized scopes and root scans. *)
   Parameter T7_build_public : forall g roots,
-    T_build g roots <= c_wto * (graph_n (base g) + graph_e (base g) + 1) *
-      (wto_depth (build g roots) + 1) * (graph_width (base g) + 1).
+    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) * N.of_nat (graph_width (base g) + 1))%N.
 
   (** The current structural head traversal retains the cost of each body-list append. *)
-  Parameter T8_heads_source : forall w, T_heads w <= k_heads * (T_wto_heads w + 1).
+  Parameter T8_heads_source : forall w,
+    (T_heads w <= k_heads * (T_wto_heads w + 1))%N.
 
   (** The linear head target needs an append-accounting or accumulator implementation argument. *)
-  Parameter T9_heads_public : forall w, T_heads w <= c_wto * (length (wto_order w) + 1).
+  Parameter T9_heads_public : forall w,
+    (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
 
   (** Ranking pays structural flattening before inserting binary positions. *)
   Parameter T10_ranks_source : forall w,
-    T_ranks w <= k_ranks * (T_wto_order w +
-      T_wto_rank_rows 1%positive (wto_order w) + 1).
+    (T_ranks w <= k_ranks * (T_wto_order w +
+      T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
 
   (** The public rank target must absorb structural flattening as well as trie insertion. *)
   Parameter T11_ranks_public : forall w,
-    T_ranks w <= c_wto * (length (wto_order w) + 1) *
-      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1).
+    (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
+      N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
 End WTO_PLAN.
 
 Module Type WTO_ALL := WTO_T <+ WTO_PLAN.
