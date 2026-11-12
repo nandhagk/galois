@@ -5,12 +5,21 @@
     Builds on: DisjunctionSig, StateSig and the lattice interfaces. *)
 
 From Stdlib Require Import List Arith Bool.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig DisjunctionSig.
 Import List.ListNotations.
 Local Open Scope nat_scope.
+
+Module Specif.
+  TimeFun proj1_sig.
+End Specif.
+
+Module Nat.
+  TimeFun Nat.pred.
+End Nat.
 
 Module StateDisjunctionCode (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (S : STATE_DOMAIN_OPS X L V) (C : CAP) (P : SharedDisjunction.DISJUNCTION_OPS S C)
@@ -153,6 +162,25 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma compact_len : forall n d, length (compact n d) <= Nat.max n 1.
   Proof. Admitted. (* STUB *)
 End StateDisjunction.
+
+Module StateDisjunctionClock (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (C : POS_CAP)
+    (P : SharedDisjunction.DISJUNCTION_T S JS C).
+  Include StateDisjunction X L V S C P.
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun collapse.
+  TimeFun compact_tail.
+  TimeFun compact.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun map_bounded.
+  TimeFun assign.
+  TimeFun havoc.
+  TimeFun assume.
+  TimeFun eval.
+End StateDisjunctionClock.
 
 (* The landed lattice source exposed the following raw-list equations. The shared
    bounded carrier now supplies P.clip. Its laws allow different oversized-list

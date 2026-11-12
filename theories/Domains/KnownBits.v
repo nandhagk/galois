@@ -5,7 +5,7 @@
     Builds on: KnownBitsSig, WordSig and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith NArith List Bool Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Loop.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Lattice Require Import LatticeSig.
@@ -15,72 +15,101 @@ Import List.ListNotations.
 
 Local Open Scope Z_scope.
 
+Module Z.
+  TimeFun Z.b2z.
+  TimeFun Z.lnot.
+End Z.
+
 Definition tnum_normalise (w : width) (t : tnum) : tnum :=
   Tnum (wrap w (zeros t)) (wrap w (ones t)).
+TimeFun tnum_normalise.
 
 Definition tnum_join (w : width) (a b : tnum) : tnum :=
   Tnum (wand w (zeros a) (zeros b)) (wand w (ones a) (ones b)).
+TimeFun tnum_join.
 
 Definition tnum_meet (w : width) (a b : tnum) : tnum :=
   Tnum (wor w (zeros a) (zeros b)) (wor w (ones a) (ones b)).
+TimeFun tnum_meet.
 
 Definition tnum_subset (w : width) (a b : Z) : bool :=
   Z.eqb (wand w a b) (wrap w a).
+TimeFun tnum_subset.
 
 Definition tnum_top : tnum := Tnum 0 0.
+TimeFun tnum_top.
 
 Definition tnum_const (w : width) (z : Z) : tnum := Tnum (wnot w z) (wrap w z).
+TimeFun tnum_const.
 
 Definition tnum_min (w : width) (a : tnum) : Z := wrap w (ones a).
+TimeFun tnum_min.
 
 Definition tnum_max (w : width) (a : tnum) : Z := wnot w (zeros a).
+TimeFun tnum_max.
 
 Definition tnum_mask (w : width) (a : tnum) : Z := wnot w (wor w (zeros a) (ones a)).
+TimeFun tnum_mask.
 
 Definition tnum_constant (w : width) (a : tnum) : option Z :=
   if wrap w (zeros a) =? wnot w (ones a) then Some (tnum_min w a) else None.
+TimeFun tnum_constant.
 
 Definition tnum_empty (w : width) (a : tnum) : bool :=
   negb (Z.eqb (wand w (zeros a) (ones a)) 0).
+TimeFun tnum_empty.
 
 Definition tnum_not (w : width) (a : tnum) : tnum :=
   Tnum (wrap w (ones a)) (wrap w (zeros a)).
+TimeFun tnum_not.
 
 Definition tnum_and (w : width) (a b : tnum) : tnum :=
   Tnum (wor w (zeros a) (zeros b)) (wand w (ones a) (ones b)).
+TimeFun tnum_and.
 
 Definition tnum_or (w : width) (a b : tnum) : tnum :=
   Tnum (wand w (zeros a) (zeros b)) (wor w (ones a) (ones b)).
+TimeFun tnum_or.
 
 Definition tnum_xor (w : width) (a b : tnum) : tnum :=
   Tnum (wor w (wand w (zeros a) (zeros b)) (wand w (ones a) (ones b)))
     (wor w (wand w (zeros a) (ones b)) (wand w (ones a) (zeros b))).
+TimeFun tnum_xor.
 
 Definition tnum_adc_uncertain (w : width) (a b : tnum) (initial : bool) : Z :=
   Z.lor (Z.lxor (tnum_min w a + tnum_min w b + Z.b2z initial)
       (tnum_max w a + tnum_max w b + Z.b2z initial))
     (Z.lor (tnum_mask w a) (tnum_mask w b)).
+TimeFun tnum_adc_uncertain.
 
 Definition tnum_adc (w : width) (a b : tnum) (initial : bool) : tnum :=
   let v := tnum_min w a + tnum_min w b + Z.b2z initial in
   let m := tnum_adc_uncertain w a b initial in
   Tnum (wrap w (Z.lnot (Z.lor v m))) (wrap w (Z.land v (Z.lnot m))).
+TimeFun tnum_adc.
 
 Definition tnum_add (w : width) (a b : tnum) : tnum := tnum_adc w a b false.
+TimeFun tnum_add.
 
 Definition tnum_sub (w : width) (a b : tnum) : tnum := tnum_adc w a (tnum_not w b) true.
+TimeFun tnum_sub.
 
 Definition tnum_neg (w : width) (a : tnum) : tnum := tnum_sub w (tnum_const w 0) a.
+TimeFun tnum_neg.
 
 Definition tnum_bitlen (h : Z) : Z := if h =? 0 then 0 else Z.succ (Z.log2 h).
+TimeFun tnum_bitlen.
 
 Definition tnum_upper (w : width) (h : Z) : tnum :=
   Tnum (wnot w (Z.ones (tnum_bitlen h))) 0.
+TimeFun tnum_upper.
 
 Definition tnum_udiv (w : width) (a b : tnum) : tnum :=
   if wrap w (ones b) =? 0 then tnum_top else tnum_upper w (tnum_max w a).
+TimeFun tnum_udiv.
 
 Definition tnum_urem (w : width) (a : tnum) : tnum := tnum_upper w (tnum_max w a).
+TimeFun tnum_urem.
 
 Definition tnum_linux_add (w : width) (a b : tnum) : tnum :=
   let v := tnum_min w a + tnum_min w b in
@@ -89,29 +118,37 @@ Definition tnum_linux_add (w : width) (a b : tnum) : tnum :=
   Tnum (wrap w (Z.lnot (Z.lor v m))) (wrap w (Z.land v (Z.lnot m))).
 
 Definition tnum_trailing (w : width) (a : tnum) : Z := wctz w (wnot w (zeros a)).
+TimeFun tnum_trailing.
 
 Definition tnum_mul_low (w : width) (a b : tnum) : tnum :=
   Tnum (wrap w (Z.ones (tnum_trailing w a + tnum_trailing w b))) 0.
+TimeFun tnum_mul_low.
 
 Definition tnum_mul (w : width) (a b : tnum) : tnum :=
   match tnum_constant w a, tnum_constant w b with
   | Some x, Some y => tnum_const w (wmul w x y)
   | _, _ => tnum_mul_low w a b
   end.
+TimeFun tnum_mul.
 
 Definition tnum_map (sw rw : width) (f : Z -> Z) (a : tnum) : tnum :=
   Tnum (wnot rw (f (tnum_max sw a))) (wrap rw (f (tnum_min sw a))).
+TimeFun tnum_map.
 
 Definition tnum_shl_scalar_value (w : width) (k x : Z) : Z :=
   wshl w x (Z.min k (Zpos w)).
+TimeFun tnum_shl_scalar_value.
 
 Definition tnum_shl_scalar (w : width) (k : Z) (a : tnum) : tnum :=
   tnum_map w w (tnum_shl_scalar_value w k) a.
+TimeFun tnum_shl_scalar.
 
 Definition tnum_uncertain (w : width) (m : Z) : tnum := Tnum (wnot w m) 0.
+TimeFun tnum_uncertain.
 
 Definition tnum_mul_acc_done (w : width) (b : tnum) (i : Z) : bool :=
   (Z.shiftr (tnum_min w b) i =? 0) && (Z.shiftr (tnum_mask w b) i =? 0).
+TimeFun tnum_mul_acc_done.
 
 Definition tnum_scalar_value (o : op) (w : width) (k x : Z) : Z :=
   match o with
@@ -122,24 +159,30 @@ Definition tnum_scalar_value (o : op) (w : width) (k x : Z) : Z :=
   | bvrotr => wrotl w x ((-k) mod Zpos w)
   | _ => wrap w x
   end.
+TimeFun tnum_scalar_value.
 
 Definition tnum_scalar (o : op) (w : width) (k : Z) (a : tnum) : tnum :=
   tnum_map w w (tnum_scalar_value o w k) a.
+TimeFun tnum_scalar.
 
 Definition tnum_concat (w v : width) (a b : tnum) : tnum :=
   Tnum (wrap (w + v)%positive (wrap w (zeros a) * modulus v + wrap v (zeros b)))
     (wrap (w + v)%positive (wrap w (ones a) * modulus v + wrap v (ones b))).
+TimeFun tnum_concat.
 
 Definition tnum_rotation (o : op) : bool :=
   match o with
   | bvrotl | bvrotr => true
   | _ => false
   end.
+TimeFun tnum_rotation.
 
 Definition tnum_stride (o : op) (w : width) (d : Z) : Z :=
   if tnum_rotation o then (2 * d) mod Zpos w else 2 * d.
+TimeFun tnum_stride.
 
 Definition tnum_bot (w : width) : tnum := Tnum (modulus w - 1) (modulus w - 1).
+TimeFun tnum_bot.
 
 Definition tnum_mul_stage_step (w : width) (a b : tnum) (s : Z * tnum)
     : (Z * tnum) + tnum :=
@@ -148,6 +191,7 @@ Definition tnum_mul_stage_step (w : width) (a b : tnum) (s : Z * tnum)
     if Z.testbit (zeros b) i then r
     else let sum := tnum_add w r (tnum_shl_scalar w i a) in
       if Z.testbit (ones b) i then sum else tnum_join w r sum).
+TimeFun tnum_mul_stage_step.
 
 Definition tnum_mul_stages (w : width) (a b : tnum) : tnum :=
   if tnum_empty w a || tnum_empty w b then tnum_bot w else
@@ -155,6 +199,7 @@ Definition tnum_mul_stages (w : width) (a b : tnum) : tnum :=
   | inl s => snd s
   | inr r => r
   end.
+TimeFun tnum_mul_stages.
 
 Definition tnum_mul_acc_step (w : width) (a b : tnum) (s : Z * tnum)
     : (Z * tnum) + tnum :=
@@ -165,6 +210,7 @@ Definition tnum_mul_acc_step (w : width) (a b : tnum) (s : Z * tnum)
     let m := if Z.testbit (ones b) i then tnum_mask w a
       else wor w (tnum_min w a) (tnum_mask w a) in
     tnum_add w r (tnum_shl_scalar w i (tnum_uncertain w m))).
+TimeFun tnum_mul_acc_step.
 
 Definition tnum_mul_acc (w : width) (a b : tnum) : tnum :=
   if tnum_empty w a || tnum_empty w b then tnum_bot w else
@@ -175,6 +221,7 @@ Definition tnum_mul_acc (w : width) (a b : tnum) : tnum :=
     | inr r => r
     end in
   tnum_add w value_acc mask_acc.
+TimeFun tnum_mul_acc.
 
 Definition tnum_mul_with (choice : mulchoice) (w : width) (a b : tnum) : tnum :=
   match choice with
@@ -183,6 +230,7 @@ Definition tnum_mul_with (choice : mulchoice) (w : width) (a b : tnum) : tnum :=
   | MulAcc => tnum_mul_acc w a b
   | MulBoth => tnum_meet w (tnum_mul_stages w a b) (tnum_mul_acc w a b)
   end.
+TimeFun tnum_mul_with.
 
 Fixpoint tnum_expand (o : op) (w : width) (p : positive) (d : Z) (r : tnum) : tnum :=
   match p with
@@ -191,14 +239,17 @@ Fixpoint tnum_expand (o : op) (w : width) (p : positive) (d : Z) (r : tnum) : tn
   | xI q => tnum_expand o w q (tnum_stride o w d)
       (tnum_join w r (tnum_scalar o w d r))
   end.
+TimeFun tnum_expand.
 
 Definition tnum_expand_mask (o : op) (w : width) (u : Z) (r : tnum) : tnum :=
   match u with
   | Zpos p => tnum_expand o w p 1 r
   | _ => tnum_normalise w r
   end.
+TimeFun tnum_expand_mask.
 
 Definition tnum_shift_cutoff (w : width) : Z := tnum_bitlen (Zpos w - 1).
+TimeFun tnum_shift_cutoff.
 
 Definition tnum_variable_raw (o : op) (w : width) (a b : tnum) : tnum :=
   let base := tnum_min w b in
@@ -208,10 +259,12 @@ Definition tnum_variable_raw (o : op) (w : width) (a b : tnum) : tnum :=
   let cutoff := 2 ^ tnum_shift_cutoff w in
   let low := tnum_expand_mask o w (u mod cutoff) r in
   if u <? cutoff then low else tnum_join w low (tnum_scalar o w (Zpos w) a).
+TimeFun tnum_variable_raw.
 
 Definition tnum_variable (o : op) (w : width) (a b : tnum) : tnum :=
   if tnum_empty w a || tnum_empty w b then tnum_bot w
   else tnum_variable_raw o w a b.
+TimeFun tnum_variable.
 
 (** A finite sequence records the pure counterpart of the landed charged driver. *)
 Inductive tnum_runs {S R : Type} (step : S -> S + R) : nat -> S -> S + R -> Prop :=
@@ -251,6 +304,7 @@ Definition tnum_shift (o : op) (w : width) (a : tnum) (k : Z) : tnum :=
   | Some f => tnum_map w w (fun x => eval_binary_tag f w x k) a
   | None => tnum_top
   end.
+TimeFun tnum_shift.
 
 Definition tnum_source (o : op) (w : width) (k i : Z) : option Z :=
   match o with
@@ -261,6 +315,7 @@ Definition tnum_source (o : op) (w : width) (k i : Z) : option Z :=
   | bvrotr => Some ((i + k) mod Zpos w)
   | _ => Some i
   end.
+TimeFun tnum_source.
 
 Definition tnum_order (strict : bool) (w : width) (a b : tnum) : tnum :=
   if (if strict then tnum_max w a <? tnum_min w b
@@ -268,6 +323,7 @@ Definition tnum_order (strict : bool) (w : width) (a b : tnum) : tnum :=
   else if (if strict then tnum_max w b <=? tnum_min w a
            else tnum_max w b <? tnum_min w a) then tnum_const 1%positive 0
   else tnum_top.
+TimeFun tnum_order.
 
 Definition tnum_equal (w : width) (a b : tnum) : tnum :=
   if tnum_empty w (tnum_meet w a b) then tnum_const 1%positive 0 else
@@ -275,9 +331,11 @@ Definition tnum_equal (w : width) (a b : tnum) : tnum :=
   | Some x, Some y => tnum_const 1%positive (if x =? y then 1 else 0)
   | _, _ => tnum_top
   end.
+TimeFun tnum_equal.
 
 Definition tnum_bias (w : width) (a : tnum) : tnum :=
   tnum_xor w a (tnum_const w (half w)).
+TimeFun tnum_bias.
 
 Definition tnum_compare (o : op) (w : width) (a b : tnum) : tnum :=
   match o with
@@ -289,20 +347,25 @@ Definition tnum_compare (o : op) (w : width) (a b : tnum) : tnum :=
   | bvsle => tnum_order false w (tnum_bias w a) (tnum_bias w b)
   | _ => tnum_top
   end.
+TimeFun tnum_compare.
 
 Definition tnum_count (w : width) : tnum := tnum_upper w (Zpos w).
+TimeFun tnum_count.
 
 Definition tnum_srem (w : width) (a : tnum) : tnum :=
   Tnum (wand w (zeros a) (half w)) 0.
+TimeFun tnum_srem.
 
 Definition tnum_ite (w : width) (c a b : tnum) : tnum :=
   match tnum_constant 1%positive c with
   | Some k => tnum_normalise w (if k =? 1 then a else b)
   | None => tnum_join w a b
   end.
+TimeFun tnum_ite.
 
 Definition tnum_leb (w : width) (a b : tnum) : bool :=
   tnum_subset w (zeros b) (zeros a) && tnum_subset w (ones b) (ones a).
+TimeFun tnum_leb.
 
 Definition tnum_gamma (w : width) (a : tnum) (z : Z) : Prop :=
   Z.land z (wrap w (zeros a)) = 0 /\ Z.land (wrap w (ones a)) (Z.lnot z) = 0.
@@ -380,6 +443,179 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
   Lemma multiplier_selected : forall w a b, tnum_mul w a b = tnum_mul_with C.multiplier w a b.
   Proof. Admitted. (* STUB *)
 End KnownBits.
+
+Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
+    <: KNOWN_BITS_ALL L C.
+  Include KnownBits L C.
+  TimeFun pleb.
+  TimeFun pjoin.
+  TimeFun pmeet.
+  TimeFun pbot.
+  TimeFun ptop.
+  TimeFun pis_bot.
+  TimeFun pconst.
+  TimeFun ppoint.
+  TimeFun pwiden.
+  TimeFun pnarrow.
+  TimeFun tnum_normalise.
+  TimeFun tnum_not.
+  TimeFun tnum_neg.
+  TimeFun tnum_add.
+  TimeFun tnum_sub.
+  TimeFun tnum_and.
+  TimeFun tnum_or.
+  TimeFun tnum_xor.
+  TimeFun tnum_mul_with.
+  TimeFun tnum_mul.
+  TimeFun tnum_variable.
+
+  Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + tnum_bits a + 1.
+  Definition pwsize (_ : pwparam) : nat := 0.
+
+  Definition c_payload : N := 1. (* STUB *)
+  Definition c_tnum : N := 1. (* STUB *)
+  Lemma T_ptop_le : forall w,
+    (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pbot_le : forall w,
+    (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma ptop_size : forall w,
+    (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pbot_size : forall w,
+    (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pconst_size : forall w z,
+    (N.of_nat (psize w (pconst w z)) <=
+      c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pjoin_size : forall w a b,
+    (N.of_nat (psize w (pjoin w a b)) <= c_payload *
+      N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pmeet_size : forall w a b,
+    (N.of_nat (psize w (pmeet w a b)) <= c_payload *
+      N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pwiden_size : forall q w a b,
+    (N.of_nat (psize w (pwiden q w a b)) <= c_payload *
+      N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pnarrow_size : forall w a b,
+    (N.of_nat (psize w (pnarrow w a b)) <= c_payload *
+      N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pwiden_le : forall q w a b,
+    (T_pwiden q w a b <= c_payload *
+      N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pnarrow_le : forall w a b,
+    (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pleb_le : forall w a b,
+    (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pjoin_le : forall w a b,
+    (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pmeet_le : forall w a b,
+    (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pis_bot_le : forall w a,
+    (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_ppoint_le : forall w a,
+    (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pconst_le : forall w z,
+    (T_pconst w z <= c_payload *
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_tnum_normalise_le : forall w a,
+    (T_tnum_normalise w a <= c_tnum *
+      N.of_nat ((Pos.to_nat w + tnum_bits a + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_not_le : forall w a,
+    (T_tnum_not w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_neg_le : forall w a,
+    (T_tnum_neg w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_add_le : forall w a b,
+    (T_tnum_add w a b <= c_tnum *
+      N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_sub_le : forall w a b,
+    (T_tnum_sub w a b <= c_tnum *
+      N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_and_le : forall w a b,
+    (T_tnum_and w a b <= c_tnum *
+      N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_or_le : forall w a b,
+    (T_tnum_or w a b <= c_tnum *
+      N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_xor_le : forall w a b,
+    (T_tnum_xor w a b <= c_tnum *
+      N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_mul_with_le : forall choice w a b,
+    (T_tnum_mul_with choice w a b <= c_tnum *
+      N.of_nat ((Pos.to_nat w + 1) *
+        (Pos.to_nat w + tnum_bits a + tnum_bits b + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_mul_le : forall w a b,
+    (T_tnum_mul w a b <= c_tnum * N.of_nat ((Pos.to_nat w + 1) *
+      (Pos.to_nat w + tnum_bits a + tnum_bits b + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_tnum_variable_le : forall o w a b,
+    (T_tnum_variable o w a b <= c_tnum * N.of_nat ((Pos.to_nat w + 1) *
+      (Pos.to_nat w + tnum_bits a + tnum_bits b + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma mul_bigO : bigO (fun _ => True)
+    (fun x : positive * (tnum * tnum) => N.of_nat ((Pos.to_nat (fst x) + 1) *
+      (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) + tnum_bits (snd (snd x)) + 1)))
+    (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
+  Proof. Admitted. (* STUB *)
+
+  Definition mul_step := tnum_mul_stage_step.
+  TimeFun mul_step.
+  Definition k_mul_step : N := 1. (* STUB *)
+  Lemma F1_gamma : forall w a z, pgamma w a z <-> tnum_gamma w a z.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_widen : forall q w a b,
+    pwiden q w a b = if pleb w b a then a else pjoin w a b.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_rank : forall q w a, pis_bot w a = false ->
+    (pwrank q w a = known_count w a)%nat.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_rank_bound : forall q w a, pis_bot w a = false ->
+    (pwrank q w a <= Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  Lemma F5_size : forall w a, psize w a = (Pos.to_nat w + tnum_bits a + 1)%nat.
+  Proof. Admitted. (* STUB *)
+  Lemma F6_mul_sound : forall choice w a b x y,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    pgamma w (tnum_mul_with choice w a b) (L.wrap w (x * y)).
+  Proof. Admitted. (* STUB *)
+  Lemma F7_mul_step : forall w a b x y i r,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    (0 <= i < Zpos w)%Z -> pgamma w r (L.wrap w (x * (y mod 2 ^ i))) ->
+    match mul_step w a b (i, r) with
+    | inl (j, s) => j = (i + 1)%Z /\ pgamma w s (L.wrap w (x * (y mod 2 ^ j)))
+    | inr s => pgamma w s (L.wrap w (x * y))
+    end.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_mul_step : forall w a b i r,
+    (T_mul_step w a b (i, r) <= k_mul_step *
+      N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
+        tnum_bits r + 1))%N.
+  Proof. Admitted. (* STUB *)
+End KnownBitsT.
 
 (** Closed-form addition contains every concrete modular sum. *)
 Theorem tnum_add_sound : forall w a b x y,

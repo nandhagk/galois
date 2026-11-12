@@ -5,6 +5,7 @@
     Builds on: WrappedSig, Interval and the bit-vector operations. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps Thresholds.
 Import List.ListNotations.
@@ -14,6 +15,7 @@ Module WrappedScalar := IntervalBaseCode ThresholdsCode.
 
 Definition wrapped_offset (w : width) (origin x : Z) : Z :=
   (x - origin) mod modulus w.
+TimeFun wrapped_offset.
 
 Definition wrapped_size (w : width) (a : wrapped) : Z :=
   match a with
@@ -21,6 +23,7 @@ Definition wrapped_size (w : width) (a : wrapped) : Z :=
   | WFull => modulus w
   | WItv lo hi => wrapped_offset w lo hi + 1
   end.
+TimeFun wrapped_size.
 
 Definition wrapped_gamma (w : width) (a : wrapped) (z : Z) : Prop :=
   match a with
@@ -36,6 +39,7 @@ Definition wrapped_norm (w : width) (a : wrapped) : wrapped :=
     then WFull else WItv (wrap w lo) (wrap w hi)
   | _ => a
   end.
+TimeFun wrapped_norm.
 
 Definition wrapped_leb (w : width) (a b : wrapped) : bool :=
   match a, b with
@@ -47,9 +51,11 @@ Definition wrapped_leb (w : width) (a b : wrapped) : bool :=
     (wrapped_offset w c d =? modulus w - 1) ||
     (wrapped_offset w c a + wrapped_offset w a b <=? wrapped_offset w c d)
   end.
+TimeFun wrapped_leb.
 
 Definition wrapped_cover (w : width) (a b candidate : wrapped) : bool :=
   wrapped_leb w a candidate && wrapped_leb w b candidate.
+TimeFun wrapped_cover.
 
 Definition wrapped_choose (w : width) (a b first second : wrapped) : wrapped :=
   if wrapped_cover w a b first then
@@ -57,6 +63,7 @@ Definition wrapped_choose (w : width) (a b first second : wrapped) : wrapped :=
       if wrapped_size w first <=? wrapped_size w second then first else second
     else first
   else if wrapped_cover w a b second then second else WFull.
+TimeFun wrapped_choose.
 
 Definition wrapped_join (w : width) (a b : wrapped) : wrapped :=
   wrapped_norm w
@@ -67,6 +74,7 @@ Definition wrapped_join (w : width) (a b : wrapped) : wrapped :=
        wrapped_choose w a b (WItv lo hi') (WItv lo' hi)
      | _, _ => WFull
      end).
+TimeFun wrapped_join.
 
 Definition wrapped_double (w : width) (a : wrapped) : wrapped :=
   match a with
@@ -77,20 +85,24 @@ Definition wrapped_double (w : width) (a : wrapped) : wrapped :=
     if modulus w <=? 3 * size then WFull
     else wrapped_norm w (WItv (lo - size) (hi + size))
   end.
+TimeFun wrapped_double.
 
 Definition wrapped_widen (w : width) (a b : wrapped) : wrapped :=
   if wrapped_leb w b a then wrapped_norm w a
   else wrapped_join w (wrapped_double w a) b.
+TimeFun wrapped_widen.
 
 Definition wrapped_narrow (w : width) (a b : wrapped) : wrapped :=
   match wrapped_norm w a with
   | WFull => wrapped_norm w b
   | _ => wrapped_norm w a
   end.
+TimeFun wrapped_narrow.
 
 Definition wrapped_range (w : width) (lo hi : Z) : wrapped :=
   if hi <? lo then WBot else
   if modulus w - 1 <=? hi - lo then WFull else wrapped_norm w (WItv lo hi).
+TimeFun wrapped_range.
 
 Definition wrapped_of_interval (w : width) (i : itv) : wrapped :=
   match i with
@@ -98,6 +110,7 @@ Definition wrapped_of_interval (w : width) (i : itv) : wrapped :=
   | I (Fin lo) (Fin hi) => wrapped_range w lo hi
   | _ => WFull
   end.
+TimeFun wrapped_of_interval.
 
 Definition wrapped_parts_raw (w : width) (a : wrapped) : itv * itv :=
   match a with
@@ -109,12 +122,15 @@ Definition wrapped_parts_raw (w : width) (a : wrapped) : itv * itv :=
     if lo' <=? hi' then (I (Fin lo') (Fin hi'), IBot)
     else (I (Fin lo') (Fin (modulus w - 1)), I (Fin 0) (Fin hi'))
   end.
+TimeFun wrapped_parts_raw.
 
 Definition wrapped_parts (w : width) (a : wrapped) : itv * itv :=
   wrapped_parts_raw w (wrapped_norm w a).
+TimeFun wrapped_parts.
 
 Definition wrapped_join_four (w : width) (a b c d : wrapped) : wrapped :=
   wrapped_join w (wrapped_join w a b) (wrapped_join w c d).
+TimeFun wrapped_join_four.
 
 Definition wrapped_meet (w : width) (a b : wrapped) : wrapped :=
   let pa := wrapped_parts w a in
@@ -138,15 +154,18 @@ Definition wrapped_add (w : width) (a b : wrapped) : wrapped :=
     else wrapped_norm w (WItv (lo + lo') (hi + hi'))
   | _, _ => WFull
   end.
+TimeFun wrapped_add.
 
 Definition wrapped_neg (w : width) (a : wrapped) : wrapped :=
   match a with
   | WItv lo hi => wrapped_norm w (WItv (- hi) (- lo))
   | _ => a
   end.
+TimeFun wrapped_neg.
 
 Definition wrapped_sub (w : width) (a b : wrapped) : wrapped :=
   wrapped_add w a (wrapped_neg w b).
+TimeFun wrapped_sub.
 
 Definition wrapped_mul_piece (w : width) (a b : itv) : wrapped :=
   match a, b with
@@ -157,6 +176,7 @@ Definition wrapped_mul_piece (w : width) (a b : itv) : wrapped :=
       (Z.max (Z.max (lo * lo') (lo * hi')) (Z.max (hi * lo') (hi * hi')))
   | _, _ => WFull
   end.
+TimeFun wrapped_mul_piece.
 
 Definition wrapped_shift_interval (delta : Z) (a : itv) : itv :=
   let shift := fun b =>
@@ -180,6 +200,7 @@ Definition wrapped_mul_parts (w : width) (a b : itv * itv) : wrapped :=
     (wrapped_mul_piece w (fst a) (snd b))
     (wrapped_mul_piece w (snd a) (fst b))
     (wrapped_mul_piece w (snd a) (snd b)).
+TimeFun wrapped_mul_parts.
 
 Definition wrapped_mul_cut (pole : Z) (a : itv) : itv * itv :=
   (WrappedScalar.interval_meet a (I NegInf (Fin (pole - 1))),
@@ -208,6 +229,7 @@ Definition wrapped_point w a : option Z :=
   | WItv lo hi => if Z.eqb lo hi then Some lo else None
   | _ => None
   end.
+TimeFun wrapped_point.
 
 Module WrappedIntervalOps := IntervalOpsCode ThresholdsCode WrappedScalar.
 
@@ -356,6 +378,24 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* STUB *)
 End Wrapped.
+
+Module WrappedClock (L : WORD_LANGUAGE_T).
+  Include Wrapped L.
+  TimeFun pleb.
+  TimeFun pjoin.
+  TimeFun pbot.
+  TimeFun ptop.
+  TimeFun pis_bot.
+  TimeFun pconst.
+  TimeFun ppoint.
+  TimeFun pwiden.
+  TimeFun pnarrow.
+  TimeFun wrapped_norm.
+  TimeFun wrapped_double.
+  TimeFun wrapped_neg.
+  TimeFun wrapped_add.
+  TimeFun wrapped_sub.
+End WrappedClock.
 
 Theorem wrapped_offset_range w c x : 0 <= wrapped_offset w c x < modulus w.
 Proof.
