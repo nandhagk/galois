@@ -72,3 +72,14 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks) + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
 End AlarmsT.
+
+Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)
+    (V : VALUE_DOMAIN L) (S : STATE_DOMAIN X L V) (C : CHECKS L V)
+    (CP : CHECKS_POINT L V C).
+  Include Alarms N X MN L V S C.
+
+  Lemma alarm_on_exact_error : forall inv k cs,
+    Forall2 (fun e c => CP.point (S.eval e (inv_at inv (site k))) = Some c) (args k) cs ->
+    ~ C.safe (ckind k) cs -> alarm inv k = true.
+  Proof. Admitted.
+End AlarmsPoint.
