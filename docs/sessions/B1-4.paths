@@ -24,3 +24,5 @@ tests/Domains/TransferTest.v
 tests/Domains/ValueCombineTest.v
 tests/Domains/BitsLangPortTest.v
 tests/Domains/ValueLawTest.v
+tests/Domains/ValueOpenTest.v
+tests/Domains/ValueReachLawTest.v
