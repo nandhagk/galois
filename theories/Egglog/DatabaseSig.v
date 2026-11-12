@@ -11,6 +11,14 @@ From Galois.Egglog Require Import ValueSig IndexSig Syntax Model.
 
 Import List.ListNotations.
 
+(** Layout preparation charges every unary position read by insertion sorting. *)
+Definition layout_work (sl : list (positive * list nat)) : nat :=
+  fold_right Nat.add 0 (map (fun s =>
+    (length (snd s) + 1) *
+    (fold_right Nat.add 0 (map S (snd s)) + length (snd s) + 1)) sl).
+
+TimeFun layout_work.
+
 Inductive cell_rel {V : Type} (R : positive -> positive -> Prop)
     : cell V -> cell V -> Prop :=
   | cell_rel_id i j : R i j -> cell_rel R (Id i) (Id j)
@@ -364,7 +372,7 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
     wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
   (** Initialization pays for declarations and slot permutations. *)
   Parameter T_init_le : forall ds sl,
-    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + 1) *
+    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + layout_work sl + 1) *
       N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
       c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
@@ -545,15 +553,15 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** Initialization stores the ranking of its slot list. *)
   Parameter F_init_place : forall ds sl s,
     slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
-  (** Ranking by first appearance is linear in the slots and the bits of the names. *)
+  (** Ranking pays for slot positions and the bits of function names. *)
   Parameter T_rank_slots_le : forall ds sl,
-    (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + 1) +
+    (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + layout_work sl + 1) +
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0%nat sl)%nat))%N.
   (** Initialization adds the ranking to one pass over declarations and permutations. *)
   Parameter T_init_split : forall ds sl,
     (T_init ds sl <= T_rank_slots ds sl +
-      k_layout * N.of_nat (length ds + length sl + 1) *
+      k_layout * N.of_nat (length ds + length sl + layout_work sl + 1) *
         N.of_nat ((fold_right (fun s n => length (snd s) + n) 0%nat sl + 1)%nat) +
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds)%nat))%N.
   (** One update of every slot of a declared function walks its group once. *)
