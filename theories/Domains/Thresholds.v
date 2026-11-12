@@ -95,7 +95,7 @@ Module Thresholds <: THRESHOLDS.
   Proof. Admitted. (* CONVERT: threshold_index_ordered: The variable threshold_of_list_wf was not found. *)
   (** Construction produces a logarithmic-depth tree. *)
   Lemma make_depth : forall zs, depth (make zs) <= Nat.log2 (length zs) + 1.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: threshold_depth_bound: The variable build_depth was not found. *)
   (** Upper search returns the least eligible threshold or proves none exists. *)
   Lemma above_spec : forall t z, ordered t ->
     match above t z with
