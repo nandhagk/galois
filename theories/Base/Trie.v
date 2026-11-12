@@ -497,6 +497,11 @@ Module PTrieT <: TRIE_ALL.
     ((forall a, T_f a <= c) ->
     T_filter_map f T_f m <= k_filter * (c + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Filtering charges each callback at its present binding. *)
+  Lemma T3_filter_sum : forall A B (f : A -> option B) T_f m,
+    (T_filter_map f T_f m <= k_filter * (N.of_nat (nodes m + 1) +
+      fold_right N.add 0 (List.map (fun ka => T_f (snd ka)) (elements m))))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T4_merge_with : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u c cl cr,
     ((forall a b, T_f a b <= c) ->
@@ -505,9 +510,27 @@ Module PTrieT <: TRIE_ALL.
     T_merge_with f T_f fl T_fl fr T_fr m u <=
       k_merge * (c + cl + cr + 1) * N.of_nat (nodes m + nodes u + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Merging charges the callbacks at shared and one-sided bindings. *)
+  Lemma T4_merge_with_sum : forall A B C (f : option A -> option B -> option C) T_f
+      (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u cl cr,
+    (forall a, T_fl a <= cl * (N.of_nat (nodes a + 1) + fold_right N.add 0
+       (List.map (fun ka => T_f (Some (snd ka)) None) (elements a))))%N ->
+    (forall b, T_fr b <= cr * (N.of_nat (nodes b + 1) + fold_right N.add 0
+       (List.map (fun kb => T_f None (Some (snd kb))) (elements b))))%N ->
+    (T_merge_with f T_f fl T_fl fr T_fr m u <= k_merge * (cl + cr + 1) *
+      ((T_f None None + 1) * N.of_nat (nodes m + nodes u + 1) +
+       fold_right N.add 0 (List.map (fun p => T_f (get p m) (get p u))
+         (List.map fst (elements m) ++ List.map fst (elements u)))))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T5_forall2 : forall A B (f : A -> option B -> bool) T_f m u c,
     ((forall a b, T_f a b <= c) ->
     T_forall2 f T_f m u <= k_check * (c + 1) * N.of_nat (nodes m + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Directional checking charges each visited binding against its lookup result. *)
+  Lemma T5_forall2_sum : forall A B (f : A -> option B -> bool) T_f m u,
+    (T_forall2 f T_f m u <= k_check * (N.of_nat (nodes m + 1) +
+      fold_right N.add 0
+        (List.map (fun ka => T_f (snd ka) (get (fst ka) u)) (elements m))))%N.
   Proof. Admitted. (* STUB *)
   Lemma T6_fold_path : forall A B (f : B -> positive -> A -> B) T_f path T_path m b c d,
     ((forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
