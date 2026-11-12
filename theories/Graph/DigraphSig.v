@@ -59,14 +59,15 @@ End DIGRAPH_LAWS.
 Module Type DIGRAPH := DIGRAPH_OPS <+ DIGRAPH_LAWS.
 
 Module Type DIGRAPH_TIME (Import D : DIGRAPH).
-  Parameter T_prepare : digraph -> nat.
-  Parameter c_prepare : nat.
+  Parameter T_prepare : digraph -> N.
+  Parameter c_prepare : N.
   (** Preparation charges source vertices, edge occurrences and their key widths. *)
   Parameter T_prepare_le : forall g,
-    T_prepare g <= c_prepare * (graph_n g + graph_e g + 1) * (graph_width g + 1).
+    (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
+      N.of_nat (graph_width g + 1))%N.
   (** Preparation has the published linear bit-cost bound. *)
   Parameter prepare_bigO : bigO (fun _ => True)
-    (fun g => (graph_n g + graph_e g + 1) * (graph_width g + 1)) T_prepare.
+    (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
 End DIGRAPH_TIME.
 
 Module Type DIGRAPH_T := DIGRAPH <+ DIGRAPH_TIME.
