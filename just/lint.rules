@@ -4,3 +4,5 @@
 theories :: Class Instance Instances Canonical :: Typeclasses and canonical structures are not used. Write a module type and a functor.
 theories :: Print Check Compute About Locate Search SearchPattern SearchRewrite SearchHead Show :: Query commands do not belong in theories.
 theories tests examples :: admit give_up Abort :: These leave a proof unfinished.
+# Sentence-level R13 checks run in just/r13.awk: module types in Include, Declare Module,
+# data in functors, module ascription, _TIME parameters and unqualified Require.

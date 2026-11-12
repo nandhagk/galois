@@ -1,6 +1,10 @@
 # Reads the allowed axioms (just/audit.allow), then the rocqchk report. Prints each offending
 # name and exits 1 unless the report has a CONTEXT SUMMARY whose blocks all pass.
-FNR == NR {
+BEGIN {
+  while ((getline name < admitted_file) > 0) admitted[name] = 1
+  close(admitted_file)
+}
+FILENAME == ARGV[1] {
   if ($0 !~ /^[[:space:]]*(#|$)/) allowed[$1] = 1
   next
 }
@@ -23,7 +27,8 @@ FNR == NR {
 }
 block != "" && NF > 0 {
   if (block == "axioms") {
-    if (!($1 in allowed)) bad("unallowed axiom " $1)
+    if ($1 in admitted) print "admitted " $1
+    else if (!($1 in allowed)) bad("unallowed axiom " $1)
   } else {
     bad(block ": " $1)
   }

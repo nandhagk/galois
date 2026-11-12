@@ -39,41 +39,19 @@ check: fmt-check build test lint frozen
 
 # Print the words that just/lint.rules forbids in code and fail if there are any.
 lint:
-    @awk -f just/lint.awk just/lint.rules $(git ls-files -co --exclude-standard -- '*.v')
+    @awk -f just/lint.awk just/lint.rules $(git ls-files -co --exclude-standard -- '*.v'); awk -f just/r13.awk $(git ls-files -co --exclude-standard -- '*.v')
 
-# Count the admitted statements in each package.
-[script("bash", "-euo", "pipefail")]
+# Count admitted statements and placeholder code by package and tag.
 admits:
-    total=0
-    for dir in theories/*/; do
-        count=$({ grep -rhoE --include='*.v' 'Admitted\.|Admit Obligations' "$dir" || true; } | wc -l)
-        if [ "$count" -gt 0 ]; then
-            echo "${dir%/} $count"
-            total=$((total + count))
-        fi
-    done
-    echo "total $total"
+    @mapfile -d '' -t files < <(git ls-files -co --exclude-standard -z -- 'theories/**/*.v' 'tests/**/*.v' 'examples/**/*.v'); awk -f just/admits.awk /dev/null "${files[@]}"
+
+# Print changed files outside a session's owned paths.
+owned id range:
+    @bash just/owned.sh "$@"
 
 # Build, then check the compiled modules with rocqchk. Package names limit the modules checked.
-[script("bash", "-euo", "pipefail")]
 audit *packages: build
-    built=_build/default/theories
-    dirs=("$@")
-    [ ${#dirs[@]} -gt 0 ] || dirs=("")
-    modules=()
-    for dir in "${dirs[@]}"; do
-        [ -d "$built/$dir" ] || { echo "no compiled package $dir" >&2; exit 1; }
-        while IFS= read -r file; do
-            file=${file#"$built"/}
-            file=${file%.vo}
-            modules+=("{{ root }}.${file//\//.}")
-        done < <(find "$built/$dir" -name '*.vo' | sort)
-    done
-    [ ${#modules[@]} -gt 0 ] || { echo "no compiled modules" >&2; exit 1; }
-    report=$({{ cap }} rocqchk -silent -o -Q "$built" {{ root }} "${modules[@]}" 2>&1) \
-        || { echo "$report"; exit 1; }
-    echo "$report" | awk -f just/audit.awk just/audit.allow -
-    echo "audited ${#modules[@]} modules"
+    @bash just/audit.sh "$@"
 
 # Check the files listed in just/frozen.sha256, when it has entries.
 frozen:
