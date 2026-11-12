@@ -357,6 +357,11 @@ Module DomT <: DOM_ALL.
   Lemma F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
   Proof. Admitted. (* STUB *)
 
+  (** An accepted order holds listed vertices only. *)
+  Lemma F2b_check_listed : forall g r m o, check g r m o = true ->
+    forall v, In v o -> In v (verts (base g)).
+  Proof. Admitted. (* STUB *)
+
   Lemma F3_anc_before : forall g r m o u v, dom_cert g r m o ->
   tree_anc m u v -> u <> v -> order_before o u v.
   Proof. Admitted. (* STUB *)
