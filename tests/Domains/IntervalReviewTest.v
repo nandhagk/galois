@@ -10,7 +10,8 @@ From Galois.Domains Require Import ValueSig IntervalSig Interval IntervalOps Thr
 Import List.ListNotations.
 
 Module Scalar := Interval ZLang Thresholds.
-Module WordIntervals := IntervalOpsCode ThresholdsCode.
+Module ScalarCode := IntervalBaseCode ThresholdsCode.
+Module WordIntervals := IntervalOpsCode ThresholdsCode ScalarCode.
 
 (** A lower endpoint at positive infinity has room to decrease to a threshold. *)
 Example wrong_side_infinity_rank :
