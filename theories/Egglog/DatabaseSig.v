@@ -130,6 +130,8 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
   (** Identifier equality is equality of representatives. *)
   Parameter same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
+  (** Every representative represents itself. *)
+  Parameter repr_idem : forall db i, wf db -> repr db (repr db i) = repr db i.
   (** Initialization creates a well-formed database. *)
   Parameter wf_init : forall ds sl, wf (init ds sl).
   (** Kind-correct insertion keeps the database well formed. *)
@@ -248,6 +250,10 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
     ids (rebuild db) = ids db.
   (** Advancing keeps the slot layout. *)
   Parameter layout_advance : forall db, slots (advance db) = slots db.
+  (** Advancing keeps allocation, pending work and representatives. *)
+  Parameter advance_keeps : forall db, wf db ->
+    ids (advance db) = ids db /\ pending (advance db) = pending db /\
+    repr (advance db) = repr db.
   (** A quiet union already holds in the old view. *)
   Parameter union_quiet : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = false -> same (view db) i j.
@@ -258,6 +264,26 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
   (** Every row identifier is allocated. *)
   Parameter row_allocated : forall db f k o i, wf db -> row (view db) f k o ->
     In (Id i) (k ++ option_list o) -> allocated db i.
+
+  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
+  Parameter rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
+  (** Inserting a true, kind-correct row keeps the model. *)
+  Parameter put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
+    sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
+    sat V.merge M nu (view (put f k o db)).
+  (** A justified identifier union keeps the model. *)
+  Parameter union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
+    sat V.merge M nu (view db) -> nu i = nu j ->
+    sat V.merge M nu (view (union i j db)).
+  (** Make updates its output meaning and keeps every other identifier meaning. *)
+  Parameter make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
+    kind (view db) f = Some OId ->
+    (forall j, In (Id j) k -> allocated db j) ->
+    sat V.merge M nu (view db) ->
+    let '(i, db') := make f k db in
+    exists nu', (forall j, j <> i -> nu' j = nu j) /\
+      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
 
 End DATABASE_LAWS.
 
@@ -333,6 +359,9 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   Parameter unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
   (** Rebuilding never reduces the spending unit. *)
   Parameter unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
+  (** Advancing keeps the watermark and the amortized credit. *)
+  Parameter advance_credit : forall B db, wf db ->
+    wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
   (** Initialization pays for declarations and slot permutations. *)
   Parameter T_init_le : forall ds sl,
     (T_init ds sl <= c_db * N.of_nat (length ds + length sl + 1) *
@@ -443,6 +472,138 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Parameter T_rstep : repair_state -> N.
   Parameter T_rebuild_fuel : t -> N.
 
+  Parameter k_locate k_repair k_pop k_rstep k_slots k_layout : N.
+
+  (* spec: row_id row_parent row_size row_current next_row *)
+  Parameter row_id : t -> positive -> list (cell V.t) -> option positive.
+  Parameter row_parent : t -> positive -> positive.
+  Parameter row_size : t -> positive -> N.
+  Parameter row_current : t -> positive -> option (list (cell V.t)).
+  Parameter next_row : t -> positive.
+  Parameter locate : positive -> list (cell V.t) -> t -> option (list (cell V.t)).
+  Parameter T_locate : positive -> list (cell V.t) -> t -> N.
+  (** Following the merge parent of a row identifier [n] times. *)
+  Definition row_up (db : t) (n : nat) (r : positive) : positive :=
+    Nat.iter n (row_parent db) r.
+  (** A historical key resolves through a merge chain of logarithmic depth. *)
+  Parameter F_row_locate : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+    exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+      row_parent db (row_up db d r) = row_up db d r /\
+      located db f k = row_current db (row_up db d r).
+  (** A key without a row identifier has no current row. *)
+  Parameter F_row_absent : forall db work f k, inv_on db work -> row_id db f k = None ->
+    located db f k = None.
+  (** The executable resolution agrees with the observation. *)
+  Parameter F_locate : forall db work f k, inv_on db work -> locate f k db = located db f k.
+  (** Merged row groups at least double the losing group. *)
+  Parameter F_row_by_size : forall db work r, inv_on db work -> row_parent db r <> r ->
+    (1 <= row_size db r)%N /\ (2 * row_size db r <= row_size db (row_parent db r))%N.
+  (** A row group holds at most one row per assignment of its identifier positions. *)
+  Parameter F_row_group : forall db work f k r d, inv_on db work -> row_id db f k = Some r ->
+    row_parent db (row_up db d r) = row_up db d r ->
+    (row_size db (row_up db d r) <= (ids db + 1) ^ N.of_nat (length k))%N.
+  (** Row identifiers stay below a counter that the watermark covers. *)
+  Parameter F_row_counter : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+    (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
+    In (next_row db) (index_counters db).
+  (** The keys of use entries are written cells. *)
+  Parameter F_entry_cells : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
+    In c k -> In c (written_cells db).
+  (** Resolution reads the key once and follows the chain at the stored width. *)
+  Parameter T_locate_le : forall db work x f k, inv_on db work -> uses db x (f, k) ->
+    (T_locate f k db <= k_locate * N.of_nat (length k + 1) * N.of_nat (unit db))%N.
+  (** A repair, with its resolution, rekeying, slot updates and collision, pays its entry weight. *)
+  Parameter T_repair_entry_le : forall db e rest, inv_on db (e :: rest) ->
+    (T_repair_entry e db <= k_repair * N.of_nat (entry_weight db e) *
+      N.of_nat (unit (repair_entry e db)))%N.
+
+  (* spec: slot_place group_of group_slots proj_count *)
+  Parameter slot_place : t -> N -> option (bool * N * N).
+  Parameter group_of : t -> positive -> option N.
+  Parameter group_slots : t -> bool -> N -> list N.
+  Parameter rank_slots : list decl -> list (positive * list nat) -> list (bool * N * N).
+  Parameter T_rank_slots : list decl -> list (positive * list nat) -> N.
+  Parameter slots_update : bool -> positive -> list (cell V.t) -> t -> t.
+  Parameter T_slots_update : bool -> positive -> list (cell V.t) -> t -> N.
+  (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
+  Parameter F_slot_place : forall db work s f perm, inv_on db work ->
+    slot_of db s = Some (f, perm) ->
+    exists d g j, slot_place db s = Some (d, g, j) /\ (g <= s)%N /\ (j <= s)%N /\
+      nth_error (group_slots db d g) (N.to_nat j) = Some s /\
+      (d = true <-> kind (view db) f <> None) /\
+      (d = true -> group_of db f = Some g /\ (g < wmark db)%N).
+  (** A declared group lists precisely the slots of its function, once each. *)
+  Parameter F_group_slots : forall db work f g, inv_on db work -> group_of db f = Some g ->
+    NoDup (group_slots db true g) /\
+    forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm).
+  (** Initialization stores the ranking of its slot list. *)
+  Parameter F_init_place : forall ds sl s,
+    slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
+  (** Ranking by first appearance is linear in the slots and the bits of the names. *)
+  Parameter T_rank_slots_le : forall ds sl,
+    (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + 1) +
+      k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0%nat sl)%nat))%N.
+  (** Initialization adds the ranking to one pass over declarations and permutations. *)
+  Parameter T_init_split : forall ds sl,
+    (T_init ds sl <= T_rank_slots ds sl +
+      k_layout * N.of_nat (length ds + length sl + 1) *
+        N.of_nat ((fold_right (fun s n => length (snd s) + n) 0%nat sl + 1)%nat) +
+      k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds)%nat))%N.
+  (** One update of every slot of a declared function walks its group once. *)
+  Parameter T_slots_update_le : forall db work b f u, inv_on db work ->
+    kind (view db) f <> None -> slots_fit db f (length u) ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    (T_slots_update b f u db <= k_slots * N.of_nat (slots_of db f + 1) *
+      N.of_nat ((length u + 1) * (length u + 1)) *
+      N.of_nat (unit (slots_update b f u db)))%N.
+
+  (** A union finds both roots and links only distinct ones. *)
+  Parameter F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
+    let '(ri, u1) := UnionFind.find i (uf_state db) in
+    let '(rj, u2) := UnionFind.find j u1 in
+    uf_state (union i j db) =
+      if Pos.eqb ri rj then u2 else snd (UnionFind.union ri rj u2).
+  (** Membership and key width stay within allocation. *)
+  Parameter F_uf_card : forall db work, inv_on db work ->
+    UnionFind.card (uf_state db) <= 3 * N.to_nat (ids db) /\
+    UnionFind.width (uf_state db) <= N.size_nat (ids db).
+
+  Parameter proj_count : t -> N -> list (cell V.t) -> N.
+  (** The count of a projected tuple is the number of rows that project onto it. *)
+  Parameter F_proj_count : forall db work s f perm u, inv_on db work ->
+    slot_of db s = Some (f, perm) ->
+    exists rs, NoDup rs /\
+      (forall r, In r rs <-> In r (rows db) /\ fst (fst r) = f /\
+        permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
+      N.to_nat (proj_count db s u) = length rs.
+
+  (** The counter of the empty index is recorded. *)
+  Parameter F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
+
+  (** A driver step costs its repair, or its pop and bucket read, plus a constant. *)
+  Parameter T_rstep_split : forall db work,
+    (T_rstep (db, work) <= k_rstep +
+      match work with
+      | e :: _ => T_repair_entry e db
+      | [] => T_pop_loser db +
+          match pop_loser db with
+          | Some (x, _) => T_get_uses x db
+          | None => 0
+          end
+      end)%N.
+  (** A pop moves the selected bucket at one step per entry. *)
+  Parameter T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
+    (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
+      N.of_nat (unit db))%N.
+  (** An empty pop reads the stored queue. *)
+  Parameter T_pop_none_le : forall db, inv db -> pop_loser db = None ->
+    (T_pop_loser db <= k_pop * N.of_nat (unit db))%N.
+  (** A bucket is read by one keyed lookup. *)
+  Parameter T_get_uses_le : forall db work x, inv_on db work -> allocated db x ->
+    (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
+
+
   (** Public well-formedness is the maintained invariant at an empty active batch. *)
   Parameter F1_inv_wf : forall db, wf db <-> inv db.
   (** The public potential is the weighted occurrence credit. *)
@@ -550,25 +711,6 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
       Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
         map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
 
-  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
-  Parameter rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
-    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
-  (** Inserting a true, kind-correct row keeps the model. *)
-  Parameter put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
-    sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
-    sat V.merge M nu (view (put f k o db)).
-  (** A justified identifier union keeps the model. *)
-  Parameter union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
-    sat V.merge M nu (view db) -> nu i = nu j ->
-    sat V.merge M nu (view (union i j db)).
-  (** Make updates its output meaning and keeps every other identifier meaning. *)
-  Parameter make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
-    kind (view db) f = Some OId ->
-    (forall j, In (Id j) k -> allocated db j) ->
-    sat V.merge M nu (view db) ->
-    let '(i, db') := make f k db in
-    exists nu', (forall j, j <> i -> nu' j = nu j) /\
-      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
 
   (** A losing root enters a class at least twice as large. *)
   Parameter T1_doubling : forall db i j x, inv db -> repr db x = x ->

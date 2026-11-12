@@ -82,6 +82,15 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition changed (_ : t) := false.
   (* STUB-CODE *)
   Definition ids (db : t) : N := count (db_forest db).
+  (* STUB-CODE *)
+  Definition locate (_ : positive) (_ : list (cell V.t)) (_ : t)
+      : option (list (cell V.t)) := None.
+  (* STUB-CODE *)
+  Definition rank_slots (_ : list decl) (_ : list (positive * list nat))
+      : list (bool * N * N) := [].
+  (* STUB-CODE *)
+  Definition slots_update (_ : bool) (_ : positive) (_ : list (cell V.t)) (db : t) : t := db.
+
 End DatabaseCode.
 
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
@@ -167,6 +176,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
+  Proof. Admitted.
+  (** Every representative represents itself. *)
+  Lemma repr_idem : forall db i, wf db -> repr db (repr db i) = repr db i.
   Proof. Admitted.
 
   (** Initialization creates a well-formed database. *)
@@ -348,6 +360,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Advancing keeps the slot layout. *)
   Lemma layout_advance : forall db, slots (advance db) = slots db.
   Proof. Admitted.
+  (** Advancing keeps allocation, pending work and representatives. *)
+  Lemma advance_keeps : forall db, wf db ->
+    ids (advance db) = ids db /\ pending (advance db) = pending db /\
+    repr (advance db) = repr db.
+  Proof. Admitted.
 
   (** A quiet union already holds in the old view. *)
   Lemma union_quiet : forall i j db, wf db -> changed db = false ->
@@ -363,6 +380,33 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Every row identifier is allocated. *)
   Lemma row_allocated : forall db f k o i, wf db -> row (view db) f k o ->
     In (Id i) (k ++ option_list o) -> allocated db i.
+  Proof. Admitted.
+
+  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
+  Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
+  Proof. Admitted.
+
+  (** Inserting a true, kind-correct row keeps the model. *)
+  Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
+    sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
+    sat V.merge M nu (view (put f k o db)).
+  Proof. Admitted.
+
+  (** A justified identifier union keeps the model. *)
+  Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
+    sat V.merge M nu (view db) -> nu i = nu j ->
+    sat V.merge M nu (view (union i j db)).
+  Proof. Admitted.
+
+  (** Make updates its output meaning and keeps every other identifier meaning. *)
+  Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
+    kind (view db) f = Some OId ->
+    (forall j, In (Id j) k -> allocated db j) ->
+    sat V.merge M nu (view db) ->
+    let '(i, db') := make f k db in
+    exists nu', (forall j, j <> i -> nu' j = nu j) /\
+      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
   Proof. Admitted.
 
 End Database.
@@ -467,6 +511,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Rebuilding never reduces the spending unit. *)
   Lemma unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
+  Proof. Admitted. (* STUB *)
+  (** Advancing keeps the watermark and the amortized credit. *)
+  Lemma advance_credit : forall B db, wf db ->
+    wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
   Proof. Admitted. (* STUB *)
 
   (** Initialization pays for declarations and slot permutations. *)
@@ -607,6 +655,172 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition rebuild_fuel (db : t) : N := db_rebuild_fuel db.
   TimeFun rebuild_fuel.
+
+  TimeFun locate.
+  TimeFun rank_slots.
+  TimeFun slots_update.
+  Definition k_locate : N := 1. (* STUB *)
+  Definition k_repair : N := 1. (* STUB *)
+  Definition k_pop : N := 1. (* STUB *)
+  Definition k_rstep : N := 1. (* STUB *)
+  Definition k_slots : N := 1. (* STUB *)
+  Definition k_layout : N := 1. (* STUB *)
+
+  (* spec: row_id row_parent row_size row_current next_row *)
+  (* STUB-CODE *)
+  Definition row_id (_ : t) (_ : positive) (_ : list (cell V.t)) : option positive := None.
+  (* STUB-CODE *)
+  Definition row_parent (_ : t) (r : positive) : positive := r.
+  (* STUB-CODE *)
+  Definition row_size (_ : t) (_ : positive) : N := 1%N.
+  (* STUB-CODE *)
+  Definition row_current (_ : t) (_ : positive) : option (list (cell V.t)) := None.
+  (* STUB-CODE *)
+  Definition next_row (_ : t) : positive := 1%positive.
+  (** Following the merge parent of a row identifier [n] times. *)
+  Definition row_up (db : t) (n : nat) (r : positive) : positive :=
+    Nat.iter n (row_parent db) r.
+  (** A historical key resolves through a merge chain of logarithmic depth. *)
+  Lemma F_row_locate : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+    exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+      row_parent db (row_up db d r) = row_up db d r /\
+      located db f k = row_current db (row_up db d r).
+  Proof. Admitted. (* STUB *)
+  (** A key without a row identifier has no current row. *)
+  Lemma F_row_absent : forall db work f k, inv_on db work -> row_id db f k = None ->
+    located db f k = None.
+  Proof. Admitted. (* STUB *)
+  (** The executable resolution agrees with the observation. *)
+  Lemma F_locate : forall db work f k, inv_on db work -> locate f k db = located db f k.
+  Proof. Admitted. (* STUB *)
+  (** Merged row groups at least double the losing group. *)
+  Lemma F_row_by_size : forall db work r, inv_on db work -> row_parent db r <> r ->
+    (1 <= row_size db r)%N /\ (2 * row_size db r <= row_size db (row_parent db r))%N.
+  Proof. Admitted. (* STUB *)
+  (** A row group holds at most one row per assignment of its identifier positions. *)
+  Lemma F_row_group : forall db work f k r d, inv_on db work -> row_id db f k = Some r ->
+    row_parent db (row_up db d r) = row_up db d r ->
+    (row_size db (row_up db d r) <= (ids db + 1) ^ N.of_nat (length k))%N.
+  Proof. Admitted. (* STUB *)
+  (** Row identifiers stay below a counter that the watermark covers. *)
+  Lemma F_row_counter : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
+    (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
+    In (next_row db) (index_counters db).
+  Proof. Admitted. (* STUB *)
+  (** The keys of use entries are written cells. *)
+  Lemma F_entry_cells : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
+    In c k -> In c (written_cells db).
+  Proof. Admitted. (* STUB *)
+  (** Resolution reads the key once and follows the chain at the stored width. *)
+  Lemma T_locate_le : forall db work x f k, inv_on db work -> uses db x (f, k) ->
+    (T_locate f k db <= k_locate * N.of_nat (length k + 1) * N.of_nat (unit db))%N.
+  Proof. Admitted. (* STUB *)
+  (** A repair, with its resolution, rekeying, slot updates and collision, pays its entry weight. *)
+  Lemma T_repair_entry_le : forall db e rest, inv_on db (e :: rest) ->
+    (T_repair_entry e db <= k_repair * N.of_nat (entry_weight db e) *
+      N.of_nat (unit (repair_entry e db)))%N.
+  Proof. Admitted. (* STUB *)
+
+  (* spec: slot_place group_of group_slots proj_count *)
+  (* STUB-CODE *)
+  Definition slot_place (_ : t) (_ : N) : option (bool * N * N) := None.
+  (* STUB-CODE *)
+  Definition group_of (_ : t) (_ : positive) : option N := None.
+  (* STUB-CODE *)
+  Definition group_slots (_ : t) (_ : bool) (_ : N) : list N := [].
+  (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
+  Lemma F_slot_place : forall db work s f perm, inv_on db work ->
+    slot_of db s = Some (f, perm) ->
+    exists d g j, slot_place db s = Some (d, g, j) /\ (g <= s)%N /\ (j <= s)%N /\
+      nth_error (group_slots db d g) (N.to_nat j) = Some s /\
+      (d = true <-> kind (view db) f <> None) /\
+      (d = true -> group_of db f = Some g /\ (g < wmark db)%N).
+  Proof. Admitted. (* STUB *)
+  (** A declared group lists precisely the slots of its function, once each. *)
+  Lemma F_group_slots : forall db work f g, inv_on db work -> group_of db f = Some g ->
+    NoDup (group_slots db true g) /\
+    forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm).
+  Proof. Admitted. (* STUB *)
+  (** Initialization stores the ranking of its slot list. *)
+  Lemma F_init_place : forall ds sl s,
+    slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
+  Proof. Admitted. (* STUB *)
+  (** Ranking by first appearance is linear in the slots and the bits of the names. *)
+  Lemma T_rank_slots_le : forall ds sl,
+    (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + 1) +
+      k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0%nat sl)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** Initialization adds the ranking to one pass over declarations and permutations. *)
+  Lemma T_init_split : forall ds sl,
+    (T_init ds sl <= T_rank_slots ds sl +
+      k_layout * N.of_nat (length ds + length sl + 1) *
+        N.of_nat ((fold_right (fun s n => length (snd s) + n) 0%nat sl + 1)%nat) +
+      k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** One update of every slot of a declared function walks its group once. *)
+  Lemma T_slots_update_le : forall db work b f u, inv_on db work ->
+    kind (view db) f <> None -> slots_fit db f (length u) ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    (T_slots_update b f u db <= k_slots * N.of_nat (slots_of db f + 1) *
+      N.of_nat ((length u + 1) * (length u + 1)) *
+      N.of_nat (unit (slots_update b f u db)))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** A union finds both roots and links only distinct ones. *)
+  Lemma F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
+    let '(ri, u1) := UnionFind.find i (uf_state db) in
+    let '(rj, u2) := UnionFind.find j u1 in
+    uf_state (union i j db) =
+      if Pos.eqb ri rj then u2 else snd (UnionFind.union ri rj u2).
+  Proof. Admitted. (* STUB *)
+  (** Membership and key width stay within allocation. *)
+  Lemma F_uf_card : forall db work, inv_on db work ->
+    UnionFind.card (uf_state db) <= 3 * N.to_nat (ids db) /\
+    UnionFind.width (uf_state db) <= N.size_nat (ids db).
+  Proof. Admitted. (* STUB *)
+
+  (* STUB-CODE *)
+  Definition proj_count (_ : t) (_ : N) (_ : list (cell V.t)) : N := 0%N.
+  (** The count of a projected tuple is the number of rows that project onto it. *)
+  Lemma F_proj_count : forall db work s f perm u, inv_on db work ->
+    slot_of db s = Some (f, perm) ->
+    exists rs, NoDup rs /\
+      (forall r, In r rs <-> In r (rows db) /\ fst (fst r) = f /\
+        permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
+      N.to_nat (proj_count db s u) = length rs.
+  Proof. Admitted. (* STUB *)
+
+  (** The counter of the empty index is recorded. *)
+  Lemma F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
+  Proof. Admitted. (* STUB *)
+
+  (** A driver step costs its repair, or its pop and bucket read, plus a constant. *)
+  Lemma T_rstep_split : forall db work,
+    (T_rstep (db, work) <= k_rstep +
+      match work with
+      | e :: _ => T_repair_entry e db
+      | [] => T_pop_loser db +
+          match pop_loser db with
+          | Some (x, _) => T_get_uses x db
+          | None => 0
+          end
+      end)%N.
+  Proof. Admitted. (* STUB *)
+  (** A pop moves the selected bucket at one step per entry. *)
+  Lemma T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
+    (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
+      N.of_nat (unit db))%N.
+  Proof. Admitted. (* STUB *)
+  (** An empty pop reads the stored queue. *)
+  Lemma T_pop_none_le : forall db, inv db -> pop_loser db = None ->
+    (T_pop_loser db <= k_pop * N.of_nat (unit db))%N.
+  Proof. Admitted. (* STUB *)
+  (** A bucket is read by one keyed lookup. *)
+  Lemma T_get_uses_le : forall db work x, inv_on db work -> allocated db x ->
+    (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
+  Proof. Admitted. (* STUB *)
+
   (* STUB-CODE *)
   Definition rebuild_measure : repair_state -> nat := fun _ => 0.
 
@@ -765,32 +979,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
   Proof. Admitted. (* STUB *)
 
-  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
-  Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
-    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
-  Proof. Admitted. (* STUB *)
-
-  (** Inserting a true, kind-correct row keeps the model. *)
-  Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
-    sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
-    sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted. (* STUB *)
-
-  (** A justified identifier union keeps the model. *)
-  Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
-    sat V.merge M nu (view db) -> nu i = nu j ->
-    sat V.merge M nu (view (union i j db)).
-  Proof. Admitted. (* STUB *)
-
-  (** Make updates its output meaning and keeps every other identifier meaning. *)
-  Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
-    kind (view db) f = Some OId ->
-    (forall j, In (Id j) k -> allocated db j) ->
-    sat V.merge M nu (view db) ->
-    let '(i, db') := make f k db in
-    exists nu', (forall j, j <> i -> nu' j = nu j) /\
-      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted. (* STUB *)
 
   (** A losing root enters a class at least twice as large. *)
   Lemma T1_doubling : forall db i j x, inv db -> repr db x = x ->

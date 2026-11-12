@@ -145,11 +145,11 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma T_next_le : forall ix, (T_next ix <= c_ix)%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_insert_le : forall r ix,
+  Lemma T_insert_le : forall a r ix, wf a ix ->
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_remove_le : forall r ix,
+  Lemma T_remove_le : forall a r ix, wf a ix ->
     (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
@@ -157,7 +157,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_children_le : forall ix n,
+  Lemma T_children_le : forall a ix n, wf a ix ->
     (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
       N.of_nat (width ix [] + 1))%N.
   Proof. Admitted. (* STUB *)
