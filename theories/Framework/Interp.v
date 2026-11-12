@@ -4,7 +4,7 @@ From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
 From Galois.Fixpoint Require Import Query SystemSig.
-From Galois.Program Require Import CfgSig.
+From Galois.Program Require Import SemanticsSig CfgSig.
 From Galois.Framework Require Import DenseSig InterpSig.
 Import List.ListNotations.
 
@@ -81,3 +81,13 @@ Module Interp (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
       end) (A.actions p e) (look (C.src p e)), nil).
   Proof. reflexivity. Qed.
 End Interp.
+
+Module InterpSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
+    (X : KEY) (L : LANG) (V : VALUE_DOMAIN L) (A : ACTIONS_OPS P E X L)
+    (D : STATE_DOMAIN X L V) (S : INTERP_SYSTEM P N E C X L V A D)
+    (M : SEMANTICS P) (K : INTERP_LINK P N E C X L A M)
+    <: INTERP_SOUND P N E C X L V A D S M K.
+  Lemma covers : forall p look, S.post_solution p look ->
+    forall s, reachable (M.initial p) (M.step p) s -> D.gamma (look (K.point s)) (K.store s).
+  Proof. Admitted. (* CONVERT: sound: landed action and reachability interfaces differ *)
+End InterpSound.
