@@ -151,3 +151,18 @@ Example repeated_tree_checked :
   DomCode.check (DigraphCode.prepare (graph_fixture [1; 2]%positive
     [(1, 2); (1, 2)]%positive)) 1%positive (parents [(2, 1)]%positive) [1; 2]%positive = true.
 Proof. vm_compute; reflexivity. Qed.
+
+Example equal_operand_strictly_smaller :
+  (V.leb (FVal (32%positive, 2%Z)) FTop,
+   V.leb FTop (FVal (32%positive, 2%Z))) = (true, false).
+Proof. vm_compute; reflexivity. Qed.
+
+Example sparse_numeric_run_finishes :
+  match A.analyze 0 flat_policy 16%N with Solved _ => true | _ => false end = true.
+Proof. vm_compute; reflexivity. Qed.
+
+Example sparse_numeric_checker_accepts : C.check 0 candidate = true.
+Proof. vm_compute; reflexivity. Qed.
+
+Example sparse_numeric_constant_propagation : observe 0 16%N [1] = Some [Some (number 2)].
+Proof. vm_compute; reflexivity. Qed.
