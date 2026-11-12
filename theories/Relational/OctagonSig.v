@@ -20,7 +20,7 @@ Module Type OCTAGON_OPS (X : KEY_OPS)
   Definition dbm := M.t (M.t Z).
   Include NUM_STATE_OPS X L F with Definition t := reach dbm.
   Parameter entry : dbm -> K.t -> K.t -> option Z.
-  Parameter fw strengthen tighten close : dbm -> dbm.
+  Parameter fw strengthen tighten : dbm -> dbm.
   Parameter tclose : dbm -> t.
   Parameter add_cons : K.t -> K.t -> Z -> dbm -> dbm.
   Parameter incr_close : K.t -> K.t -> Z -> dbm -> t.
@@ -69,18 +69,22 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
   Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
   Parameter T_entry : dbm -> K.t -> K.t -> N.
-  Parameter T_fw T_strengthen T_tighten T_close T_tclose : dbm -> N.
+  Parameter T_fw T_strengthen T_tighten T_tclose : dbm -> N.
   Parameter T_add_cons : K.t -> K.t -> Z -> dbm -> N.
   Parameter T_incr_close : K.t -> K.t -> Z -> dbm -> N.
   Parameter c_octagon : N.
+  (** Inserting a constraint charges both key traversals and the bound. *)
+  Parameter T_add_cons_le : forall i j d m,
+    (T_add_cons i j d m <= c_octagon * N.of_nat
+      (K.bits i + K.bits j + Z.size_nat d + 1))%N.
   Definition binary_work (a z : t) : nat :=
-    (ns a + ns z)^2 * (bs a + bs z + ells a + ells z + 1).
+    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1).
   (** Tight closure charges cubic updates and logarithmic entry growth. *)
-  Parameter T_tclose_le : forall m, (T_tclose m <= c_octagon * N.of_nat (((supp m)^3)%nat) *
+  Parameter T_tclose_le : forall m, (T_tclose m <= c_octagon * N.of_nat (((supp m + 1)^3)%nat) *
     N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
   (** Incremental closure charges quadratic updates. *)
   Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
-    c_octagon * N.of_nat (((supp m)^2)%nat) * N.of_nat ((b m + ell m + Z.size_nat d + 1)%nat))%N.
+    c_octagon * N.of_nat (((supp m + 1)^2)%nat) * N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
   (** Join charges both input supports and entry sizes. *)
   Parameter T_join_octagon_le : forall a z,
     (T_join a z <= c_octagon * N.of_nat (binary_work a z))%N.
@@ -89,7 +93,7 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (T_leb a z <= c_octagon * N.of_nat (binary_work a z))%N.
   (** Widening charges both input supports and entry sizes. *)
   Parameter T_widen_octagon_le : forall p a z,
-    (T_widen p a z <= c_octagon * N.of_nat (binary_work a z))%N.
+    (T_widen p a z <= c_octagon * N.of_nat (binary_work a z + wsize p))%N.
 End OCTAGON_TIME.
 
 Module Type OCTAGON_T (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
@@ -101,6 +105,57 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     (Import D : OCTAGON_T X K M L N F).
   Definition coherent (m : dbm) : Prop :=
     forall i j, entry m i j = entry m (bar j) (bar i).
+  Definition coh (s : t) : Prop :=
+    match s with Unreached => True | Reached m => coherent m end.
+  Definition same_entries (a b : t) : Prop :=
+    match a, b with
+    | Reached ma, Reached mb => forall i j, entry ma i j = entry mb i j
+    | Unreached, Unreached => True
+    | _, _ => False
+    end.
+  Parameter fw_round : K.t -> dbm -> dbm.
+  Parameter k_octagon : N.
+  (** Assignment work pays for linearization and quadratic matrix updates. *)
+  Parameter F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) =
+      N.of_nat ((ns s + 1)^2 * (bs s + ells s + X.bits x + 1)) + F.T_lin_of e)%N.
+  (** Havoc visits the affected signed rows and columns. *)
+  Parameter F_havoc_work : forall x s,
+    havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).
+  (** Top starts coherent. *)
+  Parameter coh_top : coh top.
+  (** Join keeps coherent matrices coherent. *)
+  Parameter coh_join : forall a b, coh a -> coh b -> coh (join a b).
+  (** Widening keeps coherent matrices coherent. *)
+  Parameter coh_widen : forall p a b, coh a -> coh b -> coh (widen p a b).
+  (** Assignment keeps coherence. *)
+  Parameter coh_assign : forall x e s, coh s -> coh (assign x e s).
+  (** Havoc keeps coherence. *)
+  Parameter coh_havoc : forall x s, coh s -> coh (havoc x s).
+  (** Assumption keeps coherence. *)
+  Parameter coh_assume : forall g es s, coh s -> coh (assume g es s).
+  (** Tight closure keeps coherence. *)
+  Parameter coh_tclose : forall m, coherent m -> coh (tclose m).
+  (** Incremental closure writes both twins and keeps coherence. *)
+  Parameter coh_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
+  (** Constraint insertion writes both signed twins. *)
+  Parameter F_add_cons_twins : forall i j d m,
+    entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
+  (** Floyd-Warshall charges cubic entry updates. *)
+  Parameter T1_fw : forall m,
+    (T_fw m <= k_octagon * N.of_nat
+      ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
+  (** Tightening charges quadratic entry updates. *)
+  Parameter T2_tighten : forall m,
+    (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  (** Strengthening charges quadratic entry updates. *)
+  Parameter T3_strengthen : forall m,
+    (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  (** Diagonal checks limit intermediate entry growth. *)
+  Parameter bits_fw_round_le : forall ks m,
+    (forall k, In k ks -> forall d,
+      entry (fold_left (fun a k => fw_round k a) ks m) k k = Some d -> (0 <= d)%Z) ->
+    ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
   Definition strongly_closed (m : dbm) : Prop :=
     coherent m /\
     (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
@@ -123,16 +178,12 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   (** Incremental closure retains models satisfying its new bound. *)
   Parameter incr_close_sound : forall i j d m v,
     models m v -> (vl v j - vl v i <= d)%Z -> ngamma (incr_close i j d m) v.
-  (** Full rational closure strengthens one Floyd-Warshall result. *)
-  Parameter close_spec : forall m, close m = strengthen (fw m).
-  (** Rational closure is strongly closed. *)
-  Parameter close_strong : forall m, strongly_closed (close m).
   (** Successful integer closure is tightly closed. *)
-  Parameter tclose_tight : forall m m',
+  Parameter tclose_tight : forall m m', coherent m ->
     tclose m = Reached m' -> tightly_closed m'.
   (** Incremental closure agrees with tight closure on tightly closed input. *)
   Parameter incr_close_eq : forall m i j d, tightly_closed m ->
-    incr_close i j d m = tclose (add_cons i j d m).
+    same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   (** Successful tight closure bounds finite entry growth. *)
   Parameter bits_tclose_le : forall m m', tclose m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.

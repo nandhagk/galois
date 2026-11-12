@@ -82,6 +82,9 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
     | Reached m => fold_right Nat.add 0
       (map (fun kv => X.bits (fst kv) + V.size (snd kv) + 1) (M.elements m))
     end.
+  Definition env_wf (s : t) : Prop :=
+    match s with Unreached => True | Reached m => M.wf m end.
+  Parameter rsize : t -> L.guard -> list (term L.op X.t) -> nat.
   Parameter T_read : M.t V.t -> X.t -> N.
   Parameter T_annotate : M.t V.t -> term L.op X.t -> N.
   Parameter T_root : ann L.op X.t V.t -> N.
@@ -92,9 +95,10 @@ Module Type ENV_TIME (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   Parameter T_annotate_le : forall m e, (T_annotate m e <= c_env * N.of_nat ((tcost m e)%nat))%N.
   (** Assumption charges both passes and guard work. *)
   Parameter T_assume_env_le : forall g es s, (T_assume g es s <= c_env *
-    N.of_nat ((fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) + 1)%nat))%N.
+    N.of_nat ((fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
+      fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1)%nat))%N.
   (** Join charges the weighted sizes of both environments. *)
-  Parameter T_join_env_le : forall a b,
+  Parameter T_join_env_le : forall a b, env_wf a -> env_wf b ->
     (T_join a b <= c_env * N.of_nat ((esize a + esize b + 1)%nat))%N.
 End ENV_TIME.
 
@@ -103,6 +107,37 @@ Module Type ENV_T (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L) 
 
 Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (Import E : ENV_T X M L V).
+  Fixpoint refine_size (q : V.t) (n : ann L.op X.t V.t) (m : M.t V.t) : nat :=
+    match n with
+    | ALeaf x _ => Nat.max (V.size q) (V.size (read m x))
+    | ANode o _ ns =>
+      let qs := V.backward o q (map root ns) in
+      Nat.max (V.size q)
+        ((fix children ns qs m :=
+          match ns, qs with
+          | n :: ns, q :: qs =>
+            Nat.max (refine_size q n m) (children ns qs (refine q n m))
+          | _, _ => 0
+          end) ns qs m)
+    end.
+  Definition assume_size (s : t) (g : L.guard) (es : list (term L.op X.t)) : nat :=
+    match s with
+    | Unreached => 0
+    | Reached m =>
+      let ns := map (annotate m) es in
+      let qs := V.guard g (map root ns) in
+      fst (fold_left (fun acc nq =>
+        (Nat.max (fst acc) (refine_size (snd nq) (fst nq) (snd acc)),
+          refine (snd nq) (fst nq) (snd acc))) (combine ns qs) (0, m))
+    end.
+  (** Request size records the largest request or stored value met by refinement. *)
+  Parameter F_rsize : forall s g es, rsize s g es = assume_size s g es.
+  (** Assumption checks bottoms at written leaves and charges cached two-pass refinement. *)
+  Parameter T1_assume : forall g es m,
+    (T_assume g es (Reached m) <= c_env * N.of_nat
+      (fold_right Nat.add 0%nat (map (tcost m) es) +
+        V.gwork g (roots (Reached m) es) +
+        fold_right Nat.add 0%nat (map tsize es) * (rsize (Reached m) g es + 1) + 1))%N.
   Definition models m st := forall x, V.gamma (read m x) (st x).
   Fixpoint ann_models (st : X.t -> L.val) (n : ann L.op X.t V.t)
       (e : term L.op X.t) {struct n} : Prop :=
@@ -134,6 +169,15 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
   (** Environment rank sums component ranks over stored bindings. *)
   Parameter wrank_env : forall p m, M.wf m -> wrank p (Reached m) =
     fold_right Nat.add 0 (map (fun kv => V.wrank p (snd kv)) (M.elements m)).
+  (** Reached bottom detection scans stored values. *)
+  Parameter F_is_bot_env : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
+  (** Inclusion treats every recognized bottom as least. *)
+  Parameter F_leb_env : forall a b, leb a b = orb (is_bot a)
+    (andb (negb (is_bot b)) (match a, b with
+      | Reached ma, Reached mb => M.forall2b (fun x y =>
+          V.leb (match x with Some v => v | None => V.top end)
+                (match y with Some v => v | None => V.top end)) ma mb
+      | _, _ => false end)).
   (** Annotation work counts one leaf lookup. *)
   Parameter tcost_leaf : forall m x, tcost m (Leaf x) = X.bits x + 1.
   (** Annotation work counts every child and the current transfer. *)

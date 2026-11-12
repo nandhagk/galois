@@ -5,6 +5,7 @@
     Builds on: LangSig and bit-vector operations. *)
 
 From Stdlib Require Import List ZArith.
+From Argent Require Import Std.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig.
 Import List.ListNotations.
@@ -15,6 +16,17 @@ Inductive bop : Type :=
 
 Inductive bguard : Type :=
   | BTruth (b : bool).
+
+(** Operator work charges its own widths and literal before operand widths. *)
+Definition op_bits (o : bop) : nat :=
+  match o with
+  | BConst w z => Pos.to_nat w + Z.size_nat z
+  | BOp o => Op.op_widths o
+  end.
+
+(** Word evaluation charges the combined metadata and operand widths quadratically. *)
+Definition work (o : bop) (vs : list word) : nat :=
+  ((op_bits o + fold_right Nat.add 0 (map (fun v => Pos.to_nat (fst v)) vs) + 1) ^ 2)%nat.
 
 Module BitsLangCode <: LANG_OPS.
   Definition op := bop.

@@ -5,7 +5,7 @@
     Builds on: Word, Fun, Testbit, Arith and Base code. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import Code KeySig.
 From Galois.Bits Require Import Word Fun Testbit Arith Tactics.
 Import List.ListNotations.
@@ -48,6 +48,14 @@ Inductive op : Type :=
   | bvextract (hi lo : nat)
   | bvconcat.
 
+
+(** Operator metadata charges each carried width or extraction index. *)
+Definition op_widths (o : op) : nat :=
+  match o with
+  | bvzext w | bvsext w | bvtrunc w => Pos.to_nat w
+  | bvextract hi lo => (hi + lo)%nat
+  | _ => 0%nat
+  end.
 
 (** Tags select an operation without storing an executable closure. *)
 Inductive unary_tag := UNot | UNeg | UClz | UCtz | UPopcnt.

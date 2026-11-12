@@ -26,6 +26,10 @@ Module Type VALUE_REDUCER_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** One reduction charges the combined component sizes. *)
   Parameter T_reduce_le : forall a b,
     (T_reduce (a, b) <= c_reduce * N.of_nat ((A.size a + B.size b + 1)%nat))%N.
+  (** Reduction results fit within the charged component sizes. *)
+  Parameter reduce_size_le : forall a b,
+    (N.of_nat (A.size (fst (R.reduce (a, b))) + B.size (snd (R.reduce (a, b)))) <=
+      c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
 End VALUE_REDUCER_TIME.
 
 Module Type VALUE_REDUCER_T (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -82,6 +86,8 @@ Module Type PRODUCT_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     wrank p (a, b) = A.wrank (fst p) a + B.wrank (snd p) b.
   (** Product size adds the component sizes. *)
   Parameter F5_size : forall a b, size (a, b) = A.size a + B.size b.
+  (** Product bottom testing recognizes two component bottoms. *)
+  Parameter F6_is_bot : forall a b, is_bot (a, b) = andb (A.is_bot a) (B.is_bot b).
   (** Inclusion charges the component tests. *)
   Parameter T1_leb : forall a b, (T_leb a b <= k_product_lists *
     (A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
@@ -104,9 +110,10 @@ Module Type REDUCED_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER_T L A B) (K : ROUNDS) (Import D : REDUCED L A B R K).
   Include VALUE_DOMAIN_TIME L D.
   Parameter T_red : t -> N.
+  Parameter c_red : N.
   (** Iterated reduction charges the configured number of rounds. *)
   Parameter T_red_le : forall a b,
-    (T_red (a, b) <= N.of_nat K.rounds * R.c_reduce *
+    (T_red (a, b) <= c_red * N.of_nat (K.rounds + 1) *
       N.of_nat ((A.size a + B.size b + 1)%nat))%N.
   (** Reduced transfer has the published work bound. *)
   Parameter forward_bigO : (bigO (fun _ => True)
