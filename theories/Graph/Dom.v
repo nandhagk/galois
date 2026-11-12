@@ -271,24 +271,24 @@ Module Dom <: DOM.
   Include DOM_SPEC.
 
   Lemma check_sound : forall g r m o, check g r m o = true -> dom_exact g r m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma tree_idom : forall g r m o, check g r m o = true -> idom (tree g r m o) = m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma tree_exact : forall g r m o, check g r m o = true -> domtree_exact g r (tree g r m o).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma dominates_b_spec : forall g r m o u v,
     check g r m o = true -> reach (base g) [r] v ->
     reflect (dominates (base g) r u v) (dominates_b (tree g r m o) u v).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma kids_spec : forall g r m o, check g r m o = true -> forall u,
     (forall v, In v (children (tree g r m o) u) <-> trie_get v m = Some u) /\
     NoDup (children (tree g r m o) u) /\
     StronglySorted (preorder_before (tree g r m o)) (children (tree g r m o) u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Dom.
 
 Module DomT <: DOM_ALL.
