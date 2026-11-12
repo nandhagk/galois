@@ -232,6 +232,21 @@ Definition def_before {K G} (b : block positive K G) (x : positive) (i : nat) : 
   In x (params _ _ _ b) \/
   exists j op args, j < i /\ nth_error (code _ _ _ b) j = Some (x, op, args).
 
+(** An edge targets a listed block and supplies one argument per parameter. *)
+Definition edge_shape {K G} (p : func positive K G) (target : positive)
+    (args : list positive) : Prop :=
+  exists body, In (target, body) (blocks _ _ _ p) /\
+    length args = length (params _ _ _ body).
+
+(** Each outgoing edge of an exit has a listed target and matching arity. *)
+Definition exit_shape {K G} (p : func positive K G) (e : exit positive G) : Prop :=
+  match e with
+  | Jump target args => edge_shape p target args
+  | Branch _ _ yes yes_args no no_args =>
+      edge_shape p yes yes_args /\ edge_shape p no no_args
+  | Return _ => True
+  end.
+
 (** SSA definitions are unique and dominate each use, including uses on outgoing edges. *)
 Definition ssa_wf {K G} (p : func positive K G) : Prop :=
   NoDup (map fst (blocks _ _ _ p)) /\
@@ -239,4 +254,6 @@ Definition ssa_wf {K G} (p : func positive K G) : Prop :=
   (forall id body x i, In (id, body) (blocks _ _ _ p) -> use_at body x i ->
     In x (inputs _ _ _ p) \/ def_before body x i \/
     exists def_id def_body, In (def_id, def_body) (blocks _ _ _ p) /\
-      def_id <> id /\ In x (block_defs def_body) /\ dominates p def_id id).
+      def_id <> id /\ In x (block_defs def_body) /\ dominates p def_id id) /\
+  (exists body, In (entry _ _ _ p, body) (blocks _ _ _ p)) /\
+  (forall id body, In (id, body) (blocks _ _ _ p) -> exit_shape p (term _ _ _ body)).

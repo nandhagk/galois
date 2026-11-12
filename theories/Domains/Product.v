@@ -96,10 +96,15 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   Proof. Admitted.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof.
+    intros c [Ha Hb]. exact (A.gamma_bot c Ha).
+  Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted.
+  Proof.
+    intro c. change (A.gamma A.top c /\ B.gamma B.top c).
+    split; [apply A.gamma_top|apply B.gamma_top].
+  Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
   Proof. Admitted.
@@ -112,7 +117,7 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found. *)
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->

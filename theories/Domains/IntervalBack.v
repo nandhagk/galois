@@ -4,7 +4,7 @@
     For example, equality to one refines both operands of an equality test.
     Builds on: IntervalOps and fixed-width word operators. *)
 
-From Stdlib Require Import ZArith List Bool.
+From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSig WordSig.
 Import List.ListNotations.
@@ -157,14 +157,17 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Proof. Admitted.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_refl was not found in the current environment. *)
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_trans was not found in the current environment. *)
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
-  Proof. Admitted.
+  Proof.
+  intro w. intros [|l h]; reflexivity.
+
+  Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
   Proof. Admitted.
@@ -176,44 +179,54 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Proof. Admitted.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_l was not found in the current *)
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_r was not found in the current *)
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_meet_lower_left: The variable bound_max_upper_l was not found. *)
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_word_laws: The variable gamma_monotone was not found in the current environment. *)
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted.
+  Proof.
+intros w z [_ Hempty]. exact Hempty.
+
+  Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted.
+  Proof.
+    intros w z Hword. split; [exact Hword|].
+    unfold ptop, interval_top, in_bnd.
+    destruct Hword as [Hlower Hupper]. split; lia.
+  Qed.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_meet_sound: The variable bound_max_least was not found. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_shape_laws: Expects a disjunctive pattern with 3 branches. *)
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
   Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted.
+  Proof.
+    intros w z. split; [apply L.wrap_is_word|].
+    unfold pconst, interval_const, in_bnd. split; reflexivity.
+  Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> pgamma w a z -> z = v.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_is_point_sound: The reference interval_is_point was not found in the current *)
 End IntervalPayload.
 
 Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (W : INTERVAL_PAYLOAD L)
@@ -224,7 +237,7 @@ Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (W : INTERVAL_PAYL
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_table_laws: Unexpected name (no introduction patterns were expected in the *)
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -232,5 +245,5 @@ Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (W : INTERVAL_PAYL
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_table_laws: Unexpected name (no introduction patterns were expected in the *)
 End IntervalWordTable.

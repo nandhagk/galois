@@ -98,6 +98,9 @@ Module Type VALUE_DOMAIN_TIME (L : LANG_T) (Import D : VALUE_DOMAIN L).
   (** Join results fit within the combined operand sizes. *)
   Parameter join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  (** Widening results fit within the operand and parameter sizes. *)
+  Parameter widen_size : forall p a b,
+    (N.of_nat (size (widen p a b)) <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
   (** Backward results fit within the charged work and request size. *)
   Parameter backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=

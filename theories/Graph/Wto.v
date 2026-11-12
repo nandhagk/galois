@@ -290,26 +290,26 @@ Module Wto <: WTO.
   Lemma ranks_spec : forall w, NoDup (wto_order w) -> forall v i,
     nth_error (wto_order w) i = Some v ->
     trie_get v (ranks w) = Some (Pos.of_succ_nat i).
-  Proof. Admitted. (* SIG-QUESTION: WeakOrder.ranks_spec uses membership and advance ranks. *)
+  Proof. Admitted. (* CONVERT: WeakOrder.ranks_spec uses membership and advance ranks. *)
 
   (** Vertices outside the linear order have no rank. *)
   Lemma ranks_absent : forall w v,
     ~ In v (wto_order w) -> trie_get v (ranks w) = None.
-  Proof. Admitted. (* SIG-QUESTION: landed rank lemmas do not state absent-key lookup. *)
+  Proof. Admitted. (* CONVERT: landed rank lemmas do not state absent-key lookup. *)
 
   (** Every reachable cycle contains a structural loop head. *)
   Lemma check_cuts : forall g roots w,
     check g roots w = true -> forall vs, cycle (base g) vs ->
     (forall v, In v vs -> reach (base g) roots v) ->
     exists h, In h vs /\ In h (heads w).
-  Proof. Admitted. (* SIG-QUESTION: WeakOrder.cycles_have_head concerns producer token annotations. *)
+  Proof. Admitted. (* CONVERT: WeakOrder.cycles_have_head concerns producer token annotations. *)
 
   (** Edges increase rank unless their target is a backward loop head. *)
   Lemma ranks_forward : forall g roots w u v,
     check g roots w = true -> edge (base g) u v -> reach (base g) roots u ->
     exists ru rv, trie_get u (ranks w) = Some ru /\ trie_get v (ranks w) = Some rv /\
       ((ru < rv)%positive \/ (In v (heads w) /\ (rv <= ru)%positive)).
-  Proof. Admitted. (* SIG-QUESTION: WeakOrder.ranks_forward concludes annotation membership. *)
+  Proof. Admitted. (* CONVERT: WeakOrder.ranks_forward concludes annotation membership. *)
 End Wto.
 
 Module WtoT <: WTO_ALL.

@@ -204,16 +204,16 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: havoc_sound: The variable update_sound was not found. *)
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
     gamma (assume g es s) st.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: assume_sound: The variable refine_sound was not found. *)
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: abs_eval_sound: The variable term_eval_sound was not found. *)
 
   (** Reading an absent key returns top. *)
   Lemma read_spec : forall m x,
