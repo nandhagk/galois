@@ -66,3 +66,16 @@ Example natural_self :
   let g := DigraphCode.prepare SelfLoop.graph in
   loop_body (LoopsCode.forest g (fixture_tree g)) 1 = [1].
 Proof. vm_compute. reflexivity. Qed.
+
+Example nested_headers :
+  let g := DigraphCode.prepare NestedLoop.graph in
+  let l := LoopsCode.forest g (fixture_tree g) in
+  filter (fun v => match trie_get v (body l) with Some _ => true | None => false end)
+    [1; 2; 3; 4] = [1; 2].
+Proof. vm_compute. reflexivity. Qed.
+
+Example empty_loop_projection :
+  let g := DigraphCode.prepare EmptyGraph.graph in
+  let l := LoopsCode.forest g (fixture_tree g) in
+  trie_get 99 (body l) = None.
+Proof. vm_compute. reflexivity. Qed.
