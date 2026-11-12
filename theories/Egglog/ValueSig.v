@@ -34,4 +34,3 @@ Module Type VALUE_PLAN (Import V : VALUE_T).
 End VALUE_PLAN.
 
 Module Type VALUE_ALL := VALUE_T <+ VALUE_PLAN.
-

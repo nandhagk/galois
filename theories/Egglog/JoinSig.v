@@ -38,4 +38,3 @@ End JOIN_PLAN.
 
 Module Type JOIN_ALL (V : VALUE_T) (I : INDEX_T V) :=
   JOIN_T V I <+ JOIN_PLAN V I.
-

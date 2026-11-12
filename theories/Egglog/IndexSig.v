@@ -38,4 +38,3 @@ End INDEX_PLAN.
 
 Module Type INDEX_ALL (V : VALUE_T) :=
   INDEX_T V <+ INDEX_PLAN V.
-
