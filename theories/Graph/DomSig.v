@@ -92,6 +92,18 @@ Inductive lt_op :=
   | LtLink (child parent : N)
   | LtEval (v : N).
 
+(** The initial scan supplies bounded data to the certificate phases. *)
+Record dom_scan_data := DomScanData {
+  dom_listed : ptrie bool;
+  dom_count : nat;
+  dom_edge_count : nat;
+  dom_width : nat
+}.
+TimeFun dom_listed.
+TimeFun dom_count.
+TimeFun dom_edge_count.
+TimeFun dom_width.
+
 Module Type DOM_OPS.
   Parameter build : prepared -> positive -> ptrie positive * list positive.
   Parameter check : prepared -> positive -> ptrie positive -> list positive -> bool.
@@ -177,12 +189,12 @@ Module Type DOM_PLAN (Import D : DOM_T).
   Parameter T_pos_of : list positive -> positive -> N.
   Parameter size_of : ptrie positive -> list positive -> positive -> N.
   Parameter T_size_of : ptrie positive -> list positive -> positive -> N.
-  Parameter scan : prepared -> ptrie bool.
+  Parameter scan : prepared -> dom_scan_data.
   Parameter T_scan : prepared -> N.
-  Parameter read : prepared -> positive -> list positive -> option (ptrie N).
-  Parameter T_read : prepared -> positive -> list positive -> N.
-  Parameter map_check : prepared -> positive -> ptrie positive -> list positive -> bool.
-  Parameter T_map_check : prepared -> positive -> ptrie positive -> list positive -> N.
+  Parameter read : dom_scan_data -> positive -> list positive -> option (ptrie N).
+  Parameter T_read : dom_scan_data -> positive -> list positive -> N.
+  Parameter map_check : dom_scan_data -> positive -> ptrie positive -> list positive -> bool.
+  Parameter T_map_check : dom_scan_data -> positive -> ptrie positive -> list positive -> N.
   Parameter sizes : ptrie positive -> list positive -> ptrie N.
   Parameter T_sizes : ptrie positive -> list positive -> N.
   Parameter edges : prepared -> ptrie positive -> list positive -> bool.
@@ -271,19 +283,22 @@ Parameter F12_tree_exact : forall g r m o, check g r m o = true ->
       (graph_width (base g) + 1)))%N.
   (** Reading stops at the graph-sized certificate budget. *)
   Parameter T2_read : forall g r o,
-    (T_read g r o <= k_read * N.of_nat ((graph_n (base g) + 1) *
+    (T_read (scan g) r o <= k_read * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Parent reconstruction rejects extra candidate bindings by structural comparison. *)
   Parameter T3_map : forall g r m o,
-    (T_map_check g r m o <= k_map * N.of_nat ((graph_n (base g) + 1) *
+    (T_map_check (scan g) r m o <= k_map * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Subtree sizes and low-high tests charge each accepted order entry. *)
   Parameter T4_sizes : forall g m o, NoDup o -> length o <= graph_n (base g) ->
+    (forall v, In v o -> In v (nodes g)) ->
+    (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_sizes m o <= k_size * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Edge checks read only rows whose sources are listed. *)
   Parameter T5_edges : forall g m o, length o <= graph_n (base g) ->
     (forall v, In v o -> In v (verts (base g))) ->
+    (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_edges g m o <= k_edge * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
   (** Numbering and inverse-parent grouping make one pass over accepted entries. *)

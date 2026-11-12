@@ -21,7 +21,7 @@ parts and deletes the rest of that old file. New destinations are relative to
 
 | Old file | Decision | Reason |
 | --- | --- | --- |
-| `GraphCheckDom.v` | Convert to `Spec.v`, `DomSig.v`, `Dom.v` | Retain exactness and checker reasoning, replace radix numbering and slow checking as needed. |
+| `GraphCheckDom.v` | Convert to `Spec.v`, `DomSig.v`, `Dom.v` | Retain semantic definitions and replace checking by the reviewed low-high certificate. |
 | `GraphCheckDomCost.v` | Delete | Monadic instrumentation gives raw-chain budgets, not the target checker bound. |
 | `GraphDomAncestorIndex.v` | Delete | Materializing every ancestor chain needs quadratic space and work. |
 | `GraphDomBackend.v` | Convert to `Dom.v` | Keep the LT parent pipeline and accepted-candidate renumbering pattern, remove backend records and fallback certification. |
@@ -41,7 +41,7 @@ parts and deletes the rest of that old file. New destinations are relative to
 | `GraphDomFiniteClosure.v` | Delete | New first-order prepared adjacency removes the raw interpreted-graph transport. |
 | `GraphDomFiniteCost.v` | Delete | Raw normalization and callback prices disappear with closure records. |
 | `GraphDomFiniteQueryCost.v` | Delete | Repeated normalized reachability is outside the target linear checker. |
-| `GraphDomFiniteReach.v` | Convert selected reachability materialization to `Dom.v` | Supplies the reference deletion checker without retaining `GraphReach`. |
+| `GraphDomFiniteReach.v` | Delete | The reviewed certificate checker replaces deletion reachability. |
 | `GraphDomFiniteSearch.v` | Delete | The new search directly consumes first-order prepared data. |
 | `GraphDomFiniteTransport.v` | Delete | Raw finite-view ID transport has no new representation counterpart. |
 | `GraphDomFiniteView.v` | Delete | Preparing one first-order graph replaces the normalization layer. |
@@ -107,199 +107,132 @@ synthetic-root fixture. Direct-root tests retain their public parent and query e
 
 ## Producer
 
-`build g r` runs DFS from `r`, constructs discovery-rank parent and predecessor tables,
-settles semidominators in reverse discovery order, builds buckets, processes those buckets
-in reverse order, and corrects provisional parents in forward order. The retained code
-comes from `DomSemi`, `DomLink`, `DomLt` and the LT branch of `DomBackend.parents_c`.
-Output conversion maps discovered ranks back to original positive vertex IDs. The root
-has no strict parent. Unreachable vertices have no output bindings.
+`build g r` returns a parent map and a list in low-high order. The reviewed producer runs
+simple Lengauer and Tarjan, then constructs the order from divergent spanning trees.
+The producer remains untrusted under R9. Acceptance by `check g r m o` certifies its result.
+The producer bodies in `Dom.v` are marked `STUB-CODE` until the following phases are ported.
 
-Simple LT matches the producer assumed by core §3.4 and avoids keeping both LT and
-Semi-NCA. The landed Semi-NCA walk has a rank-linear bound per query in
-`DomNcaCost.walk_cost`. Its finisher has a quadratic bound in
-`DomNcaCost.actual_finish_numeric_cost`. Selecting that finisher would not establish the
-published LT target.
+The Lengauer and Tarjan phase numbers reached vertices by binary counters. It records
+DFS parents, semidominators, relative dominators and the predecessor whose evaluation
+minimizes each semidominator. Reverse settlement and forward correction produce the
+candidate immediate parents. Link-and-evaluate operates on binary DFS numbers and records
+its actual sequence in `lt_ops g r`.
 
-The retained link/eval code uses `fix_wf` on unary rank measures. Conversion replaces that
-recursion with explicit `loopN` states and unwind stacks. Each walk receives sufficient
-binary fuel derived from the discovered node count. State data and stacks are first order.
-The time derivation must charge descending walks, saved stack cells and unwinding writes.
-Choosing `loopN` alone proves termination of the bounded code. It does not establish the
-logarithmic aggregate work bound.
+The order phase follows the reviewed construction below.
 
-The cost arguments also need two functional helper lemmas from files whose semantic
-proofs are deleted. `DomLinkProof.minimum_member` bounds selected labels without proving
-semidominator correctness. `DomLtReverse.bucket_index_spec` bounds bucket members by the
-input order without proving provisional-parent correctness. Both proofs move alongside
-the retained code, so the timed producer has no dependency on deleted soundness files.
-Other retained inventory arguments must likewise be restated over numeric discovery and
-operation support, rather than importing deleted ranked-path or producer-exactness proofs.
+1. Colour vertices in increasing DFS order using semidominators and relative dominators.
+   Choose each divergent-tree parent from its DFS parent and minimizing predecessor.
+2. Replace both divergent-tree parents by the immediate parent when its direct edge exists.
+   Otherwise find each derived source in the appropriate immediate-parent child subtree.
+3. Maintain child counters and a queue of removable vertices in the derived trees. Remove
+   a qualifying vertex and record its anchor and witness. Redirect its remaining child.
+4. Reinsert vertices in reverse removal order beside their anchors. Compare each witness
+   with its anchor to choose the side.
+5. Use the offline anchor tree and subtree sizes to assign binary intervals during insertion.
+   A missing anchor or an empty candidate queue takes the specified total fallback.
+6. Walk the immediate-parent tree in the resulting child order to emit the certificate.
+
+The construction and its source algorithms are specified in F1-50 §4.4 of
+`run/review/F1-findings-2.md`. That ruling cites Georgiadis and Tarjan,
+[Dominator tree certification and divergent spanning trees](https://arxiv.org/abs/1210.8303),
+Algorithms 3, 5, 7 and 8. Producer correctness proofs are outside the R9 conversion scope.
+Its aggregate time contract still requires the actual phase and operation inventories.
 
 ## Checker specification
 
-Let `R` be the vertices reachable from `r` in `base g`. Let `parent_m v` be the lookup of
-`v` in the candidate map `m`. Strict dominance means dominance between distinct vertices.
-An immediate dominator strictly dominates its child and is dominated by every strict
-dominator of that child. Candidate exactness has the following obligations.
+`dom_exact g r m` concerns the candidate map independently of production. Every binding
+has reachable endpoints and gives an immediate dominator. Every reachable vertex lacks a
+parent precisely when it lacks a strict dominator. The parent relation is well founded.
+The order argument supplies an independently checked certificate for those properties.
 
-- Every present binding has both endpoints in `R` and gives an immediate dominator.
-- A reachable vertex has no parent if and only if it has no strict dominator.
-- The parent relation is well founded.
+`dom_cert (base g) r m o` has the following clauses.
 
-These obligations define `exact g r m` in `DOM_SPEC`. Canonical `PTrie` storage removes
-the old `Map.wf` field. The definition concerns the supplied map. Tree numbering and
-children ordering receive separate specifications because `check` accepts a parent map.
-No result from `build` occurs in `exact` or in the checker laws.
+- `cert_preorder` makes `o` a duplicate-free rooted tree preorder and rejects extra bindings.
+- `cert_parent` closes the order under graph edges and makes every target parent an ancestor
+  of its edge source.
+- `cert_low_high` gives each child a parent edge or predecessors on both sides in preorder.
+  The high predecessor lies outside the child's subtree.
 
-The independent reference checker computes `R`, validates binding endpoints and terminating
-parent chains, and compares parent ancestry with absence from reachability after deleting
-each reachable potential dominator. `DomCheck.check_sound` is the semantic proof source.
-Its actual premises are `Prepared.ready p`, `Map.wf positive_encoding m`, and acceptance.
-Its conclusion is `Dom.exact p (DomCheck.of_parents p m)`, which also certifies the old
-radix numbering. It is not already the new map-only theorem.
+The checker reads the base graph and ignores all prepared caches. Its bounded passes follow
+F1-50 §4.2.
 
-The conversion proves the map-only fields first, then derives the numbered-tree result.
-The following landed lemmas identify the available proof steps.
+1. Scan listed vertices and their successor rows to compute graph measures and membership.
+2. Read the order up to the graph vertex budget. Reject a wrong root, repeated key, unlisted
+   key or key whose width exceeds the graph width. Build the position trie.
+3. Read each ordered vertex's parent. Require no root parent and an earlier ordered parent
+   for every other vertex. Reconstruct the candidate bindings.
+4. Compare the reconstructed canonical trie structurally with the supplied map. Recursion
+   follows the reconstructed trie, so extra raw candidate storage is rejected within budget.
+5. Accumulate subtree sizes backwards through the order and validate parent containment.
+6. Scan each ordered source row. Reject an absent target and test the parent property through
+   intervals. Record direct-parent flags and minimum and maximum predecessor positions.
+7. Test each child's direct-parent flag or low-high predecessor bounds.
 
-| New obligation | Landed source | Conversion duty |
-| --- | --- | --- |
-| Candidate domain | `DomCheck.checked_domain` | Replace name/ID transport by direct positive endpoints. |
-| Parent termination | `DomCheck.checked_ends`, `checked_forest`, `ends_acc` | Use canonical storage and a finite reachable domain. |
-| Parent ancestry | `DomCheck.ancestor_b_spec` | Retain the termination premise for bounded parent walks. |
-| Semantic ancestry | `DomCheck.checked_dominance` | Replace `Reach.avoiding` by a search-based deletion reachability lemma. |
-| Immediate parents | `DomCheck.checked_strict`, `checked_immediate` | Carry reachable endpoints and exclude cycles. |
-| Missing parents | `DomCheck.checked_absent` | Prove the equivalence for every reachable child. |
-| Semantic reachability of dominators | `DomCheck.dominator_reachable` | Specialize every-entry paths to root `r`. |
-| Parent ancestry from exactness | `DomCheck.ancestry_spec` | Rebuild against map-only `exact`. |
-| Interval queries | `DomCheck.dominates_b_spec` | Use DFS numbering, handle unreachable query dominators explicitly. |
-| DFS forest intervals | `DomNumber.named_ancestry`, `of_parents_covers`, `of_parents_numbering` | Remove re-interning and keep original positive keys. |
-| Renumbering exact maps | `DomOutput.renumber_exact` | Its proof uses checker exactness and forest numbering independently of producer correctness. |
-| Inverse children | `DomNumber.forest_out`, `forest_edge`, `forest_out_nodup` | Retain grouped binding membership and prove the specified list order. |
+`tree g r m o` numbers the accepted order and groups inverse parents in that order. Its
+preorder and postorder fields are binary intervals. `dominates_b` tests interval containment.
+`DOM_LAWS` requires acceptance before exposing exactness, inverse-child laws and semantic
+query reflection. A query target must also be reachable for `dominates_b_spec`.
 
-Several checker helpers in this table are `Local Lemma`s in `GraphCheckDom.v`. Their
-proofs must move into `Dom.v` before the old files are deleted. Their old module paths
-are not an importable public interface.
+## Functional plan
 
-`dominates_b_spec` in the design assumes reachability of the queried target `v`. The landed
-lemma also assumes reachability of the queried dominator `u` and supplies prepared-name
-bindings for both endpoints. Conversion discharges the extra reachability case without
-adding a public hypothesis. If `u` is unreachable and `v` is reachable, semantic dominance
-is false by `dominator_reachable`. Tree lookup must return no interval for `u`, so the
-Boolean is false. The reachable case uses `ancestry_spec` and `of_parents_numbering`.
-Conversion also proves absence of intervals outside `R`. Coverage of `R` alone does not
-prove that absence property.
+The functional plan follows the reviewed chain in F1-50 §4.3. Every declaration is in
+`DOM_PLAN` in `DomSig.v`. The following proof obligations remain admitted in groundwork.
 
-`kids_spec` is planned as exact inverse membership, absence of duplicates, and ascending
-tree preorder within each parent's child list. `DomNumber.forest_out` gives the inverse
-membership list in filtered map-enumeration order. `forest_edge` and `forest_out_nodup`
-give membership and uniqueness. No landed lemma orders these lists by the new tree
-preorder. The numbering traversal must visit children in the order stored by `kids`.
-Its traversal-order lemma then proves the ordering clause without sorting afterward.
-
-The new graph has no interpreted graph or naming dictionary. A proof that the prepared
-predecessor cache agrees with `base g` is still necessary wherever the checker uses
-`preds`. A checker that uses only `base g` avoids that cache premise. The public acceptance
-law must not silently import old `Prepared.ready`. Malformed graph data and an absent
-root require explicit behavior in the signatures and executable checks before freezing.
-
-## Cost gaps
-
-Let `n` and `e` count graph vertices and edge occurrences. Let `w` bound the bit width of
-queried vertex IDs and generated counters. The retained public targets are those of core
-§3.4. Checking and tree construction cost at most `c * (n + e + 1) * (w + 1)`.
-An interval query costs at most `c * (w + 1)`. Building parents costs at most
-`c * (n + e + 1) * (Nat.log2 n + 1) * (w + 1)`.
-<!-- src: run/design/core-design.md, dominators in §3.4, supplied run kit. -->
-
-The following landed results do not prove these targets.
-
-- `DomCheckCost.ancestor_cost` prices construction and scanning of one parent chain.
-  `DomCheckCost.check_c` repeats that work inside the live-node pair loop.
-- `DomFastCheckCost.check_table_cost` proves a bound proportional to
-  `(1 + n) * (1 + n + e) * (1 + w)` on its stated finite-input domain. Caching ancestor
-  sets removes repeated chain reconstruction but retains every live-node pair and one
-  blocked search per potential dominator.
-- `DomCheck.of_parents` encodes complete parent paths as radix intervals. Label widths
-  grow with parent depth, so constant-width interval lookup cannot be inferred from it.
-- `DomNumberCost.number_cost` composes forest construction, re-preparation, search and
-  annotation. `number_shape` proves a quadratic upper bound. Its `edge_inventory` uses
-  `c * c` despite the forest's unique parent keys.
-- `DomLinkCost.eval_identity_cost` bounds one evaluator query by the numeric rank limit.
-  `DomLtCost.actual_finish_cost` and `DomGlobalCost.lt_cost` compose that estimate into
-  a vertex-edge product. They contain no aggregate logarithmic link/eval theorem.
-
-The linear checker needs a new implementation and a proof of acceptance implying the
-same `exact`. A proof of agreement with the deletion checker would reuse the old
-soundness argument. The reading pass does not select a proved linear checker algorithm.
-Changing a constant or a `TimeFun` annotation cannot remove the pair loop. A candidate
-algorithm must be reviewed before `DOM_PLAN` claims a linear work inventory.
-
-Candidate storage also needs an explicit accounting decision. A parent map can contain
-more bindings or wider keys than the graph. Scanning every supplied binding cannot have
-a graph-only bound on arbitrary raw candidates. Early rejection must bound the amount
-of storage inspected using graph-derived budgets, including trie depth. Alternatively,
-the specification must define how candidate input size enters the existing measures.
-The public target is left unchanged pending review of this boundary.
-
-## Draft functional chain
-
-The following names are planned obligations for `DOM_PLAN`. The names record dependencies
-for task 6.5. They are not new checked Rocq declarations.
-
-| Planned lemma | Statement and dependency |
+| Lemma | Claim |
 | --- | --- |
-| `F1_reach` | A root search lists each reachable vertex once and lists no other vertex. Uses the new `Search` laws. |
-| `F2_parent_domain` | Acceptance gives reachable endpoints for each candidate binding. Ports `checked_domain`. |
-| `F3_parent_forest` | Acceptance gives a well-founded parent relation and terminating bounded walks. Ports `checked_ends` and `checked_forest`. |
-| `F4_checked_ancestry` | Accepted candidate ancestry equals semantic dominance on reachable endpoints. Ports `checked_dominance` for the reference checker. |
-| `F5_exact` | `F2` through `F4` give immediate-parent soundness, parent absence equivalence and map-only exactness. Ports `checked_immediate` and `checked_absent`. |
-| `F6_tree_edges` | Inverse grouping has exactly the candidate edges and no duplicate child. Ports `forest_edge` and `forest_out_nodup`. |
-| `F7_tree_numbering` | A single DFS of the checked parent forest covers exactly reachable vertices and gives nested intervals exactly for ancestry. Ports `named_ancestry` and `of_parents_numbering`. |
-| `F8_kids_order` | Each stored child list is visited in its stored order, so its preorder numbers are strictly increasing. New traversal-order proof. |
-| `F9_dominates_b` | `F4` and `F7` prove the reachable query case. Interval absence and `dominator_reachable` prove the unreachable-dominator case. |
-| `F10_check_sound` | The selected efficient checker implies `F2` through `F5`, either directly or through agreement with the reference checker. New efficient-checker proof. |
+| `F0_path_last` | A nonsingleton path has a last edge. |
+| `F1_dominates_trans` | Dominance composes through a dominated vertex. |
+| `F2_check_cert` | Acceptance establishes the certificate clauses. |
+| `F3_anc_before` | A proper ancestor precedes its descendant. |
+| `F4_root_anc` | The root is an ancestor of every listed vertex. |
+| `F5_reach_listed` | Every reachable vertex occurs in the order. |
+| `F6_listed_reach` | Every ordered vertex is reachable. |
+| `F7_anc_dominates` | Candidate ancestry implies dominance. |
+| `F8_anc_dec` | Candidate ancestry is decidable on the ordered domain. |
+| `F9a_low_path` | A listed vertex has a path through vertices at or before it. |
+| `F9b_high_path` | A child has a parent path whose internal vertices follow it. |
+| `F9c_avoid` | A nonancestor is avoided by some root path. |
+| `F9_dominates_anc` | Dominance implies candidate ancestry. |
+| `F10_cert_exact` | A certificate makes the parent map exact. |
+| `F11_intervals` | Positions and subtree sizes decide ancestry. |
+| `F12_tree_exact` | Numbering an accepted certificate gives an exact tree. |
+| `F13_ops_length` | The actual producer sequence has linear operation count. |
 
-`F10` must be proved independently of the selected producer. A checker that recomputes LT
-and compares results would require a producer soundness theorem and would inherit its
-build time. Such a construction does not meet the design's checker role or linear target.
+`check_sound` follows from `F2_check_cert` and `F10_cert_exact`. The tree laws use
+`F12_tree_exact`. This chain replaces all-pairs deletion checking and requires no soundness
+claim about the producer.
 
-## Draft time chain
+## Time plan
 
-The plan exposes a traversal work inventory and named coefficients before stating the
-contracts. `TimeFun` derives the time functions of every retained helper. Old tick
-functions and old numerical coefficients are deleted. Groundwork uses the run's `STUB`
-form for the unproved time obligations after review.
+Let `n`, `e` and `w` be `graph_n (base g)`, `graph_e (base g)` and
+`graph_width (base g)`. The checker and accepted tree target is
+`c_dom * N.of_nat ((n + e + 1) * (w + 1))`. Query cost charges actual key and interval widths.
+The producer target adds `Nat.log2 n + 1` and assumes `prepared_ok g`.
+<!-- src: run/review/F1-findings-2.md, F1-50 §4.1 and RULES §8. -->
 
-| Planned lemma | Work inventory and dependency |
+The time chain follows F1-50 §4.5.
+
+| Lemma | Work inventory |
 | --- | --- |
-| `T1_trie` | Public trie lookup, insertion and bounded traversal costs include the actual queried key widths. |
-| `T2_reach` | `F1` and search cost charge each reached vertex and outgoing edge occurrence once. |
-| `T3_tree_group` | Group candidate bindings once into inverse child lists. Charge every inspected trie node and emitted binding. |
-| `T4_tree_edges` | The exact number of forest edges is the number of present candidate keys. Reachable-domain exactness bounds it by `n`. Repair the old quadratic `edge_inventory`. |
-| `T5_tree_search` | Traverse those child lists directly through first-order prepared data. `T3`, `T4` and search cost give linear grouping and numbering work. |
-| `T6_tree` | Add reachable enumeration, inverse grouping, numbering and annotation. Derive the target `T_tree_le` from `T2` through `T5`. |
-| `T7_query` | Bound four interval lookups and two binary comparisons. `F7` bounds counter widths. Derive `T_dominates_b_le`. |
-| `T8_check_inventory` | Prove the reviewed efficient checker inspects a linear number of graph and candidate items, including failed candidates. New implementation-specific obligation. |
-| `T9_check` | Combine `T1`, `T2` and `T8` to derive the unchanged `T_check_le`. Reference deletion-checker bounds cannot prove this lemma. |
-| `T10_build_inventory` | DFS ranks are distinct, each reachable incoming occurrence is scanned once, and total bucket membership is linear. Reuse `DomPredSize.actual_incoming_mass` and `DomBucketCost.index_cost` reasoning. |
-| `T11_link_eval` | Prove aggregate LT link/eval work is bounded by a named constant times `(n + e + 1) * (Nat.log2 n + 1)`. New amortized proof over the actual retained evaluator. |
-| `T12_build` | Compose DFS, rank layout, settlement, bucket settlement, forward correction and rank-to-ID output. `T10` and `T11` imply the unchanged `T_build_le`. |
-| `T13_bigO` | Derive the published corollaries from the corresponding contracts on their specified input domains. |
+| `T1_scan` | Listed vertices, their rows and their membership trie. |
+| `T2_read` | Budgeted certificate reading with bounded key inspection. |
+| `T3_map` | Parent reconstruction and bounded structural comparison. |
+| `T4_sizes` | Subtree sizes and the per-vertex low-high tests. |
+| `T5_edges` | Parent-property and predecessor accumulator updates. |
+| `T6_tree` | Accepted numbering and inverse-parent grouping. |
+| `T7_dfs` | Producer numbering by binary counters. |
+| `T8_link_eval` | Aggregate compression work over `lt_ops g r`. |
+| `T9_semi` | Semidominators, buckets and forward correction. |
+| `T10_order` | Divergent trees, derived sources and offline insertion. |
 
-`T11` needs a manifest potential or charging invariant for shortcuts, labels and the
-unwind stack. The landed rank-descent proof supplies termination and finite support.
-It supplies no logarithmic potential. The plan must not assert that each individual
-query costs logarithmic time. The intended target is an aggregate bound over the actual
-LT operation sequence. A failure to prove that bound for this evaluator requires review
-of the evaluator implementation.
+The aggregate forest potential sums logarithms of subtree sizes and charges each link by a
+logarithmic increment. It does not promise a logarithmic cost for each evaluation.
+All time values, coefficients and potentials use `N` under RULES §8. The checker and tree
+proofs, producer implementation and aggregate evaluator proof remain conversion obligations.
 
-Numbering can avoid the old cost gap by grouping inverse parents once and running DFS
-directly over that forest. The grouping proof must use the sum of row lengths, because
-charging the longest child row once per vertex recreates the old quadratic estimate.
-Binary DFS clocks and all explicit loop fuels need width lemmas and the additive fuel-bit
-cost required by rule R10. An empty traversal needs its driver overhead too.
-
-The unresolved obligations for review are the efficient checker algorithm and its proof,
-candidate-storage accounting, the graph validity boundary, and the aggregate LT evaluator
-bound. Task 6.5 turns the reviewed chain into statements. Task 6.6 ports the retained code
-and functional lemmas after the reviewer resolves those obligations.
+`T4_sizes` requires duplicate-free listed entries, a graph-sized order and parents within
+that order. `T5_edges` also requires parents of ordered entries to belong to the order.
+The bounded read and parent-validation phases establish these premises before either pass
+runs. The master approved these internal premise repairs for the raw-input gap in F1-50.
+The public time targets are unchanged. Read and parent-validation helpers take the initial
+scan result, so their per-vertex bounds exclude repeated graph scans.
