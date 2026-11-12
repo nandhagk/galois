@@ -68,6 +68,8 @@ Module Type VALUE_DOMAIN_TIME (L : LANG_T) (Import D : VALUE_DOMAIN L).
   Parameter T_guard : L.guard -> list t -> N.
   Parameter c_val : N.
   Definition c_lat : N := c_val.
+  (** The lattice constant pays for at least one call. *)
+  Parameter c_lat_pos : (1 <= c_lat)%N.
   (** Inclusion testing costs at most the combined abstract sizes. *)
   Parameter T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
   (** Join costs at most the combined abstract sizes. *)
