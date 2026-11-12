@@ -79,8 +79,9 @@ Module Type SUMMARY_TIME (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
     (L : LATTICE_T) (B : BODY_T P F Site L)
     (Import A : SUMMARY P F Site CL L B).
   Include SYSTEM_TIME L A.
-  (* SIG-QUESTION: CALLS_T readers and BODY_T callbacks need numeric budgets or
-     a prepared presentation to discharge the system's row and transfer contracts. *)
+  (* SIG-QUESTION: CALLS_T readers need numeric budgets or a prepared presentation.
+     T_resume calls B.via_call on an arbitrary lattice value, but BODY_T supplies
+     no work bound as a function of that value's size. *)
 End SUMMARY_TIME.
 
 Module Type SUMMARY_T (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
