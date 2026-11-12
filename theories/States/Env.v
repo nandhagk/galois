@@ -4,7 +4,7 @@
     For example, reading an absent binding returns the value domain's top.
     Builds on: EnvSig and the keyed map operations. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List Bool NArith.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -287,3 +287,293 @@ Module EnvTimingHelpers (X : KEY_T) (M : MAP_T X) (L : LANG_T)
   TimeFun materialize.
   TimeFun assume.
 End EnvTimingHelpers.
+
+Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    <: ENV_ALL X M L V.
+  Include Env X M L V.
+  TimeFun read.
+  TimeFun bot.
+  TimeFun top.
+  TimeFun is_bot.
+  TimeFun option_leb.
+  TimeFun leb.
+  TimeFun join_map.
+  TimeFun join.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun root.
+  TimeFun annotate.
+  TimeFun erase.
+  TimeFun refine_checked.
+  TimeFun refine.
+  TimeFun eval.
+  TimeFun assign.
+  TimeFun havoc.
+  TimeFun vars.
+  TimeFun materialize.
+  TimeFun assume.
+
+  Definition size (s : t) : nat :=
+    match s with
+    | Unreached => 0
+    | Reached m => M.nodes m + fold_right Nat.add 0
+      (map (fun kv => X.bits (fst kv) + V.size (snd kv) + 1) (M.elements m))
+    end.
+  Definition wsize (p : wparam) : nat := V.wsize p.
+  Definition wunits (s : t) : nat :=
+    match s with Unreached => 0 | Reached m => length (M.codes m) end.
+  Fixpoint tcost (m : M.t V.t) (e : term L.op X.t) : nat :=
+    match e with
+    | Leaf x => X.bits x + 1
+    | Node o es =>
+      fold_right Nat.add 0 (map (tcost m) es) +
+        V.work o (map (fun e => root (annotate m e)) es) + 1
+    end.
+  Fixpoint refine_size (q : V.t) (n : ann L.op X.t V.t) (m : M.t V.t) : nat :=
+    match n with
+    | ALeaf x _ => Nat.max (V.size q) (V.size (read m x))
+    | ANode o _ ns =>
+      let qs := V.backward o q (map root ns) in
+      Nat.max (V.size q)
+        ((fix children ns qs m :=
+          match ns, qs with
+          | n :: ns, q :: qs =>
+            Nat.max (refine_size q n m) (children ns qs (refine q n m))
+          | _, _ => 0
+          end) ns qs m)
+    end.
+  Definition assume_size (s : t) (g : L.guard) (es : list (term L.op X.t)) : nat :=
+    match s with
+    | Unreached => 0
+    | Reached m =>
+      let ns := map (annotate m) es in
+      let qs := V.guard g (map root ns) in
+      fst (fold_left (fun acc nq =>
+        (Nat.max (fst acc) (refine_size (snd nq) (fst nq) (snd acc)),
+          refine (snd nq) (fst nq) (snd acc))) (combine ns qs) (0, m))
+    end.
+  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
+    match s with
+    | Unreached => tsize e + X.bits x + 1
+    | Reached m => tcost m e + size s + X.bits x + 1
+    end.
+  Definition havoc_work (x : X.t) (s : t) : nat := size s + X.bits x + 1.
+  Definition eval_work (e : term L.op X.t) (s : t) : nat :=
+    match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
+  Definition tcost_s (s : t) (e : term L.op X.t) : nat :=
+    match s with Unreached => 0 | Reached m => tcost m e end.
+  Definition rsize (s : t) (g : L.guard) (es : list (term L.op X.t)) : nat :=
+    assume_size s g es.
+  Definition esize (s : t) : nat := size s.
+  Definition env_wf (s : t) : Prop :=
+    match s with Unreached => True | Reached m => M.wf m end.
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
+    fold_right Nat.add 0 (map (tcost_s s) es) +
+      V.gwork g (roots s es) +
+      fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.
+  Definition c_lat : N := 1%N. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. reflexivity. Qed.
+  Definition c_state : N := 1%N. (* STUB *)
+  Definition c_env : N := 1%N. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assign_le : forall x e s,
+    (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_le : forall x s,
+    (T_havoc x s <= c_state * N.of_nat (havoc_work x s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_le : forall g es s,
+    (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_eval_le : forall e s,
+    (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_annotate_le : forall m e,
+    (T_annotate m e <= c_env * N.of_nat (tcost m e))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_env_le : forall g es s,
+    (T_assume g es s <= c_env * N.of_nat
+      (fold_right Nat.add 0%nat (map (tcost_s s) es) + V.gwork g (roots s es) +
+       fold_right Nat.add 0%nat (map tsize es) * (rsize s g es + 1) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_env_le : forall a b, env_wf a -> env_wf b ->
+    (T_join a b <= c_env * N.of_nat (esize a + esize b + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F_wunits_unreached : wunits Unreached = 0.
+  Proof. reflexivity. Qed.
+  Lemma F_wunits_reached : forall m, wunits (Reached m) = length (M.codes m).
+  Proof. reflexivity. Qed.
+  Lemma F_bot : bot = Unreached.
+  Proof. reflexivity. Qed.
+  Lemma F_top : top = Reached M.empty.
+  Proof. reflexivity. Qed.
+  Lemma F_join_map : forall a b, join_map a b =
+    M.merge (fun x y => match x, y with
+      | Some a, Some b => let v := V.join a b in if V.is_bot v then None else Some v
+      | _, _ => None
+      end) a b.
+  Proof. reflexivity. Qed.
+  Lemma F_join : forall a b, join a b =
+    match a, b with
+    | Unreached, s | s, Unreached => s
+    | Reached a, Reached b => Reached (join_map a b)
+    end.
+  Proof. reflexivity. Qed.
+  Definition k_env_widen : N := 1%N. (* STUB *)
+  Lemma F_widen : forall p a b, widen p a b =
+    if leb b a then a else
+    match a, b with
+    | Unreached, s | s, Unreached => s
+    | Reached a, Reached b => Reached (M.merge (fun x y => match x, y with
+        | Some a, Some b => let v := V.widen p a b in if V.is_bot v then None else Some v
+        | _, _ => None
+        end) a b)
+    end.
+  Proof. reflexivity. Qed.
+  Lemma T_widen_split : forall p a b,
+    (T_widen p a b <= T_leb b a + k_env_widen *
+      (1 + if leb b a then 0 else
+        match a, b with
+        | Reached ma, Reached mb => M.T_merge
+            (fun x y => match x, y with
+             | Some a, Some b => let v := V.widen p a b in if V.is_bot v then None else Some v
+             | _, _ => None
+             end)
+            (fun x y => match x, y with
+             | Some a, Some b => V.T_widen p a b + V.T_is_bot (V.widen p a b) + 1
+             | _, _ => 1
+             end) ma mb
+        | _, _ => 0
+        end))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F_narrow : forall a b, narrow a b =
+    match a, b with
+    | Unreached, _ => Unreached
+    | s, Unreached => s
+    | Reached a, Reached b => Reached (M.merge (fun x y => match x, y with
+        | None, None => None
+        | Some a, None => Some a
+        | None, Some b => Some b
+        | Some a, Some b => Some (V.narrow a b)
+        end) a b)
+    end.
+  Proof. reflexivity. Qed.
+  Lemma F_eval : forall e s, eval e s =
+    match s with Unreached => V.bot | Reached m => root (annotate m e) end.
+  Proof. reflexivity. Qed.
+  Lemma F_assign : forall x e s, assign x e s =
+    match s with
+    | Unreached => Unreached
+    | Reached m => Reached (M.set x (eval e s) m)
+    end.
+  Proof. reflexivity. Qed.
+  Lemma F_havoc : forall x s, havoc x s =
+    match s with
+    | Unreached => Unreached
+    | Reached m => Reached (M.set x V.top m)
+    end.
+  Proof. reflexivity. Qed.
+  Lemma F_refine_leaf : forall q x a m, refine_checked q (ALeaf x a) m =
+    let v := V.meet (read m x) q in (M.set x v m, V.is_bot v).
+  Proof. reflexivity. Qed.
+  Lemma F_refine_node : forall q o a ns m, refine_checked q (ANode o a ns) m =
+    let qs := V.backward o q (map root ns) in
+    (fix children ns qs m bad :=
+      match ns, qs with
+      | n :: ns, q :: qs =>
+        let result := refine_checked q n m in
+        children ns qs (fst result) (orb bad (snd result))
+      | _, _ => (m, bad)
+      end) ns qs m false.
+  Proof. reflexivity. Qed.
+  Lemma F_refine : forall q n m,
+    refine q n m = fst (refine_checked q n m).
+  Proof. reflexivity. Qed.
+  Lemma F_assume : forall g es s, assume g es s =
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      let ns := map (annotate m) es in
+      let qs := V.guard g (map root ns) in
+      let result := fold_left (fun result nq =>
+        let next := refine_checked (snd nq) (fst nq) (fst result) in
+        (fst next, orb (snd result) (snd next))) (combine ns qs) (m, false) in
+      if snd result then Unreached else Reached (fst result)
+    end.
+  Proof. reflexivity. Qed.
+  Lemma F_rsize : forall s g es, rsize s g es = assume_size s g es.
+  Proof. reflexivity. Qed.
+  Lemma T1_assume : forall g es m,
+    (T_assume g es (Reached m) <= c_env * N.of_nat
+      (fold_right Nat.add 0%nat (map (tcost m) es) +
+        V.gwork g (roots (Reached m) es) +
+        fold_right Nat.add 0%nat (map tsize es) * (rsize (Reached m) g es + 1) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Definition models (m : M.t V.t) (st : X.t -> L.val) : Prop :=
+    forall x, V.gamma (read m x) (st x).
+  Fixpoint ann_models (st : X.t -> L.val) (n : ann L.op X.t V.t)
+      (e : term L.op X.t) {struct n} : Prop :=
+    (forall c, eval_term L.eval st e = Some c -> V.gamma (root n) c) /\
+    match n, e with
+    | ALeaf x _, Leaf y => x = y
+    | ANode o _ ns, Node p es => o = p /\
+      (fix children (ns : list (ann L.op X.t V.t)) (es : list (term L.op X.t)) :=
+        match ns, es with
+        | nil, nil => True
+        | n :: ns, e :: es => ann_models st n e /\ children ns es
+        | _, _ => False
+        end) ns es
+    | _, _ => False
+    end.
+  Lemma annotate_sound : forall m st e c,
+    models m st -> eval_term L.eval st e = Some c ->
+    ann_models st (annotate m e) e /\ V.gamma (root (annotate m e)) c.
+  Proof. Admitted. (* STUB *)
+  Lemma refine_sound : forall m st e n q c,
+    models m st -> ann_models st n e -> eval_term L.eval st e = Some c ->
+    V.gamma q c -> models (refine q n m) st.
+  Proof. Admitted. (* STUB *)
+  Lemma refine_lower : forall q n m x,
+    V.leb (read (refine q n m) x) (read m x) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma join_models : forall a b st,
+    models a st \/ models b st -> models (join_map a b) st.
+  Proof. Admitted. (* STUB *)
+  Lemma wrank_env : forall p m, M.wf m -> wrank p (Reached m) =
+    fold_right Nat.add 0
+      (map (fun kv => V.wrank p (snd kv)) (M.elements m)).
+  Proof. reflexivity. Qed.
+  Lemma F_is_bot_env : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
+  Proof. reflexivity. Qed.
+  Lemma F_leb_env : forall a b, leb a b = orb (is_bot a)
+    (andb (negb (is_bot b)) (match a, b with
+      | Reached ma, Reached mb => M.forall2b (fun x y =>
+          V.leb (match x with Some v => v | None => V.top end)
+                (match y with Some v => v | None => V.top end)) ma mb
+      | _, _ => false end)).
+  Proof. Admitted. (* STUB *)
+  Lemma tcost_leaf : forall m x, tcost m (Leaf x) = X.bits x + 1.
+  Proof. reflexivity. Qed.
+  Lemma tcost_node : forall m o es, tcost m (Node o es) =
+    fold_right Nat.add 0 (map (tcost m) es) +
+    V.work o (map (fun e => root (annotate m e)) es) + 1.
+  Proof. reflexivity. Qed.
+End EnvT.
