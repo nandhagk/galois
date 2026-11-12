@@ -24,7 +24,7 @@ Module InternCode (K : KEY_OPS) (M : MAP_OPS K) <: INTERN_OPS K.
   Definition empty : t := InternTable M.empty PTrieCode.empty 1%positive.
   Definition find (k : K.t) (s : t) := M.get k (intern_forward s).
   Definition name (i : positive) (s : t) := PTrieCode.get i (intern_inverse s).
-  Definition size (s : t) := N.pred (N.pos (intern_next s)).
+  Definition size (s : t) := M.fold (fun n _ _ => N.succ n) (intern_forward s) 0%N.
   Definition intern (k : K.t) (s : t) : positive * t :=
     match find k s with
     | Some i => (i, s)
