@@ -86,3 +86,24 @@ Module WithTopT (L : LATTICE_T) <: TOP_LATTICE_T.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
 End WithTopT.
+
+Module WithTopHeight (L : LATTICE) (H : HEIGHT L).
+  Module Lat := WithTop L.
+  Definition rank (x : lift_top L.t) := match x with Elem a => H.rank a | Unknown => S H.height end.
+  Definition height := S H.height.
+  Lemma rank_le : forall a, rank a <= height.
+  Proof. intros [a|]; cbv [rank height]; [pose proof (H.rank_le a); lia|reflexivity]. Qed.
+  Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
+    rank a < rank b.
+  Proof.
+    intros [a|] [b|]; cbn [Lat.leb rank]; intros Hab Hba;
+      try discriminate; try (pose proof (H.rank_le a); lia).
+    apply H.rank_strict; assumption.
+  Qed.
+  Module Check <: HEIGHT Lat.
+    Definition rank := rank.
+    Definition height := height.
+    Definition rank_le := rank_le.
+    Definition rank_strict := rank_strict.
+  End Check.
+End WithTopHeight.
