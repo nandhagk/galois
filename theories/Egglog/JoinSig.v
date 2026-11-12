@@ -4,7 +4,7 @@
     For example, a shared column binds the same cell in two relation indexes.
     Builds on: ValueSig, IndexSig and Syntax. *)
 
-From Stdlib Require Import List PArith Arith Sorting.Sorted.
+From Stdlib Require Import List PArith NArith Arith Sorting.Sorted.
 From Argent Require Import Time Std.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax.
 
@@ -56,6 +56,9 @@ Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
   Parameter T_run : jplan -> list I.t -> nat.
   Parameter c_join : nat.
   (** Running pays for recursive probe work at the maximum index width. *)
+  (* SIG-QUESTION: For zero variables and arbitrarily many empty-column indexes,
+     the requested recurrence gives work = 1 while root-node initialization visits
+     every index. The public bound is retained for F1 without an added cost term. *)
   Parameter T_run_le : forall p ixs, wf_plan p ixs ->
     T_run p ixs <= c_join * (work p ixs + 1) * (wmax p ixs + 1).
   (** Recursive probe work is a lower bound on running time. *)
@@ -81,6 +84,23 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
     list (list (cell V.t)) -> nat.
   (* spec: work_at *)
   Parameter work_at : jplan -> list I.t -> nat -> list positive -> nat.
+  (* spec: participants *)
+  Definition participants (p : jplan) (lvl : nat) : list nat :=
+    filter (fun j => existsb (Nat.eqb lvl) (nth j (cols p) []))
+      (seq 0 (length (cols p))).
+  Parameter choose : jplan -> list I.t -> nat -> list positive -> option nat.
+  Parameter T_choose : jplan -> list I.t -> nat -> list positive -> nat.
+  (** The pivot is the least-degree participant, breaking equal-degree ties by position. *)
+  Parameter choose_min : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
+    l < nvars p -> choose p ixs l ns = Some j ->
+    In j (participants p l) /\ forall k, In k (participants p l) ->
+      (I.degree (nth j ixs I.empty) (nth j ns 1%positive) <=
+       I.degree (nth k ixs I.empty) (nth k ns 1%positive))%N /\
+      (I.degree (nth j ixs I.empty) (nth j ns 1%positive) =
+       I.degree (nth k ixs I.empty) (nth k ns 1%positive) -> j <= k).
+  (** Every unfinished well-formed level has a pivot participant. *)
+  Parameter choose_some : forall p ixs l pre ns, nodes_ok p ixs l pre ns ->
+    l < nvars p -> exists j, choose p ixs l ns = Some j.
   (** Root nodes represent the initial empty assignment. *)
   Parameter nodes_ok_root : forall p ixs, wf_plan p ixs ->
     nodes_ok p ixs 0 [] (map I.root ixs).
@@ -108,6 +128,22 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
   (** Public work starts at the root nodes. *)
   Parameter work_root : forall p ixs,
     work p ixs = work_at p ixs 0 (map I.root ixs).
+  (** Finished assignments contribute one unit of recursive work. *)
+  Parameter work_at_done : forall p ixs l ns, nvars p <= l ->
+    work_at p ixs l ns = 1.
+  (** A level pays for pivot enumeration, all probes and every surviving subtree. *)
+  Parameter work_at_step : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
+    l < nvars p -> choose p ixs l ns = Some j ->
+    work_at p ixs l ns = 1 + length (participants p l) *
+      (1 + N.to_nat (I.degree (nth j ixs I.empty) (nth j ns 1%positive))) +
+      fold_right Nat.add 0
+        (map (fun c => match advance p ixs l ns c with
+          | None => 0
+          | Some ns' => work_at p ixs (S l) ns'
+          end) (I.children (nth j ixs I.empty) (nth j ns 1%positive))).
+  (** The public join starts recursion at the roots with an empty accumulator. *)
+  Parameter run_go : forall p ixs,
+    run p ixs = go (nvars p) p ixs (map I.root ixs) [] [].
   (** Recursive cost pays for probes and all surviving subtrees. *)
   Parameter T_go_le : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
     T_go (nvars p - l) p ixs ns pre acc <=
