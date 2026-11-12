@@ -255,3 +255,31 @@ Module Type SSA_POINTS_T (P : TYPE) (B : KEY_T) (BE : TYPE)
     (BC : CFG_T P B BE) (N : KEY_T) (E : TYPE)
     (C : CFG_T P N E) (V : KEY_T) (U : VARS_T P N E C V) :=
   SSA_POINTS P B BE BC N E C V U <+ SSA_POINTS_TIME P B BE BC N E C V U.
+
+Module Type SSA_POINTS_STRICT_LAWS (P : TYPE) (B : KEY) (BE : TYPE)
+    (BC : CFG P B BE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (V : KEY) (U : VARS P N E C V) (S : SSA_POINTS P B BE BC N E C V U).
+  Definition point_reachable p n := exists entry route, In entry (C.entries p) /\
+    presentation_path (C.edges p) (C.src p) (C.dst p) entry route n.
+  Definition point_dominates p d n := forall entry route, In entry (C.entries p) ->
+    presentation_path (C.edges p) (C.src p) (C.dst p) entry route n -> In d route.
+  Definition point_use_at p n x := In x (U.exits p n) \/
+    exists e, In e (C.out p n) /\ In x (U.uses p e).
+  (** The point graph has exactly one entry. *)
+  Parameter single_entry : forall p, S.wf p -> exists entry, C.entries p = entry :: nil.
+  (** A reachable use has a reachable definition strictly dominating its point. *)
+  Parameter uses_defined : forall p n x, S.wf p -> point_reachable p n ->
+    point_use_at p n x -> exists d, S.point_definition p x = Some d /\
+      point_reachable p d /\ point_dominates p d n /\ d <> n.
+  (** A reachable definition edge leaves the value's unique definition point. *)
+  Parameter defs_at_home : forall p n e x, S.wf p -> point_reachable p n ->
+    In e (C.out p n) -> In x (U.defs p e) -> S.point_definition p x = Some n.
+  (** Every outgoing edge of a reachable definition point kills that value. *)
+  Parameter home_kills : forall p x d e, S.wf p -> S.point_definition p x = Some d ->
+    point_reachable p d -> In e (C.out p d) -> In x (U.defs p e).
+  (** Two reachable definition edges of one value have the same source point. *)
+  Parameter definitions_unique : forall p n1 n2 e1 e2 x, S.wf p ->
+    point_reachable p n1 -> point_reachable p n2 ->
+    In e1 (C.out p n1) -> In e2 (C.out p n2) ->
+    In x (U.defs p e1) -> In x (U.defs p e2) -> n1 = n2.
+End SSA_POINTS_STRICT_LAWS.
