@@ -10,6 +10,15 @@ From Galois.Bits Require Import Word Fun Op.
 From Galois.Domains Require Import ConstSig LangSig WordSig.
 Import List.ListNotations.
 
+Module ConstWordFast.
+  Definition wrap_fast (w : positive) (z : Z) : Z := Z.land z (Z.ones (Zpos w)).
+  TimeFun wrap_fast.
+
+  (** The mask implements the specified modular word reduction. *)
+  Lemma wrap_fast_agrees : forall w z, wrap_fast w z = Word.wrap w z.
+  Proof. Admitted.
+End ConstWordFast.
+
 Module ConstCode (L : LANG_OPS) (E : VAL_EQ_OPS L) <: CONST_OPS L E.
   Definition t := flat L.val.
   Definition wparam := unit.
@@ -99,9 +108,19 @@ End ConstWordCode.
 
 Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
     (W : WORD_PAYLOAD_OPS L with Definition p := flat Z) <: WORD_TABLE_OPS L W.
+  Definition wrap_fast := ConstWordFast.wrap_fast.
+  Definition normalise (w : positive) (a : W.p) : W.p :=
+    match a with
+    | FVal z => FVal (wrap_fast w z)
+    | _ => a
+    end.
+  Definition normalise_operands (xs : list (positive * W.p)) :=
+    map (fun wp => (fst wp, normalise (fst wp) (snd wp))) xs.
   Definition const_is (a : flat Z) (z : Z) :=
     match a with FVal x => Z.eqb x z | _ => false end.
   Definition shortcut (o : L.op) (a b : positive * W.p) : option Z :=
+    let a := (fst a, normalise (fst a) (snd a)) in
+    let b := (fst b, normalise (fst b) (snd b)) in
     match o with
     | bvmul | bvand =>
       if const_is (snd a) 0 || const_is (snd b) 0 then Some 0 else None
@@ -138,12 +157,16 @@ Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
     end%Z.
   Definition backward_one o rw (q : W.p) (xs : list (positive * W.p)) :
       option (list W.p) :=
+    let q := normalise rw q in
+    let xs := normalise_operands xs in
     match o, xs with
     | (bvnot | bvneg), [_] => Some (backward_one_values o rw q xs)
     | _, _ => None
     end.
   Definition backward_two o rw (q : W.p) (xs : list (positive * W.p)) :
       option (list W.p) :=
+    let q := normalise rw q in
+    let xs := normalise_operands xs in
     match o, xs with
     | (bveq | bvne | bvadd | bvsub | bvxor), [_; _] =>
       Some (backward_two_values o rw q xs)
@@ -583,10 +606,14 @@ Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
   TimeFun pwiden.
   TimeFun pnarrow.
 
-  Definition psize (_ : positive) (a : p) : nat :=
-    match a with FVal z => Z.size_nat z | _ => 0 end.
+  Definition psize (w : positive) (a : p) : nat :=
+    Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
   Definition pwsize (_ : pwparam) : nat := 0.
   Definition c_payload : N := 1%N. (* STUB *)
+  (** Constant payload size includes the width and raw integer bits. *)
+  Lemma F_psize_const : forall w a, psize w a =
+    Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
+  Proof. Admitted. (* STUB *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -667,6 +694,9 @@ End ConstWordTable.
 Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     <: CONST_WORD_TABLE_ALL L W.
   Include ConstWordTable L W.
+  TimeFun wrap_fast.
+  TimeFun normalise.
+  TimeFun normalise_operands.
   TimeFun const_is.
   TimeFun shortcut.
   TimeFun inverse.
@@ -692,6 +722,25 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
   Proof. Admitted. (* STUB *)
   Definition k_const_word : N := 1%N. (* STUB *)
+  (** Normalised inverse arithmetic reads bounded word payloads. *)
+  Lemma T2b_inverse_words : forall o rw q xs,
+    (T_backward_one_values o rw (normalise rw q) (normalise_operands xs) +
+     T_backward_two_values o rw (normalise rw q) (normalise_operands xs) <=
+      k_const_word * N.of_nat
+        (((Pos.to_nat rw +
+          fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Normalisation reads the width mask and raw literal once. *)
+  Lemma T2a_normalise : forall w z,
+    (T_wrap_fast w z <= k_const_word *
+      N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Fast wrapping preserves the specified modular reduction. *)
+  Lemma F_wrap_fast : forall w z, wrap_fast w z = L.wrap w z.
+  Proof. Admitted.
+
   Lemma F1_shortcut_sound : forall o a b z cs rw v,
     shortcut o a b = Some z ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -714,19 +763,24 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
   Proof. Admitted. (* STUB *)
-  Lemma T1_shortcut : forall o a b,
-    (T_shortcut o a b <= k_const_word *
-      N.of_nat (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2)%nat))%N.
+  Lemma T1_shortcut : forall o a b, (T_shortcut o a b <=
+    k_const_word * N.of_nat
+      (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2 +
+        W.psize (fst a) (snd a) + W.psize (fst b) (snd b))%nat))%N.
   Proof. Admitted. (* STUB *)
   Lemma T2_backward_one : forall o rw q xs,
     (T_backward_one o rw q xs <= k_const_word * N.of_nat
       (((Pos.to_nat rw +
-        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
   Proof. Admitted. (* STUB *)
   Lemma T3_backward_two : forall o rw q xs,
     (T_backward_two o rw q xs <= k_const_word * N.of_nat
       (((Pos.to_nat rw +
-        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
   Proof. Admitted. (* STUB *)
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->

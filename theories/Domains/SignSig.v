@@ -5,7 +5,8 @@
     Builds on: WordSig. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Argent Require Import BigO.
+From Argent Require Import Time Std BigO.
+From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import WordSig.
 
 Record sgn : Type := Sgn {
@@ -13,6 +14,63 @@ Record sgn : Type := Sgn {
   zero : bool;
   pos : bool
 }.
+
+TimeFun neg.
+TimeFun zero.
+TimeFun pos.
+
+Local Open Scope Z_scope.
+
+Definition sign_numeric_lo w a := if neg a then - Word.half w else if zero a then 0 else 1.
+Definition sign_numeric_hi w a := if pos a then Word.half w - 1 else if zero a then 0 else -1.
+Definition sign_numeric_ulo w a := if zero a then 0 else if pos a then 1 else Word.half w.
+Definition sign_numeric_uhi w a :=
+  if neg a then Word.modulus w - 1 else if pos a then Word.half w - 1 else 0.
+Definition sign_numeric_boolean (b : bool) :=
+  if b then Sgn true false false else Sgn false true false.
+Definition sign_numeric_bool_top := Sgn true true false.
+Definition sign_numeric_bool_not s := Sgn (zero s) (neg s) false.
+Definition sign_numeric_cmp_lt lo hi lo' hi' :=
+  if hi <? lo' then sign_numeric_boolean true else
+  if hi' <=? lo then sign_numeric_boolean false else sign_numeric_bool_top.
+Definition sign_numeric_cmp_le lo hi lo' hi' :=
+  if hi <=? lo' then sign_numeric_boolean true else
+  if hi' <? lo then sign_numeric_boolean false else sign_numeric_bool_top.
+Definition sign_numeric_cmp_eq lo hi lo' hi' :=
+  if (hi <? lo') || (hi' <? lo) then sign_numeric_boolean false else
+  if (lo =? hi) && (lo' =? hi') && (lo =? lo')
+  then sign_numeric_boolean true else sign_numeric_bool_top.
+(** Numeric endpoint comparison fixes the reference result for every flag combination. *)
+Definition sign_numeric_cmp o w a b :=
+  match o with
+  | bveq => sign_numeric_cmp_eq (sign_numeric_lo w a) (sign_numeric_hi w a)
+      (sign_numeric_lo w b) (sign_numeric_hi w b)
+  | bvne => sign_numeric_bool_not
+      (sign_numeric_cmp_eq (sign_numeric_lo w a) (sign_numeric_hi w a)
+        (sign_numeric_lo w b) (sign_numeric_hi w b))
+  | bvult => sign_numeric_cmp_lt (sign_numeric_ulo w a) (sign_numeric_uhi w a)
+      (sign_numeric_ulo w b) (sign_numeric_uhi w b)
+  | bvule => sign_numeric_cmp_le (sign_numeric_ulo w a) (sign_numeric_uhi w a)
+      (sign_numeric_ulo w b) (sign_numeric_uhi w b)
+  | bvslt => sign_numeric_cmp_lt (sign_numeric_lo w a) (sign_numeric_hi w a)
+      (sign_numeric_lo w b) (sign_numeric_hi w b)
+  | bvsle => sign_numeric_cmp_le (sign_numeric_lo w a) (sign_numeric_hi w a)
+      (sign_numeric_lo w b) (sign_numeric_hi w b)
+  | _ => sign_numeric_bool_top
+  end.
+TimeFun sign_numeric_lo.
+TimeFun sign_numeric_hi.
+TimeFun sign_numeric_ulo.
+TimeFun sign_numeric_uhi.
+TimeFun sign_numeric_boolean.
+TimeFun sign_numeric_bool_top.
+TimeFun sign_numeric_bool_not.
+TimeFun sign_numeric_cmp_lt.
+TimeFun sign_numeric_cmp_le.
+TimeFun sign_numeric_cmp_eq.
+TimeFun sign_numeric_cmp.
+
+Local Close Scope Z_scope.
 
 Module Type SIGN_OPS (L : WORD_LANGUAGE_OPS).
   Include WORD_PAYLOAD_OPS L with Definition p := sgn.
@@ -59,7 +117,6 @@ End SIGN_TIME.
 Module Type SIGN_T (L : WORD_LANGUAGE_T) := SIGN L <+ SIGN_TIME L.
 
 Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
-  Parameter k_sign : N.
   (** Payload concretization reads the sign flags. *)
   Parameter F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
   (** Sign height is at most three. *)
@@ -84,12 +141,6 @@ Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
   Parameter F7_sign_xor_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
-  (** Flag inclusion takes a constant number of Boolean operations. *)
-  Parameter T1_pleb : forall w a b, (T_pleb w a b <= k_sign)%N.
-  (** Flag join takes a constant number of Boolean operations. *)
-  Parameter T2_pjoin : forall w a b, (T_pjoin w a b <= k_sign)%N.
-  (** Flag meet takes a constant number of Boolean operations. *)
-  Parameter T3_pmeet : forall w a b, (T_pmeet w a b <= k_sign)%N.
 End SIGN_PLAN.
 
 Module Type SIGN_ALL (L : WORD_LANGUAGE_T) := SIGN_T L <+ SIGN_PLAN L.
@@ -107,7 +158,8 @@ Module Type SIGN_TABLE_T (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=
 
 Module Type SIGN_TABLE_PLAN (L : WORD_LANGUAGE_T) (S : SIGN_T L)
     (Import T : SIGN_TABLE_T L S).
-  Parameter sign_cmp sign_cmp_sym : L.op -> positive -> sgn -> sgn -> sgn.
+  Definition sign_cmp := sign_numeric_cmp.
+  Parameter sign_cmp_sym : L.op -> positive -> sgn -> sgn -> sgn.
   (** The bounded flag comparison keeps every numeric comparator result. *)
   Parameter F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
 End SIGN_TABLE_PLAN.

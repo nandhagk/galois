@@ -5,7 +5,7 @@
     Builds on: ValueSig and HarnessSig. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import BigO.
+From Argent Require Import Std BigO.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig HarnessSig WordSig.
 
@@ -107,8 +107,17 @@ Module Type CONST_ALL (L : LANG_T) (E : VAL_EQ_T L) := CONST_T L E <+ CONST_PLAN
 
 Module Type CONST_WORD_PAYLOAD (L : WORD_LANGUAGE) :=
   WORD_PAYLOAD L with Definition p := flat Z.
+
+Module Type CONST_WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T)
+    (Import W : CONST_WORD_PAYLOAD L).
+  Include WORD_PAYLOAD_TIME L W.
+  (** Constant payload size includes the width and the raw integer bits. *)
+  Parameter F_psize_const : forall w a, psize w a =
+    Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
+End CONST_WORD_PAYLOAD_TIME.
+
 Module Type CONST_WORD_PAYLOAD_T (L : WORD_LANGUAGE_T) :=
-  WORD_PAYLOAD_T L with Definition p := flat Z.
+  CONST_WORD_PAYLOAD L <+ CONST_WORD_PAYLOAD_TIME L.
 Module Type CONST_WORD_TABLE (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) :=
   WORD_TABLE L W.
 Module Type CONST_WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L) :=
@@ -116,6 +125,14 @@ Module Type CONST_WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L
 
 Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     (Import T : CONST_WORD_TABLE_T L W).
+  Parameter wrap_fast : positive -> Z -> Z.
+  Parameter T_wrap_fast : positive -> Z -> N.
+  Parameter normalise : positive -> W.p -> W.p.
+  Parameter normalise_operands : list (positive * W.p) -> list (positive * W.p).
+  Parameter backward_one_values backward_two_values :
+    L.op -> positive -> W.p -> list (positive * W.p) -> list W.p.
+  Parameter T_backward_one_values T_backward_two_values :
+    L.op -> positive -> W.p -> list (positive * W.p) -> N.
   Parameter shortcut : L.op -> (positive * W.p) -> (positive * W.p) -> option Z.
   Parameter backward_one backward_two :
     L.op -> positive -> W.p -> list (positive * W.p) -> option (list W.p).
@@ -123,6 +140,8 @@ Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_
   Parameter T_backward_one T_backward_two :
     L.op -> positive -> W.p -> list (positive * W.p) -> N.
   Parameter k_const_word : N.
+  (** Fast wrapping preserves the specified modular reduction. *)
+  Parameter F_wrap_fast : forall w z, wrap_fast w z = L.wrap w z.
   (** An annihilator shortcut identifies every defined concrete result. *)
   Parameter F1_shortcut_sound : forall o a b z cs rw v,
     shortcut o a b = Some z ->
@@ -145,19 +164,36 @@ Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
-  (** Shortcuts charge both operand widths. *)
+  (** Shortcuts charge widths quadratically and raw payloads linearly. *)
   Parameter T1_shortcut : forall o a b, (T_shortcut o a b <=
-    k_const_word * N.of_nat (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2)%nat))%N.
+    k_const_word * N.of_nat
+      (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2 +
+        W.psize (fst a) (snd a) + W.psize (fst b) (snd b))%nat))%N.
+  (** Normalisation reads the width mask and raw literal once. *)
+  Parameter T2a_normalise : forall w z,
+    (T_wrap_fast w z <= k_const_word *
+      N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+  (** Normalised inverse arithmetic reads bounded word payloads. *)
+  Parameter T2b_inverse_words : forall o rw q xs,
+    (T_backward_one_values o rw (normalise rw q) (normalise_operands xs) +
+     T_backward_two_values o rw (normalise rw q) (normalise_operands xs) <=
+      k_const_word * N.of_nat
+        (((Pos.to_nat rw +
+          fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
   (** Unary inverses have the published quadratic width bound. *)
   Parameter T2_backward_one : forall o rw q xs, (T_backward_one o rw q xs <=
     k_const_word * N.of_nat
       (((Pos.to_nat rw +
-        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
   (** Binary inverses have the published quadratic width bound. *)
   Parameter T3_backward_two : forall o rw q xs, (T_backward_two o rw q xs <=
     k_const_word * N.of_nat
       (((Pos.to_nat rw +
-        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
 End CONST_WORD_TABLE_PLAN.
 
 Module Type CONST_WORD_TABLE_ALL (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L) :=

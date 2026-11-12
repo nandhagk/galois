@@ -102,6 +102,23 @@ Module Type CONGRUENCE_T (L : WORD_LANGUAGE_T) :=
   CONGRUENCE L <+ CONGRUENCE_TIME L.
 
 Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
+  Parameter div_aligned : Z -> Z -> Z * Z.
+  Parameter extgcd : Z -> Z -> Z * Z * Z.
+  Parameter T_div_aligned T_extgcd : Z -> Z -> N.
+  Parameter k_div k_gcd : N.
+  (** Aligned division preserves the standard quotient and remainder. *)
+  Parameter F_div_aligned : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
+    div_aligned a b = Z.div_eucl a b.
+  (** The coefficient chain preserves the standard ordered result. *)
+  Parameter extgcd_agrees : forall a b, extgcd a b = Z.extgcd a b.
+  (** Division charges the dividend bits for each quotient bit. *)
+  Parameter T_div_aligned_le : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
+    (T_div_aligned a b <= k_div *
+      N.of_nat ((Z.size_nat a - Z.size_nat b + 2) * (Z.size_nat a + 1)))%N.
+  (** The full coefficient chain has quadratic input-bit work. *)
+  Parameter T_extgcd_le : forall a b,
+    (T_extgcd a b <= k_gcd *
+      N.of_nat ((Z.size_nat a + Z.size_nat b + 1) ^ 2))%N.
   Parameter k_congr_gcd k_congr_crt k_congr_transfer : N.
   (** Payload concretization agrees with residue-class membership. *)
   Parameter F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.

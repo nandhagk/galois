@@ -46,9 +46,13 @@ Module CongruenceCRT.
   TimeFun div_scan.
 
   Definition div_aligned (a b : Z) : Z * Z :=
-    if (a <? b)%Z then (0, a) else
-      let shift := (Z.size_nat a - Z.size_nat b)%nat in
-      div_scan (S shift) (Z.shiftl b (Z.of_nat shift)) a 0.
+    match a, b with
+    | Zneg _, _ | _, Zneg _ | _, Z0 => Z.div_eucl a b
+    | _, _ =>
+      if (a <? b)%Z then (0, a) else
+        let shift := (Z.size_nat a - Z.size_nat b)%nat in
+        div_scan (S shift) (Z.shiftl b (Z.of_nat shift)) a 0
+    end.
   TimeFun div_aligned.
 
   Definition k_div : N := 1%N. (* STUB *)
@@ -77,6 +81,21 @@ Module CongruenceCRT.
 
   Definition lt (s1 s : congr_crt_state) : Prop :=
     (Z.abs_N (crt_r1 s1) < Z.abs_N (crt_r1 s))%N.
+
+  Definition nonnegative_remainders (s : congr_crt_state) : Prop :=
+    (0 <= crt_r1 s /\ 0 <= crt_r2 s)%Z.
+
+  (** Absolute-value initialization puts both remainders in the aligned division domain. *)
+  Lemma initial_nonnegative : forall a b,
+    nonnegative_remainders
+      {| crt_r1 := Z.abs a; crt_u1 := Z.sgn a; crt_v1 := 0;
+         crt_r2 := Z.abs b; crt_u2 := 0; crt_v2 := Z.sgn b |}.
+  Proof. Admitted.
+
+  (** Every nonterminal reachable step keeps the remainders nonnegative. *)
+  Lemma next_nonnegative : forall s, nonnegative_remainders s ->
+    (crt_r1 s =? 0) = false -> nonnegative_remainders (next s).
+  Proof. Admitted.
 
   (** The Euclidean remainder strictly reduces the absolute first remainder. *)
   Lemma next_decreases : forall s, (crt_r1 s =? 0) = false -> lt (next s) s.
@@ -341,6 +360,16 @@ End CongruenceTable.
 
 Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Include Congruence L.
+  Definition div_aligned := CongruenceCRT.div_aligned.
+  Definition extgcd := CongruenceCRT.extgcd.
+  Definition T_div_aligned := CongruenceCRT.T_div_aligned.
+  Definition T_extgcd := CongruenceCRT.T_extgcd.
+  Definition k_div := CongruenceCRT.k_div.
+  Definition k_gcd := CongruenceCRT.k_gcd.
+  Definition F_div_aligned := CongruenceCRT.F_div_aligned.
+  Definition extgcd_agrees := CongruenceCRT.extgcd_agrees.
+  Definition T_div_aligned_le := CongruenceCRT.T_div_aligned_le.
+  Definition T_extgcd_le := CongruenceCRT.T_extgcd_le.
   TimeFun wordb.
   TimeFun congr_norm.
   TimeFun raw_leb.

@@ -10,9 +10,6 @@ From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module Z.
-  TimeFun Z.ones.
-End Z.
 Module Nat.
   TimeFun Nat.max.
 End Nat.

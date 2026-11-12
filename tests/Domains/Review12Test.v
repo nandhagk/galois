@@ -8,12 +8,13 @@ From Stdlib Require Import ZArith List Bool.
 From Galois.Bits Require Import Op Word.
 From Galois.Domains Require Import
   Sign SignSig Const ConstSig WordSig BitsLang ZLang Interval IntervalSig IntervalBack
-  ValueSig Thresholds Congruence CongruenceSig Tagged.
+  ValueSig Thresholds Congruence CongruenceSig Tagged Harness.
 Import List.ListNotations.
 
 Module Signs := SignCode WordLanguageCode.
 Module SignTable := SignTableCode WordLanguageCode Signs.
 Module Ints := IntervalT ZLangT ThresholdsT.
+Module IntegerCode := IntervalCode ZLangCode ThresholdsCode.
 
 Definition all_flags :=
   flat_map (fun n => flat_map (fun z => map (Sgn n z) [false; true]) [false; true])
@@ -40,7 +41,7 @@ Example positive_width_three :
 Proof. vm_compute. reflexivity. Qed.
 
 Example integer_view_dispatch :
-  Ints.forward (ZConst 7%Z) [] = I (Fin 7%Z) (Fin 7%Z).
+  IntegerCode.forward (ZConst 7%Z) [] = I (Fin 7%Z) (Fin 7%Z).
 Proof. vm_compute. reflexivity. Qed.
 
 Module RawConstants := ConstWordCode WordLanguageCode.
@@ -88,12 +89,29 @@ Module Scalar := IntervalBaseT ThresholdsT.
 Module IntervalPayload := IntervalPayloadT WordLanguageT ThresholdsT Scalar.
 Module IntervalEntries := IntervalWordTableT WordLanguageT ThresholdsT Scalar IntervalPayload.
 Module IntervalDomain := WordDomainT WordLanguageT IntervalPayload IntervalEntries.
+Module CongruenceCodePayload := CongruenceCode WordLanguageCode.
+Module CongruenceCodeEntries := CongruenceTableCode WordLanguageCode CongruenceCodePayload.
+Module ConstantCodeEntries := ConstWordTableCode WordLanguageCode RawConstants.
+Module ConstantCodeBase := TaggedCode WordLanguageCode RawConstants.
+Module ConstantCodeTable := TaggedTableCode WordLanguageCode RawConstants ConstantCodeEntries.
+Module ConstantCodeDomain := HarnessCode BitsLangCode ConstantCodeBase ConstantCodeTable.
 
 Example congruence_top_dispatch :
-  CongruenceEntries.wfwd bvneg 8%positive [(4%positive, C 0 1%Z)] = Some (C 1%Z 0%Z).
+  CongruenceCodeEntries.wfwd bvneg 8%positive [(4%positive, C 0 1%Z)] = Some (C 1%Z 0%Z).
 Proof. vm_compute. reflexivity. Qed.
 
 Example tagged_literal_dispatch :
-  ConstantDomain.Domain.forward (BConst 8%positive 7%Z) [] =
+  ConstantCodeDomain.forward (BConst 8%positive 7%Z) [] =
     TVal 8%positive (FVal 7%Z).
+Proof. vm_compute. reflexivity. Qed.
+
+Example fast_wrap_signed_reference :
+  ConstWordFast.wrap_fast 8%positive (-257)%Z = 255%Z /\
+  ConstWordFast.wrap_fast 8%positive (2 ^ 128 + 7)%Z = 7%Z.
+Proof. vm_compute. split; reflexivity. Qed.
+
+Example raw_constant_inverse_normalises :
+  ConstantCodeEntries.backward_two bvadd 8%positive (FVal (2 ^ 128 + 3)%Z)
+    [(8%positive, FTop); (8%positive, FVal (2 ^ 128 + 1)%Z)] =
+    Some [FVal 2%Z; FVal 1%Z].
 Proof. vm_compute. reflexivity. Qed.

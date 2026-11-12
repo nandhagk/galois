@@ -12,12 +12,6 @@ Import List.ListNotations.
 
 Local Open Scope Z_scope.
 
-Module SignSig.
-  TimeFun Galois.Domains.SignSig.neg.
-  TimeFun Galois.Domains.SignSig.zero.
-  TimeFun Galois.Domains.SignSig.pos.
-End SignSig.
-
 Module SignCode (L : WORD_LANGUAGE_OPS) <: SIGN_OPS L.
   Definition p := sgn.
   Definition pleb (_ : positive) (a b : p) : bool :=
@@ -57,33 +51,17 @@ End SignCode.
 Module SignTableCode (L : WORD_LANGUAGE_OPS) (S : SIGN_OPS L)
     <: WORD_TABLE_OPS L S.
   Definition sign_nonneg (a : sgn) := zero a || pos a.
-  Definition sign_lo w a := if neg a then - half w else if zero a then 0 else 1.
-  Definition sign_hi w a := if pos a then half w - 1 else if zero a then 0 else -1.
-  Definition sign_ulo w a := if zero a then 0 else if pos a then 1 else half w.
-  Definition sign_uhi w a := if neg a then modulus w - 1 else if pos a then half w - 1 else 0.
-  Definition sign_boolean (b : bool) := if b then Sgn true false false else Sgn false true false.
-  Definition sign_bool_top := Sgn true true false.
-  Definition sign_bool_not s := Sgn (zero s) (neg s) false.
-  Definition sign_cmp_lt lo hi lo' hi' :=
-    if hi <? lo' then sign_boolean true else
-    if hi' <=? lo then sign_boolean false else sign_bool_top.
-  Definition sign_cmp_le lo hi lo' hi' :=
-    if hi <=? lo' then sign_boolean true else
-    if hi' <? lo then sign_boolean false else sign_bool_top.
-  Definition sign_cmp_eq lo hi lo' hi' :=
-    if (hi <? lo') || (hi' <? lo) then sign_boolean false else
-    if (lo =? hi) && (lo' =? hi') && (lo =? lo') then sign_boolean true else sign_bool_top.
-  Definition sign_cmp o w a b :=
-    match o with
-    | bveq => sign_cmp_eq (sign_lo w a) (sign_hi w a) (sign_lo w b) (sign_hi w b)
-    | bvne => sign_bool_not
-        (sign_cmp_eq (sign_lo w a) (sign_hi w a) (sign_lo w b) (sign_hi w b))
-    | bvult => sign_cmp_lt (sign_ulo w a) (sign_uhi w a) (sign_ulo w b) (sign_uhi w b)
-    | bvule => sign_cmp_le (sign_ulo w a) (sign_uhi w a) (sign_ulo w b) (sign_uhi w b)
-    | bvslt => sign_cmp_lt (sign_lo w a) (sign_hi w a) (sign_lo w b) (sign_hi w b)
-    | bvsle => sign_cmp_le (sign_lo w a) (sign_hi w a) (sign_lo w b) (sign_hi w b)
-    | _ => sign_bool_top
-    end.
+  Definition sign_lo := sign_numeric_lo.
+  Definition sign_hi := sign_numeric_hi.
+  Definition sign_ulo := sign_numeric_ulo.
+  Definition sign_uhi := sign_numeric_uhi.
+  Definition sign_boolean := sign_numeric_boolean.
+  Definition sign_bool_top := sign_numeric_bool_top.
+  Definition sign_bool_not := sign_numeric_bool_not.
+  Definition sign_cmp_lt := sign_numeric_cmp_lt.
+  Definition sign_cmp_le := sign_numeric_cmp_le.
+  Definition sign_cmp_eq := sign_numeric_cmp_eq.
+  Definition sign_cmp := sign_numeric_cmp.
   Definition sign_half_class (w : positive) : Z :=
     match w with
     | xH => 1
@@ -356,7 +334,6 @@ End SignT.
 
 Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
   Include SignT L.
-  Definition k_sign : N := 1%N. (* STUB *)
   Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
   Proof. Admitted. (* STUB *)
   Lemma F2_level : forall a, (sign_level a <= 3)%nat.
@@ -380,12 +357,6 @@ Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
   Lemma F7_sign_xor_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
-  Proof. Admitted. (* STUB *)
-  Lemma T1_pleb : forall w a b, (T_pleb w a b <= k_sign)%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T2_pjoin : forall w a b, (T_pjoin w a b <= k_sign)%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T3_pmeet : forall w a b, (T_pmeet w a b <= k_sign)%N.
   Proof. Admitted. (* STUB *)
 End SignAll.
 

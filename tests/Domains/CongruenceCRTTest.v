@@ -83,3 +83,13 @@ Proof. vm_compute. reflexivity. Qed.
 Example aligned_division_large_quotient :
   CongruenceCRT.div_aligned (2 ^ 128 + 7) 3 = Z.div_eucl (2 ^ 128 + 7) 3.
 Proof. vm_compute. reflexivity. Qed.
+
+Example aligned_division_negative_divisor :
+  CongruenceCRT.div_aligned 1 (-1) = Z.div_eucl 1 (-1).
+Proof. vm_compute. reflexivity. Qed.
+
+Example aligned_division_signed_and_zero_reference :
+  forallb (fun a => forallb (fun b =>
+    div_pair_eqb (CongruenceCRT.div_aligned a b) (Z.div_eucl a b))
+    signed_samples) signed_samples = true.
+Proof. vm_compute. reflexivity. Qed.
