@@ -6,6 +6,9 @@
 
 From Stdlib Require Import NArith PArith List.
 From Argent Require Import Time Std.
+Module List.
+  TimeFun flat_map.
+End List.
 
 Fixpoint glue (a b : positive) : positive :=
   match a with
