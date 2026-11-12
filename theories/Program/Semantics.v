@@ -52,3 +52,41 @@ Module SemanticsSteps (P : TYPE) (M : SEMANTICS P) (T : TRACES P M).
     - intros H x s l t Hreach Hstep; exact (H s l t Hreach Hstep x).
   Qed.
 End SemanticsSteps.
+
+Module SemanticsTraces (P : TYPE) (M : SEMANTICS P) (T : TRACES P M).
+  (** A state has the same finite and diverging behaviours as itself. *)
+  Lemma same_behaviour_refl p s : T.same_behaviour p s s.
+  Proof.
+    unfold T.same_behaviour; split; [intros; reflexivity|].
+    split; intros; reflexivity.
+  Qed.
+
+  (** Observable behaviour equality can be reversed. *)
+  Lemma same_behaviour_sym p s t :
+    T.same_behaviour p s t -> T.same_behaviour p t s.
+  Proof.
+    intros [Hfinish [Hprefix Hdiv]]; split.
+    - intros k tr; symmetry; apply Hfinish.
+    - split.
+      + intro tr; symmetry; apply Hprefix.
+      + intro tr; symmetry; apply Hdiv.
+  Qed.
+
+  (** Behaviour equality composes through the same intermediate state. *)
+  Lemma same_behaviour_trans p s t u :
+    T.same_behaviour p s t -> T.same_behaviour p t u -> T.same_behaviour p s u.
+  Proof.
+    intros [Hfinish12 [Hprefix12 Hdiv12]] [Hfinish23 [Hprefix23 Hdiv23]]; split.
+    - intros k tr; transitivity
+        (exists v, traced_run (T.lstep p) t tr v /\ T.ends_as p k v).
+      + apply Hfinish12.
+      + apply Hfinish23.
+    - split.
+      + intro tr; transitivity (exists v, traced_run (T.lstep p) t tr v).
+        * apply Hprefix12.
+        * apply Hprefix23.
+      + intro tr; transitivity (T.diverges_after p t tr).
+        * apply Hdiv12.
+        * apply Hdiv23.
+  Qed.
+End SemanticsTraces.
