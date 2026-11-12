@@ -5,9 +5,12 @@
     Builds on: ValueSig, WordSig and ThresholdsSig. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Std BigO.
+From Argent Require Import Time Std BigO.
+From Galois.Bits Require Import Word.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig WordSig ThresholdsSig.
+
+Local Open Scope nat_scope.
 
 Inductive itv : Type :=
   | IBot
@@ -78,6 +81,139 @@ End Z_LANGUAGE_LAWS.
 
 Module Type Z_LANGUAGE := Z_LANGUAGE_BASE <+ Z_LANGUAGE_LAWS.
 Module Type Z_LANGUAGE_T := Z_LANGUAGE <+ LANG_TIME.
+
+Module Type INTERVAL_SCALAR_SPEC (T : THRESHOLDS_OPS).
+  Definition bound_leb (a b : bnd) : bool :=
+    match a, b with
+    | NegInf, _ => true
+    | _, PosInf => true
+    | Fin x, Fin y => Z.leb x y
+    | _, _ => false
+    end.
+  Definition bound_min a b := if bound_leb a b then a else b.
+  Definition bound_max a b := if bound_leb a b then b else a.
+  Definition widen_lower ts old next :=
+    if bound_leb old next then old else
+      match next with
+      | NegInf => NegInf
+      | Fin z => match T.below ts z with Some u => Fin u | None => NegInf end
+      | PosInf => PosInf
+      end.
+  Definition widen_upper ts old next :=
+    if bound_leb next old then old else
+      match next with
+      | NegInf => NegInf
+      | Fin z => match T.above ts z with Some u => Fin u | None => PosInf end
+      | PosInf => PosInf
+      end.
+  Definition narrow_bound old next :=
+    match old with
+    | Fin _ => old
+    | _ => next
+    end.
+  Definition interval_leb (a b : itv) :=
+    match a, b with
+    | IBot, _ => true
+    | I _ _, IBot => false
+    | I l h, I l' h' => andb (bound_leb l' l) (bound_leb h h')
+    end.
+  Definition interval_join (a b : itv) :=
+    match a, b with
+    | IBot, _ => b
+    | _, IBot => a
+    | I l h, I l' h' => I (bound_min l l') (bound_max h h')
+    end.
+  Definition interval_widen ts (a b : itv) :=
+    match a, b with
+    | IBot, _ => b
+    | _, IBot => a
+    | I l h, I l' h' => I (widen_lower ts l l') (widen_upper ts h h')
+    end.
+  Definition interval_narrow (a b : itv) :=
+    match a, b with
+    | IBot, _ => IBot
+    | _, IBot => a
+    | I l h, I l' h' => I (narrow_bound l l') (narrow_bound h h')
+    end.
+  Definition bounds_nonempty lo hi :=
+    match lo, hi with
+    | PosInf, _ => false
+    | _, NegInf => false
+    | _, _ => bound_leb lo hi
+    end.
+  Definition interval_meet (a b : itv) :=
+    match a, b with
+    | I l h, I l' h' =>
+      let lo := bound_max l l' in
+      let hi := bound_min h h' in
+      if bounds_nonempty lo hi then I lo hi else IBot
+    | _, _ => IBot
+    end.
+  Definition interval_finite (a : itv) : option (Z * Z) :=
+    match a with
+    | I (Fin lo) (Fin hi) => Some (lo, hi)
+    | _ => None
+    end.
+  Definition interval_singleton a :=
+    match interval_finite a with
+    | Some (lo, hi) => if Z.eqb lo hi then Some lo else None
+    | None => None
+    end.
+  Definition interval_is_bot (a : itv) : bool :=
+    match a with IBot => true | _ => false end.
+  Definition interval_stable_widen ts a b :=
+    if interval_leb b a then a else interval_widen ts a b.
+End INTERVAL_SCALAR_SPEC.
+
+Module Type INTERVAL_SCALAR_OPS (T : THRESHOLDS_OPS) := INTERVAL_SCALAR_SPEC T.
+
+(** Raw interval size counts the largest finite endpoint. *)
+Definition interval_bits (a : itv) : nat :=
+  match a with
+  | IBot => 0
+  | I lo hi => Nat.max
+      (match lo with Fin z => Z.size_nat z | _ => 0 end)
+      (match hi with Fin z => Z.size_nat z | _ => 0 end)
+  end.
+
+Module Type INTERVAL_SCALAR_TIME (T : THRESHOLDS_T) (Import S : INTERVAL_SCALAR_OPS T).
+  Parameter T_interval_leb T_interval_join T_interval_meet T_interval_narrow : itv -> itv -> N.
+  Parameter T_interval_is_bot T_interval_singleton : itv -> N.
+  Parameter T_interval_stable_widen : ttree -> itv -> itv -> N.
+  Parameter c_scalar : N.
+  (** Scalar inclusion charges the raw endpoint bits. *)
+  Parameter T_interval_leb_le : forall a b,
+    (T_interval_leb a b <= c_scalar * N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  (** Scalar join charges the raw endpoint bits. *)
+  Parameter T_interval_join_le : forall a b,
+    (T_interval_join a b <= c_scalar * N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  (** Scalar meet charges the raw endpoint bits. *)
+  Parameter T_interval_meet_le : forall a b,
+    (T_interval_meet a b <= c_scalar * N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  (** Scalar narrowing reads the endpoint constructors. *)
+  Parameter T_interval_narrow_le : forall a b, (T_interval_narrow a b <= c_scalar)%N.
+  (** Scalar bottom recognition reads the interval constructor. *)
+  Parameter T_interval_is_bot_le : forall a, (T_interval_is_bot a <= c_scalar)%N.
+  (** Scalar point recognition compares both finite endpoints. *)
+  Parameter T_interval_singleton_le : forall a,
+    (T_interval_singleton a <= c_scalar * N.of_nat (interval_bits a + 1))%N.
+  (** Scalar widening pays for inclusion and the threshold search paths. *)
+  Parameter T_interval_stable_widen_le : forall ts a b,
+    (T_interval_stable_widen ts a b <= c_scalar * N.of_nat
+      (interval_bits a + interval_bits b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
+  (** Widening selects endpoints from its operands, thresholds and infinities. *)
+  Parameter interval_stable_widen_bits : forall ts a b,
+    interval_bits (interval_stable_widen ts a b) <=
+      interval_bits a + interval_bits b + T.tree_bits ts.
+End INTERVAL_SCALAR_TIME.
+
+Module Type INTERVAL_SCALAR_T (T : THRESHOLDS_T) :=
+  INTERVAL_SCALAR_OPS T <+ INTERVAL_SCALAR_TIME T.
+
+(** Clipping intersects a raw interval with the unsigned word range. *)
+Definition interval_payload_clip (meet : itv -> itv -> itv) (w : positive) (a : itv) : itv :=
+  meet a (I (Fin 0) (Fin (Word.modulus w - 1))).
+TimeFun interval_payload_clip.
 
 Module Type INTERVAL_OPS (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS).
   Include VALUE_DOMAIN_OPS L with Definition t := itv with Definition wparam := ttree.
@@ -333,6 +469,103 @@ Module Type INTERVAL_PAYLOAD (L : WORD_LANGUAGE) :=
   WORD_PAYLOAD L with Definition p := itv.
 Module Type INTERVAL_PAYLOAD_T (L : WORD_LANGUAGE_T) :=
   WORD_PAYLOAD_T L with Definition p := itv.
+
+Module Type INTERVAL_PAYLOAD_SPEC (T : THRESHOLDS) (S : INTERVAL_SCALAR_OPS T).
+  Definition count_gt (ts : ttree) (z : Z) : nat :=
+    length (filter (fun u => (z <? u)%Z) (T.vals ts)).
+  Definition count_lt (ts : ttree) (z : Z) : nat :=
+    length (filter (fun u => (u <? z)%Z) (T.vals ts)).
+  Definition payload_wrank (ts : ttree) (w : positive) (a : itv) : nat :=
+    match interval_payload_clip S.interval_meet w a with
+    | IBot => 0
+    | I lo hi =>
+      (match hi with
+       | Fin z => if (z =? Word.modulus w - 1)%Z then 0 else 1 + count_gt ts z
+       | _ => 0
+       end) +
+      (match lo with
+       | Fin z => if (z =? 0)%Z then 0 else 1 + count_lt ts z
+       | _ => 0
+       end)
+    end.
+End INTERVAL_PAYLOAD_SPEC.
+
+Module Type INTERVAL_PAYLOAD_BASE (L : WORD_LANGUAGE) (T : THRESHOLDS)
+    (S : INTERVAL_SCALAR_OPS T) :=
+  (INTERVAL_PAYLOAD L with Definition pwparam := ttree) <+ INTERVAL_PAYLOAD_SPEC T S.
+
+Module Type INTERVAL_PAYLOAD_PINS (L : WORD_LANGUAGE) (T : THRESHOLDS)
+    (S : INTERVAL_SCALAR_OPS T) (Import P : INTERVAL_PAYLOAD_BASE L T S).
+  (** Payload inclusion reads both operands through the word range. *)
+  Parameter F_pleb : forall w a b, pleb w a b = S.interval_leb
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  (** Payload bottom recognition reads the clipped interval. *)
+  Parameter F_pis_bot : forall w a, pis_bot w a =
+    S.interval_is_bot (interval_payload_clip S.interval_meet w a).
+  (** Payload join combines clipped operands. *)
+  Parameter F_pjoin : forall w a b, pjoin w a b = S.interval_join
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  (** Payload meet combines clipped operands. *)
+  Parameter F_pmeet : forall w a b, pmeet w a b = S.interval_meet
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  (** Payload widening retains stable raw values and clips unstable results. *)
+  Parameter F_pwiden : forall q w a b, pwiden q w a b =
+    if pleb w b a then a else interval_payload_clip S.interval_meet w
+      (S.interval_stable_widen q (interval_payload_clip S.interval_meet w a)
+        (interval_payload_clip S.interval_meet w b)).
+  (** Payload narrowing combines clipped operands. *)
+  Parameter F_pnarrow : forall w a b, pnarrow w a b = S.interval_narrow
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
+  Parameter F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
+  (** Payload bottom is the empty interval. *)
+  Parameter F_pbot : forall w, pbot w = IBot.
+  (** Payload top is the inclusive unsigned word range. *)
+  Parameter F_ptop : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
+  (** Payload constants are wrapped singleton intervals. *)
+  Parameter F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
+  (** Payload points are recognized after clipping. *)
+  Parameter F_ppoint : forall w a, ppoint w a =
+    S.interval_singleton (interval_payload_clip S.interval_meet w a).
+  (** Payload concretization intersects raw endpoints with normalized words. *)
+  Parameter F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
+    match a with IBot => False | I lo hi => in_bnd lo hi z end.
+End INTERVAL_PAYLOAD_PINS.
+
+Module Type INTERVAL_PAYLOAD_PINNED (L : WORD_LANGUAGE) (T : THRESHOLDS)
+    (S : INTERVAL_SCALAR_OPS T) :=
+  INTERVAL_PAYLOAD_BASE L T S <+ INTERVAL_PAYLOAD_PINS L T S.
+
+Module Type INTERVAL_PAYLOAD_PINNED_T (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
+    (S : INTERVAL_SCALAR_T T) :=
+  INTERVAL_PAYLOAD_PINNED L T S <+ WORD_PAYLOAD_TIME L.
+
+Module Type INTERVAL_PAYLOAD_PLAN (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
+    (S : INTERVAL_SCALAR_T T) (Import P : INTERVAL_PAYLOAD_PINNED_T L T S).
+  Parameter k_payload_clip : N.
+  (** Payload size charges its width and the raw endpoint bits. *)
+  Parameter F_psize : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
+  (** Widening parameter size charges a threshold search path. *)
+  Parameter F_pwsize : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
+  (** Payload rank never exceeds the scalar threshold envelope. *)
+  Parameter F_pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
+  (** Constructing the unsigned modulus charges the resulting word width. *)
+  Parameter T_modulus_le : forall w,
+    (Word.T_modulus w <= k_payload_clip * N.of_nat (Pos.to_nat w + 1))%N.
+  (** Concrete wrapping charges the width and raw literal bits. *)
+  Parameter T_wrap_le : forall w z,
+    (Word.T_wrap w z <= k_payload_clip *
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  (** Clipping pays for the word bound and the raw endpoint bits. *)
+  Parameter T_clip_le : forall w a,
+    (T_interval_payload_clip S.interval_meet S.T_interval_meet w a <=
+      k_payload_clip * N.of_nat (psize w a + 1))%N.
+End INTERVAL_PAYLOAD_PLAN.
+
+Module Type INTERVAL_PAYLOAD_ALL (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
+    (S : INTERVAL_SCALAR_T T) :=
+  INTERVAL_PAYLOAD_PINNED_T L T S <+ INTERVAL_PAYLOAD_PLAN L T S.
+
 Module Type INTERVAL_WORD_TABLE (L : WORD_LANGUAGE) (D : INTERVAL_PAYLOAD L) :=
   WORD_TABLE L D.
 Module Type INTERVAL_WORD_TABLE_T (L : WORD_LANGUAGE_T) (D : INTERVAL_PAYLOAD_T L) :=

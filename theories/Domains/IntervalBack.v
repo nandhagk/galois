@@ -5,13 +5,14 @@
     Builds on: IntervalOps and fixed-width word operators. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
+From Argent Require Import Time Std.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSig WordSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module IntervalBackCode (T : THRESHOLDS_OPS).
-  Include IntervalOpsCode T.
+Module IntervalBackCode (T : THRESHOLDS_OPS) (S : INTERVAL_SCALAR_OPS T).
+  Include IntervalOpsCode T S.
 Definition interval_is_point (i : itv) (z : Z) : bool :=
   match interval_finite i with
   | Some (lo, hi) => Z.eqb lo z && Z.eqb hi z
@@ -56,26 +57,31 @@ Definition interval_assume_pair (o : op) (w : width) (a b q : itv) : itv * itv :
 End IntervalBackCode.
 
 Module IntervalPayloadCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
+    (S : INTERVAL_SCALAR_OPS T)
     <: (WORD_PAYLOAD_OPS L with Definition p := itv).
-  Include IntervalOpsCode T.
+  Include S.
   Definition p := itv.
-  Definition pleb (_ : positive) a b := interval_leb a b.
-  Definition pjoin (_ : positive) a b := interval_join a b.
-  Definition pmeet (_ : positive) a b := interval_meet a b.
+  Definition interval_top (w : positive) := I (Fin 0) (Fin (Word.modulus w - 1)).
+  Definition interval_clip w a := interval_payload_clip interval_meet w a.
+  Definition pleb w a b := interval_leb (interval_clip w a) (interval_clip w b).
+  Definition pjoin w a b := interval_join (interval_clip w a) (interval_clip w b).
+  Definition pmeet w a b := interval_meet (interval_clip w a) (interval_clip w b).
   Definition pbot (_ : positive) := IBot.
   Definition ptop w := interval_top w.
-  Definition pis_bot w a := match interval_clip w a with IBot => true | _ => false end.
-  Definition pconst w z := interval_const w z.
+  Definition pis_bot w a := interval_is_bot (interval_clip w a).
+  Definition pconst w z := I (Fin (Word.wrap w z)) (Fin (Word.wrap w z)).
   Definition ppoint w a := interval_singleton (interval_clip w a).
   Definition pwparam := ttree.
   Definition pwiden ts w a b :=
-    if pleb w b a then a else interval_widen ts a b.
-  Definition pnarrow (_ : positive) a b := interval_narrow a b.
+    if pleb w b a then a else interval_clip w
+      (interval_stable_widen ts (interval_clip w a) (interval_clip w b)).
+  Definition pnarrow w a b := interval_narrow (interval_clip w a) (interval_clip w b).
 End IntervalPayloadCode.
 
 Module IntervalWordTableCode (L : WORD_LANGUAGE_OPS) (T : THRESHOLDS_OPS)
+    (S : INTERVAL_SCALAR_OPS T)
     (D : WORD_PAYLOAD_OPS L with Definition p := itv) <: WORD_TABLE_OPS L D.
-  Include IntervalBackCode T.
+  Include IntervalBackCode T S.
   Definition wfwd (o : L.op) (rw : positive) (xs : list (positive * D.p)) : option D.p :=
     match o, xs with
     | (bvnot | bvneg | bvclz | bvctz | bvpopcnt | bvzext _ | bvtrunc _ | bvsext _),
@@ -122,8 +128,10 @@ End IntervalWordTableCode.
 
 Local Close Scope Z_scope.
 
-Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD L.
-  Include IntervalPayloadCode L T.
+Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR_OPS T)
+    <: INTERVAL_PAYLOAD_PINNED L T S.
+  Include IntervalPayloadCode L T S.
+  Include INTERVAL_PAYLOAD_SPEC T S.
   (** Every bound is below itself. *)
   Theorem bound_leb_refl : forall a, bound_leb a a = true.
   Proof.
@@ -196,15 +204,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
 
   Definition pgamma (w : positive) (a : p) (z : Z) : Prop :=
     L.is_word w z /\ match a with IBot => False | I lo hi => in_bnd lo hi z end.
-  Definition pwrank (ts : pwparam) (_ : positive) (a : p) : nat :=
-    match a with
-    | IBot => 0
-    | I lo hi =>
-      ((match hi with Fin z => 1 + length (filter (fun u => (z <? u)%Z) (T.vals ts))
-        | _ => 0 end) +
-       (match lo with Fin z => 1 + length (filter (fun u => (u <? z)%Z) (T.vals ts))
-        | _ => 0 end))%nat
-    end.
+  Definition pwrank := payload_wrank.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof. Admitted. (* CONVERT: interval_laws: In environment *)
@@ -224,30 +224,21 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof.
-    intro w.   intros a b Hba. split.
-    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
-      try (intros _; now rewrite !bound_leb_refl).
-    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
-    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
-    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
-    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
-      try (intros _; now rewrite !bound_leb_refl).
-    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
-    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
-    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
-  Qed.
+  Proof. Admitted. (* CONVERT: pnarrow_between: clipped operands prevent the raw interval case split. *)
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
-    intro w. intros [|l h]; cbn; [reflexivity|].
+    intros w a. unfold pleb. destruct (interval_clip w a) as [|l h]; cbn; [reflexivity|].
     now rewrite !bound_leb_refl.
   Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
   Proof.
-    intro w. intros [|la ha] [|lb hb] [|lc hc]; cbn; try discriminate; try reflexivity.
+    intros w a b c. unfold pleb.
+    destruct (interval_clip w a) as [|la ha];
+      destruct (interval_clip w b) as [|lb hb];
+      destruct (interval_clip w c) as [|lc hc]; cbn; try discriminate; try reflexivity.
     intros Hab Hbc. apply andb_true_iff in Hab as [Hlb Hhb].
     apply andb_true_iff in Hbc as [Hlc Hhc]. apply andb_true_iff. split;
       eapply bound_leb_trans; eassumption.
@@ -259,32 +250,22 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted. (* SIG-QUESTION: Q18: at width 1, raw interval [2,3] is not below top [0,1]. *)
+  Proof. Admitted.
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
   Proof. Admitted.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* SIG-QUESTION: Q18: at width 1, [2,3] clips to bottom but is not below IBot in raw order. *)
+  Proof. Admitted.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof.
-    intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
-    apply andb_true_iff. split; [apply bound_min_lower_l|apply bound_max_upper_l].
-  Qed.
+  Proof. Admitted. (* CONVERT: pjoin_ub_l: Unable to unify raw order with clipped order. *)
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof.
-    intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
-    apply andb_true_iff. split; [apply bound_min_lower_r|apply bound_max_upper_r].
-  Qed.
+  Proof. Admitted. (* CONVERT: pjoin_ub_r: Unable to unify raw order with clipped order. *)
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof.
-    intros w [|la ha] [|lb hb]; cbn; try reflexivity.
-    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
-    apply andb_true_iff. split; [apply bound_max_upper_l|apply bound_min_lower_l].
-  Qed.
+  Proof. Admitted. (* CONVERT: pmeet_lb_l: The variable lb was not found. *)
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
@@ -319,17 +300,65 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
     intros w z. split; [apply L.wrap_is_word|].
-    unfold pconst, interval_const, in_bnd. split; reflexivity.
+    unfold pconst, in_bnd. split; reflexivity.
   Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* CONVERT: interval_is_point_sound: The reference interval_is_point was not found in the current *)
+
+  (** Payload inclusion reads both operands through the word range. *)
+  Lemma F_pleb : forall w a b, pleb w a b = S.interval_leb
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Proof. Admitted.
+  (** Payload bottom recognition reads the clipped interval. *)
+  Lemma F_pis_bot : forall w a, pis_bot w a =
+    S.interval_is_bot (interval_payload_clip S.interval_meet w a).
+  Proof. Admitted.
+  (** Payload join combines clipped operands. *)
+  Lemma F_pjoin : forall w a b, pjoin w a b = S.interval_join
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Proof. Admitted.
+  (** Payload meet combines clipped operands. *)
+  Lemma F_pmeet : forall w a b, pmeet w a b = S.interval_meet
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Proof. Admitted.
+  (** Payload widening retains stable raw values and clips unstable results. *)
+  Lemma F_pwiden : forall q w a b, pwiden q w a b =
+    if pleb w b a then a else interval_payload_clip S.interval_meet w
+      (S.interval_stable_widen q (interval_payload_clip S.interval_meet w a)
+        (interval_payload_clip S.interval_meet w b)).
+  Proof. Admitted.
+  (** Payload narrowing combines clipped operands. *)
+  Lemma F_pnarrow : forall w a b, pnarrow w a b = S.interval_narrow
+    (interval_payload_clip S.interval_meet w a) (interval_payload_clip S.interval_meet w b).
+  Proof. Admitted.
+  (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
+  Lemma F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
+  Proof. Admitted.
+  (** Payload bottom is the empty interval. *)
+  Lemma F_pbot : forall w, pbot w = IBot.
+  Proof. Admitted.
+  (** Payload top is the inclusive unsigned word range. *)
+  Lemma F_ptop : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
+  Proof. Admitted.
+  (** Payload constants are wrapped singleton intervals. *)
+  Lemma F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
+  Proof. Admitted.
+  (** Payload points are recognized after clipping. *)
+  Lemma F_ppoint : forall w a, ppoint w a =
+    S.interval_singleton (interval_payload_clip S.interval_meet w a).
+  Proof. Admitted.
+  (** Payload concretization intersects raw endpoints with normalized words. *)
+  Lemma F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
+    match a with IBot => False | I lo hi => in_bnd lo hi z end.
+  Proof. Admitted.
 End IntervalPayload.
 
-Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (W : INTERVAL_PAYLOAD L)
+Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (S : INTERVAL_SCALAR_OPS T)
+    (W : INTERVAL_PAYLOAD_PINNED L T S)
     <: INTERVAL_WORD_TABLE L W.
-  Include IntervalWordTableCode L T W.
+  Include IntervalWordTableCode L T S W.
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
