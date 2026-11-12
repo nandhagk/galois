@@ -173,6 +173,29 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
     (same (view (put f k o db)) i j <->
       clos_refl_sym_trans positive
         (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
+  (** A raised change flag stays raised until the database advances. *)
+  Parameter changed_put : forall f k o db, changed db = true -> changed (put f k o db) = true.
+  Parameter changed_make : forall f k db,
+    changed db = true -> changed (snd (make f k db)) = true.
+  Parameter changed_union : forall i j db, changed db = true -> changed (union i j db) = true.
+  Parameter changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
+  (** Find and lookup leave the change flag alone. *)
+  Parameter changed_find : forall i db, changed (snd (find i db)) = changed db.
+  Parameter changed_lookup : forall f k db, changed (snd (lookup f k db)) = changed db.
+  (** An insertion raises the flag only when its row was not represented. *)
+  Parameter put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
+    changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
+  (** A union raises the flag only when it adds an equality. *)
+  Parameter union_changed : forall i j db, wf db -> changed db = false ->
+    changed (union i j db) = true -> ~ same (view db) i j.
+  (** A make raises the flag only when it allocates. *)
+  Parameter make_changed : forall f k db, wf db -> changed db = false ->
+    changed (snd (make f k db)) = true ->
+    ~ exists j, row (view db) f (map (canon db) k) (Some (Id j)).
+  (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
+  Parameter rebuild_quiet : forall db, wf db -> canonical db ->
+    (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
+
   (** A quiet insertion already has its requested row represented. *)
   Parameter put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
     changed db = false -> changed (put f k o db) = false ->
@@ -359,6 +382,11 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   (** The high-water mark covers every declared function name. *)
   Parameter wmark_names : forall db f, wf db -> kind (view db) f <> None ->
     Pos.size_nat f <= N.size_nat (wmark db).
+  (** The high-water mark covers every slot index. *)
+  Parameter wmark_index : forall db s new, wf db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
+
   (** Insertion never reduces the spending unit. *)
   Parameter unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
   (** Make never reduces the spending unit. *)
