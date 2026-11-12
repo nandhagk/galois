@@ -194,6 +194,8 @@ Definition tnum_mul_stage_step (w : width) (a b : tnum) (s : Z * tnum)
 TimeFun tnum_mul_stage_step.
 
 Definition tnum_mul_stages (w : width) (a b : tnum) : tnum :=
+  let a := tnum_normalise w a in
+  let b := tnum_normalise w b in
   if tnum_empty w a || tnum_empty w b then tnum_bot w else
   match loopN (tnum_mul_stage_step w a b) (N.pos w) (0, tnum_const w 0) with
   | inl s => snd s
@@ -213,6 +215,8 @@ Definition tnum_mul_acc_step (w : width) (a b : tnum) (s : Z * tnum)
 TimeFun tnum_mul_acc_step.
 
 Definition tnum_mul_acc (w : width) (a b : tnum) : tnum :=
+  let a := tnum_normalise w a in
+  let b := tnum_normalise w b in
   if tnum_empty w a || tnum_empty w b then tnum_bot w else
   let value_acc := tnum_const w (wmul w (tnum_min w a) (tnum_min w b)) in
   let mask_acc :=
@@ -262,6 +266,8 @@ Definition tnum_variable_raw (o : op) (w : width) (a b : tnum) : tnum :=
 TimeFun tnum_variable_raw.
 
 Definition tnum_variable (o : op) (w : width) (a b : tnum) : tnum :=
+  let a := tnum_normalise w a in
+  let b := tnum_normalise w b in
   if tnum_empty w a || tnum_empty w b then tnum_bot w
   else tnum_variable_raw o w a b.
 TimeFun tnum_variable.
@@ -442,10 +448,63 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
   Proof. Admitted. (* STUB *)
   Lemma multiplier_selected : forall w a b, tnum_mul w a b = tnum_mul_with C.multiplier w a b.
   Proof. Admitted. (* STUB *)
-End KnownBits.
+  (** Payload concretization is the zero-mask and one-mask meaning. *)
+  Lemma gamma_tnum : forall w a z, pgamma w a z <-> tnum_gamma w a z.
+  Proof. intros; reflexivity. Qed.
+  (** Bitwise negation retains each concrete result. *)
+  Lemma tnum_not_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
+    L.eval_op Op.bvnot ((w, x) :: nil) = Some (w, z) -> pgamma w (tnum_not w a) z.
+  Proof. Admitted. (* STUB *)
+  (** Arithmetic negation retains each concrete result. *)
+  Lemma tnum_neg_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
+    L.eval_op Op.bvneg ((w, x) :: nil) = Some (w, z) -> pgamma w (tnum_neg w a) z.
+  Proof. Admitted. (* STUB *)
+  (** Addition retains each concrete result. *)
+  Lemma tnum_add_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvadd ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_add w a b) z.
+  Proof. Admitted. (* STUB *)
+  (** Subtraction retains each concrete result. *)
+  Lemma tnum_sub_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvsub ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_sub w a b) z.
+  Proof. Admitted. (* STUB *)
+  (** Conjunction retains each concrete result. *)
+  Lemma tnum_and_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvand ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_and w a b) z.
+  Proof. Admitted. (* STUB *)
+  (** Disjunction retains each concrete result. *)
+  Lemma tnum_or_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvor ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_or w a b) z.
+  Proof. Admitted. (* STUB *)
+  (** Exclusive disjunction retains each concrete result. *)
+  Lemma tnum_xor_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvxor ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_xor w a b) z.
+  Proof. Admitted. (* STUB *)
+  (** Every multiplier choice retains each concrete product. *)
+  Lemma tnum_mul_with_sound : forall choice w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvmul ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_mul_with choice w a b) z.
+  Proof. Admitted. (* STUB *)
+  (** An unknown shift or rotation retains each concrete result. *)
+  Lemma tnum_variable_sound : forall o w a b x y z,
+    In o (Op.bvshl :: Op.bvlshr :: Op.bvashr :: Op.bvrotl :: Op.bvrotr :: nil) ->
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op o ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (tnum_variable o w a b) z.
+  Proof. Admitted. (* STUB *)
 
-Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
-    <: KNOWN_BITS_ALL L C.
+End KnownBits.
+Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG).
   Include KnownBits L C.
   TimeFun pleb.
   TimeFun pjoin.
