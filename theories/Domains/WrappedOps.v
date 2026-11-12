@@ -290,6 +290,43 @@ Module WrappedTableClock (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
   TimeFun wbwd.
 End WrappedTableClock.
 
+Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
+    <: WRAPPED_TABLE_T L W.
+  Include WrappedTableClock L W.
+  Definition c_word_table : N := 1. (* STUB *)
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0
+          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + fold_right Nat.add 0
+            (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+          W.psize rw q + fold_right Nat.add 0
+            (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End WrappedTableT.
+
 Theorem wrapped_project_sound target source q z :
   wrapped_gamma source q z ->
   wrapped_gamma target (wrapped_project target source q) (wrap target z).
