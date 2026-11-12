@@ -23,6 +23,10 @@ Record priority_queue := Queue {
   pending_count : N
 }.
 
+Definition heap_pending (q : priority_queue) : heap_forest :=
+  match q with Queue h _ _ _ => h end.
+TimeFun heap_pending.
+
 Definition heap_root (t : heap_tree) := match t with HeapTree e _ => e end.
 TimeFun pending.
 TimeFun live.
@@ -105,7 +109,7 @@ Module HeapCode <: PQ_OPS.
     | None => enqueue p k q (N.succ (live_count q))
     | Some old => if N.ltb p old then enqueue p k q (live_count q) else q
     end.
-  Definition pop_step (m : PTrieCode.t N) (n : N) (s : heap_forest * N) :
+  Definition heap_pop_step (m : PTrieCode.t N) (n : N) (s : heap_forest * N) :
       heap_forest * N + option (N * positive * t) :=
     let '(h, total) := s in
     match heap_remove_min h with
@@ -119,9 +123,9 @@ Module HeapCode <: PQ_OPS.
       | None => inl (rest, N.pred total)
       end
     end.
-  TimeFun pop_step.
+  TimeFun heap_pop_step.
   Definition pop (q : t) : option (N * positive * t) :=
-    match loopN (pop_step (live q) (live_count q)) (N.pos (heap_fuel (pending q)))
+    match loopN (heap_pop_step (live q) (live_count q)) (N.pos (heap_fuel (pending q)))
       (pending q, pending_count q) with
     | inl _ => None
     | inr result => result
@@ -210,3 +214,113 @@ Module Heap <: PQ.
   Lemma size_pending : forall q, wf q -> N.to_nat (size q) <= pending q.
   Proof. Admitted. (* CONVERT: live_pending_bound: The variable live_pending_bound was not found in the current environment. *)
 End Heap.
+
+Module HeapT <: PQ_ALL.
+  Include Heap.
+
+  TimeFun size.
+  TimeFun enqueue.
+  TimeFun push.
+
+  Definition unit_pq (P w : nat) : nat := (Nat.log2 P + 1) * (w + 1).
+  Definition c_pq : N := 1. (* STUB *)
+  Definition k_insert : N := 1. (* STUB *)
+  Definition k_remove : N := 1. (* STUB *)
+  Definition k_step : N := 1. (* STUB *)
+  Definition k_credit : N := 1. (* STUB *)
+  Definition k_driver : N := 1. (* STUB *)
+  Definition stale (q : t) : nat := pending q - N.to_nat (size q).
+  Definition credit (P w : nat) : N := (k_credit * N.of_nat (unit_pq P w))%N.
+  Definition stale_phi (P w : nat) (q : t) : N :=
+    (N.of_nat (stale q) * credit P w)%N.
+  Definition phi (P w : nat) (q : t) : N := stale_phi P w q.
+
+  Lemma T_push_amort : forall P w p x q,
+    (wf q -> (pending q < P)%nat ->
+    (Pos.size_nat x + N.size_nat p <= w)%nat ->
+    T_push p x q + phi P w (push p x q) <=
+      c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pop_amort : forall P w q,
+    (wf q -> (pending q <= P)%nat ->
+    T_pop q + match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end
+      <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma phi_empty : forall P w, (phi P w empty = 0)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_size_le : forall q, (T_size q <= c_pq)%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition heap := heap_forest.
+  Definition forest (q : t) : heap := heap_pending q.
+  Definition entries := heap_entries.
+  Definition ranks (h : heap) : nat := length h.
+  Definition insert (p : N) (x : positive) (h : heap) : heap :=
+    heap_insert (HeapTree (p, x) []) h.
+  Definition remove_min := heap_remove_min.
+  Definition pop_step (q : t) : t + option (N * positive * t) :=
+    match HeapCode.heap_pop_step (live q) (live_count q) (heap_pending q, pending_count q) with
+    | inl (h, n) => inl (Queue h (live q) (live_count q) n)
+    | inr result => inr result
+    end.
+
+  TimeFun insert.
+  TimeFun remove_min.
+  TimeFun pop_step.
+
+  Definition bounded (w : nat) (q : t) : Prop :=
+    forall p x, In (p, x) (entries (forest q)) -> N.size_nat p + Pos.size_nat x <= w.
+  Definition output_phi (P w : nat) (r : option (N * positive * t)) : N :=
+    match r with Some (_, _, q1) => phi P w q1 | None => 0%N end.
+
+  Lemma F1_pending : forall q, wf q -> length (entries (forest q)) = pending q.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_ranks : forall P q, wf q -> pending q <= P ->
+    ranks (forest q) <= Nat.log2 P + 1.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_stale_push : forall p x q, wf q -> stale (push p x q) <= S (stale q).
+  Proof. Admitted. (* STUB *)
+  Lemma F4_skip : forall q q1, wf q -> pop_step q = inl q1 ->
+    wf q1 /\ size q1 = size q /\ pending q = S (pending q1).
+  Proof. Admitted. (* STUB *)
+  Lemma F5_skip_bounded : forall w q q1, wf q -> bounded w q ->
+    pop_step q = inl q1 -> bounded w q1.
+  Proof. Admitted. (* STUB *)
+  Lemma F6_phi_bounded : forall P w q, wf q -> bounded w q ->
+    phi P w q = stale_phi P w q.
+  Proof. Admitted. (* STUB *)
+  Lemma F7_stop : forall q r, wf q -> pop_step q = inr r -> pop q = r.
+  Proof. Admitted. (* STUB *)
+  Lemma F8_push_bounded : forall w p x q, wf q -> bounded w q ->
+    N.size_nat p + Pos.size_nat x <= w -> bounded w (push p x q).
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_insert : forall P w p x q,
+    (wf q -> bounded w q -> (pending q < P)%nat ->
+    (N.size_nat p + Pos.size_nat x <= w)%nat ->
+    T_insert p x (forest q) <= k_insert * N.of_nat (unit_pq P w))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_remove_min : forall P w q,
+    (wf q -> bounded w q -> (pending q <= P)%nat ->
+    T_remove_min (forest q) <= k_remove * N.of_nat (unit_pq P w))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_skip_credit : forall P w q q1,
+    (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inl q1 ->
+    T_pop_step q + phi P w q1 + 1 <= phi P w q)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T4_stop_credit : forall P w q r,
+    (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inr r ->
+    T_pop_step q + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T5_pop_bounded : forall P w q,
+    (wf q -> bounded w q -> (pending q <= P)%nat ->
+    T_pop q + output_phi P w (pop q) <=
+      k_driver * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T6_push_bounded : forall P w p x q,
+    (wf q -> bounded w q -> (pending q < P)%nat ->
+    (N.size_nat p + Pos.size_nat x <= w)%nat ->
+    T_push p x q + phi P w (push p x q) <=
+      (k_insert + k_step + k_credit) * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof. Admitted. (* STUB *)
+End HeapT.

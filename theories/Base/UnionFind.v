@@ -5,7 +5,7 @@
     Builds on: trie code and Argent fuelled loops. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Loop Std.
+From Argent Require Import Time Loop Std BigO.
 From Galois.Base Require Import Trie UnionFindSig.
 Import ListNotations.
 
@@ -102,3 +102,77 @@ Module UnionFind <: UNION_FIND.
   Lemma card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2. Proof. Admitted.
   Lemma width_mem  : forall u x, wf u -> mem u x -> Pos.size_nat x <= width u. Proof. Admitted.
 End UnionFind.
+
+Module UnionFindT <: UNION_FIND_ALL.
+  Include UnionFind.
+
+  TimeFun add.
+  TimeFun size_at.
+  TimeFun link.
+  TimeFun union.
+
+  Definition c_uf : N := 1. (* STUB *)
+
+  Definition k_get : N := 1. (* STUB *)
+  Definition k_step : N := 1. (* STUB *)
+  Definition k_walk : N := 1. (* STUB *)
+  Definition k_comp : N := 1. (* STUB *)
+  Definition k_link : N := 1. (* STUB *)
+
+  Lemma T_add_le : forall x u, (wf u ->
+    T_add x u <= c_uf * N.of_nat (Pos.size_nat x + Nat.log2 (card u) + 2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_find_le : forall x u, (wf u ->
+    T_find x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_union_le : forall x y u, (wf u ->
+    T_union x y u <= c_uf * N.of_nat (Nat.log2 (card u + 2) + 1) *
+      N.of_nat (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma find_bigO : bigO (fun xu : positive * t => wf (snd xu))
+    (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
+      (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
+    (fun xu => T_find (fst xu) (snd xu)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F1_ranked : forall u, wf u -> exists rk, ranked u rk.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_rank_log : forall u rk x, wf u -> ranked u rk -> mem u x ->
+    rk x <= Nat.log2 (card u).
+  Proof. Admitted. (* STUB *)
+  Lemma F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_walk_path : forall x u, wf u -> mem u x ->
+    length (snd (walk x u)) <= Nat.log2 (card u) /\
+    forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
+  Proof. Admitted. (* STUB *)
+  Lemma F5_compress : forall u rk r path, wf u -> ranked u rk -> is_root u r ->
+    (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) ->
+    ranked (compress r path u) rk.
+  Proof. Admitted. (* STUB *)
+  Lemma F6_link : forall u rk w l, wf u -> ranked u rk ->
+    is_root u w -> is_root u l -> w <> l -> size_of u l <= size_of u w ->
+    ranked (link w l u)
+      (fun x => if Pos.eqb x w then Nat.max (rk w) (S (rk l)) else rk x).
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_parent_of : forall x u,
+    (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_walk_step : forall u s, (wf u -> mem u (fst s) ->
+    T_walk_step u s <= k_step * N.of_nat (width u + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_walk : forall x u, (wf u ->
+    T_walk x u <= k_walk * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T4_compress : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
+    T_compress r path u <= k_comp * N.of_nat (length path + 1) *
+      N.of_nat (width u + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T5_link : forall w l u, (wf u -> mem u w -> mem u l ->
+    T_link w l u <= k_link * N.of_nat (width u + Nat.log2 (card u) + 2))%N.
+  Proof. Admitted. (* STUB *)
+End UnionFindT.
