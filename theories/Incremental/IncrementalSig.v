@@ -13,6 +13,21 @@ From Galois.Incremental Require Import RestrictSig.
 
 Import List.ListNotations.
 
+(** Rows with one primary target share their recorded write occurrences. *)
+Record incremental_snapshot (K : Type) := {
+  snapshot_owner : K;
+  snapshot_writes : list K;
+  snapshot_live : bool
+}.
+
+Arguments snapshot_owner {K}.
+Arguments snapshot_writes {K}.
+Arguments snapshot_live {K}.
+
+TimeFun snapshot_owner.
+TimeFun snapshot_writes.
+TimeFun snapshot_live.
+
 Inductive demand_status :=
   | Done
   | DemandOutOfFuel
@@ -118,11 +133,13 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     (R : RESTRICT_T L S RS) (Sol : SOLVER_T L RS) (Checker : CHECK_T L S)
     (Least : SOLVER_LEAST L LB RS Sol)
     (Import X : INCREMENTAL L LB Top S RS R Sol Checker Least).
-  (* spec: region invalidated frozen infl_deg width *)
+  (* spec: region invalidated frozen infl_deg infl_mass kwidth width *)
   Parameter region : S.prog -> list S.key -> state -> list S.row.
   Parameter invalidated : S.prog -> S.prog -> list S.row -> state -> list S.key.
   Parameter frozen : S.prog -> list S.key -> state -> list (S.key * L.t).
   Parameter infl_deg : state -> S.key -> nat.
+  Parameter infl_mass : state -> nat.
+  Parameter kwidth : state -> nat.
   Definition width (p : S.prog) (_ : state) : nat :=
     S.kw p + N.to_nat (S.row_work p 0).
   Parameter T_init : N.
@@ -147,18 +164,44 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
 
   Parameter T_demand_le : forall p pol roots fuel st, S.wf p -> inv p st ->
     (T_demand p pol roots fuel st <=
-      c_inc * N.of_nat ((fold_right Nat.add 0
+      c_inc * N.of_nat ((fold_right Nat.add 0%nat
         (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
         length roots + 1)%nat) * N.of_nat (width p st + 1) +
       c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
       c_inc * demand_solver_work p pol roots fuel st)%N.
-  (** Editing pays for invalidated influence edges and changed dependencies. *)
-  Parameter T_edit_le : forall p p' ch st,
+  (** Invalidation lists each removed stored key once. *)
+  Parameter invalidated_spec : forall p p' ch st x,
+    In x (invalidated p p' ch st) <-> dom st x /\ ~ dom (edit p p' ch st) x.
+  Parameter invalidated_nodup : forall p p' ch st, NoDup (invalidated p p' ch st).
+  (** The empty state stores no key and no influence entry. *)
+  Parameter infl_mass_init : infl_mass init = 0.
+  Parameter kwidth_init : kwidth init = 0.
+  (** Every stored key fits the key width of the state. *)
+  Parameter kwidth_dom : forall st x, dom st x -> S.key_bits x <= kwidth st.
+  (** Demand adds influence mass within twice its charged region occurrences. *)
+  Parameter infl_mass_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+    demand p pol roots fuel st = (o, st') ->
+    infl_mass st' <= infl_mass st + 2 * (length roots + fold_right Nat.add 0%nat
+      (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st))).
+  (** Demand widens the state only to program keys and roots. *)
+  Parameter kwidth_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+    demand p pol roots fuel st = (o, st') ->
+    kwidth st' <= Nat.max (kwidth st) (fold_right Nat.max (S.kw p) (map S.key_bits roots)).
+  (** Editing releases the stored key and the entries of every invalidated key. *)
+  Parameter infl_mass_edit : forall p p' ch st,
+    infl_mass (edit p p' ch st) +
+      fold_right Nat.add 0%nat (map (fun x => infl_deg st x + 1) (invalidated p p' ch st)) <=
+    infl_mass st.
+  (** Editing never widens the state. *)
+  Parameter kwidth_edit : forall p p' ch st, kwidth (edit p p' ch st) <= kwidth st.
+  (** Editing pays for the influence mass that it releases and for the changed rows. *)
+  Parameter T_edit_le : forall p p' ch st, S.wf p -> S.wf p' ->
+    (forall r, In r ch -> In r (S.rows p) \/ In r (S.rows p')) ->
     (T_edit p p' ch st <= c_inc *
-      N.of_nat ((fold_right Nat.add 0 (map (fun x => infl_deg st x + 1) (invalidated p p' ch st)) +
-       fold_right Nat.add 0
-         (map (fun r => length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
-      N.of_nat (width p' st + 1))%N.
+      N.of_nat (((infl_mass st - infl_mass (edit p p' ch st)) +
+        fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
+          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N.
   (** Frozen pairs are stored checked values. *)
   Parameter frozen_spec : forall p roots st x v,
     In (x, v) (frozen p roots st) -> value st x = Some v.
@@ -187,6 +230,109 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     (Import X : INCREMENTAL_T L LB Top S RS R Sol Checker Least).
   Parameter discover : S.prog -> list S.key -> state -> list S.key.
   Parameter invalidate : S.prog -> S.prog -> list S.row -> state -> list S.key.
+  Parameter stored : state -> list S.key.
+  Parameter infl_at : state -> S.key -> list positive.
+  Parameter snapshot_keys : state -> list S.key.
+  (* spec: snapshot_mass snapshots cowrite_at *)
+  Parameter snapshot_mass : state -> nat.
+  Parameter snapshots : state -> list (positive * incremental_snapshot S.key).
+  Parameter cowrite_at : state -> S.key -> list positive.
+  Parameter snapshot_get : positive -> state -> option (incremental_snapshot S.key).
+  Parameter snapshot_set : positive -> incremental_snapshot S.key -> state -> state.
+  Parameter snapshot_record : S.key -> list S.key -> state -> state.
+  Parameter T_snapshot_get : positive -> state -> N.
+  Parameter T_snapshot_set : positive -> incremental_snapshot S.key -> state -> N.
+  Parameter T_snapshot_record : S.key -> list S.key -> state -> N.
+  (** Trie lookup reads precisely the recorded snapshot inventory. *)
+  Parameter snapshot_get_pin : forall st id ss,
+    snapshot_get id st = Some ss <-> In (id, ss) (snapshots st).
+  (** Trie update changes precisely one shared snapshot. *)
+  Parameter snapshot_set_pin : forall st id ss q,
+    snapshot_get q (snapshot_set id ss st) =
+      if Pos.eqb q id then Some ss else snapshot_get q st.
+  (** Recording copies the new row's writes once before the previous live group. *)
+  Parameter snapshot_record_pin : forall st owner writes,
+    snapshot_get (S.key_code owner) (snapshot_record owner writes st) =
+      Some {| snapshot_owner := owner;
+        snapshot_writes := writes ++
+          match snapshot_get (S.key_code owner) st with
+          | Some ss => if snapshot_live ss then snapshot_writes ss else []
+          | None => []
+          end;
+        snapshot_live := true |}.
+  (** Snapshot mass counts each unvisited write occurrence once. *)
+  Parameter snapshot_mass_pin : forall st, snapshot_mass st =
+    fold_right (fun ss n =>
+      if snapshot_live (snd ss) then length (snapshot_writes (snd ss)) + n else n)
+      0 (snapshots st).
+  (** The recorded key inventory includes visited snapshots for identifier width accounting. *)
+  Parameter snapshot_keys_pin : forall st, snapshot_keys st =
+    flat_map (fun ss => snapshot_writes (snd ss)) (snapshots st).
+  (** Every snapshot identifier is the code of an owner among its writes. *)
+  Parameter snapshot_owner_pin : forall st id ss, In (id, ss) (snapshots st) ->
+    id = S.key_code (snapshot_owner ss) /\ In (snapshot_owner ss) (snapshot_writes ss).
+  (** Snapshot identifiers occur once in the inventory. *)
+  Parameter snapshots_nodup : forall st, NoDup (map fst (snapshots st)).
+  (** Read entries resolve to a retained shared snapshot, including stale entries. *)
+  Parameter infl_snapshot_pin : forall st x id, In id (infl_at st x) ->
+    exists ss, In (id, ss) (snapshots st).
+  (** Unvisited snapshots contain stored keys. *)
+  Parameter snapshot_stored_pin : forall st id ss, In (id, ss) (snapshots st) ->
+    snapshot_live ss = true -> forall x, In x (snapshot_writes ss) -> dom st x.
+  (** Co-write memberships are precisely the unvisited snapshot key occurrences. *)
+  Parameter cowrite_count_pin : forall st x id,
+    length (filter (Pos.eqb id) (cowrite_at st x)) =
+    fold_right (fun iss n =>
+      if (Pos.eqb id (fst iss) && snapshot_live (snd iss))%bool then
+        length (filter (S.key_eqb x) (snapshot_writes (snd iss))) + n else n)
+      0 (snapshots st).
+  (** Shared snapshot mass pays the co-write memberships without a second inventory charge. *)
+  Parameter cowrite_mass_pin : forall st, snapshot_mass st =
+    fold_right Nat.add 0 (map (fun x => length (cowrite_at st x)) (stored st)).
+  (** Every retained snapshot identifier fits the stored key width. *)
+  Parameter snapshot_id_width : forall st id ss, In (id, ss) (snapshots st) ->
+    Pos.size_nat id <= kwidth st.
+  (** Demands record write occurrences only from their discovered rows. *)
+  Parameter snapshot_keys_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+    demand p pol roots fuel st = (o, st') -> forall x, In x (snapshot_keys st') ->
+    In x (snapshot_keys st) \/ exists r, In r (region p roots st) /\ In x (S.writes p r).
+  (** Demand records keys, read entries and shared write occurrences within their exact charges. *)
+  Parameter demand_record_counts : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+    demand p pol roots fuel st = (o, st') ->
+    let reads := fold_right Nat.add 0 (map (fun r => length (S.deps p r)) (region p roots st)) in
+    let writes := fold_right Nat.add 0 (map (fun r => length (S.writes p r)) (region p roots st)) in
+    length (stored st') <= length (stored st) + length roots + reads + writes /\
+    fold_right Nat.add 0 (map (fun x => length (infl_at st' x)) (stored st')) <=
+      fold_right Nat.add 0 (map (fun x => length (infl_at st x)) (stored st)) + reads /\
+    snapshot_mass st' <= snapshot_mass st + writes.
+  (** Edits retain read entries of every retained key, including changed-row entries. *)
+  Parameter edit_infl_keeps : forall p p' ch st x, dom (edit p p' ch st) x ->
+    infl_at (edit p p' ch st) x = infl_at st x.
+  (** Visiting a snapshot removes all its writes and retires every co-write membership. *)
+  Parameter edit_snapshot_visit : forall p p' ch st id ss,
+    In (id, ss) (snapshots st) -> snapshot_live ss = true ->
+    (exists x, In x (snapshot_writes ss) /\ In x (invalidated p p' ch st)) ->
+    (forall x, In x (snapshot_writes ss) -> ~ dom (edit p p' ch st) x) /\
+    (forall x, ~ In id (cowrite_at (edit p p' ch st) x)) /\
+    (forall ss', In (id, ss') (snapshots (edit p p' ch st)) -> snapshot_live ss' = false).
+  (** The stored key list enumerates the domain once. *)
+  Parameter stored_spec : forall st x, In x (stored st) <-> dom st x.
+  Parameter stored_nodup : forall st, NoDup (stored st).
+  (** The influence degree counts the recorded entries of a key, stale ones included. *)
+  Parameter infl_deg_spec : forall st x, infl_deg st x = length (infl_at st x).
+  (** Influence mass counts stored keys, their entries and the unvisited snapshot keys. *)
+  Parameter infl_mass_spec : forall st, infl_mass st =
+    fold_right Nat.add 0%nat (map (fun x => infl_deg st x + 1) (stored st)) + snapshot_mass st.
+  (** The key width covers the stored keys and every key of a recorded snapshot. *)
+  Parameter kwidth_spec : forall st, kwidth st =
+    fold_right Nat.max 0 (map S.key_bits (stored st ++ snapshot_keys st)).
+  (** The public invalidation list is the plan's closure. *)
+  Parameter invalidated_pin : forall p p' ch st,
+    invalidated p p' ch st = invalidate p p' ch st.
+  (** The closure lists stored keys only, each once. *)
+  Parameter invalidate_dom : forall p p' ch st x,
+    In x (invalidate p p' ch st) -> dom st x.
+  Parameter invalidate_nodup : forall p p' ch st, NoDup (invalidate p p' ch st).
   Parameter merge_region : state -> list S.key -> kmap S.key L.t -> state.
   Parameter T_discover : S.prog -> list S.key -> state -> N.
   Parameter T_invalidate : S.prog -> S.prog -> list S.row -> state -> N.
