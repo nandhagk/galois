@@ -29,6 +29,10 @@ Example intern_reverse_forward :
    | None => None
    end, NatIntern.name 3%positive interned) = (Some 2%positive, None).
 Proof. vm_compute. reflexivity. Qed.
+Example intern_size_domain_boundary :
+  (N.leb 2 (NatIntern.size interned), N.leb 3 (NatIntern.size interned),
+    N.leb 4 (NatIntern.size interned)) = (true, false, false).
+Proof. vm_compute. reflexivity. Qed.
 Example intern_numeric_first : NatIntern.find 9 (intern_list [9; 4; 7]) = Some 1%positive.
 Proof. vm_compute. reflexivity. Qed.
 Example intern_numeric_last : NatIntern.find 7 (intern_list [9; 4; 7]) = Some 3%positive.
