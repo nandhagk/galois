@@ -4,7 +4,7 @@
     For example, removing the sole binding collapses its path to the empty trie.
     Builds on: TrieSig and Argent time derivation. *)
 
-From Stdlib Require Import PArith List Bool.
+From Stdlib Require Import PArith List Bool Sorting.Sorted.
 From Argent Require Import Time Std.
 From Galois.Base Require Import TrieSig.
 
@@ -86,6 +86,11 @@ Module PTrieCode <: TRIE_OPS.
   Arguments right {A} tr.
   Arguments get {A} p tr.
 
+  TimeFun left.
+  TimeFun value.
+  TimeFun right.
+  TimeFun get.
+
   Definition node {A} (l : t A) (o : option A) (r : t A) : t A :=
     match l, o, r with
     | Empty, None, Empty => Empty
@@ -98,6 +103,8 @@ Module PTrieCode <: TRIE_OPS.
     | Nodes l, Some v, Nodes r => Nodes (N111 l v r)
     end.
 
+  TimeFun node.
+
   Fixpoint replace {A} (p : positive) (o : option A) (tr : t A) : t A :=
     match p with
     | xH => node (left tr) o (right tr)
@@ -105,8 +112,12 @@ Module PTrieCode <: TRIE_OPS.
     | xI q => node (left tr) (value tr) (replace q o (right tr))
     end.
 
+  TimeFun replace.
+
   Definition set {A} p (v : A) tr := replace p (Some v) tr.
+  TimeFun set.
   Definition remove {A} p (tr : t A) := replace p None tr.
+  TimeFun remove.
 
   Definition filter_value {A B} (f : A -> option B) (o : option A) : option B :=
     match o with
@@ -258,3 +269,106 @@ Module PTrieCode <: TRIE_OPS.
   Definition elements {A} (tr : t A) : list (positive * A) :=
     List.rev (fold (fun acc p v => (p, v) :: acc) tr nil).
 End PTrieCode.
+
+Module PTrie <: TRIE.
+  Include PTrieCode.
+  Include TRIE_SPEC.
+
+  Fixpoint nodes_ne {A} (n : trie_ne A) : nat :=
+    match n with
+    | N001 r => 1 + nodes_ne r
+    | N010 _ => 1
+    | N011 _ r => 1 + nodes_ne r
+    | N100 l => 1 + nodes_ne l
+    | N101 l r => 1 + nodes_ne l + nodes_ne r
+    | N110 l _ => 1 + nodes_ne l
+    | N111 l _ r => 1 + nodes_ne l + nodes_ne r
+    end.
+
+  Definition nodes {A} (tr : t A) : nat :=
+    match tr with Empty => 0 | Nodes n => nodes_ne n end.
+
+  Fixpoint trie_lt (p q : positive) : Prop :=
+    match p, q with
+    | xO p, xO q => trie_lt p q
+    | xI p, xI q => trie_lt p q
+    | xO _, xH | xO _, xI _ | xH, xI _ => True
+    | _, _ => False
+    end.
+
+  Lemma get_empty : forall A p, get p (@empty A) = None.
+  Proof.
+    intros A p; induction p; cbn [get trie_get trie_left trie_right trie_value empty];
+      assumption || reflexivity.
+  Qed.
+  Lemma left_node {A} (l r : t A) o : left (node l o r) = l.
+  Proof. destruct l, o, r; reflexivity. Qed.
+  Lemma value_node {A} (l r : t A) o : value (node l o r) = o.
+  Proof. destruct l, o, r; reflexivity. Qed.
+  Lemma right_node {A} (l r : t A) o : right (node l o r) = r.
+  Proof. destruct l, o, r; reflexivity. Qed.
+  Lemma get_node {A} (p : positive) (l r : t A) o :
+    get p (node l o r) =
+    match p with xH => o | xO q => get q l | xI q => get q r end.
+  Proof. destruct p; cbn [get trie_get]; rewrite ?left_node, ?right_node, ?value_node; reflexivity. Qed.
+  Lemma get_replace_same {A} (tr : t A) p o : get p (replace p o tr) = o.
+  Proof. revert tr; induction p; intro tr; cbn [replace]; rewrite get_node; auto. Qed.
+  Lemma get_replace_other {A} (tr : t A) p q o :
+    p <> q -> get q (replace p o tr) = get q tr.
+  Proof.
+    revert tr q; induction p; intros tr q Hneq; destruct q;
+      cbn [replace get trie_get]; rewrite ?left_node, ?right_node, ?value_node;
+      try reflexivity; try congruence; apply IHp; congruence.
+  Qed.
+  Lemma get_set_same : forall A p (a : A) m, get p (set p a m) = Some a.
+  Proof. intros; apply get_replace_same. Qed.
+  Lemma get_set_other : forall A p q (a : A) m,
+    p <> q -> get p (set q a m) = get p m.
+  Proof. intros; apply get_replace_other; congruence. Qed.
+  Lemma get_remove_same : forall A p (m : t A), get p (remove p m) = None.
+  Proof. intros; apply get_replace_same. Qed.
+  Lemma get_remove_other : forall A p q (m : t A),
+    p <> q -> get p (remove q m) = get p m.
+  Proof. intros; apply get_replace_other; congruence. Qed.
+  Lemma get_merge : forall A B C (f : option A -> option B -> option C) m1 m2 p,
+    f None None = None -> get p (merge f m1 m2) = f (get p m1) (get p m2).
+  Proof. Admitted. (* CONVERT: get_combine: The variable get_merge_with was not found in the current environment. *)
+  Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
+    f None None = true ->
+    (forall2b f m1 m2 = true <-> forall p, f (get p m1) (get p m2) = true).
+  Proof. Admitted. (* SIG-QUESTION: landed forall2_spec covers only one directional traversal. *)
+  Lemma existsb_spec : forall A (f : A -> bool) m,
+    existsb f m = true <-> exists p a, get p m = Some a /\ f a = true.
+  Proof. Admitted.
+  Lemma get_map : forall A B (f : A -> B) m p,
+    get p (map f m) = option_map f (get p m).
+  Proof. Admitted. (* CONVERT: get_map: The variable get_filter was not found in the current environment. *)
+  Lemma elements_spec : forall A (m : t A) p a,
+    In (p, a) (elements m) <-> get p m = Some a.
+  Proof. Admitted. (* CONVERT: elements_spec: The variable node_ind was not found in the current environment. *)
+  Lemma elements_sorted : forall A (m : t A),
+    StronglySorted (fun x y => trie_lt (fst x) (fst y)) (elements m).
+  Proof. Admitted. (* CONVERT: elements_sorted: The variable node_ind was not found in the current environment. *)
+  Lemma elements_nodup : forall A (m : t A), NoDup (List.map fst (elements m)).
+  Proof.
+    intros A m. pose proof (elements_sorted A m) as Hsort.
+    induction Hsort as [|[p a] xs Hsort IH Hforall]; cbn [List.map fst].
+    - constructor.
+    - constructor; [|exact IH]. intro Hin.
+      apply in_map_iff in Hin as [[q b] [Heq Hin]]. cbn [fst] in Heq. subst q.
+      rewrite Forall_forall in Hforall. specialize (Hforall (p, b) Hin).
+      assert (Hirr : forall p, ~ trie_lt p p).
+      { intro q. induction q; cbn [trie_lt]; assumption || tauto. }
+      exact (Hirr p Hforall).
+  Qed.
+  Lemma fold_spec : forall A B (f : B -> positive -> A -> B) m b,
+    fold f m b = fold_left (fun acc kv => f acc (fst kv) (snd kv)) (elements m) b.
+  Proof. Admitted. (* CONVERT: fold_elements: The variable elements_entries was not found in the current environment. *)
+  Lemma ext : forall A (m n : t A), (forall p, get p m = get p n) -> m = n.
+  Proof. Admitted. (* CONVERT: extensionality: The variable node_ind was not found in the current environment. *)
+  Lemma nodes_set : forall A p (a : A) m,
+    nodes (set p a m) <= nodes m + Pos.size_nat p.
+  Proof. Admitted.
+  Lemma nodes_le_weight : forall A (m : t A), nodes m <= weight m.
+  Proof. Admitted.
+End PTrie.

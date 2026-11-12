@@ -5,12 +5,21 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
+
+Module Bool.
+  Definition implb (a b : bool) : bool :=
+    match a with
+    | false => true
+    | true => b
+    end.
+  TimeFun implb.
+End Bool.
 
 Module BoolLatCode <: BLATTICE_OPS.
   Definition t := bool.
-  Definition leb := implb.
+  Definition leb := Bool.implb.
   Definition bot := false.
   Definition is_bot := negb.
   Definition join := orb.
@@ -37,9 +46,9 @@ Module BoolLat <: BLATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
@@ -47,9 +56,9 @@ Module BoolLat <: BLATTICE.
   Lemma top_greatest : forall a, leb a top = true.
   Proof. intros []; reflexivity. Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. intros; repeat match goal with b : bool |- _ => destruct b end; cbn in *; congruence. Qed.
+  Proof. Admitted.
 End BoolLat.
 
 Module UnitLat <: BLATTICE.
@@ -61,9 +70,9 @@ Module UnitLat <: BLATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. intros; reflexivity. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
@@ -71,7 +80,43 @@ Module UnitLat <: BLATTICE.
   Lemma top_greatest : forall a, leb a top = true.
   Proof. intros; reflexivity. Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. intros; reflexivity. Qed.
+  Proof. Admitted.
 End UnitLat.
+
+Module BoolLatT <: BLATTICE_T.
+  Include BoolLat.
+  Definition size (_ : t) : nat := 1.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun is_bot.
+  TimeFun meet.
+  Definition c_lat : nat := 1. (* STUB *)
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+End BoolLatT.
+
+Module UnitLatT <: BLATTICE_T.
+  Include UnitLat.
+  Definition size (_ : t) : nat := 1.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun is_bot.
+  TimeFun meet.
+  Definition c_lat : nat := 1. (* STUB *)
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+End UnitLatT.

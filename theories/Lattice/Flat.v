@@ -52,3 +52,43 @@ Module FlatCode (K : KEY_OPS) <: BLATTICE_OPS.
     | _, _ => FBot
     end.
 End FlatCode.
+
+Module Flat (K : KEY) <: BLATTICE.
+  Include FlatCode K.
+  Lemma eqb_refl : forall a, K.eqb a a = true.
+  Proof. intro a; destruct (K.eqb_spec a a); congruence. Qed.
+  Lemma leb_refl : forall a, leb a a = true.
+  Proof. intros [|a|]; cbn [leb flat_leb]; auto using eqb_refl. Qed.
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof.
+    intros [|a|] [|b|] [|c|]; cbn [leb flat_leb]; intros Hab Hbc;
+      try discriminate; try reflexivity.
+    destruct (K.eqb_spec a b); try discriminate; subst b; exact Hbc.
+  Qed.
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof. intros [|a|]; reflexivity. Qed.
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof. Admitted.
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof. Admitted.
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof.
+    intros [|a|] [|b|]; cbn [leb join flat_leb flat_join]; try reflexivity;
+      try apply eqb_refl.
+    destruct (K.eqb a b) eqn:Hab; cbn [flat_leb]; [apply eqb_refl|reflexivity].
+  Qed.
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof.
+    intros [|a|] [|b|]; cbn [leb join flat_leb flat_join]; try reflexivity;
+      try apply eqb_refl.
+    destruct (K.eqb a b) eqn:Hab; cbn [flat_leb].
+    - destruct (K.eqb_spec a b); try discriminate; subst b; apply eqb_refl.
+    - reflexivity.
+  Qed.
+  Lemma top_greatest : forall a, leb a top = true.
+  Proof. intros [|a|]; reflexivity. Qed.
+  Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
+  Proof. Admitted.
+  Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
+  Proof. Admitted.
+End Flat.
