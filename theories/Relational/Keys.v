@@ -32,3 +32,17 @@ Module TmpKeyCode (X : KEY_OPS) := OptionKeyCode X.
 
 Module TmpKey (X : KEY) := OptionKey X.
 
+Module LitKeyT (X : KEY_T) <: KEY_T.
+  Include LitKey X.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  (** Encoding adds one sign bit to the variable encoding. *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  (** Literal equality charges the first variable and its sign. *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End LitKeyT.
+
+Module TmpKeyT (X : KEY_T) := OptionKeyT X.

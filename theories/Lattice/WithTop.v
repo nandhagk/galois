@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 Inductive lift_top (A : Type) : Type :=
   | Elem (a : A)
@@ -40,6 +40,8 @@ End WithTopCode.
 
 Module Type TOP_LATTICE := LATTICE <+ HAS_TOP_OPS <+ HAS_TOP_LAWS.
 
+Module Type TOP_LATTICE_T := TOP_LATTICE <+ LATTICE_TIME.
+
 Module WithTop (L : LATTICE) <: TOP_LATTICE.
   Include WithTopCode L.
   Lemma leb_refl : forall a, leb a a = true.
@@ -62,3 +64,25 @@ Module WithTop (L : LATTICE) <: TOP_LATTICE.
   Lemma top_greatest : forall a, leb a top = true.
   Proof. intros [a|]; reflexivity. Qed.
 End WithTop.
+
+Module WithTopT (L : LATTICE_T) <: TOP_LATTICE_T.
+  Include WithTop L.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+
+  Definition size (x : t) : nat :=
+    match x with
+    | Elem a => L.size a + 1
+    | Unknown => 1
+    end.
+  Definition c_lat : nat := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+End WithTopT.
