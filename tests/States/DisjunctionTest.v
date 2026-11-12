@@ -34,7 +34,18 @@ Example havoc_preserves_alternative_count :
 Proof. vm_compute. reflexivity. Qed.
 
 (* The old shared lattice rank client expected (3, 3, 0) on [false; false] and its
-   widening by [true]. It used a flat Boolean lattice as the component, while this
+   widening by [true]. It used a Boolean lattice as the component, while this
    state component requires a STATE_DOMAIN with assignment, havoc, assume and eval.
-   No corresponding flat Boolean state instance is provided here. The old cap-zero
+   No corresponding Boolean state instance is provided here, and the two-element input
+   does not fit the cap-one bounded carrier. The old cap-zero
    empty widening is also outside the positive-cap functional interface. *)
+
+(* The exact landed client used the raw-list carrier, which allowed two entries
+   at cap one. The bounded carrier rejects that input.
+Example disjunction_measure_client :
+  let W := disjunction_wrank bool_lattice (fun _ => True) bool_closed
+    bool_laws bool_wrank 1 in
+  (wbound W, wrank W [false; false],
+   wrank W (widen (disjunction 1 bool_lattice) [false; false] [true])) = (3, 3, 0).
+Proof. vm_compute; reflexivity. Qed.
+*)
