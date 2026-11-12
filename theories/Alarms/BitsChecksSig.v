@@ -134,6 +134,11 @@ Module Type BITS_CHECKS_TIME (V : VALUE_DOMAIN_T BitsLangT)
   Parameter T_bounds_le : forall i len, (T_may_fail Bounds [i; len] <= c_bits_checks *
     (Q.T_range i + Q.T_range len +
       N.of_nat (range_bits (Q.range i) + range_bits (Q.range len) + 1)))%N.
+  (* SIG-QUESTION: BITS_RANGE_T wires actual range clocks but gives neither a
+     declared-work bound for T_range nor an endpoint-size bound for range_bits.
+     The specific check bounds charge both explicitly. Deriving the inherited
+     T_may_fail_le for a declared CHECKS_TIME.work needs a provider relating that
+     measure to the query costs and returned endpoint sizes. *)
   (* SIG-QUESTION: No overflow cost is published until its width and mathematical
      evaluation boundaries are fixed. The inherited CHECKS_TIME work remains explicit. *)
 End BITS_CHECKS_TIME.
