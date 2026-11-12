@@ -117,13 +117,13 @@ Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
     match a with FVal z => FVal (f z) | _ => FTop end.
   Definition inverse_pair w (f g : Z -> Z) (a b : W.p) :=
     [W.pmeet w a (inverse f b); W.pmeet w b (inverse g a)].
-  Definition backward_one o rw (q : W.p) (xs : list (positive * W.p)) :=
+  Definition backward_one_values o rw (q : W.p) (xs : list (positive * W.p)) :=
     match xs, q with
     | [(_, a)], FVal r =>
       [W.pmeet rw a (FVal (match o with bvnot => wnot rw r | _ => wneg rw r end))]
     | _, _ => map snd xs
     end.
-  Definition backward_two o rw (q : W.p) (xs : list (positive * W.p)) :=
+  Definition backward_two_values o rw (q : W.p) (xs : list (positive * W.p)) :=
     match xs, q with
     | [(w, a); (_, b)], FVal r =>
       match o with
@@ -136,6 +136,10 @@ Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
       end
     | _, _ => map snd xs
     end%Z.
+  Definition backward_one o rw (q : W.p) (xs : list (positive * W.p)) :
+      option (list W.p) := Some (backward_one_values o rw q xs).
+  Definition backward_two o rw (q : W.p) (xs : list (positive * W.p)) :
+      option (list W.p) := Some (backward_two_values o rw q xs).
   Definition wfwd o (_ : positive) (xs : list (positive * W.p)) : option W.p :=
     match o, xs with
     | (bvmul | bvand | bvor | bvshl | bvlshr | bvashr | bvurem), [a; b] =>
@@ -144,8 +148,8 @@ Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
     end.
   Definition wbwd o rw q (xs : list (positive * W.p)) : option (list W.p) :=
     match o, xs with
-    | (bvnot | bvneg), [_] => Some (backward_one o rw q xs)
-    | (bveq | bvne | bvadd | bvsub | bvxor), [_; _] => Some (backward_two o rw q xs)
+    | (bvnot | bvneg), [_] => backward_one o rw q xs
+    | (bveq | bvne | bvadd | bvsub | bvxor), [_; _] => backward_two o rw q xs
     | _, _ => None
     end.
 End ConstWordTableCode.
@@ -334,13 +338,15 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
   Definition size (a : t) : nat :=
     match a with FVal c => E.vsize c | _ => 0 end.
   Definition work (o : L.op) (xs : list t) : nat :=
+    let operands := fold_right Nat.add 0%nat (map size xs) in
     match points xs with
     | Some vs =>
-      L.work o vs + length xs +
-      match L.eval o vs with Some c => E.vsize c | None => 0 end + 1
-    | None => length xs + 1
+      L.work o vs + operands + length xs +
+        match L.eval o vs with Some c => E.vsize c | None => 0 end + 1
+    | None => operands + length xs + 1
     end.
-  Definition gwork (_ : L.guard) (xs : list t) : nat := length xs + 1.
+  Definition gwork (_ : L.guard) (xs : list t) : nat :=
+    fold_right Nat.add 0%nat (map size xs) + length xs + 1.
   Definition wsize (_ : wparam) : nat := 0.
   Definition wunits (_ : t) : nat := 0.
 
@@ -633,12 +639,14 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
 End ConstWordTable.
 
 Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
-    <: CONST_WORD_TABLE_T L W.
+    <: CONST_WORD_TABLE_ALL L W.
   Include ConstWordTable L W.
   TimeFun const_is.
   TimeFun shortcut.
   TimeFun inverse.
   TimeFun inverse_pair.
+  TimeFun backward_one_values.
+  TimeFun backward_two_values.
   TimeFun backward_one.
   TimeFun backward_two.
   TimeFun wfwd.
@@ -656,5 +664,42 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Definition k_const_word : N := 1%N. (* STUB *)
+  Lemma F1_shortcut_sound : forall o a b z cs rw v,
+    shortcut o a b = Some z ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) (a :: b :: nil) cs ->
+    L.eval_op o cs = Some (rw, v) -> v = z.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_backward_one_sound : forall o rw q xs ys cs z,
+    backward_one o rw q xs = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) ys) cs.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_backward_two_sound : forall o rw q xs ys cs z,
+    backward_two o rw q xs = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) ys) cs.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_shortcut : forall o a b,
+    (T_shortcut o a b <= k_const_word *
+      N.of_nat (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_backward_one : forall o rw q xs,
+    (T_backward_one o rw q xs <= k_const_word * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_backward_two : forall o rw q xs,
+    (T_backward_two o rw q xs <= k_const_word * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
   Proof. Admitted. (* STUB *)
 End ConstWordTableT.
