@@ -5,6 +5,7 @@
     Builds on: ConstSig and the concrete language operations. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
+From Argent Require Import Time Std.
 From Galois.Bits Require Import Word Fun Op.
 From Galois.Domains Require Import ConstSig LangSig WordSig.
 Import List.ListNotations.
@@ -88,7 +89,7 @@ Module ConstWordCode (L : WORD_LANGUAGE_OPS)
   Definition ptop (_ : positive) : p := FTop.
   Definition pis_bot (_ : positive) (a : p) :=
     match a with FBot => true | _ => false end.
-  Definition pconst (w : positive) (z : Z) : p := FVal (L.wrap w z).
+  Definition pconst (w : positive) (z : Z) : p := FVal (Word.wrap w z).
   Definition ppoint (_ : positive) (a : p) : option Z :=
     match a with FVal z => Some z | _ => None end.
   Definition pwparam := unit.
@@ -150,6 +151,10 @@ Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
 End ConstWordTableCode.
 
 Local Close Scope Z_scope.
+
+Module Z.
+  TimeFun Z.size_nat.
+End Z.
 
 Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Include ConstCode L E.
@@ -438,6 +443,61 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Qed.
 End ConstWord.
 
+Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
+  Include ConstWord L.
+  TimeFun pleb.
+  TimeFun pjoin.
+  TimeFun pmeet.
+  TimeFun pbot.
+  TimeFun ptop.
+  TimeFun pis_bot.
+  TimeFun pconst.
+  TimeFun ppoint.
+  TimeFun pwiden.
+  TimeFun pnarrow.
+
+  Definition psize (_ : positive) (a : p) : nat :=
+    match a with FVal z => Z.size_nat z | _ => 0 end.
+  Definition pwsize (_ : pwparam) : nat := 0.
+  Definition c_payload : N := 1%N. (* STUB *)
+  Lemma pjoin_size : forall w a b,
+    (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pmeet_size : forall w a b,
+    (N.of_nat (psize w (pmeet w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pwiden_size : forall q w a b,
+    (N.of_nat (psize w (pwiden q w a b)) <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma pnarrow_size : forall w a b,
+    (N.of_nat (psize w (pnarrow w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pwiden_le : forall q w a b,
+    (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pnarrow_le : forall w a b,
+    (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pleb_le : forall w a b,
+    (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pjoin_le : forall w a b,
+    (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pmeet_le : forall w a b,
+    (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pis_bot_le : forall w a,
+    (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_ppoint_le : forall w a,
+    (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_pconst_le : forall w z, (T_pconst w z <=
+    c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+End ConstWordT.
+
 Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WORD_TABLE L W.
   Include ConstWordTableCode L W.
   (** A forward word entry retains each concrete result at its checked width. *)
@@ -455,3 +515,30 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* CONVERT: const_table_laws: No product even after head-reduction. *)
 End ConstWordTable.
+
+Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
+    <: CONST_WORD_TABLE_T L W.
+  Include ConstWordTable L W.
+  TimeFun const_is.
+  TimeFun shortcut.
+  TimeFun inverse.
+  TimeFun inverse_pair.
+  TimeFun backward_one.
+  TimeFun backward_two.
+  TimeFun wfwd.
+  TimeFun wbwd.
+  Definition c_word_table : N := 1%N. (* STUB *)
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End ConstWordTableT.
