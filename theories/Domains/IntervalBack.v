@@ -207,46 +207,55 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
     end.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: In environment *)
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: In environment *)
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof. Admitted.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_widening_rank_on: The variable interval_rank was not found in the current environment. *)
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_widening_rank_on: No product even after head-reduction. *)
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted.
+  Proof.
+    intro w.   intros a b Hba. split.
+    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
+      try (intros _; now rewrite !bound_leb_refl).
+    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
+    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
+    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
+    - revert a b Hba. intros [|la ha] [|lb hb]; cbn; try discriminate; try reflexivity;
+      try (intros _; now rewrite !bound_leb_refl).
+    intros Hle. apply andb_true_iff in Hle as [Hl Hh]. apply andb_true_iff. split.
+    + unfold narrow_bound. destruct la; try assumption; apply bound_leb_refl.
+    + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
+  Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
-  intro w. intros [|l h]; cbn; [reflexivity|].
+    intro w. intros [|l h]; cbn; [reflexivity|].
     now rewrite !bound_leb_refl.
-
   Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
   Proof.
-  intro w. intros [|la ha] [|lb hb] [|lc hc]; cbn; try discriminate; try reflexivity.
+    intro w. intros [|la ha] [|lb hb] [|lc hc]; cbn; try discriminate; try reflexivity.
     intros Hab Hbc. apply andb_true_iff in Hab as [Hlb Hhb].
     apply andb_true_iff in Hbc as [Hlc Hhc]. apply andb_true_iff. split;
       eapply bound_leb_trans; eassumption.
-
   Qed.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
   Proof.
-  intro w. intros [|l h]; reflexivity.
-
+    intro w. intros [|l h]; reflexivity.
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
@@ -260,25 +269,21 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof.
-  intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
     apply andb_true_iff. split; [apply bound_min_lower_l|apply bound_max_upper_l].
-
   Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
   Proof.
-  intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    intro w. intros [|la ha] [|lb hb]; cbn; try reflexivity; try (now rewrite !bound_leb_refl).
     apply andb_true_iff. split; [apply bound_min_lower_r|apply bound_max_upper_r].
-
   Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof.
-
-  intros w [|la ha] [|lb hb]; cbn; try reflexivity.
-  destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
-  apply andb_true_iff. split; [apply bound_max_upper_l|apply bound_min_lower_l].
-
+    intros w [|la ha] [|lb hb]; cbn; try reflexivity.
+    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
+    apply andb_true_iff. split; [apply bound_max_upper_l|apply bound_min_lower_l].
   Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
@@ -290,8 +295,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof.
-intros w z [_ Hempty]. exact Hempty.
-
+    intros w z [_ Hempty]. exact Hempty.
   Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.

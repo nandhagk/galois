@@ -4,7 +4,7 @@
     For example, joining distinct singleton values returns top.
     Builds on: ConstSig and the concrete language operations. *)
 
-From Stdlib Require Import List ZArith Bool.
+From Stdlib Require Import List ZArith Bool Lia.
 From Galois.Bits Require Import Word Fun Op.
 From Galois.Domains Require Import ConstSig LangSig WordSig.
 Import List.ListNotations.
@@ -156,6 +156,11 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Include CONST_SPEC L E.
   Definition gamma := flat_gamma.
   Definition wrank (_ : wparam) (a : t) : nat := 2 - level a.
+  (** Reflected equality is reflexive. *)
+  Lemma eqb_refl : forall a, E.eqb a a = true.
+  Proof.
+    intro a; apply E.eqb_spec; reflexivity.
+  Qed.
   Lemma leb_refl : forall a, leb a a = true.
   Proof. intros [|a|]; cbn [leb]; try reflexivity. apply E.eqb_spec. reflexivity. Qed.
   (** The order composes through an intermediate value. *)
@@ -207,24 +212,37 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted.
+  Proof.
+    intro q. unfold widen. intros [|a|] [|b|]; cbn [leb join]; try reflexivity;
+      try apply eqb_refl.
+    destruct (E.eqb a b) eqn:Hab; cbn [leb];
+      [apply eqb_refl | reflexivity].
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted.
+  Proof.
+    intro q. unfold widen. intros [|a|] [|b|]; cbn [leb join]; try reflexivity;
+      try apply eqb_refl.
+    destruct (E.eqb a b) eqn:Hab; cbn [leb].
+    + apply E.eqb_spec in Hab; subst b; apply eqb_refl.
+    + reflexivity.
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: height_wrank: The variable join_rank_grows was not found in the current environment. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: height_wrank: The variable rank_monotone was not found in the current environment. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof.
+    intros a b Hba. split; cbn [narrow]; eauto using leb_refl.
+  Qed.
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
@@ -236,12 +254,12 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
-  intros c Hfalse; exact Hfalse.
+    intros c Hfalse; exact Hfalse.
   Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
   Proof.
-  intro c; exact I.
+    intro c; exact I.
   Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
@@ -253,23 +271,34 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Qed.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted.
+  Proof.
+    intros [|z|] c He Hg; try discriminate. exact Hg.
+  Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: forward_sound: The variable no_empty was not found in the current environment. *)
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted.
+  Proof.
+    intros o r xs cs c Hxs Heval Ha. clear Heval Ha.
+    induction Hxs as [|x d xs ds Hx Hxs IH]; cbn; constructor.
+    - exact Hx.
+    - exact IH.
+  Qed.
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
-  Proof. Admitted.
+  Proof.
+    intros o r xs. induction xs as [|x xs IH]; cbn; constructor.
+    - exact (leb_refl x).
+    - exact IH.
+  Qed.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
@@ -288,20 +317,31 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
     match a with FBot => 2 | FVal _ => 1 | FTop => 0 end.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof.
+    intros q w. unfold pwiden. intros [|a|] [|b|]; cbn [pleb pjoin]; try reflexivity;
+      try apply Z.eqb_refl.
+    destruct (Z.eqb a b) eqn:Hab; cbn [pleb];
+      [apply Z.eqb_refl | reflexivity].
+  Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof.
+    intros q w. unfold pwiden. intros [|a|] [|b|]; cbn [pleb pjoin]; try reflexivity;
+      try apply Z.eqb_refl.
+    destruct (Z.eqb a b) eqn:Hab; cbn [pleb].
+    + apply Z.eqb_eq in Hab; subst b; apply Z.eqb_refl.
+    + reflexivity.
+  Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof. Admitted.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: height_wrank: The variable pleb_trans was not found in the current environment. *)
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: height_wrank: The variable rank_monotone was not found in the current environment. *)
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
@@ -379,7 +419,9 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Qed.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted. (* CONVERT: const_shape_laws: Expects a disjunctive pattern with 3 branches. *)
+  Proof.
+    intros w [|z|] c He Hg; try discriminate. exact Hg.
+  Qed.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.

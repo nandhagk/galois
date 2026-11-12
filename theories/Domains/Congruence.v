@@ -122,20 +122,20 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Definition pwrank (_ : pwparam) (w : positive) (a : p) : nat := congr_wrank w a.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof. Admitted.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_height: In environment *)
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_height: In environment *)
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
@@ -150,8 +150,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
   Proof.
-  intro w. intro a. reflexivity.
-
+    intro w. intro a. reflexivity.
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
@@ -181,19 +180,18 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof.
-intros w z H. exact H.
-
+    intros w z H. exact H.
   Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted. (* CONVERT: cong_top_sound: In environment *)
+  Proof. Admitted. (* CONVERT: cong_top_sound: Unable to unify "?a mod 1 = 0" with "exists z0 : Z, z - 0 = z0 * 1". *)
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   Proof. Admitted. (* CONVERT: cong_meet_sound: The variable cong_norm_gamma was not found. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted. (* CONVERT: cong_shape_laws: Expects a disjunctive pattern with 3 branches. *)
+  Proof. Admitted. (* CONVERT: cong_shape_laws: The variable cong_norm_gamma was not found in the current environment. *)
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
@@ -201,8 +199,7 @@ intros w z H. exact H.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
-intros. split; [apply wrap_is_word|]. rewrite Z.sub_diag. reflexivity.
-
+    intros. split; [apply wrap_is_word|]. rewrite Z.sub_diag. reflexivity.
   Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
