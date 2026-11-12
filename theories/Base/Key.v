@@ -84,3 +84,101 @@ Module ListKeyCode (K : KEY_OPS) <: KEY_OPS.
     | _, _ => false
     end.
 End ListKeyCode.
+
+Module PosKey <: KEY.
+  Include PosKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. intros a b Hcode. exact Hcode. Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. exact Pos.eqb_spec. Qed.
+End PosKey.
+
+Module NKey <: KEY.
+  Include NKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof.
+    intros a b Hcode.
+    apply (f_equal (fun p => N.pred (N.pos p))) in Hcode.
+    now rewrite !N.succ_pos_spec, !N.pred_succ in Hcode.
+  Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. exact N.eqb_spec. Qed.
+End NKey.
+
+Module ZKey <: KEY.
+  Include ZKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. intros [|a|a] [|b|b] Hcode; cbn in Hcode; congruence. Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. exact Z.eqb_spec. Qed.
+End ZKey.
+
+Module NatKey <: KEY.
+  Include NatKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof.
+    intros a b Hcode.
+    apply (f_equal (fun p => Nat.pred (Pos.to_nat p))) in Hcode.
+    now rewrite !SuccNat2Pos.id_succ in Hcode.
+  Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. exact Nat.eqb_spec. Qed.
+End NatKey.
+
+Module BoolKey <: KEY.
+  Include BoolKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. intros [] [] Hcode; cbn in Hcode; congruence. Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. exact Bool.eqb_spec. Qed.
+End BoolKey.
+
+Module UnitKey <: KEY.
+  Include UnitKeyCode.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. intros [] [] Hcode; reflexivity. Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. intros [] []; constructor; reflexivity. Qed.
+End UnitKey.
+
+Module PairKey (A B : KEY) <: KEY.
+  Include PairKeyCode A B.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* CONVERT: pair_encoding_laws: The variable serialized_code_injective was not found in the current environment. *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive while a structured key was expected. *)
+End PairKey.
+
+Module SumKey (A B : KEY) <: KEY.
+  Include SumKeyCode A B.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* CONVERT: sum_encoding_laws: The variable serialized_code_injective was not found in the current environment. *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
+End SumKey.
+
+Module OptionKey (K : KEY) <: KEY.
+  Include OptionKeyCode K.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* CONVERT: option_codec_laws: The variable codec_laws_injective was not found in the current environment. *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
+End OptionKey.
+
+Module ListKey (K : KEY) <: KEY.
+  Include ListKeyCode K.
+  Include KEY_SPEC.
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. Admitted. (* CONVERT: list_codec_laws: The variable codec_laws_injective was not found in the current environment. *)
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
+End ListKey.
