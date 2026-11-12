@@ -6,10 +6,114 @@
 
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
 From Argent Require Import Time Std Loop.
-From Galois.Base Require Import Code Loop UnionFind.
+From Galois.Base Require Import Code Loop UnionFind Trie.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig.
 
 Import List.ListNotations.
+
+(** Sorted positions retain their original positive ranks in a projection. *)
+Record database_slot_layout := {
+  ranked_positions : list (nat * positive);
+  projection_steps : list (nat * positive)
+}.
+
+TimeFun ranked_positions.
+TimeFun projection_steps.
+
+Fixpoint slot_rank_insert (p : nat * positive) (ps : list (nat * positive))
+    : list (nat * positive) :=
+  match ps with
+  | [] => [p]
+  | q :: rest =>
+    if Nat.leb (fst p) (fst q) then p :: ps else q :: slot_rank_insert p rest
+  end.
+
+TimeFun slot_rank_insert.
+
+Fixpoint slot_rank_positions (rank : positive) (perm : list nat) : list (nat * positive) :=
+  match perm with
+  | [] => []
+  | p :: rest => slot_rank_insert (p, rank) (slot_rank_positions (Pos.succ rank) rest)
+  end.
+
+TimeFun slot_rank_positions.
+
+Fixpoint slot_position_difference (position previous : nat) : nat :=
+  match previous, position with
+  | 0, _ => position
+  | S before, S current => slot_position_difference current before
+  | S _, 0 => 0
+  end.
+
+TimeFun slot_position_difference.
+
+(** A gap is measured from the preceding selected position, starting at zero. *)
+Fixpoint slot_position_gaps (previous : nat) (ps : list (nat * positive))
+    : list (nat * positive) :=
+  match ps with
+  | [] => []
+  | (p, rank) :: rest =>
+    (slot_position_difference p previous, rank) :: slot_position_gaps p rest
+  end.
+
+TimeFun slot_position_gaps.
+
+Definition prepare_slot_layout (perm : list nat) : database_slot_layout :=
+  let positions := slot_rank_positions 1 perm in
+  {| ranked_positions := positions; projection_steps := slot_position_gaps 0 positions |}.
+
+TimeFun prepare_slot_layout.
+
+Definition prepare_slot_layouts (sl : list (positive * list nat))
+    : list (positive * database_slot_layout) :=
+  map (fun s => (fst s, prepare_slot_layout (snd s))) sl.
+
+TimeFun prepare_slot_layouts.
+
+Fixpoint slot_skip {C : Type} (gap : nat) (u : list C) : list C :=
+  match gap, u with
+  | 0, _ => u
+  | S n, _ :: rest => slot_skip n rest
+  | S _, [] => []
+  end.
+
+TimeFun slot_skip.
+
+(** Each gap advances the remaining tuple and saves its head at the original rank. *)
+Fixpoint slot_pick_ranked {C : Type} (steps : list (nat * positive)) (u : list C)
+    (picked : PTrieCode.t C) : PTrieCode.t C :=
+  match steps with
+  | [] => picked
+  | (gap, rank) :: rest =>
+    let suffix := slot_skip gap u in
+    match suffix with
+    | [] => picked
+    | c :: _ => slot_pick_ranked rest suffix (PTrieCode.set rank c picked)
+    end
+  end.
+
+TimeFun slot_pick_ranked.
+
+(** Reading increasing original ranks restores permutation order. *)
+Fixpoint slot_read_ranked {C : Type} (remaining : nat) (rank : positive)
+    (picked : PTrieCode.t C) : list C :=
+  match remaining with
+  | 0 => []
+  | S n =>
+    match PTrieCode.get rank picked with
+    | None => slot_read_ranked n (Pos.succ rank) picked
+    | Some c => c :: slot_read_ranked n (Pos.succ rank) picked
+    end
+  end.
+
+TimeFun slot_read_ranked.
+
+Definition project_slot_layout {C : Type} (layout : database_slot_layout) (u : list C)
+    : list C :=
+  slot_read_ranked (length (projection_steps layout)) 1
+    (slot_pick_ranked (projection_steps layout) u PTrieCode.empty).
+
+TimeFun project_slot_layout.
 
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
@@ -22,6 +126,7 @@ Record database_row_store (C : Type) := {
 
 (** Slot groups and tuple counts retain the layout of the initialized database. *)
 Record database_slot_store (C : Type) := {
+  prepared_slots : list (positive * database_slot_layout);
   slot_positions : list (bool * N * N);
   function_groups : list (positive * N);
   slot_groups : list ((bool * N) * list N);
@@ -60,12 +165,14 @@ TimeFun db_slot_store.
 
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition t := database_state (cell V.t).
+  (** Projection preparation is stored while group and index construction remain placeholders. *)
   (* STUB-CODE *)
-  Definition init (_ : list decl) (_ : list (positive * list nat)) : t :=
+  Definition init (_ : list decl) (sl : list (positive * list nat)) : t :=
     DatabaseState UnionFindCode.empty 0%N 0%N 0%N [] []
       {| row_history := []; row_links := []; row_weights := []; row_keys := [];
          row_fresh := 1 |}
-      {| slot_positions := []; function_groups := []; slot_groups := [];
+      {| prepared_slots := prepare_slot_layouts sl;
+         slot_positions := []; function_groups := []; slot_groups := [];
          projection_counts := [] |}.
   (* STUB-CODE *)
   Definition find (i : positive) (db : t) : positive * t :=
@@ -546,7 +653,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Initialization pays for declarations and slot permutations. *)
   Lemma T_init_le : forall ds sl,
-    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + 1) *
+    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + layout_work sl + 1) *
       N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
       c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
@@ -794,16 +901,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_init_place : forall ds sl s,
     slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
   Proof. Admitted. (* STUB *)
-  (** Ranking by first appearance is linear in the slots and the bits of the names. *)
+  (** Ranking pays for slot positions and the bits of function names. *)
   Lemma T_rank_slots_le : forall ds sl,
-    (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + 1) +
+    (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + layout_work sl + 1) +
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0%nat sl)%nat))%N.
   Proof. Admitted. (* STUB *)
   (** Initialization adds the ranking to one pass over declarations and permutations. *)
   Lemma T_init_split : forall ds sl,
     (T_init ds sl <= T_rank_slots ds sl +
-      k_layout * N.of_nat (length ds + length sl + 1) *
+      k_layout * N.of_nat (length ds + length sl + layout_work sl + 1) *
         N.of_nat ((fold_right (fun s n => length (snd s) + n) 0%nat sl + 1)%nat) +
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds)%nat))%N.
   Proof. Admitted. (* STUB *)
