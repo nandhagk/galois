@@ -209,3 +209,15 @@ Example multiplier_all_choice_raw_product_controls :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(* The charged Cost interface was removed. These source clock observations are deferred
+   to the later timing work and are not executable tests of generated clocks.
+Example multiplier_early_stop_cost :
+  Cost.ticks (tnum_mul_acc_c 8%positive tnum_top (tnum_const 8%positive 0)) = 5%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Example multiplier_cost_bound_clients :
+  (Cost.ticks (tnum_mul_with_c MulBoth 8%positive tnum_top tnum_top) <= 48)%N /\
+  (Cost.ticks (tnum_mul_stages_c 8%positive tnum_top tnum_top) <= 24)%N.
+Proof. vm_compute. intuition discriminate. Qed.
+*)

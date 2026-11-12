@@ -6,7 +6,7 @@
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op.
-From Galois.Domains Require Import BitsLang WordSig WrappedSig Wrapped WrappedOps Tagged Harness.
+From Galois.Domains Require Import BitsLang WordSig ValueSig IntervalSig WrappedSig Wrapped WrappedOps Tagged Harness.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 Local Abbreviation w8 := 8%positive.
@@ -345,3 +345,52 @@ Example wrapped_payload_malformed_backward :
     malformed_backward_inputs =
   [([], true, true); ([WFull; WItv 15 1; WFull], true, true)].
 Proof. vm_compute. reflexivity. Qed.
+
+(* The charged Cost interface was removed. These source clock claims are deferred to
+   timing and are not executable tests of generated clocks.
+Example wrapped_join_retains_callback_costs :
+  Cost.ticks (wrapped_union_c w8
+    (Cost.tick 7 ;; Cost.ret (WItv 0 0))
+    (Cost.tick 11 ;; Cost.ret (WItv 1 1))) = 20%N.
+Proof. vm_compute. reflexivity. Qed.
+Example wrapped_pair_join_retains_callback_costs :
+  Cost.ticks (wrapped_pair_union_c w4 w8
+    (Cost.tick 7 ;; Cost.ret (WItv 0 0, WItv 2 2))
+    (Cost.tick 11 ;; Cost.ret (WItv 1 1, WItv 3 3))) = 22%N.
+Proof. vm_compute. reflexivity. Qed.
+Example wrapped_piece_retains_interval_costs :
+  Cost.ticks (wrapped_piece_forward_c bvnot [] w1) =
+  (Cost.ticks (interval_forward_c ThresholdEmpty bvnot [] w1) + 2)%N.
+Proof. vm_compute. reflexivity. Qed.
+Example wrapped_consistency_retains_delegated_forward_cost (q : interval) :
+  Cost.ticks (wrapped_assume_consistent_c bvadd w8 w8
+    (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) q) =
+  (Cost.ticks (interval_forward_c ThresholdEmpty bvadd
+    [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8) + 2)%N.
+Proof. vm_compute. reflexivity. Qed.
+Example wrapped_consistency_accept_and_reject_costs :
+  (Cost.value (interval_forward_c ThresholdEmpty bvadd
+      [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8),
+    Cost.ticks (interval_forward_c ThresholdEmpty bvadd
+      [(w8, Itv (Fin 1) (Fin 3)); (w8, Itv (Fin 2) (Fin 4))] w8),
+    map (fun q =>
+      let checked := wrapped_assume_consistent_c bvadd w8 w8
+        (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) q in
+      (Cost.value checked, Cost.ticks checked))
+      [Itv (Fin 4) (Fin 5); Itv (Fin 20) (Fin 21)]) =
+  (Itv (Fin 3) (Fin 7), 20%N, [(true, 22%N); (false, 22%N)]).
+Proof. vm_compute. reflexivity. Qed.
+Example wrapped_consistency_rejects_width_mismatch_without_delegation :
+  let checked := wrapped_assume_consistent_c bvadd w8 w4
+    (Itv (Fin 1) (Fin 3)) (Itv (Fin 2) (Fin 4)) (Itv (Fin 4) (Fin 5)) in
+  (Cost.value checked, Cost.ticks checked) = (false, 1%N).
+Proof. vm_compute. reflexivity. Qed.
+*)
+
+(** The source cost fixture also checked these three consistency values. *)
+Example wrapped_consistency_value_projections :
+  map (Ops.assume_consistent bvadd w8 w8 (I (Fin 1) (Fin 3)) (I (Fin 2) (Fin 4)))
+    [I (Fin 4) (Fin 5); I (Fin 20) (Fin 21)] = [true; false] /\
+  Ops.assume_consistent bvadd w8 w4 (I (Fin 1) (Fin 3)) (I (Fin 2) (Fin 4))
+    (I (Fin 4) (Fin 5)) = false.
+Proof. vm_compute. auto. Qed.
