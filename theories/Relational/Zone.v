@@ -9,7 +9,7 @@ From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
-From Galois.Relational Require Import LinearizeSig NumStateSig ZoneSig.
+From Galois.Relational Require Import LinForm LinearizeSig NumStateSig ZoneSig.
 Local Open Scope nat_scope.
 
 Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t)
@@ -129,9 +129,42 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Include Zone X K M L N F.
   Definition size (_ : t) : nat := 0.
   Definition wsize (_ : wparam) : nat := 0.
-  Definition assign_work (_ : X.t) (_ : term L.op X.t) (_ : t) : nat := 0.
-  Definition havoc_work (_ : X.t) (_ : t) : nat := 0.
-  Definition assume_work (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : nat := 0.
+  Definition support (m : dbm) : list K.t :=
+    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
+      (map fst (M.elements m) ++
+       flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) nil.
+  Definition supp (m : dbm) : nat := length (support m).
+  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map K.bits (support m)).
+  Definition ell (m : dbm) : nat := fold_right Nat.max 0
+    (flat_map (fun kv => map (fun p => Z.size_nat (snd p))
+      (M.elements (snd kv))) (M.elements m)).
+  Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
+  Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
+  Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
+  Definition binary_work (a z : t) : nat :=
+    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1).
+  Definition lin_bits (e : term L.op X.t) : nat :=
+    match F.lin_of e with
+    | Some (f, r) =>
+      fold_right Nat.max (Z.size_nat (cst f))
+        (map (fun p => Z.size_nat (snd p)) (coef f)) +
+      match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end
+    | None => 0
+    end.
+  Definition entries (m : dbm) : nat :=
+    fold_right Nat.add 0%nat (map (fun code =>
+      match M.find code m with Some row => length (M.codes row) | None => 0 end) (M.codes m)).
+  Definition wunits (s : t) : nat :=
+    match s with Unreached => 0 | Reached m => entries m end.
+  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
+    (ns s + 1)^2 * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) +
+      N.to_nat (F.T_lin_of e).
+  Definition havoc_work (x : X.t) (s : t) : nat :=
+    (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
+    length (F.atoms_of g es) * (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
+      (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
+      N.to_nat (F.T_atoms_of g es).
   Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
   TimeFun bot.
   TimeFun top.
@@ -168,20 +201,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
-  Definition support (m : dbm) : list K.t :=
-    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
-      (map fst (M.elements m) ++
-       flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) nil.
-  Definition supp (m : dbm) : nat := length (support m).
-  Definition b (m : dbm) : nat := fold_right Nat.max 0 (map K.bits (support m)).
-  Definition ell (m : dbm) : nat := fold_right Nat.max 0
-    (flat_map (fun kv => map (fun p => Z.size_nat (snd p))
-      (M.elements (snd kv))) (M.elements m)).
-  Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
-  Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
-  Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
-  Definition binary_work (a z : t) : nat :=
-    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1).
   Definition c_zone : N := 1. (* STUB *)
   Lemma T_close_le : forall m,
     (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
@@ -195,7 +214,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Lemma T_leb_zone_le : forall a z, (T_leb a z <= c_zone * N.of_nat ((binary_work a z)%nat))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_widen_zone_le : forall p a z,
-    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + wsize p))%N.
+    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + (ns a + ns z + 1)^2 * wsize p))%N.
   Proof. Admitted. (* STUB *)
   Definition closed (m : dbm) : Prop :=
     (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
@@ -218,9 +237,23 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     end.
   Definition k_zone : N := 1. (* STUB *)
   (** Assignment work pays for linearization and quadratic matrix updates. *)
+  (** Widening visits each raw matrix entry. *)
+  Lemma F_wunits : forall s, wunits s =
+    match s with Unreached => 0 | Reached m => entries m end.
+  Proof. Admitted. (* STUB *)
+  (** Assumption work charges incremental closure for every emitted atom. *)
+  Lemma F_assume_work : forall g es s,
+    (N.of_nat (assume_work g es s) =
+      N.of_nat (length (F.atoms_of g es) *
+        (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
+        (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1)) +
+      F.T_atoms_of g es)%N.
+  Proof. Admitted. (* STUB *)
+  (** Assignment work pays for linearization and quadratic matrix updates. *)
   Lemma F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
-      N.of_nat ((ns s + 1)^2 * (bs s + ells s + X.bits x + 1)) + F.T_lin_of e)%N.
+      N.of_nat ((ns s + 1)^2 *
+        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1)) + F.T_lin_of e)%N.
   Proof. Admitted. (* STUB *)
   Lemma F_havoc_work : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).

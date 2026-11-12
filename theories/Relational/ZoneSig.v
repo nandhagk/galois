@@ -10,7 +10,7 @@ From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
-From Galois.Relational Require Import LinearizeSig NumStateSig.
+From Galois.Relational Require Import LinForm LinearizeSig NumStateSig.
 
 Local Open Scope nat_scope.
 
@@ -87,7 +87,7 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Parameter T_leb_zone_le : forall a z, (T_leb a z <= c_zone * N.of_nat ((binary_work a z)%nat))%N.
   (** Widening charges the combined matrix support and entry sizes. *)
   Parameter T_widen_zone_le : forall p a z,
-    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + wsize p))%N.
+    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + (ns a + ns z + 1)^2 * wsize p))%N.
 End ZONE_TIME.
 
 Module Type ZONE_T (X : KEY_T) (K : KEY_T with Definition t := option X.t)
@@ -117,10 +117,33 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     | _, _ => False
     end.
   Parameter k_zone : N.
+  (** Linear-form size charges coefficients, the constant and wrap bounds. *)
+  Definition lin_bits (e : term L.op X.t) : nat :=
+    match F.lin_of e with
+    | Some (f, r) =>
+      fold_right Nat.max (Z.size_nat (cst f))
+        (map (fun p => Z.size_nat (snd p)) (coef f)) +
+      match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end
+    | None => 0
+    end.
+  Definition entries (m : dbm) : nat :=
+    fold_right Nat.add 0%nat (map (fun code =>
+      match M.find code m with Some row => length (M.codes row) | None => 0 end) (M.codes m)).
+  (** Widening visits each raw matrix entry. *)
+  Parameter F_wunits : forall s, wunits s =
+    match s with Unreached => 0 | Reached m => entries m end.
+  (** Assumption work charges incremental closure for every emitted atom. *)
+  Parameter F_assume_work : forall g es s,
+    (N.of_nat (assume_work g es s) =
+      N.of_nat (length (F.atoms_of g es) *
+        (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
+        (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1)) +
+      F.T_atoms_of g es)%N.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Parameter F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
-      N.of_nat ((ns s + 1)^2 * (bs s + ells s + X.bits x + 1)) + F.T_lin_of e)%N.
+      N.of_nat ((ns s + 1)^2 *
+        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1)) + F.T_lin_of e)%N.
   (** Havoc visits the affected row and column. *)
   Parameter F_havoc_work : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).
