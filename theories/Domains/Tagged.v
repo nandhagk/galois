@@ -194,3 +194,21 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE TaggedBit
   Lemma abst_sound : forall v, gamma (abst v) v.
   Proof. Admitted.
 End Tagged.
+
+Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
+  Module B := Tagged L W.
+  Include TaggedTableCode L W T.
+
+  Lemma fwd_sound : forall o xs cs c r, fwd o xs = Some r ->
+    Forall2 B.gamma xs cs -> TaggedBitsLang.eval o cs = Some c -> B.gamma r c.
+  Proof. Admitted.
+
+  Lemma bwd_sound : forall o r xs ys cs c, bwd o r xs = Some ys ->
+    Forall2 B.gamma xs cs -> TaggedBitsLang.eval o cs = Some c -> B.gamma r c ->
+    Forall2 B.gamma ys cs.
+  Proof. Admitted.
+
+  Lemma grd_sound : forall g xs ys cs, grd g xs = Some ys ->
+    Forall2 B.gamma xs cs -> TaggedBitsLang.holds g cs -> Forall2 B.gamma ys cs.
+  Proof. Admitted.
+End TaggedTable.
