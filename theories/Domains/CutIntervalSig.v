@@ -68,6 +68,18 @@ Definition cut_interval (bits : nat) (a : itv) : itv :=
   else IBot.
 TimeFun cut_interval.
 
+(** Oversized endpoints of a refinement fall back to the refined operand's endpoints. *)
+Definition cut_within (bits : nat) (old a : itv) : itv :=
+  if cut_shape_ok a then
+    match a, old with
+    | I lo hi, I olo ohi =>
+      I (if cut_endpoint_ok bits lo then lo else olo)
+        (if cut_endpoint_ok bits hi then hi else ohi)
+    | _, _ => IBot
+    end
+  else IBot.
+TimeFun cut_within.
+
 Module Type CUT_INTERVAL_OPS (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS).
   Include VALUE_DOMAIN_OPS L with Definition t := cut_itv C.bits
     with Definition wparam := ttree.
@@ -118,7 +130,7 @@ Module Type CUT_INTERVAL_TIME (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Parameter c_cut : N.
   (** The cutoff pays for shape comparisons and endpoint bit scans. *)
   Parameter T_cut_le : forall a,
-    (T_cut a <= c_cut * N.of_nat (interval_bits a + C.bits + 1))%N.
+    (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
   (** The representation measure counts the largest finite endpoint. *)
   Parameter size_raw : forall a, size a = interval_bits (cut_raw a).
   (** The fixed cutoff bounds every value, independently of the operation and thresholds. *)
@@ -137,8 +149,40 @@ End CUT_INTERVAL_TIME.
 Module Type CUT_INTERVAL_T (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T : THRESHOLDS_T) := CUT_INTERVAL C L <+ CUT_INTERVAL_TIME C L T.
 
+(** Raw endpoint order, with the same branches as the scalar interval order. *)
+Definition cut_bound_leb (a b : bnd) : bool :=
+  match a, b with
+  | NegInf, _ => true
+  | _, PosInf => true
+  | Fin x, Fin y => Z.leb x y
+  | _, _ => false
+  end.
+TimeFun cut_bound_leb.
+
+Definition cut_leb (a b : itv) : bool :=
+  match a, b with
+  | IBot, _ => true
+  | I _ _, IBot => false
+  | I l h, I l' h' => andb (cut_bound_leb l' l) (cut_bound_leb h h')
+  end.
+TimeFun cut_leb.
+
+Module Type CUT_RAW_LINK (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) (R : INTERVAL_ALL L T).
+  (** The raw order compares endpoints. *)
+  Parameter raw_leb : forall a b, R.leb a b = cut_leb a b.
+  (** Raw transfer work counts operand bits, arity, the quadratic term and the literal. *)
+  Parameter raw_work : forall o xs, R.work o xs =
+    fold_right Nat.add 0 (map interval_bits xs) + length xs +
+      (fold_right Nat.add 0 (map interval_bits xs) + 1) ^ 2 +
+      match L.view o with ZConst z => Z.size_nat z | _ => 0 end.
+  (** Raw guard work counts operand bits, arity and the quadratic term. *)
+  Parameter raw_gwork : forall g xs, R.gwork g xs =
+    fold_right Nat.add 0 (map interval_bits xs) + length xs +
+      (fold_right Nat.add 0 (map interval_bits xs) + 1) ^ 2.
+End CUT_RAW_LINK.
+
 Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
-    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (Import D : CUT_INTERVAL_T C L T).
+    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R) (Import D : CUT_INTERVAL_T C L T).
   (** Concrete membership uses the projected inclusive interval. *)
   Parameter F_gamma : forall a z, gamma a z <-> in_cut a z.
   (** Inclusion compares normalized bounded projections directly. *)
@@ -167,10 +211,12 @@ Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   (** Backward transfer cuts each result in its original operand position. *)
   Parameter F_backward : forall o r xs,
     map cut_raw (backward o r xs) =
-      map (cut_interval C.bits) (R.backward o (cut_raw r) (map cut_raw xs)).
-  (** Guard refinement cuts each returned operand. *)
+      map (fun yx => cut_within C.bits (snd yx) (fst yx))
+        (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
   Parameter F_guard : forall g xs,
-    map cut_raw (guard g xs) = map (cut_interval C.bits) (R.guard g (map cut_raw xs)).
+    map cut_raw (guard g xs) =
+      map (fun yx => cut_within C.bits (snd yx) (fst yx))
+        (combine (R.guard g (map cut_raw xs)) (map cut_raw xs)).
   (** Widening rank counts thresholds beyond the retained finite endpoints. *)
   Parameter F_rank : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
   (** Normalization and outward cutoff cannot increase the raw threshold rank. *)
@@ -179,7 +225,10 @@ Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Parameter k_cut : N.
   (** The total raw helper clock includes all endpoint inspections. *)
   Parameter T_cut_helper : forall a,
-    (T_cut_interval C.bits a <= k_cut * N.of_nat (interval_bits a + C.bits + 1))%N.
+    (T_cut_interval C.bits a <= k_cut * N.of_nat (interval_bits a + 1))%N.
+  (** Inward cutting reads both intervals once. *)
+  Parameter T_cut_within_helper : forall old a,
+    (T_cut_within C.bits old a <= k_cut * N.of_nat (interval_bits old + interval_bits a + 1))%N.
   (** Packing the Boolean subtype adds constant overhead to the raw cutoff helper. *)
   Parameter T_cut_pack : forall a,
     (T_cut a <= k_cut * (T_cut_interval C.bits a + 1))%N.
@@ -194,16 +243,16 @@ Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T_backward o r xs <= k_cut *
       (R.T_backward o (cut_raw r) (map cut_raw xs) +
        fold_right N.add 0%N
-         (map (fun a => (T_cut_interval C.bits a + 1)%N)
-           (R.backward o (cut_raw r) (map cut_raw xs))) +
+         (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
+           (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs))) +
        N.of_nat (length xs) + 1))%N.
   (** Guard timing includes every returned cutoff and both list traversals. *)
   Parameter T_guard_source : forall g xs,
     (T_guard g xs <= k_cut *
       (R.T_guard g (map cut_raw xs) +
        fold_right N.add 0%N
-         (map (fun a => (T_cut_interval C.bits a + 1)%N)
-           (R.guard g (map cut_raw xs))) + N.of_nat (length xs) + 1))%N.
+         (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
+           (combine (R.guard g (map cut_raw xs)) (map cut_raw xs))) + N.of_nat (length xs) + 1))%N.
   (** Widening timing includes cutting the actual threshold-selected endpoints. *)
   Parameter T_widen_source : forall q a b,
     (T_widen q a b <= k_cut *
@@ -212,13 +261,5 @@ Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
 End CUT_INTERVAL_PLAN.
 
 Module Type CUT_INTERVAL_ALL (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
-    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) :=
-  CUT_INTERVAL_T C L T <+ CUT_INTERVAL_PLAN C L T R.
-
-(* SIG-QUESTION: Which integer-program interface supplies finite variable support,
-   canonical map skeleton bounds and actual system row instruction equations for BUDGET?
-   EnvCode.havoc in States/Env.v stores V.top with M.set. Applying it to arbitrarily many
-   fresh keys grows storage although every value satisfies this fixed endpoint budget.
-   ENV_WORD_PROGRAM in States/EnvBudgetSig.v supplies variables, row_execution and
-   size_environment for words. An integer connection needs corresponding facts and support
-   preservation for assign, havoc, assume, join, narrow and every widening parameter. *)
+    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R) :=
+  CUT_INTERVAL_T C L T <+ CUT_INTERVAL_PLAN C L T R RL.

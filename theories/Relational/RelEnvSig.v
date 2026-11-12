@@ -4,7 +4,8 @@
     For example, a relational upper bound refines the interval returned by evaluation.
     Builds on: NumStateSig, StateSig and ValueSig. *)
 
-From Stdlib Require Import NArith List.
+From Stdlib Require Import NArith List ZArith.
+From Argent Require Import Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -18,7 +19,22 @@ End REL_RANGE_REFINE_OPS.
 Module Type REL_RANGE_REFINE_T (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L).
   Include RANGE_REFINE L N V.
   Parameter T_refine_range : bnd -> bnd -> V.t -> N.
+  Parameter c_refine : N.
+  (** Range refinement reads both finite endpoints and the refined value. *)
+  Parameter T_refine_range_le : forall lo hi a, (T_refine_range lo hi a <= c_refine *
+    N.of_nat ((match lo with Fin z => Z.size_nat z | _ => 0 end) +
+      (match hi with Fin z => Z.size_nat z | _ => 0 end) + V.size a + 1))%N.
 End REL_RANGE_REFINE_T.
+
+Module Type REL_PAIR_LINK (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
+    (F : LINEARIZE X L N) (R : NUM_STATE X L N F) (E : STATE_DOMAIN X L V)
+    (P : LATTICE with Definition t := (R.t * E.t)%type).
+  (** A pair is bottom when either component is bottom. *)
+  Parameter is_bot_pair : forall a, P.is_bot a = orb (R.is_bot (fst a)) (E.is_bot (snd a)).
+  (** Bottom pairs are least, and other pairs compare componentwise. *)
+  Parameter leb_pair : forall a b, P.leb a b =
+    orb (P.is_bot a) (andb (R.leb (fst a) (fst b)) (E.leb (snd a) (snd b))).
+End REL_PAIR_LINK.
 
 Module Type REL_ENV_OPS (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (F : LINEARIZE_OPS X L) (R : NUM_STATE_OPS X L F) (E : STATE_DOMAIN_OPS X L V)
@@ -33,7 +49,8 @@ End REL_ENV_OPS.
 Module Type REL_ENV (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
     (F : LINEARIZE X L N) (R : NUM_STATE X L N F) (E : STATE_DOMAIN X L V)
     (RR : RANGE_REFINE L N V)
-    (P : LATTICE with Definition t := (R.t * E.t)%type) :=
+    (P : LATTICE with Definition t := (R.t * E.t)%type)
+    (PL : REL_PAIR_LINK X L N V F R E P) :=
   REL_ENV_OPS X L V F R E RR P <+ LATTICE_LAWS <+ HAS_TOP_LAWS <+
   WIDENING_LAWS <+ STATE_DOMAIN_LAWS X L V.
 
@@ -41,19 +58,14 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
     (F : LINEARIZE_T X L N) (R : NUM_STATE_T X L N F) (E : STATE_DOMAIN_T X L V)
     (RR : REL_RANGE_REFINE_T L N V)
     (P : LATTICE_T with Definition t := (R.t * E.t)%type)
-    (Import D : REL_ENV X L N V F R E RR P).
+    (PL : REL_PAIR_LINK X L N V F R E P)
+    (Import D : REL_ENV X L N V F R E RR P PL).
   Include STATE_DOMAIN_TIME X L V D.
   Parameter c_rel_env : N.
   (** Evaluation charges the numeric query, value evaluation and actual range refinement. *)
   Parameter T_eval_components : forall e r s, (T_eval e (r, s) <= c_rel_env *
     (R.T_range e r + E.T_eval e s +
       RR.T_refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s) + 1))%N.
-  (* SIG-QUESTION: REL_RANGE_REFINE_T wires an actual clock without a declared-work
-     bound for T_refine_range or an output-size bound for refine_range. NUM_STATE_T
-     also has no bound on the endpoint bits returned by range. T_eval_components
-     therefore does not derive inherited T_eval_le for a declared eval_work measure.
-     A provider relating the composed costs to that measure is still required.
-     An input-size route would additionally need the range endpoint-size budget. *)
   (** Assignment charges both component updates. *)
   Parameter T_assign_components : forall x e r s, (T_assign x e (r, s) <=
     c_rel_env * (R.T_assign x e r + E.T_assign x e s + 1))%N.
@@ -63,19 +75,28 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   (** Assumption charges both component updates. *)
   Parameter T_assume_components : forall g es r s, (T_assume g es (r, s) <=
     c_rel_env * (R.T_assume g es r + E.T_assume g es s + 1))%N.
+  (** Evaluation work counts the query, its endpoints, value evaluation and its result. *)
+  Parameter eval_work_components : forall e r s, eval_work e (r, s) =
+    R.range_work e r + R.range_bits e r + E.eval_work e s + V.size (E.eval e s) + 1.
+  (** The shared constant pays for the shared order and join. *)
+  Parameter c_lat_pair : (P.c_lat <= c_lat)%N.
+  (** The shared lattice measures a pair by its two components. *)
+  Parameter size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
 End REL_ENV_TIME.
 
 Module Type REL_ENV_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     (F : LINEARIZE_T X L N) (R : NUM_STATE_T X L N F) (E : STATE_DOMAIN_T X L V)
     (RR : REL_RANGE_REFINE_T L N V)
-    (P : LATTICE_T with Definition t := (R.t * E.t)%type) :=
-  REL_ENV X L N V F R E RR P <+ REL_ENV_TIME X L N V F R E RR P.
+    (P : LATTICE_T with Definition t := (R.t * E.t)%type)
+    (PL : REL_PAIR_LINK X L N V F R E P) :=
+  REL_ENV X L N V F R E RR P PL <+ REL_ENV_TIME X L N V F R E RR P PL.
 
 Module Type REL_ENV_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     (F : LINEARIZE_T X L N) (R : NUM_STATE_T X L N F) (E : STATE_DOMAIN_T X L V)
     (RR : REL_RANGE_REFINE_T L N V)
     (P : LATTICE_T with Definition t := (R.t * E.t)%type)
-    (Import D : REL_ENV_T X L N V F R E RR P).
+    (PL : REL_PAIR_LINK X L N V F R E P)
+    (Import D : REL_ENV_T X L N V F R E RR P PL).
   (** Composition denotes the intersection of numeric and value-state meanings. *)
   Parameter F1_gamma : forall r s st,
     gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.
@@ -92,22 +113,19 @@ Module Type REL_ENV_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   Parameter F6_widen : forall p r s r' s', widen p (r, s) (r', s') =
     if is_bot (r', s') then (r, s)
     else (R.widen (fst p) r r', E.widen (snd p) s s').
+  (** Narrowing returns a bottom candidate and otherwise narrows each component. *)
+  Parameter F6a_narrow : forall a b, narrow a b =
+    if is_bot b then b else (R.narrow (fst a) (fst b), E.narrow (snd a) (snd b)).
   (** Product rank adds the ranks of the actual two components. *)
   Parameter F7_rank : forall p r s,
     wrank p (r, s) = R.wrank (fst p) r + E.wrank (snd p) s.
   (** Product state storage adds component storage. *)
   Parameter F8_size : forall r s, size (r, s) = R.size r + E.size s.
-  (* SIG-QUESTION: P shares the pair carrier but does not pin the product operations.
-     An unrelated P can choose nonbottom components for P.bot, or reverse P.leb,
-     invalidating gamma_bot or gamma_mono under F1_gamma. Operation correspondence
-     with the actual shared product instance is required before freezing. *)
-  (* SIG-QUESTION: A numeric state lacks full LATTICE_T contracts, including T_join_le.
-     The shared product parameter P needs a certified numeric lattice capability before
-     the standard product time proof can be instantiated. No F1 law is assumed implicitly. *)
 End REL_ENV_PLAN.
 
 Module Type REL_ENV_ALL (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
     (F : LINEARIZE_T X L N) (R : NUM_STATE_T X L N F) (E : STATE_DOMAIN_T X L V)
     (RR : REL_RANGE_REFINE_T L N V)
-    (P : LATTICE_T with Definition t := (R.t * E.t)%type) :=
-  REL_ENV_T X L N V F R E RR P <+ REL_ENV_PLAN X L N V F R E RR P.
+    (P : LATTICE_T with Definition t := (R.t * E.t)%type)
+    (PL : REL_PAIR_LINK X L N V F R E P) :=
+  REL_ENV_T X L N V F R E RR P PL <+ REL_ENV_PLAN X L N V F R E RR P PL.
