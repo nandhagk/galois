@@ -26,7 +26,7 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
-(* The narrowing example in LatticeLiftTest.v at 87192fe has no current operation. *)
+(* The old lift_narrow_unknown returned Elem false. JoinWideningCode keeps Unknown. *)
 
 Example lift_bottom :
   TopBool.bot = Elem false.
