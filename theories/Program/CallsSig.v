@@ -41,6 +41,7 @@ Module Type CALLS_OPS (P : TYPE) (F S : KEY_OPS).
   Parameter caller_of : P.t -> S.t -> F.t.
   Parameter resolve : P.t -> S.t -> list F.t.
   Parameter call_graph : P.t -> digraph.
+  Parameter calls : P.t -> list (S.t * F.t).
 End CALLS_OPS.
 
 Module Type CALLS_SPEC (P : TYPE) (F S : KEY_OPS) (Import C : CALLS_OPS P F S).
@@ -54,6 +55,9 @@ Module Type CALLS_SPEC (P : TYPE) (F S : KEY_OPS) (Import C : CALLS_OPS P F S).
 End CALLS_SPEC.
 
 Module Type CALLS_LAWS (P : TYPE) (F S : KEY) (Import C : CALLS_OPS P F S).
+  (** The call inventory retains function, site and resolver order. *)
+  Parameter calls_spec : forall p, calls p = flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
   (* spec: wf *)
   Parameter wf : P.t -> Prop.
   (** A well-formed inventory lists each function once. *)
@@ -85,7 +89,11 @@ Module Type CALLS_TIME (P : TYPE) (F S : KEY_T) (Import C : CALLS P F S).
   Parameter T_caller_of : P.t -> S.t -> N.
   Parameter T_resolve : P.t -> S.t -> N.
   Parameter T_call_graph : P.t -> N.
+  Parameter T_calls : P.t -> N.
   Parameter c_calls : N.
+  (** Call enumeration pays for its output. *)
+  Parameter T_calls_le : forall p,
+    (T_calls p <= c_calls * N.of_nat (length (calls p) + 1))%N.
   (** The function inventory pays for its output. *)
   Parameter T_functions_le : forall p,
     (T_functions p <= c_calls * N.of_nat (length (functions p) + 1))%N.

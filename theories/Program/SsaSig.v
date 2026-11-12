@@ -36,6 +36,8 @@ Inductive presentation_chain {N E : Type} (edges : list E) (src dst : E -> N) :
 Module Type SSA_OPS (P : TYPE) (N : KEY_OPS) (E : TYPE)
     (C : CFG_INDEXED_OPS P N E) (V : KEY_OPS) (K G : TYPE).
   Parameter values : P.t -> list V.t.
+  Parameter entry_params : P.t -> list V.t.
+  Parameter arg_rows : P.t -> list (E.t * (V.t * V.t)).
   Parameter def : P.t -> V.t -> definition N.t V.t K.t.
   Parameter home : P.t -> V.t -> N.t.
   Parameter params : P.t -> N.t -> list V.t.
@@ -61,6 +63,12 @@ End SSA_SPEC.
 Module Type SSA_LAWS (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG P N E) (V : KEY) (K G : TYPE)
     (Import S : SSA_OPS P N E C V K G).
+  (** The entry inventory follows entry and parameter order. *)
+  Parameter entry_params_spec : forall p,
+    entry_params p = flat_map (params p) (C.entries p).
+  (** The operand inventory follows edge and operand order. *)
+  Parameter arg_rows_spec : forall p,
+    arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
   (* spec: wf *)
   Parameter wf : P.t -> Prop.
   (** A well-formed SSA presentation has a well-formed underlying CFG. *)
@@ -112,12 +120,19 @@ Module Type SSA_TIME (P : TYPE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T) (K G : TYPE)
     (Import S : SSA P N E C V K G).
   Parameter T_values : P.t -> N.
+  Parameter T_entry_params T_arg_rows : P.t -> N.
   Parameter T_def : P.t -> V.t -> N.
   Parameter T_home : P.t -> V.t -> N.
   Parameter T_params : P.t -> N.t -> N.
   Parameter T_args : P.t -> E.t -> N.
   Parameter T_guards : P.t -> E.t -> N.
   Parameter c_ssa : N.
+  (** Entry-parameter enumeration pays for its output. *)
+  Parameter T_entry_params_le : forall p,
+    (T_entry_params p <= c_ssa * N.of_nat (length (entry_params p) + 1))%N.
+  (** Operand enumeration pays for its output. *)
+  Parameter T_arg_rows_le : forall p,
+    (T_arg_rows p <= c_ssa * N.of_nat (length (arg_rows p) + 1))%N.
   (** The value inventory pays for its output. *)
   Parameter T_values_le : forall p,
     (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
