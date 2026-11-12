@@ -52,7 +52,10 @@ Module Type JOIN (V : VALUE) (I : INDEX V) :=
 
 Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
   (* spec: work wmax *)
-  Parameter work wmax : jplan -> list I.t -> nat.
+  Parameter work : jplan -> list I.t -> nat.
+  Definition wmax (_ : jplan) (ixs : list I.t) : nat :=
+    fold_right (fun ix w => Nat.max (Pos.size_nat (I.next ix) + I.max_cell_bits ix) w)
+      0 ixs.
   Parameter T_run : jplan -> list I.t -> N.
   Parameter c_join : N.
   (** Running pays for recursive probe work at the maximum index width. *)

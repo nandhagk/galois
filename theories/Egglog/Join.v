@@ -35,7 +35,9 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Include Join V I.
   TimeFun run.
   Definition work (_ : jplan) (_ : list I.t) : nat := 0.
-  Definition wmax (_ : jplan) (_ : list I.t) : nat := 0.
+  Definition wmax (_ : jplan) (ixs : list I.t) : nat :=
+    fold_right (fun ix w => Nat.max (Pos.size_nat (I.next ix) + I.max_cell_bits ix) w)
+      0 ixs.
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 1) * N.of_nat (wmax p ixs + 1) *

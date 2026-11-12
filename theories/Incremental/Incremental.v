@@ -117,7 +117,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma T_edit_le : forall p p' ch st,
     (T_edit p p' ch st <= c_inc *
       N.of_nat ((fold_right Nat.add 0 (map (fun x => infl_deg st x + 1) (invalidated p p' ch st)) +
-       fold_right Nat.add 0 (map (fun r => length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+       fold_right Nat.add 0
+         (map (fun r => length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
       N.of_nat (width p' st + 1))%N.
   Proof. Admitted. (* STUB *)
 

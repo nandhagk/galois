@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Std.
+From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax.
 
 Import List.ListNotations.
@@ -134,6 +135,15 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   Parameter T_start : t -> N.
   Parameter T_insert_step_st T_remove_step_st : walk_state -> cell V.t -> N.
   Parameter T_insert_finish T_remove_finish : list (cell V.t) -> t -> walk_state -> N.
+  (** Edge maps use the shared binary trie contracts. *)
+  Parameter c_map_source : c_map = PTrieT.c_trie.
+  Parameter k_walk : N.
+  (** The public constant absorbs the aggregate path and wrapper charges. *)
+  Parameter c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
+  (** Each removal step pays for its edge-map operations. *)
+  Parameter T_remove_step_st_le : forall st c,
+    (T_remove_step_st st c <= 4 * c_map * N.of_nat (width (fst st) [c] + 1) + 4)%N.
+
   (** Insertion follows its named state walk. *)
   Parameter F_insert_steps : forall r ix, inv ix ->
     insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
@@ -143,11 +153,11 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   (** Insertion aggregates the path-step charges. *)
   Parameter T_insert_steps : forall r ix, inv ix ->
     (T_insert r ix <= N.of_nat (length r + 1) *
-      (4 * c_map * N.of_nat (width ix r + 1) + 4) + c_ix)%N.
+      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
   (** Removal aggregates the path-step charges. *)
   Parameter T_remove_steps : forall r ix, inv ix ->
     (T_remove r ix <= N.of_nat (length r + 1) *
-      (4 * c_map * N.of_nat (width ix r + 1) + 4) + c_ix)%N.
+      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
   (** Child lookup aggregates its map operations. *)
   Parameter T_child_steps : forall ix n c,
     (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.

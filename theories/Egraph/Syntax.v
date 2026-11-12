@@ -64,23 +64,23 @@ Inductive unfolds_pat {V : Type} (tau : positive -> option (@Model.expr V))
 
 (** A flat expression denotes the value of any expression that it unfolds to. *)
 Definition denotes_expr {V} (merge : positive -> V -> V -> V)
-    (M : model merge) (e : fexpr V) (value : carrier merge M + V) : Prop :=
+    (M : model (V := V)) (e : fexpr V) (value : carrier M + V) : Prop :=
   exists t, unfolds_expr (expr_nodes V e) (expr_root V e) t /\
-    denote merge M t = value.
+    denote M t = value.
 
 (** A flat pattern denotes the value of any expression obtained from its holes. *)
 Definition denotes_pat {V} (merge : positive -> V -> V -> V)
-    (M : model merge) (tau : positive -> option (@Model.expr V))
-    (p : fpat V) (value : carrier merge M + V) : Prop :=
+    (M : model (V := V)) (tau : positive -> option (@Model.expr V))
+    (p : fpat V) (value : carrier M + V) : Prop :=
   exists t, unfolds_pat tau (nodes V p) (root V p) t /\
-    denote merge M t = value.
+    denote M t = value.
 
 (** A rewrite preserves denotation whenever its conditions hold in the model. *)
 Definition valid_rw {V} (prim : positive -> list V -> option V)
-    (merge : positive -> V -> V -> V) (M : model merge)
+    (merge : positive -> V -> V -> V) (M : model (V := V))
     (kinds : positive -> option output) (rw : rewrite V) : Prop :=
   forall tau s l r,
-    (forall h t, tau h = Some t -> s h = Some (denote merge M t)) ->
-    Forall (model_atom prim merge M kinds s) (cond V rw) ->
+    (forall h t, tau h = Some t -> s h = Some (denote M t)) ->
+    Forall (model_atom prim M kinds s) (cond V rw) ->
     denotes_pat merge M tau (lhs V rw) l ->
     denotes_pat merge M tau (rhs V rw) r -> l = r.
