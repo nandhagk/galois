@@ -90,3 +90,9 @@ Module BitsChecks (V : VALUE_DOMAIN BitsLang)
     negb (range_nonnegative (Q.range i) && bound_lt (snd (Q.range i)) (fst (Q.range len))).
   Proof. Admitted. (* STUB *)
 End BitsChecks.
+
+Module BitsChecksClock (V : VALUE_DOMAIN_T BitsLangT)
+    (Q : BITS_RANGE_T NumU V) (QS : BITS_RANGE_T NumS V).
+  Include BitsChecks V Q QS.
+  TimeFun may_fail.
+End BitsChecksClock.

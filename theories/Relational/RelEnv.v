@@ -5,6 +5,7 @@
     Builds on: RelEnvSig, NumStateSig, StateSig and ValueSig. *)
 
 From Stdlib Require Import NArith List.
+From Argent Require Import Time Tactics Std.
 From Argent Require Import Time.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -121,3 +122,21 @@ Module RelEnv (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* STUB *)
 
 End RelEnv.
+
+Module RelEnvClock (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
+    (F : LINEARIZE_T X L N) (R : NUM_STATE_T X L N F) (E : STATE_DOMAIN_T X L V)
+    (RR : REL_RANGE_REFINE_T L N V)
+    (P : LATTICE_T with Definition t := (R.t * E.t)%type).
+  Include RelEnv X L N V F R E RR P.
+  TimeFun leb.
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun top.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun assign.
+  TimeFun havoc.
+  TimeFun assume.
+  TimeFun eval.
+End RelEnvClock.
