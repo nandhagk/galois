@@ -159,3 +159,28 @@ Example no_flow_identity : forallb (fun r =>
       (S (length (NoFlowIfds.deps tt r))) (NoFlowIfds.start tt r)))
   (NoFlowIfds.rows tt) = true.
 Proof. vm_compute; reflexivity. Qed.
+
+Definition affine_root (r : ASys.row) := match path_row_rule r with
+  | PathIdentity n d => Some (n, d)
+  | _ => None
+  end.
+
+Example affine_prepared_roots :
+  flat_map (fun r => match affine_root r with Some x => [x] | None => [] end) (ASys.rows tt) = [(0, None); (1, None)].
+Proof. vm_compute; reflexivity. Qed.
+
+Definition affine_rule_tags (r : ASys.row) : bool * bool * bool * bool :=
+  match path_row_rule r with
+  | PathIdentity n None => (Nat.eqb n 0, Nat.eqb n 1, false, false)
+  | PathStep None e None None => (false, false, Nat.eqb e 1, false)
+  | PathReturn None call ret None None None None =>
+      (false, false, false, Nat.eqb call 0 && Nat.eqb ret 2)
+  | _ => (false, false, false, false)
+  end.
+Definition affine_seen := fold_left (fun acc r =>
+  let '(seed, root, step, ret) := affine_rule_tags r in
+  let '(a, b, c, d) := acc in (a || seed, b || root, c || step, d || ret))
+  (ASys.rows tt) (false, false, false, false).
+
+Example affine_seed_call_path_return_rows : affine_seen = (true, true, true, true).
+Proof. vm_compute; reflexivity. Qed.
