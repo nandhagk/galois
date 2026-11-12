@@ -110,3 +110,13 @@ Example producer_derives_sources_from_sibling_subtrees :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example producer_retains_direct_root_parent_observations :
+  map (fun g => fst (DomCode.build (DigraphCode.prepare g) 1))
+    [Line.graph; Diamond.graph; JoinLoop.graph; NestedLoop.graph; SelfLoop.graph;
+      Irreducible.graph; Singleton.graph; Unreachable.graph] =
+  map parent_map [Line.parents; Diamond.parents; JoinLoop.parents; NestedLoop.parents;
+    SelfLoop.parents; Irreducible.parents; Singleton.parents; Unreachable.parents].
+Proof.
+  vm_compute. reflexivity.
+Qed.
