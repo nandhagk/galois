@@ -53,16 +53,17 @@ Module Type JOIN (V : VALUE) (I : INDEX V) :=
 Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
   (* spec: work wmax *)
   Parameter work wmax : jplan -> list I.t -> nat.
-  Parameter T_run : jplan -> list I.t -> nat.
-  Parameter c_join : nat.
+  Parameter T_run : jplan -> list I.t -> N.
+  Parameter c_join : N.
   (** Running pays for recursive probe work at the maximum index width. *)
   (* SIG-QUESTION: For zero variables and arbitrarily many empty-column indexes,
      the requested recurrence gives work = 1 while root-node initialization visits
      every index. The public bound is retained for F1 without an added cost term. *)
   Parameter T_run_le : forall p ixs, wf_plan p ixs ->
-    T_run p ixs <= c_join * (work p ixs + 1) * (wmax p ixs + 1).
+    (T_run p ixs <= c_join * N.of_nat (work p ixs + 1) * N.of_nat (wmax p ixs + 1))%N.
   (** Recursive probe work is a lower bound on running time. *)
-  Parameter T_run_ge : forall p ixs, wf_plan p ixs -> work p ixs <= T_run p ixs.
+  Parameter T_run_ge : forall p ixs, wf_plan p ixs ->
+    (N.of_nat (work p ixs) <= T_run p ixs)%N.
 End JOIN_TIME.
 
 Module Type JOIN_T (V : VALUE_T) (I : INDEX_T V) := JOIN V I <+ JOIN_TIME V I.
@@ -79,9 +80,9 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
     option (list positive).
   Parameter go : nat -> jplan -> list I.t -> list positive -> list (cell V.t) ->
     list (list (cell V.t)) -> list (list (cell V.t)).
-  Parameter T_advance : jplan -> list I.t -> nat -> list positive -> cell V.t -> nat.
+  Parameter T_advance : jplan -> list I.t -> nat -> list positive -> cell V.t -> N.
   Parameter T_go : nat -> jplan -> list I.t -> list positive -> list (cell V.t) ->
-    list (list (cell V.t)) -> nat.
+    list (list (cell V.t)) -> N.
   (* spec: work_at *)
   Parameter work_at : jplan -> list I.t -> nat -> list positive -> nat.
   (* spec: participants *)
@@ -89,7 +90,7 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
     filter (fun j => existsb (Nat.eqb lvl) (nth j (cols p) []))
       (seq 0 (length (cols p))).
   Parameter choose : jplan -> list I.t -> nat -> list positive -> option nat.
-  Parameter T_choose : jplan -> list I.t -> nat -> list positive -> nat.
+  Parameter T_choose : jplan -> list I.t -> nat -> list positive -> N.
   (** The pivot is the least-degree participant, breaking equal-degree ties by position. *)
   Parameter choose_min : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
     l < nvars p -> choose p ixs l ns = Some j ->
@@ -146,8 +147,8 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
     run p ixs = go (nvars p) p ixs (map I.root ixs) [] [].
   (** Recursive cost pays for probes and all surviving subtrees. *)
   Parameter T_go_le : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
-    T_go (nvars p - l) p ixs ns pre acc <=
-      c_join * (work_at p ixs l ns + 1) * (wmax p ixs + 1).
+    (T_go (nvars p - l) p ixs ns pre acc <=
+      c_join * N.of_nat (work_at p ixs l ns + 1) * N.of_nat (wmax p ixs + 1))%N.
 End JOIN_PLAN.
 
 Module Type JOIN_ALL (V : VALUE_T) (I : INDEX_T V) := JOIN_T V I <+ JOIN_PLAN V I.
