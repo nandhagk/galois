@@ -31,6 +31,9 @@ Module SignCode (L : WORD_LANGUAGE_OPS) <: SIGN_OPS L.
     | Sgn false true false => Some 0
     | _ => None
     end.
+  Definition pwparam := unit.
+  Definition pwiden (_ : pwparam) w a b := pjoin w a b.
+  Definition pnarrow w a b := pmeet w a b.
   Definition sign_nonneg (a : p) := zero a || pos a.
   Definition sign_bits n nn := Sgn n nn nn.
   Definition sign_not (a : p) := sign_bits (sign_nonneg a) (neg a).
