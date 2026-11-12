@@ -89,13 +89,13 @@ Module Thresholds <: THRESHOLDS.
   Include THRESHOLDS_SPEC.
   (** Construction retains precisely the supplied thresholds. *)
   Lemma make_vals : forall zs x, In x (vals (make zs)) <-> In x zs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: threshold_index_membership: The variable build_membership was not found. *)
   (** Construction orders and deduplicates thresholds. *)
   Lemma make_ordered : forall zs, ordered (make zs).
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: threshold_index_ordered: The variable threshold_of_list_wf was not found. *)
   (** Construction produces a logarithmic-depth tree. *)
   Lemma make_depth : forall zs, depth (make zs) <= Nat.log2 (length zs) + 1.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: threshold_depth_bound: The variable build_depth was not found. *)
   (** Upper search returns the least eligible threshold or proves none exists. *)
   Lemma above_spec : forall t z, ordered t ->
     match above t z with
@@ -103,7 +103,7 @@ Module Thresholds <: THRESHOLDS.
       forall v, In v (vals t) -> (z <= v)%Z -> (u <= v)%Z
     | None => forall v, In v (vals t) -> (v < z)%Z
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: upper_threshold_least: The variable tree was not found in the current environment. *)
   (** Lower search returns the greatest eligible threshold or proves none exists. *)
   Lemma below_spec : forall t z, ordered t ->
     match below t z with
@@ -111,13 +111,13 @@ Module Thresholds <: THRESHOLDS.
       forall v, In v (vals t) -> (v <= z)%Z -> (v <= u)%Z
     | None => forall v, In v (vals t) -> (z < v)%Z
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: lower_threshold_greatest: The variable tree was not found in the current environment. *)
   (** Upper search is sound even when the tree is unordered. *)
   Lemma above_sound : forall t z u,
     above t z = Some u -> In u (vals t) /\ (z <= u)%Z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: upper_threshold_member: The variable tree was not found in the current environment. *)
   (** Lower search is sound even when the tree is unordered. *)
   Lemma below_sound : forall t z u,
     below t z = Some u -> In u (vals t) /\ (u <= z)%Z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: lower_threshold_member: The variable tree was not found in the current environment. *)
 End Thresholds.

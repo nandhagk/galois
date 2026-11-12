@@ -124,7 +124,7 @@ Module Type WORD_PAYLOAD_LAWS (L : WORD_LANGUAGE) (Import W : WORD_PAYLOAD_OPS L
   Parameter pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   (** A recognized point identifies all represented integers. *)
   Parameter ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
 End WORD_PAYLOAD_LAWS.
 
 Module Type WORD_PAYLOAD (L : WORD_LANGUAGE) :=
@@ -141,6 +141,19 @@ Module Type WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T) (Import W : WORD_PAYLOAD L).
   Parameter T_pis_bot T_ppoint : positive -> p -> N.
   Parameter T_pconst : positive -> Z -> N.
   Parameter c_payload : N.
+  (** Joined payloads fit within the combined operand sizes. *)
+  Parameter pjoin_size : forall w a b,
+    (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  (** Met payloads fit within the combined operand sizes. *)
+  Parameter pmeet_size : forall w a b,
+    (N.of_nat (psize w (pmeet w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
+  (** Widened payloads fit within the operand and parameter sizes. *)
+  Parameter pwiden_size : forall q w a b,
+    (N.of_nat (psize w (pwiden q w a b)) <=
+      c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  (** Narrowed payloads fit within the combined operand sizes. *)
+  Parameter pnarrow_size : forall w a b,
+    (N.of_nat (psize w (pnarrow w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   (** Payload widening charges both operands and its parameters. *)
   Parameter T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.

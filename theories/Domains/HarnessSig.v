@@ -73,6 +73,9 @@ Module Type HARNESS_BASE_TIME (L : LANG_T) (Import B : HARNESS_BASE L).
   (** Join results fit within the charged operand sizes. *)
   Parameter join_size_le : forall a b,
     (N.of_nat (bsize (join a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
+  (** Widening results fit within the operand and parameter sizes. *)
+  Parameter widen_size_le : forall p a b,
+    (N.of_nat (bsize (widen p a b)) <= c_base * N.of_nat (bsize a + bsize b + wsize p + 1))%N.
   (** Abstraction results fit within their abstraction time. *)
   Parameter abst_size_le : forall v,
     (N.of_nat (bsize (abst v)) <= c_base * (T_abst v + 1))%N.

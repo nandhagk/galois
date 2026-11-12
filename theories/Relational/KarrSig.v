@@ -88,19 +88,24 @@ Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : KARR_T X L N F C).
-  (** Assignment charges fraction-free elimination after linearization. *)
+  Definition terms (s : t) : nat :=
+    fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
+  Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
+  (** Assignment charges row normalization and elimination after linearization. *)
   Parameter F_assign_work : forall x e s,
-    (N.of_nat (assign_work x e s) = N.of_nat ((n s + tsize e + 1)^3 *
-      (ellB (n s + tsize e + 1) (ell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
-  (** Havoc charges fraction-free elimination of the selected variable. *)
+    (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
+      (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
+  (** Havoc charges row normalization and elimination of the selected variable. *)
   Parameter F_havoc_work : forall x s,
-    havoc_work x s = (n s + 1)^3 * (ellB (n s + 1) (ell s + X.bits x) + 1)^2.
-  (** Assumption charges elimination of the state and all newly linearized rows. *)
+    havoc_work x s = terms s * (nell s + 1) +
+      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
+  (** Assumption charges row normalization and elimination with the new rows. *)
   Parameter F_assume_work : forall g es s,
-    (N.of_nat (assume_work g es s) =
-      N.of_nat ((n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+    (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
+      (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
         (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
-          (ell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
+          (nell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
   (** Top has no repeated coefficients. *)
   Parameter normal_top : normal_s top.
   (** Join keeps rows free of repeated keys. *)

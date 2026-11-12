@@ -8,31 +8,59 @@ From Stdlib Require Import List.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
 
+Definition product_is_bot {A B} (ba : A -> bool) (bb : B -> bool) (x : A * B) :=
+  orb (ba (fst x)) (bb (snd x)).
+
+Definition product_leb {A B} (ba : A -> bool) (bb : B -> bool)
+    (la : A -> A -> bool) (lb : B -> B -> bool) (x y : A * B) :=
+  orb (product_is_bot ba bb x) (andb (la (fst x) (fst y)) (lb (snd x) (snd y))).
+
+Definition product_pair {A B} (fa : A -> A -> A) (fb : B -> B -> B) (x y : A * B) :=
+  (fa (fst x) (fst y), fb (snd x) (snd y)).
+
+Definition product_normalize {A B} (ba : A -> bool) (bb : B -> bool)
+    (a : A) (b : B) (x : A * B) :=
+  if product_is_bot ba bb x then (a, b) else x.
+
+Definition product_widen {A B PA PB} (ba : A -> bool) (bb : B -> bool)
+    (wa : PA -> A -> A -> A) (wb : PB -> B -> B -> B) (p : PA * PB) (x y : A * B) :=
+  if product_is_bot ba bb y then x
+  else (wa (fst p) (fst x) (fst y), wb (snd p) (snd x) (snd y)).
+
+Definition product_narrow {A B} (ba : A -> bool) (bb : B -> bool)
+    (na : A -> A -> A) (nb : B -> B -> B) (x y : A * B) :=
+  if product_is_bot ba bb y then y else product_pair na nb x y.
+
+Definition product_forward {A B O} (ba : A -> bool) (bb : B -> bool) (a : A) (b : B)
+    (fa : O -> list A -> A) (fb : O -> list B -> B) (o : O) (xs : list (A * B)) :=
+  product_normalize ba bb a b (fa o (map fst xs), fb o (map snd xs)).
+
+Definition product_backward {A B O} (ba : A -> bool) (bb : B -> bool) (a : A) (b : B)
+    (fa : O -> A -> list A -> list A) (fb : O -> B -> list B -> list B)
+    (o : O) (r : A * B) (xs : list (A * B)) :=
+  map (product_normalize ba bb a b)
+    (combine (fa o (fst r) (map fst xs)) (fb o (snd r) (map snd xs))).
+
+Definition product_guard {A B G} (ba : A -> bool) (bb : B -> bool) (a : A) (b : B)
+    (fa : G -> list A -> list A) (fb : G -> list B -> list B)
+    (g : G) (xs : list (A * B)) :=
+  map (product_normalize ba bb a b) (combine (fa g (map fst xs)) (fb g (map snd xs))).
+
 Module ProductCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L) <: PRODUCT_OPS L A B.
   Definition t := (A.t * B.t)%type.
   Definition bot : t := (A.bot, B.bot).
-  Definition is_bot (x : t) := orb (A.is_bot (fst x)) (B.is_bot (snd x)).
-  Definition leb (x y : t) :=
-    orb (is_bot x) (andb (A.leb (fst x) (fst y)) (B.leb (snd x) (snd y))).
-  Definition join (x y : t) : t := (A.join (fst x) (fst y), B.join (snd x) (snd y)).
-  Definition normalize (x : t) : t :=
-    if orb (A.is_bot (fst x)) (B.is_bot (snd x)) then bot else x.
+  Definition is_bot := product_is_bot A.is_bot B.is_bot.
+  Definition leb := product_leb A.is_bot B.is_bot A.leb B.leb.
+  Definition join := product_pair A.join B.join.
+  Definition normalize := product_normalize A.is_bot B.is_bot A.bot B.bot.
   Definition top : t := (A.top, B.top).
-  Definition meet (x y : t) : t :=
-    normalize (A.meet (fst x) (fst y), B.meet (snd x) (snd y)).
+  Definition meet (x y : t) : t := normalize (product_pair A.meet B.meet x y).
   Definition wparam := (A.wparam * B.wparam)%type.
-  Definition widen (p : wparam) (x y : t) : t :=
-    if is_bot y then x
-    else (A.widen (fst p) (fst x) (fst y), B.widen (snd p) (snd x) (snd y)).
-  Definition narrow (x y : t) : t :=
-    if is_bot y then y else (A.narrow (fst x) (fst y), B.narrow (snd x) (snd y)).
-  Definition forward (o : L.op) (xs : list t) : t :=
-    normalize (A.forward o (map fst xs), B.forward o (map snd xs)).
-  Definition backward (o : L.op) (r : t) (xs : list t) : list t :=
-    map normalize
-      (combine (A.backward o (fst r) (map fst xs)) (B.backward o (snd r) (map snd xs))).
-  Definition guard (g : L.guard) (xs : list t) : list t :=
-    map normalize (combine (A.guard g (map fst xs)) (B.guard g (map snd xs))).
+  Definition widen := product_widen A.is_bot B.is_bot A.widen B.widen.
+  Definition narrow := product_narrow A.is_bot B.is_bot A.narrow B.narrow.
+  Definition forward := product_forward A.is_bot B.is_bot A.bot B.bot A.forward B.forward.
+  Definition backward := product_backward A.is_bot B.is_bot A.bot B.bot A.backward B.backward.
+  Definition guard := product_guard A.is_bot B.is_bot A.bot B.bot A.guard B.guard.
 End ProductCode.
 
 Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
@@ -41,13 +69,13 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
     A.wrank (fst p) (fst a) + B.wrank (snd p) (snd a).
   Definition gamma (a : t) (c : L.val) : Prop := A.gamma (fst a) c /\ B.gamma (snd a) c.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
@@ -56,10 +84,10 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   Proof. Admitted.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof. Admitted.
@@ -72,34 +100,39 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: slots2_gamma_laws: The variable slots_leb was not found in the current environment. *)
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof.
+    intros c [Ha Hb]. exact (A.gamma_bot c Ha).
+  Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted.
+  Proof.
+    intro c. change (A.gamma A.top c /\ B.gamma B.top c).
+    split; [apply A.gamma_top|apply B.gamma_top].
+  Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
   Proof. Admitted.
@@ -112,12 +145,12 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found. *)
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
@@ -125,7 +158,7 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.

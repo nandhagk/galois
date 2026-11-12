@@ -271,10 +271,13 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_refl was not found. *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_leb_trans was not found in the current environment. *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof.
+intros [|l h]; reflexivity.
+
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
@@ -283,26 +286,26 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Proof. Admitted.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_l was not found in the current *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable bound_min_lower_r was not found in the current *)
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof. Admitted.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_meet_lower_left: The variable bound_max_upper_l was not found in the current *)
   (** Meet is below its right operand. *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable widen_lower_old was not found in the current environment. *)
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_laws: The variable widen_lower_next was not found in the current *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted.
@@ -320,7 +323,7 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_gamma_laws: The variable bound_leb_trans was not found in the current environment. *)
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
@@ -341,12 +344,12 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_forward_sound: The variable pforward_sound was not found in the current environment. *)
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_assume_sound: The variable passume_sound was not found in the current environment. *)
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.

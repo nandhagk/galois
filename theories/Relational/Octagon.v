@@ -154,11 +154,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
       match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end
     | None => 0
     end.
-  Definition entries (m : dbm) : nat :=
-    fold_right Nat.add 0%nat (map (fun code =>
-      match M.find code m with Some row => length (M.codes row) | None => 0 end) (M.codes m)).
-  Definition wunits (s : t) : nat :=
-    match s with Unreached => 0 | Reached m => entries m end.
+  Definition wunits (s : t) : nat := (ns s + 1) ^ 2.
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
     (ns s + 1)^2 * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) +
       N.to_nat (F.T_lin_of e).
@@ -243,9 +239,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   TimeFun fw_round.
   Definition k_octagon : N := 1. (* STUB *)
   (** Assignment work pays for linearization and quadratic matrix updates. *)
-  (** Widening visits each raw matrix entry. *)
-  Lemma F_wunits : forall s, wunits s =
-    match s with Unreached => 0 | Reached m => entries m end.
+  (** Widening units cover the squared support size. *)
+  Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
   Proof. Admitted. (* STUB *)
   (** Assumption work charges incremental closure for every emitted atom. *)
   Lemma F_assume_work : forall g es s,

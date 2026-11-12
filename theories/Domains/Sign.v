@@ -4,8 +4,8 @@
     For example, a zero-only payload represents the integer zero.
     Builds on: SignSig and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith List Bool.
-From Galois.Bits Require Import Word Op.
+From Stdlib Require Import ZArith List Bool Lia.
+From Galois.Bits Require Import Word Op Arith.
 From Galois.Domains Require Import SignSig WordSig.
 Import List.ListNotations.
 
@@ -102,9 +102,15 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Definition pwrank (_ : pwparam) (_ : positive) (a : p) : nat := 3 - sign_level a.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof.
+  intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+
+  Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof.
+  intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+
+  Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof. Admitted.
@@ -122,14 +128,17 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted.
+  Proof. intros w [a b c]. destruct a, b, c; reflexivity. Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted.
+  Proof.
+    intros w [a b c] [d e f] [g h i]. destruct a, b, c, d, e, f, g, h, i;
+      cbn; intros; try discriminate; reflexivity.
+  Qed.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
-  Proof. Admitted.
+  Proof. intros w [a b c]. reflexivity. Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
   Proof. Admitted.
@@ -141,30 +150,37 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted.
+  Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted.
+  Proof.
+intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+
+  Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_mono: Attempt to save an incomplete proof. *)
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_bot_empty: Not an inductive product. *)
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted.
+  Proof.
+    intros w z _. unfold pgamma, sign_gamma, ptop.
+    destruct (L.signed w z <? 0); [reflexivity|].
+    destruct (L.signed w z =? 0); reflexivity.
+  Qed.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_meet_sound: Not an inductive product. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted.
@@ -174,11 +190,18 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted.
+  Proof.
+    intros w z. unfold pgamma, sign_gamma, pconst.
+    rewrite signed_wrap.
+    destruct (Word.signed w z <? 0) eqn:Hneg; cbn; [exact Hneg|].
+    destruct (Word.signed w z =? 0) eqn:Hzero; cbn; [exact Hzero|].
+    apply Z.ltb_lt. change (0 < Word.signed w z).
+    apply Z.ltb_ge in Hneg. apply Z.eqb_neq in Hzero. lia.
+  Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
-  Proof. Admitted.
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
+  Proof. Admitted. (* CONVERT: sign_shape_laws: Not an inductive definition. *)
 End Sign.
 
 Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
@@ -188,7 +211,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_table_laws: No product even after head-reduction. *)
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -196,5 +219,5 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted.
+  Proof. intros o rw q wps ys cs z Hf. discriminate Hf. Qed.
 End SignTable.

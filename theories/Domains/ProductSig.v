@@ -104,9 +104,6 @@ Module Type PRODUCT_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     if is_bot b then b else (A.narrow (fst a) (fst b), B.narrow (snd a) (snd b)).
   (** Product widening units add the component units. *)
   Parameter F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
-  (** Inclusion charges the component tests. *)
-  Parameter T1_leb : forall a b, (T_leb a b <= k_product_lists *
-    (A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
   (** Inclusion charges bottom recognition before comparing the components. *)
   Parameter T1_leb_components : forall a b, (T_leb a b <= k_product_lists *
     (A.T_is_bot (fst a) + B.T_is_bot (snd a) +

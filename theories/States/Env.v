@@ -143,13 +143,16 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     end.
 
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof.
+intros [|a]; reflexivity.
+
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
@@ -158,20 +161,20 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof. Admitted.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted.
@@ -185,17 +188,20 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: meaning_laws: The variable lat was not found in the current environment. *)
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
-  Proof. Admitted.
+  Proof.
+intros st Hbot. exact Hbot.
+
+  Qed.
   (** Top describes every concrete environment. *)
   Lemma gamma_top : forall st, gamma top st.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: top_full: No product even after head-reduction. *)
   (** Assignment contains each successful concrete update. *)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
@@ -204,21 +210,25 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: havoc_sound: The variable update_sound was not found. *)
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
     gamma (assume g es s) st.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: assume_sound: The variable refine_sound was not found. *)
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: abs_eval_sound: The variable term_eval_sound was not found. *)
 
   (** Reading an absent key returns top. *)
   Lemma read_spec : forall m x,
     read m x = match M.get x m with Some a => a | None => V.top end.
-  Proof. Admitted.
+  Proof.
+  intros m x. 
+  reflexivity.
+
+  Qed.
   (** Leaf roots expose their stored abstract value. *)
   Lemma root_leaf : forall x a, root (ALeaf x a) = a.
   Proof. Admitted.
@@ -234,7 +244,10 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted.
   (** Unreachable states describe no stores. *)
   Lemma gamma_unreached : forall st, ~ gamma Unreached st.
-  Proof. Admitted.
+  Proof.
+intros st Hbot. exact Hbot.
+
+  Qed.
   (** Reached maps without recognized bottoms describe stores pointwise. *)
   Lemma gamma_reached : forall m st,
     gamma (Reached m) st <->

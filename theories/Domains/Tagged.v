@@ -123,43 +123,53 @@ Module TaggedTableCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
       : option (list (tagged W.p)) := None.
 End TaggedTableCode.
 
+Definition tagged_gamma {P : Type} (is_word : positive -> Z -> Prop)
+    (pgamma : positive -> P -> Z -> Prop) (a : tagged P) (c : BitsLang.val) : Prop :=
+  match a with
+  | TBot => False
+  | TAny => True
+  | TVal w p => fst c = w /\ is_word w (snd c) /\ pgamma w p (snd c)
+  end.
+
+Module Type TAGGED_BASE (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) :=
+  HARNESS_BASE BitsLang with Definition t := tagged W.p
+    with Definition gamma := tagged_gamma L.is_word W.pgamma.
+
 Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Include TaggedCode L W.
-  Definition gamma (a : t) (c : BitsLang.val) : Prop :=
-    match a with
-    | TBot => False
-    | TAny => True
-    | TVal w p => fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)
-    end.
+  Definition gamma := tagged_gamma L.is_word W.pgamma.
   Definition wrank (q : wparam) (a : t) : nat :=
     match a with
     | TBot | TAny => 0
     | TVal w p => S (W.pwrank q w p)
     end.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof.
+    intros [|w p|]; cbn [leb]; try reflexivity.
+    rewrite Pos.eqb_refl. apply W.pleb_refl.
+  Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: The variable v was not found. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. intros []; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof. Admitted.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: Found no subterm matching "(?M1523 =? ?M1523)%positive" *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: Found no subterm matching "(?M1523 =? ?M1523)%positive" *)
   Lemma top_greatest : forall a, leb a top = true.
   Proof. Admitted.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_meet_lower: The variable tagged_val_lower was not found in the current *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
   Lemma widen_ub_l : forall q a b, leb a (widen q a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: q is already used. *)
   Lemma widen_ub_r : forall q a b, leb b (widen q a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_laws: q is already used. *)
   Lemma widen_stable : forall q a b, leb b a = true -> widen q a b = a.
   Proof. Admitted.
   Lemma wrank_widen : forall q a b, is_bot a = false -> leb b a = false ->
@@ -171,36 +181,42 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
   Proof. Admitted.
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_numeric_laws: The variable tagged_lattice was not found in the current environment. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof. intros c Hg. exact Hg. Qed.
   Lemma gamma_top : forall c, gamma top c.
   Proof. Admitted.
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_meet_sound: The variable tagged_val_sound was not found in the current *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_empty_false: The relation (fun (x : tagged W.p) (y : width * Z) => ~ gamma x y) is not a declared reflexive relation. Maybe you need to require the Corelib.Classes.RelationClasses library *)
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.
   Lemma point_sound : forall a v c, point a = Some v -> gamma a c -> c = v.
-  Proof. Admitted.
+  Proof.
+    intros [|w p|] [v x] [u z] Hpoint Hgamma; cbn in Hpoint; try discriminate.
+    destruct (W.ppoint w p) as [value|] eqn:Hpayload; [|discriminate].
+    inversion Hpoint; subst v x.
+    destruct Hgamma as [Hwidth [Hword Hpayload_gamma]]. cbn in Hwidth. subst u.
+    f_equal. exact (W.ppoint_sound w p z value Hpayload Hword Hpayload_gamma).
+  Qed.
   Lemma abst_sound : forall v, gamma (abst v) v.
   Proof. Admitted.
 End Tagged.
 
-Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
-  Module B := Tagged L W.
+Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
+    (B : TAGGED_BASE L W) <: TABLE BitsLang B.
   Include TaggedTableCode L W T.
 
   Lemma fwd_sound : forall o xs cs c r, fwd o xs = Some r ->
     Forall2 B.gamma xs cs -> BitsLang.eval o cs = Some c -> B.gamma r c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_forward_sound: The variable tagged_no_empty was not found in the current environment. *)
 
   Lemma bwd_sound : forall o r xs ys cs c, bwd o r xs = Some ys ->
     Forall2 B.gamma xs cs -> BitsLang.eval o cs = Some c -> B.gamma r c ->
     Forall2 B.gamma ys cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: tagged_assume_sound: The variable tagged_empty_false was not found in the current *)
 
   Lemma grd_sound : forall g xs ys cs, grd g xs = Some ys ->
     Forall2 B.gamma xs cs -> BitsLang.holds g cs -> Forall2 B.gamma ys cs.
@@ -209,6 +225,6 @@ End TaggedTable.
 
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
   Module B := Tagged L W.
-  Module Table := TaggedTable L W T.
+  Module Table := TaggedTable L W T B.
   Module Domain := Harness BitsLang B Table.
 End WordDomain.
