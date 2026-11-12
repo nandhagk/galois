@@ -26,7 +26,7 @@ Definition op_bits (o : bop) : nat :=
 
 (** Word evaluation charges the combined metadata and operand widths quadratically. *)
 Definition work (o : bop) (vs : list word) : nat :=
-  (op_bits o + fold_right Nat.add 0 (map (fun v => Pos.to_nat (fst v)) vs) + 1) ^ 2.
+  ((op_bits o + fold_right Nat.add 0 (map (fun v => Pos.to_nat (fst v)) vs) + 1) ^ 2)%nat.
 
 Module BitsLangCode <: LANG_OPS.
   Definition op := bop.

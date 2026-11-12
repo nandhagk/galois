@@ -56,6 +56,9 @@ Module Type CHECKS_T (L : LANG_T) (V : VALUE_DOMAIN_T L) :=
 
 Module Type CHECKS_POINT (L : LANG) (V : VALUE_DOMAIN L) (C : CHECKS L V).
   Parameter point : V.t -> option L.val.
+  (** A recognized point identifies every represented concrete value. *)
+  Parameter point_sound : forall x c c',
+    point x = Some c -> V.gamma x c' -> c' = c.
   (** Exact erroneous operands always raise an alarm. *)
   Parameter may_fail_point : forall k xs cs,
     Forall2 (fun x c => point x = Some c) xs cs ->
