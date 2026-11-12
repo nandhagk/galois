@@ -27,3 +27,56 @@ Module MapLatticeCode (K : KEY_OPS) (M : MAP_OPS K) (L : LATTICE_OPS)
       | Some a, Some b => Some (L.join a b)
       end) x y.
 End MapLatticeCode.
+
+Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
+  Include MapLatticeCode K M L.
+  Definition read (m : t) (k : K.t) := default (M.get k m).
+  Lemma leb_read : forall a b, leb a b = true <-> forall k, L.leb (read a k) (read b k) = true.
+  Proof.
+    intros a b; unfold leb, read.
+    apply M.forall2b_spec; cbn [default]; apply L.leb_refl.
+  Qed.
+  Lemma leb_refl : forall a, leb a a = true.
+  Proof. intro a; apply leb_read; intro k; apply L.leb_refl. Qed.
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof.
+    intros a b c Hab Hbc; apply leb_read; intro k.
+    eapply L.leb_trans; [apply (proj1 (leb_read a b) Hab)|apply (proj1 (leb_read b c) Hbc)].
+  Qed.
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof.
+    intro a; apply leb_read; intro k; unfold read, bot; rewrite M.get_empty; apply L.bot_least.
+  Qed.
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof.
+    unfold is_bot, bot; apply Bool.negb_true_iff.
+    destruct (M.existsb (fun a => negb (L.is_bot a)) M.empty) eqn:H; try reflexivity.
+    apply M.existsb_spec in H; destruct H as [k [a [Hget _]]].
+    rewrite M.get_empty in Hget; discriminate.
+  Qed.
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof.
+    intros a b Hbot; apply leb_read; intro k; unfold read.
+    destruct (M.get k a) as [v|] eqn:Hget; cbn [default]; [|apply L.bot_least].
+    apply L.is_bot_least.
+    destruct (L.is_bot v) eqn:Hvalue; try reflexivity.
+    unfold is_bot in Hbot; apply Bool.negb_true_iff in Hbot.
+    assert (Hex : M.existsb (fun a => negb (L.is_bot a)) a = true).
+    { apply M.existsb_spec; exists k, v; split; [exact Hget|rewrite Hvalue; reflexivity]. }
+    congruence.
+  Qed.
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof.
+    intros a b; apply leb_read; intro k; unfold read, join.
+    rewrite M.get_merge by reflexivity.
+    destruct (M.get k a), (M.get k b); cbn [default];
+      try apply L.leb_refl; try apply L.bot_least; apply L.join_ub_l.
+  Qed.
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof.
+    intros a b; apply leb_read; intro k; unfold read, join.
+    rewrite M.get_merge by reflexivity.
+    destruct (M.get k a), (M.get k b); cbn [default];
+      try apply L.leb_refl; try apply L.bot_least; apply L.join_ub_r.
+  Qed.
+End MapLattice.
