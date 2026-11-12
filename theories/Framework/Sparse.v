@@ -10,7 +10,7 @@ From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.Fixpoint Require Import Query SystemSig.
-From Galois.Program Require Import CfgSig SsaSig.
+From Galois.Program Require Import CfgSig SsaSig SemanticsSig.
 From Galois.Framework Require Import SparseSig.
 
 Definition sparse_read {X K A} (forward : K -> list A -> A)
@@ -142,3 +142,17 @@ Module Sparse (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     eval p (SparseArg e x y) look = Some (look y, nil).
   Proof. Admitted.
 End Sparse.
+
+Module SparseSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (X : KEY) (L : LANG) (K : TYPE with Definition t := L.op)
+    (G : TYPE with Definition t := L.guard) (Val : TYPE with Definition t := L.val)
+    (S : SSA P N E C X K G) (V : VALUE_DOMAIN L) (T : SSA_TRANSFER_OPS P X L V)
+    (A : SPARSE P N E C X L K G S V T) (M : SEMANTICS P)
+    (CL : CFG_LINK P N E C M) (SL : SSA_LINK P N E C X K G Val S M CL)
+    (IL : SPARSE_INITIAL_LINK P N E C X L K G Val S V T M CL SL)
+    <: SPARSE_SOUND P N E C X L K G Val S V T A M CL SL IL.
+  Lemma covers : forall p look, A.post_solution p look ->
+    forall s, reachable (M.initial p) (M.step p) s ->
+      forall x c, SL.venv s x = Some c -> V.gamma (look x) c.
+  Proof. Admitted. (* CONVERT: sparse_sound: The variable sparse_reachable_invariant was not found *)
+End SparseSound.

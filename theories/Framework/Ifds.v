@@ -206,3 +206,14 @@ Module Ifds (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
      end, nil).
   Proof. Admitted.
 End Ifds.
+
+Module IfdsSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (FL : FLOW_FUN P N E C F)
+    (L : IFDS_LATTICE) (A : IFDS P N E C Site I F FL L)
+    <: IFDS_SOUND P N E C Site I F FL L A.
+  Lemma covers : forall p look, A.post_solution p look ->
+    forall entry d0 n path d, In (entry, d0) (FL.seeds p) ->
+      valid_path (C.edges p) (C.src p) (C.dst p) (I.kind p) entry path n ->
+      In d (path_facts (FL.flow p) d0 path) -> look (d0, (n, d)) = true.
+  Proof. Admitted. (* CONVERT: ifds_post_balanced: The reference TabPaths.balanced_induction was not found *)
+End IfdsSound.

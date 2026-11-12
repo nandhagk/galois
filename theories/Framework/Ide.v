@@ -130,3 +130,15 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
      end, nil).
   Proof. Admitted.
 End Ide.
+
+Module IdeSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
+    (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (V : LATTICE) (M : MICRO V)
+    (FL : IDE_FLOW P N E C F V M) (A : IDE P N E C Site I F V M FL)
+    <: IDE_SOUND P N E C Site I F V M FL A.
+  Lemma covers : forall p look, A.post_solution p look ->
+    forall entry d0 n path d f, In (entry, d0) (FL.seeds p) ->
+      valid_path (C.edges p) (C.src p) (C.dst p) (I.kind p) entry path n ->
+      In (d, f) (weighted_facts (FL.flow p) (FL.weight p) M.identity M.compose d0 path) ->
+      forall a, V.leb (M.apply f a) (M.apply (look (d0, (n, d))) a) = true.
+  Proof. Admitted. (* CONVERT: balanced_path_sound: The reference TabPaths.trace_complete was not found *)
+End IdeSound.

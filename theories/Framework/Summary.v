@@ -9,7 +9,7 @@ From Argent Require Import Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
-From Galois.Program Require Import CallsSig.
+From Galois.Program Require Import CallsSig SemanticsSig.
 From Galois.Framework Require Import SummarySig.
 
 Module SummaryCode (P : TYPE) (F Site : KEY_OPS) (CL : CALLS_OPS P F Site)
@@ -101,3 +101,24 @@ Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
     Some (B.via_call p site g (look g), (g, B.entry p site g) :: nil).
   Proof. Admitted.
 End Summary.
+
+Module SummarySound (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
+    (L : LATTICE) (B : BODY_OPS P F Site L) (A : SUMMARY P F Site CL L B)
+    (M : SEMANTICS P) (K : CALLS_LINK P F Site CL M)
+    (SL : SUMMARY_LINK P F Site CL L B M K)
+    <: SUMMARY_SOUND P F Site CL L B A M K SL.
+  Lemma covers : forall p look, CL.wf p -> A.post_solution p look ->
+    forall s t f, reachable (M.initial p) (M.step p) s -> M.step p s t ->
+      In f (K.active s) -> SL.gamma_step (look f) s t.
+  Proof. Admitted. (* CONVERT: sound: The variable frames_cover was not found *)
+  Lemma covers_entry : forall p look, CL.wf p -> A.post_solution p look ->
+    forall s t site, reachable (M.initial p) (M.step p) s -> M.step p s t ->
+      In site (CL.sites_of p (K.here s)) -> In (K.here t) (CL.resolve p site) ->
+      K.frames t = (K.here s, site) :: K.frames s -> SL.gamma_entry (look (K.here t)) t.
+  Proof. Admitted.
+  Lemma covers_finished : forall p look f s t, CL.wf p -> A.post_solution p look ->
+    covered_run (M.step p)
+      (fun u _ => reachable (M.initial p) (M.step p) u /\ In f (K.active u)) s t ->
+    covered_run (M.step p) (SL.gamma_step (look f)) s t.
+  Proof. Admitted.
+End SummarySound.
