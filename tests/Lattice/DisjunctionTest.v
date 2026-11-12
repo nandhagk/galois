@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool.
 From Galois.Base Require Import Key.
-From Galois.Lattice Require Import Disjunction Flat.
+From Galois.Lattice Require Import Disjunction Flat Simple JoinWidening.
 Import List.ListNotations.
 
 Module FlatBool := FlatCode BoolKeyCode.
@@ -22,6 +22,11 @@ Module Cap2. Definition k := 2. End Cap2.
 Module D0 := DisjunctionCode FlatWide Cap0.
 Module D1 := DisjunctionCode FlatWide Cap1.
 Module D2 := DisjunctionCode FlatWide Cap2.
+Module BoolWide.
+  Include BoolLatCode.
+  Include JoinWideningCode BoolLatCode.
+End BoolWide.
+Module BoolDisjunction := DisjunctionCode BoolWide Cap1.
 
 Example disjunction_cap_one : D1.join [FVal false] [FVal true; FBot] = [FTop].
 Proof. vm_compute. reflexivity. Qed.
@@ -45,8 +50,21 @@ Proof. vm_compute. reflexivity. Qed.
 Example disjunction_covered : D2.widen tt [FTop; FVal true] [FVal false] = [FTop; FVal true].
 Proof. vm_compute. reflexivity. Qed.
 
-(* The old disjunction widening bound was 3. Its rank for [false; false] was 3,
-   and the rank after widening by [true] was 0. No disjunction rank is exported. *)
+Example selective_leastness :
+  BoolDisjunction.leb (BoolDisjunction.join [false] [true]) [false; true] = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* LatticeDisjunctionTest.disjunction_measure_client expects (3, 3, 0) from
+   disjunction_wrank on [false; false] and its widening by [true]. DisjunctionCode
+   exports operations without a rank or bound, and there is no public disjunction
+   height or widening-rank adapter. The old invariant-guarded wrank dictionary
+   has no counterpart in this interface.
+   disjunction_empty_costs, disjunction_leb_ticks, disjunction_join_ticks,
+   fixed_cap_long_tail and widening_callback_ticks retire with Cost.ticks.
+   bool_join_selective and selective_disjunction_client are proof clients of the
+   retired lub_laws dictionary. The concrete selective_leastness is checked above. *)
 
 Example disjunction_bottom_test : (D1.is_bot [], D1.is_bot [FBot]) = (true, false).
 Proof. vm_compute. reflexivity. Qed.

@@ -28,7 +28,10 @@ Example map_update_absent :
 Proof. vm_compute. reflexivity. Qed.
 
 Example map_remove_last :
-  PosMap.elements (PosMap.remove 1%positive (PosMap.set 1%positive 0 PosMap.empty)) = [].
+  (match PosMap.elements (PosMap.remove 1%positive (PosMap.set 1%positive 0 PosMap.empty)) with
+   | [] => true
+   | _ => false
+   end) = true.
 Proof. vm_compute. reflexivity. Qed.
 
 Example map_empty : PosMap.elements (PosMap.empty : PosMap.t nat) = [].
@@ -39,8 +42,47 @@ Example map_combination :
     sample PosMap.empty) = [(2%positive, 20); (1%positive, 11); (3%positive, 30)].
 Proof. vm_compute. reflexivity. Qed.
 
-(* The old update and is_empty operations are expressed through get, set and elements above.
-   Cost and law examples are in BaseMapTest.v at 87192fe. *)
+Example map_costed_comparison_value :
+  PosMap.forall2b (fun v w =>
+    match v, w with
+    | Some v, Some w => Nat.eqb v w
+    | None, None => true
+    | _, _ => false
+    end) sample sample = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition malformed_storage : PosMap.t nat :=
+  PTrieCode.set 1%positive (2%positive, 10) PTrieCode.empty.
+Module CollisionKey.
+  Definition t := positive.
+  Definition encode (_ : t) := 1%positive.
+  Definition eqb (_ _ : t) := true.
+End CollisionKey.
+Module CollisionMap := TrieMapCode CollisionKey.
+
+Example malformed_storage_update_client :
+  PosMap.get 1%positive (PosMap.set 3%positive 30 malformed_storage) = Some 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example colliding_keys_update_client :
+  CollisionMap.get 1%positive
+    (CollisionMap.set 2%positive 20
+      (CollisionMap.set 2%positive 10 CollisionMap.empty)) = Some 20.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* BaseMapTest.map_remove_last expresses is_empty through elements above.
+   map_costed_combination and map_costed_comparison
+   keep their value coordinates in map_combination and map_costed_comparison_value.
+   Their tick comparisons and map_reference_ticks retire with Cost.ticks.
+   raw_set_client and malformed_storage_control are symbolic law clients.
+   colliding_keys_update_client uses a constant encoder through the operations
+   layer, which requires no injectivity proof. *)
 
 Module UnitMap := TrieMapCode UnitKeyCode.
 Definition raw_unit_map : UnitMap.t bool := PTrieCode.set 2%positive (tt, true) PTrieCode.empty.
