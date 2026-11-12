@@ -13,7 +13,7 @@ Module DisjunctionCode (L : WLATTICE_OPS) (C : CAP) <: WLATTICE_OPS.
   Definition t := list L.t.
   Definition leb (xs ys : t) := forallb (fun x => existsb (L.leb x) ys) xs.
   Definition bot : t := [].
-  Definition is_bot (xs : t) := forallb L.is_bot xs.
+  Definition is_bot (xs : t) := match xs with [] => true | _ => false end.
   Definition join_all (xs : t) : L.t :=
     match xs with
     | [] => L.bot

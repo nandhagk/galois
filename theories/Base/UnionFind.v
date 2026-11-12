@@ -61,7 +61,10 @@ Module UnionFind <: UNION_FIND.
   Definition card (u : t) : nat := N.to_nat (count u).
   Definition repr (u : t) (x : positive) : positive := Nat.iter (card u) (fun y => parent_of y u) x.
   Definition size_of (u : t) (x : positive) : nat :=
-    length (filter (fun y => Pos.eqb (repr u y) (repr u x)) (support u)).
+    match PTrieCode.get x (parents u) with
+    | None => 1
+    | Some _ => length (filter (fun y => Pos.eqb (repr u y) (repr u x)) (support u))
+    end.
   Definition width (u : t) : nat := fold_right (fun y w => Nat.max (Pos.size_nat y) w) 0 (support u).
   Definition is_root (u : t) (x : positive) : Prop := parent_of x u = x.
   Definition ranked (u : t) (rk : positive -> nat) : Prop :=
@@ -101,6 +104,30 @@ Module UnionFind <: UNION_FIND.
   Lemma card_find  : forall x u, wf u -> card (snd (find x u)) = card u. Proof. reflexivity. Qed.
   Lemma card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2. Proof. Admitted.
   Lemma width_mem  : forall u x, wf u -> mem u x -> Pos.size_nat x <= width u. Proof. Admitted.
+Lemma size_of_fresh : forall u x, wf u -> ~ mem u x -> size_of u x = 1.
+  Proof. Admitted.
+Lemma size_of_repr : forall u x, wf u -> size_of u x = size_of u (repr u x).
+  Proof. Admitted.
+Lemma size_of_add : forall x u y, wf u -> size_of (add x u) y = size_of u y.
+  Proof. Admitted.
+Lemma size_of_find : forall x u y, wf u -> size_of (snd (find x u)) y = size_of u y.
+  Proof. Admitted.
+Lemma size_of_union_other : forall x y u o u1 z, wf u -> union x y u = (o, u1) ->
+  (forall w l, o = Some (w, l) -> repr u z <> w /\ repr u z <> l) ->
+  size_of u1 z = size_of u z.
+  Proof. Admitted.
+
+Lemma width_empty : width empty = 0.
+  Proof. Admitted.
+Lemma width_add : forall x u, wf u ->
+  width (add x u) <= Nat.max (width u) (Pos.size_nat x).
+  Proof. Admitted.
+Lemma width_find : forall x u, wf u -> width (snd (find x u)) <= width u.
+  Proof. Admitted.
+Lemma width_union : forall x y u, wf u ->
+  width (snd (union x y u)) <= Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)).
+  Proof. Admitted.
+
 End UnionFind.
 
 Module UnionFindT <: UNION_FIND_ALL.

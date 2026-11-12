@@ -28,7 +28,7 @@ Module InternCode (K : KEY_OPS) (M : MAP_OPS K) <: INTERN_OPS K.
   Definition empty : t := InternTable M.empty PTrieCode.empty 1%positive.
   Definition find (k : K.t) (s : t) := M.get k (intern_forward s).
   Definition name (i : positive) (s : t) := PTrieCode.get i (intern_inverse s).
-  Definition size (s : t) := M.fold (fun n _ _ => N.succ n) (intern_forward s) 0%N.
+  Definition size (s : t) := Pos.pred_N (intern_next s).
   Definition intern (k : K.t) (s : t) : positive * t :=
     match find k s with
     | Some i => (i, s)
@@ -126,5 +126,9 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   Proof. Admitted. (* STUB *)
   Lemma T_name_le : forall i s,
     (T_name i s <= c_intern * N.of_nat (Pos.size_nat i + N.size_nat (size s) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Reading size charges the allocation frontier width. *)
+  Lemma T_size_le : forall s,
+    (T_size s <= c_intern * N.of_nat (N.size_nat (size s) + 1))%N.
   Proof. Admitted. (* STUB *)
 End InternT.

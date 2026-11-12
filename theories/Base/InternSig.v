@@ -81,6 +81,10 @@ Module Type INTERN_TIME (K : KEY_T) (Import I : INTERN K).
   (** Inverse lookup charges the queried identifier's bits, including absent identifiers. *)
   Parameter T_name_le : forall i s,
     (T_name i s <= c_intern * N.of_nat (Pos.size_nat i + N.size_nat (size s) + 1))%N.
+  (** Reading size charges the allocation frontier width. *)
+  Parameter T_size_le : forall s,
+    (T_size s <= c_intern * N.of_nat (N.size_nat (size s) + 1))%N.
+
 End INTERN_TIME.
 
 Module Type INTERN_T (K : KEY_T) := INTERN K <+ INTERN_TIME K.
