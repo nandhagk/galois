@@ -200,7 +200,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
     gamma (assign x e s) (upd X.eqb st x c).
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: assign_sound: The variable update_sound was not found. *)
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).

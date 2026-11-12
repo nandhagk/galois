@@ -322,7 +322,9 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Proof. Admitted.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof.
+    intros c H. exact H.
+  Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
   Proof. Admitted.
