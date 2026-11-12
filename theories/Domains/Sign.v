@@ -102,9 +102,15 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Definition pwrank (_ : pwparam) (_ : positive) (a : p) : nat := 3 - sign_level a.
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof.
+  intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+
+  Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted.
+  Proof.
+  intros q w. intros [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+
+  Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
   Proof. Admitted.
@@ -150,7 +156,10 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted.
+  Proof.
+intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+
+  Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
@@ -192,7 +201,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> pgamma w a z -> z = v.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: sign_shape_laws uses is_word to recover z from signed zero. *)
 End Sign.
 
 Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
@@ -202,7 +211,7 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: sign_table_laws: No product even after head-reduction. *)
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\

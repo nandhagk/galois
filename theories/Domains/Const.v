@@ -235,10 +235,14 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Qed.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted.
+  Proof.
+  intros c Hfalse; exact Hfalse.
+  Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted.
+  Proof.
+  intro c; exact I.
+  Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
   Proof.
@@ -375,7 +379,7 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Qed.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: const_shape_laws: Expects a disjunctive pattern with 3 branches. *)
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
@@ -386,7 +390,7 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> pgamma w a z -> z = v.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: const_shape_laws: Expects a disjunctive pattern with 3 branches. *)
 End ConstWord.
 
 Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WORD_TABLE L W.
@@ -396,7 +400,7 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: const_table_laws: No product even after head-reduction. *)
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -404,5 +408,5 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: const_table_laws: No product even after head-reduction. *)
 End ConstWordTable.
