@@ -395,3 +395,10 @@ Module SsaPointsStrict (P : TYPE) (B : KEY) (BE : TYPE)
     rewrite Hhome1 in Hhome2; inversion Hhome2; reflexivity.
   Qed.
 End SsaPointsStrict.
+
+(** Projecting occurrence identifiers retains the selected edge order. *)
+Theorem dominating_edges_projected_equation : forall E (ctx : strict_context (E * nat)) n,
+  dominating_edges_projected ctx n = map fst (dominating_edges_in ctx n).
+Proof.
+  reflexivity.
+Qed.

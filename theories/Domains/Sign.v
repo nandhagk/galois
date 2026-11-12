@@ -200,8 +200,8 @@ intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
   Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
-  Proof. Admitted. (* SIG-QUESTION: sign_shape_laws uses is_word to recover z from signed zero. *)
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
+  Proof. Admitted. (* CONVERT: sign_shape_laws: Not an inductive definition. *)
 End Sign.
 
 Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.

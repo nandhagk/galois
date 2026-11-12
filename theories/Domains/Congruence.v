@@ -206,7 +206,7 @@ intros. split; [apply wrap_is_word|]. rewrite Z.sub_diag. reflexivity.
   Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* CONVERT: cong_shape_laws: Expects a disjunctive pattern with 3 branches. *)
 End Congruence.
 

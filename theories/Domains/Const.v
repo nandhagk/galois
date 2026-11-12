@@ -389,8 +389,11 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. intros. reflexivity. Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
-  Proof. Admitted. (* CONVERT: const_shape_laws: Expects a disjunctive pattern with 3 branches. *)
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
+  Proof.
+    intros w [|x|] z v Hpoint Hword Hgamma; cbn in Hpoint; try discriminate.
+    inversion Hpoint; subst. exact Hgamma.
+  Qed.
 End ConstWord.
 
 Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WORD_TABLE L W.

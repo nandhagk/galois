@@ -225,7 +225,7 @@ intros w z [_ Hempty]. exact Hempty.
   Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
-    ppoint w a = Some v -> pgamma w a z -> z = v.
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* CONVERT: interval_is_point_sound: The reference interval_is_point was not found in the current *)
 End IntervalPayload.
 
