@@ -157,13 +157,17 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Definition gamma := flat_gamma.
   Definition wrank (_ : wparam) (a : t) : nat := 2 - level a.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. intros [|a|]; cbn [leb]; try reflexivity. apply E.eqb_spec. reflexivity. Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof.
+    intros [|a|] [|b|] [|c|]; cbn [leb]; intros Hab Hbc;
+      try discriminate; try reflexivity.
+    apply E.eqb_spec in Hab. subst b. exact Hbc.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. intros [|a|]; reflexivity. Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
@@ -172,13 +176,23 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Proof. Admitted.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof.
+    intros [|a|] [|b|]; cbn [leb join]; try reflexivity;
+      try (apply E.eqb_spec; reflexivity).
+    destruct (E.eqb a b); cbn [leb]; [apply E.eqb_spec|]; reflexivity.
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof.
+    intros [|a|] [|b|]; cbn [leb join]; try reflexivity;
+      try (apply E.eqb_spec; reflexivity).
+    destruct (E.eqb a b) eqn:Hab; cbn [leb].
+    - apply E.eqb_spec in Hab. subst b. apply E.eqb_spec. reflexivity.
+    - reflexivity.
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted.
+  Proof. intros [|a|]; reflexivity. Qed.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
   Proof. Admitted.
@@ -209,7 +223,11 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted.
+  Proof.
+    intros [|a|] [|b|] c Hab Hc; cbn [leb gamma flat_gamma] in *;
+      try contradiction; try discriminate; try exact I.
+    apply E.eqb_spec in Hab. subst b. exact Hc.
+  Qed.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof. Admitted.
