@@ -124,9 +124,12 @@ Module Type SPARSE_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (V : VALUE_DOMAIN_T L) (T : SSA_TRANSFER_T P X L V)
     (B : SPARSE_ENVELOPE P N E C X L K G S V)
     (Import A : SPARSE P N E C X L K G S V T).
+  (** The widest value key that a row targets. *)
+  Definition value_bits (p : prog) : nat :=
+    fold_right Nat.max 0 (map (fun r => X.bits (target p r)) (rows p)).
   Include SYSTEM_TIME V A with Definition row_work := fun p s =>
     N.of_nat (B.op_work p s + (B.op_arity p + 1) * (s + 1) + T.seed_work p +
-      V.size V.top + V.size V.bot + 1).
+      value_bits p + V.size V.top + V.size V.bot + 1).
 End SPARSE_TIME.
 
 Module Type SPARSE_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
