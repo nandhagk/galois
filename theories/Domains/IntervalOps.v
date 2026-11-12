@@ -11,9 +11,6 @@ From Galois.Domains Require Import Interval IntervalSig ThresholdsSig ValueSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
-Module Z.
-  TimeFun Z.ones.
-End Z.
 Module Datatypes.
   TimeFun Corelib.Init.Datatypes.xorb.
 End Datatypes.
