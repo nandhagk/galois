@@ -1,0 +1,68 @@
+# Galois session {ID}: {TITLE}
+You are one of {N} parallel sessions on the Rocq library Galois. Budget: 6 hours.
+Deliverable: a git format-patch series and one handoff file. Nothing else is read.
+
+## 1. Bootstrap (never install Nix, never build Rocq)
+  gh release download {TAG} -R nandhagk/galois -D ~/assets   # or curl the URLs below
+  cd ~/assets && sha256sum -c SHA256SUMS
+  tar --zstd -xPf galois-toolchain.tar.zst                    # fills /nix/store
+  source ~/assets/galois-env.sh   # PATH, ROCQPATH, DUNE_CACHE*, GALOIS_JOBS=4, GALOIS_NO_SYSTEMD=1
+  mkdir -p ~/.cache/galois && tar --zstd -xf galois-dune-cache.tar.zst -C ~/.cache/galois
+  git clone https://github.com/nandhagk/galois ~/galois && cd ~/galois
+  git switch -c {ID} {BASE_SHA}
+  nohup just session-check > /tmp/check.log 2>&1 &   # cached: minutes. Poll: tail -n 5 /tmp/check.log
+Source galois-env.sh in every new shell. Run one build at a time, always in the background
+with a log. If a build's process disappears, run the same command again; dune resumes.
+Single file: just vo theories/<Pkg>/<File>.v
+
+## 2. Rules
+- You own only: {PATHS}. Do not touch anything else: no *Sig.v, dune, just/, docs/, AGENTS.md.
+- Never edit a *Sig.v. `just frozen` must pass. The Sig wins over any other text.
+- No Axiom, admit, give_up, Abort. Admitted only with a tag from section 5.
+- Do not change a definition fixed by a Sig. Replace code bodies only where marked STUB-CODE.
+- Extra lemmas, helper definitions and internal modules in your own files are free.
+- Follow AGENTS.md and docs/design/rules.md (R1-R13; patterns V1-V11 work, F1-F6 fail).
+- Read the landed sources for proofs at commit 87192fe: git show 87192fe:<path>.
+
+## 3. How to read a Sig and its plan
+- FooSig.v has layers: FOO_OPS (code), FOO_SPEC (definitions), FOO_LAWS (laws),
+  FOO_TIME (T_op, constants c_*, contracts), FOO_PLAN (internals, k_* constants, lemma chain).
+- Foo.v has FooCode <: FOO_OPS, Foo <: FOO (Include FooCode), FooT <: FOO_ALL (Include Foo).
+- Your targets are the Admitted lemmas in your files, tagged CONVERT, STUB or plain.
+- A PLAN lists lemmas F1..Fn (functional) then T1..Tn (time), ending at a contract.
+  Prove them in order; each may use the earlier ones. You choose the values of k_* and c_*.
+- A Parameter of another component's Sig may be used before it is proved. Your tests may
+  run only code that exists in this base.
+- Time proofs: unfold T_f, then time_step / time_pose (Argent), lia/nia.
+
+## 4. Order of work
+Chain: {CHAIN}
+Cut line: after "{CUT}". Everything before it must be closed. Work after it may slip.
+For each item: prove, run just vo on the file, commit (one item per commit), go on.
+Every 90 minutes: run the full check in the background and write a checkpoint (section 6).
+Stop new proofs at 5h15; spend the rest on the final check and the deliverable.
+
+## 5. When stuck
+- 20 minutes on one lemma with no progress: leave it Admitted, keep its statement,
+  add (* OPEN: what is missing *), go to the next item.
+- A PLAN lemma that is false or useless: prove the contract it serves another way,
+  leave the lemma Admitted with (* PLAN-DEFECT: reason, counterexample if any *).
+- A LAWS or TIME statement that is false: stop work on that component, leave it
+  Admitted with (* SIG-QUESTION: reason *), and move to the next component.
+- A CONVERT proof: port the old proof named in the tag; renaming and unfolding are allowed.
+- Never weaken a statement, add a hypothesis to a Sig lemma, or edit outside your paths.
+
+## 6. Checkpoint
+  just session-check                     # fmt, build, tests, lint, frozen
+  just admits > /tmp/admits.txt
+  just owned {ID} {BASE_SHA}..HEAD       # must print nothing
+  git format-patch {BASE_SHA}..HEAD -o ~/out/patches
+  cp docs/sessions/HANDOFF.md ~/out/HANDOFF-{ID}.md   # then fill it in
+Re-run these whenever you checkpoint; the last run is the deliverable.
+
+## 7. Final deliverable
+~/out/patches/*.patch (series from {BASE_SHA}) and ~/out/HANDOFF-{ID}.md, filled in:
+items closed, items open with tags, PLAN-DEFECT and SIG-QUESTION list,
+just admits before/after. Commit messages: "<File>: close <lemma names>".
+No build outputs, logs, reports or other files. If the full check fails at the end,
+revert the last failing commit and say so in the handoff.

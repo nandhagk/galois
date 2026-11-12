@@ -1,6 +1,6 @@
 # Explicit records
 
-Status: in force
+Status: superseded by [the core design](../design/core.md)
 
 Dictionaries are records parametric in their types, and their laws are separate `Prop` records
 (formerly ruling C3). The library uses no typeclasses, instances, canonical structures or functors.

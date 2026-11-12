@@ -68,3 +68,7 @@ fmt:
 # Remove this worktree's build outputs.
 clean:
     @just capped dune clean
+
+# Build release assets for a revision into a directory outside the repository.
+assets tag dir:
+    @bash just/assets.sh "$@"
