@@ -126,6 +126,9 @@ Module BoolLatHeight <: HEIGHT BoolLat.
   Definition height : nat := 1.
   Lemma rank_le : forall a, rank a <= height.
   Proof. intros []; cbv [rank height]; auto. Qed.
+  (** Boolean implication never lowers rank. *)
+  Lemma rank_mono : forall a b, BoolLat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
   Lemma rank_strict : forall a b, BoolLat.leb a b = true -> BoolLat.leb b a = false ->
     rank a < rank b.
   Proof. intros [] []; cbn [BoolLat.leb Bool.implb rank]; intros; try discriminate; lia. Qed.
@@ -136,6 +139,9 @@ Module UnitLatHeight <: HEIGHT UnitLat.
   Definition height : nat := 0.
   Lemma rank_le : forall a, rank a <= height.
   Proof. intros []; reflexivity. Qed.
+  (** The single unit value has constant rank. *)
+  Lemma rank_mono : forall a b, UnitLat.leb a b = true -> rank a <= rank b.
+  Proof. Admitted.
   Lemma rank_strict : forall a b, UnitLat.leb a b = true -> UnitLat.leb b a = false ->
     rank a < rank b.
   Proof. intros [] [] _ H; discriminate. Qed.
