@@ -5,7 +5,7 @@
     Builds on: Wrapped, IntervalBack and WordSig. *)
 
 From Stdlib Require Import ZArith List Bool.
-From Galois.Bits Require Import Word Op.
+From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig Wrapped IntervalSig IntervalBack
   Thresholds.
 Import List.ListNotations.
@@ -201,3 +201,93 @@ Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
       (combine (map fst wps) ys) cs.
   Proof. Admitted. (* SIG-QUESTION: W.pgamma is not linked to arc_gamma in WRAPPED. *)
 End WrappedTable.
+Theorem wrapped_project_sound target source q z :
+  wrapped_gamma source q z ->
+  wrapped_gamma target (wrapped_project target source q) (wrap target z).
+Proof. Admitted. (* CONVERT: wrapped_project_sound: The variable wrapped_parts_spec was not found in the current environment. *)
+Definition wrapped_pair_gamma wa wb (a : wrapped * wrapped) (x y : Z) : Prop :=
+  wrapped_gamma wa (fst a) x /\ wrapped_gamma wb (snd a) y.
+
+Theorem wrapped_pole_cut_sound w a z :
+  interval_pgamma w a z ->
+  interval_pgamma w (fst (wrapped_pole_cut w a)) z \/
+  interval_pgamma w (snd (wrapped_pole_cut w a)) z.
+Proof. Admitted. (* CONVERT: wrapped_pole_cut_sound: The variable interval_meet_sound was not found in the current *)
+
+Theorem wrapped_pair_join_sound wa wb a b x y :
+  wrapped_pair_gamma wa wb a x y \/ wrapped_pair_gamma wa wb b x y ->
+  wrapped_pair_gamma wa wb (wrapped_pair_join wa wb a b) x y.
+Proof.
+  intros [[Hax Hay]|[Hbx Hby]]; split; apply wrapped_join_sound;
+    first [now left|now right].
+Qed.
+Theorem wrapped_signed_piece_sound division w a b x y :
+  interval_pgamma w a x -> interval_pgamma w b y ->
+  wrapped_gamma w (wrapped_signed_piece division w a b)
+    (if division then wsdiv w x y else wsrem w x y).
+Proof. Admitted. (* CONVERT: wrapped_signed_piece_sound: The variable wrapped_signed_piece_raw_sound was not found in the current environment. *)
+
+Definition wrapped_interval_payload_sound (wp : width * itv) (y : word) : Prop :=
+  fst wp = fst y /\ interval_pgamma (fst wp) (snd wp) (snd y).
+
+Module WrappedTransferClaims (L : WORD_LANGUAGE_OPS).
+  Module P := WrappedCode L.
+  Module O := WrappedOpsCode L P.
+Theorem wrapped_assume_consistent_sound o wa wb a b q x y rw z :
+  interval_pgamma wa a x -> interval_pgamma wb b y -> interval_pgamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  O.assume_consistent o wa wb a b q = true.
+Proof. Admitted. (* CONVERT: wrapped_assume_consistent_sound: Ha has type interval_pgamma while in_bnd is expected. *)
+
+Theorem wrapped_assume_binary_base_sound o wa wb a b rw q x y z :
+  wrapped_gamma wa a x -> wrapped_gamma wb b y -> wrapped_gamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_pair_gamma wa wb (O.assume_binary_base o wa wb a b rw q) x y.
+Proof. Admitted. (* CONVERT: wrapped_assume_binary_base_sound: The reference wrapped_assume_binary_base_c was not found *)
+
+Theorem wrapped_assume_binary_base_lower o wa wb a b rw q :
+  wrapped_leb wa (fst (O.assume_binary_base o wa wb a b rw q)) a = true /\
+  wrapped_leb wb (snd (O.assume_binary_base o wa wb a b rw q)) b = true.
+Proof. Admitted. (* CONVERT: wrapped_assume_binary_base_lower: The reference wrapped_assume_binary_base_c was not found *)
+
+Theorem wrapped_assume_trunc_sound w a rw q x :
+  wrapped_gamma w a x -> wrapped_gamma rw q (wrap rw x) ->
+  wrapped_gamma w (O.assume_trunc w a rw q) x.
+Proof. Admitted. (* CONVERT: wrapped_assume_trunc_sound: The variable wrapped_interval_value_sound was not found in the current *)
+
+Theorem wrapped_assume_binary_sound o wa wb a b rw q x y z :
+  wrapped_gamma wa a x -> wrapped_gamma wb b y -> wrapped_gamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_pair_gamma wa wb (O.assume_binary o wa wb a b rw q) x y.
+Proof. Admitted. (* CONVERT: wrapped_assume_binary_sound: Syntax error after tactic. *)
+
+Theorem wrapped_assume_binary_lower o wa wb a b rw q :
+  wrapped_leb wa (fst (O.assume_binary o wa wb a b rw q)) a = true /\
+  wrapped_leb wb (snd (O.assume_binary o wa wb a b rw q)) b = true.
+Proof. Admitted. (* CONVERT: wrapped_assume_binary_lower: Syntax error after tactic. *)
+
+Theorem wrapped_assume_unary_sound o w a rw q x z :
+  wrapped_gamma w a x -> wrapped_gamma rw q z -> eval_op o [(w, x)] = Some (rw, z) ->
+  wrapped_gamma w (O.assume_unary o w a rw q) x.
+Proof. Admitted. (* CONVERT: wrapped_assume_unary_sound: Syntax error after tactic. *)
+
+Theorem wrapped_assume_unary_lower o w a rw q :
+  wrapped_leb w (O.assume_unary o w a rw q) a = true.
+Proof. Admitted. (* CONVERT: wrapped_assume_unary_lower: Syntax error after tactic. *)
+
+Theorem wrapped_piece_forward_sound o xs cs rw z :
+  Forall2 wrapped_interval_payload_sound xs cs -> eval_op o cs = Some (rw, z) ->
+  wrapped_gamma rw (O.piece_forward o xs rw) z.
+Proof. Admitted. (* CONVERT: wrapped_piece_forward_sound: The reference wrapped_piece_forward_c was not found in the current *)
+
+Theorem wrapped_forward_unary_sound o w a x rw z :
+  wrapped_gamma w a x -> eval_op o [(w, x)] = Some (rw, z) ->
+  wrapped_gamma rw (O.forward_unary o w a rw) z.
+Proof. Admitted. (* CONVERT: wrapped_forward_unary_sound: The reference wrapped_forward_unary_c was not found in the current *)
+
+Theorem wrapped_forward_binary_sound o wa wb a b x y rw z :
+  wrapped_gamma wa a x -> wrapped_gamma wb b y ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_gamma rw (O.forward_binary o wa wb a b rw) z.
+Proof. Admitted. (* CONVERT: wrapped_forward_binary_sound: The reference wrapped_forward_binary_c was not found in the current *)
+End WrappedTransferClaims.
