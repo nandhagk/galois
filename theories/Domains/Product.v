@@ -5,35 +5,50 @@
     Builds on: ProductSig and lattice products. *)
 
 From Stdlib Require Import List.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
 
 Definition product_is_bot {A B} (ba : A -> bool) (bb : B -> bool) (x : A * B) :=
   orb (ba (fst x)) (bb (snd x)).
 
+TimeFun product_is_bot.
+
 Definition product_leb {A B} (ba : A -> bool) (bb : B -> bool)
     (la : A -> A -> bool) (lb : B -> B -> bool) (x y : A * B) :=
   orb (product_is_bot ba bb x) (andb (la (fst x) (fst y)) (lb (snd x) (snd y))).
 
+TimeFun product_leb.
+
 Definition product_pair {A B} (fa : A -> A -> A) (fb : B -> B -> B) (x y : A * B) :=
   (fa (fst x) (fst y), fb (snd x) (snd y)).
+
+TimeFun product_pair.
 
 Definition product_normalize {A B} (ba : A -> bool) (bb : B -> bool)
     (a : A) (b : B) (x : A * B) :=
   if product_is_bot ba bb x then (a, b) else x.
+
+TimeFun product_normalize.
 
 Definition product_widen {A B PA PB} (ba : A -> bool) (bb : B -> bool)
     (wa : PA -> A -> A -> A) (wb : PB -> B -> B -> B) (p : PA * PB) (x y : A * B) :=
   if product_is_bot ba bb y then x
   else (wa (fst p) (fst x) (fst y), wb (snd p) (snd x) (snd y)).
 
+TimeFun product_widen.
+
 Definition product_narrow {A B} (ba : A -> bool) (bb : B -> bool)
     (na : A -> A -> A) (nb : B -> B -> B) (x y : A * B) :=
   if product_is_bot ba bb y then y else product_pair na nb x y.
 
+TimeFun product_narrow.
+
 Definition product_forward {A B O} (ba : A -> bool) (bb : B -> bool) (a : A) (b : B)
     (fa : O -> list A -> A) (fb : O -> list B -> B) (o : O) (xs : list (A * B)) :=
   product_normalize ba bb a b (fa o (map fst xs), fb o (map snd xs)).
+
+TimeFun product_forward.
 
 Definition product_backward {A B O} (ba : A -> bool) (bb : B -> bool) (a : A) (b : B)
     (fa : O -> A -> list A -> list A) (fb : O -> B -> list B -> list B)
@@ -41,10 +56,14 @@ Definition product_backward {A B O} (ba : A -> bool) (bb : B -> bool) (a : A) (b
   map (product_normalize ba bb a b)
     (combine (fa o (fst r) (map fst xs)) (fb o (snd r) (map snd xs))).
 
+TimeFun product_backward.
+
 Definition product_guard {A B G} (ba : A -> bool) (bb : B -> bool) (a : A) (b : B)
     (fa : G -> list A -> list A) (fb : G -> list B -> list B)
     (g : G) (xs : list (A * B)) :=
   map (product_normalize ba bb a b) (combine (fa g (map fst xs)) (fb g (map snd xs))).
+
+TimeFun product_guard.
 
 Module ProductCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L) <: PRODUCT_OPS L A B.
   Definition t := (A.t * B.t)%type.

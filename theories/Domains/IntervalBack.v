@@ -259,13 +259,13 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q18: at width 1, raw interval [2,3] is not below top [0,1]. *)
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
   Proof. Admitted.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* SIG-QUESTION: Q18: at width 1, [2,3] clips to bottom but is not below IBot in raw order. *)
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof.
