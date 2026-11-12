@@ -188,6 +188,13 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Definition width (p : S.prog) (_ : state) : nat :=
     S.kw p + N.to_nat (S.row_work p 0).
   Definition c_inc : N := 1. (* STUB *)
+  (** The initial state is a constant. *)
+  Lemma T_init_le : (T_init <= c_inc)%N.
+  Proof. Admitted. (* STUB *)
+  (** Reading a value pays for the key code. *)
+  Lemma T_value_le : forall st x,
+    (T_value st x <= c_inc * N.of_nat (S.key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
   (** Regional checking restores the frozen values in the solver candidate. *)
   Definition checked (p : S.prog) (roots : list S.key) (st : state)
       (m : kmap S.key L.t) : kmap S.key L.t :=

@@ -104,7 +104,8 @@ Definition andersen_model (q : pointer_input) : model (V := positive) :=
     (fun _ _ => tt) (fun _ _ _ => False).
 
 Definition andersen_program : program positive := Program positive
-  [Decl 1 2 ORel; Decl 2 2 ORel; Decl 3 2 ORel; Decl 4 2 ORel; Decl 5 2 ORel]
+  [Decl 1 [SVal; SVal] ORel; Decl 2 [SVal; SVal] ORel; Decl 3 [SVal; SVal] ORel;
+   Decl 4 [SVal; SVal] ORel; Decl 5 [SVal; SVal] ORel]
   [Rule positive [Fun positive 1 [Var 1; Var 2] None]
       [Put 5 [Var 1; Var 2] None];
    Rule positive [Fun positive 2 [Var 1; Var 2] None;
