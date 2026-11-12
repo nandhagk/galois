@@ -38,6 +38,13 @@ Module Type INDEX_LAWS (V : VALUE) (Import X : INDEX_OPS V).
   Parameter wf : nat -> t -> Prop.
   Parameter mem : t -> list (cell V.t) -> Prop.
   Parameter node : t -> positive -> list (cell V.t) -> Prop.
+  (** The initial node counter starts at one. *)
+  Parameter next_empty : next empty = 1%positive.
+  (** Insertion allocates at most one node per tuple cell. *)
+  Parameter next_insert : forall a r ix, wf a ix ->
+    (next (insert r ix) <= next ix + Pos.of_nat (length r))%positive.
+  (** Removal keeps the fresh node counter. *)
+  Parameter next_remove : forall a r ix, wf a ix -> next (remove r ix) = next ix.
   (** Empty indexes accept every arity. *)
   (** Empty indexes contain no tuple. *)
   Parameter mem_empty : forall u, ~ mem empty u.
@@ -82,9 +89,19 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   (** The largest encoded cell width stored on an index edge. *)
   Parameter max_cell_bits : t -> nat.
   Parameter width : t -> list (cell V.t) -> nat.
+  (** Empty indexes have no encoded cells. *)
+  Parameter max_cell_bits_empty : max_cell_bits empty = 0.
+  (** Insertion adds at most the encoded width of its tuple. *)
+  Parameter max_cell_bits_insert : forall r ix,
+    max_cell_bits (insert r ix) <=
+      Nat.max (max_cell_bits ix)
+        (fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r).
+  (** Removal never increases the stored cell width. *)
+  Parameter max_cell_bits_remove : forall r ix,
+    max_cell_bits (remove r ix) <= max_cell_bits ix.
   (** Width charges the fresh node counter and the largest query and stored cells. *)
   Parameter width_le : forall ix r,
-    width ix r <= Pos.size_nat (next ix) +
+    width ix r <= Pos.size_nat (next ix + Pos.of_nat (length r)) +
       fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
   Parameter T_empty : N.
   Parameter T_insert T_remove : list (cell V.t) -> t -> N.
@@ -93,6 +110,8 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   Parameter T_child : t -> positive -> cell V.t -> N.
   Parameter T_children T_degree : t -> positive -> N.
   Parameter c_ix : N.
+  (** The fresh node counter is stored. *)
+  Parameter T_next_le : forall ix, (T_next ix <= c_ix)%N.
   (** Insertion pays for one path through the tuple. *)
   Parameter T_insert_le : forall r ix,
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
@@ -140,9 +159,18 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   Parameter k_walk : N.
   (** The public constant absorbs the aggregate path and wrapper charges. *)
   Parameter c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
-  (** Each removal step pays for its edge-map operations. *)
-  Parameter T_remove_step_st_le : forall st c,
-    (T_remove_step_st st c <= 4 * c_map * N.of_nat (width (fst st) [c] + 1) + 4)%N.
+  (** Each insertion step uses the width of the complete original walk. *)
+  Parameter T_insert_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
+    (T_insert_step_st (fold_left insert_step_st pre (start ix)) c <=
+      4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
+  (** Each removal step uses the width of the complete original walk. *)
+  Parameter T_remove_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
+    (T_remove_step_st (fold_left remove_step_st pre (start ix)) c <=
+      4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
+  (** Initialization and both finishing passes fit the original walk budget. *)
+  Parameter T_walk_ends : forall r ix st, inv ix ->
+    (T_start ix + T_insert_finish r ix st + T_remove_finish r ix st <=
+      k_walk * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
 
   (** Insertion follows its named state walk. *)
   Parameter F_insert_steps : forall r ix, inv ix ->
@@ -153,21 +181,11 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   (** Insertion aggregates the path-step charges. *)
   Parameter T_insert_steps : forall r ix, inv ix ->
     (T_insert r ix <= N.of_nat (length r + 1) *
-      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
+      ((4 * c_map + k_walk) * N.of_nat (width ix r + 1) + 4))%N.
   (** Removal aggregates the path-step charges. *)
   Parameter T_remove_steps : forall r ix, inv ix ->
     (T_remove r ix <= N.of_nat (length r + 1) *
-      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
-  (** Child lookup aggregates its map operations. *)
-  Parameter T_child_steps : forall ix n c,
-    (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
-  (** Enumeration aggregates the stored children. *)
-  Parameter T_children_steps : forall ix n,
-    (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
-      N.of_nat (width ix [] + 1))%N.
-  (** Degree lookup aggregates its map operations. *)
-  Parameter T_degree_steps : forall ix n,
-    (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
+      ((4 * c_map + k_walk) * N.of_nat (width ix r + 1) + 4))%N.
 
 End INDEX_PLAN.
 

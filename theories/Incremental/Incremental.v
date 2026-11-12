@@ -161,6 +161,19 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     closed p' (fun x => dom st x /\ ~ In x (invalidate p p' ch st)).
   Proof. Admitted. (* STUB *)
 
+  (** Editing removes precisely the invalidated stored values. *)
+  Lemma edit_value : forall p p' ch st x,
+    value (edit p p' ch st) x =
+      if existsb (S.key_eqb x) (invalidate p p' ch st) then None else value st x.
+  Proof. Admitted. (* STUB *)
+
+  (** Changed writes in either program invalidate their old stored values. *)
+  Lemma invalidate_changed : forall p p' ch st r y, In r ch ->
+    (In r (S.rows p) /\ In y (S.writes p r) \/
+      In r (S.rows p') /\ In y (S.writes p' r)) ->
+    dom st y -> In y (invalidate p p' ch st).
+  Proof. Admitted. (* STUB *)
+
   Lemma edit_frame : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
     post_on p' (edit p p' ch st).
   Proof. Admitted. (* STUB *)
