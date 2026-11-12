@@ -66,3 +66,20 @@ Example meet_reference :
     congr_eqb (Payload.pnarrow w a b) (reference_pmeet w a b))
     payload_samples) payload_samples) [1%positive; 4%positive; 8%positive] = true.
 Proof. vm_compute. reflexivity. Qed.
+
+Definition div_pair_eqb (a b : Z * Z) : bool :=
+  (fst a =? fst b) && (snd a =? snd b).
+
+Example aligned_division_reference :
+  forallb (fun a => forallb (fun b =>
+    div_pair_eqb (CongruenceCRT.div_aligned (Z.of_nat a) (Z.of_nat b))
+      (Z.div_eucl (Z.of_nat a) (Z.of_nat b))) (seq 1 32)) (seq 0 128) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example aligned_division_small_dividend :
+  CongruenceCRT.div_aligned 1 (2 ^ 128) = (0, 1).
+Proof. vm_compute. reflexivity. Qed.
+
+Example aligned_division_large_quotient :
+  CongruenceCRT.div_aligned (2 ^ 128 + 7) 3 = Z.div_eucl (2 ^ 128 + 7) 3.
+Proof. vm_compute. reflexivity. Qed.

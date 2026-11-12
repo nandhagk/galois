@@ -33,8 +33,40 @@ Module Z.
 End Z.
 
 Module CongruenceCRT.
+  (** Each iteration consumes one aligned quotient bit. *)
+  Fixpoint div_scan (bits : nat) (divisor remainder quotient : Z) : Z * Z :=
+    match bits with
+    | O => (quotient, remainder)
+    | S rest =>
+      let take := (divisor <=? remainder)%Z in
+      div_scan rest (Z.div2 divisor)
+        (if take then remainder - divisor else remainder)
+        (if take then 2 * quotient + 1 else 2 * quotient)
+    end.
+  TimeFun div_scan.
+
+  Definition div_aligned (a b : Z) : Z * Z :=
+    if (a <? b)%Z then (0, a) else
+      let shift := (Z.size_nat a - Z.size_nat b)%nat in
+      div_scan (S shift) (Z.shiftl b (Z.of_nat shift)) a 0.
+  TimeFun div_aligned.
+
+  Definition k_div : N := 1%N. (* STUB *)
+  Definition k_gcd : N := 1%N. (* STUB *)
+
+  (** Aligned division keeps the standard quotient and remainder on its input domain. *)
+  Lemma F_div_aligned : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
+    div_aligned a b = Z.div_eucl a b.
+  Proof. Admitted.
+
+  (** Division charges one dividend scan per quotient bit. *)
+  Lemma T_div_aligned_le : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
+    (T_div_aligned a b <= k_div *
+      N.of_nat ((Z.size_nat a - Z.size_nat b + 2) * (Z.size_nat a + 1)))%N.
+  Proof. Admitted. (* STUB *)
+
   Definition next (s : congr_crt_state) : congr_crt_state :=
-    let q := crt_r2 s / crt_r1 s in
+    let q := fst (div_aligned (crt_r2 s) (crt_r1 s)) in
     {| crt_r1 := crt_r2 s - q * crt_r1 s;
        crt_u1 := crt_u2 s - q * crt_u1 s;
        crt_v1 := crt_v2 s - q * crt_v1 s;
@@ -67,6 +99,12 @@ Module CongruenceCRT.
         (wf_inverse_image congr_crt_state N N.lt
           (fun st => Z.abs_N (crt_r1 st)) N.lt_wf_0) s).
   TimeFun extgcd.
+
+  (** The full Euclidean coefficient chain has quadratic input-bit work. *)
+  Lemma T_extgcd_le : forall a b,
+    (T_extgcd a b <= k_gcd *
+      N.of_nat ((Z.size_nat a + Z.size_nat b + 1) ^ 2))%N.
+  Proof. Admitted. (* STUB *)
 
   (** The state loop returns the exact coefficients chosen by the standard library. *)
   Lemma extgcd_agrees : forall a b, extgcd a b = Z.extgcd a b.
