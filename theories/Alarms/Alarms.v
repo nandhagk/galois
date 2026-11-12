@@ -46,12 +46,12 @@ Module Alarms (N X : KEY) (MN : MAP N) (L : LANG)
     (forall n st, reach n st -> S.gamma (inv_at inv n) st) ->
     forall k, alarm inv k = false -> forall st cs,
     reach (site k) st -> eval_terms L.eval st (args k) = Some cs -> C.safe (ckind k) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma alarm_at_top : forall inv k, inv_at inv (site k) = S.top ->
     (forall e, In e (args k) -> S.eval e S.top = V.top) ->
     (exists cs, length cs = length (args k) /\ ~ C.safe (ckind k) cs) -> alarm inv k = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Alarms.
 
 Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
@@ -83,7 +83,7 @@ Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)
   Lemma alarm_on_exact_error : forall inv k cs,
     Forall2 (fun e c => CP.point (S.eval e (inv_at inv (site k))) = Some c) (args k) cs ->
     ~ C.safe (ckind k) cs -> alarm inv k = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End AlarmsPoint.
 
 Module AlarmsAnalysis (P : TYPE) (N : KEY) (E : TYPE) (G : CFG_OPS P N E)
@@ -101,5 +101,5 @@ Module AlarmsAnalysis (P : TYPE) (N : KEY) (E : TYPE) (G : CFG_OPS P N E)
     A.alarm inv k = false -> forall s cs,
     reachable (M.initial p) (M.step p) s -> K.point s = site k ->
     eval_terms L.eval (K.store s) (args k) = Some cs -> C.safe (ckind k) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End AlarmsAnalysis.

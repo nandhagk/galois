@@ -105,8 +105,18 @@ End CONST_PLAN.
 
 Module Type CONST_ALL (L : LANG_T) (E : VAL_EQ_T L) := CONST_T L E <+ CONST_PLAN L E.
 
-Module Type CONST_WORD_PAYLOAD (L : WORD_LANGUAGE) :=
+Module Type CONST_WORD_PAYLOAD_BASE (L : WORD_LANGUAGE) :=
   WORD_PAYLOAD L with Definition p := flat Z.
+
+Module Type CONST_WORD_PAYLOAD_LAWS (L : WORD_LANGUAGE)
+    (Import W : CONST_WORD_PAYLOAD_BASE L).
+  (** A constant payload denotes its stored integer. *)
+  Parameter F_pgamma_const : forall w a z, W.pgamma w a z <->
+    match a with FBot => False | FVal x => z = x | FTop => True end.
+End CONST_WORD_PAYLOAD_LAWS.
+
+Module Type CONST_WORD_PAYLOAD (L : WORD_LANGUAGE) :=
+  CONST_WORD_PAYLOAD_BASE L <+ CONST_WORD_PAYLOAD_LAWS L.
 
 Module Type CONST_WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T)
     (Import W : CONST_WORD_PAYLOAD L).

@@ -61,7 +61,7 @@ Module CongruenceCRT.
   (** Aligned division keeps the standard quotient and remainder on its input domain. *)
   Lemma F_div_aligned : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
     div_aligned a b = Z.div_eucl a b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Division charges one dividend scan per quotient bit. *)
   Lemma T_div_aligned_le : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
@@ -90,16 +90,16 @@ Module CongruenceCRT.
     nonnegative_remainders
       {| crt_r1 := Z.abs a; crt_u1 := Z.sgn a; crt_v1 := 0;
          crt_r2 := Z.abs b; crt_u2 := 0; crt_v2 := Z.sgn b |}.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Every nonterminal reachable step keeps the remainders nonnegative. *)
   Lemma next_nonnegative : forall s, nonnegative_remainders s ->
     (crt_r1 s =? 0) = false -> nonnegative_remainders (next s).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** The Euclidean remainder strictly reduces the absolute first remainder. *)
   Lemma next_decreases : forall s, (crt_r1 s =? 0) = false -> lt (next s) s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Definition step (s : congr_crt_state) :
       {s1 : congr_crt_state | lt s1 s} + (Z * Z * Z) :=
@@ -127,7 +127,7 @@ Module CongruenceCRT.
 
   (** The state loop returns the exact coefficients chosen by the standard library. *)
   Lemma extgcd_agrees : forall a b, extgcd a b = Z.extgcd a b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Definition combinecong (m1 m2 r1 r2 : Z) : Z :=
     let '(u, v, d) := extgcd m1 m2 in
@@ -140,7 +140,7 @@ Module CongruenceCRT.
   (** The CRT helper keeps the standard library's exact residue, including zero moduli. *)
   Lemma combinecong_agrees : forall m1 m2 r1 r2,
     combinecong m1 m2 r1 r2 = Z.combinecong m1 m2 r1 r2.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End CongruenceCRT.
 
 Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
@@ -260,7 +260,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
@@ -272,7 +272,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_raw_leb_refl was not found in the current *)
@@ -287,13 +287,13 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
@@ -305,7 +305,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Proof. Admitted. (* CONVERT: cong_meet_lower_left: The variable cong_norm_idempotent was not found. *)
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
@@ -328,7 +328,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.

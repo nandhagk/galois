@@ -99,11 +99,11 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
 
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Harness.
 
 Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)

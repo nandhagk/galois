@@ -22,36 +22,36 @@ Module SignEnvelope (L : WORD_LANGUAGE_T) (S : SIGN_ALL L)
   (** Canonical payload sizes fit the concrete width envelope. *)
   Lemma canonical_size : forall w p,
     canonical w p -> S.psize w p <= payload_size_bound w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Canonical payload ranks fit the concrete rank envelope. *)
   Lemma canonical_rank : forall q w p,
     canonical w p -> S.pwrank q w p <= payload_rank_bound q w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The concrete bottom payload is canonical. *)
   Lemma canonical_bot : forall w, canonical w (S.pbot w).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The concrete top payload is canonical. *)
   Lemma canonical_top : forall w, canonical w (S.ptop w).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Literal abstraction returns a canonical payload. *)
   Lemma canonical_const : forall w z, canonical w (S.pconst w z).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete join keeps canonical payloads canonical. *)
   Lemma canonical_join : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pjoin w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete meet keeps canonical payloads canonical. *)
   Lemma canonical_meet : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pmeet w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete widening keeps canonical payloads canonical. *)
   Lemma canonical_widen : forall q w a b,
     canonical w a -> canonical w b -> canonical w (S.pwiden q w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete narrowing keeps canonical payloads canonical. *)
   Lemma canonical_narrow : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pnarrow w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End SignEnvelope.
 
 (** Concrete normalized congruences fit a quadratic width envelope. *)
@@ -64,36 +64,36 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
   (** Fixed points of concrete normalization have at most two width-sized stored integers. *)
   Lemma canonical_size : forall w p,
     canonical w p -> W.psize w p <= payload_size_bound w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Congruence ranks fit the width-plus-two envelope. *)
   Lemma canonical_rank : forall q w p,
     canonical w p -> W.pwrank q w p <= payload_rank_bound q w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The concrete bottom payload is canonical. *)
   Lemma canonical_bot : forall w, canonical w (W.pbot w).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The concrete top payload is canonical. *)
   Lemma canonical_top : forall w, canonical w (W.ptop w).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Literal abstraction returns a canonical payload. *)
   Lemma canonical_const : forall w z, canonical w (W.pconst w z).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete join keeps canonical payloads canonical. *)
   Lemma canonical_join : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pjoin w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete meet keeps canonical payloads canonical. *)
   Lemma canonical_meet : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pmeet w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete widening keeps canonical payloads canonical. *)
   Lemma canonical_widen : forall q w a b,
     canonical w a -> canonical w b -> canonical w (W.pwiden q w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Concrete narrowing keeps canonical payloads canonical. *)
   Lemma canonical_narrow : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pnarrow w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End CongruenceEnvelope.
 
 Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
@@ -109,36 +109,36 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
 
   (** Unreachable environments satisfy the representation invariant. *)
   Lemma inv_bot : forall p, inv p E.bot.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Pointwise join keeps declared widths and canonical payloads. *)
   Lemma inv_join : forall p a b, inv p a -> inv p b -> inv p (E.join a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Pointwise narrowing keeps declared widths and canonical payloads. *)
   Lemma inv_narrow : forall p a b, inv p a -> inv p b -> inv p (E.narrow a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Payload widening keeps the representation invariant for every widening parameter. *)
   Lemma inv_widen : forall p w a b,
     inv p a -> inv p b -> inv p (E.widen w a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Typed operational rows preserve the representation invariant on every contribution. *)
   Lemma inv_rows : forall p r look a ss, S.wf p -> In r (S.rows p) ->
     (forall x, inv p (look x)) -> S.eval p r look = Some (a, ss) ->
     inv p a /\ Forall (fun xa => inv p (snd xa)) ss.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Canonical representation sizes fit the program's sum of width-dependent envelopes. *)
   Lemma size_le : forall p a, inv p a -> E.size a <= vsize p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Canonical environments store at most one binding per declared variable. *)
   Lemma wunits_le : forall p a, inv p a -> E.wunits a <= wunits p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Canonical payload ranks fit the program's sum of parameter-dependent rank envelopes. *)
   Lemma wrank_le : forall p w a, inv p a -> E.wrank w a <= wmax p w.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End EnvBudget.
