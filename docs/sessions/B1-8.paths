@@ -1,0 +1,8 @@
+theories/Fixpoint/Indexed.v
+tests/Fixpoint/IndexedTest.v
+theories/Fixpoint/WorklistLeast.v
+tests/Fixpoint/WorklistLeastTest.v
+theories/Incremental/Restrict.v
+tests/Incremental/RestrictTest.v
+theories/Incremental/Incremental.v
+tests/Incremental/IncrementalTest.v
