@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List Bool.
 From Galois.Base Require Import KeySig Key Trie.
+From Galois.Graph Require Import Data.
 From Galois.Program Require Import CfgSig Vars SsaSig Ssa CallsSig Calls IcfgSig Icfg MemorySig Memory.
 Import List.ListNotations.
 
@@ -98,4 +99,13 @@ Example barrier_regions :
   (effect_reads true Barrier, effect_writes true Barrier) = ([true], [true]).
 Proof. vm_compute; reflexivity. Qed.
 Example pure_write_has_no_read : effect_reads true (Write false) = [].
+Proof. vm_compute; reflexivity. Qed.
+
+Example call_graph_successors :
+  succs (CallView.call_graph true) (NatKeyCode.encode 0) =
+    [NatKeyCode.encode 0; NatKeyCode.encode 1].
+Proof. vm_compute; reflexivity. Qed.
+
+Example allocation_and_free_writes :
+  (effect_writes true (Alloc false), effect_writes true (Free false)) = ([false], [false]).
 Proof. vm_compute; reflexivity. Qed.
