@@ -27,6 +27,8 @@ Definition flat_leb {A} (eqb : A -> A -> bool) (x y : flat A) : bool :=
   | _, _ => false
   end.
 
+TimeFun flat_leb.
+
 (** Flat join preserves equal known values and otherwise returns top. *)
 Definition flat_join {A} (eqb : A -> A -> bool) (x y : flat A) : flat A :=
   match x, y with
@@ -35,6 +37,8 @@ Definition flat_join {A} (eqb : A -> A -> bool) (x y : flat A) : flat A :=
   | FVal a, FVal b => if eqb a b then FVal a else FTop
   | _, _ => FTop
   end.
+
+TimeFun flat_join.
 
 (** Flat widening is join and narrowing keeps its left input. *)
 Module FlatCode (K : KEY_OPS) <: BLATTICE_OPS.
@@ -92,3 +96,28 @@ Module Flat (K : KEY) <: BLATTICE.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
 End Flat.
+
+Module FlatT (K : KEY_T) <: BLATTICE_T.
+  Include Flat K.
+
+  TimeFun leb.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun meet.
+
+  Definition size (x : t) : nat :=
+    match x with
+    | FBot | FTop => 1
+    | FVal a => K.bits a + 1
+    end.
+  Definition c_lat : nat := 1. (* STUB *)
+
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+End FlatT.
