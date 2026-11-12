@@ -62,7 +62,10 @@ Definition body_step (g : prepared) (t : domtree) (_ : positive) (st : loop_body
   | LoopBodyState (v :: rest) seen answer =>
     match trie_get v seen, trie_get v (pre t) with
     | None, Some _ =>
-      inl (LoopBodyState (preds g v ++ rest) (PTrieCode.set v tt seen) (v :: answer))
+      inl (LoopBodyState (filter (fun u => match trie_get u (pre t) with
+        | Some _ => true
+        | None => false
+        end) (preds g v) ++ rest) (PTrieCode.set v tt seen) (v :: answer))
     | _, _ => inl (LoopBodyState rest seen answer)
     end
   end.
