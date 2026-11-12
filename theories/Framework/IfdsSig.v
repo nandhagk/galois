@@ -61,6 +61,9 @@ Arguments PathRow {N E F}.
 Arguments path_row_code {N E F}.
 Arguments path_row_rule {N E F}.
 
+TimeFun path_row_code.
+TimeFun path_row_rule.
+
 Record path_frame (N E F A : Type) := PathFrame {
   path_frame_rule : path_rule N E F;
   path_frame_pending : list (path_edge N F);

@@ -5,7 +5,7 @@
     Builds on: Framework.SummarySig and Fixpoint.Query. *)
 
 From Stdlib Require Import List Bool.
-From Argent Require Import Loop.
+From Argent Require Import Time Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -101,6 +101,20 @@ Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
     Some (B.via_call p site g (look g), (g, B.entry p site g) :: nil).
   Proof. Admitted.
 End Summary.
+
+Module SummaryT (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
+    (L : LATTICE_T) (B : BODY_T P F Site L).
+  Include Summary P F Site CL L B.
+
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+End SummaryT.
 
 Module SummarySound (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
     (L : LATTICE) (B : BODY_OPS P F Site L) (A : SUMMARY P F Site CL L B)
