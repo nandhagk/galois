@@ -200,6 +200,16 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
     Include Plain.Impl.
     TimeFun mk.
     Definition c_res : N := 1. (* STUB *)
+  (** Restricted key budgets cover the original program and frozen keys. *)
+  Lemma mk_kw : forall p fz rs,
+    RS.kw (mk p fz rs) <= fold_right (fun xv n => Nat.max (S.key_bits (fst xv)) n)
+      (S.kw p) fz.
+  Proof. Admitted. (* STUB *)
+  (** Restricted row work adds the largest frozen value to the source row budget. *)
+  Lemma mk_row_work : forall p fz rs s,
+    (RS.row_work (mk p fz rs) s <= S.row_work p s +
+      N.of_nat (fold_right (fun xv n => Nat.max (L.size (snd xv)) n) 0%nat fz) + 1)%N.
+  Proof. Admitted. (* STUB *)
   Lemma T_mk_le : forall p fz rs,
     (T_mk p fz rs <= c_res *
       N.of_nat ((fold_right Nat.add 0

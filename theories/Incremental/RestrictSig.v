@@ -54,6 +54,14 @@ Module Type RESTRICT_TIME (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
     (Import X : RESTRICT L S RS).
   Parameter T_mk : S.prog -> list (S.key * L.t) -> list S.row -> N.
   Parameter c_res : N.
+  (** Restricted key budgets cover the original program and frozen keys. *)
+  Parameter mk_kw : forall p fz rs,
+    RS.kw (mk p fz rs) <= fold_right (fun xv n => Nat.max (S.key_bits (fst xv)) n)
+      (S.kw p) fz.
+  (** Restricted row work adds the largest frozen value to the source row budget. *)
+  Parameter mk_row_work : forall p fz rs s,
+    (RS.row_work (mk p fz rs) s <= S.row_work p s +
+      N.of_nat (fold_right (fun xv n => Nat.max (L.size (snd xv)) n) 0%nat fz) + 1)%N.
   (** Restriction construction pays for selected row codes and frozen bindings. *)
   Parameter T_mk_le : forall p fz rs,
     (T_mk p fz rs <= c_res *

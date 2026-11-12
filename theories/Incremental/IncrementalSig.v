@@ -130,13 +130,18 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter T_demand : S.prog -> policy L.wparam -> list S.key -> N -> state -> N.
   Parameter T_edit : S.prog -> S.prog -> list S.row -> state -> N.
   Parameter c_inc : N.
+  (** Regional checking restores the frozen values in the solver candidate. *)
+  Definition checked (p : S.prog) (roots : list S.key) (st : state)
+      (m : kmap S.key L.t) : kmap S.key L.t :=
+    fold_left (fun acc xv => PTrieCode.set (S.key_code (fst xv)) xv acc)
+      (frozen p roots st) m.
   (** Demand pays for discovery and the restricted solver including fuel bits. *)
   Definition demand_solver_work p pol roots fuel st : N :=
     let fz := frozen p roots st in
     let rg := region p roots st in
     (Sol.T_run (R.mk p fz rg) pol fuel + R.T_mk p fz rg +
       match Sol.run (R.mk p fz rg) pol fuel with
-      | Solved m => Checker.T_check_rows p rg m
+      | Solved m => Checker.T_check_rows p rg (checked p roots st m)
       | _ => 0
       end)%N.
 
@@ -145,6 +150,7 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
       c_inc * N.of_nat ((fold_right Nat.add 0
         (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
         length roots + 1)%nat) * N.of_nat (width p st + 1) +
+      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
       c_inc * demand_solver_work p pol roots fuel st)%N.
   (** Editing pays for invalidated influence edges and changed dependencies. *)
   Parameter T_edit_le : forall p p' ch st,
