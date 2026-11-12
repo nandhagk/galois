@@ -120,8 +120,9 @@ TimeFun tnum_refine.
 Module KnownBitsTableCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_OPS L C) <: WORD_TABLE_OPS L K.
   Module Ops := KnownBitsOpsCode L C K.
+  Include Ops.
   Definition wfwd (o : L.op) (rw : positive) (xs : list (positive * K.p)) : option K.p :=
-    if Nat.eqb (length xs) (arity o) then Some (Ops.tnum_forward_raw o xs rw) else None.
+    if Nat.eqb (length xs) (arity o) then Some (tnum_forward_raw o xs rw) else None.
   Definition wbwd (o : L.op) (rw : positive) (q : K.p)
       (xs : list (positive * K.p)) : option (list K.p) :=
     if Nat.eqb (length xs) (arity o) then Some (tnum_refine xs (tnum_backward_raw o xs rw q))
@@ -147,6 +148,8 @@ End KnownBitsTable.
 
 Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
   Include KnownBitsTable L C K.
+  TimeFun tnum_forward_raw.
+  TimeFun wfwd.
   TimeFun wbwd.
   Definition c_word_table : N := 1. (* STUB *)
   Lemma T_wbwd_le : forall o rw q xs,
