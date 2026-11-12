@@ -30,10 +30,13 @@ Module Type COMPILE_LAWS (V : VALUE) (Import C : COMPILE_OPS V)
     (Import CS : COMPILE_SPEC V C).
   (** Compiling valid rewrites gives valid engine rules in the same algebra. *)
   Parameter compile_valid : forall (M : model (V := V.t)) ds rws,
+    (forall f m k a b, lookup_kind (map snd ds) f = Some (OLat m) ->
+      lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
     Forall (valid_rw V.prim V.merge M (lookup_kind (map snd ds))) rws ->
     valid V.prim V.merge M (compile ds rws).
   (** Flattened matches represent the left pattern and satisfy its conditions. *)
-  Parameter flatten_sound : forall w rw s, matches V.prim w (flatten_lhs rw) s ->
+  Parameter flatten_sound : forall w rw s, app_rooted (lhs V.t rw) ->
+    matches V.prim w (flatten_lhs rw) s ->
     exists tau c e, s (root_var rw) = Some (Id c) /\
       instantiates tau (lhs V.t rw) e /\ represents w (Id c) e /\
       cond_in_view w tau (cond V.t rw).
@@ -61,6 +64,9 @@ Module Type COMPILE_PLAN (V : VALUE_T) (Import C : COMPILE_T V).
     Forall (model_atom V.prim M (lookup_kind (map snd ds)) s)
       (query V.t (compile_rule rw)) ->
     model_actions V.prim M (lookup_kind (map snd ds)) s (actions V.t (compile_rule rw)).
+  (** A rewrite without a constructor root has no compiled actions. *)
+  Parameter F1a_nonapp_actions : forall rw, ~ app_rooted (lhs V.t rw) ->
+    actions V.t (compile_rule rw) = nil.
   (** Compiling a rewrite list keeps its declared kinds and compiled rules. *)
   Parameter F2_compile_program : forall ds rws,
     decls V.t (compile ds rws) = map snd ds /\
@@ -70,7 +76,7 @@ Module Type COMPILE_PLAN (V : VALUE_T) (Import C : COMPILE_T V).
     flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw.
   (** Pattern instantiation retains each represented hole under the same substitution. *)
   Parameter F4_inst_represents : forall w tau s p e root_id c,
-    represents_subst w tau s -> instantiates tau p e -> s root_id = Some (Id c) ->
+    app_rooted p -> represents_subst w tau s -> instantiates tau p e -> s root_id = Some (Id c) ->
     matches V.prim w (flatten_pat p root_id) s -> represents w (Id c) e.
 End COMPILE_PLAN.
 
