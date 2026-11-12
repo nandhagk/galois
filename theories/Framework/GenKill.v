@@ -244,3 +244,33 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   TimeFun boundary.
   TimeFun transfer.
 End GenKillMustFlowT.
+
+Module GenKillMayOperationalT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_T P N E) (F : KEY_T) (S : SET_T F)
+    (G : GENKILL_T P E F S) (L : GENKILL_MAY_DOMAIN_T F S).
+  Module Flow := GenKillMayFlowT P N E F S G L.
+  Include GenKillMay P N E C F S G L Flow.
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+End GenKillMayOperationalT.
+
+Module GenKillMustOperationalT (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_T P N E) (F : KEY_T) (S : SET_T F)
+    (G : GENKILL_T P E F S) (L : GENKILL_MUST_DOMAIN_T F S).
+  Module Flow := GenKillMustFlowT P N E F S G L.
+  Include GenKillMust P N E C F S G L Flow.
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+End GenKillMustOperationalT.
