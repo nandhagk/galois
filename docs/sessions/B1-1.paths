@@ -40,3 +40,7 @@ theories/Lattice/Reduced.v
 tests/Lattice/ReducedTest.v
 theories/Lattice/JoinWidening.v
 tests/Lattice/JoinWideningTest.v
+tests/Base/IndexTest.v
+tests/Base/KeyEqualityTest.v
+tests/Base/TrieMergeTest.v
+tests/Lattice/LiftTest.v

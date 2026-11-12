@@ -26,3 +26,4 @@ tests/Domains/BitsLangPortTest.v
 tests/Domains/ValueLawTest.v
 tests/Domains/ValueOpenTest.v
 tests/Domains/ValueReachLawTest.v
+tests/Domains/BitsLawTest.v
