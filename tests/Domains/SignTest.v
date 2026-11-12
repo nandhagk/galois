@@ -78,7 +78,14 @@ Proof.
   vm_compute. repeat split; reflexivity.
 Qed.
 
+(* The old leaf assumption used num_assume and returned the zero sign.
 Example sign_refinement :
+  num_assume signs (fun _ => TVal w8 (Sign false true true)) (Var 0)
+    (TVal w8 (Sign true true false)) 0%nat = TVal w8 (Sign false true false).
+Proof. vm_compute. reflexivity. Qed.
+*)
+
+Example sign_refinement_meet :
   Base.meet (TVal w8 (Sgn false true true))
     (TVal w8 (Sgn true true false)) = TVal w8 (Sgn false true false).
 Proof.
