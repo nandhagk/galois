@@ -5,7 +5,15 @@
     Builds on: CutIntervalSig and the shared interval operations. *)
 
 From Stdlib Require Import List ZArith Bool.
+From Argent Require Import Time Std.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig.
+
+Definition pack_cut (bits : nat) (raw : itv) : cut_itv bits :=
+  match cut_interval_ok bits raw as ok return cut_interval_ok bits raw = ok -> cut_itv bits with
+  | true => fun proof => exist _ raw proof
+  | false => fun _ => exist _ IBot eq_refl
+  end eq_refl.
+TimeFun pack_cut.
 
 Module CutIntervalCode (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS)
     (T : THRESHOLDS_OPS) (R : INTERVAL_OPS L T) <: CUT_INTERVAL_OPS C L.
@@ -13,11 +21,7 @@ Module CutIntervalCode (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS)
   Definition wparam := ttree.
 
   Definition cut (a : itv) : t :=
-    let raw := cut_interval C.bits a in
-    match Bool.bool_dec (cut_interval_ok C.bits raw) true with
-    | left proof => exist _ raw proof
-    | right _ => exist _ IBot eq_refl
-    end.
+    pack_cut C.bits (cut_interval C.bits a).
 
   Definition bot : t := exist _ IBot eq_refl.
   Definition top : t := exist _ (I NegInf PosInf) eq_refl.
