@@ -9,18 +9,6 @@ From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec SearchSig Search SccSig.
 Import List.ListNotations.
 
-Record tarjan_state := TarjanState {
-  tarjan_disc : ptrie positive;
-  tarjan_low : ptrie positive;
-  tarjan_pending : list positive;
-  tarjan_active : ptrie bool;
-  tarjan_frames : list positive;
-  tarjan_emitted : list (list positive);
-  tarjan_owners : ptrie positive;
-  tarjan_clock : positive;
-  tarjan_next : positive
-}.
-
 Definition tarjan_initial := TarjanState Empty Empty [] Empty [] [] Empty 1%positive 1%positive.
 
 Fixpoint tarjan_pop (root index : positive) (pending : list positive)

@@ -68,17 +68,6 @@ Fixpoint wto_reverse_into (w tail : wto) : wto :=
   | WLoop h body rest => wto_reverse_into rest (WLoop h body tail)
   end.
 
-Inductive wto_task :=
-  | WtoExpand (within : option (list positive)) (entries owners : ptrie positive)
-      (component : list positive)
-  | WtoClose (head : positive).
-
-Record wto_state := WtoState {
-  wto_tasks : list wto_task;
-  wto_partial : wto;
-  wto_parents : list wto
-}.
-
 Definition wto_expand_tasks within entries owners cs :=
   map (fun c => WtoExpand within entries owners c) cs.
 
