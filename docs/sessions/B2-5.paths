@@ -1,0 +1,8 @@
+theories/Egglog/Run.v
+tests/Egglog/RunTest.v
+theories/Egglog/Extract.v
+tests/Egglog/ExtractTest.v
+theories/Egraph/Compile.v
+tests/Egraph/CompileTest.v
+theories/Egraph/Saturate.v
+tests/Egraph/SaturateTest.v
