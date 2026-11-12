@@ -84,10 +84,13 @@ End Interp.
 
 Module InterpSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
     (X : KEY) (L : LANG) (V : VALUE_DOMAIN L) (A : ACTIONS_OPS P E X L)
-    (D : STATE_DOMAIN X L V) (S : INTERP_SYSTEM P N E C X L V A D)
-    (M : SEMANTICS P) (K : INTERP_LINK P N E C X L A M)
-    <: INTERP_SOUND P N E C X L V A D S M K.
-  Lemma covers : forall p look, S.post_solution p look ->
+    (D : STATE_DOMAIN X L V) (M : SEMANTICS P) (K : INTERP_LINK P N E C X L A M).
+  Module S := Interp P N E C X L V A D.
+  Include Interp P N E C X L V A D.
+  Module Sound <: INTERP_SOUND P N E C X L V A D S M K.
+  Lemma covers : forall p look, post_solution p look ->
     forall s, reachable (M.initial p) (M.step p) s -> D.gamma (look (K.point s)) (K.store s).
-  Proof. Admitted. (* CONVERT: sound: landed action and reachability interfaces differ *)
+  Proof. Admitted. (* CONVERT: sound: Unexpected name (no introduction patterns were expected in the *)
+  End Sound.
+  Include Sound.
 End InterpSound.
