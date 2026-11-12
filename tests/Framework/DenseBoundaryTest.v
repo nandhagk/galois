@@ -68,6 +68,15 @@ Proof.
 Qed.
 
 (* At fuel 1 the old result was Some [false]. The new result is None. *)
+Example no_boundary_singleton_old_fuel :
+  match BA.analyze 1 flat 1%N with
+  | Solved m => Some (map (BC.look m) [0])
+  | _ => None
+  end = None.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 Example no_boundary_singleton :
   match BA.analyze 1 flat 2%N with
   | Solved m => Some (map (BC.look m) [0])
@@ -82,6 +91,19 @@ Example empty_rows :
   | Solved m => Some (map (FC.look m) [0])
   | _ => None
   end = Some [false].
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Module Unlisted <: FLOW_OPS Shape NatKeyCode Edge BoolOps.
+  Definition dir := Forward.
+  Definition boundary (_ : nat) n := Nat.eqb n 99.
+  Definition transfer (_ : nat) (_ : nat) (a : bool) := a.
+End Unlisted.
+Module U := DenseCode Shape NatKeyCode Edge Graph BoolOps Unlisted.
+Module UC := CheckCode BoolOps U.
+
+Example unlisted_boundary_is_not_a_row : UC.check 1 PTrieCode.empty = true.
 Proof.
   vm_compute; reflexivity.
 Qed.
