@@ -77,6 +77,15 @@ Example shifted_shortcut_disagrees :
 Proof. vm_compute. split; reflexivity. Qed.
 
 Module ConstantPayload := ConstWordT WordLanguageT.
+Module UntimedConstantPayload := ConstWord WordLanguage.
+Module UntimedConstantTable := ConstWordTable WordLanguage UntimedConstantPayload.
+
+Module ConstantMeaningClient (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L).
+  Definition raw_meaning := W.F_pgamma_const.
+End ConstantMeaningClient.
+
+Module UntimedConstantMeaning := ConstantMeaningClient WordLanguage UntimedConstantPayload.
+Module TimedConstantMeaning := ConstantMeaningClient WordLanguageT ConstantPayload.
 Module ConstantTable := ConstWordTableT WordLanguageT ConstantPayload.
 Module ConstantDomain := WordDomainT WordLanguageT ConstantPayload ConstantTable.
 Module SignPayload := SignT WordLanguageT.

@@ -14,6 +14,15 @@ Module Table := ConstWordTableCode WordLanguageCode Payload.
 Module Base := TaggedCode WordLanguageCode Payload.
 Module TaggedTable := TaggedTableCode WordLanguageCode Payload Table.
 Module Domain := HarnessCode BitsLangCode Base TaggedTable.
+Module FunctionalPayload := ConstWord WordLanguage.
+
+(** Raw constant payloads retain integers outside the width's normalized range. *)
+Example constant_raw_meaning :
+  FunctionalPayload.pgamma 8%positive (FVal 257) 257 /\
+  ~ FunctionalPayload.pgamma 8%positive (FVal 257) 1.
+Proof.
+  vm_compute. split; [reflexivity | discriminate].
+Qed.
 
 Definition forward_constants o xs := Domain.forward (BOp o) xs.
 Definition assume_constants o r xs := Domain.backward (BOp o) r xs.
