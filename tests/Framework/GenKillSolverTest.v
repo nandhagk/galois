@@ -27,18 +27,21 @@ Module Graph <: CFG_OPS Prog NatKeyCode Edge.
     | 0 | 1 | 7 => [0; 1; 2]
     | 2 | 8 => [0; 1; 2; 3]
     | 6 | 9 | 10 => [0]
+    | 11 => [0; 1]
+    | 13 => [0; 0]
     | _ => []
     end.
   Definition src p e := match p with
     | 0 | 1 | 7 => if Nat.eqb e 0 then 0 else 1
     | 2 | 8 => match e with 2 => 1 | 3 => 2 | _ => 0 end
     | 6 | 10 => 1
+    | 11 => e
     | _ => 0
     end.
   Definition dst p e := match p with
     | 0 | 1 | 7 => if Nat.eqb e 2 then 2 else 1
     | 2 | 8 => match e with 0 => 1 | 1 => 2 | _ => 3 end
-    | 6 | 10 => 2
+    | 6 | 10 | 11 => 2
     | _ => 0
     end.
 End Graph.
@@ -48,7 +51,7 @@ Module Forward <: GENKILL_OPS Prog Edge NatKeyCode Sets.
   Definition gen p e := facts (match p, e with
     | 1, 0 => [0] | 1, 1 => [1]
     | 2, 0 => [7] | 2, 2 => [8]
-    | 6, _ => [7] | _, _ => [] end).
+    | 6, _ | 11, 1 => [7] | _, _ => [] end).
   Definition kill p e := facts (match p, e with 1, 1 => [0] | 10, _ => [7] | _, _ => [] end).
   Definition init p := facts (match p with 4 | 5 | 10 => [7] | _ => [] end).
 End Forward.
@@ -212,3 +215,22 @@ Proof. vm_compute; reflexivity. Qed.
 Example strict_all_is_not_finite_universe :
   UF.transfer 6 0 None = None /\ UF.transfer 6 0 (Some (facts [7])) <> None.
 Proof. vm_compute; split; [reflexivity|discriminate]. Qed.
+
+Example singleton_path_value :
+  Sets.elements (genkill_path Sets.union Sets.diff (Forward.gen 5) (Forward.kill 5)
+    (Forward.init 5) []) = [7].
+Proof. vm_compute; reflexivity. Qed.
+
+Example query_reachability_does_not_absorb_implicit_starts :
+  observe_may 11 [0; 1; 2] = Some [[]; []; [7]] /\
+  Sets.elements (genkill_path Sets.union Sets.diff (Forward.gen 11) (Forward.kill 11)
+    Sets.empty [0]) = [].
+Proof. vm_compute; split; reflexivity. Qed.
+
+Example unlisted_source_callback_is_not_an_equation :
+  Graph.edges 12 = [] /\ observe_may 12 [0; 1; 99] = Some [[]; []; []].
+Proof. vm_compute; split; reflexivity. Qed.
+
+Example duplicate_constructor_keeps_flow_occurrences :
+  MS.rows 13 = [Seed 0; Flow 0; Flow 0].
+Proof. vm_compute; reflexivity. Qed.
