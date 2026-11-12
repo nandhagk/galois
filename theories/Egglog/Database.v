@@ -11,13 +11,32 @@ From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig.
 
 Import List.ListNotations.
 
+(** Stable row identifiers retain historical keys through collisions. *)
+Record database_row_store (C : Type) := {
+  row_history : list ((positive * list C) * positive);
+  row_links : list (positive * positive);
+  row_weights : list (positive * N);
+  row_keys : list (positive * list C);
+  row_fresh : positive
+}.
+
+(** Slot groups and tuple counts retain the layout of the initialized database. *)
+Record database_slot_store (C : Type) := {
+  slot_positions : list (bool * N * N);
+  function_groups : list (positive * N);
+  slot_groups : list ((bool * N) * list N);
+  projection_counts : list ((N * list C) * N)
+}.
+
 Record database_state (C : Type) := DatabaseState {
   db_forest : UnionFindCode.t;
   db_nuses : N;
   db_npending : N;
   db_wmark : N;
   db_written_cells : list C;
-  db_index_counters : list positive
+  db_index_counters : list positive;
+  db_row_store : database_row_store C;
+  db_slot_store : database_slot_store C
 }.
 
 Arguments DatabaseState {C}.
@@ -27,6 +46,8 @@ Arguments db_npending {C}.
 Arguments db_wmark {C}.
 Arguments db_written_cells {C}.
 Arguments db_index_counters {C}.
+Arguments db_row_store {C}.
+Arguments db_slot_store {C}.
 
 TimeFun db_forest.
 TimeFun db_nuses.
@@ -34,17 +55,23 @@ TimeFun db_npending.
 TimeFun db_wmark.
 TimeFun db_written_cells.
 TimeFun db_index_counters.
+TimeFun db_row_store.
+TimeFun db_slot_store.
 
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition t := database_state (cell V.t).
   (* STUB-CODE *)
   Definition init (_ : list decl) (_ : list (positive * list nat)) : t :=
-    DatabaseState UnionFindCode.empty 0%N 0%N 0%N [] [].
+    DatabaseState UnionFindCode.empty 0%N 0%N 0%N [] []
+      {| row_history := []; row_links := []; row_weights := []; row_keys := [];
+         row_fresh := 1 |}
+      {| slot_positions := []; function_groups := []; slot_groups := [];
+         projection_counts := [] |}.
   (* STUB-CODE *)
   Definition find (i : positive) (db : t) : positive * t :=
     let result := UnionFindCode.find i (db_forest db) in
     (fst result, DatabaseState (snd result) (db_nuses db) (db_npending db) (db_wmark db)
-      (db_written_cells db) (db_index_counters db)).
+      (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)).
   (* STUB-CODE *)
   Definition lookup (_ : positive) (_ : list (cell V.t)) (db : t)
       : option (option (cell V.t)) * t := (None, db).
@@ -62,7 +89,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
         | Some _ => N.succ (db_npending db)
         end in
       DatabaseState (snd result) (db_nuses db) queued (db_wmark db)
-        (db_written_cells db) (db_index_counters db)
+        (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
     else db.
   (* STUB-CODE *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
