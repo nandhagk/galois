@@ -152,8 +152,8 @@ Proof.
   assert (Hadd : eval eval_op env (App bvadd [Var 0; Var 1]) = Some (w, wadd w x y)).
   { rewrite eval_app, !eval_args_cons, !eval_var, eval_args_nil, Hx, Hy.
     change (eval_op bvadd [(w, wrap w x); (w, wrap w y)] = Some (w, wadd w x y)).
-    rewrite (eval_op_fun2 bvadd w _ _ wadd eq_refl).
-    unfold wadd. now rewrite <- wrap_add. }
+    rewrite (eval_op_fun2 bvadd w _ _ BAdd eq_refl).
+    cbn [eval_binary_tag]. unfold wadd. now rewrite <- wrap_add. }
   pose proof (eval_trunc_value env _ w t _ Hadd Hle) as Htrunc.
   unfold wadd in *. rewrite wrap_narrow in Htrunc by exact Hle. exact Htrunc.
 Qed.

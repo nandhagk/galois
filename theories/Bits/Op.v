@@ -1,7 +1,7 @@
-(** * Descriptor-based bitvector operators
+(** * First-order bitvector operators
 
-    One table chooses each operator's action, classification, code and symmetry flag.
-    For example, the binary addition action derives both its arity and equal-width check.
+    Operator tags select width checks, arithmetic and metadata.
+    For example, binary addition checks that both operand widths agree.
     Builds on: Word, Fun, Testbit, Arith and Base code. *)
 
 From Stdlib Require Import ZArith List Bool Lia.
@@ -48,314 +48,128 @@ Inductive op : Type :=
   | bvextract (hi lo : nat)
   | bvconcat.
 
-Module Desc.
 
-(** Kinds let clients group operators without repeating the operator table. *)
-Inductive kind_tag : Type :=
-  | Bitwise
-  | Additive
-  | Multiplicative
-  | Division
-  | Shift
-  | Rotate
-  | Count
-  | Compare
-  | Select
-  | Resize.
+(** Tags select an operation without storing an executable closure. *)
+Inductive unary_tag := UNot | UNeg | UClz | UCtz | UPopcnt.
+Inductive binary_tag :=
+  | BAdd | BSub | BMul | BUdiv | BUrem | BSdiv | BSrem | BSmod
+  | BAnd | BOr | BXor | BShl | BLshr | BAshr | BRotl | BRotr.
+Inductive comparison_tag := CEq | CNe | CUlt | CUle | CSlt | CSle.
 
-(** Actions derive arity, width checking and evaluation from a single shape. *)
-Inductive action : Type :=
-  | Unary (f : width -> Z -> Z)
-  | Binary (f : width -> Z -> Z -> Z)
-  | Comparison (f : width -> Z -> Z -> bool)
-  | Selection
-  | Resizing (check : width -> option width) (f : width -> Z -> Z)
-  | Concatenation.
+Definition eval_unary_tag tag w x :=
+  match tag with
+  | UNot => wnot w x | UNeg => wneg w x | UClz => wclz w x
+  | UCtz => wctz w x | UPopcnt => wpopcnt w x
+  end.
+Definition eval_binary_tag tag w x y :=
+  match tag with
+  | BAdd => wadd w x y | BSub => wsub w x y | BMul => wmul w x y
+  | BUdiv => wudiv w x y | BUrem => wurem w x y | BSdiv => wsdiv w x y
+  | BSrem => wsrem w x y | BSmod => wsmod w x y | BAnd => wand w x y
+  | BOr => wor w x y | BXor => wxor w x y | BShl => wshl w x y
+  | BLshr => wlshr w x y | BAshr => washr w x y | BRotl => wrotl w x y
+  | BRotr => wrotr w x y
+  end.
+Definition eval_comparison_tag tag w x y :=
+  match tag with
+  | CEq => wrap w x =? wrap w y | CNe => negb (wrap w x =? wrap w y)
+  | CUlt => wult w x y | CUle => wule w x y
+  | CSlt => wslt w x y | CSle => wsle w x y
+  end.
+Definition word_fun1 o :=
+  match o with
+  | bvnot => Some UNot | bvneg => Some UNeg | bvclz => Some UClz
+  | bvctz => Some UCtz | bvpopcnt => Some UPopcnt | _ => None
+  end.
+Definition word_fun2 o :=
+  match o with
+  | bvadd => Some BAdd | bvsub => Some BSub | bvmul => Some BMul
+  | bvudiv => Some BUdiv | bvurem => Some BUrem | bvsdiv => Some BSdiv
+  | bvsrem => Some BSrem | bvsmod => Some BSmod | bvand => Some BAnd
+  | bvor => Some BOr | bvxor => Some BXor | bvshl => Some BShl
+  | bvlshr => Some BLshr | bvashr => Some BAshr | bvrotl => Some BRotl
+  | bvrotr => Some BRotr | _ => None
+  end.
+Definition word_cmp o :=
+  match o with
+  | bveq => Some CEq | bvne => Some CNe | bvult => Some CUlt
+  | bvule => Some CUle | bvslt => Some CSlt | bvsle => Some CSle | _ => None
+  end.
 
-(** A descriptor contains computation and metadata without proof fields. *)
-Record t : Type := Make {
-  kind : kind_tag;
-  run : action;
-  commutes : bool;
-  code : nat * (positive * positive)
-}.
-
-(** The action determines the operand count. *)
-Definition arity (d : t) : nat :=
-  match run d with
-  | Unary _ | Resizing _ _ => 1%nat
-  | Selection => 3%nat
+Definition arity o : nat :=
+  match o with
+  | bvnot | bvneg | bvclz | bvctz | bvpopcnt | bvzext _ | bvsext _
+  | bvtrunc _ | bvextract _ _ => 1%nat
+  | bvite => 3%nat
   | _ => 2%nat
   end.
-
-(** Width checking rejects malformed shapes before raw evaluation. *)
-Definition result_width (d : t) (ws : list width) : option width :=
-  match run d, ws with
-  | Unary _, [w] => Some w
-  | Binary _, [a; b] => if Pos.eqb a b then Some a else None
-  | Comparison _, [a; b] => if Pos.eqb a b then Some 1%positive else None
-  | Selection, [c; a; b] => if Pos.eqb c 1 && Pos.eqb a b then Some a else None
-  | Resizing check _, [w] => check w
-  | Concatenation, [a; b] => Some (a + b)%positive
+Definition commutative o :=
+  match o with bvadd | bvmul | bvand | bvor | bvxor | bveq | bvne => true
+  | _ => false end.
+Definition result_width o ws :=
+  match o, ws with
+  | (bvnot | bvneg | bvclz | bvctz | bvpopcnt), [w] => Some w
+  | (bvzext n | bvsext n), [w] => Some (w + n)%positive
+  | bvtrunc t, [w] => if Pos.leb t w then Some t else None
+  | bvextract hi lo, [w] =>
+      if (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w))%bool
+      then Some (Pos.of_nat (S (hi - lo))) else None
+  | bvconcat, [a; b] => Some (a + b)%positive
+  | bvite, [c; a; b] => if Pos.eqb c 1 && Pos.eqb a b then Some a else None
+  | (bveq | bvne | bvult | bvule | bvslt | bvsle), [a; b] =>
+      if Pos.eqb a b then Some 1%positive else None
+  | (bvadd | bvsub | bvmul | bvudiv | bvurem | bvsdiv | bvsrem | bvsmod |
+      bvand | bvor | bvxor | bvshl | bvlshr | bvashr | bvrotl | bvrotr), [a; b] =>
+      if Pos.eqb a b then Some a else None
   | _, _ => None
   end.
-
-(** The raw result is meaningful after width checking and before the final wrap. *)
-Definition value (d : t) (xs : list word) : Z :=
-  match run d, xs with
-  | Unary f, [(w, x)] => f w x
-  | Binary f, [(w, x); (_, y)] => f w x y
-  | Comparison f, [(w, x); (_, y)] => if f w x y then 1 else 0
-  | Selection, [(_, c); (_, x); (_, y)] => if c =? 1 then x else y
-  | Resizing _ f, [(w, x)] => f w x
-  | Concatenation, [(_, x); (w2, y)] => x * modulus w2 + y
-  | _, _ => 0
+Definition op_value o xs : Z :=
+  match word_fun1 o, word_fun2 o, word_cmp o, xs with
+  | Some t, _, _, [(w, x)] => eval_unary_tag t w x
+  | _, Some t, _, [(w, x); (_, y)] => eval_binary_tag t w x y
+  | _, _, Some t, [(w, x); (_, y)] => if eval_comparison_tag t w x y then 1 else 0
+  | _, _, _, [(_, c); (_, x); (_, y)] =>
+      match o with bvite => if c =? 1 then x else y | _ => 0 end
+  | _, _, _, [(w, x)] =>
+      match o with
+      | bvzext _ | bvtrunc _ => x
+      | bvsext _ => signed w x
+      | bvextract _ lo => x / 2 ^ Z.of_nat lo
+      | _ => 0
+      end
+  | _, _, _, [(_, x); (w, y)] =>
+      match o with bvconcat => x * modulus w + y | _ => 0 end
+  | _, _, _, _ => 0
   end.
-
-(** Successful width checking implies the descriptor's arity. *)
-Record wf (d : t) : Prop := Wf {
-  width_arity : forall ws w, result_width d ws = Some w -> length ws = arity d
-}.
-
-(** Raw word-valuedness requires normalized operands and a successful width check. *)
-Definition word_valued (d : t) : Prop := forall xs w,
-  Forall (fun x => is_word (fst x) (snd x)) xs ->
-  result_width d (map fst xs) = Some w -> is_word w (value d xs).
-
-End Desc.
-
-(** A unary helper checks one operand and retains its width. *)
-Definition unary k n f : Desc.t :=
-  Desc.Make k (Desc.Unary f) false (n, (1%positive, 1%positive)).
-
-(** A binary helper checks two equal-width operands and retains their width. *)
-Definition binary k n comm f : Desc.t :=
-  Desc.Make k (Desc.Binary f) comm (n, (1%positive, 1%positive)).
-
-(** A comparison helper returns a one-bit boolean word. *)
-Definition compare n comm f : Desc.t :=
-  Desc.Make Desc.Compare (Desc.Comparison f) comm (n, (1%positive, 1%positive)).
-
-(** Selection checks a one-bit condition and equal branch widths. *)
-Definition select n : Desc.t :=
-  Desc.Make Desc.Select Desc.Selection false (n, (1%positive, 1%positive)).
-
-(** Resizing uses the supplied width check and raw integer conversion. *)
-Definition resize n params check f : Desc.t :=
-  Desc.Make Desc.Resize (Desc.Resizing check f) false (n, params).
-
-(** Concatenation accepts independently sized operands. *)
-Definition concat n : Desc.t :=
-  Desc.Make Desc.Resize Desc.Concatenation false (n, (1%positive, 1%positive)).
-
-(** This is the sole operator dispatch table for computation and metadata. *)
-Definition op_desc (o : op) : Desc.t :=
+Local Open Scope nat_scope.
+Definition op_code o : nat * (positive * positive) :=
   match o with
-  | bvnot => unary Desc.Bitwise 0 wnot
-  | bvneg => unary Desc.Additive 1 wneg
-  | bvclz => unary Desc.Count 2 wclz
-  | bvctz => unary Desc.Count 3 wctz
-  | bvpopcnt => unary Desc.Count 4 wpopcnt
-  | bvadd => binary Desc.Additive 5 true wadd
-  | bvsub => binary Desc.Additive 6 false wsub
-  | bvmul => binary Desc.Multiplicative 7 true wmul
-  | bvudiv => binary Desc.Division 8 false wudiv
-  | bvurem => binary Desc.Division 9 false wurem
-  | bvsdiv => binary Desc.Division 10 false wsdiv
-  | bvsrem => binary Desc.Division 11 false wsrem
-  | bvsmod => binary Desc.Division 12 false wsmod
-  | bvand => binary Desc.Bitwise 13 true wand
-  | bvor => binary Desc.Bitwise 14 true wor
-  | bvxor => binary Desc.Bitwise 15 true wxor
-  | bvshl => binary Desc.Shift 16 false wshl
-  | bvlshr => binary Desc.Shift 17 false wlshr
-  | bvashr => binary Desc.Shift 18 false washr
-  | bvrotl => binary Desc.Rotate 19 false wrotl
-  | bvrotr => binary Desc.Rotate 20 false wrotr
-  | bveq => compare 21 true (fun w x y => wrap w x =? wrap w y)
-  | bvne => compare 22 true (fun w x y => negb (wrap w x =? wrap w y))
-  | bvult => compare 23 false wult
-  | bvule => compare 24 false wule
-  | bvslt => compare 25 false wslt
-  | bvsle => compare 26 false wsle
-  | bvite => select 27
-  | bvzext n => resize 28 (n, 1%positive) (fun w => Some (w + n)%positive) (fun _ x => x)
-  | bvsext n => resize 29 (n, 1%positive) (fun w => Some (w + n)%positive) signed
-  | bvtrunc t => resize 30 (t, 1%positive)
-      (fun w => if Pos.leb t w then Some t else None) (fun _ x => x)
-  | bvextract hi lo => resize 31 (Pos.of_succ_nat hi, Pos.of_succ_nat lo)
-      (fun w => if (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w))%bool
-        then Some (Pos.of_nat (S (hi - lo))) else None)
-      (fun _ x => x / 2 ^ Z.of_nat lo)
-  | bvconcat => concat 32
+  | bvnot => (0, (1%positive, 1%positive)) | bvneg => (1, (1%positive, 1%positive))
+  | bvclz => (2, (1%positive, 1%positive)) | bvctz => (3, (1%positive, 1%positive))
+  | bvpopcnt => (4, (1%positive, 1%positive)) | bvadd => (5, (1%positive, 1%positive))
+  | bvsub => (6, (1%positive, 1%positive)) | bvmul => (7, (1%positive, 1%positive))
+  | bvudiv => (8, (1%positive, 1%positive)) | bvurem => (9, (1%positive, 1%positive))
+  | bvsdiv => (10, (1%positive, 1%positive)) | bvsrem => (11, (1%positive, 1%positive))
+  | bvsmod => (12, (1%positive, 1%positive)) | bvand => (13, (1%positive, 1%positive))
+  | bvor => (14, (1%positive, 1%positive)) | bvxor => (15, (1%positive, 1%positive))
+  | bvshl => (16, (1%positive, 1%positive)) | bvlshr => (17, (1%positive, 1%positive))
+  | bvashr => (18, (1%positive, 1%positive)) | bvrotl => (19, (1%positive, 1%positive))
+  | bvrotr => (20, (1%positive, 1%positive)) | bveq => (21, (1%positive, 1%positive))
+  | bvne => (22, (1%positive, 1%positive)) | bvult => (23, (1%positive, 1%positive))
+  | bvule => (24, (1%positive, 1%positive)) | bvslt => (25, (1%positive, 1%positive))
+  | bvsle => (26, (1%positive, 1%positive)) | bvite => (27, (1%positive, 1%positive))
+  | bvzext n => (28, (n, 1%positive)) | bvsext n => (29, (n, 1%positive))
+  | bvtrunc n => (30, (n, 1%positive))
+  | bvextract hi lo => (31, (Pos.of_succ_nat hi, Pos.of_succ_nat lo))
+  | bvconcat => (32, (1%positive, 1%positive))
   end.
-
-(** Arity is the descriptor's operand count. *)
-Definition arity o := Desc.arity (op_desc o).
-
-(** Commutativity is the descriptor's symmetry flag. *)
-Definition commutative o := Desc.commutes (op_desc o).
-
-(** Result widths are checked by the descriptor. *)
-Definition result_width o := Desc.result_width (op_desc o).
-
-(** Codes retain the legacy constructor tags and parameter representation. *)
-Definition op_code o := Desc.code (op_desc o).
-
-(** Normalization wraps a dynamic word without changing its width. *)
+Local Open Scope Z_scope.
 Definition normalize_word (x : word) : word := (fst x, wrap (fst x) (snd x)).
-
-(** Raw operator evaluation is the descriptor's value operation. *)
-Definition op_value o := Desc.value (op_desc o).
-
-(** Unary dispatch is recovered from the descriptor action. *)
-Definition word_fun1 o : option (width -> Z -> Z) :=
-  match Desc.run (op_desc o) with
-  | Desc.Unary f => Some f
-  | _ => None
-  end.
-
-(** Same-width binary dispatch is recovered from the descriptor action. *)
-Definition word_fun2 o : option (width -> Z -> Z -> Z) :=
-  match Desc.run (op_desc o) with
-  | Desc.Binary f => Some f
-  | _ => None
-  end.
-
-(** Boolean comparison dispatch is recovered from the descriptor action. *)
-Definition word_cmp o : option (width -> Z -> Z -> bool) :=
-  match Desc.run (op_desc o) with
-  | Desc.Comparison f => Some f
-  | _ => None
-  end.
-
-(** Evaluation wraps normalized operands' raw result at the checked width. *)
 Definition eval_op (o : op) (xs : list word) : option word :=
   match result_width o (map fst xs) with
   | Some rw => Some (rw, wrap rw (op_value o (map normalize_word xs)))
   | None => None
   end.
-
-(** Every action derives its arity consistently with its width checker. *)
-Theorem desc_wf : forall d, Desc.wf d.
-Proof.
-  intros [k a comm code]. constructor.
-  destruct a; intros ws w; destruct ws as [|a [|b [|c [|d rest]]]];
-    cbn [Desc.result_width Desc.run Desc.arity]; try discriminate; intro Hwidth;
-    repeat match type of Hwidth with
-    | (if ?test then _ else _) = _ => destruct test; try discriminate
-    end; reflexivity.
-Qed.
-
-(** Unary descriptors have a consistent arity. *)
-Theorem unary_wf : forall k n f, Desc.wf (unary k n f).
-Proof.
-  intros. apply desc_wf.
-Qed.
-
-(** Binary descriptors have a consistent arity. *)
-Theorem binary_wf : forall k n c f, Desc.wf (binary k n c f).
-Proof.
-  intros. apply desc_wf.
-Qed.
-
-(** Comparison descriptors have a consistent arity. *)
-Theorem compare_wf : forall n c f, Desc.wf (compare n c f).
-Proof.
-  intros. apply desc_wf.
-Qed.
-
-(** Selection descriptors have a consistent arity. *)
-Theorem select_wf : forall n, Desc.wf (select n).
-Proof.
-  intros. apply desc_wf.
-Qed.
-
-(** Resizing descriptors have a consistent arity for arbitrary width checks. *)
-Theorem resize_wf : forall n p check f, Desc.wf (resize n p check f).
-Proof.
-  intros. apply desc_wf.
-Qed.
-
-(** Concatenation descriptors have a consistent arity. *)
-Theorem concat_wf : forall n, Desc.wf (concat n).
-Proof.
-  intros. apply desc_wf.
-Qed.
-
-(** Unary word-valued functions produce word-valued descriptors. *)
-Theorem unary_word_valued : forall k n f,
-  (forall w x, is_word w (f w x)) -> Desc.word_valued (unary k n f).
-Proof.
-  intros k n f Hf xs w Hwords Hwidth.
-  destruct xs as [|[a x] [|b rest]]; cbn in Hwidth; try discriminate.
-  inversion Hwidth; subst. apply Hf.
-Qed.
-
-(** Binary word-valued functions produce word-valued descriptors. *)
-Theorem binary_word_valued : forall k n c f,
-  (forall w x y, is_word w (f w x y)) -> Desc.word_valued (binary k n c f).
-Proof.
-  intros k n c f Hf xs w Hwords Hwidth.
-  destruct xs as [|[a x] [|[b y] [|d rest]]]; cbn in Hwidth; try discriminate.
-  destruct (Pos.eqb a b); inversion Hwidth; subst. apply Hf.
-Qed.
-
-(** Comparisons always produce a one-bit word. *)
-Theorem compare_word_valued : forall n c f, Desc.word_valued (compare n c f).
-Proof.
-  intros n c f xs w Hwords Hwidth.
-  destruct xs as [|[a x] [|[b y] [|d rest]]]; cbn in Hwidth; try discriminate.
-  destruct (Pos.eqb a b); inversion Hwidth; subst.
-  cbn [Desc.value compare Desc.run]. destruct (f a x y);
-    [apply one_is_word|apply zero_is_word].
-Qed.
-
-(** Selection returns one of its normalized branch words. *)
-Theorem select_word_valued : forall n, Desc.word_valued (select n).
-Proof.
-  intros n xs w Hwords Hwidth.
-  destruct xs as [|[c z] [|[a x] [|[b y] [|d rest]]]];
-    cbn in Hwidth; try discriminate.
-  change ((if Pos.eqb c 1 && Pos.eqb a b then Some a else None) = Some w) in Hwidth.
-  destruct (Pos.eqb c 1 && Pos.eqb a b) eqn:Hcheck; inversion Hwidth; subst w.
-  apply andb_true_iff in Hcheck as [_ Hab]. apply Pos.eqb_eq in Hab. subst b.
-  inversion Hwords as [|? ? Hc Htail]; subst.
-  inversion Htail as [|? ? Hx Hlast]; subst.
-  inversion Hlast as [|? ? Hy Hnil]; subst.
-  cbn [Desc.value select Desc.run]. destruct (z =? 1); assumption.
-Qed.
-
-(** Resizing is raw word-valued when its conversion fits each accepted result width. *)
-Theorem resize_word_valued : forall n p check f,
-  (forall w t x, is_word w x -> check w = Some t -> is_word t (f w x)) ->
-  Desc.word_valued (resize n p check f).
-Proof.
-  intros n p check f Hf xs w Hwords Hwidth.
-  destruct xs as [|[a x] [|b rest]]; cbn in Hwidth; try discriminate.
-  inversion Hwords as [|? ? Hx Hnil]; subst.
-  now apply (Hf a w x).
-Qed.
-
-(** Concatenating normalized operands is raw word-valued. *)
-Theorem concat_word_valued : forall n, Desc.word_valued (concat n).
-Proof.
-  intros n xs w Hwords Hwidth.
-  destruct xs as [|[a x] [|[b y] [|d rest]]]; cbn in Hwidth; try discriminate.
-  inversion Hwidth; subst w.
-  inversion Hwords as [|? ? Hx Htail]; subst.
-  inversion Htail as [|? ? Hy Hnil]; subst.
-  cbn [Desc.value concat Desc.run].
-  rewrite <- (wrap_id a x Hx), <- (wrap_id b y Hy). apply concat_is_word.
-Qed.
-
-(** Every table entry has width checks consistent with its arity. *)
-Theorem op_desc_wf : forall o, Desc.wf (op_desc o).
-Proof.
-  intro o. op_cases o by apply desc_wf.
-Qed.
-
-(** Evaluation fails exactly when width checking fails. *)
 Theorem eval_op_total : forall o xs,
   eval_op o xs = None <-> result_width o (map fst xs) = None.
 Proof.
@@ -372,32 +186,27 @@ Proof.
 Qed.
 
 (** Successful same-width binary dispatch requires equal operand widths. *)
-Theorem eval_op_fun2_width : forall o f wa wb x y r,
-  word_fun2 o = Some f -> eval_op o [(wa, x); (wb, y)] = Some r -> wa = wb.
+(** A successful binary operation has equal operand widths. *)
+Theorem eval_op_fun2_width : forall o t wa wb x y r,
+  word_fun2 o = Some t -> eval_op o [(wa, x); (wb, y)] = Some r -> wa = wb.
 Proof.
-  intros o f wa wb x y r Hfun Hresult.
-  apply eval_op_width in Hresult.
-  unfold word_fun2 in Hfun.
-  unfold result_width, Desc.result_width in Hresult.
-  destruct (Desc.run (op_desc o)); try discriminate.
-  cbn [map fst] in Hresult.
-  destruct (Pos.eqb wa wb) eqn:Hwidth; [now apply Pos.eqb_eq|discriminate].
+  intros o t wa wb x y r Hfun Hresult.
+  op_cases o; cbn [word_fun2] in Hfun; try discriminate;
+    unfold eval_op in Hresult; cbn [result_width map fst] in Hresult;
+    destruct (Pos.eqb wa wb) eqn:Hwidth; try discriminate;
+    now apply Pos.eqb_eq.
 Qed.
 
-(** Successful comparison dispatch requires equal operand widths. *)
-Theorem eval_op_cmp_width : forall o f wa wb x y r,
-  word_cmp o = Some f -> eval_op o [(wa, x); (wb, y)] = Some r -> wa = wb.
+(** A successful comparison has equal operand widths. *)
+Theorem eval_op_cmp_width : forall o t wa wb x y r,
+  word_cmp o = Some t -> eval_op o [(wa, x); (wb, y)] = Some r -> wa = wb.
 Proof.
-  intros o f wa wb x y r Hfun Hresult.
-  apply eval_op_width in Hresult.
-  unfold word_cmp in Hfun.
-  unfold result_width, Desc.result_width in Hresult.
-  destruct (Desc.run (op_desc o)); try discriminate.
-  cbn [map fst] in Hresult.
-  destruct (Pos.eqb wa wb) eqn:Hwidth; [now apply Pos.eqb_eq|discriminate].
+  intros o t wa wb x y r Hfun Hresult.
+  op_cases o; cbn [word_cmp] in Hfun; try discriminate;
+    unfold eval_op in Hresult; cbn [result_width map fst] in Hresult;
+    destruct (Pos.eqb wa wb) eqn:Hwidth; try discriminate;
+    now apply Pos.eqb_eq.
 Qed.
-
-(** Successful selection requires a one-bit condition and equal branch widths. *)
 Theorem eval_op_ite_width : forall wc wa wb c x y r,
   eval_op bvite [(wc, c); (wa, x); (wb, y)] = Some r ->
   wc = 1%positive /\ wa = wb.
@@ -412,13 +221,16 @@ Proof.
 Qed.
 
 (** A successful width check implies the operator's arity. *)
+(** A successful width check implies the operator's arity. *)
 Theorem result_width_arity : forall o ws w,
   result_width o ws = Some w -> length ws = arity o.
 Proof.
-  intros o. apply (Desc.width_arity _ (op_desc_wf o)).
+  intros o ws w. op_cases o; destruct ws as [|a [|b [|c [|d rest]]]];
+    cbn [result_width arity]; try discriminate;
+    repeat match goal with
+    | |- (if ?test then _ else _) = _ -> _ => destruct test; try discriminate
+    end; intros; reflexivity.
 Qed.
-
-(** A successful evaluation has the required operand count. *)
 Theorem eval_op_arity : forall o xs r, eval_op o xs = Some r -> length xs = arity o.
 Proof.
   intros o xs r Hresult. apply eval_op_width in Hresult.
@@ -463,45 +275,45 @@ Proof.
   now rewrite Hvalues.
 Qed.
 
-(** Unary dispatch functions always return words. *)
-Theorem word_fun1_is_word : forall o f w x,
-  word_fun1 o = Some f -> is_word w (f w x).
+(** Unary selection returns a word at the supplied width. *)
+Theorem word_fun1_is_word : forall o t w x,
+  word_fun1 o = Some t -> is_word w (eval_unary_tag t w x).
 Proof.
-  intros o f w x Hf. op_cases o; cbn [word_fun1 op_desc unary binary compare
-    select resize concat Desc.run] in Hf; try discriminate; injection Hf as <-;
+  intros o t w x Hf. op_cases o; cbn [word_fun1] in Hf; try discriminate;
+    injection Hf as <-; cbn [eval_unary_tag];
     first [apply wnot_is_word|apply wrap_is_word|apply wclz_is_word|
       apply wctz_is_word|apply wpopcnt_is_word].
 Qed.
 
-(** Binary dispatch functions always return words. *)
-Theorem word_fun2_is_word : forall o f w x y,
-  word_fun2 o = Some f -> is_word w (f w x y).
+(** Binary selection returns a word at the supplied width. *)
+Theorem word_fun2_is_word : forall o t w x y,
+  word_fun2 o = Some t -> is_word w (eval_binary_tag t w x y).
 Proof.
-  intros o f w x y Hf. op_cases o; cbn [word_fun2 op_desc unary binary compare
-    select resize concat Desc.run] in Hf; try discriminate; injection Hf as <-;
+  intros o t w x y Hf. op_cases o; cbn [word_fun2] in Hf; try discriminate;
+    injection Hf as <-; cbn [eval_binary_tag];
     first [apply wrap_is_word|apply wudiv_is_word|apply wurem_is_word|
       apply wsdiv_is_word|apply wsrem_is_word|apply wsmod_is_word|
       apply wand_is_word|apply wor_is_word|apply wxor_is_word|apply wshl_is_word|
       apply wlshr_is_word|apply washr_is_word|
       unfold wrotr, wrotl; apply wrap_is_word|unfold wrotl; apply wrap_is_word].
 Qed.
-
-(** Unary dispatch is insensitive to operand normalization. *)
-Theorem word_fun1_normalised : forall o f w x,
-  word_fun1 o = Some f -> f w (wrap w x) = f w x.
+(** Unary selection is insensitive to normalization. *)
+Theorem word_fun1_normalised : forall o t w x,
+  word_fun1 o = Some t -> eval_unary_tag t w (wrap w x) = eval_unary_tag t w x.
 Proof.
-  intros o f w x Hf. op_cases o; cbn [word_fun1 op_desc unary binary compare
-    select resize concat Desc.run] in Hf; try discriminate; injection Hf as <-;
+  intros o t w x Hf. op_cases o; cbn [word_fun1] in Hf; try discriminate;
+    injection Hf as <-; cbn [eval_unary_tag];
     unfold wnot, wneg, wclz, wctz, wpopcnt;
     now rewrite ?wrap_wrap, ?wrap_opp.
 Qed.
 
-(** Binary dispatch is insensitive to operand normalization. *)
-Theorem word_fun2_normalised : forall o f w x y,
-  word_fun2 o = Some f -> f w (wrap w x) (wrap w y) = f w x y.
+(** Binary selection is insensitive to normalization. *)
+Theorem word_fun2_normalised : forall o t w x y,
+  word_fun2 o = Some t ->
+  eval_binary_tag t w (wrap w x) (wrap w y) = eval_binary_tag t w x y.
 Proof.
-  intros o f w x y Hf. op_cases o; cbn [word_fun2 op_desc unary binary compare
-    select resize concat Desc.run] in Hf; try discriminate; injection Hf as <-;
+  intros o t w x y Hf. op_cases o; cbn [word_fun2] in Hf; try discriminate;
+    injection Hf as <-; cbn [eval_binary_tag];
     unfold wadd, wsub, wmul, wsdiv, wsrem, wsmod, wudiv, wurem, wneg,
       wand, wor, wxor, wshl, wlshr, washr, wrotr, wrotl, msb, signed;
     repeat rewrite wrap_wrap;
@@ -511,106 +323,78 @@ Proof.
   reflexivity.
 Qed.
 
-(** Comparison dispatch is insensitive to operand normalization. *)
-Theorem word_cmp_normalised : forall o f w x y,
-  word_cmp o = Some f -> f w (wrap w x) (wrap w y) = f w x y.
+(** Comparison selection is insensitive to normalization. *)
+Theorem word_cmp_normalised : forall o t w x y,
+  word_cmp o = Some t ->
+  eval_comparison_tag t w (wrap w x) (wrap w y) = eval_comparison_tag t w x y.
 Proof.
-  intros o f w x y Hf. op_cases o; cbn [word_cmp op_desc unary binary compare
-    select resize concat Desc.run] in Hf; try discriminate; injection Hf as <-;
+  intros o t w x y Hf. op_cases o; cbn [word_cmp] in Hf; try discriminate;
+    injection Hf as <-; cbn [eval_comparison_tag];
     unfold wult, wule, wslt, wsle, signed; now rewrite !wrap_wrap.
 Qed.
-
-(** Unary dispatch agrees with its public word function. *)
-Theorem eval_op_fun1 : forall o w z f,
-  word_fun1 o = Some f -> eval_op o [(w, z)] = Some (w, f w z).
+(** Unary dispatch agrees with its selected tag. *)
+Theorem eval_op_fun1 : forall o w z t,
+  word_fun1 o = Some t -> eval_op o [(w, z)] = Some (w, eval_unary_tag t w z).
 Proof.
-  intros o w z f Hf.
-  pose proof (word_fun1_normalised o f w z Hf) as Hnorm.
-  pose proof (word_fun1_is_word o f w z Hf) as Hrange.
-  op_cases o; cbn [word_fun1 op_desc unary binary compare select resize concat
-    Desc.run] in Hf; try discriminate; injection Hf as <-;
-    cbn [eval_op result_width op_value op_desc unary Desc.result_width Desc.value
-      Desc.run normalize_word map fst snd];
+  intros o w z t Hf.
+  pose proof (word_fun1_normalised o t w z Hf) as Hnorm.
+  pose proof (word_fun1_is_word o t w z Hf) as Hrange.
+  op_cases o; cbn [word_fun1] in Hf; try discriminate; injection Hf as <-;
+    cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+      normalize_word map fst snd eval_unary_tag] in *;
+    cbn [eval_binary_tag] in Hnorm, Hrange; rewrite Hnorm, wrap_id by exact Hrange; reflexivity.
+Qed.
+
+(** Binary dispatch agrees with its selected tag. *)
+Theorem eval_op_fun2 : forall o w x y t, word_fun2 o = Some t ->
+  eval_op o [(w, x); (w, y)] = Some (w, eval_binary_tag t w x y).
+Proof.
+  intros o w x y t Hf.
+  pose proof (word_fun2_normalised o t w x y Hf) as Hnorm.
+  pose proof (word_fun2_is_word o t w x y Hf) as Hrange.
+  op_cases o; cbn [word_fun2] in Hf; try discriminate; injection Hf as <-;
+    unfold eval_op; cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+      normalize_word map fst snd] in *;
+    rewrite ?Pos.eqb_refl; cbn [op_value word_fun1 word_fun2 word_cmp normalize_word map fst snd];
     rewrite Hnorm, wrap_id by exact Hrange; reflexivity.
 Qed.
 
-(** Binary dispatch agrees with its public word function. *)
-Theorem eval_op_fun2 : forall o w x y f, word_fun2 o = Some f ->
-  eval_op o [(w, x); (w, y)] = Some (w, f w x y).
+(** Comparison dispatch returns the one-bit Boolean value of its selected tag. *)
+Theorem eval_op_cmp : forall o w x y t, word_cmp o = Some t ->
+  eval_op o [(w, x); (w, y)] =
+    Some (1%positive, if eval_comparison_tag t w x y then 1 else 0).
 Proof.
-  intros o w x y f Hf.
-  pose proof (word_fun2_normalised o f w x y Hf) as Hnorm.
-  pose proof (word_fun2_is_word o f w x y Hf) as Hrange.
-  op_cases o; cbn [word_fun2 op_desc unary binary compare select resize concat
-    Desc.run] in Hf; try discriminate; injection Hf as <-;
-    unfold eval_op;
-    cbn [result_width op_value op_desc binary Desc.result_width Desc.value
-      Desc.run normalize_word map fst snd];
-    rewrite ?Pos.eqb_refl;
-    rewrite Hnorm, wrap_id by exact Hrange; reflexivity.
-Qed.
-
-(** Comparison dispatch represents false and true by one-bit zero and one. *)
-Theorem eval_op_cmp : forall o w x y f, word_cmp o = Some f ->
-  eval_op o [(w, x); (w, y)] = Some (1%positive, if f w x y then 1 else 0).
-Proof.
-  intros o w x y f Hf.
-  pose proof (word_cmp_normalised o f w x y Hf) as Hnorm.
-  op_cases o; cbn [word_cmp op_desc unary binary compare select resize concat
-    Desc.run] in Hf; try discriminate; injection Hf as <-;
-    unfold eval_op;
-    cbn [result_width op_value op_desc compare Desc.result_width Desc.value
-      Desc.run normalize_word map fst snd];
-    rewrite ?Pos.eqb_refl; rewrite ?Hnorm;
+  intros o w x y t Hf.
+  pose proof (word_cmp_normalised o t w x y Hf) as Hnorm.
+  op_cases o; cbn [word_cmp] in Hf; try discriminate; injection Hf as <-;
+    unfold eval_op; cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+      normalize_word map fst snd eval_comparison_tag] in *;
+    rewrite ?Pos.eqb_refl; cbn [op_value word_fun1 word_fun2 word_cmp normalize_word map fst snd eval_comparison_tag]; rewrite ?Hnorm;
     repeat match goal with
     | |- context [if ?b then _ else _] => destruct b
     end; reflexivity.
 Qed.
 
-(** Conditional selection reads its one-bit condition after wrapping. *)
+(** Conditional selection reads its normalized one-bit condition. *)
 Theorem eval_op_ite : forall w x y c,
   eval_op bvite [(1%positive, c); (w, x); (w, y)] =
     Some (w, if wrap 1%positive c =? 1 then wrap w x else wrap w y).
 Proof.
   intros w x y c. unfold eval_op.
-  cbn [result_width op_value op_desc select Desc.result_width Desc.value
-    Desc.run normalize_word map fst snd].
-  rewrite Pos.eqb_refl.
-  cbn [andb op_value op_desc select Desc.value Desc.run normalize_word map fst snd].
-  rewrite Pos.eqb_refl.
-  destruct (wrap 1%positive c =? 1); now rewrite wrap_wrap.
-Qed.
-
-(** The marked operators evaluate symmetrically on every pair of dynamic words. *)
-Theorem commutative_sound : forall o, commutative o = true -> forall a b : word,
-  eval_op o [a; b] = eval_op o [b; a].
-Proof.
-  intros o Hcomm [w x] [w2 y].
-  op_cases o by (cbn [commutative op_desc unary binary compare select resize concat
-    Desc.commutes] in Hcomm; discriminate).
-  all: unfold eval_op;
-    cbn [result_width op_desc binary compare Desc.result_width Desc.run map fst snd];
-    rewrite (Pos.eqb_sym w2 w);
-    destruct (Pos.eqb w w2) eqn:Hwidth; try reflexivity;
-    apply Pos.eqb_eq in Hwidth; subst w2;
-    cbn [op_value op_desc binary compare Desc.value Desc.run normalize_word map fst snd];
-    repeat rewrite wrap_wrap;
-    first [now rewrite wadd_comm|now rewrite wmul_comm|now rewrite wand_comm|
-      now rewrite wor_comm|now rewrite wxor_comm|now rewrite (Z.eqb_sym (wrap w y))].
+  cbn [result_width map fst]. rewrite Pos.eqb_refl.
+  cbn [op_value word_fun1 word_fun2 word_cmp normalize_word map fst snd].
+  rewrite Pos.eqb_refl. cbn. destruct (wrap 1%positive c =? 1); now rewrite wrap_wrap.
 Qed.
 
 (** Equal constructor-and-parameter codes identify operators. *)
 Theorem op_code_injective : forall o1 o2, op_code o1 = op_code o2 -> o1 = o2.
 Proof.
-  intros o1 o2.
-  op_cases o1; op_cases o2;
-    cbn [op_code op_desc unary binary compare select resize concat Desc.code];
-    intro Hcode; try discriminate; try congruence.
+  intros o1 o2. op_cases o1; op_cases o2;
+    cbn [op_code]; intro Hcode; try discriminate; try congruence.
   injection Hcode as Hhi Hlo.
   apply (f_equal Pos.to_nat) in Hhi. apply (f_equal Pos.to_nat) in Hlo.
   rewrite !SuccNat2Pos.id_succ in Hhi, Hlo. congruence.
 Qed.
-
 (** Zero extension normalizes the input before wrapping at the larger width. *)
 Theorem eval_op_zext : forall extra w x,
   eval_op (bvzext extra) [(w, x)] =
@@ -626,8 +410,8 @@ Theorem eval_op_sext : forall extra w x,
     Some ((w + extra)%positive, wrap (w + extra)%positive (signed w x)).
 Proof.
   intros extra w x.
-  cbn [eval_op result_width op_desc resize Desc.result_width Desc.run
-    op_value Desc.value map normalize_word fst snd].
+  cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+    op_value  map normalize_word fst snd].
   now rewrite signed_wrap.
 Qed.
 
@@ -638,8 +422,8 @@ Theorem eval_op_trunc : forall target w x,
 Proof.
   intros target w x.
   unfold eval_op.
-  cbn [result_width op_desc resize Desc.result_width Desc.run
-    op_value Desc.value map normalize_word fst snd].
+  cbn [result_width op_value word_fun1 word_fun2 word_cmp
+    op_value  map normalize_word fst snd].
   destruct (Pos.leb target w); reflexivity.
 Qed.
 
@@ -652,8 +436,8 @@ Theorem eval_op_extract : forall hi lo w x,
     else None.
 Proof.
   intros hi lo w x. unfold eval_op.
-  cbn [result_width op_desc resize Desc.result_width Desc.run
-    op_value Desc.value map normalize_word fst snd].
+  cbn [result_width op_value word_fun1 word_fun2 word_cmp
+    op_value  map normalize_word fst snd].
   destruct (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w))%bool; reflexivity.
 Qed.
 
@@ -671,8 +455,8 @@ Qed.
 Theorem eval_zext_value : forall w n x,
   eval_op (bvzext n) [(w, x)] = Some ((w + n)%positive, wrap w x).
 Proof.
-  intros w n x. cbn [eval_op result_width op_desc resize Desc.result_width Desc.run
-    op_value Desc.value map normalize_word fst snd].
+  intros w n x. cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+    op_value  map normalize_word fst snd].
   rewrite wrap_id; [reflexivity|].
   eapply word_widen; [apply width_add_le|apply wrap_is_word].
 Qed.
@@ -682,8 +466,8 @@ Theorem eval_sext_value : forall w n x,
   eval_op (bvsext n) [(w, x)] =
     Some ((w + n)%positive, wrap (w + n)%positive (signed w x)).
 Proof.
-  intros w n x. cbn [eval_op result_width op_desc resize Desc.result_width Desc.run
-    op_value Desc.value map normalize_word fst snd].
+  intros w n x. cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+    op_value  map normalize_word fst snd].
   now rewrite signed_wrap.
 Qed.
 
@@ -708,7 +492,181 @@ Theorem eval_concat_value : forall w w2 x y,
     Some ((w + w2)%positive, wrap w x * modulus w2 + wrap w2 y).
 Proof.
   intros w w2 x y.
-  cbn [eval_op result_width op_desc concat Desc.result_width Desc.run
-    op_value Desc.value map normalize_word fst snd].
+  cbn [eval_op result_width op_value word_fun1 word_fun2 word_cmp
+    op_value  map normalize_word fst snd].
   rewrite wrap_id by apply concat_is_word. reflexivity.
+Qed.
+
+(** The marked operators evaluate symmetrically on every pair of dynamic words. *)
+Theorem commutative_sound : forall o, commutative o = true -> forall a b : word,
+  eval_op o [a; b] = eval_op o [b; a].
+Proof.
+  intros o Hcomm [w x] [w2 y].
+  op_cases o by (cbn [commutative] in Hcomm; discriminate).
+  all: unfold eval_op;
+    cbn [result_width map fst snd]; rewrite (Pos.eqb_sym w2 w);
+    destruct (Pos.eqb w w2) eqn:Hwidth; try reflexivity;
+    apply Pos.eqb_eq in Hwidth; subst w2;
+    cbn [op_value word_fun1 word_fun2 word_cmp eval_binary_tag eval_comparison_tag
+      normalize_word map fst snd];
+    repeat rewrite wrap_wrap;
+    first [now rewrite wadd_comm|now rewrite wmul_comm|now rewrite wand_comm|
+      now rewrite wor_comm|now rewrite wxor_comm|now rewrite (Z.eqb_sym (wrap w y))].
+Qed.
+
+Module Desc.
+  Inductive kind_tag := Bitwise | Additive | Multiplicative | Division | Shift | Rotate |
+    Count | Compare | Select | Resize.
+  Definition wf (arity : nat) (check : list width -> option width) : Prop :=
+    forall ws w, check ws = Some w -> length ws = arity.
+  Definition word_valued (check : list width -> option width) (value : list word -> Z) : Prop :=
+    forall xs w, Forall (fun x => is_word (fst x) (snd x)) xs ->
+      check (map fst xs) = Some w -> is_word w (value xs).
+End Desc.
+
+Definition unary_width (ws : list width) := match ws with [w] => Some w | _ => None end.
+Definition binary_width (ws : list width) :=
+  match ws with [a; b] => if Pos.eqb a b then Some a else None | _ => None end.
+Definition compare_width (ws : list width) :=
+  match ws with [a; b] => if Pos.eqb a b then Some 1%positive else None | _ => None end.
+Definition select_width (ws : list width) :=
+  match ws with [c; a; b] => if Pos.eqb c 1 && Pos.eqb a b then Some a else None | _ => None end.
+Definition resize_width (check : width -> option width) (ws : list width) :=
+  match ws with [w] => check w | _ => None end.
+Definition concat_width (ws : list width) := match ws with [a; b] => Some (a + b)%positive | _ => None end.
+Definition unary_value (f : width -> Z -> Z) (xs : list word) :=
+  match xs with [(w, x)] => f w x | _ => 0 end.
+Definition binary_value (f : width -> Z -> Z -> Z) (xs : list word) :=
+  match xs with [(w, x); (_, y)] => f w x y | _ => 0 end.
+Definition compare_value (f : width -> Z -> Z -> bool) (xs : list word) :=
+  match xs with [(w, x); (_, y)] => if f w x y then 1 else 0 | _ => 0 end.
+Definition select_value (xs : list word) :=
+  match xs with [(_, c); (_, x); (_, y)] => if c =? 1 then x else y | _ => 0 end.
+Definition concat_value (xs : list word) :=
+  match xs with [(_, x); (w, y)] => x * modulus w + y | _ => 0 end.
+
+(** A unary width check accepts one operand. *)
+Theorem unary_wf : forall (_ : Desc.kind_tag) (_ : nat) (_ : width -> Z -> Z),
+  Desc.wf 1 unary_width.
+Proof. intros. unfold Desc.wf. intros ws w Hwidth. destruct ws as [|a [|b rest]]; cbn in *; congruence. Qed.
+(** A binary width check accepts two operands. *)
+Theorem binary_wf : forall (_ : Desc.kind_tag) (_ : nat) (_ : bool)
+    (_ : width -> Z -> Z -> Z), Desc.wf 2 binary_width.
+Proof.
+  intros. unfold Desc.wf. intros ws w Hwidth. destruct ws as [|a [|b [|c rest]]]; cbn in *; try discriminate.
+  destruct (Pos.eqb a b); congruence.
+Qed.
+(** A comparison width check accepts two operands. *)
+Theorem compare_wf : forall (_ : nat) (_ : bool) (_ : width -> Z -> Z -> bool),
+  Desc.wf 2 compare_width.
+Proof.
+  intros. unfold Desc.wf. intros ws w Hwidth. destruct ws as [|a [|b [|c rest]]]; cbn in *; try discriminate.
+  destruct (Pos.eqb a b); congruence.
+Qed.
+(** A selection width check accepts three operands. *)
+Theorem select_wf : forall (_ : nat), Desc.wf 3 select_width.
+Proof.
+  intros. unfold Desc.wf. intros ws w Hwidth. destruct ws as [|a [|b [|c [|d rest]]]]; cbn in *; try discriminate.
+  destruct (Pos.eqb a 1 && Pos.eqb b c); congruence.
+Qed.
+(** A resize width check accepts one operand. *)
+Theorem resize_wf : forall (_ : nat) (_ : positive * positive) check
+    (_ : width -> Z -> Z), Desc.wf 1 (resize_width check).
+Proof. intros. unfold Desc.wf. intros ws w Hwidth. destruct ws as [|a [|b rest]]; cbn in *; congruence. Qed.
+(** A concatenation width check accepts two operands. *)
+Theorem concat_wf : forall (_ : nat), Desc.wf 2 concat_width.
+Proof. intros. unfold Desc.wf. intros ws w Hwidth. destruct ws as [|a [|b [|c rest]]]; cbn in *; congruence. Qed.
+
+(** A unary word-valued function gives a word-valued unary helper. *)
+Theorem unary_word_valued : forall (_ : Desc.kind_tag) (_ : nat) f,
+  (forall w x, is_word w (f w x)) -> Desc.word_valued unary_width (unary_value f).
+Proof.
+  intros k n f Hf xs w Hwords Hwidth.
+  destruct xs as [|[a x] [|b rest]]; cbn [unary_width map fst] in Hwidth; try discriminate.
+  inversion Hwidth; subst. apply Hf.
+Qed.
+(** A binary word-valued function gives a word-valued binary helper. *)
+Theorem binary_word_valued : forall (_ : Desc.kind_tag) (_ : nat) (_ : bool) f,
+  (forall w x y, is_word w (f w x y)) -> Desc.word_valued binary_width (binary_value f).
+Proof.
+  intros k n c f Hf xs w Hwords Hwidth.
+  destruct xs as [|[a x] [|[b y] [|d rest]]]; cbn [binary_width map fst] in Hwidth;
+    try discriminate.
+  destruct (Pos.eqb a b); inversion Hwidth; subst. apply Hf.
+Qed.
+(** Comparisons give one-bit words. *)
+Theorem compare_word_valued : forall (_ : nat) (_ : bool) f,
+  Desc.word_valued compare_width (compare_value f).
+Proof.
+  intros n c f xs w Hwords Hwidth.
+  destruct xs as [|[a x] [|[b y] [|d rest]]]; cbn [compare_width map fst] in Hwidth;
+    try discriminate.
+  destruct (Pos.eqb a b); inversion Hwidth; subst.
+  cbn [compare_value]. destruct (f a x y); [apply one_is_word|apply zero_is_word].
+Qed.
+(** Selection returns a normalized branch. *)
+Theorem select_word_valued : forall (_ : nat), Desc.word_valued select_width select_value.
+Proof.
+  intros n xs w Hwords Hwidth.
+  destruct xs as [|[c z] [|[a x] [|[b y] [|d rest]]]];
+    cbn [select_width map fst] in Hwidth; try discriminate.
+  destruct (Pos.eqb c 1 && Pos.eqb a b) eqn:Hcheck; inversion Hwidth; subst w.
+  apply andb_true_iff in Hcheck as [_ Hab]. apply Pos.eqb_eq in Hab. subst b.
+  inversion Hwords as [|? ? Hc Htail]; subst.
+  inversion Htail as [|? ? Hx Hlast]; subst.
+  inversion Hlast as [|? ? Hy Hnil]; subst.
+  cbn [select_value]. destruct (z =? 1); assumption.
+Qed.
+(** Resizing is word-valued when its callback respects the accepted width. *)
+Theorem resize_word_valued : forall (_ : nat) (_ : positive * positive) check f,
+  (forall w t x, is_word w x -> check w = Some t -> is_word t (f w x)) ->
+  Desc.word_valued (resize_width check) (unary_value f).
+Proof.
+  intros n p check f Hf xs w Hwords Hwidth.
+  destruct xs as [|[a x] [|b rest]]; cbn [resize_width map fst] in Hwidth; try discriminate.
+  inversion Hwords as [|? ? Hx Hnil]; subst. now apply (Hf a w x).
+Qed.
+(** Concatenation of normalized operands gives a normalized result. *)
+Theorem concat_word_valued : forall (_ : nat), Desc.word_valued concat_width concat_value.
+Proof.
+  intros n xs w Hwords Hwidth.
+  destruct xs as [|[a x] [|[b y] [|d rest]]]; cbn [concat_width map fst] in Hwidth;
+    try discriminate.
+  inversion Hwidth; subst w.
+  inversion Hwords as [|? ? Hx Htail]; subst.
+  inversion Htail as [|? ? Hy Hnil]; subst.
+  cbn [concat_value]. rewrite <- (wrap_id a x Hx), <- (wrap_id b y Hy).
+  apply concat_is_word.
+Qed.
+(** The width check for each operator accepts its declared number of operands. *)
+Theorem op_desc_wf : forall o, Desc.wf (arity o) (result_width o).
+Proof. intros o ws w. apply result_width_arity. Qed.
+
+Inductive action_shape := UnaryShape | BinaryShape | ComparisonShape | SelectionShape |
+  ResizingShape | ConcatenationShape.
+Definition shape_arity shape :=
+  match shape with
+  | UnaryShape | ResizingShape => 1%nat
+  | SelectionShape => 3%nat
+  | _ => 2%nat
+  end.
+Definition shape_width shape check (ws : list width) :=
+  match shape with
+  | UnaryShape => unary_width ws
+  | BinaryShape => binary_width ws
+  | ComparisonShape => compare_width ws
+  | SelectionShape => select_width ws
+  | ResizingShape => resize_width check ws
+  | ConcatenationShape => concat_width ws
+  end.
+(** Every action shape has a width check that accepts its declared arity. *)
+Theorem desc_wf : forall shape check, Desc.wf (shape_arity shape) (shape_width shape check).
+Proof.
+  intros shape check. destruct shape; cbn [shape_arity shape_width].
+  - exact (unary_wf Desc.Bitwise 0 (fun _ x => x)).
+  - exact (binary_wf Desc.Bitwise 0 false (fun _ x _ => x)).
+  - exact (compare_wf 0 false (fun _ _ _ => false)).
+  - exact (select_wf 0).
+  - exact (resize_wf 0 (1%positive, 1%positive) check (fun _ x => x)).
+  - exact (concat_wf 0).
 Qed.
