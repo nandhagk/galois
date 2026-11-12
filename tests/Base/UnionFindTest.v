@@ -34,6 +34,9 @@ Proof. vm_compute. reflexivity. Qed.
 Example uf_unknown_find :
   UnionFindCode.find 5%positive uf_sample = (5%positive, uf_sample).
 Proof. vm_compute. reflexivity. Qed.
+Example uf_unknown_walk_has_no_path :
+  UnionFindCode.walk 5%positive uf_sample = (5%positive, []).
+Proof. vm_compute. reflexivity. Qed.
 Example uf_empty_find :
   UnionFindCode.find 1%positive UnionFindCode.empty = (1%positive, UnionFindCode.empty).
 Proof. vm_compute. reflexivity. Qed.

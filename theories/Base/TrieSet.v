@@ -29,7 +29,7 @@ Module TrieSetCode (K : KEY_OPS) <: SET_OPS K.
   Definition equal (s u : t) := andb (subset s u) (subset u s).
   Definition fold {A} (f : A -> K.t -> A) (s : t) (a : A) :=
     PTrieCode.fold_values f s a.
-  Definition elements (s : t) := List.rev (fold (fun acc k => k :: acc) s nil).
+  Definition elements (s : t) := List.rev_append (fold (fun acc k => k :: acc) s nil) nil.
 End TrieSetCode.
 
 Module TrieSet (K : KEY) <: SET K.

@@ -451,7 +451,7 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
   Parameter T1_tree_step : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
-    (T_tree_step g t st + tree_credit g t next < tree_credit g t st)%N.
+    (T_tree_step g t st + tree_credit g t next + c_loopN <= tree_credit g t st)%N.
 
   (** The final tree step reverses the reachable preorder once. *)
   Parameter T2_tree_stop : forall g t r st scan,
@@ -469,7 +469,7 @@ Module Type LOOPS_PLAN (Import L : LOOPS_T).
   Parameter T4_body_step : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
-    (T_body_step g t h st + body_credit g t h next < body_credit g t h st)%N.
+    (T_body_step g t h st + body_credit g t h next + c_loopN <= body_credit g t h st)%N.
 
   (** The last reverse step pays one body reversal. *)
   Parameter T5_body_stop : forall g t r h st result,

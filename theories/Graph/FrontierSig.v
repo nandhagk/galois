@@ -226,7 +226,7 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
   Parameter T1_df_step : forall g t r y st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inl next ->
-    (T_df_step g t y st + df_credit g t y next < df_credit g t y st)%N.
+    (T_df_step g t y st + df_credit g t y next + c_loopN <= df_credit g t y st)%N.
 
   (** Stopping pays one reversal of the emitted column. *)
   Parameter T2_df_stop : forall g t r y st result,

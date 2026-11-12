@@ -74,6 +74,7 @@ Module UnionFind <: UNION_FIND.
     card u = length (support u) /\
     (forall x p, PTrieCode.get x (parents u) = Some p -> mem u p) /\
     (forall r, mem u r -> is_root u r -> N.to_nat (size_at r u) = size_of u r) /\
+    (forall r n, PTrieCode.get r (sizes u) = Some n -> N.to_nat n <= card u) /\
     exists rk, ranked u rk.
   Lemma wf_empty : wf empty. Proof. Admitted.
   Lemma wf_add   : forall x u, wf u -> wf (add x u). Proof. Admitted.
@@ -170,7 +171,7 @@ Module UnionFindT <: UNION_FIND_ALL.
   Proof. Admitted. (* STUB *)
   Lemma F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
   Proof. Admitted. (* STUB *)
-  Lemma F4_walk_path : forall x u, wf u -> mem u x ->
+  Lemma F4_walk_path : forall x u, wf u ->
     length (snd (walk x u)) <= Nat.log2 (card u) /\
     forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
   Proof. Admitted. (* STUB *)
