@@ -399,6 +399,28 @@ Module Type SEARCH_PLAN (V : VISITOR_T) (Import S : SEARCH_T V).
           (search_budget g roots) (initial roots) +
         N.of_nat (length (trace g roots)) + 1))%N.
 
+  (** A continuing step taken within the fuel costs one key width of the run. *)
+  Parameter T1_raw_step : forall g roots n st next,
+    (N.of_nat n < search_budget g roots)%N ->
+    Nat.iter n (advance (base g)) (initial roots) = st ->
+    search_step (base g) st = inl next ->
+    (T_search_step (base g) st <= k_step * N.of_nat (run_width g roots + 1))%N.
+
+  (** Steps taken within the fuel emit an event, retire a root or finish a row. *)
+  Parameter F9_raw_count : forall g roots n,
+    (N.of_nat n <= search_budget g roots)%N ->
+    (forall i, i < n -> exists next,
+      search_step (base g) (Nat.iter i (advance (base g)) (initial roots)) = inl next) ->
+    n <= length (trace g roots) + length roots + n_reach g roots.
+
+  (** The truncated loop pays its steps, one stop and the binary fuel width. *)
+  Parameter T3_raw_loop : forall g roots,
+    (T_loopN (search_step (base g)) (T_search_step (base g))
+      (search_budget g roots) (initial roots) <=
+    c_loopN * (k_step * N.of_nat (run_width g roots + 1) *
+      N.of_nat (length (trace g roots) + length roots + n_reach g roots + 1) +
+      stop_budget g roots + N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
+
   (** Every step emits an event or retires a root or row task, at the width of the run. *)
   Parameter T4_raw : forall g roots,
     (T_search_trace g roots <= k_trace *
