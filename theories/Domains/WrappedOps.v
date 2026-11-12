@@ -259,14 +259,14 @@ Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* SIG-QUESTION: W arithmetic has no soundness or implementation pin. *)
+  Proof. Admitted. (* STUB: F2-6 adds public arithmetic soundness laws to WRAPPED. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted. (* SIG-QUESTION: W.pgamma is not linked to arc_gamma in WRAPPED. *)
+  Proof. Admitted. (* STUB: F2-6 adds gamma_arc to WRAPPED. *)
 End WrappedTable.
 
 Module WrappedTableClock (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
