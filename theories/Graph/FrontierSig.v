@@ -5,8 +5,8 @@
     Builds on: graph semantics, dominator predicates and preparation measures. *)
 
 From Stdlib Require Import PArith NArith List.
-From Argent Require Import Time Std BigO.
-From Galois.Base Require Import Trie.
+From Argent Require Import Time Std BigO Loop.
+From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
 Import List.ListNotations.
 
@@ -68,6 +68,16 @@ Definition frontier_entries (rows : ptrie (list positive)) (vs : list positive) 
   fold_right (fun v n => length (frontier_row rows v) + n) 0 vs.
 TimeFun frontier_entries.
 
+(** A target column shares its seen ancestors across all predecessor occurrences. *)
+Record df_state := DfState {
+  df_pending : list positive;
+  df_seen : ptrie unit;
+  df_column_answer : list positive
+}.
+TimeFun df_pending.
+TimeFun df_seen.
+TimeFun df_column_answer.
+
 Module Type FRONTIER_OPS.
   Parameter df : prepared -> domtree -> ptrie (list positive).
   Parameter idf : ptrie (list positive) -> list positive -> list positive.
@@ -126,6 +136,135 @@ Module Type FRONTIER_T := FRONTIER <+ FRONTIER_TIME.
 (** * Frontier proof plan *)
 
 Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
+  Parameter df_step : prepared -> domtree -> positive -> df_state ->
+    df_state + list positive.
+  Parameter T_df_step : prepared -> domtree -> positive -> df_state -> N.
+  Parameter df_column : prepared -> domtree -> positive -> list positive.
+  Parameter T_df_column : prepared -> domtree -> positive -> N.
+  Parameter df_transpose : list (positive * list positive) -> ptrie (list positive).
+  Parameter T_df_transpose : list (positive * list positive) -> N.
+  Parameter k_df_step k_df_stop k_df_column k_df_transpose k_df : N.
+
+  Definition df_initial g y := DfState (preds g y) Empty [].
+
+  Definition df_advance g t y st :=
+    match df_step g t y st with
+    | inl next => next
+    | inr _ => st
+    end.
+
+  (** A column stops at the target's parent and skips unreachable or seen ancestors. *)
+  Definition df_invariant g t y st : Prop :=
+    (exists n, Nat.iter n (df_advance g t y) (df_initial g y) = st) /\
+    NoDup (df_column_answer st) /\
+    (forall x, trie_get x (df_seen st) = Some tt <-> In x (df_column_answer st)) /\
+    incl (df_column_answer st) (df_column g t y) /\
+    incl (df_pending st) (nodes g).
+
+  (** White credit covers each emitted ancestor once, even with parallel predecessors. *)
+  Definition df_potential g t y st : N :=
+    N.of_nat (2 * length (filter (fun x =>
+      match trie_get x (df_seen st) with None => true | Some _ => false end)
+      (df_column g t y)) + length (df_pending st)).
+
+  Definition df_credit g t y st :=
+    ((k_df_step * N.of_nat (graph_width (base g) + 1) + 1) *
+      df_potential g t y st)%N.
+
+  (** The binary budget bounds distinct ancestors and predecessor task retirements. *)
+  Definition df_fuel g y : N :=
+    (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N.
+
+  Definition df_columns g t : list (positive * list positive) :=
+    map (fun y => (y, df_column g t y)) (nodes g).
+
+  (** Each predecessor occurrence starts one runner with a shared column membership table. *)
+  Parameter F1_df_initial : forall g t r y,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    df_invariant g t y (df_initial g y).
+
+  (** Every continuing step retires a task or emits one previously unseen ancestor. *)
+  Parameter F2_df_step : forall g t r y st next,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    df_invariant g t y st -> df_step g t y st = inl next ->
+    df_invariant g t y next /\ (df_potential g t y next < df_potential g t y st)%N.
+
+  (** The stopped answer lists exactly the ancestors emitted for this target. *)
+  Parameter F3_df_stop : forall g t r y st result,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    df_invariant g t y st -> df_step g t y st = inr result ->
+    df_pending st = [] /\ result = rev (df_column_answer st) /\ result = df_column g t y.
+
+  (** Fuel suffices without computing a whole-tree size or a unary iteration budget. *)
+  Parameter F4_df_driver : forall g t r y,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    loopN (df_step g t y) (df_fuel g y) (df_initial g y) = inr (df_column g t y).
+
+  (** Columns describe the same boundary as the public rows, with duplicate pairs removed. *)
+  Parameter F5_df_column : forall g t r y,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    NoDup (df_column g t y) /\ incl (df_column g t y) (nodes g) /\
+      forall x, In x (df_column g t y) <-> in_frontier (base g) r x y.
+
+  (** Transposition conses each distinct column member into its source row. *)
+  Parameter F6_df_transpose : forall columns x y,
+    In y (frontier_row (df_transpose columns) x) <->
+      exists column, In (y, column) columns /\ In x column.
+
+  (** Construction transposes the listed target columns. *)
+  Parameter F7_df_equation : forall g t, df g t = df_transpose (df_columns g t).
+
+  (** The emitted pair count is exactly the public output size. *)
+  Parameter F8_df_pairs : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    fold_right (fun entry n => length (snd entry) + n) 0 (df_columns g t) = df_size g t.
+
+  (** A local runner uses key lookups and equality, without interval-number arithmetic. *)
+  Parameter T1_df_step : forall g t r y st next,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    df_invariant g t y st -> df_step g t y st = inl next ->
+    (T_df_step g t y st + df_credit g t y next < df_credit g t y st)%N.
+
+  (** Stopping pays one reversal of the emitted column. *)
+  Parameter T2_df_stop : forall g t r y st result,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    df_invariant g t y st -> df_step g t y st = inr result ->
+    (T_df_step g t y st <= k_df_stop * N.of_nat (length (df_column g t y) + 1))%N.
+
+  (** The loop bound charges initial credit, stopping, task setup and binary fuel width. *)
+  Parameter T3_df_loop : forall g t r y,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+    (T_df_column g t y <= k_df_column *
+      (df_credit g t y (df_initial g y) +
+        k_df_stop * N.of_nat (length (df_column g t y) + 1) +
+        N.of_nat (length (preds g y) + N.size_nat (df_fuel g y) + 1)))%N.
+
+  (** Summed fuel widths are absorbed by listed vertices, predecessor occurrences and keys. *)
+  Parameter T4_df_columns : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (fold_right (fun y cost => T_df_column g t y + cost)%N 0%N (nodes g) <=
+      k_df_column * N.of_nat (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
+        N.of_nat (graph_width (base g) + 1))%N.
+
+  (** Transposition traverses emitted pairs and their trie paths once. *)
+  Parameter T5_df_transpose : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (T_df_transpose (df_columns g t) <= k_df_transpose *
+      N.of_nat (graph_n (base g) + df_size g t + 1) *
+        N.of_nat (graph_width (base g) + 1))%N.
+
+  (** The wrapper pays the listed-node scan, columns and transposition. *)
+  Parameter T6_df_wrapper : forall g t,
+    (T_df g t <= k_df * (N.of_nat (length (nodes g) + 1) +
+      fold_right (fun y cost => T_df_column g t y + cost)%N 0%N (nodes g) +
+      T_df_transpose (df_columns g t)))%N.
+
+  (** Column accounting and transposition give the published frontier bound. *)
+  Parameter T7_df_public : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (T_df g t <= c_frontier * N.of_nat (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+
   Parameter idf_step : ptrie (list positive) -> idf_state -> idf_state + list positive.
   Parameter T_idf_step : ptrie (list positive) -> idf_state -> N.
   Parameter idf_walk : ptrie (list positive) -> list positive -> list positive.
@@ -182,6 +321,21 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
     ((k_idf_step * N.of_nat (idf_width rows seeds + 1) + 1) *
       idf_potential rows seeds st)%N.
 
+  (** The subset carries erased invariant evidence over the concrete first-order state. *)
+  Definition idf_guard rows seeds := { st : idf_state | idf_invariant rows seeds st }.
+
+  (** The termination relation compares ghost pending-task credit in Prop. *)
+  Definition idf_decreases rows seeds (next st : idf_guard rows seeds) : Prop :=
+    (idf_potential rows seeds (proj1_sig next) <
+      idf_potential rows seeds (proj1_sig st))%N.
+
+  Parameter idf_checked_step : forall rows seeds (st : idf_guard rows seeds),
+    { next : idf_guard rows seeds | idf_decreases rows seeds next st } + list positive.
+  Parameter T_idf_checked_step : forall rows seeds, idf_guard rows seeds -> N.
+
+  Definition idf_loop_credit rows seeds (st : idf_guard rows seeds) : N :=
+    (k_idf_walk * idf_credit rows seeds (proj1_sig st))%N.
+
   (** Finite row bindings give a ghost universe without an executable whole-map scan. *)
   Parameter F1_idf_finite : forall rows seeds,
     exists universe, NoDup universe /\ incl seeds universe /\
@@ -220,6 +374,23 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
     idf_invariant rows seeds st -> idf_step rows st = inr result ->
     idf_pending st = [] /\ result = rev (idf_answer st) /\ result = idf rows seeds.
 
+  (** Erasing the checked callback's evidence gives exactly the raw task transition. *)
+  Parameter F8a_idf_checked : forall rows seeds st,
+    match idf_checked_step rows seeds st with
+    | inl next => inl (proj1_sig (proj1_sig next))
+    | inr result => inr result
+    end = idf_step rows (proj1_sig st).
+
+  (** The ghost binary measure supplies accessibility for every invariant state. *)
+  Parameter F8b_idf_accessible : forall rows seeds st, Acc (idf_decreases rows seeds) st.
+
+  (** The driver uses Argent's lazy accessibility loop with erased invariant evidence. *)
+  Parameter F8c_idf_loop : forall rows seeds,
+    idf_walk rows seeds = Argent.Loop.loop (idf_decreases rows seeds)
+      (idf_checked_step rows seeds)
+      (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))
+      (F8b_idf_accessible rows seeds _).
+
   (** Every output target has an occurrence in a visited frontier row. *)
   Parameter F9_idf_output : forall rows seeds,
     length (idf rows seeds) <= idf_work idf rows seeds.
@@ -238,6 +409,24 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
   Parameter T2_idf_stop : forall rows seeds st result,
     idf_invariant rows seeds st -> idf_step rows st = inr result ->
     (T_idf_step rows st <= k_idf_stop * N.of_nat (length (idf rows seeds) + 1))%N.
+
+  (** The derived checked-callback clock pays its lifted pending-task potential. *)
+  Parameter T2a_idf_checked_step : forall rows seeds st next Hnext,
+    idf_checked_step rows seeds st = inl (exist _ next Hnext) ->
+    (T_idf_checked_step rows seeds st + idf_loop_credit rows seeds next <
+      idf_loop_credit rows seeds st)%N.
+
+  (** The checked stopping callback has the same reversal charge up to its wrapper. *)
+  Parameter T2b_idf_checked_stop : forall rows seeds st result,
+    idf_checked_step rows seeds st = inr result ->
+    (T_idf_checked_step rows seeds st <=
+      k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1))%N.
+
+  (** Argent's T_loop_le sums checked steps without computing an executable fuel. *)
+  Parameter T2c_idf_loop : forall rows seeds st Hacc,
+    (Argent.Loop.T_loop (idf_decreases rows seeds) (idf_checked_step rows seeds)
+      (T_idf_checked_step rows seeds) st Hacc <= idf_loop_credit rows seeds st +
+      k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1) + 1)%N.
 
   (** Accessibility recursion charges its decreasing credit and final reversal. *)
   Parameter T3_idf_walk : forall rows seeds,
