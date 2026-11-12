@@ -35,6 +35,8 @@ End VARS_DATA.
 
 Module Type VARS_DATA_TIME (P : TYPE) (X : KEY_T) (Import D : VARS_DATA P X).
   Parameter T_tables : P.t -> N.
+  Parameter c_tables : N.
+  Parameter T_tables_le : forall p, (T_tables p <= c_tables)%N.
 End VARS_DATA_TIME.
 
 Module Type VARS_DATA_T (P : TYPE) (X : KEY_T) :=
@@ -59,7 +61,7 @@ Module VarsCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     | None => nil
     end.
   Definition universe p :=
-    List.rev_append (PTrieCode.fold_values (fun acc x => x :: acc)
+    List.rev_append (PTrieCode.fold (fun acc _ x => x :: acc)
       (fold_left (fun s x => PTrieCode.set (X.encode x) x s)
       (flat_map (fun e => uses p e ++ defs p e) (C.edges p) ++
         flat_map (exits p) (C.nodes p)) PTrieCode.empty) nil) nil.
@@ -79,10 +81,10 @@ Module Vars (P : TYPE) (N : KEY) (E : KEY)
   Proof. Admitted. (* STUB *)
 End Vars.
 
-Module VarsT (P : TYPE) (N : KEY_T) (E : TYPE)
-    (EKey : KEY_T with Definition t := E.t) (C : CFG_T P N E) (X : KEY_T)
+Module VarsT (P : TYPE) (N : KEY_T) (E : KEY_T)
+    (C : CFG_T P N E) (X : KEY_T)
     (D : VARS_DATA_T P X) <: VARS_ALL P N E C X.
-  Include Vars P N EKey C X D.
+  Include Vars P N E C X D.
   TimeFun uses.
   TimeFun defs.
   TimeFun exits.
@@ -115,5 +117,40 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : TYPE)
 
   (** Deduplicating occurrences gives the prepared variable universe. *)
   Lemma F2_universe : forall p x, In x (universe p) <-> In x (occurrences p).
+  Proof. Admitted. (* STUB *)
+  Definition seen p :=
+    fold_left (fun s x => PTrieCode.set (X.encode x) x s) (occurrences p) PTrieCode.empty.
+  TimeFun seen.
+  Definition k_seen : N := 1%N. (* STUB *)
+  Definition k_collect : N := 1%N. (* STUB *)
+
+  Lemma T_uses_le : forall p e,
+    (T_uses p e <= c_vars * N.of_nat (E.bits e + length (uses p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_defs_le : forall p e,
+    (T_defs p e <= c_vars * N.of_nat (E.bits e + length (defs p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_exits_le : forall p n,
+    (T_exits p n <= c_vars * N.of_nat (N.bits n + length (exits p n) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F3_seen : forall p,
+    seen p = fold_left (fun s x => PTrieCode.set (X.encode x) x s) (occurrences p)
+      PTrieCode.empty.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F4_seen_nodes : forall p,
+    PTrie.nodes (seen p) <= length (occurrences p) * occurrence_width p.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_seen : forall p,
+    (T_seen p <= k_seen * universe_work p)%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T2_universe : forall p,
+    (T_universe p <= k_collect * (T_seen p +
+      N.of_nat (length (occurrences p) + 1) * N.of_nat (occurrence_width p + 1)))%N.
   Proof. Admitted. (* STUB *)
 End VarsT.

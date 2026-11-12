@@ -45,6 +45,8 @@ End SSA_DATA.
 Module Type SSA_DATA_TIME (P : TYPE) (N V : KEY_T) (K G : TYPE)
     (Import D : SSA_DATA P N V K G).
   Parameter T_tables : P.t -> N.
+  Parameter c_tables : N.
+  Parameter T_tables_le : forall p, (T_tables p <= c_tables)%N.
 End SSA_DATA_TIME.
 
 Module Type SSA_DATA_T (P : TYPE) (N V : KEY_T) (K G : TYPE) :=
@@ -125,6 +127,8 @@ Module Type SSA_POINTS_DATA_TIME (P : TYPE) (B : KEY_T) (BE : KEY_OPS)
     (N : KEY_T) (E : KEY_OPS) (V : KEY_T)
     (Import D : SSA_POINTS_DATA P B BE N E V).
   Parameter T_tables : P.t -> N.
+  Parameter c_tables : N.
+  Parameter T_tables_le : forall p, (T_tables p <= c_tables)%N.
 End SSA_POINTS_DATA_TIME.
 
 Module Type SSA_POINTS_DATA_T (P : TYPE) (B : KEY_T) (BE : KEY_OPS)
@@ -270,7 +274,9 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
     (forall x op xs y, In x (values p) -> def p x = Op op xs -> In y xs ->
       In y (values p) /\ forall entry route, In entry (C.entries p) ->
         presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
-        In (home p y) route).
+        In (home p y) route) /\
+    well_founded (fun y x => In x (values p) /\ home p y = home p x /\
+      exists op xs, def p x = Op op xs /\ In y xs).
 
   Lemma cfg_wf : forall p, wf p -> C.wf p.
   Proof. Admitted. (* STUB *)
@@ -307,12 +313,16 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
       In (home p y) route.
   Proof. Admitted. (* STUB *)
+  Lemma op_args_acyclic : forall p, wf p ->
+    well_founded (fun y x => In x (values p) /\ home p y = home p x /\
+      exists op xs, def p x = Op op xs /\ In y xs).
+  Proof. Admitted. (* STUB *)
 End Ssa.
 
-Module SsaT (P : TYPE) (N : KEY_T) (E : TYPE)
-    (EKey : KEY_T with Definition t := E.t) (C : CFG_T P N E) (V : KEY_T)
+Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
+    (C : CFG_T P N E) (V : KEY_T)
     (K G : TYPE) (D : SSA_DATA_T P N V K G) <: SSA_T P N E C V K G.
-  Include Ssa P N EKey C V K G D.
+  Include Ssa P N E C V K G D.
   TimeFun values.
   TimeFun def.
   TimeFun home.
@@ -321,6 +331,29 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : TYPE)
   TimeFun guards.
   TimeFun edge_uses.
   TimeFun operands.
+  Definition c_ssa : N := 1%N. (* STUB *)
+  Lemma T_values_le : forall p,
+    (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_def_le : forall p x,
+    (T_def p x <= c_ssa * N.of_nat (V.bits x + length (operands p x) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_home_le : forall p x, (T_home p x <= c_ssa * N.of_nat (V.bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_params_le : forall p n,
+    (T_params p n <= c_ssa * N.of_nat (N.bits n + length (params p n) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_args_le : forall p e,
+    (T_args p e <= c_ssa * N.of_nat (E.bits e + length (args p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_guards_le : forall p e,
+    (T_guards p e <= c_ssa * N.of_nat (E.bits e + length (guards p e) + 1))%N.
+  Proof. Admitted. (* STUB *)
 End SsaT.
 
 Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
@@ -423,13 +456,12 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
   Proof. Admitted. (* STUB *)
 End SsaPoints.
 
-Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : TYPE)
-    (BEKey : KEY_T with Definition t := BE.t) (BC : CFG_T P B BE)
-    (N : KEY_T) (E : TYPE) (EKey : KEY_T with Definition t := E.t)
+Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
+    (BC : CFG_T P B BE) (N : KEY_T) (E : KEY_T)
     (C : CFG_T P N E) (V : KEY_T) (U : VARS_T P N E C V)
-    (D : SSA_POINTS_DATA_T P B BEKey N EKey V)
+    (D : SSA_POINTS_DATA_T P B BE N E V)
     <: SSA_POINTS_T P B BE BC N E C V U.
-  Include SsaPoints P B BEKey BC N EKey C V U D.
+  Include SsaPoints P B BE BC N E C V U D.
   TimeFun points_in_block.
   TimeFun instruction_edges.
   TimeFun parameter_edge.
@@ -438,6 +470,42 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : TYPE)
   TimeFun block_params.
   TimeFun block_edge_args.
   TimeFun point_definition.
+  Definition c_points : N := 1%N. (* STUB *)
+  Lemma T_points_in_block_le : forall p b,
+    (T_points_in_block p b <=
+      c_points * N.of_nat (B.bits b + length (points_in_block p b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_instruction_edges_le : forall p b,
+    (T_instruction_edges p b <=
+      c_points * N.of_nat (B.bits b + length (instruction_edges p b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_parameter_edge_le : forall p b,
+    (T_parameter_edge p b <= c_points * N.of_nat (B.bits b + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_block_of_point_le : forall p n,
+    (T_block_of_point p n <= c_points * N.of_nat (N.bits n + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_block_edge_of_le : forall p e,
+    (T_block_edge_of p e <= c_points * N.of_nat (E.bits e + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_block_params_le : forall p b,
+    (T_block_params p b <=
+      c_points * N.of_nat (B.bits b + length (block_params p b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_block_edge_args_le : forall p be,
+    (T_block_edge_args p be <=
+      c_points * N.of_nat (BE.bits be + length (block_edge_args p be) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_point_definition_le : forall p x,
+    (T_point_definition p x <= c_points * N.of_nat (V.bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
 End SsaPointsT.
 
 Module Type SSA_POINTS_STRICT_WITNESS (P : TYPE) (B : KEY) (BE : TYPE)

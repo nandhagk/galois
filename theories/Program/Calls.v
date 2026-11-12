@@ -52,6 +52,8 @@ End CALLS_DATA.
 Module Type CALLS_DATA_TIME (P : TYPE) (F S : KEY_T)
     (Import D : CALLS_DATA P F S).
   Parameter T_tables : P.t -> N.
+  Parameter c_tables : N.
+  Parameter T_tables_le : forall p, (T_tables p <= c_tables)%N.
 End CALLS_DATA_TIME.
 
 Module Type CALLS_DATA_T (P : TYPE) (F S : KEY_T) :=
@@ -167,5 +169,40 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   Lemma F1_call_edge : forall p f site target,
     In site (sites_of p f) -> In target (resolve p site) ->
     In (CallEdge site target) (out_edges p f).
+  Proof. Admitted. (* STUB *)
+  Definition k_edges : N := 1%N. (* STUB *)
+  Definition k_adj : N := 1%N. (* STUB *)
+
+  Lemma T_functions_le : forall p,
+    (T_functions p <= c_calls * N.of_nat (length (functions p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_roots_le : forall p,
+    (T_roots p <= c_calls * N.of_nat (length (roots p) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_sites_of_le : forall p f,
+    (T_sites_of p f <= c_calls * N.of_nat (F.bits f + length (sites_of p f) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_caller_of_le : forall p site,
+    (T_caller_of p site <= c_calls * N.of_nat (S.bits site + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_resolve_le : forall p site,
+    (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_out_edges : forall p f,
+    (T_out_edges p f <= k_edges * (T_sites_of p f +
+      fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+      N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T2_adjacency : forall p,
+    (T_call_graph p <= k_adj * (T_functions p +
+      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f)%N (functions p)) +
+      N.of_nat (length (functions p) + 1) * N.of_nat (function_width p + 1)))%N.
   Proof. Admitted. (* STUB *)
 End CallsT.
