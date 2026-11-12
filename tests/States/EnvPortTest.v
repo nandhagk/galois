@@ -195,3 +195,31 @@ The old semantic_value_laws example used Point as a semantically full top even t
 Upper was not below it. VALUE_DOMAIN now requires top_greatest, so that same fixture
 cannot inhabit the current law interface. The two executable order observations above
 retain its original counterexample. *)
+
+Definition point_gamma (a : Points.t) (z : Z) : Prop :=
+  match a with FBot => False | FVal x => z = x | FTop => True end.
+
+(** The point meet retains values represented by both inputs. *)
+Example meet_sound : forall a b c,
+  point_gamma a c -> point_gamma b c -> point_gamma (Points.meet a b) c.
+Proof.
+  intros [|x|] [|y|] c; cbn [point_gamma Points.meet];
+    intros Ha Hb; try contradiction; try exact I; try assumption.
+  subst x y. now rewrite Z.eqb_refl.
+Qed.
+
+(** The point top is above every point payload. *)
+Example greatest : forall a, Points.leb a Points.top = true.
+Proof. intros [|x|]; reflexivity. Qed.
+
+(* The former integer point fixture established these bundled dictionary claims.
+   The current VALUE_DOMAIN additionally requires meet meaning, bottom-test soundness
+   and below-bottom behavior, and widening, narrowing and rank laws. Its STATE_DOMAIN
+   separates evaluation, assignment, havoc and guard laws. EnvLawTest instantiates those
+   current clients on integer intervals; the original guarded point fixture has not
+   supplied the additional laws.
+
+Theorem value_laws_fixture : value_laws values sem gam.
+Theorem state_laws_fixture :
+  state_laws SD sem (StateEnv.semantics bool_encoding) gam gs.
+*)
