@@ -1,11 +1,14 @@
 theories/Domains/KnownBits.v
 tests/Domains/KnownBitsTest.v
+tests/Domains/KnownBitsMulTest.v
+tests/Domains/KnownBitsPortTest.v
 theories/Domains/KnownBitsOps.v
 tests/Domains/KnownBitsOpsTest.v
 theories/Domains/KnownBitsBack.v
 tests/Domains/KnownBitsBackTest.v
 theories/Domains/Wrapped.v
 tests/Domains/WrappedTest.v
+tests/Domains/WrappedPortTest.v
 theories/Domains/WrappedOps.v
 tests/Domains/WrappedOpsTest.v
 theories/Domains/Reducers.v
