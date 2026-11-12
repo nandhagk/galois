@@ -68,25 +68,28 @@ Module Type OCTAGON_TIME (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
   Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
   Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
-  Parameter T_entry : dbm -> K.t -> K.t -> nat.
-  Parameter T_fw T_strengthen T_tighten T_close T_tclose : dbm -> nat.
-  Parameter T_add_cons : K.t -> K.t -> Z -> dbm -> nat.
-  Parameter T_incr_close : K.t -> K.t -> Z -> dbm -> nat.
-  Parameter c_octagon : nat.
+  Parameter T_entry : dbm -> K.t -> K.t -> N.
+  Parameter T_fw T_strengthen T_tighten T_close T_tclose : dbm -> N.
+  Parameter T_add_cons : K.t -> K.t -> Z -> dbm -> N.
+  Parameter T_incr_close : K.t -> K.t -> Z -> dbm -> N.
+  Parameter c_octagon : N.
   Definition binary_work (a z : t) : nat :=
     (ns a + ns z)^2 * (bs a + bs z + ells a + ells z + 1).
   (** Tight closure charges cubic updates and logarithmic entry growth. *)
-  Parameter T_tclose_le : forall m, T_tclose m <= c_octagon * (supp m)^3 *
-    (b m + ell m + Nat.log2 (supp m) + 1).
+  Parameter T_tclose_le : forall m, (T_tclose m <= c_octagon * N.of_nat (((supp m)^3)%nat) *
+    N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
   (** Incremental closure charges quadratic updates. *)
-  Parameter T_incr_close_le : forall i j d m, T_incr_close i j d m <=
-    c_octagon * (supp m)^2 * (b m + ell m + Z.size_nat d + 1).
+  Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
+    c_octagon * N.of_nat (((supp m)^2)%nat) * N.of_nat ((b m + ell m + Z.size_nat d + 1)%nat))%N.
   (** Join charges both input supports and entry sizes. *)
-  Parameter T_join_octagon_le : forall a z, T_join a z <= c_octagon * binary_work a z.
+  Parameter T_join_octagon_le : forall a z,
+    (T_join a z <= c_octagon * N.of_nat (binary_work a z))%N.
   (** Inclusion charges both input supports and entry sizes. *)
-  Parameter T_leb_octagon_le : forall a z, T_leb a z <= c_octagon * binary_work a z.
+  Parameter T_leb_octagon_le : forall a z,
+    (T_leb a z <= c_octagon * N.of_nat (binary_work a z))%N.
   (** Widening charges both input supports and entry sizes. *)
-  Parameter T_widen_octagon_le : forall p a z, T_widen p a z <= c_octagon * binary_work a z.
+  Parameter T_widen_octagon_le : forall p a z,
+    (T_widen p a z <= c_octagon * N.of_nat (binary_work a z))%N.
 End OCTAGON_TIME.
 
 Module Type OCTAGON_T (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)

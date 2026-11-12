@@ -4,7 +4,7 @@
     For example, selecting no rows retains an empty row list.
     Builds on: RestrictSig. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -95,49 +95,51 @@ Module RestrictedT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L) <: LOCAL_SYSTEM_T L.
   TimeFun sides.
   TimeFun row_code.
   TimeFun rows_of.
-  Definition row_work (_ : prog) (_ : nat) : nat := 0.
+  Definition row_work (_ : prog) (_ : nat) : N := 0%N.
   Definition kw (_ : prog) : nat := 0.
-  Definition c_sys : nat := 1. (* STUB *)
-  Definition c_loc : nat := 1. (* STUB *)
-  Lemma row_work_mono : forall p s s', s <= s' -> row_work p s <= row_work p s'.
+  Definition c_sys : N := 1. (* STUB *)
+  Definition c_loc : N := 1. (* STUB *)
+  Lemma row_work_mono : forall p s s', s <= s' -> (row_work p s <= row_work p s')%N.
   Proof. Admitted. (* STUB *)
 
   Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_key_code_le : forall x, T_key_code x <= c_sys * (key_bits x + 1).
+  Lemma T_key_code_le : forall x,
+    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_rows_le : forall p, wf p -> T_rows p <= c_sys * (length (rows p) + 1).
+  Lemma T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
-    T_target p r <= c_sys * (row_work p 0 + 1).
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
-    T_start p r <= c_sys * (row_work p 0 + 1).
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_resume_le : forall p f a, wf p ->
-    T_resume p f a <= c_sys * (row_work p (L.size a) + 1).
+    (T_resume p f a <= c_sys * (row_work p (L.size a) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
-    T_deps p r <= c_sys * (length (deps p r) + 1) * (kw p + 1).
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) * N.of_nat (kw p + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
-    T_sides p r <= c_sys * (length (sides p r) + 1) * (kw p + 1).
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) * N.of_nat (kw p + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_row_code_le : forall r,
-    T_row_code r <= c_loc * (Pos.size_nat (row_code r) + 1).
+    (T_row_code r <= c_loc * N.of_nat (Pos.size_nat (row_code r) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_rows_of_le : forall p x, wf p ->
-    T_rows_of p x <= c_loc * (length (rows_of p x) + key_bits x + 1).
+    (T_rows_of p x <= c_loc * N.of_nat (length (rows_of p x) + key_bits x + 1))%N.
   Proof. Admitted. (* STUB *)
 
 End RestrictedT.
@@ -172,13 +174,13 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
     Module Plain := Restrict L S.
     Include Plain.Impl.
     TimeFun mk.
-    Definition c_res : nat := 1. (* STUB *)
+    Definition c_res : N := 1. (* STUB *)
   Lemma T_mk_le : forall p fz rs,
-    T_mk p fz rs <= c_res *
-      (fold_right Nat.add 0
+    (T_mk p fz rs <= c_res *
+      N.of_nat ((fold_right Nat.add 0
         (map (fun r => Pos.size_nat (S.row_code r) + 1) rs) +
        fold_right Nat.add 0
-        (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1).
+        (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma restrict_writes : forall p fz rs s r, RS.post_solution (mk p fz rs) s ->

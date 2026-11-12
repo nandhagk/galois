@@ -65,16 +65,18 @@ Module Type POLY_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Include NUM_STATE_TIME X L N F D.
   (* spec: n ell *)
   Parameter n ell : list (lcons X.t) -> nat.
-  Parameter T_subst : X.t -> lin X.t -> lcons X.t -> nat.
-  Parameter T_fm_elim : X.t -> list (lcons X.t) -> nat.
-  Parameter T_entail_cert : list (lcons X.t) -> lcons X.t -> nat.
-  Parameter c_poly : nat.
+  Parameter T_subst : X.t -> lin X.t -> lcons X.t -> N.
+  Parameter T_fm_elim : X.t -> list (lcons X.t) -> N.
+  Parameter T_entail_cert : list (lcons X.t) -> lcons X.t -> N.
+  Parameter c_poly : N.
   (** One elimination charges all row pairs and their tracked multipliers. *)
-  Parameter T_fm_elim_le : forall x P, T_fm_elim x P <= c_poly * (length P)^2 *
-    (n P + length P) * (ell P + 1)^2.
+  Parameter T_fm_elim_le : forall x P,
+    (T_fm_elim x P <= c_poly * N.of_nat (((length P)^2)%nat) *
+      N.of_nat ((n P + length P)%nat) * N.of_nat (((ell P + 1)^2)%nat))%N.
   (** Certificate production follows the full Fourier-Motzkin recurrence. *)
-  Parameter T_entail_cert_le : forall P c, T_entail_cert P c <= c_poly *
-    fmcost (n P) (n P) (length P + 1) (ell P + C.row_bits c).
+  Parameter T_entail_cert_le : forall P c,
+    (T_entail_cert P c <= c_poly *
+      N.of_nat (fmcost (n P) (n P) (length P + 1) (ell P + C.row_bits c)))%N.
 End POLY_TIME.
 
 Module Type POLY_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

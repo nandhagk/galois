@@ -4,7 +4,7 @@
     For example, a row can read a predecessor and contribute to its target and an alarm key.
     Builds on: Fixpoint.Query and Lattice.LatticeSig. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query.
@@ -61,41 +61,42 @@ Module Type SYSTEM (L : LATTICE) :=
   SYSTEM_OPS L <+ SYSTEM_SPEC L <+ SYSTEM_LAWS L.
 
 Module Type SYSTEM_TIME (L : LATTICE_T) (Import S : SYSTEM L).
-  Parameter T_key_code : key -> nat.
-  Parameter T_rows : prog -> nat.
-  Parameter T_target : prog -> row -> nat.
-  Parameter T_start : prog -> row -> nat.
-  Parameter T_resume : prog -> frame -> L.t -> nat.
-  Parameter T_deps : prog -> row -> nat.
-  Parameter T_sides : prog -> row -> nat.
+  Parameter T_key_code : key -> N.
+  Parameter T_rows : prog -> N.
+  Parameter T_target : prog -> row -> N.
+  Parameter T_start : prog -> row -> N.
+  Parameter T_resume : prog -> frame -> L.t -> N.
+  Parameter T_deps : prog -> row -> N.
+  Parameter T_sides : prog -> row -> N.
   (* spec: row_work kw *)
-  Parameter row_work : prog -> nat -> nat.
+  Parameter row_work : prog -> nat -> N.
   Parameter kw : prog -> nat.
-  Parameter c_sys : nat.
+  Parameter c_sys : N.
   (** Step budgets grow with the size of abstract values. *)
-  Parameter row_work_mono : forall p s s', s <= s' -> row_work p s <= row_work p s'.
+  Parameter row_work_mono : forall p s s', s <= s' -> (row_work p s <= row_work p s')%N.
   (** The program key budget covers all declared reads and writes. *)
   Parameter key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
   (** Encoding costs are linear in the resulting code size. *)
-  Parameter T_key_code_le : forall x, T_key_code x <= c_sys * (key_bits x + 1).
+  Parameter T_key_code_le : forall x, (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
   (** Enumerating rows costs linear time in the output length. *)
-  Parameter T_rows_le : forall p, wf p -> T_rows p <= c_sys * (length (rows p) + 1).
+  Parameter T_rows_le : forall p, wf p ->
+    (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
   (** Target lookup fits the row budget. *)
   Parameter T_target_le : forall p r, wf p -> In r (rows p) ->
-    T_target p r <= c_sys * (row_work p 0 + 1).
+    (T_target p r <= c_sys * (row_work p 0 + 1))%N.
   (** Starting a row fits the row budget. *)
   Parameter T_start_le : forall p r, wf p -> In r (rows p) ->
-    T_start p r <= c_sys * (row_work p 0 + 1).
+    (T_start p r <= c_sys * (row_work p 0 + 1))%N.
   (** Resuming a frame accounts for the size of the supplied abstract value. *)
   Parameter T_resume_le : forall p f a, wf p ->
-    T_resume p f a <= c_sys * (row_work p (L.size a) + 1).
+    (T_resume p f a <= c_sys * (row_work p (L.size a) + 1))%N.
   (** Dependency enumeration pays for every key occurrence. *)
   Parameter T_deps_le : forall p r, wf p -> In r (rows p) ->
-    T_deps p r <= c_sys * (length (deps p r) + 1) * (kw p + 1).
+    (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) * N.of_nat (kw p + 1))%N.
   (** Side enumeration pays for every key occurrence. *)
   Parameter T_sides_le : forall p r, wf p -> In r (rows p) ->
-    T_sides p r <= c_sys * (length (sides p r) + 1) * (kw p + 1).
+    (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) * N.of_nat (kw p + 1))%N.
 End SYSTEM_TIME.
 
 Module Type SYSTEM_T (L : LATTICE_T) := SYSTEM L <+ SYSTEM_TIME L.
@@ -121,15 +122,15 @@ Module Type LOCAL_SYSTEM (L : LATTICE) :=
   SYSTEM L <+ LOCAL_OPS L <+ LOCAL_LAWS L.
 
 Module Type LOCAL_TIME (L : LATTICE_T) (Import S : LOCAL_SYSTEM L).
-  Parameter T_row_code : row -> nat.
-  Parameter T_rows_of : prog -> key -> nat.
-  Parameter c_loc : nat.
+  Parameter T_row_code : row -> N.
+  Parameter T_rows_of : prog -> key -> N.
+  Parameter c_loc : N.
   (** Row encoding costs are linear in the resulting code size. *)
   Parameter T_row_code_le : forall r,
-    T_row_code r <= c_loc * (Pos.size_nat (row_code r) + 1).
+    (T_row_code r <= c_loc * N.of_nat (Pos.size_nat (row_code r) + 1))%N.
   (** Indexed lookup pays for its key and every returned row. *)
   Parameter T_rows_of_le : forall p x, wf p ->
-    T_rows_of p x <= c_loc * (length (rows_of p x) + key_bits x + 1).
+    (T_rows_of p x <= c_loc * N.of_nat (length (rows_of p x) + key_bits x + 1))%N.
 End LOCAL_TIME.
 
 Module Type LOCAL_SYSTEM_T (L : LATTICE_T) :=

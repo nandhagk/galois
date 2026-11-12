@@ -4,7 +4,7 @@
     For example, a guard after an assignment observes the assigned value.
     Builds on: Domains.LangSig, Domains.ValueSig, States.StateSig and Framework.DenseSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -45,11 +45,11 @@ End ACTIONS_OPS.
 
 Module Type ACTIONS_TIME (P : TYPE) (E : TYPE) (X : KEY_T) (L : LANG_T)
     (Import A : ACTIONS_OPS P E X L).
-  Parameter T_actions : P.t -> E.t -> nat.
-  Parameter c_actions : nat.
+  Parameter T_actions : P.t -> E.t -> N.
+  Parameter c_actions : N.
   (** Reading actions pays for the returned ordered list. *)
   Parameter T_actions_le : forall p e,
-    T_actions p e <= c_actions * (length (actions p e) + 1).
+    (T_actions p e <= c_actions * N.of_nat (length (actions p e) + 1))%N.
 End ACTIONS_TIME.
 
 Module Type ACTIONS_T (P : TYPE) (E : TYPE) (X : KEY_T) (L : LANG_T) :=

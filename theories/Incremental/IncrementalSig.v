@@ -119,25 +119,25 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (S : LOCAL_SYSTEM_T L)
   Parameter frozen : S.prog -> list S.key -> state -> list (S.key * L.t).
   Parameter infl_deg : state -> S.key -> nat.
   Parameter width : S.prog -> state -> nat.
-  Parameter T_init : nat.
-  Parameter T_value : state -> S.key -> nat.
-  Parameter T_demand : S.prog -> policy L.wparam -> list S.key -> N -> state -> nat.
-  Parameter T_edit : S.prog -> S.prog -> list S.row -> state -> nat.
-  Parameter c_inc : nat.
+  Parameter T_init : N.
+  Parameter T_value : state -> S.key -> N.
+  Parameter T_demand : S.prog -> policy L.wparam -> list S.key -> N -> state -> N.
+  Parameter T_edit : S.prog -> S.prog -> list S.row -> state -> N.
+  Parameter c_inc : N.
   (** Demand pays for discovery and the restricted solver including fuel bits. *)
   Parameter T_demand_le : forall p pol roots fuel st, inv p st ->
-    T_demand p pol roots fuel st <=
-      c_inc * (fold_right Nat.add 0
+    (T_demand p pol roots fuel st <=
+      c_inc * N.of_nat ((fold_right Nat.add 0
         (map (fun r => length (S.deps p r) + 1) (region p roots st)) +
-        length roots + 1) * (width p st + 1) +
+        length roots + 1)%nat) * N.of_nat (width p st + 1) +
       Sol.c_solve * (Sol.work (R.mk p (frozen p roots st) (region p roots st)) pol +
-        N.size_nat fuel + 1).
+        N.of_nat (N.size_nat fuel) + 1))%N.
   (** Editing pays for invalidated influence edges and changed dependencies. *)
   Parameter T_edit_le : forall p p' ch st,
-    T_edit p p' ch st <= c_inc *
-      (fold_right Nat.add 0 (map (fun x => infl_deg st x + 1) (invalidated p' ch st)) +
-       fold_right Nat.add 0 (map (fun r => length (S.deps p' r) + 1) ch) + 1) *
-      (width p' st + 1).
+    (T_edit p p' ch st <= c_inc *
+      N.of_nat ((fold_right Nat.add 0 (map (fun x => infl_deg st x + 1) (invalidated p' ch st)) +
+       fold_right Nat.add 0 (map (fun r => length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p' st + 1))%N.
 End INCREMENTAL_TIME.
 
 Module Type INCREMENTAL_T (L : WLATTICE_T) (S : LOCAL_SYSTEM_T L)
@@ -155,9 +155,9 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (S : LOCAL_SYSTEM_T L)
   Parameter discover : S.prog -> list S.key -> state -> list S.key.
   Parameter invalidate : S.prog -> list S.row -> state -> list S.key.
   Parameter merge_region : state -> list S.key -> kmap S.key L.t -> state.
-  Parameter T_discover : S.prog -> list S.key -> state -> nat.
-  Parameter T_invalidate : S.prog -> list S.row -> state -> nat.
-  Parameter T_merge_region : state -> list S.key -> kmap S.key L.t -> nat.
+  Parameter T_discover : S.prog -> list S.key -> state -> N.
+  Parameter T_invalidate : S.prog -> list S.row -> state -> N.
+  Parameter T_merge_region : state -> list S.key -> kmap S.key L.t -> N.
   (** Discovery extends the old domain to a closed domain. *)
   Parameter discover_closed : forall p roots st, inv p st ->
     closed p (fun x => dom st x \/ In x (discover p roots st)).

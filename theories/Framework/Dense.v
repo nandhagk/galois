@@ -82,9 +82,13 @@ End Dense.
 
 Module DenseSound (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG_OPS P N E) (L : LATTICE) (T : FLOW_OPS P N E L)
-    (S : DENSE_SYSTEM P N E C L T) (M : SEMANTICS P)
-    (K : FLOW_LINK P N E C L T M) <: DENSE_SOUND P N E C L T S M K.
-  Lemma covers : forall p look, T.dir = Forward -> S.post_solution p look ->
+    (M : SEMANTICS P) (K : FLOW_LINK P N E C L T M).
+  Module S := Dense P N E C L T.
+  Include Dense P N E C L T.
+  Module Sound <: DENSE_SOUND P N E C L T S M K.
+  Lemma covers : forall p look, T.dir = Forward -> post_solution p look ->
     forall s, reachable (M.initial p) (M.step p) s -> K.gamma (look (K.point s)) s.
-  Proof. Admitted. (* CONVERT: forward_invariant_sound: landed reachability and link interfaces differ *)
+  Proof. Admitted. (* CONVERT: forward_invariant_sound: No product even after head-reduction. *)
+  End Sound.
+  Include Sound.
 End DenseSound.

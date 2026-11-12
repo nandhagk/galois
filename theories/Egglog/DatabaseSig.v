@@ -190,42 +190,44 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   (* spec: unit slots_of potential num_slots *)
   Parameter unit : t -> nat.
   Parameter slots_of : t -> positive -> nat.
-  Parameter potential : N -> t -> nat.
+  Parameter potential : N -> t -> N.
   Parameter num_slots : t -> nat.
-  Parameter T_init : list decl -> list (positive * list nat) -> nat.
-  Parameter T_find : positive -> t -> nat.
-  Parameter T_lookup : positive -> list (cell V.t) -> t -> nat.
-  Parameter T_make : positive -> list (cell V.t) -> t -> nat.
-  Parameter T_put : positive -> list (cell V.t) -> option (cell V.t) -> t -> nat.
-  Parameter T_union : positive -> positive -> t -> nat.
-  Parameter T_rebuild : t -> nat.
-  Parameter T_index : nat -> bool -> t -> nat.
-  Parameter T_advance T_changed T_ids : t -> nat.
-  Parameter c_db : nat.
+  Parameter T_init : list decl -> list (positive * list nat) -> N.
+  Parameter T_find : positive -> t -> N.
+  Parameter T_lookup : positive -> list (cell V.t) -> t -> N.
+  Parameter T_make : positive -> list (cell V.t) -> t -> N.
+  Parameter T_put : positive -> list (cell V.t) -> option (cell V.t) -> t -> N.
+  Parameter T_union : positive -> positive -> t -> N.
+  Parameter T_rebuild : t -> N.
+  Parameter T_index : nat -> bool -> t -> N.
+  Parameter T_advance T_changed T_ids : t -> N.
+  Parameter c_db : N.
   (** Initialization starts without amortized debt. *)
-  Parameter potential_init : forall B ds sl, potential B (init ds sl) = 0.
+  Parameter potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   (** Insertion pays for all slots and the logarithmic identifier budget. *)
   Parameter T_put_amort : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
-    T_put f k o db + potential B (put f k o db) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      potential B db.
+    (T_put f k o db + potential B (put f k o db) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      potential B db)%N.
   (** Constructor allocation has the same amortized budget as insertion. *)
   Parameter T_make_amort : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
-    T_make f k db + potential B (snd (make f k db)) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      potential B db.
+    (T_make f k db + potential B (snd (make f k db)) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      potential B db)%N.
   (** Union transfers the deferred work to potential. *)
   Parameter T_union_amort : forall B i j db, wf db ->
-    T_union i j db + potential B (union i j db) <= c_db * unit db + potential B db.
+    (T_union i j db + potential B (union i j db) <= c_db * N.of_nat (unit db) + potential B db)%N.
   (** Rebuilding spends potential on pending union work. *)
   Parameter T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    T_rebuild db + potential B (rebuild db) <=
-      c_db * (pending db + 1) * unit db + potential B db.
+    (T_rebuild db + potential B (rebuild db) <=
+      c_db * N.of_nat (pending db + 1) * N.of_nat (unit db) + potential B db)%N.
   (** Slot lookup pays for the slot code. *)
   Parameter T_index_le : forall s new db,
-    T_index s new db <= c_db * (Nat.log2 (S s) + 1).
+    (T_index s new db <= c_db * N.of_nat (Nat.log2 (S s) + 1))%N.
   (** Advancing visits every slot. *)
-  Parameter T_advance_le : forall db, T_advance db <= c_db * (num_slots db + 1).
+  Parameter T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
 End DATABASE_TIME.
 
 Module Type DATABASE_T (V : VALUE_T) (I : INDEX_T V) := DATABASE V I <+ DATABASE_TIME V I.
@@ -244,7 +246,7 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Parameter class_size : t -> positive -> N.
   Parameter live_use : t -> positive * use_entry -> bool.
   Parameter max_bits : t -> nat.
-  Parameter k_credit k_stale k_active k_queue k_stop k_driver : nat.
+  Parameter k_credit k_stale k_active k_queue k_stop k_driver : N.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
     In (x, e) (uses_entries db).
@@ -293,27 +295,28 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Definition stale_count (db : t) : nat :=
     length (filter (fun xe => negb (live_use db xe)) (uses_entries db)).
   (** Live occurrences carry relabeling credit and stale occurrences carry deletion credit. *)
-  Definition rebuild_potential (B : N) (db : t) : nat :=
-    k_credit * fold_right (fun xe n => use_credit B db xe + n) 0 (uses_entries db) +
-    k_stale * stale_count db.
+  Definition rebuild_potential (B : N) (db : t) : N :=
+    (k_credit * N.of_nat
+      ((fold_right (fun xe n => use_credit B db xe + n) 0 (uses_entries db))%nat) +
+     k_stale * N.of_nat (stale_count db))%N.
   Definition work_weight (db : t) (work : list use_entry) : nat :=
     fold_right (fun e n => entry_weight db e + n) 0 work.
   Parameter get_uses : positive -> t -> list use_entry.
-  Parameter T_get_uses : positive -> t -> nat.
+  Parameter T_get_uses : positive -> t -> N.
   Parameter pop_loser : t -> option (positive * t).
   Parameter repair_entry : use_entry -> t -> t.
   Parameter rstep : repair_state -> repair_state + t.
   Parameter rebuild_fuel : t -> nat.
   Parameter rebuild_measure : repair_state -> nat.
-  Parameter T_pop_loser : t -> nat.
-  Parameter T_repair_entry : use_entry -> t -> nat.
-  Parameter T_rstep : repair_state -> nat.
-  Parameter T_rebuild_fuel : t -> nat.
+  Parameter T_pop_loser : t -> N.
+  Parameter T_repair_entry : use_entry -> t -> N.
+  Parameter T_rstep : repair_state -> N.
+  Parameter T_rebuild_fuel : t -> N.
 
   (** Public well-formedness is the maintained invariant at an empty active batch. *)
   Parameter F1_inv_wf : forall db, wf db <-> inv db.
   (** The public potential is the weighted occurrence credit. *)
-  Parameter F2_potential : forall B db, potential B db = rebuild_potential B db.
+  Parameter F2_potential : forall B db, (potential B db = rebuild_potential B db)%N.
   (** The unit charges identifier traversal and cell encoding widths. *)
   Parameter F3_unit : forall db,
     unit db = (N.to_nat (N.log2 (ids db)) + 1) * (max_bits db + 1).
@@ -450,46 +453,48 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
     repr (union i j db) x <> x ->
     (2 * class_size db x <= class_size (union i j db) (repr (union i j db) x))%N.
   (** Initialization has no use-occurrence debt. *)
-  Parameter T2_init_credit : forall B ds sl, rebuild_potential B (init ds sl) = 0.
+  Parameter T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
   (** Insertion pays its executable work and new occurrence credit. *)
   Parameter T3_put_credit : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
-    T_put f k o db + rebuild_potential B (put f k o db) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      rebuild_potential B db.
+    (T_put f k o db + rebuild_potential B (put f k o db) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      rebuild_potential B db)%N.
   (** Allocation pays new occurrences through the insertion budget. *)
   Parameter T4_make_credit : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
-    T_make f k db + rebuild_potential B (snd (make f k db)) <=
-      c_db * (length k + 2) * (slots_of db f + 1) * (N.to_nat (N.log2 B) + 1) * unit db +
-      rebuild_potential B db.
+    (T_make f k db + rebuild_potential B (snd (make f k db)) <=
+      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
+      rebuild_potential B db)%N.
   (** Union pays its root link and queued repair credit. *)
   Parameter T5_union_credit : forall B i j db, wf db ->
-    T_union i j db + rebuild_potential B (union i j db) <=
-      c_db * unit db + rebuild_potential B db.
+    (T_union i j db + rebuild_potential B (union i j db) <=
+      c_db * N.of_nat (unit db) + rebuild_potential B db)%N.
   (** The design's local step estimate exposes its additive per-step allowance. *)
   Parameter T6_rstep_go : forall B s s', state_inv s -> (ids (fst s') <= B)%N ->
     rstep s = inl s' ->
-    T_rstep s + potential B (fst s') < potential B (fst s) + c_db * unit (fst s).
+    (T_rstep s + potential B (fst s') < potential B (fst s) + c_db * N.of_nat (unit (fst s)))%N.
   (** Stopping charges one unit of the final database. *)
   Parameter T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
-    T_rstep s <= k_stop * unit (fst s).
+    (T_rstep s <= k_stop * N.of_nat (unit (fst s)))%N.
   (* T6 accumulates an allowance per active entry.  It does not imply T8.
      T8 is the missing aggregate charging obligation, including fuel construction,
      lattice-value growth, queued buckets and the final public potential. *)
   (** The actual loop must fit the public budget after all use-entry charges are summed. *)
   Parameter T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    T_rebuild_fuel db +
+    (T_rebuild_fuel db +
       T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
       potential B (rebuild db) <=
-      c_db * (pending db + 1) * unit db + potential B db.
+      c_db * N.of_nat (pending db + 1) * N.of_nat (unit db) + potential B db)%N.
   (** The wrapper exposes fuel construction and driver overhead. *)
   Parameter T9_rebuild_driver : forall db,
-    T_rebuild db <= T_rebuild_fuel db +
-      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver.
+    (T_rebuild db <= T_rebuild_fuel db +
+      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
   (** Slot lookup charges its binary slot code. *)
   Parameter T10_index : forall s new db,
-    T_index s new db <= c_db * (Nat.log2 (S s) + 1).
+    (T_index s new db <= c_db * N.of_nat (Nat.log2 (S s) + 1))%N.
   (** Advancing clears each maintained slot once. *)
-  Parameter T11_advance : forall db, T_advance db <= c_db * (num_slots db + 1).
+  Parameter T11_advance : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
 End DATABASE_PLAN.
 
 Module Type DATABASE_ALL (V : VALUE_T) (I : INDEX_T V) :=

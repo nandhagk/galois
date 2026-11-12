@@ -4,7 +4,7 @@
     For example, a head with zero delay widens at its first strict update.
     Builds on: Base.Trie and Lattice.LatticeSig. *)
 
-From Stdlib Require Import PArith List Arith.
+From Stdlib Require Import PArith List Arith NArith.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -97,12 +97,13 @@ Module Type POLICY (L : WLATTICE) :=
   POLICY_OPS L <+ POLICY_SPEC L <+ POLICY_LAWS L.
 
 Module Type POLICY_TIME (L : WLATTICE_T) (Import P : POLICY L).
-  Parameter T_update : policy L.wparam -> positive -> nat -> L.t -> L.t -> nat.
-  Parameter c_pol : nat.
+  Parameter T_update : policy L.wparam -> positive -> nat -> L.t -> L.t -> N.
+  Parameter c_pol : N.
   (** Updating accounts for key lookup, both values and widening parameters. *)
   Parameter T_update_le : forall pol x cnt a b,
-    T_update pol x cnt a b <= c_pol *
-      (Pos.size_nat x + L.c_lat * (L.size a + L.size b + L.wsize (wp pol) + 1) + 1).
+    (T_update pol x cnt a b <= c_pol *
+      (N.of_nat (Pos.size_nat x) +
+        L.c_lat * N.of_nat (L.size a + L.size b + L.wsize (wp pol) + 1) + 1))%N.
 End POLICY_TIME.
 
 Module Type POLICY_T (L : WLATTICE_T) := POLICY L <+ POLICY_TIME L.

@@ -4,7 +4,7 @@
     For example, a division check can reject a possible zero divisor.
     Builds on: LangSig and ValueSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Argent Require Import Time Std.
 From Galois.Domains Require Import LangSig ValueSig.
 
@@ -44,10 +44,11 @@ Module Type CHECKS (L : LANG) (V : VALUE_DOMAIN L) :=
 Module Type CHECKS_TIME (L : LANG_T) (V : VALUE_DOMAIN_T L) (Import C : CHECKS L V).
   (* spec: work *)
   Parameter work : kd -> list V.t -> nat.
-  Parameter T_may_fail : kd -> list V.t -> nat.
-  Parameter c_checks : nat.
+  Parameter T_may_fail : kd -> list V.t -> N.
+  Parameter c_checks : N.
   (** Checks charge their domain-specific operand work. *)
-  Parameter T_may_fail_le : forall k xs, T_may_fail k xs <= c_checks * (work k xs + 1).
+  Parameter T_may_fail_le : forall k xs, (T_may_fail k xs <= c_checks * N.of_nat ((work k xs +
+    1)%nat))%N.
 End CHECKS_TIME.
 
 Module Type CHECKS_T (L : LANG_T) (V : VALUE_DOMAIN_T L) :=

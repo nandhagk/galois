@@ -4,7 +4,7 @@
     For example, a failed candidate check keeps the input store.
     Builds on: Fixpoint.CheckSig and Fixpoint.SystemSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -47,14 +47,14 @@ Module Type NARROW (L : WLATTICE) (S : SYSTEM L) (C : CHECK L S) :=
 
 Module Type NARROW_TIME (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S)
     (Import R : NARROW L S C).
-  Parameter T_narrow_candidate : S.prog -> kmap S.key L.t -> nat.
-  Parameter T_narrow_pass : S.prog -> kmap S.key L.t -> nat.
-  Parameter T_refine : S.prog -> nat -> kmap S.key L.t -> nat.
+  Parameter T_narrow_candidate : S.prog -> kmap S.key L.t -> N.
+  Parameter T_narrow_pass : S.prog -> kmap S.key L.t -> N.
+  Parameter T_refine : S.prog -> nat -> kmap S.key L.t -> N.
   (* spec: T_eval_all *)
-  Parameter T_eval_all : S.prog -> kmap S.key L.t -> nat.
+  Parameter T_eval_all : S.prog -> kmap S.key L.t -> N.
   (** Repeated narrowing pays one evaluation and check per pass. *)
   Parameter T_narrow_passes_le : forall p k m,
-    T_refine p k m <= k * (T_eval_all p m + C.T_check p m + 1).
+    (T_refine p k m <= N.of_nat k * (T_eval_all p m + C.T_check p m + 1))%N.
 End NARROW_TIME.
 
 Module Type NARROW_T (L : WLATTICE_T) (S : SYSTEM_T L) (C : CHECK_T L S) :=

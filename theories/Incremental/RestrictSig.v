@@ -4,7 +4,7 @@
     For example, a selected row can read a previously solved predecessor through a seed.
     Builds on: LatticeSig and SystemSig. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -43,15 +43,15 @@ Module Type RESTRICT (L : LATTICE) (S : LOCAL_SYSTEM L)
 Module Type RESTRICT_TIME (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
     (RS : LOCAL_SYSTEM_T L with Definition key := S.key)
     (Import X : RESTRICT L S RS).
-  Parameter T_mk : S.prog -> list (S.key * L.t) -> list S.row -> nat.
-  Parameter c_res : nat.
+  Parameter T_mk : S.prog -> list (S.key * L.t) -> list S.row -> N.
+  Parameter c_res : N.
   (** Restriction construction pays for selected row codes and frozen bindings. *)
   Parameter T_mk_le : forall p fz rs,
-    T_mk p fz rs <= c_res *
-      (fold_right Nat.add 0
+    (T_mk p fz rs <= c_res *
+      N.of_nat ((fold_right Nat.add 0
         (map (fun r => Pos.size_nat (S.row_code r) + 1) rs) +
        fold_right Nat.add 0
-        (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1).
+        (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1)%nat))%N.
 End RESTRICT_TIME.
 
 Module Type RESTRICT_T (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)

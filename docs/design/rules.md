@@ -7,6 +7,10 @@ signature takes precedence over other text, and `just frozen` must pass. Do not 
 definition fixed by a signature. Replace code bodies only where marked `STUB-CODE`.
 Extra lemmas, helper definitions and internal modules in owned files are allowed.
 
+The reviewed helpers `Base/Code.v`, `Base/Loop.v` and `Fixpoint/Query.v` are excluded from
+`just/frozen.sha256` so that their owners can prove existing lemmas. Keep their reviewed
+statements and definitions unchanged. Every file listed in the checksum stays unchanged.
+
 ## 2. Work and checks
 
 Follow `AGENTS.md` and the session prompt. Read landed proofs at commit `87192fe` using
@@ -33,7 +37,7 @@ tag counts as plain.
 | Tag | Form | Meaning | Written by |
 | --- | --- | --- | --- |
 | `CONVERT` | `Proof. Admitted. (* CONVERT: <old name>: <first error line> *)` | A landed proof did not survive conversion. The session ports the proof that the tag names. | Groundwork |
-| `STUB` | `Proof. Admitted. (* STUB *)`, and `Definition c_x : nat := 1. (* STUB *)` | A time or plan lemma written by recipe step 7, or a constant whose value the session chooses. | Groundwork |
+| `STUB` | `Proof. Admitted. (* STUB *)`, and `Definition c_x : N := 1. (* STUB *)` | A time or plan lemma written by recipe step 7, or a constant whose value the session chooses. | Groundwork |
 | `STUB-CODE` | `(* STUB-CODE *)` on the line before a definition | A placeholder body for a new algorithm. The session that owns the file writes the code. | Groundwork |
 | `SIG-QUESTION` | `Proof. Admitted. (* SIG-QUESTION: <reason> *)` | The statement is believed true, nothing landed proves it, and a reviewer should look at it. | Groundwork and sessions |
 | `PLAN-DEFECT` | `Proof. Admitted. (* PLAN-DEFECT: <reason> *)` | A plan lemma is false or useless (R11). | Sessions only |
@@ -219,10 +223,11 @@ following order.
    the same bound"), write each lemma. Where the design gives only prose, state it in Rocq. That
    is Sol's work, and the lane file says where.
 6. In `_TIME`, declare one `Parameter T_op` per operation, with the type that `TimeFun` derives.
-   That type adds a companion `nat`-valued function right after each function argument, so the
-   time function of `merge` has the type
-   `forall {A B C}, (option A -> option B -> option C) -> (option A -> option B -> nat) -> t A -> t B -> nat`.
-   Then declare the named constants, the contracts, and the published `bigO` corollaries.
+   A time function returns `N`, and that type adds a companion with values in `N` right after
+   each function argument, so the time function of `merge` has the type
+   `forall {A B C}, (option A -> option B -> option C) -> (option A -> option B -> N) -> t A -> t B -> N`.
+   Then declare the named constants, the contracts, and the published `bigO` corollaries, all by
+   the rule "Time values are binary" below.
 7. In `_PLAN`, declare the internals that the proof talks about as `Parameter`s with their `T_`,
    the plan constants `k_*`, the invariants and potentials as definitions, and the chain of `F`
    lemmas and then `T` lemmas that ends at the contracts. A plan is good when a session can prove
@@ -231,6 +236,21 @@ following order.
 8. Compile with `just vo`. The layers fit together when the three modules of the matching `Foo.v`
    ascribe to them (§9). Test that a wrong implementation is rejected only by applying a checking
    functor (V4), never with `Fail Module` (F6).
+
+**Time values are binary.** This rule holds from Argent revision `c88e642` on, and it governs
+every statement about time in a signature, an implementation, a helper and a test.
+
+- A time function, a companion of a function argument, a time constant (`c_*`, `k_*`), the
+  potential of a time bound and the bound itself have type `N`.
+- A size keeps its type. A length, a bit length, a node count, a rank, a height and the fuel of
+  `loop_fuel` stay in `nat`, and so does a definition that combines sizes, such as `unit_pq`.
+- A size enters a bound through `N.of_nat`. Wrap each largest subterm of type `nat` once, so
+  `T_get k m <= c_map * (K.bits k + 1)` becomes
+  `(T_get k m <= c_map * N.of_nat (K.bits k + 1))%N`. A size that is already an `N` enters as
+  it is.
+- Write each time statement in `N_scope`, with `%N` on the statement. The size function of a
+  `bigO` statement returns `N`.
+- A design document that states a time contract in `nat` is read by this rule.
 
 ## 9. Writing `Foo.v`
 
@@ -278,7 +298,9 @@ of `f` and places it beside `f`. Use it as follows.
   inside a functor, because Argent drops what such a command records when the functor ends.
 - Short loops use Argent's `loop_fuel` with `nat` fuel computed from data. Long loops use `loopN`
   of `Base/Loop.v` with `N` fuel (R10).
-- In groundwork, every constant is `Definition c_x : nat := 1. (* STUB *)` and every time and plan
+- Use `time_step` and `time_cbn` in a time proof. A plain `cbn` or `simpl` unfolds the arithmetic
+  of `N` on a numeral, and `lia` cannot read the result.
+- In groundwork, every constant is `Definition c_x : N := 1. (* STUB *)` and every time and plan
   lemma is `Proof. Admitted. (* STUB *)`. A lemma that `time_step` proves in one line may keep
   that proof.
 
@@ -333,7 +355,7 @@ Steps 1, 2 and 7 are textual (Luna). Steps 3 to 6 need a model that reads Rocq (
    - A record of closures (a visitor, a graph's `out_c`, a policy's `order_c`) becomes the functor parameter or the first-order data named in the `Sig`.
 5. **Place the code.** Move every `Inductive` and `Record` above the first functor. Put the definitions in `Module <Name>Code (…_OPS) <: <NAME>_OPS … .` Compile this module alone before going on.
 6. **Port the value lemmas** into `Module <Name> (…) <: <NAME> … .`, after `Include <Name>Code … .` and `Include <NAME>_SPEC … .` Rename to the `Sig`'s names. In each proof delete `autorewrite with galois_cost`, `cost_simpl`, `rewrite Cost.value_bind` and its relatives, and `change (Cost.value …)`; replace `rewrite f_equation` by `unfold f` or `cbn [f]`.
-7. **Time tower.** `Module <Name>T (…_T) <: <NAME>_ALL … .`, `Include <Name> … .`, one `TimeFun` per definition of the code module in dependency order, each constant as `Definition c_x : nat := 1. (* STUB *)`, and every `_TIME` and `_PLAN` lemma stated and closed with `Proof. Admitted.`
+7. **Time tower.** `Module <Name>T (…_T) <: <NAME>_ALL … .`, `Include <Name> … .`, one `TimeFun` per definition of the code module in dependency order, each constant as `Definition c_x : N := 1. (* STUB *)`, and every `_TIME` and `_PLAN` lemma stated and closed with `Proof. Admitted.`
 8. **Gate.** The file compiles. The ported test file gives, under `vm_compute`, the values the old tests gave. Paste the old expected values; do not recompute them.
 
 **When a proof breaks.**

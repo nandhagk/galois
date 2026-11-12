@@ -9,17 +9,6 @@ From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec SearchSig.
 Import List.ListNotations.
 
-Inductive search_task :=
-  | SearchRoot (v : positive)
-  | SearchRow (u : positive) (vs : list positive)
-  | SearchLeave (v : positive).
-
-Record search_state := SearchState {
-  search_tasks : list search_task;
-  search_colours : ptrie bool;
-  search_events : list event
-}.
-
 Definition search_step (g : digraph) (s : search_state) : search_state + (list event) :=
   match s with
   | SearchState [] _ es => inr (rev es)

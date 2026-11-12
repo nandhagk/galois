@@ -38,13 +38,14 @@ End WORD_LANGUAGE_LAWS.
 Module Type WORD_LANGUAGE := WORD_LANGUAGE_OPS <+ WORD_LANGUAGE_LAWS.
 
 Module Type WORD_LANGUAGE_TIME (Import L : WORD_LANGUAGE).
-  Parameter T_wrap T_signed : positive -> Z -> nat.
-  Parameter T_eval_op : op -> list (positive * Z) -> nat.
-  Parameter T_result_width : op -> list positive -> nat.
-  Parameter c_word : nat.
+  Parameter T_wrap T_signed : positive -> Z -> N.
+  Parameter T_eval_op : op -> list (positive * Z) -> N.
+  Parameter T_result_width : op -> list positive -> N.
+  Parameter c_word : N.
   (** Concrete word evaluation has the published operand-width bound. *)
-  Parameter T_eval_op_le : forall o cs, T_eval_op o cs <=
-    c_word * (fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) cs) + 1) ^ 2.
+  Parameter T_eval_op_le : forall o cs, (T_eval_op o cs <=
+    c_word * N.of_nat (((fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) cs) + 1) ^
+    2)%nat))%N.
 End WORD_LANGUAGE_TIME.
 
 Module Type WORD_LANGUAGE_T := WORD_LANGUAGE <+ WORD_LANGUAGE_TIME.
@@ -108,29 +109,29 @@ Module Type WORD_PAYLOAD (L : WORD_LANGUAGE) :=
 Module Type WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T) (Import W : WORD_PAYLOAD L).
   (* spec: psize *)
   Parameter psize : positive -> p -> nat.
-  Parameter T_pleb : positive -> p -> p -> nat.
-  Parameter T_pjoin T_pmeet : positive -> p -> p -> nat.
-  Parameter T_pis_bot T_ppoint : positive -> p -> nat.
-  Parameter T_pconst : positive -> Z -> nat.
-  Parameter c_payload : nat.
+  Parameter T_pleb : positive -> p -> p -> N.
+  Parameter T_pjoin T_pmeet : positive -> p -> p -> N.
+  Parameter T_pis_bot T_ppoint : positive -> p -> N.
+  Parameter T_pconst : positive -> Z -> N.
+  Parameter c_payload : N.
   (** Payload inclusion charges the two payload sizes. *)
   Parameter T_pleb_le : forall w a b,
-    T_pleb w a b <= c_payload * (psize w a + psize w b + 1).
+    (T_pleb w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
   (** Payload join charges the two payload sizes. *)
   Parameter T_pjoin_le : forall w a b,
-    T_pjoin w a b <= c_payload * (psize w a + psize w b + 1).
+    (T_pjoin w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
   (** Payload meet charges the two payload sizes. *)
   Parameter T_pmeet_le : forall w a b,
-    T_pmeet w a b <= c_payload * (psize w a + psize w b + 1).
+    (T_pmeet w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
   (** Bottom recognition charges the payload size. *)
   Parameter T_pis_bot_le : forall w a,
-    T_pis_bot w a <= c_payload * (psize w a + 1).
+    (T_pis_bot w a <= c_payload * N.of_nat ((psize w a + 1)%nat))%N.
   (** Point recognition charges the payload size. *)
   Parameter T_ppoint_le : forall w a,
-    T_ppoint w a <= c_payload * (psize w a + 1).
+    (T_ppoint w a <= c_payload * N.of_nat ((psize w a + 1)%nat))%N.
   (** Constant abstraction charges the width and literal bit size. *)
-  Parameter T_pconst_le : forall w z, T_pconst w z <=
-    c_payload * (Pos.to_nat w + Z.size_nat z + 1) ^ 2.
+  Parameter T_pconst_le : forall w z, (T_pconst w z <=
+    c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
 End WORD_PAYLOAD_TIME.
 
 Module Type WORD_PAYLOAD_T (L : WORD_LANGUAGE_T) := WORD_PAYLOAD L <+ WORD_PAYLOAD_TIME L.
@@ -159,15 +160,19 @@ Module Type WORD_TABLE (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) :=
 
 Module Type WORD_TABLE_TIME (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     (Import T : WORD_TABLE L W).
-  Parameter T_wfwd : L.op -> positive -> list (positive * W.p) -> nat.
-  Parameter T_wbwd : L.op -> positive -> W.p -> list (positive * W.p) -> nat.
-  Parameter c_word_table : nat.
+  Parameter T_wfwd : L.op -> positive -> list (positive * W.p) -> N.
+  Parameter T_wbwd : L.op -> positive -> W.p -> list (positive * W.p) -> N.
+  Parameter c_word_table : N.
   (** Forward table time has the published quadratic width bound. *)
-  Parameter T_wfwd_le : forall o rw xs, T_wfwd o rw xs <= c_word_table *
-    (Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2.
+  Parameter T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
   (** Backward table time has the published quadratic width bound. *)
-  Parameter T_wbwd_le : forall o rw q xs, T_wbwd o rw q xs <= c_word_table *
-    (Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2.
+  Parameter T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
 End WORD_TABLE_TIME.
 
 Module Type WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) :=
@@ -177,9 +182,9 @@ Module Type WORD_PLAN (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     (T : WORD_TABLE_T L W).
   Parameter untag : list (tagged W.p) -> option (list (positive * W.p)).
   Parameter retag : list positive -> list W.p -> list (tagged W.p).
-  Parameter T_untag : list (tagged W.p) -> nat.
-  Parameter T_retag : list positive -> list W.p -> nat.
-  Parameter k_untag k_retag : nat.
+  Parameter T_untag : list (tagged W.p) -> N.
+  Parameter T_retag : list positive -> list W.p -> N.
+  Parameter k_untag k_retag : N.
   Definition tagged_gamma (a : tagged W.p) (c : positive * Z) : Prop :=
     match a with
     | TBot => False
@@ -197,8 +202,8 @@ Module Type WORD_PLAN (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
     length ps = length ws -> Forall2 tagged_gamma (retag ws ps) cs.
   (** Untagging charges one constant step per tag. *)
-  Parameter T1_untag : forall xs, T_untag xs <= k_untag * (length xs + 1).
+  Parameter T1_untag : forall xs, (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
   (** Retagging charges one constant step per operand. *)
   Parameter T2_retag : forall ws ps,
-    T_retag ws ps <= k_retag * (length ws + length ps + 1).
+    (T_retag ws ps <= k_retag * N.of_nat ((length ws + length ps + 1)%nat))%N.
 End WORD_PLAN.

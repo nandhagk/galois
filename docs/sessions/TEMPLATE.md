@@ -10,6 +10,7 @@ Deliverable: a git format-patch series and one handoff file. Nothing else is rea
   mkdir -p ~/.cache/galois && tar --zstd -xf galois-dune-cache.tar.zst -C ~/.cache/galois
   git clone https://github.com/nandhagk/galois ~/galois && cd ~/galois
   git switch -c {ID} {BASE_SHA}
+  just admits > /tmp/admits-before.txt
   nohup just session-check > /tmp/check.log 2>&1 &   # cached: minutes. Poll: tail -n 5 /tmp/check.log
 Source galois-env.sh in every new shell. Run one build at a time, always in the background
 with a log. If a build's process disappears, run the same command again; dune resumes.
@@ -33,7 +34,12 @@ Single file: just vo theories/<Pkg>/<File>.v
   Prove them in order; each may use the earlier ones. You choose the values of k_* and c_*.
 - A Parameter of another component's Sig may be used before it is proved. Your tests may
   run only code that exists in this base.
-- Time proofs: unfold T_f, then time_step / time_pose (Argent), lia/nia.
+- Time functions, callback companions, `c_*`, `k_*` and time-bound potentials have type `N`.
+  Sizes keep their types. Wrap each largest `nat` size expression in `N.of_nat` once when it
+  enters a time bound. Use `%N` on time statements and an `N`-valued size for `bigO`.
+- Time proofs use `time_step`, `time_cbn` and `time_pose` (Argent), then `lia` or `nia`.
+  Plain `cbn` and `simpl` unfold binary arithmetic on numerals. Read the archival design's time
+  statements through `docs/design/rules.md` section 8.
 
 ## 4. Order of work
 Chain: {CHAIN}
@@ -53,6 +59,7 @@ Stop new proofs at 5h15; spend the rest on the final check and the deliverable.
 - Never weaken a statement, add a hypothesis to a Sig lemma, or edit outside your paths.
 
 ## 6. Checkpoint
+  mkdir -p ~/out/patches
   just session-check                     # fmt, build, tests, lint, frozen
   just admits > /tmp/admits.txt
   just owned {ID} {BASE_SHA}..HEAD       # must print nothing
@@ -63,6 +70,7 @@ Re-run these whenever you checkpoint; the last run is the deliverable.
 ## 7. Final deliverable
 ~/out/patches/*.patch (series from {BASE_SHA}) and ~/out/HANDOFF-{ID}.md, filled in:
 items closed, items open with tags, PLAN-DEFECT and SIG-QUESTION list,
-just admits before/after. Commit messages: "<File>: close <lemma names>".
+just admits before/after from /tmp/admits-before.txt and /tmp/admits.txt.
+Commit messages: "<File>: close <lemma names>".
 No build outputs, logs, reports or other files. If the full check fails at the end,
 revert the last failing commit and say so in the handoff.

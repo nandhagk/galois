@@ -36,12 +36,13 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   TimeFun run.
   Definition work (_ : jplan) (_ : list I.t) : nat := 0.
   Definition wmax (_ : jplan) (_ : list I.t) : nat := 0.
-  Definition c_join : nat := 1. (* STUB *)
+  Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
-    T_run p ixs <= c_join * (work p ixs + 1) * (wmax p ixs + 1).
+    (T_run p ixs <= c_join * N.of_nat (work p ixs + 1) * N.of_nat (wmax p ixs + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_run_ge : forall p ixs, wf_plan p ixs -> work p ixs <= T_run p ixs.
+  Lemma T_run_ge : forall p ixs, wf_plan p ixs ->
+    (N.of_nat (work p ixs) <= T_run p ixs)%N.
   Proof. Admitted. (* STUB *)
 
   Definition nodes_ok (p : jplan) (ixs : list I.t) (lvl : nat)
@@ -132,8 +133,8 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Proof. Admitted. (* STUB *)
 
   Lemma T_go_le : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
-    T_go (nvars p - l) p ixs ns pre acc <=
-      c_join * (work_at p ixs l ns + 1) * (wmax p ixs + 1).
+    (T_go (nvars p - l) p ixs ns pre acc <=
+      c_join * N.of_nat (work_at p ixs l ns + 1) * N.of_nat (wmax p ixs + 1))%N.
   Proof. Admitted. (* STUB *)
 
 End JoinT.

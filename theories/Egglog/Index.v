@@ -91,30 +91,33 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   TimeFun children.
   TimeFun degree.
   Definition width (_ : t) (_ : list (cell V.t)) : nat := 0.
-  Definition c_ix : nat := 1. (* STUB *)
+  Definition c_ix : N := 1. (* STUB *)
   Lemma T_insert_le : forall r ix,
-    T_insert r ix <= c_ix * (length r + 1) * (width ix r + 1).
+    (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_remove_le : forall r ix,
-    T_remove r ix <= c_ix * (length r + 1) * (width ix r + 1).
+    (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_child_le : forall ix n c, T_child ix n c <= c_ix * (width ix [c] + 1).
+  Lemma T_child_le : forall ix n c,
+    (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T_children_le : forall ix n,
-    T_children ix n <= c_ix * (N.to_nat (degree ix n) + 1) * (width ix [] + 1).
+    (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
+      N.of_nat (width ix [] + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_degree_le : forall ix n, T_degree ix n <= c_ix * (width ix [] + 1).
+  Lemma T_degree_le : forall ix n,
+    (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Definition inv (_ : t) : Prop := True.
   (* STUB-CODE *)
   Definition insert_step (ix : t) (_ : positive) (_ : cell V.t) : t := ix.
   TimeFun insert_step.
-  Definition c_map : nat := 1. (* STUB *)
+  Definition c_map : N := 1. (* STUB *)
   Lemma inv_wf : forall a ix,
     wf a ix <-> inv ix /\ (forall u, mem ix u -> length u = a).
   Proof. Admitted. (* STUB *)
@@ -126,7 +129,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Proof. Admitted. (* STUB *)
 
   Lemma T_insert_step_le : forall ix n c,
-    T_insert_step ix n c <= 4 * c_map * (width ix [c] + 1) + 4.
+    (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
   Proof. Admitted. (* STUB *)
 
 End IndexT.
