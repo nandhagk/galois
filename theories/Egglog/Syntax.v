@@ -15,6 +15,19 @@ Inductive cell (V : Type) : Type :=
 Arguments Id {V}.
 Arguments Val {V}.
 
+(** An argument position holds a class identifier or a value. *)
+Inductive sort : Type :=
+  | SId
+  | SVal.
+
+(** A cell has the sort of its constructor. *)
+Definition cell_sort {V} (c : cell V) : sort :=
+  match c with
+  | Id _ => SId
+  | Val _ => SVal
+  end.
+TimeFun cell_sort.
+
 Inductive term (V : Type) : Type :=
   | Var (x : positive)
   | Lit (v : V).
@@ -27,7 +40,16 @@ Inductive output : Type :=
   | OId
   | OLat (merge_op : positive).
 
-Record decl : Type := Decl { name : positive; arity : nat; out : output }.
+(** An identifier output is a class, a lattice output is a value, and a relation has none. *)
+Definition out_sort (o : output) : option sort :=
+  match o with
+  | ORel => None
+  | OId => Some SId
+  | OLat _ => Some SVal
+  end.
+TimeFun out_sort.
+
+Record decl : Type := Decl { name : positive; arg_sorts : list sort; out : output }.
 
 Inductive atom (V : Type) : Type :=
   | Fun (f : positive) (args : list (term V)) (res : option (term V))
@@ -71,6 +93,7 @@ Record compiled (V : Type) : Type := Compiled {
 }.
 
 TimeFun name.
+TimeFun arg_sorts.
 TimeFun out.
 TimeFun actions.
 TimeFun decls.

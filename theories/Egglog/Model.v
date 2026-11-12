@@ -194,8 +194,17 @@ Fixpoint lookup_kind (ds : list decl) (f : positive) : option output :=
   | d :: rest => if Pos.eqb (name d) f then Some (out d) else lookup_kind rest f
   end.
 
+Fixpoint lookup_sorts (ds : list decl) (f : positive) : option (list sort) :=
+  match ds with
+  | [] => None
+  | d :: rest => if Pos.eqb (name d) f then Some (arg_sorts d) else lookup_sorts rest f
+  end.
+
 Definition program_kind (p : program V) (f : positive) : option output :=
   lookup_kind (decls V p) f.
+
+Definition program_sorts (p : program V) (f : positive) : option (list sort) :=
+  lookup_sorts (decls V p) f.
 
 Definition valid (M : model) (p : program V) : Prop :=
   (forall r s, In r (rules V p) ->
@@ -251,4 +260,6 @@ TimeFun den.
 TimeFun update.
 TimeFun model_update.
 TimeFun lookup_kind.
+TimeFun lookup_sorts.
 TimeFun program_kind.
+TimeFun program_sorts.
