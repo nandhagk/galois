@@ -78,6 +78,9 @@ Module Type INCREMENTAL_LAWS (L : WLATTICE) (S : LOCAL_SYSTEM L)
   (** A demand already covered by the domain leaves the state unchanged. *)
   Parameter demand_noop : forall p pol roots fuel st,
     (forall x, In x roots -> dom st x) -> demand p pol roots fuel st = (Done, st).
+  (** Rejected demand leaves the previously checked state unchanged. *)
+  Parameter demand_rejected : forall p pol roots fuel st why st',
+    demand p pol roots fuel st = (DemandRejected why, st') -> st' = st.
   (** Covered edits keep a sound state after invalidation. *)
   Parameter edit_inv : forall p p' ch st, edit_covers p p' ch -> inv p st ->
     inv p' (edit p p' ch st).
@@ -172,6 +175,10 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (S : LOCAL_SYSTEM_T L)
     Checker.check_rows p (region p roots st) m = true ->
     (forall x, dom st x -> Checker.look m x = look st x) ->
     inv p (merge_region st (discover p roots st) m).
+  (** Completed demand has an accepted certificate for the discovered rows. *)
+  Parameter demand_certificate : forall p pol roots fuel st st', inv p st ->
+    demand p pol roots fuel st = (Done, st') ->
+    exists m, Checker.check_rows p (region p roots st) m = true.
   (** Removing the forward influence closure keeps a closed domain. *)
   Parameter invalidate_closed : forall p p' ch st, edit_covers p p' ch -> inv p st ->
     closed p' (fun x => dom st x /\ ~ In x (invalidate p' ch st)).
