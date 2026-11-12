@@ -10,6 +10,10 @@ From Galois.Base Require Import KeySig Trie Code.
 From Galois.Program Require Import CfgSig VarsSig.
 Import Code.List.
 
+Module Nat.
+  TimeFun Nat.max.
+End Nat.
+
 Record var_tables (X : Type) := VarTables {
   edge_uses : ptrie (list X);
   edge_defs : ptrie (list X);
@@ -82,6 +86,8 @@ Module VarsT (P : TYPE) (N : KEY_T) (E : TYPE)
   TimeFun uses.
   TimeFun defs.
   TimeFun exits.
+  TimeFun occurrences.
+  TimeFun occurrence_width.
   TimeFun universe.
 
   Definition universe_work p :=

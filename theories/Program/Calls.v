@@ -10,6 +10,10 @@ From Galois.Base Require Import KeySig Trie.
 From Galois.Graph Require Import Data Spec.
 From Galois.Program Require Import SemanticsSig CallsSig.
 
+Module Nat.
+  TimeFun Nat.max.
+End Nat.
+
 Definition call_edge_target {F S} (edge : call_edge F S) : F :=
   match edge with
   | CallEdge _ target => target
@@ -134,6 +138,11 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
   TimeFun caller_of.
   TimeFun resolve.
   TimeFun call_graph.
+  TimeFun out_edges.
+  TimeFun sites.
+  TimeFun targets.
+  TimeFun graph_roots.
+  TimeFun function_width.
 
   Definition call_graph_work p :=
     (T_functions p +

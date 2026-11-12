@@ -6,9 +6,10 @@
 
 From Stdlib Require Import List Bool NArith PArith.
 From Argent Require Import Time Tactics Std.
-From Galois.Base Require Import KeySig Trie Loop.
+From Galois.Base Require Import KeySig Trie Loop Code.
 From Galois.Graph Require Import Data SearchSig Search Dom.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
+Import Code.List.
 
 Record ssa_tables (N V K G : Type) := SsaTables {
   ssa_values : list V;
@@ -168,12 +169,18 @@ Arguments strict_tree {E}.
 Arguments strict_index {E}.
 Arguments strict_fuel {E}.
 
+TimeFun strict_tree.
+TimeFun strict_index.
+TimeFun strict_fuel.
+
 (** Predecessor rows retain edge occurrences and their encoded sources in input order. *)
 Definition strict_predecessors {E} (src dst : E -> positive) (edges : list E) :=
   fold_right (fun e rows =>
     let d := dst e in
     let row := match trie_get d rows with Some es => es | None => nil end in
     PTrieCode.set d ((e, src e) :: row) rows) Empty edges.
+
+TimeFun strict_predecessors.
 
 Definition strict_candidates {E} (tree : domtree) (live : ptrie bool)
     (rows : ptrie (list (E * positive))) (v : positive) :=
@@ -184,6 +191,8 @@ Definition strict_candidates {E} (tree : domtree) (live : ptrie bool)
     end)
     (match trie_get v rows with Some es => es | None => nil end).
 
+TimeFun strict_candidates.
+
 Definition strict_choice {E} (tree : domtree) (live : ptrie bool)
     (roots : list positive) (rows : ptrie (list (E * positive))) (v : positive) :=
   if existsb (Pos.eqb v) roots then None else
@@ -191,6 +200,8 @@ Definition strict_choice {E} (tree : domtree) (live : ptrie bool)
     | (e, _) :: nil => Some e
     | _ => None
     end.
+
+TimeFun strict_choice.
 
 (** Preparation records reachable sources and one eligible incoming edge per vertex. *)
 Definition make_strict_context {E} (src dst : E -> positive) (edges : list E)
@@ -202,6 +213,8 @@ Definition make_strict_context {E} (src dst : E -> positive) (edges : list E)
     (nodes g) Empty in
   StrictContext tree choices (N.of_nat (Datatypes.S (length (PTrieCode.elements (idom tree))))).
 
+TimeFun make_strict_context.
+
 Definition strict_walk_step {E} (ctx : strict_context E) (state : option positive * list E)
     : (option positive * list E) + list E :=
   match state with
@@ -211,6 +224,8 @@ Definition strict_walk_step {E} (ctx : strict_context E) (state : option positiv
     let selected := trie_get v (strict_index ctx) in
     inl (parent, match selected with Some (Some e) => e :: es | _ => es end)
   end.
+
+TimeFun strict_walk_step.
 
 (** The parent walk reports selected edges from the outermost ancestor to the target. *)
 Definition dominating_edges_in {E} (ctx : strict_context E) (vertex : positive) : list E :=
@@ -223,9 +238,13 @@ Definition dominating_edges_in {E} (ctx : strict_context E) (vertex : positive) 
     end
   end.
 
+TimeFun dominating_edges_in.
+
 Definition dominating_edges_projected {E} (ctx : strict_context (E * nat))
     (vertex : positive) : list E :=
   map fst (dominating_edges_in ctx vertex).
+
+TimeFun dominating_edges_projected.
 
 Module Ssa (P : TYPE) (N : KEY) (E : KEY)
     (C : CFG P N E) (V : KEY) (K G : TYPE) (D : SSA_DATA P N V K G)
@@ -300,6 +319,8 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : TYPE)
   TimeFun params.
   TimeFun args.
   TimeFun guards.
+  TimeFun edge_uses.
+  TimeFun operands.
 End SsaT.
 
 Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
