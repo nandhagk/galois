@@ -56,6 +56,16 @@ Module ZLangT <: Z_LANGUAGE_T.
     end.
   TimeFun eval.
   TimeFun literal.
+  TimeFun view.
+  TimeFun gview.
+
+  Definition c_view : N := 1%N. (* STUB *)
+  (** Viewing an integer operator takes constant time. *)
+  Lemma T_view_le : forall o, (T_view o <= c_view)%N.
+  Proof. Admitted. (* STUB *)
+  (** Viewing an integer guard takes constant time. *)
+  Lemma T_gview_le : forall g, (T_gview g <= c_view)%N.
+  Proof. Admitted. (* STUB *)
 
   Definition c_lang : N := 1%N. (* STUB *)
   (** STUB: constant-factor cost obligation for viewed integer evaluation. *)

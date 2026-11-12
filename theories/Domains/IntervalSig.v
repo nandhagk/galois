@@ -89,7 +89,17 @@ Module Type Z_LANGUAGE_LAWS (Import L : Z_LANGUAGE_BASE).
 End Z_LANGUAGE_LAWS.
 
 Module Type Z_LANGUAGE := Z_LANGUAGE_BASE <+ Z_LANGUAGE_LAWS.
-Module Type Z_LANGUAGE_T := Z_LANGUAGE <+ LANG_TIME.
+Module Type Z_LANGUAGE_TIME (Import L : Z_LANGUAGE).
+  Parameter T_view : op -> N.
+  Parameter T_gview : guard -> N.
+  Parameter c_view : N.
+  (** Viewing an operator takes constant time. *)
+  Parameter T_view_le : forall o, (T_view o <= c_view)%N.
+  (** Viewing a guard takes constant time. *)
+  Parameter T_gview_le : forall g, (T_gview g <= c_view)%N.
+End Z_LANGUAGE_TIME.
+
+Module Type Z_LANGUAGE_T := Z_LANGUAGE <+ LANG_TIME <+ Z_LANGUAGE_TIME.
 
 Module Type INTERVAL_SCALAR_SPEC (T : THRESHOLDS_OPS).
   Definition bound_leb (a b : bnd) : bool :=
