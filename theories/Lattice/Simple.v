@@ -4,7 +4,7 @@
     For example, joining false and true gives true.
     Builds on: LatticeSig and Argent time interfaces. *)
 
-From Stdlib Require Import Bool Arith Lia.
+From Stdlib Require Import NArith Bool Arith Lia.
 From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -92,14 +92,14 @@ Module BoolLatT <: BLATTICE_T.
   TimeFun join.
   TimeFun is_bot.
   TimeFun meet.
-  Definition c_lat : nat := 1. (* STUB *)
-  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Definition c_lat : N := 1. (* STUB *)
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End BoolLatT.
 
@@ -110,13 +110,13 @@ Module UnitLatT <: BLATTICE_T.
   TimeFun join.
   TimeFun is_bot.
   TimeFun meet.
-  Definition c_lat : nat := 1. (* STUB *)
-  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Definition c_lat : N := 1. (* STUB *)
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
 End UnitLatT.
