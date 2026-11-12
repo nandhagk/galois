@@ -68,26 +68,33 @@ Module Type CONGRUENCE_TIME (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE L).
     (T_congr_neg w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
   (** Addition has the published quadratic arithmetic bound. *)
   Parameter T_congr_add_le : forall w a b,
-    (T_congr_add w a b <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_congr_add w a b <= c_congruence *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Subtraction has the published quadratic arithmetic bound. *)
   Parameter T_congr_sub_le : forall w a b,
-    (T_congr_sub w a b <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_congr_sub w a b <= c_congruence *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Multiplication has the published quadratic arithmetic bound. *)
   Parameter T_congr_mul_le : forall w a b,
-    (T_congr_mul w a b <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_congr_mul w a b <= c_congruence *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Shift transfer has the published quadratic arithmetic bound. *)
   Parameter T_congr_shl_le : forall w a b,
-    (T_congr_shl w a b <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_congr_shl w a b <= c_congruence *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Remainder transfer has the published quadratic arithmetic bound. *)
   Parameter T_congr_urem_le : forall w a b,
-    (T_congr_urem w a b <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_congr_urem w a b <= c_congruence *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Projection charges both source and target widths. *)
   Parameter T_congr_project_le : forall source target a,
     (T_congr_project source target a <=
-    c_congruence * N.of_nat (((Pos.to_nat source + Pos.to_nat target + congr_bits a + 1) ^ 2)%nat))%N.
+    c_congruence * N.of_nat
+      (((Pos.to_nat source + Pos.to_nat target + congr_bits a + 1) ^ 2)%nat))%N.
   (** Congruence multiplication has the published quadratic width bound. *)
   Parameter mul_bigO : (bigO (fun _ => True)
-    (fun x : positive * (congr * congr) => N.of_nat (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
+    (fun x : positive * (congr * congr) => N.of_nat
+      (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
 End CONGRUENCE_TIME.
 
@@ -139,10 +146,12 @@ Module Type CONGRUENCE_PLAN (L : WORD_LANGUAGE_T) (Import D : CONGRUENCE_T L).
   Parameter F14_pwrank : forall q w a, pwrank q w a = congr_wrank w a.
   (** Gcd-based joining has the published quadratic arithmetic bound. *)
   Parameter T1_join : forall w a b,
-    (T_pjoin w a b <= k_congr_gcd * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_pjoin w a b <= k_congr_gcd *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
   (** Chinese remainder meet has the published quadratic arithmetic bound. *)
   Parameter T2_meet : forall w a b,
-    (T_pmeet w a b <= k_congr_crt * N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
+    (T_pmeet w a b <= k_congr_crt *
+      N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
 End CONGRUENCE_PLAN.
 
 Module Type CONGRUENCE_ALL (L : WORD_LANGUAGE_T) :=

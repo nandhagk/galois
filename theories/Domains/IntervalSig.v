@@ -14,13 +14,21 @@ Inductive itv : Type :=
   | I (lo hi : bnd).
 
 Inductive zview :=
-  | ZAdd | ZSub | ZMul | ZDiv | ZRem | ZAnd | ZOr | ZShl
+  | ZAdd
+  | ZSub
+  | ZMul
+  | ZDiv
+  | ZRem
+  | ZAnd
+  | ZOr
+  | ZShl
   | ZCmp (c : comparison)
   | ZConst (z : Z)
   | ZOther.
 
 Inductive zguardview :=
   | ZGuardCmp (c : comparison)
+  | ZGuardUlt
   | ZGuardOther.
 
 (** Viewed integer operators use their mathematical primitive on valid operands. *)
@@ -47,6 +55,7 @@ Definition zview_eval (k : zview) (xs : list Z) : option Z :=
 Definition zguard_holds (k : zguardview) (xs : list Z) : Prop :=
   match k, xs with
   | ZGuardCmp c, x :: y :: nil => Z.compare x y = c
+  | ZGuardUlt, x :: y :: nil => (0 <= x /\ 0 <= y /\ x < y)%Z
   | _, _ => False
   end.
 
@@ -188,8 +197,8 @@ Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     c_interval * N.of_nat (((Pos.to_nat w + size a + 1) ^ 2)%nat))%N.
   (** Threshold widening charges a search path and endpoint bit sizes. *)
   Parameter T_widen_thresholds_le : forall ts a b, (T_widen ts a b <=
-    c_interval * N.of_nat ((T.depth ts + 1)%nat) * N.of_nat ((T.tree_bits ts + size a + size b +
-    1)%nat))%N.
+    c_interval * N.of_nat
+      ((size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1)%nat))%N.
   (** Multiplication has the published quadratic endpoint bound. *)
   Parameter mul_bigO : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
@@ -218,6 +227,26 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   Parameter F_wsize : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
   (** Shift transfer computes finite endpoints below the cutoff and a sound infinity above it. *)
   Parameter F_shl_cutoff : forall a b, shl a b = shift_cutoff a b.
+  (** Viewed forward transfer dispatches to the proved interval primitives. *)
+  Parameter F_forward_view : forall o xs, forward o xs =
+    match L.view o, xs with
+    | ZConst z, nil => abst z
+    | ZAdd, a :: b :: nil => add a b
+    | ZSub, a :: b :: nil => sub a b
+    | ZMul, a :: b :: nil => mul a b
+    | ZDiv, a :: b :: nil => udiv a b
+    | ZRem, a :: b :: nil => urem a b
+    | ZAnd, a :: b :: nil => bitand a b
+    | ZOr, a :: b :: nil => bitor a b
+    | ZShl, a :: b :: nil => shl a b
+    | ZCmp c, a :: b :: nil => cmp c a b
+    | _, _ => top
+    end.
+  (** Viewed strict guards dispatch to unsigned comparison refinement. *)
+  Parameter F_guard_lt : forall g a b, L.gview g = ZGuardUlt ->
+    guard g (a :: b :: nil) =
+      let result := ult_back (I (Fin 1) (Fin 1)) a b in
+      fst result :: snd result :: nil.
   (** Cutoff shifting keeps the published quadratic endpoint bound. *)
   Parameter T3_shl : forall a b,
     (T_shl a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
@@ -282,8 +311,8 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   Parameter T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   (** Threshold searches bound widening before dispatch overhead. *)
   Parameter T2_widen : forall ts a b,
-    (T_widen ts a b <= k_interval_widen * N.of_nat (T.depth ts + 1) *
-      N.of_nat (T.tree_bits ts + size a + size b + 1))%N.
+    (T_widen ts a b <= k_interval_widen * N.of_nat
+      (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
 End INTERVAL_PLAN.
 
 Module Type INTERVAL_ALL (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=

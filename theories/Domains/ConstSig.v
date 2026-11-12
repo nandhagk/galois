@@ -126,19 +126,22 @@ Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_
   (** An annihilator shortcut identifies every defined concrete result. *)
   Parameter F1_shortcut_sound : forall o a b z cs rw v,
     shortcut o a b = Some z ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\ W.pgamma (fst wp) (snd wp) (snd c))
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c))
       (a :: b :: nil) cs -> L.eval_op o cs = Some (rw, v) -> v = z.
   (** Unary inverses retain every operand consistent with the result. *)
   Parameter F2_backward_one_sound : forall o rw q xs ys cs z,
     backward_one o rw q xs = Some ys ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\ W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
   (** Binary inverses retain every operand consistent with the result. *)
   Parameter F3_backward_two_sound : forall o rw q xs ys cs z,
     backward_two o rw q xs = Some ys ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\ W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.

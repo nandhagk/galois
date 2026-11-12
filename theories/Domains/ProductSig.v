@@ -51,17 +51,27 @@ Module Type PRODUCT (L : LANG) (A B : VALUE_DOMAIN L) :=
 Module Type PRODUCT_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (Import P : PRODUCT L A B).
   Include VALUE_DOMAIN_TIME L P.
+  Parameter T_normalize : t -> N.
   Parameter c_product : N.
+  (** Bottom normalization charges both component sizes. *)
+  Parameter T_normalize_le : forall a b,
+    (T_normalize (a, b) <= c_product * N.of_nat (A.size a + B.size b + 1))%N.
   (** Product forward transfer charges both component transfers. *)
   Parameter T_forward_components : forall o xs, (T_forward o xs <= c_product *
-    (N.of_nat ((length xs)%nat) + A.T_forward o (map fst xs) + B.T_forward o (map snd xs) + 1))%N.
+    (N.of_nat ((length xs)%nat) + A.T_forward o (map fst xs) + B.T_forward o (map snd xs) +
+      T_normalize (A.forward o (map fst xs), B.forward o (map snd xs)) + 1))%N.
   (** Product backward transfer charges both component transfers and list assembly. *)
   Parameter T_backward_components : forall o r xs, (T_backward o r xs <= c_product *
     (N.of_nat ((length xs)%nat) + A.T_backward o (fst r) (map fst xs) +
-     B.T_backward o (snd r) (map snd xs) + 1))%N.
+     B.T_backward o (snd r) (map snd xs) +
+     fold_right N.add 0%N (map T_normalize
+       (combine (A.backward o (fst r) (map fst xs))
+         (B.backward o (snd r) (map snd xs)))) + 1))%N.
   (** Product guards charge both component guards and list assembly. *)
   Parameter T_guard_components : forall g xs, (T_guard g xs <= c_product *
-    (N.of_nat ((length xs)%nat) + A.T_guard g (map fst xs) + B.T_guard g (map snd xs) + 1))%N.
+    (N.of_nat ((length xs)%nat) + A.T_guard g (map fst xs) + B.T_guard g (map snd xs) +
+      fold_right N.add 0%N (map T_normalize
+        (combine (A.guard g (map fst xs)) (B.guard g (map snd xs)))) + 1))%N.
   (** Product forward transfer has the published work bound. *)
   Parameter forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
@@ -127,8 +137,13 @@ Module Type REDUCED_T (L : LANG_T) (A B : VALUE_DOMAIN_T L)
 Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER_T L A B) (K : ROUNDS) (Import D : REDUCED_T L A B R K).
   Parameter k_red : N.
-  (** Reduction is precisely the configured fixed iteration. *)
-  Parameter F1_red_eq : forall x, red x = Nat.iter K.rounds R.reduce x.
+  (** Reduction normalizes the configured fixed iteration's recognized bottoms. *)
+  Parameter F1_red_eq : forall x, red x =
+    let result := Nat.iter K.rounds R.reduce x in
+    if orb (A.is_bot (fst result)) (B.is_bot (snd result))
+    then (A.bot, B.bot) else result.
+  (** Reduced bottom testing recognizes two component bottoms. *)
+  Parameter F_is_bot : forall a b, is_bot (a, b) = andb (A.is_bot a) (B.is_bot b).
   (** Product concretization is intersection. *)
   Parameter F2_gamma : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   (** Iterated reduction retains every represented concrete value. *)
@@ -142,7 +157,9 @@ Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** Iteration time charges reduction at every intermediate value. *)
   Parameter T1_red_steps : forall x, (T_red x <= k_red *
     (fold_right N.add 0
-      (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1) (seq 0 K.rounds)) + 1))%N.
+      (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1) (seq 0 K.rounds)) +
+      A.T_is_bot (fst (Nat.iter K.rounds R.reduce x)) +
+      B.T_is_bot (snd (Nat.iter K.rounds R.reduce x)) + 1))%N.
 End REDUCED_PLAN.
 
 Module Type REDUCED_ALL (L : LANG_T) (A B : VALUE_DOMAIN_T L)
