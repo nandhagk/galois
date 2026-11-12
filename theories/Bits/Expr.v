@@ -5,13 +5,18 @@
     Builds on: Word and Op. *)
 
 From Stdlib Require Import ZArith List.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Bits Require Import Word Op.
 Import List.ListNotations.
 
 Open Scope Z_scope.
 
 Scheme All for list.
+
+Module ListDef.
+  TimeFun Corelib.Lists.ListDef.nth.
+  TimeFun Corelib.Lists.ListDef.seq.
+End ListDef.
 
 Module Expr.
 
@@ -68,6 +73,11 @@ Definition env_of (d : word) (xs : list word) : nat -> word := fun i => nth i xs
 
 (** Consecutive variables preserve the order of an operator's arguments. *)
 Definition vars {O} (n : nat) : list (t O) := map Var (seq 0 n).
+
+TimeFun eval.
+TimeFun eval_args.
+TimeFun env_of.
+TimeFun vars.
 
 End Expr.
 Import Expr.

@@ -5,7 +5,7 @@
     Builds on: LangSig and bit-vector operations. *)
 
 From Stdlib Require Import List ZArith.
-From Argent Require Import Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig WordSig.
 Import List.ListNotations.
@@ -28,6 +28,17 @@ Definition op_bits (o : bop) : nat :=
 Definition work (o : bop) (vs : list word) : nat :=
   ((op_bits o + fold_right Nat.add 0
     (map (fun v => Pos.to_nat (fst v) + Z.size_nat (snd v)) vs) + 1) ^ 2)%nat.
+
+Module Z.
+  TimeFun Z.size_nat.
+End Z.
+
+Module Nat.
+  TimeFun Nat.pow.
+End Nat.
+
+TimeFun op_bits.
+TimeFun work.
 
 Module BitsLangCode <: LANG_OPS.
   Definition op := bop.
@@ -76,3 +87,31 @@ Module WordLanguage <: WORD_LANGUAGE.
     - exact (Op.eval_op_width o cs (w, z) Hresult).
   Qed.
 End WordLanguage.
+
+Module BitsLangT <: LANG_T.
+  Include BitsLang.
+  Definition work := work.
+  TimeFun eval.
+  TimeFun literal.
+  Definition c_lang : N := 1%N. (* STUB *)
+  Lemma T_eval_le : forall o vs,
+    (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_literal_le : forall o, (T_literal o <= c_lang)%N.
+  Proof. Admitted. (* STUB *)
+End BitsLangT.
+
+Module WordLanguageT <: WORD_LANGUAGE_T.
+  Include WordLanguage.
+  TimeFun wrap.
+  TimeFun signed.
+  TimeFun eval_op.
+  TimeFun result_width.
+  Definition c_word : N := 1%N. (* STUB *)
+  Lemma T_eval_op_le : forall o cs,
+    (T_eval_op o cs <=
+      c_word * N.of_nat (((Op.op_widths o +
+        fold_right Nat.add 0
+          (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^ 2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+End WordLanguageT.
