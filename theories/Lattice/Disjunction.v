@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool Arith NArith Lia.
 From Argent Require Import Time Std.
-From Galois.Lattice Require Import LatticeSig Bounded.
+From Galois.Lattice Require Import LatticeSig DisjunctionSig Bounded.
 Import List.ListNotations.
 
 Definition cap_predecessor (n : nat) : nat :=
@@ -17,7 +17,7 @@ Definition cap_predecessor (n : nat) : nat :=
 
 TimeFun cap_predecessor.
 
-Module DisjunctionCode (L : LATTICE_OPS) (C : CAP) <: LATTICE_OPS.
+Module DisjunctionCode (L : LATTICE_OPS) (C : CAP) <: DISJUNCTION_OPS L C.
   Definition t := {xs : list L.t | Nat.leb (length xs) C.k = true}.
   Definition raw_leb (xs ys : list L.t) := forallb (fun x => existsb (L.leb x) ys) xs.
   Definition leb (xs ys : t) := raw_leb (proj1_sig xs) (proj1_sig ys).
@@ -56,7 +56,7 @@ Module DisjunctionCode (L : LATTICE_OPS) (C : CAP) <: LATTICE_OPS.
   Definition join (xs ys : t) := clip (proj1_sig xs ++ proj1_sig ys).
 End DisjunctionCode.
 
-Module Disjunction (L : LATTICE) (C : CAP) <: LATTICE.
+Module Disjunction (L : LATTICE) (C : CAP) <: DISJUNCTION L C.
   Include DisjunctionCode L C.
 
   Lemma raw_leb_spec xs ys : raw_leb xs ys = true <->
@@ -65,6 +65,34 @@ Module Disjunction (L : LATTICE) (C : CAP) <: LATTICE.
     unfold raw_leb; rewrite forallb_forall.
     split; intros H x Hin; specialize (H x Hin); now apply existsb_exists in H.
   Qed.
+
+  (** Order compares the projected lists by Hoare coverage. *)
+  Lemma leb_spec xs ys : leb xs ys = true <->
+    forall x, In x (proj1_sig xs) ->
+      exists y, In y (proj1_sig ys) /\ L.leb x y = true.
+  Proof.
+    apply raw_leb_spec.
+  Qed.
+
+  (** Bottom projects to the empty list. *)
+  Lemma bot_raw : proj1_sig bot = [].
+  Proof. Admitted. (* STUB *)
+
+  (** The bottom test recognizes exactly the empty projected list. *)
+  Lemma is_bot_spec xs : is_bot xs = true <-> proj1_sig xs = [].
+  Proof. Admitted. (* STUB *)
+
+  (** Joining clips the concatenation of the projected operands. *)
+  Lemma join_clip xs ys : join xs ys = clip (proj1_sig xs ++ proj1_sig ys).
+  Proof. Admitted. (* STUB *)
+
+  (** Clipping preserves a raw list that already fits the cap. *)
+  Lemma clip_small xs : length xs <= C.k -> proj1_sig (clip xs) = xs.
+  Proof. Admitted. (* STUB *)
+
+  (** At cap zero clipping discards every raw alternative. *)
+  Lemma clip_zero xs : C.k = 0 -> proj1_sig (clip xs) = [].
+  Proof. Admitted. (* STUB *)
 
   Lemma leb_refl xs : leb xs xs = true.
   Proof.
@@ -123,6 +151,11 @@ Module Disjunction (L : LATTICE) (C : CAP) <: LATTICE.
       + apply in_app_iff; right; now left.
       + apply join_all_upper; exact Hs.
   Qed.
+
+  (** With a positive cap clipping covers every raw alternative. *)
+  Lemma clip_covers xs : 0 < C.k ->
+    forall x, In x xs -> exists y, In y (proj1_sig (clip xs)) /\ L.leb x y = true.
+  Proof. Admitted. (* STUB *)
   Local Lemma zero_empty (xs : t) : C.k = 0 -> proj1_sig xs = [].
   Proof.
     destruct xs as [[|x xs] Hbound]; cbn; [reflexivity |].
