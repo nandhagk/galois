@@ -452,3 +452,55 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
   Proof. Admitted.
 End Interval.
+
+Module IntervalTimingHelpers (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
+  Include Interval L T.
+  TimeFun bound_leb.
+  TimeFun bound_min.
+  TimeFun bound_max.
+  TimeFun widen_lower.
+  TimeFun widen_upper.
+  TimeFun narrow_bound.
+  TimeFun interval_leb.
+  TimeFun interval_join.
+  TimeFun interval_widen.
+  TimeFun interval_narrow.
+  TimeFun bounds_nonempty.
+  TimeFun interval_meet.
+  TimeFun interval_finite.
+  TimeFun interval_singleton.
+  TimeFun interval_is_bot.
+  TimeFun interval_stable_widen.
+  TimeFun leb.
+  TimeFun bot.
+  TimeFun top.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun point.
+  TimeFun abst.
+  TimeFun add.
+  TimeFun sub.
+  TimeFun mul.
+  TimeFun udiv.
+  TimeFun urem.
+  TimeFun bitand.
+  TimeFun bitor.
+  TimeFun code_bnd_bits.
+  TimeFun code_itv_bits.
+  TimeFun shl.
+  TimeFun truth.
+  TimeFun cmp.
+  TimeFun add_back.
+  TimeFun sub_back.
+  TimeFun mul_preimage.
+  TimeFun mul_back.
+  TimeFun unsigned_back.
+  TimeFun udiv_back.
+  TimeFun urem_back.
+  TimeFun ult_back.
+  TimeFun signed_split.
+  TimeFun strict_back.
+End IntervalTimingHelpers.

@@ -8,10 +8,6 @@ From Stdlib Require Import List ZArith.
 From Argent Require Import Time Tactics Std.
 From Galois.Domains Require Import LangSig IntervalSig.
 
-Module Z.
-  TimeFun Z.size_nat.
-End Z.
-
 Module ZLangCode <: Z_LANGUAGE_OPS.
   Definition op := zview.
   Definition guard := zguardview.
