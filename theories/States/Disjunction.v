@@ -21,6 +21,13 @@ Module Nat.
   TimeFun Nat.pred.
 End Nat.
 
+Lemma replace_first_length {A} (is_bot : A -> bool) (f : A -> A) xs :
+  length (replace_first is_bot f xs) = length xs.
+Proof.
+  induction xs as [|x rest IH]; simpl; auto.
+  destruct (is_bot x); simpl; now rewrite ?IH.
+Qed.
+
 Module StateDisjunctionCode (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (S : STATE_DOMAIN_OPS X L V) (C : CAP) (P : SharedDisjunction.DISJUNCTION_OPS S C)
     <: DISJUNCTION_OPS X L V S C P.
@@ -43,13 +50,17 @@ Module StateDisjunctionCode (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L
   Definition meet (a b : t) : t :=
     P.clip (flat_map (fun x => map (S.meet x) (proj1_sig b)) (proj1_sig a)).
   Definition wparam := S.wparam.
-  Definition widen (p : wparam) (a b : t) : t :=
-    if leb b a then a else
-    let old := proj1_sig a in
-    let next := compact (length old) (proj1_sig (join a b)) in
-    if Nat.eqb (length next) (length old) then
-      P.clip (map (fun xy => S.widen p (fst xy) (snd xy)) (combine old next))
-    else P.clip [S.widen p (collapse old) (collapse (proj1_sig b))].
+  Definition widen (p : wparam) (a b : t) : t.
+  Proof.
+    destruct a as [old Hbound].
+    destruct (leb b (exist _ old Hbound)) eqn:Hstable.
+    - exact (exist _ old Hbound).
+    - destruct (forallb S.is_bot old) eqn:Hbottom.
+      + exact (P.clip [S.top]).
+      + refine (exist _ (replace_first S.is_bot
+          (fun x => S.widen p x (collapse (x :: uncovered S.leb old (proj1_sig b)))) old) _).
+        now rewrite replace_first_length.
+  Defined.
   Definition narrow (a _ : t) := a.
 
   Definition map_bounded (f : S.t -> S.t) (d : t) : t.
@@ -73,7 +84,7 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     Exists (fun s => S.gamma s st) (proj1_sig d).
   Definition wrank (p : wparam) (d : t) : nat :=
     fold_right Nat.add 0 (map (S.wrank p) (proj1_sig d)) +
-      if Nat.eqb (length (proj1_sig d)) 1 then 0 else C.k.
+      if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
   Lemma leb_refl : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   (** The order composes through an intermediate value. *)
@@ -108,12 +119,14 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof. Admitted. (* STUB *)
   (** An unstable widening from a nonbottom strictly decreases rank. *)
+  (* The former aligned-pair widening left collapse rank and component bounds unspecified.
+     The current widening keeps the previous alternatives and gives bottom lists rank credit. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* SIG-QUESTION: Collapse rank and component bounds are unspecified. *)
+  Proof. Admitted. (* STUB *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* SIG-QUESTION: Collapse rank and component bounds are unspecified. *)
+  Proof. Admitted. (* STUB *)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
@@ -161,6 +174,8 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* CONVERT: compact_covers: The variable compact_equation was not found in the current environment. *)
   Lemma compact_len : forall n d, length (compact n d) <= Nat.max n 1.
   Proof. Admitted. (* STUB *)
+  Lemma collapse_covers : forall xs x, In x xs -> S.leb x (collapse xs) = true.
+  Proof. Admitted. (* STUB *)
 End StateDisjunction.
 
 Module StateDisjunctionClock (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
@@ -190,8 +205,8 @@ Theorem compact_equation {A} k (L : lattice A) xs :
     if Nat.leb (length xs) k then xs
     else firstn (k - 1) xs ++ [join_all L (skipn (k - 1) xs)].
 
-   The state widening follows the reviewed aligned-pair algorithm. The landed lattice
-   widening used a single collapse and its exact equation is therefore a different claim.
+   The state widening grows the first nonbottom alternative using uncovered candidates.
+   The landed lattice widening used a single collapse and its equation is a different claim.
 Theorem widen_disjunction {A} k (L : lattice A) xs ys :
   widen (disjunction k L) xs ys =
     if disjunction_leb L ys xs then xs
