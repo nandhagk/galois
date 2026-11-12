@@ -15,6 +15,7 @@ let
     pkgs.git
     pkgs.ripgrep
     pkgs.perl
+    pkgs.zstd
   ];
   shellHook = ''
     export DUNE_CACHE=enabled
