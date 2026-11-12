@@ -12,7 +12,7 @@ NR == FNR {
     next
 }
 FNR == 1 {
-    depth = 0; instring = 0
+    depth = 0; instring = 0; requiring = 0
     for (r = 1; r <= rules; r++) {
         applies[r] = 0; n = split(paths[r], prefix, " ")
         for (i = 1; i <= n; i++) if (index(FILENAME, prefix[i] "/") == 1) applies[r] = 1
@@ -31,12 +31,15 @@ FNR == 1 {
     delete found; prev = ""; end = 1; pos = 1
     while (match(substr(code, pos), /[A-Za-z0-9_']+/)) {
         start = pos + RSTART - 1; word = substr(code, start, RLENGTH); pos = start + RLENGTH
+        if (requiring && substr(code, end, start - end) ~ /\.[[:space:]]/) requiring = 0
         qualified = substr(code, start - 1, 1) == "." || substr(code, pos, 2) ~ /^\.[A-Za-z_]/
         declared = prev ~ /^(Module|Type|Section|End|Import|Export|Include)$/ \
             && substr(code, end, start - end) ~ /^[ \t]*$/
-        if (!qualified && !declared) found[word]
+        if (!qualified && !declared && !requiring) found[word]
+        if (word == "Require" && !qualified) requiring = 1
         prev = word; end = pos
     }
+    if (requiring && substr(code, end) ~ /\.[[:space:]]*$/) requiring = 0
     for (r = 1; r <= rules; r++)
         for (word in found)
             if (applies[r] && ((r, word) in forbidden)) {
