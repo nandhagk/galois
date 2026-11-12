@@ -5,7 +5,7 @@
     Builds on: ConstSig and the concrete language operations. *)
 
 From Stdlib Require Import List ZArith Bool Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std BigO.
 From Galois.Bits Require Import Word Fun Op.
 From Galois.Domains Require Import ConstSig LangSig WordSig.
 Import List.ListNotations.
@@ -313,6 +313,122 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
   Proof. Admitted.
 End Const.
+
+Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
+  Include Const L E.
+  TimeFun leb.
+  TimeFun bot.
+  TimeFun top.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun point.
+  TimeFun abst.
+  TimeFun points.
+  TimeFun forward.
+  TimeFun backward.
+  TimeFun guard.
+
+  Definition size (a : t) : nat :=
+    match a with FVal c => E.vsize c | _ => 0 end.
+  Definition work (o : L.op) (xs : list t) : nat :=
+    match points xs with
+    | Some vs =>
+      L.work o vs + length xs +
+      match L.eval o vs with Some c => E.vsize c | None => 0 end + 1
+    | None => length xs + 1
+    end.
+  Definition gwork (_ : L.guard) (xs : list t) : nat := length xs + 1.
+  Definition wsize (_ : wparam) : nat := 0.
+  Definition wunits (_ : t) : nat := 0.
+
+  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_lat : N := c_val.
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. reflexivity. Qed.
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b, (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forward_le : forall o xs, (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_guard_le : forall g xs, (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma widen_size : forall p a b,
+    (N.of_nat (size (widen p a b)) <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma work_sizes : forall o xs, fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof. Admitted. (* STUB *)
+  Lemma gwork_sizes : forall g xs, fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof. Admitted. (* STUB *)
+
+  Definition c_const : N := 1%N. (* STUB *)
+  Lemma T_point_le : forall a, (T_point a <= c_const)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_abst_le : forall c, (T_abst c <= c_const)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_const_points : N := 1%N. (* STUB *)
+  Definition k_const_forward : N := 1%N. (* STUB *)
+  Lemma F1_gamma : forall a c, gamma a c <-> flat_gamma a c.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_widen : forall p a b, widen p a b = join a b.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_wrank : forall p a, wrank p a = 2 - level a.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_rank_le : forall a, level a <= 2.
+  Proof. Admitted. (* STUB *)
+  Lemma F5_points_sound : forall xs cs vs,
+    Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
+  Proof. Admitted. (* STUB *)
+  Lemma F6_point : forall a, point a = match a with FVal c => Some c | _ => None end.
+  Proof. Admitted. (* STUB *)
+  Lemma F7_abst : forall c, abst c = FVal c.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_points : forall xs,
+    (T_points xs <= k_const_points * N.of_nat (length xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_forward_points : forall o xs cs, points xs = Some cs ->
+    (T_forward o xs <= k_const_forward *
+      (N.of_nat (length xs) + L.T_eval o cs +
+       match L.eval o cs with Some c => T_abst c | None => 0 end + 1))%N.
+  Proof. Admitted. (* STUB *)
+End ConstT.
 
 Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Include ConstWordCode L.
