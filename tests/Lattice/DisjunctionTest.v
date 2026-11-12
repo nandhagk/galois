@@ -46,3 +46,6 @@ Example disjunction_covered : D2.widen tt [FTop; FVal true] [FVal false] = [FTop
 Proof. vm_compute. reflexivity. Qed.
 
 (* Cost, height and symbolic law examples are in LatticeDisjunctionTest.v at 87192fe. *)
+
+Example disjunction_bottom_test : (D1.is_bot [], D1.is_bot [FBot]) = (true, false).
+Proof. vm_compute. reflexivity. Qed.

@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List PArith NArith Arith.
 From Argent Require Import Time.
+From Galois.Base Require Import Loop.
 
 Module Type PQ_OPS.
   Parameter t : Type.
@@ -16,7 +17,7 @@ Module Type PQ_OPS.
 End PQ_OPS.
 
 Module Type PQ_LAWS (Import Q : PQ_OPS).
-  (* spec: wf prio pending *)
+  (* spec: wf prio pending fits *)
   Parameter wf : t -> Prop.
   Parameter prio : t -> positive -> option N.
   Parameter pending : t -> nat.
@@ -56,6 +57,13 @@ Module Type PQ_LAWS (Import Q : PQ_OPS).
     pending q1 < pending q.
   (** Every live item has a pending entry. *)
   Parameter size_pending : forall q, wf q -> N.to_nat (size q) <= pending q.
+  Parameter fits : nat -> t -> Prop.
+  Parameter fits_empty : forall w, fits w empty.
+  Parameter fits_push : forall w p x q, wf q -> fits w q ->
+    Pos.size_nat x + N.size_nat p <= w -> fits w (push p x q).
+  Parameter fits_pop : forall w q p x q1, wf q -> fits w q ->
+    pop q = Some (p, x, q1) -> fits w q1.
+
 End PQ_LAWS.
 
 Module Type PQ := PQ_OPS <+ PQ_LAWS.
@@ -70,11 +78,11 @@ Module Type PQ_TIME (Import Q : PQ).
   (** One operation pays for logarithmically many comparisons of bounded width. *)
   Definition unit_pq (P w : nat) : nat := (Nat.log2 P + 1) * (w + 1).
   (** Push pays for its work and the potential of its returned queue. *)
-  Parameter T_push_amort : forall P w p x q, (wf q -> (pending q < P)%nat ->
+  Parameter T_push_amort : forall P w p x q, (wf q -> fits w q -> (pending q < P)%nat ->
     (Pos.size_nat x + N.size_nat p <= w)%nat ->
     T_push p x q + phi P w (push p x q) <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** Pop pays for discarded stale entries by refunding input potential. *)
-  Parameter T_pop_amort : forall P w q, (wf q -> (pending q <= P)%nat ->
+  Parameter T_pop_amort : forall P w q, (wf q -> fits w q -> (pending q <= P)%nat ->
     T_pop q + match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end
       <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** Empty queues carry zero potential. *)
@@ -100,8 +108,7 @@ Module Type PQ_PLAN (Import Q : PQ_T).
   Parameter k_insert k_remove k_step k_credit k_driver : N.
 
   (** Width budgets include stale entries because removal compares their cached keys. *)
-  Definition bounded (w : nat) (q : t) : Prop :=
-    forall p x, In (p, x) (entries (forest q)) -> N.size_nat p + Pos.size_nat x <= w.
+  Definition bounded (w : nat) (q : t) : Prop := fits w q.
 
   (** Staleness counts pending entries in excess of the live cardinality. *)
   Definition stale (q : t) : nat := pending q - N.to_nat (size q).
@@ -152,11 +159,11 @@ Module Type PQ_PLAN (Import Q : PQ_T).
   (** A skipped stale entry pays for its step and the strict loop decrease. *)
   Parameter T3_skip_credit : forall P w q q1, (wf q -> bounded w q -> (pending q <= P)%nat ->
     pop_step q = inl q1 ->
-    T_pop_step q + phi P w q1 + 1 <= phi P w q)%N.
+    T_pop_step q + c_loopN + phi P w q1 <= phi P w q)%N.
   (** A stopping step pays its work and its actual output potential. *)
   Parameter T4_stop_credit : forall P w q r, (wf q -> bounded w q -> (pending q <= P)%nat ->
     pop_step q = inr r ->
-    T_pop_step q + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
+    T_pop_step q + c_loopN + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
   (** The binary loop driver absorbs initial fuel width into the operation budget. *)
   Parameter T5_pop_bounded : forall P w q, (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_pop q + output_phi P w (pop q) <=
@@ -167,9 +174,6 @@ Module Type PQ_PLAN (Import Q : PQ_T).
     T_push p x q + phi P w (push p x q) <=
       (k_insert + k_step + k_credit) * N.of_nat (unit_pq P w) + phi P w q)%N.
 
-  (* The landed chain above requires bounded w q. The public amortised contracts omit
-     that premise. A potential accounting for stored widths outside bounded queues may
-     close the gap. The stale-only source proof does not establish that extension. *)
 End PQ_PLAN.
 
 Module Type PQ_ALL := PQ_T <+ PQ_PLAN.

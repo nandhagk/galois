@@ -13,6 +13,7 @@ Definition kmap (K A : Type) : Type := PTrieCode.t (K * A).
 Module Type MAP_OPS (K : KEY_OPS).
   Parameter t : Type -> Type.
   Parameter empty : forall {A}, t A.
+  Parameter find : forall {A}, positive -> t A -> option A.
   Parameter get : forall {A}, K.t -> t A -> option A.
   Parameter set : forall {A}, K.t -> A -> t A -> t A.
   Parameter remove : forall {A}, K.t -> t A -> t A.
@@ -30,8 +31,8 @@ Module Type MAP_SPEC (K : KEY_OPS) (Import M : MAP_OPS K).
       (List.map (fun kv => Pos.size_nat (K.encode (fst kv)) + 1) (elements m)).
 End MAP_SPEC.
 
-Module Type MAP_LAWS (K : KEY) (Import M : MAP_OPS K).
-  (* spec: wf nodes *)
+Module Type MAP_LAWS (K : KEY) (Import M : MAP_OPS K) (Import S : MAP_SPEC K M).
+  (* spec: wf nodes codes *)
   Parameter wf : forall {A}, t A -> Prop.
   Parameter nodes : forall {A}, t A -> nat.
   (** Empty maps have consistent stored keys. *)
@@ -58,13 +59,6 @@ Module Type MAP_LAWS (K : KEY) (Import M : MAP_OPS K).
   (** Merging acts pointwise when absence remains absent. *)
   Parameter get_merge : forall A B C (f : option A -> option B -> option C) m1 m2 k,
     f None None = None -> get k (merge f m1 m2) = f (get k m1) (get k m2).
-  (** Relational checking covers all keys when absence passes. *)
-  Parameter forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
-    f None None = true ->
-    (forall2b f m1 m2 = true <-> forall k, f (get k m1) (get k m2) = true).
-  (** Existential checking finds a present value satisfying its predicate. *)
-  Parameter existsb_spec : forall A (f : A -> bool) m,
-    existsb f m = true <-> exists k a, get k m = Some a /\ f a = true.
   (** Consistent maps enumerate precisely their bindings. *)
   Parameter elements_spec : forall A (m : t A) k a, wf m ->
     (In (k, a) (elements m) <-> get k m = Some a).
@@ -76,6 +70,32 @@ Module Type MAP_LAWS (K : KEY) (Import M : MAP_OPS K).
   (** Lookup determines a consistent map. *)
   Parameter ext : forall A (m n : t A), wf m -> wf n ->
     (forall k, get k m = get k n) -> m = n.
+  Parameter get_find : forall A k (m : t A), get k m = find (K.encode k) m.
+  Parameter find_empty : forall A p, find p (@empty A) = None.
+  Parameter find_set : forall A p k (a : A) m,
+  find p (set k a m) = if Pos.eqb p (K.encode k) then Some a else find p m.
+  Parameter find_remove : forall A p k (m : t A),
+  find p (remove k m) = if Pos.eqb p (K.encode k) then None else find p m.
+  Parameter find_merge : forall A B C (f : option A -> option B -> option C) m1 m2 p,
+  f None None = None -> find p (merge f m1 m2) = f (find p m1) (find p m2).
+  Parameter forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
+  f None None = true ->
+  (forall2b f m1 m2 = true <-> forall p, f (find p m1) (find p m2) = true).
+  Parameter existsb_spec : forall A (f : A -> bool) m,
+  existsb f m = true <-> exists p a, find p m = Some a /\ f a = true.
+  Parameter wf_find : forall A (m : t A) p a, wf m -> find p m = Some a ->
+  exists k, K.encode k = p.
+
+  Parameter nodes_empty : forall A, nodes (@empty A) = 0.
+  Parameter nodes_set : forall A k (a : A) m, nodes (set k a m) <= nodes m + K.bits k.
+  Parameter nodes_remove : forall A k (m : t A), nodes (remove k m) <= nodes m.
+  Parameter nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
+  nodes (merge f m1 m2) <= nodes m1 + nodes m2.
+  Parameter nodes_le_weight : forall A (m : t A), wf m -> nodes m <= weight m.
+
+  Parameter codes : forall {A}, t A -> list positive.
+  Parameter codes_spec : forall A (m : t A) p, In p (codes m) <-> find p m <> None.
+  Parameter codes_nodup : forall A (m : t A), NoDup (codes m).
 End MAP_LAWS.
 
 Module Type MAP (K : KEY) := MAP_OPS K <+ MAP_SPEC K <+ MAP_LAWS K.
@@ -117,6 +137,25 @@ Module Type MAP_TIME (K : KEY_T) (Import M : MAP K).
   (** Enumeration charges the encoded keys returned by a consistent map. *)
   Parameter T_elements_le : forall A (m : t A),
     (wf m -> T_elements m <= c_map * N.of_nat (weight m + 1))%N.
+  Parameter T_merge_sum_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2,
+    (T_merge f T_f m1 m2 <= c_map *
+      ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
+       fold_right N.add 0 (List.map (fun p => T_f (find p m1) (find p m2))
+         (codes m1 ++ codes m2))))%N.
+  Parameter T_forall2b_sum_le : forall A B (f : option A -> option B -> bool) T_f m1 m2,
+    (T_forall2b f T_f m1 m2 <= c_map *
+      ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
+       fold_right N.add 0 (List.map (fun p => T_f (find p m1) (find p m2))
+         (codes m1 ++ codes m2))))%N.
+  Parameter T_existsb_sum_le : forall A (f : A -> bool) T_f m,
+    (T_existsb f T_f m <= c_map * (N.of_nat (nodes m + 1) +
+      fold_right N.add 0 (List.map (fun p =>
+        match find p m with Some a => T_f a | None => 0 end) (codes m))))%N.
+  Parameter T_fold_sum_le : forall A B (f : B -> K.t -> A -> B) T_f m b,
+    (T_fold f T_f m b <= c_map * (N.of_nat (nodes m + 1) +
+      snd (fold_left (fun bw ka =>
+        (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
+        (elements m) (b, 0))))%N.
 End MAP_TIME.
 
 Module Type MAP_T (K : KEY_T) := MAP K <+ MAP_TIME K.

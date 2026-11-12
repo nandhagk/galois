@@ -5,7 +5,7 @@
     Builds on: TrieSet and Key. *)
 
 From Stdlib Require Import List NArith.
-From Galois.Base Require Import Key TrieSet.
+From Galois.Base Require Import Key TrieSet Trie.
 Import List.ListNotations.
 
 Module PosSet := TrieSetCode PosKeyCode.
@@ -28,3 +28,10 @@ Example set_empty : PosSet.equal PosSet.empty PosSet.empty = true.
 Proof. vm_compute. reflexivity. Qed.
 
 (* Cost and law examples are in BaseSetTest.v at 87192fe. *)
+
+Module UnitSet := TrieSetCode UnitKeyCode.
+Definition raw_unit_set : UnitSet.t := PTrieCode.set 2%positive tt PTrieCode.empty.
+Example set_raw_code :
+  (UnitSet.mem tt raw_unit_set, UnitSet.has 2%positive raw_unit_set,
+   UnitSet.subset raw_unit_set UnitSet.empty) = (false, true, false).
+Proof. vm_compute. reflexivity. Qed.

@@ -74,21 +74,20 @@ Module Type UNION_FIND_LAWS (Import U : UNION_FIND_OPS).
   Parameter card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2.
   (** The stored width covers each member key. *)
   Parameter width_mem  : forall u x, wf u -> mem u x -> Pos.size_nat x <= width u.
-Parameter size_of_fresh : forall u x, wf u -> ~ mem u x -> size_of u x = 1.
-Parameter size_of_repr : forall u x, wf u -> size_of u x = size_of u (repr u x).
-Parameter size_of_add : forall x u y, wf u -> size_of (add x u) y = size_of u y.
-Parameter size_of_find : forall x u y, wf u -> size_of (snd (find x u)) y = size_of u y.
-Parameter size_of_union_other : forall x y u o u1 z, wf u -> union x y u = (o, u1) ->
+  Parameter size_of_fresh : forall u x, wf u -> ~ mem u x -> size_of u x = 1.
+  Parameter size_of_repr : forall u x, wf u -> size_of u x = size_of u (repr u x).
+  Parameter size_of_add : forall x u y, wf u -> size_of (add x u) y = size_of u y.
+  Parameter size_of_find : forall x u y, wf u -> size_of (snd (find x u)) y = size_of u y.
+  Parameter size_of_union_other : forall x y u o u1 z, wf u -> union x y u = (o, u1) ->
   (forall w l, o = Some (w, l) -> repr u z <> w /\ repr u z <> l) ->
   size_of u1 z = size_of u z.
 
-Parameter width_empty : width empty = 0.
-Parameter width_add : forall x u, wf u ->
+  Parameter width_empty : width empty = 0.
+  Parameter width_add : forall x u, wf u ->
   width (add x u) <= Nat.max (width u) (Pos.size_nat x).
-Parameter width_find : forall x u, wf u -> width (snd (find x u)) <= width u.
-Parameter width_union : forall x y u, wf u ->
+  Parameter width_find : forall x u, wf u -> width (snd (find x u)) <= width u.
+  Parameter width_union : forall x y u, wf u ->
   width (snd (union x y u)) <= Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)).
-
 End UNION_FIND_LAWS.
 
 Module Type UNION_FIND := UNION_FIND_OPS <+ UNION_FIND_LAWS.

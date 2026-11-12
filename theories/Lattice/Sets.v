@@ -45,18 +45,18 @@ Module MaySet (K : KEY) (S : SET K) <: LATTICE.
     apply S.subset_spec; intros k Hk; apply Hbc1, Hab1, Hk.
   Qed.
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. intro a; apply S.subset_spec; intros k Hk; rewrite S.mem_empty in Hk; discriminate. Qed.
+  Proof. intro a; apply S.subset_spec; intros k Hk; rewrite S.has_empty in Hk; discriminate. Qed.
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof. Admitted.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
-    intros a b; apply S.subset_spec; intros k Hk; rewrite S.mem_union, Hk; reflexivity.
+    intros a b; apply S.subset_spec; intros k Hk; rewrite S.has_union, Hk; reflexivity.
   Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof.
-    intros a b; apply S.subset_spec; intros k Hk; rewrite S.mem_union, Hk, orb_true_r; reflexivity.
+    intros a b; apply S.subset_spec; intros k Hk; rewrite S.has_union, Hk, orb_true_r; reflexivity.
   Qed.
 End MaySet.
 
@@ -79,13 +79,13 @@ Module MustSet (K : KEY) (S : SET K) <: LATTICE.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros [a|] [b|]; cbn [leb join]; try reflexivity; try apply May.leb_refl.
-    apply S.subset_spec; intros k Hk; rewrite S.mem_inter in Hk.
+    apply S.subset_spec; intros k Hk; rewrite S.has_inter in Hk.
     apply andb_true_iff in Hk; tauto.
   Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof.
     intros [a|] [b|]; cbn [leb join]; try reflexivity; try apply May.leb_refl.
-    apply S.subset_spec; intros k Hk; rewrite S.mem_inter in Hk.
+    apply S.subset_spec; intros k Hk; rewrite S.has_inter in Hk.
     apply andb_true_iff in Hk; tauto.
   Qed.
 End MustSet.

@@ -170,14 +170,13 @@ Module Type REDUCER_LAWS (A B : LATTICE) (Import R : REDUCER_OPS A B).
   (** Reduction lowers both components in their respective orders. *)
   Parameter reduce_lower : forall a b,
     A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
-Parameter reduce_mono : forall a b a' b',
+  Parameter reduce_mono : forall a b a' b',
   A.leb a a' = true -> B.leb b b' = true ->
   A.leb (fst (reduce (a, b))) (fst (reduce (a', b'))) = true /\
   B.leb (snd (reduce (a, b))) (snd (reduce (a', b'))) = true.
-Parameter reduce_idem : forall a b,
+  Parameter reduce_idem : forall a b,
   A.leb (fst (reduce (a, b))) (fst (reduce (reduce (a, b)))) = true /\
   B.leb (snd (reduce (a, b))) (snd (reduce (reduce (a, b)))) = true.
-
 End REDUCER_LAWS.
 
 Module Type REDUCER (A B : LATTICE) := REDUCER_OPS A B <+ REDUCER_LAWS A B.

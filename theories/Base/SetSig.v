@@ -11,6 +11,7 @@ From Galois.Base Require Import KeySig.
 Module Type SET_OPS (K : KEY_OPS).
   Parameter t : Type.
   Parameter empty : t.
+  Parameter has : positive -> t -> bool.
   Parameter mem : K.t -> t -> bool.
   Parameter add : K.t -> t -> t.
   Parameter remove : K.t -> t -> t.
@@ -29,7 +30,7 @@ Module Type SET_SPEC (K : KEY_OPS) (Import S : SET_OPS K).
     fold_right Nat.add 0 (List.map (fun k => Pos.size_nat (K.encode k) + 1) (elements s)).
 End SET_SPEC.
 
-Module Type SET_LAWS (K : KEY) (Import S : SET_OPS K).
+Module Type SET_LAWS (K : KEY) (Import S : SET_OPS K) (Import W : SET_SPEC K S).
   (* spec: wf nodes *)
   Parameter wf : t -> Prop.
   Parameter nodes : t -> nat.
@@ -61,12 +62,6 @@ Module Type SET_LAWS (K : KEY) (Import S : SET_OPS K).
   Parameter mem_inter : forall k s u, mem k (inter s u) = (mem k s && mem k u).
   (** Difference removes the right operand's members from the left. *)
   Parameter mem_diff : forall k s u, mem k (diff s u) = (mem k s && negb (mem k u)).
-  (** Inclusion checks membership implication for every key. *)
-  Parameter subset_spec : forall s u,
-    subset s u = true <-> forall k, mem k s = true -> mem k u = true.
-  (** Equality checks agreement of all membership observations. *)
-  Parameter equal_spec : forall s u,
-    equal s u = true <-> forall k, mem k s = mem k u.
   (** Consistent sets enumerate precisely their members. *)
   Parameter elements_spec : forall s k, wf s -> (In k (elements s) <-> mem k s = true).
   (** Consistent sets enumerate each member once. *)
@@ -76,6 +71,26 @@ Module Type SET_LAWS (K : KEY) (Import S : SET_OPS K).
     fold f s a = fold_left f (elements s) a.
   (** Membership determines a consistent set. *)
   Parameter ext : forall s u, wf s -> wf u -> (forall k, mem k s = mem k u) -> s = u.
+  Parameter mem_has : forall k s, mem k s = has (K.encode k) s.
+  Parameter has_empty : forall p, has p empty = false.
+  Parameter has_add : forall p k s, has p (add k s) = Pos.eqb p (K.encode k) || has p s.
+  Parameter has_remove : forall p k s,
+  has p (remove k s) = negb (Pos.eqb p (K.encode k)) && has p s.
+  Parameter has_union : forall p s u, has p (union s u) = has p s || has p u.
+  Parameter has_inter : forall p s u, has p (inter s u) = has p s && has p u.
+  Parameter has_diff : forall p s u, has p (diff s u) = has p s && negb (has p u).
+  Parameter subset_spec : forall s u,
+  subset s u = true <-> forall p, has p s = true -> has p u = true.
+  Parameter equal_spec : forall s u, equal s u = true <-> forall p, has p s = has p u.
+  Parameter wf_has : forall s p, wf s -> has p s = true -> exists k, K.encode k = p.
+
+  Parameter nodes_empty : nodes empty = 0.
+  Parameter nodes_add : forall k s, nodes (add k s) <= nodes s + K.bits k.
+  Parameter nodes_remove : forall k s, nodes (remove k s) <= nodes s.
+  Parameter nodes_union : forall s u, nodes (union s u) <= nodes s + nodes u.
+  Parameter nodes_inter : forall s u, nodes (inter s u) <= nodes s.
+  Parameter nodes_diff : forall s u, nodes (diff s u) <= nodes s.
+  Parameter nodes_le_weight : forall s, wf s -> nodes s <= weight s.
 End SET_LAWS.
 
 Module Type SET (K : KEY) := SET_OPS K <+ SET_SPEC K <+ SET_LAWS K.

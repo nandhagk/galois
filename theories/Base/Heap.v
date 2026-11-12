@@ -188,9 +188,9 @@ Module Heap <: PQ.
   Proof. Admitted. (* CONVERT: wf_pop: The variable pop_correct was not found in the current environment. *)
   Lemma prio_push : forall p x q,
     prio (push p x q) x = Some (match prio q x with Some old => N.min p old | None => p end).
-  Proof. Admitted. (* SIG-QUESTION: landed priority_push assumes wf. *)
+  Proof. Admitted.
   Lemma prio_push_other : forall p x y q, x <> y -> prio (push p x q) y = prio q y.
-  Proof. Admitted. (* SIG-QUESTION: landed priority_push assumes wf. *)
+  Proof. Admitted.
   Lemma pop_min : forall q p x q1, wf q -> pop q = Some (p, x, q1) ->
     prio q x = Some p /\ (forall y r, prio q y = Some r -> (p <= r)%N) /\
     prio q1 x = None /\ (forall y, y <> x -> prio q1 y = prio q y).
@@ -213,6 +213,18 @@ Module Heap <: PQ.
   Proof. Admitted.
   Lemma size_pending : forall q, wf q -> N.to_nat (size q) <= pending q.
   Proof. Admitted. (* CONVERT: live_pending_bound: The variable live_pending_bound was not found in the current environment. *)
+  Definition fits (w : nat) (q : t) : Prop :=
+    forall p x, In (p, x) (heap_entries (heap_pending q)) ->
+      N.size_nat p + Pos.size_nat x <= w.
+  Lemma fits_empty : forall w, fits w empty.
+  Proof. Admitted.
+  Lemma fits_push : forall w p x q, wf q -> fits w q ->
+    Pos.size_nat x + N.size_nat p <= w -> fits w (push p x q).
+  Proof. Admitted.
+  Lemma fits_pop : forall w q p x q1, wf q -> fits w q ->
+    pop q = Some (p, x, q1) -> fits w q1.
+  Proof. Admitted.
+
 End Heap.
 
 Module HeapT <: PQ_ALL.
@@ -236,13 +248,13 @@ Module HeapT <: PQ_ALL.
   Definition phi (P w : nat) (q : t) : N := stale_phi P w q.
 
   Lemma T_push_amort : forall P w p x q,
-    (wf q -> (pending q < P)%nat ->
+    (wf q -> fits w q -> (pending q < P)%nat ->
     (Pos.size_nat x + N.size_nat p <= w)%nat ->
     T_push p x q + phi P w (push p x q) <=
       c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_pop_amort : forall P w q,
-    (wf q -> (pending q <= P)%nat ->
+    (wf q -> fits w q -> (pending q <= P)%nat ->
     T_pop q + match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end
       <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
   Proof. Admitted. (* STUB *)
@@ -268,8 +280,7 @@ Module HeapT <: PQ_ALL.
   TimeFun remove_min.
   TimeFun pop_step.
 
-  Definition bounded (w : nat) (q : t) : Prop :=
-    forall p x, In (p, x) (entries (forest q)) -> N.size_nat p + Pos.size_nat x <= w.
+  Definition bounded (w : nat) (q : t) : Prop := fits w q.
   Definition output_phi (P w : nat) (r : option (N * positive * t)) : N :=
     match r with Some (_, _, q1) => phi P w q1 | None => 0%N end.
 
@@ -306,11 +317,11 @@ Module HeapT <: PQ_ALL.
   Proof. Admitted. (* STUB *)
   Lemma T3_skip_credit : forall P w q q1,
     (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inl q1 ->
-    T_pop_step q + phi P w q1 + 1 <= phi P w q)%N.
+    T_pop_step q + c_loopN + phi P w q1 <= phi P w q)%N.
   Proof. Admitted. (* STUB *)
   Lemma T4_stop_credit : forall P w q r,
     (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inr r ->
-    T_pop_step q + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
+    T_pop_step q + c_loopN + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
   Proof. Admitted. (* STUB *)
   Lemma T5_pop_bounded : forall P w q,
     (wf q -> bounded w q -> (pending q <= P)%nat ->

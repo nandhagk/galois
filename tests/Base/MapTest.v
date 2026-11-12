@@ -5,7 +5,7 @@
     Builds on: Map and Key. *)
 
 From Stdlib Require Import List NArith.
-From Galois.Base Require Import Key Map.
+From Galois.Base Require Import Key Map Trie.
 Import List.ListNotations.
 
 Module PosMap := TrieMapCode PosKeyCode.
@@ -32,3 +32,10 @@ Example map_combination :
 Proof. vm_compute. reflexivity. Qed.
 
 (* Update, cost and law examples are in BaseMapTest.v at 87192fe. *)
+
+Module UnitMap := TrieMapCode UnitKeyCode.
+Definition raw_unit_map : UnitMap.t bool := PTrieCode.set 2%positive (tt, true) PTrieCode.empty.
+Example map_raw_code :
+  (UnitMap.get tt raw_unit_map, UnitMap.find 2%positive raw_unit_map,
+   UnitMap.existsb (fun b => b) raw_unit_map) = (None, Some true, true).
+Proof. vm_compute. reflexivity. Qed.

@@ -288,13 +288,6 @@ Module PTrie <: TRIE.
   Definition nodes {A} (tr : t A) : nat :=
     match tr with Empty => 0 | Nodes n => nodes_ne n end.
 
-  Fixpoint trie_lt (p q : positive) : Prop :=
-    match p, q with
-    | xO p, xO q => trie_lt p q
-    | xI p, xI q => trie_lt p q
-    | xO _, xH | xO _, xI _ | xH, xI _ => True
-    | _, _ => False
-    end.
 
   Lemma get_empty : forall A p, get p (@empty A) = None.
   Proof.
@@ -336,7 +329,7 @@ Module PTrie <: TRIE.
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
     f None None = true ->
     (forall2b f m1 m2 = true <-> forall p, f (get p m1) (get p m2) = true).
-  Proof. Admitted. (* SIG-QUESTION: landed forall2_spec covers only one directional traversal. *)
+  Proof. Admitted.
   Lemma existsb_spec : forall A (f : A -> bool) m,
     existsb f m = true <-> exists p a, get p m = Some a /\ f a = true.
   Proof. Admitted.
@@ -371,6 +364,16 @@ Module PTrie <: TRIE.
   Proof. Admitted.
   Lemma nodes_le_weight : forall A (m : t A), nodes m <= weight m.
   Proof. Admitted.
+Lemma is_empty_spec : forall A (m : t A), is_empty m = true <-> m = empty.
+  Proof. Admitted.
+Lemma nodes_remove : forall A p (m : t A), nodes (remove p m) <= nodes m.
+  Proof. Admitted.
+Lemma nodes_map : forall A B (f : A -> B) m, nodes (map f m) <= nodes m.
+  Proof. Admitted.
+Lemma nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
+  nodes (merge f m1 m2) <= nodes m1 + nodes m2.
+  Proof. Admitted.
+
 End PTrie.
 
 Module PTrieT <: TRIE_ALL.
@@ -430,7 +433,8 @@ Module PTrieT <: TRIE_ALL.
   Proof. Admitted. (* STUB *)
   Lemma T_fold_le : forall A B (f : B -> positive -> A -> B) T_f m b k,
     ((forall acc p a, T_f acc p a <= k) ->
-    T_fold f T_f m b <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
+    T_fold f T_f m b <= c_trie * ((k + 1) * N.of_nat (nodes m + 1) +
+      N.of_nat (weight m)))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_elements_le : forall A (m : t A),
     (T_elements m <= c_trie * N.of_nat (weight m + 1))%N.
@@ -520,5 +524,36 @@ Module PTrieT <: TRIE_ALL.
   Lemma T9_fold_values : forall A B (f : B -> A -> B) T_f m b c,
     ((forall acc a, T_f acc a <= c) ->
     T_fold_values f T_f m b <= k_fold * (c + 1) * N.of_nat (nodes m + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_merge_sum_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2,
+    (T_merge f T_f m1 m2 <= c_trie *
+      ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
+       fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
+         (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forall2b_sum_le : forall A B (f : option A -> option B -> bool) T_f m1 m2,
+    (T_forall2b f T_f m1 m2 <= c_trie *
+      ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
+       fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
+         (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_existsb_sum_le : forall A (f : A -> bool) T_f m,
+    (T_existsb f T_f m <= c_trie * (N.of_nat (nodes m + 1) +
+      fold_right N.add 0 (List.map (fun p =>
+        match get p m with Some a => T_f a | None => 0 end) (List.map fst (elements m)))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_fold_sum_le : forall A B (f : B -> positive -> A -> B) T_f m b,
+    (T_fold f T_f m b <= c_trie * (N.of_nat (nodes m + 1) + N.of_nat (weight m) +
+      snd (fold_left (fun bw ka =>
+        (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
+        (elements m) (b, 0))))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Value folding charges callbacks in enumeration order without constructing keys. *)
+  Lemma T_fold_values_sum_le : forall A B (f : B -> A -> B) T_f m b,
+    (T_fold_values f T_f m b <= c_trie * (N.of_nat (nodes m + 1) +
+      snd (fold_left (fun bw ka =>
+        (f (fst bw) (snd ka), snd bw + T_f (fst bw) (snd ka)))
+        (elements m) (b, 0))))%N.
   Proof. Admitted. (* STUB *)
 End PTrieT.

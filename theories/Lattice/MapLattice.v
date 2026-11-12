@@ -32,7 +32,7 @@ End MapLatticeCode.
 
 Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
   Include MapLatticeCode K M L.
-  Definition read (m : t) (k : K.t) := default (M.get k m).
+  Definition read (m : t) (k : positive) := default (M.find k m).
   Lemma leb_read : forall a b, leb a b = true <-> forall k, L.leb (read a k) (read b k) = true.
   Proof.
     intros a b; unfold leb, read.
@@ -47,7 +47,7 @@ Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
   Qed.
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
-    intro a; apply leb_read; intro k; unfold read, bot; rewrite M.get_empty; apply L.bot_least.
+    intro a; apply leb_read; intro k; unfold read, bot; rewrite M.find_empty; apply L.bot_least.
   Qed.
   Lemma is_bot_bot : is_bot bot = true.
   Proof. Admitted.
@@ -56,15 +56,15 @@ Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros a b; apply leb_read; intro k; unfold read, join.
-    rewrite M.get_merge by reflexivity.
-    destruct (M.get k a), (M.get k b); cbn [default];
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find k a), (M.find k b); cbn [default];
       try apply L.leb_refl; try apply L.bot_least; apply L.join_ub_l.
   Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof.
     intros a b; apply leb_read; intro k; unfold read, join.
-    rewrite M.get_merge by reflexivity.
-    destruct (M.get k a), (M.get k b); cbn [default];
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find k a), (M.find k b); cbn [default];
       try apply L.leb_refl; try apply L.bot_least; apply L.join_ub_r.
   Qed.
 End MapLattice.
