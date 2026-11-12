@@ -15,11 +15,19 @@ Module SourceLanguage.
   Definition val := unit.
   Definition eval (_ : op) (_ : list val) := Some tt.
   Definition literal (_ : op) : option Z := None.
+  Definition holds (_ : guard) (_ : list val) := True.
 End SourceLanguage.
 
 Module FixtureMorphism.
   Definition op (_ : bool) := tt.
   Definition guard (_ : nat) := tt.
+  Definition value (_ : unit) := tt.
+  Lemma eval_commutes : forall o cs,
+    UnitLanguage.eval (op o) (map value cs) = option_map value (SourceLanguage.eval o cs).
+  Proof. intros. reflexivity. Qed.
+  Lemma guard_preserves : forall g cs,
+    SourceLanguage.holds g cs -> UnitLanguage.holds (guard g) (map value cs).
+  Proof. intros. exact I. Qed.
 End FixtureMorphism.
 
 Module Renamed := TranslateCode SourceLanguage UnitLanguage FixtureMorphism ReachCode.
