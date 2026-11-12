@@ -5,7 +5,7 @@
     Builds on: LatticeSig and StateSig. *)
 
 From Stdlib Require Import List NArith Arith Bool.
-From Argent Require Import BigO.
+From Argent Require Import Time Std BigO.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -19,6 +19,26 @@ Module Type POS_CAP.
   (** A bounded disjunction always has room for one alternative. *)
   Parameter k_pos : 0 < k.
 End POS_CAP.
+
+(** Candidate alternatives that no previous alternative covers. *)
+Definition uncovered {A} (leb : A -> A -> bool) (old new : list A) : list A :=
+  filter (fun y => negb (existsb (leb y) old)) new.
+TimeFun uncovered.
+
+(** Applies a function at the first alternative that is not recognized as bottom. *)
+Fixpoint replace_first {A} (is_bot : A -> bool) (f : A -> A) (xs : list A) : list A :=
+  match xs with
+  | [] => []
+  | x :: rest => if is_bot x then x :: replace_first is_bot f rest else f x :: rest
+  end.
+TimeFun replace_first.
+
+Module Type JOIN_UNITS (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (S : STATE_DOMAIN_T X L V).
+  (** A join visits no more widening units than a constant times its operands. *)
+  Parameter join_wunits : forall a b,
+    (N.of_nat (S.wunits (S.join a b)) <= S.c_lat * N.of_nat (S.wunits a + S.wunits b + 1))%N.
+End JOIN_UNITS.
 
 Module Type DISJUNCTION_OPS (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (S : STATE_DOMAIN_OPS X L V) (C : CAP)
@@ -56,6 +76,8 @@ Module Type DISJUNCTION_LAWS (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     exists y, In y (compact n d) /\ S.leb x y = true.
   (** Compaction returns at most the requested positive capacity. *)
   Parameter compact_len : forall n d, length (compact n d) <= Nat.max n 1.
+  (** Collapse is above every alternative it joins. *)
+  Parameter collapse_covers : forall xs x, In x xs -> S.leb x (collapse xs) = true.
 End DISJUNCTION_LAWS.
 
 Module Type DISJUNCTION (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
@@ -64,20 +86,15 @@ Module Type DISJUNCTION (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   DISJUNCTION_BASE X L V S C P <+ DISJUNCTION_LAWS X L V S C P.
 
 Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
-    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (C : POS_CAP)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (JU : JOIN_UNITS X L V S) (C : POS_CAP)
     (P : SharedDisjunction.DISJUNCTION_T S JS C)
     (Import D : DISJUNCTION X L V S C P).
   Include STATE_DOMAIN_TIME X L V D
     with Definition size := P.size with Definition T_leb := P.T_leb
-    with Definition T_join := P.T_join with Definition T_is_bot := P.T_is_bot
-    with Definition c_lat := P.c_lat.
+    with Definition T_join := P.T_join with Definition T_is_bot := P.T_is_bot.
   Parameter T_compact : nat -> list S.t -> N.
   Parameter T_collapse : list S.t -> N.
   Parameter c_disjunction : N.
-  (** Coverage checking charges every tested pair of alternatives. *)
-  Parameter T_leb_pairs : forall a b, (T_leb a b <= c_disjunction *
-    (fold_right N.add 0%N (map (fun x => fold_right N.add 0%N
-      (map (fun y => S.T_leb x y + 1) (proj1_sig b)) + 1) (proj1_sig a)) + 1))%N.
   (** Assignment charges each alternative independently. *)
   Parameter T_assign_alternatives : forall x e d, (T_assign x e d <= c_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_assign x e s + 1) (proj1_sig d)) + 1))%N.
@@ -87,48 +104,48 @@ Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Assumption charges each alternative independently. *)
   Parameter T_assume_alternatives : forall g es d, (T_assume g es d <= c_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_assume g es s + 1) (proj1_sig d)) + 1))%N.
+  (** The state constant pays for the shared order and join. *)
+  Parameter c_lat_shared : (P.c_lat <= c_lat)%N.
+  (** Widening visits the units of every alternative. *)
+  Parameter wunits_alternatives : forall d,
+    wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
+  (** The widening parameter is the component's parameter. *)
+  Parameter wsize_component : forall p, wsize p = S.wsize p.
+  (** Collapsing at most the cap plus one alternatives charges their sizes. *)
+  Parameter T_collapse_le : forall xs, length xs <= C.k + 1 ->
+    (T_collapse xs <= c_disjunction *
+      N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  (** A collapse of at most the cap plus one alternatives fits their sizes. *)
+  Parameter collapse_size : forall xs, length xs <= C.k + 1 ->
+    (N.of_nat (S.size (collapse xs)) <= c_disjunction *
+      N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  (** A collapse of at most the cap plus one alternatives fits their units. *)
+  Parameter collapse_wunits : forall xs, length xs <= C.k + 1 ->
+    (N.of_nat (S.wunits (collapse xs)) <= c_disjunction *
+      N.of_nat (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
 End DISJUNCTION_TIME.
 
 Module Type DISJUNCTION_T (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
-    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (C : POS_CAP)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (JU : JOIN_UNITS X L V S) (C : POS_CAP)
     (P : SharedDisjunction.DISJUNCTION_T S JS C) :=
-  DISJUNCTION X L V S C P <+ DISJUNCTION_TIME X L V S JS C P.
+  DISJUNCTION X L V S C P <+ DISJUNCTION_TIME X L V S JS JU C P.
 
 Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
-    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (C : POS_CAP)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (JU : JOIN_UNITS X L V S) (C : POS_CAP)
     (P : SharedDisjunction.DISJUNCTION_T S JS C)
-    (Import D : DISJUNCTION_T X L V S JS C P).
-  Parameter pair_widen : S.wparam -> list S.t -> list S.t -> list S.t.
-  Parameter T_pair_widen : S.wparam -> list S.t -> list S.t -> N.
+    (Import D : DISJUNCTION_T X L V S JS JU C P).
   Parameter k_disjunction : N.
-  Definition wf (d : t) : Prop :=
-    length (proj1_sig d) <= C.k /\ Forall (fun s => S.is_bot s = false) (proj1_sig d).
-  (** Pair widening aligns alternatives at the same list position. *)
-  Parameter F1_pair_widen : forall p a b,
-    pair_widen p a b = map (fun xy => S.widen p (fst xy) (snd xy)) (combine a b).
-  (** Unstable widening first attempts to retain the previous number of alternatives. *)
-  Parameter F2_widen : forall p a b, widen p a b =
-    if leb b a then a else
-    let old := proj1_sig a in
-    let next := compact (length old) (proj1_sig (join a b)) in
-    if Nat.eqb (length next) (length old) then P.clip (pair_widen p old next)
-    else P.clip [S.widen p (collapse old) (collapse (proj1_sig b))].
-  (** The proposed credit adds component ranks and a collapse credit. *)
+  (** Unstable widening widens the first nonbottom alternative with every uncovered one. *)
+  Parameter F2_widen : forall p a b, proj1_sig (widen p a b) =
+    if leb b a then proj1_sig a else
+    if forallb S.is_bot (proj1_sig a) then [S.top] else
+    replace_first S.is_bot
+      (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
+      (proj1_sig a).
+  (** The rank adds the alternatives' ranks and credits a list of bottom alternatives. *)
   Parameter F3_rank : forall p d, wrank p d =
-    fold_right Nat.add 0 (map (S.wrank p) (proj1_sig d)) +
-      if Nat.eqb (length (proj1_sig d)) 1 then 0 else C.k.
-  (* SIG-QUESTION: The shared disjunction supplies a lattice with the Hoare order and
-     capped join. The state component owns widening and narrowing, including the
-     requested F2_widen algorithm. F2 must rule its bounded-rank capability and carrier. *)
-  (* SIG-QUESTION: The collapse rank has no bound in terms of the component rank sum.
-     Equivalent raw representatives can have unrelated ranks. The fixed C.k credit does
-     not establish the inherited wrank_widen law for arbitrary S. *)
-  (* SIG-QUESTION: A component rank bound under an invariant needs a corresponding
-     prepared carrier, initialization and preservation route for the unconditional
-     STATE_DOMAIN widening laws. Bounded lists still admit [bottom] and fresh alternatives
-     of unbounded component rank, as in F1-332. An invariant premise on a rank lemma does not
-     establish those unconditional laws. The current wf predicate supplies neither a
-     component invariant nor a bound. F2 must rule the capability and its public route. *)
+    fold_right Nat.add 0%nat (map (S.wrank p) (proj1_sig d)) +
+      if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
   (** Assignment maps its transfer over the alternatives. *)
   Parameter F4_assign : forall x e d,
     proj1_sig (assign x e d) = map (S.assign x e) (proj1_sig d).
@@ -138,17 +155,19 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Assumption maps its transfer over the alternatives. *)
   Parameter F6_assume : forall g es d,
     proj1_sig (assume g es d) = map (S.assume g es) (proj1_sig d).
-  (** Pair widening charges the actual aligned component calls. *)
-  Parameter T1_pair_widen : forall p a b, (T_pair_widen p a b <= k_disjunction *
-    (fold_right N.add 0%N (map (fun xy => S.T_widen p (fst xy) (snd xy) + 1)
-      (combine a b)) + 1))%N.
-  (* SIG-QUESTION: JS is an explicit component join-size capability. STATE_DOMAIN_T
-     does not provide it. A concrete S provider is still needed to instantiate the
-     actual shared timed bundle P. F333 bounds its carrier and wires its genuine clocks,
-     but does not supply a bounded component rank or establish the widening invariant. *)
+  (** Widening charges the order, the scans, one collapse and one component widening. *)
+  Parameter T1_widen : forall p a b, (T_widen p a b <= k_disjunction *
+    (T_leb b a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
+     fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
+     fold_right N.add 0%N (map (fun y => fold_right N.add 0%N
+       (map (fun x => S.T_leb y x + 1) (proj1_sig a))) (proj1_sig b)) +
+     fold_right N.add 0%N (map (fun x =>
+       let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
+       T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
+       (proj1_sig a))))%N.
 End DISJUNCTION_PLAN.
 
 Module Type DISJUNCTION_ALL (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
-    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (C : POS_CAP)
+    (S : STATE_DOMAIN_T X L V) (JS : JOIN_SIZE S) (JU : JOIN_UNITS X L V S) (C : POS_CAP)
     (P : SharedDisjunction.DISJUNCTION_T S JS C) :=
-  DISJUNCTION_T X L V S JS C P <+ DISJUNCTION_PLAN X L V S JS C P.
+  DISJUNCTION_T X L V S JS JU C P <+ DISJUNCTION_PLAN X L V S JS JU C P.
