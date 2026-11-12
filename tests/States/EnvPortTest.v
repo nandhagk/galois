@@ -90,3 +90,48 @@ Example three_widening_iterations :
   let s3 := E.widen tt s2 E.top in
   (get false s1, get false s2, get false s3) = (FVal 1, FTop, FTop).
 Proof. vm_compute. reflexivity. Qed.
+
+Module TraceLanguage.
+  Definition op := unit.
+  Definition guard := list (list nat).
+  Definition val := unit.
+  Definition eval (_ : op) (_ : list val) := Some tt.
+  Definition literal (_ : op) : option Z := None.
+End TraceLanguage.
+Module TraceValues.
+  Definition t := list nat.
+  Definition leb (_ _ : t) := true.
+  Definition bot : t := [].
+  Definition is_bot (_ : t) := false.
+  Definition join (a _ : t) := a.
+  Definition top : t := [].
+  Definition meet := @app nat.
+  Definition wparam := unit.
+  Definition widen (_ : unit) (a _ : t) := a.
+  Definition narrow (a _ : t) := a.
+  Definition forward (_ : unit) (_ : list t) : t := [].
+  Definition backward (_ : unit) (_ : t) (_ : list t) := [[1%nat]; [2%nat]].
+  Definition guard (targets : list t) (_ : list t) := targets.
+End TraceValues.
+Module TraceEnv := EnvCode BoolKeyCode BoolMap TraceLanguage TraceValues.
+Definition trace_input : TraceEnv.t :=
+  Reached (BoolMap.set true [8%nat] (BoolMap.set false [9%nat] BoolMap.empty)).
+Definition trace_get x (s : TraceEnv.t) :=
+  match s with Unreached => [] | Reached m => TraceEnv.read m x end.
+
+Example term_order_survives_materialization :
+  trace_get false (TraceEnv.assume [[1%nat]; [2%nat]] [Leaf false; Leaf false] trace_input) =
+    [9%nat; 1%nat; 2%nat].
+Proof. vm_compute. reflexivity. Qed.
+Example reversing_guard_targets_is_observable :
+  trace_get false (TraceEnv.assume [[2%nat]; [1%nat]] [Leaf false; Leaf false] trace_input) =
+    [9%nat; 2%nat; 1%nat].
+Proof. vm_compute. reflexivity. Qed.
+Example generic_node_order_survives_materialization :
+  trace_get false (TraceEnv.assume [[]] [Node tt [Leaf false; Leaf false]] trace_input) =
+    [9%nat; 1%nat; 2%nat].
+Proof. vm_compute. reflexivity. Qed.
+Example materialization_does_not_recompute_old_bindings :
+  trace_get true (TraceEnv.assume [[1%nat]; [2%nat]] [Leaf false; Leaf false] trace_input) =
+    [8%nat].
+Proof. vm_compute. reflexivity. Qed.
