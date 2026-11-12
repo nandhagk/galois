@@ -46,29 +46,41 @@ Module Type CFG (P : TYPE) (N : KEY) (E : TYPE) :=
   CFG_INDEXED_OPS P N E <+ CFG_LAWS P N E.
 
 Module Type CFG_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
-    (Import C : CFG_INDEXED_OPS P N E).
-  Parameter T_entries T_edges T_nodes : P.t -> nat.
+    (Import C : CFG_OPS P N E).
+  Parameter T_entries T_edges : P.t -> nat.
   Parameter T_src T_dst : P.t -> E.t -> nat.
-  Parameter T_out T_inc : P.t -> N.t -> nat.
   Parameter c_cfg : nat.
   (** Entry enumeration pays for its output. *)
   Parameter T_entries_le : forall p, T_entries p <= c_cfg * (length (entries p) + 1).
   (** Edge enumeration pays for its output. *)
   Parameter T_edges_le : forall p, T_edges p <= c_cfg * (length (edges p) + 1).
-  (** Node enumeration pays for its output. *)
-  Parameter T_nodes_le : forall p, T_nodes p <= c_cfg * (length (nodes p) + 1).
   (** Source projection has bounded cost. *)
   Parameter T_src_le : forall p e, T_src p e <= c_cfg.
   (** Destination projection has bounded cost. *)
   Parameter T_dst_le : forall p e, T_dst p e <= c_cfg.
-  (** Outgoing lookup pays for the key and its output. *)
-  Parameter T_out_le : forall p n, T_out p n <= c_cfg * (N.bits n + length (out p n) + 1).
-  (** Incoming lookup pays for the key and its output. *)
-  Parameter T_inc_le : forall p n, T_inc p n <= c_cfg * (N.bits n + length (inc p n) + 1).
 End CFG_TIME.
 
+Module Type CFG_ADJ_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
+    (Import C : CFG_INDEXED_OPS P N E).
+  Parameter T_nodes : P.t -> nat.
+  Parameter T_out T_inc : P.t -> N.t -> nat.
+  Parameter c_cfg_adj : nat.
+  (** Node enumeration pays for its output. *)
+  Parameter T_nodes_le : forall p,
+    T_nodes p <= c_cfg_adj * (length (nodes p) + 1).
+  (** Outgoing lookup pays for the key and its output. *)
+  Parameter T_out_le : forall p n,
+    T_out p n <= c_cfg_adj * (N.bits n + length (out p n) + 1).
+  (** Incoming lookup pays for the key and its output. *)
+  Parameter T_inc_le : forall p n,
+    T_inc p n <= c_cfg_adj * (N.bits n + length (inc p n) + 1).
+End CFG_ADJ_TIME.
+
+Module Type CFG_BASE_T (P : TYPE) (N : KEY_T) (E : TYPE) :=
+  CFG_OPS P N E <+ CFG_TIME P N E.
+
 Module Type CFG_T (P : TYPE) (N : KEY_T) (E : TYPE) :=
-  CFG P N E <+ CFG_TIME P N E.
+  CFG P N E <+ CFG_TIME P N E <+ CFG_ADJ_TIME P N E.
 
 Module Type CFG_LINK (P : TYPE) (N : KEY) (E : TYPE)
     (C : CFG_OPS P N E) (M : SEMANTICS P).
