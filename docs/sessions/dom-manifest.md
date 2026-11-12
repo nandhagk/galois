@@ -218,13 +218,18 @@ The time chain follows F1-50 §4.5.
 | `T1_scan` | Listed vertices, their rows and their membership trie. |
 | `T2_read` | Budgeted certificate reading with bounded key inspection. |
 | `T3_map` | Parent reconstruction and bounded structural comparison. |
-| `T4_sizes` | Subtree sizes and the per-vertex low-high tests. |
-| `T5_edges` | Parent-property and predecessor accumulator updates. |
+| `F2c_read` | Successful reading gives distinct listed entries, bounded length and positions. |
+| `F2d_map` | Successful parent validation keeps ordered vertices' parents in the order. |
+| `T4_sizes` | Subtree sizes over distinct listed entries with parents in the order. |
+| `T4b_sizes_ok` | Parent containment tests after successful reading and parent validation. |
+| `T5_edges` | Parent-property and per-vertex low-high tests over listed rows. |
 | `T6_tree` | Accepted numbering and inverse-parent grouping. |
 | `T7_dfs` | Producer numbering by binary counters. |
 | `T8_link_eval` | Aggregate compression work over `lt_ops g r`. |
 | `T9_semi` | Semidominators, buckets and forward correction. |
 | `T10_order` | Divergent trees, derived sources and offline insertion. |
+| `T11b_build` | Composition of producer numbering, semidominator and order phases. |
+| `T11_check` | Composition of checker phases with rejection at the first failed test. |
 
 The aggregate forest potential sums logarithms of subtree sizes and charges each link by a
 logarithmic increment. It does not promise a logarithmic cost for each evaluation.
@@ -233,7 +238,8 @@ proofs and the aggregate evaluator proof remain conversion obligations.
 
 `T4_sizes` requires duplicate-free listed entries, a graph-sized order and parents within
 that order. `T5_edges` also requires parents of ordered entries to belong to the order.
-The bounded read and parent-validation phases establish these premises before either pass
-runs. The master approved these internal premise repairs for the raw-input gap in F1-50.
+`F2c_read` and `F2d_map` establish these premises from successful reading and parent validation
+before either pass runs. The master approved these internal premise repairs for the raw-input
+gap in F1-50.
 The public time targets are unchanged. Read and parent-validation helpers take the initial
 scan result, so their per-vertex bounds exclude repeated graph scans.
