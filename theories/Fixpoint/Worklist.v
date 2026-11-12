@@ -365,12 +365,12 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
           | Some (_, a) => a
           | None => L.bot
           end in
-        (h - rk a) * weighted_degree p c) (key_support p)))%nat) *
+        (h - rk a) * (weighted_degree p c + degree p c)) (key_support p)))%nat) *
       unit p + queue_phi p s)%N.
   Definition all_head_phi (p : S.prog) (pol : policy L.wparam) (s : state) : N :=
     (k_credit * N.of_nat ((queue_credit p s + fold_right Nat.add 0
       (List.map (fun c => (head_allowance p pol c - N.to_nat (counter s c)) *
-        weighted_degree p c) (key_support p)))%nat) * unit p + queue_phi p s +
+        (weighted_degree p c + degree p c)) (key_support p)))%nat) * unit p + queue_phi p s +
       k_credit * N.of_nat ((fold_right Nat.add 0
         (List.map (fun c => head_allowance p pol c - N.to_nat (counter s c))
           (key_support p)))%nat) * head_unit p pol)%N.
@@ -584,11 +584,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof. Admitted. (* STUB *)
 
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
-  Lemma W1_prepare : forall p pol, fits p pol ->
+  Lemma W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Initial guarded pushes supply the potential consumed by later queue operations. *)
-  Lemma W1_queue_phi : forall p pol, fits p pol ->
+  Lemma W1_queue_phi : forall p pol, S.wf p -> prio_ok p pol ->
     (queue_phi p (prepare p pol) <= k_prepare * N.of_nat (C p + D p) * unit p)%N.
   Proof. Admitted. (* STUB *)
   (** W2 charges every dependency-resume occurrence on invariant stores. *)
@@ -701,7 +701,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
   Lemma W7_all_heads_initial : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (all_head_phi p pol (prepare p pol) <=
-      k_credit * all_head_work p pol + queue_phi p (prepare p pol))%N.
+      2 * k_credit * all_head_work p pol + queue_phi p (prepare p pol))%N.
   Proof. Admitted. (* STUB *)
   (** Solved candidates satisfy every row. *)
   Lemma run_post : forall p pol fuel m, fits p pol -> run p pol fuel = Solved m ->
