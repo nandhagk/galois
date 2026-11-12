@@ -513,7 +513,7 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
   Proof. Admitted. (* STUB *)
 
 End KnownBits.
-Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG).
+Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Include KnownBits L C.
   TimeFun pleb.
   TimeFun pjoin.
@@ -633,42 +633,60 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG).
   Proof. Admitted. (* STUB *)
   Lemma T_tnum_mul_with_le : forall choice w a b,
     (T_tnum_mul_with choice w a b <= c_tnum *
-      N.of_nat ((Pos.to_nat w + 1) *
-        (Pos.to_nat w + tnum_bits a + tnum_bits b + 1)))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_tnum_mul_le : forall w a b,
-    (T_tnum_mul w a b <= c_tnum * N.of_nat ((Pos.to_nat w + 1) *
-      (Pos.to_nat w + tnum_bits a + tnum_bits b + 1)))%N.
+    (T_tnum_mul w a b <= c_tnum *
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_tnum_variable_le : forall o w a b,
-    (T_tnum_variable o w a b <= c_tnum * N.of_nat ((Pos.to_nat w + 1) *
-      (Pos.to_nat w + tnum_bits a + tnum_bits b + 1)))%N.
+    (T_tnum_variable o w a b <= c_tnum *
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
   Proof. Admitted. (* STUB *)
   Lemma mul_bigO : bigO (fun _ => True)
-    (fun x : positive * (tnum * tnum) => N.of_nat ((Pos.to_nat (fst x) + 1) *
-      (Pos.to_nat (fst x) + tnum_bits (fst (snd x)) + tnum_bits (snd (snd x)) + 1)))
+    (fun x : positive * (tnum * tnum) => N.of_nat
+      ((Pos.to_nat (fst x) + 1) ^ 2 + tnum_bits (fst (snd x)) +
+        tnum_bits (snd (snd x))))
     (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
   Proof. Admitted. (* STUB *)
 
   Definition mul_step := tnum_mul_stage_step.
   TimeFun mul_step.
+  Definition acc_step := tnum_mul_acc_step.
+  TimeFun acc_step.
   Definition k_mul_step : N := 1. (* STUB *)
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> tnum_gamma w a z.
-  Proof. Admitted. (* STUB *)
-  Lemma F2_widen : forall q w a b,
-    pwiden q w a b = if pleb w b a then a else pjoin w a b.
-  Proof. Admitted. (* STUB *)
   Lemma F3_rank : forall q w a, pis_bot w a = false ->
     (pwrank q w a = known_count w a)%nat.
   Proof. Admitted. (* STUB *)
   Lemma F4_rank_bound : forall q w a, pis_bot w a = false ->
     (pwrank q w a <= Pos.to_nat w)%nat.
   Proof. Admitted. (* STUB *)
-  Lemma F5_size : forall w a, psize w a = (Pos.to_nat w + tnum_bits a + 1)%nat.
+  (** Payload size includes width and stored mask bits. *)
+  Lemma psize_bits : forall w a,
+    psize w a = (Pos.to_nat w + tnum_bits a + 1)%nat.
   Proof. Admitted. (* STUB *)
-  Lemma F6_mul_sound : forall choice w a b x y,
-    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
-    pgamma w (tnum_mul_with choice w a b) (L.wrap w (x * y)).
+  (** Unary transfer results store no more than two masks of the width. *)
+  Lemma tnum_unary_bits : forall w a,
+    (tnum_bits (tnum_not w a) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_neg w a) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_normalise w a) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Binary transfer results store no more than two masks of the width. *)
+  Lemma tnum_binary_bits : forall w a b,
+    (tnum_bits (tnum_add w a b) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_sub w a b) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_and w a b) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_or w a b) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_xor w a b) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_mul w a b) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Configured stages and variable shifts keep masks within the width. *)
+  Lemma tnum_stage_bits : forall choice o w a b,
+    (tnum_bits (tnum_mul_with choice w a b) <= 2 * Pos.to_nat w)%nat /\
+    (tnum_bits (tnum_variable o w a b) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** The bit mask agrees with modular word reduction. *)
+  Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
   Proof. Admitted. (* STUB *)
   Lemma F7_mul_step : forall w a b x y i r,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
@@ -678,8 +696,30 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG).
     | inr s => pgamma w s (L.wrap w (x * y))
     end.
   Proof. Admitted. (* STUB *)
+  (** A staged step keeps its output masks within the width. *)
+  Lemma F8_mul_step_bits : forall w a b i r j s,
+    mul_step w a b (i, r) = inl (j, s) ->
+    (tnum_bits s <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** An accumulating step keeps its output masks within the width. *)
+  Lemma F9_acc_step_bits : forall w a b i r j s,
+    acc_step w a b (i, r) = inl (j, s) ->
+    (tnum_bits s <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Masking work is linear in the width and raw integer size. *)
+  Lemma T0_tnum_wrap : forall w z,
+    (T_tnum_wrap w z <= k_mul_step *
+      N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (* Gamma, widening and multiplication laws now live in KNOWN_BITS_LAWS. *)
   Lemma T1_mul_step : forall w a b i r,
     (T_mul_step w a b (i, r) <= k_mul_step *
+      N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
+        tnum_bits r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Accumulating work charges width, index and all stored masks. *)
+  Lemma T2_acc_step : forall w a b i r,
+    (T_acc_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.
   Proof. Admitted. (* STUB *)

@@ -424,7 +424,7 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Proof. Admitted. (* STUB *)
 End Wrapped.
 
-Module WrappedT (L : WORD_LANGUAGE_T).
+Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Include Wrapped L.
   TimeFun pleb.
   TimeFun pjoin.
@@ -531,58 +531,58 @@ Module WrappedT (L : WORD_LANGUAGE_T).
   (** Arc normalization charges raw endpoints and output width. *)
   Lemma T_wrapped_norm_le : forall w a,
     (T_wrapped_norm w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Arc expansion charges raw endpoints and output width. *)
   Lemma T_wrapped_double_le : forall w a,
     (T_wrapped_double w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Arithmetic negation charges raw endpoints and output width. *)
   Lemma T_wrapped_neg_le : forall w a,
     (T_wrapped_neg w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Bitwise negation charges raw endpoints and output width. *)
   Lemma T_wrapped_not_le : forall w a,
     (T_wrapped_not w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Circular multiplication charges width and both endpoint sets. *)
   Lemma T_wrapped_mul_le : forall w a b,
     (T_wrapped_mul w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Circular addition charges width and both endpoint sets. *)
   Lemma T_wrapped_add_le : forall w a b,
     (T_wrapped_add w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Circular subtraction charges width and both endpoint sets. *)
   Lemma T_wrapped_sub_le : forall w a b,
     (T_wrapped_sub w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Arc splitting charges endpoint normalization at both poles. *)
   Lemma T_wrapped_split_le : forall w a,
     (T_wrapped_split w a <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
   Proof. Admitted. (* STUB *)
   (** Unsigned division charges width and both endpoint sets. *)
   Lemma T_wrapped_udiv_le : forall w a b,
     (T_wrapped_udiv w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Unsigned remainder charges width and both endpoint sets. *)
   Lemma T_wrapped_urem_le : forall w a b,
     (T_wrapped_urem w a b <= c_wrapped *
-      N.of_nat ((Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
   Proof. Admitted. (* STUB *)
   (** Circular multiplication has the published quadratic work bound. *)
   Lemma mul_bigO : bigO (fun _ => True)
     (fun x : positive * (wrapped * wrapped) => N.of_nat
-      ((Pos.to_nat (fst x) + wrapped_bits (fst (snd x)) + wrapped_bits (snd (snd x)) + 1)
-        ^ 2))
+      ((Pos.to_nat (fst x) + 1) ^ 2 + wrapped_bits (fst (snd x)) +
+        wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
   Proof. Admitted. (* STUB *)
 
@@ -594,9 +594,7 @@ Module WrappedT (L : WORD_LANGUAGE_T).
   Definition k_split : N := 1. (* STUB *)
   Definition k_mul_piece : N := 1. (* STUB *)
 
-  (** Payload membership is clockwise arc membership. *)
-  Lemma F1_gamma : forall w a z, pgamma w a z <-> arc_gamma w a z.
-  Proof. Admitted. (* STUB *)
+  (* Gamma and multiplication laws now live in WRAPPED_LAWS. *)
   (** Arc cardinality lies between zero and the modulus. *)
   Lemma F2_card : forall w a, (0 <= card w a <= Word.modulus w)%Z.
   Proof. Admitted. (* STUB *)
@@ -612,11 +610,6 @@ Module WrappedT (L : WORD_LANGUAGE_T).
     (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
     pgamma w (mul_piece w (lo, hi) (lo', hi')) (L.wrap w (x * y)).
   Proof. Admitted. (* STUB *)
-  (** Circular multiplication retains every normalized represented product. *)
-  Lemma F6_mul_sound : forall w a b x y,
-    pgamma w a x -> pgamma w b y ->
-    pgamma w (wrapped_mul w a b) (L.wrap w (x * y)).
-  Proof. Admitted. (* STUB *)
   (** Widening retains a contained candidate and otherwise expands first. *)
   Lemma F7_widen : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w (wrapped_double w a) b.
@@ -625,6 +618,13 @@ Module WrappedT (L : WORD_LANGUAGE_T).
   Lemma F8_double_card : forall w a,
     card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
   Proof. Admitted. (* STUB *)
+  (** Expansion contains the old arc. *)
+  Lemma F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
+  Proof. Admitted. (* STUB *)
+  (** Cardinality is monotone in the payload order. *)
+  Lemma F8b_card_mono : forall w a b,
+    pleb w a b = true -> (card w a <= card w b)%Z.
+  Proof. Admitted. (* STUB *)
   (** Widening rank is determined by arc cardinality. *)
   Lemma F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
   Proof. Admitted. (* STUB *)
@@ -632,8 +632,20 @@ Module WrappedT (L : WORD_LANGUAGE_T).
   Lemma F10_rank_bound : forall q w a, (pwrank q w a <= Pos.to_nat w + 2)%nat.
   Proof. Admitted. (* STUB *)
   (** Payload storage charges width and endpoint bit lengths. *)
-  Lemma F11_size : forall w a,
+  Lemma psize_bits : forall w a,
     psize w a = (Pos.to_nat w + wrapped_bits a + 1)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Arithmetic transfer results have endpoints within the word width. *)
+  Lemma wrapped_result_bits : forall w a b,
+    (wrapped_bits (wrapped_add w a b) <= 2 * Pos.to_nat w)%nat /\
+    (wrapped_bits (wrapped_sub w a b) <= 2 * Pos.to_nat w)%nat /\
+    (wrapped_bits (wrapped_mul w a b) <= 2 * Pos.to_nat w)%nat /\
+    (wrapped_bits (wrapped_neg w a) <= 2 * Pos.to_nat w)%nat.
+  Proof. Admitted. (* STUB *)
+  (** Every split piece has endpoints within the word width. *)
+  Lemma wrapped_split_bits : forall w a lo hi,
+    In (lo, hi) (wrapped_split w a) ->
+    (Z.size_nat lo + Z.size_nat hi <= 2 * Pos.to_nat w)%nat.
   Proof. Admitted. (* STUB *)
   (** Multiplication pieces charge width and all endpoint bit lengths. *)
   Lemma T1_mul_piece : forall w lo hi lo' hi',
