@@ -112,17 +112,17 @@ Definition idf_measure rows seeds st : N :=
 
 Lemma idf_reachable_initial : forall rows seeds,
   idf_reachable rows seeds (idf_initial seeds).
-Proof. Admitted.
+Proof. Admitted. (* STUB *)
 
 Lemma idf_reachable_step : forall rows seeds st next,
   idf_reachable rows seeds st -> idf_step rows st = inl next ->
   idf_reachable rows seeds next.
-Proof. Admitted.
+Proof. Admitted. (* STUB *)
 
 Lemma idf_measure_step : forall rows seeds st next,
   idf_reachable rows seeds st -> idf_step rows st = inl next ->
   (idf_measure rows seeds next < idf_measure rows seeds st)%N.
-Proof. Admitted.
+Proof. Admitted. (* STUB *)
 
 Definition idf_private_state rows seeds := { st : idf_state | idf_reachable rows seeds st }.
 
@@ -173,18 +173,18 @@ Module Frontier <: FRONTIER.
   Lemma df_spec : forall g t r x y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In y (frontier_row (df g t) x) <-> in_frontier (base g) r x y.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma df_unique : forall g t x, NoDup (frontier_row (df g t) x).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma idf_spec : forall g t r seeds y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In y (idf (df g t) seeds) <-> in_iterated_frontier (base g) r seeds y.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma idf_unique : forall rows seeds, NoDup (idf rows seeds).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Frontier.
 
 Module FrontierT <: FRONTIER_ALL.

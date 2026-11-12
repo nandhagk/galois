@@ -25,16 +25,16 @@ Module BoundedSetCode (K : KEY) (S : SET K) (U : UNIVERSE K S) <: LATTICE_OPS.
 
   (** Empty support lies inside the universe. *)
   Lemma bot_inside : S.subset S.empty U.u = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Union preserves the restriction to the universe. *)
   Lemma union_inside (a b : t) :
     S.subset (S.union (proj1_sig a) (proj1_sig b)) U.u = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   (** Intersection clips any raw set to the universe. *)
   Lemma inter_inside (s : S.t) : S.subset (S.inter s U.u) U.u = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Definition leb (a b : t) : bool := S.subset (proj1_sig a) (proj1_sig b).
   Definition bot : t := exist _ S.empty bot_inside.
@@ -49,25 +49,25 @@ Module BoundedSet (K : KEY) (S : SET K) (U : UNIVERSE K S) <: LATTICE.
 
   (** Restricted inclusion is reflexive. *)
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Restricted inclusion composes. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The empty restricted set is least. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes the empty restricted set. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Every recognized empty support is least. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Union contains its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Union contains its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End BoundedSet.
 
 Module BoundedSetT (K : KEY_T) (S : SET_T K) (U : UNIVERSE K S) <: LATTICE_T.
@@ -109,12 +109,12 @@ Module BoundedHeight (K : KEY) (S : SET K) (U : UNIVERSE K S)
 
   (** The restricted support contains at most all universe keys. *)
   Lemma rank_le : forall a, rank a <= height.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Inclusion never removes a universe key. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Strict inclusion adds a universe key. *)
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End BoundedHeight.

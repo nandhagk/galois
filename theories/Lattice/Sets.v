@@ -47,9 +47,9 @@ Module MaySet (K : KEY) (S : SET K) <: LATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intro a; apply S.subset_spec; intros k Hk; rewrite S.has_empty in Hk; discriminate. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros a b; apply S.subset_spec; intros k Hk; rewrite S.has_union, Hk; reflexivity.
@@ -73,9 +73,9 @@ Module MustSet (K : KEY) (S : SET K) <: LATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros [a|]; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros [a|] [b|]; cbn [leb join]; try reflexivity; try apply May.leb_refl.

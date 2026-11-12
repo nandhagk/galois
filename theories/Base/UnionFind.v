@@ -76,58 +76,58 @@ Module UnionFind <: UNION_FIND.
     (forall r, mem u r -> is_root u r -> N.to_nat (size_at r u) = size_of u r) /\
     (forall r n, PTrieCode.get r (sizes u) = Some n -> N.to_nat n <= card u) /\
     exists rk, ranked u rk.
-  Lemma wf_empty : wf empty. Proof. Admitted.
-  Lemma wf_add   : forall x u, wf u -> wf (add x u). Proof. Admitted.
-  Lemma wf_find  : forall x u, wf u -> wf (snd (find x u)). Proof. Admitted.
-  Lemma wf_union : forall x y u, wf u -> wf (snd (union x y u)). Proof. Admitted.
-  Lemma mem_add   : forall x u y, wf u -> (mem (add x u) y <-> mem u y \/ y = x). Proof. Admitted.
-  Lemma mem_find  : forall x u y, wf u -> (mem (snd (find x u)) y <-> mem u y). Proof. Admitted.
+  Lemma wf_empty : wf empty. Proof. Admitted. (* STUB *)
+  Lemma wf_add   : forall x u, wf u -> wf (add x u). Proof. Admitted. (* STUB *)
+  Lemma wf_find  : forall x u, wf u -> wf (snd (find x u)). Proof. Admitted. (* STUB *)
+  Lemma wf_union : forall x y u, wf u -> wf (snd (union x y u)). Proof. Admitted. (* STUB *)
+  Lemma mem_add   : forall x u y, wf u -> (mem (add x u) y <-> mem u y \/ y = x). Proof. Admitted. (* STUB *)
+  Lemma mem_find  : forall x u y, wf u -> (mem (snd (find x u)) y <-> mem u y). Proof. Admitted. (* STUB *)
   Lemma mem_union : forall x y u z, wf u -> (mem (snd (union x y u)) z <-> mem u z \/ z = x \/ z = y).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma repr_empty : forall x, repr empty x = x. Proof. reflexivity. Qed.
-  Lemma repr_idem  : forall u x, wf u -> repr u (repr u x) = repr u x. Proof. Admitted.
-  Lemma repr_add   : forall x u y, wf u -> repr (add x u) y = repr u y. Proof. Admitted.
-  Lemma find_repr  : forall x u, wf u -> fst (find x u) = repr u x. Proof. Admitted.
-  Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y. Proof. Admitted.
+  Lemma repr_idem  : forall u x, wf u -> repr u (repr u x) = repr u x. Proof. Admitted. (* STUB *)
+  Lemma repr_add   : forall x u y, wf u -> repr (add x u) y = repr u y. Proof. Admitted. (* STUB *)
+  Lemma find_repr  : forall x u, wf u -> fst (find x u) = repr u x. Proof. Admitted. (* STUB *)
+  Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y. Proof. Admitted. (* STUB *)
   Lemma union_none : forall x y u u1, wf u -> union x y u = (None, u1) ->
-    repr u x = repr u y /\ forall z, repr u1 z = repr u z. Proof. Admitted.
+    repr u x = repr u y /\ forall z, repr u1 z = repr u z. Proof. Admitted. (* STUB *)
   Lemma union_some : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
     repr u x <> repr u y /\
     ((w = repr u x /\ l = repr u y) \/ (w = repr u y /\ l = repr u x)) /\
-    forall z, repr u1 z = if Pos.eqb (repr u z) l then w else repr u z. Proof. Admitted.
+    forall z, repr u1 z = if Pos.eqb (repr u z) l then w else repr u z. Proof. Admitted. (* STUB *)
   Lemma union_by_size : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
-    size_of u l <= size_of u w. Proof. Admitted.
+    size_of u l <= size_of u w. Proof. Admitted. (* STUB *)
   Lemma size_of_union : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
-    size_of u1 w = size_of u w + size_of u l. Proof. Admitted.
-  Lemma size_of_le_card : forall u x, wf u -> mem u x -> size_of u x <= card u. Proof. Admitted.
+    size_of u1 w = size_of u w + size_of u l. Proof. Admitted. (* STUB *)
+  Lemma size_of_le_card : forall u x, wf u -> mem u x -> size_of u x <= card u. Proof. Admitted. (* STUB *)
   Lemma card_empty : card empty = 0. Proof. reflexivity. Qed.
-  Lemma card_add   : forall x u, wf u -> card (add x u) <= card u + 1. Proof. Admitted.
+  Lemma card_add   : forall x u, wf u -> card (add x u) <= card u + 1. Proof. Admitted. (* STUB *)
   Lemma card_find  : forall x u, wf u -> card (snd (find x u)) = card u. Proof. reflexivity. Qed.
-  Lemma card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2. Proof. Admitted.
-  Lemma width_mem  : forall u x, wf u -> mem u x -> Pos.size_nat x <= width u. Proof. Admitted.
+  Lemma card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2. Proof. Admitted. (* STUB *)
+  Lemma width_mem  : forall u x, wf u -> mem u x -> Pos.size_nat x <= width u. Proof. Admitted. (* STUB *)
   Lemma size_of_fresh : forall u x, wf u -> ~ mem u x -> size_of u x = 1.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma size_of_repr : forall u x, wf u -> size_of u x = size_of u (repr u x).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma size_of_add : forall x u y, wf u -> size_of (add x u) y = size_of u y.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma size_of_find : forall x u y, wf u -> size_of (snd (find x u)) y = size_of u y.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma size_of_union_other : forall x y u o u1 z, wf u -> union x y u = (o, u1) ->
   (forall w l, o = Some (w, l) -> repr u z <> w /\ repr u z <> l) ->
   size_of u1 z = size_of u z.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma width_empty : width empty = 0.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma width_add : forall x u, wf u ->
   width (add x u) <= Nat.max (width u) (Pos.size_nat x).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma width_find : forall x u, wf u -> width (snd (find x u)) <= width u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma width_union : forall x y u, wf u ->
   width (snd (union x y u)) <= Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End UnionFind.
 
 Module UnionFindT <: UNION_FIND_ALL.

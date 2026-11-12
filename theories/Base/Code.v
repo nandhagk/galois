@@ -60,12 +60,12 @@ TimeFun list_code.
 
 (** Equal glued codes identify both components. *)
 Lemma glue_inj : forall a b a' b', glue a b = glue a' b' -> a = a' /\ b = b'.
-Proof. Admitted.
+Proof. Admitted. (* STUB *)
 
 (** Gluing doubles the first component's bits apart from its final delimiter. *)
 Lemma glue_bits : forall a b,
   Pos.size_nat (glue a b) = 2 * Pos.size_nat a + Pos.size_nat b - 1.
-Proof. Admitted.
+Proof. Admitted. (* STUB *)
 
 Definition c_glue : N := 1. (* STUB *)
 
