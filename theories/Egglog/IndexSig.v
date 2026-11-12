@@ -99,6 +99,9 @@ Module Type INDEX_TIME (V : VALUE_T) (Import X : INDEX V).
   (** Removal never increases the stored cell width. *)
   Parameter max_cell_bits_remove : forall r ix,
     max_cell_bits (remove r ix) <= max_cell_bits ix.
+  (** Every stored cell fits the recorded cell width. *)
+  Parameter max_cell_bits_mem : forall a ix u c, wf a ix -> mem ix u -> In c u ->
+    cell_bits V.encode c <= max_cell_bits ix.
   (** Width charges the fresh node counter and the largest query and stored cells. *)
   Parameter width_le : forall ix r,
     width ix r <= Pos.size_nat (next ix + Pos.of_nat (length r)) +
@@ -168,8 +171,10 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
     (T_remove_step_st (fold_left remove_step_st pre (start ix)) c <=
       4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
   (** Initialization and both finishing passes fit the original walk budget. *)
-  Parameter T_walk_ends : forall r ix st, inv ix ->
-    (T_start ix + T_insert_finish r ix st + T_remove_finish r ix st <=
+  Parameter T_walk_ends : forall r ix, inv ix ->
+    (T_start ix +
+     T_insert_finish r ix (fold_left insert_step_st r (start ix)) +
+     T_remove_finish r ix (fold_left remove_step_st r (start ix)) <=
       k_walk * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
 
   (** Insertion follows its named state walk. *)

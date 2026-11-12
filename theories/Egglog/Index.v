@@ -130,6 +130,11 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     max_cell_bits (remove r ix) <= max_cell_bits ix.
   Proof. Admitted. (* STUB *)
 
+  (** Every stored cell fits the recorded cell width. *)
+  Lemma max_cell_bits_mem : forall a ix u c, wf a ix -> mem ix u -> In c u ->
+    cell_bits V.encode c <= max_cell_bits ix.
+  Proof. Admitted. (* STUB *)
+
   Lemma width_le : forall ix r,
     width ix r <= Pos.size_nat (next ix + Pos.of_nat (length r)) +
       fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
@@ -217,8 +222,10 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Proof. Admitted. (* STUB *)
 
   (** Initialization and both finishing passes fit the original walk budget. *)
-  Lemma T_walk_ends : forall r ix st, inv ix ->
-    (T_start ix + T_insert_finish r ix st + T_remove_finish r ix st <=
+  Lemma T_walk_ends : forall r ix, inv ix ->
+    (T_start ix +
+     T_insert_finish r ix (fold_left insert_step_st r (start ix)) +
+     T_remove_finish r ix (fold_left remove_step_st r (start ix)) <=
       k_walk * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
