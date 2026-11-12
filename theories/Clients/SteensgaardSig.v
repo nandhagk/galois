@@ -61,7 +61,8 @@ Module Type POINTER_QUOTIENT.
 End POINTER_QUOTIENT.
 
 Definition steensgaard_program : program positive := Program positive
-  [Decl 1 2 ORel; Decl 2 2 ORel; Decl 3 2 ORel; Decl 4 2 ORel; Decl 6 1 OId; Decl 7 1 OId]
+  [Decl 1 [SVal; SVal] ORel; Decl 2 [SVal; SVal] ORel; Decl 3 [SVal; SVal] ORel;
+   Decl 4 [SVal; SVal] ORel; Decl 6 [SVal] OId; Decl 7 [SId] OId]
   [Rule positive [Fun positive 1 [Var 1; Var 2] None]
     [Make 3 6 [Var 1]; Make 4 6 [Var 2]; Make 5 7 [Var 3]; Union (Var 5) (Var 4)];
    Rule positive [Fun positive 2 [Var 1; Var 2] None]
