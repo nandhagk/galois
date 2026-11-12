@@ -21,7 +21,15 @@ Proof. vm_compute. reflexivity. Qed.
 Example map_trie_order : List.map fst (PosMap.elements sample) = [2; 1; 3]%positive.
 Proof. vm_compute. reflexivity. Qed.
 
-(* The is_empty observation in BaseMapTest.v at 87192fe has no current operation. *)
+Example map_update_absent :
+  let old := PosMap.get 4%positive sample in
+  PosMap.get 4%positive (PosMap.set 4%positive (match old with Some v => v | None => 40 end)
+    sample) = Some 40.
+Proof. vm_compute. reflexivity. Qed.
+
+Example map_remove_last :
+  PosMap.elements (PosMap.remove 1%positive (PosMap.set 1%positive 0 PosMap.empty)) = [].
+Proof. vm_compute. reflexivity. Qed.
 
 Example map_empty : PosMap.elements (PosMap.empty : PosMap.t nat) = [].
 Proof. vm_compute. reflexivity. Qed.
@@ -31,7 +39,8 @@ Example map_combination :
     sample PosMap.empty) = [(2%positive, 20); (1%positive, 11); (3%positive, 30)].
 Proof. vm_compute. reflexivity. Qed.
 
-(* Update, cost and law examples are in BaseMapTest.v at 87192fe. *)
+(* The old update and is_empty operations are expressed through get, set and elements above.
+   Cost and law examples are in BaseMapTest.v at 87192fe. *)
 
 Module UnitMap := TrieMapCode UnitKeyCode.
 Definition raw_unit_map : UnitMap.t bool := PTrieCode.set 2%positive (tt, true) PTrieCode.empty.
