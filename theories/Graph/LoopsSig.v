@@ -17,7 +17,7 @@ Definition natural_header (g : digraph) (r h : positive) : Prop :=
 (** A natural loop contains its header and paths to latches that avoid the header. *)
 Definition natural_loop (g : digraph) (r h v : positive) : Prop :=
   natural_header g r h /\
-  (v = h \/ exists latch vs, reach g [r] latch /\ edge g latch h /\
+  (v = h \/ exists latch vs, reach g [r] v /\ reach g [r] latch /\ edge g latch h /\
     dominates g r h latch /\ path g v vs latch /\ forall x, In x vs -> x <> h).
 
 (** Strict containment compares the complete semantic loop bodies. *)
@@ -83,21 +83,26 @@ End LOOPS_OPS.
 Module Type LOOPS_LAWS (Import L : LOOPS_OPS).
   (** Body bindings exist precisely at targets of dominance back edges. *)
   Parameter headers_spec : forall g t r h,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (exists vs, trie_get h (body (forest g t)) = Some vs) <-> natural_header (base g) r h.
   (** Each header row is the semantic natural loop of that header. *)
   Parameter body_spec : forall g t r h v,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In v (loop_body (forest g t) h) <-> natural_loop (base g) r h v.
   (** Loop bodies contain no repeated vertex. *)
   Parameter body_unique : forall g t h, NoDup (loop_body (forest g t) h).
   (** Header lookup chooses the innermost loop containing a vertex. *)
   Parameter header_spec : forall g t r v h,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     trie_get v (header (forest g t)) = Some h <-> innermost_header (base g) r v h.
   (** Parent lookup gives immediate strict containment of natural loops. *)
   Parameter parent_spec : forall g t r inner outer,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     trie_get inner (parent (forest g t)) = Some outer <->
     immediate_outer (base g) r inner outer.
   (** The Boolean test reflects the requested retreating-edge condition. *)
   Parameter reducible_b_spec : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     reflect (reducible (base g) r) (reducible_b g t).
 End LOOPS_LAWS.
 
@@ -108,23 +113,27 @@ Module Type LOOPS_TIME (Import L : LOOPS).
   Parameter T_reducible_b : prepared -> domtree -> N.
   Parameter c_loops : N.
   (** Forest construction charges graph occurrences at every loop nesting depth. *)
-  Parameter T_forest_le : forall g t,
+  Parameter T_forest_le : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Reducibility checking has the published nesting-sensitive graph bound. *)
-  Parameter T_reducible_b_le : forall g t,
+  Parameter T_reducible_b_le : forall g t r,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Forest construction has the published nesting-sensitive bit-cost bound. *)
-  Parameter forest_bigO : bigO (fun _ : prepared * domtree => True)
-    (fun '(g, t) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Parameter forest_bigO : bigO (fun '(g, t, r) =>
+      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
+    (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t) => T_forest g t).
+    (fun '(g, t, _) => T_forest g t).
   (** Reducibility checking has the published nesting-sensitive bit-cost bound. *)
-  Parameter reducible_b_bigO : bigO (fun _ : prepared * domtree => True)
-    (fun '(g, t) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+  Parameter reducible_b_bigO : bigO (fun '(g, t, r) =>
+      wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
+    (fun '(g, t, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, t) => T_reducible_b g t).
+    (fun '(g, t, _) => T_reducible_b g t).
 End LOOPS_TIME.
 
 Module Type LOOPS_T := LOOPS <+ LOOPS_TIME.
