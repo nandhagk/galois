@@ -34,3 +34,72 @@ Module InternCode (K : KEY_OPS) (M : MAP_OPS K) <: INTERN_OPS K.
             (PTrieCode.set i k (intern_inverse s)) (Pos.succ i))
     end.
 End InternCode.
+
+Module Intern (K : KEY) (M : MAP K) <: INTERN K.
+  Include InternCode K M.
+  Definition wf (s : t) : Prop :=
+    M.wf (intern_forward s) /\
+    (forall k i, find k s = Some i -> (i < intern_next s)%positive) /\
+    (forall k i, find k s = Some i <-> name i s = Some k) /\
+    (forall i, (i < intern_next s)%positive -> exists k, find k s = Some i).
+  Lemma find_empty : forall k, find k empty = None.
+  Proof. intro k; apply M.get_empty. Qed.
+  Lemma name_empty : forall i, name i empty = None.
+  Proof. intro i; apply PTrie.get_empty. Qed.
+  Lemma wf_empty : wf empty.
+  Proof.
+    split; [apply M.wf_empty|]. split.
+    - intros k i H; rewrite find_empty in H; discriminate.
+    - split.
+      + intros k i; rewrite find_empty, name_empty; split; discriminate.
+      + intros i Hi; change (i < 1)%positive in Hi; lia.
+  Qed.
+  Lemma wf_intern : forall k s, wf s -> wf (snd (intern k s)).
+  Proof. Admitted. (* CONVERT: intern_wf: The variable fresh_bound was not found in the current environment. *)
+  Lemma size_empty : size empty = 0%N.
+  Proof. Admitted.
+  Lemma find_name : forall k i s, wf s -> (find k s = Some i <-> name i s = Some k).
+  Proof. intros k i s [_ [_ [Hlink _]]]; apply Hlink. Qed.
+  Lemma find_inj : forall k l i s, wf s ->
+    find k s = Some i -> find l s = Some i -> k = l.
+  Proof.
+    intros k l i s Hwf Hk Hl.
+    apply (proj1 (find_name k i s Hwf)) in Hk.
+    apply (proj1 (find_name l i s Hwf)) in Hl; congruence.
+  Qed.
+  Lemma find_range : forall k i s, wf s -> find k s = Some i ->
+    (N.pos i <= size s)%N.
+  Proof. Admitted. (* CONVERT: ids_size: The variable ids_size was not found in the current environment. *)
+  Lemma dense : forall i s, wf s -> (N.pos i <= size s)%N -> exists k, name i s = Some k.
+  Proof. Admitted. (* CONVERT: ids_size: The variable ids_size was not found in the current environment. *)
+  Lemma intern_found : forall k s i, find k s = Some i -> intern k s = (i, s).
+  Proof. intros k s i H; unfold intern; rewrite H; reflexivity. Qed.
+  Lemma intern_new : forall k s, wf s -> find k s = None ->
+    N.pos (fst (intern k s)) = N.succ (size s).
+  Proof. Admitted. (* CONVERT: next_size: The variable next_size was not found in the current environment. *)
+  Lemma find_intern_same : forall k s, wf s ->
+    find k (snd (intern k s)) = Some (fst (intern k s)).
+  Proof.
+    intros k s Hwf; unfold intern; destruct (find k s) eqn:H; cbn; [exact H|].
+    apply M.get_set_same.
+  Qed.
+  Lemma find_intern_other : forall k l s, wf s -> k <> l ->
+    find l (snd (intern k s)) = find l s.
+  Proof.
+    intros k l s Hwf Hneq; unfold intern; destruct (find k s) eqn:H; cbn; [reflexivity|].
+    unfold find; cbn; apply M.get_set_other; congruence.
+  Qed.
+  Lemma name_intern : forall k s, wf s ->
+    name (fst (intern k s)) (snd (intern k s)) = Some k.
+  Proof.
+    intros k s Hwf; apply (proj1 (find_name k (fst (intern k s)) (snd (intern k s)) (wf_intern k s Hwf))).
+    apply find_intern_same; exact Hwf.
+  Qed.
+  Lemma name_stable : forall k s i l, wf s -> name i s = Some l ->
+    name i (snd (intern k s)) = Some l.
+  Proof. Admitted.
+  Lemma size_intern : forall k s, wf s ->
+    size (snd (intern k s)) =
+      match find k s with Some _ => size s | None => N.succ (size s) end.
+  Proof. Admitted.
+End Intern.
