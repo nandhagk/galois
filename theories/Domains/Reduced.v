@@ -5,8 +5,18 @@
     Builds on: ProductSig and value products. *)
 
 From Stdlib Require Import List Arith.
+From Stdlib Require Import NArith.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig ProductSig Product.
+
+Module Datatypes.
+  TimeFun Corelib.Init.Datatypes.nat_rect.
+End Datatypes.
+
+Module Nat.
+  TimeFun Nat.iter.
+End Nat.
 
 Module ReducedCode (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L)
     (R : REDUCER_OPS A B) (K : ROUNDS) <: REDUCED_OPS L A B R K.
@@ -132,3 +142,131 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
   Proof. Admitted.
 End Reduced.
+
+Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
+    (R : VALUE_REDUCER_T L A B) (K : ROUNDS) <: REDUCED_ALL L A B R K.
+  Include Reduced L A B R K.
+
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun normalize.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun red.
+  TimeFun forward.
+  TimeFun backward.
+  TimeFun guard.
+
+  Definition size (a : t) : nat := A.size (fst a) + B.size (snd a).
+  Definition work (o : L.op) (xs : list t) : nat :=
+    A.work o (map fst xs) + B.work o (map snd xs) + length xs.
+  Definition gwork (g : L.guard) (xs : list t) : nat :=
+    A.gwork g (map fst xs) + B.gwork g (map snd xs) + length xs.
+  Definition wsize (p : wparam) : nat := A.wsize (fst p) + B.wsize (snd p).
+  Definition wunits (_ : t) : nat := 0.
+  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_lat : N := c_val.
+  Definition c_red : N := 1%N. (* STUB *)
+
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b,
+    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forward_le : forall o xs,
+    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_guard_le : forall g xs,
+    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma widen_size : forall p a b,
+    (N.of_nat (size (widen p a b)) <=
+      c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma work_sizes : forall o xs,
+    fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof. Admitted. (* STUB *)
+  Lemma gwork_sizes : forall g xs,
+    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof. Admitted. (* STUB *)
+  Lemma T_red_le : forall a b,
+    (T_red (a, b) <= c_red * N.of_nat (K.rounds + 1) *
+      N.of_nat ((A.size a + B.size b + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat (work (fst ox) (snd ox)))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_red : N := 1%N. (* STUB *)
+  Lemma F1_red_eq : forall x,
+    red x = let result := Nat.iter K.rounds R.reduce x in
+      if orb (A.is_bot (fst result)) (B.is_bot (snd result))
+      then (A.bot, B.bot) else result.
+  Proof. Admitted. (* STUB *)
+  Lemma F_is_bot : forall a b,
+    is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
+  Proof. Admitted. (* STUB *)
+  Lemma F_leb : forall a b,
+    leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
+  Proof. Admitted. (* STUB *)
+  Lemma F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_gamma : forall a b c,
+    gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_red_sound : forall x c, gamma x c -> gamma (red x) c.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_red_lower : forall a b,
+    A.leb (fst (red (a, b))) a = true /\ B.leb (snd (red (a, b))) b = true.
+  Proof. Admitted. (* STUB *)
+  Lemma F5_widen : forall p a b,
+    widen p a b = if is_bot b then a
+      else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
+  Proof. Admitted. (* STUB *)
+  Lemma T1_red_steps : forall x,
+    (T_red x <= k_red *
+      (fold_right N.add 0
+        (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1)
+          (seq 0 K.rounds)) +
+       A.T_is_bot (fst (Nat.iter K.rounds R.reduce x)) +
+       B.T_is_bot (snd (Nat.iter K.rounds R.reduce x)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+End ReducedT.
