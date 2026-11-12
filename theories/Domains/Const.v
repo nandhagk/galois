@@ -137,9 +137,18 @@ Module ConstWordTableCode (L : WORD_LANGUAGE_OPS)
     | _, _ => map snd xs
     end%Z.
   Definition backward_one o rw (q : W.p) (xs : list (positive * W.p)) :
-      option (list W.p) := Some (backward_one_values o rw q xs).
+      option (list W.p) :=
+    match o, xs with
+    | (bvnot | bvneg), [_] => Some (backward_one_values o rw q xs)
+    | _, _ => None
+    end.
   Definition backward_two o rw (q : W.p) (xs : list (positive * W.p)) :
-      option (list W.p) := Some (backward_two_values o rw q xs).
+      option (list W.p) :=
+    match o, xs with
+    | (bveq | bvne | bvadd | bvsub | bvxor), [_; _] =>
+      Some (backward_two_values o rw q xs)
+    | _, _ => None
+    end.
   Definition wfwd o (_ : positive) (xs : list (positive * W.p)) : option W.p :=
     match o, xs with
     | (bvmul | bvand | bvor | bvshl | bvlshr | bvashr | bvurem), [a; b] =>
