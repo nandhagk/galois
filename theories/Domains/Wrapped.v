@@ -13,8 +13,18 @@ Local Open Scope Z_scope.
 
 Module WrappedScalar := IntervalBaseT ThresholdsT.
 
+Definition arc_wrap (w : width) (z : Z) : Z := Z.land z (Z.ones (Zpos w)).
+TimeFun arc_wrap.
+
+(** The mask agrees with modular word reduction. *)
+Lemma arc_wrap_agrees : forall w z, arc_wrap w z = wrap w z.
+Proof.
+  intros w z. unfold arc_wrap, wrap, modulus.
+  apply Z.land_ones. lia.
+Qed.
+
 Definition wrapped_offset (w : width) (origin x : Z) : Z :=
-  (x - origin) mod modulus w.
+  arc_wrap w (x - origin).
 TimeFun wrapped_offset.
 
 Definition wrapped_size (w : width) (a : wrapped) : Z :=
@@ -36,7 +46,7 @@ Definition wrapped_norm (w : width) (a : wrapped) : wrapped :=
   match a with
   | WItv lo hi =>
     if wrapped_offset w lo hi =? modulus w - 1
-    then WFull else WItv (wrap w lo) (wrap w hi)
+    then WFull else WItv (arc_wrap w lo) (arc_wrap w hi)
   | _ => a
   end.
 TimeFun wrapped_norm.
@@ -117,8 +127,8 @@ Definition wrapped_parts_raw (w : width) (a : wrapped) : itv * itv :=
   | WBot => (IBot, IBot)
   | WFull => (I (Fin 0) (Fin (modulus w - 1)), IBot)
   | WItv lo hi =>
-    let lo' := wrap w lo in
-    let hi' := wrap w hi in
+    let lo' := arc_wrap w lo in
+    let hi' := arc_wrap w hi in
     if lo' <=? hi' then (I (Fin lo') (Fin hi'), IBot)
     else (I (Fin lo') (Fin (modulus w - 1)), I (Fin 0) (Fin hi'))
   end.
@@ -392,9 +402,29 @@ Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
   Proof. Admitted. (* STUB *)
+  Lemma gamma_arc : forall w a z, pgamma w a z <-> arc_gamma w a z.
+  Proof. intros; reflexivity. Qed.
+  Lemma wrapped_neg_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
+    L.eval_op Op.bvneg ((w, x) :: nil) = Some (w, z) -> pgamma w (wrapped_neg w a) z.
+  Proof. Admitted. (* STUB *)
+  Lemma wrapped_add_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvadd ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (wrapped_add w a b) z.
+  Proof. Admitted. (* STUB *)
+  Lemma wrapped_sub_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvsub ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (wrapped_sub w a b) z.
+  Proof. Admitted. (* STUB *)
+  Lemma wrapped_mul_sound : forall w a b x y z,
+    L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
+    L.eval_op Op.bvmul ((w, x) :: (w, y) :: nil) = Some (w, z) ->
+    pgamma w (wrapped_mul w a b) z.
+  Proof. Admitted. (* STUB *)
 End Wrapped.
 
-Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
+Module WrappedT (L : WORD_LANGUAGE_T).
   Include Wrapped L.
   TimeFun pleb.
   TimeFun pjoin.
@@ -615,25 +645,26 @@ End WrappedT.
 
 Theorem wrapped_offset_range w c x : 0 <= wrapped_offset w c x < modulus w.
 Proof.
+  unfold wrapped_offset; rewrite arc_wrap_agrees, wrap_mod.
   apply Z.mod_pos_bound. apply modulus_pos.
 Qed.
 
 Theorem wrapped_offset_self w c : wrapped_offset w c c = 0.
 Proof.
-  unfold wrapped_offset. rewrite Z.sub_diag.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite Z.sub_diag.
   apply Z.mod_0_l. apply modulus_nonzero.
 Qed.
 
 Theorem wrapped_offset_wrap w c x :
   wrapped_offset w (wrap w c) (wrap w x) = wrapped_offset w c x.
 Proof.
-  unfold wrapped_offset. rewrite !wrap_mod. symmetry. apply Zminus_mod.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite !wrap_mod. symmetry. apply Zminus_mod.
 Qed.
 
 Theorem wrapped_offset_word w c x :
   wrapped_offset w c (wrap w x) = wrapped_offset w c x.
 Proof.
-  unfold wrapped_offset. rewrite !wrap_mod.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite !wrap_mod.
   rewrite Zminus_mod, Z.mod_mod by apply modulus_nonzero.
   symmetry. apply Zminus_mod.
 Qed.
@@ -641,7 +672,7 @@ Qed.
 Theorem wrapped_offset_origin w c x :
   wrapped_offset w (wrap w c) x = wrapped_offset w c x.
 Proof.
-  unfold wrapped_offset. rewrite !wrap_mod.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. rewrite !wrap_mod.
   rewrite Zminus_mod, Z.mod_mod by apply modulus_nonzero.
   symmetry. apply Zminus_mod.
 Qed.
@@ -650,7 +681,7 @@ Theorem wrapped_offset_add w c a x :
   wrapped_offset w c x =
   (wrapped_offset w c a + wrapped_offset w a x) mod modulus w.
 Proof.
-  unfold wrapped_offset.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees.
   replace (x - c) with ((a - c) + (x - a)) by ring.
   apply Z.add_mod. apply modulus_nonzero.
 Qed.
@@ -659,7 +690,7 @@ Theorem wrapped_offset_sub w c a x :
   wrapped_offset w a x =
   (wrapped_offset w c x - wrapped_offset w c a) mod modulus w.
 Proof.
-  unfold wrapped_offset.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees.
   replace (x - a) with ((x - c) - (a - c)) by ring.
   apply Zminus_mod.
 Qed.
@@ -668,7 +699,7 @@ Theorem wrapped_offset_step w c k :
   0 <= k < modulus w -> wrapped_offset w c (wrap w (c + k)) = k.
 Proof.
   intro Hk. rewrite wrapped_offset_word.
-  unfold wrapped_offset. replace (c + k - c) with k by ring.
+  unfold wrapped_offset; rewrite !arc_wrap_agrees. replace (c + k - c) with k by ring.
   apply Z.mod_small. exact Hk.
 Qed.
 
@@ -683,9 +714,11 @@ Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try tauto.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull.
   - apply Z.eqb_eq in Hfull. cbn [wrapped_gamma].
+    try rewrite !arc_wrap_agrees.
     pose proof (wrapped_offset_range w lo z) as Hrange. split; [|tauto].
     intro Hz. split; [exact Hz|lia].
   - cbn [wrapped_gamma].
+    try rewrite !arc_wrap_agrees.
     rewrite wrapped_offset_origin, wrapped_offset_wrap. reflexivity.
 Qed.
 
@@ -694,7 +727,7 @@ Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull.
   - apply Z.eqb_eq in Hfull. cbn [wrapped_size]. lia.
-  - cbn [wrapped_size]. now rewrite wrapped_offset_wrap.
+  - cbn [wrapped_size]. rewrite !arc_wrap_agrees. now rewrite wrapped_offset_wrap.
 Qed.
 
 Theorem wrapped_size_bounds w a : 0 <= wrapped_size w a <= modulus w.
@@ -787,7 +820,7 @@ Proof.
   destruct (modulus w - 1 <=? hi - lo) eqn:Hfull; [apply wrap_is_word|].
   apply Z.leb_gt in Hfull. apply (proj2 (wrapped_norm_gamma w (WItv lo hi) _)).
   split; [apply wrap_is_word|].
-  rewrite wrapped_offset_word. unfold wrapped_offset.
+  rewrite wrapped_offset_word. unfold wrapped_offset; rewrite !arc_wrap_agrees, !wrap_mod.
   rewrite !Z.mod_small by lia. lia.
 Qed.
 
@@ -795,7 +828,7 @@ Theorem wrapped_offset_word_cases w c z :
   is_word w c -> is_word w z ->
   wrapped_offset w c z = if c <=? z then z - c else z - c + modulus w.
 Proof.
-  intros Hc Hz. unfold wrapped_offset.
+  intros Hc Hz. unfold wrapped_offset; rewrite !arc_wrap_agrees.
   destruct (c <=? z) eqn:Hle.
   - apply Z.leb_le in Hle. apply Z.mod_small. destruct Hc, Hz. lia.
   - apply Z.leb_gt in Hle. symmetry. apply Z.mod_unique with (q := -1);
@@ -807,7 +840,7 @@ Theorem wrapped_norm_idempotent w a :
 Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull; [reflexivity|].
-  cbn [wrapped_norm]. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap. reflexivity.
+  cbn [wrapped_norm]. rewrite !arc_wrap_agrees. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap. reflexivity.
 Qed.
 
 Theorem wrapped_norm_endpoints w a lo hi :
@@ -815,7 +848,7 @@ Theorem wrapped_norm_endpoints w a lo hi :
 Proof.
   destruct a as [| |l h]; cbn [wrapped_norm]; try discriminate.
   destruct (wrapped_offset w l h =? modulus w - 1); [discriminate|].
-  intro Hnorm. inversion Hnorm; subst lo hi. split; apply wrap_is_word.
+  intro Hnorm. inversion Hnorm; subst lo hi. rewrite !arc_wrap_agrees. split; apply wrap_is_word.
 Qed.
 
 Theorem wrapped_parts_normalized w a :
