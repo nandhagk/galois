@@ -2,10 +2,10 @@
 
     Edge and exit readers use first-order tables keyed by encoded identities.
     For example, an absent edge binding has no uses or definitions.
-    Builds on: Program.VarsSig and Base.SetSig. *)
+    Builds on: Program.VarsSig and Base.Trie. *)
 
 From Stdlib Require Import List.
-From Galois.Base Require Import KeySig SetSig Trie.
+From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import CfgSig VarsSig.
 
 Record var_tables (X : Type) := VarTables {
@@ -25,7 +25,7 @@ End VARS_DATA.
 
 Module VarsCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     (C : CFG_INDEXED_OPS P N E) (X : KEY_OPS) (D : VARS_DATA P X)
-    (S : SET_OPS X) <: VARS_OPS P N E C X.
+    <: VARS_OPS P N E C X.
   Definition uses p e :=
     match trie_get (E.encode e) (edge_uses (D.tables p)) with
     | Some xs => xs
@@ -42,15 +42,16 @@ Module VarsCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     | None => nil
     end.
   Definition universe p :=
-    S.elements (fold_left (fun s x => S.add x s)
+    List.rev (PTrieCode.fold_values (fun acc x => x :: acc)
+      (fold_left (fun s x => PTrieCode.set (X.encode x) x s)
       (flat_map (fun e => uses p e ++ defs p e) (C.edges p) ++
-        flat_map (exits p) (C.nodes p)) S.empty).
+        flat_map (exits p) (C.nodes p)) PTrieCode.empty) nil).
 End VarsCode.
 
 Module Vars (P : TYPE) (N : KEY) (E : KEY)
-    (C : CFG P N E) (X : KEY) (D : VARS_DATA P X) (S : SET X)
+    (C : CFG P N E) (X : KEY) (D : VARS_DATA P X)
     <: VARS P N E C X.
-  Include VarsCode P N E C X D S.
+  Include VarsCode P N E C X D.
   Include VARS_SPEC P N E C X.
   Lemma universe_spec : forall p x,
     In x (universe p) <->
