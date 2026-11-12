@@ -196,3 +196,21 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     ppoint w a = Some v -> pgamma w a z -> z = v.
   Proof. Admitted.
 End Congruence.
+
+Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABLE L W.
+  Include CongruenceTableCode L W.
+  (** A forward word entry retains each concrete result at its checked width. *)
+  Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
+  Proof. Admitted.
+  (** A backward word entry retains each concrete operand in its original position. *)
+  Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst wps) ys) cs.
+  Proof. Admitted.
+End CongruenceTable.
