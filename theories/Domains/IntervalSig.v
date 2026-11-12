@@ -54,6 +54,8 @@ Definition zview_eval (k : zview) (xs : list Z) : option Z :=
   | _, _ => None
   end.
 
+TimeFun zview_eval.
+
 (** Viewed guards compare exactly two integer operands. *)
 Definition zguard_holds (k : zguardview) (xs : list Z) : Prop :=
   match k, xs with
