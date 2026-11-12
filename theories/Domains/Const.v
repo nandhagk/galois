@@ -382,7 +382,7 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted.
+  Proof. intros. reflexivity. Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> pgamma w a z -> z = v.
