@@ -4,7 +4,7 @@
     For example, a self-dependency requires its target to be a head.
     Builds on: Fixpoint.PolicySig, Fixpoint.SystemSig and Graph.WtoSig. *)
 
-From Stdlib Require Import List PArith Arith.
+From Stdlib Require Import List PArith Arith NArith.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import Data Spec DigraphSig WtoSig.
@@ -79,26 +79,28 @@ Module Type SCHEDULE (L : WLATTICE) (S : SYSTEM L) (G : DIGRAPH) (W : WTO) :=
 
 Module Type SCHEDULE_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
     (G : DIGRAPH_T) (W : WTO_T) (Import H : SCHEDULE L S G W).
-  Parameter T_dep_graph : S.prog -> nat.
-  Parameter T_of_wto : wto -> head_cfg -> L.wparam -> nat -> nat.
-  Parameter T_plan : S.prog -> head_cfg -> L.wparam -> nat -> nat.
-  Parameter T_cuts : S.prog -> policy L.wparam -> nat.
-  Parameter c_sched : nat.
+  Parameter T_dep_graph : S.prog -> N.
+  Parameter T_of_wto : wto -> head_cfg -> L.wparam -> nat -> N.
+  Parameter T_plan : S.prog -> head_cfg -> L.wparam -> nat -> N.
+  Parameter T_cuts : S.prog -> policy L.wparam -> N.
+  Parameter c_sched : N.
   (** Dependency graph construction charges every declared occurrence. *)
   Parameter T_dep_graph_le : forall p, S.wf p ->
-    T_dep_graph p <= c_sched * (row_count p + occurrence_count p + 1) * (S.kw p + 1).
+    (T_dep_graph p <= c_sched * N.of_nat (row_count p + occurrence_count p + 1) *
+      N.of_nat (S.kw p + 1))%N.
   (** WTO conversion charges traversal, ranks and encoded vertices. *)
   Parameter T_of_wto_le : forall w cfg wp n,
-    T_of_wto w cfg wp n <= c_sched * (length (wto_order w) + 1) *
-      (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1).
+    (T_of_wto w cfg wp n <= c_sched * N.of_nat (length (wto_order w) + 1) *
+      N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   (** Planning pays for graph preparation and the nesting depth of the built WTO. *)
   Parameter T_plan_le : forall p cfg wp n, S.wf p ->
-    T_plan p cfg wp n <= c_sched * (row_count p + occurrence_count p + 1) *
-      (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
-      (S.kw p + 1).
+    (T_plan p cfg wp n <= c_sched * N.of_nat (row_count p + occurrence_count p + 1) *
+      N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
+      N.of_nat (S.kw p + 1))%N.
   (** Cut checking is linear in declared occurrences and program key width. *)
   Parameter T_cuts_le : forall p pol, S.wf p ->
-    T_cuts p pol <= c_sched * (row_count p + occurrence_count p + 1) * (S.kw p + 1).
+    (T_cuts p pol <= c_sched * N.of_nat (row_count p + occurrence_count p + 1) *
+      N.of_nat (S.kw p + 1))%N.
 End SCHEDULE_TIME.
 
 Module Type SCHEDULE_T (L : WLATTICE_T) (S : SYSTEM_T L)
