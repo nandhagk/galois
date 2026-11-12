@@ -153,7 +153,7 @@ Module Type LOCAL_SYSTEM_OPS (L : LATTICE_OPS) := SYSTEM_OPS L <+ LOCAL_OPS L.
 Module Type LOCAL_LAWS (L : LATTICE) (Import S : SYSTEM L)
     (Import X : LOCAL_OPS L S).
   (** Row codes distinguish rows within each program. *)
-  Parameter row_code_inj : forall p a b, In a (rows p) -> In b (rows p) ->
+  Parameter row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
   (** The index lists exactly the rows that may write the requested key. *)
   Parameter rows_of_spec : forall p x r, wf p ->

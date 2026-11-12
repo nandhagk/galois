@@ -111,7 +111,8 @@ Module Type POLICY_TIME (L : WLATTICE_T) (Import P : POLICY L).
       (N.of_nat (Pos.size_nat x) + L.c_lat * N.of_nat (L.size a + L.size b + 1) +
        (if L.leb b a then 0 else
           match trie_get x (heads pol) with
-          | Some _ => N.of_nat (N.size_nat cnt) + L.c_lat * N.of_nat (L.wsize (wp pol))
+          | Some _ => N.of_nat (N.size_nat cnt) + L.c_lat *
+              N.of_nat ((L.wunits a + L.wunits b + 1) * L.wsize (wp pol))
           | None => 0
           end) + 1))%N.
 End POLICY_TIME.
