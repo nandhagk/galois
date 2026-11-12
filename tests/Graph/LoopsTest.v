@@ -79,3 +79,12 @@ Example empty_loop_projection :
   let l := LoopsCode.forest g (fixture_tree g) in
   trie_get 99 (body l) = None.
 Proof. vm_compute. reflexivity. Qed.
+
+Definition detached_predecessor := fixture_graph [1; 2; 3; 4]
+  [(1, 2); (2, 3); (3, 2); (4, 3)].
+
+Example unreachable_predecessor_excluded :
+  let g := DigraphCode.prepare detached_predecessor in
+  let l := LoopsCode.forest g (fixture_tree g) in
+  existsb (Pos.eqb 4) (loop_body l 2) = false.
+Proof. vm_compute. reflexivity. Qed.
