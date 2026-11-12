@@ -45,7 +45,7 @@ End SOLVER_TIME.
 Module Type SOLVER_T (L : WLATTICE_T) (S : SYSTEM_T L) :=
   SOLVER_OPS L S <+ SOLVER_TIME L S.
 
-Module Type SOLVER_LEAST (L : WLATTICE) (S : SYSTEM L)
+Module Type SOLVER_LEAST (L : WLATTICE) (LB : LUB L) (S : SYSTEM L)
     (Import V : SOLVER_OPS L S).
   (** A policy without heads performs no widening. *)
   Definition widening_free (pol : policy L.wparam) : Prop :=

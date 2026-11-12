@@ -54,6 +54,12 @@ Module Type THRESHOLDS_LAWS (Import T : THRESHOLDS_OPS) (Import S : THRESHOLDS_S
       forall v, In v (vals t) -> (v <= z)%Z -> (v <= u)%Z
     | None => forall v, In v (vals t) -> (z < v)%Z
     end.
+  (** Upper search is sound even when the tree is unordered. *)
+  Parameter above_sound : forall t z u,
+    above t z = Some u -> In u (vals t) /\ (z <= u)%Z.
+  (** Lower search is sound even when the tree is unordered. *)
+  Parameter below_sound : forall t z u,
+    below t z = Some u -> In u (vals t) /\ (u <= z)%Z.
 End THRESHOLDS_LAWS.
 
 Module Type THRESHOLDS := THRESHOLDS_OPS <+ THRESHOLDS_SPEC <+ THRESHOLDS_LAWS.
@@ -68,10 +74,10 @@ Module Type THRESHOLDS_TIME (Import T : THRESHOLDS).
       N.of_nat (zb zs + 1))%N.
   (** Upper search charges a path and comparison bit sizes. *)
   Parameter T_above_le : forall t z, (T_above t z <=
-    c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
+    c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
   (** Lower search charges a path and comparison bit sizes. *)
   Parameter T_below_le : forall t z, (T_below t z <=
-    c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
+    c_thresholds * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
   (** Construction has the published comparison-sort bound. *)
   Parameter make_bigO : (bigO (fun _ => True)
     (fun zs => N.of_nat
@@ -114,12 +120,12 @@ Module Type THRESHOLDS_PLAN (Import T : THRESHOLDS_T).
   (** Median construction charges one logarithmic splitting pass per level. *)
   Parameter T3_build : forall fuel zs, length zs <= fuel -> (T_build fuel zs <=
     k_build * N.of_nat ((length zs * (Nat.log2 (length zs) + 1) + fuel + 1)%nat))%N.
-  (** Upper search charges one comparison per visited level. *)
+  (** Upper search compares the threshold first at each visited level. *)
   Parameter T4_above : forall t z, (T_above t z <=
-    k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
-  (** Lower search charges one comparison per visited level. *)
+    k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
+  (** Lower search compares the threshold first at each visited level. *)
   Parameter T5_below : forall t z, (T_below t z <=
-    k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + zbits z + 1)%nat))%N.
+    k_search * N.of_nat ((depth t + 1)%nat) * N.of_nat ((tree_bits t + 1)%nat))%N.
 End THRESHOLDS_PLAN.
 
 Module Type THRESHOLDS_ALL := THRESHOLDS_T <+ THRESHOLDS_PLAN.

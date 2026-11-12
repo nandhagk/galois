@@ -31,6 +31,11 @@ Module Type SCHEDULE_SPEC (L : WLATTICE_OPS) (S : SYSTEM_OPS L)
   Definition row_count p : nat := length (S.rows p).
   Definition occurrence_count p : nat := fold_right Nat.add 0
     (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)).
+  Definition edge_count (p : S.prog) : nat := fold_right Nat.add 0
+    (List.map (fun r => length (S.deps p r) * (length (S.sides p r) + 1)) (S.rows p)).
+  Definition prio_width (p : S.prog) (pol : policy L.wparam) : nat :=
+    fold_right Nat.max 0 (List.map (fun c => Pos.size_nat (priority pol c))
+      (flat_map (fun r => List.map S.key_code ((S.target p r :: S.sides p r) ++ S.deps p r)) (S.rows p))).
 End SCHEDULE_SPEC.
 
 Module Type SCHEDULE_LAWS (L : WLATTICE) (S : SYSTEM L)
@@ -42,7 +47,7 @@ Module Type SCHEDULE_LAWS (L : WLATTICE) (S : SYSTEM L)
   (** The graph lists exactly the key codes read or written by a row. *)
   Parameter dep_graph_vertices : forall p c,
     In c (verts (dep_graph p)) <->
-      exists r x, In r (S.rows p) /\ In x (S.writes p r ++ S.deps p r) /\
+      exists r x, In r (S.rows p) /\ In x ((S.target p r :: S.sides p r) ++ S.deps p r) /\
         S.key_code x = c.
   (** WTO priorities use the WTO's public rank projection. *)
   Parameter of_wto_prio : forall w cfg wp n, prio (of_wto w cfg wp n) = W.ranks w.
@@ -86,21 +91,28 @@ Module Type SCHEDULE_TIME (L : WLATTICE_T) (S : SYSTEM_T L)
   Parameter c_sched : N.
   (** Dependency graph construction charges every declared occurrence. *)
   Parameter T_dep_graph_le : forall p, S.wf p ->
-    (T_dep_graph p <= c_sched * N.of_nat (row_count p + occurrence_count p + 1) *
-      N.of_nat (S.kw p + 1))%N.
+    (T_dep_graph p <= c_sched * (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
+      N.of_nat (S.kw p + 1) +
+      N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
   (** WTO conversion charges traversal, ranks and encoded vertices. *)
   Parameter T_of_wto_le : forall w cfg wp n,
     (T_of_wto w cfg wp n <= c_sched * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   (** Planning pays for graph preparation and the nesting depth of the built WTO. *)
   Parameter T_plan_le : forall p cfg wp n, S.wf p ->
-    (T_plan p cfg wp n <= c_sched * N.of_nat (row_count p + occurrence_count p + 1) *
+    (T_plan p cfg wp n <= c_sched * (N.of_nat (row_count p + occurrence_count p + edge_count p + 1) *
       N.of_nat (wto_depth (W.build (G.prepare (dep_graph p)) (verts (dep_graph p))) + 1) *
-      N.of_nat (S.kw p + 1))%N.
+      N.of_nat (S.kw p + 1) +
+      N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
   (** Cut checking is linear in declared occurrences and program key width. *)
   Parameter T_cuts_le : forall p pol, S.wf p ->
-    (T_cuts p pol <= c_sched * N.of_nat (row_count p + occurrence_count p + 1) *
-      N.of_nat (S.kw p + 1))%N.
+    (T_cuts p pol <= c_sched *
+      (N.of_nat (row_count p + occurrence_count p + 1) *
+       N.of_nat (S.kw p + prio_width p pol + 1) +
+       N.of_nat (row_count p) * (S.row_work p 0 + 1)))%N.
+  (** Every planned priority fits the program key width. *)
+  Parameter plan_prio_width : forall p cfg wp n pol, S.wf p ->
+    plan p cfg wp n = Some pol -> prio_width p pol <= S.kw p + 1.
 End SCHEDULE_TIME.
 
 Module Type SCHEDULE_T (L : WLATTICE_T) (S : SYSTEM_T L)

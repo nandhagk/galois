@@ -46,18 +46,19 @@ Module Certified (L : WLATTICE) (S : SYSTEM L) (V : SOLVER_OPS L S)
 End Certified.
 
 Module CertifiedT (L : WLATTICE_T) (S : SYSTEM_T L) (V : SOLVER_T L S)
-    (C : CHECK_T L S) (R : NARROW_T L S C) <: CERTIFIED_T L S V C R.
+    (C : CHECK_T L S) (B : BUDGET L S) (R : NARROW_T L S C B) <: CERTIFIED_T L S V C B R.
   Include Certified L S V C R.
   Definition candidate_work p pol fuel : N :=
     match V.run p pol fuel with
-    | Solved m => (C.T_check p m + R.T_eval_all p m)%N
+    | Solved m => (C.T_check p m + R.T_refine p (passes pol) m)%N
     | OutOfFuel _ => 0%N
     | Rejected _ => 0%N
     end.
   TimeFun analyze.
+  Definition c_cert : N := 1%N. (* STUB *)
 
   Lemma T_analyze_le : forall p pol fuel,
-    (T_analyze p pol fuel <= V.T_run p pol fuel +
-      N.of_nat (passes pol + 1) * (candidate_work p pol fuel + 1))%N.
+    (T_analyze p pol fuel <= c_cert *
+      (V.T_run p pol fuel + candidate_work p pol fuel + 1))%N.
   Proof. Admitted. (* STUB *)
 End CertifiedT.

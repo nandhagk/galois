@@ -45,7 +45,8 @@ Module Type WORD_LANGUAGE_TIME (Import L : WORD_LANGUAGE).
   Parameter c_word : N.
   (** Concrete word evaluation has the published operand-width bound. *)
   Parameter T_eval_op_le : forall o cs, (T_eval_op o cs <=
-    c_word * N.of_nat (((fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) cs) + 1) ^
+    c_word * N.of_nat (((Op.op_widths o +
+      fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) cs) + 1) ^
     2)%nat))%N.
 End WORD_LANGUAGE_TIME.
 
@@ -59,11 +60,29 @@ Module Type WORD_PAYLOAD_OPS (L : WORD_LANGUAGE_OPS).
   Parameter pis_bot : positive -> p -> bool.
   Parameter pconst : positive -> Z -> p.
   Parameter ppoint : positive -> p -> option Z.
+  Parameter pwparam : Type.
+  Parameter pwiden : pwparam -> positive -> p -> p -> p.
+  Parameter pnarrow : positive -> p -> p -> p.
 End WORD_PAYLOAD_OPS.
 
 Module Type WORD_PAYLOAD_LAWS (L : WORD_LANGUAGE) (Import W : WORD_PAYLOAD_OPS L).
-  (* spec: pgamma *)
+  (* spec: pgamma pwrank *)
   Parameter pgamma : positive -> p -> Z -> Prop.
+  Parameter pwrank : pwparam -> positive -> p -> nat.
+  (** Widening contains both payloads. *)
+  Parameter pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
+  Parameter pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
+  (** Stable widening retains the previous payload. *)
+  Parameter pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
+  (** An unstable nonbottom widening strictly lowers the rank. *)
+  Parameter pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
+    (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
+  (** Nonbottom widening does not increase rank. *)
+  Parameter pwrank_widen_le : forall q w a b, pis_bot w a = false ->
+    (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
+  (** Narrowing lies between ordered inputs. *)
+  Parameter pnarrow_between : forall w a b, pleb w b a = true ->
+    pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
   (** Width-specific inclusion is reflexive. *)
   Parameter pleb_refl : forall w a, pleb w a a = true.
   (** Width-specific inclusion is transitive. *)
@@ -108,13 +127,19 @@ Module Type WORD_PAYLOAD (L : WORD_LANGUAGE) :=
   WORD_PAYLOAD_OPS L <+ WORD_PAYLOAD_LAWS L.
 
 Module Type WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T) (Import W : WORD_PAYLOAD L).
-  (* spec: psize *)
+  (* spec: psize pwsize *)
   Parameter psize : positive -> p -> nat.
+  Parameter pwsize : pwparam -> nat.
+  Parameter T_pwiden : pwparam -> positive -> p -> p -> N.
+  Parameter T_pnarrow : positive -> p -> p -> N.
   Parameter T_pleb : positive -> p -> p -> N.
   Parameter T_pjoin T_pmeet : positive -> p -> p -> N.
   Parameter T_pis_bot T_ppoint : positive -> p -> N.
   Parameter T_pconst : positive -> Z -> N.
   Parameter c_payload : N.
+  (** Payload widening charges both operands and its parameters. *)
+  Parameter T_pwiden_le : forall q w a b,
+    (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
   (** Payload inclusion charges the two payload sizes. *)
   Parameter T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
@@ -146,11 +171,13 @@ Module Type WORD_TABLE_LAWS (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L)
     (Import T : WORD_TABLE_OPS L W).
   (** A forward word entry retains each concrete result at its checked width. *)
   Parameter wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
-    Forall2 (fun wp c => fst wp = fst c /\ W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
   (** A backward word entry retains each concrete operand in its original position. *)
   Parameter wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
-    Forall2 (fun wp c => fst wp = fst c /\ W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
@@ -181,6 +208,11 @@ Module Type WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) :=
 
 Module Type WORD_PLAN (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     (T : WORD_TABLE_T L W).
+  Definition tagged_wrank (q : W.pwparam) (a : tagged W.p) : nat :=
+    match a with
+    | TBot | TAny => 0
+    | TVal w p => 1 + W.pwrank q w p
+    end.
   Parameter untag : list (tagged W.p) -> option (list (positive * W.p)).
   Parameter retag : list positive -> list W.p -> list (tagged W.p).
   Parameter T_untag : list (tagged W.p) -> N.

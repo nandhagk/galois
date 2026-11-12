@@ -104,3 +104,77 @@ Module Type INTERP_SOUND (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
   Parameter covers : forall p look, S.post_solution p look ->
     forall s, reachable (M.initial p) (M.step p) s -> D.gamma (look (K.point s)) (K.store s).
 End INTERP_SOUND.
+
+Module Type INTERP_ENVELOPE (P : TYPE) (E : TYPE) (X : KEY_T) (L : LANG_T)
+    (V : VALUE_DOMAIN_T L) (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V).
+  (* spec: primitive_work next_size *)
+  Parameter primitive_work : P.t -> nat -> N.
+  Parameter next_size : P.t -> nat -> nat.
+  (** Primitive work grows with the input state size. *)
+  Parameter primitive_work_mono : forall p s t, s <= t ->
+    (primitive_work p s <= primitive_work p t)%N.
+  (** Primitive output envelopes grow with the input state size. *)
+  Parameter next_size_mono : forall p s t, s <= t -> next_size p s <= next_size p t.
+  (** Listed assignments fit the primitive work envelope. *)
+  Parameter assign_work_le : forall p e x ex st s, In (Assign x ex) (A.actions p e) ->
+    D.size st <= s -> (N.of_nat (D.assign_work x ex st) <= primitive_work p s)%N.
+  (** Listed havoc actions fit the primitive work envelope. *)
+  Parameter havoc_work_le : forall p e x st s, In (Havoc x) (A.actions p e) ->
+    D.size st <= s -> (N.of_nat (D.havoc_work x st) <= primitive_work p s)%N.
+  (** Listed guards fit the primitive work envelope. *)
+  Parameter assume_work_le : forall p e g es st s, In (Assume g es) (A.actions p e) ->
+    D.size st <= s -> (N.of_nat (D.assume_work g es st) <= primitive_work p s)%N.
+  (** Listed assignments fit the next-state size envelope. *)
+  Parameter assign_size_le : forall p e x ex st s, In (Assign x ex) (A.actions p e) ->
+    D.size st <= s -> D.size (D.assign x ex st) <= next_size p s.
+  (** Listed havoc actions fit the next-state size envelope. *)
+  Parameter havoc_size_le : forall p e x st s, In (Havoc x) (A.actions p e) ->
+    D.size st <= s -> D.size (D.havoc x st) <= next_size p s.
+  (** Listed guards fit the next-state size envelope. *)
+  Parameter assume_size_le : forall p e g es st s, In (Assume g es) (A.actions p e) ->
+    D.size st <= s -> D.size (D.assume g es st) <= next_size p s.
+End INTERP_ENVELOPE.
+
+Module Type INTERP_COST_SPEC (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_BASE_T P N E) (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V)
+    (B : INTERP_ENVELOPE P E X L V A D).
+  Definition max_actions p : nat := fold_right Nat.max 0
+    (List.map (fun e => length (A.actions p e)) (C.edges p)).
+  Fixpoint state_extent p n s : nat :=
+    match n with
+    | O => s
+    | S n1 => state_extent p n1 (Nat.max s (B.next_size p s))
+    end.
+  Fixpoint fold_work p n s : N :=
+    match n with
+    | O => 1%N
+    | S n1 => (B.primitive_work p s + 1 +
+        fold_work p n1 (Nat.max s (B.next_size p s)))%N
+    end.
+  Definition interp_work p s : N :=
+    (N.of_nat (D.size D.top + max_actions p + 1) +
+      N.of_nat (state_extent p (max_actions p) s) + fold_work p (max_actions p) s)%N.
+  Definition interp_kw p : nat := fold_right Nat.max 0
+    (List.map N.bits (C.entries p ++
+      flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))).
+End INTERP_COST_SPEC.
+
+Module Type INTERP (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
+    (X : KEY) (L : LANG) (V : VALUE_DOMAIN L) (A : ACTIONS_OPS P E X L)
+    (D : STATE_DOMAIN X L V) :=
+  INTERP_SYSTEM P N E C X L V A D <+ SYSTEM_LAWS D.
+
+Module Type INTERP_TIME (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_BASE_T P N E) (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V)
+    (B : INTERP_ENVELOPE P E X L V A D) (Import S : INTERP P N E C X L V A D).
+  Include INTERP_COST_SPEC P N E C X L V A D B.
+  Include SYSTEM_TIME D S with Definition row_work := interp_work with Definition kw := interp_kw.
+End INTERP_TIME.
+
+Module Type INTERP_T (P : TYPE) (N : KEY_T) (E : TYPE)
+    (C : CFG_BASE_T P N E) (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
+    (A : ACTIONS_T P E X L) (D : STATE_DOMAIN_T X L V)
+    (B : INTERP_ENVELOPE P E X L V A D) :=
+  INTERP P N E C X L V A D <+ INTERP_TIME P N E C X L V A D B.

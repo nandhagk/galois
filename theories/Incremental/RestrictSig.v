@@ -10,17 +10,20 @@ From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
 
 Module Type RESTRICT_OPS (L : LATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
-    (RS : LOCAL_SYSTEM_OPS L with Definition key := S.key).
+    (RS : SYSTEM_OPS L with Definition key := S.key
+      with Definition key_code := S.key_code).
   Parameter mk : S.prog -> list (S.key * L.t) -> list S.row -> RS.prog.
 End RESTRICT_OPS.
 
 Module Type RESTRICT_SPEC (L : LATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
-    (RS : LOCAL_SYSTEM_OPS L with Definition key := S.key)
+    (RS : SYSTEM_OPS L with Definition key := S.key
+      with Definition key_code := S.key_code)
     (Import X : RESTRICT_OPS L S RS).
 End RESTRICT_SPEC.
 
 Module Type RESTRICT_LAWS (L : LATTICE) (S : LOCAL_SYSTEM L)
-    (RS : LOCAL_SYSTEM L with Definition key := S.key)
+    (RS : SYSTEM L with Definition key := S.key
+      with Definition key_code := S.key_code)
     (Import X : RESTRICT_OPS L S RS).
   (** Restricted post-solutions cover every selected primary and side write and every seed. *)
   Parameter restrict_post : forall p fz rs s, RS.post_solution (mk p fz rs) s ->
@@ -34,14 +37,20 @@ Module Type RESTRICT_LAWS (L : LATTICE) (S : LOCAL_SYSTEM L)
   (** Selecting declared rows and adding seeds gives a well-formed restricted program. *)
   Parameter mk_wf : forall p fz rs, S.wf p ->
     (forall r, In r rs -> In r (S.rows p)) -> RS.wf (mk p fz rs).
+  (** Selecting declared rows transfers monotonicity to the seeded system. *)
+  Parameter mk_monotone : forall p fz rs, S.monotone p ->
+    (forall r, In r rs -> In r (S.rows p)) -> RS.monotone (mk p fz rs).
+
 End RESTRICT_LAWS.
 
 Module Type RESTRICT (L : LATTICE) (S : LOCAL_SYSTEM L)
-    (RS : LOCAL_SYSTEM L with Definition key := S.key) :=
+    (RS : SYSTEM L with Definition key := S.key
+      with Definition key_code := S.key_code) :=
   RESTRICT_OPS L S RS <+ RESTRICT_SPEC L S RS <+ RESTRICT_LAWS L S RS.
 
 Module Type RESTRICT_TIME (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
-    (RS : LOCAL_SYSTEM_T L with Definition key := S.key)
+    (RS : SYSTEM_T L with Definition key := S.key
+      with Definition key_code := S.key_code)
     (Import X : RESTRICT L S RS).
   Parameter T_mk : S.prog -> list (S.key * L.t) -> list S.row -> N.
   Parameter c_res : N.
@@ -55,11 +64,13 @@ Module Type RESTRICT_TIME (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
 End RESTRICT_TIME.
 
 Module Type RESTRICT_T (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
-    (RS : LOCAL_SYSTEM_T L with Definition key := S.key) :=
+    (RS : SYSTEM_T L with Definition key := S.key
+      with Definition key_code := S.key_code) :=
   RESTRICT L S RS <+ RESTRICT_TIME L S RS.
 
 Module Type RESTRICT_PLAN (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
-    (RS : LOCAL_SYSTEM_T L with Definition key := S.key)
+    (RS : SYSTEM_T L with Definition key := S.key
+      with Definition key_code := S.key_code)
     (Import X : RESTRICT_T L S RS).
   (** Restricted post-solutions accept every declared write of every selected row. *)
   Parameter restrict_writes : forall p fz rs s r, RS.post_solution (mk p fz rs) s ->
@@ -67,5 +78,6 @@ Module Type RESTRICT_PLAN (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
 End RESTRICT_PLAN.
 
 Module Type RESTRICT_ALL (L : LATTICE_T) (S : LOCAL_SYSTEM_T L)
-    (RS : LOCAL_SYSTEM_T L with Definition key := S.key) :=
+    (RS : SYSTEM_T L with Definition key := S.key
+      with Definition key_code := S.key_code) :=
   RESTRICT_T L S RS <+ RESTRICT_PLAN L S RS.

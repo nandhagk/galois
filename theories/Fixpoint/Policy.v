@@ -16,8 +16,8 @@ Module PolicyCode (L : WLATTICE_OPS) <: POLICY_OPS L.
     match trie_get x (heads p) with
     | None => (L.join old new, cnt)
     | Some h =>
-      if Nat.ltb cnt (delay h) then (L.join old new, S cnt)
-      else (L.widen (wp p) old new, S cnt)
+      if N.ltb cnt (delay h) then (L.join old new, N.succ cnt)
+      else (L.widen (wp p) old new, N.succ cnt)
     end.
 End PolicyCode.
 
@@ -38,24 +38,25 @@ Module Policy (L : WLATTICE) <: POLICY L.
       match trie_get x (heads p) with
       | None => (L.join old new, cnt)
       | Some h =>
-        if Nat.ltb cnt (delay h) then (L.join old new, S cnt)
-        else (L.widen (wp p) old new, S cnt)
+        if N.ltb cnt (delay h) then (L.join old new, N.succ cnt)
+        else (L.widen (wp p) old new, N.succ cnt)
       end.
   Proof. Admitted.
-  Definition head_pot (h : head_cfg) (w : L.wparam) (cnt : nat) (a : L.t) : nat :=
-    (delay h - cnt) + (if L.is_bot a then 1 else 0) +
-      (if Nat.ltb cnt (delay h) then 0 else L.wrank w a).
   Lemma head_strict_steps : forall p x h cnt a new,
     trie_get x (heads p) = Some h -> L.leb new a = false ->
-    Nat.leb (delay h) cnt = true ->
+    N.leb (delay h) cnt = true -> L.is_bot a = false ->
     let '(a', cnt') := update p x cnt a new in
     head_pot h (wp p) cnt' a' < head_pot h (wp p) cnt a.
-  Proof. Admitted. (* SIG-QUESTION: rank can rise on the first widening. *)
+  Proof. Admitted.
   Lemma head_updates_le : forall p x h news a0,
     trie_get x (heads p) = Some h ->
-    strict_count (run_updates p x 0 a0 news) <=
-      delay h + 1 + L.wrank (wp p) (value_after_delay p x h a0 news).
-  Proof. Admitted. (* SIG-QUESTION: the rank after the delay need not bound all updates. *)
+    strict_count (run_updates p x 0%N a0 news) <=
+      N.to_nat (delay h) + 1 + L.wrank (wp p) (value_after_delay p x h a0 news).
+  Proof. Admitted.
+  (** Strict updates leave bottom. *)
+  Lemma update_leaves_bot : forall p x cnt a new, L.leb new a = false ->
+    L.is_bot (fst (update p x cnt a new)) = false.
+  Proof. Admitted.
 End Policy.
 
 Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
@@ -66,7 +67,11 @@ Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
 
   Lemma T_update_le : forall pol x cnt a b,
     (T_update pol x cnt a b <= c_pol *
-      (N.of_nat (Pos.size_nat x) +
-        L.c_lat * N.of_nat (L.size a + L.size b + L.wsize (wp pol) + 1) + 1))%N.
+      (N.of_nat (Pos.size_nat x) + L.c_lat * N.of_nat (L.size a + L.size b + 1) +
+       (if L.leb b a then 0 else
+          match trie_get x (heads pol) with
+          | Some _ => N.of_nat (N.size_nat cnt) + L.c_lat * N.of_nat (L.wsize (wp pol))
+          | None => 0
+          end) + 1))%N.
   Proof. Admitted. (* STUB *)
 End PolicyT.

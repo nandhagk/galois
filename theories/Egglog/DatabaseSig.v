@@ -5,7 +5,8 @@
     Builds on: ValueSig, IndexSig, Syntax and Model. *)
 
 From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
-From Argent Require Import Time Loop.
+From Argent Require Import Time Std Loop.
+From Galois.Base Require Import Loop UnionFind.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model.
 
 Import List.ListNotations.
@@ -42,7 +43,7 @@ Module Type DATABASE_OPS (V : VALUE_OPS) (I : INDEX_OPS V).
   Parameter put : positive -> list (cell V.t) -> option (cell V.t) -> t -> t.
   Parameter union : positive -> positive -> t -> t.
   Parameter rebuild : t -> t.
-  Parameter index : nat -> bool -> t -> I.t.
+  Parameter index : N -> bool -> t -> I.t.
   Parameter advance : t -> t.
   Parameter changed : t -> bool.
   Parameter ids : t -> N.
@@ -53,20 +54,13 @@ Module Type DATABASE_SPEC (V : VALUE_OPS) (I : INDEX_OPS V)
 End DATABASE_SPEC.
 
 Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I).
-  (* spec: wf view repr pending kind_ok old conflict fresh_id extends_by slot_of permute merged *)
+  (* spec: wf view repr pending old slots *)
   Parameter wf : t -> Prop.
   Parameter view : t -> Model.view (V := V.t).
   Parameter repr : t -> positive -> positive.
   Parameter pending : t -> nat.
-  Parameter kind_ok : t -> positive -> list (cell V.t) -> option (cell V.t) -> Prop.
   Parameter old : t -> positive -> list (cell V.t) -> option (option (cell V.t)).
-  Parameter conflict : t -> positive -> list (cell V.t) -> option (cell V.t) ->
-    positive -> positive -> Prop.
-  Parameter fresh_id : t -> positive -> Prop.
-  Parameter extends_by : t -> t -> positive -> list (cell V.t) -> positive -> Prop.
-  Parameter slot_of : t -> nat -> option (positive * list nat).
-  Parameter permute : list nat -> list (cell V.t) -> list (cell V.t).
-  Parameter merged : t -> positive -> list (option (cell V.t)) -> option (cell V.t).
+  Parameter slots : t -> list (positive * list nat).
   Definition canon (db : t) (c : cell V.t) : cell V.t :=
     match c with
     | Id i => Id (repr db i)
@@ -83,6 +77,38 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
     | Some old, _, _ => old
     | None, _, _ => o
     end.
+  Definition allocated (db : t) (i : positive) : Prop := (Npos i <= ids db)%N.
+  Definition kind_ok (db : t) (f : positive) (k : list (cell V.t))
+      (o : option (cell V.t)) : Prop :=
+    (forall i, In (Id i) (k ++ option_list o) -> allocated db i) /\
+    match kind (view db) f, o with
+    | Some ORel, None => True
+    | Some OId, Some (Id _) => True
+    | Some (OLat _), Some (Val _) => True
+    | _, _ => False
+    end.
+  Definition conflict (db : t) (f : positive) (k : list (cell V.t))
+      (o : option (cell V.t)) (a b : positive) : Prop :=
+    old db f (map (canon db) k) = Some (Some (Id a)) /\
+    option_map (canon db) o = Some (Id b).
+  Definition fresh_id (db : t) (i : positive) : Prop := i = N.succ_pos (ids db).
+  Definition extends_by (db db' : t) (f : positive) (k : list (cell V.t))
+      (i : positive) : Prop :=
+    ids db' = Npos i /\ kind (view db') = kind (view db) /\
+    (forall a b, same (view db') a b <-> same (view db) a b \/ (a = i /\ b = i)) /\
+    (forall f' k' o', row (view db') f' k' o' <->
+      row (view db) f' k' o' \/ (f' = f /\ k' = map (canon db) k /\ o' = Some (Id i))).
+  Definition slot_of (db : t) (s : N) : option (positive * list nat) :=
+    nth_error (slots db) (N.to_nat s).
+  Definition permute (perm : list nat) (u : list (cell V.t)) : list (cell V.t) :=
+    flat_map (fun i => option_list (nth_error u i)) perm.
+  Definition merged (db : t) (f : positive) (os : list (option (cell V.t)))
+      : option (cell V.t) :=
+    match map (option_map (canon db)) os with
+    | [] => None
+    | o :: rest => fold_left (fun acc o' => combine db f (Some acc) o') rest o
+    end.
+
   Definition out_le (db : t) (f : positive) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, _ => True
@@ -181,17 +207,65 @@ Module Type DATABASE_LAWS (V : VALUE) (I : INDEX V) (Import X : DATABASE_OPS V I
   (** Slot indexes have the declared permutation arity. *)
   Parameter index_wf : forall db s new f perm, wf db -> slot_of db s = Some (f, perm) ->
     I.wf (length perm) (index s new db).
+  (** Stored lookup agrees with the public row observation. *)
+  Parameter old_row : forall db f k o, wf db ->
+    (old db f k = Some o <-> row (view db) f k o).
+  (** Lookup canonicalizes its query and keeps the view and invariant. *)
+  Parameter lookup_spec : forall f k db, wf db ->
+    fst (lookup f k db) = old db f (map (canon db) k) /\
+    view (snd (lookup f k db)) = view db /\ wf (snd (lookup f k db)).
+  (** Initialization records declarations and slots and starts empty. *)
+  Parameter init_view : forall ds sl f k o i j,
+    (row (view (init ds sl)) f k o <-> False) /\
+    (same (view (init ds sl)) i j <-> i = j) /\
+    kind (view (init ds sl)) f = lookup_kind ds f /\
+    slots (init ds sl) = sl /\ ids (init ds sl) = 0%N /\ pending (init ds sl) = 0.
+  (** Insertion keeps layout and allocation and queues at most one loser. *)
+  Parameter layout_put : forall f k o db, wf db ->
+    kind (view (put f k o db)) = kind (view db) /\ slots (put f k o db) = slots db /\
+    ids (put f k o db) = ids db /\ pending (put f k o db) <= pending db + 1.
+  (** Make keeps layout and returns an allocated identifier. *)
+  Parameter layout_make : forall f k db, wf db ->
+    kind (view (snd (make f k db))) = kind (view db) /\
+    slots (snd (make f k db)) = slots db /\
+    (ids (snd (make f k db)) <= N.succ (ids db))%N /\
+    allocated (snd (make f k db)) (fst (make f k db)) /\
+    pending (snd (make f k db)) = pending db.
+  (** Union keeps layout and allocation and queues at most one loser. *)
+  Parameter layout_union : forall i j db, wf db ->
+    kind (view (union i j db)) = kind (view db) /\ slots (union i j db) = slots db /\
+    ids (union i j db) = ids db /\ pending (union i j db) <= pending db + 1.
+  (** Rebuilding keeps layout and allocation. *)
+  Parameter layout_rebuild : forall db, wf db ->
+    kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
+    ids (rebuild db) = ids db.
+  (** Advancing keeps the slot layout. *)
+  Parameter layout_advance : forall db, slots (advance db) = slots db.
+  (** A quiet union already holds in the old view. *)
+  Parameter union_quiet : forall i j db, wf db -> changed db = false ->
+    changed (union i j db) = false -> same (view db) i j.
+  (** A quiet make reuses a constructor row. *)
+  Parameter make_quiet : forall f k db, wf db -> changed db = false ->
+    changed (snd (make f k db)) = false ->
+    exists j, row (view db) f (map (canon db) k) (Some (Id j)).
+  (** Every row identifier is allocated. *)
+  Parameter row_allocated : forall db f k o i, wf db -> row (view db) f k o ->
+    In (Id i) (k ++ option_list o) -> allocated db i.
+
 End DATABASE_LAWS.
 
 Module Type DATABASE (V : VALUE) (I : INDEX V) :=
   DATABASE_OPS V I <+ DATABASE_SPEC V I <+ DATABASE_LAWS V I.
 
 Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I).
-  (* spec: unit slots_of potential num_slots *)
-  Parameter unit : t -> nat.
-  Parameter slots_of : t -> positive -> nat.
+  (* spec: wmark potential *)
+  Parameter wmark : t -> N.
+  Definition unit (db : t) : nat :=
+    (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
+  Definition slots_of (db : t) (f : positive) : nat :=
+    length (filter (fun s => Pos.eqb (fst s) f) (slots db)).
   Parameter potential : N -> t -> N.
-  Parameter num_slots : t -> nat.
+  Definition num_slots (db : t) : nat := length (slots db).
   Parameter T_init : list decl -> list (positive * list nat) -> N.
   Parameter T_find : positive -> t -> N.
   Parameter T_lookup : positive -> list (cell V.t) -> t -> N.
@@ -199,35 +273,70 @@ Module Type DATABASE_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE V I
   Parameter T_put : positive -> list (cell V.t) -> option (cell V.t) -> t -> N.
   Parameter T_union : positive -> positive -> t -> N.
   Parameter T_rebuild : t -> N.
-  Parameter T_index : nat -> bool -> t -> N.
+  Parameter T_index : N -> bool -> t -> N.
   Parameter T_advance T_changed T_ids : t -> N.
   Parameter c_db : N.
   (** Initialization starts without amortized debt. *)
   Parameter potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   (** Insertion pays for all slots and the logarithmic identifier budget. *)
   Parameter T_put_amort : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
-    (T_put f k o db + potential B (put f k o db) <=
-      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
-        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
-      potential B db)%N.
+    (T_put f k o db +
+      N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
+      N.of_nat (unit (put f k o db)) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          potential B db))%N.
   (** Constructor allocation has the same amortized budget as insertion. *)
   Parameter T_make_amort : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
-    (T_make f k db + potential B (snd (make f k db)) <=
-      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
-        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
-      potential B db)%N.
+    (T_make f k db +
+      N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
+      N.of_nat (unit (snd (make f k db))) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          potential B db))%N.
   (** Union transfers the deferred work to potential. *)
-  Parameter T_union_amort : forall B i j db, wf db ->
-    (T_union i j db + potential B (union i j db) <= c_db * N.of_nat (unit db) + potential B db)%N.
+  Parameter T_union_amort : forall B i j db, wf db -> allocated db i -> allocated db j ->
+    (ids db <= B)%N ->
+    (T_union i j db +
+      N.of_nat (unit (union i j db)) * potential B (union i j db) <=
+      N.of_nat (unit (union i j db)) * (c_db + potential B db))%N.
   (** Rebuilding spends potential on pending union work. *)
   Parameter T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    (T_rebuild db + potential B (rebuild db) <=
-      c_db * N.of_nat (pending db + 1) * N.of_nat (unit db) + potential B db)%N.
+    (T_rebuild db + N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
+      N.of_nat (unit (rebuild db)) *
+        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
   (** Slot lookup pays for the slot code. *)
   Parameter T_index_le : forall s new db,
-    (T_index s new db <= c_db * N.of_nat (Nat.log2 (S s) + 1))%N.
+    (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
   (** Advancing visits every slot. *)
   Parameter T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
+  (** The high-water mark covers every stored cell encoding. *)
+  Parameter wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
+    In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
+  (** Insertion never reduces the spending unit. *)
+  Parameter unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
+  (** Make never reduces the spending unit. *)
+  Parameter unit_mono_make : forall f k db, wf db -> unit db <= unit (snd (make f k db)).
+  (** Union never reduces the spending unit. *)
+  Parameter unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
+  (** Rebuilding never reduces the spending unit. *)
+  Parameter unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
+  (** Initialization pays for declarations and slot permutations. *)
+  Parameter T_init_le : forall ds sl,
+    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + 1) *
+      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat))%N.
+  (** Find traverses allocated identifiers at the database unit. *)
+  Parameter T_find_le : forall i db, wf db -> allocated db i ->
+    (T_find i db <= c_db * N.of_nat (unit db))%N.
+  (** Lookup charges the stored unit and query cell encodings. *)
+  Parameter T_lookup_le : forall f k db, wf db ->
+    (T_lookup f k db <= c_db * N.of_nat (length k + 1) * N.of_nat (unit db) +
+      c_db * N.of_nat ((fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))%N.
+  (** The change flag is stored. *)
+  Parameter T_changed_le : forall db, (T_changed db <= c_db)%N.
+  (** The allocation counter is stored. *)
+  Parameter T_ids_le : forall db, (T_ids db <= c_db)%N.
+
 End DATABASE_TIME.
 
 Module Type DATABASE_T (V : VALUE_T) (I : INDEX_T V) := DATABASE V I <+ DATABASE_TIME V I.
@@ -237,16 +346,15 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Definition stored_row := (use_entry * option (cell V.t))%type.
   Definition repair_state := (t * list use_entry)%type.
 
-  (* spec: rows uses_entries queue next_id forest_ok class_size live_use max_bits *)
+  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
+     index_counters written_cells *)
   Parameter rows : t -> list stored_row.
   Parameter uses_entries : t -> list (positive * use_entry).
   Parameter queue : t -> list positive.
   Parameter next_id : t -> positive.
   Parameter forest_ok : t -> Prop.
   Parameter class_size : t -> positive -> N.
-  Parameter live_use : t -> positive * use_entry -> bool.
-  Parameter max_bits : t -> nat.
-  Parameter k_credit k_stale k_active k_queue k_stop k_driver : N.
+  Parameter k_credit k_loop k_active k_queue k_stop k_driver : N.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
     In (x, e) (uses_entries db).
@@ -260,9 +368,9 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
     (forall f k o, In ((f, k), o) (rows db) <-> row (view db) f k o) /\
     NoDup (map fst (rows db)) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i ->
-      uses db (repr db i) (f, k)) /\
+      exists k0, uses db (repr db i) (f, k0) /\ map (canon db) k0 = k) /\
     (forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
-      scheduled db work (f, k)) /\
+      exists k0, scheduled db work (f, k0) /\ map (canon db) k0 = k) /\
     (forall s f perm, slot_of db s = Some (f, perm) ->
       I.wf (length perm) (index s false db) /\
       I.wf (length perm) (index s true db) /\
@@ -288,25 +396,28 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Definition bucket (db : t) (x : positive) : list use_entry :=
     map snd (filter (fun xe => Pos.eqb (fst xe) x) (uses_entries db)).
   Definition use_credit (B : N) (db : t) (xe : positive * use_entry) : nat :=
-    if live_use db xe then
-      N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe)))) *
-        entry_weight db (snd xe)
-    else 0.
-  Definition stale_count (db : t) : nat :=
-    length (filter (fun xe => negb (live_use db xe)) (uses_entries db)).
-  (** Live occurrences carry relabeling credit and stale occurrences carry deletion credit. *)
-  Definition rebuild_potential (B : N) (db : t) : N :=
-    (k_credit * N.of_nat
-      ((fold_right (fun xe n => use_credit B db xe + n) 0 (uses_entries db))%nat) +
-     k_stale * N.of_nat (stale_count db))%N.
+    N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe)))) *
+        entry_weight db (snd xe).
   Definition work_weight (db : t) (work : list use_entry) : nat :=
     fold_right (fun e n => entry_weight db e + n) 0 work.
+  Definition queue_weight (db : t) : nat :=
+    fold_right (fun x n => work_weight db (bucket db x) + 1 + n) 0 (queue db).
+  Definition rebuild_potential (B : N) (db : t) : N :=
+    (k_credit * N.of_nat (fold_right (fun xe n => (use_credit B db xe + n)%nat) 0%nat
+      (uses_entries db)) + k_queue * N.of_nat (queue_weight db))%N.
+  Definition state_potential (B : N) (s : repair_state) : N :=
+    (rebuild_potential B (fst s) +
+      k_active * N.of_nat (work_weight (fst s) (snd s)))%N.
+  Parameter nuses npending : t -> N.
+  Parameter uf_state : t -> UnionFind.t.
+  Parameter index_counters : t -> list positive.
+  Parameter written_cells : t -> list (cell V.t).
   Parameter get_uses : positive -> t -> list use_entry.
   Parameter T_get_uses : positive -> t -> N.
   Parameter pop_loser : t -> option (positive * t).
   Parameter repair_entry : use_entry -> t -> t.
   Parameter rstep : repair_state -> repair_state + t.
-  Parameter rebuild_fuel : t -> nat.
+  Parameter rebuild_fuel : t -> N.
   Parameter rebuild_measure : repair_state -> nat.
   Parameter T_pop_loser : t -> N.
   Parameter T_repair_entry : use_entry -> t -> N.
@@ -316,10 +427,10 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   (** Public well-formedness is the maintained invariant at an empty active batch. *)
   Parameter F1_inv_wf : forall db, wf db <-> inv db.
   (** The public potential is the weighted occurrence credit. *)
-  Parameter F2_potential : forall B db, (potential B db = rebuild_potential B db)%N.
+  Parameter F2_potential : forall B db, (potential B db = k_loop * rebuild_potential B db)%N.
   (** The unit charges identifier traversal and cell encoding widths. *)
   Parameter F3_unit : forall db,
-    unit db = (N.to_nat (N.log2 (ids db)) + 1) * (max_bits db + 1).
+    unit db = (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   (** Direct bucket lookup agrees with the occurrence inventory. *)
   Parameter F4_bucket : forall db work x, inv_on db work -> get_uses x db = bucket db x.
   (** An empty pop detects an empty pending queue. *)
@@ -339,8 +450,9 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
         | Some (x, db') => inl (db', get_uses x db)
         end
       end.
-  (** Missing stale keys are discarded without changing rows or equality. *)
-  Parameter F6_absent : forall db f k, old db f k = None -> repair_entry (f, k) db = db.
+  (** Missing canonical keys are discarded without changing rows or equality. *)
+  Parameter F6_absent : forall db f k,
+    old db f (map (canon db) k) = None -> repair_entry (f, k) db = db.
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Parameter F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
@@ -376,24 +488,24 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
     rebuild_measure s' < rebuild_measure s.
   (** Fuel budgets logarithmic relabelings of all stored use occurrences. *)
   Parameter F15_fuel_formula : forall db, rebuild_fuel db =
-    (N.to_nat (N.log2 (ids db)) + 2) * (length (uses_entries db) + 1) + pending db + 1.
+    ((N.size (ids db) + 2) * (nuses db + 1) + npending db + 1)%N.
   (** Computed fuel includes the final stop call. *)
   Parameter F15_fuel_enough : forall db, inv db ->
-    rebuild_measure (db, []) < rebuild_fuel db.
+    (N.of_nat (rebuild_measure (db, [])) < rebuild_fuel db)%N.
   (** The rebuild operation runs the same step and fuel as the plan. *)
   Parameter F16_rebuild_run : forall db, wf db ->
-    loop_fuel rstep (rebuild_fuel db) (db, []) = inr (rebuild db).
+    loopN rstep (rebuild_fuel db) (db, []) = inr (rebuild db).
 
   (** Congruent cells have equal denotations in every satisfying model. *)
-  Parameter F17_cong_den : forall (M : model V.merge) nu db i j, wf db ->
+  Parameter F17_cong_den : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> cong db i j -> nu i = nu j.
   (** Nonempty output groups keep their model meaning through the actual merge fold. *)
-  Parameter F18_merged_holds : forall (M : model V.merge) nu db f k os,
-    wf db -> os <> [] -> (forall i, nu (repr db i) = nu i) ->
-    Forall (holds V.merge M nu (view db) f k) os ->
-    holds V.merge M nu (view db) f k (merged db f os).
+  Parameter F18_merged_holds : forall (M : model (V := V.t)) nu db f k os,
+    wf db -> lat_closed V.merge M (view db) -> os <> [] -> (forall i, nu (repr db i) = nu i) ->
+    Forall (holds M nu (view db) f k) os ->
+    holds M nu (view db) f k (merged db f os).
   (** Repair preserves satisfaction through its collision, lattice and index branches. *)
-  Parameter F19_rstep_sat : forall (M : model V.merge) nu s s',
+  Parameter F19_rstep_sat : forall (M : model (V := V.t)) nu s s',
     state_inv s -> rstep s = inl s' -> sat V.merge M nu (view (fst s)) ->
     sat V.merge M nu (view (fst s')).
   (** Lineage retains original row groups throughout repeated deletion and reinsertion. *)
@@ -417,37 +529,25 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
         map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
 
   (** Rebuilding keeps every satisfying model and identifier interpretation. *)
-  Parameter rebuild_sat : forall (M : model V.merge) nu db,
+  Parameter rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
     sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
   (** Inserting a true, kind-correct row keeps the model. *)
-  Parameter put_sat : forall (M : model V.merge) nu db f k o, wf db -> kind_ok db f k o ->
-    sat V.merge M nu (view db) -> holds V.merge M nu (view db) f k o ->
+  Parameter put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
+    sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
   (** A justified identifier union keeps the model. *)
-  Parameter union_sat : forall (M : model V.merge) nu db i j, wf db ->
+  Parameter union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
   (** Make updates its output meaning and keeps every other identifier meaning. *)
-  (* F1 validity gap.  Model.model permits carrier = bool, rel = False and lat = False
-     (lat_merge is then vacuous), and a total con whose [inl b] case is negb b
-     and whose other cases return false.  There is no constructor freeness law or
-     program-validity premise here.  Consider a row-empty well-formed db whose
-     same relation is equality and whose repr is identity.  Every nu satisfies it.
-     If make f [Id i] db allocates that unallocated i, make_spec requires the row
-     f [Id i] (Some (Id i)).  Satisfaction under nu' requires negb (nu' i) = nu' i,
-     which has no Boolean solution.  The requested update also sets
-     nu' i = negb (nu i).  No premise excludes this fresh-output input alias.
-     This source-level obstruction leaves the unrestricted claim visible for F1. *)
-  Parameter make_sat : forall (M : model V.merge) nu db f k, wf db ->
+  Parameter make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
     kind (view db) f = Some OId ->
+    (forall j, In (Id j) k -> allocated db j) ->
     sat V.merge M nu (view db) ->
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
-      nu' i = con V.merge M f (map (den V.merge nu) k) /\ sat V.merge M nu' (view db').
+      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
 
-  (* The source kernel proves semantics for immutable productions.  Row deletion,
-     lattice aggregation and maintained indexes require new proofs.
-     Rank-selected source union does not establish the following size lemma. *)
   (** A losing root enters a class at least twice as large. *)
   Parameter T1_doubling : forall db i j x, inv db -> repr db x = x ->
     repr (union i j db) x <> x ->
@@ -456,45 +556,100 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Parameter T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
   (** Insertion pays its executable work and new occurrence credit. *)
   Parameter T3_put_credit : forall B f k o db, wf db -> (ids (put f k o db) <= B)%N ->
-    (T_put f k o db + rebuild_potential B (put f k o db) <=
-      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
-        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
-      rebuild_potential B db)%N.
+    (T_put f k o db +
+      N.of_nat (unit (put f k o db)) * (k_loop * rebuild_potential B (put f k o db)) <=
+      N.of_nat (unit (put f k o db)) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          (k_loop * rebuild_potential B db)))%N.
   (** Allocation pays new occurrences through the insertion budget. *)
   Parameter T4_make_credit : forall B f k db, wf db -> (ids (snd (make f k db)) <= B)%N ->
-    (T_make f k db + rebuild_potential B (snd (make f k db)) <=
-      c_db * N.of_nat (length k + 2) * N.of_nat (slots_of db f + 1) *
-        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (unit db) +
-      rebuild_potential B db)%N.
+    (T_make f k db +
+      N.of_nat (unit (snd (make f k db))) * (k_loop * rebuild_potential B (snd (make f k db))) <=
+      N.of_nat (unit (snd (make f k db))) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          (k_loop * rebuild_potential B db)))%N.
   (** Union pays its root link and queued repair credit. *)
-  Parameter T5_union_credit : forall B i j db, wf db ->
-    (T_union i j db + rebuild_potential B (union i j db) <=
-      c_db * N.of_nat (unit db) + rebuild_potential B db)%N.
-  (** The design's local step estimate exposes its additive per-step allowance. *)
-  Parameter T6_rstep_go : forall B s s', state_inv s -> (ids (fst s') <= B)%N ->
-    rstep s = inl s' ->
-    (T_rstep s + potential B (fst s') < potential B (fst s) + c_db * N.of_nat (unit (fst s)))%N.
+  Parameter T5_union_credit : forall B i j db, wf db -> allocated db i -> allocated db j ->
+    (ids db <= B)%N ->
+    (T_union i j db +
+      N.of_nat (unit (union i j db)) * (k_loop * rebuild_potential B (union i j db)) <=
+      N.of_nat (unit (union i j db)) * (c_db + (k_loop * rebuild_potential B db)))%N.
+  (** Continuing steps spend queued and active credit without a per-entry allowance. *)
+  Parameter T6_rstep_go : forall B U s s', state_inv s -> (ids (fst s') <= B)%N ->
+    unit (fst s') <= U -> rstep s = inl s' ->
+    (T_rstep s + k_loop * N.of_nat U * state_potential B s' <
+      k_loop * N.of_nat U * state_potential B s)%N.
   (** Stopping charges one unit of the final database. *)
   Parameter T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
     (T_rstep s <= k_stop * N.of_nat (unit (fst s)))%N.
-  (* T6 accumulates an allowance per active entry.  It does not imply T8.
-     T8 is the missing aggregate charging obligation, including fuel construction,
-     lattice-value growth, queued buckets and the final public potential. *)
+  (** Continuing steps also pay the binary loop driver's per-step charge. *)
+  Parameter T6a_rstep_credit : forall B U s s', state_inv s ->
+    (ids (fst s') <= B)%N -> unit (fst s') <= U -> rstep s = inl s' ->
+    (T_rstep s + c_loopN + k_loop * N.of_nat U * state_potential B s' <=
+      k_loop * N.of_nat U * state_potential B s)%N.
+  (** Stopping retains result credit and spends the reserved stop allowance. *)
+  Parameter T7a_stop_credit : forall B U s r, state_inv s -> unit (fst s) <= U ->
+    rstep s = inr r ->
+    (T_rstep s + c_loopN + k_loop * N.of_nat U * rebuild_potential B r <=
+      k_loop * N.of_nat U * state_potential B s + k_stop * N.of_nat U)%N.
+
   (** The actual loop must fit the public budget after all use-entry charges are summed. *)
   Parameter T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    (T_rebuild_fuel db +
-      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
-      potential B (rebuild db) <=
-      c_db * N.of_nat (pending db + 1) * N.of_nat (unit db) + potential B db)%N.
+    (T_rebuild_fuel db + T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
+      N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
+      N.of_nat (unit (rebuild db)) *
+        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
   (** The wrapper exposes fuel construction and driver overhead. *)
   Parameter T9_rebuild_driver : forall db,
     (T_rebuild db <= T_rebuild_fuel db +
-      T_loop_fuel rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
+      T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
   (** Slot lookup charges its binary slot code. *)
   Parameter T10_index : forall s new db,
-    (T_index s new db <= c_db * N.of_nat (Nat.log2 (S s) + 1))%N.
+    (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
   (** Advancing clears each maintained slot once. *)
   Parameter T11_advance : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
+  (** Stored counters agree with the occurrence inventory and pending queue. *)
+  Parameter F15_counts : forall db work, inv_on db work ->
+    N.to_nat (nuses db) = length (uses_entries db) /\ N.of_nat (pending db) = npending db.
+  (** The stored watermark is the exact historical maximum of written payloads and counters. *)
+  Parameter F_wmark : forall db, inv db ->
+    wmark db = fold_right N.max (N.max (nuses db) (ids db))
+      (map Npos (index_counters db) ++
+        map (fun c => match c with
+          | Id i => Npos (xO i)
+          | Val v => Npos (xI (V.encode v))
+          end) (written_cells db)).
+  (** Class sizes come from the size-based union-find. *)
+  Parameter F_uf_bridge : forall db work x, inv_on db work ->
+    repr db x = UnionFind.repr (uf_state db) x /\
+    class_size db x = N.of_nat (UnionFind.size_of (uf_state db) x) /\
+    UnionFind.wf (uf_state db).
+  (** Root classes are nonempty and bounded by allocation. *)
+  Parameter F_class_size : forall db work x, inv_on db work ->
+    (1 <= class_size db (repr db x))%N /\
+    (class_size db (repr db x) <= N.max 1 (ids db))%N.
+  (** Collision unions also double the losing class. *)
+  Parameter F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
+    repr (fst s) x = x -> repr (fst s') x <> x ->
+    (2 * class_size (fst s) x <= class_size (fst s') (repr (fst s') x))%N.
+  (** Repair never reduces the spending unit. *)
+  Parameter F9b_rstep_unit : forall s s', state_inv s -> rstep s = inl s' ->
+    unit (fst s) <= unit (fst s').
+  (** Loop credit includes the binary driver charge. *)
+  Parameter k_loop_le : (c_loopN <= k_loop)%N.
+  (** Fuel construction uses stored binary counters. *)
+  Parameter T7b_fuel : forall db, inv db ->
+    (T_rebuild_fuel db <= k_driver * N.of_nat (unit db))%N.
+  (** The [T_loopN_amort] driver retains the final database credit. *)
+  Parameter T8a_loop_final : forall B U db, inv db -> (ids (rebuild db) <= B)%N ->
+    unit (rebuild db) <= U ->
+    (T_loopN rstep T_rstep (rebuild_fuel db) (db, []) +
+      k_loop * N.of_nat U * rebuild_potential B (rebuild db) <=
+      k_loop * N.of_nat U * rebuild_potential B db + k_stop * N.of_nat U +
+      c_loopN * N.of_nat (N.size_nat (rebuild_fuel db) + 1))%N.
+
 End DATABASE_PLAN.
 
 Module Type DATABASE_ALL (V : VALUE_T) (I : INDEX_T V) :=

@@ -22,124 +22,140 @@ TimeFun original.
 TimeFun seeds.
 TimeFun selected.
 
-Module RestrictedCode (L : LATTICE_OPS) (S : LOCAL_SYSTEM_OPS L) <: LOCAL_SYSTEM_OPS L.
+Module RestrictedCode (L : LATTICE_OPS) (S : LOCAL_SYSTEM_OPS L) <: SYSTEM_OPS L.
   Definition prog := restricted_program S.prog S.key L.t S.row.
   Definition key := S.key.
-  Definition row := S.row.
+  Definition row := (S.row + (S.key * L.t))%type.
   Definition frame := S.frame.
   Definition key_code := S.key_code.
-  (* STUB-CODE *)
-  Definition rows (p : prog) : list row := selected _ _ _ _ p.
-  (* STUB-CODE *)
-  Definition target (p : prog) : row -> key := S.target (original _ _ _ _ p).
-  (* STUB-CODE *)
-  Definition start (p : prog) : row -> query key L.t frame := S.start (original _ _ _ _ p).
-  (* STUB-CODE *)
-  Definition resume (p : prog) : frame -> L.t -> query key L.t frame :=
-    S.resume (original _ _ _ _ p).
-  (* STUB-CODE *)
-  Definition deps (p : prog) : row -> list key := S.deps (original _ _ _ _ p).
-  (* STUB-CODE *)
-  Definition sides (p : prog) : row -> list key := S.sides (original _ _ _ _ p).
-  Definition row_code := S.row_code.
-  (* STUB-CODE *)
-  Definition rows_of (_ : prog) (_ : key) : list row := [].
+  Definition key_eqb := S.key_eqb.
+  Definition rows (p : prog) : list row :=
+    map (fun r => inl r) (selected _ _ _ _ p) ++ map (fun xv => inr xv) (seeds _ _ _ _ p).
+  Definition target (p : prog) (r : row) : key :=
+    match r with
+    | inl r => S.target (original _ _ _ _ p) r
+    | inr xv => fst xv
+    end.
+  Definition start (p : prog) (r : row) : query key L.t frame :=
+    match r with
+    | inl r => S.start (original _ _ _ _ p) r
+    | inr xv => Ret (snd xv)
+    end.
+  Definition resume (p : prog) (f : frame) (a : L.t) : query key L.t frame :=
+    S.resume (original _ _ _ _ p) f a.
+  Definition deps (p : prog) (r : row) : list key :=
+    match r with
+    | inl r => S.deps (original _ _ _ _ p) r
+    | inr _ => []
+    end.
+  Definition sides (p : prog) (r : row) : list key :=
+    match r with
+    | inl r => S.sides (original _ _ _ _ p) r
+    | inr _ => []
+    end.
 End RestrictedCode.
 
 Module RestrictCode (L : LATTICE_OPS) (S : LOCAL_SYSTEM_OPS L).
   Module RS := RestrictedCode L S.
   Module Code <: RESTRICT_OPS L S RS.
-    (* STUB-CODE *)
     Definition mk (p : S.prog) (fz : list (S.key * L.t)) (rs : list S.row) : RS.prog :=
       {| original := p; seeds := fz; selected := rs |}.
   End Code.
 End RestrictCode.
 
-Module Restricted (L : LATTICE) (S : LOCAL_SYSTEM L) <: LOCAL_SYSTEM L.
+Module Restricted (L : LATTICE) (S : LOCAL_SYSTEM L) <: SYSTEM L.
   Include RestrictedCode L S.
   Include SYSTEM_SPEC L.
-  Definition wf (_ : prog) : Prop := True.
+  (* spec: wf *)
+  Definition wf (p : prog) : Prop := S.wf (original _ _ _ _ p) /\
+    Forall (fun r => In r (S.rows (original _ _ _ _ p))) (selected _ _ _ _ p).
+  (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
   Proof. Admitted.
-
+  (** Key equality decides equality of system keys. *)
+  Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
+  Proof. Admitted.
+  (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
   Proof. Admitted.
-
+  (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
   Proof. Admitted.
-
+  (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
   Proof. Admitted.
-
-  Lemma row_code_inj : forall p a b, In a (rows p) -> In b (rows p) ->
-    row_code a = row_code b -> a = b.
-  Proof. Admitted.
-
-  Lemma rows_of_spec : forall p x r, wf p ->
-    (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
+  (** Side contributions fit the declared occurrence budget. *)
+  Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
+    eval p r look = Some (a, ss) -> length ss <= length (sides p r).
   Proof. Admitted.
 
 End Restricted.
 
-Module RestrictedT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L) <: LOCAL_SYSTEM_T L.
+Module RestrictedT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L) <: SYSTEM_T L.
   Include Restricted L S.
   TimeFun key_code.
+  TimeFun key_eqb.
   TimeFun rows.
   TimeFun target.
   TimeFun start.
   TimeFun resume.
   TimeFun deps.
   TimeFun sides.
-  TimeFun row_code.
-  TimeFun rows_of.
-  Definition row_work (_ : prog) (_ : nat) : N := 0%N.
-  Definition kw (_ : prog) : nat := 0.
+  (* spec: row_work kw *)
+  Definition row_work (p : prog) (s : nat) : N :=
+    (S.row_work (original _ _ _ _ p) s +
+      N.of_nat (fold_right (fun xv n => Nat.max (L.size (snd xv)) n) 0%nat
+        (seeds _ _ _ _ p)) + 1)%N.
+  Definition kw (p : prog) : nat :=
+    fold_right (fun xv n => Nat.max (S.key_bits (fst xv)) n)
+      (S.kw (original _ _ _ _ p)) (seeds _ _ _ _ p).
   Definition c_sys : N := 1. (* STUB *)
-  Definition c_loc : N := 1. (* STUB *)
+  (** Step budgets grow with the size of abstract values. *)
   Lemma row_work_mono : forall p s s', s <= s' -> (row_work p s <= row_work p s')%N.
   Proof. Admitted. (* STUB *)
-
+  (** The program key budget covers all declared reads and writes. *)
   Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
   Proof. Admitted. (* STUB *)
-
-  Lemma T_key_code_le : forall x,
-    (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
+  (** Encoding costs are linear in the resulting code size. *)
+  Lemma T_key_code_le : forall x, (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
   Proof. Admitted. (* STUB *)
-
+  (** Equality costs are bounded by the first key's code size. *)
+  Lemma T_key_eqb_le : forall a b,
+    (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Enumerating rows costs linear time in the output length. *)
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
   Proof. Admitted. (* STUB *)
-
+  (** Target lookup fits the row budget. *)
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
   Proof. Admitted. (* STUB *)
-
+  (** Starting a row fits the row budget. *)
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
   Proof. Admitted. (* STUB *)
-
+  (** Resuming a frame accounts for the size of the supplied abstract value. *)
   Lemma T_resume_le : forall p f a, wf p ->
     (T_resume p f a <= c_sys * (row_work p (L.size a) + 1))%N.
   Proof. Admitted. (* STUB *)
-
+  (** Dependency enumeration pays for every key occurrence. *)
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) * N.of_nat (kw p + 1))%N.
   Proof. Admitted. (* STUB *)
-
+  (** Side enumeration pays for every key occurrence. *)
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) * N.of_nat (kw p + 1))%N.
   Proof. Admitted. (* STUB *)
-
-  Lemma T_row_code_le : forall r,
-    (T_row_code r <= c_loc * N.of_nat (Pos.size_nat (row_code r) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_rows_of_le : forall p x, wf p ->
-    (T_rows_of p x <= c_loc * N.of_nat (length (rows_of p x) + key_bits x + 1))%N.
+  (** Row output sizes fit the transfer budget. *)
+  Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
+    (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
+    (N.of_nat (L.size a) <= row_work p s)%N /\
+    Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
   Proof. Admitted. (* STUB *)
 
 End RestrictedT.
@@ -159,6 +175,10 @@ Module Restrict (L : LATTICE) (S : LOCAL_SYSTEM L).
     (forall r, In r rs -> In r (S.rows p)) ->
     (forall x v, In (x, v) fz -> L.leb v (s x) = true) ->
     RS.post_solution (mk p fz rs) s.
+  Proof. Admitted.
+
+  Lemma mk_monotone : forall p fz rs, S.monotone p ->
+    (forall r, In r rs -> In r (S.rows p)) -> RS.monotone (mk p fz rs).
   Proof. Admitted.
 
   Lemma mk_wf : forall p fz rs, S.wf p ->

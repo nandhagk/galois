@@ -53,12 +53,12 @@ Inductive stop : Type :=
   | IdLimit.
 
 Inductive source (V : Type) : Type :=
-  | All (slot : nat)
-  | New (slot : nat)
+  | All (slot : N)
+  | New (slot : N)
   | Const (c : cell V).
 Record jplan : Type := JPlan { nvars : nat; cols : list (list nat) }.
 Record cplan (V : Type) : Type := CPlan {
-  rule_ix : nat;
+  rule_ix : N;
   join : jplan;
   sources : list (source V);
   var_of : list positive;
