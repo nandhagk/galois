@@ -9,6 +9,8 @@ From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
+From Galois.Program Require Import SemanticsSig CfgSig.
+From Galois.Framework Require Import InterpSig.
 From Galois.Alarms Require Import ChecksSig AlarmsSig.
 
 Module AlarmsCode (N X : KEY_OPS) (MN : MAP_OPS N) (L : LANG_OPS)
@@ -83,3 +85,21 @@ Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)
     ~ C.safe (ckind k) cs -> alarm inv k = true.
   Proof. Admitted.
 End AlarmsPoint.
+
+Module AlarmsAnalysis (P : TYPE) (N : KEY) (E : TYPE) (G : CFG_OPS P N E)
+    (X : KEY) (L : LANG) (V : VALUE_DOMAIN L) (ACT : ACTIONS_OPS P E X L)
+    (D : STATE_DOMAIN X L V) (SYS : INTERP_SYSTEM P N E G X L V ACT D)
+    (M : SEMANTICS P) (K : INTERP_LINK P N E G X L ACT M)
+    (SOUND : INTERP_SOUND P N E G X L V ACT D SYS M K)
+    (MN : MAP N) (C : CHECKS L V) (A : ALARMS N X MN L V D C)
+    <: ALARMS_ANALYSIS P N E G X L V ACT D SYS M K SOUND MN C A.
+  Include Alarms N X MN L V D C.
+
+  (** Certified interpreter invariants make every silent reachable check safe. *)
+  Lemma analysis_no_alarm_safe : forall p inv,
+    SYS.post_solution p (A.inv_at inv) -> forall k,
+    A.alarm inv k = false -> forall s cs,
+    reachable (M.initial p) (M.step p) s -> K.point s = site k ->
+    eval_terms L.eval (K.store s) (args k) = Some cs -> C.safe (ckind k) cs.
+  Proof. Admitted.
+End AlarmsAnalysis.
