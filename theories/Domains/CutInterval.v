@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith Bool.
 From Argent Require Import Time Tactics Std.
-From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig.
+From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig Interval.
 
 Definition pack_cut (bits : nat) (raw : itv) : cut_itv bits :=
   match cut_interval_ok bits raw as ok return cut_interval_ok bits raw = ok -> cut_itv bits with
@@ -32,8 +32,12 @@ Module CutIntervalCode (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS)
   Definition widen q (a b : t) := cut (R.widen q (cut_raw a) (cut_raw b)).
   Definition narrow (a b : t) := cut (R.narrow (cut_raw a) (cut_raw b)).
   Definition forward o (xs : list t) := cut (R.forward o (map cut_raw xs)).
-  Definition backward o (r : t) (xs : list t) := map cut (R.backward o (cut_raw r) (map cut_raw xs)).
-  Definition guard g (xs : list t) := map cut (R.guard g (map cut_raw xs)).
+  Definition backward o (r : t) (xs : list t) :=
+    map (fun yx => pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))
+      (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
+  Definition guard g (xs : list t) :=
+    map (fun yx => pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))
+      (combine (R.guard g (map cut_raw xs)) (map cut_raw xs)).
 End CutIntervalCode.
 
 Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
@@ -117,9 +121,26 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
   Proof. Admitted. (* STUB *)
 End CutInterval.
 
+Module CutIntervalRaw (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
+  Module R := IntervalT L T.
+  Module Link <: CUT_RAW_LINK L T R.
+    Lemma raw_leb : forall a b, R.leb a b = cut_leb a b.
+    Proof. reflexivity. Qed.
+    Lemma raw_work : forall o xs, R.work o xs =
+      fold_right Nat.add 0 (map interval_bits xs) + length xs +
+        (fold_right Nat.add 0 (map interval_bits xs) + 1) ^ 2 +
+        match L.view o with ZConst z => Z.size_nat z | _ => 0 end.
+    Proof. reflexivity. Qed.
+    Lemma raw_gwork : forall g xs, R.gwork g xs =
+      fold_right Nat.add 0 (map interval_bits xs) + length xs +
+        (fold_right Nat.add 0 (map interval_bits xs) + 1) ^ 2.
+    Proof. reflexivity. Qed.
+    End Link.
+End CutIntervalRaw.
+
 Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
-    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T)
-    <: CUT_INTERVAL_ALL C L T R.
+    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R)
+    <: CUT_INTERVAL_ALL C L T R RL.
   Include CutInterval C L T R.
 
   TimeFun cut.
@@ -224,7 +245,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
 
   (** The cutoff pays for shape comparisons and endpoint bit scans. *)
   Lemma T_cut_le : forall a,
-    (T_cut a <= c_cut * N.of_nat (interval_bits a + C.bits + 1))%N.
+    (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
   Proof. Admitted. (* STUB *)
   (** The representation measure counts the largest finite endpoint. *)
   Lemma size_raw : forall a, size a = interval_bits (cut_raw a).
@@ -284,12 +305,14 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   (** Backward transfer cuts each result in its original operand position. *)
   Lemma F_backward : forall o r xs,
     map cut_raw (backward o r xs) =
-      map (cut_interval C.bits) (R.backward o (cut_raw r) (map cut_raw xs)).
+      map (fun yx => cut_within C.bits (snd yx) (fst yx))
+        (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
   Proof. Admitted. (* STUB *)
   (** Guard refinement cuts each returned operand. *)
   Lemma F_guard : forall g xs,
     map cut_raw (guard g xs) =
-      map (cut_interval C.bits) (R.guard g (map cut_raw xs)).
+      map (fun yx => cut_within C.bits (snd yx) (fst yx))
+        (combine (R.guard g (map cut_raw xs)) (map cut_raw xs)).
   Proof. Admitted. (* STUB *)
   (** Widening rank counts thresholds beyond the retained finite endpoints. *)
   Lemma F_rank : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
@@ -301,7 +324,11 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   (** The total raw helper clock includes all endpoint inspections. *)
   Lemma T_cut_helper : forall a,
     (T_cut_interval C.bits a <=
-      k_cut * N.of_nat (interval_bits a + C.bits + 1))%N.
+      k_cut * N.of_nat (interval_bits a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Inward cutting reads both intervals. *)
+  Lemma T_cut_within_helper : forall old a,
+    (T_cut_within C.bits old a <= k_cut * N.of_nat (interval_bits old + interval_bits a + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Packing the Boolean subtype adds constant overhead to the raw cutoff helper. *)
   Lemma T_cut_pack : forall a,
@@ -319,8 +346,8 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T_backward o r xs <= k_cut *
       (R.T_backward o (cut_raw r) (map cut_raw xs) +
        fold_right N.add 0%N
-         (map (fun a => (T_cut_interval C.bits a + 1)%N)
-           (R.backward o (cut_raw r) (map cut_raw xs))) +
+         (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
+           (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs))) +
        N.of_nat (length xs) + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Guard timing includes every returned cutoff and both list traversals. *)
@@ -328,8 +355,8 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T_guard g xs <= k_cut *
       (R.T_guard g (map cut_raw xs) +
        fold_right N.add 0%N
-         (map (fun a => (T_cut_interval C.bits a + 1)%N)
-           (R.guard g (map cut_raw xs))) + N.of_nat (length xs) + 1))%N.
+         (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
+           (combine (R.guard g (map cut_raw xs)) (map cut_raw xs))) + N.of_nat (length xs) + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Widening timing includes cutting the threshold-selected endpoints. *)
   Lemma T_widen_source : forall q a b,

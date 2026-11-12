@@ -41,3 +41,15 @@ Example unrestricted_threshold_is_cut :
     (Cut.cut (I (Fin 0) (Fin 0))) (Cut.cut (I (Fin 0) (Fin 1)))) =
     I (Fin 0) PosInf.
 Proof. vm_compute. reflexivity. Qed.
+
+Example backward_overflow_keeps_operand :
+  map cut_raw (Cut.backward ZAdd (Cut.cut (I (Fin 255) (Fin 255)))
+    [Cut.cut (I (Fin 0) PosInf); Cut.cut (I (Fin (-255)) (Fin (-255)))]) =
+  [I (Fin 0) PosInf; I (Fin (-255)) (Fin (-255))].
+Proof. vm_compute. reflexivity. Qed.
+
+Example guard_overflow_keeps_operand :
+  map cut_raw (Cut.guard (ZGuardCmp Lt)
+    [Cut.cut (I (Fin 255) (Fin 255)); Cut.cut (I (Fin 0) PosInf)]) =
+  [I (Fin 255) (Fin 255); I (Fin 0) PosInf].
+Proof. vm_compute. reflexivity. Qed.
