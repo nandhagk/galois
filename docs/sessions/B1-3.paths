@@ -14,3 +14,7 @@ theories/States/EnvBudget.v
 tests/States/EnvBudgetTest.v
 theories/Alarms/Alarms.v
 tests/Alarms/AlarmsTest.v
+tests/States/TermTest.v
+tests/Domains/IntervalScalarPortTest.v
+tests/Domains/IntervalGuardTest.v
+tests/Domains/IntervalReviewTest.v

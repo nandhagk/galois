@@ -49,17 +49,16 @@ Never weaken a statement or add a hypothesis to a signature lemma.
 
 A tag is the first word of a comment on the same line as `Admitted`, or on the line of the
 definition that it marks. `just admits` counts the tags per package, and an `Admitted` with no
-tag counts as plain.
+tag counts as plain. Every admission must carry a tag, so the plain count must be zero.
 
 | Tag | Form | Meaning | Written by |
 | --- | --- | --- | --- |
 | `CONVERT` | `Proof. Admitted. (* CONVERT: <old name>: <first error line> *)` | A landed proof did not survive conversion. The session ports the proof that the tag names. | Groundwork |
-| `STUB` | `Proof. Admitted. (* STUB *)`, and `Definition c_x : N := 1. (* STUB *)` | A time or plan lemma written by recipe step 7, or a constant whose value the session chooses. | Groundwork |
+| `STUB` | `Proof. Admitted. (* STUB *)`, and `Definition c_x : N := 1. (* STUB *)` | A new functional, helper, time or plan obligation, or a constant whose value the session chooses. | Groundwork |
 | `STUB-CODE` | `(* STUB-CODE *)` on the line before a definition | A placeholder body for a new algorithm. The session that owns the file writes the code. | Groundwork |
 | `SIG-QUESTION` | `Proof. Admitted. (* SIG-QUESTION: <reason> *)` | The statement is believed true, nothing landed proves it, and a reviewer should look at it. | Groundwork and sessions |
 | `PLAN-DEFECT` | `Proof. Admitted. (* PLAN-DEFECT: <reason> *)` | A plan lemma is false or useless (R11). | Sessions only |
 | `OPEN` | `Proof. Admitted. (* OPEN: <what is missing> *)` | A session left the lemma for later. | Sessions only |
-| none | `Proof. Admitted.` | A new obligation with no landed proof, such as a law of new code. | Groundwork |
 
 Never write `admit`, `give_up` or `Abort`, and never write `Axiom` or `Parameter` outside a
 module type.
@@ -373,7 +372,7 @@ Steps 1, 2 and 7 are textual (Luna). Steps 3 to 6 need a model that reads Rocq (
    - A record of closures (a visitor, a graph's `out_c`, a policy's `order_c`) becomes the functor parameter or the first-order data named in the `Sig`.
 5. **Place the code.** Move every `Inductive` and `Record` above the first functor. Put the definitions in `Module <Name>Code (…_OPS) <: <NAME>_OPS … .` Apply the `BoundedSetCode` exception in §5 where its subtype requires it. Compile this module alone before going on.
 6. **Port the value lemmas** into `Module <Name> (…) <: <NAME> … .`, after `Include <Name>Code … .` and `Include <NAME>_SPEC … .` Rename to the `Sig`'s names. In each proof delete `autorewrite with galois_cost`, `cost_simpl`, `rewrite Cost.value_bind` and its relatives, and `change (Cost.value …)`; replace `rewrite f_equation` by `unfold f` or `cbn [f]`.
-7. **Time tower.** `Module <Name>T (…_T) <: <NAME>_ALL … .`, `Include <Name> … .`, one `TimeFun` per definition of the code module in dependency order, each constant as `Definition c_x : N := 1. (* STUB *)`, and every `_TIME` and `_PLAN` lemma stated and closed with `Proof. Admitted.`
+7. **Time tower.** `Module <Name>T (…_T) <: <NAME>_ALL … .`, `Include <Name> … .`, one `TimeFun` per definition of the code module in dependency order, each constant as `Definition c_x : N := 1. (* STUB *)`, and every `_TIME` and `_PLAN` lemma stated and closed with `Proof. Admitted. (* STUB *)`
 8. **Gate.** The file compiles. The ported test file gives, under `vm_compute`, the values the old tests gave. Paste the old expected values; do not recompute them.
 
 **When a proof breaks.**
