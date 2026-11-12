@@ -70,5 +70,9 @@ Module WordLanguage <: WORD_LANGUAGE.
   Proof. exact Word.wrap_is_word. Qed.
   Lemma eval_op_is_word : forall o cs w z, eval_op o cs = Some (w, z) ->
     is_word w z /\ result_width o (map fst cs) = Some w.
-  Proof. Admitted.
+  Proof.
+    intros o cs w z Hresult. split.
+    - exact (Op.eval_op_is_word o cs (w, z) Hresult).
+    - exact (Op.eval_op_width o cs (w, z) Hresult).
+  Qed.
 End WordLanguage.

@@ -4,7 +4,7 @@
     For example, equality to one refines both operands of an equality test.
     Builds on: IntervalOps and fixed-width word operators. *)
 
-From Stdlib Require Import ZArith List Bool.
+From Stdlib Require Import ZArith List Bool Lia.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSig WordSig.
 Import List.ListNotations.
@@ -182,7 +182,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Proof. Admitted.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_meet_lower_left: The variable bound_max_upper_l was not found. *)
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
@@ -195,11 +195,15 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Proof. Admitted.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted.
+  Proof.
+    intros w z Hword. split; [exact Hword|].
+    unfold ptop, interval_top, in_bnd.
+    destruct Hword as [Hlower Hupper]. split; lia.
+  Qed.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: interval_meet_sound: The variable bound_max_least was not found. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted.
@@ -209,7 +213,10 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) <: INTERVAL_PAYLOAD 
   Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted.
+  Proof.
+    intros w z. split; [apply L.wrap_is_word|].
+    unfold pconst, interval_const, in_bnd. split; reflexivity.
+  Qed.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> pgamma w a z -> z = v.

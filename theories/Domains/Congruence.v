@@ -167,14 +167,14 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Proof. Admitted.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_meet_lower_left: The variable cong_norm_idempotent was not found. *)
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
   Proof. Admitted.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_gamma_monotone: The variable cong_norm_gamma was not found. *)
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof. Admitted.
@@ -184,7 +184,7 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: cong_meet_sound: The variable cong_norm_gamma was not found. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof. Admitted.
@@ -216,5 +216,5 @@ Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABL
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted.
+  Proof. intros o rw q wps ys cs z Hf. discriminate Hf. Qed.
 End CongruenceTable.

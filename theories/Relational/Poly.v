@@ -130,12 +130,17 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition prows (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
   Definition wunits (_ : t) : nat := 0.
+  Definition terms (s : t) : nat :=
+    fold_right Nat.add 0 (map (fun r => length (lhs r)) (prows s)).
+  Definition nell (s : t) : nat := ell (prows s) + Nat.log2 (terms s) + 1.
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
-    (length (prows s) + 3)^2 * (n (prows s) + tsize e + length (prows s) + 3) *
-      (ell (prows s) + X.bits x + F.bits_e e + 1)^2 + N.to_nat (F.T_lin_of e).
+    terms s * (nell s + 1) +
+      (length (prows s) + 3)^2 * (n (prows s) + tsize e + length (prows s) + 3) *
+      (nell s + X.bits x + F.bits_e e + 1)^2 + N.to_nat (F.T_lin_of e).
   Definition havoc_work (x : X.t) (s : t) : nat :=
-    (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
-      (ell (prows s) + X.bits x + 1)^2.
+    terms s * (nell s + 1) +
+      (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (nell s + X.bits x + 1)^2.
   Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
     (length (prows s) + 1) * (fold_right Nat.add 0%nat (map tsize es) + 1) *
       (F.bits_es g es + 1) + N.to_nat (F.T_atoms_of g es).
@@ -184,16 +189,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (n P + length (lhs c)) (length P + 1)
         (ell P + C.row_bits c + C.row_key_bits c)))%N.
   Proof. Admitted. (* STUB *)
-  (** Assignment charges one elimination after linearization. *)
+  (** Assignment charges row normalization and one elimination after linearization. *)
   Lemma F_assign_work : forall x e s,
-    (N.of_nat (assign_work x e s) = N.of_nat ((length (prows s) + 3)^2 *
+    (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
+      (length (prows s) + 3)^2 *
       (n (prows s) + tsize e + length (prows s) + 3) *
-      (ell (prows s) + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
+      (nell s + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
   Proof. Admitted. (* STUB *)
-  (** Havoc charges one elimination of the selected variable. *)
+  (** Havoc charges row normalization and one elimination of the selected variable. *)
   Lemma F_havoc_work : forall x s,
-    havoc_work x s = (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
-      (ell (prows s) + X.bits x + 1)^2.
+    havoc_work x s = terms s * (nell s + 1) +
+      (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (nell s + X.bits x + 1)^2.
   Proof. Admitted. (* STUB *)
   (** Assumption charges appending the rows emitted by linearization. *)
   Lemma F_assume_work : forall g es s,

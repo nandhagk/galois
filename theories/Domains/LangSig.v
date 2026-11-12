@@ -95,3 +95,22 @@ Module Type LANG_TIME (Import L : LANG).
 End LANG_TIME.
 
 Module Type LANG_T := LANG <+ LANG_TIME.
+
+Module Type LANG_MORPHISM_OPS (L1 L2 : LANG_OPS).
+  Parameter op : L1.op -> L2.op.
+  Parameter guard : L1.guard -> L2.guard.
+End LANG_MORPHISM_OPS.
+
+Module Type LANG_MORPHISM_LAWS (L1 L2 : LANG) (Import F : LANG_MORPHISM_OPS L1 L2).
+  (* spec: value *)
+  Parameter value : L1.val -> L2.val.
+  (** Evaluation commutes with the value and operator mappings. *)
+  Parameter eval_commutes : forall o cs,
+    L2.eval (op o) (map value cs) = option_map value (L1.eval o cs).
+  (** Mapped operands satisfy the mapped guard. *)
+  Parameter guard_preserves : forall g cs,
+    L1.holds g cs -> L2.holds (guard g) (map value cs).
+End LANG_MORPHISM_LAWS.
+
+Module Type LANG_MORPHISM (L1 L2 : LANG) :=
+  LANG_MORPHISM_OPS L1 L2 <+ LANG_MORPHISM_LAWS L1 L2.
