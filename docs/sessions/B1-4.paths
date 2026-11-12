@@ -18,3 +18,7 @@ theories/Domains/Reduced.v
 tests/Domains/ReducedTest.v
 theories/Domains/Translate.v
 tests/Domains/TranslateTest.v
+tests/Domains/CongruenceCRTTest.v
+tests/Domains/Review12Test.v
+tests/Domains/TransferTest.v
+tests/Domains/ValueCombineTest.v

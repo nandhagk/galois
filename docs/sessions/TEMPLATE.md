@@ -32,7 +32,7 @@ Single file: just vo theories/<Pkg>/<File>.v
 - FooSig.v has layers: FOO_OPS (code), FOO_SPEC (definitions), FOO_LAWS (laws),
   FOO_TIME (T_op, constants c_*, contracts), FOO_PLAN (internals, k_* constants, lemma chain).
 - Foo.v has FooCode <: FOO_OPS, Foo <: FOO (Include FooCode), FooT <: FOO_ALL (Include Foo).
-- Your targets are the Admitted lemmas in your files, tagged CONVERT, STUB or plain.
+- Your targets are the Admitted lemmas in your files, tagged CONVERT, STUB, SIG-QUESTION, PLAN-DEFECT or OPEN.
 - A PLAN lists lemmas F1..Fn (functional) then T1..Tn (time), ending at a contract.
   Prove them in order; each may use the earlier ones. You choose the values of k_* and c_*.
 - A Parameter of another component's Sig may be used before it is proved. Your tests may
