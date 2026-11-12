@@ -14,7 +14,8 @@ From Galois.Relational Require Import LinForm LinearizeSig NumStateSig.
 
 Local Open Scope nat_scope.
 
-Module Type ZONE_OPS (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t)
+Module Type ZONE_OPS (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP_OPS K) (L : LANG_OPS) (F : LINEARIZE_OPS X L).
   Definition dbm := M.t (M.t Z).
   Include NUM_STATE_OPS X L F with Definition t := reach dbm.
@@ -25,12 +26,14 @@ Module Type ZONE_OPS (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t)
   Parameter incr_close : K.t -> K.t -> Z -> dbm -> t.
 End ZONE_OPS.
 
-Module Type ZONE_BASE (X : KEY) (K : KEY with Definition t := option X.t)
+Module Type ZONE_BASE (X : KEY) (K : KEY with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) :=
   ZONE_OPS X K M L F <+ LATTICE_LAWS <+ HAS_TOP_LAWS <+ WIDENING_LAWS <+
   NUM_STATE_LAWS X L N F.
 
-Module Type ZONE_LAWS (X : KEY) (K : KEY with Definition t := option X.t)
+Module Type ZONE_LAWS (X : KEY) (K : KEY with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N)
     (Import D : ZONE_BASE X K M L N F).
   Definition vz (v : X.t -> Z) (i : K.t) : Z :=
@@ -46,11 +49,13 @@ Module Type ZONE_LAWS (X : KEY) (K : KEY with Definition t := option X.t)
   Parameter ngamma_unreached : forall v, ~ ngamma Unreached v.
 End ZONE_LAWS.
 
-Module Type ZONE (X : KEY) (K : KEY with Definition t := option X.t)
+Module Type ZONE (X : KEY) (K : KEY with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) :=
   ZONE_BASE X K M L N F <+ ZONE_LAWS X K M L N F.
 
-Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t)
+Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : ZONE X K M L N F).
   Include NUM_STATE_TIME X L N F D.
@@ -88,11 +93,11 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Parameter T_close_le : forall m, dbm_wf m ->
     (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
       N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
-  (** Incremental closure charges quadratic updates. *)
+  (** Incremental closure charges quadratic updates and one row merge per row. *)
   Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
     c_zone * N.of_nat (((supp m + 1)^2)%nat) *
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
-    c_zone * N.of_nat (skel m))%N.
+    c_zone * N.of_nat ((supp m + 1) * skel m))%N.
   (** Join charges the combined matrix support and entry sizes. *)
   Parameter T_join_zone_le : forall a z, (T_join a z <= c_zone * N.of_nat (binary_work a z))%N.
   (** Inclusion charges the combined matrix support and entry sizes. *)
@@ -102,11 +107,13 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     (T_widen p a z <= c_zone * N.of_nat (binary_work a z + (ns a + ns z + 1)^2 * wsize p))%N.
 End ZONE_TIME.
 
-Module Type ZONE_T (X : KEY_T) (K : KEY_T with Definition t := option X.t)
+Module Type ZONE_T (X : KEY_T) (K : KEY_T with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N) :=
   ZONE X K M L N F <+ ZONE_TIME X K M L N F.
 
-Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
+Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     (Import D : ZONE_T X K M L N F).
   Definition closed (m : dbm) : Prop :=
@@ -129,6 +136,8 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     | _, _ => False
     end.
   Parameter k_zone : N.
+  Parameter F_swf : forall s,
+    swf s <-> match s with Unreached => True | Reached m => dbm_wf m end.
   (** Linear-form size charges coefficients, the constant and wrap bounds. *)
   Definition lin_bits (e : term L.op X.t) : nat :=
     match F.lin_of e with
@@ -146,7 +155,8 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-        length (F.atoms_of g es) * skels s) +
+        length (F.atoms_of g es) *
+          (ns s + 2 * length (F.atoms_of g es) + 1) * skels s) +
       F.T_atoms_of g es)%N.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Parameter F_assign_work : forall x e s,
@@ -168,6 +178,13 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     end.
   (** A Floyd-Warshall round adds only implied constraints. *)
   Parameter fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
+  (** A round keeps consistent matrices consistent. *)
+  Parameter wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
+  (** Inserting a constraint keeps a well-formed matrix well formed. *)
+  Parameter wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
+  (** Incremental closure keeps a well-formed matrix well formed. *)
+  Parameter wf_incr_close : forall i j d m, dbm_wf m ->
+    match incr_close i j d m with Unreached => True | Reached m' => dbm_wf m' end.
   (** Closure retains all models of its input. *)
   Parameter close_sound : forall m v, models m v -> ngamma (close m) v.
   (** A negative diagonal certifies inconsistency. *)
@@ -189,7 +206,7 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
       entry (fold_left (fun a k => fw_round k a) ks m) k k = Some d -> (0 <= d)%Z) ->
     ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
   (** Each Floyd-Warshall round charges quadratic entry updates. *)
-  Parameter T1_fw_round : forall k m,
+  Parameter T1_fw_round : forall k m, dbm_wf m ->
     (T_fw_round k m <= k_zone * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   (** Early negative-diagonal exit limits finite entry growth. *)
@@ -224,6 +241,7 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
         (fw_trace (keys m) m))))%N.
 End ZONE_PLAN.
 
-Module Type ZONE_ALL (X : KEY_T) (K : KEY_T with Definition t := option X.t)
+Module Type ZONE_ALL (X : KEY_T) (K : KEY_T with Definition t := option X.t
+      with Definition encode := option_code X.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N) :=
   ZONE_T X K M L N F <+ ZONE_PLAN X K M L N F.

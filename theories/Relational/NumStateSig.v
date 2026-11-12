@@ -59,6 +59,16 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter havoc_work : X.t -> t -> nat.
   Parameter assume_work : L.guard -> list (term L.op X.t) -> t -> nat.
   Parameter range_work : term L.op X.t -> t -> nat.
+  (* spec: swf *)
+  Parameter swf : t -> Prop.
+  (** Top and every operation keep the time invariant. *)
+  Parameter swf_top : swf top.
+  Parameter swf_join : forall a b, swf a -> swf b -> swf (join a b).
+  Parameter swf_widen : forall p a b, swf a -> swf b -> swf (widen p a b).
+  Parameter swf_narrow : forall a b, swf a -> swf b -> swf (narrow a b).
+  Parameter swf_assign : forall x e s, swf s -> swf (assign x e s).
+  Parameter swf_havoc : forall x s, swf s -> swf (havoc x s).
+  Parameter swf_assume : forall g es s, swf s -> swf (assume g es s).
   Parameter T_leb T_join T_narrow : t -> t -> N.
   Parameter T_is_bot : t -> N.
   Parameter T_widen : wparam -> t -> t -> N.
@@ -74,7 +84,7 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   (** Assumption charges its stated numeric work. *)
-  Parameter T_assume_le : forall g es s,
+  Parameter T_assume_le : forall g es s, swf s ->
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   (** Bottom testing charges the numeric state size. *)
   Parameter T_is_bot_le : forall s,

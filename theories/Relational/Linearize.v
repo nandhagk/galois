@@ -31,7 +31,9 @@ End Linearize.
 
 Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L N.
   Include Linearize X L N.
+  (* STUB-CODE *)
   Definition bits_e (_ : term L.op X.t) : nat := 0.
+  (* STUB-CODE *)
   Definition bits_es (_ : L.guard) (_ : list (term L.op X.t)) : nat := 0.
   TimeFun lin_of.
   TimeFun atoms_of.

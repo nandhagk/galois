@@ -97,6 +97,7 @@ Module Type POLY_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type POLY_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : POLY_T X L N F C).
+  Parameter F_swf : forall s, swf s.
   Definition prows (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
   Definition terms (s : t) : nat :=

@@ -5,14 +5,15 @@
     Builds on: OctagonSig. *)
 From Stdlib Require Import List ZArith.
 From Argent Require Import Time Std.
-From Galois.Base Require Import KeySig MapSig.
+From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig OctagonSig.
 Local Open Scope nat_scope.
 
-Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%type)
+Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_OPS K) (L : LANG_OPS) (F : LINEARIZE_OPS X L) <: OCTAGON_OPS X K M L F.
   Definition dbm := M.t (M.t Z).
   Definition t := reach dbm.
@@ -57,7 +58,8 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
   Definition incr_close (_ _ : K.t) (_ : Z) (_ : dbm) : t := Unreached.
 End OctagonCode.
 
-Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type)
+Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) <: OCTAGON X K M L N F.
   Include OctagonCode X K M L F.
   (* STUB-CODE *)
@@ -134,7 +136,8 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type)
   Proof. Admitted. (* STUB *)
 End Octagon.
 
-Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
+Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
+      with Definition encode := pair_code X.encode BoolKeyCode.encode)
     (M : MAP_T K) (L : LANG_T) (N : NUM_VIEW L) (F : LINEARIZE_T X L N)
     <: OCTAGON_ALL X K M L N F.
   Include Octagon X K M L N F.
@@ -158,6 +161,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   TimeFun keys.
   Definition dbm_wf (m : dbm) : Prop :=
     M.wf m /\ forall p r, M.find p m = Some r -> M.wf r.
+  Definition swf (s : t) : Prop :=
+    match s with Unreached => True | Reached m => dbm_wf m end.
   Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
   Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
   Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
@@ -180,7 +185,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
     length (F.atoms_of g es) * (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
       (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-      length (F.atoms_of g es) * skels s +
+      length (F.atoms_of g es) *
+        (ns s + 2 * length (F.atoms_of g es) + 1) * skels s +
       N.to_nat (F.T_atoms_of g es).
   Definition range_work (e : term L.op X.t) (s : t) : nat :=
     (tsize e + 1) * (bs s + ells s + F.bits_e e + 1)^2 + N.to_nat (F.T_lin_of e).
@@ -204,13 +210,27 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   TimeFun add_cons.
   TimeFun incr_close.
   Definition c_num : N := 1. (* STUB *)
+  Lemma swf_top : swf top.
+  Proof. Admitted. (* STUB *)
+  Lemma swf_join : forall a b, swf a -> swf b -> swf (join a b).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_widen : forall p a b, swf a -> swf b -> swf (widen p a b).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_narrow : forall a b, swf a -> swf b -> swf (narrow a b).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_assign : forall x e s, swf s -> swf (assign x e s).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_havoc : forall x s, swf s -> swf (havoc x s).
+  Proof. Admitted. (* STUB *)
+  Lemma swf_assume : forall g es s, swf s -> swf (assume g es s).
+  Proof. Admitted. (* STUB *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_assume_le : forall g es s,
+  Lemma T_assume_le : forall g es s, swf s ->
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_is_bot_le : forall s,
@@ -235,7 +255,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   Lemma T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
     c_octagon * N.of_nat (((supp m + 1)^2)%nat) *
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
-    c_octagon * N.of_nat (skel m))%N.
+    c_octagon * N.of_nat ((supp m + 1) * skel m))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_join_octagon_le : forall a z,
     (T_join a z <= c_octagon * N.of_nat (binary_work a z))%N.
@@ -260,6 +280,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   Definition fw_round (_ : K.t) (m : dbm) : dbm := m.
   TimeFun fw_round.
   Definition k_octagon : N := 1. (* STUB *)
+  Lemma F_swf : forall s,
+    swf s <-> match s with Unreached => True | Reached m => dbm_wf m end.
+  Proof. Admitted. (* STUB *)
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   (** Widening units cover the squared support size. *)
   Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
@@ -270,7 +293,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-        length (F.atoms_of g es) * skels s) +
+        length (F.atoms_of g es) *
+          (ns s + 2 * length (F.atoms_of g es) + 1) * skels s) +
       F.T_atoms_of g es)%N.
   Proof. Admitted. (* STUB *)
   (** Assignment work pays for linearization and quadratic matrix updates. *)
@@ -301,14 +325,21 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   Lemma F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   Proof. Admitted. (* STUB *)
+  Lemma wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
+  Proof. Admitted. (* STUB *)
+  Lemma wf_incr_close : forall i j d m, dbm_wf m ->
+    match incr_close i j d m with Unreached => True | Reached m' => dbm_wf m' end.
+  Proof. Admitted. (* STUB *)
+  Lemma wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
+  Proof. Admitted. (* STUB *)
   Lemma T1_fw : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * N.of_nat
       ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T2_tighten : forall m,
+  Lemma T2_tighten : forall m, dbm_wf m ->
     (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T3_strengthen : forall m,
+  Lemma T3_strengthen : forall m, dbm_wf m ->
     (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof. Admitted. (* STUB *)
   Lemma bits_fw_round_le : forall ks m,
@@ -330,6 +361,12 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type)
   Lemma strengthen_implied : forall m v, models m v -> models (strengthen m) v.
   Proof. Admitted. (* STUB *)
   Lemma tighten_implied : forall m v, models m v -> models (tighten m) v.
+  Proof. Admitted. (* STUB *)
+  Lemma wf_fw : forall m, dbm_wf m -> dbm_wf (fw m).
+  Proof. Admitted. (* STUB *)
+  Lemma wf_tighten : forall m, dbm_wf m -> dbm_wf (tighten m).
+  Proof. Admitted. (* STUB *)
+  Lemma wf_strengthen : forall m, dbm_wf m -> dbm_wf (strengthen m).
   Proof. Admitted. (* STUB *)
   Lemma tclose_sound : forall m v, models m v -> ngamma (tclose m) v.
   Proof. Admitted. (* STUB *)
