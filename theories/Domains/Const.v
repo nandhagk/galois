@@ -350,10 +350,10 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Qed.
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted.
+  Proof. intros w z H. exact H. Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted.
+  Proof. intros. exact I. Qed.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
