@@ -4,7 +4,8 @@
     For example, an unmodeled forward operation returns top.
     Builds on: HarnessSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
+From Argent Require Import Time Std BigO.
 From Galois.Domains Require Import LangSig HarnessSig.
 
 Module HarnessCode (L : LANG_OPS) (B : HARNESS_BASE_OPS L) (T : TABLE_OPS L B)
@@ -104,3 +105,154 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
   Proof. Admitted.
 End Harness.
+
+Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
+    <: HARNESS_ALL L B T.
+  Include Harness L B T.
+  TimeFun leb.
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun join.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun points.
+  TimeFun forward.
+  TimeFun meet_all.
+  TimeFun backward.
+  TimeFun guard.
+
+  Definition opt_vals (xs : list B.t) : list L.val :=
+    match points xs with Some cs => cs | None => nil end.
+  Definition size (a : t) : nat := B.bsize a.
+  Definition work (o : L.op) (xs : list t) : nat :=
+    fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
+      L.work o (opt_vals xs) + T.twork o xs.
+  Definition gwork (g : L.guard) (xs : list t) : nat :=
+    fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
+  Definition wsize (p : wparam) : nat := B.wsize p.
+  Definition wunits (_ : t) : nat := 0.
+  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_lat : N := c_val.
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. reflexivity. Qed.
+  Lemma T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b, (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forward_le : forall o xs,
+    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_guard_le : forall g xs,
+    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma widen_size : forall p a b,
+    (N.of_nat (size (widen p a b)) <= c_val *
+      N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma work_sizes : forall o xs,
+    fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof. Admitted. (* STUB *)
+  Lemma gwork_sizes : forall g xs,
+    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof. Admitted. (* STUB *)
+
+  Definition c_harness : N := 1%N. (* STUB *)
+  Lemma T_points_le : forall xs,
+    (T_points xs <= c_harness *
+      N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_all_le : forall xs ys,
+    (T_meet_all xs ys <= c_harness *
+      N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) +
+        fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_points : N := 1%N. (* STUB *)
+  Definition k_meet : N := 1%N. (* STUB *)
+  Definition k_forward : N := 1%N. (* STUB *)
+  Definition k_backward : N := 1%N. (* STUB *)
+  Definition k_guard : N := 1%N. (* STUB *)
+  Lemma F0_gamma : forall a c, gamma a c <-> B.gamma a c.
+  Proof. Admitted. (* STUB *)
+  Lemma F0_leb : forall a b, leb a b = B.leb a b.
+  Proof. Admitted. (* STUB *)
+  Lemma F0_join : forall a b, join a b = B.join a b.
+  Proof. Admitted. (* STUB *)
+  Lemma F0_meet : forall a b, meet a b = B.meet a b.
+  Proof. Admitted. (* STUB *)
+  Lemma F0_size : forall a, size a = B.bsize a.
+  Proof. Admitted. (* STUB *)
+  Lemma F0_work : forall o xs, work o xs =
+    fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
+    L.work o (opt_vals xs) + T.twork o xs.
+  Proof. Admitted. (* STUB *)
+  Lemma F0_gwork : forall g xs, gwork g xs =
+    fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
+  Proof. Admitted. (* STUB *)
+  Lemma F1_points_sound : forall xs cs vs,
+    Forall2 B.gamma xs cs -> points xs = Some vs -> vs = cs.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_no_bot : forall xs cs,
+    Forall2 B.gamma xs cs -> existsb B.is_bot xs = false.
+  Proof. Admitted. (* STUB *)
+  Lemma F3_meet_all_sound : forall xs ys cs, length ys = length xs ->
+    Forall2 B.gamma xs cs -> Forall2 B.gamma ys cs ->
+    Forall2 B.gamma (meet_all xs ys) cs.
+  Proof. Admitted. (* STUB *)
+  Lemma F4_meet_all_refines : forall xs ys,
+    Forall2 (fun y x => B.leb y x = true) (meet_all xs ys) xs.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_points : forall xs, (T_points xs <=
+    k_points * (fold_right N.add 0 (map (fun x => B.T_point x + 1) xs) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T2_forward : forall o xs,
+    (T_forward o xs <= k_forward *
+      N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
+        L.work o (opt_vals xs) + T.twork o xs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_backward : forall o r xs, (T_backward o r xs <= k_backward *
+    (T.T_bwd o r xs + N.of_nat ((length xs)%nat) +
+     match T.bwd o r xs with
+     | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys
+     | None => 0
+     end + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T4_guard : forall g xs, (T_guard g xs <= k_guard *
+    (T.T_grd g xs + N.of_nat ((length xs)%nat) +
+     match T.grd g xs with
+     | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys
+     | None => 0
+     end + 1))%N.
+  Proof. Admitted. (* STUB *)
+End HarnessT.
