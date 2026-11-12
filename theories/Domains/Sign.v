@@ -127,7 +127,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
@@ -145,7 +145,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof. intros w [a b c]. destruct a, b, c; reflexivity. Qed.
@@ -161,13 +161,13 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. intros w [a b c]. reflexivity. Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
@@ -181,7 +181,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
@@ -208,7 +208,7 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
@@ -404,7 +404,7 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Definition c_word_table : N := 1%N. (* STUB *)
   (** The bounded flag comparison keeps every numeric comparator result. *)
   Lemma F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +

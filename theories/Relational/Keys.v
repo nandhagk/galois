@@ -21,10 +21,10 @@ Module LitKey (X : KEY) <: KEY.
   Include KEY_SPEC.
   (** The sign bit and the variable encoding determine the literal. *)
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Literal equality compares the sign and the variable. *)
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End LitKey.
 
 (** The temporary variable uses the absent branch of the core option encoding. *)

@@ -212,7 +212,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Proof. Admitted. (* CONVERT: interval_laws: In environment *)
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
@@ -250,13 +250,13 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof. Admitted. (* CONVERT: pjoin_ub_l: Unable to unify raw order with clipped order. *)
@@ -268,7 +268,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Proof. Admitted. (* CONVERT: pmeet_lb_l: The variable lb was not found. *)
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
@@ -295,7 +295,7 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
@@ -311,52 +311,52 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Lemma F_pleb : forall w a b, pleb w a b = Scalar.interval_leb
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload bottom recognition reads the clipped interval. *)
   Lemma F_pis_bot : forall w a, pis_bot w a =
     Scalar.interval_is_bot (interval_payload_clip Scalar.interval_meet w a).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload join combines clipped operands. *)
   Lemma F_pjoin : forall w a b, pjoin w a b = Scalar.interval_join
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload meet combines clipped operands. *)
   Lemma F_pmeet : forall w a b, pmeet w a b = Scalar.interval_meet
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload widening retains stable raw values and clips unstable results. *)
   Lemma F_pwiden : forall q w a b, pwiden q w a b =
     if pleb w b a then a else interval_payload_clip Scalar.interval_meet w
       (Scalar.interval_stable_widen q (interval_payload_clip Scalar.interval_meet w a)
         (interval_payload_clip Scalar.interval_meet w b)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload narrowing combines clipped operands. *)
   Lemma F_pnarrow : forall w a b, pnarrow w a b = Scalar.interval_narrow
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
   Lemma F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload bottom is the empty interval. *)
   Lemma F_pbot : forall w, pbot w = IBot.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload top is the inclusive unsigned word range. *)
   Lemma F_ptop : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload constants are wrapped singleton intervals. *)
   Lemma F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload points are recognized after clipping. *)
   Lemma F_ppoint : forall w a, ppoint w a =
     Scalar.interval_singleton (interval_payload_clip Scalar.interval_meet w a).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Payload concretization intersects raw endpoints with normalized words. *)
   Lemma F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
     match a with IBot => False | I lo hi => in_bnd lo hi z end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End IntervalPayload.
 
 Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)

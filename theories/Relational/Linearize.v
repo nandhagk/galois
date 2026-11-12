@@ -22,11 +22,11 @@ Module Linearize (X : KEY) (L : LANG) (N : NUM_VIEW L) <: LINEARIZE X L N.
   Lemma lin_sound : forall st e c f r,
     eval_term L.eval st e = Some c -> lin_of e = Some (f, r) ->
     N.num c = wrap_into r (eval_lin (fun x => N.num (st x)) f).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma atoms_sound : forall g es st cs,
     eval_terms L.eval st es = Some cs -> L.holds g cs ->
     Forall (atom_holds (fun x => N.num (st x))) (atoms_of g es).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Linearize.
 
 Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L N.

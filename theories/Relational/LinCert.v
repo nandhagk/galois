@@ -23,20 +23,20 @@ Module LinCert (X : KEY) <: LINCERT X.
   Include LinCertCode X.
   Lemma check_entails_sound : forall P c k, check_entails P c k = true ->
     forall v, Forall (sat v) P -> sat v c.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Certificates without integer cuts also entail their rational conclusion. *)
   Lemma check_entails_sound_Q : forall P c k,
     check_entails P c k = true -> cut k = false ->
     forall v, Forall (satQ v) P -> satQ v c.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** Accepted contradictions exclude every integer model. *)
   Lemma check_empty_sound : forall P ms, check_empty P ms = true ->
     forall v, ~ Forall (sat v) P.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   (** An accepted contradiction entails every conclusion. *)
   Lemma check_entails_empty : forall P c k,
     check_empty P (mults k) = true -> check_entails P c k = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End LinCert.
 
 Module LinCertT (X : KEY_T) <: LINCERT_ALL X.

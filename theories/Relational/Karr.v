@@ -55,60 +55,60 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ngamma_bot : forall v, ~ ngamma bot v.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ngamma_top : forall v, ngamma top v.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Karr.
 
 Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)

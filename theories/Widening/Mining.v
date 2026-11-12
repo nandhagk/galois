@@ -39,15 +39,15 @@ Module Mining (X : KEY) (L : LANG) (T : THRESHOLDS) <: MINING X L T.
 
   Lemma lits_node : forall o es, lits (Node o es) =
     (match L.literal o with Some z => z :: nil | None => nil end) ++ flat_map lits es.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mine_vals : forall es extra z, In z (T.vals (mine es extra)) <->
     exists q, In q (flat_map lits es ++ extra) /\
       (z = (q - 1)%Z \/ z = q \/ z = (q + 1)%Z).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma mine_ordered : forall es extra, T.ordered (mine es extra).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Mining.
 
 Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
