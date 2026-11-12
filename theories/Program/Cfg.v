@@ -72,3 +72,29 @@ Module PreparedCfg (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E).
       | Some es => es | None => [] end.
   End Adj.
 End PreparedCfg.
+
+Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
+  Module PC := PreparedCfg P N E C.
+  Module Laws <: CFG PC.PT N E.
+  Include PC.Ops.
+  Include PC.Adj.
+
+  Definition wf (_ : PC.PT.t) := True.
+
+  Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
+  Proof. Admitted.
+
+  Lemma edges_nodes : forall p e, wf p -> In e (edges p) ->
+    In (src p e) (nodes p) /\ In (dst p e) (nodes p).
+  Proof. Admitted.
+
+  Lemma out_spec : forall p n e, wf p ->
+    (In e (out p n) <-> In e (edges p) /\ src p e = n).
+  Proof. Admitted.
+
+  Lemma inc_spec : forall p n e, wf p ->
+    (In e (inc p n) <-> In e (edges p) /\ dst p e = n).
+  Proof. Admitted.
+  End Laws.
+  Include Laws.
+End PreparedCfgLaws.
