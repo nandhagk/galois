@@ -191,7 +191,11 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     (Import K : KNOWN_BITS_T L C).
   Parameter mul_step : positive -> tnum -> tnum -> Z * tnum -> (Z * tnum) + tnum.
   Parameter T_mul_step : positive -> tnum -> tnum -> Z * tnum -> N.
+  Parameter acc_step : positive -> tnum -> tnum -> Z * tnum -> (Z * tnum) + tnum.
+  Parameter T_acc_step : positive -> tnum -> tnum -> Z * tnum -> N.
   Parameter k_mul_step : N.
+  (** The mask agrees with the modular word reduction. *)
+  Parameter F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
   (** Remaining widening credit counts known positions at nonbottoms. *)
   Parameter F3_rank : forall q w a, pis_bot w a = false -> pwrank q w a = known_count w a.
   (** At most one fact per position contributes nonbottom widening credit. *)
@@ -204,22 +208,18 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     | inl (j, s) => j = (i + 1)%Z /\ pgamma w s (L.wrap w (x * (y mod 2 ^ j)))
     | inr s => pgamma w s (L.wrap w (x * y))
     end.
-  (** One staged product step charges its index, accumulator and raw masks. *)
-  Parameter T1_mul_step : forall w a b i r, (T_mul_step w a b (i, r) <= k_mul_step *
-    N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
-  (** The mask agrees with the modular word reduction. *)
-  Parameter F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
-  (** The mask reads the width once and the raw integer once. *)
-  Parameter T0_tnum_wrap : forall w z,
-    (T_tnum_wrap w z <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
-  Parameter acc_step : positive -> tnum -> tnum -> Z * tnum -> (Z * tnum) + tnum.
-  Parameter T_acc_step : positive -> tnum -> tnum -> Z * tnum -> N.
   (** A stage step keeps its accumulator within the width. *)
   Parameter F8_mul_step_bits : forall w a b i r j s,
     mul_step w a b (i, r) = inl (j, s) -> tnum_bits s <= 2 * Pos.to_nat w.
   (** An accumulating step keeps its accumulator within the width. *)
   Parameter F9_acc_step_bits : forall w a b i r j s,
     acc_step w a b (i, r) = inl (j, s) -> tnum_bits s <= 2 * Pos.to_nat w.
+  (** The mask reads the width once and the raw integer once. *)
+  Parameter T0_tnum_wrap : forall w z,
+    (T_tnum_wrap w z <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+  (** One staged product step charges its index, accumulator and raw masks. *)
+  Parameter T1_mul_step : forall w a b i r, (T_mul_step w a b (i, r) <= k_mul_step *
+    N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
   (** One accumulating step charges the width, its index and its accumulator. *)
   Parameter T2_acc_step : forall w a b i r, (T_acc_step w a b (i, r) <= k_mul_step *
     N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.

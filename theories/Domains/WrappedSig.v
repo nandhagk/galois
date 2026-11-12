@@ -159,6 +159,10 @@ Module Type WRAPPED_PLAN (L : WORD_LANGUAGE_T) (Import W : WRAPPED_T L).
   (** Expansion triples cardinality until the circle is full. *)
   Parameter F8_double_card : forall w a,
     card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
+  (** Expansion contains the old arc. *)
+  Parameter F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
+  (** Cardinality is monotone in the payload order. *)
+  Parameter F8b_card_mono : forall w a b, pleb w a b = true -> (card w a <= card w b)%Z.
   (** Rank gives full circles zero credit and bottom width plus two credits. *)
   Parameter F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
   (** The logarithmic credit is bounded by width plus two. *)
@@ -168,10 +172,6 @@ Module Type WRAPPED_PLAN (L : WORD_LANGUAGE_T) (Import W : WRAPPED_T L).
     (T_mul_piece w (lo, hi) (lo', hi') <= k_mul_piece * N.of_nat
       ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
         ^ 2))%N.
-  (** Expansion contains the old arc. *)
-  Parameter F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
-  (** Cardinality is monotone in the payload order. *)
-  Parameter F8b_card_mono : forall w a b, pleb w a b = true -> (card w a <= card w b)%Z.
 End WRAPPED_PLAN.
 
 Module Type WRAPPED_ALL (L : WORD_LANGUAGE_T) := WRAPPED_T L <+ WRAPPED_PLAN L.

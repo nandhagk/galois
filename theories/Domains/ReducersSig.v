@@ -35,13 +35,27 @@ Definition arc_prefix (w : positive) (a : wrapped) : tnum :=
   end.
 TimeFun arc_prefix.
 
+(** Word interval queries first discard integers outside the unsigned word domain. *)
+Definition interval_word_clip (w : positive) (a : itv) : itv :=
+  match a with
+  | IBot => IBot
+  | I PosInf _ | I _ NegInf => IBot
+  | I lo hi =>
+    let lo' := match lo with Fin z => Z.max 0 z | _ => 0%Z end in
+    let hi' := match hi with Fin z => Z.min (Z.ones (Zpos w)) z
+      | _ => Z.ones (Zpos w) end in
+    if Z.leb lo' hi' then I (Fin lo') (Fin hi') else IBot
+  end.
+TimeFun interval_word_clip.
+
 (** Finite bounds round inward to the residue class, and a singleton fixes both bounds. *)
-Definition congr_interval (a : itv) (b : congr) : itv :=
-  match a, b with
+Definition congr_interval (w : positive) (a : itv) (b : congr) : itv :=
+  let a' := interval_word_clip w a in
+  match a', b with
   | IBot, _ | _, CBot => IBot
   | _, C m r =>
     if Z.eqb m 0 then I (Fin r) (Fin r) else
-    match a with
+    match a' with
     | IBot => IBot
     | I lo hi => I
         (match lo with Fin z => Fin (z + (r - z) mod Z.abs m) | _ => lo end)
@@ -70,13 +84,9 @@ TimeFun bits_interval.
 
 (** Common-prefix extraction first intersects the interval with the unsigned word range. *)
 Definition interval_prefix (w : positive) (a : itv) : tnum :=
-  match a with
-  | I lo hi =>
-    let lo' := match lo with Fin z => Z.max 0 z | NegInf => 0%Z | PosInf => Z.ones (Zpos w) end in
-    let hi' := match hi with Fin z => Z.min (Z.ones (Zpos w)) z
-      | PosInf => Z.ones (Zpos w) | NegInf => 0%Z end in
-    if Z.leb lo' hi' then arc_prefix w (WItv lo' hi') else Tnum 0 0
-  | IBot => Tnum 0 0
+  match interval_word_clip w a with
+  | I (Fin lo) (Fin hi) => arc_prefix w (WItv lo hi)
+  | _ => Tnum 0 0
   end.
 TimeFun interval_prefix.
 
@@ -212,7 +222,7 @@ Module Type INTERVAL_CONGR_PIN (L : WORD_LANGUAGE)
     (R : INTERVAL_CONGR A B).
   (** The left exchange meets the interval with inward residue rounding at the same width. *)
   Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
-    (TVal w (I.pmeet w a (congr_interval a b)), TVal w b).
+    (TVal w (I.pmeet w a (congr_interval w a b)), TVal w b).
   (** The right exchange meets the congruence with the interval's singleton fact. *)
   Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (G.pmeet w b (interval_congr a))).
