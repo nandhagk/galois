@@ -280,6 +280,16 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Definition fw_round (_ : K.t) (m : dbm) : dbm := m.
   TimeFun fw_round.
   Definition k_octagon : N := 1. (* STUB *)
+  Lemma F_join_entry : forall ma mb i j,
+    match join (Reached ma) (Reached mb) with
+    | Reached mj => entry mj i j =
+        match entry ma i j, entry mb i j with
+        | Some x, Some y => Some (Z.max x y)
+        | _, _ => None
+        end
+    | Unreached => False
+    end.
+  Proof. Admitted. (* STUB *)
   Lemma skel_le : forall m, skel m <= (supp m + 1)^2 * (b m + 1).
   Proof. Admitted. (* STUB *)
   Lemma weight_le : forall m, dbm_wf m -> M.weight m <= supp m * (b m + 1).

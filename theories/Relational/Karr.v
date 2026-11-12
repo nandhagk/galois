@@ -218,6 +218,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
   Proof. Admitted. (* STUB *)
+  Definition k_cert : N := 1%N. (* STUB *)
+  Lemma affine_hull_size : forall a b, normal a -> normal b ->
+    length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
+    ell (Reached (affine_hull a b)) <=
+      ellB (n (Reached a) + n (Reached b) + 1) (ell (Reached a) + ell (Reached b)).
+  Proof. Admitted. (* STUB *)
+  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
+    entail_cert P r = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize r + C.cbits P (mults k) + 1)) <=
+      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
     (T_entail_cert P r <= c_karr * N.of_nat
       (elimination_work (Reached P) (Reached (r :: nil))))%N.
