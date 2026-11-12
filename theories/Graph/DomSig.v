@@ -45,6 +45,7 @@ Definition preorder_before (t : domtree) (u v : positive) : Prop :=
 
 (** Exact trees expose the intended boundary for consumers of raw tree records. *)
 Definition domtree_exact (g : prepared) (r : positive) (t : domtree) : Prop :=
+  In r (verts (base g)) /\
   dom_exact g r (idom t) /\
   (forall u v, In v (children t u) <-> trie_get v (idom t) = Some u) /\
   (forall u, NoDup (children t u) /\ StronglySorted (preorder_before t) (children t u)) /\
@@ -218,6 +219,10 @@ Parameter F1_dominates_trans : forall g r x y v,
 
 (** Acceptance establishes the certificate. *)
 Parameter F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
+
+(** An accepted order holds listed vertices only. *)
+Parameter F2b_check_listed : forall g r m o, check g r m o = true ->
+  forall v, In v o -> In v (verts (base g)).
 
 (** Ancestors precede their proper descendants. *)
 Parameter F3_anc_before : forall g r m o u v, dom_cert g r m o ->
