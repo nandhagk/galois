@@ -49,3 +49,19 @@ Example disjunction_measure_client :
    wrank W (widen (disjunction 1 bool_lattice) [false; false] [true])) = (3, 3, 0).
 Proof. vm_compute; reflexivity. Qed.
 *)
+
+(* These landed raw-list widening fixtures use the flat Boolean lattice directly.
+   The state disjunction requires a STATE_DOMAIN instance, and no such flat-Boolean
+   state instance is available among the landed real implementations.
+Example disjunction_collapse :
+  widen (disjunction 2 flat_bool) [FVal false] [FVal true] = [FTop].
+Proof. vm_compute; reflexivity. Qed.
+Example disjunction_covered :
+  widen (disjunction 2 flat_bool) [FTop; FVal true] [FVal false] = [FTop; FVal true].
+Proof. vm_compute; reflexivity. Qed.
+Example disjunction_empty :
+  (join (disjunction 0 flat_bool) [] [],
+   leb (disjunction 0 flat_bool) [] [],
+   widen (disjunction 0 flat_bool) [] []) = ([], true, []).
+Proof. vm_compute; reflexivity. Qed.
+*)
