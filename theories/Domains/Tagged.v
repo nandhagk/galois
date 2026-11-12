@@ -123,14 +123,21 @@ Module TaggedTableCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
       : option (list (tagged W.p)) := None.
 End TaggedTableCode.
 
+Definition tagged_gamma {P : Type} (is_word : positive -> Z -> Prop)
+    (pgamma : positive -> P -> Z -> Prop) (a : tagged P) (c : BitsLang.val) : Prop :=
+  match a with
+  | TBot => False
+  | TAny => True
+  | TVal w p => fst c = w /\ is_word w (snd c) /\ pgamma w p (snd c)
+  end.
+
+Module Type TAGGED_BASE (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) :=
+  HARNESS_BASE BitsLang with Definition t := tagged W.p
+    with Definition gamma := tagged_gamma L.is_word W.pgamma.
+
 Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Include TaggedCode L W.
-  Definition gamma (a : t) (c : BitsLang.val) : Prop :=
-    match a with
-    | TBot => False
-    | TAny => True
-    | TVal w p => fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)
-    end.
+  Definition gamma := tagged_gamma L.is_word W.pgamma.
   Definition wrank (q : wparam) (a : t) : nat :=
     match a with
     | TBot | TAny => 0
@@ -189,8 +196,8 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Proof. Admitted.
 End Tagged.
 
-Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
-  Module B := Tagged L W.
+Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
+    (B : TAGGED_BASE L W) <: TABLE BitsLang B.
   Include TaggedTableCode L W T.
 
   Lemma fwd_sound : forall o xs cs c r, fwd o xs = Some r ->
@@ -209,6 +216,6 @@ End TaggedTable.
 
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
   Module B := Tagged L W.
-  Module Table := TaggedTable L W T.
+  Module Table := TaggedTable L W T B.
   Module Domain := Harness BitsLang B Table.
 End WordDomain.
