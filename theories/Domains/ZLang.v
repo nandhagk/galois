@@ -5,7 +5,12 @@
     Builds on: IntervalSig. *)
 
 From Stdlib Require Import List ZArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Domains Require Import LangSig IntervalSig.
+
+Module Z.
+  TimeFun Z.size_nat.
+End Z.
 
 Module ZLangCode <: Z_LANGUAGE_OPS.
   Definition op := zview.
@@ -33,3 +38,22 @@ Module ZLang <: Z_LANGUAGE.
     gview g <> ZGuardOther -> (holds g xs <-> zguard_holds (gview g) xs).
   Proof. reflexivity. Qed.
 End ZLang.
+
+Module ZLangT <: Z_LANGUAGE_T.
+  Include ZLang.
+
+  Definition work (o : op) (xs : list val) : nat :=
+    S (fold_right Nat.add 0 (map Z.size_nat xs)).
+  TimeFun work.
+  TimeFun eval.
+  TimeFun literal.
+
+  Definition c_lang : N := 1%N.
+  (** STUB: constant-factor cost obligation for viewed integer evaluation. *)
+  Lemma T_eval_le : forall o vs,
+    (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** STUB: uniform literal-recognition cost obligation. *)
+  Lemma T_literal_le : forall o, (T_literal o <= c_lang)%N.
+  Proof. Admitted. (* STUB *)
+End ZLangT.
