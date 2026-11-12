@@ -43,14 +43,14 @@ Module Type CHECK_TIME (L : LATTICE_T) (S : SYSTEM_T L) (Import C : CHECK L S).
     (forall x, L.size (look m x) <= B) ->
     (T_check_rows p rs m <= c_chk *
       N.of_nat ((fold_right Nat.add 0
-        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs))%nat) *
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
   (** Whole-program checking uses the same row budget. *)
   Parameter T_check_le : forall p m B, S.wf p ->
     (forall x, L.size (look m x) <= B) ->
     (T_check p m <= c_chk *
       N.of_nat ((fold_right Nat.add 0
-        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)))%nat) *
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (S.rows p)) + 1)%nat) *
       (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
 End CHECK_TIME.
 

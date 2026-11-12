@@ -3,11 +3,13 @@
     Prepare adjacency tables from a client presentation.
     For example, parallel edges remain separate entries in each adjacency list.
     Builds on: Program.CfgSig and Graph.Data. *)
-From Stdlib Require Import List PArith.
-From Galois.Base Require Import KeySig Trie.
+From Stdlib Require Import List PArith NArith.
+From Argent Require Import Time Tactics Std.
+From Galois.Base Require Import KeySig Trie Code.
 From Galois.Graph Require Import Data.
 From Galois.Program Require Import CfgSig.
 Import List.ListNotations.
+Import Code.List.
 
 Fixpoint occurrences {E} (es : list E) (i : nat) : list (E * nat) :=
   match es with
@@ -52,6 +54,8 @@ Arguments cfg_inc {P N E} _.
 Definition cfg_add {A} (k : positive) (x : A) (m : ptrie (list A)) :=
   PTrieCode.set k (x :: match trie_get k m with Some xs => xs | None => [] end) m.
 
+TimeFun cfg_add.
+
 Definition cfg_distinct {A} (encode : A -> positive) (xs : list A) : list A :=
   rev (snd (fold_left (fun acc x =>
     let c := encode x in
@@ -59,6 +63,12 @@ Definition cfg_distinct {A} (encode : A -> positive) (xs : list A) : list A :=
     | Some _ => acc
     | None => (PTrieCode.set c tt (fst acc), x :: snd acc)
     end) xs (Empty, []))).
+
+TimeFun cfg_distinct.
+TimeFun cfg_program.
+TimeFun cfg_nodes.
+TimeFun cfg_out.
+TimeFun cfg_inc.
 
 Module CfgCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E).
   Definition nodes p := cfg_distinct N.encode
@@ -107,6 +117,9 @@ Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
   Lemma prepare_wf : forall p, wf (Code.prepare p).
   Proof. Admitted.
 
+  Lemma nodes_nodup : forall p, wf p -> NoDup (nodes p).
+  Proof. Admitted.
+
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
   Proof. Admitted.
 
@@ -124,3 +137,22 @@ Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
   End Laws.
   Include Laws.
 End PreparedCfgLaws.
+
+Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
+  Module PT := PreparedType P N E.
+  Module Timed <: CFG_PREPARE_TIME P PT N E C.
+  Include CfgCode P N E C.
+  TimeFun nodes.
+  TimeFun graph_of.
+  TimeFun prepare.
+  Definition c_cfg_prep : N := 1%N. (* STUB *)
+
+  (** Preparation pays for every indexed endpoint and entry. *)
+  Lemma T_prepare_le : forall p,
+    (T_prepare p <= c_cfg_prep * N.of_nat (length (C.entries p) + length (C.edges p) + 1) *
+      N.of_nat (fold_right Nat.max 0%nat (List.map N.bits (C.entries p ++
+        flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  End Timed.
+  Include Timed.
+End CfgT.
