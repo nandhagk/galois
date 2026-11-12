@@ -172,3 +172,54 @@ Example missing_top_order_breaks_transitivity :
   (BadEnv.leb upper BadEnv.top, BadEnv.leb BadEnv.top point, BadEnv.leb upper point) =
     (true, true, false).
 Proof. vm_compute. reflexivity. Qed.
+
+(* The old optional/default layer exposed env_default, env_optional and
+   env_default_laws. EnvCode uses reached maps directly and exposes no corresponding
+   optional/default contract. These old clients therefore have no current statement
+   with the same operations.
+
+Example widening_only_compatibility :
+  forall a b,
+    env_default PTop (env_optional Top_default PTop point_lattice Env_widen a b) =
+    widen point_lattice (env_default PTop a) (env_default PTop b).
+
+Example full_narrowing_compatibility_rejected :
+  ~ env_default_laws Top_default PTop point_lattice.
+
+Example widening_observation_without_narrowing :
+  forall x s r, StateEnv.observe bool_encoding values x (widen (StateAbs.lat SD) s r) =
+    widen (lift_bot point_lattice)
+      (StateEnv.observe bool_encoding values x s) (StateEnv.observe bool_encoding values x r).
+
+The old semantic_value_laws example used Point as a semantically full top even though
+Upper was not below it. VALUE_DOMAIN now requires top_greatest, so that same fixture
+cannot inhabit the current law interface. The two executable order observations above
+retain its original counterexample. *)
+
+Definition point_gamma (a : Points.t) (z : Z) : Prop :=
+  match a with FBot => False | FVal x => z = x | FTop => True end.
+
+(** The point meet retains values represented by both inputs. *)
+Example meet_sound : forall a b c,
+  point_gamma a c -> point_gamma b c -> point_gamma (Points.meet a b) c.
+Proof.
+  intros [|x|] [|y|] c; cbn [point_gamma Points.meet];
+    intros Ha Hb; try contradiction; try exact I; try assumption.
+  subst x y. now rewrite Z.eqb_refl.
+Qed.
+
+(** The point top is above every point payload. *)
+Example greatest : forall a, Points.leb a Points.top = true.
+Proof. intros [|x|]; reflexivity. Qed.
+
+(* The former integer point fixture established these bundled dictionary claims.
+   The current VALUE_DOMAIN additionally requires meet meaning, bottom-test soundness
+   and below-bottom behavior, and widening, narrowing and rank laws. Its STATE_DOMAIN
+   separates evaluation, assignment, havoc and guard laws. EnvLawTest instantiates those
+   current clients on integer intervals; the original guarded point fixture has not
+   supplied the additional laws.
+
+Theorem value_laws_fixture : value_laws values sem gam.
+Theorem state_laws_fixture :
+  state_laws SD sem (StateEnv.semantics bool_encoding) gam gs.
+*)

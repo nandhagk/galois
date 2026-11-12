@@ -331,3 +331,14 @@ Example interval_rank_counts_duplicates :
   ScalarPlain.wrank (TNode (TNode TLeaf 0 TLeaf) 0 (TNode TLeaf 5 TLeaf))
     (I (Fin 1) (Fin 3)) = 5%nat.
 Proof. vm_compute. reflexivity. Qed.
+
+(* The former interval_word_domain accepted a prepared tree at construction. The
+   current IntervalWordTableCode has no threshold argument, so the same construction
+   dependency cannot be observed through its forward interface. Its result is retained
+   as interval_ite_forward above.
+
+Example interval_ite_uses_prepared_tree :
+  pforward (interval_word_domain (threshold_of_list [0; 10; 20])) bvite
+    [(1%positive, Itv (Fin 0) (Fin 1)); (8%positive, Itv (Fin 2) (Fin 4));
+     (8%positive, Itv (Fin 11) (Fin 12))] 8%positive = Itv (Fin 2) (Fin 12).
+*)
