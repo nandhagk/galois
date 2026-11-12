@@ -291,3 +291,44 @@ Theorem wrapped_forward_binary_sound o wa wb a b x y rw z :
   wrapped_gamma rw (O.forward_binary o wa wb a b rw) z.
 Proof. Admitted. (* CONVERT: wrapped_forward_binary_sound: The reference wrapped_forward_binary_c was not found in the current *)
 End WrappedTransferClaims.
+
+Definition wrapped_rewrap (target source : width) (q : wrapped) : wrapped :=
+  wrapped_project target source q.
+Theorem wrapped_rewrap_sound target source q z :
+  wrapped_gamma source q z ->
+  wrapped_gamma target (wrapped_rewrap target source q) (wrap target z).
+Proof.
+  apply wrapped_project_sound.
+Qed.
+
+(* The landed transfer stack used closure-bearing shape/table/word records. The
+   current WORD_TABLE interface takes the payload as a module and states its soundness
+   directly. These exact source bundle claims have no corresponding old record type.
+Theorem wrapped_shape_laws :
+  transfer_sem wrapped_shape (payload_sound wrapped_gamma)
+    (word_output wrapped_gamma) word_context.
+Theorem wrapped_table_laws :
+  table_laws wrapped_table wrapped_shape (payload_sound wrapped_gamma)
+    (word_output wrapped_gamma) word_context.
+Theorem wrapped_table_refines :
+  table_refines wrapped_table wrapped_shape
+    (fun wp p => wrapped_leb (fst wp) p (snd wp) = true).
+Theorem wrapped_word_laws : word_laws wrapped_word_domain wrapped_gamma.
+Theorem wrapped_numeric_laws :
+  numeric_laws wrapped_domain (tagged_gamma wrapped_gamma).
+
+   The following source equations and entry claim refer to removed Cost values and
+   closure-valued table entries. Timing will derive clocks for the current operations.
+Theorem wrapped_pair_union_value wa wb a b :
+  Cost.value (wrapped_pair_union_c wa wb a b) =
+  wrapped_pair_join wa wb (Cost.value a) (Cost.value b).
+Theorem wrapped_union_four_value w a b c d :
+  Cost.value (wrapped_union_four_c w a b c d) =
+  wrapped_join_four w (Cost.value a) (Cost.value b) (Cost.value c) (Cost.value d).
+Theorem wrapped_union_value w a b :
+  Cost.value (wrapped_union_c w a b) = wrapped_join w (Cost.value a) (Cost.value b).
+Theorem wrapped_fwd_entry_sound o n f rw xs cs z :
+  wrapped_fwd_entry o n = Some f -> length xs = n ->
+  Forall2 (payload_sound wrapped_gamma) xs cs -> eval_op o cs = Some (rw, z) ->
+  wrapped_gamma rw (Cost.value (f rw xs)) z.
+*)

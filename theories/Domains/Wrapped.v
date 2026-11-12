@@ -678,3 +678,34 @@ Proof.
   intros [Hword Hz]. rewrite <- (wrap_id w z Hword).
   now apply wrapped_of_interval_sound.
 Qed.
+
+(* The landed bundle statements used lattice, concretisation and widening-rank
+   records that are absent from the current signatures. Their operations and
+   individual obligations are now exposed through WRAPPED and WORD_PAYLOAD_LAWS.
+Theorem wrapped_laws w : lattice_laws (wrapped_lattice w).
+Theorem wrapped_gamma_laws w :
+  concretisation_laws (wrapped_lattice w) (Concretisation wrapped Z (wrapped_gamma w)).
+Theorem wrapped_widening_rank_on w :
+  widening_rank_on (wrapped_lattice w) (fun _ => True).
+*)
+
+Theorem wrapped_mul_cut_sound pole a z :
+  interval_meaning a z ->
+  interval_meaning (fst (wrapped_mul_cut pole a)) z \/
+  interval_meaning (snd (wrapped_mul_cut pole a)) z.
+Proof. Admitted. (* CONVERT: wrapped_mul_cut_sound: The variable wrapped_interval_meet_gamma was not found in the current *)
+
+Theorem wrapped_mul_piece_sound w a b x y :
+  interval_meaning a x -> interval_meaning b y ->
+  wrapped_gamma w (wrapped_mul_piece w a b) (wrap w (x * y)).
+Proof. Admitted. (* CONVERT: wrapped_mul_piece_sound: The reference interval_gamma was not found in the current environment. *)
+
+Theorem wrapped_shift_interval_sound delta a z :
+  interval_meaning a z -> interval_meaning (wrapped_shift_interval delta a) (z + delta).
+Proof. Admitted. (* CONVERT: wrapped_shift_interval_sound: The reference interval_gamma was not found in the current environment. *)
+
+Theorem wrapped_signed_parts_sound w a z :
+  wrapped_gamma w a z ->
+  interval_meaning (fst (wrapped_signed_parts w a)) (signed w z) \/
+  interval_meaning (snd (wrapped_signed_parts w a)) (signed w z).
+Proof. Admitted. (* CONVERT: wrapped_signed_parts_sound: The variable wrapped_signed_bias was not found in the current *)

@@ -128,7 +128,7 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
     L.eval_op o cs = Some (rw, z) -> K.pgamma rw q z ->
     Forall2 (fun wp c => K.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: K.pgamma is not linked to tnum_gamma in KNOWN_BITS. *)
 End KnownBitsTable.
 Theorem tnum_refine_equation : forall wps qs,
   tnum_refine wps qs =
@@ -571,3 +571,18 @@ Lemma tnum_backward_cmp_sound : forall o w f a b x y q,
   Forall2 (fun p v => tnum_gamma w p v)
     (tnum_backward_raw o [(w, a); (w, b)] 1%positive q) [x; y].
 Proof. Admitted. (* CONVERT: tnum_backward_cmp_sound: The reference tnum_backward_raw_c was not found in the current environment. *)
+Lemma tnum_refine_word_sound : forall xs cs qs,
+  Forall2 kb_payload_sound xs cs ->
+  Forall2 (fun wp_y q => tnum_gamma (fst (fst wp_y)) q (snd (snd wp_y)))
+    (combine xs cs) qs ->
+  Forall2 (fun p c => tnum_gamma (fst c) p (snd c)) (tnum_refine xs qs) cs.
+Proof.
+  intros xs cs qs Hpayload. revert qs.
+  induction Hpayload as [|[w a] [v z] xs cs Hhead Htail IH]; intros qs Hqs.
+  - inversion Hqs; subst. rewrite tnum_refine_equation. constructor.
+  - inversion Hqs as [|p q ps qs' Hq Hrest]; subst.
+    destruct Hhead as [Hwidth [Hz Ha]]. cbn [fst snd] in Hwidth, Ha, Hq. subst v.
+    rewrite tnum_refine_equation. constructor.
+    + apply tnum_meet_sound; assumption.
+    + now apply IH.
+Qed.

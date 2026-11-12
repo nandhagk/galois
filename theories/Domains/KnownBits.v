@@ -213,6 +213,13 @@ Definition tnum_variable (o : op) (w : width) (a b : tnum) : tnum :=
   if tnum_empty w a || tnum_empty w b then tnum_bot w
   else tnum_variable_raw o w a b.
 
+(** A finite sequence records the pure counterpart of the landed charged driver. *)
+Inductive tnum_runs {S R : Type} (step : S -> S + R) : nat -> S -> S + R -> Prop :=
+  | tnum_runs_zero s : tnum_runs step O s (inl s)
+  | tnum_runs_stop n s r : step s = inr r -> tnum_runs step (Datatypes.S n) s (inr r)
+  | tnum_runs_next n s s' result : step s = inl s' -> tnum_runs step n s' result ->
+      tnum_runs step (Datatypes.S n) s result.
+
 Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS L C.
   Definition p := tnum.
   Definition pleb w a b := tnum_subset w (zeros b) (zeros a) &&
@@ -1847,12 +1854,6 @@ Lemma tnum_unknown_monotone : forall w a b,
 Proof. Admitted. (* CONVERT: tnum_unknown_monotone: The variable tnum_unknown_from_equation was not found in the current environment. *)
 
 
-(** A finite sequence records the pure counterpart of the landed charged driver. *)
-Inductive tnum_runs {S R : Type} (step : S -> S + R) : nat -> S -> S + R -> Prop :=
-  | tnum_runs_zero s : tnum_runs step O s (inl s)
-  | tnum_runs_stop n s r : step s = inr r -> tnum_runs step (Datatypes.S n) s (inr r)
-  | tnum_runs_next n s s' result : step s = inl s' -> tnum_runs step n s' result ->
-      tnum_runs step (Datatypes.S n) s result.
 
 Fixpoint tnum_unknown_from (n i : nat) (m : Z) : nat :=
   match n with
@@ -1949,6 +1950,8 @@ Proof. Admitted. (* CONVERT: tnum_unknown_from_equation: The reference tnum_unkn
 (* The old bundled dictionary statements below used the removed lattice_laws and
    lub_laws records. Their inclusion, bottom and join obligations now appear in
    WORD_PAYLOAD_LAWS; the reviewed payload interface does not include leastness.
+   The retained direct facts include tnum_leb_bits, tnum_gamma_monotone and
+   tnum_meet_lower_left.
 Theorem tnum_laws : forall w, lattice_laws (tnum_lattice w).
 Theorem tnum_lub : forall w, lub_laws (tnum_lattice w).
 *)
