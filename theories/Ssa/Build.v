@@ -14,14 +14,15 @@ Import List.ListNotations.
 
 Module BuildCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E : TYPE) (N : KEY_OPS)
-    (BC : CFG_INDEXED_OPS P PosKeyCode BE) (C : CFG_INDEXED_OPS P N E)
-    (U : VARS_OPS P N E C PosKeyCode)
-    (SP : SSA_POINTS_OPS P PosKeyCode BE BC N E C PosKeyCode U)
-    (S : SSA_OPS P PosKeyCode BE BC PosKeyCode K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (BE E : TYPE) (N : KEY_OPS)
+    (BC : CFG_INDEXED_OPS Q PosKeyCode BE) (C : CFG_INDEXED_OPS Q N E)
+    (U : VARS_OPS Q N E C PosKeyCode)
+    (SP : SSA_POINTS_OPS Q PosKeyCode BE BC N E C PosKeyCode U)
+    (S : SSA_OPS Q PosKeyCode BE BC PosKeyCode K G)
     (DG : DIGRAPH_OPS) (D : DOM_OPS) (F : FRONTIER_OPS)
-    (L : LIVE_OPS O P BE E N BC C U SP)
-    (Va : VALIDATE_OPS O K G P BE BC S DG D) <: BUILD_OPS O K G P BE E N BC C U SP S DG D F L Va.
+    (L : LIVE_OPS O P Q R BE E N BC C U SP)
+    (Va : VALIDATE_OPS O K G P Q R BE BC S DG D) <: BUILD_OPS O K G P Q R BE E N BC C U SP S DG D F L Va.
   (* STUB-CODE *)
   Definition produce (_ : P.t) : option (P.t * cert) := None.
   (* STUB-CODE *)
@@ -30,16 +31,17 @@ End BuildCode.
 
 Module Build (O : OPS)
     (K : KEY with Definition t := O.K) (G : KEY with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E : TYPE) (N : KEY)
-    (BC : CFG P PosKey BE) (C : CFG P N E)
-    (U : VARS P N E C PosKey)
-    (SP : SSA_POINTS P PosKey BE BC N E C PosKey U)
-    (S : SSA P PosKey BE BC PosKey K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_OPS O Q) (BE E : TYPE) (N : KEY)
+    (BC : CFG Q PosKey BE) (C : CFG Q N E)
+    (U : VARS Q N E C PosKey)
+    (SP : SSA_POINTS Q PosKey BE BC N E C PosKey U)
+    (S : SSA Q PosKey BE BC PosKey K G)
     (DG : DIGRAPH) (D : DOM) (F : FRONTIER)
-    (L : LIVE O P BE E N BC C U SP)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE O K G P BE BC S DG D B) <: BUILD O K G P BE E N BC C U SP S DG D F L B Va.
-  Include BuildCode O K G P BE E N BC C U SP S DG D F L Va.
+    (L : LIVE O P Q R BE E N BC C U SP)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE O K G P Q R BE BC S DG D B) <: BUILD O K G P Q R BE E N BC C U SP S DG D F L B Va.
+  Include BuildCode O K G P Q R BE E N BC C U SP S DG D F L Va.
   Lemma build_checked : forall p, build p =
     match produce p with
     | None => None
@@ -53,21 +55,22 @@ End Build.
 
 Module BuildT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (BE E N : KEY_T)
-    (BC : CFG_T P PosKeyT BE) (C : CFG_T P N E)
-    (U : VARS_T P N E C PosKeyT)
-    (SP : SSA_POINTS_T P PosKeyT BE BC N E C PosKeyT U)
-    (PB : LANG_PRESENT_BUDGET O P BE E N BC C U SP)
-    (S : SSA_T P PosKeyT BE BC PosKeyT K G)
+    (P : TYPE with Definition t := func positive O.K O.G)
+    (Q : TYPE) (R : LANG_PREPARE_T O Q) (BE E N : KEY_T)
+    (BC : CFG_T Q PosKeyT BE) (C : CFG_T Q N E)
+    (U : VARS_T Q N E C PosKeyT)
+    (SP : SSA_POINTS_T Q PosKeyT BE BC N E C PosKeyT U)
+    (PB : LANG_PRESENT_BUDGET O Q R BE E N BC C U SP)
+    (S : SSA_T Q PosKeyT BE BC PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T) (F : FRONTIER_T)
-    (L : LIVE_T O P BE E N BC C U SP PB)
-    (B : LANG_SSA_LINK O K G P BE BC S)
-    (Va : VALIDATE_T O K G P BE BC S DG D B) <: BUILD_ALL O K G P BE E N BC C U SP PB S DG D F L B Va.
-  Include Build O K G P BE E N BC C U SP S DG D F L B Va.
+    (L : LIVE_T O P Q R BE E N BC C U SP PB)
+    (B : LANG_SSA_LINK O K G Q R BE BC S)
+    (Va : VALIDATE_T O K G P Q R BE BC S DG D B) <: BUILD_ALL O K G P Q R BE E N BC C U SP PB S DG D F L B Va.
+  Include Build O K G P Q R BE E N BC C U SP S DG D F L B Va.
   TimeFun produce.
   TimeFun build.
   Definition c_build : N := 1. (* STUB *)
-  Definition graph p := DG.prepare (cfg_graph (BC.nodes p) (BC.edges p) (BC.src p) (BC.dst p)).
+  Definition graph p := DG.prepare (cfg_graph (BC.nodes (R.prepare p)) (BC.edges (R.prepare p)) (BC.src (R.prepare p)) (BC.dst (R.prepare p))).
   Definition dom_result p := D.build (graph p) (entry _ _ _ p).
   Definition dom_tree p := D.tree (graph p) (entry _ _ _ p)
     (fst (dom_result p)) (snd (dom_result p)).
@@ -76,13 +79,13 @@ Module BuildT (O : OPS)
   Definition phi_sites p x := F.idf (frontiers p) (definition_blocks p x).
   Definition placement_work p := fold_right (fun x n =>
     fold_right (fun b m => 1 + length (frontier_row (frontiers p) b) + m) 0 (phi_sites p x) + n)
-    0 (U.universe p).
+    0 (U.universe (R.prepare p)).
   Definition phi_args p :=
     match produce p with Some (s, _) => function_edge_args s | None => 0 end.
   Definition dom_work p :=
     (graph_n (base (graph p)) + graph_e (base (graph p)) + 1) *
       (Nat.log2 (graph_n (base (graph p))) + 1).
-  Definition build_work p := function_size p + length (BC.nodes p) + length (BC.edges p) +
+  Definition build_work p := function_size p + length (BC.nodes (R.prepare p)) + length (BC.edges (R.prepare p)) +
     dom_work p + df_size p + placement_work p + L.live_size p + phi_args p + 1.
   (** Construction keeps the published dominator, placement, liveness and argument budget. *)
   Lemma T_build_le : forall p,
@@ -132,6 +135,8 @@ Module BuildT (O : OPS)
   Lemma F1_graph_checked : forall p, graph_ok p = true -> wf_graph (base (graph p)).
   Proof. Admitted. (* STUB *)
   (** The definition index lists each variable's definition blocks. *)
+  Lemma F1_graph_wf : forall p, wf_graph (base (graph p)).
+  Proof. Admitted. (* STUB *)
   Lemma F2a_def_index : forall p x,
     frontier_row (def_index p) x = definition_blocks p x.
   Proof. Admitted. (* STUB *)
@@ -149,19 +154,20 @@ Module BuildT (O : OPS)
   Proof. Admitted. (* STUB *)
   (** The placement table lists exactly the placed variables of each block. *)
   Lemma F3a_placement : forall p b x,
-    In x (frontier_row (placement p) b) <-> In x (U.universe p) /\ In b (placed p x).
+    In x (frontier_row (placement p) b) <->
+      In x (U.universe (R.prepare p)) /\ In b (placed p x).
   Proof. Admitted. (* STUB *)
   (** Renaming uses a bounded explicit stack with one entering and one leaving visit per block. *)
   Lemma F4_rename_loop : forall p t rows live,
     rename p t rows live =
-      match loop_fuel (rename_step p t rows live) (2 * length (BC.nodes p) + 1) (rename_init p) with
+      match loop_fuel (rename_step p t rows live) (2 * length (blocks _ _ _ p) + 1)
+        (rename_init p) with
       | inl _ => None
       | inr answer => answer
       end.
   Proof. Admitted. (* STUB *)
   (** The producer checks dominators before using their numbered tree. *)
   Lemma F5_produce_checked : forall p s c, produce p = Some (s, c) ->
-    graph_ok p = true /\
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
     rename p (dom_tree p) (placement p) (L.live_in p) = Some (s, c).
   Proof. Admitted. (* STUB *)
@@ -183,7 +189,7 @@ Module BuildT (O : OPS)
       N.of_nat (function_width p + 1) +
       fold_right N.add 0%N (map
         (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)))
-        (U.universe p)))%N.
+        (U.universe (R.prepare p))))%N.
   Proof. Admitted. (* STUB *)
   (** Initialization charges the source inventory at its syntax width. *)
   Lemma T2a_rename_init : forall p,
@@ -195,13 +201,14 @@ Module BuildT (O : OPS)
     (T_rename p (dom_tree p) (placement p) (L.live_in p) <= T_rename_init p +
       T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
         (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-        (2 * length (BC.nodes p) + 1) (rename_init p) + k_rename)%N.
+        (2 * length (blocks _ _ _ p) + 1) (rename_init p) +
+      k_rename * N.of_nat (length (blocks _ _ _ p) + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Both visits to each block charge their statements and emitted incoming arguments. *)
   Lemma T2c_rename_loop : forall p,
     (T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
       (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-      (2 * length (BC.nodes p) + 1) (rename_init p) <=
+      (2 * length (blocks _ _ _ p) + 1) (rename_init p) <=
       k_rename * N.of_nat (function_size p + placement_work p + phi_args p + 1) *
         N.of_nat (function_width p + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -220,22 +227,23 @@ Module BuildT (O : OPS)
   Proof. Admitted. (* STUB *)
   (** The producer checks the graph before preparing it and stops at the first rejection. *)
   Lemma T3_produce : forall p,
-    (T_produce p <= T_graph_ok p + k_graph +
-      if graph_ok p then
-        DG.T_prepare (cfg_graph (BC.nodes p) (BC.edges p) (BC.src p) (BC.dst p)) +
-        D.T_build (graph p) (entry _ _ _ p) +
-        D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-        (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p))
-         then D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-           F.T_df (graph p) (dom_tree p) + L.T_live_in p + T_def_index p +
-           T_live_sets (L.live_in p) + T_placement p +
-           T_rename p (dom_tree p) (placement p) (L.live_in p)
-         else 0)
-      else 0)%N.
+    (T_produce p <= R.T_prepare p + k_graph +
+      k_graph * N.of_nat (length (BC.nodes (R.prepare p)) +
+        length (BC.edges (R.prepare p)) + 1) * N.of_nat (function_width p + 1) +
+      DG.T_prepare (cfg_graph (BC.nodes (R.prepare p)) (BC.edges (R.prepare p))
+        (BC.src (R.prepare p)) (BC.dst (R.prepare p))) +
+      D.T_build (graph p) (entry _ _ _ p) +
+      D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
+      (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p))
+       then D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
+         F.T_df (graph p) (dom_tree p) + L.T_live_in p + T_def_index p +
+         T_live_sets (L.live_in p) + T_placement p +
+         T_rename p (dom_tree p) (placement p) (L.live_in p)
+       else 0))%N.
   Proof. Admitted. (* STUB *)
   (** Graph screening reads the block presentation once. *)
   Lemma T3a_graph_ok : forall p,
-    (T_graph_ok p <= k_graph * N.of_nat (length (BC.nodes p) + length (BC.edges p) + 1) *
+    (T_graph_ok p <= k_graph * N.of_nat (length (BC.nodes (R.prepare p)) + length (BC.edges (R.prepare p)) + 1) *
       N.of_nat (function_width p + 1))%N.
   Proof. Admitted. (* STUB *)
   (** The wrapper charges the actual certificate and candidate validators. *)
