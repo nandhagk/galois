@@ -42,7 +42,7 @@ End Validate.
 
 Module ValidateT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
-    (P : TYPE with Definition t := func positive O.K O.G) (E : TYPE)
+    (P : TYPE with Definition t := func positive O.K O.G) (E : KEY_T)
     (C : CFG_T P PosKeyT E) (S : SSA_T P PosKeyT E C PosKeyT K G)
     (DG : DIGRAPH_T) (D : DOM_T) (B : LANG_SSA_LINK O K G P E C S)
     <: VALIDATE_ALL O K G P E C S DG D B.
@@ -53,18 +53,31 @@ Module ValidateT (O : OPS)
   Definition c_val : N := 1. (* STUB *)
   Definition dom_bound s := N.of_nat ((graph_n (base (graph s)) +
     graph_e (base (graph s)) + 1) * (Nat.log2 (graph_n (base (graph s))) + 1)).
+  Definition check_width (p s : P.t) (c : cert) :=
+    function_width p + function_width s + vertex_width (cert_ids c).
+  Definition op_bits (p : P.t) :=
+    fold_right (fun item n =>
+      fold_right (fun i m => K.bits (snd (fst i)) + m) 0 (code _ _ _ (snd item)) +
+      match term _ _ _ (snd item) with
+      | Branch g _ _ _ _ _ => G.bits g
+      | _ => 0
+      end + n) 0 (blocks _ _ _ p).
+  (** Translation checking charges both functions and the supplied certificate. *)
   Lemma T_check_le : forall p s c,
     (T_check p s c <= c_val * N.of_nat (function_size p + function_size s + cert_size c + 1) *
-      N.of_nat (function_width p + 1))%N.
+      N.of_nat (check_width p s c + 1) + c_val * N.of_nat (op_bits p + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** SSA checking includes the core dominator construction budget. *)
   Lemma T_check_ssa_le : forall s,
     (T_check_ssa s <= c_val * (N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Translation checking has the published certificate-sensitive bit-cost bound. *)
   Lemma check_bigO : bigO (fun _ : P.t * P.t * cert => True)
     (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
-      (function_width p + 1))) (fun '(p, s, c) => T_check p s c).
+      (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
   Proof. Admitted. (* STUB *)
+  (** SSA checking has the published syntax and dominator bit-cost bound. *)
   Lemma check_ssa_bigO : bigO (fun _ : P.t => True)
     (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N) T_check_ssa.
@@ -139,19 +152,60 @@ Module ValidateT (O : OPS)
   Proof. Admitted. (* STUB *)
   Lemma F9_ssa_wf : forall s, check_ssa s = true -> ssa_wf s.
   Proof. Admitted. (* STUB *)
+  (** Graph preparation and certificate work fit the syntax and dominator budget. *)
   Lemma T1_dom : forall s,
     (T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
         N.of_nat (function_width s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T2_checks : forall p s c,
-    (T_check p s c <= k_blocks *
-      N.of_nat (function_size p + function_size s + cert_size c + 1) *
-      N.of_nat (function_width p + 1))%N.
+  (** Entry checking charges both input lists and the indexed certificate row. *)
+  Lemma T2b_entry : forall p s c,
+    (T_check_entry p s c <= k_entry *
+      N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
+        length (cert_live c (entry _ _ _ p)) + 1) *
+      N.of_nat (check_width p s c + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Code checking indexes its initial renaming and reads both instruction streams once. *)
+  Lemma T2c_code : forall ic sc rho live,
+    (T_check_code ic sc rho live <= k_code *
+      N.of_nat (length rho + length live + length ic + length sc +
+        fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (ic ++ sc) + 1) *
+      N.of_nat (vertex_width (live ++
+        flat_map (fun xy => [fst xy; snd xy]) rho ++
+        flat_map (fun i => fst (fst i) :: snd i) (ic ++ sc)) + 1) +
+      k_code * N.of_nat
+        (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Indexed edge checking charges the two exits and the destination certificate row. *)
+  Lemma T2d_edge : forall p s c b target rho ib sb,
+    find_block b (blocks _ _ _ p) = Some ib ->
+    find_block b (blocks _ _ _ s) = Some sb ->
+    (T_check_edge p s c b target rho <= k_edge *
+      N.of_nat (length rho + length (exit_uses (term _ _ _ ib)) +
+        length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
+      N.of_nat (check_width p s c +
+        vertex_width (flat_map (fun xy => [fst xy; snd xy]) rho) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Translation checking indexes the certificate, checks the entry and every source block. *)
+  Lemma T2_checks : forall p s c,
+    (T_check p s c <= k_blocks * N.of_nat (cert_size c + function_size s + 1) *
+      N.of_nat (check_width p s c + 1) + T_check_entry p s c +
+      fold_right N.add 0%N (map (fun item => T_check_block p s c (fst item)) (blocks _ _ _ p)))%N.
+  Proof. Admitted. (* STUB *)
+  (** One block check charges its two bodies, its exit and its operators. *)
+  Lemma T2a_block : forall p s c b ib,
+    find_block b (blocks _ _ _ p) = Some ib ->
+    (T_check_block p s c b <= k_code *
+      N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
+        length (code _ _ _ ib) + 1) * N.of_nat (check_width p s c + 1) +
+      k_code * N.of_nat (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat
+        (code _ _ _ ib) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** SSA checking adds the strict local-order and dominance queries to the graph phase. *)
   Lemma T3_ssa : forall s,
-    (T_check_ssa s <= k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
-      N.of_nat (function_width s + 1))%N.
+    (T_check_ssa s <= T_graph s + T_dom_cert s +
+      D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+      k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
   Proof. Admitted. (* STUB *)
 End ValidateT.
