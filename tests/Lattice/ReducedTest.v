@@ -41,4 +41,5 @@ Proof. vm_compute. reflexivity. Qed.
 
 (* The old reduced widening of (false, true) and (false, false) returned (false, true).
    JoinWideningCode widens by ReducedBool.join and returns (false, false).
-   The reducer interface has no round count, and no reduced height combinator is exported. *)
+   The reducer interface has no round count. The old reduced height ranked (false, true)
+   and (true, true) as 0 and 2. No reduced height combinator is exported. *)
