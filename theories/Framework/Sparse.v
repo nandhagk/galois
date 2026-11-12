@@ -13,6 +13,10 @@ From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig SsaSig SemanticsSig.
 From Galois.Framework Require Import SparseSig.
 
+Module List.
+  TimeFun Stdlib.Lists.List.flat_map.
+End List.
+
 Definition sparse_read {X K A} (forward : K -> list A -> A)
     (op : K) (pending : list X) (received : list A)
     : query X A (sparse_frame X K A) :=
@@ -142,6 +146,23 @@ Module Sparse (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     eval p (SparseArg e x y) look = Some (look y, nil).
   Proof. Admitted.
 End Sparse.
+
+Module SparseT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+    (X : KEY_T) (L : LANG_T) (K : TYPE with Definition t := L.op)
+    (G : TYPE with Definition t := L.guard)
+    (S : SSA_T P N E C X K G) (V : VALUE_DOMAIN_T L)
+    (T : SSA_TRANSFER_T P X L V).
+  Include Sparse P N E C X L K G S V T.
+
+  TimeFun key_code.
+  TimeFun key_eqb.
+  TimeFun rows.
+  TimeFun target.
+  TimeFun start.
+  TimeFun resume.
+  TimeFun deps.
+  TimeFun sides.
+End SparseT.
 
 Module SparseSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (X : KEY) (L : LANG) (K : TYPE with Definition t := L.op)
