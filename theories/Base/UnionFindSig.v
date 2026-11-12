@@ -147,7 +147,7 @@ Module Type UNION_FIND_PLAN (Import U : UNION_FIND_T).
   (** Walking reaches the queried key representative. *)
   Parameter F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
   (** The recorded path has logarithmic length and stays within the queried class. *)
-  Parameter F4_walk_path : forall x u, wf u -> mem u x ->
+  Parameter F4_walk_path : forall x u, wf u ->
     length (snd (walk x u)) <= Nat.log2 (card u) /\
     forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
   (** Compressing nonroot class members retains the ghost rank invariant. *)
