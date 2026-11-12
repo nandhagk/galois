@@ -5,7 +5,7 @@
     Builds on: Fixpoint.IndexedSig and Base.Trie. *)
 
 From Stdlib Require Import List PArith Arith NArith Bool.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig IndexedSig.
@@ -58,6 +58,11 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Proof. Admitted.
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
+  Proof. Admitted.
+  (** A row asks only its declared dependencies. *)
+  Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) -> In x (deps p r).
   Proof. Admitted.
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).

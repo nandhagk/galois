@@ -5,7 +5,7 @@
     Builds on: Fixpoint.Query and Lattice.LatticeSig. *)
 
 From Stdlib Require Import List PArith NArith Bool.
-From Argent Require Import Time.
+From Argent Require Import Time Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query.
 
@@ -55,6 +55,10 @@ Module Type SYSTEM_LAWS (L : LATTICE) (Import S : SYSTEM_OPS L)
   (** A row observes its declared dependencies. *)
   Parameter reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
+  (** A row asks only its declared dependencies. *)
+  Parameter asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) -> In x (deps p r).
   (** Side contributions use declared side keys. *)
   Parameter sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
