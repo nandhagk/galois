@@ -1,7 +1,7 @@
 (** * Worklist ordering and counter observations
 
     Priority values select row order and widening stops an increasing counter.
-    For example, processing the seed first solves the Boolean cycle with fuel four.
+    For example, repeated row occurrences consume separate units of fuel.
     Builds on: Fixpoint.Worklist and Fixpoint.WorklistTest. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith.
