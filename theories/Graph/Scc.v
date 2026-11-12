@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith.
 From Galois.Base Require Import Trie.
-From Galois.Graph Require Import Data SearchSig Search SccSig.
+From Galois.Graph Require Import Data Spec SearchSig Search SccSig.
 Import List.ListNotations.
 
 Record tarjan_state := TarjanState {
@@ -86,3 +86,37 @@ Module SccCode <: SCC_OPS.
     let result := TarjanSearch.dfs g (nodes g) tarjan_initial in
     Scc (tarjan_owners result) (rev (tarjan_emitted result)).
 End SccCode.
+
+Opaque search_trace.
+
+Module Scc <: SCC.
+  Include SccCode.
+  Include SCC_SPEC.
+
+  Lemma comp_spec : forall g, wf_graph (base g) -> forall u v,
+    (exists i, trie_get u (comp (run g)) = Some i /\
+      trie_get v (comp (run g)) = Some i) <->
+    In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
+  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+
+  Lemma comps_partition : forall g, wf_graph (base g) ->
+    NoDup (concat (comps (run g))) /\
+    (forall v, In v (concat (comps (run g))) <-> In v (nodes g)).
+  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+
+  Lemma comps_nonempty : forall g, wf_graph (base g) ->
+    Forall (fun vs => vs <> []) (comps (run g)).
+  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+
+  Lemma owners_spec : forall g, wf_graph (base g) -> forall v i,
+    trie_get v (comp (run g)) = Some i <->
+    exists vs, nth_error (comps (run g)) (Nat.pred (Pos.to_nat i)) = Some vs /\ In v vs.
+  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+
+  Lemma comps_order : forall g, wf_graph (base g) -> forall u v i j,
+    edge (base g) u v -> trie_get u (comp (run g)) = Some i ->
+    trie_get v (comp (run g)) = Some j -> (j <= i)%positive.
+  Proof. Admitted. (* SIG-QUESTION: landed Tarjan correctness assumes prepared readiness. *)
+End Scc.
+
+Transparent search_trace.
