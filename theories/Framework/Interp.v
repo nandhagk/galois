@@ -1,6 +1,6 @@
 (** * Abstract interpretation of ordered actions *)
 From Stdlib Require Import List Bool NArith.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -48,6 +48,12 @@ Module Interp (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E)
   Proof. exact N.encode_inj. Qed.
 
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
+  Proof. Admitted.
+
+  (** A row asks only its declared dependencies. *)
+  Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) -> In x (deps p r).
   Proof. Admitted.
 
   Lemma eval_total : forall p r look, wf p -> In r (rows p) -> eval p r look <> None.
