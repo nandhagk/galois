@@ -41,8 +41,8 @@ Module JoinWideningT (L : LATTICE_T) (H : HEIGHT L) <: WIDENING_T L.
   TimeFun widen.
   TimeFun narrow.
 
-  Definition wsize (_ : wparam) : nat := 1.
-  Definition wunits (_ : L.t) : nat := 0.
+  Definition wsize (_ : wparam) : nat := 3.
+  Definition wunits (a : L.t) : nat := L.size a + 1.
 
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= L.c_lat *

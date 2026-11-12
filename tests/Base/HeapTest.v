@@ -36,6 +36,17 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example heap_entry_traversal_order :
+  heap_entries [Some (HeapTree (1%N, 1%positive)
+    [HeapTree (2%N, 2%positive) [HeapTree (3%N, 3%positive) []];
+      HeapTree (4%N, 4%positive) []]); None;
+    Some (HeapTree (5%N, 5%positive) [])] =
+  [(1%N, 1%positive); (2%N, 2%positive); (3%N, 3%positive);
+    (4%N, 4%positive); (5%N, 5%positive)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (* BaseHeapTest.heap_push_ticks retires with Cost.ticks. Heap priorities now use N.
    heap_tie and heap_decrease retain the old numeric priorities 5 and 3 through
    that carrier change. priority reads the public live map in heap_decrease. *)

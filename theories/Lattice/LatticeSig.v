@@ -42,6 +42,8 @@ Module Type LATTICE_TIME (Import L : LATTICE_OPS).
   Parameter T_join : t -> t -> N.
   Parameter T_is_bot : t -> N.
   Parameter c_lat : N.
+  (** The lattice constant pays for at least one call. *)
+  Parameter c_lat_pos : (1 <= c_lat)%N.
   (** Order testing takes time bounded by both value sizes. *)
   Parameter T_leb_le  : forall a b, (T_leb a b  <= c_lat * N.of_nat (size a + size b + 1))%N.
   (** Joining takes time bounded by both value sizes. *)
