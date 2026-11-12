@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith.
 From Galois.Bits Require Import Word.
-From Galois.Domains Require Import WordSig HarnessSig BitsLang.
+From Galois.Domains Require Import LangSig WordSig HarnessSig BitsLang.
 
 Module TaggedCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
     <: HARNESS_BASE_OPS BitsLangCode.
@@ -122,3 +122,75 @@ Module TaggedTableCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
   Definition grd (_ : BitsLangCode.guard) (_ : list (tagged W.p))
       : option (list (tagged W.p)) := None.
 End TaggedTableCode.
+
+Module TaggedBitsLang <: LANG.
+  Include BitsLangCode.
+  Definition holds (g : guard) (vs : list val) : Prop :=
+    match g, vs with
+    | BTruth b, (w, z) :: nil => w = 1%positive /\ z = (if b then 1 else 0)%Z
+    | _, _ => False
+    end.
+End TaggedBitsLang.
+
+Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE TaggedBitsLang.
+  Include TaggedCode L W.
+  Definition gamma (a : t) (c : TaggedBitsLang.val) : Prop :=
+    match a with
+    | TBot => False
+    | TAny => True
+    | TVal w p => fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)
+    end.
+  Definition wrank (q : wparam) (a : t) : nat :=
+    match a with
+    | TBot | TAny => 0
+    | TVal w p => S (W.pwrank q w p)
+    end.
+  Lemma leb_refl : forall a, leb a a = true.
+  Proof. Admitted.
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof. Admitted.
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof. Admitted.
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof. Admitted.
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof. Admitted.
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof. Admitted.
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof. Admitted.
+  Lemma top_greatest : forall a, leb a top = true.
+  Proof. Admitted.
+  Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
+  Proof. Admitted.
+  Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
+  Proof. Admitted.
+  Lemma widen_ub_l : forall q a b, leb a (widen q a b) = true.
+  Proof. Admitted.
+  Lemma widen_ub_r : forall q a b, leb b (widen q a b) = true.
+  Proof. Admitted.
+  Lemma widen_stable : forall q a b, leb b a = true -> widen q a b = a.
+  Proof. Admitted.
+  Lemma wrank_widen : forall q a b, is_bot a = false -> leb b a = false ->
+    (wrank q (widen q a b) < wrank q a)%nat.
+  Proof. Admitted.
+  Lemma wrank_widen_le : forall q a b, is_bot a = false -> (wrank q (widen q a b) <= wrank q a)%nat.
+  Proof. Admitted.
+  Lemma narrow_between : forall a b, leb b a = true ->
+    leb b (narrow a b) = true /\ leb (narrow a b) a = true.
+  Proof. Admitted.
+  Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
+  Proof. Admitted.
+  Lemma gamma_bot : forall c, ~ gamma bot c.
+  Proof. Admitted.
+  Lemma gamma_top : forall c, gamma top c.
+  Proof. Admitted.
+  Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
+  Proof. Admitted.
+  Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
+  Proof. Admitted.
+  Lemma point_sound : forall a v c, point a = Some v -> gamma a c -> c = v.
+  Proof. Admitted.
+  Lemma abst_sound : forall v, gamma (abst v) v.
+  Proof. Admitted.
+End Tagged.
