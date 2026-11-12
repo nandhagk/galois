@@ -117,7 +117,7 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found. *)
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
