@@ -16,6 +16,13 @@ Inductive itv : Type :=
   | IBot
   | I (lo hi : bnd).
 
+Definition interval_finite_helper (a : itv) : option (Z * Z) :=
+  match a with
+  | I (Fin lo) (Fin hi) => Some (lo, hi)
+  | _ => None
+  end.
+TimeFun interval_finite_helper.
+
 Inductive zview :=
   | ZAdd
   | ZSub
@@ -151,11 +158,7 @@ Module Type INTERVAL_SCALAR_SPEC (T : THRESHOLDS_OPS).
       if bounds_nonempty lo hi then I lo hi else IBot
     | _, _ => IBot
     end.
-  Definition interval_finite (a : itv) : option (Z * Z) :=
-    match a with
-    | I (Fin lo) (Fin hi) => Some (lo, hi)
-    | _ => None
-    end.
+  Definition interval_finite := interval_finite_helper.
   Definition interval_singleton a :=
     match interval_finite a with
     | Some (lo, hi) => if Z.eqb lo hi then Some lo else None
