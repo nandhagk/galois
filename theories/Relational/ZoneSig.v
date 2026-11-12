@@ -73,21 +73,21 @@ Module Type ZONE_TIME (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Parameter T_incr_close : K.t -> K.t -> Z -> dbm -> N.
   Parameter c_zone : N.
   Definition binary_work (a z : t) : nat :=
-    (ns a + ns z)^2 * (bs a + bs z + ells a + ells z + 1).
+    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1).
   (** Closure charges cubic updates and the logarithmic entry-growth allowance. *)
   Parameter T_close_le : forall m,
-    (T_close m <= c_zone * N.of_nat (((supp m)^3)%nat) *
+    (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
       N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
   (** Incremental closure charges quadratic updates. *)
   Parameter T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
-    c_zone * N.of_nat (((supp m)^2)%nat) * N.of_nat ((b m + ell m + Z.size_nat d + 1)%nat))%N.
+    c_zone * N.of_nat (((supp m + 1)^2)%nat) * N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
   (** Join charges the combined matrix support and entry sizes. *)
   Parameter T_join_zone_le : forall a z, (T_join a z <= c_zone * N.of_nat (binary_work a z))%N.
   (** Inclusion charges the combined matrix support and entry sizes. *)
   Parameter T_leb_zone_le : forall a z, (T_leb a z <= c_zone * N.of_nat ((binary_work a z)%nat))%N.
   (** Widening charges the combined matrix support and entry sizes. *)
   Parameter T_widen_zone_le : forall p a z,
-    (T_widen p a z <= c_zone * N.of_nat (binary_work a z))%N.
+    (T_widen p a z <= c_zone * N.of_nat (binary_work a z + wsize p))%N.
 End ZONE_TIME.
 
 Module Type ZONE_T (X : KEY_T) (K : KEY_T with Definition t := option X.t)
@@ -101,8 +101,39 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
     (forall i, In i (support m) -> entry m i i = Some 0%Z) /\
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
       exists d, entry m i j = Some d /\ (d <= a + z)%Z).
-  (* spec: min_path_weight *)
-  Parameter min_path_weight : dbm -> K.t -> K.t -> option Z.
+  Fixpoint chain_weight (m : dbm) (i : K.t) (ks : list K.t) (j : K.t) : option Z :=
+    match ks with
+    | nil => entry m i j
+    | k :: ks =>
+      match entry m i k, chain_weight m k ks j with
+      | Some a, Some z => Some (a + z)%Z
+      | _, _ => None
+      end
+    end.
+  Definition same_entries (a b : t) : Prop :=
+    match a, b with
+    | Reached ma, Reached mb => forall i j, entry ma i j = entry mb i j
+    | Unreached, Unreached => True
+    | _, _ => False
+    end.
+  Parameter k_zone : N.
+  (** Assignment work pays for linearization and quadratic matrix updates. *)
+  Parameter F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) =
+      N.of_nat ((ns s + 1)^2 * (bs s + ells s + X.bits x + 1)) + F.T_lin_of e)%N.
+  (** Havoc visits the affected row and column. *)
+  Parameter F_havoc_work : forall x s,
+    havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1).
+  (** Join takes entrywise maxima without closing its arguments. *)
+  Parameter F_join_entry : forall ma mb i j,
+    match join (Reached ma) (Reached mb) with
+    | Reached mj => entry mj i j =
+        match entry ma i j, entry mb i j with
+        | Some x, Some y => Some (Z.max x y)
+        | _, _ => None
+        end
+    | Unreached => False
+    end.
   (** A Floyd-Warshall round adds only implied constraints. *)
   Parameter fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
   (** Closure retains all models of its input. *)
@@ -113,11 +144,22 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t)
   Parameter incr_close_sound : forall i j d m v,
     models m v -> (vz v j - vz v i <= d)%Z -> ngamma (incr_close i j d m) v.
   (** Successful closure computes shortest path weights. *)
-  Parameter close_shortest : forall m m', close m = Reached m' ->
-    forall i j, entry m' i j = min_path_weight m i j.
+  Parameter close_shortest : forall m m' i j, close m = Reached m' -> i <> j ->
+    (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
+    (forall ks d, chain_weight m i ks j = Some d ->
+       exists d', entry m' i j = Some d' /\ (d' <= d)%Z).
   (** Incremental closure agrees with full closure on closed input. *)
   Parameter incr_close_eq : forall m i j d, closed m ->
-    incr_close i j d m = close (add_cons i j d m).
+    same_entries (incr_close i j d m) (close (add_cons i j d m)).
+  (** Nonnegative diagonal checks limit intermediate Floyd-Warshall entry growth. *)
+  Parameter bits_fw_round_le : forall ks m,
+    (forall k, In k ks -> forall d,
+      entry (fold_left (fun a k => fw_round k a) ks m) k k = Some d -> (0 <= d)%Z) ->
+    ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
+  (** Each Floyd-Warshall round charges quadratic entry updates. *)
+  Parameter T1_fw_round : forall k m,
+    (T_fw_round k m <= k_zone * N.of_nat
+      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   (** Early negative-diagonal exit limits finite entry growth. *)
   Parameter bits_close_le : forall m m', close m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.

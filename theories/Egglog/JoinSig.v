@@ -30,7 +30,7 @@ Module Type JOIN_SPEC (V : VALUE) (I : INDEX V) (Import X : JOIN_OPS V I).
     Forall2 (fun lv ix => exists u, project lv b = Some u /\ I.mem ix u) (cols p) ixs.
   Definition wf_plan (p : jplan) (ixs : list I.t) : Prop :=
     length (cols p) = length ixs /\
-    Forall2 (fun lv ix => StronglySorted lt lv /\
+    Forall2 (fun lv ix => lv <> [] /\ StronglySorted lt lv /\
       Forall (fun i => i < nvars p) lv /\ I.wf (length lv) ix) (cols p) ixs /\
     (forall i, i < nvars p -> exists lv, In lv (cols p) /\ In i lv).
 End JOIN_SPEC.
@@ -52,15 +52,16 @@ Module Type JOIN (V : VALUE) (I : INDEX V) :=
 
 Module Type JOIN_TIME (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN V I).
   (* spec: work wmax *)
-  Parameter work wmax : jplan -> list I.t -> nat.
+  Parameter work : jplan -> list I.t -> nat.
+  Definition wmax (_ : jplan) (ixs : list I.t) : nat :=
+    fold_right (fun ix w => Nat.max (Pos.size_nat (I.next ix) + I.max_cell_bits ix) w)
+      0 ixs.
   Parameter T_run : jplan -> list I.t -> N.
   Parameter c_join : N.
   (** Running pays for recursive probe work at the maximum index width. *)
-  (* SIG-QUESTION: For zero variables and arbitrarily many empty-column indexes,
-     the requested recurrence gives work = 1 while root-node initialization visits
-     every index. The public bound is retained for F1 without an added cost term. *)
   Parameter T_run_le : forall p ixs, wf_plan p ixs ->
-    (T_run p ixs <= c_join * N.of_nat (work p ixs + 1) * N.of_nat (wmax p ixs + 1))%N.
+    (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 1) * N.of_nat (wmax p ixs + 1) *
+      N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
   (** Recursive probe work is a lower bound on running time. *)
   Parameter T_run_ge : forall p ixs, wf_plan p ixs ->
     (N.of_nat (work p ixs) <= T_run p ixs)%N.
@@ -131,11 +132,11 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
     work p ixs = work_at p ixs 0 (map I.root ixs).
   (** Finished assignments contribute one unit of recursive work. *)
   Parameter work_at_done : forall p ixs l ns, nvars p <= l ->
-    work_at p ixs l ns = 1.
+    work_at p ixs l ns = 1 + nvars p.
   (** A level pays for pivot enumeration, all probes and every surviving subtree. *)
   Parameter work_at_step : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
     l < nvars p -> choose p ixs l ns = Some j ->
-    work_at p ixs l ns = 1 + length (participants p l) *
+    work_at p ixs l ns = 1 + length (cols p) + length (participants p l) *
       (1 + N.to_nat (I.degree (nth j ixs I.empty) (nth j ns 1%positive))) +
       fold_right Nat.add 0
         (map (fun c => match advance p ixs l ns c with
@@ -148,7 +149,13 @@ Module Type JOIN_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : JOIN_T V I).
   (** Recursive cost pays for probes and all surviving subtrees. *)
   Parameter T_go_le : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
     (T_go (nvars p - l) p ixs ns pre acc <=
-      c_join * N.of_nat (work_at p ixs l ns + 1) * N.of_nat (wmax p ixs + 1))%N.
+      c_join * N.of_nat (work_at p ixs l ns + 1) * N.of_nat (wmax p ixs + 1) *
+      N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
+  (** Root initialization pays for every supplied index. *)
+  Parameter T_run_go : forall p ixs, wf_plan p ixs ->
+    (T_run p ixs <= T_go (nvars p) p ixs (map I.root ixs) [] [] +
+      c_join * N.of_nat (length ixs + 1) * N.of_nat (wmax p ixs + 1))%N.
+
 End JOIN_PLAN.
 
 Module Type JOIN_ALL (V : VALUE_T) (I : INDEX_T V) := JOIN_T V I <+ JOIN_PLAN V I.

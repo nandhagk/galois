@@ -50,6 +50,10 @@ Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
   Definition pconst w z := C 0 (L.wrap w z).
   Definition ppoint w a :=
     match congr_norm w a with C 0 r => Some r | _ => None end.
+  Definition pwparam := unit.
+  Definition pwiden (_ : pwparam) w a b :=
+    if pleb w b a then a else pjoin w a b.
+  Definition pnarrow w a b := pmeet w a b.
   Definition wrap_class w m r := congr_norm w (C (Z.gcd m (modulus w)) r).
   Definition congr_neg w a :=
     match congr_norm w a with CBot => CBot | C m r => wrap_class w m (-r) end.

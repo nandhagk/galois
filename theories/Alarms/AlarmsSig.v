@@ -65,7 +65,7 @@ Module Type ALARMS_TIME (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     k)%nat))%N.
   (** Reporting charges the sum of its checks' work. *)
   Parameter T_alarms_le : forall inv ks, (T_alarms inv ks <=
-    c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks))%nat))%N.
+    c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks) + 1)%nat))%N.
 End ALARMS_TIME.
 
 Module Type ALARMS_T (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)

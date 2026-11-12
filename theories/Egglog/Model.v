@@ -24,8 +24,7 @@ Record model : Type := Model {
   carrier : Type;
   rel : positive -> list (carrier + V) -> Prop;
   con : positive -> list (carrier + V) -> carrier;
-  lat : positive -> list (carrier + V) -> V -> Prop;
-  lat_merge : forall f m k a b, lat f k a -> lat f k b -> lat f k (merge m a b)
+  lat : positive -> list (carrier + V) -> V -> Prop
 }.
 
 Definition den {M : model} (nu : positive -> carrier M) (c : cell V) : carrier M + V :=
@@ -43,9 +42,14 @@ Definition holds (M : model) (nu : positive -> carrier M) (w : view)
   | _, _ => False
   end.
 
+Definition lat_closed (M : model) (w : view) : Prop :=
+  forall f m k a b, kind w f = Some (OLat m) ->
+    lat M f k a -> lat M f k b -> lat M f k (merge m a b).
+
 Definition sat (M : model) (nu : positive -> carrier M) (w : view) : Prop :=
   (forall f k o, row w f k o -> holds M nu w f k o) /\
-  (forall i j, same w i j -> nu i = nu j).
+  (forall i j, same w i j -> nu i = nu j) /\
+  lat_closed M w.
 
 Definition env := positive -> option (cell V).
 
@@ -192,9 +196,11 @@ Definition program_kind (p : program V) (f : positive) : option output :=
   lookup_kind (decls V p) f.
 
 Definition valid (M : model) (p : program V) : Prop :=
-  forall r s, In r (rules V p) ->
+  (forall r s, In r (rules V p) ->
     Forall (model_atom M (program_kind p) s) (query V r) ->
-    model_actions M (program_kind p) s (actions V r).
+    model_actions M (program_kind p) s (actions V r)) /\
+  (forall f m k a b, program_kind p f = Some (OLat m) ->
+    lat M f k a -> lat M f k b -> lat M f k (merge m a b)).
 
 Inductive derivation_action : env -> list (action V) -> positive -> list (cell V) -> Prop :=
   | derive_put s f args k rest : terms_value s args k ->

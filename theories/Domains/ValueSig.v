@@ -86,6 +86,27 @@ Module Type VALUE_DOMAIN_TIME (L : LANG_T) (Import D : VALUE_DOMAIN L).
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
   (** Guard transfer is bounded by guard work. *)
   Parameter T_guard_le : forall g xs, (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  (** Forward results fit within the charged operator work. *)
+  Parameter forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  (** Meet results fit within the combined operand sizes. *)
+  Parameter meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  (** Join results fit within the combined operand sizes. *)
+  Parameter join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  (** Backward results fit within the charged work and request size. *)
+  Parameter backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  (** Guard results fit within the charged guard work. *)
+  Parameter guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  (** Operator work accounts for every operand size. *)
+  Parameter work_sizes : forall o xs, fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  (** Guard work accounts for every operand size. *)
+  Parameter gwork_sizes : forall g xs, fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
 End VALUE_DOMAIN_TIME.
 
 Module Type VALUE_DOMAIN_T (L : LANG_T) := VALUE_DOMAIN L <+ VALUE_DOMAIN_TIME L.

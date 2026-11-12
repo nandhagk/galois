@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Std.
+From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
 
 Import List.ListNotations.
@@ -18,6 +19,8 @@ Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
   Definition insert (_ : list (cell V.t)) (ix : t) : t := ix.
   (* STUB-CODE *)
   Definition remove (_ : list (cell V.t)) (ix : t) : t := ix.
+  (* STUB-CODE *)
+  Definition next (_ : t) : positive := 1%positive.
   (* STUB-CODE *)
   Definition root (_ : t) : positive := 1%positive.
   (* STUB-CODE *)
@@ -34,6 +37,9 @@ Module Index (V : VALUE) <: INDEX V.
   Definition wf (_ : nat) (_ : t) : Prop := True.
   Definition mem (_ : t) (_ : list (cell V.t)) : Prop := False.
   Definition node (_ : t) (_ : positive) (_ : list (cell V.t)) : Prop := False.
+  Lemma mem_empty : forall u, ~ mem empty u.
+  Proof. Admitted.
+
   Lemma wf_empty : forall a, wf a empty.
   Proof. Admitted.
 
@@ -86,11 +92,20 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   TimeFun empty.
   TimeFun insert.
   TimeFun remove.
+  TimeFun next.
   TimeFun root.
   TimeFun child.
   TimeFun children.
   TimeFun degree.
+  Definition max_cell_bits (ix : t) : nat :=
+    fold_right (fun r n => fold_right
+      (fun c m => Nat.max (cell_bits V.encode c) m) n r) 0 ix.
   Definition width (_ : t) (_ : list (cell V.t)) : nat := 0.
+  Lemma width_le : forall ix r,
+    width ix r <= Pos.size_nat (next ix) +
+      fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
+  Proof. Admitted. (* STUB *)
+
   Definition c_ix : N := 1. (* STUB *)
   Lemma T_insert_le : forall r ix,
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
@@ -130,6 +145,73 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
 
   Lemma T_insert_step_le : forall ix n c,
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition walk_state := (t * positive)%type.
+  (* STUB-CODE *)
+  Definition start (ix : t) : walk_state := (ix, root ix).
+  (* STUB-CODE *)
+  Definition insert_step_st (st : walk_state) (_ : cell V.t) := st.
+  (* STUB-CODE *)
+  Definition remove_step_st (st : walk_state) (_ : cell V.t) := st.
+  (* STUB-CODE *)
+  Definition insert_finish (_ : list (cell V.t)) (ix : t) (_ : walk_state) := ix.
+  (* STUB-CODE *)
+  Definition remove_finish (_ : list (cell V.t)) (ix : t) (_ : walk_state) := ix.
+  TimeFun start.
+  TimeFun insert_step_st.
+  TimeFun remove_step_st.
+  TimeFun insert_finish.
+  TimeFun remove_finish.
+
+  (** Edge maps use the shared binary trie contracts. *)
+  Lemma c_map_source : c_map = PTrieT.c_trie.
+  Proof. Admitted. (* STUB *)
+  Definition k_walk : N := 1. (* STUB *)
+  (** The public constant absorbs the aggregate path and wrapper charges. *)
+  Lemma c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
+  Proof. Admitted. (* STUB *)
+  (** Each removal step pays for its edge-map operations. *)
+  Lemma T_remove_step_st_le : forall st c,
+    (T_remove_step_st st c <= 4 * c_map * N.of_nat (width (fst st) [c] + 1) + 4)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Insertion follows its named state walk. *)
+  Lemma F_insert_steps : forall r ix, inv ix ->
+    insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
+  Proof. Admitted. (* STUB *)
+
+  (** Removal follows its named state walk. *)
+  Lemma F_remove_steps : forall r ix, inv ix ->
+    remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
+  Proof. Admitted. (* STUB *)
+
+  (** Insertion aggregates the path-step charges. *)
+  Lemma T_insert_steps : forall r ix, inv ix ->
+    (T_insert r ix <= N.of_nat (length r + 1) *
+      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Removal aggregates the path-step charges. *)
+  Lemma T_remove_steps : forall r ix, inv ix ->
+    (T_remove r ix <= N.of_nat (length r + 1) *
+      (4 * c_map * N.of_nat (width ix r + 1) + 4) + k_walk)%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Child lookup aggregates its map operations. *)
+  Lemma T_child_steps : forall ix n c,
+    (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Enumeration aggregates the stored children. *)
+  Lemma T_children_steps : forall ix n,
+    (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
+      N.of_nat (width ix [] + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Degree lookup aggregates its map operations. *)
+  Lemma T_degree_steps : forall ix n,
+    (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
   Proof. Admitted. (* STUB *)
 
 End IndexT.

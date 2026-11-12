@@ -13,9 +13,71 @@ Inductive itv : Type :=
   | IBot
   | I (lo hi : bnd).
 
-Module Type Z_LANGUAGE_OPS := LANG_OPS with Definition val := Z.
-Module Type Z_LANGUAGE := LANG with Definition val := Z.
-Module Type Z_LANGUAGE_T := LANG_T with Definition val := Z.
+Inductive zview :=
+  | ZAdd
+  | ZSub
+  | ZMul
+  | ZDiv
+  | ZRem
+  | ZAnd
+  | ZOr
+  | ZShl
+  | ZCmp (c : comparison)
+  | ZConst (z : Z)
+  | ZOther.
+
+Inductive zguardview :=
+  | ZGuardCmp (c : comparison)
+  | ZGuardUlt
+  | ZGuardOther.
+
+(** Viewed integer operators use their mathematical primitive on valid operands. *)
+Definition zview_eval (k : zview) (xs : list Z) : option Z :=
+  match k, xs with
+  | ZAdd, x :: y :: nil => Some (x + y)%Z
+  | ZSub, x :: y :: nil => Some (x - y)%Z
+  | ZMul, x :: y :: nil => Some (x * y)%Z
+  | ZDiv, x :: y :: nil =>
+    if andb (0 <=? x)%Z (0 <? y)%Z then Some (x / y)%Z else None
+  | ZRem, x :: y :: nil =>
+    if andb (0 <=? x)%Z (0 <? y)%Z then Some (x mod y)%Z else None
+  | ZAnd, x :: y :: nil => Some (Z.land x y)
+  | ZOr, x :: y :: nil => Some (Z.lor x y)
+  | ZShl, x :: y :: nil => if (0 <=? y)%Z then Some (Z.shiftl x y) else None
+  | ZCmp c, x :: y :: nil =>
+    Some (if match Z.compare x y, c with Eq, Eq | Lt, Lt | Gt, Gt => true | _, _ => false end
+      then 1 else 0)%Z
+  | ZConst z, nil => Some z
+  | _, _ => None
+  end.
+
+(** Viewed guards compare exactly two integer operands. *)
+Definition zguard_holds (k : zguardview) (xs : list Z) : Prop :=
+  match k, xs with
+  | ZGuardCmp c, x :: y :: nil => Z.compare x y = c
+  | ZGuardUlt, x :: y :: nil => (0 <= x /\ 0 <= y /\ x < y)%Z
+  | _, _ => False
+  end.
+
+Module Type Z_LANGUAGE_OPS.
+  Include LANG_OPS with Definition val := Z.
+  Parameter view : op -> zview.
+  Parameter gview : guard -> zguardview.
+End Z_LANGUAGE_OPS.
+
+Module Type Z_LANGUAGE_BASE := Z_LANGUAGE_OPS <+ LANG_LAWS.
+
+Module Type Z_LANGUAGE_LAWS (Import L : Z_LANGUAGE_BASE).
+  (** Viewed operators agree with their integer primitive. *)
+  Parameter view_eval : forall o xs,
+    view o <> ZOther -> eval o xs = zview_eval (view o) xs.
+  (** Viewed guards agree with their integer comparison. *)
+  Parameter gview_holds : forall g xs,
+    gview g <> ZGuardOther -> (holds g xs <-> zguard_holds (gview g) xs).
+End Z_LANGUAGE_LAWS.
+
+Module Type Z_LANGUAGE := Z_LANGUAGE_BASE <+ Z_LANGUAGE_LAWS.
+Module Type Z_LANGUAGE_T := Z_LANGUAGE <+ LANG_TIME.
 
 Module Type INTERVAL_OPS (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS).
   Include VALUE_DOMAIN_OPS L with Definition t := itv with Definition wparam := ttree.
@@ -48,6 +110,22 @@ Module Type INTERVAL_SPEC (L : Z_LANGUAGE_OPS) (T : THRESHOLDS)
       (match lo with Fin z => 1 + count_lt ts z | _ => 0 end)
     end.
   Definition binary_work (a b : itv) : nat := (itv_bits a + itv_bits b + 1) ^ 2.
+  Definition shift_cutoff (a b : itv) : itv :=
+    let k := Z.of_nat (itv_bits a + itv_bits b + 1) in
+    match a, b with
+    | IBot, _ | _, IBot => IBot
+    | I (Fin la) ha, I (Fin lb) hb =>
+      if andb (0 <=? la)%Z (0 <=? lb)%Z then
+        match ha, hb with
+        | Fin ha, Fin hb =>
+          if (hb <=? k)%Z then
+            I (Fin (Z.shiftl la lb)) (Fin (Z.shiftl ha hb))
+          else I (Fin la) PosInf
+        | _, _ => I (Fin la) PosInf
+        end
+      else I NegInf PosInf
+    | _, _ => I NegInf PosInf
+    end.
   Definition opt_lo (z : option Z) : bnd := match z with Some z => Fin z | None => NegInf end.
   Definition opt_hi (z : option Z) : bnd := match z with Some z => Fin z | None => PosInf end.
 End INTERVAL_SPEC.
@@ -119,8 +197,8 @@ Module Type INTERVAL_TIME (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
     c_interval * N.of_nat (((Pos.to_nat w + size a + 1) ^ 2)%nat))%N.
   (** Threshold widening charges a search path and endpoint bit sizes. *)
   Parameter T_widen_thresholds_le : forall ts a b, (T_widen ts a b <=
-    c_interval * N.of_nat ((T.depth ts + 1)%nat) * N.of_nat ((T.tree_bits ts + size a + size b +
-    1)%nat))%N.
+    c_interval * N.of_nat
+      ((size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1)%nat))%N.
   (** Multiplication has the published quadratic endpoint bound. *)
   Parameter mul_bigO : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
@@ -140,11 +218,38 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   (** Each finite endpoint contributes at most one plus the threshold count. *)
   Parameter F3_wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
   (** Raising a finite upper endpoint to its next threshold removes one rank unit. *)
-  Parameter F4_above_count : forall ts z u, T.ordered ts -> T.above ts z = Some u ->
+  Parameter F4_count_gt : forall ts z u, In u (T.vals ts) ->
     (z < u)%Z -> count_gt ts u < count_gt ts z.
   (** Lowering a finite lower endpoint to its previous threshold removes one rank unit. *)
-  Parameter F5_below_count : forall ts z u, T.ordered ts -> T.below ts z = Some u ->
+  Parameter F5_count_lt : forall ts z u, In u (T.vals ts) ->
     (u < z)%Z -> count_lt ts u < count_lt ts z.
+  (** Widening parameter size pays for a threshold search path. *)
+  Parameter F_wsize : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
+  (** Shift transfer computes finite endpoints below the cutoff and a sound infinity above it. *)
+  Parameter F_shl_cutoff : forall a b, shl a b = shift_cutoff a b.
+  (** Viewed forward transfer dispatches to the proved interval primitives. *)
+  Parameter F_forward_view : forall o xs, forward o xs =
+    match L.view o, xs with
+    | ZConst z, nil => abst z
+    | ZAdd, a :: b :: nil => add a b
+    | ZSub, a :: b :: nil => sub a b
+    | ZMul, a :: b :: nil => mul a b
+    | ZDiv, a :: b :: nil => udiv a b
+    | ZRem, a :: b :: nil => urem a b
+    | ZAnd, a :: b :: nil => bitand a b
+    | ZOr, a :: b :: nil => bitor a b
+    | ZShl, a :: b :: nil => shl a b
+    | ZCmp c, a :: b :: nil => cmp c a b
+    | _, _ => top
+    end.
+  (** Viewed strict guards dispatch to unsigned comparison refinement. *)
+  Parameter F_guard_lt : forall g a b, L.gview g = ZGuardUlt ->
+    guard g (a :: b :: nil) =
+      let result := ult_back (I (Fin 1) (Fin 1)) a b in
+      fst result :: snd result :: nil.
+  (** Cutoff shifting keeps the published quadratic endpoint bound. *)
+  Parameter T3_shl : forall a b,
+    (T_shl a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   (** Addition retains every sum of represented operands. *)
   Parameter F6_add_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (add a b) (x + y).
@@ -206,8 +311,8 @@ Module Type INTERVAL_PLAN (L : Z_LANGUAGE_T) (T : THRESHOLDS_T)
   Parameter T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   (** Threshold searches bound widening before dispatch overhead. *)
   Parameter T2_widen : forall ts a b,
-    (T_widen ts a b <= k_interval_widen * N.of_nat (T.depth ts + 1) *
-      N.of_nat (T.tree_bits ts + size a + size b + 1))%N.
+    (T_widen ts a b <= k_interval_widen * N.of_nat
+      (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
 End INTERVAL_PLAN.
 
 Module Type INTERVAL_ALL (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) :=

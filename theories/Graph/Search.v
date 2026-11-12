@@ -34,22 +34,34 @@ Definition search_step (g : digraph) (s : search_state) : search_state + (list e
   end.
 TimeFun search_step.
 
-Definition search_budget (g : digraph) (roots : list positive) : N :=
+Definition raw_search_budget (g : digraph) (roots : list positive) : N :=
   N.of_nat (4 * (length roots +
     fold_right (fun entry n => length (snd entry) + n) 0 (PTrieCode.elements (succ g)) + 1)).
-TimeFun search_budget.
+TimeFun raw_search_budget.
 
 Definition search_trace (g : digraph) (roots : list positive) : list event :=
-  match loopN (search_step g) (search_budget g roots)
+  match loopN (search_step g) (raw_search_budget g roots)
       (SearchState (map SearchRoot roots) Empty []) with
   | inl s => rev (search_events s)
   | inr es => es
   end.
 TimeFun search_trace.
 
+Definition search_budget (g : prepared) (roots : list positive) : N :=
+  N.double (N.double (nv g + ne g + N.of_nat (length roots) + 1))%N.
+TimeFun search_budget.
+
+Definition prepared_search_trace (g : prepared) (roots : list positive) : list event :=
+  match loopN (search_step (base g)) (search_budget g roots)
+      (SearchState (map SearchRoot roots) Empty []) with
+  | inl s => rev (search_events s)
+  | inr es => es
+  end.
+TimeFun prepared_search_trace.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
-    fold_events V.enter V.leave V.edge (search_trace (base g) roots) s.
+    fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
 End SearchCode.
 
 Opaque search_trace.
@@ -57,67 +69,85 @@ Opaque search_trace.
 Module Search (V : VISITOR) <: SEARCH V.
   Include SearchCode V.
 
-  Definition trace (g : prepared) (roots : list positive) := search_trace (base g) roots.
+  Definition trace (g : prepared) (roots : list positive) := prepared_search_trace g roots.
 
   Lemma trace_depth_first : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     exists final, dfs_roots (base g) [] roots (trace g roots) final.
-  Proof. Admitted. (* SIG-QUESTION: landed trace proofs assume prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma dfs_fold : forall g roots s,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     dfs g roots s = fold_events V.enter V.leave V.edge (trace g roots) s.
-  Proof.
-    reflexivity.
-  Qed.
+  Proof. Admitted. (* CONVERT: GraphSearch: preserve the visitor-fold equation. *)
 
   Lemma trace_reach : forall g roots v,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     In v (entered (trace g roots)) <-> reach (base g) roots v.
-  Proof. Admitted. (* SIG-QUESTION: landed reachability proofs assume prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
-  Lemma trace_unique : forall g roots, NoDup (entered (trace g roots)).
-  Proof. Admitted. (* SIG-QUESTION: landed numbering proofs assume prepared readiness. *)
+  Lemma trace_unique : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) -> NoDup (entered (trace g roots)).
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
-  Lemma trace_nested : forall g roots, trace_stack [] (trace g roots) [].
-  Proof. Admitted. (* SIG-QUESTION: landed trace proofs assume prepared readiness. *)
+  Lemma trace_nested : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) -> trace_stack [] (trace g roots) [].
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
-  Lemma trace_edges : forall g roots u, reach (base g) roots u ->
+  Lemma trace_edges : forall g roots u,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) -> reach (base g) roots u ->
     Permutation (edge_targets u (trace g roots)) (succs (base g) u).
-  Proof. Admitted. (* SIG-QUESTION: landed edge proofs assume prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_edges_sound : forall g roots kind u v,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     In (Edge kind u v) (trace g roots) -> reach (base g) roots u /\ edge (base g) u v.
-  Proof. Admitted. (* SIG-QUESTION: landed edge proofs assume prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 
   Lemma trace_kinds : forall g roots prefix kind u v suffix,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     trace g roots = prefix ++ Edge kind u v :: suffix -> event_kind_correct prefix kind v.
-  Proof. Admitted. (* SIG-QUESTION: landed classification proofs assume prepared readiness. *)
+  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
 End Search.
 
 Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Include Search V.
   TimeFun dfs.
-  Definition c_dfs : N := 1. (* STUB *)
+  Definition c_dfs : N := 1%N. (* STUB *)
 
   Definition n_reach (g : prepared) (roots : list positive) : nat :=
     length (entered (trace g roots)).
   Definition e_reach (g : prepared) (roots : list positive) : nat :=
     fold_right (fun u n => length (succs (base g) u) + n) 0 (entered (trace g roots)).
   Definition run_width (g : prepared) (roots : list positive) : nat :=
-    graph_max (graph_width (base g)) (vertex_width roots).
+    graph_max (vertex_width roots)
+      (fold_right (fun u w => graph_max (vertex_width (succs (base g) u)) w) 0
+        (entered (trace g roots))).
   Definition work_bounded (g : prepared) (roots : list positive) (s : V.state) (B : nat) :=
     forall prefix suffix, trace g roots = prefix ++ suffix ->
       V.vwork (fold_events V.enter V.leave V.edge prefix s) <= B.
 
   Lemma T_dfs_le : forall g roots s B, work_bounded g roots s B ->
     (T_dfs g roots s <=
-      c_dfs * N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N.
+      c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma dfs_bigO : bigO
     (fun '(g, roots, s, B) => work_bounded g roots s B)
     (fun '(g, roots, _, B) =>
       (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N)
+        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+          N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
     (fun '(g, roots, s, _) => T_dfs g roots s).
   Proof. Admitted. (* STUB *)
 
@@ -125,12 +155,12 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   TimeFun search_step.
   Definition search_budget := search_budget.
   TimeFun search_budget.
-  Definition search_trace := search_trace.
+  Definition search_trace := prepared_search_trace.
   TimeFun search_trace.
-  Definition k_step : N := 1. (* STUB *)
-  Definition k_trace : N := 1. (* STUB *)
-  Definition k_fold : N := 1. (* STUB *)
-  Definition k_budget : N := 1. (* STUB *)
+  Definition k_step : N := 1%N. (* STUB *)
+  Definition k_trace : N := 1%N. (* STUB *)
+  Definition k_fold : N := 1%N. (* STUB *)
+  Definition k_budget : N := 1%N. (* STUB *)
 
   Definition initial (roots : list positive) : search_state :=
     SearchState (map SearchRoot roots) Empty [].
@@ -178,72 +208,92 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Definition stop_budget g roots := (k_trace * N.of_nat (length (trace g roots) + 1))%N.
 
   Lemma F1_budget : forall g roots,
-    search_budget g roots = N.of_nat (4 * (length roots + all_rows g + 1)).
+    search_budget g roots = (4 * (nv g + ne g + N.of_nat (length roots) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma F2_trace : forall g roots,
-    trace g roots = search_trace (base g) roots /\
-    search_trace (base g) roots =
-      match loopN (search_step (base g)) (search_budget (base g) roots) (initial roots) with
+    trace g roots = search_trace g roots /\
+    search_trace g roots =
+      match loopN (search_step (base g)) (search_budget g roots) (initial roots) with
       | inl st => rev (search_events st)
       | inr es => es
       end.
   Proof. Admitted. (* STUB *)
 
   Lemma F3_initial : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots (initial roots) /\
     potential g roots (initial roots) =
       N.of_nat (4 * n_reach g roots + 2 * e_reach g roots + length roots).
   Proof. Admitted. (* STUB *)
 
   Lemma F4_step : forall g roots st next,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inl next ->
     invariant g roots next /\ (potential g roots next < potential g roots st)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma F5_stop : forall g roots st es,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     search_tasks st = [] /\ es = trace g roots.
   Proof. Admitted. (* STUB *)
 
   Lemma F6_width : forall g roots st,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width (run_width g roots)) (search_events st).
   Proof. Admitted. (* STUB *)
 
   Lemma F7_events : forall g roots,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     length (trace g roots) = 2 * n_reach g roots + e_reach g roots.
   Proof. Admitted. (* STUB *)
 
   Lemma F8_fuel : forall g roots,
-    exists es, loopN (search_step (base g)) (search_budget (base g) roots)
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
+    exists es, loopN (search_step (base g)) (search_budget g roots)
       (initial roots) = inr es.
   Proof. Admitted. (* STUB *)
 
   Lemma T1_step : forall g roots st next w,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> Forall (event_width w) (trace g roots) ->
     vertex_width roots <= w -> search_step (base g) st = inl next ->
     (T_search_step (base g) st <= k_step * N.of_nat (w + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T2_stop : forall g roots st es,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     (T_search_step (base g) st <= stop_budget g roots)%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T3_loop : forall g roots w,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
     (T_loopN (search_step (base g)) (T_search_step (base g))
-      (search_budget (base g) roots) (initial roots) <=
+      (search_budget g roots) (initial roots) <=
     c_loopN * (driver_credit g roots w (initial roots) + stop_budget g roots +
-      N.of_nat (N.size_nat (search_budget (base g) roots)) + 1))%N.
+      N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T4_trace : forall g roots w,
+    prepared_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
     Forall (event_width w) (trace g roots) -> vertex_width roots <= w ->
-    (T_search_trace (base g) roots <= k_trace *
-      (T_search_budget (base g) roots + N.of_nat (length roots) +
+    (T_search_trace g roots <= k_trace *
+      (T_search_budget g roots + N.of_nat (length roots) +
         T_loopN (search_step (base g)) (T_search_step (base g))
-          (search_budget (base g) roots) (initial roots) +
+          (search_budget g roots) (initial roots) +
         N.of_nat (length (trace g roots)) + 1))%N.
   Proof. Admitted. (* STUB *)
 
@@ -256,15 +306,15 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Proof. Admitted. (* STUB *)
 
   Lemma T6_dfs : forall g roots s,
-    (T_dfs g roots s <= k_trace * (T_search_trace (base g) roots +
+    (T_dfs g roots s <= k_trace * (T_search_trace g roots +
       T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
         (trace g roots) s + 1))%N.
   Proof. Admitted. (* STUB *)
 
   Lemma T7_public : forall g roots s B, work_bounded g roots s B ->
-    (T_dfs g roots s <= c_dfs *
-      N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N.
+    (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof. Admitted. (* STUB *)
 End SearchT.
 
