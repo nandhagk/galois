@@ -15,3 +15,13 @@ tests/Framework/DenseTest.v
 theories/Framework/Interp.v
 tests/Framework/InterpTest.v
 examples/Toy.v
+tests/Fixpoint/IncompleteTest.v
+tests/Fixpoint/NarrowIntervalTest.v
+tests/Fixpoint/WorklistOrderTest.v
+tests/Fixpoint/WorklistSelfTest.v
+tests/Fixpoint/WorklistWidenTest.v
+tests/Framework/DenseBoundaryTest.v
+tests/Framework/DenseFactsTest.v
+tests/Framework/InterpCounterTest.v
+tests/Framework/InterpFiniteTest.v
+tests/Framework/RowsTest.v
