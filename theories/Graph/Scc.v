@@ -24,16 +24,18 @@ Record tarjan_state := TarjanState {
 Definition tarjan_initial := TarjanState Empty Empty [] Empty [] [] Empty 1%positive 1%positive.
 
 Fixpoint tarjan_pop (root index : positive) (pending : list positive)
-    (active : ptrie bool) (owners : ptrie positive)
-    : list positive * list positive * ptrie bool * ptrie positive :=
+    (low : ptrie positive) (active : ptrie bool) (owners : ptrie positive)
+    : list positive * list positive * ptrie positive * ptrie bool * ptrie positive :=
   match pending with
-  | [] => ([], [], active, owners)
+  | [] => ([], [], low, active, owners)
   | v :: rest =>
+    let low' := PTrieCode.remove v low in
     let active' := PTrieCode.remove v active in
     let owners' := PTrieCode.set v index owners in
-    if Pos.eqb v root then ([v], rest, active', owners') else
-    let '(members, tail, active'', owners'') := tarjan_pop root index rest active' owners' in
-    (v :: members, tail, active'', owners'')
+    if Pos.eqb v root then ([v], rest, low', active', owners') else
+    let '(members, tail, low'', active'', owners'') :=
+      tarjan_pop root index rest low' active' owners' in
+    (v :: members, tail, low'', active'', owners'')
   end.
 
 Module TarjanVisitor <: VISITOR_OPS.
@@ -70,9 +72,10 @@ Module TarjanVisitor <: VISITOR_OPS.
     match trie_get v (tarjan_low s), trie_get v (tarjan_disc s) with
     | Some l, Some d =>
       if Pos.eqb l d then
-        let '(members, tail, active, owners) :=
-          tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_active s) (tarjan_owners s) in
-        TarjanState (tarjan_disc s) (tarjan_low s) tail active frames
+        let '(members, tail, low, active, owners) :=
+          tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+            (tarjan_active s) (tarjan_owners s) in
+        TarjanState (tarjan_disc s) low tail active frames
           (members :: tarjan_emitted s) owners (tarjan_clock s) (Pos.succ (tarjan_next s))
       else match frames with [] => s' | parent :: _ => lower parent l s' end
     | _, _ => s'
