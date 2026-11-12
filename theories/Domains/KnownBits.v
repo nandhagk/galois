@@ -373,3 +373,73 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
   Lemma multiplier_selected : forall w a b, tnum_mul w a b = tnum_mul_with C.multiplier w a b.
   Proof. Admitted. (* STUB *)
 End KnownBits.
+
+(** Closed-form addition contains every concrete modular sum. *)
+Theorem tnum_add_sound : forall w a b x y,
+  tnum_gamma w a x -> tnum_gamma w b y -> tnum_gamma w (tnum_add w a b) (wadd w x y).
+Proof. Admitted. (* CONVERT: tnum_add_sound: The variable tnum_adc_sound was not found in the current environment. *)
+
+Theorem tnum_const_sound : forall w z, tnum_gamma w (tnum_const w z) (wrap w z).
+Proof. Admitted. (* CONVERT: tnum_const_sound: The variable tnum_gamma_bits was not found in the current environment. *)
+
+Theorem tnum_meet_sound : forall w a b z,
+  tnum_gamma w a z -> tnum_gamma w b z -> tnum_gamma w (tnum_meet w a b) z.
+Proof. Admitted. (* CONVERT: tnum_meet_sound: The variable tnum_meet_gamma was not found in the current environment. *)
+
+Theorem tnum_not_sound : forall w a z,
+  tnum_gamma w a z -> tnum_gamma w (tnum_not w a) (wnot w z).
+Proof. Admitted. (* CONVERT: tnum_not_sound: The variable tnum_gamma_bits was not found in the current environment. *)
+
+Theorem tnum_and_sound : forall w a b x y,
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_and w a b) (wand w x y).
+Proof. Admitted. (* CONVERT: tnum_and_sound: The variable tnum_gamma_bits was not found in the current environment. *)
+
+Theorem tnum_or_sound : forall w a b x y,
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_or w a b) (wor w x y).
+Proof. Admitted. (* CONVERT: tnum_or_sound: The variable tnum_gamma_bits was not found in the current environment. *)
+
+Theorem tnum_xor_sound : forall w a b x y,
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_xor w a b) (wxor w x y).
+Proof. Admitted. (* CONVERT: tnum_xor_sound: The variable tnum_gamma_bits was not found in the current environment. *)
+
+Theorem tnum_sub_sound : forall w a b x y,
+  is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_sub w a b) (wsub w x y).
+Proof. Admitted. (* CONVERT: tnum_sub_sound: The variable tnum_adc_sound was not found in the current environment. *)
+
+Theorem tnum_neg_sound : forall w a x,
+  is_word w x -> tnum_gamma w a x -> tnum_gamma w (tnum_neg w a) (wneg w x).
+Proof.
+  intros w a x Hx Ha. rewrite wneg_value.
+  replace (-x) with (0 - x) by ring. rewrite <- wsub_value.
+  apply tnum_sub_sound; try assumption.
+  pose proof (tnum_const_sound w 0) as Hzero. now rewrite wrap_0 in Hzero.
+Qed.
+
+Theorem tnum_mul_low_sound : forall w a b x y,
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_mul_low w a b) (wmul w x y).
+Proof. Admitted. (* CONVERT: tnum_mul_low_sound: The variable tnum_trailing_factor was not found in the current *)
+
+Theorem tnum_mul_sound : forall w a b x y,
+  is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_mul w a b) (wmul w x y).
+Proof. Admitted. (* CONVERT: tnum_mul_sound: The variable tnum_constant_value was not found in the current *)
+
+Theorem tnum_mul_stages_sound : forall w a b x y,
+  is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_mul_stages w a b) (wmul w x y).
+Proof. Admitted. (* CONVERT: tnum_mul_stages_sound: The reference tnum_mul_stages_c was not found in the current *)
+
+Theorem tnum_mul_acc_sound : forall w a b x y,
+  is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_mul_acc w a b) (wmul w x y).
+Proof. Admitted. (* CONVERT: tnum_mul_acc_sound: The variable iterate_value was not found in the current environment. *)
+
+Theorem tnum_mul_with_sound : forall choice w a b x y,
+  is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (tnum_mul_with choice w a b) (wmul w x y).
+Proof. Admitted. (* CONVERT: tnum_mul_with_sound: The reference tnum_mul_with_c was not found in the current *)
