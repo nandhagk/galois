@@ -57,12 +57,12 @@ Definition cfg_add {A} (k : positive) (x : A) (m : ptrie (list A)) :=
 TimeFun cfg_add.
 
 Definition cfg_distinct {A} (encode : A -> positive) (xs : list A) : list A :=
-  rev (snd (fold_left (fun acc x =>
+  rev_append (snd (fold_left (fun acc x =>
     let c := encode x in
     match trie_get c (fst acc) with
     | Some _ => acc
     | None => (PTrieCode.set c tt (fst acc), x :: snd acc)
-    end) xs (Empty, []))).
+    end) xs (Empty, []))) [].
 
 TimeFun cfg_distinct.
 TimeFun cfg_program.

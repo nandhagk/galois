@@ -59,10 +59,10 @@ Module VarsCode (P : TYPE) (N : KEY_OPS) (E : KEY_OPS)
     | None => nil
     end.
   Definition universe p :=
-    List.rev (PTrieCode.fold_values (fun acc x => x :: acc)
+    List.rev_append (PTrieCode.fold_values (fun acc x => x :: acc)
       (fold_left (fun s x => PTrieCode.set (X.encode x) x s)
       (flat_map (fun e => uses p e ++ defs p e) (C.edges p) ++
-        flat_map (exits p) (C.nodes p)) PTrieCode.empty) nil).
+        flat_map (exits p) (C.nodes p)) PTrieCode.empty) nil) nil.
 End VarsCode.
 
 Module Vars (P : TYPE) (N : KEY) (E : KEY)
