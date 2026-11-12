@@ -21,6 +21,10 @@ Record fpat (V : Type) : Type := FPat {
   root : nat
 }.
 
+(** A pattern whose root is a constructor node. *)
+Definition app_rooted {V} (p : fpat V) : Prop :=
+  exists f children, nth_error (nodes V p) (root V p) = Some (PApp f children).
+
 Inductive enode (V : Type) : Type :=
   | EApp (f : positive) (args : list nat)
   | ELit (v : V).
@@ -75,12 +79,24 @@ Definition denotes_pat {V} (merge : positive -> V -> V -> V)
   exists t, unfolds_pat tau (nodes V p) (root V p) t /\
     denote M t = value.
 
-(** A rewrite preserves denotation whenever its conditions hold in the model. *)
+(** A flat pattern takes a value when its holes take carrier values. *)
+Inductive pat_value {V : Type} (M : model (V := V)) (s : positive -> option (carrier M + V))
+    (ns : list (pnode V)) : nat -> carrier M + V -> Prop :=
+  | pat_value_hole i h c :
+      nth_error ns i = Some (PHole h) -> s h = Some c -> pat_value M s ns i c
+  | pat_value_lit i v :
+      nth_error ns i = Some (PLit v) -> pat_value M s ns i (inr v)
+  | pat_value_app i f children cs :
+      nth_error ns i = Some (PApp f children) ->
+      Forall (fun j => j < i) children ->
+      Forall2 (pat_value M s ns) children cs ->
+      pat_value M s ns i (inl (con M f cs)).
+
+(** A rewrite equates the classes of its two sides under every assignment that meets its conditions. *)
 Definition valid_rw {V} (prim : positive -> list V -> option V)
     (merge : positive -> V -> V -> V) (M : model (V := V))
     (kinds : positive -> option output) (rw : rewrite V) : Prop :=
-  forall tau s l r,
-    (forall h t, tau h = Some t -> s h = Some (denote M t)) ->
+  forall s x y,
     Forall (model_atom prim M kinds s) (cond V rw) ->
-    denotes_pat merge M tau (lhs V rw) l ->
-    denotes_pat merge M tau (rhs V rw) r -> l = r.
+    pat_value M s (nodes V (lhs V rw)) (root V (lhs V rw)) (inl x) ->
+    pat_value M s (nodes V (rhs V rw)) (root V (rhs V rw)) (inl y) -> x = y.
