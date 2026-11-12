@@ -37,7 +37,8 @@ Example clipped_widening_rank_unchanged :
   let a := I (Fin 0) (Fin 0) in
   let b := I (Fin 0) (Fin 1) in
   Scalar.is_bot (WordIntervals.interval_clip 1%positive a) = false /\
-  Scalar.leb (WordIntervals.interval_clip 1%positive b) (WordIntervals.interval_clip 1%positive a) = false /\
+  Scalar.leb (WordIntervals.interval_clip 1%positive b)
+    (WordIntervals.interval_clip 1%positive a) = false /\
   Scalar.wrank TLeaf (WordIntervals.interval_clip 1%positive a) = 2%nat /\
   Scalar.wrank TLeaf (WordIntervals.interval_clip 1%positive
     (Scalar.widen TLeaf (WordIntervals.interval_clip 1%positive a)
