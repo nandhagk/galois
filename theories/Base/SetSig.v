@@ -11,7 +11,6 @@ From Galois.Base Require Import KeySig.
 Module Type SET_OPS (K : KEY_OPS).
   Parameter t : Type.
   Parameter empty : t.
-  Parameter has : positive -> t -> bool.
   Parameter mem : K.t -> t -> bool.
   Parameter add : K.t -> t -> t.
   Parameter remove : K.t -> t -> t.
@@ -31,7 +30,8 @@ Module Type SET_SPEC (K : KEY_OPS) (Import S : SET_OPS K).
 End SET_SPEC.
 
 Module Type SET_LAWS (K : KEY) (Import S : SET_OPS K) (Import W : SET_SPEC K S).
-  (* spec: wf nodes *)
+  (* spec: wf nodes has *)
+  Parameter has : positive -> t -> bool.
   Parameter wf : t -> Prop.
   Parameter nodes : t -> nat.
   (** The empty set has consistent stored keys. *)

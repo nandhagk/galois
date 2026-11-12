@@ -13,7 +13,6 @@ Definition kmap (K A : Type) : Type := PTrieCode.t (K * A).
 Module Type MAP_OPS (K : KEY_OPS).
   Parameter t : Type -> Type.
   Parameter empty : forall {A}, t A.
-  Parameter find : forall {A}, positive -> t A -> option A.
   Parameter get : forall {A}, K.t -> t A -> option A.
   Parameter set : forall {A}, K.t -> A -> t A -> t A.
   Parameter remove : forall {A}, K.t -> t A -> t A.
@@ -32,7 +31,8 @@ Module Type MAP_SPEC (K : KEY_OPS) (Import M : MAP_OPS K).
 End MAP_SPEC.
 
 Module Type MAP_LAWS (K : KEY) (Import M : MAP_OPS K) (Import S : MAP_SPEC K M).
-  (* spec: wf nodes codes *)
+  (* spec: wf nodes find codes *)
+  Parameter find : forall {A}, positive -> t A -> option A.
   Parameter wf : forall {A}, t A -> Prop.
   Parameter nodes : forall {A}, t A -> nat.
   (** Empty maps have consistent stored keys. *)
