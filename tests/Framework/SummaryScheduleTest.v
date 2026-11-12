@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List Bool NArith.
 From Galois.Base Require Import Key Trie.
-From Galois.Graph Require Import Data Digraph Wto.
+From Galois.Graph Require Import Data Digraph Wto SearchSig Search.
 From Galois.Fixpoint Require Import PolicySig Schedule.
 From Galois.Program Require Import CallsSig.
 From Galois.Framework Require Import Summary.
@@ -45,4 +45,15 @@ Definition priority (pol : policy unit) n :=
 
 Example zero_self_edge :
   call_edges (AllCalls.resolve 0) (AllCalls.sites_of 0 0) = [CallEdge 0 0; CallEdge 0 1].
+Proof. vm_compute; reflexivity. Qed.
+
+Definition recursive_graph := Digraph [1; 2; 3]%positive
+  (PTrieCode.set 1%positive [2%positive]
+    (PTrieCode.set 2%positive [3%positive] (PTrieCode.set 3%positive [2%positive] Empty))).
+Definition reachable_from (u v : positive) :=
+  existsb (Pos.eqb v) (entered (prepared_search_trace (DigraphCode.prepare recursive_graph) [u])).
+
+Example exact_prepared_reach_sets :
+  map (fun f => map (reachable_from f) [1; 2; 3]%positive) [1; 2; 3]%positive =
+    [[true; true; true]; [false; true; true]; [false; true; true]].
 Proof. vm_compute; reflexivity. Qed.
