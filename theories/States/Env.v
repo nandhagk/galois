@@ -213,7 +213,7 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: abs_eval_sound: The variable term_eval_sound was not found. *)
 
   (** Reading an absent key returns top. *)
   Lemma read_spec : forall m x,
