@@ -424,13 +424,22 @@ Module Type DATABASE_PLAN (V : VALUE_T) (I : INDEX_T V) (Import X : DATABASE_T V
   Parameter union_sat : forall (M : model V.merge) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  (** Make extends the interpretation at its fresh output and keeps old allocated meanings. *)
+  (** Make updates its output meaning and keeps every other identifier meaning. *)
+  (* F1 validity gap.  Model.model permits carrier = bool, rel = False and lat = False
+     (lat_merge is then vacuous), and a total con whose [inl b] case is negb b
+     and whose other cases return false.  There is no constructor freeness law or
+     program-validity premise here.  Consider a row-empty well-formed db whose
+     same relation is equality and whose repr is identity.  Every nu satisfies it.
+     If make f [Id i] db allocates that unallocated i, make_spec requires the row
+     f [Id i] (Some (Id i)).  Satisfaction under nu' requires negb (nu' i) = nu' i,
+     which has no Boolean solution.  The requested update also sets
+     nu' i = negb (nu i).  No premise excludes this fresh-output input alias.
+     This source-level obstruction leaves the unrestricted claim visible for F1. *)
   Parameter make_sat : forall (M : model V.merge) nu db f k, wf db ->
     kind (view db) f = Some OId ->
-    (forall j, In (Id j) k -> (j < next_id db)%positive) ->
     sat V.merge M nu (view db) ->
     let '(i, db') := make f k db in
-    exists nu', (forall j, (j < next_id db)%positive -> nu' j = nu j) /\
+    exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con V.merge M f (map (den V.merge nu) k) /\ sat V.merge M nu' (view db').
 
   (* The source kernel proves semantics for immutable productions.  Row deletion,
