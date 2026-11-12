@@ -4,9 +4,20 @@
     For example, the least threshold above four in [0; 8] is eight.
     Builds on: ThresholdsSig. *)
 
-From Stdlib Require Import List ZArith Arith.
+From Stdlib Require Import List ZArith Arith Sorting.Sorted Sorting.Permutation.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import ThresholdsSig.
 Import List.ListNotations.
+
+Module Nat.
+  TimeFun Stdlib.Arith.PeanoNat.Nat.divmod.
+  TimeFun Stdlib.Arith.PeanoNat.Nat.div.
+End Nat.
+
+Module ListDef.
+  TimeFun Corelib.Lists.ListDef.firstn.
+  TimeFun Corelib.Lists.ListDef.skipn.
+End ListDef.
 
 Module ThresholdsCode <: THRESHOLDS_OPS.
   Fixpoint merge (fuel : nat) (xs ys : list Z) : list Z :=
@@ -121,3 +132,93 @@ Module Thresholds <: THRESHOLDS.
     below t z = Some u -> In u (vals t) /\ (u <= z)%Z.
   Proof. Admitted. (* CONVERT: lower_threshold_member: In environment *)
 End Thresholds.
+
+Module ThresholdsT <: THRESHOLDS_ALL.
+  Include Thresholds.
+
+  TimeFun merge.
+  TimeFun sort_fuel.
+  TimeFun msort.
+  TimeFun dedup_sorted.
+  TimeFun build.
+  TimeFun make.
+  TimeFun below.
+  TimeFun above.
+
+  Definition c_thresholds : N := 1%N. (* STUB *)
+  Definition k_sort : N := 1%N. (* STUB *)
+  Definition k_dedup : N := 1%N. (* STUB *)
+  Definition k_build : N := 1%N. (* STUB *)
+  Definition k_search : N := 1%N. (* STUB *)
+
+  Lemma T_make_le : forall zs,
+    (T_make zs <= c_thresholds * N.of_nat (length zs *
+      (Nat.log2 (length zs) + 1) + 1) * N.of_nat (zb zs + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_above_le : forall t z,
+    (T_above t z <= c_thresholds * N.of_nat ((depth t + 1)%nat) *
+      N.of_nat ((tree_bits t + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_below_le : forall t z,
+    (T_below t z <= c_thresholds * N.of_nat ((depth t + 1)%nat) *
+      N.of_nat ((tree_bits t + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma make_bigO : (bigO (fun _ => True)
+    (fun zs => N.of_nat
+      (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F2_msort_perm : forall zs, Permutation zs (msort zs).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F3_dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F4_dedup_ordered : forall zs, Sorted Z.le zs ->
+    StronglySorted Z.lt (dedup_sorted zs).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F5_build_vals : forall fuel zs, length zs <= fuel ->
+    vals (build fuel zs) = zs.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F6_build_depth : forall fuel zs, length zs <= fuel ->
+    depth (build fuel zs) <= Nat.log2 (length zs) + 1.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F7_make_eq : forall zs,
+    make zs = build (length zs) (dedup_sorted (msort zs)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1_msort : forall zs,
+    (T_msort zs <= k_sort * N.of_nat
+      (length zs * (Nat.log2 (length zs) + 1) + 1) *
+      N.of_nat (zb zs + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T2_dedup : forall zs,
+    (T_dedup_sorted zs <= k_dedup * N.of_nat ((length zs + 1)%nat) *
+      N.of_nat ((zb zs + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T3_build : forall fuel zs, length zs <= fuel ->
+    (T_build fuel zs <= k_build * N.of_nat
+      ((length zs * (Nat.log2 (length zs) + 1) + fuel + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T4_above : forall t z,
+    (T_above t z <= k_search * N.of_nat ((depth t + 1)%nat) *
+      N.of_nat ((tree_bits t + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T5_below : forall t z,
+    (T_below t z <= k_search * N.of_nat ((depth t + 1)%nat) *
+      N.of_nat ((tree_bits t + 1)%nat))%N.
+  Proof. Admitted. (* STUB *)
+End ThresholdsT.

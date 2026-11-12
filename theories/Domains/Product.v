@@ -4,8 +4,8 @@
     For example, a forward transfer pairs the two component results.
     Builds on: ProductSig and lattice products. *)
 
-From Stdlib Require Import List.
-From Argent Require Import Time Std.
+From Stdlib Require Import List NArith.
+From Argent Require Import Time Std BigO.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
 
@@ -183,3 +183,146 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
   Proof. Admitted.
 End Product.
+
+Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
+  Include Product L A B.
+
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun normalize.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun forward.
+  TimeFun backward.
+  TimeFun guard.
+
+  Definition size (a : t) : nat := A.size (fst a) + B.size (snd a).
+  Definition work (o : L.op) (xs : list t) : nat :=
+    A.work o (map fst xs) + B.work o (map snd xs) + length xs.
+  Definition gwork (g : L.guard) (xs : list t) : nat :=
+    A.gwork g (map fst xs) + B.gwork g (map snd xs) + length xs.
+  Definition wsize (p : wparam) : nat := A.wsize (fst p) + B.wsize (snd p).
+  Definition wunits (_ : t) : nat := 0.
+  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_lat : N := c_val.
+  Definition c_product : N := 1%N. (* STUB *)
+
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b,
+    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forward_le : forall o xs,
+    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_guard_le : forall g xs,
+    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma widen_size : forall p a b,
+    (N.of_nat (size (widen p a b)) <=
+      c_val * N.of_nat (size a + size b + wsize p + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma work_sizes : forall o xs,
+    fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof. Admitted. (* STUB *)
+  Lemma gwork_sizes : forall g xs,
+    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_normalize_le : forall a b,
+    (T_normalize (a, b) <= c_product * N.of_nat (A.size a + B.size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_forward_components : forall o xs,
+    (T_forward o xs <= c_product *
+      (N.of_nat (length xs) + A.T_forward o (map fst xs) +
+       B.T_forward o (map snd xs) +
+       T_normalize (A.forward o (map fst xs), B.forward o (map snd xs)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_backward_components : forall o r xs,
+    (T_backward o r xs <= c_product *
+      (N.of_nat (length xs) + A.T_backward o (fst r) (map fst xs) +
+       B.T_backward o (snd r) (map snd xs) +
+       fold_right N.add 0%N (map T_normalize
+         (combine (A.backward o (fst r) (map fst xs))
+           (B.backward o (snd r) (map snd xs)))) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_guard_components : forall g xs,
+    (T_guard g xs <= c_product *
+      (N.of_nat (length xs) + A.T_guard g (map fst xs) +
+       B.T_guard g (map snd xs) +
+       fold_right N.add 0%N (map T_normalize
+         (combine (A.guard g (map fst xs)) (B.guard g (map snd xs)))) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat (work (fst ox) (snd ox)))
+    (fun ox => T_forward (fst ox) (snd ox)))%N.
+  Proof. Admitted. (* STUB *)
+
+  Definition k_product_lists : N := 1%N. (* STUB *)
+  Lemma F1_gamma : forall a b c,
+    gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
+  Proof. Admitted. (* STUB *)
+  Lemma F2_leb : forall a b,
+    leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
+  Proof. Admitted. (* STUB *)
+  Lemma F3_widen : forall p a b,
+    widen p a b = if is_bot b then a
+      else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
+  Proof. Admitted. (* STUB *)
+  Lemma F4_wrank : forall p a b,
+    wrank p (a, b) = A.wrank (fst p) a + B.wrank (snd p) b.
+  Proof. Admitted. (* STUB *)
+  Lemma F5_size : forall a b, size (a, b) = A.size a + B.size b.
+  Proof. Admitted. (* STUB *)
+  Lemma F6_is_bot : forall a b,
+    is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
+  Proof. Admitted. (* STUB *)
+  Lemma F7_narrow : forall a b,
+    narrow a b = if is_bot b then b
+      else (A.narrow (fst a) (fst b), B.narrow (snd a) (snd b)).
+  Proof. Admitted. (* STUB *)
+  Lemma F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_leb_components : forall a b,
+    (T_leb a b <= k_product_lists *
+      (A.T_is_bot (fst a) + B.T_is_bot (snd a) +
+       A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
+  Proof. Admitted. (* STUB *)
+End ProductT.

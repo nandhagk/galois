@@ -5,7 +5,7 @@
     Builds on: Stdlib integer arithmetic. *)
 
 From Stdlib Require Import ZArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 
 Open Scope Z_scope.
 
@@ -51,6 +51,27 @@ Definition msb (w : width) (z : Z) : bool := Z.testbit (wrap w z) (Zpos w - 1).
 (** The signed view interprets the highest bit as a negative weight. *)
 Definition signed (w : width) (z : Z) : Z :=
   let z' := wrap w z in if z' <? half w then z' else z' - modulus w.
+
+Module Pos.
+  TimeFun Pos.testbit.
+End Pos.
+
+Module N.
+  TimeFun N.testbit.
+End N.
+
+Module Z.
+  TimeFun Z.odd.
+  TimeFun Z.pow_pos.
+  TimeFun Z.pow.
+  TimeFun Z.testbit.
+End Z.
+
+TimeFun modulus.
+TimeFun wrap.
+TimeFun half.
+TimeFun msb.
+TimeFun signed.
 
 (** Signed interpretation chooses its branch after normalizing an arbitrary integer. *)
 Theorem signed_value : forall w x,
