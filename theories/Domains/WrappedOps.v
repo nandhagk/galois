@@ -172,6 +172,12 @@ Module WrappedOpsCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L).
     | [(wa, a); (wb, b)] => let p := assume_binary o wa wb a b rw q in Some [fst p; snd p]
     | _ => None
     end.
+  Definition backward (o : op) (rw : width) (q : wrapped)
+      (xs : list (width * wrapped)) : list wrapped :=
+    match backward_raw o rw q xs with
+    | Some ys => ys
+    | None => map (fun wp => wrapped_norm (fst wp) (snd wp)) xs
+    end.
 End WrappedOpsCode.
 
 Module WrappedTableCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L) <: WORD_TABLE_OPS L W.

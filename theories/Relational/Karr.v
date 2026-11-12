@@ -116,7 +116,6 @@ End Karr.
 Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: KARR_ALL X L N F C.
   Include Karr X L N F C.
-  Definition swf (_ : t) : Prop := True.
   Definition wsize (_ : wparam) : nat := 0.
   Definition normal (P : list (lcons X.t)) : Prop :=
     Forall (fun r => NoDup (map fst (lhs r))) P.
@@ -138,7 +137,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition terms (s : t) : nat :=
     fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
   Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
-  Definition size (s : t) : nat := (terms s + n s + 1) * (nell s + 1).
+  Definition mu (s : t) : nat := terms s + n s + nell s.
+  Definition lat (m : nat) : nat :=
+    (m + 2) * ((m + 1)^3 * (ellB (m + 1) m + 1)^2 + m^2 + 1).
+  Definition size (s : t) : nat := lat (2 * mu s).
+  Definition k_karr : N := 1. (* STUB *)
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2 +
@@ -153,6 +156,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition range_work (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2 + N.to_nat (F.T_lin_of e).
+  Definition range_bits (e : term L.op X.t) (s : t) : nat := range_work e s.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -168,41 +172,44 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun subst.
   TimeFun affine_hull.
   TimeFun entail_cert.
+  Definition c_lat : N := 1. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall s,
+    (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
   Definition c_num : N := 1. (* STUB *)
-  Lemma swf_top : swf top.
-  Proof. Admitted. (* STUB *)
-  Lemma swf_join : forall a b, swf a -> swf b -> swf (join a b).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_widen : forall p a b, swf a -> swf b -> swf (widen p a b).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_narrow : forall a b, swf a -> swf b -> swf (narrow a b).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_assign : forall x e s, swf s -> swf (assign x e s).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_havoc : forall x s, swf s -> swf (havoc x s).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_assume : forall g es s, swf s -> swf (assume g es s).
-  Proof. Admitted. (* STUB *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_assume_le : forall g es s, swf s ->
+  Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall s,
-    (T_is_bot s <= c_num * N.of_nat (size s + 1))%N.
-  Proof. Admitted. (* STUB *)
   Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_num * N.of_nat (size a + size b + 1))%N.
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
+  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma range_size : forall e s,
+    (N.of_nat
+      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
+     c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Definition c_karr : N := 1. (* STUB *)
-  Lemma F_swf : forall s, swf s.
-  Proof. Admitted. (* STUB *)
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_karr * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
@@ -323,11 +330,27 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     entail_cert P c = Some k -> C.check_entails P c k = true.
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
-  Lemma F_size : forall s, size s = (terms s + n s + 1) * (nell s + 1).
+  Lemma lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_leb : forall a b,
+    (T_leb a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_join : forall a b,
+    (T_join a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_widen : forall p a b,
+    (T_widen p a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T1_narrow : forall a b,
+    (T_narrow a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F_size : forall s, size s = lat (2 * mu s).
   Proof. Admitted. (* STUB *)
   (** Range work charges the numeric query and its linearization. *)
   Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F_range_bits : forall e s, range_bits e s = range_work e s.
   Proof. Admitted. (* STUB *)
 End KarrT.

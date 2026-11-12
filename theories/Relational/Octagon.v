@@ -154,6 +154,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     (rows m)).
   Definition skel (m : dbm) : nat := M.nodes m + fold_right Nat.add 0 (map M.nodes (rows m)).
   Definition skels (s : t) : nat := match s with Unreached => 0 | Reached m => skel m end.
+  Definition labs (s : t) : nat := match s with Unreached => 0 | Reached m => M.weight m end.
   Definition keys (m : dbm) : list K.t :=
     fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc)
       (map fst (M.elements m) ++
@@ -161,8 +162,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun keys.
   Definition dbm_wf (m : dbm) : Prop :=
     M.wf m /\ forall p r, M.find p m = Some r -> M.wf r.
-  Definition swf (s : t) : Prop :=
-    match s with Unreached => True | Reached m => dbm_wf m end.
   Definition ns (s : t) := match s with Unreached => 0 | Reached m => supp m end.
   Definition bs (s : t) := match s with Unreached => 0 | Reached m => b m end.
   Definition ells (s : t) := match s with Unreached => 0 | Reached m => ell m end.
@@ -178,18 +177,22 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     end.
   Definition wunits (s : t) : nat := (ns s + 1) ^ 2.
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
-    (ns s + 1)^2 * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s +
+    (ns s + 1)^2 * (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) +
+      skels s + labs s +
+      (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2 +
       N.to_nat (F.T_lin_of e).
   Definition havoc_work (x : X.t) (s : t) : nat :=
     (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
   Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
     length (F.atoms_of g es) * (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
       (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-      length (F.atoms_of g es) *
-        (ns s + 2 * length (F.atoms_of g es) + 1) * skels s +
+      length (F.atoms_of g es) * labs s +
       N.to_nat (F.T_atoms_of g es).
   Definition range_work (e : term L.op X.t) (s : t) : nat :=
-    (tsize e + 1) * (bs s + ells s + F.bits_e e + 1)^2 + N.to_nat (F.T_lin_of e).
+    (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2 +
+      N.to_nat (F.T_lin_of e).
+  Definition range_bits (e : term L.op X.t) (s : t) : nat :=
+    ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -209,45 +212,51 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun tclose.
   TimeFun add_cons.
   TimeFun incr_close.
+  Definition c_lat : N := 1. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall s,
+    (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
   Definition c_num : N := 1. (* STUB *)
-  Lemma swf_top : swf top.
-  Proof. Admitted. (* STUB *)
-  Lemma swf_join : forall a b, swf a -> swf b -> swf (join a b).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_widen : forall p a b, swf a -> swf b -> swf (widen p a b).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_narrow : forall a b, swf a -> swf b -> swf (narrow a b).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_assign : forall x e s, swf s -> swf (assign x e s).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_havoc : forall x s, swf s -> swf (havoc x s).
-  Proof. Admitted. (* STUB *)
-  Lemma swf_assume : forall g es s, swf s -> swf (assume g es s).
-  Proof. Admitted. (* STUB *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_assume_le : forall g es s, swf s ->
+  Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall s,
-    (T_is_bot s <= c_num * N.of_nat (size s + 1))%N.
-  Proof. Admitted. (* STUB *)
   Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_num * N.of_nat (size a + size b + 1))%N.
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
+  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma range_size : forall e s,
+    (N.of_nat
+      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
+     c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Definition c_octagon : N := 1. (* STUB *)
+  Lemma T_entry_le : forall m i j,
+    (T_entry m i j <= c_octagon * N.of_nat (K.bits i + K.bits j + 1))%N.
+  Proof. Admitted. (* STUB *)
   Lemma T_add_cons_le : forall i j d m,
     (T_add_cons i j d m <= c_octagon * N.of_nat
       (K.bits i + K.bits j + Z.size_nat d + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition binary_work (a z : t) : nat :=
-    (ns a + ns z + 1)^2 * (bs a + bs z + ells a + ells z + 1) + skels a + skels z.
   Lemma T_tclose_le : forall m, dbm_wf m ->
     (T_tclose m <= c_octagon * N.of_nat (((supp m + 1)^3)%nat) *
     N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
@@ -255,16 +264,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
     c_octagon * N.of_nat (((supp m + 1)^2)%nat) *
       N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat) +
-    c_octagon * N.of_nat ((supp m + 1) * skel m))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_join_octagon_le : forall a z,
-    (T_join a z <= c_octagon * N.of_nat (binary_work a z))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_leb_octagon_le : forall a z,
-    (T_leb a z <= c_octagon * N.of_nat (binary_work a z))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_widen_octagon_le : forall p a z,
-    (T_widen p a z <= c_octagon * N.of_nat (binary_work a z + (ns a + ns z + 1)^2 * wsize p))%N.
+    c_octagon * N.of_nat (M.weight m))%N.
   Proof. Admitted. (* STUB *)
   Definition coherent (m : dbm) : Prop :=
     forall i j, entry m i j = entry m (bar j) (bar i).
@@ -280,10 +280,17 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Definition fw_round (_ : K.t) (m : dbm) : dbm := m.
   TimeFun fw_round.
   Definition k_octagon : N := 1. (* STUB *)
-  Lemma F_swf : forall s,
-    swf s <-> match s with Unreached => True | Reached m => dbm_wf m end.
+  Lemma skel_le : forall m, skel m <= (supp m + 1)^2 * (b m + 1).
   Proof. Admitted. (* STUB *)
-  (** Assignment work pays for linearization and quadratic matrix updates. *)
+  Lemma weight_le : forall m, dbm_wf m -> M.weight m <= supp m * (b m + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
+    supp m' <= supp m + 4 /\
+    b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j) + 1) /\
+    ell m' <= Nat.max (ell m) (Z.size_nat d) + 4 /\
+    M.weight m' <= M.weight m + 4 * (Nat.max (K.bits i) (K.bits j) + 2).
+  Proof. Admitted. (* STUB *)
+
   (** Widening units cover the squared support size. *)
   Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
   Proof. Admitted. (* STUB *)
@@ -293,15 +300,16 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       N.of_nat (length (F.atoms_of g es) *
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
-        length (F.atoms_of g es) *
-          (ns s + 2 * length (F.atoms_of g es) + 1) * skels s) +
+        length (F.atoms_of g es) * labs s) +
       F.T_atoms_of g es)%N.
   Proof. Admitted. (* STUB *)
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Lemma F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
       N.of_nat ((ns s + 1)^2 *
-        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s) + F.T_lin_of e)%N.
+        (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s + labs s +
+        (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) +
+      F.T_lin_of e)%N.
   Proof. Admitted. (* STUB *)
   Lemma F_havoc_work : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
@@ -336,16 +344,17 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     (T_fw m <= k_octagon * N.of_nat
       ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
   Proof. Admitted. (* STUB *)
+  Lemma T0_fw_round : forall k m, dbm_wf m ->
+    (T_fw_round k m <= k_octagon * N.of_nat
+      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma bits_tighten_le : forall m, ell (tighten m) <= ell m + 1.
+  Proof. Admitted. (* STUB *)
   Lemma T2_tighten : forall m, dbm_wf m ->
     (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof. Admitted. (* STUB *)
   Lemma T3_strengthen : forall m, dbm_wf m ->
     (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma bits_fw_round_le : forall ks m,
-    (forall k, In k ks -> forall d,
-      entry (fold_left (fun a k => fw_round k a) ks m) k k = Some d -> (0 <= d)%Z) ->
-    ell (fold_left (fun a k => fw_round k a) ks m) <= ell m + Nat.log2 (supp m) + 1.
   Proof. Admitted. (* STUB *)
   Definition strongly_closed (m : dbm) : Prop :=
     coherent m /\
@@ -389,7 +398,11 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   (** Range work charges the numeric query and its linearization. *)
   Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
-    N.of_nat ((tsize e + 1) * (bs s + ells s + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
+    N.of_nat ((tsize e + 1) *
+      (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F_range_bits : forall e s,
+    range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
   Proof. Admitted. (* STUB *)
   Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
     match ks with
@@ -404,6 +417,20 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     end.
   TimeFun fw_trace.
   (** A round keeps the support and its key bits. *)
+  Lemma keys_support : forall m k, dbm_wf m -> In k (keys m) ->
+    In (K.encode k) (support m).
+  Proof. Admitted. (* STUB *)
+  Lemma bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
+  Proof. Admitted. (* STUB *)
+  Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
+    In (k, a) (fw_trace ks m) ->
+    ell a <= ell m + Nat.log2 (supp m) + 1.
+  Proof. Admitted. (* STUB *)
+  Lemma T0_fw : forall m, dbm_wf m ->
+    (T_fw m <= k_octagon * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
+      fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
+        (fw_trace (keys m) m))))%N.
+  Proof. Admitted. (* STUB *)
   Lemma supp_fw_round : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
   Proof. Admitted. (* STUB *)

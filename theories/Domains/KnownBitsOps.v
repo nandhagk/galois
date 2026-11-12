@@ -40,3 +40,16 @@ Module KnownBitsOpsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     | _, _ => tnum_top
     end.
 End KnownBitsOpsCode.
+
+Definition tnum_payload_sound (wp : width * tnum) (y : word) : Prop :=
+  fst wp = fst y /\ is_word (fst y) (snd y) /\ tnum_gamma (fst wp) (snd wp) (snd y).
+
+Module KnownBitsForwardProof (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
+  Module P := KnownBitsCode L C.
+  Module F := KnownBitsOpsCode L C P.
+
+  Theorem tnum_forward_raw_sound : forall o wps ys rw z,
+    Forall2 tnum_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o wps rw) z.
+  Proof. Admitted. (* CONVERT: tnum_forward_raw_sound: The variable tnum_forward_one_sound was not found in the current environment. *)
+End KnownBitsForwardProof.
