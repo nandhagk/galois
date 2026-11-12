@@ -143,6 +143,21 @@ Module Type HARNESS_PLAN (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Definition opt_vals (xs : list B.t) : list L.val :=
     match points xs with Some cs => cs | None => nil end.
   Parameter k_points k_meet k_forward k_backward k_guard : nat.
+  (** Harness concretization uses the base interpretation. *)
+  Parameter F0_gamma : forall a c, gamma a c <-> B.gamma a c.
+  (** Harness inclusion uses the base order. *)
+  Parameter F0_leb : forall a b, leb a b = B.leb a b.
+  (** Harness meet uses the base meet. *)
+  Parameter F0_meet : forall a b, meet a b = B.meet a b.
+  (** Harness sizes use the base sizes. *)
+  Parameter F0_size : forall a, size a = B.bsize a.
+  (** Harness forward work charges operands, concrete evaluation and the table. *)
+  Parameter F0_work : forall o xs, work o xs =
+    fold_right Nat.add 0 (map B.bsize xs) + length xs +
+    L.work o (opt_vals xs) + T.twork o xs.
+  (** Harness guard work charges operands and the table. *)
+  Parameter F0_gwork : forall g xs, gwork g xs =
+    fold_right Nat.add 0 (map B.bsize xs) + length xs + T.tgwork g xs.
   (** Collected singletons agree with every represented concrete list. *)
   Parameter F1_points_sound : forall xs cs vs,
     Forall2 B.gamma xs cs -> points xs = Some vs -> vs = cs.

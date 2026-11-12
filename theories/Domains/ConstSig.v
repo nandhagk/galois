@@ -4,10 +4,10 @@
     For example, joining distinct singleton values gives top.
     Builds on: ValueSig and HarnessSig. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List ZArith.
 From Argent Require Import BigO.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Domains Require Import LangSig ValueSig HarnessSig.
+From Galois.Domains Require Import LangSig ValueSig HarnessSig WordSig.
 
 Inductive flat (A : Type) : Type :=
   | FBot
@@ -88,6 +88,11 @@ Module Type CONST_PLAN (L : LANG_T) (E : VAL_EQ_T L) (Import D : CONST_T L E).
   (** Singleton collection identifies every represented operand list. *)
   Parameter F5_points_sound : forall xs cs vs,
     Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
+  (** Singleton recognition reads the flat constructor. *)
+  Parameter F6_point : forall a, point a =
+    match a with FVal c => Some c | _ => None end.
+  (** Singleton abstraction records its concrete argument. *)
+  Parameter F7_abst : forall c, abst c = FVal c.
   (** Point collection charges a list traversal. *)
   Parameter T1_points : forall xs, T_points xs <= k_const_points * (length xs + 1).
   (** Concrete evaluation and singleton construction bound the point branch. *)
@@ -98,3 +103,56 @@ Module Type CONST_PLAN (L : LANG_T) (E : VAL_EQ_T L) (Import D : CONST_T L E).
 End CONST_PLAN.
 
 Module Type CONST_ALL (L : LANG_T) (E : VAL_EQ_T L) := CONST_T L E <+ CONST_PLAN L E.
+
+Module Type CONST_WORD_PAYLOAD (L : WORD_LANGUAGE) :=
+  WORD_PAYLOAD L with Definition p := flat Z.
+Module Type CONST_WORD_PAYLOAD_T (L : WORD_LANGUAGE_T) :=
+  WORD_PAYLOAD_T L with Definition p := flat Z.
+Module Type CONST_WORD_TABLE (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) :=
+  WORD_TABLE L W.
+Module Type CONST_WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L) :=
+  WORD_TABLE_T L W.
+
+Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
+    (Import T : CONST_WORD_TABLE_T L W).
+  Parameter shortcut : L.op -> (positive * W.p) -> (positive * W.p) -> option Z.
+  Parameter backward_one backward_two :
+    L.op -> positive -> W.p -> list (positive * W.p) -> option (list W.p).
+  Parameter T_shortcut : L.op -> (positive * W.p) -> (positive * W.p) -> nat.
+  Parameter T_backward_one T_backward_two :
+    L.op -> positive -> W.p -> list (positive * W.p) -> nat.
+  Parameter k_const_word : nat.
+  (** An annihilator shortcut identifies every defined concrete result. *)
+  Parameter F1_shortcut_sound : forall o a b z cs rw v,
+    shortcut o a b = Some z ->
+    Forall2 (fun wp c => fst wp = fst c /\ W.pgamma (fst wp) (snd wp) (snd c))
+      (a :: b :: nil) cs -> L.eval_op o cs = Some (rw, v) -> v = z.
+  (** Unary inverses retain every operand consistent with the result. *)
+  Parameter F2_backward_one_sound : forall o rw q xs ys cs z,
+    backward_one o rw q xs = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) ys) cs.
+  (** Binary inverses retain every operand consistent with the result. *)
+  Parameter F3_backward_two_sound : forall o rw q xs ys cs z,
+    backward_two o rw q xs = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) ys) cs.
+  (** Shortcuts charge both operand widths. *)
+  Parameter T1_shortcut : forall o a b, T_shortcut o a b <=
+    k_const_word * (Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2.
+  (** Unary inverses have the published quadratic width bound. *)
+  Parameter T2_backward_one : forall o rw q xs, T_backward_one o rw q xs <=
+    k_const_word *
+      (Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2.
+  (** Binary inverses have the published quadratic width bound. *)
+  Parameter T3_backward_two : forall o rw q xs, T_backward_two o rw q xs <=
+    k_const_word *
+      (Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2.
+End CONST_WORD_TABLE_PLAN.
+
+Module Type CONST_WORD_TABLE_ALL (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L) :=
+  CONST_WORD_TABLE_T L W <+ CONST_WORD_TABLE_PLAN L W.
