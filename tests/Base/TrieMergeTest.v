@@ -65,3 +65,28 @@ Example empty_left :
     PTrieCode.elements (PTrieCode.merge difference (PTrieCode.empty : PTrieCode.t nat) right_map)) =
   ([], []).
 Proof. vm_compute. reflexivity. Qed.
+
+Example equality_accept :
+  (PTrieCode.forall2
+    (fun x y => match y with Some y => Nat.eqb x y | None => false end) left_map left_map &&
+   PTrieCode.forall2
+    (fun x y => match y with Some y => Nat.eqb x y | None => false end) left_map left_map)%bool =
+  true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example equality_reject :
+  (PTrieCode.forall2
+    (fun x y => match y with Some y => Nat.eqb x y | None => false end) left_map right_map &&
+   PTrieCode.forall2
+    (fun x y => match y with Some y => Nat.eqb x y | None => false end) right_map left_map)%bool =
+  false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example count_bindings : length (PTrieCode.elements left_map) = 2%nat.
+Proof.
+  vm_compute. reflexivity.
+Qed.

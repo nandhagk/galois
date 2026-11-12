@@ -25,4 +25,21 @@ Proof. vm_compute. reflexivity. Qed.
 Example unit_scalar_width : UnitKey.bits tt = 1%nat.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Decoder and cost APIs from BaseEncodingTest.v at 87192fe have been removed. *)
+Example imported_positive_scalar_value p : PosKeyCode.encode p = p.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example imported_unit_scalar_value x : UnitKeyCode.encode x = 1%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* BaseEncodingTest.scalar_roundtrips expects six Some results and scalar_rejects
+   also expects (None, None) from bool and unit decoding. These coordinates retire
+   because KEY has no decoder and core section 4 deletes decoders with no consumer.
+   The signed-code comparison of scalar_rejects is checked above.
+   scalar_ticks, arbitrary_component_ticks, imported_positive_scalar_cost,
+   imported_unit_scalar_cost and scalar_adapter_charges retire with Cost.ticks.
+   imported_positive_scalar_width and imported_unit_scalar_width are symbolic
+   width laws. The concrete boundary widths above use the new nat-valued bits. *)

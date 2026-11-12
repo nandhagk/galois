@@ -51,4 +51,46 @@ Example uf_compression_classes :
     (fst (UnionFindCode.find 4%positive compressed)) = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Other operations, representation and cost examples are in BaseUnionFindTest.v at 87192fe. *)
+Example uf_empty : UnionFind.support UnionFind.empty = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example uf_singleton :
+  UnionFind.support (snd (UnionFind.union 1%positive 1%positive UnionFind.empty)) =
+  [1%positive].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example uf_same_class :
+  snd (UnionFindCode.union 1%positive 2%positive uf_pair) = uf_pair.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example uf_before_compression : PTrieCode.get 4%positive (parents uf_sample) = Some 3%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example uf_after_compression :
+  PTrieCode.get 4%positive (parents (snd (UnionFindCode.find 4%positive uf_sample))) =
+  Some 1%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example uf_key_order : UnionFind.support uf_sample = [4; 2; 1; 3]%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(* BaseUnionFindTest.uf_compression_ranks compares ranks and max_rank. Union by size deletes those
+   stored fields. uf_exhausted and uf_exhausted_prefix exercise find_fuel with
+   caller budgets 0 and 1 and expect the current key 4 and intermediate key 3.
+   find now computes its fuel from the allocation count and exports no budget
+   argument. These budget observations retire with find_fuel.
+   uf_empty_find_ticks, uf_exhausted_ticks, uf_singleton_union_ticks,
+   uf_distinct_union_ticks and uf_pair_find_ticks retire with Cost.ticks.
+   The symbolic rank/link transport clients use the replaced by-rank internals. *)
