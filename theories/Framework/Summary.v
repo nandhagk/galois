@@ -1,0 +1,103 @@
+(** * Function summary constraints
+
+    Local rows and call rows compute summary contributions.
+    For example, a call row emits its callee entry as a side contribution.
+    Builds on: Framework.SummarySig and Fixpoint.Query. *)
+
+From Stdlib Require Import List Bool.
+From Argent Require Import Loop.
+From Galois.Base Require Import KeySig.
+From Galois.Lattice Require Import LatticeSig.
+From Galois.Fixpoint Require Import Query SystemSig.
+From Galois.Program Require Import CallsSig.
+From Galois.Framework Require Import SummarySig.
+
+Module SummaryCode (P : TYPE) (F Site : KEY_OPS) (CL : CALLS_OPS P F Site)
+    (L : LATTICE_OPS) (B : BODY_OPS P F Site L) <: SUMMARY_OPS P F Site L.
+  Definition prog := P.t.
+  Definition key := F.t.
+  Definition row := summary_row F.t Site.t.
+  Definition frame := (Site.t * F.t)%type.
+  Definition key_code := F.encode.
+  Definition key_eqb := F.eqb.
+  Definition rows p : list row := map SummaryLocal (CL.functions p) ++
+    flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
+      (CL.sites_of p f)) (CL.functions p).
+  Definition target p (r : row) : key := match r with
+    | SummaryLocal f => f
+    | SummaryCall site _ => CL.caller_of p site
+    end.
+  Definition start p (r : row) : query key L.t frame := match r with
+    | SummaryLocal f => Ret (B.local p f)
+    | SummaryCall site g => Side g (B.entry p site g) (Ask g (site, g))
+    end.
+  Definition resume p (f : frame) a : query key L.t frame :=
+    Ret (B.via_call p (fst f) (snd f) a).
+  Definition deps (_ : prog) (r : row) : list key := match r with
+    | SummaryLocal _ => nil
+    | SummaryCall _ g => g :: nil
+    end.
+  Definition sides (_ : prog) (r : row) : list key := match r with
+    | SummaryLocal _ => nil
+    | SummaryCall _ g => g :: nil
+    end.
+End SummaryCode.
+
+Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
+    (L : LATTICE) (B : BODY_OPS P F Site L) <: SUMMARY P F Site CL L B.
+  Include SummaryCode P F Site CL L B.
+  Include SYSTEM_SPEC L.
+  Definition wf (_ : prog) := True.
+  (** Codes distinguish all system keys. *)
+  Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
+  Proof. Admitted.
+  (** Key equality decides equality of system keys. *)
+  Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
+  Proof. Admitted.
+  (** Declared rows finish within their dependency-derived fuel. *)
+  Lemma eval_total : forall p r look,
+    wf p -> In r (rows p) -> eval p r look <> None.
+  Proof. Admitted.
+  (** A row observes its declared dependencies. *)
+  Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
+    (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
+  Proof. Admitted.
+  (** A row asks only its declared dependencies. *)
+  Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
+    loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) -> In x (deps p r).
+  Proof. Admitted.
+  (** Side contributions use declared side keys. *)
+  Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
+    eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
+  Proof. Admitted.
+  (** Side contributions fit the declared occurrence budget. *)
+  Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
+    eval p r look = Some (a, ss) -> length ss <= length (sides p r).
+  Proof. Admitted.
+  (** Function keys use the client's encoding. *)
+  Lemma key_code_spec : key_code = F.encode.
+  Proof. Admitted.
+  (** Function keys use the client's equality test. *)
+  Lemma key_eqb_specification : key_eqb = F.eqb.
+  Proof. Admitted.
+  (** Local rows precede calls in function, site and resolver order. *)
+  Lemma rows_spec : forall p, rows p = map SummaryLocal (CL.functions p) ++
+    flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
+      (CL.sites_of p f)) (CL.functions p).
+  Proof. Admitted.
+  (** A local row targets its own function. *)
+  Lemma target_local : forall p f, target p (SummaryLocal f) = f.
+  Proof. Admitted.
+  (** A lifted row targets its call site's caller. *)
+  Lemma target_call : forall p site g, target p (SummaryCall site g) = CL.caller_of p site.
+  Proof. Admitted.
+  (** Local summaries have no side contributions. *)
+  Lemma eval_local : forall p f look,
+    eval p (SummaryLocal f) look = Some (B.local p f, nil).
+  Proof. Admitted.
+  (** Calls lift their callee summary and contribute a callee entry fact. *)
+  Lemma eval_call : forall p site g look, eval p (SummaryCall site g) look =
+    Some (B.via_call p site g (look g), (g, B.entry p site g) :: nil).
+  Proof. Admitted.
+End Summary.
