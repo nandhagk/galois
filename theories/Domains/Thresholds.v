@@ -103,7 +103,7 @@ Module Thresholds <: THRESHOLDS.
       forall v, In v (vals t) -> (z <= v)%Z -> (u <= v)%Z
     | None => forall v, In v (vals t) -> (v < z)%Z
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: upper_threshold_least: The variable tree was not found in the current environment. *)
   (** Lower search returns the greatest eligible threshold or proves none exists. *)
   Lemma below_spec : forall t z, ordered t ->
     match below t z with
@@ -111,13 +111,13 @@ Module Thresholds <: THRESHOLDS.
       forall v, In v (vals t) -> (v <= z)%Z -> (v <= u)%Z
     | None => forall v, In v (vals t) -> (z < v)%Z
     end.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: lower_threshold_greatest: The variable tree was not found in the current environment. *)
   (** Upper search is sound even when the tree is unordered. *)
   Lemma above_sound : forall t z u,
     above t z = Some u -> In u (vals t) /\ (z <= u)%Z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: upper_threshold_member: The variable tree was not found in the current environment. *)
   (** Lower search is sound even when the tree is unordered. *)
   Lemma below_sound : forall t z u,
     below t z = Some u -> In u (vals t) /\ (u <= z)%Z.
-  Proof. Admitted.
+  Proof. Admitted. (* CONVERT: lower_threshold_member: The variable tree was not found in the current environment. *)
 End Thresholds.
