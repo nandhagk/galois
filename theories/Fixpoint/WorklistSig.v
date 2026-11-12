@@ -5,7 +5,7 @@
     Builds on: Fixpoint.SystemSig and Lattice.LatticeSig. *)
 
 From Stdlib Require Import List NArith Arith PArith.
-From Argent Require Import BigO.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import MapSig Trie HeapSig Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Graph Require Import DigraphSig WtoSig.
@@ -41,6 +41,13 @@ Arguments ws_live {K A R Q} _.
 Arguments ws_rows {K A R Q} _.
 Arguments ws_readers {K A R Q} _.
 
+TimeFun ws_store.
+TimeFun ws_counters.
+TimeFun ws_queue.
+TimeFun ws_live.
+TimeFun ws_rows.
+TimeFun ws_readers.
+
 (** The projection retains every component of the original worklist state. *)
 Definition wl_view {K A R Q} (s : worklist_state K A R Q) : wl_state K A Q :=
   WlState (ws_store s) (ws_counters s) (ws_queue s).
@@ -51,6 +58,7 @@ Fixpoint wl_ids_from (n : nat) (id : positive) : list positive :=
   | O => nil
   | S n1 => id :: wl_ids_from n1 (Pos.succ id)
   end.
+TimeFun wl_ids_from.
 
 (** A path records the input state of every continuing callback in order. *)
 Inductive wl_path {A R : Type} (step : A -> A + R) : A -> list A -> A -> Prop :=
