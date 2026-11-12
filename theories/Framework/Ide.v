@@ -15,6 +15,7 @@ From Galois.Framework Require Import IfdsSig Ifds IdeSig.
 Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     (Site : KEY_OPS) (I : ICFG_OPS P N E C Site) (F : KEY_OPS)
     (V : LATTICE_OPS) (M : MICRO_OPS V) (FL : IDE_FLOW_OPS P N E F V M)
+    (R : IFDS_RULES_OPS P N E F)
     <: IDE_OPS P N E F V M.
   Definition prog := P.t.
   Definition key := path_edge N.t F.t.
@@ -25,9 +26,7 @@ Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     F.eqb (fst x) (fst y) && N.eqb (fst (snd x)) (fst (snd y)) &&
       F.eqb (snd (snd x)) (snd (snd y)).
   Definition rows p : list row := path_number 1%positive
-    (path_rules Site.eqb (I.kind p) (C.dst p) (FL.facts p) (FL.flow p)
-      (FL.seeds p) (C.edges p)).
-  Definition row_code (r : row) := path_row_code r.
+    (R.rules p).
   Definition target p (r : row) : key := match path_row_rule r with
     | PathIdentity n d => (d, (n, d))
     | PathStep d0 e _ y => (d0, (C.dst p e, y))
@@ -55,14 +54,12 @@ Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     match f with
     | PathFrame _ _ _ _ rule pending received => path_query (finish p) rule pending (a :: received)
     end.
-  Definition rows_of p (x : key) : list row :=
-    filter (fun r => key_eqb x (target p r)) (rows p).
 End IdeCode.
 
 Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (V : LATTICE) (M : MICRO V)
-    (FL : IDE_FLOW P N E C F V M) <: IDE P N E C Site I F V M FL.
-  Include IdeCode P N E C Site I F V M FL.
+    (FL : IDE_FLOW P N E C F V M) (R : IFDS_RULES P N E C Site I F FL) <: IDE P N E C Site I F V M FL.
+  Include IdeCode P N E C Site I F V M FL R.
   Include SYSTEM_SPEC M.
   Definition wf (_ : prog) := True.
   (** Codes distinguish all system keys. *)
@@ -92,20 +89,9 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
   Proof. Admitted. (* STUB *)
-  (** Row codes distinguish rows within each program. *)
-  Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
-    row_code a = row_code b -> a = b.
-  Proof. Admitted. (* STUB *)
-  (** The index lists exactly the rows that may write the requested key. *)
-  Lemma rows_of_spec : forall p x r, wf p ->
-    (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
-  Proof. Admitted. (* STUB *)
   Include IDE_RULE_SPEC P N E C Site I F V M FL.
   (** The path-edge encoding retains all three components. *)
   Lemma key_code_spec : key_code = path_edge_code N.encode F.encode.
-  Proof. Admitted. (* STUB *)
-  (** Row codes retain binary occurrence identities. *)
-  Lemma row_code_spec : row_code = path_row_code.
   Proof. Admitted. (* STUB *)
   (** Rows contain exactly the enabled finite rules. *)
   Lemma rows_spec : forall p rule,
@@ -131,22 +117,21 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Proof. Admitted. (* STUB *)
 End Ide.
 
-Module IdeT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_T P N E)
+Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     (Site : KEY_T) (I : ICFG_T P N E C Site) (F : KEY_T)
-    (V : LATTICE_T) (M : MICRO_T V) (FL : IDE_FLOW_T P N E C F V M).
-  Include Ide P N E C Site I F V M FL.
+    (V : LATTICE_T) (M : MICRO_T V) (FL : IDE_FLOW_T P N E C F V M)
+    (R : IFDS_RULES_T P N E C Site I F FL).
+  Include Ide P N E C Site I F V M FL R.
 
   TimeFun key_code.
   TimeFun key_eqb.
   TimeFun rows.
-  TimeFun row_code.
   TimeFun target.
   TimeFun deps.
   TimeFun sides.
   TimeFun finish.
   TimeFun start.
   TimeFun resume.
-  TimeFun rows_of.
 End IdeT.
 
 Module IdeSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)

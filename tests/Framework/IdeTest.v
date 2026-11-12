@@ -39,7 +39,7 @@ Module Flow <: IDE_FLOW_OPS Prog NatKeyCode Edge Fact Values Affine.
   Definition weight (_ : unit) e (_ _ : option unit) : Affine.t :=
     match e with 0 => (1, 1) | 2 => (1, 3) | _ => (1, 0) end.
 End Flow.
-Module A := IdeCode Prog NatKeyCode Edge Graph NatKeyCode Icfg Fact Values Affine Flow.
+Module A := IdeCode Prog NatKeyCode Edge Graph NatKeyCode Icfg Fact Values Affine Flow Rules.
 
 Example matched_return_composition_is_not_reversed :
   (A.finish tt (PathReturn None 0 2 None (Some tt) None None) [(1, 0); (2, 0)],
@@ -87,7 +87,14 @@ Module AffineFlow <: IDE_FLOW_OPS Prog NatKeyCode Edge Fact ZValues Translation.
   Definition weight (_ : unit) e (_ _ : option unit) : Translation.t :=
     FVal (if Nat.eqb e 1 then 1%Z else 0%Z).
 End AffineFlow.
-Module ASys := IdeCode Prog NatKeyCode Edge Graph NatKeyCode Icfg Fact ZValues Translation AffineFlow.
+Definition affine_rules := Eval vm_compute in
+  path_rules NatKeyCode.eqb (Icfg.kind tt) (Graph.dst tt) (AffineFlow.facts tt)
+    (AffineFlow.flow tt) (AffineFlow.seeds tt) (Graph.edges tt).
+Module AffineRules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
+  Definition rules (_ : unit) := affine_rules.
+End AffineRules.
+Module ASys := IdeCode Prog NatKeyCode Edge Graph NatKeyCode Icfg Fact ZValues Translation
+  AffineFlow AffineRules.
 Definition affine_lookup (k : ASys.key) : Translation.t :=
   match snd k with
   | (0, None) | (1, None) => FVal 0%Z
@@ -134,8 +141,11 @@ Module NoFlow <: IDE_FLOW_OPS Prog NatKeyCode Edge Fact IfdsLatticeCode BadMicro
   Definition seeds (_ : unit) : list (nat * option unit) := [(0, None)].
   Definition weight (_ : unit) (_ : nat) (_ _ : option unit) := true.
 End NoFlow.
+Module NoFlowRules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
+  Definition rules (_ : unit) : list (path_rule nat nat (option unit)) := [PathIdentity 0 None].
+End NoFlowRules.
 Module Bad := IdeCode Prog NatKeyCode Edge Singleton NatKeyCode SingleIcfg Fact
-  IfdsLatticeCode BadMicro NoFlow.
+  IfdsLatticeCode BadMicro NoFlow NoFlowRules.
 Definition bad_check lookup := forallb (fun r =>
   row_ok BadMicro.leb lookup (Bad.target tt r)
     (eval_query (Bad.resume tt) lookup (S (length (Bad.deps tt r))) (Bad.start tt r)))
@@ -149,7 +159,7 @@ Example bad_order_accepted_bound_loses_identity_application :
 Proof. vm_compute; reflexivity. Qed.
 
 Module NoFlowIfds := IfdsCode Prog NatKeyCode Edge Singleton NatKeyCode SingleIcfg Fact
-  NoFlow IfdsLatticeCode.
+  NoFlow NoFlowRules IfdsLatticeCode.
 
 Definition no_flow_lookup k := NoFlowIfds.key_eqb k (None, (0, None)).
 

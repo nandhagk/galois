@@ -31,7 +31,13 @@ Module Flow <: FLOW_FUN_OPS Prog NatKeyCode Edge Fact.
     end.
   Definition seeds (_ : unit) := [(0, None); (0, Some tt)].
 End Flow.
-Module A := IfdsCode Prog NatKeyCode Edge Graph NatKeyCode Icfg Fact Flow IfdsLatticeCode.
+Definition prepared_rules := Eval vm_compute in
+  path_rules NatKeyCode.eqb (Icfg.kind tt) (Graph.dst tt) (Flow.facts tt) (Flow.flow tt)
+    (Flow.seeds tt) (Graph.edges tt).
+Module Rules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
+  Definition rules (_ : unit) := prepared_rules.
+End Rules.
+Module A := IfdsCode Prog NatKeyCode Edge Graph NatKeyCode Icfg Fact Flow Rules IfdsLatticeCode.
 Definition look (k : A.key) :=
   existsb (A.key_eqb k)
     [(None, (0, None)); (Some tt, (0, Some tt));
@@ -57,8 +63,15 @@ Module UnsupportedFlow <: FLOW_FUN_OPS Prog NatKeyCode Edge Fact.
     end.
   Definition seeds (_ : unit) : list (nat * option unit) := [(0, None)].
 End UnsupportedFlow.
+Definition unsupported_rules := Eval vm_compute in
+  path_rules NatKeyCode.eqb (UnsupportedIcfg.kind tt) (UnsupportedGraph.dst tt)
+    (UnsupportedFlow.facts tt) (UnsupportedFlow.flow tt) (UnsupportedFlow.seeds tt)
+    (UnsupportedGraph.edges tt).
+Module UnsupportedRules <: IFDS_RULES_OPS Prog NatKeyCode Edge Fact.
+  Definition rules (_ : unit) := unsupported_rules.
+End UnsupportedRules.
 Module Unsupported := IfdsCode Prog NatKeyCode Edge UnsupportedGraph NatKeyCode UnsupportedIcfg
-  Fact UnsupportedFlow IfdsLatticeCode.
+  Fact UnsupportedFlow UnsupportedRules IfdsLatticeCode.
 Definition unsupported_lookup k :=
   Unsupported.key_eqb k (None, (0, None)) || Unsupported.key_eqb k (None, (1, Some tt)).
 
