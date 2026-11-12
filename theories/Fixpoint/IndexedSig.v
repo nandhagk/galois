@@ -5,6 +5,7 @@
     Builds on: Fixpoint.SystemSig and Base.Trie. *)
 
 From Stdlib Require Import List PArith Arith NArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -18,6 +19,10 @@ Record indexed (P R : Type) := Indexed {
 Arguments program {P R} _.
 Arguments numbered_rows {P R} _.
 Arguments write_index {P R} _.
+
+TimeFun program.
+TimeFun numbered_rows.
+TimeFun write_index.
 
 Module Type INDEXED_OPS (L : LATTICE_OPS) (S : SYSTEM_OPS L).
   Include LOCAL_SYSTEM_OPS L

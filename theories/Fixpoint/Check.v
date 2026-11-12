@@ -2,7 +2,8 @@
 
     The checker evaluates each row and checks every value written by the row. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List NArith.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
@@ -40,3 +41,32 @@ Module Check (L : LATTICE) (S : SYSTEM L) <: CHECK L S.
     intros p m Hcheck; apply check_rows_iff; exact Hcheck.
   Qed.
 End Check.
+
+Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
+  Include Check L S.
+  TimeFun look.
+  TimeFun check_rows.
+  TimeFun check.
+
+  Definition c_chk : N := 1. (* STUB *)
+
+  Lemma T_look_le : forall m x,
+    (T_look m x <= c_chk * N.of_nat (S.key_bits x + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_check_rows_le : forall p rs m B, S.wf p ->
+    (forall r, In r rs -> In r (S.rows p)) ->
+    (forall x, L.size (look m x) <= B) ->
+    (T_check_rows p rs m <= c_chk *
+      N.of_nat ((fold_right Nat.add 0
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs))%nat) *
+      (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_check_le : forall p m B, S.wf p ->
+    (forall x, L.size (look m x) <= B) ->
+    (T_check p m <= c_chk *
+      N.of_nat ((fold_right Nat.add 0
+        (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+          (S.rows p)))%nat) *
+      (S.row_work p B + N.of_nat (S.kw p) + L.c_lat * N.of_nat (B + 1) + 1))%N.
+  Proof. Admitted. (* STUB *)
+End CheckT.
