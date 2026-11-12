@@ -182,7 +182,8 @@ Module Type CUT_RAW_LINK (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) (R : INTERVAL_ALL
 End CUT_RAW_LINK.
 
 Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
-    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R) (Import D : CUT_INTERVAL_T C L T).
+    (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R)
+    (Import D : CUT_INTERVAL_T C L T).
   (** Concrete membership uses the projected inclusive interval. *)
   Parameter F_gamma : forall a z, gamma a z <-> in_cut a z.
   (** Inclusion compares normalized bounded projections directly. *)
@@ -213,6 +214,7 @@ Module Type CUT_INTERVAL_PLAN (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     map cut_raw (backward o r xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
+  (** Guard refinement cuts each result within its original operand. *)
   Parameter F_guard : forall g xs,
     map cut_raw (guard g xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))

@@ -4,10 +4,81 @@
     For example, an interval can discard endpoints outside a congruence class.
     Builds on: ProductSig and ValueSig. *)
 
-From Stdlib Require Import NArith.
-From Argent Require Import BigO.
+From Stdlib Require Import ZArith List.
+From Argent Require Import Time Std BigO.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Domains Require Import LangSig ValueSig ProductSig BitsLang.
+From Galois.Domains Require Import LangSig ValueSig ProductSig BitsLang WordSig
+  KnownBitsSig WrappedSig IntervalSig CongruenceSig.
+
+(** The arc between the least and the greatest member of a known-bit payload. *)
+Definition bits_hull (w : positive) (b : tnum) : wrapped :=
+  let lo := tnum_wrap w (ones b) in
+  let hi := Z.lxor (tnum_wrap w (zeros b)) (Z.ones (Zpos w)) in
+  if Z.leb lo hi then WItv lo hi else WBot.
+TimeFun bits_hull.
+
+Module Z.
+  TimeFun Z.lnot.
+End Z.
+
+(** The common prefix of a nonwrapping arc as a known-bit payload. *)
+Definition arc_prefix (w : positive) (a : wrapped) : tnum :=
+  match a with
+  | WItv lo hi =>
+    let lo' := tnum_wrap w lo in
+    let hi' := tnum_wrap w hi in
+    if Z.leb lo' hi' then
+      let m := Z.ones (Z.log2 (Z.lxor lo' hi') + 1) in
+      Tnum (Z.land (Z.lnot (Z.lor lo' m)) (Z.ones (Zpos w))) (Z.land lo' (Z.lnot m))
+    else Tnum 0 0
+  | _ => Tnum 0 0
+  end.
+TimeFun arc_prefix.
+
+(** Finite bounds round inward to the residue class, and a singleton fixes both bounds. *)
+Definition congr_interval (a : itv) (b : congr) : itv :=
+  match a, b with
+  | IBot, _ | _, CBot => IBot
+  | _, C m r =>
+    if Z.eqb m 0 then I (Fin r) (Fin r) else
+    match a with
+    | IBot => IBot
+    | I lo hi => I
+        (match lo with Fin z => Fin (z + (r - z) mod Z.abs m) | _ => lo end)
+        (match hi with Fin z => Fin (z - (z - r) mod Z.abs m) | _ => hi end)
+    end
+  end.
+TimeFun congr_interval.
+
+(** A singleton interval supplies an exact residue, and other intervals supply no residue fact. *)
+Definition interval_congr (a : itv) : congr :=
+  match a with
+  | IBot => CBot
+  | I (Fin lo) (Fin hi) => if Z.eqb lo hi then C 0 lo else C 1 0
+  | _ => C 1 0
+  end.
+TimeFun interval_congr.
+
+(** The least and greatest known-bit members bound an ordinary interval. *)
+Definition bits_interval (w : positive) (b : tnum) : itv :=
+  match bits_hull w b with
+  | WItv lo hi => I (Fin lo) (Fin hi)
+  | WBot => IBot
+  | WFull => I NegInf PosInf
+  end.
+TimeFun bits_interval.
+
+(** Common-prefix extraction first intersects the interval with the unsigned word range. *)
+Definition interval_prefix (w : positive) (a : itv) : tnum :=
+  match a with
+  | I lo hi =>
+    let lo' := match lo with Fin z => Z.max 0 z | NegInf => 0%Z | PosInf => Z.ones (Zpos w) end in
+    let hi' := match hi with Fin z => Z.min (Z.ones (Zpos w)) z
+      | PosInf => Z.ones (Zpos w) | NegInf => 0%Z end in
+    if Z.leb lo' hi' then arc_prefix w (WItv lo' hi') else Tnum 0 0
+  | IBot => Tnum 0 0
+  end.
+TimeFun interval_prefix.
 
 Module Type REDUCTION_STEPS_OPS (L : LANG_OPS) (A B : VALUE_DOMAIN_OPS L).
   Include REDUCER_OPS A B.
@@ -36,7 +107,7 @@ Module Type REDUCTION_STEPS_LAWS (L : LANG) (A B : VALUE_DOMAIN L)
 End REDUCTION_STEPS_LAWS.
 
 Module Type REDUCTION_STEPS (L : LANG) (A B : VALUE_DOMAIN L) :=
-  REDUCTION_STEPS_OPS L A B <+ REDUCER_LAWS A B <+ VALUE_REDUCER_SOUND L A B <+
+  REDUCTION_STEPS_OPS L A B <+ REDUCER_LOWER A B <+ VALUE_REDUCER_SOUND L A B <+
   REDUCTION_STEPS_LAWS L A B.
 
 Module Type REDUCTION_STEPS_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
@@ -53,6 +124,10 @@ Module Type REDUCTION_STEPS_TIME (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** The first exchange has linearly bounded output storage. *)
   Parameter left_size : forall a b,
     (N.of_nat (A.size (fst (to_left (a, b))) + B.size b) <=
+      c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
+  (** The second exchange has linearly bounded output storage. *)
+  Parameter right_size : forall a b,
+    (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
   (** Reduction has the published combined-size asymptotic budget. *)
   Parameter reduce_bigO : bigO (fun _ => True)
@@ -114,7 +189,50 @@ Module Type INTERVAL_BITS_PLAN (A B : VALUE_DOMAIN_T BitsLangT)
 Module Type INTERVAL_BITS_ALL (A B : VALUE_DOMAIN_T BitsLangT) :=
   REDUCTION_STEPS_ALL BitsLangT A B.
 
-(* SIG-QUESTION: These soundness and descent interfaces permit identity exchanges.
-   The numerical equations for the CAV bit hull/common prefix, Granger inward residue
-   rounding/singleton propagation and IntervalBits exchange are still prose in the design.
-   Their representation-pinned precision contracts require an F2 decision. *)
+Module Type WRAPPED_BITS_PIN (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
+    (W : WRAPPED L) (K : KNOWN_BITS L C)
+    (A : VALUE_DOMAIN BitsLang with Definition t := tagged W.p)
+    (B : VALUE_DOMAIN BitsLang with Definition t := tagged K.p)
+    (R : WRAPPED_BITS A B).
+  (** The left exchange meets the arc with the bit hull at the same width. *)
+  Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
+    (TVal w (W.pmeet w a (bits_hull w b)), TVal w b).
+  (** The right exchange meets the bits with the arc's common prefix at the same width. *)
+  Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
+    (TVal w a, TVal w (K.pmeet w b (arc_prefix w a))).
+  (** Pairs of other shapes are left unchanged. *)
+  Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+    R.to_left x = x /\ R.to_right x = x.
+End WRAPPED_BITS_PIN.
+
+Module Type INTERVAL_CONGR_PIN (L : WORD_LANGUAGE)
+    (I : INTERVAL_PAYLOAD L) (G : CONGRUENCE L)
+    (A : VALUE_DOMAIN BitsLang with Definition t := tagged I.p)
+    (B : VALUE_DOMAIN BitsLang with Definition t := tagged G.p)
+    (R : INTERVAL_CONGR A B).
+  (** The left exchange meets the interval with inward residue rounding at the same width. *)
+  Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
+    (TVal w (I.pmeet w a (congr_interval a b)), TVal w b).
+  (** The right exchange meets the congruence with the interval's singleton fact. *)
+  Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
+    (TVal w a, TVal w (G.pmeet w b (interval_congr a))).
+  (** Pairs of other shapes are left unchanged. *)
+  Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+    R.to_left x = x /\ R.to_right x = x.
+End INTERVAL_CONGR_PIN.
+
+Module Type INTERVAL_BITS_PIN (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
+    (I : INTERVAL_PAYLOAD L) (K : KNOWN_BITS L C)
+    (A : VALUE_DOMAIN BitsLang with Definition t := tagged I.p)
+    (B : VALUE_DOMAIN BitsLang with Definition t := tagged K.p)
+    (R : INTERVAL_BITS A B).
+  (** The left exchange meets the interval with the known bits' hull at the same width. *)
+  Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
+    (TVal w (I.pmeet w a (bits_interval w b)), TVal w b).
+  (** The right exchange meets the bits with the interval's word-range common prefix. *)
+  Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
+    (TVal w a, TVal w (K.pmeet w b (interval_prefix w a))).
+  (** Pairs of other shapes are left unchanged. *)
+  Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
+    R.to_left x = x /\ R.to_right x = x.
+End INTERVAL_BITS_PIN.
