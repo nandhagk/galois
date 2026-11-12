@@ -4,7 +4,7 @@
     For example, removing the sole binding collapses its path to the empty trie.
     Builds on: TrieSig and Argent time derivation. *)
 
-From Stdlib Require Import PArith List Bool Sorting.Sorted.
+From Stdlib Require Import NArith PArith List Bool Sorting.Sorted.
 From Argent Require Import Time Std.
 From Galois.Base Require Import TrieSig.
 
@@ -399,62 +399,62 @@ Module PTrieT <: TRIE_ALL.
   TimeFun map.
   TimeFun elements.
 
-  Definition c_trie : nat := 1. (* STUB *)
+  Definition c_trie : N := 1. (* STUB *)
 
-  Lemma T_is_empty_le : forall A (m : t A), T_is_empty m <= c_trie.
+  Lemma T_is_empty_le : forall A (m : t A), (T_is_empty m <= c_trie)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_get_le : forall A p (m : t A),
-    T_get p m <= c_trie * (Pos.size_nat p + 1).
+    (T_get p m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_set_le : forall A p (a : A) m,
-    T_set p a m <= c_trie * (Pos.size_nat p + 1).
+    (T_set p a m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_remove_le : forall A p (m : t A),
-    T_remove p m <= c_trie * (Pos.size_nat p + 1).
+    (T_remove p m <= c_trie * N.of_nat (Pos.size_nat p + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_merge_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2 k,
-    (forall a b, T_f a b <= k) ->
-    T_merge f T_f m1 m2 <= c_trie * (k + 1) * (nodes m1 + nodes m2 + 1).
+    ((forall a b, T_f a b <= k) ->
+    T_merge f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_forall2b_le : forall A B (f : option A -> option B -> bool) T_f m1 m2 k,
-    (forall a b, T_f a b <= k) ->
-    T_forall2b f T_f m1 m2 <= c_trie * (k + 1) * (nodes m1 + nodes m2 + 1).
+    ((forall a b, T_f a b <= k) ->
+    T_forall2b f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_existsb_le : forall A (f : A -> bool) T_f m k,
-    (forall a, T_f a <= k) ->
-    T_existsb f T_f m <= c_trie * (k + 1) * (nodes m + 1).
+    ((forall a, T_f a <= k) ->
+    T_existsb f T_f m <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_map_le : forall A B (f : A -> B) T_f m k,
-    (forall a, T_f a <= k) ->
-    T_map f T_f m <= c_trie * (k + 1) * (nodes m + 1).
+    ((forall a, T_f a <= k) ->
+    T_map f T_f m <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_fold_le : forall A B (f : B -> positive -> A -> B) T_f m b k,
-    (forall acc p a, T_f acc p a <= k) ->
-    T_fold f T_f m b <= c_trie * (k + 1) * (nodes m + 1).
+    ((forall acc p a, T_f acc p a <= k) ->
+    T_fold f T_f m b <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_elements_le : forall A (m : t A),
-    T_elements m <= c_trie * (weight m + 1).
+    (T_elements m <= c_trie * N.of_nat (weight m + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma get_tight : forall A p (m : t A), Pos.size_nat p <= T_get p m.
+  Lemma get_tight : forall A p (m : t A), (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
   Proof. Admitted. (* STUB *)
 
-  Definition k_node : nat := 1. (* STUB *)
-  Definition k_replace : nat := 1. (* STUB *)
-  Definition k_filter : nat := 1. (* STUB *)
-  Definition k_merge : nat := 1. (* STUB *)
-  Definition k_check : nat := 1. (* STUB *)
-  Definition k_fold : nat := 1. (* STUB *)
-  Definition k_elements : nat := 1. (* STUB *)
+  Definition k_node : N := 1. (* STUB *)
+  Definition k_replace : N := 1. (* STUB *)
+  Definition k_filter : N := 1. (* STUB *)
+  Definition k_merge : N := 1. (* STUB *)
+  Definition k_check : N := 1. (* STUB *)
+  Definition k_fold : N := 1. (* STUB *)
+  Definition k_elements : N := 1. (* STUB *)
 
   Definition bindings {A} (m : t A) : nat := length (elements m).
   Definition key_mass {A} (m : t A) : nat :=
     fold_right Nat.add 0
       (List.map (fun kv => Pos.size_nat (fst kv)) (elements m)).
   Definition fold_work {A B} (f : B -> positive -> A -> B)
-      (T_f : B -> positive -> A -> nat) (m : t A) (b : B) : nat :=
+      (T_f : B -> positive -> A -> N) (m : t A) (b : B) : N :=
     snd (fold_left (fun bw kv =>
       (f (fst bw) (fst kv) (snd kv),
-        snd bw + T_f (fst bw) (fst kv) (snd kv))) (elements m) (b, 0)).
+        (snd bw + T_f (fst bw) (fst kv) (snd kv))%N)) (elements m) (b, 0%N)).
 
   Lemma F1_node : forall A (m : t A), node (left m) (value m) (right m) = m.
   Proof. Admitted. (* STUB *)
@@ -470,7 +470,7 @@ Module PTrieT <: TRIE_ALL.
       fold_left (fun acc kv => f acc (path (fst kv)) (snd kv)) (elements m) b.
   Proof. Admitted. (* STUB *)
   Lemma F6_fold_work : forall A B (f : B -> positive -> A -> B) T_f m b c,
-    (forall acc p a, T_f acc p a <= c) -> fold_work f T_f m b <= c * bindings m.
+    ((forall acc p a, T_f acc p a <= c) -> fold_work f T_f m b <= c * N.of_nat (bindings m))%N.
   Proof. Admitted. (* STUB *)
   Lemma F7_replace : forall A p q o (m : t A),
     get p (replace q o m) = if Pos.eqb p q then o else get p m.
@@ -484,41 +484,41 @@ Module PTrieT <: TRIE_ALL.
       fold_left (fun acc kv => f acc (snd kv)) (elements m) b.
   Proof. Admitted. (* STUB *)
   Lemma T1_node : forall A (l r : t A) o,
-    T_left l + T_value l + T_right l + T_node l o r <= k_node.
+    (T_left l + T_value l + T_right l + T_node l o r <= k_node)%N.
   Proof. Admitted. (* STUB *)
   Lemma T2_replace : forall A p o (m : t A),
-    T_replace p o m <= k_replace * (Pos.size_nat p + 1).
+    (T_replace p o m <= k_replace * N.of_nat (Pos.size_nat p + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T3_filter : forall A B (f : A -> option B) T_f m c,
-    (forall a, T_f a <= c) ->
-    T_filter_map f T_f m <= k_filter * (c + 1) * (nodes m + 1).
+    ((forall a, T_f a <= c) ->
+    T_filter_map f T_f m <= k_filter * (c + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T4_merge_with : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u c cl cr,
-    (forall a b, T_f a b <= c) ->
-    (forall a, T_fl a <= cl * (nodes a + 1)) ->
-    (forall b, T_fr b <= cr * (nodes b + 1)) ->
+    ((forall a b, T_f a b <= c) ->
+    (forall a, T_fl a <= cl * N.of_nat (nodes a + 1)) ->
+    (forall b, T_fr b <= cr * N.of_nat (nodes b + 1)) ->
     T_merge_with f T_f fl T_fl fr T_fr m u <=
-      k_merge * (c + cl + cr + 1) * (nodes m + nodes u + 1).
+      k_merge * (c + cl + cr + 1) * N.of_nat (nodes m + nodes u + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T5_forall2 : forall A B (f : A -> option B -> bool) T_f m u c,
-    (forall a b, T_f a b <= c) ->
-    T_forall2 f T_f m u <= k_check * (c + 1) * (nodes m + 1).
+    ((forall a b, T_f a b <= c) ->
+    T_forall2 f T_f m u <= k_check * (c + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T6_fold_path : forall A B (f : B -> positive -> A -> B) T_f path T_path m b c d,
-    (forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
+    ((forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
     T_fold_path f T_f path T_path m b <=
-      k_fold * (nodes m + key_mass m + (c + d + 1) * bindings m + 1).
+      k_fold * (N.of_nat (nodes m + key_mass m) + (c + d + 1) * N.of_nat (bindings m) + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T7_fold_work : forall A B (f : B -> positive -> A -> B) T_f m b,
-    T_fold f T_f m b <=
-      k_fold * (nodes m + key_mass m + fold_work f T_f m b + 1).
+    (T_fold f T_f m b <=
+      k_fold * (N.of_nat (nodes m + key_mass m) + fold_work f T_f m b + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T8_elements : forall A (m : t A),
-    T_elements m <= k_elements * (nodes m + key_mass m + bindings m + 1).
+    (T_elements m <= k_elements * N.of_nat (nodes m + key_mass m + bindings m + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T9_fold_values : forall A B (f : B -> A -> B) T_f m b c,
-    (forall acc a, T_f acc a <= c) ->
-    T_fold_values f T_f m b <= k_fold * (c + 1) * (nodes m + 1).
+    ((forall acc a, T_f acc a <= c) ->
+    T_fold_values f T_f m b <= k_fold * (c + 1) * N.of_nat (nodes m + 1))%N.
   Proof. Admitted. (* STUB *)
 End PTrieT.
