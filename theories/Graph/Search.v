@@ -4,9 +4,9 @@
     For example, an edge to an active vertex produces a back-edge event.
     Builds on: graph data, binary-fuel loops and the search signature. *)
 
-From Stdlib Require Import List NArith PArith.
+From Stdlib Require Import List NArith PArith Sorting.Permutation.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data SearchSig.
+From Galois.Graph Require Import Data Spec SearchSig.
 Import List.ListNotations.
 
 Inductive search_task :=
@@ -58,3 +58,45 @@ Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (search_trace (base g) roots) s.
 End SearchCode.
+
+Opaque search_trace.
+
+Module Search (V : VISITOR) <: SEARCH V.
+  Include SearchCode V.
+
+  Definition trace (g : prepared) (roots : list positive) := search_trace (base g) roots.
+
+  Lemma trace_depth_first : forall g roots,
+    exists final, dfs_roots (base g) [] roots (trace g roots) final.
+  Proof. Admitted. (* SIG-QUESTION: landed trace proofs assume prepared readiness. *)
+
+  Lemma dfs_fold : forall g roots s,
+    dfs g roots s = fold_events V.enter V.leave V.edge (trace g roots) s.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma trace_reach : forall g roots v,
+    In v (entered (trace g roots)) <-> reach (base g) roots v.
+  Proof. Admitted. (* SIG-QUESTION: landed reachability proofs assume prepared readiness. *)
+
+  Lemma trace_unique : forall g roots, NoDup (entered (trace g roots)).
+  Proof. Admitted. (* SIG-QUESTION: landed numbering proofs assume prepared readiness. *)
+
+  Lemma trace_nested : forall g roots, trace_stack [] (trace g roots) [].
+  Proof. Admitted. (* SIG-QUESTION: landed trace proofs assume prepared readiness. *)
+
+  Lemma trace_edges : forall g roots u, reach (base g) roots u ->
+    Permutation (edge_targets u (trace g roots)) (succs (base g) u).
+  Proof. Admitted. (* SIG-QUESTION: landed edge proofs assume prepared readiness. *)
+
+  Lemma trace_edges_sound : forall g roots kind u v,
+    In (Edge kind u v) (trace g roots) -> reach (base g) roots u /\ edge (base g) u v.
+  Proof. Admitted. (* SIG-QUESTION: landed edge proofs assume prepared readiness. *)
+
+  Lemma trace_kinds : forall g roots prefix kind u v suffix,
+    trace g roots = prefix ++ Edge kind u v :: suffix -> event_kind_correct prefix kind v.
+  Proof. Admitted. (* SIG-QUESTION: landed classification proofs assume prepared readiness. *)
+End Search.
+
+Transparent search_trace.
