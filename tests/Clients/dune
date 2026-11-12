@@ -1,0 +1,5 @@
+(rocq.theory
+ (name Galois.Tests.Clients)
+ (package galois)
+ (flags :standard -w +default)
+ (theories Stdlib elpi elpi_elpi Argent Galois.Base Galois.Egglog Galois.Egraph Galois.Clients))

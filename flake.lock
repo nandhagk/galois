@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "argent": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794430187,
+        "narHash": "sha256-2ieX1gyCMPKdANAeIKjdC1EcqkhcIU7R2SOLAf921B4=",
+        "owner": "nandhagk",
+        "repo": "argent",
+        "rev": "dcba5cc6cc8134ac521e177fbb97f9d59e4e1ea2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nandhagk",
+        "repo": "argent",
+        "rev": "dcba5cc6cc8134ac521e177fbb97f9d59e4e1ea2",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1790769526,
@@ -18,6 +39,7 @@
     },
     "root": {
       "inputs": {
+        "argent": "argent",
         "nixpkgs": "nixpkgs"
       }
     }

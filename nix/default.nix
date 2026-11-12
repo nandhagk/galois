@@ -1,4 +1,4 @@
-{ pkgs }:
+{ pkgs, argent }:
 let
   # The stock Rocq 9.3 package set: every package below comes from the binary cache.
   rocq = pkgs.rocqPackages_9_3;
@@ -11,6 +11,8 @@ in
       rocq.rocq-core
       # Rocq 9 ships its standard library as a separate package; Rocq finds it through ROCQPATH.
       rocq.stdlib
+      rocq.rocq-elpi
+      argent
       # Only the optional float package uses Flocq.
       rocq.flocq
       ocaml.ocaml

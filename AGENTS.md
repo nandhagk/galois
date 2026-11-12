@@ -1,8 +1,7 @@
 # Agent instructions
 
-Galois is a Rocq library of verified program analyses, being rebuilt as described in
-`docs/architecture.md`. Read `README.md`, `docs/architecture.md` and `docs/workflow.md` before
-working.
+Galois is a Rocq library of verified program analyses. Read `README.md`,
+`docs/architecture.md`, `docs/workflow.md` and the design in `docs/design/` before working.
 
 ## Skills
 
@@ -17,27 +16,26 @@ every line you change. This file and `docs/workflow.md` take precedence over a s
 
 ## Design invariants
 
-- Core packages depend only on the Rocq standard library. Only `Float` uses Flocq.
-- Dictionaries are explicit records parametric in their types, with laws in separate `Prop`
-  records. No typeclasses, instances, canonical structures or functors; modules are namespaces.
-- Keys have injective encodings into `positive`, and preparation interns them to dense IDs. Maps
-  and sets are canonical binary tries.
-- Computational records hold data and functions; semantic links and laws are separate `Prop`
-  records. Running an analysis needs no semantics and no termination proof.
-- The core algorithms are written in the cost monad of `theories/Cost` and carry cost theorems,
-  following `docs/guide/cost.md`.
-- Consumers use other packages only through their public names and spec lemmas.
-- Every `.v` basename is unique and starts with its package name. Theories contain no `Extract`
-  directives.
-- Every claim is proved. No axioms, `Admitted`, `admit`, `give_up` or unproved statement
-  definitions. The one exception: a theorem whose file imports `Galois.Float` may depend on
-  exactly the four approved axioms listed in `docs/guarantees.md`. `just check` enforces the style rules and frozen files, `just admits` reports progress and `just audit` enforces the proof policy.
+- Component signatures in `FooSig.v` separate operations, functional laws, time contracts and
+  proof plans. An optional specification layer contains derived definitions.
+- Implementations in `Foo.v` use `FooCode`, `Foo` and `FooT` modules in an `Include` chain.
+  Dependencies are explicit module parameters, and code modules require operations only.
+- Declare data types at top level. Records contain no closures. Pass callbacks as arguments or
+  module parameters.
+- Use transparent ascription `<:`. Name each functor application before passing it as an argument.
+- Use `From`-qualified `Require` commands. File basenames need no package prefix.
+- Use Argent to derive time functions and state cost contracts. Consumers use public interfaces.
+- Mark unfinished proofs with `CONVERT`, `STUB`, `SIG-QUESTION`, `PLAN-DEFECT` or `OPEN` as
+  applicable. Mark placeholder code with `STUB-CODE`. See `docs/design/rules.md` for their forms.
 
 ## Work and verification
 
 - Use `just` inside `nix develop` for every build, test, check and format. Never run `dune`
   directly and never edit `_build/`. All builds share the 10 GB `galois.slice`; there is no build
   lock.
+- Use `just vo FILE` to build one Rocq file. Use `just session-check` for formatting, theories,
+  Rocq tests, examples, lint and frozen files. Use `just admits` to report unfinished proofs and
+  `just audit` to check assumptions.
 - Rocq tests are `Example`s in `tests/`, checked by `vm_compute`. OCaml tests are inline expect
   tests at the bottom of the module's own `.ml`.
 - Work on your own branch. Stage and commit explicit paths. Never rewrite

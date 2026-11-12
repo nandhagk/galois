@@ -1,4 +1,3 @@
-Reference clients live in `Tutorial/`, `While/`, `Ssa/`, `SsaValues/`, `SsaMemory/`,
-`SsaLoops/` and `SsaFloat/`. Their theories use the logical root `Galois.Examples`, and their
-Rocq basenames start with `Examples`. Clients exercise the redesigned library through its public
-interfaces.
+# Examples
+
+The `Galois.Examples` theory contains examples that use the library's public interfaces.

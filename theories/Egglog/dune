@@ -1,0 +1,5 @@
+(rocq.theory
+ (name Galois.Egglog)
+ (package galois)
+ (flags :standard -w +default)
+ (theories Stdlib elpi elpi_elpi Argent Galois.Base))

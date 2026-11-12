@@ -1,10 +1,5 @@
 (rocq.theory
  (name Galois.Tests.Domains)
+ (package galois)
  (flags :standard -w +default)
- (theories
-  Stdlib
-  Galois.Cost
-  Galois.Base
-  Galois.Lattice
-  Galois.Bits
-  Galois.Domains))
+ (theories Stdlib elpi elpi_elpi Argent Galois.Base Galois.Lattice Galois.Bits Galois.Domains))

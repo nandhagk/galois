@@ -19,13 +19,20 @@ capped +args:
 fmt-check:
     @just capped dune build -j {{ jobs }} @fmt
 
-# Build the theories and the extraction clients.
+# Build the theories.
 build *args:
-    @just capped dune build -j {{ jobs }} @theories/default @extraction/default "$@"
+    @just capped dune build -j {{ jobs }} @theories/default "$@"
 
-# Build the Rocq tests and examples and run the OCaml inline tests.
+# Build the Rocq tests and examples.
 test *args:
-    @just capped dune build -j {{ jobs }} @tests/default @examples/default @runtest "$@"
+    @just capped dune build -j {{ jobs }} @tests/default @examples/default "$@"
+
+# Build one Rocq source file under the memory cap.
+vo file:
+    @just capped dune build -j {{ jobs }} "${1%.v}.vo"
+
+# Check the session sources without OCaml.
+session-check: fmt-check build test lint frozen
 
 # Check formatting, build, test, lint and the frozen files.
 check: fmt-check build test lint frozen

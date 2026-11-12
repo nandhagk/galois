@@ -2,4 +2,4 @@
  (name Galois.Bits)
  (package galois)
  (flags :standard -w +default)
- (theories Stdlib Galois.Base))
+ (theories Stdlib elpi elpi_elpi Argent Galois.Base))
