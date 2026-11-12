@@ -141,3 +141,13 @@ Definition anti_checked pol := match AntiA.analyze 0 pol 16%N with
 Example both_schedules_are_checked_post_solutions :
   (anti_checked first_zero, anti_checked first_one) = (true, true).
 Proof. vm_compute; reflexivity. Qed.
+
+Definition joining_observe pol := match A.analyze 0 pol 8%N with
+  | Solved m => Some (map (C.look m) [0; 1; 2])
+  | _ => None
+  end.
+
+Example selected_joining_lookups :
+  (joining_observe first_zero, joining_observe first_one) =
+    (Some [true; true; false], Some [true; true; false]).
+Proof. vm_compute; reflexivity. Qed.
