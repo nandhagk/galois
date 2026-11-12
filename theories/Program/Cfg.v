@@ -139,6 +139,8 @@ Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
 End PreparedCfgLaws.
 
 Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
+  Module PT := PreparedType P N E.
+  Module Timed <: CFG_PREPARE_TIME P PT N E C.
   Include CfgCode P N E C.
   TimeFun nodes.
   TimeFun graph_of.
@@ -151,4 +153,6 @@ Module CfgT (P : TYPE) (N : KEY_T) (E : TYPE) (C : CFG_BASE_T P N E).
       N.of_nat (fold_right Nat.max 0%nat (List.map N.bits (C.entries p ++
         flat_map (fun e => C.src p e :: C.dst p e :: nil) (C.edges p))) + 1))%N.
   Proof. Admitted. (* STUB *)
+  End Timed.
+  Include Timed.
 End CfgT.

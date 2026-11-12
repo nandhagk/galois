@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith.
 From Stdlib Require Import NArith.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Code MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig NarrowSig.
@@ -38,10 +38,10 @@ Module NarrowCode (L : WLATTICE_OPS) (S : SYSTEM_OPS L) (C : CHECK_OPS L S)
   Definition narrow_pass p m :=
     let candidate := narrow_candidate p m in
     if C.check p candidate then candidate else m.
-  Fixpoint refine p n m :=
-    match n with
-    | O => m
-    | S n1 => narrow_pass p (refine p n1 m)
+  Definition refine p n m :=
+    match loop_fuel (fun st => @inl (kmap S.key L.t) unit (narrow_pass p st)) n m with
+    | inl result => result
+    | inr _ => m
     end.
 End NarrowCode.
 
