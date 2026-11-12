@@ -107,14 +107,16 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
   Definition add a b :=
     match a, b with
     | IBot, _ | _, IBot => IBot
-    | I (Fin la) (Fin ha), I (Fin lb) (Fin hb) => I (Fin (la + lb)) (Fin (ha + hb))
-    | _, _ => top
+    | I la ha, I lb hb =>
+      I (match la, lb with Fin x, Fin y => Fin (x + y) | _, _ => NegInf end)
+        (match ha, hb with Fin x, Fin y => Fin (x + y) | _, _ => PosInf end)
     end%Z.
   Definition sub a b :=
     match a, b with
     | IBot, _ | _, IBot => IBot
-    | I (Fin la) (Fin ha), I (Fin lb) (Fin hb) => I (Fin (la - hb)) (Fin (ha - lb))
-    | _, _ => top
+    | I la ha, I lb hb =>
+      I (match la, hb with Fin x, Fin y => Fin (x - y) | _, _ => NegInf end)
+        (match ha, lb with Fin x, Fin y => Fin (x - y) | _, _ => PosInf end)
     end%Z.
   Definition mul a b :=
     match a, b with
@@ -235,11 +237,23 @@ Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L 
     | ZRem, a :: b :: nil => let p := urem_back r a b in fst p :: snd p :: nil
     | _, _ => xs
     end.
+  Definition strict_back a b :=
+    match a, b with
+    | I la _, I _ hb =>
+      let upper := match hb with Fin z => Fin (z - 1) | _ => hb end in
+      let lower := match la with Fin z => Fin (z + 1) | _ => la end in
+      (meet a (I NegInf upper), meet b (I lower PosInf))
+    | _, _ => (IBot, IBot)
+    end.
   Definition guard g xs :=
     match L.gview g, xs with
     | ZGuardUlt, a :: b :: nil =>
       let p := ult_back (abst 1) a b in fst p :: snd p :: nil
     | ZGuardCmp Eq, a :: b :: nil => meet a b :: meet b a :: nil
+    | ZGuardCmp Lt, a :: b :: nil =>
+      let p := strict_back a b in fst p :: snd p :: nil
+    | ZGuardCmp Gt, a :: b :: nil =>
+      let p := strict_back b a in snd p :: fst p :: nil
     | _, _ => xs
     end.
 End IntervalCode.
