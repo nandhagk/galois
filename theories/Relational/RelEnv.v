@@ -37,3 +37,87 @@ Module RelEnvCode (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     let bounds := R.range e (fst s) in
     RR.refine_range (fst bounds) (snd bounds) (E.eval e (snd s)).
 End RelEnvCode.
+
+Module RelEnv (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
+    (F : LINEARIZE X L N) (R : NUM_STATE X L N F) (E : STATE_DOMAIN X L V)
+    (RR : RANGE_REFINE L N V)
+    (P : LATTICE with Definition t := (R.t * E.t)%type) <: REL_ENV X L N V F R E RR P.
+  Include RelEnvCode X L V F R E RR P.
+  Definition wrank (p : wparam) (s : t) : nat :=
+    R.wrank (fst p) (fst s) + E.wrank (snd p) (snd s).
+  Definition gamma (s : t) (st : X.t -> L.val) : Prop :=
+    R.ngamma (fst s) (fun x => N.num (st x)) /\ E.gamma (snd s) st.
+  Lemma leb_refl : forall a, leb a a = true.
+  Proof. Admitted. (* STUB *)
+  (** The order composes through an intermediate value. *)
+  Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
+  Proof. Admitted. (* STUB *)
+  (** Bottom is below every value. *)
+  Lemma bot_least : forall a, leb bot a = true.
+  Proof. Admitted. (* STUB *)
+  (** The bottom test recognizes bottom. *)
+  Lemma is_bot_bot : is_bot bot = true.
+  Proof. Admitted. (* STUB *)
+  (** Every recognized bottom is below every value. *)
+  Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
+  Proof. Admitted. (* STUB *)
+  (** Join is above its left operand. *)
+  Lemma join_ub_l : forall a b, leb a (join a b) = true.
+  Proof. Admitted. (* STUB *)
+  (** Join is above its right operand. *)
+  Lemma join_ub_r : forall a b, leb b (join a b) = true.
+  Proof. Admitted. (* STUB *)
+
+  Lemma top_greatest : forall a, leb a top = true.
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
+
+  (** Widening is above its previous value. *)
+  Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
+  (** Widening is above its candidate value. *)
+  Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
+  (** A candidate below the previous value leaves widening unchanged. *)
+  Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
+  (** An unstable widening from a nonbottom strictly decreases rank. *)
+  Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
+    wrank p (widen p a b) < wrank p a.
+  Proof. Admitted. (* STUB *)
+  (** Widening from a nonbottom does not increase rank. *)
+  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
+  Proof. Admitted. (* STUB *)
+  (** Narrowing stays between an ordered candidate and previous value. *)
+  Lemma narrow_between : forall a b, leb b a = true ->
+    leb b (narrow a b) = true /\ leb (narrow a b) a = true.
+  Proof. Admitted. (* STUB *)
+
+  (** Abstract inclusion entails inclusion of concrete environments. *)
+  Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
+  Proof. Admitted. (* SIG-QUESTION: P is not linked to the product order. *)
+  (** Bottom describes no concrete environment. *)
+  Lemma gamma_bot : forall st, ~ gamma bot st.
+  Proof. Admitted. (* SIG-QUESTION: P.bot is not linked to the product bottom. *)
+  (** Top describes every concrete environment. *)
+  Lemma gamma_top : forall st, gamma top st.
+  Proof. Admitted. (* STUB *)
+  (** Assignment contains each successful concrete update. *)
+  Lemma assign_sound : forall x e s st c,
+    gamma s st -> eval_term L.eval st e = Some c ->
+    gamma (assign x e s) (upd X.eqb st x c).
+  Proof. Admitted. (* STUB *)
+  (** Havoc contains every concrete update of the selected variable. *)
+  Lemma havoc_sound : forall x s st c,
+    gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
+  Proof. Admitted. (* STUB *)
+  (** Assuming a true guard retains its concrete environment. *)
+  Lemma assume_sound : forall g es s st cs,
+    gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
+    gamma (assume g es s) st.
+  Proof. Admitted. (* STUB *)
+  (** Abstract evaluation describes every successful concrete result. *)
+  Lemma eval_sound : forall e s st c,
+    gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
+  Proof. Admitted. (* STUB *)
+
+End RelEnv.
