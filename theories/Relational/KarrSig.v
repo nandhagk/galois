@@ -43,6 +43,11 @@ Module Type KARR (X : KEY) (L : LANG) (N : NUM_VIEW L)
 Module Type KARR_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : KARR X L N F C).
   Include NUM_STATE_TIME X L N F D.
+  Definition normal (P : list (lcons X.t)) : Prop :=
+    Forall (fun r => NoDup (map fst (lhs r))) P.
+  Definition normal_s (s : t) : Prop :=
+    match s with Unreached => True | Reached P => normal P end.
+
   Definition rows_of (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
   Definition vars_of (P : list (lcons X.t)) : list X.t :=
@@ -64,15 +69,16 @@ Module Type KARR_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_subst x f r <= c_karr * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
   (** Affine hull uses the same elimination work as join. *)
-  Parameter T_affine_hull_le : forall a b,
+  Parameter T_affine_hull_le : forall a b, normal a -> normal b ->
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
   (** Certificate production includes the conclusion in its elimination input. *)
-  Parameter T_entail_cert_le : forall P r,
+  Parameter T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
     (T_entail_cert P r <= c_karr * N.of_nat
       (elimination_work (Reached P) (Reached (r :: nil))))%N.
   (** Join charges cubic fraction-free elimination at the Hadamard bit bound. *)
-  Parameter T_join_karr_le : forall a b, (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
+  Parameter T_join_karr_le : forall a b, normal_s a -> normal_s b ->
+    (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
     N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
 End KARR_TIME.
 
@@ -82,6 +88,36 @@ Module Type KARR_T (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
 Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) (Import D : KARR_T X L N F C).
+  (** Assignment charges fraction-free elimination after linearization. *)
+  Parameter F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) = N.of_nat ((n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (ell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
+  (** Havoc charges fraction-free elimination of the selected variable. *)
+  Parameter F_havoc_work : forall x s,
+    havoc_work x s = (n s + 1)^3 * (ellB (n s + 1) (ell s + X.bits x) + 1)^2.
+  (** Assumption charges elimination of the state and all newly linearized rows. *)
+  Parameter F_assume_work : forall g es s,
+    (N.of_nat (assume_work g es s) =
+      N.of_nat ((n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+        (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
+          (ell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
+  (** Top has no repeated coefficients. *)
+  Parameter normal_top : normal_s top.
+  (** Join keeps rows free of repeated keys. *)
+  Parameter normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
+  (** Widening keeps rows free of repeated keys. *)
+  Parameter normal_widen : forall p a b,
+    normal_s a -> normal_s b -> normal_s (widen p a b).
+  (** Narrowing keeps rows free of repeated keys. *)
+  Parameter normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
+  (** Assignment normalizes its new rows. *)
+  Parameter normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
+  (** Havoc keeps rows free of repeated keys. *)
+  Parameter normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
+  (** Assumption normalizes the rows it adds. *)
+  Parameter normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
+  (** This widening has no repeated threshold search. *)
+  Parameter F_wunits : forall s, wunits s = 0.
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
       (forall v : X.t -> Z, eval_coef v (lhs s) = (sc * eval_coef v (lhs r))%Z) /\
@@ -94,6 +130,12 @@ Module Type KARR_PLAN (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** Certificates decide span inclusion on raw equality systems. *)
   Parameter leb_complete_span : forall a b,
     Forall (in_span a) b -> leb (Reached a) (Reached b) = true.
+  Definition false_row : lcons X.t := LCons X.t nil REq 1%Z.
+  (** Successful inclusion gives span inclusion or an infeasible left system. *)
+  Parameter leb_sound_span : forall a b, leb (Reached a) (Reached b) = true ->
+    Forall (in_span a) b \/ in_span a false_row.
+  (** An infeasible equality system is below every equality system. *)
+  Parameter leb_false : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
   (** Join rows lie in both input spans. *)
   Parameter join_span : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (in_span a) P /\ Forall (in_span b) P.

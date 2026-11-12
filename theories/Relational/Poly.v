@@ -116,9 +116,29 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Include Poly X L N F C.
   Definition size (_ : t) : nat := 0.
   Definition wsize (_ : wparam) : nat := 0.
-  Definition assign_work (_ : X.t) (_ : term L.op X.t) (_ : t) : nat := 0.
-  Definition havoc_work (_ : X.t) (_ : t) : nat := 0.
-  Definition assume_work (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : nat := 0.
+  Definition normal (P : list (lcons X.t)) : Prop :=
+    Forall (fun r => NoDup (map fst (lhs r))) P.
+  Definition normal_s (s : t) : Prop :=
+    match s with Unreached => True | Reached P => normal P end.
+  Definition vars_of (P : list (lcons X.t)) : list X.t :=
+    fold_left (fun acc x => if existsb (X.eqb x) acc then acc else x :: acc)
+      (flat_map (fun r => map fst (lhs r)) P) nil.
+  Definition n (P : list (lcons X.t)) : nat := length P + length (vars_of P).
+  Definition ell (P : list (lcons X.t)) : nat :=
+    fold_right Nat.max 0 (map C.row_bits P) +
+    fold_right Nat.max 0 (map C.row_key_bits P).
+  Definition prows (s : t) : list (lcons X.t) :=
+    match s with Unreached => nil | Reached P => P end.
+  Definition wunits (_ : t) : nat := 0.
+  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
+    (length (prows s) + 3)^2 * (n (prows s) + tsize e + length (prows s) + 3) *
+      (ell (prows s) + X.bits x + F.bits_e e + 1)^2 + N.to_nat (F.T_lin_of e).
+  Definition havoc_work (x : X.t) (s : t) : nat :=
+    (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (ell (prows s) + X.bits x + 1)^2.
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
+    (length (prows s) + 1) * (fold_right Nat.add 0%nat (map tsize es) + 1) *
+      (F.bits_es g es + 1) + N.to_nat (F.T_atoms_of g es).
   Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
   TimeFun bot.
   TimeFun top.
@@ -153,23 +173,58 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
-  Definition vars_of (P : list (lcons X.t)) : list X.t :=
-    fold_left (fun acc x => if existsb (X.eqb x) acc then acc else x :: acc)
-      (flat_map (fun r => map fst (lhs r)) P) nil.
-  Definition n (P : list (lcons X.t)) : nat := length P + length (vars_of P).
-  Definition ell (P : list (lcons X.t)) : nat :=
-    fold_right Nat.max 0 (map C.row_bits P) +
-    fold_right Nat.max 0 (map C.row_key_bits P).
   Definition c_poly : N := 1. (* STUB *)
-  Lemma T_fm_elim_le : forall x P,
+  Lemma T_fm_elim_le : forall x P, normal P ->
     (T_fm_elim x P <= c_poly * N.of_nat (((length P + 1)^2)%nat) *
       N.of_nat ((n P + length P + 1)%nat) * N.of_nat (((ell P + 1)^2)%nat))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_entail_cert_le : forall P c,
+  Lemma T_entail_cert_le : forall P c, normal P -> normal (c :: nil) ->
     (T_entail_cert P c <= c_poly *
       N.of_nat (fmcost (n P + length (lhs c)) (length P + 1)
         (n P + length (lhs c)) (length P + 1)
         (ell P + C.row_bits c + C.row_key_bits c)))%N.
+  Proof. Admitted. (* STUB *)
+  (** Assignment charges one elimination after linearization. *)
+  Lemma F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) = N.of_nat ((length (prows s) + 3)^2 *
+      (n (prows s) + tsize e + length (prows s) + 3) *
+      (ell (prows s) + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
+  Proof. Admitted. (* STUB *)
+  (** Havoc charges one elimination of the selected variable. *)
+  Lemma F_havoc_work : forall x s,
+    havoc_work x s = (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (ell (prows s) + X.bits x + 1)^2.
+  Proof. Admitted. (* STUB *)
+  (** Assumption charges appending the rows emitted by linearization. *)
+  Lemma F_assume_work : forall g es s,
+    (N.of_nat (assume_work g es s) =
+      N.of_nat ((length (prows s) + 1) * (fold_right Nat.add 0%nat (map tsize es) + 1) *
+        (F.bits_es g es + 1)) + F.T_atoms_of g es)%N.
+  Proof. Admitted. (* STUB *)
+  (** Top has no repeated coefficients. *)
+  Lemma normal_top : normal_s top.
+  Proof. Admitted. (* STUB *)
+  (** Join keeps rows free of repeated keys. *)
+  Lemma normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
+  Proof. Admitted. (* STUB *)
+  (** Widening keeps rows free of repeated keys. *)
+  Lemma normal_widen : forall p a b,
+    normal_s a -> normal_s b -> normal_s (widen p a b).
+  Proof. Admitted. (* STUB *)
+  (** Narrowing keeps rows free of repeated keys. *)
+  Lemma normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
+  Proof. Admitted. (* STUB *)
+  (** Assignment normalizes its new rows. *)
+  Lemma normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
+  Proof. Admitted. (* STUB *)
+  (** Havoc keeps rows free of repeated keys. *)
+  Lemma normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
+  Proof. Admitted. (* STUB *)
+  (** Assumption normalizes the rows it adds. *)
+  Lemma normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
+  Proof. Admitted. (* STUB *)
+  (** This widening has no repeated threshold search. *)
+  Lemma F_wunits : forall s, wunits s = 0.
   Proof. Admitted. (* STUB *)
   Lemma fm_step_mults : forall P x r, In r (fm_elim x P) ->
     exists s, C.combine P (mults_of r) = Some s /\ lrel s = lrel (row_of r) /\
@@ -179,12 +234,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   Proof. Admitted. (* STUB *)
+  (** Generated entailment certificates use rationally valid combinations. *)
+  Lemma entail_cert_nocut : forall P c k, entail_cert P c = Some k -> cut k = false.
+  Proof. Admitted. (* STUB *)
+  (** Elimination keeps rows free of repeated keys. *)
+  Lemma normal_fm_elim : forall x P, normal P -> normal (map row_of (fm_elim x P)).
+  Proof. Admitted. (* STUB *)
   Lemma fm_complete_Q : forall P c, lrel c = RLe -> entail_cert P c = None ->
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
   Proof. Admitted. (* STUB *)
   Lemma fm_rows_le : forall x P, length (fm_elim x P) <= (length P)^2 / 4 + length P.
   Proof. Admitted. (* STUB *)
-  Lemma ell_fm_le : forall x P,
+  Lemma ell_fm_le : forall x P, normal P ->
     ell (map row_of (fm_elim x P)) <= 2 * ell P + 1.
   Proof. Admitted. (* STUB *)
   Lemma subst_sat : forall v x f r, sat v (subst x f r) <->

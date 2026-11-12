@@ -81,6 +81,7 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
   Definition gamma_top := B.gamma_top.
   Definition gamma_meet := B.gamma_meet.
   Definition is_bot_sound := B.is_bot_sound.
+  Definition is_bot_below := B.is_bot_below.
 
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.

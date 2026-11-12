@@ -43,10 +43,11 @@ Module Type WORD_LANGUAGE_TIME (Import L : WORD_LANGUAGE).
   Parameter T_eval_op : op -> list (positive * Z) -> N.
   Parameter T_result_width : op -> list positive -> N.
   Parameter c_word : N.
-  (** Concrete word evaluation has the published operand-width bound. *)
+  (** Concrete word evaluation charges operand widths and raw integer sizes. *)
   Parameter T_eval_op_le : forall o cs, (T_eval_op o cs <=
     c_word * N.of_nat (((Op.op_widths o +
-      fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) cs) + 1) ^
+      fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^
     2)%nat))%N.
 End WORD_LANGUAGE_TIME.
 
@@ -116,6 +117,9 @@ Module Type WORD_PAYLOAD_LAWS (L : WORD_LANGUAGE) (Import W : WORD_PAYLOAD_OPS L
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   (** Recognized bottoms contain no integer. *)
   Parameter pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
+  (** Every payload below a recognized bottom is recognized as bottom. *)
+  Parameter pis_bot_below : forall w a b,
+    pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
   (** A constant payload contains the wrapped integer. *)
   Parameter pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   (** A recognized point identifies all represented integers. *)
@@ -140,6 +144,9 @@ Module Type WORD_PAYLOAD_TIME (L : WORD_LANGUAGE_T) (Import W : WORD_PAYLOAD L).
   (** Payload widening charges both operands and its parameters. *)
   Parameter T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
+  (** Payload narrowing charges both payload sizes. *)
+  Parameter T_pnarrow_le : forall w a b,
+    (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   (** Payload inclusion charges the two payload sizes. *)
   Parameter T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
@@ -191,16 +198,19 @@ Module Type WORD_TABLE_TIME (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Parameter T_wfwd : L.op -> positive -> list (positive * W.p) -> N.
   Parameter T_wbwd : L.op -> positive -> W.p -> list (positive * W.p) -> N.
   Parameter c_word_table : N.
-  (** Forward table time has the published quadratic width bound. *)
+  (** Forward table time charges the quadratic width work and raw payload sizes. *)
   Parameter T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
-        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
-  (** Backward table time has the published quadratic width bound. *)
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  (** Backward table time additionally charges the requested payload size. *)
   Parameter T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
-        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
 End WORD_TABLE_TIME.
 
 Module Type WORD_TABLE_T (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) :=

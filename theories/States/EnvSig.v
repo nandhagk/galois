@@ -62,9 +62,10 @@ Module Type ENV_LAWS (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     ANode o (V.forward o (map (fun e => root (annotate m e)) es)) (map (annotate m) es).
   (** Unreachable states describe no stores. *)
   Parameter gamma_unreached : forall st, ~ gamma Unreached st.
-  (** Reached maps describe stores pointwise. *)
+  (** Reached maps without recognized bottoms describe stores pointwise. *)
   Parameter gamma_reached : forall m st,
-    gamma (Reached m) st <-> forall x, V.gamma (read m x) (st x).
+    gamma (Reached m) st <->
+      M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x).
 End ENV_LAWS.
 
 Module Type ENV (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L) :=

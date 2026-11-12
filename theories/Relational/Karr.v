@@ -116,9 +116,33 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Include Karr X L N F C.
   Definition size (_ : t) : nat := 0.
   Definition wsize (_ : wparam) : nat := 0.
-  Definition assign_work (_ : X.t) (_ : term L.op X.t) (_ : t) : nat := 0.
-  Definition havoc_work (_ : X.t) (_ : t) : nat := 0.
-  Definition assume_work (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : nat := 0.
+  Definition normal (P : list (lcons X.t)) : Prop :=
+    Forall (fun r => NoDup (map fst (lhs r))) P.
+  Definition normal_s (s : t) : Prop :=
+    match s with Unreached => True | Reached P => normal P end.
+  Definition rows_of (s : t) : list (lcons X.t) :=
+    match s with Unreached => nil | Reached P => P end.
+  Definition vars_of (P : list (lcons X.t)) : list X.t :=
+    fold_left (fun acc x => if existsb (X.eqb x) acc then acc else x :: acc)
+      (flat_map (fun r => map fst (lhs r)) P) nil.
+  Definition n (s : t) : nat := length (rows_of s) + length (vars_of (rows_of s)).
+  Definition ell (s : t) : nat :=
+    fold_right Nat.max 0 (map C.row_bits (rows_of s)) +
+    fold_right Nat.max 0 (map C.row_key_bits (rows_of s)).
+  Definition ellB (dim bits : nat) : nat := dim * (bits + Nat.log2 dim + 1).
+  Definition elimination_work (a b : t) : nat :=
+    (n a + n b + 1)^3 * (ellB (n a + n b + 1) (ell a + ell b) + 1)^2.
+  Definition wunits (_ : t) : nat := 0.
+  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
+    (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (ell s + X.bits x + F.bits_e e) + 1)^2 +
+      N.to_nat (F.T_lin_of e).
+  Definition havoc_work (x : X.t) (s : t) : nat :=
+    (n s + 1)^3 * (ellB (n s + 1) (ell s + X.bits x) + 1)^2.
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
+    (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+      (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
+        (ell s + F.bits_es g es) + 1)^2 + N.to_nat (F.T_atoms_of g es).
   Definition range_work (_ : term L.op X.t) (_ : t) : nat := 0.
   TimeFun bot.
   TimeFun top.
@@ -153,33 +177,63 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
-  Definition rows_of (s : t) : list (lcons X.t) :=
-    match s with Unreached => nil | Reached P => P end.
-  Definition vars_of (P : list (lcons X.t)) : list X.t :=
-    fold_left (fun acc x => if existsb (X.eqb x) acc then acc else x :: acc)
-      (flat_map (fun r => map fst (lhs r)) P) nil.
-  Definition n (s : t) : nat := length (rows_of s) + length (vars_of (rows_of s)).
-  Definition ell (s : t) : nat :=
-    fold_right Nat.max 0 (map C.row_bits (rows_of s)) +
-    fold_right Nat.max 0 (map C.row_key_bits (rows_of s)).
-  Definition ellB (dim bits : nat) : nat := dim * (bits + Nat.log2 dim + 1).
-  Definition elimination_work (a b : t) : nat :=
-    (n a + n b + 1)^3 * (ellB (n a + n b + 1) (ell a + ell b) + 1)^2.
   Definition c_karr : N := 1. (* STUB *)
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_karr * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_affine_hull_le : forall a b,
+  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_entail_cert_le : forall P r,
+  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
     (T_entail_cert P r <= c_karr * N.of_nat
       (elimination_work (Reached P) (Reached (r :: nil))))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_join_karr_le : forall a b, (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
+  Lemma T_join_karr_le : forall a b, normal_s a -> normal_s b ->
+    (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
     N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** Assignment charges fraction-free elimination after linearization. *)
+  Lemma F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) = N.of_nat ((n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (ell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
+  Proof. Admitted. (* STUB *)
+  (** Havoc charges fraction-free elimination of the selected variable. *)
+  Lemma F_havoc_work : forall x s,
+    havoc_work x s = (n s + 1)^3 * (ellB (n s + 1) (ell s + X.bits x) + 1)^2.
+  Proof. Admitted. (* STUB *)
+  (** Assumption charges elimination of the state and all newly linearized rows. *)
+  Lemma F_assume_work : forall g es s,
+    (N.of_nat (assume_work g es s) =
+      N.of_nat ((n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+        (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
+          (ell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
+  Proof. Admitted. (* STUB *)
+  (** Top has no repeated coefficients. *)
+  Lemma normal_top : normal_s top.
+  Proof. Admitted. (* STUB *)
+  (** Join keeps rows free of repeated keys. *)
+  Lemma normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
+  Proof. Admitted. (* STUB *)
+  (** Widening keeps rows free of repeated keys. *)
+  Lemma normal_widen : forall p a b,
+    normal_s a -> normal_s b -> normal_s (widen p a b).
+  Proof. Admitted. (* STUB *)
+  (** Narrowing keeps rows free of repeated keys. *)
+  Lemma normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
+  Proof. Admitted. (* STUB *)
+  (** Assignment normalizes its new rows. *)
+  Lemma normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
+  Proof. Admitted. (* STUB *)
+  (** Havoc keeps rows free of repeated keys. *)
+  Lemma normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
+  Proof. Admitted. (* STUB *)
+  (** Assumption normalizes the rows it adds. *)
+  Lemma normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
+  Proof. Admitted. (* STUB *)
+  (** This widening has no repeated threshold search. *)
+  Lemma F_wunits : forall s, wunits s = 0.
   Proof. Admitted. (* STUB *)
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
@@ -192,6 +246,14 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma leb_complete_span : forall a b,
     Forall (in_span a) b -> leb (Reached a) (Reached b) = true.
+  Proof. Admitted. (* STUB *)
+  Definition false_row : lcons X.t := LCons X.t nil REq 1%Z.
+  (** Successful inclusion gives span inclusion or an infeasible left system. *)
+  Lemma leb_sound_span : forall a b, leb (Reached a) (Reached b) = true ->
+    Forall (in_span a) b \/ in_span a false_row.
+  Proof. Admitted. (* STUB *)
+  (** An infeasible equality system is below every equality system. *)
+  Lemma leb_false : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
   Proof. Admitted. (* STUB *)
   Lemma join_span : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (in_span a) P /\ Forall (in_span b) P.

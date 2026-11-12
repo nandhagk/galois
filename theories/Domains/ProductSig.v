@@ -85,22 +85,32 @@ Module Type PRODUCT_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Parameter k_product_lists : N.
   (** Product concretization is intersection. *)
   Parameter F1_gamma : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
-  (** Product inclusion compares both components. *)
+  (** Product inclusion treats recognized bottoms as least. *)
   Parameter F2_leb : forall a b,
-    leb a b = andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b)).
-  (** Widening acts independently on each component. *)
+    leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
+  (** Widening retains the previous pair when its candidate is bottom. *)
   Parameter F3_widen : forall p a b, widen p a b =
-    (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
+    if is_bot b then a
+    else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   (** Product ranks add the component ranks. *)
   Parameter F4_wrank : forall p a b,
     wrank p (a, b) = A.wrank (fst p) a + B.wrank (snd p) b.
   (** Product size adds the component sizes. *)
   Parameter F5_size : forall a b, size (a, b) = A.size a + B.size b.
-  (** Product bottom testing recognizes two component bottoms. *)
-  Parameter F6_is_bot : forall a b, is_bot (a, b) = andb (A.is_bot a) (B.is_bot b).
+  (** Product bottom testing recognizes either component bottom. *)
+  Parameter F6_is_bot : forall a b, is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
+  (** Narrowing retains a recognized bottom candidate. *)
+  Parameter F7_narrow : forall a b, narrow a b =
+    if is_bot b then b else (A.narrow (fst a) (fst b), B.narrow (snd a) (snd b)).
+  (** Product widening units add the component units. *)
+  Parameter F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
   (** Inclusion charges the component tests. *)
   Parameter T1_leb : forall a b, (T_leb a b <= k_product_lists *
     (A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
+  (** Inclusion charges bottom recognition before comparing the components. *)
+  Parameter T1_leb_components : forall a b, (T_leb a b <= k_product_lists *
+    (A.T_is_bot (fst a) + B.T_is_bot (snd a) +
+      A.T_leb (fst a) (fst b) + B.T_leb (snd a) (snd b) + 1))%N.
 End PRODUCT_PLAN.
 
 Module Type PRODUCT_ALL (L : LANG_T) (A B : VALUE_DOMAIN_T L) :=
@@ -142,8 +152,13 @@ Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     let result := Nat.iter K.rounds R.reduce x in
     if orb (A.is_bot (fst result)) (B.is_bot (snd result))
     then (A.bot, B.bot) else result.
-  (** Reduced bottom testing recognizes two component bottoms. *)
-  Parameter F_is_bot : forall a b, is_bot (a, b) = andb (A.is_bot a) (B.is_bot b).
+  (** Reduced bottom testing recognizes either component bottom. *)
+  Parameter F_is_bot : forall a b, is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
+  (** Reduced inclusion treats recognized bottoms as least. *)
+  Parameter F_leb : forall a b, leb a b =
+    orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
+  (** Reduced widening units add the component units. *)
+  Parameter F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
   (** Product concretization is intersection. *)
   Parameter F2_gamma : forall a b c, gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
   (** Iterated reduction retains every represented concrete value. *)
@@ -151,9 +166,10 @@ Module Type REDUCED_PLAN (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   (** Iterated reduction lowers both components. *)
   Parameter F4_red_lower : forall a b,
     A.leb (fst (red (a, b))) a = true /\ B.leb (snd (red (a, b))) b = true.
-  (** Widening remains componentwise. *)
+  (** Widening retains the previous pair when its candidate is bottom. *)
   Parameter F5_widen : forall p a b, widen p a b =
-    (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
+    if is_bot b then a
+    else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
   (** Iteration time charges reduction at every intermediate value. *)
   Parameter T1_red_steps : forall x, (T_red x <= k_red *
     (fold_right N.add 0

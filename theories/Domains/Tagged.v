@@ -180,6 +180,9 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Proof. Admitted.
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
   Proof. Admitted.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
+  Proof. Admitted.
   Lemma point_sound : forall a v c, point a = Some v -> gamma a c -> c = v.
   Proof. Admitted.
   Lemma abst_sound : forall v, gamma (abst v) v.

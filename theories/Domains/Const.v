@@ -222,6 +222,9 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
   Proof. Admitted.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
+  Proof. Admitted.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
@@ -318,6 +321,10 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. Admitted.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
+  Proof. Admitted.
+  (** Every payload below a recognized bottom is recognized as bottom. *)
+  Lemma pis_bot_below : forall w a b,
+    pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
   Proof. Admitted.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).

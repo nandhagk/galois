@@ -76,7 +76,7 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* SIG-QUESTION: raw half-bottom product can prevent rank decrease *)
+  Proof. Admitted.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
   Proof. Admitted.
@@ -99,6 +99,9 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Proof. Admitted.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
+  Proof. Admitted.
+  (** Every value below a recognized bottom is recognized as bottom. *)
+  Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
   Proof. Admitted.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
