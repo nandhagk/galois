@@ -215,4 +215,8 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
     (T_clip xs <= c_lat * N.of_nat
       (length xs + fold_right (fun a n => (L.size a + n)%nat) 0%nat xs + 1)%nat)%N.
   Proof. Admitted. (* STUB *)
+  (** A join has size bounded by the sizes of its operands. *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
 End DisjunctionT.
