@@ -169,7 +169,7 @@ Qed.
     The old ignores_unknown_root test expected true for roots [9] and an empty candidate.
     The new reach predicate includes unlisted roots, so this check returns false.
     GraphHierTest expected an empty hierarchy for roots [99; 99] in the empty graph.
-    The new reach predicate includes that root, so the producer emits vertex 99. *)
+    The bounded producer filters unlisted roots and emits an empty hierarchy. *)
 
 Definition parallel_graph := fixture_graph [1; 2] [(1, 2); (1, 2); (2, 1)].
 

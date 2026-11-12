@@ -67,6 +67,14 @@ Record wto_state := WtoState {
   wto_parents : list wto
 }.
 
+TimeFun wto_tasks.
+TimeFun wto_partial.
+TimeFun wto_parents.
+
+Inductive wto_check_task :=
+  | WtoCheckVisit (w : wto)
+  | WtoCheckClose (h : positive).
+
 Module Type WTO_OPS.
   Parameter build : prepared -> list positive -> wto.
   Parameter check : prepared -> list positive -> wto -> bool.
@@ -109,12 +117,14 @@ Module Type WTO_TIME (Import W : WTO).
   Parameter c_wto : N.
   (** Checking has the published linear graph bit-cost bound, including rejection. *)
   Parameter T_check_le : forall g roots w,
-    (T_check g roots w <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
+    (T_check g roots w <= c_wto *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   (** Building charges each graph occurrence once per nesting level. *)
   Parameter T_build_le : forall g roots,
-    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (wto_depth (build g roots) + 1) * N.of_nat (graph_width (base g) + 1))%N.
+    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   (** Head projection charges the supplied order. *)
   Parameter T_heads_le : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
@@ -124,12 +134,14 @@ Module Type WTO_TIME (Import W : WTO).
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
   (** Checking is linear in graph size and identifier width. *)
   Parameter check_bigO : bigO (fun _ : prepared * list positive * wto => True)
-    (fun '(g, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, roots, w) => T_check g roots w).
+    (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+      (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
+    (fun '(g, roots, w) => T_check g roots w).
   (** Building has the published nesting-sensitive bound. *)
   Parameter build_bigO : bigO (fun _ : prepared * list positive => True)
-    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (wto_depth (build g roots) + 1) * (graph_width (base g) + 1)))
+    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+      (wto_depth (build g roots) + 1) *
+      (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
     (fun '(g, roots) => T_build g roots).
 End WTO_TIME.
 
@@ -144,6 +156,15 @@ Module Type WTO_T := WTO <+ WTO_TIME.
     Their costs are kept in [scope_work] and [check_work] before the public targets. *)
 
 Module Type WTO_PLAN (Import W : WTO_T).
+  Parameter wto_key_fits : nat -> positive -> bool.
+  Parameter T_wto_key_fits : nat -> positive -> N.
+  Parameter wto_check_index : nat -> nat -> ptrie bool -> list wto_check_task -> N ->
+    ptrie N -> ptrie (N * N) -> list positive ->
+    option (ptrie N * ptrie (N * N) * list positive).
+  Parameter T_wto_check_index : nat -> nat -> ptrie bool -> list wto_check_task -> N ->
+    ptrie N -> ptrie (N * N) -> list positive -> N.
+  Parameter wto_interval_edge : ptrie N -> ptrie (N * N) -> positive -> positive -> bool.
+  Parameter T_wto_interval_edge : ptrie N -> ptrie (N * N) -> positive -> positive -> N.
   Parameter wto_member : positive -> list positive -> bool.
   Parameter wto_unique : list positive -> bool.
   Parameter wto_annotate : list positive -> wto -> list (positive * list positive).
@@ -194,6 +215,8 @@ Module Type WTO_PLAN (Import W : WTO_T).
 
   (** Accepted candidates have exact live coverage and indexed legal edges. *)
   Definition checked g roots w : Prop :=
+    (forall v, In v roots -> In v (nodes g)) /\
+    (forall v, In v (wto_order w) -> In v (nodes g)) /\
     NoDup (wto_order w) /\
     (forall v, In v (wto_order w) <-> In v (live g roots)) /\
     forall u v, In u (wto_order w) -> edge (base g) u v ->
@@ -202,9 +225,9 @@ Module Type WTO_PLAN (Import W : WTO_T).
   Definition source_mass (g : prepared) (vs : list positive) : nat :=
     fold_right (fun v n => 1 + length (succs (base g) v) + n) 0 vs.
 
-  (** Materialized scopes inspect original outgoing rows and search the allowed list per target. *)
+  (** Materialized scopes index allowed keys and filter each outgoing occurrence once. *)
   Definition scope_work g vs :=
-    (source_mass g vs + 1) * (length vs + 1) *
+    (source_mass g vs + 1) *
       (graph_max (graph_width (base g)) (vertex_width vs) + 1).
 
   Definition task_members (task : wto_task) : list positive :=
@@ -265,15 +288,9 @@ Module Type WTO_PLAN (Import W : WTO_T).
     fold_right (fun st n => (T_wto_step g st + n)%N) 0%N states.
 
   (** List scans are charged even for candidates that the checker rejects. *)
-  Definition check_work g roots w :=
-    let vs := wto_order w in
-    let ls := live g roots in
-    let width := graph_max (graph_width (base g))
-      (graph_max (vertex_width roots) (vertex_width vs)) in
-    (T_search_trace (base g) roots + T_wto_order w + T_wto_annotate [] w +
-      T_wto_positions (wto_annotate [] w) +
-      N.of_nat ((length vs * length vs + length vs * length ls + length ls * length vs +
-        source_mass g vs * (length vs + 1) + 1) * (width + 1)))%N.
+  Definition check_work g roots (w : wto) :=
+    N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+      (graph_max (graph_width (base g)) (vertex_width roots) + 1)).
 
   (** Membership and duplicate checking describe the supplied lists. *)
   Parameter F1_lists :
@@ -394,8 +411,9 @@ Module Type WTO_PLAN (Import W : WTO_T).
 
   (** The public checker target needs a linear checker and a candidate rejection boundary. *)
   Parameter T5_check_public : forall g roots w,
-    (T_check g roots w <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
+    (T_check g roots w <= c_wto *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
 
   (** A child expansion pays scope materialization, SCC, entries and task assembly separately. *)
   Parameter T6_expand : forall g within entries owners c tasks partial parents h body,
@@ -410,8 +428,9 @@ Module Type WTO_PLAN (Import W : WTO_T).
 
   (** The unchanged builder target needs depth charging for materialized scopes and root scans. *)
   Parameter T7_build_public : forall g roots,
-    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (wto_depth (build g roots) + 1) * N.of_nat (graph_width (base g) + 1))%N.
+    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
 
   (** The current structural head traversal retains the cost of each body-list append. *)
   Parameter T8_heads_source : forall w,
