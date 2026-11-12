@@ -225,7 +225,7 @@ Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS
   Definition pconst := tnum_const.
   Definition ppoint := tnum_constant.
   Definition pwparam := unit.
-  Definition pwiden (_ : unit) := pjoin.
+  Definition pwiden (_ : unit) w a b := if pleb w b a then a else pjoin w a b.
   Definition pnarrow (_ : positive) (a _ : p) := a.
   Definition tnum_normalise := tnum_normalise.
   Definition tnum_not := tnum_not.
@@ -306,3 +306,70 @@ Definition tnum_mul_stage_count (w : width) (a b : tnum) : Z :=
   | inl s => fst s
   | inr _ => 0
   end.
+Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
+  Include KnownBitsCode L C.
+  Include KNOWN_BITS_SPEC L C.
+  Definition pgamma := tnum_gamma.
+  Definition pwrank (_ : pwparam) (w : positive) (a : p) : nat := known_count w a.
+  Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
+  Proof. Admitted. (* STUB *)
+  Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
+    (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
+  Proof. Admitted. (* STUB *)
+  Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
+    (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
+  Proof. Admitted. (* STUB *)
+  Lemma pnarrow_between : forall w a b, pleb w b a = true ->
+    pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pleb_refl : forall w a, pleb w a a = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pleb_trans : forall w a b c,
+    pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
+  Proof. Admitted. (* STUB *)
+  Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pgamma_mono : forall w a b z,
+    pleb w a b = true -> pgamma w a z -> pgamma w b z.
+  Proof. Admitted. (* STUB *)
+  Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
+  Proof. Admitted. (* STUB *)
+  Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
+  Proof. Admitted. (* STUB *)
+  Lemma pgamma_meet : forall w a b z,
+    pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
+  Proof. Admitted. (* STUB *)
+  Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
+  Proof. Admitted. (* STUB *)
+  Lemma pis_bot_below : forall w a b,
+    pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
+  Proof. Admitted. (* STUB *)
+  Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
+  Proof. Admitted. (* STUB *)
+  Lemma ppoint_sound : forall w a z v,
+    ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
+  Proof. Admitted. (* STUB *)
+  Lemma F_pwiden : forall q w a b,
+    pwiden q w a b = if pleb w b a then a else pjoin w a b.
+  Proof. Admitted. (* STUB *)
+  Lemma multiplier_selected : forall w a b, tnum_mul w a b = tnum_mul_with C.multiplier w a b.
+  Proof. Admitted. (* STUB *)
+End KnownBits.
