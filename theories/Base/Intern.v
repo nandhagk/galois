@@ -61,7 +61,7 @@ Module Intern (K : KEY) (M : MAP K) <: INTERN K.
   Lemma wf_intern : forall k s, wf s -> wf (snd (intern k s)).
   Proof. Admitted. (* CONVERT: intern_wf: The variable fresh_bound was not found in the current environment. *)
   Lemma size_empty : size empty = 0%N.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma find_name : forall k i s, wf s -> (find k s = Some i <-> name i s = Some k).
   Proof. intros k i s [_ [_ [Hlink _]]]; apply Hlink. Qed.
   Lemma find_inj : forall k l i s, wf s ->
@@ -101,11 +101,11 @@ Module Intern (K : KEY) (M : MAP K) <: INTERN K.
   Qed.
   Lemma name_stable : forall k s i l, wf s -> name i s = Some l ->
     name i (snd (intern k s)) = Some l.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma size_intern : forall k s, wf s ->
     size (snd (intern k s)) =
       match find k s with Some _ => size s | None => N.succ (size s) end.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Intern.
 
 Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.

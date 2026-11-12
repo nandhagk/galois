@@ -50,9 +50,9 @@ Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
     intro a; apply leb_read; intro k; unfold read, bot; rewrite M.find_empty; apply L.bot_least.
   Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros a b; apply leb_read; intro k; unfold read, join.
@@ -77,7 +77,8 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   TimeFun join.
 
   Definition size (m : t) : nat :=
-    M.nodes m + M.fold (fun acc _ a => acc + L.size a) m 1.
+    M.nodes m + fold_right Nat.add 1 (List.map (fun p =>
+      match M.find p m with Some a => L.size a + 1 | None => 0 end) (M.codes m)).
   Definition c_lat : N := 1. (* STUB *)
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.

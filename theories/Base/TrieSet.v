@@ -39,78 +39,78 @@ Module TrieSet (K : KEY) <: SET K.
     forall p k, PTrieCode.get p s = Some k -> K.encode k = p.
   Definition nodes (s : t) : nat := PTrie.nodes s.
   Lemma wf_empty : wf empty.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_add : forall k s, wf s -> wf (add k s).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_remove : forall k s, wf s -> wf (remove k s).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_union : forall s u, wf s -> wf u -> wf (union s u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_inter : forall s u, wf s -> wf u -> wf (inter s u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_diff : forall s u, wf s -> wf u -> wf (diff s u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_empty : forall k, mem k empty = false.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_add_same : forall k s, mem k (add k s) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_add_other : forall k q s, k <> q -> mem k (add q s) = mem k s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_remove_same : forall k s, mem k (remove k s) = false.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_remove_other : forall k q s, k <> q -> mem k (remove q s) = mem k s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_union : forall k s u, mem k (union s u) = (mem k s || mem k u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_inter : forall k s u, mem k (inter s u) = (mem k s && mem k u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_diff : forall k s u, mem k (diff s u) = (mem k s && negb (mem k u)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma elements_spec : forall s k, wf s -> (In k (elements s) <-> mem k s = true).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma elements_nodup : forall s, wf s -> NoDup (elements s).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma fold_spec : forall A (f : A -> K.t -> A) s a,
     fold f s a = fold_left f (elements s) a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ext : forall s u, wf s -> wf u -> (forall k, mem k s = mem k u) -> s = u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma mem_has : forall k s, mem k s = has (K.encode k) s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma has_empty : forall p, has p empty = false.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma has_add : forall p k s, has p (add k s) = Pos.eqb p (K.encode k) || has p s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma has_remove : forall p k s,
   has p (remove k s) = negb (Pos.eqb p (K.encode k)) && has p s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma has_union : forall p s u, has p (union s u) = has p s || has p u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma has_inter : forall p s u, has p (inter s u) = has p s && has p u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma has_diff : forall p s u, has p (diff s u) = has p s && negb (has p u).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma subset_spec : forall s u,
   subset s u = true <-> forall p, has p s = true -> has p u = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma equal_spec : forall s u, equal s u = true <-> forall p, has p s = has p u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_has : forall s p, wf s -> has p s = true -> exists k, K.encode k = p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_empty : nodes empty = 0.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_add : forall k s, nodes (add k s) <= nodes s + K.bits k.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_remove : forall k s, nodes (remove k s) <= nodes s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_union : forall s u, nodes (union s u) <= nodes s + nodes u.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_inter : forall s u, nodes (inter s u) <= nodes s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_diff : forall s u, nodes (diff s u) <= nodes s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_le_weight : forall s, wf s -> nodes s <= weight s.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End TrieSet.
 
 Module TrieSetT (K : KEY_T) <: SET_T K.

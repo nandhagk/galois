@@ -156,31 +156,31 @@ Module Loops <: LOOPS.
   Lemma headers_spec : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (exists vs, trie_get h (body (forest g t)) = Some vs) <-> natural_header (base g) r h.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma body_spec : forall g t r h v,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In v (loop_body (forest g t) h) <-> natural_loop (base g) r h v.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma body_unique : forall g t h, NoDup (loop_body (forest g t) h).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma header_spec : forall g t r v h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     trie_get v (header (forest g t)) = Some h <-> innermost_header (base g) r v h.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma parent_spec : forall g t r inner outer,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     trie_get inner (parent (forest g t)) = Some outer <->
     immediate_outer (base g) r inner outer.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma reducible_b_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     reflect (reducible (base g) r) (reducible_b g t).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Loops.
 
 Module LoopsT <: LOOPS_ALL.

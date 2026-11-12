@@ -22,25 +22,25 @@ End ReducedCode.
 Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
   Include ReducedCode A B R.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End Reduced.
 
 Module ReducedT (A B : BLATTICE_T) (SA : JOIN_SIZE A) (SB : JOIN_SIZE B)
@@ -86,7 +86,7 @@ Module ReducedHeight (A B : BLATTICE) (R : REDUCER A B)
 
   (** Reduction preserves the rank order of comparable pairs. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.

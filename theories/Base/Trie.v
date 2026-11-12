@@ -329,10 +329,10 @@ Module PTrie <: TRIE.
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
     f None None = true ->
     (forall2b f m1 m2 = true <-> forall p, f (get p m1) (get p m2) = true).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma existsb_spec : forall A (f : A -> bool) m,
     existsb f m = true <-> exists p a, get p m = Some a /\ f a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_map : forall A B (f : A -> B) m p,
     get p (map f m) = option_map f (get p m).
   Proof. Admitted. (* CONVERT: get_map: The variable get_filter was not found in the current environment. *)
@@ -361,18 +361,18 @@ Module PTrie <: TRIE.
   Proof. Admitted. (* CONVERT: extensionality: The variable node_ind was not found in the current environment. *)
   Lemma nodes_set : forall A p (a : A) m,
     nodes (set p a m) <= nodes m + Pos.size_nat p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_le_weight : forall A (m : t A), nodes m <= weight m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 Lemma is_empty_spec : forall A (m : t A), is_empty m = true <-> m = empty.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 Lemma nodes_remove : forall A p (m : t A), nodes (remove p m) <= nodes m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 Lemma nodes_map : forall A B (f : A -> B) m, nodes (map f m) <= nodes m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 Lemma nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
   nodes (merge f m1 m2) <= nodes m1 + nodes m2.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
 End PTrie.
 

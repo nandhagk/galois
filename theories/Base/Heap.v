@@ -201,9 +201,9 @@ Module Heap <: PQ.
   Proof. Admitted. (* CONVERT: wf_pop: The variable pop_correct was not found in the current environment. *)
   Lemma prio_push : forall p x q,
     prio (push p x q) x = Some (match prio q x with Some old => N.min p old | None => p end).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma prio_push_other : forall p x y q, x <> y -> prio (push p x q) y = prio q y.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma pop_min : forall q p x q1, wf q -> pop q = Some (p, x, q1) ->
     prio q x = Some p /\ (forall y r, prio q y = Some r -> (p <= r)%N) /\
     prio q1 x = None /\ (forall y, y <> x -> prio q1 y = prio q y).
@@ -220,23 +220,23 @@ Module Heap <: PQ.
     size q = N.succ (size q1).
   Proof. Admitted. (* CONVERT: size_pop: The variable pop_correct was not found in the current environment. *)
   Lemma pending_push : forall p x q, wf q -> pending (push p x q) <= S (pending q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma pending_pop : forall q p x q1, wf q -> pop q = Some (p, x, q1) ->
     pending q1 < pending q.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma size_pending : forall q, wf q -> N.to_nat (size q) <= pending q.
   Proof. Admitted. (* CONVERT: live_pending_bound: The variable live_pending_bound was not found in the current environment. *)
   Definition fits (w : nat) (q : t) : Prop :=
     forall p x, In (p, x) (heap_entries (heap_pending q)) ->
       N.size_nat p + Pos.size_nat x <= w.
   Lemma fits_empty : forall w, fits w empty.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma fits_push : forall w p x q, wf q -> fits w q ->
     Pos.size_nat x + N.size_nat p <= w -> fits w (push p x q).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma fits_pop : forall w q p x q1, wf q -> fits w q ->
     pop q = Some (p, x, q1) -> fits w q1.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 
 End Heap.
 

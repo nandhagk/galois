@@ -42,9 +42,9 @@ Module WithBot (L : LATTICE) <: LATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros [a|]; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. intros [a|] [b|]; cbn; try reflexivity; try apply L.leb_refl; apply L.join_ub_l. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
@@ -90,7 +90,7 @@ Module WithBotHeight (L : LATTICE) (H : HEIGHT L)
   Proof. intros [a|]; cbv [rank height]; try (apply le_n_S; apply H.rank_le); try lia. Qed.
   (** The lifted order never lowers rank. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
   Proof.

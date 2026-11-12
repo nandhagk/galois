@@ -54,78 +54,78 @@ Module TrieMap (K : KEY) <: MAP K.
   Definition nodes {A} (m : t A) : nat := PTrie.nodes m.
   Definition codes {A} (m : t A) : list positive := List.map fst (PTrieCode.elements m).
   Lemma wf_empty : forall A, wf (@empty A).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_set : forall A k (a : A) m, wf m -> wf (set k a m).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_remove : forall A k (m : t A), wf m -> wf (remove k m).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
     wf m1 -> wf m2 -> wf (merge f m1 m2).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_empty : forall A k, get k (@empty A) = None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_set_same : forall A k (a : A) m, get k (set k a m) = Some a.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_set_other : forall A k q (a : A) m,
     k <> q -> get k (set q a m) = get k m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_remove_same : forall A k (m : t A), get k (remove k m) = None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_remove_other : forall A k q (m : t A),
     k <> q -> get k (remove q m) = get k m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_merge : forall A B C (f : option A -> option B -> option C) m1 m2 k,
     f None None = None -> get k (merge f m1 m2) = f (get k m1) (get k m2).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma elements_spec : forall A (m : t A) k a, wf m ->
     (In (k, a) (elements m) <-> get k m = Some a).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma elements_nodup : forall A (m : t A), wf m -> NoDup (List.map fst (elements m)).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma fold_spec : forall A B (f : B -> K.t -> A -> B) m b,
     fold f m b = fold_left (fun acc ka => f acc (fst ka) (snd ka)) (elements m) b.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma ext : forall A (m n : t A), wf m -> wf n ->
     (forall k, get k m = get k n) -> m = n.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma get_find : forall A k (m : t A), get k m = find (K.encode k) m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma find_empty : forall A p, find p (@empty A) = None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma find_set : forall A p k (a : A) m,
   find p (set k a m) = if Pos.eqb p (K.encode k) then Some a else find p m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma find_remove : forall A p k (m : t A),
   find p (remove k m) = if Pos.eqb p (K.encode k) then None else find p m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma find_merge : forall A B C (f : option A -> option B -> option C) m1 m2 p,
   f None None = None -> find p (merge f m1 m2) = f (find p m1) (find p m2).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
   f None None = true ->
   (forall2b f m1 m2 = true <-> forall p, f (find p m1) (find p m2) = true).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma existsb_spec : forall A (f : A -> bool) m,
   existsb f m = true <-> exists p a, find p m = Some a /\ f a = true.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma wf_find : forall A (m : t A) p a, wf m -> find p m = Some a ->
   exists k, K.encode k = p.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_empty : forall A, nodes (@empty A) = 0.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_set : forall A k (a : A) m, nodes (set k a m) <= nodes m + K.bits k.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_remove : forall A k (m : t A), nodes (remove k m) <= nodes m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
   nodes (merge f m1 m2) <= nodes m1 + nodes m2.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma nodes_le_weight : forall A (m : t A), wf m -> nodes m <= weight m.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma codes_spec : forall A (m : t A) p, In p (codes m) <-> find p m <> None.
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
   Lemma codes_nodup : forall A (m : t A), NoDup (codes m).
-  Proof. Admitted.
+  Proof. Admitted. (* STUB *)
 End TrieMap.
 
 Module TrieMapT (K : KEY_T) <: MAP_T K.
