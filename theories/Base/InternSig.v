@@ -67,20 +67,20 @@ End INTERN_LAWS.
 Module Type INTERN (K : KEY) := INTERN_OPS K <+ INTERN_LAWS K.
 
 Module Type INTERN_TIME (K : KEY_T) (Import I : INTERN K).
-  Parameter T_intern : K.t -> t -> nat.
-  Parameter T_find : K.t -> t -> nat.
-  Parameter T_name : positive -> t -> nat.
-  Parameter T_size : t -> nat.
-  Parameter c_intern : nat.
+  Parameter T_intern : K.t -> t -> N.
+  Parameter T_find : K.t -> t -> N.
+  Parameter T_name : positive -> t -> N.
+  Parameter T_size : t -> N.
+  Parameter c_intern : N.
   (** Interning charges key bits and the allocation frontier's width. *)
-  Parameter T_intern_le : forall k s, wf s ->
-    T_intern k s <= c_intern * (K.bits k + N.size_nat (size s) + 1).
+  Parameter T_intern_le : forall k s, (wf s ->
+    T_intern k s <= c_intern * N.of_nat (K.bits k + N.size_nat (size s) + 1))%N.
   (** Forward lookup charges the queried key's bits. *)
   Parameter T_find_le : forall k s,
-    T_find k s <= c_intern * (K.bits k + N.size_nat (size s) + 1).
+    (T_find k s <= c_intern * N.of_nat (K.bits k + N.size_nat (size s) + 1))%N.
   (** Inverse lookup charges the queried identifier's bits, including absent identifiers. *)
   Parameter T_name_le : forall i s,
-    T_name i s <= c_intern * (Pos.size_nat i + N.size_nat (size s) + 1).
+    (T_name i s <= c_intern * N.of_nat (Pos.size_nat i + N.size_nat (size s) + 1))%N.
 End INTERN_TIME.
 
 Module Type INTERN_T (K : KEY_T) := INTERN K <+ INTERN_TIME K.

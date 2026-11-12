@@ -4,7 +4,7 @@
     For example, positive keys can use the identity encoding.
     Builds on: Stdlib binary arithmetic and Argent time interfaces. *)
 
-From Stdlib Require Import PArith Bool.
+From Stdlib Require Import PArith NArith Bool.
 From Argent Require Import Time.
 
 Module Type TYPE.
@@ -31,13 +31,13 @@ End KEY_LAWS.
 Module Type KEY := KEY_OPS <+ KEY_SPEC <+ KEY_LAWS.
 
 Module Type KEY_TIME (Import K : KEY).
-  Parameter T_encode : t -> nat.
-  Parameter T_eqb : t -> t -> nat.
-  Parameter c_key : nat.
+  Parameter T_encode : t -> N.
+  Parameter T_eqb : t -> t -> N.
+  Parameter c_key : N.
   (** Encoding takes time bounded by the key bit length. *)
-  Parameter T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Parameter T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
   (** Equality testing takes time bounded by the first key bit length. *)
-  Parameter T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Parameter T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
 End KEY_TIME.
 
 Module Type KEY_T := KEY <+ KEY_TIME.

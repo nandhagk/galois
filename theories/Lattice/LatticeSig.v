@@ -4,7 +4,7 @@
     For example, Boolean disjunction supplies a join and false supplies bottom.
     Builds on: Stdlib arithmetic and Argent time interfaces. *)
 
-From Stdlib Require Import Arith Bool.
+From Stdlib Require Import Arith NArith Bool.
 From Argent Require Import Time.
 
 Module Type LATTICE_OPS.
@@ -37,16 +37,16 @@ Module Type LATTICE := LATTICE_OPS <+ LATTICE_LAWS.
 Module Type LATTICE_TIME (Import L : LATTICE_OPS).
   (* spec: size *)
   Parameter size : t -> nat.
-  Parameter T_leb : t -> t -> nat.
-  Parameter T_join : t -> t -> nat.
-  Parameter T_is_bot : t -> nat.
-  Parameter c_lat : nat.
+  Parameter T_leb : t -> t -> N.
+  Parameter T_join : t -> t -> N.
+  Parameter T_is_bot : t -> N.
+  Parameter c_lat : N.
   (** Order testing takes time bounded by both value sizes. *)
-  Parameter T_leb_le  : forall a b, T_leb a b  <= c_lat * (size a + size b + 1).
+  Parameter T_leb_le  : forall a b, (T_leb a b  <= c_lat * N.of_nat (size a + size b + 1))%N.
   (** Joining takes time bounded by both value sizes. *)
-  Parameter T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Parameter T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   (** Bottom testing takes time bounded by the value size. *)
-  Parameter T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Parameter T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
 End LATTICE_TIME.
 
 Module Type LATTICE_T := LATTICE <+ LATTICE_TIME.
@@ -73,9 +73,9 @@ Module Type HAS_MEET_LAWS (Import L : LATTICE_OPS) (Import M : HAS_MEET_OPS L).
 End HAS_MEET_LAWS.
 
 Module Type HAS_MEET_TIME (Import L : LATTICE_T) (Import M : HAS_MEET_OPS L).
-  Parameter T_meet : t -> t -> nat.
+  Parameter T_meet : t -> t -> N.
   (** Meeting takes time bounded by both value sizes. *)
-  Parameter T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Parameter T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
 End HAS_MEET_TIME.
 
 Module Type WIDENING_OPS (Import L : LATTICE_OPS).
@@ -106,12 +106,13 @@ End WIDENING_LAWS.
 Module Type WIDENING_TIME (Import L : LATTICE_T) (Import W : WIDENING_OPS L).
   (* spec: wsize *)
   Parameter wsize : wparam -> nat.
-  Parameter T_widen : wparam -> t -> t -> nat.
-  Parameter T_narrow : t -> t -> nat.
+  Parameter T_widen : wparam -> t -> t -> N.
+  Parameter T_narrow : t -> t -> N.
   (** Widening time is bounded by value and parameter sizes. *)
-  Parameter T_widen_le  : forall p a b, T_widen p a b <= c_lat * (size a + size b + wsize p + 1).
+  Parameter T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat (size a + size b + wsize p + 1))%N.
   (** Narrowing time is bounded by both value sizes. *)
-  Parameter T_narrow_le : forall a b, T_narrow a b <= c_lat * (size a + size b + 1).
+  Parameter T_narrow_le : forall a b, (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
 End WIDENING_TIME.
 
 Module Type HEIGHT (Import L : LATTICE).

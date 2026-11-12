@@ -4,7 +4,7 @@
     For example, two vertices joined in both directions have the same present owner.
     Builds on: graph semantics, trie data and preparation measures. *)
 
-From Stdlib Require Import PArith List.
+From Stdlib Require Import PArith NArith List.
 From Argent Require Import Time BigO.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig.
@@ -50,15 +50,16 @@ End SCC_LAWS.
 Module Type SCC := SCC_OPS <+ SCC_SPEC <+ SCC_LAWS.
 
 Module Type SCC_TIME (Import S : SCC).
-  Parameter T_run : prepared -> nat.
-  Parameter c_scc : nat.
+  Parameter T_run : prepared -> N.
+  Parameter c_scc : N.
   (** SCC computation charges graph vertices, successor occurrences and identifier bits. *)
   Parameter T_run_le : forall g,
-    T_run g <= c_scc * (graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1).
+    (T_run g <= c_scc * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
   (** SCC computation has the published linear bit-cost bound. *)
   Parameter run_bigO : bigO (fun _ => True)
-    (fun g => (graph_n (base g) + graph_e (base g) + 1) * (graph_width (base g) + 1)) T_run.
+    (fun g => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) T_run.
 End SCC_TIME.
 
 Module Type SCC_T := SCC <+ SCC_TIME.

@@ -4,7 +4,7 @@
     For example, a two-vertex cycle has its DFS entry as its natural loop header.
     Builds on: DFS trace derivations, graph dominance and preparation measures. *)
 
-From Stdlib Require Import PArith List Bool.
+From Stdlib Require Import PArith NArith List Bool.
 From Argent Require Import Time Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig DomSig.
@@ -104,26 +104,26 @@ End LOOPS_LAWS.
 Module Type LOOPS := LOOPS_OPS <+ LOOPS_LAWS.
 
 Module Type LOOPS_TIME (Import L : LOOPS).
-  Parameter T_forest : prepared -> domtree -> nat.
-  Parameter T_reducible_b : prepared -> domtree -> nat.
-  Parameter c_loops : nat.
+  Parameter T_forest : prepared -> domtree -> N.
+  Parameter T_reducible_b : prepared -> domtree -> N.
+  Parameter c_loops : N.
   (** Forest construction charges graph occurrences at every loop nesting depth. *)
   Parameter T_forest_le : forall g t,
-    T_forest g t <= c_loops * (graph_n (base g) + graph_e (base g) + 1) *
-      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1).
+    (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Reducibility checking has the published nesting-sensitive graph bound. *)
   Parameter T_reducible_b_le : forall g t,
-    T_reducible_b g t <= c_loops * (graph_n (base g) + graph_e (base g) + 1) *
-      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1).
+    (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (loop_depth g (forest g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
   (** Forest construction has the published nesting-sensitive bit-cost bound. *)
   Parameter forest_bigO : bigO (fun _ : prepared * domtree => True)
-    (fun '(g, t) => (graph_n (base g) + graph_e (base g) + 1) *
-      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1))
+    (fun '(g, t) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t) => T_forest g t).
   (** Reducibility checking has the published nesting-sensitive bit-cost bound. *)
   Parameter reducible_b_bigO : bigO (fun _ : prepared * domtree => True)
-    (fun '(g, t) => (graph_n (base g) + graph_e (base g) + 1) *
-      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1))
+    (fun '(g, t) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t) => T_reducible_b g t).
 End LOOPS_TIME.
 

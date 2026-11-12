@@ -4,7 +4,7 @@
     For example, either arm of a diamond has the join in its frontier.
     Builds on: graph semantics, dominator predicates and preparation measures. *)
 
-From Stdlib Require Import PArith List.
+From Stdlib Require Import PArith NArith List.
 From Argent Require Import Time Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
@@ -59,23 +59,24 @@ End FRONTIER_LAWS.
 Module Type FRONTIER := FRONTIER_OPS <+ FRONTIER_SPEC <+ FRONTIER_LAWS.
 
 Module Type FRONTIER_TIME (Import F : FRONTIER).
-  Parameter T_df : prepared -> domtree -> nat.
-  Parameter T_idf : prepared -> domtree -> list positive -> nat.
-  Parameter c_frontier : nat.
+  Parameter T_df : prepared -> domtree -> N.
+  Parameter T_idf : prepared -> domtree -> list positive -> N.
+  Parameter c_frontier : N.
   (** Frontier construction charges graph occurrences and emitted frontier members. *)
   Parameter T_df_le : forall g t,
-    T_df g t <= c_frontier * (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
-      (graph_width (base g) + 1).
+    (T_df g t <= c_frontier * N.of_nat (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
   (** Iteration charges the frontier rows visited from seeds and newly found targets. *)
   Parameter T_idf_le : forall g t seeds,
-    T_idf g t seeds <= c_frontier * (idf_work g t seeds + 1) * (graph_width (base g) + 1).
+    (T_idf g t seeds <= c_frontier * N.of_nat (idf_work g t seeds + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
   (** Frontier construction has the published output-sensitive bound. *)
   Parameter df_bigO : bigO (fun _ : prepared * domtree => True)
-    (fun '(g, t) => (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
-      (graph_width (base g) + 1)) (fun '(g, t) => T_df g t).
+    (fun '(g, t) => N.of_nat ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
+      (graph_width (base g) + 1))) (fun '(g, t) => T_df g t).
   (** Iteration has the published visited-frontier bound. *)
   Parameter idf_bigO : bigO (fun _ : prepared * domtree * list positive => True)
-    (fun '(g, t, seeds) => (idf_work g t seeds + 1) * (graph_width (base g) + 1))
+    (fun '(g, t, seeds) => N.of_nat ((idf_work g t seeds + 1) * (graph_width (base g) + 1)))
     (fun '(g, t, seeds) => T_idf g t seeds).
 End FRONTIER_TIME.
 

@@ -4,7 +4,7 @@
     For example, a self-loop produces a back-edge event between entering and leaving its vertex.
     Builds on: graph data, graph semantics and preparation measures. *)
 
-From Stdlib Require Import PArith List Bool Sorting.Permutation.
+From Stdlib Require Import PArith NArith List Bool Sorting.Permutation.
 From Argent Require Import Time Std BigO.
 From Galois.Graph Require Import Data Spec DigraphSig.
 Import List.ListNotations.
@@ -107,16 +107,17 @@ Module Type VISITOR := VISITOR_OPS.
 Module Type VISITOR_TIME (Import V : VISITOR).
   (* spec: vwork *)
   Parameter vwork : state -> nat.
-  Parameter T_enter : positive -> state -> nat.
-  Parameter T_leave : positive -> state -> nat.
-  Parameter T_edge : edge_kind -> positive -> positive -> state -> nat.
-  Parameter c_vis : nat.
+  Parameter T_enter : positive -> state -> N.
+  Parameter T_leave : positive -> state -> N.
+  Parameter T_edge : edge_kind -> positive -> positive -> state -> N.
+  Parameter c_vis : N.
   (** Entering charges the visitor's current work measure. *)
-  Parameter T_enter_le : forall v s, T_enter v s <= c_vis * (vwork s + 1).
+  Parameter T_enter_le : forall v s, (T_enter v s <= c_vis * N.of_nat (vwork s + 1))%N.
   (** Leaving charges the visitor's current work measure. *)
-  Parameter T_leave_le : forall v s, T_leave v s <= c_vis * (vwork s + 1).
+  Parameter T_leave_le : forall v s, (T_leave v s <= c_vis * N.of_nat (vwork s + 1))%N.
   (** Edge callbacks charge the visitor's current work measure. *)
-  Parameter T_edge_le : forall kind u v s, T_edge kind u v s <= c_vis * (vwork s + 1).
+  Parameter T_edge_le : forall kind u v s,
+    (T_edge kind u v s <= c_vis * N.of_nat (vwork s + 1))%N.
 End VISITOR_TIME.
 
 Module Type VISITOR_T := VISITOR <+ VISITOR_TIME.
@@ -155,8 +156,8 @@ End SEARCH_LAWS.
 Module Type SEARCH (V : VISITOR) := SEARCH_OPS V <+ SEARCH_LAWS V.
 
 Module Type SEARCH_TIME (V : VISITOR_T) (Import S : SEARCH V).
-  Parameter T_dfs : prepared -> list positive -> V.state -> nat.
-  Parameter c_dfs : nat.
+  Parameter T_dfs : prepared -> list positive -> V.state -> N.
+  Parameter c_dfs : N.
   Definition n_reach (g : prepared) (roots : list positive) : nat :=
     length (entered (trace g roots)).
   Definition e_reach (g : prepared) (roots : list positive) : nat :=
@@ -169,13 +170,15 @@ Module Type SEARCH_TIME (V : VISITOR_T) (Import S : SEARCH V).
       V.vwork (fold_events V.enter V.leave V.edge prefix s) <= B.
   (** Search charges each visited vertex, edge occurrence, root and callback. *)
   Parameter T_dfs_le : forall g roots s B, work_bounded g roots s B ->
-    T_dfs g roots s <= c_dfs * (n_reach g roots + e_reach g roots + length roots + 1) *
-      (run_width g roots + V.c_vis * (B + 1)).
+    (T_dfs g roots s <=
+      c_dfs * N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N.
   (** Search has the reachable-size bound when visitor work stays bounded. *)
   Parameter dfs_bigO : bigO
     (fun '(g, roots, s, B) => work_bounded g roots s B)
-    (fun '(g, roots, _, B) => (n_reach g roots + e_reach g roots + length roots + 1) *
-      (run_width g roots + V.c_vis * (B + 1)))
+    (fun '(g, roots, _, B) =>
+      (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)))%N)
     (fun '(g, roots, s, _) => T_dfs g roots s).
 End SEARCH_TIME.
 
