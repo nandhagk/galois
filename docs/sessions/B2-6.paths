@@ -1,4 +1,5 @@
 theories/States/Partition.v
+theories/States/EnvIntBudget.v
 tests/States/PartitionTest.v
 theories/States/Disjunction.v
 tests/States/DisjunctionTest.v
