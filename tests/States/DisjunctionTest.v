@@ -7,8 +7,8 @@
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map.
 From Galois.Lattice Require Import Disjunction.
-From Galois.Domains Require Import Interval ThresholdsSig Thresholds ZLang.
-From Galois.States Require Import Env Disjunction.
+From Galois.Domains Require Import ValueSig IntervalSig Interval ThresholdsSig Thresholds ZLang.
+From Galois.States Require Import EnvSig Env Disjunction.
 Import List.ListNotations.
 
 Module NatMap := TrieMapCode NatKeyCode.
@@ -65,3 +65,19 @@ Example disjunction_empty :
    widen (disjunction 0 flat_bool) [] []) = ([], true, []).
 Proof. vm_compute; reflexivity. Qed.
 *)
+
+Module Cap2.
+  Definition k := 2%nat.
+End Cap2.
+Module Shared2 := DisjunctionCode State Cap2.
+Module D2 := StateDisjunctionCode NatKeyCode ZLangCode Values State Cap2 Shared2.
+
+Definition interval_state (lo hi : Z) : State.t :=
+  Reached (NatMap.set 1%nat (I (Fin lo) (Fin hi)) NatMap.empty).
+Definition meet_left := Shared2.clip [interval_state 0 10; interval_state 20 30].
+Definition meet_right := Shared2.clip [interval_state 5 25; interval_state 27 28].
+
+Example capped_meet_does_not_refine_right :
+  (proj1_sig (D2.meet meet_left meet_right), D2.leb (D2.meet meet_left meet_right) meet_right) =
+    ([interval_state 5 10; interval_state 20 28], false).
+Proof. vm_compute. reflexivity. Qed.
