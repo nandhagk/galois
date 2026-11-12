@@ -28,7 +28,7 @@ Module Digraph <: DIGRAPH.
   Qed.
 
   Lemma prepare_correct : forall g, prepared_ok (prepare g).
-  Proof. Admitted. (* SIG-QUESTION: prepare_ready assumes a well-formed source graph. *)
+  Proof. Admitted. (* CONVERT: prepare_ready assumes a well-formed source graph. *)
 End Digraph.
 
 Module DigraphT <: DIGRAPH_T.
