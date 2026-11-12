@@ -169,48 +169,51 @@ Fixpoint wto_key_fits (width : nat) (v : positive) : bool :=
   end.
 TimeFun wto_key_fits.
 
-(** The candidate walk records ranks and exclusive loop-body endpoints once. *)
-Fixpoint wto_check_index (fuel width : nat) (listed : ptrie bool)
+(** Each candidate transition visits one constructor or closes one loop interval. *)
+Definition wto_check_step (width : nat) (listed : ptrie bool) (s : wto_check_state)
+    : wto_check_state + option (ptrie N * ptrie (N * N) * list positive) :=
+  match s with
+  | WtoCheckState [] _ ranks intervals vs => inr (Some (ranks, intervals, rev vs))
+  | WtoCheckState (task :: rest) next ranks intervals vs =>
+    match task with
+    | WtoCheckClose h =>
+      match trie_get h ranks with
+      | None => inr None
+      | Some lo => inl (WtoCheckState rest next ranks
+          (PTrieCode.set h (lo, next) intervals) vs)
+      end
+    | WtoCheckVisit WNil => inl (WtoCheckState rest next ranks intervals vs)
+    | WtoCheckVisit (WVertex v tail) =>
+      if wto_key_fits width v then
+        match trie_get v listed, trie_get v ranks with
+        | Some _, None => inl (WtoCheckState (WtoCheckVisit tail :: rest) (N.succ next)
+            (PTrieCode.set v next ranks) intervals (v :: vs))
+        | _, _ => inr None
+        end
+      else inr None
+    | WtoCheckVisit (WLoop h body tail) =>
+      if wto_key_fits width h then
+        match trie_get h listed, trie_get h ranks with
+        | Some _, None => inl (WtoCheckState
+            (WtoCheckVisit body :: WtoCheckClose h :: WtoCheckVisit tail :: rest)
+            (N.succ next) (PTrieCode.set h next ranks) intervals (h :: vs))
+        | _, _ => inr None
+        end
+      else inr None
+    end
+  end.
+TimeFun wto_check_step.
+
+Definition wto_check_index (fuel : N) (width : nat) (listed : ptrie bool)
     (tasks : list wto_check_task) (next : N) (ranks : ptrie N)
     (intervals : ptrie (N * N)) (vs : list positive)
     : option (ptrie N * ptrie (N * N) * list positive) :=
-  match tasks with
-  | [] => Some (ranks, intervals, rev vs)
-  | task :: rest =>
-    match fuel with
-    | O => None
-    | S remaining =>
-      match task with
-      | WtoCheckClose h =>
-        match trie_get h ranks with
-        | None => None
-        | Some lo => wto_check_index remaining width listed rest next ranks
-            (PTrieCode.set h (lo, next) intervals) vs
-        end
-      | WtoCheckVisit WNil =>
-        wto_check_index remaining width listed rest next ranks intervals vs
-      | WtoCheckVisit (WVertex v tail) =>
-        if wto_key_fits width v then
-          match trie_get v listed, trie_get v ranks with
-          | Some _, None => wto_check_index remaining width listed
-              (WtoCheckVisit tail :: rest) (N.succ next)
-              (PTrieCode.set v next ranks) intervals (v :: vs)
-          | _, _ => None
-          end
-        else None
-      | WtoCheckVisit (WLoop h body tail) =>
-        if wto_key_fits width h then
-          match trie_get h listed, trie_get h ranks with
-          | Some _, None => wto_check_index remaining width listed
-              (WtoCheckVisit body :: WtoCheckClose h :: WtoCheckVisit tail :: rest)
-              (N.succ next) (PTrieCode.set h next ranks) intervals (h :: vs)
-          | _, _ => None
-          end
-        else None
-      end
-    end
+  match loopN (wto_check_step width listed) fuel (WtoCheckState tasks next ranks intervals vs) with
+  | inl _ => None
+  | inr result => result
   end.
 TimeFun wto_check_index.
+
 
 Definition wto_interval_edge (ranks : ptrie N) (intervals : ptrie (N * N))
     (u v : positive) : bool :=
@@ -231,7 +234,7 @@ Definition wto_check_linear (g : prepared) (roots : list positive) (w : wto) : b
   let listed := fold_left (fun acc v => PTrieCode.set v true acc) (verts b) Empty in
   if forallb (fun v => match trie_get v listed with Some _ => true | None => false end) roots
   then
-    match wto_check_index (4 * graph_n b + 2) (graph_width b) listed
+    match wto_check_index (N.double (N.double (N.of_nat (graph_n b))) + 2)%N (graph_width b) listed
         [WtoCheckVisit w] 0%N Empty Empty [] with
     | None => false
     | Some (ranks, intervals, vs) =>

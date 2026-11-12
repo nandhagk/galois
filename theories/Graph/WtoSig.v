@@ -75,6 +75,19 @@ Inductive wto_check_task :=
   | WtoCheckVisit (w : wto)
   | WtoCheckClose (h : positive).
 
+Record wto_check_state := WtoCheckState {
+  wto_check_tasks : list wto_check_task;
+  wto_check_next : N;
+  wto_check_ranks : ptrie N;
+  wto_check_intervals : ptrie (N * N);
+  wto_check_vertices : list positive
+}.
+TimeFun wto_check_tasks.
+TimeFun wto_check_next.
+TimeFun wto_check_ranks.
+TimeFun wto_check_intervals.
+TimeFun wto_check_vertices.
+
 Module Type WTO_OPS.
   Parameter build : prepared -> list positive -> wto.
   Parameter check : prepared -> list positive -> wto -> bool.
@@ -158,10 +171,10 @@ Module Type WTO_T := WTO <+ WTO_TIME.
 Module Type WTO_PLAN (Import W : WTO_T).
   Parameter wto_key_fits : nat -> positive -> bool.
   Parameter T_wto_key_fits : nat -> positive -> N.
-  Parameter wto_check_index : nat -> nat -> ptrie bool -> list wto_check_task -> N ->
+  Parameter wto_check_index : N -> nat -> ptrie bool -> list wto_check_task -> N ->
     ptrie N -> ptrie (N * N) -> list positive ->
     option (ptrie N * ptrie (N * N) * list positive).
-  Parameter T_wto_check_index : nat -> nat -> ptrie bool -> list wto_check_task -> N ->
+  Parameter T_wto_check_index : N -> nat -> ptrie bool -> list wto_check_task -> N ->
     ptrie N -> ptrie (N * N) -> list positive -> N.
   Parameter wto_interval_edge : ptrie N -> ptrie (N * N) -> positive -> positive -> bool.
   Parameter T_wto_interval_edge : ptrie N -> ptrie (N * N) -> positive -> positive -> N.
