@@ -133,7 +133,13 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     (R : RESTRICT_T L S RS) (Sol : SOLVER_T L RS) (Checker : CHECK_T L S)
     (Least : SOLVER_LEAST L LB RS Sol)
     (Import X : INCREMENTAL L LB Top S RS R Sol Checker Least).
-  (* spec: region invalidated frozen infl_deg infl_mass kwidth width *)
+  (* spec: region invalidated frozen infl_deg infl_mass kwidth width state_ok *)
+  Parameter state_ok : state -> Prop.
+  (** Initialization and public transitions keep the representation invariant. *)
+  Parameter state_ok_init : state_ok init.
+  Parameter state_ok_demand : forall p pol roots fuel st o st', state_ok st ->
+    demand p pol roots fuel st = (o, st') -> state_ok st'.
+  Parameter state_ok_edit : forall p p' ch st, state_ok st -> state_ok (edit p p' ch st).
   Parameter region : S.prog -> list S.key -> state -> list S.row.
   Parameter invalidated : S.prog -> S.prog -> list S.row -> state -> list S.key.
   Parameter frozen : S.prog -> list S.key -> state -> list (S.key * L.t).
@@ -177,7 +183,7 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter infl_mass_init : infl_mass init = 0.
   Parameter kwidth_init : kwidth init = 0.
   (** Every stored key fits the key width of the state. *)
-  Parameter kwidth_dom : forall st x, dom st x -> S.key_bits x <= kwidth st.
+  Parameter kwidth_dom : forall st x, state_ok st -> dom st x -> S.key_bits x <= kwidth st.
   (** Demand adds influence mass within twice its charged region occurrences. *)
   Parameter infl_mass_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') ->
@@ -188,14 +194,14 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     demand p pol roots fuel st = (o, st') ->
     kwidth st' <= Nat.max (kwidth st) (fold_right Nat.max (S.kw p) (map S.key_bits roots)).
   (** Editing releases the stored key and the entries of every invalidated key. *)
-  Parameter infl_mass_edit : forall p p' ch st,
+  Parameter infl_mass_edit : forall p p' ch st, state_ok st ->
     infl_mass (edit p p' ch st) +
       fold_right Nat.add 0%nat (map (fun x => infl_deg st x + 1) (invalidated p p' ch st)) <=
     infl_mass st.
   (** Editing never widens the state. *)
   Parameter kwidth_edit : forall p p' ch st, kwidth (edit p p' ch st) <= kwidth st.
   (** Editing pays for the influence mass that it releases and for the changed rows. *)
-  Parameter T_edit_le : forall p p' ch st, S.wf p -> S.wf p' ->
+  Parameter T_edit_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
     (forall r, In r ch -> In r (S.rows p) \/ In r (S.rows p')) ->
     (T_edit p p' ch st <= c_inc *
       N.of_nat (((infl_mass st - infl_mass (edit p p' ch st)) +
@@ -205,6 +211,10 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   (** Frozen pairs are stored checked values. *)
   Parameter frozen_spec : forall p roots st x v,
     In (x, v) (frozen p roots st) -> value st x = Some v.
+  (** Frozen pairs have distinct keys read or written by region rows. *)
+  Parameter frozen_region : forall p roots st x v, In (x, v) (frozen p roots st) ->
+    exists r, In r (region p roots st) /\ In x (S.writes p r ++ S.deps p r).
+  Parameter frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
   (** Discovery selects declared rows. *)
   Parameter region_rows : forall p roots st r,
     In r (region p roots st) -> In r (S.rows p).
@@ -243,6 +253,15 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter T_snapshot_get : positive -> state -> N.
   Parameter T_snapshot_set : positive -> incremental_snapshot S.key -> state -> N.
   Parameter T_snapshot_record : S.key -> list S.key -> state -> N.
+  (** Snapshot access walks the identifier once. *)
+  Parameter T_snapshot_get_le : forall id st,
+    (T_snapshot_get id st <= c_inc * N.of_nat (Pos.size_nat id + 1))%N.
+  Parameter T_snapshot_set_le : forall id ss st,
+    (T_snapshot_set id ss st <= c_inc * N.of_nat (Pos.size_nat id + 1))%N.
+  (** Recording pays for the owner code and the new write occurrences. *)
+  Parameter T_snapshot_record_le : forall owner writes st,
+    (T_snapshot_record owner writes st <=
+      c_inc * N.of_nat (S.key_bits owner + length writes + 1))%N.
   (** Trie lookup reads precisely the recorded snapshot inventory. *)
   Parameter snapshot_get_pin : forall st id ss,
     snapshot_get id st = Some ss <-> In (id, ss) (snapshots st).
@@ -269,28 +288,28 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter snapshot_keys_pin : forall st, snapshot_keys st =
     flat_map (fun ss => snapshot_writes (snd ss)) (snapshots st).
   (** Every snapshot identifier is the code of an owner among its writes. *)
-  Parameter snapshot_owner_pin : forall st id ss, In (id, ss) (snapshots st) ->
+  Parameter snapshot_owner_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     id = S.key_code (snapshot_owner ss) /\ In (snapshot_owner ss) (snapshot_writes ss).
   (** Snapshot identifiers occur once in the inventory. *)
   Parameter snapshots_nodup : forall st, NoDup (map fst (snapshots st)).
   (** Read entries resolve to a retained shared snapshot, including stale entries. *)
-  Parameter infl_snapshot_pin : forall st x id, In id (infl_at st x) ->
+  Parameter infl_snapshot_pin : forall st x id, state_ok st -> In id (infl_at st x) ->
     exists ss, In (id, ss) (snapshots st).
   (** Unvisited snapshots contain stored keys. *)
-  Parameter snapshot_stored_pin : forall st id ss, In (id, ss) (snapshots st) ->
+  Parameter snapshot_stored_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     snapshot_live ss = true -> forall x, In x (snapshot_writes ss) -> dom st x.
   (** Co-write memberships are precisely the unvisited snapshot key occurrences. *)
-  Parameter cowrite_count_pin : forall st x id,
+  Parameter cowrite_count_pin : forall st x id, state_ok st ->
     length (filter (Pos.eqb id) (cowrite_at st x)) =
     fold_right (fun iss n =>
       if (Pos.eqb id (fst iss) && snapshot_live (snd iss))%bool then
         length (filter (S.key_eqb x) (snapshot_writes (snd iss))) + n else n)
       0 (snapshots st).
   (** Shared snapshot mass pays the co-write memberships without a second inventory charge. *)
-  Parameter cowrite_mass_pin : forall st, snapshot_mass st =
+  Parameter cowrite_mass_pin : forall st, state_ok st -> snapshot_mass st =
     fold_right Nat.add 0 (map (fun x => length (cowrite_at st x)) (stored st)).
   (** Every retained snapshot identifier fits the stored key width. *)
-  Parameter snapshot_id_width : forall st id ss, In (id, ss) (snapshots st) ->
+  Parameter snapshot_id_width : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     Pos.size_nat id <= kwidth st.
   (** Demands record write occurrences only from their discovered rows. *)
   Parameter snapshot_keys_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
@@ -309,15 +328,15 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter edit_infl_keeps : forall p p' ch st x, dom (edit p p' ch st) x ->
     infl_at (edit p p' ch st) x = infl_at st x.
   (** Visiting a snapshot removes all its writes and retires every co-write membership. *)
-  Parameter edit_snapshot_visit : forall p p' ch st id ss,
+  Parameter edit_snapshot_visit : forall p p' ch st id ss, state_ok st ->
     In (id, ss) (snapshots st) -> snapshot_live ss = true ->
     (exists x, In x (snapshot_writes ss) /\ In x (invalidated p p' ch st)) ->
     (forall x, In x (snapshot_writes ss) -> ~ dom (edit p p' ch st) x) /\
     (forall x, ~ In id (cowrite_at (edit p p' ch st) x)) /\
     (forall ss', In (id, ss') (snapshots (edit p p' ch st)) -> snapshot_live ss' = false).
   (** The stored key list enumerates the domain once. *)
-  Parameter stored_spec : forall st x, In x (stored st) <-> dom st x.
-  Parameter stored_nodup : forall st, NoDup (stored st).
+  Parameter stored_spec : forall st x, state_ok st -> (In x (stored st) <-> dom st x).
+  Parameter stored_nodup : forall st, state_ok st -> NoDup (stored st).
   (** The influence degree counts the recorded entries of a key, stale ones included. *)
   Parameter infl_deg_spec : forall st x, infl_deg st x = length (infl_at st x).
   (** Influence mass counts stored keys, their entries and the unvisited snapshot keys. *)
