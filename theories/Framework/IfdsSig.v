@@ -116,7 +116,7 @@ End FLOW_FUN_LAWS.
 Module Type FLOW_FUN (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E) (F : KEY) :=
   FLOW_FUN_OPS P N E F <+ FLOW_FUN_LAWS P N E C F.
 
-Module Type FLOW_FUN_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (F : KEY_T)
+Module Type FLOW_FUN_TIME (P : TYPE) (N : KEY_T) (E : TYPE) (F : KEY_T)
     (Import FL : FLOW_FUN_OPS P N E F).
   Parameter T_facts T_seeds : P.t -> N.
   Parameter T_flow : P.t -> E.t -> F.t -> N.
