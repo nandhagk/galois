@@ -15,6 +15,27 @@ Fixpoint occurrences {E} (es : list E) (i : nat) : list (E * nat) :=
   | e :: rest => (e, i) :: occurrences rest (S i)
   end.
 
+(** Projecting occurrence values recovers the original edge list. *)
+Theorem occurrences_project {E} (es : list E) i : map fst (occurrences es i) = es.
+Proof.
+  revert i; induction es as [|e es IH]; intro i; cbn [occurrences map fst];
+    rewrite ?IH; reflexivity.
+Qed.
+
+(** Occurrence counters form a contiguous sequence. *)
+Theorem occurrences_positions {E} (es : list E) i :
+  map snd (occurrences es i) = seq i (length es).
+Proof.
+  revert i; induction es as [|e es IH]; intro i; cbn [occurrences map snd seq length];
+    rewrite ?IH; reflexivity.
+Qed.
+
+(** Occurrence keys distinguish duplicate client edges. *)
+Theorem occurrences_nodup {E} (es : list E) i : NoDup (occurrences es i).
+Proof.
+  apply (NoDup_map_inv snd); rewrite occurrences_positions; apply seq_NoDup.
+Qed.
+
 Record cfg_prepared (P N E : Type) := CfgPrepared {
   cfg_program : P;
   cfg_nodes : list N;
@@ -74,12 +95,17 @@ Module PreparedCfg (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E).
 End PreparedCfg.
 
 Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
+  Module Code := CfgCode P N E C.
   Module PC := PreparedCfg P N E C.
   Module Laws <: CFG PC.PT N E.
   Include PC.Ops.
   Include PC.Adj.
 
-  Definition wf (_ : PC.PT.t) := True.
+  Definition wf (p : PC.PT.t) := p = Code.prepare (cfg_program p).
+
+  (** Preparation establishes the cache and node correspondence used by the laws. *)
+  Lemma prepare_wf : forall p, wf (Code.prepare p).
+  Proof. Admitted.
 
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
   Proof. Admitted.
