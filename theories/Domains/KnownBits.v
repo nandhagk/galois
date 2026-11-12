@@ -1784,3 +1784,49 @@ Theorem tnum_rank_equal : forall w a b,
   tnum_leb w a b = true -> tnum_rank w a = tnum_rank w b ->
   tnum_leb w b a = true.
 Proof. Admitted. (* CONVERT: tnum_rank_equal: The variable tnum_unknown_monotone was not found in the current *)
+
+Theorem tnum_shift_sound : forall o w a x k f,
+  (o = bvshl \/ o = bvlshr \/ o = bvashr) ->
+  word_fun2 o = Some f -> is_word w x -> is_word w k -> tnum_gamma w a x ->
+  tnum_gamma w (tnum_shift o w a k) (eval_binary_tag f w x k).
+Proof. Admitted. (* CONVERT: tnum_shift_sound: Illegal application (Non-functional construction):  *)
+
+Theorem tnum_scalar_agrees : forall o w f k x,
+  tnum_shift_op o -> word_fun2 o = Some f -> is_word w k -> is_word w x ->
+  tnum_scalar_value o w k x = eval_binary_tag f w x k.
+Proof. Admitted. (* CONVERT: tnum_scalar_agrees: eval_binary_tag has function type but binary_tag is expected. *)
+
+Theorem tnum_variable_sound : forall o w f a b x k,
+  tnum_shift_op o -> word_fun2 o = Some f ->
+  is_word w x -> is_word w k -> tnum_gamma w a x -> tnum_gamma w b k ->
+  tnum_gamma w (tnum_variable o w a b) (eval_binary_tag f w x k).
+Proof. Admitted. (* CONVERT: tnum_variable_sound: The reference tnum_variable_c was not found in the current *)
+
+Theorem tnum_compare_sound : forall o w f a b x y,
+  word_cmp o = Some f -> is_word w x -> is_word w y ->
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma 1%positive (tnum_compare o w a b) (if eval_comparison_tag f w x y then 1 else 0).
+Proof. Admitted. (* CONVERT: tnum_compare_sound: Found no subterm matching "wrap w x" in the current goal. *)
+
+Theorem tnum_count_sound : forall o w f x,
+  (o = bvclz \/ o = bvctz \/ o = bvpopcnt) -> word_fun1 o = Some f ->
+  tnum_gamma w (tnum_count w) (eval_unary_tag f w x).
+Proof.
+  intros o w f x [Ho|[Ho|Ho]] Hf; subst o; injection Hf as <-;
+    apply tnum_upper_sound; first [apply wclz_range|apply tnum_ctz_range|apply wpopcnt_range].
+Qed.
+
+Local Open Scope nat_scope.
+
+Theorem tnum_rank_equation : forall w a,
+  tnum_rank w a = tnum_unknown w (zeros a) + tnum_unknown w (ones a).
+Proof. Admitted. (* CONVERT: tnum_rank_equation: The reference tnum_rank_c was not found in the current environment. *)
+
+
+
+Theorem tnum_rank_monotone : forall w a b,
+  tnum_leb w a b = true -> tnum_rank w a <= tnum_rank w b.
+Proof. Admitted. (* CONVERT: tnum_rank_monotone: The variable tnum_unknown_monotone was not found in the current *)
+
+Theorem tnum_rank_bounded : forall w a, tnum_rank w a <= 2 * Pos.to_nat w.
+Proof. Admitted. (* CONVERT: tnum_rank_bounded: The variable tnum_unknown_from_equation was not found in the current *)
