@@ -188,3 +188,66 @@ Definition dominating_edges_in {E} (ctx : strict_context E) (vertex : positive) 
 Definition dominating_edges_projected {E} (ctx : strict_context (E * nat))
     (vertex : positive) : list E :=
   map fst (dominating_edges_in ctx vertex).
+
+Module Ssa (P : TYPE) (N : KEY) (E : KEY)
+    (C : CFG P N E) (V : KEY) (K G : TYPE) (D : SSA_DATA P N V K G)
+    <: SSA P N E C V K G.
+  Include SsaCode P N E C V K G D.
+  Include SSA_SPEC P N E C V K G.
+
+  Definition wf p :=
+    C.wf p /\ NoDup (values p) /\
+    (forall x, In x (values p) -> In (home p x) (C.nodes p)) /\
+    (forall x b i, def p x = Param b i <-> nth_error (params p b) i = Some x) /\
+    (forall b x, In x (params p b) -> home p x = b) /\
+    (forall b x, In b (C.nodes p) -> In x (params p b) -> In x (values p)) /\
+    (forall e, In e (C.edges p) -> map fst (args p e) = params p (C.dst p e)) /\
+    (forall e x y, In e (C.edges p) -> In (x, y) (args p e) ->
+      In y (values p) /\ forall entry route, In entry (C.entries p) ->
+        presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
+        In (home p y) route) /\
+    (forall e g xs x, In e (C.edges p) -> In (g, xs) (guards p e) -> In x xs ->
+      In x (values p) /\ forall entry route, In entry (C.entries p) ->
+        presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
+        In (home p x) route) /\
+    (forall x op xs y, In x (values p) -> def p x = Op op xs -> In y xs ->
+      In y (values p) /\ forall entry route, In entry (C.entries p) ->
+        presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
+        In (home p y) route).
+
+  Lemma cfg_wf : forall p, wf p -> C.wf p.
+  Proof. Admitted.
+  Lemma values_nodup : forall p, wf p -> NoDup (values p).
+  Proof. Admitted.
+  Lemma homes_listed : forall p x, wf p -> In x (values p) -> In (home p x) (C.nodes p).
+  Proof. Admitted.
+  Lemma param_defs : forall p x b i, wf p ->
+    (def p x = Param b i <-> nth_error (params p b) i = Some x).
+  Proof. Admitted.
+  Lemma param_home : forall p b x, wf p -> In x (params p b) -> home p x = b.
+  Proof. Admitted.
+  Lemma params_listed : forall p b x, wf p -> In b (C.nodes p) ->
+    In x (params p b) -> In x (values p).
+  Proof. Admitted.
+  Lemma args_params : forall p e, wf p -> In e (C.edges p) ->
+    map fst (args p e) = params p (C.dst p e).
+  Proof. Admitted.
+  Lemma args_dominate : forall p e x y, wf p -> In e (C.edges p) ->
+    In (x, y) (args p e) -> In y (values p) /\ forall entry route,
+      In entry (C.entries p) ->
+      presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
+      In (home p y) route.
+  Proof. Admitted.
+  Lemma guards_dominate : forall p e g xs x, wf p -> In e (C.edges p) ->
+    In (g, xs) (guards p e) -> In x xs -> In x (values p) /\ forall entry route,
+      In entry (C.entries p) ->
+      presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
+      In (home p x) route.
+  Proof. Admitted.
+  Lemma op_args_dominate : forall p x op xs y, wf p -> In x (values p) ->
+    def p x = Op op xs -> In y xs -> In y (values p) /\ forall entry route,
+      In entry (C.entries p) ->
+      presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
+      In (home p y) route.
+  Proof. Admitted.
+End Ssa.
