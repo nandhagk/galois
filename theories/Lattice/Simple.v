@@ -5,12 +5,21 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Lattice Require Import LatticeSig.
+
+Module Bool.
+  Definition implb (a b : bool) : bool :=
+    match a with
+    | false => true
+    | true => b
+    end.
+  TimeFun implb.
+End Bool.
 
 Module BoolLatCode <: BLATTICE_OPS.
   Definition t := bool.
-  Definition leb := implb.
+  Definition leb := Bool.implb.
   Definition bot := false.
   Definition is_bot := negb.
   Definition join := orb.
@@ -75,3 +84,39 @@ Module UnitLat <: BLATTICE.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
   Proof. Admitted.
 End UnitLat.
+
+Module BoolLatT <: BLATTICE_T.
+  Include BoolLat.
+  Definition size (_ : t) : nat := 1.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun is_bot.
+  TimeFun meet.
+  Definition c_lat : nat := 1. (* STUB *)
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+End BoolLatT.
+
+Module UnitLatT <: BLATTICE_T.
+  Include UnitLat.
+  Definition size (_ : t) : nat := 1.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun is_bot.
+  TimeFun meet.
+  Definition c_lat : nat := 1. (* STUB *)
+  Lemma T_leb_le : forall a b, T_leb a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b, T_join a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall a, T_is_bot a <= c_lat * (size a + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_meet_le : forall a b, T_meet a b <= c_lat * (size a + size b + 1).
+  Proof. Admitted. (* STUB *)
+End UnitLatT.

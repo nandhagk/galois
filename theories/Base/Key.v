@@ -5,10 +5,18 @@
     Builds on: Stdlib binary arithmetic and Argent time interfaces. *)
 
 From Stdlib Require Import Bool NArith PArith ZArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig.
 From Stdlib Require Import List.
 From Galois.Base Require Import Code.
+
+Module Pos.
+  TimeFun Pos.of_succ_nat.
+End Pos.
+
+Module Bool.
+  TimeFun Bool.eqb.
+End Bool.
 
 Module PosKeyCode <: KEY_OPS.
   Definition t := positive.
@@ -182,3 +190,113 @@ Module ListKey (K : KEY) <: KEY.
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
   Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
 End ListKey.
+
+Module PosKeyT <: KEY_T.
+  Include PosKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End PosKeyT.
+
+Module NKeyT <: KEY_T.
+  Include NKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End NKeyT.
+
+Module ZKeyT <: KEY_T.
+  Include ZKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End ZKeyT.
+
+Module NatKeyT <: KEY_T.
+  Include NatKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End NatKeyT.
+
+Module BoolKeyT <: KEY_T.
+  Include BoolKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End BoolKeyT.
+
+Module UnitKeyT <: KEY_T.
+  Include UnitKey.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End UnitKeyT.
+
+Module PairKeyT (A B : KEY_T) <: KEY_T.
+  Include PairKey A B.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End PairKeyT.
+
+Module SumKeyT (A B : KEY_T) <: KEY_T.
+  Include SumKey A B.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End SumKeyT.
+
+Module OptionKeyT (K : KEY_T) <: KEY_T.
+  Include OptionKey K.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End OptionKeyT.
+
+Module ListKeyT (K : KEY_T) <: KEY_T.
+  Include ListKey K.
+  TimeFun encode.
+  TimeFun eqb.
+  Definition c_key : nat := 1. (* STUB *)
+  Lemma T_encode_le : forall k, T_encode k <= c_key * (bits k + 1).
+  Proof. Admitted. (* STUB *)
+  Lemma T_eqb_le : forall a b, T_eqb a b <= c_key * (bits a + 1).
+  Proof. Admitted. (* STUB *)
+End ListKeyT.
