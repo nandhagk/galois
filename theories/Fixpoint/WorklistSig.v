@@ -321,8 +321,13 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
   (** Height credit pays the whole evaluation weight of every reader that a change can enqueue. *)
   Definition height_phi (p : S.prog) (rk : L.t -> nat) (h : nat) (s : state) : N :=
     (k_credit * N.of_nat ((queue_credit p s + fold_right Nat.add 0
-      (List.map (fun x => (h - rk (look s x)) * weighted_degree p (S.key_code x))
-        (flat_map (S.writes p) (S.rows p))))%nat) * unit p + queue_phi p s)%N.
+      (List.map (fun c =>
+        let a := match trie_get c (ws_store s) with
+          | Some (_, a) => a
+          | None => L.bot
+          end in
+        (h - rk a) * weighted_degree p c) (key_support p)))%nat) *
+      unit p + queue_phi p s)%N.
   (** Head credit pays reader propagation from unused strict-update allowances. *)
   Definition all_head_phi (p : S.prog) (pol : policy L.wparam) (s : state) : N :=
     (k_credit * N.of_nat ((queue_credit p s + fold_right Nat.add 0
