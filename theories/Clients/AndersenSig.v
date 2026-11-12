@@ -146,6 +146,8 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
   Parameter seed_rows : forall q f k o, row (D.view (seed q)) f k o <-> pointer_seed_row q f k o.
   (** Seed relation kinds agree with the compiled declaration list. *)
   Parameter seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
+  (** Seed slots use the checked program's compiled layout. *)
+  Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   (** Seed construction produces a well-formed canonical relational database. *)
   Parameter seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q) /\ R.no_ids (seed q).
   (** A plan is checked before the run starts. *)
@@ -157,6 +159,12 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
     reflect (row (D.view db) 5 [Val x; Val a] None) (points db x a).
   (** Every returned database is well formed and canonical. *)
   Parameter solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
+
+  (** A run with enough iteration fuel saturates. *)
+  Parameter solve_saturates : forall q lim,
+    N.to_nat (max_iter lim) >= 2 * R.herbrand (compile q) (seed q) + 2 ->
+    fst (solve q lim) = Saturated.
+
   (** A saturated result is exactly the least inclusion solution. *)
   Parameter solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> may_points q x a.
@@ -175,12 +183,22 @@ Module Type ANDERSEN_TIME (V : VALUE_T with Definition t := positive)
   Parameter T_solve : pointer_input -> limits -> N.
   Parameter T_points : D.t -> positive -> positive -> N.
   Parameter c_andersen : N.
+  (** Seeding initializes the database and inserts one row per constraint and initial pointer. *)
+  Parameter T_seed_le : forall q,
+    (T_seed q <= c_andersen *
+      N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
+      N.of_nat (D.unit (seed q)) * N.of_nat (N.to_nat (N.log2 (D.ids (seed q))) + 1))%N.
+  (** Compilation emits a fixed program. *)
+  Parameter T_compile_le : forall q, (T_compile q <= c_andersen)%N.
+  (** A points-to query is one relation lookup. *)
+  Parameter T_points_le : forall db x a, D.wf db ->
+    (T_points db x a <= c_andersen * (N.of_nat (3 * D.unit db) +
+      N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
+
   (** The driver pays for compilation, seeding, planning, checking and the selected engine run. *)
   Parameter T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
       R.T_run p cp lim (seed q) + c_andersen)%N.
-  (* SIG-QUESTION: the client design publishes no numerical class for compilation,
-     seed insertion or database queries. Their primitive costs stay explicit. *)
 End ANDERSEN_TIME.
 
 Module Type ANDERSEN_T (V : VALUE_T with Definition t := positive)
@@ -235,5 +253,4 @@ Module Type ANDERSEN_SOUND (V : VALUE with Definition t := positive)
   Parameter concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
     pointer_reachable (L.initial q) (L.step q) s -> forall x a,
       trie_get x (L.memory s) = Some a -> A.points db x a = true.
-  (* SIG-QUESTION: no landed provider connects a concrete program semantics to POINTER_LINK. *)
 End ANDERSEN_SOUND.

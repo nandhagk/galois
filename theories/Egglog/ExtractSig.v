@@ -176,10 +176,12 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
         N.size_nat (C.fn_cost f (map (cost_of (best sl db)) k)) = cost_width db) \/
       (exists f k i v, row (D.view db) f k (Some (Id i)) /\ In (Val v) k /\
         N.size_nat (C.val_cost v) = cost_width db)).
+  (** Computing best rows pays for incidences, heap operations and cost widths. *)
   Parameter T_best_le : forall sl db, D.wf db -> D.canonical db -> full_slots sl db ->
     (T_best sl db <= c_ex *
       N.of_nat ((R db + 1) * (a db + 1) + (R db + 1) * (Nat.log2 (R db) + 1)) *
       N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  (** Checking pays for the certificate syntax and accepted root cost width. *)
   Parameter T_check_dag_le : forall db c g, D.wf db ->
     (T_check_dag db c g <= c_ex * N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) *
       N.of_nat (D.unit db + 1) *
@@ -187,6 +189,7 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
         | Some n => N.size_nat n
         | None => 0
         end + 1))%N.
+  (** Extraction pays for best rows and traversal of their finite witness. *)
   Parameter T_extract_le : forall sl db c, D.wf db -> D.canonical db -> full_slots sl db ->
     (T_extract sl db c <= T_best sl db + c_ex * N.of_nat (R db + 1) *
       N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
@@ -235,7 +238,8 @@ Module Type EXTRACT_PLAN (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
   Parameter F6_best_loop : forall sl db, D.wf db -> D.canonical db -> full_slots sl db ->
     loop_fuel (step sl db) (R db + 1) (initial sl db) = inr (best sl db).
   (** A continuing step pays its work through heap potential and its row allowance. *)
-  Parameter T1_step_amort : forall sl db s s', D.wf db -> D.canonical db -> full_slots sl db -> reachable sl db s -> knuth_inv db s ->
+  Parameter T1_step_amort : forall sl db s s', D.wf db -> D.canonical db -> full_slots sl db ->
+    reachable sl db s -> knuth_inv db s ->
     step sl db s = inl s' ->
     (T_step sl db s + heap_potential s' <= heap_potential s + k_step *
       N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *

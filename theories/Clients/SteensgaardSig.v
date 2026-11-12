@@ -102,6 +102,8 @@ Module Type STEENSGAARD_LAWS (V : VALUE with Definition t := positive)
     row (D.view (seed q)) f k o <-> steensgaard_seed_row q f k o.
   (** Seed relation and constructor kinds agree with the compiled declarations. *)
   Parameter seed_kinds : forall q f, kind (D.view (seed q)) f = program_kind (compile q) f.
+  (** Seed slots use the checked program's compiled layout. *)
+  Parameter seed_loaded : forall q, R.loaded (compile q) (R.plan (compile q)) (seed q).
   (** Seeding produces a canonical well-formed database. *)
   Parameter seed_wf : forall q, D.wf (seed q) /\ D.canonical (seed q).
   (** A plan is checked before the engine is called. *)
@@ -115,9 +117,9 @@ Module Type STEENSGAARD_LAWS (V : VALUE with Definition t := positive)
       (points db x a).
   (** Every returned database is canonical and well formed. *)
   Parameter solve_wf : forall q lim, D.wf (snd (solve q lim)) /\ D.canonical (snd (solve q lim)).
-  (** Saturated query answers are exactly the independent source congruence approximation. *)
-  Parameter solve_unifies : forall q lim db, solve q lim = (Saturated, db) ->
-    forall x a, points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
+  (** Saturated query answers contain the source congruence approximation. *)
+  Parameter solve_covers : forall q lim db, solve q lim = (Saturated, db) ->
+    forall x a, pointer_congruence q (Deref (Cell x)) (Cell a) -> points db x a = true.
 End STEENSGAARD_LAWS.
 
 Module Type STEENSGAARD (V : VALUE with Definition t := positive)
@@ -133,12 +135,22 @@ Module Type STEENSGAARD_TIME (V : VALUE_T with Definition t := positive)
   Parameter T_solve : pointer_input -> limits -> N.
   Parameter T_points : D.t -> positive -> positive -> N.
   Parameter c_steensgaard : N.
+  (** Seeding initializes the database and inserts one row per constraint and initial pointer. *)
+  Parameter T_seed_le : forall q,
+    (T_seed q <= c_steensgaard *
+      N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
+      N.of_nat (D.unit (seed q)) * N.of_nat (N.to_nat (N.log2 (D.ids (seed q))) + 1))%N.
+  (** Compilation emits a fixed program. *)
+  Parameter T_compile_le : forall q, (T_compile q <= c_steensgaard)%N.
+  (** A points-to query is one relation lookup. *)
+  Parameter T_points_le : forall db x a, D.wf db ->
+    (T_points db x a <= c_steensgaard * (N.of_nat (8 * D.unit db) +
+      N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
+
   (** The driver retains the costs of rule compilation, seeding, planning and the engine. *)
   Parameter T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p + R.T_check_plan p cp +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
-  (* SIG-QUESTION: compilation, seed insertion and identifier queries have no published
-     numerical class. Their primitive costs stay explicit. *)
 End STEENSGAARD_TIME.
 
 Module Type STEENSGAARD_T (V : VALUE_T with Definition t := positive)
@@ -167,11 +179,6 @@ Module Type STEENSGAARD_PLAN (V : VALUE_T with Definition t := positive)
     solve q lim = (Saturated, db) -> pointer_congruence q (Deref (Cell x)) (Cell a) ->
     (exists i, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x)))) /\
     (exists j, represents (D.view db) (Id j) (pointer_expression (Cell a))).
-  (** Database equalities between represented terms follow from source congruence. *)
-  Parameter F5_equalities_source : forall q lim db t u i j,
-    solve q lim = (Saturated, db) -> represents (D.view db) (Id i) (pointer_expression t) ->
-    represents (D.view db) (Id j) (pointer_expression u) -> same (D.view db) i j ->
-    pointer_congruence q t u.
   (** Concrete instruction updates retain coverage by the source congruence. *)
   Parameter F6_step_covered : forall q instruction before after,
     In instruction (constraints q) ->
@@ -222,10 +229,14 @@ Module Type STEENSGAARD_SOUND (V : VALUE with Definition t := positive)
     Q.deref q (Q.deref q (Q.cell q x)) = Q.deref q (Q.cell q y).
   (** Source equations establish validity of all generated union rules. *)
   Parameter rules_valid : forall q, valid V.prim V.merge (concrete_model q) (A.compile q).
+
+  (** Saturated query answers are exactly the source congruence approximation. *)
+  Parameter solve_exact : forall q lim db, A.solve q lim = (Saturated, db) ->
+    forall x a, A.points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
+
   (** Every reachable concrete pointer is included in every saturated unification result. *)
   Parameter concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
     pointer_reachable (L.initial q) (L.step q) s -> forall x a,
       trie_get x (L.memory s) = Some a -> A.points db x a = true.
-  (* SIG-QUESTION: POINTER_LINK and the exact source-congruence quotient have no landed
-     provider. Abstract memory regions and effect snapshots supply neither boundary. *)
+  (* SIG-QUESTION: the exact source-congruence quotient needs a provider. *)
 End STEENSGAARD_SOUND.
