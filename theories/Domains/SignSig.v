@@ -33,19 +33,19 @@ Module Type SIGN (L : WORD_LANGUAGE) :=
 
 Module Type SIGN_TIME (L : WORD_LANGUAGE_T) (Import S : SIGN L).
   Include WORD_PAYLOAD_TIME L S.
-  Parameter T_sign_not T_sign_neg : sgn -> nat.
-  Parameter T_sign_and T_sign_or T_sign_xor : sgn -> sgn -> nat.
-  Parameter c_sign : nat.
+  Parameter T_sign_not T_sign_neg : sgn -> N.
+  Parameter T_sign_and T_sign_or T_sign_xor : sgn -> sgn -> N.
+  Parameter c_sign : N.
   (** Sign negation charges a constant number of flag operations. *)
-  Parameter T_sign_not_le : forall a, T_sign_not a <= c_sign.
+  Parameter T_sign_not_le : forall a, (T_sign_not a <= c_sign)%N.
   (** Arithmetic negation charges a constant number of flag operations. *)
-  Parameter T_sign_neg_le : forall a, T_sign_neg a <= c_sign.
+  Parameter T_sign_neg_le : forall a, (T_sign_neg a <= c_sign)%N.
   (** Sign conjunction charges a constant number of flag operations. *)
-  Parameter T_sign_and_le : forall a b, T_sign_and a b <= c_sign.
+  Parameter T_sign_and_le : forall a b, (T_sign_and a b <= c_sign)%N.
   (** Sign disjunction charges a constant number of flag operations. *)
-  Parameter T_sign_or_le : forall a b, T_sign_or a b <= c_sign.
+  Parameter T_sign_or_le : forall a b, (T_sign_or a b <= c_sign)%N.
   (** Sign exclusive disjunction charges a constant number of flag operations. *)
-  Parameter T_sign_xor_le : forall a b, T_sign_xor a b <= c_sign.
+  Parameter T_sign_xor_le : forall a b, (T_sign_xor a b <= c_sign)%N.
   (** Word payload size uses the tagged width. *)
   Parameter psize_width : forall w a, psize w a = Pos.to_nat w.
 End SIGN_TIME.
@@ -53,7 +53,7 @@ End SIGN_TIME.
 Module Type SIGN_T (L : WORD_LANGUAGE_T) := SIGN L <+ SIGN_TIME L.
 
 Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
-  Parameter k_sign : nat.
+  Parameter k_sign : N.
   (** Payload concretization reads the sign flags. *)
   Parameter F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
   (** Sign height is at most three. *)
@@ -77,11 +77,11 @@ Module Type SIGN_PLAN (L : WORD_LANGUAGE_T) (Import S : SIGN_T L).
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
   (** Flag inclusion takes a constant number of Boolean operations. *)
-  Parameter T1_pleb : forall w a b, T_pleb w a b <= k_sign.
+  Parameter T1_pleb : forall w a b, (T_pleb w a b <= k_sign)%N.
   (** Flag join takes a constant number of Boolean operations. *)
-  Parameter T2_pjoin : forall w a b, T_pjoin w a b <= k_sign.
+  Parameter T2_pjoin : forall w a b, (T_pjoin w a b <= k_sign)%N.
   (** Flag meet takes a constant number of Boolean operations. *)
-  Parameter T3_pmeet : forall w a b, T_pmeet w a b <= k_sign.
+  Parameter T3_pmeet : forall w a b, (T_pmeet w a b <= k_sign)%N.
 End SIGN_PLAN.
 
 Module Type SIGN_ALL (L : WORD_LANGUAGE_T) := SIGN_T L <+ SIGN_PLAN L.
@@ -90,9 +90,9 @@ Module Type SIGN_TABLE (L : WORD_LANGUAGE) (S : SIGN L) := WORD_TABLE L S.
 Module Type SIGN_TABLE_TIME (L : WORD_LANGUAGE_T) (S : SIGN_T L)
     (Import T : SIGN_TABLE L S).
   Include WORD_TABLE_TIME L S T.
-  Parameter c_sign_table : nat.
+  Parameter c_sign_table : N.
   (** Sign table dispatch has the published constant entry bound. *)
-  Parameter T_sign_entry_le : forall o rw xs, T_wfwd o rw xs <= c_sign_table.
+  Parameter T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
 End SIGN_TABLE_TIME.
 Module Type SIGN_TABLE_T (L : WORD_LANGUAGE_T) (S : SIGN_T L) :=
   SIGN_TABLE L S <+ SIGN_TABLE_TIME L S.

@@ -32,10 +32,10 @@ Module Type VAL_EQ (L : LANG) := VAL_EQ_OPS L <+ VAL_EQ_LAWS L.
 Module Type VAL_EQ_TIME (L : LANG_T) (Import E : VAL_EQ L).
   (* spec: vsize *)
   Parameter vsize : L.val -> nat.
-  Parameter T_eqb : L.val -> L.val -> nat.
-  Parameter c_eq : nat.
+  Parameter T_eqb : L.val -> L.val -> N.
+  Parameter c_eq : N.
   (** Equality charges both concrete values. *)
-  Parameter T_eqb_le : forall a b, T_eqb a b <= c_eq * (vsize a + vsize b + 1).
+  Parameter T_eqb_le : forall a b, (T_eqb a b <= c_eq * N.of_nat ((vsize a + vsize b + 1)%nat))%N.
 End VAL_EQ_TIME.
 
 Module Type VAL_EQ_T (L : LANG_T) := VAL_EQ L <+ VAL_EQ_TIME L.
@@ -59,24 +59,24 @@ Module Type CONST (L : LANG) (E : VAL_EQ L) :=
 
 Module Type CONST_TIME (L : LANG_T) (E : VAL_EQ_T L) (Import D : CONST L E).
   Include VALUE_DOMAIN_TIME L D.
-  Parameter T_point : t -> nat.
-  Parameter T_abst : L.val -> nat.
-  Parameter c_const : nat.
+  Parameter T_point : t -> N.
+  Parameter T_abst : L.val -> N.
+  Parameter c_const : N.
   (** Flat point recognition takes constant time. *)
-  Parameter T_point_le : forall a, T_point a <= c_const.
+  Parameter T_point_le : forall a, (T_point a <= c_const)%N.
   (** Flat singleton construction takes constant time. *)
-  Parameter T_abst_le : forall c, T_abst c <= c_const.
+  Parameter T_abst_le : forall c, (T_abst c <= c_const)%N.
   (** Generic constant transfer has the published operator-work bound. *)
-  Parameter forward_bigO : bigO (fun _ => True)
-    (fun ox => work (fst ox) (snd ox)) (fun ox => T_forward (fst ox) (snd ox)).
+  Parameter forward_bigO : (bigO (fun _ => True)
+    (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat)) (fun ox => T_forward (fst ox) (snd ox)))%N.
 End CONST_TIME.
 
 Module Type CONST_T (L : LANG_T) (E : VAL_EQ_T L) := CONST L E <+ CONST_TIME L E.
 
 Module Type CONST_PLAN (L : LANG_T) (E : VAL_EQ_T L) (Import D : CONST_T L E).
   Parameter points : list t -> option (list L.val).
-  Parameter T_points : list t -> nat.
-  Parameter k_const_points k_const_forward : nat.
+  Parameter T_points : list t -> N.
+  Parameter k_const_points k_const_forward : N.
   (** The concretization agrees with the flat representation. *)
   Parameter F1_gamma : forall a c, gamma a c <-> flat_gamma a c.
   (** Widening uses the finite-height join. *)
@@ -94,12 +94,13 @@ Module Type CONST_PLAN (L : LANG_T) (E : VAL_EQ_T L) (Import D : CONST_T L E).
   (** Singleton abstraction records its concrete argument. *)
   Parameter F7_abst : forall c, abst c = FVal c.
   (** Point collection charges a list traversal. *)
-  Parameter T1_points : forall xs, T_points xs <= k_const_points * (length xs + 1).
+  Parameter T1_points : forall xs,
+    (T_points xs <= k_const_points * N.of_nat (length xs + 1))%N.
   (** Concrete evaluation and singleton construction bound the point branch. *)
   Parameter T2_forward_points : forall o xs cs, points xs = Some cs ->
-    T_forward o xs <= k_const_forward *
-      (length xs + L.T_eval o cs +
-       match L.eval o cs with Some c => T_abst c | None => 0 end + 1).
+    (T_forward o xs <= k_const_forward *
+      (N.of_nat ((length xs)%nat) + L.T_eval o cs +
+       match L.eval o cs with Some c => T_abst c | None => 0 end + 1))%N.
 End CONST_PLAN.
 
 Module Type CONST_ALL (L : LANG_T) (E : VAL_EQ_T L) := CONST_T L E <+ CONST_PLAN L E.
@@ -118,10 +119,10 @@ Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_
   Parameter shortcut : L.op -> (positive * W.p) -> (positive * W.p) -> option Z.
   Parameter backward_one backward_two :
     L.op -> positive -> W.p -> list (positive * W.p) -> option (list W.p).
-  Parameter T_shortcut : L.op -> (positive * W.p) -> (positive * W.p) -> nat.
+  Parameter T_shortcut : L.op -> (positive * W.p) -> (positive * W.p) -> N.
   Parameter T_backward_one T_backward_two :
-    L.op -> positive -> W.p -> list (positive * W.p) -> nat.
-  Parameter k_const_word : nat.
+    L.op -> positive -> W.p -> list (positive * W.p) -> N.
+  Parameter k_const_word : N.
   (** An annihilator shortcut identifies every defined concrete result. *)
   Parameter F1_shortcut_sound : forall o a b z cs rw v,
     shortcut o a b = Some z ->
@@ -142,16 +143,18 @@ Module Type CONST_WORD_TABLE_PLAN (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
   (** Shortcuts charge both operand widths. *)
-  Parameter T1_shortcut : forall o a b, T_shortcut o a b <=
-    k_const_word * (Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2.
+  Parameter T1_shortcut : forall o a b, (T_shortcut o a b <=
+    k_const_word * N.of_nat (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2)%nat))%N.
   (** Unary inverses have the published quadratic width bound. *)
-  Parameter T2_backward_one : forall o rw q xs, T_backward_one o rw q xs <=
-    k_const_word *
-      (Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2.
+  Parameter T2_backward_one : forall o rw q xs, (T_backward_one o rw q xs <=
+    k_const_word * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
   (** Binary inverses have the published quadratic width bound. *)
-  Parameter T3_backward_two : forall o rw q xs, T_backward_two o rw q xs <=
-    k_const_word *
-      (Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2.
+  Parameter T3_backward_two : forall o rw q xs, (T_backward_two o rw q xs <=
+    k_const_word * N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
 End CONST_WORD_TABLE_PLAN.
 
 Module Type CONST_WORD_TABLE_ALL (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L) :=
