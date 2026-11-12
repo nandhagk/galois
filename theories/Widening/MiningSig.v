@@ -54,6 +54,14 @@ Module Type MINING_T (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T) :=
 
 Module Type MINING_PLAN (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
     (Import M : MINING_T X L T).
+  Parameter lits_acc : term L.op X.t -> list Z -> list Z.
+  Parameter T_lits_acc : term L.op X.t -> list Z -> N.
+  Parameter k_mining : N.
+  (** Accumulator collection agrees with the literal order. *)
+  Parameter F3_lits_acc : forall e acc, lits_acc e acc = lits e ++ acc.
+  (** Accumulator collection traverses each syntax node once. *)
+  Parameter T1_lits_acc : forall e acc,
+    (T_lits_acc e acc <= k_mining * N.of_nat (tsize e))%N.
   (** Mining constructs the expanded threshold set. *)
   Parameter F1_mine : forall es extra, mine es extra = T.make (expanded es extra).
   (** Expansion contributes three entries for each seed. *)

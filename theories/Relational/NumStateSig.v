@@ -51,10 +51,12 @@ Module Type NUM_STATE (X : KEY) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N
 
 Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (Import D : NUM_STATE X L N F).
-  (* spec: size wsize transfer_work range_work *)
+  (* spec: size wsize assign_work havoc_work assume_work range_work *)
   Parameter size : t -> nat.
   Parameter wsize : wparam -> nat.
-  Parameter transfer_work : t -> nat.
+  Parameter assign_work : X.t -> term L.op X.t -> t -> nat.
+  Parameter havoc_work : X.t -> t -> nat.
+  Parameter assume_work : L.guard -> list (term L.op X.t) -> t -> nat.
   Parameter range_work : term L.op X.t -> t -> nat.
   Parameter T_leb T_join T_narrow : t -> t -> N.
   Parameter T_is_bot : t -> N.
@@ -64,6 +66,21 @@ Module Type NUM_STATE_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Parameter T_assume : L.guard -> list (term L.op X.t) -> t -> N.
   Parameter T_range : term L.op X.t -> t -> N.
   Parameter c_num : N.
+  (** Assignment charges its stated numeric work. *)
+  Parameter T_assign_le : forall x e s,
+    (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
+  (** Havoc charges its stated numeric work. *)
+  Parameter T_havoc_le : forall x s,
+    (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
+  (** Assumption charges its stated numeric work. *)
+  Parameter T_assume_le : forall g es s,
+    (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
+  (** Bottom testing charges the numeric state size. *)
+  Parameter T_is_bot_le : forall s,
+    (T_is_bot s <= c_num * N.of_nat (size s + 1))%N.
+  (** Narrowing charges both numeric state sizes. *)
+  Parameter T_narrow_le : forall a b,
+    (T_narrow a b <= c_num * N.of_nat (size a + size b + 1))%N.
   (** Range queries charge their stated numeric work. *)
   Parameter T_range_le : forall e s, (T_range e s <= c_num * N.of_nat ((range_work e s + 1)%nat))%N.
 End NUM_STATE_TIME.
