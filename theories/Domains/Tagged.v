@@ -95,7 +95,7 @@ Module TaggedTableCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
     | BOp o =>
       match untag xs with
       | Some ws =>
-        match L.result_width o (map fst ws) with
+        match Op.result_width o (map fst ws) with
         | Some w => match T.wfwd o w ws with Some p => Some (TVal w p) | None => None end
         | None => None
         end
@@ -107,7 +107,7 @@ Module TaggedTableCode (L : WORD_LANGUAGE_OPS) (W : WORD_PAYLOAD_OPS L)
       : option (list (tagged W.p)) :=
     match o, r, untag xs with
     | BOp o, TVal w p, Some ws =>
-      match L.result_width o (map fst ws) with
+      match Op.result_width o (map fst ws) with
       | Some rw =>
         if Pos.eqb w rw then
           match T.wbwd o w p ws with
@@ -206,8 +206,7 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
   Proof. Admitted. (* CONVERT: tagged_numeric_laws: No product even after head-reduction. *)
 End Tagged.
 
-Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
-    <: HARNESS_BASE_T BitsLangT.
+Module TaggedTimingHelpers (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L).
   Include Tagged L W.
   TimeFun bot.
   TimeFun top.
@@ -220,48 +219,7 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   TimeFun point.
   TimeFun abst.
 
-  Definition bsize (a : t) : nat :=
-    match a with
-    | TVal w p => Pos.to_nat w + W.psize w p + 1
-    | _ => 1
-    end.
-  Definition wsize (q : wparam) : nat := W.pwsize q.
-  Definition c_base : N := 1%N. (* STUB *)
-  Lemma T_leb_le : forall a b,
-    (T_leb a b <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b,
-    (T_join a b <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_meet_le : forall a b,
-    (T_meet a b <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall a,
-    (T_is_bot a <= c_base * N.of_nat (bsize a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_point_le : forall a,
-    (T_point a <= c_base * N.of_nat (bsize a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_widen_le : forall q a b,
-    (T_widen q a b <= c_base * N.of_nat (bsize a + bsize b + wsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma meet_size_le : forall a b,
-    (N.of_nat (bsize (meet a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma join_size_le : forall a b,
-    (N.of_nat (bsize (join a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma widen_size_le : forall q a b,
-    (N.of_nat (bsize (widen q a b)) <=
-      c_base * N.of_nat (bsize a + bsize b + wsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma abst_size_le : forall v,
-    (N.of_nat (bsize (abst v)) <= c_base * (T_abst v + 1))%N.
-  Proof. Admitted. (* STUB *)
-End TaggedT.
+End TaggedTimingHelpers.
 
 Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
     (B : TAGGED_BASE L W) <: TABLE BitsLang B.
@@ -280,6 +238,16 @@ Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
     Forall2 B.gamma xs cs -> BitsLang.holds g cs -> Forall2 B.gamma ys cs.
   Proof. Admitted.
 End TaggedTable.
+
+Module TaggedTableTimingHelpers (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
+    (T : WORD_TABLE_T L W).
+  Include TaggedTableCode L W T.
+  TimeFun untag.
+  TimeFun retag.
+  TimeFun fwd.
+  TimeFun bwd.
+  TimeFun grd.
+End TaggedTableTimingHelpers.
 
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
   Module B := Tagged L W.
