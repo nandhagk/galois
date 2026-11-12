@@ -5,10 +5,36 @@
     Builds on: Simple and WithBot. *)
 
 From Stdlib Require Import Bool List.
-From Galois.Lattice Require Import Simple WithBot.
+From Galois.Lattice Require Import Simple WithBot JoinWidening.
 Import List.ListNotations.
 
 Module LiftedBool := WithBotCode BoolLatCode.
+Module BoolWide := JoinWideningCode BoolLatCode.
+Module UnitWide := JoinWideningCode UnitLatCode.
+Module LiftedWide := JoinWideningCode LiftedBool.
+
+Example boolean_widen_narrow_table :
+  map (fun xy => let '(x, y) := xy in (BoolWide.widen tt x y, BoolWide.narrow x y))
+    [(false, false); (false, true); (true, false); (true, true)] =
+  [(false, false); (true, false); (true, true); (true, true)].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example unit_widen_narrow : (UnitWide.widen tt tt tt, UnitWide.narrow tt tt) = (tt, tt).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example lift_widen_narrow :
+  (LiftedWide.widen tt None None, LiftedWide.narrow None None,
+   LiftedWide.narrow (Some false) None,
+   LiftedWide.widen tt (Some false) (Some true),
+   LiftedWide.narrow (Some true) (Some false)) =
+  (None, None, Some false, Some true, Some true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 Example boolean_table :
   map (fun xy => let '(x, y) := xy in
