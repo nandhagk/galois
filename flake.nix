@@ -17,6 +17,7 @@
     {
       devShells = nixpkgs.lib.genAttrs systems (system: {
         default = (import ./nix { pkgs = pkgsFor system; argent = argent.packages.${system}.default; }).devShell;
+        session = (import ./nix { pkgs = pkgsFor system; argent = argent.packages.${system}.default; }).sessionShell;
       });
       formatter = nixpkgs.lib.genAttrs systems (system: (pkgsFor system).nixfmt);
     };
