@@ -7364,6 +7364,172 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     fold dim mlen. rewrite <- poly_entail_width. exact Hwork_bound.
   Qed.
 
+
+  (** Every natural number lies below its next binary logarithm power. *)
+  Lemma poly_log_upper : forall count, count < 2 ^ (Nat.log2 count + 1).
+  Proof.
+    intros [|count]; [change (0 < 2); lia|].
+    pose proof (Nat.log2_spec (S count) (Nat.lt_0_succ count)) as [_ Hupper].
+    now replace (Nat.log2 (S count) + 1) with (S (Nat.log2 (S count))) by lia.
+  Qed.
+
+  (** A count of bounded summands gives a logarithmic coefficient-width bound. *)
+  Lemma poly_count_magnitude_bits : forall z count bits,
+    poly_magnitude z <= count * 2 ^ bits ->
+    Z.size_nat z <= bits + Nat.log2 count + 1.
+  Proof.
+    intros z count bits Hmagnitude. apply poly_size_least.
+    replace (bits + Nat.log2 count + 1) with (bits + (Nat.log2 count + 1)) by lia.
+    rewrite Nat.pow_add_r.
+    pose proof (poly_log_upper count) as Hcount.
+    assert (Hpositive : 0 < 2 ^ bits).
+    { pose proof (Nat.pow_nonzero 2 bits ltac:(lia)). lia. }
+    nia.
+  Qed.
+
+  (** An accumulator magnitude budget counts all inserted raw occurrences. *)
+  Definition poly_accum_magnitude (m : ptrie (X.t * Z)) (bound : nat) : Prop :=
+    forall key p, PTrieCode.get key m = Some p -> poly_magnitude (snd p) <= bound.
+
+  (** The next previous value obeys the table's magnitude budget, including missing keys. *)
+  Lemma poly_previous_magnitude : forall m bound x,
+    poly_accum_magnitude m bound -> poly_magnitude (poly_previous m x) <= bound.
+  Proof.
+    intros m bound x Hmagnitude. unfold poly_previous.
+    destruct (PTrieCode.get (X.encode x) m) as [p|] eqn:Hget.
+    - exact (Hmagnitude _ _ Hget).
+    - change (0 <= bound). lia.
+  Qed.
+
+  (** One insertion adds at most its source coefficient magnitude to every table bound. *)
+  Lemma poly_add_term_magnitude : forall m p bound bits,
+    poly_accum_magnitude m bound -> Z.size_nat (snd p) <= bits ->
+    poly_accum_magnitude (poly_add_term X.encode m p) (bound + 2 ^ bits).
+  Proof.
+    intros m p bound bits Hmagnitude Hbits key q Hget.
+    change (PTrieCode.get key (PTrieCode.set (X.encode (fst p))
+      (fst p, (poly_previous m (fst p) + snd p)%Z) m) = Some q) in Hget.
+    destruct (Pos.eq_dec key (X.encode (fst p))) as [Hequal|Hother].
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Hequal. subst q.
+      cbn [snd].
+      pose proof (poly_magnitude_add (poly_previous m (fst p)) (snd p)) as Hadd.
+      pose proof (poly_previous_magnitude m bound (fst p) Hmagnitude) as Hold.
+      pose proof (poly_magnitude_upper (snd p)) as Hnew.
+      assert (Hpower : 2 ^ Z.size_nat (snd p) <= 2 ^ bits).
+      { apply Nat.pow_le_mono_r; lia. }
+      lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hother.
+      specialize (Hmagnitude _ _ Hget). lia.
+  Qed.
+
+  (** Accumulating a raw list adds one source-magnitude budget per occurrence. *)
+  Lemma poly_accum_magnitude_fold : forall xs m bound bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    poly_accum_magnitude m bound ->
+    poly_accum_magnitude (fold_left (poly_add_term X.encode) xs m)
+      (bound + length xs * 2 ^ bits).
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m bound bits Hsizes Hmagnitude;
+      cbn [fold_left length].
+    - now rewrite Nat.add_0_r.
+    - inversion Hsizes as [|q qs Hp Htail]; subst q qs.
+      replace (bound + S (length xs) * 2 ^ bits) with
+        ((bound + 2 ^ bits) + length xs * 2 ^ bits) by nia.
+      apply IH; [exact Htail|]. now apply poly_add_term_magnitude.
+  Qed.
+
+  (** Normalized raw coefficients gain only the logarithm of the source occurrence count. *)
+  Lemma poly_normal_coef_log_bits : forall xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Forall (fun p => Z.size_nat (snd p) <= bits + Nat.log2 (length xs) + 1)
+      (poly_normal_coef X.encode xs).
+  Proof.
+    intros xs bits Hsizes.
+    assert (Hempty : poly_accum_magnitude PTrieCode.empty 0).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (poly_accum_magnitude_fold xs PTrieCode.empty 0 bits Hsizes Hempty)
+      as Hmagnitude.
+    apply Forall_forall. intros p Hin. apply poly_count_magnitude_bits.
+    destruct (poly_normal_coef_lookup _ _ _ _ Hin) as [key [Hget _]].
+    exact (Hmagnitude _ _ Hget).
+  Qed.
+
+  (** A raw row's merged coefficients fit its declared width plus an occurrence logarithm. *)
+  Lemma poly_normal_row_log_bits : forall r,
+    C.row_bits (poly_normal_row X.encode r) <=
+      C.row_bits r + Nat.log2 (length (lhs r)) + 1.
+  Proof.
+    intro r. unfold C.row_bits at 1. cbn [poly_normal_row lhs rhs].
+    apply poly_max_bound.
+    - pose proof (poly_row_rhs_bits r). lia.
+    - apply poly_normal_coef_log_bits. apply Forall_forall. intros p Hin.
+      unfold C.row_bits. exact (poly_max_member _ (fun p => Z.size_nat (snd p))
+        (Z.size_nat (rhs r)) (lhs r) p Hin).
+  Qed.
+
+  (** A raw fold keeps a single width bound derived from its total occurrence count. *)
+  Lemma T_poly_accum_log : forall xs m keys bits used total,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    poly_accum_magnitude m (used * 2 ^ bits) -> used + length xs <= total ->
+    (List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+      xs m <= (poly_add_factor + 1) * N.of_nat (length xs) *
+        N.of_nat (keys + 2 * bits + Nat.log2 total + 2) + 1)%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys bits used total Hsizes Hmagnitude Hcount.
+    - time_unfold List.T_fold_left. cbn [length]. nia.
+    - inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      assert (Hprevious : Z.size_nat (poly_previous m (fst p)) <=
+        bits + Nat.log2 total + 1).
+      { apply poly_count_magnitude_bits.
+        pose proof (poly_previous_magnitude m (used * 2 ^ bits) (fst p) Hmagnitude).
+        cbn [length] in Hcount. nia. }
+      assert (Hnext : poly_accum_magnitude (poly_add_term X.encode m p)
+        ((used + 1) * 2 ^ bits)).
+      { replace ((used + 1) * 2 ^ bits) with (used * 2 ^ bits + 2 ^ bits) by nia.
+        now apply poly_add_term_magnitude. }
+      specialize (IH (poly_add_term X.encode m p) keys bits (used + 1) total Htail Hnext
+        ltac:(cbn [length] in Hcount; lia)).
+      pose proof (T_poly_add_term_bounded m p keys bits
+        (bits + Nat.log2 total + 1) Hkey Hbits Hprevious) as Hhead.
+      time_unfold List.T_fold_left. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  Definition poly_log_normal_factor : N :=
+    (4 * (poly_add_factor + 1) + 6 * PTrieT.k_fold + 16)%N.
+
+  (** Raw normalization pays once per occurrence for keys and logarithmic merged widths. *)
+  Lemma T_poly_normal_log : forall xs keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (T_poly_normal_coef X.encode X.T_encode xs <=
+      poly_log_normal_factor * N.of_nat (length xs + 1) *
+        N.of_nat (keys + bits + Nat.log2 (length xs) + 1))%N.
+  Proof.
+    intros xs keys bits Hsizes.
+    assert (Hempty : poly_accum_magnitude PTrieCode.empty (0 * 2 ^ bits)).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (T_poly_accum_log xs PTrieCode.empty keys bits 0 (length xs)
+      Hsizes Hempty ltac:(lia)) as Haccum.
+    set (tr := fold_left (poly_add_term X.encode) xs PTrieCode.empty).
+    assert (Hkeys : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) xs).
+    { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
+    pose proof (poly_accum_nodes xs PTrieCode.empty keys Hkeys) as Hnodes.
+    change (PTrie.nodes tr <= length xs * keys) in Hnodes.
+    pose proof (PTrieT.T9_fold_values (X.t * Z) (list (X.t * Z))
+      poly_normal_keep T_poly_normal_keep tr nil 5 T_poly_normal_keep_le) as Hfold.
+    time_unfold (@T_poly_normal_coef). fold tr.
+    change (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) with poly_normal_keep.
+    unfold poly_log_normal_factor. time_simpl.
+    change (fun (acc : PTrieCode.t (X.t * Z)) (p : X.t * Z) =>
+      T_poly_add_term X.encode X.T_encode acc p) with
+      (T_poly_add_term X.encode X.T_encode).
+    change (fun (_ : list (X.t * Z)) (p : X.t * Z) =>
+      (1 + (1 + Z.T_eqb (snd p) 0))%N) with T_poly_normal_keep.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
