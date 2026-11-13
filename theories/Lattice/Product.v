@@ -30,9 +30,14 @@ Module Product (A B : LATTICE) <: LATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intro x; unfold leb, bot; cbn; rewrite A.bot_least, B.bot_least; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold is_bot, bot; cbn; rewrite A.is_bot_bot, B.is_bot_bot; reflexivity. Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hbot. unfold is_bot in Hbot. apply andb_true_iff in Hbot.
+    destruct Hbot as [Ha Hb]. unfold leb. apply andb_true_iff; split.
+    - apply A.is_bot_least; exact Ha.
+    - apply B.is_bot_least; exact Hb.
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. intros x y; unfold leb, join; cbn; rewrite A.join_ub_l, B.join_ub_l; reflexivity. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
@@ -84,12 +89,25 @@ Module ProductHeight (A B : LATTICE) (HA : HEIGHT A) (HB : HEIGHT B)
 
   (** The sum of component ranks is bounded by the sum of their heights. *)
   Lemma rank_le : forall a, rank a <= height.
-  Proof. Admitted. (* STUB *)
+  Proof. intro a; unfold rank, height; pose proof (HA.rank_le (fst a));
+    pose proof (HB.rank_le (snd a)); lia. Qed.
   (** Componentwise inclusion never lowers the rank sum. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hab. unfold Lat.leb in Hab. apply andb_true_iff in Hab.
+    destruct Hab as [Ha Hb]. unfold rank.
+    pose proof (HA.rank_mono _ _ Ha); pose proof (HB.rank_mono _ _ Hb); lia.
+  Qed.
   (** A strict product step increases at least one component rank. *)
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hab Hba. unfold Lat.leb in Hab, Hba.
+    apply andb_true_iff in Hab. apply andb_false_iff in Hba.
+    destruct Hab as [Ha Hb]. unfold rank.
+    pose proof (HA.rank_mono _ _ Ha); pose proof (HB.rank_mono _ _ Hb).
+    destruct Hba as [Hba|Hba].
+    - pose proof (HA.rank_strict _ _ Ha Hba); lia.
+    - pose proof (HB.rank_strict _ _ Hb Hba); lia.
+  Qed.
 End ProductHeight.
