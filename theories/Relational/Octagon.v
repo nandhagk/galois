@@ -4087,6 +4087,38 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     cbn [RelationalPathBounds.below]. exact Hle.
   Qed.
 
+  (** Adding paired zero diagonals preserves every triangle bound. *)
+  Lemma add_zero_global_closed : forall m k,
+    (forall p, RelationalPathBounds.closed_at (entry m) p) ->
+    (forall p, entry m p p = None \/ entry m p p = Some 0%Z) ->
+    forall p, RelationalPathBounds.closed_at
+      (entry (add_cons k k 0%Z m)) p.
+  Proof.
+    intros m k Hclosed Hdiag.
+    set (mid := put (flip k) (flip k)
+      (lower_bound 0%Z (entry m (flip k) (flip k))) m).
+    assert (Hmid : forall p, RelationalPathBounds.closed_at (entry mid) p).
+    { intro p. unfold RelationalPathBounds.closed_at. intros a b.
+      unfold mid. rewrite !entry_path_seed.
+      exact (RelationalPathBounds.seed_global_closed K.t path_key_dec
+        (entry m) (flip k) Hclosed (Hdiag (flip k)) p a b). }
+    assert (Hmid_diag : entry mid k k = entry m k k).
+    { unfold mid. rewrite entry_put.
+      destruct (K.eqb_spec k (flip k)) as [Heq|Hne]; [|reflexivity].
+      destruct k as [x sign]. destruct sign; discriminate Heq. }
+    intro p. unfold RelationalPathBounds.closed_at. intros a b.
+    change (RelationalPathBounds.below
+      (entry (put k k (lower_bound 0%Z (entry m k k)) mid) a b)
+      (RelationalPathBounds.plus
+        (entry (put k k (lower_bound 0%Z (entry m k k)) mid) a p)
+        (entry (put k k (lower_bound 0%Z (entry m k k)) mid) p b))).
+    rewrite <- Hmid_diag. rewrite !entry_path_seed.
+    assert (Hcase : entry mid k k = None \/ entry mid k k = Some 0%Z).
+    { rewrite Hmid_diag. apply Hdiag. }
+    exact (RelationalPathBounds.seed_global_closed K.t path_key_dec
+      (entry mid) k Hmid Hcase p a b).
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
