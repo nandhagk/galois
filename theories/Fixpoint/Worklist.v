@@ -893,6 +893,523 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       + eapply IH; [apply enqueue_single_prepared, Hprepared|exact Hin|exact Hsource].
   Qed.
 
+  (** Every member is bounded by a positive maximum fold. *)
+  Lemma cache_maximum_member : forall xs x, In x xs ->
+    (x <= fold_right Pos.max 1%positive xs)%positive.
+  Proof.
+    intro xs; induction xs as [|y xs IH]; intros x Hin; [contradiction|].
+    cbn [fold_right]; destruct Hin as [<-|Hin]; [apply Pos.le_max_l|].
+    eapply Pos.le_trans; [apply IH; exact Hin|apply Pos.le_max_r].
+  Qed.
+
+  (** A positive maximum fold is bounded by every common upper bound of its members. *)
+  Lemma cache_maximum_bound : forall xs bound,
+    (1 <= bound)%positive -> (forall x, In x xs -> (x <= bound)%positive) ->
+    (fold_right Pos.max 1%positive xs <= bound)%positive.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros bound Hone Hmembers; [exact Hone|].
+    cbn [fold_right]; apply Pos.max_lub.
+    - apply Hmembers; now left.
+    - apply IH; [exact Hone|intros y Hy; apply Hmembers; now right].
+  Qed.
+
+  (** Positive maximum folds depend only on list membership, including duplicate keys. *)
+  Lemma cache_maximum_ext : forall xs ys,
+    (forall x, In x xs <-> In x ys) ->
+    fold_right Pos.max 1%positive xs = fold_right Pos.max 1%positive ys.
+  Proof.
+    intros xs ys Hmembers; apply Pos.le_antisym; apply cache_maximum_bound.
+    - apply Pos.le_1_l.
+    - intros x Hin; apply cache_maximum_member, Hmembers, Hin.
+    - apply Pos.le_1_l.
+    - intros x Hin; apply cache_maximum_member, Hmembers, Hin.
+  Qed.
+
+  (** Mapping priorities commutes with their maximum fold. *)
+  Lemma cache_maximum_map {A : Type} (priority : A -> positive) : forall xs,
+    fold_right (fun x acc => Pos.max (priority x) acc) 1%positive xs =
+      fold_right Pos.max 1%positive (List.map priority xs).
+  Proof.
+    intro xs; induction xs as [|x xs IH]; cbn [fold_right List.map]; [reflexivity|].
+    now rewrite IH.
+  Qed.
+
+  (** The executable fallback rank agrees with the support-based specification. *)
+  Lemma top_rank_code_agrees : forall p pol, top_rank_code p pol = top_rank p pol.
+  Proof.
+    intros p pol; unfold top_rank_code, top_rank; rewrite cache_maximum_map.
+    f_equal; apply cache_maximum_ext; intro rank; rewrite !in_map_iff; split.
+    - intros [x [Hrank Hin]]; exists (S.key_code x); split; [exact Hrank|].
+      apply key_support_spec; apply in_flat_map in Hin as [r [Hrow Hkey]].
+      exists r, x; repeat split; try assumption; reflexivity.
+    - intros [c [Hrank Hin]]; apply key_support_spec in Hin as [r [x [Hrow [Hkey Hcode]]]].
+      exists x; split; [now rewrite Hcode|].
+      apply in_flat_map; exists r; now split.
+  Qed.
+
+  (** The executable rank fold uses the specified fallback and write sequence. *)
+  Lemma rank_with_top_agrees : forall p pol r,
+    rank_with_top p pol (top_rank_code p pol) r = row_rank p pol r.
+  Proof.
+    intros p pol r; unfold rank_with_top, row_rank; now rewrite top_rank_code_agrees.
+  Qed.
+
+  (** Combining lists pairs their corresponding optional nth entries. *)
+  Lemma cache_nth_combine {A B : Type} : forall (xs : list A) (ys : list B) n,
+    nth_error (combine xs ys) n =
+      match nth_error xs n, nth_error ys n with
+      | Some x, Some y => Some (x, y)
+      | _, _ => None
+      end.
+  Proof.
+    intros xs ys n; revert xs ys; induction n as [|n IH]; intros [|x xs] [|y ys];
+      cbn [nth_error combine]; try reflexivity.
+    - now destruct (nth_error xs n).
+    - apply IH.
+  Qed.
+
+  (** Equal-length combination retains the complete identifier sequence. *)
+  Lemma cache_combine_fst {A B : Type} : forall (xs : list A) (ys : list B),
+    length xs = length ys -> List.map fst (combine xs ys) = xs.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros [|y ys] Hlength;
+      cbn [length combine List.map fst] in *; try discriminate; [reflexivity|].
+    f_equal; apply IH; lia.
+  Qed.
+
+  (** Numbering gives the expected positive identifier at every source index. *)
+  Lemma row_ids_nth : forall p n, n < C p ->
+    nth_error (row_ids p) n = Some (Pos.of_succ_nat n).
+  Proof.
+    intros p n Hn; rewrite F0_row_ids, nth_error_map, nth_error_seq.
+    rewrite (proj2 (Nat.ltb_lt n (C p)) Hn); reflexivity.
+  Qed.
+
+  (** Numbered row pairs are precisely the successful source lookups. *)
+  Lemma numbered_rows_spec : forall p id r,
+    In (id, r) (combine (row_ids p) (S.rows p)) <-> source_row p id = Some r.
+  Proof.
+    intros p id r; split.
+    - intros Hin; apply In_nth_error in Hin as [n Hpair]; rewrite cache_nth_combine in Hpair.
+      destruct (nth_error (S.rows p) n) as [row|] eqn:Hrow.
+      + assert (Hn : n < C p) by (apply nth_error_Some; congruence).
+        rewrite (row_ids_nth p n Hn) in Hpair; injection Hpair as Hid Hr.
+        subst id row; rewrite F1_numbering; exact Hrow.
+      + destruct (nth_error (row_ids p) n); discriminate.
+    - intro Hrow; unfold source_row in Hrow.
+      assert (Hn : Pos.to_nat id - 1 < C p) by (apply nth_error_Some; congruence).
+      assert (Hid : Pos.of_succ_nat (Pos.to_nat id - 1) = id).
+      { apply SuccNat2Pos.inv; pose proof (Pos2Nat.is_pos id); lia. }
+      apply nth_error_In with (n := Pos.to_nat id - 1).
+      now rewrite cache_nth_combine, (row_ids_nth p (Pos.to_nat id - 1) Hn), Hrow, Hid.
+  Qed.
+
+  (** A right fold of distinct key bindings has exactly the listed bindings. *)
+  Lemma cache_pairs_lookup {A : Type} : forall (pairs : list (positive * A)) id a,
+    NoDup (List.map fst pairs) ->
+    (trie_get id (fold_right (fun kv m => PTrieCode.set (fst kv) (snd kv) m)
+      Empty pairs) = Some a <-> In (id, a) pairs).
+  Proof.
+    intro pairs; induction pairs as [|[key value] pairs IH]; intros id a Hnodup.
+    - cbn [fold_right]; rewrite trie_get_empty; cbn [In].
+      split; [discriminate|contradiction].
+    - inversion Hnodup as [|head tail Hfresh Htail]; subst head tail.
+      cbn [fold_right fst snd]; rewrite trie_get_set.
+      destruct (Pos.eqb id key) eqn:Heq.
+      + apply Pos.eqb_eq in Heq; subst id; split.
+        * intro H; injection H as <-; now left.
+        * intros [Hpair|Hin]; [now injection Hpair as <-|].
+          exfalso; apply Hfresh, in_map_iff; exists (key, a); now split.
+      + apply Pos.eqb_neq in Heq; rewrite IH by exact Htail; split.
+        * intro Hin; now right.
+        * intros [Hpair|Hin]; [injection Hpair as Hkey; congruence|exact Hin].
+  Qed.
+
+  (** The row component of indexing is the right fold of numbered row bindings. *)
+  Lemma index_rows_first : forall p pairs,
+    fst (fold_right (index_row p) (Empty, Empty) pairs) =
+      fold_right (fun kv m => PTrieCode.set (fst kv) (snd kv) m) Empty pairs.
+  Proof.
+    intros p pairs; induction pairs as [|[id r] pairs IH]; cbn [fold_right index_row fst snd].
+    - reflexivity.
+    - now rewrite IH.
+  Qed.
+
+  (** The constructed row table agrees with every successful or absent source lookup. *)
+  Lemma index_rows_source : forall p id,
+    trie_get id (fst (fold_right (index_row p) (Empty, Empty)
+      (combine (row_ids p) (S.rows p)))) = source_row p id.
+  Proof.
+    intros p id; rewrite index_rows_first.
+    assert (Hnodup : NoDup (List.map fst (combine (row_ids p) (S.rows p)))).
+    { rewrite cache_combine_fst; [apply row_ids_nodup|apply row_ids_length]. }
+    destruct (source_row p id) as [r|] eqn:Hsource.
+    - apply cache_pairs_lookup; [exact Hnodup|now apply numbered_rows_spec].
+    - destruct (trie_get id (fold_right
+        (fun kv m => PTrieCode.set (fst kv) (snd kv) m) Empty
+        (combine (row_ids p) (S.rows p)))) as [r|] eqn:Hget; [|reflexivity].
+      apply cache_pairs_lookup in Hget; [|exact Hnodup].
+      apply numbered_rows_spec in Hget; congruence.
+  Qed.
+
+  (** Applying a function to each stored value commutes with numbered lookup. *)
+  Lemma cache_pairs_map {A B : Type} (f : A -> B) : forall pairs id,
+    trie_get id (fold_right (fun kv m => PTrieCode.set (fst kv) (f (snd kv)) m)
+      Empty pairs) =
+    option_map f (trie_get id
+      (fold_right (fun kv m => PTrieCode.set (fst kv) (snd kv) m) Empty pairs)).
+  Proof.
+    intro pairs; induction pairs as [|[key value] pairs IH]; intro id.
+    - cbn [fold_right]; now rewrite !trie_get_empty.
+    - cbn [fold_right fst snd]; rewrite !trie_get_set.
+      destruct (Pos.eqb id key); [reflexivity|apply IH].
+  Qed.
+
+  (** The constructed rank table contains precisely the specified rank of each source row. *)
+  Lemma index_ranks_source : forall p pol id,
+    trie_get id (fold_right (fun ir acc => PTrieCode.set (fst ir)
+      (rank_with_top p pol (top_rank_code p pol) (snd ir)) acc)
+      Empty (combine (row_ids p) (S.rows p))) = option_map (row_rank p pol) (source_row p id).
+  Proof.
+    intros p pol id; rewrite cache_pairs_map.
+    rewrite <- (index_rows_first p (combine (row_ids p) (S.rows p))), index_rows_source.
+    destruct (source_row p id) as [r|]; cbn [option_map]; [|reflexivity].
+    f_equal; apply rank_with_top_agrees.
+  Qed.
+
+  (** Reader buckets interpret an absent trie binding as an empty list. *)
+  Definition reader_bucket (m : ptrie (list positive)) c :=
+    match trie_get c m with Some ids => ids | None => [] end.
+
+  (** Adding a reader prepends it only to the selected code's bucket. *)
+  Lemma reader_bucket_add : forall id key m c,
+    reader_bucket (add_reader id key m) c =
+      if Pos.eqb c key then id :: reader_bucket m c else reader_bucket m c.
+  Proof.
+    intros id key m c; unfold reader_bucket, add_reader; rewrite trie_get_set.
+    destruct (Pos.eqb c key) eqn:Heq; [|reflexivity].
+    apply Pos.eqb_eq in Heq; now subst c.
+  Qed.
+
+  (** Marking a declared read retains one unit binding per code. *)
+  Definition mark_read (seen : ptrie Datatypes.unit) (x : S.key) :=
+    let c := S.key_code x in
+    match trie_get c seen with Some _ => seen | None => PTrieCode.set c tt seen end.
+
+  (** Marking a read makes exactly its own code present. *)
+  Lemma mark_read_lookup : forall seen x c,
+    trie_get c (mark_read seen x) =
+      if Pos.eqb c (S.key_code x) then Some tt else trie_get c seen.
+  Proof.
+    intros seen x c; unfold mark_read.
+    destruct (trie_get (S.key_code x) seen) as [[]|] eqn:Hget.
+    - destruct (Pos.eqb c (S.key_code x)) eqn:Heq; [|reflexivity].
+      apply Pos.eqb_eq in Heq; now subst c.
+    - apply trie_get_set.
+  Qed.
+
+  (** A read-marking fold records whether its input list contains each code. *)
+  Lemma mark_reads_lookup : forall xs seen c,
+    trie_get c (fold_left mark_read xs seen) =
+      if existsb (fun x => Pos.eqb c (S.key_code x)) xs
+      then Some tt else trie_get c seen.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros seen c; [reflexivity|].
+    cbn [fold_left existsb]; rewrite IH, mark_read_lookup.
+    destruct (existsb (fun y => Pos.eqb c (S.key_code y)) xs),
+      (Pos.eqb c (S.key_code x)); reflexivity.
+  Qed.
+
+  (** The dependency set is the exact deduplicated read-code trie used by indexing. *)
+  Definition read_set (xs : list S.key) := fold_left mark_read xs Empty.
+
+  (** Dependency-set lookup is exactly the Boolean declared-code test. *)
+  Lemma read_set_lookup : forall xs c,
+    trie_get c (read_set xs) =
+      if existsb (fun x => Pos.eqb c (S.key_code x)) xs then Some tt else None.
+  Proof.
+    intros xs c; unfold read_set; now rewrite mark_reads_lookup, trie_get_empty.
+  Qed.
+
+  (** Dependency-set enumeration contains exactly the declared read codes. *)
+  Lemma read_set_member : forall xs c,
+    In (c, tt) (PTrieCode.elements (read_set xs)) <->
+      exists x, In x xs /\ S.key_code x = c.
+  Proof.
+    intros xs c; rewrite PTrie.elements_spec; change
+      (trie_get c (read_set xs) = Some tt <-> exists x, In x xs /\ S.key_code x = c).
+    rewrite read_set_lookup; split.
+    - destruct (existsb (fun x => Pos.eqb c (S.key_code x)) xs) eqn:Hread;
+        [|discriminate].
+      intro H; apply existsb_exists in Hread as [x [Hin Heq]].
+      apply Pos.eqb_eq in Heq; exists x; split; [exact Hin|symmetry; exact Heq].
+    - intros [x [Hin Hcode]].
+      assert (Hread : existsb (fun y => Pos.eqb c (S.key_code y)) xs = true).
+      { apply existsb_exists; exists x; split; [exact Hin|].
+        apply Pos.eqb_eq; symmetry; exact Hcode. }
+      now rewrite Hread.
+  Qed.
+
+  (** Enumerating deduplicated read codes preserves the declared Boolean membership test. *)
+  Lemma read_set_exists : forall xs c,
+    existsb (fun kv => Pos.eqb c (fst kv)) (PTrieCode.elements (read_set xs)) =
+      existsb (fun x => Pos.eqb c (S.key_code x)) xs.
+  Proof.
+    intros xs c; apply Bool.eq_true_iff_eq; rewrite !existsb_exists; split.
+    - intros [[key []] [Hin Heq]]; cbn [fst] in Heq; apply Pos.eqb_eq in Heq; subst key.
+      apply read_set_member in Hin as [x [Hin Hcode]].
+      exists x; split; [exact Hin|apply Pos.eqb_eq; symmetry; exact Hcode].
+    - intros [x [Hin Heq]]; apply Pos.eqb_eq in Heq.
+      exists (c, tt); split.
+      + apply read_set_member; exists x; split; [exact Hin|symmetry; exact Heq].
+      + apply Pos.eqb_refl.
+  Qed.
+
+  (** Distinct reader codes prepend a row at most once to each observed bucket. *)
+  Lemma reader_bucket_fold : forall id (entries : list (positive * Datatypes.unit)) m c,
+    NoDup (List.map fst entries) ->
+    reader_bucket (fold_right (fun kv acc => add_reader id (fst kv) acc) m entries) c =
+      if existsb (fun kv => Pos.eqb c (fst kv)) entries
+      then id :: reader_bucket m c else reader_bucket m c.
+  Proof.
+    intros id entries; induction entries as [|[key value] entries IH]; intros m c Hnodup;
+      [reflexivity|].
+    inversion Hnodup as [|head tail Hfresh Htail]; subst head tail.
+    cbn [fold_right existsb fst]; rewrite reader_bucket_add, IH by exact Htail.
+    destruct (Pos.eqb c key) eqn:Heq; [|reflexivity].
+    apply Pos.eqb_eq in Heq; subst c.
+    assert (Habsent : existsb (fun kv => Pos.eqb key (fst kv)) entries = false).
+    { apply Bool.not_true_iff_false; intros Hpresent.
+      apply existsb_exists in Hpresent as [kv [Hin Heq]]; apply Pos.eqb_eq in Heq.
+      apply Hfresh, in_map_iff; exists kv; split; [symmetry; exact Heq|exact Hin]. }
+    now rewrite Habsent.
+  Qed.
+
+  (** Indexing one row prepends its identifier exactly once for each declared read code. *)
+  Lemma index_row_readers : forall p id r idx c,
+    reader_bucket (snd (index_row p (id, r) idx)) c =
+      if existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+      then id :: reader_bucket (snd idx) c else reader_bucket (snd idx) c.
+  Proof.
+    intros p id r idx c.
+    change (reader_bucket (fold_right (fun kv acc => add_reader id (fst kv) acc)
+      (snd idx) (PTrieCode.elements (read_set (S.deps p r)))) c =
+      if existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+      then id :: reader_bucket (snd idx) c else reader_bucket (snd idx) c).
+    rewrite reader_bucket_fold by apply PTrie.elements_nodup; now rewrite read_set_exists.
+  Qed.
+
+  (** Folding row indexes retains the exact ordered list of reading row occurrences. *)
+  Lemma index_rows_readers : forall p pairs c,
+    reader_bucket (snd (fold_right (index_row p) (Empty, Empty) pairs)) c =
+      List.map fst (filter (fun ir =>
+        existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p (snd ir))) pairs).
+  Proof.
+    intros p pairs; induction pairs as [|[id r] pairs IH]; intro c.
+    - unfold reader_bucket; cbn [fold_right snd filter List.map]; now rewrite trie_get_empty.
+    - cbn [fold_right]; rewrite index_row_readers, IH.
+      cbn [filter List.map fst snd].
+      destruct (existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)); reflexivity.
+  Qed.
+
+  (** Numbered-pair filtering agrees with source-row filtering when each pair is accurate. *)
+  Lemma source_filter_pairs : forall p c pairs,
+    (forall id r, In (id, r) pairs -> source_row p id = Some r) ->
+    List.map fst (filter (fun ir =>
+      existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p (snd ir))) pairs) =
+    filter (fun id => match source_row p id with
+      | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+      | None => false
+      end) (List.map fst pairs).
+  Proof.
+    intros p c pairs; induction pairs as [|[id r] pairs IH]; intro Hsource; [reflexivity|].
+    assert (Htail : forall id r, In (id, r) pairs -> source_row p id = Some r).
+    { intros other row Hin; apply Hsource; now right. }
+    cbn [filter List.map fst snd]; rewrite (Hsource id r (or_introl eq_refl)).
+    destruct (existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r));
+      cbn [List.map fst]; now rewrite IH by exact Htail.
+  Qed.
+
+  (** The constructed reader table agrees with the full ordered source reader bucket. *)
+  Lemma index_readers_source : forall p c,
+    reader_bucket (snd (fold_right (index_row p) (Empty, Empty)
+      (combine (row_ids p) (S.rows p)))) c = source_readers p c.
+  Proof.
+    intros p c; rewrite index_rows_readers, source_filter_pairs.
+    - rewrite cache_combine_fst by apply row_ids_length; reflexivity.
+    - intros id r Hin; now apply numbered_rows_spec.
+  Qed.
+
+  (** The preparation seed is the fixed indexed state immediately before initial enqueue. *)
+  Definition prepare_seed p pol : state :=
+    let ids := row_ids p in
+    let idx := fold_right (index_row p) (Empty, Empty) (combine ids (S.rows p)) in
+    let top := top_rank_code p pol in
+    let ranks := fold_right (fun ir acc =>
+      PTrieCode.set (fst ir) (rank_with_top p pol top (snd ir)) acc)
+      Empty (combine ids (S.rows p)) in
+    WorklistState Empty Empty Q.empty Empty (fst idx) (snd idx) Empty ranks.
+
+  (** Preparation enqueues the numbered rows into its indexed seed. *)
+  Lemma prepare_eq : forall p pol,
+    prepare p pol = enqueue p pol (row_ids p) (prepare_seed p pol).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Seed row lookups agree with source row lookups. *)
+  Lemma prepare_seed_row : forall p pol id,
+    row_at (prepare_seed p pol) id = source_row p id.
+  Proof.
+    intros p pol id; apply index_rows_source.
+  Qed.
+
+  (** Seed reader buckets retain their exact source order and multiplicity. *)
+  Lemma prepare_seed_readers : forall p pol c,
+    readers (prepare_seed p pol) c = source_readers p c.
+  Proof.
+    intros p pol c; apply index_readers_source.
+  Qed.
+
+  (** Seed rank lookups contain the specified rank for precisely the source identifiers. *)
+  Lemma prepare_seed_ranks : forall p pol id,
+    trie_get id (ws_ranks (prepare_seed p pol)) =
+      option_map (row_rank p pol) (source_row p id).
+  Proof.
+    intros p pol id; apply index_ranks_source.
+  Qed.
+
+  (** The indexed seed establishes every prepared-state property before enqueue. *)
+  Lemma prepare_seed_prepared : forall p pol, prepared p pol (prepare_seed p pol).
+  Proof.
+    intros p pol; split.
+    - split; [apply prepare_seed_row|apply prepare_seed_readers].
+    - split.
+      + intro id; change (trie_get id (@Empty Datatypes.unit) = Some tt <->
+          exists pr, Q.prio Q.empty id = Some pr).
+        rewrite trie_get_empty, Q.prio_empty; split; [discriminate|intros [pr H]; discriminate].
+      + split; [apply Q.wf_empty|]; split.
+        * change (Q.pending Q.empty = N.to_nat (Q.size Q.empty)).
+          now rewrite Q.pending_empty, Q.size_empty.
+        * split.
+          -- intros c id Hflag Hin; change (trie_get c (@Empty Datatypes.unit) = Some tt)
+               in Hflag; rewrite trie_get_empty in Hflag; discriminate.
+          -- intros id r Hrow; rewrite prepare_seed_row in Hrow.
+             now rewrite prepare_seed_ranks, Hrow.
+  Qed.
+
+  (** Initial queue construction preserves the complete indexed seed invariant. *)
+  Lemma prepare_prepared : forall p pol, prepared p pol (prepare p pol).
+  Proof.
+    intros p pol; rewrite prepare_eq; apply enqueue_prepared, prepare_seed_prepared.
+  Qed.
+
+  (** Initial preparation queues every row without requiring system or priority premises. *)
+  Lemma prepare_queued : forall p pol id, In id (row_ids p) ->
+    exists pr, Q.prio (ws_queue (prepare p pol)) id = Some pr.
+  Proof.
+    intros p pol id Hid; rewrite prepare_eq; destruct (source_row_total p id Hid) as [r Hrow].
+    eapply enqueue_contains; [apply prepare_seed_prepared|exact Hid|exact Hrow].
+  Qed.
+
+  (** Enqueue preserves every store lookup. *)
+  Lemma enqueue_look : forall p pol ids s x, look (enqueue p pol ids s) x = look s x.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Enqueue preserves every strict-update counter. *)
+  Lemma enqueue_counter : forall p pol ids s c,
+    counter (enqueue p pol ids s) c = counter s c.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The preparation seed starts every lookup at bottom. *)
+  Lemma prepare_seed_look : forall p pol x, look (prepare_seed p pol) x = L.bot.
+  Proof.
+    intros p pol x; change (look_or S.key_code L.bot Empty x = L.bot).
+    unfold look_or; now rewrite trie_get_empty.
+  Qed.
+
+  (** The preparation seed starts every strict-update counter at zero. *)
+  Lemma prepare_seed_counter : forall p pol c, counter (prepare_seed p pol) c = 0%N.
+  Proof.
+    intros p pol c.
+    change (match trie_get c (@Empty N) with Some n => n | None => 0%N end = 0%N).
+    now rewrite trie_get_empty.
+  Qed.
+
+  (** Reference enqueue of an empty list leaves the complete view unchanged. *)
+  Lemma reference_enqueue_nil : forall p pol s, reference_enqueue p pol [] s = s.
+  Proof.
+    intros p pol s; destruct s; reflexivity.
+  Qed.
+
+  (** Reference enqueue splits after its first guarded queue update. *)
+  Lemma reference_enqueue_cons : forall p pol id ids s,
+    reference_enqueue p pol (id :: ids) s =
+      reference_enqueue p pol ids (reference_enqueue p pol [id] s).
+  Proof.
+    intros p pol id ids [store counts queue]; unfold reference_enqueue.
+    cbn [fold_left wl_store wl_counters wl_queue]; reflexivity.
+  Qed.
+
+  (** Reference singleton enqueue uses the specified source row rank. *)
+  Lemma reference_enqueue_single : forall p pol id s,
+    reference_enqueue p pol [id] s =
+      match Q.prio (wl_queue s) id, source_row p id with
+      | None, Some r => WlState (wl_store s) (wl_counters s)
+          (Q.push (N.pos (row_rank p pol r)) id (wl_queue s))
+      | _, _ => s
+      end.
+  Proof.
+    intros p pol id [store counts queue]; unfold reference_enqueue.
+    cbn [fold_left wl_store wl_counters wl_queue].
+    destruct (Q.prio queue id), (source_row p id); try reflexivity.
+    now rewrite rank_with_top_agrees.
+  Qed.
+
+  (** A reader bucket already represented in the queue makes reference enqueue a no-op. *)
+  Lemma reference_enqueue_existing : forall p pol ids s,
+    (forall id, In id ids -> exists pr, Q.prio (wl_queue s) id = Some pr) ->
+    reference_enqueue p pol ids s = s.
+  Proof.
+    intros p pol ids [store counts queue] Hall; unfold reference_enqueue.
+    cbn [wl_store wl_counters wl_queue] in *; f_equal.
+    revert Hall; induction ids as [|id ids IH]; intro Hall; [reflexivity|].
+    cbn [fold_left]; destruct (Hall id (or_introl eq_refl)) as [pr Hprio].
+    rewrite Hprio; apply IH; intros target Hin; apply Hall; now right.
+  Qed.
+
+  (** A prepared singleton enqueue performs exactly the same queue operation as its view. *)
+  Lemma enqueue_single_agreement : forall p pol id s, prepared p pol s ->
+    wl_view (enqueue p pol [id] s) = reference_enqueue p pol [id] (wl_view s).
+  Proof.
+    intros p pol id s Hprepared; rewrite enqueue_single, reference_enqueue_single.
+    cbn [wl_view wl_store wl_counters wl_queue].
+    destruct Hprepared as [[Hrows Hreaders] [Hlive [Hwf [Hexact [Harmed Hranks]]]]].
+    rewrite <- Hrows.
+    destruct (trie_get id (ws_live s)) as [[]|] eqn:Hmarker.
+    - destruct (proj1 (Hlive id) Hmarker) as [pr Hprio]; rewrite Hprio.
+      destruct (row_at s id); reflexivity.
+    - assert (Hnone : Q.prio (ws_queue s) id = None) by
+        (apply live_absent; [exact Hlive|exact Hmarker]).
+      rewrite Hnone; destruct (row_at s id) as [r|] eqn:Hrow; [|reflexivity].
+      rewrite (Hranks id r Hrow); reflexivity.
+  Qed.
+
+  (** Every prepared enqueue retains exact reference behavior through all prefixes. *)
+  Lemma enqueue_agreement : forall p pol ids s, prepared p pol s ->
+    wl_view (enqueue p pol ids s) = reference_enqueue p pol ids (wl_view s).
+  Proof.
+    intros p pol ids; induction ids as [|id ids IH]; intros s Hprepared.
+    - now rewrite enqueue_nil, reference_enqueue_nil.
+    - rewrite enqueue_cons, reference_enqueue_cons.
+      rewrite IH by (apply enqueue_single_prepared; exact Hprepared).
+      now rewrite enqueue_single_agreement by exact Hprepared.
+  Qed.
+
   (** * Identifier and priority widths *)
 
   (** Increasing a positive number cannot shorten its bit representation. *)
@@ -1121,7 +1638,21 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (forall c, counter (prepare p pol) c = 0%N) /\
     (forall id, In id (row_ids p) ->
       exists pr, Q.prio (ws_queue (prepare p pol)) id = Some pr).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol Hwf Hprio.
+    assert (Hseed : invariant p pol (prepare_seed p pol)).
+    { split; [apply structural_empty; reflexivity|]; split.
+      - intro x; rewrite prepare_seed_look; apply B.inv_bot.
+      - apply prepare_seed_prepared. }
+    split.
+    - rewrite prepare_eq; apply enqueue_invariant; try assumption.
+      intros id Hin; exact Hin.
+    - split.
+      + intro x; now rewrite prepare_eq, enqueue_look, prepare_seed_look.
+      + split.
+        * intro c; now rewrite prepare_eq, enqueue_counter, prepare_seed_counter.
+        * intros id Hin; now apply prepare_queued.
+  Qed.
   (** Enqueue changes the queue alone and guards every push by live absence. *)
   Lemma F5_enqueue : forall p pol ids s,
     wl_store (reference_enqueue p pol ids s) = wl_store s /\
@@ -1131,7 +1662,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         | None, Some r => Q.push (N.pos (row_rank p pol r)) id q
         | _, _ => q
         end) ids (wl_queue s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol ids s; split; [reflexivity|]; split; [reflexivity|].
+    unfold reference_enqueue; cbn [wl_queue].
+    generalize (wl_queue s); induction ids as [|id ids IH]; intro q; [reflexivity|].
+    cbn [fold_left]; destruct (Q.prio q id), (source_row p id);
+      rewrite ?rank_with_top_agrees; apply IH.
+  Qed.
   (** An update writes the policy result and enqueues its readers after a strict value change. *)
   Lemma F6_update : forall p pol s x a,
     let c := S.key_code x in
@@ -1175,7 +1712,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
   (** Preparation establishes all cache and live facts within the solver. *)
   Lemma F4_metadata : forall p pol, prepared p pol (prepare p pol).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply prepare_prepared.
+  Qed.
   (** Enqueue preserves the immutable indexes and the original value components. *)
   Lemma F5_fields : forall p pol ids s,
     ws_store (enqueue p pol ids s) = ws_store s /\
@@ -1207,7 +1746,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Enqueue agrees with the original helper after projection from prepared states. *)
   Lemma F5_agreement : forall p pol ids s, prepared p pol s ->
     wl_view (enqueue p pol ids s) = reference_enqueue p pol ids (wl_view s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply enqueue_agreement.
+  Qed.
   (** Enqueue maintains the metadata and live facts that justify projected agreement. *)
   Lemma F5_prepared : forall p pol ids s, prepared p pol s ->
     prepared p pol (enqueue p pol ids s).
@@ -1599,7 +2140,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Prepared ranks equal each row's least non-head write priority. *)
   Lemma F4_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
     trie_get id (ws_ranks (prepare p pol)) = Some (row_rank p pol r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol id r Hrow.
+    destruct (prepare_prepared p pol) as [_ [_ [_ [_ [_ Hranks]]]]].
+    now apply Hranks.
+  Qed.
   (** Every continuing callback keeps the structural and client value invariants. *)
   Lemma F9_step_inv : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
