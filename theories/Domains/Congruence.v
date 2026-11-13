@@ -876,6 +876,31 @@ Module CongruenceCRT.
     - apply crt_graph_next; [discriminate | apply IH].
   Qed.
 
+  (** The terminal coefficients retain the linear bit bounds of the state invariant. *)
+  Definition result_budget n result : Prop :=
+    let '(u, v, d) := result in
+    (Z.size_nat u <= 3 * n + 1 /\ Z.size_nat v <= 3 * n + 1 /\ Z.size_nat d <= n)%nat.
+
+  Lemma graph_result_budget : forall n s result, graph s result ->
+    state_budget n s -> result_budget n result.
+  Proof.
+    intros n s result Hgraph. induction Hgraph as [s Hzero|s result Hnonzero Htail IH];
+      intro Hstate.
+    - unfold result_budget.
+      destruct (state_component_sizes n s Hstate) as [_ [Hd [_ [_ [Hu Hv]]]]].
+      repeat split; assumption.
+    - apply IH. now apply next_state_budget.
+  Qed.
+
+  Lemma extgcd_result_budget : forall a b,
+    result_budget (Z.size_nat a + Z.size_nat b + 1) (extgcd a b).
+  Proof.
+    intros a b. unfold extgcd. eapply graph_result_budget.
+    - apply loop_graph.
+    - apply initial_state_budget.
+  Qed.
+
+
   (** A well-founded fixpoint preserves any observation respected by its functional.
       The observation may project a dependent result; no proof-field equality is used. *)
   Lemma fix_f_preserves
@@ -976,6 +1001,162 @@ Module CongruenceCRT.
     - rewrite (proj2 (Z.eqb_neq _ _) Hdifferent). reflexivity.
   Qed.
 End CongruenceCRT.
+
+(** Arithmetic bit and cost bounds shared by CRT and payload normalization. *)
+Module CongruenceCost.
+  Import CongruenceCRT.
+
+  Lemma integer_divide_size : forall a b,
+    (Z.size_nat (a / b) <= Z.size_nat a)%nat.
+  Proof.
+    intros a b. destruct (Z.eq_dec b 0) as [->|Hnonzero].
+    - rewrite Z.div_0_r. cbn [Z.size_nat]. lia.
+    - pose proof (Z.div_mod a b Hnonzero) as Hdivision.
+      pose proof (Z.mod_bound_abs a b Hnonzero) as Hremainder.
+      pose proof (Z.abs_nonneg a) as Ha.
+      pose proof (Z.abs_nonneg (a / b)) as Hq.
+      assert (Hb : 0 < Z.abs b) by (apply Z.abs_pos; exact Hnonzero).
+      assert (Htriangle : Z.abs b * Z.abs (a / b) <= Z.abs a + Z.abs (a mod b)).
+      { rewrite <- Z.abs_mul.
+        replace (b * (a / b)) with (a + - (a mod b)) by lia.
+        pose proof (Z.abs_triangle a (- (a mod b))) as Hsum.
+        now rewrite Z.abs_opp in Hsum. }
+      assert (Hquotient : Z.abs (a / b) <= Z.abs a).
+      { destruct (Z_le_gt_dec (Z.abs (a / b)) (Z.abs a)) as [Hle|Hgt]; [exact Hle|].
+        assert (Hmultiply : Z.abs b * (Z.abs a + 1) <= Z.abs b * Z.abs (a / b)).
+        { apply Z.mul_le_mono_nonneg_l; lia. }
+        assert (Hlower : Z.abs a + Z.abs b <= Z.abs b * (Z.abs a + 1)) by nia.
+        lia. }
+      pose proof (Z.size_nat_mono (Z.abs (a / b)) (Z.abs a)
+        (conj Hq Hquotient)) as Hsize.
+      now rewrite !integer_abs_size in Hsize.
+  Qed.
+
+  Lemma integer_modulo_size : forall a b,
+    (Z.size_nat (a mod b) <= Z.size_nat a + Z.size_nat b)%nat.
+  Proof.
+    intros a b. destruct (Z.eq_dec b 0) as [->|Hnonzero].
+    - rewrite Z.mod_0_r. cbn [Z.size_nat]. lia.
+    - pose proof (Z.mod_bound_abs a b Hnonzero) as Hremainder.
+      pose proof (Z.abs_nonneg (a mod b)) as Hnonnegative.
+      pose proof (Z.size_nat_mono (Z.abs (a mod b)) (Z.abs b) ltac:(lia)) as Hsize.
+      rewrite !integer_abs_size in Hsize. lia.
+  Qed.
+
+  Lemma integer_gcd_size : forall a b,
+    (Z.size_nat (Z.gcd a b) <= Z.size_nat a + Z.size_nat b)%nat.
+  Proof.
+    intros a b. destruct (Z.eq_dec a 0) as [->|Hnonzero].
+    - rewrite Z.gcd_0_l, integer_abs_size. cbn [Z.size_nat]. lia.
+    - assert (Ha : 0 < Z.abs a) by (apply Z.abs_pos; exact Hnonzero).
+      pose proof (Z.gcd_divide_l (Z.abs a) b) as Hdivide.
+      rewrite Z.gcd_abs_l in Hdivide.
+      pose proof (Z.divide_pos_le (Z.gcd a b) (Z.abs a) Ha Hdivide) as Hbound.
+      pose proof (Z.gcd_nonneg a b) as Hnonnegative.
+      pose proof (Z.size_nat_mono (Z.gcd a b) (Z.abs a) ltac:(lia)) as Hsize.
+      rewrite integer_abs_size in Hsize. lia.
+  Qed.
+
+  Lemma integer_lcm_size : forall a b,
+    (Z.size_nat (Z.lcm a b) <= Z.size_nat a + Z.size_nat b)%nat.
+  Proof.
+    intros a b. unfold Z.lcm. rewrite integer_abs_size.
+    pose proof (integer_multiply_size a (b / Z.gcd a b)).
+    pose proof (integer_divide_size b (Z.gcd a b)). lia.
+  Qed.
+
+  Lemma square_scaled : forall bound scale n,
+    (bound <= scale * n)%nat ->
+    (N.of_nat (bound ^ 2) <= N.of_nat (scale ^ 2) * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros bound scale n Hbound. rewrite <- Nat2N.inj_mul.
+    apply time_of_nat_le. rewrite <- Nat.pow_mul_l.
+    apply Nat.pow_le_mono_l. exact Hbound.
+  Qed.
+
+  Lemma eqb_time_budget : forall n x y,
+    (Z.size_nat x + 1 <= n)%nat -> (Z.T_eqb x y <= N.of_nat n)%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_eqb_le x y).
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_add in Hsize.
+    time_cbn_all. lia.
+  Qed.
+
+  Lemma add_time_budget : forall n x y,
+    (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+    (Z.T_add x y <= 3 * N.of_nat n)%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_add_le x y).
+    apply time_of_nat_le in Hsize. rewrite !Nat2N.inj_add in *.
+    time_cbn_all. lia.
+  Qed.
+
+  Lemma sub_time_budget : forall n x y,
+    (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+    (Z.T_sub x y <= 3 * N.of_nat n)%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_sub_le x y).
+    apply time_of_nat_le in Hsize. rewrite !Nat2N.inj_add in *.
+    time_cbn_all. lia.
+  Qed.
+
+  Lemma mul_time_budget : forall n x y,
+    (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+    (Z.T_mul x y <= 2 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_mul_le x y) as Hmultiply.
+    apply time_of_nat_le in Hsize.
+    rewrite !Nat2N.inj_pow, !Nat2N.inj_add in *. time_cbn_all.
+    assert (Hproduct : ((N.of_nat (Z.size_nat x) + 1) *
+      (N.of_nat (Z.size_nat x) + 2 * N.of_nat (Z.size_nat y) + 2) <=
+      N.of_nat n * (2 * N.of_nat n))%N).
+    { apply N.mul_le_mono; lia. }
+    nia.
+  Qed.
+
+  Lemma div_time_budget : forall n x y,
+    (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+    (Z.T_div x y <= 64 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_div_le x y) as Hdivide.
+    apply time_of_nat_le in Hsize.
+    rewrite !Nat2N.inj_pow, !Nat2N.inj_add in *. time_cbn_all.
+    assert (Hproduct : ((N.of_nat (Z.size_nat x) + 1) *
+      (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 2) <=
+      N.of_nat n * (2 * N.of_nat n))%N).
+    { apply N.mul_le_mono; lia. }
+    nia.
+  Qed.
+
+  Lemma mod_time_budget : forall n x y,
+    (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+    (Z.T_modulo x y <= 64 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_modulo_le x y) as Hmodulo.
+    apply time_of_nat_le in Hsize.
+    rewrite !Nat2N.inj_pow, !Nat2N.inj_add in *. time_cbn_all.
+    assert (Hproduct : ((N.of_nat (Z.size_nat x) + 1) *
+      (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 2) <=
+      N.of_nat n * (2 * N.of_nat n))%N).
+    { apply N.mul_le_mono; lia. }
+    nia.
+  Qed.
+
+  Lemma gcd_time_budget : forall n x y,
+    (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+    (Z.T_gcd x y <= 8 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n x y Hsize. pose proof (Z.T_gcd_le x y) as Hgcd.
+    apply time_of_nat_le in Hsize.
+    rewrite !Nat2N.inj_pow, !Nat2N.inj_add in *. time_cbn_all.
+    assert (Hproduct : ((N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 2) *
+      (2 * (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y)) + 3) <=
+      (2 * N.of_nat n) * (3 * N.of_nat n))%N).
+    { apply N.mul_le_mono; lia. }
+    nia.
+  Qed.
+End CongruenceCost.
+
 
 (** Raw integer shifting agrees with the bounded word shift on normalized inputs. *)
 Lemma normalized_wshl : forall w x y, is_word w x -> is_word w y ->
