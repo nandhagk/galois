@@ -469,14 +469,189 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Proof.
     intros q w a b Hle. unfold pwiden. now rewrite Hle.
   Qed.
+
+  (** Moving an endpoint right can only increase the number of smaller thresholds. *)
+  Lemma count_lt_mono : forall q x y, (x <= y)%Z -> count_lt q x <= count_lt q y.
+  Proof.
+    intros q x y Hxy. unfold count_lt.
+    induction (T.vals q) as [|u us IH]; cbn; [lia|].
+    destruct (Z.ltb u x) eqn:Hux, (Z.ltb u y) eqn:Huy; cbn; lia.
+  Qed.
+
+  (** Moving an endpoint right can only decrease the number of larger thresholds. *)
+  Lemma count_gt_mono : forall q x y, (x <= y)%Z -> count_gt q y <= count_gt q x.
+  Proof.
+    intros q x y Hxy. unfold count_gt.
+    induction (T.vals q) as [|u us IH]; cbn; [lia|].
+    destruct (Z.ltb y u) eqn:Hyu, (Z.ltb x u) eqn:Hxu; cbn; lia.
+  Qed.
+
+  (** Moving left to a stored threshold strictly consumes a lower-endpoint credit. *)
+  Lemma count_lt_strict : forall q x y, In x (T.vals q) -> (x < y)%Z ->
+    count_lt q x < count_lt q y.
+  Proof.
+    intros q x y Hin Hxy. unfold count_lt in *.
+    induction (T.vals q) as [|u us IH]; cbn in *; [contradiction|].
+    destruct Hin as [Heq|Hin].
+    - subst u. rewrite Z.ltb_irrefl.
+      rewrite (proj2 (Z.ltb_lt x y)) by exact Hxy. cbn.
+      assert (Hmono : length (filter (fun z => (z <? x)%Z) us) <=
+        length (filter (fun z => (z <? y)%Z) us)).
+      { clear IH. induction us as [|z zs IHus]; cbn; [lia|].
+        destruct (Z.ltb z x) eqn:Hzx, (Z.ltb z y) eqn:Hzy; cbn; lia. }
+      lia.
+    - specialize (IH Hin). destruct (Z.ltb u x) eqn:Hux, (Z.ltb u y) eqn:Huy;
+        cbn in *; lia.
+  Qed.
+
+  (** Moving right to a stored threshold strictly consumes an upper-endpoint credit. *)
+  Lemma count_gt_strict : forall q x y, In y (T.vals q) -> (x < y)%Z ->
+    count_gt q y < count_gt q x.
+  Proof.
+    intros q x y Hin Hxy. unfold count_gt in *.
+    induction (T.vals q) as [|u us IH]; cbn in *; [contradiction|].
+    destruct Hin as [Heq|Hin].
+    - subst u. rewrite Z.ltb_irrefl.
+      rewrite (proj2 (Z.ltb_lt x y)) by exact Hxy. cbn.
+      assert (Hmono : length (filter (fun z => (y <? z)%Z) us) <=
+        length (filter (fun z => (x <? z)%Z) us)).
+      { clear IH. induction us as [|z zs IHus]; cbn; [lia|].
+        destruct (Z.ltb y z) eqn:Hyz, (Z.ltb x z) eqn:Hxz; cbn; lia. }
+      lia.
+    - specialize (IH Hin). destruct (Z.ltb y u) eqn:Hyu, (Z.ltb x u) eqn:Hxu;
+        cbn in *; lia.
+  Qed.
+
+  (** Zero is the terminal lower endpoint of an unsigned payload. *)
+  Definition lower_payload_rank (q : ttree) (lo : bnd) : nat :=
+    match lo with
+    | Fin z => if (z =? 0)%Z then 0 else 1 + count_lt q z
+    | _ => 0
+    end.
+
+  (** The unsigned maximum is the terminal upper endpoint of a payload. *)
+  Definition upper_payload_rank (q : ttree) (cap : Z) (hi : bnd) : nat :=
+    match hi with
+    | Fin z => if (z =? cap)%Z then 0 else 1 + count_gt q z
+    | _ => 0
+    end.
+
+  (** Lower widening consumes a credit when it moves, including clipping to zero. *)
+  Lemma lower_payload_progress : forall q old next, (0 <= old)%Z -> (0 <= next)%Z ->
+    let lo := bound_max (widen_lower q (Fin old) (Fin next)) (Fin 0) in
+    lower_payload_rank q lo <= lower_payload_rank q (Fin old) /\
+    ((next < old)%Z -> lower_payload_rank q lo < lower_payload_rank q (Fin old)).
+  Proof.
+    intros q old next Hold Hnext. cbn beta zeta.
+    unfold widen_lower. cbn [bound_leb]. destruct (Z.leb old next) eqn:Hmove.
+    - rewrite bound_max_left by (cbn; apply Z.leb_le; exact Hold).
+      apply Z.leb_le in Hmove. split; lia.
+    - apply Z.leb_gt in Hmove.
+      assert (Hold0 : (old =? 0)%Z = false) by (apply Z.eqb_neq; lia).
+      destruct (T.below q next) as [u|] eqn:Hbelow.
+      + destruct (T.below_sound q next u Hbelow) as [Hin Hu].
+        unfold bound_max. cbn [bound_leb]. destruct (Z.leb u 0) eqn:Hu0.
+        * cbn [lower_payload_rank]. rewrite Hold0, Z.eqb_refl. split; lia.
+        * cbn [lower_payload_rank]. rewrite Hold0.
+          destruct (Z.eqb u 0); [split; lia|].
+          pose proof (count_lt_strict q u old Hin ltac:(lia)) as Hstrict. split; lia.
+      + cbn [bound_max bound_leb lower_payload_rank]. rewrite Hold0, Z.eqb_refl.
+        split; lia.
+  Qed.
+
+  (** Upper widening consumes a credit when it moves, including clipping to the maximum. *)
+  Lemma upper_payload_progress : forall q cap old next, (old <= cap)%Z -> (next <= cap)%Z ->
+    let hi := bound_min (widen_upper q (Fin old) (Fin next)) (Fin cap) in
+    upper_payload_rank q cap hi <= upper_payload_rank q cap (Fin old) /\
+    ((old < next)%Z -> upper_payload_rank q cap hi < upper_payload_rank q cap (Fin old)).
+  Proof.
+    intros q cap old next Hold Hnext. cbn beta zeta.
+    unfold widen_upper. cbn [bound_leb]. destruct (Z.leb next old) eqn:Hmove.
+    - unfold bound_min. cbn [bound_leb].
+      rewrite (proj2 (Z.leb_le old cap)) by exact Hold.
+      apply Z.leb_le in Hmove. split; lia.
+    - apply Z.leb_gt in Hmove.
+      assert (Holdcap : (old =? cap)%Z = false) by (apply Z.eqb_neq; lia).
+      destruct (T.above q next) as [u|] eqn:Habove.
+      + destruct (T.above_sound q next u Habove) as [Hin Hu].
+        unfold bound_min. cbn [bound_leb]. destruct (Z.leb u cap) eqn:Hucap.
+        * cbn [upper_payload_rank]. rewrite Holdcap.
+          destruct (Z.eqb u cap); [split; lia|].
+          pose proof (count_gt_strict q old u Hin ltac:(lia)) as Hstrict. split; lia.
+        * cbn [upper_payload_rank]. rewrite Holdcap, Z.eqb_refl. split; lia.
+      + cbn [bound_min bound_leb upper_payload_rank]. rewrite Holdcap, Z.eqb_refl.
+        split; lia.
+  Qed.
+
+  (** Widening a nonempty word interval remains nonempty after clipping. *)
+  Lemma clip_widen_eq : forall q w lo hi lo' hi',
+    (0 <= lo /\ lo <= hi /\ hi < Word.modulus w)%Z ->
+    interval_clip w (interval_widen q (I (Fin lo) (Fin hi)) (I lo' hi')) =
+      I (bound_max (widen_lower q (Fin lo) lo') (Fin 0))
+        (bound_min (widen_upper q (Fin hi) hi') (Fin (Word.modulus w - 1))).
+  Proof.
+    intros q w lo hi lo' hi' Hrange.
+    assert (Hlo : bound_leb
+      (bound_max (widen_lower q (Fin lo) lo') (Fin 0)) (Fin lo) = true).
+    { apply bound_max_least; [apply widen_lower_old|cbn; apply Z.leb_le; lia]. }
+    assert (Hhi : bound_leb (Fin hi)
+      (bound_min (widen_upper q (Fin hi) hi') (Fin (Word.modulus w - 1))) = true).
+    { apply bound_min_greatest; [apply widen_upper_old|cbn [bound_leb]; apply Z.leb_le; lia]. }
+    assert (Hordered : bound_leb
+      (bound_max (widen_lower q (Fin lo) lo') (Fin 0))
+      (bound_min (widen_upper q (Fin hi) hi') (Fin (Word.modulus w - 1))) = true).
+    { eapply bound_leb_trans; [exact Hlo|].
+      eapply bound_leb_trans; [|exact Hhi]. cbn. apply Z.leb_le. lia. }
+    assert (Hnonempty : bounds_nonempty
+      (bound_max (widen_lower q (Fin lo) lo') (Fin 0))
+      (bound_min (widen_upper q (Fin hi) hi') (Fin (Word.modulus w - 1))) = true).
+    { destruct (bound_max (widen_lower q (Fin lo) lo') (Fin 0)),
+        (bound_min (widen_upper q (Fin hi) hi') (Fin (Word.modulus w - 1)));
+        cbn [bound_leb bounds_nonempty] in *; try discriminate; assumption. }
+    unfold interval_clip, interval_payload_clip, Scalar.interval_widen, Scalar.interval_meet.
+    now rewrite Hnonempty.
+  Qed.
+
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted. (* CONVERT: interval_widening_rank_on: The variable interval_rank was not found in the current environment. *)
+  Proof.
+    intros q w a b Hbot Hle.
+    destruct (interval_clip_shape w a) as [Ha|[la [ha [Ha Harange]]]].
+    { unfold pis_bot in Hbot. rewrite Ha in Hbot. discriminate. }
+    destruct (interval_clip_shape w b) as [Hb|[lb [hb [Hb Hbrange]]]].
+    { unfold pleb in Hle. rewrite Hb in Hle. discriminate. }
+    assert (Hraw : interval_leb (I (Fin lb) (Fin hb)) (I (Fin la) (Fin ha)) = false).
+    { unfold pleb in Hle. now rewrite Ha, Hb in Hle. }
+    unfold pwiden. rewrite Hle. unfold pwrank, payload_wrank.
+    change ((match interval_clip w (interval_clip w
+      (interval_stable_widen q (interval_clip w a) (interval_clip w b))) with
+      | IBot => 0
+      | I lo hi => upper_payload_rank q (Word.modulus w - 1) hi + lower_payload_rank q lo
+      end) <
+      (match interval_clip w a with
+      | IBot => 0
+      | I lo hi => upper_payload_rank q (Word.modulus w - 1) hi + lower_payload_rank q lo
+      end))%nat.
+    rewrite interval_clip_idem, Ha, Hb.
+    unfold interval_stable_widen. rewrite Hraw. rewrite clip_widen_eq by exact Harange.
+    cbn beta iota.
+    destruct (lower_payload_progress q la lb ltac:(lia) ltac:(lia)) as [Hlower Hlower_strict].
+    destruct (upper_payload_progress q (Word.modulus w - 1) ha hb ltac:(lia) ltac:(lia))
+      as [Hupper Hupper_strict].
+    change (andb (Z.leb la lb) (Z.leb hb ha) = false) in Hraw.
+    apply andb_false_iff in Hraw as [Hmove|Hmove]; apply Z.leb_gt in Hmove.
+    - specialize (Hlower_strict Hmove). lia.
+    - specialize (Hupper_strict Hmove). lia.
+  Qed.
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted. (* CONVERT: interval_widening_rank_on: No product even after head-reduction. *)
+  Proof.
+    intros q w a b Hbot. destruct (pleb w b a) eqn:Hle.
+    - rewrite pwiden_stable by exact Hle. reflexivity.
+    - apply Nat.lt_le_incl. now apply pwrank_widen.
+  Qed.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
