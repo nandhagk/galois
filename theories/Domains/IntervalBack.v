@@ -205,14 +205,270 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Definition pgamma (w : positive) (a : p) (z : Z) : Prop :=
     L.is_word w z /\ match a with IBot => False | I lo hi => in_bnd lo hi z end.
   Definition pwrank := payload_wrank.
+
+  (** Mutual comparison identifies the same extended bound. *)
+  Lemma bound_leb_antisym : forall a b,
+    bound_leb a b = true -> bound_leb b a = true -> a = b.
+  Proof.
+    intros [|x|] [|y|]; cbn; try discriminate; try reflexivity.
+    intros Hxy Hyx. apply Z.leb_le in Hxy, Hyx. f_equal. lia.
+  Qed.
+
+  (** A maximum retains its left input when that input is greater. *)
+  Lemma bound_max_left : forall a b, bound_leb b a = true -> bound_max a b = a.
+  Proof.
+    intros a b Hba. unfold bound_max. destruct (bound_leb a b) eqn:Hab.
+    - symmetry. now apply bound_leb_antisym.
+    - reflexivity.
+  Qed.
+
+  (** Raw interval inclusion is reflexive. *)
+  Lemma interval_leb_refl : forall a, interval_leb a a = true.
+  Proof.
+    intros [|lo hi]; cbn; [reflexivity|]. now rewrite !bound_leb_refl.
+  Qed.
+
+  (** Raw interval inclusion composes. *)
+  Lemma interval_leb_trans : forall a b c,
+    interval_leb a b = true -> interval_leb b c = true -> interval_leb a c = true.
+  Proof.
+    intros [|la ha] [|lb hb] [|lc hc]; cbn; try discriminate; try reflexivity.
+    intros Hab Hbc. apply andb_true_iff in Hab as [Hlb Hhb].
+    apply andb_true_iff in Hbc as [Hlc Hhc]. apply andb_true_iff. split;
+      eapply bound_leb_trans; eassumption.
+  Qed.
+
+  (** Raw intersection lies below its left operand. *)
+  Lemma interval_meet_lower_l : forall a b, interval_leb (interval_meet a b) a = true.
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; try reflexivity.
+    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
+    apply andb_true_iff. split; [apply bound_max_upper_l|apply bound_min_lower_l].
+  Qed.
+
+  (** Raw intersection lies below its right operand. *)
+  Lemma interval_meet_lower_r : forall a b, interval_leb (interval_meet a b) b = true.
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; try reflexivity.
+    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
+    apply andb_true_iff. split; [apply bound_max_upper_r|apply bound_min_lower_r].
+  Qed.
+
+  (** A finite nonempty common lower bound lies below the intersection. *)
+  Lemma interval_meet_greatest : forall a b lo hi, (lo <= hi)%Z ->
+    interval_leb (I (Fin lo) (Fin hi)) a = true ->
+    interval_leb (I (Fin lo) (Fin hi)) b = true ->
+    interval_leb (I (Fin lo) (Fin hi)) (interval_meet a b) = true.
+  Proof.
+    intros [|la ha] [|lb hb] lo hi Hordered; cbn; try discriminate.
+    intros Ha Hb. apply andb_true_iff in Ha as [Hla Hha].
+    apply andb_true_iff in Hb as [Hlb Hhb].
+    assert (Hlo : bound_leb (bound_max la lb) (Fin lo) = true).
+    { apply bound_max_least; assumption. }
+    assert (Hhi : bound_leb (Fin hi) (bound_min ha hb) = true).
+    { apply bound_min_greatest; assumption. }
+    assert (Hends : bound_leb (bound_max la lb) (bound_min ha hb) = true).
+    { eapply bound_leb_trans; [exact Hlo|].
+      eapply bound_leb_trans; [|exact Hhi]. cbn. now apply Z.leb_le. }
+    assert (Hnonempty : bounds_nonempty (bound_max la lb) (bound_min ha hb) = true).
+    { destruct (bound_max la lb), (bound_min ha hb); cbn in *;
+        try discriminate; assumption. }
+    rewrite Hnonempty. apply andb_true_iff. now split.
+  Qed.
+
+  (** Every nonbottom clipped interval has finite ordered word endpoints. *)
+  Lemma interval_clip_shape : forall w a,
+    interval_clip w a = IBot \/ exists lo hi,
+      interval_clip w a = I (Fin lo) (Fin hi) /\ (0 <= lo /\ lo <= hi /\ hi < Word.modulus w)%Z.
+  Proof.
+    intros w [|lo hi]; [left; reflexivity|].
+    unfold interval_clip, interval_payload_clip, Scalar.interval_meet.
+    remember (bound_max lo (Fin 0)) as lower eqn:Hlower.
+    remember (bound_min hi (Fin (Word.modulus w - 1))) as upper eqn:Hupper.
+    destruct (bounds_nonempty lower upper) eqn:Hnonempty; [right|left; reflexivity].
+    assert (Hlo : bound_leb (Fin 0) lower = true).
+    { subst lower. apply bound_max_upper_r. }
+    assert (Hhi : bound_leb upper (Fin (Word.modulus w - 1)) = true).
+    { subst upper. apply bound_min_lower_r. }
+    destruct lower as [|l|], upper as [|h|]; cbn [bound_leb bounds_nonempty] in Hlo, Hhi, Hnonempty;
+      try discriminate.
+    exists l, h. split; [reflexivity|].
+    apply Z.leb_le in Hlo, Hhi, Hnonempty. lia.
+  Qed.
+
+  (** Clipping leaves a finite interval inside its word range unchanged. *)
+  Lemma interval_clip_fixed : forall w lo hi, (0 <= lo /\ lo <= hi /\ hi < Word.modulus w)%Z ->
+    interval_clip w (I (Fin lo) (Fin hi)) = I (Fin lo) (Fin hi).
+  Proof.
+    intros w lo hi Hrange.
+    unfold interval_clip, interval_payload_clip, Scalar.interval_meet.
+    rewrite bound_max_left by (cbn; apply Z.leb_le; lia).
+    unfold bound_min. cbn [bound_leb].
+    rewrite (proj2 (Z.leb_le hi (Word.modulus w - 1))) by lia.
+    cbn [bounds_nonempty bound_leb]. rewrite (proj2 (Z.leb_le lo hi)) by lia.
+    reflexivity.
+  Qed.
+
+  (** Clipping twice is the same as clipping once. *)
+  Lemma interval_clip_idem : forall w a, interval_clip w (interval_clip w a) = interval_clip w a.
+  Proof.
+    intros w a. destruct (interval_clip_shape w a) as [Hbot|[lo [hi [Hshape Hrange]]]].
+    - rewrite Hbot. reflexivity.
+    - rewrite Hshape. now apply interval_clip_fixed.
+  Qed.
+
+  (** Clipping preserves raw interval inclusion. *)
+  Lemma interval_clip_mono : forall w a b,
+    interval_leb a b = true -> interval_leb (interval_clip w a) (interval_clip w b) = true.
+  Proof.
+    intros w a b Hab. destruct (interval_clip_shape w a) as [Hbot|[lo [hi [Hshape Hrange]]]].
+    - rewrite Hbot. reflexivity.
+    - rewrite Hshape. unfold interval_clip, interval_payload_clip.
+      apply interval_meet_greatest; [lia| |].
+      + eapply interval_leb_trans; [|exact Hab].
+        rewrite <- Hshape. apply interval_meet_lower_l.
+      + rewrite <- Hshape. apply interval_meet_lower_r.
+  Qed.
+
+  (** Bound membership agrees with the two endpoint comparisons. *)
+  Lemma in_bnd_leb : forall lo hi z, in_bnd lo hi z <->
+    bound_leb lo (Fin z) = true /\ bound_leb (Fin z) hi = true.
+  Proof.
+    intros [|lo|] [|hi|] z; unfold in_bnd; cbn [bound_leb];
+      rewrite ?Z.leb_le; intuition congruence.
+  Qed.
+
+  (** Raw interval inclusion preserves payload meaning. *)
+  Lemma pgamma_raw_mono : forall w a b z,
+    interval_leb a b = true -> pgamma w a z -> pgamma w b z.
+  Proof.
+    intros w [|la ha] [|lb hb] z Hle [Hw Ha]; try contradiction; try discriminate.
+    cbn in Hle. apply andb_true_iff in Hle as [Hlower Hupper].
+    apply in_bnd_leb in Ha as [Hlo Hhi]. split; [exact Hw|].
+    apply in_bnd_leb. split; eapply bound_leb_trans; eassumption.
+  Qed.
+
+  (** Raw intersection preserves every common word. *)
+  Lemma pgamma_raw_meet : forall w a b z,
+    pgamma w a z -> pgamma w b z -> pgamma w (interval_meet a b) z.
+  Proof.
+    intros w [|la ha] [|lb hb] z [Hw Ha] [_ Hb]; try contradiction.
+    apply in_bnd_leb in Ha as [Hla Hha]. apply in_bnd_leb in Hb as [Hlb Hhb].
+    assert (Hlo : bound_leb (bound_max la lb) (Fin z) = true).
+    { apply bound_max_least; assumption. }
+    assert (Hhi : bound_leb (Fin z) (bound_min ha hb) = true).
+    { apply bound_min_greatest; assumption. }
+    assert (Hordered : bound_leb (bound_max la lb) (bound_min ha hb) = true).
+    { eapply bound_leb_trans; eassumption. }
+    assert (Hnonempty : bounds_nonempty (bound_max la lb) (bound_min ha hb) = true).
+    { destruct (bound_max la lb), (bound_min ha hb); cbn in *;
+        try discriminate; assumption. }
+    unfold interval_meet. rewrite Hnonempty. split; [exact Hw|].
+    apply in_bnd_leb. now split.
+  Qed.
+
+  (** Clipping preserves every represented word. *)
+  Lemma pgamma_clip : forall w a z, pgamma w a z -> pgamma w (interval_clip w a) z.
+  Proof.
+    intros w a z Ha. unfold interval_clip, interval_payload_clip.
+    apply pgamma_raw_meet; [exact Ha|].
+    destruct Ha as [Hw _]. split; [exact Hw|].
+    unfold in_bnd. destruct Hw as [Hlo Hhi]. split; lia.
+  Qed.
+
+  (** Removing the clip preserves every represented word. *)
+  Lemma pgamma_unclip : forall w a z, pgamma w (interval_clip w a) z -> pgamma w a z.
+  Proof.
+    intros w a z Ha. eapply pgamma_raw_mono; [|exact Ha].
+    apply interval_meet_lower_l.
+  Qed.
+  (** Widening the lower endpoint covers the next endpoint. *)
+  Lemma widen_lower_next : forall q old next,
+    bound_leb (widen_lower q old next) next = true.
+  Proof.
+    intros q old next. unfold widen_lower. destruct (bound_leb old next) eqn:Hle.
+    - exact Hle.
+    - destruct next as [|z|]; cbn; try reflexivity.
+      destruct (T.below q z) as [u|] eqn:Hbelow; [|reflexivity].
+      cbn. apply Z.leb_le. exact (proj2 (T.below_sound q z u Hbelow)).
+  Qed.
+
+  (** Widening the lower endpoint covers the old endpoint. *)
+  Lemma widen_lower_old : forall q old next,
+    bound_leb (widen_lower q old next) old = true.
+  Proof.
+    intros q old next. unfold widen_lower. destruct (bound_leb old next) eqn:Hle.
+    - apply bound_leb_refl.
+    - eapply bound_leb_trans with (b := next).
+      + pose proof (widen_lower_next q old next) as Hnext.
+        unfold widen_lower in Hnext. now rewrite Hle in Hnext.
+      + destruct (bound_leb_total old next) as [Hnext|Hnext]; congruence.
+  Qed.
+
+  (** Widening the upper endpoint covers the next endpoint. *)
+  Lemma widen_upper_next : forall q old next,
+    bound_leb next (widen_upper q old next) = true.
+  Proof.
+    intros q old next. unfold widen_upper. destruct (bound_leb next old) eqn:Hle.
+    - exact Hle.
+    - destruct next as [|z|]; cbn; try reflexivity.
+      destruct (T.above q z) as [u|] eqn:Habove; [|reflexivity].
+      cbn. apply Z.leb_le. exact (proj2 (T.above_sound q z u Habove)).
+  Qed.
+
+  (** Widening the upper endpoint covers the old endpoint. *)
+  Lemma widen_upper_old : forall q old next,
+    bound_leb old (widen_upper q old next) = true.
+  Proof.
+    intros q old next. unfold widen_upper. destruct (bound_leb next old) eqn:Hle.
+    - apply bound_leb_refl.
+    - eapply bound_leb_trans with (b := next).
+      + destruct (bound_leb_total next old) as [Hnext|Hnext]; congruence.
+      + pose proof (widen_upper_next q old next) as Hnext.
+        unfold widen_upper in Hnext. now rewrite Hle in Hnext.
+  Qed.
+
+  (** Stable scalar widening contains its previous interval. *)
+  Lemma interval_stable_widen_upper_l : forall q a b,
+    interval_leb a (interval_stable_widen q a b) = true.
+  Proof.
+    intros q a b. unfold interval_stable_widen. destruct (interval_leb b a).
+    - apply interval_leb_refl.
+    - destruct a as [|la ha], b as [|lb hb]; cbn; try reflexivity;
+        try (now rewrite !bound_leb_refl).
+      apply andb_true_iff. split; [apply widen_lower_old|apply widen_upper_old].
+  Qed.
+
+  (** Stable scalar widening contains its candidate interval. *)
+  Lemma interval_stable_widen_upper_r : forall q a b,
+    interval_leb b (interval_stable_widen q a b) = true.
+  Proof.
+    intros q a b. unfold interval_stable_widen. destruct (interval_leb b a) eqn:Hle.
+    - exact Hle.
+    - destruct a as [|la ha], b as [|lb hb]; cbn; try reflexivity;
+        try (now rewrite !bound_leb_refl).
+      apply andb_true_iff. split; [apply widen_lower_next|apply widen_upper_next].
+  Qed.
+
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: In environment *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a); unfold pleb.
+    - apply interval_leb_refl.
+    - rewrite interval_clip_idem. rewrite <- (interval_clip_idem w a) at 1.
+      apply interval_clip_mono. apply interval_stable_widen_upper_l.
+  Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: In environment *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hle; [exact Hle|].
+    unfold pleb. rewrite interval_clip_idem. rewrite <- (interval_clip_idem w b) at 1.
+    apply interval_clip_mono. apply interval_stable_widen_upper_r.
+  Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b Hle. unfold pwiden. now rewrite Hle.
+  Qed.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
@@ -224,7 +480,16 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* CONVERT: pnarrow_between: Unable to apply lemma of type andb_true_iff. *)
+  Proof.
+    intros w a b Hle.
+    assert (Hnarrow : pnarrow w a b = interval_clip w a).
+    { unfold pnarrow. destruct (interval_clip_shape w a) as
+        [Hbot|[lo [hi [Hshape Hrange]]]].
+      - now rewrite Hbot.
+      - rewrite Hshape. destruct (interval_clip w b); reflexivity. }
+    unfold pleb in *. rewrite Hnarrow, interval_clip_idem.
+    split; [exact Hle|apply interval_leb_refl].
+  Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
@@ -250,29 +515,59 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. unfold pleb, ptop, interval_top.
+    rewrite interval_clip_fixed by (pose proof (Word.modulus_pos w); lia).
+    apply interval_meet_lower_r.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. reflexivity.
+  Qed.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold pis_bot, pleb.
+    destruct (interval_clip w a); cbn; [reflexivity|discriminate].
+  Qed.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted. (* CONVERT: pjoin_ub_l: Unable to unify raw order with clipped order. *)
+  Proof.
+    intros w a b. unfold pleb, pjoin.
+    rewrite <- (interval_clip_idem w a) at 1. apply interval_clip_mono.
+    destruct (interval_clip w a) as [|la ha], (interval_clip w b) as [|lb hb];
+      cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply bound_min_lower_l|apply bound_max_upper_l].
+  Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted. (* CONVERT: pjoin_ub_r: Unable to unify raw order with clipped order. *)
+  Proof.
+    intros w a b. unfold pleb, pjoin.
+    rewrite <- (interval_clip_idem w b) at 1. apply interval_clip_mono.
+    destruct (interval_clip w a) as [|la ha], (interval_clip w b) as [|lb hb];
+      cbn; try reflexivity; try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply bound_min_lower_r|apply bound_max_upper_r].
+  Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted. (* CONVERT: pmeet_lb_l: The variable lb was not found. *)
+  Proof.
+    intros w a b. unfold pleb, pmeet.
+    eapply interval_leb_trans; [apply interval_meet_lower_l|apply interval_meet_lower_l].
+  Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold pleb, pmeet.
+    eapply interval_leb_trans; [apply interval_meet_lower_l|apply interval_meet_lower_r].
+  Qed.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted. (* CONVERT: interval_word_laws: The variable gamma_monotone was not found in the current environment. *)
+  Proof.
+    intros w a b z Hle Ha. apply pgamma_unclip.
+    eapply pgamma_raw_mono; [exact Hle|now apply pgamma_clip].
+  Qed.
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof.
@@ -288,14 +583,23 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* CONVERT: interval_meet_sound: No such assumption. *)
+  Proof.
+    intros w a b z Ha Hb. apply pgamma_raw_meet; now apply pgamma_clip.
+  Qed.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted. (* CONVERT: interval_shape_laws: Expects a disjunctive pattern with 3 branches. *)
+  Proof.
+    intros w a z Hbot Ha. apply pgamma_clip in Ha.
+    unfold pis_bot in Hbot. destruct (interval_clip w a); [exact (proj2 Ha)|discriminate].
+  Qed.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold pleb, pis_bot.
+    destruct (interval_clip w a), (interval_clip w b); cbn;
+      try discriminate; reflexivity.
+  Qed.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
@@ -305,58 +609,90 @@ Module IntervalPayload (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_S
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
-  Proof. Admitted. (* CONVERT: interval_is_point_sound: The reference interval_is_point was not found in the current *)
+  Proof.
+    intros w a z v Hpoint _ Ha. apply pgamma_clip in Ha.
+    unfold ppoint, Scalar.interval_singleton, Scalar.interval_finite in Hpoint.
+    destruct (interval_clip w a) as [|[|lo|] [|hi|]];
+      cbn [interval_finite_helper] in Hpoint; try discriminate.
+    destruct (Z.eqb lo hi) eqn:Heq; [|discriminate].
+    injection Hpoint as Hv. subst v. apply Z.eqb_eq in Heq.
+    destruct Ha as [_ [Hlo Hhi]]. cbn in Hlo, Hhi. lia.
+  Qed.
 
   (** Payload inclusion reads both operands through the word range. *)
   Lemma F_pleb : forall w a b, pleb w a b = Scalar.interval_leb
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload bottom recognition reads the clipped interval. *)
   Lemma F_pis_bot : forall w a, pis_bot w a =
     Scalar.interval_is_bot (interval_payload_clip Scalar.interval_meet w a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload join combines clipped operands. *)
   Lemma F_pjoin : forall w a b, pjoin w a b = Scalar.interval_join
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload meet combines clipped operands. *)
   Lemma F_pmeet : forall w a b, pmeet w a b = Scalar.interval_meet
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload widening retains stable raw values and clips unstable results. *)
   Lemma F_pwiden : forall q w a b, pwiden q w a b =
     if pleb w b a then a else interval_payload_clip Scalar.interval_meet w
       (Scalar.interval_stable_widen q (interval_payload_clip Scalar.interval_meet w a)
         (interval_payload_clip Scalar.interval_meet w b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload narrowing combines clipped operands. *)
   Lemma F_pnarrow : forall w a b, pnarrow w a b = Scalar.interval_narrow
     (interval_payload_clip Scalar.interval_meet w a)
     (interval_payload_clip Scalar.interval_meet w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload rank treats unsigned word boundaries as terminal endpoints. *)
   Lemma F_pwrank : forall q w a, pwrank q w a = payload_wrank q w a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload bottom is the empty interval. *)
   Lemma F_pbot : forall w, pbot w = IBot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload top is the inclusive unsigned word range. *)
   Lemma F_ptop : forall w, ptop w = I (Fin 0) (Fin (Word.modulus w - 1)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload constants are wrapped singleton intervals. *)
   Lemma F_pconst : forall w z, pconst w z = I (Fin (L.wrap w z)) (Fin (L.wrap w z)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload points are recognized after clipping. *)
   Lemma F_ppoint : forall w a, ppoint w a =
     Scalar.interval_singleton (interval_payload_clip Scalar.interval_meet w a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload concretization intersects raw endpoints with normalized words. *)
   Lemma F_pgamma : forall w a z, pgamma w a z <-> L.is_word w z /\
     match a with IBot => False | I lo hi => in_bnd lo hi z end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 End IntervalPayload.
 
 Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
