@@ -1586,10 +1586,14 @@ Module UnionFindT <: UNION_FIND_ALL.
     intros u rk r path Hwf Hrank Hroot Hpath. apply ranked_compress; assumption.
   Qed.
   Lemma F6_link : forall u rk w l, wf u -> ranked u rk ->
-    is_root u w -> is_root u l -> w <> l -> size_of u l <= size_of u w ->
+    mem u w -> mem u l -> is_root u w -> is_root u l -> w <> l ->
+    size_of u l <= size_of u w ->
     ranked (link w l u)
       (fun x => if Pos.eqb x w then Nat.max (rk w) (S (rk l)) else rk x).
-  Proof. Admitted. (* PLAN-DEFECT: singleton member/root w=1, absent root l=2, rk 2=1 and other ranks 0 satisfy the premises; linking requires 4 <= 2. Root membership premises are missing. *)
+  Proof.
+    intros u rk w l Hwf Hrank Hmw Hml Hrw Hrl Hwl Hsize.
+    apply ranked_link_members; assumption.
+  Qed.
 
   Lemma T1_parent_of : forall x u,
     (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
