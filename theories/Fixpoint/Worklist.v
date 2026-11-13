@@ -4890,6 +4890,44 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       lia.
   Qed.
 
+  (** One row allowance pays its evaluator, every output, pop overhead and driver. *)
+  Lemma step_row_payment : forall p (s : state) id r a ss,
+    S.wf p -> source_row p id = Some r ->
+    eval_row p r (ws_store s) = Some (a, ss) ->
+    (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+      N.of_nat (weight p id) * unit p +
+      k_update * N.of_nat (length ((S.target p r, a) :: ss)) * unit p +
+      2 * Q.c_pq * unit p + c_loopN <=
+      k_credit * N.of_nat (weight p id) * unit p)%N.
+  Proof.
+    intros p s id r a ss Hwf Hsource Heval.
+    pose proof (proj2 (source_row_member p id r Hsource)) as Hr.
+    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
+    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
+    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
+    { unfold weight; now rewrite Hsource. }
+    set (budget := (N.of_nat (weight p id) * unit p)%N).
+    assert (Houtputs : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
+      unit p <= k_update * budget)%N).
+    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r, N.mul_le_mono_l.
+      cbn [length]; rewrite Hweight; lia. }
+    destruct (time_unit_bounds p) as [Hu _].
+    assert (Hu_budget : (unit p <= budget)%N).
+    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
+      apply N.mul_le_mono_r; rewrite Hweight; lia. }
+    assert (Hpayment :
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
+        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
+    { unfold k_credit; clear -Hu Hu_budget; nia. }
+    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+      N.of_nat (weight p id) * unit p)%N with
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N
+      by (unfold budget; ring).
+    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
+      (k_credit * budget)%N by (unfold budget; ring).
+    clear -Houtputs Hpayment; lia.
+  Qed.
+
   (** Pop refunds queue potential and consumes exactly one weighted row allowance. *)
   Lemma T_pop_height : forall p pol rk h s pr id q1,
     structural p pol s -> Q.pop (ws_queue s) = Some (pr, id, q1) ->
@@ -4934,30 +4972,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (T_step_weighted p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval)
       as Htime.
     pose proof (T_pop_height p pol rk h s pr id q1 (proj1 Hinv) Hpop) as Hpop_time.
-    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
-    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
-    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
-    { unfold weight; now rewrite Hsource. }
-    set (budget := (N.of_nat (weight p id) * unit p)%N).
-    assert (Houtput_bound : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
-      unit p <= k_update * budget)%N).
-    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
-      cbn [length]; rewrite Hweight; lia. }
-    destruct (time_unit_bounds p) as [Hu _].
-    assert (Hu_budget : (unit p <= budget)%N).
-    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
-      apply N.mul_le_mono_r; rewrite Hweight; lia. }
-    assert (Hpayment :
-      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
-        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
-    { unfold k_credit; clear -Hu Hu_budget; nia. }
-    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
-      N.of_nat (weight p id) * unit p)%N with
-      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N in Htime
-      by (unfold budget; ring).
-    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
-      (k_credit * budget)%N in Hpop_time by (unfold budget; ring).
-    clear -Houtput Houtput_bound Htime Hpop_time Hpayment; lia.
+    pose proof (step_row_payment p s id r a ss Hwf Hsource Heval) as Hpayment.
+    clear -Houtput Htime Hpop_time Hpayment; lia.
   Qed.
 
   (** Scaling each term scales its finite sum by the same factor. *)
@@ -5989,34 +6005,12 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     rewrite Hpop in Hpop_cost.
     change (Q.T_pop (ws_queue s) + queue_phi p (after_pop p s id q) <=
       2 * Q.c_pq * unit p + queue_phi p s)%N in Hpop_cost.
-    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
-    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
-    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
-    { unfold weight; now rewrite Hsource. }
-    set (budget := (N.of_nat (weight p id) * unit p)%N).
-    assert (Hout_count : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
-      unit p <= k_update * budget)%N).
-    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r, N.mul_le_mono_l.
-      cbn [length]; rewrite Hweight; lia. }
     assert (Hscan_cost : (k_update * N.of_nat (scan_credit p pol pr
       (after_pop p s id q)) * unit p <=
       k_update * N.of_nat (scan_credit p pol lower s) * unit p)%N).
     { apply N.mul_le_mono_r, N.mul_le_mono_l; lia. }
-    destruct (time_unit_bounds p) as [Hu _].
-    assert (Hu_budget : (unit p <= budget)%N).
-    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
-      apply N.mul_le_mono_r; rewrite Hweight; lia. }
-    assert (Hpayment :
-      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
-        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
-    { unfold k_credit; clear -Hu Hu_budget; nia. }
-    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
-      N.of_nat (weight p id) * unit p)%N with
-      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N in Htime
-      by (unfold budget; ring).
-    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
-      (k_credit * budget)%N by (unfold budget; ring).
-    clear -Houtput Htime Hpop_cost Hout_count Hscan_cost Hpayment; lia.
+    pose proof (step_row_payment p s id r a ss Hwf Hsource Heval) as Hpayment.
+    clear -Houtput Htime Hpop_cost Hscan_cost Hpayment; lia.
   Qed.
 
   (** Finite occurrence weights distribute over append. *)
@@ -7216,30 +7210,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (T_step_weighted p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval)
       as Htime.
     pose proof (T_pop_all_heads p pol s pr id q1 (proj1 Hinv) Hpop) as Hpop_time.
-    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
-    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
-    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
-    { unfold weight; now rewrite Hsource. }
-    set (budget := (N.of_nat (weight p id) * unit p)%N).
-    assert (Houtput_bound : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
-      unit p <= k_update * budget)%N).
-    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
-      cbn [length]; rewrite Hweight; lia. }
-    destruct (time_unit_bounds p) as [Hu _].
-    assert (Hu_budget : (unit p <= budget)%N).
-    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
-      apply N.mul_le_mono_r; rewrite Hweight; lia. }
-    assert (Hpayment :
-      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
-        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
-    { unfold k_credit; clear -Hu Hu_budget; nia. }
-    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
-      N.of_nat (weight p id) * unit p)%N with
-      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N in Htime
-      by (unfold budget; ring).
-    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
-      (k_credit * budget)%N in Hpop_time by (unfold budget; ring).
-    clear -Houtput Houtput_bound Htime Hpop_time Hpayment; lia.
+    pose proof (step_row_payment p s id r a ss Hwf Hsource Heval) as Hpayment.
+    clear -Houtput Htime Hpop_time Hpayment; lia.
   Qed.
 
   (** Remaining head policy credit is at most the total advertised round allowance. *)
