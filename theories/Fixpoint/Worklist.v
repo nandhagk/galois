@@ -6139,14 +6139,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - pose proof (W5_round_strong p pol s xs last Hfits Hreachable Hpath Hstable); lia.
   Qed.
 
-  (** A callback that ends a stable segment is charged to its strict head events. *)
-  Lemma W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
-    step p pol s = inl s1 -> 0 < head_events pol s s1 ->
-    (T_step p pol s + c_loopN + queue_phi p s1 <=
-      k_round * N.of_nat (head_events pol s s1) * N.of_nat (C p + D p) * unit p +
-      k_round * N.of_nat (head_events pol s s1) * head_unit p pol +
-      queue_phi p s)%N.
-  Proof. Admitted. (* STUB *)
+
   (** Preparation initializes every encoded counter to zero. *)
   Lemma counter_prepare_zero : forall p pol c, counter (prepare p pol) c = 0%N.
   Proof.
@@ -6470,6 +6463,233 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         (counter t c - counter s c) + (counter u c - counter t c))%N).
       { pose proof (Hst c); pose proof (Htu c); lia. }
       rewrite Hdifference, N2Nat.inj_add, IH; lia.
+  Qed.
+
+  (** A supported update spends scan credit or charges its reader scan to a head event. *)
+  Lemma boundary_scan_spending : forall p pol s x a,
+    In (S.key_code x) (key_support p) ->
+    push_work p s x a + scan_credit p pol 0%N (update_one p pol s (x, a)) <=
+      scan_credit p pol 0%N s + head_events pol s (update_one p pol s (x, a)) * C p.
+  Proof.
+    intros p pol s x a Hsupport.
+    destruct (trie_get (S.key_code x) (heads pol)) as [cfg|] eqn:Hhead.
+    - rewrite (scan_credit_head_update p pol 0%N s x a cfg Hhead).
+      destruct (L.leb a (look s x)) eqn:Hcovered.
+      + unfold push_work; rewrite Hcovered; lia.
+      + pose proof (head_events_update_positive p pol s x a cfg Hhead Hcovered) as Hevent.
+        pose proof (degree_le_C p (S.key_code x)) as Hdegree.
+        unfold push_work; rewrite Hcovered.
+        destruct (trie_get (S.key_code x) (ws_armed s)); nia.
+    - pose proof (scan_credit_update p pol 0%N s x a Hsupport
+        ltac:(intro Hstrict; split; [exact Hhead|lia])) as Hscan.
+      lia.
+  Qed.
+
+  (** One boundary output pays its baseline and actual head work while retaining scan credit. *)
+  Lemma T_update_boundary_scan : forall p pol s x a,
+    S.wf p -> prio_ok p pol -> invariant p pol s -> B.inv p a ->
+    In (S.key_code x) (key_support p) ->
+    N.to_nat (counter s (S.key_code x)) <= rounds p pol ->
+    (T_update_one p pol s (x, a) +
+      k_update * N.of_nat (scan_credit p pol 0%N (update_one p pol s (x, a))) * unit p +
+      queue_phi p (update_one p pol s (x, a)) <= k_update * unit p +
+      k_update * N.of_nat (head_events pol s (update_one p pol s (x, a))) *
+        (N.of_nat (C p) * unit p + head_unit p pol) +
+      k_update * N.of_nat (scan_credit p pol 0%N s) * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol s x a Hwf Hprio Hinv Ha Hsupport Hcounter.
+    pose proof (proj2 (W3_update p pol s x a Hwf Hprio Hinv Ha Hsupport)) as Hcost.
+    pose proof (strict_head_work_event p pol s x a Hinv Ha Hcounter) as Hpolicy.
+    pose proof (boundary_scan_spending p pol s x a Hsupport) as Hscan.
+    assert (HscanN : (N.of_nat (push_work p s x a +
+      scan_credit p pol 0%N (update_one p pol s (x, a))) <=
+      N.of_nat (scan_credit p pol 0%N s +
+        head_events pol s (update_one p pol s (x, a)) * C p))%N) by lia.
+    rewrite !Nat2N.inj_add, Nat2N.inj_mul in HscanN.
+    rewrite Nat2N.inj_add in Hcost; change (N.of_nat 1) with 1%N in Hcost.
+    set (charge := (k_update * unit p)%N).
+    assert (Hpolicy_cost : (k_update * strict_head_work pol s x a <=
+      k_update * (N.of_nat (head_events pol s (update_one p pol s (x, a))) *
+        head_unit p pol))%N) by now apply N.mul_le_mono_l.
+    assert (Hcost' : (T_update_one p pol s (x, a) +
+      queue_phi p (update_one p pol s (x, a)) <=
+      charge * (1 + N.of_nat (push_work p s x a)) +
+      k_update * (N.of_nat (head_events pol s (update_one p pol s (x, a))) *
+        head_unit p pol) + queue_phi p s)%N).
+    { unfold charge; clear -Hcost Hpolicy_cost; nia. }
+    assert (Hspent : (charge * (N.of_nat (push_work p s x a) +
+      N.of_nat (scan_credit p pol 0%N (update_one p pol s (x, a)))) <=
+      charge * (N.of_nat (scan_credit p pol 0%N s) +
+        N.of_nat (head_events pol s (update_one p pol s (x, a))) * N.of_nat (C p)))%N)
+      by now apply N.mul_le_mono_l.
+    replace (k_update * N.of_nat
+      (scan_credit p pol 0%N (update_one p pol s (x, a))) * unit p)%N with
+      (charge * N.of_nat (scan_credit p pol 0%N (update_one p pol s (x, a))))%N
+      by (unfold charge; ring).
+    replace (k_update * N.of_nat (scan_credit p pol 0%N s) * unit p)%N with
+      (charge * N.of_nat (scan_credit p pol 0%N s))%N by (unfold charge; ring).
+    replace (k_update * N.of_nat (head_events pol s (update_one p pol s (x, a))) *
+      (N.of_nat (C p) * unit p + head_unit p pol))%N with
+      (charge * N.of_nat (head_events pol s (update_one p pol s (x, a))) * N.of_nat (C p) +
+        k_update * (N.of_nat (head_events pol s (update_one p pol s (x, a))) *
+          head_unit p pol))%N by (unfold charge; ring).
+    fold charge; clear -Hcost' Hspent; nia.
+  Qed.
+
+  (** Boundary output folds telescope scan reserves and add their actual head events. *)
+  Lemma output_cost_boundary_scan : forall p pol outs s,
+    S.wf p -> prio_ok p pol -> invariant p pol s ->
+    Forall (fun xa => B.inv p (snd xa) /\
+      In (S.key_code (fst xa)) (key_support p)) outs ->
+    (forall c, N.to_nat (counter (fold_left (update_one p pol) outs s) c) <= rounds p pol) ->
+    (output_cost p pol outs s +
+      k_update * N.of_nat (scan_credit p pol 0%N
+        (fold_left (update_one p pol) outs s)) * unit p +
+      queue_phi p (fold_left (update_one p pol) outs s) <=
+      k_update * N.of_nat (length outs) * unit p +
+      k_update * N.of_nat (head_events pol s (fold_left (update_one p pol) outs s)) *
+        (N.of_nat (C p) * unit p + head_unit p pol) +
+      k_update * N.of_nat (scan_credit p pol 0%N s) * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH];
+      intros s Hwf Hprio Hinv Hvalues Hcap.
+    - unfold output_cost; cbn [fold_left snd length]; lia.
+    - inversion Hvalues as [|xa rest Hpair Htail]; subst.
+      cbn [fst snd] in Hpair; destruct Hpair as [Ha Hsupport].
+      assert (Hcounter : N.to_nat (counter s (S.key_code x)) <= rounds p pol).
+      { pose proof (counter_fold_mono p pol ((x, a) :: outs) s (S.key_code x)) as Hmono.
+        pose proof (Hcap (S.key_code x)) as Hfinal; lia. }
+      pose proof (T_update_boundary_scan p pol s x a Hwf Hprio Hinv Ha Hsupport Hcounter)
+        as Hone.
+      pose proof (update_invariant p pol s x a Hwf Hprio Hinv Ha) as Hnext.
+      cbn [fold_left] in Hcap.
+      pose proof (IH (update_one p pol s (x, a)) Hwf Hprio Hnext Htail Hcap) as Hrest.
+      pose proof (head_events_add pol s (update_one p pol s (x, a))
+        (fold_left (update_one p pol) outs (update_one p pol s (x, a)))
+        (counter_update_mono p pol s (x, a))
+        (counter_fold_mono p pol outs (update_one p pol s (x, a)))) as Hevents.
+      rewrite output_cost_cons; cbn [fold_left length].
+      rewrite Hevents, Nat2N.inj_add, Nat2N.inj_succ.
+      set (event_unit := (N.of_nat (C p) * unit p + head_unit p pol)%N) in *.
+      clear -Hone Hrest; nia.
+  Qed.
+
+  (** Every reachable encoded counter lies below the complete policy allowance. *)
+  Lemma reachable_counter_rounds : forall p pol s,
+    S.wf p -> reachable p pol s ->
+    forall c, N.to_nat (counter s c) <= rounds p pol.
+  Proof.
+    intros p pol s Hwf Hreachable c.
+    destruct (trie_get c (heads pol)) as [cfg|] eqn:Hhead.
+    - pose proof (reachable_head_counter p pol s c cfg Hwf Hreachable Hhead) as Hcount.
+      pose proof (head_allowance_le_rounds p pol c) as Hallowance.
+      unfold head_allowance in Hallowance; rewrite Hhead in Hallowance; lia.
+    - rewrite (reachable_nonhead_counter p pol s c Hwf Hreachable Hhead); lia.
+  Qed.
+
+  (** Popping a row changes no configured head counter or head-event difference. *)
+  Lemma head_events_after_pop : forall p pol s id q last,
+    head_events pol (after_pop p s id q) last = head_events pol s last.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** One numbered row's nonnegative weight is bounded by all source incidence. *)
+  Lemma weight_le_D : forall p id, In id (row_ids p) -> weight p id <= D p.
+  Proof.
+    intros p id Hin; rewrite <- row_weight_sum.
+    now apply head_sum_member.
+  Qed.
+
+  (** A boundary callback spends one row, one non-head scan reserve, and its head events. *)
+  Lemma T_step_boundary_scan : forall p pol s s1,
+    fits p pol -> reachable p pol s -> step p pol s = inl s1 ->
+    (T_step p pol s + c_loopN + queue_phi p s1 <=
+      k_credit * N.of_nat (D p) * unit p + k_update * N.of_nat (D p) * unit p +
+      k_update * N.of_nat (head_events pol s s1) *
+        (N.of_nat (C p) * unit p + head_unit p pol) + queue_phi p s)%N.
+  Proof.
+    intros p pol s s1 Hfits Hreachable Hstep.
+    destruct Hfits as [Hwf [Hcuts Hprio]].
+    pose proof (reachable_invariant p pol s Hwf Hprio Hreachable) as Hinv.
+    destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+    pose proof (proj1 (Q.pop_min _ _ _ _ (proj1 (proj1 Hinv)) Hpop)) as Hlive.
+    assert (Hsource : exists r, source_row p id = Some r).
+    { destruct (proj1 Hinv) as [_ [_ [_ [_ Hsupport]]]].
+      destruct (Hsupport pr id Hlive) as [_ [r [Hr _]]]; now exists r. }
+    destruct Hsource as [r Hsource].
+    assert (Hrow : row_at s id = Some r).
+    { rewrite (proj1 (proj1 (proj2 (proj2 Hinv)))); exact Hsource. }
+    assert (Heval : exists a ss, eval_row p r (ws_store s) = Some (a, ss)).
+    { pose proof Hstep as Hgo; unfold step in Hgo; rewrite Hpop, Hrow in Hgo.
+      destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval;
+        [now exists a, ss|discriminate]. }
+    destruct Heval as [a [ss Heval]].
+    assert (Hstate : s1 = fold_left (update_one p pol) ((S.target p r, a) :: ss)
+      (after_pop p s id q)).
+    { unfold step in Hstep; rewrite Hpop, Hrow, Heval in Hstep.
+      injection Hstep as Heq; symmetry; exact Heq. }
+    destruct (source_row_member p id r Hsource) as [Hid Hr].
+    pose proof (after_pop_invariant p pol s pr id q Hinv Hpop) as Hafter.
+    pose proof (eval_outputs_invariant p pol s r a ss Hwf Hinv Hr Heval) as Houts.
+    assert (Hcap : forall c, N.to_nat (counter
+      (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q)) c)
+      <= rounds p pol).
+    { rewrite <- Hstate; apply reachable_counter_rounds; [exact Hwf|].
+      now apply (reachable_step p pol s s1 Hreachable Hstep). }
+    pose proof (output_cost_boundary_scan p pol ((S.target p r, a) :: ss)
+      (after_pop p s id q) Hwf Hprio Hafter Houts Hcap) as Houtput.
+    rewrite <- Hstate, head_events_after_pop in Houtput.
+    pose proof (T_step_weighted p pol s pr id q r a ss Hwf Hinv Hpop Hsource Heval)
+      as Htime.
+    pose proof (T_queue_pop_bound p pol s (proj1 Hinv)) as Hpop_cost.
+    rewrite Hpop in Hpop_cost.
+    change (Q.T_pop (ws_queue s) + queue_phi p (after_pop p s id q) <=
+      2 * Q.c_pq * unit p + queue_phi p s)%N in Hpop_cost.
+    assert (Hscan_cost : (k_update * N.of_nat
+      (scan_credit p pol 0%N (after_pop p s id q)) * unit p <=
+      k_update * N.of_nat (D p) * unit p)%N).
+    { apply N.mul_le_mono_r, N.mul_le_mono_l.
+      pose proof (scan_credit_bound p pol 0%N (after_pop p s id q)); lia. }
+    assert (Hrow_cost : (k_credit * N.of_nat (weight p id) * unit p <=
+      k_credit * N.of_nat (D p) * unit p)%N).
+    { apply N.mul_le_mono_r, N.mul_le_mono_l.
+      pose proof (weight_le_D p id Hid); lia. }
+    pose proof (step_row_payment p s id r a ss Hwf Hsource Heval) as Hpayment.
+    clear -Houtput Htime Hpop_cost Hpayment Hscan_cost Hrow_cost; lia.
+  Qed.
+
+  (** A positive boundary event pays the callback and its finite scan reserve. *)
+  Lemma boundary_event_absorb : forall C D E u h,
+    (1 <= E)%N ->
+    (k_credit * D * u + k_update * D * u + k_update * E * (C * u + h) <=
+      k_round * E * (C + D) * u + k_round * E * h)%N.
+  Proof.
+    intros c d events u h Hpositive.
+    assert (Hupdate : (k_update <= k_credit)%N) by (unfold k_credit; nia).
+    assert (Hbase : ((k_credit + k_update) * (d * u) <=
+      2 * k_credit * events * (d * u))%N).
+    { apply N.mul_le_mono_r; clear -Hpositive Hupdate; nia. }
+    assert (Hheads : (k_update * (events * (c * u + h)) <=
+      2 * k_credit * (events * (c * u + h)))%N).
+    { apply N.mul_le_mono_r; lia. }
+    unfold k_round; clear -Hbase Hheads; nia.
+  Qed.
+
+  (** A callback that ends a stable segment is charged to its strict head events. *)
+  Lemma W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
+    step p pol s = inl s1 -> 0 < head_events pol s s1 ->
+    (T_step p pol s + c_loopN + queue_phi p s1 <=
+      k_round * N.of_nat (head_events pol s s1) * N.of_nat (C p + D p) * unit p +
+      k_round * N.of_nat (head_events pol s s1) * head_unit p pol +
+      queue_phi p s)%N.
+  Proof.
+    intros p pol s s1 Hfits Hreachable Hstep Hpositive.
+    pose proof (T_step_boundary_scan p pol s s1 Hfits Hreachable Hstep) as Hcost.
+    assert (Hevents : (1 <= N.of_nat (head_events pol s s1))%N) by lia.
+    pose proof (boundary_event_absorb (N.of_nat (C p)) (N.of_nat (D p))
+      (N.of_nat (head_events pol s s1)) (unit p) (head_unit p pol) Hevents) as Hbound.
+    rewrite Nat2N.inj_add; lia.
   Qed.
 
   (** A stable first callback and stable suffix form one stable segment. *)
