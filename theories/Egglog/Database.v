@@ -1191,6 +1191,51 @@ Proof.
     eapply IH; eassumption.
 Qed.
 
+Lemma database_rank_slots_from_same_function : forall kinds start groups sl,
+  forall n m f first second d e g rank j k,
+    nth_error sl n = Some (f, first) ->
+    nth_error sl m = Some (f, second) ->
+    nth_error (database_rank_slots_from kinds start groups sl) n = Some (d, g, j) ->
+    nth_error (database_rank_slots_from kinds start groups sl) m = Some (e, rank, k) ->
+    g = rank.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH];
+    intros start groups n m f first second d e g rank j k
+      Hslot_first Hslot_second Hrank_first Hrank_second;
+    destruct n as [|n]; destruct m as [|m];
+    cbn [nth_error database_rank_slots_from] in *; try discriminate.
+  - injection Hrank_first as _ Hrank_a _.
+    injection Hrank_second as _ Hrank_b _. congruence.
+  - injection Hslot_first as <- <-.
+    set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head (fst place, N.succ (snd place)) groups).
+    assert (Hcurrent : PTrieCode.get head updated = Some (g, N.succ (snd place))).
+    { unfold updated, place. rewrite PTrie.get_set_same.
+      injection Hrank_first as _ Hgroup _. now rewrite Hgroup. }
+    symmetry. eapply database_rank_slots_from_current_rank with
+      (start := N.succ start) (groups := updated) (j := N.succ (snd place))
+      (n := m) (perm := second) (d := e) (offset := k);
+      [exact Hcurrent | exact Hslot_second | exact Hrank_second].
+  - injection Hslot_second as <- <-.
+    set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head (fst place, N.succ (snd place)) groups).
+    assert (Hcurrent : PTrieCode.get head updated = Some (rank, N.succ (snd place))).
+    { unfold updated, place. rewrite PTrie.get_set_same.
+      injection Hrank_second as _ Hgroup _. now rewrite Hgroup. }
+    eapply database_rank_slots_from_current_rank with
+      (start := N.succ start) (groups := updated) (j := N.succ (snd place))
+      (n := n) (perm := first) (d := d) (offset := j);
+      [exact Hcurrent | exact Hslot_first | exact Hrank_first].
+  - set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head (fst place, N.succ (snd place)) groups).
+    eapply IH with (start := N.succ start) (groups := updated);
+      [exact Hslot_first | exact Hslot_second | exact Hrank_first | exact Hrank_second].
+Qed.
+
 Lemma database_rank_slots_from_bound : forall kinds start groups sl,
   database_rank_groups_bounded start groups ->
   forall n d g j, nth_error (database_rank_slots_from kinds start groups sl) n =
