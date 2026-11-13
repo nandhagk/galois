@@ -1943,12 +1943,15 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     if negb (mentions x c) && C.check_entails P c (Cert (kweight r) 1 false)
     then Some c else None.
 
+  (** Projection shares one normalized source across seeding, checking and retention. *)
   Definition project (x : X.t) (P : list (lcons X.t)) : list (lcons X.t) :=
+    let Pn := map normalize_row P in
     let xs := x :: filter (fun y => negb (X.eqb y x)) (variables P) in
-    let rows := karr_bareiss 1 1 (seed_rows xs (length P) 0 (map normalize_row P)) in
-    present (map (projected_row x xs P) rows) ++
+    let rows := karr_bareiss 1 1 (seed_rows xs (length P) 0 Pn) in
+    present (map (projected_row x xs Pn) rows) ++
       filter (fun r => match lrel r with
-        | REq => false | RLe => negb (mentions x r) end) (map normalize_row P).
+        | REq => false | RLe => negb (mentions x r) end) Pn.
+
 
   Definition havoc (x : X.t) (s : t) : t :=
     match s with
@@ -2401,13 +2404,25 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     eapply C.check_entails_sound; [exact Hchecked | exact Hmodels].
   Qed.
 
+  (** A source and its coefficient-normalized form have exactly the same models. *)
+  Lemma normalize_rows_sat : forall P v,
+    Forall (sat v) (map normalize_row P) <-> Forall (sat v) P.
+  Proof.
+    intros P v. rewrite Forall_map. split; intro Hmodels;
+      apply Forall_forall; intros r Hin; apply normalize_row_sat;
+      exact (proj1 (Forall_forall _ _) Hmodels r Hin).
+  Qed.
+
   (** Projection keeps every state obtained by assigning an arbitrary new value. *)
   Lemma project_sound : forall x P v z, Forall (sat v) P ->
     Forall (sat (upd X.eqb v x z)) (project x P).
   Proof.
-    intros x P v z Hmodels. unfold project. apply Forall_app. split.
+    intros x P v z Hmodels.
+    assert (Hnormalized : Forall (sat v) (map normalize_row P)).
+    { now apply normalize_rows_sat. }
+    unfold project. apply Forall_app. split.
     - apply present_forall. intros r c Hrow.
-      eapply projected_row_sound; [exact Hrow | exact Hmodels].
+      eapply projected_row_sound; [exact Hrow | exact Hnormalized].
     - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin Hkeep].
       apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
       apply unmentioned_sat.
@@ -7365,6 +7380,127 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
       apply in_map_iff in Hin as [s [Hsame _]]. subst r.
       cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Normalization does not change which source multipliers are equality-only. *)
+  Lemma equality_weights_normalized : forall P ms,
+    equality_weights P ms -> equality_weights (map normalize_row P) ms.
+  Proof.
+    intros P ms Hweights. induction Hweights as [|p m P ms Hhead Htail IH].
+    - constructor.
+    - cbn [map]. constructor; [exact Hhead | exact IH].
+  Qed.
+
+  (** Merged duplicate keys preserve the exact weighted coefficient sum. *)
+  Lemma comb_coef_normalized : forall P ms x,
+    C.comb_coef (map normalize_row P) ms x = C.comb_coef P ms x.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] x; try reflexivity.
+    change ((m * coefficient x (normalize_coef (lhs p)) +
+      C.comb_coef (map normalize_row P) ms x)%Z =
+      (m * coefficient x (lhs p) + C.comb_coef P ms x)%Z).
+    rewrite normalize_coef_coefficient, IH. reflexivity.
+  Qed.
+
+  (** Preparing coefficient lists leaves the weighted right-hand side unchanged. *)
+  Lemma comb_rhs_normalized : forall P ms,
+    C.comb_rhs (map normalize_row P) ms = C.comb_rhs P ms.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms]; try reflexivity.
+    change ((m * rhs p + C.comb_rhs (map normalize_row P) ms)%Z =
+      (m * rhs p + C.comb_rhs P ms)%Z). now rewrite IH.
+  Qed.
+
+  (** Every exact equality certificate is also exact for the normalized source. *)
+  Lemma equality_certificate_normalized : forall P c ms sc,
+    equality_certificate P c ms sc ->
+    equality_certificate (map normalize_row P) c ms sc.
+  Proof.
+    intros P c ms sc [Hweights [Hscale [Hcoef Hrhs]]].
+    split; [now apply equality_weights_normalized |]. split; [exact Hscale |].
+    split.
+    - intro x. rewrite comb_coef_normalized. exact (Hcoef x).
+    - rewrite comb_rhs_normalized. exact Hrhs.
+  Qed.
+
+  (** Sparse reconstruction of a tracked source row has an exact scale-one certificate. *)
+  Lemma row_tracks_sparse_certificate : forall P xs target r,
+    NoDup xs ->
+    (forall s, In s P -> forall x z, In (x, z) (lhs s) -> In x xs) ->
+    row_tracks P xs target 0 r -> kscale r = 0%Z ->
+    equality_certificate P (LCons X.t (sparse xs (kcoeff r)) REq (kright r))
+      (kweight r) 1.
+  Proof.
+    intros P xs target r Hunique Hsupport [Hweights [Hcoords Hrhs]] Hscale.
+    rewrite Hscale in Hcoords, Hrhs. cbn [repeat app] in Hcoords.
+    assert (Hcoeffs : kcoeff r = map (C.comb_coef P (kweight r)) xs).
+    { rewrite Hcoords. apply map_ext. intro y. ring. }
+    split; [exact Hweights |]. split; [lia |]. split.
+    - intro x. change (C.comb_coef P (kweight r) x =
+        (1 * coefficient x (sparse xs (kcoeff r)))%Z).
+      rewrite Z.mul_1_l, Hcoeffs. unfold sparse.
+      rewrite coefficient_nonzero, combine_coordinate_map.
+      assert (Hdec : {In x xs} + {~ In x xs}).
+      { apply in_dec. intros a b. destruct (X.eqb_spec a b); auto. }
+      destruct Hdec as [Hin | Habsent].
+      + symmetry. now apply coefficient_coordinates.
+      + rewrite coefficient_absent.
+        * apply comb_coef_zero. intros s Hs. apply coefficient_absent. intro Hin.
+          apply in_map_iff in Hin as [[y z] [Hsame Hin]]. cbn [fst] in Hsame.
+          subst y. apply Habsent. exact (Hsupport s Hs x z Hin).
+        * rewrite map_map. change (~ In x (map (fun y => y) xs)).
+          now rewrite map_id.
+    - cbn [lrel rhs]. lia.
+  Qed.
+
+  (** Raw projection coordinates contain every source occurrence, including canceled keys. *)
+  Lemma project_variables_contains : forall x P r y z,
+    In r P -> In (y, z) (lhs r) ->
+    In y (x :: filter (fun q => negb (X.eqb q x)) (variables P)).
+  Proof.
+    intros x P r y z Hr Hz. destruct (X.eqb_spec y x) as [Hequal | Hother].
+    - subst y. now left.
+    - right. apply filter_In. split.
+      + now apply variables_contains with (r := r) (z := z).
+      + apply negb_true_iff. destruct (X.eqb_spec y x); congruence.
+  Qed.
+
+  (** Every row produced by one-column elimination has the advertised exact source sum. *)
+  Lemma project_basis_certificate : forall x P r,
+    let xs := x :: filter (fun y => negb (X.eqb y x)) (variables P) in
+    In r (karr_bareiss 1 1 (seed_rows xs (length P) 0 (map normalize_row P))) ->
+    equality_certificate P (LCons X.t (sparse xs (kcoeff r)) REq (kright r))
+      (kweight r) 1.
+  Proof.
+    intros x P r xs Hin.
+    apply row_tracks_sparse_certificate with (target := LCons X.t [] REq 0).
+    - apply project_variables_nodup.
+    - intros s Hs y z Hz. now apply project_variables_contains with (r := s) (z := z).
+    - apply (proj1 (Forall_forall _ _)
+        (bareiss_tracks 1 P xs (LCons X.t [] REq 0) 0 1
+          (seed_rows xs (length P) 0 (map normalize_row P))
+          ltac:(unfold xs; cbn [length]; lia) (seed_rows_tracks _ _ _)) r Hin).
+    - apply (proj1 (Forall_forall _ _)
+        (bareiss_scale_zero 1 1 (seed_rows xs (length P) 0 (map normalize_row P))
+          (seed_rows_scale_zero _ _ _ _)) r Hin).
+  Qed.
+
+  (** Preparing the checker source preserves the former projection result exactly. *)
+  Lemma project_raw_source_agrees : forall x P,
+    project x P =
+      let xs := x :: filter (fun y => negb (X.eqb y x)) (variables P) in
+      let rows := karr_bareiss 1 1 (seed_rows xs (length P) 0 (map normalize_row P)) in
+      present (map (projected_row x xs P) rows) ++
+        filter (fun r => match lrel r with
+          | REq => false | RLe => negb (mentions x r) end) (map normalize_row P).
+  Proof.
+    intros x P. unfold project. f_equal. f_equal.
+    apply map_ext_in. intros r Hin.
+    pose proof (project_basis_certificate x P r Hin) as Hcertificate.
+    pose proof (equality_certificate_checked _ _ _ _ Hcertificate) as Hraw.
+    pose proof (equality_certificate_checked _ _ _ _
+      (equality_certificate_normalized _ _ _ _ Hcertificate)) as Hnormal.
+    unfold projected_row. rewrite Hraw, Hnormal. reflexivity.
   Qed.
 
   (** Both affine assignment branches construct only normalized rows. *)

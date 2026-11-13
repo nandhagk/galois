@@ -149,6 +149,25 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example havoc_checks_a_consequence_of_duplicate_source_terms :
+  let source :=
+    [LCons _ [(1%positive, 1); (2%positive, 1); (2%positive, 1)] REq 0;
+     LCons _ [(1%positive, 1); (3%positive, 1); (3%positive, 1)] REq 0] in
+  Equalities.leb (Equalities.havoc 1%positive (Reached source))
+    (Reached [LCons _ [(2%positive, -2); (3%positive, 2)] REq 0]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example havoc_retains_an_inequality_after_selected_key_cancellation :
+  Equalities.havoc 1%positive
+    (Reached [LCons _ [(1%positive, 1); (1%positive, -1);
+      (2%positive, 2); (2%positive, -1)] RLe 7]) =
+    Reached [LCons _ [(2%positive, 1)] RLe 7].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example substitution_merges_repeated_keys :
   Equalities.subst 1%positive (Lin _ [(2%positive, 1)] 3)
     (LCons _ [(1%positive, 2); (2%positive, 1)] REq 8) =
