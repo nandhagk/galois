@@ -9532,6 +9532,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now apply normal_output_equiv.
   Qed.
 
+  (** Combining depends on the declaration kind, independently of the stored row map. *)
+  Lemma combine_kind_frame : forall db db' f previous o,
+    kind (view db') f = kind (view db) f ->
+    combine db' f previous o = combine db f previous o.
+  Proof.
+    intros db db' f previous o Hkind. unfold combine. now rewrite Hkind.
+  Qed.
+
+  (** Source groups compose by retaining the old group or merging two lattice-value groups. *)
+  Lemma lineage_sources_combine : forall initial db f k a b,
+    (exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db))) (fst ko) k) srcs /\
+      output_equiv db a (merged db f (map snd srcs))) ->
+    (exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db))) (fst ko) k) srcs /\
+      output_equiv db b (merged db f (map snd srcs))) ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db))) (fst ko) k) srcs /\
+      output_equiv db (combine db f (Some a) b) (merged db f (map snd srcs)).
+  Proof.
+    intros initial db f k a b [left [Hleft [Hleft_keys Hleft_output]]]
+      [right [Hright [Hright_keys Hright_output]]]. unfold combine.
+    destruct a as [[i | a] |], b as [[j | b] |],
+      (kind (view db) f) as [[| |m] |] eqn:Hkind;
+      try (exists left; split; [exact Hleft |]; split; assumption).
+    pose proof (output_equiv_value_eq db a _ Hleft_output) as Hleft_value.
+    pose proof (output_equiv_value_eq db b _ Hright_output) as Hright_value.
+    exists (left ++ right). split.
+    - destruct left; [contradiction | discriminate].
+    - split; [rewrite Forall_app; split; assumption |].
+      rewrite map_app, (merged_lattice_append db f m _ _ a b Hkind
+        Hleft_value Hright_value). constructor.
+  Qed.
+
   (** Lineage depends on the current view and representatives, not scheduling metadata. *)
   Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
     view db' = view db -> lineage initial db -> lineage initial db'.
