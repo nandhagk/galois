@@ -471,6 +471,9 @@ Qed.
 
 Local Opaque PTrieT.c_trie.
 
+(** Arithmetic below generalizes the released trie constant so simplification cannot
+    use its concrete placeholder value. *)
+
 (** The tuple walk charges consumed cells once and one bounded trie write per selected rank. *)
 Lemma T_slot_pick_ranked_le : forall C steps (u : list C) picked bits,
   Forall (fun q => Pos.size_nat (snd q) <= bits) steps ->
@@ -478,15 +481,17 @@ Lemma T_slot_pick_ranked_le : forall C steps (u : list C) picked bits,
     (PTrieT.c_trie + 2) * N.of_nat (length steps) * N.of_nat (bits + 1))%N.
 Proof.
   intros C steps. induction steps as [| [gap rank] steps IH]; intros u picked bits Hbits.
-  - time_step.
+  - time_unfold (@T_slot_pick_ranked). time_simpl. time_cbn.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
   - inversion Hbits as [| q qs Hrank Hrest]; subst.
     pose proof (T_slot_skip_remaining_le C gap u) as Hskip.
     time_unfold (@T_slot_pick_ranked). time_simpl. time_cbn.
     destruct (slot_skip gap u) as [| c suffix] eqn:Hsuffix.
-    + time_cbn_all. nia.
+    + time_cbn_all. set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
     + pose proof (IH (c :: suffix) (PTrieCode.set rank c picked) bits Hrest) as Htail.
       pose proof (PTrieT.T_set_le C rank c picked) as Hset.
-      time_cbn_all. rewrite ?Nat2N.inj_add in *. time_lin.
+      time_cbn_all. set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+      rewrite ?Nat2N.inj_add in *. nia.
 Qed.
 
 (** Reading consecutive ranks pays their common upper bit width at each step. *)
@@ -497,15 +502,60 @@ Lemma T_slot_read_ranked_le : forall C remaining rank (picked : PTrieCode.t C) l
 Proof.
   intros C remaining. induction remaining as [| remaining IH];
     intros rank picked limit Hrange.
-  - time_step.
+  - time_unfold (@T_slot_read_ranked). time_simpl. time_cbn.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
   - assert (Hrank : Pos.size_nat rank <= Pos.size_nat limit).
     { apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt. lia. }
     assert (Hnext : Pos.to_nat (Pos.succ rank) + remaining <= Pos.to_nat limit).
     { rewrite Pos2Nat.inj_succ. lia. }
     pose proof (IH (Pos.succ rank) picked limit Hnext) as Htail.
     pose proof (PTrieT.T_get_le C rank picked) as Hget.
-    time_step.
-    all: rewrite ?Nat2N.inj_add in *; time_lin.
+    pose proof (Pos.T_succ_le rank) as Hsucc.
+    time_unfold (@T_slot_read_ranked). time_simpl. time_cbn.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    destruct (PTrieCode.get rank picked); time_cbn_all;
+      rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+
+(** Prepared ranks use at most the bit width of one plus the permutation length. *)
+Lemma slot_prepared_rank_bits : forall perm,
+  Forall (fun q => Pos.size_nat (snd q) <= Pos.size_nat (Pos.of_succ_nat (length perm)))
+    (projection_steps (prepare_slot_layout perm)).
+Proof.
+  intro perm. apply Forall_forall. intros [gap rank] Hin. cbn [snd].
+  unfold prepare_slot_layout in Hin. cbn [projection_steps] in Hin.
+  assert (Hrank : In rank (map snd (slot_rank_positions 1 perm))).
+  { rewrite <- (slot_position_gaps_ranks 0 (slot_rank_positions 1 perm)).
+    apply in_map_iff. exists (gap, rank). split; [reflexivity | exact Hin]. }
+  apply in_map_iff in Hrank. destruct Hrank as [[position r] [Heq Hentry]].
+  cbn [snd] in Heq. subst r.
+  apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt.
+  rewrite SuccNat2Pos.id_succ.
+  pose proof (slot_rank_positions_upper 1 perm position rank Hentry) as Hupper.
+  cbn [Pos.to_nat] in Hupper. lia.
+Qed.
+
+(** Every prepared layout charges one tuple walk and the bit cost of its original ranks. *)
+Theorem T_project_slot_layout_le : forall C perm (u : list C),
+  (T_project_slot_layout (prepare_slot_layout perm) u <= N.of_nat (length u + 1) +
+    (2 * PTrieT.c_trie + 10) * N.of_nat (length perm + 1) *
+      N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1))%N.
+Proof.
+  intros C perm u.
+  pose proof (T_slot_pick_ranked_le C (projection_steps (prepare_slot_layout perm)) u
+    PTrieCode.empty (Pos.size_nat (Pos.of_succ_nat (length perm)))
+    (slot_prepared_rank_bits perm)) as Hpick.
+  assert (Hrange : Pos.to_nat 1 + length perm <= Pos.to_nat (Pos.of_succ_nat (length perm))).
+  { rewrite SuccNat2Pos.id_succ. cbn. lia. }
+  pose proof (T_slot_read_ranked_le C (length perm) 1
+    (slot_pick_ranked (projection_steps (prepare_slot_layout perm)) u PTrieCode.empty)
+    (Pos.of_succ_nat (length perm)) Hrange) as Hread.
+  pose proof (Datatypes.T_length_le (projection_steps (prepare_slot_layout perm))) as Hlength.
+  time_unfold (@T_project_slot_layout). time_simpl. time_cbn_all.
+  rewrite ?slot_position_gaps_length, ?slot_rank_positions_length in *.
+  set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+  rewrite ?Nat2N.inj_add in *.
+  change (N.of_nat 1) with 1%N in *. nia.
 Qed.
 
 (** Stable row identifiers retain historical keys through collisions. *)
