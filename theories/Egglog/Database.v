@@ -7061,6 +7061,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct roots as [[winner loser] |]; reflexivity.
   Qed.
 
+  (** Removing a scheduling entry leaves every component of the pinned watermark unchanged. *)
+  Lemma wmark_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
+    wmark db' = wmark db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. reflexivity.
+  Qed.
+
+  (** Queue scheduling keeps the spending unit exactly, including in active repair states. *)
+  Lemma unit_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
+    unit db' = unit db.
+  Proof.
+    intros db i db' Hpop. unfold unit.
+    rewrite (wmark_pop_loser db i db' Hpop),
+      (proj1 (proj2 (db_pop_loser_layout db i db' Hpop))). reflexivity.
+  Qed.
+
   Lemma unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
   Proof.
     intros i j db _. unfold unit. rewrite union_ids, wmark_union. reflexivity.
@@ -7715,7 +7733,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Repair retains kinds and identifier allocation. *)
   Lemma F9_rstep_layout : forall s s', state_inv s -> rstep s = inl s' ->
     kind (view (fst s')) = kind (view (fst s)) /\ ids (fst s') = ids (fst s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next _ Hstep. unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db i current Hpop) as [_ Hview].
+      destruct (db_pop_loser_layout db i current Hpop) as [_ [Hids _]].
+      split; [now rewrite Hview | exact Hids].
+    - injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (repair_current_layout db f k) as [Hkind [_ Hids]]. now split.
+  Qed.
 
   (** Collision unions keep the same functional-dependency closure. *)
   Lemma F10_rstep_cong : forall s s' i j, state_inv s -> rstep s = inl s' ->
