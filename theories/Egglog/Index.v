@@ -4,12 +4,129 @@
     For example, removing one tuple preserves a prefix shared with another tuple.
     Builds on: IndexSig and positive-key tries. *)
 
-From Stdlib Require Import List PArith NArith PeanoNat Lia.
+From Stdlib Require Import List PArith NArith PeanoNat Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
 
 Import List.ListNotations.
+
+(** * Cardinality of updates to an edge trie *)
+
+Module TrieCardinalityFacts.
+
+  (** An enumerated key is exactly a key with a stored value. *)
+  Lemma elements_key_iff : forall A (m : PTrieCode.t A) k,
+    In k (map fst (PTrieCode.elements m)) <-> exists v, PTrieCode.get k m = Some v.
+  Proof.
+    intros A m k. split.
+    - intro Hin. apply in_map_iff in Hin.
+      destruct Hin as [[q v] [Heq Hin]]. cbn [fst] in Heq. subst q.
+      exists v. now apply PTrie.elements_spec.
+    - intros [v Hget]. apply in_map_iff. exists (k, v). split; [reflexivity|].
+      now apply PTrie.elements_spec.
+  Qed.
+
+  (** Setting a key adds that key to the enumerated key set. *)
+  Lemma elements_set_key_iff : forall A k (v : A) m q,
+    In q (map fst (PTrieCode.elements (PTrieCode.set k v m))) <->
+      q = k \/ In q (map fst (PTrieCode.elements m)).
+  Proof.
+    intros A k v m q. rewrite !elements_key_iff.
+    destruct (Pos.eq_dec q k) as [Heq | Hneq].
+    - subst q. rewrite PTrie.get_set_same. split.
+      + intro Hget. now left.
+      + intro Hin. exists v. reflexivity.
+    - rewrite PTrie.get_set_other by exact Hneq. split.
+      + intro Hget. now right.
+      + intros [Heq | Hget]; [contradiction | exact Hget].
+  Qed.
+
+  (** Removing a key retains exactly the other enumerated keys. *)
+  Lemma elements_remove_key_iff : forall A k (m : PTrieCode.t A) q,
+    In q (map fst (PTrieCode.elements (PTrieCode.remove k m))) <->
+      In q (map fst (PTrieCode.elements m)) /\ q <> k.
+  Proof.
+    intros A k m q. rewrite !elements_key_iff.
+    destruct (Pos.eq_dec q k) as [Heq | Hneq].
+    - subst q. rewrite PTrie.get_remove_same. split.
+      + intros [v Hget]. discriminate.
+      + intros [_ Hneq]. contradiction.
+    - rewrite PTrie.get_remove_other by exact Hneq. tauto.
+  Qed.
+
+  (** Replacing an existing value leaves the number of edge bindings unchanged. *)
+  Lemma set_present : forall A k (old v : A) m, PTrieCode.get k m = Some old ->
+    length (PTrieCode.elements (PTrieCode.set k v m)) = length (PTrieCode.elements m).
+  Proof.
+    intros A k old v m Hget.
+    assert (Hkey : In k (map fst (PTrieCode.elements m))).
+    { apply elements_key_iff. now exists old. }
+    assert (Hperm : Permutation (map fst (PTrieCode.elements (PTrieCode.set k v m)))
+      (map fst (PTrieCode.elements m))).
+    { apply NoDup_Permutation; [apply PTrie.elements_nodup | apply PTrie.elements_nodup |].
+      intro q. rewrite elements_set_key_iff. split.
+      - intros [Heq | Hin]; [subst q; exact Hkey | exact Hin].
+      - intro Hin. now right. }
+    apply Permutation_length in Hperm. now rewrite !length_map in Hperm.
+  Qed.
+
+  (** Inserting a fresh key contributes exactly one edge binding. *)
+  Lemma set_absent : forall A k (v : A) m, PTrieCode.get k m = None ->
+    length (PTrieCode.elements (PTrieCode.set k v m)) = S (length (PTrieCode.elements m)).
+  Proof.
+    intros A k v m Habsent.
+    assert (Hperm : Permutation (map fst (PTrieCode.elements (PTrieCode.set k v m)))
+      (k :: map fst (PTrieCode.elements m))).
+    { apply NoDup_Permutation.
+      - apply PTrie.elements_nodup.
+      - constructor.
+        + intro Hin. apply elements_key_iff in Hin. destruct Hin as [old Hget]. congruence.
+        + apply PTrie.elements_nodup.
+      - intro q. rewrite elements_set_key_iff. cbn [In]. intuition congruence. }
+    apply Permutation_length in Hperm. cbn [length] in Hperm.
+    now rewrite !length_map in Hperm.
+  Qed.
+
+  (** Removing an existing key removes exactly one edge binding. *)
+  Lemma remove_present : forall A k (old : A) m, PTrieCode.get k m = Some old ->
+    S (length (PTrieCode.elements (PTrieCode.remove k m))) = length (PTrieCode.elements m).
+  Proof.
+    intros A k old m Hget.
+    assert (Hkey : In k (map fst (PTrieCode.elements m))).
+    { apply elements_key_iff. now exists old. }
+    assert (Hperm : Permutation (map fst (PTrieCode.elements m))
+      (k :: map fst (PTrieCode.elements (PTrieCode.remove k m)))).
+    { apply NoDup_Permutation.
+      - apply PTrie.elements_nodup.
+      - constructor.
+        + intro Hin. apply elements_remove_key_iff in Hin. destruct Hin as [_ Hneq]. contradiction.
+        + apply PTrie.elements_nodup.
+      - intro q. cbn [In]. rewrite elements_remove_key_iff. split.
+        + intro Hin. destruct (Pos.eq_dec q k) as [Heq | Hneq].
+          * left. symmetry. exact Heq.
+          * right. now split.
+        + intros [Heq | [Hin _]]; [subst q; exact Hkey | exact Hin]. }
+    apply Permutation_length in Hperm. cbn [length] in Hperm.
+    rewrite !length_map in Hperm. symmetry. exact Hperm.
+  Qed.
+
+  (** Removing an absent key leaves the number of edge bindings unchanged. *)
+  Lemma remove_absent : forall A k (m : PTrieCode.t A), PTrieCode.get k m = None ->
+    length (PTrieCode.elements (PTrieCode.remove k m)) = length (PTrieCode.elements m).
+  Proof.
+    intros A k m Habsent.
+    assert (Hperm : Permutation (map fst (PTrieCode.elements (PTrieCode.remove k m)))
+      (map fst (PTrieCode.elements m))).
+    { apply NoDup_Permutation; [apply PTrie.elements_nodup | apply PTrie.elements_nodup |].
+      intro q. rewrite elements_remove_key_iff. split.
+      - intros [Hin _]. exact Hin.
+      - intro Hin. split; [exact Hin |]. intro Heq. subst q.
+        apply elements_key_iff in Hin. destruct Hin as [old Hget]. congruence. }
+    apply Permutation_length in Hperm. now rewrite !length_map in Hperm.
+  Qed.
+
+End TrieCardinalityFacts.
 
 Module Nat.
   TimeFun Nat.max.
