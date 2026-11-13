@@ -2354,7 +2354,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (forall f k key r d,
       PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
       parent (up d r) = up d r ->
-      (size (up d r) <= (ids db + 1) ^ N.of_nat (length k))%N).
+      (size (up d r) <= (ids db + 1) ^ N.of_nat (length k))%N) /\
+    DatabaseUseMap.wf (row_uses store).
 
   Lemma database_row_store_ok_init : forall ds sl,
     database_row_store_ok (init ds sl).
@@ -2374,8 +2375,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           -- split.
              ++ intros f k key r Hhistory.
                 rewrite PTrie.get_empty in Hhistory. discriminate.
-             ++ intros f k key r d Hhistory.
-                rewrite PTrie.get_empty in Hhistory. discriminate.
+             ++ split.
+                ** intros f k key r d Hhistory.
+                   rewrite PTrie.get_empty in Hhistory. discriminate.
+                ** apply DatabaseUseMap.wf_empty.
   Qed.
 
   (** Public idle states retain enough historical uses to rebuild every row. *)
@@ -10246,7 +10249,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
     destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
     unfold row_store_ok, database_row_store_ok in Hstore.
-    destruct Hstore as (_ & _ & _ & _ & _ & _ & Hgroup).
+    destruct Hstore as (_ & _ & _ & _ & _ & _ & Hgroup & _).
     unfold row_id in Hrow.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
       as [[key id] |] eqn:Hget; [| discriminate].
