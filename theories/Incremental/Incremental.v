@@ -8762,6 +8762,67 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exact (proj2 (invalid_snapshot_width st acc id ss Hstate Horigin Hget)).
   Qed.
 
+  Lemma invalid_visit_credit_arithmetic : forall c w b r n m total clock,
+    (b <= w)%N -> (r <= n * w)%N -> (clock <= c * (b + r))%N ->
+    total = (m + n)%N ->
+    (clock + c * w * m <= c * w * (1 + total))%N.
+  Proof.
+    intros c w b r n m total clock Hb Hr Hclock Htotal; subst total.
+    assert (Hwork : (b + r <= w + n * w)%N) by lia.
+    assert (Hbound : (clock <= c * (w + n * w))%N).
+    { eapply N.le_trans; [exact Hclock|].
+      apply N.mul_le_mono_l; exact Hwork. }
+    replace (c * w * (1 + (m + n)))%N with
+      (c * (w + n * w) + c * w * m)%N by ring.
+    lia.
+  Qed.
+
+  Lemma nat_to_N_le : forall a b, a <= b -> (N.of_nat a <= N.of_nat b)%N.
+  Proof.
+    intros a b Hle; induction Hle as [|b Hle IH].
+    - apply N.le_refl.
+    - rewrite Nat2N.inj_succ; lia.
+  Qed.
+
+  Lemma T_invalid_visit_snapshot_amort : forall st acc id,
+    state_ok st -> invalid_snapshot_origin st acc ->
+    Pos.size_nat id <= kwidth st ->
+    (T_invalid_visit_snapshot st acc id +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (invalid_snapshot_mass (invalid_visit_snapshot st acc id)) <=
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        (1 + N.of_nat (invalid_snapshot_mass acc)))%N.
+  Proof.
+    intros st acc id Hstate Horigin Hid.
+    pose proof (T_invalid_visit_snapshot_le st acc id) as Htime.
+    pose proof (invalid_visit_snapshot_mass st acc id) as Hmass.
+    set (work := match PTrieCode.get id (invalid_snapshots acc) with
+      | Some ss => DemandAccounting.snapshot_weight ss | None => 0 end) in Hmass.
+    set (bitwork := match PTrieCode.get id (invalid_snapshots acc) with
+      | Some ss => if snapshot_live ss then
+          N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat)
+            (snapshot_writes ss)) else 0%N
+      | None => 0%N end) in Htime.
+    assert (Hwork : (bitwork <= N.of_nat work * N.of_nat (kwidth st + 1))%N).
+    { unfold bitwork, work.
+      destruct (PTrieCode.get id (invalid_snapshots acc)) as [ss|] eqn:Hget;
+        [|cbn; lia].
+      destruct (snapshot_live ss) eqn:Hlive; [|cbn; lia].
+      unfold work, DemandAccounting.snapshot_weight; rewrite Hlive.
+      rewrite <- Nat2N.inj_mul.
+      pose proof (invalid_snapshot_bits_le st acc id ss Hstate Horigin Hget)
+        as Hbound.
+      apply nat_to_N_le; exact Hbound. }
+    assert (Hbits : (N.of_nat (Pos.size_nat id + 1) <=
+      N.of_nat (kwidth st + 1))%N) by lia.
+    pose proof (f_equal N.of_nat Hmass) as HmassN.
+    rewrite Nat2N.inj_add in HmassN.
+    eapply invalid_visit_credit_arithmetic;
+      [exact Hbits|exact Hwork|exact Htime|symmetry; exact HmassN].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
