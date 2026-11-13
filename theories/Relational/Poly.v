@@ -4833,6 +4833,135 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition poly_subst_factor : N :=
     (8 * poly_raw_normal_factor + 4 * poly_coefficient_factor + 8 * X.c_key + 192)%N.
 
+  (** Finding a pivot stops early or pays for each tested input occurrence. *)
+  Lemma poly_T_find_members : forall A (f : A -> bool) T_f k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_find f T_f xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold List.T_find. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)).
+      time_unfold List.T_find. destruct (f x); time_cbn; nia.
+  Qed.
+
+  (** Flattening charges each callback and the length of the row list it returns. *)
+  Lemma poly_T_flat_map_members : forall A B (f : A -> list B) T_f k width xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (forall x, In x xs -> length (f x) <= width) ->
+    (List.T_flat_map f T_f xs <=
+      (k + N.of_nat width + 3) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f k width xs. induction xs as [|x xs IH]; intros Hcallback Hwidth.
+    - time_unfold List.T_flat_map. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      pose proof (Hwidth x (or_introl eq_refl)) as Hlength.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)
+        ltac:(intros y Hin; apply Hwidth; now right)).
+      pose proof (Datatypes.T_app_le (f x) (flat_map f xs)) as Happ.
+      time_unfold List.T_flat_map. time_cbn. nia.
+  Qed.
+
+  (** Normal lookups use the same primitive step with both summands in one width envelope. *)
+  Definition poly_coef_step_factor : N := (2 * poly_coefficient_factor)%N.
+
+  (** A complete lookup also pays its row projection and empty traversal. *)
+  Definition poly_coef_factor : N := (poly_coef_step_factor + 4)%N.
+
+  (** A coefficient lookup step charges the stored key and bounded summands. *)
+  Lemma T_poly_coeff_step_normal : forall x p z keys bits,
+    Pos.size_nat (X.encode (fst p)) <= keys ->
+    Z.size_nat (snd p) <= bits -> Z.size_nat z <= bits ->
+    (T_poly_coefficient_step x p z <= poly_coef_step_factor * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros x p z keys bits Hkey Hp Hz.
+    pose proof (T_poly_coefficient_step_bounded x p z keys bits bits Hkey Hp Hz) as Hstep.
+    unfold poly_coef_step_factor. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** A normal coefficient fold keeps its partial result within the input coefficient width. *)
+  Lemma T_poly_coeff_fold : forall x xs keys bits,
+    NoDup (map fst xs) ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (List.T_fold_right (poly_coefficient_step x) (T_poly_coefficient_step x) 0%Z xs <=
+      (poly_coef_step_factor + 1) * N.of_nat (length xs) *
+        N.of_nat (keys + bits + 1) + 1)%N.
+  Proof.
+    intros x xs. induction xs as [|p xs IH]; intros keys bits Hunique Hsizes.
+    - time_unfold List.T_fold_right. time_cbn. lia.
+    - inversion Hunique as [|key rest Hnot Hunique_tail]; subst key rest.
+      inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      assert (Hvalue : Z.size_nat (fold_right (poly_coefficient_step x) 0%Z xs) <= bits).
+      { rewrite poly_coefficient_step_fold. apply poly_coef_bits; [exact Hunique_tail|].
+        eapply Forall_impl; [|exact Htail]. intros q [_ Hq]. exact Hq. }
+      specialize (IH keys bits Hunique_tail Htail).
+      pose proof (T_poly_coeff_step_normal x p _ keys bits Hkey Hbits Hvalue) as Hstep.
+      time_unfold List.T_fold_right. time_cbn. nia.
+  Qed.
+
+  (** Declared row widths bound the fields of every coefficient occurrence. *)
+  Lemma poly_row_entry_bounds : forall r keys bits,
+    C.row_key_bits r <= keys -> C.row_bits r <= bits ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) (lhs r).
+  Proof.
+    intros r keys bits Hkeys Hbits. apply Forall_forall. intros p Hin. split.
+    - eapply Nat.le_trans; [apply poly_row_key_member; exact Hin|exact Hkeys].
+    - eapply Nat.le_trans; [|exact Hbits]. unfold C.row_bits.
+      exact (poly_max_member _ (fun p => Z.size_nat (snd p))
+        (Z.size_nat (rhs r)) (lhs r) p Hin).
+  Qed.
+
+  (** Looking up a coefficient in a normal row is linear in its entries and declared widths. *)
+  Lemma T_poly_coefficient_normal : forall x r keys bits,
+    NoDup (map fst (lhs r)) -> C.row_key_bits r <= keys -> C.row_bits r <= bits ->
+    (T_poly_coefficient X.eqb X.T_eqb x r <=
+      poly_coef_factor * N.of_nat (length (lhs r) + 1) * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros x r keys bits Hunique Hkeys Hbits.
+    pose proof (T_poly_coeff_fold x (lhs r) keys bits Hunique
+      (poly_row_entry_bounds r keys bits Hkeys Hbits)) as Hfold.
+    time_unfold (@T_poly_coefficient).
+    lazymatch goal with
+    | |- context [List.T_fold_right ?f ?Tf 0%Z (lhs r)] =>
+      change f with (poly_coefficient_step x); change Tf with (T_poly_coefficient_step x)
+    end.
+    unfold poly_coef_factor. time_simpl. nia.
+  Qed.
+
+  (** Scaling a bounded coefficient list charges a bounded multiplication per occurrence. *)
+  Lemma T_poly_scale_bounded : forall a (xs : list (X.t * Z)) bits,
+    Z.size_nat a <= bits -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    (T_poly_scale_coef a xs <=
+      16 * N.of_nat (length xs + 1) * N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros a xs bits Ha Hxs. pose proof (T_poly_scale_coef_bounded a xs bits Hxs) as Hscale.
+    eapply N.le_trans; [exact Hscale|]. rewrite !Nat2N.inj_mul, N.pow_2_r.
+    rewrite <- !N.mul_assoc. apply N.mul_le_mono_l, N.mul_le_mono_l, N.mul_le_mono_r.
+    lia.
+  Qed.
+
+  (** Scaling preserves uniqueness of the source keys. *)
+  Lemma poly_scale_nodup : forall a (xs : list (X.t * Z)),
+    NoDup (map fst xs) -> NoDup (map fst (poly_scale_coef a xs)).
+  Proof.
+    intros a xs Hunique. unfold poly_scale_coef. rewrite map_map. exact Hunique.
+  Qed.
+
+  (** Scaling preserves key widths and adds the factor width to coefficient widths. *)
+  Lemma poly_scale_entry_sizes : forall a xs keys bits,
+    Z.size_nat a <= bits ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= 2 * bits) (poly_scale_coef a xs).
+  Proof.
+    intros a xs keys bits Ha Hxs. unfold poly_scale_coef. apply Forall_map.
+    eapply Forall_impl; [|exact Hxs]. intros [x z] [Hkey Hz]. cbn [fst snd].
+    split; [exact Hkey|]. cbn [snd] in Hz. pose proof (poly_size_mul a z). lia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
