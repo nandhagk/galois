@@ -4,12 +4,41 @@
     For example, an empty index has a root node.
     Builds on: IndexSig. *)
 
-From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std.
+From Stdlib Require Import List PArith NArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
 
 Import List.ListNotations.
+
+(** * Consequences of the abstract index laws *)
+
+Module IndexFacts (V : VALUE) (I : INDEX V).
+  (** A live nonempty prefix of full arity is a stored tuple. *)
+  Lemma node_full_mem : forall a ix n pre, I.wf a ix -> I.node ix n pre ->
+    length pre = a -> pre <> [] -> I.mem ix pre.
+  Proof.
+    intros a ix n pre Hwf Hnode Hlength Hnonempty.
+    destruct (I.node_live a ix n pre Hwf Hnode Hnonempty) as [suf Hmember].
+    pose proof (I.mem_arity a ix (pre ++ suf) Hwf Hmember) as Harity.
+    rewrite length_app, Hlength in Harity.
+    assert (Hsuf : length suf = 0) by lia.
+    apply length_zero_iff_nil in Hsuf. subst suf.
+    now rewrite app_nil_r in Hmember.
+  Qed.
+
+  (** A member extending a live prefix supplies the next child. *)
+  Lemma child_of_member : forall a ix n pre c suf, I.wf a ix -> I.node ix n pre ->
+    I.mem ix (pre ++ c :: suf) -> exists m, I.child ix n c = Some m.
+  Proof.
+    intros a ix n pre c suf Hwf Hnode Hmember.
+    destruct (I.child ix n c) as [m |] eqn:Hchild.
+    - now exists m.
+    - exfalso.
+      apply (proj1 (proj2 (I.child_spec a ix n pre c Hwf Hnode)) Hchild).
+      now exists suf.
+  Qed.
+End IndexFacts.
 
 Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
   Definition t := list (list (cell V.t)).
@@ -39,7 +68,9 @@ Module Index (V : VALUE) <: INDEX V.
   Definition node (_ : t) (_ : positive) (_ : list (cell V.t)) : Prop := False.
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Insertion allocates at most one node per tuple cell. *)
   Lemma next_insert : forall a r ix, wf a ix ->
@@ -64,7 +95,7 @@ Module Index (V : VALUE) <: INDEX V.
 
   Lemma mem_insert : forall a r ix u, wf a ix -> length r = a ->
     (mem (insert r ix) u <-> u = r \/ mem ix u).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: unmarked list carrier lacks the required node-index groundwork. *)
 
   Lemma mem_remove : forall a r ix u, wf a ix ->
     (mem (remove r ix) u <-> u <> r /\ mem ix u).
@@ -74,7 +105,7 @@ Module Index (V : VALUE) <: INDEX V.
   Proof. Admitted. (* STUB *)
 
   Lemma node_root : forall a ix, wf a ix -> node ix (root ix) [].
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: node semantics await the missing node-index representation. *)
 
   Lemma node_live : forall a ix n pre, wf a ix -> node ix n pre -> pre <> [] ->
     exists suf, mem ix (pre ++ suf).
@@ -143,15 +174,21 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Definition c_ix : N := 1. (* STUB *)
   (** The fresh node counter is stored. *)
   Lemma T_next_le : forall ix, (T_next ix <= c_ix)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix. time_step next; unfold c_ix; lia.
+  Qed.
 
   (** The empty index is a constant. *)
   Lemma T_empty_le : (T_empty <= c_ix)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    time_step empty; unfold c_ix; lia.
+  Qed.
 
   (** The root is stored. *)
   Lemma T_root_le : forall ix, (T_root ix <= c_ix)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix. time_step root; unfold c_ix; lia.
+  Qed.
 
   Lemma T_insert_le : forall a r ix, wf a ix ->
     (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
