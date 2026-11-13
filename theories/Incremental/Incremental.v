@@ -9013,6 +9013,156 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     reflexivity.
   Qed.
 
+  Lemma incremental_loop_credit {A : Type} (lt : A -> A -> Prop)
+      (step : forall current, {next : A | lt next current} + A)
+      (T_step : A -> N) (Inv : A -> Prop) (credit mass : A -> N) (stop : N) :
+    (forall current next Hlt, Inv current ->
+      step current = inl (exist _ next Hlt) -> Inv next /\
+      (T_step current + 1 + credit current + mass next <=
+        credit next + mass current)%N) ->
+    (forall current result, Inv current -> step current = inr result ->
+      (T_step current + 1 + credit current + mass result <=
+        credit result + mass current + stop)%N) ->
+    forall current (H : Acc lt current), Inv current ->
+      (Argent.Loop.T_loop lt step T_step current H + credit current +
+        mass (Argent.Loop.loop lt step current H) <=
+        credit (Argent.Loop.loop lt step current H) + mass current + stop)%N.
+  Proof.
+    intros Hgo Hstop current H.
+    induction H as [current Hacc IH] using Acc_ind_dep; intro Hinv.
+    time_unfold @Argent.Loop.T_loop; cbn [Argent.Loop.loop Acc_inv].
+    destruct (step current) as [[next Hlt]|result] eqn:Hstep.
+    - destruct (Hgo current next Hlt Hinv Hstep) as [Hnext Hpay].
+      specialize (IH next Hlt Hnext); lia.
+    - specialize (Hstop current result Hinv Hstep); lia.
+  Qed.
+
+  Definition invalid_pending_dom (st : state)
+      (acc : incremental_invalidation S.key) : Prop :=
+    forall x, In x (invalid_pending acc) -> dom st x.
+
+  Lemma invalid_seed_pending_dom : forall st acc x,
+    invalid_pending_dom st acc ->
+    invalid_pending_dom st (invalid_seed_one st acc x).
+  Proof.
+    intros st acc x Hdom y Hy; unfold invalid_seed_one in Hy.
+    destruct (present st x) eqn:Hpresent; [|now apply Hdom].
+    destruct (PTrieCode.get (S.key_code x) (invalid_seen acc));
+      [now apply Hdom|].
+    cbn [invalid_pending] in Hy; destruct Hy as [<-|Hy].
+    - now apply (proj1 (present_spec st x)).
+    - now apply Hdom.
+  Qed.
+
+  Lemma invalid_seed_fold_pending_dom : forall st xs acc,
+    invalid_pending_dom st acc ->
+    invalid_pending_dom st (fold_left (invalid_seed_one st) xs acc).
+  Proof.
+    intros st xs; induction xs as [|x rest IH]; intros acc Hdom;
+      [exact Hdom|].
+    cbn [fold_left]; apply IH; now apply invalid_seed_pending_dom.
+  Qed.
+
+  Lemma invalid_visit_pending_dom : forall st acc id,
+    invalid_pending_dom st acc ->
+    invalid_pending_dom st (invalid_visit_snapshot st acc id).
+  Proof.
+    intros st acc id Hdom; unfold invalid_visit_snapshot.
+    destruct (PTrieCode.get id (invalid_snapshots acc)) as [ss|];
+      [|exact Hdom].
+    destruct (snapshot_live ss); [|exact Hdom].
+    cbn [invalid_pending]; now apply invalid_seed_fold_pending_dom.
+  Qed.
+
+  Lemma invalid_snapshot_fold_pending_dom : forall st ids acc,
+    invalid_pending_dom st acc ->
+    invalid_pending_dom st (fold_left (invalid_visit_snapshot st) ids acc).
+  Proof.
+    intros st ids; induction ids as [|id rest IH]; intros acc Hdom;
+      [exact Hdom|].
+    cbn [fold_left]; apply IH; now apply invalid_visit_pending_dom.
+  Qed.
+
+  Definition invalid_processed_credit (st : state)
+      (acc : incremental_invalidation S.key) : N :=
+    256 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (kwidth st + 1) * N.of_nat (invalid_done_work st acc).
+
+  Definition invalid_remaining_credit (st : state)
+      (acc : incremental_invalidation S.key) : N :=
+    64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (kwidth st + 1) * N.of_nat (invalid_snapshot_mass acc).
+
+  Lemma invalid_loop_step_arithmetic : forall q weight done before after clock,
+    (1 <= q)%N -> (1 <= weight)%N ->
+    (clock + 64 * q * after <= 128 * q * weight + 64 * q * before)%N ->
+    (1 + clock + 1 + 256 * q * done + 64 * q * after <=
+      256 * q * (weight + done) + 64 * q * before)%N.
+  Proof.
+    intros q weight done before after clock Hq Hweight Hclock.
+    assert (Hsmall : (2 <= 128 * q * weight)%N) by nia.
+    replace (256 * q * (weight + done))%N with
+      (256 * q * weight + 256 * q * done)%N by ring.
+    assert (Hlarge : (128 * q * weight <= 256 * q * weight)%N) by nia.
+    lia.
+  Qed.
+
+  Lemma T_invalid_checked_step_amort : forall st x pending seen bad done snapshots,
+    state_ok st -> dom st x ->
+    invalid_snapshot_origin st
+      {| invalid_pending := x :: pending; invalid_seen := seen;
+         invalid_bad := bad; invalid_done := done;
+         invalid_snapshots := snapshots |} ->
+    let current := {| invalid_pending := x :: pending; invalid_seen := seen;
+      invalid_bad := bad; invalid_done := done;
+      invalid_snapshots := snapshots |} in
+    let next := invalid_next st x pending seen bad done snapshots in
+    (T_invalid_checked_step st current + 1 + invalid_processed_credit st current +
+      invalid_remaining_credit st next <=
+      invalid_processed_credit st next + invalid_remaining_credit st current)%N.
+  Proof.
+    intros st x pending seen bad done snapshots Hstate Hdom Horigin.
+    cbn beta zeta.
+    assert (Hrest : invalid_snapshot_origin st
+      {| invalid_pending := pending; invalid_seen := seen;
+         invalid_bad := bad; invalid_done := x :: done;
+         invalid_snapshots := snapshots |}).
+    { unfold invalid_snapshot_origin in Horigin |- *; exact Horigin. }
+    pose proof (T_invalid_next_amort st x pending seen bad done snapshots
+      Hstate Hdom Hrest) as Htime.
+    pose proof (invalid_next_done_work st x pending seen bad done snapshots) as Hdone.
+    unfold invalid_processed_credit, invalid_remaining_credit.
+    unfold T_invalid_checked_step; cbn [invalid_pending].
+    set (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) in Htime |- *.
+    set (widthN := N.of_nat (kwidth st + 1)) in Htime |- *.
+    rewrite Hdone.
+    replace (N.of_nat (infl_deg st x + length (cowrite_at st x) + 1 +
+      invalid_done_work st
+        {| invalid_pending := x :: pending; invalid_seen := seen;
+           invalid_bad := bad; invalid_done := done;
+           invalid_snapshots := snapshots |})) with
+      (N.of_nat (infl_deg st x + length (cowrite_at st x) + 1) +
+        N.of_nat (invalid_done_work st
+          {| invalid_pending := x :: pending; invalid_seen := seen;
+             invalid_bad := bad; invalid_done := done;
+             invalid_snapshots := snapshots |}))%N by
+      (repeat rewrite Nat2N.inj_add; lia).
+    set (q := (base * widthN)%N).
+    repeat (replace (64 * base * widthN)%N with (64 * q)%N in Htime
+      by (unfold q; ring)).
+    repeat (replace (64 * base * widthN)%N with (64 * q)%N in |- *
+      by (unfold q; ring)).
+    replace (128 * base * widthN)%N with (128 * q)%N in Htime
+      by (unfold q; ring).
+    repeat (replace (256 * base * widthN)%N with (256 * q)%N in |- *
+      by (unfold q; ring)).
+    assert (Hq : (1 <= q)%N) by (unfold q, base, widthN; nia).
+    assert (Hweight : (1 <= N.of_nat
+      (infl_deg st x + length (cowrite_at st x) + 1))%N) by lia.
+    eapply invalid_loop_step_arithmetic;
+      [exact Hq|exact Hweight|exact Htime].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
