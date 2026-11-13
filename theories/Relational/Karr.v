@@ -8700,6 +8700,213 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** The matrix clock uses a fourth-degree dimension envelope and quadratic bit width. *)
+  Definition karr_havoc_volume (dim bits : nat) : nat := (dim + 1)^4 * (bits + 1)^2.
+
+  (** Every positive base increases when its natural exponent increases. *)
+  Lemma karr_positive_power_monotone : forall a p q,
+    1 <= a -> p <= q -> a^p <= a^q.
+  Proof.
+    intros a p q Hpositive Horder. apply Nat.pow_le_mono_r; lia.
+  Qed.
+
+  (** A coordinate-width product is included in the common matrix envelope. *)
+  Lemma karr_havoc_product_volume : forall dim bits,
+    (dim + 1) * (bits + 1) <= karr_havoc_volume dim bits.
+  Proof.
+    intros dim bits. unfold karr_havoc_volume. apply Nat.mul_le_mono.
+    - replace (dim + 1) with ((dim + 1)^1) at 1 by (cbn [Nat.pow]; ring).
+      apply karr_positive_power_monotone; lia.
+    - replace (bits + 1) with ((bits + 1)^1) at 1 by (cbn [Nat.pow]; ring).
+      apply karr_positive_power_monotone; lia.
+  Qed.
+
+  (** The common matrix volume covers either linear dimension or bit width. *)
+  Lemma karr_havoc_volume_lower : forall dim bits,
+    dim + 1 <= karr_havoc_volume dim bits /\ bits + 1 <= karr_havoc_volume dim bits.
+  Proof.
+    intros dim bits. pose proof (karr_havoc_product_volume dim bits) as Hproduct.
+    split.
+    - eapply Nat.le_trans; [|exact Hproduct]. nia.
+    - eapply Nat.le_trans; [|exact Hproduct]. nia.
+  Qed.
+
+  (** Dense seeding fits the fourth-degree matrix envelope even when bit width is small. *)
+  Lemma karr_havoc_seed_volume : forall dim bits,
+    (dim + 1)^3 * (bits + dim + 1) <= karr_havoc_volume dim bits.
+  Proof.
+    intros dim bits. unfold karr_havoc_volume.
+    eapply Nat.le_trans with (m := (dim + 1)^3 * ((dim + 1) * (bits + 1))).
+    - apply Nat.mul_le_mono_l. nia.
+    - replace ((dim + 1)^3 * ((dim + 1) * (bits + 1))) with
+        ((dim + 1)^4 * (bits + 1)) by (cbn [Nat.pow]; ring).
+      apply Nat.mul_le_mono_l.
+      replace (bits + 1) with ((bits + 1)^1) at 1 by (cbn [Nat.pow]; ring).
+      apply karr_positive_power_monotone; lia.
+  Qed.
+
+  (** One elimination column fits the same volume with a factor two. *)
+  Lemma karr_havoc_step_volume : forall count dim bits,
+    count <= dim ->
+    (count + 1) * (dim + dim + 1) * (bits + 1)^2 <=
+      2 * karr_havoc_volume dim bits.
+  Proof.
+    intros count dim bits Hcount. unfold karr_havoc_volume.
+    replace (2 * ((dim + 1)^4 * (bits + 1)^2)) with
+      ((2 * (dim + 1)^4) * (bits + 1)^2) by (cbn [Nat.pow]; ring).
+    apply Nat.mul_le_mono_r.
+    eapply Nat.le_trans with (m := (dim + 1) * (2 * (dim + 1))).
+    - apply Nat.mul_le_mono; lia.
+    - replace ((dim + 1) * (2 * (dim + 1))) with (2 * (dim + 1)^2) by (cbn [Nat.pow]; ring).
+      apply Nat.mul_le_mono_l. apply karr_positive_power_monotone; lia.
+  Qed.
+
+  (** Visiting at most one output per source row fits the common matrix envelope. *)
+  Lemma karr_havoc_rows_volume : forall count dim bits,
+    count <= dim ->
+    (count + 1) * (dim + 1)^2 * (bits + 1)^2 <= karr_havoc_volume dim bits.
+  Proof.
+    intros count dim bits Hcount. unfold karr_havoc_volume. apply Nat.mul_le_mono_r.
+    eapply Nat.le_trans with (m := (dim + 1) * (dim + 1)^2).
+    - apply Nat.mul_le_mono_r. lia.
+    - replace ((dim + 1) * (dim + 1)^2) with ((dim + 1)^3) by (cbn [Nat.pow]; ring).
+      apply karr_positive_power_monotone; lia.
+  Qed.
+
+  (** Raw row headers are paid by the matrix budget in addition to occurrence preparation. *)
+  Lemma karr_havoc_preparation_volume : forall total count width dim bits,
+    count <= dim -> width <= bits + 1 ->
+    (total + count + 1) * width <=
+      total * (width + 1) + karr_havoc_volume dim bits.
+  Proof.
+    intros total count width dim bits Hcount Hwidth.
+    assert (Hheaders : (count + 1) * width <= karr_havoc_volume dim bits).
+    { eapply Nat.le_trans; [|apply karr_havoc_product_volume].
+      apply Nat.mul_le_mono; lia. }
+    nia.
+  Qed.
+
+  (** The frozen cubic-Hadamard havoc budget dominates the local one-column volume. *)
+  Lemma karr_havoc_volume_public : forall dim bits,
+    1 <= dim ->
+    karr_havoc_volume dim bits <= 16 * (dim^3 * (ellB dim bits + 1)^2).
+  Proof.
+    intros dim bits Hpositive. unfold karr_havoc_volume.
+    assert (Hdimension : (dim + 1)^4 <= 16 * dim^4).
+    { replace (16 * dim^4) with ((2 * dim)^4) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. lia. }
+    assert (Hwidth : dim * (bits + 1) <= ellB dim bits + 1).
+    { unfold ellB. nia. }
+    assert (Hwidth_square : (dim * (bits + 1))^2 <= (ellB dim bits + 1)^2).
+    { now apply Nat.pow_le_mono_l. }
+    eapply Nat.le_trans with (m := 16 * dim^4 * (bits + 1)^2).
+    - now apply Nat.mul_le_mono_r.
+    - eapply Nat.le_trans with (m := 16 * (dim^3 * (dim * (bits + 1))^2)).
+      + replace (16 * dim^4 * (bits + 1)^2) with
+          (16 * (dim^4 * (bits + 1)^2)) by (cbn [Nat.pow]; ring).
+        replace (16 * (dim^3 * (dim * (bits + 1))^2)) with
+          (16 * (dim^5 * (bits + 1)^2)) by (cbn [Nat.pow]; ring).
+        apply Nat.mul_le_mono_l, Nat.mul_le_mono_r.
+        apply karr_positive_power_monotone; lia.
+      + apply Nat.mul_le_mono_l, Nat.mul_le_mono_l. exact Hwidth_square.
+  Qed.
+
+  (** Assignment includes the form's raw occurrences in its matrix dimension. *)
+  Definition karr_assign_dim (f : lin X.t) (P : list (lcons X.t)) : nat :=
+    n (Reached P) + length (coef f) + 1.
+
+  (** Assignment adds the selected key and form widths to the prepared source width. *)
+  Definition karr_assign_bits (x : X.t) (f : lin X.t) (P : list (lcons X.t)) : nat :=
+    nell (Reached P) + X.bits x + F.form_bits f.
+
+  (** The shared affine assignment budget pays raw preparation and its bounded matrix work. *)
+  Definition karr_assign_budget (x : X.t) (f : lin X.t) (P : list (lcons X.t)) : nat :=
+    terms (Reached P) * (nell (Reached P) + 1) +
+      karr_havoc_volume (karr_assign_dim f P) (karr_assign_bits x f P).
+
+  (** The frozen numeric polynomial grows with both matrix dimension and entry width. *)
+  Lemma karr_numeric_polynomial_mono : forall dim dim' bits bits',
+    dim <= dim' -> bits <= bits' ->
+    dim^3 * (ellB dim bits + 1)^2 <= dim'^3 * (ellB dim' bits' + 1)^2.
+  Proof.
+    intros dim dim' bits bits' Hdim Hbits. apply Nat.mul_le_mono.
+    - now apply Nat.pow_le_mono_l.
+    - apply Nat.pow_le_mono_l.
+      assert (Hwidth : ellB dim bits <= ellB dim' bits').
+      { unfold ellB. apply Nat.mul_le_mono; [exact Hdim|].
+        pose proof (Nat.log2_le_mono dim dim' Hdim). lia. }
+      lia.
+  Qed.
+
+  (** The private affine assignment budget fits the frozen term and bit-size allowance. *)
+  Lemma karr_assign_budget_public : forall x f P e,
+    length (coef f) <= tsize e -> F.form_bits f <= F.bits_e e ->
+    karr_assign_budget x f P <= 16 * assign_work x e (Reached P).
+  Proof.
+    intros x f P e Hlength Hbits.
+    pose proof (karr_havoc_volume_public (karr_assign_dim f P)
+      (karr_assign_bits x f P) ltac:(unfold karr_assign_dim; lia)) as Hvolume.
+    pose proof (karr_numeric_polynomial_mono
+      (karr_assign_dim f P) (n (Reached P) + tsize e + 1)
+      (karr_assign_bits x f P) (nell (Reached P) + X.bits x + F.bits_e e)
+      ltac:(unfold karr_assign_dim; lia)
+      ltac:(unfold karr_assign_bits; lia)) as Hpolynomial.
+    unfold karr_assign_budget, assign_work. lia.
+  Qed.
+
+  (** The assignment allowance also pays the havoc used for unknown or wrapped forms. *)
+  Lemma karr_assign_havoc_budget : forall x e s,
+    havoc_work x s <= assign_work x e s.
+  Proof.
+    intros x e s.
+    pose proof (karr_numeric_polynomial_mono
+      (n s + 1) (n s + tsize e + 1)
+      (nell s + X.bits x) (nell s + X.bits x + F.bits_e e)
+      ltac:(lia) ltac:(lia)) as Hpolynomial.
+    unfold havoc_work, assign_work. lia.
+  Qed.
+
+  (** Completed row and havoc bounds lift through the exact linearizer dispatch clock. *)
+  Lemma T_karr_assign_from_rows : forall row_factor havoc_factor,
+    (forall x f P, (T_assign_rows x f P <=
+      row_factor * N.of_nat (karr_assign_budget x f P))%N) ->
+    (forall x s, (T_havoc x s <=
+      havoc_factor * N.of_nat (havoc_work x s + 1))%N) ->
+    forall x e s, (T_assign x e s <= (16 * row_factor + havoc_factor + 32) *
+      N.of_nat (assign_work x e s + 1))%N.
+  Proof.
+    intros row_factor havoc_factor Hrows Hhavoc x e [|P].
+    - time_unfold T_assign. time_simpl.
+      assert (Hpositive : (1 <= N.of_nat (assign_work x e Unreached + 1))%N) by lia.
+      nia.
+    - set (work := N.of_nat (assign_work x e (Reached P) + 1)).
+      assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+      assert (Hlin_clock : (F.T_lin_of e <= work)%N).
+      { unfold work, assign_work. rewrite !Nat2N.inj_add, N2Nat.id. lia. }
+      assert (Hhavoc_total : (T_havoc x (Reached P) <= havoc_factor * work)%N).
+      { eapply N.le_trans; [apply Hhavoc|]. apply N.mul_le_mono_l.
+        pose proof (karr_assign_havoc_budget x e (Reached P)) as Hbudget.
+        unfold work. clear -Hbudget. lia. }
+      time_unfold T_assign.
+      destruct (F.lin_of e) as [[f wrapping]|] eqn:Hlin; time_simpl.
+      + destruct wrapping; time_simpl.
+        * destruct (F.lin_of_size _ _ _ Hlin) as [Hlength Hbits].
+          cbn [F.wrap_bits] in Hbits.
+          pose proof (karr_assign_budget_public x f P e Hlength ltac:(lia)) as Hbudget.
+          assert (Hcast : (N.of_nat (karr_assign_budget x f P) <= 16 * work)%N).
+          { unfold work. replace (16 * N.of_nat (assign_work x e (Reached P) + 1))%N
+              with (N.of_nat (16 * (assign_work x e (Reached P) + 1)))
+              by (rewrite Nat2N.inj_mul; reflexivity).
+            clear -Hbudget. lia. }
+          assert (Hrows_total : (T_assign_rows x f P <= 16 * row_factor * work)%N).
+          { eapply N.le_trans; [apply Hrows|].
+            replace (16 * row_factor * work)%N with (row_factor * (16 * work))%N
+              by ring. now apply N.mul_le_mono_l. }
+          fold work. clear -Hrows_total Hlin_clock Hpositive. clearbody work. nia.
+        * fold work. clear -Hhavoc_total Hlin_clock Hpositive. clearbody work. nia.
+      + fold work. clear -Hhavoc_total Hlin_clock Hpositive. clearbody work. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -9160,6 +9367,232 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       now apply (proj1 (Forall_forall _ _) Hequalities). }
     exact (proj1 (Forall_forall _ _) (Hsemantic v Hfull) target Hin).
   Qed.
+  (** Integer multiplication multiplies absolute magnitudes exactly. *)
+  Lemma karr_magnitude_mul : forall a b,
+    karr_magnitude (a * b) = karr_magnitude a * karr_magnitude b.
+  Proof.
+    intros a b. unfold karr_magnitude. rewrite Z.abs_mul.
+    now rewrite Z2Nat.inj_mul by apply Z.abs_nonneg.
+  Qed.
+
+  (** Negation leaves absolute magnitude unchanged. *)
+  Lemma karr_magnitude_opp : forall z, karr_magnitude (- z) = karr_magnitude z.
+  Proof.
+    intros [|p|p]; reflexivity.
+  Qed.
+
+  (** Either determinant sign has unit absolute magnitude. *)
+  Lemma karr_magnitude_sign : forall (negative : bool) z,
+    karr_magnitude ((if negative then (-1) else 1) * z) = karr_magnitude z.
+  Proof.
+    intros [|] z.
+    - replace (-1 * z)%Z with (- z)%Z by ring. apply karr_magnitude_opp.
+    - now rewrite Z.mul_1_l.
+  Qed.
+
+  (** Summing a list of bounded signed values pays one magnitude allowance per entry. *)
+  Lemma karr_magnitude_sum : forall xs bound,
+    Forall (fun z => karr_magnitude z <= bound) xs ->
+    karr_magnitude (fold_right Z.add 0%Z xs) <= length xs * bound.
+  Proof.
+    intros xs bound Hbound. induction Hbound as [|z zs Hz Htail IH].
+    - change (0 <= 0). lia.
+    - cbn [fold_right length].
+      pose proof (karr_magnitude_add z (fold_right Z.add 0%Z zs)) as Hsum. nia.
+  Qed.
+
+  (** Dense out-of-range lookup returns zero and otherwise preserves a common entry width. *)
+  Lemma karr_nth_bits : forall index row bits,
+    Forall (fun z => Z.size_nat z <= bits) row -> Z.size_nat (karr_nth index row) <= bits.
+  Proof.
+    intro index. induction index as [|index IH]; intros [|z row] bits Hrow.
+    - change (0 <= bits). lia.
+    - cbn [karr_nth]. inversion Hrow; assumption.
+    - change (0 <= bits). lia.
+    - cbn [karr_nth]. inversion Hrow as [|q qs Hhead Htail]; subst q qs.
+      now apply IH.
+  Qed.
+
+  (** Deleting a column preserves every remaining entry's bit bound. *)
+  Lemma karr_delete_bits : forall index row bits,
+    Forall (fun z => Z.size_nat z <= bits) row ->
+    Forall (fun z => Z.size_nat z <= bits) (karr_delete index row).
+  Proof.
+    intro index. induction index as [|index IH]; intros [|z row] bits Hrow.
+    - constructor.
+    - cbn [karr_delete]. inversion Hrow; assumption.
+    - constructor.
+    - cbn [karr_delete]. inversion Hrow as [|q qs Hhead Htail]; subst q qs.
+      constructor; [exact Hhead|now apply IH].
+  Qed.
+
+  (** Laplace expansion has at most dim products at every recursive determinant level. *)
+  Lemma karr_determinant_magnitude : forall order dim bits rows,
+    order <= dim -> Forall (Forall (fun z => Z.size_nat z <= bits)) rows ->
+    karr_magnitude (karr_determinant order rows) <= (dim * 2^bits)^order.
+  Proof.
+    intro order. induction order as [|order IH]; intros dim bits rows Horder Hrows.
+    - change (1 <= 1). lia.
+    - destruct rows as [|row rows].
+      + change (0 <= (dim * 2^bits)^S order). lia.
+      + inversion Hrows as [|r rs Hrow Htail]; subst r rs.
+        set (charge := 2^bits * (dim * 2^bits)^order).
+        assert (Hterms : Forall (fun z => karr_magnitude z <= charge)
+          (map (fun index =>
+            ((if Nat.even index then 1 else -1) * karr_nth index row *
+              karr_determinant order (map (karr_delete index) rows))%Z)
+            (seq 0 (S order)))).
+        { apply Forall_map, Forall_forall. intros index Hindex.
+          replace ((if Nat.even index then 1 else -1) * karr_nth index row *
+            karr_determinant order (map (karr_delete index) rows))%Z with
+            ((if negb (Nat.even index) then -1 else 1) *
+              (karr_nth index row *
+                karr_determinant order (map (karr_delete index) rows)))%Z
+            by (destruct (Nat.even index); cbn [negb]; ring).
+          rewrite karr_magnitude_sign, karr_magnitude_mul.
+          unfold charge. apply Nat.mul_le_mono.
+          - pose proof (karr_magnitude_upper (karr_nth index row)) as Hmagnitude.
+            pose proof (karr_nth_bits index row bits Hrow) as Hbits.
+            assert (Hpower : 2 ^ Z.size_nat (karr_nth index row) <= 2^bits)
+              by (apply Nat.pow_le_mono_r; lia).
+            lia.
+          - apply IH; [lia|]. apply Forall_map.
+            eapply Forall_impl; [|exact Htail]. intros r Hr. now apply karr_delete_bits. }
+        pose proof (karr_magnitude_sum _ charge Hterms) as Hsum.
+        rewrite length_map, length_seq in Hsum.
+        cbn [karr_determinant]. eapply Nat.le_trans; [exact Hsum|].
+        unfold charge. rewrite Nat.pow_succ_r by lia.
+        replace (S order * (2^bits * (dim * 2^bits)^order)) with
+          ((S order * 2^bits) * (dim * 2^bits)^order) by ring.
+        apply Nat.mul_le_mono_r, Nat.mul_le_mono_r. exact Horder.
+  Qed.
+
+  (** A positive enclosing dimension gives the frozen linear-logarithmic determinant width. *)
+  Lemma karr_determinant_bits : forall order dim bits rows,
+    1 <= dim -> order <= dim ->
+    Forall (Forall (fun z => Z.size_nat z <= bits)) rows ->
+    Z.size_nat (karr_determinant order rows) <= ellB dim bits.
+  Proof.
+    intros order dim bits rows Hdim Horder Hrows.
+    destruct order as [|order].
+    - change (1 <= ellB dim bits). unfold ellB. nia.
+    - pose proof (karr_determinant_magnitude (S order) dim bits rows Horder Hrows)
+        as Hmagnitude.
+      set (width := bits + Nat.log2 dim + 1).
+      assert (Hbase : dim * 2^bits < 2^width).
+      { pose proof (karr_log_upper dim) as Hlog.
+        assert (Hpositive : 0 < 2^bits).
+        { pose proof (Nat.pow_nonzero 2 bits ltac:(lia)). lia. }
+        unfold width. replace (bits + Nat.log2 dim + 1) with
+          (Nat.log2 dim + 1 + bits) by lia. rewrite Nat.pow_add_r. nia. }
+      assert (Hpower : (dim * 2^bits)^S order < (2^width)^S order).
+      { apply Nat.pow_lt_mono_l; lia. }
+      rewrite <- Nat.pow_mul_r in Hpower.
+      apply karr_size_least. eapply Nat.le_lt_trans; [exact Hmagnitude|].
+      eapply Nat.lt_le_trans; [exact Hpower|]. apply Nat.pow_le_mono_r; [lia|].
+      unfold ellB, width. nia.
+  Qed.
+
+  (** Every element in an enumerated subsequence occurs in its original list. *)
+  Lemma karr_choose_incl : forall A (xs : list A) order selected,
+    In selected (karr_choose order xs) -> incl selected xs.
+  Proof.
+    intros A xs. induction xs as [|x xs IH]; intros [|order] selected Hin.
+    - cbn [karr_choose In] in Hin. destruct Hin as [Hsame|Hin]; [subst selected|contradiction].
+      intros y Hy. contradiction.
+    - contradiction.
+    - rewrite karr_choose_zero in Hin. destruct Hin as [Hsame|Hin]; [subst selected|contradiction].
+      intros y Hy. contradiction.
+    - cbn [karr_choose] in Hin. apply in_app_or in Hin as [Hin|Hin].
+      + apply in_map_iff in Hin as [tail [Hsame Htail]]. subst selected.
+        specialize (IH order tail Htail). intros y [Hsame|Hy].
+        * now left.
+        * right. now apply IH.
+      + specialize (IH (S order) selected Hin). intros y Hy. right. now apply IH.
+  Qed.
+
+  (** Selecting arbitrary columns preserves the common source-entry width. *)
+  Lemma karr_submatrix_bits : forall columns rows bits,
+    Forall (Forall (fun z => Z.size_nat z <= bits)) rows ->
+    Forall (Forall (fun z => Z.size_nat z <= bits)) (karr_submatrix columns rows).
+  Proof.
+    intros columns rows bits Hrows. unfold karr_submatrix. apply Forall_map.
+    eapply Forall_impl; [|exact Hrows]. intros row Hrow.
+    apply Forall_map, Forall_forall. intros index _. now apply karr_nth_bits.
+  Qed.
+
+  (** Every independently enumerated signed minor satisfies the same determinant width bound. *)
+  Lemma karr_signed_minors_bits : forall width rows dim bits z,
+    1 <= dim -> length rows <= dim ->
+    Forall (Forall (fun entry => Z.size_nat entry <= bits)) rows ->
+    In z (karr_signed_minors width rows) -> Z.size_nat z <= ellB dim bits.
+  Proof.
+    intros width rows dim bits z Hdim Hlength Hrows Hin.
+    unfold karr_signed_minors in Hin. apply in_flat_map in Hin as [order [Horder Hin]].
+    apply in_seq in Horder.
+    pose proof (Nat.le_min_l (length rows) width) as Hminimum.
+    assert (Horder_dim : order <= dim) by lia.
+    apply in_flat_map in Hin as [selected [Hselected Hin]].
+    apply in_flat_map in Hin as [columns [Hcolumns Hin]].
+    assert (Hselected_bits : Forall (Forall (fun entry => Z.size_nat entry <= bits)) selected).
+    { apply Forall_forall. intros row Hr.
+      apply (proj1 (Forall_forall _ _) Hrows row).
+      exact (karr_choose_incl _ rows order selected Hselected row Hr). }
+    pose proof (karr_determinant_bits order dim bits (karr_submatrix columns selected)
+      Hdim Horder_dim (karr_submatrix_bits columns selected bits Hselected_bits)) as Hbits.
+    destruct order as [|[|order]]; cbn [List.In] in Hin;
+      destruct Hin as [Heq|Hin]; try (subst z; exact Hbits); try contradiction.
+    destruct Hin as [Heq|Hin]; [subst z|contradiction].
+    rewrite karr_size_opp. exact Hbits.
+  Qed.
+
+  (** A row envelope bounds every entry of the augmented matrix representation. *)
+  Lemma karr_row_entries_bits : forall dim mlen bits r,
+    karr_row_envelope dim mlen bits r ->
+    Forall (fun z => Z.size_nat z <= bits) (karr_row_entries r).
+  Proof.
+    intros dim mlen bits r [_ [Hcoeff [Hrhs [_ [Hweight Hscale]]]]].
+    unfold karr_row_entries. apply Forall_app. split; [exact Hcoeff|].
+    constructor; [exact Hrhs|]. apply Forall_app. split; [exact Hweight|].
+    constructor; [exact Hscale|constructor].
+  Qed.
+
+  (** Prepared source rows fit the raw state's logarithmic arithmetic width. *)
+  Lemma karr_bareiss_seeds_bits : forall P,
+    Forall (Forall (fun z => Z.size_nat z <= nell (Reached P)))
+      (map karr_row_entries (bareiss_seeds P)).
+  Proof.
+    intro P. unfold bareiss_seeds. apply Forall_map.
+    assert (Hprepared : Forall (fun r =>
+      NoDup (map fst (lhs r)) /\ C.row_bits r <= nell (Reached P))
+      (map normalize_row P)).
+    { pose proof (karr_normal_source_width P) as Hwidth.
+      apply Forall_forall. intros r Hr. split.
+      - apply in_map_iff in Hr as [source [Heq _]]. subst r.
+        cbn [normalize_row lhs]. apply normalize_coef_nodup.
+      - pose proof (proj1 (Forall_forall _ _) Hwidth r Hr) as Hrow.
+        change (C.row_key_bits r + C.row_bits r <= nell (Reached P)) in Hrow. lia. }
+    assert (Hpositive : 1 <= nell (Reached P)) by (unfold nell; lia).
+    pose proof (karr_seed_rows_envelopes (variables P) (length P) 0
+      (map normalize_row P) (length (variables P)) (length P) (nell (Reached P))
+      (Nat.le_refl _) (Nat.le_refl _) Hpositive Hprepared) as Hseed.
+    eapply Forall_impl; [|exact Hseed].
+    intros r Hr. exact (karr_row_entries_bits _ _ _ r Hr).
+  Qed.
+
+  (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
+  Lemma input_minors_bits : forall P z,
+    In z (input_minors P) ->
+    Z.size_nat z <= ellB (n (Reached P) + 1) (nell (Reached P)).
+  Proof.
+    intros P z Hin. unfold input_minors in Hin.
+    eapply karr_signed_minors_bits; [lia| |apply karr_bareiss_seeds_bits|exact Hin].
+    rewrite length_map. unfold bareiss_seeds.
+    pose proof (karr_seed_rows_length (variables P) (length P) 0
+      (map normalize_row P)) as Hlength.
+    rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
+  Qed.
+
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   Proof. Admitted. (* OPEN: general Sylvester and initialized-run divisibility invariant. *)
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
