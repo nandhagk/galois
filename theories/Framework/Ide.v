@@ -61,7 +61,7 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (FL : IDE_FLOW P N E C F V M) (R : IFDS_RULES P N E C Site I F FL) <: IDE P N E C Site I F V M FL.
   Include IdeCode P N E C Site I F V M FL R.
   Include SYSTEM_SPEC M.
-  Definition wf (_ : prog) := True.
+  Definition wf (p : prog) := R.wf p.
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
   Proof. Admitted. (* STUB *)
@@ -94,7 +94,7 @@ Module Ide (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
   Lemma key_code_spec : key_code = path_edge_code N.encode F.encode.
   Proof. Admitted. (* STUB *)
   (** Rows contain exactly the enabled finite rules. *)
-  Lemma rows_spec : forall p rule,
+  Lemma rows_spec : forall p rule, wf p ->
     (exists r, In r (rows p) /\ path_row_rule r = rule) <-> enabled p rule.
   Proof. Admitted. (* STUB *)
   (** Every rule writes its destination path edge. *)
@@ -133,11 +133,12 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   TimeFun finish.
   TimeFun start.
   TimeFun resume.
-  Definition row_work p s := N.of_nat
-    (FL.weight_work p + length (R.rules p) + s + M.size M.identity + M.size M.bot + 1).
-  Definition kw (p : prog) : nat := fold_right Nat.max 0
-    (map N.bits (C.nodes p) ++ map F.bits (FL.facts p) ++
-      map (fun nd => N.bits (fst nd) + F.bits (snd nd)) (FL.seeds p)).
+  Definition row_work p s :=
+    (3 * (M.c_micro + 1) ^ 3 * N.of_nat (FL.weight_work p + s + 1) +
+      N.of_nat (length (rows p) + M.size M.identity + M.size M.bot))%N.
+  Definition path_kw (p : prog) : nat := fold_right Nat.max 0
+    (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
+  Definition kw := path_kw.
   Definition c_sys : N := 1%N. (* STUB *)
   Lemma row_work_mono : forall p s t, s <= t ->
     (row_work p s <= row_work p t)%N.
@@ -185,7 +186,7 @@ Module IdeSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (Site : KEY) (I : ICFG P N E C Site) (F : KEY) (V : LATTICE) (M : MICRO V)
     (FL : IDE_FLOW P N E C F V M) (A : IDE P N E C Site I F V M FL)
     <: IDE_SOUND P N E C Site I F V M FL A.
-  Lemma covers : forall p look, A.post_solution p look ->
+  Lemma covers : forall p look, A.wf p -> A.post_solution p look ->
     forall entry d0 n path d f, In (entry, d0) (FL.seeds p) ->
       valid_path (C.edges p) (C.src p) (C.dst p) (I.kind p) entry path n ->
       In (d, f) (weighted_facts (FL.flow p) (FL.weight p) M.identity M.compose d0 path) ->
