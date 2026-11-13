@@ -4,8 +4,8 @@
     For example, an initial state has no stored values.
     Builds on: IncrementalSig. *)
 
-From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Std.
+From Stdlib Require Import List PArith NArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig.
@@ -36,12 +36,14 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
     (R : RESTRICT_OPS L S RS) (Sol : SOLVER_OPS L RS) (Checker : CHECK_OPS L S)
     <: INCREMENTAL_OPS L S RS R Sol Checker.
   Definition state := incremental_state S.key L.t.
-  (* STUB-CODE *)
   Definition init : state :=
     {| inc_values := PTrieCode.empty; inc_influence := PTrieCode.empty;
        inc_cowrites := PTrieCode.empty; inc_snapshots := PTrieCode.empty |}.
-  (* STUB-CODE *)
-  Definition value (_ : state) (_ : S.key) : option L.t := None.
+  Definition value (st : state) (x : S.key) : option L.t :=
+    match PTrieCode.get (S.key_code x) (inc_values st) with
+    | Some (_, v) => Some v
+    | None => None
+    end.
   (* STUB-CODE *)
   Definition demand (_ : S.prog) (_ : policy L.wparam) (_ : list S.key) (_ : N)
       (st : state) : demand_status * state := (DemandOutOfFuel, st).
@@ -71,8 +73,26 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     (Least : SOLVER_LEAST L LB RS Sol) <: INCREMENTAL L LB Top S RS R Sol Checker Least.
   Include IncrementalCode L S RS R Sol Checker.
   Include INCREMENTAL_SPEC L S RS R Sol Checker.
+
+  (** Initialization has no stored value at any key. *)
+  Lemma value_init : forall x, value init x = None.
+  Proof.
+    intro x; unfold value, init; cbn [inc_values].
+    rewrite PTrie.get_empty; reflexivity.
+  Qed.
+
+  (** The empty checked region is sound and below every post-solution. *)
   Lemma init_inv : forall p, inv p init /\ least_on p init.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; split.
+    - split.
+      + intros r y x Hrow Hwrite [v Hvalue] Hkey.
+        rewrite value_init in Hvalue; discriminate Hvalue.
+      + intros r y Hrow Hwrite [v Hvalue].
+        rewrite value_init in Hvalue; discriminate Hvalue.
+    - intros s Hpost x v Hvalue.
+      rewrite value_init in Hvalue; discriminate Hvalue.
+  Qed.
 
   Lemma demand_inv : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') -> inv p st'.
@@ -187,14 +207,26 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
 
   Definition width (p : S.prog) (_ : state) : nat :=
     S.kw p + N.to_nat (S.row_work p 0).
-  Definition c_inc : N := 1. (* STUB *)
+  Definition c_inc : N := (32 * (S.c_sys + PTrieT.c_trie + 1))%N.
   (** The initial state is a constant. *)
   Lemma T_init_le : (T_init <= c_inc)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold T_init, c_inc; time_cbn; lia.
+  Qed.
+
   (** Reading a value pays for the key code. *)
   Lemma T_value_le : forall st x,
     (T_value st x <= c_inc * N.of_nat (S.key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st x.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le (S.key * L.t) (S.key_code x) (inc_values st)) as Hget.
+    unfold PTrieT.T_get in Hget.
+    unfold S.key_bits in Hcode.
+    unfold T_value, PTrieCode.T_get, c_inc, S.key_bits.
+    time_simpl; time_cbn; nia.
+  Qed.
+
   (** Regional checking restores the frozen values in the solver candidate. *)
   Definition checked (p : S.prog) (roots : list S.key) (st : state)
       (m : kmap S.key L.t) : kmap S.key L.t :=
