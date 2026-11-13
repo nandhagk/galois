@@ -1050,7 +1050,16 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma from_scratch_agrees : forall p st s x v, S.wf p -> S.monotone p ->
     inv p st -> least_on p st -> least_solution p s -> value st x = Some v ->
     L.leb (s x) v = true /\ L.leb v (s x) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p st s x v Hwf Hmono Hinv Hleast [Hpost Hglobal] Hvalue; split.
+    - pose proof (inv_top_post p st Hwf Hinv) as Hextended.
+      pose proof (Hglobal (TopFacts.top_extend (present st) (look st)) Hextended x) as Hbound.
+      assert (Hpresent : present st x = true).
+      { apply (proj2 (present_spec st x)); exists v; exact Hvalue. }
+      rewrite (TopFacts.top_extend_on (present st) (look st) x Hpresent) in Hbound.
+      unfold look in Hbound; rewrite Hvalue in Hbound; exact Hbound.
+    - exact (Hleast s Hpost x v Hvalue).
+  Qed.
 
 End Incremental.
 
