@@ -2798,8 +2798,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros i j. rewrite <- !raw_entry_get, !raw_entry_widen, !raw_entry_get.
     now rewrite (Ha i j), (Hb i j).
   Qed.
-  Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
-  Proof. Admitted. (* STUB *)
   Lemma coh_havoc : forall x s, coh s -> coh (havoc x s).
   Proof.
     intros x [|m] Hcoh; [exact I|]. intros i j.
@@ -2807,12 +2805,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (X.eqb (fst i) x), (X.eqb (fst j) x); try reflexivity.
     apply Hcoh.
   Qed.
-  Lemma coh_assume : forall g es s, coh s -> coh (assume g es s).
-  Proof. Admitted. (* STUB *)
   Lemma coh_tclose : forall m, coherent m -> coh (tclose m).
   Proof. Admitted. (* PLAN-DEFECT: raw coherent entries may have repeated labels; keys then omits a signed twin pivot. OctagonTest.repeated_label_closure_asymmetric gives output bounds 2 and infinity from coherent input. A dbm_wf premise is needed for this label-based closure plan. *)
-  Lemma coh_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
-  Proof. Admitted. (* STUB *)
   Lemma F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   Proof. Admitted. (* PLAN-DEFECT: incoherent twins -100 and -2 stay unequal when d = 0. *)
@@ -3953,6 +3947,366 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       pose proof (flip_bits i). pose proof (flip_bits j).
       pose proof (Nat.le_max_l (K.bits i) (K.bits j)).
       pose proof (Nat.le_max_r (K.bits i) (K.bits j)). lia.
+  Qed.
+
+
+  (** Key equality commutes with the involution on signed literals. *)
+  Lemma key_eqb_flip_left : forall a b,
+    K.eqb (flip a) b = K.eqb a (flip b).
+  Proof.
+    intros a b. destruct (K.eqb_spec (flip a) b) as [Hab|Hab];
+      destruct (K.eqb_spec a (flip b)) as [Hba|Hba]; try reflexivity.
+    - exfalso. apply Hba. rewrite <- Hab, flip_involutive. reflexivity.
+    - exfalso. apply Hab. rewrite Hba, flip_involutive. reflexivity.
+  Qed.
+
+  Lemma key_eqb_flip_both : forall a b,
+    K.eqb (flip a) (flip b) = K.eqb a b.
+  Proof.
+    intros a b. rewrite key_eqb_flip_left, flip_involutive. reflexivity.
+  Qed.
+
+  Local Definition same_coordinate (a b i j : K.t) : bool :=
+    andb (K.eqb a i) (K.eqb b j).
+
+  Lemma entry_put_coordinate : forall i j d m a b,
+    entry (put i j d m) a b =
+    if same_coordinate a b i j then Some d else entry m a b.
+  Proof.
+    intros i j d m a b. rewrite entry_put. unfold same_coordinate.
+    destruct (K.eqb a i), (K.eqb b j); reflexivity.
+  Qed.
+
+  Lemma coordinate_flip : forall a b i j,
+    same_coordinate (flip b) (flip a) i j =
+    same_coordinate a b (flip j) (flip i).
+  Proof.
+    intros a b i j. unfold same_coordinate. rewrite !key_eqb_flip_left.
+    apply andb_comm.
+  Qed.
+
+  (** Equal writes at mirrored coordinates preserve coherence on raw matrices. *)
+  Lemma coherent_put_twins : forall i j d m,
+    coherent m -> coherent (put i j d (put (flip j) (flip i) d m)).
+  Proof.
+    intros i j d m Hcoh a b.
+    change (entry (put i j d (put (flip j) (flip i) d m)) a b =
+      entry (put i j d (put (flip j) (flip i) d m)) (flip b) (flip a)).
+    rewrite !entry_put_coordinate, !coordinate_flip, !flip_involutive.
+    destruct (same_coordinate a b i j), (same_coordinate a b (flip j) (flip i));
+      try reflexivity. exact (Hcoh a b).
+  Qed.
+
+  Lemma coherent_add_cons : forall i j d m,
+    coherent m -> coherent (add_cons i j d m).
+  Proof.
+    intros i j d m Hcoh. unfold add_cons.
+    assert (Hsame : entry m i j = entry m (flip j) (flip i)) by exact (Hcoh i j).
+    rewrite <- Hsame. now apply coherent_put_twins.
+  Qed.
+
+  (** A tightened replacement changes only its unary coordinate. *)
+  Definition tightened_other (m changed : dbm) : Prop :=
+    forall i row, M.get i changed = Some row ->
+      forall j, j <> flip i -> M.get j row = entry m i j.
+
+  Lemma tighten_row_other : forall m changed k ignored,
+    tightened_other m changed -> tightened_other m (tighten_row m changed k ignored).
+  Proof.
+    intros m changed k ignored Hchanged. unfold tighten_row.
+    destruct (M.get k changed); [exact Hchanged|].
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    destruct (M.get (flip k) row); [|exact Hchanged].
+    intros i fresh Hfresh j Hother. rewrite get_set_cases in Hfresh.
+    destruct (K.eqb_spec i k) as [Heq|Hne].
+    - subst i. injection Hfresh as <-.
+      rewrite M.get_set_other by exact Hother. unfold entry. now rewrite Hrow.
+    - exact (Hchanged i fresh Hfresh j Hother).
+  Qed.
+
+  Lemma collected_tighten_other : forall m,
+    tightened_other m (M.fold (tighten_row m) m M.empty).
+  Proof.
+    intro m. apply (fold_invariant _ _ (tightened_other m)).
+    - intros i row Hrow. rewrite M.get_empty in Hrow. discriminate.
+    - intros changed k ignored Hchanged. now apply tighten_row_other.
+  Qed.
+
+  Lemma entry_tighten_other : forall m i j, j <> flip i ->
+    entry (tighten m) i j = entry m i j.
+  Proof.
+    intros m i j Hother. unfold entry at 1. unfold tighten.
+    rewrite M.get_merge by reflexivity.
+    destruct (M.get i m) as [row|] eqn:Hrow; cbn [replace_row].
+    - destruct (M.get i (M.fold (tighten_row m) m M.empty)) as [fresh|] eqn:Hfresh.
+      + exact (collected_tighten_other m i fresh Hfresh j Hother).
+      + unfold entry. now rewrite Hrow.
+    - unfold entry. now rewrite Hrow.
+  Qed.
+
+  Lemma coherent_tighten : forall m, coherent m -> coherent (tighten m).
+  Proof.
+    intros m Hcoh i j.
+    change (entry (tighten m) i j = entry (tighten m) (flip j) (flip i)).
+    destruct (K.eqb_spec j (flip i)) as [Heq|Hne].
+    - subst j. now rewrite flip_involutive.
+    - rewrite entry_tighten_other by exact Hne.
+      rewrite entry_tighten_other.
+      + exact (Hcoh i j).
+      + rewrite flip_involutive. congruence.
+  Qed.
+
+  Definition unary_twins (acc : M.t Z * M.t Z) : Prop :=
+    forall k, M.get k (fst acc) = M.get (flip k) (snd acc).
+
+  Lemma unary_maps_twins : forall m acc k ignored,
+    unary_twins acc -> unary_twins (unary_maps m acc k ignored).
+  Proof.
+    intros m acc k ignored Htwins. unfold unary_maps.
+    destruct (entry m k (flip k)); [|exact Htwins].
+    intro q. cbn [fst snd]. rewrite !get_set_cases, key_eqb_flip_both.
+    destruct (K.eqb q k); [reflexivity|apply Htwins].
+  Qed.
+
+  Lemma collect_unary_twins : forall m,
+    unary_twins (M.fold (unary_maps m) m (M.empty, M.empty)).
+  Proof.
+    intro m. apply (fold_invariant _ _ unary_twins).
+    - intro k. cbn [fst snd]. now rewrite !M.get_empty.
+    - intros acc k ignored Htwins. now apply unary_maps_twins.
+  Qed.
+
+  Lemma collect_unary_left : forall m i d,
+    M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))) = Some d ->
+    entry m i (flip i) = Some d.
+  Proof.
+    intros m i d Hget. rewrite M.get_find in Hget.
+    destruct (collect_unary_origins m) as [Hleft _].
+    destruct (Hleft (K.encode i) d Hget) as [k [Hkey Hsource]].
+    apply K.encode_inj in Hkey. now subst k.
+  Qed.
+
+  (** The strengthened entry is the minimum with its collected unary average. *)
+  Lemma entry_strengthen : forall m i j,
+    entry (strengthen m) i j =
+    match M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))) with
+    | Some a => strengthen_bound a (entry m i j)
+        (M.get j (snd (M.fold (unary_maps m) m (M.empty, M.empty))))
+    | None => entry m i j
+    end.
+  Proof.
+    intros m i j. unfold entry at 1. unfold strengthen.
+    rewrite M.get_merge by reflexivity.
+    destruct (M.get i m) as [row|] eqn:Hrow; cbn [strengthen_outer].
+    - destruct (M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) as [a|].
+      + rewrite M.get_merge by reflexivity. unfold entry. now rewrite Hrow.
+      + unfold entry. now rewrite Hrow.
+    - destruct (M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))))
+        as [a|] eqn:Ha.
+      + pose proof (collect_unary_left m i a Ha) as Hsource.
+        unfold entry in Hsource. rewrite Hrow in Hsource. discriminate.
+      + unfold entry. now rewrite Hrow.
+  Qed.
+
+  Lemma coherent_strengthen : forall m, coherent m -> coherent (strengthen m).
+  Proof.
+    intros m Hcoh i j.
+    change (entry (strengthen m) i j = entry (strengthen m) (flip j) (flip i)).
+    rewrite !entry_strengthen.
+    pose proof (collect_unary_twins m) as Htwins.
+    rewrite (Htwins i), (Htwins (flip j)), flip_involutive.
+    assert (Hsame : entry m i j = entry m (flip j) (flip i)) by exact (Hcoh i j).
+    rewrite Hsame.
+    destruct (M.get (flip i) (snd (M.fold (unary_maps m) m (M.empty, M.empty)))) as [a|],
+      (M.get j (snd (M.fold (unary_maps m) m (M.empty, M.empty)))) as [b|];
+      cbn [strengthen_bound]; try reflexivity.
+    now rewrite Z.add_comm.
+  Qed.
+
+
+  Local Definition path_sum (a b : option Z) : option Z :=
+    match a, b with Some x, Some y => Some (x + y)%Z | _, _ => None end.
+
+  Local Definition edge_path (d : Z) (a b : option Z) : option Z :=
+    path_sum (edge_prefix d a) b.
+
+  Local Definition twin_path (d : Z) (a cross b : option Z) : option Z :=
+    path_sum (twin_prefix d a cross) b.
+
+  Lemma relax_value_meet : forall prefix old exit,
+    relax_value prefix old exit = bound_meet old (path_sum prefix exit).
+  Proof.
+    intros [a|] [z|] [b|]; cbn [relax_value via_bound lower_bound path_sum bound_meet];
+      try reflexivity. f_equal. apply Z.min_comm.
+  Qed.
+
+  Lemma bound_meet_comm : forall a b, bound_meet a b = bound_meet b a.
+  Proof.
+    intros [a|] [b|]; cbn [bound_meet]; try reflexivity.
+    f_equal. apply Z.min_comm.
+  Qed.
+
+  Lemma bound_meet_assoc : forall a b c,
+    bound_meet (bound_meet a b) c = bound_meet a (bound_meet b c).
+  Proof.
+    intros [a|] [b|] [c|]; cbn [bound_meet]; try reflexivity.
+    now rewrite Z.min_assoc.
+  Qed.
+
+  Lemma bound_meet_swap : forall old a b,
+    bound_meet (bound_meet old a) b = bound_meet (bound_meet old b) a.
+  Proof.
+    intros old a b. rewrite !bound_meet_assoc. now rewrite (bound_meet_comm a b).
+  Qed.
+
+  Lemma edge_path_comm : forall d a b, edge_path d a b = edge_path d b a.
+  Proof.
+    intros d [a|] [b|]; cbn [edge_path path_sum edge_prefix]; try reflexivity.
+    f_equal. ring.
+  Qed.
+
+  Lemma twin_path_comm : forall d a cross b,
+    twin_path d a cross b = twin_path d b cross a.
+  Proof.
+    intros d [a|] [cross|] [b|]; cbn [twin_path path_sum twin_prefix]; try reflexivity.
+    f_equal. ring.
+  Qed.
+
+  Lemma entry_increment : forall i j d m a b,
+    entry (increment_matrix i j d m) a b =
+    bound_meet
+      (bound_meet
+        (bound_meet
+          (bound_meet (entry m a b)
+            (edge_path d (entry m a i) (entry m j b)))
+          (edge_path d (entry m a (flip j)) (entry m (flip i) b)))
+        (twin_path d (entry m a i) (entry m j (flip j)) (entry m (flip i) b)))
+      (twin_path d (entry m a (flip j)) (entry m (flip i) i) (entry m j b)).
+  Proof.
+    intros i j d m a b.
+    rewrite <- (raw_entry_get (increment_matrix i j d m) a b).
+    rewrite raw_entry_increment, !raw_entry_get, !relax_value_meet. reflexivity.
+  Qed.
+
+  Lemma coherent_entry : forall m, coherent m ->
+    forall a b, entry m a b = entry m (flip b) (flip a).
+  Proof.
+    intros m Hcoh. exact Hcoh.
+  Qed.
+
+  (** Mirroring exchanges the two single-edge paths and reverses each mixed path. *)
+  Lemma coherent_increment : forall i j d m,
+    coherent m -> coherent (increment_matrix i j d m).
+  Proof.
+    intros i j d m Hcoh a b.
+    change (entry (increment_matrix i j d m) a b =
+      entry (increment_matrix i j d m) (flip b) (flip a)).
+    rewrite !entry_increment.
+    rewrite (coherent_entry m Hcoh (flip b) i),
+      (coherent_entry m Hcoh (flip b) (flip j)),
+      (coherent_entry m Hcoh j (flip a)),
+      (coherent_entry m Hcoh (flip i) (flip a)), !flip_involutive.
+    rewrite <- (coherent_entry m Hcoh a b).
+    rewrite (edge_path_comm d (entry m (flip i) b) (entry m a (flip j))),
+      (edge_path_comm d (entry m j b) (entry m a i)),
+      (twin_path_comm d (entry m (flip i) b) (entry m j (flip j)) (entry m a i)),
+      (twin_path_comm d (entry m j b) (entry m (flip i) i) (entry m a (flip j))).
+    rewrite (bound_meet_swap (entry m a b)
+      (edge_path d (entry m a i) (entry m j b))
+      (edge_path d (entry m a (flip j)) (entry m (flip i) b))).
+    reflexivity.
+  Qed.
+
+  Lemma coh_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
+  Proof.
+    intros i j d m Hcoh. unfold incr_close.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    change (coh (if matrix_ok (increment_matrix i j d seed) then
+      if matrix_ok (strengthen (tighten (increment_matrix i j d seed))) then
+        Reached (strengthen (tighten (increment_matrix i j d seed))) else Unreached
+      else Unreached)).
+    destruct (matrix_ok (increment_matrix i j d seed)); [|exact I].
+    destruct (matrix_ok (strengthen (tighten (increment_matrix i j d seed)))); [|exact I].
+    cbn [coh]. apply coherent_strengthen, coherent_tighten, coherent_increment.
+    unfold seed. now apply coherent_add_cons, coherent_add_cons.
+  Qed.
+
+
+  Lemma coh_refine : forall i j d s, coh s -> coh (refine i j d s).
+  Proof.
+    intros i j d [|m] Hcoh; [exact I|].
+    cbn [refine coh] in *. now apply coh_incr_close.
+  Qed.
+
+  Lemma variable_offset_flip : forall x d i,
+    variable_offset x d (flip i) = (- variable_offset x d i)%Z.
+  Proof.
+    intros x d [y sign]. unfold variable_offset, flip. cbn [fst snd].
+    destruct (X.eqb y x), sign; cbn -[Z.opp]; ring.
+  Qed.
+
+  Lemma coherent_shift : forall x d m, coherent m -> coherent (shift x d m).
+  Proof.
+    intros x d m Hcoh i j.
+    change (entry (shift x d m) i j = entry (shift x d m) (flip j) (flip i)).
+    rewrite !entry_shift, !variable_offset_flip, (coherent_entry m Hcoh i j).
+    destruct (entry m (flip j) (flip i)); cbn [option_map]; [f_equal; ring|reflexivity].
+  Qed.
+
+  Lemma coh_assign_copy : forall x source d s,
+    coh s -> coh (assign_copy x source d s).
+  Proof.
+    intros x source d [|m] Hcoh; [exact I|]. cbn [assign_copy].
+    destruct (K.eqb source (x, true)).
+    - cbn [coh]. now apply coherent_shift.
+    - apply coh_refine, coh_refine, coh_havoc, Hcoh.
+  Qed.
+
+  Lemma coh_add_range : forall x bounds s, coh s -> coh (add_range x bounds s).
+  Proof.
+    intros x [lo hi] s Hcoh. destruct lo, hi; cbn [add_range fst snd];
+      repeat apply coh_refine; exact Hcoh.
+  Qed.
+
+  Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
+  Proof.
+    intros x e [|m] Hcoh; [exact I|]. cbn [assign].
+    destruct (F.lin_of e) as [[f r]|]; [|now apply coh_havoc].
+    destruct (copy_source f) as [source|].
+    - destruct (andb (copy_allowed x source) (rel_wrap_exact r (form_bounds m f))).
+      + now apply coh_assign_copy.
+      + apply coh_add_range, coh_havoc, Hcoh.
+    - apply coh_add_range, coh_havoc, Hcoh.
+  Qed.
+
+  Lemma coh_assume_cmp : forall c shape d s, coh s -> coh (assume_cmp c shape d s).
+  Proof.
+    intros c [|i j double] d s Hcoh.
+    - cbn [assume_cmp].
+      destruct (match c with CLe => (0 <=? d)%Z | CLt => (0 <? d)%Z |
+        CEq => (0 =? d)%Z end); [exact Hcoh|exact I].
+    - destruct c; cbn [assume_cmp]; repeat apply coh_refine; exact Hcoh.
+  Qed.
+
+  Lemma coh_assume_atom : forall s a, coh s -> coh (assume_atom s a).
+  Proof.
+    intros [|m] a Hcoh; [exact I|]. cbn [assume_atom].
+    destruct (difference_forms (al a) (ar a)) as [shape|]; [|exact Hcoh].
+    destruct (andb (form_exact m (al a) (alw a)) (form_exact m (ar a) (arw a)));
+      [now apply coh_assume_cmp|exact Hcoh].
+  Qed.
+
+  Lemma coh_assume_atoms : forall atoms s,
+    coh s -> coh (fold_left assume_atom atoms s).
+  Proof.
+    intro atoms. induction atoms as [|a atoms IH]; intros s Hcoh; cbn [fold_left].
+    - exact Hcoh.
+    - apply IH, coh_assume_atom, Hcoh.
+  Qed.
+
+  Lemma coh_assume : forall g es s, coh s -> coh (assume g es s).
+  Proof.
+    intros g es [|m] Hcoh; [exact I|]. cbn [assume]. now apply coh_assume_atoms.
   Qed.
 
 
