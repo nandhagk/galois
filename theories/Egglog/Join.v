@@ -1704,7 +1704,17 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs Hwf.
+    pose proof (T_enumerate_le (nvars p) p ixs 0 [] (map I.root ixs) []
+      ltac:(lia) (nodes_ok_initial p ixs Hwf)) as Henumerate.
+    change (T_enumerate (nvars p) p ixs (map I.root ixs) [] [] <=
+      4096 * scan_factor p ixs * N.of_nat (work p ixs))%N in Henumerate.
+    pose proof (T_run_initial_le p ixs) as Hinitial.
+    destruct (scan_factor_covers p ixs) as [Hfactor [Hindex _]].
+    rewrite join_factor_equation.
+    rewrite ?Nat2N.inj_add in *. nia.
+  Qed.
 
   Lemma T_run_ge : forall p ixs, wf_plan p ixs ->
     (N.of_nat (work p ixs) <= T_run p ixs)%N.
