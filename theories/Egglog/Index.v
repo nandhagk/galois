@@ -126,6 +126,30 @@ Module TrieCardinalityFacts.
     apply Permutation_length in Hperm. now rewrite !length_map in Hperm.
   Qed.
 
+  (** Distinct entries assigned identifiers above one fit below the allocation counter. *)
+  Lemma bounded_positive_length : forall A (key : A -> positive) xs bound,
+    NoDup xs ->
+    (forall x y, In x xs -> In y xs -> key x = key y -> x = y) ->
+    (forall x, In x xs -> (1 < key x <= bound)%positive) ->
+    length xs <= Pos.to_nat bound - 1.
+  Proof.
+    intros A key xs bound Hnodup Hinjective Hbounded.
+    assert (Hkeys : NoDup (map (fun x => Pos.to_nat (key x)) xs)).
+    { apply NoDup_map_NoDup_ForallPairs; [|exact Hnodup].
+      intros x y Hx Hy Heq. apply (Hinjective x y Hx Hy). now apply Pos2Nat.inj. }
+    assert (Hinclude : incl (map (fun x => Pos.to_nat (key x)) xs)
+      (seq 2 (Pos.to_nat bound - 1))).
+    { intros n Hin. apply in_map_iff in Hin. destruct Hin as [x [Heq Hx]]. subst n.
+      destruct (Hbounded x Hx) as [Hlower Hupper].
+      apply Pos2Nat.inj_lt in Hlower. apply Pos2Nat.inj_le in Hupper.
+      change (1 < Pos.to_nat (key x)) in Hlower.
+      pose proof (Pos2Nat.is_pos bound). apply in_seq. lia. }
+    assert (Hlength : length (map (fun x => Pos.to_nat (key x)) xs) <=
+      length (seq 2 (Pos.to_nat bound - 1))).
+    { apply NoDup_incl_length; assumption. }
+    rewrite length_map, length_seq in Hlength. exact Hlength.
+  Qed.
+
 End TrieCardinalityFacts.
 
 Module Nat.
@@ -1059,6 +1083,37 @@ Module Index (V : VALUE) <: INDEX V.
         f_equal. exact (IH (rev rest) p Hpre Hrest).
   Qed.
 
+  (** Paths with a common starting node are unique even when that node is detached. *)
+  Lemma seek_paths_unique : forall ix q pre pre' n, shape ix ->
+    seek ix q pre = Some n -> seek ix q pre' = Some n -> pre = pre'.
+  Proof.
+    intros ix q pre pre' n [Hshape [_ Hparents]]. revert pre' n.
+    induction pre as [| c pre IH] using rev_ind; intros pre' n Hseek Hseek'.
+    - change (Some q = Some n) in Hseek. injection Hseek as <-.
+      destruct pre' as [| c' pre']; [reflexivity |].
+      pose proof (seek_strict ix (c' :: pre') q q
+        Hshape ltac:(discriminate) Hseek') as Hlt.
+      exfalso. exact (Pos.lt_irrefl _ Hlt).
+    - destruct (rev pre') as [| c' rest] eqn:Hrev.
+      + apply (f_equal (@rev (cell V.t))) in Hrev.
+        rewrite rev_involutive in Hrev. cbn [rev] in Hrev. subst pre'.
+        change (Some q = Some n) in Hseek'. injection Hseek' as <-.
+        pose proof (seek_strict ix (pre ++ [c]) q q
+          Hshape ltac:(destruct pre; discriminate) Hseek) as Hlt.
+        exfalso. exact (Pos.lt_irrefl _ Hlt).
+      + assert (Hpre' : pre' = rev rest ++ [c']).
+        { rewrite <- (rev_involutive pre'), Hrev. reflexivity. }
+        subst pre'. rewrite seek_append in Hseek, Hseek'.
+        destruct (seek ix q pre) as [p |] eqn:Hpre; [| discriminate].
+        destruct (seek ix q (rev rest)) as [p' |] eqn:Hrest; [| discriminate].
+        cbn [seek] in Hseek, Hseek'.
+        destruct (child ix p c) as [m |] eqn:Hchild; [| discriminate].
+        destruct (child ix p' c') as [m' |] eqn:Hchild'; [| discriminate].
+        injection Hseek as ->. injection Hseek' as ->.
+        destruct (child_parents_unique ix p c p' c' n Hparents Hchild Hchild') as [<- <-].
+        f_equal. exact (IH (rev rest) p eq_refl Hrest).
+  Qed.
+
   Lemma read_node_mark_same : forall ix n present bits,
     read_node (mark_terminal ix n present bits) n =
       IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present.
@@ -1317,6 +1372,68 @@ Module Index (V : VALUE) <: INDEX V.
       destruct (child ix q c) as [m |] eqn:Hchild; [| discriminate].
       eapply IH; [exact Hshape | | exact Hseek].
       exact (proj2 (child_forward ix q c m Hshape Hchild)).
+  Qed.
+
+  (** Distinct live suffixes from a nonroot node have distinct bounded terminal nodes. *)
+  Lemma live_suffixes_bound : forall ix q suffixes, shape ix ->
+    (1 < q <= next ix)%positive -> NoDup suffixes ->
+    (forall r, In r suffixes -> contains_from q r ix = true) ->
+    length suffixes <= Pos.to_nat (next ix) - 1.
+  Proof.
+    intros ix q suffixes Hshape [Hlower Hupper] Hnodup Hlive.
+    assert (Hends : forall r, In r suffixes -> exists n, seek ix q r = Some n).
+    { intros r Hr. specialize (Hlive r Hr). unfold contains_from in Hlive.
+      destruct (seek ix q r) as [n |] eqn:Hseek; [exists n; reflexivity | discriminate]. }
+    set (endpoint := fun r : list (cell V.t) =>
+      match seek ix q r with Some n => n | None => q end).
+    eapply TrieCardinalityFacts.bounded_positive_length with (key := endpoint).
+    - exact Hnodup.
+    - intros r r' Hr Hr' Heq.
+      destruct (Hends r Hr) as [n Hseek]. destruct (Hends r' Hr') as [n' Hseek'].
+      unfold endpoint in Heq. rewrite Hseek, Hseek' in Heq. subst n'.
+      eapply seek_paths_unique; eassumption.
+    - intros r Hr. destruct (Hends r Hr) as [n Hseek].
+      unfold endpoint. rewrite Hseek. split.
+      + eapply Pos.lt_le_trans; [exact Hlower |].
+        eapply seek_forward; [exact (proj1 Hshape) | exact Hseek].
+      + eapply seek_bounded; [exact (proj1 Hshape) | exact Hupper | exact Hseek].
+  Qed.
+
+  (** Live edge counts fit strictly below the node allocation counter. *)
+  Lemma counted_edges_upper : forall ix n code edge, shape ix -> counted_edges ix ->
+    stored_edge ix n code edge -> (edge_count edge < Npos (next ix))%N.
+  Proof.
+    intros ix n code edge Hshape Hcounts Hedge.
+    destruct ((proj1 Hshape) n code edge Hedge) as [_ [Hforward Hupper]].
+    destruct (Hcounts n code edge Hedge) as [suffixes [Hnodup [Hmembers Hcount]]].
+    assert (Hrange : (1 < edge_child edge <= next ix)%positive) by (split; lia).
+    pose proof (live_suffixes_bound ix (edge_child edge) suffixes Hshape Hrange Hnodup
+      (fun r Hr => proj1 (Hmembers r) Hr)) as Hlength.
+    rewrite Hcount. pose proof (Pos2Nat.is_pos (next ix)). lia.
+  Qed.
+
+  (** Distinct edge children also bound any cache that counts its node's bindings. *)
+  Lemma degrees_upper : forall ix, shape ix ->
+    (forall n, N.to_nat (node_degree (read_node ix n)) =
+      length (PTrieCode.elements (node_edges (read_node ix n)))) ->
+    forall n, (node_degree (read_node ix n) < Npos (next ix))%N.
+  Proof.
+    intros ix Hshape Hdegrees n.
+    assert (Hlength : length (PTrieCode.elements (node_edges (read_node ix n))) <=
+      Pos.to_nat (next ix) - 1).
+    { eapply TrieCardinalityFacts.bounded_positive_length with
+        (key := fun entry : positive * index_edge (cell V.t) => edge_child (snd entry)).
+      - apply NoDup_map_inv with (f := @fst positive (index_edge (cell V.t))).
+        apply PTrie.elements_nodup.
+      - intros [code edge] [code' edge'] Hin Hin' Heq. cbn [snd] in Heq.
+        apply PTrie.elements_spec in Hin, Hin'.
+        destruct ((proj2 (proj2 Hshape)) n code edge n code' edge' Hin Hin' Heq)
+          as [_ Hcode]. subst code'. assert (Hedge : edge = edge') by congruence.
+        now subst edge'.
+      - intros [code edge] Hin. cbn [snd]. apply PTrie.elements_spec in Hin.
+        destruct ((proj1 Hshape) n code edge Hin) as [_ [Hforward Hupper]].
+        split; lia. }
+    specialize (Hdegrees n). pose proof (Pos2Nat.is_pos (next ix)). lia.
   Qed.
 
   (** A path ending at a node never reads that node's outgoing edges. *)
