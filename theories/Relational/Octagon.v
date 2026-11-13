@@ -2788,9 +2788,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (X.eqb (fst i) x), (X.eqb (fst j) x); try reflexivity.
     apply Hcoh.
   Qed.
-  Lemma coh_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
-  Proof. Admitted. (* STUB *)
-
   (** Retrieving a row, with an empty fallback, preserves map consistency. *)
   Lemma row_of_wf : forall m k,
     dbm_wf m -> M.wf (row_of (M.get k m)).
@@ -3164,9 +3161,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma tclose_tight : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
-    tclose m = Reached m' -> tightly_closed m'.
-  Proof. Admitted. (* STUB *)
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   Proof. Admitted. (* STUB *)
@@ -6237,6 +6231,34 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     cbn [RelationalPathBounds.below]. lia.
   Qed.
 
+  (** Successful tight closure preserves every triangle inequality. *)
+  Lemma tclose_triangle : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
+    tclose m = Reached m' ->
+    forall i j k a z, entry m' i k = Some a -> entry m' k j = Some z ->
+      exists d, entry m' i j = Some d /\ (d <= a + z)%Z.
+  Proof.
+    intros m m' Hwf Hcoh Hbar Hresult i j k a z Hik Hkj.
+    pose proof Hresult as Hresult0.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun p => nonnegative p (fw m)) (keys m)) eqn:Hfirst;
+      [|discriminate].
+    destruct (forallb (fun p => nonnegative p (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    pose proof (coherent_fw_success m Hwf Hcoh Hbar Hfirst) as Hcoh_fw.
+    pose proof (proj2 (fw_closed_success m Hwf Hfirst)) as Htri_fw.
+    pose proof (strong_view_triangle (fw m) Hcoh_fw
+      (fw_closed_at_success m Hwf Hfirst)
+      (half_unary_transport (fw m) Hcoh_fw Htri_fw)
+      (tclose_half_pair m (strengthen (tighten (fw m))) Hwf Hresult0)
+      i j k) as Hbound.
+    rewrite (strengthen_tighten_view (fw m) (wf_fw m Hwf)) in Hik, Hkj |- *.
+    rewrite Hik, Hkj in Hbound. cbn [RelationalPathBounds.plus] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [d [Hd Hle]]. exists d. now split.
+  Qed.
+
   Lemma tclose_strong_clause : forall m m', dbm_wf m ->
     tclose m = Reached m' ->
     forall i j a z, entry m' i (flip i) = Some a ->
@@ -6253,6 +6275,29 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     inversion Hresult; subst m'.
     eapply strengthen_strong_clause;
       [apply wf_tighten, wf_fw; exact Hwf|exact Hleft|exact Hright].
+  Qed.
+
+  (** A successful integer closure is coherent, closed, strong and unary-even. *)
+  Lemma tclose_tight : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
+    tclose m = Reached m' -> tightly_closed m'.
+  Proof.
+    intros m m' Hwf Hcoh Hbar Hresult.
+    unfold tightly_closed, strongly_closed. split.
+    - split.
+      + eapply coherent_tclose_reached; eauto.
+      + split.
+        * eapply tclose_zero_diag; eauto.
+        * split.
+          -- eapply tclose_triangle; eauto.
+          -- eapply tclose_strong_clause; eauto.
+    - eapply tclose_unary_even; eauto.
+  Qed.
+
+  Lemma coh_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
+  Proof.
+    intros m Hwf Hcoh Hbar.
+    destruct (tclose m) as [|m'] eqn:Hresult; [exact I|].
+    exact (proj1 (proj1 (tclose_tight m m' Hwf Hcoh Hbar Hresult))).
   Qed.
 
   (** Original and final key lists cover the same supported vertices. *)
