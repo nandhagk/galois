@@ -946,6 +946,29 @@ Definition database_rank_slots (ds : list decl) (sl : list (positive * list nat)
   database_rank_slots_from (database_kinds ds) 0%N PTrieCode.empty sl.
 TimeFun database_rank_slots.
 
+Lemma database_rank_slots_from_length : forall kinds start groups sl,
+  length (database_rank_slots_from kinds start groups sl) = length sl.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[f perm] rest IH]; intros start groups;
+    cbn [database_rank_slots_from length]; [reflexivity |].
+  now rewrite IH.
+Qed.
+
+Lemma database_rank_slots_from_flag : forall kinds start groups sl n f perm d g j,
+  nth_error sl n = Some (f, perm) ->
+  nth_error (database_rank_slots_from kinds start groups sl) n = Some (d, g, j) ->
+  d = match PTrieCode.get f kinds with Some _ => true | None => false end.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH]; intros start groups n f perm d g j Hslot Hrank;
+    destruct n as [|n]; cbn [nth_error database_rank_slots_from] in Hslot, Hrank;
+    try discriminate.
+  - injection Hslot as <- <-. injection Hrank as <- _ _.
+    reflexivity.
+  - eapply IH; eassumption.
+Qed.
+
 Definition database_rank_offset (groups : PTrieCode.t (N * N)) (f : positive) : N :=
   match PTrieCode.get f groups with Some (_, j) => j | None => 0%N end.
 
