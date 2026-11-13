@@ -5,7 +5,7 @@
     Builds on: KeySig, TrieSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool NArith Lia Sorting.Sorted.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig TrieSig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -154,13 +154,33 @@ Module TrieMapT (K : KEY_T) <: MAP_T K.
   TimeFun existsb.
   TimeFun fold.
   TimeFun elements.
-  Definition c_map : N := 1. (* STUB *)
+  Definition c_map : N := 16 * (K.c_key + PTrieT.c_trie + PTrieT.k_fold + 1).
   Lemma T_get_le : forall A k (m : t A), (T_get k m <= c_map * N.of_nat (K.bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k m.
+    pose proof (K.T_encode_le k) as Hencode.
+    pose proof (PTrieT.T_get_le (K.t * A) (K.encode k) m) as Hget.
+    unfold c_map, K.bits in *.
+    time_step.
+    unfold Datatypes.T_option_map.
+    destruct (PTrieCode.get (K.encode k) m); time_cbn; nia.
+  Qed.
   Lemma T_set_le : forall A k (a : A) m, (T_set k a m <= c_map * N.of_nat (K.bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k a m.
+    pose proof (K.T_encode_le k) as Hencode.
+    pose proof (PTrieT.T_set_le (K.t * A) (K.encode k) (k, a) m) as Hset.
+    unfold c_map, K.bits in *.
+    time_step.
+  Qed.
   Lemma T_remove_le : forall A k (m : t A), (T_remove k m <= c_map * N.of_nat (K.bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k m.
+    pose proof (K.T_encode_le k) as Hencode.
+    pose proof (PTrieT.T_remove_le (K.t * A) (K.encode k) m) as Hremove.
+    unfold c_map, K.bits in *.
+    time_step.
+  Qed.
   Lemma T_merge_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2 c,
     ((forall a b, T_f a b <= c) ->
     T_merge f T_f m1 m2 <= c_map * (c + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
