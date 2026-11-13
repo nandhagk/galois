@@ -6737,6 +6737,51 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exact (proj2 (put_other_rows db f key output g args (Some (Id i)) Hother) Hrow).
   Qed.
 
+  (** Inserting any row preserves every already stored relation row exactly. *)
+  Lemma put_relation_keeps : forall db f key output g args,
+    row (view db) g args None -> row (view (put f key output db)) g args None.
+  Proof.
+    intros db f key output g args Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args))
+      (RowKeys.encode (f, normal_key db key))) as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (put_row_target_raw db f key output) as Htarget.
+      change (row_get f (normal_key db key) db = Some None) in Hrow.
+      rewrite Hrow in Htarget.
+      assert (Hcombine : combine_output db f (Some None)
+        (option_map (normal_cell db) output) = None).
+      { unfold combine_output. destruct (kind_get f db) as [[| |m] |];
+          destruct (option_map (normal_cell db) output) as [[i | value] |]; reflexivity. }
+      now rewrite Hcombine in Htarget.
+    - assert (Hother : (g, args) <> (f, normal_key db key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exact (proj2 (put_other_rows db f key output g args None Hother) Hrow).
+  Qed.
+
+  (** Inserting a row retains each old lattice row with an output at least as large. *)
+  Lemma put_lattice_keeps : forall db f key output g args a m,
+    kind (view db) g = Some (OLat m) -> row (view db) g args (Some (Val a)) ->
+    exists b, row (view (put f key output db)) g args (Some (Val b)) /\ V.merge m a b = b.
+  Proof.
+    intros db f key output g args a m Hkind Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args))
+      (RowKeys.encode (f, normal_key db key))) as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (put_row_target_raw db f key output) as Htarget.
+      change (row_get f (normal_key db key) db = Some (Some (Val a))) in Hrow.
+      change (kind_get f db = Some (OLat m)) in Hkind.
+      rewrite Hrow in Htarget. unfold combine_output in Htarget. rewrite Hkind in Htarget.
+      destruct (option_map (normal_cell db) output) as [[i | value] |].
+      + exists a. split; [exact Htarget | apply V.merge_idem].
+      + exists (V.merge m a value). split; [exact Htarget |].
+        now rewrite V.merge_assoc, V.merge_idem.
+      + exists a. split; [exact Htarget | apply V.merge_idem].
+    - assert (Hother : (g, args) <> (f, normal_key db key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exists a. split; [| apply V.merge_idem].
+      exact (proj2 (put_other_rows db f key output g args (Some (Val a)) Hother) Hrow).
+  Qed.
+
   (** A typed constructor output has an identifier payload. *)
   Lemma kind_ok_id_shape_forward : forall db f key output,
     kind_ok db f key output -> kind (view db) f = Some OId ->
