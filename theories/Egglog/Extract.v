@@ -96,11 +96,12 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       (layout_bits ds sl + 1) * (Nat.log2 (length sl) + 3).
   Proof. Admitted. (* STUB *)
 
-  Lemma R_spec : forall db, D.wf db -> exists rs, NoDup rs /\ length rs = R db /\
+  Lemma R_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
+    exists rs, NoDup rs /\ length rs = R db /\
     forall f k i, In (f, k, i) rs <-> row (D.view db) f k (Some (Id i)).
   Proof. Admitted. (* STUB *)
 
-  Lemma a_spec : forall db, D.wf db ->
+  Lemma a_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
     (forall f k i, row (D.view db) f k (Some (Id i)) -> length k <= a db) /\
     (a db = 0 \/ exists f k i, row (D.view db) f k (Some (Id i)) /\ length k = a db).
   Proof. Admitted. (* STUB *)
@@ -171,7 +172,8 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     finalised (initial cs db) = [] /\ knuth_inv db (initial cs db).
   Proof. Admitted. (* STUB *)
 
-  Lemma F2_counter_spec : forall cs db s c, reachable cs db s ->
+  Lemma F2_counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s ->
     counter s c = length (filter
       (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (finalised s)))
       (children db c)).
@@ -185,8 +187,8 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     reachable cs db s -> knuth_inv db s -> step cs db s = inl s' -> knuth_inv db s'.
   Proof. Admitted. (* STUB *)
 
-  Lemma F5_finalised_attained : forall cs db s c n ch, D.wf db ->
-    reachable cs db s -> In (c, (n, ch)) (finalised s) ->
+  Lemma F5_finalised_attained : forall cs db s c n ch, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s -> In (c, (n, ch)) (finalised s) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
   Proof. Admitted. (* STUB *)
 
@@ -213,7 +215,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     (T_step cs db s <= k_step * N.of_nat (R db + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T2_best_loop : forall cs db,
+  Lemma T2_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= T_initial cs db +
       T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db) +
       k_step * N.of_nat (R db + 1))%N.
