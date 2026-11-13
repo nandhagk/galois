@@ -7486,9 +7486,33 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros i j db _. unfold unit. rewrite union_ids, wmark_union. reflexivity.
   Qed.
 
+  (** Repair retains its input unit even while the current queue has been popped. *)
+  Lemma repair_current_unit_monotone : forall db f k,
+    unit db <= unit (repair_current f k db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
+    eapply Nat.le_trans; [apply unit_row_delete_monotone | apply unit_put_monotone].
+  Qed.
+
+  (** Both actual loop branches preserve the original spending-unit lower bound. *)
+  Lemma unit_rebuild_monotone : forall db, unit db <= unit (rebuild db).
+  Proof.
+    intro db. apply (rebuild_preserves (fun current => unit db <= unit current)).
+    - intros current f k Hcurrent. eapply Nat.le_trans;
+        [exact Hcurrent | apply repair_current_unit_monotone].
+    - intros current i next Hcurrent Hpop.
+      rewrite (unit_pop_loser current i next Hpop). exact Hcurrent.
+    - reflexivity.
+  Qed.
+
   (** Rebuilding never reduces the spending unit. *)
   Lemma unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _. apply unit_rebuild_monotone.
+  Qed.
   (** Advancing keeps the watermark and the amortized credit. *)
   Lemma advance_credit : forall B db, wf db ->
     wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
@@ -8488,7 +8512,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Repair never reduces the spending unit. *)
   Lemma F9b_rstep_unit : forall s s', state_inv s -> rstep s = inl s' ->
     unit (fst s) <= unit (fst s').
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next _ Hstep. unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      rewrite (unit_pop_loser db i current Hpop). reflexivity.
+    - injection Hstep as Hnext. subst next. cbn [fst].
+      apply repair_current_unit_monotone.
+  Qed.
 
   (** Loop credit includes the binary driver charge. *)
   Lemma k_loop_le : (c_loopN <= k_loop)%N.
