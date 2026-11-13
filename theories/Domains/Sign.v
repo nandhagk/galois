@@ -4,10 +4,10 @@
     For example, a zero-only payload represents the integer zero.
     Builds on: SignSig and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith List Bool Lia Ring.
-From Argent Require Import Time Std.
+From Stdlib Require Import ZArith NArith List Bool Lia Ring PeanoNat.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Fun Testbit Op Arith.
-From Galois.Domains Require Import SignSig WordSig.
+From Galois.Domains Require Import SignSig WordSig BitsLang.
 Import List.ListNotations.
 
 Local Open Scope Z_scope.
@@ -438,88 +438,230 @@ Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
 
   Definition psize (w : positive) (_ : p) : nat := Pos.to_nat w.
   Definition pwsize (_ : pwparam) : nat := 1.
-  Definition c_payload : N := 1%N. (* STUB *)
-  (** STUB: sign payload size and cost obligations. *)
+  Definition c_payload : N := 1024%N.
+  (** Flag inclusion uses only a fixed collection of Boolean operations. *)
+  Local Lemma pleb_ticks : forall w a b, (T_pleb w a b <= 32)%N.
+  Proof.
+    intros w [a b c] [d e f]. time_unfold T_pleb.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
+
+  Local Lemma pjoin_ticks : forall w a b, (T_pjoin w a b <= 32)%N.
+  Proof.
+    intros w [a b c] [d e f]. time_unfold T_pjoin.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
+
+  Local Lemma pmeet_ticks : forall w a b, (T_pmeet w a b <= 32)%N.
+  Proof.
+    intros w [a b c] [d e f]. time_unfold T_pmeet.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
+
+  Local Lemma pis_bot_ticks : forall w a, (T_pis_bot w a <= 32)%N.
+  Proof.
+    intros w [a b c]. time_unfold T_pis_bot.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
+
+  Local Lemma ppoint_ticks : forall w a, (T_ppoint w a <= 1)%N.
+  Proof.
+    intros w [a b c]. destruct a, b, c; time_unfold T_ppoint; time_cbn; lia.
+  Qed.
+
+  Local Lemma payload_constant_budget : forall ticks n,
+    (ticks <= 64)%N -> (ticks <= c_payload * N.of_nat (n + 1))%N.
+  Proof.
+    intros ticks n Hticks. unfold c_payload. rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  Local Lemma square_dominates : forall n extra,
+    (n <= (n + extra + 1) ^ 2 /\ 1 <= (n + extra + 1) ^ 2)%nat.
+  Proof.
+    intros n extra. cbn [Nat.pow]. nia.
+  Qed.
+
+  Local Lemma payload_square_size : forall n extra,
+    (N.of_nat n <= c_payload * N.of_nat ((n + extra + 1) ^ 2))%N.
+  Proof.
+    intros n extra. pose proof (proj1 (square_dominates n extra)) as Hsize.
+    unfold c_payload. lia.
+  Qed.
+
+  Local Lemma payload_square_positive : forall n,
+    (1 <= c_payload * N.of_nat ((n + 1) ^ 2))%N.
+  Proof.
+    intro n. pose proof (proj2 (square_dominates n 0)) as Hpositive.
+    rewrite Nat.add_0_r in Hpositive. unfold c_payload. lia.
+  Qed.
+
+  (** Payload sizes charge the declared word width. *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold psize, c_payload. rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold psize, c_payload. rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold psize, pwsize, c_payload. rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold psize, c_payload. rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. apply payload_constant_budget.
+    pose proof (pjoin_ticks w a b). time_unfold T_pwiden. lia.
+  Qed.
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. apply payload_constant_budget.
+    pose proof (pmeet_ticks w a b). time_unfold T_pnarrow. lia.
+  Qed.
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. apply payload_constant_budget. pose proof (pleb_ticks w a b). lia.
+  Qed.
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. apply payload_constant_budget. pose proof (pjoin_ticks w a b). lia.
+  Qed.
   Lemma T_pmeet_le : forall w a b,
     (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. apply payload_constant_budget. pose proof (pmeet_ticks w a b). lia.
+  Qed.
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. apply payload_constant_budget. pose proof (pis_bot_ticks w a). lia.
+  Qed.
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. apply payload_constant_budget. pose proof (ppoint_ticks w a). lia.
+  Qed.
   Lemma T_pconst_le : forall w z, (T_pconst w z <=
     c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)).
+    pose proof (WordTime.word_signed_time_bound w z) as Hsigned.
+    change (T_signed w z <= 128 * budget)%N in Hsigned.
+    pose proof (time_of_nat_le _ _ (WordTime.word_signed_size_bound w z)) as Hsize.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w) <= budget)%N).
+    { apply time_of_nat_le. apply (proj1 (square_dominates _ _)). }
+    assert (Hbudget : (1 <= budget)%N).
+    { pose proof (proj2 (square_dominates (Pos.to_nat w) (Z.size_nat z))).
+      unfold budget. lia. }
+    pose proof (Z.T_ltb_le (signed w z) 0) as Hnegative.
+    pose proof (Z.T_eqb_le (signed w z) 0) as Hzero.
+    pose proof (Z.T_ltb_le 0 (signed w z)) as Hpositive.
+    time_unfold T_pconst. unfold c_payload. time_cbn_all. lia.
+  Qed.
 
-  Definition c_sign : N := 1%N. (* STUB *)
+  Definition c_sign : N := 64%N.
   (** Flag inclusion takes constant time. *)
   Lemma T_pleb_const : forall w a b, (T_pleb w a b <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold c_sign. pose proof (pleb_ticks w a b). lia.
+  Qed.
   (** Flag join takes constant time. *)
   Lemma T_pjoin_const : forall w a b, (T_pjoin w a b <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold c_sign. pose proof (pjoin_ticks w a b). lia.
+  Qed.
   (** Flag meet takes constant time. *)
   Lemma T_pmeet_const : forall w a b, (T_pmeet w a b <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold c_sign. pose proof (pmeet_ticks w a b). lia.
+  Qed.
   Lemma T_sign_not_le : forall a, (T_sign_not a <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b c]. unfold c_sign. time_unfold T_sign_not.
+    time_unfold T_sign_nonneg. time_unfold T_sign_bits.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
   Lemma T_sign_neg_le : forall a, (T_sign_neg a <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b c]. unfold c_sign. time_unfold T_sign_neg.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
   Lemma T_sign_and_le : forall a b, (T_sign_and a b <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b c] [d e f]. unfold c_sign. time_unfold T_sign_and.
+    time_unfold T_sign_nonneg. time_unfold T_sign_bits.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
   Lemma T_sign_or_le : forall a b, (T_sign_or a b <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b c] [d e f]. unfold c_sign. time_unfold T_sign_or.
+    time_unfold T_sign_nonneg. time_unfold T_sign_bits.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
   Lemma T_sign_xor_le : forall a b, (T_sign_xor a b <= c_sign)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b c] [d e f]. unfold c_sign. time_unfold T_sign_xor.
+    time_unfold T_sign_nonneg. time_unfold T_sign_bits.
+    time_unfold T_neg. time_unfold T_zero. time_unfold T_pos.
+    time_cbn. time_pose. lia.
+  Qed.
   Lemma psize_width : forall w a, psize w a = Pos.to_nat w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_ptop. exact (payload_square_positive (Pos.to_nat w)).
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_pbot_le : forall w,
     (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_pbot. exact (payload_square_positive (Pos.to_nat w)).
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma ptop_size : forall w,
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold psize. pose proof (payload_square_size (Pos.to_nat w) 0) as Hsize.
+    rewrite Nat.add_0_r in Hsize. exact Hsize.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold psize. pose proof (payload_square_size (Pos.to_nat w) 0) as Hsize.
+    rewrite Nat.add_0_r in Hsize. exact Hsize.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pconst_size : forall w z,
     (N.of_nat (psize w (pconst w z)) <=
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. unfold psize. apply payload_square_size.
+  Qed.
 End SignT.
 
 Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
