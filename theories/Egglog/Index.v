@@ -737,6 +737,52 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Every permitted node fits the counter component of the original walk width. *)
+  Lemma node_bits_width : forall ix r n, (n <= next ix)%positive ->
+    Pos.size_nat n <= width ix r.
+  Proof.
+    intros ix r n Hnode. unfold width.
+    assert (Hbits : Pos.size_nat n <=
+      Pos.size_nat (next ix + Pos.of_nat (length r))).
+    { apply Pos.size_nat_monotone. lia. }
+    lia.
+  Qed.
+
+  (** The one-cell width includes the exact encoding presented to an edge lookup. *)
+  Lemma cell_bits_width : forall ix c, cell_bits V.encode c <= width ix [c].
+  Proof.
+    intros ix c. unfold width, tuple_bits. cbn [fold_right].
+    pose proof (Nat.le_max_l (cell_bits V.encode c) 0). lia.
+  Qed.
+
+  (** The range guard compares the stored counter first, so arbitrary query names are cheap. *)
+  Lemma T_node_guard_le : forall ix n,
+    (T_next ix + Pos.T_ltb (next ix) n <= N.of_nat (Pos.size_nat (next ix)) + 4)%N.
+  Proof.
+    intros ix n. pose proof (Pos.T_compare_le (next ix) n) as Hcompare.
+    time_unfold T_next. time_unfold @T_index_counter. time_unfold Pos.T_ltb.
+    time_cbn. lia.
+  Qed.
+
+  (** A node read pays for one trie lookup and two fixed calls. *)
+  Lemma T_read_node_le : forall ix n,
+    (T_read_node ix n <= PTrieT.c_trie * N.of_nat (Pos.size_nat n + 1) + 2)%N.
+  Proof.
+    intros ix n. pose proof (PTrieT.T_get_le _ n (index_nodes ix)) as Hget.
+    time_unfold T_read_node. time_unfold @T_index_nodes. time_cbn. lia.
+  Qed.
+
+  (** Encoding a cell adds one constructor case to the value encoding charge. *)
+  Lemma T_encode_cell_le : forall c,
+    (T_encode_cell c <= (V.c_key + 1) * N.of_nat (cell_bits V.encode c + 1))%N.
+  Proof.
+    intros [i | v].
+    - time_unfold T_encode_cell. cbn [cell_bits Pos.size_nat]. nia.
+    - pose proof (V.T_encode_le v) as Hencode.
+      time_unfold T_encode_cell. cbn [cell_bits Pos.size_nat].
+      unfold V.bits in Hencode. nia.
+  Qed.
+
   Lemma T_child_le : forall ix n c,
     (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
   Proof. Admitted. (* STUB *)
