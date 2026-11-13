@@ -712,6 +712,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   (** The bit mask agrees with modular word reduction. *)
   Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
   Proof. Admitted. (* STUB *)
+  (** Masked scalar shifts agree with the word operations for a nonnegative amount. *)
   Lemma F0_scalar_value : forall o w k x, (0 <= k)%Z ->
     tnum_scalar_value o w k x =
       match o with
@@ -723,6 +724,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
       | _ => L.wrap w x
       end.
   Proof. Admitted. (* CONVERT: F0_scalar_value: masked shifts require word-operation agreement *)
+  (** One masked scalar shift reads the width, the amount and the raw value once. *)
   Lemma T0_scalar_value : forall o w k x,
     (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
       (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.

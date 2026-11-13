@@ -203,17 +203,22 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   Lemma eval_work_components : forall e r s, eval_work e (r, s) =
     R.range_work e r + R.range_bits e r + E.eval_work e s + V.size (E.eval e s) + 1.
   Proof. reflexivity. Qed.
+  (** Assignment work adds the work of both components. *)
   Lemma assign_work_components : forall x e r s,
     assign_work x e (r, s) = R.assign_work x e r + E.assign_work x e s.
   Proof. reflexivity. Qed.
+  (** Havoc work adds the work of both components. *)
   Lemma havoc_work_components : forall x r s,
     havoc_work x (r, s) = R.havoc_work x r + E.havoc_work x s.
   Proof. reflexivity. Qed.
+  (** Assumption work adds the work of both components. *)
   Lemma assume_work_components : forall g es r s,
     assume_work g es (r, s) = R.assume_work g es r + E.assume_work g es s.
   Proof. reflexivity. Qed.
+  (** Widening visits the units of both components. *)
   Lemma wunits_components : forall r s, wunits (r, s) = R.wunits r + E.wunits s.
   Proof. reflexivity. Qed.
+  (** The widening parameter is measured by its two component parameters. *)
   Lemma wsize_components : forall p, wsize p = R.wsize (fst p) + E.wsize (snd p).
   Proof. reflexivity. Qed.
   Lemma c_lat_pair : (P.c_lat <= c_lat)%N.
