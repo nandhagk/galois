@@ -1261,6 +1261,38 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     nia.
   Qed.
 
+  (** Reading the current prefix length fits the common variable-operation budget. *)
+  Lemma T_prefix_length_le : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    (Datatypes.T_length pre <= scan_factor p ixs)%N.
+  Proof.
+    intros p ixs lvl pre ns [_ [Hlength [Hlevel _]]].
+    pose proof (Datatypes.T_length_le pre) as Htime.
+    destruct (scan_factor_covers p ixs) as [_ [_ [Hfactor _]]]. lia.
+  Qed.
+
+  (** Reversing a completed prefix fits the quadratic variable-operation budget. *)
+  Lemma T_prefix_rev_le : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    (List.T_rev pre <= scan_factor p ixs)%N.
+  Proof.
+    intros p ixs lvl pre ns [_ [Hlength [Hlevel _]]].
+    pose proof (List.T_rev_le pre) as Htime.
+    destruct (scan_factor_covers p ixs) as [_ [_ [_ [Hfactor _]]]].
+    rewrite Nat2N.inj_mul in Hfactor.
+    assert (Hbound : (N.of_nat (length pre) + 1 <= N.of_nat (nvars p + 1))%N) by lia.
+    nia.
+  Qed.
+
+  (** Root initialization pays a constant amount for each supplied index. *)
+  Lemma T_run_initial_le : forall p ixs,
+    (T_run p ixs <= T_enumerate (nvars p) p ixs (map I.root ixs) [] [] +
+      4 * (I.c_ix + 1) * N.of_nat (length ixs + 1))%N.
+  Proof.
+    intros [vars cs] ixs.
+    pose proof (Argent.Std.ListDef.T_map_le I.root (fun ix => I.T_root ix)
+      I.c_ix ixs I.T_root_le) as Hmap.
+    time_unfold T_run. time_unfold T_level_count. time_cbn. nia.
+  Qed.
+
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
