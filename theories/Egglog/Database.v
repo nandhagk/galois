@@ -9067,6 +9067,83 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     symmetry. exact (inv_on_repr_idem db [] i Hinv).
   Qed.
 
+  (** Enlarging identifier equality preserves every related cell pair. *)
+  Lemma cell_related_monotone : forall db db' (c d : cell V.t),
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    cell_rel (same (view db)) c d -> cell_rel (same (view db')) c d.
+  Proof.
+    intros db db' c d Hsame Hrelated. destruct Hrelated; constructor; auto.
+  Qed.
+
+  (** Enlarging identifier equality preserves pointwise related source keys. *)
+  Lemma key_related_monotone : forall db db' (left right : list (cell V.t)),
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    Forall2 (cell_rel (same (view db))) left right ->
+    Forall2 (cell_rel (same (view db'))) left right.
+  Proof.
+    intros db db' left right Hsame Hrelated. induction Hrelated; constructor; auto.
+    eapply cell_related_monotone; eassumption.
+  Qed.
+
+  (** Enlarging identifier equality preserves optional-output equivalence. *)
+  Lemma output_equiv_monotone : forall db db' a b,
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    output_equiv db a b -> output_equiv db' a b.
+  Proof.
+    intros db db' [a |] [b |] Hsame Hrelated;
+      cbn [output_equiv] in *; try contradiction; [| constructor].
+    eapply cell_related_monotone; eassumption.
+  Qed.
+
+  (** Optional-output equivalence composes through the actual equality log. *)
+  Lemma output_equiv_transitive : forall db a b c,
+    output_equiv db a b -> output_equiv db b c -> output_equiv db a c.
+  Proof.
+    intros db [a |] [b |] [c |] Hleft Hright;
+      cbn [output_equiv] in *; try contradiction; [| constructor].
+    eapply cell_rel_transitive; [| exact Hleft | exact Hright].
+    intros i j k Hij Hjk. eapply equality_log_trans; eassumption.
+  Qed.
+
+  (** Old and new canonical cells stay related when equality classes only coarsen. *)
+  Lemma canon_related_coarsen : forall db db' c,
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    cell_rel (same (view db')) (canon db c) (canon db' c).
+  Proof.
+    intros db db' [i | v] Hsame Hbefore Hafter; cbn [canon]; constructor.
+    eapply equality_log_trans.
+    - apply equality_log_sym. apply Hsame. apply Hbefore.
+    - apply Hafter.
+  Qed.
+
+  (** Canonicalized optional outputs remain equivalent after equality classes coarsen. *)
+  Lemma output_canon_coarsen : forall db db' o,
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    output_equiv db' (option_map (canon db) o) (option_map (canon db') o).
+  Proof.
+    intros db db' [c |] Hsame Hbefore Hafter; cbn [output_equiv option_map];
+      [| constructor]. eapply canon_related_coarsen; eassumption.
+  Qed.
+
+  (** Combining equivalent accumulators and inputs respects optional-output equivalence. *)
+  Lemma combine_output_equiv : forall db db' f a a' b b',
+    kind (view db') f = kind (view db) f ->
+    output_equiv db' a a' -> output_equiv db' b b' ->
+    output_equiv db' (combine db f (Some a) b) (combine db' f (Some a') b').
+  Proof.
+    intros db db' f a a' b b' Hkind Hacc Hnext. unfold combine. rewrite Hkind.
+    destruct a as [[i | v] |], a' as [[j | w] |],
+      b as [[x | u] |], b' as [[y | z] |];
+      cbn [output_equiv] in Hacc, Hnext; try contradiction;
+      inversion Hacc; subst; inversion Hnext; subst;
+      destruct (kind (view db) f) as [[| |m] |]; cbn [output_equiv];
+      constructor; assumption.
+  Qed.
+
   (** Lineage depends on the current view and representatives, not scheduling metadata. *)
   Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
     view db' = view db -> lineage initial db -> lineage initial db'.
