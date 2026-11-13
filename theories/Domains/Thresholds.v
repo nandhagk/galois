@@ -805,7 +805,7 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   Definition k_sort : N := 256%N.
   Definition k_dedup : N := 4%N.
   Definition k_build : N := 64%N.
-  Definition k_search : N := 1%N. (* STUB *)
+  Definition k_search : N := 16%N.
 
   Lemma T_make_le : forall zs,
     (T_make zs <= c_thresholds * N.of_nat (length zs *
@@ -900,13 +900,21 @@ Module ThresholdsT <: THRESHOLDS_ALL.
     unfold k_build. apply build_time.
   Qed.
 
+  (** Upper lookup pays for one path of bounded comparisons. *)
   Lemma T4_above : forall t z,
     (T_above t z <= k_search * N.of_nat ((depth t + 1)%nat) *
       N.of_nat ((tree_bits t + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros t z. unfold k_search. apply above_time.
+    apply (proj1 (zb_spec (vals t) (tree_bits t))). reflexivity.
+  Qed.
 
+  (** Lower lookup pays for one path of bounded comparisons. *)
   Lemma T5_below : forall t z,
     (T_below t z <= k_search * N.of_nat ((depth t + 1)%nat) *
       N.of_nat ((tree_bits t + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros t z. unfold k_search. apply below_time.
+    apply (proj1 (zb_spec (vals t) (tree_bits t))). reflexivity.
+  Qed.
 End ThresholdsT.
