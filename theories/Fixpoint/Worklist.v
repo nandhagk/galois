@@ -122,6 +122,189 @@ Proof.
     split; [constructor|split; [exact Hstep|cbn; lia]].
 Qed.
 
+(** Every zero bit supplies one unit of credit for a later binary borrow. *)
+Fixpoint fuel_zero_bits_positive (p : positive) : N :=
+  match p with
+  | xI p => fuel_zero_bits_positive p
+  | xO p => (1 + fuel_zero_bits_positive p)%N
+  | xH => 0%N
+  end.
+
+(** Zero fuel has no remaining borrow credit. *)
+Definition fuel_zero_bits (fuel : N) : N :=
+  match fuel with
+  | N0 => 0%N
+  | N.pos p => fuel_zero_bits_positive p
+  end.
+
+(** The binary representation bounds its number of zero bits. *)
+Lemma fuel_zero_bits_positive_le : forall p,
+  (fuel_zero_bits_positive p <= N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH|p IH|]; cbn [fuel_zero_bits_positive Pos.size_nat];
+    rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+(** Initial borrow credit is bounded by the supplied fuel's bit length. *)
+Lemma fuel_zero_bits_le : forall fuel,
+  (fuel_zero_bits fuel <= N.of_nat (N.size_nat fuel))%N.
+Proof.
+  intros [|p]; [reflexivity|apply fuel_zero_bits_positive_le].
+Qed.
+
+(** The recursive part of a borrow spends one unit for each zero bit it clears. *)
+Lemma fuel_zero_bits_pred_double : forall p,
+  (Pos.T_pred_double p + fuel_zero_bits_positive (Pos.pred_double p) <=
+    fuel_zero_bits_positive p + 2)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold @Pos.T_pred_double;
+    cbn [Pos.pred_double fuel_zero_bits_positive]; lia.
+Qed.
+
+(** The positive predecessor uses constant work after accounting for cleared zero bits. *)
+Lemma fuel_zero_bits_pred_positive : forall p,
+  (Pos.T_pred_N p + fuel_zero_bits (Pos.pred_N p) <=
+    fuel_zero_bits_positive p + 2)%N.
+Proof.
+  intros [p|p|]; time_unfold @Pos.T_pred_N;
+    cbn [Pos.pred_N fuel_zero_bits fuel_zero_bits_positive].
+  - lia.
+  - pose proof (fuel_zero_bits_pred_double p); lia.
+  - lia.
+Qed.
+
+(** Each binary decrement costs at most three units plus the zero-bit credit it spends. *)
+Lemma fuel_zero_bits_pred : forall fuel,
+  (N.T_pred fuel + fuel_zero_bits (N.pred fuel) <= fuel_zero_bits fuel + 3)%N.
+Proof.
+  intros [|p]; time_unfold @N.T_pred; cbn [N.pred fuel_zero_bits].
+  - lia.
+  - pose proof (fuel_zero_bits_pred_positive p); lia.
+Qed.
+
+(** A continuing binary callback exposes its underlying step and amortised borrow cost. *)
+Lemma loopN_step_continue_clock {St R : Type} (step : St -> St + R)
+    (T_step : St -> N) : forall fs fs1 Hlt,
+  loopN_step step fs = inl (exist _ fs1 Hlt) ->
+  step (snd fs) = inl (snd fs1) /\
+  (T_loopN_step step T_step fs + fuel_zero_bits (fst fs1) <=
+    T_step (snd fs) + fuel_zero_bits (fst fs) + 4)%N.
+Proof.
+  intros [fuel s] [fuel1 s1] Hlt Hgo.
+  destruct fuel as [|p]; [discriminate|].
+  cbn [loopN_step] in Hgo.
+  destruct (step s) as [next|result] eqn:Hstep; [|discriminate].
+  assert (Hpair : (N.pred (N.pos p), next) = (fuel1, s1)).
+  { exact (f_equal (fun answer =>
+      match answer with inl smaller => proj1_sig smaller | inr _ => (0%N, s) end) Hgo). }
+  injection Hpair as Hfuel Hstate; subst fuel1 s1.
+  split; [exact Hstep|].
+  time_unfold @T_loopN_step; cbn [fst snd]; rewrite Hstep.
+  change (1 + (T_step s + N.T_pred (N.pos p)) +
+    fuel_zero_bits (N.pred (N.pos p)) <=
+    T_step s + fuel_zero_bits (N.pos p) + 4)%N.
+  pose proof (fuel_zero_bits_pred (N.pos p)) as Hborrow; lia.
+Qed.
+
+(** A stopping binary callback either exhausts fuel or executes its final source callback. *)
+Lemma loopN_step_stop_clock {St R : Type} (step : St -> St + R)
+    (T_step : St -> N) : forall fs result,
+  loopN_step step fs = inr result ->
+  (T_loopN_step step T_step fs <= 1 +
+    match step (snd fs) with inl _ => 0 | inr _ => T_step (snd fs) end)%N.
+Proof.
+  intros [fuel s] result Hstop; destruct fuel as [|p].
+  - time_unfold @T_loopN_step; cbn [snd]; lia.
+  - cbn [loopN_step] in Hstop.
+    destruct (step s) as [next|out] eqn:Hstep; [discriminate|].
+    time_unfold @T_loopN_step; cbn [snd]; rewrite Hstep; lia.
+Qed.
+
+(** The accessibility clock follows a real path and pays five units per continuing callback. *)
+Lemma loopN_acc_trace_clock {St R : Type} (step : St -> St + R)
+    (T_step : St -> N) : forall fs (H : Acc (@loopN_lt St) fs),
+  exists xs last, wl_path step (snd fs) xs last /\
+    (T_loop loopN_lt (loopN_step step) (T_loopN_step step T_step) fs H <=
+      fold_right N.add 0%N (List.map T_step xs) + 5 * N.of_nat (length xs) +
+      fuel_zero_bits (fst fs) + 2 +
+      match step last with inl _ => 0 | inr _ => T_step last end)%N.
+Proof.
+  intros fs H; induction H as [fs Hacc IH] using Acc_ind_dep.
+  destruct (loopN_step step fs) as [[fs1 Hlt]|result] eqn:Hdriver.
+  - destruct (IH fs1 Hlt) as [xs [last [Hpath Hclock]]].
+    destruct (loopN_step_continue_clock step T_step fs fs1 Hlt Hdriver)
+      as [Hstep Hborrow].
+    exists (snd fs :: xs), last; split; [econstructor; eassumption|].
+    time_unfold @T_loop; cbn [Acc_inv]; rewrite Hdriver.
+    cbn [List.map fold_right length]; rewrite Nat2N.inj_succ; lia.
+  - exists [], (snd fs); split; [constructor|].
+    pose proof (loopN_step_stop_clock step T_step fs result Hdriver) as Hstop.
+    time_unfold @T_loop; cbn [Acc_inv]; rewrite Hdriver.
+    cbn [List.map fold_right length]; lia.
+Qed.
+
+(** The public binary driver adds only its own call and the initial fuel's bit length. *)
+Lemma loopN_trace_clock {St R : Type} (step : St -> St + R)
+    (T_step : St -> N) : forall fuel initial,
+  exists xs last, wl_path step initial xs last /\
+    (T_loopN step T_step fuel initial <=
+      fold_right N.add 0%N (List.map T_step xs) + 5 * N.of_nat (length xs) +
+      N.of_nat (N.size_nat fuel) + 3 +
+      match step last with inl _ => 0 | inr _ => T_step last end)%N.
+Proof.
+  intros fuel initial.
+  pose (Hfuel := Acc_intro_generator 32
+    (Inverse_Image.wf_inverse_image (N * St) N N.lt fst N.lt_wf_0)
+    (fuel, initial)).
+  destruct (loopN_acc_trace_clock step T_step (fuel, initial) Hfuel)
+    as [xs [last [Hpath Hclock]]].
+  exists xs, last; split; [exact Hpath|].
+  pose proof (fuel_zero_bits_le fuel) as Hbits.
+  change (T_loop loopN_lt (loopN_step step) (T_loopN_step step T_step)
+    (fuel, initial) Hfuel <=
+    fold_right N.add 0%N (List.map T_step xs) + 5 * N.of_nat (length xs) +
+    fuel_zero_bits fuel + 2 +
+    match step last with inl _ => 0 | inr _ => T_step last end)%N in Hclock.
+  time_unfold @T_loopN.
+  change (1 + T_loop loopN_lt (loopN_step step) (T_loopN_step step T_step)
+    (fuel, initial) Hfuel <=
+    fold_right N.add 0%N (List.map T_step xs) + 5 * N.of_nat (length xs) +
+    N.of_nat (N.size_nat fuel) + 3 +
+    match step last with inl _ => 0 | inr _ => T_step last end)%N.
+  lia.
+Qed.
+
+(** Positive source callback costs pay one unit for every entry of a finite trace. *)
+Lemma loop_trace_length_le {St : Type} (T_step : St -> N) :
+  (forall s, (1 <= T_step s)%N) -> forall xs,
+  (N.of_nat (length xs) <= fold_right N.add 0%N (List.map T_step xs))%N.
+Proof.
+  intros Hpositive xs; induction xs as [|s xs IH].
+  - reflexivity.
+  - cbn [length List.map fold_right]; rewrite Nat2N.inj_succ.
+    pose proof (Hpositive s); lia.
+Qed.
+
+(** Finite-prefix and stopping budgets bound the actual binary clock without a fuel factor. *)
+Lemma T_loopN_prefix_bound {St R : Type} (step : St -> St + R)
+    (T_step : St -> N) (Phi : St -> N) initial fuel Budget Stop :
+  (forall s, (1 <= T_step s)%N) ->
+  (forall xs last, wl_path step initial xs last ->
+    (fold_right N.add 0%N (List.map T_step xs) + Phi last <= Budget)%N) ->
+  (forall xs last result, wl_path step initial xs last -> step last = inr result ->
+    (T_step last <= Stop + Phi last)%N) ->
+  (T_loopN step T_step fuel initial <=
+    6 * Budget + Stop + N.of_nat (N.size_nat fuel) + 3)%N.
+Proof.
+  intros Hpositive Hprefix Hstop.
+  destruct (loopN_trace_clock step T_step fuel initial) as [xs [last [Hpath Hclock]]].
+  pose proof (Hprefix xs last Hpath) as Hbudget.
+  pose proof (loop_trace_length_le T_step Hpositive xs) as Hlength.
+  destruct (step last) as [next|result] eqn:Hlast; [lia|].
+  pose proof (Hstop xs last result Hpath Hlast); lia.
+Qed.
+
+
 Module Pos.
   TimeFun Stdlib.PArith.BinPos.Pos.max.
   TimeFun Stdlib.PArith.BinPos.Pos.min.
@@ -359,7 +542,6 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         L.c_lat * N.of_nat ((2 * B.wunits p + 1) * L.wsize (wp pol))))%N.
   Definition c_lookup : N := (S.c_sys + PTrieT.c_trie + 2)%N.
   Definition c_step : N := (64 * (S.c_sys + PTrieT.c_trie + 1))%N.
-  Definition c_wl : N := 1%N. (* STUB *)
   Definition k_prepare : N :=
     (4096 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
   Definition k_eval : N := (64 * (c_lookup + S.c_sys + 1))%N.
@@ -369,11 +551,14 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (512 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
   Definition k_credit : N :=
     (64 * (k_eval + k_update + c_step + S.c_sys + PTrieT.c_trie + Q.c_pq + c_loopN + 1))%N.
-  Definition k_round : N := 1%N. (* STUB *)
+  Definition k_round : N := (2 * k_credit)%N.
   Definition k_loop : N :=
     (64 * (k_prepare + k_eval + k_update + k_credit + k_round +
       c_step + c_loopN + Q.c_pq + 1))%N.
   Definition k_fuel : N := 1%N.
+  Definition c_wl : N :=
+    (16 * (k_prepare + k_credit + k_loop * (k_prepare + 1) +
+      c_loopN + Q.c_pq + 1))%N.
   Definition c_solve : N := c_wl.
 
   Definition work (p : S.prog) (pol : policy L.wparam) : N :=
@@ -5799,6 +5984,72 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     unfold k_fuel; rewrite N.mul_1_l; lia.
   Qed.
 
+  (** The advertised work contains preparation and at least one complete row round. *)
+  Lemma driver_work_bounds : forall p pol,
+    (N.of_nat (prep p) <= work p pol)%N /\
+    (N.of_nat (C p + D p) * unit p <= work p pol)%N /\
+    (N.of_nat (C p) * unit p <= work p pol)%N /\
+    (N.of_nat ((C p + D p) * rounds p pol) <= work p pol)%N.
+  Proof.
+    intros p pol.
+    assert (Hrounds : 1 <= rounds p pol) by (unfold rounds; lia).
+    assert (Hfactor_nat : C p + D p <= (C p + D p) * rounds p pol) by nia.
+    assert (Hfactor : (N.of_nat (C p + D p) <=
+      N.of_nat ((C p + D p) * rounds p pol))%N) by lia.
+    assert (Hrow : (N.of_nat ((C p + D p) * rounds p pol) * unit p <= work p pol)%N).
+    { unfold work; lia. }
+    assert (Hqueue : (N.of_nat (C p + D p) * unit p <= work p pol)%N).
+    { eapply N.le_trans; [apply N.mul_le_mono_r; exact Hfactor|exact Hrow]. }
+    split; [unfold work; lia|]; split; [exact Hqueue|]; split.
+    - eapply N.le_trans; [|exact Hqueue]; apply N.mul_le_mono_r; lia.
+    - pose proof (proj1 (time_unit_bounds p)) as Hunit.
+      eapply N.le_trans; [|exact Hrow].
+      clear -Hunit; nia.
+  Qed.
+
+  (** The global loop envelope has the same single work-and-bit-width bound. *)
+  Lemma driver_global_absorb : forall b bits,
+    (k_prepare * (2 * b + 1) + k_loop * ((k_prepare + 1) * b + bits + 1) + 2 <=
+      c_wl * (b + bits + 1))%N.
+  Proof.
+    intros b bits.
+    assert (Hwork : (2 * k_prepare + k_loop * (k_prepare + 1) <= c_wl)%N).
+    { unfold c_wl; nia. }
+    assert (Hbits : (k_loop <= c_wl)%N) by (unfold c_wl; nia).
+    assert (Hone : (k_prepare + k_loop + 2 <= c_wl)%N) by (unfold c_wl; nia).
+    replace (k_prepare * (2 * b + 1) + k_loop * ((k_prepare + 1) * b + bits + 1) + 2)%N
+      with ((2 * k_prepare + k_loop * (k_prepare + 1)) * b +
+        k_loop * bits + (k_prepare + k_loop + 2))%N by ring.
+    replace (c_wl * (b + bits + 1))%N with (c_wl * b + c_wl * bits + c_wl)%N by ring.
+    repeat apply N.add_le_mono; try assumption; apply N.mul_le_mono_r; assumption.
+  Qed.
+
+  (** Bit width never exceeds the represented positive value. *)
+  Lemma positive_bits_value : forall n, Pos.size_nat n <= Pos.to_nat n.
+  Proof.
+    intro n; induction n as [n IH|n IH|].
+    - rewrite Pos2Nat.inj_xI; cbn [Pos.size_nat]; lia.
+    - rewrite Pos2Nat.inj_xO; cbn [Pos.size_nat].
+      pose proof (Pos2Nat.is_pos n); lia.
+    - reflexivity.
+  Qed.
+
+  Lemma N_bits_value : forall n, (N.of_nat (N.size_nat n) <= n)%N.
+  Proof.
+    intros [|n]; [reflexivity|]; cbn [N.size_nat].
+    pose proof (positive_bits_value n); lia.
+  Qed.
+
+  (** Constructed fuel has bit width bounded by the already-advertised row work. *)
+  Lemma fuel_for_bits_le : forall p pol,
+    (N.of_nat (N.size_nat (fuel_for p pol)) <= work p pol + 1)%N.
+  Proof.
+    intros p pol; eapply N.le_trans; [apply N_bits_value|].
+    pose proof (proj2 (proj2 (proj2 (driver_work_bounds p pol)))) as Hwork.
+    unfold fuel_for, k_fuel; rewrite N.mul_1_l, Nat2N.inj_add.
+    change (N.of_nat 1) with 1%N; lia.
+  Qed.
+
   (** * Driver outcomes and global bounds *)
 
   (** A solved callback exposes its exact store and an empty live queue. *)
@@ -6009,6 +6260,64 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     destruct (step_solved_queue p pol s m Hstop) as [Hempty ->].
     eapply F9_reachable_inv; eassumption.
   Qed.
+  (** Height credit always includes the queue's own amortized potential. *)
+  Lemma driver_height_queue : forall p rk h s,
+    (queue_phi p s <= height_phi p rk h s)%N.
+  Proof. intros; unfold height_phi; lia. Qed.
+
+  (** The widening fallback also retains the complete queue potential. *)
+  Lemma driver_all_head_queue : forall p pol s,
+    (queue_phi p s <= all_head_phi p pol s)%N.
+  Proof. intros; unfold all_head_phi; lia. Qed.
+
+  (** One public constant absorbs preparation, state credit and binary-driver overhead. *)
+  Lemma driver_credit_absorb : forall a b bits,
+    (k_prepare * (a + b + 1) + 2 * k_credit * b + 2 * k_prepare * b +
+      k_loop * (b + 1) + c_loopN + c_loopN * (bits + 1) + 2 <=
+      c_wl * (a + b + bits + 1))%N.
+  Proof.
+    intros a b bits.
+    assert (Ha : (k_prepare <= c_wl)%N) by (unfold c_wl; nia).
+    assert (Hb : (3 * k_prepare + 2 * k_credit + k_loop <= c_wl)%N).
+    { unfold c_wl; nia. }
+    assert (Hbits : (c_loopN <= c_wl)%N) by (unfold c_wl; nia).
+    assert (Hone : (k_prepare + k_loop + 2 * c_loopN + 2 <= c_wl)%N).
+    { unfold c_wl; nia. }
+    replace (k_prepare * (a + b + 1) + 2 * k_credit * b + 2 * k_prepare * b +
+      k_loop * (b + 1) + c_loopN + c_loopN * (bits + 1) + 2)%N with
+      (k_prepare * a + (3 * k_prepare + 2 * k_credit + k_loop) * b +
+        c_loopN * bits + (k_prepare + k_loop + 2 * c_loopN + 2))%N by ring.
+    replace (c_wl * (a + b + bits + 1))%N with
+      (c_wl * a + c_wl * b + c_wl * bits + c_wl)%N by ring.
+    repeat apply N.add_le_mono; try assumption; apply N.mul_le_mono_r; assumption.
+  Qed.
+
+  (** A bounded initial credit gives the solver's public cost envelope. *)
+  Lemma T_run_budget : forall p pol fuel (Phi : state -> N) budget,
+    S.wf p -> prio_ok p pol -> (N.of_nat (C p) * unit p <= budget)%N ->
+    (Phi (prepare p pol) <= 2 * k_credit * budget + 2 * k_prepare * budget)%N ->
+    (forall s, (queue_phi p s <= Phi s)%N) ->
+    (forall s s1, reachable p pol s -> step p pol s = inl s1 ->
+      (T_step p pol s + c_loopN + Phi s1 <= Phi s)%N) ->
+    (T_run p pol fuel <= c_wl *
+      (N.of_nat (prep p) + budget + N.of_nat (N.size_nat fuel) + 1))%N.
+  Proof.
+    intros p pol fuel Phi budget Hwf Hprio Hcount Hinitial Hqueue Hcontinue.
+    assert (Hstop : forall s result, reachable p pol s -> step p pol s = inr result ->
+      (T_step p pol s + c_loopN <= Phi s +
+        (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN))%N).
+    { intros s result Hreachable Hstep.
+      pose proof (proj2 (W7_stop p pol s result Hwf Hprio Hreachable Hstep)) as Hcost.
+      pose proof (Hqueue s); lia. }
+    pose proof (T_run_credit p pol fuel Phi
+      (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN)%N Hcontinue Hstop) as Hcost.
+    pose proof (W1_prepare p pol Hwf Hprio) as Hprepare.
+    rewrite Nat2N.inj_add in Hcost; change (N.of_nat 1) with 1%N in Hcost.
+    set (queued_work := (N.of_nat (C p) * unit p)%N) in *.
+    eapply N.le_trans; [|apply driver_credit_absorb].
+    clear -Hcost Hprepare Hcount Hinitial; nia.
+  Qed.
+
   Lemma T_run_le : forall p pol fuel, fits p pol ->
     (T_run p pol fuel <= c_wl * (work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -6037,7 +6346,34 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (T_run p pol fuel <= c_wl *
       (N.of_nat (prep p) + N.of_nat (D p + h * DW p) * unit p +
         N.of_nat (N.size_nat fuel) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel rk h Hwf Hprio Hfree Hrank.
+    set (budget := (N.of_nat (D p + h * DW p) * unit p)%N).
+    assert (Hcount : (N.of_nat (C p) * unit p <= budget)%N).
+    { unfold budget; apply N.mul_le_mono_r.
+      pose proof (visits_C_le_D p); lia. }
+    assert (Hincidence : (N.of_nat (C p + D p) * unit p <= 2 * budget)%N).
+    { unfold budget; replace (2 * (N.of_nat (D p + h * DW p) * unit p))%N with
+        ((2 * N.of_nat (D p + h * DW p)) * unit p)%N by ring.
+      apply N.mul_le_mono_r; pose proof (visits_C_le_D p); lia. }
+    apply (T_run_budget p pol fuel (height_phi p rk h) budget); try assumption.
+    - pose proof (W4_initial p pol rk h Hwf Hprio Hfree) as Hheight.
+      pose proof (W1_queue_phi p pol Hwf Hprio) as Hqueue.
+      assert (Hq : (queue_phi p (prepare p pol) <= 2 * k_prepare * budget)%N).
+      { eapply N.le_trans; [exact Hqueue|].
+        replace (k_prepare * N.of_nat (C p + D p) * unit p)%N with
+          (k_prepare * (N.of_nat (C p + D p) * unit p))%N by ring.
+        replace (2 * k_prepare * budget)%N with (k_prepare * (2 * budget))%N by ring.
+        apply N.mul_le_mono_l; exact Hincidence. }
+      replace (k_credit * N.of_nat (D p + h * DW p) * unit p)%N with
+        (k_credit * budget)%N in Hheight by (unfold budget; ring).
+      clear -Hheight Hq; nia.
+    - intro s; apply driver_height_queue.
+    - intros s s1 Hreachable Hstep.
+      pose proof (W4_credit p pol rk h s s1 Hwf Hprio Hfree Hrank Hreachable Hstep).
+      lia.
+  Qed.
+
   Lemma T_run_all_heads_le : forall p pol fuel, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (T_run p pol fuel <= c_wl *
       (all_head_work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
