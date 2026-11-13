@@ -1531,6 +1531,60 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     reflexivity.
   Qed.
 
+  (** Allocating the next positive identifier increases the interval bound by one. *)
+  Lemma allocate_next_ids : forall db,
+    ids (allocate_id (N.succ_pos (ids db)) db) = N.succ (ids db).
+  Proof.
+    intro db. rewrite allocate_id_ids. apply N.succ_pos_spec.
+  Qed.
+
+  (** Every previously allocated identifier remains allocated after a fresh allocation. *)
+  Lemma allocate_next_monotone : forall db i, allocated db i ->
+    allocated (allocate_id (N.succ_pos (ids db)) db) i.
+  Proof.
+    intros db i Hi. unfold allocated in *. rewrite allocate_next_ids. lia.
+  Qed.
+
+  (** The next interval endpoint is absent from the current well-formed forest. *)
+  Lemma allocate_next_absent : forall db, wf db ->
+    ~ UnionFind.mem (db_forest db) (N.succ_pos (ids db)).
+  Proof.
+    intros db Hwf Hmember. apply (proj1 (wf_forest_members db Hwf _)) in Hmember.
+    unfold allocated in Hmember. rewrite N.succ_pos_spec in Hmember. lia.
+  Qed.
+
+  (** Fresh allocation extends exact forest membership to the new interval endpoint. *)
+  Lemma allocate_next_members : forall db, wf db -> forall i,
+    UnionFind.mem (db_forest (allocate_id (N.succ_pos (ids db)) db)) i <->
+      allocated (allocate_id (N.succ_pos (ids db)) db) i.
+  Proof.
+    intros db Hwf i.
+    change (UnionFind.mem (UnionFindCode.add (N.succ_pos (ids db)) (db_forest db)) i <->
+      (Npos i <= Npos (N.succ_pos (ids db)))%N).
+    rewrite N.succ_pos_spec.
+    exact (UnionFindCodeFacts.members_add_next (db_forest db) (ids db)
+      (wf_forest db Hwf) (wf_forest_members db Hwf) i).
+  Qed.
+
+  (** Fresh allocation increments the stored forest count and allocation bound together. *)
+  Lemma allocate_next_count : forall db, wf db ->
+    count (db_forest (allocate_id (N.succ_pos (ids db)) db)) =
+      ids (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf. rewrite allocate_next_ids.
+    change (count (UnionFindCode.add (N.succ_pos (ids db)) (db_forest db)) =
+      N.succ (ids db)).
+    rewrite UnionFindCodeFacts.count_add_absent by now apply allocate_next_absent.
+    now rewrite (wf_forest_count db Hwf).
+  Qed.
+
+  (** Adding the fresh singleton preserves every old representative. *)
+  Lemma allocate_next_repr : forall db, wf db -> forall i,
+    repr (allocate_id (N.succ_pos (ids db)) db) i = repr db i.
+  Proof.
+    intros db Hwf i. apply UnionFind.repr_add. exact (wf_forest db Hwf).
+  Qed.
+
   (** Every fresh make branch has the required layout and allocation observations. *)
   Lemma fresh_make_layout : forall db f k previous,
     let i := N.succ_pos (ids db) in
