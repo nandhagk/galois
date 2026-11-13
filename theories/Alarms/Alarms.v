@@ -43,11 +43,31 @@ Module Alarms (N X : KEY) (MN : MAP N) (L : LANG)
   Lemma alarms_spec : forall inv ks, alarms inv ks = filter (alarm inv) ks.
   Proof. reflexivity. Qed.
 
+  (** Successful operand evaluation is covered pointwise by the abstract state. *)
+  Lemma eval_operands_sound : forall es s st cs,
+    S.gamma s st -> eval_terms L.eval st es = Some cs ->
+    Forall2 V.gamma (map (fun e => S.eval e s) es) cs.
+  Proof.
+    unfold eval_terms. intros es s st cs Hgamma. revert cs.
+    induction es as [|e es IH]; intros cs Heval; cbn in Heval.
+    - inversion Heval. constructor.
+    - destruct (eval_term L.eval st e) as [c|] eqn:He; [|discriminate].
+      destruct (sequence (map (eval_term L.eval st) es)) as [vs|] eqn:Hes;
+        [|discriminate].
+      inversion Heval; subst cs. constructor.
+      + eapply S.eval_sound; eassumption.
+      + now apply IH.
+  Qed.
+
   Lemma no_alarm_safe : forall (reach : N.t -> (X.t -> L.val) -> Prop) inv,
     (forall n st, reach n st -> S.gamma (inv_at inv n) st) ->
     forall k, alarm inv k = false -> forall st cs,
     reach (site k) st -> eval_terms L.eval st (args k) = Some cs -> C.safe (ckind k) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros reach inv Hcovers k Hquiet st cs Hreach Heval.
+    eapply C.may_fail_sound; [exact Hquiet|].
+    eapply eval_operands_sound; [apply Hcovers; exact Hreach|exact Heval].
+  Qed.
 
   Lemma alarm_at_top : forall inv k, inv_at inv (site k) = S.top ->
     (forall e, In e (args k) -> S.eval e S.top = V.top) ->
