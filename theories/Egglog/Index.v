@@ -962,9 +962,6 @@ Module Index (V : VALUE) <: INDEX V.
                 exfalso. exact (empty_no_edge n code edge Hget).
   Qed.
 
-  Lemma wf_remove : forall a r ix, wf a ix -> wf a (remove r ix).
-  Proof. Admitted. (* STUB *)
-
   Lemma mem_arity : forall a ix u, wf a ix -> mem ix u -> length u = a.
   Proof.
     intros a ix u [_ Harity]. apply Harity.
@@ -2973,6 +2970,132 @@ Module Index (V : VALUE) <: INDEX V.
       exact Hpending.
   Qed.
 
+  Lemma pending_remove_dropped_other : forall ix n c edge q code out, shape ix ->
+    pending_remove_counts ix n -> (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    edge_count edge = 1%N -> stored_edge ix q code out ->
+    (q <> n \/ code <> encode_cell c) ->
+    pending_remove_edge (fst (remove_step_st (ix, n) c)) (snd (remove_step_st (ix, n) c)) out.
+  Proof.
+    intros ix n c edge q code out Hshape Hcounts Hbound Hget Hone Hout Hdiff.
+    assert (Hchild : child ix n c = Some (edge_child edge)).
+    { rewrite child_raw by exact (proj1 (proj2 Hshape)). now rewrite Hget. }
+    pose proof (remove_step_pointer ix n c (edge_child edge) Hchild) as Hpointer.
+    pose proof (remove_step_refines (ix, n) c Hshape) as Hrefines.
+    pose proof (remove_dropped_child ix n c edge (proj1 (proj2 Hshape)) Hbound Hget Hone)
+      as Hmissing.
+    pose proof (remove_dropped_other ix n c edge (proj1 (proj2 Hshape)) Hbound Hget Hone)
+      as Hother.
+    pose proof (remove_step_terminals (ix, n) c) as Hterminal.
+    assert (Hneq : edge_child out <> edge_child edge).
+    { intro Heq. destruct (stored_child_parent ix q code out n c (edge_child edge)
+        (proj2 (proj2 Hshape)) Hout Hchild Heq) as [Hnode Hcode]. tauto. }
+    assert (Hnoreach : ~ reaches (fst (remove_step_st (ix, n) c)) (edge_child out)
+      (snd (remove_step_st (ix, n) c))).
+    { rewrite Hpointer. eapply deleted_arc_unreachable;
+        [exact (proj2 (proj2 Hshape)) | exact Hrefines | exact Hchild |
+         exact Hmissing | exact Hneq]. }
+    destruct (Hcounts q code out Hout)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hnumber]]]]].
+    destruct pending.
+    - destruct (proj1 Hpending eq_refl) as [path Hpath].
+      destruct (pending_remove_singleton ix n (encode_cell c) edge Hshape Hcounts Hget Hone)
+        as [live Hsingle].
+      assert (Hin : In (path ++ c :: live) suffixes).
+      { apply Hmembers. unfold contains_from. rewrite seek_append, Hpath.
+        cbn [seek]. rewrite Hchild. apply Hsingle. reflexivity. }
+      destruct (nodup_without _ suffixes (path ++ c :: live) Hnodup Hin)
+        as [remaining [Hremaining [Hremaining_mem Hlength]]].
+      exists remaining, false. split; [exact Hremaining |]. split.
+      + intro r. rewrite Hremaining_mem, Hmembers.
+        rewrite (deleting_singleton_membership ix _ n c (edge_child edge)
+          (edge_child out) path live Hshape Hrefines Hchild Hmissing Hother Hterminal
+          Hpath Hsingle r). tauto.
+      + split.
+        * split; [discriminate |]. intro Hreach. contradiction.
+        * cbn in *. rewrite Hlength, Nat2N.inj_succ in Hnumber. lia.
+    - exists suffixes, false. split; [exact Hnodup |]. split.
+      + intro r. rewrite (deletion_outside_ancestors ix _ n c (edge_child edge)
+          (edge_child out) Hrefines Hchild Hother Hterminal).
+        * apply Hmembers.
+        * intro Hreach. assert (Hbad : false = true) by now apply Hpending. discriminate.
+      + split; [| exact Hnumber]. split; [discriminate |]. intro Hreach. contradiction.
+  Qed.
+
+  Lemma pending_remove_step : forall ix n c, shape ix -> edges_ok ix ->
+    pending_remove_counts ix n ->
+    pending_remove_counts (fst (remove_step_st (ix, n) c)) (snd (remove_step_st (ix, n) c)).
+  Proof.
+    intros ix n c Hshape Hedges Hcounts q code out Hout.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard.
+    - unfold remove_step_st in Hout |- *. rewrite Hguard in Hout |- *.
+      exact (Hcounts q code out Hout).
+    - assert (Hbound : (n <= next ix)%positive) by now apply Pos.ltb_ge.
+      destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+        as [edge |] eqn:Hget.
+      + destruct (N.eqb (edge_count edge) 1%N) eqn:Hone.
+        * unfold remove_step_st in Hout. rewrite Hguard, Hget, Hone in Hout.
+          cbn [fst] in Hout. apply stored_edge_drop in Hout as [Hdiff Hout].
+          eapply pending_remove_dropped_other; try eassumption. now apply N.eqb_eq.
+        * unfold remove_step_st in Hout. rewrite Hguard, Hget, Hone in Hout.
+          cbn [fst] in Hout.
+          apply stored_edge_put in Hout as [[-> [-> ->]] | [Hdiff Hout]].
+          -- apply pending_remove_kept_selected; try assumption.
+             ++ exact (proj1 (proj2 (proj2 (proj2 (Hedges n (encode_cell c) edge Hget))))).
+             ++ now apply N.eqb_neq.
+          -- eapply pending_remove_kept_other; try eassumption. now apply N.eqb_neq.
+      + unfold remove_step_st in Hout |- *. rewrite Hguard, Hget in Hout |- *.
+        exact (Hcounts q code out Hout).
+  Qed.
+
+  Lemma pending_remove_walk : forall r st, shape (fst st) -> edges_ok (fst st) ->
+    pending_remove_counts (fst st) (snd st) ->
+    pending_remove_counts (fst (fold_left remove_step_st r st))
+      (snd (fold_left remove_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros [ix n] Hshape Hedges Hcounts;
+      cbn [fold_left]; [exact Hcounts |].
+    apply IH.
+    - apply shape_remove_step. exact Hshape.
+    - apply edges_ok_remove_step. exact Hedges.
+    - now apply pending_remove_step.
+  Qed.
+
+  Lemma counted_edges_remove : forall ix r, shape ix -> edges_ok ix -> counted_edges ix ->
+    counted_edges (remove r ix).
+  Proof.
+    intros ix r Hshape Hedges Hcounts. unfold remove, remove_finish.
+    destruct (contains r ix) eqn:Hpresent; [| exact Hcounts].
+    set (st := fold_left remove_step_st r (start ix)).
+    assert (Hshape' : shape (fst st)) by (apply shape_remove_walk; exact Hshape).
+    assert (Hpending : pending_remove_counts (fst st) (snd st)).
+    { apply pending_remove_walk; [exact Hshape | exact Hedges |].
+      now apply pending_remove_start. }
+    unfold contains, contains_from in Hpresent.
+    destruct (seek ix (root ix) r) as [m |] eqn:Hpath; [| discriminate].
+    pose proof (remove_walk_pointer r (start ix) m Hshape Hpath) as Hpointer.
+    change (snd st = m) in Hpointer.
+    apply pending_remove_finish; [exact Hshape' | exact Hpending |].
+    rewrite Hpointer. unfold st. rewrite remove_walk_terminals. exact Hpresent.
+  Qed.
+
+  Lemma valid_remove : forall ix r, valid ix -> valid (remove r ix).
+  Proof.
+    intros ix r Hvalid. pose proof Hvalid as Hfields.
+    destruct Hfields as [Hedges [Hdegrees [_ [_ [_ Hcounts]]]]].
+    pose proof (valid_shape ix Hvalid) as Hshape.
+    pose proof (shape_remove ix r Hshape) as Hshape'.
+    split; [now apply edges_ok_remove |]. split; [now apply degrees_ok_remove |].
+    split; [exact (proj1 (proj2 Hshape')) |]. split; [now apply shape_paths_unique |].
+    split; [exact (proj2 (proj2 Hshape')) |]. now apply counted_edges_remove.
+  Qed.
+
+  Lemma wf_remove : forall a r ix, wf a ix -> wf a (remove r ix).
+  Proof.
+    intros a r ix [Hvalid Harity]. split; [now apply valid_remove |].
+    intros u Hmember. apply Harity. eapply remove_no_add; [now apply valid_shape | exact Hmember].
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
@@ -3981,7 +4104,9 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   Lemma remove_path : forall ix r, inv ix -> inv (remove r ix).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix r Hinv. now apply valid_remove.
+  Qed.
 
   Lemma T_insert_step_le : forall ix n c,
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
