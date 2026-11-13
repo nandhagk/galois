@@ -1834,3 +1834,286 @@ Proof.
       4096 1024 Hpositive Hcells Hmap Hsequence Hoperation ltac:(lia)) as Htotal.
     time_unfold (@T_zlinear_form). time_simpl. time_cbn_all. lia.
 Qed.
+
+(** The public bit envelope pays cubic syntactic work without referring to any derived clock. *)
+Definition syntax_envelope (mass : nat) : nat := (mass + 8) ^ 3.
+
+(** The public envelope contains both endpoint/form payloads and fixed overheads. *)
+Lemma syntax_envelope_large : forall mass, 16 * (mass + 1) <= syntax_envelope mass.
+Proof.
+  intro mass. unfold syntax_envelope. cbn [Nat.pow]. rewrite Nat.mul_1_r.
+  assert (Hsquare : 16 <= (mass + 8) * (mass + 8)).
+  { change (4 * 4 <= (mass + 8) * (mass + 8)). apply Nat.mul_le_mono; lia. }
+  replace (16 * (mass + 1)) with ((mass + 1) * 16) by ring.
+  apply Nat.mul_le_mono; [lia|exact Hsquare].
+Qed.
+
+(** Increasing a syntactic mass only increases its public envelope. *)
+Lemma syntax_envelope_mono : forall a b, a <= b -> syntax_envelope a <= syntax_envelope b.
+Proof.
+  intros a b Hab. unfold syntax_envelope. apply Nat.pow_le_mono_l. lia.
+Qed.
+
+(** The common recursive cost budget fits the public envelope. *)
+Lemma syntax_envelope_cost : forall mass, (mass + 1) ^ 3 <= syntax_envelope mass.
+Proof.
+  intro mass. unfold syntax_envelope. apply Nat.pow_le_mono_l. lia.
+Qed.
+
+(** An atom counts the coefficient occurrences on both sides. *)
+Definition atom_coefficients {X} (a : atom X) : nat :=
+  length (coef (al a)) + length (coef (ar a)).
+
+(** An atom charges both forms and both explicit wrap intervals. *)
+Definition atom_bits {X} (key_bits : X -> nat) (a : atom X) : nat :=
+  linear_bits key_bits (al a) + range_bits (alw a) +
+    linear_bits key_bits (ar a) + range_bits (arw a).
+
+(** Integer comparisons preserve the combined count and bit payload of their two forms. *)
+Lemma comparison_atom_size : forall X (key_bits : X -> nat) c f g,
+  atom_coefficients (comparison_atom c f g) <= length (coef f) + length (coef g) /\
+  atom_bits key_bits (comparison_atom c f g) <= linear_bits key_bits f + linear_bits key_bits g.
+Proof.
+  intros X key_bits c f g. destruct c.
+  - change (length (coef f) + length (coef g) <= length (coef f) + length (coef g) /\
+      linear_bits key_bits f + 0 + linear_bits key_bits g + 0 <=
+        linear_bits key_bits f + linear_bits key_bits g). split; lia.
+  - change (length (coef f) + length (coef g) <= length (coef f) + length (coef g) /\
+      linear_bits key_bits f + 0 + linear_bits key_bits g + 0 <=
+        linear_bits key_bits f + linear_bits key_bits g). split; lia.
+  - change (length (coef g) + length (coef f) <= length (coef f) + length (coef g) /\
+      linear_bits key_bits g + 0 + linear_bits key_bits f + 0 <=
+        linear_bits key_bits f + linear_bits key_bits g). split; lia.
+Qed.
+
+(** Reversing a wrapped atom preserves the combined count and payload of its operands. *)
+Lemma wrapped_atom_size : forall X (key_bits : X -> nat) c swap f g,
+  atom_coefficients (wrapped_atom c swap f g) <=
+    length (coef (fst f)) + length (coef (fst g)) /\
+  atom_bits key_bits (wrapped_atom c swap f g) <=
+    linear_bits key_bits (fst f) + range_bits (snd f) +
+      linear_bits key_bits (fst g) + range_bits (snd g).
+Proof.
+  intros X key_bits c swap [f fr] [g gr]. destruct swap.
+  - change (length (coef g) + length (coef f) <= length (coef f) + length (coef g) /\
+      linear_bits key_bits g + range_bits gr + linear_bits key_bits f + range_bits fr <=
+        linear_bits key_bits f + range_bits fr + linear_bits key_bits g + range_bits gr).
+    split; lia.
+  - change (length (coef f) + length (coef g) <= length (coef f) + length (coef g) /\
+      linear_bits key_bits f + range_bits fr + linear_bits key_bits g + range_bits gr <=
+        linear_bits key_bits f + range_bits fr + linear_bits key_bits g + range_bits gr).
+    split; lia.
+Qed.
+
+(** Every emitted word atom fits the syntax sizes of its original guard operands. *)
+Lemma bits_atoms_of_size : forall X (key_bits : X -> nat) is_signed g es,
+  length (bits_atoms_of is_signed g es) <= 2 * fold_right Nat.add 1 (map tsize es) /\
+  Forall (fun a =>
+    atom_coefficients a <= fold_right Nat.add 0 (map tsize es) /\
+    atom_bits key_bits a <= syntax_envelope
+      (fold_right Nat.add 0 (map (term_mass key_bits boperator_bits) es)))
+    (bits_atoms_of is_signed g es).
+Proof.
+  intros X key_bits is_signed [truth] [|e [|e' es]];
+    cbn [bits_atoms_of]; try (split; [apply Nat.le_0_l|constructor]).
+  destruct e as [x|o args]; [split; [apply Nat.le_0_l|constructor]|].
+  destruct o as [w z|o]; [split; [apply Nat.le_0_l|constructor]|].
+  destruct args as [|e1 [|e2 [|e3 args]]];
+    try (split; [apply Nat.le_0_l|constructor]).
+  cbn [bits_atoms_of].
+  destruct (word_comparison is_signed o) as [c|]; [|split; [apply Nat.le_0_l|constructor]].
+  destruct (guard_relation c truth) as [[d swap]|]; [|split; [apply Nat.le_0_l|constructor]].
+  destruct (bits_lin_of is_signed e1) as [[f1 r1]|] eqn:Hform1;
+    [|split; [apply Nat.le_0_l|constructor]].
+  destruct (bits_lin_of is_signed e2) as [[f2 r2]|] eqn:Hform2;
+    [|split; [apply Nat.le_0_l|constructor]].
+  destruct (bits_lin_of_size X key_bits is_signed e1 f1 r1 Hform1) as [Hlength1 Hbits1].
+  destruct (bits_lin_of_size X key_bits is_signed e2 f2 r2 Hform2) as [Hlength2 Hbits2].
+  destruct (wrapped_atom_size X key_bits d swap (f1, r1) (f2, r2)) as [Hlength Hbits].
+  cbn [fst snd] in Hlength, Hbits.
+  pose proof (syntax_envelope_large (fold_right Nat.add 0
+    (map (term_mass key_bits boperator_bits) [Node (BOp o) [e1; e2]]))) as Henvelope.
+  cbn [map fold_right tsize term_mass length] in Henvelope |- *.
+  split; [lia|]. constructor; [split; lia|constructor].
+Qed.
+
+Module Datatypes.
+  TimeFun option_map.
+
+  (** Mapping a constructor-only callback through an option has constant time. *)
+  Lemma T_option_map_le : forall A B (f : A -> B) k o,
+    (T_option_map f (fun _ => k) o <= k + 1)%N.
+  Proof.
+    intros A B f k [x|]; time_step.
+  Qed.
+End Datatypes.
+
+Module ZLinearizeT (X : KEY_T) <: LINEARIZE_ALL X ZLangT ZNum.
+  Include ZLinearize X.
+
+  Definition bits_e (e : term ZLangT.op X.t) : nat :=
+    syntax_envelope (term_mass X.bits zoperator_bits e).
+  Definition bits_es (_ : ZLangT.guard) (es : list (term ZLangT.op X.t)) : nat :=
+    syntax_envelope (fold_right Nat.add 0 (map (term_mass X.bits zoperator_bits) es)).
+  TimeFun lin_of.
+  TimeFun atoms_of.
+  Definition form_bits (f : lin X.t) : nat :=
+    fold_right Nat.max (Z.size_nat (cst f))
+      (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) (coef f)).
+  Definition wrap_bits (r : wrapr) : nat :=
+    match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end.
+
+  (** Integer forms keep linear coefficient count and fit the public syntax envelope. *)
+  Lemma lin_of_size : forall e f r, lin_of e = Some (f, r) ->
+    length (coef f) <= tsize e /\ form_bits f + wrap_bits r <= bits_e e.
+  Proof.
+    intros e f r Hlin. unfold lin_of in Hlin.
+    destruct (zlinear_form e) as [g|] eqn:Hform; [|discriminate].
+    inversion Hlin; subst f r.
+    destruct (zlinear_form_size X.t X.bits e g Hform) as [Hcoef Hbits].
+    pose proof (syntax_envelope_large (term_mass X.bits zoperator_bits e)) as Henvelope.
+    change (length (coef g) <= tsize e /\
+      linear_bits X.bits g + 0 <= syntax_envelope (term_mass X.bits zoperator_bits e)).
+    split; [exact Hcoef|]. rewrite Nat.add_0_r.
+    eapply Nat.le_trans; [exact Hbits|].
+    eapply Nat.le_trans; [|exact Henvelope]. lia.
+  Qed.
+
+  (** Emitted integer comparisons fit the source operand counts and payload envelope. *)
+  Lemma atoms_of_size : forall g es,
+    length (atoms_of g es) <= 2 * fold_right Nat.add 1 (map tsize es) /\
+    Forall (fun a =>
+      length (coef (al a)) + length (coef (ar a)) <= fold_right Nat.add 0 (map tsize es) /\
+      form_bits (al a) + wrap_bits (alw a) + form_bits (ar a) + wrap_bits (arw a) <=
+        bits_es g es) (atoms_of g es).
+  Proof.
+    intros g es.
+    change (length (atoms_of g es) <= 2 * fold_right Nat.add 1 (map tsize es) /\
+      Forall (fun a => atom_coefficients a <= fold_right Nat.add 0 (map tsize es) /\
+        atom_bits X.bits a <= bits_es g es) (atoms_of g es)).
+    destruct es as [|e1 [|e2 [|e3 es]]]; cbn [atoms_of];
+      try (split; [apply Nat.le_0_l|constructor]).
+    destruct (zlinear_form e1) as [f1|] eqn:Hform1;
+      [|split; [apply Nat.le_0_l|constructor]].
+    destruct (zlinear_form e2) as [f2|] eqn:Hform2;
+      [|split; [apply Nat.le_0_l|constructor]].
+    destruct (zlinear_form_size X.t X.bits e1 f1 Hform1) as [Hlength1 Hbits1].
+    destruct (zlinear_form_size X.t X.bits e2 f2 Hform2) as [Hlength2 Hbits2].
+    assert (Hatom : forall c,
+      atom_coefficients (comparison_atom c f1 f2) <=
+        fold_right Nat.add 0 (map tsize [e1; e2]) /\
+      atom_bits X.bits (comparison_atom c f1 f2) <= bits_es g [e1; e2]).
+    { intro c. destruct (comparison_atom_size X.t X.bits c f1 f2) as [Hcount Hbits].
+      pose proof (syntax_envelope_large (fold_right Nat.add 0
+        (map (term_mass X.bits zoperator_bits) [e1; e2]))) as Henvelope.
+      split.
+      - eapply Nat.le_trans; [exact Hcount|].
+        cbn [map fold_right]. rewrite Nat.add_0_r. apply Nat.add_le_mono; assumption.
+      - eapply Nat.le_trans; [exact Hbits|].
+        eapply Nat.le_trans.
+        + apply Nat.add_le_mono; [exact Hbits1|exact Hbits2].
+        + unfold bits_es. eapply Nat.le_trans; [|exact Henvelope].
+          cbn [map fold_right]. lia. }
+    destruct g as [c| |]; split.
+    - cbn [length map fold_right]. lia.
+    - constructor; [exact (Hatom c)|constructor].
+    - cbn [length map fold_right]. lia.
+    - constructor; [exact (Hatom Lt)|constructor].
+    - apply Nat.le_0_l.
+    - constructor.
+  Qed.
+
+  Definition c_linearize : N := 32768.
+
+  (** The integer linearizer's derived clock fits the syntax-sized public contract. *)
+  Lemma T_lin_of_le : forall e,
+    (T_lin_of e <= c_linearize * N.of_nat ((tsize e)%nat) *
+      N.of_nat ((bits_e e + 1)%nat))%N.
+  Proof.
+    intro e.
+    pose proof (zlinear_form_time X.t X.bits e (term_mass X.bits zoperator_bits e)
+      (Nat.le_refl _)) as Hrecursive.
+    pose proof (syntax_envelope_cost (term_mass X.bits zoperator_bits e)) as Henvelope.
+    assert (Hform : (T_zlinear_form e <= 4096 *
+      (N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat)))%N).
+    { eapply N.le_trans; [exact Hrecursive|].
+      replace (4096 * (N.of_nat ((tsize e)%nat) *
+        N.of_nat ((bits_e e + 1)%nat)))%N with
+        (4096 * N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat))%N by ring.
+      apply N.mul_le_mono; [apply N.le_refl|]. unfold bits_e.
+      apply time_of_nat_le. eapply Nat.le_trans; [exact Henvelope|].
+      apply Nat.le_add_r. }
+    assert (Hpositive : (1 <=
+      N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat))%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono.
+      - change (N.of_nat 1%nat <= N.of_nat ((tsize e)%nat))%N.
+        apply time_of_nat_le. apply term_size_pos.
+      - change (N.of_nat 1%nat <= N.of_nat ((bits_e e + 1)%nat))%N.
+        apply time_of_nat_le. apply Nat.le_add_l. }
+    clear Hrecursive Henvelope.
+    unfold c_linearize.
+    replace (32768 * N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat))%N
+      with (32768 * (N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat)))%N by ring.
+    set (work := (N.of_nat ((tsize e)%nat) *
+      N.of_nat ((bits_e e + 1)%nat))%N) in *. clearbody work.
+    time_step; lia.
+  Qed.
+
+  (** Guard recognition charges at most its two recognized operand traversals. *)
+  Lemma T_atoms_of_le : forall g es,
+    (T_atoms_of g es <= c_linearize *
+      N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+      N.of_nat ((bits_es g es + 1)%nat))%N.
+  Proof.
+    intros g es.
+    assert (Hchildren : Forall (fun e => (T_zlinear_form e <= 4096 *
+      (N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+        N.of_nat ((bits_es g es + 1)%nat)))%N) es).
+    { apply Forall_forall. intros e Hin.
+      pose proof (summed_size_member _ (term_mass X.bits zoperator_bits) es e Hin) as Hmass.
+      pose proof (summed_size_member _ (@tsize zview X.t) es e Hin) as Hnodes.
+      pose proof (zlinear_form_time X.t X.bits e
+        (fold_right Nat.add 0 (map (term_mass X.bits zoperator_bits) es)) Hmass) as Hform.
+      pose proof (syntax_envelope_cost
+        (fold_right Nat.add 0 (map (term_mass X.bits zoperator_bits) es))) as Henvelope.
+      eapply N.le_trans; [exact Hform|].
+      replace (4096 * (N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+        N.of_nat ((bits_es g es + 1)%nat)))%N with
+        (4096 * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+          N.of_nat ((bits_es g es + 1)%nat))%N by ring.
+      apply N.mul_le_mono.
+      - apply N.mul_le_mono; [apply N.le_refl|]. apply time_of_nat_le.
+        eapply Nat.le_trans; [exact Hnodes|]. apply Nat.le_add_r.
+      - unfold bits_es. apply time_of_nat_le.
+        eapply Nat.le_trans; [exact Henvelope|]. apply Nat.le_add_r. }
+    assert (Hpositive : (1 <=
+      N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+        N.of_nat ((bits_es g es + 1)%nat))%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono.
+      - change (N.of_nat 1%nat <=
+          N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat))%N.
+        apply time_of_nat_le. apply Nat.le_add_l.
+      - change (N.of_nat 1%nat <= N.of_nat ((bits_es g es + 1)%nat))%N.
+        apply time_of_nat_le. apply Nat.le_add_l. }
+    unfold c_linearize.
+    replace (32768 * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+      N.of_nat ((bits_es g es + 1)%nat))%N with
+      (32768 * (N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+        N.of_nat ((bits_es g es + 1)%nat)))%N by ring.
+    set (work := (N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
+      N.of_nat ((bits_es g es + 1)%nat))%N) in *. clearbody work.
+    destruct es as [|e1 [|e2 [|e3 es]]];
+      try solve [time_step; lia].
+    rewrite Forall_forall in Hchildren.
+    pose proof (Hchildren e1 (or_introl eq_refl)) as Htime1.
+    pose proof (Hchildren e2 (or_intror (or_introl eq_refl))) as Htime2.
+    clear Hchildren. time_step; lia.
+  Qed.
+
+  (** In-range values retain their value under the inclusive interval wrap. *)
+  Lemma wrap_into_id : forall lo hi z, (lo <= z <= hi)%Z ->
+    wrap_into (WrapTo lo hi) z = z.
+  Proof.
+    intros lo hi z Hbounds. unfold wrap_into. rewrite Z.mod_small by lia. lia.
+  Qed.
+End ZLinearizeT.
