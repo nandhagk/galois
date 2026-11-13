@@ -817,6 +817,93 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   TimeFun check_empty.
   TimeFun check_row.
   TimeFun check_entails.
+  (** The number of set bits pays for carry chains in nonnegative accumulation. *)
+  Fixpoint lc_ones (p : positive) : N :=
+    match p with
+    | xI q => (lc_ones q + 1)%N
+    | xO q => lc_ones q
+    | xH => 1%N
+    end.
+
+  (** A positive integer has no more set bits than binary digits. *)
+  Lemma lc_ones_le : forall p, (lc_ones p <= N.of_nat (Pos.size_nat p))%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_cbn; lia.
+  Qed.
+
+  (** A successor pays for every carry by removing set bits. *)
+  Lemma T_succ_ones : forall p,
+    (Pos.T_succ p + lc_ones (Pos.succ p) <= lc_ones p + 2)%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_unfold Pos.T_succ; time_cbn; lia.
+  Qed.
+
+  (** Addition charges the first operand's digits and the change of set-bit potential. *)
+  Lemma T_add_ones_both : forall p q,
+    (Pos.T_add p q + lc_ones (Pos.add p q) <=
+      3 * N.of_nat (Pos.size_nat p) + lc_ones q + 3)%N /\
+    (Pos.T_add_carry p q + lc_ones (Pos.add_carry p q) <=
+      3 * N.of_nat (Pos.size_nat p) + lc_ones q + 3)%N.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intros [q|q|];
+      time_unfold Pos.T_add; time_unfold Pos.T_add_carry; time_cbn;
+      try specialize (IH q);
+      try pose proof (T_succ_ones p); try pose proof (T_succ_ones q);
+      try pose proof (lc_ones_le p); try pose proof (lc_ones_le q); lia.
+  Qed.
+
+  (** The two addition clocks are symmetric in their inputs. *)
+  Lemma T_add_comm_both : forall p q,
+    Pos.T_add p q = Pos.T_add q p /\
+    Pos.T_add_carry p q = Pos.T_add_carry q p.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intros [q|q|];
+      time_unfold Pos.T_add; time_unfold Pos.T_add_carry; time_cbn;
+      try specialize (IH q); lia.
+  Qed.
+
+  (** The second operand can supply the charged digits of addition. *)
+  Lemma T_add_ones_right : forall p q,
+    (Pos.T_add p q + lc_ones (Pos.add p q) <=
+      3 * N.of_nat (Pos.size_nat q) + lc_ones p + 3)%N.
+  Proof.
+    intros p q. rewrite (proj1 (T_add_comm_both p q)), (Pos.add_comm p q).
+    exact (proj1 (T_add_ones_both q p)).
+  Qed.
+
+  (** Shift-and-add multiplication amortizes its internal carry chains. *)
+  Lemma T_mul_ones : forall p q,
+    (Pos.T_mul p q + lc_ones (Pos.mul p q) <=
+      6 * N.of_nat (Pos.size_nat p) * (N.of_nat (Pos.size_nat q) + 1) + lc_ones q)%N.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intro q;
+      time_unfold Pos.T_mul; time_cbn; try specialize (IH q).
+    - pose proof (proj1 (T_add_ones_both q (xO (Pos.mul p q)))) as Hadd.
+      time_cbn_all. nia.
+    - nia.
+    - nia.
+  Qed.
+
+  (** Positive multiplication is bilinear in operand bit lengths. *)
+  Lemma T_pos_mul_bilinear : forall p q,
+    (Pos.T_mul p q <=
+      7 * N.of_nat (Pos.size_nat p) * (N.of_nat (Pos.size_nat q) + 1))%N.
+  Proof.
+    intros p q. pose proof (T_mul_ones p q) as Hmul.
+    pose proof (lc_ones_le q) as Hones.
+    pose proof (Pos.size_nat_pos p) as Hpositive. nia.
+  Qed.
+
+  (** Signed multiplication has the same bilinear bound with its sign dispatch. *)
+  Lemma T_Z_mul_bilinear : forall x y,
+    (Z.T_mul x y <=
+      8 * N.of_nat (Z.size_nat x + 1) * N.of_nat (Z.size_nat y + 1))%N.
+  Proof.
+    intros [|p|p] [|q|q]; time_unfold Z.T_mul; time_cbn;
+      try pose proof (T_pos_mul_bilinear p q); nia.
+  Qed.
+
+
   Definition c_lc : N := 1. (* STUB *)
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
