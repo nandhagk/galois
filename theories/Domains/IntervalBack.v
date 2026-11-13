@@ -4,8 +4,8 @@
     For example, equality to one refines both operands of an equality test.
     Builds on: IntervalOps and fixed-width word operators. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
-From Argent Require Import Time Std.
+From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSig WordSig.
 Import List.ListNotations.
@@ -889,107 +889,379 @@ Module IntervalPayloadT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
 
   Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + interval_bits a + 1.
   Definition pwsize (q : pwparam) : nat := (T.depth q + 1) * (T.tree_bits q + 1).
-  Definition c_payload : N := 1%N. (* STUB *)
-  Definition k_payload_clip : N := 1%N. (* STUB *)
+  Definition k_payload_clip : N := (64 * (Scalar.c_scalar + 1))%N.
+  Definition c_payload : N := (32 * (k_payload_clip + Scalar.c_scalar + 1))%N.
+
+  (** A nonnegative integer below a power of two fits within that exponent. *)
+  Lemma payload_bits_below_pow : forall z k,
+    (0 <= z < 2 ^ Z.of_nat k)%Z -> Z.size_nat z <= k.
+  Proof.
+    intros [|z|z] k Hrange; cbn [Z.size_nat]; try lia.
+    now apply Zpower2_Psize.
+  Qed.
+
+  (** Normalized word values use at most their declared number of bits. *)
+  Lemma payload_word_bits : forall w z, Word.is_word w z ->
+    Z.size_nat z <= Pos.to_nat w.
+  Proof.
+    intros w z Hword. apply payload_bits_below_pow.
+    rewrite positive_nat_Z. exact Hword.
+  Qed.
+
+  (** The word modulus requires one extra bit beyond the width. *)
+  Lemma payload_modulus_bits : forall w,
+    Z.size_nat (Word.modulus w) <= Pos.to_nat w + 1.
+  Proof.
+    intro w. apply payload_bits_below_pow. split.
+    - pose proof (Word.modulus_pos w); lia.
+    - rewrite Word.modulus_value, Nat2Z.inj_add, positive_nat_Z.
+      apply Z.pow_lt_mono_r; lia.
+  Qed.
+
+  (** The largest unsigned value stays within the word width. *)
+  Lemma payload_cap_bits : forall w,
+    Z.size_nat (Word.modulus w - 1) <= Pos.to_nat w.
+  Proof.
+    intro w. apply payload_word_bits. unfold Word.is_word.
+    pose proof (Word.modulus_pos w); lia.
+  Qed.
+
+  (** The unsigned top interval stores only a width-sized upper endpoint. *)
+  Lemma payload_top_bits : forall w, interval_bits (interval_top w) <= Pos.to_nat w.
+  Proof.
+    intro w. unfold interval_top, interval_bits. cbn [Z.size_nat].
+    apply payload_cap_bits.
+  Qed.
+
+  (** Clipping removes infinities and bounds both finite endpoints by the width. *)
+  Lemma payload_clip_bits : forall w a, interval_bits (interval_clip w a) <= Pos.to_nat w.
+  Proof.
+    intros w a. destruct (interval_clip_shape w a) as [Hbot|[lo [hi [Hshape Hrange]]]].
+    - rewrite Hbot. cbn [interval_bits]; lia.
+    - rewrite Hshape. cbn [interval_bits]. apply Nat.max_lub; apply payload_word_bits;
+        unfold Word.is_word; lia.
+  Qed.
+
+  (** Joining chooses one endpoint from each side of its operands. *)
+  Lemma payload_raw_join_bits : forall a b,
+    interval_bits (Scalar.interval_join a b) <= interval_bits a + interval_bits b.
+  Proof.
+    intros [|lo hi] [|lo' hi']; cbn [Scalar.interval_join interval_bits]; try lia.
+    unfold Scalar.bound_min, Scalar.bound_max.
+    destruct (Scalar.bound_leb lo lo'), (Scalar.bound_leb hi hi');
+      cbn [interval_bits]; lia.
+  Qed.
+
+  (** Intersecting selects existing endpoints or returns bottom. *)
+  Lemma payload_raw_meet_bits : forall a b,
+    interval_bits (Scalar.interval_meet a b) <= interval_bits a + interval_bits b.
+  Proof.
+    intros [|lo hi] [|lo' hi']; cbn [Scalar.interval_meet interval_bits]; try lia.
+    destruct (Scalar.bounds_nonempty (Scalar.bound_max lo lo') (Scalar.bound_min hi hi'));
+      cbn [interval_bits]; try lia.
+    unfold Scalar.bound_min, Scalar.bound_max.
+    destruct (Scalar.bound_leb lo lo'), (Scalar.bound_leb hi hi'); lia.
+  Qed.
+
+  (** Narrowing chooses its endpoints from the two operands. *)
+  Lemma payload_raw_narrow_bits : forall a b,
+    interval_bits (Scalar.interval_narrow a b) <= interval_bits a + interval_bits b.
+  Proof.
+    intros [|lo hi] [|lo' hi']; cbn [Scalar.interval_narrow interval_bits]; try lia.
+    destruct lo, hi; cbn [Scalar.narrow_bound interval_bits]; lia.
+  Qed.
+
+  (** Repeated multiplication by two costs a constant per output bit. *)
+  Lemma payload_modulus_time : forall w,
+    (Word.T_modulus w <= 5 * N.of_nat (Pos.to_nat w) + 3)%N.
+  Proof.
+    intro w. pose proof (Std.Pos.T_iter_le (Z.mul 2)
+      (fun x => Std.Z.T_mul 2 x) (fun _ => True) 3 1%Z w
+      ltac:(easy) ltac:(intros; apply Std.Z.T_mul_two_le) ltac:(constructor)) as Hiter.
+    unfold Word.T_modulus, Word.Z.T_pow, Word.Z.T_pow_pos. cbn beta iota zeta.
+    rewrite <- (N2Nat.id (N.pos w)) in Hiter. change (N.to_nat (N.pos w)) with (Pos.to_nat w)
+      in Hiter. lia.
+  Qed.
+
+  (** Concrete wrapping charges the width and raw literal bits. *)
+  Lemma payload_wrap_time : forall w z,
+    (Word.T_wrap w z <= k_payload_clip *
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof.
+    intros w z. pose proof (payload_modulus_time w).
+    pose proof (payload_modulus_bits w). pose proof (Pos2Nat.is_pos w).
+    pose proof (Std.Z.T_modulo_le z (Word.modulus w)).
+    unfold Word.T_wrap, k_payload_clip.
+    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Clipping pays for the word bound and the raw endpoint bits. *)
+  Lemma payload_shared_clip_time : forall w a,
+    (T_interval_payload_clip Scalar.interval_meet Scalar.T_interval_meet w a <=
+      k_payload_clip * N.of_nat (psize w a + 1))%N.
+  Proof.
+    intros w a. pose proof (payload_modulus_time w).
+    pose proof (payload_modulus_bits w). pose proof (payload_top_bits w).
+    pose proof (Std.Z.T_sub_le (Word.modulus w) 1) as Hsub.
+    change (Std.Z.T_sub (Word.modulus w) 1 <=
+      3 * N.of_nat (Z.size_nat (Word.modulus w) + 1) + 3)%N in Hsub.
+    pose proof (Scalar.T_interval_meet_le a (interval_top w)).
+    unfold T_interval_payload_clip. fold (interval_top w).
+    unfold psize, k_payload_clip. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The local clipping wrapper adds one call to the shared clipping cost. *)
+  Lemma payload_clip_time : forall w a,
+    (T_interval_clip w a <= (k_payload_clip + 1) * N.of_nat (psize w a + 1))%N.
+  Proof.
+    intros w a. pose proof (payload_shared_clip_time w a).
+    change (1 + T_interval_payload_clip Scalar.interval_meet Scalar.T_interval_meet w a <=
+      (k_payload_clip + 1) * N.of_nat (psize w a + 1))%N.
+    unfold psize in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Inclusion pays for two clips and one scalar comparison. *)
+  Lemma payload_leb_time : forall w a b,
+    (T_pleb w a b <= 4 * (k_payload_clip + Scalar.c_scalar + 1) *
+      N.of_nat (psize w a + psize w b + 1))%N.
+  Proof.
+    intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
+    pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+    pose proof (Scalar.T_interval_leb_le (interval_clip w a) (interval_clip w b)).
+    unfold T_pleb, psize in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** A larger coefficient and size budget preserve an established time bound. *)
+  Lemma payload_time_weaken : forall (cost c d : N) (n m : nat),
+    (cost <= c * N.of_nat n)%N -> (c <= d)%N -> n <= m ->
+    (cost <= d * N.of_nat m)%N.
+  Proof.
+    intros cost c d n m Hcost Hcoeff Hsize. eapply N.le_trans; [exact Hcost|].
+    apply N.mul_le_mono; [exact Hcoeff|lia].
+  Qed.
+
+
 
   (** Joined payloads fit within the combined operand sizes. *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+    pose proof (payload_raw_join_bits (interval_clip w a) (interval_clip w b)).
+    unfold pjoin, psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+  Qed.
   (** Met payloads fit within the combined operand sizes. *)
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+    pose proof (payload_raw_meet_bits (interval_clip w a) (interval_clip w b)).
+    unfold pmeet, psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+  Qed.
   (** Widened payloads fit within the operand and parameter sizes. *)
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    - unfold psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+    - pose proof (payload_clip_bits w
+        (Scalar.interval_stable_widen q (interval_clip w a) (interval_clip w b))).
+      unfold psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+  Qed.
   (** Narrowed payloads fit within the combined operand sizes. *)
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+    pose proof (payload_raw_narrow_bits (interval_clip w a) (interval_clip w b)).
+    unfold pnarrow, psize, c_payload, k_payload_clip. rewrite !Nat2N.inj_add. nia.
+  Qed.
   (** Payload widening charges both operands and its parameters. *)
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b.
+    set (budget := psize w a + psize w b + pwsize q + 1).
+    set (k := (k_payload_clip + Scalar.c_scalar + 1)%N).
+    assert (Hk : (1 <= k)%N) by (unfold k; lia).
+    assert (Hbudget : (1 <= N.of_nat budget)%N) by (unfold budget; lia).
+    assert (Hleb : (T_pleb w b a <= 4 * k * N.of_nat budget)%N).
+    { eapply payload_time_weaken; [apply payload_leb_time|unfold k; lia|].
+      unfold budget; lia. }
+    assert (Hclipa : (T_interval_clip w a <= k * N.of_nat budget)%N).
+    { eapply payload_time_weaken; [apply payload_clip_time|unfold k; lia|].
+      unfold budget; lia. }
+    assert (Hclipb : (T_interval_clip w b <= k * N.of_nat budget)%N).
+    { eapply payload_time_weaken; [apply payload_clip_time|unfold k; lia|].
+      unfold budget; lia. }
+    assert (Hwiden :
+      (Scalar.T_interval_stable_widen q (interval_clip w a) (interval_clip w b) <=
+        k * N.of_nat budget)%N).
+    { eapply payload_time_weaken;
+        [apply Scalar.T_interval_stable_widen_le|unfold k; lia|].
+      pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+      unfold budget, psize, pwsize. lia. }
+    assert (Hresult :
+      (T_interval_clip w
+        (Scalar.interval_stable_widen q (interval_clip w a) (interval_clip w b)) <=
+        k * N.of_nat (2 * budget))%N).
+    { eapply payload_time_weaken; [apply payload_clip_time|unfold k; lia|].
+      pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+      pose proof (Scalar.interval_stable_widen_bits q (interval_clip w a) (interval_clip w b)).
+      assert (Htree : T.tree_bits q <= pwsize q) by (unfold pwsize; nia).
+      unfold budget, psize. lia. }
+    rewrite Nat2N.inj_mul in Hresult.
+    unfold T_pwiden, c_payload. fold k budget.
+    clearbody k budget.
+    destruct (pleb w b a); nia.
+  Qed.
   (** Payload narrowing charges both raw payload sizes. *)
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
+    pose proof (Scalar.T_interval_narrow_le (interval_clip w a) (interval_clip w b)).
+    unfold T_pnarrow, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   (** Payload inclusion charges both raw payload sizes. *)
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_leb_time w a b). unfold c_payload. nia.
+  Qed.
   (** Payload join charges both raw payload sizes. *)
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
+    pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+    pose proof (Scalar.T_interval_join_le (interval_clip w a) (interval_clip w b)).
+    unfold T_pjoin, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   (** Payload meet charges both raw payload sizes. *)
   Lemma T_pmeet_le : forall w a b,
     (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (payload_clip_time w a). pose proof (payload_clip_time w b).
+    pose proof (payload_clip_bits w a). pose proof (payload_clip_bits w b).
+    pose proof (Scalar.T_interval_meet_le (interval_clip w a) (interval_clip w b)).
+    unfold T_pmeet, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   (** Payload bottom recognition charges the raw endpoint bits and width. *)
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (payload_clip_time w a).
+    pose proof (Scalar.T_interval_is_bot_le (interval_clip w a)).
+    unfold T_pis_bot, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   (** Payload point recognition charges the raw endpoint bits and width. *)
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (payload_clip_time w a). pose proof (payload_clip_bits w a).
+    pose proof (Scalar.T_interval_singleton_le (interval_clip w a)).
+    unfold T_ppoint, psize, c_payload in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   (** Constant abstraction charges the width and raw literal bits. *)
   Lemma T_pconst_le : forall w z,
     (T_pconst w z <= c_payload *
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (payload_wrap_time w z).
+    unfold T_pconst, c_payload. rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    nia.
+  Qed.
   (** Payload size charges its width and the raw endpoint bits. *)
   Lemma F_psize : forall w a, psize w a = Pos.to_nat w + interval_bits a + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Widening parameter size charges a threshold search path. *)
   Lemma F_pwsize : forall q, pwsize q = (T.depth q + 1) * (T.tree_bits q + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Payload rank never exceeds the scalar threshold envelope. *)
   Lemma F_pwrank_le : forall q w a, pwrank q w a <= 2 * (length (T.vals q) + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a. unfold pwrank, payload_wrank.
+    destruct (interval_payload_clip Scalar.interval_meet w a) as [|lo hi]; [lia|].
+    assert (Hgt : forall z, count_gt q z <= length (T.vals q)).
+    { intro z. unfold count_gt. apply filter_length_le. }
+    assert (Hlt : forall z, count_lt q z <= length (T.vals q)).
+    { intro z. unfold count_lt. apply filter_length_le. }
+    destruct lo as [|lo|], hi as [|hi|]; cbn beta iota zeta;
+      try specialize (Hgt hi); try specialize (Hlt lo);
+      repeat match goal with |- context [if ?b then _ else _] => destruct b end; lia.
+  Qed.
   (** Constructing the unsigned modulus charges the resulting word width. *)
   Lemma T_modulus_le : forall w,
     (Word.T_modulus w <= k_payload_clip * N.of_nat (Pos.to_nat w + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (payload_modulus_time w).
+    unfold k_payload_clip. rewrite Nat2N.inj_add. nia.
+  Qed.
   (** Concrete wrapping charges the width and raw literal bits. *)
   Lemma T_wrap_le : forall w z,
     (Word.T_wrap w z <= k_payload_clip *
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact payload_wrap_time.
+  Qed.
   (** Clipping pays for the word bound and the raw endpoint bits. *)
   Lemma T_clip_le : forall w a,
     (T_interval_payload_clip Scalar.interval_meet Scalar.T_interval_meet w a <=
       k_payload_clip * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact payload_shared_clip_time.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (payload_modulus_time w). pose proof (payload_modulus_bits w).
+    pose proof (Std.Z.T_sub_le (Word.modulus w) 1) as Hsub.
+    change (Std.Z.T_sub (Word.modulus w) 1 <=
+      3 * N.of_nat (Z.size_nat (Word.modulus w) + 1) + 3)%N in Hsub.
+    unfold T_ptop, T_interval_top, c_payload, k_payload_clip.
+    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_pbot_le : forall w,
     (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold T_pbot, c_payload, k_payload_clip.
+    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma ptop_size : forall w,
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (payload_top_bits w). unfold ptop, psize, c_payload, k_payload_clip.
+    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold pbot, psize, interval_bits, c_payload, k_payload_clip.
+    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pconst_size : forall w z,
     (N.of_nat (psize w (pconst w z)) <=
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (payload_word_bits w (Word.wrap w z) (Word.wrap_is_word w z)).
+    unfold pconst, psize, interval_bits, c_payload, k_payload_clip. rewrite Nat.max_id.
+    rewrite Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+  Qed.
 End IntervalPayloadT.
 
 Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T)
@@ -1560,7 +1832,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* SIG-QUESTION: bvite permits rw mismatch without a raw payload size envelope. *)
+  Proof. Admitted. (* SIG-QUESTION: bvite permits rw mismatch without a raw size envelope. *)
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
