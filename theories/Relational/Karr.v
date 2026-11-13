@@ -3801,6 +3801,207 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       | REq => rhs s = (sc * rhs r)%Z
       | RLe => (rhs s <= sc * rhs r)%Z
       end.
+(** An equality combination assigns zero weight to every inequality source. *)
+  Lemma span_equality_weights : forall P ms,
+    C.admissible P ms -> C.comb_eq P ms = true -> equality_weights P ms.
+  Proof.
+    intros P ms [_ Hadmissible].
+    induction Hadmissible as [|p m P ms Hnonnegative Htail IH]; intro Heq.
+    - constructor.
+    - change ((match lrel p with REq => true | RLe => Z.eqb m 0 end &&
+        C.comb_eq P ms) = true) in Heq.
+      apply andb_true_iff in Heq as [Hhead Hrest]. constructor.
+      + intro Hrel. rewrite Hrel in Hhead. now apply Z.eqb_eq.
+      + now apply IH.
+  Qed.
+
+  (** A frozen combination witness has the coefficient form of an equality certificate. *)
+  Lemma span_combination_certificate : forall P r ms s sc,
+    C.combine P ms = Some s -> lrel s = REq -> (0 < sc)%Z ->
+    (forall v : X.t -> Z, eval_coef v (lhs s) = (sc * eval_coef v (lhs r))%Z) ->
+    (match lrel r with
+     | REq => rhs s = (sc * rhs r)%Z
+     | RLe => (rhs s <= sc * rhs r)%Z
+     end) -> equality_certificate P r ms sc.
+  Proof.
+    intros P r ms s sc Hcombine Hrel Hscale Heval Hright.
+    pose proof (C.combine_admissible P ms s Hcombine) as Hadmissible.
+    destruct (C.combine_spec P ms Hadmissible)
+      as [u [Hcombined [Hcoef [Hrhs Hkind]]]].
+    rewrite Hcombine in Hcombined. injection Hcombined as Hsame. subst u.
+    assert (Hweights : equality_weights P ms).
+    { apply span_equality_weights; [exact Hadmissible |].
+      destruct (C.comb_eq P ms); [reflexivity | congruence]. }
+    unfold equality_certificate. split; [exact Hweights |]. split; [exact Hscale |].
+    split.
+    - intro x. rewrite <- Hcoef.
+      change (coefficient x (lhs s) = (sc * coefficient x (lhs r))%Z).
+      rewrite !coefficient_as_eval. apply Heval.
+    - destruct (lrel r); rewrite <- Hrhs; exact Hright.
+  Qed.
+
+  (** A literal equality is represented by its original position's unit vector. *)
+  Lemma span_literal_certificate : forall P r,
+    In r P -> lrel r = REq -> exists ms sc, equality_certificate P r ms sc.
+  Proof.
+    intros P r Hin Hrel. apply In_nth_error in Hin as [i Hnth].
+    exists (karr_unit (length P) i), 1%Z. unfold equality_certificate.
+    split; [now apply equality_weights_unit with (p := r) |]. split; [lia |]. split.
+    - intro x. change (C.comb_coef P (karr_unit (length P) i) x =
+        (1 * coefficient x (lhs r))%Z).
+      rewrite (comb_coef_unit P i r x Hnth). ring.
+    - rewrite Hrel, (comb_rhs_unit P i r Hnth). ring.
+  Qed.
+
+  (** Every equality in the frozen span has an explicit positive-scale certificate. *)
+  Lemma span_equality_certificate : forall P r,
+    in_span P r -> lrel r = REq -> exists ms sc, equality_certificate P r ms sc.
+  Proof.
+    intros P r Hspan Hrel. destruct Hspan as [Hin|[ms [s [sc Hcertificate]]]].
+    - now apply span_literal_certificate.
+    - destruct Hcertificate as [Hcombine [Hkind [Hscale [Heval Hrhs]]]].
+      exists ms, sc. now apply span_combination_certificate with (s := s).
+  Qed.
+
+  (** Positive common denominators lift an entire equality combination to its sources. *)
+  Lemma span_lift_weights : forall A B ns,
+    Forall (fun r => lrel r = REq -> exists ms sc, equality_certificate A r ms sc) B ->
+    equality_weights B ns ->
+    exists ms d, equality_weights A ms /\ (0 < d)%Z /\
+      (forall x, C.comb_coef A ms x = (d * C.comb_coef B ns x)%Z) /\
+      C.comb_rhs A ms = (d * C.comb_rhs B ns)%Z.
+  Proof.
+    intros A B ns Hsources Hweights. revert Hsources.
+    induction Hweights as [|p m B ns Hzero Hrest IH]; intro Hsources.
+    - exists (repeat 0%Z (length A)), 1%Z.
+      split; [apply equality_weights_zero |]. split; [lia |]. split.
+      + intro x. change (row_sum A (repeat 0%Z (length A))
+          (fun r => C.coef_of x (lhs r)) = (1 * 0)%Z).
+        rewrite row_sum_zero. ring.
+      + change (row_sum A (repeat 0%Z (length A)) rhs = (1 * 0)%Z).
+        rewrite row_sum_zero. ring.
+    - inversion Hsources as [|p' B' Hhead Htail]; subst p' B'.
+      destruct (IH Htail) as [ms [d [Hms [Hd [Hcoef Hrhs]]]]].
+      destruct (lrel p) eqn:Hrel.
+      + assert (Hcertificate : exists hs hd, equality_certificate A p hs hd).
+        { apply Hhead. auto. }
+        destruct Hcertificate as [hs [hd [Hhs [Hhd [Hheadcoef Hheadrhs]]]]].
+        rewrite Hrel in Hheadrhs.
+        assert (Hlength : length ms = length hs).
+        { rewrite <- (equality_weights_length A ms Hms),
+            <- (equality_weights_length A hs Hhs). reflexivity. }
+        exists (karr_cross hd (-(d * m))%Z ms hs), (d * hd)%Z.
+        split; [now apply equality_weights_cross |]. split; [nia |]. split.
+        * intro x. change (C.comb_coef A (karr_cross hd (-(d * m))%Z ms hs) x =
+            ((d * hd) * (m * C.coef_of x (lhs p) + C.comb_coef B ns x))%Z).
+          rewrite comb_coef_cross by exact Hlength. rewrite Hcoef, Hheadcoef. ring.
+        * change (C.comb_rhs A (karr_cross hd (-(d * m))%Z ms hs) =
+            ((d * hd) * (m * rhs p + C.comb_rhs B ns))%Z).
+          rewrite comb_rhs_cross by exact Hlength. rewrite Hrhs, Hheadrhs. ring.
+      + assert (Hm : m = 0%Z) by (apply Hzero; auto). exists ms, d.
+        split; [exact Hms |]. split; [exact Hd |]. split.
+        * intro x. change (C.comb_coef A ms x =
+            (d * (m * C.coef_of x (lhs p) + C.comb_coef B ns x))%Z).
+          rewrite Hm, Hcoef. ring.
+        * change (C.comb_rhs A ms = (d * (m * rhs p + C.comb_rhs B ns))%Z).
+          rewrite Hm, Hrhs. ring.
+  Qed.
+
+  (** Composing equality certificates multiplies their positive scales. *)
+  Lemma span_compose_certificate : forall A B r ns sc,
+    Forall (fun p => lrel p = REq -> exists ms d, equality_certificate A p ms d) B ->
+    equality_certificate B r ns sc -> exists ms scale, equality_certificate A r ms scale.
+  Proof.
+    intros A B r ns sc Hsources [Hweights [Hscale [Hcoef Hrhs]]].
+    destruct (span_lift_weights A B ns Hsources Hweights)
+      as [ms [d [Hms [Hd [Hliftcoef Hliftrhs]]]]].
+    exists ms, (d * sc)%Z. unfold equality_certificate.
+    split; [exact Hms |]. split; [nia |]. split.
+    - intro x. rewrite Hliftcoef, Hcoef. ring.
+    - rewrite Hliftrhs. destruct (lrel r); nia.
+  Qed.
+
+  (** A positive-scale equality certificate reconstructs a frozen span witness. *)
+  Lemma span_of_certificate : forall P r ms sc,
+    equality_certificate P r ms sc -> in_span P r.
+  Proof.
+    intros P r ms sc [Hweights [Hscale [Hcoef Hrhs]]].
+    destruct (C.combine_spec P ms (equality_weights_admissible P ms Hweights))
+      as [s [Hcombine [Hcombinedcoef [Hcombinedrhs Hkind]]]].
+    right. exists ms, s, sc. split; [exact Hcombine |]. split.
+    - rewrite (equality_weights_comb_eq P ms Hweights) in Hkind. exact Hkind.
+    - split; [exact Hscale |]. split.
+      + intro v. transitivity
+          (eval_coef v (map (fun p => (fst p, (sc * snd p)%Z)) (lhs r))).
+        * apply eval_coef_ext. intro x. rewrite coefficient_scale.
+          change (C.coef_of x (lhs s) = (sc * C.coef_of x (lhs r))%Z).
+          rewrite Hcombinedcoef. apply Hcoef.
+        * apply eval_coef_scale.
+      + destruct (lrel r); rewrite Hcombinedrhs; exact Hrhs.
+  Qed.
+
+  (** Frozen span membership composes without assuming the source has a model. *)
+  Lemma span_trans_row : forall A B r,
+    Forall (in_span A) B -> in_span B r -> in_span A r.
+  Proof.
+    intros A B r Hsources Hspan.
+    destruct Hspan as [Hin|[ns [s [sc [Hcombine [Hkind [Hscale [Heval Hrhs]]]]]]]].
+    - exact (proj1 (Forall_forall _ _) Hsources r Hin).
+    - assert (Hequalities : Forall
+        (fun p => lrel p = REq -> exists ms d, equality_certificate A p ms d) B).
+      { apply Forall_forall. intros p Hin Hrel. apply span_equality_certificate.
+        - exact (proj1 (Forall_forall _ _) Hsources p Hin).
+        - exact Hrel. }
+      assert (Hcertificate : equality_certificate B r ns sc).
+      { now apply span_combination_certificate with (s := s). }
+      destruct (span_compose_certificate A B r ns sc Hequalities Hcertificate)
+        as [ms [scale Hcomposed]].
+      now apply span_of_certificate with (ms := ms) (sc := scale).
+  Qed.
+
+  (* Replacement body for the frozen span_trans. *)
+  Lemma span_trans_draft : forall a b c,
+    Forall (in_span a) b -> Forall (in_span b) c -> Forall (in_span a) c.
+  Proof.
+    intros a b c Hab Hbc. apply Forall_forall. intros r Hin.
+    apply span_trans_row with (B := b); [exact Hab |].
+    exact (proj1 (Forall_forall _ _) Hbc r Hin).
+  Qed.
+
+  (** A tracked contradiction spans the fixed false equality with a positive scale. *)
+  Lemma span_of_contradiction : forall P ms, contradiction P = Some ms ->
+    in_span P (LCons X.t nil REq 1%Z).
+  Proof.
+    intros P ms Hempty. unfold contradiction in Hempty.
+    destruct (empty_certificate_has_row P _ ms Hempty)
+      as [r [Hin [Hzero [Hnonzero _]]]].
+    pose proof (proj1 (Forall_forall _ _)
+      (equality_basis_tracks P (variables P) (LCons X.t nil REq 0%Z)) r Hin) as Htracks.
+    pose proof (proj1 (Forall_forall _ _)
+      (equality_basis_scale_zero P (variables P)) r Hin) as Hscale.
+    assert (Hsupport : forall s, In s (LCons X.t nil REq 0%Z :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x (variables P)).
+    { intros s Hs x z Hterm. destruct Hs as [Hsame|Hs].
+      - subst s. contradiction.
+      - now apply variables_contains with (r := s) (z := z). }
+    pose proof (row_tracks_zero_coeff P (variables P) (LCons X.t nil REq 0%Z) r
+      Htracks Hsupport Hzero) as Hcoeff.
+    destruct Htracks as [Hweights [_ Hrhs]].
+    assert (Hcoeffzero : forall x, C.comb_coef P (kweight r) x = 0%Z).
+    { intro x. specialize (Hcoeff x). rewrite Hscale in Hcoeff. lia. }
+    assert (Hright : C.comb_rhs P (kweight r) = kright r).
+    { rewrite Hscale in Hrhs. lia. }
+    set (sign := if (kright r <? 0)%Z then (-1)%Z else 1%Z).
+    apply span_of_certificate with
+      (ms := map (fun z => (sign * z)%Z) (kweight r)) (sc := Z.abs (kright r)).
+    unfold equality_certificate. split; [now apply equality_weights_scale |].
+    split; [destruct (kright r); cbn in *; lia |]. split.
+    - intro x. rewrite comb_coef_scale, Hcoeffzero.
+      change (sign * 0 = Z.abs (kright r) * 0)%Z. ring.
+    - cbn [lrel rhs]. rewrite comb_rhs_scale, Hright, Z.mul_1_r.
+      apply coefficient_sign_abs.
+  Qed.
+
   (** Join emits equality rows. *)
   Lemma join_eq : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (fun r => lrel r = REq) P.
@@ -3827,7 +4028,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma span_trans : forall a b c, Forall (in_span a) b -> Forall (in_span b) c ->
     Forall (in_span a) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact span_trans_draft.
+  Qed.
   Definition echelon (P : list (lcons X.t)) : Prop :=
     Forall (fun r => lrel r = REq) P /\
     (forall i r, nth_error P i = Some r -> exists x a, In (x, a) (lhs r) /\ a <> 0%Z /\
