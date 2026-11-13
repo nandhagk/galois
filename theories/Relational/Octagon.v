@@ -4119,6 +4119,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       (entry mid) k Hmid Hcase p a b).
   Qed.
 
+  Lemma incremental_seed_global_closed : forall m i j, tightly_closed m ->
+    forall p, RelationalPathBounds.closed_at
+      (entry (add_cons j j 0%Z (add_cons i i 0%Z m))) p.
+  Proof.
+    intros m i j Htight.
+    assert (Hdiag : forall k, entry m k k = None \/ entry m k k = Some 0%Z).
+    { now apply tightly_closed_diagonal_cases. }
+    apply add_zero_global_closed.
+    - apply add_zero_global_closed;
+        [now apply tightly_closed_at_every_key|exact Hdiag].
+    - now apply add_zero_diagonal_cases.
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
