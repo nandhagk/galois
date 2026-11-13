@@ -4527,6 +4527,22 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         rewrite PTrie.get_empty in Hloc. discriminate.
   Qed.
 
+  Lemma database_row_store_ok_union : forall i j db,
+    database_row_store_ok db -> database_row_store_ok (union i j db).
+  Proof.
+    intros i j db Hstore. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [[pair |] forest];
+      [destruct pair |]; exact Hstore.
+  Qed.
+
+  Lemma database_row_store_ok_advance : forall db,
+    database_row_store_ok db -> database_row_store_ok (advance db).
+  Proof. intros db Hstore. exact Hstore. Qed.
+
+  Lemma database_idle_ok_advance : forall db,
+    database_idle_ok db -> database_idle_ok (advance db).
+  Proof. intros db Hidle. exact Hidle. Qed.
+
   (** Empty rows and empty construction histories establish the history invariant initially. *)
   Lemma database_history_init : forall ds sl, database_history (init ds sl).
   Proof.
