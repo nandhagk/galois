@@ -5569,6 +5569,251 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       + cbn [nth_error] in Hia, Hjb.
         apply (IH i j a b Hreach1 Htail); [lia|exact Hia|exact Hjb].
   Qed.
+  (** A reader bucket contains at most one entry for each source row occurrence. *)
+  Lemma degree_le_C : forall p c, degree p c <= C p.
+  Proof.
+    intros p c; unfold degree, source_readers.
+    rewrite <- row_ids_length; apply filter_length_le.
+  Qed.
+
+  (** Source-reader degree counts one occurrence for each matching row identifier. *)
+  Lemma scan_degree_bucket : forall p c,
+    degree p c = fold_right Nat.add 0 (List.map (fun id =>
+      if match source_row p id with
+        | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+        | None => false
+        end then 1 else 0) (row_ids p)).
+  Proof.
+    intros p c; rewrite incidence_sum_constant; unfold degree, source_readers; lia.
+  Qed.
+
+  (** Every distinct reader edge is paid by a declared dependency occurrence. *)
+  Lemma support_degree_bound : forall p,
+    fold_right Nat.add 0 (List.map (degree p) (key_support p)) <= D p.
+  Proof.
+    intro p.
+    assert (Hswap : fold_right Nat.add 0 (List.map (degree p) (key_support p)) =
+      fold_right Nat.add 0 (List.map (fun id => fold_right Nat.add 0
+        (List.map (fun c => if match source_row p id with
+          | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+          | None => false
+          end then 1 else 0) (key_support p))) (row_ids p))).
+    { transitivity (fold_right Nat.add 0 (List.map (fun c => fold_right Nat.add 0
+        (List.map (fun id => if match source_row p id with
+          | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+          | None => false
+          end then 1 else 0) (row_ids p))) (key_support p))).
+      - f_equal; apply map_ext; intro c; apply scan_degree_bucket.
+      - apply incidence_sum_swap. }
+    rewrite Hswap.
+    transitivity (fold_right Nat.add 0 (List.map (fun id =>
+      match source_row p id with Some r => length (S.deps p r) | None => 0 end)
+      (row_ids p))).
+    - apply incidence_sum_bound; intros id Hid.
+      destruct (source_row_total p id Hid) as [r Hrow].
+      rewrite Hrow, incidence_sum_constant.
+      pose proof (incidence_codes_count p r); lia.
+    - rewrite incidence_numbered_rows; unfold D.
+      apply incidence_sum_bound; intros r Hr; lia.
+  Qed.
+
+  (** An unarmed non-head bucket has credit while its writers remain above the frontier. *)
+  Definition scan_term p pol (lower : N) (s : state) c : nat :=
+    match trie_get c (heads pol) with
+    | Some _ => 0
+    | None =>
+      if N.leb lower (N.pos (priority pol c)) then
+        match trie_get c (ws_armed s) with Some _ => 0 | None => degree p c end
+      else 0
+    end.
+
+  (** Finite source incidence supplies all unspent reader-scan credit in a stable segment. *)
+  Definition scan_credit p pol (lower : N) (s : state) : nat :=
+    fold_right Nat.add 0 (List.map (scan_term p pol lower s) (key_support p)).
+
+  (** Each code contributes at most its source-reader degree. *)
+  Lemma scan_term_bound : forall p pol lower s c,
+    scan_term p pol lower s c <= degree p c.
+  Proof.
+    intros p pol lower s c; unfold scan_term.
+    destruct (trie_get c (heads pol)); [lia|].
+    destruct (N.leb lower (N.pos (priority pol c))); [|lia].
+    destruct (trie_get c (ws_armed s)); lia.
+  Qed.
+
+  (** A stable segment starts with no more scan credit than the declared occurrence budget. *)
+  Lemma scan_credit_bound : forall p pol lower s, scan_credit p pol lower s <= D p.
+  Proof.
+    intros p pol lower s; eapply Nat.le_trans; [|apply support_degree_bound].
+    unfold scan_credit; apply incidence_sum_bound; intros c Hin; apply scan_term_bound.
+  Qed.
+
+  (** Raising the rank frontier only discards eligible reader buckets. *)
+  Lemma scan_term_lower : forall p pol lower upper s c, (lower <= upper)%N ->
+    scan_term p pol upper s c <= scan_term p pol lower s c.
+  Proof.
+    intros p pol lower upper s c Hle; unfold scan_term.
+    destruct (trie_get c (heads pol)); [lia|].
+    destruct (N.leb upper (N.pos (priority pol c))) eqn:Hupper; [|lia].
+    apply N.leb_le in Hupper.
+    assert (Hlower : N.leb lower (N.pos (priority pol c)) = true).
+    { apply N.leb_le; lia. }
+    rewrite Hlower; lia.
+  Qed.
+
+  (** Increasing the lower rank never increases the finite scan potential. *)
+  Lemma scan_credit_lower : forall p pol lower upper s, (lower <= upper)%N ->
+    scan_credit p pol upper s <= scan_credit p pol lower s.
+  Proof.
+    intros p pol lower upper s Hle; unfold scan_credit.
+    apply incidence_sum_bound; intros c Hin; now apply scan_term_lower.
+  Qed.
+
+  (** A popped row clears only dependency flags that are already below its rank. *)
+  Lemma scan_term_after_pop : forall p pol s id q r c,
+    Sched.cuts p pol = true -> In r (S.rows p) -> row_at s id = Some r ->
+    scan_term p pol (N.pos (row_rank p pol r)) (after_pop p s id q) c =
+      scan_term p pol (N.pos (row_rank p pol r)) s c.
+  Proof.
+    intros p pol s id q r c Hcuts Hr Hrow; unfold scan_term.
+    destruct (trie_get c (heads pol)); [reflexivity|].
+    destruct (N.leb (N.pos (row_rank p pol r)) (N.pos (priority pol c)))
+      eqn:Heligible; [|reflexivity].
+    assert (Hclear : existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r) = false).
+    { destruct (existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r))
+        eqn:Hread; [|reflexivity].
+      apply existsb_exists in Hread as [x [Hx Hcode]].
+      apply Pos.eqb_eq in Hcode; subst c.
+      pose proof (row_rank_read_lt p pol r x Hcuts Hr Hx) as Hrank.
+      change (N.pos (priority pol (S.key_code x)) < N.pos (row_rank p pol r))%N
+        in Hrank.
+      apply N.leb_le in Heligible; exfalso; lia. }
+    unfold after_pop; rewrite Hrow; cbn [ws_armed].
+    now rewrite clear_reads_lookup, Hclear.
+  Qed.
+
+  (** Clearing a popped row's read flags preserves credit at that row's rank. *)
+  Lemma scan_credit_after_pop : forall p pol s id q r,
+    Sched.cuts p pol = true -> In r (S.rows p) -> row_at s id = Some r ->
+    scan_credit p pol (N.pos (row_rank p pol r)) (after_pop p s id q) =
+      scan_credit p pol (N.pos (row_rank p pol r)) s.
+  Proof.
+    intros p pol s id q r Hcuts Hr Hrow; unfold scan_credit.
+    f_equal; apply map_ext; intro c; now apply scan_term_after_pop.
+  Qed.
+
+  (** A strict contribution arms its own code, including when it was already armed. *)
+  Lemma scan_update_same : forall p pol s x a,
+    trie_get (S.key_code x) (ws_armed (update_one p pol s (x, a))) =
+      if L.leb a (look s x) then trie_get (S.key_code x) (ws_armed s) else Some tt.
+  Proof.
+    intros p pol s x a; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)); [reflexivity|].
+    destruct (trie_get (S.key_code x) (ws_armed s)) as [[]|] eqn:Harmed.
+    - cbn [ws_armed]; exact Harmed.
+    - change (trie_get (S.key_code x)
+        (PTrieCode.set (S.key_code x) tt (ws_armed s)) = Some tt).
+      now rewrite trie_get_set, Pos.eqb_refl.
+  Qed.
+
+  (** A contribution retains every armed marker at a different code. *)
+  Lemma scan_update_other : forall p pol s x a c, c <> S.key_code x ->
+    trie_get c (ws_armed (update_one p pol s (x, a))) = trie_get c (ws_armed s).
+  Proof.
+    intros p pol s x a c Hother; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)); [reflexivity|].
+    destruct (trie_get (S.key_code x) (ws_armed s)); [reflexivity|].
+    change (trie_get c (PTrieCode.set (S.key_code x) tt (ws_armed s)) =
+      trie_get c (ws_armed s)).
+    rewrite trie_get_set; destruct (Pos.eqb c (S.key_code x)) eqn:Heq;
+      [apply Pos.eqb_eq in Heq; contradiction|reflexivity].
+  Qed.
+
+  (** A supported eligible strict change spends exactly the cost of its unarmed reader scan. *)
+  Lemma scan_credit_update : forall p pol lower s x a,
+    In (S.key_code x) (key_support p) ->
+    (L.leb a (look s x) = false ->
+      trie_get (S.key_code x) (heads pol) = None /\
+      (lower <= N.pos (priority pol (S.key_code x)))%N) ->
+    push_work p s x a + scan_credit p pol lower (update_one p pol s (x, a)) =
+      scan_credit p pol lower s.
+  Proof.
+    intros p pol lower s x a Hsupport Hstrict.
+    destruct (L.leb a (look s x)) eqn:Hcovered.
+    - assert (Hsame : update_one p pol s (x, a) = s).
+      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hcovered. }
+      rewrite Hsame; unfold push_work; rewrite Hcovered; lia.
+    - destruct (Hstrict eq_refl) as [Hhead Hlower].
+      assert (Heligible : N.leb lower (N.pos (priority pol (S.key_code x))) = true).
+      { now apply N.leb_le. }
+      assert (Hnodup : NoDup (key_support p)).
+      { unfold key_support; apply NoDup_nodup. }
+      pose proof (credit_sum_change positive Pos.eq_dec
+        (scan_term p pol lower (update_one p pol s (x, a)))
+        (scan_term p pol lower s) (key_support p) (S.key_code x) Hnodup Hsupport)
+        as Hsum.
+      assert (Hother : forall c, In c (key_support p) -> c <> S.key_code x ->
+        scan_term p pol lower (update_one p pol s (x, a)) c = scan_term p pol lower s c).
+      { intros c Hin Hneq; unfold scan_term; now rewrite scan_update_other by exact Hneq. }
+      specialize (Hsum Hother).
+      change (scan_credit p pol lower (update_one p pol s (x, a)) +
+        scan_term p pol lower s (S.key_code x) = scan_credit p pol lower s +
+        scan_term p pol lower (update_one p pol s (x, a)) (S.key_code x)) in Hsum.
+      assert (Hbefore : scan_term p pol lower s (S.key_code x) = push_work p s x a).
+      { unfold scan_term, push_work; now rewrite Hhead, Heligible, Hcovered. }
+      assert (Hafter : scan_term p pol lower (update_one p pol s (x, a)) (S.key_code x) = 0).
+      { unfold scan_term; now rewrite Hhead, Heligible, scan_update_same, Hcovered. }
+      rewrite Hbefore, Hafter in Hsum; lia.
+  Qed.
+
+  (** Stability and declared writes make every strict output eligible at its producer's rank. *)
+  Lemma scan_credit_update_write : forall p pol r lower s x a,
+    In r (S.rows p) -> In x (S.writes p r) -> (lower <= N.pos (row_rank p pol r))%N ->
+    heads_unchanged pol s (update_one p pol s (x, a)) ->
+    push_work p s x a + scan_credit p pol lower (update_one p pol s (x, a)) =
+      scan_credit p pol lower s.
+  Proof.
+    intros p pol r lower s x a Hr Hwrite Hlower Hstable; apply scan_credit_update.
+    - apply key_support_spec; exists r, x; split; [exact Hr|].
+      split; [apply in_or_app; now left|reflexivity].
+    - intro Hstrict.
+      pose proof (stable_update_nonhead p pol s x a Hstable Hstrict) as Hhead.
+      split; [exact Hhead|].
+      pose proof (row_rank_write_le p pol r x Hwrite Hhead) as Hrank.
+      change (N.pos (row_rank p pol r) <= N.pos (priority pol (S.key_code x)))%N in Hrank.
+      lia.
+  Qed.
+
+  (** Configured-head contributions preserve every non-head scan credit. *)
+  Lemma scan_credit_head_update : forall p pol lower s x a cfg,
+    trie_get (S.key_code x) (heads pol) = Some cfg ->
+    scan_credit p pol lower (update_one p pol s (x, a)) = scan_credit p pol lower s.
+  Proof.
+    intros p pol lower s x a cfg Hhead; unfold scan_credit.
+    f_equal; apply map_ext; intro c.
+    destruct (Pos.eq_dec c (S.key_code x)) as [->|Hother].
+    - unfold scan_term; now rewrite Hhead.
+    - unfold scan_term; now rewrite scan_update_other by exact Hother.
+  Qed.
+
+  (** A stable fold of declared outputs only consumes scan credit at its producer's rank. *)
+  Lemma scan_credit_fold : forall p pol r lower outs s,
+    In r (S.rows p) -> (lower <= N.pos (row_rank p pol r))%N ->
+    (forall x a, In (x, a) outs -> In x (S.writes p r)) ->
+    heads_unchanged pol s (fold_left (update_one p pol) outs s) ->
+    scan_credit p pol lower (fold_left (update_one p pol) outs s) <=
+      scan_credit p pol lower s.
+  Proof.
+    intros p pol r lower outs; induction outs as [|[x a] outs IH];
+      intros s Hr Hlower Hwrites Hstable; [reflexivity|].
+    destruct (heads_unchanged_fold_cons p pol (x, a) outs s Hstable) as [Hfirst Htail].
+    pose proof (scan_credit_update_write p pol r lower s x a Hr
+      (Hwrites x a (or_introl eq_refl)) Hlower Hfirst) as Hconsume.
+    pose proof (IH (update_one p pol s (x, a)) Hr Hlower
+      (fun y b Hin => Hwrites y b (or_intror Hin)) Htail) as Hrest.
+    cbn [fold_left]; lia.
+  Qed.
+
   (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
   Lemma W5_round : forall p pol s xs last,
     fits p pol -> reachable p pol s ->
