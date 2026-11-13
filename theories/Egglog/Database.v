@@ -6154,6 +6154,120 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       eapply forest_agrees_frame; [exact Hforest | now rewrite Hview | exact Hagrees].
   Qed.
 
+  (** Constructor congruence contains the equivalence closure of any justified generators. *)
+  Lemma cong_closed_raw : forall db R,
+    (forall i j, R i j -> cong db i j) ->
+    forall i j, clos_refl_sym_trans positive R i j -> cong db i j.
+  Proof.
+    intros db R Hgenerators i j Hclosure.
+    induction Hclosure as [i j Hstep | i | i j Hstep IH | i j k Hleft IHleft Hright IHright].
+    - exact (Hgenerators i j Hstep).
+    - apply cong_same. apply equality_log_refl.
+    - now apply cong_sym.
+    - eapply cong_trans; eassumption.
+  Qed.
+
+  (** Actual key normalization changes cells only within the old constructor congruence. *)
+  Lemma normal_key_cong : forall db k, forest_agrees db ->
+    Forall2 (cell_rel (cong db)) k (normal_key db k).
+  Proof.
+    intros db k Hagrees. pose proof (forest_agrees_normal_key db k Hagrees) as Hnormal.
+    clear -Hnormal. induction Hnormal as [| c d ks ds Hcell Htail IH]; constructor.
+    - destruct Hcell; constructor; now apply cong_same.
+    - exact IH.
+  Qed.
+
+  (** Every equality logged by one repair is justified by old constructor rows. *)
+  Lemma repair_same_in_cong : forall db f k, forest_agrees db ->
+    forall i j, same (view (repair_current f k db)) i j -> cong db i j.
+  Proof.
+    intros db f k Hagrees i j Hsame. pose proof (proj1 Hagrees) as Hforest.
+    unfold repair_current in Hsame.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| now apply cong_same].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [now apply cong_same |].
+    apply put_same_sources_raw in Hsame.
+    rewrite row_delete_same, row_delete_normal_key, row_delete_normal_output in Hsame.
+    rewrite (normal_key_idempotent db k Hforest),
+      (normal_output_idempotent db o Hforest) in Hsame.
+    eapply cong_closed_raw; [| exact Hsame].
+    intros x y [Hold | [Htarget Houtput]]; [now apply cong_same |].
+    apply row_delete_binding in Htarget as [Htarget _].
+    destruct o as [[z | v] |]; cbn [option_map] in Houtput; try discriminate.
+    injection Houtput as Hnormal.
+    change (normal_cell db (Id z) = Id y) in Hnormal.
+    assert (Hrelated : same (view db) z y).
+    { pose proof (forest_agrees_normal_cell db (Id z) Hagrees) as Hcell.
+      rewrite Hnormal in Hcell. inversion Hcell. assumption. }
+    eapply cong_trans.
+    - eapply cong_fd; [exact Htarget | exact Hrow |].
+      eapply key_rel_symmetric; [exact (cong_sym (view db)) |].
+      now apply normal_key_cong.
+    - now apply cong_same.
+  Qed.
+
+  (** The logged equality relation supplies constructor-congruence reflexivity. *)
+  Lemma cong_refl_raw : forall db i, cong db i i.
+  Proof. intros db i. apply cong_same. apply equality_log_refl. Qed.
+
+  Lemma key_cong_refl_raw : forall db (k : list (cell V.t)),
+    Forall2 (cell_rel (cong db)) k k.
+  Proof.
+    intros db k. induction k as [| c k IH]; constructor; [| exact IH].
+    destruct c; constructor. apply cong_refl_raw.
+  Qed.
+
+  (** A constructor-valued combination retains an old constructor or its fresh input. *)
+  Lemma combine_output_id_sources : forall db f previous o i,
+    Some (Id i) = combine_output db f previous o ->
+    previous = Some (Some (Id i)) \/ (previous = None /\ o = Some (Id i)).
+  Proof.
+    intros db f previous o i Houtput.
+    unfold combine_output in Houtput.
+    destruct previous as [[[j | v] |] |]; destruct o as [[x | w] |];
+      destruct (kind_get f db) as [[| |m] |]; cbn in *;
+      intuition congruence.
+  Qed.
+
+  (** Every constructor row after repair simulates one old constructor row. *)
+  Lemma repair_ctor_backward : forall db f k, forest_agrees db ->
+    forall g args i, row (view (repair_current f k db)) g args (Some (Id i)) ->
+    exists key j, row (view db) g key (Some (Id j)) /\
+      Forall2 (cell_rel (cong db)) args key /\ cong db i j.
+  Proof.
+    intros db f k Hagrees g args i Hrow.
+    destruct (repair_current_row_sources db f k (proj1 Hagrees) g args (Some (Id i)) Hrow)
+      as [Hold | [before [Hold [Hname [Hargs Houtput]]]]].
+    - exists args, i. split; [exact Hold |].
+      split; [apply key_cong_refl_raw | apply cong_refl_raw].
+    - subst g args.
+      destruct (combine_output_id_sources (row_delete f k db) f
+        (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before) i Houtput)
+        as [Hprevious | [Hnone Hnormalized]].
+      + apply row_delete_binding in Hprevious as [Hprevious _].
+        exists (normal_key db k), i. split; [exact Hprevious |].
+        split; [apply key_cong_refl_raw | apply cong_refl_raw].
+      + destruct before as [[j | v] |]; cbn [option_map] in Hnormalized; try discriminate.
+        injection Hnormalized as Hnormal.
+        change (normal_cell db (Id j) = Id i) in Hnormal.
+        exists k, j. split; [exact Hold |]. split.
+        * eapply key_rel_symmetric; [exact (cong_sym (view db)) |].
+          now apply normal_key_cong.
+        * apply cong_sym. apply cong_same.
+          pose proof (forest_agrees_normal_cell db (Id j) Hagrees) as Hcell.
+          rewrite Hnormal in Hcell. inversion Hcell. assumption.
+  Qed.
+
+  (** Repair introduces no constructor-congruence equality beyond the old closure. *)
+  Lemma repair_cong_backward : forall db f k, forest_agrees db ->
+    forall i j, cong (repair_current f k db) i j -> cong db i j.
+  Proof.
+    intros db f k Hagrees. apply fd_congruence_rows_transfer.
+    - exact (repair_same_in_cong db f k Hagrees).
+    - exact (repair_ctor_backward db f k Hagrees).
+  Qed.
+
   (** Queue scheduling retains layout, allocation and the current change flag. *)
   Lemma db_pop_loser_layout : forall db i db', db_pop_loser db = Some (i, db') ->
     slots db' = slots db /\ ids db' = ids db /\ changed db' = changed db.
