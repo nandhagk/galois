@@ -9256,6 +9256,88 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       constructor; assumption.
   Qed.
 
+  (** Equivalent input lists and accumulators produce equivalent folded outputs. *)
+  Lemma fold_outputs_equiv : forall db db' f before after,
+    kind (view db') f = kind (view db) f ->
+    Forall2 (output_equiv db') before after -> forall acc acc',
+    output_equiv db' acc acc' ->
+    output_equiv db'
+      (fold_left (fun current next => combine db f (Some current) next) before acc)
+      (fold_left (fun current next => combine db' f (Some current) next) after acc').
+  Proof.
+    intros db db' f before after Hkind Hrelated. induction Hrelated as
+      [| first first' rest rest' Hfirst Hrest IH]; intros acc acc' Hacc; cbn [fold_left].
+    - exact Hacc.
+    - apply IH. eapply combine_output_equiv; eassumption.
+  Qed.
+
+  (** The same source group has equivalent merged outputs after equality classes coarsen. *)
+  Lemma merged_output_coarsen : forall db db' f os,
+    kind (view db') f = kind (view db) f ->
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    output_equiv db' (merged db f os) (merged db' f os).
+  Proof.
+    intros db db' f os Hkind Hsame Hbefore Hafter.
+    assert (Houtput : forall o,
+      output_equiv db' (option_map (canon db) o) (option_map (canon db') o)).
+    { intro o. eapply output_canon_coarsen; eassumption. }
+    destruct os as [| first rest]; cbn [merged map]; [constructor |].
+    eapply fold_outputs_equiv; [exact Hkind | | apply Houtput].
+    induction rest as [| next rest IH]; cbn [map]; constructor;
+      [apply Houtput | exact IH].
+  Qed.
+
+  (** An existing row keeps its source witnesses when its equality classes coarsen. *)
+  Lemma lineage_row_coarsen : forall initial db db' f k o,
+    kind (view db') f = kind (view db) f ->
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    lineage initial db -> row (view db) f k o ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db'))) (fst ko) k) srcs /\
+      output_equiv db' o (merged db' f (map snd srcs)).
+  Proof.
+    intros initial db db' f k o Hkind Hsame Hbefore Hafter Hlineage Hrow.
+    destruct (Hlineage f k o Hrow) as [srcs [Hnonempty [Hsources Houtput]]].
+    exists srcs. split; [exact Hnonempty |]. split.
+    - rewrite Forall_forall in Hsources |- *. intros [args output] Hin.
+      destruct (Hsources (args, output) Hin) as [Hsource Hrelated].
+      cbn [fst snd] in Hsource, Hrelated |- *. split; [exact Hsource |].
+      eapply key_related_monotone; eassumption.
+    - eapply output_equiv_transitive with (b := merged db f (map snd srcs)).
+      + eapply output_equiv_monotone; eassumption.
+      + eapply merged_output_coarsen; eassumption.
+  Qed.
+
+  (** A surviving row set inherits lineage when kinds and representatives are preserved. *)
+  Lemma lineage_restrict : forall initial db db', db_forest db' = db_forest db ->
+    same (view db') = same (view db) -> kind (view db') = kind (view db) ->
+    (forall f k o, row (view db') f k o -> row (view db) f k o) ->
+    lineage initial db -> lineage initial db'.
+  Proof.
+    intros initial db db' Hforest Hsame Hkind Hrows Hlineage f k o Hrow.
+    specialize (Hlineage f k o (Hrows f k o Hrow)).
+    unfold output_equiv, merged, combine, canon, repr in Hlineage |- *.
+    now rewrite Hsame, Hkind, Hforest.
+  Qed.
+
+  (** Actual row deletion retains source witnesses for every surviving row. *)
+  Lemma lineage_row_delete : forall initial db f k,
+    lineage initial db -> lineage initial (row_delete f k db).
+  Proof.
+    intros initial db f k Hlineage.
+    eapply (lineage_restrict initial db (row_delete f k db)).
+    - apply row_delete_forest.
+    - apply row_delete_same.
+    - apply row_delete_kind.
+    - intros g args output Hrow. apply row_delete_binding in Hrow. exact (proj1 Hrow).
+    - exact Hlineage.
+  Qed.
+
   (** Lineage depends on the current view and representatives, not scheduling metadata. *)
   Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
     view db' = view db -> lineage initial db -> lineage initial db'.
