@@ -6143,6 +6143,52 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       [apply row_delete_forest | apply row_delete_same | exact Hagrees].
   Qed.
 
+  (** A repaired relation row remains stored at its normalized key. *)
+  Lemma repair_relation_target : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    row (view db) f key None ->
+    row (view (repair_current f key db)) f (normal_key db key) None.
+  Proof.
+    intros db f key Hagrees Htyped Hrow.
+    assert (Hkind : kind (view db) f = Some ORel).
+    { destruct (Htyped f key None Hrow) as [_ [_ Hshape]].
+      destruct (kind (view db) f) as [[| |m] |]; try contradiction; reflexivity. }
+    pose proof (repair_current_target db f key None (proj1 Hagrees) Hrow) as Htarget.
+    cbn [option_map] in Htarget.
+    destruct (row_get f (normal_key db key) (row_delete f key db))
+      as [output |] eqn:Hprevious.
+    - apply row_delete_binding in Hprevious as [Hold _].
+      destruct (Htyped f (normal_key db key) output Hold) as [_ [_ Hshape]].
+      rewrite Hkind in Hshape. destruct output as [[i | value] |]; try contradiction.
+      unfold combine_output in Htarget.
+      destruct (kind_get f (row_delete f key db)) as [[| |m] |]; exact Htarget.
+    - exact Htarget.
+  Qed.
+
+  (** A repaired lattice row is retained below the value at its normalized target. *)
+  Lemma repair_lattice_target : forall db f key a m, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    kind (view db) f = Some (OLat m) -> row (view db) f key (Some (Val a)) ->
+    exists b, row (view (repair_current f key db)) f (normal_key db key) (Some (Val b)) /\
+      V.merge m a b = b.
+  Proof.
+    intros db f key a m Hagrees Htyped Hkind Hrow.
+    pose proof (repair_current_target db f key (Some (Val a)) (proj1 Hagrees) Hrow) as Htarget.
+    cbn [option_map normal_cell] in Htarget.
+    assert (Hdeleted_kind : kind_get f (row_delete f key db) = Some (OLat m)).
+    { change (kind (view (row_delete f key db)) f = Some (OLat m)).
+      now rewrite row_delete_kind. }
+    destruct (row_get f (normal_key db key) (row_delete f key db))
+      as [output |] eqn:Hprevious.
+    - apply row_delete_binding in Hprevious as [Hold _].
+      destruct (Htyped f (normal_key db key) output Hold) as [_ [_ Hshape]].
+      rewrite Hkind in Hshape. destruct output as [[i | value] |]; try contradiction.
+      unfold combine_output in Htarget. rewrite Hdeleted_kind in Htarget.
+      exists (V.merge m value a). split; [exact Htarget |].
+      rewrite (V.merge_comm m value a), V.merge_assoc, V.merge_idem. reflexivity.
+    - exists a. split; [exact Htarget | apply V.merge_idem].
+  Qed.
+
   (** Forest/log agreement survives both return branches of the actual rebuild driver. *)
   Lemma forest_agrees_rebuild : forall db,
     forest_agrees db -> forest_agrees (rebuild db).
