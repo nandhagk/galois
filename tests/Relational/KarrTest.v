@@ -157,6 +157,24 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example substitution_zero_aggregate_keeps_the_other_key :
+  Equalities.subst 1%positive
+    (Lin _ [(2%positive, 1); (2%positive, -1); (3%positive, 2)] 5)
+    (LCons _ [(1%positive, 1); (1%positive, -1); (2%positive, 3)] RLe 7) =
+    LCons _ [(2%positive, 3)] RLe 7.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example substitution_preserves_an_alternating_zero_form :
+  Equalities.subst 1%positive
+    (Lin _ [(2%positive, -1); (2%positive, 1); (2%positive, -1); (2%positive, 1)] 0)
+    (LCons _ [(2%positive, 1); (2%positive, 1); (1%positive, 1); (1%positive, 1)] REq 0) =
+    LCons _ [(2%positive, 2)] REq 0.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example unsupported_assignment_uses_havoc :
   Equalities.assign 1%positive (Leaf 2%positive) (Reached [x1; y1]) =
     Equalities.havoc 1%positive (Reached [x1; y1]).

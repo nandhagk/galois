@@ -1922,11 +1922,17 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
 
   Definition narrow (_ : t) (b : t) : t := b.
 
+  (** Scaling visits each stored occurrence exactly once. *)
+  Definition scale_coef (a : Z) (xs : list (X.t * Z)) : list (X.t * Z) :=
+    map (fun p => (fst p, (a * snd p)%Z)) xs.
+
+  (** Substitution scales the affine form once by the complete replaced coefficient. *)
   Definition subst (x : X.t) (f : lin X.t) (r : lcons X.t) : lcons X.t :=
+    let a := coefficient x (lhs r) in
     normalize_row (LCons _
-      (flat_map (fun p => if X.eqb (fst p) x
-        then map (fun q => (fst q, (snd p * snd q)%Z)) (coef f) else [p]) (lhs r))
-      (lrel r) (rhs r - coefficient x (lhs r) * cst f)%Z).
+      (filter (fun p => negb (X.eqb (fst p) x)) (lhs r) ++
+        scale_coef a (coef f))
+      (lrel r) (rhs r - a * cst f)%Z).
 
   Definition mentions (x : X.t) (r : lcons X.t) : bool :=
     negb (Z.eqb (coefficient x (lhs r)) 0).
@@ -6336,6 +6342,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun meet.
   TimeFun widen.
   TimeFun narrow.
+  TimeFun scale_coef.
   TimeFun subst.
   TimeFun mentions.
   TimeFun projected_row.
@@ -6347,6 +6354,842 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun atom_rows.
   TimeFun assume.
   TimeFun range.
+
+  (** The aggregate coefficient list has exactly the concrete-update evaluation. *)
+  Lemma subst_eval : forall v x f r,
+    eval_coef v (lhs (subst x f r)) =
+      (eval_coef (upd X.eqb v x (eval_lin v f)) (lhs r) -
+        coefficient x (lhs r) * cst f)%Z.
+  Proof.
+    intros v x f r. unfold subst, scale_coef. cbn [normalize_row lhs].
+    rewrite normalize_coef_eval, eval_coef_app, eval_coef_scale,
+      eval_coef_without, eval_coef_update. unfold eval_lin. ring.
+  Qed.
+
+  (** Aggregating repeated occurrences preserves the frozen substitution meaning. *)
+  Lemma subst_sat_checked : forall v x f r,
+    sat v (subst x f r) <-> sat (upd X.eqb v x (eval_lin v f)) r.
+  Proof.
+    intros v x f r. unfold sat. rewrite subst_eval.
+    unfold subst. cbn [normalize_row lrel rhs]. destruct (lrel r); lia.
+  Qed.
+
+  (** Magnitude supplies the shared binary-size estimates. *)
+  Definition karr_magnitude (z : Z) : nat := Z.to_nat (Z.abs z).
+
+  (** An integer magnitude is strictly below the power determined by its binary width. *)
+  Lemma karr_magnitude_upper : forall z, karr_magnitude z < 2 ^ Z.size_nat z.
+  Proof.
+    intros [|p|p].
+    - change (0 < 1). lia.
+    - exact (Pos.size_nat_upper p).
+    - exact (Pos.size_nat_upper p).
+  Qed.
+
+  (** A strict power-of-two bound bounds an integer's binary width. *)
+  Lemma karr_size_least : forall z k, karr_magnitude z < 2 ^ k -> Z.size_nat z <= k.
+  Proof.
+    intros [|p|p] k Hbound; cbn [karr_magnitude Z.abs Z.to_nat Z.size_nat] in *;
+      try lia; now apply Pos.size_nat_least.
+  Qed.
+
+  (** The magnitude of a sum is at most the sum of its magnitudes. *)
+  Lemma karr_magnitude_add : forall x y,
+    karr_magnitude (x + y) <= karr_magnitude x + karr_magnitude y.
+  Proof.
+    intros x y. unfold karr_magnitude.
+    rewrite <- Z2Nat.inj_add by apply Z.abs_nonneg.
+    apply Z2Nat.inj_le; try apply Z.abs_nonneg; try lia.
+  Qed.
+
+  (** Addition uses at most one bit beyond the wider operand. *)
+  Lemma karr_size_add : forall x y,
+    Z.size_nat (x + y) <= Nat.max (Z.size_nat x) (Z.size_nat y) + 1.
+  Proof.
+    intros x y. apply karr_size_least.
+    pose proof (karr_magnitude_upper x) as Hx.
+    pose proof (karr_magnitude_upper y) as Hy.
+    pose proof (karr_magnitude_add x y) as Hsum.
+    set (bits := Nat.max (Z.size_nat x) (Z.size_nat y)).
+    assert (Hxp : 2 ^ Z.size_nat x <= 2 ^ bits).
+    { apply Nat.pow_le_mono_r; unfold bits; lia. }
+    assert (Hyp : 2 ^ Z.size_nat y <= 2 ^ bits).
+    { apply Nat.pow_le_mono_r; unfold bits; lia. }
+    replace (bits + 1) with (S bits) by lia. rewrite Nat.pow_succ_r by lia. lia.
+  Qed.
+
+  (** A product uses at most the combined widths of its operands. *)
+  Lemma karr_size_mul : forall x y,
+    Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.mul Z.size_nat]; try lia; apply Pos.size_nat_mul.
+  Qed.
+
+  (** Negation preserves an integer's binary width. *)
+  Lemma karr_size_opp : forall z, Z.size_nat (- z) = Z.size_nat z.
+  Proof.
+    intros [|p|p]; reflexivity.
+  Qed.
+
+  (** Absolute value preserves an integer's binary width. *)
+  Lemma karr_size_abs : forall z, Z.size_nat (Z.abs z) = Z.size_nat z.
+  Proof.
+    intros [|p|p]; reflexivity.
+  Qed.
+
+
+  (** Set bits pay for carries during positive multiplication. *)
+  Fixpoint karr_mul_ones_count (p : positive) : N :=
+    match p with
+    | xI q => (karr_mul_ones_count q + 1)%N
+    | xO q => karr_mul_ones_count q
+    | xH => 1%N
+    end.
+
+  (** A positive integer has no more set bits than binary digits. *)
+  Lemma karr_mul_ones_count_le : forall p, (karr_mul_ones_count p <= N.of_nat (Pos.size_nat p))%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_cbn; lia.
+  Qed.
+
+  (** A successor pays for every carry by removing set bits. *)
+  Lemma karr_T_succ_ones : forall p,
+    (Pos.T_succ p + karr_mul_ones_count (Pos.succ p) <= karr_mul_ones_count p + 2)%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_unfold Pos.T_succ; time_cbn; lia.
+  Qed.
+
+  (** Addition charges the first operand's digits and the change of set-bit potential. *)
+  Lemma karr_T_add_ones_both : forall p q,
+    (Pos.T_add p q + karr_mul_ones_count (Pos.add p q) <=
+      3 * N.of_nat (Pos.size_nat p) + karr_mul_ones_count q + 3)%N /\
+    (Pos.T_add_carry p q + karr_mul_ones_count (Pos.add_carry p q) <=
+      3 * N.of_nat (Pos.size_nat p) + karr_mul_ones_count q + 3)%N.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intros [q|q|];
+      time_unfold Pos.T_add; time_unfold Pos.T_add_carry; time_cbn;
+      try specialize (IH q);
+      try pose proof (karr_T_succ_ones p); try pose proof (karr_T_succ_ones q);
+      try pose proof (karr_mul_ones_count_le p); try pose proof (karr_mul_ones_count_le q); lia.
+  Qed.
+
+  (** Shift-and-add multiplication amortizes its internal carry chains. *)
+  Lemma karr_T_mul_ones : forall p q,
+    (Pos.T_mul p q + karr_mul_ones_count (Pos.mul p q) <=
+      6 * N.of_nat (Pos.size_nat p) * (N.of_nat (Pos.size_nat q) + 1) + karr_mul_ones_count q)%N.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intro q;
+      time_unfold Pos.T_mul; time_cbn; try specialize (IH q).
+    - pose proof (proj1 (karr_T_add_ones_both q (xO (Pos.mul p q)))) as Hadd.
+      time_cbn_all. nia.
+    - nia.
+    - nia.
+  Qed.
+
+  (** Positive multiplication is bilinear in operand bit lengths. *)
+  Lemma karr_T_pos_mul_bilinear : forall p q,
+    (Pos.T_mul p q <=
+      7 * N.of_nat (Pos.size_nat p) * (N.of_nat (Pos.size_nat q) + 1))%N.
+  Proof.
+    intros p q. pose proof (karr_T_mul_ones p q) as Hmul.
+    pose proof (karr_mul_ones_count_le q) as Hones.
+    pose proof (Pos.size_nat_pos p) as Hpositive. nia.
+  Qed.
+
+  (** Signed multiplication has the same bilinear bound with its sign dispatch. *)
+  Lemma karr_T_Z_mul_bilinear : forall x y,
+    (Z.T_mul x y <=
+      8 * N.of_nat (Z.size_nat x + 1) * N.of_nat (Z.size_nat y + 1))%N.
+  Proof.
+    intros [|p|p] [|q|q]; time_unfold Z.T_mul; time_cbn;
+      try pose proof (karr_T_pos_mul_bilinear p q); nia.
+  Qed.
+
+
+  (** Mapping charges only callbacks on actual list members. *)
+  Lemma karr_T_map_members : forall (A B : Type) (f : A -> B) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (ListDef.T_map f T_f xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold ListDef.T_map. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)).
+      time_unfold ListDef.T_map. time_cbn. nia.
+  Qed.
+
+  (** Filtering also needs callback bounds only on its actual input list. *)
+  Lemma karr_T_filter_members : forall A (f : A -> bool) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_filter f T_f xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold List.T_filter. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)).
+      time_unfold List.T_filter. destruct (f x); time_cbn; nia.
+  Qed.
+
+
+  (** Two bounded factors fit the same quadratic clock envelope. *)
+  Lemma karr_clock_product_bound : forall cost factor a b size left right,
+    (cost <= factor * a * b)%N -> (a <= left * size)%N ->
+    (b <= right * size)%N ->
+    (cost <= (factor * left * right) * (size * size))%N.
+  Proof.
+    intros cost factor a b size left right Hcost Ha Hb.
+    eapply N.le_trans; [exact Hcost|].
+    replace (factor * a * b)%N with (factor * (a * b))%N by ring.
+    replace ((factor * left * right) * (size * size))%N with
+      (factor * ((left * size) * (right * size)))%N by ring.
+    apply N.mul_le_mono_l. now apply N.mul_le_mono.
+  Qed.
+
+  (** Conversion preserves a natural-number square as one binary product. *)
+  Lemma karr_nat_square : forall n,
+    N.of_nat (n^2) = (N.of_nat n * N.of_nat n)%N.
+  Proof.
+    intro n. change (N.of_nat (n * (n * 1)) = (N.of_nat n * N.of_nat n)%N).
+    rewrite Nat.mul_1_r. apply Nat2N.inj_mul.
+  Qed.
+
+  (** A positive extent is bounded by its square. *)
+  Lemma karr_nat_square_ge : forall n, 1 <= n ->
+    (N.of_nat n <= N.of_nat (n^2))%N.
+  Proof.
+    intros n Hpositive. rewrite karr_nat_square.
+    replace (N.of_nat n) with (N.of_nat n * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+
+  (** Every collected value is paid by a visited trie node. *)
+  Lemma karr_values_ne_length : forall A (tr : trie_ne A) acc,
+    length (karr_values_ne tr acc) <= PTrie.nodes_ne tr + length acc.
+  Proof.
+    intros A tr. induction tr as
+      [r IHr|a|a r IHr|l IHl|l IHl r IHr|l IHl a|l IHl a r IHr]; intro acc;
+      cbn [karr_values_ne PTrie.nodes_ne length].
+    - specialize (IHr acc). lia.
+    - lia.
+    - specialize (IHr acc). lia.
+    - specialize (IHl acc). lia.
+    - specialize (IHl (karr_values_ne r acc)). specialize (IHr acc). lia.
+    - specialize (IHl (a :: acc)). cbn [length] in IHl. lia.
+    - specialize (IHl (a :: karr_values_ne r acc)). specialize (IHr acc).
+      cbn [length] in IHl. lia.
+  Qed.
+
+  (** Collecting values performs only a constant amount of work at each node. *)
+  Lemma T_karr_values_ne_bounded : forall A (tr : trie_ne A) acc,
+    (@T_karr_values_ne A tr acc <= 3 * N.of_nat (PTrie.nodes_ne tr))%N.
+  Proof.
+    intros A tr. induction tr as
+      [r IHr|a|a r IHr|l IHl|l IHl r IHr|l IHl a|l IHl a r IHr]; intro acc;
+      time_unfold (@T_karr_values_ne); cbn [PTrie.nodes_ne]; time_simpl.
+    - specialize (IHr acc). lia.
+    - lia.
+    - specialize (IHr acc). lia.
+    - specialize (IHl acc). lia.
+    - specialize (IHl (karr_values_ne r acc)). specialize (IHr acc). lia.
+    - specialize (IHl (a :: acc)). lia.
+    - specialize (IHl (a :: karr_values_ne r acc)). specialize (IHr acc). lia.
+  Qed.
+
+  (** The complete value list is no longer than the coefficient trie. *)
+  Lemma karr_values_length : forall A (tr : ptrie A),
+    length (karr_values tr) <= PTrie.nodes tr.
+  Proof.
+    intros A [|tr]; [reflexivity|].
+    pose proof (karr_values_ne_length A tr []).
+    cbn [karr_values PTrie.nodes length] in *. lia.
+  Qed.
+
+  (** Dispatching to the nonempty traversal adds one constant charge. *)
+  Lemma T_karr_values_bounded : forall A (tr : ptrie A),
+    (@T_karr_values A tr <= 4 * N.of_nat (PTrie.nodes tr + 1))%N.
+  Proof.
+    intros A [|tr]; time_unfold (@T_karr_values); cbn [PTrie.nodes]; time_simpl.
+    - lia.
+    - pose proof (T_karr_values_ne_bounded A tr []). lia.
+  Qed.
+
+  (** A proof model reads the current coefficient stored at one key. *)
+  Definition karr_previous (m : ptrie (X.t * Z)) (x : X.t) : Z :=
+    match PTrieCode.get (X.encode x) m with Some p => snd p | None => 0%Z end.
+
+  (** A coefficient table has one common arithmetic-width bound. *)
+  Definition karr_accum_values_bits (m : ptrie (X.t * Z)) (bits : nat) : Prop :=
+    forall key p, PTrieCode.get key m = Some p -> Z.size_nat (snd p) <= bits.
+
+  (** Reading a bounded table preserves its arithmetic-width bound. *)
+  Lemma karr_previous_bits : forall m bits x,
+    karr_accum_values_bits m bits -> Z.size_nat (karr_previous m x) <= bits.
+  Proof.
+    intros m bits x Hbits. unfold karr_previous.
+    destruct (PTrieCode.get (X.encode x) m) as [p|] eqn:Hget.
+    - exact (Hbits _ p Hget).
+    - change (0 <= bits). lia.
+  Qed.
+
+  (** One signed insertion increases the common width by at most one. *)
+  Lemma karr_add_term_values_bits : forall m p bits,
+    karr_accum_values_bits m bits -> Z.size_nat (snd p) <= bits ->
+    karr_accum_values_bits (add_term m p) (bits + 1).
+  Proof.
+    intros m p bits Hvalues Hp key q Hget. unfold add_term in Hget.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [old|] eqn:Hold;
+      destruct (Pos.eq_dec key (X.encode (fst p))) as [Hsame|Hother].
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Hsame. subst q.
+      cbn [snd]. pose proof (karr_size_add (snd old) (snd p)).
+      pose proof (Hvalues _ old Hold). lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hother.
+      pose proof (Hvalues key q Hget). lia.
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Hsame. subst q. lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hother.
+      pose proof (Hvalues key q Hget). lia.
+  Qed.
+
+  (** Inserting one coefficient creates at most one node per encoded key bit. *)
+  Lemma karr_add_term_nodes : forall m p,
+    PTrie.nodes (add_term m p) <= PTrie.nodes m + Pos.size_nat (X.encode (fst p)).
+  Proof.
+    intros m p. unfold add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m); apply PTrie.nodes_set.
+  Qed.
+
+  (** Summed key widths bound the size of the accumulated trie. *)
+  Lemma karr_accum_nodes : forall xs m keys,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) xs ->
+    PTrie.nodes (fold_left add_term xs m) <= PTrie.nodes m + length xs * keys.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys Hkeys; cbn [fold_left length].
+    - lia.
+    - inversion Hkeys as [|q qs Hp Htail]; subst q qs.
+      specialize (IH (add_term m p) keys Htail).
+      pose proof (karr_add_term_nodes m p). lia.
+  Qed.
+
+  (** Each insertion charges encoding, two trie paths, and a signed addition. *)
+  Definition karr_add_factor : N := (X.c_key + 2 * PTrieT.c_trie + 32)%N.
+
+  (** Insertion time is linear in key width and the two summand widths. *)
+  Lemma T_karr_add_term_bounded : forall m p keys bits old,
+    Pos.size_nat (X.encode (fst p)) <= keys -> Z.size_nat (snd p) <= bits ->
+    Z.size_nat (karr_previous m (fst p)) <= old ->
+    (T_add_term m p <= karr_add_factor * N.of_nat (keys + bits + old + 1))%N.
+  Proof.
+    intros m p keys bits old Hkey Hbits Hold.
+    pose proof (X.T_encode_le (fst p)) as Hencode.
+    pose proof (PTrieT.T_get_le (X.t * Z) (X.encode (fst p)) m) as Hget.
+    time_unfold T_add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [q|] eqn:Hvalue.
+    - pose proof (PTrieT.T_set_le (X.t * Z) (X.encode (fst p))
+        (fst q, (snd q + snd p)%Z) m) as Hset.
+      pose proof (Z.T_add_le (snd q) (snd p)) as Hadd.
+      unfold karr_previous in Hold. rewrite Hvalue in Hold.
+      unfold karr_add_factor, X.bits in *. time_simpl. nia.
+    - pose proof (PTrieT.T_set_le (X.t * Z) (X.encode (fst p)) p m) as Hset.
+      unfold karr_add_factor, X.bits in *. time_simpl. nia.
+  Qed.
+
+  (** The remaining list length pays for every intermediate signed-sum width. *)
+  Lemma T_karr_accum_raw : forall xs m keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs -> karr_accum_values_bits m bits ->
+    (List.T_fold_left add_term T_add_term xs m <=
+      (karr_add_factor + 1) * N.of_nat (length xs) *
+        N.of_nat (keys + 2 * bits + 2 * length xs + 1) + 1)%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys bits Hsizes Hvalues.
+    - time_unfold List.T_fold_left. cbn [length]. nia.
+    - inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      assert (Hnext : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+        Z.size_nat (snd p) <= bits + 1) xs).
+      { eapply Forall_impl; [|exact Htail]. intros q [Hqkey Hqbits]. split; lia. }
+      pose proof (karr_add_term_values_bits m p bits Hvalues Hbits) as Hnewvalues.
+      specialize (IH (add_term m p) keys (bits + 1) Hnext Hnewvalues).
+      pose proof (T_karr_add_term_bounded m p keys bits bits Hkey Hbits
+        (karr_previous_bits m bits (fst p) Hvalues)) as Hhead.
+      time_unfold List.T_fold_left. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Testing an integer against zero does not traverse its magnitude. *)
+  Lemma T_karr_zero_test : forall z, (Z.T_eqb z 0 <= 2)%N.
+  Proof.
+    intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia.
+  Qed.
+
+  (** The coefficient filter retains exactly the nonzero entries. *)
+  Definition karr_nonzero (p : X.t * Z) : bool := negb (Z.eqb (snd p) 0).
+
+  TimeFun karr_nonzero.
+
+  (** Each nonzero test has a fixed callback charge. *)
+  Lemma T_karr_nonzero_bounded : forall p, (T_karr_nonzero p <= 6)%N.
+  Proof.
+    intro p. pose proof (T_karr_zero_test (snd p)).
+    time_unfold T_karr_nonzero. time_simpl. lia.
+  Qed.
+
+  (** Raw normalization pays the signed accumulation and two linear trie traversals. *)
+  Definition karr_raw_normal_factor : N := (4 * (karr_add_factor + 1) + 64)%N.
+
+  (** The raw normalizer is quadratic in occurrence count and linear in initial width. *)
+  Lemma T_karr_normal_raw : forall xs keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (T_normalize_coef xs <= karr_raw_normal_factor * N.of_nat (length xs + 1) *
+      N.of_nat (keys + 2 * bits + 2 * length xs + 1))%N.
+  Proof.
+    intros xs keys bits Hsizes.
+    assert (Hempty : karr_accum_values_bits PTrieCode.empty bits).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (T_karr_accum_raw xs PTrieCode.empty keys bits Hsizes Hempty) as Haccum.
+    set (tr := fold_left add_term xs PTrieCode.empty).
+    assert (Hkeys : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) xs).
+    { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
+    pose proof (karr_accum_nodes xs PTrieCode.empty keys Hkeys) as Hnodes.
+    change (PTrie.nodes tr <= length xs * keys) in Hnodes.
+    pose proof (T_karr_values_bounded (X.t * Z) tr) as Hvalues.
+    pose proof (karr_values_length (X.t * Z) tr) as Hlength.
+    pose proof (karr_T_filter_members (X.t * Z) karr_nonzero T_karr_nonzero 6
+      (karr_values tr) (fun p _ => T_karr_nonzero_bounded p)) as Hfilter.
+    time_unfold T_normalize_coef. fold tr.
+    change (fun p : X.t * Z => negb (Z.eqb (snd p) 0)) with karr_nonzero.
+    time_simpl.
+    change (fun (m : ptrie (X.t * Z)) (p : X.t * Z) => T_add_term m p) with T_add_term.
+    lazymatch goal with
+    | |- context [List.T_filter karr_nonzero ?Tf (karr_values tr)] =>
+      change Tf with T_karr_nonzero
+    end.
+    unfold karr_raw_normal_factor. nia.
+  Qed.
+  (** Raw repeated coefficients gain at most one bit per occurrence. *)
+  Lemma karr_raw_coefficient_bits : forall x xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Z.size_nat (coefficient x xs) <= length xs + bits.
+  Proof.
+    intros x xs. induction xs as [|[y a] xs IH]; intros bits Hsizes.
+    - change (0 <= 0 + bits). lia.
+    - inversion Hsizes as [|p ps Ha Htail]; subst p ps.
+      rewrite coefficient_cons. cbn [length]. destruct (X.eqb x y).
+      + pose proof (karr_size_add a (coefficient x xs)).
+        specialize (IH bits Htail). cbn [snd] in Ha. lia.
+      + rewrite Z.add_0_l. specialize (IH bits Htail). lia.
+  Qed.
+
+  (** Each lookup step compares the query key and adds a matching occurrence. *)
+  Definition karr_coefficient_step (x : X.t) (p : X.t * Z) (z : Z) : Z :=
+    if X.eqb x (fst p) then (snd p + z)%Z else z.
+
+  TimeFun karr_coefficient_step.
+
+  (** The named lookup step is the executable coefficient fold. *)
+  Lemma karr_coefficient_step_fold : forall x xs,
+    fold_right (karr_coefficient_step x) 0%Z xs = coefficient x xs.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A lookup step has one key comparison and one bounded signed addition. *)
+  Definition karr_coefficient_factor : N := (X.c_key + 16)%N.
+
+  (** The query's declared bit count pays for comparison in its actual argument order. *)
+  Lemma T_karr_coefficient_step_bounded : forall x p z bits old,
+    Z.size_nat (snd p) <= bits -> Z.size_nat z <= old ->
+    (T_karr_coefficient_step x p z <=
+      karr_coefficient_factor * N.of_nat (X.bits x + bits + old + 1))%N.
+  Proof.
+    intros x p z bits old Hbits Hold.
+    pose proof (X.T_eqb_le x (fst p)) as Heqb.
+    pose proof (Z.T_add_le (snd p) z) as Hadd.
+    time_unfold T_karr_coefficient_step. unfold karr_coefficient_factor.
+    destruct (X.eqb x (fst p)); time_simpl; nia.
+  Qed.
+
+  (** The lookup clock accounts for each suffix's growing coefficient sum. *)
+  Lemma T_karr_coefficient_fold : forall x xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    (List.T_fold_right (karr_coefficient_step x) (T_karr_coefficient_step x) 0%Z xs <=
+      (karr_coefficient_factor + 1) * N.of_nat (length xs + 1) *
+        N.of_nat (X.bits x + 2 * bits + length xs + 1))%N.
+  Proof.
+    intros x xs. induction xs as [|p xs IH]; intros bits Hsizes.
+    - time_unfold List.T_fold_right. cbn [length]. unfold karr_coefficient_factor. nia.
+    - inversion Hsizes as [|q qs Hp Htail]; subst q qs.
+      specialize (IH bits Htail).
+      assert (Hsum : Z.size_nat (fold_right (karr_coefficient_step x) 0%Z xs) <=
+        length xs + bits).
+      { rewrite karr_coefficient_step_fold. now apply karr_raw_coefficient_bits. }
+      pose proof (T_karr_coefficient_step_bounded x p
+        (fold_right (karr_coefficient_step x) 0%Z xs)
+        bits (length xs + bits) Hp Hsum) as Hhead.
+      time_unfold List.T_fold_right. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** The coefficient wrapper adds only a fixed charge to its bounded fold. *)
+  Lemma T_karr_coefficient_bounded : forall x xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    (T_coefficient x xs <= (karr_coefficient_factor + 4) *
+      N.of_nat (length xs + 1) * N.of_nat (X.bits x + 2 * bits + length xs + 1))%N.
+  Proof.
+    intros x xs bits Hsizes.
+    pose proof (T_karr_coefficient_fold x xs bits Hsizes) as Hfold.
+    time_unfold T_coefficient.
+    change (fun p z => if X.eqb x (fst p) then (snd p + z)%Z else z)
+      with (karr_coefficient_step x).
+    time_simpl.
+    lazymatch goal with
+    | |- context [List.T_fold_right (karr_coefficient_step x) ?Tf 0%Z xs] =>
+      change Tf with (T_karr_coefficient_step x)
+    end.
+    assert (Hmass : (1 <= N.of_nat (length xs + 1) *
+      N.of_nat (X.bits x + 2 * bits + length xs + 1))%N).
+    { change (1 * 1 <= N.of_nat (length xs + 1) *
+        N.of_nat (X.bits x + 2 * bits + length xs + 1))%N.
+      apply N.mul_le_mono; lia. }
+    nia.
+  Qed.
+
+  (** A list maximum bounds every mapped member. *)
+  Lemma karr_max_member : forall A (f : A -> nat) seed xs x,
+    In x xs -> f x <= fold_right Nat.max seed (map f xs).
+  Proof.
+    intros A f seed xs. induction xs as [|p xs IH]; intros x Hin;
+      cbn [In map fold_right] in *; [contradiction|].
+    destruct Hin as [Hsame|Hin]; [subst p; lia|]. specialize (IH x Hin). lia.
+  Qed.
+
+  (** A list maximum also bounds its initial value. *)
+  Lemma karr_max_seed : forall xs seed, seed <= fold_right Nat.max seed xs.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intro seed; cbn [fold_right]; [lia|].
+    specialize (IH seed). lia.
+  Qed.
+
+  (** Every stored key fits its row's declared key width. *)
+  Lemma karr_row_key_member : forall r p, In p (lhs r) ->
+    Pos.size_nat (X.encode (fst p)) <= C.row_key_bits r.
+  Proof.
+    intros r p Hin. unfold C.row_key_bits.
+    exact (karr_max_member _ (fun q => Pos.size_nat (X.encode (fst q))) 0
+      (lhs r) p Hin).
+  Qed.
+
+  (** Every stored coefficient fits its row's declared arithmetic width. *)
+  Lemma karr_row_entry_bits : forall r p, In p (lhs r) ->
+    Z.size_nat (snd p) <= C.row_bits r.
+  Proof.
+    intros r p Hin. unfold C.row_bits.
+    exact (karr_max_member _ (fun q => Z.size_nat (snd q))
+      (Z.size_nat (rhs r)) (lhs r) p Hin).
+  Qed.
+
+  (** A row's constant fits the same arithmetic-width declaration. *)
+  Lemma karr_row_rhs_bits : forall r, Z.size_nat (rhs r) <= C.row_bits r.
+  Proof.
+    intro r. unfold C.row_bits. apply karr_max_seed.
+  Qed.
+
+  (** A raw source row supplies both uniform occurrence bounds. *)
+  Lemma karr_row_entry_sizes : forall r,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= C.row_key_bits r /\
+      Z.size_nat (snd p) <= C.row_bits r) (lhs r).
+  Proof.
+    intro r. apply Forall_forall. intros p Hin. split.
+    - now apply karr_row_key_member with (r := r).
+    - now apply karr_row_entry_bits with (r := r).
+  Qed.
+
+  (** Summing a raw row's repeated coefficients adds at most its occurrence count in bits. *)
+  Lemma karr_raw_row_coefficient_bits : forall x r,
+    Z.size_nat (coefficient x (lhs r)) <= length (lhs r) + C.row_bits r.
+  Proof.
+    intros x r. apply karr_raw_coefficient_bits. apply Forall_forall.
+    intros p Hin. now apply karr_row_entry_bits with (r := r).
+  Qed.
+
+  (** Public row size dominates its length and both declared input widths. *)
+  Lemma karr_lsize_parts : forall r,
+    length (lhs r) + C.row_key_bits r + C.row_bits r + 1 <= C.lsize r /\
+    (length (lhs r) + 1) * (C.row_bits r + 1) <= C.lsize r /\
+    (length (lhs r) + 1) * (C.row_key_bits r + 1) <= C.lsize r.
+  Proof.
+    intro r. unfold C.lsize. nia.
+  Qed.
+
+  (** Scaling charges one bilinear multiplication for each form occurrence. *)
+  Lemma T_karr_scale_coef_bounded : forall a xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    (T_scale_coef a xs <=
+      16 * N.of_nat ((length xs + 1) * (Z.size_nat a + 1) * (bits + 1)))%N.
+  Proof.
+    intros a xs bits Hbits. time_unfold T_scale_coef.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf xs] =>
+      assert (Hmap : (ListDef.T_map f Tf xs <=
+        (12 * N.of_nat ((Z.size_nat a + 1) * (bits + 1)) + 1) *
+        N.of_nat (length xs) + 1)%N);
+      [ apply karr_T_map_members; intros [x z] Hin;
+        pose proof (proj1 (Forall_forall _ _) Hbits (x, z) Hin) as Hz;
+        pose proof (karr_T_Z_mul_bilinear a z);
+        time_simpl; time_cbn_all; nia
+      | nia ]
+    end.
+  Qed.
+
+  (** Substitution removes every source occurrence of its selected key. *)
+  Definition karr_without_key (x : X.t) (p : X.t * Z) : bool :=
+    negb (X.eqb (fst p) x).
+
+  TimeFun karr_without_key.
+
+  (** Retention tests charge the stored key in the comparison's actual argument order. *)
+  Lemma T_karr_without_key_le : forall x p keys,
+    Pos.size_nat (X.encode (fst p)) <= keys ->
+    (T_karr_without_key x p <= (X.c_key + 4) * N.of_nat (keys + 1))%N.
+  Proof.
+    intros x p keys Hkey. pose proof (X.T_eqb_le (fst p) x) as Heqb.
+    time_unfold T_karr_without_key. unfold X.bits in *. time_simpl. nia.
+  Qed.
+
+  (** Filtering the source is linear in its public row size. *)
+  Lemma T_karr_without_filter_le : forall x r,
+    (List.T_filter (karr_without_key x) (T_karr_without_key x) (lhs r) <=
+      (X.c_key + 8) * N.of_nat (C.lsize r))%N.
+  Proof.
+    intros x r.
+    assert (Hfilter : (List.T_filter (karr_without_key x) (T_karr_without_key x)
+      (lhs r) <= ((X.c_key + 4) * N.of_nat (C.row_key_bits r + 1) + 1) *
+        N.of_nat (length (lhs r)) + 1)%N).
+    { apply karr_T_filter_members. intros p Hin. apply T_karr_without_key_le.
+      now apply karr_row_key_member with (r := r). }
+    pose proof (karr_lsize_parts r) as [Hparts [_ Hkeys]]. nia.
+  Qed.
+
+  (** The normalizer receives the surviving source terms and one scaled form. *)
+  Definition karr_subst_input (x : X.t) (f : lin X.t) (r : lcons X.t)
+      : list (X.t * Z) :=
+    filter (karr_without_key x) (lhs r) ++ scale_coef (coefficient x (lhs r)) (coef f).
+
+  (** Aggregate substitution never creates more than the two input lists' total length. *)
+  Lemma karr_subst_input_length : forall x f r,
+    length (karr_subst_input x f r) <= length (lhs r) + length (coef f).
+  Proof.
+    intros x f r. unfold karr_subst_input, scale_coef.
+    rewrite length_app, length_map. apply Nat.add_le_mono_r, filter_length_le.
+  Qed.
+
+  (** The substitution list has bounded original keys and product coefficient widths. *)
+  Lemma karr_subst_input_sizes : forall x f r,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <=
+      C.row_key_bits r + C.row_key_bits (LCons X.t (coef f) REq (cst f)) /\
+      Z.size_nat (snd p) <= length (lhs r) + C.row_bits r +
+        C.row_bits (LCons X.t (coef f) REq (cst f))) (karr_subst_input x f r).
+  Proof.
+    intros x f r. unfold karr_subst_input. apply Forall_app. split.
+    - apply Forall_forall. intros p Hin. apply filter_In in Hin as [Hin _].
+      pose proof (karr_row_key_member r p Hin).
+      pose proof (karr_row_entry_bits r p Hin). split; lia.
+    - apply Forall_forall. intros [y z] Hin. unfold scale_coef in Hin.
+      apply in_map_iff in Hin as [[u a] [Heq Hin]]. cbn [fst snd] in Heq.
+      injection Heq as Heqy Heqz. subst y z.
+      pose proof (karr_row_key_member (LCons X.t (coef f) REq (cst f))
+        (u, a) Hin) as Hkey.
+      pose proof (karr_row_entry_bits (LCons X.t (coef f) REq (cst f))
+        (u, a) Hin) as Hbits.
+      pose proof (karr_raw_row_coefficient_bits x r) as Hcoefficient.
+      pose proof (karr_size_mul (coefficient x (lhs r)) a) as Hmul.
+      cbn [fst snd] in *. split; lia.
+  Qed.
+  (** The query key and both public row sizes form the frozen substitution extent. *)
+  Definition karr_subst_extent (x : X.t) (f : lin X.t) (r : lcons X.t) : nat :=
+    X.bits x + C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1.
+
+  (** Every substitution extent is positive. *)
+  Lemma karr_subst_extent_positive : forall x f r, 1 <= karr_subst_extent x f r.
+  Proof.
+    intros x f r. unfold karr_subst_extent. lia.
+  Qed.
+
+  (** The extent bounds all original lengths and widths together. *)
+  Lemma karr_subst_extent_inputs : forall x f r,
+    X.bits x + length (lhs r) + length (coef f) + C.row_key_bits r +
+      C.row_key_bits (LCons X.t (coef f) REq (cst f)) + C.row_bits r +
+      C.row_bits (LCons X.t (coef f) REq (cst f)) + 3 <= karr_subst_extent x f r.
+  Proof.
+    intros x f r. pose proof (karr_lsize_parts r) as [Hr _].
+    pose proof (karr_lsize_parts (LCons X.t (coef f) REq (cst f))) as [Hf _].
+    change (length (coef f) + C.row_key_bits (LCons X.t (coef f) REq (cst f)) +
+      C.row_bits (LCons X.t (coef f) REq (cst f)) + 1 <=
+      C.lsize (LCons X.t (coef f) REq (cst f))) in Hf.
+    unfold karr_subst_extent. lia.
+  Qed.
+
+  (** Raw coefficient lookup fits the square of the frozen extent. *)
+  Lemma T_karr_subst_coefficient : forall x f r,
+    (T_coefficient x (lhs r) <= 2 * (karr_coefficient_factor + 4) *
+      N.of_nat ((karr_subst_extent x f r)^2))%N.
+  Proof.
+    intros x f r. pose proof (karr_subst_extent_inputs x f r) as Hinputs.
+    assert (Hbits : Forall (fun p => Z.size_nat (snd p) <= C.row_bits r) (lhs r)).
+    { apply Forall_forall. intros p Hp. now apply karr_row_entry_bits with (r := r). }
+    pose proof (T_karr_coefficient_bounded x (lhs r) (C.row_bits r) Hbits) as Htime.
+    assert (Hlength : (N.of_nat (length (lhs r) + 1) <=
+      1 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    assert (Hwidth : (N.of_nat (X.bits x + 2 * C.row_bits r + length (lhs r) + 1) <=
+      2 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    pose proof (karr_clock_product_bound _ _ _ _ _ _ _ Htime Hlength Hwidth) as Hbound.
+    rewrite <- karr_nat_square in Hbound.
+    replace ((karr_coefficient_factor + 4) * 1 * 2)%N
+      with (2 * (karr_coefficient_factor + 4))%N in Hbound by ring.
+    exact Hbound.
+  Qed.
+
+  (** The scaled form pays one source-size factor and one form-size factor. *)
+  Lemma T_karr_subst_scale : forall x f r,
+    (T_scale_coef (coefficient x (lhs r)) (coef f) <=
+      16 * N.of_nat ((karr_subst_extent x f r)^2))%N.
+  Proof.
+    intros x f r. set (a := coefficient x (lhs r)).
+    set (fr := LCons X.t (coef f) REq (cst f)).
+    pose proof (karr_raw_row_coefficient_bits x r) as Ha. fold a in Ha.
+    pose proof (karr_lsize_parts r) as [Hr _].
+    pose proof (karr_lsize_parts fr) as [_ [Hform _]].
+    change ((length (coef f) + 1) * (C.row_bits fr + 1) <= C.lsize fr) in Hform.
+    assert (Hbits : Forall (fun p => Z.size_nat (snd p) <= C.row_bits fr) (coef f)).
+    { apply Forall_forall. intros p Hin. exact (karr_row_entry_bits fr p Hin). }
+    pose proof (T_karr_scale_coef_bounded a (coef f) (C.row_bits fr) Hbits) as Htime.
+    replace (16 * N.of_nat ((length (coef f) + 1) * (Z.size_nat a + 1) *
+      (C.row_bits fr + 1)))%N with
+      (16 * N.of_nat ((length (coef f) + 1) * (C.row_bits fr + 1)) *
+        N.of_nat (Z.size_nat a + 1))%N in Htime by (rewrite !Nat2N.inj_mul; ring).
+    assert (Hleft : (N.of_nat ((length (coef f) + 1) * (C.row_bits fr + 1)) <=
+      1 * N.of_nat (karr_subst_extent x f r))%N).
+    { unfold karr_subst_extent. fold fr. lia. }
+    assert (Hright : (N.of_nat (Z.size_nat a + 1) <=
+      1 * N.of_nat (karr_subst_extent x f r))%N).
+    { unfold karr_subst_extent. fold fr. lia. }
+    pose proof (karr_clock_product_bound _ _ _ _ _ _ _ Htime Hleft Hright) as Hbound.
+    rewrite <- karr_nat_square in Hbound. exact Hbound.
+  Qed.
+
+  (** Normalizing the aggregate list fits four multiples of the same square. *)
+  Lemma T_karr_subst_normal : forall x f r,
+    (T_normalize_coef (karr_subst_input x f r) <=
+      4 * karr_raw_normal_factor * N.of_nat ((karr_subst_extent x f r)^2))%N.
+  Proof.
+    intros x f r. set (fr := LCons X.t (coef f) REq (cst f)).
+    pose proof (karr_subst_extent_inputs x f r) as Hinputs. fold fr in Hinputs.
+    pose proof (karr_subst_input_length x f r) as Hlength.
+    pose proof (T_karr_normal_raw (karr_subst_input x f r)
+      (C.row_key_bits r + C.row_key_bits fr)
+      (length (lhs r) + C.row_bits r + C.row_bits fr)
+      (karr_subst_input_sizes x f r)) as Htime.
+    assert (Hleft : (N.of_nat (length (karr_subst_input x f r) + 1) <=
+      1 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    assert (Hright : (N.of_nat (C.row_key_bits r + C.row_key_bits fr +
+      2 * (length (lhs r) + C.row_bits r + C.row_bits fr) +
+      2 * length (karr_subst_input x f r) + 1) <=
+      4 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    pose proof (karr_clock_product_bound _ _ _ _ _ _ _ Htime Hleft Hright) as Hbound.
+    rewrite <- karr_nat_square in Hbound.
+    replace (karr_raw_normal_factor * 1 * 4)%N
+      with (4 * karr_raw_normal_factor)%N in Hbound by ring. exact Hbound.
+  Qed.
+
+  (** Source filtering also fits the shared square envelope. *)
+  Lemma T_karr_subst_filter : forall x f r,
+    (List.T_filter (karr_without_key x) (T_karr_without_key x) (lhs r) <=
+      (X.c_key + 8) * N.of_nat ((karr_subst_extent x f r)^2))%N.
+  Proof.
+    intros x f r. pose proof (T_karr_without_filter_le x r) as Htime.
+    pose proof (karr_nat_square_ge _ (karr_subst_extent_positive x f r)) as Hsquare.
+    eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l.
+    unfold karr_subst_extent in *. lia.
+  Qed.
+
+  (** Appending the aggregate form traverses only the surviving source list. *)
+  Lemma T_karr_subst_app : forall x f r,
+    (Datatypes.T_app (filter (karr_without_key x) (lhs r))
+      (scale_coef (coefficient x (lhs r)) (coef f)) <=
+      N.of_nat ((karr_subst_extent x f r)^2))%N.
+  Proof.
+    intros x f r. pose proof (karr_subst_extent_inputs x f r) as Hinputs.
+    pose proof (karr_nat_square_ge _ (karr_subst_extent_positive x f r)) as Hsquare.
+    pose proof (filter_length_le (karr_without_key x) (lhs r)) as Hlength.
+    pose proof (Datatypes.T_app_le (filter (karr_without_key x) (lhs r))
+      (scale_coef (coefficient x (lhs r)) (coef f))) as Htime. lia.
+  Qed.
+
+  (** The constant adjustment has one product and one bounded subtraction. *)
+  Lemma T_karr_subst_arithmetic : forall x f r,
+    (Z.T_mul (coefficient x (lhs r)) (cst f) <=
+      8 * N.of_nat ((karr_subst_extent x f r)^2))%N /\
+    (Z.T_sub (rhs r) (coefficient x (lhs r) * cst f) <=
+      12 * N.of_nat ((karr_subst_extent x f r)^2))%N.
+  Proof.
+    intros x f r. set (a := coefficient x (lhs r)).
+    pose proof (karr_subst_extent_inputs x f r) as Hinputs.
+    pose proof (karr_raw_row_coefficient_bits x r) as Ha. fold a in Ha.
+    pose proof (karr_row_rhs_bits r) as Hr.
+    pose proof (karr_row_rhs_bits (LCons X.t (coef f) REq (cst f))) as Hf.
+    change (Z.size_nat (cst f) <= C.row_bits (LCons X.t (coef f) REq (cst f))) in Hf.
+    pose proof (karr_T_Z_mul_bilinear a (cst f)) as Hmul.
+    assert (Hleft : (N.of_nat (Z.size_nat a + 1) <=
+      1 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    assert (Hright : (N.of_nat (Z.size_nat (cst f) + 1) <=
+      1 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    pose proof (karr_clock_product_bound _ _ _ _ _ _ _ Hmul Hleft Hright) as Hbound.
+    rewrite <- karr_nat_square in Hbound. split; [exact Hbound|].
+    pose proof (Z.T_sub_le (rhs r) (a * cst f)) as Hsub.
+    pose proof (karr_size_mul a (cst f)) as Hproduct.
+    pose proof (karr_nat_square_ge _ (karr_subst_extent_positive x f r)) as Hsquare.
+    assert (Hlinear : (Z.T_sub (rhs r) (a * cst f) <=
+      12 * N.of_nat (karr_subst_extent x f r))%N) by lia.
+    eapply N.le_trans; [exact Hlinear|]. now apply N.mul_le_mono_l.
+  Qed.
+
+  (** The shared constant covers all traversals and binary arithmetic in substitution. *)
+  Definition karr_subst_factor : N :=
+    (8 * karr_raw_normal_factor + 4 * karr_coefficient_factor + 8 * X.c_key + 192)%N.
+
+  (** Aggregate substitution satisfies the frozen square bound on arbitrary raw rows. *)
+  Lemma T_karr_subst_bounded : forall x f r,
+    (T_subst x f r <= karr_subst_factor * N.of_nat
+      ((X.bits x + C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
+  Proof.
+    intros x f r. set (a := coefficient x (lhs r)).
+    set (mass := N.of_nat ((karr_subst_extent x f r)^2)).
+    pose proof (T_karr_subst_coefficient x f r) as Hcoefficient.
+    pose proof (T_karr_subst_scale x f r) as Hscale.
+    pose proof (T_karr_subst_normal x f r) as Hnormal.
+    pose proof (T_karr_subst_filter x f r) as Hfilter.
+    pose proof (T_karr_subst_app x f r) as Happ.
+    destruct (T_karr_subst_arithmetic x f r) as [Hmul Hsub].
+    fold mass in Hcoefficient, Hscale, Hnormal, Hfilter, Happ, Hmul, Hsub.
+    fold a in Hscale, Happ, Hmul, Hsub.
+    assert (Hmass : (1 <= mass)%N).
+    { unfold mass. pose proof (karr_subst_extent_positive x f r) as Hpositive.
+      pose proof (karr_nat_square_ge _ Hpositive). lia. }
+    change (T_subst x f r <= karr_subst_factor * mass)%N.
+    time_unfold T_subst. time_unfold T_normalize_row.
+    change (fun p => negb (X.eqb (fst p) x)) with (karr_without_key x).
+    fold a. fold (karr_subst_input x f r). time_simpl.
+    lazymatch goal with
+    | |- context [List.T_filter (karr_without_key x) ?Tf (lhs r)] =>
+      change Tf with (T_karr_without_key x)
+    end.
+    change (filter (karr_without_key x) (lhs r) ++ scale_coef a (coef f))
+      with (karr_subst_input x f r).
+    cbn [lhs]. unfold karr_subst_factor.
+    clear -Hcoefficient Hscale Hnormal Hfilter Happ Hmul Hsub Hmass.
+    clearbody mass. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -6388,11 +7231,14 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_karr : N := 1. (* STUB *)
+  Definition c_karr : N := (karr_subst_factor + 1)%N.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_karr * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x f r. eapply N.le_trans; [apply T_karr_subst_bounded|].
+    apply N.mul_le_mono_r. unfold c_karr. lia.
+  Qed.
   Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
@@ -6665,9 +7511,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   Proof.
-    intros v x f r. unfold subst. rewrite normalize_row_sat.
-    unfold sat. cbn [lrel lhs rhs]. rewrite eval_coef_subst.
-    destruct (lrel r); lia.
+    exact subst_sat_checked.
   Qed.
   Lemma leb_complete_Q : forall a b, echelon a ->
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
