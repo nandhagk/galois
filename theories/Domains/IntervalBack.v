@@ -3822,6 +3822,91 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_not_time : forall rw u,
+    (T_interval_not rw u <=
+      10000 * N.of_nat ((Pos.to_nat rw + interval_bits u + 1) ^ 2))%N.
+  Proof.
+    intros rw u.
+    pose proof (PayloadBounds.payload_modulus_time rw) as Hmodulus.
+    pose proof (PayloadBounds.payload_modulus_bits rw) as Hmodbits.
+    pose proof (Pos2Nat.is_pos rw) as Hrw.
+    pose proof (Std.Z.T_sub_le (Word.modulus rw) 1) as Hsubmod.
+    pose proof (table_integer_sub_bits (Word.modulus rw) 1) as Hbitsmod.
+    destruct u as [|[|lo|] [|hi|]];
+      unfold T_interval_not, T_interval_finite_helper, interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (unfold T_interval_top; time_simpl; time_cbn; time_cbn_all;
+        repeat rewrite Nat2N.inj_add in *;
+        repeat rewrite Nat2N.inj_mul in *; nia).
+    pose proof (Std.Z.T_sub_le (Word.modulus rw - 1) hi) as Hsubhi.
+    pose proof (Std.Z.T_sub_le (Word.modulus rw - 1) lo) as Hsublo.
+    pose proof (table_integer_sub_bits (Word.modulus rw - 1) hi) as Hbitshi.
+    pose proof (table_integer_sub_bits (Word.modulus rw - 1) lo) as Hbitslo.
+    pose proof (table_checked_time rw (Word.modulus rw - 1 - hi)
+      (Word.modulus rw - 1 - lo)) as Hchecked.
+    pose proof (Nat.le_max_l (Z.size_nat lo) (Z.size_nat hi)) as Hlo.
+    pose proof (Nat.le_max_r (Z.size_nat lo) (Z.size_nat hi)) as Hhi.
+    assert (Hone : Z.size_nat 1 = 1%nat) by reflexivity.
+    unfold Word.modulus in *.
+    replace (2 ^ Z.pos rw)%Z with (Z.pow_pos 2 rw) in * by reflexivity.
+    set (s := Pos.to_nat rw + Nat.max (Z.size_nat lo) (Z.size_nat hi) + 1).
+    assert (Hendpoint :
+      (Z.size_nat (Word.modulus rw - 1 - hi) <= s + 3)%nat)
+      by (unfold s, Word.modulus;
+        replace (2 ^ Z.pos rw)%Z with (Z.pow_pos 2 rw) by reflexivity; lia).
+    assert (Hlinear :
+      (2 * (5 * Pos.to_nat rw + 3) +
+       2 * (3 * (Z.size_nat (Word.modulus rw) + Z.size_nat 1) + 3) +
+       3 * (Z.size_nat (Word.modulus rw - 1) + Z.size_nat hi) + 3 +
+       3 * (Z.size_nat (Word.modulus rw - 1) + Z.size_nat lo) + 3 +
+       100 * (Pos.to_nat rw + Z.size_nat (Word.modulus rw - 1 - hi) +
+         Z.size_nat (Word.modulus rw - 1 - lo) + 1) + 2 <= 1000 * s)%nat)
+      by (unfold s, Word.modulus;
+        replace (2 ^ Z.pos rw)%Z with (Z.pow_pos 2 rw) by reflexivity; lia).
+    assert (Hsquare : (s <= s ^ 2)%nat)
+      by (unfold s; rewrite Nat.pow_2_r; nia).
+    unfold Word.modulus in Hlinear.
+    replace (2 ^ Z.pos rw)%Z with (Z.pow_pos 2 rw) in Hlinear by reflexivity.
+    pose proof (table_nat_to_N_le _ _ Hlinear) as HlinearN.
+    pose proof (table_nat_to_N_le _ _ Hsquare) as HsquareN.
+    rewrite Nat2N.inj_mul in HlinearN.
+    repeat rewrite Nat2N.inj_add in HlinearN.
+    repeat rewrite Nat2N.inj_mul in HlinearN.
+    clear - Hmodulus Hsubmod Hsubhi Hsublo Hchecked HlinearN HsquareN.
+    repeat rewrite Nat2N.inj_add in Hmodulus, Hsubmod, Hsubhi, Hsublo, Hchecked.
+    repeat rewrite Nat2N.inj_mul in Hmodulus, Hsubmod, Hsubhi, Hsublo, Hchecked.
+    lia.
+  Qed.
+
+  Local Lemma table_not_dispatch_time : forall rw w a,
+    (1 + T_interval_clip w a + T_interval_not rw (interval_clip w a) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 + W.psize w a)%nat))%N.
+  Proof.
+    intros rw w a.
+    pose proof (table_clip_time w a) as Hclip.
+    pose proof (table_not_time rw (interval_clip w a)) as Hnot.
+    pose proof (table_clip_bits w a) as Hbits.
+    pose proof (Pos2Nat.is_pos rw) as Hrw.
+    set (budget_nat := (Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 + W.psize w a).
+    assert (Hnot_nat :
+      ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2 <=
+        budget_nat)%nat).
+    { unfold budget_nat. apply Nat.le_trans with
+        (m := (Pos.to_nat rw + Pos.to_nat w + 1) ^ 2).
+      - apply Nat.pow_le_mono_l. lia.
+      - lia. }
+    assert (Hclip_nat : (W.psize w a + 1 <= budget_nat)%nat)
+      by (unfold budget_nat; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hnot_nat) as HnotN.
+    pose proof (table_nat_to_N_le _ _ Hclip_nat) as HclipN.
+    assert (Hbudget : (1 <= N.of_nat budget_nat)%N)
+      by (unfold budget_nat; rewrite Nat.pow_2_r; nia).
+    clear - Hclip Hnot HnotN HclipN Hbudget.
+    unfold c_word_table.
+    nia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -3829,7 +3914,36 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
   Proof.
     intros o rw xs.
-    time_step.
+    assert (Hcoeff : (1 <= c_word_table)%N) by (unfold c_word_table; nia).
+    pose proof (Pos2Nat.is_pos rw) as Hrw.
+    unfold T_wfwd.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct xs as [|[wa a] [|[wb b] [|[wc c] [|extra rest]]]]; destruct o;
+      cbn [map fold_right fst snd]; time_cbn_all;
+      try (clear - Hcoeff Hrw;
+        repeat rewrite Nat2N.inj_add in *;
+        repeat rewrite Nat2N.inj_mul in *; nia).
+    all: try (match goal with
+    | |- context [T_interval_counts _] =>
+        pose proof (table_clip_time wa a) as Hclip;
+        unfold T_interval_counts;
+        time_simpl; time_cbn; time_cbn_all;
+        rewrite Nat.pow_2_r, !Nat.add_0_r, !Nat.mul_1_r;
+        repeat rewrite Nat2N.inj_add in *;
+        repeat rewrite Nat2N.inj_mul in *;
+        unfold c_word_table; nia
+    end).
+    all: try (match goal with
+    | |- context [T_interval_not _ _] =>
+        pose proof (table_not_dispatch_time rw wa a) as Htime;
+        match goal with
+        | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + 1) ^ 2 + W.psize wa a)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
   Admitted. (* OPEN: bound the timed unary and binary interval dispatches. *)
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
