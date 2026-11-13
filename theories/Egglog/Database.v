@@ -5994,6 +5994,64 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     cbn [N.size_nat] in Hbits. lia.
   Qed.
 
+  (** The database coefficient covers row encoding, guarded finds, and their fixed overhead. *)
+  Lemma c_db_lookup_parts :
+    (32 * (PTrieT.c_trie + 1) * (V.c_key + 1) <= c_db /\
+      64 * (PTrieT.c_trie + 1) * (V.c_key + 1) +
+        2 * UnionFindT.c_uf + 17 <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. split; nia.
+  Qed.
+
+  (** Separate payload and structural budgets absorb the three parts of a guarded lookup. *)
+  Lemma database_lookup_cost_combine :
+    forall coefficient row_cost cell_cost work payload guard normal read : N,
+      (row_cost <= coefficient -> 2 * row_cost + cell_cost + 5 <= coefficient ->
+        guard <= 5 * work -> normal <= cell_cost * work ->
+        read <= row_cost * (payload + 2 * work) ->
+        guard + normal + read <= coefficient * work + coefficient * payload)%N.
+  Proof.
+    intros coefficient row_cost cell_cost work payload guard normal read
+      Hrow_cost Hcombined Hguard Hnormal Hread.
+    assert (Hpayload : (row_cost * payload <= coefficient * payload)%N).
+    { apply N.mul_le_mono_r. exact Hrow_cost. }
+    assert (Hwork : ((2 * row_cost + cell_cost + 5) * work <= coefficient * work)%N).
+    { apply N.mul_le_mono_r. exact Hcombined. }
+    nia.
+  Qed.
+
+  (** A name admitted by the guard pays for normalization and the encoded row query. *)
+  Lemma T_lookup_active_budget : forall f k db, wf db ->
+    (f <= runtime_max_name (db_runtime db))%positive ->
+    (Pos.T_compare (runtime_max_name (db_runtime db)) f + 3 +
+      T_normal_key db k + T_row_get f (normal_key db k) db <=
+      c_db * (N.of_nat (length k + 1) * N.of_nat (unit db)) +
+        c_db * N.of_nat (tuple_cell_bits k))%N.
+  Proof.
+    intros f k db Hwf Hname.
+    pose proof (T_normal_key_bound db k Hwf) as Hnormal.
+    pose proof (T_row_get_bound f (normal_key db k) db) as Hrow.
+    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    pose proof (guarded_name_bits db f Hwf Hname) as Hfunction.
+    pose proof (normal_key_bits_bound db k Hwf) as Hkey.
+    pose proof (unit_positive db) as Hpositive.
+    assert (Hmass : Pos.size_nat f + tuple_cell_bits (normal_key db k) +
+      length (normal_key db k) + 1 <= tuple_cell_bits k + 2 * (length k + 1) * unit db).
+    { rewrite normal_key_length. nia. }
+    eapply database_lookup_cost_combine with
+      (row_cost := (32 * (PTrieT.c_trie + 1) * (V.c_key + 1))%N)
+      (cell_cost := (2 * UnionFindT.c_uf + 12)%N).
+    - exact (proj1 c_db_lookup_parts).
+    - pose proof (proj2 c_db_lookup_parts) as Hcoefficient.
+      set (trie_cost := PTrieT.c_trie) in *.
+      set (forest_cost := UnionFindT.c_uf) in *. clearbody trie_cost forest_cost. nia.
+    - nia.
+    - nia.
+    - eapply N.le_trans; [exact Hrow |]. apply N.mul_le_mono_l. nia.
+  Qed.
+
   (** The high-water mark covers every slot index. *)
   Lemma wmark_index : forall db s new, wf db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
@@ -6149,7 +6207,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma T_lookup_le : forall f k db, wf db ->
     (T_lookup f k db <= c_db * N.of_nat (length k + 1) * N.of_nat (unit db) +
       c_db * N.of_nat ((fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf.
+    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    pose proof (unit_positive db) as Hpositive.
+    pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_lookup. time_unfold @T_db_runtime. time_unfold @T_runtime_max_name.
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f) eqn:Hbranch.
+    - apply Pos.compare_eq_iff in Hbranch.
+      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
+      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
+      unfold tuple_cell_bits in Hactive. nia.
+    - nia.
+    - apply Pos.compare_gt_iff in Hbranch.
+      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
+      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
+      unfold tuple_cell_bits in Hactive. nia.
+  Qed.
 
   (** The change flag is stored. *)
   Lemma T_changed_le : forall db, (T_changed db <= c_db)%N.
