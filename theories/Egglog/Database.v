@@ -5747,6 +5747,44 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_unfold T_db_tuple_code. nia.
   Qed.
 
+  (** Encoding a row key adds the function-name delimiter to the tuple walk. *)
+  Lemma T_db_row_code_bound : forall f k,
+    (T_db_row_code f k <= (V.c_key + 16) *
+      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intros f k. pose proof (T_db_tuple_code_bound k) as Htuple.
+    pose proof (T_glue_bits f (db_tuple_code k)) as Hglue.
+    time_unfold T_db_row_code. time_unfold @T_pair_code.
+    time_unfold @Datatypes.T_fst. time_unfold @Datatypes.T_snd.
+    cbn [fst snd]. nia.
+  Qed.
+
+  (** The row-map wrapper adds at most five steps around encoding and trie lookup. *)
+  Lemma T_row_get_overhead : forall f k db,
+    (T_row_get f k db <= T_db_row_code f k +
+      PTrieT.T_get (db_row_code f k) (runtime_rows (db_runtime db)) + 5)%N.
+  Proof.
+    intros f k db. time_unfold T_row_get.
+    time_unfold @T_db_runtime. time_unfold @T_runtime_rows.
+    time_unfold @Map.Datatypes.T_option_map.
+    destruct (PTrieCode.get (db_row_code f k) (runtime_rows (db_runtime db)));
+      time_unfold @Datatypes.T_snd; nia.
+  Qed.
+
+  (** Row lookup pays linearly for the complete encoded query key. *)
+  Lemma T_row_get_bound : forall f k db,
+    (T_row_get f k db <= 32 * (PTrieT.c_trie + 1) * (V.c_key + 1) *
+      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intros f k db. pose proof (T_row_get_overhead f k db) as Hrow.
+    pose proof (T_db_row_code_bound f k) as Hcode.
+    pose proof (PTrieT.T_get_le _ (db_row_code f k)
+      (runtime_rows (db_runtime db))) as Hget.
+    pose proof (db_row_code_bits f k) as Hbits.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    nia.
+  Qed.
+
   (** Initialization starts without amortized debt. *)
   Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
