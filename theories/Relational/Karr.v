@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith QArith Bool Lia Ring.
+From Stdlib Require Import List ZArith QArith Bool Lia Ring Permutation.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -269,6 +269,151 @@ TimeFun karr_unit.
 Definition karr_zero (r : karr_row) : bool := forallb (Z.eqb 0) (kcoeff r).
 
 TimeFun karr_zero.
+
+(** A selected pivot is nonzero and only changes the ordering of the rows. *)
+Lemma karr_pivot_some : forall rs p rest, karr_pivot rs = Some (p, rest) ->
+  karr_head p <> 0%Z /\ Permutation rs (p :: rest).
+Proof.
+  induction rs as [|r rs IH]; intros p rest Hpivot; cbn [karr_pivot] in Hpivot;
+    [discriminate|].
+  destruct (Z.eqb (karr_head r) 0) eqn:Hhead.
+  - destruct (karr_pivot rs) as [[q tail]|] eqn:Hnext; [|discriminate].
+    inversion Hpivot; subst p rest. destruct (IH q tail eq_refl) as [Hnonzero Hperm].
+    split; [exact Hnonzero|]. eapply Permutation_trans.
+    + apply perm_skip. exact Hperm.
+    + apply perm_swap.
+  - inversion Hpivot; subst p rest. split; [now apply Z.eqb_neq|apply Permutation_refl].
+Qed.
+
+(** Failing to find a pivot means every leading coefficient vanishes. *)
+Lemma karr_pivot_none : forall rs, karr_pivot rs = None ->
+  Forall (fun r => karr_head r = 0%Z) rs.
+Proof.
+  induction rs as [|r rs IH]; intro Hnone; [constructor|].
+  cbn [karr_pivot] in Hnone. destruct (Z.eqb (karr_head r) 0) eqn:Hhead;
+    [|discriminate].
+  destruct (karr_pivot rs) as [[p rest]|] eqn:Hnext; [discriminate|].
+  constructor; [now apply Z.eqb_eq|now apply IH].
+Qed.
+
+(** Every reported first coefficient is nonzero. *)
+Lemma karr_first_nonzero : forall zs i a, karr_first zs = Some (i, a) -> a <> 0%Z.
+Proof.
+  induction zs as [|z zs IH]; intros i a Hfirst; cbn [karr_first] in Hfirst;
+    [discriminate|].
+  destruct (Z.eqb z 0) eqn:Hzero.
+  - destruct (karr_first zs) as [[j b]|] eqn:Hnext; [|discriminate].
+    inversion Hfirst; subst i a. now apply (IH j b).
+  - inversion Hfirst; subst i a. now apply Z.eqb_neq.
+Qed.
+
+(** Exact division preserves the number of dense coordinates. *)
+Lemma karr_divide_width : forall d r,
+  length (kcoeff (karr_divide d r)) = length (kcoeff r).
+Proof.
+  intros d r. unfold karr_divide. destruct (karr_exact d r); [|reflexivity].
+  unfold karr_quotient. cbn [kcoeff]. apply length_map.
+Qed.
+
+(** Crossing equally wide rows retains their width. *)
+Lemma karr_cross_width : forall a b xs ys, length xs = length ys ->
+  length (karr_cross a b xs ys) = length xs.
+Proof.
+  intros a b xs. induction xs as [|x xs IH]; intros [|y ys] Hwidth;
+    cbn [length karr_cross] in *; try discriminate; [reflexivity|].
+  f_equal. apply IH. now injection Hwidth.
+Qed.
+
+(** Reduction retains the width shared by its input rows. *)
+Lemma karr_reduce_width : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kcoeff (karr_reduce d a b p r)) = length (kcoeff r).
+Proof.
+  intros d a b p r Hwidth. unfold karr_reduce. rewrite karr_divide_width.
+  cbn [kcoeff]. now apply karr_cross_width.
+Qed.
+
+(** Dropping a leading coordinate reduces a positive width by one. *)
+Lemma karr_tail_width : forall n r, length (kcoeff r) = S n ->
+  length (kcoeff (karr_tail r)) = n.
+Proof.
+  intros n [zs rhs ws sc] Hwidth; cbn [kcoeff karr_tail] in *.
+  destruct zs; cbn [length tl] in *; lia.
+Qed.
+
+(** Restoring a zero coordinate increases the width by one. *)
+Lemma karr_restore_width : forall r,
+  length (kcoeff (karr_restore r)) = S (length (kcoeff r)).
+Proof.
+  reflexivity.
+Qed.
+
+(** The recursion's shape records strictly advancing pivot positions. *)
+Inductive karr_echelon : nat -> list karr_row -> Prop :=
+  | karr_echelon_zero : forall rs,
+      Forall (fun r => kcoeff r = []) rs -> karr_echelon 0 rs
+  | karr_echelon_skip : forall n rs,
+      karr_echelon n rs -> karr_echelon (S n) (map karr_restore rs)
+  | karr_echelon_pivot : forall n p rs,
+      length (kcoeff p) = S n -> karr_head p <> 0%Z ->
+      karr_echelon n rs -> karr_echelon (S n) (p :: map karr_restore rs).
+
+(** Eliminating every coordinate produces a triangular basis. *)
+Lemma karr_bareiss_echelon : forall n d rs,
+  Forall (fun r => length (kcoeff r) = n) rs ->
+  karr_echelon n (karr_bareiss n d rs).
+Proof.
+  intro n. induction n as [|n IH]; intros d rs Hwidth; cbn [karr_bareiss].
+  - apply karr_echelon_zero. apply Forall_forall. intros r Hin.
+    pose proof (proj1 (Forall_forall _ _) Hwidth r Hin) as Hr.
+    now apply length_zero_iff_nil in Hr.
+  - destruct (karr_pivot rs) as [[p rest]|] eqn:Hpivot.
+    + destruct (karr_pivot_some rs p rest Hpivot) as [Hhead Hperm].
+      assert (Hordered : Forall (fun r => length (kcoeff r) = S n) (p :: rest)).
+      { eapply Permutation_Forall; [exact Hperm|exact Hwidth]. }
+      inversion Hordered as [|p' rest' Hp Hrest]; subst p' rest'.
+      apply karr_echelon_pivot; [exact Hp|exact Hhead|].
+      apply IH. apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Heq Hin]]. subst r.
+      apply karr_tail_width. rewrite karr_reduce_width.
+      * exact (proj1 (Forall_forall _ _) Hrest s Hin).
+      * rewrite Hp. exact (proj1 (Forall_forall _ _) Hrest s Hin).
+    + apply karr_echelon_skip. apply IH. apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Heq Hin]]. subst r.
+      apply karr_tail_width. exact (proj1 (Forall_forall _ _) Hwidth s Hin).
+Qed.
+(** Division preserves a vanishing leading coordinate in either checked branch. *)
+Lemma karr_divide_head_zero : forall d r, karr_head r = 0%Z ->
+  karr_head (karr_divide d r) = 0%Z.
+Proof.
+  intros d r Hzero. unfold karr_divide. destruct (karr_exact d r); [|exact Hzero].
+  unfold karr_head, karr_quotient in *. cbn [kcoeff].
+  destruct (kcoeff r) as [|z zs]; cbn [map] in *; [reflexivity|].
+  subst z. reflexivity.
+Qed.
+
+(** Crossing at the two leading coefficients eliminates that coordinate exactly. *)
+Lemma karr_reduce_head_zero : forall d p r,
+  karr_head (karr_reduce d (karr_head p) (karr_head r) p r) = 0%Z.
+Proof.
+  intros d [ps pr pw pc] [rs rr rw rc]. unfold karr_reduce.
+  apply karr_divide_head_zero. destruct ps as [|p ps], rs as [|r rs];
+    cbn [kcoeff karr_cross karr_head]; try reflexivity. ring.
+Qed.
+
+(** A reported first coefficient is found at its reported index. *)
+Lemma karr_first_nth : forall zs i a, karr_first zs = Some (i, a) ->
+  karr_nth i zs = a.
+Proof.
+  induction zs as [|z zs IH]; intros i a Hfirst; cbn [karr_first] in Hfirst;
+    [discriminate|].
+  destruct (Z.eqb z 0) eqn:Hzero.
+  - destruct (karr_first zs) as [[j b]|] eqn:Hnext; [|discriminate].
+    inversion Hfirst; subst i a. cbn [karr_nth]. now apply (IH j b).
+  - inversion Hfirst; reflexivity.
+Qed.
+
+
 
 Lemma karr_values_ne_app : forall A (tr : trie_ne A) acc,
   karr_values_ne tr acc = karr_values_ne tr [] ++ acc.
