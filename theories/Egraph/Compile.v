@@ -46,21 +46,13 @@ Module Compile (V : VALUE) <: COMPILE V.
     valid_sorted V.prim V.merge M (compile ds rws ans).
   Proof. Admitted. (* STUB *)
 
-  Lemma flatten_sound : forall ds w rw g s,
-    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
-    view_sorted (lookup_sorts ds) w -> (forall f, kind w f = lookup_kind ds f) ->
-    (forall i, same w i i) -> matches V.prim w (flatten_lhs rw) s ->
-    exists tau c e, s (root_var rw) = Some (Id c) /\
-      instantiates tau (lhs V.t rw) e /\ represents w (Id c) e /\
-      cond_in_view w tau (cond V.t rw).
-  Proof. Admitted. (* STUB *)
-
   Lemma flatten_complete : forall ds w rw g tau c e,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g -> canonical_view w ->
     instantiates tau (lhs V.t rw) e -> represents w (Id c) e ->
     cond_in_view w tau (cond V.t rw) ->
     exists s j, matches V.prim w (flatten_lhs rw) s /\ represents_on g w tau s /\
-      s (root_var rw) = Some (Id j) /\ same w c j.
+      s (root_var rw) = Some (Id j) /\ same w c j /\
+      exists f k, row w f k (Some (Id j)).
   Proof. Admitted. (* STUB *)
 
   Lemma present_represents : forall ds w rw g s tau c r,
@@ -107,11 +99,6 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw.
   Proof. Admitted. (* STUB *)
 
-  Lemma F4_inst_represents : forall w tau s p e root_id c, app_rooted p ->
-    represents_subst w tau s -> instantiates tau p e -> s root_id = Some (Id c) ->
-    matches V.prim w (flatten_pat p root_id) s -> represents w (Id c) e.
-  Proof. Admitted. (* STUB *)
-
   Lemma T1_compile_split : forall ds rws ans,
     (T_compile ds rws ans <= fold_right (fun rw n => T_compile_rule rw + n) 0 rws +
       k_compile * N.of_nat (length rws + length ans + 1))%N.
@@ -121,4 +108,9 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     (T_compile_rule rw <= k_compile * N.of_nat (rewrite_size rw + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** The compiled rule's bit size is bounded by the square of its rewrite size. *)
+  Lemma compile_rule_bits : forall rw,
+    (N.of_nat (rule_bits (compile_rule rw)) <=
+      c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.
+  Proof. Admitted. (* STUB *)
 End CompileT.

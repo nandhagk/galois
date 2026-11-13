@@ -96,8 +96,6 @@ Module BuildT (O : OPS)
     (fun p => N.of_nat (build_work p * (function_width p + 1) + Va.op_bits p + 1)) T_build.
   Proof. Admitted. (* STUB *)
   (* STUB-CODE *)
-  Definition graph_ok (_ : P.t) : bool := false.
-  (* STUB-CODE *)
   Definition def_index (_ : P.t) : ptrie (list positive) := Empty.
   (* STUB-CODE *)
   Definition live_sets (_ : list (positive * list positive)) : ptrie (ptrie unit) := Empty.
@@ -110,12 +108,11 @@ Module BuildT (O : OPS)
   Definition rename (_ : P.t) (_ : domtree) (_ : ptrie (list positive))
       (_ : list (positive * list positive)) : option (P.t * cert) := None.
   (* STUB-CODE *)
-  Definition rename_init (_ : P.t) : rename_state O.K O.G := RenameState O.K O.G [] [] [] 0%N.
+  Definition rename_init (_ : P.t) : rename_state O.K O.G := RenameState O.K O.G Empty [] [] [] 0%N.
   (* STUB-CODE *)
   Definition rename_step (_ : P.t) (_ : domtree) (_ : ptrie (list positive))
       (_ : list (positive * list positive)) (_ : rename_state O.K O.G)
       : rename_state O.K O.G + option (P.t * cert) := inr None.
-  TimeFun graph_ok.
   TimeFun def_index.
   TimeFun live_sets.
   TimeFun place_var.
@@ -131,9 +128,6 @@ Module BuildT (O : OPS)
   Definition placed p x :=
     place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x.
 
-  (** The producer rejects malformed block graphs before frontier construction. *)
-  Lemma F1_graph_checked : forall p, graph_ok p = true -> wf_graph (base (graph p)).
-  Proof. Admitted. (* STUB *)
   (** The definition index lists each variable's definition blocks. *)
   Lemma F1_graph_wf : forall p, wf_graph (base (graph p)).
   Proof. Admitted. (* STUB *)
@@ -177,7 +171,7 @@ Module BuildT (O : OPS)
       N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
   Proof. Admitted. (* STUB *)
   (** One placement search charges seed and discovered-frontier incidences. *)
-  Lemma T1_place_var : forall p x,
+  Lemma T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
     (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
       N.of_nat (length (definition_blocks p x) +
         fold_right (fun b n => (1 + length (frontier_row (frontiers p) b) + n)%nat)
@@ -240,11 +234,6 @@ Module BuildT (O : OPS)
          T_live_sets (L.live_in p) + T_placement p +
          T_rename p (dom_tree p) (placement p) (L.live_in p)
        else 0))%N.
-  Proof. Admitted. (* STUB *)
-  (** Graph screening reads the block presentation once. *)
-  Lemma T3a_graph_ok : forall p,
-    (T_graph_ok p <= k_graph * N.of_nat (length (BC.nodes (R.prepare p)) + length (BC.edges (R.prepare p)) + 1) *
-      N.of_nat (function_width p + 1))%N.
   Proof. Admitted. (* STUB *)
   (** The wrapper charges the actual certificate and candidate validators. *)
   Lemma T4_wrapper : forall p,

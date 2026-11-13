@@ -581,6 +581,11 @@ Module PresentT (O : OPS)
     Lemma nodes_agree : forall p,
       BC.nodes (R.prepare p) = map fst (first_blocks (blocks _ _ _ p)).
     Proof. Admitted. (* STUB *)
+    (** Each presented edge targets an exit of a listed source block. *)
+    Lemma edges_syntax : forall p e, In e (BC.edges (R.prepare p)) ->
+      exists body, In (BC.src (R.prepare p) e, body) (blocks _ _ _ p) /\
+        In (BC.dst (R.prepare p) e) (exit_targets (term _ _ _ body)).
+    Proof. Admitted. (* STUB *)
     Lemma paths_agree : forall p a route b, NoDup (map fst (blocks _ _ _ p)) ->
       targets_listed p ->
       (presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p))
@@ -611,7 +616,7 @@ Module PresentT (O : OPS)
   Proof. Admitted. (* STUB *)
   (** Each listed block contributes at most its two exit edges. *)
   Lemma block_edges_le : forall p,
-    length (BC.edges (R.prepare p)) <= 2 * length (blocks _ _ _ p).
+    length (BC.edges (R.prepare p)) <= 2 * length (BC.nodes (R.prepare p)).
   Proof. Admitted. (* STUB *)
   (** Presented block identifiers are identifiers of the syntax. *)
   Lemma block_bits_le : forall p b,

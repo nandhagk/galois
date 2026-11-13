@@ -128,7 +128,7 @@ Module LiveT (O : OPS)
       N.of_nat (function_width p + 1))%N.
   Proof. Admitted. (* STUB *)
   (** A variable's search charges each visited point and incoming occurrence. *)
-  Lemma T1_explore : forall p x,
+  Lemma T1_explore : forall p x, In x (U.universe (R.prepare p)) ->
     (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x <=
       k_explore * N.of_nat (variable_work p x + 1) * N.of_nat (function_width p + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -144,4 +144,8 @@ Module LiveT (O : OPS)
           (U.universe (R.prepare p))))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Emitted rows name listed blocks and variables of the universe. *)
+  Lemma live_in_ids : forall p row, In row (live_in p) ->
+    In (fst row) (BC.nodes (R.prepare p)) /\ incl (snd row) (U.universe (R.prepare p)).
+  Proof. Admitted. (* STUB *)
 End LiveT.

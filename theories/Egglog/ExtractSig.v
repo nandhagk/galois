@@ -190,10 +190,11 @@ Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     inventory_bits (inventory ds sl) <=
       (layout_bits ds sl + 1) * (Nat.log2 (length sl) + 3).
   (** R counts the constructor rows. *)
-  Parameter R_spec : forall db, D.wf db -> exists rs, NoDup rs /\ length rs = R db /\
+  Parameter R_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
+    exists rs, NoDup rs /\ length rs = R db /\
     forall f k i, In (f, k, i) rs <-> row (D.view db) f k (Some (Id i)).
   (** a is the longest constructor key. *)
-  Parameter a_spec : forall db, D.wf db ->
+  Parameter a_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
     (forall f k i, row (D.view db) f k (Some (Id i)) -> length k <= a db) /\
     (a db = 0 \/ exists f k i, row (D.view db) f k (Some (Id i)) /\ length k = a db).
   (** cost_width is the widest final row cost or literal cost. *)
@@ -253,7 +254,8 @@ Module Type EXTRACT_PLAN (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
   Parameter F1_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     finalised (initial cs db) = [] /\ knuth_inv db (initial cs db).
   (** A row's counter counts its unfinalised identifier children. *)
-  Parameter F2_counter_spec : forall cs db s c, reachable cs db s ->
+  Parameter F2_counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s ->
     counter s c = length (filter
       (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (finalised s)))
       (children db c)).
@@ -264,8 +266,8 @@ Module Type EXTRACT_PLAN (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
   Parameter F4_pop_final : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s -> step cs db s = inl s' -> knuth_inv db s'.
   (** Finalised entries have finite witnesses attaining their costs. *)
-  Parameter F5_finalised_attained : forall cs db s c n ch, D.wf db ->
-    reachable cs db s -> In (c, (n, ch)) (finalised s) ->
+  Parameter F5_finalised_attained : forall cs db s c n ch, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s -> In (c, (n, ch)) (finalised s) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
   (** The driver uses one more step than the constructor-row count. *)
   Parameter F6_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
@@ -287,7 +289,7 @@ Module Type EXTRACT_PLAN (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     ctor_inventory cs db -> reachable cs db s -> step cs db s = inr out ->
     (T_step cs db s <= k_step * N.of_nat (R db + 1))%N.
   (** The driver initialises once, counts its fuel and runs its bounded loop. *)
-  Parameter T2_best_loop : forall cs db,
+  Parameter T2_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= T_initial cs db +
       T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db) +
       k_step * N.of_nat (R db + 1))%N.

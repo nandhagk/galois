@@ -61,21 +61,14 @@ Module Type COMPILE_LAWS (V : VALUE) (Import C : COMPILE_OPS V)
     (forall f m k a b, lookup_kind ds f = Some (OLat m) ->
       lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
     valid_sorted V.prim V.merge M (compile ds rws ans).
-  (** A match of a flattened left side represents an instance in the class of its root. *)
-  Parameter flatten_sound : forall ds w rw g s,
-    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
-    view_sorted (lookup_sorts ds) w -> (forall f, kind w f = lookup_kind ds f) ->
-    (forall i, same w i i) -> matches V.prim w (flatten_lhs rw) s ->
-    exists tau c e, s (root_var rw) = Some (Id c) /\
-      instantiates tau (lhs V.t rw) e /\ represents w (Id c) e /\
-      cond_in_view w tau (cond V.t rw).
   (** A canonical view matches every represented left side whose condition holds. *)
   Parameter flatten_complete : forall ds w rw g tau c e,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g -> canonical_view w ->
     instantiates tau (lhs V.t rw) e -> represents w (Id c) e ->
     cond_in_view w tau (cond V.t rw) ->
     exists s j, matches V.prim w (flatten_lhs rw) s /\ represents_on g w tau s /\
-      s (root_var rw) = Some (Id j) /\ same w c j.
+      s (root_var rw) = Some (Id j) /\ same w c j /\
+      exists f k, row w f k (Some (Id j)).
   (** A present compiled right side represents its instance in the class of the matched
       root. *)
   Parameter present_represents : forall ds w rw g s tau c r,
@@ -99,6 +92,11 @@ Module Type COMPILE_TIME (V : VALUE_T) (Import C : COMPILE V).
     (T_compile ds rws ans <= c_compile *
       N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws +
         length ans + 1)%nat)%N.
+  (** A compiled rewrite writes each pattern reference once, at a width within the size of
+      the rewrite. *)
+  Parameter compile_rule_bits : forall rw,
+    (N.of_nat (rule_bits (compile_rule rw)) <=
+      c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.
 End COMPILE_TIME.
 
 Module Type COMPILE_T (V : VALUE_T) := COMPILE V <+ COMPILE_TIME V.
@@ -119,10 +117,6 @@ Module Type COMPILE_PLAN (V : VALUE_T) (Import C : COMPILE_T V).
   (** Flattening the left side uses the rewrite's chosen root variable. *)
   Parameter F3_flatten_spec : forall rw,
     flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw.
-  (** Pattern instantiation retains each represented hole under the same substitution. *)
-  Parameter F4_inst_represents : forall w tau s p e root_id c, app_rooted p ->
-    represents_subst w tau s -> instantiates tau p e -> s root_id = Some (Id c) ->
-    matches V.prim w (flatten_pat p root_id) s -> represents w (Id c) e.
   (** Compiling a list pays for each rewrite and one step per rewrite. *)
   Parameter T1_compile_split : forall ds rws ans,
     (T_compile ds rws ans <= fold_right (fun rw n => T_compile_rule rw + n) 0 rws +

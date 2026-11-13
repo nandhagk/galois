@@ -33,7 +33,8 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Definition universe (_ : program V.t) (_ : D.t) : list (positive * list (cell V.t)) := [].
   Definition active_value (p : program V.t) (db : D.t) (v : V.t) : Prop :=
     In (Lit v) (program_terms p) \/
-    exists f k o, row (D.view db) f k o /\ In (Val v) (k ++ option_list o).
+    exists s u, N.to_nat s < length (D.slots db) /\ I.mem (D.index s false db) u /\
+      In (Val v) u.
   (* STUB-CODE *)
   Definition herbrand (_ : program V.t) (_ : D.t) : nat := 0.
   Lemma universe_spec : forall p db, D.wf db -> relational_fragment p = true ->
@@ -151,7 +152,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         length (bindings cp c db) *
           (length (post V.t c) + 1 +
            fold_right (fun a n => match a with
-             | Make _ _ args | Put _ args _ => (length args + 2) * (length args + 2) + n
+             | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
+                 (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
              | Union _ _ => 1 + n
              | Let _ _ args => length args + 1 + n
              end) 0 (actions V.t (nth (N.to_nat (rule_ix V.t c)) (rules V.t p)
@@ -259,6 +261,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition check_shape (_ : program V.t) (_ : compiled V.t) : bool := false.
   TimeFun check_shape.
   Definition k_check : N := 1. (* STUB *)
+  (** Two identifiers that occur in rows and are equal in the view are identical. *)
+  Definition row_ids_unique (w : Model.view (V := V.t)) : Prop :=
+    forall f k o f' k' o' i j, row w f k o -> row w f' k' o' ->
+      In (Id i) (k ++ option_list o) -> In (Id j) (k' ++ option_list o') ->
+      same w i j -> i = j.
+
   Lemma F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     In c (all_plans cp) -> nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
     In b (bindings cp c db) -> matches V.prim (D.view db) (query V.t r) (env_of c b).
@@ -297,6 +305,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   Lemma F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
+    row_ids_unique (D.view db) ->
     D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
     present V.prim V.merge (D.view db) s (actions V.t r).
   Proof. Admitted. (* STUB *)
@@ -354,6 +363,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
     prim_free p = true -> no_ids db ->
     In (nv, current) (trace p cp lim db) -> row (D.view current) f k o ->
+    ~ row (D.view db) f k o ->
     In (f, k) (universe p db).
   Proof. Admitted. (* STUB *)
 
@@ -394,7 +404,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         length (bindings cp c db) *
           (length (post V.t c) + 1 +
            fold_right (fun a n => match a with
-             | Make _ _ args | Put _ args _ => (length args + 2) * (length args + 2) + n
+             | Make _ f args | Put f args _ =>
+                 (length args + 2) * (length args + 2) *
+                   (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1)
+                 + n
              | Union _ _ => 1 + n
              | Let _ _ args => length args + 1 + n
              end) 0 (actions V.t (nth (N.to_nat (rule_ix V.t c)) (rules V.t p)
@@ -443,14 +456,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma F28_plan_shape : forall p, program_ok p -> check_shape p (plan p) = true.
   Proof. Admitted. (* STUB *)
 
-  Lemma F29_shape_slots : forall p cp f ss out perm, plans_ok p cp ->
-    program_sorts p f = Some ss -> program_kind p f = Some out ->
-    In (f, perm) (Syntax.slots V.t cp) ->
-    NoDup perm /\ Forall (fun i => i < length ss +
-      match out_sort out with
-      | Some _ => 1
-      | None => 0
-      end) perm.
+  Lemma F29_shape_slots : forall p cp f perm, plans_ok p cp ->
+    In (f, perm) (Syntax.slots V.t cp) -> exists ss out,
+      program_sorts p f = Some ss /\ program_kind p f = Some out /\
+      NoDup perm /\ Forall (fun i => i < length ss +
+        match out_sort out with
+        | Some _ => 1
+        | None => 0
+        end) perm.
   Proof. Admitted. (* STUB *)
 
   Lemma T4_check_plan_split : forall p cp,
@@ -478,17 +491,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * D.potential B db)%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T2_run_trace : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
-    (T_run p cp lim db <=
-      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
-        (fold_right N.add 0 (map (fun start =>
-          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
-         N.of_nat (D.pending db + 1)) +
-      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
-      N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
-
   Lemma T3_driver_wrapper : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (T_run p cp lim db <=
       T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) +
@@ -498,4 +500,37 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       end + k_driver)%N.
   Proof. Admitted. (* STUB *)
 
+  (** A driver call pays for its round, limit test, flag test and advance. *)
+  Lemma T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
+    (T_driver p cp lim (nv, db) <= T_round p cp nv db + k_driver *
+      N.of_nat (length (Syntax.slots V.t cp) +
+        N.size_nat (D.ids (round p cp nv db)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The loop pays for every driver call in the trace prefix and its fuel. *)
+  Lemma T2b_loop_trace : forall p cp lim db,
+    (T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) <=
+      fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
+        (firstn (N.to_nat (max_iter lim)) (trace p cp lim db))) +
+      c_loopN * N.of_nat (N.size_nat (max_iter lim) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** Applying a rule pays for its actions, referenced bindings and transferred potential. *)
+  Lemma T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    (D.ids (apply (actions V.t r) s db) <= B)%N ->
+    D.unit (apply (actions V.t r) s db) <= U ->
+    (T_apply (actions V.t r) s Ts db +
+      N.of_nat U * D.potential B (apply (actions V.t r) s db) <=
+      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat ((fold_right (fun a n => match a with
+          | Make _ f args | Put f args _ => ((length args + 2) * (length args + 2) *
+              (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n)%nat
+          | Union _ _ => (1 + n)%nat
+          | Let _ _ args => (length args + 1 + n)%nat
+          end) 0%nat (actions V.t r) + 1)%nat) +
+      fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
+      action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
+      N.of_nat U * D.potential B db)%N.
+  Proof. Admitted. (* STUB *)
 End RunT.

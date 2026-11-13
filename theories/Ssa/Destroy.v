@@ -7,7 +7,6 @@
 From Stdlib Require Import List PArith NArith.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Key.
-From Galois.Program Require Import CfgSig SsaSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig DestroySig.
 Import List.ListNotations.
 

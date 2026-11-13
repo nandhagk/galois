@@ -86,14 +86,18 @@ Module ValidateT (O : OPS)
       N.of_nat (function_width s + 1))%N) T_check_ssa.
   Proof. Admitted. (* STUB *)
   (* STUB-CODE *)
-  Definition check_entry (_ _ : P.t) (_ : cert) : bool := false.
+  Definition tables (_ _ : P.t) (_ : cert) : check_tables O.K O.G :=
+    CheckTables Empty Empty Empty Empty.
+  TimeFun tables.
   (* STUB-CODE *)
-  Definition check_block (_ _ : P.t) (_ : cert) (_ : positive) : bool := false.
+  Definition check_entry (_ _ : P.t) (_ : cert) (_ : check_tables O.K O.G) : bool := false.
+  (* STUB-CODE *)
+  Definition check_block (_ : check_tables O.K O.G) (_ : positive) : bool := false.
   (* STUB-CODE *)
   Definition check_code (_ _ : list (positive * O.K * list positive))
       (_ : renaming) (_ : list positive) : option renaming := None.
   (* STUB-CODE *)
-  Definition check_edge (_ _ : P.t) (_ : cert) (_ _ : positive) (_ : renaming) : bool := false.
+  Definition check_edge (_ : check_tables O.K O.G) (_ _ : positive) (_ : renaming) : bool := false.
   (* STUB-CODE *)
   Definition dom_cert (_ : P.t) : ptrie positive * list positive := (Empty, []).
   TimeFun check_entry.
@@ -111,8 +115,8 @@ Module ValidateT (O : OPS)
   Definition code_defs (xs : list (positive * O.K * list positive)) :=
     map (fun i => fst (fst i)) xs.
   Lemma F1_checks : forall p s c, check p s c = true ->
-    check_entry p s c = true /\ forall b body, In (b, body) (blocks _ _ _ p) ->
-      check_block p s c b = true.
+    check_entry p s c (tables p s c) = true /\ forall b body,
+      In (b, body) (blocks _ _ _ p) -> check_block (tables p s c) b = true.
   Proof. Admitted. (* STUB *)
   Lemma F2_code_sim : forall ic sc rho rho' live ss si,
     check_code ic sc rho live = Some rho' -> agrees rho live ss si ->
@@ -123,7 +127,7 @@ Module ValidateT (O : OPS)
     end.
   Proof. Admitted. (* STUB *)
   Lemma F3_edge_sim : forall p s c b target rho ss si sa ia sb ib sx ix choice,
-    check p s c = true -> check_edge p s c b target rho = true ->
+    check p s c = true -> check_edge (tables p s c) b target rho = true ->
     find_block b (blocks _ _ _ s) = Some sb ->
     find_block b (blocks _ _ _ p) = Some ib ->
     edge_choice (term _ _ _ sb) choice = Some (target, sx) ->
@@ -164,7 +168,7 @@ Module ValidateT (O : OPS)
   Proof. Admitted. (* STUB *)
   (** Entry checking charges both input lists and the indexed certificate row. *)
   Lemma T2b_entry : forall p s c,
-    (T_check_entry p s c <= k_entry *
+    (T_check_entry p s c (tables p s c) <= k_entry *
       N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
         length (cert_live c (entry _ _ _ p)) + 1) *
       N.of_nat (check_width p s c + 1))%N.
@@ -184,7 +188,7 @@ Module ValidateT (O : OPS)
   Lemma T2d_edge : forall p s c b target rho ib sb,
     find_block b (blocks _ _ _ p) = Some ib ->
     find_block b (blocks _ _ _ s) = Some sb ->
-    (T_check_edge p s c b target rho <= k_edge *
+    (T_check_edge (tables p s c) b target rho <= k_edge *
       N.of_nat (length rho + length (exit_uses (term _ _ _ ib)) +
         length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
       N.of_nat (check_width p s c +
@@ -192,14 +196,16 @@ Module ValidateT (O : OPS)
   Proof. Admitted. (* STUB *)
   (** Translation checking indexes the certificate, checks the entry and every source block. *)
   Lemma T2_checks : forall p s c,
-    (T_check p s c <= k_blocks * N.of_nat (cert_size c + function_size s + 1) *
-      N.of_nat (check_width p s c + 1) + T_check_entry p s c +
-      fold_right N.add 0%N (map (fun item => T_check_block p s c (fst item)) (blocks _ _ _ p)))%N.
+    (T_check p s c <= T_tables p s c +
+      k_blocks * N.of_nat (function_size p + 1) * N.of_nat (check_width p s c + 1) +
+      T_check_entry p s c (tables p s c) +
+      fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
+        (first_blocks (blocks _ _ _ p))))%N.
   Proof. Admitted. (* STUB *)
   (** One block check charges its two bodies, its operands, its exit and its operators. *)
   Lemma T2a_block : forall p s c b ib,
     find_block b (blocks _ _ _ p) = Some ib ->
-    (T_check_block p s c b <= k_code *
+    (T_check_block (tables p s c) b <= k_code *
       N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
         length (code _ _ _ ib) +
         fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ ib) + 1) *
@@ -216,5 +222,18 @@ Module ValidateT (O : OPS)
     (T_check_ssa s <= T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
       k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  (** The tables retain the first body and certificate row for each identifier. *)
+  Lemma F0_tables : forall p s c b,
+    trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
+    trie_get b (target_bodies (tables p s c)) = find_block b (blocks _ _ _ s) /\
+    trie_get b (cert_envs (tables p s c)) = lookup b (fst c) /\
+    index_row (cert_rows (tables p s c)) b = cert_live c b.
+  Proof. Admitted. (* STUB *)
+  (** Building lookup tables scans the functions and certificate once. *)
+  Lemma T0_tables : forall p s c,
+    (T_tables p s c <= k_blocks *
+      N.of_nat (function_size p + function_size s + cert_size c + 1) *
+      N.of_nat (check_width p s c + 1))%N.
   Proof. Admitted. (* STUB *)
 End ValidateT.

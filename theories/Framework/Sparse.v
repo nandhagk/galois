@@ -165,12 +165,13 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   TimeFun sides.
   Definition value_bits (p : prog) : nat :=
     fold_right Nat.max 0 (map (fun r => X.bits (target p r)) (rows p)).
-  Definition row_work p s := N.of_nat
-    (B.op_work p s + (B.op_arity p + 1) * (s + 1) + T.seed_work p +
-      value_bits p + V.size V.top + V.size V.bot + 1).
-  Definition kw (p : prog) : nat := fold_right Nat.max 0
-    (List.map X.bits (S.entry_params p ++ S.values p ++
-      flat_map (fun r => fst (snd r) :: snd (snd r) :: nil) (S.arg_rows p))).
+  Definition row_work p s :=
+    (V.c_val * N.of_nat (B.op_work p s + 1) +
+      N.of_nat ((B.op_arity p + 1) * (s + 1) + T.seed_work p +
+        value_bits p + V.size V.top + V.size V.bot + 1))%N.
+  Definition sparse_kw (p : prog) : nat := fold_right Nat.max 0
+    (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
+  Definition kw := sparse_kw.
   Definition c_sys : N := 1%N. (* STUB *)
   Lemma row_work_mono : forall p s t, s <= t ->
     (row_work p s <= row_work p t)%N.

@@ -107,7 +107,7 @@ Module Type LANG_PRESENT_BUDGET (O : OPS) (Q : TYPE) (R : LANG_PREPARE_OPS O Q)
     length (BC.nodes (R.prepare p)) <= length (blocks _ _ _ p).
   (** Each listed block contributes at most its two exit edges. *)
   Parameter block_edges_le : forall p,
-    length (BC.edges (R.prepare p)) <= 2 * length (blocks _ _ _ p).
+    length (BC.edges (R.prepare p)) <= 2 * length (BC.nodes (R.prepare p)).
   (** Presented block identifiers are identifiers of the syntax. *)
   Parameter block_bits_le : forall p b,
     (In b (BC.nodes (R.prepare p)) \/ exists e, In e (BC.edges (R.prepare p)) /\
@@ -180,6 +180,9 @@ Module Type LIVE_TIME (O : OPS)
   (** The producer emits at most one row entry per charged block and live pair. *)
   Parameter live_in_size : forall p,
     rows_size (live_in p) <= length (blocks _ _ _ p) + live_size p.
+  (** Emitted rows name listed blocks and variables of the universe. *)
+  Parameter live_in_ids : forall p row, In row (live_in p) ->
+    In (fst row) (BC.nodes (R.prepare p)) /\ incl (snd row) (U.universe (R.prepare p)).
   Parameter T_live_in : P.t -> N.
   Parameter c_live : N.
   (** Path exploration pays for syntax and live predecessor incidences. *)
@@ -246,8 +249,9 @@ Module Type LIVE_PLAN (O : OPS)
   Parameter T0_kill_index : forall p,
     (T_kill_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
-  (** A variable's search charges each visited point and incoming occurrence. *)
-  Parameter T1_explore : forall p x,
+  (** A search for a variable of the universe charges each visited point and incoming
+      occurrence. *)
+  Parameter T1_explore : forall p x, In x (U.universe (R.prepare p)) ->
     (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x <=
       k_explore * N.of_nat (variable_work p x + 1) * N.of_nat (function_width p + 1))%N.
   (** The driver prepares once, builds both indexes, searches each variable and groups

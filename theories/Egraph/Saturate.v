@@ -106,6 +106,12 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     saturate ds rws ans lim es = inr (IdLimit, db, cs) -> (D.ids db > max_ids lim)%N.
   Proof. Admitted. (* STUB *)
 
+  (** Accepted inputs load into a well-formed database of the planned program. *)
+  Lemma inputs_loaded : forall ds rws ans es, front_ok ds rws ans es ->
+    let p := C.compile ds rws ans in
+    let cp := E.plan p in
+    D.wf (inputs_db es (E.load p cp)) /\ E.loaded p cp (inputs_db es (E.load p cp)).
+  Proof. Admitted. (* STUB *)
 End Saturate.
 
 Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
@@ -152,6 +158,28 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   TimeFun add_node.
   TimeFun add_inputs.
   Definition k_sat : N := 1. (* STUB *)
+  Definition node_args (n : enode V.t) (cs : list (cell V.t)) : list (cell V.t) :=
+    match n with
+    | EApp _ ch => map (fun j => nth j cs (Id 1%positive)) ch
+    | ELit _ => []
+    end.
+  (** The cells and the database after adding nodes in order. *)
+  Fixpoint add_nodes (ns : list (enode V.t)) (cs : list (cell V.t)) (db : D.t)
+      : list (cell V.t) * D.t :=
+    match ns with
+    | [] => (cs, db)
+    | n :: rest =>
+        add_nodes rest (cs ++ [fst (add_node n (node_args n cs) db)])
+          (snd (add_node n (node_args n cs) db))
+    end.
+  Fixpoint T_add_nodes (ns : list (enode V.t)) (cs : list (cell V.t)) (db : D.t) : N :=
+    match ns with
+    | [] => 0%N
+    | n :: rest =>
+        (T_add_node n (node_args n cs) db +
+          T_add_nodes rest (cs ++ [fst (add_node n (node_args n cs) db)])
+            (snd (add_node n (node_args n cs) db)))%N
+    end.
   Lemma F1_add_expr_step : forall ds node cells db, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     (forall f, kind (D.view db) f = lookup_kind ds f) ->
@@ -243,4 +271,40 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   Lemma T2_k_sat : (k_sat <= c_sat)%N.
   Proof. Admitted. (* STUB *)
 
+  (** Adding inputs pays for their nodes at the final unit and identifier budget. *)
+  Lemma T_inputs_le : forall B U ds rws ans es, front_ok ds rws ans es ->
+    let p := C.compile ds rws ans in
+    let db0 := E.load p (E.plan p) in
+    (D.ids (inputs_db es db0) <= B)%N -> D.unit (inputs_db es db0) <= U ->
+    (T_inputs es db0 + N.of_nat U * D.potential B (inputs_db es db0) <=
+      c_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db0 + 1) *
+        N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es))%N.
+  Proof. Admitted. (* STUB *)
+  (** Adding a flat expression folds over its nodes in order and returns its root cell. *)
+  Lemma F10_add_expr_nodes : forall ds e db,
+    expr_sorted (lookup_sorts ds) (lookup_kind ds) e ->
+    snd (add_expr e db) = snd (add_nodes (expr_nodes V.t e) [] db) /\
+    nth_error (fst (add_nodes (expr_nodes V.t e) [] db)) (expr_root V.t e) =
+      Some (Id (fst (add_expr e db))).
+  Proof. Admitted. (* STUB *)
+  (** Adding an expression separates node insertion cost from child-index work. *)
+  Lemma T3_add_expr_split : forall e db,
+    (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
+      k_sat * N.of_nat (expr_work e))%N.
+  Proof. Admitted. (* STUB *)
+  (** Adding a node pays its insertion cost and transfers the database potential. *)
+  Lemma T4_add_node_amort : forall B U node cells db, D.wf db ->
+    (forall i, In (Id i) cells -> D.allocated db i) ->
+    match node with
+    | EApp f _ => kind (D.view db) f = Some OId /\ D.slots_fit db f (S (length cells))
+    | ELit _ => cells = []
+    end ->
+    (D.ids (snd (add_node node cells db)) <= B)%N ->
+    D.unit (snd (add_node node cells db)) <= U ->
+    (T_add_node node cells db + N.of_nat U * D.potential B (snd (add_node node cells db)) <=
+      k_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat ((length cells + 2) * (length cells + 2)) +
+      N.of_nat U * D.potential B db)%N.
+  Proof. Admitted. (* STUB *)
 End SaturateT.
