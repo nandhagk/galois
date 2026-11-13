@@ -1171,6 +1171,87 @@ Proof.
 Qed.
 
 
+(** A dense target defect is scaled by its recorded target coefficient. *)
+Definition karr_scaled_defect (qs : list Q) (target r : karr_row) : Prop :=
+  (karr_eval qs (kcoeff r) - inject_Z (kright r) ==
+    inject_Z (kscale r) *
+      (karr_eval qs (kcoeff target) - inject_Z (kright target)))%Q.
+
+(** One guarded reduction preserves the scaled defect under a satisfied basis row. *)
+Lemma karr_reduce_scaled_defect : forall qs target d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  karr_models qs p -> kscale p = 0%Z -> karr_scaled_defect qs target r ->
+  karr_scaled_defect qs target (karr_reduce d a b p r).
+Proof.
+  intros qs target d a b p r Hwidth Hp Hpscale Hr. unfold karr_reduce.
+  set (raw := KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p)) (a * kscale r - b * kscale p)%Z).
+  destruct (karr_divide_factor d raw) as [factor [Hfactor Hmultiple]].
+  pose proof (karr_multiple_eval factor _ _ qs Hmultiple) as Hdefect.
+  destruct Hmultiple as [_ [_ [_ Hscale]]].
+  change (factor * kscale (karr_divide d raw) =
+    a * kscale r - b * kscale p)%Z in Hscale.
+  change (inject_Z factor * (karr_eval qs (kcoeff (karr_divide d raw)) -
+    inject_Z (kright (karr_divide d raw))) ==
+    karr_eval qs (karr_cross a b (kcoeff r) (kcoeff p)) -
+      inject_Z (a * kright r - b * kright p))%Q in Hdefect.
+  setoid_rewrite (karr_eval_cross qs a b _ _ Hwidth) in Hdefect.
+  unfold Z.sub in Hdefect. rewrite inject_Z_plus, inject_Z_opp, !inject_Z_mult in Hdefect.
+  unfold karr_models in Hp. unfold karr_scaled_defect in *.
+  setoid_rewrite Hp in Hdefect.
+  assert (HscaleQ : (inject_Z factor * inject_Z (kscale (karr_divide d raw)) ==
+    inject_Z a * inject_Z (kscale r))%Q).
+  { rewrite <- !inject_Z_mult. apply (proj2 (inject_Z_injective _ _)).
+    rewrite Hscale, Hpscale. ring. }
+  apply (proj1 (Qmult_inj_l _ _ (inject_Z factor) (karr_inject_nonzero _ Hfactor))).
+  eapply Qeq_trans; [exact Hdefect|].
+  eapply Qeq_trans with (y := (inject_Z a *
+    (karr_eval qs (kcoeff r) - inject_Z (kright r)))%Q); [ring|].
+  setoid_rewrite Hr.
+  eapply Qeq_trans with (y := ((inject_Z a * inject_Z (kscale r)) *
+    (karr_eval qs (kcoeff target) - inject_Z (kright target)))%Q); [ring|].
+  setoid_rewrite <- HscaleQ. ring.
+Qed.
+
+(** Following satisfied zero-scale basis rows preserves the target's defect exactly. *)
+Lemma karr_target_scaled_defect : forall rs qs target n,
+  Forall (karr_models qs) rs -> Forall (fun p => kscale p = 0%Z) rs ->
+  Forall (fun p => length (kcoeff p) = n) rs ->
+  forall previous r, length (kcoeff r) = n -> karr_scaled_defect qs target r ->
+  karr_scaled_defect qs target (karr_target rs previous r).
+Proof.
+  intro rs. induction rs as [|p rs IH];
+    intros qs target n Hmodels Hscales Hwidth previous r Hr Hdefect; [exact Hdefect|].
+  inversion Hmodels as [|p' rs' Hp Hmodels']; subst p' rs'.
+  inversion Hscales as [|p' rs' Hpscale Hscales']; subst p' rs'.
+  inversion Hwidth as [|p' rs' Hpwidth Hwidth']; subst p' rs'.
+  cbn [karr_target]. destruct (karr_first (kcoeff p)) as [[i a]|].
+  - apply (IH qs target n Hmodels' Hscales' Hwidth').
+    + rewrite karr_reduce_width; [exact Hr|now rewrite Hr, Hpwidth].
+    + apply karr_reduce_scaled_defect; try assumption. now rewrite Hr, Hpwidth.
+  - now apply (IH qs target n Hmodels' Hscales' Hwidth').
+Qed.
+
+(** All-zero coefficients evaluate to zero in every finite rational store. *)
+Lemma karr_eval_zero : forall zs, forallb (Z.eqb 0) zs = true ->
+  forall qs, (karr_eval qs zs == 0)%Q.
+Proof.
+  intro zs. induction zs as [|z zs IH]; intros Hzero [|q qs]; try reflexivity.
+  cbn [forallb] in Hzero. apply andb_true_iff in Hzero as [Hz Htail].
+  apply Z.eqb_eq in Hz. subst z.
+  change (0 * q + karr_eval qs zs == 0)%Q. setoid_rewrite (IH Htail qs). ring.
+Qed.
+
+(** A modeled all-zero row cannot have a nonzero right-hand side. *)
+Lemma karr_zero_model_right : forall qs r, karr_models qs r ->
+  karr_zero r = true -> kright r = 0%Z.
+Proof.
+  intros qs r Hmodel Hzero. unfold karr_models in Hmodel.
+  setoid_rewrite (karr_eval_zero _ Hzero qs) in Hmodel.
+  apply (proj1 (inject_Z_injective _ _)). symmetry. exact Hmodel.
+Qed.
+
 Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: KARR_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
