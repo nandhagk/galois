@@ -2378,6 +2378,162 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     lia.
   Qed.
 
+  Local Lemma table_swap_bits : forall p,
+    interval_bits (fst (interval_swap p)) + interval_bits (snd (interval_swap p)) =
+      interval_bits (fst p) + interval_bits (snd p).
+  Proof.
+    intros [a b]. unfold interval_swap. cbn [fst snd]. lia.
+  Qed.
+
+  Local Lemma table_assume_signed_bits : forall w strict result a b,
+    interval_bits (fst (interval_assume_signed w strict result a b)) +
+      interval_bits (snd (interval_assume_signed w strict result a b)) <=
+      2 * (interval_bits a + interval_bits b + 2).
+  Proof.
+    intros w strict result a b. unfold interval_assume_signed.
+    destruct (interval_sign w a) as [sa|];
+      destruct (interval_sign w b) as [sb|];
+      try (cbn [fst snd]; lia).
+    destruct (Bool.eqb sa sb); [|cbn [fst snd]; lia].
+    destruct strict, result; cbn [fst snd];
+      try (pose proof (table_assume_ult_bits a b); lia);
+      try (pose proof (table_assume_ule_bits a b); lia);
+      rewrite table_swap_bits;
+      try (pose proof (table_assume_ult_bits b a); lia);
+      pose proof (table_assume_ule_bits b a); lia.
+  Qed.
+
+  Local Lemma table_singleton_bits : forall a c,
+    Scalar.interval_singleton a = Some c -> Z.size_nat c <= interval_bits a.
+  Proof.
+    intros a c Hpoint.
+    unfold Scalar.interval_singleton, Scalar.interval_finite in Hpoint.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      try discriminate.
+    destruct (Z.eqb lo hi) eqn:Heq; [|discriminate].
+    inversion Hpoint; subst c.
+    exact (proj1 (table_finite_bits a lo hi Hfinite)).
+  Qed.
+
+  Local Lemma table_exclude_bits : forall a c,
+    interval_bits (interval_exclude a c) <= interval_bits a + Z.size_nat c + 2.
+  Proof.
+    intros a c. unfold interval_exclude.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      [|lia].
+    destruct (Z.eqb lo c) eqn:Hlo.
+    - pose proof (table_integer_add_bits c 1) as Hplus.
+      pose proof (PayloadBounds.payload_raw_meet_bits a (I (Fin (c + 1)) PosInf))
+        as Hmeet.
+      cbn [interval_bits Nat.max Pos.size_nat Z.size_nat] in *.
+      lia.
+    - destruct (Z.eqb hi c) eqn:Hhi; [|lia].
+      pose proof (table_integer_sub_bits c 1) as Hminus.
+      pose proof (PayloadBounds.payload_raw_meet_bits a (I NegInf (Fin (c - 1))))
+        as Hmeet.
+      cbn [interval_bits Nat.max Pos.size_nat Z.size_nat] in *.
+      lia.
+  Qed.
+
+  Local Lemma table_assume_neq_bits : forall a b,
+    interval_bits (fst (interval_assume_neq a b)) +
+      interval_bits (snd (interval_assume_neq a b)) <=
+      2 * (interval_bits a + interval_bits b + 2).
+  Proof.
+    intros a b.
+    assert (Hcode : interval_assume_neq a b =
+      (match Scalar.interval_singleton b with
+       | Some c => interval_exclude a c
+       | None => a
+       end,
+       match Scalar.interval_singleton a with
+       | Some c => interval_exclude b c
+       | None => b
+       end)).
+    { unfold interval_assume_neq, interval_exclude. reflexivity. }
+    rewrite Hcode. cbn [fst snd].
+    destruct (Scalar.interval_singleton b) as [cb|] eqn:Hb;
+      destruct (Scalar.interval_singleton a) as [ca|] eqn:Ha;
+      try (pose proof (table_exclude_bits a cb);
+        pose proof (table_exclude_bits b ca);
+        pose proof (table_singleton_bits b cb Hb);
+        pose proof (table_singleton_bits a ca Ha); lia);
+      try (pose proof (table_exclude_bits a cb);
+        pose proof (table_singleton_bits b cb Hb); lia);
+      try (pose proof (table_exclude_bits b ca);
+        pose proof (table_singleton_bits a ca Ha); lia);
+      lia.
+  Qed.
+
+  Local Lemma table_assume_pair_bits : forall o w a b q,
+    interval_bits (fst (interval_assume_pair o w a b q)) +
+      interval_bits (snd (interval_assume_pair o w a b q)) <=
+      2 * (interval_bits a + interval_bits b + interval_bits q + 2).
+  Proof.
+    intros o w a b q. destruct o;
+      cbn [interval_assume_pair];
+      repeat match goal with
+      | |- context [interval_is_point q ?z] => destruct (interval_is_point q z)
+      end;
+      cbn [fst snd];
+      try (pose proof (table_assume_equal_bits a b); lia);
+      try (pose proof (table_assume_neq_bits a b); lia);
+      try (pose proof (table_assume_ult_bits a b); lia);
+      try (pose proof (table_assume_ule_bits a b); lia);
+      try (pose proof (table_assume_signed_bits w true true a b); lia);
+      try (pose proof (table_assume_signed_bits w true false a b); lia);
+      try (pose proof (table_assume_signed_bits w false true a b); lia);
+      try (pose proof (table_assume_signed_bits w false false a b); lia);
+      try (pose proof (table_assume_add_bits w a b q); lia);
+      try (pose proof (table_assume_sub_bits a b q); lia);
+      try (rewrite table_swap_bits; pose proof (table_assume_ult_bits b a); lia);
+      try (rewrite table_swap_bits; pose proof (table_assume_ule_bits b a); lia);
+      lia.
+  Qed.
+
+  Local Lemma table_bwd2_size : forall o rw wa a wb b q,
+    let p := interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q in
+    (N.of_nat (2 + W.psize wa (fst p) + W.psize wb (snd p)) <=
+      (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1)) * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize rw q + W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros o rw wa a wb b q p.
+    pose proof (table_assume_pair_bits o wa (interval_clip wa a)
+      (interval_clip wb b) q) as Hpair.
+    pose proof (table_clip_bits wa a) as Ha.
+    pose proof (table_clip_bits wb b) as Hb.
+    pose proof (table_raw_size rw q) as Hq.
+    pose proof (Pos2Nat.is_pos rw) as Hr.
+    pose proof (Pos2Nat.is_pos wa) as Hwa.
+    pose proof (Pos2Nat.is_pos wb) as Hwb.
+    unfold p in *.
+    set (s := Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1).
+    set (sq := s ^ 2).
+    assert (Hwidth : (Pos.to_nat wa + Pos.to_nat wb + 2 <= sq)%nat).
+    { subst sq s. rewrite Nat.pow_2_r. nia. }
+    set (budget := sq + W.psize rw q + W.psize wa a + W.psize wb b).
+    assert (Hsize :
+      (2 + W.psize wa
+        (fst (interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q)) +
+        W.psize wb
+        (snd (interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q)) <=
+        10 * budget)%nat).
+    { unfold budget. rewrite !W.F_psize. lia. }
+    assert (HsizeN :
+      (N.of_nat (2 + W.psize wa
+        (fst (interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q)) +
+        W.psize wb
+        (snd (interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q))) <=
+        10 * N.of_nat budget)%N).
+    { replace (10 * N.of_nat budget)%N with (N.of_nat (10 * budget)).
+      - lia.
+      - rewrite Nat2N.inj_mul. reflexivity. }
+    assert (Hcoeff : (10 <= 1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N)
+      by nia.
+    nia.
+  Qed.
+
   Local Lemma table_ite_size : forall rw wa wb a b,
     W.psize rw (Scalar.interval_join (interval_clip wa a) (interval_clip wb b)) <=
       (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2.
@@ -2560,5 +2716,28 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* OPEN: bound the raw result bits of backward refinements. *)
+  Proof.
+    intros o rw q xs ys Hresult.
+    destruct xs as [|[wa a] tail]; [destruct o; discriminate|].
+    destruct tail as [|[wb b] tail].
+    - destruct o; cbn [wbwd interval_bwd1] in Hresult;
+        try discriminate; inversion Hresult; subst ys;
+        cbn [map combine length fold_right fst snd];
+        rewrite !Nat.add_0_r;
+        change (N.of_nat (1 + W.psize wa
+          (interval_assume_rewrap rw (interval_clip wa a) q)) <=
+          c_word_table * N.of_nat
+            (((Pos.to_nat rw + Pos.to_nat wa + 1) ^ 2 +
+              W.psize rw q + W.psize wa a)%nat))%N;
+        unfold c_word_table; apply table_bwd1_size.
+    - destruct tail as [|extra rest].
+      + pose proof (table_bwd2_size o rw wa a wb b q) as Hsize.
+        destruct o; cbn [wbwd interval_bwd2] in Hresult;
+          try discriminate; inversion Hresult; subst ys;
+          cbn [map combine length fold_right fst snd];
+          rewrite !Nat.add_0_r;
+          repeat rewrite Nat.add_assoc;
+          unfold c_word_table; exact Hsize.
+      + destruct o; discriminate.
+  Qed.
 End IntervalWordTableT.
