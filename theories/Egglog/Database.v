@@ -10827,6 +10827,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hcover f k0 k Hlocated).
   Qed.
 
+  Lemma forest_ok_public : forall db, database_wf db -> database_idle_ok db ->
+    slot_rank_ok db -> forest_ok db.
+  Proof.
+    intros db Hbase Hidle Hrank. unfold forest_ok.
+    split; [exact (database_idle_located db Hidle) |].
+    split; [exact (wf_metadata db Hbase) |].
+    split; [exact (wf_pending_count db Hbase) |].
+    split; [exact (wf_forest db Hbase) |].
+    split.
+    { change (N.to_nat (count (db_forest db)) = N.to_nat (ids db)).
+      now rewrite (wf_forest_count db Hbase). }
+    split; [exact (wf_equalities db Hbase) |].
+    split; [exact (wf_forest_width db Hbase) |].
+    split; [exact (database_idle_row_store db Hidle) |].
+    split; [exact (wf_projection_counts db Hbase) |].
+    split; [exact (wf_history db Hbase) |].
+    split; [exact (database_wf_core_bridge db Hbase) | exact Hrank].
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
