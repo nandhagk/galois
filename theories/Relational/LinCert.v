@@ -4,7 +4,7 @@
     For example, opposite occurrences of one variable cancel before comparison.
     Builds on: LinCertSig. *)
 
-From Stdlib Require Import List ZArith QArith Lia Bool.
+From Stdlib Require Import List ZArith QArith Lia Bool Psatz.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm LinCertSig.
@@ -491,9 +491,104 @@ Module LinCert (X : KEY) <: LINCERT X.
     split; intros H x; specialize (H x); rewrite coef_of_app, coef_of_scale in *; nia.
   Qed.
 
+  (** One admissible weighted row preserves integer satisfaction of the partial sum. *)
+  Lemma combine_cons_sat : forall p m s v,
+    allowed p m = true -> sat v p -> sat v (finish_sum s) ->
+    sat v (finish_sum (LCSum _ (scale_terms m (lhs p) ++ lc_terms s)
+      (lc_add_signed (m * rhs p)%Z (lc_sums s)) (equality_used p m && lc_equal s))).
+  Proof.
+    intros p m s v Hallowed Hp Hs.
+    unfold sat, finish_sum in *. cbn [lhs lrel rhs lc_terms lc_sums lc_equal] in *.
+    rewrite eval_coef_app, eval_coef_scale, add_signed_value.
+    unfold allowed, equality_used in *. destruct (lrel p); destruct (lc_equal s);
+      cbn [andb] in *.
+    - nia.
+    - nia.
+    - apply Z.leb_le in Hallowed. destruct (m =? 0)%Z eqn:Hzero; cbn [andb].
+      + apply Z.eqb_eq in Hzero. nia.
+      + nia.
+    - apply Z.leb_le in Hallowed. destruct (m =? 0)%Z; cbn [andb]; nia.
+  Qed.
+
+  (** Successful combination of satisfied input rows is satisfied. *)
+  Lemma combine_rows_sat : forall P ms s, combine_rows P ms = Some s ->
+    forall v, Forall (sat v) P -> sat v (finish_sum s).
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hcombine v Hmodels;
+      cbn [combine_rows] in Hcombine; try discriminate.
+    - inversion Hcombine; subst. reflexivity.
+    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+      destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hcombine; subst s.
+      inversion Hmodels as [|p' ps' Hp Hps]; subst.
+      apply combine_cons_sat; [exact Hallowed|exact Hp|].
+      exact (IH ns tail Htail v Hps).
+  Qed.
+
+  (** The exported combination retains every integer model of its input. *)
+  Lemma combine_valid : forall P ms s, combine P ms = Some s ->
+    forall v, Forall (sat v) P -> sat v s.
+  Proof.
+    intros P ms s Hcombine v Hmodels. unfold combine in Hcombine.
+    destruct (combine_rows P ms) as [sum|] eqn:Hsum; [|discriminate].
+    inversion Hcombine; subst s. exact (combine_rows_sat P ms sum Hsum v Hmodels).
+  Qed.
+
+  (** An accepted zero-left-hand-side contradiction has no integer model. *)
+  Lemma empty_row_sound : forall s, empty_row s = true -> forall v, ~ sat v s.
+  Proof.
+    intros s Hempty v Hsat. unfold empty_row in Hempty.
+    apply andb_true_iff in Hempty as [Hzero Hrhs].
+    pose proof (proj1 (linear_zero_spec (lhs s)) Hzero) as Hcoef.
+    pose proof (eval_coef_zero (lhs s) v Hcoef) as Hvalue.
+    unfold sat in Hsat. destruct (lrel s).
+    - apply negb_true_iff, Z.eqb_neq in Hrhs. congruence.
+    - apply Z.ltb_lt in Hrhs. lia.
+  Qed.
+
+  (** Accepted scaled coefficients give the same scaled integer evaluation. *)
+  Lemma linear_equal_eval : forall sc xs ys v, linear_equal sc xs ys = true ->
+    eval_coef v xs = (sc * eval_coef v ys)%Z.
+  Proof.
+    intros sc xs ys v Heq.
+    pose proof (proj1 (linear_equal_spec sc xs ys) Heq) as Hcoef.
+    rewrite <- eval_coef_scale. apply eval_coef_ext.
+    intro x. rewrite coef_of_scale. apply Hcoef.
+  Qed.
+
+  (** The checked bound follows from the weighted row, with floor division for integer cuts. *)
+  Lemma check_row_sound : forall s c k, check_row s c k = true ->
+    forall v, sat v s -> sat v c.
+  Proof.
+    intros s c k Hcheck v Hsat. unfold check_row in Hcheck.
+    apply andb_true_iff in Hcheck as [Hleft Hrhs].
+    apply andb_true_iff in Hleft as [Hscale Hcoef]. apply Z.ltb_lt in Hscale.
+    pose proof (linear_equal_eval _ _ _ v Hcoef) as Heval.
+    unfold sat in *. destruct (lrel c), (lrel s); try discriminate.
+    - apply Z.eqb_eq in Hrhs. nia.
+    - destruct (cut k).
+      + apply Z.leb_le in Hrhs.
+        pose proof (Z.div_mod (rhs s) (scale k) ltac:(lia)) as Hdiv.
+        pose proof (Z.mod_pos_bound (rhs s) (scale k) Hscale) as Hmod. nia.
+      + apply Z.leb_le in Hrhs. nia.
+    - destruct (cut k).
+      + apply Z.leb_le in Hrhs.
+        pose proof (Z.div_mod (rhs s) (scale k) ltac:(lia)) as Hdiv.
+        pose proof (Z.mod_pos_bound (rhs s) (scale k) Hscale) as Hmod. nia.
+      + apply Z.leb_le in Hrhs. nia.
+  Qed.
+
+  (** Accepted certificates retain every integer model, including the contradiction case. *)
   Lemma check_entails_sound : forall P c k, check_entails P c k = true ->
     forall v, Forall (sat v) P -> sat v c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k Hcheck v Hmodels. unfold check_entails in Hcheck.
+    destruct (combine P (mults k)) as [s|] eqn:Hsum; [|discriminate].
+    pose proof (combine_valid P (mults k) s Hsum v Hmodels) as Hsat.
+    destruct (empty_row s) eqn:Hempty.
+    - exfalso. exact (empty_row_sound s Hempty v Hsat).
+    - exact (check_row_sound s c k Hcheck v Hsat).
+  Qed.
   (** Certificates without integer cuts also entail their rational conclusion. *)
   Lemma check_entails_sound_Q : forall P c k,
     check_entails P c k = true -> cut k = false ->
@@ -502,7 +597,11 @@ Module LinCert (X : KEY) <: LINCERT X.
   (** Accepted contradictions exclude every integer model. *)
   Lemma check_empty_sound : forall P ms, check_empty P ms = true ->
     forall v, ~ Forall (sat v) P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms Hempty v Hmodels. unfold check_empty in Hempty.
+    destruct (combine P ms) as [s|] eqn:Hsum; [|discriminate].
+    apply (empty_row_sound s Hempty v). exact (combine_valid P ms s Hsum v Hmodels).
+  Qed.
   (** An accepted contradiction entails every conclusion. *)
   Lemma check_entails_empty : forall P c k,
     check_empty P (mults k) = true -> check_entails P c k = true.
@@ -539,13 +638,34 @@ Module LinCert (X : KEY) <: LINCERT X.
     | RLe => (comb_rhs P ms <= sc * rhs c)%Z
     end ->
     check_entails P c (Cert ms sc false) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c ms sc Hadmissible Hscale Hcoef Hbound.
+    destruct (combine_spec P ms Hadmissible) as [s [Hsum [Hcoeff [Hrhs Hrel]]]].
+    unfold check_entails. cbn [mults]. rewrite Hsum.
+    destruct (empty_row s); [reflexivity|]. unfold check_row.
+    cbn [scale cut]. apply andb_true_iff. split.
+    - apply andb_true_iff. split; [now apply Z.ltb_lt|].
+      apply linear_equal_spec. intro x. rewrite Hcoeff. apply Hcoef.
+    - destruct (lrel c).
+      + destruct Hbound as [Heq Hbound]. rewrite Heq in Hrel. rewrite Hrel.
+        apply Z.eqb_eq. now rewrite Hrhs.
+      + destruct (lrel s); apply Z.leb_le; now rewrite Hrhs.
+  Qed.
   (** Rational contradictions are accepted. *)
   Lemma check_empty_complete : forall P ms, admissible P ms ->
     (forall x, comb_coef P ms x = 0%Z) ->
     (comb_rhs P ms < 0)%Z \/ (comb_eq P ms = true /\ comb_rhs P ms <> 0%Z) ->
     check_empty P ms = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms Hadmissible Hcoef Hcontradiction.
+    destruct (combine_spec P ms Hadmissible) as [s [Hsum [Hcoeff [Hrhs Hrel]]]].
+    unfold check_empty. rewrite Hsum. unfold empty_row.
+    apply andb_true_iff. split.
+    - apply linear_zero_spec. intro x. rewrite Hcoeff. apply Hcoef.
+    - rewrite Hrel, Hrhs. destruct (comb_eq P ms) eqn:Heq.
+      + apply negb_true_iff, Z.eqb_neq. destruct Hcontradiction as [Hneg|[_ Hneq]]; lia.
+      + apply Z.ltb_lt. destruct Hcontradiction as [Hneg|[Hfalse _]]; [exact Hneg|discriminate].
+  Qed.
 End LinCert.
 
 Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
@@ -604,7 +724,9 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   (** Successful combination retains the consequences of all input rows. *)
   Lemma combine_sound : forall P ms s, combine P ms = Some s ->
     forall v, Forall (sat v) P -> sat v s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact combine_valid.
+  Qed.
   (** Combination without cuts is valid over rational stores. *)
   Lemma combine_sound_Q : forall P ms s, combine P ms = Some s ->
     forall v, Forall (satQ v) P -> satQ v s.
