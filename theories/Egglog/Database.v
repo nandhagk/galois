@@ -1588,11 +1588,42 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma rebuild_idle : forall db, wf db -> canonical db -> pending db = 0 -> rebuild db = db.
   Proof. Admitted. (* STUB *)
 
+  (** Related keys whose identifiers are already representatives are equal cell by cell. *)
+  Lemma canonical_keys_equal : forall db (k1 k2 : list (cell V.t)), wf db ->
+    (forall i, In (Id i) k1 -> repr db i = i) ->
+    (forall i, In (Id i) k2 -> repr db i = i) ->
+    Forall2 (cell_rel (same (view db))) k1 k2 -> k1 = k2.
+  Proof.
+    intros db k1 k2 Hwf Hleft Hright Hrelated. revert Hleft Hright.
+    induction Hrelated as [| c d left right Hcell Htail IH]; intros Hleft Hright.
+    - reflexivity.
+    - f_equal.
+      + destruct Hcell as [i j Hsame | v]; [| reflexivity].
+        f_equal. apply (proj1 (same_repr db i j Hwf)) in Hsame.
+        rewrite (Hleft i), (Hright j) in Hsame by now left. exact Hsame.
+      + apply IH.
+        * intros i Hin. apply Hleft. now right.
+        * intros i Hin. apply Hright. now right.
+  Qed.
+
   (** A database without pending work respects constructor congruence. *)
   Lemma rebuild_congruent : forall db f k1 k2 i j, wf db -> pending db = 0 ->
     row (view db) f k1 (Some (Id i)) -> row (view db) f k2 (Some (Id j)) ->
     Forall2 (cell_rel (same (view db))) k1 k2 -> same (view db) i j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k1 k2 i j Hwf Hquiet Hrow1 Hrow2 Hrelated.
+    pose proof (wf_quiet_canonical db Hwf Hquiet) as Hcanonical.
+    assert (Hkeys : k1 = k2).
+    { eapply canonical_keys_equal; [exact Hwf | | | exact Hrelated].
+      - intros x Hin. apply (Hcanonical f k1 (Some (Id i)) Hrow1 x).
+        apply in_or_app. now left.
+      - intros x Hin. apply (Hcanonical f k2 (Some (Id j)) Hrow2 x).
+        apply in_or_app. now left. }
+    subst k2.
+    pose proof (row_functional db f k1 (Some (Id i)) (Some (Id j)) Hwf Hrow1 Hrow2)
+      as Houtputs.
+    injection Houtputs as ->. apply (proj2 (same_repr db j j Hwf)). reflexivity.
+  Qed.
 
   (** Every indexed tuple comes from a row in its declared slot. *)
   Lemma index_all : forall db s new u, wf db -> I.mem (index s new db) u ->
