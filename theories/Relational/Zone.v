@@ -220,8 +220,6 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
     | Reached m => Reached (M.merge (forget_row x) (M.remove (Some x) m) M.empty)
     end.
 
-  (* STUB-CODE *)
-  Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
   Definition entry (m : dbm) (i j : K.t) : option Z :=
     match M.get i m with Some row => M.get j row | None => None end.
 
@@ -391,6 +389,73 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
     match s with
     | Unreached => Unreached
     | Reached _ => fold_left assume_atom (F.atoms_of g es) s
+    end.
+
+  Definition copy_source (f : lin X.t) : option K.t :=
+    match coef f with
+    | nil => Some None
+    | (x, a) :: nil => if (a =? 1)%Z then Some (Some x) else None
+    | _ => None
+    end.
+
+  Definition shift_column_row (x : X.t) (d : Z)
+      (r : option (M.t Z)) (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row =>
+      Some (match M.get (Some x) row with
+        | Some old => M.set (Some x) (old + d)%Z row
+        | None => row
+        end)
+    | None => None
+    end.
+
+  Definition shift_columns (x : X.t) (d : Z) (m : dbm) : dbm :=
+    M.merge (shift_column_row x d) m M.empty.
+
+  Definition shift_bound (d : Z) (old : option Z) (_ : option Z) : option Z :=
+    match old with Some z => Some (z - d)%Z | None => None end.
+
+  (** Self assignment shifts one column up and the corresponding row down. *)
+  Definition shift (x : X.t) (d : Z) (m : dbm) : dbm :=
+    let next := shift_columns x d m in
+    match M.get (Some x) next with
+    | Some row => M.set (Some x) (M.merge (shift_bound d) row M.empty) next
+    | None => next
+    end.
+
+  Definition assign_copy (x : X.t) (source : K.t) (d : Z) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      if K.eqb source (Some x) then Reached (shift x d m) else
+      refine (Some x) source (-d)%Z (refine source (Some x) d (havoc x s))
+    end.
+
+  Definition add_range (x : X.t) (bounds : bnd * bnd) (s : t) : t :=
+    let lower := match fst bounds with
+      | Fin lo => refine (Some x) None (-lo)%Z s
+      | _ => s
+      end in
+    match snd bounds with
+    | Fin hi => refine None (Some x) hi lower
+    | _ => lower
+    end.
+
+  Definition assign (x : X.t) (e : term L.op X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      match F.lin_of e with
+      | None => havoc x s
+      | Some (f, r) =>
+        let bounds := form_bounds m f in
+        match copy_source f with
+        | Some source =>
+          if rel_wrap_exact r bounds then assign_copy x source (cst f) s else
+          add_range x (rel_wrap_bounds r bounds) (havoc x s)
+        | None => add_range x (rel_wrap_bounds r bounds) (havoc x s)
+        end
+      end
     end.
 End ZoneCode.
 
@@ -1279,7 +1344,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun widen.
   TimeFun narrow.
   TimeFun havoc.
-  TimeFun assign.
   TimeFun entry.
   TimeFun variable_bounds.
   TimeFun form_bounds.
@@ -1299,6 +1363,14 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun assume_cmp.
   TimeFun assume_atom.
   TimeFun assume.
+  TimeFun copy_source.
+  TimeFun shift_column_row.
+  TimeFun shift_columns.
+  TimeFun shift_bound.
+  TimeFun shift.
+  TimeFun assign_copy.
+  TimeFun add_range.
+  TimeFun assign.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -1858,11 +1930,131 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - pose proof (ell_entry m p q z Hentry). lia.
   Qed.
 
+  (** An incremental path update retains exactly the existing outer rows. *)
+  Lemma find_increment_presence : forall i j d m p,
+    M.find p (M.merge (increment_row i d (row_of (M.get j m))) m M.empty) <> None <->
+    M.find p m <> None.
+  Proof.
+    intros i j d m p. rewrite M.find_merge by reflexivity.
+    rewrite M.find_empty. destruct (M.find p m); cbn [increment_row]; split; congruence.
+  Qed.
+
+  (** A new finite coordinate joins a prefix into the source and a suffix from the target. *)
+  Lemma raw_increment_presence : forall i j d m p q,
+    raw_entry (M.merge (increment_row i d (row_of (M.get j m))) m M.empty) p q <>
+      None <-> raw_entry m p q <> None \/
+      (raw_entry m p (K.encode i) <> None /\ raw_entry m (K.encode j) q <> None).
+  Proof.
+    intros i j d m p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|]; cbn [increment_row row_of].
+    - rewrite !M.get_find. destruct (M.find (K.encode i) row).
+      + rewrite M.find_merge by reflexivity.
+        destruct (M.find q row), (M.find q (row_of (M.find (K.encode j) m)));
+          cbn [via_bound]; intuition congruence.
+      + tauto.
+    - rewrite !M.find_empty. tauto.
+  Qed.
+
+  (** The path update uses only codes already present in its input support. *)
+  Lemma support_increment : forall i j d m p,
+    In p (support (M.merge (increment_row i d (row_of (M.get j m))) m M.empty)) <->
+    In p (support m).
+  Proof.
+    intros i j d m p. rewrite !support_find. split.
+    - intros [Hrow | [q Hentry]].
+      + left. now apply find_increment_presence in Hrow.
+      + apply raw_increment_presence in Hentry. right.
+        destruct Hentry as [Hentry | [Hprefix Hsuffix]].
+        * now exists q.
+        * now exists (K.encode j).
+    - intros [Hrow | [q Hentry]].
+      + left. now apply find_increment_presence.
+      + right. exists q. apply raw_increment_presence. now left.
+  Qed.
+
+  (** Two possible new endpoint codes bound both support count and key bits. *)
+  Lemma support_endpoints : forall i j ma mb,
+    (forall p, In p (support ma) ->
+      p = K.encode i \/ p = K.encode j \/ In p (support mb)) ->
+    supp ma <= supp mb + 2 /\
+    b ma <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j)).
+  Proof.
+    intros i j ma mb Hsupport. split.
+    - assert (Hincl : incl (support ma) (K.encode i :: K.encode j :: support mb)).
+      { intros p Hin. destruct (Hsupport p Hin) as [Heq | [Heq | Hin']];
+          cbn; intuition congruence. }
+      pose proof (NoDup_incl_length (support_nodup ma) Hincl) as Hlength.
+      unfold supp. cbn in Hlength. lia.
+    - unfold b at 1. apply maximum_bound. intros p Hin.
+      destruct (Hsupport p Hin) as [Heq | [Heq | Hin']].
+      + subst p. change (K.bits i <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j))).
+        eapply Nat.le_trans; [apply Nat.le_max_l|apply Nat.le_max_r].
+      + subst p. change (K.bits j <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j))).
+        eapply Nat.le_trans; [apply Nat.le_max_r|apply Nat.le_max_r].
+      + eapply Nat.le_trans; [exact (support_bits mb p Hin')|apply Nat.le_max_l].
+  Qed.
+
+  (** Each incremental candidate uses an old prefix, the inserted bound, and an old suffix. *)
+  Lemma raw_entry_increment : forall i j d m p q,
+    raw_entry (M.merge (increment_row i d (row_of (M.get j m))) m M.empty) p q =
+    match raw_entry m p (K.encode i) with
+    | Some a => via_bound (a + d)%Z (raw_entry m p q) (raw_entry m (K.encode j) q)
+    | None => raw_entry m p q
+    end.
+  Proof.
+    intros i j d m p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|]; cbn [increment_row row_of].
+    - rewrite !M.get_find. destruct (M.find (K.encode i) row).
+      + now rewrite M.find_merge by reflexivity.
+      + reflexivity.
+    - now rewrite !M.find_empty.
+  Qed.
+
+  (** An incremental path update needs at most two further integer bits. *)
+  Lemma ell_increment : forall i j d m upper,
+    ell m <= upper -> Z.size_nat d <= upper ->
+    ell (M.merge (increment_row i d (row_of (M.get j m))) m M.empty) <= upper + 2.
+  Proof.
+    intros i j d m upper Hm Hd. apply ell_bound. intros p q z Hentry.
+    rewrite raw_entry_increment in Hentry.
+    destruct (raw_entry m p (K.encode i)) as [a|] eqn:Ha.
+    - unfold via_bound in Hentry.
+      destruct (raw_entry m (K.encode j) q) as [c|] eqn:Hc.
+      + injection Hentry as <-. apply lower_bound_size.
+        * assert (Habits : Z.size_nat a <= upper).
+          { pose proof (ell_entry m p (K.encode i) a Ha). lia. }
+          assert (Hcbits : Z.size_nat c <= upper + 1).
+          { pose proof (ell_entry m (K.encode j) q c Hc). lia. }
+          pose proof (zbits_add_bound a d upper Habits Hd) as Had.
+          pose proof (zbits_add_bound (a + d)%Z c (upper + 1) Had Hcbits). lia.
+        * intros old Hold. pose proof (ell_entry m p q old Hold). lia.
+      + pose proof (ell_entry m p q z Hentry). lia.
+    - pose proof (ell_entry m p q z Hentry). lia.
+  Qed.
+
   Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 2 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
     ell m' <= Nat.max (ell m) (Z.size_nat d) + 2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j d m m' Hclose. unfold incr_close in Hclose.
+    set (seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))) in *.
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty) in *.
+    destruct (andb (nonnegative i next) (nonnegative j next)); [|discriminate].
+    injection Hclose as <-.
+    assert (Hsupport : forall p, In p (support next) ->
+      p = K.encode i \/ p = K.encode j \/ In p (support m)).
+    { intros p Hin. unfold next in Hin. apply support_increment in Hin.
+      unfold seed in Hin. rewrite !support_add_cons in Hin. tauto. }
+    destruct (support_endpoints i j next m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. split; [exact Hbits|].
+    unfold next. apply ell_increment; [|apply Nat.le_max_r].
+    unfold seed. apply ell_add_cons; [|apply Nat.le_max_r].
+    apply ell_add_cons; [|cbn [Z.size_nat]; lia].
+    apply ell_add_cons; [apply Nat.le_max_l|cbn [Z.size_nat]; lia].
+  Qed.
 
   (** Widening units cover the squared support size. *)
   Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
@@ -1900,13 +2092,88 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     exact fw_round_models.
   Qed.
+  (** Retrieving a row, with an empty fallback, preserves map consistency. *)
+  Lemma row_of_wf : forall m k,
+    dbm_wf m -> M.wf (row_of (M.get k m)).
+  Proof.
+    intros m k [_ Hrows]. rewrite M.get_find.
+    destruct (M.find (K.encode k) m) as [row|] eqn:Hrow; cbn [row_of].
+    - exact (Hrows (K.encode k) row Hrow).
+    - apply M.wf_empty.
+  Qed.
+
+  (** A row-wise map update preserves consistency when each returned row does. *)
+  Lemma dbm_merge_wf : forall
+      (f : option (M.t Z) -> option (M.t Z) -> option (M.t Z)) m,
+    f None None = None -> dbm_wf m ->
+    (forall old row, M.wf old -> f (Some old) None = Some row -> M.wf row) ->
+    dbm_wf (M.merge f m M.empty).
+  Proof.
+    intros f m Hnone [Houter Hrows] Hf. split.
+    - apply M.wf_merge; [exact Houter|apply M.wf_empty].
+    - intros p row Hrow. rewrite M.find_merge in Hrow by exact Hnone.
+      rewrite M.find_empty in Hrow.
+      destruct (M.find p m) as [old|] eqn:Hold.
+      + eapply Hf; [exact (Hrows p old Hold)|exact Hrow].
+      + rewrite Hnone in Hrow. discriminate.
+  Qed.
+
+  (** Insertion retains consistent outer labels and consistent inner rows. *)
+  Lemma add_cons_wf : forall i j d m,
+    dbm_wf m -> dbm_wf (add_cons i j d m).
+  Proof.
+    intros i j d m Hwf. destruct Hwf as [Houter Hrows]. unfold add_cons. split.
+    - apply M.wf_set. exact Houter.
+    - intros p row Hrow. rewrite M.find_set in Hrow.
+      destruct (Pos.eqb p (K.encode i)).
+      + injection Hrow as <-. apply M.wf_set. apply row_of_wf. now split.
+      + exact (Hrows p row Hrow).
+  Qed.
+
+  (** Sparse relaxation merges only consistent source and pivot rows. *)
+  Lemma relax_wf : forall k m, dbm_wf m -> dbm_wf (relax_round k m).
+  Proof.
+    intros k m Hwf. unfold relax_round. apply dbm_merge_wf;
+      [reflexivity|exact Hwf|].
+    intros old row Hold Hrow. cbn [round_row] in Hrow.
+    destruct (M.get k old).
+    - injection Hrow as <-. apply M.wf_merge; [exact Hold|].
+      now apply row_of_wf.
+    - injection Hrow as <-. exact Hold.
+  Qed.
+
+  (** An incremental path update merges only consistent source and exit rows. *)
+  Lemma increment_wf : forall i j d m,
+    dbm_wf m ->
+    dbm_wf (M.merge (increment_row i d (row_of (M.get j m))) m M.empty).
+  Proof.
+    intros i j d m Hwf. apply dbm_merge_wf; [reflexivity|exact Hwf|].
+    intros old row Hold Hrow. cbn [increment_row] in Hrow.
+    destruct (M.get i old).
+    - injection Hrow as <-. apply M.wf_merge; [exact Hold|].
+      now apply row_of_wf.
+    - injection Hrow as <-. exact Hold.
+  Qed.
+
   Lemma wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k m Hwf. unfold fw_round. apply relax_wf.
+    destruct (pivot_present k m); [now apply add_cons_wf|exact Hwf].
+  Qed.
   Lemma wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact add_cons_wf.
+  Qed.
   Lemma wf_incr_close : forall i j d m, dbm_wf m ->
     match incr_close i j d m with Unreached => True | Reached m' => dbm_wf m' end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j d m Hwf. unfold incr_close.
+    set (seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))).
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty).
+    destruct (andb (nonnegative i next) (nonnegative j next)); [|exact I].
+    unfold next. apply increment_wf. unfold seed.
+    apply add_cons_wf, add_cons_wf, add_cons_wf. exact Hwf.
+  Qed.
   Lemma close_sound : forall m v, models m v -> ngamma (close m) v.
   Proof.
     exact close_models.
