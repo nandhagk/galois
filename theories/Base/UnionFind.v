@@ -570,6 +570,270 @@ Module UnionFind <: UNION_FIND.
           rewrite PTrie.get_set_other by exact Hne. rewrite Hy. reflexivity.
   Qed.
 
+  (** Collapsing one distinct root selects exactly the two old root classes. *)
+  Lemma filter_collapse_count {A} (f : A -> positive) w l xs : w <> l ->
+    length (filter (fun z => Pos.eqb (if Pos.eqb (f z) l then w else f z) w) xs) =
+    length (filter (fun z => Pos.eqb (f z) w) xs) +
+    length (filter (fun z => Pos.eqb (f z) l) xs).
+  Proof.
+    intro Hne. induction xs as [|a xs IH]; [reflexivity|].
+    cbn [filter]. destruct (Pos.eqb (f a) w) eqn:Haw;
+      destruct (Pos.eqb (f a) l) eqn:Hal.
+    - apply Pos.eqb_eq in Haw, Hal. congruence.
+    - rewrite Haw. cbn [length]. lia.
+    - rewrite Pos.eqb_refl. cbn [length]. lia.
+    - rewrite Haw. cbn [length]. lia.
+  Qed.
+
+  (** A collapse leaves equality with every other representative unchanged. *)
+  Lemma collapse_eqb_other w l r z : r <> w -> r <> l ->
+    Pos.eqb (if Pos.eqb z l then w else z) r = Pos.eqb z r.
+  Proof.
+    intros Hrw Hrl. destruct (Pos.eqb z l) eqn:Hz; [|reflexivity].
+    apply Pos.eqb_eq in Hz. subst z.
+    rewrite (proj2 (Pos.eqb_neq w r) ltac:(congruence)),
+      (proj2 (Pos.eqb_neq l r) ltac:(congruence)). reflexivity.
+  Qed.
+
+  (** Equal support and a representative collapse add the two root class sizes. *)
+  Lemma size_of_collapse u v w l :
+    mem u w -> mem u l -> repr u w = w -> repr u l = l -> w <> l ->
+    (forall z, mem v z <-> mem u z) ->
+    (forall z, repr v z = if Pos.eqb (repr u z) l then w else repr u z) ->
+    size_of v w = size_of u w + size_of u l.
+  Proof.
+    intros Hmw Hml Hrw Hrl Hne Hmem Hrepr.
+    rewrite (size_of_member v w) by (apply Hmem; exact Hmw).
+    rewrite (size_of_member u w Hmw), (size_of_member u l Hml), Hrw, Hrl.
+    assert (Hvw : repr v w = w).
+    { rewrite Hrepr, Hrw, (proj2 (Pos.eqb_neq w l) Hne). reflexivity. }
+    rewrite Hvw.
+    assert (Hfilter : filter (fun z => Pos.eqb (repr v z) w) (support v) =
+      filter (fun z => Pos.eqb (if Pos.eqb (repr u z) l then w else repr u z) w)
+        (support v)).
+    { apply filter_ext. intro z. now rewrite Hrepr. }
+    rewrite Hfilter.
+    rewrite (filter_length_perm _ _ _ (support_perm v u Hmem)).
+    apply filter_collapse_count. exact Hne.
+  Qed.
+
+  (** Every class outside the two collapsed representatives keeps its size. *)
+  Lemma size_of_collapse_other u v w l x :
+    (forall z, mem v z <-> mem u z) ->
+    (forall z, repr v z = if Pos.eqb (repr u z) l then w else repr u z) ->
+    repr u x <> w -> repr u x <> l -> size_of v x = size_of u x.
+  Proof.
+    intros Hmem Hrepr Hxw Hxl. unfold size_of.
+    destruct (PTrieCode.get x (parents v)) as [p|] eqn:Hv;
+      destruct (PTrieCode.get x (parents u)) as [q|] eqn:Hu.
+    - assert (Hvx : repr v x = repr u x).
+      { rewrite Hrepr, (proj2 (Pos.eqb_neq (repr u x) l) Hxl). reflexivity. }
+      rewrite Hvx.
+      assert (Hfilter :
+        filter (fun z => Pos.eqb (repr v z) (repr u x)) (support v) =
+        filter (fun z => Pos.eqb (repr u z) (repr u x)) (support v)).
+      { apply filter_ext. intro z. rewrite Hrepr. apply collapse_eqb_other; assumption. }
+      rewrite Hfilter. apply filter_length_perm, support_perm. exact Hmem.
+    - exfalso. assert (Hknown : mem u x).
+      { apply Hmem. unfold mem. rewrite Hv. discriminate. }
+      apply Hknown. exact Hu.
+    - exfalso. assert (Hknown : mem v x).
+      { apply Hmem. unfold mem. rewrite Hu. discriminate. }
+      apply Hknown. exact Hv.
+    - reflexivity.
+  Qed.
+
+  (** ** Root-link structure *)
+
+  (** Linking changes only the losing root's parent. *)
+  Lemma parent_link w l u z : parent_of z (link w l u) =
+    if Pos.eqb z l then w else parent_of z u.
+  Proof.
+    unfold parent_of, link. cbn [parents].
+    destruct (Pos.eqb z l) eqn:Heq.
+    - apply Pos.eqb_eq in Heq. subst z. rewrite PTrie.get_set_same. reflexivity.
+    - apply Pos.eqb_neq in Heq. rewrite PTrie.get_set_other by exact Heq. reflexivity.
+  Qed.
+
+  (** The stored cardinality is unchanged by a link. *)
+  Lemma card_link w l u : card (link w l u) = card u.
+  Proof. reflexivity. Qed.
+
+  (** Overwriting an existing root preserves the parent support. *)
+  Lemma mem_link w l u z : mem u l -> (mem (link w l u) z <-> mem u z).
+  Proof.
+    intro Hmem. unfold mem, link. cbn [parents].
+    destruct (Pos.eq_dec z l) as [Heq|Hne].
+    - subst z. rewrite PTrie.get_set_same. split; [intros _; exact Hmem|discriminate].
+    - rewrite PTrie.get_set_other by exact Hne. reflexivity.
+  Qed.
+
+  (** Distinct-root linking removes exactly the losing root from the roots. *)
+  Lemma is_root_link w l u z : w <> l ->
+    (is_root (link w l u) z <-> is_root u z /\ z <> l).
+  Proof.
+    intro Hwl. unfold is_root. rewrite parent_link.
+    destruct (Pos.eqb z l) eqn:Heq.
+    - apply Pos.eqb_eq in Heq. subst z. split; [contradiction|tauto].
+    - apply Pos.eqb_neq in Heq. tauto.
+  Qed.
+
+  (** Raising the winning root's rank preserves strict increases on parent edges. *)
+  Lemma link_rank_step w l u rk : ranked u rk -> mem u l ->
+    is_root u w -> w <> l ->
+    forall z, mem (link w l u) z -> ~ is_root (link w l u) z ->
+      (if Pos.eqb z w then Nat.max (rk w) (S (rk l)) else rk z) <
+      (if Pos.eqb (parent_of z (link w l u)) w
+       then Nat.max (rk w) (S (rk l)) else rk (parent_of z (link w l u))).
+  Proof.
+    intros Hrank Hml Hrw Hwl z Hmz Hnz.
+    assert (Hzw : z <> w).
+    { intro Heq. subst z. apply Hnz. apply is_root_link; [exact Hwl|]. split; assumption. }
+    assert (Hzwe : Pos.eqb z w = false) by (apply Pos.eqb_neq; exact Hzw).
+    rewrite Hzwe, parent_link.
+    destruct (Pos.eqb z l) eqn:Hzl.
+    - apply Pos.eqb_eq in Hzl. subst z. rewrite Pos.eqb_refl.
+      pose proof (Nat.le_max_r (rk w) (S (rk l))). lia.
+    - apply Pos.eqb_neq in Hzl.
+      assert (Hmzold : mem u z) by (apply (mem_link w l u z Hml); exact Hmz).
+      assert (Hnzold : ~ is_root u z).
+      { intro Hroot. apply Hnz. apply is_root_link; [exact Hwl|]. split; assumption. }
+      pose proof (proj1 Hrank z Hmzold Hnzold) as Hrise.
+      destruct (Pos.eqb (parent_of z u) w) eqn:Hpw.
+      + apply Pos.eqb_eq in Hpw. rewrite Hpw in Hrise.
+        pose proof (Nat.le_max_l (rk w) (S (rk l))). lia.
+      + exact Hrise.
+  Qed.
+
+  (** Linking two stored keys preserves closure under parents. *)
+  Lemma link_parent_closed w l u : wf u -> mem u w -> mem u l ->
+    forall z, mem (link w l u) z -> mem (link w l u) (parent_of z (link w l u)).
+  Proof.
+    intros Hwf Hmw Hml z Hmz. apply (mem_link w l u _ Hml).
+    rewrite parent_link. destruct (Pos.eqb z l); [exact Hmw|].
+    apply parent_mem; [exact Hwf|]. apply (mem_link w l u z Hml). exact Hmz.
+  Qed.
+
+  (** The raised rank remains at most one above the old logarithmic bound. *)
+  Lemma link_rank_bound w l u rk z : wf u -> ranked u rk ->
+    mem u w -> mem u l -> mem (link w l u) z ->
+    (if Pos.eqb z w then Nat.max (rk w) (S (rk l)) else rk z) <=
+      S (Nat.log2 (card u)).
+  Proof.
+    intros Hwf Hrank Hmw Hml Hmz. destruct (Pos.eqb z w).
+    - apply Nat.max_lub.
+      + pose proof (rank_log u rk w Hwf Hrank Hmw). lia.
+      + pose proof (rank_log u rk l Hwf Hrank Hml). lia.
+    - pose proof (rank_log u rk z Hwf Hrank
+        (proj1 (mem_link w l u z Hml) Hmz)). lia.
+  Qed.
+
+  (** The stored cardinality still provides enough parent iterations after linking. *)
+  Lemma link_repr_root w l u z : wf u -> mem u w -> mem u l ->
+    is_root u w -> w <> l -> is_root (link w l u) (repr (link w l u) z).
+  Proof.
+    intros Hwf Hmw Hml Hrw Hwl.
+    destruct (Pos.eq_dec (parent_of z (link w l u)) z) as [Hroot|Hnon].
+    - rewrite (repr_of_root (link w l u) z Hroot). exact Hroot.
+    - pose proof (nonroot_mem (link w l u) z Hnon) as Hmz.
+      pose proof Hwf as [_ [_ [_ [_ [rk Hrank]]]]].
+      assert (Hpositive : 0 < card u).
+      { pose proof (proj1 Hwf) as Hcard.
+        pose proof (proj2 (support_spec u w) Hmw) as Hin.
+        destruct (support u); cbn [length In] in *; [contradiction|lia]. }
+      pose proof (Nat.log2_lt_lin (card u) Hpositive) as Hlog.
+      unfold repr. rewrite card_link.
+      eapply iter_root_rank with
+        (rk := fun y => if Pos.eqb y w then Nat.max (rk w) (S (rk l)) else rk y)
+        (bound := S (Nat.log2 (card u))).
+      + intros y Hy. apply link_rank_bound; assumption.
+      + apply link_parent_closed; assumption.
+      + apply link_rank_step; assumption.
+      + lia.
+      + exact Hmz.
+  Qed.
+
+  (** Collapsing the losing representative is invariant under one new parent step. *)
+  Lemma link_collapse_parent w l u z : wf u -> is_root u w -> is_root u l -> w <> l ->
+    (if Pos.eqb (repr u (parent_of z (link w l u))) l
+     then w else repr u (parent_of z (link w l u))) =
+    (if Pos.eqb (repr u z) l then w else repr u z).
+  Proof.
+    intros Hwf Hrw Hrl Hwl. rewrite parent_link.
+    destruct (Pos.eqb z l) eqn:Hzl.
+    - apply Pos.eqb_eq in Hzl. subst z.
+      rewrite (repr_of_root u w Hrw), (repr_of_root u l Hrl), Pos.eqb_refl.
+      assert (Hwe : Pos.eqb w l = false) by (apply Pos.eqb_neq; exact Hwl).
+      rewrite Hwe. reflexivity.
+    - rewrite (repr_parent u z Hwf). reflexivity.
+  Qed.
+
+  (** The collapsed old representative is constant throughout the new parent walk. *)
+  Lemma link_collapse_iter w l u n z : wf u -> is_root u w -> is_root u l -> w <> l ->
+    (if Pos.eqb (repr u (Nat.iter n (fun y => parent_of y (link w l u)) z)) l
+     then w else repr u (Nat.iter n (fun y => parent_of y (link w l u)) z)) =
+    (if Pos.eqb (repr u z) l then w else repr u z).
+  Proof.
+    intros Hwf Hrw Hrl Hwl. induction n as [|n IH]; [reflexivity|].
+    rewrite Nat.iter_succ, link_collapse_parent by assumption. exact IH.
+  Qed.
+
+  (** Linking two roots replaces exactly the losing representative by the winner. *)
+  Lemma repr_link w l u z : wf u -> mem u w -> mem u l ->
+    is_root u w -> is_root u l -> w <> l ->
+    repr (link w l u) z = if Pos.eqb (repr u z) l then w else repr u z.
+  Proof.
+    intros Hwf Hmw Hml Hrw Hrl Hwl.
+    pose proof (link_repr_root w l u z Hwf Hmw Hml Hrw Hwl) as Hroot.
+    apply (is_root_link w l u _ Hwl) in Hroot. destruct Hroot as [Hold Hneq].
+    pose proof (link_collapse_iter w l u (card (link w l u)) z Hwf Hrw Hrl Hwl) as Hcollapse.
+    change ((if Pos.eqb (repr u (repr (link w l u) z)) l
+      then w else repr u (repr (link w l u) z)) =
+      (if Pos.eqb (repr u z) l then w else repr u z)) in Hcollapse.
+    rewrite (repr_of_root u _ Hold) in Hcollapse.
+    assert (Hother : Pos.eqb (repr (link w l u) z) l = false)
+      by (apply Pos.eqb_neq; exact Hneq).
+    rewrite Hother in Hcollapse. exact Hcollapse.
+  Qed.
+
+  (** ** End root-link structure *)
+
+  (** The linked winning class contains precisely both old root classes. *)
+  Lemma size_of_link w l u : wf u -> mem u w -> mem u l ->
+    is_root u w -> is_root u l -> w <> l ->
+    size_of (link w l u) w = size_of u w + size_of u l.
+  Proof.
+    intros Hwf Hmw Hml Hrw Hrl Hwl.
+    apply (size_of_collapse u (link w l u) w l Hmw Hml
+      (repr_of_root u w Hrw) (repr_of_root u l Hrl) Hwl).
+    - intro z. apply mem_link. exact Hml.
+    - intro z. apply repr_link; assumption.
+  Qed.
+
+  (** Linking preserves every class outside the two selected roots. *)
+  Lemma size_of_link_other w l u z : wf u -> mem u w -> mem u l ->
+    is_root u w -> is_root u l -> w <> l ->
+    repr u z <> w -> repr u z <> l -> size_of (link w l u) z = size_of u z.
+  Proof.
+    intros Hwf Hmw Hml Hrw Hrl Hwl Hzw Hzl.
+    apply (size_of_collapse_other u (link w l u) w l z).
+    - intro y. apply mem_link. exact Hml.
+    - intro y. apply repr_link; assumption.
+    - exact Hzw.
+    - exact Hzl.
+  Qed.
+
+  (** Root linking updates only the winning root's cached size. *)
+  Lemma size_at_link w l u r :
+    size_at r (link w l u) =
+      if Pos.eqb r w then (size_at w u + size_at l u)%N else size_at r u.
+  Proof.
+    unfold size_at, link. cbn [sizes].
+    destruct (Pos.eqb r w) eqn:Hr.
+    - apply Pos.eqb_eq in Hr. subst r. rewrite PTrie.get_set_same. reflexivity.
+    - apply Pos.eqb_neq in Hr. rewrite PTrie.get_set_other by exact Hr. reflexivity.
+  Qed.
+
   Lemma wf_empty : wf empty.
   Proof.
     unfold wf. split; [reflexivity|]. split.
@@ -828,6 +1092,50 @@ Module UnionFind <: UNION_FIND.
         * intro z. apply root_compress. intros y Hy. exact (proj2 (Hpath y Hy)).
   Qed.
 
+  (** The two lookups before linking preserve old classes and expose both stored roots. *)
+  Lemma union_find_correct x y u : wf u -> forall rx v ry w,
+    find x (add y (add x u)) = (rx, v) -> find y v = (ry, w) ->
+    rx = repr u x /\ ry = repr u y /\ wf w /\
+    (forall z, mem w z <-> mem u z \/ z = x \/ z = y) /\
+    (forall z, repr w z = repr u z) /\
+    (forall z, size_of w z = size_of u z) /\
+    (mem w rx /\ is_root w rx) /\ (mem w ry /\ is_root w ry).
+  Proof.
+    intros Hwf rx v ry w Hx Hy.
+    pose proof (wf_add x u Hwf) as Hax.
+    pose proof (wf_add y (add x u) Hax) as Haxy.
+    pose proof (find_correct x (add y (add x u)) Haxy) as Hfx.
+    rewrite Hx in Hfx. cbn [fst snd] in Hfx.
+    destruct Hfx as [Hrx [Hv [Hv_mem [Hv_repr [Hv_size Hv_root]]]]].
+    pose proof (find_correct y v Hv) as Hfy.
+    rewrite Hy in Hfy. cbn [fst snd] in Hfy.
+    destruct Hfy as [Hry [Hw [Hw_mem [Hw_repr [Hw_size Hw_root]]]]].
+    assert (Hrepr : forall z, repr (add y (add x u)) z = repr u z).
+    { intro z. rewrite !repr_add_same by assumption. reflexivity. }
+    assert (Hsize : forall z, size_of (add y (add x u)) z = size_of u z).
+    { intro z. rewrite !size_add_same by assumption. reflexivity. }
+    assert (Hxmem : mem (add y (add x u)) x).
+    { apply mem_add_raw. left. apply mem_add_raw. right; reflexivity. }
+    assert (Hymem : mem (add y (add x u)) y).
+    { apply mem_add_raw. right; reflexivity. }
+    split; [rewrite Hrx; apply Hrepr|].
+    split; [rewrite Hry, Hv_repr; apply Hrepr|].
+    split; [exact Hw|]. split.
+    - intro z. rewrite Hw_mem, Hv_mem, !mem_add_raw. tauto.
+    - split.
+      + intro z. rewrite Hw_repr, Hv_repr. apply Hrepr.
+      + split.
+        * intro z. rewrite Hw_size, Hv_size. apply Hsize.
+        * split; split.
+          -- apply (proj2 (Hw_mem rx)), (proj2 (Hv_mem rx)).
+             rewrite Hrx. apply repr_mem; assumption.
+          -- apply (proj2 (Hw_root rx)), (proj2 (Hv_root rx)).
+             rewrite Hrx. apply repr_root; exact Haxy.
+          -- apply (proj2 (Hw_mem ry)). rewrite Hry. apply repr_mem; [exact Hv|].
+             apply (proj2 (Hv_mem y)); exact Hymem.
+          -- apply (proj2 (Hw_root ry)). rewrite Hry. apply repr_root; exact Hv.
+  Qed.
+
   (** ** End compression and find helpers *)
 
   Lemma wf_find  : forall x u, wf u -> wf (snd (find x u)).
@@ -844,7 +1152,17 @@ Module UnionFind <: UNION_FIND.
     intros x u y Hwf. exact (proj1 (proj2 (proj2 (find_correct x u Hwf))) y).
   Qed.
   Lemma mem_union : forall x y u z, wf u -> (mem (snd (union x y u)) z <-> mem u z \/ z = x \/ z = y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x y u z Hwf. unfold union.
+    destruct (find x (add y (add x u))) as [rx v] eqn:Hx. cbn [fst snd].
+    destruct (find y v) as [ry w] eqn:Hy. cbn [fst snd].
+    destruct (union_find_correct x y u Hwf rx v ry w Hx Hy)
+      as [Hrx [Hry [Hw [Hmem [Hrepr [Hsize [[Hmx Hrootx] [Hmy Hrooty]]]]]]]].
+    destruct (Pos.eqb rx ry); cbn [snd]; [apply Hmem|].
+    destruct (N.leb (size_at ry w) (size_at rx w)); cbn [snd].
+    - rewrite mem_link by exact Hmy. apply Hmem.
+    - rewrite mem_link by exact Hmx. apply Hmem.
+  Qed.
   Lemma repr_empty : forall x, repr empty x = x. Proof. reflexivity. Qed.
   Lemma repr_idem  : forall u x, wf u -> repr u (repr u x) = repr u x.
   Proof.
@@ -864,13 +1182,56 @@ Module UnionFind <: UNION_FIND.
     exact (proj1 (proj2 (proj2 (proj2 (find_correct x u Hwf)))) y).
   Qed.
   Lemma union_none : forall x y u u1, wf u -> union x y u = (None, u1) ->
-    repr u x = repr u y /\ forall z, repr u1 z = repr u z. Proof. Admitted. (* STUB *)
+    repr u x = repr u y /\ forall z, repr u1 z = repr u z.
+  Proof.
+    intros x y u u1 Hwf. unfold union.
+    destruct (find x (add y (add x u))) as [rx v] eqn:Hx. cbn [fst snd].
+    destruct (find y v) as [ry w] eqn:Hy. cbn [fst snd].
+    destruct (union_find_correct x y u Hwf rx v ry w Hx Hy)
+      as [Hrx [Hry [Hw [Hmem [Hrepr Hrest]]]]].
+    destruct (Pos.eqb rx ry) eqn:Heq.
+    - intro Hresult. injection Hresult as Hstate. subst u1.
+      apply Pos.eqb_eq in Heq. split; [congruence|exact Hrepr].
+    - destruct (N.leb (size_at ry w) (size_at rx w)); discriminate.
+  Qed.
   Lemma union_some : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
     repr u x <> repr u y /\
     ((w = repr u x /\ l = repr u y) \/ (w = repr u y /\ l = repr u x)) /\
-    forall z, repr u1 z = if Pos.eqb (repr u z) l then w else repr u z. Proof. Admitted. (* STUB *)
+    forall z, repr u1 z = if Pos.eqb (repr u z) l then w else repr u z.
+  Proof.
+    intros x y u win lose u1 Hwf. unfold union.
+    destruct (find x (add y (add x u))) as [rx v] eqn:Hx. cbn [fst snd].
+    destruct (find y v) as [ry w] eqn:Hy. cbn [fst snd].
+    destruct (union_find_correct x y u Hwf rx v ry w Hx Hy)
+      as [Hrx [Hry [Hw [Hmem [Hrepr [Hsize [[Hmx Hrootx] [Hmy Hrooty]]]]]]]].
+    destruct (Pos.eqb rx ry) eqn:Heq; [discriminate|].
+    apply Pos.eqb_neq in Heq.
+    destruct (N.leb (size_at ry w) (size_at rx w)); intro Hresult;
+      injection Hresult as Hwin Hlose Hstate; subst win lose u1.
+    - split; [congruence|]. split; [left; split; assumption|].
+      intro z. rewrite (repr_link rx ry w z Hw Hmx Hmy Hrootx Hrooty Heq), Hrepr.
+      reflexivity.
+    - split; [congruence|]. split; [right; split; assumption|].
+      intro z. rewrite (repr_link ry rx w z Hw Hmy Hmx Hrooty Hrootx ltac:(congruence)).
+      rewrite Hrepr. reflexivity.
+  Qed.
   Lemma union_by_size : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
-    size_of u l <= size_of u w. Proof. Admitted. (* STUB *)
+    size_of u l <= size_of u w.
+  Proof.
+    intros x y u win lose u1 Hwf. unfold union.
+    destruct (find x (add y (add x u))) as [rx v] eqn:Hx. cbn [fst snd].
+    destruct (find y v) as [ry w] eqn:Hy. cbn [fst snd].
+    destruct (union_find_correct x y u Hwf rx v ry w Hx Hy)
+      as [Hrx [Hry [Hw [Hmem [Hrepr [Hsize [[Hmx Hrootx] [Hmy Hrooty]]]]]]]].
+    pose proof (proj1 (proj2 (proj2 Hw)) rx Hmx Hrootx) as Hsx.
+    pose proof (proj1 (proj2 (proj2 Hw)) ry Hmy Hrooty) as Hsy.
+    rewrite Hsize in Hsx, Hsy.
+    destruct (Pos.eqb rx ry); [discriminate|].
+    destruct (N.leb (size_at ry w) (size_at rx w)) eqn:Hle; intro Hresult;
+      injection Hresult as Hwin Hlose Hstate; subst win lose.
+    - apply N.leb_le in Hle. lia.
+    - apply N.leb_gt in Hle. lia.
+  Qed.
   Lemma size_of_union : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
     size_of u1 w = size_of u w + size_of u l. Proof. Admitted. (* STUB *)
   Lemma size_of_le_card : forall u x, wf u -> mem u x -> size_of u x <= card u.
@@ -885,7 +1246,22 @@ Module UnionFind <: UNION_FIND.
     unfold card. cbn [count]. rewrite N2Nat.inj_succ. lia.
   Qed.
   Lemma card_find  : forall x u, wf u -> card (snd (find x u)) = card u. Proof. reflexivity. Qed.
-  Lemma card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2. Proof. Admitted. (* STUB *)
+  Lemma card_union : forall x y u, wf u -> card (snd (union x y u)) <= card u + 2.
+  Proof.
+    intros x y u Hwf.
+    pose proof (card_add x u Hwf) as Hxcard.
+    pose proof (card_add y (add x u) (wf_add x u Hwf)) as Hycard.
+    unfold union. destruct (find x (add y (add x u))) as [rx v] eqn:Hx. cbn [fst snd].
+    destruct (find y v) as [ry w] eqn:Hy. cbn [fst snd].
+    assert (Hvcard : card v = card (add y (add x u))).
+    { change (card (snd (rx, v)) = card (add y (add x u))).
+      rewrite <- Hx. reflexivity. }
+    assert (Hwcard : card w = card v).
+    { change (card (snd (ry, w)) = card v). rewrite <- Hy. reflexivity. }
+    destruct (Pos.eqb rx ry); cbn [snd]; [lia|].
+    destruct (N.leb (size_at ry w) (size_at rx w));
+      change (card w <= card u + 2); lia.
+  Qed.
   Lemma width_mem  : forall u x, wf u -> mem u x -> Pos.size_nat x <= width u.
   Proof.
     intros u x _ Hmem. apply support_width. exact Hmem.
@@ -937,7 +1313,13 @@ Module UnionFind <: UNION_FIND.
   Qed.
   Lemma width_union : forall x y u, wf u ->
   width (snd (union x y u)) <= Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x y u Hwf. apply width_le_members. intros z Hz.
+    apply (proj1 (mem_union x y u z Hwf)) in Hz. destruct Hz as [Hz | [Hz | Hz]].
+    - eapply Nat.le_trans; [apply support_width; exact Hz | apply Nat.le_max_l].
+    - subst z. eapply Nat.le_trans; [apply Nat.le_max_l | apply Nat.le_max_r].
+    - subst z. eapply Nat.le_trans; [apply Nat.le_max_r | apply Nat.le_max_r].
+  Qed.
 End UnionFind.
 
 Module UnionFindT <: UNION_FIND_ALL.
@@ -1216,10 +1598,132 @@ Module UnionFindT <: UNION_FIND_ALL.
     apply N.mul_le_mono_r, N.mul_le_mono_r. unfold c_uf. lia.
   Qed.
 
+  Local Lemma add_clock_cap x u Q W :
+    wf u -> card u <= Q -> Pos.size_nat x <= W ->
+    (T_add x u <= 8192 *
+      (N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1)))%N.
+  Proof.
+    intros Hwf Hcard Hwidth. pose proof (add_clock x u Hwf) as Hclock.
+    pose proof (Nat.log2_le_mono _ _ Hcard) as Hlog.
+    apply time_of_nat_le in Hwidth. apply time_of_nat_le in Hlog.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  Local Lemma find_clock_cap x u Q W :
+    wf u -> card u <= Q -> width u <= W -> Pos.size_nat x <= W ->
+    (T_find x u <= 32768 *
+      (N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1)))%N.
+  Proof.
+    intros Hwf Hcard Hwidth Hx. eapply N.le_trans; [exact (find_clock x u Hwf)|].
+    replace (32768 * (N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1)))%N
+      with (32768 * N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1))%N by ring.
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l, time_of_nat_le.
+      pose proof (Nat.log2_le_mono _ _ Hcard). lia.
+    - apply time_of_nat_le. pose proof (Nat.max_lub _ _ _ Hwidth Hx). lia.
+  Qed.
+
+  Local Lemma link_clock_cap w l u Q W :
+    wf u -> mem u w -> mem u l -> card u <= Q -> width u <= W ->
+    (T_link w l u <= 16384 *
+      (N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1)))%N.
+  Proof.
+    intros Hwf Hw Hl Hcard Hwidth. pose proof (T5_link w l u Hwf Hw Hl) as Hclock.
+    pose proof (Nat.log2_le_mono _ _ Hcard) as Hlog.
+    apply time_of_nat_le in Hwidth. apply time_of_nat_le in Hlog.
+    unfold k_link in Hclock.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
   Lemma T_union_le : forall x y u, (wf u ->
     T_union x y u <= c_uf * N.of_nat (Nat.log2 (card u + 2) + 1) *
       N.of_nat (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x y u Hwf.
+    set (Q := card u + 2).
+    set (W := Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y))).
+    assert (HuW : width u <= W) by (unfold W; lia).
+    assert (HxW : Pos.size_nat x <= W) by (unfold W; lia).
+    assert (HyW : Pos.size_nat y <= W) by (unfold W; lia).
+    pose proof (add_clock_cap x u Q W Hwf ltac:(unfold Q; lia) HxW) as Haddx.
+    remember (add x u) as ua eqn:Ea.
+    assert (Hwfa : wf ua) by (subst ua; apply wf_add; exact Hwf).
+    assert (Hcarda : card ua <= card u + 1).
+    { subst ua. apply card_add. exact Hwf. }
+    assert (Hwa : width ua <= W).
+    { subst ua. pose proof (width_add x u Hwf). lia. }
+    pose proof (add_clock_cap y ua Q W Hwfa ltac:(unfold Q; lia) HyW) as Haddy.
+    remember (add y ua) as ub eqn:Eb.
+    assert (Hwfb : wf ub) by (subst ub; apply wf_add; exact Hwfa).
+    assert (Hcardb : card ub <= Q).
+    { subst ub. pose proof (card_add y ua Hwfa). unfold Q. lia. }
+    assert (Hwb : width ub <= W).
+    { subst ub. pose proof (width_add y ua Hwfa). lia. }
+    assert (Hxb : mem ub x).
+    { subst ub. apply (proj2 (mem_add y ua x Hwfa)). left.
+      subst ua. apply (proj2 (mem_add x u x Hwf)). now right. }
+    assert (Hyb : mem ub y).
+    { subst ub. apply (proj2 (mem_add y ua y Hwfa)). now right. }
+    pose proof (find_clock_cap x ub Q W Hwfb Hcardb Hwb HxW) as Hfindx.
+    destruct (find x ub) as [rx uc] eqn:Ex.
+    pose proof (wf_find x ub Hwfb) as Hwfc.
+    pose proof (card_find x ub Hwfb) as Hcardc.
+    pose proof (width_find x ub Hwfb) as Hwc.
+    rewrite Ex in Hwfc, Hcardc, Hwc. cbn [snd] in Hwfc, Hcardc, Hwc.
+    assert (Hyc : mem uc y).
+    { pose proof (proj2 (mem_find x ub y Hwfb) Hyb) as H.
+      rewrite Ex in H. exact H. }
+    assert (Hrxc : mem uc rx).
+    { pose proof (find_repr x ub Hwfb) as Hrepr. rewrite Ex in Hrepr. cbn [fst] in Hrepr.
+      pose proof (repr_mem ub x Hwfb Hxb) as Hmem. rewrite <- Hrepr in Hmem.
+      pose proof (proj2 (mem_find x ub rx Hwfb) Hmem) as H. rewrite Ex in H. exact H. }
+    pose proof (find_clock_cap y uc Q W Hwfc ltac:(lia) ltac:(lia) HyW) as Hfindy.
+    destruct (find y uc) as [ry ud] eqn:Ey.
+    pose proof (wf_find y uc Hwfc) as Hwfd.
+    pose proof (card_find y uc Hwfc) as Hcardd.
+    pose proof (width_find y uc Hwfc) as Hwd.
+    rewrite Ey in Hwfd, Hcardd, Hwd. cbn [snd] in Hwfd, Hcardd, Hwd.
+    assert (Hrxd : mem ud rx).
+    { pose proof (proj2 (mem_find y uc rx Hwfc) Hrxc) as H.
+      rewrite Ey in H. exact H. }
+    assert (Hryd : mem ud ry).
+    { pose proof (find_repr y uc Hwfc) as Hrepr. rewrite Ey in Hrepr. cbn [fst] in Hrepr.
+      pose proof (repr_mem uc y Hwfc Hyc) as Hmem. rewrite <- Hrepr in Hmem.
+      pose proof (proj2 (mem_find y uc ry Hwfc) Hmem) as H. rewrite Ey in H. exact H. }
+    assert (HrxW : Pos.size_nat rx <= W).
+    { pose proof (width_mem ud rx Hwfd Hrxd). lia. }
+    assert (HryW : Pos.size_nat ry <= W).
+    { pose proof (width_mem ud ry Hwfd Hryd). lia. }
+    pose proof (link_clock_cap rx ry ud Q W Hwfd Hrxd Hryd ltac:(lia) ltac:(lia)) as Hlinkxy.
+    pose proof (link_clock_cap ry rx ud Q W Hwfd Hryd Hrxd ltac:(lia) ltac:(lia)) as Hlinkyx.
+    assert (Hsizex : (T_size_at rx ud <= 2048 * N.of_nat (W + 1))%N).
+    { eapply N.le_trans; [exact (size_at_clock rx ud)|]. unfold k_get.
+      apply N.mul_le_mono_l, time_of_nat_le. lia. }
+    assert (Hsizey : (T_size_at ry ud <= 2048 * N.of_nat (W + 1))%N).
+    { eapply N.le_trans; [exact (size_at_clock ry ud)|]. unfold k_get.
+      apply N.mul_le_mono_l, time_of_nat_le. lia. }
+    pose proof (Pos.T_eqb_le rx ry) as Heq.
+    pose proof (N.T_leb_le (size_at ry ud) (size_at rx ud)) as Hcompare.
+    pose proof (size_at_width ud ry Hwfd) as Hbits.
+    pose proof (Nat.log2_le_mono (card ud) Q ltac:(lia)) as Hlog.
+    assert (HbitsQ : N.size_nat (size_at ry ud) <= Nat.log2 Q + 1) by lia.
+    apply time_of_nat_le in HbitsQ. apply time_of_nat_le in HrxW.
+    set (budget := (N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1))%N) in *.
+    assert (HWbudget : (N.of_nat (W + 1) <= budget)%N).
+    { unfold budget. repeat rewrite Nat2N.inj_add. cbn [N.of_nat]. nia. }
+    assert (HLbudget : (N.of_nat (Nat.log2 Q + 1) <= budget)%N).
+    { unfold budget. repeat rewrite Nat2N.inj_add. cbn [N.of_nat]. nia. }
+    assert (Hbudget : (1 <= budget)%N).
+    { pose proof (time_of_nat_le 1 (W + 1) ltac:(lia)). cbn [N.of_nat] in H. lia. }
+    change (T_union x y u <= c_uf * N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1))%N.
+    replace (c_uf * N.of_nat (Nat.log2 Q + 1) * N.of_nat (W + 1))%N
+      with (c_uf * budget)%N by (unfold budget; ring).
+    time_unfold T_union.
+    rewrite <- Ea, <- Eb, Ex. cbn [fst snd]. rewrite Ey. cbn [fst snd].
+    time_unfold @Datatypes.T_fst. time_unfold @Datatypes.T_snd.
+    destruct (Pos.eqb rx ry); [|destruct (N.leb (size_at ry ud) (size_at rx ud))];
+      unfold c_uf; repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
+  Qed.
 
   Lemma find_bigO : bigO (fun xu : positive * t => wf (snd xu))
     (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
