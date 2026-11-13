@@ -1536,6 +1536,122 @@ Module Index (V : VALUE) <: INDEX V.
       + intros [-> | Hmem]; [now left | now right].
   Qed.
 
+  Lemma degrees_ok_mark_terminal : forall ix n present bits,
+    degrees_ok ix -> degrees_ok (mark_terminal ix n present bits).
+  Proof.
+    intros ix n present bits Hdegrees q. destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_mark_same. cbn [node_degree node_edges]. exact (Hdegrees n).
+    - rewrite read_node_mark_other by exact Hneq. exact (Hdegrees q).
+  Qed.
+
+  Lemma shape_mark_terminal : forall ix n present bits, shape ix ->
+    (n <= next ix)%positive -> shape (mark_terminal ix n present bits).
+  Proof.
+    intros ix n present bits [Hedges [Htable Hparents]] Hbound. split.
+    - intros q key edge Hget. unfold stored_edge in Hget.
+      rewrite mark_node_edges in Hget. exact (Hedges q key edge Hget).
+    - split.
+      + change (table_ok (write_node ix n
+          (IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present)
+          (next ix))).
+        apply table_ok_write; [exact Htable | exact Hbound | apply Pos.le_refl].
+      + intros q key edge q' key' edge' Hget Hget' Hchild.
+        unfold stored_edge in Hget, Hget'. rewrite mark_node_edges in Hget, Hget'.
+        eapply Hparents; eassumption.
+  Qed.
+
+  Lemma edges_ok_mark_terminal : forall ix n present bits, edges_ok ix ->
+    index_cell_width ix <= bits -> edges_ok (mark_terminal ix n present bits).
+  Proof.
+    intros ix n present bits Hedges Hwidth q key edge Hget.
+    unfold stored_edge in Hget. rewrite mark_node_edges in Hget.
+    destruct (Hedges q key edge Hget) as [Hcode [Hbounds [Hbits Hcount]]].
+    split; [exact Hcode |]. split; [exact Hbounds |]. split; [| exact Hcount].
+    change (cell_bits V.encode (edge_cell edge) <= bits). lia.
+  Qed.
+
+  Lemma remove_step_point_bound : forall st c, edge_shape (fst st) ->
+    (snd st <= next (fst st))%positive ->
+    (snd (remove_step_st st c) <= next (fst (remove_step_st st c)))%positive.
+  Proof.
+    intros [ix n] c Hshape Hbound. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [exact Hbound |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| exact Hbound].
+    destruct (N.eqb (edge_count edge) 1%N);
+      exact (proj2 (proj2 (Hshape n (encode_cell c) edge Hget))).
+  Qed.
+
+  Lemma remove_walk_point_bound : forall r st, shape (fst st) ->
+    (snd st <= next (fst st))%positive ->
+    (snd (fold_left remove_step_st r st) <= next (fst (fold_left remove_step_st r st)))%positive.
+  Proof.
+    induction r as [| c r IH]; intros st Hshape Hbound; cbn [fold_left]; [exact Hbound |].
+    apply IH; [now apply shape_remove_step |].
+    apply remove_step_point_bound; [exact (proj1 Hshape) | exact Hbound].
+  Qed.
+
+  Lemma remove_step_width : forall st c,
+    index_cell_width (fst (remove_step_st st c)) = index_cell_width (fst st).
+  Proof.
+    intros [ix n] c. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [reflexivity |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |]; [| reflexivity].
+    destruct (N.eqb (edge_count edge) 1%N); reflexivity.
+  Qed.
+
+  Lemma remove_walk_width : forall r st,
+    index_cell_width (fst (fold_left remove_step_st r st)) = index_cell_width (fst st).
+  Proof.
+    induction r as [| c r IH]; intro st; cbn [fold_left]; [reflexivity |].
+    rewrite IH. apply remove_step_width.
+  Qed.
+
+  Lemma shape_insert : forall ix r, shape ix -> shape (insert r ix).
+  Proof.
+    intros ix r Hshape. unfold insert, insert_finish.
+    destruct (contains r ix); [exact Hshape |].
+    apply shape_mark_terminal.
+    - apply shape_insert_walk. exact Hshape.
+    - eapply seek_bounded.
+      + exact (proj1 (shape_insert_walk r (start ix) Hshape)).
+      + apply Pos.le_1_l.
+      + exact (insert_walk_path r (start ix) [] Hshape eq_refl).
+  Qed.
+
+  Lemma shape_remove : forall ix r, shape ix -> shape (remove r ix).
+  Proof.
+    intros ix r Hshape. unfold remove, remove_finish.
+    destruct (contains r ix); [| exact Hshape].
+    apply shape_mark_terminal.
+    - apply shape_remove_walk. exact Hshape.
+    - apply remove_walk_point_bound; [exact Hshape | apply Pos.le_1_l].
+  Qed.
+
+  Lemma degrees_ok_insert : forall ix r, degrees_ok ix -> degrees_ok (insert r ix).
+  Proof.
+    intros ix r Hdegrees. unfold insert, insert_finish.
+    destruct (contains r ix); [exact Hdegrees |].
+    apply degrees_ok_mark_terminal, degrees_ok_insert_walk. exact Hdegrees.
+  Qed.
+
+  Lemma degrees_ok_remove : forall ix r, degrees_ok ix -> degrees_ok (remove r ix).
+  Proof.
+    intros ix r Hdegrees. unfold remove, remove_finish.
+    destruct (contains r ix); [| exact Hdegrees].
+    apply degrees_ok_mark_terminal, degrees_ok_remove_walk. exact Hdegrees.
+  Qed.
+
+  Lemma edges_ok_remove : forall ix r, edges_ok ix -> edges_ok (remove r ix).
+  Proof.
+    intros ix r Hedges. unfold remove, remove_finish.
+    destruct (contains r ix); [| exact Hedges].
+    apply edges_ok_mark_terminal.
+    - apply edges_ok_remove_walk. exact Hedges.
+    - rewrite remove_walk_width. apply Nat.le_refl.
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
