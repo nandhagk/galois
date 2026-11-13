@@ -4067,6 +4067,96 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - unfold entry. now rewrite Hrow.
   Qed.
 
+  (** Once a unary row is rounded, later callbacks leave that row intact. *)
+  Lemma tighten_row_fixed : forall m changed i fresh k ignored,
+    M.get i changed = Some fresh ->
+    M.get i (tighten_row m changed k ignored) = Some fresh.
+  Proof.
+    intros m changed i fresh k ignored Hfresh. unfold tighten_row.
+    destruct (K.eqb_spec k i) as [Heq|Hne].
+    - subst k. now rewrite Hfresh.
+    - destruct (M.get k changed) as [row|] eqn:Hrow; [exact Hfresh|].
+      destruct (M.get k m) as [row|] eqn:Hsource; [|exact Hfresh].
+      destruct (M.get (flip k) row) as [d|] eqn:Hunary; [|exact Hfresh].
+      rewrite M.get_set_other by congruence. exact Hfresh.
+  Qed.
+
+  (** Visiting a source row rounds its unary entry exactly once. *)
+  Lemma tighten_row_target : forall m changed i row d ignored,
+    M.get i m = Some row -> M.get (flip i) row = Some d ->
+    (M.get i changed = None \/
+      M.get i changed = Some (M.set (flip i) (even_bound d) row)) ->
+    M.get i (tighten_row m changed i ignored) =
+      Some (M.set (flip i) (even_bound d) row).
+  Proof.
+    intros m changed i row d ignored Hrow Hd [Hnone|Hfixed].
+    - unfold tighten_row. now rewrite Hnone, Hrow, Hd, M.get_set_same.
+    - now apply tighten_row_fixed.
+  Qed.
+
+  Lemma tighten_row_unvisited : forall m changed i k ignored,
+    i <> k -> M.get i changed = None ->
+    M.get i (tighten_row m changed k ignored) = None.
+  Proof.
+    intros m changed i k ignored Hne Hnone. unfold tighten_row.
+    destruct (M.get k changed) as [row|]; [exact Hnone|].
+    destruct (M.get k m) as [row|]; [|exact Hnone].
+    destruct (M.get (flip k) row) as [d|]; [|exact Hnone].
+    rewrite M.get_set_other by exact Hne. exact Hnone.
+  Qed.
+
+  (** Tightening rounds every finite unary entry to its even predecessor. *)
+  Lemma entry_tighten_unary : forall m, dbm_wf m -> forall i d,
+    entry m i (flip i) = Some d ->
+    entry (tighten m) i (flip i) = Some (even_bound d).
+  Proof.
+    intros m [Houter Hrows] i d Hentry.
+    unfold entry in Hentry.
+    destruct (M.get i m) as [row|] eqn:Hrow; [|discriminate].
+    assert (Hin : In (i, row) (M.elements m)).
+    { apply (proj2 (M.elements_spec (M.t Z) m i row Houter)). exact Hrow. }
+    apply in_split in Hin. destruct Hin as [before [after Helems]].
+    set (fresh := M.set (flip i) (even_bound d) row).
+    assert (Hstep : forall changed k ignored,
+      (M.get i changed = None \/ M.get i changed = Some fresh) ->
+      M.get i (tighten_row m changed k ignored) = None \/
+        M.get i (tighten_row m changed k ignored) = Some fresh).
+    { intros changed k ignored [Hnone|Hfixed].
+      - destruct (K.eqb_spec k i) as [Heq|Hne].
+        + subst k. right. unfold fresh.
+          eapply tighten_row_target; eauto.
+        + left. apply tighten_row_unvisited; congruence.
+      - right. now apply tighten_row_fixed. }
+    assert (Hfold : forall xs changed,
+      (M.get i changed = None \/ M.get i changed = Some fresh) ->
+      M.get i (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv))
+        xs changed) = None \/
+      M.get i (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv))
+        xs changed) = Some fresh).
+    { induction xs as [|[k ignored] xs IH]; intros changed Hchanged;
+        cbn [fold_left]; [exact Hchanged|].
+      apply IH, Hstep, Hchanged. }
+    assert (Hbefore : M.get i
+      (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv)) before M.empty) = None \/
+      M.get i
+      (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv)) before M.empty) =
+        Some fresh).
+    { apply Hfold. left. apply M.get_empty. }
+    assert (Hafter : forall xs changed,
+      M.get i changed = Some fresh ->
+      M.get i (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv))
+        xs changed) = Some fresh).
+    { induction xs as [|[k ignored] xs IH]; intros changed Hfixed;
+        cbn [fold_left]; [exact Hfixed|].
+      apply IH. now apply tighten_row_fixed. }
+    assert (Hcollected : M.get i (M.fold (tighten_row m) m M.empty) = Some fresh).
+    { rewrite M.fold_spec, Helems, fold_left_app. cbn [fold_left].
+      apply Hafter. eapply tighten_row_target; eauto. }
+    unfold entry at 1, tighten. rewrite M.get_merge by reflexivity.
+    rewrite Hrow, Hcollected. cbn [replace_row].
+    unfold fresh. now rewrite M.get_set_same.
+  Qed.
+
   Lemma coherent_tighten : forall m, coherent m -> coherent (tighten m).
   Proof.
     intros m Hcoh i j.
