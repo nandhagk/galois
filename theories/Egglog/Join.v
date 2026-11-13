@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith NArith Arith Sorting.Sorted Lia.
 From Argent Require Import Time Tactics Std.
-From Galois.Egglog Require Import ValueSig IndexSig Syntax JoinSig.
+From Galois.Egglog Require Import ValueSig IndexSig Syntax JoinSig Index.
 
 Import List.ListNotations.
 
@@ -90,6 +90,97 @@ End JoinCode.
 Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
   Include JoinCode V I.
   Include JOIN_SPEC V I.
+
+  Module IF := IndexFacts V I.
+
+  (** A missing pivot means that no aligned column contains the current level. *)
+  Lemma choose_columns_none : forall cs ixs ns lvl pos,
+    length cs = length ixs -> length cs = length ns ->
+    choose_columns cs ixs ns lvl pos = None ->
+    forall lv, In lv cs -> existsb (Nat.eqb lvl) lv = false.
+  Proof.
+    induction cs as [|head cs IH]; intros [|ix ixs] [|n ns] lvl pos Hix Hns Hnone lv Hin;
+      cbn [length] in Hix, Hns; try discriminate; try contradiction.
+    cbn [choose_columns] in Hnone.
+    destruct (existsb (Nat.eqb lvl) head) eqn:Hhead.
+    - destruct (choose_columns cs ixs ns lvl (S pos)) as [[j d]|];
+        [destruct (N.leb (I.degree ix n) d)|]; discriminate.
+    - destruct Hin as [<-|Hin].
+      + exact Hhead.
+      + eapply (IH ixs ns lvl (S pos)); [lia|lia|exact Hnone|exact Hin].
+  Qed.
+
+  (** A chosen pivot names an aligned participating column and its stored degree. *)
+  Lemma choose_columns_member : forall cs ixs ns lvl pos j d,
+    choose_columns cs ixs ns lvl pos = Some (j, d) ->
+    exists k lv ix n,
+      j = pos + k /\ nth_error cs k = Some lv /\ nth_error ixs k = Some ix /\
+      nth_error ns k = Some n /\ existsb (Nat.eqb lvl) lv = true /\ d = I.degree ix n.
+  Proof.
+    induction cs as [|head cs IH]; intros [|ix ixs] [|n ns] lvl pos j d Hchoose;
+      cbn [choose_columns] in Hchoose; try discriminate.
+    destruct (choose_columns cs ixs ns lvl (S pos)) as [[later degree]|] eqn:Hlater.
+    - destruct (existsb (Nat.eqb lvl) head) eqn:Hhead.
+      + destruct (N.leb (I.degree ix n) degree).
+        * injection Hchoose as <- <-.
+          exists 0, head, ix, n. cbn. repeat split; auto; lia.
+        * injection Hchoose as <- <-.
+          destruct (IH _ _ _ _ _ _ Hlater) as [k [lv [ix' [n' H]]]].
+          exists (S k), lv, ix', n'. cbn. intuition lia.
+      + injection Hchoose as <- <-.
+        destruct (IH _ _ _ _ _ _ Hlater) as [k [lv [ix' [n' H]]]].
+        exists (S k), lv, ix', n'. cbn. intuition lia.
+    - destruct (existsb (Nat.eqb lvl) head) eqn:Hhead; [|discriminate].
+      injection Hchoose as <- <-.
+      exists 0, head, ix, n. cbn. repeat split; auto; lia.
+  Qed.
+
+  (** Every aligned participant has at least the selected degree, with stable ties. *)
+  Lemma choose_columns_minimal : forall cs ixs ns lvl pos j d,
+    length cs = length ixs -> length cs = length ns ->
+    choose_columns cs ixs ns lvl pos = Some (j, d) ->
+    forall k lv ix n, nth_error cs k = Some lv -> nth_error ixs k = Some ix ->
+      nth_error ns k = Some n -> existsb (Nat.eqb lvl) lv = true ->
+      (d <= I.degree ix n)%N /\ (d = I.degree ix n -> j <= pos + k).
+  Proof.
+    induction cs as [|head cs IH]; intros [|ix ixs] [|n ns] lvl pos j d Hix Hns Hchoose;
+      cbn [length] in Hix, Hns; cbn [choose_columns] in Hchoose; try discriminate.
+    destruct (choose_columns cs ixs ns lvl (S pos)) as [[later degree]|] eqn:Hlater.
+    - destruct (existsb (Nat.eqb lvl) head) eqn:Hhead.
+      + destruct (N.leb (I.degree ix n) degree) eqn:Hdegree.
+        * injection Hchoose as <- <-. apply N.leb_le in Hdegree.
+          intros [|k] lv ix' n' Hlv Hix' Hn' Hpart.
+          -- cbn in Hlv, Hix', Hn'. injection Hlv as <-.
+             injection Hix' as <-. injection Hn' as <-. split; [lia|lia].
+          -- cbn in Hlv, Hix', Hn'.
+             destruct (IH ixs ns lvl (S pos) later degree ltac:(lia) ltac:(lia) Hlater
+               k lv ix' n' Hlv Hix' Hn' Hpart) as [Hmin _].
+             split; [lia|lia].
+        * injection Hchoose as <- <-. apply N.leb_gt in Hdegree.
+          intros [|k] lv ix' n' Hlv Hix' Hn' Hpart.
+          -- cbn in Hlv, Hix', Hn'. injection Hlv as <-.
+             injection Hix' as <-. injection Hn' as <-. split; [lia|lia].
+          -- cbn in Hlv, Hix', Hn'.
+             destruct (IH ixs ns lvl (S pos) later degree ltac:(lia) ltac:(lia) Hlater
+               k lv ix' n' Hlv Hix' Hn' Hpart) as [Hmin Htie].
+             split; [exact Hmin|intro Heq; specialize (Htie Heq); lia].
+      + injection Hchoose as <- <-.
+        intros [|k] lv ix' n' Hlv Hix' Hn' Hpart.
+        * cbn in Hlv. injection Hlv as <-. congruence.
+        * cbn in Hlv, Hix', Hn'.
+          destruct (IH ixs ns lvl (S pos) later degree ltac:(lia) ltac:(lia) Hlater
+            k lv ix' n' Hlv Hix' Hn' Hpart) as [Hmin Htie].
+          split; [exact Hmin|intro Heq; specialize (Htie Heq); lia].
+    - destruct (existsb (Nat.eqb lvl) head) eqn:Hhead; [|discriminate].
+      injection Hchoose as <- <-.
+      intros [|k] lv ix' n' Hlv Hix' Hn' Hpart.
+      + cbn in Hlv, Hix', Hn'. injection Hlv as <-.
+        injection Hix' as <-. injection Hn' as <-. split; [lia|lia].
+      + cbn in Hlv.
+        pose proof (choose_columns_none cs ixs ns lvl (S pos) ltac:(lia) ltac:(lia)
+          Hlater lv (nth_error_In _ _ Hlv)) as Hnone. congruence.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
