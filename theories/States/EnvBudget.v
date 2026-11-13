@@ -82,36 +82,77 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
   (** Fixed points of concrete normalization have at most two width-sized stored integers. *)
   Lemma canonical_size : forall w p,
     canonical w p -> W.psize w p <= payload_size_bound w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w p Hcanonical. unfold canonical in Hcanonical.
+    rewrite <- R.norm_code in Hcanonical.
+    pose proof (W.congr_norm_bits w p) as Hbits. rewrite Hcanonical in Hbits.
+    rewrite W.psize_congr. unfold payload_size_bound. apply Nat.pow_le_mono_l. lia.
+  Qed.
   (** Congruence ranks fit the width-plus-two envelope. *)
   Lemma canonical_rank : forall q w p,
     canonical w p -> W.pwrank q w p <= payload_rank_bound q w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w p _. unfold payload_rank_bound. rewrite W.F14_pwrank.
+    apply W.F13_wrank_le.
+  Qed.
   (** The concrete bottom payload is canonical. *)
   Lemma canonical_bot : forall w, canonical w (W.pbot w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. rewrite R.bot_code. reflexivity.
+  Qed.
   (** The concrete top payload is canonical. *)
   Lemma canonical_top : forall w, canonical w (W.ptop w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. rewrite R.top_code. unfold canonical, CongruenceBudgetCode.ptop.
+    assert (Hwidth : (modulus w <=? 1)%Z = false).
+    { apply Z.leb_gt. exact (proj2 (one_is_word w)). }
+    cbn [CongruenceBudgetCode.congr_norm Z.abs Z.eqb].
+    now rewrite Hwidth.
+  Qed.
   (** Literal abstraction returns a canonical payload. *)
   Lemma canonical_const : forall w z, canonical w (W.pconst w z).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. rewrite R.const_code. unfold canonical.
+    change ((if CongruenceBudgetCode.wordb w (wrap w z)
+      then C 0 (wrap w z) else CBot) = C 0 (wrap w z)).
+    assert (Hword : CongruenceBudgetCode.wordb w (wrap w z) = true).
+    { unfold CongruenceBudgetCode.wordb. apply andb_true_iff. split.
+      - apply Z.leb_le. exact (proj1 (wrap_is_word w z)).
+      - apply Z.ltb_lt. exact (proj2 (wrap_is_word w z)). }
+    now rewrite Hword.
+  Qed.
   (** Concrete join keeps canonical payloads canonical. *)
   Lemma canonical_join : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pjoin w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Ha Hb. rewrite R.join_code. unfold CongruenceBudgetCode.pjoin.
+    unfold canonical in Ha, Hb. rewrite Ha, Hb.
+    destruct a as [|m r], b as [|n s]; try assumption; try reflexivity.
+    unfold canonical. rewrite <- R.norm_code. apply W.F4_norm_idempotent.
+  Qed.
   (** Concrete meet keeps canonical payloads canonical. *)
   Lemma canonical_meet : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pmeet w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Ha Hb. rewrite R.meet_code. unfold CongruenceBudgetCode.pmeet.
+    unfold canonical in Ha, Hb. rewrite Ha, Hb.
+    destruct a as [|m r], b as [|n s]; try reflexivity.
+    destruct (Z.eqb (r mod Z.gcd m n) (s mod Z.gcd m n)); [|reflexivity].
+    unfold canonical. rewrite <- R.norm_code. apply W.F4_norm_idempotent.
+  Qed.
   (** Concrete widening keeps canonical payloads canonical. *)
   Lemma canonical_widen : forall q w a b,
     canonical w a -> canonical w b -> canonical w (W.pwiden q w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b Ha Hb. rewrite R.widen_code.
+    destruct (W.pleb w b a); [exact Ha|now apply canonical_join].
+  Qed.
   (** Concrete narrowing keeps canonical payloads canonical. *)
   Lemma canonical_narrow : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pnarrow w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Ha Hb. rewrite R.narrow_code. now apply canonical_meet.
+  Qed.
 End CongruenceEnvelope.
 
 Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
