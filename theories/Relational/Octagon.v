@@ -5632,6 +5632,45 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       now apply Hscan.
   Qed.
 
+  (** Paired shortest paths make a successful full Floyd result coherent. *)
+  Lemma coherent_fw_success : forall m, dbm_wf m -> coherent m -> bar_closed m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true -> coherent (fw m).
+  Proof.
+    intros m Hwf Hcoh Hbar Hscan.
+    pose proof (fw_success_path_invariant m Hwf Hscan) as Hinv.
+    destruct Hinv as [Hbelow Hclosed Hzero Hpath].
+    assert (Hkeys : forall k, In k (rev (keys m)) -> In (bar k) (rev (keys m))).
+    { intros k Hk. apply in_rev in Hk. apply in_rev.
+      rewrite rev_involutive.
+      apply (proj2 (keys_support_iff m (bar k) Hwf)).
+      apply Hbar, (proj1 (keys_support_iff m k Hwf)). exact Hk. }
+    assert (Hpair : forall i j,
+      RelationalPathBounds.below (entry (fw m) (bar j) (bar i)) (entry (fw m) i j)).
+    { intros i j. destruct (entry (fw m) i j) as [d|] eqn:Hentry;
+        [|destruct (entry (fw m) (bar j) (bar i)); exact I].
+      pose proof (coherent_path_pair m (rev (keys m)) i j d Hcoh Hkeys
+        (Hpath i j d Hentry)) as Hpaired.
+      destruct Hpaired as [[Heq Hd]|[ks [Hks Hchain]]].
+      - subst d. rewrite <- Heq.
+        assert (Hsupport : In (K.encode (bar j)) (support m)).
+        { apply Hbar. apply (proj1 (fw_support m (K.encode j))).
+          eapply entry_target_support. exact Hentry. }
+        rewrite (Hzero (bar j)).
+        + cbn [RelationalPathBounds.below]. lia.
+        + apply in_rev. rewrite rev_involutive.
+          apply (proj2 (keys_support_iff m (bar j) Hwf)).
+          exact Hsupport.
+      - pose proof (RelationalPathBounds.chain_bound K.t (entry m) (entry (fw m))
+          (rev (keys m)) Hbelow Hclosed ks (bar j) (bar i) Hks) as Hbound.
+        now rewrite Hchain in Hbound. }
+    assert (Hbarbar : forall x, bar (bar x) = x).
+    { intro x. exact (flip_involutive x). }
+    intros i j. apply RelationalPathBounds.below_antisym.
+    - pose proof (Hpair (bar j) (bar i)) as Hreverse.
+      now rewrite !Hbarbar in Hreverse.
+    - exact (Hpair i j).
+  Qed.
+
   (** Original and final key lists cover the same supported vertices. *)
   Lemma keys_fw_membership : forall m k, dbm_wf m ->
     (In k (keys m) <-> In k (keys (fw m))).
