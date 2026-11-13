@@ -4168,6 +4168,55 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     apply RelationalPathBounds.plus_mono; [exact Hmiddle|apply Hbase].
   Qed.
 
+  (** Successful full closure rules out a negative cycle through a distinct inserted edge. *)
+  Lemma close_success_cycle : forall m i j d final, dbm_wf m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    close seed = Reached final ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)).
+  Proof.
+    intros m i j d final Hwf Hdistinct. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base). intro Hresult.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed, base. apply add_cons_wf, add_cons_wf, add_cons_wf. exact Hwf. }
+    destruct (close_path_invariant seed final Hwfseed Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed i Hwfseed). unfold seed. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed j Hwfseed). unfold seed. rewrite support_add_cons.
+      right. now left. }
+    destruct (entry base j i) as [back|] eqn:Hback;
+      [|exact I].
+    assert (Hseed_ij : entry seed i j = Some (lower_bound d (entry base i j))).
+    { unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction]. reflexivity. }
+    assert (Hseed_ji : entry seed j i = Some back).
+    { unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec j i); [congruence|exact Hback]. }
+    assert (Hseed_bound : RelationalPathBounds.below (entry seed i j) (Some d)).
+    { rewrite Hseed_ij. destruct (entry base i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below];
+        [apply Z.le_min_l|lia]. }
+    pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i j) Hseed_bound)
+      as Hfirst_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hfirst_bound)
+      as [first [Hfirst Hfirst_le]].
+    pose proof (Hbelow j i) as Hsecond_bound. rewrite Hseed_ji in Hsecond_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hsecond_bound)
+      as [second [Hsecond Hsecond_le]].
+    pose proof (Hclosed j Hj i i) as Htriangle.
+    rewrite (Hzero i Hi), Hfirst, Hsecond in Htriangle.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below] in Htriangle |- *.
+    lia.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
