@@ -1937,6 +1937,190 @@ Proof.
   split; [lia|]. constructor; [split; lia|constructor].
 Qed.
 
+(** A positive number's bit length never exceeds its numeric value. *)
+Lemma positive_bits_value : forall p, Pos.size_nat p <= Pos.to_nat p.
+Proof.
+  intro p. induction p as [p IH|p IH|].
+  - pose proof (Pos2Nat.is_pos p). cbn [Pos.size_nat]. rewrite Pos2Nat.inj_xI. lia.
+  - pose proof (Pos2Nat.is_pos p). cbn [Pos.size_nat]. rewrite Pos2Nat.inj_xO. lia.
+  - cbn. lia.
+Qed.
+
+(** Repeated multiplication by two costs a constant per exponent unit. *)
+Lemma power_two_positive_time : forall p,
+  (Word.Z.T_pow_pos 2%Z p <= 5 * N.pos p + 1)%N.
+Proof.
+  intro p.
+  pose proof (Pos.T_iter_le (Z.mul 2) (fun z => Z.T_mul 2 z)
+    (fun _ => True) 3%N 1%Z p (fun _ _ => Logic.I)
+    (fun z _ => Z.T_mul_two_le z) Logic.I) as Hiter.
+  time_unfold Word.Z.T_pow_pos. time_simpl. time_cbn. nia.
+Qed.
+
+(** The released power implementation has linear cost at base two. *)
+Lemma power_two_time : forall n,
+  (Word.Z.T_pow 2%Z n <= 5 * Z.abs_N n + 2)%N.
+Proof.
+  intros [|p|p]; time_unfold Word.Z.T_pow; time_simpl; time_cbn; try lia.
+  pose proof (power_two_positive_time p). lia.
+Qed.
+
+(** Constructing an unsigned modulus pays for its explicit numeric width. *)
+Lemma modulus_time : forall w,
+  (T_modulus w <= 16 * N.of_nat ((Pos.to_nat w + 1)%nat))%N.
+Proof.
+  intro w. pose proof (power_two_time (Zpos w)) as Hpow.
+  assert (Hwidth : N.of_nat ((Pos.to_nat w)%nat) = N.pos w) by exact (N2Nat.id (N.pos w)).
+  time_step; rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+
+(** Constructing a sign-bit weight pays the width subtraction and the power of two. *)
+Lemma half_time : forall w,
+  (T_half w <= 32 * N.of_nat ((Pos.to_nat w + 1)%nat))%N.
+Proof.
+  intro w. pose proof (power_two_time (Zpos w - 1)) as Hpow.
+  pose proof (Z.T_sub_le (Zpos w) 1) as Hsub.
+  pose proof (positive_bits_value w) as Hbits.
+  assert (Hwidth : N.of_nat ((Pos.to_nat w)%nat) = N.pos w) by exact (N2Nat.id (N.pos w)).
+  assert (Hexponent : (Z.abs_N (Zpos w - 1) <= N.pos w)%N).
+  { rewrite Zabs2N.inj_sub by lia. time_cbn. lia. }
+  time_step; rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+
+(** Signed and unsigned endpoint construction both cost linearly in the explicit width. *)
+Lemma word_range_time : forall is_signed w,
+  (T_word_range is_signed w <= 256 * N.of_nat ((Pos.to_nat w + 1)%nat))%N.
+Proof.
+  intros is_signed w.
+  pose proof (modulus_time w) as Hmodtime.
+  pose proof (half_time w) as Hhalftime.
+  destruct (word_bound_bits w) as [Hmodbits Hhalfbits].
+  destruct is_signed; time_step; rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+
+(** A word pair pays constant width dispatch plus the corresponding integer operation. *)
+Lemma blinear_pair_time : forall X (key_bits : X -> nat) a f g,
+  (T_blinear_pair a f g <= 2048 * affine_charge
+    ((length (coef (fst f)) + length (coef (fst g)))%nat)
+    ((linear_bits key_bits (fst f) + linear_bits key_bits (fst g))%nat))%N.
+Proof.
+  intros X key_bits a f g.
+  pose proof (zlinear_op_time X key_bits (affine_zview a) [fst f; fst g]) as Hoperation.
+  pose proof (affine_charge_positive
+    (length (coef (fst f)) + length (coef (fst g)))
+    (linear_bits key_bits (fst f) + linear_bits key_bits (fst g))) as Hpositive.
+  cbn [map fold_right] in Hoperation. rewrite !Nat.add_0_r in Hoperation.
+  set (work := affine_charge
+    ((length (coef (fst f)) + length (coef (fst g)))%nat)
+    ((linear_bits key_bits (fst f) + linear_bits key_bits (fst g))%nat)) in *.
+  clearbody work. time_step; lia.
+Qed.
+
+(** Word dispatch has the same coefficient and arithmetic budget as affine integer dispatch. *)
+Lemma blinear_op_time : forall X (key_bits : X -> nat) o fs,
+  (T_blinear_op o fs <= 4096 * affine_charge
+    ((fold_right Nat.add 0 (map (fun f => length (coef (fst f))) fs))%nat)
+    ((fold_right Nat.add 0 (map (fun f => linear_bits key_bits (fst f)) fs))%nat))%N.
+Proof.
+  intros X key_bits o fs.
+  pose proof (affine_charge_positive
+    (fold_right Nat.add 0 (map (fun f => length (coef (fst f))) fs))
+    (fold_right Nat.add 0 (map (fun f => linear_bits key_bits (fst f)) fs))) as Hpositive.
+  destruct o as [w z|o]; destruct fs as [|f1 [|f2 [|f3 fs]]];
+    time_unfold (@T_blinear_op); time_simpl; time_cbn_all;
+    rewrite ?Nat.add_0_r in *;
+    try match goal with
+    | |- (_ <= 4096 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia
+    end.
+  destruct (word_affine o) as [a|] eqn:Haffine.
+  - pose proof (blinear_pair_time X key_bits a f1 f2) as Hpair. time_cbn_all.
+    match goal with |- (_ <= 4096 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia end.
+  - time_cbn_all.
+    match goal with |- (_ <= 4096 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia end.
+Qed.
+
+(** Recognized word operands inherit summed coefficient and bit-size budgets. *)
+Lemma blinear_forms_size : forall X (key_bits : X -> nat) es fs,
+  sequence (map blinear_form es) = Some fs ->
+  fold_right Nat.add 0 (map (fun f => length (coef (fst f))) fs) <=
+    fold_right Nat.add 0 (map tsize es) /\
+  fold_right Nat.add 0 (map (fun f => linear_bits key_bits (fst f)) fs) <=
+    fold_right Nat.add 0 (map (term_mass key_bits boperator_bits) es).
+Proof.
+  intros X key_bits es fs Hforms. split.
+  - eapply sequence_map_bound; [|exact Hforms].
+    apply Forall_forall. intros e Hin f Hf.
+    exact (proj1 (blinear_form_size X key_bits e f Hf)).
+  - eapply sequence_map_bound; [|exact Hforms].
+    apply Forall_forall. intros e Hin f Hf.
+    exact (proj1 (proj2 (blinear_form_size X key_bits e f Hf))).
+Qed.
+
+(** The reached word operator fits the enclosing syntax budget. *)
+Lemma blinear_node_operation_time : forall X (key_bits : X -> nat) o es bound,
+  term_mass key_bits boperator_bits (Node o es) <= bound ->
+  ((match sequence (map blinear_form es) with
+    | Some fs => T_blinear_op o fs
+    | None => 0%N
+    end) <= 4096 * N.of_nat (((bound + 1) ^ 3)%nat))%N.
+Proof.
+  intros X key_bits o es bound Hmass.
+  destruct (sequence (map blinear_form es)) as [fs|] eqn:Hforms.
+  - destruct (blinear_forms_size X key_bits es fs Hforms) as [Hlength Hbits].
+    pose proof (term_mass_size bop X key_bits boperator_bits (Node o es)) as Hnodes.
+    cbn [tsize term_mass] in Hmass, Hnodes.
+    pose proof (blinear_op_time X key_bits o fs) as Htime.
+    eapply N.le_trans; [exact Htime|].
+    apply N.mul_le_mono; [apply N.le_refl|].
+    unfold affine_charge. apply cubic_cost_bound; lia.
+  - apply N.le_0_l.
+Qed.
+
+(** Word recognition charges every syntax node against one common syntactic bit budget. *)
+Lemma blinear_form_time : forall X (key_bits : X -> nat) e bound,
+  term_mass key_bits boperator_bits e <= bound ->
+  (T_blinear_form e <=
+    8192 * N.of_nat ((tsize e)%nat) * N.of_nat (((bound + 1) ^ 3)%nat))%N.
+Proof.
+  intros X key_bits e. induction e as [x|o es IH]; intros bound Hmass.
+  - pose proof (cubic_size bound) as Hcube.
+    assert (Hpositive : (1 <= N.of_nat (((bound + 1) ^ 3)%nat))%N) by lia.
+    time_unfold (@T_blinear_form). time_simpl. time_cbn_all. lia.
+  - apply all_children_forall in IH.
+    assert (Hchildren : Forall (fun e =>
+      (T_blinear_form e <= 8192 * N.of_nat ((tsize e)%nat) *
+        N.of_nat (((bound + 1) ^ 3)%nat))%N) es).
+    { apply Forall_forall. intros e Hin. rewrite Forall_forall in IH.
+      apply (IH e Hin bound).
+      pose proof (summed_size_member _ (term_mass key_bits boperator_bits) es e Hin).
+      cbn [term_mass] in Hmass. lia. }
+    pose proof (map_time_weighted _ _ (@blinear_form X) (fun e => @T_blinear_form X e)
+      (@tsize bop X) 8192 (N.of_nat (((bound + 1) ^ 3)%nat)) es Hchildren) as Hmap.
+    pose proof (sequence_time _ (map (@blinear_form X) es)) as Hsequence.
+    rewrite length_map in Hsequence.
+    pose proof (blinear_node_operation_time X key_bits o es bound Hmass) as Hoperation.
+    pose proof (operand_count_size bop X es) as Hcount.
+    pose proof (term_mass_size bop X key_bits boperator_bits (Node o es)) as Hnodes.
+    pose proof (cubic_size bound) as Hcube.
+    cbn [tsize term_mass] in Hmass, Hnodes.
+    assert (Hcells : (N.of_nat (length es) + 1 <=
+      N.of_nat (((bound + 1) ^ 3)%nat))%N) by lia.
+    clear Hcube Hnodes Hcount Hmass IH Hchildren.
+    set (work := N.of_nat (((bound + 1) ^ 3)%nat)) in *. clearbody work.
+    assert (Hpositive : (1 <= work)%N) by lia.
+    pose proof (traversal_time_budget
+      (N.of_nat ((fold_right Nat.add 0 (map tsize es))%nat)) (N.of_nat (length es)) work
+      (ListDef.T_map (@blinear_form X) (fun e => @T_blinear_form X e) es)
+      (T_sequence (map (@blinear_form X) es))
+      (match sequence (map (@blinear_form X) es) with
+       | Some fs => T_blinear_op o fs | None => 0%N end)
+      8192 4096 Hpositive Hcells Hmap Hsequence Hoperation ltac:(lia)) as Htotal.
+    time_unfold (@T_blinear_form). time_simpl. time_cbn_all. lia.
+Qed.
+
 Module Datatypes.
   TimeFun option_map.
 
