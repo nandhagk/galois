@@ -2252,15 +2252,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
   (** Numeric transfers pay for map operations and the two key equality tests. *)
   Definition c_num : N :=
-    (16777216 * (M.c_map + K.c_key + X.c_key + 1) *
+    (4294967296 * (M.c_map + K.c_key + X.c_key + 1) *
       (M.c_map + K.c_key + X.c_key + 1))%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Matrix primitives share one concrete constant for lookup and update costs. *)
   Definition c_zone : N := (65536 * (M.c_map + 1) * (M.c_map + 1))%N.
@@ -5982,4 +5980,65 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     rewrite Nat.log2_pow2 in Hlog by lia. exact Hlog.
   Qed.
 
+  (** The public numeric coefficient pays the affine range fold with fixed slack. *)
+  Lemma c_num_range_coefficient : (4096 * (M.c_map + 1) <= c_num)%N.
+  Proof.
+    unfold c_num. nia.
+  Qed.
+
+  (** Actual linearization time is charged additively beside the interval fold. *)
+  Lemma range_public_budget : forall form_cost wrap_cost lin_cost work : N,
+    (form_cost <= 1024 * (M.c_map + 1) * work)%N ->
+    (wrap_cost <= 8 * work)%N ->
+    (8 + lin_cost + form_cost + wrap_cost <= c_num * (work + lin_cost + 1))%N.
+  Proof.
+    intros form_cost wrap_cost lin_cost work Hform Hwrap.
+    pose proof c_num_range_coefficient as Hcoefficient.
+    assert (Hcombined : (1024 * (M.c_map + 1) + 8 <= c_num)%N) by lia.
+    pose proof (N.mul_le_mono_r _ _ work Hcombined) as Hwork.
+    rewrite N.mul_add_distr_r in Hwork.
+    assert (Hlinear : (lin_cost <= c_num * lin_cost)%N).
+    { replace lin_cost with (1 * lin_cost)%N at 1 by ring.
+      apply N.mul_le_mono_r. lia. }
+    replace (c_num * (work + lin_cost + 1))%N with
+      (c_num * work + c_num * lin_cost + c_num)%N by ring.
+    lia.
+  Qed.
+
+  (** Range queries charge every performed form step and the actual linearizer clock. *)
+  Lemma T_range_le : forall e s,
+    (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
+  Proof.
+    intros e [|m].
+    - assert (Hpositive : (1 <= c_num)%N).
+      { pose proof c_num_range_coefficient. lia. }
+      assert (Hwork : (1 <= N.of_nat (range_work e Unreached + 1))%N).
+      { change (N.of_nat 1%nat <= N.of_nat (range_work e Unreached + 1))%N.
+        apply time_of_nat_le. lia. }
+      pose proof (N.mul_le_mono _ _ _ _ Hpositive Hwork) as Hbudget.
+      time_unfold (@T_range). time_simpl. time_cbn. lia.
+    - set (work := (N.of_nat ((tsize e + 1)%nat) * range_unit e m)%N).
+      assert (Hwork : N.of_nat (range_work e (Reached m) + 1) =
+        (work + F.T_lin_of e + 1)%N).
+      { rewrite Nat2N.inj_add, F_range_work. cbn [bs ells].
+        unfold work, range_unit, range_payload. rewrite Nat2N.inj_mul.
+        reflexivity. }
+      assert (Hunit_work : (range_unit e m <= work)%N).
+      { unfold work. replace (range_unit e m) with (1 * range_unit e m)%N at 1 by ring.
+        apply N.mul_le_mono_r.
+        change (N.of_nat 1%nat <= N.of_nat (tsize e + 1))%N.
+        apply time_of_nat_le. lia. }
+      rewrite Hwork. time_unfold (@T_range).
+      destruct (F.lin_of e) as [[f r]|] eqn:Hlin.
+      + pose proof (T_form_bounds_source e m f r Hlin) as Hform.
+        change (T_form_bounds m f <= 1024 * (M.c_map + 1) * work)%N in Hform.
+        pose proof (T_wrap_bounds_range e m f r (form_bounds m f) Hlin) as Hwrap.
+        assert (Hwrap_work : (T_rel_wrap_bounds r (form_bounds m f) <= 8 * work)%N).
+        { eapply N.le_trans; [exact Hwrap|]. now apply N.mul_le_mono_l. }
+        pose proof (range_public_budget _ _ (F.T_lin_of e) work Hform Hwrap_work) as Htotal.
+        eapply N.le_trans; [|exact Htotal]. time_simpl. time_cbn. lia.
+      + pose proof (range_public_budget 0 0 (F.T_lin_of e) work
+          ltac:(lia) ltac:(lia)) as Htotal.
+        eapply N.le_trans; [|exact Htotal]. time_simpl. time_cbn. lia.
+  Qed.
 End ZoneT.
