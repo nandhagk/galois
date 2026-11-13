@@ -9916,6 +9916,76 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact Hcount.
   Qed.
 
+  Lemma row_root_same_links : forall fuel r store store',
+    row_links store = row_links store' ->
+    row_root fuel r store = row_root fuel r store'.
+  Proof.
+    induction fuel as [|remaining IH]; intros r store store' Hlinks; [reflexivity |].
+    cbn [row_root]. rewrite Hlinks.
+    destruct (PTrieCode.get r (row_links store')) as [parent |]; [| reflexivity].
+    destruct (Pos.eqb parent r); [reflexivity |].
+    apply IH. exact Hlinks.
+  Qed.
+
+  Lemma pop_loser_locate : forall db x db' f k,
+    db_pop_loser db = Some (x, db') -> db_locate f k db' = db_locate f k db.
+  Proof.
+    intros db x db' f k Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'.
+    unfold db_locate.
+    cbn [database_set_pending database_set_runtime runtime_set_union
+      database_set_row_store db_row_store row_history row_links row_keys
+      db_runtime runtime_allocated].
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |]; [| reflexivity].
+    f_equal. apply row_root_same_links. reflexivity.
+  Qed.
+
+  Lemma pop_loser_row_store_ok : forall db x db', row_store_ok db ->
+    db_pop_loser db = Some (x, db') -> row_store_ok db'.
+  Proof.
+    intros db x db' Hstore Hpop.
+    assert (Hlocate : forall f k, db_locate f k db' = db_locate f k db).
+    { intros f k. eapply pop_loser_locate. exact Hpop. }
+    pose proof (proj1 (proj2 (db_pop_loser_layout db x db' Hpop))) as Hids.
+    unfold row_store_ok, database_row_store_ok in Hstore.
+    destruct Hstore as
+      [Hlinks [Hhistory [Hcount [Hcounter [Hcells [Hdepth [Hgroup Hmap]]]]]]].
+    assert (Hcountnew : N.to_nat (db_nuses db') = length (uses_entries db')).
+    { eapply pop_loser_nuses_count; [exact Hmap | exact Hcount | exact Hpop]. }
+    unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'.
+    unfold row_store_ok, database_row_store_ok.
+    cbn [database_set_pending database_set_runtime database_set_row_store
+      db_row_store row_history row_links row_weights row_keys row_fresh row_uses
+      db_nuses db_index_counters db_written_cells ids db_runtime runtime_allocated].
+    split; [exact Hlinks |].
+    split.
+    - intros y f k Huse. apply DatabaseUsesFacts.bucket_transfer_member in Huse.
+      destruct Huse as [[Hold _] | [_ Hsource]].
+      + exact (Hhistory y f k Hold).
+      + exact (Hhistory i f k Hsource).
+    - split; [exact Hcountnew |].
+      split; [exact Hcounter |].
+      split.
+      + intros y f k c Huse Hcell.
+        apply DatabaseUsesFacts.bucket_transfer_member in Huse.
+        destruct Huse as [[Hold _] | [_ Hsource]].
+        * exact (Hcells y f k c Hold Hcell).
+        * exact (Hcells i f k c Hsource Hcell).
+      + split.
+        * intros f k key r Hget.
+          destruct (Hdepth f k key r Hget) as [d [Hbound [Hroot Hcurrent]]].
+          exists d. split; [rewrite Hids; exact Hbound |].
+          split; [exact Hroot |]. rewrite Hlocate. exact Hcurrent.
+        * split.
+          -- intros f k key r d Hget Hroot. rewrite Hids.
+             exact (Hgroup f k key r d Hget Hroot).
+          -- apply DatabaseUsesFacts.wf_transfer. exact Hmap.
+  Qed.
+
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
