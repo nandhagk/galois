@@ -4199,6 +4199,54 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply K.encode_inj in Hkey. now subst k.
   Qed.
 
+  (** Unary collection reads exactly the source matrix's finite unary entries. *)
+  Lemma collect_unary_left_exact : forall m, dbm_wf m -> forall i,
+    M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))) =
+      entry m i (flip i).
+  Proof.
+    intros m [Houter Hrows] i.
+    destruct (entry m i (flip i)) as [d|] eqn:Hunary.
+    - assert (Hfixed : forall acc k ignored,
+        M.get i (fst acc) = Some d ->
+        M.get i (fst (unary_maps m acc k ignored)) = Some d).
+      { intros [left right] k ignored Hget. unfold unary_maps.
+        destruct (entry m k (flip k)) as [z|] eqn:Hentry; [|exact Hget].
+        cbn [fst]. destruct (K.eqb_spec k i) as [Heq|Hne].
+        + subst k. rewrite Hunary in Hentry. inversion Hentry; subst z.
+          now rewrite M.get_set_same.
+        + rewrite M.get_set_other by congruence. exact Hget. }
+      assert (Hhit : forall acc ignored,
+        M.get i (fst (unary_maps m acc i ignored)) = Some d).
+      { intros [left right] ignored. unfold unary_maps. rewrite Hunary.
+        cbn [fst]. now rewrite M.get_set_same. }
+      assert (Htail : forall xs acc,
+        M.get i (fst acc) = Some d ->
+        M.get i (fst (fold_left (fun state kv =>
+          unary_maps m state (fst kv) (snd kv)) xs acc)) = Some d).
+      { induction xs as [|[k ignored] xs IH]; intros acc Hget;
+          cbn [fold_left]; [exact Hget|].
+        apply IH, Hfixed, Hget. }
+      unfold entry in Hunary.
+      destruct (M.get i m) as [row|] eqn:Hrow; [|discriminate].
+      assert (Hin : In (i, row) (M.elements m)).
+      { apply (proj2 (M.elements_spec (M.t Z) m i row Houter)). exact Hrow. }
+      apply in_split in Hin. destruct Hin as [before [after Helems]].
+      rewrite M.fold_spec, Helems, fold_left_app. cbn [fold_left].
+      apply Htail, Hhit.
+    - assert (Hstep : forall acc k ignored,
+        M.get i (fst acc) = None ->
+        M.get i (fst (unary_maps m acc k ignored)) = None).
+      { intros [left right] k ignored Hget. unfold unary_maps.
+        destruct (entry m k (flip k)) as [z|] eqn:Hentry; [|exact Hget].
+        cbn [fst]. destruct (K.eqb_spec k i) as [Heq|Hne].
+        + subst k. congruence.
+        + rewrite M.get_set_other by congruence. exact Hget. }
+      apply (fold_invariant _ _
+        (fun acc => M.get i (fst acc) = None));
+        [cbn [fst]; apply M.get_empty|].
+      intros acc k ignored Hget. now apply Hstep.
+  Qed.
+
   (** The strengthened entry is the minimum with its collected unary average. *)
   Lemma entry_strengthen : forall m i j,
     entry (strengthen m) i j =
