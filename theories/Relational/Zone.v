@@ -4498,6 +4498,41 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + exact (direct_close_below_extension m i j d final Hwf Hfull a b).
   Qed.
 
+  (** A nonnegative self-edge leaves every entry of a closed matrix unchanged. *)
+  Lemma nonnegative_self_extension : forall m i d, closed m -> (0 <= d)%Z ->
+    forall a b, RelationalPathBounds.edge_extension (entry m) i i d a b =
+      entry m a b.
+  Proof.
+    intros m i d Hclosed Hd a b.
+    unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_when_below.
+    pose proof (closed_at_every_key m Hclosed i a b) as Htriangle.
+    destruct (entry m a i) as [left|] eqn:Hleft;
+      destruct (entry m i b) as [right|] eqn:Hright;
+      cbn [RelationalPathBounds.plus];
+      destruct (entry m a b) as [old|] eqn:Hold;
+      cbn [RelationalPathBounds.below RelationalPathBounds.plus] in *;
+      try exact I.
+    all: lia.
+  Qed.
+
+  (** Inserting a nonnegative self-edge after zero seeding is inert. *)
+  Lemma nonnegative_self_seed : forall m i d,
+    closed m -> (0 <= d)%Z ->
+    forall a b,
+      entry (add_cons i i d (add_cons i i 0%Z m)) a b =
+      entry (add_cons i i 0%Z m) a b.
+  Proof.
+    intros m i d Hclosed Hd a b. rewrite entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha]; [subst a|reflexivity].
+    destruct (K.eqb_spec b i) as [Hb|Hb]; [subst b|reflexivity].
+    assert (Hseed : closed (add_cons i i 0%Z m)).
+    { now apply closed_add_zero. }
+    assert (Hdiag : entry (add_cons i i 0%Z m) i i = Some 0%Z).
+    { apply (proj1 Hseed). rewrite support_add_cons. now left. }
+    rewrite Hdiag. cbn [lower_bound]. f_equal. lia.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
