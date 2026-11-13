@@ -1138,6 +1138,30 @@ Fixpoint database_group_slots (s : N) (d : bool) (g : N)
     if andb (Bool.eqb flag d) (N.eqb rank g) then s :: tail else tail
   end.
 
+Lemma database_group_slots_lower : forall positions s d g x,
+  In x (database_group_slots s d g positions) -> (s <= x)%N.
+Proof.
+  induction positions as [|[[flag rank] offset] rest IH];
+    intros s d g x Hmember; cbn [database_group_slots] in Hmember;
+    [contradiction |].
+  destruct (andb (Bool.eqb flag d) (N.eqb rank g)) eqn:Hselect.
+  - destruct Hmember as [-> | Htail]; [lia |].
+    specialize (IH (N.succ s) d g x Htail). lia.
+  - specialize (IH (N.succ s) d g x Hmember). lia.
+Qed.
+
+Lemma database_group_slots_nodup : forall positions s d g,
+  NoDup (database_group_slots s d g positions).
+Proof.
+  induction positions as [|[[flag rank] offset] rest IH];
+    intros s d g; cbn [database_group_slots]; [constructor |].
+  destruct (andb (Bool.eqb flag d) (N.eqb rank g)) eqn:Hselect;
+    [| apply IH].
+  constructor; [| apply IH].
+  intro Hmember. pose proof (database_group_slots_lower rest (N.succ s) d g s Hmember).
+  lia.
+Qed.
+
 (** A maximum comparison reads no more bits than its current declaration name. *)
 Lemma T_database_positive_max_le : forall p q,
   (Pos.T_max p q <= N.of_nat (Pos.size_nat p) + 2)%N.
