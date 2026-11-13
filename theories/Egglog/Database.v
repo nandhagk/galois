@@ -9843,6 +9843,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split; [exact (wf_kind_bound db Hwf) |].
     exact (wf_max_name_attained db Hwf).
   Qed.
+  (** Stored slot positions retain the rank computed from the current slot layout. *)
+  Definition slot_rank_ok (db : t) : Prop :=
+    slot_positions _ (db_slot_store db) =
+      database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
+        PTrieCode.empty (slots db).
+  Lemma slot_rank_ok_frame : forall db db',
+    slot_positions _ (db_slot_store db') = slot_positions _ (db_slot_store db) ->
+    runtime_kinds (db_runtime db') = runtime_kinds (db_runtime db) ->
+    slots db' = slots db -> slot_rank_ok db -> slot_rank_ok db'.
+  Proof.
+    intros db db' Hpositions Hkinds Hslots Hrank.
+    unfold slot_rank_ok in *. now rewrite Hpositions, Hkinds, Hslots.
+  Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
@@ -9851,7 +9864,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
-    row_store_ok db /\ projection_counts_ok db /\ database_history db /\ core_bridge db.
+    row_store_ok db /\ projection_counts_ok db /\ database_history db /\ core_bridge db /\
+    slot_rank_ok db.
   Lemma forest_ok_init : forall ds sl, forest_ok (init ds sl).
   Proof.
     intros ds sl. unfold forest_ok.
@@ -9868,7 +9882,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       split; [apply row_store_ok_init |].
       split; [apply init_projection_counts |].
       split; [apply database_history_init |].
-      apply database_wf_core_bridge. apply wf_init.
+      split.
+      + apply database_wf_core_bridge. apply wf_init.
+      + reflexivity.
   Qed.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
@@ -9993,7 +10009,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db x db' Hforest Hpop.
     destruct Hforest as
       [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
-        [Hstore [Hcounts [Hhistory Hcore]]]]]]]]]].
+      [Hstore [Hcounts [Hhistory [Hcore Hrank]]]]]]]]]]].
     pose proof (pop_loser_row_store_ok db x db' Hstore Hpop) as Hstore'.
     assert (Hlocate : forall f k, db_locate f k db' = db_locate f k db).
     { intros f k. eapply pop_loser_locate. exact Hpop. }
@@ -10021,7 +10037,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           split; [exact Hstore' |].
           split; [exact Hcounts |].
           split; [exact Hhistory |].
-          exact Hcore.
+          split; [exact Hcore |].
+          exact Hrank.
   Qed.
 
   Lemma pop_loser_queue : forall db x db',
@@ -10110,6 +10127,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Repair retains the key-width bound already required by public well-formedness. *)
   Lemma forest_width_bound : forall db, forest_ok db ->
     UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    intros db Hforest. unfold forest_ok in Hforest. tauto.
+  Qed.
+
+  Lemma forest_slot_rank : forall db, forest_ok db -> slot_rank_ok db.
   Proof.
     intros db Hforest. unfold forest_ok in Hforest. tauto.
   Qed.
