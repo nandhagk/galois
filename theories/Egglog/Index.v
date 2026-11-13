@@ -1346,6 +1346,29 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
         time_unfold @T_node_edges; try time_unfold @T_edge_child; time_cbn; lia.
   Qed.
 
+  (** Every enumerated edge pays at most the recorded cell width and its binding unit. *)
+  Lemma edge_weight_le : forall ix n, valid ix ->
+    PTrieT.weight (node_edges (read_node ix n)) <=
+      length (PTrieCode.elements (node_edges (read_node ix n))) * (max_cell_bits ix + 1).
+  Proof.
+    intros ix n [Hedges _].
+    assert (Hbounds : Forall
+      (fun entry : positive * index_edge (cell V.t) =>
+        Pos.size_nat (fst entry) + 1 <= max_cell_bits ix + 1)
+      (PTrieCode.elements (node_edges (read_node ix n)))).
+    { apply Forall_forall. intros [code edge] Hin.
+      apply PTrie.elements_spec in Hin.
+      destruct (Hedges n code edge Hin) as [Hcode [_ [Hbits _]]].
+      cbn [fst]. rewrite <- Hcode.
+      assert (Hencode : Pos.size_nat (encode_cell (edge_cell edge)) =
+        cell_bits V.encode (edge_cell edge)) by (destruct (edge_cell edge); reflexivity).
+      rewrite Hencode. unfold max_cell_bits. lia. }
+    unfold PTrieT.weight.
+    induction Hbounds as [|entry entries Hhead Htail IH]; cbn [map fold_right length Nat.mul].
+    - reflexivity.
+    - apply Nat.add_le_mono; assumption.
+  Qed.
+
   Lemma T_children_le : forall a ix n, wf a ix ->
     (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
       N.of_nat (width ix [] + 1))%N.
