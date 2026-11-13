@@ -638,7 +638,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       else if andb nv (negb (D.changed next)) then inr (Saturated, next)
       else inl (negb (D.changed next), D.advance next).
 
-  (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
+  (** A round pays for its joins, applications, rebuild and per-binding work. *)
   Parameter T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_round p cp nv db <=
