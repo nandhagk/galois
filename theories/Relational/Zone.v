@@ -6041,6 +6041,191 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
           ltac:(lia) ltac:(lia)) as Htotal.
         eapply N.le_trans; [|exact Htotal]. time_simpl. time_cbn. lia.
   Qed.
+  (** Mapping a finite optional payload preserves whether the binding exists. *)
+  Lemma shift_option_presence : forall A B (f : A -> B) a,
+    option_map f a <> None <-> a <> None.
+  Proof.
+    intros A B f [a|]; cbn; split; congruence.
+  Qed.
+
+  (** Equal outer and entry presence gives equal raw support membership. *)
+  Lemma support_by_presence : forall ma mb,
+    (forall p, M.find p ma <> None <-> M.find p mb <> None) ->
+    (forall p q, raw_entry ma p q <> None <-> raw_entry mb p q <> None) ->
+    forall p, In p (support ma) <-> In p (support mb).
+  Proof.
+    intros ma mb Houter Hentry p. rewrite !support_find. split.
+    - intros [Hrow|[q Hraw]].
+      + left. now apply Houter.
+      + right. exists q. now apply Hentry.
+    - intros [Hrow|[q Hraw]].
+      + left. now apply Houter.
+      + right. exists q. now apply Hentry.
+  Qed.
+
+  (** Updating the selected column changes a payload only where that code already exists. *)
+  Lemma find_shift_column_row : forall (target : X.t) d row q,
+    M.find q (row_of (shift_column_row target d (Some row) None)) =
+      option_map (fun z => if Pos.eqb q (K.encode (Some target)) then (z + d)%Z else z)
+        (M.find q row).
+  Proof.
+    intros target d row q. unfold shift_column_row. cbn [row_of].
+    rewrite M.get_find.
+    destruct (M.find (K.encode (Some target)) row) as [old|] eqn:Hselected.
+    - rewrite M.find_set. destruct (Pos.eqb q (K.encode (Some target))) eqn:Hsame.
+      + apply Pos.eqb_eq in Hsame. subst q. now rewrite Hselected.
+      + destruct (M.find q row); reflexivity.
+    - destruct (Pos.eqb q (K.encode (Some target))) eqn:Hsame.
+      + apply Pos.eqb_eq in Hsame. subst q. now rewrite Hselected.
+      + destruct (M.find q row); reflexivity.
+  Qed.
+
+  (** A column shift retains exactly the existing outer row bindings. *)
+  Lemma find_shift_columns_presence : forall (target : X.t) d m p,
+    M.find p (shift_columns target d m) <> None <-> M.find p m <> None.
+  Proof.
+    intros target d m p. unfold shift_columns.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|]; cbn [shift_column_row].
+    - split; intros _ H; discriminate H.
+    - tauto.
+  Qed.
+
+  (** Raw column-shift lookup is independent of stored labels. *)
+  Lemma raw_entry_shift_columns : forall (target : X.t) d m p q,
+    raw_entry (shift_columns target d m) p q =
+      option_map (fun z => if Pos.eqb q (K.encode (Some target)) then (z + d)%Z else z)
+        (raw_entry m p q).
+  Proof.
+    intros target d m p q. unfold raw_entry, shift_columns.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|].
+    - exact (find_shift_column_row target d row q).
+    - cbn [shift_column_row row_of]. rewrite M.find_empty. reflexivity.
+  Qed.
+
+  (** The column pass creates and removes no finite coordinates. *)
+  Lemma raw_entry_shift_columns_presence : forall (target : X.t) d m p q,
+    raw_entry (shift_columns target d m) p q <> None <-> raw_entry m p q <> None.
+  Proof.
+    intros target d m p q. rewrite raw_entry_shift_columns. apply shift_option_presence.
+  Qed.
+
+  (** Column translation preserves raw support, including inconsistent labels. *)
+  Lemma support_shift_columns : forall (target : X.t) d m p,
+    In p (support (shift_columns target d m)) <-> In p (support m).
+  Proof.
+    intros target d m. apply support_by_presence.
+    - apply find_shift_columns_presence.
+    - apply raw_entry_shift_columns_presence.
+  Qed.
+
+  (** Column translation retains both support size and encoded-key bit allowance. *)
+  Lemma shift_columns_sizes : forall (target : X.t) d m,
+    supp (shift_columns target d m) = supp m /\ b (shift_columns target d m) = b m.
+  Proof.
+    intros target d m. apply support_sizes, support_shift_columns.
+  Qed.
+
+  (** Adding the translation to existing entries uses one additional carry bit. *)
+  Lemma ell_shift_columns : forall (target : X.t) d m,
+    ell (shift_columns target d m) <= ell m + Z.size_nat d + 1.
+  Proof.
+    intros target d m. apply ell_bound. intros p q z Hentry.
+    rewrite raw_entry_shift_columns in Hentry.
+    destruct (raw_entry m p q) as [old|] eqn:Hraw; [|discriminate].
+    pose proof (ell_entry m p q old Hraw) as Hold.
+    destruct (Pos.eqb q (K.encode (Some target))) eqn:Hselected;
+      cbn [option_map] in Hentry; injection Hentry as <-.
+    - eapply Nat.le_trans; [apply zbits_add_sum|]. lia.
+    - lia.
+  Qed.
+
+  (** Subtraction has the same additive bit allowance as addition with an opposite. *)
+  Lemma zbits_sub_sum : forall a d,
+    Z.size_nat (a - d)%Z <= Z.size_nat a + Z.size_nat d + 1.
+  Proof.
+    intros a d. pose proof (zbits_add_sum a (-d)%Z) as Hbits.
+    rewrite zbits_opp in Hbits. exact Hbits.
+  Qed.
+
+  (** The row pass updates only a row already present after the column pass. *)
+  Lemma find_shift_presence : forall (target : X.t) d m p,
+    M.find p (shift target d m) <> None <-> M.find p m <> None.
+  Proof.
+    intros target d m p. rewrite <- (find_shift_columns_presence target d m p).
+    unfold shift. set (next := shift_columns target d m).
+    destruct (M.get (Some target) next) as [row|] eqn:Hrow; [|reflexivity].
+    rewrite M.find_set. destruct (Pos.eqb p (K.encode (Some target))) eqn:Hsame.
+    - apply Pos.eqb_eq in Hsame. subst p.
+      rewrite <- (M.get_find (M.t Z) (Some target) next), Hrow.
+      split; intros _ H; discriminate H.
+    - reflexivity.
+  Qed.
+
+  (** The final row translation subtracts its offset at the selected raw source code. *)
+  Lemma raw_entry_shift : forall (target : X.t) d m p q,
+    raw_entry (shift target d m) p q =
+      if Pos.eqb p (K.encode (Some target)) then
+        option_map (fun z => (z - d)%Z) (raw_entry (shift_columns target d m) p q)
+      else raw_entry (shift_columns target d m) p q.
+  Proof.
+    intros target d m p q. unfold shift.
+    set (next := shift_columns target d m).
+    destruct (M.get (Some target) next) as [row|] eqn:Hrow.
+    - unfold raw_entry at 1. rewrite M.find_set.
+      destruct (Pos.eqb p (K.encode (Some target))) eqn:Hsame.
+      + apply Pos.eqb_eq in Hsame. subst p. cbn [row_of].
+        rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+        unfold raw_entry. rewrite <- (M.get_find (M.t Z) (Some target) next), Hrow.
+        cbn [row_of shift_bound]. destruct (M.find q row); reflexivity.
+      + reflexivity.
+    - destruct (Pos.eqb p (K.encode (Some target))) eqn:Hsame; [|reflexivity].
+      apply Pos.eqb_eq in Hsame. subst p.
+      unfold raw_entry. rewrite <- (M.get_find (M.t Z) (Some target) next), Hrow.
+      cbn [row_of]. rewrite M.find_empty. reflexivity.
+  Qed.
+
+  (** A complete literal translation preserves every finite coordinate. *)
+  Lemma raw_entry_shift_presence : forall (target : X.t) d m p q,
+    raw_entry (shift target d m) p q <> None <-> raw_entry m p q <> None.
+  Proof.
+    intros target d m p q. rewrite raw_entry_shift.
+    destruct (Pos.eqb p (K.encode (Some target))).
+    - rewrite shift_option_presence. apply raw_entry_shift_columns_presence.
+    - apply raw_entry_shift_columns_presence.
+  Qed.
+
+  (** A complete literal translation preserves raw support membership. *)
+  Lemma support_shift : forall (target : X.t) d m p,
+    In p (support (shift target d m)) <-> In p (support m).
+  Proof.
+    intros target d m. apply support_by_presence.
+    - apply find_shift_presence.
+    - apply raw_entry_shift_presence.
+  Qed.
+
+  (** Literal translation retains support size and its key-bit maximum. *)
+  Lemma shift_sizes : forall (target : X.t) d m,
+    supp (shift target d m) = supp m /\ b (shift target d m) = b m.
+  Proof.
+    intros target d m. apply support_sizes, support_shift.
+  Qed.
+
+  (** Two translation passes add at most two offset allowances and two carry bits. *)
+  Lemma ell_shift : forall (target : X.t) d m,
+    ell (shift target d m) <= ell m + 2 * Z.size_nat d + 2.
+  Proof.
+    intros target d m. pose proof (ell_shift_columns target d m) as Hcolumns.
+    apply ell_bound. intros p q z Hentry. rewrite raw_entry_shift in Hentry.
+    destruct (Pos.eqb p (K.encode (Some target))).
+    - destruct (raw_entry (shift_columns target d m) p q) as [old|] eqn:Hraw;
+        [|discriminate].
+      cbn [option_map] in Hentry. injection Hentry as <-.
+      pose proof (ell_entry (shift_columns target d m) p q old Hraw) as Hold.
+      pose proof (zbits_sub_sum old d). lia.
+    - pose proof (ell_entry (shift_columns target d m) p q z Hentry). lia.
+  Qed.
   Definition short_coefficients (cs : list (X.t * Z)) : Prop :=
     length cs <= 2 /\ Forall (fun p => Z.size_nat (snd p) <= 2) cs.
 
