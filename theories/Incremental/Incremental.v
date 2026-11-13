@@ -9163,6 +9163,156 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       [exact Hq|exact Hweight|exact Htime].
   Qed.
 
+  Lemma T_invalid_loop_amort : forall st current
+      (H : Acc (invalid_lt st) current),
+    state_ok st -> invalid_pending_dom st current ->
+    invalid_snapshot_origin st current ->
+    (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+      (T_invalid_checked_step st) current H + invalid_processed_credit st current +
+      invalid_remaining_credit st
+        (Argent.Loop.loop (invalid_lt st) (invalid_checked_step st) current H) <=
+      invalid_processed_credit st
+        (Argent.Loop.loop (invalid_lt st) (invalid_checked_step st) current H) +
+      invalid_remaining_credit st current + 2)%N.
+  Proof.
+    intros st current H Hstate Hpending Horigin.
+    eapply (incremental_loop_credit (invalid_lt st) (invalid_checked_step st)
+      (T_invalid_checked_step st)
+      (fun acc => invalid_pending_dom st acc /\ invalid_snapshot_origin st acc)
+      (invalid_processed_credit st) (invalid_remaining_credit st) 2).
+    - intros [pending0 seen bad done snapshots] next Hlt [Hdom Hsnap] Hstep.
+      destruct pending0 as [|x pending]; cbn [invalid_checked_step] in Hstep;
+        [discriminate Hstep|].
+      inversion Hstep; subst next; clear Hstep.
+      split.
+      + split.
+        * unfold invalid_next; apply invalid_snapshot_fold_pending_dom.
+          intros y Hy; apply Hdom; cbn [invalid_pending] in Hy; now right.
+        * unfold invalid_next; apply invalid_snapshot_fold_origin.
+          unfold invalid_snapshot_origin in Hsnap |- *; exact Hsnap.
+      + apply T_invalid_checked_step_amort; [exact Hstate| |exact Hsnap].
+        apply Hdom; cbn [invalid_pending]; now left.
+    - intros [pending0 seen bad done snapshots] result [Hdom Hsnap] Hstep.
+      destruct pending0 as [|x pending]; cbn [invalid_checked_step] in Hstep;
+        [|discriminate Hstep].
+      inversion Hstep; subst result; clear Hstep.
+      unfold T_invalid_checked_step; cbn [invalid_pending].
+      lia.
+    - split; assumption.
+  Qed.
+
+  Definition invalid_queue_perm (acc : incremental_invalidation S.key) : Prop :=
+    Permutation (invalid_pending acc ++ invalid_done acc) (invalid_bad acc).
+
+  Lemma invalid_seed_queue_perm : forall st acc x,
+    invalid_queue_perm acc -> invalid_queue_perm (invalid_seed_one st acc x).
+  Proof.
+    intros st acc x Hperm; unfold invalid_seed_one, invalid_queue_perm in *.
+    destruct (present st x); [|exact Hperm].
+    destruct (PTrieCode.get (S.key_code x) (invalid_seen acc));
+      [exact Hperm|].
+    cbn [invalid_pending invalid_done invalid_bad]; now constructor.
+  Qed.
+
+  Lemma invalid_seed_fold_queue_perm : forall st xs acc,
+    invalid_queue_perm acc ->
+    invalid_queue_perm (fold_left (invalid_seed_one st) xs acc).
+  Proof.
+    intros st xs; induction xs as [|x rest IH]; intros acc Hperm;
+      [exact Hperm|].
+    cbn [fold_left]; apply IH; now apply invalid_seed_queue_perm.
+  Qed.
+
+  Lemma invalid_visit_queue_perm : forall st acc id,
+    invalid_queue_perm acc ->
+    invalid_queue_perm (invalid_visit_snapshot st acc id).
+  Proof.
+    intros st acc id Hperm; unfold invalid_visit_snapshot.
+    destruct (PTrieCode.get id (invalid_snapshots acc)) as [ss|];
+      [|exact Hperm].
+    destruct (snapshot_live ss); [|exact Hperm].
+    unfold invalid_queue_perm; cbn [invalid_pending invalid_done invalid_bad].
+    now apply invalid_seed_fold_queue_perm.
+  Qed.
+
+  Lemma invalid_snapshot_fold_queue_perm : forall st ids acc,
+    invalid_queue_perm acc ->
+    invalid_queue_perm (fold_left (invalid_visit_snapshot st) ids acc).
+  Proof.
+    intros st ids; induction ids as [|id rest IH]; intros acc Hperm;
+      [exact Hperm|].
+    cbn [fold_left]; apply IH; now apply invalid_visit_queue_perm.
+  Qed.
+
+  Lemma invalid_walk_queue_perm : forall p p' ch st,
+    invalid_queue_perm (invalid_walk p p' ch st).
+  Proof.
+    intros p p' ch st; unfold invalid_walk.
+    eapply incremental_loop_preserves with
+      (Inv := invalid_queue_perm) (Post := invalid_queue_perm).
+    - intros [pending0 seen bad done snapshots] Hperm.
+      destruct pending0 as [|x pending]; cbn [invalid_checked_step];
+        [exact Hperm|].
+      unfold invalid_next.
+      apply invalid_snapshot_fold_queue_perm.
+      unfold invalid_queue_perm in Hperm |- *.
+      cbn [invalid_pending invalid_done invalid_bad].
+      eapply Permutation_trans; [apply Permutation_sym, Permutation_middle|].
+      exact Hperm.
+    - unfold invalid_initial; apply invalid_seed_fold_queue_perm.
+      unfold invalid_queue_perm; cbn [invalid_pending invalid_done invalid_bad].
+      constructor.
+  Qed.
+
+  Lemma invalid_walk_done_work : forall p p' ch st,
+    invalid_done_work st (invalid_walk p p' ch st) =
+      finite_sum (fun x => infl_deg st x + length (cowrite_at st x) + 1)
+        (invalidate p p' ch st).
+  Proof.
+    intros p p' ch st; unfold invalid_done_work, invalidate, invalidate_keys.
+    pose proof (invalid_walk_queue_perm p p' ch st) as Hperm.
+    unfold invalid_queue_perm in Hperm.
+    rewrite invalid_walk_pending_empty in Hperm.
+    cbn [app] in Hperm.
+    now apply finite_sum_perm.
+  Qed.
+
+  Lemma invalid_initial_pending_dom : forall p p' ch st,
+    invalid_pending_dom st (invalid_initial p p' ch st).
+  Proof.
+    intros p p' ch st; unfold invalid_initial.
+    apply invalid_seed_fold_pending_dom.
+    intros x Hin; cbn [invalid_pending] in Hin; contradiction.
+  Qed.
+
+  Lemma invalid_initial_done_work : forall p p' ch st,
+    invalid_done_work st (invalid_initial p p' ch st) = 0.
+  Proof.
+    intros p p' ch st; unfold invalid_done_work, invalid_initial.
+    rewrite invalid_seed_fold_done; reflexivity.
+  Qed.
+
+  Lemma invalid_initial_snapshot_mass : forall p p' ch st,
+    invalid_snapshot_mass (invalid_initial p p' ch st) = snapshot_mass st.
+  Proof.
+    intros p p' ch st; unfold invalid_initial, invalid_snapshot_mass.
+    rewrite invalid_seed_fold_snapshots.
+    cbn [invalid_snapshots].
+    symmetry; apply DemandAccounting.snapshot_mass_sum.
+  Qed.
+
+  Lemma invalid_initial_snapshot_origin : forall p p' ch st,
+    invalid_snapshot_origin st (invalid_initial p p' ch st).
+  Proof.
+    intros p p' ch st; unfold invalid_initial.
+    apply invalid_seed_fold_origin.
+    intros id current Hget; exists current.
+    cbn [invalid_snapshots] in Hget.
+    split; [exact Hget|].
+    split; [reflexivity|].
+    split; [reflexivity|tauto].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
