@@ -8718,6 +8718,50 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     rewrite Hlive in Hsum |- *; cbn [snapshot_live] in Hsum |- *; lia.
   Qed.
 
+  Lemma invalid_snapshot_width : forall st acc id ss,
+    state_ok st -> invalid_snapshot_origin st acc ->
+    PTrieCode.get id (invalid_snapshots acc) = Some ss ->
+    Pos.size_nat id <= kwidth st /\
+      (forall x, In x (snapshot_writes ss) -> S.key_bits x <= kwidth st).
+  Proof.
+    intros st acc id ss Hstate Horigin Hget.
+    destruct (Horigin id ss Hget) as [original [Horiginal [_ [Hwrites _]]]].
+    assert (Hin : In (id, original) (snapshots st)).
+    { apply Core.snapshot_get_elements; exact Horiginal. }
+    split.
+    - exact (snapshot_id_width st id original Hstate Hin).
+    - intros x Hx; rewrite Hwrites in Hx.
+      unfold kwidth; apply finite_max_member; apply in_or_app; right.
+      unfold snapshot_keys; apply in_flat_map.
+      exists (id, original); split; [exact Hin|exact Hx].
+  Qed.
+
+  Lemma finite_sum_key_bits_width : forall xs w,
+    (forall x, In x xs -> S.key_bits x <= w) ->
+    finite_sum (fun x => S.key_bits x + 1) xs <= length xs * (w + 1).
+  Proof.
+    intros xs; induction xs as [|x rest IH]; intros w Hwidth; [reflexivity|].
+    change (finite_sum (fun y => S.key_bits y + 1) (x :: rest)) with
+      (S.key_bits x + 1 + finite_sum (fun y => S.key_bits y + 1) rest).
+    cbn [length].
+    assert (Hhead : S.key_bits x <= w) by (apply Hwidth; now left).
+    assert (Htail : forall y, In y rest -> S.key_bits y <= w).
+    { intros y Hy; apply Hwidth; now right. }
+    specialize (IH w Htail).
+    nia.
+  Qed.
+
+  Lemma invalid_snapshot_bits_le : forall st acc id ss,
+    state_ok st -> invalid_snapshot_origin st acc ->
+    PTrieCode.get id (invalid_snapshots acc) = Some ss ->
+    finite_sum (fun x => S.key_bits x + 1) (snapshot_writes ss) <=
+      length (snapshot_writes ss) * (kwidth st + 1).
+  Proof.
+    intros st acc id ss Hstate Horigin Hget.
+    apply finite_sum_key_bits_width.
+    exact (proj2 (invalid_snapshot_width st acc id ss Hstate Horigin Hget)).
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
