@@ -4032,6 +4032,47 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite Hnone || rewrite Hzero; reflexivity.
   Qed.
 
+  Lemma add_zero_preserve_diagonal : forall m p k,
+    (forall q, entry m q q = None \/ entry m q q = Some 0%Z) ->
+    entry m k k = Some 0%Z ->
+    entry (add_cons p p 0%Z m) k k = Some 0%Z.
+  Proof.
+    intros m p k Hdiag Hzero. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate k k p p).
+    - destruct (Hdiag p) as [Hnone|Hz];
+        rewrite Hnone || rewrite Hz; reflexivity.
+    - destruct (same_coordinate k k (flip p) (flip p)).
+      + destruct (Hdiag (flip p)) as [Hnone|Hz];
+          rewrite Hnone || rewrite Hz; reflexivity.
+      + exact Hzero.
+  Qed.
+
+  Lemma tightly_closed_diagonal_cases : forall m, tightly_closed m ->
+    forall k, entry m k k = None \/ entry m k k = Some 0%Z.
+  Proof.
+    intros m [[Hcoh [Hzero [Htri Hstrong]]] Heven] k.
+    destruct (entry m k k) as [d|] eqn:Hentry; [right|now left].
+    pose proof (Hzero k (entry_source_support m k k d Hentry)) as Hdiag.
+    now rewrite Hentry in Hdiag.
+  Qed.
+
+  Lemma incremental_seed_diagonals : forall m i j, tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    entry seed i i = Some 0%Z /\ entry seed j j = Some 0%Z.
+  Proof.
+    intros m i j Htight. cbn beta iota zeta.
+    set (first := add_cons i i 0%Z m).
+    assert (Hdiag : forall k, entry m k k = None \/ entry m k k = Some 0%Z).
+    { now apply tightly_closed_diagonal_cases. }
+    assert (Hfirst : forall k, entry first k k = None \/
+      entry first k k = Some 0%Z).
+    { unfold first. now apply add_zero_diagonal_cases. }
+    split.
+    - apply add_zero_preserve_diagonal; [exact Hfirst|].
+      unfold first. now apply add_zero_own_diagonal.
+    - now apply add_zero_own_diagonal.
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
