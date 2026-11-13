@@ -1248,6 +1248,21 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
       cbn [fst snd]; apply Pos.eqb_refl.
   Qed.
 
+  Lemma valid_keys_fill : forall xs m base x,
+    In x (valid_keys (Bindings.fill xs m base)) <->
+      In x xs \/ In x (valid_keys base).
+  Proof.
+    intros xs m base x; rewrite !valid_keys_dom, fill_lookup.
+    destruct (Bindings.mem x xs) eqn:Hmem.
+    - split.
+      + intros _; left; now apply (proj1 (mem_spec x xs)).
+      + intros _; eexists; reflexivity.
+    - split.
+      + intros Hvalue; right; exact Hvalue.
+      + intros [Hin|Hvalue]; [|exact Hvalue].
+        pose proof (proj2 (mem_spec x xs) Hin) as Htrue; congruence.
+  Qed.
+
   Lemma valid_keys_nodup : forall m, NoDup (valid_keys m).
   Proof.
     intro m; unfold valid_keys.
@@ -1320,6 +1335,15 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
         f_equal; apply IH; intros q y w Hin; apply (Hall q y w); now right. }
     apply Hfilter; intros path x v Hin.
     apply PTrie.elements_spec in Hin; exact (Hcanonical path x v Hin).
+  Qed.
+
+  Lemma valid_keys_remove_subset : forall bad m x,
+    In x (valid_keys (Bindings.remove_keys bad m)) -> In x (valid_keys m).
+  Proof.
+    intros bad m x Hin; apply valid_keys_dom in Hin as [v Hvalue].
+    apply valid_keys_dom; exists v.
+    rewrite lookup_remove_keys in Hvalue.
+    destruct (Bindings.mem x bad); [discriminate Hvalue|exact Hvalue].
   Qed.
 
   (** A duplicate-free mapped list identifies equal fibers uniquely. *)
