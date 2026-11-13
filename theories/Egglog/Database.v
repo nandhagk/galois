@@ -2117,6 +2117,81 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + intro u. now apply wf_slot_projection_count.
   Qed.
 
+  (** A declared fitting slot has only positions within the supplied tuple length. *)
+  Lemma slot_projection_fits : forall db s f perm n,
+    slot_of db s = Some (f, perm) -> slots_fit db f n -> Forall (fun p => p < n) perm.
+  Proof.
+    intros db s f perm n Hslot Hfits.
+    assert (Hmember : In (f, perm) (slots db)) by (eapply nth_error_In; exact Hslot).
+    exact (proj2 (Hfits perm Hmember)).
+  Qed.
+
+  (** Inserting a row contribution updates every declared slot's virtual row multiset. *)
+  Lemma slots_update_cache_row_insert : forall db f k o s g perm rows,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> slots_fit db f (length (k ++ option_list o)) ->
+    slot_cache_ok (db_runtime db) s (length perm) (row_contributions g perm rows) ->
+    slot_cache_ok (db_runtime (slots_update true f (k ++ option_list o) db)) s (length perm)
+      (row_contributions g perm (((f, k), o) :: rows)).
+  Proof.
+    intros db f k o s g perm rows Hgroups Hslot Hfits Hcache.
+    destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+    - rewrite row_contributions_same. apply slots_update_cache_insert; try assumption.
+      eapply slot_projection_fits; eassumption.
+    - rewrite row_contributions_other by exact Hdifferent.
+      apply slots_update_cache_other with (g := g); assumption.
+  Qed.
+
+  (** Removing a row contribution updates every declared slot's virtual row multiset. *)
+  Lemma slots_update_cache_row_remove : forall db f k o s g perm rows,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> slots_fit db f (length (k ++ option_list o)) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions g perm (((f, k), o) :: rows)) ->
+    slot_cache_ok (db_runtime (slots_update false f (k ++ option_list o) db)) s (length perm)
+      (row_contributions g perm rows).
+  Proof.
+    intros db f k o s g perm rows Hgroups Hslot Hfits Hcache.
+    destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+    - rewrite row_contributions_same in Hcache. apply slots_update_cache_remove; try assumption.
+      eapply slot_projection_fits; eassumption.
+    - rewrite row_contributions_other in Hcache by exact Hdifferent.
+      apply slots_update_cache_other with (g := g); assumption.
+  Qed.
+
+  (** The final row-table write leaves the already-maintained slot caches unchanged. *)
+  Lemma row_write_slot_snapshot : forall db f k o s,
+    slot_snapshot (db_runtime (row_write f k o db)) s = slot_snapshot (db_runtime db) s.
+  Proof.
+    intros db f k o s. reflexivity.
+  Qed.
+
+  (** Row replacement removes its optional old contribution and adds its new contribution. *)
+  Lemma row_replace_cache_list : forall db f k previous o s g perm rest,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> slots_fit db f (length (k ++ option_list o)) ->
+    (forall before, previous = Some before ->
+      slots_fit db f (length (k ++ option_list before))) ->
+    slot_cache_ok (db_runtime db) s (length perm) (row_contributions g perm
+      (option_list (option_map (pair (f, k)) previous) ++ rest)) ->
+    slot_cache_ok (db_runtime (row_replace f k previous o db)) s (length perm)
+      (row_contributions g perm (((f, k), o) :: rest)).
+  Proof.
+    intros db f k previous o s g perm rest Hgroups Hslot Hnew Hbefore Hcache.
+    unfold row_replace. eapply slot_cache_snapshot; [apply row_write_slot_snapshot |].
+    destruct previous as [before |]; cbn [option_map option_list app] in Hcache |- *.
+    - apply slots_update_cache_row_insert.
+      + rewrite slots_update_function_slots, slots_update_slots. exact Hgroups.
+      + unfold slot_of. rewrite slots_update_slots. exact Hslot.
+      + unfold slots_fit. rewrite slots_update_slots. exact Hnew.
+      + exact (slots_update_cache_row_remove db f k before s g perm rest
+          Hgroups Hslot (Hbefore before eq_refl) Hcache).
+    - exact (slots_update_cache_row_insert db f k o s g perm rest Hgroups Hslot Hnew Hcache).
+  Qed.
+
   (** A direct row write replaces one map binding and leaves all other bindings intact. *)
   Lemma row_write_binding : forall f k o db g args output,
     row (view (row_write f k o db)) g args output <->
