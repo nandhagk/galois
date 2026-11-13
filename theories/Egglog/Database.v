@@ -10934,6 +10934,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros x Hin. exact (public_queue_allocated db Hbase x Hin).
   Qed.
 
+  Lemma inv_idle_reverse : forall db, inv_on db [] -> database_idle_ok db.
+  Proof.
+    intros db Hinv. unfold inv_on in Hinv.
+    destruct Hinv as (_ & _ & Hcoverage & Hscheduled & _ & _ & _ & Hforest & _ &
+      Hqueue & _).
+    unfold database_idle_ok.
+    split.
+    { unfold forest_ok, row_store_ok in Hforest. tauto. }
+    split; [exact Hqueue |].
+    split.
+    { intros f k o i Hrow Hid. exact (Hcoverage f k o i Hrow Hid). }
+    split.
+    { intros f k o i Hrow Hid Hnonroot.
+      destruct (Hscheduled f k o i Hrow Hid Hnonroot) as [k0 [Hwork Hlocated]].
+      unfold scheduled in Hwork. cbn [In] in Hwork.
+      destruct Hwork as [Hempty | [x [Hqueued Huse]]]; [contradiction |].
+      exists k0. split; [exists x; split; assumption | exact Hlocated]. }
+    intros f k0 k Hlocated.
+    exact (proj1 Hforest f k0 k Hlocated).
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
