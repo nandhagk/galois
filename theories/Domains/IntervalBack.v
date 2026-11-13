@@ -1832,6 +1832,17 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     - exact (PayloadBounds.payload_top_bits w).
   Qed.
 
+  Local Lemma table_checked_raw_bits : forall w lo hi,
+    interval_bits (interval_checked w lo hi) <=
+      Pos.to_nat w + Z.size_nat lo + Z.size_nat hi.
+  Proof.
+    intros w lo hi. unfold interval_checked.
+    destruct (Z.leb 0 lo && Z.ltb hi (Word.modulus w)).
+    - cbn [interval_bits]. lia.
+    - apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia].
+  Qed.
+
   Local Lemma table_truth_bits : forall decision,
     interval_bits (interval_truth decision) <= 1.
   Proof.
@@ -2268,6 +2279,13 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     destruct y; cbn [Z.opp Z.size_nat] in *; lia.
   Qed.
 
+  Local Lemma table_integer_mul_bits : forall x y,
+    Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.mul Z.size_nat]; try lia;
+      apply Std.Pos.size_nat_mul.
+  Qed.
+
   Local Lemma table_finite_bits : forall a lo hi,
     interval_finite_helper a = Some (lo, hi) ->
     Z.size_nat lo <= interval_bits a /\ Z.size_nat hi <= interval_bits a.
@@ -2275,6 +2293,160 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros [|[|x|] [|y|]] lo hi Hfinite;
       cbn [interval_finite_helper] in Hfinite; try discriminate.
     inversion Hfinite; subst. cbn [interval_bits]. lia.
+  Qed.
+
+  Local Lemma table_neg_raw_bits : forall w a,
+    interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
+  Proof.
+    intros w a. unfold interval_neg.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      [|apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]].
+    destruct (Z.eqb hi 0); [cbn [interval_bits Z.size_nat]; lia|].
+    destruct (Z.ltb 0 lo); [|apply Nat.le_trans with (m := Pos.to_nat w);
+      [apply PayloadBounds.payload_top_bits|lia]].
+    destruct (table_finite_bits a lo hi Hfinite) as [Hlo Hhi].
+    pose proof (table_checked_raw_bits w (Word.modulus w - hi)
+      (Word.modulus w - lo)) as Hchecked.
+    pose proof (PayloadBounds.payload_modulus_bits w) as Hmodulus.
+    pose proof (table_integer_sub_bits (Word.modulus w) hi) as Hupper.
+    pose proof (table_integer_sub_bits (Word.modulus w) lo) as Hlower.
+    lia.
+  Qed.
+
+  Local Lemma table_integer_abs_bits : forall z,
+    Z.size_nat (Z.abs z) = Z.size_nat z.
+  Proof.
+    intros []; reflexivity.
+  Qed.
+
+  Local Lemma table_integer_div_abs : forall x y,
+    (Z.abs (x / y) <= Z.abs x)%Z.
+  Proof.
+    intros x y. destruct (Z.eq_dec y 0) as [-> | Hnonzero].
+    - rewrite Z.div_0_r. cbn [Z.abs]. apply Z.abs_nonneg.
+    - pose proof (Z.div_mod x y Hnonzero) as Hdiv.
+      destruct (Z_lt_ge_dec 0 y) as [Hpositive | Hnegative].
+      + pose proof (Z.mod_pos_bound x y Hpositive) as Hmod.
+        destruct (Z_le_gt_dec 0 x), (Z_le_gt_dec 0 (x / y));
+          rewrite ?Z.abs_eq, ?Z.abs_neq by lia; nia.
+      + assert (Hnegative' : (y < 0)%Z) by lia.
+        pose proof (Z.mod_neg_bound x y Hnegative') as Hmod.
+        destruct (Z_le_gt_dec 0 x), (Z_le_gt_dec 0 (x / y));
+          rewrite ?Z.abs_eq, ?Z.abs_neq by lia; nia.
+  Qed.
+
+  Local Lemma table_integer_div_bits : forall x y,
+    Z.size_nat (x / y) <= Z.size_nat x.
+  Proof.
+    intros x y.
+    rewrite <- (table_integer_abs_bits (x / y)), <- (table_integer_abs_bits x).
+    apply Std.Z.size_nat_mono.
+    split; [apply Z.abs_nonneg|apply table_integer_div_abs].
+  Qed.
+
+  Local Lemma table_udiv_raw_bits : forall w a b,
+    interval_bits (interval_udiv w a b) <=
+      2 * Pos.to_nat w + 2 * interval_bits a + 1.
+  Proof.
+    intros w a b. unfold interval_udiv.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    destruct (Z.leb 0 la && Z.ltb 0 lb).
+    - pose proof (table_checked_raw_bits w (la / hb) (ha / lb)) as Hchecked.
+      pose proof (table_integer_div_bits la hb).
+      pose proof (table_integer_div_bits ha lb).
+      lia.
+    - destruct (Z.leb 0 la && Z.eqb lb 0 && Z.ltb 0 hb).
+      + pose proof (table_checked_raw_bits w (la / hb) (Word.modulus w - 1))
+          as Hchecked.
+        pose proof (table_integer_div_bits la hb).
+        pose proof (PayloadBounds.payload_cap_bits w).
+        lia.
+      + destruct (Z.eqb lb 0 && Z.eqb hb 0).
+        * cbn [interval_bits].
+          pose proof (PayloadBounds.payload_cap_bits w). lia.
+        * apply Nat.le_trans with (m := Pos.to_nat w);
+            [apply PayloadBounds.payload_top_bits|lia].
+  Qed.
+
+  Local Lemma table_urem_raw_bits : forall w a b,
+    interval_bits (interval_urem w a b) <=
+      Pos.to_nat w + 4 * interval_bits a + 2 * interval_bits b + 4.
+  Proof.
+    intros w a b. unfold interval_urem.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    destruct (table_finite_bits b lb hb Hb) as [Hlb Hhb].
+    destruct (Z.leb 0 la && Z.ltb 0 lb && Z.eqb (la / hb) (ha / lb)).
+    - pose proof (table_checked_raw_bits w (la - la / hb * hb)
+        (ha - la / hb * lb)) as Hchecked.
+      pose proof (table_integer_div_bits la hb) as Hdiv.
+      pose proof (table_integer_mul_bits (la / hb) hb) as Hmul_hi.
+      pose proof (table_integer_mul_bits (la / hb) lb) as Hmul_lo.
+      pose proof (table_integer_sub_bits la (la / hb * hb)) as Hsub_lo.
+      pose proof (table_integer_sub_bits ha (la / hb * lb)) as Hsub_hi.
+      lia.
+    - destruct (Z.ltb 0 lb).
+      + destruct (Z.le_gt_cases ha (hb - 1)) as [Hcase|Hcase].
+        * rewrite Z.min_l by lia.
+          pose proof (table_checked_raw_bits w 0 ha). cbn [Z.size_nat] in *. lia.
+        * rewrite Z.min_r by lia.
+          pose proof (table_checked_raw_bits w 0 (hb - 1)) as Hchecked.
+          pose proof (table_integer_sub_bits hb 1) as Hsub.
+          cbn [Z.size_nat Pos.size_nat] in *.
+          lia.
+      + pose proof (table_checked_raw_bits w 0 ha).
+        cbn [Z.size_nat] in *.
+        lia.
+  Qed.
+
+  Local Lemma table_sdiv_raw_bits : forall w a b,
+    interval_bits (interval_sdiv w a b) <=
+      20 * Pos.to_nat w + 8 * interval_bits a + 24.
+  Proof.
+    intros w a b. unfold interval_sdiv.
+    destruct (interval_sign w a) as [sa|];
+      destruct (interval_sign w b) as [sb|];
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    set (aa := if sa then interval_neg w a else a).
+    set (bb := if sb then interval_neg w b else b).
+    assert (Haa : interval_bits aa <= 3 * Pos.to_nat w + 2 * interval_bits a + 4).
+    { unfold aa. destruct sa; [apply table_neg_raw_bits|lia]. }
+    pose proof (table_udiv_raw_bits w aa bb) as Hdiv.
+    destruct (xorb sa sb).
+    - pose proof (table_neg_raw_bits w (interval_udiv w aa bb)) as Hneg.
+      lia.
+    - lia.
+  Qed.
+
+  Local Lemma table_srem_raw_bits : forall w a b,
+    interval_bits (interval_srem w a b) <=
+      42 * Pos.to_nat w + 16 * interval_bits a + 8 * interval_bits b + 64.
+  Proof.
+    intros w a b. unfold interval_srem.
+    destruct (interval_sign w a) as [sa|];
+      destruct (interval_sign w b) as [sb|];
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    set (aa := if sa then interval_neg w a else a).
+    set (bb := if sb then interval_neg w b else b).
+    assert (Haa : interval_bits aa <= 3 * Pos.to_nat w + 2 * interval_bits a + 4).
+    { unfold aa. destruct sa; [apply table_neg_raw_bits|lia]. }
+    assert (Hbb : interval_bits bb <= 3 * Pos.to_nat w + 2 * interval_bits b + 4).
+    { unfold bb. destruct sb; [apply table_neg_raw_bits|lia]. }
+    pose proof (table_urem_raw_bits w aa bb) as Hrem.
+    destruct sa.
+    - pose proof (table_neg_raw_bits w (interval_urem w aa bb)) as Hneg.
+      lia.
+    - lia.
   Qed.
 
   Local Lemma table_assume_ult_bits : forall a b,
