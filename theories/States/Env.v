@@ -1415,12 +1415,16 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Local Hint Rewrite Nat2N.inj_add Nat2N.inj_mul Nat2N.inj_succ Nat2N.inj_max
     : env_time_nat.
 
-  (** The child traversal carries the generated clock of checked refinement. *)
-  Fixpoint refine_children_time ns qs m bad :=
-    (1 + match ns, qs with
-    | n :: ns, q :: qs => T_refine_checked q n m + (3 +
-      refine_children_time ns qs (refine q n m) (orb bad (snd (refine_checked q n m))))
-    | _, _ => 0 end)%N.
+  (** The extracted child traversal matches the local checked-refinement loop. *)
+  Fixpoint refine_children (ns : list (ann L.op X.t V.t)) (qs : list V.t)
+      (m : M.t V.t) (bad : bool) :=
+    match ns, qs with
+    | n :: ns, q :: qs =>
+      let result := refine_checked q n m in
+      refine_children ns qs (fst result) (orb bad (snd result))
+    | _, _ => (m, bad)
+    end.
+  TimeFun refine_children.
   (** Child refinement records the maximum request charge along its changing map. *)
   Fixpoint refine_children_size ns qs m :=
     match ns, qs with
@@ -1442,23 +1446,27 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       (T_refine_checked q n m + 6 <= env_refine_factor *
         N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N) ns ->
     forall qs m bad,
-    (refine_children_time ns qs m bad + 2 * N.of_nat (length ns) <=
+    (T_refine_children ns qs m bad + 2 * N.of_nat (length ns) <=
       env_refine_factor * N.of_nat
         (fold_right Nat.add 0%nat (map ann_work ns) +
           fold_right Nat.add 0%nat (map ann_size ns) *
             (refine_children_size ns qs m + 1)) + 1)%N.
   Proof.
     intros ns Hns. induction Hns as [|n Hn ns Hns IH]; intros qs m bad.
-    - cbn [refine_children_time length map fold_right]. nia.
+    - change (1 + 2 * 0 <= env_refine_factor * 0 + 1)%N. nia.
     - destruct qs as [|q qs].
       + pose proof (ann_work_lengths (n :: ns)) as Hlen.
-        cbn [refine_children_time refine_children_size].
+        change (T_refine_children (n :: ns) [] m bad) with 1%N.
+        cbn [refine_children_size].
         assert (HlenN : (N.of_nat (length (n :: ns)) <=
           N.of_nat (fold_right Nat.add 0%nat (map ann_work (n :: ns))))%N) by lia.
         unfold env_refine_factor. repeat rewrite Nat2N.inj_add. nia.
       + specialize (Hn q m).
         specialize (IH qs (refine q n m) (orb bad (snd (refine_checked q n m)))).
-        cbn [refine_children_time refine_children_size length map fold_right].
+        time_unfold T_refine_children.
+        unfold Datatypes.T_fst, Datatypes.T_snd, Datatypes.T_orb. cbn beta zeta.
+        cbn [refine_children_size length map fold_right].
+        change (fst (refine_checked q n m)) with (refine q n m).
         autorewrite with env_time_nat.
         autorewrite with env_time_nat in Hn.
         autorewrite with env_time_nat in IH.
@@ -1495,7 +1503,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         (V.backward o q (map root ns)) m false) as Hchildren.
       pose proof (V.T_backward_le o q (map root ns)) as Hback.
       change (1 + (ListDef.T_map root T_root ns + V.T_backward o q (map root ns) +
-        refine_children_time ns (V.backward o q (map root ns)) m false) + 6 <=
+        T_refine_children ns (V.backward o q (map root ns)) m false) + 6 <=
         env_refine_factor * N.of_nat
           (ann_work (ANode o a ns) + ann_size (ANode o a ns) *
             (refine_size q (ANode o a ns) m + 1)))%N.
@@ -1524,15 +1532,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Definition assume_step (result : M.t V.t * bool) (nq : ann L.op X.t V.t * V.t) :=
     let next := refine_checked (snd nq) (fst nq) (fst result) in
     (fst next, orb (snd result) (snd next)).
-  (** The callback clock follows the generated projection and Boolean costs. *)
-  Definition assume_step_time (result : M.t V.t * bool)
-      (nq : ann L.op X.t V.t * V.t) :=
-    (1 + (Datatypes.T_snd nq + (Datatypes.T_fst nq + Datatypes.T_fst result) +
-      T_refine_checked (snd nq) (fst nq) (fst result) +
-      (let next := refine_checked (snd nq) (fst nq) (fst result) in
-      Datatypes.T_fst next +
-        (Datatypes.T_snd result + Datatypes.T_snd next +
-          Datatypes.T_orb (snd result) (snd next)))))%N.
+  TimeFun assume_step.
   (** Sequential guard requests record their largest encountered refinement charge. *)
   Fixpoint assume_children_size (nqs : list (ann L.op X.t V.t * V.t)) m :=
     match nqs with
@@ -1565,7 +1565,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
 
   (** Guard-request traversal pays for checked refinement and its constant callback overhead. *)
   Lemma assume_children_time_bound : forall nqs m bad,
-    (List.T_fold_left assume_step assume_step_time nqs (m, bad) <=
+    (List.T_fold_left assume_step T_assume_step nqs (m, bad) <=
       (env_refine_factor + 9) * N.of_nat
         (fold_right Nat.add 0%nat (map (fun nq => ann_work (fst nq)) nqs) +
           fold_right Nat.add 0%nat (map (fun nq => ann_size (fst nq)) nqs) *
@@ -1575,8 +1575,8 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     - change (1 <= (env_refine_factor + 9) * 0 + 1)%N. nia.
     - pose proof (refine_time_reserve q n m) as Hrefine.
       specialize (IH (refine q n m) (orb bad (snd (refine_checked q n m)))).
-      unfold List.T_fold_left at 1. fold (@List.T_fold_left _ _ assume_step assume_step_time).
-      cbn [assume_step assume_step_time fst snd map fold_right assume_children_size].
+      unfold List.T_fold_left at 1. fold (@List.T_fold_left _ _ assume_step T_assume_step).
+      cbn [assume_step T_assume_step fst snd map fold_right assume_children_size].
       unfold Datatypes.T_snd, Datatypes.T_fst, Datatypes.T_orb. cbn beta zeta.
       change (fst (refine_checked q n m)) with (refine q n m).
       autorewrite with env_time_nat in Hrefine, IH |- *.
@@ -1587,7 +1587,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       assert (Hwork : (1 <= N.of_nat (ann_work n))%N).
       { destruct n; cbn [ann_work]; lia. }
       change (N.of_nat 1) with 1%N in Hrefine, IH |- *.
-      change (assume_step_time (m, bad) (n, q)) with
+      change (T_assume_step (m, bad) (n, q)) with
         (1 + (3 + T_refine_checked q n m + 4))%N.
       change (assume_step (m, bad) (n, q)) with
         (refine q n m, orb bad (snd (refine_checked q n m))).
@@ -1596,7 +1596,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
   (** Annotated guard children share the original terms' work and shape charges. *)
   Lemma assume_children_annotations : forall m es qs bad,
-    (List.T_fold_left assume_step assume_step_time
+    (List.T_fold_left assume_step T_assume_step
       (combine (map (annotate m) es) qs) (m, bad) <=
       (env_refine_factor + 9) * N.of_nat
         (fold_right Nat.add 0%nat (map (tcost m) es) +
@@ -1674,7 +1674,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     assert (Hnslen : length ns = length es) by (unfold ns; apply length_map).
     rewrite Hnslen in Hcombine.
     unfold T_assume. cbn beta iota zeta. fold ns qs.
-    fold assume_step assume_step_time.
+    fold assume_step T_assume_step.
     rewrite time_map_sum, time_roots, Hnslen, Hroots.
     change (fun e : term L.op X.t => T_annotate m e) with (T_annotate m).
     unfold rsize, assume_size. fold ns qs. rewrite assume_size_fold.
