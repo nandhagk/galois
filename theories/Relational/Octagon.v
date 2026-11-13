@@ -4,13 +4,13 @@
     For example, joining upper bounds 3 and 5 retains the weaker bound 5.
     Builds on: OctagonSig, keyed map laws and numeric linearization. *)
 
-From Stdlib Require Import List ZArith NArith Lia.
+From Stdlib Require Import List Bool ZArith NArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
-From Galois.Relational Require Import LinForm LinearizeSig NumStateSig OctagonSig.
+From Galois.Relational Require Import LinForm LinearizeSig NumStateSig OctagonSig Zone.
 Local Open Scope nat_scope.
 
 Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%type
@@ -120,12 +120,6 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
         (M.remove (x, true) (M.remove (x, false) m)) M.empty)
     end.
 
-  (* STUB-CODE *)
-  Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
   Definition entry (m : dbm) (i j : K.t) : option Z :=
     match M.get i m with Some row => M.get j row | None => None end.
 
@@ -289,6 +283,186 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
       let tightened := strengthen (tighten next) in
       if matrix_ok tightened then Reached tightened else Unreached
     else Unreached.
+
+  (** Unary signed bounds divide by two, rounding toward negative infinity. *)
+  Definition variable_bounds (m : dbm) (x : X.t) : bnd * bnd :=
+    (match entry m (x, true) (x, false) with
+       Some d => Fin (- Z.div2 d)%Z | None => NegInf end,
+     match entry m (x, false) (x, true) with
+       Some d => Fin (Z.div2 d) | None => PosInf end).
+
+  Definition form_bounds (m : dbm) (f : lin X.t) : bnd * bnd :=
+    rel_form_bounds (variable_bounds m) f.
+
+  Definition range (e : term L.op X.t) (s : t) : bnd * bnd :=
+    match s with
+    | Unreached => (NegInf, PosInf)
+    | Reached m =>
+      match F.lin_of e with
+      | Some (f, r) => rel_wrap_bounds r (form_bounds m f)
+      | None => (NegInf, PosInf)
+      end
+    end.
+
+  Definition signed_unit (x : X.t) (a : Z) : option K.t :=
+    if (a =? 1)%Z then Some (x, true) else
+    if (a =? -1)%Z then Some (x, false) else None.
+
+  Inductive oct_shape : Type :=
+  | OctConstant
+  | OctDifference (i j : K.t) (double : bool).
+
+  Definition reverse_shape (shape : oct_shape) : oct_shape :=
+    match shape with
+    | OctConstant => OctConstant
+    | OctDifference i j double => OctDifference j i double
+    end.
+
+  (** A unary expression is doubled; two signed units already form a difference. *)
+  Definition difference_pair (cs : list (X.t * Z)) : option oct_shape :=
+    match cs with
+    | nil => Some OctConstant
+    | (x, a) :: nil =>
+      match signed_unit x a with
+      | Some k => Some (OctDifference (flip k) k true)
+      | None =>
+        if (a =? 2)%Z then Some (OctDifference (x, false) (x, true) false) else
+        if (a =? -2)%Z then Some (OctDifference (x, true) (x, false) false) else None
+      end
+    | (x, a) :: (y, b) :: nil =>
+      match signed_unit x a, signed_unit y b with
+      | Some i, Some j => Some (OctDifference (flip j) i false)
+      | _, _ => None
+      end
+    | _ => None
+    end.
+
+  (** Recognition inspects at most two coefficients and does not scan rejected forms. *)
+  Definition difference_forms (l r : lin X.t) : option oct_shape :=
+    match coef l, coef r with
+    | nil, rs =>
+      match difference_pair rs with Some shape => Some (reverse_shape shape) | None => None end
+    | ls, nil => difference_pair ls
+    | (x, a) :: nil, (y, b) :: nil =>
+      match signed_unit x a, signed_unit y b with
+      | Some i, Some j => Some (OctDifference j i false)
+      | _, _ => None
+      end
+    | _, _ => None
+    end.
+
+  Definition form_exact (m : dbm) (f : lin X.t) (r : wrapr) : bool :=
+    match r with NoWrap => true | _ => rel_wrap_exact r (form_bounds m f) end.
+
+  Definition refine (i j : K.t) (d : Z) (s : t) : t :=
+    match s with Unreached => Unreached | Reached m => incr_close i j d m end.
+
+  Definition scale_constraint (double : bool) (d : Z) : Z :=
+    if double then (2 * d)%Z else d.
+
+  Definition assume_cmp (c : cmp) (shape : oct_shape) (d : Z) (s : t) : t :=
+    match shape with
+    | OctConstant =>
+      if match c with CLe => (0 <=? d)%Z | CLt => (0 <? d)%Z | CEq => (0 =? d)%Z end
+      then s else Unreached
+    | OctDifference i j double =>
+      match c with
+      | CLe => refine i j (scale_constraint double d) s
+      | CLt => refine i j (scale_constraint double (d - 1)%Z) s
+      | CEq => refine j i (- scale_constraint double d)%Z
+          (refine i j (scale_constraint double d) s)
+      end
+    end.
+
+  Definition assume_atom (s : t) (a : atom X.t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      match difference_forms (al a) (ar a) with
+      | None => s
+      | Some shape =>
+        if andb (form_exact m (al a) (alw a)) (form_exact m (ar a) (arw a)) then
+          assume_cmp (acmp a) shape (cst (ar a) - cst (al a))%Z s
+        else s
+      end
+    end.
+
+  Definition assume (g : L.guard) (es : list (term L.op X.t)) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached _ => fold_left assume_atom (F.atoms_of g es) s
+    end.
+
+  Definition copy_source (f : lin X.t) : option K.t :=
+    match coef f with (x, a) :: nil => signed_unit x a | _ => None end.
+
+  Definition shift_column_row (k : K.t) (d : Z)
+      (r : option (M.t Z)) (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row =>
+      Some (match M.get k row with
+        | Some old => M.set k (old + d)%Z row
+        | None => row
+        end)
+    | None => None
+    end.
+
+  Definition shift_columns (k : K.t) (d : Z) (m : dbm) : dbm :=
+    M.merge (shift_column_row k d) m M.empty.
+
+  Definition shift_bound (d : Z) (old : option Z) (_ : option Z) : option Z :=
+    match old with Some z => Some (z - d)%Z | None => None end.
+
+  Definition shift_literal (k : K.t) (d : Z) (m : dbm) : dbm :=
+    let next := shift_columns k d m in
+    match M.get k next with
+    | Some row => M.set k (M.merge (shift_bound d) row M.empty) next
+    | None => next
+    end.
+
+  (** A self translation moves the positive and negative literals in opposite directions. *)
+  Definition shift (x : X.t) (d : Z) (m : dbm) : dbm :=
+    shift_literal (x, false) (-d)%Z (shift_literal (x, true) d m).
+
+  (** A copied source is retained unless it is the negative literal of the assigned variable. *)
+  Definition copy_allowed (x : X.t) (source : K.t) : bool :=
+    if X.eqb (fst source) x then snd source else true.
+
+  Definition assign_copy (x : X.t) (source : K.t) (d : Z) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      if K.eqb source (x, true) then Reached (shift x d m) else
+      refine (x, true) source (-d)%Z (refine source (x, true) d (havoc x s))
+    end.
+
+  Definition add_range (x : X.t) (bounds : bnd * bnd) (s : t) : t :=
+    let lower := match fst bounds with
+      | Fin lo => refine (x, true) (x, false) (-2 * lo)%Z s
+      | _ => s
+      end in
+    match snd bounds with
+    | Fin hi => refine (x, false) (x, true) (2 * hi)%Z lower
+    | _ => lower
+    end.
+
+  Definition assign (x : X.t) (e : term L.op X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      match F.lin_of e with
+      | None => havoc x s
+      | Some (f, r) =>
+        let bounds := form_bounds m f in
+        match copy_source f with
+        | Some source =>
+          if andb (copy_allowed x source) (rel_wrap_exact r bounds) then
+            assign_copy x source (cst f) s
+          else add_range x (rel_wrap_bounds r bounds) (havoc x s)
+        | None => add_range x (rel_wrap_bounds r bounds) (havoc x s)
+        end
+      end
+    end.
 End OctagonCode.
 
 Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
@@ -1198,14 +1372,190 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     destruct (X.eqb_spec (fst j) x) as [Hj|Hj]; [discriminate Hentry|].
     rewrite !vl_update_other by assumption. now apply Hmodel.
   Qed.
+  (** Unary entries bound twice the variable, so their halves bound the integer value. *)
+  Lemma variable_bounds_sound : forall m v x, models m v ->
+    in_bnd (fst (variable_bounds m x)) (snd (variable_bounds m x)) (v x).
+  Proof.
+    intros m v x Hmodel.
+    assert (Hlower : forall d, entry m (x, true) (x, false) = Some d ->
+      (- Z.div2 d <= v x)%Z).
+    { intros d Hd. pose proof (Hmodel (x, true) (x, false) d Hd) as Hbound.
+      unfold vl in Hbound. cbn [fst snd] in Hbound.
+      pose proof (div2_lower d (- v x)%Z ltac:(lia)). lia. }
+    assert (Hupper : forall d, entry m (x, false) (x, true) = Some d ->
+      (v x <= Z.div2 d)%Z).
+    { intros d Hd. pose proof (Hmodel (x, false) (x, true) d Hd) as Hbound.
+      unfold vl in Hbound. cbn [fst snd] in Hbound. apply div2_lower. lia. }
+    unfold variable_bounds.
+    destruct (entry m (x, true) (x, false)) as [lo|] eqn:Hlo;
+      destruct (entry m (x, false) (x, true)) as [hi|] eqn:Hhi;
+      cbn [fst snd in_bnd]; split; try exact I; auto.
+  Qed.
+
+  Lemma form_bounds_sound : forall m v f, models m v ->
+    in_bnd (fst (form_bounds m f)) (snd (form_bounds m f)) (eval_lin v f).
+  Proof.
+    intros m v f Hmodel. apply rel_form_bounds_sound.
+    intro x. now apply variable_bounds_sound.
+  Qed.
+
+  (** A recognized signed unit has exactly its selected literal's value. *)
+  Lemma signed_unit_sound : forall x a k v, signed_unit x a = Some k ->
+    vl v k = (a * v x)%Z.
+  Proof.
+    intros x a k v Hunit. unfold signed_unit in Hunit.
+    destruct (a =? 1)%Z eqn:Hpos.
+    - apply Z.eqb_eq in Hpos. subst a. inversion Hunit; subst k.
+      unfold vl. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+    - destruct (a =? -1)%Z eqn:Hneg; [|discriminate Hunit].
+      apply Z.eqb_eq in Hneg. subst a. inversion Hunit; subst k.
+      unfold vl. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+  Qed.
+
+  (** A recognized shape denotes either zero or its possibly doubled signed difference. *)
+  Definition shape_relation (v : X.t -> Z) (shape : oct_shape) (z : Z) : Prop :=
+    match shape with
+    | OctConstant => z = 0%Z
+    | OctDifference i j double => scale_constraint double z = (vl v j - vl v i)%Z
+    end.
+
+  Lemma reverse_shape_relation : forall v shape z,
+    shape_relation v shape z -> shape_relation v (reverse_shape shape) (-z)%Z.
+  Proof.
+    intros v [|i j double] z Hrelation; [cbn [shape_relation reverse_shape] in *; lia|].
+    destruct double; cbn [shape_relation reverse_shape scale_constraint] in *; lia.
+  Qed.
+
+  (** Recognition preserves the value of every supported coefficient pattern. *)
+  Lemma difference_pair_sound : forall cs v shape,
+    difference_pair cs = Some shape -> shape_relation v shape (eval_coef v cs).
+  Proof.
+    intros cs v shape Hpair. destruct cs as [|[x a] cs].
+    - inversion Hpair; subst shape. reflexivity.
+    - destruct cs as [|[y b] cs].
+      + unfold difference_pair in Hpair.
+        destruct (signed_unit x a) as [k|] eqn:Hunit.
+        * inversion Hpair; subst shape. unfold shape_relation, scale_constraint.
+          rewrite vl_flip, (signed_unit_sound x a k v Hunit).
+          unfold eval_coef. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+        * destruct (a =? 2)%Z eqn:Htwo.
+          -- apply Z.eqb_eq in Htwo. subst a. inversion Hpair; subst shape.
+             unfold shape_relation, scale_constraint, eval_coef, vl.
+             cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+          -- destruct (a =? -2)%Z eqn:Hneg; [|discriminate Hpair].
+             apply Z.eqb_eq in Hneg. subst a. inversion Hpair; subst shape.
+             unfold shape_relation, scale_constraint, eval_coef, vl.
+             cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+      + destruct cs as [|p cs]; [|discriminate Hpair].
+        unfold difference_pair in Hpair.
+        destruct (signed_unit x a) as [i|] eqn:Hi; [|discriminate Hpair].
+        destruct (signed_unit y b) as [j|] eqn:Hj; [|discriminate Hpair].
+        inversion Hpair; subst shape. unfold shape_relation, scale_constraint.
+        rewrite vl_flip, (signed_unit_sound x a i v Hi), (signed_unit_sound y b j v Hj).
+        unfold eval_coef. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+  Qed.
+
+  Lemma difference_forms_sound : forall l r v shape,
+    difference_forms l r = Some shape ->
+    shape_relation v shape (eval_coef v (coef l) - eval_coef v (coef r))%Z.
+  Proof.
+    intros [ls lc] [rs rc] v shape Hpair. unfold difference_forms in Hpair.
+    cbn [coef] in Hpair |- *. destruct ls as [|[x a] xs].
+    - destruct (difference_pair rs) as [recognized|] eqn:Hrecognized;
+        [|discriminate Hpair].
+      inversion Hpair; subst shape.
+      replace (eval_coef v nil - eval_coef v rs)%Z with (- eval_coef v rs)%Z
+        by (unfold eval_coef; cbn; lia).
+      apply reverse_shape_relation. now apply difference_pair_sound.
+    - destruct rs as [|[y b] ys].
+      + change (shape_relation v shape (eval_coef v ((x, a) :: xs) - 0)%Z).
+        rewrite Z.sub_0_r. now apply difference_pair_sound.
+      + destruct xs as [|p xs], ys as [|q ys]; try discriminate Hpair.
+        destruct (signed_unit x a) as [i|] eqn:Hi; [|discriminate Hpair].
+        destruct (signed_unit y b) as [j|] eqn:Hj; [|discriminate Hpair].
+        inversion Hpair; subst shape. unfold shape_relation, scale_constraint.
+        rewrite (signed_unit_sound x a i v Hi), (signed_unit_sound y b j v Hj).
+        unfold eval_coef. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+  Qed.
+
+  Lemma form_exact_sound : forall m f r v, models m v -> form_exact m f r = true ->
+    wrap_into r (eval_lin v f) = eval_lin v f.
+  Proof.
+    intros m f [|lo hi] v Hmodel Hexact; [reflexivity|].
+    apply (rel_wrap_exact_sound (WrapTo lo hi) (form_bounds m f)).
+    - now apply form_bounds_sound.
+    - exact Hexact.
+  Qed.
+
+  Lemma refine_sound : forall i j d s v, ngamma s v ->
+    (vl v j - vl v i <= d)%Z -> ngamma (refine i j d s) v.
+  Proof.
+    intros i j d [|m] v Hmodel Hbound; [exact Hmodel|]. now apply incr_close_models.
+  Qed.
+
+  Lemma assume_cmp_sound : forall c shape d s v z, ngamma s v ->
+    shape_relation v shape z ->
+    (match c with CLe => (z <= d)%Z | CLt => (z < d)%Z | CEq => z = d end) ->
+    ngamma (assume_cmp c shape d s) v.
+  Proof.
+    intros c [|i j double] d s v z Hmodel Hrelation Hbound.
+    - cbn [shape_relation] in Hrelation. subst z.
+      destruct c; cbn [assume_cmp] in *.
+      + destruct (0 <=? d)%Z eqn:Htest; [exact Hmodel|].
+        apply Z.leb_gt in Htest. lia.
+      + destruct (0 <? d)%Z eqn:Htest; [exact Hmodel|].
+        apply Z.ltb_ge in Htest. lia.
+      + destruct (0 =? d)%Z eqn:Htest; [exact Hmodel|].
+        apply Z.eqb_neq in Htest. lia.
+    - destruct double, c; cbn [shape_relation scale_constraint assume_cmp] in *;
+        repeat (apply refine_sound; [|lia]); exact Hmodel.
+  Qed.
+
+  (** Every recognized atom contributes constraints implied by its integer comparison. *)
+  Lemma assume_atom_sound : forall s a v, ngamma s v -> atom_holds v a ->
+    ngamma (assume_atom s a) v.
+  Proof.
+    intros [|m] a v Hmodel Hatom; [exact Hmodel|].
+    unfold assume_atom. destruct (difference_forms (al a) (ar a)) as [shape|] eqn:Hpair;
+      [|exact Hmodel].
+    destruct (andb (form_exact m (al a) (alw a))
+      (form_exact m (ar a) (arw a))) eqn:Hexact; [|exact Hmodel].
+    apply andb_true_iff in Hexact. destruct Hexact as [Hl Hr].
+    unfold atom_holds in Hatom.
+    rewrite (form_exact_sound m (al a) (alw a) v Hmodel Hl),
+      (form_exact_sound m (ar a) (arw a) v Hmodel Hr) in Hatom.
+    pose proof (difference_forms_sound (al a) (ar a) v shape Hpair) as Hdiff.
+    eapply assume_cmp_sound; [exact Hmodel|exact Hdiff|].
+    unfold eval_lin in Hatom. destruct (acmp a); lia.
+  Qed.
+
+  Lemma assume_atoms_sound : forall atoms s v, ngamma s v ->
+    Forall (atom_holds v) atoms -> ngamma (fold_left assume_atom atoms s) v.
+  Proof.
+    induction atoms as [|a atoms IH]; intros s v Hmodel Hatoms.
+    - exact Hmodel.
+    - inversion Hatoms as [|a' atoms' Ha Htail]; subst.
+      apply IH; [now apply assume_atom_sound|exact Htail].
+  Qed.
+
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [|m] st cs Hmodel Heval Hholds; [exact Hmodel|].
+    apply assume_atoms_sound; [exact Hmodel|]. now apply (F.atoms_sound g es st cs).
+  Qed.
+
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [|m] st c Hmodel Heval; [contradiction|].
+    unfold range. destruct (F.lin_of e) as [[f r]|] eqn:Hlinear.
+    - rewrite (F.lin_sound st e c f r Heval Hlinear).
+      apply rel_wrap_bounds_sound. now apply form_bounds_sound.
+    - unfold in_bnd. cbn. tauto.
+  Qed.
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
   Proof.
@@ -1317,6 +1667,32 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun twin_prefix.
   TimeFun increment_row.
   TimeFun matrix_ok.
+  TimeFun fw.
+  TimeFun tighten.
+  TimeFun strengthen.
+  TimeFun tclose.
+  TimeFun incr_close.
+  TimeFun variable_bounds.
+  TimeFun form_bounds.
+  TimeFun signed_unit.
+  TimeFun reverse_shape.
+  TimeFun difference_pair.
+  TimeFun difference_forms.
+  TimeFun form_exact.
+  TimeFun refine.
+  TimeFun scale_constraint.
+  TimeFun assume_cmp.
+  TimeFun assume_atom.
+  TimeFun copy_source.
+  TimeFun shift_column_row.
+  TimeFun shift_columns.
+  TimeFun shift_bound.
+  TimeFun shift_literal.
+  TimeFun shift.
+  TimeFun copy_allowed.
+  TimeFun havoc.
+  TimeFun assign_copy.
+  TimeFun add_range.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -1326,14 +1702,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun widen.
   TimeFun narrow.
   TimeFun assign.
-  TimeFun havoc.
   TimeFun assume.
   TimeFun range.
-  TimeFun fw.
-  TimeFun tighten.
-  TimeFun strengthen.
-  TimeFun tclose.
-  TimeFun incr_close.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)

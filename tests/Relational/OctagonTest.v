@@ -6,13 +6,14 @@
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key Map Trie.
-From Galois.Domains Require Import ZLang.
+From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import Linearize Octagon.
+Import ListNotations.
 
 Module OctKey := PairKeyCode PosKeyCode BoolKeyCode.
 Module OctMap := TrieMapCode OctKey.
-Module Forms := LinearizeCode PosKeyCode ZLangCode.
+Module Forms := ZLinearizeCode PosKeyCode.
 Module Oct := OctagonCode PosKeyCode OctKey OctMap ZLangCode Forms.
 
 Definition positive_x := (1%positive, true).
@@ -168,6 +169,113 @@ Example repeated_label_closure_asymmetric :
      Oct.entry closed (Oct.flip z) (Oct.flip positive_x))
   | Unreached => (None, None)
   end = (Some 2%Z, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Range evaluation rounds unary bounds before combining an affine expression. *)
+Example affine_range_negative_coefficient :
+  let m := Oct.add_cons positive_x (Oct.flip positive_x) (-4)%Z
+    (Oct.add_cons (Oct.flip positive_x) positive_x 10%Z OctMap.empty) in
+  Oct.range (Node ZSub [Node (ZConst 10%Z) []; Leaf 1%positive]) (Reached m) =
+    (Fin 5%Z, Fin 8%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An octagonal sum supplies both signed twins after a strict integer guard. *)
+Example assume_strict_sum :
+  match Oct.assume (ZGuardCmp Lt)
+    [Node ZAdd [Leaf 1%positive; Leaf 2%positive]; Node (ZConst 4%Z) []] Oct.top with
+  | Reached m =>
+    (Oct.entry m (Oct.flip positive_y) positive_x,
+     Oct.entry m (Oct.flip positive_x) positive_y)
+  | Unreached => (None, None)
+  end = (Some 3%Z, Some 3%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A unary strict guard doubles its integral difference bound. *)
+Example assume_unary_strict :
+  match Oct.assume (ZGuardCmp Lt)
+    [Leaf 1%positive; Node (ZConst 4%Z) []] Oct.top with
+  | Reached m => Oct.entry m (Oct.flip positive_x) positive_x
+  | Unreached => None
+  end = Some 6%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A doubled unary coefficient retains the tighter integral upper bound. *)
+Example assume_doubled_unary :
+  Oct.range (Leaf 1%positive)
+    (Oct.assume (ZGuardCmp Lt)
+      [Node ZMul [Node (ZConst 2%Z) []; Leaf 1%positive]; Node (ZConst 6%Z) []]
+      Oct.top) = (NegInf, Fin 2%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An impossible constant comparison is detected without a distinguished zero literal. *)
+Example assume_false_constants :
+  Oct.assume (ZGuardCmp Lt)
+    [Node (ZConst 5%Z) []; Node (ZConst 2%Z) []] Oct.top = Unreached.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A constant assignment gives an exact singleton from the unconstrained state. *)
+Example assign_constant :
+  Oct.range (Leaf 1%positive)
+    (Oct.assign 1%positive (Node (ZConst 7%Z) []) Oct.top) = (Fin 7%Z, Fin 7%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A negative copy preserves the signed equality and the resulting unary interval. *)
+Example assign_negative_copy :
+  let m := Oct.add_cons positive_y (Oct.flip positive_y) (-2)%Z
+    (Oct.add_cons (Oct.flip positive_y) positive_y 8%Z OctMap.empty) in
+  let next := Oct.assign 1%positive
+    (Node ZSub [Node (ZConst 3%Z) []; Leaf 2%positive]) (Reached m) in
+  (Oct.range (Leaf 1%positive) next,
+   match next with
+   | Reached n =>
+     (Oct.entry n (Oct.flip positive_y) positive_x,
+      Oct.entry n positive_x (Oct.flip positive_y))
+   | Unreached => (None, None)
+   end) = ((Fin (-1)%Z, Fin 2%Z), (Some 3%Z, Some (-3)%Z)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A self translation shifts both signed literals and retains foreign-variable relations. *)
+Example assign_self_shift :
+  let m := Oct.add_cons positive_x positive_y 4%Z
+    (Oct.add_cons positive_x (Oct.flip positive_x) (-4)%Z
+      (Oct.add_cons (Oct.flip positive_x) positive_x 10%Z OctMap.empty)) in
+  let next := Oct.assign 1%positive
+    (Node ZAdd [Leaf 1%positive; Node (ZConst 2%Z) []]) (Reached m) in
+  (Oct.range (Leaf 1%positive) next,
+   match next with
+   | Reached n =>
+     (Oct.entry n positive_x positive_y,
+      Oct.entry n (Oct.flip positive_y) (Oct.flip positive_x))
+   | Unreached => (None, None)
+   end) = ((Fin 4%Z, Fin 7%Z), (Some 2%Z, Some 2%Z)).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A negative self assignment conservatively retains the evaluated output interval. *)
+Example assign_negative_self_range :
+  let m := Oct.add_cons positive_x (Oct.flip positive_x) (-4)%Z
+    (Oct.add_cons (Oct.flip positive_x) positive_x 10%Z OctMap.empty) in
+  Oct.range (Leaf 1%positive)
+    (Oct.assign 1%positive
+      (Node ZSub [Node (ZConst 3%Z) []; Leaf 1%positive]) (Reached m)) =
+    (Fin (-2)%Z, Fin 1%Z).
 Proof.
   vm_compute. reflexivity.
 Qed.
