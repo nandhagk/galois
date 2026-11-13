@@ -2995,8 +2995,168 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     (T_fw_round k m <= k_octagon * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   Proof. Admitted. (* STUB *)
+  (** Replacing one raw row preserves any common payload-bit allowance. *)
+  Lemma ell_set_row : forall m k row upper,
+    ell m <= upper ->
+    (forall q z, M.find q row = Some z -> Z.size_nat z <= upper) ->
+    ell (M.set k row m) <= upper.
+  Proof.
+    intros m k row upper Hm Hrow. apply ell_bound. intros p q z Hentry.
+    unfold raw_entry in Hentry. rewrite M.find_set in Hentry.
+    destruct (Pos.eqb p (K.encode k)); cbn [row_of] in Hentry.
+    - now apply (Hrow q z).
+    - eapply Nat.le_trans; [eapply ell_entry; exact Hentry|exact Hm].
+  Qed.
+
+  (** Choosing old or replacement rows preserves their common bit bound. *)
+  Lemma ell_replace_rows : forall m changed upper,
+    ell m <= upper -> ell changed <= upper ->
+    ell (M.merge replace_row m changed) <= upper.
+  Proof.
+    intros m changed upper Hm Hchanged. apply ell_bound. intros p q z Hentry.
+    unfold raw_entry in Hentry. rewrite M.find_merge in Hentry by reflexivity.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [replace_row row_of] in Hentry.
+    - destruct (M.find p changed) as [fresh|] eqn:Hfresh;
+        cbn [row_of] in Hentry.
+      + eapply Nat.le_trans; [eapply (ell_entry changed p q z)|exact Hchanged].
+        unfold raw_entry. now rewrite Hfresh.
+      + eapply Nat.le_trans; [eapply (ell_entry m p q z)|exact Hm].
+        unfold raw_entry. now rewrite Hrow.
+    - rewrite M.find_empty in Hentry. discriminate.
+  Qed.
+
+  (** Rounding a unary bound down to an even integer costs at most one bit. *)
+  Lemma even_bound_bits : forall d,
+    Z.size_nat (even_bound d) <= Z.size_nat d + 1.
+  Proof.
+    intro d. unfold even_bound.
+    replace (2 * Z.div2 d)%Z with (Z.div2 d + Z.div2 d)%Z by ring.
+    apply zbits_add_bound; apply zbits_div2.
+  Qed.
+
+  Lemma tighten_row_bits : forall m changed k ignored,
+    ell changed <= ell m + 1 -> ell (tighten_row m changed k ignored) <= ell m + 1.
+  Proof.
+    intros m changed k ignored Hchanged. unfold tighten_row.
+    destruct (M.get k changed); [exact Hchanged|].
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    destruct (M.get (flip k) row) as [d|] eqn:Hbound; [|exact Hchanged].
+    apply ell_set_row; [exact Hchanged|]. intros q z Hentry.
+    rewrite M.find_set in Hentry.
+    destruct (Pos.eqb q (K.encode (flip k))) eqn:Hkey.
+    - injection Hentry as <-. eapply Nat.le_trans; [apply even_bound_bits|].
+      assert (Hd : Z.size_nat d <= ell m).
+      { eapply (ell_entry m (K.encode k) (K.encode (flip k)) d).
+        unfold raw_entry. rewrite <- (M.get_find (M.t Z) k m), Hrow. cbn [row_of].
+        now rewrite <- (M.get_find Z (flip k) row). }
+      lia.
+    - assert (Hz : Z.size_nat z <= ell m).
+      { eapply (ell_entry m (K.encode k) q z).
+        unfold raw_entry. rewrite <- (M.get_find (M.t Z) k m), Hrow. exact Hentry. }
+      lia.
+  Qed.
+
+  (** Unary collection retains the source lookup of every stored payload. *)
+  Definition unary_origins (m : dbm) (acc : M.t Z * M.t Z) : Prop :=
+    (forall p d, M.find p (fst acc) = Some d ->
+      exists k, p = K.encode k /\ entry m k (flip k) = Some d) /\
+    (forall p d, M.find p (snd acc) = Some d ->
+      exists k, p = K.encode (flip k) /\ entry m k (flip k) = Some d).
+
+  Lemma unary_maps_origins : forall m acc k ignored,
+    unary_origins m acc -> unary_origins m (unary_maps m acc k ignored).
+  Proof.
+    intros m acc k ignored [Hleft Hright]. unfold unary_maps.
+    destruct (entry m k (flip k)) as [d|] eqn:Hsource; [|now split].
+    split; intros p z Hentry; cbn [fst snd] in Hentry;
+      rewrite M.find_set in Hentry.
+    - destruct (Pos.eqb p (K.encode k)) eqn:Hkey.
+      + apply Pos.eqb_eq in Hkey. injection Hentry as <-.
+        exists k. now split.
+      + now apply Hleft.
+    - destruct (Pos.eqb p (K.encode (flip k))) eqn:Hkey.
+      + apply Pos.eqb_eq in Hkey. injection Hentry as <-.
+        exists k. now split.
+      + now apply Hright.
+  Qed.
+
+  Lemma collect_unary_origins : forall m,
+    unary_origins m (M.fold (unary_maps m) m (M.empty, M.empty)).
+  Proof.
+    intro m. apply (fold_invariant _ _ (unary_origins m)).
+    - split; intros p d Hentry; cbn [fst snd] in Hentry;
+        rewrite M.find_empty in Hentry; discriminate.
+    - intros acc k ignored Hacc. now apply unary_maps_origins.
+  Qed.
+
+  (** An integer average stays within the common bit bound of its operands. *)
+  Lemma average_bits : forall a b upper,
+    Z.size_nat a <= upper -> Z.size_nat b <= upper ->
+    Z.size_nat (Z.div2 (a + b)) <= upper.
+  Proof.
+    intros a b upper Ha Hb. apply zbits_least.
+    pose proof (zbits_abs_bound a upper Ha) as HabsA.
+    pose proof (zbits_abs_bound b upper Hb) as HabsB.
+    assert (HA : (Z.abs a < Z.of_nat (2 ^ upper))%Z).
+    { rewrite <- Zabs2Nat.id_abs. lia. }
+    assert (HB : (Z.abs b < Z.of_nat (2 ^ upper))%Z).
+    { rewrite <- Zabs2Nat.id_abs. lia. }
+    apply Z.abs_lt in HA. apply Z.abs_lt in HB.
+    apply (proj2 (Nat2Z.inj_lt _ _)).
+    rewrite Zabs2Nat.id_abs, Z.div2_div. apply Z.abs_lt.
+    pose proof (Z.div_mod (a + b) 2 ltac:(lia)) as Hdiv.
+    pose proof (Z.mod_pos_bound (a + b) 2 ltac:(lia)) as Hrem.
+    lia.
+  Qed.
+
+  (** Strengthening averages validated unary bounds and never enlarges the payload maximum. *)
+  Lemma bits_strengthen_le : forall m, ell (strengthen m) <= ell m.
+  Proof.
+    intro m. unfold strengthen.
+    remember (M.fold (unary_maps m) m (M.empty, M.empty)) as unaries eqn:Hunaries.
+    pose proof (collect_unary_origins m) as Horigins.
+    rewrite <- Hunaries in Horigins. destruct Horigins as [Hleft Hright].
+    apply ell_bound. intros p q z Hentry.
+    unfold raw_entry in Hentry. rewrite M.find_merge in Hentry by reflexivity.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [strengthen_outer row_of] in Hentry.
+    - assert (Hold : forall d, M.find q row = Some d -> Z.size_nat d <= ell m).
+      { intros d Hd. eapply (ell_entry m p q d). unfold raw_entry. now rewrite Hrow. }
+      destruct (M.find p (fst unaries)) as [a|] eqn:Ha.
+      + rewrite M.find_merge in Hentry by reflexivity.
+        unfold strengthen_bound in Hentry.
+        destruct (M.find q (snd unaries)) as [b|] eqn:Hb.
+        * injection Hentry as <-. apply lower_bound_size; [|exact Hold].
+          destruct (Hleft p a Ha) as [i [Hi Hai]].
+          destruct (Hright q b Hb) as [j [Hj Hbj]].
+          apply average_bits.
+          -- eapply ell_entry. rewrite raw_entry_get. exact Hai.
+          -- eapply ell_entry. rewrite raw_entry_get. exact Hbj.
+        * now apply Hold.
+      + now apply Hold.
+    - rewrite M.find_empty in Hentry. discriminate.
+  Qed.
+
+  (** Tightening and strengthening preserve all original outer labels. *)
+  Lemma weight_tighten : forall m, M.weight (tighten m) <= M.weight m.
+  Proof.
+    intro m. unfold tighten. apply M.weight_merge_l. reflexivity.
+  Qed.
+
+  Lemma weight_strengthen : forall m, M.weight (strengthen m) <= M.weight m.
+  Proof.
+    intro m. unfold strengthen. apply M.weight_merge_l. reflexivity.
+  Qed.
+
+
   Lemma bits_tighten_le : forall m, ell (tighten m) <= ell m + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro m. unfold tighten. apply ell_replace_rows; [lia|].
+    apply (fold_invariant _ _ (fun changed => ell changed <= ell m + 1)).
+    - apply ell_bound. intros p q z Hentry. unfold raw_entry in Hentry.
+      rewrite M.find_empty in Hentry. cbn [row_of] in Hentry.
+      rewrite M.find_empty in Hentry. discriminate.
+    - intros changed k ignored Hchanged. now apply tighten_row_bits.
+  Qed.
   Lemma T2_tighten : forall m, dbm_wf m ->
     (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof. Admitted. (* STUB *)
