@@ -337,7 +337,6 @@ Proof.
     time_simpl; time_cbn; lia.
 Qed.
 
-
 (** Finite bounds with an absent value interpreted as positive infinity. *)
 Module RelationalPathBounds.
   Definition below (a b : option Z) : Prop :=
@@ -5878,6 +5877,49 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     set (node_charge := (unit * nodes)%N) in *.
     clearbody count_charge node_charge. lia.
   Qed.
+  (** The actual affine fold is linear in source size at the squared bit charge. *)
+  Lemma T_form_bounds_source : forall e m f r,
+    F.lin_of e = Some (f, r) ->
+    (T_form_bounds m f <= 1024 * (M.c_map + 1) *
+      (N.of_nat ((tsize e + 1)%nat) * range_unit e m))%N.
+  Proof.
+    intros e m [cs c] r Hlin.
+    destruct (F.lin_of_size e (Lin X.t cs c) r Hlin) as [Hcount Hbits].
+    cbn [coef] in Hcount.
+    time_unfold (@T_form_bounds). time_simpl. time_cbn.
+    time_unfold (@T_rel_form_bounds). time_simpl. time_cbn.
+    lazymatch goal with
+    | |- context [Std.List.T_fold_right ?ff ?tf ?seed ?xs] =>
+      assert (Hfold : (Std.List.T_fold_right ff tf seed xs <=
+        (512 * ((M.c_map + 1) * range_unit e m) + 1) *
+          N.of_nat (length xs) + 1)%N)
+    end.
+    { apply rel_fold_right_time. intros before p after Heq.
+      assert (Hin : In p (coef (Lin X.t cs c))).
+      { cbn [coef]. rewrite Heq. apply in_or_app. right. now left. }
+      assert (Hincl : incl after (coef (Lin X.t cs c))).
+      { intros q Hq. cbn [coef]. rewrite Heq. apply in_or_app. right. now right. }
+      assert (Hafter : length after <= tsize e).
+      { rewrite Heq, length_app in Hcount. cbn [length] in Hcount. lia. }
+      pose proof (form_bounds_step_time e m (Lin X.t cs c) r p after
+        Hlin Hin Hincl Hafter) as Hstep.
+      unfold rel_form_bounds in Hstep. cbn [coef cst] in Hstep.
+      replace (512 * (M.c_map + 1) * range_unit e m)%N with
+        (512 * ((M.c_map + 1) * range_unit e m))%N in Hstep by ring.
+      eapply N.le_trans; [|exact Hstep]. time_simpl. time_cbn. lia. }
+    assert (Hunit : (1 <= (M.c_map + 1) * range_unit e m)%N).
+    { eapply N.le_trans; [apply range_unit_positive|].
+      replace (range_unit e m) with (1 * range_unit e m)%N at 1 by ring.
+      apply N.mul_le_mono_r. lia. }
+    pose proof (time_of_nat_le _ _ Hcount) as HcountN.
+    pose proof (range_fold_budget _ _ _ _ Hunit HcountN Hfold) as Htotal.
+    rewrite Nat2N.inj_add. change (N.of_nat 1%nat) with 1%N.
+    replace (1024 * (M.c_map + 1) *
+      ((N.of_nat (tsize e) + 1) * range_unit e m))%N with
+      (1024 * ((M.c_map + 1) * range_unit e m) * (N.of_nat (tsize e) + 1))%N
+      by ring.
+    eapply N.le_trans; [|exact Htotal]. lia.
+  Qed.
   (** State refinement inherits the raw incremental resource bounds. *)
   Lemma grow_refine : forall i j d s,
     ns (refine i j d s) <= ns s + 2 /\
@@ -5939,4 +5981,5 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     intro m. pose proof (Nat.log2_le_mono _ _ (support_cardinality_power m)) as Hlog.
     rewrite Nat.log2_pow2 in Hlog by lia. exact Hlog.
   Qed.
+
 End ZoneT.
