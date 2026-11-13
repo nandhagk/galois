@@ -8994,6 +8994,25 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       [exact Hq|exact Hhead|exact Hread|exact Hraw].
   Qed.
 
+  Definition invalid_done_work (st : state)
+      (acc : incremental_invalidation S.key) : nat :=
+    finite_sum (fun x => infl_deg st x + length (cowrite_at st x) + 1)
+      (invalid_done acc).
+
+  Lemma invalid_next_done_work : forall st x pending seen bad done snapshots,
+    invalid_done_work st (invalid_next st x pending seen bad done snapshots) =
+      infl_deg st x + length (cowrite_at st x) + 1 +
+        invalid_done_work st
+          {| invalid_pending := x :: pending; invalid_seen := seen;
+             invalid_bad := bad; invalid_done := done;
+             invalid_snapshots := snapshots |}.
+  Proof.
+    intros st x pending seen bad done snapshots.
+    unfold invalid_done_work, invalid_next.
+    rewrite invalid_snapshot_fold_done.
+    reflexivity.
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
