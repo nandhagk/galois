@@ -4330,6 +4330,42 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     rewrite Z.div_mul by lia. now rewrite Z.min_id.
   Qed.
 
+  Lemma strengthen_below_old : forall m, dbm_wf m -> forall i j,
+    RelationalPathBounds.below (entry (strengthen m) i j) (entry m i j).
+  Proof.
+    intros m Hwf i j. rewrite entry_strengthen_exact by exact Hwf.
+    destruct (entry m i (flip i)) as [a|]; [|apply RelationalPathBounds.below_refl].
+    destruct (entry m (flip j) j) as [z|];
+      destruct (entry m i j) as [old|]; cbn [strengthen_bound lower_bound
+        RelationalPathBounds.below]; try exact I; lia.
+  Qed.
+
+  (** Strengthening enforces the unary average at every finite unary pair. *)
+  Lemma strengthen_strong_clause : forall m, dbm_wf m ->
+    forall i j a z,
+      entry (strengthen m) i (flip i) = Some a ->
+      entry (strengthen m) (flip j) j = Some z ->
+      exists d, entry (strengthen m) i j = Some d /\ (2 * d <= a + z)%Z.
+  Proof.
+    intros m Hwf i j a z Hleft Hright.
+    rewrite entry_strengthen_unary in Hleft by exact Hwf.
+    assert (Hright' : entry (strengthen m) (flip j) (flip (flip j)) = Some z).
+    { now rewrite flip_involutive. }
+    rewrite entry_strengthen_unary in Hright' by exact Hwf.
+    rewrite flip_involutive in Hright'.
+    rewrite entry_strengthen_exact by exact Hwf.
+    rewrite Hleft, Hright'. cbn [strengthen_bound].
+    destruct (entry m i j) as [old|];
+      [exists (Z.min (Z.div2 (a + z)) old)|exists (Z.div2 (a + z))];
+      split; [reflexivity| |reflexivity|].
+    - pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      rewrite Z.div2_div. lia.
+    - pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      rewrite Z.div2_div. lia.
+  Qed.
+
   Lemma coherent_strengthen : forall m, coherent m -> coherent (strengthen m).
   Proof.
     intros m Hcoh i j.
