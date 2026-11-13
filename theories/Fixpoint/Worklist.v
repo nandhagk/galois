@@ -364,7 +364,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Definition k_credit : N := 1%N. (* STUB *)
   Definition k_round : N := 1%N. (* STUB *)
   Definition k_loop : N := 1%N. (* STUB *)
-  Definition k_fuel : N := 1%N. (* STUB *)
+  Definition k_fuel : N := 1%N.
   Definition c_solve : N := c_wl.
 
   Definition work (p : S.prog) (pol : policy L.wparam) : N :=
@@ -3253,24 +3253,404 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       k_round * N.of_nat (head_events pol s s1) * head_unit p pol +
       queue_phi p s)%N.
   Proof. Admitted. (* STUB *)
+  (** Preparation initializes every encoded counter to zero. *)
+  Lemma counter_prepare_zero : forall p pol c, counter (prepare p pol) c = 0%N.
+  Proof.
+    intros p pol c; unfold prepare; rewrite counter_enqueue.
+    unfold counter; cbn [ws_counters].
+    now rewrite PTrie.get_empty.
+  Qed.
+
+  (** A policy fold exposes its first contribution to the remaining suffix. *)
+  Lemma policy_updates_cons : forall pol c cnt a b news,
+    P.run_updates pol c cnt a (b :: news) =
+      P.run_updates pol c (snd (P.update pol c cnt a b))
+        (fst (P.update pol c cnt a b)) news.
+  Proof.
+    intros pol c cnt a b news; unfold P.run_updates; cbn [fold_left fst snd].
+    destruct (P.update pol c cnt a b); reflexivity.
+  Qed.
+
+  (** Appending histories composes the corresponding policy folds. *)
+  Lemma policy_updates_app : forall pol c cnt a news more,
+    P.run_updates pol c cnt a (news ++ more) =
+      P.run_updates pol c (snd (P.run_updates pol c cnt a news))
+        (fst (P.run_updates pol c cnt a news)) more.
+  Proof.
+    intros pol c cnt a news more; unfold P.run_updates; rewrite fold_left_app.
+    destruct (fold_left (fun ac new => P.update pol c (snd ac) (fst ac) new)
+      news (a, cnt)); reflexivity.
+  Qed.
+
+  (** The selected history retains contributions at one encoded key in occurrence order. *)
+  Definition code_news (c : positive) (outs : list (S.key * L.t)) : list L.t :=
+    fold_right (fun xa news =>
+      if Pos.eqb c (S.key_code (fst xa)) then snd xa :: news else news) nil outs.
+
+  (** Selecting a key's history retains the invariant of every emitted value. *)
+  Lemma code_news_inv : forall p c outs,
+    Forall (fun xa => B.inv p (snd xa)) outs -> Forall (B.inv p) (code_news c outs).
+  Proof.
+    intros p c outs Houts; induction Houts as [|[x a] outs Ha Houts IH].
+    - constructor.
+    - cbn [code_news fold_right fst snd].
+      destruct (Pos.eqb c (S.key_code x)); [constructor|]; assumption.
+  Qed.
+
+  (** Each output fold is the policy fold over the selected key's actual contributions. *)
+  Lemma fold_code_news : forall p pol outs s c,
+    (raw_value (fold_left (update_one p pol) outs s) c,
+      counter (fold_left (update_one p pol) outs s) c) =
+    P.run_updates pol c (counter s c) (raw_value s c) (code_news c outs).
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH]; intros s c.
+    - reflexivity.
+    - cbn [fold_left code_news fold_right fst snd]; rewrite IH.
+      destruct (Pos.eqb c (S.key_code x)) eqn:Hcode.
+      + apply Pos.eqb_eq in Hcode; subst c; rewrite policy_updates_cons.
+        rewrite counter_update_same, raw_value_update_same; reflexivity.
+      + apply Pos.eqb_neq in Hcode.
+        rewrite counter_update_other, raw_value_update_other by exact Hcode; reflexivity.
+  Qed.
+
+  (** Stopping at a delay boundary retains the invariant of the evolving policy value. *)
+  Lemma value_at_counter_inv : forall p pol c limit news cnt a,
+    B.inv p a -> Forall (B.inv p) news ->
+    B.inv p (value_at_counter P.update pol c limit cnt a news).
+  Proof.
+    intros p pol c limit news; induction news as [|b news IH]; intros cnt a Ha Hnews.
+    - cbn [value_at_counter]; destruct (N.leb limit cnt); exact Ha.
+    - inversion Hnews as [|b0 news0 Hb Htail]; subst.
+      cbn [value_at_counter]; destruct (N.leb limit cnt); [exact Ha|].
+      apply IH; [apply policy_update_inv; assumption|exact Htail].
+  Qed.
+
+  (** A key with no widening head keeps its counter through every policy history. *)
+  Lemma policy_nonhead_counter : forall pol c news cnt a,
+    trie_get c (heads pol) = None -> snd (P.run_updates pol c cnt a news) = cnt.
+  Proof.
+    intros pol c news; induction news as [|b news IH]; intros cnt a Hhead.
+    - reflexivity.
+    - rewrite policy_updates_cons, IH by exact Hhead.
+      rewrite P.update_spec; destruct (L.leb b a); [reflexivity|].
+      now rewrite Hhead.
+  Qed.
+
+  (** A reachable callback contributes only invariant values to every encoded history. *)
+  Lemma step_code_news : forall p pol s s1, S.wf p -> reachable p pol s ->
+    step p pol s = inl s1 -> exists outs,
+    Forall (fun xa => B.inv p (snd xa)) outs /\
+    forall c, (raw_value s1 c, counter s1 c) =
+      P.run_updates pol c (counter s c) (raw_value s c) (code_news c outs).
+  Proof.
+    intros p pol s s1 Hwf Hreach Hstep.
+    pose proof (F9_reachable_prepared p pol s Hreach) as Hprepared.
+    rewrite F7_indexed in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
+    rewrite (proj1 (proj1 Hprepared) id) in Hstep.
+    destruct (source_row p id) as [r|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    assert (Hlook : forall x, B.inv p (look s x)).
+    { exact (F9_reachable_inv p pol s Hwf Hreach). }
+    pose proof Heval as Hsystem; rewrite F3_eval in Hsystem.
+    destruct (B.inv_rows p r (look s) a ss Hwf
+      (proj2 (source_row_member p id r Hrow)) Hlook Hsystem) as [Ha Hss].
+    exists ((S.target p r, a) :: ss); split; [now constructor|].
+    intro c; exact (fold_code_news p pol ((S.target p r, a) :: ss) (after_pop p s id q) c).
+  Qed.
+
+  (** A finite path extends each existing per-code policy history. *)
+  Lemma path_code_history : forall p pol s xs last, S.wf p -> reachable p pol s ->
+    wl_path (step p pol) s xs last ->
+    (forall c, exists news, Forall (B.inv p) news /\
+      (raw_value s c, counter s c) = P.run_updates pol c 0%N L.bot news) ->
+    forall c, exists news, Forall (B.inv p) news /\
+      (raw_value last c, counter last c) = P.run_updates pol c 0%N L.bot news.
+  Proof.
+    intros p pol s xs last Hwf Hreach Hpath; revert Hreach.
+    induction Hpath as [s|s s1 xs last Hstep Hpath IH]; intros Hreach Hhistory.
+    - exact Hhistory.
+    - apply (IH (reachable_step p pol s s1 Hreach Hstep)).
+      destruct (step_code_news p pol s s1 Hwf Hreach Hstep) as [outs [Houts Hnext]].
+      intro c; destruct (Hhistory c) as [news [Hnews Hpair]].
+      exists (news ++ code_news c outs); split.
+      + apply Forall_app; split; [exact Hnews|apply code_news_inv; exact Houts].
+      + rewrite Hnext, policy_updates_app.
+        pose proof (f_equal fst Hpair) as Hvalue.
+        pose proof (f_equal snd Hpair) as Hcounter.
+        cbn [fst snd] in Hvalue, Hcounter; now rewrite Hvalue, Hcounter.
+  Qed.
+
+  (** Every reachable encoded value and counter come from an invariant contribution history. *)
+  Lemma reachable_code_history : forall p pol s, S.wf p -> reachable p pol s ->
+    forall c, exists news, Forall (B.inv p) news /\
+      (raw_value s c, counter s c) = P.run_updates pol c 0%N L.bot news.
+  Proof.
+    intros p pol s Hwf [xs Hpath].
+    apply (path_code_history p pol (prepare p pol) xs s Hwf).
+    - exists nil; constructor.
+    - exact Hpath.
+    - intro c; exists nil; split; [constructor|].
+      rewrite raw_value_prepare, counter_prepare_zero; reflexivity.
+  Qed.
+
+  (** Every reachable head counter is bounded by its delay and invariant widening rank. *)
+  Lemma reachable_head_counter : forall p pol s c cfg, S.wf p -> reachable p pol s ->
+    trie_get c (heads pol) = Some cfg ->
+    N.to_nat (counter s c) <= N.to_nat (delay cfg) + B.wmax p (wp pol) + 1.
+  Proof.
+    intros p pol s c cfg Hwf Hreach Hhead.
+    destruct (reachable_code_history p pol s Hwf Hreach c) as [news [Hnews Hpair]].
+    pose proof (P.head_updates_le pol c cfg news L.bot Hhead) as Hsteps.
+    assert (Hvalue : B.inv p (P.value_after_delay pol c cfg L.bot news)).
+    { unfold P.value_after_delay; apply value_at_counter_inv; [apply B.inv_bot|exact Hnews]. }
+    pose proof (B.wrank_le p (wp pol) (P.value_after_delay pol c cfg L.bot news) Hvalue)
+      as Hrank.
+    pose proof (f_equal snd Hpair) as Hcounter; cbn [snd] in Hcounter.
+    unfold P.strict_count in Hsteps; rewrite Hcounter; lia.
+  Qed.
+
+  (** Every reachable non-head counter remains zero. *)
+  Lemma reachable_nonhead_counter : forall p pol s c, S.wf p -> reachable p pol s ->
+    trie_get c (heads pol) = None -> counter s c = 0%N.
+  Proof.
+    intros p pol s c Hwf Hreach Hhead.
+    destruct (reachable_code_history p pol s Hwf Hreach c) as [news [_ Hpair]].
+    pose proof (f_equal snd Hpair) as Hcounter; cbn [snd] in Hcounter.
+    rewrite Hcounter; apply policy_nonhead_counter; exact Hhead.
+  Qed.
+
+  (** Pointwise head allowances bound the sum of finite head-event contributions. *)
+  Lemma head_sum_bound : forall A (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) ->
+    fold_right Nat.add 0 (List.map f xs) <= fold_right Nat.add 0 (List.map g xs).
+  Proof.
+    intros A f g xs; induction xs as [|x xs IH]; intros Hbound.
+    - reflexivity.
+    - cbn [List.map fold_right].
+      pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+      assert (Htail : forall y, In y xs -> f y <= g y).
+      { intros y Hy; apply Hbound; now right. }
+      specialize (IH Htail); lia.
+  Qed.
+
   (** W6 bounds every finite prefix's strict head events by the advertised round count. *)
   Lemma W6_rounds : forall p pol xs last, S.wf p -> prio_ok p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     head_events pol (prepare p pol) last + 1 <= rounds p pol /\
     (forall c, In c (key_support p) ->
       N.to_nat (counter last c) <= head_allowance p pol c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol xs last Hwf Hprio Hpath.
+    assert (Hreach : reachable p pol last) by (exists xs; exact Hpath).
+    split.
+    - unfold head_events, rounds.
+      assert (Hsum :
+        fold_right Nat.add 0 (List.map
+          (fun ch => N.to_nat (counter last (fst ch) - counter (prepare p pol) (fst ch)))
+          (PTrieCode.elements (heads pol))) <=
+        fold_right Nat.add 0 (List.map
+          (fun ch => N.to_nat (delay (snd ch)) + B.wmax p (wp pol) + 2)
+          (PTrieCode.elements (heads pol)))).
+      { apply head_sum_bound; intros [c cfg] Hin; cbn [fst snd].
+        apply PTrie.elements_spec in Hin.
+        rewrite counter_prepare_zero, N.sub_0_r.
+        pose proof (reachable_head_counter p pol last c cfg Hwf Hreach Hin); lia. }
+      lia.
+    - intros c Hsupport; unfold head_allowance.
+      destruct (trie_get c (heads pol)) as [cfg|] eqn:Hhead.
+      + pose proof (reachable_head_counter p pol last c cfg Hwf Hreach Hhead); lia.
+      + rewrite (reachable_nonhead_counter p pol last c Hwf Hreach Hhead); reflexivity.
+  Qed.
   (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
   Lemma W7_trace : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
       k_loop * work p pol + queue_phi p (prepare p pol))%N.
   Proof. Admitted. (* STUB *)
+  (** Every continuing callback preserves the monotonicity of every encoded counter. *)
+  Lemma counter_step_mono : forall p pol s s1 c, step p pol s = inl s1 ->
+    (counter s c <= counter s1 c)%N.
+  Proof.
+    intros p pol s s1 c Hstep; rewrite F7_indexed in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|]; [|discriminate].
+    destruct (row_at s id) as [r|]; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|]; [|discriminate].
+    injection Hstep as <-.
+    pose proof (counter_fold_mono p pol ((S.target p r, a) :: ss) (after_pop p s id q) c)
+      as Hmono.
+    now rewrite counter_after_pop in Hmono.
+  Qed.
+
+  (** Encoded counters are monotone along every continuing path. *)
+  Lemma counter_path_mono : forall p pol s xs last c,
+    wl_path (step p pol) s xs last -> (counter s c <= counter last c)%N.
+  Proof.
+    intros p pol s xs last c Hpath; induction Hpath as [s|s s1 xs last Hstep Hpath IH].
+    - lia.
+    - pose proof (counter_step_mono p pol s s1 c Hstep); lia.
+  Qed.
+
+  (** A listed head contributes at most the total event count. *)
+  Lemma head_sum_member : forall A (f : A -> nat) xs x, In x xs ->
+    f x <= fold_right Nat.add 0 (List.map f xs).
+  Proof.
+    intros A f xs; induction xs as [|y xs IH]; intros x Hin.
+    - contradiction.
+    - cbn [List.map fold_right]; destruct Hin as [<-|Hin].
+      + lia.
+      + specialize (IH x Hin); lia.
+  Qed.
+
+  (** Zero head events force unchanged head counters when counters are monotone. *)
+  Lemma head_events_zero_stable : forall pol s t,
+    (forall c, (counter s c <= counter t c)%N) -> head_events pol s t = 0 ->
+    heads_unchanged pol s t.
+  Proof.
+    intros pol s t Hmono Hzero c cfg Hhead.
+    assert (Hin : In (c, cfg) (PTrieCode.elements (heads pol))).
+    { now apply PTrie.elements_spec. }
+    pose proof (head_sum_member (positive * head_cfg)
+      (fun ch => N.to_nat (counter t (fst ch) - counter s (fst ch)))
+      (PTrieCode.elements (heads pol)) (c, cfg) Hin) as Hpart.
+    change (N.to_nat (counter t c - counter s c) <= head_events pol s t) in Hpart.
+    rewrite Hzero in Hpart.
+    assert (Hzero_difference : (counter t c - counter s c = 0)%N).
+    { apply N2Nat.inj; cbn [N.to_nat]; lia. }
+    specialize (Hmono c); lia.
+  Qed.
+
+  (** Monotone head counters make event counts additive across adjacent paths. *)
+  Lemma head_events_add : forall pol s t u,
+    (forall c, (counter s c <= counter t c)%N) ->
+    (forall c, (counter t c <= counter u c)%N) ->
+    head_events pol s u = head_events pol s t + head_events pol t u.
+  Proof.
+    intros pol s t u Hst Htu; unfold head_events.
+    induction (PTrieCode.elements (heads pol)) as [|[c cfg] hs IH].
+    - reflexivity.
+    - cbn [List.map fold_right fst].
+      assert (Hdifference : (counter u c - counter s c =
+        (counter t c - counter s c) + (counter u c - counter t c))%N).
+      { pose proof (Hst c); pose proof (Htu c); lia. }
+      rewrite Hdifference, N2Nat.inj_add, IH; lia.
+  Qed.
+
+  (** A stable first callback and stable suffix form one stable segment. *)
+  Lemma stable_segment_cons : forall p pol s s1 xs,
+    step p pol s = inl s1 -> heads_unchanged pol s s1 -> stable_segment p pol xs ->
+    stable_segment p pol (s :: xs).
+  Proof.
+    intros p pol s s1 xs Hstep Hfirst Htail t t1 Hin Hnext.
+    destruct Hin as [<-|Hin].
+    - rewrite Hstep in Hnext; injection Hnext as <-; exact Hfirst.
+    - exact (Htail t t1 Hin Hnext).
+  Qed.
+
+  (** Every nonstable path has a first positive-event callback after a stable prefix. *)
+  Lemma path_first_event : forall p pol s xs last, wl_path (step p pol) s xs last ->
+    stable_segment p pol xs \/
+      exists prefix before after suffix, xs = prefix ++ before :: suffix /\
+        wl_path (step p pol) s prefix before /\ step p pol before = inl after /\
+        wl_path (step p pol) after suffix last /\ stable_segment p pol prefix /\
+        0 < head_events pol before after.
+  Proof.
+    intros p pol s xs last Hpath; induction Hpath as [s|s s1 xs last Hstep Hpath IH].
+    - left; intros t t1 Hin; contradiction.
+    - destruct (Nat.eq_dec (head_events pol s s1) 0) as [Hzero|Hpositive].
+      + assert (Hfirst : heads_unchanged pol s s1).
+        { apply head_events_zero_stable; [intro c; eapply counter_step_mono; exact Hstep|].
+          exact Hzero. }
+        destruct IH as [Htail|[prefix [before [after [suffix
+          [Hxs [Hprefix [Hevent [Hsuffix [Hstable Hcount]]]]]]]]]].
+        * left; eapply stable_segment_cons; eassumption.
+        * right; exists (s :: prefix), before, after, suffix.
+          split; [now rewrite Hxs|].
+          split; [econstructor; eassumption|].
+          split; [exact Hevent|].
+          split; [exact Hsuffix|].
+          split; [eapply stable_segment_cons; eassumption|exact Hcount].
+      + right; exists nil, s, s1, xs.
+        split; [reflexivity|].
+        split; [constructor|].
+        split; [exact Hstep|].
+        split; [exact Hpath|].
+        split; [intros t t1 Hin; contradiction|lia].
+  Qed.
+
+  (** At most one row sweep separates successive positive head-event callbacks. *)
+  Lemma path_visit_bound_fuel : forall p pol fuel s xs last,
+    length xs <= fuel -> fits p pol -> reachable p pol s ->
+    wl_path (step p pol) s xs last ->
+    length xs <= C p * (head_events pol s last + 1) + head_events pol s last.
+  Proof.
+    intros p pol fuel; induction fuel as [|fuel IH];
+      intros s xs last Hlength Hfits Hreach Hpath.
+    - lia.
+    - destruct (path_first_event p pol s xs last Hpath) as [Hstable|
+        [prefix [before [after [suffix [Hxs [Hprefix [Hevent [Hsuffix [Hstable Hpositive]]]]]]]]]].
+      + pose proof (stable_length_le p pol s xs last Hfits Hreach Hpath Hstable); nia.
+      + pose proof (reachable_path p pol s prefix before Hreach Hprefix) as Hbefore.
+        pose proof (reachable_step p pol before after Hbefore Hevent) as Hafter.
+        assert (Hsuffix_length : length suffix <= fuel).
+        { rewrite Hxs, length_app in Hlength; cbn [length] in Hlength; lia. }
+        pose proof (IH after suffix last Hsuffix_length Hfits Hafter Hsuffix) as Htail_bound.
+        pose proof (stable_length_le p pol s prefix before Hfits Hreach Hprefix Hstable)
+          as Hprefix_bound.
+        assert (Hrest : forall c, (counter before c <= counter last c)%N).
+        { intro c; pose proof (counter_step_mono p pol before after c Hevent).
+          pose proof (counter_path_mono p pol after suffix last c Hsuffix); lia. }
+        pose proof (head_events_add pol s before last
+          (fun c => counter_path_mono p pol s prefix before c Hprefix) Hrest) as Hadd1.
+        pose proof (head_events_add pol before after last
+          (fun c => counter_step_mono p pol before after c Hevent)
+          (fun c => counter_path_mono p pol after suffix last c Hsuffix)) as Hadd2.
+        rewrite Hxs, length_app; cbn [length]; nia.
+  Qed.
+
+  (** The finite visit bound is independent of the representation size of abstract values. *)
+  Lemma path_visit_bound : forall p pol s xs last, fits p pol -> reachable p pol s ->
+    wl_path (step p pol) s xs last ->
+    length xs <= C p * (head_events pol s last + 1) + head_events pol s last.
+  Proof.
+    intros p pol s xs last Hfits Hreach Hpath.
+    apply (path_visit_bound_fuel p pol (length xs) s xs last); assumption || lia.
+  Qed.
+
+  (** Every source row contributes at least one declared occurrence. *)
+  Lemma visits_C_le_D : forall p, C p <= D p.
+  Proof.
+    intro p; unfold C, D; induction (S.rows p) as [|r rs IH];
+      cbn [List.map fold_right length]; lia.
+  Qed.
+
   (** The visit count supplies fuel without charging abstract value sizes to fuel construction. *)
   Lemma W7_visits : forall p pol xs last, fits p pol ->
     wl_path (step p pol) (prepare p pol) xs last ->
     (N.of_nat (length xs) < k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol xs last Hfits Hpath.
+    assert (Hinitial : reachable p pol (prepare p pol)) by (exists nil; constructor).
+    pose proof (path_visit_bound p pol (prepare p pol) xs last Hfits Hinitial Hpath) as Hvisits.
+    destruct Hfits as [Hwf [Hcuts Hprio]].
+    assert (Hfits : fits p pol) by now repeat split.
+    pose proof (proj1 (W6_rounds p pol xs last Hwf Hprio Hpath)) as Hrounds.
+    pose proof (visits_C_le_D p) as Hoccurrences.
+    assert (Hnumeric : length xs < (C p + D p) * rounds p pol + 1).
+    { destruct (Nat.eq_dec (C p) 0) as [Hempty|Hnonempty]; [|nia].
+      assert (Hids : row_ids p = nil).
+      { apply length_zero_iff_nil; now rewrite row_ids_length. }
+      pose proof (popped_ids_supported p pol (prepare p pol) xs last Hfits Hinitial Hpath)
+        as Hsupport.
+      assert (Hpopped : popped_ids xs = nil).
+      { destruct (popped_ids xs) as [|id ids]; [reflexivity|].
+        exfalso; pose proof (Hsupport id (or_introl eq_refl)) as Hin.
+        rewrite Hids in Hin; contradiction. }
+      pose proof (popped_ids_length p pol (prepare p pol) xs last Hpath) as Hlength.
+      rewrite Hpopped in Hlength; cbn [length] in Hlength; lia. }
+    unfold k_fuel; rewrite N.mul_1_l; lia.
+  Qed.
 
   (** * Driver outcomes and global bounds *)
 
