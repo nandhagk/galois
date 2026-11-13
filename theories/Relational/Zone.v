@@ -4089,6 +4089,22 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         [apply RelationalPathBounds.minimum_l|apply Hbase].
   Qed.
 
+  (** A zero diagonal remains below a zero-diagonal insertion. *)
+  Lemma below_add_zero : forall m u k,
+    (forall x y, RelationalPathBounds.below (u x y) (entry m x y)) ->
+    u k k = Some 0%Z ->
+    forall x y, RelationalPathBounds.below
+      (u x y) (entry (add_cons k k 0%Z m) x y).
+  Proof.
+    intros m u k Hbelow Hzero x y. rewrite entry_add_cons.
+    destruct (K.eqb_spec x k) as [Hx|Hx]; [subst x|apply Hbelow].
+    destruct (K.eqb_spec y k) as [Hy|Hy]; [subst y|apply Hbelow].
+    rewrite Hzero. destruct (entry m k k) as [old|] eqn:Hold;
+      cbn [lower_bound RelationalPathBounds.below]; [|lia].
+    pose proof (Hbelow k k) as Hbound. rewrite Hzero, Hold in Hbound.
+    cbn [RelationalPathBounds.below] in Hbound. lia.
+  Qed.
+
   (** A passing incremental diagonal rules out a negative cycle through the new edge. *)
   Lemma incremental_candidate_cycle : forall m i j d, closed m -> i <> j ->
     let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
@@ -4353,6 +4369,50 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       - unfold base. rewrite support_add_cons. right. right.
         rewrite support_add_cons. right. right. exact Hcode. }
     exact (close_above_closed direct u Hwfdirect Hglobal Hbelow Hzero).
+  Qed.
+
+  (** Successful direct insertion is bounded by the same one-edge formula. *)
+  Lemma direct_close_below_extension : forall m i j d final, dbm_wf m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    close (add_cons i j d m) = Reached final ->
+    forall a b, RelationalPathBounds.below (entry final a b)
+      (RelationalPathBounds.edge_extension (entry base) i j d a b).
+  Proof.
+    intros m i j d final Hwf. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (direct := add_cons i j d m). intro Hresult.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    destruct (close_path_invariant direct final Hwfdirect Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct i Hwfdirect). unfold direct. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct j Hwfdirect). unfold direct. rewrite support_add_cons.
+      right. now left. }
+    assert (Hbase : forall x y,
+      RelationalPathBounds.below (entry final x y) (entry base x y)).
+    { intros x y. unfold base.
+      eapply below_add_zero; [|exact (Hzero j Hj)].
+      eapply below_add_zero; [|exact (Hzero i Hi)].
+      intros p q. eapply RelationalPathBounds.below_trans;
+        [apply Hbelow|apply entry_add_cons_below]. }
+    assert (Hmiddle : RelationalPathBounds.below (entry final i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans; [apply Hbelow|].
+      unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    intros a b. unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_glb. split; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed i Hi a b)|].
+    apply RelationalPathBounds.plus_mono; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed j Hj i b)|].
+    apply RelationalPathBounds.plus_mono; [exact Hmiddle|apply Hbase].
   Qed.
 
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
