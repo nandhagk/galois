@@ -2523,6 +2523,209 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       destruct Hin as [q [Hcode Hq]]. apply K.encode_inj in Hcode.
       subst q. exact (Hfresh Hq).
   Qed.
+  (** This proof abbreviation names the row merge already used by a Floyd-Warshall round. *)
+  Local Definition relax_round (k : K.t) (m : dbm) : dbm :=
+    M.merge (round_row k (row_of (M.get k m))) m M.empty.
+
+  Lemma find_put_presence : forall i j d m p,
+    M.find p (put i j d m) <> None <-> p = K.encode i \/ M.find p m <> None.
+  Proof.
+    intros i j d m p. unfold put. rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode i)) eqn:Hkey.
+    - apply Pos.eqb_eq in Hkey. subst p. split; [intros; now left|intros; discriminate].
+    - apply Pos.eqb_neq in Hkey. tauto.
+  Qed.
+
+  (** Constraint insertion changes finite-entry presence only at its supplied coordinates. *)
+  Lemma raw_put_presence : forall i j d m p q,
+    raw_entry (put i j d m) p q <> None <->
+    (p = K.encode i /\ q = K.encode j) \/ raw_entry m p q <> None.
+  Proof.
+    intros i j d m p q. unfold raw_entry, put. rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode i)) eqn:Hrow.
+    - apply Pos.eqb_eq in Hrow. subst p. cbn [row_of]. rewrite M.find_set.
+      destruct (Pos.eqb q (K.encode j)) eqn:Hcol.
+      + apply Pos.eqb_eq in Hcol. subst q. split.
+        * intros. left. now split.
+        * intros. discriminate.
+      + apply Pos.eqb_neq in Hcol. rewrite M.get_find. tauto.
+    - apply Pos.eqb_neq in Hrow. tauto.
+  Qed.
+
+  (** Insertion adds only its two endpoint codes to the support. *)
+  Lemma support_put : forall i j d m p,
+    In p (support (put i j d m)) <->
+    p = K.encode i \/ p = K.encode j \/ In p (support m).
+  Proof.
+    intros i j d m p. split.
+    - intro Hin. apply support_find in Hin. destruct Hin as [Hrow | [q Hentry]].
+      + apply find_put_presence in Hrow. destruct Hrow as [Heq | Hrow].
+        * now left.
+        * right. right. apply support_find. now left.
+      + apply raw_put_presence in Hentry. destruct Hentry as [[Hq Hp] | Hentry].
+        * right. now left.
+        * right. right. apply support_find. right. now exists q.
+    - intros [Hrow | [Hcol | Hin]]; apply support_find.
+      + left. apply find_put_presence. now left.
+      + right. exists (K.encode i). apply raw_put_presence. left. now split.
+      + apply support_find in Hin. destruct Hin as [Hrow | [q Hentry]].
+        * left. apply find_put_presence. now right.
+        * right. exists q. apply raw_put_presence. now right.
+  Qed.
+
+  (** The pivot test recognizes precisely the supplied key's membership in raw support. *)
+  Lemma pivot_present_support : forall k m,
+    pivot_present k m = true <-> In (K.encode k) (support m).
+  Proof.
+    intros k m. unfold pivot_present. rewrite M.get_find.
+    destruct (M.find (K.encode k) m) as [row|] eqn:Hrow.
+    - split; [intros|reflexivity]. apply support_find. left. rewrite Hrow. discriminate.
+    - rewrite (M.existsb_spec (M.t Z) (column_present k) m). split.
+      + intros [p [row [Hp Hcol]]]. apply support_find. right. exists p.
+        unfold raw_entry. rewrite Hp. cbn [row_of].
+        unfold column_present in Hcol. rewrite M.get_find in Hcol.
+        destruct (M.find (K.encode k) row); congruence.
+      + intro Hin. apply support_find in Hin. destruct Hin as [Hfound | [p Hentry]].
+        * rewrite Hrow in Hfound. contradiction.
+        * unfold raw_entry in Hentry. destruct (M.find p m) as [r|] eqn:Hp.
+          -- exists p, r. split; [exact Hp|]. unfold column_present. rewrite M.get_find.
+             cbn [row_of] in Hentry. destruct (M.find (K.encode k) r); congruence.
+          -- cbn [row_of] in Hentry. rewrite M.find_empty in Hentry. contradiction.
+  Qed.
+
+  (** Relaxation retains precisely the existing outer rows. *)
+  Lemma find_relax_presence : forall k m p,
+    M.find p (relax_round k m) <> None <-> M.find p m <> None.
+  Proof.
+    intros k m p. unfold relax_round. rewrite M.find_merge by reflexivity.
+    rewrite M.find_empty. destruct (M.find p m); cbn [round_row]; split; congruence.
+  Qed.
+
+  (** A relaxed coordinate is old or joins an incoming and an outgoing pivot edge. *)
+  Lemma raw_relax_presence : forall k m p q,
+    raw_entry (relax_round k m) p q <> None <->
+    raw_entry m p q <> None \/
+      (raw_entry m p (K.encode k) <> None /\ raw_entry m (K.encode k) q <> None).
+  Proof.
+    intros k m p q. unfold raw_entry, relax_round.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [round_row relax_row row_of].
+    - rewrite !M.get_find. destruct (M.find (K.encode k) row) as [a|] eqn:Hentry;
+        cbn [relax_row].
+      + rewrite M.find_merge by reflexivity.
+        destruct (M.find q row), (M.find q (row_of (M.find (K.encode k) m)));
+          cbn [via_bound]; intuition congruence.
+      + tauto.
+    - rewrite !M.find_empty. tauto.
+  Qed.
+
+  (** Relaxing through a pivot adds no code and deletes no supported code. *)
+  Lemma support_relax : forall k m p,
+    In p (support (relax_round k m)) <-> In p (support m).
+  Proof.
+    intros k m p. rewrite !support_find. split.
+    - intros [Hrow | [q Hentry]].
+      + left. now apply find_relax_presence in Hrow.
+      + apply raw_relax_presence in Hentry. right.
+        destruct Hentry as [Hentry | [Hprefix Hsuffix]].
+        * now exists q.
+        * now exists (K.encode k).
+    - intros [Hrow | [q Hentry]].
+      + left. now apply find_relax_presence.
+      + right. exists q. apply raw_relax_presence. now left.
+  Qed.
+
+  (** Materializing an already-supported pivot diagonal leaves support unchanged. *)
+  Lemma support_round : forall k m p,
+    In p (support (fw_round k m)) <-> In p (support m).
+  Proof.
+    intros k m p. unfold fw_round.
+    change (In p (support (relax_round k
+      (if pivot_present k m then put k k (lower_bound 0%Z (entry m k k)) m else m))) <->
+      In p (support m)).
+    rewrite support_relax.
+    destruct (pivot_present k m) eqn:Hpresent; [|reflexivity].
+    apply pivot_present_support in Hpresent. rewrite support_put.
+    split.
+    - intros [Heq | [Heq | Hin]]; subst; assumption.
+    - intro Hin. right. now right.
+  Qed.
+
+
+  (** A raw update changes exactly its supplied coordinate. *)
+  Lemma raw_entry_put : forall i j d m p q,
+    raw_entry (put i j d m) p q =
+    if Pos.eqb p (K.encode i) then
+      if Pos.eqb q (K.encode j) then Some d else raw_entry m p q
+    else raw_entry m p q.
+  Proof.
+    intros i j d m p q. unfold raw_entry, put. rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode i)) eqn:Hrow; [|reflexivity].
+    apply Pos.eqb_eq in Hrow. subst p. cbn [row_of]. rewrite M.find_set.
+    destruct (Pos.eqb q (K.encode j)); [reflexivity|]. now rewrite M.get_find.
+  Qed.
+
+  Lemma ell_put : forall i j d m upper,
+    ell m <= upper -> Z.size_nat d <= upper -> ell (put i j d m) <= upper.
+  Proof.
+    intros i j d m upper Hm Hd. apply ell_bound. intros p q z Hentry.
+    rewrite raw_entry_put in Hentry.
+    destruct (Pos.eqb p (K.encode i)).
+    - destruct (Pos.eqb q (K.encode j)).
+      + injection Hentry as <-. exact Hd.
+      + eapply Nat.le_trans; [eapply ell_entry; exact Hentry|exact Hm].
+    - eapply Nat.le_trans; [eapply ell_entry; exact Hentry|exact Hm].
+  Qed.
+
+  Lemma lower_bound_ell : forall m i j d upper,
+    ell m <= upper -> Z.size_nat d <= upper ->
+    Z.size_nat (lower_bound d (entry m i j)) <= upper.
+  Proof.
+    intros m i j d upper Hm Hd. apply lower_bound_size; [exact Hd|].
+    intros z Hz. eapply Nat.le_trans; [|exact Hm].
+    eapply ell_entry. rewrite raw_entry_get. exact Hz.
+  Qed.
+
+  (** Inserting signed twins preserves a common bit allowance for the old and new bounds. *)
+  Lemma ell_add_cons : forall i j d m upper,
+    ell m <= upper -> Z.size_nat d <= upper -> ell (add_cons i j d m) <= upper.
+  Proof.
+    intros i j d m upper Hm Hd. unfold add_cons. apply ell_put.
+    - apply ell_put; [exact Hm|]. now apply lower_bound_ell.
+    - now apply lower_bound_ell.
+  Qed.
+
+  Lemma raw_entry_relax : forall k m p q,
+    raw_entry (relax_round k m) p q =
+    match raw_entry m p (K.encode k) with
+    | Some a => via_bound a (raw_entry m p q) (raw_entry m (K.encode k) q)
+    | None => raw_entry m p q
+    end.
+  Proof.
+    intros k m p q. unfold raw_entry, relax_round.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|]; cbn [round_row relax_row row_of].
+    - rewrite !M.get_find. destruct (M.find (K.encode k) row); cbn [relax_row].
+      + now rewrite M.find_merge by reflexivity.
+      + reflexivity.
+    - now rewrite !M.find_empty.
+  Qed.
+
+  (** One sparse relaxation adds at most one bit to the maximum stored bound. *)
+  Lemma ell_relax : forall k m, ell (relax_round k m) <= ell m + 1.
+  Proof.
+    intros k m. apply ell_bound. intros p q z Hentry.
+    rewrite raw_entry_relax in Hentry.
+    destruct (raw_entry m p (K.encode k)) as [a|] eqn:Ha.
+    - unfold via_bound in Hentry.
+      destruct (raw_entry m (K.encode k) q) as [c|] eqn:Hc.
+      + injection Hentry as <-. apply lower_bound_size.
+        * apply zbits_add_bound; [exact (ell_entry m p (K.encode k) a Ha)|
+            exact (ell_entry m (K.encode k) q c Hc)].
+        * intros old Hold. pose proof (ell_entry m p q old Hold). lia.
+      + pose proof (ell_entry m p q z Hentry). lia.
+    - pose proof (ell_entry m p q z Hentry). lia.
+  Qed.
   Lemma weight_le : forall m, dbm_wf m -> M.weight m <= supp m * (b m + 1).
   Proof.
     intros m [Houter Hrows].
@@ -2919,7 +3122,18 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + apply elements_code; [exact (Hrows (K.encode i) row Hget)|exact Hkey].
   Qed.
   Lemma bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k m. unfold fw_round.
+    change (ell (relax_round k
+      (if pivot_present k m then put k k (lower_bound 0%Z (entry m k k)) m else m)) <=
+      ell m + 1).
+    destruct (pivot_present k m).
+    - eapply Nat.le_trans; [apply ell_relax|].
+      assert (Hseed : ell (put k k (lower_bound 0%Z (entry m k k)) m) <= ell m).
+      { apply ell_put; [lia|]. apply lower_bound_ell; [lia|cbn [Z.size_nat]; lia]. }
+      lia.
+    - apply ell_relax.
+  Qed.
   Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
     In (k, a) (fw_trace ks m) ->
     ell a <= ell m + Nat.log2 (supp m) + 1.
@@ -2931,7 +3145,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   Lemma supp_fw_round : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k m. apply support_sizes, support_round.
+  Qed.
   (** A consistent matrix has no more pivot keys than codes in its support. *)
   Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
   Proof.
@@ -2941,10 +3157,82 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - intros p Hin. apply in_map_iff in Hin. destruct Hin as [k [Hcode Hkey]].
       subst p. now apply keys_support.
   Qed.
+
+  (** The Boolean list scan recognizes key membership through the key equality law. *)
+  Lemma key_existsb : forall k ks, existsb (K.eqb k) ks = true <-> In k ks.
+  Proof.
+    intros k ks. rewrite existsb_exists. split.
+    - intros [x [Hx Heq]]. apply key_eqb_true in Heq. now subst x.
+    - intro Hk. exists k. split; [exact Hk|apply key_eqb_true; reflexivity].
+  Qed.
+
+  Definition keyset_matches (seen : M.t unit) (ks : list K.t) : Prop :=
+    forall k, M.get k seen <> None <-> In k ks.
+
+  (** Inserting a remembered key preserves the membership correspondence. *)
+  Lemma keyset_add_matches : forall seen ks k,
+    keyset_matches seen ks -> keyset_matches (M.set k tt seen) (k :: ks).
+  Proof.
+    intros seen ks k Hmatch q. destruct (K.eqb_spec q k) as [Heq|Hne].
+    - subst q. rewrite M.get_set_same. cbn [In]. split.
+      + intros. now left.
+      + intros. discriminate.
+    - rewrite M.get_set_other by exact Hne. rewrite (Hmatch q). cbn [In].
+      split; [intro Hin; now right|]. intros [Heq|Hin]; [|exact Hin].
+      exfalso. apply Hne. now symmetry.
+  Qed.
+
+  (** The map-backed fold preserves the signature's reverse first-occurrence order. *)
+  Lemma remember_fold_keys : forall xs seen ks,
+    keyset_matches seen ks ->
+    snd (fold_left remember_key xs (seen, ks)) =
+    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc) xs ks.
+  Proof.
+    intro xs. induction xs as [|k xs IH]; intros seen ks Hmatch; [reflexivity|].
+    cbn [fold_left]. destruct (M.get k seen) as [u|] eqn:Hget.
+    - assert (Hremember : remember_key (seen, ks) k = (seen, ks)).
+      { unfold remember_key. cbn [fst snd]. now rewrite Hget. }
+      assert (Hseen : existsb (K.eqb k) ks = true).
+      { apply key_existsb, (proj1 (Hmatch k)). rewrite Hget. discriminate. }
+      rewrite Hremember, Hseen. now apply IH.
+    - assert (Hremember : remember_key (seen, ks) k = (M.set k tt seen, k :: ks)).
+      { unfold remember_key. cbn [fst snd]. now rewrite Hget. }
+      assert (Hseen : existsb (K.eqb k) ks = false).
+      { destruct (existsb (K.eqb k) ks) eqn:Hseen; [|reflexivity].
+        apply key_existsb in Hseen. apply (proj2 (Hmatch k)) in Hseen.
+        contradiction. }
+      rewrite Hremember, Hseen. apply IH. now apply keyset_add_matches.
+  Qed.
+
+  (** Executable pivot enumeration agrees with the frozen specification even on raw maps. *)
+  Lemma pivot_keys_eq_keys : forall m, pivot_keys m = keys m.
+  Proof.
+    intro m. unfold pivot_keys, keys. apply remember_fold_keys.
+    intro k. rewrite M.get_empty. cbn [In]. tauto.
+  Qed.
+
+  (** The executable loop returns precisely the result of its recorded rounds. *)
+  Lemma fw_pivots_trace : forall ks m,
+    fw_pivots ks m =
+    fold_left (fun a km => fw_round (fst km) a) (fw_trace ks m) m.
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intro m; [reflexivity|].
+    cbn [fw_pivots fw_trace fold_left fst]. unfold nonnegative.
+    destruct (entry (fw_round k m) k k) as [d|] eqn:Hdiag; [|apply IH].
+    destruct (d <? 0)%Z eqn:Hneg.
+    - apply Z.ltb_lt in Hneg.
+      assert (Htest : (0 <=? d)%Z = false) by (apply Z.leb_gt; lia).
+      rewrite Htest. reflexivity.
+    - apply Z.ltb_ge in Hneg.
+      assert (Htest : (0 <=? d)%Z = true) by (apply Z.leb_le; lia).
+      rewrite Htest. apply IH.
+  Qed.
   (** Floyd-Warshall runs the traced rounds over the pivot keys. *)
   Lemma F_fw : forall m, fw m =
     fold_left (fun a km => fw_round (fst km) a) (fw_trace (keys m) m) m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro m. unfold fw. rewrite pivot_keys_eq_keys. apply fw_pivots_trace.
+  Qed.
   Definition diag_ok (m : dbm) : bool :=
     forallb (fun k => match entry m k k with Some d => (0 <=? d)%Z | None => true end) (keys m).
   TimeFun diag_ok.
