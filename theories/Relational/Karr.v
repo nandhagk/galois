@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith QArith Bool Lia Ring Permutation.
+From Stdlib Require Import List ZArith QArith Bool Lia Ring Psatz Permutation.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -414,6 +414,191 @@ Proof.
 Qed.
 
 
+
+
+(** Integer nonzero factors remain nonzero in the rational field. *)
+Lemma karr_inject_nonzero : forall z, z <> 0%Z -> ~ (inject_Z z == 0)%Q.
+Proof.
+  intros z Hnonzero Hzero. apply Hnonzero.
+  apply (proj1 (inject_Z_injective z 0)). exact Hzero.
+Qed.
+
+(** Dense evaluation distributes over coefficient scaling. *)
+Lemma karr_eval_scale : forall qs d zs,
+  (karr_eval qs (map (fun z => (d * z)%Z) zs) ==
+    inject_Z d * karr_eval qs zs)%Q.
+Proof.
+  intro qs. induction qs as [|q qs IH]; intros d [|z zs];
+    cbn [map karr_eval]; try ring.
+  rewrite inject_Z_mult. setoid_rewrite (IH d zs). ring.
+Qed.
+
+(** Dense evaluation distributes over equally wide cross products. *)
+Lemma karr_eval_cross : forall qs a b xs ys, length xs = length ys ->
+  (karr_eval qs (karr_cross a b xs ys) ==
+    inject_Z a * karr_eval qs xs - inject_Z b * karr_eval qs ys)%Q.
+Proof.
+  intro qs. induction qs as [|q qs IH]; intros a b [|x xs] [|y ys] Hwidth;
+    cbn [length] in Hwidth; try discriminate; cbn [karr_eval karr_cross]; try ring.
+  unfold Z.sub. rewrite inject_Z_plus, inject_Z_opp, !inject_Z_mult.
+  setoid_rewrite (IH a b xs ys ltac:(lia)). ring.
+Qed.
+
+(** A tracked integer factor scales the whole rational equality defect. *)
+Lemma karr_multiple_eval : forall factor r s qs, karr_multiple factor r s ->
+  (inject_Z factor * (karr_eval qs (kcoeff r) - inject_Z (kright r)) ==
+    karr_eval qs (kcoeff s) - inject_Z (kright s))%Q.
+Proof.
+  intros factor r s qs [Hcoeff [Hright _]]. rewrite <- Hcoeff, <- Hright.
+  setoid_rewrite karr_eval_scale. rewrite inject_Z_mult. ring.
+Qed.
+
+(** Each reduction has a nonzero factor relating its defect to the two input defects. *)
+Lemma karr_reduce_eval : forall qs d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  exists factor, factor <> 0%Z /\
+    (inject_Z factor *
+      (karr_eval qs (kcoeff (karr_reduce d a b p r)) -
+        inject_Z (kright (karr_reduce d a b p r))) ==
+      inject_Z a * (karr_eval qs (kcoeff r) - inject_Z (kright r)) -
+      inject_Z b * (karr_eval qs (kcoeff p) - inject_Z (kright p)))%Q.
+Proof.
+  intros qs d a b p r Hwidth. unfold karr_reduce.
+  set (raw := KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p)) (a * kscale r - b * kscale p)%Z).
+  destruct (karr_divide_factor d raw) as [factor [Hnonzero Hmultiple]].
+  exists factor. split; [exact Hnonzero|].
+  eapply Qeq_trans; [exact (karr_multiple_eval factor _ _ qs Hmultiple)|].
+  unfold raw. cbn [kcoeff kright].
+  setoid_rewrite (karr_eval_cross qs a b _ _ Hwidth).
+  unfold Z.sub. rewrite inject_Z_plus, inject_Z_opp, !inject_Z_mult. ring.
+Qed.
+
+(** Retaining a satisfied nonzero pivot makes reduction equivalent to the original row. *)
+Lemma karr_reduce_models : forall qs d a b p r,
+  length (kcoeff r) = length (kcoeff p) -> a <> 0%Z -> karr_models qs p ->
+  (karr_models qs (karr_reduce d a b p r) <-> karr_models qs r).
+Proof.
+  intros qs d a b p r Hwidth Ha Hp.
+  destruct (karr_reduce_eval qs d a b p r Hwidth) as [factor [Hfactor Hrelation]].
+  pose proof (karr_inject_nonzero a Ha) as HaQ.
+  pose proof (karr_inject_nonzero factor Hfactor) as HfactorQ.
+  unfold karr_models in *. setoid_rewrite Hp in Hrelation.
+  split; intro Hmodel.
+  - apply (proj1 (Qmult_inj_l _ _ (inject_Z a) HaQ)).
+    setoid_rewrite Hmodel in Hrelation. nra.
+  - apply (proj1 (Qmult_inj_l _ _ (inject_Z factor) HfactorQ)).
+    setoid_rewrite Hmodel in Hrelation. nra.
+Qed.
+
+(** A zero leading coefficient makes the leading store coordinate irrelevant. *)
+Lemma karr_eval_tail_zero : forall q qs r, karr_head r = 0%Z ->
+  (karr_eval (q :: qs) (kcoeff r) == karr_eval qs (kcoeff (karr_tail r)))%Q.
+Proof.
+  intros q qs [zs rhs ws sc] Hzero.
+  destruct zs as [|z zs]; cbn [karr_head kcoeff] in Hzero;
+    cbn [karr_tail kcoeff karr_eval tl]; [destruct qs; reflexivity|].
+  subst z. ring.
+Qed.
+
+(** Removing a zero leading coefficient preserves the row's models. *)
+Lemma karr_models_tail_zero : forall q qs r, karr_head r = 0%Z ->
+  (karr_models (q :: qs) r <-> karr_models qs (karr_tail r)).
+Proof.
+  intros q qs r Hzero. unfold karr_models.
+  setoid_rewrite (karr_eval_tail_zero q qs r Hzero). reflexivity.
+Qed.
+
+(** Restoring a leading zero does not constrain the leading store coordinate. *)
+Lemma karr_models_restore : forall q qs r,
+  (karr_models (q :: qs) (karr_restore r) <-> karr_models qs r).
+Proof.
+  intros q qs r. unfold karr_models, karr_restore.
+  change ((0 * q + karr_eval qs (kcoeff r) == inject_Z (kright r))%Q <->
+    (karr_eval qs (kcoeff r) == inject_Z (kright r))%Q).
+  setoid_rewrite Qmult_0_l. setoid_rewrite Qplus_0_l. reflexivity.
+Qed.
+
+(** Pointwise equivalence lifts through a mapped finite conjunction. *)
+Lemma karr_Forall_map_iff : forall A B (f : A -> B) (P : B -> Prop) (R : A -> Prop) xs,
+  (forall x, In x xs -> (P (f x) <-> R x)) ->
+  (Forall P (map f xs) <-> Forall R xs).
+Proof.
+  intros A B f P R xs Hpoint. rewrite !Forall_forall. split; intros Hmodels x Hin.
+  - apply (proj1 (Hpoint x Hin)). apply Hmodels. now apply in_map.
+  - apply in_map_iff in Hin as [y [Heq Hin]]. subst x.
+    apply (proj2 (Hpoint y Hin)). now apply Hmodels.
+Qed.
+
+(** Restoring zeros lifts all tail models to models of the restored rows. *)
+Lemma karr_Forall_restore : forall q qs rs,
+  (Forall (karr_models (q :: qs)) (map karr_restore rs) <->
+    Forall (karr_models qs) rs).
+Proof.
+  intros q qs rs. apply karr_Forall_map_iff. intros r _. apply karr_models_restore.
+Qed.
+
+(** Permuting a row list preserves simultaneous rational satisfaction. *)
+Lemma karr_models_permutation : forall qs rs ss, Permutation rs ss ->
+  (Forall (karr_models qs) rs <-> Forall (karr_models qs) ss).
+Proof.
+  intros qs rs ss Hperm. split; intro Hmodels.
+  - eapply Permutation_Forall; [exact Hperm|exact Hmodels].
+  - eapply Permutation_Forall; [apply Permutation_sym; exact Hperm|exact Hmodels].
+Qed.
+
+(** Eliminating the leading coordinate preserves a row once the pivot is satisfied. *)
+Lemma karr_reduce_tail_models : forall q qs d p r,
+  length (kcoeff r) = length (kcoeff p) -> karr_head p <> 0%Z ->
+  karr_models (q :: qs) p ->
+  (karr_models qs (karr_tail (karr_reduce d (karr_head p) (karr_head r) p r)) <->
+    karr_models (q :: qs) r).
+Proof.
+  intros q qs d p r Hwidth Hpivot Hp.
+  rewrite <- (karr_models_tail_zero q qs _ (karr_reduce_head_zero d p r)).
+  now apply karr_reduce_models.
+Qed.
+
+(** The whole guarded elimination preserves every rational model of equally wide rows. *)
+Lemma karr_bareiss_models : forall n d rs qs, length qs = n ->
+  Forall (fun r => length (kcoeff r) = n) rs ->
+  (Forall (karr_models qs) (karr_bareiss n d rs) <-> Forall (karr_models qs) rs).
+Proof.
+  intro n. induction n as [|n IH]; intros d rs qs Hlength Hwidth.
+  - reflexivity.
+  - destruct qs as [|q qs]; cbn [length] in Hlength; [discriminate|].
+    assert (Htail_length : length qs = n) by lia.
+    cbn [karr_bareiss]. destruct (karr_pivot rs) as [[p rest]|] eqn:Hpivot.
+    + destruct (karr_pivot_some rs p rest Hpivot) as [Hhead Hperm].
+      assert (Hordered : Forall (fun r => length (kcoeff r) = S n) (p :: rest)).
+      { eapply Permutation_Forall; [exact Hperm|exact Hwidth]. }
+      inversion Hordered as [|p' rest' Hp Hrest]; subst p' rest'.
+      set (reduced := map (fun r =>
+        karr_tail (karr_reduce d (karr_head p) (karr_head r) p r)) rest).
+      assert (Hreduced : Forall (fun r => length (kcoeff r) = n) reduced).
+      { apply Forall_forall. intros r Hin. unfold reduced in Hin.
+        apply in_map_iff in Hin as [s [Heq Hin]]. subst r.
+        apply karr_tail_width. rewrite karr_reduce_width.
+        - exact (proj1 (Forall_forall _ _) Hrest s Hin).
+        - rewrite Hp. exact (proj1 (Forall_forall _ _) Hrest s Hin). }
+      rewrite (karr_models_permutation (q :: qs) rs (p :: rest) Hperm).
+      rewrite !Forall_cons_iff, karr_Forall_restore, (IH _ _ _ Htail_length Hreduced).
+      assert (Hpoint : karr_models (q :: qs) p ->
+        (Forall (karr_models qs) reduced <-> Forall (karr_models (q :: qs)) rest)).
+      { intro Hmodelp. unfold reduced. apply karr_Forall_map_iff. intros r Hin.
+        apply karr_reduce_tail_models; [|exact Hhead|exact Hmodelp].
+        rewrite Hp. exact (proj1 (Forall_forall _ _) Hrest r Hin). }
+      split; intros [Hmodelp Hmodels]; split; [exact Hmodelp| |exact Hmodelp|].
+      * now apply (proj1 (Hpoint Hmodelp)).
+      * now apply (proj2 (Hpoint Hmodelp)).
+    + assert (Htail_width : Forall (fun r => length (kcoeff r) = n) (map karr_tail rs)).
+      { apply Forall_forall. intros r Hin. apply in_map_iff in Hin as [s [Heq Hin]].
+        subst r. apply karr_tail_width. exact (proj1 (Forall_forall _ _) Hwidth s Hin). }
+      rewrite karr_Forall_restore, (IH d _ qs Htail_length Htail_width).
+      apply karr_Forall_map_iff. intros r Hin. symmetry. apply karr_models_tail_zero.
+      exact (proj1 (Forall_forall _ _) (karr_pivot_none rs Hpivot) r Hin).
+Qed.
 
 Lemma karr_values_ne_app : forall A (tr : trie_ne A) acc,
   karr_values_ne tr acc = karr_values_ne tr [] ++ acc.
@@ -2479,6 +2664,95 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       [exact Hz |].
     destruct (contradiction_of_zero_row _ _ Hin Hzero Hnz) as [ms Hsome].
     rewrite Hnone in Hsome. discriminate.
+  Qed.
+
+  Lemma dense_normalize_row : forall xs r,
+    dense xs (normalize_row r) = dense xs r.
+  Proof.
+    intros xs r. unfold dense. cbn [normalize_row lhs].
+    apply map_ext. intro x. apply normalize_coef_coefficient.
+  Qed.
+
+  (** Seed extraction keeps precisely the equality models of the source rows. *)
+  Lemma seed_rows_models : forall xs total rows index qs,
+    Forall (karr_models qs) (seed_rows xs total index rows) <->
+      Forall (fun r => lrel r = REq ->
+        (karr_eval qs (dense xs r) == inject_Z (rhs r))%Q) rows.
+  Proof.
+    intros xs total rows. induction rows as [|p rows IH]; intros index qs.
+    - split; intro H; constructor.
+    - cbn [seed_rows]. destruct (lrel p) eqn:Hrel.
+      + rewrite !Forall_cons_iff, IH. split; intros [Hp Hrows]; split.
+        * intros _. exact Hp.
+        * exact Hrows.
+        * now apply Hp.
+        * exact Hrows.
+      + rewrite Forall_cons_iff, IH. split.
+        * intro Hrows. split; [|exact Hrows]. intro Hfalse. congruence.
+        * intros [_ Hrows]. exact Hrows.
+  Qed.
+
+  Lemma seed_rows_width : forall xs total index rows,
+    Forall (fun r => length (kcoeff r) = length xs) (seed_rows xs total index rows).
+  Proof.
+    intros xs total index rows. revert index.
+    induction rows as [|p rows IH]; intro index; [constructor |].
+    cbn [seed_rows]. destruct (lrel p); [constructor |]; auto.
+    unfold dense. cbn [kcoeff]. apply length_map.
+  Qed.
+
+  Lemma dense_equality_models_Q : forall xs r v,
+    lrel r = REq -> NoDup xs -> (forall x z, In (x, z) (lhs r) -> In x xs) ->
+    ((karr_eval (map v xs) (dense xs r) == inject_Z (rhs r))%Q <-> satQ v r).
+  Proof.
+    intros xs r v Hrel Hunique Hsupport. unfold satQ. rewrite Hrel.
+    change ((karr_eval (map v xs) (dense xs r) == inject_Z (rhs r))%Q <->
+      (karr_eval_coef_Q v (lhs r) == inject_Z (rhs r))%Q).
+    now setoid_rewrite (dense_eval_Q xs r v Hunique Hsupport).
+  Qed.
+
+  Lemma seed_rows_models_Q : forall P xs v total index,
+    NoDup xs -> (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (Forall (karr_models (map v xs))
+      (seed_rows xs total index (map normalize_row P)) <->
+      Forall (fun r => lrel r = REq -> satQ v r) P).
+  Proof.
+    intros P xs v total index Hunique Hsupport.
+    rewrite seed_rows_models, Forall_map. split; intro Hmodels;
+      apply Forall_forall; intros r Hin Hrel.
+    - pose proof (proj1 (Forall_forall _ _) Hmodels r Hin Hrel) as Hmodel.
+      rewrite dense_normalize_row in Hmodel. cbn [normalize_row rhs] in Hmodel.
+      apply (proj1 (dense_equality_models_Q xs r v Hrel Hunique (Hsupport r Hin))).
+      exact Hmodel.
+    - change (lrel r = REq) in Hrel.
+      pose proof (proj1 (Forall_forall _ _) Hmodels r Hin Hrel) as Hmodel.
+      rewrite dense_normalize_row. cbn [normalize_row rhs].
+      apply (proj2 (dense_equality_models_Q xs r v Hrel Hunique (Hsupport r Hin))).
+      exact Hmodel.
+  Qed.
+
+  Lemma equality_basis_models_Q : forall P xs v,
+    NoDup xs -> (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (Forall (karr_models (map v xs)) (equality_basis xs P) <->
+      Forall (fun r => lrel r = REq -> satQ v r) P).
+  Proof.
+    intros P xs v Hunique Hsupport. unfold equality_basis.
+    assert (Hlength : length (map v xs) = length xs) by apply length_map.
+    rewrite (karr_bareiss_models (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) (map v xs) Hlength
+      (seed_rows_width xs (length P) 0 (map normalize_row P))).
+    now apply seed_rows_models_Q.
+  Qed.
+
+  Lemma coordinate_basis_models_Q : forall P xs qs,
+    NoDup xs -> length xs = length qs ->
+    (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (Forall (karr_models qs) (equality_basis xs P) <->
+      Forall (fun r => lrel r = REq -> satQ (coordinate_store xs qs) r) P).
+  Proof.
+    intros P xs qs Hunique Hlength Hsupport.
+    rewrite <- (coordinate_store_values xs qs Hunique Hlength) at 1.
+    now apply equality_basis_models_Q.
   Qed.
 
   Lemma leb_refl  : forall a, leb a a = true.
