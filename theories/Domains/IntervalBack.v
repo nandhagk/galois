@@ -2690,6 +2690,27 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_half_time : forall w,
+    (Word.T_half w <= 100 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intro w.
+    assert (Hsize : (Pos.size_nat w <= Pos.to_nat w)%nat).
+    { induction w as [p IH|p IH|]; cbn [Pos.size_nat].
+      - rewrite Pos2Nat.inj_xI. lia.
+      - rewrite Pos2Nat.inj_xO. lia.
+      - lia. }
+    pose proof (Std.Z.T_sub_le (Z.pos w) 1) as Hsub.
+    pose proof (Std.Pos.T_iter_le (Z.mul 2)
+      (fun x => Std.Z.T_mul 2 x) (fun _ => True) 3 1%Z (Pos.pred w)
+      ltac:(easy) ltac:(intros; apply Std.Z.T_mul_two_le) ltac:(constructor)) as Hiter.
+    pose proof (Pos2Nat.inj_pred_max w) as Hpred.
+    unfold Word.T_half, Word.Z.T_pow, Word.Z.T_pow_pos.
+    destruct w as [p|p|]; time_simpl; time_cbn; time_pose; time_cbn_all;
+      repeat rewrite Nat2N.inj_add in *;
+      repeat rewrite Nat2N.inj_mul in *;
+      nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
