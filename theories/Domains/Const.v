@@ -819,7 +819,7 @@ Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
   Definition psize (w : positive) (a : p) : nat :=
     Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
   Definition pwsize (_ : pwparam) : nat := 0.
-  Definition c_payload : N := 1%N. (* STUB *)
+  Definition c_payload : N := 256%N.
   (** Constant payload size includes the width and raw integer bits. *)
   Lemma F_psize_const : forall w a, psize w a =
     Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
@@ -828,61 +828,117 @@ Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
   Qed.
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; unfold pjoin, psize; try destruct (Z.eqb a b);
+      time_cbn; unfold c_payload; rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; unfold pmeet, psize; try destruct (Z.eqb a b);
+      time_cbn; unfold c_payload; rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden, pwsize. rewrite Nat.add_0_r. apply pjoin_size.
+  Qed.
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply pmeet_size.
+  Qed.
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w [|a|] [|b|]; time_unfold T_pwiden; time_unfold T_pjoin;
+      time_cbn; unfold psize, pwsize, c_payload;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (Z.T_eqb_le a b). rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; time_unfold T_pnarrow; time_unfold T_pmeet;
+      time_cbn; unfold psize, c_payload;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (Z.T_eqb_le a b). rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; time_unfold T_pleb; time_cbn; unfold psize, c_payload;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (Z.T_eqb_le a b). rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply T_pleb_le.
+  Qed.
   Lemma T_pmeet_le : forall w a b,
     (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply T_pleb_le.
+  Qed.
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. time_unfold T_pis_bot. unfold c_payload.
+    rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. time_unfold T_ppoint. unfold c_payload.
+    rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma T_pconst_le : forall w z, (T_pconst w z <=
     c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (WordTime.word_wrap_time_bound w z) as Hwrap.
+    time_unfold T_pconst. unfold c_payload.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_ptop. unfold c_payload.
+    rewrite Nat2N.inj_pow, Nat2N.inj_add. time_cbn. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_pbot_le : forall w,
     (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_pbot. unfold c_payload.
+    rewrite Nat2N.inj_pow, Nat2N.inj_add. time_cbn. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma ptop_size : forall w,
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold ptop, psize, c_payload.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add. time_cbn. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold pbot, psize, c_payload.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add. time_cbn. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pconst_size : forall w z,
     (N.of_nat (psize w (pconst w z)) <=
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z.
+    assert (Hsize : (N.of_nat (Z.size_nat (wrap w z)) <= N.of_nat (Pos.to_nat w))%N).
+    { apply time_of_nat_le. apply WordTime.word_wrap_size_bound. }
+    unfold pconst, psize, c_payload.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add. time_cbn. nia.
+  Qed.
 End ConstWordT.
 
 Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WORD_TABLE L W.
