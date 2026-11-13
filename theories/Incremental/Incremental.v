@@ -8628,6 +8628,70 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       [exact Hget|exact Hset|exact Hfold|exact Hbits|exact Hbase].
   Qed.
 
+  Lemma invalid_next_budget : forall a b c bits n code read write app fold,
+    (code <= a * bits)%N -> (read <= c * bits)%N ->
+    (write <= c * bits)%N -> (app <= n)%N -> (1 <= bits)%N ->
+    (1 + (code + 1 + read + (code + 1 + write + (app + fold))) <=
+      16 * (a + b + c + 1) * bits + 4 * n + fold)%N.
+  Proof.
+    intros a b c bits n code read write app fold Hcode Hread Hwrite Happ Hbits.
+    replace (16 * (a + b + c + 1) * bits)%N with
+      (16 * (a * bits) + 16 * (b * bits) +
+        16 * (c * bits) + 16 * bits)%N by ring.
+    nia.
+  Qed.
+
+  Lemma T_invalid_next_le : forall st x pending seen bad done snapshots,
+    let readers := match PTrieCode.get (S.key_code x) (inc_influence st) with
+      | Some ids => ids | None => [] end in
+    let cowriters := match PTrieCode.get (S.key_code x) (inc_cowrites st) with
+      | Some ids => ids | None => [] end in
+    let rest := {| invalid_pending := pending; invalid_seen := seen;
+      invalid_bad := bad; invalid_done := x :: done;
+      invalid_snapshots := snapshots |} in
+    (T_invalid_next st x pending seen bad done snapshots <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1) +
+      4 * N.of_nat (length readers + 1) +
+      List.T_fold_left (invalid_visit_snapshot st)
+        (fun current id => T_invalid_visit_snapshot st current id)
+        (readers ++ cowriters) rest)%N.
+  Proof.
+    intros st x pending seen bad done snapshots.
+    cbn beta zeta.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le (list positive) (S.key_code x)
+      (inc_influence st)) as Hread.
+    pose proof (PTrieT.T_get_le (list positive) (S.key_code x)
+      (inc_cowrites st)) as Hwrite.
+    unfold PTrieT.T_get in Hread, Hwrite.
+    destruct (PTrieCode.get (S.key_code x) (inc_influence st)) as [readers|]
+      eqn:Hreaders;
+      destruct (PTrieCode.get (S.key_code x) (inc_cowrites st)) as [cowriters|]
+      eqn:Hcowriters.
+    all: pose proof (Datatypes.T_app_le
+      (match PTrieCode.get (S.key_code x) (inc_influence st) with
+       | Some ids => ids | None => [] end)
+      (match PTrieCode.get (S.key_code x) (inc_cowrites st) with
+       | Some ids => ids | None => [] end)) as Happ.
+    all: unfold T_invalid_next, PTrieCode.T_get, S.key_bits in *;
+      rewrite Hreaders, Hcowriters in *; time_simpl; time_cbn.
+    all: assert (HappN : (Datatypes.T_app
+      (match PTrieCode.get (S.key_code x) (inc_influence st) with
+       | Some ids => ids | None => [] end)
+      (match PTrieCode.get (S.key_code x) (inc_cowrites st) with
+       | Some ids => ids | None => [] end) <=
+      N.of_nat (length (match PTrieCode.get (S.key_code x) (inc_influence st) with
+        | Some ids => ids | None => [] end) + 1))%N)
+      by (rewrite Hreaders, Hcowriters in *;
+        rewrite Nat2N.inj_add; cbn [N.of_nat]; exact Happ).
+    all: rewrite Hreaders, Hcowriters in HappN;
+      assert (Hbits : (1 <= N.of_nat (Pos.size_nat (S.key_code x) + 1))%N)
+        by lia;
+      eapply invalid_next_budget;
+        [exact Hcode|exact Hread|exact Hwrite|exact HappN|exact Hbits].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
