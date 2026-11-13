@@ -1668,11 +1668,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     wf (snd (make f k db)).
   Proof. Admitted. (* STUB *)
 
-  (** Equality insertion keeps the database well formed. *)
-  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
-    wf (union i j db).
-  Proof. Admitted. (* STUB *)
-
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
   Proof. Admitted. (* STUB *)
@@ -1990,6 +1985,33 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite (proj2 (UnionFind.union_none i j (db_forest db) forest
         (wf_forest db Hwf) Hunion) x).
       exact (wf_quiet_canonical db Hwf Hquiet f k o Hrow x Hin).
+  Qed.
+
+  (** Equality insertion keeps the database well formed. *)
+  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
+    wf (union i j db).
+  Proof.
+    intros i j db Hwf Hi Hj.
+    assert (Hforest : UnionFind.wf (db_forest (union i j db))).
+    { rewrite union_forest. apply UnionFind.wf_union. exact (wf_forest db Hwf). }
+    pose proof (union_forest_members i j db Hwf Hi Hj) as Hmembers.
+    pose proof (union_forest_count i j db Hwf Hi Hj) as Hcount.
+    pose proof (union_forest_width i j db Hwf Hi Hj) as Hwidth.
+    pose proof (union_equalities i j db Hwf) as Hequalities.
+    pose proof (union_log_allocated i j db Hwf Hi Hj) as Hlog.
+    pose proof (union_pending_count i j db Hwf) as Hpending.
+    pose proof (union_queue_allocated i j db Hwf Hi Hj) as Hqueue.
+    pose proof (union_quiet_canonical i j db Hwf) as Hcanonical.
+    unfold wf, database_wf in Hwf |- *. unfold union in *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |];
+      cbn [fst snd database_set_forest database_set_runtime database_set_pending
+        runtime_set_union db_forest db_runtime db_npending runtime_allocated
+        runtime_rows runtime_kinds runtime_slots runtime_equalities runtime_queue
+        runtime_all_indexes runtime_new_indexes runtime_projection_counts
+        runtime_function_slots runtime_max_name runtime_slot_bound
+        view row same kind row_get kind_get repr allocated ids pending slots slot_of
+        index canonical slots_fit projection_counts_ok stored_projection_count] in *; tauto.
   Qed.
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
