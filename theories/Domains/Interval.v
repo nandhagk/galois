@@ -838,15 +838,232 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
     - change ((0 <= x)%Z /\ True). tauto.
     - change ((1 <= y)%Z /\ True). split; [lia|trivial].
   Qed.
+  Local Open Scope Z_scope.
+
+  (** An all-ones mask above both nonnegative operands contains their disjunction. *)
+  Lemma raw_lor_mask : forall x y hi,
+    0 <= x <= hi -> 0 <= y <= hi ->
+    0 <= Z.lor x y <= Z.ones (Z.log2 hi + 1).
+  Proof.
+    intros x y hi Hx Hy.
+    set (n := Z.log2 hi + 1).
+    assert (Hn : 0 <= n) by (unfold n; pose proof (Z.log2_nonneg hi); lia).
+    assert (Hmask : 0 <= Z.ones n).
+    { rewrite Z.ones_equiv. pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn). lia. }
+    assert (Hlogx : Z.log2 x < n) by
+      (unfold n; pose proof (Z.log2_le_mono x hi ltac:(lia)); lia).
+    assert (Hlogy : Z.log2 y < n) by
+      (unfold n; pose proof (Z.log2_le_mono y hi ltac:(lia)); lia).
+    assert (Hor : Z.lor (Z.lor x y) (Z.ones n) = Z.ones n).
+    { rewrite <- Z.lor_assoc, Z.lor_ones_low by lia. apply Z.lor_ones_low; lia. }
+    assert (Hlor : 0 <= Z.lor x y) by (apply Z.lor_nonneg; lia).
+    assert (Hmaskdiff : 0 <= Z.land (Z.ones n) (Z.lnot (Z.lor x y))).
+    { apply Z.land_nonneg. now left. }
+    pose proof (Z.sub_lor_l_same_l (Z.ones n) (Z.lor x y)) as Hdiff.
+    rewrite Hor in Hdiff. lia.
+  Qed.
+
+  (** Raw disjunction contains every represented integer result. *)
+  Lemma raw_bitor_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (bitor a b) (Z.lor x y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Ha Hb;
+      cbn [gamma in_itv] in Ha, Hb; try contradiction.
+    destruct la as [|la|], ha as [|ha|], lb as [|lb|], hb as [|hb|];
+      cbn [bitor]; try apply gamma_top.
+    destruct ((0 <=? la) && (0 <=? lb))%bool eqn:Hnonneg;
+      [|apply gamma_top].
+    apply andb_true_iff in Hnonneg as [Hla Hlb].
+    apply Z.leb_le in Hla. apply Z.leb_le in Hlb.
+    unfold in_bnd in Ha, Hb; cbn in Ha, Hb. cbn [gamma in_itv]; unfold in_bnd; cbn.
+    apply raw_lor_mask; pose proof (Z.le_max_l ha hb); pose proof (Z.le_max_r ha hb); lia.
+  Qed.
+
+  (** A nonnegative shift cannot decrease a nonnegative integer. *)
+  Lemma raw_shiftl_grows : forall x y,
+    0 <= x -> 0 <= y -> x <= Z.shiftl x y.
+  Proof.
+    intros x y Hx Hy. rewrite Z.shiftl_mul_pow2 by exact Hy.
+    pose proof (Z.pow_pos_nonneg 2 y ltac:(lia) Hy). nia.
+  Qed.
+
+  (** Nonnegative endpoint shifts bound every enclosed pair. *)
+  Lemma raw_shiftl_bounds : forall la ha lb hb x y,
+    0 <= la -> 0 <= lb -> la <= x <= ha -> lb <= y <= hb ->
+    Z.shiftl la lb <= Z.shiftl x y <= Z.shiftl ha hb.
+  Proof.
+    intros la ha lb hb x y Hla Hlb Hx Hy.
+    rewrite !Z.shiftl_mul_pow2 by lia.
+    assert (Hpowlo : 2 ^ lb <= 2 ^ y) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpowhi : 2 ^ y <= 2 ^ hb) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpowpos : 0 < 2 ^ lb) by (apply Z.pow_pos_nonneg; lia).
+    nia.
+  Qed.
+
+  (** The shift cutoff preserves soundness when the upper endpoint is discarded. *)
+  Lemma raw_shl_sound : forall a b x y,
+    gamma a x -> gamma b y -> 0 <= y -> gamma (shl a b) (Z.shiftl x y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Ha Hb Hy;
+      cbn [gamma in_itv] in Ha, Hb; try contradiction.
+    destruct la as [|la|], lb as [|lb|]; cbn [shl]; try apply gamma_top.
+    destruct ((0 <=? la) && (0 <=? lb))%bool eqn:Hnonneg;
+      [|apply gamma_top].
+    apply andb_true_iff in Hnonneg as [Hla Hlb].
+    apply Z.leb_le in Hla. apply Z.leb_le in Hlb.
+    unfold in_bnd in Ha, Hb; cbn in Ha, Hb.
+    assert (Hlower : la <= Z.shiftl x y).
+    { eapply Z.le_trans; [exact (proj1 Ha)|apply raw_shiftl_grows; lia]. }
+    destruct ha as [|ha|], hb as [|hb|]; cbn [gamma in_itv]; unfold in_bnd; cbn;
+      try (split; [exact Hlower|constructor]).
+    match goal with
+    | |- context [if ?test then _ else _] => destruct test eqn:Hcutoff
+    end;
+      cbn [gamma in_itv]; unfold in_bnd; cbn.
+    - apply raw_shiftl_bounds; assumption.
+    - split; [exact Hlower|constructor].
+  Qed.
+
+  (** Raw conjunction is nonnegative and below both nonnegative operands. *)
+  Lemma raw_land_bounds : forall x y,
+    0 <= x -> 0 <= y -> 0 <= Z.land x y /\ Z.land x y <= x /\ Z.land x y <= y.
+  Proof.
+    intros x y Hx Hy.
+    pose proof (Z.sub_land_same_l x y) as Hsubx.
+    pose proof (Z.sub_land_same_l y x) as Hsuby. rewrite Z.land_comm in Hsuby.
+    assert (Hdx : 0 <= Z.land x (Z.lnot y)) by (apply Z.land_nonneg; now left).
+    assert (Hdy : 0 <= Z.land y (Z.lnot x)) by (apply Z.land_nonneg; now left).
+    assert (Hxy : 0 <= Z.land x y) by (apply Z.land_nonneg; now left).
+    lia.
+  Qed.
+
+  (** Raw conjunction contains every represented integer result. *)
+  Lemma raw_bitand_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (bitand a b) (Z.land x y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Ha Hb;
+      cbn [gamma in_itv] in Ha, Hb; try contradiction.
+    destruct la as [|la|], ha as [|ha|], lb as [|lb|], hb as [|hb|];
+      cbn [bitand]; try apply gamma_top.
+    destruct ((0 <=? la) && (0 <=? lb))%bool eqn:Hnonneg;
+      [|apply gamma_top].
+    apply andb_true_iff in Hnonneg as [Hla Hlb].
+    apply Z.leb_le in Hla. apply Z.leb_le in Hlb.
+    unfold in_bnd in Ha, Hb; cbn in Ha, Hb. cbn [gamma in_itv]; unfold in_bnd; cbn.
+    pose proof (raw_land_bounds x y ltac:(lia) ltac:(lia)) as [Hxy [Hx Hy]].
+    split; [exact Hxy|apply Z.min_glb; lia].
+  Qed.
+
+  (** Raw positive-divisor division is bounded by the opposite divisor endpoints. *)
+  Lemma raw_udiv_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (udiv a b) (x / y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Ha Hb;
+      cbn [gamma in_itv] in Ha, Hb; try contradiction.
+    destruct la as [|la|], ha as [|ha|], lb as [|lb|], hb as [|hb|];
+      cbn [udiv]; try apply gamma_top.
+    destruct ((0 <=? la) && (0 <? lb))%bool eqn:Hnonneg;
+      [|apply gamma_top].
+    apply andb_true_iff in Hnonneg as [Hla Hlb].
+    apply Z.leb_le in Hla. apply Z.ltb_lt in Hlb.
+    unfold in_bnd in Ha, Hb; cbn in Ha, Hb. cbn [gamma in_itv]; unfold in_bnd; cbn.
+    split.
+    - eapply Z.le_trans with (m := x / hb);
+        [apply Z.div_le_mono; lia|apply Z.div_le_compat_l; lia].
+    - eapply Z.le_trans with (m := x / lb);
+        [apply Z.div_le_compat_l; lia|apply Z.div_le_mono; lia].
+  Qed.
+
+  (** Raw remainder lies below both the numerator and the divisor-minus-one bounds. *)
+  Lemma raw_urem_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (urem a b) (x mod y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Ha Hb;
+      cbn [gamma in_itv] in Ha, Hb; try contradiction.
+    destruct la as [|la|], ha as [|ha|], lb as [|lb|], hb as [|hb|];
+      cbn [urem]; try apply gamma_top.
+    destruct ((0 <=? la) && (0 <? lb))%bool eqn:Hnonneg;
+      [|apply gamma_top].
+    apply andb_true_iff in Hnonneg as [Hla Hlb].
+    apply Z.leb_le in Hla. apply Z.ltb_lt in Hlb.
+    unfold in_bnd in Ha, Hb; cbn in Ha, Hb. cbn [gamma in_itv]; unfold in_bnd; cbn.
+    pose proof (Z.mod_pos_bound x y ltac:(lia)).
+    pose proof (Z.mod_le x y ltac:(lia) ltac:(lia)).
+    split; [lia|apply Z.min_glb; lia].
+  Qed.
+
+   (** Singleton comparison decisions and the Boolean fallback describe their result. *)
+  Lemma raw_cmp_sound : forall c a b x y,
+    gamma a x -> gamma b y ->
+    gamma (cmp c a b)
+      (if match Z.compare x y, c with
+        | Eq, Eq | Lt, Lt | Gt, Gt => true | _, _ => false end then 1 else 0).
+  Proof.
+    intros c [|la ha] [|lb hb] x y Ha Hb; try contradiction.
+    cbn [cmp].
+    destruct (point (I la ha)) as [u|] eqn:Hu;
+      destruct (point (I lb hb)) as [v|] eqn:Hv.
+    - pose proof (point_sound _ _ _ Ha Hu) as Hx.
+      pose proof (point_sound _ _ _ Hb Hv) as Hy. subst u v.
+      unfold truth. destruct (Z.compare x y), c;
+        cbn [abst gamma in_itv]; unfold in_bnd; cbn; lia.
+    - destruct (Z.compare x y), c; cbn [gamma in_itv]; unfold in_bnd; cbn; lia.
+    - destruct (Z.compare x y), c; cbn [gamma in_itv]; unfold in_bnd; cbn; lia.
+    - destruct (Z.compare x y), c; cbn [gamma in_itv]; unfold in_bnd; cbn; lia.
+  Qed.
+  Local Close Scope Z_scope.
+
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted. (* CONVERT: interval_forward_sound: The variable pforward_sound was not found in the current environment. *)
+  Proof.
+    intros o xs cs c Hxs Heval. unfold forward.
+    destruct (L.view o) eqn:Hview; try apply gamma_top.
+    all: rewrite (L.view_eval o cs ltac:(congruence)), Hview in Heval.
+    all: destruct xs as [|a [|b [|extra xs]]]; try apply gamma_top.
+    all: inversion Hxs as [|a' x tail values Ha Htail]; subst.
+    all: try (cbn [zview_eval] in Heval; injection Heval as Hvalue;
+      subst c; apply abst_sound).
+    all: inversion Htail as [|b' y tail' values' Hb Hlast]; subst.
+    all: inversion Hlast; subst.
+    all: cbn [zview_eval] in Heval.
+    all: try (match type of Heval with
+      | (if ?test then Some _ else None) = Some _ =>
+        destruct test eqn:Hdefined in Heval; try discriminate
+      end).
+    all: injection Heval as Hvalue; subst c.
+    all: first [now apply add_sound | now apply sub_sound | now apply mul_sound |
+      now apply raw_udiv_sound | now apply raw_urem_sound | now apply raw_bitand_sound |
+      now apply raw_bitor_sound | now apply raw_cmp_sound |
+      eapply raw_shl_sound; [exact Ha|exact Hb|now apply Z.leb_le in Hdefined]].
+  Qed.
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted. (* CONVERT: interval_assume_sound: The variable passume_sound was not found in the current environment. *)
+  Proof.
+    intros o r xs cs c Hxs Heval Hr. unfold backward.
+    destruct (L.view o) eqn:Hview; try exact Hxs.
+    all: destruct xs as [|a [|b [|extra xs]]]; try exact Hxs.
+    all: rewrite (L.view_eval o cs ltac:(congruence)), Hview in Heval.
+    all: inversion Hxs as [|a' x tail values Ha Htail]; subst.
+    all: inversion Htail as [|b' y tail' values' Hb Hlast]; subst.
+    all: inversion Hlast; subst.
+    all: cbn [zview_eval] in Heval.
+    all: try (match type of Heval with
+      | (if ?test then Some _ else None) = Some _ =>
+        destruct test eqn:Hdefined in Heval; try discriminate
+      end).
+    all: injection Heval as Hvalue; subst c.
+    all: try (apply andb_true_iff in Hdefined as [Hnonneg Hpositive];
+      apply Z.leb_le in Hnonneg; apply Z.ltb_lt in Hpositive).
+    all: first
+      [destruct (add_back_sound r a b x y Ha Hb Hr) as [Hleft Hright] |
+       destruct (sub_back_sound r a b x y Ha Hb Hr) as [Hleft Hright] |
+       destruct (mul_back_sound r a b x y Ha Hb Hr) as [Hleft Hright] |
+       destruct (unsigned_back_sound a b x y Ha Hb Hnonneg Hpositive) as [Hleft Hright]].
+    all: constructor; [exact Hleft|constructor; [exact Hright|constructor]].
+  Qed.
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
