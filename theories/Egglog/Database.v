@@ -5650,6 +5650,46 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - rewrite row_replace_same. apply Hsame.
   Qed.
 
+  (** A real union retains every old equality, including during an active repair batch. *)
+  Lemma union_same_preserves_raw : forall db a b i j,
+    same (view db) i j -> same (view (union a b db)) i j.
+  Proof.
+    intros db a b i j Hsame. unfold union.
+    destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; [| exact Hsame].
+    apply (proj2 (equality_log_cons a b (runtime_equalities (db_runtime db)) i j)).
+    apply rst_step. now left.
+  Qed.
+
+  (** Resolving output conflicts only extends the old equality log. *)
+  Lemma output_conflict_same_preserves_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)) i j,
+    same (view db) i j ->
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end)) i j.
+  Proof.
+    intros db previous co i j Hsame.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try exact Hsame.
+    now apply union_same_preserves_raw.
+  Qed.
+
+  (** The insertion branch and row-cache writes preserve all previously logged equalities. *)
+  Lemma put_same_preserves_raw : forall db f k o i j,
+    same (view db) i j -> same (view (put f k o db)) i j.
+  Proof.
+    intros db f k o i j Hsame. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : same (view next) i j).
+    { now apply output_conflict_same_preserves_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |]. now rewrite row_replace_same.
+    - now rewrite row_replace_same.
+  Qed.
+
   (** Put is semantically sound whenever its actual normalization preserves meaning. *)
   Lemma put_sat_normal_meaning : forall (M : model (V := V.t)) nu db f k o,
     sat V.merge M nu (view db) ->
@@ -5888,6 +5928,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (LoopNFacts.loopN_preserves _ _ db_rstep (fun s => P (fst s)) P
       Hcontinue Hstop (db_rebuild_fuel db) (db, []) Hinitial) as Hloop.
     unfold rebuild. destruct (loopN db_rstep (db_rebuild_fuel db) (db, [])); exact Hloop.
+  Qed.
+
+  (** Deleting and reinserting one current row never loses an old identifier equality. *)
+  Lemma repair_current_same_preserves : forall db f k i j,
+    same (view db) i j -> same (view (repair_current f k db)) i j.
+  Proof.
+    intros db f k i j Hsame. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| exact Hsame].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hsame |].
+    apply put_same_preserves_raw. now rewrite row_delete_same.
+  Qed.
+
+  (** Old equalities survive the actual rebuild loop, including fuel exhaustion. *)
+  Lemma rebuild_same_preserves : forall db i j,
+    same (view db) i j -> same (view (rebuild db)) i j.
+  Proof.
+    intros db i j Hsame. apply (rebuild_preserves (fun current => same (view current) i j)).
+    - intros current f k Hcurrent. now apply repair_current_same_preserves.
+    - intros current x next Hcurrent Hpop.
+      destruct (db_pop_loser_preserves current x next Hpop) as [_ Hview].
+      now rewrite Hview.
+    - exact Hsame.
   Qed.
 
   (** Queue scheduling retains layout, allocation and the current change flag. *)
@@ -8037,11 +8100,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       k_active * N.of_nat (work_weight (fst s) (snd s)))%N.
   (* STUB-CODE *)
   Definition nuses (db : t) : N := db_nuses db.
-  (* STUB-CODE *)
   Definition npending (db : t) : N := db_npending db.
-  (* STUB-CODE *)
   Definition index_counters (db : t) : list positive := db_index_counters db.
-  (* STUB-CODE *)
   Definition written_cells (db : t) : list (cell V.t) := db_written_cells db.
   Definition get_uses : positive -> t -> list use_entry := db_get_uses.
   TimeFun get_uses.
