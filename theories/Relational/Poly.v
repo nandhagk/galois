@@ -538,6 +538,272 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     unfold sat in *. rewrite (eval_coef_havoc x st c (lhs (row_of r)) Hfree).
     exact Hsat.
   Qed.
+  (** The trie mass sums every stored contribution under a numeric valuation. *)
+  Fixpoint normalization_mass_ne (v : X.t -> Z) (n : trie_ne (X.t * Z)) : Z :=
+    match n with
+    | N001 r => normalization_mass_ne v r
+    | N010 p => (snd p * v (fst p))%Z
+    | N011 p r => (snd p * v (fst p) + normalization_mass_ne v r)%Z
+    | N100 l => normalization_mass_ne v l
+    | N101 l r => (normalization_mass_ne v l + normalization_mass_ne v r)%Z
+    | N110 l p => (normalization_mass_ne v l + snd p * v (fst p))%Z
+    | N111 l p r =>
+      (normalization_mass_ne v l + snd p * v (fst p) + normalization_mass_ne v r)%Z
+    end.
+
+  (** An empty trie has zero mass. *)
+  Definition normalization_mass (v : X.t -> Z) (tr : ptrie (X.t * Z)) : Z :=
+    match tr with Empty => 0%Z | Nodes n => normalization_mass_ne v n end.
+
+  (** An absent binding contributes zero to the trie mass. *)
+  Definition normalization_value (v : X.t -> Z) (o : option (X.t * Z)) : Z :=
+    match o with None => 0%Z | Some p => (snd p * v (fst p))%Z end.
+
+  (** Canonical rebuilding adds the left, current and right contributions. *)
+  Lemma normalization_mass_node : forall v l o r,
+    normalization_mass v (PTrieCode.node l o r) =
+      (normalization_mass v l + normalization_value v o + normalization_mass v r)%Z.
+  Proof.
+    intros v [|l] [p|] [|r];
+      cbn [PTrieCode.node normalization_mass normalization_value normalization_mass_ne]; ring.
+  Qed.
+
+  (** The observable children account for the full trie mass. *)
+  Lemma normalization_mass_view : forall v tr,
+    normalization_mass v tr =
+      (normalization_mass v (PTrieCode.left tr) +
+       normalization_value v (PTrieCode.value tr) +
+       normalization_mass v (PTrieCode.right tr))%Z.
+  Proof.
+    intros v tr.
+    assert (Hnode : PTrieCode.node (PTrieCode.left tr) (PTrieCode.value tr)
+      (PTrieCode.right tr) = tr).
+    { destruct tr as [|n]; [reflexivity | destruct n; reflexivity]. }
+    rewrite <- Hnode at 1. apply normalization_mass_node.
+  Qed.
+
+  (** Replacing one binding subtracts its old contribution and adds its new one. *)
+  Lemma normalization_mass_set : forall v p a tr,
+    normalization_mass v (PTrieCode.set p a tr) =
+      (normalization_mass v tr + snd a * v (fst a) -
+       normalization_value v (PTrieCode.get p tr))%Z.
+  Proof.
+    intros v p a. unfold PTrieCode.set.
+    induction p as [p IH|p IH|]; intro tr; cbn [PTrieCode.replace].
+    - rewrite normalization_mass_node, IH, (normalization_mass_view v tr).
+      unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
+      cbn [trie_get]. ring.
+    - rewrite normalization_mass_node, IH, (normalization_mass_view v tr).
+      unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
+      cbn [trie_get]. ring.
+    - rewrite normalization_mass_node, (normalization_mass_view v tr).
+      unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
+      cbn [trie_get normalization_value]. ring.
+  Qed.
+
+  (** A fold whose step adds one contribution accumulates the nonempty trie mass. *)
+  Lemma normalization_fold_ne : forall v B (step : B -> X.t * Z -> B) eval,
+    (forall b p, eval (step b p) = (eval b + snd p * v (fst p))%Z) ->
+    forall n b, eval (PTrieCode.fold_values_ne step n b) =
+      (eval b + normalization_mass_ne v n)%Z.
+  Proof.
+    intros v B step eval Hstep n.
+    induction n as [r IHr|p|p r IHr|l IHl|l IHl r IHr|l IHl p|l IHl p r IHr]; intro b;
+      cbn [PTrieCode.fold_values_ne normalization_mass_ne].
+    - apply IHr.
+    - apply Hstep.
+    - rewrite IHr, Hstep. ring.
+    - apply IHl.
+    - rewrite IHr, IHl. ring.
+    - rewrite Hstep, IHl. ring.
+    - rewrite IHr, Hstep, IHl. ring.
+  Qed.
+
+  (** A fold whose step adds one contribution accumulates the whole trie mass. *)
+  Lemma normalization_fold : forall v B (step : B -> X.t * Z -> B) eval,
+    (forall b p, eval (step b p) = (eval b + snd p * v (fst p))%Z) ->
+    forall tr b, eval (PTrieCode.fold_values step tr b) =
+      (eval b + normalization_mass v tr)%Z.
+  Proof.
+    intros v B step eval Hstep [|n] b; cbn [PTrieCode.fold_values normalization_mass].
+    - ring.
+    - now apply normalization_fold_ne.
+  Qed.
+
+  (** Every stored source key agrees with its encoded trie address. *)
+  Definition normalization_wf (m : ptrie (X.t * Z)) : Prop :=
+    forall p q, PTrieCode.get p m = Some q -> X.encode (fst q) = p.
+
+  (** The empty coefficient accumulator satisfies key agreement. *)
+  Lemma normalization_empty : normalization_wf PTrieCode.empty.
+  Proof.
+    intros p q Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  (** Accumulating a coefficient preserves agreement between keys and addresses. *)
+  Lemma add_term_wf : forall m p, normalization_wf m ->
+    normalization_wf (poly_add_term X.encode m p).
+  Proof.
+    intros m p Hwf key value Hvalue. unfold poly_add_term in Hvalue.
+    destruct (Pos.eq_dec key (X.encode (fst p))) as [Heq|Hneq].
+    - subst key. rewrite PTrie.get_set_same in Hvalue.
+      injection Hvalue as Hsame. subst value. reflexivity.
+    - rewrite PTrie.get_set_other in Hvalue by exact Hneq. exact (Hwf _ _ Hvalue).
+  Qed.
+
+  (** Accumulation adds the input occurrence to the trie mass. *)
+  Lemma add_term_mass : forall v m p, normalization_wf m ->
+    normalization_mass v (poly_add_term X.encode m p) =
+      (normalization_mass v m + snd p * v (fst p))%Z.
+  Proof.
+    intros v m p Hwf. unfold poly_add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [q|] eqn:Hq;
+      rewrite normalization_mass_set, Hq; cbn [normalization_value fst snd].
+    - assert (Hkey : fst q = fst p).
+      { apply X.encode_inj. exact (Hwf _ _ Hq). }
+      rewrite Hkey. ring.
+    - ring.
+  Qed.
+
+  (** Accumulating a raw coefficient list preserves the sum of all occurrences. *)
+  Lemma normalize_fold_mass : forall v xs m, normalization_wf m ->
+    normalization_mass v (fold_left (poly_add_term X.encode) xs m) =
+      (normalization_mass v m + eval_coef v xs)%Z.
+  Proof.
+    intros v xs. induction xs as [|p xs IH]; intros m Hwf; cbn [fold_left].
+    - unfold eval_coef. cbn [fold_right]. ring.
+    - rewrite (IH _ (add_term_wf _ _ Hwf)), (add_term_mass v m p Hwf).
+      unfold eval_coef. cbn [fold_right]. ring.
+  Qed.
+
+  (** Filtering zero bindings from the accumulator preserves integer evaluation. *)
+  Lemma normalize_coef_eval : forall (v : X.t -> Z) xs,
+    eval_coef v (poly_normal_coef X.encode xs) = eval_coef v xs.
+  Proof.
+    intros v xs. unfold poly_normal_coef.
+    rewrite (normalization_fold v _ _ (eval_coef v)).
+    - rewrite (normalize_fold_mass v xs PTrieCode.empty normalization_empty). reflexivity.
+    - intros acc [x a]. cbn [snd]. destruct (Z.eqb a 0) eqn:Hzero.
+      + apply Z.eqb_eq in Hzero. subst a. cbn [fst snd]. ring.
+      + change (a * v x + eval_coef v acc = eval_coef v acc + a * v x)%Z. ring.
+  Qed.
+
+  (** Concatenation adds the evaluations of both coefficient lists. *)
+  Lemma eval_coef_app : forall (v : X.t -> Z) xs ys,
+    eval_coef v (xs ++ ys) = (eval_coef v xs + eval_coef v ys)%Z.
+  Proof.
+    intros v xs. unfold eval_coef. induction xs as [|[x a] xs IH]; intro ys;
+      cbn [app fold_right fst snd]; [reflexivity |].
+    rewrite IH. ring.
+  Qed.
+
+  (** Updating one variable changes a form by its summed coefficient. *)
+  Lemma eval_coef_update : forall (v : X.t -> Z) x z r,
+    eval_coef (upd X.eqb v x z) (lhs r) =
+      (eval_coef v (lhs r) + poly_coefficient X.eqb x r * (z - v x))%Z.
+  Proof.
+    intros v x z [xs relation b]. unfold eval_coef, poly_coefficient. cbn [lhs].
+    induction xs as [|[y a] xs IH]; cbn [fold_right fst snd]; [ring |].
+    rewrite IH. unfold upd. destruct (X.eqb_spec y x) as [Hsame|Hother].
+    - subst y. ring.
+    - ring.
+  Qed.
+
+  (** Removing all occurrences of a key subtracts its full contribution. *)
+  Lemma eval_coef_without : forall (v : X.t -> Z) x r,
+    eval_coef v (filter (fun p => negb (X.eqb (fst p) x)) (lhs r)) =
+      (eval_coef v (lhs r) - poly_coefficient X.eqb x r * v x)%Z.
+  Proof.
+    intros v x [xs relation b]. unfold eval_coef, poly_coefficient. cbn [lhs].
+    induction xs as [|[y a] xs IH]; cbn [filter fold_right fst snd]; [ring |].
+    destruct (X.eqb_spec y x) as [Hsame|Hother]; cbn [negb fold_right fst snd].
+    - subst y. rewrite IH. ring.
+    - rewrite IH. ring.
+  Qed.
+
+  (** Substitution adjusts the constant separately from the updated coefficient sum. *)
+  Lemma eval_coef_subst : forall (v : X.t -> Z) x f r,
+    eval_coef v (lhs (subst x f r)) =
+      (eval_coef (upd X.eqb v x (eval_lin v f)) (lhs r) -
+       poly_coefficient X.eqb x r * cst f)%Z.
+  Proof.
+    intros v x f r. unfold subst, poly_substitute. cbn [lhs].
+    rewrite normalize_coef_eval, eval_coef_app, eval_coef_scale,
+      eval_coef_without, eval_coef_update. unfold eval_lin. ring.
+  Qed.
+
+  (** Syntactic substitution denotes the concrete update for arbitrary raw rows. *)
+  Lemma subst_sat_checked : forall v x f r, sat v (subst x f r) <->
+    sat (upd X.eqb v x (eval_lin v f)) r.
+  Proof.
+    intros v x f r. unfold sat. rewrite eval_coef_subst.
+    unfold subst, poly_substitute. cbn [lrel rhs]. destruct (lrel r); lia.
+  Qed.
+
+  (** Returned assignment rows are justified by their checked substitutions. *)
+  Lemma assigned_candidate_sound : forall P x f r c v,
+    assigned_candidate P x f r = Some c -> Forall (sat v) P ->
+    sat (upd X.eqb v x (eval_lin v f)) c.
+  Proof.
+    intros P x f r c v Hresult Hmodels. unfold assigned_candidate in Hresult.
+    destruct (untag (lhs (poly_constraint r))) as [xs|]; [| discriminate].
+    destruct (poly_multipliers r) as [|m ms]; [discriminate |].
+    destruct (C.check_entails P
+      (subst x f (LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r))))
+      (Cert ms 1 false)) eqn:Hcheck; [| discriminate].
+    injection Hresult as Hsame. subst c. apply subst_sat_checked.
+    exact (C.check_entails_sound P _ (Cert ms 1 false) Hcheck v Hmodels).
+  Qed.
+
+  (** Every emitted assignment row holds after evaluating its affine right-hand side. *)
+  Lemma assign_linear_sound : forall x f P v, Forall (sat v) P ->
+    Forall (sat (upd X.eqb v x (eval_lin v f))) (assign_linear x f P).
+  Proof.
+    intros x f P v Hmodels. unfold assign_linear. apply Forall_forall. intros c Hin.
+    apply in_flat_map in Hin as [r [_ Hin]].
+    destruct (assigned_candidate P x f r) as [q|] eqn:Hresult; [| contradiction].
+    destruct Hin as [Hsame|Hfalse]; [subst q | contradiction].
+    exact (assigned_candidate_sound P x f r c v Hresult Hmodels).
+  Qed.
+
+  (** Pointwise equal numeric stores have equal coefficient evaluations. *)
+  Lemma eval_coef_pointwise : forall (v w : X.t -> Z) xs,
+    (forall x, v x = w x) -> eval_coef v xs = eval_coef w xs.
+  Proof.
+    intros v w xs Hsame. unfold eval_coef.
+    induction xs as [|[x a] xs IH]; cbn [fold_right fst snd]; [reflexivity |].
+    now rewrite Hsame, IH.
+  Qed.
+
+  (** Pointwise equal numeric stores satisfy the same row. *)
+  Lemma sat_pointwise : forall (v w : X.t -> Z) r,
+    (forall x, v x = w x) -> sat v r -> sat w r.
+  Proof.
+    intros v w r Hsame Hsat. unfold sat in *.
+    rewrite <- (eval_coef_pointwise v w (lhs r) Hsame). exact Hsat.
+  Qed.
+
+  (** An accepted atom row is the integer interpretation of its unwrapped comparison. *)
+  Lemma atom_row_sound : forall v a r,
+    atom_row a = Some r -> atom_holds v a -> sat v r.
+  Proof.
+    intros v [fl wl comparison fr wr] r Hrow Hatom.
+    destruct wl, wr; cbn [atom_row al alw ar arw acmp] in Hrow; try discriminate.
+    destruct comparison; injection Hrow as Hsame; subst r;
+      unfold sat; cbn [lhs lrel rhs];
+      rewrite normalize_coef_eval, eval_coef_app, eval_coef_scale;
+      cbn [atom_holds al alw ar arw acmp wrap_into] in Hatom;
+      unfold eval_lin in Hatom; lia.
+  Qed.
+
+  (** Normalizing a row preserves its integer models. *)
+  Lemma normalize_row_sat : forall v r,
+    sat v (poly_normal_row X.encode r) <-> sat v r.
+  Proof.
+    intros v r. unfold sat, poly_normal_row. cbn [lrel lhs rhs].
+    rewrite normalize_coef_eval. reflexivity.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
@@ -590,10 +856,6 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intro v. constructor.
   Qed.
-  Lemma assign_sound : forall x e s st c,
-    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
-    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
   Proof.
@@ -605,10 +867,42 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply filter_In in Hin as [_ Hchecked].
     exact (checked_projection_sound P x q st c Hchecked Hmodels).
   Qed.
+  Lemma assign_sound : forall x e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x e [|P] st c Hmodels Heval; [contradiction |]. unfold assign.
+    destruct (F.lin_of e) as [[f wrapping]|] eqn:Hform.
+    - destruct wrapping.
+      + pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
+        cbn [wrap_into] in Hvalue.
+        pose proof (assign_linear_sound x f P (fun y => N.num (st y)) Hmodels) as Hpost.
+        apply Forall_forall. intros r Hin.
+        apply sat_pointwise with
+          (v := upd X.eqb (fun y => N.num (st y)) x
+            (eval_lin (fun y => N.num (st y)) f)).
+        * intro y. unfold upd. destruct (X.eqb y x); [symmetry; exact Hvalue | reflexivity].
+        * exact (proj1 (Forall_forall _ _) Hpost r Hin).
+      + exact (havoc_sound x (Reached P) st c Hmodels).
+    - exact (havoc_sound x (Reached P) st c Hmodels).
+  Qed.
+
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [|P] st cs Hmodels Heval Hguard; [contradiction |].
+    change (Forall (sat (fun y => N.num (st y)))
+      (flat_map (fun a => match atom_row a with Some r => r :: nil | None => nil end)
+        (F.atoms_of g es) ++ P)).
+    pose proof (F.atoms_sound g es st cs Heval Hguard) as Hatoms.
+    apply Forall_app. split; [| exact Hmodels]. apply Forall_forall. intros r Hin.
+    apply in_flat_map in Hin as [a [Hin Hrow]].
+    destruct (atom_row a) as [q|] eqn:Hresult; [| contradiction].
+    destruct Hrow as [Hsame|Hfalse]; [subst q | contradiction].
+    apply atom_row_sound with (a := a); [exact Hresult |].
+    exact (proj1 (Forall_forall _ _) Hatoms a Hin).
+  Qed.
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
@@ -852,7 +1146,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply subst_sat_checked.
+  Qed.
   Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
   Proof. Admitted. (* STUB *)
   Definition keep (P : list (lcons X.t)) (r : lcons X.t) : bool := keep_row P r.
