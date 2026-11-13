@@ -4524,28 +4524,172 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
+
+  (** Every key retained by pairing belongs to the original coordinate list. *)
+  Lemma combine_keys_in : forall (xs : list X.t) (zs : list Z) x,
+    In x (map fst (List.combine xs zs)) -> In x xs.
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros [|z zs] x Hin;
+      cbn [List.combine map fst In] in *; try contradiction.
+    destruct Hin as [Hsame|Hin]; [now left|]. right. now apply IH with (zs := zs).
+  Qed.
+
+  (** Pairing distinct coordinates with a coefficient vector retains distinct keys. *)
+  Lemma combine_keys_nodup : forall (xs : list X.t) (zs : list Z),
+    NoDup xs -> NoDup (map fst (List.combine xs zs)).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros [|z zs] Hunique;
+      cbn [List.combine map fst]; try solve [constructor].
+    inversion Hunique as [|key keys Hnot Htail]; subst key keys.
+    constructor.
+    - intro Hin. apply Hnot. now apply combine_keys_in with (zs := zs).
+    - now apply IH.
+  Qed.
+
+  (** Dropping zero coefficients from a unique coordinate list preserves unique keys. *)
+  Lemma sparse_nodup : forall xs zs,
+    NoDup xs -> NoDup (map fst (sparse xs zs)).
+  Proof.
+    intros xs zs Hunique. unfold sparse. apply karr_nodup_map_filter.
+    now apply combine_keys_nodup.
+  Qed.
+
+  (** Normalization gives every source row a unique coefficient at each key. *)
+  Lemma normal_normalize_rows : forall P, normal (map normalize_row P).
+  Proof.
+    intro P. unfold normal. apply Forall_map. apply Forall_forall. intros r _.
+    cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** A successful hull extractor returns its sparse equality row unchanged. *)
+  Lemma checked_hull_row_shape : forall xs a b r c,
+    checked_hull_row xs a b r = Some c ->
+    c = LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r))).
+  Proof.
+    intros xs a b r c Hrow. unfold checked_hull_row in Hrow.
+    remember (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) as candidate
+      eqn:Hcandidate in Hrow.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) &&
+      negb (forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r))) &&
+      C.check_entails a candidate (Cert (firstn (length a) (kweight r)) 1 false) &&
+      C.check_entails b candidate (Cert (skipn (length a) (kweight r)) 1 false));
+      [|discriminate].
+    injection Hrow as Hsame. subst c. exact Hcandidate.
+  Qed.
+
+  (** Every affine-hull output has distinct coefficient keys, even for raw inputs. *)
+  Lemma normal_affine_hull : forall a b, normal (affine_hull a b).
+  Proof.
+    intros a b. unfold normal, affine_hull. apply present_forall.
+    intros r c Hrow. rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
+    cbn [lhs]. apply sparse_nodup. apply variables_nodup.
+  Qed.
+
+  (** A successful projection extractor returns its sparse equality row unchanged. *)
+  Lemma projected_row_shape : forall x xs P r c,
+    projected_row x xs P r = Some c ->
+    c = LCons X.t (sparse xs (kcoeff r)) REq (kright r).
+  Proof.
+    intros x xs P r c Hrow. unfold projected_row in Hrow.
+    remember (LCons X.t (sparse xs (kcoeff r)) REq (kright r)) as candidate
+      eqn:Hcandidate in Hrow.
+    destruct (negb (mentions x candidate) &&
+      C.check_entails P candidate (Cert (kweight r) 1 false)); [|discriminate].
+    injection Hrow as Hsame. subst c. exact Hcandidate.
+  Qed.
+
+  (** Moving the eliminated variable to the front preserves unique coordinates. *)
+  Lemma project_variables_nodup : forall x P,
+    NoDup (x :: filter (fun y => negb (X.eqb y x)) (variables P)).
+  Proof.
+    intros x P. constructor.
+    - intro Hin. apply filter_In in Hin as [_ Hkeep].
+      rewrite key_eqb_refl in Hkeep. discriminate.
+    - apply NoDup_filter. apply variables_nodup.
+  Qed.
+
+  (** Projection normalizes both its equality basis and its retained inequalities. *)
+  Lemma normal_project : forall x P, normal (project x P).
+  Proof.
+    intros x P. unfold normal, project. apply Forall_app. split.
+    - apply present_forall. intros r c Hrow.
+      rewrite (projected_row_shape _ _ _ _ _ Hrow). cbn [lhs].
+      apply sparse_nodup. apply project_variables_nodup.
+    - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+      apply in_map_iff in Hin as [s [Hsame _]]. subst r.
+      cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Both affine assignment branches construct only normalized rows. *)
+  Lemma normal_assign_rows : forall x f P, normal (assign_rows x f P).
+  Proof.
+    intros x f P. unfold assign_rows.
+    destruct (Z.eqb (coefficient x (coef f)) 0).
+    - constructor.
+      + cbn [normalize_row lhs]. apply normalize_coef_nodup.
+      + apply normal_project.
+    - unfold normal. apply Forall_map. apply Forall_forall. intros r _.
+      cbn [inverse_row normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Every emitted equality atom has merged duplicate keys. *)
+  Lemma normal_atom_rows : forall a, normal (atom_rows a).
+  Proof.
+    intros [fl wl comparison fr wr].
+    destruct wl, wr, comparison; cbn [normal atom_rows al alw ar arw acmp];
+      try solve [constructor].
+    constructor; [|constructor]. cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
   (** Top has no repeated coefficients. *)
   Lemma normal_top : normal_s top.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    constructor.
+  Qed.
   (** Join keeps rows free of repeated keys. *)
   Lemma normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|P] [|Q] Ha Hb; [exact I|exact Hb|exact Ha|].
+    apply normal_affine_hull.
+  Qed.
   (** Widening keeps rows free of repeated keys. *)
   Lemma normal_widen : forall p a b,
     normal_s a -> normal_s b -> normal_s (widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Ha Hb. unfold widen. destruct (leb b a); [exact Ha|].
+    now apply normal_join.
+  Qed.
   (** Narrowing keeps rows free of repeated keys. *)
   Lemma normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b _ Hb. exact Hb.
+  Qed.
   (** Assignment normalizes its new rows. *)
   Lemma normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [|P] _; [exact I|]. unfold assign.
+    destruct (F.lin_of e) as [[f wrapping]|]; [destruct wrapping|].
+    - apply normal_assign_rows.
+    - apply normal_project.
+    - apply normal_project.
+  Qed.
   (** Havoc keeps rows free of repeated keys. *)
   Lemma normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|P] _; [exact I|]. apply normal_project.
+  Qed.
   (** Assumption normalizes the rows it adds. *)
   Lemma normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [|P] _; [exact I|].
+    change (normal (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)).
+    unfold normal. apply Forall_app. split.
+    - apply Forall_forall. intros r Hin. apply in_flat_map in Hin as [a [_ Hr]].
+      exact (proj1 (Forall_forall _ _) (normal_atom_rows a) r Hr).
+    - apply normal_normalize_rows.
+  Qed.
   (** This widening has no repeated threshold search. *)
   Lemma F_wunits : forall s, wunits s = 0.
   Proof.
@@ -4785,7 +4929,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** Join emits equality rows. *)
   Lemma join_eq : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (fun r => lrel r = REq) P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b P Hjoin. change (Reached (affine_hull a b) = Reached P) in Hjoin.
+    injection Hjoin as Hsame. subst P. unfold affine_hull. apply present_forall.
+    intros r c Hrow. rewrite (checked_hull_row_shape _ _ _ _ _ Hrow). reflexivity.
+  Qed.
 
   Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
   Proof.
