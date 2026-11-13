@@ -2721,6 +2721,82 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
         set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost; lia.
   Qed.
 
+  (** Removal charges its decrements using the edge and cached-degree bounds. *)
+  Lemma T_remove_step_budget : forall st c bound,
+    edges_ok (fst st) -> degrees_ok (fst st) ->
+    Pos.size_nat (next (fst st)) <= bound -> cell_bits V.encode c <= bound ->
+    (T_remove_step_st st c <=
+      128 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros [ix n] c bound Hedges Hdegrees Hcounter Hcell.
+    cbn [fst] in Hedges, Hdegrees, Hcounter.
+    set (bits := N.of_nat (bound + 1)).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    pose proof (mutation_step_budget PTrieT.c_trie V.c_key bits Hbits) as Hbudget.
+    pose proof (T_node_guard_le ix n) as Hguard.
+    assert (Hguard' : (Pos.T_ltb (next ix) n <= bits + 4)%N) by (unfold bits; lia).
+    time_unfold T_remove_step_st. cbn beta iota zeta. fold bits.
+    destruct (Pos.ltb (next ix) n) eqn:Hrange.
+    - time_unfold T_next. time_unfold @T_index_counter. time_cbn.
+      clear Hguard Hcounter Hcell Hedges Hdegrees. clearbody bits.
+      set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost. lia.
+    - apply Pos.ltb_ge in Hrange.
+      assert (Hnode : Pos.size_nat n <= bound).
+      { eapply Nat.le_trans; [apply positive_bits_mono; exact Hrange | exact Hcounter]. }
+      assert (Hcode : Pos.size_nat (encode_cell c) = cell_bits V.encode c)
+        by (destruct c; reflexivity).
+      assert (Hread : (T_read_node ix n <= PTrieT.c_trie * bits + 2)%N).
+      { eapply N.le_trans; [apply T_read_node_le |].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hencode : (T_encode_cell c <= (V.c_key + 1) * bits)%N).
+      { eapply N.le_trans; [apply T_encode_cell_le |].
+        apply N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hget : (PTrieCode.T_get (encode_cell c)
+        (node_edges (read_node ix n)) <= PTrieT.c_trie * bits)%N).
+      { eapply N.le_trans; [apply PTrieT.T_get_le |].
+        apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
+      assert (Hset : forall edge : index_edge (cell V.t),
+        (PTrieCode.T_set (encode_cell c) edge (node_edges (read_node ix n)) <=
+          PTrieT.c_trie * bits)%N).
+      { intro edge. eapply N.le_trans; [apply PTrieT.T_set_le |].
+        apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
+      assert (Hremove : (PTrieCode.T_remove (encode_cell c) (node_edges (read_node ix n)) <=
+        PTrieT.c_trie * bits)%N).
+      { eapply N.le_trans; [apply PTrieT.T_remove_le |].
+        apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
+      assert (Hwrite : forall nd counter,
+        (T_write_node ix n nd counter <= PTrieT.c_trie * bits + 3)%N).
+      { intros nd counter. eapply N.le_trans; [apply T_write_node_le |].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      time_unfold T_next. time_unfold @T_index_counter.
+      destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+        as [edge |] eqn:Hlookup.
+      + destruct (Hedges n (encode_cell c) edge Hlookup) as [_ [_ [_ [_ Hcount]]]].
+        pose proof (proj2 (Hdegrees n)) as Hdegree.
+        assert (Hcount_bits : N.size_nat (edge_count edge) <= bound).
+        { eapply Nat.le_trans; [apply N_bits_bounded; apply N.lt_le_incl; exact Hcount | exact Hcounter]. }
+        assert (Hdegree_bits : N.size_nat (node_degree (read_node ix n)) <= bound).
+        { eapply Nat.le_trans; [apply N_bits_bounded; apply N.lt_le_incl; exact Hdegree | exact Hcounter]. }
+        pose proof (N.T_eqb_le (edge_count edge) 1%N) as Hcompare.
+        pose proof (N.T_pred_le (edge_count edge)) as Hpred_count.
+        pose proof (N.T_pred_le (node_degree (read_node ix n))) as Hpred_degree.
+        assert (Hcompare' : (N.T_eqb (edge_count edge) 1 <= bits + 1)%N)
+          by (unfold bits; lia).
+        assert (Hpred_count' : (N.T_pred (edge_count edge) <= bits + 2)%N)
+          by (unfold bits; lia).
+        assert (Hpred_degree' : (N.T_pred (node_degree (read_node ix n)) <= bits + 2)%N)
+          by (unfold bits; lia).
+        destruct (N.eqb (edge_count edge) 1%N);
+          time_pose; time_simpl; time_cbn;
+          clear Hguard Hcounter Hcell Hnode Hcode Hset Hwrite Hedges Hdegrees
+            Hcompare Hpred_count Hpred_degree Hcount Hdegree Hcount_bits Hdegree_bits;
+          clearbody bits;
+          set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost; lia.
+      + time_pose. time_simpl. time_cbn.
+        clear Hguard Hcounter Hcell Hnode Hcode Hset Hwrite Hedges Hdegrees.
+        clearbody bits. set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost. lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
