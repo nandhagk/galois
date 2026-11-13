@@ -85,6 +85,16 @@ Module Type INCREMENTAL_LAWS (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : 
     (Least : SOLVER_LEAST L LB RS Sol)
     (Import X : INCREMENTAL_OPS L S RS R Sol Checker)
     (Import XS : INCREMENTAL_SPEC L S RS R Sol Checker X).
+  (* spec: tracks *)
+  Parameter tracks : S.prog -> state -> Prop.
+  (** The empty state records every program. *)
+  Parameter tracks_init : forall p, tracks p init.
+  (** Demand keeps the record of the program that it solves. *)
+  Parameter tracks_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+    tracks p st -> demand p pol roots fuel st = (o, st') -> tracks p st'.
+  (** A covered edit moves the record to the new program. *)
+  Parameter tracks_edit : forall p p' ch st, edit_covers p p' ch -> inv p st ->
+    tracks p st -> tracks p' (edit p p' ch st).
   (** The empty state is sound and below all post-solutions. *)
   Parameter init_inv : forall p, inv p init /\ least_on p init.
   (** Demand returns a sound state for every outcome. *)
@@ -101,7 +111,7 @@ Module Type INCREMENTAL_LAWS (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : 
     demand p pol roots fuel st = (DemandRejected why, st') -> st' = st.
   (** Covered edits keep a sound state after invalidation. *)
   Parameter edit_inv : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
-    inv p' (edit p p' ch st).
+    tracks p st -> inv p' (edit p p' ch st).
   (** Invalidation retains old values verbatim. *)
   Parameter edit_keeps : forall p p' ch st x v,
     value (edit p p' ch st) x = Some v -> value st x = Some v.
@@ -111,7 +121,7 @@ Module Type INCREMENTAL_LAWS (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : 
     demand p pol roots fuel st = (o, st') -> least_on p st'.
   (** Covered edits keep the least-value property on the retained domain. *)
   Parameter edit_least : forall p p' ch st, S.wf p -> edit_covers p p' ch ->
-    inv p st -> least_on p st -> least_on p' (edit p p' ch st).
+    inv p st -> tracks p st -> least_on p st -> least_on p' (edit p p' ch st).
   (** Stored least values agree in both lattice directions with a global least solution. *)
   Parameter from_scratch_agrees : forall p st s x v, S.wf p -> S.monotone p ->
     inv p st -> least_on p st -> least_solution p s -> value st x = Some v ->
@@ -207,7 +217,7 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter kwidth_edit : forall p p' ch st, kwidth (edit p p' ch st) <= kwidth st.
   (** Editing pays for the influence mass that it releases and for the changed rows. *)
   Parameter T_edit_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
-    (forall r, In r ch -> In r (S.rows p) \/ In r (S.rows p')) ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
     (T_edit p p' ch st <= c_inc *
       N.of_nat (((infl_mass st - infl_mass (edit p p' ch st)) +
         fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
@@ -221,10 +231,10 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     exists r, In r (region p roots st) /\ In x (S.writes p r ++ S.deps p r).
   Parameter frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
   (** Discovery selects declared rows. *)
-  Parameter region_rows : forall p roots st r,
+  Parameter region_rows : forall p roots st r, S.wf p ->
     In r (region p roots st) -> In r (S.rows p).
   (** Every selected row writes a key outside the old checked domain. *)
-  Parameter region_new : forall p roots st r,
+  Parameter region_new : forall p roots st r, S.wf p ->
     In r (region p roots st) -> exists y, In y (S.writes p r) /\ ~ dom st y.
 
 End INCREMENTAL_TIME.
@@ -361,8 +371,55 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter T_discover : S.prog -> list S.key -> state -> N.
   Parameter T_invalidate : S.prog -> S.prog -> list S.row -> state -> N.
   Parameter T_merge_region : state -> list S.key -> kmap S.key L.t -> N.
+  (** A tracked row with a stored write has a live group that holds its writes and entries. *)
+  Parameter tracks_row : forall p st r y, tracks p st -> In r (S.rows p) ->
+    In y (S.writes p r) -> dom st y ->
+    exists ss, In (S.key_code (S.target p r), ss) (snapshots st) /\
+      snapshot_live ss = true /\
+      (forall w, In w (S.writes p r) -> In w (snapshot_writes ss) /\
+        In (S.key_code (S.target p r)) (cowrite_at st w)) /\
+      (forall x, In x (S.deps p r) -> In (S.key_code (S.target p r)) (infl_at st x)).
+  (** Discovery lists each new key once. *)
+  Parameter discover_nodup : forall p roots st, NoDup (discover p roots st).
+  (** Every discovered key is missing and is a root or a key of a discovered row. *)
+  Parameter discover_source : forall p roots st x, In x (discover p roots st) ->
+    ~ dom st x /\
+    (In x roots \/ exists r, In r (region p roots st) /\ In x (S.writes p r ++ S.deps p r)).
+  (** Discovery pays for the rows and keys that it reaches and for the root codes. *)
+  Parameter T_discover_le : forall p roots st, S.wf p ->
+    (T_discover p roots st <=
+      c_inc * N.of_nat ((fold_right Nat.add 0%nat
+        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
+        length roots + 1)%nat) * N.of_nat (width p st + 1) +
+      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)))%N.
+  (** Merging pays for the code of every merged key. *)
+  Parameter T_merge_region_le : forall st xs m,
+    (T_merge_region st xs m <=
+      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat xs) + 1))%N.
+  (** Invalidation pays for each removed key with its read and co-write entries. *)
+  Parameter T_invalidate_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    (T_invalidate p p' ch st <= c_inc *
+      N.of_nat ((fold_right Nat.add 0%nat (map (fun x =>
+          infl_deg st x + length (cowrite_at st x) + 1) (invalidate p p' ch st)) +
+        fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
+          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N.
+  (** Editing releases each invalidated key with its read and co-write entries. *)
+  Parameter infl_mass_release : forall p p' ch st, state_ok st ->
+    infl_mass (edit p p' ch st) +
+      fold_right Nat.add 0%nat (map (fun x =>
+        infl_deg st x + length (cowrite_at st x) + 1) (invalidate p p' ch st)) <=
+    infl_mass st.
+  (** Invalidation removes no key outside the recorded closure of the changed writes. *)
+  Parameter invalidate_least : forall p p' ch st (P : S.key -> Prop),
+    (forall r y, In r ch -> In y (S.writes p r ++ S.writes p' r) -> dom st y -> P y) ->
+    (forall x id ss y, P x -> In id (infl_at st x ++ cowrite_at st x) ->
+      In (id, ss) (snapshots st) -> snapshot_live ss = true ->
+      In y (snapshot_writes ss) -> dom st y -> P y) ->
+    forall x, In x (invalidate p p' ch st) -> P x.
   (** Discovery extends the old domain to a closed domain. *)
-  Parameter discover_closed : forall p roots st, inv p st ->
+  Parameter discover_closed : forall p roots st, S.wf p -> inv p st ->
     closed p (fun x => dom st x \/ In x (discover p roots st)).
   (** Every discovered row has all its writes and reads in the extended domain. *)
   Parameter region_closed : forall p roots st r x, inv p st ->
@@ -384,7 +441,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     exists m, Checker.check_rows p (region p roots st) m = true.
   (** Removing the forward influence closure keeps a closed domain. *)
   Parameter invalidate_closed : forall p p' ch st, edit_covers p p' ch -> inv p st ->
-    closed p' (fun x => dom st x /\ ~ In x (invalidate p p' ch st)).
+    tracks p st -> closed p' (fun x => dom st x /\ ~ In x (invalidate p p' ch st)).
   (** Editing removes precisely the invalidated stored values. *)
   Parameter edit_value : forall p p' ch st x,
     value (edit p p' ch st) x =
@@ -396,7 +453,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     dom st y -> In y (invalidate p p' ch st).
   (** Unchanged rows writing into the retained domain keep their accepted contributions. *)
   Parameter edit_frame : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
-    post_on p' (edit p p' ch st).
+    tracks p st -> post_on p' (edit p p' ch st).
   (** Restricted least solving and frozen least seeds give regional least values. *)
   Parameter region_least_restricted : forall p pol roots fuel st m,
     S.wf p -> S.monotone p -> Least.widening_free pol -> inv p st -> least_on p st ->
