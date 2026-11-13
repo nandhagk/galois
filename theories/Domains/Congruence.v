@@ -1244,6 +1244,24 @@ Module CongruenceCost.
       cost_constants.
       destruct (r1 mod d =? r2 mod d), (d =? 0); lia.
   Qed.
+  Lemma lcm_time_budget : forall n a b,
+    (Z.size_nat a + Z.size_nat b + 1 <= n)%nat ->
+    (Z.T_lcm a b <= 512 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n a b Hinput.
+    pose proof (integer_gcd_size a b) as Hgsize.
+    pose proof (integer_divide_size b (Z.gcd a b)) as Hqsize.
+    pose proof (gcd_time_budget n a b Hinput) as Hgcd.
+    pose proof (div_time_budget (2 * n) b (Z.gcd a b) ltac:(lia)) as Hdivide.
+    pose proof (mul_time_budget n a (b / Z.gcd a b) ltac:(lia)) as Hmultiply.
+    pose proof (Z.T_abs_le (a * (b / Z.gcd a b))) as Habs.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    rewrite Nat.pow_mul_l, Nat2N.inj_mul in Hdivide.
+    time_unfold Z.T_lcm. cost_constants. lia.
+  Qed.
 End CongruenceCost.
 
 
@@ -2300,6 +2318,57 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Definition k_congr_crt : N := 268435456%N.
   Definition k_congr_transfer : N := 1048576%N.
 
+  Import CongruenceCost.
+
+  (** Word recognition charges a modulus construction and a linear comparison. *)
+  Lemma wordb_time_budget : forall w z n,
+    (Pos.to_nat w + Z.size_nat z + 1 <= n)%nat ->
+    (T_wordb w z <= 32 * N.of_nat n)%N.
+  Proof.
+    intros w z n Hsize.
+    pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+    pose proof (Z.T_leb_le 0 z) as Hnonnegative.
+    pose proof (Z.T_ltb_le z (modulus w)) as Hupper.
+    pose proof (Datatypes.T_andb_le (0 <=? z) (z <? modulus w)) as Hboth.
+    apply time_of_nat_le in Hsize. rewrite !Nat2N.inj_add in *.
+    time_unfold T_wordb. time_cbn_all. lia.
+  Qed.
+
+  (** A shared bit budget bounds every arithmetic call made by normalization. *)
+  Lemma normalization_time_budget : forall w a n,
+    (Pos.to_nat w + congr_bits a + 1 <= n)%nat ->
+    (T_congr_norm w a <= 128 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros w [|m r] n Hsize.
+    - assert (Hpositive : (1 <= n)%nat) by (cbn [congr_bits] in Hsize; lia).
+      pose proof (linear_le_square n Hpositive) as Hlinear.
+      assert (Hone : (1 <= N.of_nat n)%N).
+      { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+      time_unfold T_congr_norm. lia.
+    - cbn [congr_bits] in Hsize.
+      assert (Hpositive : (1 <= n)%nat) by lia.
+      pose proof (linear_le_square n Hpositive) as Hlinear.
+      assert (Hone : (1 <= N.of_nat n)%N).
+      { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+      pose proof (Z.T_abs_le m) as Habs.
+      pose proof (eqb_time_budget n (Z.abs m) 0
+        ltac:(rewrite CongruenceCRT.integer_abs_size; lia)) as Hzero.
+      pose proof (mod_time_budget n r (Z.abs m)
+        ltac:(rewrite CongruenceCRT.integer_abs_size; lia)) as Hremainder.
+      pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+      pose proof (WordTime.word_modulus_size_bound w) as Hmodsize.
+      apply time_of_nat_le in Hmodsize.
+      pose proof (Z.T_leb_le (modulus w) (Z.abs m)) as Hlarge.
+      pose proof (wordb_time_budget w r n ltac:(lia)) as Hword.
+      pose proof (integer_modulo_size r (Z.abs m)) as Hrembits.
+      rewrite CongruenceCRT.integer_abs_size in Hrembits.
+      pose proof (wordb_time_budget w (r mod Z.abs m) n ltac:(lia)) as Hremword.
+      assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat n)%N).
+      { apply time_of_nat_le. lia. }
+      time_unfold T_congr_norm. cbn beta zeta.
+      destruct (Z.abs m =? 0), (modulus w <=? Z.abs m); lia.
+  Qed.
+
   (** Strong canonicality bounds both stored integers by the word width. *)
   Lemma canonical_bits : forall w a, strong_canonical w a ->
     (congr_bits a <= 2 * Pos.to_nat w)%nat.
@@ -2482,7 +2551,12 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Normalization has the published quadratic arithmetic bound. *)
   Lemma T_congr_norm_le : forall w a,
     (T_congr_norm w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a.
+    pose proof (normalization_time_budget w a (Pos.to_nat w + congr_bits a + 1)
+      ltac:(lia)) as Hnorm.
+    unfold c_congruence. lia.
+  Qed.
   (** Negation has the published quadratic arithmetic bound. *)
   Lemma T_congr_neg_le : forall w a,
     (T_congr_neg w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
