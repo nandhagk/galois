@@ -294,6 +294,231 @@ Qed.
 
 Local Close Scope Q_scope.
 
+(** Each stored source key agrees with the address used to find it. *)
+Definition poly_addressed {A} (encode : A -> positive) (m : ptrie (A * Z)) : Prop :=
+  forall key p, PTrieCode.get key m = Some p -> encode (fst p) = key.
+
+(** An empty coefficient accumulator satisfies address agreement. *)
+Lemma poly_addressed_empty : forall A (encode : A -> positive),
+  poly_addressed encode PTrieCode.empty.
+Proof.
+  intros A encode key p Hget. rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+(** Accumulating one coefficient preserves agreement between keys and addresses. *)
+Lemma poly_addressed_add : forall A (encode : A -> positive) m p,
+  poly_addressed encode m -> poly_addressed encode (poly_add_term encode m p).
+Proof.
+  intros A encode m p Hwf key q Hget. unfold poly_add_term in Hget.
+  destruct (Pos.eq_dec key (encode (fst p))) as [Heq|Hneq].
+  - subst key. rewrite PTrie.get_set_same in Hget.
+    injection Hget as Hsame. subst q. reflexivity.
+  - rewrite PTrie.get_set_other in Hget by exact Hneq. exact (Hwf _ _ Hget).
+Qed.
+
+(** Accumulating a list preserves agreement between keys and addresses. *)
+Lemma poly_addressed_fold : forall A (encode : A -> positive) xs m,
+  poly_addressed encode m -> poly_addressed encode (fold_left (poly_add_term encode) xs m).
+Proof.
+  intros A encode xs. induction xs as [|p xs IH]; intros m Hwf; cbn [fold_left].
+  - exact Hwf.
+  - apply IH. now apply poly_addressed_add.
+Qed.
+
+(** Distinct trie addresses imply distinct source keys in an addressed accumulator. *)
+Lemma poly_values_nodup : forall A (encode : A -> positive) m,
+  poly_addressed encode m -> NoDup (map fst (map snd (PTrieCode.elements m))).
+Proof.
+  intros A encode m Hwf. apply NoDup_map_inv with (f := encode). rewrite !map_map.
+  assert (Hkeys : map (fun p => encode (fst (snd p))) (PTrieCode.elements m) =
+    map fst (PTrieCode.elements m)).
+  { apply map_ext_in. intros [key p] Hin. cbn [fst snd].
+    apply Hwf. apply (proj1 (PTrie.elements_spec _ m key p)). exact Hin. }
+  rewrite Hkeys. apply PTrie.elements_nodup.
+Qed.
+
+(** Folding trie entries after projection is the same as folding their values. *)
+Lemma poly_fold_values_list : forall A B (step : B -> A -> B) (xs : list (positive * A)) b,
+  fold_left (fun acc p => step acc (snd p)) xs b = fold_left step (map snd xs) b.
+Proof.
+  intros A B step xs. induction xs as [|p xs IH]; intro b; cbn [fold_left map].
+  - reflexivity.
+  - apply IH.
+Qed.
+
+(** The normalization fold reverses the nonzero entries before its accumulator. *)
+Lemma poly_fold_normalized : forall A (xs acc : list (A * Z)),
+  fold_left (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) xs acc =
+    rev (filter (fun p => negb (Z.eqb (snd p) 0)) xs) ++ acc.
+Proof.
+  intros A xs. induction xs as [|p xs IH]; intro acc; cbn [fold_left filter].
+  - reflexivity.
+  - destruct (Z.eqb (snd p) 0); cbn [negb rev].
+    + apply IH.
+    + rewrite IH, <- app_assoc. reflexivity.
+Qed.
+
+(** Filtering preserves uniqueness after projecting each retained entry. *)
+Lemma poly_nodup_map_filter : forall A B (f : A -> B) test xs,
+  NoDup (map f xs) -> NoDup (map f (filter test xs)).
+Proof.
+  intros A B f test xs. induction xs as [|a xs IH]; intro Hunique.
+  - constructor.
+  - inversion Hunique as [|b bs Hnot Htail]; subst b bs.
+    cbn [filter]. destruct (test a) eqn:Htest; cbn [map].
+    + constructor; [|now apply IH].
+      intro Hin. apply Hnot. apply in_map_iff in Hin as [p [Heq Hin]].
+      apply filter_In in Hin as [Hin _]. apply in_map_iff. exists p. auto.
+    + now apply IH.
+Qed.
+
+(** Normalization retains at most one coefficient for each source key. *)
+Lemma poly_normal_coef_nodup : forall A (encode : A -> positive) xs,
+  NoDup (map fst (poly_normal_coef encode xs)).
+Proof.
+  intros A encode xs. unfold poly_normal_coef.
+  rewrite PTrieT.F9_fold_values.
+  rewrite (poly_fold_values_list _ _
+    (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) _ nil).
+  rewrite poly_fold_normalized, app_nil_r, map_rev.
+  apply NoDup_rev. apply poly_nodup_map_filter. apply poly_values_nodup with (encode := encode).
+  apply poly_addressed_fold. apply poly_addressed_empty.
+Qed.
+
+(** Updating a coefficient preserves an old source key or stores the new source key. *)
+Lemma poly_add_term_key : forall A (encode : A -> positive) m p key q,
+  PTrieCode.get key (poly_add_term encode m p) = Some q ->
+  fst q = fst p \/
+    exists old, PTrieCode.get key m = Some old /\ fst q = fst old.
+Proof.
+  intros A encode m p key q Hget. unfold poly_add_term in Hget.
+  destruct (Pos.eq_dec key (encode (fst p))) as [Heq|Hneq].
+  - subst key. rewrite PTrie.get_set_same in Hget.
+    injection Hget as Hsame. subst q. left. reflexivity.
+  - rewrite PTrie.get_set_other in Hget by exact Hneq.
+    right. exists q. auto.
+Qed.
+
+(** Every accumulated key comes from the input list or the initial accumulator. *)
+Lemma poly_fold_keys : forall A (encode : A -> positive) xs m key q,
+  PTrieCode.get key (fold_left (poly_add_term encode) xs m) = Some q ->
+  In (fst q) (map fst xs) \/
+    exists old, PTrieCode.get key m = Some old /\ fst q = fst old.
+Proof.
+  intros A encode xs. induction xs as [|p xs IH]; intros m key q Hget;
+    cbn [fold_left] in Hget.
+  - right. exists q. auto.
+  - destruct (IH _ _ _ Hget) as [Htail|[old [Hold Hkey]]].
+    + left. right. exact Htail.
+    + destruct (poly_add_term_key A encode m p key old Hold)
+        as [Hhead|[prior [Hprior Hprior_key]]].
+      * left. left. congruence.
+      * right. exists prior. split; [exact Hprior|congruence].
+Qed.
+
+(** A retained normalized term is a nonzero binding in the coefficient accumulator. *)
+Lemma poly_normal_coef_lookup : forall A (encode : A -> positive) xs q,
+  In q (poly_normal_coef encode xs) ->
+  exists key,
+    PTrieCode.get key (fold_left (poly_add_term encode) xs PTrieCode.empty) = Some q /\
+    snd q <> 0%Z.
+Proof.
+  intros A encode xs q Hin. unfold poly_normal_coef in Hin.
+  rewrite PTrieT.F9_fold_values in Hin.
+  rewrite (poly_fold_values_list _ _
+    (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) _ nil) in Hin.
+  rewrite poly_fold_normalized, app_nil_r in Hin.
+  apply (proj2 (in_rev _ _)) in Hin. apply filter_In in Hin as [Hin Hnonzero].
+  apply in_map_iff in Hin as [[key p] [Heq Hin]]. cbn [snd] in Heq. subst p.
+  exists key. split.
+  - apply (proj1 (PTrie.elements_spec _ _ _ _)). exact Hin.
+  - apply Bool.negb_true_iff in Hnonzero. now apply Z.eqb_neq.
+Qed.
+
+(** Normalization removes every coefficient whose sum is zero. *)
+Lemma poly_normal_coef_nonzero : forall A (encode : A -> positive) xs q,
+  In q (poly_normal_coef encode xs) -> snd q <> 0%Z.
+Proof.
+  intros A encode xs q Hin.
+  destruct (poly_normal_coef_lookup A encode xs q Hin) as [key [_ Hnonzero]].
+  exact Hnonzero.
+Qed.
+
+(** Normalization retains only keys occurring in the original coefficient list. *)
+Lemma poly_normal_coef_keys : forall A (encode : A -> positive) xs q,
+  In q (poly_normal_coef encode xs) -> In (fst q) (map fst xs).
+Proof.
+  intros A encode xs q Hin.
+  destruct (poly_normal_coef_lookup A encode xs q Hin) as [key [Hget _]].
+  destruct (poly_fold_keys A encode xs PTrieCode.empty key q Hget)
+    as [Hkey|[old [Hold _]]]; [exact Hkey|].
+  rewrite PTrie.get_empty in Hold. discriminate.
+Qed.
+
+(** Initializing tracked rows normalizes each input row without changing its position. *)
+Lemma poly_initial_constraints : forall A (encode : A -> positive) P,
+  map poly_constraint (poly_initial encode P) =
+    map (fun p => poly_normal_row encode (fst p)) P.
+Proof.
+  intros A encode P. induction P as [|p ps IH]; cbn [poly_initial map poly_constraint].
+  - reflexivity.
+  - f_equal. rewrite map_map. exact IH.
+Qed.
+
+(** Initializing tracked rows preserves the input row count. *)
+Lemma poly_initial_length : forall A (encode : A -> positive) P,
+  length (poly_initial encode P) = length P.
+Proof.
+  intros A encode P. induction P as [|p ps IH]; cbn [poly_initial length].
+  - reflexivity.
+  - rewrite length_map, IH. reflexivity.
+Qed.
+
+(** Disjoint filters select at most one occurrence from each input position. *)
+Lemma poly_disjoint_filters : forall A (f g : A -> bool) xs,
+  (forall x, f x = true -> g x = false) ->
+  length (filter f xs) + length (filter g xs) <= length xs.
+Proof.
+  intros A f g xs Hdisjoint. induction xs as [|x xs IH]; cbn [filter length].
+  - lia.
+  - destruct (f x) eqn:Hf, (g x) eqn:Hg; cbn [length]; try lia.
+    rewrite (Hdisjoint x Hf) in Hg. discriminate.
+Qed.
+
+(** Two disjoint row classes form at most a quarter of the square many pairs. *)
+Lemma poly_pair_count : forall a b n,
+  a + b <= n -> a * b <= n ^ 2 / 4.
+Proof.
+  intros a b n Htotal. apply Nat.div_le_lower_bound; [lia|].
+  assert (Hsquare : (a + b) ^ 2 <= n ^ 2) by (apply Nat.pow_le_mono_l; lia).
+  destruct (Nat.le_ge_cases a b) as [Hab|Hba].
+  - pose proof (Nat.sub_add a b Hab). cbn [Nat.pow] in *. nia.
+  - pose proof (Nat.sub_add b a Hba). cbn [Nat.pow] in *. nia.
+Qed.
+
+(** One elimination keeps zero rows and forms every opposite-sign pair at most once. *)
+Lemma poly_step_rows : forall A (encode : A -> positive) eqb x P,
+  length (poly_step encode eqb x P) <= (length P) ^ 2 / 4 + length P.
+Proof.
+  intros A encode eqb x P. unfold poly_step.
+  destruct (find (poly_pivot eqb x) P) as [pivot|] eqn:Hpivot.
+  - rewrite length_map. lia.
+  - set (pos := filter (fun r =>
+      (0 <? poly_coefficient eqb x (poly_constraint r))%Z) P).
+    set (neg := filter (fun r =>
+      (poly_coefficient eqb x (poly_constraint r) <? 0)%Z) P).
+    assert (Hclasses : length pos + length neg <= length P).
+    { unfold pos, neg. apply poly_disjoint_filters. intros r Hpositive.
+      apply Z.ltb_lt in Hpositive. apply Z.ltb_ge. lia. }
+    pose proof (poly_pair_count _ _ _ Hclasses) as Hpairs.
+    pose proof (filter_length_le
+      (fun r => Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0) P) as Hzero.
+    rewrite length_app.
+    rewrite flat_map_constant_length with (c := length neg)
+      by (intros; apply length_map). lia.
+Qed.
+
+
 (** The row-count recurrence is monotone. *)
 Lemma poly_rows_recurrence_mono : forall rows more, rows <= more ->
   rows ^ 2 / 4 + rows <= more ^ 2 / 4 + more.
@@ -2012,7 +2237,13 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
   Proof. Admitted. (* STUB *)
   Lemma fm_rows_le : forall x P, length (fm_elim x P) <= (length P)^2 / 4 + length P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x P. unfold fm_elim. rewrite length_map.
+    pose proof (poly_step_rows X.t X.encode X.eqb x
+      (poly_initial X.encode (map (fun r => (r, false)) P))) as Hrows.
+    rewrite !poly_initial_length, !length_map in Hrows. exact Hrows.
+  Qed.
+
   Lemma ell_fm_le : forall x P, normal P ->
     ell (map row_of (fm_elim x P)) <= 2 * ell P + 1.
   Proof. Admitted. (* STUB *)
