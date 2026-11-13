@@ -2326,6 +2326,58 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     cbn [fst snd]. lia.
   Qed.
 
+  Local Lemma table_assume_add_bits : forall w a b q,
+    interval_bits (fst (interval_assume_add w a b q)) +
+      interval_bits (snd (interval_assume_add w a b q)) <=
+      2 * (interval_bits a + interval_bits b + interval_bits q + 2).
+  Proof.
+    intros w a b q. unfold interval_assume_add.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      destruct (interval_finite_helper q) as [[lq hq]|] eqn:Hq;
+      cbn [fst snd]; try lia.
+    destruct (Z.ltb (ha + hb) (Word.modulus w)); cbn [fst snd]; [|lia].
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    destruct (table_finite_bits b lb hb Hb) as [Hlb Hhb].
+    destruct (table_finite_bits q lq hq Hq) as [Hlq Hhq].
+    pose proof (table_integer_sub_bits lq hb).
+    pose proof (table_integer_sub_bits hq lb).
+    pose proof (table_integer_sub_bits lq ha).
+    pose proof (table_integer_sub_bits hq la).
+    pose proof (PayloadBounds.payload_raw_meet_bits a
+      (I (Fin (lq - hb)) (Fin (hq - lb)))).
+    pose proof (PayloadBounds.payload_raw_meet_bits b
+      (I (Fin (lq - ha)) (Fin (hq - la)))).
+    cbn [interval_bits Nat.max] in *.
+    lia.
+  Qed.
+
+  Local Lemma table_assume_sub_bits : forall a b q,
+    interval_bits (fst (interval_assume_sub a b q)) +
+      interval_bits (snd (interval_assume_sub a b q)) <=
+      2 * (interval_bits a + interval_bits b + interval_bits q + 2).
+  Proof.
+    intros a b q. unfold interval_assume_sub.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      destruct (interval_finite_helper q) as [[lq hq]|] eqn:Hq;
+      cbn [fst snd]; try lia.
+    destruct (Z.leb hb la); cbn [fst snd]; [|lia].
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    destruct (table_finite_bits b lb hb Hb) as [Hlb Hhb].
+    destruct (table_finite_bits q lq hq Hq) as [Hlq Hhq].
+    pose proof (table_integer_add_bits lq lb).
+    pose proof (table_integer_add_bits hq hb).
+    pose proof (table_integer_sub_bits la hq).
+    pose proof (table_integer_sub_bits ha lq).
+    pose proof (PayloadBounds.payload_raw_meet_bits a
+      (I (Fin (lq + lb)) (Fin (hq + hb)))).
+    pose proof (PayloadBounds.payload_raw_meet_bits b
+      (I (Fin (la - hq)) (Fin (ha - lq)))).
+    cbn [interval_bits Nat.max] in *.
+    lia.
+  Qed.
+
   Local Lemma table_ite_size : forall rw wa wb a b,
     W.psize rw (Scalar.interval_join (interval_clip wa a) (interval_clip wb b)) <=
       (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2.
