@@ -25,16 +25,23 @@ Module BoundedSetCode (K : KEY) (S : SET K) (U : UNIVERSE K S) <: LATTICE_OPS.
 
   (** Empty support lies inside the universe. *)
   Lemma bot_inside : S.subset S.empty U.u = true.
-  Proof. Admitted. (* STUB *)
+  Proof. apply S.subset_spec; intros k Hk; rewrite S.has_empty in Hk; discriminate. Qed.
 
   (** Union preserves the restriction to the universe. *)
   Lemma union_inside (a b : t) :
     S.subset (S.union (proj1_sig a) (proj1_sig b)) U.u = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct a as [a Ha], b as [b Hb]. pose proof (proj1 (S.subset_spec a U.u) Ha) as Ha1; pose proof (proj1 (S.subset_spec b U.u) Hb) as Hb1.
+    apply S.subset_spec; intros k Hk; cbn in *. rewrite S.has_union in Hk.
+    apply Bool.orb_true_iff in Hk. destruct Hk; auto.
+  Qed.
 
   (** Intersection clips any raw set to the universe. *)
   Lemma inter_inside (s : S.t) : S.subset (S.inter s U.u) U.u = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply S.subset_spec; intros k Hk. rewrite S.has_inter in Hk.
+    apply Bool.andb_true_iff in Hk. tauto.
+  Qed.
 
   Definition leb (a b : t) : bool := S.subset (proj1_sig a) (proj1_sig b).
   Definition bot : t := exist _ S.empty bot_inside.
@@ -46,28 +53,29 @@ End BoundedSetCode.
 
 Module BoundedSet (K : KEY) (S : SET K) (U : UNIVERSE K S) <: LATTICE.
   Include BoundedSetCode K S U.
+  Module May := MaySet K S.
 
   (** Restricted inclusion is reflexive. *)
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intro a; apply May.leb_refl. Qed.
   (** Restricted inclusion composes. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a b c; apply May.leb_trans. Qed.
   (** The empty restricted set is least. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intro a; apply May.bot_least. Qed.
   (** The bottom test recognizes the empty restricted set. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof. apply May.is_bot_bot. Qed.
   (** Every recognized empty support is least. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a b; apply May.is_bot_least. Qed.
   (** Union contains its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a b; apply May.join_ub_l. Qed.
   (** Union contains its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a b; apply May.join_ub_r. Qed.
 End BoundedSet.
 
 Module BoundedSetT (K : KEY_T) (S : SET_T K) (U : UNIVERSE K S) <: LATTICE_T.
