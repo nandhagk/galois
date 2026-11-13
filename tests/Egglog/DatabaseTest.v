@@ -21,6 +21,36 @@ End FixtureValue.
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
 
+(** Initialization retains declared output kinds and gives the first declaration priority. *)
+Example init_declared_kinds :
+  let db := FixtureDatabase.init
+    [Decl 1%positive [SId] OId; Decl 1%positive [SVal] ORel] [] in
+  (FixtureDatabase.kind_get 1%positive db, FixtureDatabase.kind_get 2%positive db) =
+    (Some OId, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Union records arbitrary requested equalities without allocating identifiers. *)
+Example union_unallocated_identifiers :
+  let db := FixtureDatabase.union 7%positive 9%positive (FixtureDatabase.init [] []) in
+  (FixtureDatabase.ids db, FixtureDatabase.changed db, db_npending db,
+   fst (FixtureDatabase.find 7%positive db), fst (FixtureDatabase.find 9%positive db)) =
+    (0%N, true, 1%N, 7%positive, 7%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Advancing clears the flag while preserving pending equality work and representatives. *)
+Example advance_keeps_equality_work :
+  let db := FixtureDatabase.advance
+    (FixtureDatabase.union 7%positive 9%positive (FixtureDatabase.init [] [])) in
+  (FixtureDatabase.changed db, db_npending db, fst (FixtureDatabase.find 9%positive db)) =
+    (false, 1%N, 7%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Even without slots, the empty index's next counter must be retained. *)
 Example init_empty_index_counter :
   db_index_counters (FixtureDatabase.init [] []) = [1%positive].

@@ -676,8 +676,98 @@ Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_s
   end.
 TimeFun database_slot_groups.
 
+Definition runtime_set_rows {C X} (rows : PTrieCode.t ((positive * list C) * option C))
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) rows
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_rows.
+
+Definition runtime_set_changed {C X} (flag : bool)
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) flag (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_changed.
+
+Definition runtime_set_allocated {C X} (allocated : N)
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime allocated (runtime_changed state) (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_allocated.
+
+Definition runtime_set_union {C X} (flag : bool) (equalities : list (positive * positive)) (queue : list positive)
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) flag (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) equalities queue (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_union.
+
+Definition runtime_set_indexes {C X} (all_indexes new_indexes : PTrieCode.t X) (counts : PTrieCode.t (PTrieCode.t (list C * N)))
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) all_indexes new_indexes
+    counts (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_indexes.
+
+Definition database_set_runtime {C X} (state : database_runtime C X)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) state.
+TimeFun database_set_runtime.
+
+Definition database_set_forest {C X} (forest : UnionFindCode.t)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState forest (db_nuses db) (db_npending db) (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db).
+TimeFun database_set_forest.
+
+Definition database_set_pending {C X} (pending : N)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) (db_nuses db) pending (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db).
+TimeFun database_set_pending.
+
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition t := database_state (cell V.t) I.t.
+
+  Definition db_cell_code (c : cell V.t) : positive :=
+    match c with Id i => xO i | Val v => xI (V.encode v) end.
+  Definition db_cell_eqb (c d : cell V.t) : bool :=
+    match c, d with
+    | Id i, Id j => Pos.eqb i j
+    | Val v, Val w => V.eqb v w
+    | _, _ => false
+    end.
+  Definition db_tuple_code := list_code db_cell_code.
+  Definition db_row_code (f : positive) (k : list (cell V.t)) : positive :=
+    pair_code (fun p => p) db_tuple_code (f, k).
+  Definition row_get (f : positive) (k : list (cell V.t)) (db : t)
+      : option (option (cell V.t)) :=
+    option_map snd (PTrieCode.get (db_row_code f k) (runtime_rows (db_runtime db))).
+  Definition kind_get (f : positive) (db : t) : option output :=
+    PTrieCode.get f (runtime_kinds (db_runtime db)).
+  Definition normal_cell (db : t) (c : cell V.t) : cell V.t :=
+    match c with
+    | Id i => Id (fst (UnionFindCode.find i (db_forest db)))
+    | Val v => Val v
+    end.
+  Definition normal_key (db : t) (k : list (cell V.t)) : list (cell V.t) :=
+    map (normal_cell db) k.
+  Definition output_eqb (a b : option (cell V.t)) : bool :=
+    match a, b with
+    | None, None => true
+    | Some c, Some d => db_cell_eqb c d
+    | _, _ => false
+    end.
+  Definition combine_output (db : t) (f : positive)
+      (previous : option (option (cell V.t))) (o : option (cell V.t)) : option (cell V.t) :=
+    match previous, kind_get f db, o with
+    | Some (Some (Val a)), Some (OLat m), Some (Val b) => Some (Val (V.merge m a b))
+    | Some old, _, _ => old
+    | None, _, _ => o
+    end.
   (** Initialization stores declarations, slots, empty rows and index caches. *)
   (* STUB-CODE *)
   Definition init (ds : list decl) (sl : list (positive * list nat)) : t :=
@@ -694,50 +784,55 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       (DatabaseRuntime 0%N false ds (database_kinds ds) PTrieCode.empty sl [] []
         PTrieCode.empty PTrieCode.empty PTrieCode.empty
         (database_slot_groups 0 prepared PTrieCode.empty) (database_max_name ds) bound).
-  (* STUB-CODE *)
   Definition find (i : positive) (db : t) : positive * t :=
     let result := UnionFindCode.find i (db_forest db) in
-    (fst result, DatabaseState (snd result) (db_nuses db) (db_npending db) (db_wmark db)
-      (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
-      (db_runtime db)).
-  (* STUB-CODE *)
-  Definition lookup (_ : positive) (_ : list (cell V.t)) (db : t)
-      : option (option (cell V.t)) * t := (None, db).
+    (fst result, database_set_forest (snd result) db).
+  Definition lookup (f : positive) (k : list (cell V.t)) (db : t)
+      : option (option (cell V.t)) * t :=
+    match Pos.compare (runtime_max_name (db_runtime db)) f with
+    | Lt => (None, db)
+    | _ => (row_get f (normal_key db k) db, db)
+    end.
   (* STUB-CODE *)
   Definition make (i : positive) (_ : list (cell V.t)) (db : t) : positive * t := (i, db).
   (* STUB-CODE *)
   Definition put (_ : positive) (_ : list (cell V.t)) (_ : option (cell V.t)) (db : t) := db.
-  (* STUB-CODE *)
   Definition union (i j : positive) (db : t) :=
-    if (N.leb (Npos i) (count (db_forest db)) &&
-        N.leb (Npos j) (count (db_forest db)))%bool then
-      let result := UnionFindCode.union i j (db_forest db) in
-      let queued := match fst result with
-        | None => db_npending db
-        | Some _ => N.succ (db_npending db)
-        end in
-      DatabaseState (snd result) (db_nuses db) queued (db_wmark db)
-        (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
-        (db_runtime db)
-    else db.
+    let result := UnionFindCode.union i j (db_forest db) in
+    let next := database_set_forest (snd result) db in
+    match fst result with
+    | None => next
+    | Some (_, loser) =>
+      database_set_pending (N.succ (db_npending db))
+        (database_set_runtime
+          (runtime_set_union true ((i, j) :: runtime_equalities (db_runtime db))
+            (loser :: runtime_queue (db_runtime db)) (db_runtime db)) next)
+    end.
   (* STUB-CODE *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
       : (t * list (positive * list (cell V.t))) + t := inr (fst s).
   Definition db_rebuild_fuel (db : t) : N :=
-    ((N.size (count (db_forest db)) + 2) * (db_nuses db + 1) + db_npending db + 1)%N.
+    ((N.size (runtime_allocated (db_runtime db)) + 2) * (db_nuses db + 1) + db_npending db + 1)%N.
   Definition rebuild (db : t) :=
     match loopN db_rstep (db_rebuild_fuel db) (db, []) with
     | inl s => fst s
     | inr result => result
     end.
-  (* STUB-CODE *)
-  Definition index (_ : N) (_ : bool) (_ : t) : I.t := I.empty.
-  (* STUB-CODE *)
-  Definition advance (db : t) := db.
-  (* STUB-CODE *)
-  Definition changed (_ : t) := false.
-  (* STUB-CODE *)
-  Definition ids (db : t) : N := count (db_forest db).
+  Definition index (s : N) (new : bool) (db : t) : I.t :=
+    match N.compare (runtime_slot_bound (db_runtime db)) s with
+    | Gt =>
+      let indexes := if new then runtime_new_indexes (db_runtime db)
+        else runtime_all_indexes (db_runtime db) in
+      match PTrieCode.get (N.succ_pos s) indexes with Some ix => ix | None => I.empty end
+    | _ => I.empty
+    end.
+  Definition advance (db : t) :=
+    database_set_runtime
+      (runtime_set_changed false
+        (runtime_set_indexes (runtime_all_indexes (db_runtime db)) PTrieCode.empty
+          (runtime_projection_counts (db_runtime db)) (db_runtime db))) db.
+  Definition changed (db : t) := runtime_changed (db_runtime db).
+  Definition ids (db : t) : N := runtime_allocated (db_runtime db).
   (* STUB-CODE *)
   Definition locate (_ : positive) (_ : list (cell V.t)) (_ : t)
       : option (list (cell V.t)) := None.
@@ -753,16 +848,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Include DatabaseCode V I.
   Include DATABASE_SPEC V I.
   (* spec: wf view repr pending old slots *)
-  Definition wf : t -> Prop := fun _ => True.
-  Definition view (_ : t) : Model.view (V := V.t) :=
-    {| row := fun _ _ _ => False;
-       same := fun _ _ => False;
-       kind := fun _ => None |}.
-  Definition repr : t -> positive -> positive := fun _ i => i.
-  Definition pending : t -> nat := fun _ => 0.
-  Definition old (_ : t) (_ : positive) (_ : list (cell V.t))
-      : option (option (cell V.t)) := None.
-  Definition slots (_ : t) : list (positive * list nat) := [].
+  Definition view (db : t) : Model.view (V := V.t) :=
+    {| row := fun f k o => row_get f k db = Some o;
+       same := equality_log (runtime_equalities (db_runtime db));
+       kind := fun f => kind_get f db |}.
+  Definition repr (db : t) : positive -> positive := UnionFind.repr (db_forest db).
+  Definition pending (db : t) : nat := length (runtime_queue (db_runtime db)).
+  Definition old (db : t) (f : positive) (k : list (cell V.t)) := row_get f k db.
+  Definition slots (db : t) : list (positive * list nat) := runtime_slots (db_runtime db).
   Definition canon (db : t) (c : cell V.t) : cell V.t :=
     match c with
     | Id i => Id (repr db i)
@@ -829,6 +922,47 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       | Some a, Some b => cell_le V.merge w f a b
       | _, _ => False
       end.
+
+  Module Cells := CellKey V.
+  Module Tuples := ListKey Cells.
+  Module RowKeys := PairKey PosKey Tuples.
+  Module RowMap := TrieMap RowKeys.
+  Module ForestFacts := UnionFindFacts UnionFind.
+
+  (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
+  Record database_wf (db : t) : Prop := Wf {
+    wf_forest : UnionFind.wf (db_forest db);
+    wf_forest_members : forall i, UnionFind.mem (db_forest db) i <-> allocated db i;
+    wf_forest_count : count (db_forest db) = ids db;
+    wf_forest_width : UnionFind.width (db_forest db) <= N.size_nat (ids db);
+    wf_equalities : forall i j, same (view db) i j <-> repr db i = repr db j;
+    wf_log_allocated : Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db));
+    wf_row_map : RowMap.wf (runtime_rows (db_runtime db));
+    wf_row_kind : forall f k o, row (view db) f k o ->
+      match kind (view db) f, o with
+      | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
+      | _, _ => False
+      end;
+    wf_row_ids : forall f k o i, row (view db) f k o ->
+      In (Id i) (k ++ option_list o) -> allocated db i;
+    wf_row_slots : forall f k o, row (view db) f k o ->
+      slots_fit db f (length (k ++ option_list o));
+    wf_kind_bound : forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive;
+    wf_slot_bound : runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db));
+    wf_pending_count : db_npending db = N.of_nat (pending db);
+    wf_queue_allocated : Forall (allocated db) (runtime_queue (db_runtime db));
+    wf_quiet_canonical : pending db = 0 -> canonical db;
+    wf_index_sound : forall s new u, I.mem (index s new db) u ->
+      exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+        u = permute perm (k ++ option_list o);
+    wf_index_complete : forall s f perm k o, slot_of db s = Some (f, perm) ->
+      row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o));
+    wf_index_arity : forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db)
+  }.
+  Definition wf : t -> Prop := database_wf.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
@@ -1112,6 +1246,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition potential (_ : N) (_ : t) : N := 0%N.
   Definition num_slots (db : t) : nat := length (slots db).
+  TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
+  TimeFun normal_cell normal_key output_eqb combine_output.
   TimeFun init.
   TimeFun find.
   TimeFun lookup.
