@@ -4,8 +4,8 @@
     For example, joining values of different widths produces top.
     Builds on: WordSig and BitsLang. *)
 
-From Stdlib Require Import List ZArith Bool Lia.
-From Argent Require Import Time Std BigO.
+From Stdlib Require Import List ZArith NArith Bool Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word.
 From Galois.Domains Require Import LangSig WordSig HarnessSig Harness BitsLang.
 
@@ -377,10 +377,47 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Definition bsize := tagged_size W.psize.
   Definition wsize := W.pwsize.
   Definition abst_work := tagged_abst_work.
-  Definition c_base : N := 1%N. (* STUB *)
+  Definition c_base : N := (256 * (W.c_payload + 1))%N.
+
+  (** Width comparison reads at most the numeric value of its left width. *)
+  Local Lemma width_compare_time : forall w v,
+    (Pos.T_eqb w v <= N.of_nat (Pos.to_nat w))%N.
+  Proof.
+    intros w v. eapply N.le_trans; [apply Pos.T_eqb_le|].
+    apply time_of_nat_le. apply WordTime.positive_size_value.
+  Qed.
+
+  (** Tag bottom recognition adds one call to payload bottom recognition. *)
+  Local Lemma is_bot_time_bound : forall a,
+    (T_is_bot a <= (W.c_payload + 1) * N.of_nat (bsize a + 1))%N.
+  Proof.
+    intros [|w p|]; time_unfold T_is_bot; time_cbn;
+      unfold bsize, tagged_size; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (W.T_pis_bot_le w p).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Tag inclusion pays for width comparison and the selected payload test. *)
+  Local Lemma leb_time_bound : forall a b,
+    (T_leb a b <= 4 * (W.c_payload + 1) * N.of_nat (bsize a + bsize b + 1))%N.
+  Proof.
+    intros [|w p|] [|v q|]; time_unfold T_leb; time_cbn;
+      unfold bsize, tagged_size; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    - pose proof (W.T_pis_bot_le w p).
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+    - pose proof (width_compare_time w v) as Hwidth.
+      destruct (Pos.eqb w v) eqn:Hsame.
+      + apply Pos.eqb_eq in Hsame. subst v.
+        pose proof (W.T_pleb_le w p q).
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+      + pose proof (W.T_pis_bot_le w p).
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_leb_le : forall a b, (T_leb a b <= c_base * N.of_nat ((bsize a + bsize b + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (leb_time_bound a b). unfold c_base. nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_join_le : forall a b, (T_join a b <= c_base * N.of_nat ((bsize a + bsize b +
     1)%nat))%N.
@@ -395,10 +432,18 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Proof. Admitted. (* STUB *)
   (** The operation stays within the declared work budget. *)
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. pose proof (is_bot_time_bound a). unfold c_base. nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_point_le : forall a, (T_point a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|]; time_unfold T_point; time_cbn;
+      unfold bsize, tagged_size, c_base;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (W.T_ppoint_le w p).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_base * N.of_nat ((bsize a + bsize b + wsize p + 1)%nat))%N.
