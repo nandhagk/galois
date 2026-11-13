@@ -1355,6 +1355,48 @@ Module LoopNFacts.
       apply T_loopN_mono; intro current; now rewrite Hequal.
   Qed.
 
+  (** Pointwise-equal callbacks and clocks give the same accessibility-loop clock. *)
+  Lemma T_loop_congr : forall S R (lt : S -> S -> Prop)
+      (step step' : forall s, {s1 : S | lt s1 s} + R) (T_step T_step' : S -> N),
+    (forall s, step s = step' s) -> (forall s, T_step s = T_step' s) ->
+    forall s (Hacc : Acc lt s),
+    T_loop lt step T_step s Hacc = T_loop lt step' T_step' s Hacc.
+  Proof.
+    intros S R lt step step' T_step T_step' Hstep Htime s Hacc.
+    induction Hacc as [s Hacc IH] using Acc_ind_dep.
+    time_unfold @T_loop. cbn [Acc_inv]. rewrite (Hstep s), (Htime s).
+    destruct (step' s) as [[s1 Hlt] | r]; [now rewrite (IH s1 Hlt) | reflexivity].
+  Qed.
+
+  (** The binary wrapper preserves pointwise callback equality, including its decrease evidence. *)
+  Lemma loopN_step_congr : forall S R (step step' : S -> S + R),
+    (forall s, step s = step' s) -> forall fs, loopN_step step fs = loopN_step step' fs.
+  Proof.
+    intros S R step step' Hstep [[| p] s]; cbn [loopN_step]; [reflexivity |].
+    now rewrite Hstep.
+  Qed.
+
+  (** The binary wrapper's derived clocks agree whenever its callbacks and their clocks agree. *)
+  Lemma T_loopN_step_congr : forall S R (step step' : S -> S + R) (T_step T_step' : S -> N),
+    (forall s, step s = step' s) -> (forall s, T_step s = T_step' s) -> forall fs,
+    T_loopN_step step T_step fs = T_loopN_step step' T_step' fs.
+  Proof.
+    intros S R step step' T_step T_step' Hstep Htime [[| p] s]; time_unfold @T_loopN_step.
+    - reflexivity.
+    - now rewrite Hstep, Htime.
+  Qed.
+
+  (** Exact clock congruence requires only pointwise equality, with no extensionality axiom. *)
+  Lemma T_loopN_congr : forall S R (step step' : S -> S + R) (T_step T_step' : S -> N),
+    (forall s, step s = step' s) -> (forall s, T_step s = T_step' s) -> forall fuel s,
+    T_loopN step T_step fuel s = T_loopN step' T_step' fuel s.
+  Proof.
+    intros S R step step' T_step T_step' Hstep Htime fuel s. time_unfold @T_loopN.
+    apply f_equal. apply T_loop_congr.
+    - now apply loopN_step_congr.
+    - now apply T_loopN_step_congr.
+  Qed.
+
 End LoopNFacts.
 
 (** * Stored occurrence buckets *)
