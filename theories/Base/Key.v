@@ -5,7 +5,7 @@
     Builds on: Stdlib binary arithmetic and Argent time interfaces. *)
 
 From Stdlib Require Import Bool NArith PArith ZArith Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std Tactics.
 From Galois.Base Require Import KeySig.
 From Stdlib Require Import List.
 From Galois.Base Require Import Code.
@@ -241,97 +241,219 @@ Module PosKeyT <: KEY_T.
   Include PosKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 1.
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro k. unfold c_key, bits, encode. time_step.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (Pos.T_eqb_le a b) as Hcompare.
+    unfold c_key, bits, encode. time_unfold @T_eqb.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
 End PosKeyT.
 
 Module NKeyT <: KEY_T.
   Include NKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 2.
+
+  (** Successor encoding retains at least the input's binary width. *)
+  Local Lemma bits_input_width (k : t) : N.size_nat k <= bits k.
+  Proof.
+    destruct k as [|p]; unfold bits, encode; cbn [N.size_nat N.succ_pos].
+    - lia.
+    - apply Pos.size_nat_monotone, Pos.lt_succ_diag_r.
+  Qed.
+
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro k. pose proof (bits_input_width k) as Hwidth.
+    apply time_of_nat_le in Hwidth.
+    pose proof (N.T_succ_pos_le k) as Hsuccessor.
+    unfold c_key. time_unfold @T_encode.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (bits_input_width a) as Hwidth.
+    apply time_of_nat_le in Hwidth.
+    pose proof (N.T_eqb_le a b) as Hcompare.
+    unfold c_key. time_unfold @T_eqb.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
 End NKeyT.
 
 Module ZKeyT <: KEY_T.
   Include ZKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 1.
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|p|p]; unfold c_key, bits, encode; time_step.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (Z.T_eqb_le a b) as Hcompare.
+    destruct a as [|p|p]; unfold c_key, bits, encode; time_unfold @T_eqb.
+    all: cbn [Z.size_nat Pos.size_nat] in *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; lia.
+  Qed.
 End ZKeyT.
 
 Module BoolKeyT <: KEY_T.
   Include BoolKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 1.
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros []; unfold c_key, bits, encode; time_step.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [] []; unfold c_key, bits, encode; time_step.
+  Qed.
 End BoolKeyT.
 
 Module UnitKeyT <: KEY_T.
   Include UnitKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 1.
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros []; unfold c_key, bits, encode; time_step.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [] []; unfold c_key, bits, encode; time_step.
+  Qed.
 End UnitKeyT.
 
 Module PairKeyT (A B : KEY_T) <: KEY_T.
   Include PairKey A B.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (A.c_key + B.c_key + 1).
+
+  (** Pair width pays both components and the delimiter traversal. *)
+  Local Lemma bits_pair a b : bits (a, b) + 1 = 2 * A.bits a + B.bits b.
+  Proof.
+    unfold bits, encode, pair_code. cbn [fst snd]. rewrite glue_bits.
+    unfold A.bits, B.bits. pose proof (Pos.size_nat_pos (A.encode a)).
+    pose proof (Pos.size_nat_pos (B.encode b)). lia.
+  Qed.
+
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b]. pose proof (A.T_encode_le a) as Ha.
+    pose proof (B.T_encode_le b) as Hb.
+    pose proof (T_glue_le (A.encode a) (B.encode b)) as Hglue.
+    pose proof (Pos.size_nat_pos (A.encode a)) as Hapos.
+    pose proof (Pos.size_nat_pos (B.encode b)) as Hbpos.
+    rewrite bits_pair. unfold c_key, c_glue in *.
+    unfold A.bits, B.bits in *. time_unfold T_encode.
+    time_unfold @T_pair_code. time_simpl; time_cbn; nia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [a' b']. pose proof (A.T_eqb_le a a') as Ha.
+    pose proof (B.T_eqb_le b b') as Hb.
+    pose proof (Pos.size_nat_pos (A.encode a)) as Hapos.
+    pose proof (Pos.size_nat_pos (B.encode b)) as Hbpos.
+    rewrite bits_pair. unfold c_key, A.bits, B.bits in *.
+    time_unfold T_eqb. time_simpl; time_cbn; nia.
+  Qed.
 End PairKeyT.
 
 Module SumKeyT (A B : KEY_T) <: KEY_T.
   Include SumKey A B.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (A.c_key + B.c_key + 1).
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|b].
+    - pose proof (A.T_encode_le a) as Ha.
+      unfold bits, encode, sum_code, c_key, A.bits in *.
+      cbn [Pos.size_nat]. time_unfold T_encode.
+      time_unfold @T_sum_code. time_simpl; time_cbn; nia.
+    - pose proof (B.T_encode_le b) as Hb.
+      unfold bits, encode, sum_code, c_key, B.bits in *.
+      cbn [Pos.size_nat]. time_unfold T_encode.
+      time_unfold @T_sum_code. time_simpl; time_cbn; nia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|a] [b|b]; try pose proof (A.T_eqb_le a b) as Hcall;
+      try pose proof (B.T_eqb_le a b) as Hcall;
+      unfold bits, encode, sum_code, c_key, A.bits, B.bits in *;
+      cbn [Pos.size_nat]; time_unfold T_eqb; time_simpl; time_cbn; nia.
+  Qed.
 End SumKeyT.
 
 Module OptionKeyT (K : KEY_T) <: KEY_T.
   Include OptionKey K.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (K.c_key + 1).
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|]; try pose proof (K.T_encode_le a) as Hcall;
+      unfold bits, encode, option_code, c_key, K.bits in *;
+      cbn [Pos.size_nat]; time_unfold T_encode;
+      time_unfold @T_option_code; time_simpl; time_cbn; nia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] [b|]; try pose proof (K.T_eqb_le a b) as Hcall;
+      unfold bits, encode, option_code, c_key, K.bits in *;
+      cbn [Pos.size_nat]; time_unfold T_eqb; time_simpl; time_cbn; nia.
+  Qed.
 End OptionKeyT.
 
 Module ListKeyT (K : KEY_T) <: KEY_T.
   Include ListKey K.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (K.c_key + 1).
+
+  (** Each list element adds its delimited component width. *)
+  Local Lemma bits_cons a xs : bits (a :: xs) + 1 = 2 * K.bits a + bits xs.
+  Proof.
+    unfold bits, encode. cbn [list_code]. rewrite glue_bits.
+    unfold K.bits. pose proof (Pos.size_nat_pos (K.encode a)).
+    pose proof (Pos.size_nat_pos (list_code K.encode xs)). lia.
+  Qed.
+
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    induction k as [|a xs IH].
+    - unfold bits, encode, c_key. cbn [list_code Pos.size_nat].
+      time_unfold T_encode. time_unfold @T_list_code. nia.
+    - pose proof (K.T_encode_le a) as Ha.
+      pose proof (T_glue_le (K.encode a) (list_code K.encode xs)) as Hglue.
+      pose proof (Pos.size_nat_pos (K.encode a)) as Hapos.
+      rewrite bits_cons. unfold c_key, c_glue, K.bits in *.
+      unfold T_encode in *. time_unfold @T_list_code.
+      time_simpl; time_cbn; nia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    induction a as [|x xs IH]; intros [|y ys].
+    - unfold bits, encode, c_key. cbn [list_code Pos.size_nat].
+      time_unfold T_eqb. nia.
+    - unfold bits, encode, c_key. cbn [list_code Pos.size_nat].
+      time_unfold T_eqb. nia.
+    - pose proof (Pos.size_nat_pos (K.encode x)) as Hxpos.
+      rewrite bits_cons. unfold c_key, K.bits in *. time_unfold T_eqb. nia.
+    - specialize (IH ys). pose proof (K.T_eqb_le x y) as Hcall.
+      pose proof (Pos.size_nat_pos (K.encode x)) as Hxpos.
+      rewrite bits_cons. unfold c_key, K.bits in *.
+      time_unfold T_eqb. time_simpl; time_cbn; nia.
+  Qed.
 End ListKeyT.
