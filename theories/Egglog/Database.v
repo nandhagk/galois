@@ -1,15 +1,122 @@
-(** * Placeholder database operations
+(** * Stored database operations
 
     Databases store rows and identifier equalities.
     For example, an initialized database supplies indexes on request.
     Builds on: DatabaseSig. *)
 
-From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
-From Argent Require Import Time Std Loop.
-From Galois.Base Require Import Code Loop UnionFind Trie.
-From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig.
+From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relation_Operators
+  Sorting.Permutation Sorting.Sorted.
+From Argent Require Import Time Tactics Std Loop.
+From Galois.Base Require Import Code Loop UnionFind Trie Key Map.
+From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig ModelFacts.
 
 Import List.ListNotations.
+
+Module Pos.
+  TimeFun Pos.max.
+End Pos.
+
+Module N.
+  TimeFun N.of_nat N.max.
+End N.
+
+(** Set bits pay for the carries performed by successive binary increments. *)
+Fixpoint database_positive_credit (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => database_positive_credit q
+  | xI q => (1 + database_positive_credit q)%N
+  end.
+
+Definition database_counter_credit (n : N) : N :=
+  match n with N0 => 0%N | Npos p => database_positive_credit p end.
+
+(** A positive increment spends at most two units after releasing its carry credit. *)
+Lemma database_positive_succ_amort : forall p,
+  (Pos.T_succ p + database_positive_credit (Pos.succ p) <=
+    2 + database_positive_credit p)%N.
+Proof.
+  intro p. induction p as [p IH | p IH |]; time_unfold Pos.T_succ;
+    cbn [Pos.succ database_positive_credit]; lia.
+Qed.
+
+(** The natural-number wrapper adds one unit to a positive increment's amortized cost. *)
+Lemma database_counter_succ_amort : forall n,
+  (N.T_succ n + database_counter_credit (N.succ n) <=
+    3 + database_counter_credit n)%N.
+Proof.
+  intros [|p]; time_unfold N.T_succ; cbn [N.succ database_counter_credit].
+  - cbn [database_positive_credit]. lia.
+  - pose proof (database_positive_succ_amort p). lia.
+Qed.
+
+(** Computing a binary size amortizes the carries in its binary result. *)
+Lemma database_positive_size_amort : forall p,
+  (Pos.T_size p + database_positive_credit (Pos.size p) <=
+    4 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  intro p. induction p as [p IH | p IH |]; time_unfold Pos.T_size;
+    cbn [Pos.size Pos.size_nat].
+  - pose proof (database_positive_succ_amort (Pos.size p)). lia.
+  - pose proof (database_positive_succ_amort (Pos.size p)). lia.
+  - cbn [database_positive_credit]. lia.
+Qed.
+
+(** The natural wrapper for size adds a single constant call. *)
+Lemma database_N_size_time : forall n,
+  (N.T_size n <= 4 * N.of_nat (N.size_nat n) + 1)%N.
+Proof.
+  intros [| p]; time_unfold N.T_size; cbn [N.size_nat]; [lia |].
+  pose proof (database_positive_size_amort p). lia.
+Qed.
+
+(** Binary multiplication pays the measured operand widths, retaining the actual clock. *)
+Lemma database_N_mul_time : forall n m,
+  (N.T_mul n m <= N.of_nat (N.size_nat n) *
+    (N.of_nat (N.size_nat n) + 2 * N.of_nat (N.size_nat m) + 2) + 1)%N.
+Proof.
+  intros [| p] [| q]; time_unfold N.T_mul; cbn [N.size_nat]; try lia.
+  pose proof (Pos.T_mul_le p q). lia.
+Qed.
+
+(** Unary conversion shares the same carry credit as dense slot numbering. *)
+Lemma database_of_succ_nat_amort : forall n,
+  (Pos.T_of_succ_nat n + database_positive_credit (Pos.of_succ_nat n) <=
+    3 * N.of_nat n + 2)%N.
+Proof.
+  intro n. induction n as [|n IH]; time_unfold Pos.T_of_succ_nat.
+  - reflexivity.
+  - pose proof (database_positive_succ_amort (Pos.of_succ_nat n)) as Hcarry.
+    cbn [Pos.of_succ_nat]. lia.
+Qed.
+
+(** Constructing a binary natural from a unary length has linear total carry cost. *)
+Lemma T_database_of_nat_le : forall n,
+  (N.T_of_nat n <= 3 * N.of_nat n + 2)%N.
+Proof.
+  intros [|n]; time_unfold N.T_of_nat; [lia |].
+  pose proof (database_of_succ_nat_amort n). lia.
+Qed.
+
+(** A run of low one bits witnesses the carry cost of a binary multiplicity. *)
+Fixpoint database_carry_value (n : nat) : positive :=
+  match n with O => xH | S k => xI (database_carry_value k) end.
+
+(** Incrementing an all-ones positive visits every bit. *)
+Lemma database_carry_positive_time : forall n,
+  Pos.T_succ (database_carry_value n) = (N.of_nat n + 1)%N.
+Proof.
+  intro n. induction n as [|n IH]; cbn [database_carry_value]; time_unfold Pos.T_succ.
+  - reflexivity.
+  - rewrite IH. lia.
+Qed.
+
+(** The natural-number increment retains the full carry cost. *)
+Lemma database_carry_successor_time : forall n,
+  N.T_succ (Npos (database_carry_value n)) = (N.of_nat n + 2)%N.
+Proof.
+  intro n. time_unfold N.T_succ. rewrite database_carry_positive_time. lia.
+Qed.
 
 (** Sorted positions retain their original positive ranks in a projection. *)
 Record database_slot_layout := {
@@ -115,6 +222,448 @@ Definition project_slot_layout {C : Type} (layout : database_slot_layout) (u : l
 
 TimeFun project_slot_layout.
 
+(** * Prepared projection facts *)
+
+(** Sorting one pair retains precisely that pair and the old entries. *)
+Lemma slot_rank_insert_in : forall p ps q,
+  In q (slot_rank_insert p ps) <-> q = p \/ In q ps.
+Proof.
+  intros p ps. induction ps as [| a ps IH]; intro q; cbn [slot_rank_insert].
+  - cbn. intuition congruence.
+  - destruct (Nat.leb (fst p) (fst a)); cbn [In].
+    + intuition congruence.
+    + rewrite IH. intuition congruence.
+Qed.
+
+(** Insertion adds one ranked position. *)
+Lemma slot_rank_insert_length : forall p ps,
+  length (slot_rank_insert p ps) = S (length ps).
+Proof.
+  intros p ps. induction ps as [| a ps IH]; cbn [slot_rank_insert].
+  - reflexivity.
+  - destruct (Nat.leb (fst p) (fst a)); cbn [length]; congruence.
+Qed.
+
+(** Ranking preserves the number of requested positions. *)
+Lemma slot_rank_positions_length : forall rank perm,
+  length (slot_rank_positions rank perm) = length perm.
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - reflexivity.
+  - cbn [slot_rank_positions length]. rewrite slot_rank_insert_length, IH. reflexivity.
+Qed.
+
+(** Replacing positions with gaps preserves their number. *)
+Lemma slot_position_gaps_length : forall previous ps,
+  length (slot_position_gaps previous ps) = length ps.
+Proof.
+  intros previous ps. revert previous. induction ps as [| [p rank] ps IH]; intro previous.
+  - reflexivity.
+  - cbn [slot_position_gaps length]. now rewrite IH.
+Qed.
+
+(** A stored gap is the truncated difference of its endpoint positions. *)
+Lemma slot_position_difference_sub : forall position previous,
+  slot_position_difference position previous = position - previous.
+Proof.
+  intros position previous. revert position.
+  induction previous as [| previous IH]; intros [| position]; cbn; auto.
+Qed.
+
+(** Scanning a gap returns the corresponding list suffix. *)
+Lemma slot_skip_spec : forall C gap (u : list C), slot_skip gap u = skipn gap u.
+Proof.
+  intros C gap. induction gap as [| gap IH]; intros [| c u]; cbn; auto.
+Qed.
+
+(** A scan leaves bindings of ranks outside its steps unchanged. *)
+Lemma slot_pick_ranked_other : forall C steps (u : list C) picked rank,
+  ~ In rank (map snd steps) ->
+  PTrieCode.get rank (slot_pick_ranked steps u picked) = PTrieCode.get rank picked.
+Proof.
+  intros C steps. induction steps as [| [gap r] steps IH]; intros u picked rank Habsent.
+  - reflexivity.
+  - cbn [slot_pick_ranked]. destruct (slot_skip gap u) as [| c rest].
+    + reflexivity.
+    + rewrite IH.
+      * apply PTrie.get_set_other. intro Heq. apply Habsent. cbn. now left.
+      * intro Hin. apply Habsent. cbn. now right.
+Qed.
+
+(** Insertion changes only the order of the ranked entries. *)
+Lemma slot_rank_insert_perm : forall p ps,
+  Permutation (p :: ps) (slot_rank_insert p ps).
+Proof.
+  intros p ps. induction ps as [| a ps IH]; cbn [slot_rank_insert].
+  - reflexivity.
+  - destruct (Nat.leb (fst p) (fst a)).
+    + reflexivity.
+    + eapply perm_trans; [apply perm_swap | now apply perm_skip].
+Qed.
+
+(** Insertion keeps absolute positions in increasing order. *)
+Lemma slot_rank_insert_sorted : forall p ps,
+  StronglySorted (fun a b => fst a <= fst b) ps ->
+  StronglySorted (fun a b => fst a <= fst b) (slot_rank_insert p ps).
+Proof.
+  intros p ps Hsorted. induction Hsorted as [| a ps Hsorted IH Hlower].
+  - cbn [slot_rank_insert]. constructor; constructor.
+  - cbn [slot_rank_insert]. destruct (Nat.leb (fst p) (fst a)) eqn:Hle.
+    + apply Nat.leb_le in Hle. constructor.
+      * constructor; assumption.
+      * constructor; [exact Hle |].
+        eapply Forall_impl; [| exact Hlower]. intros q Hq. cbn in *. lia.
+    + apply Nat.leb_gt in Hle. constructor; [exact IH |].
+      apply Forall_forall. intros q Hin. apply slot_rank_insert_in in Hin.
+      destruct Hin as [-> | Hin]; [cbn; lia |].
+      rewrite Forall_forall in Hlower. exact (Hlower q Hin).
+Qed.
+
+(** Prepared absolute positions are increasing even when positions repeat. *)
+Lemma slot_rank_positions_sorted : forall rank perm,
+  StronglySorted (fun a b => fst a <= fst b) (slot_rank_positions rank perm).
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - constructor.
+  - cbn [slot_rank_positions]. apply slot_rank_insert_sorted. apply IH.
+Qed.
+
+(** Every ranked entry retains its source position and a rank above its starting rank. *)
+Lemma slot_rank_positions_origin : forall rank perm p r,
+  In (p, r) (slot_rank_positions rank perm) ->
+  In p perm /\ Pos.to_nat rank <= Pos.to_nat r.
+Proof.
+  intros rank perm. revert rank. induction perm as [| a perm IH]; intros rank p r Hin.
+  - contradiction.
+  - cbn [slot_rank_positions] in Hin. apply slot_rank_insert_in in Hin.
+    destruct Hin as [Heq | Hin].
+    + inversion Heq; subst. split; [now left | lia].
+    + destruct (IH (Pos.succ rank) p r Hin) as [Hposition Hrank].
+      split; [now right |]. rewrite Pos2Nat.inj_succ in Hrank. lia.
+Qed.
+
+(** Original ranks remain distinct after sorting, including repeated source positions. *)
+Lemma slot_rank_positions_nodup : forall rank perm,
+  NoDup (map snd (slot_rank_positions rank perm)).
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - constructor.
+  - cbn [slot_rank_positions]. eapply Permutation_NoDup.
+    + apply Permutation_map. apply slot_rank_insert_perm.
+    + cbn [map snd]. constructor; [| apply IH].
+      intro Hin. apply in_map_iff in Hin. destruct Hin as [[q r] [Heq Hin]].
+      cbn in Heq. subst r.
+      destruct (slot_rank_positions_origin (Pos.succ rank) perm q rank Hin) as [_ Hrank].
+      rewrite Pos2Nat.inj_succ in Hrank. lia.
+Qed.
+
+(** Gap construction does not change the original ranks. *)
+Lemma slot_position_gaps_ranks : forall previous ps,
+  map snd (slot_position_gaps previous ps) = map snd ps.
+Proof.
+  intros previous ps. revert previous. induction ps as [| [p rank] ps IH]; intro previous.
+  - reflexivity.
+  - cbn [slot_position_gaps map snd]. now rewrite IH.
+Qed.
+
+(** Advancing by a nonnegative position gap reaches its absolute tuple suffix. *)
+Lemma slot_skip_gap : forall C previous position (u : list C), previous <= position ->
+  slot_skip (slot_position_difference position previous) (skipn previous u) = skipn position u.
+Proof.
+  intros C previous position u Hle.
+  rewrite slot_skip_spec, slot_position_difference_sub, skipn_skipn. f_equal. lia.
+Qed.
+
+(** The tuple scan saves each fitting position at its unique original rank. *)
+Lemma slot_pick_ranked_spec : forall C (u : list C) ps previous picked,
+  StronglySorted (fun a b => fst a <= fst b) ps ->
+  Forall (fun q => previous <= fst q) ps ->
+  Forall (fun q => fst q < length u) ps -> NoDup (map snd ps) ->
+  forall p rank, In (p, rank) ps ->
+  PTrieCode.get rank
+    (slot_pick_ranked (slot_position_gaps previous ps) (skipn previous u) picked) =
+      nth_error u p.
+Proof.
+  intros C u ps. induction ps as [| [position r] ps IH];
+    intros previous picked Hsorted Hlower Hfits Hdistinct p rank Hin.
+  - contradiction.
+  - apply StronglySorted_inv in Hsorted as [Hsorted Hnext].
+    inversion Hlower as [| ? ? Hbefore Hlower']; subst.
+    inversion Hfits as [| ? ? Hinside Hfits']; subst.
+    cbn [map snd] in Hdistinct.
+    inversion Hdistinct as [| ? ? Habsent Hdistinct']; subst.
+    cbn [fst] in Hbefore, Hinside.
+    cbn [slot_position_gaps slot_pick_ranked]. rewrite slot_skip_gap by exact Hbefore.
+    destruct (skipn position u) as [| c suffix] eqn:Hsuffix.
+    + pose proof (length_skipn position u) as Hlength.
+      rewrite Hsuffix in Hlength. cbn in Hlength. lia.
+    + destruct Hin as [Heq | Hin].
+      * injection Heq as Heqpos Heqrank. subst p rank.
+        rewrite slot_pick_ranked_other.
+        -- rewrite PTrie.get_set_same.
+           pose proof (nth_error_skipn position u 0) as Hnth.
+           rewrite Hsuffix, Nat.add_0_r in Hnth. exact Hnth.
+        -- rewrite slot_position_gaps_ranks. exact Habsent.
+      * rewrite <- Hsuffix. eapply IH; eassumption.
+Qed.
+
+(** Reading original ranks recovers the source order of every recorded position. *)
+Lemma slot_read_ranked_spec : forall C (u : list C) perm rank picked,
+  (forall p r, In (p, r) (slot_rank_positions rank perm) ->
+    PTrieCode.get r picked = nth_error u p) ->
+  slot_read_ranked (length perm) rank picked =
+    flat_map (fun p => option_list (nth_error u p)) perm.
+Proof.
+  intros C u perm. induction perm as [| p perm IH]; intros rank picked Hagree.
+  - reflexivity.
+  - assert (Hhead : PTrieCode.get rank picked = nth_error u p).
+    { apply Hagree. cbn [slot_rank_positions]. apply slot_rank_insert_in. now left. }
+    assert (Htail : slot_read_ranked (length perm) (Pos.succ rank) picked =
+      flat_map (fun p => option_list (nth_error u p)) perm).
+    { apply IH. intros q r Hin. apply Hagree. cbn [slot_rank_positions].
+      apply slot_rank_insert_in. now right. }
+    cbn [length slot_read_ranked flat_map]. rewrite Hhead, Htail.
+    destruct (nth_error u p); reflexivity.
+Qed.
+
+(** A prepared projection restores the requested order, including repeated fitting positions. *)
+Theorem project_slot_layout_correct : forall C perm (u : list C),
+  Forall (fun p => p < length u) perm ->
+  project_slot_layout (prepare_slot_layout perm) u =
+    flat_map (fun p => option_list (nth_error u p)) perm.
+Proof.
+  intros C perm u Hfits. unfold project_slot_layout, prepare_slot_layout.
+  cbn [projection_steps]. rewrite slot_position_gaps_length, slot_rank_positions_length.
+  apply slot_read_ranked_spec. intros p rank Hin.
+  eapply (slot_pick_ranked_spec C u (slot_rank_positions 1 perm) 0 PTrieCode.empty).
+  - apply slot_rank_positions_sorted.
+  - apply Forall_forall. intros [q r] _. cbn. lia.
+  - apply Forall_forall. intros [q r] Hq. cbn [fst].
+    rewrite Forall_forall in Hfits. apply Hfits.
+    exact (proj1 (slot_rank_positions_origin 1 perm q r Hq)).
+  - apply slot_rank_positions_nodup.
+  - exact Hin.
+Qed.
+
+(** * Preparation costs *)
+
+(** Computing a gap charges at most one call per unit of its endpoint. *)
+Lemma T_slot_position_difference_le : forall position previous,
+  (T_slot_position_difference position previous <= N.of_nat (position + 1))%N.
+Proof.
+  intro position. induction position as [| position IH]; intros [| previous];
+    time_step slot_position_difference.
+Qed.
+
+(** Scanning a gap charges at most one call per skipped cell. *)
+Lemma T_slot_skip_le : forall C gap (u : list C),
+  (T_slot_skip gap u <= N.of_nat (gap + 1))%N.
+Proof.
+  intros C gap. induction gap as [| gap IH]; intros [| c u]; time_step.
+Qed.
+
+(** Insertion reads each existing position once with a comparison bounded by the new position. *)
+Lemma T_slot_rank_insert_le : forall p ps,
+  (T_slot_rank_insert p ps <= N.of_nat ((length ps + 1) * (fst p + 5)))%N.
+Proof.
+  intros p ps. induction ps as [| q ps IH]; time_step slot_rank_insert.
+Qed.
+
+(** Sorting one entry preserves the sum of unary position sizes. *)
+Lemma slot_rank_insert_mass : forall p ps,
+  fold_right (fun q n => S (fst q) + n) 0 (slot_rank_insert p ps) =
+    S (fst p) + fold_right (fun q n => S (fst q) + n) 0 ps.
+Proof.
+  intros p ps. induction ps as [| q ps IH]; cbn [slot_rank_insert].
+  - reflexivity.
+  - destruct (Nat.leb (fst p) (fst q)); cbn [fold_right]; [lia |].
+    rewrite IH. lia.
+Qed.
+
+(** The sorted positions have exactly the source permutation's unary size. *)
+Lemma slot_rank_positions_mass : forall rank perm,
+  fold_right (fun q n => S (fst q) + n) 0 (slot_rank_positions rank perm) =
+    fold_right Nat.add 0 (map S perm).
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - reflexivity.
+  - cbn [slot_rank_positions map fold_right]. rewrite slot_rank_insert_mass, IH. reflexivity.
+Qed.
+
+(** Gap construction pays the unary size of each absolute position once. *)
+Lemma T_slot_position_gaps_le : forall previous ps,
+  (T_slot_position_gaps previous ps <=
+    N.of_nat (length ps + fold_right (fun q n => (S (fst q) + n)%nat) 0%nat ps + 1))%N.
+Proof.
+  intros previous ps. revert previous. induction ps as [| [p rank] ps IH];
+    intro previous; time_step slot_position_gaps.
+Qed.
+
+(** A positive rank's bit length is bounded by its unary value. *)
+Local Lemma slot_rank_bits_value : forall rank, Pos.size_nat rank <= Pos.to_nat rank.
+Proof.
+  intro rank. induction rank as [rank IH | rank IH |]; cbn [Pos.size_nat].
+  - rewrite Pos2Nat.inj_xI. lia.
+  - rewrite Pos2Nat.inj_xO. pose proof (Pos2Nat.is_pos rank). lia.
+  - reflexivity.
+Qed.
+
+(** Ranking pays for insertion comparisons and each increasing positive rank. *)
+Lemma T_slot_rank_positions_le : forall rank perm,
+  (T_slot_rank_positions rank perm <=
+    8 * N.of_nat ((length perm + 1) *
+      (fold_right Nat.add 0%nat (map S perm) + length perm + Pos.to_nat rank + 1)))%N.
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - time_step slot_rank_positions.
+  - pose proof (IH (Pos.succ rank)) as Htail.
+    pose proof (slot_rank_bits_value rank) as Hbits.
+    pose proof (T_slot_rank_insert_le (p, rank)
+      (slot_rank_positions (Pos.succ rank) perm)) as Hinsert.
+    rewrite slot_rank_positions_length in Hinsert.
+    rewrite Pos2Nat.inj_succ in Htail. time_step slot_rank_positions.
+Qed.
+
+(** One prepared layout is bounded by the work charged for its source positions. *)
+Lemma T_prepare_slot_layout_le : forall perm,
+  (T_prepare_slot_layout perm <=
+    20 * N.of_nat ((length perm + 1) *
+      (fold_right Nat.add 0%nat (map S perm) + length perm + 1)))%N.
+Proof.
+  intro perm.
+  pose proof (T_slot_rank_positions_le 1 perm) as Hrank.
+  pose proof (T_slot_position_gaps_le 0 (slot_rank_positions 1 perm)) as Hgap.
+  rewrite slot_rank_positions_length, slot_rank_positions_mass in Hgap.
+  time_step prepare_slot_layout.
+Qed.
+
+(** Preparing the full layout list fits the released aggregate layout-work budget. *)
+Lemma T_prepare_slot_layouts_le : forall sl,
+  (T_prepare_slot_layouts sl <=
+    25 * N.of_nat (layout_work sl + length sl + 1))%N.
+Proof.
+  intro sl. induction sl as [| [f perm] sl IH]; time_step prepare_slot_layouts; time_step.
+  unfold T_prepare_slot_layouts, layout_work in IH.
+  revert IH. time_simpl. intro IH. time_cbn_all. nia.
+Qed.
+
+(** * Projection costs *)
+
+(** A skip pays for the cells it consumes and one final call. *)
+Lemma T_slot_skip_remaining_le : forall C gap (u : list C),
+  (T_slot_skip gap u + N.of_nat (length (slot_skip gap u)) <=
+    N.of_nat (length u + 1))%N.
+Proof.
+  intros C gap. induction gap as [| gap IH]; intros [| c u].
+  - time_step.
+  - time_step.
+  - time_step.
+  - pose proof (IH u) as Htail. time_step.
+Qed.
+
+(** Every original rank lies below the rank immediately after the permutation. *)
+Lemma slot_rank_positions_upper : forall first perm p rank,
+  In (p, rank) (slot_rank_positions first perm) ->
+  Pos.to_nat rank < Pos.to_nat first + length perm.
+Proof.
+  intros first perm. revert first.
+  induction perm as [| q perm IH]; intros first p rank Hin; cbn [slot_rank_positions] in Hin.
+  - contradiction.
+  - apply slot_rank_insert_in in Hin. destruct Hin as [Heq | Hin].
+    + inversion Heq; subst. cbn [length]. lia.
+    + specialize (IH (Pos.succ first) p rank Hin).
+      rewrite Pos2Nat.inj_succ in IH. cbn [length]. lia.
+Qed.
+
+Local Opaque PTrieT.c_trie.
+
+(** Arithmetic below generalizes the released trie constant so simplification cannot
+    use its concrete placeholder value. *)
+
+(** The tuple walk charges consumed cells once and one bounded trie write per selected rank. *)
+Lemma T_slot_pick_ranked_le : forall C steps (u : list C) picked bits,
+  Forall (fun q => Pos.size_nat (snd q) <= bits) steps ->
+  (T_slot_pick_ranked steps u picked <= N.of_nat (length u + 1) +
+    (PTrieT.c_trie + 2) * N.of_nat (length steps) * N.of_nat (bits + 1))%N.
+Proof.
+  intros C steps. induction steps as [| [gap rank] steps IH]; intros u picked bits Hbits.
+  - time_unfold (@T_slot_pick_ranked). time_simpl. time_cbn.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
+  - inversion Hbits as [| q qs Hrank Hrest]; subst.
+    pose proof (T_slot_skip_remaining_le C gap u) as Hskip.
+    time_unfold (@T_slot_pick_ranked). time_simpl. time_cbn.
+    destruct (slot_skip gap u) as [| c suffix] eqn:Hsuffix.
+    + time_cbn_all. set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
+    + pose proof (IH (c :: suffix) (PTrieCode.set rank c picked) bits Hrest) as Htail.
+      pose proof (PTrieT.T_set_le C rank c picked) as Hset.
+      time_cbn_all. set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+      rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+
+(** Reading consecutive ranks pays their common upper bit width at each step. *)
+Lemma T_slot_read_ranked_le : forall C remaining rank (picked : PTrieCode.t C) limit,
+  Pos.to_nat rank + remaining <= Pos.to_nat limit ->
+  (T_slot_read_ranked remaining rank picked <=
+    (PTrieT.c_trie + 2) * N.of_nat (remaining + 1) * N.of_nat (Pos.size_nat limit + 1))%N.
+Proof.
+  intros C remaining. induction remaining as [| remaining IH];
+    intros rank picked limit Hrange.
+  - time_unfold (@T_slot_read_ranked). time_simpl. time_cbn.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
+  - assert (Hrank : Pos.size_nat rank <= Pos.size_nat limit).
+    { apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt. lia. }
+    assert (Hnext : Pos.to_nat (Pos.succ rank) + remaining <= Pos.to_nat limit).
+    { rewrite Pos2Nat.inj_succ. lia. }
+    pose proof (IH (Pos.succ rank) picked limit Hnext) as Htail.
+    pose proof (PTrieT.T_get_le C rank picked) as Hget.
+    pose proof (Pos.T_succ_le rank) as Hsucc.
+    time_unfold (@T_slot_read_ranked). time_simpl. time_cbn.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    destruct (PTrieCode.get rank picked); time_cbn_all;
+      rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+
+(** Prepared ranks use at most the bit width of one plus the permutation length. *)
+Lemma slot_prepared_rank_bits : forall perm,
+  Forall (fun q => Pos.size_nat (snd q) <= Pos.size_nat (Pos.of_succ_nat (length perm)))
+    (projection_steps (prepare_slot_layout perm)).
+Proof.
+  intro perm. apply Forall_forall. intros [gap rank] Hin. cbn [snd].
+  unfold prepare_slot_layout in Hin. cbn [projection_steps] in Hin.
+  assert (Hrank : In rank (map snd (slot_rank_positions 1 perm))).
+  { rewrite <- (slot_position_gaps_ranks 0 (slot_rank_positions 1 perm)).
+    apply in_map_iff. exists (gap, rank). split; [reflexivity | exact Hin]. }
+  apply in_map_iff in Hrank. destruct Hrank as [[position r] [Heq Hentry]].
+  cbn [snd] in Heq. subst r.
+  apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt.
+  rewrite SuccNat2Pos.id_succ.
+  pose proof (slot_rank_positions_upper 1 perm position rank Hentry) as Hupper.
+  cbn [Pos.to_nat] in Hupper. lia.
+Qed.
+
+(** Every prepared layout charges one tuple walk and the bit cost of its original ranks. *)
+Theorem T_project_slot_layout_le : forall C perm (u : list C),
+  (T_project_slot_layout (prepare_slot_layout perm) u <= N.of_nat (length u + 1) +
+    (2 * PTrieT.c_trie + 10) * N.of_nat (length perm + 1) *
+      N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1))%N.
+Proof.
+  intros C perm u.
+  pose proof (T_slot_pick_ranked_le C (projection_steps (prepare_slot_layout perm)) u
+    PTrieCode.empty (Pos.size_nat (Pos.of_succ_nat (length perm)))
+    (slot_prepared_rank_bits perm)) as Hpick.
+  assert (Hrange : Pos.to_nat 1 + length perm <= Pos.to_nat (Pos.of_succ_nat (length perm))).
+  { rewrite SuccNat2Pos.id_succ. cbn. lia. }
+  pose proof (T_slot_read_ranked_le C (length perm) 1
+    (slot_pick_ranked (projection_steps (prepare_slot_layout perm)) u PTrieCode.empty)
+    (Pos.of_succ_nat (length perm)) Hrange) as Hread.
+  pose proof (Datatypes.T_length_le (projection_steps (prepare_slot_layout perm))) as Hlength.
+  time_unfold (@T_project_slot_layout). time_simpl. time_cbn_all.
+  rewrite ?slot_position_gaps_length, ?slot_rank_positions_length in *.
+  set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+  rewrite ?Nat2N.inj_add in *.
+  change (N.of_nat 1) with 1%N in *. nia.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
@@ -133,7 +682,46 @@ Record database_slot_store (C : Type) := {
   projection_counts : list ((N * list C) * N)
 }.
 
-Record database_state (C : Type) := DatabaseState {
+(** Runtime contents are stored independently of the union-find membership counter.
+    The abstract index type is an explicit parameter of the concrete state. *)
+Record database_runtime (C X : Type) := DatabaseRuntime {
+  runtime_allocated : N;
+  runtime_changed : bool;
+  runtime_declarations : list decl;
+  runtime_kinds : PTrieCode.t output;
+  runtime_rows : PTrieCode.t ((positive * list C) * option C);
+  runtime_slots : list (positive * list nat);
+  runtime_equalities : list (positive * positive);
+  runtime_queue : list positive;
+  runtime_all_indexes : PTrieCode.t X;
+  runtime_new_indexes : PTrieCode.t X;
+  runtime_projection_counts : PTrieCode.t (PTrieCode.t (list C * N));
+  runtime_function_slots : PTrieCode.t (list (N * database_slot_layout));
+  runtime_max_name : positive;
+  runtime_slot_bound : N
+}.
+
+Arguments DatabaseRuntime {C X}.
+Arguments runtime_allocated {C X}.
+Arguments runtime_changed {C X}.
+Arguments runtime_declarations {C X}.
+Arguments runtime_kinds {C X}.
+Arguments runtime_rows {C X}.
+Arguments runtime_slots {C X}.
+Arguments runtime_equalities {C X}.
+Arguments runtime_queue {C X}.
+Arguments runtime_all_indexes {C X}.
+Arguments runtime_new_indexes {C X}.
+Arguments runtime_projection_counts {C X}.
+Arguments runtime_function_slots {C X}.
+Arguments runtime_max_name {C X}.
+Arguments runtime_slot_bound {C X}.
+
+TimeFun runtime_allocated runtime_changed runtime_declarations runtime_kinds runtime_rows.
+TimeFun runtime_slots runtime_equalities runtime_queue runtime_all_indexes runtime_new_indexes.
+TimeFun runtime_projection_counts runtime_function_slots runtime_max_name runtime_slot_bound.
+
+Record database_state (C X : Type) := DatabaseState {
   db_forest : UnionFindCode.t;
   db_nuses : N;
   db_npending : N;
@@ -141,18 +729,22 @@ Record database_state (C : Type) := DatabaseState {
   db_written_cells : list C;
   db_index_counters : list positive;
   db_row_store : database_row_store C;
-  db_slot_store : database_slot_store C
+  db_slot_store : database_slot_store C;
+  db_runtime : database_runtime C X;
+  db_cache_updates : N
 }.
 
-Arguments DatabaseState {C}.
-Arguments db_forest {C}.
-Arguments db_nuses {C}.
-Arguments db_npending {C}.
-Arguments db_wmark {C}.
-Arguments db_written_cells {C}.
-Arguments db_index_counters {C}.
-Arguments db_row_store {C}.
-Arguments db_slot_store {C}.
+Arguments DatabaseState {C X}.
+Arguments db_forest {C X}.
+Arguments db_nuses {C X}.
+Arguments db_npending {C X}.
+Arguments db_wmark {C X}.
+Arguments db_written_cells {C X}.
+Arguments db_index_counters {C X}.
+Arguments db_row_store {C X}.
+Arguments db_slot_store {C X}.
+Arguments db_runtime {C X}.
+Arguments db_cache_updates {C X}.
 
 TimeFun db_forest.
 TimeFun db_nuses.
@@ -162,85 +754,777 @@ TimeFun db_written_cells.
 TimeFun db_index_counters.
 TimeFun db_row_store.
 TimeFun db_slot_store.
+TimeFun db_runtime.
+TimeFun db_cache_updates.
+
+(** Earlier declarations override later declarations, as in [lookup_kind]. *)
+Definition database_kinds (ds : list decl) : PTrieCode.t output :=
+  fold_right (fun d kinds => PTrieCode.set (name d) (out d) kinds) PTrieCode.empty ds.
+TimeFun database_kinds.
+
+Definition database_max_name (ds : list decl) : positive :=
+  fold_right (fun d bound => Pos.max (name d) bound) 1%positive ds.
+TimeFun database_max_name.
+
+(** Adding an earlier declaration preserves the presence of every already-declared name. *)
+Lemma database_declaration_cons_nonempty : forall ds d f,
+  lookup_kind ds f <> None -> lookup_kind (d :: ds) f <> None.
+Proof.
+  intros ds d f Hpresent. cbn [lookup_kind].
+  destruct (Pos.eqb (name d) f); [discriminate | exact Hpresent].
+Qed.
+
+(** The stored name maximum is either the constant base or an actual declared name. *)
+Lemma database_max_name_attained : forall ds,
+  database_max_name ds = 1%positive \/ lookup_kind ds (database_max_name ds) <> None.
+Proof.
+  induction ds as [| d ds IH]; [now left |].
+  assert (Htail : database_max_name ds = 1%positive \/
+    lookup_kind (d :: ds) (database_max_name ds) <> None).
+  { destruct IH as [Hbase | Hpresent]; [now left |].
+    right. now apply database_declaration_cons_nonempty. }
+  change (Pos.max (name d) (database_max_name ds) = 1%positive \/
+    lookup_kind (d :: ds) (Pos.max (name d) (database_max_name ds)) <> None).
+  unfold Pos.max. destruct (Pos.compare (name d) (database_max_name ds)); try exact Htail.
+  right. cbn [lookup_kind]. rewrite Pos.eqb_refl. discriminate.
+Qed.
+
+Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_slot_layout))
+    (groups : PTrieCode.t (list (N * database_slot_layout)))
+    : PTrieCode.t (list (N * database_slot_layout)) :=
+  match prepared with
+  | [] => groups
+  | (f, layout) :: rest =>
+    let previous := match PTrieCode.get f groups with Some slots => slots | None => [] end in
+    database_slot_groups (N.succ next) rest (PTrieCode.set f ((next, layout) :: previous) groups)
+  end.
+TimeFun database_slot_groups.
+
+(** A maximum comparison reads no more bits than its current declaration name. *)
+Lemma T_database_positive_max_le : forall p q,
+  (Pos.T_max p q <= N.of_nat (Pos.size_nat p) + 2)%N.
+Proof.
+  intros p q. time_step Pos.max.
+Qed.
+
+(** The declaration trie pays once for each declaration and each name bit. *)
+Lemma T_database_kinds_le : forall ds,
+  (T_database_kinds ds <= 8 * (PTrieT.c_trie + 1) *
+    N.of_nat (length ds + fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds + 1))%N.
+Proof.
+  intro ds. induction ds as [|d ds IH].
+  - time_step database_kinds; time_step.
+  - pose proof (PTrieT.T_set_le output (name d) (out d) (database_kinds ds)) as Hset.
+    unfold database_kinds in Hset. unfold T_database_kinds in IH.
+    time_unfold T_database_kinds. time_unfold List.T_fold_right.
+    revert IH. time_simpl. intro IH. time_cbn_all.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
+Qed.
+
+(** The declaration maximum charges the bit length of each name independently. *)
+Lemma T_database_max_name_le : forall ds,
+  (T_database_max_name ds <=
+    8 * N.of_nat (length ds + fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds + 1))%N.
+Proof.
+  intro ds. induction ds as [|d ds IH].
+  - time_step database_max_name; time_step.
+  - pose proof (T_database_positive_max_le (name d) (database_max_name ds)) as Hmax.
+    unfold database_max_name in Hmax. unfold T_database_max_name in IH.
+    time_unfold T_database_max_name. time_unfold List.T_fold_right.
+    revert IH. time_simpl. intro IH. time_cbn_all. lia.
+Qed.
+
+(** Dense grouping releases the carry credit accumulated by earlier slot numbers. *)
+Lemma T_database_slot_groups_amort : forall prepared next groups,
+  (T_database_slot_groups next prepared groups +
+    database_counter_credit (next + N.of_nat (length prepared)) <=
+    8 * (PTrieT.c_trie + 1) *
+      N.of_nat (length prepared +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat prepared + 1) +
+    database_counter_credit next)%N.
+Proof.
+  intro prepared. induction prepared as [|[f layout] rest IH]; intros next groups.
+  - time_unfold T_database_slot_groups. cbn [length fold_right].
+    rewrite !N.add_0_r. cbn [N.of_nat Nat.add]. rewrite N.mul_1_r.
+    set (trie_cost := PTrieT.c_trie). clearbody trie_cost. lia.
+  - set (previous := match PTrieCode.get f groups with Some slots => slots | None => [] end).
+    pose proof (IH (N.succ next) (PTrieCode.set f ((next, layout) :: previous) groups)) as Htail.
+    pose proof (PTrieT.T_get_le (list (N * database_slot_layout)) f groups) as Hget.
+    pose proof (PTrieT.T_set_le (list (N * database_slot_layout)) f
+      ((next, layout) :: previous) groups) as Hset.
+    pose proof (database_counter_succ_amort next) as Hcarry.
+    assert (Hfinish : (next + N.of_nat (length ((f, layout) :: rest)))%N =
+      (N.succ next + N.of_nat (length rest))%N) by (cbn [length]; lia).
+    rewrite Hfinish. time_unfold T_database_slot_groups. fold previous.
+    cbn [length fold_right fst].
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    time_cbn. nia.
+Qed.
+
+(** Numbering from zero has no initial carry debt. *)
+Lemma T_database_slot_groups_le : forall prepared groups,
+  (T_database_slot_groups 0 prepared groups <= 8 * (PTrieT.c_trie + 1) *
+    N.of_nat (length prepared +
+      fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat prepared + 1))%N.
+Proof.
+  intros prepared groups. pose proof (T_database_slot_groups_amort prepared 0 groups).
+  cbn [database_counter_credit] in H. lia.
+Qed.
+
+(** The largest declaration name fits within the sum of all name widths and the root bit. *)
+Lemma database_max_name_bits : forall ds,
+  Pos.size_nat (database_max_name ds) <=
+    fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds + 1.
+Proof.
+  intro ds. induction ds as [|d ds IH]; [reflexivity |].
+  change (Pos.size_nat (Pos.max (name d) (database_max_name ds)) <=
+    Pos.size_nat (name d) + fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds + 1).
+  unfold Pos.max. destruct (Pos.compare (name d) (database_max_name ds)); lia.
+Qed.
+
+(** A binary natural's bit width never exceeds its unary value. *)
+Lemma database_counter_bits_value : forall n, N.size_nat n <= N.to_nat n.
+Proof.
+  intros [|p]; [reflexivity | apply slot_rank_bits_value].
+Qed.
+
+(** Binary maximum pays only the bit width of its first argument. *)
+Lemma T_database_counter_max_le : forall n m,
+  (N.T_max n m <= N.of_nat (N.size_nat n) + 3)%N.
+Proof.
+  intros n m. time_step N.max.
+Qed.
+
+(** Preparing layouts preserves both the slot count and the charged function-name bits. *)
+Lemma database_prepared_sizes : forall sl,
+  length (prepare_slot_layouts sl) = length sl /\
+  fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (prepare_slot_layouts sl) =
+    fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl.
+Proof.
+  intro sl. split.
+  - unfold prepare_slot_layouts. apply length_map.
+  - unfold prepare_slot_layouts.
+    induction sl as [|[f perm] sl IH]; cbn [map fold_right fst];
+      [reflexivity | now rewrite IH].
+Qed.
+
+(** Reading a missing function group gives its empty slot list. *)
+Definition database_group_entries (f : positive)
+    (groups : PTrieCode.t (list (N * database_slot_layout))) : list (N * database_slot_layout) :=
+  match PTrieCode.get f groups with Some slots => slots | None => [] end.
+
+(** A prepared list entry receives its offset from the starting slot number. *)
+Definition database_slot_member (next : N) (prepared : list (positive * database_slot_layout))
+    (f : positive) (s : N) (layout : database_slot_layout) : Prop :=
+  exists n, nth_error prepared n = Some (f, layout) /\ s = (next + N.of_nat n)%N.
+
+(** Prepending to one function group adds exactly its new numbered layout. *)
+Lemma database_group_add_member : forall f g next block groups s layout,
+  In (s, layout) (database_group_entries f
+    (PTrieCode.set g ((next, block) :: database_group_entries g groups) groups)) <->
+  In (s, layout) (database_group_entries f groups) \/
+    (f = g /\ s = next /\ layout = block).
+Proof.
+  intros f g next block groups s layout. unfold database_group_entries.
+  destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+  - rewrite PTrie.get_set_same. cbn [In]. intuition congruence.
+  - rewrite PTrie.get_set_other by exact Hdifferent. intuition congruence.
+Qed.
+
+(** Numbering a nonempty prepared list separates its head from the incremented tail. *)
+Lemma database_slot_member_cons : forall next g block rest f s layout,
+  database_slot_member next ((g, block) :: rest) f s layout <->
+    (f = g /\ s = next /\ layout = block) \/
+    database_slot_member (N.succ next) rest f s layout.
+Proof.
+  intros next g block rest f s layout. unfold database_slot_member. split.
+  - intros [n [Hentry Hslot]]. destruct n as [| n].
+    + cbn [nth_error] in Hentry. injection Hentry as Hfunction Hlayout.
+      left. split; [congruence |]. split; [cbn in Hslot; lia | congruence].
+    + right. exists n. split; [exact Hentry |]. rewrite Nat2N.inj_succ in Hslot. lia.
+  - intros [[-> [-> ->]] | [n [Hentry Hslot]]].
+    + exists 0. split; [reflexivity | lia].
+    + exists (S n). split; [exact Hentry |]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Group construction adds exactly the numbered entries of the prepared input. *)
+Lemma database_slot_groups_member : forall prepared next groups f s layout,
+  In (s, layout) (database_group_entries f (database_slot_groups next prepared groups)) <->
+    In (s, layout) (database_group_entries f groups) \/
+      database_slot_member next prepared f s layout.
+Proof.
+  induction prepared as [| [g block] rest IH]; intros next groups f s layout.
+  - cbn [database_slot_groups]. unfold database_slot_member. split.
+    + intro Hin. now left.
+    + intros [Hin | [n [Hentry _]]]; [exact Hin | destruct n; discriminate].
+  - cbn [database_slot_groups]. fold (database_group_entries g groups).
+    rewrite IH, database_group_add_member, database_slot_member_cons. tauto.
+Qed.
+
+(** A prepared function group contains exactly the declared slots at their global numbers. *)
+Lemma database_prepared_group_member : forall sl f s layout,
+  In (s, layout) (database_group_entries f
+    (database_slot_groups 0 (prepare_slot_layouts sl) PTrieCode.empty)) <->
+  exists perm, nth_error sl (N.to_nat s) = Some (f, perm) /\
+    layout = prepare_slot_layout perm.
+Proof.
+  intros sl f s layout. rewrite database_slot_groups_member.
+  unfold database_slot_member, prepare_slot_layouts.
+  unfold database_group_entries at 1. rewrite PTrie.get_empty. cbn [In]. split.
+  - intros [Hfalse | [n [Hentry Hslot]]]; [contradiction |].
+    rewrite nth_error_map in Hentry.
+    destruct (nth_error sl n) as [[g perm] |] eqn:Hnth; [| discriminate].
+    cbn [option_map fst snd] in Hentry. injection Hentry as Hfunction Hlayout.
+    subst g. exists perm. split; [| congruence].
+    replace s with (N.of_nat n) by lia. now rewrite Nat2N.id.
+  - intros [perm [Hentry ->]]. right. exists (N.to_nat s). split.
+    + rewrite nth_error_map, Hentry. reflexivity.
+    + rewrite N2Nat.id. lia.
+Qed.
+
+(** Existing group numbers are distinct and lie below the next number to allocate. *)
+Definition database_groups_bounded (next : N)
+    (groups : PTrieCode.t (list (N * database_slot_layout))) : Prop :=
+  forall f, NoDup (map fst (database_group_entries f groups)) /\
+    (forall s, In s (map fst (database_group_entries f groups)) -> (s < next)%N).
+
+(** Numbering one fresh slot preserves distinctness in every function group. *)
+Lemma database_groups_bounded_add : forall next groups g block,
+  database_groups_bounded next groups ->
+  database_groups_bounded (N.succ next)
+    (PTrieCode.set g ((next, block) :: database_group_entries g groups) groups).
+Proof.
+  intros next groups g block Hbounded f. destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+  - destruct (Hbounded g) as [Hdistinct Hbelow].
+    unfold database_group_entries at 1 3. rewrite !PTrie.get_set_same.
+    cbn [map fst]. split.
+    + constructor; [intro Hin; specialize (Hbelow next Hin); lia | exact Hdistinct].
+    + intros s [-> | Hin]; [lia | specialize (Hbelow s Hin); lia].
+  - destruct (Hbounded f) as [Hdistinct Hbelow].
+    unfold database_group_entries at 1 3. rewrite !PTrie.get_set_other by exact Hdifferent.
+    fold (database_group_entries f groups). split; [exact Hdistinct |].
+    intros s Hin. specialize (Hbelow s Hin). lia.
+Qed.
+
+(** A complete group build preserves globally fresh slot numbering. *)
+Lemma database_slot_groups_bounded : forall prepared next groups,
+  database_groups_bounded next groups ->
+  database_groups_bounded (next + N.of_nat (length prepared))
+    (database_slot_groups next prepared groups).
+Proof.
+  induction prepared as [| [g block] rest IH]; intros next groups Hbounded.
+  - cbn [database_slot_groups length]. now rewrite N.add_0_r.
+  - cbn [database_slot_groups length]. fold (database_group_entries g groups).
+    rewrite Nat2N.inj_succ.
+    replace (next + N.succ (N.of_nat (length rest)))%N
+      with (N.succ next + N.of_nat (length rest))%N by lia.
+    apply IH. now apply database_groups_bounded_add.
+Qed.
+
+(** A function's prepared list visits each global slot number at most once. *)
+Lemma database_prepared_group_nodup : forall sl f,
+  NoDup (map fst (database_group_entries f
+    (database_slot_groups 0 (prepare_slot_layouts sl) PTrieCode.empty))).
+Proof.
+  intros sl f. assert (Hempty : database_groups_bounded 0 PTrieCode.empty).
+  { intro g. unfold database_group_entries. rewrite PTrie.get_empty.
+    split; [constructor | intros s Hin; contradiction]. }
+  exact (proj1 (database_slot_groups_bounded
+    (prepare_slot_layouts sl) 0 PTrieCode.empty Hempty f)).
+Qed.
+
+(** Adding one prepared entry increases exactly its function's group length. *)
+Lemma database_group_add_length : forall groups f g s layout,
+  length (database_group_entries f
+    (PTrieCode.set g ((s, layout) :: database_group_entries g groups) groups)) =
+  if Pos.eqb g f then S (length (database_group_entries f groups))
+  else length (database_group_entries f groups).
+Proof.
+  intros groups f g s layout. destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+  - rewrite Pos.eqb_refl. unfold database_group_entries at 1.
+    now rewrite PTrie.get_set_same.
+  - assert (Htest : Pos.eqb g f = false) by (apply Pos.eqb_neq; congruence).
+    rewrite Htest. unfold database_group_entries at 1.
+    now rewrite PTrie.get_set_other by exact Hdifferent.
+Qed.
+
+(** A grouping pass adds one entry for each matching function in its input. *)
+Lemma database_slot_groups_length : forall prepared next groups f,
+  length (database_group_entries f (database_slot_groups next prepared groups)) =
+  length (database_group_entries f groups) +
+    length (filter (fun item => Pos.eqb (fst item) f) prepared).
+Proof.
+  intro prepared. induction prepared as [|[g layout] rest IH]; intros next groups f.
+  - cbn [database_slot_groups filter length]. lia.
+  - cbn [database_slot_groups filter fst]. fold (database_group_entries g groups).
+    rewrite IH, database_group_add_length. destruct (Pos.eqb g f); cbn [length]; lia.
+Qed.
+
+(** Preparing layouts preserves the exact number of slots belonging to each function. *)
+Lemma database_prepared_group_length : forall sl f,
+  length (database_group_entries f
+    (database_slot_groups 0 (prepare_slot_layouts sl) PTrieCode.empty)) =
+  length (filter (fun item => Pos.eqb (fst item) f) sl).
+Proof.
+  intros sl f. rewrite database_slot_groups_length.
+  unfold database_group_entries at 1. rewrite PTrie.get_empty. cbn [length Nat.add].
+  unfold prepare_slot_layouts.
+  induction sl as [|[g perm] rest IH]; [reflexivity |].
+  cbn [map filter fst].
+  destruct (Pos.eqb g f); cbn [length]; now rewrite IH.
+Qed.
+
+Definition runtime_set_rows {C X} (rows : PTrieCode.t ((positive * list C) * option C))
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) rows
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_rows.
+
+Definition runtime_set_changed {C X} (flag : bool)
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) flag (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_changed.
+
+Definition runtime_set_allocated {C X} (allocated : N)
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime allocated (runtime_changed state) (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_allocated.
+
+Definition runtime_set_union {C X} (flag : bool) (equalities : list (positive * positive)) (queue : list positive)
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) flag (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) equalities queue (runtime_all_indexes state) (runtime_new_indexes state)
+    (runtime_projection_counts state) (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_union.
+
+Definition runtime_set_indexes {C X} (all_indexes new_indexes : PTrieCode.t X) (counts : PTrieCode.t (PTrieCode.t (list C * N)))
+    (state : database_runtime C X) : database_runtime C X :=
+  DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) (runtime_rows state)
+    (runtime_slots state) (runtime_equalities state) (runtime_queue state) all_indexes new_indexes
+    counts (runtime_function_slots state) (runtime_max_name state) (runtime_slot_bound state).
+TimeFun runtime_set_indexes.
+
+Definition database_set_runtime {C X} (state : database_runtime C X)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) state
+    (db_cache_updates db).
+TimeFun database_set_runtime.
+
+Definition database_set_forest {C X} (forest : UnionFindCode.t)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState forest (db_nuses db) (db_npending db) (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db)
+    (db_cache_updates db).
+TimeFun database_set_forest.
+
+Definition database_set_pending {C X} (pending : N)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) (db_nuses db) pending (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db)
+    (db_cache_updates db).
+TimeFun database_set_pending.
+
+(** Each cache call records its actual update counter, input rank, index counters and cells. *)
+Definition database_record_cache {C X} (u : list C) (counters : list positive)
+    (db : database_state C X) : database_state C X :=
+  let next := N.succ_pos (db_cache_updates db) in
+  let rank := Pos.of_succ_nat (length u) in
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    (u ++ db_written_cells db)
+    (next :: rank :: (counters ++ db_index_counters db))
+    (db_row_store db) (db_slot_store db) (db_runtime db) (Npos next).
+TimeFun database_record_cache.
+
+(** Recording a cache call traverses only its new input and newly collected counters. *)
+Lemma T_database_record_cache_le : forall C X (u : list C) counters (db : database_state C X),
+  (T_database_record_cache u counters db <=
+    32 + N.T_succ_pos (db_cache_updates db) +
+      6 * N.of_nat (length u + 1) + N.of_nat (length counters + 1))%N.
+Proof.
+  intros C X u counters db.
+  pose proof (database_of_succ_nat_amort (length u)) as Hrank.
+  pose proof (Datatypes.T_length_le u) as Hlength.
+  pose proof (Datatypes.T_app_le counters (db_index_counters db)) as Hcounters.
+  pose proof (Datatypes.T_app_le u (db_written_cells db)) as Hcells.
+  time_unfold @T_database_record_cache. time_simpl. time_cbn. lia.
+Qed.
+
+(** A ghost operation records whether a tuple was inserted or removed from an index. *)
+Definition database_index_step {C X : Type} (insert remove : list C -> X -> X)
+    (ix : X) (operation : bool * list C) : X :=
+  if fst operation then insert (snd operation) ix else remove (snd operation) ix.
+
+(** Cached indexes have finite construction histories over the recorded written cells. *)
+Definition database_index_history {C X : Type} (empty : X)
+    (insert remove : list C -> X -> X) (written : list C) (ix : X) : Prop :=
+  exists operations : list (bool * list C),
+    ix = fold_left (database_index_step insert remove) operations empty /\
+    Forall (fun operation => fst operation = true -> incl (snd operation) written) operations.
+
+(** The empty index has an empty construction history. *)
+Lemma database_index_history_empty : forall C X (empty : X) insert remove (written : list C),
+  database_index_history empty insert remove written empty.
+Proof.
+  intros C X empty insert remove written. exists []. split; [reflexivity | constructor].
+Qed.
+
+(** Recording more written cells retains every existing construction witness. *)
+Lemma database_index_history_weaken : forall C X (empty : X) insert remove
+  (before after : list C) ix,
+  incl before after -> database_index_history empty insert remove before ix ->
+  database_index_history empty insert remove after ix.
+Proof.
+  intros C X empty insert remove before after ix Hwritten [operations [Hix Hhistory]].
+  exists operations. split; [exact Hix |].
+  rewrite Forall_forall in Hhistory |- *. intros operation Hin Hinsert c Hcell.
+  apply Hwritten. exact (Hhistory operation Hin Hinsert c Hcell).
+Qed.
+
+(** An insertion extends the ghost history when its tuple cells have been recorded. *)
+Lemma database_index_history_insert : forall C X (empty : X) insert remove
+  (written u : list C) ix,
+  database_index_history empty insert remove written ix -> incl u written ->
+  database_index_history empty insert remove written (insert u ix).
+Proof.
+  intros C X empty insert remove written u ix [operations [Hix Hhistory]] Hcells.
+  exists (operations ++ [(true, u)]). split.
+  - rewrite fold_left_app. cbn [fold_left database_index_step fst snd]. now rewrite Hix.
+  - apply Forall_app. split; [exact Hhistory |]. constructor; [exact (fun _ => Hcells) | constructor].
+Qed.
+
+(** A removal extends the history without adding any written-cell requirement. *)
+Lemma database_index_history_remove : forall C X (empty : X) insert remove
+  (written u : list C) ix,
+  database_index_history empty insert remove written ix ->
+  database_index_history empty insert remove written (remove u ix).
+Proof.
+  intros C X empty insert remove written u ix [operations [Hix Hhistory]].
+  exists (operations ++ [(false, u)]). split.
+  - rewrite fold_left_app. cbn [fold_left database_index_step fst snd]. now rewrite Hix.
+  - apply Forall_app. split; [exact Hhistory |]. constructor; [discriminate | constructor].
+Qed.
+
+(** Properties preserved by recorded insertions and removals hold for every ghost history. *)
+Lemma database_index_history_induction : forall C X (empty : X) insert remove
+  (written : list C) (P : X -> Prop),
+  P empty ->
+  (forall u ix, incl u written -> P ix -> P (insert u ix)) ->
+  (forall u ix, P ix -> P (remove u ix)) ->
+  forall ix, database_index_history empty insert remove written ix -> P ix.
+Proof.
+  intros C X empty insert remove written P Hempty Hinsert Hremove ix
+    [operations [-> Hhistory]].
+  assert (Hfold : forall operations current,
+    Forall (fun operation => fst operation = true -> incl (snd operation) written) operations ->
+    P current -> P (fold_left (database_index_step insert remove) operations current)).
+  { intro history. induction history as [|[add u] rest IH]; intros current Hentries Hcurrent.
+    - exact Hcurrent.
+    - inversion Hentries as [|entry tail Hhead Htail]; subst entry tail.
+      cbn [fold_left database_index_step fst snd]. apply IH; [exact Htail |].
+      destruct add.
+      + apply Hinsert; [exact (Hhead eq_refl) | exact Hcurrent].
+      + apply Hremove. exact Hcurrent. }
+  now apply Hfold.
+Qed.
 
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
-  Definition t := database_state (cell V.t).
-  (** Projection preparation is stored while group and index construction remain placeholders. *)
+  Definition t := database_state (cell V.t) I.t.
+
+  Definition db_cell_code (c : cell V.t) : positive :=
+    match c with Id i => xO i | Val v => xI (V.encode v) end.
+  Definition db_cell_eqb (c d : cell V.t) : bool :=
+    match c, d with
+    | Id i, Id j => Pos.eqb i j
+    | Val v, Val w => V.eqb v w
+    | _, _ => false
+    end.
+  Definition db_tuple_code := list_code db_cell_code.
+  Definition db_row_code (f : positive) (k : list (cell V.t)) : positive :=
+    pair_code (fun p => p) db_tuple_code (f, k).
+  Definition row_get (f : positive) (k : list (cell V.t)) (db : t)
+      : option (option (cell V.t)) :=
+    option_map snd (PTrieCode.get (db_row_code f k) (runtime_rows (db_runtime db))).
+  Definition kind_get (f : positive) (db : t) : option output :=
+    PTrieCode.get f (runtime_kinds (db_runtime db)).
+  Definition normal_cell (db : t) (c : cell V.t) : cell V.t :=
+    match c with
+    | Id i =>
+      match N.compare (runtime_allocated (db_runtime db)) (Npos i) with
+      | Lt => Id i
+      | _ => Id (fst (UnionFindCode.find i (db_forest db)))
+      end
+    | Val v => Val v
+    end.
+  Definition normal_key (db : t) (k : list (cell V.t)) : list (cell V.t) :=
+    map (normal_cell db) k.
+  Definition output_eqb (a b : option (cell V.t)) : bool :=
+    match a, b with
+    | None, None => true
+    | Some c, Some d => db_cell_eqb c d
+    | _, _ => false
+    end.
+  Definition combine_output (db : t) (f : positive)
+      (previous : option (option (cell V.t))) (o : option (cell V.t)) : option (cell V.t) :=
+    match previous, kind_get f db, o with
+    | Some (Some (Val a)), Some (OLat m), Some (Val b) => Some (Val (V.merge m a b))
+    | Some old, _, _ => old
+    | None, _, _ => o
+    end.
+
+  Definition slot_index_get (s : positive) (indexes : PTrieCode.t I.t) : I.t :=
+    match PTrieCode.get s indexes with Some ix => ix | None => I.empty end.
+  Definition projection_table_get (s : positive)
+      (counts : PTrieCode.t (PTrieCode.t (list (cell V.t) * N))) :=
+    match PTrieCode.get s counts with Some table => table | None => PTrieCode.empty end.
+
+  (** Projection counts keep a shared tuple until its last contributing row is removed. *)
+  Definition slot_update_one (add : bool) (s : N) (u : list (cell V.t))
+      (state : database_runtime (cell V.t) I.t) :=
+    let code := N.succ_pos s in
+    let tuple_code := db_tuple_code u in
+    let table := projection_table_get code (runtime_projection_counts state) in
+    let count := match PTrieCode.get tuple_code table with
+      | Some (_, n) => n | None => 0%N end in
+    let all := slot_index_get code (runtime_all_indexes state) in
+    let new := slot_index_get code (runtime_new_indexes state) in
+    if add then
+      runtime_set_indexes
+        (PTrieCode.set code (I.insert u all) (runtime_all_indexes state))
+        (PTrieCode.set code (I.insert u new) (runtime_new_indexes state))
+        (PTrieCode.set code (PTrieCode.set tuple_code (u, N.succ count) table)
+          (runtime_projection_counts state)) state
+    else match count with
+      | N0 => state
+      | Npos xH =>
+        runtime_set_indexes
+          (PTrieCode.set code (I.remove u all) (runtime_all_indexes state))
+          (PTrieCode.set code (I.remove u new) (runtime_new_indexes state))
+          (PTrieCode.set code (PTrieCode.remove tuple_code table)
+            (runtime_projection_counts state)) state
+      | _ =>
+        runtime_set_indexes (runtime_all_indexes state) (runtime_new_indexes state)
+          (PTrieCode.set code (PTrieCode.set tuple_code (u, N.pred count) table)
+            (runtime_projection_counts state)) state
+      end.
+
+  Fixpoint slot_update_many (add : bool) (u : list (cell V.t))
+      (layouts : list (N * database_slot_layout))
+      (state : database_runtime (cell V.t) I.t) :=
+    match layouts with
+    | [] => state
+    | (s, layout) :: rest =>
+      slot_update_many add u rest
+        (slot_update_one add s (project_slot_layout layout u) state)
+    end.
+
+  (** A second group pass records the counters of the indexes produced by this cache call. *)
+  Fixpoint slot_updated_counters (layouts : list (N * database_slot_layout))
+      (state : database_runtime (cell V.t) I.t) : list positive :=
+    match layouts with
+    | [] => []
+    | (s, _) :: rest =>
+      let code := N.succ_pos s in
+      I.next (slot_index_get code (runtime_all_indexes state)) ::
+      I.next (slot_index_get code (runtime_new_indexes state)) ::
+      slot_updated_counters rest state
+    end.
+
+  Definition slots_update (add : bool) (f : positive) (u : list (cell V.t)) (db : t)
+      : t :=
+    let layouts := match PTrieCode.get f (runtime_function_slots (db_runtime db)) with
+      | None => [] | Some layouts => layouts end in
+    let state := slot_update_many add u layouts (db_runtime db) in
+    database_record_cache u (slot_updated_counters layouts state)
+      (database_set_runtime state db).
+
+  Definition row_write (f : positive) (k : list (cell V.t)) (o : option (cell V.t))
+      (db : t) : t :=
+    database_set_runtime
+      (runtime_set_rows
+        (PTrieCode.set (db_row_code f k) ((f, k), o) (runtime_rows (db_runtime db)))
+        (runtime_set_changed true (db_runtime db))) db.
+
+  Definition row_replace (f : positive) (k : list (cell V.t))
+      (previous : option (option (cell V.t))) (o : option (cell V.t)) (db : t) : t :=
+    let without := match previous with
+      | None => db
+      | Some before => slots_update false f (k ++ option_list before) db
+      end in
+    row_write f k o (slots_update true f (k ++ option_list o) without).
+
+  (** The row table is erased after its slot contributions have been removed. *)
+  Definition row_erase (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    database_set_runtime
+      (runtime_set_rows
+        (PTrieCode.remove (db_row_code f k) (runtime_rows (db_runtime db))) (db_runtime db)) db.
+
+  (** An absent row is unchanged; a present row releases each projected occurrence. *)
+  Definition row_delete (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    match row_get f k db with
+    | None => db
+    | Some o => row_erase f k (slots_update false f (k ++ option_list o) db)
+    end.
+  (** Initialization stores declarations, slots, empty rows and index caches. *)
   (* STUB-CODE *)
-  Definition init (_ : list decl) (sl : list (positive * list nat)) : t :=
-    DatabaseState UnionFindCode.empty 0%N 0%N 0%N [] []
+  Definition init (ds : list decl) (sl : list (positive * list nat)) : t :=
+    let prepared := prepare_slot_layouts sl in
+    let bound := N.of_nat (length sl) in
+    DatabaseState UnionFindCode.empty 0%N 0%N
+      (N.max (Npos (database_max_name ds)) (N.succ bound)) []
+      (match sl with [] => [1%positive] | _ => [1%positive; N.succ_pos bound] end)
       {| row_history := []; row_links := []; row_weights := []; row_keys := [];
          row_fresh := 1 |}
-      {| prepared_slots := prepare_slot_layouts sl;
+      {| prepared_slots := prepared;
          slot_positions := []; function_groups := []; slot_groups := [];
-         projection_counts := [] |}.
-  (* STUB-CODE *)
+         projection_counts := [] |}
+      (DatabaseRuntime 0%N false ds (database_kinds ds) PTrieCode.empty sl [] []
+        PTrieCode.empty PTrieCode.empty PTrieCode.empty
+        (database_slot_groups 0 prepared PTrieCode.empty) (database_max_name ds) bound) 0%N.
   Definition find (i : positive) (db : t) : positive * t :=
     let result := UnionFindCode.find i (db_forest db) in
-    (fst result, DatabaseState (snd result) (db_nuses db) (db_npending db) (db_wmark db)
-      (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)).
-  (* STUB-CODE *)
-  Definition lookup (_ : positive) (_ : list (cell V.t)) (db : t)
-      : option (option (cell V.t)) * t := (None, db).
-  (* STUB-CODE *)
-  Definition make (i : positive) (_ : list (cell V.t)) (db : t) : positive * t := (i, db).
-  (* STUB-CODE *)
-  Definition put (_ : positive) (_ : list (cell V.t)) (_ : option (cell V.t)) (db : t) := db.
-  (* STUB-CODE *)
+    (fst result, database_set_forest (snd result) db).
+  Definition lookup (f : positive) (k : list (cell V.t)) (db : t)
+      : option (option (cell V.t)) * t :=
+    match Pos.compare (runtime_max_name (db_runtime db)) f with
+    | Lt => (None, db)
+    | _ => (row_get f (normal_key db k) db, db)
+    end.
   Definition union (i j : positive) (db : t) :=
-    if (N.leb (Npos i) (count (db_forest db)) &&
-        N.leb (Npos j) (count (db_forest db)))%bool then
-      let result := UnionFindCode.union i j (db_forest db) in
-      let queued := match fst result with
-        | None => db_npending db
-        | Some _ => N.succ (db_npending db)
+    let result := UnionFindCode.union i j (db_forest db) in
+    let next := database_set_forest (snd result) db in
+    match fst result with
+    | None => next
+    | Some (_, loser) =>
+      database_set_pending (N.succ (db_npending db))
+        (database_set_runtime
+          (runtime_set_union true ((i, j) :: runtime_equalities (db_runtime db))
+            (loser :: runtime_queue (db_runtime db)) (db_runtime db)) next)
+    end.
+  Definition allocate_id (i : positive) (db : t) : t :=
+    database_set_forest (UnionFindCode.add i (db_forest db))
+      (database_set_runtime
+        (runtime_set_allocated (Npos i) (runtime_set_changed true (db_runtime db))) db).
+  Definition make (f : positive) (k : list (cell V.t)) (db : t) : positive * t :=
+    let ck := normal_key db k in
+    let previous := row_get f ck db in
+    match previous with
+    | Some (Some (Id j)) => (fst (UnionFindCode.find j (db_forest db)), db)
+    | _ =>
+      let i := N.succ_pos (runtime_allocated (db_runtime db)) in
+      let fresh := allocate_id i db in
+      let next := match kind_get f db with
+        | Some OId => row_replace f ck previous (Some (Id i)) fresh
+        | _ => fresh
         end in
-      DatabaseState (snd result) (db_nuses db) queued (db_wmark db)
-        (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
-    else db.
-  (* STUB-CODE *)
+      (i, next)
+    end.
+  Definition put (f : positive) (k : list (cell V.t)) (o : option (cell V.t))
+      (db : t) : t :=
+    let ck := normal_key db k in
+    let co := option_map (normal_cell db) o in
+    let previous := row_get f ck db in
+    let updated := combine_output db f previous co in
+    let next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end in
+    match previous with
+    | Some before =>
+      if output_eqb before updated then next else row_replace f ck previous updated next
+    | None => row_replace f ck previous updated next
+    end.
+
+  (** Repair one current row, discarding its old projections before inserting its normal form. *)
+  Definition repair_current (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    match row_get f k db with
+    | None => db
+    | Some o =>
+      let ck := normal_key db k in
+      let co := option_map (normal_cell db) o in
+      if andb (Pos.eqb (db_tuple_code ck) (db_tuple_code k)) (output_eqb co o)
+      then db else put f ck co (row_delete f k db)
+    end.
+  (** Enumerate current rows that contain an occurrence of a queued loser. *)
+  Definition db_get_uses (i : positive) (db : t) : list (positive * list (cell V.t)) :=
+    fold_right (fun entry work =>
+      let stored := snd entry in
+      if existsb (fun c => match c with
+          | Id j => Pos.eqb i j
+          | Val _ => false
+          end) (snd (fst stored) ++ option_list (snd stored))
+      then fst stored :: work else work) []
+      (PTrieCode.elements (runtime_rows (db_runtime db))).
+
+  (** Popping the scheduling queue leaves the represented database view unchanged. *)
+  Definition db_pop_loser (db : t) : option (positive * t) :=
+    match runtime_queue (db_runtime db) with
+    | [] => None
+    | i :: rest => Some (i,
+        database_set_pending (N.pred (db_npending db))
+          (database_set_runtime
+            (runtime_set_union (runtime_changed (db_runtime db))
+              (runtime_equalities (db_runtime db)) rest (db_runtime db)) db))
+    end.
+
+  (** Repair active rows before taking the next pending equality. *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
-      : (t * list (positive * list (cell V.t))) + t := inr (fst s).
+      : (t * list (positive * list (cell V.t))) + t :=
+    match snd s with
+    | (f, k) :: rest => inl (repair_current f k (fst s), rest)
+    | [] =>
+      match db_pop_loser (fst s) with
+      | None => inr (fst s)
+      | Some (i, db) => inl (db, db_get_uses i (fst s))
+      end
+    end.
   Definition db_rebuild_fuel (db : t) : N :=
-    ((N.size (count (db_forest db)) + 2) * (db_nuses db + 1) + db_npending db + 1)%N.
+    ((N.size (runtime_allocated (db_runtime db)) + 2) * (db_nuses db + 1) + db_npending db + 1)%N.
   Definition rebuild (db : t) :=
     match loopN db_rstep (db_rebuild_fuel db) (db, []) with
     | inl s => fst s
     | inr result => result
     end.
-  (* STUB-CODE *)
-  Definition index (_ : N) (_ : bool) (_ : t) : I.t := I.empty.
-  (* STUB-CODE *)
-  Definition advance (db : t) := db.
-  (* STUB-CODE *)
-  Definition changed (_ : t) := false.
-  (* STUB-CODE *)
-  Definition ids (db : t) : N := count (db_forest db).
+  Definition index (s : N) (new : bool) (db : t) : I.t :=
+    match N.compare s (runtime_slot_bound (db_runtime db)) with
+    | Lt =>
+      let indexes := if new then runtime_new_indexes (db_runtime db)
+        else runtime_all_indexes (db_runtime db) in
+      match PTrieCode.get (N.succ_pos s) indexes with Some ix => ix | None => I.empty end
+    | _ => I.empty
+    end.
+  Definition advance (db : t) :=
+    database_set_runtime
+      (runtime_set_changed false
+        (runtime_set_indexes (runtime_all_indexes (db_runtime db)) PTrieCode.empty
+          (runtime_projection_counts (db_runtime db)) (db_runtime db))) db.
+  Definition changed (db : t) := runtime_changed (db_runtime db).
+  Definition ids (db : t) : N := runtime_allocated (db_runtime db).
   (* STUB-CODE *)
   Definition locate (_ : positive) (_ : list (cell V.t)) (_ : t)
       : option (list (cell V.t)) := None.
   (* STUB-CODE *)
   Definition rank_slots (_ : list decl) (_ : list (positive * list nat))
       : list (bool * N * N) := [].
-  (* STUB-CODE *)
-  Definition slots_update (_ : bool) (_ : positive) (_ : list (cell V.t)) (db : t) : t := db.
-
 End DatabaseCode.
 
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Include DatabaseCode V I.
   Include DATABASE_SPEC V I.
   (* spec: wf view repr pending old slots *)
-  Definition wf : t -> Prop := fun _ => True.
-  Definition view (_ : t) : Model.view (V := V.t) :=
-    {| row := fun _ _ _ => False;
-       same := fun _ _ => False;
-       kind := fun _ => None |}.
-  Definition repr : t -> positive -> positive := fun _ i => i.
-  Definition pending : t -> nat := fun _ => 0.
-  Definition old (_ : t) (_ : positive) (_ : list (cell V.t))
-      : option (option (cell V.t)) := None.
-  Definition slots (_ : t) : list (positive * list nat) := [].
+  Definition view (db : t) : Model.view (V := V.t) :=
+    {| row := fun f k o => row_get f k db = Some o;
+       same := equality_log (runtime_equalities (db_runtime db));
+       kind := fun f => kind_get f db |}.
+  Definition repr (db : t) : positive -> positive := UnionFind.repr (db_forest db).
+  Definition pending (db : t) : nat := length (runtime_queue (db_runtime db)).
+  Definition old (db : t) (f : positive) (k : list (cell V.t)) := row_get f k db.
+  Definition slots (db : t) : list (positive * list nat) := runtime_slots (db_runtime db).
   Definition canon (db : t) (c : cell V.t) : cell V.t :=
     match c with
     | Id i => Id (repr db i)
@@ -307,106 +1591,2417 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       | Some a, Some b => cell_le V.merge w f a b
       | _, _ => False
       end.
+
+  Module Cells := CellKey V.
+  Module Tuples := ListKey Cells.
+  Module RowKeys := PairKey PosKey Tuples.
+  Module RowMap := TrieMap RowKeys.
+  Module RowFacts := FiniteMapFacts RowKeys RowMap.
+  Module ForestFacts := UnionFindFacts UnionFind.
+
+  (** A cached projection count records how many stored rows contribute its tuple. *)
+  Definition stored_projection_count (db : t) (s : N) (u : list (cell V.t)) : N :=
+    match PTrieCode.get (db_tuple_code u)
+      (projection_table_get (N.succ_pos s) (runtime_projection_counts (db_runtime db))) with
+    | Some (_, n) => n
+    | None => 0%N
+    end.
+
+  (** Counts refer to the actual finite row map, including distinct rows with one projection. *)
+  Definition projection_counts_ok (db : t) : Prop :=
+    forall s f perm u, slot_of db s = Some (f, perm) ->
+    exists rs, NoDup rs /\
+      (forall r, In r rs <->
+        In r (RowMap.elements (runtime_rows (db_runtime db))) /\ fst (fst r) = f /\
+        permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
+      N.to_nat (stored_projection_count db s u) = length rs.
+
+  (** A slot's proof observation consists of its count table and two index cache entries. *)
+  Definition slot_snapshot (state : database_runtime (cell V.t) I.t) (s : N) :=
+    (PTrieCode.get (N.succ_pos s) (runtime_projection_counts state),
+     PTrieCode.get (N.succ_pos s) (runtime_all_indexes state),
+     PTrieCode.get (N.succ_pos s) (runtime_new_indexes state)).
+
+  (** A runtime count observation uses the same lookup as the public database count. *)
+  Definition runtime_projection_count (state : database_runtime (cell V.t) I.t)
+      (s : N) (u : list (cell V.t)) : N :=
+    match PTrieCode.get (db_tuple_code u)
+      (projection_table_get (N.succ_pos s) (runtime_projection_counts state)) with
+    | Some (_, n) => n
+    | None => 0%N
+    end.
+
+  (** A runtime index observation selects one of the two stored per-slot caches. *)
+  Definition runtime_slot_index (state : database_runtime (cell V.t) I.t)
+      (s : N) (new : bool) : I.t :=
+    slot_index_get (N.succ_pos s)
+      (if new then runtime_new_indexes state else runtime_all_indexes state).
+
+  (** Metadata records cache activity and index construction independently of the row map. *)
+  Definition metadata_ok (db : t) : Prop :=
+    In 1%positive (db_index_counters db) /\
+    In (N.succ_pos (N.of_nat (length (slots db)))) (db_index_counters db) /\
+    (forall p, db_cache_updates db = Npos p -> In p (db_index_counters db)) /\
+    (forall s new, In (I.next (runtime_slot_index (db_runtime db) s new))
+      (db_index_counters db)) /\
+    (forall s new, database_index_history I.empty I.insert I.remove (db_written_cells db)
+      (runtime_slot_index (db_runtime db) s new)) /\
+    (forall s u, (runtime_projection_count (db_runtime db) s u <= db_cache_updates db)%N) /\
+    (runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty) /\
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)).
+
+  (** These observations determine metadata validity and omit the row store and forest. *)
+  Definition metadata_snapshot (db : t) :=
+    (db_cache_updates db, db_written_cells db, db_index_counters db,
+     runtime_slots (db_runtime db), runtime_slot_bound (db_runtime db),
+     runtime_function_slots (db_runtime db), runtime_all_indexes (db_runtime db),
+     runtime_new_indexes (db_runtime db), runtime_projection_counts (db_runtime db)).
+
+  (** Equal metadata observations transfer all construction and counter witnesses. *)
+  Lemma metadata_snapshot_ok : forall db db',
+    metadata_snapshot db = metadata_snapshot db' -> metadata_ok db -> metadata_ok db'.
+  Proof.
+    intros db db' Hsame Hmetadata. unfold metadata_snapshot in Hsame.
+    injection Hsame as Hupdates Hwritten Hcounters Hslots Hbound Hgroups Hall Hnew Hcounts.
+    unfold metadata_ok, slots, runtime_slot_index, runtime_projection_count in *.
+    now rewrite <- Hupdates, <- Hwritten, <- Hcounters, <- Hslots, <- Hbound,
+      <- Hgroups, <- Hall, <- Hnew, <- Hcounts.
+  Qed.
+
+  (** Each touched slot contributes both final index counters to the recorded list. *)
+  Lemma slot_updated_counters_member : forall layouts state s layout,
+    In (s, layout) layouts -> forall new,
+    In (I.next (runtime_slot_index state s new)) (slot_updated_counters layouts state).
+  Proof.
+    intro layouts. induction layouts as [|[t block] rest IH]; intros state s layout Hin new.
+    - contradiction.
+    - destruct Hin as [Hequal | Hin].
+      + injection Hequal as -> ->. cbn [slot_updated_counters runtime_slot_index].
+        destruct new; [right; now left | now left].
+      + cbn [slot_updated_counters]. right. right. now apply (IH state s layout).
+  Qed.
+
+  (** Initial caches have empty histories, zero counts and their root counter recorded. *)
+  Lemma metadata_init : forall ds sl, metadata_ok (init ds sl).
+  Proof.
+    intros ds sl.
+    assert (Hempty : forall s new,
+      runtime_slot_index (db_runtime (init ds sl)) s new = I.empty).
+    { intros s new. unfold runtime_slot_index, slot_index_get.
+      cbn [init db_runtime runtime_new_indexes runtime_all_indexes].
+      destruct new; now rewrite PTrie.get_empty. }
+    unfold metadata_ok. split.
+    - destruct sl; now left.
+    - split.
+      + destruct sl; [now left | right; now left].
+      + split.
+        * intros p Hzero. discriminate Hzero.
+        * split.
+          -- intros s new. rewrite Hempty, I.next_empty. destruct sl; now left.
+          -- split.
+             ++ intros s new. rewrite Hempty. apply database_index_history_empty.
+             ++ split.
+                ** intros s u. unfold runtime_projection_count, projection_table_get.
+                   cbn [init db_runtime runtime_projection_counts db_cache_updates].
+                   rewrite PTrie.get_empty. cbn. rewrite PTrie.get_empty. reflexivity.
+                ** split; reflexivity.
+  Qed.
+
+  (** Changing only the forest preserves all cache metadata. *)
+  Lemma metadata_set_forest : forall db forest, metadata_ok db ->
+    metadata_ok (database_set_forest forest db).
+  Proof.
+    intros db forest. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Changing only the pending counter preserves all cache metadata. *)
+  Lemma metadata_set_pending : forall db count, metadata_ok db ->
+    metadata_ok (database_set_pending count db).
+  Proof.
+    intros db count. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Writing the row table leaves the independently maintained cache metadata intact. *)
+  Lemma metadata_row_write : forall db f k o, metadata_ok db ->
+    metadata_ok (row_write f k o db).
+  Proof.
+    intros db f k o. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Erasing the row table also preserves the cache metadata observations. *)
+  Lemma metadata_row_erase : forall db f k, metadata_ok db ->
+    metadata_ok (row_erase f k db).
+  Proof.
+    intros db f k. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Allocating an identifier does not alter the cache histories or counters. *)
+  Lemma metadata_allocate_id : forall db i, metadata_ok db ->
+    metadata_ok (allocate_id i db).
+  Proof.
+    intros db i. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Forest compression changes none of the cache metadata observations. *)
+  Lemma metadata_find : forall db i, metadata_ok db -> metadata_ok (snd (find i db)).
+  Proof.
+    intros db i. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** A union changes its forest and queue while retaining all cache metadata. *)
+  Lemma metadata_union : forall db i j, metadata_ok db -> metadata_ok (union i j db).
+  Proof.
+    intros db i j Hmetadata. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [[pair |] forest].
+    - destruct pair as [winner loser].
+      eapply metadata_snapshot_ok; [reflexivity | exact Hmetadata].
+    - eapply metadata_snapshot_ok; [reflexivity | exact Hmetadata].
+  Qed.
+
+  (** Advancing starts an empty delta history and retains every other metadata fact. *)
+  Lemma metadata_advance : forall db, metadata_ok db -> metadata_ok (advance db).
+  Proof.
+    intros db (Hone & Hslots & Hcounter & Hnext & Hhistory & Hcount & Hgroups & Hbound).
+    unfold metadata_ok.
+    split; [exact Hone |]. split; [exact Hslots |]. split; [exact Hcounter |].
+    split.
+    - intros s new. destruct new; [| exact (Hnext s false)].
+      unfold runtime_slot_index, slot_index_get.
+      cbn [advance database_set_runtime runtime_set_changed runtime_set_indexes
+        db_runtime runtime_new_indexes db_index_counters].
+      rewrite PTrie.get_empty, I.next_empty. exact Hone.
+    - split.
+      + intros s new. destruct new; [| exact (Hhistory s false)].
+        unfold runtime_slot_index, slot_index_get.
+        cbn [advance database_set_runtime runtime_set_changed runtime_set_indexes
+          db_runtime runtime_new_indexes db_written_cells].
+        rewrite PTrie.get_empty. apply database_index_history_empty.
+      + split; [exact Hcount |]. split; assumption.
+  Qed.
+
+  (** Every stored row cell occurs in the concrete write history. *)
+  Definition recorded_rows (db : t) : Prop :=
+    forall f k o c, row (view db) f k o -> In c (k ++ option_list o) ->
+      In c (db_written_cells db).
+
+  (** The history invariant combines cache construction with coverage of current rows. *)
+  Definition database_history (db : t) : Prop := metadata_ok db /\ recorded_rows db.
+
+  (** Retaining rows and extending their history preserves cell coverage. *)
+  Lemma recorded_rows_transport : forall db db',
+    (forall f k o, row (view db') f k o -> row (view db) f k o) ->
+    incl (db_written_cells db) (db_written_cells db') ->
+    recorded_rows db -> recorded_rows db'.
+  Proof.
+    intros db db' Hrows Hwritten Hrecorded f k o c Hrow Hin.
+    apply Hwritten. exact (Hrecorded f k o c (Hrows f k o Hrow) Hin).
+  Qed.
+
+  (** Allocation changes neither the row cells nor the cache histories. *)
+  Lemma database_history_allocate_id : forall db i, database_history db ->
+    database_history (allocate_id i db).
+  Proof.
+    intros db i [Hmetadata Hrows]. split.
+    - now apply metadata_allocate_id.
+    - exact Hrows.
+  Qed.
+
+  (** Union preserves row cells and every independently maintained cache history. *)
+  Lemma database_history_union : forall db i j, database_history db ->
+    database_history (union i j db).
+  Proof.
+    intros db i j [Hmetadata Hrows]. split.
+    - now apply metadata_union.
+    - unfold union.
+      destruct (UnionFindCode.union i j (db_forest db)) as [[pair |] forest].
+      + destruct pair as [winner loser]. exact Hrows.
+      + exact Hrows.
+  Qed.
+
+  (** Advancing clears delta membership while retaining all stored-cell coverage. *)
+  Lemma database_history_advance : forall db, database_history db ->
+    database_history (advance db).
+  Proof.
+    intros db [Hmetadata Hrows]. split; [now apply metadata_advance | exact Hrows].
+  Qed.
+
+  (** Both guarded index branches retain a recorded counter and a construction history. *)
+  Lemma metadata_public_index : forall db s new, metadata_ok db ->
+    In (I.next (index s new db)) (db_index_counters db) /\
+    database_index_history I.empty I.insert I.remove (db_written_cells db) (index s new db).
+  Proof.
+    intros db s new (Hone & _ & _ & Hnext & Hhistory & _).
+    unfold index. destruct (N.compare s (runtime_slot_bound (db_runtime db))).
+    - rewrite I.next_empty. split; [exact Hone | apply database_index_history_empty].
+    - change (In (I.next (runtime_slot_index (db_runtime db) s new)) (db_index_counters db) /\
+        database_index_history I.empty I.insert I.remove (db_written_cells db)
+          (runtime_slot_index (db_runtime db) s new)). split; [apply Hnext | apply Hhistory].
+    - rewrite I.next_empty. split; [exact Hone | apply database_index_history_empty].
+  Qed.
+
+  (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
+  Definition database_wf (db : t) : Prop :=
+    (UnionFind.wf (db_forest db)) /\
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) /\
+    (count (db_forest db) = ids db) /\
+    (UnionFind.width (db_forest db) <= N.size_nat (ids db)) /\
+    (forall i j, same (view db) i j <-> repr db i = repr db j) /\
+    (Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db))) /\
+    (RowMap.wf (runtime_rows (db_runtime db))) /\
+    (forall f k o, row (view db) f k o ->
+      match kind (view db) f, o with
+      | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
+      | _, _ => False
+      end) /\
+    (forall f k o i, row (view db) f k o ->
+      In (Id i) (k ++ option_list o) -> allocated db i) /\
+    (forall f k o, row (view db) f k o ->
+      slots_fit db f (length (k ++ option_list o))) /\
+    (forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive) /\
+    (runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db))) /\
+    (db_npending db = N.of_nat (pending db)) /\
+    (Forall (allocated db) (runtime_queue (db_runtime db))) /\
+    (pending db = 0 -> canonical db) /\
+    (forall s new u, I.mem (index s new db) u ->
+      exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+        u = permute perm (k ++ option_list o)) /\
+    (forall s f perm k o, slot_of db s = Some (f, perm) ->
+      row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o))) /\
+    (forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db)) /\
+    (runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty) /\
+    projection_counts_ok db /\
+    (runtime_max_name (db_runtime db) = 1%positive \/
+      kind (view db) (runtime_max_name (db_runtime db)) <> None) /\
+    database_history db.
+
+  (** The stored invariant supplies forest. *)
+  Lemma wf_forest : forall db, database_wf db -> UnionFind.wf (db_forest db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies forest members. *)
+  Lemma wf_forest_members : forall db, database_wf db -> forall i, UnionFind.mem (db_forest db) i <-> allocated db i.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies forest count. *)
+  Lemma wf_forest_count : forall db, database_wf db -> count (db_forest db) = ids db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies forest width. *)
+  Lemma wf_forest_width : forall db, database_wf db -> UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies equalities. *)
+  Lemma wf_equalities : forall db, database_wf db -> forall i j, same (view db) i j <-> repr db i = repr db j.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies log allocated. *)
+  Lemma wf_log_allocated : forall db, database_wf db -> Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row map. *)
+  Lemma wf_row_map : forall db, database_wf db -> RowMap.wf (runtime_rows (db_runtime db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row kind. *)
+  Lemma wf_row_kind : forall db, database_wf db -> forall f k o, row (view db) f k o ->
+      match kind (view db) f, o with
+      | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
+      | _, _ => False
+      end.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row ids. *)
+  Lemma wf_row_ids : forall db, database_wf db -> forall f k o i, row (view db) f k o ->
+      In (Id i) (k ++ option_list o) -> allocated db i.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row slots. *)
+  Lemma wf_row_slots : forall db, database_wf db -> forall f k o, row (view db) f k o ->
+      slots_fit db f (length (k ++ option_list o)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies kind bound. *)
+  Lemma wf_kind_bound : forall db, database_wf db -> forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies slot bound. *)
+  Lemma wf_slot_bound : forall db, database_wf db -> runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies pending count. *)
+  Lemma wf_pending_count : forall db, database_wf db -> db_npending db = N.of_nat (pending db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies queue allocated. *)
+  Lemma wf_queue_allocated : forall db, database_wf db -> Forall (allocated db) (runtime_queue (db_runtime db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies quiet canonical. *)
+  Lemma wf_quiet_canonical : forall db, database_wf db -> pending db = 0 -> canonical db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies index sound. *)
+  Lemma wf_index_sound : forall db, database_wf db -> forall s new u, I.mem (index s new db) u ->
+      exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+        u = permute perm (k ++ option_list o).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies index complete. *)
+  Lemma wf_index_complete : forall db, database_wf db -> forall s f perm k o, slot_of db s = Some (f, perm) ->
+      row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies index arity. *)
+  Lemma wf_index_arity : forall db, database_wf db -> forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The function table contains exactly the prepared layouts of the stored slot list. *)
+  Lemma wf_group_table : forall db, database_wf db ->
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The invariant ties cached projection counts to the actual row map. *)
+  Lemma wf_projection_counts : forall db, database_wf db -> projection_counts_ok db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The comparison guard uses an attained declaration maximum or the constant base. *)
+  Lemma wf_max_name_attained : forall db, database_wf db ->
+    runtime_max_name (db_runtime db) = 1%positive \/
+      kind (view db) (runtime_max_name (db_runtime db)) <> None.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant includes maintained cache histories and current-row coverage. *)
+  Lemma wf_history : forall db, database_wf db -> database_history db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** Well-formed databases have genuine cache construction and recorded counter bounds. *)
+  Lemma wf_metadata : forall db, database_wf db -> metadata_ok db.
+  Proof.
+    intros db Hwf. exact (proj1 (wf_history db Hwf)).
+  Qed.
+
+  (** Every cell of a stored row is present in the write history. *)
+  Lemma wf_recorded_rows : forall db, database_wf db -> recorded_rows db.
+  Proof.
+    intros db Hwf. exact (proj2 (wf_history db Hwf)).
+  Qed.
+  Definition wf : t -> Prop := database_wf.
+
+  (** An in-range slot reads exactly its stored full or delta cache. *)
+  Lemma index_runtime_slot : forall db s new,
+    (s < runtime_slot_bound (db_runtime db))%N ->
+    index s new db = runtime_slot_index (db_runtime db) s new.
+  Proof.
+    intros db s new Hinside. unfold index.
+    apply N.compare_lt_iff in Hinside. rewrite Hinside.
+    unfold runtime_slot_index, slot_index_get. destruct new; reflexivity.
+  Qed.
+
+  (** Out-of-range queries return the empty index without reading a slot trie. *)
+  Lemma index_outside_bound : forall db s new,
+    (runtime_slot_bound (db_runtime db) <= s)%N -> index s new db = I.empty.
+  Proof.
+    intros db s new Houtside. unfold index.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))) eqn:Hcompare;
+      try reflexivity.
+    apply N.compare_lt_iff in Hcompare. exfalso. apply (N.lt_irrefl s).
+    eapply N.lt_le_trans; eassumption.
+  Qed.
+
+  (** A declared slot number is below the stored bound in every well-formed database. *)
+  Lemma slot_of_inside_bound : forall db s f perm, wf db ->
+    slot_of db s = Some (f, perm) -> (s < runtime_slot_bound (db_runtime db))%N.
+  Proof.
+    intros db s f perm Hwf Hslot. rewrite (wf_slot_bound db Hwf).
+    assert (Hinside : N.to_nat s < length (slots db)).
+    { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    lia.
+  Qed.
+
+  (** Missing slot declarations are exactly the queries outside the allocated slot interval. *)
+  Lemma slot_of_outside_bound : forall db s, wf db -> slot_of db s = None ->
+    (runtime_slot_bound (db_runtime db) <= s)%N.
+  Proof.
+    intros db s Hwf Hslot. rewrite (wf_slot_bound db Hwf).
+    unfold slot_of in Hslot. apply nth_error_None in Hslot. lia.
+  Qed.
+
+  (** Executable cell normalization returns the public representative-based cell. *)
+  Lemma normal_cell_correct : forall db c, wf db -> normal_cell db c = canon db c.
+  Proof.
+    intros db [i | v] Hwf; cbn [normal_cell canon repr].
+    - destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hallocated.
+      + f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+      + f_equal. symmetry. apply UnionFindCodeFacts.repr_absent.
+        intro Hmember. apply (proj1 (wf_forest_members db Hwf i)) in Hmember.
+        apply N.compare_lt_iff in Hallocated.
+        change (Npos i <= runtime_allocated (db_runtime db))%N in Hmember.
+        apply (N.lt_irrefl (Npos i)). eapply N.le_lt_trans; eassumption.
+      + f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - reflexivity.
+  Qed.
+
+  (** Executable key normalization agrees with the public canonical key. *)
+  Lemma normal_key_correct : forall db k, wf db ->
+    normal_key db k = map (canon db) k.
+  Proof.
+    intros db k Hwf. unfold normal_key. apply map_ext.
+    intro c. exact (normal_cell_correct db c Hwf).
+  Qed.
+
+  (** Executable output normalization agrees with the public canonical output. *)
+  Lemma normal_output_correct : forall db o, wf db ->
+    option_map (normal_cell db) o = option_map (canon db) o.
+  Proof.
+    intros db [c |] Hwf; cbn [option_map].
+    - now rewrite (normal_cell_correct db c Hwf).
+    - reflexivity.
+  Qed.
+
+  (** A slot update preserves every observation independent of the three index caches. *)
+  Lemma slot_update_one_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall b s u state, observe (slot_update_one b s u state) = observe state.
+  Proof.
+    intros A observe Hkeep b s u state. unfold slot_update_one.
+    destruct b; [apply Hkeep |].
+    destruct (PTrieCode.get (db_tuple_code u)
+      (projection_table_get (N.succ_pos s) (runtime_projection_counts state)))
+      as [[tuple n] |]; [| reflexivity].
+    destruct n as [| p]; [reflexivity |]. destruct p; apply Hkeep.
+  Qed.
+
+  (** Updating a function's prepared layouts preserves the same non-index observations. *)
+  Lemma slot_update_many_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall b u layouts state, observe (slot_update_many b u layouts state) = observe state.
+  Proof.
+    intros A observe Hkeep b u layouts.
+    induction layouts as [| [s layout] rest IH]; intro state; cbn [slot_update_many].
+    - reflexivity.
+    - rewrite IH. apply slot_update_one_preserves. exact Hkeep.
+  Qed.
+
+  (** The database wrapper exposes exactly the preserved runtime observation. *)
+  Lemma slots_update_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall b f u db,
+      observe (db_runtime (slots_update b f u db)) = observe (db_runtime db).
+  Proof.
+    intros A observe Hkeep b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))) as [layouts |].
+    - apply slot_update_many_preserves. exact Hkeep.
+    - reflexivity.
+  Qed.
+
+  (** Distinct binary slot numbers have distinct positive trie keys. *)
+  Lemma slot_code_injective : forall s t, N.succ_pos s = N.succ_pos t -> s = t.
+  Proof.
+    intros s t Hequal. apply (f_equal Npos) in Hequal.
+    assert (Hs : Npos (N.succ_pos s) = N.succ s) by (destruct s; reflexivity).
+    assert (Ht : Npos (N.succ_pos t) = N.succ t) by (destruct t; reflexivity).
+    rewrite Hs, Ht in Hequal. lia.
+  Qed.
+
+  (** Updating one slot leaves every other slot's cached entries unchanged. *)
+  Lemma slot_update_one_snapshot_other : forall b s u state t, t <> s ->
+    slot_snapshot (slot_update_one b s u state) t = slot_snapshot state t.
+  Proof.
+    intros b s u state t Hdifferent.
+    assert (Hcode : N.succ_pos t <> N.succ_pos s).
+    { intro Hequal. apply Hdifferent. now apply slot_code_injective. }
+    unfold slot_update_one. destruct b.
+    - unfold slot_snapshot.
+      cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes].
+      now rewrite !PTrie.get_set_other by exact Hcode.
+    - destruct (PTrieCode.get (db_tuple_code u)
+        (projection_table_get (N.succ_pos s) (runtime_projection_counts state)))
+        as [[tuple n] |]; [| reflexivity].
+      destruct n as [| p]; [reflexivity |]. destruct p; unfold slot_snapshot;
+        cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes];
+        now rewrite !PTrie.get_set_other by exact Hcode.
+  Qed.
+
+  (** A slot update depends only on that slot's three cached entries. *)
+  Lemma slot_update_one_snapshot_local : forall b s u first second,
+    slot_snapshot first s = slot_snapshot second s ->
+    slot_snapshot (slot_update_one b s u first) s =
+      slot_snapshot (slot_update_one b s u second) s.
+  Proof.
+    intros b s u first second Hkeep.
+    pose proof Hkeep as Hentries. unfold slot_snapshot in Hentries.
+    injection Hentries as Hcounts Hall Hnew. destruct b.
+    - unfold slot_update_one, slot_snapshot.
+      cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes].
+      rewrite !PTrie.get_set_same. unfold projection_table_get, slot_index_get.
+      now rewrite Hcounts, Hall, Hnew.
+    - unfold slot_update_one, projection_table_get, slot_index_get.
+      rewrite Hcounts, Hall, Hnew.
+      fold (projection_table_get (N.succ_pos s) (runtime_projection_counts second)).
+      destruct (PTrieCode.get (db_tuple_code u)
+        (projection_table_get (N.succ_pos s) (runtime_projection_counts second)))
+        as [[tuple n] |]; [| exact Hkeep].
+      destruct n as [| p]; [exact Hkeep |]. destruct p; unfold slot_snapshot;
+        cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes];
+        rewrite !PTrie.get_set_same; now rewrite ?Hcounts, ?Hall, ?Hnew.
+  Qed.
+
+  (** A function update leaves any slot absent from its prepared list unchanged. *)
+  Lemma slot_update_many_snapshot_other : forall b u layouts state s,
+    ~ In s (map fst layouts) ->
+    slot_snapshot (slot_update_many b u layouts state) s = slot_snapshot state s.
+  Proof.
+    intros b u layouts. induction layouts as [| [t layout] rest IH];
+      intros state s Hmissing; cbn [slot_update_many]; [reflexivity |].
+    cbn [map fst] in Hmissing.
+    rewrite IH by (intro Hin; apply Hmissing; now right).
+    apply slot_update_one_snapshot_other. intro Hequal. subst s. apply Hmissing. now left.
+  Qed.
+
+  (** A duplicate-free prepared list updates each listed slot exactly once. *)
+  Lemma slot_update_many_snapshot_member : forall b u layouts,
+    NoDup (map fst layouts) -> forall state s layout, In (s, layout) layouts ->
+    slot_snapshot (slot_update_many b u layouts state) s =
+      slot_snapshot (slot_update_one b s (project_slot_layout layout u) state) s.
+  Proof.
+    intros b u layouts. induction layouts as [| [t first] rest IH];
+      intros Hnodup state s layout Hmember; [contradiction |].
+    cbn [map fst] in Hnodup. inversion Hnodup as [| key keys Hnot Htail]; subst.
+    destruct Hmember as [Hequal | Hmember].
+    - injection Hequal as -> ->. cbn [slot_update_many].
+      now rewrite slot_update_many_snapshot_other by exact Hnot.
+    - cbn [slot_update_many]. rewrite (IH Htail _ _ _ Hmember).
+      apply slot_update_one_snapshot_local. apply slot_update_one_snapshot_other.
+      intro Hequal. subst t. apply Hnot. exact (in_map fst rest (s, layout) Hmember).
+  Qed.
+
+  (** Equal cached slot entries yield equal tuple-count observations. *)
+  Lemma slot_snapshot_count : forall first second s,
+    slot_snapshot first s = slot_snapshot second s ->
+    forall u, runtime_projection_count first s u = runtime_projection_count second s u.
+  Proof.
+    intros first second s Hequal u. unfold slot_snapshot in Hequal.
+    injection Hequal as Hcounts Hall Hnew.
+    unfold runtime_projection_count, projection_table_get. now rewrite Hcounts.
+  Qed.
+
+  (** Equal cached slot entries yield the same selected index. *)
+  Lemma slot_snapshot_index : forall first second s,
+    slot_snapshot first s = slot_snapshot second s ->
+    forall new, runtime_slot_index first s new = runtime_slot_index second s new.
+  Proof.
+    intros first second s Hequal new. unfold slot_snapshot in Hequal.
+    injection Hequal as Hcounts Hall Hnew.
+    unfold runtime_slot_index, slot_index_get. destruct new; [now rewrite Hnew | now rewrite Hall].
+  Qed.
+
+  (** Adding or removing one contribution increments or decrements its exact tuple count. *)
+  Lemma slot_update_one_count_same : forall b s u state,
+    runtime_projection_count (slot_update_one b s u state) s u =
+      if b then N.succ (runtime_projection_count state s u)
+      else N.pred (runtime_projection_count state s u).
+  Proof.
+    intros b s u state. unfold slot_update_one.
+    fold (runtime_projection_count state s u).
+    remember (runtime_projection_count state s u) as n eqn:Hcount. destruct b.
+    - unfold runtime_projection_count, projection_table_get.
+      cbn [runtime_set_indexes runtime_projection_counts projection_table_get].
+      now rewrite !PTrie.get_set_same.
+    - destruct n as [| p]; [exact (eq_sym Hcount) |].
+      destruct p; unfold runtime_projection_count, projection_table_get;
+        cbn [runtime_set_indexes runtime_projection_counts projection_table_get];
+        rewrite !PTrie.get_set_same; rewrite ?PTrie.get_remove_same; reflexivity.
+  Qed.
+
+  (** A contribution update leaves every different tuple's count unchanged. *)
+  Lemma slot_update_one_count_other : forall b s u state v, v <> u ->
+    runtime_projection_count (slot_update_one b s u state) s v =
+      runtime_projection_count state s v.
+  Proof.
+    intros b s u state v Hdifferent.
+    assert (Hcode : db_tuple_code v <> db_tuple_code u).
+    { intro Hequal. apply Hdifferent. exact (Tuples.encode_inj v u Hequal). }
+    unfold slot_update_one. fold (runtime_projection_count state s u). destruct b.
+    - unfold runtime_projection_count, projection_table_get.
+      cbn [runtime_set_indexes runtime_projection_counts projection_table_get].
+      rewrite PTrie.get_set_same, PTrie.get_set_other by exact Hcode. reflexivity.
+    - destruct (runtime_projection_count state s u) as [| p]; [reflexivity |].
+      destruct p; unfold runtime_projection_count, projection_table_get;
+        cbn [runtime_set_indexes runtime_projection_counts projection_table_get];
+        rewrite PTrie.get_set_same;
+        rewrite ?PTrie.get_set_other, ?PTrie.get_remove_other by exact Hcode; reflexivity.
+  Qed.
+
+  (** Removal touches the index only when the deleted contribution was the last one. *)
+  Lemma slot_update_one_index : forall b s u state new,
+    runtime_slot_index (slot_update_one b s u state) s new =
+      if b then I.insert u (runtime_slot_index state s new)
+      else match runtime_projection_count state s u with
+        | Npos xH => I.remove u (runtime_slot_index state s new)
+        | _ => runtime_slot_index state s new
+        end.
+  Proof.
+    intros b s u state new. unfold slot_update_one.
+    fold (runtime_projection_count state s u). destruct b.
+    - unfold runtime_slot_index. destruct new;
+        cbn [runtime_set_indexes runtime_all_indexes runtime_new_indexes];
+        unfold slot_index_get; now rewrite PTrie.get_set_same.
+    - destruct (runtime_projection_count state s u) as [| p]; [reflexivity |].
+      destruct p; try reflexivity. unfold runtime_slot_index. destruct new;
+        cbn [runtime_set_indexes runtime_all_indexes runtime_new_indexes];
+        unfold slot_index_get; now rewrite PTrie.get_set_same.
+  Qed.
+
+  (** One contribution changes each count by at most one, including missing removals. *)
+  Lemma slot_update_one_count_le : forall b s u state v,
+    (runtime_projection_count (slot_update_one b s u state) s v <=
+      N.succ (runtime_projection_count state s v))%N.
+  Proof.
+    intros b s u state v.
+    destruct (Pos.eq_dec (db_tuple_code v) (db_tuple_code u)) as [Hequal | Hdifferent].
+    - apply Tuples.encode_inj in Hequal. subst v. rewrite slot_update_one_count_same.
+      destruct b; lia.
+    - rewrite slot_update_one_count_other; [lia |].
+      intro Hequal. subst v. contradiction.
+  Qed.
+
+  (** A duplicate-free group spends at most one count increment per slot. *)
+  Lemma slot_update_many_count_le : forall b u layouts state limit,
+    NoDup (map fst layouts) ->
+    (forall s v, (runtime_projection_count state s v <= limit)%N) ->
+    forall s v, (runtime_projection_count (slot_update_many b u layouts state) s v <=
+      N.succ limit)%N.
+  Proof.
+    intros b u layouts state limit Hnodup Hcount s v.
+    destruct (in_dec N.eq_dec s (map fst layouts)) as [Hin | Hmissing].
+    - apply in_map_iff in Hin. destruct Hin as [[t layout] [Hequal Hmember]].
+      cbn [fst] in Hequal. subst t.
+      rewrite (slot_snapshot_count _ _ s
+        (slot_update_many_snapshot_member b u layouts Hnodup state s layout Hmember)).
+      pose proof (slot_update_one_count_le b s (project_slot_layout layout u) state v).
+      specialize (Hcount s v). lia.
+    - rewrite (slot_snapshot_count _ _ s
+        (slot_update_many_snapshot_other b u layouts state s Hmissing)).
+      specialize (Hcount s v). lia.
+  Qed.
+
+  (** A single slot update extends a history using only cells in the recorded set. *)
+  Lemma slot_update_one_history : forall written b s u state,
+    (b = true -> incl u written) ->
+    (forall t new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index state t new)) ->
+    forall t new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index (slot_update_one b s u state) t new).
+  Proof.
+    intros written b s u state Hcells Hhistory t new.
+    destruct (N.eq_dec t s) as [Hequal | Hdifferent].
+    - subst t. rewrite slot_update_one_index. destruct b.
+      + apply database_index_history_insert; [apply Hhistory | apply Hcells; reflexivity].
+      + destruct (runtime_projection_count state s u) as [|p]; [apply Hhistory |].
+        destruct p; try apply Hhistory. apply database_index_history_remove. apply Hhistory.
+    - rewrite (slot_snapshot_index _ _ t
+        (slot_update_one_snapshot_other b s u state t Hdifferent)).
+      apply Hhistory.
+  Qed.
+
+  (** A finite group update extends every affected construction history. *)
+  Lemma slot_update_many_history : forall written b u layouts state,
+    (b = true -> forall s layout, In (s, layout) layouts ->
+      incl (project_slot_layout layout u) written) ->
+    (forall s new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index state s new)) ->
+    forall s new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index (slot_update_many b u layouts state) s new).
+  Proof.
+    intros written b u layouts. induction layouts as [|[s layout] rest IH];
+      intros state Hcells Hhistory t new; cbn [slot_update_many].
+    - apply Hhistory.
+    - apply IH.
+      + intros Hb q block Hin. apply (Hcells Hb q block). now right.
+      + apply slot_update_one_history; [| exact Hhistory].
+        intro Hb. apply (Hcells Hb s layout). now left.
+  Qed.
+
+  (** Recording a duplicate-free cache pass maintains honest histories and count bounds. *)
+  Lemma metadata_record_group : forall db b u layouts,
+    metadata_ok db -> NoDup (map fst layouts) ->
+    (b = true -> forall s layout, In (s, layout) layouts ->
+      incl (project_slot_layout layout u) u) ->
+    metadata_ok
+      (database_record_cache u
+        (slot_updated_counters layouts (slot_update_many b u layouts (db_runtime db)))
+        (database_set_runtime (slot_update_many b u layouts (db_runtime db)) db)).
+  Proof.
+    intros db b u layouts
+      (Hone & Hslots & Hcounter & Hnext & Hhistory & Hcount & Hgroups & Hbound)
+      Hnodup Hcells.
+    set (state := slot_update_many b u layouts (db_runtime db)).
+    assert (Hframe : (runtime_slots state, runtime_function_slots state, runtime_slot_bound state) =
+      (runtime_slots (db_runtime db), runtime_function_slots (db_runtime db),
+       runtime_slot_bound (db_runtime db))).
+    { exact (slot_update_many_preserves _
+        (fun current => (runtime_slots current, runtime_function_slots current, runtime_slot_bound current))
+        (fun all new counts current => eq_refl) b u layouts (db_runtime db)). }
+    injection Hframe as Hlayout Hfunctions Hlimit.
+    assert (Hwritten : incl (db_written_cells db) (u ++ db_written_cells db)).
+    { intros c Hin. apply in_or_app. now right. }
+    unfold metadata_ok, slots.
+    cbn [database_record_cache database_set_runtime db_cache_updates db_written_cells
+      db_index_counters db_runtime slots].
+    split.
+    - right. right. apply in_or_app. now right.
+    - split.
+      + rewrite Hlayout. right. right. apply in_or_app. now right.
+      + split.
+        * intros p Hequal. injection Hequal as Hequal. subst p. now left.
+        * split.
+          -- intros s new. right. right. apply in_or_app.
+             destruct (in_dec N.eq_dec s (map fst layouts)) as [Hin | Hmissing].
+             ++ left. apply in_map_iff in Hin. destruct Hin as [[t layout] [Hequal Hmember]].
+                cbn [fst] in Hequal. subst t.
+                exact (slot_updated_counters_member layouts state s layout Hmember new).
+             ++ right. unfold state.
+                rewrite (slot_snapshot_index _ _ s
+                  (slot_update_many_snapshot_other b u layouts (db_runtime db) s Hmissing)).
+                apply Hnext.
+          -- split.
+             ++ apply slot_update_many_history.
+                ** intros Hb s layout Hin c Hcell. apply in_or_app. left.
+                   exact (Hcells Hb s layout Hin c Hcell).
+                ** intros s new. eapply database_index_history_weaken;
+                     [exact Hwritten | apply Hhistory].
+             ++ split.
+                ** intros s v. rewrite N.succ_pos_spec.
+                   exact (slot_update_many_count_le b u layouts (db_runtime db)
+                     (db_cache_updates db) Hnodup Hcount s v).
+                ** split.
+                   --- rewrite Hfunctions, Hlayout. exact Hgroups.
+                   --- rewrite Hlimit, Hlayout. exact Hbound.
+  Qed.
+
+  (** A tuple's multiplicity counts distinct row contributions with the same projection. *)
+  Definition tuple_multiplicity (u : list (cell V.t))
+      (tuples : list (list (cell V.t))) : nat :=
+    length (filter (Tuples.eqb u) tuples).
+
+  (** Adding one contribution increments exactly the matching tuple's multiplicity. *)
+  Lemma tuple_multiplicity_cons : forall u v tuples,
+    tuple_multiplicity u (v :: tuples) =
+      if Tuples.eqb u v then S (tuple_multiplicity u tuples)
+      else tuple_multiplicity u tuples.
+  Proof.
+    intros u v tuples. unfold tuple_multiplicity. cbn [filter].
+    destruct (Tuples.eqb u v); reflexivity.
+  Qed.
+
+  (** A tuple contributes one to its own multiplicity. *)
+  Lemma tuple_multiplicity_head : forall u tuples,
+    tuple_multiplicity u (u :: tuples) = S (tuple_multiplicity u tuples).
+  Proof.
+    intros u tuples. rewrite tuple_multiplicity_cons.
+    destruct (Tuples.eqb_spec u u); [reflexivity | contradiction].
+  Qed.
+
+  (** A different tuple does not change the queried multiplicity. *)
+  Lemma tuple_multiplicity_other : forall u v tuples, u <> v ->
+    tuple_multiplicity u (v :: tuples) = tuple_multiplicity u tuples.
+  Proof.
+    intros u v tuples Hdifferent. rewrite tuple_multiplicity_cons.
+    destruct (Tuples.eqb_spec u v); [contradiction | reflexivity].
+  Qed.
+
+  (** Positive multiplicity is equivalent to presence in the contribution list. *)
+  Lemma tuple_multiplicity_positive : forall u tuples,
+    0 < tuple_multiplicity u tuples <-> In u tuples.
+  Proof.
+    intros u tuples. induction tuples as [| v rest IH].
+    - unfold tuple_multiplicity. cbn. split; [lia | contradiction].
+    - destruct (Tuples.eqb_spec u v) as [-> | Hdifferent].
+      + rewrite tuple_multiplicity_head. cbn [In]. split; [auto | lia].
+      + rewrite tuple_multiplicity_other by exact Hdifferent.
+        rewrite IH. cbn [In]. intuition congruence.
+  Qed.
+
+  (** Zero multiplicity is equivalent to absence from the contribution list. *)
+  Lemma tuple_multiplicity_zero : forall u tuples,
+    tuple_multiplicity u tuples = 0 <-> ~ In u tuples.
+  Proof.
+    intros u tuples. split.
+    - intros Hzero Hin. apply tuple_multiplicity_positive in Hin. lia.
+    - intro Hmissing. destruct (tuple_multiplicity u tuples) eqn:Hcount; [reflexivity |].
+      exfalso. apply Hmissing. apply tuple_multiplicity_positive. lia.
+  Qed.
+
+  (** Each slot cache tracks a multiset of row projections and a sound delta subset. *)
+  Definition slot_cache_ok (state : database_runtime (cell V.t) I.t)
+      (s : N) (arity : nat) (tuples : list (list (cell V.t))) : Prop :=
+    I.wf arity (runtime_slot_index state s false) /\
+    I.wf arity (runtime_slot_index state s true) /\
+    (forall u, I.mem (runtime_slot_index state s false) u <-> In u tuples) /\
+    (forall u, I.mem (runtime_slot_index state s true) u -> In u tuples) /\
+    (forall u, N.to_nat (runtime_projection_count state s u) =
+      tuple_multiplicity u tuples).
+
+  (** Equal slot snapshots preserve the complete cache invariant. *)
+  Lemma slot_cache_snapshot : forall first second s arity tuples,
+    slot_snapshot first s = slot_snapshot second s ->
+    slot_cache_ok second s arity tuples -> slot_cache_ok first s arity tuples.
+  Proof.
+    intros first second s arity tuples Hsnapshot Hcache.
+    unfold slot_cache_ok in *. rewrite !(slot_snapshot_index first second s Hsnapshot).
+    destruct Hcache as [Hall [Hnew [Hfull [Hdelta Hcounts]]]].
+    split; [exact Hall |]. split; [exact Hnew |].
+    split; [exact Hfull |]. split; [exact Hdelta |].
+    intro u. rewrite (slot_snapshot_count first second s Hsnapshot). apply Hcounts.
+  Qed.
+
+  (** Inserting one contribution preserves both indexes and increments its exact count. *)
+  Lemma slot_cache_insert : forall state s arity tuples u,
+    slot_cache_ok state s arity tuples -> length u = arity ->
+    slot_cache_ok (slot_update_one true s u state) s arity (u :: tuples).
+  Proof.
+    intros state s arity tuples u [Hall [Hnew [Hfull [Hdelta Hcounts]]]] Harity.
+    unfold slot_cache_ok. rewrite !slot_update_one_index. split.
+    - now apply I.wf_insert.
+    - split; [now apply I.wf_insert |]. split.
+      + intro v. rewrite (I.mem_insert arity u _ v Hall Harity), Hfull.
+        cbn [In]. intuition congruence.
+      + split.
+        * intros v Hmember. apply (I.mem_insert arity u _ v Hnew Harity) in Hmember.
+          cbn [In]. destruct Hmember as [-> | Hmember]; [auto | right; now apply Hdelta].
+        * intro v. destruct (Tuples.eqb_spec v u) as [-> | Hdifferent].
+          -- rewrite slot_update_one_count_same, N2Nat.inj_succ,
+               tuple_multiplicity_head, Hcounts. reflexivity.
+          -- rewrite slot_update_one_count_other by exact Hdifferent.
+             rewrite tuple_multiplicity_other by exact Hdifferent. apply Hcounts.
+  Qed.
+
+  (** Removing one contribution decrements its multiplicity and preserves all other counts. *)
+  Lemma slot_cache_remove_counts : forall state s u tuples,
+    (forall v, N.to_nat (runtime_projection_count state s v) =
+      tuple_multiplicity v (u :: tuples)) ->
+    forall v, N.to_nat (runtime_projection_count (slot_update_one false s u state) s v) =
+      tuple_multiplicity v tuples.
+  Proof.
+    intros state s u tuples Hcounts v. destruct (Tuples.eqb_spec v u) as [-> | Hdifferent].
+    - rewrite slot_update_one_count_same, N2Nat.inj_pred, Hcounts,
+        tuple_multiplicity_head. reflexivity.
+    - rewrite slot_update_one_count_other by exact Hdifferent.
+      rewrite Hcounts, tuple_multiplicity_other by exact Hdifferent. reflexivity.
+  Qed.
+
+  (** Removing a contribution keeps the indexes whenever its count was not one. *)
+  Lemma slot_update_one_index_retained : forall state s u new,
+    runtime_projection_count state s u <> 1%N ->
+    runtime_slot_index (slot_update_one false s u state) s new =
+      runtime_slot_index state s new.
+  Proof.
+    intros state s u new Hnotone. rewrite slot_update_one_index.
+    destruct (runtime_projection_count state s u) as [| p] eqn:Hcount; [reflexivity |].
+    destruct p; try reflexivity. exfalso. apply Hnotone. reflexivity.
+  Qed.
+
+  (** Deletion preserves shared projections and removes a tuple only at its last contribution. *)
+  Lemma slot_cache_remove : forall state s arity tuples u,
+    slot_cache_ok state s arity (u :: tuples) ->
+    slot_cache_ok (slot_update_one false s u state) s arity tuples.
+  Proof.
+    intros state s arity tuples u [Hall [Hnew [Hfull [Hdelta Hcounts]]]].
+    pose proof (slot_cache_remove_counts state s u tuples Hcounts) as Hupdated.
+    destruct (tuple_multiplicity u tuples) as [| n] eqn:Hrest.
+    - assert (Hone : runtime_projection_count state s u = 1%N).
+      { apply N2Nat.inj. rewrite Hcounts, tuple_multiplicity_head, Hrest. reflexivity. }
+      assert (Hmissing : ~ In u tuples) by (now apply tuple_multiplicity_zero).
+      unfold slot_cache_ok. rewrite !slot_update_one_index, Hone. split.
+      + now apply I.wf_remove.
+      + split; [now apply I.wf_remove |]. split.
+        * intro v. rewrite (I.mem_remove arity u _ v Hall), Hfull. cbn [In]. split.
+          -- intros [Hdiffer [Hequal | Hin]]; [congruence | exact Hin].
+          -- intro Hin. split; [intro Hequal; subst v; contradiction | now right].
+        * split.
+          -- intros v Hmember. apply (I.mem_remove arity u _ v Hnew) in Hmember.
+             destruct Hmember as [Hdiffer Hmember]. specialize (Hdelta v Hmember).
+             destruct Hdelta as [Hequal | Hin]; [congruence | exact Hin].
+          -- exact Hupdated.
+    - assert (Hnotone : runtime_projection_count state s u <> 1%N).
+      { intro Hone. specialize (Hcounts u). rewrite Hone, tuple_multiplicity_head,
+          Hrest in Hcounts. cbn in Hcounts. lia. }
+      assert (Hpresent : In u tuples).
+      { apply tuple_multiplicity_positive. rewrite Hrest. lia. }
+      unfold slot_cache_ok. rewrite !slot_update_one_index_retained by exact Hnotone.
+      split; [exact Hall |]. split; [exact Hnew |]. split.
+      + intro v. rewrite Hfull. cbn [In]. split.
+        * intros [Hequal | Hin]; [now subst v | exact Hin].
+        * intro Hin. now right.
+      + split.
+        * intros v Hmember. specialize (Hdelta v Hmember).
+          destruct Hdelta as [Hequal | Hin]; [now subst v | exact Hin].
+        * exact Hupdated.
+  Qed.
+
+  (** Reordering contributions preserves every tuple's multiplicity. *)
+  Lemma tuple_multiplicity_permutation : forall u first second,
+    Permutation first second -> tuple_multiplicity u first = tuple_multiplicity u second.
+  Proof.
+    intros u first second Hperm. unfold tuple_multiplicity.
+    apply Permutation_length. now apply filter_permutation.
+  Qed.
+
+  (** The cache invariant depends on contribution multiplicity, not enumeration order. *)
+  Lemma slot_cache_permutation : forall state s arity first second,
+    Permutation first second -> slot_cache_ok state s arity first ->
+    slot_cache_ok state s arity second.
+  Proof.
+    intros state s arity first second Hperm [Hall [Hnew [Hfull [Hdelta Hcounts]]]].
+    split; [exact Hall |]. split; [exact Hnew |]. split.
+    - intro u. split.
+      + intro Hmember. eapply Permutation_in; [exact Hperm | now apply Hfull].
+      + intro Hin. apply Hfull. eapply Permutation_in;
+          [apply Permutation_sym; exact Hperm | exact Hin].
+    - split.
+      + intros u Hmember. eapply Permutation_in; [exact Hperm | now apply Hdelta].
+      + intro u. rewrite Hcounts. now apply tuple_multiplicity_permutation.
+  Qed.
+
+  (** Index maintenance keeps the complete model view unchanged. *)
+  Lemma slots_update_view : forall b f u db, view (slots_update b f u db) = view db.
+  Proof.
+    intros b f u db.
+    exact (slots_update_preserves _
+      (fun state =>
+        {| row := fun g k o =>
+             option_map snd (PTrieCode.get (db_row_code g k) (runtime_rows state)) = Some o;
+           same := equality_log (runtime_equalities state);
+           kind := fun g => PTrieCode.get g (runtime_kinds state) |})
+      (fun all new counts state => eq_refl) b f u db).
+  Qed.
+
+  (** Index maintenance leaves the identifier forest in place. *)
+  Lemma slots_update_forest : forall b f u db,
+    db_forest (slots_update b f u db) = db_forest db.
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** Index maintenance preserves the allocated interval. *)
+  Lemma slots_update_ids : forall b f u db, ids (slots_update b f u db) = ids db.
+  Proof.
+    intros b f u db. apply slots_update_preserves. intros. reflexivity.
+  Qed.
+
+  (** Index maintenance preserves the pending equality queue. *)
+  Lemma slots_update_pending : forall b f u db,
+    pending (slots_update b f u db) = pending db.
+  Proof.
+    intros b f u db.
+    exact (slots_update_preserves _ (fun state => length (runtime_queue state))
+      (fun all new counts state => eq_refl) b f u db).
+  Qed.
+
+  (** Index maintenance retains the requested slot layout. *)
+  Lemma slots_update_slots : forall b f u db, slots (slots_update b f u db) = slots db.
+  Proof.
+    intros b f u db. apply slots_update_preserves. intros. reflexivity.
+  Qed.
+
+  (** Index maintenance preserves the prepared function-to-slot table. *)
+  Lemma slots_update_function_slots : forall b f u db,
+    runtime_function_slots (db_runtime (slots_update b f u db)) =
+      runtime_function_slots (db_runtime db).
+  Proof.
+    intros b f u db. apply slots_update_preserves. intros. reflexivity.
+  Qed.
+
+  (** The optional function-group lookup is equivalent to walking its default-empty list. *)
+  Lemma slots_update_runtime : forall b f u db,
+    db_runtime (slots_update b f u db) =
+      slot_update_many b u
+        (database_group_entries f (runtime_function_slots (db_runtime db))) (db_runtime db).
+  Proof.
+    intros b f u db. unfold slots_update, database_group_entries.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** Every cache call records its input cells, including a missing function group. *)
+  Lemma slots_update_written_cells : forall b f u db,
+    db_written_cells (slots_update b f u db) = u ++ db_written_cells db.
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** The maintained update counter measures actual calls to the cache wrapper. *)
+  Lemma slots_update_cache_updates : forall b f u db,
+    db_cache_updates (slots_update b f u db) = N.succ (db_cache_updates db).
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db)));
+      apply N.succ_pos_spec.
+  Qed.
+
+  (** A fitting projection returns one cell for every requested position. *)
+  Lemma permute_length : forall perm u,
+    Forall (fun p => p < length u) perm -> length (permute perm u) = length perm.
+  Proof.
+    intros perm u Hfits. induction Hfits as [| p rest Hbound Hfits IH].
+    - reflexivity.
+    - unfold permute in *. cbn [flat_map length].
+      assert (Hpresent : nth_error u p <> None) by (now apply nth_error_Some).
+      destruct (nth_error u p); [| contradiction]. cbn [option_list app length].
+      now rewrite IH.
+  Qed.
+
+  (** A projection only selects cells that occur in its input tuple. *)
+  Lemma permute_member : forall perm u c, In c (permute perm u) -> In c u.
+  Proof.
+    intros perm u c Hin. unfold permute in Hin. apply in_flat_map in Hin.
+    destruct Hin as [position [_ Hin]].
+    destruct (nth_error u position) as [found |] eqn:Hfound;
+      cbn [option_list In] in Hin; [| contradiction].
+    destruct Hin as [Hequal | Hin]; [subst found | contradiction].
+    eapply nth_error_In. exact Hfound.
+  Qed.
+
+  (** Actual prepared groups satisfy the independent metadata preservation contract. *)
+  Lemma metadata_slots_update : forall db b f u, metadata_ok db ->
+    (b = true -> slots_fit db f (length u)) -> metadata_ok (slots_update b f u db).
+  Proof.
+    intros db b f u Hmetadata Hfits.
+    pose proof Hmetadata as Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & _ & _ & Hgroups & _).
+    set (layouts := database_group_entries f (runtime_function_slots (db_runtime db))).
+    change (metadata_ok
+      (database_record_cache u
+        (slot_updated_counters layouts (slot_update_many b u layouts (db_runtime db)))
+        (database_set_runtime (slot_update_many b u layouts (db_runtime db)) db))).
+    apply metadata_record_group; [exact Hmetadata | |].
+    - unfold layouts. rewrite Hgroups. apply database_prepared_group_nodup.
+    - intros Hb s layout Hin. unfold layouts in Hin. rewrite Hgroups in Hin.
+      apply database_prepared_group_member in Hin.
+      destruct Hin as [perm [Hslot Hequal]]. subst layout.
+      assert (Hmember : In (f, perm) (slots db)) by (eapply nth_error_In; exact Hslot).
+      destruct (Hfits Hb perm Hmember) as [_ Hpositions].
+      rewrite project_slot_layout_correct by exact Hpositions.
+      intros c Hcell. exact (permute_member perm u c Hcell).
+  Qed.
+
+  (** Replacing a row composes metadata preservation for its old and new contributions. *)
+  Lemma metadata_row_replace : forall db f k previous o, metadata_ok db ->
+    slots_fit db f (length (k ++ option_list o)) ->
+    metadata_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hmetadata Hnew. unfold row_replace.
+    apply metadata_row_write. destruct previous as [before |].
+    - apply metadata_slots_update.
+      + apply metadata_slots_update; [exact Hmetadata | discriminate].
+      + intros _. unfold slots_fit. rewrite slots_update_slots. exact Hnew.
+    - apply metadata_slots_update; [exact Hmetadata | intros _; exact Hnew].
+  Qed.
+
+  (** Deleting a row needs no projection fit premise to preserve the metadata. *)
+  Lemma metadata_row_delete : forall db f k, metadata_ok db ->
+    metadata_ok (row_delete f k db).
+  Proof.
+    intros db f k Hmetadata. unfold row_delete.
+    destruct (row_get f k db) as [output |]; [| exact Hmetadata].
+    apply metadata_row_erase. apply metadata_slots_update;
+      [exact Hmetadata | discriminate].
+  Qed.
+
+  (** A prepared group changes its own slot exactly once by the declared projection. *)
+  Lemma slots_update_snapshot_same : forall db b f u s perm,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (f, perm) -> Forall (fun p => p < length u) perm ->
+    slot_snapshot (db_runtime (slots_update b f u db)) s =
+      slot_snapshot (slot_update_one b s (permute perm u) (db_runtime db)) s.
+  Proof.
+    intros db b f u s perm Hgroups Hslot Hfits. rewrite slots_update_runtime, Hgroups.
+    assert (Hmember : In (s, prepare_slot_layout perm) (database_group_entries f
+      (database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty))).
+    { apply database_prepared_group_member. exists perm. split; [exact Hslot | reflexivity]. }
+    rewrite (slot_update_many_snapshot_member b u _
+      (database_prepared_group_nodup (slots db) f) _ s _ Hmember).
+    rewrite project_slot_layout_correct by exact Hfits. reflexivity.
+  Qed.
+
+  (** A prepared function group cannot change a slot declared for another function. *)
+  Lemma slots_update_snapshot_other : forall db b f u s g perm,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> f <> g ->
+    slot_snapshot (db_runtime (slots_update b f u db)) s = slot_snapshot (db_runtime db) s.
+  Proof.
+    intros db b f u s g perm Hgroups Hslot Hdifferent. rewrite slots_update_runtime.
+    apply slot_update_many_snapshot_other. rewrite Hgroups.
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [[t layout] [Hequal Hmember]].
+    cbn [fst] in Hequal. subst t. apply database_prepared_group_member in Hmember.
+    destruct Hmember as [other [Hentry _]]. unfold slot_of in Hslot. congruence.
+  Qed.
+
+  (** Insertion through a prepared group adds the projected contribution to its slot cache. *)
+  Lemma slots_update_cache_insert : forall db f u s perm tuples,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (f, perm) -> Forall (fun p => p < length u) perm ->
+    slot_cache_ok (db_runtime db) s (length perm) tuples ->
+    slot_cache_ok (db_runtime (slots_update true f u db)) s (length perm)
+      (permute perm u :: tuples).
+  Proof.
+    intros db f u s perm tuples Hgroups Hslot Hfits Hcache.
+    eapply slot_cache_snapshot.
+    - exact (slots_update_snapshot_same db true f u s perm Hgroups Hslot Hfits).
+    - apply slot_cache_insert; [exact Hcache | now apply permute_length].
+  Qed.
+
+  (** Deletion through a prepared group removes one projected contribution from its slot cache. *)
+  Lemma slots_update_cache_remove : forall db f u s perm tuples,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (f, perm) -> Forall (fun p => p < length u) perm ->
+    slot_cache_ok (db_runtime db) s (length perm) (permute perm u :: tuples) ->
+    slot_cache_ok (db_runtime (slots_update false f u db)) s (length perm) tuples.
+  Proof.
+    intros db f u s perm tuples Hgroups Hslot Hfits Hcache.
+    eapply slot_cache_snapshot.
+    - exact (slots_update_snapshot_same db false f u s perm Hgroups Hslot Hfits).
+    - now apply slot_cache_remove.
+  Qed.
+
+  (** Updating another function preserves every part of a slot's multiset cache. *)
+  Lemma slots_update_cache_other : forall db b f u s g perm tuples,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> f <> g ->
+    slot_cache_ok (db_runtime db) s (length perm) tuples ->
+    slot_cache_ok (db_runtime (slots_update b f u db)) s (length perm) tuples.
+  Proof.
+    intros db b f u s g perm tuples Hgroups Hslot Hdifferent Hcache.
+    eapply slot_cache_snapshot.
+    - exact (slots_update_snapshot_other db b f u s g perm Hgroups Hslot Hdifferent).
+    - exact Hcache.
+  Qed.
+
+  (** A row enumeration contributes one projected tuple for each row of the selected function. *)
+  Definition row_contributions (f : positive) (perm : list nat)
+      (rows : list ((positive * list (cell V.t)) * option (cell V.t))) :=
+    map (fun r => permute perm (snd (fst r) ++ option_list (snd r)))
+      (filter (fun r => Pos.eqb (fst (fst r)) f) rows).
+
+  (** A contributed tuple has a source row with the selected function and projection. *)
+  Lemma row_contributions_member : forall f perm rows u,
+    In u (row_contributions f perm rows) <->
+      exists k o, In ((f, k), o) rows /\ u = permute perm (k ++ option_list o).
+  Proof.
+    intros f perm rows u. unfold row_contributions. split.
+    - intro Hin. apply in_map_iff in Hin. destruct Hin as [[[g k] o] [Hvalue Hin]].
+      apply filter_In in Hin as [Hin Hfunction]. cbn [fst] in Hfunction.
+      apply Pos.eqb_eq in Hfunction. subst g. exists k, o. split; [exact Hin |].
+      symmetry. exact Hvalue.
+    - intros [k [o [Hin Hvalue]]]. apply in_map_iff. exists ((f, k), o).
+      split; [symmetry; exact Hvalue |]. apply filter_In.
+      split; [exact Hin | apply Pos.eqb_refl].
+  Qed.
+
+  (** Row permutations induce permutations of their projected contributions. *)
+  Lemma row_contributions_permutation : forall f perm first second,
+    Permutation first second ->
+    Permutation (row_contributions f perm first) (row_contributions f perm second).
+  Proof.
+    intros f perm first second Hperm. unfold row_contributions.
+    apply Permutation_map. now apply filter_permutation.
+  Qed.
+
+  (** A row of the selected function contributes its projected tuple once. *)
+  Lemma row_contributions_same : forall f perm k o rows,
+    row_contributions f perm (((f, k), o) :: rows) =
+      permute perm (k ++ option_list o) :: row_contributions f perm rows.
+  Proof.
+    intros f perm k o rows. unfold row_contributions. cbn [filter map fst snd].
+    now rewrite Pos.eqb_refl.
+  Qed.
+
+  (** Rows of another function do not contribute to the selected projection multiset. *)
+  Lemma row_contributions_other : forall f g perm k o rows, f <> g ->
+    row_contributions g perm (((f, k), o) :: rows) = row_contributions g perm rows.
+  Proof.
+    intros f g perm k o rows Hdifferent. unfold row_contributions.
+    cbn [filter map fst snd]. apply Pos.eqb_neq in Hdifferent. now rewrite Hdifferent.
+  Qed.
+
+  (** Enumerating the actual row map agrees with the public row predicate. *)
+  Lemma row_elements_member : forall db f k o, RowMap.wf (runtime_rows (db_runtime db)) ->
+    (In ((f, k), o) (RowMap.elements (runtime_rows (db_runtime db))) <-> row (view db) f k o).
+  Proof.
+    intros db f k o Hmap. change (In ((f, k), o)
+      (RowMap.elements (runtime_rows (db_runtime db))) <->
+      RowMap.get (f, k) (runtime_rows (db_runtime db)) = Some o).
+    now apply RowMap.elements_spec.
+  Qed.
+
+  (** A well-formed count equals multiplicity in the actual row projection multiset. *)
+  Lemma wf_slot_projection_count : forall db s f perm u, wf db ->
+    slot_of db s = Some (f, perm) ->
+    N.to_nat (runtime_projection_count (db_runtime db) s u) =
+      tuple_multiplicity u
+        (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm u Hwf Hslot.
+    destruct (wf_projection_counts db Hwf s f perm u Hslot)
+      as [rs [Hdistinct [Hmembers Hcount]]].
+    change (N.to_nat (stored_projection_count db s u) = tuple_multiplicity u
+      (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))).
+    rewrite Hcount. symmetry.
+    unfold tuple_multiplicity, row_contributions. eapply filtered_projection_witness_length.
+    - exact Tuples.eqb_spec.
+    - apply RowFacts.elements_nodup_pairs. now apply wf_row_map.
+    - exact Hdistinct.
+    - intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
+  Qed.
+
+  (** Every cached member in a declared slot has a source in the actual projection multiset. *)
+  Lemma wf_slot_cache_sound : forall db s f perm, wf db ->
+    slot_of db s = Some (f, perm) -> forall new u,
+    I.mem (runtime_slot_index (db_runtime db) s new) u ->
+    In u (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm Hwf Hslot new u Hmember.
+    assert (Hinside : (s < runtime_slot_bound (db_runtime db))%N).
+    { eapply slot_of_inside_bound; eassumption. }
+    rewrite <- (index_runtime_slot db s new Hinside) in Hmember.
+    destruct (wf_index_sound db Hwf s new u Hmember)
+      as [g [other [k [o [Hentry [Hrow Hvalue]]]]]].
+    rewrite Hslot in Hentry. injection Hentry as <- <-.
+    apply row_contributions_member. exists k, o. split; [| exact Hvalue].
+    apply row_elements_member; [now apply wf_row_map | exact Hrow].
+  Qed.
+
+  (** Every declared slot in a well-formed database has the complete multiset cache invariant. *)
+  Lemma wf_slot_cache : forall db s f perm, wf db -> slot_of db s = Some (f, perm) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm Hwf Hslot.
+    assert (Hinside : (s < runtime_slot_bound (db_runtime db))%N).
+    { eapply slot_of_inside_bound; eassumption. }
+    assert (Harity : forall new, I.wf (length perm) (runtime_slot_index (db_runtime db) s new)).
+    { intro new. rewrite <- (index_runtime_slot db s new Hinside).
+      exact (wf_index_arity db Hwf s new f perm Hslot). }
+    split; [apply Harity |]. split; [apply Harity |]. split.
+    - intro u. split; [now apply wf_slot_cache_sound with (f := f) (perm := perm) |].
+      intro Hin. apply row_contributions_member in Hin as [k [o [Hrow ->]]].
+      apply row_elements_member in Hrow; [| now apply wf_row_map].
+      rewrite <- (index_runtime_slot db s false Hinside).
+      exact (wf_index_complete db Hwf s f perm k o Hslot Hrow).
+    - split.
+      + now apply wf_slot_cache_sound with (f := f) (perm := perm).
+      + intro u. now apply wf_slot_projection_count.
+  Qed.
+
+  (** A declared fitting slot has only positions within the supplied tuple length. *)
+  Lemma slot_projection_fits : forall db s f perm n,
+    slot_of db s = Some (f, perm) -> slots_fit db f n -> Forall (fun p => p < n) perm.
+  Proof.
+    intros db s f perm n Hslot Hfits.
+    assert (Hmember : In (f, perm) (slots db)) by (eapply nth_error_In; exact Hslot).
+    exact (proj2 (Hfits perm Hmember)).
+  Qed.
+
+  (** Inserting a row contribution updates every declared slot's virtual row multiset. *)
+  Lemma slots_update_cache_row_insert : forall db f k o s g perm rows,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> slots_fit db f (length (k ++ option_list o)) ->
+    slot_cache_ok (db_runtime db) s (length perm) (row_contributions g perm rows) ->
+    slot_cache_ok (db_runtime (slots_update true f (k ++ option_list o) db)) s (length perm)
+      (row_contributions g perm (((f, k), o) :: rows)).
+  Proof.
+    intros db f k o s g perm rows Hgroups Hslot Hfits Hcache.
+    destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+    - rewrite row_contributions_same. apply slots_update_cache_insert; try assumption.
+      eapply slot_projection_fits; eassumption.
+    - rewrite row_contributions_other by exact Hdifferent.
+      apply slots_update_cache_other with (g := g); assumption.
+  Qed.
+
+  (** Removing a row contribution updates every declared slot's virtual row multiset. *)
+  Lemma slots_update_cache_row_remove : forall db f k o s g perm rows,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> slots_fit db f (length (k ++ option_list o)) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions g perm (((f, k), o) :: rows)) ->
+    slot_cache_ok (db_runtime (slots_update false f (k ++ option_list o) db)) s (length perm)
+      (row_contributions g perm rows).
+  Proof.
+    intros db f k o s g perm rows Hgroups Hslot Hfits Hcache.
+    destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+    - rewrite row_contributions_same in Hcache. apply slots_update_cache_remove; try assumption.
+      eapply slot_projection_fits; eassumption.
+    - rewrite row_contributions_other in Hcache by exact Hdifferent.
+      apply slots_update_cache_other with (g := g); assumption.
+  Qed.
+
+  (** The final row-table write leaves the already-maintained slot caches unchanged. *)
+  Lemma row_write_slot_snapshot : forall db f k o s,
+    slot_snapshot (db_runtime (row_write f k o db)) s = slot_snapshot (db_runtime db) s.
+  Proof.
+    intros db f k o s. reflexivity.
+  Qed.
+
+  (** Row replacement removes its optional old contribution and adds its new contribution. *)
+  Lemma row_replace_cache_list : forall db f k previous o s g perm rest,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> slots_fit db f (length (k ++ option_list o)) ->
+    (forall before, previous = Some before ->
+      slots_fit db f (length (k ++ option_list before))) ->
+    slot_cache_ok (db_runtime db) s (length perm) (row_contributions g perm
+      (option_list (option_map (pair (f, k)) previous) ++ rest)) ->
+    slot_cache_ok (db_runtime (row_replace f k previous o db)) s (length perm)
+      (row_contributions g perm (((f, k), o) :: rest)).
+  Proof.
+    intros db f k previous o s g perm rest Hgroups Hslot Hnew Hbefore Hcache.
+    unfold row_replace. eapply slot_cache_snapshot; [apply row_write_slot_snapshot |].
+    destruct previous as [before |]; cbn [option_map option_list app] in Hcache |- *.
+    - apply slots_update_cache_row_insert.
+      + rewrite slots_update_function_slots, slots_update_slots. exact Hgroups.
+      + unfold slot_of. rewrite slots_update_slots. exact Hslot.
+      + unfold slots_fit. rewrite slots_update_slots. exact Hnew.
+      + exact (slots_update_cache_row_remove db f k before s g perm rest
+          Hgroups Hslot (Hbefore before eq_refl) Hcache).
+    - exact (slots_update_cache_row_insert db f k o s g perm rest Hgroups Hslot Hnew Hcache).
+  Qed.
+
+  (** The four cache fields relate both indexes and stored counts to the actual row map. *)
+  Definition database_cache_correct (db : t) : Prop :=
+    (forall s new u, I.mem (index s new db) u ->
+      exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+        u = permute perm (k ++ option_list o)) /\
+    (forall s f perm k o, slot_of db s = Some (f, perm) -> row (view db) f k o ->
+      I.mem (index s false db) (permute perm (k ++ option_list o))) /\
+    (forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db)) /\ projection_counts_ok db.
+
+  (** A correct slot bound exposes the raw cache at every declared slot. *)
+  Lemma index_declared_slot : forall db s new f perm,
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    slot_of db s = Some (f, perm) ->
+    index s new db = runtime_slot_index (db_runtime db) s new.
+  Proof.
+    intros db s new f perm Hbound Hslot. apply index_runtime_slot. rewrite Hbound.
+    assert (Hinside : N.to_nat s < length (slots db)).
+    { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    lia.
+  Qed.
+
+  (** A correct slot bound hides all cache entries without a declared slot. *)
+  Lemma index_undeclared_slot : forall db s new,
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    slot_of db s = None -> index s new db = I.empty.
+  Proof.
+    intros db s new Hbound Hslot. apply index_outside_bound. rewrite Hbound.
+    unfold slot_of in Hslot. apply nth_error_None in Hslot. lia.
+  Qed.
+
+  (** Exact per-slot multiplicities provide the finite witnesses required by stored counts. *)
+  Lemma projection_counts_from_slot_caches : forall db,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    (forall s f perm, slot_of db s = Some (f, perm) ->
+      slot_cache_ok (db_runtime db) s (length perm)
+        (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))) ->
+    projection_counts_ok db.
+  Proof.
+    intros db Hmap Hcaches s f perm u Hslot.
+    destruct (Hcaches s f perm Hslot) as [_ [_ [_ [_ Hcounts]]]].
+    destruct (filtered_projection_witness _ _ (fun r => Pos.eqb (fst (fst r)) f)
+      (fun r => permute perm (snd (fst r) ++ option_list (snd r)))
+      Tuples.eqb Tuples.eqb_spec u (RowMap.elements (runtime_rows (db_runtime db)))
+      (RowFacts.elements_nodup_pairs _ _ Hmap)) as [rs [Hdistinct [Hmembers Hlength]]].
+    exists rs. split; [exact Hdistinct |]. split.
+    - intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
+    - change (N.to_nat (runtime_projection_count (db_runtime db) s u) = length rs).
+      rewrite Hcounts. exact Hlength.
+  Qed.
+
+  (** The raw per-slot invariants imply all four public database cache fields. *)
+  Lemma database_cache_correct_from_slots : forall db,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    (forall s f perm, slot_of db s = Some (f, perm) ->
+      slot_cache_ok (db_runtime db) s (length perm)
+        (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))) ->
+    database_cache_correct db.
+  Proof.
+    intros db Hmap Hbound Hcaches. split.
+    - intros s new u Hmember. destruct (slot_of db s) as [[f perm] |] eqn:Hslot.
+      + rewrite (index_declared_slot db s new f perm Hbound Hslot) in Hmember.
+        destruct (Hcaches s f perm Hslot) as [_ [_ [Hfull [Hdelta _]]]].
+        assert (Hin : In u
+          (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))).
+        { destruct new; [now apply Hdelta | now apply Hfull]. }
+        apply row_contributions_member in Hin as [k [o [Hrow Hvalue]]].
+        exists f, perm, k, o. split; [reflexivity |]. split; [| exact Hvalue].
+        apply row_elements_member; assumption.
+      + rewrite (index_undeclared_slot db s new Hbound Hslot) in Hmember.
+        exfalso. exact (I.mem_empty u Hmember).
+    - split.
+      + intros s f perm k o Hslot Hrow.
+        rewrite (index_declared_slot db s false f perm Hbound Hslot).
+        destruct (Hcaches s f perm Hslot) as [_ [_ [Hfull _]]]. apply Hfull.
+        apply row_contributions_member. exists k, o. split; [| reflexivity].
+        apply row_elements_member; assumption.
+      + split.
+        * intros s new f perm Hslot.
+          rewrite (index_declared_slot db s new f perm Hbound Hslot).
+          destruct (Hcaches s f perm Hslot) as [Hall [Hnew _]]. destruct new; assumption.
+        * apply projection_counts_from_slot_caches; assumption.
+  Qed.
+
+  (** A direct row write replaces one map binding and leaves all other bindings intact. *)
+  Lemma row_write_binding : forall f k o db g args output,
+    row (view (row_write f k o db)) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      ((g, args) = (f, k) /\ output = o).
+  Proof.
+    intros f k o db g args output.
+    change (RowMap.get (g, args)
+      (RowMap.set (f, k) o (runtime_rows (db_runtime db))) = Some output <->
+      (RowMap.get (g, args) (runtime_rows (db_runtime db)) = Some output /\
+        (g, args) <> (f, k)) \/ ((g, args) = (f, k) /\ output = o)).
+    apply RowFacts.set_binding_iff.
+  Qed.
+
+  (** Maintaining the index caches does not change the row-write specification. *)
+  Lemma row_replace_binding : forall f k previous o db g args output,
+    row (view (row_replace f k previous o db)) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      ((g, args) = (f, k) /\ output = o).
+  Proof.
+    intros f k [before |] o db g args output; unfold row_replace;
+      rewrite row_write_binding, !slots_update_view; reflexivity.
+  Qed.
+
+  (** Row replacement exposes the function, key and output equalities separately. *)
+  Lemma row_replace_rows : forall f k previous o db g args output,
+    row (view (row_replace f k previous o db)) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      (g = f /\ args = k /\ o = output).
+  Proof.
+    intros f k previous o db g args output. rewrite row_replace_binding. split.
+    - intros [Hold | [Hkey Houtput]]; [now left |].
+      right. injection Hkey as -> ->. repeat split; congruence.
+    - intros [Hold | [-> [-> Houtput]]]; [now left |].
+      right. split; congruence.
+  Qed.
+
+  (** Retaining an existing row satisfies the same replacement equation at that key. *)
+  Lemma row_unchanged_binding : forall db f k o, old db f k = Some o ->
+    forall g args output, row (view db) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      (g = f /\ args = k /\ o = output).
+  Proof.
+    intros db f k o Hbinding g args output.
+    destruct (RowKeys.eqb_spec (g, args) (f, k)) as [Hkey | Hneq].
+    - injection Hkey as -> ->. split.
+      + intro Hrow. right. repeat split.
+        change (old db f k = Some output) in Hrow. congruence.
+      + intros [[_ Hfalse] | [_ [_ Heq]]]; [contradiction |].
+        subst output. exact Hbinding.
+    - split.
+      + intro Hrow. left. split; assumption.
+      + intros [[Hrow _] | [-> [-> _]]]; [exact Hrow | contradiction].
+  Qed.
+
+  (** The executable optional-cell equality test reflects exact output equality. *)
+  Lemma output_eqb_spec : forall a b, reflect (a = b) (output_eqb a b).
+  Proof.
+    intros [c |] [d |].
+    - change (reflect (Some c = Some d) (Cells.eqb c d)).
+      destruct (Cells.eqb_spec c d); constructor; congruence.
+    - constructor. discriminate.
+    - constructor. discriminate.
+    - constructor. reflexivity.
+  Qed.
+
+  (** Every optional output compares equal to itself. *)
+  Lemma output_eqb_refl : forall o, output_eqb o o = true.
+  Proof.
+    intro o. destruct (output_eqb_spec o o); [reflexivity | congruence].
+  Qed.
+
+  (** Every row after a replacement is either an old row or the requested binding. *)
+  Lemma row_replace_sources : forall f k previous o db g args output,
+    row (view (row_replace f k previous o db)) g args output ->
+      row (view db) g args output \/ (g = f /\ args = k /\ output = o).
+  Proof.
+    intros f k previous o db g args output Hrow.
+    apply row_replace_binding in Hrow as [[Hrow _] | [Hkey Houtput]].
+    - now left.
+    - right. injection Hkey as -> ->. repeat split; assumption.
+  Qed.
+
+  (** A row replacement records its new tuple and retains every earlier written cell. *)
+  Lemma row_replace_written : forall db f k previous o,
+    db_written_cells (row_replace f k previous o db) =
+      (k ++ option_list o) ++
+        match previous with
+        | Some before => (k ++ option_list before) ++ db_written_cells db
+        | None => db_written_cells db
+        end.
+  Proof.
+    intros db f k [before |] o; unfold row_replace, row_write;
+      cbn [database_set_runtime db_written_cells]; rewrite !slots_update_written_cells;
+      reflexivity.
+  Qed.
+
+  (** Replacement covers the new row by its recording and every retained row by its old history. *)
+  Lemma row_replace_recorded_rows : forall db f k previous o, recorded_rows db ->
+    recorded_rows (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hrecorded g args output c Hrow Hin.
+    rewrite row_replace_written.
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - apply in_or_app. right. destruct previous as [before |].
+      + apply in_or_app. right. exact (Hrecorded g args output c Hold Hin).
+      + exact (Hrecorded g args output c Hold Hin).
+    - apply in_or_app. now left.
+  Qed.
+
+  (** A fitting new contribution preserves the complete row and cache history invariant. *)
+  Lemma database_history_row_replace : forall db f k previous o,
+    database_history db -> slots_fit db f (length (k ++ option_list o)) ->
+    database_history (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o [Hmetadata Hrows] Hfits. split.
+    - now apply metadata_row_replace.
+    - now apply row_replace_recorded_rows.
+  Qed.
+
+  (** Replacing an absent key adds one row and preserves every old row. *)
+  Lemma row_replace_fresh : forall f k previous o db, old db f k = None ->
+    forall g args output, row (view (row_replace f k previous o db)) g args output <->
+      row (view db) g args output \/ (g = f /\ args = k /\ output = o).
+  Proof.
+    intros f k previous o db Habsent g args output. rewrite row_replace_binding.
+    split.
+    - intros [[Hrow _] | [Hkey Houtput]].
+      + now left.
+      + right. injection Hkey as -> ->. repeat split; assumption.
+    - intros [Hrow | [-> [-> ->]]].
+      + left. split; [exact Hrow |]. intro Hkey. injection Hkey as -> ->.
+        change (old db f k = Some output) in Hrow. congruence.
+      + right. split; reflexivity.
+  Qed.
+
+  (** A row-table write retains the declaration table. *)
+  Lemma row_write_kind : forall f k o db,
+    kind (view (row_write f k o db)) = kind (view db).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the equality log. *)
+  Lemma row_write_same : forall f k o db,
+    same (view (row_write f k o db)) = same (view db).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the allocation counter. *)
+  Lemma row_write_ids : forall f k o db, ids (row_write f k o db) = ids db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the pending queue. *)
+  Lemma row_write_pending : forall f k o db, pending (row_write f k o db) = pending db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the slot list. *)
+  Lemma row_write_slots : forall f k o db, slots (row_write f k o db) = slots db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the identifier forest. *)
+  Lemma row_write_forest : forall f k o db, db_forest (row_write f k o db) = db_forest db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A replacement leaves the declared function kinds unchanged. *)
+  Lemma row_replace_kind : forall f k previous o db,
+    kind (view (row_replace f k previous o db)) = kind (view db).
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_kind, !slots_update_view; reflexivity.
+  Qed.
+
+  (** A replacement leaves the recorded equality relation unchanged. *)
+  Lemma row_replace_same : forall f k previous o db,
+    same (view (row_replace f k previous o db)) = same (view db).
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_same, !slots_update_view; reflexivity.
+  Qed.
+
+  (** Replacing a row does not allocate identifiers. *)
+  Lemma row_replace_ids : forall f k previous o db,
+    ids (row_replace f k previous o db) = ids db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_ids, !slots_update_ids; reflexivity.
+  Qed.
+
+  (** Replacing a row does not enqueue equality work. *)
+  Lemma row_replace_pending : forall f k previous o db,
+    pending (row_replace f k previous o db) = pending db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_pending, !slots_update_pending; reflexivity.
+  Qed.
+
+  (** Replacing a row preserves its slot layout. *)
+  Lemma row_replace_slots : forall f k previous o db,
+    slots (row_replace f k previous o db) = slots db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_slots, !slots_update_slots; reflexivity.
+  Qed.
+
+  (** Replacing a row leaves the identifier forest untouched. *)
+  Lemma row_replace_forest : forall f k previous o db,
+    db_forest (row_replace f k previous o db) = db_forest db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_forest, !slots_update_forest; reflexivity.
+  Qed.
+
+  (** A row replacement records a new fact by raising the change flag. *)
+  Lemma row_replace_changed : forall f k previous o db,
+    changed (row_replace f k previous o db) = true.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Row and cache replacement preserves every observation outside the changed fields. *)
+  Lemma row_replace_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall rows state, observe (runtime_set_rows rows state) = observe state) ->
+    (forall flag state, observe (runtime_set_changed flag state) = observe state) ->
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall f k previous o db,
+      observe (db_runtime (row_replace f k previous o db)) = observe (db_runtime db).
+  Proof.
+    intros A observe Hrows Hchanged Hindexes f k [before |] o db;
+      unfold row_replace, row_write; cbn [database_set_runtime db_runtime];
+      rewrite Hrows, Hchanged;
+      repeat rewrite (slots_update_preserves A observe Hindexes); reflexivity.
+  Qed.
+
+  (** Index maintenance preserves the row map itself before its final binding update. *)
+  Lemma row_replace_map : forall f k previous o db,
+    runtime_rows (db_runtime (row_replace f k previous o db)) =
+      RowMap.set (f, k) o (runtime_rows (db_runtime db)).
+  Proof.
+    intros f k [before |] o db; unfold row_replace, row_write;
+      cbn [database_set_runtime db_runtime runtime_set_rows runtime_rows];
+      repeat rewrite (slots_update_preserves _ (@runtime_rows (cell V.t) I.t)
+        (fun all new counts state => eq_refl)); reflexivity.
+  Qed.
+
+  (** Replacing one actual binding preserves the complete multiset cache at every declared slot. *)
+  Lemma row_replace_slot_cache : forall db f k previous o s g perm,
+    wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    slot_of db s = Some (g, perm) ->
+    slot_cache_ok (db_runtime (row_replace f k previous o db)) s (length perm)
+      (row_contributions g perm
+        (RowMap.elements (runtime_rows (db_runtime (row_replace f k previous o db))))).
+  Proof.
+    intros db f k previous o s g perm Hwf Hprevious Hfits Hslot.
+    pose proof (wf_row_map db Hwf) as Hmap.
+    destruct (RowFacts.set_elements_decomposition _ _ (f, k) previous o Hmap Hprevious)
+      as [rest [Hsource [Htarget _]]].
+    rewrite row_replace_map. eapply slot_cache_permutation.
+    - apply row_contributions_permutation. apply Permutation_sym. exact Htarget.
+    - apply (row_replace_cache_list db f k previous o s g perm rest).
+      + now apply wf_group_table.
+      + exact Hslot.
+      + exact Hfits.
+      + intros before Hbefore. apply (wf_row_slots db Hwf f k before).
+        change (old db f k = Some before). now rewrite Hprevious.
+      + eapply slot_cache_permutation.
+        * apply row_contributions_permutation. exact Hsource.
+        * exact (wf_slot_cache db s g perm Hwf Hslot).
+  Qed.
+
+  (** Row replacement preserves both indexes and exact projection counts without an output-wf premise. *)
+  Lemma row_replace_cache_correct : forall db f k previous o,
+    wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    database_cache_correct (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hwf Hprevious Hfits.
+    apply database_cache_correct_from_slots.
+    - rewrite row_replace_map. apply RowMap.wf_set. now apply wf_row_map.
+    - change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
+        N.of_nat (length (slots (row_replace f k previous o db)))).
+      rewrite (row_replace_preserves _ (@runtime_slot_bound (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db), row_replace_slots.
+      now apply wf_slot_bound.
+    - intros s g perm Hslot. apply row_replace_slot_cache; try assumption.
+      unfold slot_of in *. now rewrite row_replace_slots in Hslot.
+  Qed.
+
+  (** Replacing a well-kinded row preserves the kind condition for every stored binding. *)
+  Lemma row_replace_kinds : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    forall g args output, row (view (row_replace f k previous o db)) g args output ->
+      match kind (view (row_replace f k previous o db)) g, output with
+      | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
+      | _, _ => False
+      end.
+  Proof.
+    intros db f k previous o Hwf [_ [_ Hkind]] g args output Hrow.
+    rewrite row_replace_kind. apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_row_kind db Hwf g args output Hold).
+    - exact Hkind.
+  Qed.
+
+  (** A replacement whose new cells are allocated keeps every row identifier allocated. *)
+  Lemma row_replace_allocated : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    forall g args output i, row (view (row_replace f k previous o db)) g args output ->
+      In (Id i) (args ++ option_list output) -> allocated (row_replace f k previous o db) i.
+  Proof.
+    intros db f k previous o Hwf [Hids _] g args output i Hrow Hin.
+    unfold allocated. rewrite row_replace_ids.
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_row_ids db Hwf g args output i Hold Hin).
+    - exact (Hids i Hin).
+  Qed.
+
+  (** A fitting replacement preserves all row lengths required by the stored slots. *)
+  Lemma row_replace_fits : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    forall g args output, row (view (row_replace f k previous o db)) g args output ->
+      slots_fit (row_replace f k previous o db) g (length (args ++ option_list output)).
+  Proof.
+    intros db f k previous o Hwf [_ [Hfits _]] g args output Hrow.
+    unfold slots_fit. rewrite row_replace_slots. fold (slots_fit db g (length (args ++ option_list output))).
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_row_slots db Hwf g args output Hold).
+    - exact Hfits.
+  Qed.
+
+  (** A canonical replacement leaves quiet databases canonical. *)
+  Lemma row_replace_canonical : forall db f k previous o,
+    wf db -> (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    pending (row_replace f k previous o db) = 0 -> canonical (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hwf Hnew Hquiet g args output Hrow i Hin.
+    unfold repr. rewrite row_replace_forest. fold (repr db i).
+    rewrite row_replace_pending in Hquiet.
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_quiet_canonical db Hwf Hquiet g args output Hold i Hin).
+    - exact (Hnew i Hin).
+  Qed.
+
+  (** Cache updates leave the stored pending-work counter unchanged. *)
+  Lemma slots_update_npending : forall b f u db,
+    db_npending (slots_update b f u db) = db_npending db.
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** Replacing one row does not change the stored pending-work counter. *)
+  Lemma row_replace_npending : forall f k previous o db,
+    db_npending (row_replace f k previous o db) = db_npending db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace, row_write;
+      cbn [database_set_runtime db_npending]; now rewrite !slots_update_npending.
+  Qed.
+
+  (** Cache correctness is the only remaining obligation for a well-kinded canonical row update. *)
+  Lemma row_replace_wf_from_caches : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    (forall s new u, I.mem (index s new (row_replace f k previous o db)) u ->
+      exists g perm args output,
+        slot_of (row_replace f k previous o db) s = Some (g, perm) /\
+        row (view (row_replace f k previous o db)) g args output /\
+        u = permute perm (args ++ option_list output)) ->
+    (forall s g perm args output,
+      slot_of (row_replace f k previous o db) s = Some (g, perm) ->
+      row (view (row_replace f k previous o db)) g args output ->
+      I.mem (index s false (row_replace f k previous o db))
+        (permute perm (args ++ option_list output))) ->
+    (forall s new g perm,
+      slot_of (row_replace f k previous o db) s = Some (g, perm) ->
+      I.wf (length perm) (index s new (row_replace f k previous o db))) ->
+    projection_counts_ok (row_replace f k previous o db) ->
+    wf (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hwf Hkind Hcanonical Hsound Hcomplete Harity Hcounts.
+    assert (Hruntime :
+      (runtime_equalities (db_runtime (row_replace f k previous o db)),
+       runtime_queue (db_runtime (row_replace f k previous o db)),
+       runtime_function_slots (db_runtime (row_replace f k previous o db)),
+       runtime_max_name (db_runtime (row_replace f k previous o db)),
+       runtime_slot_bound (db_runtime (row_replace f k previous o db))) =
+      (runtime_equalities (db_runtime db), runtime_queue (db_runtime db),
+       runtime_function_slots (db_runtime db), runtime_max_name (db_runtime db),
+       runtime_slot_bound (db_runtime db))).
+    { exact (row_replace_preserves _
+        (fun state => (runtime_equalities state, runtime_queue state,
+          runtime_function_slots state, runtime_max_name state, runtime_slot_bound state))
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db). }
+    injection Hruntime as Hlog Hqueue Hgroups Hmax Hbound.
+    change (runtime_equalities (db_runtime (row_replace f k previous o db)) =
+      runtime_equalities (db_runtime db)) in Hlog.
+    change (runtime_queue (db_runtime (row_replace f k previous o db)) =
+      runtime_queue (db_runtime db)) in Hqueue.
+    change (runtime_function_slots (db_runtime (row_replace f k previous o db)) =
+      runtime_function_slots (db_runtime db)) in Hgroups.
+    change (runtime_max_name (db_runtime (row_replace f k previous o db)) =
+      runtime_max_name (db_runtime db)) in Hmax.
+    change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
+      runtime_slot_bound (db_runtime db)) in Hbound.
+    unfold wf, database_wf. split.
+    { rewrite row_replace_forest. exact (wf_forest db Hwf). }
+    split.
+    { intro i. rewrite row_replace_forest. unfold allocated. rewrite row_replace_ids.
+      exact (wf_forest_members db Hwf i). }
+    split.
+    { rewrite row_replace_forest, row_replace_ids. exact (wf_forest_count db Hwf). }
+    split.
+    { rewrite row_replace_forest, row_replace_ids. exact (wf_forest_width db Hwf). }
+    split.
+    { intros i j. rewrite row_replace_same. unfold repr. rewrite row_replace_forest.
+      exact (wf_equalities db Hwf i j). }
+    split.
+    { rewrite Hlog. unfold allocated. rewrite row_replace_ids. exact (wf_log_allocated db Hwf). }
+    split.
+    { rewrite row_replace_map. apply RowMap.wf_set. exact (wf_row_map db Hwf). }
+    split; [exact (row_replace_kinds db f k previous o Hwf Hkind) |].
+    split; [exact (row_replace_allocated db f k previous o Hwf Hkind) |].
+    split; [exact (row_replace_fits db f k previous o Hwf Hkind) |].
+    split.
+    { intros g output Houtput. rewrite row_replace_kind in Houtput. rewrite Hmax.
+      exact (wf_kind_bound db Hwf g output Houtput). }
+    split.
+    { rewrite Hbound, row_replace_slots. exact (wf_slot_bound db Hwf). }
+    split.
+    { rewrite row_replace_npending, row_replace_pending. exact (wf_pending_count db Hwf). }
+    split.
+    { rewrite Hqueue. unfold allocated. rewrite row_replace_ids. exact (wf_queue_allocated db Hwf). }
+    split; [exact (row_replace_canonical db f k previous o Hwf Hcanonical) |].
+    split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
+    split; [rewrite Hgroups, row_replace_slots; exact (wf_group_table db Hwf) |].
+    split; [exact Hcounts |]. split.
+    { rewrite Hmax, row_replace_kind. exact (wf_max_name_attained db Hwf). }
+    apply database_history_row_replace.
+    - exact (wf_history db Hwf).
+    - exact (proj1 (proj2 Hkind)).
+  Qed.
+
+  (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
+  Lemma allocate_id_view : forall i db, view (allocate_id i db) = view db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The allocation wrapper stores the supplied identifier as its new allocation bound. *)
+  Lemma allocate_id_ids : forall i db, ids (allocate_id i db) = Npos i.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Allocation preserves the slot layout. *)
+  Lemma allocate_id_slots : forall i db, slots (allocate_id i db) = slots db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Allocation does not enqueue equality work. *)
+  Lemma allocate_id_pending : forall i db, pending (allocate_id i db) = pending db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Allocating the next positive identifier increases the interval bound by one. *)
+  Lemma allocate_next_ids : forall db,
+    ids (allocate_id (N.succ_pos (ids db)) db) = N.succ (ids db).
+  Proof.
+    intro db. rewrite allocate_id_ids. apply N.succ_pos_spec.
+  Qed.
+
+  (** Every previously allocated identifier remains allocated after a fresh allocation. *)
+  Lemma allocate_next_monotone : forall db i, allocated db i ->
+    allocated (allocate_id (N.succ_pos (ids db)) db) i.
+  Proof.
+    intros db i Hi. unfold allocated in *. rewrite allocate_next_ids. lia.
+  Qed.
+
+  (** The next interval endpoint is absent from the current well-formed forest. *)
+  Lemma allocate_next_absent : forall db, wf db ->
+    ~ UnionFind.mem (db_forest db) (N.succ_pos (ids db)).
+  Proof.
+    intros db Hwf Hmember. apply (proj1 (wf_forest_members db Hwf _)) in Hmember.
+    unfold allocated in Hmember. rewrite N.succ_pos_spec in Hmember. lia.
+  Qed.
+
+  (** Fresh allocation extends exact forest membership to the new interval endpoint. *)
+  Lemma allocate_next_members : forall db, wf db -> forall i,
+    UnionFind.mem (db_forest (allocate_id (N.succ_pos (ids db)) db)) i <->
+      allocated (allocate_id (N.succ_pos (ids db)) db) i.
+  Proof.
+    intros db Hwf i.
+    change (UnionFind.mem (UnionFindCode.add (N.succ_pos (ids db)) (db_forest db)) i <->
+      (Npos i <= Npos (N.succ_pos (ids db)))%N).
+    rewrite N.succ_pos_spec.
+    exact (UnionFindCodeFacts.members_add_next (db_forest db) (ids db)
+      (wf_forest db Hwf) (wf_forest_members db Hwf) i).
+  Qed.
+
+  (** Fresh allocation increments the stored forest count and allocation bound together. *)
+  Lemma allocate_next_count : forall db, wf db ->
+    count (db_forest (allocate_id (N.succ_pos (ids db)) db)) =
+      ids (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf. rewrite allocate_next_ids.
+    change (count (UnionFindCode.add (N.succ_pos (ids db)) (db_forest db)) =
+      N.succ (ids db)).
+    rewrite UnionFindCodeFacts.count_add_absent by now apply allocate_next_absent.
+    now rewrite (wf_forest_count db Hwf).
+  Qed.
+
+  (** Adding the fresh singleton preserves every old representative. *)
+  Lemma allocate_next_repr : forall db, wf db -> forall i,
+    repr (allocate_id (N.succ_pos (ids db)) db) i = repr db i.
+  Proof.
+    intros db Hwf i. apply UnionFind.repr_add. exact (wf_forest db Hwf).
+  Qed.
+
+  (** Fresh allocation preserves the log-to-representative agreement. *)
+  Lemma allocate_next_equalities : forall db, wf db -> forall i j,
+    same (view (allocate_id (N.succ_pos (ids db)) db)) i j <->
+      repr (allocate_id (N.succ_pos (ids db)) db) i =
+      repr (allocate_id (N.succ_pos (ids db)) db) j.
+  Proof.
+    intros db Hwf i j. rewrite allocate_id_view.
+    rewrite (allocate_next_repr db Hwf i), (allocate_next_repr db Hwf j).
+    exact (wf_equalities db Hwf i j).
+  Qed.
+
+  (** Every logged endpoint stays inside the enlarged allocation interval. *)
+  Lemma allocate_next_log : forall db, wf db ->
+    Forall (fun edge => allocated (allocate_id (N.succ_pos (ids db)) db) (fst edge) /\
+      allocated (allocate_id (N.succ_pos (ids db)) db) (snd edge))
+      (runtime_equalities (db_runtime (allocate_id (N.succ_pos (ids db)) db))).
+  Proof.
+    intros db Hwf. eapply Forall_impl; [| exact (wf_log_allocated db Hwf)].
+    intros [i j] [Hi Hj]. split; apply allocate_next_monotone; assumption.
+  Qed.
+
+  (** The unchanged pending queue remains allocated after a fresh singleton is added. *)
+  Lemma allocate_next_queue : forall db, wf db ->
+    Forall (allocated (allocate_id (N.succ_pos (ids db)) db))
+      (runtime_queue (db_runtime (allocate_id (N.succ_pos (ids db)) db))).
+  Proof.
+    intros db Hwf. eapply Forall_impl; [| exact (wf_queue_allocated db Hwf)].
+    intros i Hi. now apply allocate_next_monotone.
+  Qed.
+
+  (** Identifiers in unchanged rows remain allocated after the interval grows. *)
+  Lemma allocate_next_row_ids : forall db, wf db -> forall f k o i,
+    row (view (allocate_id (N.succ_pos (ids db)) db)) f k o ->
+    In (Id i) (k ++ option_list o) -> allocated (allocate_id (N.succ_pos (ids db)) db) i.
+  Proof.
+    intros db Hwf f k o i Hrow Hin. apply allocate_next_monotone.
+    exact (wf_row_ids db Hwf f k o i Hrow Hin).
+  Qed.
+
+  (** Fresh singleton allocation preserves canonicality whenever the queue is empty. *)
+  Lemma allocate_next_canonical : forall db, wf db ->
+    pending (allocate_id (N.succ_pos (ids db)) db) = 0 ->
+    canonical (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf Hquiet f k o Hrow i Hin.
+    rewrite (allocate_next_repr db Hwf i).
+    exact (wf_quiet_canonical db Hwf Hquiet f k o Hrow i Hin).
+  Qed.
+
+  (** Adding the next singleton preserves the complete database invariant. *)
+  Lemma wf_allocate_next : forall db, wf db -> wf (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf.
+    assert (Hforest : UnionFind.wf (db_forest (allocate_id (N.succ_pos (ids db)) db))).
+    { apply UnionFind.wf_add. exact (wf_forest db Hwf). }
+    pose proof (allocate_next_members db Hwf) as Hmembers.
+    pose proof (allocate_next_count db Hwf) as Hcount.
+    assert (Hwidth : UnionFind.width (db_forest (allocate_id (N.succ_pos (ids db)) db)) <=
+      N.size_nat (ids (allocate_id (N.succ_pos (ids db)) db))).
+    { apply UnionFindCodeFacts.width_allocated. intros i Hi. exact (proj1 (Hmembers i) Hi). }
+    pose proof (allocate_next_equalities db Hwf) as Hequalities.
+    pose proof (allocate_next_log db Hwf) as Hlog.
+    pose proof (allocate_next_row_ids db Hwf) as Hrowids.
+    pose proof (allocate_next_queue db Hwf) as Hqueue.
+    pose proof (allocate_next_canonical db Hwf) as Hcanonical.
+    pose proof (database_history_allocate_id db (N.succ_pos (ids db))
+      (wf_history db Hwf)) as Hhistory.
+    unfold wf, database_wf in Hwf |- *. unfold allocate_id in *.
+    cbn [database_set_forest database_set_runtime runtime_set_allocated runtime_set_changed
+      db_forest db_runtime db_npending runtime_allocated runtime_rows runtime_kinds
+      runtime_slots runtime_equalities runtime_queue runtime_all_indexes runtime_new_indexes
+      runtime_projection_counts runtime_function_slots runtime_max_name runtime_slot_bound
+      view row same kind row_get kind_get repr allocated ids pending slots slot_of
+      index canonical slots_fit projection_counts_ok stored_projection_count] in *; tauto.
+  Qed.
+
+  (** Every fresh make branch has the required layout and allocation observations. *)
+  Lemma fresh_make_layout : forall db f k previous,
+    let i := N.succ_pos (ids db) in
+    let fresh := allocate_id i db in
+    let next := match kind_get f db with
+      | Some OId => row_replace f k previous (Some (Id i)) fresh | _ => fresh end in
+    kind (view next) = kind (view db) /\ slots next = slots db /\
+    (ids next <= N.succ (ids db))%N /\ allocated next i /\ pending next = pending db.
+  Proof.
+    intros db f k previous. cbn zeta. unfold allocated.
+    assert (Hnext : Npos (N.succ_pos (ids db)) = N.succ (ids db)).
+    { destruct (ids db); reflexivity. }
+    destruct (kind_get f db) as [[| |m] |];
+      try rewrite row_replace_kind, row_replace_slots, !row_replace_ids, row_replace_pending;
+      rewrite allocate_id_view, allocate_id_slots, !allocate_id_ids, allocate_id_pending;
+      rewrite Hnext; repeat split; lia.
+  Qed.
+
+  (** Every stored output of a declared constructor is an identifier. *)
+  Lemma constructor_old : forall db f k o, wf db -> kind (view db) f = Some OId ->
+    old db f k = Some o -> exists i, o = Some (Id i).
+  Proof.
+    intros db f k o Hwf Hkind Hrow.
+    pose proof (wf_row_kind db Hwf f k o Hrow) as Houtput.
+    rewrite Hkind in Houtput. destruct o as [[i | v] |]; try contradiction.
+    exists i. reflexivity.
+  Qed.
+
+  (** Writing a constructor at an absent key has exactly the public extension shape. *)
+  Lemma fresh_constructor_extension : forall db f k i,
+    old db f (map (canon db) k) = None ->
+    extends_by db
+      (row_replace f (map (canon db) k) None (Some (Id i)) (allocate_id i db)) f k i.
+  Proof.
+    intros db f k i Habsent. unfold extends_by.
+    rewrite row_replace_ids, allocate_id_ids. split; [reflexivity |].
+    rewrite row_replace_kind, allocate_id_view. split; [reflexivity |]. split.
+    - intros a b. rewrite row_replace_same, allocate_id_view. split.
+      + intro Hsame. now left.
+      + intros [Hsame | [-> ->]]; [exact Hsame | apply equality_log_refl].
+    - intros g args output. rewrite row_replace_fresh by exact Habsent.
+      now rewrite allocate_id_view.
+  Qed.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db i j Hwf. exact (wf_equalities db Hwf i j).
+  Qed.
   (** Every representative represents itself. *)
   Lemma repr_idem : forall db i, wf db -> repr db (repr db i) = repr db i.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db i Hwf. apply UnionFind.repr_idem. exact (wf_forest db Hwf).
+  Qed.
+
+  (** Every initial slot query reads an empty index. *)
+  Lemma index_init_empty : forall ds sl s new, index s new (init ds sl) = I.empty.
+  Proof.
+    intros ds sl s new. unfold index. destruct new;
+      cbn [init db_runtime runtime_slot_bound runtime_all_indexes runtime_new_indexes];
+      destruct (N.compare s (N.of_nat (length sl))); try reflexivity;
+      now rewrite PTrie.get_empty.
+  Qed.
+
+  (** Initialization has no stored row of any kind. *)
+  Lemma init_rows_empty : forall ds sl f k o, ~ row (view (init ds sl)) f k o.
+  Proof.
+    intros ds sl f k o Hrow.
+    change (row_get f k (init ds sl) = Some o) in Hrow.
+    unfold row_get in Hrow. cbn [init db_runtime runtime_rows] in Hrow.
+    rewrite PTrie.get_empty in Hrow. discriminate.
+  Qed.
+
+  (** Empty rows and empty construction histories establish the history invariant initially. *)
+  Lemma database_history_init : forall ds sl, database_history (init ds sl).
+  Proof.
+    intros ds sl. split; [apply metadata_init |].
+    intros f k o c Hrow _. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+  Qed.
+
+  (** Every declared function fits the maximum name recorded by initialization. *)
+  Lemma init_kind_bound : forall ds sl f output,
+    kind (view (init ds sl)) f = Some output ->
+    (f <= runtime_max_name (db_runtime (init ds sl)))%positive.
+  Proof.
+    intros ds sl f output Hkind.
+    change (PTrieCode.get f (database_kinds ds) = Some output) in Hkind.
+    unfold database_kinds in Hkind. rewrite declaration_trie_lookup in Hkind.
+    exact (lookup_kind_name_bound ds f output Hkind).
+  Qed.
+
+  (** Initialization records a name maximum that is attained by its declaration table. *)
+  Lemma init_max_name_attained : forall ds sl,
+    runtime_max_name (db_runtime (init ds sl)) = 1%positive \/
+      kind (view (init ds sl)) (runtime_max_name (db_runtime (init ds sl))) <> None.
+  Proof.
+    intros ds sl. change (database_max_name ds = 1%positive \/
+      PTrieCode.get (database_max_name ds) (database_kinds ds) <> None).
+    unfold database_kinds. rewrite declaration_trie_lookup. apply database_max_name_attained.
+  Qed.
+
+  (** Empty row and count tries give every initial projection multiplicity zero. *)
+  Lemma init_projection_counts : forall ds sl, projection_counts_ok (init ds sl).
+  Proof.
+    intros ds sl s f perm u _. exists []. split; [constructor |]. split.
+    - intro r.
+      assert (Hempty : RowMap.elements (runtime_rows (db_runtime (init ds sl))) = [])
+        by reflexivity.
+      rewrite Hempty. cbn [In]. tauto.
+    - unfold stored_projection_count, projection_table_get.
+      cbn [init db_runtime runtime_projection_counts].
+      rewrite PTrie.get_empty. cbn. rewrite PTrie.get_empty. reflexivity.
+  Qed.
 
   (** Initialization creates a well-formed database. *)
   Lemma wf_init : forall ds sl, wf (init ds sl).
-  Proof. Admitted. (* STUB *)
-
-  (** Kind-correct insertion keeps the database well formed. *)
-  Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
-  Proof. Admitted. (* STUB *)
-
-  (** Constructor allocation keeps the database well formed. *)
-  Lemma wf_make : forall f k db, wf db ->
-    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
-    wf (snd (make f k db)).
-  Proof. Admitted. (* STUB *)
-
-  (** Equality insertion keeps the database well formed. *)
-  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
-    wf (union i j db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl. unfold wf, database_wf.
+    split; [apply UnionFind.wf_empty |].
+    split.
+    { intro i. change (PTrieCode.get i (@PTrieCode.empty positive) <> None <->
+        (Npos i <= 0)%N). rewrite PTrie.get_empty. split; intro H; [contradiction | lia]. }
+    split; [reflexivity |].
+    split; [change (0 <= 0); lia |].
+    split; [intros i j; apply equality_log_empty |].
+    split; [constructor |].
+    split; [apply RowMap.wf_empty |].
+    split; [intros f k o Hrow; exfalso; exact (init_rows_empty ds sl f k o Hrow) |].
+    split; [intros f k o i Hrow; exfalso; exact (init_rows_empty ds sl f k o Hrow) |].
+    split; [intros f k o Hrow; exfalso; exact (init_rows_empty ds sl f k o Hrow) |].
+    split; [exact (init_kind_bound ds sl) |].
+    split; [reflexivity |]. split; [reflexivity |]. split; [constructor |].
+    split.
+    { intros _ f k o Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow). }
+    split.
+    { intros s new u Hmem. rewrite index_init_empty in Hmem.
+      exfalso. exact (I.mem_empty u Hmem). }
+    split.
+    { intros s f perm k o _ Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow). }
+    split.
+    { intros s new f perm _. rewrite index_init_empty. apply I.wf_empty. }
+    split; [reflexivity |]. split; [apply init_projection_counts |].
+    split; [apply init_max_name_attained | apply database_history_init].
+  Qed.
 
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
   Proof. Admitted. (* STUB *)
 
+  (** Advancing preserves every full slot index exactly. *)
+  Lemma index_advance_all : forall s db, index s false (advance db) = index s false db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Advancing clears every delta slot index, including out-of-range queries. *)
+  Lemma index_advance_new : forall s db, index s true (advance db) = I.empty.
+  Proof.
+    intros s db.
+    change ((match N.compare s (runtime_slot_bound (db_runtime db)) with
+      | Lt => match PTrieCode.get (N.succ_pos s) (@PTrieCode.empty I.t) with
+        | Some ix => ix
+        | None => I.empty
+        end
+      | _ => I.empty
+      end) = I.empty).
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))); try reflexivity.
+    now rewrite PTrie.get_empty.
+  Qed.
+
   (** Advancing clears the change flag without changing the view. *)
   Lemma wf_advance : forall db, wf db ->
     wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hwf. split.
+    - unfold wf, database_wf in Hwf |- *.
+      destruct Hwf as (Hforest & Hmembers & Hcount & Hwidth & Hequalities & Hlog &
+        Hrows & Hkind & Hrowids & Hslots & Hbound & Hslotbound & Hpending & Hqueue &
+        Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts & Hmaxname & Hhistory).
+      do 15 (split; [assumption |]).
+      split.
+      + intros s new u Hmem. destruct new.
+        * rewrite index_advance_new in Hmem. exfalso. exact (I.mem_empty u Hmem).
+        * rewrite index_advance_all in Hmem. exact (Hsound s false u Hmem).
+      + split.
+        * intros s f perm k o Hslot Hrow. rewrite index_advance_all.
+          exact (Hcomplete s f perm k o Hslot Hrow).
+        * split.
+          -- intros s new f perm Hslot. destruct new.
+             ++ rewrite index_advance_new. apply I.wf_empty.
+             ++ rewrite index_advance_all. exact (Harity s false f perm Hslot).
+          -- split; [exact Hgroups |]. split; [exact Hcounts |].
+             split; [exact Hmaxname | now apply database_history_advance].
+    - split; reflexivity.
+  Qed.
 
   (** Find returns the representative without changing the view. *)
   Lemma find_spec : forall i db, wf db ->
     fst (find i db) = repr db i /\ view (snd (find i db)) = view db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i db Hwf. split.
+    - apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - reflexivity.
+  Qed.
 
   (** Each function key has one output. *)
   Lemma row_functional : forall db f k o1 o2, wf db ->
     row (view db) f k o1 -> row (view db) f k o2 -> o1 = o2.
-  Proof. Admitted. (* STUB *)
-
-  (** Insertion changes precisely the canonical key and combines its output. *)
-  Lemma put_rows : forall f k o db, wf db -> kind_ok db f k o ->
-    let ck := map (canon db) k in let co := option_map (canon db) o in
-    forall f' k' o', row (view (put f k o db)) f' k' o' <->
-      (row (view db) f' k' o' /\ (f', k') <> (f, ck)) \/
-      (f' = f /\ k' = ck /\ combine db f (old db f ck) co = o').
-  Proof. Admitted. (* STUB *)
-
-  (** Identifier output conflicts add precisely their equality closure. *)
-  Lemma put_same : forall f k o db i j, wf db -> kind_ok db f k o ->
-    (same (view (put f k o db)) i j <->
-      clos_refl_sym_trans positive
-        (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o1 o2 _ Hfirst Hsecond.
+    change (row_get f k db = Some o1) in Hfirst.
+    change (row_get f k db = Some o2) in Hsecond. congruence.
+  Qed.
 
   (** A raised change flag stays raised until the database advances. *)
   Lemma changed_put : forall f k o db, changed db = true -> changed (put f k o db) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k o db Hchanged. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : changed next = true).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hchanged.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; [reflexivity | exact Hchanged]. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext | apply row_replace_changed].
+    - apply row_replace_changed.
+  Qed.
   Lemma changed_make : forall f k db,
     changed db = true -> changed (snd (make f k db)) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hchanged. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |]; try exact Hchanged;
+      destruct (kind_get f db) as [[| |m] |]; reflexivity.
+  Qed.
   Lemma changed_union : forall i j db, changed db = true -> changed (union i j db) = true.
-  Proof. Admitted. (* STUB *)
-  Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hchanged. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; [reflexivity | exact Hchanged].
+  Qed.
   (** Find and lookup leave the change flag alone. *)
   Lemma changed_find : forall i db, changed (snd (find i db)) = changed db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma changed_lookup : forall f k db, changed (snd (lookup f k db)) = changed db.
-  Proof. Admitted. (* STUB *)
-  (** An insertion raises the flag only when its row was not represented. *)
-  Lemma put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
-    changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db. unfold lookup.
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f); reflexivity.
+  Qed.
   (** A union raises the flag only when it adds an equality. *)
   Lemma union_changed : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = true -> ~ same (view db) i j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hwf Hquiet Hchanged Hsame. unfold union in Hchanged.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+        (wf_forest db Hwf) Hunion) as [Hdifferent _].
+      apply Hdifferent. exact (proj1 (same_repr db i j Hwf) Hsame).
+    - change (changed db = true) in Hchanged. congruence.
+  Qed.
   (** A make raises the flag only when it allocates. *)
   Lemma make_changed : forall f k db, wf db -> changed db = false ->
     changed (snd (make f k db)) = true ->
     ~ exists j, row (view db) f (map (canon db) k) (Some (Id j)).
-  Proof. Admitted. (* STUB *)
-  (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
-  Lemma rebuild_quiet : forall db, wf db -> canonical db ->
-    (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
-  Proof. Admitted. (* STUB *)
-
-  (** A quiet insertion already has its requested row represented. *)
-  Lemma put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
-    changed db = false -> changed (put f k o db) = false ->
-    view (put f k o db) = view db /\ present_put (view db) f (map (canon db) k) o.
-  Proof. Admitted. (* STUB *)
-
+  Proof.
+    intros f k db Hwf Hquiet Hchanged [j Hrow]. unfold make in Hchanged.
+    rewrite (normal_key_correct db k Hwf) in Hchanged.
+    change (row_get f (map (canon db) k) db = Some (Some (Id j))) in Hrow.
+    rewrite Hrow in Hchanged. change (changed db = true) in Hchanged. congruence.
+  Qed.
   (** Make reuses a canonical constructor output or allocates a fresh identifier. *)
   Lemma make_spec : forall f k db, wf db -> kind (view db) f = Some OId ->
     let '(i, db') := make f k db in
@@ -414,18 +4009,197 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       i = repr db j /\ db' = db) \/
     (fresh_id db i /\ row (view db') f (map (canon db) k) (Some (Id i)) /\
       extends_by db db' f k i).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf Hkind. unfold make.
+    rewrite (normal_key_correct db k Hwf). fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous eqn:Hprevious.
+    destruct previous as [before |].
+    - destruct (constructor_old db f (map (canon db) k) before Hwf Hkind
+        (eq_sym Hprevious)) as [j ->].
+      left. exists j. split; [exact (eq_sym Hprevious) |]. split; [| reflexivity].
+      apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - change (kind_get f db = Some OId) in Hkind. rewrite Hkind.
+      right. split; [reflexivity |]. split.
+      + apply row_replace_binding. right. split; reflexivity.
+      + apply fresh_constructor_extension. exact (eq_sym Hprevious).
+  Qed.
 
   (** Union adds precisely the requested equality closure. *)
   Lemma union_same : forall i j db k l, wf db ->
     (same (view (union i j db)) k l <->
       clos_refl_sym_trans positive (fun a b => same (view db) a b \/ (a, b) = (i, j)) k l).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db k l Hwf. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - apply equality_log_cons.
+    - change (equality_log (runtime_equalities (db_runtime db)) k l <->
+        clos_refl_sym_trans positive
+          (fun a b => equality_log (runtime_equalities (db_runtime db)) a b \/
+            (a, b) = (i, j)) k l).
+      rewrite <- equality_log_cons. symmetry. apply equality_log_redundant.
+      apply (proj2 (same_repr db i j Hwf)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hwf) Hunion)).
+  Qed.
 
   (** Union queues equality work without changing rows. *)
   Lemma union_rows : forall i j db, wf db ->
     row (view (union i j db)) = row (view db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db _. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Database union retains exactly the forest returned by the concrete union operation. *)
+  Lemma union_forest : forall i j db,
+    db_forest (union i j db) = snd (UnionFindCode.union i j (db_forest db)).
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Union never changes the database allocation interval. *)
+  Lemma union_ids : forall i j db, ids (union i j db) = ids db.
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Union of allocated endpoints keeps the forest's exact membership interval. *)
+  Lemma union_forest_members : forall i j db, wf db -> allocated db i -> allocated db j ->
+    forall x, UnionFind.mem (db_forest (union i j db)) x <-> allocated (union i j db) x.
+  Proof.
+    intros i j db Hwf Hi Hj x. rewrite union_forest.
+    unfold allocated. rewrite union_ids.
+    apply UnionFindCodeFacts.members_union_present.
+    - exact (wf_forest db Hwf).
+    - exact (wf_forest_members db Hwf).
+    - exact Hi.
+    - exact Hj.
+  Qed.
+
+  (** Already allocated union endpoints add no forest members or counter charge. *)
+  Lemma union_forest_count : forall i j db, wf db -> allocated db i -> allocated db j ->
+    count (db_forest (union i j db)) = ids (union i j db).
+  Proof.
+    intros i j db Hwf Hi Hj. rewrite union_forest, union_ids.
+    rewrite UnionFindCodeFacts.count_union_present.
+    - exact (wf_forest_count db Hwf).
+    - exact (proj2 (wf_forest_members db Hwf i) Hi).
+    - exact (proj2 (wf_forest_members db Hwf j) Hj).
+  Qed.
+
+  (** The preserved allocation interval bounds all forest keys after union. *)
+  Lemma union_forest_width : forall i j db, wf db -> allocated db i -> allocated db j ->
+    UnionFind.width (db_forest (union i j db)) <= N.size_nat (ids (union i j db)).
+  Proof.
+    intros i j db Hwf Hi Hj. apply UnionFindCodeFacts.width_allocated.
+    intros x Hmember. exact (proj1 (union_forest_members i j db Hwf Hi Hj x) Hmember).
+  Qed.
+
+  (** The updated equality log describes exactly the updated forest classes. *)
+  Lemma union_equalities : forall i j db, wf db -> forall a b,
+    same (view (union i j db)) a b <-> repr (union i j db) a = repr (union i j db) b.
+  Proof.
+    intros i j db Hwf a b. rewrite (union_same i j db a b Hwf).
+    unfold repr. rewrite union_forest.
+    rewrite (ForestFacts.union_same_closure i j (db_forest db) a b (wf_forest db Hwf)).
+    apply equality_closure_equiv. intros x y. rewrite (same_repr db x y Hwf). tauto.
+  Qed.
+
+  (** A recorded union adds only its two allocated endpoints to the equality log. *)
+  Lemma union_log_allocated : forall i j db, wf db -> allocated db i -> allocated db j ->
+    Forall (fun edge => allocated (union i j db) (fst edge) /\
+      allocated (union i j db) (snd edge)) (runtime_equalities (db_runtime (union i j db))).
+  Proof.
+    intros i j db Hwf Hi Hj. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - change (Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+        ((i, j) :: runtime_equalities (db_runtime db))).
+      constructor; [now split | exact (wf_log_allocated db Hwf)].
+    - exact (wf_log_allocated db Hwf).
+  Qed.
+
+  (** The losing representative queued by union is allocated. *)
+  Lemma union_queue_allocated : forall i j db, wf db -> allocated db i -> allocated db j ->
+    Forall (allocated (union i j db)) (runtime_queue (db_runtime (union i j db))).
+  Proof.
+    intros i j db Hwf Hi Hj.
+    pose proof (UnionFindCodeFacts.repr_allocated (db_forest db) (ids db)
+      (wf_forest db Hwf) (wf_forest_members db Hwf)) as Hrepresentative.
+    unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - change (Forall (allocated db) (loser :: runtime_queue (db_runtime db))).
+      constructor.
+      + destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+          (wf_forest db Hwf) Hunion) as [_ [Hroots _]].
+        destruct Hroots as [[_ Hloser] | [_ Hloser]]; rewrite Hloser.
+        * exact (Hrepresentative j Hj).
+        * exact (Hrepresentative i Hi).
+      + exact (wf_queue_allocated db Hwf).
+    - exact (wf_queue_allocated db Hwf).
+  Qed.
+
+  (** The stored pending counter follows exactly the optional queue insertion. *)
+  Lemma union_pending_count : forall i j db, wf db ->
+    db_npending (union i j db) = N.of_nat (pending (union i j db)).
+  Proof.
+    intros i j db Hwf. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - change (N.succ (db_npending db) = N.of_nat (S (pending db))).
+      now rewrite Nat2N.inj_succ, (wf_pending_count db Hwf).
+    - exact (wf_pending_count db Hwf).
+  Qed.
+
+  (** A union with an empty resulting queue has changed no representative. *)
+  Lemma union_quiet_canonical : forall i j db, wf db ->
+    pending (union i j db) = 0 -> canonical (union i j db).
+  Proof.
+    intros i j db Hwf Hquiet. unfold union in Hquiet |- *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - change (S (pending db) = 0) in Hquiet. discriminate.
+    - change (pending db = 0) in Hquiet. intros f k o Hrow x Hin.
+      change (UnionFind.repr forest x = x).
+      rewrite (proj2 (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hwf) Hunion) x).
+      exact (wf_quiet_canonical db Hwf Hquiet f k o Hrow x Hin).
+  Qed.
+
+  (** Equality insertion keeps the database well formed. *)
+  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
+    wf (union i j db).
+  Proof.
+    intros i j db Hwf Hi Hj.
+    assert (Hforest : UnionFind.wf (db_forest (union i j db))).
+    { rewrite union_forest. apply UnionFind.wf_union. exact (wf_forest db Hwf). }
+    pose proof (union_forest_members i j db Hwf Hi Hj) as Hmembers.
+    pose proof (union_forest_count i j db Hwf Hi Hj) as Hcount.
+    pose proof (union_forest_width i j db Hwf Hi Hj) as Hwidth.
+    pose proof (union_equalities i j db Hwf) as Hequalities.
+    pose proof (union_log_allocated i j db Hwf Hi Hj) as Hlog.
+    pose proof (union_pending_count i j db Hwf) as Hpending.
+    pose proof (union_queue_allocated i j db Hwf Hi Hj) as Hqueue.
+    pose proof (union_quiet_canonical i j db Hwf) as Hcanonical.
+    pose proof (database_history_union db i j (wf_history db Hwf)) as Hhistory.
+    unfold wf, database_wf in Hwf |- *. unfold union in *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |];
+      cbn [fst snd database_set_forest database_set_runtime database_set_pending
+        runtime_set_union db_forest db_runtime db_npending runtime_allocated
+        runtime_rows runtime_kinds runtime_slots runtime_equalities runtime_queue
+        runtime_all_indexes runtime_new_indexes runtime_projection_counts
+        runtime_function_slots runtime_max_name runtime_slot_bound
+        view row same kind row_get kind_get repr allocated ids pending slots slot_of
+        index canonical slots_fit projection_counts_ok stored_projection_count] in *; tauto.
+  Qed.
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
@@ -453,41 +4227,120 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Canonical databases without pending work rebuild to themselves. *)
   Lemma rebuild_idle : forall db, wf db -> canonical db -> pending db = 0 -> rebuild db = db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hwf Hcanonical Hpending. unfold rebuild.
+    rewrite (LoopNFacts.loopN_stop _ _ db_rstep (db_rebuild_fuel db) (db, []) db).
+    - reflexivity.
+    - unfold db_rebuild_fuel. lia.
+    - unfold pending in Hpending.
+      destruct (runtime_queue (db_runtime db)) as [| i rest] eqn:Hqueue;
+        [| discriminate].
+      cbn [db_rstep fst snd]. unfold db_pop_loser. now rewrite Hqueue.
+  Qed.
+
+  (** Related keys whose identifiers are already representatives are equal cell by cell. *)
+  Lemma canonical_keys_equal : forall db (k1 k2 : list (cell V.t)), wf db ->
+    (forall i, In (Id i) k1 -> repr db i = i) ->
+    (forall i, In (Id i) k2 -> repr db i = i) ->
+    Forall2 (cell_rel (same (view db))) k1 k2 -> k1 = k2.
+  Proof.
+    intros db k1 k2 Hwf Hleft Hright Hrelated. revert Hleft Hright.
+    induction Hrelated as [| c d left right Hcell Htail IH]; intros Hleft Hright.
+    - reflexivity.
+    - f_equal.
+      + destruct Hcell as [i j Hsame | v]; [| reflexivity].
+        f_equal. apply (proj1 (same_repr db i j Hwf)) in Hsame.
+        rewrite (Hleft i), (Hright j) in Hsame by now left. exact Hsame.
+      + apply IH.
+        * intros i Hin. apply Hleft. now right.
+        * intros i Hin. apply Hright. now right.
+  Qed.
 
   (** A database without pending work respects constructor congruence. *)
   Lemma rebuild_congruent : forall db f k1 k2 i j, wf db -> pending db = 0 ->
     row (view db) f k1 (Some (Id i)) -> row (view db) f k2 (Some (Id j)) ->
     Forall2 (cell_rel (same (view db))) k1 k2 -> same (view db) i j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k1 k2 i j Hwf Hquiet Hrow1 Hrow2 Hrelated.
+    pose proof (wf_quiet_canonical db Hwf Hquiet) as Hcanonical.
+    assert (Hkeys : k1 = k2).
+    { eapply canonical_keys_equal; [exact Hwf | | | exact Hrelated].
+      - intros x Hin. apply (Hcanonical f k1 (Some (Id i)) Hrow1 x).
+        apply in_or_app. now left.
+      - intros x Hin. apply (Hcanonical f k2 (Some (Id j)) Hrow2 x).
+        apply in_or_app. now left. }
+    subst k2.
+    pose proof (row_functional db f k1 (Some (Id i)) (Some (Id j)) Hwf Hrow1 Hrow2)
+      as Houtputs.
+    injection Houtputs as ->. apply (proj2 (same_repr db j j Hwf)). reflexivity.
+  Qed.
 
   (** Every indexed tuple comes from a row in its declared slot. *)
   Lemma index_all : forall db s new u, wf db -> I.mem (index s new db) u ->
     exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
       u = permute perm (k ++ option_list o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new u Hwf. exact (wf_index_sound db Hwf s new u).
+  Qed.
 
   (** The full index contains every row in its slot. *)
   Lemma index_all_complete : forall db s f perm k o, wf db ->
     slot_of db s = Some (f, perm) -> row (view db) f k o ->
     I.mem (index s false db) (permute perm (k ++ option_list o)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s f perm k o Hwf. exact (wf_index_complete db Hwf s f perm k o).
+  Qed.
 
   (** Slot indexes have the declared permutation arity. *)
   Lemma index_wf : forall db s new f perm, wf db -> slot_of db s = Some (f, perm) ->
     I.wf (length perm) (index s new db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new f perm Hwf. exact (wf_index_arity db Hwf s new f perm).
+  Qed.
 
   (** Stored lookup agrees with the public row observation. *)
   Lemma old_row : forall db f k o, wf db ->
     (old db f k = Some o <-> row (view db) f k o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o _. reflexivity.
+  Qed.
+
+  (** Every stored row has a declared function within the stored name bound. *)
+  Lemma row_name_bound : forall db f k o, wf db -> row (view db) f k o ->
+    (f <= runtime_max_name (db_runtime db))%positive.
+  Proof.
+    intros db f k o Hwf Hrow.
+    destruct (kind (view db) f) as [output |] eqn:Hkind.
+    - exact (wf_kind_bound db Hwf f output Hkind).
+    - pose proof (wf_row_kind db Hwf f k o Hrow) as Hshape.
+      rewrite Hkind in Hshape. destruct o as [[i | v] |]; contradiction.
+  Qed.
+
+  (** A function above the stored name bound cannot have a row. *)
+  Lemma row_get_outside : forall db f k, wf db ->
+    (runtime_max_name (db_runtime db) < f)%positive -> row_get f k db = None.
+  Proof.
+    intros db f k Hwf Houtside.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| reflexivity].
+    pose proof (row_name_bound db f k o Hwf Hrow) as Hbound. exfalso. lia.
+  Qed.
 
   (** Lookup canonicalizes its query and keeps the view and invariant. *)
   Lemma lookup_spec : forall f k db, wf db ->
     fst (lookup f k db) = old db f (map (canon db) k) /\
     view (snd (lookup f k db)) = view db /\ wf (snd (lookup f k db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf. unfold lookup, old.
+    rewrite (normal_key_correct db k Hwf).
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f) eqn:Hcompare;
+      cbn [fst snd].
+    - split; [reflexivity |]. split; [reflexivity | exact Hwf].
+    - split.
+      + apply Pos.compare_lt_iff in Hcompare. symmetry.
+        exact (row_get_outside db f (map (canon db) k) Hwf Hcompare).
+      + split; [reflexivity | exact Hwf].
+    - split; [reflexivity |]. split; [reflexivity | exact Hwf].
+  Qed.
 
   (** Initialization records declarations and slots and starts empty. *)
   Lemma init_view : forall ds sl f k o i j,
@@ -495,13 +4348,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (same (view (init ds sl)) i j <-> i = j) /\
     kind (view (init ds sl)) f = lookup_kind ds f /\
     slots (init ds sl) = sl /\ ids (init ds sl) = 0%N /\ pending (init ds sl) = 0.
-  Proof. Admitted. (* STUB *)
-
-  (** Insertion keeps layout and allocation and queues at most one loser. *)
-  Lemma layout_put : forall f k o db, wf db ->
-    kind (view (put f k o db)) = kind (view db) /\ slots (put f k o db) = slots db /\
-    ids (put f k o db) = ids db /\ pending (put f k o db) <= pending db + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl f k o i j. split.
+    - change (row_get f k (init ds sl) = Some o <-> False).
+      unfold row_get. cbn [init db_runtime runtime_rows].
+      rewrite PTrie.get_empty. cbn. split; [discriminate | contradiction].
+    - split; [apply equality_log_empty |]. split.
+      + change (PTrieCode.get f (database_kinds ds) = lookup_kind ds f).
+        unfold database_kinds. apply declaration_trie_lookup.
+      + repeat split; reflexivity.
+  Qed.
 
   (** Make keeps layout and returns an allocated identifier. *)
   Lemma layout_make : forall f k db, wf db ->
@@ -510,61 +4366,569 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (ids (snd (make f k db)) <= N.succ (ids db))%N /\
     allocated (snd (make f k db)) (fst (make f k db)) /\
     pending (snd (make f k db)) = pending db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf. unfold make. rewrite (normal_key_correct db k Hwf).
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hrow;
+      try apply fresh_make_layout.
+    cbn [fst snd]. split; [reflexivity |]. split; [reflexivity |].
+    split; [lia |]. split; [| reflexivity].
+    rewrite (UnionFind.find_repr j (db_forest db) (wf_forest db Hwf)).
+    unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
+    - exact (wf_forest db Hwf).
+    - intro i. exact (wf_forest_members db Hwf i).
+    - eapply (wf_row_ids db Hwf f (map (canon db) k) (Some (Id j)) j).
+      + exact Hrow.
+      + apply in_or_app. right. now left.
+  Qed.
 
   (** Union keeps layout and allocation and queues at most one loser. *)
   Lemma layout_union : forall i j db, wf db ->
     kind (view (union i j db)) = kind (view db) /\ slots (union i j db) = slots db /\
     ids (union i j db) = ids db /\ pending (union i j db) <= pending db + 1.
-  Proof. Admitted. (* STUB *)
-
-  (** Rebuilding keeps layout and allocation. *)
-  Lemma layout_rebuild : forall db, wf db ->
-    kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
-    ids (rebuild db) = ids db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db _. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - split; [reflexivity |]. split; [reflexivity |]. split; [reflexivity |].
+      change (S (pending db) <= pending db + 1). lia.
+    - split; [reflexivity |]. split; [reflexivity |]. split; [reflexivity |].
+      change (pending db <= pending db + 1). lia.
+  Qed.
 
   (** Advancing keeps the slot layout. *)
   Lemma layout_advance : forall db, slots (advance db) = slots db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Advancing keeps allocation, pending work and representatives. *)
   Lemma advance_keeps : forall db, wf db ->
     ids (advance db) = ids db /\ pending (advance db) = pending db /\
     repr (advance db) = repr db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _. repeat split; reflexivity.
+  Qed.
 
   (** A quiet union already holds in the old view. *)
   Lemma union_quiet : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = false -> same (view db) i j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hwf _ Hquiet. unfold union in Hquiet.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - discriminate Hquiet.
+    - apply (proj2 (same_repr db i j Hwf)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hwf) Hunion)).
+  Qed.
 
   (** A quiet make reuses a constructor row. *)
   Lemma make_quiet : forall f k db, wf db -> changed db = false ->
     changed (snd (make f k db)) = false ->
     exists j, row (view db) f (map (canon db) k) (Some (Id j)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf _ Hquiet. unfold make in Hquiet.
+    rewrite (normal_key_correct db k Hwf) in Hquiet.
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hrow.
+    - exists j. exact Hrow.
+    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+  Qed.
 
   (** Every row identifier is allocated. *)
   Lemma row_allocated : forall db f k o i, wf db -> row (view db) f k o ->
     In (Id i) (k ++ option_list o) -> allocated db i.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o i Hwf. exact (wf_row_ids db Hwf f k o i).
+  Qed.
 
-  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
-  Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
-    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
-  Proof. Admitted. (* STUB *)
+  (** The executable output merge is the frozen public combination operation. *)
+  Lemma combine_output_correct : forall db f previous o,
+    combine_output db f previous o = combine db f previous o.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Resolving an output conflict retains every stored row. *)
+  Lemma output_conflict_rows : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db ->
+    row (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = row (view db).
+  Proof.
+    intros db previous co Hwf.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try reflexivity; apply union_rows; exact Hwf.
+  Qed.
+
+  (** Resolving an output conflict retains the declared function kinds. *)
+  Lemma output_conflict_kind : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db ->
+    kind (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = kind (view db).
+  Proof.
+    intros db previous co Hwf.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    exact (proj1 (layout_union a b db Hwf)).
+  Qed.
+
+  (** Conflict resolution preserves layout and allocation and queues at most one loser. *)
+  Lemma output_conflict_layout : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db ->
+    let next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end in
+    kind (view next) = kind (view db) /\ slots next = slots db /\ ids next = ids db /\
+    pending next <= pending db + 1.
+  Proof.
+    intros db previous co Hwf.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try solve [repeat split; lia].
+    exact (layout_union a b db Hwf).
+  Qed.
+
+  (** A union with a clear result flag leaves the complete model view unchanged. *)
+  Lemma union_quiet_view : forall i j db, changed (union i j db) = false ->
+    view (union i j db) = view db.
+  Proof.
+    intros i j db Hquiet. unfold union in Hquiet |- *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; [discriminate Hquiet | reflexivity].
+  Qed.
+
+  (** Quiet output-conflict resolution preserves the model view. *)
+  Lemma output_conflict_quiet_view : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    let next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end in
+    changed next = false -> view next = view db.
+  Proof.
+    intros db previous co. cbn zeta. intro Hquiet.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    exact (union_quiet_view a b db Hquiet).
+  Qed.
+
+  (** Every equality from an output conflict follows from the old relation and that conflict. *)
+  Lemma output_conflict_same_sources : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db -> forall i j,
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j.
+  Proof.
+    intros db previous co Hwf i j Hsame.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try solve [apply rst_step; now left].
+    pose proof (proj1 (union_same a b db i j Hwf) Hsame) as Hclosure.
+    eapply equality_closure_mono; [| exact Hclosure].
+    intros x y [Hold | Hpair]; [now left |].
+    right. injection Hpair as -> ->. split; reflexivity.
+  Qed.
+
+  (** The logged equality relation is closed under equivalence reasoning. *)
+  Lemma same_closed : forall db R,
+    (forall a b, R a b -> same (view db) a b) ->
+    forall i j, clos_refl_sym_trans positive R i j -> same (view db) i j.
+  Proof.
+    intros db R Hgenerators i j Hclosure.
+    induction Hclosure as [i j Hstep | i | i j Hstep IH | i j k Hleft IHleft Hright IHright].
+    - exact (Hgenerators i j Hstep).
+    - apply equality_log_refl.
+    - now apply equality_log_sym.
+    - eapply equality_log_trans; eassumption.
+  Qed.
+
+  (** An output conflict adds exactly the equivalence closure of its two outputs. *)
+  Lemma output_conflict_same : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db -> forall i j,
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) i j <->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j.
+  Proof.
+    intros db previous co Hwf i j. split.
+    - apply output_conflict_same_sources. exact Hwf.
+    - intro Hclosure.
+      destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+        try solve [refine (same_closed db _ _ i j Hclosure);
+          intros x y [Hold | [Ha Hb]]; [exact Hold | congruence]].
+      apply (proj2 (union_same a b db i j Hwf)).
+      eapply equality_closure_mono; [| exact Hclosure].
+      intros x y [Hold | [Ha Hb]]; [now left |].
+      right. injection Ha as ->. injection Hb as ->. reflexivity.
+  Qed.
+
+  (** Insertion retains the declaration table through conflicts and row replacement. *)
+  Lemma put_kind_effect : forall db f k o, wf db ->
+    kind (view (put f k o db)) = kind (view db).
+  Proof.
+    intros db f k o Hwf. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hkind : kind (view next) = kind (view db)).
+    { apply output_conflict_kind. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hkind |].
+      now rewrite row_replace_kind.
+    - now rewrite row_replace_kind.
+  Qed.
+
+  (** The only inserted row is the canonical key with its combined output. *)
+  Lemma put_row_sources : forall db f k o, wf db -> forall g args output,
+    row (view (put f k o db)) g args output ->
+      row (view db) g args output \/
+      (g = f /\ args = map (canon db) k /\
+        output = combine db f (old db f (map (canon db) k)) (option_map (canon db) o)).
+  Proof.
+    intros db f k o Hwf g args output. unfold put.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)).
+    { apply output_conflict_rows. exact Hwf. }
+    intro Hrow. destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + left. now rewrite <- Hrows.
+      + apply row_replace_sources in Hrow as [Hold | Hnew].
+        * left. now rewrite <- Hrows.
+        * now right.
+    - apply row_replace_sources in Hrow as [Hold | Hnew].
+      + left. now rewrite <- Hrows.
+      + now right.
+  Qed.
+
+  (** Insertion only adds equality consequences justified by the old and requested outputs. *)
+  Lemma put_same_sources : forall db f k o, wf db -> forall i j,
+    same (view (put f k o db)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/ conflict db f k o x y) i j.
+  Proof.
+    intros db f k o Hwf i j. unfold put, conflict.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hsame : forall a b, same (view next) a b ->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/
+          (previous = Some (Some (Id x)) /\ co = Some (Id y))) a b).
+    { apply output_conflict_same_sources. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [apply Hsame |].
+      rewrite row_replace_same. apply Hsame.
+    - rewrite row_replace_same. apply Hsame.
+  Qed.
+
+  (** Insertion changes precisely the canonical key and combines its output. *)
+  Lemma put_rows : forall f k o db, wf db -> kind_ok db f k o ->
+    let ck := map (canon db) k in let co := option_map (canon db) o in
+    forall f' k' o', row (view (put f k o db)) f' k' o' <->
+      (row (view db) f' k' o' /\ (f', k') <> (f, ck)) \/
+      (f' = f /\ k' = ck /\ combine db f (old db f ck) co = o').
+  Proof.
+    intros f k o db Hwf _. cbn zeta. intros g args output. unfold put.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous eqn:Hprevious.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)).
+    { apply output_conflict_rows. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb_spec before updated) as [Hequal | Hdifferent].
+      + rewrite Hrows, <- Hequal. apply row_unchanged_binding. exact (eq_sym Hprevious).
+      + now rewrite row_replace_rows, Hrows.
+    - now rewrite row_replace_rows, Hrows.
+  Qed.
+
+  (** Identifier output conflicts add precisely their equality closure. *)
+  Lemma put_same : forall f k o db i j, wf db -> kind_ok db f k o ->
+    (same (view (put f k o db)) i j <->
+      clos_refl_sym_trans positive
+        (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
+  Proof.
+    intros f k o db i j Hwf _. unfold put, conflict.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hsame : same (view next) i j <->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/
+          (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j).
+    { apply output_conflict_same. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hsame |].
+      now rewrite row_replace_same.
+    - now rewrite row_replace_same.
+  Qed.
+
+  (** Insertion keeps layout and allocation and queues at most one loser. *)
+  Lemma layout_put : forall f k o db, wf db ->
+    kind (view (put f k o db)) = kind (view db) /\ slots (put f k o db) = slots db /\
+    ids (put f k o db) = ids db /\ pending (put f k o db) <= pending db + 1.
+  Proof.
+    intros f k o db Hwf. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hlayout : kind (view next) = kind (view db) /\ slots next = slots db /\
+      ids next = ids db /\ pending next <= pending db + 1).
+    { apply output_conflict_layout. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hlayout |].
+      now rewrite row_replace_kind, row_replace_slots, row_replace_ids, row_replace_pending.
+    - now rewrite row_replace_kind, row_replace_slots, row_replace_ids, row_replace_pending.
+  Qed.
+
+  (** Combining an already represented output leaves the stored output unchanged. *)
+  Lemma combine_out_le : forall db f o before, out_le db f o before ->
+    combine db f (Some before) (option_map (canon db) o) = before.
+  Proof.
+    intros db f o before Hle.
+    destruct o as [[i | v] |]; destruct before as [[j | w] |];
+      cbn [out_le cell_le option_map canon] in Hle; try contradiction; try reflexivity;
+      try solve [unfold combine; destruct (kind (view db) f) as [[| |m] |]; reflexivity].
+    destruct Hle as [m [Hkind Hmerge]]. unfold combine. rewrite Hkind.
+    cbn [option_map canon]. rewrite V.merge_comm, Hmerge. reflexivity.
+  Qed.
+
+  (** A represented insertion only performs its possible identifier conflict union. *)
+  Lemma put_present_operation : forall db f k o before, wf db ->
+    row (view db) f (map (canon db) k) before -> out_le db f o before ->
+    put f k o db =
+      match before, option_map (canon db) o with
+      | Some (Id a), Some (Id b) => union a b db | _, _ => db end.
+  Proof.
+    intros db f k o before Hwf Hrow Hle. unfold put.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    change (row_get f (map (canon db) k) db = Some before) in Hrow. rewrite Hrow.
+    rewrite combine_output_correct, (combine_out_le db f o before Hle), output_eqb_refl.
+    reflexivity.
+  Qed.
+
+  (** An insertion raises the flag only when its row was not represented. *)
+  Lemma put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
+    changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
+  Proof.
+    intros f k o db Hwf _ Hquiet Hchanged [before [Hrow Hle]].
+    rewrite (put_present_operation db f k o before Hwf Hrow Hle) in Hchanged.
+    destruct o as [[i | v] |]; destruct before as [[j | w] |];
+      try solve [change (changed db = true) in Hchanged; congruence].
+    change (changed (union j (repr db i) db) = true) in Hchanged.
+    apply (union_changed j (repr db i) db Hwf Hquiet Hchanged).
+    apply (proj2 (same_repr db j (repr db i) Hwf)).
+    rewrite (repr_idem db i Hwf). symmetry.
+    exact (proj1 (same_repr db i j Hwf) Hle).
+  Qed.
+
+  (** A quiet, unchanged output already contains the kind-correct requested output. *)
+  Lemma quiet_output_le : forall db f k o before, wf db -> kind_ok db f k o ->
+    old db f (map (canon db) k) = Some before ->
+    before = combine db f (Some before) (option_map (canon db) o) ->
+    changed db = false ->
+    changed (match before, option_map (canon db) o with
+      | Some (Id a), Some (Id b) => union a b db | _, _ => db end) = false ->
+    out_le db f o before.
+  Proof.
+    intros db f k o before Hwf [_ [_ Hshape]] Hprevious Hequal Hquiet Hnext.
+    pose proof (wf_row_kind db Hwf f (map (canon db) k) before Hprevious) as Hbefore.
+    destruct (kind (view db) f) as [[| |m] |] eqn:Hkind in Hshape, Hbefore;
+      destruct o as [[i | v] |]; destruct before as [[j | w] |];
+      cbn in Hshape, Hbefore; try contradiction.
+    - exact I.
+    - change (changed (union j (repr db i) db) = false) in Hnext.
+      pose proof (union_quiet j (repr db i) db Hwf Hquiet Hnext) as Hsame.
+      apply (proj2 (same_repr db i j Hwf)).
+      pose proof (proj1 (same_repr db j (repr db i) Hwf) Hsame) as Hrepr.
+      rewrite (repr_idem db i Hwf) in Hrepr. symmetry. exact Hrepr.
+    - exists m. split; [exact Hkind |].
+      unfold combine in Hequal. rewrite Hkind in Hequal. cbn [option_map canon] in Hequal.
+      injection Hequal as Hequal. rewrite V.merge_comm. symmetry. exact Hequal.
+  Qed.
+
+  (** A quiet insertion already has its requested row represented. *)
+  Lemma put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
+    changed db = false -> changed (put f k o db) = false ->
+    view (put f k o db) = view db /\ present_put (view db) f (map (canon db) k) o.
+  Proof.
+    intros f k o db Hwf Hkind Hquiet Hnew. unfold put in Hnew |- *.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf) in Hnew |- *.
+    rewrite combine_output_correct in Hnew |- *. fold (old db f (map (canon db) k)) in Hnew |- *.
+    remember (old db f (map (canon db) k)) as previous eqn:Hprevious in Hnew |- *.
+    set (co := option_map (canon db) o) in Hnew |- *.
+    set (updated := combine db f previous co) in Hnew |- *.
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end) in Hnew |- *.
+    destruct previous as [before |].
+    - destruct (output_eqb_spec before updated) as [Hequal | Hdifferent].
+      + split.
+        * exact (output_conflict_quiet_view db (Some before) co Hnew).
+        * exists before. split; [exact (eq_sym Hprevious) |].
+          exact (quiet_output_le db f k o before Hwf Hkind (eq_sym Hprevious)
+            Hequal Hquiet Hnew).
+      + rewrite row_replace_changed in Hnew. discriminate Hnew.
+    - rewrite row_replace_changed in Hnew. discriminate Hnew.
+  Qed.
+
+  (** Canonicalization preserves every cell's denotation in a satisfying model. *)
+  Lemma canon_den : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> forall c, den nu (canon db c) = den nu c.
+  Proof.
+    intros M nu db Hwf Hsat [i | v]; cbn [canon den]; [| reflexivity].
+    f_equal.
+    apply (sat_same V.merge M nu (view db) (repr db i) i Hsat).
+    apply (proj2 (same_repr db (repr db i) i Hwf)).
+    apply repr_idem. exact Hwf.
+  Qed.
+
+  (** Canonicalizing a tuple preserves all of its interpreted arguments. *)
+  Lemma canon_key_den : forall (M : model (V := V.t)) nu db k, wf db ->
+    sat V.merge M nu (view db) -> map (den nu) (map (canon db) k) = map (den nu) k.
+  Proof.
+    intros M nu db k Hwf Hsat. rewrite map_map. apply map_ext.
+    intro c. exact (canon_den M nu db Hwf Hsat c).
+  Qed.
+
+  (** Canonicalizing an optional output preserves its interpreted value. *)
+  Lemma canon_output_den : forall (M : model (V := V.t)) nu db o, wf db ->
+    sat V.merge M nu (view db) ->
+    option_map (den nu) (option_map (canon db) o) = option_map (den nu) o.
+  Proof.
+    intros M nu db [c |] Hwf Hsat; cbn [option_map]; [| reflexivity].
+    now rewrite (canon_den M nu db Hwf Hsat c).
+  Qed.
 
   (** Inserting a true, kind-correct row keeps the model. *)
   Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
     sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db f k o Hwf _ Hsat Hholds.
+    eapply (@sat_put_view V.t V.merge M nu (view db) (view (put f k o db)) f k o
+      (map (canon db) k) (option_map (canon db) o) (old db f (map (canon db) k))).
+    - exact Hsat.
+    - exact (put_kind_effect db f k o Hwf).
+    - intros previous Hprevious. exact Hprevious.
+    - exact (canon_key_den M nu db k Hwf Hsat).
+    - exact (canon_output_den M nu db o Hwf Hsat).
+    - exact Hholds.
+    - exact (put_row_sources db f k o Hwf).
+    - exact (put_same_sources db f k o Hwf).
+  Qed.
 
   (** A justified identifier union keeps the model. *)
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db i j Hwf Hsat Hequal.
+    eapply sat_union_view with (w := view db) (i := i) (j := j).
+    - exact (proj1 (layout_union i j db Hwf)).
+    - exact (union_rows i j db Hwf).
+    - intros a b Hsame.
+      pose proof (proj1 (union_same i j db a b Hwf) Hsame) as Hclosure.
+      eapply equality_closure_mono; [| exact Hclosure].
+      intros x y [Hold | Hpair].
+      + now left.
+      + right. now injection Hpair as -> ->.
+    - exact Hsat.
+    - exact Hequal.
+  Qed.
+
+  (** The next positive identifier is outside the current allocation interval. *)
+  Lemma fresh_id_unallocated : forall db i, fresh_id db i -> ~ allocated db i.
+  Proof.
+    intros db i Hfresh. unfold fresh_id in Hfresh. subst i. unfold allocated.
+    assert (Hnext : Npos (N.succ_pos (ids db)) = N.succ (ids db)).
+    { destruct (ids db); reflexivity. }
+    rewrite Hnext. lia.
+  Qed.
+
+  (** A representative of an allocated identifier is still allocated. *)
+  Lemma repr_allocated : forall db i, wf db -> allocated db i -> allocated db (repr db i).
+  Proof.
+    intros db i Hwf Hi. unfold allocated, repr.
+    eapply UnionFindCodeFacts.repr_allocated.
+    - exact (wf_forest db Hwf).
+    - intro j. exact (wf_forest_members db Hwf j).
+    - exact Hi.
+  Qed.
+
+  (** Canonicalizing an allocated tuple does not introduce an unallocated identifier. *)
+  Lemma canon_key_allocated : forall db k, wf db ->
+    (forall j, In (Id j) k -> allocated db j) ->
+    forall i, In (Id i) (map (canon db) k) -> allocated db i.
+  Proof.
+    intros db k Hwf Hargs i Hin.
+    apply in_map_iff in Hin as [c [Hcell Hin]].
+    destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+    injection Hcell as <-. apply repr_allocated; [exact Hwf | exact (Hargs j Hin)].
+  Qed.
+
+  (** A satisfying interpretation gives each identifier and its representative one meaning. *)
+  Lemma repr_den : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> forall i, nu (repr db i) = nu i.
+  Proof.
+    intros M nu db Hwf Hsat i.
+    apply (sat_same V.merge M nu (view db) (repr db i) i Hsat).
+    apply (proj2 (same_repr db (repr db i) i Hwf)).
+    apply repr_idem. exact Hwf.
+  Qed.
+
+  (** A fresh constructor extension preserves the model after assigning its new output. *)
+  Lemma fresh_extension_sat : forall (M : model (V := V.t)) nu db db' f k i,
+    wf db -> fresh_id db i -> extends_by db db' f k i ->
+    kind (view db) f = Some OId ->
+    (forall j, In (Id j) k -> allocated db j) -> sat V.merge M nu (view db) ->
+    exists nu', (forall j, j <> i -> nu' j = nu j) /\
+      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
+  Proof.
+    intros M nu db db' f k i Hwf Hfresh [_ [Hkinds [Hsame Hrows]]] Hkind Hargs Hsat.
+    pose proof (fresh_id_unallocated db i Hfresh) as Hnot.
+    assert (Hmodel : exists nu', (forall j, j <> i -> nu' j = nu j) /\
+      nu' i = con M f (map (den nu) (map (canon db) k)) /\ sat V.merge M nu' (view db')).
+    { eapply (@sat_fresh_constructor_view V.t V.merge M nu (view db) (view db')
+        f (map (canon db) k) i).
+      - exact Hsat.
+      - exact Hkinds.
+      - intros g args output Hrow Hin. apply Hnot.
+        exact (wf_row_ids db Hwf g args output i Hrow Hin).
+      - exact (equality_log_fresh_occurs (runtime_equalities (db_runtime db))
+          (allocated db) (wf_log_allocated db Hwf) i Hnot).
+      - exact Hsame.
+      - exact Hrows.
+      - exact Hkind.
+      - intro Hin. apply Hnot. exact (canon_key_allocated db k Hwf Hargs i Hin). }
+    destruct Hmodel as [nu' [Hkeep [Hmeaning Hsat']]].
+    exists nu'. split; [exact Hkeep |]. split; [| exact Hsat'].
+    now rewrite (canon_key_den M nu db k Hwf Hsat) in Hmeaning.
+  Qed.
 
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
@@ -574,15 +4938,2144 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db f k Hwf Hkind Hargs Hsat.
+    remember (make f k db) as result eqn:Hmake. destruct result as [i db'].
+    pose proof (make_spec f k db Hwf Hkind) as Hspec. rewrite <- Hmake in Hspec.
+    destruct Hspec as [[j [Hrow [Hi Hdb]]] | [Hfresh [_ Hextension]]].
+    - subst db' i. exists nu. split; [reflexivity |]. split; [| exact Hsat].
+      rewrite (repr_den M nu db Hwf Hsat j). symmetry.
+      pose proof (sat_constructor V.merge M nu (view db) f (map (canon db) k) j Hsat Hrow)
+        as Hconstructor.
+      now rewrite (canon_key_den M nu db k Hwf Hsat) in Hconstructor.
+    - exact (fresh_extension_sat M nu db db' f k i Hwf Hfresh Hextension Hkind Hargs Hsat).
+  Qed.
+
+  (** Normalizing a row tuple is the same as normalizing its key and optional output. *)
+  Lemma canon_row_tuple : forall db k o,
+    map (canon db) (k ++ option_list o) =
+      map (canon db) k ++ option_list (option_map (canon db) o).
+  Proof.
+    intros db k [c |]; rewrite map_app; reflexivity.
+  Qed.
+
+  (** Every identifier in a normalized tuple is already its own representative. *)
+  Lemma canon_key_fixed : forall db k, wf db ->
+    forall i, In (Id i) (map (canon db) k) -> repr db i = i.
+  Proof.
+    intros db k Hwf i Hin. apply in_map_iff in Hin as [c [Hcell Hin]].
+    destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+    injection Hcell as <-. apply repr_idem. exact Hwf.
+  Qed.
+
+  (** Normalization preserves allocation, tuple length and the declared output shape. *)
+  Lemma kind_ok_canon : forall db f k o, wf db -> kind_ok db f k o ->
+    kind_ok db f (map (canon db) k) (option_map (canon db) o).
+  Proof.
+    intros db f k o Hwf [Hids [Hfits Hkind]]. unfold kind_ok. split.
+    - intros i Hin. rewrite <- canon_row_tuple in Hin.
+      exact (canon_key_allocated db (k ++ option_list o) Hwf Hids i Hin).
+    - split.
+      + rewrite <- canon_row_tuple, length_map. exact Hfits.
+      + destruct o as [[i | v] |]; exact Hkind.
+  Qed.
+
+  (** A fresh constructor row has allocated cells, the required slots and its declared kind. *)
+  Lemma fresh_constructor_kind_ok : forall db f k, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    kind (view db) f = Some OId ->
+    kind_ok (allocate_id (N.succ_pos (ids db)) db) f (map (canon db) k)
+      (Some (Id (N.succ_pos (ids db)))).
+  Proof.
+    intros db f k Hwf Hargs Hfits Hkind. unfold kind_ok. split.
+    - intros i Hin. apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+      + apply allocate_next_monotone. exact (canon_key_allocated db k Hwf Hargs i Hin).
+      + cbn [option_list In] in Hin. destruct Hin as [Heq | Hfalse]; [| contradiction].
+        injection Heq as <-. unfold allocated. rewrite allocate_id_ids. lia.
+    - split.
+      + unfold slots_fit in *. rewrite allocate_id_slots, length_app, length_map.
+        cbn [option_list length]. replace (length k + 1) with (S (length k)) by lia.
+        exact Hfits.
+      + rewrite allocate_id_view, Hkind. exact I.
+  Qed.
+
+  (** The fresh singleton and every normalized key identifier remain canonical after allocation. *)
+  Lemma fresh_constructor_canonical : forall db k, wf db ->
+    forall i, In (Id i)
+      (map (canon db) k ++ option_list (Some (Id (N.succ_pos (ids db))))) ->
+    repr (allocate_id (N.succ_pos (ids db)) db) i = i.
+  Proof.
+    intros db k Hwf i Hin. rewrite (allocate_next_repr db Hwf i).
+    apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+    - exact (canon_key_fixed db k Hwf i Hin).
+    - cbn [option_list In] in Hin. destruct Hin as [Heq | Hfalse]; [| contradiction].
+      injection Heq as <-. apply UnionFindCodeFacts.repr_absent. now apply allocate_next_absent.
+  Qed.
+
+  (** The common row-update obligation used by put and fresh constructor allocation. *)
+  Definition replacement_preserves_wf : Prop :=
+    forall db f k previous o, wf db -> old db f k = previous -> kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    wf (row_replace f k previous o db).
+
+  (** Every non-reuse make branch follows from fresh allocation and the common row update. *)
+  Lemma wf_make_fresh_from_replacement : replacement_preserves_wf ->
+    forall db f k previous, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    old db f (map (canon db) k) = previous ->
+    wf (match kind_get f db with
+      | Some OId => row_replace f (map (canon db) k) previous
+          (Some (Id (N.succ_pos (ids db)))) (allocate_id (N.succ_pos (ids db)) db)
+      | _ => allocate_id (N.succ_pos (ids db)) db
+      end).
+  Proof.
+    intros Hreplace db f k previous Hwf Hargs Hfits Hprevious.
+    destruct (kind_get f db) as [[| |m] |] eqn:Hkind; try now apply wf_allocate_next.
+    apply Hreplace.
+    - now apply wf_allocate_next.
+    - exact Hprevious.
+    - apply fresh_constructor_kind_ok; assumption.
+    - apply fresh_constructor_canonical. exact Hwf.
+  Qed.
+
+  (** Constructor well-formedness reduces to the proved allocation and one row replacement. *)
+  Lemma wf_make_from_replacement : replacement_preserves_wf ->
+    forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
+  Proof.
+    intros Hreplace f k db Hwf Hargs Hfits. unfold make.
+    rewrite (normal_key_correct db k Hwf). fold (ids db).
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hprevious;
+      cbn [snd]; [exact Hwf | | |];
+      apply wf_make_fresh_from_replacement; assumption.
+  Qed.
+
+  (** Replacing one value output by another preserves kind and all identifier obligations. *)
+  Lemma kind_ok_value_replace : forall db f k a b,
+    kind_ok db f k (Some (Val a)) -> kind_ok db f k (Some (Val b)).
+  Proof.
+    intros db f k a b [Hids [Hfits Hkind]]. unfold kind_ok. split.
+    - intros i Hin. apply Hids. apply in_app_iff in Hin. apply in_app_iff.
+      destruct Hin as [Hin | Hin]; [now left |].
+      cbn [option_list In] in Hin. destruct Hin as [Hfalse | Hfalse];
+        [discriminate Hfalse | contradiction].
+    - split.
+      + rewrite length_app in Hfits |- *. exact Hfits.
+      + exact Hkind.
+  Qed.
+
+  (** Normalized keys and normalized optional outputs form a canonical row. *)
+  Lemma canon_row_fixed : forall db k o, wf db ->
+    forall i, In (Id i) (map (canon db) k ++ option_list (option_map (canon db) o)) ->
+    repr db i = i.
+  Proof.
+    intros db k o Hwf i Hin. rewrite <- canon_row_tuple in Hin.
+    exact (canon_key_fixed db (k ++ option_list o) Hwf i Hin).
+  Qed.
+
+  (** Put uses only a justified union, an unchanged state or one canonical row replacement. *)
+  Lemma wf_put_from_replacement : replacement_preserves_wf ->
+    forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+  Proof.
+    intros Hreplace f k o db Hwf Hkind.
+    pose proof (kind_ok_canon db f k o Hwf Hkind) as Hnormal.
+    unfold put. rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    destruct (old db f (map (canon db) k)) as [before |] eqn:Hprevious.
+    - pose proof (wf_row_kind db Hwf f (map (canon db) k) before Hprevious) as Hbefore.
+      destruct Hkind as [Hids [Hfits Hshape]].
+      destruct (kind (view db) f) as [[| |m] |] eqn:Hdecl in Hshape, Hbefore;
+        destruct o as [[i | v] |]; destruct before as [[j | w] |];
+        cbn in Hshape, Hbefore; try contradiction.
+      + cbn [combine option_map canon]. rewrite output_eqb_refl. exact Hwf.
+      + cbn [combine option_map canon]. rewrite output_eqb_refl.
+        apply wf_union; [exact Hwf | |].
+        * eapply wf_row_ids; [exact Hwf | exact Hprevious |].
+          apply in_app_iff. right. cbn [option_list In]. now left.
+        * apply repr_allocated; [exact Hwf |]. apply Hids.
+          apply in_app_iff. right. cbn [option_list In]. now left.
+      + cbn [combine option_map canon]. rewrite Hdecl.
+        destruct (output_eqb (Some (Val w)) (Some (Val (V.merge m w v)))); [exact Hwf |].
+        apply Hreplace.
+        * exact Hwf.
+        * exact Hprevious.
+        * exact (kind_ok_value_replace db f (map (canon db) k) v (V.merge m w v) Hnormal).
+        * exact (canon_row_fixed db k (Some (Val (V.merge m w v))) Hwf).
+    - cbn [combine]. apply Hreplace.
+      + exact Hwf.
+      + exact Hprevious.
+      + exact Hnormal.
+      + exact (canon_row_fixed db k o Hwf).
+  Qed.
+
+  (** Exact projection multiplicities complete well-formed canonical row replacement. *)
+  Lemma row_replace_wf : replacement_preserves_wf.
+  Proof.
+    intros db f k previous o Hwf Hprevious Hkind Hcanonical.
+    destruct (row_replace_cache_correct db f k previous o Hwf Hprevious
+      (proj1 (proj2 Hkind))) as [Hsound [Hcomplete [Harity Hcounts]]].
+    apply row_replace_wf_from_caches; assumption.
+  Qed.
+
+  (** Kind-correct insertion keeps the database well formed. *)
+  Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+  Proof.
+    exact (wf_put_from_replacement row_replace_wf).
+  Qed.
+
+  (** Constructor allocation keeps the database well formed. *)
+  Lemma wf_make : forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
+  Proof.
+    exact (wf_make_from_replacement row_replace_wf).
+  Qed.
+
+  (** Erasing a row removes precisely its selected table binding. *)
+  Lemma row_erase_binding : forall f k db g args output,
+    row (view (row_erase f k db)) g args output <->
+      row (view db) g args output /\ (g, args) <> (f, k).
+  Proof.
+    intros f k db g args output.
+    change (RowMap.get (g, args) (RowMap.remove (f, k) (runtime_rows (db_runtime db))) =
+      Some output <-> RowMap.get (g, args) (runtime_rows (db_runtime db)) = Some output /\
+        (g, args) <> (f, k)).
+    apply RowFacts.remove_binding_iff.
+  Qed.
+
+  (** Cache maintenance and table deletion preserve all unrelated runtime observations. *)
+  Lemma row_delete_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall rows state, observe (runtime_set_rows rows state) = observe state) ->
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall f k db, observe (db_runtime (row_delete f k db)) = observe (db_runtime db).
+  Proof.
+    intros A observe Hrows Hindexes f k db. unfold row_delete.
+    destruct (row_get f k db); [| reflexivity].
+    unfold row_erase. cbn [database_set_runtime db_runtime]. rewrite Hrows.
+    now apply slots_update_preserves.
+  Qed.
+
+  (** Deleting a row keeps every function declaration exactly unchanged. *)
+  Lemma row_delete_kind : forall f k db, kind (view (row_delete f k db)) = kind (view db).
+  Proof.
+    intros f k db. unfold view, kind_get. cbn [kind].
+    rewrite (row_delete_preserves _ (@runtime_kinds (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    reflexivity.
+  Qed.
+
+  (** Deleting a row keeps the stored equality relation exactly unchanged. *)
+  Lemma row_delete_same : forall f k db, same (view (row_delete f k db)) = same (view db).
+  Proof.
+    intros f k db. unfold view. cbn [same].
+    rewrite (row_delete_preserves _ (@runtime_equalities (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    reflexivity.
+  Qed.
+
+  (** Deletion removes one row key and retains all other rows, even before rebuilding. *)
+  Lemma row_delete_binding : forall f k db g args output,
+    row (view (row_delete f k db)) g args output <->
+      row (view db) g args output /\ (g, args) <> (f, k).
+  Proof.
+    intros f k db g args output. unfold row_delete.
+    destruct (row_get f k db) as [before |] eqn:Hprevious.
+    - now rewrite row_erase_binding, slots_update_view.
+    - split; [| tauto]. intro Hrow. split; [exact Hrow |].
+      intro Hequal. inversion Hequal; subst.
+      change (row_get f k db = Some output) in Hrow. congruence.
+  Qed.
+
+  (** Deleting a contribution retains the complete preexisting write history. *)
+  Lemma row_delete_written : forall db f k,
+    incl (db_written_cells db) (db_written_cells (row_delete f k db)).
+  Proof.
+    intros db f k c Hin. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| exact Hin].
+    change (In c (db_written_cells (slots_update false f (k ++ option_list before) db))).
+    rewrite slots_update_written_cells. apply in_or_app. now right.
+  Qed.
+
+  (** Deletion only retains rows whose cells were already recorded. *)
+  Lemma row_delete_recorded_rows : forall db f k, recorded_rows db ->
+    recorded_rows (row_delete f k db).
+  Proof.
+    intros db f k Hrecorded.
+    eapply recorded_rows_transport; [| apply row_delete_written | exact Hrecorded].
+    intros g args output Hrow. now apply row_delete_binding in Hrow as [Hrow _].
+  Qed.
+
+  (** Deletion preserves the complete row and cache history invariant. *)
+  Lemma database_history_row_delete : forall db f k, database_history db ->
+    database_history (row_delete f k db).
+  Proof.
+    intros db f k [Hmetadata Hrows]. split.
+    - now apply metadata_row_delete.
+    - now apply row_delete_recorded_rows.
+  Qed.
+
+  (** Removing a stored row preserves every satisfying interpretation without a quietness premise. *)
+  Lemma row_delete_sat : forall (M : model (V := V.t)) nu f k db,
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (row_delete f k db)).
+  Proof.
+    intros M nu f k db Hsat. eapply sat_restrict; [apply row_delete_kind | | | exact Hsat].
+    - intros g args output Hrow. now apply row_delete_binding in Hrow as [Hrow _].
+    - intros i j Hsame. now rewrite row_delete_same in Hsame.
+  Qed.
+
+  (** Deleting a row never modifies identifier representatives. *)
+  Lemma row_delete_forest : forall f k db,
+    db_forest (row_delete f k db) = db_forest db.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [o |]; [| reflexivity].
+    change (db_forest (slots_update false f (k ++ option_list o) db) = db_forest db).
+    apply slots_update_forest.
+  Qed.
+
+  (** Deletion retains the allocation interval, slot declarations and pending queue. *)
+  Lemma row_delete_ids : forall f k db, ids (row_delete f k db) = ids db.
+  Proof.
+    intros f k db. apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  Lemma row_delete_slots : forall f k db, slots (row_delete f k db) = slots db.
+  Proof.
+    intros f k db. apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  Lemma row_delete_pending : forall f k db, pending (row_delete f k db) = pending db.
+  Proof.
+    intros f k db. exact (row_delete_preserves _ (fun state => length (runtime_queue state))
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+  Qed.
+
+  Lemma row_delete_npending : forall f k db,
+    db_npending (row_delete f k db) = db_npending db.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [o |]; [| reflexivity].
+    change (db_npending (slots_update false f (k ++ option_list o) db) = db_npending db).
+    apply slots_update_npending.
+  Qed.
+
+  (** Deleting the obsolete binding does not reset an already-raised change flag. *)
+  Lemma row_delete_changed : forall f k db, changed (row_delete f k db) = changed db.
+  Proof.
+    intros f k db. apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  (** A forest representative is fixed by the guarded executable normalizer. *)
+  Lemma normal_cell_root : forall db i, UnionFind.wf (db_forest db) ->
+    normal_cell db (Id (repr db i)) = Id (repr db i).
+  Proof.
+    intros db i Hforest. unfold repr. cbn [normal_cell].
+    destruct (N.compare (runtime_allocated (db_runtime db))
+      (Npos (UnionFind.repr (db_forest db) i))); try reflexivity;
+      f_equal; rewrite (UnionFind.find_repr _ _ Hforest);
+      now apply UnionFind.repr_idem.
+  Qed.
+
+  (** The allocation guard and representative lookup together form an idempotent normalizer. *)
+  Lemma normal_cell_idempotent : forall db c, UnionFind.wf (db_forest db) ->
+    normal_cell db (normal_cell db c) = normal_cell db c.
+  Proof.
+    intros db [i | v] Hforest; [| reflexivity].
+    remember (normal_cell db (Id i)) as normalized eqn:Hnormal.
+    unfold normal_cell in Hnormal.
+    destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hbound.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+      subst normalized. now apply normal_cell_root.
+    - subst normalized. unfold normal_cell. now rewrite Hbound.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+      subst normalized. now apply normal_cell_root.
+  Qed.
+
+  (** Normalizing a key twice retains the first normalized key. *)
+  Lemma normal_key_idempotent : forall db k, UnionFind.wf (db_forest db) ->
+    normal_key db (normal_key db k) = normal_key db k.
+  Proof.
+    intros db k Hforest. unfold normal_key. rewrite map_map. apply map_ext.
+    intro c. now apply normal_cell_idempotent.
+  Qed.
+
+  (** Normalizing an optional output twice retains the first normalized output. *)
+  Lemma normal_output_idempotent : forall db o, UnionFind.wf (db_forest db) ->
+    option_map (normal_cell db) (option_map (normal_cell db) o) =
+      option_map (normal_cell db) o.
+  Proof.
+    intros db [c |] Hforest; cbn [option_map]; [| reflexivity].
+    f_equal. now apply normal_cell_idempotent.
+  Qed.
+
+  (** Deleting a row preserves the forest and allocation guard used to normalize cells. *)
+  Lemma row_delete_normal_cell : forall db f k c,
+    normal_cell (row_delete f k db) c = normal_cell db c.
+  Proof.
+    intros db f k [i | v]; cbn [normal_cell]; [| reflexivity].
+    rewrite row_delete_forest.
+    rewrite (row_delete_preserves _ (@runtime_allocated (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    reflexivity.
+  Qed.
+
+  (** Deletion preserves executable key normalization pointwise. *)
+  Lemma row_delete_normal_key : forall db f k args,
+    normal_key (row_delete f k db) args = normal_key db args.
+  Proof.
+    intros db f k args. unfold normal_key. apply map_ext.
+    intro c. apply row_delete_normal_cell.
+  Qed.
+
+  (** Deletion preserves executable optional-output normalization. *)
+  Lemma row_delete_normal_output : forall db f k o,
+    option_map (normal_cell (row_delete f k db)) o = option_map (normal_cell db) o.
+  Proof.
+    intros db f k [c |]; cbn [option_map]; [| reflexivity].
+    now rewrite row_delete_normal_cell.
+  Qed.
+
+  (** A present deletion uses the finite-map removal of precisely the selected row key. *)
+  Lemma row_delete_map_present : forall f k db o, row_get f k db = Some o ->
+    runtime_rows (db_runtime (row_delete f k db)) =
+      RowMap.remove (f, k) (runtime_rows (db_runtime db)).
+  Proof.
+    intros f k db o Hrow. unfold row_delete. rewrite Hrow. unfold row_erase.
+    cbn [database_set_runtime db_runtime runtime_set_rows runtime_rows].
+    rewrite (slots_update_preserves _ (@runtime_rows (cell V.t) I.t)
+      (fun all new counts state => eq_refl)). reflexivity.
+  Qed.
+
+  (** Erasing a binding leaves every previously updated slot cache intact. *)
+  Lemma row_erase_slot_snapshot : forall db f k s,
+    slot_snapshot (db_runtime (row_erase f k db)) s = slot_snapshot (db_runtime db) s.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Actual row deletion preserves exact projection multiplicities and both index caches. *)
+  Lemma row_delete_cache_correct : forall db f k,
+    wf db -> database_cache_correct (row_delete f k db).
+  Proof.
+    intros db f k Hwf. destruct (row_get f k db) as [o |] eqn:Hrow.
+    - pose proof (row_delete_map_present f k db o Hrow) as Hmap.
+      assert (Hbound : runtime_slot_bound (db_runtime (row_delete f k db)) =
+        runtime_slot_bound (db_runtime db)).
+      { apply row_delete_preserves; intros; reflexivity. }
+      apply (database_cache_correct_from_slots (row_delete f k db)).
+      + refine (eq_ind_r (fun rows => RowMap.wf rows) _ Hmap).
+        apply RowMap.wf_remove. exact (wf_row_map db Hwf).
+      + exact (eq_trans Hbound (eq_trans (wf_slot_bound db Hwf)
+          (eq_sym (f_equal (fun sl => N.of_nat (length sl)) (row_delete_slots f k db))))).
+      + intros s g perm Hslot. unfold slot_of in Hslot. rewrite row_delete_slots in Hslot.
+        fold (slot_of db s) in Hslot.
+        pose proof (RowFacts.remove_elements_decomposition _
+          (runtime_rows (db_runtime db)) (f, k) (Some o) (wf_row_map db Hwf) Hrow) as Hrows.
+        cbn [option_list option_map app] in Hrows.
+        pose proof (wf_slot_cache db s g perm Hwf Hslot) as Hcache.
+        pose proof (slot_cache_permutation (db_runtime db) s (length perm) _ _
+          (row_contributions_permutation g perm _ _ Hrows) Hcache) as Hordered.
+        refine (eq_ind_r (fun rows => slot_cache_ok (db_runtime (row_delete f k db))
+          s (length perm) (row_contributions g perm (RowMap.elements rows))) _ Hmap).
+        unfold row_delete. rewrite Hrow.
+        eapply slot_cache_snapshot; [apply row_erase_slot_snapshot |].
+        apply slots_update_cache_row_remove; try assumption.
+        * exact (wf_group_table db Hwf).
+        * exact (wf_row_slots db Hwf f k o Hrow).
+    - unfold row_delete. rewrite Hrow. unfold database_cache_correct.
+      repeat split.
+      + exact (wf_index_sound db Hwf).
+      + exact (wf_index_complete db Hwf).
+      + exact (wf_index_arity db Hwf).
+      + exact (wf_projection_counts db Hwf).
+  Qed.
+
+  (** Removing a stored row preserves every structural and multiset-cache invariant. *)
+  Lemma row_delete_wf : forall db f k, wf db -> wf (row_delete f k db).
+  Proof.
+    intros db f k Hwf.
+    assert (Hruntime :
+      (runtime_equalities (db_runtime (row_delete f k db)),
+       runtime_queue (db_runtime (row_delete f k db)),
+       runtime_function_slots (db_runtime (row_delete f k db)),
+       runtime_max_name (db_runtime (row_delete f k db)),
+       runtime_slot_bound (db_runtime (row_delete f k db))) =
+      (runtime_equalities (db_runtime db), runtime_queue (db_runtime db),
+       runtime_function_slots (db_runtime db), runtime_max_name (db_runtime db),
+       runtime_slot_bound (db_runtime db))).
+    { exact (row_delete_preserves _
+        (fun state => (runtime_equalities state, runtime_queue state,
+          runtime_function_slots state, runtime_max_name state, runtime_slot_bound state))
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db). }
+    injection Hruntime as Hlog Hqueue Hgroups Hmax Hbound.
+    change (runtime_equalities (db_runtime (row_delete f k db)) =
+      runtime_equalities (db_runtime db)) in Hlog.
+    change (runtime_queue (db_runtime (row_delete f k db)) =
+      runtime_queue (db_runtime db)) in Hqueue.
+    change (runtime_function_slots (db_runtime (row_delete f k db)) =
+      runtime_function_slots (db_runtime db)) in Hgroups.
+    change (runtime_max_name (db_runtime (row_delete f k db)) =
+      runtime_max_name (db_runtime db)) in Hmax.
+    change (runtime_slot_bound (db_runtime (row_delete f k db)) =
+      runtime_slot_bound (db_runtime db)) in Hbound.
+    assert (Hsource : forall g args output, row (view (row_delete f k db)) g args output ->
+      row (view db) g args output).
+    { intros g args output Hrow. now apply row_delete_binding in Hrow as [Hrow _]. }
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime (row_delete f k db)))).
+    { destruct (row_get f k db) as [o |] eqn:Hrow.
+      - refine (eq_ind_r (fun rows => RowMap.wf rows) _
+          (row_delete_map_present f k db o Hrow)). apply RowMap.wf_remove.
+        exact (wf_row_map db Hwf).
+      - unfold row_delete. rewrite Hrow. exact (wf_row_map db Hwf). }
+    destruct (row_delete_cache_correct db f k Hwf) as [Hsound [Hcomplete [Harity Hcounts]]].
+    unfold wf, database_wf. split.
+    { rewrite row_delete_forest. exact (wf_forest db Hwf). }
+    split.
+    { intro i. rewrite row_delete_forest. unfold allocated. rewrite row_delete_ids.
+      exact (wf_forest_members db Hwf i). }
+    split.
+    { rewrite row_delete_forest, row_delete_ids. exact (wf_forest_count db Hwf). }
+    split.
+    { rewrite row_delete_forest, row_delete_ids. exact (wf_forest_width db Hwf). }
+    split.
+    { intros i j. rewrite row_delete_same. unfold repr. rewrite row_delete_forest.
+      exact (wf_equalities db Hwf i j). }
+    split.
+    { rewrite Hlog. unfold allocated. rewrite row_delete_ids. exact (wf_log_allocated db Hwf). }
+    split; [exact Hmap |]. split.
+    { intros g args output Hrow. rewrite row_delete_kind.
+      exact (wf_row_kind db Hwf g args output (Hsource g args output Hrow)). }
+    split.
+    { intros g args output i Hrow Hin. unfold allocated. rewrite row_delete_ids.
+      exact (wf_row_ids db Hwf g args output i (Hsource g args output Hrow) Hin). }
+    split.
+    { intros g args output Hrow. unfold slots_fit. rewrite row_delete_slots.
+      exact (wf_row_slots db Hwf g args output (Hsource g args output Hrow)). }
+    split.
+    { intros g output Houtput. rewrite row_delete_kind in Houtput. rewrite Hmax.
+      exact (wf_kind_bound db Hwf g output Houtput). }
+    split.
+    { rewrite Hbound, row_delete_slots. exact (wf_slot_bound db Hwf). }
+    split.
+    { rewrite row_delete_npending, row_delete_pending. exact (wf_pending_count db Hwf). }
+    split.
+    { rewrite Hqueue. unfold allocated. rewrite row_delete_ids. exact (wf_queue_allocated db Hwf). }
+    split.
+    { intros Hquiet g args output Hrow i Hin. unfold repr. rewrite row_delete_forest.
+      rewrite row_delete_pending in Hquiet.
+      exact (wf_quiet_canonical db Hwf Hquiet g args output (Hsource g args output Hrow) i Hin). }
+    split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
+    split; [rewrite Hgroups, row_delete_slots; exact (wf_group_table db Hwf) |].
+    split; [exact Hcounts |]. split.
+    { rewrite Hmax, row_delete_kind. exact (wf_max_name_attained db Hwf). }
+    apply database_history_row_delete. exact (wf_history db Hwf).
+  Qed.
+
+  (** Conflict resolution preserves declarations even during an active repair batch. *)
+  Lemma output_conflict_kind_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    kind (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = kind (view db).
+  Proof.
+    intros db previous co.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Conflict resolution changes no rows, independently of queue coverage. *)
+  Lemma output_conflict_rows_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    row (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = row (view db).
+  Proof.
+    intros db previous co.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Every newly logged equality comes from the actual two conflicting outputs. *)
+  Lemma output_conflict_same_sources_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)) i j,
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j.
+  Proof.
+    intros db previous co i j Hsame.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try solve [apply rst_step; now left].
+    unfold union in Hsame.
+    destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - apply (proj1 (equality_log_cons a b (runtime_equalities (db_runtime db)) i j)) in Hsame.
+      eapply equality_closure_mono; [| exact Hsame].
+      intros x y [Hold | Hpair]; [now left |].
+      right. injection Hpair as -> ->. split; reflexivity.
+    - apply rst_step. now left.
+  Qed.
+
+  (** Put preserves declarations without requiring a quiet public database invariant. *)
+  Lemma put_kind_raw : forall db f k o, kind (view (put f k o db)) = kind (view db).
+  Proof.
+    intros db f k o. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hkind : kind (view next) = kind (view db)) by apply output_conflict_kind_raw.
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hkind |]. now rewrite row_replace_kind.
+    - now rewrite row_replace_kind.
+  Qed.
+
+  (** The executed normalizers determine the only row that a put can add. *)
+  Lemma put_row_sources_raw : forall db f k o g args output,
+    row (view (put f k o db)) g args output ->
+      row (view db) g args output \/
+      (g = f /\ args = normal_key db k /\
+        output = combine_output db f (row_get f (normal_key db k) db)
+          (option_map (normal_cell db) o)).
+  Proof.
+    intros db f k o g args output. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)) by apply output_conflict_rows_raw.
+    intro Hrow. destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + left. now rewrite <- Hrows.
+      + apply row_replace_sources in Hrow as [Hold | Hnew].
+        * left. now rewrite <- Hrows.
+        * now right.
+    - apply row_replace_sources in Hrow as [Hold | Hnew].
+      + left. now rewrite <- Hrows.
+      + now right.
+  Qed.
+
+  (** Put retains or writes its actual normalized target with the combined output. *)
+  Lemma put_row_target_raw : forall db f k o,
+    row (view (put f k o db)) f (normal_key db k)
+      (combine_output db f (row_get f (normal_key db k) db)
+        (option_map (normal_cell db) o)).
+  Proof.
+    intros db f k o. unfold put.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hprevious.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)) by apply output_conflict_rows_raw.
+    destruct previous as [before |].
+    - destruct (output_eqb_spec before updated) as [Hequal | Hdifferent].
+      + rewrite Hrows, <- Hequal. exact (eq_sym Hprevious).
+      + apply row_replace_binding. right. split; reflexivity.
+    - apply row_replace_binding. right. split; reflexivity.
+  Qed.
+
+  (** Put leaves every row outside its actually normalized insertion key unchanged. *)
+  Lemma put_other_rows : forall db f k o g args output,
+    (g, args) <> (f, normal_key db k) ->
+    (row (view (put f k o db)) g args output <-> row (view db) g args output).
+  Proof.
+    intros db f k o g args output Hother. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)) by apply output_conflict_rows_raw.
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + now rewrite Hrows.
+      + rewrite row_replace_binding, Hrows. tauto.
+    - rewrite row_replace_binding, Hrows. tauto.
+  Qed.
+
+  (** Every added repair row is the normalized, merged image of its actual removed row. *)
+  Lemma repair_current_row_sources : forall db f k,
+    UnionFind.wf (db_forest db) -> forall g args output,
+    row (view (repair_current f k db)) g args output ->
+    row (view db) g args output \/
+    exists before, row (view db) f k before /\ g = f /\ args = normal_key db k /\
+      output = combine_output (row_delete f k db) f
+        (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before).
+  Proof.
+    intros db f k Hforest g args output Hrow. unfold repair_current in Hrow.
+    destruct (row_get f k db) as [before |] eqn:Hbefore; [| now left].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)); [now left |].
+    apply put_row_sources_raw in Hrow as [Hold | Hnew].
+    - left. apply row_delete_binding in Hold. exact (proj1 Hold).
+    - right. exists before. split; [exact Hbefore |].
+      rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest) in Hnew.
+      rewrite row_delete_normal_output, (normal_output_idempotent db before Hforest) in Hnew.
+      exact Hnew.
+  Qed.
+
+  (** Repair retains the normalized target, including its unchanged-row branch. *)
+  Lemma repair_current_target : forall db f k before,
+    UnionFind.wf (db_forest db) -> row_get f k db = Some before ->
+    row (view (repair_current f k db)) f (normal_key db k)
+      (combine_output (row_delete f k db) f
+        (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before)).
+  Proof.
+    intros db f k before Hforest Hrow. unfold repair_current. rewrite Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)) eqn:Hfixed.
+    - apply andb_true_iff in Hfixed as [Hkey Houtput].
+      apply Pos.eqb_eq in Hkey.
+      pose proof (Tuples.encode_inj (normal_key db k) k Hkey) as Hnormal.
+      destruct (output_eqb_spec (option_map (normal_cell db) before) before)
+        as [Hequal | Hdifferent]; [| discriminate].
+      rewrite Hnormal, Hequal.
+      assert (Habsent : row_get f k (row_delete f k db) = None).
+      { destruct (row_get f k (row_delete f k db)) as [output |] eqn:Hlookup;
+          [| reflexivity].
+        apply row_delete_binding in Hlookup. destruct Hlookup as [_ Hother].
+        exfalso. apply Hother. reflexivity. }
+      rewrite Habsent. exact Hrow.
+    - pose proof (put_row_target_raw (row_delete f k db) f (normal_key db k)
+        (option_map (normal_cell db) before)) as Htarget.
+      rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest) in Htarget.
+      rewrite row_delete_normal_output, (normal_output_idempotent db before Hforest) in Htarget.
+      exact Htarget.
+  Qed.
+
+  (** Repair preserves every row away from both the removed key and its normal form. *)
+  Lemma repair_current_keeps : forall db f k g args output,
+    UnionFind.wf (db_forest db) -> row (view db) g args output ->
+    (g, args) <> (f, k) -> (g, args) <> (f, normal_key db k) ->
+    row (view (repair_current f k db)) g args output.
+  Proof.
+    intros db f k g args output Hforest Hrow Hremoved Hnormalized. unfold repair_current.
+    destruct (row_get f k db) as [before |]; [| exact Hrow].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)); [exact Hrow |].
+    assert (Hother : (g, args) <>
+      (f, normal_key (row_delete f k db) (normal_key db k))).
+    { rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest).
+      exact Hnormalized. }
+    apply (proj2 (put_other_rows (row_delete f k db) f (normal_key db k)
+      (option_map (normal_cell db) before) g args output Hother)).
+    apply row_delete_binding. split; assumption.
+  Qed.
+
+  (** Put logs only old equalities and conflicts at its actually normalized key. *)
+  Lemma put_same_sources_raw : forall db f k o i j,
+    same (view (put f k o db)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (row_get f (normal_key db k) db = Some (Some (Id x)) /\
+          option_map (normal_cell db) o = Some (Id y))) i j.
+  Proof.
+    intros db f k o i j. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hsame : forall a b, same (view next) a b ->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/
+          (previous = Some (Some (Id x)) /\ co = Some (Id y))) a b).
+    { apply output_conflict_same_sources_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [apply Hsame |].
+      rewrite row_replace_same. apply Hsame.
+    - rewrite row_replace_same. apply Hsame.
+  Qed.
+
+  (** A real union retains every old equality, including during an active repair batch. *)
+  Lemma union_same_preserves_raw : forall db a b i j,
+    same (view db) i j -> same (view (union a b db)) i j.
+  Proof.
+    intros db a b i j Hsame. unfold union.
+    destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; [| exact Hsame].
+    apply (proj2 (equality_log_cons a b (runtime_equalities (db_runtime db)) i j)).
+    apply rst_step. now left.
+  Qed.
+
+  (** Resolving output conflicts only extends the old equality log. *)
+  Lemma output_conflict_same_preserves_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)) i j,
+    same (view db) i j ->
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end)) i j.
+  Proof.
+    intros db previous co i j Hsame.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try exact Hsame.
+    now apply union_same_preserves_raw.
+  Qed.
+
+  (** The insertion branch and row-cache writes preserve all previously logged equalities. *)
+  Lemma put_same_preserves_raw : forall db f k o i j,
+    same (view db) i j -> same (view (put f k o db)) i j.
+  Proof.
+    intros db f k o i j Hsame. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : same (view next) i j).
+    { now apply output_conflict_same_preserves_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |]. now rewrite row_replace_same.
+    - now rewrite row_replace_same.
+  Qed.
+
+  (** Put is semantically sound whenever its actual normalization preserves meaning. *)
+  Lemma put_sat_normal_meaning : forall (M : model (V := V.t)) nu db f k o,
+    sat V.merge M nu (view db) ->
+    (forall c, den nu (normal_cell db c) = den nu c) ->
+    holds M nu (view db) f k o -> sat V.merge M nu (view (put f k o db)).
+  Proof.
+    intros M nu db f k o Hsat Hnormal Hholds.
+    eapply (@sat_put_view V.t V.merge M nu (view db) (view (put f k o db)) f k o
+      (normal_key db k) (option_map (normal_cell db) o) (row_get f (normal_key db k) db)).
+    - exact Hsat.
+    - apply put_kind_raw.
+    - intros before Hprevious. exact Hprevious.
+    - unfold normal_key. rewrite map_map. apply map_ext. exact Hnormal.
+    - destruct o as [c |]; cbn [option_map]; [now rewrite Hnormal | reflexivity].
+    - exact Hholds.
+    - apply put_row_sources_raw.
+    - apply put_same_sources_raw.
+  Qed.
+
+  (** The semantic loop needs only a valid forest whose representatives keep their meaning. *)
+  Definition model_forest (M : model (V := V.t)) (nu : positive -> carrier M) (db : t) : Prop :=
+    UnionFind.wf (db_forest db) /\ forall i, nu (repr db i) = nu i.
+
+  (** A satisfying public database starts with the weaker semantic forest invariant. *)
+  Lemma model_forest_initial : forall M nu db,
+    wf db -> sat V.merge M nu (view db) -> model_forest M nu db.
+  Proof.
+    intros M nu db Hwf Hsat. split; [exact (wf_forest db Hwf) |].
+    intro i. pose proof (canon_den M nu db Hwf Hsat (Id i)) as Hden.
+    now injection Hden.
+  Qed.
+
+  (** The actual find-based cell normalizer preserves denotations under the semantic invariant. *)
+  Lemma model_forest_normal : forall M nu db, model_forest M nu db ->
+    forall c, den nu (normal_cell db c) = den nu c.
+  Proof.
+    intros M nu db [Hforest Hmeaning] [i | v]; cbn [normal_cell den]; [| reflexivity].
+    destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
+      rewrite (UnionFind.find_repr i (db_forest db) Hforest); cbn [den];
+      f_equal; exact (Hmeaning i).
+  Qed.
+
+  (** Row and scheduling updates that retain the forest also retain its interpretation. *)
+  Lemma model_forest_unchanged : forall M nu db db',
+    db_forest db' = db_forest db -> model_forest M nu db -> model_forest M nu db'.
+  Proof.
+    intros M nu db db' Hequal. unfold model_forest, repr. now rewrite Hequal.
+  Qed.
+
+  (** Linking identifiers with equal interpretations preserves representative meanings. *)
+  Lemma model_forest_union : forall M nu db i j,
+    model_forest M nu db -> nu i = nu j -> model_forest M nu (union i j db).
+  Proof.
+    intros M nu db i j [Hforest Hmeaning] Hequal. split.
+    - rewrite union_forest. now apply UnionFind.wf_union.
+    - intro x. unfold repr in Hmeaning |- *. rewrite union_forest.
+      destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+      destruct roots as [[winner loser] |]; cbn [snd].
+      + destruct (UnionFind.union_some i j (db_forest db) winner loser forest Hforest Hunion)
+          as [_ [Hroots Hrepr]].
+        assert (Hjoined : nu winner = nu loser).
+        { destruct Hroots as [[-> ->] | [-> ->]]; rewrite !Hmeaning; congruence. }
+        rewrite (Hrepr x). destruct (Pos.eqb (UnionFind.repr (db_forest db) x) loser) eqn:Hloser.
+        * apply Pos.eqb_eq in Hloser. rewrite Hjoined, <- Hloser. exact (Hmeaning x).
+        * exact (Hmeaning x).
+      + rewrite (proj2 (UnionFind.union_none i j (db_forest db) forest Hforest Hunion) x).
+        exact (Hmeaning x).
+  Qed.
+
+  (** A true row supplies equal meanings for every constructor conflict raised by put. *)
+  Lemma put_model_forest : forall M nu db f k o,
+    model_forest M nu db -> sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
+    model_forest M nu (put f k o db).
+  Proof.
+    intros M nu db f k o Hmodel Hsat Hholds.
+    pose proof (model_forest_normal M nu db Hmodel) as Hnormal.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    assert (Hcanonical : holds M nu (view db) f ck co).
+    { eapply (@holds_transport V.t M nu nu (view db) (view db) f k ck o co).
+      - reflexivity.
+      - unfold ck, normal_key. rewrite map_map. apply map_ext. exact Hnormal.
+      - unfold co. destruct o as [c |]; cbn [option_map]; [now rewrite Hnormal | reflexivity].
+      - exact Hholds. }
+    assert (Hprevious : forall before, previous = Some before -> holds M nu (view db) f ck before).
+    { intros before Hlookup. exact (proj1 Hsat f ck before Hlookup). }
+    assert (Hnext : model_forest M nu (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end)).
+    { destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try exact Hmodel.
+      apply model_forest_union; [exact Hmodel |].
+      pose proof (Hprevious (Some (Id a)) eq_refl) as Hold.
+      unfold holds in Hold, Hcanonical.
+      destruct (kind (view db) f) as [[| |m] |]; try contradiction; congruence. }
+    unfold put. fold ck co previous.
+    set (updated := combine_output db f previous co).
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      eapply model_forest_unchanged; [apply row_replace_forest | exact Hnext].
+    - eapply model_forest_unchanged; [apply row_replace_forest | exact Hnext].
+  Qed.
+
+  (** The removed source still justifies its normalized row in the restricted view. *)
+  Lemma deleted_normal_row_holds : forall M nu db f k o,
+    model_forest M nu db -> sat V.merge M nu (view db) -> row (view db) f k o ->
+    holds M nu (view (row_delete f k db)) f
+      (normal_key db k) (option_map (normal_cell db) o).
+  Proof.
+    intros M nu db f k o Hmodel Hsat Hrow.
+    pose proof (model_forest_normal M nu db Hmodel) as Hnormal.
+    eapply (@holds_transport V.t M nu nu (view db) (view (row_delete f k db)) f k
+      (normal_key db k) o (option_map (normal_cell db) o)).
+    - now rewrite row_delete_kind.
+    - unfold normal_key. rewrite map_map. apply map_ext. exact Hnormal.
+    - destruct o as [c |]; cbn [option_map]; [now rewrite Hnormal | reflexivity].
+    - exact (proj1 Hsat f k o Hrow).
+  Qed.
+
+  (** Actual row repair preserves both satisfaction and the invariant needed by the next repair. *)
+  Lemma repair_current_semantic : forall M nu db f k,
+    model_forest M nu db -> sat V.merge M nu (view db) ->
+    model_forest M nu (repair_current f k db) /\
+      sat V.merge M nu (view (repair_current f k db)).
+  Proof.
+    intros M nu db f k Hmodel Hsat. unfold repair_current.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [now split |].
+    assert (Hdeleted : model_forest M nu (row_delete f k db)).
+    { eapply model_forest_unchanged; [apply row_delete_forest | exact Hmodel]. }
+    pose proof (row_delete_sat M nu f k db Hsat) as Hrestricted.
+    pose proof (deleted_normal_row_holds M nu db f k o Hmodel Hsat Hrow) as Hholds.
+    split.
+    - now apply put_model_forest.
+    - apply put_sat_normal_meaning; [exact Hrestricted | | exact Hholds].
+      now apply model_forest_normal.
+  Qed.
+
+  (** Queue removal changes neither rows, equality evidence, kinds nor the forest. *)
+  Lemma db_pop_loser_preserves : forall db i db', db_pop_loser db = Some (i, db') ->
+    db_forest db' = db_forest db /\ view db' = view db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. split; reflexivity.
+  Qed.
+
+  (** Every continuing callback preserves the weaker semantic invariant. *)
+  Lemma db_rstep_semantic_continue : forall M nu s s',
+    model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)) ->
+    db_rstep s = inl s' ->
+    model_forest M nu (fst s') /\ sat V.merge M nu (view (fst s')).
+  Proof.
+    intros M nu [db work] s' [Hmodel Hsat] Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i db'] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst s'. cbn [fst].
+      destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
+      split; [eapply model_forest_unchanged; eassumption | now rewrite Hview].
+    - injection Hstep as Hnext. subst s'. cbn [fst].
+      now apply repair_current_semantic.
+  Qed.
+
+  (** A stopped callback returns the database whose semantic invariant it carries. *)
+  Lemma db_rstep_semantic_stop : forall M nu s db',
+    model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)) ->
+    db_rstep s = inr db' -> model_forest M nu db' /\ sat V.merge M nu (view db').
+  Proof.
+    intros M nu [db work] db' Hsemantic Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep; [| discriminate].
+    destruct (db_pop_loser db) as [[i next] |]; [discriminate |].
+    injection Hstep as Hnext. now subst db'.
+  Qed.
+
+  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
+  Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
+  Proof.
+    intros M nu db Hwf Hsat.
+    pose proof (LoopNFacts.loopN_preserves _ _ db_rstep
+      (fun s => model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)))
+      (fun result => model_forest M nu result /\ sat V.merge M nu (view result))
+      (db_rstep_semantic_continue M nu) (db_rstep_semantic_stop M nu)
+      (db_rebuild_fuel db) (db, [])
+      (conj (model_forest_initial M nu db Hwf Hsat) Hsat)) as Hloop.
+    unfold rebuild.
+    destruct (loopN db_rstep (db_rebuild_fuel db) (db, [])) as [s | result];
+      exact (proj2 Hloop).
+  Qed.
+
+  (** A stale work entry with no current row is discarded without any state update. *)
+  Lemma repair_current_absent : forall db f k,
+    row_get f k db = None -> repair_current f k db = db.
+  Proof.
+    intros db f k Habsent. unfold repair_current. now rewrite Habsent.
+  Qed.
+
+  (** A row already equal to its normal form takes the unchanged-state branch. *)
+  Lemma repair_current_fixed : forall db f k o,
+    row_get f k db = Some o -> normal_key db k = k ->
+    option_map (normal_cell db) o = o -> repair_current f k db = db.
+  Proof.
+    intros db f k o Hrow Hkey Houtput. unfold repair_current.
+    now rewrite Hrow, Hkey, Houtput, Pos.eqb_refl, output_eqb_refl.
+  Qed.
+
+  (** Every repair retains a change flag raised before it began. *)
+  Lemma repair_current_changed : forall db f k,
+    changed db = true -> changed (repair_current f k db) = true.
+  Proof.
+    intros db f k Hchanged. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| exact Hchanged].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hchanged |].
+    apply changed_put. now rewrite row_delete_changed.
+  Qed.
+
+  (** Every property preserved by both actual callback branches survives the fuelled loop. *)
+  Lemma rebuild_preserves : forall (P : t -> Prop),
+    (forall db f k, P db -> P (repair_current f k db)) ->
+    (forall db i db', P db -> db_pop_loser db = Some (i, db') -> P db') ->
+    forall db, P db -> P (rebuild db).
+  Proof.
+    intros P Hrepair Hpop db Hinitial.
+    assert (Hstep : forall s, P (fst s) ->
+      match db_rstep s with inl next => P (fst next) | inr result => P result end).
+    { intros [current work] Hcurrent.
+      destruct work as [| [f k] rest]; cbn [db_rstep fst snd].
+      - destruct (db_pop_loser current) as [[i next] |] eqn:Hqueue;
+          [eapply Hpop; eassumption | exact Hcurrent].
+      - now apply Hrepair. }
+    assert (Hcontinue : forall s s', P (fst s) -> db_rstep s = inl s' -> P (fst s')).
+    { intros s s' Hcurrent Hgo. specialize (Hstep s Hcurrent). now rewrite Hgo in Hstep. }
+    assert (Hstop : forall s result, P (fst s) -> db_rstep s = inr result -> P result).
+    { intros s result Hcurrent Hdone. specialize (Hstep s Hcurrent). now rewrite Hdone in Hstep. }
+    pose proof (LoopNFacts.loopN_preserves _ _ db_rstep (fun s => P (fst s)) P
+      Hcontinue Hstop (db_rebuild_fuel db) (db, []) Hinitial) as Hloop.
+    unfold rebuild. destruct (loopN db_rstep (db_rebuild_fuel db) (db, [])); exact Hloop.
+  Qed.
+
+  (** Deleting and reinserting one current row never loses an old identifier equality. *)
+  Lemma repair_current_same_preserves : forall db f k i j,
+    same (view db) i j -> same (view (repair_current f k db)) i j.
+  Proof.
+    intros db f k i j Hsame. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| exact Hsame].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hsame |].
+    apply put_same_preserves_raw. now rewrite row_delete_same.
+  Qed.
+
+  (** Old equalities survive the actual rebuild loop, including fuel exhaustion. *)
+  Lemma rebuild_same_preserves : forall db i j,
+    same (view db) i j -> same (view (rebuild db)) i j.
+  Proof.
+    intros db i j Hsame. apply (rebuild_preserves (fun current => same (view current) i j)).
+    - intros current f k Hcurrent. now apply repair_current_same_preserves.
+    - intros current x next Hcurrent Hpop.
+      destruct (db_pop_loser_preserves current x next Hpop) as [_ Hview].
+      now rewrite Hview.
+    - exact Hsame.
+  Qed.
+
+  (** The logged equalities agree with a well-formed operational forest. *)
+  Definition forest_agrees (db : t) : Prop :=
+    UnionFind.wf (db_forest db) /\
+    forall i j, same (view db) i j <-> repr db i = repr db j.
+
+  Lemma forest_agrees_initial : forall db, wf db -> forest_agrees db.
+  Proof.
+    intros db Hwf. split; [exact (wf_forest db Hwf) |].
+    intros i j. exact (same_repr db i j Hwf).
+  Qed.
+
+  (** Every identifier is related to its representative under the weak forest invariant. *)
+  Lemma forest_agrees_id : forall db i, forest_agrees db -> same (view db) i (repr db i).
+  Proof.
+    intros db i [Hforest Hsame]. apply (proj2 (Hsame i (repr db i))).
+    symmetry. unfold repr. now apply UnionFind.repr_idem.
+  Qed.
+
+  (** The actual guarded cell normalizer stays within the input equality relation. *)
+  Lemma forest_agrees_normal_cell : forall db c, forest_agrees db ->
+    cell_rel (same (view db)) c (normal_cell db c).
+  Proof.
+    intros db [i | v] Hagrees; [| constructor].
+    destruct Hagrees as [Hforest Hsame]. cbn [normal_cell].
+    destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); constructor.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+      exact (forest_agrees_id db i (conj Hforest Hsame)).
+    - apply equality_log_refl.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+      exact (forest_agrees_id db i (conj Hforest Hsame)).
+  Qed.
+
+  (** Normalizing a tuple relates each output cell to its original cell. *)
+  Lemma forest_agrees_normal_key : forall db k, forest_agrees db ->
+    Forall2 (cell_rel (same (view db))) k (normal_key db k).
+  Proof.
+    intros db k Hagrees. unfold normal_key. induction k; constructor.
+    - now apply forest_agrees_normal_cell.
+    - exact IHk.
+  Qed.
+
+  (** Exact forest and equality frames retain agreement independently of scheduling. *)
+  Lemma forest_agrees_frame : forall db db', db_forest db' = db_forest db ->
+    same (view db') = same (view db) -> forest_agrees db -> forest_agrees db'.
+  Proof.
+    intros db db' Hforest Hsame Hagrees. unfold forest_agrees, repr in *.
+    now rewrite Hforest, Hsame.
+  Qed.
+
+  (** Union's equality closure only requires agreement with its input forest. *)
+  Lemma union_same_from_forest_agreement : forall db i j,
+    forest_agrees db -> forall a b,
+    (same (view (union i j db)) a b <->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/ (x, y) = (i, j)) a b).
+  Proof.
+    intros db i j [Hforest Hsame] a b. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - apply equality_log_cons.
+    - change (equality_log (runtime_equalities (db_runtime db)) a b <->
+        clos_refl_sym_trans positive
+          (fun x y => equality_log (runtime_equalities (db_runtime db)) x y \/
+            (x, y) = (i, j)) a b).
+      rewrite <- equality_log_cons. symmetry. apply equality_log_redundant.
+      apply (proj2 (Hsame i j)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest Hforest Hunion)).
+  Qed.
+
+  (** Logging the requested pair and updating the forest preserve the same equivalence. *)
+  Lemma forest_agrees_union : forall db i j,
+    forest_agrees db -> forest_agrees (union i j db).
+  Proof.
+    intros db i j Hagrees. destruct Hagrees as [Hforest Hsame]. split.
+    - rewrite union_forest. now apply UnionFind.wf_union.
+    - intros a b.
+      rewrite (union_same_from_forest_agreement db i j (conj Hforest Hsame) a b).
+      unfold repr. rewrite union_forest.
+      rewrite (ForestFacts.union_same_closure i j (db_forest db) a b Hforest).
+      apply equality_closure_equiv. intros x y. rewrite (Hsame x y). tauto.
+  Qed.
+
+  (** Every actual output-conflict branch preserves forest/log agreement. *)
+  Lemma forest_agrees_output_conflict : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    forest_agrees db -> forest_agrees (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+  Proof.
+    intros db previous co Hagrees.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try exact Hagrees.
+    now apply forest_agrees_union.
+  Qed.
+
+  (** Insertion retains the weak forest invariant even in an active repair batch. *)
+  Lemma forest_agrees_put : forall db f k o,
+    forest_agrees db -> forest_agrees (put f k o db).
+  Proof.
+    intros db f k o Hagrees. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : forest_agrees next) by (now apply forest_agrees_output_conflict).
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      eapply forest_agrees_frame;
+        [apply row_replace_forest | apply row_replace_same | exact Hnext].
+    - eapply forest_agrees_frame;
+        [apply row_replace_forest | apply row_replace_same | exact Hnext].
+  Qed.
+
+  (** An actual constructor-output conflict equates the two outputs retained by put. *)
+  Lemma put_conflict_same_raw : forall db f k o i j, forest_agrees db ->
+    row_get f (normal_key db k) db = Some (Some (Id i)) ->
+    option_map (normal_cell db) o = Some (Id j) ->
+    same (view (put f k o db)) i j.
+  Proof.
+    intros db f k o i j Hagrees Hprevious Houtput.
+    assert (Hunion : same (view (union i j db)) i j).
+    { apply (proj2 (union_same_from_forest_agreement db i j Hagrees i j)).
+      apply rst_step. right. reflexivity. }
+    unfold put. rewrite Hprevious, Houtput.
+    set (updated := combine_output db f (Some (Some (Id i))) (Some (Id j))).
+    destruct (output_eqb (Some (Id i)) updated); [exact Hunion |].
+    now rewrite row_replace_same.
+  Qed.
+
+  (** Single-row repair can change scheduling while keeping exact forest/log agreement. *)
+  Lemma forest_agrees_repair : forall db f k,
+    forest_agrees db -> forest_agrees (repair_current f k db).
+  Proof.
+    intros db f k Hagrees. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| exact Hagrees].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hagrees |].
+    apply forest_agrees_put. eapply forest_agrees_frame;
+      [apply row_delete_forest | apply row_delete_same | exact Hagrees].
+  Qed.
+
+  (** A repaired relation row remains stored at its normalized key. *)
+  Lemma repair_relation_target : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    row (view db) f key None ->
+    row (view (repair_current f key db)) f (normal_key db key) None.
+  Proof.
+    intros db f key Hagrees Htyped Hrow.
+    assert (Hkind : kind (view db) f = Some ORel).
+    { destruct (Htyped f key None Hrow) as [_ [_ Hshape]].
+      destruct (kind (view db) f) as [[| |m] |]; try contradiction; reflexivity. }
+    pose proof (repair_current_target db f key None (proj1 Hagrees) Hrow) as Htarget.
+    cbn [option_map] in Htarget.
+    destruct (row_get f (normal_key db key) (row_delete f key db))
+      as [output |] eqn:Hprevious.
+    - apply row_delete_binding in Hprevious as [Hold _].
+      destruct (Htyped f (normal_key db key) output Hold) as [_ [_ Hshape]].
+      rewrite Hkind in Hshape. destruct output as [[i | value] |]; try contradiction.
+      unfold combine_output in Htarget.
+      destruct (kind_get f (row_delete f key db)) as [[| |m] |]; exact Htarget.
+    - exact Htarget.
+  Qed.
+
+  (** A repaired lattice row is retained below the value at its normalized target. *)
+  Lemma repair_lattice_target : forall db f key a m, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    kind (view db) f = Some (OLat m) -> row (view db) f key (Some (Val a)) ->
+    exists b, row (view (repair_current f key db)) f (normal_key db key) (Some (Val b)) /\
+      V.merge m a b = b.
+  Proof.
+    intros db f key a m Hagrees Htyped Hkind Hrow.
+    pose proof (repair_current_target db f key (Some (Val a)) (proj1 Hagrees) Hrow) as Htarget.
+    cbn [option_map normal_cell] in Htarget.
+    assert (Hdeleted_kind : kind_get f (row_delete f key db) = Some (OLat m)).
+    { change (kind (view (row_delete f key db)) f = Some (OLat m)).
+      now rewrite row_delete_kind. }
+    destruct (row_get f (normal_key db key) (row_delete f key db))
+      as [output |] eqn:Hprevious.
+    - apply row_delete_binding in Hprevious as [Hold _].
+      destruct (Htyped f (normal_key db key) output Hold) as [_ [_ Hshape]].
+      rewrite Hkind in Hshape. destruct output as [[i | value] |]; try contradiction.
+      unfold combine_output in Htarget. rewrite Hdeleted_kind in Htarget.
+      exists (V.merge m value a). split; [exact Htarget |].
+      rewrite (V.merge_comm m value a), V.merge_assoc, V.merge_idem. reflexivity.
+    - exists a. split; [exact Htarget | apply V.merge_idem].
+  Qed.
+
+  (** Forest/log agreement survives both return branches of the actual rebuild driver. *)
+  Lemma forest_agrees_rebuild : forall db,
+    forest_agrees db -> forest_agrees (rebuild db).
+  Proof.
+    apply (rebuild_preserves forest_agrees).
+    - exact forest_agrees_repair.
+    - intros db x next Hagrees Hpop.
+      destruct (db_pop_loser_preserves db x next Hpop) as [Hforest Hview].
+      eapply forest_agrees_frame; [exact Hforest | now rewrite Hview | exact Hagrees].
+  Qed.
+
+  (** Constructor congruence contains the equivalence closure of any justified generators. *)
+  Lemma cong_closed_raw : forall db R,
+    (forall i j, R i j -> cong db i j) ->
+    forall i j, clos_refl_sym_trans positive R i j -> cong db i j.
+  Proof.
+    intros db R Hgenerators i j Hclosure.
+    induction Hclosure as [i j Hstep | i | i j Hstep IH | i j k Hleft IHleft Hright IHright].
+    - exact (Hgenerators i j Hstep).
+    - apply cong_same. apply equality_log_refl.
+    - now apply cong_sym.
+    - eapply cong_trans; eassumption.
+  Qed.
+
+  (** Actual key normalization changes cells only within the old constructor congruence. *)
+  Lemma normal_key_cong : forall db k, forest_agrees db ->
+    Forall2 (cell_rel (cong db)) k (normal_key db k).
+  Proof.
+    intros db k Hagrees. pose proof (forest_agrees_normal_key db k Hagrees) as Hnormal.
+    clear -Hnormal. induction Hnormal as [| c d ks ds Hcell Htail IH]; constructor.
+    - destruct Hcell; constructor; now apply cong_same.
+    - exact IH.
+  Qed.
+
+  (** Every equality logged by one repair is justified by old constructor rows. *)
+  Lemma repair_same_in_cong : forall db f k, forest_agrees db ->
+    forall i j, same (view (repair_current f k db)) i j -> cong db i j.
+  Proof.
+    intros db f k Hagrees i j Hsame. pose proof (proj1 Hagrees) as Hforest.
+    unfold repair_current in Hsame.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| now apply cong_same].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [now apply cong_same |].
+    apply put_same_sources_raw in Hsame.
+    rewrite row_delete_same, row_delete_normal_key, row_delete_normal_output in Hsame.
+    rewrite (normal_key_idempotent db k Hforest),
+      (normal_output_idempotent db o Hforest) in Hsame.
+    eapply cong_closed_raw; [| exact Hsame].
+    intros x y [Hold | [Htarget Houtput]]; [now apply cong_same |].
+    apply row_delete_binding in Htarget as [Htarget _].
+    destruct o as [[z | v] |]; cbn [option_map] in Houtput; try discriminate.
+    injection Houtput as Hnormal.
+    change (normal_cell db (Id z) = Id y) in Hnormal.
+    assert (Hrelated : same (view db) z y).
+    { pose proof (forest_agrees_normal_cell db (Id z) Hagrees) as Hcell.
+      rewrite Hnormal in Hcell. inversion Hcell. assumption. }
+    eapply cong_trans.
+    - eapply cong_fd; [exact Htarget | exact Hrow |].
+      eapply key_rel_symmetric; [exact (cong_sym (view db)) |].
+      now apply normal_key_cong.
+    - now apply cong_same.
+  Qed.
+
+  (** The logged equality relation supplies constructor-congruence reflexivity. *)
+  Lemma cong_refl_raw : forall db i, cong db i i.
+  Proof. intros db i. apply cong_same. apply equality_log_refl. Qed.
+
+  Lemma key_cong_refl_raw : forall db (k : list (cell V.t)),
+    Forall2 (cell_rel (cong db)) k k.
+  Proof.
+    intros db k. induction k as [| c k IH]; constructor; [| exact IH].
+    destruct c; constructor. apply cong_refl_raw.
+  Qed.
+
+  (** A constructor-valued combination retains an old constructor or its fresh input. *)
+  Lemma combine_output_id_sources : forall db f previous o i,
+    Some (Id i) = combine_output db f previous o ->
+    previous = Some (Some (Id i)) \/ (previous = None /\ o = Some (Id i)).
+  Proof.
+    intros db f previous o i Houtput.
+    unfold combine_output in Houtput.
+    destruct previous as [[[j | v] |] |]; destruct o as [[x | w] |];
+      destruct (kind_get f db) as [[| |m] |]; cbn in *;
+      intuition congruence.
+  Qed.
+
+  (** Every constructor row after repair simulates one old constructor row. *)
+  Lemma repair_ctor_backward : forall db f k, forest_agrees db ->
+    forall g args i, row (view (repair_current f k db)) g args (Some (Id i)) ->
+    exists key j, row (view db) g key (Some (Id j)) /\
+      Forall2 (cell_rel (cong db)) args key /\ cong db i j.
+  Proof.
+    intros db f k Hagrees g args i Hrow.
+    destruct (repair_current_row_sources db f k (proj1 Hagrees) g args (Some (Id i)) Hrow)
+      as [Hold | [before [Hold [Hname [Hargs Houtput]]]]].
+    - exists args, i. split; [exact Hold |].
+      split; [apply key_cong_refl_raw | apply cong_refl_raw].
+    - subst g args.
+      destruct (combine_output_id_sources (row_delete f k db) f
+        (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before) i Houtput)
+        as [Hprevious | [Hnone Hnormalized]].
+      + apply row_delete_binding in Hprevious as [Hprevious _].
+        exists (normal_key db k), i. split; [exact Hprevious |].
+        split; [apply key_cong_refl_raw | apply cong_refl_raw].
+      + destruct before as [[j | v] |]; cbn [option_map] in Hnormalized; try discriminate.
+        injection Hnormalized as Hnormal.
+        change (normal_cell db (Id j) = Id i) in Hnormal.
+        exists k, j. split; [exact Hold |]. split.
+        * eapply key_rel_symmetric; [exact (cong_sym (view db)) |].
+          now apply normal_key_cong.
+        * apply cong_sym. apply cong_same.
+          pose proof (forest_agrees_normal_cell db (Id j) Hagrees) as Hcell.
+          rewrite Hnormal in Hcell. inversion Hcell. assumption.
+  Qed.
+
+  (** Repair introduces no constructor-congruence equality beyond the old closure. *)
+  Lemma repair_cong_backward : forall db f k, forest_agrees db ->
+    forall i j, cong (repair_current f k db) i j -> cong db i j.
+  Proof.
+    intros db f k Hagrees. apply fd_congruence_rows_transfer.
+    - exact (repair_same_in_cong db f k Hagrees).
+    - exact (repair_ctor_backward db f k Hagrees).
+  Qed.
+
+  (** Queue scheduling retains layout, allocation and the current change flag. *)
+  Lemma db_pop_loser_layout : forall db i db', db_pop_loser db = Some (i, db') ->
+    slots db' = slots db /\ ids db' = ids db /\ changed db' = changed db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. repeat split; reflexivity.
+  Qed.
+
+  (** A raised change flag stays raised through every repair and queue operation. *)
+  Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
+  Proof.
+    apply (rebuild_preserves (fun db => changed db = true)).
+    - exact repair_current_changed.
+    - intros db i db' Hchanged Hpop.
+      rewrite (proj2 (proj2 (db_pop_loser_layout db i db' Hpop))). exact Hchanged.
+  Qed.
+
+  (** Put preserves declarations, slots and allocation even in an active repair batch. *)
+  Lemma put_layout_raw : forall db f k o,
+    kind (view (put f k o db)) = kind (view db) /\
+    slots (put f k o db) = slots db /\ ids (put f k o db) = ids db.
+  Proof.
+    intros db f k o. split; [apply put_kind_raw |]. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : slots next = slots db /\ ids next = ids db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try (split; reflexivity).
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; split; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      now rewrite row_replace_slots, row_replace_ids.
+    - now rewrite row_replace_slots, row_replace_ids.
+  Qed.
+
+  (** Single-row repair keeps all public layout observations. *)
+  Lemma repair_current_layout : forall db f k,
+    kind (view (repair_current f k db)) = kind (view db) /\
+    slots (repair_current f k db) = slots db /\ ids (repair_current f k db) = ids db.
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| repeat split; reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [repeat split; reflexivity |].
+    pose proof (put_layout_raw (row_delete f k db) f
+      (normal_key db k) (option_map (normal_cell db) o)) as Hlayout.
+    now rewrite row_delete_kind, row_delete_slots, row_delete_ids in Hlayout.
+  Qed.
+
+  (** Rebuilding keeps layout and allocation. *)
+  Lemma layout_rebuild : forall db, wf db ->
+    kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
+    ids (rebuild db) = ids db.
+  Proof.
+    intros db _. apply (rebuild_preserves (fun current =>
+      kind (view current) = kind (view db) /\ slots current = slots db /\ ids current = ids db)).
+    - intros current f k Hlayout.
+      destruct (repair_current_layout current f k) as [Hkind [Hslots Hids]].
+      now rewrite Hkind, Hslots, Hids.
+    - intros current i next Hlayout Hpop.
+      destruct (db_pop_loser_preserves current i next Hpop) as [_ Hview].
+      destruct (db_pop_loser_layout current i next Hpop) as [Hslots [Hids _]].
+      now rewrite Hview, Hslots, Hids.
+    - repeat split; reflexivity.
+  Qed.
+
+  (** Queue removal preserves canonical rows because both the view and forest are unchanged. *)
+  Lemma db_pop_loser_canonical : forall db i db',
+    db_pop_loser db = Some (i, db') -> canonical db -> canonical db'.
+  Proof.
+    intros db i db' Hpop Hcanonical.
+    destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
+    unfold canonical, repr in *. now rewrite Hview, Hforest.
+  Qed.
+
+  (** Deletion preserves every premise for a later kind-correct insertion. *)
+  Lemma row_delete_kind_ok : forall db f k g args output,
+    kind_ok (row_delete f k db) g args output <-> kind_ok db g args output.
+  Proof.
+    intros db f k g args output. unfold kind_ok, allocated, slots_fit.
+    now rewrite row_delete_ids, row_delete_slots, row_delete_kind.
+  Qed.
+
+  (** Every actual row of a well-formed database satisfies the insertion shape conditions. *)
+  Lemma wf_row_kind_ok : forall db f k o, wf db -> row (view db) f k o -> kind_ok db f k o.
+  Proof.
+    intros db f k o Hwf Hrow. split.
+    - intros i Hin. exact (wf_row_ids db Hwf f k o i Hrow Hin).
+    - split; [exact (wf_row_slots db Hwf f k o Hrow) |].
+      exact (wf_row_kind db Hwf f k o Hrow).
+  Qed.
+
+  (** A row of representative identifiers is fixed by the actual guarded normalizer. *)
+  Lemma normal_row_fixed : forall db k o,
+    UnionFind.wf (db_forest db) ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    normal_key db k = k /\ option_map (normal_cell db) o = o.
+  Proof.
+    intros db k o Hforest Hfixed.
+    assert (Hcell : forall c, In c (k ++ option_list o) -> normal_cell db c = c).
+    { intros [i | v] Hin; [| reflexivity]. cbn [normal_cell].
+      destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
+        rewrite (UnionFind.find_repr i (db_forest db) Hforest); f_equal; exact (Hfixed i Hin). }
+    split.
+    - unfold normal_key. rewrite <- (map_id k) at 2. apply map_ext_in.
+      intros c Hin. apply Hcell. apply in_or_app. now left.
+    - destruct o as [c |]; [| reflexivity]. cbn [option_map]. f_equal.
+      apply Hcell. apply in_or_app. right. cbn [option_list In]. now left.
+  Qed.
+
+  (** Canonical rows are skipped even when an active batch prevents public well-formedness. *)
+  Lemma repair_current_canonical : forall db f k,
+    UnionFind.wf (db_forest db) -> canonical db -> repair_current f k db = db.
+  Proof.
+    intros db f k Hforest Hcanonical.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| now apply repair_current_absent].
+    destruct (normal_row_fixed db k o Hforest (Hcanonical f k o Hrow)) as [Hkey Houtput].
+    now apply repair_current_fixed with (o := o).
+  Qed.
+
+  (** A repair begun in a public well-formed state preserves its complete database invariant. *)
+  Lemma repair_current_wf : forall db f k, wf db -> wf (repair_current f k db).
+  Proof.
+    intros db f k Hwf. unfold repair_current.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| exact Hwf].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hwf |].
+    apply wf_put; [now apply row_delete_wf |]. apply row_delete_kind_ok.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    apply kind_ok_canon; [exact Hwf |]. now apply wf_row_kind_ok.
+  Qed.
+
+  (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
+  Lemma rebuild_quiet : forall db, wf db -> canonical db ->
+    (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
+  Proof.
+    intros db Hwf Hcanonical _.
+    assert (Hresult : UnionFind.wf (db_forest (rebuild db)) /\
+      canonical (rebuild db) /\ changed (rebuild db) = changed db).
+    { apply (rebuild_preserves (fun current => UnionFind.wf (db_forest current) /\
+        canonical current /\ changed current = changed db)).
+      - intros current f k [Hforest [Hfixed Hflag]].
+        rewrite (repair_current_canonical current f k Hforest Hfixed).
+        exact (conj Hforest (conj Hfixed Hflag)).
+      - intros current i next [Hforest [Hfixed Hflag]] Hpop.
+        destruct (db_pop_loser_preserves current i next Hpop) as [Hsame_forest _].
+        destruct (db_pop_loser_layout current i next Hpop) as [_ [_ Hsame_flag]].
+        split; [now rewrite Hsame_forest |]. split.
+        + eapply db_pop_loser_canonical; eassumption.
+        + now rewrite Hsame_flag.
+      - split; [exact (wf_forest db Hwf) |]. split; [exact Hcanonical | reflexivity]. }
+    exact (proj2 (proj2 Hresult)).
+  Qed.
+
+  (** Pending identifiers are distinct old roots that no longer represent their classes. *)
+  Definition queue_valid (db : t) : Prop :=
+    NoDup (runtime_queue (db_runtime db)) /\
+      Forall (fun x => repr db x <> x) (runtime_queue (db_runtime db)).
+
+  (** Queue observations and representatives completely determine queue validity. *)
+  Lemma queue_valid_frame : forall db db',
+    runtime_queue (db_runtime db') = runtime_queue (db_runtime db) ->
+    (forall x, repr db' x = repr db x) -> queue_valid db -> queue_valid db'.
+  Proof.
+    intros db db' Hqueue Hrepr [Hdistinct Hnonroots]. unfold queue_valid.
+    rewrite Hqueue. split; [exact Hdistinct |].
+    eapply Forall_impl; [| exact Hnonroots]. intros x Hnonroot. now rewrite Hrepr.
+  Qed.
+
+  (** A fresh database has no pending roots. *)
+  Lemma queue_valid_init : forall ds sl, queue_valid (init ds sl).
+  Proof.
+    intros ds sl. split; constructor.
+  Qed.
+
+  (** Union keeps every old queued loser nonrepresentative and prepends a previously absent root. *)
+  Lemma queue_valid_union : forall db i j,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (union i j db).
+  Proof.
+    intros db i j Hforest [Hdistinct Hnonroots]. rewrite Forall_forall in Hnonroots.
+    unfold queue_valid, union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    assert (Htail : Forall (fun x => UnionFind.repr forest x <> x)
+      (runtime_queue (db_runtime db))).
+    { apply Forall_forall. intros x Hin.
+      pose proof (ForestFacts.union_keeps_nonrepresentative i j (db_forest db) x Hforest
+        (Hnonroots x Hin)) as Hstable. rewrite Hunion in Hstable. exact Hstable. }
+    destruct roots as [[winner loser] |].
+    - change (NoDup (loser :: runtime_queue (db_runtime db)) /\
+        Forall (fun x => UnionFind.repr forest x <> x) (loser :: runtime_queue (db_runtime db))).
+      split.
+      + constructor; [| exact Hdistinct]. intro Hin.
+        apply (Hnonroots loser Hin).
+        exact (ForestFacts.union_loser_was_representative i j (db_forest db)
+          winner loser forest Hforest Hunion).
+      + constructor; [| exact Htail].
+        exact (ForestFacts.union_loser_is_nonrepresentative i j (db_forest db)
+          winner loser forest Hforest Hunion).
+    - change (NoDup (runtime_queue (db_runtime db)) /\
+        Forall (fun x => UnionFind.repr forest x <> x) (runtime_queue (db_runtime db))).
+      now split.
+  Qed.
+
+  (** Singleton addition changes neither queued identifiers nor their representatives. *)
+  Lemma queue_valid_allocate : forall db i,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (allocate_id i db).
+  Proof.
+    intros db i Hforest Hqueue. eapply (queue_valid_frame db); [reflexivity | | exact Hqueue].
+    intro x. apply UnionFind.repr_add. exact Hforest.
+  Qed.
+
+  (** Path compression preserves queue validity because it preserves every representative. *)
+  Lemma queue_valid_find : forall db i,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (snd (find i db)).
+  Proof.
+    intros db i Hforest Hqueue. eapply (queue_valid_frame db); [reflexivity | | exact Hqueue].
+    intro x. apply UnionFind.find_same. exact Hforest.
+  Qed.
+
+  (** Slot maintenance changes neither the queue nor the forest. *)
+  Lemma queue_valid_slots_update : forall db add f u,
+    queue_valid db -> queue_valid (slots_update add f u db).
+  Proof.
+    intros db add f u Hqueue. eapply (queue_valid_frame db); [| | exact Hqueue].
+    - apply slots_update_preserves. intros. reflexivity.
+    - intro x. unfold repr. now rewrite slots_update_forest.
+  Qed.
+
+  (** Row replacement changes neither the queue nor the forest. *)
+  Lemma queue_valid_row_replace : forall db f k previous o,
+    queue_valid db -> queue_valid (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hqueue. eapply (queue_valid_frame db); [| | exact Hqueue].
+    - exact (row_replace_preserves _ (@runtime_queue (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db).
+    - intro x. unfold repr. now rewrite row_replace_forest.
+  Qed.
+
+  (** Row deletion retains every pending identifier and its nonrepresentative status. *)
+  Lemma queue_valid_row_delete : forall db f k,
+    queue_valid db -> queue_valid (row_delete f k db).
+  Proof.
+    intros db f k Hqueue. eapply (queue_valid_frame db); [| | exact Hqueue].
+    - exact (row_delete_preserves _ (@runtime_queue (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    - intro x. unfold repr. now rewrite row_delete_forest.
+  Qed.
+
+  (** Advancing only clears cache and change observations. *)
+  Lemma queue_valid_advance : forall db, queue_valid db -> queue_valid (advance db).
+  Proof.
+    intros db Hqueue. eapply (queue_valid_frame db); [reflexivity | | exact Hqueue]. reflexivity.
+  Qed.
+
+  (** Removing the queue head retains distinctness and the nonrepresentative property. *)
+  Lemma queue_valid_pop : forall db i db',
+    queue_valid db -> db_pop_loser db = Some (i, db') -> queue_valid db'.
+  Proof.
+    intros db i db' Hvalid Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| head rest] eqn:Hqueue; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'.
+    unfold queue_valid in Hvalid. rewrite Hqueue in Hvalid.
+    destruct Hvalid as [Hdistinct Hnonroots].
+    change (NoDup rest /\ Forall (fun x => repr db x <> x) rest).
+    inversion Hdistinct; inversion Hnonroots; subst. now split.
+  Qed.
+
+  (** Distinct allocated queue identifiers fit within the interval without a public-wf premise. *)
+  Lemma queue_length_le_ids_from_members : forall db,
+    NoDup (runtime_queue (db_runtime db)) ->
+    (forall x, In x (runtime_queue (db_runtime db)) -> allocated db x) ->
+    pending db <= N.to_nat (ids db).
+  Proof.
+    intros db Hdistinct Hallocated.
+    assert (Hkeys : NoDup (map Pos.to_nat (runtime_queue (db_runtime db)))).
+    { apply NoDup_map_NoDup_ForallPairs; [| exact Hdistinct].
+      intros x y Hx Hy Hequal. now apply Pos2Nat.inj. }
+    assert (Hinclude : incl (map Pos.to_nat (runtime_queue (db_runtime db)))
+      (seq 1 (N.to_nat (ids db)))).
+    { intros n Hin. apply in_map_iff in Hin as [x [Hequal Hin]]. subst n.
+      pose proof (Hallocated x Hin) as Hbound. unfold allocated in Hbound.
+      assert (Hnatural : Pos.to_nat x <= N.to_nat (ids db)) by lia.
+      pose proof (Pos2Nat.is_pos x). apply in_seq. lia. }
+    assert (Hlength : length (map Pos.to_nat (runtime_queue (db_runtime db))) <=
+      length (seq 1 (N.to_nat (ids db)))).
+    { apply NoDup_incl_length; assumption. }
+    rewrite length_map, length_seq in Hlength. exact Hlength.
+  Qed.
+
+  (** Public row and allocation invariants supply the queue's allocated-member premise. *)
+  Lemma queue_length_le_ids : forall db, wf db -> queue_valid db ->
+    pending db <= N.to_nat (ids db).
+  Proof.
+    intros db Hwf [Hdistinct Hnonroots]. apply queue_length_le_ids_from_members; [exact Hdistinct |].
+    pose proof (wf_queue_allocated db Hwf) as Hallocated. now rewrite Forall_forall in Hallocated.
+  Qed.
+
+  (** An explicitly consistent binary queue counter inherits the same interval bound. *)
+  Lemma queue_counter_le_ids_from_members : forall db,
+    NoDup (runtime_queue (db_runtime db)) ->
+    (forall x, In x (runtime_queue (db_runtime db)) -> allocated db x) ->
+    db_npending db = N.of_nat (pending db) -> (db_npending db <= ids db)%N.
+  Proof.
+    intros db Hdistinct Hallocated Hcount.
+    pose proof (queue_length_le_ids_from_members db Hdistinct Hallocated) as Hbound.
+    rewrite Hcount. lia.
+  Qed.
+
+  (** The exact binary queue counter is bounded by the identifier allocation counter. *)
+  Lemma queue_counter_le_ids : forall db, wf db -> queue_valid db ->
+    (db_npending db <= ids db)%N.
+  Proof.
+    intros db Hwf Hqueue. pose proof (queue_length_le_ids db Hwf Hqueue) as Hbound.
+    rewrite (wf_pending_count db Hwf). lia.
+  Qed.
+
+  (** Put preserves the forest and queue invariants even inside a repair batch. *)
+  Lemma put_queue_state : forall db f k o,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (put f k o db)) /\ queue_valid (put f k o db).
+  Proof.
+    intros db f k o Hforest Hqueue. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : UnionFind.wf (db_forest next) /\ queue_valid next).
+    { unfold next. destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+        try (now split). split.
+      - rewrite union_forest. now apply UnionFind.wf_union.
+      - now apply queue_valid_union. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |]. split.
+      + rewrite row_replace_forest. exact (proj1 Hnext).
+      + apply queue_valid_row_replace. exact (proj2 Hnext).
+    - split.
+      + rewrite row_replace_forest. exact (proj1 Hnext).
+      + apply queue_valid_row_replace. exact (proj2 Hnext).
+  Qed.
+
+  Lemma queue_valid_put : forall db f k o,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (put f k o db).
+  Proof.
+    intros db f k o Hforest Hqueue. exact (proj2 (put_queue_state db f k o Hforest Hqueue)).
+  Qed.
+
+  (** Constructor reuse or allocation keeps the same valid pending-root queue. *)
+  Lemma make_queue_state : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (snd (make f k db))) /\ queue_valid (snd (make f k db)).
+  Proof.
+    intros db f k Hforest Hqueue.
+    assert (Hfresh : UnionFind.wf (db_forest (allocate_id (N.succ_pos (ids db)) db)) /\
+      queue_valid (allocate_id (N.succ_pos (ids db)) db)).
+    { split; [now apply UnionFind.wf_add | now apply queue_valid_allocate]. }
+    unfold make. destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      try (exact (conj Hforest Hqueue)).
+    all: destruct (kind_get f db) as [[| |m] |]; cbn [snd]; try exact Hfresh.
+    all: split; [rewrite row_replace_forest; exact (proj1 Hfresh) |].
+    all: apply queue_valid_row_replace; exact (proj2 Hfresh).
+  Qed.
+
+  Lemma queue_valid_make : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (snd (make f k db)).
+  Proof.
+    intros db f k Hforest Hqueue. exact (proj2 (make_queue_state db f k Hforest Hqueue)).
+  Qed.
+
+  (** Repair keeps the structural queue invariant without assuming public quietness. *)
+  Lemma repair_queue_state : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (repair_current f k db)) /\ queue_valid (repair_current f k db).
+  Proof.
+    intros db f k Hforest Hqueue. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [now split |].
+    apply put_queue_state.
+    - now rewrite row_delete_forest.
+    - now apply queue_valid_row_delete.
+  Qed.
+
+  Lemma queue_valid_repair : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (repair_current f k db).
+  Proof.
+    intros db f k Hforest Hqueue. exact (proj2 (repair_queue_state db f k Hforest Hqueue)).
+  Qed.
+
+  (** Both completed and exhausted rebuilds preserve distinct queued nonrepresentatives. *)
+  Lemma rebuild_queue_state : forall db,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (rebuild db)) /\ queue_valid (rebuild db).
+  Proof.
+    intros db Hforest Hqueue. apply (rebuild_preserves (fun current =>
+      UnionFind.wf (db_forest current) /\ queue_valid current)).
+    - intros current f k [Hforest' Hqueue']. now apply repair_queue_state.
+    - intros current i next [Hforest' Hqueue'] Hpop. split.
+      + now rewrite (proj1 (db_pop_loser_preserves current i next Hpop)).
+      + eapply queue_valid_pop; eassumption.
+    - now split.
+  Qed.
+
+  Lemma queue_valid_rebuild : forall db,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (rebuild db).
+  Proof.
+    intros db Hforest Hqueue. exact (proj2 (rebuild_queue_state db Hforest Hqueue)).
+  Qed.
+
+  (** Enlarging an identifier relation preserves the induced relation on keys. *)
+  Lemma key_rel_mono_forward : forall (before after : positive -> positive -> Prop),
+    (forall i j, before i j -> after i j) -> forall (left right : list (cell V.t)),
+    Forall2 (cell_rel before) left right -> Forall2 (cell_rel after) left right.
+  Proof.
+    intros before after Hmono left right Hkeys. induction Hkeys as
+      [| first second left right Hcell Hkeys IH]; constructor; [| exact IH].
+    destruct Hcell; constructor; auto.
+  Qed.
+
+  (** Every key is related to itself by the database equality relation. *)
+  Lemma key_same_refl_forward : forall db (key : list (cell V.t)),
+    Forall2 (cell_rel (same (view db))) key key.
+  Proof.
+    intros db key. induction key as [| [i | value] rest IH]; constructor;
+      try exact IH; constructor. apply equality_log_refl.
+  Qed.
+
+  (** Normalizing an identifier returns an identifier in the same equality class. *)
+  Lemma normal_id_same_forward : forall db i, forest_agrees db ->
+    exists j, normal_cell db (Id i) = Id j /\ same (view db) i j.
+  Proof.
+    intros db i Hagrees.
+    pose proof (forest_agrees_normal_cell db (Id i) Hagrees) as Hrelated.
+    destruct (normal_cell db (Id i)) as [j | value] eqn:Hnormal.
+    - exists j. split; [reflexivity |]. inversion Hrelated; assumption.
+    - inversion Hrelated.
+  Qed.
+
+  (** A constructor accumulator is retained by the executable output combination. *)
+  Lemma combine_output_id_forward : forall db f i output,
+    combine_output db f (Some (Some (Id i))) output = Some (Id i).
+  Proof.
+    intros db f i [[j | value] |]; unfold combine_output;
+      destruct (kind_get f db) as [[| |m] |]; reflexivity.
+  Qed.
+
+  (** Inserting any row preserves every already stored constructor row exactly. *)
+  Lemma put_constructor_keeps : forall db f key output g args i,
+    row (view db) g args (Some (Id i)) ->
+    row (view (put f key output db)) g args (Some (Id i)).
+  Proof.
+    intros db f key output g args i Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args))
+      (RowKeys.encode (f, normal_key db key))) as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (put_row_target_raw db f key output) as Htarget.
+      change (row_get f (normal_key db key) db = Some (Some (Id i))) in Hrow.
+      now rewrite Hrow, combine_output_id_forward in Htarget.
+    - assert (Hother : (g, args) <> (f, normal_key db key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exact (proj2 (put_other_rows db f key output g args (Some (Id i)) Hother) Hrow).
+  Qed.
+
+  (** Inserting any row preserves every already stored relation row exactly. *)
+  Lemma put_relation_keeps : forall db f key output g args,
+    row (view db) g args None -> row (view (put f key output db)) g args None.
+  Proof.
+    intros db f key output g args Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args))
+      (RowKeys.encode (f, normal_key db key))) as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (put_row_target_raw db f key output) as Htarget.
+      change (row_get f (normal_key db key) db = Some None) in Hrow.
+      rewrite Hrow in Htarget.
+      assert (Hcombine : combine_output db f (Some None)
+        (option_map (normal_cell db) output) = None).
+      { unfold combine_output. destruct (kind_get f db) as [[| |m] |];
+          destruct (option_map (normal_cell db) output) as [[i | value] |]; reflexivity. }
+      now rewrite Hcombine in Htarget.
+    - assert (Hother : (g, args) <> (f, normal_key db key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exact (proj2 (put_other_rows db f key output g args None Hother) Hrow).
+  Qed.
+
+  (** Inserting a row retains each old lattice row with an output at least as large. *)
+  Lemma put_lattice_keeps : forall db f key output g args a m,
+    kind (view db) g = Some (OLat m) -> row (view db) g args (Some (Val a)) ->
+    exists b, row (view (put f key output db)) g args (Some (Val b)) /\ V.merge m a b = b.
+  Proof.
+    intros db f key output g args a m Hkind Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args))
+      (RowKeys.encode (f, normal_key db key))) as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (put_row_target_raw db f key output) as Htarget.
+      change (row_get f (normal_key db key) db = Some (Some (Val a))) in Hrow.
+      change (kind_get f db = Some (OLat m)) in Hkind.
+      rewrite Hrow in Htarget. unfold combine_output in Htarget. rewrite Hkind in Htarget.
+      destruct (option_map (normal_cell db) output) as [[i | value] |].
+      + exists a. split; [exact Htarget | apply V.merge_idem].
+      + exists (V.merge m a value). split; [exact Htarget |].
+        now rewrite V.merge_assoc, V.merge_idem.
+      + exists a. split; [exact Htarget | apply V.merge_idem].
+    - assert (Hother : (g, args) <> (f, normal_key db key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exists a. split; [| apply V.merge_idem].
+      exact (proj2 (put_other_rows db f key output g args (Some (Val a)) Hother) Hrow).
+  Qed.
+
+  (** A typed constructor output has an identifier payload. *)
+  Lemma kind_ok_id_shape_forward : forall db f key output,
+    kind_ok db f key output -> kind (view db) f = Some OId ->
+    exists i, output = Some (Id i).
+  Proof.
+    intros db f key output [_ [_ Hshape]] Hkind. rewrite Hkind in Hshape.
+    destruct output as [[i | value] |]; try contradiction. now exists i.
+  Qed.
+
+  (** A stored typed constructor row declares a constructor function. *)
+  Lemma kind_ok_id_kind_forward : forall db f key i,
+    kind_ok db f key (Some (Id i)) -> kind (view db) f = Some OId.
+  Proof.
+    intros db f key i [_ [_ Hshape]].
+    destruct (kind (view db) f) as [[| |m] |]; try contradiction; reflexivity.
+  Qed.
+
+  (** A constructor insertion has a target row whose output equals its requested class. *)
+  Lemma put_constructor_target_same : forall db f key i, forest_agrees db ->
+    (forall output, row (view db) f (normal_key db key) output ->
+      exists j, output = Some (Id j)) ->
+    exists j, row (view (put f key (Some (Id i)) db)) f (normal_key db key)
+      (Some (Id j)) /\ same (view (put f key (Some (Id i)) db)) i j.
+  Proof.
+    intros db f key i Hagrees Hshape.
+    destruct (normal_id_same_forward db i Hagrees) as [j [Hnormal Hsame]].
+    pose proof (put_row_target_raw db f key (Some (Id i))) as Htarget.
+    cbn [option_map] in Htarget. rewrite Hnormal in Htarget.
+    destruct (row_get f (normal_key db key) db) as [output |] eqn:Hprevious.
+    - destruct (Hshape output Hprevious) as [old Houtput]. subst output.
+      rewrite combine_output_id_forward in Htarget. exists old. split; [exact Htarget |].
+      eapply equality_log_trans with (b := j).
+      + now apply put_same_preserves_raw.
+      + apply equality_log_sym. eapply put_conflict_same_raw.
+        * exact Hagrees.
+        * exact Hprevious.
+        * cbn [option_map]. now rewrite Hnormal.
+    - change (row (view (put f key (Some (Id i)) db)) f (normal_key db key)
+        (Some (Id j))) in Htarget.
+      exists j. split; [exact Htarget |]. now apply put_same_preserves_raw.
+  Qed.
+
+  (** A deleted constructor row is reinserted with an equivalent identifier output. *)
+  Lemma deleted_constructor_target_same : forall db f key i, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    row (view db) f key (Some (Id i)) ->
+    let after := put f (normal_key db key) (option_map (normal_cell db) (Some (Id i)))
+      (row_delete f key db) in
+    exists j, row (view after) f (normal_key db key) (Some (Id j)) /\
+      same (view after) i j.
+  Proof.
+    intros db f key i Hagrees Htyped Hrow. cbn zeta.
+    destruct (normal_id_same_forward db i Hagrees) as [j [Hnormal Hsame]].
+    cbn [option_map]. rewrite Hnormal.
+    assert (Hdeleted : forest_agrees (row_delete f key db)).
+    { eapply forest_agrees_frame;
+        [apply row_delete_forest | apply row_delete_same | exact Hagrees]. }
+    assert (Hkind : kind (view db) f = Some OId).
+    { apply kind_ok_id_kind_forward with (key := key) (i := i). now apply Htyped. }
+    assert (Hshape : forall output,
+      row (view (row_delete f key db)) f
+        (normal_key (row_delete f key db) (normal_key db key)) output ->
+      exists old, output = Some (Id old)).
+    { intros output Hcurrent. apply row_delete_binding in Hcurrent as [Hcurrent _].
+      exact (kind_ok_id_shape_forward db f
+        (normal_key (row_delete f key db) (normal_key db key)) output
+        (Htyped f _ output Hcurrent) Hkind). }
+    destruct (put_constructor_target_same (row_delete f key db) f (normal_key db key)
+      j Hdeleted Hshape) as [output [Htarget Hjoined]].
+    rewrite row_delete_normal_key, (normal_key_idempotent db key (proj1 Hagrees)) in Htarget.
+    exists output. split; [exact Htarget |].
+    eapply equality_log_trans; [| exact Hjoined]. apply put_same_preserves_raw.
+    now rewrite row_delete_same.
+  Qed.
+
+  (** Repair retains constructor rows other than the row it explicitly deletes. *)
+  Lemma repair_other_constructor_keeps : forall db f key g args i,
+    (g, args) <> (f, key) -> row (view db) g args (Some (Id i)) ->
+    row (view (repair_current f key db)) g args (Some (Id i)).
+  Proof.
+    intros db f key g args i Hdifferent Hrow. unfold repair_current.
+    destruct (row_get f key db) as [before |]; [| exact Hrow].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+      (output_eqb (option_map (normal_cell db) before) before)); [exact Hrow |].
+    apply put_constructor_keeps. apply row_delete_binding. now split.
+  Qed.
+
+  (** Every old constructor row has a post-repair row in the same key and output classes. *)
+  Lemma repair_constructor_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args i, row (view db) g args (Some (Id i)) ->
+    exists args' j, row (view (repair_current f key db)) g args' (Some (Id j)) /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args' /\
+      same (view (repair_current f key db)) i j.
+  Proof.
+    intros db f key Hagrees Htyped g args i Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args)) (RowKeys.encode (f, key)))
+      as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (deleted_constructor_target_same db f key i Hagrees Htyped Hrow) as Htarget.
+      change (row_get f key db = Some (Some (Id i))) in Hrow.
+      unfold repair_current. rewrite Hrow.
+      destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+        (output_eqb (option_map (normal_cell db) (Some (Id i))) (Some (Id i)))).
+      + exists key, i. split; [exact Hrow |]. split;
+          [apply key_same_refl_forward | apply equality_log_refl].
+      + destruct Htarget as [j [Htarget Hjoined]]. exists (normal_key db key), j.
+        split; [exact Htarget |]. split; [| exact Hjoined].
+        eapply key_rel_mono_forward; [| now apply forest_agrees_normal_key].
+        intros a b Hab. apply put_same_preserves_raw. now rewrite row_delete_same.
+    - exists args, i. split.
+      + apply repair_other_constructor_keeps; [| exact Hrow].
+        intro Hequal. apply Hdifferent. now rewrite Hequal.
+      + split; [apply key_same_refl_forward | apply equality_log_refl].
+  Qed.
+
+  (** Actual repair preserves every consequence of the old constructor rows and equalities. *)
+  Lemma repair_cong_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall i j, cong db i j -> cong (repair_current f key db) i j.
+  Proof.
+    intros db f key Hagrees Htyped. unfold cong.
+    apply fd_congruence_rows_transfer.
+    - intros i j Hsame. apply cong_same. now apply repair_current_same_preserves.
+    - intros g args i Hrow.
+      destruct (repair_constructor_forward db f key Hagrees Htyped g args i Hrow)
+        as [args' [j [Htarget [Hkeys Houtput]]]].
+      exists args', j. split; [exact Htarget |]. split.
+      + eapply key_rel_mono_forward; [| exact Hkeys]. intros a b Hab. now apply cong_same.
+      + now apply cong_same.
+  Qed.
+
+  (** Every relation row survives repair at its old or normalized key. *)
+  Lemma repair_relation_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args, row (view db) g args None ->
+    exists args', row (view (repair_current f key db)) g args' None /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args'.
+  Proof.
+    intros db f key Hagrees Htyped g args Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args)) (RowKeys.encode (f, key)))
+      as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      exists (normal_key db key). split; [now apply repair_relation_target |].
+      eapply key_rel_mono_forward; [| now apply forest_agrees_normal_key].
+      intros i j Hij. now apply repair_current_same_preserves.
+    - assert (Hother : (g, args) <> (f, key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exists args. split; [| apply key_same_refl_forward].
+      unfold repair_current. destruct (row_get f key db) as [before |]; [| exact Hrow].
+      destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+        (output_eqb (option_map (normal_cell db) before) before)); [exact Hrow |].
+      apply put_relation_keeps. apply row_delete_binding. now split.
+  Qed.
+
+  (** Every lattice row survives repair below its old or normalized target value. *)
+  Lemma repair_lattice_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args a m, kind (view db) g = Some (OLat m) ->
+    row (view db) g args (Some (Val a)) ->
+    exists args' b, row (view (repair_current f key db)) g args' (Some (Val b)) /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args' /\
+      V.merge m a b = b.
+  Proof.
+    intros db f key Hagrees Htyped g args a m Hkind Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args)) (RowKeys.encode (f, key)))
+      as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      destruct (repair_lattice_target db f key a m Hagrees Htyped Hkind Hrow)
+        as [b [Htarget Hle]].
+      exists (normal_key db key), b. split; [exact Htarget |]. split; [| exact Hle].
+      eapply key_rel_mono_forward; [| now apply forest_agrees_normal_key].
+      intros i j Hij. now apply repair_current_same_preserves.
+    - assert (Hother : (g, args) <> (f, key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      unfold repair_current. destruct (row_get f key db) as [before |].
+      + destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+          (output_eqb (option_map (normal_cell db) before) before)).
+        * exists args, a. split; [exact Hrow |]. split;
+            [apply key_same_refl_forward | apply V.merge_idem].
+        * assert (Hdeleted : row (view (row_delete f key db)) g args (Some (Val a))).
+          { apply row_delete_binding. now split. }
+          assert (Hdeleted_kind : kind (view (row_delete f key db)) g = Some (OLat m))
+            by now rewrite row_delete_kind.
+          destruct (put_lattice_keeps (row_delete f key db) f (normal_key db key)
+            (option_map (normal_cell db) before) g args a m Hdeleted_kind Hdeleted)
+            as [b [Htarget Hle]].
+          exists args, b. split; [exact Htarget |]. split;
+            [apply key_same_refl_forward | exact Hle].
+      + exists args, a. split; [exact Hrow |]. split;
+          [apply key_same_refl_forward | apply V.merge_idem].
+  Qed.
+
+  (** A typed output contains its own canonicalized value under forest agreement. *)
+  Lemma row_output_canon_le : forall db f key output, forest_agrees db ->
+    kind_ok db f key output -> out_le db f (option_map (canon db) output) output.
+  Proof.
+    intros db f key [[i | a] |] Hagrees [_ [_ Hshape]].
+    - cbn [out_le option_map canon cell_le]. apply equality_log_sym.
+      now apply forest_agrees_id.
+    - cbn [out_le option_map canon cell_le].
+      destruct (kind (view db) f) as [[| |m] |] eqn:Hkind in Hshape; try contradiction.
+      exists m. split; [exact Hkind | apply V.merge_idem].
+    - exact I.
+  Qed.
+
+  (** Actual repair retains each old row with related keys and a greater output. *)
+  Lemma repair_row_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args output, row (view db) g args output ->
+    exists args' output', row (view (repair_current f key db)) g args' output' /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args' /\
+      out_le (repair_current f key db) g
+        (option_map (canon (repair_current f key db)) output) output'.
+  Proof.
+    intros db f key Hagrees Htyped g args [[i | a] |] Hrow.
+    - destruct (repair_constructor_forward db f key Hagrees Htyped g args i Hrow)
+        as [args' [j [Htarget [Hkeys Hsame]]]].
+      exists args', (Some (Id j)). split; [exact Htarget |]. split; [exact Hkeys |].
+      cbn [out_le option_map canon cell_le]. eapply equality_log_trans with (b := i).
+      + apply equality_log_sym. apply forest_agrees_id. now apply forest_agrees_repair.
+      + exact Hsame.
+    - destruct (Htyped g args (Some (Val a)) Hrow) as [_ [_ Hshape]].
+      destruct (kind (view db) g) as [[| |m] |] eqn:Hkind in Hshape; try contradiction.
+      destruct (repair_lattice_forward db f key Hagrees Htyped g args a m Hkind Hrow)
+        as [args' [b [Htarget [Hkeys Hle]]]].
+      exists args', (Some (Val b)). split; [exact Htarget |]. split; [exact Hkeys |].
+      cbn [out_le option_map canon cell_le]. exists m. split; [| exact Hle].
+      now rewrite (proj1 (repair_current_layout db f key)).
+    - destruct (repair_relation_forward db f key Hagrees Htyped g args Hrow)
+        as [args' [Htarget Hkeys]].
+      exists args', None. split; [exact Htarget |]. split; [exact Hkeys | exact I].
+  Qed.
 
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Include Database V I.
   (* spec: wmark potential *)
-  (* STUB-CODE *)
-  Definition wmark (db : t) : N := db_wmark db.
+  Definition decl_names (db : t) : list positive :=
+    map fst (PTrieCode.elements (runtime_kinds (db_runtime db))).
+  Definition wmark (db : t) : N :=
+    fold_right N.max (N.max (db_nuses db) (ids db))
+      (map Npos (db_index_counters db) ++ map Npos (decl_names db) ++
+        map (fun c => match c with
+          | Id i => Npos (xO i)
+          | Val v => Npos (xI (V.encode v))
+          end) (db_written_cells db)).
   Definition unit (db : t) : nat :=
     (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Definition slots_of (db : t) (f : positive) : nat :=
@@ -590,12 +7083,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition potential (_ : N) (_ : t) : N := 0%N.
   Definition num_slots (db : t) : nat := length (slots db).
+  TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
+  TimeFun normal_cell normal_key output_eqb combine_output.
+  TimeFun slot_index_get projection_table_get slot_update_one slot_update_many slot_updated_counters.
+  TimeFun slots_update row_write row_replace row_erase row_delete.
   TimeFun init.
   TimeFun find.
   TimeFun lookup.
+  TimeFun union.
+  TimeFun allocate_id.
   TimeFun make.
   TimeFun put.
-  TimeFun union.
+  TimeFun repair_current.
+  TimeFun db_get_uses db_pop_loser.
   TimeFun db_rstep.
   TimeFun db_rebuild_fuel.
   TimeFun rebuild.
@@ -603,7 +7103,632 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun advance.
   TimeFun changed.
   TimeFun ids.
-  Definition c_db : N := 1. (* STUB *)
+
+  (** A functional construction trace bounds cached widths using the public index laws. *)
+  Lemma index_history_cell_bits : forall written ix bits,
+    database_index_history I.empty I.insert I.remove written ix ->
+    (forall c, In c written -> cell_bits V.encode c <= bits) ->
+    I.max_cell_bits ix <= bits.
+  Proof.
+    intros written ix bits Hhistory Hwritten.
+    apply (database_index_history_induction (cell V.t) I.t I.empty I.insert I.remove written
+      (fun current => I.max_cell_bits current <= bits)); [| | | exact Hhistory].
+    - rewrite I.max_cell_bits_empty. lia.
+    - intros u current Hcells Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_insert |].
+      apply Nat.max_lub; [exact Hcurrent |].
+      induction u as [|c u IH]; cbn [fold_right]; [lia |]. apply Nat.max_lub.
+      + apply Hwritten, Hcells. now left.
+      + apply IH. intros d Hin. apply Hcells. now right.
+    - intros u current Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_remove | exact Hcurrent].
+  Qed.
+
+  (** Every insertion pays the actual binary increment of the stored projection count. *)
+  Lemma T_slot_update_one_count_succ_ge : forall s u state,
+    (N.T_succ (runtime_projection_count state s u) <=
+      T_slot_update_one true s u state)%N.
+  Proof.
+    intros s u state. unfold runtime_projection_count.
+    time_unfold T_slot_update_one. cbn beta iota zeta. lia.
+  Qed.
+
+  (** A non-final deletion pays the predecessor of its stored projection count. *)
+  Lemma T_slot_update_one_count_pred_ge : forall s u state,
+    runtime_projection_count state s u <> 0%N ->
+    runtime_projection_count state s u <> 1%N ->
+    (N.T_pred (runtime_projection_count state s u) <=
+      T_slot_update_one false s u state)%N.
+  Proof.
+    intros s u state Hnonzero Hnotone.
+    time_unfold T_slot_update_one. cbn beta iota zeta.
+    fold (runtime_projection_count state s u).
+    destruct (runtime_projection_count state s u) as [|p]; [contradiction |].
+    destruct p; [lia | lia | contradiction].
+  Qed.
+
+  (** All-ones multiplicities force an arbitrarily long carry inside one slot update. *)
+  Lemma T_slot_update_one_carry_ge : forall n s u state,
+    runtime_projection_count state s u = Npos (database_carry_value n) ->
+    (N.of_nat n + 2 <= T_slot_update_one true s u state)%N.
+  Proof.
+    intros n s u state Hcount.
+    pose proof (T_slot_update_one_count_succ_ge s u state) as Htime.
+    rewrite Hcount, database_carry_successor_time in Htime. exact Htime.
+  Qed.
+
+  (** A nonempty slot walk pays projection, one update, and its updated-state continuation. *)
+  Lemma T_slot_update_many_cons : forall b u s layout rest state,
+    T_slot_update_many b u ((s, layout) :: rest) state =
+      (1 + T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) state +
+       T_slot_update_many b u rest
+         (slot_update_one b s (project_slot_layout layout u) state))%N.
+  Proof.
+    intros b u s layout rest state. time_unfold T_slot_update_many. ring.
+  Qed.
+
+  (** The empty slot walk performs only its entry call. *)
+  Lemma T_slot_update_many_nil : forall b u state,
+    T_slot_update_many b u [] state = 1%N.
+  Proof.
+    intros b u state. time_unfold T_slot_update_many. reflexivity.
+  Qed.
+
+  (** Reading either index cache pays the binary slot key once. *)
+  Lemma T_slot_index_get_width : forall code indexes,
+    (T_slot_index_get code indexes <=
+      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
+  Proof.
+    intros code indexes. time_unfold T_slot_index_get.
+    apply N.add_le_mono_l. apply PTrieT.T_get_le.
+  Qed.
+
+  (** Reading a projection-count table pays the same binary slot key. *)
+  Lemma T_projection_table_get_width : forall code counts,
+    (T_projection_table_get code counts <=
+      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
+  Proof.
+    intros code counts. time_unfold T_projection_table_get.
+    apply N.add_le_mono_l. apply PTrieT.T_get_le.
+  Qed.
+
+  (** One slot update exposes count width separately from tuple and index costs. *)
+  Lemma T_slot_update_one_local : forall add s u state,
+    let code := N.succ_pos s in
+    let all := slot_index_get code (runtime_all_indexes state) in
+    let fresh := slot_index_get code (runtime_new_indexes state) in
+    let count := runtime_projection_count state s u in
+    (T_slot_update_one add s u state <=
+      32 + N.T_succ_pos s + T_db_tuple_code u +
+      6 * (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1)) +
+      2 * (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1)) +
+      I.T_insert u all + I.T_insert u fresh + I.T_remove u all + I.T_remove u fresh +
+      N.of_nat (N.size_nat count) + 2)%N.
+  Proof.
+    intros add s u state. cbn beta zeta.
+    set (code := N.succ_pos s) in *.
+    set (tuple_code := db_tuple_code u) in *.
+    set (table := projection_table_get code (runtime_projection_counts state)).
+    set (all := slot_index_get code (runtime_all_indexes state)) in *.
+    set (fresh := slot_index_get code (runtime_new_indexes state)) in *.
+    pose proof (T_projection_table_get_width code (runtime_projection_counts state)) as Htable.
+    pose proof (T_slot_index_get_width code (runtime_all_indexes state)) as Hall.
+    pose proof (T_slot_index_get_width code (runtime_new_indexes state)) as Hfresh.
+    assert (Hget : (PTrieCode.T_get tuple_code table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { apply PTrieT.T_get_le. }
+    assert (Hset_slot : forall A (v : A) (m : PTrieCode.t A),
+      (PTrieCode.T_set code v m <= PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N).
+    { intros A v m. apply PTrieT.T_set_le. }
+    assert (Hset_tuple : forall v,
+      (PTrieCode.T_set tuple_code v table <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { intro v. apply PTrieT.T_set_le. }
+    assert (Hremove : (PTrieCode.T_remove tuple_code table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { apply PTrieT.T_remove_le. }
+    pose proof (N.T_succ_le (runtime_projection_count state s u)) as Hsucc.
+    pose proof (N.T_pred_le (runtime_projection_count state s u)) as Hpred.
+    unfold runtime_projection_count in Hsucc, Hpred |- *.
+    fold code tuple_code table in Hsucc, Hpred |- *.
+    set (count := match PTrieCode.get tuple_code table with Some (_, n) => n | None => 0%N end) in *.
+    time_unfold T_slot_update_one. cbn beta iota zeta.
+    fold code tuple_code table count all fresh.
+    destruct add; [| destruct count as [|[p|p|]]];
+      try time_unfold @T_runtime_set_indexes;
+      time_pose; time_simpl; time_cbn_all.
+    all: set (slot_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N) in *;
+      set (tuple_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N) in *;
+      clearbody slot_cost tuple_cost; lia.
+  Qed.
+
+  (** A preserved state predicate turns uniform per-layout costs into a complete walk bound. *)
+  Lemma T_slot_update_many_bound : forall b u layouts state
+    (P : database_runtime (cell V.t) I.t -> Prop) budget,
+    P state ->
+    (forall s layout current, In (s, layout) layouts -> P current ->
+      P (slot_update_one b s (project_slot_layout layout u) current) /\
+      (T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
+    (T_slot_update_many b u layouts state <=
+      (budget + 1) * N.of_nat (length layouts) + 1)%N.
+  Proof.
+    intros b u layouts. induction layouts as [|[s layout] rest IH];
+      intros state P budget Hstate Hstep.
+    - rewrite T_slot_update_many_nil. cbn [length]. lia.
+    - destruct (Hstep s layout state (or_introl eq_refl) Hstate) as [Hnext Hcost].
+      pose proof (IH (slot_update_one b s (project_slot_layout layout u) state) P budget Hnext
+        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Htail.
+      rewrite T_slot_update_many_cons. cbn [length]. nia.
+  Qed.
+
+  (** A duplicate-free walk reads each slot before any earlier update can change it. *)
+  Lemma T_slot_update_many_snapshots : forall b u layouts original state budget,
+    NoDup (map fst layouts) ->
+    (forall s layout, In (s, layout) layouts -> slot_snapshot state s = slot_snapshot original s) ->
+    (forall s layout current, In (s, layout) layouts ->
+      slot_snapshot current s = slot_snapshot original s ->
+      (T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
+    (T_slot_update_many b u layouts state <=
+      (budget + 1) * N.of_nat (length layouts) + 1)%N.
+  Proof.
+    intros b u layouts. induction layouts as [|[s layout] rest IH];
+      intros original state budget Hnodup Hsnapshots Hstep.
+    - rewrite T_slot_update_many_nil. cbn [length]. lia.
+    - cbn [map fst] in Hnodup. inversion Hnodup as [|key keys Hmissing Htail]; subst.
+      pose proof (Hstep s layout state (or_introl eq_refl)
+        (Hsnapshots s layout (or_introl eq_refl))) as Hhead.
+      assert (Hnext : forall t block, In (t, block) rest ->
+        slot_snapshot (slot_update_one b s (project_slot_layout layout u) state) t =
+          slot_snapshot original t).
+      { intros t block Hin. rewrite slot_update_one_snapshot_other.
+        - apply (Hsnapshots t block). now right.
+        - intro Hequal. subst t. apply Hmissing. exact (in_map fst rest (s, block) Hin). }
+      pose proof (IH original (slot_update_one b s (project_slot_layout layout u) state)
+        budget Htail Hnext
+        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Hrest.
+      rewrite T_slot_update_many_cons. cbn [length]. nia.
+  Qed.
+
+  (** Counter collection emits precisely the full and delta counter for every visited slot. *)
+  Lemma slot_updated_counters_length : forall layouts state,
+    length (slot_updated_counters layouts state) = 2 * length layouts.
+  Proof.
+    intro layouts. induction layouts as [|[s layout] rest IH]; intro state;
+      cbn [slot_updated_counters length]; [reflexivity | rewrite IH; lia].
+  Qed.
+
+  Definition c_db : N :=
+    4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
+
+  (** The database coefficient dominates the trie work and every constant observation cost. *)
+  Lemma c_db_trie_budget : (128 * (PTrieT.c_trie + 1) <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. nia.
+  Qed.
+
+  (** Every database operation has room for its fixed record-construction overhead. *)
+  Lemma c_db_constant_budget : (128 <= c_db)%N.
+  Proof.
+    pose proof c_db_trie_budget. nia.
+  Qed.
+
+  (** The positive bit count agrees with the natural length of the positive size code. *)
+  Lemma positive_size_nat : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
+  Proof.
+    intro p. induction p; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ, ?IHp; reflexivity.
+  Qed.
+
+  (** Binary slot width fits its logarithmic public query size, including zero. *)
+  Lemma slot_width_log : forall s, N.size_nat s <= N.to_nat (N.log2 s) + 1.
+  Proof.
+    intros [| [p | p |]]; cbn [N.size_nat N.log2 N.to_nat Pos.size_nat];
+      rewrite ?positive_size_nat; lia.
+  Qed.
+
+  (** The positive slot encoding adds at most one bit to the queried number. *)
+  Lemma slot_code_bits : forall s, Pos.size_nat (N.succ_pos s) <= N.size_nat s + 1.
+  Proof.
+    intros [| p]; [cbn; lia |].
+    cbn [N.succ_pos N.size_nat]. induction p; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** Collecting the two final counters pays one bounded slot lookup per cache. *)
+  Lemma T_slot_updated_counters_le : forall layouts state bits,
+    (forall s layout, In (s, layout) layouts -> N.size_nat s <= bits) ->
+    (T_slot_updated_counters layouts state <=
+      16 * (I.c_ix + PTrieT.c_trie + 1) * N.of_nat (length layouts + 1) *
+        N.of_nat (bits + 1))%N.
+  Proof.
+    intro layouts. induction layouts as [|[s layout] rest IH]; intros state bits Hbits.
+    - time_unfold T_slot_updated_counters. cbn [length]. nia.
+    - pose proof (IH state bits (fun t block Hin => Hbits t block (or_intror Hin))) as Htail.
+      pose proof (Hbits s layout (or_introl eq_refl)) as Hslot.
+      pose proof (slot_code_bits s) as Hcode.
+      pose proof (N.T_succ_pos_le s) as Hsucc.
+      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_all_indexes state)) as Hall.
+      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_new_indexes state)) as Hnew.
+      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_all_indexes state))) as Hall_next.
+      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_new_indexes state))) as Hnew_next.
+      time_unfold T_slot_updated_counters.
+      time_unfold @T_runtime_all_indexes. time_unfold @T_runtime_new_indexes.
+      cbn [length]. nia.
+  Qed.
+
+  (** Taking the maximum over a list retains its initial lower bound. *)
+  Lemma fold_max_base : forall values base, (base <= fold_right N.max base values)%N.
+  Proof.
+    intro values. induction values as [| value values IH]; intro base; cbn [fold_right].
+    - lia.
+    - eapply N.le_trans; [apply IH | apply N.le_max_r].
+  Qed.
+
+  (** Every recorded value is below the maximum over the recording list. *)
+  Lemma fold_max_member : forall values base value,
+    In value values -> (value <= fold_right N.max base values)%N.
+  Proof.
+    intro values. induction values as [| head values IH]; intros base value Hin.
+    - contradiction.
+    - cbn [fold_right]. destruct Hin as [-> | Hin]; [apply N.le_max_l |].
+      eapply N.le_trans; [now apply IH | apply N.le_max_r].
+  Qed.
+
+  (** Increasing a binary number never decreases its encoded width. *)
+  Lemma N_width_mono : forall n m, (n <= m)%N -> N.size_nat n <= N.size_nat m.
+  Proof.
+    intros [| p] [| q] Hle; cbn [N.size_nat]; try lia.
+    destruct (Pos.eq_dec p q) as [-> | Hneq]; [lia |].
+    apply Pos.size_nat_monotone. lia.
+  Qed.
+
+  (** Doubling a binary natural adds at most one bit. *)
+  Lemma database_double_bits : forall n, N.size_nat (2 * n) <= N.size_nat n + 1.
+  Proof.
+    intros [|p]; cbn [N.mul N.size_nat Pos.mul Pos.size_nat]; lia.
+  Qed.
+
+  (** A query length no greater than an input length fits the input's positive rank. *)
+  Lemma database_query_length_rank : forall n m, n <= m ->
+    (Npos (Pos.of_nat n) <= Npos (Pos.of_succ_nat m))%N.
+  Proof.
+    intros n m Hlength. change (Pos.of_nat n <= Pos.of_succ_nat m)%positive.
+    apply Pos2Nat.inj_le.
+    rewrite SuccNat2Pos.id_succ. destruct n as [|n].
+    - cbn. lia.
+    - rewrite Nat2Pos.id by lia. lia.
+  Qed.
+
+  (** Counter, query and stored-cell bounds together control the actual index width. *)
+  Lemma index_width_watermark : forall ix u bound,
+    (Npos (I.next ix) <= bound)%N ->
+    (Npos (Pos.of_nat (length u)) <= bound)%N ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat bound) ->
+    I.max_cell_bits ix <= N.size_nat bound ->
+    I.width ix u <= 4 * N.size_nat bound + 2.
+  Proof.
+    intros ix u bound Hnext Hlength Hcells Hstored.
+    assert (Hsum : (Npos (I.next ix + Pos.of_nat (length u)) <= 2 * bound)%N).
+    { change ((Npos (I.next ix) + Npos (Pos.of_nat (length u))) <= 2 * bound)%N. lia. }
+    pose proof (N_width_mono _ _ Hsum) as Hsum_bits.
+    change (Pos.size_nat (I.next ix + Pos.of_nat (length u)) <= N.size_nat (2 * bound))
+      in Hsum_bits.
+    pose proof (database_double_bits bound) as Hdouble.
+    assert (Hmaximum : fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 u <=
+      N.size_nat bound).
+    { clear -Hcells. induction u as [|c rest IH]; cbn [fold_right]; [lia |].
+      apply Nat.max_lub; [apply Hcells; now left |].
+      apply IH. intros d Hin. apply Hcells. now right. }
+    pose proof (I.width_le ix u). lia.
+  Qed.
+
+  (** The exact watermark formula always covers the allocated identifier interval. *)
+  Lemma wmark_ids : forall db, (ids db <= wmark db)%N.
+  Proof.
+    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_r | apply fold_max_base].
+  Qed.
+
+  (** The declaration inventory is exactly the domain of the stored kind trie. *)
+  Lemma decl_names_spec : forall db f,
+    kind (view db) f <> None <-> In f (decl_names db).
+  Proof.
+    intros db f. unfold decl_names.
+    change (PTrieCode.get f (runtime_kinds (db_runtime db)) <> None <->
+      In f (map fst (PTrieCode.elements (runtime_kinds (db_runtime db))))).
+    split.
+    - intro Hpresent. destruct (PTrieCode.get f (runtime_kinds (db_runtime db))) as [output |] eqn:Hget;
+        [| contradiction]. apply in_map_iff. exists (f, output). split; [reflexivity |].
+      now apply PTrie.elements_spec.
+    - intro Hin. apply in_map_iff in Hin as [[g output] [Heq Hin]].
+      cbn [fst] in Heq. subst g. apply PTrie.elements_spec in Hin. congruence.
+  Qed.
+
+  (** A guarded slot lookup pays only the query's bits and one trie access. *)
+  Lemma T_index_bits : forall s new db,
+    (T_index s new db <= 16 * (PTrieT.c_trie + 1) * N.of_nat (N.size_nat s + 1))%N.
+  Proof.
+    intros s new db. pose proof (N.T_compare_le s (runtime_slot_bound (db_runtime db))) as Hcompare.
+    pose proof (N.T_succ_pos_le s) as Hsucc.
+    pose proof (slot_code_bits s) as Hbits.
+    pose proof (PTrieT.T_get_le I.t (N.succ_pos s)
+      (if new then runtime_new_indexes (db_runtime db) else runtime_all_indexes (db_runtime db))) as Hget.
+    time_unfold T_index. time_unfold @T_db_runtime. time_unfold @T_runtime_slot_bound.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))); try nia.
+    destruct new; time_unfold @T_runtime_new_indexes; time_unfold @T_runtime_all_indexes;
+      cbn in Hget; nia.
+  Qed.
+
+  (** Unary logarithms agree with the width of a positive binary integer. *)
+  Lemma positive_nat_log2_size : forall p,
+    S (Nat.log2 (Pos.to_nat p)) = Pos.size_nat p.
+  Proof.
+    intro p. induction p.
+    - rewrite Pos2Nat.inj_xI.
+      replace (S (2 * Pos.to_nat p)) with (2 * Pos.to_nat p + 1) by lia.
+      rewrite Nat.log2_succ_double by apply Pos2Nat.is_pos.
+      cbn [Pos.size_nat]. now rewrite IHp.
+    - rewrite Pos2Nat.inj_xO, Nat.log2_double by apply Pos2Nat.is_pos.
+      cbn [Pos.size_nat]. now rewrite IHp.
+    - reflexivity.
+  Qed.
+
+  (** A unary logarithm is bounded by the width of the same binary integer. *)
+  Lemma nat_log2_N_width : forall n, Nat.log2 (N.to_nat n) <= N.size_nat n.
+  Proof.
+    intros [| p]; [reflexivity |].
+    change (Nat.log2 (Pos.to_nat p) <= Pos.size_nat p).
+    pose proof (positive_nat_log2_size p). lia.
+  Qed.
+
+  (** Forest cardinality is exactly the database allocation counter. *)
+  Lemma forest_card_ids : forall db, wf db ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db Hwf. unfold UnionFind.card. now rewrite (wf_forest_count db Hwf).
+  Qed.
+
+  (** Find adds only the fixed record-wrapper work to the actual forest clock. *)
+  Lemma T_find_overhead : forall i db,
+    (T_find i db = UnionFindT.T_find i (db_forest db) + 14)%N.
+  Proof.
+    intros i db. time_unfold T_find. time_unfold @T_database_set_forest.
+    time_simpl. time_cbn. nia.
+  Qed.
+
+  (** The shared coefficient also dominates forest work and fixed wrapper costs. *)
+  Lemma c_db_forest_budget : (128 * (UnionFindT.c_uf + 1) <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. nia.
+  Qed.
+
+  (** Allocated finds fit the logarithmic database unit without any history assumption. *)
+  Lemma T_find_unit_budget : forall i db, wf db -> allocated db i ->
+    (UnionFindT.T_find i (db_forest db) <=
+      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros i db Hwf Hi.
+    pose proof (UnionFindT.T_find_le i (db_forest db) (wf_forest db Hwf)) as Hfind.
+    rewrite (forest_card_ids db Hwf) in Hfind.
+    pose proof (nat_log2_N_width (ids db)) as Hlog.
+    pose proof (slot_width_log (ids db)) as Hlogwidth.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
+      N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (wf_forest_width db Hwf) |].
+        apply N_width_mono. apply wmark_ids.
+      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    unfold unit. rewrite Nat2N.inj_mul.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    nia.
+  Qed.
+
+  (** The input-cell width sum separates tuple payloads from list bookkeeping. *)
+  Definition tuple_cell_bits (k : list (cell V.t)) : nat :=
+    fold_right (fun c n => cell_bits V.encode c + n) 0 k.
+
+  (** Cell encoding has exactly the public tagged-cell width. *)
+  Lemma db_cell_code_bits : forall c,
+    Pos.size_nat (db_cell_code c) = cell_bits V.encode c.
+  Proof.
+    intros [i | v]; reflexivity.
+  Qed.
+
+  (** Self-delimiting glue adds at most twice the first code's width. *)
+  Lemma glue_width_bound : forall a b,
+    Pos.size_nat (glue a b) <= 2 * Pos.size_nat a + Pos.size_nat b.
+  Proof.
+    intro a. induction a as [a IH | a IH |]; intro b; cbn [glue Pos.size_nat].
+    - specialize (IH b). lia.
+    - specialize (IH b). lia.
+    - lia.
+  Qed.
+
+  (** The generated glue clock charges exactly one step per bit of its first code. *)
+  Lemma T_glue_bits : forall a b, T_glue a b = N.of_nat (Pos.size_nat a).
+  Proof.
+    intro a. induction a as [a IH | a IH |]; intro b; time_unfold T_glue;
+      cbn [Pos.size_nat]; rewrite ?Nat2N.inj_succ, ?IH; lia.
+  Qed.
+
+  (** Tuple codes have width linear in the sum of their tagged cell widths. *)
+  Lemma db_tuple_code_bits : forall k,
+    Pos.size_nat (db_tuple_code k) <= 2 * tuple_cell_bits k + 1.
+  Proof.
+    intro k. induction k as [| c rest IH]; [reflexivity |].
+    change (Pos.size_nat (glue (db_cell_code c) (db_tuple_code rest)) <=
+      2 * (cell_bits V.encode c + tuple_cell_bits rest) + 1).
+    pose proof (glue_width_bound (db_cell_code c) (db_tuple_code rest)) as Hglue.
+    rewrite db_cell_code_bits in Hglue. lia.
+  Qed.
+
+  (** Row-key width is linear in the function name and tuple payload widths. *)
+  Lemma db_row_code_bits : forall f k,
+    Pos.size_nat (db_row_code f k) <= 2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1.
+  Proof.
+    intros f k. pose proof (glue_width_bound f (db_tuple_code k)) as Hglue.
+    pose proof (db_tuple_code_bits k) as Htuple.
+    change (Pos.size_nat (glue f (db_tuple_code k)) <=
+      2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1). lia.
+  Qed.
+
+  (** Cell encoding pays the value encoder only in the value branch. *)
+  Lemma T_db_cell_code_bound : forall c,
+    (T_db_cell_code c <= (V.c_key + 2) * N.of_nat (cell_bits V.encode c + 1))%N.
+  Proof.
+    intros [i | v].
+    - time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
+    - pose proof (V.T_encode_le v) as Hencode.
+      change (V.T_encode v <= V.c_key * N.of_nat (Pos.size_nat (V.encode v) + 1))%N in Hencode.
+      time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
+  Qed.
+
+  (** The generated list-code walk pays once for every cell and its delimiter bits. *)
+  Lemma T_list_cell_code_bound : forall k,
+    (T_list_code db_cell_code (fun c => T_db_cell_code c) k <=
+      (V.c_key + 6) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intro k. induction k as [| c rest IH].
+    - time_unfold @T_list_code. cbn [tuple_cell_bits fold_right length]. nia.
+    - pose proof (T_db_cell_code_bound c) as Hcell.
+      pose proof (T_glue_bits (db_cell_code c) (list_code db_cell_code rest)) as Hglue.
+      rewrite db_cell_code_bits in Hglue. time_unfold @T_list_code.
+      unfold tuple_cell_bits in *. cbn [fold_right length] in *. nia.
+  Qed.
+
+  (** Tuple encoding adds only its wrapper to the linear list-code walk. *)
+  Lemma T_db_tuple_code_bound : forall k,
+    (T_db_tuple_code k <=
+      (V.c_key + 8) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intro k. pose proof (T_list_cell_code_bound k) as Hlist.
+    time_unfold T_db_tuple_code. nia.
+  Qed.
+
+  (** Encoding a row key adds the function-name delimiter to the tuple walk. *)
+  Lemma T_db_row_code_bound : forall f k,
+    (T_db_row_code f k <= (V.c_key + 16) *
+      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intros f k. pose proof (T_db_tuple_code_bound k) as Htuple.
+    pose proof (T_glue_bits f (db_tuple_code k)) as Hglue.
+    time_unfold T_db_row_code. time_unfold @T_pair_code.
+    time_unfold @Datatypes.T_fst. time_unfold @Datatypes.T_snd.
+    cbn [fst snd]. nia.
+  Qed.
+
+  (** The row-map wrapper adds at most five steps around encoding and trie lookup. *)
+  Lemma T_row_get_overhead : forall f k db,
+    (T_row_get f k db <= T_db_row_code f k +
+      PTrieT.T_get (db_row_code f k) (runtime_rows (db_runtime db)) + 5)%N.
+  Proof.
+    intros f k db. time_unfold T_row_get.
+    time_unfold @T_db_runtime. time_unfold @T_runtime_rows.
+    time_unfold @Map.Datatypes.T_option_map.
+    destruct (PTrieCode.get (db_row_code f k) (runtime_rows (db_runtime db)));
+      time_unfold @Datatypes.T_snd; nia.
+  Qed.
+
+  (** Row lookup pays linearly for the complete encoded query key. *)
+  Lemma T_row_get_bound : forall f k db,
+    (T_row_get f k db <= 32 * (PTrieT.c_trie + 1) * (V.c_key + 1) *
+      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intros f k db. pose proof (T_row_get_overhead f k db) as Hrow.
+    pose proof (T_db_row_code_bound f k) as Hcode.
+    pose proof (PTrieT.T_get_le _ (db_row_code f k)
+      (runtime_rows (db_runtime db))) as Hget.
+    pose proof (db_row_code_bits f k) as Hbits.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    nia.
+  Qed.
+
+  (** A uniform cell-width bound controls the sum used by tuple encoding. *)
+  Lemma tuple_cell_bits_bound : forall u bits,
+    (forall c, In c u -> cell_bits V.encode c <= bits) ->
+    tuple_cell_bits u <= length u * bits.
+  Proof.
+    intro u. induction u as [|c rest IH]; intros bits Hcells.
+    - reflexivity.
+    - pose proof (Hcells c (or_introl eq_refl)) as Hhead.
+      pose proof (IH bits (fun d Hin => Hcells d (or_intror Hin))) as Htail.
+      unfold tuple_cell_bits in *. cbn [fold_right length]. lia.
+  Qed.
+
+  (** One slot mutation fits a uniform tuple, count, slot-key and index-width budget. *)
+  Lemma T_slot_update_one_width : forall b s u state arity count_limit bits,
+    (forall new, I.wf arity (runtime_slot_index state s new)) ->
+    length u <= count_limit ->
+    (forall c, In c u -> cell_bits V.encode c <= bits) ->
+    N.size_nat s <= bits ->
+    N.size_nat (runtime_projection_count state s u) <= bits ->
+    (forall new, I.width (runtime_slot_index state s new) u <= 4 * bits + 2) ->
+    (T_slot_update_one b s u state <=
+      128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros b s u state arity count_limit bits Harity Hlength Hcells Hslot Hcount Hwidth.
+    set (factor := (N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N).
+    pose proof (tuple_cell_bits_bound u bits Hcells) as Hsum.
+    assert (Hencoding_size : (N.of_nat (tuple_cell_bits u + length u + 1) <= factor)%N)
+      by (unfold factor; nia).
+    assert (Htuple_key : (N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <= 2 * factor)%N).
+    { pose proof (db_tuple_code_bits u). unfold factor. nia. }
+    assert (Hencoding : (T_db_tuple_code u <= (V.c_key + 8) * factor)%N).
+    { eapply N.le_trans; [apply T_db_tuple_code_bound |].
+      now apply N.mul_le_mono_l. }
+    assert (Hmutation : forall new,
+      (I.T_insert u (runtime_slot_index state s new) +
+       I.T_remove u (runtime_slot_index state s new) <= 8 * I.c_ix * factor)%N).
+    { intro new.
+      pose proof (I.T_insert_le arity u (runtime_slot_index state s new) (Harity new)) as Hinsert.
+      pose proof (I.T_remove_le arity u (runtime_slot_index state s new) (Harity new)) as Hremove.
+      assert (Hsize : (N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1) <= 4 * factor)%N).
+      { specialize (Hwidth new). unfold factor. nia. }
+      eapply N.le_trans; [apply N.add_le_mono; [exact Hinsert | exact Hremove] |].
+      replace (I.c_ix * N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1) +
+        I.c_ix * N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1))%N with
+        (2 * I.c_ix * (N.of_nat (length u + 1) *
+          N.of_nat (I.width (runtime_slot_index state s new) u + 1)))%N by ring.
+      replace (8 * I.c_ix * factor)%N with (2 * I.c_ix * (4 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (Hmutation false) as Hall.
+    pose proof (Hmutation true) as Hnew.
+    unfold runtime_slot_index in Hall, Hnew. cbn beta iota in Hall, Hnew.
+    pose proof (T_slot_update_one_local b s u state) as Hlocal. cbn beta zeta in Hlocal.
+    pose proof (N.T_succ_pos_le s) as Hsucc.
+    pose proof (slot_code_bits s) as Hcode.
+    assert (Hfactor : (1 <= factor)%N) by (unfold factor; nia).
+    assert (Hbits : (N.of_nat (bits + 1) <= factor)%N) by (unfold factor; nia).
+    assert (Hslot_key : (N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <= 2 * factor)%N)
+      by lia.
+    assert (Hslot_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <=
+      2 * PTrieT.c_trie * factor)%N).
+    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Htuple_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <=
+      2 * PTrieT.c_trie * factor)%N).
+    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hsucc_factor : (N.T_succ_pos s <= factor)%N) by lia.
+    assert (Hcount_factor : (N.of_nat (N.size_nat (runtime_projection_count state s u)) <=
+      factor)%N) by lia.
+    replace (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N with
+      (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N by (unfold factor; ring).
+    clearbody factor.
+    assert (Hcoarse : (T_slot_update_one b s u state <=
+      34 + (16 * I.c_ix + 16 * PTrieT.c_trie + V.c_key + 10) * factor)%N).
+    { clear -Hlocal Hslot_cost Htuple_cost Hall Hnew Hencoding Hsucc_factor Hcount_factor.
+      nia. }
+    eapply N.le_trans; [exact Hcoarse |]. clear -Hfactor. nia.
+  Qed.
+
   (** Initialization starts without amortized debt. *)
   Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
@@ -648,47 +7773,759 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Slot lookup pays for the slot code. *)
   Lemma T_index_le : forall s new db,
     (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s new db. pose proof (T_index_bits s new db) as Htime.
+    pose proof (slot_width_log s) as Hwidth. pose proof c_db_trie_budget as Hcoefficient.
+    nia.
+  Qed.
 
   (** Advancing visits every slot. *)
   Lemma T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_advance. time_unfold @T_runtime_set_indexes.
+    time_unfold @T_runtime_set_changed. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. nia.
+  Qed.
+
+  (** Every recorded index or activity counter is included in the exact watermark maximum. *)
+  Lemma recorded_counters_wmark : forall db p, In p (db_index_counters db) ->
+    (Npos p <= wmark db)%N.
+  Proof.
+    intros db p Hin. unfold wmark. apply fold_max_member.
+    apply in_app_iff. left. now apply in_map.
+  Qed.
+
+  (** Every actual declaration name is watermarked, independently of the database invariant. *)
+  Lemma declared_names_wmark : forall db f, kind (view db) f <> None ->
+    (Npos f <= wmark db)%N.
+  Proof.
+    intros db f Hkind. unfold wmark. apply fold_max_member.
+    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
+    now apply decl_names_spec.
+  Qed.
+
+  (** Every recorded cell has a tagged encoding whose width is covered by the watermark. *)
+  Lemma recorded_cells_wmark : forall db c, In c (db_written_cells db) ->
+    cell_bits V.encode c <= N.size_nat (wmark db).
+  Proof.
+    intros db c Hin.
+    assert (Hbound : (Npos (db_cell_code c) <= wmark db)%N).
+    { unfold wmark. apply fold_max_member.
+      apply in_app_iff. right. apply in_app_iff. right. apply in_map_iff.
+      exists c. split; [destruct c; reflexivity | exact Hin]. }
+    pose proof (N_width_mono _ _ Hbound) as Hwidth.
+    change (Pos.size_nat (db_cell_code c) <= N.size_nat (wmark db)) in Hwidth.
+    now rewrite db_cell_code_bits in Hwidth.
+  Qed.
+
+  (** Genuine construction histories bound public indexes without requiring row consistency. *)
+  Lemma metadata_wmark_index : forall db s new, metadata_ok db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
+  Proof.
+    intros db s new Hmetadata.
+    destruct (metadata_public_index db s new Hmetadata) as [Hcounter Hhistory]. split.
+    - now apply recorded_counters_wmark.
+    - eapply index_history_cell_bits; [exact Hhistory |].
+      intros c Hin. exact (recorded_cells_wmark db c Hin).
+  Qed.
+
+  (** Extending a list and its base cannot decrease their folded maximum. *)
+  Lemma fold_max_incl : forall values values' base base', incl values values' ->
+    (base <= base' -> fold_right N.max base values <= fold_right N.max base' values')%N.
+  Proof.
+    intro values. induction values as [| value rest IH]; intros values' base base' Hincl Hbase;
+      cbn [fold_right].
+    - eapply N.le_trans; [exact Hbase | apply fold_max_base].
+    - apply N.max_lub.
+      + apply fold_max_member. apply Hincl. now left.
+      + apply IH; [| exact Hbase]. intros other Hin. apply Hincl. now right.
+  Qed.
+
+  (** Retained histories and increasing stored bounds never reduce the watermark. *)
+  Lemma wmark_monotone : forall db db', (ids db <= ids db')%N ->
+    (db_nuses db <= db_nuses db')%N -> decl_names db' = decl_names db ->
+    incl (db_index_counters db) (db_index_counters db') ->
+    incl (db_written_cells db) (db_written_cells db') -> (wmark db <= wmark db')%N.
+  Proof.
+    intros db db' Hids Huses Hnames Hcounters Hwritten. unfold wmark. apply fold_max_incl.
+    - intros value Hin. apply in_app_iff in Hin as [Hin | Hin].
+      + apply in_app_iff. left. apply in_map_iff in Hin as [p [<- Hin]].
+        apply in_map. now apply Hcounters.
+      + apply in_app_iff. right. apply in_app_iff in Hin as [Hin | Hin].
+        * apply in_app_iff. left. now rewrite Hnames.
+        * apply in_app_iff. right. apply in_map_iff in Hin as [c [<- Hin]].
+          apply in_map_iff. exists c. split; [reflexivity | now apply Hwritten].
+    - apply N.max_lub.
+      + eapply N.le_trans; [exact Huses | apply N.le_max_l].
+      + eapply N.le_trans; [exact Hids | apply N.le_max_r].
+  Qed.
+
+  (** Increasing allocation and watermark bounds increases the database spending unit. *)
+  Lemma unit_monotone : forall db db', (ids db <= ids db')%N ->
+    (wmark db <= wmark db')%N -> unit db <= unit db'.
+  Proof.
+    intros db db' Hids Hmark. pose proof (N.log2_le_mono _ _ Hids) as Hlog.
+    pose proof (N_width_mono _ _ Hmark) as Hwidth. unfold unit. nia.
+  Qed.
+
+  (** Cache maintenance leaves the stored use-entry count unchanged. *)
+  Lemma slots_update_nuses : forall b f u db,
+    db_nuses (slots_update b f u db) = db_nuses db.
+  Proof.
+    intros b f u db. unfold slots_update. reflexivity.
+  Qed.
+
+  (** Cache maintenance retains the actual declaration inventory. *)
+  Lemma slots_update_decl_names : forall b f u db,
+    decl_names (slots_update b f u db) = decl_names db.
+  Proof.
+    intros b f u db. unfold decl_names.
+    rewrite (slots_update_preserves _ (fun state => runtime_kinds state)
+      (fun all new counts state => eq_refl) b f u db). reflexivity.
+  Qed.
+
+  (** Every cache call retains all previously recorded counters. *)
+  Lemma slots_update_counters_incl : forall b f u db,
+    incl (db_index_counters db) (db_index_counters (slots_update b f u db)).
+  Proof.
+    intros b f u db p Hin. unfold slots_update.
+    cbn [database_record_cache database_set_runtime db_index_counters].
+    right. right. apply in_or_app. now right.
+  Qed.
+
+  (** Cache updates retain all watermark inputs and record additional activity. *)
+  Lemma wmark_slots_update : forall b f u db,
+    (wmark db <= wmark (slots_update b f u db))%N.
+  Proof.
+    intros b f u db. apply wmark_monotone.
+    - rewrite slots_update_ids. reflexivity.
+    - rewrite slots_update_nuses. reflexivity.
+    - apply slots_update_decl_names.
+    - apply slots_update_counters_incl.
+    - intros c Hin. rewrite slots_update_written_cells. apply in_or_app. now right.
+  Qed.
+
+  (** Cache updates never reduce the spending unit, including during a partial row replacement. *)
+  Lemma unit_mono_slots_update : forall b f u db, unit db <= unit (slots_update b f u db).
+  Proof.
+    intros b f u db. apply unit_monotone.
+    - rewrite slots_update_ids. reflexivity.
+    - apply wmark_slots_update.
+  Qed.
+
+  (** Writing only the row table retains the complete watermark observation. *)
+  Lemma wmark_row_write : forall f k o db, wmark (row_write f k o db) = wmark db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Erasing only the row table likewise retains every watermark input. *)
+  Lemma wmark_row_erase : forall f k db, wmark (row_erase f k db) = wmark db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Replacement composes two monotone history updates before writing its row binding. *)
+  Lemma wmark_row_replace : forall f k previous o db,
+    (wmark db <= wmark (row_replace f k previous o db))%N.
+  Proof.
+    intros f k [before |] o db; unfold row_replace; rewrite wmark_row_write.
+    - eapply N.le_trans.
+      + exact (wmark_slots_update false f (k ++ option_list before) db).
+      + apply wmark_slots_update.
+    - apply wmark_slots_update.
+  Qed.
+
+  (** Deletion records its removed contribution and never discards prior watermark inputs. *)
+  Lemma wmark_row_delete : forall f k db, (wmark db <= wmark (row_delete f k db))%N.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [before |].
+    - rewrite wmark_row_erase. apply wmark_slots_update.
+    - reflexivity.
+  Qed.
+
+  (** Row replacement cannot reduce the spending unit, without a row-consistency premise. *)
+  Lemma unit_row_replace_monotone : forall f k previous o db,
+    unit db <= unit (row_replace f k previous o db).
+  Proof.
+    intros f k previous o db. apply unit_monotone.
+    - rewrite row_replace_ids. reflexivity.
+    - apply wmark_row_replace.
+  Qed.
+
+  (** Row deletion cannot reduce the spending unit during an active repair. *)
+  Lemma unit_row_delete_monotone : forall f k db, unit db <= unit (row_delete f k db).
+  Proof.
+    intros f k db. apply unit_monotone.
+    - rewrite row_delete_ids. reflexivity.
+    - apply wmark_row_delete.
+  Qed.
+
+  (** Increasing the allocation bound retains all histories and increases the watermark. *)
+  Lemma wmark_allocate_id : forall i db, (ids db <= Npos i)%N ->
+    (wmark db <= wmark (allocate_id i db))%N.
+  Proof.
+    intros i db Hids. apply wmark_monotone.
+    - rewrite allocate_id_ids. exact Hids.
+    - reflexivity.
+    - reflexivity.
+    - intros p Hin. exact Hin.
+    - intros c Hin. exact Hin.
+  Qed.
+
+  (** Increasing allocation increases the spending unit without requiring forest consistency. *)
+  Lemma unit_allocate_id_monotone : forall i db, (ids db <= Npos i)%N ->
+    unit db <= unit (allocate_id i db).
+  Proof.
+    intros i db Hids. apply unit_monotone.
+    - rewrite allocate_id_ids. exact Hids.
+    - now apply wmark_allocate_id.
+  Qed.
+
+  (** Every raw put branch either retains the watermark or extends recorded histories. *)
+  Lemma wmark_put : forall f k o db, (wmark db <= wmark (put f k o db))%N.
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : wmark next = wmark db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + rewrite Hnext. reflexivity.
+      + rewrite <- Hnext. apply wmark_row_replace.
+    - rewrite <- Hnext. apply wmark_row_replace.
+  Qed.
+
+  (** Put is monotone in the spending unit even between invariant-restoring repair stages. *)
+  Lemma unit_put_monotone : forall f k o db, unit db <= unit (put f k o db).
+  Proof.
+    intros f k o db. apply unit_monotone.
+    - destruct (put_layout_raw db f k o) as [_ [_ Hids]]. rewrite Hids. reflexivity.
+    - apply wmark_put.
+  Qed.
+
+  (** Every fresh constructor branch combines increasing allocation with optional row recording. *)
+  Lemma unit_make_fresh_monotone : forall f k previous db,
+    let i := N.succ_pos (ids db) in
+    let fresh := allocate_id i db in
+    unit db <= unit (match kind_get f db with
+      | Some OId => row_replace f k previous (Some (Id i)) fresh | _ => fresh end).
+  Proof.
+    intros f k previous db. cbn zeta.
+    assert (Hallocate : unit db <= unit (allocate_id (N.succ_pos (ids db)) db)).
+    { apply unit_allocate_id_monotone. rewrite N.succ_pos_spec. lia. }
+    destruct (kind_get f db) as [[| |m] |]; try exact Hallocate.
+    eapply Nat.le_trans; [exact Hallocate | apply unit_row_replace_monotone].
+  Qed.
+
+  (** Reuse retains the unit, while every other make branch allocates monotonically. *)
+  Lemma unit_make_monotone : forall f k db, unit db <= unit (snd (make f k db)).
+  Proof.
+    intros f k db. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[i | v] |] |]; cbn [snd];
+      [reflexivity | apply unit_make_fresh_monotone | apply unit_make_fresh_monotone |
+       apply unit_make_fresh_monotone].
+  Qed.
 
   (** The high-water mark covers every stored cell encoding. *)
   Lemma wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
     In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o c Hwf Hrow Hin. apply recorded_cells_wmark.
+    exact (wf_recorded_rows db Hwf f k o c Hrow Hin).
+  Qed.
 
   (** The high-water mark covers every declared function name. *)
   Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
     Pos.size_nat f <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f _ Hkind. change (N.size_nat (Npos f) <= N.size_nat (wmark db)).
+    apply N_width_mono. unfold wmark. apply fold_max_member.
+    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
+    now apply decl_names_spec.
+  Qed.
+
+  (** One database unit covers the watermark width and a constant step. *)
+  Lemma unit_width_budget : forall db, N.size_nat (wmark db) + 1 <= unit db.
+  Proof.
+    intro db. unfold unit. nia.
+  Qed.
+
+  (** The allocation guard fits the same unit because identifiers are watermarked. *)
+  Lemma unit_ids_width : forall db, N.size_nat (ids db) + 1 <= unit db.
+  Proof.
+    intro db. pose proof (N_width_mono (ids db) (wmark db) (wmark_ids db)).
+    pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Every database unit is positive, including the empty database. *)
+  Lemma unit_positive : forall db, (1 <= N.of_nat (unit db))%N.
+  Proof.
+    intro db. pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** The size operation returns the number of bits as a binary natural. *)
+  Lemma N_size_value : forall n, N.to_nat (N.size n) = N.size_nat n.
+  Proof.
+    intros [| p]; cbn [N.size N.to_nat N.size_nat]; [reflexivity | apply positive_size_nat].
+  Qed.
+
+  (** Incrementing a counter adds at most one bit. *)
+  Lemma N_successor_width : forall n, N.size_nat (n + 1) <= N.size_nat n + 1.
+  Proof.
+    intro n. replace (n + 1)%N with (N.succ n) by lia.
+    pose proof (slot_code_bits n) as Hbits. destruct n; exact Hbits.
+  Qed.
+
+  (** Product encodings have at most the sum of their operand widths. *)
+  Lemma N_product_width : forall n m,
+    N.size_nat (n * m) <= N.size_nat n + N.size_nat m.
+  Proof.
+    intros [| p] [| q]; cbn [N.mul N.size_nat]; try lia. apply Pos.size_nat_mul.
+  Qed.
+
+  (** A sum has a coarse linear width bound, including both zero operands. *)
+  Lemma N_sum_width : forall n m,
+    N.size_nat (n + m) <= N.size_nat n + N.size_nat m + 2.
+  Proof.
+    intros n m.
+    assert (Hnumber : (n + m <= (n + 1) * (m + 1))%N) by nia.
+    pose proof (N_width_mono _ _ Hnumber) as Hwidth.
+    pose proof (N_product_width (n + 1) (m + 1)).
+    pose proof (N_successor_width n). pose proof (N_successor_width m). lia.
+  Qed.
+
+  (** The pinned watermark covers the stored occurrence count directly. *)
+  Lemma wmark_nuses : forall db, (db_nuses db <= wmark db)%N.
+  Proof.
+    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_l | apply fold_max_base].
+  Qed.
+
+  (** Fuel arithmetic factors through the logarithmic allocation and watermark widths. *)
+  Lemma rebuild_fuel_scalar_budget : forall a w l : N,
+    (a <= l)%N -> (a <= w)%N -> (1 <= l)%N ->
+    ((a + 2) * (a + 2 * w + 6) + 7 * a + 5 * w + 32 <=
+      128 * l * (w + 1))%N.
+  Proof.
+    intros a w l Hal Haw Hl.
+    assert (Hleft : (a + 2 <= 3 * l)%N) by lia.
+    assert (Hright : (a + 2 * w + 6 <= 6 * (w + 1))%N) by lia.
+    pose proof (N.mul_le_mono _ _ _ _ Hleft Hright) as Hproduct.
+    assert (Hla : (a <= l * (w + 1))%N) by nia.
+    assert (Hlw : (w <= l * (w + 1))%N) by nia.
+    assert (Hlone : (1 <= l * (w + 1))%N) by nia.
+    nia.
+  Qed.
+
+  (** Constructing the exact binary fuel uses one database unit of operand widths. *)
+  Lemma T_db_rebuild_fuel_unit : forall db,
+    (db_npending db <= wmark db)%N ->
+    (T_db_rebuild_fuel db <= 128 * N.of_nat (unit db))%N.
+  Proof.
+    intros db Hpending.
+    pose proof (N_width_mono _ _ (wmark_ids db)) as Hids.
+    pose proof (N_width_mono _ _ (wmark_nuses db)) as Huses.
+    pose proof (N_width_mono _ _ Hpending) as Hpending_width.
+    pose proof (slot_width_log (ids db)) as Hlog.
+    pose proof (database_counter_bits_value (N.size (ids db))) as Hsize.
+    rewrite N_size_value in Hsize.
+    assert (Ha : N.size_nat (N.size (ids db) + 2) <= N.size_nat (ids db) + 2).
+    { pose proof (database_counter_bits_value (N.size (ids db) + 2)) as Hwidth.
+      rewrite N2Nat.inj_add, N_size_value in Hwidth. cbn in Hwidth. lia. }
+    assert (Hb : N.size_nat (db_nuses db + 1) <= N.size_nat (wmark db) + 1).
+    { pose proof (N_successor_width (db_nuses db)). lia. }
+    assert (Hab : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1)) <=
+      N.size_nat (ids db) + N.size_nat (wmark db) + 3).
+    { pose proof (N_product_width (N.size (ids db) + 2) (db_nuses db + 1)). lia. }
+    assert (Habp : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1) +
+      db_npending db) <= N.size_nat (ids db) + 2 * N.size_nat (wmark db) + 5).
+    { pose proof (N_sum_width ((N.size (ids db) + 2) * (db_nuses db + 1))
+        (db_npending db)). lia. }
+    pose proof (database_N_size_time (ids db)) as Htime_size.
+    assert (Htime_a : (N.T_add (N.size (ids db)) 2 <=
+      N.of_nat (N.size_nat (ids db)) + 3)%N).
+    { pose proof (N.T_add_le (N.size (ids db)) 2) as Htime.
+      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    assert (Htime_b : (N.T_add (db_nuses db) 1 <=
+      N.of_nat (N.size_nat (wmark db)) + 2)%N).
+    { pose proof (N.T_add_le (db_nuses db) 1) as Htime.
+      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    assert (Htime_product : (N.T_mul (N.size (ids db) + 2) (db_nuses db + 1) <=
+      (N.of_nat (N.size_nat (ids db)) + 2) *
+        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) + 1)%N).
+    { pose proof (database_N_mul_time (N.size (ids db) + 2) (db_nuses db + 1)) as Htime.
+      clear - Htime Ha Hb. nia. }
+    assert (Htime_pending : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1))
+      (db_npending db) <= N.of_nat (N.size_nat (ids db)) +
+        2 * N.of_nat (N.size_nat (wmark db)) + 4)%N).
+    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1))
+        (db_npending db)) as Htime. lia. }
+    assert (Htime_last : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1) +
+      db_npending db) 1 <= N.of_nat (N.size_nat (ids db)) +
+        2 * N.of_nat (N.size_nat (wmark db)) + 7)%N).
+    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1) +
+        db_npending db) 1) as Htime. cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    eapply N.le_trans with (m :=
+      ((N.of_nat (N.size_nat (ids db)) + 2) *
+        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) +
+        7 * N.of_nat (N.size_nat (ids db)) + 5 * N.of_nat (N.size_nat (wmark db)) + 32)%N).
+    - time_unfold T_db_rebuild_fuel. time_unfold @T_db_runtime.
+      time_unfold @T_runtime_allocated. time_unfold @T_db_nuses. time_unfold @T_db_npending.
+      fold (ids db). nia.
+    - pose proof (rebuild_fuel_scalar_budget (N.of_nat (N.size_nat (ids db)))
+        (N.of_nat (N.size_nat (wmark db)))
+        (N.of_nat (N.to_nat (N.log2 (ids db)) + 1))) as Hscalar.
+      specialize (Hscalar ltac:(lia) ltac:(lia) ltac:(lia)).
+      clear - Hscalar. unfold unit. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
+  Lemma T_normal_cell_id : forall db i,
+    (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
+      match N.compare (ids db) (Npos i) with
+      | Lt => 0
+      | _ => UnionFindT.T_find i (db_forest db) + 2
+      end)%N.
+  Proof.
+    intros db i. time_unfold T_normal_cell. time_unfold @T_db_runtime.
+    time_unfold @T_runtime_allocated. time_unfold @T_db_forest.
+    time_unfold @Datatypes.T_fst. fold (ids db).
+    destruct (N.compare (ids db) (Npos i)); nia.
+  Qed.
+
+  (** The guard keeps normalization bounded even for arbitrarily large unallocated queries. *)
+  Lemma T_normal_cell_bound : forall db c, wf db ->
+    (T_normal_cell db c <=
+      (2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N.
+  Proof.
+    intros db [i | v] Hwf.
+    - pose proof (N.T_compare_le (ids db) (Npos i)) as Hcompare.
+      pose proof (unit_ids_width db) as Hwidth.
+      pose proof (unit_positive db) as Hpositive. rewrite T_normal_cell_id.
+      destruct (N.compare (ids db) (Npos i)) eqn:Hcompare_result.
+      + apply N.compare_eq_iff in Hcompare_result.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+      + set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+      + apply N.compare_gt_iff in Hcompare_result.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+    - time_unfold T_normal_cell. pose proof (unit_positive db).
+      set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  (** Key normalization pays one guarded cell normalization per list element. *)
+  Lemma T_normal_key_bound : forall db k, wf db ->
+    (T_normal_key db k <= (2 * UnionFindT.c_uf + 12) *
+      N.of_nat (length k + 1) * N.of_nat (unit db))%N.
+  Proof.
+    intros db k Hwf.
+    pose proof (ListDef.T_map_le (normal_cell db) (fun c => T_normal_cell db c)
+      ((2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N k
+      (fun c => T_normal_cell_bound db c Hwf)) as Hmap.
+    pose proof (unit_positive db) as Hpositive. time_unfold T_normal_key.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  (** Normalizing an allocated identifier produces a cell whose width fits one unit. *)
+  Lemma normal_cell_allocated_bits : forall db i, wf db -> allocated db i ->
+    cell_bits V.encode (normal_cell db (Id i)) <= unit db.
+  Proof.
+    intros db i Hwf Hi. rewrite (normal_cell_correct db (Id i) Hwf).
+    pose proof (repr_allocated db i Hwf Hi) as Hrepr.
+    assert (Hbound : (Npos (repr db i) <= wmark db)%N).
+    { eapply N.le_trans; [exact Hrepr | apply wmark_ids]. }
+    pose proof (N_width_mono _ _ Hbound) as Hbits.
+    pose proof (unit_width_budget db) as Hunit.
+    cbn [canon cell_bits Pos.size_nat N.size_nat] in *. lia.
+  Qed.
+
+  (** Normalization either preserves a query cell or replaces its identifier within the unit. *)
+  Lemma normal_cell_bits : forall db c, wf db ->
+    cell_bits V.encode (normal_cell db c) <= cell_bits V.encode c + unit db.
+  Proof.
+    intros db [i | v] Hwf.
+    - destruct (N.compare (ids db) (Npos i)) eqn:Hcompare.
+      + apply N.compare_eq_iff in Hcompare.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
+      + unfold normal_cell. fold (ids db). rewrite Hcompare. lia.
+      + apply N.compare_gt_iff in Hcompare.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
+    - cbn [normal_cell]. lia.
+  Qed.
+
+  (** Normalization preserves the number of cells in a query key. *)
+  Lemma normal_key_length : forall db k, length (normal_key db k) = length k.
+  Proof.
+    intros db k. unfold normal_key. apply length_map.
+  Qed.
+
+  (** The normalized key width is covered by its original width and one unit per cell. *)
+  Lemma normal_key_bits_bound : forall db k, wf db ->
+    tuple_cell_bits (normal_key db k) <= tuple_cell_bits k + length k * unit db.
+  Proof.
+    intros db k Hwf. unfold normal_key, tuple_cell_bits.
+    induction k as [| c rest IH]; cbn [map fold_right length] in *; [lia |].
+    pose proof (normal_cell_bits db c Hwf). nia.
+  Qed.
+
+  (** The declaration guard uses the base name or an actual declared, watermarked name. *)
+  Lemma runtime_max_name_bits : forall db, wf db ->
+    Pos.size_nat (runtime_max_name (db_runtime db)) <= unit db.
+  Proof.
+    intros db Hwf. destruct (wf_max_name_attained db Hwf) as [Hbase | Hkind].
+    - rewrite Hbase. cbn [Pos.size_nat]. pose proof (unit_positive db). lia.
+    - pose proof (wmark_names db _ Hwf Hkind).
+      pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Any function name admitted by the guard has width bounded by one unit. *)
+  Lemma guarded_name_bits : forall db f, wf db ->
+    (f <= runtime_max_name (db_runtime db))%positive -> Pos.size_nat f <= unit db.
+  Proof.
+    intros db f Hwf Hname.
+    assert (Hnumber : (Npos f <= Npos (runtime_max_name (db_runtime db)))%N)
+      by exact Hname.
+    pose proof (N_width_mono _ _ Hnumber) as Hbits.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    cbn [N.size_nat] in Hbits. lia.
+  Qed.
+
+  (** The database coefficient covers row encoding, guarded finds, and their fixed overhead. *)
+  Lemma c_db_lookup_parts :
+    (32 * (PTrieT.c_trie + 1) * (V.c_key + 1) <= c_db /\
+      64 * (PTrieT.c_trie + 1) * (V.c_key + 1) +
+        2 * UnionFindT.c_uf + 17 <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. split; nia.
+  Qed.
+
+  (** Separate payload and structural budgets absorb the three parts of a guarded lookup. *)
+  Lemma database_lookup_cost_combine :
+    forall coefficient row_cost cell_cost work payload guard normal read : N,
+      (row_cost <= coefficient -> 2 * row_cost + cell_cost + 5 <= coefficient ->
+        guard <= 5 * work -> normal <= cell_cost * work ->
+        read <= row_cost * (payload + 2 * work) ->
+        guard + normal + read <= coefficient * work + coefficient * payload)%N.
+  Proof.
+    intros coefficient row_cost cell_cost work payload guard normal read
+      Hrow_cost Hcombined Hguard Hnormal Hread.
+    assert (Hpayload : (row_cost * payload <= coefficient * payload)%N).
+    { apply N.mul_le_mono_r. exact Hrow_cost. }
+    assert (Hwork : ((2 * row_cost + cell_cost + 5) * work <= coefficient * work)%N).
+    { apply N.mul_le_mono_r. exact Hcombined. }
+    nia.
+  Qed.
+
+  (** A name admitted by the guard pays for normalization and the encoded row query. *)
+  Lemma T_lookup_active_budget : forall f k db, wf db ->
+    (f <= runtime_max_name (db_runtime db))%positive ->
+    (Pos.T_compare (runtime_max_name (db_runtime db)) f + 3 +
+      T_normal_key db k + T_row_get f (normal_key db k) db <=
+      c_db * (N.of_nat (length k + 1) * N.of_nat (unit db)) +
+        c_db * N.of_nat (tuple_cell_bits k))%N.
+  Proof.
+    intros f k db Hwf Hname.
+    pose proof (T_normal_key_bound db k Hwf) as Hnormal.
+    pose proof (T_row_get_bound f (normal_key db k) db) as Hrow.
+    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    pose proof (guarded_name_bits db f Hwf Hname) as Hfunction.
+    pose proof (normal_key_bits_bound db k Hwf) as Hkey.
+    pose proof (unit_positive db) as Hpositive.
+    assert (Hmass : Pos.size_nat f + tuple_cell_bits (normal_key db k) +
+      length (normal_key db k) + 1 <= tuple_cell_bits k + 2 * (length k + 1) * unit db).
+    { rewrite normal_key_length. nia. }
+    eapply database_lookup_cost_combine with
+      (row_cost := (32 * (PTrieT.c_trie + 1) * (V.c_key + 1))%N)
+      (cell_cost := (2 * UnionFindT.c_uf + 12)%N).
+    - exact (proj1 c_db_lookup_parts).
+    - pose proof (proj2 c_db_lookup_parts) as Hcoefficient.
+      set (trie_cost := PTrieT.c_trie) in *.
+      set (forest_cost := UnionFindT.c_uf) in *. clearbody trie_cost forest_cost. nia.
+    - nia.
+    - nia.
+    - eapply N.le_trans; [exact Hrow |]. apply N.mul_le_mono_l. nia.
+  Qed.
 
   (** The high-water mark covers every slot index. *)
   Lemma wmark_index : forall db s new, wf db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
     I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new Hwf. apply metadata_wmark_index. exact (wf_metadata db Hwf).
+  Qed.
 
   (** Insertion never reduces the spending unit. *)
   Lemma unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k o db _. apply unit_put_monotone.
+  Qed.
 
   (** Make never reduces the spending unit. *)
   Lemma unit_mono_make : forall f k db, wf db -> unit db <= unit (snd (make f k db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db _. apply unit_make_monotone.
+  Qed.
 
   (** Union never reduces the spending unit. *)
+  Lemma wmark_union : forall i j db, wmark (union i j db) = wmark db.
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Removing a scheduling entry leaves every component of the pinned watermark unchanged. *)
+  Lemma wmark_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
+    wmark db' = wmark db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. reflexivity.
+  Qed.
+
+  (** Queue scheduling keeps the spending unit exactly, including in active repair states. *)
+  Lemma unit_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
+    unit db' = unit db.
+  Proof.
+    intros db i db' Hpop. unfold unit.
+    rewrite (wmark_pop_loser db i db' Hpop),
+      (proj1 (proj2 (db_pop_loser_layout db i db' Hpop))). reflexivity.
+  Qed.
+
   Lemma unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db _. unfold unit. rewrite union_ids, wmark_union. reflexivity.
+  Qed.
+
+  (** Repair retains its input unit even while the current queue has been popped. *)
+  Lemma repair_current_unit_monotone : forall db f k,
+    unit db <= unit (repair_current f k db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
+    eapply Nat.le_trans; [apply unit_row_delete_monotone | apply unit_put_monotone].
+  Qed.
+
+  (** Both actual loop branches preserve the original spending-unit lower bound. *)
+  Lemma unit_rebuild_monotone : forall db, unit db <= unit (rebuild db).
+  Proof.
+    intro db. apply (rebuild_preserves (fun current => unit db <= unit current)).
+    - intros current f k Hcurrent. eapply Nat.le_trans;
+        [exact Hcurrent | apply repair_current_unit_monotone].
+    - intros current i next Hcurrent Hpop.
+      rewrite (unit_pop_loser current i next Hpop). exact Hcurrent.
+    - reflexivity.
+  Qed.
 
   (** Rebuilding never reduces the spending unit. *)
   Lemma unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _. apply unit_rebuild_monotone.
+  Qed.
   (** Advancing keeps the watermark and the amortized credit. *)
   Lemma advance_credit : forall B db, wf db ->
     wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
   Proof. Admitted. (* STUB *)
+
+  (** Each initialization scan fits the same total amount of charged input. *)
+  Lemma database_init_sum_budget : forall cost decls slots layout declaration_bits slot_bits,
+    (1 <= cost ->
+      1 + 25 * (layout + slots + 1) + (slots + 1) + (3 * slots + 2) +
+      16 * (decls + declaration_bits + 1) + (slots + 1) + (declaration_bits + 4) +
+      (slots + 1) + 8 * cost * (decls + declaration_bits + 1) +
+      8 * cost * (slots + slot_bits + 1) <=
+      128 * cost * (decls + slots + layout + declaration_bits + slot_bits + 1))%N.
+  Proof.
+    intros cost decls slots layout declaration_bits slot_bits Hcost.
+    set (total := (decls + slots + layout + declaration_bits + slot_bits + 1)%N).
+    set (budget := (cost * total)%N).
+    assert (Htotal : (total <= budget)%N).
+    { unfold budget. replace total with (1 * total)%N at 1 by ring.
+      apply N.mul_le_mono_r. exact Hcost. }
+    assert (Hkinds : (8 * cost * (decls + declaration_bits + 1) <= 8 * budget)%N).
+    { unfold budget. replace (8 * cost * (decls + declaration_bits + 1))%N with
+        (8 * (cost * (decls + declaration_bits + 1)))%N by ring.
+      apply N.mul_le_mono_l.
+      apply N.mul_le_mono_l. unfold total. lia. }
+    assert (Hgroups : (8 * cost * (slots + slot_bits + 1) <= 8 * budget)%N).
+    { unfold budget. replace (8 * cost * (slots + slot_bits + 1))%N with
+        (8 * (cost * (slots + slot_bits + 1)))%N by ring.
+      apply N.mul_le_mono_l.
+      apply N.mul_le_mono_l. unfold total. lia. }
+    replace (128 * cost * total)%N with (128 * budget)%N by (unfold budget; ring).
+    unfold total in Htotal. clearbody total budget. lia.
+  Qed.
+
+  (** Initialization sums preparation, name scans, and amortized dense slot numbering. *)
+  Lemma T_init_budget : forall ds sl,
+    (T_init ds sl <= 128 * (PTrieT.c_trie + 1) *
+      N.of_nat (length ds + length sl + layout_work sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1))%N.
+  Proof.
+    intros ds sl.
+    pose proof (T_prepare_slot_layouts_le sl) as Hprepare.
+    pose proof (T_database_kinds_le ds) as Hkinds.
+    pose proof (T_database_max_name_le ds) as Hnames.
+    pose proof (T_database_slot_groups_le (prepare_slot_layouts sl) PTrieCode.empty) as Hgroups.
+    destruct (database_prepared_sizes sl) as [Hprepared_length Hprepared_bits].
+    rewrite Hprepared_length, Hprepared_bits in Hgroups.
+    pose proof (Datatypes.T_length_le sl) as Hlength.
+    pose proof (T_database_of_nat_le (length sl)) as Hconvert.
+    pose proof (database_counter_bits_value (N.of_nat (length sl))) as Hslot_bits.
+    rewrite Nat2N.id in Hslot_bits.
+    pose proof (N.T_succ_le (N.of_nat (length sl))) as Hsucc.
+    pose proof (N.T_succ_pos_le (N.of_nat (length sl))) as Hsucc_pos.
+    pose proof (T_database_counter_max_le (Npos (database_max_name ds))
+      (N.succ (N.of_nat (length sl)))) as Hmaximum.
+    cbn [N.size_nat] in Hmaximum.
+    pose proof (database_max_name_bits ds) as Hname_bits.
+    assert (Hsucc_small : (N.T_succ (N.of_nat (length sl)) <=
+      N.of_nat (length sl) + 1)%N) by (clear - Hsucc Hslot_bits; lia).
+    assert (Hsucc_pos_small : (N.T_succ_pos (N.of_nat (length sl)) <=
+      N.of_nat (length sl) + 1)%N) by (clear - Hsucc_pos Hslot_bits; lia).
+    assert (Hmaximum_small : (N.T_max (Npos (database_max_name ds))
+      (N.succ (N.of_nat (length sl))) <=
+      N.of_nat (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) + 4)%N)
+      by (clear - Hmaximum Hname_bits; lia).
+    assert (Hbranch : ((match sl with [] => 0 | _ :: _ =>
+      N.T_succ_pos (N.of_nat (length sl)) end) <= N.of_nat (length sl) + 1)%N).
+    { destruct sl; [cbn; lia | exact Hsucc_pos_small]. }
+    clear Hprepared_length Hprepared_bits Hslot_bits Hname_bits Hsucc Hsucc_pos Hmaximum.
+    time_unfold T_init. cbn beta zeta.
+    rewrite !Nat2N.inj_add in Hprepare, Hkinds, Hnames, Hgroups |- *.
+    repeat rewrite Nat2N.inj_add.
+    set (cost := (PTrieT.c_trie + 1)%N) in *.
+    set (decls := N.of_nat (length ds)) in *.
+    set (slots_count := N.of_nat (length sl)) in *.
+    set (layout := N.of_nat (layout_work sl)) in *.
+    set (declaration_bits := N.of_nat
+      (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds)) in *.
+    set (slot_bits := N.of_nat
+      (fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    pose proof (database_init_sum_budget cost decls slots_count layout declaration_bits slot_bits Hcost)
+      as Hbudget.
+    clearbody cost decls slots_count layout declaration_bits slot_bits. lia.
+  Qed.
 
   (** Initialization pays for declarations and slot permutations. *)
   Lemma T_init_le : forall ds sl,
@@ -696,26 +8533,70 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
       c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl. eapply N.le_trans; [apply T_init_budget |].
+    eapply N.le_trans.
+    - apply N.mul_le_mono_r. exact c_db_trie_budget.
+    - set (amount := N.of_nat (length ds + length sl + layout_work sl + 1)).
+      set (names := N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat)).
+      assert (Hsum : N.of_nat (length ds + length sl + layout_work sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1) =
+        (amount + names)%N) by (unfold amount, names; lia).
+      rewrite Hsum, N.mul_add_distr_l. apply N.add_le_mono_r.
+      replace (c_db * amount)%N with ((c_db * amount) * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. lia.
+  Qed.
 
   (** Find traverses allocated identifiers at the database unit. *)
   Lemma T_find_le : forall i db, wf db -> allocated db i ->
     (T_find i db <= c_db * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i db Hwf Hi. rewrite T_find_overhead.
+    pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+    pose proof c_db_forest_budget as Hcoefficient.
+    assert (Hunit : (1 <= N.of_nat (unit db))%N).
+    { unfold unit. rewrite Nat2N.inj_mul. nia. }
+    nia.
+  Qed.
 
   (** Lookup charges the stored unit and query cell encodings. *)
   Lemma T_lookup_le : forall f k db, wf db ->
     (T_lookup f k db <= c_db * N.of_nat (length k + 1) * N.of_nat (unit db) +
       c_db * N.of_nat ((fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf.
+    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    pose proof (unit_positive db) as Hpositive.
+    pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_lookup. time_unfold @T_db_runtime. time_unfold @T_runtime_max_name.
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f) eqn:Hbranch.
+    - apply Pos.compare_eq_iff in Hbranch.
+      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
+      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
+      unfold tuple_cell_bits in Hactive. nia.
+    - nia.
+    - apply Pos.compare_gt_iff in Hbranch.
+      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
+      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
+      unfold tuple_cell_bits in Hactive. nia.
+  Qed.
 
   (** The change flag is stored. *)
   Lemma T_changed_le : forall db, (T_changed db <= c_db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_changed. time_unfold @T_db_runtime. time_unfold @T_runtime_changed. nia.
+  Qed.
 
   (** The allocation counter is stored. *)
   Lemma T_ids_le : forall db, (T_ids db <= c_db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_ids. time_unfold @T_db_runtime. time_unfold @T_runtime_allocated. nia.
+  Qed.
 
   Definition use_entry := (positive * list (cell V.t))%type.
   Definition stored_row := (use_entry * option (cell V.t))%type.
@@ -723,33 +8604,32 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
      index_counters written_cells *)
-  (* STUB-CODE *)
-  Definition rows : t -> list stored_row := fun _ => [].
+  Definition rows (db : t) : list stored_row :=
+    map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
   (* STUB-CODE *)
   Definition uses_entries : t -> list (positive * use_entry) := fun _ => [].
-  (* STUB-CODE *)
-  Definition queue : t -> list positive := fun _ => [].
-  (* STUB-CODE *)
-  Definition next_id : t -> positive := fun _ => 1%positive.
-  (* STUB-CODE *)
+  Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
+  Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
-  (* STUB-CODE *)
   Definition class_size (db : t) (x : positive) : N :=
     N.of_nat (UnionFind.size_of (uf_state db) x).
   (** A historical row key resolves to its current stored key. *)
   (* STUB-CODE *)
   Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
       : option (list (cell V.t)) := None.
-  (** Located keys resolve to stored rows of declared functions. *)
+  (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
-    forall f k0 k, located db f k0 = Some k ->
-      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
+    (forall f k0 k, located db f k0 = Some k ->
+      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None) /\
+    metadata_ok db /\ db_npending db = N.of_nat (pending db) /\
+    UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
+    (forall i j, same (view db) i j <-> repr db i = repr db j) /\
+    UnionFind.width (db_forest db) <= N.size_nat (ids db).
   Definition k_credit : N := 1. (* STUB *)
-  Definition k_loop : N := 1. (* STUB *)
+  Definition k_loop : N := c_loopN + 1.
   Definition k_active : N := 1. (* STUB *)
   Definition k_queue : N := 1. (* STUB *)
-  Definition k_stop : N := 1. (* STUB *)
-  Definition k_driver : N := 1. (* STUB *)
+  Definition k_driver : N := 512.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
     In (x, e) (uses_entries db).
@@ -761,7 +8641,49 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k0 k Hforest Hlocated. exact (proj1 Hforest f k0 k Hlocated).
+  Qed.
+
+  (** The repair invariant retains independent cache metadata throughout an active batch. *)
+  Lemma forest_metadata : forall db, forest_ok db -> metadata_ok db.
+  Proof.
+    intros db [_ [Hmetadata _]]. exact Hmetadata.
+  Qed.
+
+  (** The repair invariant equates the stored pending count with the queue observation. *)
+  Lemma forest_pending_count : forall db, forest_ok db ->
+    db_npending db = N.of_nat (pending db).
+  Proof.
+    intros db [_ [_ [Hpending _]]]. exact Hpending.
+  Qed.
+
+  (** Active repair keeps the same well-formed union-find discipline as public states. *)
+  Lemma forest_uf_wf : forall db, forest_ok db -> UnionFind.wf (db_forest db).
+  Proof.
+    intros db [_ [_ [_ [Hforest _]]]]. exact Hforest.
+  Qed.
+
+  (** The forest's cardinality agrees with the exact allocation counter. *)
+  Lemma forest_cardinality : forall db, forest_ok db ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db [_ [_ [_ [_ [Hcard _]]]]]. exact Hcard.
+  Qed.
+
+  (** The equality log and forest representatives have the same meaning during repair. *)
+  Lemma forest_same_repr : forall db, forest_ok db ->
+    forall i j, same (view db) i j <-> repr db i = repr db j.
+  Proof.
+    intros db Hforest. unfold forest_ok in Hforest. tauto.
+  Qed.
+
+  (** Repair retains the key-width bound already required by public well-formedness. *)
+  Lemma forest_width_bound : forall db, forest_ok db ->
+    UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    intros db Hforest. unfold forest_ok in Hforest. tauto.
+  Qed.
 
   (** Active entries retain coverage after their loser has left the queue. *)
   Definition inv_on (db : t) (work : list use_entry) : Prop :=
@@ -785,6 +8707,141 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
     NoDup (queue db) /\ pending db = length (queue db) /\
     (forall x, In x (queue db) -> allocated db x).
+
+  (** Active repair states expose cache metadata directly, without a public wf conversion. *)
+  Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
+  Proof.
+    intros db work Hinv. apply forest_metadata. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active and queued repair states expose their forest invariant directly. *)
+  Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
+  Proof.
+    intros db work Hinv. apply forest_uf_wf. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active repair retains the exact forest cardinality without a public wf conversion. *)
+  Lemma inv_on_forest_card : forall db work, inv_on db work ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db work Hinv. apply forest_cardinality. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Every active repair state keeps forest keys within the allocation bit width. *)
+  Lemma inv_on_forest_width : forall db work, inv_on db work ->
+    UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    intros db work Hinv. apply forest_width_bound. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active repair states expose equality agreement without a public wf conversion. *)
+  Lemma inv_on_same_repr : forall db work i j, inv_on db work ->
+    (same (view db) i j <-> repr db i = repr db j).
+  Proof.
+    intros db work i j Hinv. apply forest_same_repr. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Representatives remain fixed throughout every active repair state. *)
+  Lemma inv_on_repr_idem : forall db work i, inv_on db work ->
+    repr db (repr db i) = repr db i.
+  Proof.
+    intros db work i Hinv. unfold repr. apply UnionFind.repr_idem.
+    exact (inv_on_forest_wf db work Hinv).
+  Qed.
+
+  (** Active repair states expose the exact stored queue count directly. *)
+  Lemma inv_on_pending_count : forall db work, inv_on db work ->
+    db_npending db = N.of_nat (pending db).
+  Proof.
+    intros db work Hinv. apply forest_pending_count. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Distinct allocated queue entries bound the actual stored pending counter. *)
+  Lemma inv_on_pending_bound : forall db work, inv_on db work ->
+    (db_npending db <= ids db)%N.
+  Proof.
+    intros db work Hinv. apply queue_counter_le_ids_from_members.
+    - unfold inv_on, queue in Hinv. tauto.
+    - unfold inv_on, queue in Hinv. tauto.
+    - exact (inv_on_pending_count db work Hinv).
+  Qed.
+
+  (** Allowing the forest's two queried keys costs at most four allocation-log units. *)
+  Lemma union_logarithm_budget : forall n,
+    Nat.log2 (N.to_nat n + 2) + 1 <= 4 * (N.to_nat (N.log2 n) + 1).
+  Proof.
+    intro n. pose proof (nat_log2_N_width (n + 2)) as Hlog.
+    rewrite N2Nat.inj_add in Hlog.
+    change (Nat.log2 (N.to_nat n + 2) <= N.size_nat (n + 2)) in Hlog.
+    pose proof (N_successor_width n) as Hfirst.
+    pose proof (N_successor_width (n + 1)) as Hsecond.
+    replace (n + 1 + 1)%N with (n + 2)%N in Hsecond by lia.
+    pose proof (slot_width_log n) as Hwidth. lia.
+  Qed.
+
+  (** The actual union wrapper adds a binary queue increment and fixed record work. *)
+  Lemma T_union_overhead : forall i j db,
+    (T_union i j db <= UnionFindT.T_union i j (db_forest db) +
+      N.T_succ (db_npending db) + 64)%N.
+  Proof.
+    intros i j db. time_unfold T_union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; cbn [fst snd].
+    - time_unfold @T_database_set_forest. time_unfold @T_database_set_pending.
+      time_unfold @T_database_set_runtime. time_unfold @T_runtime_set_union.
+      time_simpl. time_cbn. lia.
+    - time_unfold @T_database_set_forest. time_simpl. time_cbn. lia.
+  Qed.
+
+  (** Allocated endpoints put the measured forest union within the stored database unit. *)
+  Lemma T_union_forest_unit : forall db work i j, inv_on db work ->
+    allocated db i -> allocated db j ->
+    (UnionFindT.T_union i j (db_forest db) <=
+      4 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros db work i j Hinv Hi Hj.
+    pose proof (UnionFindT.T_union_le i j (db_forest db)
+      (inv_on_forest_wf db work Hinv)) as Htime.
+    rewrite (inv_on_forest_card db work Hinv) in Htime.
+    pose proof (union_logarithm_budget (ids db)) as Hlog.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db))
+      (Nat.max (Pos.size_nat i) (Pos.size_nat j)) <= N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (inv_on_forest_width db work Hinv) |].
+        apply N_width_mono. apply wmark_ids.
+      - apply Nat.max_lub.
+        + change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+          apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids].
+        + change (N.size_nat (Npos j) <= N.size_nat (wmark db)).
+          apply N_width_mono. eapply N.le_trans; [exact Hj | apply wmark_ids]. }
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    replace (4 * forest_cost * N.of_nat (unit db))%N with
+      (forest_cost * (4 * N.of_nat (N.to_nat (N.log2 (ids db)) + 1)) *
+        N.of_nat (N.size_nat (wmark db) + 1))%N
+      by (unfold unit; rewrite Nat2N.inj_mul; ring).
+    eapply N.le_trans; [exact Htime |]. apply N.mul_le_mono.
+    - apply N.mul_le_mono_l. lia.
+    - lia.
+  Qed.
+
+  (** Queue uniqueness bounds the actual counter increment during any invariant union. *)
+  Lemma T_union_inv_on_unit : forall db work i j, inv_on db work ->
+    allocated db i -> allocated db j ->
+    (T_union i j db <= (4 * UnionFindT.c_uf + 65) * N.of_nat (unit db))%N.
+  Proof.
+    intros db work i j Hinv Hi Hj.
+    pose proof (T_union_forest_unit db work i j Hinv Hi Hj) as Hforest.
+    pose proof (T_union_overhead i j db) as Hwrapped.
+    assert (Hsuccessor : (N.T_succ (db_npending db) <= N.of_nat (unit db))%N).
+    { pose proof (N.T_succ_le (db_npending db)) as Htime.
+      pose proof (N_width_mono _ _ (inv_on_pending_bound db work Hinv)) as Hwidth.
+      pose proof (unit_ids_width db) as Hunit. lia. }
+    pose proof (unit_positive db) as Hpositive.
+    clear - Hforest Hwrapped Hsuccessor Hpositive.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    set (budget := N.of_nat (unit db)) in *. clearbody budget. nia.
+  Qed.
+
   Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, None => True
@@ -792,6 +8849,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     | _, _ => False
     end.
   Definition inv (db : t) : Prop := inv_on db [].
+
+  (** The public coefficient covers the actual union clock without potential assumptions. *)
+  Lemma T_union_unit_bound : forall i j db, inv db -> allocated db i -> allocated db j ->
+    (T_union i j db <= c_db * N.of_nat (unit db))%N.
+  Proof.
+    intros i j db Hinv Hi Hj.
+    eapply N.le_trans; [exact (T_union_inv_on_unit db [] i j Hinv Hi Hj) |].
+    apply N.mul_le_mono_r. pose proof c_db_forest_budget as Hcoefficient.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    set (database_cost := c_db) in *. clearbody database_cost. lia.
+  Qed.
+
   Definition state_inv (s : repair_state) : Prop := inv_on (fst s) (snd s).
 
   Definition entry_weight (db : t) (e : use_entry) : nat :=
@@ -813,38 +8882,29 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       k_active * N.of_nat (work_weight (fst s) (snd s)))%N.
   (* STUB-CODE *)
   Definition nuses (db : t) : N := db_nuses db.
-  (* STUB-CODE *)
   Definition npending (db : t) : N := db_npending db.
-  (* STUB-CODE *)
   Definition index_counters (db : t) : list positive := db_index_counters db.
-  (* STUB-CODE *)
   Definition written_cells (db : t) : list (cell V.t) := db_written_cells db.
-  (* STUB-CODE *)
-  Definition decl_names (_ : t) : list positive := [].
-  (* STUB-CODE *)
-  Definition get_uses : positive -> t -> list use_entry := fun _ _ => [].
+  Definition get_uses : positive -> t -> list use_entry := db_get_uses.
   TimeFun get_uses.
-  (* STUB-CODE *)
-  Definition pop_loser : t -> option (positive * t) := fun _ => None.
+  Definition pop_loser : t -> option (positive * t) := db_pop_loser.
   TimeFun pop_loser.
-  (* STUB-CODE *)
-  Definition repair_entry : use_entry -> t -> t := fun _ db => db.
+  Definition repair_entry (e : use_entry) (db : t) : t :=
+    repair_current (fst e) (snd e) db.
   TimeFun repair_entry.
-  (* STUB-CODE *)
   Definition rstep (s : repair_state) : repair_state + t := db_rstep s.
   TimeFun rstep.
-  (* STUB-CODE *)
   Definition rebuild_fuel (db : t) : N := db_rebuild_fuel db.
   TimeFun rebuild_fuel.
 
   TimeFun locate.
   TimeFun rank_slots.
-  TimeFun slots_update.
   Definition k_locate : N := 1. (* STUB *)
   Definition k_repair : N := 1. (* STUB *)
-  Definition k_pop : N := 1. (* STUB *)
-  Definition k_rstep : N := 1. (* STUB *)
-  Definition k_slots : N := 1. (* STUB *)
+  Definition k_pop : N := 64 * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1).
+  Definition k_rstep : N := 64.
+  Definition k_stop : N := k_rstep + k_pop + c_loopN.
+  Definition k_slots : N := 1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1).
   Definition k_layout : N := 1. (* STUB *)
 
   (* spec: row_id row_parent row_size row_current next_row *)
@@ -911,18 +8971,325 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition group_slots (_ : t) (_ : bool) (_ : N) : list N := [].
   (** Slot facts survive changes to the row store between projection updates. *)
   Definition slots_ok (db : t) : Prop :=
-    (forall s f perm, slot_of db s = Some (f, perm) ->
-      I.wf (length perm) (index s false db) /\
-      I.wf (length perm) (index s true db) /\
-      exists d g j, slot_place db s = Some (d, g, j) /\ (g <= s)%N /\ (j <= s)%N /\
-        nth_error (group_slots db d g) (N.to_nat j) = Some s /\
-        (d = true <-> kind (view db) f <> None) /\
-        (d = true -> group_of db f = Some g /\ (g < wmark db)%N)) /\
-    (forall f g, group_of db f = Some g ->
-      NoDup (group_slots db true g) /\
-      forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm)) /\
+    metadata_ok db /\
     (forall s f perm new, slot_of db s = Some (f, perm) ->
-      (Npos (I.next (index s new db)) <= wmark db)%N).
+      I.wf (length perm) (index s new db)).
+
+  (** Empty initialized caches satisfy the maintained slot invariant for every layout. *)
+  Lemma slots_ok_init : forall ds sl, slots_ok (init ds sl).
+  Proof.
+    intros ds sl. split; [apply metadata_init |].
+    intros s f perm new _. rewrite index_init_empty. apply I.wf_empty.
+  Qed.
+
+  (** Recorded slot bounds identify each declared slot with its raw cache entry. *)
+  Lemma slots_metadata_inside : forall db s f perm, metadata_ok db ->
+    slot_of db s = Some (f, perm) -> (s < runtime_slot_bound (db_runtime db))%N.
+  Proof.
+    intros db s f perm Hmetadata Hslot.
+    destruct Hmetadata as (_ & _ & _ & _ & _ & _ & _ & Hbound). rewrite Hbound.
+    assert (Hinside : N.to_nat s < length (slots db)).
+    { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    lia.
+  Qed.
+  (** The genuine cache-call counter is one of the recorded watermark values. *)
+  Lemma metadata_updates_wmark : forall db, metadata_ok db ->
+    (db_cache_updates db <= wmark db)%N.
+  Proof.
+    intros db Hmetadata. destruct Hmetadata as (_ & _ & Hcounter & _).
+    destruct (db_cache_updates db) as [|p] eqn:Hvalue; [lia |].
+    apply recorded_counters_wmark. apply Hcounter. reflexivity.
+  Qed.
+
+  (** Declared slot numbers fit the recorded size of the slot inventory. *)
+  Lemma metadata_slot_number : forall db s f perm, metadata_ok db ->
+    slot_of db s = Some (f, perm) -> (s <= wmark db)%N.
+  Proof.
+    intros db s f perm Hmetadata Hslot.
+    pose proof (slots_metadata_inside db s f perm Hmetadata Hslot) as Hinside.
+    destruct Hmetadata as (_ & Hslots & _ & _ & _ & _ & _ & Hbound).
+    pose proof (recorded_counters_wmark db _ Hslots) as Hrecorded.
+    rewrite Hbound in Hinside. rewrite N.succ_pos_spec in Hrecorded. lia.
+  Qed.
+
+  (** A cache call records the actual positive rank of its complete input tuple. *)
+  Lemma slots_update_rank_wmark : forall db b f u,
+    (Npos (Pos.of_succ_nat (length u)) <= wmark (slots_update b f u db))%N.
+  Proof.
+    intros db b f u. apply recorded_counters_wmark. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db)));
+      right; now left.
+  Qed.
+
+  (** Distinct fitting positions cannot outnumber the cells they select. *)
+  Lemma fitting_permutation_length : forall perm n,
+    NoDup perm -> Forall (fun p => p < n) perm -> length perm <= n.
+  Proof.
+    intros perm n Hdistinct Hpositions.
+    eapply Nat.le_trans with (length (seq 0 n)); [| rewrite length_seq; lia].
+    apply NoDup_incl_length; [exact Hdistinct |].
+    intros p Hin. apply in_seq. split; [lia |].
+    rewrite Forall_forall in Hpositions. exact (Hpositions p Hin).
+  Qed.
+
+  (** Every original slot index fits the watermark recorded after this cache call. *)
+  Lemma slots_update_query_width : forall db b f u s new v, metadata_ok db ->
+    length v <= length u ->
+    (forall c, In c v -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    I.width (index s new db) v <= 4 * N.size_nat (wmark (slots_update b f u db)) + 2.
+  Proof.
+    intros db b f u s new v Hmetadata Hlength Hcells.
+    destruct (metadata_wmark_index db s new Hmetadata) as [Hnext Hstored].
+    pose proof (wmark_slots_update b f u db) as Hmono.
+    pose proof (N_width_mono _ _ Hmono) as Hbits.
+    apply index_width_watermark.
+    - lia.
+    - eapply N.le_trans; [apply database_query_length_rank; exact Hlength |].
+      apply slots_update_rank_wmark.
+    - exact Hcells.
+    - lia.
+  Qed.
+
+  (** A prepared slot pays its projection and mutation using the final recorded width. *)
+  Lemma T_slot_update_prepared : forall db b f u s perm current, slots_ok db ->
+    slot_of db s = Some (f, perm) -> slots_fit db f (length u) ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    slot_snapshot current s = slot_snapshot (db_runtime db) s ->
+    (T_project_slot_layout (prepare_slot_layout perm) u +
+      T_slot_update_one b s (project_slot_layout (prepare_slot_layout perm) u) current <=
+      256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (length u + 1) *
+        N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N.
+  Proof.
+    intros db b f u s perm current [Hmetadata Harity] Hslot Hfits Hcells Hsnapshot.
+    set (bits := N.size_nat (wmark (slots_update b f u db))) in *.
+    assert (Hin : In (f, perm) (slots db)) by (eapply nth_error_In; exact Hslot).
+    destruct (Hfits perm Hin) as [Hdistinct Hpositions].
+    pose proof (fitting_permutation_length perm (length u) Hdistinct Hpositions) as Hperm_length.
+    assert (Hprojection : project_slot_layout (prepare_slot_layout perm) u = permute perm u)
+      by (now apply project_slot_layout_correct).
+    assert (Hquery_length : length (project_slot_layout (prepare_slot_layout perm) u) <= length u).
+    { rewrite Hprojection, permute_length by exact Hpositions. exact Hperm_length. }
+    assert (Hquery_cells : forall c, In c (project_slot_layout (prepare_slot_layout perm) u) ->
+      cell_bits V.encode c <= bits).
+    { intros c Hmember. rewrite Hprojection in Hmember. apply Hcells.
+      exact (permute_member perm u c Hmember). }
+    assert (Hindex : forall new, runtime_slot_index current s new = index s new db).
+    { intro new. rewrite (slot_snapshot_index _ _ s Hsnapshot).
+      symmetry. apply index_runtime_slot. eapply slots_metadata_inside; eassumption. }
+    pose proof (wmark_slots_update b f u db) as Hmono.
+    assert (Hone : (T_slot_update_one b s
+      (project_slot_layout (prepare_slot_layout perm) u) current <=
+      128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (length u + 1) * N.of_nat (bits + 1))%N).
+    { apply T_slot_update_one_width with (arity := length perm).
+      - intro new. rewrite Hindex. exact (Harity s f perm new Hslot).
+      - exact Hquery_length.
+      - exact Hquery_cells.
+      - unfold bits. apply N_width_mono.
+        pose proof (metadata_slot_number db s f perm Hmetadata Hslot). lia.
+      - unfold bits. apply N_width_mono. rewrite (slot_snapshot_count _ _ s Hsnapshot).
+        pose proof (metadata_updates_wmark db Hmetadata) as Hupdates.
+        destruct Hmetadata as (_ & _ & _ & _ & _ & Hcounts & _).
+        specialize (Hcounts s (project_slot_layout (prepare_slot_layout perm) u)). lia.
+      - intro new. rewrite Hindex. unfold bits.
+        apply slots_update_query_width; assumption. }
+    assert (Hrank_order : (Npos (Pos.of_succ_nat (length perm)) <=
+      Npos (Pos.of_succ_nat (length u)))%N).
+    { change (Pos.of_succ_nat (length perm) <= Pos.of_succ_nat (length u))%positive.
+      apply Pos2Nat.inj_le. rewrite !SuccNat2Pos.id_succ. lia. }
+    assert (Hrank_bits : Pos.size_nat (Pos.of_succ_nat (length perm)) <= bits).
+    { unfold bits. change (N.size_nat (Npos (Pos.of_succ_nat (length perm))) <=
+        N.size_nat (wmark (slots_update b f u db))).
+      apply N_width_mono. eapply N.le_trans; [exact Hrank_order | apply slots_update_rank_wmark]. }
+    set (factor := (N.of_nat (length u + 1) * N.of_nat (bits + 1))%N).
+    assert (Hmeasure : (N.of_nat (length perm + 1) *
+      N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1) <= factor)%N).
+    { unfold factor. apply N.mul_le_mono; lia. }
+    assert (Hscaled : ((2 * PTrieT.c_trie + 10) *
+      (N.of_nat (length perm + 1) *
+       N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1)) <=
+      (2 * PTrieT.c_trie + 10) * factor)%N) by (now apply N.mul_le_mono_l).
+    pose proof (T_project_slot_layout_le (cell V.t) perm u) as Hproject.
+    assert (Hinput : (N.of_nat (length u + 1) <= factor)%N) by (unfold factor; nia).
+    assert (Hproject_factor : (T_project_slot_layout (prepare_slot_layout perm) u <=
+      (2 * PTrieT.c_trie + 11) * factor)%N).
+    { eapply N.le_trans; [exact Hproject |].
+      replace ((2 * PTrieT.c_trie + 11) * factor)%N with
+        (factor + (2 * PTrieT.c_trie + 10) * factor)%N by ring.
+      apply N.add_le_mono; [exact Hinput |].
+      replace ((2 * PTrieT.c_trie + 10) * N.of_nat (length perm + 1) *
+        N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1))%N with
+        ((2 * PTrieT.c_trie + 10) * (N.of_nat (length perm + 1) *
+          N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1)))%N by ring.
+      exact Hscaled. }
+    assert (Hproject_budget : (T_project_slot_layout (prepare_slot_layout perm) u <=
+      16 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N).
+    { eapply N.le_trans; [exact Hproject_factor |]. apply N.mul_le_mono_r. lia. }
+    replace (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length u + 1) * N.of_nat (bits + 1))%N with
+      (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N in Hone by (unfold factor; ring).
+    replace (256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length u + 1) * N.of_nat (bits + 1))%N with
+      (256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N by (unfold factor; ring).
+    clearbody factor. clear -Hone Hproject_budget. nia.
+  Qed.
+
+  (** The outer wrapper pays its lookup, mutation pass, counter pass and actual recording. *)
+  Lemma T_slots_update_parts : forall db b f u,
+    let layouts := database_group_entries f (runtime_function_slots (db_runtime db)) in
+    let state := slot_update_many b u layouts (db_runtime db) in
+    (T_slots_update b f u db = 14 +
+      PTrieCode.T_get f (runtime_function_slots (db_runtime db)) +
+      T_slot_update_many b u layouts (db_runtime db) +
+      T_slot_updated_counters layouts state +
+      T_database_record_cache u (slot_updated_counters layouts state)
+        (database_set_runtime state db))%N.
+  Proof.
+    intros db b f u. cbn beta zeta. unfold database_group_entries.
+    time_unfold T_slots_update. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. lia.
+  Qed.
+
+  (** A complete function-group update charges every actual pass at the final width. *)
+  Lemma T_slots_update_width : forall db b f u, slots_ok db ->
+    kind (view db) f <> None -> slots_fit db f (length u) ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    (T_slots_update b f u db <=
+      1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (slots_of db f + 1) * N.of_nat (length u + 1) *
+        N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N.
+  Proof.
+    intros db b f u Hslots Hkind Hfits Hcells.
+    pose proof Hslots as Hslot_facts. destruct Hslot_facts as [Hmetadata Hindex_wf].
+    pose proof Hmetadata as Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & _ & _ & Hgroups & _).
+    set (layouts := database_group_entries f (runtime_function_slots (db_runtime db))).
+    set (state := slot_update_many b u layouts (db_runtime db)).
+    set (bits := N.size_nat (wmark (slots_update b f u db))) in *.
+    set (cost := (I.c_ix + PTrieT.c_trie + V.c_key + 1)%N).
+    set (arity := N.of_nat (length u + 1)).
+    set (width := N.of_nat (bits + 1)).
+    set (count := N.of_nat (length layouts)).
+    set (base := (cost * arity * width)%N).
+    set (total := (base * (count + 1))%N).
+    assert (Hlength : length layouts = slots_of db f).
+    { unfold layouts, slots_of. rewrite Hgroups. apply database_prepared_group_length. }
+    assert (Hdistinct : NoDup (map fst layouts)).
+    { unfold layouts. rewrite Hgroups. apply database_prepared_group_nodup. }
+    assert (Hentry : forall s layout, In (s, layout) layouts ->
+      exists perm, slot_of db s = Some (f, perm) /\ layout = prepare_slot_layout perm).
+    { intros s layout Hin. unfold layouts in Hin. rewrite Hgroups in Hin.
+      apply database_prepared_group_member in Hin. exact Hin. }
+    assert (Hcost_positive : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Harity_positive : (1 <= arity)%N) by (unfold arity; lia).
+    assert (Hwidth_positive : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbase_positive : (1 <= base)%N).
+    { unfold base. replace 1%N with ((1 * 1) * 1)%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono |]; assumption. }
+    assert (Harity_base : (arity <= base)%N).
+    { unfold base. replace arity with ((1 * arity) * 1)%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono_r |]; assumption. }
+    assert (Hwidth_base : (width <= base)%N).
+    { unfold base. replace width with ((1 * 1) * width)%N at 1 by ring.
+      apply N.mul_le_mono_r. apply N.mul_le_mono; assumption. }
+    assert (Hcost_width : (cost * width <= base)%N).
+    { unfold base. replace (cost * width)%N with ((cost * 1) * width)%N at 1 by ring.
+      apply N.mul_le_mono_r. now apply N.mul_le_mono_l. }
+    assert (Hbase_total : (base <= total)%N).
+    { unfold total. replace base with (base * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. lia. }
+    assert (Hcount_total : (count + 1 <= total)%N).
+    { unfold total. replace (count + 1)%N with (1 * (count + 1))%N at 1 by ring.
+      now apply N.mul_le_mono_r. }
+    assert (Htotal_positive : (1 <= total)%N) by lia.
+    assert (Harity_total : (arity <= total)%N) by lia.
+    assert (Hwidth_total : (width <= total)%N) by lia.
+    assert (Hwalk_main : (base * count <= total)%N).
+    { unfold total. apply N.mul_le_mono_l. lia. }
+    assert (Hmany : (T_slot_update_many b u layouts (db_runtime db) <=
+      (256 * base + 1) * count + 1)%N).
+    { unfold count. apply T_slot_update_many_snapshots with (original := db_runtime db).
+      - exact Hdistinct.
+      - intros s layout Hin. reflexivity.
+      - intros s layout current Hin Hsnapshot.
+        destruct (Hentry s layout Hin) as [perm [Hslot Hequal]]. subst layout.
+        replace (256 * base)%N with
+          (256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * N.of_nat (length u + 1) *
+            N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N
+          by (unfold base, cost, arity, width, bits; ring).
+        exact (T_slot_update_prepared db b f u s perm current Hslots Hslot Hfits Hcells Hsnapshot). }
+    assert (Hmany_total : (T_slot_update_many b u layouts (db_runtime db) <= 257 * total)%N).
+    { eapply N.le_trans; [exact Hmany |].
+      replace ((256 * base + 1) * count + 1)%N with
+        (256 * (base * count) + (count + 1))%N by ring.
+      replace (257 * total)%N with (256 * total + total)%N by ring.
+      apply N.add_le_mono; [now apply N.mul_le_mono_l | exact Hcount_total]. }
+    pose proof (wmark_slots_update b f u db) as Hmono.
+    assert (Hslot_bits : forall s layout, In (s, layout) layouts -> N.size_nat s <= bits).
+    { intros s layout Hin. destruct (Hentry s layout Hin) as [perm [Hslot _]].
+      unfold bits. apply N_width_mono.
+      pose proof (metadata_slot_number db s f perm Hmetadata Hslot). lia. }
+    pose proof (T_slot_updated_counters_le layouts state bits Hslot_bits) as Hcollect.
+    assert (Hcount_succ : N.of_nat (length layouts + 1) = (count + 1)%N)
+      by (unfold count; lia).
+    rewrite Hcount_succ in Hcollect. fold width in Hcollect.
+    assert (Hcollect_total : (T_slot_updated_counters layouts state <= 16 * total)%N).
+    { eapply N.le_trans; [exact Hcollect |]. unfold total.
+      replace (16 * (I.c_ix + PTrieT.c_trie + 1) * (count + 1) * width)%N with
+        (16 * ((I.c_ix + PTrieT.c_trie + 1) * width) * (count + 1))%N by ring.
+      replace (16 * (base * (count + 1)))%N with (16 * base * (count + 1))%N by ring.
+      apply N.mul_le_mono_r. apply N.mul_le_mono_l.
+      eapply N.le_trans; [| exact Hcost_width].
+      apply N.mul_le_mono_r. unfold cost. lia. }
+    assert (Hname_bits : Pos.size_nat f <= bits).
+    { unfold bits. change (N.size_nat (Npos f) <= N.size_nat (wmark (slots_update b f u db))).
+      apply N_width_mono. pose proof (declared_names_wmark db f Hkind). lia. }
+    assert (Hget_total : (PTrieCode.T_get f (runtime_function_slots (db_runtime db)) <= total)%N).
+    { eapply N.le_trans; [apply PTrieT.T_get_le |].
+      eapply N.le_trans with (cost * width)%N.
+      - apply N.mul_le_mono; [unfold cost; lia | unfold width; lia].
+      - eapply N.le_trans; [exact Hcost_width | exact Hbase_total]. }
+    assert (Hcache_bits : N.size_nat (db_cache_updates db) <= bits).
+    { unfold bits. apply N_width_mono. pose proof (metadata_updates_wmark db Hmetadata). lia. }
+    assert (Hsucc_cost : (N.T_succ_pos (db_cache_updates db) <= width)%N).
+    { pose proof (N.T_succ_pos_le (db_cache_updates db)). unfold width. lia. }
+    pose proof (@T_database_record_cache_le (cell V.t) I.t u
+      (slot_updated_counters layouts state) (database_set_runtime state db)) as Hrecord.
+    change (T_database_record_cache u (slot_updated_counters layouts state)
+      (database_set_runtime state db) <=
+      32 + N.T_succ_pos (db_cache_updates db) + 6 * N.of_nat (length u + 1) +
+        N.of_nat (length (slot_updated_counters layouts state) + 1))%N in Hrecord.
+    rewrite slot_updated_counters_length in Hrecord.
+    assert (Hcounter_length : N.of_nat (2 * length layouts + 1) = (2 * count + 1)%N)
+      by (unfold count; lia).
+    rewrite Hcounter_length in Hrecord. fold arity in Hrecord.
+    assert (Hrecord_total : (T_database_record_cache u (slot_updated_counters layouts state)
+      (database_set_runtime state db) <= 42 * total)%N).
+    { eapply N.le_trans; [exact Hrecord |].
+      clearbody total arity width count.
+      clear -Hsucc_cost Harity_total Hwidth_total Hcount_total Htotal_positive. lia. }
+    change (T_slots_update b f u db <=
+      1024 * cost * N.of_nat (slots_of db f + 1) * arity * width)%N.
+    replace (1024 * cost * N.of_nat (slots_of db f + 1) * arity * width)%N
+      with (1024 * total)%N.
+    2: { unfold total, base.
+         replace (count + 1)%N with (N.of_nat (slots_of db f + 1))
+           by (unfold count; rewrite Hlength; lia).
+         ring. }
+    change (T_slots_update b f u db <= 1024 * total)%N.
+    pose proof (T_slots_update_parts db b f u) as Hparts.
+    cbn beta zeta in Hparts. fold layouts in Hparts. fold state in Hparts.
+    clearbody total.
+    rewrite Hparts.
+    eapply N.le_trans with (14 + total + 257 * total + 16 * total + 42 * total)%N.
+    - apply N.add_le_mono; [| exact Hrecord_total].
+      apply N.add_le_mono; [| exact Hcollect_total].
+      apply N.add_le_mono; [| exact Hmany_total].
+      now apply N.add_le_mono_l.
+    - clear -Htotal_positive. lia.
+  Qed.
+
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
   Lemma F_slot_place : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
@@ -960,7 +9327,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_slots_update b f u db <= k_slots * N.of_nat (slots_of db f + 1) *
       N.of_nat (length u + 1) *
       N.of_nat (unit (slots_update b f u db)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db b f u Hslots Hkind Hfits Hcells.
+    eapply N.le_trans; [exact (T_slots_update_width db b f u Hslots Hkind Hfits Hcells) |].
+    unfold k_slots. apply N.mul_le_mono_l.
+    unfold unit. rewrite Nat2N.inj_mul.
+    replace (N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1)) with
+      (1 * N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N at 1 by ring.
+    apply N.mul_le_mono_r. lia.
+  Qed.
 
   (** A union finds both roots and links only distinct ones. *)
   Lemma F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
@@ -973,10 +9348,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_uf_card : forall db work, inv_on db work ->
     UnionFind.card (uf_state db) <= 3 * N.to_nat (ids db) /\
     UnionFind.width (uf_state db) <= N.size_nat (ids db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work Hinv. unfold uf_state.
+    pose proof (inv_on_forest_card db work Hinv) as Hcard.
+    split; [lia | exact (inv_on_forest_width db work Hinv)].
+  Qed.
 
-  (* STUB-CODE *)
-  Definition proj_count (_ : t) (_ : N) (_ : list (cell V.t)) : N := 0%N.
+  Definition proj_count (db : t) (s : N) (u : list (cell V.t)) : N :=
+    stored_projection_count db s u.
   (** The count of a projected tuple is the number of rows that project onto it. *)
   Lemma F_proj_count : forall db work s f perm u, inv_on db work ->
     slot_of db s = Some (f, perm) ->
@@ -988,15 +9367,50 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** The counter of the empty index is recorded. *)
   Lemma F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv. exact (proj1 (inv_on_metadata db [] Hinv)).
+  Qed.
 
   (** The maintained invariant gives the slot facts that an update reads. *)
   Lemma F_slots_ok : forall db work, inv_on db work -> slots_ok db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work Hinv. split; [exact (inv_on_metadata db work Hinv) |].
+    intros s f perm new Hslot.
+    destruct Hinv as (_ & _ & _ & _ & Hindexes & _).
+    specialize (Hindexes s f perm Hslot). destruct new; tauto.
+  Qed.
   (** A slot update keeps those facts. *)
   Lemma F_slots_ok_update : forall db b f u, slots_ok db ->
     slots_fit db f (length u) -> slots_ok (slots_update b f u db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db b f u [Hmetadata Harity] Hfits.
+    assert (Hupdated : metadata_ok (slots_update b f u db)).
+    { apply metadata_slots_update; [exact Hmetadata | intros _; exact Hfits]. }
+    split; [exact Hupdated |]. intros s g perm new Hslot.
+    assert (Horiginal : slot_of db s = Some (g, perm)).
+    { unfold slot_of in Hslot |- *. rewrite slots_update_slots in Hslot. exact Hslot. }
+    pose proof (Harity s g perm new Horiginal) as Hwf.
+    rewrite index_runtime_slot in Hwf by
+      (eapply slots_metadata_inside; [exact Hmetadata | exact Horiginal]).
+    rewrite index_runtime_slot by
+      (eapply slots_metadata_inside; [exact Hupdated | exact Hslot]).
+    pose proof Hmetadata as Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & _ & _ & Hgroups & _).
+    destruct (Pos.eq_dec f g) as [Hequal | Hdifferent].
+    - subst g.
+      assert (Hpositions : Forall (fun p => p < length u) perm).
+      { assert (Hin : In (f, perm) (slots db)) by (eapply nth_error_In; exact Horiginal).
+        exact (proj2 (Hfits perm Hin)). }
+      rewrite (slot_snapshot_index _ _ s
+        (slots_update_snapshot_same db b f u s perm Hgroups Horiginal Hpositions)).
+      rewrite slot_update_one_index. destruct b.
+      + apply I.wf_insert; [exact Hwf | now apply permute_length].
+      + destruct (runtime_projection_count (db_runtime db) s (permute perm u)) as [|p];
+          [exact Hwf |]. destruct p; try exact Hwf. now apply I.wf_remove.
+    - rewrite (slot_snapshot_index _ _ s
+        (slots_update_snapshot_other db b f u s g perm Hgroups Horiginal Hdifferent)).
+      exact Hwf.
+  Qed.
 
   (** A driver step costs its repair, or its pop and bucket read, plus a constant. *)
   Lemma T_rstep_split : forall db work,
@@ -1009,16 +9423,54 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           | None => 0
           end
       end)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work. time_unfold T_rstep. time_unfold T_db_rstep.
+    destruct work as [| [f k] rest]; cbn [fst snd].
+    - unfold pop_loser. destruct (db_pop_loser db) as [[x next] |];
+        time_unfold T_pop_loser; try time_unfold T_get_uses;
+        time_simpl; unfold k_rstep; lia.
+    - time_unfold T_repair_entry. time_simpl. cbn [fst snd]. unfold k_rstep. lia.
+  Qed.
   (** A pop moves the selected bucket at one step per entry. *)
+  Lemma T_pop_loser_counter_bound : forall db,
+    (T_pop_loser db <= 64 + N.of_nat (N.size_nat (db_npending db)))%N.
+  Proof.
+    intro db. pose proof (N.T_pred_le (db_npending db)) as Hpred.
+    time_unfold T_pop_loser. time_unfold T_db_pop_loser.
+    destruct (runtime_queue (db_runtime db)) as [| i rest].
+    - time_simpl. time_cbn. lia.
+    - time_unfold @T_runtime_set_union. time_unfold @T_database_set_runtime.
+      time_unfold @T_database_set_pending. time_simpl. time_cbn. lia.
+  Qed.
+
   Lemma T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
       N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db x db' Hinv _.
+    pose proof (T_pop_loser_counter_bound db) as Htime.
+    assert (Hcount : (db_npending db <= wmark db)%N).
+    { eapply N.le_trans; [exact (inv_on_pending_bound db [] Hinv) | apply wmark_ids]. }
+    pose proof (N_width_mono _ _ Hcount) as Hbits.
+    pose proof (unit_width_budget db) as Hwidth.
+    pose proof (unit_positive db) as Hunit.
+    assert (Hcoefficient : (64 <= k_pop)%N) by (unfold k_pop; nia).
+    assert (Hweight : (1 <= N.of_nat (work_weight db (bucket db x) + 1))%N) by lia.
+    assert (Hsmall : (T_pop_loser db <= 64 * N.of_nat (unit db))%N) by nia.
+    nia.
+  Qed.
   (** An empty pop reads the stored queue. *)
   Lemma T_pop_none_le : forall db, inv db -> pop_loser db = None ->
     (T_pop_loser db <= k_pop * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _ Hnone. unfold pop_loser, db_pop_loser in Hnone.
+    destruct (runtime_queue (db_runtime db)) as [| i rest] eqn:Hqueue; [| discriminate].
+    time_unfold T_pop_loser. time_unfold T_db_pop_loser. rewrite Hqueue.
+    time_unfold @T_db_runtime. time_unfold @T_runtime_queue.
+    assert (Hunit : (1 <= N.of_nat (unit db))%N).
+    { unfold unit. rewrite Nat2N.inj_mul. nia. }
+    unfold k_pop. nia.
+  Qed.
   (** A bucket is read by one keyed lookup. *)
   Lemma T_get_uses_le : forall db work x, inv_on db work -> allocated db x ->
     (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
@@ -1038,7 +9490,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** The unit charges identifier traversal and cell encoding widths. *)
   Lemma F3_unit : forall db,
     unit db = (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
 
   (** Direct bucket lookup agrees with the occurrence inventory. *)
   Lemma F4_bucket : forall db work x, inv_on db work -> get_uses x db = bucket db x.
@@ -1046,7 +9498,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** An empty pop detects an empty pending queue. *)
   Lemma F4_pop_none : forall db, inv db -> (pop_loser db = None <-> queue db = []).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _. unfold pop_loser, db_pop_loser, queue.
+    destruct (runtime_queue (db_runtime db)); split; congruence.
+  Qed.
 
   (** A pop transfers its selected bucket into the active work list. *)
   Lemma F4_pop : forall db x db', inv db -> pop_loser db = Some (x, db') ->
@@ -1068,7 +9523,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         | Some (x, db') => inl (db', get_uses x db)
         end
       end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db [| [f k] rest]; reflexivity.
+  Qed.
 
   (** Entries without a current row are discarded without changing the database. *)
   Lemma F6_absent : forall db f k,
@@ -1087,12 +9544,39 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Repair retains kinds and identifier allocation. *)
   Lemma F9_rstep_layout : forall s s', state_inv s -> rstep s = inl s' ->
     kind (view (fst s')) = kind (view (fst s)) /\ ids (fst s') = ids (fst s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next _ Hstep. unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db i current Hpop) as [_ Hview].
+      destruct (db_pop_loser_layout db i current Hpop) as [_ [Hids _]].
+      split; [now rewrite Hview | exact Hids].
+    - injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (repair_current_layout db f k) as [Hkind [_ Hids]]. now split.
+  Qed.
 
   (** Collision unions keep the same functional-dependency closure. *)
   Lemma F10_rstep_cong : forall s s' i j, state_inv s -> rstep s = inl s' ->
     (cong (fst s') i j <-> cong (fst s) i j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next i j Hinv Hstep. change (inv_on db work) in Hinv.
+    assert (Hagrees : forest_agrees db).
+    { split; [exact (inv_on_forest_wf db work Hinv) |].
+      intros a b. exact (inv_on_same_repr db work a b Hinv). }
+    assert (Htyped : forall g args output,
+      row (view db) g args output -> kind_ok db g args output).
+    { unfold inv_on in Hinv. tauto. }
+    unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db x current Hpop) as [_ Hview].
+      unfold cong. now rewrite Hview.
+    - injection Hstep as Hnext. subst next. cbn [fst]. split.
+      + exact (repair_cong_backward db f k Hagrees i j).
+      + exact (repair_cong_forward db f k Hagrees Htyped i j).
+  Qed.
 
   (** Every old row survives one step at an equivalent, possibly unfinished key. *)
   Lemma F11_rstep_keeps : forall s s' f k o, state_inv s -> rstep s = inl s' ->
@@ -1100,16 +9584,56 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exists k' o', row (view (fst s')) f k' o' /\
       Forall2 (cell_rel (same (view (fst s')))) k k' /\
       out_le (fst s') f (option_map (canon (fst s')) o) o'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next f k o Hinv Hstep Hrow.
+    change (inv_on db work) in Hinv. cbn [fst] in Hrow.
+    assert (Hagrees : forest_agrees db).
+    { split; [exact (inv_on_forest_wf db work Hinv) |].
+      intros i j. exact (inv_on_same_repr db work i j Hinv). }
+    assert (Htyped : forall g args output, row (view db) g args output -> kind_ok db g args output).
+    { unfold inv_on in Hinv. tauto. }
+    destruct work as [| [g args] rest].
+    - change (db_rstep (db, []) = inl next) in Hstep. cbn [db_rstep fst snd] in Hstep.
+      destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db x current Hpop) as [Hforest Hview].
+      exists k, o. split; [now rewrite Hview |]. split.
+      + rewrite Hview. apply key_same_refl_forward.
+      + pose proof (row_output_canon_le db f k o Hagrees (Htyped f k o Hrow)) as Hout.
+        unfold out_le, canon, repr in Hout |- *. now rewrite Hview, Hforest.
+    - change (db_rstep (db, (g, args) :: rest) = inl next) in Hstep.
+      cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
+      exact (repair_row_forward db g args Hagrees Htyped f k o Hrow).
+  Qed.
 
-  (** Every repaired row groups a nonempty list of rows from before the step. *)
-  Lemma F12_rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
-    row (view (fst s')) f k' o' ->
-    exists srcs, srcs <> [] /\
-      Forall (fun ko => row (view (fst s)) f (fst ko) (snd ko) /\
-        Forall2 (cell_rel (same (view (fst s')))) (fst ko) k') srcs /\
-      output_equiv (fst s') o' (merged (fst s') f (map snd srcs)).
-  Proof. Admitted. (* STUB *)
+  (** Empty active and pending schedules leave no noncanonical row occurrence. *)
+  Lemma inv_quiet_canonical : forall db, inv db -> queue db = [] -> canonical db.
+  Proof.
+    intros db Hinv Hqueue f k o Hrow i Hin.
+    destruct (Pos.eq_dec (repr db i) i) as [Hequal | Hdifferent]; [exact Hequal |].
+    destruct Hinv as (_ & _ & _ & Hscheduled & _).
+    destruct (Hscheduled f k o i Hrow Hin Hdifferent) as [k0 [Hwork _]].
+    unfold scheduled in Hwork. rewrite Hqueue in Hwork.
+    destruct Hwork as [Hempty | [x [Hempty _]]]; contradiction.
+  Qed.
+
+  (** The active invariant identifies canonical related keys cell by cell. *)
+  Lemma inv_on_canonical_keys_equal : forall db work (k1 k2 : list (cell V.t)), inv_on db work ->
+    (forall i, In (Id i) k1 -> repr db i = i) ->
+    (forall i, In (Id i) k2 -> repr db i = i) ->
+    Forall2 (cell_rel (same (view db))) k1 k2 -> k1 = k2.
+  Proof.
+    intros db work k1 k2 Hinv Hleft Hright Hrelated. revert Hleft Hright.
+    induction Hrelated as [| c d left right Hcell Htail IH]; intros Hleft Hright.
+    - reflexivity.
+    - f_equal.
+      + destruct Hcell as [i j Hsame | v]; [| reflexivity].
+        f_equal. apply (proj1 (inv_on_same_repr db work i j Hinv)) in Hsame.
+        rewrite (Hleft i), (Hright j) in Hsame by now left. exact Hsame.
+      + apply IH.
+        * intros i Hin. apply Hleft. now right.
+        * intros i Hin. apply Hright. now right.
+  Qed.
 
   (** A stopped driver exposes canonical rows and constructor closure. *)
   Lemma F13_rstep_done : forall s r, state_inv s -> rstep s = inr r ->
@@ -1117,7 +9641,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall f k1 k2 i j, row (view r) f k1 (Some (Id i)) ->
       row (view r) f k2 (Some (Id j)) ->
       Forall2 (cell_rel (same (view r))) k1 k2 -> same (view r) i j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] result Hinv Hstop. unfold rstep in Hstop.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstop; [| discriminate].
+    change (inv db) in Hinv.
+    destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [discriminate |].
+    injection Hstop as Hresult. subst result. cbn [fst snd].
+    assert (Hqueue : queue db = []).
+    { apply (proj1 (F4_pop_none db Hinv)). exact Hpop. }
+    assert (Hcanonical : canonical db) by (now apply inv_quiet_canonical).
+    split; [reflexivity |]. split; [reflexivity |]. split; [exact Hinv |].
+    split; [exact Hcanonical |]. split.
+    - unfold pending, queue in *. now rewrite Hqueue.
+    - intros f k1 k2 i j Hrow1 Hrow2 Hrelated.
+      assert (Hkeys : k1 = k2).
+      { eapply inv_on_canonical_keys_equal; [exact Hinv | | | exact Hrelated].
+        - intros x Hin. apply (Hcanonical f k1 (Some (Id i)) Hrow1 x).
+          apply in_or_app. now left.
+        - intros x Hin. apply (Hcanonical f k2 (Some (Id j)) Hrow2 x).
+          apply in_or_app. now left. }
+      subst k2. change (row_get f k1 db = Some (Some (Id i))) in Hrow1.
+      change (row_get f k1 db = Some (Some (Id j))) in Hrow2.
+      assert (Hequal : i = j) by congruence. subst j.
+      apply (proj2 (inv_on_same_repr db [] i i Hinv)). reflexivity.
+  Qed.
 
   (** Continuing steps strictly decrease a measure that includes active work. *)
   Lemma F14_rstep_measure : forall s s', state_inv s -> rstep s = inl s' ->
@@ -1127,7 +9674,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Fuel budgets logarithmic relabelings of all stored use occurrences. *)
   Lemma F15_fuel_formula : forall db, rebuild_fuel db =
     ((N.size (ids db) + 2) * (nuses db + 1) + npending db + 1)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. reflexivity.
+  Qed.
 
   (** Computed fuel includes the final stop call. *)
   Lemma F15_fuel_enough : forall db, inv db ->
@@ -1142,20 +9691,57 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Congruent cells have equal denotations in every satisfying model. *)
   Lemma F17_cong_den : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> cong db i j -> nu i = nu j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db i j _ Hsat Hcong.
+    exact (fd_congruence_den V.merge M nu (view db) i j Hsat Hcong).
+  Qed.
 
   (** Nonempty output groups keep their model meaning through the actual merge fold. *)
   Lemma F18_merged_holds : forall (M : model (V := V.t)) nu db f k os,
     wf db -> lat_closed V.merge M (view db) -> os <> [] -> (forall i, nu (repr db i) = nu i) ->
     Forall (holds M nu (view db) f k) os ->
     holds M nu (view db) f k (merged db f os).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db f k os _ Hlat Hnonempty Hrepr Hrows.
+    assert (Hcanonical : Forall (holds M nu (view db) f k)
+      (map (option_map (canon db)) os)).
+    { apply Forall_map. eapply Forall_impl; [| exact Hrows].
+      intros o Ho.
+      exact (holds_output_rename M nu (repr db) Hrepr (view db) f k o Ho). }
+    unfold merged.
+    destruct (map (option_map (canon db)) os) as [| o rest] eqn:Houtputs.
+    - destruct os; [contradiction | discriminate].
+    - inversion Hcanonical as [| o0 rest0 Ho Hrest]; subst.
+      clear Houtputs Hnonempty Hrows Hcanonical. revert o Ho.
+      induction Hrest as [| next rest Hnext Hrest IH]; intros acc Hacc;
+        cbn [fold_left].
+      + exact Hacc.
+      + apply IH. unfold combine.
+        eapply (holds_combine V.merge M nu (view db) f k (Some acc) next Hlat).
+        * intros previous Heq. inversion Heq; subst. exact Hacc.
+        * exact Hnext.
+  Qed.
+
+  (** Satisfaction and the active forest facts give representative meanings during repair. *)
+  Lemma inv_on_model_forest : forall M nu db work, inv_on db work ->
+    sat V.merge M nu (view db) -> model_forest M nu db.
+  Proof.
+    intros M nu db work Hinv Hsat. split.
+    - exact (inv_on_forest_wf db work Hinv).
+    - intro i. apply (sat_same V.merge M nu (view db) (repr db i) i Hsat).
+      apply (proj2 (inv_on_same_repr db work (repr db i) i Hinv)).
+      unfold repr. apply UnionFind.repr_idem. exact (inv_on_forest_wf db work Hinv).
+  Qed.
 
   (** Repair preserves satisfaction through its collision, lattice and index branches. *)
   Lemma F19_rstep_sat : forall (M : model (V := V.t)) nu s s',
     state_inv s -> rstep s = inl s' -> sat V.merge M nu (view (fst s)) ->
     sat V.merge M nu (view (fst s')).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu s s' Hinv Hstep Hsat.
+    apply (proj2 (db_rstep_semantic_continue M nu s s'
+      (conj (inv_on_model_forest M nu (fst s) (snd s) Hinv Hsat) Hsat) Hstep)).
+  Qed.
 
   (** Lineage retains original row groups throughout repeated deletion and reinsertion. *)
   Definition lineage (initial current : t) : Prop :=
@@ -1164,14 +9750,641 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
         Forall2 (cell_rel (same (view current))) (fst ko) k) srcs /\
       output_equiv current o (merged current f (map snd srcs)).
+
+  (** Every key is related to itself by the actual equality log. *)
+  Lemma key_related_refl : forall db (k : list (cell V.t)), Forall2 (cell_rel (same (view db))) k k.
+  Proof.
+    intros db k. induction k as [| c rest IH].
+    - constructor.
+    - constructor; [| exact IH]. destruct c as [i | v].
+      + constructor. apply equality_log_refl.
+      + constructor.
+  Qed.
+
+  (** Canonicalizing an output preserves its class whenever identifiers agree with their roots. *)
+  Lemma output_equiv_canon : forall db o,
+    (forall i, same (view db) i (repr db i)) ->
+    output_equiv db o (option_map (canon db) o).
+  Proof.
+    intros db [[i | v] |] Hrepr; cbn [output_equiv option_map canon].
+    - constructor. apply Hrepr.
+    - constructor.
+    - constructor.
+  Qed.
+
+  (** A singleton group supplies the unchanged source row and its canonicalized output. *)
+  Lemma lineage_initial_from_repr : forall db,
+    (forall i, same (view db) i (repr db i)) -> lineage db db.
+  Proof.
+    intros db Hrepr f k o Hrow. exists [(k, o)]. split; [discriminate |]. split.
+    - constructor; [| constructor]. cbn [fst snd]. split; [exact Hrow | apply key_related_refl].
+    - cbn [map snd merged fold_left]. now apply output_equiv_canon.
+  Qed.
+
   (** Singleton source groups establish lineage before the first repair. *)
   Lemma F20_lineage_initial : forall db, inv db -> lineage db db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv. apply lineage_initial_from_repr. intro i.
+    apply (proj2 (inv_on_same_repr db [] i (repr db i) Hinv)).
+    symmetry. exact (inv_on_repr_idem db [] i Hinv).
+  Qed.
+
+  (** Enlarging identifier equality preserves every related cell pair. *)
+  Lemma cell_related_monotone : forall db db' (c d : cell V.t),
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    cell_rel (same (view db)) c d -> cell_rel (same (view db')) c d.
+  Proof.
+    intros db db' c d Hsame Hrelated. destruct Hrelated; constructor; auto.
+  Qed.
+
+  (** Enlarging identifier equality preserves pointwise related source keys. *)
+  Lemma key_related_monotone : forall db db' (left right : list (cell V.t)),
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    Forall2 (cell_rel (same (view db))) left right ->
+    Forall2 (cell_rel (same (view db'))) left right.
+  Proof.
+    intros db db' left right Hsame Hrelated. induction Hrelated; constructor; auto.
+    eapply cell_related_monotone; eassumption.
+  Qed.
+
+  (** Enlarging identifier equality preserves optional-output equivalence. *)
+  Lemma output_equiv_monotone : forall db db' a b,
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    output_equiv db a b -> output_equiv db' a b.
+  Proof.
+    intros db db' [a |] [b |] Hsame Hrelated;
+      cbn [output_equiv] in *; try contradiction; [| constructor].
+    eapply cell_related_monotone; eassumption.
+  Qed.
+
+  (** Optional-output equivalence composes through the actual equality log. *)
+  Lemma output_equiv_transitive : forall db a b c,
+    output_equiv db a b -> output_equiv db b c -> output_equiv db a c.
+  Proof.
+    intros db [a |] [b |] [c |] Hleft Hright;
+      cbn [output_equiv] in *; try contradiction; [| constructor].
+    eapply cell_rel_transitive; [| exact Hleft | exact Hright].
+    intros i j k Hij Hjk. eapply equality_log_trans; eassumption.
+  Qed.
+
+  (** Old and new canonical cells stay related when equality classes only coarsen. *)
+  Lemma canon_related_coarsen : forall db db' c,
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    cell_rel (same (view db')) (canon db c) (canon db' c).
+  Proof.
+    intros db db' [i | v] Hsame Hbefore Hafter; cbn [canon]; constructor.
+    eapply equality_log_trans.
+    - apply equality_log_sym. apply Hsame. apply Hbefore.
+    - apply Hafter.
+  Qed.
+
+  (** Canonicalized optional outputs remain equivalent after equality classes coarsen. *)
+  Lemma output_canon_coarsen : forall db db' o,
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    output_equiv db' (option_map (canon db) o) (option_map (canon db') o).
+  Proof.
+    intros db db' [c |] Hsame Hbefore Hafter; cbn [output_equiv option_map];
+      [| constructor]. eapply canon_related_coarsen; eassumption.
+  Qed.
+
+  (** Combining equivalent accumulators and inputs respects optional-output equivalence. *)
+  Lemma combine_output_equiv : forall db db' f a a' b b',
+    kind (view db') f = kind (view db) f ->
+    output_equiv db' a a' -> output_equiv db' b b' ->
+    output_equiv db' (combine db f (Some a) b) (combine db' f (Some a') b').
+  Proof.
+    intros db db' f a a' b b' Hkind Hacc Hnext. unfold combine. rewrite Hkind.
+    destruct a as [[i | v] |], a' as [[j | w] |],
+      b as [[x | u] |], b' as [[y | z] |];
+      cbn [output_equiv] in Hacc, Hnext; try contradiction;
+      inversion Hacc; subst; inversion Hnext; subst;
+      destruct (kind (view db) f) as [[| |m] |]; cbn [output_equiv];
+      constructor; assumption.
+  Qed.
+
+  (** Equivalent input lists and accumulators produce equivalent folded outputs. *)
+  Lemma fold_outputs_equiv : forall db db' f before after,
+    kind (view db') f = kind (view db) f ->
+    Forall2 (output_equiv db') before after -> forall acc acc',
+    output_equiv db' acc acc' ->
+    output_equiv db'
+      (fold_left (fun current next => combine db f (Some current) next) before acc)
+      (fold_left (fun current next => combine db' f (Some current) next) after acc').
+  Proof.
+    intros db db' f before after Hkind Hrelated. induction Hrelated as
+      [| first first' rest rest' Hfirst Hrest IH]; intros acc acc' Hacc; cbn [fold_left].
+    - exact Hacc.
+    - apply IH. eapply combine_output_equiv; eassumption.
+  Qed.
+
+  (** The same source group has equivalent merged outputs after equality classes coarsen. *)
+  Lemma merged_output_coarsen : forall db db' f os,
+    kind (view db') f = kind (view db) f ->
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    output_equiv db' (merged db f os) (merged db' f os).
+  Proof.
+    intros db db' f os Hkind Hsame Hbefore Hafter.
+    assert (Houtput : forall o,
+      output_equiv db' (option_map (canon db) o) (option_map (canon db') o)).
+    { intro o. eapply output_canon_coarsen; eassumption. }
+    destruct os as [| first rest]; cbn [merged map]; [constructor |].
+    eapply fold_outputs_equiv; [exact Hkind | | apply Houtput].
+    induction rest as [| next rest IH]; cbn [map]; constructor;
+      [apply Houtput | exact IH].
+  Qed.
+
+  (** An existing row keeps its source witnesses when its equality classes coarsen. *)
+  Lemma lineage_row_coarsen : forall initial db db' f k o,
+    kind (view db') f = kind (view db) f ->
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    (forall i, same (view db) i (repr db i)) ->
+    (forall i, same (view db') i (repr db' i)) ->
+    lineage initial db -> row (view db) f k o ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db'))) (fst ko) k) srcs /\
+      output_equiv db' o (merged db' f (map snd srcs)).
+  Proof.
+    intros initial db db' f k o Hkind Hsame Hbefore Hafter Hlineage Hrow.
+    destruct (Hlineage f k o Hrow) as [srcs [Hnonempty [Hsources Houtput]]].
+    exists srcs. split; [exact Hnonempty |]. split.
+    - rewrite Forall_forall in Hsources |- *. intros [args output] Hin.
+      destruct (Hsources (args, output) Hin) as [Hsource Hrelated].
+      cbn [fst snd] in Hsource, Hrelated |- *. split; [exact Hsource |].
+      eapply key_related_monotone; eassumption.
+    - eapply output_equiv_transitive with (b := merged db f (map snd srcs)).
+      + eapply output_equiv_monotone; eassumption.
+      + eapply merged_output_coarsen; eassumption.
+  Qed.
+
+  (** A surviving row set inherits lineage when kinds and representatives are preserved. *)
+  Lemma lineage_restrict : forall initial db db', db_forest db' = db_forest db ->
+    same (view db') = same (view db) -> kind (view db') = kind (view db) ->
+    (forall f k o, row (view db') f k o -> row (view db) f k o) ->
+    lineage initial db -> lineage initial db'.
+  Proof.
+    intros initial db db' Hforest Hsame Hkind Hrows Hlineage f k o Hrow.
+    specialize (Hlineage f k o (Hrows f k o Hrow)).
+    unfold output_equiv, merged, combine, canon, repr in Hlineage |- *.
+    now rewrite Hsame, Hkind, Hforest.
+  Qed.
+
+  (** Actual row deletion retains source witnesses for every surviving row. *)
+  Lemma lineage_row_delete : forall initial db f k,
+    lineage initial db -> lineage initial (row_delete f k db).
+  Proof.
+    intros initial db f k Hlineage.
+    eapply (lineage_restrict initial db (row_delete f k db)).
+    - apply row_delete_forest.
+    - apply row_delete_same.
+    - apply row_delete_kind.
+    - intros g args output Hrow. apply row_delete_binding in Hrow. exact (proj1 Hrow).
+    - exact Hlineage.
+  Qed.
+
+  (** An identifier accumulator is retained by every subsequent combine input. *)
+  Lemma combine_id_exact : forall db f i next,
+    combine db f (Some (Some (Id i))) next = Some (Id i).
+  Proof.
+    intros db f i [[j | v] |]; unfold combine;
+      destruct (kind (view db) f) as [[| |m] |]; reflexivity.
+  Qed.
+
+  (** An absent-output accumulator is retained by every subsequent combine input. *)
+  Lemma combine_none_exact : forall db f next, combine db f (Some None) next = None.
+  Proof.
+    intros db f [[j | v] |]; unfold combine;
+      destruct (kind (view db) f) as [[| |m] |]; reflexivity.
+  Qed.
+
+  (** Lattice combining merges value inputs and ignores inputs of other shapes. *)
+  Lemma combine_lattice_value : forall db f m value next,
+    kind (view db) f = Some (OLat m) ->
+    combine db f (Some (Some (Val value))) next =
+      match next with
+      | Some (Val other) => Some (Val (V.merge m value other))
+      | _ => Some (Val value)
+      end.
+  Proof.
+    intros db f m value [[i | other] |] Hkind; unfold combine; now rewrite Hkind.
+  Qed.
+
+  (** Folding from an identifier output preserves that exact identifier. *)
+  Lemma fold_combine_id : forall db f outputs i,
+    fold_left (fun acc next => combine db f (Some acc) next) outputs (Some (Id i)) =
+      Some (Id i).
+  Proof.
+    intros db f outputs. induction outputs as [| next rest IH]; intro i; cbn [fold_left].
+    - reflexivity.
+    - rewrite combine_id_exact. apply IH.
+  Qed.
+
+  (** Folding from an absent output retains absence. *)
+  Lemma fold_combine_none : forall db f outputs,
+    fold_left (fun acc next => combine db f (Some acc) next) outputs None = None.
+  Proof.
+    intros db f outputs. induction outputs as [| next rest IH]; cbn [fold_left].
+    - reflexivity.
+    - now rewrite combine_none_exact.
+  Qed.
+
+  (** A fixed lattice prefix can be merged before or after folding the remaining inputs. *)
+  Lemma fold_lattice_merge : forall db f m outputs prefix seed result,
+    kind (view db) f = Some (OLat m) ->
+    fold_left (fun acc next => combine db f (Some acc) next) outputs (Some (Val seed)) =
+      Some (Val result) ->
+    fold_left (fun acc next => combine db f (Some acc) next) outputs
+      (Some (Val (V.merge m prefix seed))) = Some (Val (V.merge m prefix result)).
+  Proof.
+    intros db f m outputs. induction outputs as [| next rest IH];
+      intros prefix seed result Hkind Hresult; cbn [fold_left] in Hresult |- *.
+    - injection Hresult as Hvalue. subst result. reflexivity.
+    - rewrite (combine_lattice_value db f m seed next Hkind) in Hresult.
+      rewrite (combine_lattice_value db f m (V.merge m prefix seed) next Hkind).
+      destruct next as [[i | value] |]; cbn in Hresult |- *.
+      + eapply IH; eassumption.
+      + rewrite <- (V.merge_assoc m prefix seed value). eapply IH; eassumption.
+      + eapply IH; eassumption.
+  Qed.
+
+  (** Concatenating two value-producing groups merges their independently folded values. *)
+  Lemma merged_lattice_append : forall db f m left right a b,
+    kind (view db) f = Some (OLat m) ->
+    merged db f left = Some (Val a) -> merged db f right = Some (Val b) ->
+    merged db f (left ++ right) = Some (Val (V.merge m a b)).
+  Proof.
+    intros db f m left right a b Hkind Hleft Hright.
+    destruct left as [| first rest]; [discriminate |].
+    destruct right as [| second tail]; [discriminate |].
+    unfold merged in Hleft, Hright |- *. cbn [app map] in Hleft, Hright |- *.
+    rewrite map_app, fold_left_app, Hleft.
+    destruct second as [[i | value] |].
+    - cbn [option_map canon] in Hright. rewrite fold_combine_id in Hright. discriminate.
+    - cbn [map option_map canon fold_left] in Hright |- *.
+      rewrite (combine_lattice_value db f m a (Some (Val value)) Hkind).
+      eapply fold_lattice_merge; eassumption.
+    - cbn [option_map] in Hright. rewrite fold_combine_none in Hright. discriminate.
+  Qed.
+
+  (** Optional-output equivalence is symmetric under the actual equality log. *)
+  Lemma output_equiv_symmetric : forall db a b,
+    output_equiv db a b -> output_equiv db b a.
+  Proof.
+    intros db [a |] [b |] Hrelated; cbn [output_equiv] in *;
+      try contradiction; [| constructor].
+    eapply cell_rel_symmetric; [| exact Hrelated].
+    intros i j Hsame. now apply equality_log_sym.
+  Qed.
+
+  (** An output equivalent to a value has that exact value payload. *)
+  Lemma output_equiv_value_eq : forall db value output,
+    output_equiv db (Some (Val value)) output -> output = Some (Val value).
+  Proof.
+    intros db value [c |] Hrelated; cbn [output_equiv] in Hrelated; [| contradiction].
+    inversion Hrelated; subst; reflexivity.
+  Qed.
+
+  (** Executable optional-output normalization preserves output equivalence. *)
+  Lemma normal_output_equiv : forall db o, forest_agrees db ->
+    output_equiv db o (option_map (normal_cell db) o).
+  Proof.
+    intros db [c |] Hforest; cbn [output_equiv option_map]; [| constructor].
+    now apply forest_agrees_normal_cell.
+  Qed.
+
+  (** Active repair directly supplies the weak forest and equality agreement. *)
+  Lemma inv_on_forest_agrees : forall db work, inv_on db work -> forest_agrees db.
+  Proof.
+    intros db work Hinv. split.
+    - exact (inv_on_forest_wf db work Hinv).
+    - intros i j. exact (inv_on_same_repr db work i j Hinv).
+  Qed.
+
+  (** Active repair directly supplies each stored row's insertion shape condition. *)
+  Lemma inv_on_kind_ok : forall db work f k o, inv_on db work ->
+    row (view db) f k o -> kind_ok db f k o.
+  Proof.
+    intros db work f k o (_ & _ & _ & _ & _ & _ & _ & _ & Hkinds & _) Hrow.
+    exact (Hkinds f k o Hrow).
+  Qed.
+
+  (** A row's normalized key and output retain its source group after equality coarsening. *)
+  Lemma lineage_row_normalized : forall initial db db' f k o,
+    kind (view db') f = kind (view db) f ->
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    forest_agrees db -> forest_agrees db' ->
+    lineage initial db -> row (view db) f k o ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db'))) (fst ko) (normal_key db k)) srcs /\
+      output_equiv db' (option_map (normal_cell db) o) (merged db' f (map snd srcs)).
+  Proof.
+    intros initial db db' f k o Hkind Hsame Hforest Hforest' Hlineage Hrow.
+    destruct (lineage_row_coarsen initial db db' f k o Hkind Hsame
+      (fun i => forest_agrees_id db i Hforest)
+      (fun i => forest_agrees_id db' i Hforest') Hlineage Hrow)
+      as [srcs [Hnonempty [Hsources Houtput]]].
+    assert (Hnormal : Forall2 (cell_rel (same (view db'))) k (normal_key db k)).
+    { eapply key_related_monotone; [exact Hsame |]. now apply forest_agrees_normal_key. }
+    exists srcs. split; [exact Hnonempty |]. split.
+    - rewrite Forall_forall in Hsources |- *. intros [args output] Hin.
+      destruct (Hsources (args, output) Hin) as [Hsource Hrelated].
+      cbn [fst snd] in Hsource, Hrelated |- *. split; [exact Hsource |].
+      eapply key_rel_transitive; [| exact Hrelated | exact Hnormal].
+      intros i j l Hij Hjl. eapply equality_log_trans; eassumption.
+    - eapply output_equiv_transitive with (b := o); [| exact Houtput].
+      apply output_equiv_symmetric. eapply output_equiv_monotone; [exact Hsame |].
+      now apply normal_output_equiv.
+  Qed.
+
+  (** Combining depends on the declaration kind, independently of the stored row map. *)
+  Lemma combine_kind_frame : forall db db' f previous o,
+    kind (view db') f = kind (view db) f ->
+    combine db' f previous o = combine db f previous o.
+  Proof.
+    intros db db' f previous o Hkind. unfold combine. now rewrite Hkind.
+  Qed.
+
+  (** Source groups compose by retaining the old group or merging two lattice-value groups. *)
+  Lemma lineage_sources_combine : forall initial db f k a b,
+    (exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db))) (fst ko) k) srcs /\
+      output_equiv db a (merged db f (map snd srcs))) ->
+    (exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db))) (fst ko) k) srcs /\
+      output_equiv db b (merged db f (map snd srcs))) ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db))) (fst ko) k) srcs /\
+      output_equiv db (combine db f (Some a) b) (merged db f (map snd srcs)).
+  Proof.
+    intros initial db f k a b [left [Hleft [Hleft_keys Hleft_output]]]
+      [right [Hright [Hright_keys Hright_output]]]. unfold combine.
+    destruct a as [[i | a] |], b as [[j | b] |],
+      (kind (view db) f) as [[| |m] |] eqn:Hkind;
+      try (exists left; split; [exact Hleft |]; split; assumption).
+    pose proof (output_equiv_value_eq db a _ Hleft_output) as Hleft_value.
+    pose proof (output_equiv_value_eq db b _ Hright_output) as Hright_value.
+    exists (left ++ right). split.
+    - destruct left; [contradiction | discriminate].
+    - split; [rewrite Forall_app; split; assumption |].
+      rewrite map_app, (merged_lattice_append db f m _ _ a b Hkind
+        Hleft_value Hright_value). constructor.
+  Qed.
+
+  (** A candidate reinsertion binding has a source group in any coarsened target forest. *)
+  Lemma lineage_reinsert_sources : forall initial db after f k before output,
+    forest_agrees db -> forest_agrees after ->
+    kind (view after) = kind (view db) ->
+    (forall i j, same (view db) i j -> same (view after) i j) ->
+    lineage initial db -> row (view db) f k before ->
+    output = combine_output (row_delete f k db) f
+      (row_get f (normal_key db k) (row_delete f k db))
+      (option_map (normal_cell db) before) ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view after))) (fst ko) (normal_key db k)) srcs /\
+      output_equiv after output (merged after f (map snd srcs)).
+  Proof.
+    intros initial db after f k before output Hforest Hafter Hkind Hsame
+      Hlineage Hbefore Houtput.
+    pose proof (lineage_row_normalized initial db after f k before
+      (f_equal (fun kinds => kinds f) Hkind) Hsame Hforest Hafter Hlineage Hbefore)
+      as Hnormalized.
+    destruct (row_get f (normal_key db k) (row_delete f k db)) as [oldout |]
+      eqn:Hprevious.
+    - pose proof (proj1 (row_delete_binding f k db f (normal_key db k) oldout)
+        Hprevious) as [Hexisting _].
+      change (output = combine (row_delete f k db) f (Some oldout)
+        (option_map (normal_cell db) before)) in Houtput.
+      assert (Hkind_delete : kind (view after) f = kind (view (row_delete f k db)) f).
+      { now rewrite Hkind, row_delete_kind. }
+      rewrite <- (combine_kind_frame (row_delete f k db) after f (Some oldout)
+        (option_map (normal_cell db) before) Hkind_delete) in Houtput. subst output.
+      eapply (lineage_sources_combine initial after f (normal_key db k) oldout
+        (option_map (normal_cell db) before)); [| exact Hnormalized].
+      exact (lineage_row_coarsen initial db after f (normal_key db k) oldout
+        (f_equal (fun kinds => kinds f) Hkind) Hsame
+        (fun i => forest_agrees_id db i Hforest)
+        (fun i => forest_agrees_id after i Hafter) Hlineage Hexisting).
+    - change (output = option_map (normal_cell db) before) in Houtput.
+      now subst output.
+  Qed.
+
+  (** Actual row repair preserves lineage using only forest agreement and prior source groups. *)
+  Lemma lineage_repair_current : forall initial db f k,
+    forest_agrees db -> lineage initial db -> lineage initial (repair_current f k db).
+  Proof.
+    intros initial db f k Hforest Hlineage.
+    pose proof (forest_agrees_repair db f k Hforest) as Hafter.
+    assert (Hsame : forall i j, same (view db) i j ->
+      same (view (repair_current f k db)) i j).
+    { intros i j Hij. exact (repair_current_same_preserves db f k i j Hij). }
+    pose proof (proj1 (repair_current_layout db f k)) as Hkind.
+    unfold repair_current in Hafter, Hsame, Hkind |- *.
+    destruct (row_get f k db) as [before |] eqn:Hbefore; [| exact Hlineage].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)); [exact Hlineage |].
+    set (after := put f (normal_key db k) (option_map (normal_cell db) before)
+      (row_delete f k db)) in Hafter, Hsame, Hkind |- *.
+    intros g args output Hrow. apply put_row_sources_raw in Hrow as [Hold | Hnew].
+    - apply row_delete_binding in Hold. exact (lineage_row_coarsen initial db after
+        g args output (f_equal (fun kinds => kinds g) Hkind) Hsame
+        (fun i => forest_agrees_id db i Hforest)
+        (fun i => forest_agrees_id after i Hafter) Hlineage (proj1 Hold)).
+    - rewrite row_delete_normal_key, (normal_key_idempotent db k (proj1 Hforest)) in Hnew.
+      rewrite row_delete_normal_output,
+        (normal_output_idempotent db before (proj1 Hforest)) in Hnew.
+      destruct Hnew as [Hname [Hkey Houtput]]. subst g args.
+      eapply (lineage_reinsert_sources initial db after f k before output);
+        eassumption.
+  Qed.
+
+  (** Lineage depends on the current view and representatives, not scheduling metadata. *)
+  Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
+    view db' = view db -> lineage initial db -> lineage initial db'.
+  Proof.
+    intros initial db db' Hforest Hview Hlineage.
+    unfold lineage, output_equiv, merged, combine, canon, repr in Hlineage |- *.
+    now rewrite Hview, Hforest.
+  Qed.
+
+  (** Removing a pending loser preserves every existing source-group witness exactly. *)
+  Lemma lineage_pop_loser : forall initial db i db',
+    db_pop_loser db = Some (i, db') -> lineage initial db -> lineage initial db'.
+  Proof.
+    intros initial db i db' Hpop Hlineage.
+    destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
+    eapply lineage_frame; eassumption.
+  Qed.
+
+  (** The queue-scheduling callback branch preserves lineage before any row repair begins. *)
+  Lemma lineage_schedule : forall initial db next,
+    rstep (db, []) = inl next -> lineage initial db -> lineage initial (fst next).
+  Proof.
+    intros initial db next Hstep Hlineage.
+    change (db_rstep (db, []) = inl next) in Hstep. cbn [db_rstep fst snd] in Hstep.
+    destruct (db_pop_loser db) as [[i current] |] eqn:Hpop; [| discriminate].
+    injection Hstep as Hnext. subst next. cbn [fst].
+    eapply lineage_pop_loser; eassumption.
+  Qed.
+
+  (** Forest agreement supplies a singleton lineage witness without an active-state invariant. *)
+  Lemma lineage_initial_forest : forall db, forest_agrees db -> lineage db db.
+  Proof.
+    intros db Hforest. apply lineage_initial_from_repr.
+    intro i. now apply forest_agrees_id.
+  Qed.
+
+  (** The actual bounded rebuild loop preserves every existing source-group witness. *)
+  Lemma lineage_rebuild : forall initial db,
+    forest_agrees db -> lineage initial db -> lineage initial (rebuild db).
+  Proof.
+    intros initial db Hforest Hlineage.
+    assert (Hresult : forest_agrees (rebuild db) /\ lineage initial (rebuild db)).
+    { apply (rebuild_preserves
+        (fun current => forest_agrees current /\ lineage initial current)).
+      - intros current f k [Hcurrent Hsources]. split.
+        + now apply forest_agrees_repair.
+        + now apply lineage_repair_current.
+      - intros current i next [Hcurrent Hsources] Hpop.
+        destruct (db_pop_loser_preserves current i next Hpop) as [Hforest_frame Hview].
+        split.
+        + eapply forest_agrees_frame;
+            [exact Hforest_frame | now rewrite Hview | exact Hcurrent].
+        + exact (lineage_pop_loser initial current i next Hpop Hsources).
+      - split; assumption. }
+    exact (proj2 Hresult).
+  Qed.
+
+  (** Rebuilding a well-formed database retains groups of its actual original rows. *)
+  Lemma rebuild_lineage : forall db, wf db -> lineage db (rebuild db).
+  Proof.
+    intros db Hwf. pose proof (forest_agrees_initial db Hwf) as Hforest.
+    apply lineage_rebuild; [exact Hforest | now apply lineage_initial_forest].
+  Qed.
 
   (** Actual repair flattens source groups through canonicalization and lattice merging. *)
   Lemma F21_lineage_step : forall initial s s', state_inv s ->
     rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros initial [db work] next Hinv Hstep Hlineage.
+    destruct work as [| [f k] rest].
+    - exact (lineage_schedule initial db next Hstep Hlineage).
+    - change (db_rstep (db, (f, k) :: rest) = inl next) in Hstep.
+      cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
+      apply lineage_repair_current; [| exact Hlineage].
+      exact (inv_on_forest_agrees db ((f, k) :: rest) Hinv).
+  Qed.
+
+  (** Every repaired row groups a nonempty list of rows from before the step. *)
+  Lemma F12_rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
+    row (view (fst s')) f k' o' ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view (fst s)) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view (fst s')))) (fst ko) k') srcs /\
+      output_equiv (fst s') o' (merged (fst s') f (map snd srcs)).
+  Proof.
+    intros s next f k o Hinv Hstep Hrow.
+    assert (Hinitial : lineage (fst s) (fst s)).
+    { apply lineage_initial_forest. exact (inv_on_forest_agrees (fst s) (snd s) Hinv). }
+    exact (F21_lineage_step (fst s) s next Hinv Hstep Hinitial f k o Hrow).
+  Qed.
+
+  (** Related cells normalize to the same already canonical target cell. *)
+  Lemma related_cell_canonical : forall db work c d, inv_on db work ->
+    cell_rel (same (view db)) c d -> canon db d = d -> canon db c = d.
+  Proof.
+    intros db work c d Hinv Hrelated Hfixed.
+    transitivity (canon db d); [| exact Hfixed].
+    destruct Hrelated as [i j Hsame | v]; [| reflexivity].
+    cbn [canon]. f_equal. exact (proj1 (inv_on_same_repr db work i j Hinv) Hsame).
+  Qed.
+
+  (** A key related to a canonical key normalizes exactly to that key. *)
+  Lemma related_key_canonical : forall db work before after, inv_on db work ->
+    Forall2 (cell_rel (same (view db))) before after ->
+    map (canon db) after = after -> map (canon db) before = after.
+  Proof.
+    intros db work before after Hinv Hrelated. induction Hrelated as
+      [| c d before after Hcell Htail IH]; intro Hfixed.
+    - reflexivity.
+    - cbn [map] in Hfixed |- *. injection Hfixed as Hhead Hrest. f_equal.
+      + exact (related_cell_canonical db work c d Hinv Hcell Hhead).
+      + exact (IH Hrest).
+  Qed.
+
+  (** Canonical stored rows are unchanged by key and output normalization. *)
+  Lemma canonical_row_identity : forall db f k o, canonical db -> row (view db) f k o ->
+    map (canon db) k = k /\ option_map (canon db) o = o.
+  Proof.
+    intros db f k o Hcanonical Hrow.
+    assert (Hcells : forall c, In c (k ++ option_list o) -> canon db c = c).
+    { intros [i | v] Hin; cbn [canon]; [| reflexivity]. f_equal.
+      exact (Hcanonical f k o Hrow i Hin). }
+    split.
+    - transitivity (map (fun c => c) k).
+      + apply map_ext_in. intros c Hin. apply Hcells. apply in_or_app. now left.
+      + apply map_id.
+    - destruct o as [c |]; [| reflexivity]. cbn [option_map]. f_equal.
+      apply Hcells. apply in_or_app. right. now left.
+  Qed.
+
+  (** Normalizing an optional output twice has the same result as normalizing it once. *)
+  Lemma canon_output_idempotent : forall db work o, inv_on db work ->
+    option_map (canon db) (option_map (canon db) o) = option_map (canon db) o.
+  Proof.
+    intros db work [[i | v] |] Hinv; cbn [option_map canon]; try reflexivity.
+    now rewrite (inv_on_repr_idem db work i Hinv).
+  Qed.
+
+  (** Combining another output retains a canonical accumulator or produces a value cell. *)
+  Lemma combine_output_fixed : forall db f acc next,
+    option_map (canon db) acc = acc ->
+    option_map (canon db) (combine db f (Some acc) next) = combine db f (Some acc) next.
+  Proof.
+    intros db f acc next Hfixed. unfold combine.
+    destruct acc as [[i | v] |]; destruct next as [[j | w] |];
+      destruct (kind (view db) f) as [[| |m] |];
+      cbn [option_map canon] in *; try exact Hfixed; reflexivity.
+  Qed.
+
+  (** Merging a group produces an output already fixed by canonicalization. *)
+  Lemma merged_output_fixed : forall db work f os, inv_on db work ->
+    option_map (canon db) (merged db f os) = merged db f os.
+  Proof.
+    intros db work f os Hinv.
+    assert (Hfold : forall rest acc, option_map (canon db) acc = acc ->
+      option_map (canon db)
+        (fold_left (fun current next => combine db f (Some current) next) rest acc) =
+      fold_left (fun current next => combine db f (Some current) next) rest acc).
+    { intro rest. induction rest as [| next rest IH]; intros acc Hfixed; cbn [fold_left].
+      - exact Hfixed.
+      - apply IH. now apply combine_output_fixed. }
+    destruct os as [| first rest]; [reflexivity |]. unfold merged. cbn [map].
+    apply Hfold. exact (canon_output_idempotent db work first Hinv).
+  Qed.
+
+  (** Equivalent canonical outputs are equal under the active representative agreement. *)
+  Lemma output_equiv_fixed_equal : forall db work a b, inv_on db work ->
+    option_map (canon db) a = a -> option_map (canon db) b = b ->
+    output_equiv db a b -> a = b.
+  Proof.
+    intros db work [c |] [d |] Hinv Hleft Hright Hrelated;
+      cbn [output_equiv] in Hrelated; try contradiction; [| reflexivity].
+    cbn [option_map] in Hleft, Hright. injection Hleft as Hleft_cell.
+    injection Hright as Hright_cell. f_equal. transitivity (canon db c).
+    - symmetry. exact Hleft_cell.
+    - exact (related_cell_canonical db work c d Hinv Hrelated Hright_cell).
+  Qed.
 
   (** Stopped lineage gives the exact public output equation for each original group. *)
   Lemma F22_lineage_done : forall initial s r, inv initial -> state_inv s ->
@@ -1180,14 +10393,79 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exists srcs, srcs <> [] /\
       Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
         map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros initial s r _ Hstate Hstop Hlineage f k o Hrow.
+    destruct (F13_rstep_done s r Hstate Hstop) as (_ & _ & Hinv & Hcanonical & _).
+    destruct (Hlineage f k o Hrow) as [srcs [Hnonempty [Hsources Houtput]]].
+    destruct (canonical_row_identity r f k o Hcanonical Hrow) as [Hkey Hout].
+    exists srcs. split; [exact Hnonempty |]. split.
+    - rewrite Forall_forall in Hsources |- *. intros [args output] Hin.
+      destruct (Hsources (args, output) Hin) as [Hsource Hrelated].
+      cbn [fst snd] in Hsource, Hrelated |- *. split; [exact Hsource |].
+      exact (related_key_canonical r [] args k Hinv Hrelated Hkey).
+    - eapply (output_equiv_fixed_equal r []); [exact Hinv | exact Hout | | exact Houtput].
+      exact (merged_output_fixed r [] f (map snd srcs) Hinv).
+  Qed.
 
+
+  (** Insertion changes its forest only by the single optional output-conflict union. *)
+  Lemma put_forest_effect : forall f k o db,
+    db_forest (put f k o db) = db_forest db \/
+    exists i j, db_forest (put f k o db) = snd (UnionFindCode.union i j (db_forest db)).
+  Proof.
+    intros f k o db. unfold put.
+    remember (normal_key db k) as ck.
+    remember (option_map (normal_cell db) o) as co.
+    remember (row_get f ck db) as previous.
+    remember (combine_output db f previous co) as updated.
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [| rewrite row_replace_forest].
+      all: destruct before as [[i | v] |]; destruct co as [[j | w] |];
+        try (left; reflexivity); right; exists i, j; apply union_forest.
+    - rewrite row_replace_forest. left. reflexivity.
+  Qed.
+
+  (** Deleting the old row before insertion introduces no additional forest change. *)
+  Lemma repair_forest_effect : forall f k db,
+    db_forest (repair_current f k db) = db_forest db \/
+    exists i j, db_forest (repair_current f k db) = snd (UnionFindCode.union i j (db_forest db)).
+  Proof.
+    intros f k db. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| left; reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [left; reflexivity |].
+    destruct (put_forest_effect f (normal_key db k) (option_map (normal_cell db) o)
+      (row_delete f k db)) as [Hsame | [i [j Hunion]]].
+    - left. now rewrite Hsame, row_delete_forest.
+    - right. exists i, j. now rewrite Hunion, row_delete_forest.
+  Qed.
+
+  (** A root redirected by actual row repair inherits the union-by-size doubling bound. *)
+  Lemma repair_root_doubling : forall db f k x,
+    UnionFind.wf (db_forest db) -> repr db x = x ->
+    repr (repair_current f k db) x <> x ->
+    (2 * class_size db x <=
+      class_size (repair_current f k db) (repr (repair_current f k db) x))%N.
+  Proof.
+    intros db f k x Hwf Hfixed Hchanged. unfold class_size, uf_state, repr in *.
+    destruct (repair_forest_effect f k db) as [Hsame | [i [j Hunion]]].
+    - rewrite Hsame in Hchanged. contradiction.
+    - rewrite Hunion in Hchanged |- *.
+      pose proof (ForestFacts.union_root_doubling i j (db_forest db) x
+        Hwf Hfixed Hchanged) as Hsize. lia.
+  Qed.
 
   (** A losing root enters a class at least twice as large. *)
   Lemma T1_doubling : forall db i j x, inv db -> repr db x = x ->
     repr (union i j db) x <> x ->
     (2 * class_size db x <= class_size (union i j db) (repr (union i j db) x))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db i j x Hinv Hfixed Hchanged.
+    unfold repr in Hfixed, Hchanged. rewrite union_forest in Hchanged.
+    pose proof (ForestFacts.union_root_doubling i j (db_forest db) x
+      (inv_on_forest_wf db [] Hinv) Hfixed Hchanged) as Hsize.
+    unfold class_size, uf_state, repr. rewrite union_forest. lia.
+  Qed.
 
   (** Initialization has no use-occurrence debt. *)
   Lemma T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
@@ -1230,10 +10508,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       k_loop * N.of_nat U * state_potential B s)%N.
   Proof. Admitted. (* STUB *)
 
+  (** The stopped branch reads an empty queue and pays the real wrapper overhead. *)
+  Lemma T_rstep_stop_bound : forall s r, state_inv s -> rstep s = inr r ->
+    (T_rstep s <= (k_rstep + k_pop) * N.of_nat (unit (fst s)))%N.
+  Proof.
+    intros [db work] result Hinv Hstop. unfold rstep in Hstop.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstop; [| discriminate].
+    change (inv db) in Hinv.
+    destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [discriminate |].
+    change (pop_loser db = None) in Hpop.
+    pose proof (T_rstep_split db []) as Hsplit. rewrite Hpop in Hsplit.
+    pose proof (T_pop_none_le db Hinv Hpop) as Htime.
+    pose proof (unit_positive db) as Hpositive. cbn [fst]. nia.
+  Qed.
+
   (** Stopping charges one unit of the final database. *)
   Lemma T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
     (T_rstep s <= k_stop * N.of_nat (unit (fst s)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s r Hinv Hstop.
+    pose proof (T_rstep_stop_bound s r Hinv Hstop) as Htime.
+    unfold k_stop. nia.
+  Qed.
 
   (** Continuing steps also pay the binary loop driver's per-step charge. *)
   Lemma T6a_rstep_credit : forall B U s s', state_inv s ->
@@ -1247,7 +10543,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rstep s = inr r ->
     (T_rstep s + c_loopN + k_loop * N.of_nat U * rebuild_potential B r <=
       k_loop * N.of_nat U * state_potential B s + k_stop * N.of_nat U)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B U [db work] result Hinv Hunit Hstop.
+    pose proof (T_rstep_stop_bound (db, work) result Hinv Hstop) as Htime.
+    destruct (F13_rstep_done (db, work) result Hinv Hstop) as [Hresult [Hwork _]].
+    cbn [fst snd] in Hresult, Hwork, Hunit, Htime. subst result work.
+    pose proof (unit_positive db) as Hpositive.
+    unfold state_potential. cbn [fst snd work_weight fold_right].
+    unfold k_stop. nia.
+  Qed.
 
 
   (** The actual loop must fit the public budget after all use-entry charges are summed. *)
@@ -1262,16 +10566,33 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma T9_rebuild_driver : forall db,
     (T_rebuild db <= T_rebuild_fuel db +
       T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db.
+    assert (Hcallback : forall s, (T_db_rstep s <= T_rstep s)%N).
+    { intro s. time_unfold T_rstep. lia. }
+    pose proof (LoopNFacts.T_loopN_mono _ _ db_rstep T_db_rstep T_rstep Hcallback
+      (db_rebuild_fuel db) (db, [])) as Hloop.
+    time_unfold T_rebuild. time_unfold T_rebuild_fuel.
+    unfold rebuild_fuel, rstep in *. cbn beta zeta.
+    change (T_loopN db_rstep (fun s => T_db_rstep s) (db_rebuild_fuel db) (db, []) <=
+      T_loopN (fun s : repair_state => db_rstep s) T_rstep
+        (db_rebuild_fuel db) (db, []))%N in Hloop.
+    destruct (loopN db_rstep (db_rebuild_fuel db) (db, []));
+      time_simpl; unfold k_driver; lia.
+  Qed.
 
   (** Slot lookup charges its binary slot code. *)
   Lemma T10_index : forall s new db,
     (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_index_le.
+  Qed.
 
   (** Advancing clears each maintained slot once. *)
   Lemma T11_advance : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_advance_le.
+  Qed.
 
   (** Stored counters agree with the occurrence inventory and pending queue. *)
   Lemma F15_counts : forall db work, inv_on db work ->
@@ -1281,7 +10602,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** The declaration inventory contains precisely the names with a kind. *)
   Lemma F_decl_names : forall db f, inv db ->
     (kind (view db) f <> None <-> In f (decl_names db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f _. apply decl_names_spec.
+  Qed.
 
   (** The stored watermark is the exact historical maximum of written payloads and counters. *)
   Lemma F_wmark : forall db, inv db ->
@@ -1291,46 +10614,89 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           | Id i => Npos (xO i)
           | Val v => Npos (xI (V.encode v))
           end) (written_cells db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Every slot index fits the stored counter and cell watermark. *)
   Lemma F_wmark_index : forall db s new, inv db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
     I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new Hinv. apply metadata_wmark_index. exact (inv_on_metadata db [] Hinv).
+  Qed.
 
   (** Class sizes come from the size-based union-find. *)
   Lemma F_uf_bridge : forall db work x, inv_on db work ->
     repr db x = UnionFind.repr (uf_state db) x /\
     class_size db x = N.of_nat (UnionFind.size_of (uf_state db) x) /\
     UnionFind.wf (uf_state db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x Hinv. split; [reflexivity |]. split; [reflexivity |].
+    exact (inv_on_forest_wf db work Hinv).
+  Qed.
 
   (** Root classes are nonempty and bounded by allocation. *)
   Lemma F_class_size : forall db work x, inv_on db work ->
     (1 <= class_size db (repr db x))%N /\
     (class_size db (repr db x) <= N.max 1 (ids db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x Hinv. unfold class_size, uf_state.
+    pose proof (ConcreteUnionFindFacts.size_of_positive (db_forest db) (repr db x)) as Hpositive.
+    pose proof (ConcreteUnionFindFacts.size_of_card_bound (db_forest db) (repr db x)
+      (inv_on_forest_wf db work Hinv)) as Hbound.
+    rewrite (inv_on_forest_card db work Hinv) in Hbound. split; [lia |].
+    assert (Hbinary : (N.of_nat (UnionFind.size_of (db_forest db) (repr db x)) <=
+      N.of_nat (Nat.max 1 (N.to_nat (ids db))))%N) by lia.
+    rewrite Nat2N.inj_max, N2Nat.id in Hbinary. exact Hbinary.
+  Qed.
 
   (** Collision unions also double the losing class. *)
   Lemma F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
     repr (fst s) x = x -> repr (fst s') x <> x ->
     (2 * class_size (fst s) x <= class_size (fst s') (repr (fst s') x))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next x Hinv Hstep Hfixed Hchanged.
+    unfold state_inv in Hinv. cbn [fst snd] in Hinv, Hfixed.
+    unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i db'] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst] in Hchanged |- *.
+      destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest _].
+      unfold repr in Hfixed, Hchanged. rewrite Hforest in Hchanged. contradiction.
+    - injection Hstep as Hnext. subst next. cbn [fst] in Hchanged |- *.
+      exact (repair_root_doubling db f k x
+        (inv_on_forest_wf db ((f, k) :: rest) Hinv) Hfixed Hchanged).
+  Qed.
 
   (** Repair never reduces the spending unit. *)
   Lemma F9b_rstep_unit : forall s s', state_inv s -> rstep s = inl s' ->
     unit (fst s) <= unit (fst s').
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next _ Hstep. unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      rewrite (unit_pop_loser db i current Hpop). reflexivity.
+    - injection Hstep as Hnext. subst next. cbn [fst].
+      apply repair_current_unit_monotone.
+  Qed.
 
   (** Loop credit includes the binary driver charge. *)
   Lemma k_loop_le : (c_loopN <= k_loop)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold k_loop. lia. Qed.
 
   (** Fuel construction uses stored binary counters. *)
   Lemma T7b_fuel : forall db, inv db ->
     (T_rebuild_fuel db <= k_driver * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv.
+    assert (Hpending : (db_npending db <= wmark db)%N).
+    { eapply N.le_trans; [exact (inv_on_pending_bound db [] Hinv) | apply wmark_ids]. }
+    pose proof (T_db_rebuild_fuel_unit db Hpending) as Hfuel.
+    pose proof (unit_positive db) as Hpositive.
+    time_unfold T_rebuild_fuel. unfold k_driver. nia.
+  Qed.
 
   (** The [T_loopN_amort] driver retains the final database credit. *)
   Lemma T8a_loop_final : forall B U db, inv db -> (ids (rebuild db) <= B)%N ->
