@@ -1054,6 +1054,84 @@ Definition database_set_pending {C X} (pending : N)
     (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db).
 TimeFun database_set_pending.
 
+(** A ghost operation records whether a tuple was inserted or removed from an index. *)
+Definition database_index_step {C X : Type} (insert remove : list C -> X -> X)
+    (ix : X) (operation : bool * list C) : X :=
+  if fst operation then insert (snd operation) ix else remove (snd operation) ix.
+
+(** Cached indexes have finite construction histories over the recorded written cells. *)
+Definition database_index_history {C X : Type} (empty : X)
+    (insert remove : list C -> X -> X) (written : list C) (ix : X) : Prop :=
+  exists operations : list (bool * list C),
+    ix = fold_left (database_index_step insert remove) operations empty /\
+    Forall (fun operation => fst operation = true -> incl (snd operation) written) operations.
+
+(** The empty index has an empty construction history. *)
+Lemma database_index_history_empty : forall C X (empty : X) insert remove (written : list C),
+  database_index_history empty insert remove written empty.
+Proof.
+  intros C X empty insert remove written. exists []. split; [reflexivity | constructor].
+Qed.
+
+(** Recording more written cells retains every existing construction witness. *)
+Lemma database_index_history_weaken : forall C X (empty : X) insert remove
+  (before after : list C) ix,
+  incl before after -> database_index_history empty insert remove before ix ->
+  database_index_history empty insert remove after ix.
+Proof.
+  intros C X empty insert remove before after ix Hwritten [operations [Hix Hhistory]].
+  exists operations. split; [exact Hix |].
+  rewrite Forall_forall in Hhistory |- *. intros operation Hin Hinsert c Hcell.
+  apply Hwritten. exact (Hhistory operation Hin Hinsert c Hcell).
+Qed.
+
+(** An insertion extends the ghost history when its tuple cells have been recorded. *)
+Lemma database_index_history_insert : forall C X (empty : X) insert remove
+  (written u : list C) ix,
+  database_index_history empty insert remove written ix -> incl u written ->
+  database_index_history empty insert remove written (insert u ix).
+Proof.
+  intros C X empty insert remove written u ix [operations [Hix Hhistory]] Hcells.
+  exists (operations ++ [(true, u)]). split.
+  - rewrite fold_left_app. cbn [fold_left database_index_step fst snd]. now rewrite Hix.
+  - apply Forall_app. split; [exact Hhistory |]. constructor; [exact (fun _ => Hcells) | constructor].
+Qed.
+
+(** A removal extends the history without adding any written-cell requirement. *)
+Lemma database_index_history_remove : forall C X (empty : X) insert remove
+  (written u : list C) ix,
+  database_index_history empty insert remove written ix ->
+  database_index_history empty insert remove written (remove u ix).
+Proof.
+  intros C X empty insert remove written u ix [operations [Hix Hhistory]].
+  exists (operations ++ [(false, u)]). split.
+  - rewrite fold_left_app. cbn [fold_left database_index_step fst snd]. now rewrite Hix.
+  - apply Forall_app. split; [exact Hhistory |]. constructor; [discriminate | constructor].
+Qed.
+
+(** Properties preserved by recorded insertions and removals hold for every ghost history. *)
+Lemma database_index_history_induction : forall C X (empty : X) insert remove
+  (written : list C) (P : X -> Prop),
+  P empty ->
+  (forall u ix, incl u written -> P ix -> P (insert u ix)) ->
+  (forall u ix, P ix -> P (remove u ix)) ->
+  forall ix, database_index_history empty insert remove written ix -> P ix.
+Proof.
+  intros C X empty insert remove written P Hempty Hinsert Hremove ix
+    [operations [-> Hhistory]].
+  assert (Hfold : forall operations current,
+    Forall (fun operation => fst operation = true -> incl (snd operation) written) operations ->
+    P current -> P (fold_left (database_index_step insert remove) operations current)).
+  { intro history. induction history as [|[add u] rest IH]; intros current Hentries Hcurrent.
+    - exact Hcurrent.
+    - inversion Hentries as [|entry tail Hhead Htail]; subst entry tail.
+      cbn [fold_left database_index_step fst snd]. apply IH; [exact Htail |].
+      destruct add.
+      + apply Hinsert; [exact (Hhead eq_refl) | exact Hcurrent].
+      + apply Hremove. exact Hcurrent. }
+  now apply Hfold.
+Qed.
+
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition t := database_state (cell V.t) I.t.
 
@@ -5265,6 +5343,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun advance.
   TimeFun changed.
   TimeFun ids.
+
+  (** A functional construction trace bounds cached widths using the public index laws. *)
+  Lemma index_history_cell_bits : forall written ix bits,
+    database_index_history I.empty I.insert I.remove written ix ->
+    (forall c, In c written -> cell_bits V.encode c <= bits) ->
+    I.max_cell_bits ix <= bits.
+  Proof.
+    intros written ix bits Hhistory Hwritten.
+    apply (database_index_history_induction (cell V.t) I.t I.empty I.insert I.remove written
+      (fun current => I.max_cell_bits current <= bits)); [| | | exact Hhistory].
+    - rewrite I.max_cell_bits_empty. lia.
+    - intros u current Hcells Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_insert |].
+      apply Nat.max_lub; [exact Hcurrent |].
+      induction u as [|c u IH]; cbn [fold_right]; [lia |]. apply Nat.max_lub.
+      + apply Hwritten, Hcells. now left.
+      + apply IH. intros d Hin. apply Hcells. now right.
+    - intros u current Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_remove | exact Hcurrent].
+  Qed.
 
   (** Every insertion pays the actual binary increment of the stored projection count. *)
   Lemma T_slot_update_one_count_succ_ge : forall s u state,
