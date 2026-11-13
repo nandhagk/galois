@@ -2312,6 +2312,14 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     inversion Hfinite; subst. cbn [interval_bits]. lia.
   Qed.
 
+  Local Lemma table_nat_to_N_le : forall n m,
+    (n <= m)%nat -> (N.of_nat n <= N.of_nat m)%N.
+  Proof.
+    intros n m Hle. induction Hle.
+    - lia.
+    - rewrite Nat2N.inj_succ. lia.
+  Qed.
+
   Local Lemma table_assume_rewrap_time : forall rw a q,
     (T_interval_assume_rewrap rw a q <=
       100 * (Scalar.c_scalar + 1) *
@@ -2335,6 +2343,97 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       cbn [interval_bits] in *;
       pose proof (Nat.le_max_l (Z.size_nat lo) (Z.size_nat hi));
       pose proof (Nat.le_max_r (Z.size_nat lo) (Z.size_nat hi)); nia.
+  Qed.
+
+  Local Lemma table_assume_equal_time : forall a b,
+    (T_interval_assume_equal a b <=
+      10 * (Scalar.c_scalar + 1) *
+      N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (Scalar.T_interval_meet_le a b) as Hab.
+    pose proof (Scalar.T_interval_meet_le b a) as Hba.
+    unfold T_interval_assume_equal.
+    time_cbn_all.
+    rewrite !Nat2N.inj_add in *.
+    nia.
+  Qed.
+
+  Local Lemma table_assume_ule_time : forall a b,
+    (T_interval_assume_ule a b <=
+      100 * (Scalar.c_scalar + 1) *
+      N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  Proof.
+    intros a b.
+    destruct a as [|[|la|] [|ha|]];
+      destruct b as [|[|lb|] [|hb|]];
+      unfold T_interval_assume_ule, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Local Lemma table_assume_ult_time : forall a b,
+    (T_interval_assume_ult a b <=
+      100 * (Scalar.c_scalar + 1) *
+      N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  Proof.
+    intros a b.
+    destruct a as [|[|la|] [|ha|]];
+      destruct b as [|[|lb|] [|hb|]];
+      unfold T_interval_assume_ult, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (repeat rewrite Nat2N.inj_add in *; nia).
+    pose proof (table_integer_sub_bits hb 1) as Hsub_bits.
+    pose proof (table_integer_add_bits la 1) as Hadd_bits.
+    pose proof (Std.Z.T_sub_le hb 1) as Hsub_time.
+    pose proof (Std.Z.T_add_le la 1) as Hadd_time.
+    pose proof (Scalar.T_interval_meet_le
+      (I (Fin la) (Fin ha)) (I NegInf (Fin (hb - 1)))) as Ha.
+    pose proof (Scalar.T_interval_meet_le
+      (I (Fin lb) (Fin hb)) (I (Fin (la + 1)) PosInf)) as Hb.
+    cbn [interval_bits] in *.
+    pose proof (Nat.le_max_l (Z.size_nat la) (Z.size_nat ha)) as Hla.
+    pose proof (Nat.le_max_r (Z.size_nat lb) (Z.size_nat hb)) as Hhb.
+    cbn [Z.size_nat Pos.size_nat] in Hsub_bits, Hadd_bits.
+    rewrite Nat.max_0_r in Hb.
+    repeat rewrite Nat2N.inj_add in *.
+    set (budget := (N.of_nat (Nat.max (Z.size_nat la) (Z.size_nat ha)) +
+      N.of_nat (Nat.max (Z.size_nat lb) (Z.size_nat hb)) + 1)%N).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; lia).
+    assert (Ha_bound :
+      (Scalar.T_interval_meet (I (Fin la) (Fin ha)) (I NegInf (Fin (hb - 1))) <=
+        Scalar.c_scalar * (budget + 2))%N).
+    { apply N.le_trans with
+        (m := (Scalar.c_scalar *
+          (N.of_nat (Nat.max (Z.size_nat la) (Z.size_nat ha)) +
+           N.of_nat (Z.size_nat (hb - 1)) + 1))%N); [exact Ha|].
+      apply N.mul_le_mono_l. unfold budget.
+      rewrite <- !Nat2N.inj_add.
+      change 1%N with (N.of_nat 1).
+      change 2%N with (N.of_nat 2).
+      rewrite <- !Nat2N.inj_add.
+      apply table_nat_to_N_le. lia. }
+    assert (Hb_bound :
+      (Scalar.T_interval_meet (I (Fin lb) (Fin hb)) (I (Fin (la + 1)) PosInf) <=
+        Scalar.c_scalar * (budget + 2))%N).
+    { apply N.le_trans with
+        (m := (Scalar.c_scalar *
+          (N.of_nat (Nat.max (Z.size_nat lb) (Z.size_nat hb)) +
+           N.of_nat (Z.size_nat (la + 1)) + 1))%N); [exact Hb|].
+      apply N.mul_le_mono_l. unfold budget.
+      rewrite <- !Nat2N.inj_add.
+      change 1%N with (N.of_nat 1).
+      change 2%N with (N.of_nat 2).
+      rewrite <- !Nat2N.inj_add.
+      apply table_nat_to_N_le. lia. }
+    assert (Hsub_bound : (Z.T_sub hb 1 <= 3 * budget + 6)%N)
+      by (unfold budget; lia).
+    assert (Hadd_bound : (Z.T_add la 1 <= 3 * budget + 4)%N)
+      by (unfold budget; lia).
+    clear Ha Hb Hsub_time Hadd_time Hsub_bits Hadd_bits Hla Hhb.
+    nia.
   Qed.
 
   Local Lemma table_neg_raw_bits : forall w a,
