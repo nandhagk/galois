@@ -252,7 +252,67 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
   Definition wsize (p : wparam) : nat := B.wsize p.
   Definition wunits (_ : t) : nat := 0.
-  Definition c_val : N := 1%N. (* STUB *)
+  (** A singleton scan charges the sum of the sizes of its operands. *)
+  Local Lemma points_time_bound : forall xs,
+    (T_points xs <= (B.c_base + 1) *
+      N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH].
+    - time_step.
+    - time_unfold T_points. time_cbn.
+      pose proof (B.T_point_le x) as Hpoint.
+      destruct (B.point x);
+        rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Bottom recognition charges every tested operand at its own size. *)
+  Local Lemma bot_scan_time_bound : forall xs,
+    (List.T_existsb B.is_bot B.T_is_bot xs <= (B.c_base + 2) *
+      N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH].
+    - time_step.
+    - time_unfold List.T_existsb. time_simpl. time_cbn.
+      pose proof (B.T_is_bot_le x) as Hbot.
+      rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Positional meets charge only paired elements and the final branch. *)
+  Local Lemma meet_all_time_bound : forall xs ys,
+    (T_meet_all xs ys <= (B.c_base + 1) *
+      N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs) +
+        fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intros [|y ys].
+    - time_step.
+    - time_step.
+    - time_step.
+    - time_unfold T_meet_all. time_cbn.
+      pose proof (B.T_meet_le x y) as Hmeet.
+      pose proof (IH ys) as Htail.
+      rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** The resulting operands fit within the sizes and lengths of both lists. *)
+  Local Lemma meet_all_size_bound : forall xs ys,
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize (meet_all xs ys))) <=
+      (B.c_base + 1) *
+      N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs) +
+        fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intros [|y ys].
+    - time_cbn. nia.
+    - time_cbn. nia.
+    - time_cbn. rewrite !Nat2N.inj_add. time_cbn. nia.
+    - time_cbn.
+      pose proof (B.meet_size_le x y) as Hmeet.
+      pose proof (IH ys) as Htail.
+      rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  Definition c_val : N :=
+    (64 * (B.c_base + 1) * (T.c_tab + 1) + L.c_lang +
+      N.of_nat (B.bsize B.bot + B.bsize B.top) + 8)%N.
   Definition c_lat : N := c_val.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -314,22 +374,26 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     unfold gwork. lia.
   Qed.
 
-  Definition c_harness : N := 1%N. (* STUB *)
+  Definition c_harness : N := (B.c_base + 1)%N.
   Lemma T_points_le : forall xs,
     (T_points xs <= c_harness *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact points_time_bound.
+  Qed.
   Lemma T_meet_all_le : forall xs ys,
     (T_meet_all xs ys <= c_harness *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) +
         fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact meet_all_time_bound.
+  Qed.
 
-  Definition k_points : N := 1%N. (* STUB *)
-  Definition k_meet : N := 1%N. (* STUB *)
-  Definition k_forward : N := 1%N. (* STUB *)
-  Definition k_backward : N := 1%N. (* STUB *)
-  Definition k_guard : N := 1%N. (* STUB *)
+  Definition k_points : N := 1%N.
+  Definition k_meet : N := c_harness.
+  Definition k_forward : N := c_val.
+  Definition k_backward : N := 4%N.
+  Definition k_guard : N := 4%N.
   Lemma F0_gamma : forall a c, gamma a c <-> B.gamma a c.
   Proof.
     reflexivity.
@@ -384,7 +448,13 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Qed.
   Lemma T1_points : forall xs, (T_points xs <=
     k_points * (fold_right N.add 0 (map (fun x => B.T_point x + 1) xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_points.
+    induction xs as [|x xs IH].
+    - time_step.
+    - time_unfold T_points. time_cbn.
+      destruct (B.point x); nia.
+  Qed.
   Lemma T2_forward : forall o xs,
     (T_forward o xs <= k_forward *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
@@ -396,12 +466,26 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
      | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys
      | None => 0
      end + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. unfold k_backward. time_unfold T_backward.
+    destruct (T.bwd o r xs) as [ys|]; [|nia].
+    pose proof (Datatypes.T_length_le ys) as Hys.
+    pose proof (Datatypes.T_length_le xs) as Hxs.
+    pose proof (Nat.T_eqb_le (length ys) (length xs)) as Heq.
+    destruct (Nat.eqb (length ys) (length xs)); nia.
+  Qed.
   Lemma T4_guard : forall g xs, (T_guard g xs <= k_guard *
     (T.T_grd g xs + N.of_nat ((length xs)%nat) +
      match T.grd g xs with
      | Some ys => N.of_nat ((length ys)%nat) + T_meet_all xs ys
      | None => 0
      end + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold k_guard. time_unfold T_guard.
+    destruct (T.grd g xs) as [ys|]; [|nia].
+    pose proof (Datatypes.T_length_le ys) as Hys.
+    pose proof (Datatypes.T_length_le xs) as Hxs.
+    pose proof (Nat.T_eqb_le (length ys) (length xs)) as Heq.
+    destruct (Nat.eqb (length ys) (length xs)); nia.
+  Qed.
 End HarnessT.
