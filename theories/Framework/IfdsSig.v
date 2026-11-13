@@ -225,7 +225,8 @@ Module Type IFDS_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Definition path_kw (p : prog) : nat := fold_right Nat.max 0
     (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
   Include SYSTEM_TIME L A
-    with Definition row_work := fun p s => N.of_nat (length (rows p) + s + 1)
+    with Definition row_work := fun p s =>
+      N.of_nat (length (rows p) + s + L.size true + 1)
     with Definition kw := path_kw.
 End IFDS_TIME.
 

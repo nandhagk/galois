@@ -236,12 +236,16 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   (** The mask reads the width once and the raw integer once. *)
   Parameter T0_tnum_wrap : forall w z,
     (T_tnum_wrap w z <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
-  (** One staged product step charges its index, accumulator and raw masks. *)
-  Parameter T1_mul_step : forall w a b i r, (T_mul_step w a b (i, r) <= k_mul_step *
-    N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
-  (** One accumulating step charges the width, its index and its accumulator. *)
-  Parameter T2_acc_step : forall w a b i r, (T_acc_step w a b (i, r) <= k_mul_step *
-    N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
+  (** One staged product step at an index within the width charges its index, accumulator
+      and raw masks. *)
+  Parameter T1_mul_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
+    (T_mul_step w a b (i, r) <= k_mul_step *
+      N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
+  (** One accumulating step at an index within the width charges the width, its index and
+      its accumulator. *)
+  Parameter T2_acc_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
+    (T_acc_step w a b (i, r) <= k_mul_step *
+      N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
 End KNOWN_BITS_PLAN.
 
 Module Type KNOWN_BITS_ALL (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) :=
