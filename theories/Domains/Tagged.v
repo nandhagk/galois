@@ -504,11 +504,40 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   (** The operation stays within the declared work budget. *)
   Lemma T_abst_le : forall v,
     (T_abst v <= c_base * N.of_nat (abst_work v + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z]. pose proof (WordTime.word_wrap_time_bound w z) as Hwrap.
+    pose proof (W.T_pconst_le w z) as Hconst.
+    pose proof (Z.T_eqb_le (Word.wrap w z) z) as Hcompare.
+    assert (Hsize : (N.of_nat (Z.size_nat (Word.wrap w z)) <=
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
+    { apply WordTime.time_square_floor; [|lia].
+      pose proof (WordTime.word_wrap_size_bound w z). lia. }
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)) in *.
+    change (T_abst (w, z) <= 256 * (W.c_payload + 1) *
+      N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2) + 1))%N.
+    rewrite Nat2N.inj_add.
+    change (T_abst (w, z) <= 256 * (W.c_payload + 1) * (budget + 1))%N.
+    time_unfold T_abst. unfold Datatypes.T_fst, Datatypes.T_snd.
+    time_cbn. destruct (Z.eqb (Word.wrap w z) z); nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma abst_size_le : forall v,
     (N.of_nat (bsize (abst v)) <= c_base * N.of_nat (abst_work v + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z]. pose proof (W.pconst_size w z) as Hconst.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w) <=
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
+    { apply WordTime.time_square_floor; lia. }
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)) in *.
+    change (N.of_nat (bsize (abst (w, z))) <= 256 * (W.c_payload + 1) *
+      N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2) + 1))%N.
+    rewrite Nat2N.inj_add.
+    change (N.of_nat (bsize (abst (w, z))) <=
+      256 * (W.c_payload + 1) * (budget + 1))%N.
+    unfold abst, bsize, tagged_size.
+    time_cbn. destruct (Z.eqb (Word.wrap w z) z);
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
 End TaggedT.
 
 Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
