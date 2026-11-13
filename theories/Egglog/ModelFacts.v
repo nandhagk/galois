@@ -53,6 +53,44 @@ Module UnionFindFacts (U : UNION_FIND).
     apply (proj2 (union_eq_cases i j u a b Hwf)). now left.
   Qed.
 
+  (** A queued old loser cannot become a representative after another union. *)
+  Lemma union_keeps_nonrepresentative : forall i j u x,
+    U.wf u -> U.repr u x <> x -> U.repr (snd (U.union i j u)) x <> x.
+  Proof.
+    intros i j u x Hwf Hnonroot.
+    destruct (U.union i j u) as [roots next] eqn:Hunion.
+    destruct roots as [[winner loser] |]; cbn [snd].
+    - destruct (U.union_some i j u winner loser next Hwf Hunion)
+        as [_ [Hroots Hrepr]].
+      assert (Hwinner : U.repr u winner = winner).
+      { destruct Hroots as [[-> _] | [-> _]]; now apply U.repr_idem. }
+      rewrite Hrepr. destruct (Pos.eqb (U.repr u x) loser); [| exact Hnonroot].
+      intro Hequal. apply Hnonroot. now rewrite <- Hequal.
+    - now rewrite (proj2 (U.union_none i j u next Hwf Hunion) x).
+  Qed.
+
+  (** A newly returned loser was a root, so it is absent from any old nonroot-only queue. *)
+  Lemma union_loser_was_representative : forall i j u winner loser next,
+    U.wf u -> U.union i j u = (Some (winner, loser), next) -> U.repr u loser = loser.
+  Proof.
+    intros i j u winner loser next Hwf Hunion.
+    destruct (U.union_some i j u winner loser next Hwf Hunion)
+      as [_ [Hroots _]].
+    destruct Hroots as [[_ ->] | [_ ->]]; now apply U.repr_idem.
+  Qed.
+
+  (** Linking distinct roots makes the returned loser a nonrepresentative immediately. *)
+  Lemma union_loser_is_nonrepresentative : forall i j u winner loser next,
+    U.wf u -> U.union i j u = (Some (winner, loser), next) -> U.repr next loser <> loser.
+  Proof.
+    intros i j u winner loser next Hwf Hunion.
+    destruct (U.union_some i j u winner loser next Hwf Hunion)
+      as [Hdifferent [Hroots Hrepr]].
+    rewrite Hrepr, (union_loser_was_representative i j u winner loser next Hwf Hunion),
+      Pos.eqb_refl.
+    destruct Hroots as [[-> ->] | [-> ->]]; congruence.
+  Qed.
+
   (** Union always identifies its requested endpoints. *)
   Lemma union_requested : forall i j u, U.wf u ->
     U.repr (snd (U.union i j u)) i = U.repr (snd (U.union i j u)) j.
