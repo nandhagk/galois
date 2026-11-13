@@ -9393,15 +9393,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       out_le (fst s') f (option_map (canon (fst s')) o) o'.
   Proof. Admitted. (* STUB *)
 
-  (** Every repaired row groups a nonempty list of rows from before the step. *)
-  Lemma F12_rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
-    row (view (fst s')) f k' o' ->
-    exists srcs, srcs <> [] /\
-      Forall (fun ko => row (view (fst s)) f (fst ko) (snd ko) /\
-        Forall2 (cell_rel (same (view (fst s')))) (fst ko) k') srcs /\
-      output_equiv (fst s') o' (merged (fst s') f (map snd srcs)).
-  Proof. Admitted. (* STUB *)
-
   (** Empty active and pending schedules leave no noncanonical row occurrence. *)
   Lemma inv_quiet_canonical : forall db, inv db -> queue db = [] -> canonical db.
   Proof.
@@ -10079,6 +10070,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
       apply lineage_repair_current; [| exact Hlineage].
       exact (inv_on_forest_agrees db ((f, k) :: rest) Hinv).
+  Qed.
+
+  (** Every repaired row groups a nonempty list of rows from before the step. *)
+  Lemma F12_rstep_from : forall s s' f k' o', state_inv s -> rstep s = inl s' ->
+    row (view (fst s')) f k' o' ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view (fst s)) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view (fst s')))) (fst ko) k') srcs /\
+      output_equiv (fst s') o' (merged (fst s') f (map snd srcs)).
+  Proof.
+    intros s next f k o Hinv Hstep Hrow.
+    assert (Hinitial : lineage (fst s) (fst s)).
+    { apply lineage_initial_forest. exact (inv_on_forest_agrees (fst s) (snd s) Hinv). }
+    exact (F21_lineage_step (fst s) s next Hinv Hstep Hinitial f k o Hrow).
   Qed.
 
   (** Related cells normalize to the same already canonical target cell. *)
