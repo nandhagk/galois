@@ -903,6 +903,26 @@ Module RelationalPathBounds.
       apply Hclosed.
   Qed.
 
+  (** A closed lower bound stays below one seeded Floyd round. *)
+  Lemma floyd_above_closed : forall A decide (u r : A -> A -> option Z) k,
+    (forall p, closed_at u p) ->
+    (forall i j, below (u i j) (r i j)) ->
+    u k k = Some 0%Z ->
+    forall i j, below (u i j) (floyd (seed decide r k) k i j).
+  Proof.
+    intros A decide u r k Hclosed Hbelow Hdiag.
+    assert (Hseed : forall i j, below (u i j) (seed decide r k i j)).
+    { intros i j. unfold seed.
+      destruct (decide i k) as [Hi|Hi]; [subst i|apply Hbelow].
+      destruct (decide j k) as [Hj|Hj]; [subst j|apply Hbelow].
+      rewrite Hdiag. apply minimum_glb. split;
+        [apply below_refl|rewrite <- Hdiag; apply Hbelow]. }
+    intros i j. unfold floyd. apply minimum_glb. split.
+    - apply Hseed.
+    - eapply below_trans; [apply Hclosed|].
+      apply plus_mono; apply Hseed.
+  Qed.
+
   Definition path_witness {A : Type} (e : A -> A -> option Z)
       (processed : list A) (i j : A) (d : Z) : Prop :=
     (i = j /\ d = 0%Z) \/
@@ -3747,6 +3767,82 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     rewrite <- (app_nil_r (rev (keys m))).
     eapply close_pivots_path_invariant; [|apply RelationalPathBounds.invariant_initial|exact Hrun].
     intros k Hkey. now apply keys_support.
+  Qed.
+
+  (** A closed lower relation prevents a supported Floyd round from crossing its bounds. *)
+  Lemma fw_round_above_closed : forall u current k,
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall i j, RelationalPathBounds.below (u i j) (entry current i j)) ->
+    u k k = Some 0%Z -> pivot_present k current = true ->
+    forall i j, RelationalPathBounds.below (u i j) (entry (fw_round k current) i j).
+  Proof.
+    intros u current k Hclosed Hbelow Hzero Hpresent i j.
+    rewrite (entry_fw_present k current Hpresent i j).
+    apply (RelationalPathBounds.floyd_above_closed K.t path_key_dec
+      u (entry current) k Hclosed Hbelow Hzero i j).
+  Qed.
+
+  (** A zero lower diagonal makes its matrix diagonal check pass. *)
+  Lemma nonnegative_above_zero : forall u current k,
+    u k k = Some 0%Z ->
+    RelationalPathBounds.below (u k k) (entry current k k) ->
+    nonnegative k current = true.
+  Proof.
+    intros u current k Hzero Hbelow. unfold nonnegative.
+    destruct (entry current k k) as [z|]; [|reflexivity].
+    rewrite Hzero in Hbelow. cbn [RelationalPathBounds.below] in Hbelow.
+    apply Z.leb_le. exact Hbelow.
+  Qed.
+
+  (** All supported pivot rounds finish above a closed relation with zero pivot diagonals. *)
+  Lemma close_pivots_above_closed : forall ks current u,
+    (forall k, In k ks -> In (K.encode k) (support current)) ->
+    (forall k, In k ks -> u k k = Some 0%Z) ->
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall i j, RelationalPathBounds.below (u i j) (entry current i j)) ->
+    exists final, close_pivots ks current = Reached final /\
+      forall i j, RelationalPathBounds.below (u i j) (entry final i j).
+  Proof.
+    induction ks as [|k ks IH]; intros current u Hsupport Hzero Hclosed Hbelow.
+    - exists current. split; [reflexivity|exact Hbelow].
+    - assert (Hpresent : pivot_present k current = true).
+      { apply pivot_present_support, Hsupport. now left. }
+      assert (Hnext : forall i j,
+        RelationalPathBounds.below (u i j) (entry (fw_round k current) i j)).
+      { intros i j. eapply fw_round_above_closed; eauto.
+        apply Hzero. now left. }
+      assert (Haccept : nonnegative k (fw_round k current) = true).
+      { eapply nonnegative_above_zero; [apply Hzero; now left|apply Hnext]. }
+      specialize (IH (fw_round k current) u).
+      assert (Htail_support : forall q, In q ks ->
+        In (K.encode q) (support (fw_round k current))).
+      { intros q Hq. apply (proj2 (support_round k current (K.encode q))).
+        apply Hsupport. now right. }
+      assert (Htail_zero : forall q, In q ks -> u q q = Some 0%Z).
+      { intros q Hq. apply Hzero. now right. }
+      destruct (IH Htail_support Htail_zero Hclosed Hnext) as [final [Hrun Hfinal]].
+      exists final. split; [|exact Hfinal].
+      cbn [close_pivots]. now rewrite Haccept.
+  Qed.
+
+  (** A closed lower relation with zero support diagonals makes full closure succeed. *)
+  Lemma close_above_closed : forall m u, dbm_wf m ->
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall i j, RelationalPathBounds.below (u i j) (entry m i j)) ->
+    (forall k, In k (keys m) -> u k k = Some 0%Z) ->
+    exists final, close m = Reached final /\
+      forall i j, RelationalPathBounds.below (u i j) (entry final i j).
+  Proof.
+    intros m u Hwf Hclosed Hbelow Hzero.
+    destruct (close_pivots_above_closed (keys m) m u
+      (fun k Hkey => keys_support m k Hwf Hkey) Hzero Hclosed Hbelow)
+      as [final [Hrun Hfinal]].
+    exists final. split; [|exact Hfinal].
+    unfold close. rewrite pivot_keys_eq_keys, Hrun.
+    assert (Hchecks : forallb (fun k => nonnegative k final) (keys m) = true).
+    { apply forallb_forall. intros k Hkey.
+      eapply nonnegative_above_zero; [apply Hzero; exact Hkey|apply Hfinal]. }
+    now rewrite Hchecks.
   Qed.
 
   (** Every successful pivot loop retains well-formed matrix labels. *)
