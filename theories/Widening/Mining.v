@@ -126,23 +126,70 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
       cbn [tsize]. rewrite Nat2N.inj_succ. nia.
   Qed.
 
-  Definition c_mining : N := 1%N. (* STUB *)
+  (** Folding a term list charges the sum of its syntax sizes. *)
+  Lemma lits_fold_time : forall es acc,
+    (Std.List.T_fold_right
+      (fun e acc => lits_acc e acc) (fun e acc => 1 + T_lits_acc e acc)%N acc es <=
+     (L.c_lang + 4) * N.of_nat (fold_right Nat.add 0%nat (map tsize es)) + 1)%N.
+  Proof.
+    intro es. induction es as [|e es IH]; intro acc.
+    - time_unfold Std.List.T_fold_right. cbn [map fold_right]. nia.
+    - pose proof (IH acc) as Hrest.
+      pose proof (lits_acc_time e
+        (fold_right (fun e acc => lits_acc e acc) acc es)) as Hhead.
+      time_unfold Std.List.T_fold_right. cbn [map fold_right].
+      rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Expansion pays for two arithmetic operations and three output entries per seed. *)
+  Lemma neighbors_time : forall zs,
+    (List.T_flat_map (fun z => (z - 1)%Z :: z :: (z + 1)%Z :: nil)
+      (fun z => 1 + (Std.Z.T_sub z 1 + Std.Z.T_add z 1))%N zs <=
+     16 * N.of_nat
+       (fold_right Nat.add 0%nat (map (fun z => (Z.size_nat z + 1)%nat) zs)) + 1)%N.
+  Proof.
+    intro zs. induction zs as [|z zs IH].
+    - time_unfold List.T_flat_map. cbn [map fold_right]. nia.
+    - time_unfold List.T_flat_map. cbn [map fold_right].
+      pose proof (Std.Z.T_sub_le z 1) as Hsub.
+      pose proof (Std.Z.T_add_le z 1) as Hadd.
+      pose proof (Std.Datatypes.T_app_le ((z - 1)%Z :: z :: (z + 1)%Z :: nil)
+        (flat_map (fun z => (z - 1)%Z :: z :: (z + 1)%Z :: nil) zs)) as Happ.
+      cbn [length] in Happ.
+      change (Std.Z.T_sub z 1 <= 3 * N.of_nat (Z.size_nat z + 1) + 3)%N in Hsub.
+      change (Std.Z.T_add z 1 <= 3 * N.of_nat (Z.size_nat z + 1) + 1)%N in Hadd.
+      rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** This coefficient covers syntax traversal and neighbor expansion together. *)
+  Definition c_mining : N := (L.c_lang + 32)%N.
 
   Definition seeds es extra := flat_map lits es ++ extra.
   Definition expanded es extra := flat_map (fun z => ((z - 1)%Z :: z :: (z + 1)%Z :: nil))
     (seeds es extra).
 
+  (** Literal collection pays for one traversal of the input syntax. *)
   Lemma T_lits_le : forall e,
     (T_lits e <= c_mining * N.of_nat (tsize e))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro e. time_unfold T_lits. unfold c_mining.
+    pose proof (lits_acc_time e nil). nia.
+  Qed.
 
+  (** Mining combines syntax traversal, seed arithmetic and threshold construction. *)
   Lemma T_mine_le : forall es extra,
     (T_mine es extra <= c_mining *
       (N.of_nat ((fold_right Nat.add 0 (map tsize es) +
         fold_right Nat.add 0 (map (fun z => Z.size_nat z + 1) (seeds es extra)))%nat) +
       T.T_make (expanded es extra) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros es extra. time_unfold T_mine. rewrite lits_fold_spec.
+    pose proof (lits_fold_time es extra) as Hterms.
+    pose proof (neighbors_time (seeds es extra)) as Hneighbors.
+    unfold c_mining, expanded, seeds in *. rewrite Nat2N.inj_add. nia.
+  Qed.
 
+  (** A syntax node pays for literal recognition and the surrounding fold. *)
   Definition k_mining : N := (L.c_lang + 4)%N.
 
   (** Accumulator collection preserves the public literal order. *)
@@ -158,11 +205,18 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
     intros e acc. unfold k_mining. pose proof (lits_acc_time e acc). nia.
   Qed.
 
+  (** The accumulator implementation constructs exactly the specified expansion. *)
   Lemma F1_mine : forall es extra, mine es extra = T.make (expanded es extra).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros es extra. unfold mine, expanded, seeds. rewrite lits_fold_spec. reflexivity.
+  Qed.
 
+  (** Expansion contributes three list entries even when seeds repeat. *)
   Lemma F2_expanded_length : forall es extra,
     length (expanded es extra) = 3 * length (seeds es extra).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros es extra. unfold expanded. generalize (seeds es extra). intro zs.
+    induction zs as [|z zs IH]; cbn [flat_map app length]; lia.
+  Qed.
 End MiningT.
 
