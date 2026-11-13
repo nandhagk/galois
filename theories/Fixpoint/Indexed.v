@@ -314,65 +314,134 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
   TimeFun index_row.
   TimeFun prepare.
 
-  Definition c_sys : N := 1. (* STUB *)
-  Definition c_loc : N := 1. (* STUB *)
+  Definition c_sys : N := (S.c_sys + 4)%N.
+  Definition c_loc : N := (S.c_sys + PTrieT.c_trie + 6)%N.
 
   Lemma row_work_mono : forall p s s', s <= s' ->
     (row_work p s <= row_work p s')%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s s' Hle; apply S.row_work_mono, Hle.
+  Qed.
   Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r x Hwf Hin Hx.
+    eapply S.key_bits_le; [exact (proj1 Hwf)| |exact Hx].
+    exact (listed_original p r Hwf Hin).
+  Qed.
   Lemma T_key_code_le : forall x,
     (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x; pose proof (S.T_key_code_le x) as Htime.
+    unfold S.key_bits in Htime.
+    unfold c_sys, key_bits, key_code; time_step.
+  Qed.
   Lemma T_key_eqb_le : forall a b,
     (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof (S.T_key_eqb_le a b) as Htime.
+    unfold S.key_bits in Htime.
+    unfold c_sys, key_bits, key_code; time_step.
+  Qed.
   Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
     (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
     (N.of_nat (L.size a) <= row_work p s)%N /\
     Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s a ss Hwf Hin Hsize Heval.
+    eapply S.eval_size_le; [exact (proj1 Hwf)| |exact Hsize|exact Heval].
+    exact (listed_original p r Hwf Hin).
+  Qed.
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf; unfold c_sys; time_step.
+  Qed.
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r Hwf Hin.
+    pose proof (S.T_target_le (program p) (snd r) (proj1 Hwf)
+      (listed_original p r Hwf Hin)) as Htime.
+    unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r Hwf Hin.
+    pose proof (S.T_start_le (program p) (snd r) (proj1 Hwf)
+      (listed_original p r Hwf Hin)) as Htime.
+    unfold c_sys, row_work; time_step.
+  Qed.
   (** Resuming a frame that a listed row reaches pays for the sizes of the lookup values. *)
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, L.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) ->
     (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s n q acc x f Hwf Hin Hsize Hreach Hask.
+    pose proof (S.T_resume_le (program p) (snd r) look s n q acc x f
+      (proj1 Hwf) (listed_original p r Hwf Hin) Hsize Hreach Hask) as Htime.
+    unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r Hwf Hin.
+    pose proof (S.T_deps_le (program p) (snd r) (proj1 Hwf)
+      (listed_original p r Hwf Hin)) as Htime.
+    unfold c_sys, kw, deps; time_step.
+  Qed.
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r Hwf Hin.
+    pose proof (S.T_sides_le (program p) (snd r) (proj1 Hwf)
+      (listed_original p r Hwf Hin)) as Htime.
+    unfold c_sys, kw, sides; time_step.
+  Qed.
   Lemma T_row_code_le : forall r,
     (T_row_code r <= c_loc * N.of_nat (Pos.size_nat (row_code r) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro r; unfold c_loc; time_step.
+  Qed.
   Lemma T_rows_of_le : forall p x, wf p ->
     (T_rows_of p x <= c_loc * N.of_nat (length (rows_of p x) + key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x Hwf.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le (list row) (key_code x) (write_index p)) as Hget.
+    unfold PTrieT.T_get in Hget.
+    unfold c_loc, key_bits, key_code.
+    unfold T_rows_of, T_key_code; time_simpl; time_cbn.
+    unfold S.key_bits, key_code in *.
+    set (w := N.of_nat (length (rows_of p x) + Pos.size_nat (S.key_code x) + 1)).
+    assert (Hwidth : (N.of_nat (Pos.size_nat (S.key_code x) + 1) <= w)%N).
+    { unfold w; lia. }
+    assert (Hunit : (1 <= w)%N) by (unfold w; lia).
+    assert (Hcode' : (S.T_key_code x <= S.c_sys * w)%N).
+    { eapply N.le_trans; [exact Hcode|apply N.mul_le_mono_l, Hwidth]. }
+    assert (Hget' : (1 + T_trie_get (S.key_code x) (write_index p) <=
+      PTrieT.c_trie * w)%N).
+    { eapply N.le_trans; [exact Hget|apply N.mul_le_mono_l, Hwidth]. }
+    rewrite !N.mul_add_distr_r; lia.
+  Qed.
 
   Definition c_idx : N := 1. (* STUB *)
 
   (** Preparation keeps the original key-width budget. *)
   Lemma prepare_kw : forall p, kw (prepare p) = S.kw p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Preparation keeps the original row-work budget. *)
   Lemma prepare_row_work : forall p s, row_work (prepare p) s = S.row_work p s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma T_prepare_le : forall p, S.wf p ->
     (T_prepare p <= c_idx * (
