@@ -4006,6 +4006,32 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now rewrite !entry_put_coordinate.
   Qed.
 
+  Lemma same_coordinate_true : forall a b i j,
+    same_coordinate a b i j = true -> a = i /\ b = j.
+  Proof.
+    intros a b i j Hsame. unfold same_coordinate in Hsame.
+    apply andb_true_iff in Hsame. destruct Hsame as [Ha Hb].
+    apply key_eqb_true in Ha. apply key_eqb_true in Hb. now split.
+  Qed.
+
+  Lemma add_cons_entry_below : forall i j d m a b,
+    RelationalPathBounds.below (entry (add_cons i j d m) a b) (entry m a b).
+  Proof.
+    intros i j d m a b. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate a b i j) eqn:Hfirst.
+    - destruct (same_coordinate_true a b i j Hfirst) as [Ha Hb].
+      subst a b. destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below];
+        [apply Z.le_min_r|exact I].
+    - destruct (same_coordinate a b (flip j) (flip i)) eqn:Hsecond.
+      + destruct (same_coordinate_true a b (flip j) (flip i) Hsecond)
+          as [Ha Hb]. subst a b.
+        destruct (entry m (flip j) (flip i)) as [old|];
+          cbn [lower_bound RelationalPathBounds.below];
+          [apply Z.le_min_r|exact I].
+      + apply RelationalPathBounds.below_refl.
+  Qed.
+
   (** Zero insertion preserves zero or absent diagonal entries. *)
   Lemma add_zero_diagonal_cases : forall m p,
     (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
