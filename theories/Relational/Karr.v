@@ -1,51 +1,450 @@
-(** * Linear equality placeholders
+(** * Linear equality states
 
-    These modules provide the linear equality state interface.
-    For example, certificate production returns no certificate.
-    Builds on: KarrSig. *)
-From Stdlib Require Import List ZArith QArith.
+    Integer elimination tracks the input multipliers used by every produced row.
+    For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
+    Builds on: KarrSig and the binary trie code. *)
+From Stdlib Require Import List ZArith QArith Bool.
 From Argent Require Import Time Std.
-From Galois.Base Require Import KeySig.
+From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig KarrSig.
+Import List.ListNotations.
 Local Open Scope nat_scope.
+
+Module List.
+  TimeFun tl.
+  TimeFun flat_map.
+End List.
+
+Module ListDef.
+  TimeFun repeat.
+  TimeFun firstn.
+  TimeFun skipn.
+End ListDef.
+
+Fixpoint karr_list_eqb {A} (eqb : A -> A -> bool) (xs ys : list A) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x :: xs, y :: ys => eqb x y && karr_list_eqb eqb xs ys
+  | _, _ => false
+  end.
+
+TimeFun karr_list_eqb.
+
+(** A row carries its dense coordinates and its integer combination of the input rows. *)
+Record karr_row := KRow {
+  kcoeff : list Z;
+  kright : Z;
+  kweight : list Z;
+  kscale : Z
+}.
+
+TimeFun kcoeff.
+TimeFun kright.
+TimeFun kweight.
+TimeFun kscale.
+
+(** Trie traversal returns stored values without constructing their positive keys. *)
+Fixpoint karr_values_ne {A} (tr : trie_ne A) (acc : list A) : list A :=
+  match tr with
+  | N001 r => karr_values_ne r acc
+  | N010 a => a :: acc
+  | N011 a r => a :: karr_values_ne r acc
+  | N100 l => karr_values_ne l acc
+  | N101 l r => karr_values_ne l (karr_values_ne r acc)
+  | N110 l a => karr_values_ne l (a :: acc)
+  | N111 l a r => karr_values_ne l (a :: karr_values_ne r acc)
+  end.
+
+TimeFun karr_values_ne.
+
+Definition karr_values {A} (tr : ptrie A) : list A :=
+  match tr with
+  | Empty => []
+  | Nodes n => karr_values_ne n []
+  end.
+
+TimeFun karr_values.
+
+(** Dense row arithmetic uses the previous pivot as the Bareiss divisor. *)
+Fixpoint karr_cross (d a b : Z) (xs ys : list Z) : list Z :=
+  match xs, ys with
+  | x :: xs, y :: ys => ((a * x - b * y) / d)%Z :: karr_cross d a b xs ys
+  | _, _ => []
+  end.
+
+TimeFun karr_cross.
+
+Definition karr_head (r : karr_row) : Z :=
+  match kcoeff r with [] => 0%Z | z :: _ => z end.
+
+TimeFun karr_head.
+
+Definition karr_tail (r : karr_row) : karr_row :=
+  KRow (tl (kcoeff r)) (kright r) (kweight r) (kscale r).
+
+TimeFun karr_tail.
+
+Definition karr_restore (r : karr_row) : karr_row :=
+  KRow (0%Z :: kcoeff r) (kright r) (kweight r) (kscale r).
+
+TimeFun karr_restore.
+
+Definition karr_reduce (d a b : Z) (p r : karr_row) : karr_row :=
+  KRow (karr_cross d a b (kcoeff r) (kcoeff p))
+    ((a * kright r - b * kright p) / d)%Z
+    (karr_cross d a b (kweight r) (kweight p))
+    ((a * kscale r - b * kscale p) / d)%Z.
+
+TimeFun karr_reduce.
+
+Fixpoint karr_pivot (rs : list karr_row) : option (karr_row * list karr_row) :=
+  match rs with
+  | [] => None
+  | r :: rs =>
+    if Z.eqb (karr_head r) 0 then
+      match karr_pivot rs with
+      | None => None
+      | Some (p, rest) => Some (p, r :: rest)
+      end
+    else Some (r, rs)
+  end.
+
+TimeFun karr_pivot.
+
+(** Elimination visits each coefficient column once and retains the row certificates. *)
+Fixpoint karr_bareiss (cols : nat) (previous : Z) (rs : list karr_row)
+    : list karr_row :=
+  match cols with
+  | 0 => rs
+  | S cols =>
+    match karr_pivot rs with
+    | None => map karr_restore (karr_bareiss cols previous (map karr_tail rs))
+    | Some (p, rest) =>
+      let a := karr_head p in
+      let rest' := map (fun r =>
+        karr_tail (karr_reduce previous a (karr_head r) p r)) rest in
+      p :: map karr_restore (karr_bareiss cols a rest')
+    end
+  end.
+
+TimeFun karr_bareiss.
+
+Fixpoint karr_first (xs : list Z) : option (nat * Z) :=
+  match xs with
+  | [] => None
+  | x :: xs =>
+    if Z.eqb x 0 then
+      match karr_first xs with
+      | None => None
+      | Some (i, a) => Some (S i, a)
+      end
+    else Some (0, x)
+  end.
+
+TimeFun karr_first.
+
+Fixpoint karr_nth (i : nat) (xs : list Z) : Z :=
+  match i, xs with
+  | 0, x :: _ => x
+  | S i, _ :: xs => karr_nth i xs
+  | _, _ => 0%Z
+  end.
+
+TimeFun karr_nth.
+
+(** A target follows the same pivot operations as an appended matrix row. *)
+Fixpoint karr_target (rs : list karr_row) (previous : Z) (r : karr_row) : karr_row :=
+  match rs with
+  | [] => r
+  | p :: rs =>
+    match karr_first (kcoeff p) with
+    | None => karr_target rs previous r
+    | Some (i, a) =>
+      karr_target rs a (karr_reduce previous a (karr_nth i (kcoeff r)) p r)
+    end
+  end.
+
+TimeFun karr_target.
+
+Fixpoint karr_unit (length index : nat) : list Z :=
+  match length with
+  | 0 => []
+  | S length =>
+    match index with
+    | 0 => 1%Z :: repeat 0%Z length
+    | S index => 0%Z :: karr_unit length index
+    end
+  end.
+
+TimeFun karr_unit.
+
+Definition karr_zero (r : karr_row) : bool := forallb (Z.eqb 0) (kcoeff r).
+
+TimeFun karr_zero.
 
 Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: KARR_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
   Definition wparam := nat.
-  (* STUB-CODE *)
-  Definition leb (_ _ : t) := false.
-  (* STUB-CODE *)
+
+  Definition add_term (m : ptrie (X.t * Z)) (p : X.t * Z) : ptrie (X.t * Z) :=
+    let key := X.encode (fst p) in
+    match PTrieCode.get key m with
+    | None => PTrieCode.set key p m
+    | Some q => PTrieCode.set key (fst q, (snd q + snd p)%Z) m
+    end.
+
+  Definition normalize_coef (xs : list (X.t * Z)) : list (X.t * Z) :=
+    filter (fun p => negb (Z.eqb (snd p) 0))
+      (karr_values (fold_left add_term xs PTrieCode.empty)).
+
+  Definition normalize_row (r : lcons X.t) : lcons X.t :=
+    LCons _ (normalize_coef (lhs r)) (lrel r) (rhs r).
+
+  Definition coefficient (x : X.t) (xs : list (X.t * Z)) : Z :=
+    fold_right (fun p z => if X.eqb x (fst p) then (snd p + z)%Z else z) 0%Z xs.
+
+  Definition variables (P : list (lcons X.t)) : list X.t :=
+    map fst (karr_values
+      (fold_left add_term (flat_map lhs P) PTrieCode.empty)).
+
+  Definition dense (xs : list X.t) (r : lcons X.t) : list Z :=
+    map (fun x => coefficient x (lhs r)) xs.
+
+  Definition sparse (xs : list X.t) (zs : list Z) : list (X.t * Z) :=
+    filter (fun p => negb (Z.eqb (snd p) 0)) (List.combine xs zs).
+
+  Fixpoint seed_rows (xs : list X.t) (total index : nat) (P : list (lcons X.t))
+      : list karr_row :=
+    match P with
+    | [] => []
+    | r :: P =>
+      let rest := seed_rows xs total (S index) P in
+      match lrel r with
+      | REq => KRow (dense xs r) (rhs r) (karr_unit total index) 0%Z :: rest
+      | RLe => rest
+      end
+    end.
+
+  Definition equality_basis (xs : list X.t) (P : list (lcons X.t)) : list karr_row :=
+    karr_bareiss (length xs) 1 (seed_rows xs (length P) 0 (map normalize_row P)).
+
+  Fixpoint empty_certificate (P : list (lcons X.t)) (rs : list karr_row)
+      : option (list Z) :=
+    match rs with
+    | [] => None
+    | r :: rs =>
+      if karr_zero r && negb (Z.eqb (kright r) 0) && C.check_empty P (kweight r)
+      then Some (kweight r) else empty_certificate P rs
+    end.
+
+  Definition contradiction (P : list (lcons X.t)) : option (list Z) :=
+    empty_certificate P (equality_basis (variables P) P).
+
+  Definition row_eqb (r s : lcons X.t) : bool :=
+    let relation := match lrel r, lrel s with
+      | REq, REq | RLe, RLe => true
+      | _, _ => false
+      end in
+    relation && Z.eqb (rhs r) (rhs s) &&
+      karr_list_eqb (fun p q => X.eqb (fst p) (fst q) && Z.eqb (snd p) (snd q))
+        (lhs r) (lhs s).
+
+  Definition target_certificate (P : list (lcons X.t)) (c : lcons X.t) : cert :=
+    let xs := variables (c :: P) in
+    let r := karr_target (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1) in
+    let sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z in
+    Cert (map (fun z => (- sign * z)%Z) (kweight r)) (Z.abs (kscale r)) false.
+
+  Definition entail_cert (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+    let k := match contradiction P with
+      | Some ms => Cert ms 1 false
+      | None => target_certificate P c
+      end in
+    if C.check_entails P c k then Some k else None.
+
+  Definition entails (P : list (lcons X.t)) (r : lcons X.t) : bool :=
+    existsb (row_eqb r) P ||
+      match entail_cert P r with Some _ => true | None => false end.
+
+  Definition leb (a b : t) : bool :=
+    match a, b with
+    | Unreached, _ => true
+    | Reached P, Unreached =>
+      match contradiction P with Some _ => true | None => false end
+    | Reached P, Reached Q =>
+      match contradiction P with
+      | Some _ => true
+      | None => forallb (entails P) Q
+      end
+    end.
+
   Definition bot : t := Unreached.
-  (* STUB-CODE *)
-  Definition is_bot (_ : t) := false.
-  (* STUB-CODE *)
-  Definition join (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
+
+  Definition is_bot (s : t) : bool :=
+    match s with
+    | Unreached => true
+    | Reached P => match contradiction P with Some _ => true | None => false end
+    end.
+
+  Fixpoint hull_left (xs : list X.t) (total index : nat) (P : list (lcons X.t))
+      : list karr_row :=
+    match P with
+    | [] => []
+    | r :: P =>
+      let rest := hull_left xs total (S index) P in
+      match lrel r with
+      | REq =>
+        KRow (dense xs r ++ (- rhs r)%Z :: repeat 0%Z (S (length xs)))
+          0 (karr_unit total index) 0 :: rest
+      | RLe => rest
+      end
+    end.
+
+  Fixpoint hull_right (xs : list X.t) (total index : nat) (P : list (lcons X.t))
+      : list karr_row :=
+    match P with
+    | [] => []
+    | r :: P =>
+      let rest := hull_right xs total (S index) P in
+      match lrel r with
+      | REq =>
+        let zs := dense xs r in
+        KRow (map Z.opp zs ++ rhs r :: zs ++ [rhs r])
+          0 (karr_unit total index) 0 :: rest
+      | RLe => rest
+      end
+    end.
+
+  Definition checked_hull_row (xs : list X.t) (a b : list (lcons X.t)) (r : karr_row)
+      : option (lcons X.t) :=
+    let aux := S (length xs) in
+    let zs := skipn aux (kcoeff r) in
+    let c := LCons _ (sparse xs zs) REq (karr_nth (length xs) zs) in
+    if forallb (Z.eqb 0) (firstn aux (kcoeff r)) && negb (forallb (Z.eqb 0) zs) &&
+      C.check_entails a c (Cert (firstn (length a) (kweight r)) 1 false) &&
+      C.check_entails b c (Cert (skipn (length a) (kweight r)) 1 false)
+    then Some c else None.
+
+  Definition present {A} (xs : list (option A)) : list A :=
+    flat_map (fun o => match o with Some x => [x] | None => [] end) xs.
+
+  Definition affine_hull (a b : list (lcons X.t)) : list (lcons X.t) :=
+    let P := map normalize_row a in
+    let Q := map normalize_row b in
+    let xs := variables (P ++ Q) in
+    let total := length a + length b in
+    let rows := hull_left xs total 0 P ++ hull_right xs total (length a) Q in
+    let basis := karr_bareiss (2 * length xs + 2) 1 rows in
+    present (map (checked_hull_row xs a b) basis).
+
+  Definition join (a b : t) : t :=
+    match a, b with
+    | Unreached, s | s, Unreached => s
+    | Reached P, Reached Q => Reached (affine_hull P Q)
+    end.
+
   Definition top : t := Reached nil.
-  (* STUB-CODE *)
-  Definition meet (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
+
+  Definition meet (a b : t) : t :=
+    match a, b with
+    | Reached P, Reached Q => Reached (map normalize_row (P ++ Q))
+    | _, _ => Unreached
+    end.
+
   Definition widen (_ : wparam) (a b : t) : t := if leb b a then a else join a b.
-  (* STUB-CODE *)
-  Definition narrow (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition havoc (_ : X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
-  (* STUB-CODE *)
-  Definition subst (_ : X.t) (_ : lin X.t) (r : lcons X.t) := r.
-  (* STUB-CODE *)
-  Definition affine_hull (_ _ : list (lcons X.t)) : list (lcons X.t) := nil.
-  (* STUB-CODE *)
-  Definition entail_cert (_ : list (lcons X.t)) (_ : lcons X.t) : option cert := None.
+
+  Definition narrow (_ : t) (b : t) : t := b.
+
+  Definition subst (x : X.t) (f : lin X.t) (r : lcons X.t) : lcons X.t :=
+    normalize_row (LCons _
+      (flat_map (fun p => if X.eqb (fst p) x
+        then map (fun q => (fst q, (snd p * snd q)%Z)) (coef f) else [p]) (lhs r))
+      (lrel r) (rhs r - coefficient x (lhs r) * cst f)%Z).
+
+  Definition mentions (x : X.t) (r : lcons X.t) : bool :=
+    negb (Z.eqb (coefficient x (lhs r)) 0).
+
+  Definition projected_row (x : X.t) (xs : list X.t) (P : list (lcons X.t))
+      (r : karr_row) : option (lcons X.t) :=
+    let c := LCons _ (sparse xs (kcoeff r)) REq (kright r) in
+    if negb (mentions x c) && C.check_entails P c (Cert (kweight r) 1 false)
+    then Some c else None.
+
+  Definition project (x : X.t) (P : list (lcons X.t)) : list (lcons X.t) :=
+    let xs := x :: filter (fun y => negb (X.eqb y x)) (variables P) in
+    let rows := karr_bareiss 1 1 (seed_rows xs (length P) 0 (map normalize_row P)) in
+    present (map (projected_row x xs P) rows) ++
+      filter (fun r => match lrel r with
+        | REq => false | RLe => negb (mentions x r) end) (map normalize_row P).
+
+  Definition havoc (x : X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached P => Reached (project x P)
+    end.
+
+  Definition inverse_row (x : X.t) (f : lin X.t) (a : Z) (r : lcons X.t)
+      : lcons X.t :=
+    let b := coefficient x (lhs r) in
+    let sign := if (a <? 0)%Z then (-1)%Z else 1%Z in
+    let without := filter (fun p => negb (X.eqb (fst p) x)) in
+    normalize_row (LCons _
+      ((x, (sign * b)%Z) ::
+       map (fun p => (fst p, (Z.abs a * snd p)%Z)) (without (lhs r)) ++
+       map (fun p => (fst p, (- sign * b * snd p)%Z)) (without (coef f)))
+      (lrel r) (Z.abs a * rhs r + sign * b * cst f)%Z).
+
+  Definition assign_rows (x : X.t) (f : lin X.t) (P : list (lcons X.t))
+      : list (lcons X.t) :=
+    let a := coefficient x (coef f) in
+    if Z.eqb a 0 then
+      normalize_row (LCons _ ((x, 1%Z) :: map (fun p => (fst p, (- snd p)%Z)) (coef f))
+        REq (cst f)) :: project x P
+    else map (inverse_row x f a) (map normalize_row P).
+
+  Definition assign (x : X.t) (e : term L.op X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached P =>
+      match F.lin_of e with
+      | Some (f, NoWrap) => Reached (assign_rows x f P)
+      | _ => havoc x s
+      end
+    end.
+
+  Definition atom_rows (a : atom X.t) : list (lcons X.t) :=
+    match alw a, arw a, acmp a with
+    | NoWrap, NoWrap, CEq =>
+      [normalize_row (LCons _
+        (coef (al a) ++ map (fun p => (fst p, (- snd p)%Z)) (coef (ar a)))
+        REq (cst (ar a) - cst (al a))%Z)]
+    | _, _, _ => []
+    end.
+
+  Definition assume (g : L.guard) (es : list (term L.op X.t)) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached P => Reached (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)
+    end.
+
+  Definition range (e : term L.op X.t) (s : t) : bnd * bnd :=
+    match s, F.lin_of e with
+    | Reached P, Some (f, NoWrap) =>
+      let xs := variables (LCons _ (coef f) REq 0 :: P) in
+      let r := karr_target (equality_basis xs P) 1
+        (KRow (map (fun x => coefficient x (coef f)) xs) 0 (repeat 0%Z (length P)) 1) in
+      let z := (- kright r / kscale r + cst f)%Z in
+      match entail_cert P (LCons _ (coef f) REq (z - cst f)%Z) with
+      | Some _ => (Fin z, Fin z)
+      | None => (NegInf, PosInf)
+      end
+    | _, _ => (NegInf, PosInf)
+    end.
 End KarrCode.
 
 Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
@@ -157,21 +556,45 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2 + N.to_nat (F.T_lin_of e).
   Definition range_bits (e : term L.op X.t) (s : t) : nat := range_work e s.
+  TimeFun add_term.
+  TimeFun normalize_coef.
+  TimeFun normalize_row.
+  TimeFun coefficient.
+  TimeFun variables.
+  TimeFun dense.
+  TimeFun sparse.
+  TimeFun seed_rows.
+  TimeFun equality_basis.
+  TimeFun empty_certificate.
+  TimeFun contradiction.
+  TimeFun row_eqb.
+  TimeFun target_certificate.
+  TimeFun entail_cert.
+  TimeFun entails.
+  TimeFun leb.
   TimeFun bot.
+  TimeFun is_bot.
+  TimeFun hull_left.
+  TimeFun hull_right.
+  TimeFun checked_hull_row.
+  TimeFun present.
+  TimeFun affine_hull.
+  TimeFun join.
   TimeFun top.
   TimeFun meet.
-  TimeFun leb.
-  TimeFun join.
-  TimeFun is_bot.
   TimeFun widen.
   TimeFun narrow.
-  TimeFun assign.
+  TimeFun subst.
+  TimeFun mentions.
+  TimeFun projected_row.
+  TimeFun project.
   TimeFun havoc.
+  TimeFun inverse_row.
+  TimeFun assign_rows.
+  TimeFun assign.
+  TimeFun atom_rows.
   TimeFun assume.
   TimeFun range.
-  TimeFun subst.
-  TimeFun affine_hull.
-  TimeFun entail_cert.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
