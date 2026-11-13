@@ -6869,6 +6869,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply in_app_iff. left. now apply in_map.
   Qed.
 
+  (** Every actual declaration name is watermarked, independently of the database invariant. *)
+  Lemma declared_names_wmark : forall db f, kind (view db) f <> None ->
+    (Npos f <= wmark db)%N.
+  Proof.
+    intros db f Hkind. unfold wmark. apply fold_max_member.
+    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
+    now apply decl_names_spec.
+  Qed.
+
   (** Every recorded cell has a tagged encoding whose width is covered by the watermark. *)
   Lemma recorded_cells_wmark : forall db c, In c (db_written_cells db) ->
     cell_bits V.encode c <= N.size_nat (wmark db).
@@ -6893,6 +6902,90 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - now apply recorded_counters_wmark.
     - eapply index_history_cell_bits; [exact Hhistory |].
       intros c Hin. exact (recorded_cells_wmark db c Hin).
+  Qed.
+
+  (** Extending a list and its base cannot decrease their folded maximum. *)
+  Lemma fold_max_incl : forall values values' base base', incl values values' ->
+    (base <= base' -> fold_right N.max base values <= fold_right N.max base' values')%N.
+  Proof.
+    intro values. induction values as [| value rest IH]; intros values' base base' Hincl Hbase;
+      cbn [fold_right].
+    - eapply N.le_trans; [exact Hbase | apply fold_max_base].
+    - apply N.max_lub.
+      + apply fold_max_member. apply Hincl. now left.
+      + apply IH; [| exact Hbase]. intros other Hin. apply Hincl. now right.
+  Qed.
+
+  (** Retained histories and increasing stored bounds never reduce the watermark. *)
+  Lemma wmark_monotone : forall db db', (ids db <= ids db')%N ->
+    (db_nuses db <= db_nuses db')%N -> decl_names db' = decl_names db ->
+    incl (db_index_counters db) (db_index_counters db') ->
+    incl (db_written_cells db) (db_written_cells db') -> (wmark db <= wmark db')%N.
+  Proof.
+    intros db db' Hids Huses Hnames Hcounters Hwritten. unfold wmark. apply fold_max_incl.
+    - intros value Hin. apply in_app_iff in Hin as [Hin | Hin].
+      + apply in_app_iff. left. apply in_map_iff in Hin as [p [<- Hin]].
+        apply in_map. now apply Hcounters.
+      + apply in_app_iff. right. apply in_app_iff in Hin as [Hin | Hin].
+        * apply in_app_iff. left. now rewrite Hnames.
+        * apply in_app_iff. right. apply in_map_iff in Hin as [c [<- Hin]].
+          apply in_map_iff. exists c. split; [reflexivity | now apply Hwritten].
+    - apply N.max_lub.
+      + eapply N.le_trans; [exact Huses | apply N.le_max_l].
+      + eapply N.le_trans; [exact Hids | apply N.le_max_r].
+  Qed.
+
+  (** Increasing allocation and watermark bounds increases the database spending unit. *)
+  Lemma unit_monotone : forall db db', (ids db <= ids db')%N ->
+    (wmark db <= wmark db')%N -> unit db <= unit db'.
+  Proof.
+    intros db db' Hids Hmark. pose proof (N.log2_le_mono _ _ Hids) as Hlog.
+    pose proof (N_width_mono _ _ Hmark) as Hwidth. unfold unit. nia.
+  Qed.
+
+  (** Cache maintenance leaves the stored use-entry count unchanged. *)
+  Lemma slots_update_nuses : forall b f u db,
+    db_nuses (slots_update b f u db) = db_nuses db.
+  Proof.
+    intros b f u db. unfold slots_update. reflexivity.
+  Qed.
+
+  (** Cache maintenance retains the actual declaration inventory. *)
+  Lemma slots_update_decl_names : forall b f u db,
+    decl_names (slots_update b f u db) = decl_names db.
+  Proof.
+    intros b f u db. unfold decl_names.
+    rewrite (slots_update_preserves _ (fun state => runtime_kinds state)
+      (fun all new counts state => eq_refl) b f u db). reflexivity.
+  Qed.
+
+  (** Every cache call retains all previously recorded counters. *)
+  Lemma slots_update_counters_incl : forall b f u db,
+    incl (db_index_counters db) (db_index_counters (slots_update b f u db)).
+  Proof.
+    intros b f u db p Hin. unfold slots_update.
+    cbn [database_record_cache database_set_runtime db_index_counters].
+    right. right. apply in_or_app. now right.
+  Qed.
+
+  (** Cache updates retain all watermark inputs and record additional activity. *)
+  Lemma wmark_slots_update : forall b f u db,
+    (wmark db <= wmark (slots_update b f u db))%N.
+  Proof.
+    intros b f u db. apply wmark_monotone.
+    - rewrite slots_update_ids. reflexivity.
+    - rewrite slots_update_nuses. reflexivity.
+    - apply slots_update_decl_names.
+    - apply slots_update_counters_incl.
+    - intros c Hin. rewrite slots_update_written_cells. apply in_or_app. now right.
+  Qed.
+
+  (** Cache updates never reduce the spending unit, including during a partial row replacement. *)
+  Lemma unit_mono_slots_update : forall b f u db, unit db <= unit (slots_update b f u db).
+  Proof.
+    intros b f u db. apply unit_monotone.
+    - rewrite slots_update_ids. reflexivity.
+    - apply wmark_slots_update.
   Qed.
 
   (** The high-water mark covers every stored cell encoding. *)
