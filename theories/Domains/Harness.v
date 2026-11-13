@@ -320,6 +320,80 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     unfold c_val. nia.
   Qed.
 
+  Definition k_table_base : N := ((B.c_base + 1) * (T.c_tab + 1))%N.
+
+  Local Lemma table_base_bounds :
+    (1 <= k_table_base /\ T.c_tab <= k_table_base /\ 16 * k_table_base <= c_val)%N.
+  Proof.
+    unfold k_table_base, c_val. nia.
+  Qed.
+
+  Local Lemma table_base_budget : forall budget,
+    (budget <= k_table_base * budget /\
+      T.c_tab * budget <= k_table_base * budget /\
+      16 * (k_table_base * budget) <= c_val * budget)%N.
+  Proof.
+    intro budget. destruct table_base_bounds as [Hone [Htable Hconstant]].
+    split.
+    - replace budget with (1 * budget)%N at 1 by ring. now apply N.mul_le_mono_r.
+    - split.
+      + now apply N.mul_le_mono_r.
+      + replace (16 * (k_table_base * budget))%N with
+          ((16 * k_table_base) * budget)%N by ring. now apply N.mul_le_mono_r.
+  Qed.
+
+  (** A table result and the original operands share one product cost coefficient. *)
+  Local Lemma meet_table_budget : forall xs ys budget,
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1) <= budget)%N ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <= T.c_tab * budget)%N ->
+    (T_meet_all xs ys <= k_table_base * budget)%N /\
+    (N.of_nat (fold_right Nat.add 0%nat (map B.bsize (meet_all xs ys))) <=
+      k_table_base * budget)%N.
+  Proof.
+    intros xs ys budget Hinput Houtput.
+    assert (Hcombined : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize xs) +
+       fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1) <=
+      (T.c_tab + 1) * budget)%N).
+    { rewrite !Nat2N.inj_add in *. rewrite N.mul_add_distr_r. lia. }
+    assert (Hscaled : ((B.c_base + 1) * N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize xs) +
+       fold_right Nat.add 0%nat (map B.bsize ys) + length xs + length ys + 1) <=
+      k_table_base * budget)%N).
+    { unfold k_table_base. replace ((B.c_base + 1) * (T.c_tab + 1) * budget)%N with
+        ((B.c_base + 1) * ((T.c_tab + 1) * budget))%N by ring.
+      now apply N.mul_le_mono_l. }
+    split.
+    - eapply N.le_trans; [apply meet_all_time_bound|exact Hscaled].
+    - eapply N.le_trans; [apply meet_all_size_bound|exact Hscaled].
+  Qed.
+
+  (** Abstraction result size composes the base and table work bounds. *)
+  Local Lemma abst_table_budget : forall v budget,
+    (1 <= budget)%N -> (N.of_nat (B.abst_work v) <= T.c_tab * budget)%N ->
+    (N.of_nat (B.bsize (B.abst v)) <= k_table_base * budget)%N.
+  Proof.
+    intros v budget Hbudget Hwork.
+    assert (Hplus : (N.of_nat (B.abst_work v + 1) <= (T.c_tab + 1) * budget)%N).
+    { rewrite Nat2N.inj_add, N.mul_add_distr_r. lia. }
+    eapply N.le_trans; [apply B.abst_size_le|]. unfold k_table_base.
+    replace ((B.c_base + 1) * (T.c_tab + 1) * budget)%N with
+      ((B.c_base + 1) * ((T.c_tab + 1) * budget))%N by ring.
+    apply N.mul_le_mono; [lia|exact Hplus].
+  Qed.
+
+  Local Lemma closed_sizes_budget : forall budget, (1 <= budget)%N ->
+    (N.of_nat (B.bsize B.bot) <= c_val * budget)%N /\
+    (N.of_nat (B.bsize B.top) <= c_val * budget)%N.
+  Proof.
+    intros budget Hbudget.
+    assert (Hclosed : (N.of_nat (B.bsize B.bot) + N.of_nat (B.bsize B.top) <= c_val)%N).
+    { unfold c_val. rewrite Nat2N.inj_add. lia. }
+    assert (Hscaled : (c_val <= c_val * budget)%N).
+    { replace c_val with (c_val * 1)%N at 1 by ring. now apply N.mul_le_mono_l. }
+    split; lia.
+  Qed.
+
   Definition c_lat : N := c_val.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -389,13 +463,88 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Qed.
   Lemma T_backward_le : forall o r xs,
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. set (budget := N.of_nat (work o xs + size r + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Hinput : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1) <= budget)%N).
+    { unfold budget, work, size, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Hwork : (N.of_nat (T.twork o xs + B.bsize r + 1) <= budget)%N).
+    { unfold budget, work, size, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Htable : (T.T_bwd o r xs <= T.c_tab * budget)%N).
+    { eapply N.le_trans; [apply T.T_bwd_le|]. now apply N.mul_le_mono_l. }
+    destruct (table_base_budget budget) as [Hdom [Htabdom Htotal]].
+    time_unfold T_backward. destruct (T.bwd o r xs) as [ys|] eqn:Hys.
+    - assert (Houtput : (N.of_nat
+        (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <= T.c_tab * budget)%N).
+      { eapply N.le_trans; [exact (T.bwd_size_le o r xs ys Hys)|].
+        now apply N.mul_le_mono_l. }
+      destruct (meet_table_budget xs ys budget Hinput Houtput) as [Hmeet Hsize].
+      assert (Hlenxs : (N.of_nat (length xs) <= budget)%N).
+      { rewrite !Nat2N.inj_add in Hinput. lia. }
+      assert (Hlenys : (N.of_nat (length ys) <= T.c_tab * budget)%N).
+      { rewrite Nat2N.inj_add in Houtput. lia. }
+      pose proof (Datatypes.T_length_le xs) as Hxsclock.
+      pose proof (Datatypes.T_length_le ys) as Hysclock.
+      pose proof (Nat.T_eqb_le (length ys) (length xs)) as Heqclock.
+      unfold t in *. destruct (Nat.eqb (length ys) (length xs)); lia.
+    - lia.
+  Qed.
   Lemma T_guard_le : forall g xs,
     (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. set (budget := N.of_nat (gwork g xs + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Hinput : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1) <= budget)%N).
+    { unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Hwork : (N.of_nat (T.tgwork g xs + 1) <= budget)%N).
+    { unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Htable : (T.T_grd g xs <= T.c_tab * budget)%N).
+    { eapply N.le_trans; [apply T.T_grd_le|]. now apply N.mul_le_mono_l. }
+    destruct (table_base_budget budget) as [Hdom [Htabdom Htotal]].
+    time_unfold T_guard. destruct (T.grd g xs) as [ys|] eqn:Hys.
+    - assert (Houtput : (N.of_nat
+        (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <= T.c_tab * budget)%N).
+      { eapply N.le_trans; [exact (T.grd_size_le g xs ys Hys)|].
+        now apply N.mul_le_mono_l. }
+      destruct (meet_table_budget xs ys budget Hinput Houtput) as [Hmeet Hsize].
+      assert (Hlenxs : (N.of_nat (length xs) <= budget)%N).
+      { rewrite !Nat2N.inj_add in Hinput. lia. }
+      assert (Hlenys : (N.of_nat (length ys) <= T.c_tab * budget)%N).
+      { rewrite Nat2N.inj_add in Houtput. lia. }
+      pose proof (Datatypes.T_length_le xs) as Hxsclock.
+      pose proof (Datatypes.T_length_le ys) as Hysclock.
+      pose proof (Nat.T_eqb_le (length ys) (length xs)) as Heqclock.
+      unfold t in *. destruct (Nat.eqb (length ys) (length xs)); lia.
+    - lia.
+  Qed.
   Lemma forward_size : forall o xs,
     (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. set (budget := N.of_nat (work o xs + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Hwork : (N.of_nat (T.twork o xs + 1) <= budget)%N).
+    { unfold budget, work, t. rewrite !Nat2N.inj_add. lia. }
+    destruct (closed_sizes_budget budget Hbudget) as [Hbot Htop].
+    destruct (table_base_budget budget) as [Hdom [Htabdom Htotal]].
+    change (N.of_nat (B.bsize (forward o xs)) <= c_val * budget)%N.
+    unfold forward. destruct (@existsb B.t B.is_bot xs); [exact Hbot|].
+    destruct (points xs) as [cs|] eqn:Hcs.
+    - destruct (L.eval o cs) as [v|] eqn:Heval; [|exact Hbot].
+      pose proof (T.T_abst_le v xs o cs Heval (points_complete xs cs Hcs)) as Hvalue.
+      assert (Hvaluework : (N.of_nat (B.abst_work v) <= T.c_tab * budget)%N).
+      { eapply N.le_trans; [exact Hvalue|]. now apply N.mul_le_mono_l. }
+      pose proof (abst_table_budget v budget Hbudget Hvaluework) as Hsize. lia.
+    - destruct (T.fwd o xs) as [r|] eqn:Htable; [|exact Htop].
+      assert (Hsize : (N.of_nat (B.bsize r) <= T.c_tab * budget)%N).
+      { eapply N.le_trans; [exact (T.fwd_size_le o xs r Htable)|].
+        now apply N.mul_le_mono_l. }
+      lia.
+  Qed.
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -421,11 +570,49 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. set (budget := N.of_nat (work o xs + size r + 1)).
+    assert (Hinput : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1) <= budget)%N).
+    { unfold budget, work, size, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Hwork : (N.of_nat (T.twork o xs + B.bsize r + 1) <= budget)%N).
+    { unfold budget, work, size, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Hinputsize : (N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs)) <= budget)%N).
+    { rewrite !Nat2N.inj_add in Hinput. lia. }
+    destruct (table_base_budget budget) as [Hdom [Htabdom Htotal]].
+    change (N.of_nat (fold_right Nat.add 0%nat (map B.bsize (backward o r xs))) <=
+      c_val * budget)%N.
+    unfold backward. destruct (T.bwd o r xs) as [ys|] eqn:Hys; [|lia].
+    assert (Houtput : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <= T.c_tab * budget)%N).
+    { eapply N.le_trans; [exact (T.bwd_size_le o r xs ys Hys)|].
+      now apply N.mul_le_mono_l. }
+    destruct (meet_table_budget xs ys budget Hinput Houtput) as [Hmeet Hsize].
+    unfold t in *. destruct (Nat.eqb (length ys) (length xs)); lia.
+  Qed.
   Lemma guard_size : forall g xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
       c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. set (budget := N.of_nat (gwork g xs + 1)).
+    assert (Hinput : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize xs) + length xs + 1) <= budget)%N).
+    { unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Hwork : (N.of_nat (T.tgwork g xs + 1) <= budget)%N).
+    { unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+    assert (Hinputsize : (N.of_nat (fold_right Nat.add 0%nat (map B.bsize xs)) <= budget)%N).
+    { rewrite !Nat2N.inj_add in Hinput. lia. }
+    destruct (table_base_budget budget) as [Hdom [Htabdom Htotal]].
+    change (N.of_nat (fold_right Nat.add 0%nat (map B.bsize (guard g xs))) <=
+      c_val * budget)%N.
+    unfold guard. destruct (T.grd g xs) as [ys|] eqn:Hys; [|lia].
+    assert (Houtput : (N.of_nat
+      (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <= T.c_tab * budget)%N).
+    { eapply N.le_trans; [exact (T.grd_size_le g xs ys Hys)|].
+      now apply N.mul_le_mono_l. }
+    destruct (meet_table_budget xs ys budget Hinput Houtput) as [Hmeet Hsize].
+    unfold t in *. destruct (Nat.eqb (length ys) (length xs)); lia.
+  Qed.
   Lemma work_sizes : forall o xs,
     fold_right Nat.add 0%nat (map size xs) <= work o xs.
   Proof.
