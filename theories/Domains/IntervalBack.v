@@ -2436,6 +2436,17 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_is_point_time : forall q z,
+    (T_interval_is_point q z <= 20 * N.of_nat (interval_bits q + 1))%N.
+  Proof.
+    intros q z.
+    destruct q as [|[|lo|] [|hi|]];
+      unfold T_interval_is_point, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
