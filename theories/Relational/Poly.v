@@ -12177,6 +12177,290 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       pose proof (poly_raw_width P). lia.
   Qed.
 
+  (** The original rows and raw form determine the frozen range preprocessing budget. *)
+  Definition poly_range_setup_budget (P : list (lcons X.t)) (f : lin X.t) : nat :=
+    terms (Reached P) * (nell (Reached P) + 1) +
+      fmcost (n P + length (coef f)) (length P + 2) (n P + length (coef f))
+        (length P + 2) (nell (Reached P) + F.form_bits f + 1).
+
+  (** These are exactly the native preprocessing clocks, with three fixed body/projection calls. *)
+  Definition poly_range_setup_cost (P : list (lcons X.t)) (f : lin X.t) : N :=
+    let rows := map (poly_normal_row X.encode) P in
+    let input := poly_range_input P f in
+    let vars := poly_variables X.encode (LCons X.t (coef f) REq (cst f) :: rows) in
+    (3 + ListDef.T_map (poly_normal_row X.encode)
+      (T_poly_normal_row X.encode X.T_encode) P + T_range_row f +
+      ListDef.T_map (rename_row (@Some X.t))
+        (T_rename_row (@Some X.t) (fun _ => 1%N)) rows +
+      T_poly_variables X.encode X.T_encode (LCons X.t (coef f) REq (cst f) :: rows) +
+      ListDef.T_map (@Some X.t) (fun _ => 1%N) vars +
+      ListDef.T_map (fun r : lcons (option X.t) => (r, false)) (fun _ => 1%N) input +
+      T_poly_initial tmp_encode T_tmp_encode
+        (map (fun r : lcons (option X.t) => (r, false)) input))%N.
+
+  (** Building the result equation only tags and negates the original coefficient occurrences. *)
+  Lemma T_poly_range_row_bounded : forall f,
+    (T_range_row f <= 8 * N.of_nat (length (coef f) + 1))%N.
+  Proof.
+    intro f. time_unfold T_range_row. time_simpl.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?body ?clock (coef f)] =>
+      assert (Hmap : (ListDef.T_map body clock (coef f) <=
+        (4 + 1) * N.of_nat (length (coef f)) + 1)%N);
+      [ apply (poly_T_map_members _ _ body clock 4 (coef f));
+        intros [x z] Hin; cbn [fst snd];
+        assert (Hopp : (Z.T_opp z <= 1)%N)
+          by (destruct z; time_unfold Z.T_opp; time_simpl; lia);
+        time_simpl; lia
+      | lia ]
+    end.
+  Qed.
+
+  (** Tagging an already normalized row has a constant cost per occurrence. *)
+  Lemma T_poly_range_rename_some_bounded : forall r,
+    (T_rename_row (@Some X.t) (fun _ => 1%N) r <=
+      8 * N.of_nat (length (lhs r) + 1))%N.
+  Proof.
+    intro r. time_unfold T_rename_row. time_simpl.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?body ?clock (lhs r)] =>
+      assert (Hmap : (ListDef.T_map body clock (lhs r) <=
+        (4 + 1) * N.of_nat (length (lhs r)) + 1)%N);
+      [ apply (poly_T_map_members _ _ body clock 4 (lhs r));
+        intros [x z] Hin; time_simpl; cbn [fst snd]; lia
+      | lia ]
+    end.
+  Qed.
+
+  (** Query construction and tagged normalized source rows fit one extra result coordinate. *)
+  Lemma poly_range_input_dimensions : forall P f,
+    Forall (fun r => length (lhs r) <= n P + length (coef f) + 1)
+      (poly_range_input P f).
+  Proof.
+    intros P f. unfold poly_range_input. constructor.
+    - cbn [range_row lhs length]. rewrite length_map. lia.
+    - apply Forall_map, Forall_map, Forall_forall. intros r Hr.
+      cbn [rename_row lhs]. rewrite length_map.
+      pose proof (poly_range_normal_source_dimension P r Hr). unfold n. lia.
+  Qed.
+
+  (** Variable collection reads the raw form and the normalized source rows. *)
+  Lemma poly_range_variable_envelopes : forall P f,
+    Forall (fun r => length (lhs r) <= n P + length (coef f) /\
+      C.row_key_bits r <= nell (Reached P) + F.form_bits f + 1)
+      (LCons X.t (coef f) REq (cst f) :: map (poly_normal_row X.encode) P).
+  Proof.
+    intros P f. constructor.
+    - split; [cbn [lhs]; lia|].
+      unfold C.row_key_bits. cbn [lhs]. apply poly_max_bound; [lia|].
+      apply Forall_forall. intros p Hp.
+      pose proof (poly_form_entry_bits f p Hp). unfold X.bits in *. lia.
+    - apply Forall_map, Forall_forall. intros r Hr. split.
+      + pose proof (poly_range_normal_source_dimension P r Hr). unfold n. lia.
+      + pose proof (poly_normal_row_key_bits r) as Hnormal.
+        pose proof (poly_max_member _ C.row_key_bits 0 P r Hr) as Hkeys.
+        unfold nell, ell. cbn [prows]. lia.
+  Qed.
+
+  (** Every setup count is polynomial in the frozen dimension allowance. *)
+  Lemma poly_range_setup_polynomial : forall dim bits,
+    (dim + 2)^2 * (bits + 1) <= (dim + 2)^4 * (bits + 1).
+  Proof.
+    intros dim bits. apply Nat.mul_le_mono_r. apply Nat.pow_le_mono_r; lia.
+  Qed.
+
+  Definition poly_range_setup_factor : N :=
+    (9 * (poly_raw_row_factor + poly_variables_factor +
+      RangeCore.poly_raw_initial_factor + 40))%N.
+
+  (** Shared normalization is charged by occurrences; all later setup fits the recurrence. *)
+  Lemma T_poly_range_setup_bounded : forall P f,
+    (poly_range_setup_cost P f <=
+      poly_range_setup_factor * N.of_nat (poly_range_setup_budget P f))%N.
+  Proof.
+    intros P f.
+    set (dim := n P + length (coef f)).
+    set (mlen := length P).
+    set (bits := nell (Reached P) + F.form_bits f + 1).
+    set (rows := map (poly_normal_row X.encode) P).
+    set (input := poly_range_input P f).
+    set (vrows := LCons X.t (coef f) REq (cst f) :: rows).
+    set (vars := poly_variables X.encode vrows).
+    set (polynomial := (dim + 2)^4 * (bits + 1)).
+    set (prefix := terms (Reached P) * (nell (Reached P) + 1)).
+    set (work := N.of_nat (prefix + polynomial)).
+    assert (Hrows_length : length rows = mlen) by (unfold rows, mlen; apply length_map).
+    assert (Hinput_length : length input = mlen + 1).
+    { unfold input, poly_range_input, mlen. cbn [length]. rewrite !length_map. lia. }
+    assert (Hvrows_length : length vrows = mlen + 1) by (unfold vrows; cbn [length]; lia).
+    assert (Hcount : mlen <= dim) by (unfold mlen, dim, n; lia).
+    assert (Hform : length (coef f) <= dim) by (unfold dim; lia).
+    assert (Hbits : nell (Reached P) <= bits) by (unfold bits; lia).
+    assert (Hsquare : (dim + 2)^2 * (bits + 1) <= polynomial)
+      by (unfold polynomial; apply poly_range_setup_polynomial).
+    assert (Hsmall : (dim + 1) * (bits + 1) <= polynomial).
+    { eapply Nat.le_trans; [|exact Hsquare]. apply Nat.mul_le_mono_r. cbn [Nat.pow]. nia. }
+    assert (Hdim_small : dim + 1 <= polynomial) by nia.
+    assert (Hpositive_nat : 1 <= polynomial) by nia.
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    assert (Hpolynomial_work : (N.of_nat polynomial <= work)%N) by (unfold work; lia).
+
+    pose proof (T_poly_normal_map_occurrences P poly_raw_row_factor (nell (Reached P))
+      (T_poly_raw_normal_row_global P)) as Hnormal.
+    assert (Hnormal_charge :
+      (terms (Reached P) + length P + 1) * (nell (Reached P) + 1) <= prefix + polynomial).
+    { assert (Htail : (length P + 1) * (nell (Reached P) + 1) <= polynomial).
+      { eapply Nat.le_trans; [|exact Hsmall]. apply Nat.mul_le_mono; [unfold mlen in Hcount; lia|lia]. }
+      unfold prefix. nia. }
+    assert (Hnormal_total : (ListDef.T_map (poly_normal_row X.encode)
+      (T_poly_normal_row X.encode X.T_encode) P <= (poly_raw_row_factor + 2) * work)%N).
+    { eapply N.le_trans; [exact Hnormal|]. rewrite <- N.mul_assoc.
+      apply N.mul_le_mono_l. rewrite <- Nat2N.inj_mul. unfold work. clear -Hnormal_charge. lia. }
+
+    pose proof (T_poly_range_row_bounded f) as Hquery.
+    assert (Hquery_total : (T_range_row f <= 8 * work)%N).
+    { eapply N.le_trans; [exact Hquery|]. apply N.mul_le_mono_l.
+      unfold work. clear -Hform Hdim_small. lia. }
+
+    pose proof (poly_T_map_members _ _ (rename_row (@Some X.t))
+      (T_rename_row (@Some X.t) (fun _ => 1%N)) (8 * N.of_nat (dim + 1))%N rows)
+      as Hrename.
+    specialize (Hrename ltac:(intros r Hr; apply in_map_iff in Hr as [p [Hsame Hp]];
+      subst r; eapply N.le_trans; [apply T_poly_range_rename_some_bounded|];
+      apply N.mul_le_mono_l; pose proof (poly_range_normal_source_dimension P p Hp);
+      unfold dim, n; lia)).
+    rewrite Hrows_length in Hrename.
+    pose proof (poly_clock_linear_count_bound 8 1 (N.of_nat mlen)
+      (N.of_nat (mlen + 1)) (N.of_nat (dim + 1)) ltac:(lia) ltac:(lia)) as Hrename_linear.
+    assert (Hrename_charge : (mlen + 1) * (dim + 1) <= polynomial).
+    { eapply Nat.le_trans; [|exact Hsquare]. clear -Hcount.
+      eapply Nat.le_trans with (m := (dim + 2)^2).
+      - cbn [Nat.pow]. nia.
+      - rewrite <- (Nat.mul_1_r ((dim + 2)^2)) at 1.
+        apply Nat.mul_le_mono_l. lia. }
+    assert (Hrename_total : (ListDef.T_map (rename_row (@Some X.t))
+      (T_rename_row (@Some X.t) (fun _ => 1%N)) rows <= 10 * work)%N).
+    { eapply N.le_trans; [exact Hrename|]. eapply N.le_trans; [exact Hrename_linear|].
+      change (10 * N.of_nat (mlen + 1) * N.of_nat (dim + 1) <= 10 * work)%N.
+      rewrite <- N.mul_assoc. apply N.mul_le_mono_l. rewrite <- Nat2N.inj_mul.
+      unfold work. clear -Hrename_charge. lia. }
+
+    pose proof (T_poly_variables_bounded vrows dim bits
+      (poly_range_variable_envelopes P f)) as Hvariables.
+    rewrite Hvrows_length in Hvariables.
+    assert (Hvariables_charge : (mlen + 1 + 1) * (dim + 1) * (bits + 1) <= polynomial).
+    { eapply Nat.le_trans; [|exact Hsquare]. apply Nat.mul_le_mono_r.
+      clear -Hcount. cbn [Nat.pow]. nia. }
+    assert (Hvariables_total : (T_poly_variables X.encode X.T_encode vrows <=
+      poly_variables_factor * work)%N).
+    { eapply N.le_trans; [exact Hvariables|].
+      replace (poly_variables_factor * N.of_nat (mlen + 1 + 1) * N.of_nat (dim + 1) *
+        N.of_nat (bits + 1))%N with
+        (poly_variables_factor * N.of_nat ((mlen + 1 + 1) * (dim + 1) * (bits + 1)))%N
+        by (rewrite !Nat2N.inj_mul; ring).
+      apply N.mul_le_mono_l. unfold work. clear -Hvariables_charge. lia. }
+
+    pose proof (poly_range_fuel P f) as Hfuel.
+    change (length vars <= dim) in Hfuel.
+    pose proof (poly_T_map_members _ _ (@Some X.t) (fun _ => 1%N) 1 vars
+      (fun _ _ => N.le_refl 1%N)) as Hsome.
+    assert (Hsome_total : (ListDef.T_map (@Some X.t) (fun _ => 1%N) vars <= 2 * work)%N).
+    { eapply N.le_trans; [exact Hsome|].
+      change (2 * N.of_nat (length vars) + 1 <= 2 * work)%N.
+      unfold work. clear -Hfuel Hdim_small. lia. }
+    pose proof (poly_T_map_members _ _ (fun r : lcons (option X.t) => (r, false))
+      (fun _ => 1%N) 1 input (fun _ _ => N.le_refl 1%N)) as Hflags.
+    rewrite Hinput_length in Hflags.
+    assert (Hflags_total : (ListDef.T_map (fun r : lcons (option X.t) => (r, false))
+      (fun _ => 1%N) input <= 4 * work)%N).
+    { eapply N.le_trans; [exact Hflags|]. unfold work. clear -Hcount Hdim_small. lia. }
+
+    assert (Hinitial_rows : Forall (fun p =>
+      length (lhs (fst p)) <= dim + 1 /\ RangeCert.row_key_bits (fst p) <= bits /\
+        RangeCert.row_bits (fst p) <= bits)
+      (map (fun r : lcons (option X.t) => (r, false)) input)).
+    { apply Forall_map, Forall_forall. intros r Hr. cbn [fst]. split.
+      - exact (proj1 (Forall_forall _ _) (poly_range_input_dimensions P f) r Hr).
+      - split.
+        + exact (proj1 (Forall_forall _ _) (poly_range_input_keys P f) r Hr).
+        + exact (proj1 (Forall_forall _ _) (poly_range_input_bits P f) r Hr). }
+    pose proof (RangeCore.T_poly_initial_raw_bounded
+      (map (fun r : lcons (option X.t) => (r, false)) input)
+      (dim + 1) bits bits Hinitial_rows) as Hinitial.
+    change (T_poly_initial tmp_encode T_tmp_encode
+      (map (fun r : lcons (option X.t) => (r, false)) input) <=
+      RangeCore.poly_raw_initial_factor *
+        N.of_nat (length (map (fun r : lcons (option X.t) => (r, false)) input) + 1)^2 *
+        N.of_nat (dim + 1 + 1) * N.of_nat (bits + bits + Nat.log2 (dim + 1) + 1))%N in Hinitial.
+    rewrite length_map, Hinput_length in Hinitial.
+    assert (Hinitial_charge : (mlen + 1 + 1)^2 * (dim + 1 + 1) *
+      (bits + bits + Nat.log2 (dim + 1) + 1) <= polynomial).
+    { pose proof (Nat.log2_lt_lin (dim + 1) ltac:(lia)) as Hlog.
+      assert (Hwidth : bits + bits + Nat.log2 (dim + 1) + 1 <= (dim + 2) * (bits + 1))
+        by (clear -Hlog; nia).
+      clear -Hcount Hwidth.
+      eapply Nat.le_trans with (m := (dim + 2)^2 * (dim + 2) * ((dim + 2) * (bits + 1))).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; [apply Nat.pow_le_mono_l; lia|lia]|exact Hwidth].
+      - unfold polynomial. cbn [Nat.pow]. nia. }
+    assert (Hinitial_total : (T_poly_initial tmp_encode T_tmp_encode
+      (map (fun r : lcons (option X.t) => (r, false)) input) <=
+      RangeCore.poly_raw_initial_factor * work)%N).
+    { eapply N.le_trans; [exact Hinitial|].
+      replace (RangeCore.poly_raw_initial_factor * N.of_nat (mlen + 1 + 1)^2 *
+        N.of_nat (dim + 1 + 1) * N.of_nat (bits + bits + Nat.log2 (dim + 1) + 1))%N with
+        (RangeCore.poly_raw_initial_factor * N.of_nat ((mlen + 1 + 1)^2 *
+          (dim + 1 + 1) * (bits + bits + Nat.log2 (dim + 1) + 1)))%N
+        by (rewrite !Nat2N.inj_mul, poly_nat_square, N.pow_2_r; ring).
+      apply N.mul_le_mono_l. unfold work. clear -Hinitial_charge. lia. }
+
+    assert (Hsum : (poly_range_setup_cost P f <=
+      (poly_raw_row_factor + poly_variables_factor + RangeCore.poly_raw_initial_factor + 40) * work)%N).
+    { unfold poly_range_setup_cost. fold rows input vrows vars.
+      clear -Hnormal_total Hquery_total Hrename_total Hvariables_total Hsome_total Hflags_total
+        Hinitial_total Hpositive. clearbody work. nia. }
+    assert (Hbudget : (work <= 9 * N.of_nat (poly_range_setup_budget P f))%N).
+    { pose proof (poly_range_budget_preprocessing dim mlen bits) as Hcharge.
+      fold polynomial in Hcharge. unfold work, poly_range_setup_budget. fold dim mlen bits prefix.
+      assert (Hnat : prefix + polynomial <=
+        9 * (prefix + fmcost dim (mlen + 2) dim (mlen + 2) bits)) by lia.
+      rewrite <- (Nat2N.inj_mul 9). clear -Hnat. lia. }
+    eapply N.le_trans; [exact Hsum|]. unfold poly_range_setup_factor.
+    replace (9 * (poly_raw_row_factor + poly_variables_factor +
+      RangeCore.poly_raw_initial_factor + 40) *
+        N.of_nat (poly_range_setup_budget P f))%N with
+      ((poly_raw_row_factor + poly_variables_factor +
+        RangeCore.poly_raw_initial_factor + 40) *
+          (9 * N.of_nat (poly_range_setup_budget P f)))%N by ring.
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** Range's native clock separates into preprocessing, elimination, and its terminal fold. *)
+  Lemma T_poly_range_linear_setup : forall P f,
+    let rows := map (poly_normal_row X.encode) P in
+    let input := poly_range_input P f in
+    let vars := poly_variables X.encode (LCons X.t (coef f) REq (cst f) :: rows) in
+    let initial := poly_initial tmp_encode (map (fun r => (r, false)) input) in
+    (T_range_linear P f <= poly_range_setup_cost P f +
+      T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb (map (@Some X.t) vars) initial +
+      List.T_fold_left (range_candidate rows f) (T_range_candidate rows f)
+        (poly_run tmp_encode tmp_eqb (map (@Some X.t) vars) initial) (NegInf, PosInf))%N.
+  Proof.
+    intros P f rows input vars initial. time_unfold T_range_linear. time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    change (fun x : option X.t => T_tmp_encode x) with T_tmp_encode.
+    change (fun x y : option X.t => T_tmp_eqb x y) with T_tmp_eqb.
+    unfold poly_range_setup_cost. fold rows input vars initial.
+    change (range_row f :: map (rename_row (@Some X.t)) rows) with input.
+    fold initial.
+    change (fun r => T_poly_normal_row X.encode X.T_encode r)
+      with (T_poly_normal_row X.encode X.T_encode).
+    change (fun r => T_rename_row (@Some X.t) (fun _ => 1%N) r)
+      with (T_rename_row (@Some X.t) (fun _ => 1%N)).
+    change (fun bounds r => T_range_candidate rows f bounds r)
+      with (T_range_candidate rows f).
+    lia.
+  Qed.
+
   Definition c_lat : N := (poly_lattice_factor + 1)%N.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
