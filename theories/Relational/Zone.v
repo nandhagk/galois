@@ -1509,22 +1509,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun assign_copy.
   TimeFun add_range.
   TimeFun assign.
-  Definition c_lat : N := 1. (* STUB *)
+  (** One coefficient covers the two sparse-map levels and widening's inclusion check. *)
+  Definition c_lat : N := (256 * (M.c_map + 1) * (M.c_map + 1))%N.
+  (** The common lattice coefficient is positive. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_leb_le : forall a b,
-    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b,
-    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall s,
-    (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_widen_le : forall p a b,
-    (T_widen p a b <= c_lat * N.of_nat
-      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. nia.
+  Qed.
   Definition c_num : N := 1. (* STUB *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
@@ -1534,9 +1525,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -2250,7 +2238,12 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         end
     | Unreached => False
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ma mb i j. cbn [join].
+    change (entry (M.merge row_join ma mb) i j =
+      bound_join (entry ma i j) (entry mb i j)).
+    rewrite <- !raw_entry_get. apply raw_entry_join.
+  Qed.
   Lemma fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
   Proof.
     exact fw_round_models.
@@ -2464,6 +2457,60 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     intros k m. apply support_sizes, support_round.
   Qed.
+
+  (** The Boolean list scan recognizes key membership through the key equality law. *)
+  Lemma key_existsb : forall k ks, existsb (K.eqb k) ks = true <-> In k ks.
+  Proof.
+    intros k ks. rewrite existsb_exists. split.
+    - intros [x [Hx Heq]]. apply key_eqb_true in Heq. now subst x.
+    - intro Hk. exists k. split; [exact Hk|apply key_eqb_true; reflexivity].
+  Qed.
+
+  Definition keyset_matches (seen : M.t unit) (ks : list K.t) : Prop :=
+    forall k, M.get k seen <> None <-> In k ks.
+
+  (** Inserting a remembered key preserves the membership correspondence. *)
+  Lemma keyset_add_matches : forall seen ks k,
+    keyset_matches seen ks -> keyset_matches (M.set k tt seen) (k :: ks).
+  Proof.
+    intros seen ks k Hmatch q. destruct (K.eqb_spec q k) as [Heq|Hne].
+    - subst q. rewrite M.get_set_same. cbn [In]. split.
+      + intros. now left.
+      + intros. discriminate.
+    - rewrite M.get_set_other by exact Hne. rewrite (Hmatch q). cbn [In].
+      split; [intro Hin; now right|]. intros [Heq|Hin]; [|exact Hin].
+      exfalso. apply Hne. now symmetry.
+  Qed.
+
+  (** The map-backed fold preserves the signature's reverse first-occurrence order. *)
+  Lemma remember_fold_keys : forall xs seen ks,
+    keyset_matches seen ks ->
+    snd (fold_left remember_key xs (seen, ks)) =
+    fold_left (fun acc x => if existsb (K.eqb x) acc then acc else x :: acc) xs ks.
+  Proof.
+    intro xs. induction xs as [|k xs IH]; intros seen ks Hmatch; [reflexivity|].
+    cbn [fold_left]. destruct (M.get k seen) as [u|] eqn:Hget.
+    - assert (Hremember : remember_key (seen, ks) k = (seen, ks)).
+      { unfold remember_key. cbn [fst snd]. now rewrite Hget. }
+      assert (Hseen : existsb (K.eqb k) ks = true).
+      { apply key_existsb, (proj1 (Hmatch k)). rewrite Hget. discriminate. }
+      rewrite Hremember, Hseen. now apply IH.
+    - assert (Hremember : remember_key (seen, ks) k = (M.set k tt seen, k :: ks)).
+      { unfold remember_key. cbn [fst snd]. now rewrite Hget. }
+      assert (Hseen : existsb (K.eqb k) ks = false).
+      { destruct (existsb (K.eqb k) ks) eqn:Hseen; [|reflexivity].
+        apply key_existsb in Hseen. apply (proj2 (Hmatch k)) in Hseen.
+        contradiction. }
+      rewrite Hremember, Hseen. apply IH. now apply keyset_add_matches.
+  Qed.
+
+  (** Executable pivot enumeration agrees with the frozen specification even on raw maps. *)
+  Lemma pivot_keys_eq_keys : forall m, pivot_keys m = keys m.
+  Proof.
+    intro m. unfold pivot_keys, keys. apply remember_fold_keys.
+    intro k. rewrite M.get_empty. cbn [In]. tauto.
+  Qed.
+
   (** A consistent matrix has no more pivot keys than codes in its support. *)
   Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
   Proof.
@@ -2686,5 +2733,364 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       (option_weight Z.size_nat a + option_weight Z.size_nat b + 1))%N.
   Proof.
     intros [x|] [y|]; unfold option_weight; time_step.
+  Qed.
+  (** Empty maps enumerate no stored code. *)
+  Lemma codes_empty : forall A, M.codes (@M.empty A) = nil.
+  Proof.
+    intro A. destruct (M.codes (@M.empty A)) as [|p ps] eqn:Hcodes; [reflexivity|].
+    exfalso. assert (Hp : In p (M.codes (@M.empty A))).
+    { rewrite Hcodes. now left. }
+    apply M.codes_spec in Hp. rewrite M.find_empty in Hp. contradiction.
+  Qed.
+
+  (** Empty maps carry no payload weight. *)
+  Lemma stored_weight_empty : forall (A : Type) (w : A -> nat),
+    stored_weight w M.empty = 0.
+  Proof.
+    intros A w. unfold stored_weight. rewrite codes_empty. reflexivity.
+  Qed.
+
+  (** Empty maps contribute no skeleton, binding, or payload work. *)
+  Lemma code_work_empty : forall (A : Type) (w : A -> nat), code_work w M.empty = 0.
+  Proof.
+    intros A w. unfold code_work. rewrite M.nodes_empty, codes_empty, stored_weight_empty.
+    reflexivity.
+  Qed.
+
+  (** Replacing a missing row by the empty map preserves its zero work contribution. *)
+  Lemma code_work_row_of : forall r,
+    code_work Z.size_nat (row_of r) = option_weight (code_work Z.size_nat) r.
+  Proof.
+    intros [row|]; [reflexivity|apply code_work_empty].
+  Qed.
+
+  (** A common coefficient covers scalar work and one sparse row traversal. *)
+  Definition row_time_factor : N := (32 * (M.c_map + 1))%N.
+
+  (** Row comparison charges the two rows' own finite entries. *)
+  Lemma T_row_leb_le : forall a b,
+    (T_row_leb a b <= row_time_factor * N.of_nat
+      (option_weight (code_work Z.size_nat) a +
+       option_weight (code_work Z.size_nat) b + 1))%N.
+  Proof.
+    intros a b.
+    assert (Hwork : (1 <= N.of_nat (option_weight (code_work Z.size_nat) a +
+      option_weight (code_work Z.size_nat) b + 1))%N) by lia.
+    pose proof (T_forall2b_code_work Z Z bound_leb (fun x y => T_bound_leb x y)
+      Z.size_nat Z.size_nat
+      (row_of a) (row_of b) 8%N T_bound_leb_le) as Hscan.
+    rewrite !code_work_row_of in Hscan. unfold row_time_factor. time_step.
+  Qed.
+
+  (** Row join charges the two rows' own finite entries. *)
+  Lemma T_row_join_le : forall a b,
+    (T_row_join a b <= row_time_factor * N.of_nat
+      (option_weight (code_work Z.size_nat) a +
+       option_weight (code_work Z.size_nat) b + 1))%N.
+  Proof.
+    intros a b.
+    assert (Hwork : (1 <= N.of_nat (option_weight (code_work Z.size_nat) a +
+      option_weight (code_work Z.size_nat) b + 1))%N) by lia.
+    destruct a as [ra|], b as [rb|].
+    - pose proof (T_merge_code_work Z Z Z bound_join (fun x y => T_bound_join x y)
+        Z.size_nat Z.size_nat
+        ra rb 8%N T_bound_join_le) as Hmerge. unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+  Qed.
+
+  (** Row meet charges the two rows' own finite entries. *)
+  Lemma T_row_meet_le : forall a b,
+    (T_row_meet a b <= row_time_factor * N.of_nat
+      (option_weight (code_work Z.size_nat) a +
+       option_weight (code_work Z.size_nat) b + 1))%N.
+  Proof.
+    intros a b.
+    assert (Hwork : (1 <= N.of_nat (option_weight (code_work Z.size_nat) a +
+      option_weight (code_work Z.size_nat) b + 1))%N) by lia.
+    destruct a as [ra|], b as [rb|].
+    - pose proof (T_merge_code_work Z Z Z bound_meet (fun x y => T_bound_meet x y)
+        Z.size_nat Z.size_nat
+        ra rb 8%N T_bound_meet_le) as Hmerge. unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+  Qed.
+
+  (** Row widening charges the two rows' own finite entries. *)
+  Lemma T_row_widen_le : forall a b,
+    (T_row_widen a b <= row_time_factor * N.of_nat
+      (option_weight (code_work Z.size_nat) a +
+       option_weight (code_work Z.size_nat) b + 1))%N.
+  Proof.
+    intros a b.
+    assert (Hwork : (1 <= N.of_nat (option_weight (code_work Z.size_nat) a +
+      option_weight (code_work Z.size_nat) b + 1))%N) by lia.
+    destruct a as [ra|].
+    - pose proof (T_merge_code_work Z Z Z bound_widen (fun x y => T_bound_widen x y)
+        Z.size_nat Z.size_nat
+        ra (row_of b) 8%N T_bound_widen_le) as Hmerge.
+      rewrite code_work_row_of in Hmerge. unfold row_time_factor. time_step.
+    - unfold row_time_factor. time_step.
+  Qed.
+
+  (** Pointwise weight bounds lift to their list sums. *)
+  Lemma sum_weight_mono : forall (A : Type) (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) -> sum_weight f xs <= sum_weight g xs.
+  Proof.
+    intros A f g xs. induction xs as [|x xs IH]; intro Hbound; [reflexivity|].
+    assert (Hx : f x <= g x) by (apply Hbound; now left).
+    assert (Hxs : sum_weight f xs <= sum_weight g xs).
+    { apply IH. intros y Hin. apply Hbound. now right. }
+    change (f x + sum_weight f xs <= g x + sum_weight g xs). lia.
+  Qed.
+
+  (** Constant weights multiply the list length. *)
+  Lemma sum_weight_const : forall (A : Type) (xs : list A) n,
+    sum_weight (fun _ => n) xs = length xs * n.
+  Proof.
+    intros A xs. induction xs as [|x xs IH]; intro n; [reflexivity|].
+    change (n + sum_weight (fun _ : A => n) xs = S (length xs) * n).
+    rewrite IH. lia.
+  Qed.
+
+  (** Summing outer payloads agrees with summing the collected rows. *)
+  Lemma stored_weight_rows : forall (w : M.t Z -> nat) m,
+    stored_weight w m = sum_weight w (rows m).
+  Proof.
+    intros w m. unfold stored_weight, sum_weight, rows.
+    induction (M.codes m) as [|p ps IH]; [reflexivity|].
+    cbn [map fold_right flat_map]. destruct (M.find p m) eqn:Hrow;
+      cbn [option_weight map fold_right app]; now rewrite IH.
+  Qed.
+
+  (** Each collected row's finite-entry bits are bounded by the matrix maximum. *)
+  Lemma stored_row_bits_bound : forall m p row,
+    M.find p m = Some row -> stored_weight Z.size_nat row <=
+      length (M.codes row) * ell m.
+  Proof.
+    intros m p row Hrow. unfold stored_weight, sum_weight. apply sum_members_bound.
+    intros q Hq. destruct (M.find q row) as [z|] eqn:Hentry.
+    - change (Z.size_nat z <= ell m). apply (ell_entry m p q z).
+      unfold raw_entry. rewrite Hrow. exact Hentry.
+    - change (0 <= ell m). lia.
+  Qed.
+
+  (** A collected row pays for its skeleton and at most one entry per supported code. *)
+  Lemma row_code_work_bound : forall m row, In row (rows m) ->
+    code_work Z.size_nat row <= M.nodes row + supp m * (ell m + 1).
+  Proof.
+    intros m row Hin.
+    assert (Hsupport : forall q, In q (M.codes row) -> In q (support m)).
+    { intros q Hq. apply support_spec. right. apply in_flat_map. exists row. now split. }
+    pose proof (codes_support_length Z row m Hsupport) as Hlength.
+    apply rows_find in Hin. destruct Hin as [p Hrow].
+    pose proof (stored_row_bits_bound m p row Hrow) as Hbits.
+    unfold code_work. nia.
+  Qed.
+
+  (** The public quadratic size covers raw code work and the complete sparse skeleton. *)
+  Lemma matrix_code_work_le : forall m,
+    code_work (code_work Z.size_nat) m <= size (Reached m).
+  Proof.
+    intro m.
+    assert (Houter : length (M.codes m) <= supp m).
+    { apply codes_support_length. intros p Hp. apply support_spec. now left. }
+    pose proof (rows_length m) as Hrows.
+    assert (Hsum : sum_weight (code_work Z.size_nat) (rows m) <=
+      sum_weight (fun row => M.nodes row + supp m * (ell m + 1)) (rows m)).
+    { apply sum_weight_mono. intros row Hin. now apply row_code_work_bound. }
+    rewrite sum_weight_add, sum_weight_const in Hsum.
+    change (sum_weight (code_work Z.size_nat) (rows m) <=
+      sum_weight M.nodes (rows m) + length (rows m) * (supp m * (ell m + 1))) in Hsum.
+    assert (Hprod : length (rows m) * (supp m * (ell m + 1)) <=
+      supp m * (supp m * (ell m + 1))).
+    { apply Nat.mul_le_mono_r. lia. }
+    unfold code_work at 1. rewrite stored_weight_rows.
+    change (M.nodes m + length (M.codes m) + sum_weight (code_work Z.size_nat) (rows m) <=
+      (supp m + 1)^2 * (b m + ell m + 1) +
+      (M.nodes m + sum_weight M.nodes (rows m))). cbn [Nat.pow]. nia.
+  Qed.
+
+  (** A matrix traversal adds one outer sparse-map pass to the row bound. *)
+  Definition matrix_time_factor : N := (M.c_map * (row_time_factor + 1) * 2 + 8)%N.
+
+  (** Comparing two reached matrices is linear in their nested code work. *)
+  Lemma T_leb_matrix_le : forall ma mb,
+    (T_leb (Reached ma) (Reached mb) <= matrix_time_factor * N.of_nat
+      (code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1))%N.
+  Proof.
+    intros ma mb.
+    assert (Hwork : (1 <= N.of_nat (code_work (code_work Z.size_nat) ma +
+      code_work (code_work Z.size_nat) mb + 1))%N) by lia.
+    pose proof (T_forall2b_code_work (M.t Z) (M.t Z) row_leb (fun x y => T_row_leb x y)
+      (code_work Z.size_nat) (code_work Z.size_nat) ma mb row_time_factor T_row_leb_le)
+      as Hscan. unfold matrix_time_factor. time_step.
+  Qed.
+
+  (** Joining two reached matrices is linear in their nested code work. *)
+  Lemma T_join_matrix_le : forall ma mb,
+    (T_join (Reached ma) (Reached mb) <= matrix_time_factor * N.of_nat
+      (code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1))%N.
+  Proof.
+    intros ma mb.
+    assert (Hwork : (1 <= N.of_nat (code_work (code_work Z.size_nat) ma +
+      code_work (code_work Z.size_nat) mb + 1))%N) by lia.
+    pose proof (T_merge_code_work (M.t Z) (M.t Z) (M.t Z) row_join (fun x y => T_row_join x y)
+      (code_work Z.size_nat) (code_work Z.size_nat) ma mb row_time_factor T_row_join_le)
+      as Hmerge. unfold matrix_time_factor. time_step.
+  Qed.
+
+  (** Meeting two reached matrices is linear in their nested code work. *)
+  Lemma T_meet_matrix_le : forall ma mb,
+    (T_meet (Reached ma) (Reached mb) <= matrix_time_factor * N.of_nat
+      (code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1))%N.
+  Proof.
+    intros ma mb.
+    assert (Hwork : (1 <= N.of_nat (code_work (code_work Z.size_nat) ma +
+      code_work (code_work Z.size_nat) mb + 1))%N) by lia.
+    pose proof (T_merge_code_work (M.t Z) (M.t Z) (M.t Z) row_meet (fun x y => T_row_meet x y)
+      (code_work Z.size_nat) (code_work Z.size_nat) ma mb row_time_factor T_row_meet_le)
+      as Hmerge. unfold matrix_time_factor. time_step.
+  Qed.
+
+  (** The widening update itself is linear in its two input matrices' code work. *)
+  Lemma T_widen_merge_le : forall ma mb,
+    (M.T_merge row_widen (fun x y => T_row_widen x y) ma mb <= matrix_time_factor * N.of_nat
+      (code_work (code_work Z.size_nat) ma + code_work (code_work Z.size_nat) mb + 1))%N.
+  Proof.
+    intros ma mb.
+    pose proof (T_merge_code_work (M.t Z) (M.t Z) (M.t Z) row_widen (fun x y => T_row_widen x y)
+      (code_work Z.size_nat) (code_work Z.size_nat) ma mb row_time_factor T_row_widen_le)
+      as Hmerge. unfold matrix_time_factor. nia.
+  Qed.
+
+  (** A matrix pass has a positive coefficient even when the map clock is zero. *)
+  Lemma matrix_time_factor_pos : (1 <= matrix_time_factor)%N.
+  Proof.
+    unfold matrix_time_factor. nia.
+  Qed.
+
+  (** The lattice coefficient covers both widening passes and constant dispatch work. *)
+  Lemma matrix_time_factor_lat : (2 * matrix_time_factor + 8 <= c_lat)%N.
+  Proof.
+    unfold matrix_time_factor, row_time_factor, c_lat. nia.
+  Qed.
+
+  (** Comparison dispatch and sparse scanning fit the matrix coefficient. *)
+  Lemma T_leb_base_le : forall a b,
+    (T_leb a b <= matrix_time_factor * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|ma] [|mb].
+    - pose proof matrix_time_factor_pos. time_step.
+    - pose proof matrix_time_factor_pos. time_step.
+    - pose proof matrix_time_factor_pos. time_step.
+    - eapply N.le_trans; [apply T_leb_matrix_le|]. apply N.mul_le_mono_l.
+      apply time_of_nat_le, Nat.add_le_mono_r, Nat.add_le_mono;
+        apply matrix_code_work_le.
+  Qed.
+
+  (** Join dispatch and sparse merging fit the matrix coefficient. *)
+  Lemma T_join_base_le : forall a b,
+    (T_join a b <= matrix_time_factor * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|ma] [|mb].
+    - pose proof matrix_time_factor_pos. time_step.
+    - pose proof matrix_time_factor_pos. time_step.
+    - pose proof matrix_time_factor_pos. time_step.
+    - eapply N.le_trans; [apply T_join_matrix_le|]. apply N.mul_le_mono_l.
+      apply time_of_nat_le, Nat.add_le_mono_r, Nat.add_le_mono;
+        apply matrix_code_work_le.
+  Qed.
+
+  (** Meet dispatch and sparse merging fit the matrix coefficient. *)
+  Lemma T_meet_base_le : forall a b,
+    (T_meet a b <= matrix_time_factor * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|ma] [|mb].
+    - pose proof matrix_time_factor_pos. time_step.
+    - pose proof matrix_time_factor_pos. time_step.
+    - pose proof matrix_time_factor_pos. time_step.
+    - eapply N.le_trans; [apply T_meet_matrix_le|]. apply N.mul_le_mono_l.
+      apply time_of_nat_le, Nat.add_le_mono_r, Nat.add_le_mono;
+        apply matrix_code_work_le.
+  Qed.
+
+  (** The widening merge is bounded by the public sizes of its two matrices. *)
+  Lemma T_widen_merge_size : forall ma mb,
+    (M.T_merge row_widen (fun x y => T_row_widen x y) ma mb <= matrix_time_factor *
+      N.of_nat (size (Reached ma) + size (Reached mb) + 1))%N.
+  Proof.
+    intros ma mb. eapply N.le_trans; [apply T_widen_merge_le|].
+    apply N.mul_le_mono_l.
+    apply time_of_nat_le, Nat.add_le_mono_r, Nat.add_le_mono;
+      apply matrix_code_work_le.
+  Qed.
+
+  (** The public inclusion clock is linear in the two raw matrix sizes. *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. eapply N.le_trans; [apply T_leb_base_le|]. apply N.mul_le_mono_r.
+    pose proof matrix_time_factor_lat. lia.
+  Qed.
+
+  (** The public join clock is linear in the two raw matrix sizes. *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. eapply N.le_trans; [apply T_join_base_le|]. apply N.mul_le_mono_r.
+    pose proof matrix_time_factor_lat. lia.
+  Qed.
+
+  (** Bottom recognition takes constant work within the lattice size bound. *)
+  Lemma T_is_bot_le : forall s,
+    (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
+  Proof.
+    intro s. assert (Hclock : (T_is_bot s <= 1)%N).
+    { destruct s; time_step. }
+    eapply N.le_trans; [exact Hclock|].
+    change (1 * 1 <= c_lat * N.of_nat (size s + 1))%N.
+    apply N.mul_le_mono; [exact c_lat_pos|lia].
+  Qed.
+
+  (** Widening pays for one inclusion check and at most one sparse merge. *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof.
+    intros p a b. unfold wsize.
+    rewrite Nat.mul_0_r, Nat.add_0_l, Nat.add_0_r.
+    pose proof (T_leb_base_le b a) as Hcompare.
+    replace (size b + size a + 1) with (size a + size b + 1) in Hcompare by lia.
+    set (work := N.of_nat (size a + size b + 1)) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    assert (Hmerge : forall ma mb, a = Reached ma -> b = Reached mb ->
+      (M.T_merge row_widen (fun x y => T_row_widen x y) ma mb <=
+        matrix_time_factor * work)%N).
+    { intros ma mb Ha Hb. subst a b. unfold work. apply T_widen_merge_size. }
+    assert (Hbudget : ((2 * matrix_time_factor + 8) * work <= c_lat * work)%N).
+    { apply N.mul_le_mono_r. exact matrix_time_factor_lat. }
+    clearbody work. unfold T_widen. cbn beta iota zeta.
+    destruct (leb b a); cbn beta iota zeta.
+    - nia.
+    - destruct a as [|ma], b as [|mb]; cbn beta iota zeta.
+      + nia.
+      + nia.
+      + nia.
+      + specialize (Hmerge ma mb eq_refl eq_refl). nia.
+  Qed.
+
+  (** Narrowing uses the meet clock within the common lattice size bound. *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof (T_meet_base_le a b) as Hmeet.
+    set (work := N.of_nat (size a + size b + 1)) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    assert (Hbudget : ((2 * matrix_time_factor + 8) * work <= c_lat * work)%N).
+    { apply N.mul_le_mono_r. exact matrix_time_factor_lat. }
+    clearbody work. unfold T_narrow. cbn beta iota zeta. nia.
   Qed.
 End ZoneT.
