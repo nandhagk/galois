@@ -996,12 +996,463 @@ Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL
     (W : INTERVAL_PAYLOAD_PINNED L T Scalar)
     <: INTERVAL_WORD_TABLE L W.
   Include IntervalWordTableCode L T Scalar W.
+  Module Sound := IntervalOpsSound T Scalar.
+  Local Abbreviation interval_pgamma := Sound.interval_pgamma.
+  Local Open Scope Z_scope.
+
+  (** The table's endpoint semantics agrees with the pinned payload meaning. *)
+  Local Lemma interval_payload_spec w a z :
+    W.pgamma w a z <-> interval_pgamma w a z.
+  Proof.
+    rewrite W.F_pgamma, Sound.interval_pgamma_spec. reflexivity.
+  Qed.
+
+  (** Each checked operand provides its width and its raw interval membership. *)
+  Local Lemma interval_inputs_sound xs cs :
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    Forall2 (fun wp c => fst wp = fst c /\
+      interval_pgamma (fst wp) (snd wp) (snd c)) xs cs.
+  Proof.
+    intros Hinputs. induction Hinputs as [|wp c xs cs [Hwidth [_ Ha]] Htail IH].
+    - constructor.
+    - constructor; [split; [exact Hwidth|now apply interval_payload_spec]|exact IH].
+  Qed.
+
+  (** A unary entry clips its operand before applying its scalar soundness law. *)
+  Local Lemma interval_entry1_sound o (f : width -> width -> itv -> itv)
+      (rw w : width) a cs z :
+    Forall2 (fun wp c => fst wp = fst c /\
+      interval_pgamma (fst wp) (snd wp) (snd c)) [(w, a)] cs ->
+    eval_op o cs = Some (rw, z) ->
+    (forall (w : width) a x, interval_pgamma w a x ->
+      eval_op o [(w, x)] = Some (rw, z) ->
+      interval_pgamma rw (f rw w a) z) ->
+    interval_pgamma rw (f rw w (interval_clip w a)) z.
+  Proof.
+    intros Hinputs Heval Hscalar.
+    inversion Hinputs as [|wp [v x] tail values [Hwidth Ha] Htail]; subst.
+    inversion Htail; subst. change (w = v) in Hwidth. subst v.
+    apply (Hscalar w (interval_clip w a) x); [now apply Sound.interval_clip_sound|].
+    exact Heval.
+  Qed.
+
+  (** A binary entry clips both operands at their own checked widths. *)
+  Local Lemma interval_entry2_sound o (f : width -> width -> width -> itv -> itv -> itv)
+      (rw wa wb : width) a b cs z :
+    Forall2 (fun wp c => fst wp = fst c /\
+      interval_pgamma (fst wp) (snd wp) (snd c)) [(wa, a); (wb, b)] cs ->
+    eval_op o cs = Some (rw, z) ->
+    (forall (wa wb : width) a b x y, interval_pgamma wa a x -> interval_pgamma wb b y ->
+      eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+      interval_pgamma rw (f rw wa wb a b) z) ->
+    interval_pgamma rw (f rw wa wb (interval_clip wa a) (interval_clip wb b)) z.
+  Proof.
+    intros Hinputs Heval Hscalar.
+    inversion Hinputs as [|wp [wx x] tail values [Hwa Ha] Htail]; subst.
+    inversion Htail as [|wp [wy y] tail' values' [Hwb Hb] Hlast]; subst.
+    inversion Hlast; subst.
+    change (wa = wx) in Hwa. change (wb = wy) in Hwb. subst wx wy.
+    apply (Hscalar wa wb (interval_clip wa a) (interval_clip wb b) x y);
+      try now apply Sound.interval_clip_sound.
+    exact Heval.
+  Qed.
+
+  (** A selected binary tag supplies its checked common width and concrete result. *)
+  Local Lemma interval_binary_semantics o tag (f : width -> itv -> itv -> itv) :
+    word_fun2 o = Some tag ->
+    (forall (w : width) a b x y, interval_pgamma w a x -> interval_pgamma w b y ->
+      interval_pgamma w (f w a b) (eval_binary_tag tag w x y)) ->
+    forall (rw wa wb : width) a b x y z, interval_pgamma wa a x -> interval_pgamma wb b y ->
+      eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+      interval_pgamma rw (f rw a b) z.
+  Proof.
+    intros Hkind Hscalar rw wa wb a b x y z Ha Hb Heval.
+    pose proof (eval_op_fun2_width o tag wa wb x y (rw, z) Hkind Heval) as Hwidth.
+    subst wb. rewrite (eval_op_fun2 o wa x y tag Hkind) in Heval.
+    inversion Heval; subst. now apply Hscalar.
+  Qed.
+
+  (** A selected unary tag preserves the checked operand width. *)
+  Local Lemma interval_unary_semantics o tag (f : width -> itv -> itv) :
+    word_fun1 o = Some tag ->
+    (forall (w : width) a x, interval_pgamma w a x ->
+      interval_pgamma w (f w a) (eval_unary_tag tag w x)) ->
+    forall (rw w : width) a x z, interval_pgamma w a x ->
+      eval_op o [(w, x)] = Some (rw, z) -> interval_pgamma rw (f rw a) z.
+  Proof.
+    intros Hkind Hscalar rw w a x z Ha Heval.
+    rewrite (eval_op_fun1 o w x tag Hkind) in Heval.
+    inversion Heval; subst. now apply Hscalar.
+  Qed.
+
+  (** A selected comparison tag produces a one-bit Boolean at the common operand width. *)
+  Local Lemma interval_comparison_semantics o tag (f : width -> itv -> itv -> itv) :
+    word_cmp o = Some tag ->
+    (forall (w : width) a b x y, interval_pgamma w a x -> interval_pgamma w b y ->
+      interval_pgamma 1%positive (f w a b)
+        (if eval_comparison_tag tag w x y then 1 else 0)) ->
+    forall (rw wa wb : width) a b x y z, interval_pgamma wa a x -> interval_pgamma wb b y ->
+      eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+      interval_pgamma rw (f wa a b) z.
+  Proof.
+    intros Hkind Hscalar rw wa wb a b x y z Ha Hb Heval.
+    pose proof (eval_op_cmp_width o tag wa wb x y (rw, z) Hkind Heval) as Hwidth.
+    subst wb. rewrite (eval_op_cmp o wa x y tag Hkind) in Heval.
+    inversion Heval; subst. now apply Hscalar.
+  Qed.
+
+  (** The conditional entry contains either selected arm at their common checked width. *)
+  Local Lemma interval_ite_entry_sound (rw wc wa wb : width) c a b cs z :
+    Forall2 (fun wp v => fst wp = fst v /\
+      interval_pgamma (fst wp) (snd wp) (snd v)) [(wc, c); (wa, a); (wb, b)] cs ->
+    eval_op bvite cs = Some (rw, z) ->
+    interval_pgamma rw (Scalar.interval_join (interval_clip wa a) (interval_clip wb b)) z.
+  Proof.
+    intros Hinputs Heval.
+    inversion Hinputs as [|wp [vc t] tail values [Hwc Hc] Htail]; subst.
+    inversion Htail as [|wp [va x] tail' values' [Hwa Ha] Hlast]; subst.
+    inversion Hlast as [|wp [vb y] tail'' values'' [Hwb Hb] Hnil]; subst.
+    inversion Hnil; subst.
+    change (wc = vc) in Hwc. change (wa = va) in Hwa. change (wb = vb) in Hwb.
+    subst vc va vb.
+    destruct (eval_op_ite_width wc wa wb t x y (rw, z) Heval) as [Hcondition Harms].
+    subst wc wb. rewrite eval_op_ite in Heval.
+    rewrite (wrap_id wa x (proj1 Ha)), (wrap_id wa y (proj1 Hb)) in Heval.
+    destruct (wrap 1%positive t =? 1) eqn:Hdecision; inversion Heval; subst rw z;
+      apply Sound.interval_join_sound.
+    - left. now apply Sound.interval_clip_sound.
+    - right. now apply Sound.interval_clip_sound.
+  Qed.
+
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* CONVERT: interval_table_laws: Unexpected name (no introduction patterns were expected in the *)
+  Proof.
+    intros o rw wps cs z r Hentry Hxs Heval.
+    apply interval_payload_spec. apply interval_inputs_sound in Hxs.
+    destruct wps as [|[wA aA] [|[wB aB] [|[wC aC] [|extra rest]]]];
+      destruct o; cbn [wfwd] in Hentry; try discriminate; inversion Hentry; subst r.
+    - eapply interval_entry1_sound with (f := fun rw _ => interval_not rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr.
+      eapply (interval_unary_semantics bvnot UNot (fun w => interval_not w));
+        [reflexivity|exact Sound.interval_not_sound|exact Ha|exact Hr].
+    - eapply interval_entry1_sound with (f := fun rw _ => interval_neg rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr.
+      eapply (interval_unary_semantics bvneg UNeg (fun w => interval_neg w));
+        [reflexivity| |exact Ha|exact Hr].
+      intros. cbn [eval_unary_tag]. rewrite Fun.wneg_value. now apply Sound.interval_neg_sound.
+    - eapply interval_entry1_sound with (f := fun rw _ _ => interval_counts rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr.
+      eapply (interval_unary_semantics bvclz UClz (fun w _ => interval_counts w));
+        [reflexivity|intros; apply Sound.interval_clz_sound|exact Ha|exact Hr].
+    - eapply interval_entry1_sound with (f := fun rw _ _ => interval_counts rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr.
+      eapply (interval_unary_semantics bvctz UCtz (fun w _ => interval_counts w));
+        [reflexivity|intros; apply Sound.interval_ctz_sound|exact Ha|exact Hr].
+    - eapply interval_entry1_sound with (f := fun rw _ _ => interval_counts rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr.
+      eapply (interval_unary_semantics bvpopcnt UPopcnt (fun w _ => interval_counts w));
+        [reflexivity|intros; apply Sound.interval_popcnt_sound|exact Ha|exact Hr].
+    - eapply interval_entry1_sound with (f := fun rw _ => interval_rewrap rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr. rewrite eval_op_zext, (wrap_id w x (proj1 Ha)) in Hr.
+      inversion Hr; subst. now apply (Sound.interval_rewrap_sound _ w).
+    - eapply interval_entry1_sound with (f := interval_sext);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr. rewrite eval_op_sext in Hr.
+      inversion Hr; subst. now apply Sound.interval_sext_sound.
+    - eapply interval_entry1_sound with (f := fun rw _ => interval_rewrap rw);
+        [exact Hxs|exact Heval|].
+      intros w a x Ha Hr. rewrite eval_op_trunc in Hr.
+      destruct (Pos.leb target w); [|discriminate].
+      rewrite (wrap_id w x (proj1 Ha)) in Hr.
+      inversion Hr; subst. now apply (Sound.interval_rewrap_sound _ w).
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_add rw);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_binary_semantics bvadd BAdd interval_add);
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy. cbn [eval_binary_tag]. rewrite Fun.wadd_value.
+      exact (Sound.interval_add_sound w w w a' b' x' y' Hx Hy).
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_sub rw);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_binary_semantics bvsub BSub interval_sub);
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy. cbn [eval_binary_tag]. rewrite Fun.wsub_value.
+      exact (Sound.interval_sub_sound w w w a' b' x' y' Hx Hy).
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_mul rw);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_binary_semantics bvmul BMul interval_mul);
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy. cbn [eval_binary_tag]. rewrite Fun.wmul_value.
+      exact (Sound.interval_mul_sound w w w a' b' x' y' Hx Hy).
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_udiv rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvudiv BUdiv interval_udiv);
+        [reflexivity|exact Sound.interval_udiv_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_urem rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvurem BUrem interval_urem);
+        [reflexivity|exact Sound.interval_urem_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_sdiv rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvsdiv BSdiv interval_sdiv);
+        [reflexivity|exact Sound.interval_sdiv_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_srem rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvsrem BSrem interval_srem);
+        [reflexivity|exact Sound.interval_srem_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_smod rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvsmod BSmod interval_smod);
+        [reflexivity|exact Sound.interval_smod_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_and rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvand BAnd interval_and);
+        [reflexivity|exact Sound.interval_and_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_or_xor rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvor BOr interval_or_xor);
+        [reflexivity| |eassumption|eassumption|eassumption].
+      intros w a' b' x' y' Hx Hy.
+      exact (proj1 (Sound.interval_or_xor_sound w a' b' x' y' Hx Hy)).
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_or_xor rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvxor BXor interval_or_xor);
+        [reflexivity| |eassumption|eassumption|eassumption].
+      intros w a' b' x' y' Hx Hy.
+      exact (proj2 (Sound.interval_or_xor_sound w a' b' x' y' Hx Hy)).
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_shl rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvshl BShl interval_shl);
+        [reflexivity|exact Sound.interval_shl_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_lshr rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvlshr BLshr interval_lshr);
+        [reflexivity|exact Sound.interval_lshr_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun rw _ _ => interval_ashr rw);
+        [exact Hxs|exact Heval|].
+      intros. eapply (interval_binary_semantics bvashr BAshr interval_ashr);
+        [reflexivity|exact Sound.interval_ashr_sound|eassumption|eassumption|eassumption].
+    - eapply interval_entry2_sound with (f := fun _ _ _ => interval_eq);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_comparison_semantics bveq CEq (fun _ => interval_eq));
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy.
+      cbn [eval_comparison_tag]. rewrite (wrap_id w x' (proj1 Hx)), (wrap_id w y' (proj1 Hy)).
+      now apply (Sound.interval_eq_sound w w).
+    - eapply interval_entry2_sound with (f := fun _ _ _ a b => interval_bool_not (interval_eq a b));
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_comparison_semantics bvne CNe
+        (fun _ a b => interval_bool_not (interval_eq a b)));
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy.
+      cbn [eval_comparison_tag]. rewrite (wrap_id w x' (proj1 Hx)), (wrap_id w y' (proj1 Hy)).
+      apply Sound.interval_bool_not_sound. now apply (Sound.interval_eq_sound w w).
+    - eapply interval_entry2_sound with (f := fun _ _ _ => interval_ult);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_comparison_semantics bvult CUlt (fun _ => interval_ult));
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy.
+      cbn [eval_comparison_tag].
+      rewrite Fun.wult_value, (wrap_id w x' (proj1 Hx)), (wrap_id w y' (proj1 Hy)).
+      now apply (Sound.interval_ult_sound w w).
+    - eapply interval_entry2_sound with (f := fun _ _ _ => interval_ule);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_comparison_semantics bvule CUle (fun _ => interval_ule));
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros w a' b' x' y' Hx Hy.
+      cbn [eval_comparison_tag].
+      rewrite Fun.wule_value, (wrap_id w x' (proj1 Hx)), (wrap_id w y' (proj1 Hy)).
+      now apply (Sound.interval_ule_sound w w).
+    - eapply interval_entry2_sound with (f := fun _ w _ => interval_signed_compare w true);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_comparison_semantics bvslt CSlt
+        (fun w => interval_signed_compare w true));
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros. cbn [eval_comparison_tag]. rewrite Fun.wslt_value.
+      now apply (Sound.interval_signed_compare_sound _ _ _ _ _ _ true).
+    - eapply interval_entry2_sound with (f := fun _ w _ => interval_signed_compare w false);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      eapply (interval_comparison_semantics bvsle CSle
+        (fun w => interval_signed_compare w false));
+        [reflexivity| |exact Ha|exact Hb|exact Hr].
+      intros. cbn [eval_comparison_tag]. rewrite Fun.wsle_value.
+      now apply (Sound.interval_signed_compare_sound _ _ _ _ _ _ false).
+    - eapply interval_entry2_sound with (f := fun rw _ w => interval_concat rw w);
+        [exact Hxs|exact Heval|].
+      intros wa wb a b x y Ha Hb Hr.
+      rewrite eval_op_concat, (wrap_id wa x (proj1 Ha)), (wrap_id wb y (proj1 Hb)) in Hr.
+      inversion Hr; subst. now apply (Sound.interval_concat_sound _ wa wb).
+    - eapply interval_ite_entry_sound; [exact Hxs|exact Heval].
+  Qed.
+
+  (** A successful point test identifies every represented concrete word. *)
+  Local Lemma interval_is_point_sound (w : width) i z value :
+    interval_pgamma w i value -> interval_is_point i z = true -> value = z.
+  Proof.
+    intros Hi Hpoint. unfold interval_is_point in Hpoint.
+    destruct (interval_finite_helper i) as [[lo hi]|] eqn:Hfinite; [|discriminate].
+    apply andb_true_iff in Hpoint as [Hlo Hhi]. apply Z.eqb_eq in Hlo. apply Z.eqb_eq in Hhi.
+    pose proof (Sound.interval_finite_sound w i lo hi value Hi Hfinite). lia.
+  Qed.
+
+  (** Extension and truncation retain the original operand under a rewrapped result fact. *)
+  Local Lemma interval_bwd1_sound o (rw w : width) q a cs z :
+    (exists extra, o = bvzext extra) \/ (exists target, o = bvtrunc target) ->
+    Forall2 (fun wp c => fst wp = fst c /\
+      interval_pgamma (fst wp) (snd wp) (snd c)) [(w, a)] cs ->
+    eval_op o cs = Some (rw, z) -> interval_pgamma rw q z ->
+    Forall2 (fun wp c => interval_pgamma (fst wp) (snd wp) (snd c))
+      (combine [w] (interval_bwd1 rw q [(w, a)])) cs.
+  Proof.
+    intros Hkind Hinputs Heval Hq.
+    inversion Hinputs as [|wp [v x] tail values [Hwidth Ha] Htail]; subst.
+    inversion Htail; subst. change (w = v) in Hwidth. subst v.
+    constructor; [|constructor]. cbn [interval_bwd1 combine fst snd].
+    apply Sound.interval_assume_rewrap_sound; [now apply Sound.interval_clip_sound|].
+    destruct Hkind as [[extra ->]|[target ->]].
+    - rewrite eval_op_zext, (wrap_id w x (proj1 Ha)) in Heval.
+      inversion Heval; subst. exact Hq.
+    - rewrite eval_op_trunc in Heval. destruct (Pos.leb target w); [|discriminate].
+      rewrite (wrap_id w x (proj1 Ha)) in Heval. inversion Heval; subst. exact Hq.
+  Qed.
+
+  (** Pair refinement retains operands whose checked evaluation satisfies the result fact. *)
+  Local Lemma interval_assume_pair_sound o (w v : width) a b q x y (rw : width) z :
+    interval_pgamma w a x -> interval_pgamma v b y -> interval_pgamma rw q z ->
+    eval_op o [(w, x); (v, y)] = Some (rw, z) ->
+    interval_pgamma w (fst (interval_assume_pair o w a b q)) x /\
+    interval_pgamma v (snd (interval_assume_pair o w a b q)) y.
+  Proof.
+    intros Ha Hb Hq Heval. destruct o; try (solve [split; assumption]).
+    all: assert (Hwv : w = v) by
+      (match type of Heval with
+       | eval_op ?o _ = _ =>
+         first
+           [ eapply (eval_op_fun2_width o); [reflexivity|exact Heval]
+           | eapply (eval_op_cmp_width o); [reflexivity|exact Heval] ]
+       end); subst v.
+    - rewrite (eval_op_fun2 bvadd w x y BAdd eq_refl) in Heval.
+      cbn [eval_binary_tag] in Heval.
+      inversion Heval; subst rw z. rewrite Fun.wadd_value in Hq.
+      now apply Sound.interval_assume_add_sound.
+    - rewrite (eval_op_fun2 bvsub w x y BSub eq_refl) in Heval.
+      cbn [eval_binary_tag] in Heval.
+      inversion Heval; subst rw z. rewrite Fun.wsub_value in Hq.
+      now apply Sound.interval_assume_sub_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bveq w x y CEq eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [|discriminate].
+        apply Z.eqb_eq in Heq. subst y. now apply Sound.interval_assume_equal_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [discriminate|].
+        apply Z.eqb_neq in Heq. now apply Sound.interval_assume_neq_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvne w x y CNe eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 0) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 0 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [|discriminate].
+        apply Z.eqb_eq in Heq. subst y. now apply Sound.interval_assume_equal_sound.
+      + destruct (interval_is_point q 1) eqn:Hpoint1; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 1 z Hq Hpoint1) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [discriminate|].
+        apply Z.eqb_neq in Heq. now apply Sound.interval_assume_neq_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvult w x y CUlt eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wult_value in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb x y) eqn:Hlt; [|discriminate].
+        apply Z.ltb_lt in Hlt. now apply Sound.interval_assume_ult_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb x y) eqn:Hlt; [discriminate|].
+        apply Z.ltb_ge in Hlt.
+        destruct (Sound.interval_assume_ule_sound w w b a y x Hb Ha Hlt) as [Hfirst Hsecond].
+        split; assumption.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvule w x y CUle eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wule_value in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb x y) eqn:Hle; [|discriminate].
+        apply Z.leb_le in Hle. now apply Sound.interval_assume_ule_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb x y) eqn:Hle; [discriminate|].
+        apply Z.leb_gt in Hle.
+        destruct (Sound.interval_assume_ult_sound w w b a y x Hb Ha Hle) as [Hfirst Hsecond].
+        split; assumption.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvslt w x y CSlt eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wslt_value in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb (signed w x) (signed w y)) eqn:Hlt;
+          [|discriminate]. now apply Sound.interval_assume_signed_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb (signed w x) (signed w y)) eqn:Hlt;
+          [discriminate|]. now apply Sound.interval_assume_signed_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvsle w x y CSle eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wsle_value in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb (signed w x) (signed w y)) eqn:Hle;
+          [|discriminate]. now apply Sound.interval_assume_signed_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb (signed w x) (signed w y)) eqn:Hle;
+          [discriminate|]. now apply Sound.interval_assume_signed_sound.
+  Qed.
+
+  (** Binary backward dispatch preserves both clipped operands at their original widths. *)
+  Local Lemma interval_bwd2_sound o (rw wa wb : width) q a b cs z :
+    Forall2 (fun wp c => fst wp = fst c /\
+      interval_pgamma (fst wp) (snd wp) (snd c)) [(wa, a); (wb, b)] cs ->
+    eval_op o cs = Some (rw, z) -> interval_pgamma rw q z ->
+    Forall2 (fun wp c => interval_pgamma (fst wp) (snd wp) (snd c))
+      (combine [wa; wb] (interval_bwd2 o rw q [(wa, a); (wb, b)])) cs.
+  Proof.
+    intros Hinputs Heval Hq.
+    inversion Hinputs as [|wp [wx x] tail values [Hwa Ha] Htail]; subst.
+    inversion Htail as [|wp [wy y] tail' values' [Hwb Hb] Hlast]; subst.
+    inversion Hlast; subst.
+    change (wa = wx) in Hwa. change (wb = wy) in Hwb. subst wx wy.
+    pose proof (interval_assume_pair_sound o wa wb
+      (interval_clip wa a) (interval_clip wb b) q x y rw z
+      (Sound.interval_clip_sound wa a x Ha) (Sound.interval_clip_sound wb b y Hb) Hq Heval)
+      as [Hleft Hright].
+    constructor; [exact Hleft|constructor; [exact Hright|constructor]].
+  Qed.
+
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -1009,7 +1460,26 @@ Module IntervalWordTable (L : WORD_LANGUAGE) (T : THRESHOLDS) (Scalar : INTERVAL
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted. (* CONVERT: interval_table_laws: Unexpected name (no introduction patterns were expected in the *)
+  Proof.
+    intros o rw q wps ys cs z Hentry Hxs Heval Hq.
+    apply interval_inputs_sound in Hxs. apply interval_payload_spec in Hq.
+    assert (Hresult : Forall2 (fun wp c =>
+      interval_pgamma (fst wp) (snd wp) (snd c)) (combine (map fst wps) ys) cs).
+    { destruct wps as [|[wa a] [|[wb b] [|extra rest]]];
+        destruct o; cbn [wbwd] in Hentry; try discriminate; inversion Hentry; subst ys.
+      all: try (match type of Heval with
+        | L.eval_op ?o _ = _ =>
+          exact (interval_bwd2_sound o rw wa wb q a b cs z Hxs Heval Hq)
+        end).
+      - eapply interval_bwd1_sound;
+          [left; eexists; reflexivity|exact Hxs|exact Heval|exact Hq].
+      - eapply interval_bwd1_sound;
+          [right; eexists; reflexivity|exact Hxs|exact Heval|exact Hq]. }
+    clear Hentry Hxs Heval Hq.
+    induction Hresult as [|wp c xs values Hhead Htail IH].
+    - constructor.
+    - constructor; [now apply interval_payload_spec|exact IH].
+  Qed.
 End IntervalWordTable.
 
 Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
