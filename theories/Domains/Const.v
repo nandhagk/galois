@@ -783,12 +783,406 @@ End ConstWordT.
 
 Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WORD_TABLE L W.
   Include ConstWordTableCode L W.
+  Local Open Scope Z_scope.
+
+  (** Flat payload meaning does not depend on the surrounding width. *)
+  Local Lemma pgamma_width : forall w v a z,
+    W.pgamma w a z <-> W.pgamma v a z.
+  Proof.
+    intros w v a z. rewrite !W.F_pgamma_const. reflexivity.
+  Qed.
+
+  (** A payload representing a word is already normalized at that word's width. *)
+  Local Lemma normalise_id : forall w a z,
+    L.is_word w z -> W.pgamma w a z -> normalise w a = a.
+  Proof.
+    intros w [|a|] z Hz Ha; try reflexivity.
+    apply W.F_pgamma_const in Ha. cbn in Ha. subst z.
+    cbn [normalise]. unfold wrap_fast.
+    rewrite ConstWordFast.wrap_fast_agrees, wrap_id by exact Hz. reflexivity.
+  Qed.
+
+  (** Normalization preserves every operand in a represented word list. *)
+  Local Lemma normalise_operands_id : forall xs cs,
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs -> normalise_operands xs = xs.
+  Proof.
+    intros xs cs Hxs. induction Hxs as [|[w a] [v z] xs cs Ha Hxs IH].
+    - reflexivity.
+    - destruct Ha as [Hw [Hz Ha]]. cbn in Hw, Hz, Ha. subst v.
+      cbn [normalise_operands map fst snd].
+      rewrite (normalise_id w a z Hz Ha). f_equal. exact IH.
+  Qed.
+
+  (** A recognized constant identifies the represented integer. *)
+  Local Lemma const_is_sound : forall w a z c,
+    W.pgamma w a z -> const_is a c = true -> z = c.
+  Proof.
+    intros w [|a|] z c Ha His; apply W.F_pgamma_const in Ha;
+      cbn [const_is] in His; cbn in Ha; try contradiction; try discriminate.
+    apply Z.eqb_eq in His. congruence.
+  Qed.
+
+  (** Recognizing either operand supplies the corresponding constant equation. *)
+  Local Lemma const_either : forall w a b x y c,
+    W.pgamma w a x -> W.pgamma w b y ->
+    const_is a c || const_is b c = true -> x = c \/ y = c.
+  Proof.
+    intros w a b x y c Ha Hb Htest. apply orb_true_iff in Htest as [Htest|Htest].
+    - left. exact (const_is_sound w a x c Ha Htest).
+    - right. exact (const_is_sound w b y c Hb Htest).
+  Qed.
+
+  (** Bitwise conjunction with zero returns zero. *)
+  Local Lemma const_zero_bits : forall w x, is_word w x -> wand w 0 x = 0.
+  Proof.
+    intros w x Hx. apply (word_ext w); [apply wand_is_word|apply zero_is_word|].
+    intros i Hi. rewrite testbit_wand by (auto using zero_is_word; lia).
+    now rewrite !Z.bits_0.
+  Qed.
+
+  (** Bitwise disjunction with the all-ones word returns that word. *)
+  Local Lemma const_ones_bits : forall w x,
+    is_word w x -> wor w (modulus w - 1) x = modulus w - 1.
+  Proof.
+    intros w x Hx. apply (word_ext w); [apply wor_is_word|apply ones_is_word|].
+    intros i Hi. rewrite testbit_wor by (auto using ones_is_word; lia).
+    rewrite all_ones_bits by exact Hi.
+    destruct (i <? Zpos w) eqn:Hlow; cbn; [reflexivity|].
+    apply Z.ltb_ge in Hlow. exact (word_bits_high w x i Hx Hlow).
+  Qed.
+
+  (** Multiplication, shifts and unsigned remainder preserve a zero left operand. *)
+  Local Lemma const_zero_ops : forall w y, is_word w y ->
+    wmul w 0 y = 0 /\ wshl w 0 y = 0 /\ wlshr w 0 y = 0 /\
+    washr w 0 y = 0 /\ wurem w 0 y = 0.
+  Proof.
+    intros w y Hy.
+    assert (Hpow : 2 ^ wrap w y <> 0).
+    { pose proof (wrap_is_word w y) as [Hnonnegative Hupper].
+      apply Z.pow_nonzero; lia. }
+    rewrite wmul_value, wshl_value, wlshr_value, washr_value, wurem_mod.
+    rewrite wrap_0, msb_zero, signed_zero, Z.mul_0_l, wrap_0.
+    rewrite Z.div_0_l by exact Hpow. rewrite wrap_0.
+    split; [reflexivity|].
+    destruct (Zpos w <=? wrap w y); cbn; repeat split; try reflexivity.
+    all: destruct (Z.eq_dec (wrap w y) 0) as [-> | Hz];
+      [reflexivity|now apply Z.mod_0_l].
+  Qed.
+
+  (** Each successful shortcut is an annihilator for the concrete operation. *)
+  Local Lemma shortcut_at_width : forall o w a b x y rw z c,
+    is_word w x -> is_word w y -> W.pgamma w a x -> W.pgamma w b y ->
+    eval_op o [(w, x); (w, y)] = Some (rw, z) ->
+    shortcut o (w, a) (w, b) = Some c -> z = c.
+  Proof.
+    intros o w a b x y rw z c Hx Hy Ha Hb Heval Hshortcut.
+    unfold shortcut in Hshortcut. cbn [fst snd] in Hshortcut.
+    rewrite (normalise_id w a x Hx Ha), (normalise_id w b y Hy Hb) in Hshortcut.
+    destruct o; cbn [fst snd] in Hshortcut; try discriminate.
+    all: repeat match type of Hshortcut with
+      | (if ?test then _ else _) = _ => destruct test eqn:Htest; [|discriminate]
+      end; inversion Hshortcut; subst c.
+    - pose proof (const_either w a b x y 0 Ha Hb Htest) as Hzero.
+      rewrite (eval_op_fun2 bvmul w x y BMul eq_refl) in Heval.
+      inversion Heval; subst rw z. destruct Hzero as [-> | ->].
+      + exact (proj1 (const_zero_ops w y Hy)).
+      + rewrite wmul_comm. exact (proj1 (const_zero_ops w x Hx)).
+    - apply (const_is_sound w a x 0 Ha) in Htest. subst x.
+      rewrite (eval_op_fun2 bvurem w 0 y BUrem eq_refl) in Heval.
+      inversion Heval; subst rw z.
+      exact (proj2 (proj2 (proj2 (proj2 (const_zero_ops w y Hy))))).
+    - pose proof (const_either w a b x y 0 Ha Hb Htest) as Hzero.
+      rewrite (eval_op_fun2 bvand w x y BAnd eq_refl) in Heval.
+      inversion Heval; subst rw z. destruct Hzero as [-> | ->].
+      + now apply const_zero_bits.
+      + rewrite wand_comm. now apply const_zero_bits.
+    - pose proof (const_either w a b x y _ Ha Hb Htest) as Hones.
+      rewrite (eval_op_fun2 bvor w x y BOr eq_refl) in Heval.
+      inversion Heval; subst rw z. destruct Hones as [-> | ->].
+      + now apply const_ones_bits.
+      + rewrite wor_comm. now apply const_ones_bits.
+    - apply (const_is_sound w a x 0 Ha) in Htest. subst x.
+      rewrite (eval_op_fun2 bvshl w 0 y BShl eq_refl) in Heval.
+      inversion Heval; subst rw z. exact (proj1 (proj2 (const_zero_ops w y Hy))).
+    - apply (const_is_sound w a x 0 Ha) in Htest. subst x.
+      rewrite (eval_op_fun2 bvlshr w 0 y BLshr eq_refl) in Heval.
+      inversion Heval; subst rw z. exact (proj1 (proj2 (proj2 (const_zero_ops w y Hy)))).
+    - apply (const_is_sound w a x 0 Ha) in Htest. subst x.
+      rewrite (eval_op_fun2 bvashr w 0 y BAshr eq_refl) in Heval.
+      inversion Heval; subst rw z.
+      exact (proj1 (proj2 (proj2 (proj2 (const_zero_ops w y Hy))))).
+  Qed.
+
+  (** A successful shortcut identifies the result on its represented operands. *)
+  Lemma shortcut_sound : forall o a b k cs rw z,
+    shortcut o a b = Some k ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) [a; b] cs ->
+    L.eval_op o cs = Some (rw, z) -> z = k.
+  Proof.
+    intros o [w a] [v b] k cs rw z Hshortcut Hxs Heval.
+    inversion Hxs as [|? [wx x] ? ? Hhead Htail]; subst.
+    inversion Htail as [|? [vy y] ? ? Hhead' Hnil]; subst. inversion Hnil; subst.
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]].
+    cbn in Hwx, Hvy, Ha, Hb. subst wx vy.
+    change (eval_op o [(w, x); (v, y)] = Some (rw, z)) in Heval.
+    assert (Hw : w = v).
+    { destruct o; cbn [shortcut] in Hshortcut; try discriminate;
+        match type of Heval with
+        | eval_op ?op _ = _ =>
+          eapply (eval_op_fun2_width op _ w v x y (rw, z));
+            [reflexivity|exact Heval]
+        end. }
+    subst v. exact (shortcut_at_width o w a b x y rw z k Hx Hy Ha Hb Heval Hshortcut).
+  Qed.
+
+  (** Adding and then subtracting the same operand recovers a word. *)
+  Local Lemma const_add_inverse : forall w x y,
+    is_word w x -> wsub w (wadd w x y) y = x.
+  Proof.
+    intros w x y Hx. rewrite wsub_value, wadd_value, wrap_sub, wrap_wrap, <- wrap_sub.
+    replace (x + y - y) with x by ring. now apply wrap_id.
+  Qed.
+
+  (** Adding back a subtracted operand recovers a word. *)
+  Local Lemma const_sub_inverse_left : forall w x y,
+    is_word w x -> wadd w (wsub w x y) y = x.
+  Proof.
+    intros w x y Hx. rewrite wadd_value, wsub_value, wrap_add, wrap_wrap, <- wrap_add.
+    replace (x - y + y) with x by ring. now apply wrap_id.
+  Qed.
+
+  (** Subtracting the difference recovers the right operand. *)
+  Local Lemma const_sub_inverse_right : forall w x y,
+    is_word w y -> wsub w x (wsub w x y) = y.
+  Proof.
+    intros w x y Hy. rewrite !wsub_value, wrap_sub, wrap_wrap, <- wrap_sub.
+    replace (x - (x - y)) with y by ring. now apply wrap_id.
+  Qed.
+
+  (** Applying xor with the same word twice recovers the first word. *)
+  Local Lemma const_xor_inverse : forall w x y,
+    is_word w x -> wxor w (wxor w x y) y = x.
+  Proof.
+    intros w x y Hx. rewrite <- wxor_assoc, wxor_self.
+    apply (word_ext w); [apply wxor_is_word|exact Hx|].
+    intros i Hi. rewrite testbit_wxor by (auto using zero_is_word; lia).
+    now rewrite Z.bits_0, xorb_false_r.
+  Qed.
+
+  (** Word negation is an involution on normalized words. *)
+  Local Lemma const_neg_inverse : forall w x,
+    is_word w x -> wneg w (wneg w x) = x.
+  Proof.
+    intros w x Hx. rewrite !wneg_value, wrap_opp.
+    replace (- - x) with x by ring. now apply wrap_id.
+  Qed.
+
+  (** Applying an inverse to a known operand retains its computed preimage. *)
+  Local Lemma inverse_sound : forall w f a x y,
+    W.pgamma w a y -> x = f y -> W.pgamma w (inverse f a) x.
+  Proof.
+    intros w f [|a|] x y Ha Hxy; apply W.F_pgamma_const in Ha;
+      apply W.F_pgamma_const; cbn [inverse] in *;
+      try contradiction; try exact I. now subst y.
+  Qed.
+
+  (** The table may meet at the result width because flat meaning ignores widths. *)
+  Local Lemma meet_at_width : forall w rw a b z,
+    W.pgamma w a z -> W.pgamma w b z -> W.pgamma w (W.pmeet rw a b) z.
+  Proof.
+    intros w rw a b z Ha Hb. apply (proj1 (pgamma_width rw w _ _)).
+    apply W.pgamma_meet; apply (proj1 (pgamma_width w rw _ _)); assumption.
+  Qed.
+
+  (** Unary inverse entries retain their represented operand. *)
+  Local Lemma backward_one_values_sound : forall o rw q xs cs z,
+    (o = bvnot \/ o = bvneg) -> length xs = 1%nat ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) (backward_one_values o rw q xs)) cs.
+  Proof.
+    intros o rw q xs cs z Ho Hlen Hxs Heval Hq.
+    destruct xs as [|[w a] [|wp rest]]; cbn in Hlen; try discriminate.
+    inversion Hxs as [|? [v x] ? ? Hhead Hnil]; subst. inversion Hnil; subst.
+    destruct Hhead as [Hw [Hx Ha]]. cbn in Hw, Hx, Ha. subst v.
+    change (eval_op o [(w, x)] = Some (rw, z)) in Heval.
+    apply W.F_pgamma_const in Hq. destruct q as [|r|]; [contradiction| |].
+    - cbn in Hq. subst r. destruct Ho as [-> | ->].
+      + rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
+        inversion Heval; subst rw z. cbn [backward_one_values map combine fst snd].
+        constructor; [|constructor]. apply W.pgamma_meet; [exact Ha|].
+        apply W.F_pgamma_const. cbn. symmetry. now apply wnot_involutive.
+      + rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
+        inversion Heval; subst rw z. cbn [backward_one_values map combine fst snd].
+        constructor; [|constructor]. apply W.pgamma_meet; [exact Ha|].
+        apply W.F_pgamma_const. cbn. symmetry. now apply const_neg_inverse.
+    - cbn [backward_one_values map combine fst snd]. constructor; [exact Ha|constructor].
+  Qed.
+
+  (** Pairing two payload facts preserves both operand positions. *)
+  Local Lemma pair_sound : forall w a b x y,
+    W.pgamma w a x -> W.pgamma w b y ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      [(w, a); (w, b)] [(w, x); (w, y)].
+  Proof.
+    intros w a b x y Ha Hb. constructor; [exact Ha|].
+    constructor; [exact Hb|constructor].
+  Qed.
+
+  (** Successful equality constraints retain both operands at their original width. *)
+  Local Lemma backward_comparison_sound : forall o rw w a b x y z,
+    (o = bveq \/ o = bvne) -> is_word w x -> is_word w y ->
+    W.pgamma w a x -> W.pgamma w b y ->
+    eval_op o [(w, x); (w, y)] = Some (rw, z) ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine [w; w] (backward_two_values o rw (FVal z) [(w, a); (w, b)]))
+      [(w, x); (w, y)].
+  Proof.
+    intros o rw w a b x y z Ho Hx Hy Ha Hb Heval. destruct Ho as [-> | ->].
+    - rewrite (eval_op_cmp bveq w x y CEq eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite !wrap_id in Heval by assumption.
+      destruct (x =? y) eqn:Hxy; inversion Heval; subst rw z;
+        cbn [backward_two_values combine fst snd].
+      + apply Z.eqb_eq in Hxy. subst y. apply pair_sound; apply meet_at_width; assumption.
+      + apply pair_sound; assumption.
+    - rewrite (eval_op_cmp bvne w x y CNe eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite !wrap_id in Heval by assumption.
+      destruct (x =? y) eqn:Hxy; inversion Heval; subst rw z;
+        cbn [backward_two_values combine fst snd].
+      + apply Z.eqb_eq in Hxy. subst y. apply pair_sound; apply meet_at_width; assumption.
+      + apply pair_sound; assumption.
+  Qed.
+
+  (** Add, subtract and xor inverses retain their represented operands. *)
+  Local Lemma backward_arithmetic_sound : forall o rw w a b x y z,
+    (o = bvadd \/ o = bvsub \/ o = bvxor) -> is_word w x -> is_word w y ->
+    W.pgamma w a x -> W.pgamma w b y ->
+    eval_op o [(w, x); (w, y)] = Some (rw, z) ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine [w; w] (backward_two_values o rw (FVal z) [(w, a); (w, b)]))
+      [(w, x); (w, y)].
+  Proof.
+    intros o rw w a b x y z Ho Hx Hy Ha Hb Heval. destruct Ho as [-> | [-> | ->]].
+    - rewrite (eval_op_fun2 bvadd w x y BAdd eq_refl) in Heval.
+      inversion Heval; subst rw z.
+      cbn [backward_two_values inverse_pair combine fst snd eval_binary_tag].
+      apply pair_sound; apply W.pgamma_meet; try assumption.
+      + apply (inverse_sound w _ b x y Hb). symmetry. now apply const_add_inverse.
+      + apply (inverse_sound w _ a y x Ha). rewrite wadd_comm.
+        symmetry. now apply const_add_inverse.
+    - rewrite (eval_op_fun2 bvsub w x y BSub eq_refl) in Heval.
+      inversion Heval; subst rw z.
+      cbn [backward_two_values inverse_pair combine fst snd eval_binary_tag].
+      apply pair_sound; apply W.pgamma_meet; try assumption.
+      + apply (inverse_sound w _ b x y Hb). symmetry. now apply const_sub_inverse_left.
+      + apply (inverse_sound w _ a y x Ha). symmetry. now apply const_sub_inverse_right.
+    - rewrite (eval_op_fun2 bvxor w x y BXor eq_refl) in Heval.
+      inversion Heval; subst rw z.
+      cbn [backward_two_values inverse_pair combine fst snd eval_binary_tag].
+      apply pair_sound; apply W.pgamma_meet; try assumption.
+      + apply (inverse_sound w _ b x y Hb). symmetry. now apply const_xor_inverse.
+      + apply (inverse_sound w _ a y x Ha). rewrite (wxor_comm w x y).
+        symmetry. now apply const_xor_inverse.
+  Qed.
+
+  (** Binary inverse entries retain both represented operands. *)
+  Local Lemma backward_two_values_sound : forall o rw q xs cs z,
+    (o = bveq \/ o = bvne \/ o = bvadd \/ o = bvsub \/ o = bvxor) ->
+    length xs = 2%nat ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) (backward_two_values o rw q xs)) cs.
+  Proof.
+    intros o rw q xs cs z Ho Hlen Hxs Heval Hq.
+    destruct xs as [|[w a] [|[v b] [|wp rest]]]; cbn in Hlen; try discriminate.
+    inversion Hxs as [|? [wx x] ? ? Hhead Htail]; subst.
+    inversion Htail as [|? [vy y] ? ? Hhead' Hnil]; subst. inversion Hnil; subst.
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]].
+    cbn in Hwx, Hvy, Hx, Hy, Ha, Hb. subst wx vy.
+    change (eval_op o [(w, x); (v, y)] = Some (rw, z)) in Heval.
+    assert (Hw : w = v).
+    { destruct Ho as [-> | [-> | [-> | [-> | ->]]]];
+        match type of Heval with
+        | eval_op ?op _ = _ =>
+          first [eapply (eval_op_fun2_width op _ w v x y (rw, z));
+              [reflexivity|exact Heval] |
+            eapply (eval_op_cmp_width op _ w v x y (rw, z));
+              [reflexivity|exact Heval]]
+        end. }
+    subst v. apply W.F_pgamma_const in Hq. destruct q as [|r|]; [contradiction| |].
+    - cbn in Hq. subst r.
+      assert (Hcases : (o = bveq \/ o = bvne) \/
+        (o = bvadd \/ o = bvsub \/ o = bvxor)) by tauto.
+      destruct Hcases as [Hcomparison|Harithmetic].
+      + eapply backward_comparison_sound; eassumption.
+      + eapply backward_arithmetic_sound; eassumption.
+    - cbn [backward_two_values map combine fst snd].
+      constructor; [exact Ha|]. constructor; [exact Hb|constructor].
+  Qed.
+
+  (** The checked unary wrapper retains every represented operand. *)
+  Lemma backward_one_sound : forall o rw q xs ys cs z,
+    backward_one o rw q xs = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) ys) cs.
+  Proof.
+    intros o rw q xs ys cs z Hentry Hxs Heval Hq.
+    pose proof (proj1 (L.eval_op_is_word o cs rw z Heval)) as Hz.
+    unfold backward_one in Hentry.
+    rewrite (normalise_id rw q z Hz Hq),
+      (normalise_operands_id xs cs Hxs) in Hentry.
+    destruct o; destruct xs as [|a [|b rest]]; try discriminate;
+      injection Hentry as <-.
+    all: match type of Heval with
+      | L.eval_op ?op _ = _ =>
+        eapply (backward_one_values_sound op rw q [a] cs z)
+      end; [tauto|reflexivity|exact Hxs|exact Heval|exact Hq].
+  Qed.
+
+  (** The checked binary wrapper retains every represented operand. *)
+  Lemma backward_two_sound : forall o rw q xs ys cs z,
+    backward_two o rw q xs = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) xs cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst xs) ys) cs.
+  Proof.
+    intros o rw q xs ys cs z Hentry Hxs Heval Hq.
+    pose proof (proj1 (L.eval_op_is_word o cs rw z Heval)) as Hz.
+    unfold backward_two in Hentry.
+    rewrite (normalise_id rw q z Hz Hq),
+      (normalise_operands_id xs cs Hxs) in Hentry.
+    destruct o; destruct xs as [|a [|b [|c rest]]]; try discriminate;
+      injection Hentry as <-.
+    all: match type of Heval with
+      | L.eval_op ?op _ = _ =>
+        eapply (backward_two_values_sound op rw q [a; b] cs z)
+      end; [tauto|reflexivity|exact Hxs|exact Heval|exact Hq].
+  Qed.
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* CONVERT: const_table_laws: No product even after head-reduction. *)
+  Proof.
+    intros o rw wps cs z r Hentry Hxs Heval. unfold wfwd in Hentry.
+    destruct o; destruct wps as [|a [|b [|c rest]]]; try discriminate.
+    all: match type of Hentry with
+      | context [shortcut ?op ?a ?b] =>
+        destruct (shortcut op a b) as [k|] eqn:Hshortcut
+      end; injection Hentry as <-; apply W.F_pgamma_const; try exact I.
+    all: eapply shortcut_sound; eassumption.
+  Qed.
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -796,7 +1190,12 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst wps) ys) cs.
-  Proof. Admitted. (* CONVERT: const_table_laws: No product even after head-reduction. *)
+  Proof.
+    intros o rw q wps ys cs z Hentry Hxs Heval Hq. unfold wbwd in Hentry.
+    destruct o; destruct wps as [|a [|b [|c rest]]]; try discriminate.
+    all: first [eapply backward_one_sound; eassumption |
+      eapply backward_two_sound; eassumption].
+  Qed.
 End ConstWordTable.
 
 Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
@@ -847,14 +1246,18 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
 
   (** Fast wrapping preserves the specified modular reduction. *)
   Lemma F_wrap_fast : forall w z, wrap_fast w z = L.wrap w z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply ConstWordFast.wrap_fast_agrees.
+  Qed.
 
   Lemma F1_shortcut_sound : forall o a b z cs rw v,
     shortcut o a b = Some z ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) (a :: b :: nil) cs ->
     L.eval_op o cs = Some (rw, v) -> v = z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply shortcut_sound.
+  Qed.
   Lemma F2_backward_one_sound : forall o rw q xs ys cs z,
     backward_one o rw q xs = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -862,7 +1265,9 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply backward_one_sound.
+  Qed.
   Lemma F3_backward_two_sound : forall o rw q xs ys cs z,
     backward_two o rw q xs = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -870,7 +1275,9 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
       (combine (map fst xs) ys) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply backward_two_sound.
+  Qed.
   Lemma T1_shortcut : forall o a b, (T_shortcut o a b <=
     k_const_word * N.of_nat
       (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2 +
