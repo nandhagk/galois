@@ -307,6 +307,171 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     unfold c_val. lia.
   Qed.
 
+  Local Lemma nat_bound : forall n m, (n <= m)%nat -> (N.of_nat n <= N.of_nat m)%N.
+  Proof.
+    intros n m Hle. lia.
+  Qed.
+
+  (** One reduction has the advertised affine size growth. *)
+  Lemma reduce_size_bound : forall x,
+    (N.of_nat (size (R.reduce x) + 1) <= k_growth * N.of_nat (size x + 1))%N.
+  Proof.
+    intros [a b]. pose proof (R.reduce_size_le a b) as Hsize.
+    change (N.of_nat (size (R.reduce (a, b))) <=
+      R.c_reduce * N.of_nat (size (a, b) + 1))%N in Hsize.
+    set (budget := N.of_nat (size (a, b) + 1)) in *.
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    rewrite Nat2N.inj_add. unfold k_growth. rewrite N.mul_add_distr_r. lia.
+  Qed.
+
+  (** Iterating reduction multiplies the affine size bound at each round. *)
+  Lemma iter_size_bound : forall n x,
+    (N.of_nat (size (Nat.iter n R.reduce x) + 1) <=
+      k_growth ^ N.of_nat n * N.of_nat (size x + 1))%N.
+  Proof.
+    intro n. induction n as [|n IH]; intro x.
+    - change (N.of_nat (size x + 1) <= 1 * N.of_nat (size x + 1))%N. lia.
+    - change (N.of_nat (size (R.reduce (Nat.iter n R.reduce x)) + 1) <=
+        k_growth ^ N.of_nat (S n) * N.of_nat (size x + 1))%N.
+      eapply N.le_trans; [apply reduce_size_bound|].
+      rewrite Nat2N.inj_succ, N.pow_succ_r by lia.
+      replace (k_growth * k_growth ^ N.of_nat n * N.of_nat (size x + 1))%N with
+        (k_growth * (k_growth ^ N.of_nat n * N.of_nat (size x + 1)))%N by ring.
+      now apply N.mul_le_mono_l.
+  Qed.
+
+  Local Lemma growth_power_pos : forall n, (1 <= k_growth ^ N.of_nat n)%N.
+  Proof.
+    intro n. replace 1%N with (k_growth ^ 0)%N by apply N.pow_0_r.
+    apply N.pow_le_mono_r; unfold k_growth; lia.
+  Qed.
+
+  Local Lemma iter_size_prefix : forall fuel n x, (n <= fuel)%nat ->
+    (N.of_nat (size (Nat.iter n R.reduce x) + 1) <=
+      k_growth ^ N.of_nat fuel * N.of_nat (size x + 1))%N.
+  Proof.
+    intros fuel n x Hn. eapply N.le_trans; [apply iter_size_bound|].
+    apply N.mul_le_mono_r. apply N.pow_le_mono_r; unfold k_growth; lia.
+  Qed.
+
+  Local Lemma iter_budget_pos : forall fuel x,
+    (1 <= k_growth ^ N.of_nat fuel * N.of_nat (size x + 1))%N.
+  Proof.
+    intros fuel x. replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono.
+    - apply growth_power_pos.
+    - rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  (** The derived unary iterator pays two ticks per reduction step. *)
+  Lemma iter_clock_zero : forall x,
+    Nat.T_iter 0 R.reduce (fun x => R.T_reduce x) x = 2%N.
+  Proof.
+    intro x. time_unfold @Nat.T_iter. time_unfold @Datatypes.T_nat_rect.
+    time_cbn. reflexivity.
+  Qed.
+
+  Lemma iter_clock_succ : forall n x,
+    Nat.T_iter (S n) R.reduce (fun x => R.T_reduce x) x =
+      (Nat.T_iter n R.reduce (fun x => R.T_reduce x) x +
+        R.T_reduce (Nat.iter n R.reduce x) + 2)%N.
+  Proof.
+    intros n x.
+    set (rec_clock := Datatypes.T_nat_rect (fun _ : nat => (A.t * B.t)%type)
+      x (fun _ : nat => R.reduce) (fun _ a => (1 + R.T_reduce a)%N) n).
+    change (1 + (1 + (rec_clock + (1 + R.T_reduce (Nat.iter n R.reduce x)))) =
+      (1 + rec_clock) + R.T_reduce (Nat.iter n R.reduce x) + 2)%N.
+    ring.
+  Qed.
+
+  Local Lemma reduce_time_bound : forall x,
+    (R.T_reduce x <= R.c_reduce * N.of_nat (size x + 1))%N.
+  Proof.
+    intros [a b]. exact (R.T_reduce_le a b).
+  Qed.
+
+  (** Every prefix charges a size budget for the full configured fuel. *)
+  Lemma iter_clock_prefix : forall fuel n x, (n <= fuel)%nat ->
+    (Nat.T_iter n R.reduce (fun x => R.T_reduce x) x <=
+      (R.c_reduce + 2) * (N.of_nat n + 1) * k_growth ^ N.of_nat fuel *
+        N.of_nat (size x + 1))%N.
+  Proof.
+    intros fuel n x Hn. set (budget := (k_growth ^ N.of_nat fuel * N.of_nat (size x + 1))%N).
+    assert (Hbudget : (1 <= budget)%N) by apply iter_budget_pos.
+    assert (Hprefix : forall m, (m <= fuel)%nat ->
+      (Nat.T_iter m R.reduce (fun x => R.T_reduce x) x <=
+        (R.c_reduce + 2) * (N.of_nat m + 1) * budget)%N).
+    { intro m. induction m as [|m IH]; intro Hm.
+      - rewrite iter_clock_zero.
+        assert (Hfactor : (2 * budget <= (R.c_reduce + 2) * budget)%N).
+        { apply N.mul_le_mono_r. lia. }
+        change (2 <= (R.c_reduce + 2) * 1 * budget)%N. rewrite N.mul_1_r. lia.
+      - assert (Hprev : (m <= fuel)%nat) by lia. specialize (IH Hprev).
+        assert (Hcall : (R.T_reduce (Nat.iter m R.reduce x) <= R.c_reduce * budget)%N).
+        { eapply N.le_trans; [apply reduce_time_bound|]. apply N.mul_le_mono_l.
+          now apply iter_size_prefix. }
+        assert (Hstep : (R.T_reduce (Nat.iter m R.reduce x) + 2 <=
+          (R.c_reduce + 2) * budget)%N).
+        { rewrite N.mul_add_distr_r. lia. }
+        rewrite iter_clock_succ, time_of_nat_succ.
+        replace ((R.c_reduce + 2) * (N.of_nat m + 1 + 1) * budget)%N with
+          ((R.c_reduce + 2) * (N.of_nat m + 1) * budget +
+            (R.c_reduce + 2) * budget)%N by ring. lia. }
+    replace ((R.c_reduce + 2) * (N.of_nat n + 1) * k_growth ^ N.of_nat fuel *
+      N.of_nat (size x + 1))%N with
+      ((R.c_reduce + 2) * (N.of_nat n + 1) * budget)%N by (unfold budget; ring).
+    now apply Hprefix.
+  Qed.
+
+  Local Lemma rounds_positive : (1 <= k_rounds)%N.
+  Proof.
+    unfold k_rounds. rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  Local Lemma red_budget : forall budget,
+    ((R.c_reduce + 2) * budget + 4 * (PT.k_core * budget) + budget <=
+      16 * (PT.k_core + R.c_reduce + 1) * budget)%N.
+  Proof.
+    intro budget. replace
+      ((R.c_reduce + 2) * budget + 4 * (PT.k_core * budget) + budget)%N with
+      ((R.c_reduce + 2 + 4 * PT.k_core + 1) * budget)%N by ring.
+    apply N.mul_le_mono_r. lia.
+  Qed.
+
+  (** Reduction time includes both iteration growth and final bottom normalization. *)
+  Lemma red_time_bound : forall x,
+    (T_red x <= k_red_budget * N.of_nat (size x + 1))%N.
+  Proof.
+    intro x. set (budget := (k_rounds * k_iter * N.of_nat (size x + 1))%N).
+    assert (Hinput : (k_iter * N.of_nat (size x + 1) <= budget)%N).
+    { unfold budget. replace (k_iter * N.of_nat (size x + 1))%N with
+        (1 * (k_iter * N.of_nat (size x + 1)))%N at 1 by ring.
+      replace (k_rounds * k_iter * N.of_nat (size x + 1))%N with
+        (k_rounds * (k_iter * N.of_nat (size x + 1)))%N by ring.
+      apply N.mul_le_mono_r. exact rounds_positive. }
+    assert (Hbudget : (1 <= budget)%N).
+    { eapply N.le_trans; [apply (iter_budget_pos K.rounds x)|exact Hinput]. }
+    assert (Hiter : (Nat.T_iter K.rounds R.reduce (fun x => R.T_reduce x) x <=
+      (R.c_reduce + 2) * budget)%N).
+    { replace ((R.c_reduce + 2) * budget)%N with
+        ((R.c_reduce + 2) * (N.of_nat K.rounds + 1) *
+          k_growth ^ N.of_nat K.rounds * N.of_nat (size x + 1))%N
+        by (unfold budget, k_rounds, k_iter; rewrite !Nat2N.inj_add;
+          change (N.of_nat 1) with 1%N; ring).
+      apply iter_clock_prefix. lia. }
+    assert (Hnormal : (T_normalize (Nat.iter K.rounds R.reduce x) <=
+      4 * (PT.k_core * budget))%N).
+    { eapply N.le_trans; [apply PT.normalize_time_bound|].
+      replace (4 * (PT.k_core * budget))%N with (4 * PT.k_core * budget)%N by ring.
+      apply N.mul_le_mono_l.
+      eapply N.le_trans; [apply iter_size_bound|exact Hinput]. }
+    pose proof (red_budget budget) as Htotal.
+    replace (k_red_budget * N.of_nat (size x + 1))%N with
+      (16 * (PT.k_core + R.c_reduce + 1) * budget)%N
+      by (unfold k_red_budget, c_red, budget; ring).
+    time_unfold T_red. lia.
+  Qed.
+
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -395,7 +560,9 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Lemma T_red_le : forall a b,
     (T_red (a, b) <= c_red * N.of_nat (K.rounds + 1) *
       N.of_nat ((A.size a + B.size b + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. exact (red_time_bound (a, b)).
+  Qed.
   Lemma forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat (work (fst ox) (snd ox)))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
