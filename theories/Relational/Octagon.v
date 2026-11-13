@@ -5957,6 +5957,34 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     lia.
   Qed.
 
+  Definition half_unary (m : dbm) (i : K.t) : option Z :=
+    option_map Z.div2 (entry m i (flip i)).
+
+  Definition strong_view (m : dbm) (i j : K.t) : option Z :=
+    RelationalPathBounds.minimum (entry m i j)
+      (RelationalPathBounds.plus (half_unary m i) (half_unary m (flip j))).
+
+  Lemma half_unary_transport : forall m, coherent m ->
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z) ->
+    forall i k, RelationalPathBounds.below (half_unary m i)
+      (RelationalPathBounds.plus (entry m i k) (half_unary m k)).
+  Proof.
+    intros m Hcoh Htri i k. unfold half_unary.
+    destruct (entry m i k) as [a|] eqn:Hik;
+      destruct (entry m k (flip k)) as [b|] eqn:Hkb;
+      cbn [option_map RelationalPathBounds.plus RelationalPathBounds.below];
+      try (destruct (entry m i (flip i)); exact I).
+    destruct (Htri i (flip k) k a b Hik Hkb) as [d [Hikbar Hd]].
+    assert (Hbar : entry m (flip k) (flip i) = Some a).
+    { change (entry m (bar k) (bar i) = Some a).
+      rewrite <- (Hcoh i k). exact Hik. }
+    destruct (Htri i (flip i) (flip k) d a Hikbar Hbar)
+      as [c [Hic Hc]].
+    rewrite Hic. cbn [option_map RelationalPathBounds.below].
+    exact (unary_half_transport m Hcoh Htri i k a b c Hik Hkb Hic).
+  Qed.
+
   (** A successful tight closure is coherent after both numeric passes. *)
   Lemma coherent_tclose_reached : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
     tclose m = Reached m' -> coherent m'.
