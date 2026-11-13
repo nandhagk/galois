@@ -794,6 +794,33 @@ Module FiniteMapFacts (K : KEY) (M : MAP K).
       + split; assumption.
   Qed.
 
+  (** Deletion exposes the actual enumerated remainder and its optional removed binding. *)
+  Lemma remove_elements_decomposition : forall A (m : M.t A) k previous,
+    M.wf m -> M.get k m = previous ->
+    Permutation (M.elements m)
+      (option_list (option_map (pair k) previous) ++ M.elements (M.remove k m)).
+  Proof.
+    intros A m k previous Hwf Hprevious.
+    assert (Hremove : M.wf (M.remove k m)) by (now apply M.wf_remove).
+    assert (Hrest : forall q out, In (q, out) (M.elements (M.remove k m)) <->
+        M.get q m = Some out /\ q <> k).
+    { intros q out. rewrite M.elements_spec by exact Hremove.
+      apply remove_binding_iff. }
+    apply NoDup_Permutation.
+    - now apply elements_nodup_pairs.
+    - destruct previous as [before |]; cbn [option_map option_list app].
+      + constructor.
+        * intro Hin. apply Hrest in Hin. tauto.
+        * now apply elements_nodup_pairs.
+      + now apply elements_nodup_pairs.
+    - intros [q out]. rewrite M.elements_spec by exact Hwf.
+      destruct previous as [before |]; cbn [option_map option_list app In]; rewrite Hrest.
+      + destruct (K.eqb_spec q k) as [-> | Hneq].
+        * rewrite Hprevious. intuition congruence.
+        * intuition congruence.
+      + split; [intro Hget; split; [exact Hget | congruence] | tauto].
+  Qed.
+
 End FiniteMapFacts.
 
 (** * Allocation counts in the concrete union-find implementation *)
