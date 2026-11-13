@@ -744,6 +744,43 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     rewrite (matrix_ok_models _ v Hnext), (matrix_ok_models _ v Htight). exact Htight.
   Qed.
 
+  (** Removing both signed literals removes exactly one program variable. *)
+  Lemma get_remove_variable : forall A x i (m : M.t A),
+    M.get i (M.remove (x, true) (M.remove (x, false) m)) =
+    if X.eqb (fst i) x then None else M.get i m.
+  Proof.
+    intros A x [y sign] m. cbn [fst]. destruct (X.eqb_spec y x) as [Heq|Hneq].
+    - subst y. destruct sign.
+      + apply M.get_remove_same.
+      + rewrite M.get_remove_other by discriminate. apply M.get_remove_same.
+    - rewrite !M.get_remove_other by congruence. reflexivity.
+  Qed.
+
+  (** Forgetting removes all bounds whose source or destination mentions the variable. *)
+  Lemma entry_havoc : forall x m i j,
+    entry (M.merge (forget_row x)
+      (M.remove (x, true) (M.remove (x, false) m)) M.empty) i j =
+    if X.eqb (fst i) x then None else
+      if X.eqb (fst j) x then None else entry m i j.
+  Proof.
+    intros x m i j. unfold entry. rewrite M.get_merge by reflexivity.
+    rewrite M.get_empty, get_remove_variable.
+    destruct (X.eqb (fst i) x); [reflexivity|].
+    destruct (M.get i m) as [row|]; cbn [forget_row].
+    - apply get_remove_variable.
+    - destruct (X.eqb (fst j) x); reflexivity.
+  Qed.
+
+  (** Updating a variable leaves the value of every other signed literal unchanged. *)
+  Lemma vl_update_other : forall x st c i,
+    fst i <> x ->
+    vl (fun y => N.num (upd X.eqb st x c y)) i = vl (fun y => N.num (st y)) i.
+  Proof.
+    intros x st c [y sign] Hneq. cbn [fst] in Hneq.
+    unfold vl, upd. cbn [fst snd].
+    destruct (X.eqb_spec y x) as [Heq|Heq]; [contradiction|reflexivity].
+  Qed.
+
   (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
   Definition raw_entry (m : dbm) (p q : positive) : option Z :=
     M.find q (row_of (M.find p m)).
@@ -1154,7 +1191,13 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|m] st c Hmodel; [contradiction|].
+    intros i j d Hentry. rewrite entry_havoc in Hentry.
+    destruct (X.eqb_spec (fst i) x) as [Hi|Hi]; [discriminate Hentry|].
+    destruct (X.eqb_spec (fst j) x) as [Hj|Hj]; [discriminate Hentry|].
+    rewrite !vl_update_other by assumption. now apply Hmodel.
+  Qed.
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
@@ -1564,7 +1607,12 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
   Proof. Admitted. (* STUB *)
   Lemma coh_havoc : forall x s, coh s -> coh (havoc x s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|m] Hcoh; [exact I|]. intros i j.
+    rewrite !entry_havoc. cbn [bar fst snd].
+    destruct (X.eqb (fst i) x), (X.eqb (fst j) x); try reflexivity.
+    apply Hcoh.
+  Qed.
   Lemma coh_assume : forall g es s, coh s -> coh (assume g es s).
   Proof. Admitted. (* STUB *)
   Lemma coh_tclose : forall m, coherent m -> coh (tclose m).
@@ -1574,13 +1622,176 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   Proof. Admitted. (* PLAN-DEFECT: incoherent twins -100 and -2 stay unequal when d = 0. *)
+
+  (** Retrieving a row, with an empty fallback, preserves map consistency. *)
+  Lemma row_of_wf : forall m k,
+    dbm_wf m -> M.wf (row_of (M.get k m)).
+  Proof.
+    intros m k [_ Hrows]. rewrite M.get_find.
+    destruct (M.find (K.encode k) m) as [row|] eqn:Hrow; cbn [row_of].
+    - exact (Hrows (K.encode k) row Hrow).
+    - apply M.wf_empty.
+  Qed.
+
+  Lemma dbm_empty_wf : dbm_wf M.empty.
+  Proof.
+    split; [apply M.wf_empty|]. intros p row Hrow.
+    rewrite M.find_empty in Hrow. discriminate Hrow.
+  Qed.
+
+  (** Inserting a consistent row preserves consistency of the matrix. *)
+  Lemma dbm_set_wf : forall k row m,
+    dbm_wf m -> M.wf row -> dbm_wf (M.set k row m).
+  Proof.
+    intros k row m [Houter Hrows] Hrow. split.
+    - now apply M.wf_set.
+    - intros p next Hnext. rewrite M.find_set in Hnext.
+      destruct (Pos.eqb p (K.encode k)).
+      + injection Hnext as <-. exact Hrow.
+      + exact (Hrows p next Hnext).
+  Qed.
+
+  (** A row-wise update preserves consistency when every returned row does. *)
+  Lemma dbm_merge_wf : forall
+      (f : option (M.t Z) -> option (M.t Z) -> option (M.t Z)) m,
+    f None None = None -> dbm_wf m ->
+    (forall old row, M.wf old -> f (Some old) None = Some row -> M.wf row) ->
+    dbm_wf (M.merge f m M.empty).
+  Proof.
+    intros f m Hnone [Houter Hrows] Hf. split.
+    - apply M.wf_merge; [exact Houter|apply M.wf_empty].
+    - intros p row Hrow. rewrite M.find_merge in Hrow by exact Hnone.
+      rewrite M.find_empty in Hrow.
+      destruct (M.find p m) as [old|] eqn:Hold.
+      + eapply Hf; [exact (Hrows p old Hold)|exact Hrow].
+      + rewrite Hnone in Hrow. discriminate Hrow.
+  Qed.
+
+  (** Replacing rows from another consistent matrix retains consistent labels. *)
+  Lemma replace_wf : forall m fresh,
+    dbm_wf m -> dbm_wf fresh -> dbm_wf (M.merge replace_row m fresh).
+  Proof.
+    intros m fresh [Houter Hrows] [Hfresh Hnexts]. split.
+    - now apply M.wf_merge.
+    - intros p row Hrow. rewrite M.find_merge in Hrow by reflexivity.
+      destruct (M.find p m) as [old|] eqn:Hold; cbn [replace_row] in Hrow.
+      + destruct (M.find p fresh) as [next|] eqn:Hnext; injection Hrow as <-.
+        * exact (Hnexts p next Hnext).
+        * exact (Hrows p old Hold).
+      + discriminate Hrow.
+  Qed.
+
+  Lemma put_wf : forall i j d m, dbm_wf m -> dbm_wf (put i j d m).
+  Proof.
+    intros i j d m Hwf. unfold put. apply dbm_set_wf; [exact Hwf|].
+    apply M.wf_set. now apply row_of_wf.
+  Qed.
+
+  Lemma add_cons_wf : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
+  Proof.
+    intros i j d m Hwf. unfold add_cons. now apply put_wf, put_wf.
+  Qed.
+
+  Lemma relax_row_wf : forall prefix row exit,
+    M.wf row -> M.wf exit -> M.wf (relax_row prefix row exit).
+  Proof.
+    intros [a|] row exit Hrow Hexit; cbn [relax_row]; [now apply M.wf_merge|exact Hrow].
+  Qed.
+
+  Lemma round_merge_wf : forall k m, dbm_wf m ->
+    dbm_wf (M.merge (round_row k (row_of (M.get k m))) m M.empty).
+  Proof.
+    intros k m Hwf. apply dbm_merge_wf; [reflexivity|exact Hwf|].
+    intros old row Hold Hrow. cbn [round_row] in Hrow. injection Hrow as <-.
+    apply relax_row_wf; [exact Hold|now apply row_of_wf].
+  Qed.
+
+  Lemma round_wf : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
+  Proof.
+    intros k m Hwf. unfold fw_round. apply round_merge_wf.
+    destruct (pivot_present k m); [now apply put_wf|exact Hwf].
+  Qed.
+
+  Lemma fw_pivots_wf : forall ks m, dbm_wf m -> dbm_wf (fw_pivots ks m).
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intros m Hwf; cbn [fw_pivots].
+    - exact Hwf.
+    - destruct (nonnegative k (fw_round k m)); [apply IH|]; now apply round_wf.
+  Qed.
+
+  Lemma tighten_row_wf : forall m changed k ignored,
+    dbm_wf m -> dbm_wf changed -> dbm_wf (tighten_row m changed k ignored).
+  Proof.
+    intros m changed k ignored Hwf Hchanged. unfold tighten_row.
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    destruct (M.get (flip k) row); [|exact Hchanged].
+    apply dbm_set_wf; [exact Hchanged|]. apply M.wf_set.
+    destruct Hwf as [_ Hrows]. rewrite M.get_find in Hrow.
+    exact (Hrows (K.encode k) row Hrow).
+  Qed.
+
+  Lemma tighten_wf : forall m, dbm_wf m -> dbm_wf (tighten m).
+  Proof.
+    intros m Hwf. unfold tighten. apply replace_wf; [exact Hwf|].
+    apply (fold_invariant _ _ dbm_wf); [apply dbm_empty_wf|].
+    intros changed k ignored Hchanged. now apply tighten_row_wf.
+  Qed.
+
+  Lemma strengthen_row_wf : forall m unaries changed k a,
+    dbm_wf m -> M.wf unaries -> dbm_wf changed ->
+    dbm_wf (strengthen_row m unaries changed k a).
+  Proof.
+    intros m unaries changed k a Hwf Hunaries Hchanged. unfold strengthen_row.
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    apply dbm_set_wf; [exact Hchanged|]. apply M.wf_merge; [|exact Hunaries].
+    destruct Hwf as [_ Hrows]. rewrite M.get_find in Hrow.
+    exact (Hrows (K.encode k) row Hrow).
+  Qed.
+
+  Lemma strengthen_wf : forall m, dbm_wf m -> dbm_wf (strengthen m).
+  Proof.
+    intros m Hwf. unfold strengthen. apply replace_wf; [exact Hwf|].
+    apply (fold_invariant _ _ dbm_wf); [apply dbm_empty_wf|].
+    intros changed k a Hchanged. apply strengthen_row_wf.
+    - exact Hwf.
+    - exact (proj2 (collect_unary_wf m)).
+    - exact Hchanged.
+  Qed.
+
+  Lemma increment_wf : forall i j d m, dbm_wf m ->
+    dbm_wf (M.merge
+      (increment_row i j d (row_of (M.get j m)) (row_of (M.get (flip i) m))
+        (entry m j (flip j)) (entry m (flip i) i)) m M.empty).
+  Proof.
+    intros i j d m Hwf. apply dbm_merge_wf; [reflexivity|exact Hwf|].
+    intros old row Hold Hrow. cbn [increment_row] in Hrow. injection Hrow as <-.
+    apply relax_row_wf; [|now apply row_of_wf].
+    apply relax_row_wf; [|now apply row_of_wf].
+    apply relax_row_wf; [|now apply row_of_wf].
+    apply relax_row_wf; [exact Hold|now apply row_of_wf].
+  Qed.
+
   Lemma wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact add_cons_wf.
+  Qed.
   Lemma wf_incr_close : forall i j d m, dbm_wf m ->
     match incr_close i j d m with Unreached => True | Reached m' => dbm_wf m' end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j d m Hwf. unfold incr_close.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := M.merge
+      (increment_row i j d (row_of (M.get j seed)) (row_of (M.get (flip i) seed))
+        (entry seed j (flip j)) (entry seed (flip i) i)) seed M.empty).
+    destruct (matrix_ok next); [|exact I].
+    destruct (matrix_ok (strengthen (tighten next))); [|exact I].
+    apply strengthen_wf, tighten_wf. unfold next. apply increment_wf. unfold seed.
+    now apply add_cons_wf, add_cons_wf.
+  Qed.
   Lemma wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact round_wf.
+  Qed.
   Lemma T1_fw : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * N.of_nat
       ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
@@ -1619,11 +1830,17 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     exact tighten_models.
   Qed.
   Lemma wf_fw : forall m, dbm_wf m -> dbm_wf (fw m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m Hwf. unfold fw. now apply fw_pivots_wf.
+  Qed.
   Lemma wf_tighten : forall m, dbm_wf m -> dbm_wf (tighten m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact tighten_wf.
+  Qed.
   Lemma wf_strengthen : forall m, dbm_wf m -> dbm_wf (strengthen m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact strengthen_wf.
+  Qed.
   Lemma tclose_sound : forall m v, models m v -> ngamma (tclose m) v.
   Proof.
     exact tclose_models.
