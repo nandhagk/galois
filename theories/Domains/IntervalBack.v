@@ -2232,6 +2232,100 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     lia.
   Qed.
 
+  Local Lemma table_positive_add_bits : forall p q,
+    Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q + 1.
+  Proof.
+    intros p q. apply Std.Pos.size_nat_least.
+    rewrite Pos2Nat.inj_add, !Nat.pow_add_r. cbn [Nat.pow].
+    pose proof (Std.Pos.size_nat_upper p).
+    pose proof (Std.Pos.size_nat_upper q).
+    pose proof (Pos2Nat.is_pos p). pose proof (Pos2Nat.is_pos q). nia.
+  Qed.
+
+  Local Lemma table_positive_difference_bits : forall p q,
+    Z.size_nat (Z.pos_sub p q) <= Pos.size_nat p + Pos.size_nat q.
+  Proof.
+    intros p q. rewrite Z.pos_sub_spec. destruct (Pos.compare p q);
+      cbn [Z.size_nat]; try lia;
+      pose proof (Std.Pos.size_nat_sub p q);
+      pose proof (Std.Pos.size_nat_sub q p); lia.
+  Qed.
+
+  Local Lemma table_integer_add_bits : forall x y,
+    Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.add Z.size_nat]; try lia;
+      try apply table_positive_add_bits;
+      pose proof (table_positive_difference_bits p q);
+      pose proof (table_positive_difference_bits q p); lia.
+  Qed.
+
+  Local Lemma table_integer_sub_bits : forall x y,
+    Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1.
+  Proof.
+    intros x y. change (Z.size_nat (x + - y) <= Z.size_nat x + Z.size_nat y + 1).
+    pose proof (table_integer_add_bits x (- y)).
+    destruct y; cbn [Z.opp Z.size_nat] in *; lia.
+  Qed.
+
+  Local Lemma table_finite_bits : forall a lo hi,
+    interval_finite_helper a = Some (lo, hi) ->
+    Z.size_nat lo <= interval_bits a /\ Z.size_nat hi <= interval_bits a.
+  Proof.
+    intros [|[|x|] [|y|]] lo hi Hfinite;
+      cbn [interval_finite_helper] in Hfinite; try discriminate.
+    inversion Hfinite; subst. cbn [interval_bits]. lia.
+  Qed.
+
+  Local Lemma table_assume_ult_bits : forall a b,
+    interval_bits (fst (interval_assume_ult a b)) +
+      interval_bits (snd (interval_assume_ult a b)) <=
+      2 * (interval_bits a + interval_bits b + 2).
+  Proof.
+    intros a b. unfold interval_assume_ult.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      cbn [fst snd]; try lia.
+    destruct (table_finite_bits a la ha Ha) as [Hla _].
+    destruct (table_finite_bits b lb hb Hb) as [_ Hhb].
+    pose proof (table_integer_sub_bits hb 1) as Hupper.
+    pose proof (table_integer_add_bits la 1) as Hlower.
+    pose proof (PayloadBounds.payload_raw_meet_bits a (I NegInf (Fin (hb - 1))))
+      as Hleft.
+    pose proof (PayloadBounds.payload_raw_meet_bits b (I (Fin (la + 1)) PosInf))
+      as Hright.
+    cbn [fst snd interval_bits Z.size_nat Nat.max Pos.size_nat] in *.
+    lia.
+  Qed.
+
+  Local Lemma table_assume_ule_bits : forall a b,
+    interval_bits (fst (interval_assume_ule a b)) +
+      interval_bits (snd (interval_assume_ule a b)) <=
+      2 * (interval_bits a + interval_bits b + 1).
+  Proof.
+    intros a b. unfold interval_assume_ule.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      cbn [fst snd]; try lia.
+    destruct (table_finite_bits a la ha Ha) as [Hla _].
+    destruct (table_finite_bits b lb hb Hb) as [_ Hhb].
+    pose proof (PayloadBounds.payload_raw_meet_bits a (I NegInf (Fin hb))) as Hleft.
+    pose proof (PayloadBounds.payload_raw_meet_bits b (I (Fin la) PosInf)) as Hright.
+    cbn [fst snd interval_bits Nat.max] in *.
+    lia.
+  Qed.
+
+  Local Lemma table_assume_equal_bits : forall a b,
+    interval_bits (fst (interval_assume_equal a b)) +
+      interval_bits (snd (interval_assume_equal a b)) <=
+      2 * (interval_bits a + interval_bits b).
+  Proof.
+    intros a b. unfold interval_assume_equal.
+    pose proof (PayloadBounds.payload_raw_meet_bits a b).
+    pose proof (PayloadBounds.payload_raw_meet_bits b a).
+    cbn [fst snd]. lia.
+  Qed.
+
   Local Lemma table_ite_size : forall rw wa wb a b,
     W.psize rw (Scalar.interval_join (interval_clip wa a) (interval_clip wb b)) <=
       (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2.
