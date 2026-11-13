@@ -3905,6 +3905,76 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     time_unfold T_remove_finish. destruct (contains r ix); time_simpl; time_cbn; lia.
   Qed.
 
+  (** Initializing a walk pays one wrapper call and the constant root call. *)
+  Lemma T_start_exact : forall ix, T_start ix = 2%N.
+  Proof.
+    intro ix. time_unfold T_start. time_unfold T_root. time_cbn. reflexivity.
+  Qed.
+
+  (** The direct walk and finishing budgets fit half the public mutation coefficient. *)
+  Lemma mutation_total_budget : forall cost bits amount,
+    (1 <= cost -> 1 <= bits ->
+      4 + (128 * cost * bits + 1) * amount + 224 * cost * (amount + 1) * bits <=
+      512 * cost * (amount + 1) * bits)%N.
+  Proof.
+    intros cost bits amount Hcost Hbits.
+    assert (Hunit : (1 <= cost * bits)%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono; assumption. }
+    assert (Hamount : (amount <= cost * bits * amount)%N).
+    { replace amount with (1 * amount)%N at 1 by ring. apply N.mul_le_mono_r. exact Hunit. }
+    replace (4 + (128 * cost * bits + 1) * amount + 224 * cost * (amount + 1) * bits)%N
+      with (4 + 352 * (cost * bits * amount) + amount + 224 * (cost * bits))%N by ring.
+    replace (512 * cost * (amount + 1) * bits)%N
+      with (512 * (cost * bits * amount) + 512 * (cost * bits))%N by ring.
+    lia.
+  Qed.
+
+  (** Insertion's complete clock follows from its actual walk and finishing pass. *)
+  Lemma T_insert_total_budget : forall r ix, valid ix ->
+    (T_insert r ix <= 512 * (PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
+  Proof.
+    intros r ix Hvalid.
+    pose proof (T_insert_fold_budget ix r) as Hfold.
+    pose proof (T_insert_finish_budget r ix Hvalid) as Hfinish.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    set (bits := N.of_nat (width ix r + 1)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hlength : N.of_nat (length r + 1) = (N.of_nat (length r) + 1)%N) by lia.
+    rewrite Hlength in Hfinish |- *.
+    set (amount := N.of_nat (length r)) in *.
+    pose proof (mutation_total_budget cost bits amount Hcost Hbits) as Hbudget.
+    time_unfold T_insert. rewrite T_start_exact.
+    change (1 + (2 + List.T_fold_left insert_step_st T_insert_step_st r (start ix) +
+      T_insert_finish r ix (fold_left insert_step_st r (start ix))) <=
+      512 * cost * (amount + 1) * bits)%N.
+    clear Hvalid. clearbody cost bits amount. lia.
+  Qed.
+
+  (** Removal's complete clock uses only preserved edge and degree bounds. *)
+  Lemma T_remove_total_budget : forall r ix, valid ix ->
+    (T_remove r ix <= 512 * (PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
+  Proof.
+    intros r ix Hvalid.
+    pose proof (T_remove_fold_budget ix r Hvalid) as Hfold.
+    pose proof (T_remove_finish_budget r ix Hvalid) as Hfinish.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    set (bits := N.of_nat (width ix r + 1)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hlength : N.of_nat (length r + 1) = (N.of_nat (length r) + 1)%N) by lia.
+    rewrite Hlength in Hfinish |- *.
+    set (amount := N.of_nat (length r)) in *.
+    pose proof (mutation_total_budget cost bits amount Hcost Hbits) as Hbudget.
+    time_unfold T_remove. rewrite T_start_exact.
+    change (1 + (2 + List.T_fold_left remove_step_st T_remove_step_st r (start ix) +
+      T_remove_finish r ix (fold_left remove_step_st r (start ix))) <=
+      512 * cost * (amount + 1) * bits)%N.
+    clear Hvalid. clearbody cost bits amount. lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
