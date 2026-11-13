@@ -4,8 +4,8 @@
     For example, an optional value uses a low zero bit and absence uses 1.
     Builds on: Stdlib binary arithmetic and Argent time derivation. *)
 
-From Stdlib Require Import NArith PArith List.
-From Argent Require Import Time Std.
+From Stdlib Require Import NArith PArith List Lia.
+From Argent Require Import Time Std Tactics.
 Module List.
   TimeFun flat_map.
 End List.
@@ -60,15 +60,29 @@ TimeFun list_code.
 
 (** Equal glued codes identify both components. *)
 Lemma glue_inj : forall a b a' b', glue a b = glue a' b' -> a = a' /\ b = b'.
-Proof. Admitted. (* STUB *)
+Proof.
+  intro a; induction a as [a IH | a IH |]; intros b [a' | a' |] b' Hcode;
+    cbn [glue] in Hcode; try discriminate.
+  - injection Hcode as Htail. destruct (IH b a' b' Htail) as [Ha Hb].
+    split; [now f_equal | exact Hb].
+  - injection Hcode as Htail. destruct (IH b a' b' Htail) as [Ha Hb].
+    split; [now f_equal | exact Hb].
+  - injection Hcode as Hb. split; [reflexivity | exact Hb].
+Qed.
 
 (** Gluing doubles the first component's bits apart from its final delimiter. *)
 Lemma glue_bits : forall a b,
   Pos.size_nat (glue a b) = 2 * Pos.size_nat a + Pos.size_nat b - 1.
-Proof. Admitted. (* STUB *)
+Proof.
+  induction a as [a IH | a IH |]; intro b; cbn [glue Pos.size_nat];
+    rewrite ?IH; pose proof (Pos.size_nat_pos b); lia.
+Qed.
 
-Definition c_glue : N := 1. (* STUB *)
+Definition c_glue : N := 1.
 
 (** Gluing takes time bounded by the first component's bit length. *)
 Lemma T_glue_le : forall a b, (T_glue a b <= c_glue * N.of_nat (Pos.size_nat a + 1))%N.
-Proof. Admitted. (* STUB *)
+Proof.
+  induction a as [a IH | a IH |]; intro b; unfold c_glue in *;
+    time_unfold T_glue; cbn [Pos.size_nat]; try specialize (IH b); lia.
+Qed.
