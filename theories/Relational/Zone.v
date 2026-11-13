@@ -4533,6 +4533,38 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     rewrite Hdiag. cbn [lower_bound]. f_equal. lia.
   Qed.
 
+  (** A nonnegative self-edge produces exactly the seeded closed matrix. *)
+  Lemma incr_close_self_nonnegative : forall m i d, dbm_wf m -> closed m ->
+    (0 <= d)%Z ->
+    exists next, incr_close i i d m = Reached next /\
+      forall a b, entry next a b =
+        entry (add_cons i i 0%Z (add_cons i i 0%Z m)) a b.
+  Proof.
+    intros m i d Hwf Hclosed Hd.
+    set (base := add_cons i i 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i i d base).
+    set (next := M.merge (increment_row i d (row_of (M.get i seed))) seed M.empty).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hseed : forall x y, entry seed x y = entry base x y).
+    { intros x y. unfold seed, base.
+      apply nonnegative_self_seed; [apply closed_add_zero; exact Hclosed|exact Hd]. }
+    assert (Hentry : forall a b, entry next a b = entry base a b).
+    { intros a b. unfold next. rewrite entry_increment_extension.
+      unfold RelationalPathBounds.edge_extension.
+      rewrite (Hseed a b), (Hseed a i), (Hseed i b).
+      change (RelationalPathBounds.edge_extension (entry base) i i d a b =
+        entry base a b).
+      now apply nonnegative_self_extension. }
+    assert (Hdiag : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    exists next. split; [|exact Hentry].
+    unfold incr_close. change
+      ((if andb (nonnegative i next) (nonnegative i next)
+        then Reached next else Unreached) = Reached next).
+    unfold nonnegative. now rewrite Hentry, Hdiag.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
