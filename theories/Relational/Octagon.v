@@ -4973,6 +4973,66 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     exact (Hclosed p a b).
   Qed.
 
+  Lemma below_lower_bound : forall value d old,
+    RelationalPathBounds.below value (Some d) ->
+    RelationalPathBounds.below value old ->
+    RelationalPathBounds.below value (Some (lower_bound d old)).
+  Proof.
+    intros [value|] d [old|]; cbn [lower_bound RelationalPathBounds.below];
+      intros; try contradiction; lia.
+  Qed.
+
+  (** The four-path candidate is below direct twin insertion. *)
+  Lemma incremental_candidate_below_direct : forall m i j d,
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forall a b, RelationalPathBounds.below
+      (entry (increment_matrix i j d seed) a b)
+      (entry (add_cons i j d m) a b).
+  Proof.
+    intros m i j d Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed).
+    destruct (incremental_seed_diagonals m i j Htight) as [Hii Hjj].
+    change (entry seed i i = Some 0%Z) in Hii.
+    change (entry seed j j = Some 0%Z) in Hjj.
+    assert (Hcoh : coherent seed).
+    { unfold seed. apply coherent_add_cons, coherent_add_cons.
+      exact (proj1 (proj1 Htight)). }
+    assert (Hbar_i : entry seed (flip i) (flip i) = Some 0%Z).
+    { rewrite (Hcoh (flip i) (flip i)), !flip_involutive. exact Hii. }
+    assert (Hbar_j : entry seed (flip j) (flip j) = Some 0%Z).
+    { rewrite (Hcoh (flip j) (flip j)), !flip_involutive. exact Hjj. }
+    assert (Hold : forall x y,
+      RelationalPathBounds.below (entry next x y) (entry m x y)).
+    { intros x y. eapply RelationalPathBounds.below_trans.
+      - unfold next. apply increment_entry_below.
+      - unfold seed. eapply RelationalPathBounds.below_trans;
+          apply add_cons_entry_below. }
+    assert (Hfirst : RelationalPathBounds.below (entry next i j) (Some d)).
+    { unfold next. pose proof (increment_below_first_edge i j d seed i j) as Hbound.
+      rewrite Hii, Hjj in Hbound.
+      cbn [edge_path path_sum edge_prefix] in Hbound.
+      replace (0 + d + 0)%Z with d in Hbound by lia. exact Hbound. }
+    assert (Hsecond : RelationalPathBounds.below
+      (entry next (flip j) (flip i)) (Some d)).
+    { unfold next.
+      pose proof (increment_below_second_edge i j d seed (flip j) (flip i))
+        as Hbound.
+      rewrite Hbar_j, Hbar_i in Hbound.
+      cbn [edge_path path_sum edge_prefix] in Hbound.
+      replace (0 + d + 0)%Z with d in Hbound by lia. exact Hbound. }
+    intros a b. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate a b i j) eqn:Hcoordinate.
+    - destruct (same_coordinate_true a b i j Hcoordinate) as [Ha Hb].
+      subst a b. apply below_lower_bound; [exact Hfirst|apply Hold].
+    - destruct (same_coordinate a b (flip j) (flip i)) eqn:Hmirror.
+      + destruct (same_coordinate_true a b (flip j) (flip i) Hmirror)
+          as [Ha Hb]. subst a b.
+        apply below_lower_bound; [exact Hsecond|apply Hold].
+      + apply Hold.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
