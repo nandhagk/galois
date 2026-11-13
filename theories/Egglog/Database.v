@@ -363,6 +363,61 @@ Proof.
   intros p ps. induction ps as [| q ps IH]; time_step slot_rank_insert.
 Qed.
 
+(** Sorting one entry preserves the sum of unary position sizes. *)
+Lemma slot_rank_insert_mass : forall p ps,
+  fold_right (fun q n => S (fst q) + n) 0 (slot_rank_insert p ps) =
+    S (fst p) + fold_right (fun q n => S (fst q) + n) 0 ps.
+Proof.
+  intros p ps. induction ps as [| q ps IH]; cbn [slot_rank_insert].
+  - reflexivity.
+  - destruct (Nat.leb (fst p) (fst q)); cbn [fold_right]; [lia |].
+    rewrite IH. lia.
+Qed.
+
+(** The sorted positions have exactly the source permutation's unary size. *)
+Lemma slot_rank_positions_mass : forall rank perm,
+  fold_right (fun q n => S (fst q) + n) 0 (slot_rank_positions rank perm) =
+    fold_right Nat.add 0 (map S perm).
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - reflexivity.
+  - cbn [slot_rank_positions map fold_right]. rewrite slot_rank_insert_mass, IH. reflexivity.
+Qed.
+
+(** Gap construction pays the unary size of each absolute position once. *)
+Lemma T_slot_position_gaps_le : forall previous ps,
+  (T_slot_position_gaps previous ps <=
+    N.of_nat (length ps + fold_right (fun q n => (S (fst q) + n)%nat) 0%nat ps + 1))%N.
+Proof.
+  intros previous ps. revert previous. induction ps as [| [p rank] ps IH];
+    intro previous; time_step slot_position_gaps.
+Qed.
+
+(** A positive rank's bit length is bounded by its unary value. *)
+Local Lemma slot_rank_bits_value : forall rank, Pos.size_nat rank <= Pos.to_nat rank.
+Proof.
+  intro rank. induction rank as [rank IH | rank IH |]; cbn [Pos.size_nat].
+  - rewrite Pos2Nat.inj_xI. lia.
+  - rewrite Pos2Nat.inj_xO. pose proof (Pos2Nat.is_pos rank). lia.
+  - reflexivity.
+Qed.
+
+(** Ranking pays for insertion comparisons and each increasing positive rank. *)
+Lemma T_slot_rank_positions_le : forall rank perm,
+  (T_slot_rank_positions rank perm <=
+    8 * N.of_nat ((length perm + 1) *
+      (fold_right Nat.add 0%nat (map S perm) + length perm + Pos.to_nat rank + 1)))%N.
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - time_step slot_rank_positions.
+  - pose proof (IH (Pos.succ rank)) as Htail.
+    pose proof (slot_rank_bits_value rank) as Hbits.
+    pose proof (T_slot_rank_insert_le (p, rank)
+      (slot_rank_positions (Pos.succ rank) perm)) as Hinsert.
+    rewrite slot_rank_positions_length in Hinsert.
+    rewrite Pos2Nat.inj_succ in Htail. time_step slot_rank_positions.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
