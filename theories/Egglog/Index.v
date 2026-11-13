@@ -3607,6 +3607,95 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     time_pose. time_simpl. time_cbn. clear Hnode Hset. clearbody cost bits. lia.
   Qed.
 
+  (** The finishing pass fits the membership scan, width scan and final node write. *)
+  Lemma finish_budget : forall cost amount bits,
+    (1 <= cost -> 1 <= amount -> 1 <= bits ->
+      4 + 160 * cost * amount * bits + 16 * cost * amount * bits + bits +
+        16 * cost * bits <= 224 * cost * amount * bits)%N.
+  Proof.
+    intros cost amount bits Hcost Hamount Hbits.
+    assert (Hsingle : (cost * bits <= cost * amount * bits)%N).
+    { apply N.mul_le_mono_r. replace cost with (cost * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. exact Hamount. }
+    assert (Hwidth : (bits <= cost * amount * bits)%N).
+    { replace bits with (1 * bits)%N at 1 by ring. apply N.mul_le_mono_r.
+      replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono; assumption. }
+    assert (Hunit : (1 <= cost * amount * bits)%N) by (eapply N.le_trans; eassumption).
+    replace (4 + 160 * cost * amount * bits + 16 * cost * amount * bits + bits +
+      16 * cost * bits)%N with
+      (4 + 176 * (cost * amount * bits) + bits + 16 * (cost * bits))%N by ring.
+    replace (224 * cost * amount * bits)%N with (224 * (cost * amount * bits))%N by ring.
+    lia.
+  Qed.
+
+  (** Insertion's finishing pass uses only the original width and the bounded final cursor. *)
+  Lemma T_insert_finish_budget : forall r ix, valid ix ->
+    (T_insert_finish r ix (fold_left insert_step_st r (start ix)) <=
+      224 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (length r + 1) *
+        N.of_nat (width ix r + 1))%N.
+  Proof.
+    intros r ix Hvalid. pose proof (valid_shape ix Hvalid) as Hshape.
+    assert (Hcounter : Pos.size_nat (next ix) <= width ix r) by (apply node_bits_width, Pos.le_refl).
+    assert (Hcells : forall c, In c r -> cell_bits V.encode c <= width ix r).
+    { intros c Hin. now apply tuple_cell_width. }
+    pose proof (T_contains_budget ix r (width ix r) Hshape Hcounter Hcells) as Hcontains.
+    pose proof (T_tuple_bits_budget r (width ix r) Hcells) as Htuple.
+    set (st := fold_left insert_step_st r (start ix)).
+    assert (Hpoint : (snd st <= next (fst st))%positive).
+    { unfold st. apply insert_walk_point_bound; [exact Hshape |].
+      change (1 <= next ix)%positive. apply Pos.le_1_l. }
+    assert (Hpoint_bits : Pos.size_nat (snd st) <= width ix r).
+    { eapply Nat.le_trans; [apply positive_bits_mono; exact Hpoint |].
+      unfold st. apply insert_prefix_counter_bits, Nat.le_refl. }
+    pose proof (T_mark_terminal_budget (fst st) (snd st) true
+      (Nat.max (index_cell_width ix) (tuple_bits r)) (width ix r) Hpoint_bits) as Hmark.
+    assert (Hstored_bits : index_cell_width ix <= width ix r) by (unfold width, max_cell_bits; lia).
+    assert (Hmax : (T_max (index_cell_width ix) (tuple_bits r) <= N.of_nat (width ix r + 1))%N).
+    { pose proof (T_nat_max_le (index_cell_width ix) (tuple_bits r)). lia. }
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    set (amount := N.of_nat (length r + 1)) in *.
+    set (bits := N.of_nat (width ix r + 1)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hamount : (1 <= amount)%N) by (unfold amount; lia).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    pose proof (finish_budget cost amount bits Hcost Hamount Hbits) as Hbudget.
+    clear Hvalid Hshape Hcounter Hcells Hpoint Hpoint_bits Hstored_bits.
+    clearbody cost amount bits st.
+    time_unfold T_insert_finish. destruct (contains r ix); time_simpl; time_cbn; lia.
+  Qed.
+
+  (** Removal's finishing pass uses the original counter and the surviving bounded cursor. *)
+  Lemma T_remove_finish_budget : forall r ix, valid ix ->
+    (T_remove_finish r ix (fold_left remove_step_st r (start ix)) <=
+      224 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (length r + 1) *
+        N.of_nat (width ix r + 1))%N.
+  Proof.
+    intros r ix Hvalid. pose proof (valid_shape ix Hvalid) as Hshape.
+    assert (Hcounter : Pos.size_nat (next ix) <= width ix r) by (apply node_bits_width, Pos.le_refl).
+    assert (Hcells : forall c, In c r -> cell_bits V.encode c <= width ix r).
+    { intros c Hin. now apply tuple_cell_width. }
+    pose proof (T_contains_budget ix r (width ix r) Hshape Hcounter Hcells) as Hcontains.
+    set (st := fold_left remove_step_st r (start ix)).
+    assert (Hpoint : (snd st <= next (fst st))%positive).
+    { unfold st. apply remove_walk_point_bound; [exact Hshape |].
+      change (1 <= next ix)%positive. apply Pos.le_1_l. }
+    assert (Hpoint_bits : Pos.size_nat (snd st) <= width ix r).
+    { eapply Nat.le_trans; [apply positive_bits_mono; exact Hpoint |].
+      unfold st. rewrite remove_walk_counter. cbn [start fst]. exact Hcounter. }
+    pose proof (T_mark_terminal_budget (fst st) (snd st) false
+      (index_cell_width ix) (width ix r) Hpoint_bits) as Hmark.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    set (amount := N.of_nat (length r + 1)) in *.
+    set (bits := N.of_nat (width ix r + 1)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hamount : (1 <= amount)%N) by (unfold amount; lia).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    pose proof (finish_budget cost amount bits Hcost Hamount Hbits) as Hbudget.
+    clear Hvalid Hshape Hcounter Hcells Hpoint Hpoint_bits.
+    clearbody cost amount bits st.
+    time_unfold T_remove_finish. destruct (contains r ix); time_simpl; time_cbn; lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
