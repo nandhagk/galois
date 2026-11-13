@@ -1033,6 +1033,47 @@ Proof.
     (prepare_slot_layouts sl) 0 PTrieCode.empty Hempty f)).
 Qed.
 
+(** Adding one prepared entry increases exactly its function's group length. *)
+Lemma database_group_add_length : forall groups f g s layout,
+  length (database_group_entries f
+    (PTrieCode.set g ((s, layout) :: database_group_entries g groups) groups)) =
+  if Pos.eqb g f then S (length (database_group_entries f groups))
+  else length (database_group_entries f groups).
+Proof.
+  intros groups f g s layout. destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+  - rewrite Pos.eqb_refl. unfold database_group_entries at 1.
+    now rewrite PTrie.get_set_same.
+  - assert (Htest : Pos.eqb g f = false) by (apply Pos.eqb_neq; congruence).
+    rewrite Htest. unfold database_group_entries at 1.
+    now rewrite PTrie.get_set_other by exact Hdifferent.
+Qed.
+
+(** A grouping pass adds one entry for each matching function in its input. *)
+Lemma database_slot_groups_length : forall prepared next groups f,
+  length (database_group_entries f (database_slot_groups next prepared groups)) =
+  length (database_group_entries f groups) +
+    length (filter (fun item => Pos.eqb (fst item) f) prepared).
+Proof.
+  intro prepared. induction prepared as [|[g layout] rest IH]; intros next groups f.
+  - cbn [database_slot_groups filter length]. lia.
+  - cbn [database_slot_groups filter fst]. fold (database_group_entries g groups).
+    rewrite IH, database_group_add_length. destruct (Pos.eqb g f); cbn [length]; lia.
+Qed.
+
+(** Preparing layouts preserves the exact number of slots belonging to each function. *)
+Lemma database_prepared_group_length : forall sl f,
+  length (database_group_entries f
+    (database_slot_groups 0 (prepare_slot_layouts sl) PTrieCode.empty)) =
+  length (filter (fun item => Pos.eqb (fst item) f) sl).
+Proof.
+  intros sl f. rewrite database_slot_groups_length.
+  unfold database_group_entries at 1. rewrite PTrie.get_empty. cbn [length Nat.add].
+  unfold prepare_slot_layouts.
+  induction sl as [|[g perm] rest IH]; [reflexivity |].
+  cbn [map filter fst].
+  destruct (Pos.eqb g f); cbn [length]; now rewrite IH.
+Qed.
+
 Definition runtime_set_rows {C X} (rows : PTrieCode.t ((positive * list C) * option C))
     (state : database_runtime C X) : database_runtime C X :=
   DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) rows
@@ -1099,6 +1140,20 @@ Definition database_record_cache {C X} (u : list C) (counters : list positive)
     (next :: rank :: (counters ++ db_index_counters db))
     (db_row_store db) (db_slot_store db) (db_runtime db) (Npos next).
 TimeFun database_record_cache.
+
+(** Recording a cache call traverses only its new input and newly collected counters. *)
+Lemma T_database_record_cache_le : forall C X (u : list C) counters (db : database_state C X),
+  (T_database_record_cache u counters db <=
+    32 + N.T_succ_pos (db_cache_updates db) +
+      6 * N.of_nat (length u + 1) + N.of_nat (length counters + 1))%N.
+Proof.
+  intros C X u counters db.
+  pose proof (database_of_succ_nat_amort (length u)) as Hrank.
+  pose proof (Datatypes.T_length_le u) as Hlength.
+  pose proof (Datatypes.T_app_le counters (db_index_counters db)) as Hcounters.
+  pose proof (Datatypes.T_app_le u (db_written_cells db)) as Hcells.
+  time_unfold @T_database_record_cache. time_simpl. time_cbn. lia.
+Qed.
 
 (** A ghost operation records whether a tuple was inserted or removed from an index. *)
 Definition database_index_step {C X : Type} (insert remove : list C -> X -> X)
@@ -6318,6 +6373,44 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (fun t block current Hin => Hstep t block current (or_intror Hin))) as Htail.
       rewrite T_slot_update_many_cons. cbn [length]. nia.
   Qed.
+
+  (** A duplicate-free walk reads each slot before any earlier update can change it. *)
+  Lemma T_slot_update_many_snapshots : forall b u layouts original state budget,
+    NoDup (map fst layouts) ->
+    (forall s layout, In (s, layout) layouts -> slot_snapshot state s = slot_snapshot original s) ->
+    (forall s layout current, In (s, layout) layouts ->
+      slot_snapshot current s = slot_snapshot original s ->
+      (T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
+    (T_slot_update_many b u layouts state <=
+      (budget + 1) * N.of_nat (length layouts) + 1)%N.
+  Proof.
+    intros b u layouts. induction layouts as [|[s layout] rest IH];
+      intros original state budget Hnodup Hsnapshots Hstep.
+    - rewrite T_slot_update_many_nil. cbn [length]. lia.
+    - cbn [map fst] in Hnodup. inversion Hnodup as [|key keys Hmissing Htail]; subst.
+      pose proof (Hstep s layout state (or_introl eq_refl)
+        (Hsnapshots s layout (or_introl eq_refl))) as Hhead.
+      assert (Hnext : forall t block, In (t, block) rest ->
+        slot_snapshot (slot_update_one b s (project_slot_layout layout u) state) t =
+          slot_snapshot original t).
+      { intros t block Hin. rewrite slot_update_one_snapshot_other.
+        - apply (Hsnapshots t block). now right.
+        - intro Hequal. subst t. apply Hmissing. exact (in_map fst rest (s, block) Hin). }
+      pose proof (IH original (slot_update_one b s (project_slot_layout layout u) state)
+        budget Htail Hnext
+        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Hrest.
+      rewrite T_slot_update_many_cons. cbn [length]. nia.
+  Qed.
+
+  (** Counter collection emits precisely the full and delta counter for every visited slot. *)
+  Lemma slot_updated_counters_length : forall layouts state,
+    length (slot_updated_counters layouts state) = 2 * length layouts.
+  Proof.
+    intro layouts. induction layouts as [|[s layout] rest IH]; intro state;
+      cbn [slot_updated_counters length]; [reflexivity | rewrite IH; lia].
+  Qed.
+
   Definition c_db : N :=
     4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
 
