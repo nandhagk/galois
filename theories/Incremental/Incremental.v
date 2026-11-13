@@ -173,8 +173,51 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
           then (Done, finish_demand p st xs rs candidate)
           else (DemandRejected Check_failed, st)
       end.
-  (* STUB-CODE *)
-  Definition edit (_ _ : S.prog) (_ : list S.row) (st : state) : state := st.
+  Definition row_footprint (p : S.prog) (r : S.row) : edit_footprint S.key :=
+    {| edit_triggers := row_keys p r; edit_outputs := row_writes p r |}.
+
+  Definition snapshot_footprint (ss : incremental_snapshot S.key) : edit_footprint S.key :=
+    {| edit_triggers := snapshot_writes ss; edit_outputs := snapshot_writes ss |}.
+
+  Definition edit_footprints (p p' : S.prog) (st : state) : list (edit_footprint S.key) :=
+    map (row_footprint p) (S.rows p) ++
+    map (row_footprint p') (S.rows p') ++
+    map (fun entry => snapshot_footprint (snd entry))
+      (filter (fun entry => snapshot_live (snd entry))
+        (PTrieCode.elements (inc_snapshots st))).
+
+  Definition changed_keys (p p' : S.prog) (ch : list S.row) : list S.key :=
+    flat_map (fun r => row_writes p r ++ row_writes p' r) ch.
+
+  Definition changed_seeds (p p' : S.prog) (ch : list S.row) (st : state) : list S.key :=
+    footprint_adds S.key_eqb (present st) (changed_keys p p' ch) [].
+
+  Definition invalidate_keys (p p' : S.prog) (ch : list S.row) (st : state) : list S.key :=
+    let seeds := changed_seeds p p' ch st in
+    match seeds with
+    | [] => []
+    | _ :: _ =>
+      footprint_seen (footprint_run S.key_eqb edit_triggers edit_outputs (present st)
+        seeds (edit_footprints p p' st))
+    end.
+
+  Definition retire_snapshot (bad : list S.key) (ss : incremental_snapshot S.key)
+      : incremental_snapshot S.key :=
+    {| snapshot_owner := snapshot_owner ss;
+       snapshot_writes := snapshot_writes ss;
+       snapshot_live := snapshot_live ss &&
+         negb (existsb (fun x => mem x bad) (snapshot_writes ss)) |}.
+
+  Definition edit (p p' : S.prog) (ch : list S.row) (st : state) : state :=
+    let bad := invalidate_keys p p' ch st in
+    match bad with
+    | [] => st
+    | _ :: _ =>
+      {| inc_values := remove_keys bad (inc_values st);
+         inc_influence := remove_keys bad (inc_influence st);
+         inc_cowrites := remove_keys bad (inc_cowrites st);
+         inc_snapshots := PTrieCode.map (retire_snapshot bad) (inc_snapshots st) |}
+    end.
 End IncrementalCode.
 
 Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYSTEM L)
@@ -605,9 +648,254 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     - intro Hresult; inversion Hresult; reflexivity.
   Qed.
 
-  Lemma edit_inv : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
-    inv p' (edit p p' ch st).
-  Proof. Admitted. (* STUB *)
+  (** Seeds are precisely old-present changed writes from either program. *)
+  Lemma changed_seeds_spec : forall p p' ch st x,
+    In x (changed_seeds p p' ch st) <-> dom st x /\
+      exists r, In r ch /\ In x (S.writes p r ++ S.writes p' r).
+  Proof.
+    intros p p' ch st x; unfold changed_seeds.
+    rewrite (footprint_adds_spec S.key_eqb (present st) key_eqb_true).
+    cbn [In]; rewrite present_spec; unfold changed_keys; rewrite in_flat_map.
+    change (False \/ ((exists r, In r ch /\
+      In x (S.writes p r ++ S.writes p' r)) /\ dom st x) <->
+      dom st x /\ exists r, In r ch /\ In x (S.writes p r ++ S.writes p' r)).
+    tauto.
+  Qed.
+
+  Lemma changed_seeds_nodup : forall p p' ch st, NoDup (changed_seeds p p' ch st).
+  Proof.
+    intros p p' ch st; unfold changed_seeds.
+    apply (footprint_adds_nodup S.key_eqb (present st) key_eqb_true); constructor.
+  Qed.
+
+  (** Every seed remains in the saturated invalidation list. *)
+  Lemma invalidate_keys_seed : forall p p' ch st,
+    incl (changed_seeds p p' ch st) (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st; unfold invalidate_keys.
+    destruct (changed_seeds p p' ch st) as [|x xs]; cbn beta iota zeta.
+    - intros y Hy; contradiction.
+    - unfold footprint_run.
+      apply (footprint_close_seed S.key_eqb edit_triggers edit_outputs (present st) key_eqb_true).
+  Qed.
+
+  (** Invalidation can only remove keys that were actually present. *)
+  Lemma invalidate_keys_dom : forall p p' ch st x,
+    In x (invalidate_keys p p' ch st) -> dom st x.
+  Proof.
+    intros p p' ch st x Hin; apply (proj1 (present_spec st x)).
+    unfold invalidate_keys in Hin.
+    destruct (changed_seeds p p' ch st) as [|y ys] eqn:Hseeds; [contradiction|].
+    cbn beta iota zeta in Hin; unfold footprint_run in Hin.
+    eapply (footprint_close_allowed S.key_eqb edit_triggers edit_outputs
+      (present st) key_eqb_true); [|exact Hin].
+    intros z Hz; apply (proj2 (present_spec st z)).
+    assert (Hseed : In z (changed_seeds p p' ch st)) by (rewrite Hseeds; exact Hz).
+    exact (proj1 (proj1 (changed_seeds_spec p p' ch st z) Hseed)).
+  Qed.
+
+  (** Invalidation lists each removed key once. *)
+  Lemma invalidate_keys_nodup : forall p p' ch st, NoDup (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st; unfold invalidate_keys.
+    destruct (changed_seeds p p' ch st) as [|x xs] eqn:Hseeds; [constructor|].
+    cbn beta iota zeta; unfold footprint_run.
+    apply (footprint_close_nodup S.key_eqb edit_triggers edit_outputs (present st) key_eqb_true).
+    rewrite <- Hseeds; apply changed_seeds_nodup.
+  Qed.
+
+  (** Every activated footprint loses all of its old-present outputs. *)
+  Lemma invalidate_keys_footprint : forall p p' ch st fp x y,
+    In fp (edit_footprints p p' st) -> In x (edit_triggers fp) ->
+    In x (invalidate_keys p p' ch st) -> In y (edit_outputs fp) -> dom st y ->
+    In y (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st fp x y Hfp Htrigger Hbad Houtput Hdom.
+    unfold invalidate_keys in Hbad |- *.
+    destruct (changed_seeds p p' ch st) as [|z zs]; [contradiction|].
+    cbn beta iota zeta in Hbad |- *.
+    apply (footprint_run_closed S.key_eqb edit_triggers edit_outputs (present st)
+      key_eqb_true (z :: zs) (edit_footprints p p' st) fp y).
+    - exact Hfp.
+    - apply (proj2 (footprint_active_spec S.key_eqb edit_triggers key_eqb_true _ fp)).
+      exists x; split; assumption.
+    - exact Houtput.
+    - apply (proj2 (present_spec st y)); exact Hdom.
+  Qed.
+
+  (** Old rows propagate invalidation from reads and co-writes to every stored write. *)
+  Lemma invalidate_keys_old : forall p p' ch st r x y,
+    In r (S.rows p) -> In x (S.writes p r ++ S.deps p r) ->
+    In x (invalidate_keys p p' ch st) -> In y (S.writes p r) -> dom st y ->
+    In y (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st r x y Hr Hx Hbad Hy Hdom.
+    eapply (invalidate_keys_footprint p p' ch st (row_footprint p r) x y).
+    - unfold edit_footprints; apply in_or_app; left; apply in_map; exact Hr.
+    - exact Hx.
+    - exact Hbad.
+    - exact Hy.
+    - exact Hdom.
+  Qed.
+
+  (** New rows propagate invalidation from reads and co-writes to every stored write. *)
+  Lemma invalidate_keys_new : forall p p' ch st r x y,
+    In r (S.rows p') -> In x (S.writes p' r ++ S.deps p' r) ->
+    In x (invalidate_keys p p' ch st) -> In y (S.writes p' r) -> dom st y ->
+    In y (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st r x y Hr Hx Hbad Hy Hdom.
+    eapply (invalidate_keys_footprint p p' ch st (row_footprint p' r) x y).
+    - unfold edit_footprints; apply in_or_app; right; apply in_or_app; left.
+      apply in_map; exact Hr.
+    - exact Hx.
+    - exact Hbad.
+    - exact Hy.
+    - exact Hdom.
+  Qed.
+
+  (** Listed changed writes in either program are seed invalidations. *)
+  Lemma invalidate_keys_changed : forall p p' ch st r y, In r ch ->
+    (In r (S.rows p) /\ In y (S.writes p r) \/
+      In r (S.rows p') /\ In y (S.writes p' r)) ->
+    dom st y -> In y (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st r y Hchanged Hwrite Hdom.
+    apply (invalidate_keys_seed p p' ch st).
+    apply (proj2 (changed_seeds_spec p p' ch st y)).
+    split; [exact Hdom|]; exists r; split; [exact Hchanged|].
+    apply in_or_app; destruct Hwrite as [[_ Hy]|[_ Hy]]; [now left|now right].
+  Qed.
+
+  (** A row with a retained new write cannot be one of the changed rows. *)
+  Lemma retained_row_unchanged : forall p p' ch st r y,
+    In r (S.rows p') -> In y (S.writes p' r) -> dom st y ->
+    ~ In y (invalidate_keys p p' ch st) -> ~ In r ch.
+  Proof.
+    intros p p' ch st r y Hr Hy Hdom Hkeep Hchanged; apply Hkeep.
+    eapply invalidate_keys_changed; [exact Hchanged|right; split; eassumption|exact Hdom].
+  Qed.
+
+  (** The retained domain remains closed for the old program. *)
+  Lemma invalidate_keys_closed_old : forall p p' ch st, inv p st ->
+    closed p (fun x => dom st x /\ ~ In x (invalidate_keys p p' ch st)).
+  Proof.
+    intros p p' ch st [Hclosed Hpost] r y x Hr Hy [Hdom Hkeep] Hx; split.
+    - exact (Hclosed r y x Hr Hy Hdom Hx).
+    - intro Hbad; apply Hkeep.
+      exact (invalidate_keys_old p p' ch st r x y Hr Hx Hbad Hy Hdom).
+  Qed.
+
+  (** Removing the closure leaves a closed domain in the new program. *)
+  Lemma invalidate_keys_closed : forall p p' ch st, edit_covers p p' ch -> inv p st ->
+    closed p' (fun x => dom st x /\ ~ In x (invalidate_keys p p' ch st)).
+  Proof.
+    intros p p' ch st Hcovers [Hclosed Hpost] r y x Hr' Hy' [Hdom Hkeep] Hx'.
+    pose proof (retained_row_unchanged p p' ch st r y Hr' Hy' Hdom Hkeep) as Hunchanged.
+    destruct (Hcovers r Hunchanged) as [Hrows Hbody].
+    pose proof (proj2 Hrows Hr') as Hr.
+    destruct (Hbody Hr) as [Htarget [Hdeps [Hsides Heval]]].
+    assert (Hwrites : S.writes p r = S.writes p' r).
+    { unfold S.writes; now rewrite Htarget, Hsides. }
+    assert (Hy : In y (S.writes p r)) by (rewrite Hwrites; exact Hy').
+    assert (Hx : In x (S.writes p r ++ S.deps p r)).
+    { rewrite Hwrites, Hdeps; exact Hx'. }
+    split.
+    - exact (Hclosed r y x Hr Hy Hdom Hx).
+    - intro Hbad; apply Hkeep.
+      exact (invalidate_keys_new p p' ch st r x y Hr' Hx' Hbad Hy' Hdom).
+  Qed.
+
+  (** Metadata retirement does not alter exact value deletion. *)
+  Lemma edit_value_keys : forall p p' ch st x,
+    value (edit p p' ch st) x =
+      if mem x (invalidate_keys p p' ch st) then None else value st x.
+  Proof.
+    intros p p' ch st x; unfold edit.
+    destruct (invalidate_keys p p' ch st) as [|y bad]; [reflexivity|].
+    unfold value; cbn [inc_values]; apply lookup_remove_keys.
+  Qed.
+
+  (** Retained values are exactly old values outside the invalidation list. *)
+  Lemma edit_dom_keys : forall p p' ch st x,
+    dom (edit p p' ch st) x <->
+      dom st x /\ ~ In x (invalidate_keys p p' ch st).
+  Proof.
+    intros p p' ch st x; unfold dom; rewrite edit_value_keys.
+    destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem.
+    - split.
+      + intros [v Hvalue]; discriminate Hvalue.
+      + intros [_ Hkeep]; exfalso; apply Hkeep.
+        apply (proj1 (mem_spec x (invalidate_keys p p' ch st))); exact Hmem.
+    - split.
+      + intro Hvalue; split; [exact Hvalue|].
+        intro Hin.
+        pose proof (proj2 (mem_spec x (invalidate_keys p p' ch st)) Hin) as Htrue.
+        change (mem x (invalidate_keys p p' ch st) = true) in Htrue; congruence.
+      + intros [Hvalue _]; exact Hvalue.
+  Qed.
+
+  (** The public invalidation inventory equals the actual removed domain, on all states. *)
+  Lemma invalidated_keys_spec : forall p p' ch st x,
+    In x (invalidate_keys p p' ch st) <-> dom st x /\ ~ dom (edit p p' ch st) x.
+  Proof.
+    intros p p' ch st x; split.
+    - intro Hin; split; [eapply invalidate_keys_dom; exact Hin|].
+      intro Hnew; apply (proj1 (edit_dom_keys p p' ch st x)) in Hnew as [_ Hkeep].
+      exact (Hkeep Hin).
+    - intros [Hold Hremoved].
+      destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem.
+      + apply (proj1 (mem_spec x (invalidate_keys p p' ch st))); exact Hmem.
+      + exfalso; apply Hremoved; apply (proj2 (edit_dom_keys p p' ch st x)).
+        split; [exact Hold|].
+        intro Hin.
+        pose proof (proj2 (mem_spec x (invalidate_keys p p' ch st)) Hin) as Htrue.
+        change (mem x (invalidate_keys p p' ch st) = true) in Htrue; congruence.
+  Qed.
+
+  (** Values at retained keys agree pointwise with their old lookups. *)
+  Lemma edit_look_kept : forall p p' ch st x,
+    ~ In x (invalidate_keys p p' ch st) -> look (edit p p' ch st) x = look st x.
+  Proof.
+    intros p p' ch st x Hkeep; unfold look; rewrite edit_value_keys.
+    destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem; [|reflexivity].
+    exfalso; apply Hkeep.
+    apply (proj1 (mem_spec x (invalidate_keys p p' ch st))); exact Hmem.
+  Qed.
+
+  (** Unchanged retained rows keep their accepted contributions under the edited lookup. *)
+  Lemma edit_frame_keys : forall p p' ch st,
+    S.wf p' -> edit_covers p p' ch -> inv p st -> post_on p' (edit p p' ch st).
+  Proof.
+    intros p p' ch st Hwf Hcovers Hinv r y Hr' Hy' Hnew.
+    apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew as [Hdom Hkeep].
+    pose proof (retained_row_unchanged p p' ch st r y Hr' Hy' Hdom Hkeep) as Hunchanged.
+    destruct (Hcovers r Hunchanged) as [Hrows Hbody].
+    pose proof (proj2 Hrows Hr') as Hr.
+    destruct (Hbody Hr) as [Htarget [Hdeps [Hsides Heval]]].
+    assert (Hy : In y (S.writes p r)).
+    { unfold S.writes; rewrite Htarget, Hsides; exact Hy'. }
+    pose proof (proj2 Hinv r y Hr Hy Hdom) as Hrow.
+    rewrite Htarget, Heval in Hrow.
+    assert (Hagree : forall x, In x (row_keys p' r) ->
+      look st x = look (edit p p' ch st) x).
+    { intros x Hx; symmetry; apply edit_look_kept.
+      exact (proj2 (invalidate_keys_closed p p' ch st Hcovers Hinv r y x
+        Hr' Hy' (conj Hdom Hkeep) Hx)). }
+    rewrite (row_look_transport p' r (look st) (look (edit p p' ch st))
+      Hwf Hr' Hagree) in Hrow.
+    exact Hrow.
+  Qed.
+
+  Lemma edit_inv : forall p p' ch st,
+    S.wf p' -> edit_covers p p' ch -> inv p st -> inv p' (edit p p' ch st).
+  Proof.
+    intros p p' ch st Hwf Hcovers Hinv; split.
+    - intros r y x Hr Hy Hnew Hx; apply (proj2 (edit_dom_keys p p' ch st x)).
+      apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew.
+      exact (invalidate_keys_closed p p' ch st Hcovers Hinv r y x Hr Hy Hnew Hx).
+    - exact (edit_frame_keys p p' ch st Hwf Hcovers Hinv).
+  Qed.
 
   Lemma edit_keeps : forall p p' ch st x v,
     value (edit p p' ch st) x = Some v -> value st x = Some v.
@@ -670,9 +958,18 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   TimeFun record_rows.
   TimeFun finish_demand.
   TimeFun demand.
+  TimeFun row_footprint.
+  TimeFun snapshot_footprint.
+  TimeFun edit_footprints.
+  TimeFun changed_keys.
+  TimeFun changed_seeds.
+  TimeFun invalidate_keys.
+  TimeFun retire_snapshot.
   TimeFun edit.
   Definition region := discovery_region.
-  Definition invalidated (_ _ : S.prog) (_ : list S.row) (_ : state) : list S.key := [].
+  Definition invalidate := invalidate_keys.
+  TimeFun invalidate.
+  Definition invalidated := invalidate.
   Definition frozen := frozen_pairs.
   Definition stored (st : state) : list S.key :=
     map (fun binding => fst (snd binding)) (PTrieCode.elements (inc_values st)).
@@ -828,9 +1125,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
 
   Definition discover := discovery_keys.
   TimeFun discover.
-  (* STUB-CODE *)
-  Definition invalidate (_ _ : S.prog) (_ : list S.row) (_ : state) : list S.key := [].
-  TimeFun invalidate.
   (** Snapshot access walks the identifier once. *)
   Lemma T_snapshot_get_le : forall id st,
     (T_snapshot_get id st <= c_inc * N.of_nat (Pos.size_nat id + 1))%N.
