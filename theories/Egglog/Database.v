@@ -10043,6 +10043,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     injection Hpop as Hname Hstate. subst x db'. reflexivity.
   Qed.
 
+  Lemma pop_loser_index : forall db x db' s new,
+    db_pop_loser db = Some (x, db') -> index s new db' = index s new db.
+  Proof.
+    intros db x db' s new Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'. reflexivity.
+  Qed.
+
+  Lemma pop_loser_slot_of : forall db x db' s,
+    db_pop_loser db = Some (x, db') -> slot_of db' s = slot_of db s.
+  Proof.
+    intros db x db' s Hpop. unfold slot_of.
+    rewrite (proj1 (db_pop_loser_layout db x db' Hpop)). reflexivity.
+  Qed.
+
+  Lemma pop_loser_kind_ok : forall db x db' f k o,
+    db_pop_loser db = Some (x, db') -> kind_ok db' f k o <-> kind_ok db f k o.
+  Proof.
+    intros db x db' f k o Hpop.
+    destruct (db_pop_loser_preserves db x db' Hpop) as [_ Hview].
+    destruct (db_pop_loser_layout db x db' Hpop) as [Hslots [Hids _]].
+    unfold kind_ok, allocated, slots_fit. now rewrite Hview, Hslots, Hids.
+  Qed.
+
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
