@@ -4,7 +4,7 @@
     For example, an empty index has a root node.
     Builds on: IndexSig. *)
 
-From Stdlib Require Import List PArith NArith Lia.
+From Stdlib Require Import List PArith NArith PeanoNat Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
@@ -39,6 +39,79 @@ Module IndexFacts (V : VALUE) (I : INDEX V).
       now exists suf.
   Qed.
 End IndexFacts.
+
+Module IndexTimeFacts (V : VALUE_T) (I : INDEX_T V).
+  Module C := CellKey V.
+
+  (** Every enumerated child has an encoding covered by the stored cell width. *)
+  Lemma child_bits : forall a ix n pre c, I.wf a ix -> I.node ix n pre ->
+    In c (I.children ix n) -> cell_bits V.encode c <= I.max_cell_bits ix.
+  Proof.
+    intros a ix n pre c Hwf Hnode Hin.
+    destruct (I.children_spec a ix n pre c Hwf Hnode) as [Hchildren _].
+    destruct (proj1 Hchildren Hin) as [m Hchild].
+    assert (Hchildnode : I.node ix m (pre ++ [c])).
+    { apply (proj1 (proj1 (I.child_spec a ix n pre c Hwf Hnode) m)).
+      exact Hchild. }
+    assert (Hnonempty : pre ++ [c] <> []) by (destruct pre; discriminate).
+    destruct (I.node_live a ix m (pre ++ [c]) Hwf Hchildnode Hnonempty)
+      as [suf Hmember].
+    eapply I.max_cell_bits_mem; [exact Hwf | exact Hmember |].
+    apply in_or_app. left. apply in_or_app. right. now left.
+  Qed.
+
+  (** Distinct cells retain distinct natural-number encodings. *)
+  Lemma cell_codes_nodup : forall cs, NoDup cs ->
+    NoDup (map (fun c => Pos.to_nat (C.encode c)) cs).
+  Proof.
+    intros cs Hnodup. induction Hnodup as [| c cs Habsent Hnodup IH].
+    - constructor.
+    - cbn [map]. constructor; [| exact IH].
+      intro Hin. apply in_map_iff in Hin as [d [Hcode Hin]].
+      apply Pos2Nat.inj in Hcode. apply C.encode_inj in Hcode. subst d.
+      exact (Habsent Hin).
+  Qed.
+
+  (** The distinct positive child encodings fit below the width's power of two. *)
+  Lemma degree_count : forall a ix n pre, I.wf a ix -> I.node ix n pre ->
+    N.to_nat (I.degree ix n) < Nat.pow 2 (I.max_cell_bits ix).
+  Proof.
+    intros a ix n pre Hwf Hnode.
+    pose proof (proj2 (I.children_spec a ix n pre (Id 1%positive) Hwf Hnode))
+      as Hnodup.
+    pose proof (cell_codes_nodup _ Hnodup) as Hcodes.
+    assert (Hrange : incl (map (fun c => Pos.to_nat (C.encode c)) (I.children ix n))
+      (seq 1 (Nat.pow 2 (I.max_cell_bits ix) - 1))).
+    { intros code Hin. apply in_map_iff in Hin as [c [<- Hin]].
+      apply in_seq.
+      pose proof (Pos2Nat.is_pos (C.encode c)) as Hpositive.
+      pose proof (Pos.size_nat_upper (C.encode c)) as Hupper.
+      pose proof (child_bits a ix n pre c Hwf Hnode Hin) as Hbits.
+      assert (Hwidth : Pos.size_nat (C.encode c) <= I.max_cell_bits ix)
+        by (destruct c; exact Hbits).
+      pose proof (Nat.pow_le_mono_r 2 _ _ ltac:(lia) Hwidth) as Hpow.
+      pose proof (Nat.pow_lower_bound 2 (I.max_cell_bits ix) ltac:(lia)) as Hnonzero.
+      lia. }
+    pose proof (NoDup_incl_length Hcodes Hrange) as Hlength.
+    rewrite length_map, length_seq in Hlength.
+    rewrite (I.degree_spec a ix n pre Hwf Hnode).
+    pose proof (Nat.pow_lower_bound 2 (I.max_cell_bits ix) ltac:(lia)) as Hnonzero.
+    eapply Nat.le_lt_trans; [exact Hlength |].
+    apply Nat.sub_lt; [exact Hnonzero | lia].
+  Qed.
+
+  (** A stored node's degree uses no more bits than its widest child cell. *)
+  Lemma degree_bits : forall a ix n pre, I.wf a ix -> I.node ix n pre ->
+    N.size_nat (I.degree ix n) <= I.max_cell_bits ix.
+  Proof.
+    intros a ix n pre Hwf Hnode.
+    pose proof (degree_count a ix n pre Hwf Hnode) as Hcount.
+    destruct (I.degree ix n) as [| degree] eqn:Hdegree.
+    - cbn [N.size_nat]. lia.
+    - cbn [N.size_nat N.to_nat] in *.
+      now apply Pos.size_nat_least.
+  Qed.
+End IndexTimeFacts.
 
 Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
   Definition t := list (list (cell V.t)).
