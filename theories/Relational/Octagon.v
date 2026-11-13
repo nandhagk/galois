@@ -5026,6 +5026,43 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       intros; try contradiction; lia.
   Qed.
 
+  Lemma below_add_zero : forall m u p,
+    (forall a b, RelationalPathBounds.below (u a b) (entry m a b)) ->
+    u p p = Some 0%Z -> u (flip p) (flip p) = Some 0%Z ->
+    forall a b, RelationalPathBounds.below
+      (u a b) (entry (add_cons p p 0%Z m) a b).
+  Proof.
+    intros m u p Hbelow Hzero Hbar a b. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate a b p p) eqn:Hfirst.
+    - destruct (same_coordinate_true a b p p Hfirst) as [Ha Hb].
+      subst a b. apply below_lower_bound;
+        [rewrite Hzero; cbn [RelationalPathBounds.below]; lia|apply Hbelow].
+    - destruct (same_coordinate a b (flip p) (flip p)) eqn:Hsecond.
+      + destruct (same_coordinate_true a b (flip p) (flip p) Hsecond)
+          as [Ha Hb]. subst a b.
+        apply below_lower_bound;
+          [rewrite Hbar; cbn [RelationalPathBounds.below]; lia|apply Hbelow].
+      + apply Hbelow.
+  Qed.
+
+  (** Any closed lower relation lies below a one-edge extension. *)
+  Lemma closed_below_edge_extension : forall (u base : K.t -> K.t -> option Z)
+      i j d,
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall a b, RelationalPathBounds.below (u a b) (base a b)) ->
+    RelationalPathBounds.below (u i j) (Some d) ->
+    forall a b, RelationalPathBounds.below (u a b)
+      (RelationalPathBounds.edge_extension base i j d a b).
+  Proof.
+    intros u base i j d Hclosed Hbelow Hedge a b.
+    unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_glb. split; [apply Hbelow|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed i a b)|].
+    apply RelationalPathBounds.plus_mono; [apply Hbelow|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed j i b)|].
+    apply RelationalPathBounds.plus_mono; [exact Hedge|apply Hbelow].
+  Qed.
+
   (** The four-path candidate is below direct twin insertion. *)
   Lemma incremental_candidate_below_direct : forall m i j d,
     tightly_closed m ->
