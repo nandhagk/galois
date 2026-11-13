@@ -189,6 +189,7 @@ Module Type INCREMENTAL_TIME (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
         (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
         length roots + 1)%nat) * N.of_nat (width p st + 1) +
       c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
+      c_inc * N.of_nat (N.size_nat fuel) +
       c_inc * demand_solver_work p pol roots fuel st)%N.
   (** Invalidation lists each removed stored key once. *)
   Parameter invalidated_spec : forall p p' ch st x,
@@ -368,7 +369,9 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     In x (invalidate p p' ch st) -> dom st x.
   Parameter invalidate_nodup : forall p p' ch st, NoDup (invalidate p p' ch st).
   Parameter merge_region : state -> list S.key -> kmap S.key L.t -> state.
-  Parameter T_discover : S.prog -> list S.key -> state -> N.
+  Parameter discovery : S.prog -> list S.key -> N -> state ->
+    option (list S.key * list S.row * list (S.key * L.t)).
+  Parameter T_discovery : S.prog -> list S.key -> N -> state -> N.
   Parameter T_invalidate : S.prog -> S.prog -> list S.row -> state -> N.
   Parameter T_merge_region : state -> list S.key -> kmap S.key L.t -> N.
   (** A tracked row with a stored write has a live group that holds its writes and entries. *)
@@ -385,13 +388,22 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
   Parameter discover_source : forall p roots st x, In x (discover p roots st) ->
     ~ dom st x /\
     (In x roots \/ exists r, In r (region p roots st) /\ In x (S.writes p r ++ S.deps p r)).
-  (** Discovery pays for the rows and keys that it reaches and for the root codes. *)
-  Parameter T_discover_le : forall p roots st, S.wf p ->
-    (T_discover p roots st <=
+  (** A finished pass returns the discovered keys, the region and the frozen pairs. *)
+  Parameter discovery_views : forall p roots fuel st ks rs fz, S.wf p ->
+    discovery p roots fuel st = Some (ks, rs, fz) ->
+    ks = discover p roots st /\ rs = region p roots st /\ fz = frozen p roots st.
+  (** Fuel above the number of discovered keys finishes the pass. *)
+  Parameter discovery_enough : forall p roots fuel st, S.wf p ->
+    (N.of_nat (length (discover p roots st)) < fuel)%N ->
+    discovery p roots fuel st <> None.
+  (** The pass pays for the rows and keys that it reaches, the root codes and the fuel bits. *)
+  Parameter T_discovery_le : forall p roots fuel st, S.wf p ->
+    (T_discovery p roots fuel st <=
       c_inc * N.of_nat ((fold_right Nat.add 0%nat
         (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
         length roots + 1)%nat) * N.of_nat (width p st + 1) +
-      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)))%N.
+      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
+      c_inc * N.of_nat (N.size_nat fuel))%N.
   (** Merging pays for the code of every merged key. *)
   Parameter T_merge_region_le : forall st xs m,
     (T_merge_region st xs m <=
@@ -436,7 +448,7 @@ Module Type INCREMENTAL_PLAN (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S 
     (forall x, dom st x -> Checker.look m x = look st x) ->
     inv p (merge_region st (discover p roots st) m).
   (** Completed demand has an accepted certificate for the discovered rows. *)
-  Parameter demand_certificate : forall p pol roots fuel st st', inv p st ->
+  Parameter demand_certificate : forall p pol roots fuel st st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (Done, st') ->
     exists m, Checker.check_rows p (region p roots st) m = true.
   (** Removing the forward influence closure keeps a closed domain. *)
