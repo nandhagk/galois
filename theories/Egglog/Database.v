@@ -1810,6 +1810,65 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct roots as [[winner loser] |]; reflexivity.
   Qed.
 
+  (** Database union retains exactly the forest returned by the concrete union operation. *)
+  Lemma union_forest : forall i j db,
+    db_forest (union i j db) = snd (UnionFindCode.union i j (db_forest db)).
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Union never changes the database allocation interval. *)
+  Lemma union_ids : forall i j db, ids (union i j db) = ids db.
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Union of allocated endpoints keeps the forest's exact membership interval. *)
+  Lemma union_forest_members : forall i j db, wf db -> allocated db i -> allocated db j ->
+    forall x, UnionFind.mem (db_forest (union i j db)) x <-> allocated (union i j db) x.
+  Proof.
+    intros i j db Hwf Hi Hj x. rewrite union_forest.
+    unfold allocated. rewrite union_ids.
+    apply UnionFindCodeFacts.members_union_present.
+    - exact (wf_forest db Hwf).
+    - exact (wf_forest_members db Hwf).
+    - exact Hi.
+    - exact Hj.
+  Qed.
+
+  (** Already allocated union endpoints add no forest members or counter charge. *)
+  Lemma union_forest_count : forall i j db, wf db -> allocated db i -> allocated db j ->
+    count (db_forest (union i j db)) = ids (union i j db).
+  Proof.
+    intros i j db Hwf Hi Hj. rewrite union_forest, union_ids.
+    rewrite UnionFindCodeFacts.count_union_present.
+    - exact (wf_forest_count db Hwf).
+    - exact (proj2 (wf_forest_members db Hwf i) Hi).
+    - exact (proj2 (wf_forest_members db Hwf j) Hj).
+  Qed.
+
+  (** The preserved allocation interval bounds all forest keys after union. *)
+  Lemma union_forest_width : forall i j db, wf db -> allocated db i -> allocated db j ->
+    UnionFind.width (db_forest (union i j db)) <= N.size_nat (ids (union i j db)).
+  Proof.
+    intros i j db Hwf Hi Hj. apply UnionFindCodeFacts.width_allocated.
+    intros x Hmember. exact (proj1 (union_forest_members i j db Hwf Hi Hj x) Hmember).
+  Qed.
+
+  (** The updated equality log describes exactly the updated forest classes. *)
+  Lemma union_equalities : forall i j db, wf db -> forall a b,
+    same (view (union i j db)) a b <-> repr (union i j db) a = repr (union i j db) b.
+  Proof.
+    intros i j db Hwf a b. rewrite (union_same i j db a b Hwf).
+    unfold repr. rewrite union_forest.
+    rewrite (ForestFacts.union_same_closure i j (db_forest db) a b (wf_forest db Hwf)).
+    apply equality_closure_equiv. intros x y. rewrite (same_repr db x y Hwf). tauto.
+  Qed.
+
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
     canonical (rebuild db) /\ pending (rebuild db) = 0.
