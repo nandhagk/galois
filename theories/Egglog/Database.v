@@ -5233,6 +5233,94 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros b u state. time_unfold T_slot_update_many. reflexivity.
   Qed.
+
+  (** Reading either index cache pays the binary slot key once. *)
+  Lemma T_slot_index_get_width : forall code indexes,
+    (T_slot_index_get code indexes <=
+      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
+  Proof.
+    intros code indexes. time_unfold T_slot_index_get.
+    apply N.add_le_mono_l. apply PTrieT.T_get_le.
+  Qed.
+
+  (** Reading a projection-count table pays the same binary slot key. *)
+  Lemma T_projection_table_get_width : forall code counts,
+    (T_projection_table_get code counts <=
+      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
+  Proof.
+    intros code counts. time_unfold T_projection_table_get.
+    apply N.add_le_mono_l. apply PTrieT.T_get_le.
+  Qed.
+
+  (** One slot update exposes count width separately from tuple and index costs. *)
+  Lemma T_slot_update_one_local : forall add s u state,
+    let code := N.succ_pos s in
+    let all := slot_index_get code (runtime_all_indexes state) in
+    let fresh := slot_index_get code (runtime_new_indexes state) in
+    let count := runtime_projection_count state s u in
+    (T_slot_update_one add s u state <=
+      32 + N.T_succ_pos s + T_db_tuple_code u +
+      6 * (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1)) +
+      2 * (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1)) +
+      I.T_insert u all + I.T_insert u fresh + I.T_remove u all + I.T_remove u fresh +
+      N.of_nat (N.size_nat count) + 2)%N.
+  Proof.
+    intros add s u state. cbn beta zeta.
+    set (code := N.succ_pos s) in *.
+    set (tuple_code := db_tuple_code u) in *.
+    set (table := projection_table_get code (runtime_projection_counts state)).
+    set (all := slot_index_get code (runtime_all_indexes state)) in *.
+    set (fresh := slot_index_get code (runtime_new_indexes state)) in *.
+    pose proof (T_projection_table_get_width code (runtime_projection_counts state)) as Htable.
+    pose proof (T_slot_index_get_width code (runtime_all_indexes state)) as Hall.
+    pose proof (T_slot_index_get_width code (runtime_new_indexes state)) as Hfresh.
+    assert (Hget : (PTrieCode.T_get tuple_code table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { apply PTrieT.T_get_le. }
+    assert (Hset_slot : forall A (v : A) (m : PTrieCode.t A),
+      (PTrieCode.T_set code v m <= PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N).
+    { intros A v m. apply PTrieT.T_set_le. }
+    assert (Hset_tuple : forall v,
+      (PTrieCode.T_set tuple_code v table <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { intro v. apply PTrieT.T_set_le. }
+    assert (Hremove : (PTrieCode.T_remove tuple_code table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { apply PTrieT.T_remove_le. }
+    pose proof (N.T_succ_le (runtime_projection_count state s u)) as Hsucc.
+    pose proof (N.T_pred_le (runtime_projection_count state s u)) as Hpred.
+    unfold runtime_projection_count in Hsucc, Hpred |- *.
+    fold code tuple_code table in Hsucc, Hpred |- *.
+    set (count := match PTrieCode.get tuple_code table with Some (_, n) => n | None => 0%N end) in *.
+    time_unfold T_slot_update_one. cbn beta iota zeta.
+    fold code tuple_code table count all fresh.
+    destruct add; [| destruct count as [|[p|p|]]];
+      try time_unfold @T_runtime_set_indexes;
+      time_pose; time_simpl; time_cbn_all.
+    all: set (slot_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N) in *;
+      set (tuple_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N) in *;
+      clearbody slot_cost tuple_cost; lia.
+  Qed.
+
+  (** A preserved state predicate turns uniform per-layout costs into a complete walk bound. *)
+  Lemma T_slot_update_many_bound : forall b u layouts state
+    (P : database_runtime (cell V.t) I.t -> Prop) budget,
+    P state ->
+    (forall s layout current, In (s, layout) layouts -> P current ->
+      P (slot_update_one b s (project_slot_layout layout u) current) /\
+      (T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
+    (T_slot_update_many b u layouts state <=
+      (budget + 1) * N.of_nat (length layouts) + 1)%N.
+  Proof.
+    intros b u layouts. induction layouts as [|[s layout] rest IH];
+      intros state P budget Hstate Hstep.
+    - rewrite T_slot_update_many_nil. cbn [length]. lia.
+    - destruct (Hstep s layout state (or_introl eq_refl) Hstate) as [Hnext Hcost].
+      pose proof (IH (slot_update_one b s (project_slot_layout layout u) state) P budget Hnext
+        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Htail.
+      rewrite T_slot_update_many_cons. cbn [length]. nia.
+  Qed.
   Definition c_db : N :=
     4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
 
