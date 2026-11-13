@@ -2711,6 +2711,30 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       nia.
   Qed.
 
+  Local Lemma table_sign_time : forall w a,
+    (T_interval_sign w a <=
+      300 * N.of_nat ((Pos.to_nat w + interval_bits a + 1) ^ 2))%N.
+  Proof.
+    intros w a.
+    pose proof (table_half_time w) as Hhalf_time.
+    assert (Hhalf_bits : Z.size_nat (Word.half w) <= Pos.to_nat w).
+    { apply PayloadBounds.payload_word_bits. unfold Word.is_word.
+      pose proof (Word.half_pos w). pose proof (Word.modulus_half w). lia. }
+    destruct a as [|[|lo|] [|hi|]];
+      unfold T_interval_sign, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (repeat rewrite Nat2N.inj_add in *; nia).
+    pose proof (Std.Z.T_ltb_le hi (Word.half w)) as Hltb.
+    pose proof (Std.Z.T_leb_le (Word.half w) lo) as Hleb.
+    pose proof (Nat.le_max_r (Z.size_nat lo) (Z.size_nat hi)) as Hhi_bits.
+    destruct (Z.ltb hi (Word.half w)); time_cbn_all;
+      cbn [interval_bits] in *;
+      repeat rewrite Nat2N.inj_add in *;
+      repeat rewrite Nat2N.inj_mul in *;
+      nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
