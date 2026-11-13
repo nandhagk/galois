@@ -681,6 +681,115 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   (** * Identifier and priority widths *)
 
+  (** Increasing a positive number cannot shorten its bit representation. *)
+  Lemma positive_bits_mono : forall a b, (a <= b)%positive ->
+    Pos.size_nat a <= Pos.size_nat b.
+  Proof.
+    intros a b Hle; rewrite !pos_size_log2.
+    apply Nat.add_le_mono_r, Nat.log2_le_mono.
+    now apply Pos2Nat.inj_le.
+  Qed.
+
+  (** A binary successor adds at most one bit. *)
+  Lemma positive_succ_bits : forall a,
+    Pos.size_nat (Pos.succ a) <= Pos.size_nat a + 1.
+  Proof.
+    intro a; induction a; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** Taking a maximum retains one operand's bit width. *)
+  Lemma positive_max_bits : forall a b,
+    Pos.size_nat (Pos.max a b) <= Nat.max (Pos.size_nat a) (Pos.size_nat b).
+  Proof.
+    intros a b; destruct (Pos.compare_spec a b) as [Heq|Hab|Hba].
+    - subst b; rewrite Pos.max_l by apply Pos.le_refl; apply Nat.le_max_l.
+    - rewrite Pos.max_r by (apply Pos.lt_le_incl; exact Hab); apply Nat.le_max_r.
+    - rewrite Pos.max_l by (apply Pos.lt_le_incl; exact Hba); apply Nat.le_max_l.
+  Qed.
+
+  (** A maximum of width-bounded identifiers remains within their common width. *)
+  Lemma positive_maximum_bits : forall xs w, 1 <= w ->
+    (forall x, In x xs -> Pos.size_nat x <= w) ->
+    Pos.size_nat (fold_right Pos.max 1%positive xs) <= w.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros w Hw Hbits.
+    - exact Hw.
+    - cbn [fold_right]; eapply Nat.le_trans; [apply positive_max_bits|].
+      apply Nat.max_lub; [apply Hbits; now left|].
+      apply IH; [exact Hw|intros y Hy; apply Hbits; now right].
+  Qed.
+
+  (** Numbered rows fit the logarithmic occurrence-index width. *)
+  Lemma row_ids_bits : forall p id, In id (row_ids p) ->
+    Pos.size_nat id <= Nat.log2 (C p) + 1.
+  Proof.
+    intros p id Hin; rewrite F0_row_ids in Hin.
+    apply in_map_iff in Hin as [n [<- Hin]]; apply in_seq in Hin.
+    rewrite pos_size_log2, SuccNat2Pos.id_succ.
+    apply Nat.add_le_mono_r, Nat.log2_le_mono; lia.
+  Qed.
+
+  (** Every declared support code fits the system's key-width bound. *)
+  Lemma key_support_bits : forall p c, S.wf p -> In c (key_support p) ->
+    Pos.size_nat c <= S.kw p.
+  Proof.
+    intros p c Hwf Hin; unfold key_support in Hin; apply nodup_In in Hin.
+    apply in_map_iff in Hin as [x [<- Hin]].
+    apply in_flat_map in Hin as [r [Hr Hx]].
+    exact (S.key_bits_le p r x Hwf Hr Hx).
+  Qed.
+
+  (** A fitting policy bounds each support priority by one more than the key width. *)
+  Lemma priority_bits : forall p pol c, prio_ok p pol -> In c (key_support p) ->
+    Pos.size_nat (priority pol c) <= S.kw p + 1.
+  Proof.
+    intros p pol c Hprio Hin; exact (Hprio c Hin).
+  Qed.
+
+  (** The fallback rank adds only the successor bit to the maximum support priority. *)
+  Lemma top_rank_bits : forall p pol, prio_ok p pol ->
+    Pos.size_nat (top_rank p pol) <= S.kw p + 2.
+  Proof.
+    intros p pol Hprio; unfold top_rank.
+    eapply Nat.le_trans; [apply positive_succ_bits|].
+    assert (Hmax : Pos.size_nat
+      (fold_right Pos.max 1%positive (List.map (priority pol) (key_support p))) <=
+      S.kw p + 1).
+    { apply positive_maximum_bits; [lia|].
+      intros x Hin; apply in_map_iff in Hin as [c [<- Hc]].
+      exact (priority_bits p pol c Hprio Hc). }
+    lia.
+  Qed.
+
+  (** Skipping heads and taking minima never raises a row above its fallback rank. *)
+  Lemma row_rank_top : forall p pol r, (row_rank p pol r <= top_rank p pol)%positive.
+  Proof.
+    intros p pol r; unfold row_rank.
+    induction (S.writes p r) as [|x xs IH]; [apply Pos.le_refl|].
+    cbn [fold_right]; destruct (trie_get (S.key_code x) (heads pol)); [exact IH|].
+    eapply Pos.le_trans; [apply Pos.le_min_r|exact IH].
+  Qed.
+
+  (** Every cached row priority fits the fallback's bit-width bound. *)
+  Lemma row_rank_bits : forall p pol r, prio_ok p pol ->
+    Pos.size_nat (row_rank p pol r) <= S.kw p + 2.
+  Proof.
+    intros p pol r Hprio; eapply Nat.le_trans.
+    - apply positive_bits_mono, row_rank_top.
+    - now apply top_rank_bits.
+  Qed.
+
+  (** A row identifier and its priority fit the queue's declared key width. *)
+  Lemma row_queue_width : forall p pol id r, prio_ok p pol -> In id (row_ids p) ->
+    Pos.size_nat id + N.size_nat (N.pos (row_rank p pol r)) <=
+      S.kw p + Nat.log2 (C p) + 3.
+  Proof.
+    intros p pol id r Hprio Hid.
+    pose proof (row_ids_bits p id Hid) as Hbits.
+    pose proof (row_rank_bits p pol r Hprio) as Hrank.
+    cbn [N.size_nat]; lia.
+  Qed.
+
   (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
   Lemma F4_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     invariant p pol (prepare p pol) /\
