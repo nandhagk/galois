@@ -1372,6 +1372,233 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     rewrite Hcombine in Hr. inversion Hr; subst r. rewrite Hrhs. apply comb_rhs_size.
   Qed.
 
+  (** Each raw occurrence pays for its key, coefficient and list cell. *)
+  Fixpoint lc_terms_weight (xs : list (X.t * Z)) : N :=
+    match xs with
+    | nil => 0
+    | (x, a) :: ys => N.of_nat (Pos.size_nat (X.encode x) + Z.size_nat a + 1) +
+        lc_terms_weight ys
+    end%N.
+
+  (** Concatenation preserves total occurrence weight. *)
+  Lemma lc_terms_weight_app : forall xs ys,
+    lc_terms_weight (xs ++ ys) = (lc_terms_weight xs + lc_terms_weight ys)%N.
+  Proof.
+    induction xs as [|[x a] xs IH]; intro ys;
+      cbn [app lc_terms_weight]; rewrite ?IH; lia.
+  Qed.
+
+  (** A row's key envelope includes every stored key occurrence. *)
+  Lemma row_key_bits_coefficient : forall p x a,
+    In (x, a) (lhs p) -> (Pos.size_nat (X.encode x) <= row_key_bits p)%nat.
+  Proof.
+    intros [xs r b] x a Hin. unfold row_key_bits. cbn [lhs] in *.
+    induction xs as [|[y c] xs IH]; [contradiction|].
+    cbn [map fold_right fst] in *. destruct Hin as [Heq|Hin].
+    - inversion Heq; subst. apply Nat.le_max_l.
+    - eapply Nat.le_trans; [exact (IH Hin)|apply Nat.le_max_r].
+  Qed.
+
+  (** Coefficient scaling increases each occurrence only by the multiplier's bit length. *)
+  Lemma lc_terms_weight_scale : forall m xs k b,
+    (forall x a, In (x, a) xs ->
+      (Pos.size_nat (X.encode x) <= k /\ Z.size_nat a <= b)%nat) ->
+    (lc_terms_weight (scale_terms m xs) <=
+      N.of_nat (length xs * (k + Z.size_nat m + b + 1)))%N.
+  Proof.
+    intros m xs. induction xs as [|[x a] xs IH]; intros k b Hbounds.
+    - cbn [scale_terms map lc_terms_weight length]. lia.
+    - destruct (Hbounds x a (or_introl eq_refl)) as [Hkey Hbits].
+      specialize (IH k b ltac:(intros y z Hin; apply Hbounds; now right)).
+      pose proof (lc_size_mul m a) as Hproduct.
+      change (N.of_nat (Pos.size_nat (X.encode x) + Z.size_nat (m * a) + 1) +
+        lc_terms_weight (scale_terms m xs) <=
+        N.of_nat (S (length xs) * (k + Z.size_nat m + b + 1)))%N. nia.
+  Qed.
+
+  (** A scaled row's raw terms fit the row's contribution to certificate size. *)
+  Lemma lc_terms_weight_scale_row : forall p m,
+    (lc_terms_weight (scale_terms m (lhs p)) <=
+      N.of_nat ((length (lhs p) + 1) *
+        (row_key_bits p + (Z.size_nat m + 1) * (row_bits p + 1))))%N.
+  Proof.
+    intros p m.
+    pose proof (lc_terms_weight_scale m (lhs p) (row_key_bits p) (row_bits p)
+      ltac:(intros x a Hin; split; [now apply (row_key_bits_coefficient p x a)|
+        now apply (row_bits_coefficient p x a)])) as Hscale. nia.
+  Qed.
+
+  (** Successful raw combinations retain at most the certificate's occurrence weight. *)
+  Lemma combine_rows_terms_weight : forall P ms s, combine_rows P ms = Some s ->
+    (lc_terms_weight (lc_terms s) <= N.of_nat (csize P ms))%N.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hsum;
+      cbn [combine_rows] in Hsum; try discriminate.
+    - inversion Hsum. cbn [lc_terms lc_terms_weight csize]. lia.
+    - destruct (allowed p m); [|discriminate].
+      destruct (combine_rows ps ns) as [u|] eqn:Hu; [|discriminate].
+      specialize (IH ns u Hu). inversion Hsum; subst s. cbn [lc_terms csize].
+      rewrite lc_terms_weight_app. pose proof (lc_terms_weight_scale_row p m). nia.
+  Qed.
+
+  (** The public combination retains the same raw occurrence weight. *)
+  Lemma combine_terms_weight : forall P ms s, combine P ms = Some s ->
+    (lc_terms_weight (lhs s) <= N.of_nat (csize P ms))%N.
+  Proof.
+    intros P ms s Hsum. unfold combine in Hsum.
+    destruct (combine_rows P ms) as [u|] eqn:Hu; [|discriminate].
+    inversion Hsum; subst s. cbn [finish_sum lhs].
+    exact (combine_rows_terms_weight P ms u Hu).
+  Qed.
+
+  (** Total input bit mass also bounds the finished right-hand side. *)
+  Lemma combine_rhs_coarse_size : forall P ms s, combine P ms = Some s ->
+    (Z.size_nat (rhs s) <= csize P ms)%nat.
+  Proof.
+    intros P ms s Hsum. unfold combine in Hsum.
+    destruct (combine_rows P ms) as [u|] eqn:Hu; [|discriminate].
+    pose proof (combine_rows_nonnegative P ms u Hu) as [Ha Hb].
+    pose proof (combine_rows_sums_size P ms u Hu) as Hsize.
+    inversion Hsum; subst s. cbn [finish_sum rhs].
+    pose proof (lc_size_difference (fst (lc_sums u)) (snd (lc_sums u)) Ha Hb). lia.
+  Qed.
+
+  (** A proof-only sum accounts for every stored signed pair exactly once. *)
+  Fixpoint lc_trie_sum_ne (f : Z * Z -> N) (n : trie_ne (Z * Z)) : N :=
+    match n with
+    | N001 r => lc_trie_sum_ne f r
+    | N010 z => f z
+    | N011 z r => f z + lc_trie_sum_ne f r
+    | N100 l => lc_trie_sum_ne f l
+    | N101 l r => lc_trie_sum_ne f l + lc_trie_sum_ne f r
+    | N110 l z => lc_trie_sum_ne f l + f z
+    | N111 l z r => lc_trie_sum_ne f l + f z + lc_trie_sum_ne f r
+    end%N.
+
+  (** The empty trie contributes zero to the stored-value sum. *)
+  Definition lc_trie_sum (f : Z * Z -> N) (tr : PTrieCode.t (Z * Z)) : N :=
+    match tr with
+    | Empty => 0
+    | Nodes n => lc_trie_sum_ne f n
+    end%N.
+
+  (** An absent binding contributes zero to the stored-value sum. *)
+  Definition lc_option_sum (f : Z * Z -> N) (o : option (Z * Z)) : N :=
+    match o with
+    | None => 0
+    | Some z => f z
+    end%N.
+
+  (** Rebuilding a canonical node preserves the sum of its three parts. *)
+  Lemma lc_trie_sum_node : forall f l o r,
+    lc_trie_sum f (PTrieCode.node l o r) =
+      (lc_trie_sum f l + lc_option_sum f o + lc_trie_sum f r)%N.
+  Proof.
+    intros f [|l] [z|] [|r];
+      cbn [PTrieCode.node lc_trie_sum lc_trie_sum_ne lc_option_sum]; lia.
+  Qed.
+
+  (** A trie sum decomposes into its left, root and right contributions. *)
+  Lemma lc_trie_sum_parts : forall f tr,
+    lc_trie_sum f tr =
+      (lc_trie_sum f (PTrieCode.left tr) + lc_option_sum f (PTrieCode.value tr) +
+        lc_trie_sum f (PTrieCode.right tr))%N.
+  Proof.
+    intros f [|n]; [reflexivity|]. destruct n;
+      cbn [PTrieCode.left PTrieCode.value PTrieCode.right trie_left trie_value trie_right
+        lc_trie_sum lc_trie_sum_ne lc_option_sum]; lia.
+  Qed.
+
+  (** Updating one key replaces precisely that key's contribution to the sum. *)
+  Lemma lc_trie_sum_set : forall f key z tr,
+    (lc_trie_sum f (PTrieCode.set key z tr) +
+      lc_option_sum f (PTrieCode.get key tr) = lc_trie_sum f tr + f z)%N.
+  Proof.
+    intros f key. induction key as [key IH|key IH|]; intros z tr;
+      pose proof (lc_trie_sum_parts f tr) as Hparts.
+    - change (lc_trie_sum f (PTrieCode.node (PTrieCode.left tr) (PTrieCode.value tr)
+        (PTrieCode.set key z (PTrieCode.right tr))) +
+        lc_option_sum f (PTrieCode.get key (PTrieCode.right tr)) =
+        lc_trie_sum f tr + f z)%N.
+      rewrite lc_trie_sum_node. pose proof (IH z (PTrieCode.right tr)). lia.
+    - change (lc_trie_sum f (PTrieCode.node (PTrieCode.set key z (PTrieCode.left tr))
+        (PTrieCode.value tr) (PTrieCode.right tr)) +
+        lc_option_sum f (PTrieCode.get key (PTrieCode.left tr)) =
+        lc_trie_sum f tr + f z)%N.
+      rewrite lc_trie_sum_node. pose proof (IH z (PTrieCode.left tr)). lia.
+    - change (lc_trie_sum f (PTrieCode.node (PTrieCode.left tr) (Some z)
+        (PTrieCode.right tr)) + lc_option_sum f (PTrieCode.value tr) =
+        lc_trie_sum f tr + f z)%N.
+      rewrite lc_trie_sum_node. change (lc_option_sum f (Some z)) with (f z). lia.
+  Qed.
+
+  (** A value fold adds the proof-only sum to its initial accumulator. *)
+  Lemma lc_trie_sum_fold_ne : forall f n b,
+    PTrieCode.fold_values_ne (fun acc z => (acc + f z)%N) n b =
+      (b + lc_trie_sum_ne f n)%N.
+  Proof.
+    intros f n. induction n as
+      [r IHr|z|z r IHr|l IHl|l IHl r IHr|l IHl z|l IHl z r IHr]; intro b;
+      cbn [PTrieCode.fold_values_ne lc_trie_sum_ne]; rewrite ?IHl, ?IHr; lia.
+  Qed.
+
+  (** A value fold sums each stored contribution once. *)
+  Lemma lc_trie_sum_fold : forall f tr b,
+    PTrieCode.fold_values (fun acc z => (acc + f z)%N) tr b =
+      (b + lc_trie_sum f tr)%N.
+  Proof.
+    intros f [|n] b; cbn [PTrieCode.fold_values lc_trie_sum]; [lia|].
+    apply lc_trie_sum_fold_ne.
+  Qed.
+
+  (** Addition permits the list accumulator to be separated from its final sum. *)
+  Lemma lc_sum_fold_left : forall f xs b,
+    fold_left (fun acc p => (acc + f (snd p))%N) xs b =
+      (b + fold_right N.add 0 (map (fun p : positive * (Z * Z) => f (snd p)) xs))%N.
+  Proof.
+    intros f xs. induction xs as [|p xs IH]; intro b;
+      cbn [fold_left map fold_right]; rewrite ?IH; lia.
+  Qed.
+
+  (** Enumeration and the proof-only trie sum agree. *)
+  Lemma lc_trie_sum_elements : forall f tr,
+    lc_trie_sum f tr =
+      fold_right N.add 0%N (map (fun p => f (snd p)) (PTrieCode.elements tr)).
+  Proof.
+    intros f tr.
+    pose proof (PTrieT.F9_fold_values (Z * Z) N
+      (fun acc z => (acc + f z)%N) tr 0%N) as Hfold.
+    rewrite lc_trie_sum_fold, lc_sum_fold_left in Hfold. lia.
+  Qed.
+
+  (** Every occupied signed accumulator has nonnegative components. *)
+  Definition lc_trie_good (tr : PTrieCode.t (Z * Z)) : Prop :=
+    forall key z, PTrieCode.get key tr = Some z ->
+      (0 <= fst z)%Z /\ (0 <= snd z)%Z.
+
+  (** Absent entries start from the nonnegative zero pair. *)
+  Lemma lc_previous_nonnegative : forall tr key, lc_trie_good tr ->
+    let previous := match PTrieCode.get key tr with Some z => z | None => (0%Z, 0%Z) end in
+    (0 <= fst previous)%Z /\ (0 <= snd previous)%Z.
+  Proof.
+    intros tr key Hgood. destruct (PTrieCode.get key tr) as [z|] eqn:Hget.
+    - exact (Hgood key z Hget).
+    - cbn [fst snd]. lia.
+  Qed.
+
+  (** Inserting a coefficient preserves nonnegativity at every key. *)
+  Lemma insert_term_good : forall tr p, lc_trie_good tr -> lc_trie_good (insert_term tr p).
+  Proof.
+    intros tr [x a] Hgood key z Hget. unfold insert_term in Hget. cbn [fst snd] in Hget.
+    destruct (Pos.eq_dec key (X.encode x)) as [Heq|Hneq].
+    - subst key. rewrite PTrie.get_set_same in Hget. inversion Hget; subst z.
+      pose proof (lc_previous_nonnegative tr (X.encode x) Hgood) as Hprevious.
+      destruct (match PTrieCode.get (X.encode x) tr with
+        | Some w => w | None => (0%Z, 0%Z) end) as [p n].
+      cbn [fst snd] in Hprevious. apply lc_add_signed_nonnegative; tauto.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq. exact (Hgood key z Hget).
+  Qed.
+
   Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
