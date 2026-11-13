@@ -3862,6 +3862,36 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - f_equal. lia.
   Qed.
 
+  (** Inserting a distinct edge before the row merge leaves its prefix and suffix unchanged. *)
+  Lemma edge_extension_after_insert : forall base i j d,
+    i <> j -> entry base i i = Some 0%Z -> entry base j j = Some 0%Z ->
+    forall a b,
+      RelationalPathBounds.edge_extension (entry (add_cons i j d base)) i j d a b =
+      RelationalPathBounds.edge_extension (entry base) i j d a b.
+  Proof.
+    intros base i j d Hdistinct Hii Hjj a b.
+    assert (Hprefix : entry (add_cons i j d base) a i = entry base a i).
+    { rewrite entry_add_cons.
+      destruct (K.eqb_spec a i); [|reflexivity].
+      destruct (K.eqb_spec i j); congruence. }
+    assert (Hsuffix : entry (add_cons i j d base) j b = entry base j b).
+    { rewrite entry_add_cons.
+      destruct (K.eqb_spec j i); congruence. }
+    unfold RelationalPathBounds.edge_extension.
+    rewrite Hprefix, Hsuffix, entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha]; [subst a|reflexivity].
+    destruct (K.eqb_spec b j) as [Hb|Hb]; [subst b|reflexivity].
+    rewrite Hii, Hjj. cbn [RelationalPathBounds.plus].
+    replace (0 + (d + 0))%Z with d by lia.
+    destruct (entry base i j) as [old|];
+      cbn [lower_bound RelationalPathBounds.minimum].
+    - f_equal. destruct (Z_le_dec d old) as [Hle|Hgt].
+      + rewrite (Z.min_l d old) by lia. rewrite Z.min_id.
+        rewrite (Z.min_r old d) by lia. reflexivity.
+      + rewrite (Z.min_r d old) by lia. reflexivity.
+    - now rewrite Z.min_id.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
