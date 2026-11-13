@@ -3470,6 +3470,64 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       apply wf_make_fresh_from_replacement; assumption.
   Qed.
 
+  (** Replacing one value output by another preserves kind and all identifier obligations. *)
+  Lemma kind_ok_value_replace : forall db f k a b,
+    kind_ok db f k (Some (Val a)) -> kind_ok db f k (Some (Val b)).
+  Proof.
+    intros db f k a b [Hids [Hfits Hkind]]. unfold kind_ok. split.
+    - intros i Hin. apply Hids. apply in_app_iff in Hin. apply in_app_iff.
+      destruct Hin as [Hin | Hin]; [now left |].
+      cbn [option_list In] in Hin. destruct Hin as [Hfalse | Hfalse];
+        [discriminate Hfalse | contradiction].
+    - split.
+      + rewrite length_app in Hfits |- *. exact Hfits.
+      + exact Hkind.
+  Qed.
+
+  (** Normalized keys and normalized optional outputs form a canonical row. *)
+  Lemma canon_row_fixed : forall db k o, wf db ->
+    forall i, In (Id i) (map (canon db) k ++ option_list (option_map (canon db) o)) ->
+    repr db i = i.
+  Proof.
+    intros db k o Hwf i Hin. rewrite <- canon_row_tuple in Hin.
+    exact (canon_key_fixed db (k ++ option_list o) Hwf i Hin).
+  Qed.
+
+  (** Put uses only a justified union, an unchanged state or one canonical row replacement. *)
+  Lemma wf_put_from_replacement : replacement_preserves_wf ->
+    forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+  Proof.
+    intros Hreplace f k o db Hwf Hkind.
+    pose proof (kind_ok_canon db f k o Hwf Hkind) as Hnormal.
+    unfold put. rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    destruct (old db f (map (canon db) k)) as [before |] eqn:Hprevious.
+    - pose proof (wf_row_kind db Hwf f (map (canon db) k) before Hprevious) as Hbefore.
+      destruct Hkind as [Hids [Hfits Hshape]].
+      destruct (kind (view db) f) as [[| |m] |] eqn:Hdecl in Hshape, Hbefore;
+        destruct o as [[i | v] |]; destruct before as [[j | w] |];
+        cbn in Hshape, Hbefore; try contradiction.
+      + cbn [combine option_map canon]. rewrite output_eqb_refl. exact Hwf.
+      + cbn [combine option_map canon]. rewrite output_eqb_refl.
+        apply wf_union; [exact Hwf | |].
+        * eapply wf_row_ids; [exact Hwf | exact Hprevious |].
+          apply in_app_iff. right. cbn [option_list In]. now left.
+        * apply repr_allocated; [exact Hwf |]. apply Hids.
+          apply in_app_iff. right. cbn [option_list In]. now left.
+      + cbn [combine option_map canon]. rewrite Hdecl.
+        destruct (output_eqb (Some (Val w)) (Some (Val (V.merge m w v)))); [exact Hwf |].
+        apply Hreplace.
+        * exact Hwf.
+        * exact Hprevious.
+        * exact (kind_ok_value_replace db f (map (canon db) k) v (V.merge m w v) Hnormal).
+        * exact (canon_row_fixed db k (Some (Val (V.merge m w v))) Hwf).
+    - cbn [combine]. apply Hreplace.
+      + exact Hwf.
+      + exact Hprevious.
+      + exact Hnormal.
+      + exact (canon_row_fixed db k o Hwf).
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
