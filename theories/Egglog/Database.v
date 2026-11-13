@@ -1869,6 +1869,68 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply equality_closure_equiv. intros x y. rewrite (same_repr db x y Hwf). tauto.
   Qed.
 
+  (** A recorded union adds only its two allocated endpoints to the equality log. *)
+  Lemma union_log_allocated : forall i j db, wf db -> allocated db i -> allocated db j ->
+    Forall (fun edge => allocated (union i j db) (fst edge) /\
+      allocated (union i j db) (snd edge)) (runtime_equalities (db_runtime (union i j db))).
+  Proof.
+    intros i j db Hwf Hi Hj. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - change (Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+        ((i, j) :: runtime_equalities (db_runtime db))).
+      constructor; [now split | exact (wf_log_allocated db Hwf)].
+    - exact (wf_log_allocated db Hwf).
+  Qed.
+
+  (** The losing representative queued by union is allocated. *)
+  Lemma union_queue_allocated : forall i j db, wf db -> allocated db i -> allocated db j ->
+    Forall (allocated (union i j db)) (runtime_queue (db_runtime (union i j db))).
+  Proof.
+    intros i j db Hwf Hi Hj.
+    pose proof (UnionFindCodeFacts.repr_allocated (db_forest db) (ids db)
+      (wf_forest db Hwf) (wf_forest_members db Hwf)) as Hrepresentative.
+    unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - change (Forall (allocated db) (loser :: runtime_queue (db_runtime db))).
+      constructor.
+      + destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+          (wf_forest db Hwf) Hunion) as [_ [Hroots _]].
+        destruct Hroots as [[_ Hloser] | [_ Hloser]]; rewrite Hloser.
+        * exact (Hrepresentative j Hj).
+        * exact (Hrepresentative i Hi).
+      + exact (wf_queue_allocated db Hwf).
+    - exact (wf_queue_allocated db Hwf).
+  Qed.
+
+  (** The stored pending counter follows exactly the optional queue insertion. *)
+  Lemma union_pending_count : forall i j db, wf db ->
+    db_npending (union i j db) = N.of_nat (pending (union i j db)).
+  Proof.
+    intros i j db Hwf. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - change (N.succ (db_npending db) = N.of_nat (S (pending db))).
+      now rewrite Nat2N.inj_succ, (wf_pending_count db Hwf).
+    - exact (wf_pending_count db Hwf).
+  Qed.
+
+  (** A union with an empty resulting queue has changed no representative. *)
+  Lemma union_quiet_canonical : forall i j db, wf db ->
+    pending (union i j db) = 0 -> canonical (union i j db).
+  Proof.
+    intros i j db Hwf Hquiet. unfold union in Hquiet |- *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - change (S (pending db) = 0) in Hquiet. discriminate.
+    - change (pending db = 0) in Hquiet. intros f k o Hrow x Hin.
+      change (UnionFind.repr forest x = x).
+      rewrite (proj2 (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hwf) Hunion) x).
+      exact (wf_quiet_canonical db Hwf Hquiet f k o Hrow x Hin).
+  Qed.
+
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
     canonical (rebuild db) /\ pending (rebuild db) = 0.
