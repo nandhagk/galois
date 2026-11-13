@@ -6988,6 +6988,127 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply wmark_slots_update.
   Qed.
 
+  (** Writing only the row table retains the complete watermark observation. *)
+  Lemma wmark_row_write : forall f k o db, wmark (row_write f k o db) = wmark db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Erasing only the row table likewise retains every watermark input. *)
+  Lemma wmark_row_erase : forall f k db, wmark (row_erase f k db) = wmark db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Replacement composes two monotone history updates before writing its row binding. *)
+  Lemma wmark_row_replace : forall f k previous o db,
+    (wmark db <= wmark (row_replace f k previous o db))%N.
+  Proof.
+    intros f k [before |] o db; unfold row_replace; rewrite wmark_row_write.
+    - eapply N.le_trans.
+      + exact (wmark_slots_update false f (k ++ option_list before) db).
+      + apply wmark_slots_update.
+    - apply wmark_slots_update.
+  Qed.
+
+  (** Deletion records its removed contribution and never discards prior watermark inputs. *)
+  Lemma wmark_row_delete : forall f k db, (wmark db <= wmark (row_delete f k db))%N.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [before |].
+    - rewrite wmark_row_erase. apply wmark_slots_update.
+    - reflexivity.
+  Qed.
+
+  (** Row replacement cannot reduce the spending unit, without a row-consistency premise. *)
+  Lemma unit_row_replace_monotone : forall f k previous o db,
+    unit db <= unit (row_replace f k previous o db).
+  Proof.
+    intros f k previous o db. apply unit_monotone.
+    - rewrite row_replace_ids. reflexivity.
+    - apply wmark_row_replace.
+  Qed.
+
+  (** Row deletion cannot reduce the spending unit during an active repair. *)
+  Lemma unit_row_delete_monotone : forall f k db, unit db <= unit (row_delete f k db).
+  Proof.
+    intros f k db. apply unit_monotone.
+    - rewrite row_delete_ids. reflexivity.
+    - apply wmark_row_delete.
+  Qed.
+
+  (** Increasing the allocation bound retains all histories and increases the watermark. *)
+  Lemma wmark_allocate_id : forall i db, (ids db <= Npos i)%N ->
+    (wmark db <= wmark (allocate_id i db))%N.
+  Proof.
+    intros i db Hids. apply wmark_monotone.
+    - rewrite allocate_id_ids. exact Hids.
+    - reflexivity.
+    - reflexivity.
+    - intros p Hin. exact Hin.
+    - intros c Hin. exact Hin.
+  Qed.
+
+  (** Increasing allocation increases the spending unit without requiring forest consistency. *)
+  Lemma unit_allocate_id_monotone : forall i db, (ids db <= Npos i)%N ->
+    unit db <= unit (allocate_id i db).
+  Proof.
+    intros i db Hids. apply unit_monotone.
+    - rewrite allocate_id_ids. exact Hids.
+    - now apply wmark_allocate_id.
+  Qed.
+
+  (** Every raw put branch either retains the watermark or extends recorded histories. *)
+  Lemma wmark_put : forall f k o db, (wmark db <= wmark (put f k o db))%N.
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : wmark next = wmark db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + rewrite Hnext. reflexivity.
+      + rewrite <- Hnext. apply wmark_row_replace.
+    - rewrite <- Hnext. apply wmark_row_replace.
+  Qed.
+
+  (** Put is monotone in the spending unit even between invariant-restoring repair stages. *)
+  Lemma unit_put_monotone : forall f k o db, unit db <= unit (put f k o db).
+  Proof.
+    intros f k o db. apply unit_monotone.
+    - destruct (put_layout_raw db f k o) as [_ [_ Hids]]. rewrite Hids. reflexivity.
+    - apply wmark_put.
+  Qed.
+
+  (** Every fresh constructor branch combines increasing allocation with optional row recording. *)
+  Lemma unit_make_fresh_monotone : forall f k previous db,
+    let i := N.succ_pos (ids db) in
+    let fresh := allocate_id i db in
+    unit db <= unit (match kind_get f db with
+      | Some OId => row_replace f k previous (Some (Id i)) fresh | _ => fresh end).
+  Proof.
+    intros f k previous db. cbn zeta.
+    assert (Hallocate : unit db <= unit (allocate_id (N.succ_pos (ids db)) db)).
+    { apply unit_allocate_id_monotone. rewrite N.succ_pos_spec. lia. }
+    destruct (kind_get f db) as [[| |m] |]; try exact Hallocate.
+    eapply Nat.le_trans; [exact Hallocate | apply unit_row_replace_monotone].
+  Qed.
+
+  (** Reuse retains the unit, while every other make branch allocates monotonically. *)
+  Lemma unit_make_monotone : forall f k db, unit db <= unit (snd (make f k db)).
+  Proof.
+    intros f k db. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[i | v] |] |]; cbn [snd];
+      [reflexivity | apply unit_make_fresh_monotone | apply unit_make_fresh_monotone |
+       apply unit_make_fresh_monotone].
+  Qed.
+
   (** The high-water mark covers every stored cell encoding. *)
   Lemma wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
     In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
@@ -7324,11 +7445,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Insertion never reduces the spending unit. *)
   Lemma unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k o db _. apply unit_put_monotone.
+  Qed.
 
   (** Make never reduces the spending unit. *)
   Lemma unit_mono_make : forall f k db, wf db -> unit db <= unit (snd (make f k db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db _. apply unit_make_monotone.
+  Qed.
 
   (** Union never reduces the spending unit. *)
   Lemma wmark_union : forall i j db, wmark (union i j db) = wmark db.
