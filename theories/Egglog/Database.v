@@ -725,6 +725,77 @@ Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_s
   end.
 TimeFun database_slot_groups.
 
+(** A maximum comparison reads no more bits than its current declaration name. *)
+Lemma T_database_positive_max_le : forall p q,
+  (Pos.T_max p q <= N.of_nat (Pos.size_nat p) + 2)%N.
+Proof.
+  intros p q. time_step Pos.max.
+Qed.
+
+(** The declaration trie pays once for each declaration and each name bit. *)
+Lemma T_database_kinds_le : forall ds,
+  (T_database_kinds ds <= 8 * (PTrieT.c_trie + 1) *
+    N.of_nat (length ds + fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds + 1))%N.
+Proof.
+  intro ds. induction ds as [|d ds IH].
+  - time_step database_kinds; time_step.
+  - pose proof (PTrieT.T_set_le output (name d) (out d) (database_kinds ds)) as Hset.
+    unfold database_kinds in Hset. unfold T_database_kinds in IH.
+    time_unfold T_database_kinds. time_unfold List.T_fold_right.
+    revert IH. time_simpl. intro IH. time_cbn_all.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
+Qed.
+
+(** The declaration maximum charges the bit length of each name independently. *)
+Lemma T_database_max_name_le : forall ds,
+  (T_database_max_name ds <=
+    8 * N.of_nat (length ds + fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds + 1))%N.
+Proof.
+  intro ds. induction ds as [|d ds IH].
+  - time_step database_max_name; time_step.
+  - pose proof (T_database_positive_max_le (name d) (database_max_name ds)) as Hmax.
+    unfold database_max_name in Hmax. unfold T_database_max_name in IH.
+    time_unfold T_database_max_name. time_unfold List.T_fold_right.
+    revert IH. time_simpl. intro IH. time_cbn_all. lia.
+Qed.
+
+(** Dense grouping releases the carry credit accumulated by earlier slot numbers. *)
+Lemma T_database_slot_groups_amort : forall prepared next groups,
+  (T_database_slot_groups next prepared groups +
+    database_counter_credit (next + N.of_nat (length prepared)) <=
+    8 * (PTrieT.c_trie + 1) *
+      N.of_nat (length prepared +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat prepared + 1) +
+    database_counter_credit next)%N.
+Proof.
+  intro prepared. induction prepared as [|[f layout] rest IH]; intros next groups.
+  - time_unfold T_database_slot_groups. cbn [length fold_right].
+    rewrite !N.add_0_r. cbn [N.of_nat Nat.add]. rewrite N.mul_1_r.
+    set (trie_cost := PTrieT.c_trie). clearbody trie_cost. lia.
+  - set (previous := match PTrieCode.get f groups with Some slots => slots | None => [] end).
+    pose proof (IH (N.succ next) (PTrieCode.set f ((next, layout) :: previous) groups)) as Htail.
+    pose proof (PTrieT.T_get_le (list (N * database_slot_layout)) f groups) as Hget.
+    pose proof (PTrieT.T_set_le (list (N * database_slot_layout)) f
+      ((next, layout) :: previous) groups) as Hset.
+    pose proof (database_counter_succ_amort next) as Hcarry.
+    assert (Hfinish : (next + N.of_nat (length ((f, layout) :: rest)))%N =
+      (N.succ next + N.of_nat (length rest))%N) by (cbn [length]; lia).
+    rewrite Hfinish. time_unfold T_database_slot_groups. fold previous.
+    cbn [length fold_right fst].
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    time_cbn. nia.
+Qed.
+
+(** Numbering from zero has no initial carry debt. *)
+Lemma T_database_slot_groups_le : forall prepared groups,
+  (T_database_slot_groups 0 prepared groups <= 8 * (PTrieT.c_trie + 1) *
+    N.of_nat (length prepared +
+      fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat prepared + 1))%N.
+Proof.
+  intros prepared groups. pose proof (T_database_slot_groups_amort prepared 0 groups).
+  cbn [database_counter_credit] in H. lia.
+Qed.
+
 (** Reading a missing function group gives its empty slot list. *)
 Definition database_group_entries (f : positive)
     (groups : PTrieCode.t (list (N * database_slot_layout))) : list (N * database_slot_layout) :=
