@@ -7344,12 +7344,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
       : option (list (cell V.t)) := None.
-  (** Repair retains located rows, cache metadata, queue counts and the allocated forest. *)
+  (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
       exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None) /\
     metadata_ok db /\ db_npending db = N.of_nat (pending db) /\
-    UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db).
+    UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
+    (forall i j, same (view db) i j <-> repr db i = repr db j).
   Definition k_credit : N := 1. (* STUB *)
   Definition k_loop : N := 1. (* STUB *)
   Definition k_active : N := 1. (* STUB *)
@@ -7394,7 +7395,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma forest_cardinality : forall db, forest_ok db ->
     UnionFind.card (db_forest db) = N.to_nat (ids db).
   Proof.
-    intros db [_ [_ [_ [_ Hcard]]]]. exact Hcard.
+    intros db [_ [_ [_ [_ [Hcard _]]]]]. exact Hcard.
+  Qed.
+
+  (** The equality log and forest representatives have the same meaning during repair. *)
+  Lemma forest_same_repr : forall db, forest_ok db ->
+    forall i j, same (view db) i j <-> repr db i = repr db j.
+  Proof.
+    intros db [_ [_ [_ [_ [_ Hsame]]]]]. exact Hsame.
   Qed.
 
   (** Active entries retain coverage after their loser has left the queue. *)
@@ -7437,6 +7445,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.card (db_forest db) = N.to_nat (ids db).
   Proof.
     intros db work Hinv. apply forest_cardinality. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active repair states expose equality agreement without a public wf conversion. *)
+  Lemma inv_on_same_repr : forall db work i j, inv_on db work ->
+    (same (view db) i j <-> repr db i = repr db j).
+  Proof.
+    intros db work i j Hinv. apply forest_same_repr. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Representatives remain fixed throughout every active repair state. *)
+  Lemma inv_on_repr_idem : forall db work i, inv_on db work ->
+    repr db (repr db i) = repr db i.
+  Proof.
+    intros db work i Hinv. unfold repr. apply UnionFind.repr_idem.
+    exact (inv_on_forest_wf db work Hinv).
   Qed.
 
   (** Active repair states expose the exact stored queue count directly. *)
