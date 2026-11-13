@@ -1309,6 +1309,33 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite row_write_binding, !slots_update_view; reflexivity.
   Qed.
 
+  (** Every row after a replacement is either an old row or the requested binding. *)
+  Lemma row_replace_sources : forall f k previous o db g args output,
+    row (view (row_replace f k previous o db)) g args output ->
+      row (view db) g args output \/ (g = f /\ args = k /\ output = o).
+  Proof.
+    intros f k previous o db g args output Hrow.
+    apply row_replace_binding in Hrow as [[Hrow _] | [Hkey Houtput]].
+    - now left.
+    - right. injection Hkey as -> ->. repeat split; assumption.
+  Qed.
+
+  (** Replacing an absent key adds one row and preserves every old row. *)
+  Lemma row_replace_fresh : forall f k previous o db, old db f k = None ->
+    forall g args output, row (view (row_replace f k previous o db)) g args output <->
+      row (view db) g args output \/ (g = f /\ args = k /\ output = o).
+  Proof.
+    intros f k previous o db Habsent g args output. rewrite row_replace_binding.
+    split.
+    - intros [[Hrow _] | [Hkey Houtput]].
+      + now left.
+      + right. injection Hkey as -> ->. repeat split; assumption.
+    - intros [Hrow | [-> [-> ->]]].
+      + left. split; [exact Hrow |]. intro Hkey. injection Hkey as -> ->.
+        change (old db f k = Some output) in Hrow. congruence.
+      + right. split; reflexivity.
+  Qed.
+
   (** A row-table write retains the declaration table. *)
   Lemma row_write_kind : forall f k o db,
     kind (view (row_write f k o db)) = kind (view db).
@@ -1786,11 +1813,175 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
   Proof. Admitted. (* STUB *)
 
+  (** The executable output merge is the frozen public combination operation. *)
+  Lemma combine_output_correct : forall db f previous o,
+    combine_output db f previous o = combine db f previous o.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Resolving an output conflict retains every stored row. *)
+  Lemma output_conflict_rows : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db ->
+    row (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = row (view db).
+  Proof.
+    intros db previous co Hwf.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try reflexivity; apply union_rows; exact Hwf.
+  Qed.
+
+  (** Resolving an output conflict retains the declared function kinds. *)
+  Lemma output_conflict_kind : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db ->
+    kind (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = kind (view db).
+  Proof.
+    intros db previous co Hwf.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    exact (proj1 (layout_union a b db Hwf)).
+  Qed.
+
+  (** Every equality from an output conflict follows from the old relation and that conflict. *)
+  Lemma output_conflict_same_sources : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db -> forall i j,
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j.
+  Proof.
+    intros db previous co Hwf i j Hsame.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try solve [apply rst_step; now left].
+    pose proof (proj1 (union_same a b db i j Hwf) Hsame) as Hclosure.
+    eapply equality_closure_mono; [| exact Hclosure].
+    intros x y [Hold | Hpair]; [now left |].
+    right. injection Hpair as -> ->. split; reflexivity.
+  Qed.
+
+  (** Insertion retains the declaration table through conflicts and row replacement. *)
+  Lemma put_kind_effect : forall db f k o, wf db ->
+    kind (view (put f k o db)) = kind (view db).
+  Proof.
+    intros db f k o Hwf. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hkind : kind (view next) = kind (view db)).
+    { apply output_conflict_kind. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hkind |].
+      now rewrite row_replace_kind.
+    - now rewrite row_replace_kind.
+  Qed.
+
+  (** The only inserted row is the canonical key with its combined output. *)
+  Lemma put_row_sources : forall db f k o, wf db -> forall g args output,
+    row (view (put f k o db)) g args output ->
+      row (view db) g args output \/
+      (g = f /\ args = map (canon db) k /\
+        output = combine db f (old db f (map (canon db) k)) (option_map (canon db) o)).
+  Proof.
+    intros db f k o Hwf g args output. unfold put.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)).
+    { apply output_conflict_rows. exact Hwf. }
+    intro Hrow. destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + left. now rewrite <- Hrows.
+      + apply row_replace_sources in Hrow as [Hold | Hnew].
+        * left. now rewrite <- Hrows.
+        * now right.
+    - apply row_replace_sources in Hrow as [Hold | Hnew].
+      + left. now rewrite <- Hrows.
+      + now right.
+  Qed.
+
+  (** Insertion only adds equality consequences justified by the old and requested outputs. *)
+  Lemma put_same_sources : forall db f k o, wf db -> forall i j,
+    same (view (put f k o db)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/ conflict db f k o x y) i j.
+  Proof.
+    intros db f k o Hwf i j. unfold put, conflict.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hsame : forall a b, same (view next) a b ->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/
+          (previous = Some (Some (Id x)) /\ co = Some (Id y))) a b).
+    { apply output_conflict_same_sources. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [apply Hsame |].
+      rewrite row_replace_same. apply Hsame.
+    - rewrite row_replace_same. apply Hsame.
+  Qed.
+
+  (** Canonicalization preserves every cell's denotation in a satisfying model. *)
+  Lemma canon_den : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> forall c, den nu (canon db c) = den nu c.
+  Proof.
+    intros M nu db Hwf Hsat [i | v]; cbn [canon den]; [| reflexivity].
+    f_equal.
+    apply (sat_same V.merge M nu (view db) (repr db i) i Hsat).
+    apply (proj2 (same_repr db (repr db i) i Hwf)).
+    apply repr_idem. exact Hwf.
+  Qed.
+
+  (** Canonicalizing a tuple preserves all of its interpreted arguments. *)
+  Lemma canon_key_den : forall (M : model (V := V.t)) nu db k, wf db ->
+    sat V.merge M nu (view db) -> map (den nu) (map (canon db) k) = map (den nu) k.
+  Proof.
+    intros M nu db k Hwf Hsat. rewrite map_map. apply map_ext.
+    intro c. exact (canon_den M nu db Hwf Hsat c).
+  Qed.
+
+  (** Canonicalizing an optional output preserves its interpreted value. *)
+  Lemma canon_output_den : forall (M : model (V := V.t)) nu db o, wf db ->
+    sat V.merge M nu (view db) ->
+    option_map (den nu) (option_map (canon db) o) = option_map (den nu) o.
+  Proof.
+    intros M nu db [c |] Hwf Hsat; cbn [option_map]; [| reflexivity].
+    now rewrite (canon_den M nu db Hwf Hsat c).
+  Qed.
+
   (** Inserting a true, kind-correct row keeps the model. *)
   Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
     sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted. (* OPEN: establish concrete canonical row updates and their model preservation. *)
+  Proof.
+    intros M nu db f k o Hwf _ Hsat Hholds.
+    eapply (@sat_put_view V.t V.merge M nu (view db) (view (put f k o db)) f k o
+      (map (canon db) k) (option_map (canon db) o) (old db f (map (canon db) k))).
+    - exact Hsat.
+    - exact (put_kind_effect db f k o Hwf).
+    - intros previous Hprevious. exact Hprevious.
+    - exact (canon_key_den M nu db k Hwf Hsat).
+    - exact (canon_output_den M nu db o Hwf Hsat).
+    - exact Hholds.
+    - exact (put_row_sources db f k o Hwf).
+    - exact (put_same_sources db f k o Hwf).
+  Qed.
 
   (** A justified identifier union keeps the model. *)
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
