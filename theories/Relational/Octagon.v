@@ -955,6 +955,110 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     destruct (X.eqb_spec y x) as [Heq|Heq]; [contradiction|reflexivity].
   Qed.
 
+  (** A column translation changes exactly the bounds targeting its literal. *)
+  Lemma entry_shift_columns : forall k d m i j,
+    entry (shift_columns k d m) i j =
+    if K.eqb j k then option_map (fun z => (z + d)%Z) (entry m i j)
+    else entry m i j.
+  Proof.
+    intros k d m i j. unfold entry, shift_columns.
+    rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+    destruct (M.get i m) as [row|]; cbn [shift_column_row].
+    - destruct (M.get k row) as [old|] eqn:Hcol.
+      + destruct (K.eqb_spec j k) as [Hj|Hj].
+        * subst j. rewrite M.get_set_same, Hcol. reflexivity.
+        * rewrite M.get_set_other by exact Hj. reflexivity.
+      + destruct (K.eqb_spec j k) as [Hj|Hj].
+        * subst j. now rewrite Hcol.
+        * reflexivity.
+    - destruct (K.eqb j k); reflexivity.
+  Qed.
+
+  Lemma entry_shift_literal : forall k d m i j,
+    entry (shift_literal k d m) i j =
+    if K.eqb i k then
+      option_map (fun z => (z - d)%Z) (entry (shift_columns k d m) i j)
+    else entry (shift_columns k d m) i j.
+  Proof.
+    intros k d m i j. unfold shift_literal.
+    destruct (M.get k (shift_columns k d m)) as [row|] eqn:Hrow.
+    - destruct (K.eqb_spec i k) as [Hi|Hi].
+      + subst i. unfold entry. rewrite M.get_set_same, Hrow.
+        rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+        destruct (M.get j row); reflexivity.
+      + unfold entry. rewrite M.get_set_other by exact Hi. reflexivity.
+    - destruct (K.eqb_spec i k) as [Hi|Hi]; [subst i|reflexivity].
+      unfold entry. now rewrite Hrow.
+  Qed.
+
+  Definition literal_offset (k : K.t) (d : Z) (i : K.t) : Z :=
+    if K.eqb i k then d else 0%Z.
+
+  Definition variable_offset (x : X.t) (d : Z) (i : K.t) : Z :=
+    if X.eqb (fst i) x then if snd i then d else (-d)%Z else 0%Z.
+
+  Lemma entry_shift_literal_linear : forall k d m i j,
+    entry (shift_literal k d m) i j =
+    option_map (fun z => (z + literal_offset k d j - literal_offset k d i)%Z)
+      (entry m i j).
+  Proof.
+    intros k d m i j. rewrite entry_shift_literal, !entry_shift_columns.
+    unfold literal_offset. destruct (K.eqb i k), (K.eqb j k), (entry m i j);
+      cbn [option_map]; try reflexivity; f_equal; ring.
+  Qed.
+
+  Lemma signed_offsets : forall x d i,
+    (literal_offset (x, true) d i + literal_offset (x, false) (-d)%Z i)%Z =
+    variable_offset x d i.
+  Proof.
+    intros x d [y sign]. unfold literal_offset, variable_offset. cbn [fst snd].
+    destruct (X.eqb_spec y x) as [Heq|Hneq];
+      destruct (K.eqb_spec (y, sign) (x, true)) as [Hpos|Hpos];
+      destruct (K.eqb_spec (y, sign) (x, false)) as [Hneg|Hneg];
+      destruct sign; cbn -[Z.add Z.sub Z.mul Z.opp]; try congruence; lia.
+  Qed.
+
+  (** Paired translations add the destination offset and subtract the source offset. *)
+  Lemma entry_shift : forall x d m i j,
+    entry (shift x d m) i j =
+    option_map (fun z => (z + variable_offset x d j - variable_offset x d i)%Z)
+      (entry m i j).
+  Proof.
+    intros x d m i j. unfold shift. rewrite !entry_shift_literal_linear.
+    destruct (entry m i j) as [z|]; [|reflexivity]. cbn [option_map].
+    rewrite <- (signed_offsets x d i), <- (signed_offsets x d j). f_equal. ring.
+  Qed.
+
+  Lemma vl_update_shift : forall x d st c i,
+    N.num c = (N.num (st x) + d)%Z ->
+    vl (fun y => N.num (upd X.eqb st x c y)) i =
+      (vl (fun y => N.num (st y)) i + variable_offset x d i)%Z.
+  Proof.
+    intros x d st c [y sign] Hvalue. unfold vl, upd, variable_offset. cbn [fst snd].
+    destruct (X.eqb_spec y x) as [Heq|Hneq]; [subst y|];
+      destruct sign; cbn -[Z.add Z.sub Z.mul Z.opp]; lia.
+  Qed.
+
+  (** Translating a variable preserves every existing signed constraint under its update. *)
+  Lemma shift_models : forall x offset m st c,
+    models m (fun y => N.num (st y)) ->
+    N.num c = (N.num (st x) + offset)%Z ->
+    models (shift x offset m) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x offset m st c Hmodel Hvalue i j d Hentry. rewrite entry_shift in Hentry.
+    destruct (entry m i j) as [z|] eqn:Hz; [|discriminate Hentry].
+    inversion Hentry; subst d. pose proof (Hmodel i j z Hz).
+    rewrite (vl_update_shift x offset st c i Hvalue), (vl_update_shift x offset st c j Hvalue).
+    lia.
+  Qed.
+
+  Lemma vl_update_same : forall x st c,
+    vl (fun y => N.num (upd X.eqb st x c y)) (x, true) = N.num c.
+  Proof.
+    intros x st c. unfold vl, upd. cbn [fst snd].
+    destruct (X.eqb_spec x x); [reflexivity|congruence].
+  Qed.
+
   (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
   Definition raw_entry (m : dbm) (p q : positive) : option Z :=
     M.find q (row_of (M.find p m)).
@@ -1359,10 +1463,6 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     intros v i j d Hentry. unfold entry in Hentry.
     rewrite M.get_empty in Hentry. discriminate Hentry.
   Qed.
-  Lemma assign_sound : forall x e s st c,
-    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
-    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
   Proof.
@@ -1555,6 +1655,77 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     - rewrite (F.lin_sound st e c f r Heval Hlinear).
       apply rel_wrap_bounds_sound. now apply form_bounds_sound.
     - unfold in_bnd. cbn. tauto.
+  Qed.
+
+  (** The recognized copy source accounts for the whole variable part of the form. *)
+  Lemma copy_source_sound : forall f source v, copy_source f = Some source ->
+    eval_lin v f = (vl v source + cst f)%Z.
+  Proof.
+    intros [cs c] source v Hsource. unfold copy_source in Hsource. cbn [coef] in Hsource.
+    destruct cs as [|[x a] cs]; [discriminate Hsource|].
+    destruct cs as [|p cs]; [|discriminate Hsource].
+    pose proof (signed_unit_sound x a source v Hsource) as Hunit.
+    unfold eval_lin, eval_coef. cbn [coef cst fold_right fst snd]. rewrite Hunit. lia.
+  Qed.
+
+  Lemma copy_allowed_spec : forall x source, copy_allowed x source = true ->
+    source = (x, true) \/ fst source <> x.
+  Proof.
+    intros x [y sign] Hallowed. unfold copy_allowed in Hallowed. cbn [fst snd] in *.
+    destruct (X.eqb_spec y x) as [Heq|Hneq].
+    - subst y. destruct sign; [now left|discriminate Hallowed].
+    - now right.
+  Qed.
+
+  Lemma assign_copy_sound : forall x source d s st c,
+    copy_allowed x source = true ->
+    ngamma s (fun y => N.num (st y)) ->
+    N.num c = (vl (fun y => N.num (st y)) source + d)%Z ->
+    ngamma (assign_copy x source d s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x source d [|m] st c Hallowed Hmodel Hvalue; [exact Hmodel|].
+    unfold assign_copy. destruct (K.eqb_spec source (x, true)) as [Heq|Hne].
+    - subst source. now apply shift_models.
+    - assert (Hvar : fst source <> x).
+      { destruct (copy_allowed_spec x source Hallowed) as [Heq|Hvar]; [contradiction|exact Hvar]. }
+      apply refine_sound.
+      + apply refine_sound.
+        * now apply havoc_sound.
+        * rewrite vl_update_same, (vl_update_other x st c source Hvar). lia.
+      + rewrite vl_update_same, (vl_update_other x st c source Hvar). lia.
+  Qed.
+
+  Lemma add_range_sound : forall x bounds s v, ngamma s v ->
+    in_bnd (fst bounds) (snd bounds) (v x) -> ngamma (add_range x bounds s) v.
+  Proof.
+    intros x [lo hi] s v Hmodel Hbounds. unfold add_range, in_bnd in *.
+    destruct lo, hi; cbn [fst snd] in *; try contradiction;
+      repeat (apply refine_sound; [|unfold vl; cbn [fst snd]; lia]); exact Hmodel.
+  Qed.
+
+  Lemma assign_sound : forall x e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x e [|m] st c Hmodel Heval; [exact Hmodel|].
+    unfold assign. destruct (F.lin_of e) as [[f r]|] eqn:Hlinear;
+      [|now apply havoc_sound].
+    pose proof (F.lin_sound st e c f r Heval Hlinear) as Hvalue.
+    pose proof (form_bounds_sound m (fun y => N.num (st y)) f Hmodel) as Hbounds.
+    assert (Hwrapped : in_bnd
+      (fst (rel_wrap_bounds r (form_bounds m f)))
+      (snd (rel_wrap_bounds r (form_bounds m f))) (N.num c)).
+    { rewrite Hvalue. now apply rel_wrap_bounds_sound. }
+    assert (Hupdate : N.num (upd X.eqb st x c x) = N.num c).
+    { unfold upd. destruct (X.eqb_spec x x); [reflexivity|congruence]. }
+    destruct (copy_source f) as [source|] eqn:Hsource.
+    - destruct (andb (copy_allowed x source) (rel_wrap_exact r (form_bounds m f))) eqn:Hexact.
+      + apply andb_true_iff in Hexact. destruct Hexact as [Hallowed Hwrap].
+        apply assign_copy_sound; [exact Hallowed|exact Hmodel|].
+        rewrite Hvalue, (rel_wrap_exact_sound r (form_bounds m f) _ Hbounds Hwrap).
+        now apply copy_source_sound.
+      + apply add_range_sound; [now apply havoc_sound|]. now rewrite Hupdate.
+    - apply add_range_sound; [now apply havoc_sound|]. now rewrite Hupdate.
   Qed.
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
