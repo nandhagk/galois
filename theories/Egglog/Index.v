@@ -2764,6 +2764,91 @@ Module Index (V : VALUE) <: INDEX V.
     exists suffix. intro r. rewrite <- Hmembers. cbn [In]. intuition congruence.
   Qed.
 
+  Lemma seek_endpoint_children : forall ix ix' target, edge_shape ix ->
+    (forall q c, q <> target -> child ix' q c = child ix q c) ->
+    forall r q, seek ix q r = Some target -> seek ix' q r = Some target.
+  Proof.
+    intros ix ix' target Hshape Hchildren r. induction r as [| c r IH]; intros q Hseek.
+    - exact Hseek.
+    - cbn [seek] in *. destruct (child ix q c) as [m |] eqn:Hchild; [| discriminate].
+      assert (Hneq : q <> target).
+      { intro Heq. subst q.
+        pose proof (proj1 (child_forward ix target c m Hshape Hchild)) as Hlt.
+        pose proof (seek_forward ix r m target Hshape Hseek) as Hle.
+        apply Pos.lt_nle in Hlt. contradiction. }
+      rewrite Hchildren by exact Hneq. rewrite Hchild. now apply IH.
+  Qed.
+
+  Lemma reaches_incoming : forall ix source target, source <> target ->
+    reaches ix source target -> exists n c, child ix n c = Some target.
+  Proof.
+    intros ix source target Hneq [path Hseek].
+    destruct (rev path) as [| c rest] eqn:Hrev.
+    - apply (f_equal (@rev (cell V.t))) in Hrev.
+      rewrite rev_involutive in Hrev. cbn [rev] in Hrev. subst path.
+      cbn [seek] in Hseek. injection Hseek as Heq. contradiction.
+    - assert (Hpath : path = rev rest ++ [c]).
+      { rewrite <- (rev_involutive path), Hrev. reflexivity. }
+      rewrite Hpath, seek_append in Hseek.
+      destruct (seek ix source (rev rest)) as [n |]; [| discriminate].
+      cbn [seek] in Hseek. destruct (child ix n c) as [m |] eqn:Hchild; [| discriminate].
+      injection Hseek as ->. now exists n, c.
+  Qed.
+
+  Lemma deleted_arc_unreachable : forall ix ix' n c m source, parents_unique ix ->
+    refines ix ix' -> child ix n c = Some m -> child ix' n c = None -> source <> m ->
+    ~ reaches ix' source m.
+  Proof.
+    intros ix ix' n c m source Hparents [Hedges _] Hchild Hmissing Hneq Hreach.
+    destruct (reaches_incoming ix' source m Hneq Hreach) as [q [d Hedge]].
+    pose proof (Hedges q d m Hedge) as Hold.
+    destruct (child_parents_unique ix q d n c m Hparents Hold Hchild) as [-> ->].
+    congruence.
+  Qed.
+
+  Lemma deletion_outside_ancestors : forall ix ix' n c m source, refines ix ix' ->
+    child ix n c = Some m ->
+    (forall q d, q <> n \/ encode_cell d <> encode_cell c -> child ix' q d = child ix q d) ->
+    (forall q, node_terminal (read_node ix' q) = node_terminal (read_node ix q)) ->
+    ~ reaches ix source n -> forall r,
+    (contains_from source r ix' = true <-> contains_from source r ix = true).
+  Proof.
+    intros ix ix' n c m source Hrefines Hchild Hother Hterminal Houtside r. split.
+    - now apply contains_from_refinement.
+    - intro Hmember. destruct (contains_from source r ix') eqn:Hnew; [reflexivity |].
+      exfalso. destruct (edge_deletion_loss ix ix' n c m Hchild Hother Hterminal
+        r source Hmember Hnew) as [pre [suf [_ [Hpath _]]]].
+      apply Houtside. now exists pre.
+  Qed.
+
+  (** Unlinking a singleton subtree deletes one known suffix from each ancestor. *)
+  Lemma deleting_singleton_membership : forall ix ix' n c m source path live,
+    shape ix -> refines ix ix' -> child ix n c = Some m -> child ix' n c = None ->
+    (forall q d, q <> n \/ encode_cell d <> encode_cell c -> child ix' q d = child ix q d) ->
+    (forall q, node_terminal (read_node ix' q) = node_terminal (read_node ix q)) ->
+    seek ix source path = Some n ->
+    (forall r, contains_from m r ix = true <-> r = live) -> forall u,
+    (contains_from source u ix' = true <->
+      u <> path ++ c :: live /\ contains_from source u ix = true).
+  Proof.
+    intros ix ix' n c m source path live Hshape Hrefines Hchild Hmissing Hother Hterminal
+      Hpath Hsingle u.
+    assert (Hpath' : seek ix' source path = Some n).
+    { eapply seek_endpoint_children; [exact (proj1 Hshape) | | exact Hpath].
+      intros q d Hneq. apply Hother. now left. }
+    assert (Habsent : contains_from source (path ++ c :: live) ix' = false).
+    { unfold contains_from. rewrite seek_append, Hpath'. cbn [seek]. now rewrite Hmissing. }
+    split.
+    - intro Hmember. split.
+      + intro Heq. subst u. congruence.
+      + eapply contains_from_refinement; eassumption.
+    - intros [Hneq Hmember]. destruct (contains_from source u ix') eqn:Hnew; [reflexivity |].
+      exfalso. destruct (edge_deletion_loss ix ix' n c m Hchild Hother Hterminal
+        u source Hmember Hnew) as [pre [suf [Htuple [Hprefix Hsuffix]]]].
+      pose proof (seek_paths_unique ix source pre path n Hshape Hprefix Hpath) as Hpre.
+      apply Hsingle in Hsuffix. subst pre suf. contradiction.
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
