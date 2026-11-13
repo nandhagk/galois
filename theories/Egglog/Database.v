@@ -7,10 +7,18 @@
 From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relation_Operators
   Sorting.Permutation Sorting.Sorted.
 From Argent Require Import Time Tactics Std Loop.
-From Galois.Base Require Import Code Loop UnionFind Trie.
+From Galois.Base Require Import Code Loop UnionFind Trie Key Map.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig ModelFacts.
 
 Import List.ListNotations.
+
+Module Pos.
+  TimeFun Pos.max.
+End Pos.
+
+Module N.
+  TimeFun N.of_nat N.max.
+End N.
 
 (** Sorted positions retain their original positive ranks in a projection. *)
 Record database_slot_layout := {
@@ -576,7 +584,46 @@ Record database_slot_store (C : Type) := {
   projection_counts : list ((N * list C) * N)
 }.
 
-Record database_state (C : Type) := DatabaseState {
+(** Runtime contents are stored independently of the union-find membership counter.
+    The abstract index type is an explicit parameter of the concrete state. *)
+Record database_runtime (C X : Type) := DatabaseRuntime {
+  runtime_allocated : N;
+  runtime_changed : bool;
+  runtime_declarations : list decl;
+  runtime_kinds : PTrieCode.t output;
+  runtime_rows : PTrieCode.t ((positive * list C) * option C);
+  runtime_slots : list (positive * list nat);
+  runtime_equalities : list (positive * positive);
+  runtime_queue : list positive;
+  runtime_all_indexes : PTrieCode.t X;
+  runtime_new_indexes : PTrieCode.t X;
+  runtime_projection_counts : PTrieCode.t (PTrieCode.t (list C * N));
+  runtime_function_slots : PTrieCode.t (list (N * database_slot_layout));
+  runtime_max_name : positive;
+  runtime_slot_bound : N
+}.
+
+Arguments DatabaseRuntime {C X}.
+Arguments runtime_allocated {C X}.
+Arguments runtime_changed {C X}.
+Arguments runtime_declarations {C X}.
+Arguments runtime_kinds {C X}.
+Arguments runtime_rows {C X}.
+Arguments runtime_slots {C X}.
+Arguments runtime_equalities {C X}.
+Arguments runtime_queue {C X}.
+Arguments runtime_all_indexes {C X}.
+Arguments runtime_new_indexes {C X}.
+Arguments runtime_projection_counts {C X}.
+Arguments runtime_function_slots {C X}.
+Arguments runtime_max_name {C X}.
+Arguments runtime_slot_bound {C X}.
+
+TimeFun runtime_allocated runtime_changed runtime_declarations runtime_kinds runtime_rows.
+TimeFun runtime_slots runtime_equalities runtime_queue runtime_all_indexes runtime_new_indexes.
+TimeFun runtime_projection_counts runtime_function_slots runtime_max_name runtime_slot_bound.
+
+Record database_state (C X : Type) := DatabaseState {
   db_forest : UnionFindCode.t;
   db_nuses : N;
   db_npending : N;
@@ -584,18 +631,20 @@ Record database_state (C : Type) := DatabaseState {
   db_written_cells : list C;
   db_index_counters : list positive;
   db_row_store : database_row_store C;
-  db_slot_store : database_slot_store C
+  db_slot_store : database_slot_store C;
+  db_runtime : database_runtime C X
 }.
 
-Arguments DatabaseState {C}.
-Arguments db_forest {C}.
-Arguments db_nuses {C}.
-Arguments db_npending {C}.
-Arguments db_wmark {C}.
-Arguments db_written_cells {C}.
-Arguments db_index_counters {C}.
-Arguments db_row_store {C}.
-Arguments db_slot_store {C}.
+Arguments DatabaseState {C X}.
+Arguments db_forest {C X}.
+Arguments db_nuses {C X}.
+Arguments db_npending {C X}.
+Arguments db_wmark {C X}.
+Arguments db_written_cells {C X}.
+Arguments db_index_counters {C X}.
+Arguments db_row_store {C X}.
+Arguments db_slot_store {C X}.
+Arguments db_runtime {C X}.
 
 TimeFun db_forest.
 TimeFun db_nuses.
@@ -605,24 +654,52 @@ TimeFun db_written_cells.
 TimeFun db_index_counters.
 TimeFun db_row_store.
 TimeFun db_slot_store.
+TimeFun db_runtime.
+
+(** Earlier declarations override later declarations, as in [lookup_kind]. *)
+Definition database_kinds (ds : list decl) : PTrieCode.t output :=
+  fold_right (fun d kinds => PTrieCode.set (name d) (out d) kinds) PTrieCode.empty ds.
+TimeFun database_kinds.
+
+Definition database_max_name (ds : list decl) : positive :=
+  fold_right (fun d bound => Pos.max (name d) bound) 1%positive ds.
+TimeFun database_max_name.
+
+Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_slot_layout))
+    (groups : PTrieCode.t (list (N * database_slot_layout)))
+    : PTrieCode.t (list (N * database_slot_layout)) :=
+  match prepared with
+  | [] => groups
+  | (f, layout) :: rest =>
+    let previous := match PTrieCode.get f groups with Some slots => slots | None => [] end in
+    database_slot_groups (N.succ next) rest (PTrieCode.set f ((next, layout) :: previous) groups)
+  end.
+TimeFun database_slot_groups.
 
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
-  Definition t := database_state (cell V.t).
-  (** Initialization retains the empty index counter and prepares supplied projections.
-      Group and index construction remain placeholders. *)
+  Definition t := database_state (cell V.t) I.t.
+  (** Initialization stores declarations, slots, empty rows and index caches. *)
   (* STUB-CODE *)
-  Definition init (_ : list decl) (sl : list (positive * list nat)) : t :=
-    DatabaseState UnionFindCode.empty 0%N 0%N 1%N [] [1%positive]
+  Definition init (ds : list decl) (sl : list (positive * list nat)) : t :=
+    let prepared := prepare_slot_layouts sl in
+    let bound := N.of_nat (length sl) in
+    DatabaseState UnionFindCode.empty 0%N 0%N
+      (N.max (Npos (database_max_name ds)) (N.succ bound)) []
+      (match sl with [] => [1%positive] | _ => [1%positive; N.succ_pos bound] end)
       {| row_history := []; row_links := []; row_weights := []; row_keys := [];
          row_fresh := 1 |}
-      {| prepared_slots := prepare_slot_layouts sl;
+      {| prepared_slots := prepared;
          slot_positions := []; function_groups := []; slot_groups := [];
-         projection_counts := [] |}.
+         projection_counts := [] |}
+      (DatabaseRuntime 0%N false ds (database_kinds ds) PTrieCode.empty sl [] []
+        PTrieCode.empty PTrieCode.empty PTrieCode.empty
+        (database_slot_groups 0 prepared PTrieCode.empty) (database_max_name ds) bound).
   (* STUB-CODE *)
   Definition find (i : positive) (db : t) : positive * t :=
     let result := UnionFindCode.find i (db_forest db) in
     (fst result, DatabaseState (snd result) (db_nuses db) (db_npending db) (db_wmark db)
-      (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)).
+      (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
+      (db_runtime db)).
   (* STUB-CODE *)
   Definition lookup (_ : positive) (_ : list (cell V.t)) (db : t)
       : option (option (cell V.t)) * t := (None, db).
@@ -641,6 +718,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
         end in
       DatabaseState (snd result) (db_nuses db) queued (db_wmark db)
         (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
+        (db_runtime db)
     else db.
   (* STUB-CODE *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
@@ -1002,13 +1080,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
     sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted. (* OPEN: runtime state lacks row outputs and declared function kinds. *)
+  Proof. Admitted. (* OPEN: establish concrete canonical row updates and their model preservation. *)
 
   (** A justified identifier union keeps the model. *)
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  Proof. Admitted. (* OPEN: runtime state lacks an allocation counter and equality-work queue. *)
+  Proof. Admitted. (* OPEN: establish equality-log extension and representative preservation. *)
 
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
@@ -1018,7 +1096,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted. (* OPEN: missing allocation/row storage and fresh-singleton invariant. *)
+  Proof. Admitted. (* OPEN: establish allocation, stored-row and fresh-singleton invariants. *)
 
 End Database.
 
