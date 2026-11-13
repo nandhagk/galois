@@ -8692,6 +8692,32 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         [exact Hcode|exact Hread|exact Hwrite|exact HappN|exact Hbits].
   Qed.
 
+  Definition invalid_snapshot_mass (acc : incremental_invalidation S.key) : nat :=
+    trie_sum DemandAccounting.snapshot_weight (invalid_snapshots acc).
+
+  Lemma invalid_visit_snapshot_mass : forall st acc id,
+    invalid_snapshot_mass (invalid_visit_snapshot st acc id) +
+      match PTrieCode.get id (invalid_snapshots acc) with
+      | Some ss => DemandAccounting.snapshot_weight ss
+      | None => 0
+      end = invalid_snapshot_mass acc.
+  Proof.
+    intros st acc id; unfold invalid_visit_snapshot.
+    destruct (PTrieCode.get id (invalid_snapshots acc)) as [ss|] eqn:Hget;
+      [|lia].
+    destruct (snapshot_live ss) eqn:Hlive.
+    2: { unfold DemandAccounting.snapshot_weight; rewrite Hlive; lia. }
+    unfold invalid_snapshot_mass; cbn [invalid_snapshots].
+    rewrite invalid_seed_fold_snapshots.
+    pose proof (trie_sum_set _ DemandAccounting.snapshot_weight id
+      {| snapshot_owner := snapshot_owner ss;
+         snapshot_writes := snapshot_writes ss;
+         snapshot_live := false |} (invalid_snapshots acc)) as Hsum.
+    rewrite Hget in Hsum.
+    unfold DemandAccounting.snapshot_weight in *.
+    rewrite Hlive in Hsum |- *; cbn [snapshot_live] in Hsum |- *; lia.
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
