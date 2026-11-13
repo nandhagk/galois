@@ -861,6 +861,48 @@ Module RelationalPathBounds.
     f_equal. lia.
   Qed.
 
+  (** Adding a zero loop to a globally closed relation keeps every triangle bound. *)
+  Lemma seed_global_closed : forall A decide (r : A -> A -> option Z) k,
+    (forall p, closed_at r p) ->
+    (r k k = None \/ r k k = Some 0%Z) ->
+    forall p, closed_at (seed decide r k) p.
+  Proof.
+    intros A decide r k Hclosed [Hnone|Hzero] p a b.
+    - destruct (decide p k) as [Hp|Hp].
+      + subst p. destruct (decide a k) as [Ha|Ha];
+          destruct (decide b k) as [Hb|Hb]; subst.
+        * rewrite !seed_diag, Hnone. cbn [minimum plus below]. lia.
+        * rewrite seed_diag, Hnone.
+          rewrite (seed_away A decide r k k b) by (right; exact Hb).
+          rewrite plus_zero_l. apply below_refl.
+        * rewrite seed_diag, Hnone.
+          rewrite (seed_away A decide r k a k) by (left; exact Ha).
+          rewrite plus_zero_r. apply below_refl.
+        * rewrite (seed_away A decide r k a b) by (left; exact Ha).
+          rewrite (seed_away A decide r k a k) by (left; exact Ha).
+          rewrite (seed_away A decide r k k b) by (right; exact Hb).
+          apply Hclosed.
+      + rewrite (seed_away A decide r k a p) by (right; exact Hp).
+        rewrite (seed_away A decide r k p b) by (left; exact Hp).
+        destruct (decide a k) as [Ha|Ha];
+          destruct (decide b k) as [Hb|Hb]; subst.
+        * rewrite seed_diag, Hnone.
+          pose proof (Hclosed p k k) as Hcycle.
+          rewrite Hnone in Hcycle.
+          destruct (plus (r k p) (r p k)) eqn:Hpath;
+            cbn [below] in Hcycle; [contradiction|exact I].
+        * rewrite (seed_away A decide r k k b) by (right; exact Hb).
+          apply Hclosed.
+        * rewrite (seed_away A decide r k a k) by (left; exact Ha).
+          apply Hclosed.
+        * rewrite (seed_away A decide r k a b) by (left; exact Ha).
+          apply Hclosed.
+    - rewrite (seed_existing_zero A decide r k Hzero a b).
+      rewrite (seed_existing_zero A decide r k Hzero a p).
+      rewrite (seed_existing_zero A decide r k Hzero p b).
+      apply Hclosed.
+  Qed.
+
   Definition path_witness {A : Type} (e : A -> A -> option Z)
       (processed : list A) (i j : A) (d : Z) : Prop :=
     (i = j /\ d = 0%Z) \/
@@ -3766,6 +3808,42 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - intros a b. apply RelationalPathBounds.below_refl.
     - intros k _. now apply closed_at_every_key.
     - intros k Hk. exact Hk.
+  Qed.
+
+  (** Materializing one zero diagonal keeps a closed matrix closed. *)
+  Lemma closed_add_zero : forall m k, closed m -> closed (add_cons k k 0%Z m).
+  Proof.
+    intros m k Hclosed.
+    assert (Hdiag : entry m k k = None \/ entry m k k = Some 0%Z).
+    { destruct (entry m k k) as [z|] eqn:Hentry; [right|now left].
+      pose proof (proj1 Hclosed k (entry_source_support m k k z Hentry)) as Hz.
+      rewrite Hentry in Hz. injection Hz as <-. reflexivity. }
+    assert (Hglobal : forall p,
+      RelationalPathBounds.closed_at (entry (add_cons k k 0%Z m)) p).
+    { intro p. unfold RelationalPathBounds.closed_at. intros i j.
+      rewrite !entry_path_seed.
+      exact (RelationalPathBounds.seed_global_closed K.t path_key_dec
+        (entry m) k (closed_at_every_key m Hclosed) Hdiag p i j). }
+    split.
+    - intros i Hsupport. rewrite support_add_cons in Hsupport.
+      destruct Hsupport as [Hcode|[Hcode|Hcode]].
+      + apply K.encode_inj in Hcode. subst i.
+        rewrite entry_path_seed, RelationalPathBounds.seed_diag.
+        destruct Hdiag as [Hnone|Hzero]; rewrite Hnone || rewrite Hzero; reflexivity.
+      + apply K.encode_inj in Hcode. subst i.
+        rewrite entry_path_seed, RelationalPathBounds.seed_diag.
+        destruct Hdiag as [Hnone|Hzero]; rewrite Hnone || rewrite Hzero; reflexivity.
+      + destruct (path_key_dec i k) as [Heq|Hne].
+        * subst i. rewrite entry_path_seed, RelationalPathBounds.seed_diag.
+          destruct Hdiag as [Hnone|Hzero]; rewrite Hnone || rewrite Hzero; reflexivity.
+        * rewrite entry_path_seed.
+          rewrite RelationalPathBounds.seed_away by (left; exact Hne).
+          exact (proj1 Hclosed i Hcode).
+    - intros i j p a z Hleft Hright.
+      pose proof (Hglobal p i j) as Hbound.
+      rewrite Hleft, Hright in Hbound.
+      cbn [RelationalPathBounds.plus] in Hbound.
+      exact (RelationalPathBounds.below_finite _ _ Hbound).
   Qed.
 
   (** The sparse row merge implements the minimum of the old entry and one new-edge path. *)
