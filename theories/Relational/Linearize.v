@@ -1246,3 +1246,154 @@ Proof.
     destruct (zlinear_op_size X key_bits o fs f Hlin) as [Hcoef Hform].
     cbn [tsize term_mass]. split; lia.
 Qed.
+
+(** An absent width contributes no width bits to an internal affine form. *)
+Definition width_mass (w : option positive) : nat :=
+  match w with Some w => Pos.to_nat w | None => 0 end.
+
+(** Choosing either known width stays within the sum of the operand width budgets. *)
+Lemma known_width_size : forall a b w,
+  known_width a b = Some w -> Pos.to_nat w <= width_mass a + width_mass b.
+Proof.
+  intros [u|] [v|] w Hwidth; cbn [known_width] in Hwidth;
+    inversion Hwidth; subst; cbn [width_mass]; lia.
+Qed.
+
+(** Binary word forms preserve coefficient counts and propagate syntactic size budgets. *)
+Lemma blinear_pair_size : forall X (key_bits : X -> nat) a f g h,
+  blinear_pair a f g = Some h ->
+  length (coef (fst h)) <= length (coef (fst f)) + length (coef (fst g)) /\
+  linear_bits key_bits (fst h) <=
+    linear_bits key_bits (fst f) + linear_bits key_bits (fst g) + 1 /\
+  width_mass (snd h) <= width_mass (snd f) + width_mass (snd g).
+Proof.
+  intros X key_bits a [f u] [g v] [h r] Hlin.
+  unfold blinear_pair in Hlin. cbn [fst snd] in Hlin |- *.
+  destruct (known_width u v) as [w|] eqn:Hwidth; [|discriminate].
+  destruct (zlinear_op (affine_zview a) [f; g]) as [q|] eqn:Hform; [|discriminate].
+  inversion Hlin; subst h r. cbn [width_mass].
+  destruct (zlinear_op_size X key_bits (affine_zview a) [f; g] q Hform)
+    as [Hcoef Hbits].
+  pose proof (known_width_size u v w Hwidth) as Hwidthbound.
+  destruct a; cbn [affine_zview zoperator_bits map fold_right] in Hcoef, Hbits;
+    repeat split; lia.
+Qed.
+
+(** Word operator recognition charges literals and inherited coefficient and width budgets. *)
+Lemma blinear_op_size : forall X (key_bits : X -> nat) o fs f,
+  blinear_op o fs = Some f ->
+  length (coef (fst f)) <=
+    fold_right Nat.add 0 (map (fun g => length (coef (fst g))) fs) /\
+  linear_bits key_bits (fst f) <= boperator_bits o + 1 +
+    fold_right Nat.add 0 (map (fun g => linear_bits key_bits (fst g)) fs) /\
+  width_mass (snd f) <= boperator_bits o +
+    fold_right Nat.add 0 (map (fun g => width_mass (snd g)) fs).
+Proof.
+  intros X key_bits o fs f Hlin.
+  destruct o as [w z|o]; destruct fs as [|f1 [|f2 [|f3 fs]]];
+    cbn [blinear_op] in Hlin; try discriminate.
+  - inversion Hlin; subst f.
+    cbn [fst snd linear_const coef width_mass boperator_bits map fold_right length].
+    unfold linear_bits. cbn [linear_const coef cst map fold_right]. repeat split; lia.
+  - destruct (word_affine o) as [a|] eqn:Haffine; [|discriminate].
+    destruct (blinear_pair_size X key_bits a f1 f2 f Hlin) as [Hcoef [Hbits Hwidth]].
+    cbn [boperator_bits map fold_right]. split; [lia|split; lia].
+Qed.
+
+(** Successful word recognition preserves linear coefficient count and syntax-sized payloads. *)
+Lemma blinear_form_size : forall X (key_bits : X -> nat) e f,
+  blinear_form e = Some f ->
+  length (coef (fst f)) <= tsize e /\
+  linear_bits key_bits (fst f) <= term_mass key_bits boperator_bits e /\
+  width_mass (snd f) <= term_mass key_bits boperator_bits e.
+Proof.
+  intros X key_bits e. induction e as [x|o es IH]; intros f Hlin.
+  - cbn [blinear_form] in Hlin. inversion Hlin; subst f.
+    change (1 <= 1 /\ Nat.max (key_bits x + 1) 0 <= key_bits x + 1 /\
+      0 <= key_bits x + 1).
+    rewrite Nat.max_0_r. repeat split; lia.
+  - cbn [blinear_form] in Hlin. apply all_children_forall in IH.
+    destruct (sequence (map blinear_form es)) as [fs|] eqn:Hforms; [|discriminate].
+    assert (Hlength : fold_right Nat.add 0 (map (fun g => length (coef (fst g))) fs) <=
+      fold_right Nat.add 0 (map tsize es)).
+    { eapply sequence_map_bound; [|exact Hforms].
+      eapply Forall_impl; [|exact IH]. intros e He g Hg. exact (proj1 (He g Hg)). }
+    assert (Hbits : fold_right Nat.add 0 (map (fun g => linear_bits key_bits (fst g)) fs) <=
+      fold_right Nat.add 0 (map (term_mass key_bits boperator_bits) es)).
+    { eapply sequence_map_bound; [|exact Hforms].
+      eapply Forall_impl; [|exact IH]. intros e He g Hg. exact (proj1 (proj2 (He g Hg))). }
+    assert (Hwidth : fold_right Nat.add 0 (map (fun g => width_mass (snd g)) fs) <=
+      fold_right Nat.add 0 (map (term_mass key_bits boperator_bits) es)).
+    { eapply sequence_map_bound; [|exact Hforms].
+      eapply Forall_impl; [|exact IH]. intros e He g Hg. exact (proj2 (proj2 (He g Hg))). }
+    destruct (blinear_op_size X key_bits o fs f Hlin) as [Hcoef [Hform Hrange]].
+    cbn [tsize term_mass]. split; [lia|split; lia].
+Qed.
+
+(** Negation does not change an integer's bit length. *)
+Lemma zbits_opp : forall z, Z.size_nat (-z) = Z.size_nat z.
+Proof.
+  intros [|p|p]; reflexivity.
+Qed.
+
+(** A power of two has bit length linear in its nonnegative exponent. *)
+Lemma zbits_power_two : forall n, (0 <= n)%Z ->
+  Z.size_nat (2 ^ n) <= 2 * Z.to_nat n + 1.
+Proof.
+  intros n Hn. rewrite <- (Z2Nat.id n Hn).
+  generalize (Z.to_nat n) as k. intro k. rewrite Nat2Z.id.
+  induction k as [|k IH].
+  - cbn. lia.
+  - rewrite Nat2Z.inj_succ, Z.pow_succ_r by lia.
+    pose proof (zbits_mul 2 (2 ^ Z.of_nat k)) as Hmul.
+    change (Z.size_nat (2 * 2 ^ Z.of_nat k) <= 2 + Z.size_nat (2 ^ Z.of_nat k))
+      in Hmul.
+    lia.
+Qed.
+
+(** The modulus and half-modulus have bit lengths linear in their explicit width. *)
+Lemma word_bound_bits : forall w,
+  Z.size_nat (modulus w) <= 2 * Pos.to_nat w + 1 /\
+  Z.size_nat (half w) <= 2 * Pos.to_nat w + 1.
+Proof.
+  intro w. unfold modulus, half.
+  pose proof (zbits_power_two (Zpos w) ltac:(lia)) as Hmod.
+  pose proof (zbits_power_two (Zpos w - 1) ltac:(lia)) as Hhalf.
+  assert (Hnat : Z.to_nat (Zpos w - 1) <= Pos.to_nat w).
+  { change (Z.to_nat (Zpos w - 1) <= Z.to_nat (Zpos w)). apply Z2Nat.inj_le; lia. }
+  change (Z.size_nat (2 ^ Zpos w) <= 2 * Pos.to_nat w + 1) in Hmod.
+  split; lia.
+Qed.
+
+(** Inclusive wrap endpoints are measured independently of the form coefficients. *)
+Definition range_bits (r : wrapr) : nat :=
+  match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end.
+
+(** Both signed and unsigned wrap endpoints fit a linear explicit-width budget. *)
+Lemma word_range_bits : forall is_signed w,
+  range_bits (word_range is_signed w) <= 4 * Pos.to_nat w + 3.
+Proof.
+  intros is_signed w. destruct (word_bound_bits w) as [Hmod Hhalf].
+  destruct is_signed; cbn [word_range range_bits].
+  - rewrite zbits_opp.
+    pose proof (zbits_add (half w) (-1)) as Hsub.
+    change (Z.size_nat (half w - 1) <= Z.size_nat (half w) + 1) in Hsub. lia.
+  - change (Z.size_nat (modulus w - 1) <= 4 * Pos.to_nat w + 3).
+    pose proof (zbits_add (modulus w) (-1)) as Hsub.
+    change (Z.size_nat (modulus w - 1) <= Z.size_nat (modulus w) + 1) in Hsub. lia.
+Qed.
+
+(** Public word forms fit the syntax coefficient count and a linear mass envelope. *)
+Lemma bits_lin_of_size : forall X (key_bits : X -> nat) is_signed e f r,
+  bits_lin_of is_signed e = Some (f, r) ->
+  length (coef f) <= tsize e /\
+  linear_bits key_bits f + range_bits r <= 8 * (term_mass key_bits boperator_bits e + 1).
+Proof.
+  intros X key_bits is_signed e f r Hlin. unfold bits_lin_of in Hlin.
+  destruct (blinear_form e) as [[g [w|]]|] eqn:Hform; [| |discriminate];
+    inversion Hlin; subst f r;
+    destruct (blinear_form_size X key_bits e _ Hform) as [Hcoef [Hbits Hwidth]];
+    cbn [fst snd width_mass] in Hcoef, Hbits, Hwidth.
+  - pose proof (word_range_bits is_signed w). split; [exact Hcoef|lia].
+  - cbn [range_bits]. split; [exact Hcoef|lia].
+Qed.
