@@ -3572,10 +3572,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     forallb (fun k => match entry m k k with Some d => (0 <=? d)%Z | None => true end) (keys m).
   TimeFun diag_ok.
   (** Tight closure tightens and strengthens only a consistent closed matrix. *)
-  Lemma T4_tclose : forall m, dbm_wf m ->
-    (T_tclose m <= T_fw m + k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
-      if diag_ok (fw m) then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0)%N.
-  Proof. Admitted. (* STUB *)
   (** A replacement row has the same finite coordinates as its validated source row. *)
   Definition tightened_rows (m changed : dbm) : Prop :=
     forall p row, M.find p changed = Some row ->
@@ -5641,4 +5637,96 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     rewrite original_scan_diag_ok by exact Hwf.
     destruct (diag_ok (fw m)); cbn beta iota zeta; time_simpl; lia.
   Qed.
+  (** Comparing zero to a diagonal has no dependence on the stored integer width. *)
+  Lemma T_nonnegative_small : forall k m,
+    (T_nonnegative k m <= 16 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N.
+  Proof.
+    intros k m. pose proof (T_entry_small m k k) as Hentry. time_step.
+  Qed.
+
+  Lemma tclose_scan_clock : forall A (f : A -> bool) tf c xs,
+    Forall (fun x => (tf x <= c)%N) xs ->
+    (List.T_forallb f tf xs <= (c + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f tf c xs Hbounds.
+    induction Hbounds as [|x xs Hhead Htail IH]; time_step.
+  Qed.
+
+  (** Both closure scans use the original supported keys and a width-independent comparison. *)
+  Lemma T_original_diagonal_scan : forall m next, dbm_wf m ->
+    (List.T_forallb (fun k => nonnegative k next)
+      (fun k => (1 + T_nonnegative k next)%N) (keys m) <=
+      32 * (M.c_map + 1) * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  Proof.
+    intros m next Hwf.
+    set (c := (M.c_map + 1)%N).
+    set (units := N.of_nat (b m + 1)).
+    set (count := N.of_nat (length (keys m))).
+    assert (Hunit : (1 <= units)%N) by (unfold units; lia).
+    assert (Hc : (1 <= c)%N) by (unfold c; lia).
+    assert (Hcallback : Forall (fun k =>
+      ((1 + T_nonnegative k next)%N <= 16 * c * units + 1)%N) (keys m)).
+    { apply Forall_forall. intros k Hkey.
+      assert (Hbits : K.bits k <= b m).
+      { unfold K.bits. apply support_bits. now apply keys_support. }
+      pose proof (T_nonnegative_small k next) as Hclock.
+      assert (Hcast : (N.of_nat (K.bits k + 1) <= units)%N).
+      { unfold units. apply time_of_nat_le. lia. }
+      assert (Hclock' : (T_nonnegative k next <= 16 * c * units)%N).
+      { eapply N.le_trans; [exact Hclock|]. unfold c. now apply N.mul_le_mono_l. }
+      lia. }
+    pose proof (tclose_scan_clock K.t (fun k => nonnegative k next)
+      (fun k => (1 + T_nonnegative k next)%N) (16 * c * units + 1)%N
+      (keys m) Hcallback) as Hscan.
+    fold count in Hscan.
+    assert (Hlinear : ((16 * c * units + 1 + 2) * count + 1 <=
+      32 * c * N.of_nat ((length (keys m) + 1) * (b m + 1)))%N).
+    { assert (Hcast : N.of_nat ((length (keys m) + 1) * (b m + 1)) =
+        ((count + 1) * units)%N).
+      { unfold units, count. rewrite Nat2N.inj_mul.
+        rewrite (Nat2N.inj_add (length (keys m)) 1). reflexivity. }
+      replace (32 * c * N.of_nat ((length (keys m) + 1) * (b m + 1)))%N with
+        (32 * (c * units) * (count + 1))%N
+        by (rewrite Hcast; ring).
+      replace (16 * c * units)%N with (16 * (c * units))%N by ring.
+      assert (Hrate : (1 <= c * units)%N) by nia.
+      set (rate := (c * units)%N) in *. clearbody rate. nia. }
+    assert (Hwork : (length (keys m) + 1) * (b m + 1) <=
+      (supp m + 1)^2 * (b m + ell m + 1)).
+    { apply Nat.mul_le_mono.
+      - pose proof (keys_le m Hwf). cbn [Nat.pow]. nia.
+      - lia. }
+    eapply N.le_trans; [exact Hscan|]. eapply N.le_trans; [exact Hlinear|].
+    unfold c. apply N.mul_le_mono_l. now apply time_of_nat_le.
+  Qed.
+
+  (** The common closure coefficient includes both diagonal scans and fixed control work. *)
+  Lemma k_octagon_frame_le : (64 * (M.c_map + 1) + 8 <= k_octagon)%N.
+  Proof.
+    unfold k_octagon. nia.
+  Qed.
+
+  (** Tight closure adds only bounded scans around its three numeric stages. *)
+  Lemma T4_tclose : forall m, dbm_wf m ->
+    (T_tclose m <= T_fw m + k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
+      if diag_ok (fw m) then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0)%N.
+  Proof.
+    intros m Hwf.
+    set (work := N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))).
+    assert (Hpositive : 1 <= (supp m + 1)^2 * (b m + ell m + 1))
+      by (cbn [Nat.pow]; nia).
+    pose proof (time_of_nat_le _ _ Hpositive) as Hunit.
+    change (1 <= work)%N in Hunit.
+    assert (Hscan : forall next,
+      (List.T_forallb (fun k => nonnegative k next) (fun k => (1 + T_nonnegative k next)%N)
+        (keys m) <= 32 * (M.c_map + 1) * work)%N).
+    { intro next. unfold work. now apply T_original_diagonal_scan. }
+    pose proof (T_tclose_overhead m (32 * (M.c_map + 1) * work)%N Hwf Hscan) as Hclock.
+    pose proof (N.mul_le_mono_r _ _ work k_octagon_frame_le) as Hbudget.
+    rewrite N.mul_add_distr_r in Hbudget.
+    replace (64 * (M.c_map + 1) * work)%N with
+      (2 * (32 * (M.c_map + 1) * work))%N in Hbudget by ring.
+    clear Hpositive. clearbody work. lia.
+  Qed.
+
 End OctagonT.
