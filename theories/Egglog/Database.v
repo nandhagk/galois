@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relation_Operators
   Sorting.Permutation Sorting.Sorted.
-From Argent Require Import Time Std Loop.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Code Loop UnionFind Trie.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig.
 
@@ -337,6 +337,30 @@ Proof.
     exact (proj1 (slot_rank_positions_origin 1 perm q r Hq)).
   - apply slot_rank_positions_nodup.
   - exact Hin.
+Qed.
+
+(** * Preparation costs *)
+
+(** Computing a gap charges at most one call per unit of its endpoint. *)
+Lemma T_slot_position_difference_le : forall position previous,
+  (T_slot_position_difference position previous <= N.of_nat (position + 1))%N.
+Proof.
+  intro position. induction position as [| position IH]; intros [| previous];
+    time_step slot_position_difference.
+Qed.
+
+(** Scanning a gap charges at most one call per skipped cell. *)
+Lemma T_slot_skip_le : forall C gap (u : list C),
+  (T_slot_skip gap u <= N.of_nat (gap + 1))%N.
+Proof.
+  intros C gap. induction gap as [| gap IH]; intros [| c u]; time_step.
+Qed.
+
+(** Insertion reads each existing position once with a comparison bounded by the new position. *)
+Lemma T_slot_rank_insert_le : forall p ps,
+  (T_slot_rank_insert p ps <= N.of_nat ((length ps + 1) * (fst p + 5)))%N.
+Proof.
+  intros p ps. induction ps as [| q ps IH]; time_step slot_rank_insert.
 Qed.
 
 (** Stable row identifiers retain historical keys through collisions. *)
