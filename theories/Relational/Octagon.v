@@ -4109,6 +4109,23 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now rewrite Z.add_comm.
   Qed.
 
+  (** Reversing a chain and flipping its endpoints preserves its weight. *)
+  Lemma coherent_chain_pair : forall m i j ks,
+    coherent m ->
+    RelationalPathBounds.chain (entry m) i ks j =
+      RelationalPathBounds.chain (entry m) (bar j) (map bar (rev ks)) (bar i).
+  Proof.
+    intros m i j ks Hcoh. revert i.
+    induction ks as [|k ks IH]; intro i.
+    - cbn [RelationalPathBounds.chain rev map]. apply Hcoh.
+    - cbn [RelationalPathBounds.chain].
+      cbn [rev]. rewrite map_app.
+      cbn [map]. rewrite RelationalPathBounds.chain_app.
+      cbn [RelationalPathBounds.chain].
+      rewrite <- (IH k), (Hcoh i k).
+      apply RelationalPathBounds.plus_comm.
+  Qed.
+
 
   Local Definition path_sum (a b : option Z) : option Z :=
     match a, b with Some x, Some y => Some (x + y)%Z | _, _ => None end.
