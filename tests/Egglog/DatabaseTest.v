@@ -6,7 +6,7 @@
     Builds on: Database and the code towers of ValueSig and Index. *)
 
 From Stdlib Require Import List PArith NArith.
-From Galois.Base Require Import Trie.
+From Galois.Base Require Import Trie UnionFind.
 From Galois.Egglog Require Import ValueSig Syntax Index Database DatabaseSig.
 
 Import List.ListNotations.
@@ -108,6 +108,33 @@ Example missing_written_history_observation :
     UnitDatabase.locate 1%positive [] missing_written_history_db,
     db_written_cells missing_written_history_db) =
     (Some (Some (Id 1%positive)), [(1%positive, [])], Some [], []).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** One active repair adds a fresh occurrence while consuming its scheduled entry. *)
+Definition one_repair_queued :=
+  let empty := FixtureDatabase.init [Decl 2%positive [SId] ORel] [] in
+  let first := snd (FixtureDatabase.make 9%positive [] empty) in
+  let second := snd (FixtureDatabase.make 9%positive [] first) in
+  let stored := FixtureDatabase.put 2%positive [Id 2%positive] None second in
+  FixtureDatabase.union 1%positive 2%positive stored.
+
+Example one_repair_inventory_growth :
+  match FixtureDatabase.db_rstep (one_repair_queued, []) with
+  | inr _ => False
+  | inl (popped, work) =>
+    match FixtureDatabase.db_rstep (popped, work) with
+    | inr _ => False
+    | inl (repaired, rest) =>
+      (db_npending popped, length work, db_nuses popped,
+        db_npending repaired, length rest, db_nuses repaired,
+        UnionFind.size_of (db_forest popped) 1%positive,
+        UnionFind.size_of (db_forest repaired) 1%positive,
+        FixtureDatabase.row_get 2%positive [Id 1%positive] repaired) =
+      (0%N, 1, 1%N, 0%N, 0, 2%N, 2, 2, Some None)
+    end
+  end.
 Proof.
   vm_compute. reflexivity.
 Qed.
