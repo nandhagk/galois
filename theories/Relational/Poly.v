@@ -11745,6 +11745,145 @@ Module PolyAssignBranch (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 End PolyAssignBranch.
 
 
+Module PolyAssignBranchExtended (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
+    (F : LINEARIZE_T X L N) (C : LINCERT_T X).
+  Include PolyAssignBranch X L N F C.
+  (** Filtering evaluates exactly one predicate for each inspected occurrence. *)
+  Lemma poly_assign_T_filter_cons : forall A (f : A -> bool) (Tf : A -> N) x xs,
+    List.T_filter f Tf (x :: xs) = (1 + Tf x + List.T_filter f Tf xs)%N.
+  Proof.
+    intros A f Tf x xs. time_unfold List.T_filter. destruct (f x); time_simpl;
+      fold (List.T_filter f Tf xs); ring.
+  Qed.
+
+  Lemma poly_assign_T_map_cons : forall A B (f : A -> B) (Tf : A -> N) x xs,
+    ListDef.T_map f Tf (x :: xs) = (1 + Tf x + ListDef.T_map f Tf xs)%N.
+  Proof.
+    intros A B f Tf x xs. time_unfold ListDef.T_map. time_simpl.
+    fold (ListDef.T_map f Tf xs). ring.
+  Qed.
+
+  Lemma poly_assign_T_find_false : forall A (f : A -> bool) (Tf : A -> N) x xs,
+    f x = false ->
+    List.T_find f Tf (x :: xs) = (1 + Tf x + List.T_find f Tf xs)%N.
+  Proof.
+    intros A f Tf x xs Hfalse. time_unfold List.T_find. rewrite Hfalse. time_simpl.
+    fold (List.T_find f Tf xs). ring.
+  Qed.
+
+  Lemma poly_assign_T_app_cons : forall A (x : A) xs ys,
+    Datatypes.T_app (x :: xs) ys = (1 + Datatypes.T_app xs ys)%N.
+  Proof.
+    intros A x xs ys. time_unfold Datatypes.T_app. time_simpl.
+    fold (Datatypes.T_app xs ys). ring.
+  Qed.
+
+  (** The pivot test adds a fixed-cost zero test to its one coefficient lookup. *)
+  Lemma T_poly_assign_pivot_lookup : forall x r,
+    (T_poly_pivot X.eqb X.T_eqb x r <=
+      T_poly_coefficient X.eqb X.T_eqb x (poly_constraint r) + 8)%N.
+  Proof.
+    intros x r. pose proof (T_poly_zero_test
+      (poly_coefficient X.eqb x (poly_constraint r))) as Hzero.
+    time_unfold (@T_poly_pivot). destruct (lrel (poly_constraint r)); time_simpl;
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb; lia.
+  Qed.
+
+  (** Cancelling a zero-coefficient row evaluates the two lookups and returns that row. *)
+  Lemma T_poly_assign_cancel_zero : forall x pivot r,
+    poly_coefficient X.eqb x (poly_constraint r) = 0%Z ->
+    (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot r <=
+      T_poly_coefficient X.eqb X.T_eqb x (poly_constraint pivot) +
+      T_poly_coefficient X.eqb X.T_eqb x (poly_constraint r) + 8)%N.
+  Proof.
+    intros x pivot r Hzero. time_unfold (@T_poly_cancel). rewrite Hzero. time_simpl.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    time_unfold Z.T_eqb. time_simpl. cbn [Z.eqb]. lia.
+  Qed.
+
+  (** This proof-only branch keeps the native nested lambdas and adds no pair wrapper. *)
+  Definition poly_assign_inequalities (x : X.t) (rows : list (poly_row X.t)) :=
+    let pos := filter (fun r => (0 <? poly_coefficient X.eqb x (poly_constraint r))%Z) rows in
+    let neg := filter (fun r => (poly_coefficient X.eqb x (poly_constraint r) <? 0)%Z) rows in
+    filter (fun r => Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) rows ++
+      flat_map (fun p => map (fun q =>
+        poly_add_rows X.encode (- poly_coefficient X.eqb x (poly_constraint q))%Z p
+          (poly_coefficient X.eqb x (poly_constraint p)) q) neg) pos.
+
+  TimeFun poly_assign_inequalities.
+
+  (** The actual step clock separates the pivot search from its selected traversal. *)
+  Lemma T_poly_assign_step_split : forall x rows,
+    T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows =
+      (List.T_find (poly_pivot X.eqb x) (T_poly_pivot X.eqb X.T_eqb x) rows +
+       match find (poly_pivot X.eqb x) rows with
+       | Some pivot => 1 + ListDef.T_map (poly_cancel X.encode X.eqb x pivot)
+           (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot) rows
+       | None => T_poly_assign_inequalities x rows
+       end)%N.
+  Proof.
+    intros x rows. time_unfold (@T_poly_step).
+    destruct (find (poly_pivot X.eqb x) rows) as [pivot|].
+    - time_simpl.
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      change (fun r => T_poly_pivot X.eqb X.T_eqb x r)
+        with (T_poly_pivot X.eqb X.T_eqb x).
+      change (fun r => T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot r)
+        with (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot).
+      ring.
+    - unfold T_poly_assign_inequalities, poly_assign_inequalities.
+      time_simpl.
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      change (fun r => T_poly_pivot X.eqb X.T_eqb x r)
+        with (T_poly_pivot X.eqb X.T_eqb x).
+      ring.
+  Qed.
+
+  (** A zero head adds three tests and one retained list cell to the inequality branch. *)
+  Lemma T_poly_assign_inequalities_zero_head : forall x z rows,
+    poly_coefficient X.eqb x (poly_constraint z) = 0%Z ->
+    (T_poly_assign_inequalities x (z :: rows) <= T_poly_assign_inequalities x rows +
+      4 * T_poly_coefficient X.eqb X.T_eqb x (poly_constraint z) + 32)%N.
+  Proof.
+    intros x z rows Hzero. time_unfold T_poly_assign_inequalities.
+    rewrite !poly_assign_T_filter_cons.
+    cbn [filter]. rewrite Hzero. cbn [Z.ltb Z.eqb app].
+    rewrite poly_assign_T_app_cons. time_simpl.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    rewrite !Z.ltb_irrefl. cbn beta iota zeta.
+    pose proof (Z.T_ltb_le 0 0) as Hlt.
+    pose proof (T_poly_zero_test 0) as Heq. cbn [Z.size_nat] in Hlt. lia.
+  Qed.
+
+  (** Separating an irrelevant affine equality preserves the source-only step charge. *)
+  Lemma T_poly_assign_step_zero_head : forall x z rows bound,
+    poly_coefficient X.eqb x (poly_constraint z) = 0%Z ->
+    (forall r, In r rows ->
+      (T_poly_coefficient X.eqb X.T_eqb x (poly_constraint r) <= bound)%N) ->
+    (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x (z :: rows) <=
+      T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows + bound +
+      8 * T_poly_coefficient X.eqb X.T_eqb x (poly_constraint z) + 64)%N.
+  Proof.
+    intros x z rows bound Hzero Hrows.
+    assert (Hpivot : poly_pivot X.eqb x z = false).
+    { unfold poly_pivot. rewrite Hzero. destruct (lrel (poly_constraint z)); reflexivity. }
+    pose proof (T_poly_assign_pivot_lookup x z) as Htest.
+    rewrite !T_poly_assign_step_split.
+    rewrite (poly_assign_T_find_false _ _ _ _ _ Hpivot).
+    cbn [find]. rewrite Hpivot.
+    destruct (find (poly_pivot X.eqb x) rows) as [pivot|] eqn:Hfind.
+    - pose proof Hfind as Hmember. apply find_some in Hmember as [Hmember _].
+      specialize (Hrows pivot Hmember).
+      pose proof (T_poly_assign_cancel_zero x pivot z Hzero) as Hcancel.
+      rewrite poly_assign_T_map_cons. nia.
+    - pose proof (T_poly_assign_inequalities_zero_head x z rows Hzero) as Hbranch. nia.
+  Qed.
+
+End PolyAssignBranchExtended.
+
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: POLY_ALL X L N F C.
   Include PolyClockCore X L N F C.
@@ -12929,6 +13068,538 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono; [unfold c_lat; lia|].
     pose proof (poly_lattice_lat_size a b). lia.
   Qed.
+(** * Temporary-key invariants for affine assignment
+
+    Renaming moves the old assigned variable to None and reserves Some x for
+    its new value. Source-only elimination therefore cannot create that key.
+    Builds on: the checked temporary-key core and normalized coefficient support. *)
+
+
+  Lemma poly_assign_nodup_map : forall A B (f : A -> B),
+    (forall x y, f x = f y -> x = y) ->
+    forall xs, NoDup xs -> NoDup (map f xs).
+  Proof.
+    intros A B f Hinjective xs Hunique.
+    induction Hunique as [|x xs Hnot Hunique IH]; cbn [map]; [constructor|].
+    constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin as [y [Heq Hin]].
+    apply Hinjective in Heq. subst y. contradiction.
+  Qed.
+
+  (** Both branches of old-variable renaming are injective. *)
+  Lemma poly_assign_rename_injective : forall x y z,
+    rename_old x y = rename_old x z -> y = z.
+  Proof.
+    intros x y z Heq. unfold rename_old in Heq.
+    destruct (X.eqb_spec y x) as [Hy|Hy];
+      destruct (X.eqb_spec z x) as [Hz|Hz]; try discriminate; congruence.
+  Qed.
+
+  (** The renamed source excludes the new assigned coordinate. *)
+  Lemma poly_assign_rename_fresh : forall x y, rename_old x y <> Some x.
+  Proof.
+    intros x y Hsame. unfold rename_old in Hsame.
+    destruct (X.eqb_spec y x) as [Heq|Hneq]; [discriminate|].
+    injection Hsame as Hsame. contradiction.
+  Qed.
+
+  (** The temporary tag adds at most one key bit. *)
+  Lemma poly_assign_rename_key_bits : forall x y,
+    RangeKey.bits (rename_old x y) <= X.bits y + 1.
+  Proof.
+    intros x y. unfold rename_old. destruct (X.eqb y x);
+      unfold RangeKey.bits, RangeKey.encode; cbn [Pos.size_nat]; unfold X.bits; lia.
+  Qed.
+
+  (** Source renaming preserves coefficient widths and raw occurrence counts. *)
+  Lemma poly_assign_rename_row_bits : forall x r,
+    RangeCert.row_bits (rename_row (rename_old x) r) = C.row_bits r /\
+    length (lhs (rename_row (rename_old x) r)) = length (lhs r).
+  Proof.
+    intros x r. split.
+    - unfold RangeCert.row_bits, C.row_bits. cbn [rename_row lhs rhs].
+      rewrite map_map. reflexivity.
+    - cbn [rename_row lhs]. apply length_map.
+  Qed.
+
+  Lemma poly_assign_rename_row_keys : forall x r,
+    RangeCert.row_key_bits (rename_row (rename_old x) r) <= C.row_key_bits r + 1.
+  Proof.
+    intros x r. unfold RangeCert.row_key_bits. cbn [rename_row lhs].
+    rewrite map_map. apply poly_max_bound; [lia|].
+    apply Forall_forall. intros [y a] Hin. cbn [fst].
+    pose proof (poly_assign_rename_key_bits x y) as Hkey.
+    pose proof (poly_row_key_member r (y, a) Hin) as Hrow.
+    unfold RangeKey.bits, X.bits in *. cbn [fst] in Hrow. lia.
+  Qed.
+
+  Lemma poly_assign_rename_row_absent : forall x r,
+    ~ In (Some x) (map fst (lhs (rename_row (rename_old x) r))).
+  Proof.
+    intros x r Hin. cbn [rename_row lhs] in Hin. rewrite map_map in Hin.
+    apply in_map_iff in Hin as [p [Heq _]]. cbn [fst] in Heq.
+    exact (poly_assign_rename_fresh x (fst p) Heq).
+  Qed.
+
+  (** The affine equation is already unique once its form has been prepared. *)
+  Lemma poly_assign_prepared_row_nodup : forall x f,
+    NoDup (map fst (lhs (assignment_row x (poly_prepare_form X.encode f)))).
+  Proof.
+    intros x f. cbn [assignment_row lhs map fst]. rewrite map_map. constructor.
+    - intro Hin. apply in_map_iff in Hin as [p [Heq _]]. cbn [fst] in Heq.
+      exact (poly_assign_rename_fresh x (fst p) Heq).
+    - pose proof (poly_assign_nodup_map X.t (option X.t) (rename_old x)
+        (poly_assign_rename_injective x)
+        (map fst (coef (poly_prepare_form X.encode f)))
+        (poly_prepare_form_nodup X.t X.encode f)) as Hkeys.
+      rewrite map_map in Hkeys. exact Hkeys.
+  Qed.
+
+  Lemma poly_assign_form_row_bounds : forall f,
+    C.row_key_bits (LCons X.t (coef f) REq (cst f)) <= F.form_bits f /\
+    C.row_bits (LCons X.t (coef f) REq (cst f)) <= F.form_bits f.
+  Proof.
+    intro f. split.
+    - unfold C.row_key_bits. cbn [lhs]. apply poly_max_bound; [lia|].
+      apply Forall_forall. intros p Hp. pose proof (poly_form_entry_bits f p Hp).
+      unfold X.bits in *. lia.
+    - unfold C.row_bits. cbn [lhs rhs]. apply poly_max_bound.
+      + apply poly_form_constant_bits.
+      + apply Forall_forall. intros p Hp. pose proof (poly_form_entry_bits f p Hp). lia.
+  Qed.
+
+  (** The signed preparer returns exactly the existing canonical form row. *)
+  Lemma poly_assign_prepared_form_row : forall f,
+    LCons X.t (coef (poly_prepare_form X.encode f)) REq (cst (poly_prepare_form X.encode f)) =
+      poly_normal_row X.encode (LCons X.t (coef f) REq (cst f)).
+  Proof.
+    intro f. cbn [poly_prepare_form coef cst poly_normal_row lhs lrel rhs].
+    now rewrite poly_signed_normal_eq.
+  Qed.
+
+  (** Prepared affine coefficients grow only by the logarithm of raw multiplicity. *)
+  Lemma poly_assign_prepared_form_bounds : forall f,
+    C.row_key_bits (LCons X.t (coef (poly_prepare_form X.encode f)) REq
+      (cst (poly_prepare_form X.encode f))) <= F.form_bits f /\
+    C.row_bits (LCons X.t (coef (poly_prepare_form X.encode f)) REq
+      (cst (poly_prepare_form X.encode f))) <=
+      F.form_bits f + Nat.log2 (length (coef f)) + 1.
+  Proof.
+    intro f. rewrite poly_assign_prepared_form_row.
+    destruct (poly_assign_form_row_bounds f) as [Hkeys Hbits]. split.
+    - eapply Nat.le_trans; [apply poly_normal_row_key_bits|exact Hkeys].
+    - pose proof (poly_normal_row_log_bits (LCons X.t (coef f) REq (cst f))) as Hnormal.
+      cbn [lhs] in Hnormal. lia.
+  Qed.
+
+  (** The new-variable unit coefficient adds at most one bit to the form row width. *)
+  Lemma poly_assign_row_bits : forall x f,
+    RangeCert.row_bits (assignment_row x f) <=
+      C.row_bits (LCons X.t (coef f) REq (cst f)) + 1.
+  Proof.
+    intros x f. unfold RangeCert.row_bits. cbn [assignment_row lhs rhs].
+    apply poly_max_bound.
+    - pose proof (poly_row_rhs_bits (LCons X.t (coef f) REq (cst f))). cbn [rhs] in *. lia.
+    - constructor.
+      + cbn [snd Z.size_nat Pos.size_nat]. lia.
+      + apply Forall_map, Forall_forall. intros p Hp. cbn [snd]. rewrite poly_size_opp.
+        pose proof (poly_row_entry_bits (LCons X.t (coef f) REq (cst f)) p Hp). lia.
+  Qed.
+
+  Lemma poly_assign_row_keys : forall x f,
+    RangeCert.row_key_bits (assignment_row x f) <=
+      X.bits x + C.row_key_bits (LCons X.t (coef f) REq (cst f)) + 1.
+  Proof.
+    intros x f. unfold RangeCert.row_key_bits. cbn [assignment_row lhs].
+    apply poly_max_bound; [lia|]. constructor.
+    - cbn [fst RangeKey.encode Pos.size_nat]. unfold X.bits. lia.
+    - apply Forall_map, Forall_forall. intros p Hp. cbn [fst].
+      pose proof (poly_assign_rename_key_bits x (fst p)) as Hrename.
+      pose proof (poly_row_key_member (LCons X.t (coef f) REq (cst f)) p Hp) as Hkey.
+      unfold RangeKey.bits, X.bits in *. lia.
+  Qed.
+
+  Definition poly_assign_sources (x : X.t) (P : list (lcons X.t)) :=
+    map (rename_row (rename_old x)) P.
+
+  Lemma poly_assign_sources_length : forall x P,
+    length (poly_assign_sources x P) = length P.
+  Proof. intros. unfold poly_assign_sources. apply length_map. Qed.
+
+  Lemma poly_assign_sources_terms : forall x P,
+    RangeCore.terms (Reached (poly_assign_sources x P)) = terms (Reached P).
+  Proof.
+    intros x P. unfold RangeCore.terms, terms, poly_assign_sources.
+    cbn [RangeCore.prows prows]. rewrite map_map.
+    apply f_equal. apply map_ext. intro r.
+    exact (proj2 (poly_assign_rename_row_bits x r)).
+  Qed.
+
+  Lemma poly_assign_sources_row_bits : forall x P,
+    fold_right Nat.max 0 (map RangeCert.row_bits (poly_assign_sources x P)) =
+      fold_right Nat.max 0 (map C.row_bits P).
+  Proof.
+    intros x P. unfold poly_assign_sources. rewrite map_map.
+    apply f_equal. apply map_ext. intro r.
+    exact (proj1 (poly_assign_rename_row_bits x r)).
+  Qed.
+
+  (** Renamed raw sources retain their original merged arithmetic width. *)
+  Lemma poly_assign_sources_raw_bits : forall x P,
+    RangeCore.poly_raw_bits (poly_assign_sources x P) = poly_raw_bits P.
+  Proof.
+    intros x P. unfold RangeCore.poly_raw_bits, poly_raw_bits.
+    now rewrite poly_assign_sources_row_bits, poly_assign_sources_terms.
+  Qed.
+
+  (** Their key-width maximum changes by at most the temporary tag bit. *)
+  Lemma poly_assign_sources_raw_keys : forall x P,
+    RangeCore.poly_raw_keys (poly_assign_sources x P) <= poly_raw_keys P + 1.
+  Proof.
+    intros x P. unfold RangeCore.poly_raw_keys, poly_assign_sources.
+    rewrite map_map. apply poly_max_bound; [lia|].
+    apply Forall_forall. intros r Hr.
+    pose proof (poly_assign_rename_row_keys x r) as Hrename.
+    pose proof (poly_max_member _ C.row_key_bits 0 P r Hr) as Hsource.
+    unfold poly_raw_keys. lia.
+  Qed.
+
+  (** Normalizing one renamed source cannot introduce the new assigned variable. *)
+  Lemma poly_assign_normal_source_absent : forall x r,
+    ~ In (Some x) (map fst (lhs
+      (poly_normal_row tmp_encode (rename_row (rename_old x) r)))).
+  Proof.
+    intros x r Hin. apply in_map_iff in Hin as [p [Heq Hin]].
+    cbn [poly_normal_row lhs] in Hin.
+    pose proof (poly_normal_coef_keys _ tmp_encode _ p Hin) as Hsource.
+    rewrite Heq in Hsource. exact (poly_assign_rename_row_absent x r Hsource).
+  Qed.
+
+  (** Successful untagging changes only the temporary key constructor. *)
+  Lemma poly_assign_untag_entries : forall xs ys, untag xs = Some ys ->
+    map (fun p => (Some (fst p), snd p)) ys = xs.
+  Proof.
+    intro xs. induction xs as [|[[x|] a] xs IH]; intros ys Hresult;
+      cbn [untag] in Hresult; try discriminate.
+    - injection Hresult as Hsame. subst ys. reflexivity.
+    - destruct (untag xs) as [zs|] eqn:Htail; [|discriminate].
+      injection Hresult as Hsame. subst ys. cbn [map fst snd].
+      f_equal. now apply IH.
+  Qed.
+
+  (** Untagging preserves counts and coefficient widths and removes the key tag bit. *)
+  Lemma poly_assign_untag_envelope : forall r xs,
+    untag (lhs r) = Some xs ->
+    length xs = length (lhs r) /\
+    C.row_bits (LCons X.t xs (lrel r) (rhs r)) = RangeCert.row_bits r /\
+    C.row_key_bits (LCons X.t xs (lrel r) (rhs r)) <= RangeCert.row_key_bits r.
+  Proof.
+    intros r xs Hresult.
+    pose proof (poly_assign_untag_entries (lhs r) xs Hresult) as Hentries.
+    split.
+    - apply f_equal with (f := @length (option X.t * Z)) in Hentries.
+      now rewrite length_map in Hentries.
+    - split.
+      + unfold C.row_bits, RangeCert.row_bits, RangeKey.t. cbn [lhs rhs].
+        rewrite <- Hentries, map_map. reflexivity.
+      + unfold C.row_key_bits. cbn [lhs]. apply poly_max_bound; [lia|].
+        apply Forall_forall. intros [y a] Hin. cbn [fst].
+        assert (Hmapped : In (Some y, a) (lhs r)).
+        { rewrite <- Hentries. apply in_map_iff. exists (y, a). split; [reflexivity|exact Hin]. }
+        pose proof (RangeCore.poly_row_key_member r (Some y, a) Hmapped) as Hkey.
+        cbn [fst RangeKey.encode Pos.size_nat] in Hkey. lia.
+  Qed.
+
+  (** A missing temporary new-value key remains absent after successful untagging. *)
+  Lemma poly_assign_untag_absent : forall x r xs,
+    untag (lhs r) = Some xs ->
+    ~ In (Some x) (map fst (lhs r)) -> ~ In x (map fst xs).
+  Proof.
+    intros x r xs Hresult Habsent Hin. apply Habsent.
+    rewrite (untag_keys _ _ Hresult). now apply in_map.
+  Qed.
+
+  (** Untagging stops early or visits each temporary coefficient once. *)
+  Lemma T_poly_assign_untag : forall xs,
+    (T_untag xs <= 2 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intro xs. induction xs as [|[[x|] a] xs IH].
+    - time_unfold T_untag. time_simpl. lia.
+    - time_unfold T_untag. destruct (untag xs); time_simpl; cbn [length]; nia.
+    - time_unfold T_untag. time_simpl. cbn [length]. nia.
+  Qed.
+
+  (** Candidate dispatch adds fixed projections to untagging, substitution, and checking. *)
+  Lemma T_poly_assign_candidate_frame : forall P x f r budget,
+    (forall xs head ms,
+      untag (lhs (poly_constraint r)) = Some xs ->
+      poly_multipliers r = head :: ms ->
+      let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+      (T_subst x f c + C.T_check_entails P (subst x f c) (Cert ms 1 false) <= budget)%N) ->
+    (T_assigned_candidate P x f r <=
+      T_untag (lhs (poly_constraint r)) + budget + 16)%N.
+  Proof.
+    intros P x f r budget Hcost. time_unfold T_assigned_candidate.
+    destruct (untag (lhs (poly_constraint r))) as [xs|] eqn:Huntag;
+      destruct (poly_multipliers r) as [|head ms] eqn:Hmults; time_simpl; try lia.
+    pose proof (Hcost xs head ms eq_refl eq_refl) as Hbranch.
+    cbn zeta in Hbranch. lia.
+  Qed.
+
+  (** Renaming compares the stored key and otherwise only chooses its option tag. *)
+  Lemma T_poly_assign_rename_old : forall x y,
+    (T_rename_old x y <= (X.c_key + 2) * N.of_nat (X.bits y + 1))%N.
+  Proof.
+    intros x y. pose proof (X.T_eqb_le y x) as Htest.
+    time_unfold T_rename_old. destruct (X.eqb y x); time_simpl; nia.
+  Qed.
+
+  Lemma T_poly_assign_rename_row : forall x r,
+    (T_rename_row (rename_old x) (T_rename_old x) r <=
+      (X.c_key + 16) * N.of_nat (length (lhs r) + 1) *
+        N.of_nat (C.row_key_bits r + 1))%N.
+  Proof.
+    intros x r. time_unfold T_rename_row.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?body ?clock (lhs r)] =>
+      assert (Hmap : (ListDef.T_map body clock (lhs r) <=
+        ((X.c_key + 8) * N.of_nat (C.row_key_bits r + 1) + 1) *
+          N.of_nat (length (lhs r)) + 1)%N);
+      [ apply poly_T_map_members; intros [y a] Hin;
+        pose proof (T_poly_assign_rename_old x y) as Hrename;
+        pose proof (poly_row_key_member r (y, a) Hin) as Hkey;
+        cbn [fst] in Hkey; unfold X.bits in Hrename; time_simpl; cbn [fst snd]; nia
+      | revert Hmap; time_simpl; intro Hmap; nia ]
+    end.
+  Qed.
+
+  (** Building the prepared equation inspects key widths but not coefficient magnitudes. *)
+  Lemma T_poly_assign_row : forall x f keys,
+    Forall (fun p => X.bits (fst p) <= keys) (coef f) ->
+    (T_assignment_row x f <= (X.c_key + 24) *
+      N.of_nat (length (coef f) + 1) * N.of_nat (keys + 1))%N.
+  Proof.
+    intros x f keys Hkeys. time_unfold T_assignment_row.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?body ?clock (coef f)] =>
+      assert (Hmap : (ListDef.T_map body clock (coef f) <=
+        ((X.c_key + 8) * N.of_nat (keys + 1) + 1) *
+          N.of_nat (length (coef f)) + 1)%N);
+      [ apply poly_T_map_members; intros [y a] Hin;
+        pose proof (T_poly_assign_rename_old x y) as Hrename;
+        pose proof (proj1 (Forall_forall _ _) Hkeys (y, a) Hin) as Hkey;
+        cbn [fst] in Hkey;
+        assert (Hopp : (Z.T_opp a <= 1)%N)
+          by (destruct a; time_unfold Z.T_opp; time_simpl; lia);
+        time_simpl; cbn [fst snd]; nia
+      | revert Hmap; time_simpl; intro Hmap; nia ]
+    end.
+  Qed.
+
+  (** Mapping the renamed raw sources fits their total occurrence and maximum key budgets. *)
+  Lemma T_poly_assign_sources : forall P x keys,
+    Forall (fun r => C.row_key_bits r <= keys) P ->
+    (ListDef.T_map (fun r => (rename_row (rename_old x) r, false))
+      (fun r => (1 + T_rename_row (rename_old x) (T_rename_old x) r)%N) P <=
+      (X.c_key + 20) * N.of_nat (length P + 1) *
+        (N.of_nat (terms (Reached P) + 1) * N.of_nat (keys + 1)))%N.
+  Proof.
+    intros P x keys Hkeys.
+    set (work := (N.of_nat (terms (Reached P) + 1) * N.of_nat (keys + 1))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. change (1 * 1 <= N.of_nat (terms (Reached P) + 1) * N.of_nat (keys + 1))%N.
+      apply N.mul_le_mono; lia. }
+    assert (Hcallback : forall r, In r P ->
+      ((1 + T_rename_row (rename_old x) (T_rename_old x) r) <=
+        (X.c_key + 16) * work + 1)%N).
+    { intros r Hr. pose proof (T_poly_assign_rename_row x r) as Hrow.
+      pose proof (poly_raw_row_terms P r Hr) as Hlength.
+      pose proof (proj1 (Forall_forall _ _) Hkeys r Hr) as Hkey.
+      cbn beta in Hkey.
+      assert (Hrow_total : (T_rename_row (rename_old x) (T_rename_old x) r <=
+        (X.c_key + 16) * work)%N).
+      { eapply N.le_trans; [exact Hrow|]. rewrite <- N.mul_assoc.
+        apply N.mul_le_mono_l. unfold work. apply N.mul_le_mono; lia. }
+      lia. }
+    pose proof (poly_T_map_members _ _ (fun r => (rename_row (rename_old x) r, false))
+      (fun r => (1 + T_rename_row (rename_old x) (T_rename_old x) r)%N)
+      ((X.c_key + 16) * work + 1)%N P Hcallback) as Hmap.
+    pose proof (poly_clock_linear_count_bound (X.c_key + 16) 2
+      (N.of_nat (length P)) (N.of_nat (length P + 1)) work ltac:(lia) Hpositive) as Hcount.
+    fold work. eapply N.le_trans; [exact Hmap|].
+    replace ((X.c_key + 16) * work + 1 + 1)%N with
+      ((X.c_key + 16) * work + 2)%N by ring.
+    eapply N.le_trans; [exact Hcount|]. apply N.mul_le_mono_r, N.mul_le_mono_r. lia.
+  Qed.
+
+  (** Source-only assignment rows reserve the first certificate position for the affine row. *)
+  Definition poly_assign_tail (x : X.t) (P : list (lcons X.t)) :=
+    map (@poly_pad_row (option X.t))
+      (poly_initial tmp_encode
+        (map (fun r => (rename_row (rename_old x) r, false)) P)).
+
+  (** The renamed source list is shared by all support and width bounds. *)
+  Lemma poly_assign_tail_sources : forall x P,
+    poly_assign_tail x P = map (@poly_pad_row (option X.t))
+      (poly_initial tmp_encode
+        (map (fun r => (r, false)) (poly_assign_sources x P))).
+  Proof.
+    intros x P. unfold poly_assign_tail, poly_assign_sources. now rewrite map_map.
+  Qed.
+
+  (** Padding multiplier vectors does not change the source row count. *)
+  Lemma poly_assign_tail_length : forall x P,
+    length (poly_assign_tail x P) = length P.
+  Proof.
+    intros x P. rewrite poly_assign_tail_sources, length_map, poly_initial_length,
+      length_map, poly_assign_sources_length. reflexivity.
+  Qed.
+
+  (** Padded source multipliers retain the common exact length and unit entries. *)
+  Lemma poly_assign_tail_units : forall x P,
+    Forall (fun r => length (poly_multipliers r) = length P + 1 /\
+      Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers r))
+      (poly_assign_tail x P).
+  Proof.
+    intros x P. rewrite poly_assign_tail_sources. apply Forall_map, Forall_forall.
+    intros r Hr.
+    pose proof (poly_initial_units (option X.t) tmp_encode
+      (map (fun p => (p, false)) (poly_assign_sources x P))) as Hunits.
+    destruct (proj1 (Forall_forall _ _) Hunits r Hr) as [Hlength Hunit].
+    rewrite length_map, poly_assign_sources_length in Hlength.
+    cbn [poly_pad_row poly_multipliers length]. split; [lia|].
+    constructor; [left; reflexivity|exact Hunit].
+  Qed.
+
+  (** The new assigned coordinate never belongs to the renamed source support. *)
+  Lemma poly_assign_tail_support_absent : forall x P,
+    ~ In (Some x) (RangeCore.vars_of (poly_assign_sources x P)).
+  Proof.
+    intros x P Hin.
+    destruct (RangeCore.poly_vars_of_support _ _ Hin) as [r [Hr Hkey]].
+    unfold poly_assign_sources in Hr.
+    apply in_map_iff in Hr as [p [Hsame Hp]]. subst r.
+    exact (poly_assign_rename_row_absent x p Hkey).
+  Qed.
+
+  (** Initial normalization keeps all source rows on the fixed renamed support. *)
+  Lemma poly_assign_tail_reduced : forall x P,
+    Forall (RangeCore.poly_reduced_row (RangeCore.vars_of (poly_assign_sources x P)))
+      (poly_assign_tail x P).
+  Proof.
+    intros x P. rewrite poly_assign_tail_sources. apply Forall_map.
+    exact (RangeCore.poly_raw_initial_reduced (poly_assign_sources x P)).
+  Qed.
+
+  (** Any normalized row on that support omits the fresh assigned coordinate. *)
+  Lemma poly_assign_tail_reduced_absent : forall x P r,
+    RangeCore.poly_reduced_row (RangeCore.vars_of (poly_assign_sources x P)) r ->
+    ~ In (Some x) (map fst (lhs (poly_constraint r))).
+  Proof.
+    intros x P r [_ Hsupport] Hin.
+    apply in_map_iff in Hin as [p [Hsame Hp]].
+    destruct (proj1 (Forall_forall _ _) Hsupport p Hp) as [_ Hkey].
+    rewrite Hsame in Hkey. exact (poly_assign_tail_support_absent x P Hkey).
+  Qed.
+
+  Lemma poly_assign_tail_absent : forall x P,
+    Forall (fun r => ~ In (Some x) (map fst (lhs (poly_constraint r))))
+      (poly_assign_tail x P).
+  Proof.
+    intros x P. eapply Forall_impl; [|exact (poly_assign_tail_reduced x P)].
+    intros r Hr. exact (poly_assign_tail_reduced_absent x P r Hr).
+  Qed.
+
+  (** Padding preserves source arithmetic width and adds only the reserved multiplier slot. *)
+  Lemma poly_assign_tail_envelopes : forall x P,
+    Forall (RangeCore.poly_row_envelope
+      (length (RangeCore.vars_of (poly_assign_sources x P))) (length P + 1)
+      (poly_raw_keys P + 1) (poly_raw_bits P)) (poly_assign_tail x P).
+  Proof.
+    intros x P. rewrite poly_assign_tail_sources. apply Forall_map, Forall_forall.
+    intros r Hr.
+    pose proof (RangeCore.poly_raw_initial_reduced (poly_assign_sources x P)) as Hsupport.
+    pose proof (proj1 (Forall_forall _ _) Hsupport r Hr) as Hreduced.
+    pose proof (RangeCore.poly_reduced_dimension
+      (RangeCore.vars_of (poly_assign_sources x P)) r Hreduced) as Hdim.
+    pose proof (RangeCore.poly_raw_initial_envelopes (poly_assign_sources x P)) as Hrows.
+    destruct (proj1 (Forall_forall _ _) Hrows r Hr)
+      as (Hunique & Hwide & Hkeys & Hbits & Hlength & Hmults).
+    rewrite poly_assign_sources_raw_bits in Hbits, Hmults.
+    rewrite poly_assign_sources_length in Hlength.
+    pose proof (poly_assign_sources_raw_keys x P) as Hkey_bound.
+    unfold RangeCore.poly_row_envelope.
+    cbn [poly_pad_row poly_constraint poly_multipliers length].
+    split; [exact Hunique|]. split; [exact Hdim|].
+    split; [eapply Nat.le_trans; [exact Hkeys|exact Hkey_bound]|].
+    split; [exact Hbits|]. split.
+    - replace (length P + 1) with (S (length P)) by lia.
+      apply le_n_S. exact Hlength.
+    -
+    constructor; [cbn [Z.size_nat]; lia|exact Hmults].
+  Qed.
+
+  (** Only the old assigned coordinate is eliminated from the source-only tail. *)
+  Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
+    poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
+
+  (** Source-only elimination preserves its original support and distinct coefficients. *)
+  Lemma poly_assign_tail_step_reduced : forall x P,
+    Forall (RangeCore.poly_reduced_row (RangeCore.vars_of (poly_assign_sources x P)))
+      (poly_assign_tail_step x P).
+  Proof.
+    intros x P. unfold poly_assign_tail_step.
+    apply RangeCore.poly_step_reduced. apply poly_assign_tail_reduced.
+  Qed.
+
+  (** A source pivot cannot create the new assigned variable. *)
+  Lemma poly_assign_tail_step_absent : forall x P,
+    Forall (fun r => ~ In (Some x) (map fst (lhs (poly_constraint r))))
+      (poly_assign_tail_step x P).
+  Proof.
+    intros x P. eapply Forall_impl; [|exact (poly_assign_tail_step_reduced x P)].
+    intros r Hr. exact (poly_assign_tail_reduced_absent x P r Hr).
+  Qed.
+
+  (** The tail step keeps its dimension and key width while doubling source arithmetic width. *)
+  Lemma poly_assign_tail_step_envelopes : forall x P,
+    Forall (RangeCore.poly_row_envelope
+      (length (RangeCore.vars_of (poly_assign_sources x P))) (length P + 1)
+      (poly_raw_keys P + 1) (2 * poly_raw_bits P + 1)) (poly_assign_tail_step x P).
+  Proof.
+    intros x P. unfold poly_assign_tail_step.
+    apply RangeCore.poly_step_envelopes
+      with (vars := RangeCore.vars_of (poly_assign_sources x P)).
+    - lia.
+    - apply poly_assign_tail_reduced.
+    - apply poly_assign_tail_envelopes.
+  Qed.
+
+  (** Initial unit vectors give the sharper one-step multiplier bound without form growth. *)
+  Lemma poly_assign_tail_step_multiplier_bits : forall x P,
+    Forall (fun r => length (poly_multipliers r) = length P + 1 /\
+      Forall (fun m => Z.size_nat m <= poly_raw_bits P + 1) (poly_multipliers r))
+      (poly_assign_tail_step x P).
+  Proof.
+    intros x P. unfold poly_assign_tail_step. apply RangeCore.poly_step_multiplier_bits.
+    apply Forall_forall. intros r Hr.
+    destruct (proj1 (Forall_forall _ _) (poly_assign_tail_units x P) r Hr)
+      as [Hlength Hunit].
+    destruct (proj1 (Forall_forall _ _) (poly_assign_tail_envelopes x P) r Hr)
+      as (Hunique & Hdim & Hkeys & Hbits & Hcount & Hmults).
+    split; [exact Hlength|]. split; [exact Hunit|].
+    eapply Nat.le_trans; [apply RangeCore.poly_row_coefficient_bits; exact Hunique|].
+    exact Hbits.
+  Qed.
+
+  (** Every resulting source-only constraint has zero coefficient for the new variable. *)
+  Lemma poly_assign_tail_step_fresh_zero : forall x P,
+    Forall (fun r => poly_coefficient tmp_eqb (Some x) (poly_constraint r) = 0%Z)
+      (poly_assign_tail_step x P).
+  Proof.
+    intros x P. eapply Forall_impl; [|exact (poly_assign_tail_step_absent x P)].
+    intros r Hr. now apply RangeCore.poly_coefficient_absent.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
