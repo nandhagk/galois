@@ -9515,6 +9515,68 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exact (snapshot_mass_partition p p' ch st Hstate).
   Qed.
 
+  Lemma invalid_cowrite_work_le : forall st xs,
+    finite_sum (fun x => length (cowrite_at st x)) xs <=
+      finite_sum (fun x => infl_deg st x + length (cowrite_at st x) + 1) xs.
+  Proof.
+    intros st xs; apply finite_sum_mono; intros x Hin; lia.
+  Qed.
+
+  Lemma invalid_loop_finish_arithmetic : forall base bits work cow mass clock,
+    (cow <= work)%N ->
+    (clock + 64 * base * bits * mass <=
+      256 * base * bits * work + 64 * base * bits * (mass + cow) + 2)%N ->
+    (clock <= 320 * base * bits * work + 2)%N.
+  Proof.
+    intros base bits work cow mass clock Hcow Hclock.
+    replace (64 * base * bits * (mass + cow))%N with
+      (64 * base * bits * mass + 64 * base * bits * cow)%N in Hclock by ring.
+    replace (320 * base * bits * work)%N with
+      (256 * base * bits * work + 64 * base * bits * work)%N by ring.
+    assert (Hscaled : (64 * base * bits * cow <= 64 * base * bits * work)%N).
+    { apply N.mul_le_mono_l; exact Hcow. }
+    lia.
+  Qed.
+
+  Lemma T_invalid_loop_key_le : forall p p' ch st, state_ok st ->
+    let initial := invalid_initial p p' ch st in
+    let H := invalid_accessible st initial in
+    (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+      (T_invalid_checked_step st) initial H <=
+      320 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (finite_sum (fun x =>
+          (infl_deg st x + length (cowrite_at st x) + 1)%nat)
+          (invalidate p p' ch st)) + 2)%N.
+  Proof.
+    intros p p' ch st Hstate; cbn beta zeta.
+    pose proof (T_invalid_loop_amort st (invalid_initial p p' ch st)
+      (invalid_accessible st (invalid_initial p p' ch st)) Hstate
+      (invalid_initial_pending_dom p p' ch st)
+      (invalid_initial_snapshot_origin p p' ch st)) as Hloop.
+    change (Argent.Loop.loop (invalid_lt st) (invalid_checked_step st)
+      (invalid_initial p p' ch st)
+      (invalid_accessible st (invalid_initial p p' ch st))) with
+      (invalid_walk p p' ch st) in Hloop.
+    unfold invalid_processed_credit, invalid_remaining_credit in Hloop.
+    rewrite invalid_initial_done_work, invalid_walk_done_work,
+      invalid_initial_snapshot_mass in Hloop.
+    pose proof (invalid_walk_mass_partition p p' ch st Hstate) as Hmass.
+    rewrite Hmass in Hloop.
+    replace (N.of_nat (invalid_snapshot_mass (invalid_walk p p' ch st) +
+      finite_sum (fun x => length (cowrite_at st x))
+        (invalidate p p' ch st))) with
+      (N.of_nat (invalid_snapshot_mass (invalid_walk p p' ch st)) +
+        N.of_nat (finite_sum (fun x => length (cowrite_at st x))
+          (invalidate p p' ch st)))%N in Hloop by
+      (rewrite Nat2N.inj_add; reflexivity).
+    pose proof (invalid_cowrite_work_le st (invalidate p p' ch st)) as Hcow.
+    apply nat_to_N_le in Hcow.
+    change (N.of_nat 0) with 0%N in Hloop.
+    rewrite N.mul_0_r, N.add_0_r in Hloop.
+    eapply invalid_loop_finish_arithmetic; [exact Hcow|exact Hloop].
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
