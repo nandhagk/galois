@@ -297,7 +297,6 @@ Proof.
     try apply rel_zbits_least in Hlo; try apply rel_zbits_least in Hhi; time_step.
 Qed.
 
-
 (** Finite bounds with an absent value interpreted as positive infinity. *)
 Module RelationalPathBounds.
   Definition below (a b : option Z) : Prop :=
@@ -5011,5 +5010,327 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     clearbody work. clear units. unfold T_incr_close. cbn beta iota zeta.
     fold seed next. time_simpl. cbn beta iota zeta.
     destruct (andb (nonnegative i next) (nonnegative j next)); cbn beta iota zeta; lia.
+  Qed.
+
+  (** Consistent labels inject into any raw support containing their stored codes. *)
+  Lemma elements_support_length : forall A (r : M.t A) m, M.wf r ->
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    length (M.elements r) <= supp m.
+  Proof.
+    intros A r m Hwf Hsupport.
+    assert (Hlength : length (map K.encode (map fst (M.elements r))) <= supp m).
+    { unfold supp. apply NoDup_incl_length.
+      - apply encoded_keys_nodup. now apply M.elements_nodup.
+      - intros p Hin. apply in_map_iff in Hin. destruct Hin as [k [Hcode Hkey]].
+        subst p. apply Hsupport. now apply elements_code. }
+    now rewrite !length_map in Hlength.
+  Qed.
+
+  (** The bit length of a consistent stored label is bounded by its raw support. *)
+  Lemma elements_support_bits : forall A (r : M.t A) m k a, M.wf r ->
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    In (k, a) (M.elements r) -> K.bits k <= b m.
+  Proof.
+    intros A r m k a Hwf Hsupport Hin. unfold K.bits. apply support_bits, Hsupport.
+    apply elements_code; [exact Hwf|]. apply in_map_iff. exists (k, a). now split.
+  Qed.
+
+  (** Consistent label weight is bounded by raw support size and key bits. *)
+  Lemma weight_support_bound : forall A (r : M.t A) m, M.wf r ->
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    M.weight r <= supp m * (b m + 1).
+  Proof.
+    intros A r m Hwf Hsupport.
+    pose proof (elements_support_length A r m Hwf Hsupport) as Hlength.
+    assert (Hweight : M.weight r <= length (M.elements r) * (b m + 1)).
+    { unfold M.weight. apply sum_members_bound. intros [k a] Hin. cbn [fst].
+      pose proof (elements_support_bits A r m k a Hwf Hsupport Hin) as Hbits.
+      unfold K.bits in Hbits. lia. }
+    eapply Nat.le_trans; [exact Hweight|]. now apply Nat.mul_le_mono_r.
+  Qed.
+
+  (** Enumerating consistent labels fits the same raw support and key-bit budget. *)
+  Lemma T_elements_support : forall A (r : M.t A) m, M.wf r ->
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    (M.T_elements r <= M.c_map * N.of_nat (supp m * (b m + 1) + 1))%N.
+  Proof.
+    intros A r m Hwf Hsupport.
+    eapply N.le_trans; [now apply M.T_elements_le|].
+    apply N.mul_le_mono_l, time_of_nat_le.
+    pose proof (weight_support_bound A r m Hwf Hsupport) as Hweight. lia.
+  Qed.
+
+  (** Projecting enumerated keys adds only a linear pass to label enumeration. *)
+  Lemma T_element_keys_le : forall A (r : M.t A) m, M.wf r ->
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    (M.T_elements r + ListDef.T_map (@fst K.t A) (fun p => Datatypes.T_fst p)
+      (M.elements r) + 1 <=
+      (M.c_map + 4) * N.of_nat ((supp m + 1) * (b m + 1)))%N.
+  Proof.
+    intros A r m Hwf Hsupport.
+    pose proof (elements_support_length A r m Hwf Hsupport) as Hlength.
+    pose proof (T_elements_support A r m Hwf Hsupport) as Helements.
+    pose proof (@ListDef.T_map_le (K.t * A) K.t (@fst K.t A)
+      (fun p => Datatypes.T_fst p) 1%N (M.elements r)
+      (fun p => Datatypes.T_fst_le p)) as Hmap.
+    set (work := N.of_nat ((supp m + 1) * (b m + 1))).
+    assert (HlengthN : (N.of_nat (length (M.elements r)) + 1 <= work)%N).
+    { replace (N.of_nat (length (M.elements r)) + 1)%N with
+        (N.of_nat (length (M.elements r) + 1)) by (rewrite Nat2N.inj_add; reflexivity).
+      unfold work. apply time_of_nat_le. nia. }
+    assert (HdataN : (N.of_nat (supp m * (b m + 1) + 1) <= work)%N).
+    { unfold work. apply time_of_nat_le. nia. }
+    assert (Helements_work : (M.T_elements r <= M.c_map * work)%N).
+    { eapply N.le_trans; [exact Helements|]. now apply N.mul_le_mono_l. }
+    match goal with
+    | |- N.le ?clock _ => change (clock <= (M.c_map + 4) * work)%N
+    end.
+    rewrite N.mul_add_distr_r.
+    clear Hlength Helements HdataN. clearbody work. lia.
+  Qed.
+
+  (** Each enumerated matrix row is consistent and lies inside the matrix support. *)
+  Lemma elements_row_support : forall m k row, dbm_wf m ->
+    In (k, row) (M.elements m) -> M.wf row /\
+      (forall p, In p (M.codes row) -> In p (support m)).
+  Proof.
+    intros m k row [Houter Hrows] Hin.
+    pose proof (proj1 (M.elements_spec (M.t Z) m k row Houter) Hin) as Hget.
+    rewrite M.get_find in Hget. split.
+    - exact (Hrows (K.encode k) row Hget).
+    - intros p Hp. apply support_spec. right. apply in_flat_map. exists row. split.
+      + exact (row_in_rows m (K.encode k) row Hget).
+      + exact Hp.
+  Qed.
+
+  (** Flattening lists of uniformly bounded length multiplies the two list counts. *)
+  Lemma flat_map_length_bound : forall A B (f : A -> list B) xs n,
+    (forall x, In x xs -> length (f x) <= n) ->
+    length (flat_map f xs) <= length xs * n.
+  Proof.
+    intros A B f xs. induction xs as [|x xs IH]; intros n Hbound.
+    - cbn. lia.
+    - cbn [flat_map length]. rewrite length_app.
+      assert (Hhead : length (f x) <= n) by (apply Hbound; now left).
+      assert (Htail : length (flat_map f xs) <= length xs * n).
+      { apply IH. intros y Hy. apply Hbound. now right. }
+      lia.
+  Qed.
+
+  (** The raw pivot-label list precedes duplicate removal in the executable collector. *)
+  Definition pivot_inputs (m : dbm) : list K.t :=
+    map fst (M.elements m) ++
+      flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m).
+
+  (** The pivot input list has at most one outer and one inner label per supported pair. *)
+  Lemma pivot_inputs_length : forall m, dbm_wf m ->
+    length (pivot_inputs m) + 1 <= (supp m + 1)^2.
+  Proof.
+    intros m Hwf.
+    assert (Houter : length (M.elements m) <= supp m).
+    { apply elements_support_length; [exact (proj1 Hwf)|].
+      intros p Hp. apply support_spec. now left. }
+    assert (Hinner : length (flat_map (fun kv => map fst (M.elements (snd kv)))
+      (M.elements m)) <= length (M.elements m) * supp m).
+    { apply flat_map_length_bound. intros [k row] Hin. cbn [snd]. rewrite length_map.
+      destruct (elements_row_support m k row Hwf Hin) as [Hrow Hsupport].
+      now apply elements_support_length. }
+    unfold pivot_inputs. rewrite length_app, length_map. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** Every pivot-input label has the key-bit bound of the original matrix. *)
+  Lemma pivot_inputs_bits : forall m k, dbm_wf m ->
+    In k (pivot_inputs m) -> K.bits k <= b m.
+  Proof.
+    intros m k Hwf Hin. unfold pivot_inputs in Hin. apply in_app_iff in Hin.
+    destruct Hin as [Hin|Hin].
+    - apply in_map_iff in Hin. destruct Hin as [[q row] [Heq Hin]]. cbn in Heq. subst q.
+      apply (elements_support_bits (M.t Z) m m k row (proj1 Hwf)); [|exact Hin].
+      intros p Hp. apply support_spec. now left.
+    - apply in_flat_map in Hin. destruct Hin as [[q row] [Hrow Hin]]. cbn [snd] in Hin.
+      apply in_map_iff in Hin. destruct Hin as [[p z] [Heq Hin]]. cbn in Heq. subst p.
+      destruct (elements_row_support m q row Hwf Hrow) as [Hrow_wf Hsupport].
+      exact (elements_support_bits Z row m k z Hrow_wf Hsupport Hin).
+  Qed.
+
+  (** Mapping needs a callback bound only at members of its actual input. *)
+  Lemma map_clock_members : forall A B (f : A -> B) tf c xs,
+    Forall (fun x => (tf x <= c)%N) xs ->
+    (ListDef.T_map f tf xs <= (c + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f tf c xs Hbounds.
+    induction Hbounds as [|x xs Hhead Htail IH]; time_step.
+  Qed.
+
+  (** An accumulator fold needs a uniform bound only for the input values it visits. *)
+  Lemma fold_left_clock_members : forall A B (f : A -> B -> A) tf c xs,
+    Forall (fun x => forall acc, (tf acc x <= c)%N) xs -> forall acc,
+    (List.T_fold_left f tf xs acc <= (c + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f tf c xs Hbounds.
+    induction Hbounds as [|x xs Hhead Htail IH]; intro acc; time_step.
+  Qed.
+
+  (** A Boolean scan needs callback bounds only at members of its input list. *)
+  Lemma forallb_clock_members : forall A (f : A -> bool) tf c xs,
+    Forall (fun x => (tf x <= c)%N) xs ->
+    (List.T_forallb f tf xs <= (c + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f tf c xs Hbounds.
+    induction Hbounds as [|x xs Hhead Htail IH]; time_step.
+  Qed.
+
+  (** Flattening pays a callback and one concatenation per outer input value. *)
+  Lemma flat_map_clock_members : forall A B (f : A -> list B) tf c n xs,
+    Forall (fun x => (tf x <= c)%N /\ length (f x) <= n) xs ->
+    (List.T_flat_map f tf xs <=
+      (c + N.of_nat n + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f tf c n xs Hbounds.
+    induction Hbounds as [|x xs [Hhead Hlength] Htail IH].
+    - time_step.
+    - pose proof (time_of_nat_le _ _ Hlength) as HlengthN. time_step.
+  Qed.
+
+  (** Remembering a key charges its encoded key length independently of accumulated keys. *)
+  Lemma T_remember_key_le : forall acc k,
+    (T_remember_key acc k <= 8 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N.
+  Proof.
+    intros [seen ks] k. time_step.
+  Qed.
+
+  (** The map-backed deduplication fold pays each input's key bits once. *)
+  Lemma T_remember_fold_le : forall ks acc bb,
+    (forall k, In k ks -> K.bits k <= bb) ->
+    (List.T_fold_left remember_key (fun a k => T_remember_key a k) ks acc <=
+      16 * (M.c_map + 1) * N.of_nat ((length ks + 1) * (bb + 1)))%N.
+  Proof.
+    intros ks acc bb Hbits.
+    assert (Hcallback : Forall (fun k => forall a,
+      (T_remember_key a k <= 8 * (M.c_map + 1) * N.of_nat (bb + 1))%N) ks).
+    { apply Forall_forall. intros k Hin a.
+      eapply N.le_trans; [apply T_remember_key_le|].
+      apply N.mul_le_mono_l, time_of_nat_le. pose proof (Hbits k Hin). lia. }
+    pose proof (fold_left_clock_members (M.t unit * list K.t) K.t remember_key
+      (fun a k => T_remember_key a k) (8 * (M.c_map + 1) * N.of_nat (bb + 1))%N
+      ks Hcallback acc) as Hfold.
+    clear Hbits Hcallback.
+    rewrite (Nat2N.inj_mul (length ks + 1) (bb + 1)), Nat2N.inj_add.
+    set (count := N.of_nat (length ks)) in *.
+    set (bits := N.of_nat (bb + 1)) in *.
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    clearbody count bits.
+    set (work := ((count + 1) * bits)%N).
+    assert (Hunit : (1 <= work)%N) by (unfold work; nia).
+    assert (Hper : (8 * (M.c_map + 1) * bits + 1 <=
+      9 * (M.c_map + 1) * bits)%N) by nia.
+    assert (Hfold_work : (List.T_fold_left remember_key
+      (fun a k => T_remember_key a k) ks acc <= 9 * (M.c_map + 1) * work + 1)%N).
+    { eapply N.le_trans; [exact Hfold|]. apply N.add_le_mono_r.
+      eapply N.le_trans; [apply N.mul_le_mono_r; exact Hper|].
+      replace (9 * (M.c_map + 1) * work)%N with
+        (9 * (M.c_map + 1) * bits * (count + 1))%N by (unfold work; ring).
+      apply N.mul_le_mono_l. lia. }
+    match goal with
+    | |- N.le ?clock _ => change (clock <= 16 * (M.c_map + 1) * work)%N
+    end.
+    assert (Hbudget : ((9 * (M.c_map + 1) + 1) * work <=
+      16 * (M.c_map + 1) * work)%N).
+    { apply N.mul_le_mono_r. lia. }
+    rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+    clear Hfold Hper Hbits. clearbody work. lia.
+  Qed.
+
+  (** The trace stops at the same negative diagonal as the executable pivot loop. *)
+  Lemma fw_trace_nonnegative : forall k ks m,
+    fw_trace (k :: ks) m = (k, m) ::
+      if nonnegative k (fw_round k m) then fw_trace ks (fw_round k m) else nil.
+  Proof.
+    intros k ks m. cbn [fw_trace]. unfold nonnegative.
+    destruct (entry (fw_round k m) k k) as [z|]; [|reflexivity].
+    destruct (z <? 0)%Z eqn:Hneg; destruct (0 <=? z)%Z eqn:Hnonneg;
+      try reflexivity.
+    - apply Z.ltb_lt in Hneg. apply Z.leb_le in Hnonneg. lia.
+    - apply Z.ltb_ge in Hneg. apply Z.leb_gt in Hnonneg. lia.
+  Qed.
+
+  (** The trace cost records precisely the rounds performed by the executable loop. *)
+  Definition trace_cost (ks : list K.t) (m : dbm) : N :=
+    fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km)) (fw_trace ks m)).
+
+  (** One trace entry pays its round and continues exactly when the diagonal is nonnegative. *)
+  Lemma trace_cost_cons : forall k ks m,
+    trace_cost (k :: ks) m = (T_fw_round k m +
+      if nonnegative k (fw_round k m) then trace_cost ks (fw_round k m) else 0)%N.
+  Proof.
+    intros k ks m. unfold trace_cost at 1. rewrite fw_trace_nonnegative.
+    cbn [map fold_right fst snd]. destruct (nonnegative k (fw_round k m)); reflexivity.
+  Qed.
+
+  (** Each key has a diagonal-check budget independent of the current matrix entries. *)
+  Definition diagonal_budget (k : K.t) : N :=
+    (16 * (M.c_map + 1) * N.of_nat (K.bits k + 1) + 4)%N.
+
+  Definition scan_budget (ks : list K.t) : N := fold_right N.add 0%N (map diagonal_budget ks).
+
+  (** The pivot loop pays its traced rounds, one diagonal check per key, and loop overhead. *)
+  Lemma T_close_pivots_trace : forall ks m,
+    (T_close_pivots ks m <= trace_cost ks m + scan_budget ks + 1)%N.
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intro m.
+    - unfold trace_cost, scan_budget. cbn [fw_trace map fold_right]. time_step.
+    - rewrite trace_cost_cons.
+      change (T_close_pivots (k :: ks) m <=
+        T_fw_round k m +
+          (if nonnegative k (fw_round k m) then trace_cost ks (fw_round k m) else 0) +
+        (diagonal_budget k + scan_budget ks) + 1)%N.
+      pose proof (T_nonnegative_small k (fw_round k m)) as Hdiag.
+      specialize (IH (fw_round k m)).
+      time_unfold (@T_close_pivots). cbn beta iota zeta.
+      destruct (nonnegative k (fw_round k m)); cbn beta iota zeta;
+        unfold diagonal_budget; lia.
+  Qed.
+
+  (** The final diagonal scan fits the same per-key budget as the pivot loop. *)
+  Lemma T_diagonal_scan_le : forall ks m,
+    (List.T_forallb (fun k => nonnegative k m) (fun k => T_nonnegative k m) ks <=
+      scan_budget ks + 1)%N.
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intro m.
+    - unfold scan_budget. cbn [map fold_right]. time_step.
+    - change (List.T_forallb (fun k => nonnegative k m) (fun k => T_nonnegative k m)
+        (k :: ks) <= diagonal_budget k + scan_budget ks + 1)%N.
+      pose proof (T_nonnegative_small k m) as Hdiag. specialize (IH m).
+      unfold diagonal_budget. time_step.
+  Qed.
+
+  (** Uniform key bits bound the sum of diagonal budgets. *)
+  Lemma scan_budget_bound : forall ks bb,
+    (forall k, In k ks -> K.bits k <= bb) ->
+    (scan_budget ks <= 20 * (M.c_map + 1) * N.of_nat (length ks * (bb + 1)))%N.
+  Proof.
+    intros ks bb Hbits.
+    assert (Hpoint : forall k, In k ks ->
+      (diagonal_budget k <= 20 * (M.c_map + 1) * N.of_nat (bb + 1))%N).
+    { intros k Hin. pose proof (Hbits k Hin) as Hkey.
+      assert (HkeyN : (N.of_nat (K.bits k + 1) <= N.of_nat (bb + 1))%N)
+        by (apply time_of_nat_le; lia).
+      assert (Hunit : (1 <= N.of_nat (bb + 1))%N) by lia.
+      pose proof (N.mul_le_mono_l _ _ (16 * (M.c_map + 1))%N HkeyN) as Hscaled.
+      unfold diagonal_budget. nia. }
+    pose proof (time_sum_bound K.t ks diagonal_budget (fun _ => bb + 1)
+      (20 * (M.c_map + 1))%N Hpoint) as Hsum.
+    now rewrite sum_weight_const in Hsum.
+  Qed.
+
+  (** The deduplicated pivot scan fits the matrix's initial quadratic work. *)
+  Lemma scan_budget_keys : forall m, dbm_wf m ->
+    (scan_budget (keys m) <= 20 * (M.c_map + 1) *
+      N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  Proof.
+    intros m Hwf. eapply N.le_trans; [apply (scan_budget_bound (keys m) (b m))|].
+    - intros k Hin. unfold K.bits. apply support_bits. now apply keys_support.
+    - apply N.mul_le_mono_l, time_of_nat_le.
+      pose proof (keys_le m Hwf) as Hlength. cbn [Nat.pow]. nia.
   Qed.
 End ZoneT.
