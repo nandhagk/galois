@@ -5845,6 +5845,33 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - exact (Hpair i j).
   Qed.
 
+  (** A completed successful scan has zero diagonals and every triangle bound. *)
+  Lemma fw_closed_success : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true ->
+    (forall i, In (K.encode i) (support (fw m)) -> entry (fw m) i i = Some 0%Z) /\
+    (forall i j k a z, entry (fw m) i k = Some a ->
+      entry (fw m) k j = Some z ->
+      exists d, entry (fw m) i j = Some d /\ (d <= a + z)%Z).
+  Proof.
+    intros m Hwf Hscan.
+    pose proof (fw_success_path_invariant m Hwf Hscan) as Hinv.
+    destruct Hinv as [_ Hclosed Hzero _]. split.
+    - intros i Hsupport. apply Hzero.
+      apply in_rev. rewrite rev_involutive.
+      apply (proj2 (keys_support_iff m i Hwf)).
+      apply (proj1 (fw_support m (K.encode i))). exact Hsupport.
+    - intros i j k a z Hik Hkj.
+      assert (Hkey : In k (rev (keys m))).
+      { apply in_rev. rewrite rev_involutive.
+        apply (proj2 (keys_support_iff m k Hwf)).
+        apply (proj1 (fw_support m (K.encode k))).
+        eapply entry_target_support. exact Hik. }
+      pose proof (Hclosed k Hkey i j) as Hbound.
+      rewrite Hik, Hkj in Hbound. cbn [RelationalPathBounds.plus] in Hbound.
+      destruct (RelationalPathBounds.below_finite _ _ Hbound)
+        as [d [Hd Hle]]. exists d. now split.
+  Qed.
+
   (** A successful tight closure is coherent after both numeric passes. *)
   Lemma coherent_tclose_reached : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
     tclose m = Reached m' -> coherent m'.
