@@ -3,13 +3,14 @@
     Fourier-Motzkin elimination tracks combinations of the input constraints.
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
-From Stdlib Require Import List ZArith NArith QArith Bool Lia Ring.
+From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring Psatz Wf_nat.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig PolySig.
+Import List.ListNotations.
 Local Open Scope nat_scope.
 
 Module Z.
@@ -200,6 +201,98 @@ Definition poly_upper (z : Z) (b : bnd) : bnd :=
   match b with PosInf => Fin z | Fin n => Fin (Z.min z n) | NegInf => NegInf end.
 
 TimeFun poly_upper.
+
+(** Rational coefficient evaluation keeps every raw occurrence. *)
+Definition poly_eval_coef_Q {X} (v : X -> Q) (xs : list (X * Z)) : Q :=
+  fold_right (fun p q => (inject_Z (snd p) * v (fst p) + q)%Q) 0%Q xs.
+
+Local Open Scope Q_scope.
+
+(** Finite lower bounds have an attained greatest numerical endpoint. *)
+Lemma poly_Q_max_member : forall (p : Q * bool) ps,
+  exists m, In m (p :: ps) /\ forall q, In q (p :: ps) -> fst q <= fst m.
+Proof.
+  intros p ps. revert p. induction ps as [|q ps IH]; intro p.
+  - exists p. split; [now left|]. intros q [Heq|Hfalse]; [subst q; apply Qle_refl|contradiction].
+  - destruct (IH q) as [m [Hmember Hbound]].
+    destruct (Qle_bool (fst p) (fst m)) eqn:Hcompare.
+    + apply Qle_bool_iff in Hcompare. exists m. split; [now right|].
+      intros r [Heq|Hin]; [subst r; exact Hcompare|now apply Hbound].
+    + assert (Hreverse : fst m <= fst p).
+      { assert (Hnot : ~ fst p <= fst m).
+        { intro Hle. apply Qle_bool_iff in Hle. congruence. }
+        pose proof (Qnot_le_lt _ _ Hnot). lra. }
+      exists p. split; [now left|]. intros r [Heq|Hin].
+      * subst r. apply Qle_refl.
+      * eapply Qle_trans; [now apply Hbound|exact Hreverse].
+Qed.
+
+(** Finite upper bounds have an attained least numerical endpoint. *)
+Lemma poly_Q_min_member : forall (p : Q * bool) ps,
+  exists m, In m (p :: ps) /\ forall q, In q (p :: ps) -> fst m <= fst q.
+Proof.
+  intros p ps. revert p. induction ps as [|q ps IH]; intro p.
+  - exists p. split; [now left|]. intros q [Heq|Hfalse]; [subst q; apply Qle_refl|contradiction].
+  - destruct (IH q) as [m [Hmember Hbound]].
+    destruct (Qle_bool (fst p) (fst m)) eqn:Hcompare.
+    + apply Qle_bool_iff in Hcompare. exists p. split; [now left|].
+      intros r [Heq|Hin]; [subst r; apply Qle_refl|].
+      eapply Qle_trans; [exact Hcompare|now apply Hbound].
+    + assert (Hreverse : fst m <= fst p).
+      { assert (Hnot : ~ fst p <= fst m).
+        { intro Hle. apply Qle_bool_iff in Hle. congruence. }
+        pose proof (Qnot_le_lt _ _ Hnot). lra. }
+      exists m. split; [now right|]. intros r [Heq|Hin];
+        [subst r; exact Hreverse|now apply Hbound].
+Qed.
+
+(** A strict flag makes its endpoint open. *)
+Definition poly_lower_at (q : Q) (bound : Q * bool) : Prop :=
+  if snd bound then fst bound < q else fst bound <= q.
+Definition poly_upper_at (q : Q) (bound : Q * bool) : Prop :=
+  if snd bound then q < fst bound else q <= fst bound.
+Definition poly_bounds_compatible (lo hi : Q * bool) : Prop :=
+  if snd lo || snd hi then fst lo < fst hi else fst lo <= fst hi.
+
+(** Pairwise compatibility of finitely many open or closed bounds gives a rational point. *)
+Lemma poly_Q_interval_model : forall lowers uppers,
+  (forall lo hi, In lo lowers -> In hi uppers -> poly_bounds_compatible lo hi) ->
+  exists q, Forall (poly_lower_at q) lowers /\ Forall (poly_upper_at q) uppers.
+Proof.
+  intros [|lo lowers] [|hi uppers] Hcompatible.
+  - exists 0. split; constructor.
+  - destruct (poly_Q_min_member hi uppers) as [least [Hleast Hbound]].
+    exists (fst least - 1). split; [constructor|].
+    apply Forall_forall. intros upper Hin. specialize (Hbound upper Hin).
+    unfold poly_upper_at. destruct (snd upper); lra.
+  - destruct (poly_Q_max_member lo lowers) as [greatest [Hgreatest Hbound]].
+    exists (fst greatest + 1). split; [|constructor].
+    apply Forall_forall. intros lower Hin. specialize (Hbound lower Hin).
+    unfold poly_lower_at. destruct (snd lower); lra.
+  - destruct (poly_Q_max_member lo lowers) as [greatest [Hgreatest Hlower]].
+    destruct (poly_Q_min_member hi uppers) as [least [Hleast Hupper]].
+    pose proof (Hcompatible greatest least Hgreatest Hleast) as Hbetween.
+    assert (Horder : fst greatest <= fst least).
+    { unfold poly_bounds_compatible in Hbetween.
+      destruct (snd greatest || snd least); lra. }
+    set (q := (fst greatest + fst least) * (1#2)).
+    assert (Hmidpoint : 2 * q == fst greatest + fst least).
+    { unfold q. ring. }
+    exists q. split; apply Forall_forall.
+    + intros lower Hin. pose proof (Hlower lower Hin) as Hbound.
+      pose proof (Hcompatible lower least Hin Hleast) as Hstrict.
+      unfold poly_lower_at. destruct (snd lower) eqn:Hflag.
+      * unfold poly_bounds_compatible in Hstrict. rewrite Hflag in Hstrict.
+        cbn [orb] in Hstrict. lra.
+      * lra.
+    + intros upper Hin. pose proof (Hupper upper Hin) as Hbound.
+      pose proof (Hcompatible greatest upper Hgreatest Hin) as Hstrict.
+      unfold poly_upper_at. destruct (snd upper) eqn:Hflag.
+      * unfold poly_bounds_compatible in Hstrict. rewrite Hflag, orb_true_r in Hstrict. lra.
+      * lra.
+Qed.
+
+Local Close Scope Q_scope.
 
 (** The row-count recurrence is monotone. *)
 Lemma poly_rows_recurrence_mono : forall rows more, rows <= more ->
@@ -503,6 +596,22 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     match s with Unreached => 0 | Reached P => length P end.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
+
+  (** A strict flag changes an inequality to its open rational interpretation. *)
+  Definition poly_satQ (v : X.t -> Q) (r : poly_row X.t) : Prop :=
+    match lrel (poly_constraint r) with
+    | REq => (poly_eval_coef_Q v (lhs (poly_constraint r)) ==
+        inject_Z (rhs (poly_constraint r)))%Q
+    | RLe => if poly_strict r
+      then (poly_eval_coef_Q v (lhs (poly_constraint r)) <
+        inject_Z (rhs (poly_constraint r)))%Q
+      else (poly_eval_coef_Q v (lhs (poly_constraint r)) <=
+        inject_Z (rhs (poly_constraint r)))%Q
+    end.
+
+  Definition poly_eq_nonstrict (r : poly_row X.t) : Prop :=
+    lrel (poly_constraint r) = REq -> poly_strict r = false.
+
 
   (** Scaling every stored occurrence scales its integer evaluation. *)
   Lemma eval_coef_scale : forall (v : X.t -> Z) a xs,
@@ -869,6 +978,585 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros v r. unfold sat, poly_normal_row. cbn [lrel lhs rhs].
     rewrite normalize_coef_eval. reflexivity.
+  Qed.
+
+  Lemma poly_key_eqb_refl : forall x, X.eqb x x = true.
+  Proof.
+    intro x. destruct (X.eqb_spec x x); [reflexivity|contradiction].
+  Qed.
+
+  Lemma poly_key_eqb_sym : forall x y, X.eqb x y = X.eqb y x.
+  Proof.
+    intros x y. destruct (X.eqb_spec x y), (X.eqb_spec y x); congruence.
+  Qed.
+
+  Lemma coef_of_cons : forall x y a xs,
+    C.coef_of x ((y, a) :: xs) =
+      if X.eqb x y then (a + C.coef_of x xs)%Z else C.coef_of x xs.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A coefficient is the evaluation at its single-key indicator store. *)
+  Lemma coef_of_eval : forall x xs,
+    C.coef_of x xs = eval_coef (fun y => if X.eqb x y then 1%Z else 0%Z) xs.
+  Proof.
+    intros x xs. unfold C.coef_of, eval_coef.
+    induction xs as [|[y a] xs IH]; cbn [fold_right fst snd]; [reflexivity|].
+    rewrite <- IH. destruct (X.eqb x y); ring.
+  Qed.
+
+  Lemma coef_of_app : forall x xs ys,
+    C.coef_of x (xs ++ ys) = (C.coef_of x xs + C.coef_of x ys)%Z.
+  Proof.
+    intros x xs ys. rewrite !coef_of_eval. apply eval_coef_app.
+  Qed.
+
+  Lemma coef_of_scale : forall x a xs,
+    C.coef_of x (poly_scale_coef a xs) = (a * C.coef_of x xs)%Z.
+  Proof.
+    intros x a xs. rewrite !coef_of_eval. apply eval_coef_scale.
+  Qed.
+
+  (** Normalization preserves the total coefficient at every key. *)
+  Lemma coef_of_normal : forall x xs,
+    C.coef_of x (poly_normal_coef X.encode xs) = C.coef_of x xs.
+  Proof.
+    intros x xs. rewrite !coef_of_eval. apply normalize_coef_eval.
+  Qed.
+
+  Lemma coef_of_poly_coefficient : forall x r,
+    C.coef_of x (lhs r) = poly_coefficient X.eqb x r.
+  Proof.
+    intros x r. unfold C.coef_of, poly_coefficient.
+    induction (lhs r) as [|[y a] xs IH]; cbn [fold_right fst snd]; [reflexivity|].
+    rewrite poly_key_eqb_sym, IH. reflexivity.
+  Qed.
+
+  Lemma poly_coefficient_normal : forall x r,
+    poly_coefficient X.eqb x (poly_normal_row X.encode r) =
+      poly_coefficient X.eqb x r.
+  Proof.
+    intros x r. rewrite <- !coef_of_poly_coefficient.
+    cbn [poly_normal_row lhs]. apply coef_of_normal.
+  Qed.
+
+  Lemma coef_of_filter : forall x y xs,
+    C.coef_of y (filter (fun p => negb (X.eqb x (fst p))) xs) =
+      if X.eqb y x then 0%Z else C.coef_of y xs.
+  Proof.
+    intros x y xs. induction xs as [|[z a] xs IH].
+    - cbn [filter C.coef_of]. destruct (X.eqb y x); reflexivity.
+    - destruct (X.eqb_spec y x) as [Hyx|Hyx].
+      + subst y. cbn [filter fst].
+        destruct (X.eqb x z) eqn:Hxz; cbn [negb].
+        * exact IH.
+        * rewrite coef_of_cons, Hxz. exact IH.
+      + cbn [filter fst]. destruct (X.eqb_spec x z) as [Hxz|Hxz].
+        * subst z. cbn [negb]. rewrite IH, coef_of_cons.
+          destruct (X.eqb_spec y x) as [Heq|Hneq]; [contradiction|reflexivity].
+        * cbn [negb]. rewrite !coef_of_cons, IH. reflexivity.
+  Qed.
+
+  Lemma eval_coef_split : forall x xs (v : X.t -> Z),
+    eval_coef v xs = (C.coef_of x xs * v x +
+      eval_coef v (filter (fun p => negb (X.eqb x (fst p))) xs))%Z.
+  Proof.
+    intros x xs v. induction xs as [|[y a] xs IH]; [reflexivity|].
+    rewrite coef_of_cons. cbn [filter fst].
+    destruct (X.eqb_spec x y) as [Hxy|Hxy].
+    - subst y.
+      change (a * v x + eval_coef v xs = (a + C.coef_of x xs) * v x +
+        eval_coef v (filter (fun p => negb (X.eqb x (fst p))) xs))%Z.
+      rewrite IH. ring.
+    - change (a * v y + eval_coef v xs = C.coef_of x xs * v x +
+        (a * v y + eval_coef v (filter (fun p => negb (X.eqb x (fst p))) xs)))%Z.
+      rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_zero : forall xs (v : X.t -> Z),
+    (forall x, C.coef_of x xs = 0%Z) -> eval_coef v xs = 0%Z.
+  Proof.
+    refine (well_founded_induction
+      (well_founded_ltof _ (@length (X.t * Z))) _ _).
+    intros xs IH v Hzero. destruct xs as [|[x a] xs]; [reflexivity|].
+    rewrite (eval_coef_split x ((x, a) :: xs) v), Hzero.
+    rewrite Z.mul_0_l, Z.add_0_l. apply IH.
+    - unfold ltof. cbn [filter fst length]. rewrite poly_key_eqb_refl. cbn [negb].
+      pose proof (filter_length_le (fun p => negb (X.eqb x (fst p))) xs). lia.
+    - intro y. rewrite coef_of_filter.
+      destruct (X.eqb y x); [reflexivity|apply Hzero].
+  Qed.
+
+  Lemma eval_coef_ext : forall xs ys (v : X.t -> Z),
+    (forall x, C.coef_of x xs = C.coef_of x ys) ->
+    eval_coef v xs = eval_coef v ys.
+  Proof.
+    intros xs ys v Heq.
+    assert (Hzero : forall x, C.coef_of x (xs ++ poly_scale_coef (-1)%Z ys) = 0%Z).
+    { intro x. rewrite coef_of_app, coef_of_scale, Heq. ring. }
+    pose proof (eval_coef_zero _ v Hzero) as Heval.
+    rewrite eval_coef_app, eval_coef_scale in Heval. lia.
+  Qed.
+
+  Lemma eval_coef_app_Q : forall (v : X.t -> Q) xs ys,
+    (poly_eval_coef_Q v (xs ++ ys) ==
+      poly_eval_coef_Q v xs + poly_eval_coef_Q v ys)%Q.
+  Proof.
+    intros v xs ys. induction xs as [|[x a] xs IH].
+    - change (poly_eval_coef_Q v ys == 0 + poly_eval_coef_Q v ys)%Q. ring.
+    - change (inject_Z a * v x + poly_eval_coef_Q v (xs ++ ys) ==
+        (inject_Z a * v x + poly_eval_coef_Q v xs) + poly_eval_coef_Q v ys)%Q.
+      setoid_rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_scale_Q : forall a xs (v : X.t -> Q),
+    (poly_eval_coef_Q v (poly_scale_coef a xs) == inject_Z a * poly_eval_coef_Q v xs)%Q.
+  Proof.
+    intros a xs v. induction xs as [|[x z] xs IH].
+    - change (0 == inject_Z a * 0)%Q. ring.
+    - change (inject_Z (a * z) * v x + poly_eval_coef_Q v (poly_scale_coef a xs) ==
+        inject_Z a * (inject_Z z * v x + poly_eval_coef_Q v xs))%Q.
+      rewrite inject_Z_mult. setoid_rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_split_Q : forall x xs (v : X.t -> Q),
+    (poly_eval_coef_Q v xs == inject_Z (C.coef_of x xs) * v x +
+      poly_eval_coef_Q v (filter (fun p => negb (X.eqb x (fst p))) xs))%Q.
+  Proof.
+    intros x xs v. induction xs as [|[y a] xs IH].
+    - change (0 == 0 * v x + 0)%Q. ring.
+    - rewrite coef_of_cons. cbn [filter fst].
+      destruct (X.eqb_spec x y) as [Hxy|Hxy].
+      + subst y.
+        change (inject_Z a * v x + poly_eval_coef_Q v xs ==
+          inject_Z (a + C.coef_of x xs) * v x +
+          poly_eval_coef_Q v (filter (fun p => negb (X.eqb x (fst p))) xs))%Q.
+        rewrite inject_Z_plus. setoid_rewrite IH. ring.
+      + change (inject_Z a * v y + poly_eval_coef_Q v xs ==
+          inject_Z (C.coef_of x xs) * v x + (inject_Z a * v y +
+          poly_eval_coef_Q v (filter (fun p => negb (X.eqb x (fst p))) xs)))%Q.
+        setoid_rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_zero_Q : forall xs (v : X.t -> Q),
+    (forall x, C.coef_of x xs = 0%Z) -> (poly_eval_coef_Q v xs == 0)%Q.
+  Proof.
+    refine (well_founded_induction
+      (well_founded_ltof _ (@length (X.t * Z))) _ _).
+    intros xs IH v Hzero. destruct xs as [|[x a] xs]; [reflexivity|].
+    setoid_rewrite (eval_coef_split_Q x ((x, a) :: xs) v). rewrite Hzero.
+    setoid_rewrite Qmult_0_l. setoid_rewrite Qplus_0_l. apply IH.
+    - unfold ltof. cbn [filter fst length]. rewrite poly_key_eqb_refl. cbn [negb].
+      pose proof (filter_length_le (fun p => negb (X.eqb x (fst p))) xs). lia.
+    - intro y. rewrite coef_of_filter.
+      destruct (X.eqb y x); [reflexivity|apply Hzero].
+  Qed.
+
+  Lemma eval_coef_ext_Q : forall xs ys (v : X.t -> Q),
+    (forall x, C.coef_of x xs = C.coef_of x ys) ->
+    (poly_eval_coef_Q v xs == poly_eval_coef_Q v ys)%Q.
+  Proof.
+    intros xs ys v Heq.
+    assert (Hzero : forall x, C.coef_of x (xs ++ poly_scale_coef (-1)%Z ys) = 0%Z).
+    { intro x. rewrite coef_of_app, coef_of_scale, Heq. ring. }
+    pose proof (eval_coef_zero_Q _ v Hzero) as Heval.
+    setoid_rewrite eval_coef_app_Q in Heval. setoid_rewrite eval_coef_scale_Q in Heval.
+    change (poly_eval_coef_Q v xs + (-1) * poly_eval_coef_Q v ys == 0)%Q in Heval.
+    apply (proj1 (Qplus_inj_r (poly_eval_coef_Q v xs) (poly_eval_coef_Q v ys)
+      (- poly_eval_coef_Q v ys)%Q)).
+    setoid_replace (poly_eval_coef_Q v ys + - poly_eval_coef_Q v ys)%Q with 0%Q by ring.
+    setoid_replace (poly_eval_coef_Q v xs + - poly_eval_coef_Q v ys)%Q
+      with (poly_eval_coef_Q v xs + (-1) * poly_eval_coef_Q v ys)%Q by ring.
+    exact Heval.
+  Qed.
+
+  (** The integer normalization algorithm also preserves rational evaluations. *)
+  Lemma normalize_coef_eval_Q : forall (v : X.t -> Q) xs,
+    (poly_eval_coef_Q v (poly_normal_coef X.encode xs) == poly_eval_coef_Q v xs)%Q.
+  Proof.
+    intros v xs. apply eval_coef_ext_Q. intro x. apply coef_of_normal.
+  Qed.
+
+  (** Source sums use the same truncated pairing as the public certificate specification. *)
+  Definition poly_sum (P : list (lcons X.t)) (ms : list Z)
+      (entry : lcons X.t -> Z) : Z :=
+    fold_right Z.add 0%Z
+      (map (fun pm => (snd pm * entry (fst pm))%Z) (List.combine P ms)).
+
+  (** Tracked rows retain exact coefficients, right side, and equality status. *)
+  Definition poly_tracks (P : list (lcons X.t)) (r : poly_row X.t) : Prop :=
+    C.admissible P (poly_multipliers r) /\
+    (forall x, C.coef_of x (lhs (poly_constraint r)) =
+      C.comb_coef P (poly_multipliers r) x) /\
+    rhs (poly_constraint r) = C.comb_rhs P (poly_multipliers r) /\
+    lrel (poly_constraint r) =
+      (if C.comb_eq P (poly_multipliers r) then REq else RLe).
+
+  Lemma poly_admissible_cons : forall p P m ms,
+    C.admissible (p :: P) (m :: ms) <->
+      (lrel p = RLe -> (0 <= m)%Z) /\ C.admissible P ms.
+  Proof.
+    intros p P m ms. unfold C.admissible. split.
+    - intros [Hlength Hweights]. inversion Hweights as [|p' m' P' ms' Hhead Htail];
+        subst p' m' P' ms'. split; [exact Hhead|]. split; [cbn [length] in Hlength; lia|].
+      exact Htail.
+    - intros [Hhead [Hlength Htail]]. split; [cbn [length]; lia|].
+      constructor; assumption.
+  Qed.
+
+  Lemma poly_comb_coef_cons : forall p P m ms x,
+    C.comb_coef (p :: P) (m :: ms) x =
+      (m * C.coef_of x (lhs p) + C.comb_coef P ms x)%Z.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma poly_comb_rhs_cons : forall p P m ms,
+    C.comb_rhs (p :: P) (m :: ms) = (m * rhs p + C.comb_rhs P ms)%Z.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma poly_comb_eq_cons : forall p P m ms,
+    C.comb_eq (p :: P) (m :: ms) =
+      (match lrel p with REq => true | RLe => Z.eqb m 0 end) && C.comb_eq P ms.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma poly_sum_weighted : forall P ms ns a b entry,
+    length P = length ms -> length P = length ns ->
+    poly_sum P (poly_weighted a ms b ns) entry =
+      (a * poly_sum P ms entry + b * poly_sum P ns entry)%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] [|n ns] a b entry Hms Hns;
+      cbn [length] in Hms, Hns; try discriminate.
+    - change (0 = a * 0 + b * 0)%Z. ring.
+    - change ((a * m + b * n) * entry p +
+        poly_sum P (poly_weighted a ms b ns) entry =
+        a * (m * entry p + poly_sum P ms entry) +
+        b * (n * entry p + poly_sum P ns entry))%Z.
+      rewrite (IH ms ns a b entry) by lia. ring.
+  Qed.
+
+  Lemma poly_comb_coef_weighted : forall P ms ns a b x,
+    length P = length ms -> length P = length ns ->
+    C.comb_coef P (poly_weighted a ms b ns) x =
+      (a * C.comb_coef P ms x + b * C.comb_coef P ns x)%Z.
+  Proof.
+    intros P ms ns a b x Hms Hns.
+    change (poly_sum P (poly_weighted a ms b ns) (fun r => C.coef_of x (lhs r)) =
+      (a * poly_sum P ms (fun r => C.coef_of x (lhs r)) +
+       b * poly_sum P ns (fun r => C.coef_of x (lhs r)))%Z).
+    now apply poly_sum_weighted.
+  Qed.
+
+  Lemma poly_comb_rhs_weighted : forall P ms ns a b,
+    length P = length ms -> length P = length ns ->
+    C.comb_rhs P (poly_weighted a ms b ns) =
+      (a * C.comb_rhs P ms + b * C.comb_rhs P ns)%Z.
+  Proof.
+    intros P ms ns a b Hms Hns.
+    change (poly_sum P (poly_weighted a ms b ns) rhs =
+      (a * poly_sum P ms rhs + b * poly_sum P ns rhs)%Z).
+    now apply poly_sum_weighted.
+  Qed.
+
+  Lemma poly_mul_eqb_zero : forall a m,
+    Z.eqb (a * m) 0 = (Z.eqb a 0 || Z.eqb m 0).
+  Proof.
+    intros a m. destruct (Z.eqb_spec a 0) as [Ha|Ha].
+    - subst a. reflexivity.
+    - destruct (Z.eqb_spec m 0) as [Hm|Hm].
+      + subst m. now rewrite Z.mul_0_r.
+      + apply Z.eqb_neq. intro Hzero. apply Z.mul_eq_0 in Hzero. tauto.
+  Qed.
+
+  Lemma poly_add_eqb_zero : forall m n, (0 <= m)%Z -> (0 <= n)%Z ->
+    Z.eqb (m + n) 0 = (Z.eqb m 0 && Z.eqb n 0).
+  Proof.
+    intros m n Hm Hn. destruct (Z.eqb_spec m 0) as [Hm0|Hm0].
+    - subst m. reflexivity.
+    - destruct (Z.eqb_spec n 0) as [Hn0|Hn0].
+      + subst n. apply Z.eqb_neq. lia.
+      + apply Z.eqb_neq. lia.
+  Qed.
+
+  Lemma poly_comb_eq_scale : forall P ms a,
+    C.comb_eq P (map (fun m => (a * m)%Z) ms) =
+      (Z.eqb a 0 || C.comb_eq P ms).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] a.
+    - cbn [map C.comb_eq List.combine forallb]. now rewrite orb_true_r.
+    - cbn [map C.comb_eq List.combine forallb]. now rewrite orb_true_r.
+    - cbn [map C.comb_eq List.combine forallb]. now rewrite orb_true_r.
+    - cbn [map]. rewrite !poly_comb_eq_cons, IH.
+      destruct (lrel p); cbn [andb]; [reflexivity|].
+      rewrite poly_mul_eqb_zero.
+      destruct (Z.eqb a 0), (Z.eqb m 0), (C.comb_eq P ms); reflexivity.
+  Qed.
+
+  (** Signed scaling is admissible when the source combination is an equality. *)
+  Lemma poly_admissible_scale : forall P ms a,
+    C.admissible P ms -> (C.comb_eq P ms = true \/ (0 <= a)%Z) ->
+    C.admissible P (map (fun m => (a * m)%Z) ms).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] a Hadmissible Hsign;
+      try (destruct Hadmissible as [Hlength _]; cbn [length] in Hlength; discriminate).
+    - split; [reflexivity|constructor].
+    - apply poly_admissible_cons in Hadmissible as [Hhead Htail].
+      cbn [map]. apply poly_admissible_cons. split.
+      + intro Hrel. destruct Hsign as [Hequality|Hpositive].
+        * rewrite poly_comb_eq_cons, Hrel in Hequality.
+          apply andb_true_iff in Hequality as [Hzero _]. apply Z.eqb_eq in Hzero.
+          subst m. lia.
+        * pose proof (Hhead Hrel). nia.
+      + apply IH; [exact Htail|]. destruct Hsign as [Hequality|Hpositive];
+          [left|now right].
+        rewrite poly_comb_eq_cons in Hequality.
+        apply andb_true_iff in Hequality as [_ Htail_eq]. exact Htail_eq.
+  Qed.
+
+  Lemma poly_admissible_add : forall P ms ns,
+    C.admissible P ms -> C.admissible P ns ->
+    C.admissible P (poly_weighted 1%Z ms 1%Z ns).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] [|n ns] Hms Hns;
+      try (destruct Hms as [Hlength _]; cbn [length] in Hlength; discriminate);
+      try (destruct Hns as [Hlength _]; cbn [length] in Hlength; discriminate).
+    - split; [reflexivity|constructor].
+    - apply poly_admissible_cons in Hms as [Hm Hms].
+      apply poly_admissible_cons in Hns as [Hn Hns].
+      cbn [poly_weighted]. apply poly_admissible_cons. split.
+      + intro Hrel. specialize (Hm Hrel). specialize (Hn Hrel). lia.
+      + now apply IH.
+  Qed.
+
+  Lemma poly_comb_eq_add : forall P ms ns,
+    C.admissible P ms -> C.admissible P ns ->
+    C.comb_eq P (poly_weighted 1%Z ms 1%Z ns) =
+      (C.comb_eq P ms && C.comb_eq P ns).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] [|n ns] Hms Hns;
+      try (destruct Hms as [Hlength _]; cbn [length] in Hlength; discriminate);
+      try (destruct Hns as [Hlength _]; cbn [length] in Hlength; discriminate).
+    - reflexivity.
+    - apply poly_admissible_cons in Hms as [Hm Hms].
+      apply poly_admissible_cons in Hns as [Hn Hns].
+      cbn [poly_weighted]. rewrite !poly_comb_eq_cons, (IH ms ns Hms Hns).
+      destruct (lrel p) eqn:Hrel; [reflexivity|].
+      replace (1 * m + 1 * n)%Z with (m + n)%Z by ring.
+      rewrite poly_add_eqb_zero by auto.
+      destruct (Z.eqb m 0), (Z.eqb n 0), (C.comb_eq P ms), (C.comb_eq P ns);
+        reflexivity.
+  Qed.
+
+  Lemma poly_weighted_as_add : forall ms ns a b,
+    poly_weighted a ms b ns =
+      poly_weighted 1%Z (map (fun m => (a * m)%Z) ms)
+        1%Z (map (fun n => (b * n)%Z) ns).
+  Proof.
+    intro ms. induction ms as [|m ms IH]; intros [|n ns] a b;
+      cbn [poly_weighted map]; try reflexivity.
+    f_equal; [ring|apply IH].
+  Qed.
+
+  Lemma poly_weighted_admissible_eq : forall P ms ns a b,
+    C.admissible P ms -> C.admissible P ns ->
+    (C.comb_eq P ms = true \/ (0 <= a)%Z) ->
+    (C.comb_eq P ns = true \/ (0 <= b)%Z) ->
+    C.admissible P (poly_weighted a ms b ns) /\
+      C.comb_eq P (poly_weighted a ms b ns) =
+        ((Z.eqb a 0 || C.comb_eq P ms) && (Z.eqb b 0 || C.comb_eq P ns)).
+  Proof.
+    intros P ms ns a b Hms Hns Hsigna Hsignb.
+    pose proof (poly_admissible_scale P ms a Hms Hsigna) as Ha.
+    pose proof (poly_admissible_scale P ns b Hns Hsignb) as Hb.
+    rewrite poly_weighted_as_add. split.
+    - now apply poly_admissible_add.
+    - rewrite poly_comb_eq_add by assumption. now rewrite !poly_comb_eq_scale.
+  Qed.
+
+  (** Combining tracked rows preserves their exact source certificate. *)
+  Lemma poly_add_rows_tracks : forall P p q a b,
+    poly_tracks P p -> poly_tracks P q ->
+    (lrel (poly_constraint p) = RLe -> (0 <= a)%Z) ->
+    (lrel (poly_constraint q) = RLe -> (0 <= b)%Z) ->
+    poly_tracks P (poly_add_rows X.encode a p b q).
+  Proof.
+    intros P p q a b [Hmp [Hcp [Hrp Hep]]] [Hmq [Hcq [Hrq Heq]]] Hpa Hqb.
+    assert (Hsigna : C.comb_eq P (poly_multipliers p) = true \/ (0 <= a)%Z).
+    { destruct (C.comb_eq P (poly_multipliers p)) eqn:Hused; [now left|right].
+      apply Hpa. rewrite Hep. now rewrite ?Hused. }
+    assert (Hsignb : C.comb_eq P (poly_multipliers q) = true \/ (0 <= b)%Z).
+    { destruct (C.comb_eq P (poly_multipliers q)) eqn:Hused; [now left|right].
+      apply Hqb. rewrite Heq. now rewrite ?Hused. }
+    destruct (poly_weighted_admissible_eq P (poly_multipliers p)
+      (poly_multipliers q) a b Hmp Hmq Hsigna Hsignb) as [Hweights Hequality].
+    unfold poly_tracks, poly_add_rows. cbn [poly_constraint poly_multipliers lhs rhs lrel].
+    split; [exact Hweights|]. split.
+    - intro x. rewrite coef_of_normal, coef_of_app, !coef_of_scale, Hcp, Hcq.
+      symmetry. apply poly_comb_coef_weighted; [exact (proj1 Hmp)|exact (proj1 Hmq)].
+    - split.
+      + rewrite Hrp, Hrq. symmetry. apply poly_comb_rhs_weighted;
+          [exact (proj1 Hmp)|exact (proj1 Hmq)].
+      + rewrite Hequality. unfold poly_eq_used. rewrite Hep, Heq.
+        destruct (C.comb_eq P (poly_multipliers p)),
+          (C.comb_eq P (poly_multipliers q)), (Z.eqb a 0), (Z.eqb b 0); reflexivity.
+  Qed.
+
+  Lemma poly_zero_admissible : forall P,
+    C.admissible P (repeat 0%Z (length P)).
+  Proof.
+    intro P. induction P as [|p P IH].
+    - split; [reflexivity|constructor].
+    - cbn [length repeat]. apply poly_admissible_cons. split; [lia|exact IH].
+  Qed.
+
+  Lemma poly_sum_zero : forall P entry,
+    poly_sum P (repeat 0%Z (length P)) entry = 0%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intro entry; [reflexivity|].
+    change (0 * entry p + poly_sum P (repeat 0%Z (length P)) entry = 0)%Z.
+    rewrite IH. ring.
+  Qed.
+
+  Lemma poly_comb_eq_zero : forall P,
+    C.comb_eq P (repeat 0%Z (length P)) = true.
+  Proof.
+    intro P. induction P as [|p P IH]; [reflexivity|].
+    cbn [length repeat]. rewrite poly_comb_eq_cons, IH. destruct (lrel p); reflexivity.
+  Qed.
+
+  Lemma poly_map_zero : forall A (xs : list A),
+    map (fun _ => 0%Z) xs = repeat 0%Z (length xs).
+  Proof.
+    intros A xs. induction xs as [|x xs IH]; cbn [map length repeat]; congruence.
+  Qed.
+
+  Lemma poly_initial_head_tracks : forall p P flag,
+    poly_tracks (p :: P)
+      (PolyRow X.t (poly_normal_row X.encode p) (1%Z :: repeat 0%Z (length P)) flag).
+  Proof.
+    intros p P flag. unfold poly_tracks.
+    cbn [poly_multipliers poly_constraint poly_normal_row lhs rhs lrel].
+    split.
+    - apply poly_admissible_cons. split; [lia|apply poly_zero_admissible].
+    - split.
+      + intro x. rewrite coef_of_normal, poly_comb_coef_cons.
+        change (C.coef_of x (lhs p) = 1 * C.coef_of x (lhs p) +
+          poly_sum P (repeat 0%Z (length P)) (fun r => C.coef_of x (lhs r)))%Z.
+        rewrite poly_sum_zero. ring.
+      + split.
+        * rewrite poly_comb_rhs_cons.
+          change (rhs p = 1 * rhs p + poly_sum P (repeat 0%Z (length P)) rhs)%Z.
+          rewrite poly_sum_zero. ring.
+        * rewrite poly_comb_eq_cons, poly_comb_eq_zero. destruct (lrel p); reflexivity.
+  Qed.
+
+  Lemma poly_pad_tracks : forall p P r, poly_tracks P r ->
+    poly_tracks (p :: P) (poly_pad_row r).
+  Proof.
+    intros p P r [Hweights [Hcoef [Hrhs Hrel]]].
+    unfold poly_tracks, poly_pad_row. cbn [poly_constraint poly_multipliers].
+    split.
+    - apply poly_admissible_cons. split; [lia|exact Hweights].
+    - split.
+      + intro x. rewrite poly_comb_coef_cons, Hcoef. ring.
+      + split.
+        * rewrite poly_comb_rhs_cons, Hrhs. ring.
+        * rewrite poly_comb_eq_cons. destruct (lrel p); cbn; exact Hrel.
+  Qed.
+
+  Lemma poly_initial_tracks : forall rows,
+    Forall (poly_tracks (map fst rows)) (poly_initial X.encode rows).
+  Proof.
+    intro rows. induction rows as [|[p flag] rows IH]; [constructor|].
+    cbn [poly_initial map fst snd]. constructor.
+    - replace (map (fun _ : lcons X.t * bool => 0%Z) rows)
+        with (repeat 0%Z (length (map fst rows))).
+      + apply poly_initial_head_tracks.
+      + rewrite length_map, poly_map_zero. reflexivity.
+    - apply Forall_map. apply Forall_forall. intros r Hin. apply poly_pad_tracks.
+      exact (proj1 (Forall_forall _ _) IH r Hin).
+  Qed.
+
+  Lemma poly_cancel_tracks : forall P x p r,
+    poly_tracks P p -> poly_tracks P r -> lrel (poly_constraint p) = REq ->
+    poly_tracks P (poly_cancel X.encode X.eqb x p r).
+  Proof.
+    intros P x p r Hp Hr Heq. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    apply poly_add_rows_tracks; [exact Hp|exact Hr| |].
+    - intro Hfalse. congruence.
+    - intros _. apply Z.abs_nonneg.
+  Qed.
+
+  Lemma poly_step_tracks : forall P x rows,
+    Forall (poly_tracks P) rows ->
+    Forall (poly_tracks P) (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros P x rows Htracks. unfold poly_step.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - apply find_some in Hfind as [Hmember Hpivot].
+      assert (Hp : poly_tracks P p) by
+        exact (proj1 (Forall_forall _ _) Htracks p Hmember).
+      assert (Heq : lrel (poly_constraint p) = REq).
+      { unfold poly_pivot in Hpivot. destruct (lrel (poly_constraint p));
+          [reflexivity|discriminate]. }
+      apply Forall_map. apply Forall_forall. intros r Hin.
+      apply poly_cancel_tracks; [exact Hp| |exact Heq].
+      exact (proj1 (Forall_forall _ _) Htracks r Hin).
+    - apply Forall_app. split; apply Forall_forall; intros r Hin.
+      + apply filter_In in Hin as [Hin _].
+        exact (proj1 (Forall_forall _ _) Htracks r Hin).
+      + apply in_flat_map in Hin as [p [Hp Hin]].
+        apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
+        apply filter_In in Hp as [Hp Hpositive]. apply Z.ltb_lt in Hpositive.
+        apply filter_In in Hq as [Hq Hnegative]. apply Z.ltb_lt in Hnegative.
+        apply poly_add_rows_tracks.
+        * exact (proj1 (Forall_forall _ _) Htracks p Hp).
+        * exact (proj1 (Forall_forall _ _) Htracks q Hq).
+        * intros _. lia.
+        * intros _. lia.
+  Qed.
+
+  Lemma poly_run_tracks : forall xs P rows,
+    Forall (poly_tracks P) rows ->
+    Forall (poly_tracks P) (poly_run X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros P rows Htracks; [exact Htracks|].
+    cbn [poly_run]. apply IH. now apply poly_step_tracks.
+  Qed.
+
+  (** Every tracked row has the exact public combination promised by its weights. *)
+  Lemma poly_tracks_combine : forall P r, poly_tracks P r ->
+    exists s, C.combine P (poly_multipliers r) = Some s /\
+      lrel s = lrel (poly_constraint r) /\ rhs s = rhs (poly_constraint r) /\
+      forall v : X.t -> Z, eval_coef v (lhs s) = eval_coef v (lhs (poly_constraint r)).
+  Proof.
+    intros P r [Hweights [Hcoef [Hrhs Hrel]]].
+    destruct (C.combine_spec P (poly_multipliers r) Hweights)
+      as [s [Hcombine [Hscoef [Hsrhs Hsrel]]]].
+    exists s. split; [exact Hcombine|]. split; [congruence|].
+    split; [congruence|]. intro v. apply eval_coef_ext. intro x.
+    rewrite Hscoef, Hcoef. reflexivity.
+  Qed.
+
+  Lemma fm_step_mults_checked : forall P x r, In r (fm_elim x P) ->
+    exists s, C.combine P (mults_of r) = Some s /\ lrel s = lrel (row_of r) /\
+      rhs s = rhs (row_of r) /\
+      forall v : X.t -> Z, eval_coef v (lhs s) = eval_coef v (lhs (row_of r)).
+  Proof.
+    intros P x r Hin. unfold fm_elim in Hin.
+    apply in_map_iff in Hin as [s [Hsame Hmember]]. subst r.
+    cbn [row_of mults_of]. apply poly_tracks_combine.
+    assert (Hsource : map fst (map (fun p => (p, false)) P) = P).
+    { rewrite map_map. change (map (fun p => p) P = P). apply map_id. }
+    pose proof (poly_initial_tracks (map (fun p => (p, false)) P)) as Hinitial.
+    rewrite Hsource in Hinitial.
+    exact (proj1 (Forall_forall _ _) (poly_step_tracks P x _ Hinitial) s Hmember).
   Qed.
 
   (** A valid lower endpoint can be intersected with the existing interval. *)
@@ -1304,7 +1992,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exists s, C.combine P (mults_of r) = Some s /\ lrel s = lrel (row_of r) /\
       rhs s = rhs (row_of r) /\
       forall v : X.t -> Z, eval_coef v (lhs s) = eval_coef v (lhs (row_of r)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply fm_step_mults_checked.
+  Qed.
   Lemma entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
   Proof.
