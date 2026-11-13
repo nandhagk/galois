@@ -4,7 +4,7 @@
     For example, zero fuel returns the initial state without calling the callback.
     Builds on: Stdlib accessibility and binary arithmetic, and Argent loops and time derivation. *)
 
-From Stdlib Require Import NArith Wellfounded.Inverse_Image.
+From Stdlib Require Import NArith Lia Wellfounded.Inverse_Image.
 From Argent Require Import Time Tactics Std Loop.
 
 (** Continuing states decrease the binary fuel component. *)
@@ -36,14 +36,79 @@ Definition loopN {S R : Type} (step : S -> S + R) (fuel : N) (s : S) : S + R :=
 
 TimeFun loopN.
 
-Definition c_loopN : N := 1. (* STUB *)
+Definition c_loopN : N := 8.
+
+(** Proof-only fuel credit counts every zero bit in the binary representation. *)
+Fixpoint loopN_zero_bits_pos (p : positive) : N :=
+  match p with
+  | xI q => loopN_zero_bits_pos q
+  | xO q => (1 + loopN_zero_bits_pos q)%N
+  | xH => 0%N
+  end.
+
+Definition loopN_zero_bits (n : N) : N :=
+  match n with
+  | N0 => 0%N
+  | N.pos p => loopN_zero_bits_pos p
+  end.
+
+Lemma loopN_pred_double_credit (p : positive) :
+  (Pos.T_pred_double p + loopN_zero_bits_pos (Pos.pred_double p) <=
+    loopN_zero_bits_pos p + 2)%N.
+Proof.
+  induction p as [p IH | p IH |]; time_unfold Pos.T_pred_double;
+    cbn [Pos.pred_double loopN_zero_bits_pos] in *; lia.
+Qed.
+
+Lemma loopN_pred_credit (n : N) :
+  (N.T_pred n + loopN_zero_bits (N.pred n) <= loopN_zero_bits n + 3)%N.
+Proof.
+  destruct n as [| p].
+  - time_unfold N.T_pred. cbn [N.pred loopN_zero_bits]. lia.
+  - destruct p as [p | p |]; time_unfold N.T_pred; time_unfold Pos.T_pred_N;
+      cbn [N.pred Pos.pred_N loopN_zero_bits loopN_zero_bits_pos];
+      try pose proof (loopN_pred_double_credit p); lia.
+Qed.
+
+Lemma loopN_zero_bits_pos_le_size (p : positive) :
+  (loopN_zero_bits_pos p <= N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH | p IH |]; cbn [loopN_zero_bits_pos Pos.size_nat];
+    rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+Lemma loopN_zero_bits_le_size (n : N) :
+  (loopN_zero_bits n <= N.of_nat (N.size_nat n))%N.
+Proof.
+  destruct n as [| p]; cbn [loopN_zero_bits N.size_nat].
+  - lia.
+  - apply loopN_zero_bits_pos_le_size.
+Qed.
+
+(** Completion holds for every accessibility proof used by the binary-fuel driver. *)
+Local Lemma loopN_done_acc {S R} (step : S -> S + R) (Inv : S -> Prop) (Phi : S -> nat)
+    (Hstep : forall s s1, Inv s -> step s = inl s1 -> Inv s1 /\ Phi s1 < Phi s) :
+  forall fs (H : Acc loopN_lt fs), Inv (snd fs) ->
+    (N.of_nat (Phi (snd fs)) < fst fs)%N ->
+    exists r, loop loopN_lt (loopN_step step) fs H = inr r.
+Proof.
+  intros fs H. induction H as [[fuel s] Hacc IH] using Acc_ind_dep.
+  cbn [fst snd]. intros Hinv Hfuel. destruct fuel as [|p]; [lia|].
+  cbn [loop loopN_step Acc_inv]. destruct (step s) as [s1|r] eqn:Hnext.
+  - destruct (Hstep s s1 Hinv Hnext) as [Hinv1 Hphi].
+    eapply IH; [exact Hinv1|]. cbn [fst snd]. lia.
+  - exists r. reflexivity.
+Qed.
 
 (** A decreasing state potential guarantees completion with sufficient fuel. *)
 Lemma loopN_done : forall S R (step : S -> S + R) (Inv : S -> Prop) (Phi : S -> nat)
     fuel s,
   (forall s s1, Inv s -> step s = inl s1 -> Inv s1 /\ Phi s1 < Phi s) ->
   Inv s -> (N.of_nat (Phi s) < fuel)%N -> exists r, loopN step fuel s = inr r.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros S R step Inv Phi fuel s Hstep Hinv Hfuel.
+  unfold loopN. apply (loopN_done_acc step Inv Phi Hstep (fuel, s)); assumption.
+Qed.
 
 (** State potential pays callback work and amortised decrements after the first borrow. *)
 Lemma T_loopN_le : forall S R (step : S -> S + R) T_step Inv Phi Tstop fuel s,
