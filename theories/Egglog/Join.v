@@ -1690,7 +1690,17 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
       rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_succ in *. nia.
   Qed.
 
-  Definition c_join : N := 1. (* STUB *)
+  Definition c_join : N := (4096 * (I.c_ix + 1))%N.
+
+  (** The public coefficient and dimensions are the common recursive factor. *)
+  Lemma join_factor_equation : forall p ixs n,
+    (c_join * N.of_nat n * N.of_nat (wmax p ixs + 1) *
+      N.of_nat ((nvars p + 1) * (nvars p + 1)) =
+      4096 * scan_factor p ixs * N.of_nat n)%N.
+  Proof.
+    intros p ixs n. unfold c_join, scan_factor. ring.
+  Qed.
+
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
@@ -1828,7 +1838,15 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     (T_go (nvars p - l) p ixs ns pre acc <=
       c_join * N.of_nat (work_at p ixs l ns + 1) * N.of_nat (wmax p ixs + 1) *
       N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns acc Hnodes.
+    pose proof (proj1 (proj2 (proj2 Hnodes))) as Hlevel.
+    pose proof (T_enumerate_le (nvars p - l) p ixs l pre ns acc ltac:(lia) Hnodes)
+      as Henumerate.
+    destruct (scan_factor_covers p ixs) as [Hfactor _].
+    rewrite join_factor_equation. unfold work_at.
+    time_unfold T_go. rewrite Nat2N.inj_add. nia.
+  Qed.
 
   (** Root initialization pays for every supplied index. *)
   Lemma T_run_go : forall p ixs, wf_plan p ixs ->
