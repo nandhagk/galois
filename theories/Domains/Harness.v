@@ -4,8 +4,8 @@
     For example, an unmodeled forward operation returns top.
     Builds on: HarnessSig. *)
 
-From Stdlib Require Import List NArith.
-From Argent Require Import Time Std BigO.
+From Stdlib Require Import List Arith NArith Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import LangSig HarnessSig.
 
 Module HarnessCode (L : LANG_OPS) (B : HARNESS_BASE_OPS L) (T : TABLE_OPS L B)
@@ -83,26 +83,146 @@ Module Harness (L : LANG) (B : HARNESS_BASE L) (T : TABLE L B) <: HARNESS L B T.
   Definition is_bot_sound := B.is_bot_sound.
   Definition is_bot_below := B.is_bot_below.
 
+  (** Collected singletons agree with every represented operand. *)
+  Lemma points_sound : forall xs cs vs,
+    Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
+  Proof.
+    intros xs cs vs Hxs. revert vs.
+    induction Hxs as [|x c xs cs Hx Hxs IH]; intros vs Hp.
+    - inversion Hp. reflexivity.
+    - cbn [points] in Hp.
+      destruct (B.point x) as [v|] eqn:Hv; [|discriminate].
+      destruct (points xs) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hp; subst vs. f_equal.
+      + symmetry. exact (B.point_sound x v c Hv Hx).
+      + apply IH. reflexivity.
+  Qed.
+
+  (** Successful collection records a singleton equation for each operand. *)
+  Lemma points_complete : forall xs cs, points xs = Some cs ->
+    Forall2 (fun x c => B.point x = Some c) xs cs.
+  Proof.
+    induction xs as [|x xs IH]; intros cs Hp.
+    - inversion Hp. constructor.
+    - cbn [points] in Hp.
+      destruct (B.point x) as [c|] eqn:Hpoint; [|discriminate].
+      destruct (points xs) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hp; subst cs. constructor.
+      + exact Hpoint.
+      + apply IH. reflexivity.
+  Qed.
+
+  (** A represented operand list contains no recognized bottom. *)
+  Lemma no_bot : forall xs cs,
+    Forall2 gamma xs cs -> existsb B.is_bot xs = false.
+  Proof.
+    intros xs cs Hxs.
+    induction Hxs as [|x c xs cs Hx Hxs IH]; cbn [existsb].
+    - reflexivity.
+    - destruct (B.is_bot x) eqn:Hbot; [|exact IH].
+      exfalso. exact (B.is_bot_sound x c Hbot Hx).
+  Qed.
+
+  (** Leaving the operands unchanged is a positional refinement. *)
+  Lemma self_refines : forall xs,
+    Forall2 (fun y x => B.leb y x = true) xs xs.
+  Proof.
+    induction xs as [|x xs IH]; constructor.
+    - apply B.leb_refl.
+    - exact IH.
+  Qed.
+
+  (** Positional meets retain values represented by both input lists. *)
+  Lemma meet_all_sound : forall xs ys cs, length ys = length xs ->
+    Forall2 gamma xs cs -> Forall2 gamma ys cs ->
+    Forall2 gamma (meet_all xs ys) cs.
+  Proof.
+    intros xs ys cs Hlength Hxs. revert ys Hlength.
+    induction Hxs as [|x c xs cs Hx Hxs IH]; intros ys Hlength Hys.
+    - destruct ys; [constructor|discriminate].
+    - inversion Hys as [|y d tail ds Hy Htail]; subst.
+      cbn [meet_all]. constructor.
+      + apply B.gamma_meet; assumption.
+      + apply IH; [cbn in Hlength; lia|exact Htail].
+  Qed.
+
+  (** Positional meets descend even when the candidate list has another length. *)
+  Lemma meet_all_refines : forall xs ys,
+    Forall2 (fun y x => B.leb y x = true) (meet_all xs ys) xs.
+  Proof.
+    induction xs as [|x xs IH]; intros ys; destruct ys as [|y ys];
+      cbn [meet_all]; try apply self_refines.
+    constructor.
+    - apply B.meet_lb_l.
+    - apply IH.
+  Qed.
+
+  (** Positional meet always retains the original list length. *)
+  Lemma meet_all_length : forall xs ys, length (meet_all xs ys) = length xs.
+  Proof.
+    induction xs as [|x xs IH]; intros ys; destruct ys as [|y ys];
+      cbn [meet_all length]; try reflexivity.
+    now rewrite IH.
+  Qed.
+
+  (** Forward dispatch retains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted. (* CONVERT: forward_sound: The variable no_empty was not found. *)
+  Proof.
+    intros o xs cs c Hxs Heval. unfold forward.
+    rewrite (no_bot xs cs Hxs).
+    destruct (points xs) as [vs|] eqn:Hpoints.
+    - pose proof (points_sound xs cs vs Hxs Hpoints) as ->.
+      rewrite Heval. apply B.abst_sound.
+    - destruct (T.fwd o xs) as [r|] eqn:Hfwd.
+      + eapply T.fwd_sound; eauto.
+      + apply B.gamma_top.
+  Qed.
 
+  (** Backward dispatch retains every consistent concrete operand. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted. (* CONVERT: backward_sound: The variable bwd_sound was not found in the current environment. *)
+  Proof.
+    intros o r xs cs c Hxs Heval Hr. unfold backward.
+    destruct (T.bwd o r xs) as [ys|] eqn:Hbwd; [|exact Hxs].
+    destruct (Nat.eqb (length ys) (length xs)) eqn:Hlength; [|exact Hxs].
+    apply Nat.eqb_eq in Hlength.
+    eapply meet_all_sound; [exact Hlength|exact Hxs|].
+    eapply T.bwd_sound; eauto.
+  Qed.
 
+  (** Backward dispatch refines every operand in place. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
-  Proof. Admitted. (* CONVERT: backward_refines: The variable entry_refines was not found in the current environment. *)
+  Proof.
+    intros o r xs. unfold backward, leb.
+    destruct (T.bwd o r xs) as [ys|]; [|apply self_refines].
+    destruct (Nat.eqb (length ys) (length xs));
+      [apply meet_all_refines|apply self_refines].
+  Qed.
 
+  (** Guard dispatch retains every operand satisfying the guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs cs Hxs Hholds. unfold guard.
+    destruct (T.grd g xs) as [ys|] eqn:Hgrd; [|exact Hxs].
+    destruct (Nat.eqb (length ys) (length xs)) eqn:Hlength; [|exact Hxs].
+    apply Nat.eqb_eq in Hlength.
+    eapply meet_all_sound; [exact Hlength|exact Hxs|].
+    eapply T.grd_sound; eauto.
+  Qed.
 
+  (** Guard dispatch refines every operand in place. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold guard, leb.
+    destruct (T.grd g xs) as [ys|]; [|apply self_refines].
+    destruct (Nat.eqb (length ys) (length xs));
+      [apply meet_all_refines|apply self_refines].
+  Qed.
 End Harness.
 
 Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
@@ -181,10 +301,18 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Proof. Admitted. (* STUB *)
   Lemma work_sizes : forall o xs,
     fold_right Nat.add 0%nat (map size xs) <= work o xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs.
+    change (fold_right Nat.add 0 (map B.bsize xs) <= work o xs).
+    unfold work. lia.
+  Qed.
   Lemma gwork_sizes : forall g xs,
     fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs.
+    change (fold_right Nat.add 0 (map B.bsize xs) <= gwork g xs).
+    unfold gwork. lia.
+  Qed.
 
   Definition c_harness : N := 1%N. (* STUB *)
   Lemma T_points_le : forall xs,
@@ -203,35 +331,57 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Definition k_backward : N := 1%N. (* STUB *)
   Definition k_guard : N := 1%N. (* STUB *)
   Lemma F0_gamma : forall a c, gamma a c <-> B.gamma a c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F0_leb : forall a b, leb a b = B.leb a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F0_join : forall a b, join a b = B.join a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F0_meet : forall a b, meet a b = B.meet a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F0_size : forall a, size a = B.bsize a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F0_work : forall o xs, work o xs =
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
     L.work o (opt_vals xs) + T.twork o xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F0_gwork : forall g xs, gwork g xs =
     fold_right Nat.add 0%nat (map B.bsize xs) + length xs + T.tgwork g xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F1_points_sound : forall xs cs vs,
     Forall2 B.gamma xs cs -> points xs = Some vs -> vs = cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact points_sound.
+  Qed.
   Lemma F2_no_bot : forall xs cs,
     Forall2 B.gamma xs cs -> existsb B.is_bot xs = false.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact no_bot.
+  Qed.
   Lemma F3_meet_all_sound : forall xs ys cs, length ys = length xs ->
     Forall2 B.gamma xs cs -> Forall2 B.gamma ys cs ->
     Forall2 B.gamma (meet_all xs ys) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact meet_all_sound.
+  Qed.
   Lemma F4_meet_all_refines : forall xs ys,
     Forall2 (fun y x => B.leb y x = true) (meet_all xs ys) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact meet_all_refines.
+  Qed.
   Lemma T1_points : forall xs, (T_points xs <=
     k_points * (fold_right N.add 0 (map (fun x => B.T_point x + 1) xs) + 1))%N.
   Proof. Admitted. (* STUB *)
