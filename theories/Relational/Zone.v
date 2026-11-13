@@ -338,6 +338,61 @@ Proof.
 Qed.
 
 (** Finite bounds with an absent value interpreted as positive infinity. *)
+(** Each fold callback is charged at its actual stage and successor state. *)
+Lemma rel_fold_left_time_stages :
+  forall (A B : Type) (step : A -> B -> A) (step_time : A -> B -> N)
+    (inv : nat -> A -> Prop) (good : B -> Prop) (limit : nat) (charge : N),
+  (forall index state item, inv index state -> good item ->
+    inv (S index) (step state item)) ->
+  (forall index state item, index < limit -> inv index state -> good item ->
+    (step_time state item <= charge)%N) ->
+  forall xs, Forall good xs -> forall index state,
+    index + length xs <= limit -> inv index state ->
+    (Std.List.T_fold_left step step_time xs state <=
+      (charge + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros A B step step_time inv good limit charge Hstep Htime xs Hgood.
+  induction Hgood as [|item xs Hitem Htail IH]; intros index state Hlength Hstate.
+  - time_step.
+  - assert (Hindex : index < limit) by (cbn [length] in Hlength; lia).
+    pose proof (Htime index state item Hindex Hstate Hitem) as Hcurrent.
+    pose proof (Hstep index state item Hstate Hitem) as Hnext.
+    assert (Hlength' : S index + length xs <= limit)
+      by (cbn [length] in Hlength; lia).
+    specialize (IH (S index) (step state item) Hlength' Hnext).
+    time_step.
+Qed.
+
+(** A uniform callback coefficient also pays the fold and linearization overhead. *)
+Lemma rel_fold_overhead_budget :
+  forall atom_budget work count linear final_budget : N,
+    (1 <= atom_budget)%N -> (1 <= work)%N ->
+    (2 * atom_budget <= final_budget)%N ->
+    (linear + (atom_budget * work + 1) * count + 2 <=
+      final_budget * (count * work + linear + 1))%N.
+Proof.
+  intros atom_budget work count linear final_budget Hatom Hwork Hbudget.
+  set (matrix := (count * work)%N).
+  assert (Hcount : (count <= matrix)%N).
+  { unfold matrix. replace count with (count * 1)%N at 1 by ring.
+    now apply N.mul_le_mono_l. }
+  assert (Hfold : ((atom_budget * work + 1) * count <=
+    (atom_budget + 1) * matrix)%N).
+  { replace ((atom_budget * work + 1) * count)%N with
+      (atom_budget * matrix + count)%N by (unfold matrix; ring).
+    rewrite N.mul_add_distr_r, N.mul_1_l. lia. }
+  assert (Hcoefficient : (atom_budget + 1 <= final_budget)%N) by lia.
+  pose proof (N.mul_le_mono_r _ _ matrix Hcoefficient) as Hmatrix.
+  assert (Hlinear : (linear <= final_budget * linear)%N).
+  { replace linear with (1 * linear)%N at 1 by ring.
+    apply N.mul_le_mono_r. lia. }
+  assert (Hconstant : (2 <= final_budget)%N) by lia.
+  replace (final_budget * (count * work + linear + 1))%N with
+    (final_budget * matrix + final_budget * linear + final_budget)%N
+    by (unfold matrix; ring).
+  lia.
+Qed.
+
 Module RelationalPathBounds.
   Definition below (a b : option Z) : Prop :=
     match a, b with
@@ -6373,5 +6428,430 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         destruct ls, rs; time_step.
   Qed.
 
+
+  (** Self-translations charge the selected column and row updates. *)
+
+  Definition shift_column_work (target : X.t) (d : Z) (row : M.t Z) : nat :=
+    K.bits (Some target) + Z.size_nat d +
+      option_weight Z.size_nat (M.get (Some target) row) + 1.
+
+  Lemma T_shift_column_row_le : forall target d a b,
+    (T_shift_column_row target d a b <= 8 * (M.c_map + 1) *
+      N.of_nat (option_weight (shift_column_work target d) a + 1))%N.
+  Proof.
+    intros target d [row|] ignored.
+    - cbn [option_weight]. unfold shift_column_work.
+      destruct (M.get (Some target) row) as [old|] eqn:Hentry;
+        unfold T_shift_column_row; cbn beta iota zeta; rewrite Hentry;
+        cbn [option_weight]; time_step.
+    - time_step.
+  Qed.
+
+  Lemma T_shift_bound_le : forall d a b,
+    (T_shift_bound d a b <= 8 *
+      N.of_nat (option_weight (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) a + 1))%N.
+  Proof.
+    intros d [z|] ignored; unfold option_weight; time_step.
+  Qed.
+
+  Lemma shift_linear_budget : forall n payload factor,
+    1 <= payload -> 1 <= factor ->
+    n * (factor * payload) + 1 <= factor * ((n + 1)^2 * payload).
+  Proof.
+    intros n payload factor Hpayload Hfactor.
+    assert (Hpositive : 1 <= factor * payload) by nia.
+    eapply Nat.le_trans with ((n + 1) * (factor * payload)); [nia|].
+    replace (factor * ((n + 1)^2 * payload)) with
+      ((n + 1)^2 * (factor * payload)) by ring.
+    apply Nat.mul_le_mono_r. cbn [Nat.pow]. nia.
+  Qed.
+
+  Lemma shift_column_work_bound : forall target d m,
+    code_work (shift_column_work target d) m + 1 <=
+      3 * ((supp m + 1)^2 *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+  Proof.
+    intros target d m.
+    assert (Hsupport : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Hsupport) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Hsupport) as Hcount.
+    assert (Hstored : stored_weight (shift_column_work target d) m <=
+      length (M.codes m) * (K.bits (Some target) + Z.size_nat d + ell m + 1)).
+    { apply stored_weight_uniform. intros p row Hrow.
+      unfold shift_column_work.
+      destruct (M.get (Some target) row) as [old|] eqn:Hentry; cbn [option_weight].
+      - pose proof (row_get_bits m p row (Some target) old Hrow Hentry). lia.
+      - lia. }
+    assert (Hstored' : stored_weight (shift_column_work target d) m <=
+      supp m * (K.bits (Some target) + Z.size_nat d + ell m + 1)).
+    { eapply Nat.le_trans; [exact Hstored|]. now apply Nat.mul_le_mono_r. }
+    set (payload := b m + ell m + K.bits (Some target) + Z.size_nat d + 1).
+    assert (Hpayload : 1 <= payload) by (unfold payload; lia).
+    assert (Hscalar : b m + ell m + K.bits (Some target) + Z.size_nat d + 3 <=
+      3 * payload) by (unfold payload; lia).
+    assert (Hwork : code_work (shift_column_work target d) m + 1 <=
+      supp m * (3 * payload) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _ (supp m) Hscalar) as Hscaled.
+      unfold code_work. nia. }
+    eapply Nat.le_trans; [exact Hwork|].
+    apply shift_linear_budget; lia.
+  Qed.
+
+  Lemma shift_selected_row_work_bound : forall target d m row,
+    M.get (Some target) (shift_columns target d m) = Some row ->
+    code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row + 1 <=
+      4 * ((supp m + 1)^2 *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+  Proof.
+    intros target d m row Hrow.
+    set (next := shift_columns target d m). fold next in Hrow.
+    assert (Hsupport : forall p, In p (M.codes row) -> In p (support next)).
+    { intros p Hp. apply (row_lookup_support next (Some target) p).
+      rewrite Hrow. exact Hp. }
+    assert (Hbits : forall p z, M.find p row = Some z -> Z.size_nat z <= ell next).
+    { intros p z Hz. apply (row_lookup_bits next (Some target) p z).
+      rewrite Hrow. exact Hz. }
+    pose proof (code_work_bits_bound next row (Z.size_nat d) (ell next)
+      Hsupport Hbits) as Hrow_work.
+    destruct (shift_columns_sizes target d m) as [Hcount Hkeys].
+    pose proof (ell_shift_columns target d m) as Hell.
+    fold next in Hcount, Hkeys, Hell. rewrite Hcount, Hkeys in Hrow_work.
+    set (payload := b m + ell m + K.bits (Some target) + Z.size_nat d + 1).
+    assert (Hpayload : 1 <= payload) by (unfold payload; lia).
+    assert (Hscalar : b m + ell next + Z.size_nat d + 3 <= 4 * payload).
+    { unfold payload. lia. }
+    assert (Hwork : code_work (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+      row + 1 <= supp m * (4 * payload) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _ (supp m) Hscalar). lia. }
+    eapply Nat.le_trans; [exact Hwork|]. apply shift_linear_budget; lia.
+  Qed.
+
+  Lemma T_shift_columns_le : forall target d m,
+    (T_shift_columns target d m <= 64 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1)^2 *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target d m.
+    set (units := (supp m + 1)^2 *
+      (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+    change (T_shift_columns target d m <=
+      64 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    assert (Hpositive : 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply quadratic_payload_le]. lia. }
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    pose proof (shift_column_work_bound target d m) as Hdata.
+    change (code_work (shift_column_work target d) m + 1 <= 3 * units) in Hdata.
+    pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+    rewrite (Nat2N.inj_mul 3 units) in HdataN.
+    set (work := N.of_nat units) in *.
+    change (1 <= work)%N in Hwork.
+    pose proof (T_merge_left_code_work (M.t Z) (M.t Z) (M.t Z)
+      (shift_column_row target d) (fun a b => T_shift_column_row target d a b)
+      (shift_column_work target d) m (8 * (M.c_map + 1))%N
+      (T_shift_column_row_le target d)) as Hmerge.
+    assert (Hmerge_work : (M.T_merge (shift_column_row target d)
+      (fun a b => T_shift_column_row target d a b) m M.empty <=
+      M.c_map * (8 * (M.c_map + 1) + 1) * 2 * (3 * work))%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      apply N.mul_le_mono_l. exact HdataN. }
+    assert (Hcoefficient :
+      (M.c_map * (8 * (M.c_map + 1) + 1) * 2 * 3 + 1 <=
+        64 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+    replace (M.c_map * (8 * (M.c_map + 1) + 1) * 2 * (3 * work))%N with
+      ((M.c_map * (8 * (M.c_map + 1) + 1) * 2 * 3) * work)%N
+      in Hmerge_work by ring.
+    unfold T_shift_columns. cbn beta iota zeta.
+    clearbody work. clear - Hmerge_work Hwork Hbudget. lia.
+  Qed.
+
+  Lemma T_shift_key_le : forall target d m,
+    (T_shift target d m <= 256 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1)^2 *
+        (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)))%N.
+  Proof.
+    intros target d m.
+    set (units := (supp m + 1)^2 *
+      (b m + ell m + K.bits (Some target) + Z.size_nat d + 1)).
+    change (T_shift target d m <=
+      256 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    set (next := shift_columns target d m).
+    assert (Hkey : K.bits (Some target) + 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply quadratic_payload_le]. lia. }
+    assert (Hpositive : 1 <= units) by lia.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    pose proof (time_of_nat_le _ _ Hpositive) as Hwork.
+    pose proof (T_shift_columns_le target d m) as Hcolumns.
+    change (T_shift_columns target d m <=
+      64 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N in Hcolumns.
+    set (work := N.of_nat units) in *.
+    change (1 <= work)%N in Hwork.
+    assert (Hget : (M.T_get (Some target) next <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|].
+      apply N.mul_le_mono_l. exact HkeyN. }
+    assert (Hcoefficient :
+      (64 * (M.c_map + 1) * (M.c_map + 1) + M.c_map +
+        M.c_map * (8 + 1) * 2 * 4 + M.c_map + 4 <=
+        256 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    destruct (M.get (Some target) next) as [row|] eqn:Hrow.
+    - assert (Hdata : code_work
+        (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat) row + 1 <= 4 * units).
+      { unfold units. apply shift_selected_row_work_bound. exact Hrow. }
+      pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+      rewrite (Nat2N.inj_mul 4 units) in HdataN. fold work in HdataN.
+      pose proof (T_merge_left_code_work Z Z Z (shift_bound d)
+        (fun a b => T_shift_bound d a b)
+        (fun z => (Z.size_nat d + Z.size_nat z + 1)%nat)
+        row 8%N (T_shift_bound_le d)) as Hmerge.
+      assert (Hmerge_work : (M.T_merge (shift_bound d)
+        (fun a b => T_shift_bound d a b) row M.empty <=
+        M.c_map * (8 + 1) * 2 * (4 * work))%N).
+      { eapply N.le_trans; [exact Hmerge|].
+        apply N.mul_le_mono_l. exact HdataN. }
+      assert (Hset : (M.T_set (Some target)
+        (M.merge (shift_bound d) row M.empty) next <= M.c_map * work)%N).
+      { eapply N.le_trans; [apply M.T_set_le|].
+        apply N.mul_le_mono_l. exact HkeyN. }
+      replace (M.c_map * (8 + 1) * 2 * (4 * work))%N with
+        ((M.c_map * (8 + 1) * 2 * 4) * work)%N in Hmerge_work by ring.
+      unfold T_shift. cbn beta iota zeta. fold next. rewrite Hrow.
+      cbn beta iota zeta. time_simpl.
+      clearbody work. clear - Hcolumns Hget Hset Hmerge_work Hbudget Hwork. lia.
+    - unfold T_shift. cbn beta iota zeta. fold next. rewrite Hrow.
+      cbn beta iota zeta. time_simpl.
+      clearbody work. clear - Hcolumns Hget Hbudget Hwork. lia.
+  Qed.
+
+  (** The original assignment units cover the option-encoded target key. *)
+  Lemma T_shift_le : forall x d m,
+    (T_shift x d m <= 1024 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1)^2 *
+        (b m + ell m + X.bits x + Z.size_nat d + 1)))%N.
+  Proof.
+    intros x d m.
+    set (units := (supp m + 1)^2 *
+      (b m + ell m + X.bits x + Z.size_nat d + 1)).
+    change (T_shift x d m <=
+      1024 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    assert (Hunits : (supp m + 1)^2 *
+      (b m + ell m + K.bits (Some x) + Z.size_nat d + 1) <= 4 * units).
+    { unfold units. rewrite some_key_bits.
+      replace (4 * ((supp m + 1)^2 *
+        (b m + ell m + X.bits x + Z.size_nat d + 1))) with
+        ((supp m + 1)^2 * (4 * (b m + ell m + X.bits x + Z.size_nat d + 1))) by ring.
+      apply Nat.mul_le_mono_l. lia. }
+    eapply N.le_trans; [apply T_shift_key_le|].
+    replace (1024 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N with
+      (256 * (M.c_map + 1) * (M.c_map + 1) * (4 * N.of_nat units))%N by ring.
+    apply N.mul_le_mono_l.
+    pose proof (time_of_nat_le _ _ Hunits) as Hcast.
+    rewrite (Nat2N.inj_mul 4 units) in Hcast. exact Hcast.
+  Qed.
+
+  (** Two opposite refinements use one quadratic support and common bit allowance. *)
+  Lemma T_refine_pair_small : forall i j a b s bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    (T_refine i j a s + T_refine j i b (refine i j a s) <=
+      32 * c_zone * N.of_nat
+        ((ns s + 1)^2 * (bs s + ells s + K.bits i + K.bits j + bits + 1)))%N.
+  Proof.
+    intros i j a b s bits Ha Hb.
+    set (units := (ns s + 1)^2 *
+      (bs s + ells s + K.bits i + K.bits j + bits + 1)).
+    assert (Hfirst_work : (ns s + 1)^2 *
+      (bs s + K.bits i + K.bits j + ells s + Z.size_nat a + 1) <= units).
+    { unfold units. apply Nat.mul_le_mono_l. lia. }
+    pose proof (time_of_nat_le _ _ Hfirst_work) as Hfirst_cast.
+    assert (Hfirst : (T_refine i j a s <= 1 + c_zone * N.of_nat units)%N).
+    { eapply N.le_trans; [apply T_refine_small|].
+      apply N.add_le_mono_l, N.mul_le_mono_l. exact Hfirst_cast. }
+    set (next := refine i j a s).
+    destruct (grow_refine i j a s) as [Hcount [Hbits Hell]].
+    fold next in Hcount, Hbits, Hell.
+    assert (Hkey_cap : Nat.max (bs s) (Nat.max (K.bits i) (K.bits j)) <=
+      bs s + K.bits i + K.bits j).
+    { apply Nat.max_lub; [lia|apply Nat.max_lub; lia]. }
+    assert (Hentry_cap : Nat.max (ells s) (Z.size_nat a) <= ells s + bits).
+    { apply Nat.max_lub; lia. }
+    assert (Hsquare : (ns next + 1)^2 <= 9 * (ns s + 1)^2).
+    { clear -Hcount. cbn [Nat.pow]. nia. }
+    assert (Hpayload : bs next + K.bits j + K.bits i + ells next + Z.size_nat b + 1 <=
+      3 * (bs s + ells s + K.bits i + K.bits j + bits + 1)) by lia.
+    assert (Hsecond_work : (ns next + 1)^2 *
+      (bs next + K.bits j + K.bits i + ells next + Z.size_nat b + 1) <= 27 * units).
+    { replace (27 * units) with
+        ((9 * (ns s + 1)^2) *
+          (3 * (bs s + ells s + K.bits i + K.bits j + bits + 1)))
+        by (unfold units; ring).
+      now apply Nat.mul_le_mono. }
+    pose proof (time_of_nat_le _ _ Hsecond_work) as Hsecond_cast.
+    rewrite (Nat2N.inj_mul 27 units) in Hsecond_cast.
+    assert (Hsecond : (T_refine j i b next <= 1 + c_zone * (27 * N.of_nat units))%N).
+    { eapply N.le_trans; [apply T_refine_small|].
+      apply N.add_le_mono_l, N.mul_le_mono_l. exact Hsecond_cast. }
+    assert (Hunit : (1 <= N.of_nat units)%N).
+    { change (N.of_nat 1%nat <= N.of_nat units)%N. apply time_of_nat_le.
+      clear -units. unfold units. cbn [Nat.pow]. nia. }
+    assert (Hcoefficient : (1 <= c_zone)%N).
+    { pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap.
+      unfold c_zone. nia. }
+    assert (Hpositive : (1 <= c_zone * N.of_nat units)%N).
+    { change (1 * 1 <= c_zone * N.of_nat units)%N. now apply N.mul_le_mono. }
+    fold next. fold units.
+    replace (c_zone * (27 * N.of_nat units))%N with
+      (27 * (c_zone * N.of_nat units))%N in Hsecond by ring.
+    replace (32 * c_zone * N.of_nat units)%N with
+      (32 * (c_zone * N.of_nat units))%N by ring.
+    set (charge := (c_zone * N.of_nat units)%N) in *.
+    clear Hfirst_work Hfirst_cast Hcount Hbits Hell Hkey_cap Hentry_cap Hsquare
+      Hpayload Hsecond_work Hsecond_cast Hunit Hcoefficient.
+    clearbody charge. lia.
+  Qed.
+
+  (** A recognized short form has at most three affine summands. *)
+  Lemma form_fragment_short_abs : forall m f cs,
+    incl cs (coef f) -> length cs <= 2 ->
+    rel_bounds_abs (2 ^ (ell m + F.form_bits f + 2))
+      (rel_form_bounds (variable_bounds m) (Lin X.t cs (cst f))).
+  Proof.
+    intros m f cs Hincl Hcount.
+    eapply rel_bounds_abs_mono with
+      (lower := (length cs + 1) * 2 ^ F.form_bits f * 2 ^ ell m).
+    - rewrite !Nat.pow_add_r. change ((length cs + 1) * 2 ^ F.form_bits f * 2 ^ ell m <=
+        (2 ^ ell m * 2 ^ F.form_bits f) * 4).
+      replace ((2 ^ ell m * 2 ^ F.form_bits f) * 4) with
+        ((4 * 2 ^ F.form_bits f) * 2 ^ ell m) by ring.
+      apply Nat.mul_le_mono_r, Nat.mul_le_mono_r. lia.
+    - apply rel_form_bounds_abs.
+      + cbn [cst]. apply zbits_abs_bound, form_bits_constant.
+      + cbn [coef]. apply Forall_forall. intros p Hin. apply zbits_abs_bound.
+        apply form_bits_coefficient, Hincl, Hin.
+      + apply variable_bounds_abs.
+      + pose proof (Nat.pow_nonzero 2 (F.form_bits f) ltac:(lia)). lia.
+      + pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia.
+  Qed.
+
+  (** Small coefficients make each supported assumption-form step linear in its bits. *)
+  Lemma form_bounds_short_step_time : forall m f p after,
+    short_form f -> In p (coef f) -> incl after (coef f) -> length after <= 2 ->
+    (16 + T_variable_bounds m (fst p) +
+      T_rel_scale_bounds (snd p) (variable_bounds m (fst p)) +
+      T_rel_add_bounds (rel_scale_bounds (snd p) (variable_bounds m (fst p)))
+        (rel_form_bounds (variable_bounds m) (Lin X.t after (cst f))) <=
+      512 * (M.c_map + 1) * N.of_nat (ell m + F.form_bits f + 1))%N.
+  Proof.
+    intros m f p after [_ Hsmall] Hin Hincl Hcount.
+    assert (Hcoefficient : Z.size_nat (snd p) <= 2).
+    { apply Forall_forall with (x := p) in Hsmall; assumption. }
+    assert (Hproduct : rel_bounds_abs (2 ^ (ell m + 2))
+      (rel_scale_bounds (snd p) (variable_bounds m (fst p)))).
+    { replace (2 ^ (ell m + 2)) with (2 ^ 2 * 2 ^ ell m)
+        by (rewrite Nat.pow_add_r; ring).
+      apply rel_bounds_abs_scale.
+      - now apply zbits_abs_bound.
+      - apply variable_bounds_abs.
+      - cbn. lia.
+      - pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    pose proof (form_fragment_short_abs m f after Hincl Hcount) as Hsuffix.
+    pose proof (T_variable_bounds_small m (fst p)) as Hquery.
+    pose proof (form_bits_key f p Hin) as Hkey.
+    pose proof (rel_scale_bounds_small_time _ _ _ Hcoefficient
+      (variable_bounds_abs m (fst p))) as Hscale.
+    pose proof (rel_add_bounds_time _ _ _ _ Hproduct Hsuffix) as Hadd.
+    set (unit := N.of_nat (ell m + F.form_bits f + 1)).
+    assert (Hpositive : (1 <= unit)%N) by (unfold unit; lia).
+    assert (Hquery_bits : (N.of_nat (X.bits (fst p) + 1) <= unit)%N).
+    { unfold unit. apply time_of_nat_le. lia. }
+    assert (Hscale_bits : (N.of_nat (ell m + 1) <= unit)%N).
+    { unfold unit. apply time_of_nat_le. lia. }
+    assert (Hadd_bits : (N.of_nat (ell m + 2 + (ell m + F.form_bits f + 2) + 1) <=
+      5 * unit)%N).
+    { unfold unit. replace (5 * N.of_nat (ell m + F.form_bits f + 1))%N with
+        (N.of_nat (5 * (ell m + F.form_bits f + 1))) by
+          (rewrite Nat2N.inj_mul; reflexivity).
+      apply time_of_nat_le. lia. }
+    assert (Hquery' : (T_variable_bounds m (fst p) <= 64 * (M.c_map + 1) * unit)%N).
+    { eapply N.le_trans; [exact Hquery|]. now apply N.mul_le_mono_l. }
+    assert (Hscale' : (T_rel_scale_bounds (snd p) (variable_bounds m (fst p)) <= 128 * unit)%N).
+    { eapply N.le_trans; [exact Hscale|]. now apply N.mul_le_mono_l. }
+    assert (Hadd' : (T_rel_add_bounds
+      (rel_scale_bounds (snd p) (variable_bounds m (fst p)))
+      (rel_form_bounds (variable_bounds m) (Lin X.t after (cst f))) <= 80 * unit)%N).
+    { eapply N.le_trans; [exact Hadd|].
+      replace (80 * unit)%N with (16 * (5 * unit))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hcharge : (unit <= (M.c_map + 1) * unit)%N) by nia.
+    replace (64 * (M.c_map + 1) * unit)%N with
+      (64 * ((M.c_map + 1) * unit))%N in Hquery' by ring.
+    replace (512 * (M.c_map + 1) * unit)%N with
+      (512 * ((M.c_map + 1) * unit))%N by ring.
+    set (charge := ((M.c_map + 1) * unit)%N) in *.
+    clear Hsmall Hin Hincl Hcount Hcoefficient Hproduct Hsuffix Hquery Hkey Hscale Hadd
+      Hquery_bits Hscale_bits Hadd_bits. clearbody charge unit. lia.
+  Qed.
+
+  (** The short affine fold makes at most two linear-cost steps. *)
+  Lemma T_form_bounds_short : forall m f,
+    short_form f ->
+    (T_form_bounds m f <=
+      4096 * (M.c_map + 1) * N.of_nat (ell m + F.form_bits f + 1))%N.
+  Proof.
+    intros m [cs c] Hshort.
+    pose proof (proj1 Hshort) as Hcount. cbn [coef] in Hcount.
+    time_unfold (@T_form_bounds). time_simpl. time_cbn.
+    time_unfold (@T_rel_form_bounds). time_simpl. time_cbn.
+    lazymatch goal with
+    | |- context [Std.List.T_fold_right ?ff ?tf ?seed ?xs] =>
+      assert (Hfold : (Std.List.T_fold_right ff tf seed xs <=
+        (512 * ((M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1)) + 1) *
+          N.of_nat (length xs) + 1)%N)
+    end.
+    { apply rel_fold_right_time. intros before p after Heq.
+      assert (Hin : In p (coef (Lin X.t cs c))).
+      { cbn [coef]. rewrite Heq. apply in_or_app. right. now left. }
+      assert (Hincl : incl after (coef (Lin X.t cs c))).
+      { intros q Hq. cbn [coef]. rewrite Heq. apply in_or_app. right. now right. }
+      assert (Hafter : length after <= 2).
+      { rewrite Heq, length_app in Hcount. cbn [length] in Hcount. lia. }
+      pose proof (form_bounds_short_step_time m (Lin X.t cs c) p after
+        Hshort Hin Hincl Hafter) as Hstep.
+      unfold rel_form_bounds in Hstep. cbn [coef cst] in Hstep.
+      replace (512 * (M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1))%N with
+        (512 * ((M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1)))%N
+        in Hstep by ring.
+      eapply N.le_trans; [|exact Hstep]. time_simpl. time_cbn. lia. }
+    pose proof (time_of_nat_le _ _ Hcount) as HcountN.
+    change (N.of_nat (length cs) <= 2)%N in HcountN.
+    set (unit := ((M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1))%N) in *.
+    assert (Hpositive : (1 <= unit)%N) by (unfold unit; nia).
+    lazymatch goal with |- (?actual <= ?rhs)%N =>
+      replace rhs with (4096 * unit)%N by
+        (unfold unit, F.form_bits; cbn [coef cst]; ring)
+    end.
+    pose proof (N.mul_le_mono_l _ _ (512 * unit + 1)%N HcountN) as Hsteps.
+    replace ((512 * unit + 1) * 2)%N with (1024 * unit + 2)%N in Hsteps by ring.
+    clear -Hfold Hsteps Hpositive. clearbody unit. lia.
+  Qed.
+
+  (** A supported wrap test charges the short form and its explicitly stored endpoints. *)
+  Lemma T_form_exact_short : forall m f r,
+    short_form f ->
+    (T_form_exact m f r <= 8192 * (M.c_map + 1) *
+      N.of_nat (ell m + F.form_bits f + F.wrap_bits r + 1))%N.
+  Proof.
+    intros m f r Hshort.
+    pose proof (T_form_bounds_short m f Hshort) as Hform.
+    pose proof (form_fragment_short_abs m f (coef f) (incl_refl _) (proj1 Hshort)) as Habs.
+    change (rel_bounds_abs (2 ^ (ell m + F.form_bits f + 2)) (form_bounds m f)) in Habs.
+    pose proof (rel_wrap_exact_time r (form_bounds m f) (F.wrap_bits r)
+      (ell m + F.form_bits f + 2) (Nat.le_refl _) Habs) as Hwrap.
+    clear Hshort Habs. unfold F.form_bits, F.wrap_bits in Hform, Hwrap |- *.
+    unfold T_form_exact. destruct r; time_simpl; time_cbn;
+      rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
 
 End ZoneT.
