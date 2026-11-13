@@ -2449,6 +2449,267 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     - lia.
   Qed.
 
+  Local Lemma table_add_raw_bits : forall w a b,
+    interval_bits (interval_add w a b) <=
+      Pos.to_nat w + 2 * interval_bits a + 2 * interval_bits b + 2.
+  Proof.
+    intros w a b. unfold interval_add.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    destruct (table_finite_bits b lb hb Hb) as [Hlb Hhb].
+    pose proof (table_checked_raw_bits w (la + lb) (ha + hb)) as Hchecked.
+    pose proof (table_integer_add_bits la lb).
+    pose proof (table_integer_add_bits ha hb).
+    lia.
+  Qed.
+
+  Local Lemma table_add_modular_raw_bits : forall w a b,
+    interval_bits (interval_add_modular w a b) <=
+      3 * Pos.to_nat w + 2 * interval_bits a + 2 * interval_bits b + 6.
+  Proof.
+    intros w a b. unfold interval_add_modular.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    destruct (Z.leb (Word.modulus w) (la + lb) &&
+      Z.ltb (ha + hb) (2 * Word.modulus w)).
+    - destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+      destruct (table_finite_bits b lb hb Hb) as [Hlb Hhb].
+      pose proof (table_checked_raw_bits w
+        (la + lb - Word.modulus w) (ha + hb - Word.modulus w)) as Hchecked.
+      pose proof (table_integer_add_bits la lb) as Hsum_lo.
+      pose proof (table_integer_add_bits ha hb) as Hsum_hi.
+      pose proof (table_integer_sub_bits (la + lb) (Word.modulus w)) as Hsub_lo.
+      pose proof (table_integer_sub_bits (ha + hb) (Word.modulus w)) as Hsub_hi.
+      pose proof (PayloadBounds.payload_modulus_bits w) as Hmodulus.
+      lia.
+    - pose proof (table_add_raw_bits w a b) as Hadd.
+      lia.
+  Qed.
+
+  Local Lemma table_mod_choice_raw_bits : forall u candidate,
+    interval_bits (interval_mod_choice u candidate) <= interval_bits candidate.
+  Proof.
+    intros u candidate. unfold interval_mod_choice.
+    destruct (interval_finite_helper u) as [[lo hi]|].
+    - destruct (Z.ltb 0 lo); [lia|].
+      destruct (Z.eqb hi 0); [cbn [interval_bits Z.size_nat]; lia|].
+      pose proof (PayloadBounds.payload_raw_join_bits
+        (I (Fin 0) (Fin 0)) candidate) as Hjoin.
+      cbn [interval_bits Z.size_nat Nat.max] in Hjoin. lia.
+    - pose proof (PayloadBounds.payload_raw_join_bits
+        (I (Fin 0) (Fin 0)) candidate) as Hjoin.
+      cbn [interval_bits Z.size_nat Nat.max] in Hjoin. lia.
+  Qed.
+
+  Local Lemma table_smod_base_raw_bits : forall w a b,
+    interval_bits (interval_smod_base w a b) <=
+      85 * Pos.to_nat w + 32 * interval_bits a + 18 * interval_bits b + 126.
+  Proof.
+    intros w a b. unfold interval_smod_base.
+    destruct (interval_sign w a) as [sa|];
+      destruct (interval_sign w b) as [sb|];
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    set (aa := if sa then interval_neg w a else a).
+    set (bb := if sb then interval_neg w b else b).
+    set (u := interval_urem w aa bb).
+    set (candidate := match sa, sb with
+      | false, false => u
+      | true, false => interval_add_modular w (interval_neg w u) b
+      | false, true => interval_add_modular w u b
+      | true, true => interval_neg w u
+      end).
+    assert (Haa : interval_bits aa <= 3 * Pos.to_nat w + 2 * interval_bits a + 4).
+    { unfold aa. destruct sa; [apply table_neg_raw_bits|lia]. }
+    assert (Hbb : interval_bits bb <= 3 * Pos.to_nat w + 2 * interval_bits b + 4).
+    { unfold bb. destruct sb; [apply table_neg_raw_bits|lia]. }
+    assert (Hu : interval_bits u <=
+      Pos.to_nat w + 4 * interval_bits aa + 2 * interval_bits bb + 4).
+    { unfold u. apply table_urem_raw_bits. }
+    assert (Hcandidate : interval_bits candidate <=
+      9 * Pos.to_nat w + 4 * interval_bits u + 2 * interval_bits b + 14).
+    { unfold candidate. destruct sa, sb.
+      - pose proof (table_neg_raw_bits w u). lia.
+      - pose proof (table_neg_raw_bits w u) as Hneg.
+        pose proof (table_add_modular_raw_bits w (interval_neg w u) b) as Hadd.
+        lia.
+      - pose proof (table_add_modular_raw_bits w u b) as Hadd. lia.
+      - lia. }
+    pose proof (table_mod_choice_raw_bits u candidate) as Hchoice.
+    lia.
+  Qed.
+
+  Local Lemma table_smod_raw_bits : forall w a b,
+    interval_bits (interval_smod w a b) <=
+      85 * Pos.to_nat w + 32 * interval_bits a + 19 * interval_bits b + 128.
+  Proof.
+    intros w a b. unfold interval_smod.
+    pose proof (table_smod_base_raw_bits w a b) as Hbase.
+    destruct (interval_sign w b) as [sb|];
+      [destruct sb|]; try lia.
+    destruct (interval_finite_helper b) as [[lo hi]|] eqn:Hfinite; [|lia].
+    destruct (Z.ltb 0 lo); [|lia].
+    destruct (table_finite_bits b lo hi Hfinite) as [_ Hhi].
+    pose proof (table_integer_sub_bits hi 1) as Hsub.
+    pose proof (PayloadBounds.payload_raw_meet_bits
+      (interval_smod_base w a b) (I (Fin 0) (Fin (hi - 1)))) as Hmeet.
+    cbn [interval_bits Z.size_nat Nat.max Pos.size_nat] in Hmeet, Hsub.
+    lia.
+  Qed.
+
+  Local Lemma table_lshr_raw_bits : forall w a b,
+    interval_bits (interval_lshr w a b) <= Pos.to_nat w + 2 * interval_bits a.
+  Proof.
+    intros w a b. unfold interval_lshr.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Z.pos w));
+      [|apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]].
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    pose proof (table_checked_raw_bits w (la / 2 ^ hb) (ha / 2 ^ lb)) as Hchecked.
+    pose proof (table_integer_div_bits la (2 ^ hb)).
+    pose proof (table_integer_div_bits ha (2 ^ lb)).
+    lia.
+  Qed.
+
+  Local Lemma table_not_raw_bits : forall w a,
+    interval_bits (interval_not w a) <=
+      3 * Pos.to_nat w + 2 * interval_bits a + 2.
+  Proof.
+    intros w a. unfold interval_not.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      [|apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]].
+    destruct (table_finite_bits a lo hi Hfinite) as [Hlo Hhi].
+    pose proof (table_checked_raw_bits w
+      (Word.modulus w - 1 - hi) (Word.modulus w - 1 - lo)) as Hchecked.
+    pose proof (PayloadBounds.payload_cap_bits w) as Hcap.
+    pose proof (table_integer_sub_bits (Word.modulus w - 1) hi) as Hupper.
+    pose proof (table_integer_sub_bits (Word.modulus w - 1) lo) as Hlower.
+    lia.
+  Qed.
+
+  Local Lemma table_ashr_small_raw_bits : forall w a b,
+    interval_bits (interval_ashr_small w a b) <=
+      18 * Pos.to_nat w + 8 * interval_bits a + 12.
+  Proof.
+    intros w a b. unfold interval_ashr_small.
+    destruct (interval_sign w a) as [sign|];
+      [destruct sign|];
+      try (apply Nat.le_trans with (m := Pos.to_nat w);
+        [apply PayloadBounds.payload_top_bits|lia]).
+    - pose proof (table_not_raw_bits w a) as Hnot.
+      pose proof (table_lshr_raw_bits w (interval_not w a) b) as Hshift.
+      pose proof (table_not_raw_bits w
+        (interval_lshr w (interval_not w a) b)) as Hresult.
+      lia.
+    - pose proof (table_lshr_raw_bits w a b) as Hshift. lia.
+  Qed.
+
+  Local Lemma table_ashr_raw_bits : forall w a b,
+    interval_bits (interval_ashr w a b) <=
+      20 * Pos.to_nat w + 8 * interval_bits a + 14.
+  Proof.
+    intros w a b. unfold interval_ashr.
+    destruct (interval_sign w a) as [sign|];
+      [destruct (interval_finite_helper b) as [[lo hi]|] eqn:Hfinite|];
+      try (pose proof (table_ashr_small_raw_bits w a b); lia).
+    set (saturated := if sign then (Word.modulus w - 1)%Z else 0%Z).
+    assert (Hsaturated : Z.size_nat saturated <= Pos.to_nat w).
+    { unfold saturated. destruct sign;
+        [apply PayloadBounds.payload_cap_bits|cbn [Z.size_nat]; lia]. }
+    destruct (Z.ltb hi (Z.pos w));
+      [pose proof (table_ashr_small_raw_bits w a b); lia|].
+    destruct (Z.leb (Z.pos w) lo).
+    - cbn [interval_bits Nat.max]. lia.
+    - pose proof (table_ashr_small_raw_bits w a
+        (I (Fin lo) (Fin (Z.pos w - 1)))) as Hsmall.
+      pose proof (PayloadBounds.payload_raw_join_bits
+        (interval_ashr_small w a (I (Fin lo) (Fin (Z.pos w - 1))))
+        (I (Fin saturated) (Fin saturated))) as Hjoin.
+      cbn [interval_bits Nat.max] in Hjoin.
+      lia.
+  Qed.
+
+  Local Lemma table_wfwd_linear_bits : forall o rw xs r,
+    wfwd o rw xs = Some r ->
+    interval_bits r <= 128 *
+      (Pos.to_nat rw + fold_right Nat.add 0
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1).
+  Proof.
+    intros o rw xs r Hresult.
+    destruct xs as [|[wa a] tail]; [destruct o; discriminate|].
+    destruct tail as [|[wb b] tail].
+    - destruct o; cbn [wfwd] in Hresult;
+        try discriminate; inversion Hresult; subst r;
+        cbn [map fold_right fst];
+        try (pose proof (table_not_bits rw wa a); lia);
+        try (pose proof (table_neg_bits rw wa a); lia);
+        try (pose proof (table_counts_bits rw); lia);
+        try (pose proof (table_rewrap_bits rw wa a); lia);
+        try (pose proof (table_sext_bits rw wa a); lia).
+    - destruct tail as [|[wc c] tail].
+      + destruct o; cbn [wfwd] in Hresult;
+          try discriminate; inversion Hresult; subst r;
+          cbn [map fold_right fst];
+          try (pose proof (table_clip_bits wa a) as Ha;
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_udiv_bits rw wa wb a b); lia);
+          try (pose proof (table_clip_bits wa a) as Ha;
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_urem_bits rw wa wb a b); lia);
+          try (pose proof (table_clip_bits wa a) as Ha;
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_sdiv_raw_bits rw (interval_clip wa a) (interval_clip wb b));
+            lia);
+          try (pose proof (table_clip_bits wa a) as Ha;
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_srem_raw_bits rw (interval_clip wa a) (interval_clip wb b));
+            lia);
+          try (pose proof (table_clip_bits wa a) as Ha;
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_smod_raw_bits rw (interval_clip wa a) (interval_clip wb b));
+            lia);
+          try (pose proof (table_clip_bits wa a) as Ha;
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_ashr_raw_bits rw (interval_clip wa a) (interval_clip wb b));
+            lia);
+          try (pose proof (table_add_bits rw wa wb a b); lia);
+          try (pose proof (table_sub_bits rw wa wb a b); lia);
+          try (pose proof (table_mul_bits rw wa wb a b); lia);
+          try (pose proof (table_and_bits rw wa wb a b); lia);
+          try (pose proof (table_or_xor_bits rw wa wb a b); lia);
+          try (pose proof (table_shl_bits rw wa wb a b); lia);
+          try (pose proof (table_lshr_bits rw wa wb a b); lia);
+          try (pose proof (table_concat_bits rw wa wb a b); lia);
+          try (pose proof (table_eq_bits (interval_clip wa a) (interval_clip wb b)); lia);
+          try (pose proof (table_ult_bits (interval_clip wa a) (interval_clip wb b)); lia);
+          try (pose proof (table_ule_bits (interval_clip wa a) (interval_clip wb b)); lia);
+          try (pose proof (table_bool_not_bits
+            (interval_eq (interval_clip wa a) (interval_clip wb b))); lia);
+          try (pose proof (table_signed_compare_bits wa true
+            (interval_clip wa a) (interval_clip wb b)); lia);
+          try (pose proof (table_signed_compare_bits wa false
+            (interval_clip wa a) (interval_clip wb b)); lia).
+      + destruct tail as [|extra rest].
+        * destruct o; cbn [wfwd] in Hresult;
+            try discriminate; inversion Hresult; subst r;
+            cbn [map fold_right fst];
+            pose proof (table_clip_bits wb b) as Hb;
+            pose proof (table_clip_bits wc c) as Hc;
+            pose proof (PayloadBounds.payload_raw_join_bits
+              (interval_clip wb b) (interval_clip wc c)); lia.
+        * destruct o; discriminate.
+  Qed.
+
   Local Lemma table_assume_ult_bits : forall a b,
     interval_bits (fst (interval_assume_ult a b)) +
       interval_bits (snd (interval_assume_ult a b)) <=
@@ -2878,7 +3139,25 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* OPEN: bound the raw result bits of each forward dispatch. *)
+  Proof.
+    intros o rw xs r Hresult.
+    pose proof (table_wfwd_linear_bits o rw xs r Hresult) as Hbits.
+    set (s := Pos.to_nat rw +
+      fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1).
+    set (budget := s ^ 2 +
+      fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs)).
+    assert (Hsquare : (s <= budget)%nat).
+    { unfold budget. assert (Hs : (1 <= s)%nat) by (unfold s; lia).
+      rewrite Nat.pow_2_r. nia. }
+    assert (Hnat : (W.psize rw r <= 129 * budget)%nat).
+    { rewrite W.F_psize. unfold s in Hbits. lia. }
+    assert (HN : (N.of_nat (W.psize rw r) <= 129 * N.of_nat budget)%N).
+    { replace (129 * N.of_nat budget)%N with (N.of_nat (129 * budget)).
+      - lia.
+      - rewrite Nat2N.inj_mul. reflexivity. }
+    assert (Hcoeff : (129 <= c_word_table)%N) by (unfold c_word_table; nia).
+    nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
