@@ -338,6 +338,44 @@ Module Thresholds <: THRESHOLDS.
     intro zs. unfold make. eapply Nat.le_trans; [apply build_depth|].
     apply Nat.add_le_mono_r, Nat.log2_le_mono, prepared_length.
   Qed.
+
+  (** Inorder membership splits into the root and the two children. *)
+  Lemma node_vals : forall lhs value rhs x,
+    In x (vals (TNode lhs value rhs)) <->
+      value = x \/ In x (vals lhs) \/ In x (vals rhs).
+  Proof.
+    intros lhs value rhs x. cbn [vals]. rewrite in_app_iff. cbn [In]. tauto.
+  Qed.
+
+  (** A strict list split orders both pieces and separates them at the pivot. *)
+  Lemma sorted_split : forall lhs x rhs, StronglySorted Z.lt (lhs ++ x :: rhs) ->
+    StronglySorted Z.lt lhs /\ StronglySorted Z.lt rhs /\
+    (forall y, In y lhs -> (y < x)%Z) /\ (forall y, In y rhs -> (x < y)%Z).
+  Proof.
+    induction lhs as [|a lhs IH]; intros x rhs Hsort; cbn in Hsort.
+    - destruct (StronglySorted_inv Hsort) as [Htail Hall].
+      repeat split; try constructor; try assumption; try contradiction.
+      now rewrite <- Forall_forall.
+    - destruct (StronglySorted_inv Hsort) as [Htail Hall].
+      destruct (IH x rhs Htail) as [Hl [Hr [Hbelow Habove]]].
+      rewrite Forall_forall in Hall.
+      repeat split; try assumption.
+      + constructor; [exact Hl|]. rewrite Forall_forall.
+        intros y Hy. apply Hall. apply in_app_iff. now left.
+      + intros y [<-|Hy].
+        * apply Hall. apply in_app_iff. right. now left.
+        * now apply Hbelow.
+  Qed.
+
+  (** An ordered node has ordered children separated by its root value. *)
+  Lemma ordered_node : forall lhs value rhs, ordered (TNode lhs value rhs) ->
+    ordered lhs /\ ordered rhs /\
+    (forall x, In x (vals lhs) -> (x < value)%Z) /\
+    (forall x, In x (vals rhs) -> (value < x)%Z).
+  Proof.
+    intros lhs value rhs Hordered. unfold ordered in *. apply sorted_split, Hordered.
+  Qed.
+
   (** Upper search returns the least eligible threshold or proves none exists. *)
   Lemma above_spec : forall t z, ordered t ->
     match above t z with
@@ -345,7 +383,39 @@ Module Thresholds <: THRESHOLDS.
       forall v, In v (vals t) -> (z <= v)%Z -> (u <= v)%Z
     | None => forall v, In v (vals t) -> (v < z)%Z
     end.
-  Proof. Admitted. (* CONVERT: upper_threshold_least: No product even after head-reduction. *)
+  Proof.
+    induction t as [|lhs IHleft value rhs IHright]; intros z Hordered;
+      [cbn; tauto|].
+    destruct (ordered_node lhs value rhs Hordered) as [Hleft [Hright [Hbelow Habove]]].
+    specialize (IHleft z Hleft). specialize (IHright z Hright).
+    cbn [above]. destruct (Z.ltb value z) eqn:Htest; cbn.
+    - apply Z.ltb_lt in Htest. destruct (above rhs z) as [u|] eqn:Hsearch.
+      + destruct IHright as [Hin [Hbound Hleast]].
+        split; [apply node_vals; now right; right|]. split; [exact Hbound|].
+        intros v Hv Hzv. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * lia.
+        * specialize (Hbelow v Hv). lia.
+        * now apply Hleast.
+      + intros v Hv. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * exact Htest.
+        * specialize (Hbelow v Hv). lia.
+        * now apply IHright.
+    - apply Z.ltb_ge in Htest. destruct (above lhs z) as [u|] eqn:Hsearch.
+      + destruct IHleft as [Hin [Hbound Hleast]].
+        split.
+        * apply node_vals. destruct (Z.min_dec value u) as [Hmin | Hmin];
+            rewrite Hmin; [now left|right; now left].
+        * split; [now apply Z.min_glb|].
+          intros v Hv Hzv. apply node_vals in Hv as [<-|[Hv|Hv]].
+          -- apply Z.le_min_l.
+          -- eapply Z.le_trans; [apply Z.le_min_r|now apply Hleast].
+          -- pose proof (Z.le_min_l value u). specialize (Habove v Hv). lia.
+      + split; [apply node_vals; now left|]. split; [exact Htest|].
+        intros v Hv Hzv. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * lia.
+        * specialize (IHleft v Hv). lia.
+        * specialize (Habove v Hv). lia.
+  Qed.
   (** Lower search returns the greatest eligible threshold or proves none exists. *)
   Lemma below_spec : forall t z, ordered t ->
     match below t z with
@@ -353,7 +423,39 @@ Module Thresholds <: THRESHOLDS.
       forall v, In v (vals t) -> (v <= z)%Z -> (v <= u)%Z
     | None => forall v, In v (vals t) -> (z < v)%Z
     end.
-  Proof. Admitted. (* CONVERT: lower_threshold_greatest: No product even after head-reduction. *)
+  Proof.
+    induction t as [|lhs IHleft value rhs IHright]; intros z Hordered;
+      [cbn; tauto|].
+    destruct (ordered_node lhs value rhs Hordered) as [Hleft [Hright [Hbelow Habove]]].
+    specialize (IHleft z Hleft). specialize (IHright z Hright).
+    cbn [below]. destruct (Z.leb value z) eqn:Htest.
+    - apply Z.leb_le in Htest. destruct (below rhs z) as [u|] eqn:Hsearch.
+      + destruct IHright as [Hin [Hbound Hgreatest]].
+        split.
+        * apply node_vals. destruct (Z.max_dec value u) as [Hmax | Hmax];
+            rewrite Hmax; [now left|right; now right].
+        * split; [now apply Z.max_lub|].
+          intros v Hv Hvz. apply node_vals in Hv as [<-|[Hv|Hv]].
+          -- apply Z.le_max_l.
+          -- pose proof (Z.le_max_l value u). specialize (Hbelow v Hv). lia.
+          -- eapply Z.le_trans; [now apply Hgreatest|apply Z.le_max_r].
+      + split; [apply node_vals; now left|]. split; [exact Htest|].
+        intros v Hv Hvz. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * lia.
+        * specialize (Hbelow v Hv). lia.
+        * specialize (IHright v Hv). lia.
+    - apply Z.leb_gt in Htest. destruct (below lhs z) as [u|] eqn:Hsearch.
+      + destruct IHleft as [Hin [Hbound Hgreatest]].
+        split; [apply node_vals; right; now left|]. split; [exact Hbound|].
+        intros v Hv Hvz. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * lia.
+        * now apply Hgreatest.
+        * specialize (Habove v Hv). lia.
+      + intros v Hv. apply node_vals in Hv as [<-|[Hv|Hv]].
+        * exact Htest.
+        * now apply IHleft.
+        * specialize (Habove v Hv). lia.
+  Qed.
   (** Upper search is sound even when the tree is unordered. *)
   Lemma above_sound : forall t z u,
     above t z = Some u -> In u (vals t) /\ (z <= u)%Z.
