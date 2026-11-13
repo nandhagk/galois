@@ -1141,6 +1141,273 @@ Module WordTime.
       end; rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
   Qed.
 
+  (** The two unary-to-positive conversions follow the same successor recurrence. *)
+  Lemma positive_of_succ_nat_time_eq n :
+    Op.Pos.T_of_succ_nat n = Op.Pos.T_of_nat (S n).
+  Proof.
+    induction n as [|n IH]; [reflexivity|].
+    change (1 + (Op.Pos.T_of_succ_nat n + Pos.T_succ (Pos.of_succ_nat n)) =
+      1 + (Op.Pos.T_of_nat (S n) + Pos.T_succ (Pos.of_nat (S n))))%N.
+    rewrite IH, Pos.of_nat_succ. reflexivity.
+  Qed.
+
+  (** Unary-to-integer conversion fits a quadratic budget in its input value. *)
+  Lemma natural_to_integer_time_bound n :
+    (Op.Z.T_of_nat n <= 8 * N.of_nat ((n + 1) ^ 2))%N.
+  Proof.
+    destruct n as [|n]; [time_step|].
+    pose proof (positive_of_nat_time_bound (S n)) as Hconvert.
+    pose proof (time_square_floor 1 (S n + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    time_unfold Op.Z.T_of_nat. rewrite positive_of_succ_nat_time_eq.
+    time_cbn_all. lia.
+  Qed.
+
+  (** Every unary tag returns at most the declared width many bits. *)
+  Lemma word_unary_size_bound tag w x :
+    (Z.size_nat (eval_unary_tag tag w x) <= Pos.to_nat w)%nat.
+  Proof.
+    apply word_size_bound. destruct tag; cbn [eval_unary_tag];
+      first [apply wnot_is_word|apply wrap_is_word|apply wclz_is_word|
+        apply wctz_is_word|apply wpopcnt_is_word].
+  Qed.
+
+  (** Every binary tag returns at most the declared width many bits. *)
+  Lemma word_binary_size_bound tag w x y :
+    (Z.size_nat (eval_binary_tag tag w x y) <= Pos.to_nat w)%nat.
+  Proof.
+    apply word_size_bound. destruct tag; cbn [eval_binary_tag];
+      first [apply wrap_is_word|apply wudiv_is_word|apply wurem_is_word|
+        apply wsdiv_is_word|apply wsrem_is_word|apply wsmod_is_word|
+        apply wand_is_word|apply wor_is_word|apply wxor_is_word|apply wshl_is_word|
+        apply wlshr_is_word|apply washr_is_word|
+        unfold wrotr, wrotl; apply wrap_is_word|unfold wrotl; apply wrap_is_word].
+  Qed.
+
+  (** Intermediate values fit the metadata and normalized operand widths. *)
+  Lemma word_value_size_bound o xs :
+    (Z.size_nat (op_value o (map normalize_word xs)) <=
+      op_widths o + fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) xs) + 1)%nat.
+  Proof.
+    destruct o; destruct xs as [|[a x] [|[b y] [|[c z] [|d rest]]]];
+      cbn [op_value word_fun1 word_fun2 word_cmp map normalize_word fst snd
+        op_widths fold_right];
+      try (eapply Nat.le_trans; [apply word_unary_size_bound|lia]);
+      try (eapply Nat.le_trans; [apply word_binary_size_bound|lia]);
+      repeat match goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end;
+      try (eapply Nat.le_trans; [apply word_wrap_size_bound|lia]);
+      try (eapply Nat.le_trans; [apply word_signed_size_bound|lia]);
+      try (cbn [Z.size_nat Pos.size_nat]; lia).
+    - pose proof (integer_positive_div_size (wrap a x) (2 ^ Z.of_nat lo)
+        ltac:(apply Z.pow_pos_nonneg; lia)).
+      pose proof (word_wrap_size_bound a x). lia.
+    - eapply Nat.le_trans; [apply word_size_bound, concat_is_word|].
+      rewrite Pos2Nat.inj_add. lia.
+  Qed.
+
+  (** Unary value dispatch adds only a constant to its selected operation. *)
+  Lemma word_value_unary_time_bound o tag w x : word_fun1 o = Some tag -> is_word w x ->
+    (T_op_value o [(w, x)] <= 4096 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Htag Hx.
+    pose proof (word_unary_width_bound _ _ w x (word_unary_time_bound tag) Hx) as Htime.
+    pose proof (time_square_floor 1 (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+    time_unfold T_op_value. rewrite Htag. destruct (word_fun2 o), (word_cmp o);
+      time_simpl; time_cbn_all; lia.
+  Qed.
+
+  (** Binary value dispatch adds only a constant to its selected operation. *)
+  Lemma word_value_binary_time_bound o tag w x y : word_fun2 o = Some tag ->
+    is_word w x -> is_word w y ->
+    (T_op_value o [(w, x); (w, y)] <= 131072 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Htag Hx Hy. pose proof (word_binary_time_bound tag w x y Hx Hy) as Htime.
+    pose proof (time_square_floor 1 (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+    time_unfold T_op_value. rewrite Htag. destruct (word_fun1 o), (word_cmp o);
+      time_simpl; time_cbn_all; lia.
+  Qed.
+
+  (** Comparison value dispatch adds only a constant to its selected operation. *)
+  Lemma word_value_comparison_time_bound o tag w x y : word_cmp o = Some tag ->
+    is_word w x -> is_word w y ->
+    (T_op_value o [(w, x); (w, y)] <= 8192 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Htag Hx Hy.
+    pose proof (word_binary_width_bound _ _ w x y
+      (word_comparison_time_bound tag) Hx Hy) as Htime.
+    assert (Hbinary : word_fun2 o = None) by (destruct o; cbn in *; congruence).
+    pose proof (time_square_floor 1 (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+    time_unfold T_op_value. rewrite Htag, Hbinary. destruct (word_fun1 o);
+      time_simpl; time_cbn_all; lia.
+  Qed.
+
+  (** Increasing both a coefficient and its input budget preserves a square bound. *)
+  Lemma time_square_subsumes t c d a b : (t <= c * N.of_nat (a ^ 2))%N ->
+    (c <= d)%N -> (a <= b)%nat -> (t <= d * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Htime Hcoefficient Hsize.
+    eapply N.le_trans; [eapply time_square_weaken; [exact Htime|exact Hsize]|].
+    apply N.mul_le_mono_r. exact Hcoefficient.
+  Qed.
+
+  (** Checked value dispatch fits the metadata and normalized operand-width budget. *)
+  Lemma word_value_time_bound o xs rw : result_width o (map fst xs) = Some rw ->
+    (T_op_value o (map normalize_word xs) <= 262144 *
+      N.of_nat (((op_widths o +
+        fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) xs) + 1) ^ 2)%nat))%N.
+  Proof.
+    intros Hwidth. destruct o; destruct xs as [|[a x] [|[b y] [|[c z] [|d rest]]]];
+      cbn [result_width map fst] in Hwidth; try discriminate;
+      repeat match goal with
+      | H : context [if ?test then _ else _] |- _ =>
+          destruct test eqn:Hcheck; try discriminate
+      end;
+      repeat match goal with
+      | H : (_ && _)%bool = true |- _ => apply andb_true_iff in H as [Hleft Hright]
+      | H : (?a =? ?b)%positive = true |- _ => apply Pos.eqb_eq in H; subst
+      | H : (?a <=? ?b)%nat = true |- _ => apply Nat.leb_le in H
+      | H : (?a <? ?b)%nat = true |- _ => apply Nat.ltb_lt in H
+      end; cbn [map normalize_word fst snd op_widths fold_right].
+    all: unfold normalize_word; cbn [fst snd].
+    all: try (eapply time_square_subsumes;
+      [eapply word_value_unary_time_bound; [reflexivity|apply wrap_is_word]|lia|lia]).
+    all: try (eapply time_square_subsumes;
+      [eapply word_value_binary_time_bound; [reflexivity|apply wrap_is_word|
+        apply wrap_is_word]|lia|lia]).
+    all: try (eapply time_square_subsumes;
+      [eapply word_value_comparison_time_bound; [reflexivity|apply wrap_is_word|
+        apply wrap_is_word]|lia|lia]).
+    all: match goal with
+    | |- (_ <= 262144 * N.of_nat ((?base ^ 2)%nat))%N =>
+        set (budget := N.of_nat ((base ^ 2)%nat));
+        assert (Hpositive : (1 <= budget)%N)
+          by (unfold budget; apply (time_square_floor 1 base); lia)
+    end.
+    all: try (time_unfold T_op_value; time_simpl; time_cbn_all; lia).
+    - pose proof (Z.T_eqb_le (wrap 1%positive x) 1) as Heq.
+      pose proof (time_of_nat_le _ _ (word_wrap_size_bound 1%positive x)) as Hsize.
+      clearbody budget. time_unfold T_op_value. time_simpl. time_cbn_all. lia.
+    - assert (Hsigned : (T_signed a (wrap a x) <= 512 * budget)%N).
+      { unfold budget. eapply time_square_weaken.
+        - apply (word_unary_width_bound _ _ a _ word_signed_time_bound), wrap_is_word.
+        - lia. }
+      clearbody budget. time_unfold T_op_value. time_simpl. time_cbn_all. lia.
+    - assert (Hrange : (0 <= Z.of_nat lo < Zpos a)%Z).
+      { split; [lia|rewrite <- positive_nat_Z; apply Nat2Z.inj_lt; lia]. }
+      pose proof (word_power_time_bound a (Z.of_nat lo) ltac:(lia)) as Hpow.
+      assert (Hdiv : (Z.T_div (wrap a x) (2 ^ Z.of_nat lo) <= 64 * budget)%N).
+      { unfold budget. eapply time_square_weaken.
+        - apply integer_div_word_time_bound; [apply wrap_is_word|apply pow2_word; exact Hrange].
+        - lia. }
+      assert (Hlinear : (N.of_nat (Pos.to_nat a + 1) <= budget)%N).
+      { unfold budget. apply time_square_floor; lia. }
+      assert (Hconvert : (Op.Z.T_of_nat lo <= 8 * budget)%N).
+      { unfold budget. eapply time_square_weaken; [apply natural_to_integer_time_bound|lia]. }
+      clearbody budget. time_unfold T_op_value. time_simpl. time_cbn_all. lia.
+    - pose proof (word_wrap_size_bound a x) as Hsx.
+      pose proof (word_wrap_size_bound b y) as Hsy.
+      pose proof (word_modulus_size_bound b) as Hsm.
+      pose proof (integer_mul_size (wrap a x) (modulus b)) as Hproduct.
+      assert (Hmul : (Z.T_mul (wrap a x) (modulus b) <= 8 * budget)%N).
+      { unfold budget. pose proof (Z.T_mul_le (wrap a x) (modulus b)) as Htime.
+        apply time_of_nat_le in Hsx. apply time_of_nat_le in Hsm.
+        rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *. nia. }
+      pose proof (Z.T_add_le (wrap a x * modulus b) (wrap b y)) as Hadd.
+      pose proof (word_modulus_time_bound b) as Hmodulus.
+      assert (Hlinear : (N.of_nat (Pos.to_nat a + Pos.to_nat b + 1) <= budget)%N).
+      { unfold budget. apply time_square_floor; lia. }
+      apply time_of_nat_le in Hsx. apply time_of_nat_le in Hsy.
+      apply time_of_nat_le in Hsm. apply time_of_nat_le in Hproduct.
+      clearbody budget. time_unfold T_op_value. time_simpl.
+      rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
+
+  (** Operand widths never exceed the widths plus raw magnitude sizes. *)
+  Lemma word_widths_bits xs :
+    (fold_right Nat.add 0 (map (fun c => Pos.to_nat (fst c)) xs) <=
+      fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) xs))%nat.
+  Proof.
+    induction xs as [|[w z] xs IH]; cbn [map fold_right fst snd]; lia.
+  Qed.
+
+  (** Every positive operand width pays for its list entry. *)
+  Lemma word_operand_length xs :
+    (length xs <= fold_right Nat.add 0
+      (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) xs))%nat.
+  Proof.
+    induction xs as [|[w z] xs IH]; cbn [length map fold_right fst snd];
+      [lia|pose proof (Pos2Nat.is_pos w); lia].
+  Qed.
+
+  (** Normalizing an operand list fits a square of its total raw bit budget. *)
+  Lemma word_normalize_time_bound xs :
+    (ListDef.T_map normalize_word (fun c => T_normalize_word c) xs <=
+      128 * N.of_nat (((fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) xs) + 1) ^ 2)%nat))%N.
+  Proof.
+    induction xs as [|[w z] xs IH].
+    - time_unfold (@ListDef.T_map). cbn. lia.
+    - time_unfold (@ListDef.T_map). unfold T_normalize_word at 1.
+      cbn [map fold_right fst snd] in *. time_simpl.
+      pose proof (word_wrap_time_bound w z) as Hwrap.
+      set (charge := (Pos.to_nat w + Z.size_nat z)%nat) in *.
+      assert (Hpositive : (1 <= charge)%nat)
+        by (unfold charge; pose proof (Pos2Nat.is_pos w); lia).
+      apply time_of_nat_le in Hpositive. clearbody charge.
+      rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all;
+        rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Evaluation charges width checking, normalization, value dispatch and the final wrap. *)
+  Lemma word_eval_time_bound o xs :
+    (Op.T_eval_op o xs <= 524288 * N.of_nat (((op_widths o +
+      fold_right Nat.add 0
+        (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) xs) + 1) ^ 2)%nat))%N.
+  Proof.
+    pose proof (word_widths_bits xs) as Hwidths.
+    set (raw := (fold_right Nat.add 0
+      (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) xs))%nat) in *.
+    set (base := (op_widths o + raw + 1)%nat).
+    set (budget := N.of_nat (base ^ 2)).
+    assert (Hpositive : (1 <= budget)%N).
+    { unfold budget. apply (time_square_floor 1 base); unfold base; lia. }
+    assert (Hlinear : (N.of_nat (raw + 1) <= budget)%N).
+    { unfold budget, base. apply time_square_floor; lia. }
+    assert (Hprojection : (ListDef.T_map (@fst width Z)
+      (fun c => @Datatypes.T_fst width Z c) xs <= 4 * budget)%N).
+    { pose proof (ListDef.T_map_le (@fst width Z) (fun c => @Datatypes.T_fst width Z c)
+        1 xs ltac:(intros [w z]; time_step)) as Hmap.
+      pose proof (time_of_nat_le _ _ (word_operand_length xs)) as Hlength.
+      fold raw in Hlength. rewrite Nat2N.inj_add in Hlinear.
+      unfold word, width in *. time_cbn_all. lia. }
+    assert (Hmetadata : (T_result_width o (map fst xs) <= 128 * budget)%N).
+    { unfold budget, base. eapply time_square_weaken; [apply result_width_time_bound|].
+      rewrite map_map. unfold word, width in *. lia. }
+    assert (Hnormalize : (ListDef.T_map normalize_word (fun c => T_normalize_word c) xs <=
+      128 * budget)%N).
+    { unfold budget, base. eapply time_square_weaken.
+      - unfold raw. apply word_normalize_time_bound.
+      - lia. }
+    time_unfold Op.T_eval_op. destruct (result_width o (map fst xs)) as [rw|] eqn:Hwidth.
+    - assert (Hvalue : (T_op_value o (map normalize_word xs) <= 262144 * budget)%N).
+      { unfold budget, base. eapply time_square_weaken.
+        - apply (word_value_time_bound o xs rw Hwidth).
+        - lia. }
+      assert (Hwrap : (T_wrap rw (op_value o (map normalize_word xs)) <=
+        (64 * 9) * budget)%N).
+      { unfold budget. eapply (time_square_scale _ 64 _ _ 3); [apply word_wrap_time_bound|].
+        pose proof (result_width_size_bound o (map fst xs) rw Hwidth) as Hresult.
+        rewrite map_map in Hresult. pose proof (word_value_size_bound o xs) as Hsize.
+        unfold base, word, width in *. lia. }
+      clearbody budget base raw. unfold word, width in *. time_cbn_all. lia.
+    - clearbody budget base raw. unfold word, width in *. time_cbn_all. lia.
+  Qed.
+
 End WordTime.
 
 
@@ -1223,10 +1490,24 @@ Module BitsLangT <: LANG_T.
   Definition work := work.
   TimeFun eval.
   TimeFun literal.
-  Definition c_lang : N := 1%N. (* STUB *)
+  Definition c_lang : N := 1048576%N.
   Lemma T_eval_le : forall o vs,
     (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z|o] vs.
+    - destruct vs as [|v vs].
+      + pose proof (WordTime.word_wrap_time_bound w z) as Hwrap.
+        unfold c_lang, work, Galois.Domains.BitsLang.work.
+        cbn [op_bits map fold_right]. rewrite Nat.add_0_r.
+        time_unfold T_eval. rewrite Nat2N.inj_add.
+        unfold word, width in *. time_cbn_all. lia.
+      + unfold c_lang. time_unfold T_eval.
+        rewrite Nat2N.inj_add. unfold word, width in *. time_cbn_all. lia.
+    - pose proof (WordTime.word_eval_time_bound o vs) as Heval.
+      unfold c_lang, work, Galois.Domains.BitsLang.work. cbn [op_bits].
+      time_unfold T_eval. rewrite Nat2N.inj_add.
+      unfold word, width in *. time_cbn_all. lia.
+  Qed.
   Lemma T_literal_le : forall o, (T_literal o <= c_lang)%N.
   Proof.
     intros o. unfold c_lang. time_step.
@@ -1239,11 +1520,20 @@ Module WordLanguageT <: WORD_LANGUAGE_T.
   TimeFun signed.
   TimeFun eval_op.
   TimeFun result_width.
-  Definition c_word : N := 1%N. (* STUB *)
+  Definition c_word : N := 1048576%N.
   Lemma T_eval_op_le : forall o cs,
     (T_eval_op o cs <=
       c_word * N.of_nat (((Op.op_widths o +
         fold_right Nat.add 0
           (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o cs. unfold c_word. pose proof (WordTime.word_eval_time_bound o cs) as Heval.
+    set (units := (Op.op_widths o + fold_right Nat.add 0
+      (map (fun c => Pos.to_nat (fst c) + Z.size_nat (snd c)) cs) + 1)%nat) in *.
+    set (budget := N.of_nat (units ^ 2)) in *.
+    assert (Hpositive : (1 <= budget)%N).
+    { unfold budget. apply (WordTime.time_square_floor 1 units); unfold units; lia. }
+    clearbody budget units. time_unfold T_eval_op.
+    unfold word, width in *. time_cbn_all. lia.
+  Qed.
 End WordLanguageT.
