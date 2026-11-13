@@ -376,7 +376,9 @@ Module Index (V : VALUE) <: INDEX V.
   Proof. Admitted. (* STUB *)
 
   Lemma mem_arity : forall a ix u, wf a ix -> mem ix u -> length u = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix u [_ Harity]. apply Harity.
+  Qed.
 
   Lemma node_root : forall a ix, wf a ix -> node ix (root ix) [].
   Proof.
@@ -440,19 +442,29 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     Pos.size_nat (next ix + Pos.of_nat (length r)) + tuple_bits r + max_cell_bits ix.
   (** Empty indexes have no encoded cells. *)
   Lemma max_cell_bits_empty : max_cell_bits empty = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Insertion adds at most the encoded width of its tuple. *)
   Lemma max_cell_bits_insert : forall r ix,
     max_cell_bits (insert r ix) <=
       Nat.max (max_cell_bits ix)
         (fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r ix. unfold insert, insert_finish, max_cell_bits.
+    destruct (contains r ix); cbn [mark_terminal index_cell_width].
+    - apply Nat.le_max_l.
+    - apply Nat.le_refl.
+  Qed.
 
   (** Removal never increases the stored cell width. *)
   Lemma max_cell_bits_remove : forall r ix,
     max_cell_bits (remove r ix) <= max_cell_bits ix.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r ix. unfold remove, remove_finish, max_cell_bits.
+    destruct (contains r ix); cbn [mark_terminal index_cell_width]; apply Nat.le_refl.
+  Qed.
 
   (** Every stored cell fits the recorded cell width. *)
   Lemma max_cell_bits_mem : forall a ix u c, wf a ix -> mem ix u -> In c u ->
@@ -462,7 +474,9 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma width_le : forall ix r,
     width ix r <= Pos.size_nat (next ix + Pos.of_nat (length r)) +
       fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix r. apply Nat.le_refl.
+  Qed.
 
   Definition c_ix : N := (1024 * (PTrieT.c_trie + V.c_key + 1))%N.
   (** The fresh node counter is stored. *)
@@ -508,7 +522,9 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
     wf a ix <-> inv ix /\ (forall u, mem ix u -> length u = a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix. reflexivity.
+  Qed.
 
   Lemma insert_path : forall ix r, inv ix -> inv (insert r ix).
   Proof. Admitted. (* STUB *)
@@ -522,11 +538,15 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
 
   (** Edge maps use the shared binary trie contracts. *)
   Lemma c_map_source : c_map = PTrieT.c_trie.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Definition k_walk : N := (512 * (PTrieT.c_trie + V.c_key + 1))%N.
   (** The public constant absorbs the aggregate path and wrapper charges. *)
   Lemma c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_map, k_walk, c_ix. lia.
+  Qed.
   (** Each insertion step uses the width of the complete original walk. *)
   Lemma T_insert_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
     (T_insert_step_st (fold_left insert_step_st pre (start ix)) c <=
@@ -550,12 +570,16 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   (** Insertion follows its named state walk. *)
   Lemma F_insert_steps : forall r ix, inv ix ->
     insert r ix = insert_finish r ix (fold_left insert_step_st r (start ix)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Removal follows its named state walk. *)
   Lemma F_remove_steps : forall r ix, inv ix ->
     remove r ix = remove_finish r ix (fold_left remove_step_st r (start ix)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Insertion aggregates the path-step charges. *)
   Lemma T_insert_steps : forall r ix, inv ix ->
