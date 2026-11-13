@@ -1965,6 +1965,87 @@ Module Index (V : VALUE) <: INDEX V.
         split; [cbn [seek]; now rewrite Hchild | exact Hsuffix].
   Qed.
 
+  Lemma deleted_member_is_target : forall original ix ix' n c edge pre suf,
+    valid original -> refines original ix -> node original n pre ->
+    stored_edge original n (encode_cell c) edge -> edge_count edge = 1%N ->
+    contains_from (edge_child edge) suf original = true ->
+    child ix n c = Some (edge_child edge) ->
+    (forall q d, q <> n \/ encode_cell d <> encode_cell c -> child ix' q d = child ix q d) ->
+    (forall q, node_terminal (read_node ix' q) = node_terminal (read_node ix q)) ->
+    forall u, mem ix u -> contains u ix' = false -> u = pre ++ c :: suf.
+  Proof.
+    intros original ix ix' n c edge pre suf Hvalid Hrefines Hnode Hget Hone Hsuffix
+      Hchild Hother Hterminal u Hmember Hmissing.
+    pose proof (valid_shape original Hvalid) as Hshape.
+    destruct Hvalid as [_ [_ [_ [_ [_ Hcounts]]]]].
+    destruct (edge_deletion_loss ix ix' n c (edge_child edge) Hchild Hother Hterminal
+      u 1%positive Hmember Hmissing) as [prefix [suffix [Htuple [Hprefix Htail]]]].
+    pose proof (seek_refinement original ix Hrefines prefix 1%positive n Hprefix) as Hprefix'.
+    assert (Hprefix_eq : prefix = pre).
+    { eapply (shape_paths_unique original Hshape); [exact Hprefix' | exact Hnode]. }
+    subst prefix.
+    pose proof (contains_from_refinement original ix Hrefines suffix (edge_child edge) Htail)
+      as Htail'.
+    pose proof (counted_edge_singleton original n (encode_cell c) edge Hcounts Hget Hone
+      suffix suf Htail' Hsuffix) as Hsuffix_eq.
+    now rewrite Hsuffix_eq in Htuple.
+  Qed.
+
+  Lemma remove_step_preserves_other : forall original ix n c pre suf u,
+    valid original -> shape ix -> refines original ix ->
+    read_node ix n = read_node original n -> node original n pre ->
+    mem original (pre ++ c :: suf) -> u <> pre ++ c :: suf -> mem ix u ->
+    mem (fst (remove_step_st (ix, n) c)) u.
+  Proof.
+    intros original ix n c pre suf u Hvalid [_ [Htable _]] Hrefines Hread Hnode
+      Htarget Hneq Hmember.
+    pose proof (proj1 (proj2 (valid_shape original Hvalid))) as Htable_original.
+    unfold remove_step_st. destruct (Pos.ltb (next ix) n) eqn:Hguard; [exact Hmember |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| exact Hmember].
+    assert (Horiginal : stored_edge original n (encode_cell c) edge).
+    { unfold stored_edge. rewrite <- Hread. exact Hget. }
+    destruct (N.eqb (edge_count edge) 1%N) eqn:Hone; cbn [fst].
+    - set (out := write_node ix n
+        (IndexNode (PTrieCode.remove (encode_cell c) (node_edges (read_node ix n)))
+          (N.pred (node_degree (read_node ix n))) (node_terminal (read_node ix n)))
+        (next ix)).
+      assert (Htable' : table_ok out).
+      { unfold out. apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl]. }
+      change (contains u out = true).
+      destruct (contains u out) eqn:Hpresent; [reflexivity |].
+      exfalso. apply Hneq.
+      eapply (deleted_member_is_target original ix out n c edge pre suf);
+        try exact Hvalid; try exact Hrefines; try exact Hnode; try exact Horiginal;
+        try exact Hmember; try exact Hpresent.
+      + now apply N.eqb_eq.
+      + pose proof (proj1 (node_member_suffix original n pre (c :: suf) Hnode) Htarget)
+          as Htail.
+        rewrite contains_from_cons in Htail.
+        rewrite child_raw in Htail by exact Htable_original.
+        unfold stored_edge in Horiginal. rewrite Horiginal in Htail. exact Htail.
+      + rewrite child_raw by exact Htable. rewrite Hget. reflexivity.
+      + intros q d Hdiff. unfold out. apply child_drop_edge_other; assumption.
+      + intro q. unfold out. apply terminal_drop_edge.
+    - set (out := write_node ix n
+        (IndexNode (PTrieCode.set (encode_cell c)
+          (IndexEdge (edge_cell edge) (edge_child edge) (N.pred (edge_count edge)))
+          (node_edges (read_node ix n))) (node_degree (read_node ix n))
+          (node_terminal (read_node ix n))) (next ix)).
+      assert (Htable' : table_ok out).
+      { unfold out. apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl]. }
+      assert (Hchildren : forall q d, child out q d = child ix q d).
+      { intros q d. unfold out. eapply child_put_edge_existing with (old := edge);
+          try assumption; reflexivity. }
+      assert (Hterminal : forall q,
+        node_terminal (read_node out q) = node_terminal (read_node ix q)).
+      { intro q. unfold out. apply terminal_put_edge. }
+      change (contains_from 1%positive u out = true).
+      rewrite (contains_from_extensional ix out Hchildren Hterminal u 1%positive).
+      exact Hmember.
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
