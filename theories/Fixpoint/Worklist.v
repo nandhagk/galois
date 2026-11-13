@@ -7984,10 +7984,10 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
   Lemma F10_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
     V.reachable p pol s -> S.post_solution p s' ->
     forall x, L.leb (V.look s x) (s' x) = true.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: V only guarantees bottom preparation under prio_ok. *)
   (** A solved widening-free candidate lies below every post-solution. *)
   Lemma run_least : forall p pol fuel m s', S.wf p -> S.monotone p ->
     widening_free pol -> V.run p pol fuel = Solved m -> S.post_solution p s' ->
     forall x, L.leb (look_or S.key_code L.bot m x) (s' x) = true.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: abstract V lacks unconditional bottom initialization. *)
 End WorklistLeast.
