@@ -334,3 +334,66 @@ Proof.
 Qed.
 
 End FreshConstructor.
+
+(** * Preserving a model while inserting or combining one row *)
+
+Section PutView.
+Context {V : Type} (merge : positive -> V -> V -> V).
+Context (M : model (V := V)) (nu : positive -> carrier M).
+
+(** True constructor outputs for the same arguments have equal meanings. *)
+Local Lemma put_constructor_outputs_agree : forall w f k a b,
+  holds M nu w f k (Some (Id a)) -> holds M nu w f k (Some (Id b)) -> nu a = nu b.
+Proof.
+  intros w f k a b Hleft Hright. unfold holds in Hleft, Hright.
+  destruct (kind w f) as [[| |m] |]; try contradiction; congruence.
+Qed.
+
+(** A true row and its justified identifier conflicts preserve a satisfying interpretation. *)
+Lemma sat_put_view : forall w w' f k o ck co previous,
+  let updated :=
+    match previous, kind w f, co with
+    | Some (Some (Val a)), Some (OLat m), Some (Val b) => Some (Val (merge m a b))
+    | Some old, _, _ => old
+    | None, _, _ => co
+    end in
+  sat merge M nu w -> kind w' = kind w ->
+  (forall old, previous = Some old -> row w f ck old) ->
+  map (den nu) ck = map (den nu) k ->
+  option_map (den nu) co = option_map (den nu) o -> holds M nu w f k o ->
+  (forall g args output, row w' g args output ->
+    row w g args output \/ (g = f /\ args = ck /\ output = updated)) ->
+  (forall a b, same w' a b -> clos_refl_sym_trans positive
+    (fun x y => same w x y \/ (previous = Some (Some (Id x)) /\ co = Some (Id y))) a b) ->
+  sat merge M nu w'.
+Proof.
+  intros w w' f k o ck co previous updated [Hrows [Hsame Hlat]] Hkind Hlookup
+    Hargs Hout Hholds Hrows_new Hsame_new.
+  assert (Hcanonical : holds M nu w f ck co).
+  { exact (@holds_transport V M nu nu w w f k ck o co eq_refl Hargs Hout Hholds). }
+  assert (Hprevious : forall old, previous = Some old -> holds M nu w f ck old).
+  { intros old Hlookup_old. exact (Hrows f ck old (Hlookup old Hlookup_old)). }
+  assert (Hupdated : holds M nu w f ck updated).
+  { exact (@holds_combine V merge M nu w f ck previous co Hlat Hprevious Hcanonical). }
+  assert (Hgenerators : forall a b,
+    same w a b \/ (previous = Some (Some (Id a)) /\ co = Some (Id b)) -> nu a = nu b).
+  { intros a b [Hrelated | [Hprevious_id Hnew_id]].
+    - exact (Hsame a b Hrelated).
+    - eapply put_constructor_outputs_agree.
+      + exact (Hprevious (Some (Id a)) Hprevious_id).
+      + now rewrite <- Hnew_id. }
+  split.
+  - intros g args output Hrow. unfold holds. rewrite Hkind.
+    apply Hrows_new in Hrow as [Hrow | [-> [-> ->]]].
+    + exact (Hrows g args output Hrow).
+    + exact Hupdated.
+  - split.
+    + intros a b Hrelated.
+      eapply (@equality_closure_den V M nu
+        (fun x y => same w x y \/ (previous = Some (Some (Id x)) /\ co = Some (Id y)))).
+      * exact Hgenerators.
+      * exact (Hsame_new a b Hrelated).
+    + unfold lat_closed in *. now rewrite Hkind.
+Qed.
+
+End PutView.
