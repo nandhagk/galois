@@ -4423,6 +4423,152 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - intros i j Hsame. now rewrite row_delete_same in Hsame.
   Qed.
 
+  (** Deleting a row never modifies identifier representatives. *)
+  Lemma row_delete_forest : forall f k db,
+    db_forest (row_delete f k db) = db_forest db.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [o |]; [| reflexivity].
+    change (db_forest (slots_update false f (k ++ option_list o) db) = db_forest db).
+    apply slots_update_forest.
+  Qed.
+
+  (** Conflict resolution preserves declarations even during an active repair batch. *)
+  Lemma output_conflict_kind_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    kind (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = kind (view db).
+  Proof.
+    intros db previous co.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Conflict resolution changes no rows, independently of queue coverage. *)
+  Lemma output_conflict_rows_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    row (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) = row (view db).
+  Proof.
+    intros db previous co.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Every newly logged equality comes from the actual two conflicting outputs. *)
+  Lemma output_conflict_same_sources_raw : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)) i j,
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j.
+  Proof.
+    intros db previous co i j Hsame.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try solve [apply rst_step; now left].
+    unfold union in Hsame.
+    destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - apply (proj1 (equality_log_cons a b (runtime_equalities (db_runtime db)) i j)) in Hsame.
+      eapply equality_closure_mono; [| exact Hsame].
+      intros x y [Hold | Hpair]; [now left |].
+      right. injection Hpair as -> ->. split; reflexivity.
+    - apply rst_step. now left.
+  Qed.
+
+  (** Put preserves declarations without requiring a quiet public database invariant. *)
+  Lemma put_kind_raw : forall db f k o, kind (view (put f k o db)) = kind (view db).
+  Proof.
+    intros db f k o. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hkind : kind (view next) = kind (view db)) by apply output_conflict_kind_raw.
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hkind |]. now rewrite row_replace_kind.
+    - now rewrite row_replace_kind.
+  Qed.
+
+  (** The executed normalizers determine the only row that a put can add. *)
+  Lemma put_row_sources_raw : forall db f k o g args output,
+    row (view (put f k o db)) g args output ->
+      row (view db) g args output \/
+      (g = f /\ args = normal_key db k /\
+        output = combine_output db f (row_get f (normal_key db k) db)
+          (option_map (normal_cell db) o)).
+  Proof.
+    intros db f k o g args output. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)) by apply output_conflict_rows_raw.
+    intro Hrow. destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + left. now rewrite <- Hrows.
+      + apply row_replace_sources in Hrow as [Hold | Hnew].
+        * left. now rewrite <- Hrows.
+        * now right.
+    - apply row_replace_sources in Hrow as [Hold | Hnew].
+      + left. now rewrite <- Hrows.
+      + now right.
+  Qed.
+
+  (** Put logs only old equalities and conflicts at its actually normalized key. *)
+  Lemma put_same_sources_raw : forall db f k o i j,
+    same (view (put f k o db)) i j ->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (row_get f (normal_key db k) db = Some (Some (Id x)) /\
+          option_map (normal_cell db) o = Some (Id y))) i j.
+  Proof.
+    intros db f k o i j. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hsame : forall a b, same (view next) a b ->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/
+          (previous = Some (Some (Id x)) /\ co = Some (Id y))) a b).
+    { apply output_conflict_same_sources_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [apply Hsame |].
+      rewrite row_replace_same. apply Hsame.
+    - rewrite row_replace_same. apply Hsame.
+  Qed.
+
+  (** Put is semantically sound whenever its actual normalization preserves meaning. *)
+  Lemma put_sat_normal_meaning : forall (M : model (V := V.t)) nu db f k o,
+    sat V.merge M nu (view db) ->
+    (forall c, den nu (normal_cell db c) = den nu c) ->
+    holds M nu (view db) f k o -> sat V.merge M nu (view (put f k o db)).
+  Proof.
+    intros M nu db f k o Hsat Hnormal Hholds.
+    eapply (@sat_put_view V.t V.merge M nu (view db) (view (put f k o db)) f k o
+      (normal_key db k) (option_map (normal_cell db) o) (row_get f (normal_key db k) db)).
+    - exact Hsat.
+    - apply put_kind_raw.
+    - intros before Hprevious. exact Hprevious.
+    - unfold normal_key. rewrite map_map. apply map_ext. exact Hnormal.
+    - destruct o as [c |]; cbn [option_map]; [now rewrite Hnormal | reflexivity].
+    - exact Hholds.
+    - apply put_row_sources_raw.
+    - apply put_same_sources_raw.
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
