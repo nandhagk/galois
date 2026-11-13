@@ -2236,6 +2236,23 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_checked_time : forall w lo hi,
+    (T_interval_checked w lo hi <=
+      100 * N.of_nat (Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + 1))%N.
+  Proof.
+    intros w lo hi.
+    pose proof (PayloadBounds.payload_modulus_time w) as Hmodulus_time.
+    pose proof (PayloadBounds.payload_modulus_bits w) as Hmodulus_bits.
+    pose proof (Std.Z.T_leb_le 0 lo) as Hleb.
+    pose proof (Std.Z.T_ltb_le hi (Word.modulus w)) as Hltb.
+    pose proof (Std.Z.T_sub_le (Word.modulus w) 1) as Hsub.
+    unfold T_interval_checked.
+    time_simpl. time_cbn. time_pose. time_cbn_all.
+    destruct (Z.leb 0 lo && Z.ltb hi (Z.pow_pos 2 w));
+      unfold T_interval_top; time_simpl; time_cbn; time_pose; time_cbn_all;
+      rewrite !Nat2N.inj_add in *; lia.
+  Qed.
+
   Local Lemma table_raw_size : forall w a, interval_bits a <= W.psize w a.
   Proof.
     intros w a.
