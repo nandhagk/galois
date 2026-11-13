@@ -1652,6 +1652,261 @@ Module Index (V : VALUE) <: INDEX V.
     - rewrite remove_walk_width. apply Nat.le_refl.
   Qed.
 
+  Definition refines (ix ix' : t) : Prop :=
+    (forall n c m, child ix' n c = Some m -> child ix n c = Some m) /\
+    (forall n, node_terminal (read_node ix' n) = true ->
+      node_terminal (read_node ix n) = true).
+
+  Lemma refines_refl : forall ix, refines ix ix.
+  Proof.
+    intro ix. split; auto.
+  Qed.
+
+  Lemma refines_trans : forall ix ix' ix'', refines ix ix' -> refines ix' ix'' ->
+    refines ix ix''.
+  Proof.
+    intros ix ix' ix'' [Hedges Hterminal] [Hedges' Hterminal']. split.
+    - intros n c m Hchild. apply Hedges. now apply Hedges'.
+    - intros n Hterm. apply Hterminal. now apply Hterminal'.
+  Qed.
+
+  Lemma seek_refinement : forall ix ix', refines ix ix' ->
+    forall r n m, seek ix' n r = Some m -> seek ix n r = Some m.
+  Proof.
+    intros ix ix' [Hedges _] r. induction r as [| c r IH]; intros n m Hseek.
+    - exact Hseek.
+    - cbn [seek] in *. destruct (child ix' n c) as [q |] eqn:Hchild; [| discriminate].
+      rewrite (Hedges n c q Hchild). now apply IH.
+  Qed.
+
+  Lemma contains_from_refinement : forall ix ix', refines ix ix' ->
+    forall r n, contains_from n r ix' = true -> contains_from n r ix = true.
+  Proof.
+    intros ix ix' [Hedges Hterminal] r. induction r as [| c r IH]; intros n Hmember.
+    - apply Hterminal. exact Hmember.
+    - rewrite contains_from_cons in *. destruct (child ix' n c) as [q |] eqn:Hchild;
+        [| discriminate].
+      rewrite (Hedges n c q Hchild). now apply IH.
+  Qed.
+
+  Lemma terminal_drop_edge : forall ix n code degree counter q,
+    node_terminal (read_node
+      (write_node ix n
+        (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree
+          (node_terminal (read_node ix n))) counter) q) =
+      node_terminal (read_node ix q).
+  Proof.
+    intros ix n code degree counter q. destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_write_same. reflexivity.
+    - now rewrite read_node_write_other.
+  Qed.
+
+  Lemma child_drop_edge_other : forall ix n code degree counter q c,
+    table_ok ix ->
+    table_ok (write_node ix n
+      (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) ->
+    (q <> n \/ encode_cell c <> code) ->
+    child (write_node ix n
+      (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) q c = child ix q c.
+  Proof.
+    intros ix n code degree counter q c Htable Htable' Hother.
+    rewrite !child_raw by assumption.
+    destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_write_same. cbn [node_edges].
+      rewrite PTrie.get_remove_other by tauto. reflexivity.
+    - rewrite read_node_write_other by exact Hneq. reflexivity.
+  Qed.
+
+  Lemma child_drop_edge_same : forall ix n c degree counter,
+    table_ok (write_node ix n
+      (IndexNode (PTrieCode.remove (encode_cell c) (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) ->
+    child (write_node ix n
+      (IndexNode (PTrieCode.remove (encode_cell c) (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) n c = None.
+  Proof.
+    intros ix n c degree counter Htable.
+    rewrite child_raw by exact Htable. rewrite read_node_write_same. cbn [node_edges].
+    rewrite PTrie.get_remove_same. reflexivity.
+  Qed.
+
+  Lemma child_drop_edge_refinement : forall ix n code degree counter,
+    table_ok ix ->
+    table_ok (write_node ix n
+      (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) ->
+    forall q c m,
+    child (write_node ix n
+      (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) q c = Some m -> child ix q c = Some m.
+  Proof.
+    intros ix n code degree counter Htable Htable' q c m Hchild.
+    rewrite child_raw in Hchild by exact Htable'.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node
+      (write_node ix n
+        (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree
+          (node_terminal (read_node ix n))) counter) q))) as [edge |] eqn:Hget;
+      [| discriminate].
+    apply stored_edge_drop in Hget as [_ Hget].
+    rewrite child_raw by exact Htable. rewrite Hget. exact Hchild.
+  Qed.
+
+  Lemma remove_step_refines : forall st c, shape (fst st) ->
+    refines (fst st) (fst (remove_step_st st c)).
+  Proof.
+    intros [ix n] c [_ [Htable _]]. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard; [apply refines_refl |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| apply refines_refl].
+    destruct (N.eqb (edge_count edge) 1%N); cbn [fst]; split.
+    - apply child_drop_edge_refinement; [exact Htable |].
+      apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl].
+    - intros q Hterm. rewrite terminal_drop_edge in Hterm. exact Hterm.
+    - intros q d m Hchild.
+      rewrite (child_put_edge_existing ix n (encode_cell c) edge) in Hchild;
+        [exact Hchild | exact Htable | | exact Hget | reflexivity].
+      apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl].
+    - intros q Hterm. rewrite terminal_put_edge in Hterm. exact Hterm.
+  Qed.
+
+  Lemma remove_walk_refines : forall r st, shape (fst st) ->
+    refines (fst st) (fst (fold_left remove_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros st Hshape; cbn [fold_left]; [apply refines_refl |].
+    eapply refines_trans; [now apply remove_step_refines |].
+    apply IH. now apply shape_remove_step.
+  Qed.
+
+  Lemma mark_terminal_delete_refines : forall ix n bits,
+    refines ix (mark_terminal ix n false bits).
+  Proof.
+    intros ix n bits. split.
+    - intros q c m Hchild. now rewrite child_mark_terminal in Hchild.
+    - intros q Hterm. destruct (Pos.eq_dec q n) as [-> | Hneq].
+      + rewrite read_node_mark_same in Hterm. discriminate.
+      + now rewrite read_node_mark_other in Hterm.
+  Qed.
+
+  Lemma remove_refines : forall ix r, shape ix -> refines ix (remove r ix).
+  Proof.
+    intros ix r Hshape. unfold remove, remove_finish.
+    destruct (contains r ix); [| apply refines_refl].
+    eapply refines_trans; [| apply mark_terminal_delete_refines].
+    apply remove_walk_refines. exact Hshape.
+  Qed.
+
+  Lemma remove_no_add : forall ix r u, shape ix -> mem (remove r ix) u -> mem ix u.
+  Proof.
+    intros ix r u Hshape Hmember.
+    exact (contains_from_refinement ix (remove r ix) (remove_refines ix r Hshape)
+      u 1%positive Hmember).
+  Qed.
+
+  (** A write below a starting node cannot affect any of its increasing paths. *)
+  Lemma seek_above_change : forall ix ix' cut,
+    edge_shape ix -> table_ok ix -> table_ok ix' ->
+    (forall q, q <> cut -> read_node ix' q = read_node ix q) ->
+    forall r q, (cut < q)%positive -> seek ix' q r = seek ix q r.
+  Proof.
+    intros ix ix' cut Hshape Htable Htable' Hread r.
+    induction r as [| c r IH]; intros q Habove; cbn [seek]; [reflexivity |].
+    assert (Hneq : q <> cut) by (intro Heq; subst q; exact (Pos.lt_irrefl _ Habove)).
+    assert (Hchild : child ix' q c = child ix q c).
+    { rewrite !child_raw by assumption. now rewrite Hread. }
+    rewrite Hchild. destruct (child ix q c) as [m |] eqn:Hedge; [| reflexivity].
+    apply IH. eapply Pos.lt_trans; [exact Habove |].
+    exact (proj1 (child_forward ix q c m Hshape Hedge)).
+  Qed.
+
+  Lemma contains_from_above_change : forall ix ix' cut,
+    edge_shape ix -> table_ok ix -> table_ok ix' ->
+    (forall q, q <> cut -> read_node ix' q = read_node ix q) ->
+    forall r q, (cut < q)%positive -> contains_from q r ix' = contains_from q r ix.
+  Proof.
+    intros ix ix' cut Hshape Htable Htable' Hread r q Habove. unfold contains_from.
+    rewrite (seek_above_change ix ix' cut Hshape Htable Htable' Hread r q Habove).
+    destruct (seek ix q r) as [m |] eqn:Hseek; [| reflexivity].
+    rewrite Hread; [reflexivity |].
+    intro Heq. subst m. pose proof (seek_forward ix r q cut Hshape Hseek) as Hle.
+    apply Pos.lt_nle in Habove. contradiction.
+  Qed.
+
+  Lemma remove_step_other_nodes : forall st c q, q <> snd st ->
+    read_node (fst (remove_step_st st c)) q = read_node (fst st) q.
+  Proof.
+    intros [ix n] c q Hneq. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [reflexivity |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |]; [| reflexivity].
+    destruct (N.eqb (edge_count edge) 1%N); cbn [fst];
+      now rewrite read_node_write_other.
+  Qed.
+
+  Lemma remove_step_pointer : forall ix n c m, child ix n c = Some m ->
+    snd (remove_step_st (ix, n) c) = m.
+  Proof.
+    intros ix n c m Hchild. unfold child in Hchild. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [discriminate |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |]; [| discriminate].
+    injection Hchild as <-. destruct (N.eqb (edge_count edge) 1%N); reflexivity.
+  Qed.
+
+  Lemma remove_step_descendant_seek : forall ix n c m, shape ix ->
+    child ix n c = Some m -> forall r,
+    seek (fst (remove_step_st (ix, n) c)) m r = seek ix m r.
+  Proof.
+    intros ix n c m [Hshape [Htable Hparents]] Hchild r.
+    eapply seek_above_change with (cut := n);
+      [exact Hshape | exact Htable | | |].
+    - apply table_ok_remove_step. exact Htable.
+    - intros q Hneq. exact (remove_step_other_nodes (ix, n) c q Hneq).
+    - exact (proj1 (child_forward ix n c m Hshape Hchild)).
+  Qed.
+
+  Lemma remove_walk_pointer : forall r st m, shape (fst st) ->
+    seek (fst st) (snd st) r = Some m -> snd (fold_left remove_step_st r st) = m.
+  Proof.
+    induction r as [| c r IH]; intros [ix n] m Hshape Hseek.
+    - cbn [fold_left seek fst snd] in *. now injection Hseek.
+    - cbn [fold_left seek fst snd] in *.
+      destruct (child ix n c) as [q |] eqn:Hchild; [| discriminate].
+      apply IH.
+      + apply shape_remove_step. exact Hshape.
+      + rewrite (remove_step_pointer ix n c q Hchild).
+        rewrite (remove_step_descendant_seek ix n c q Hshape Hchild). exact Hseek.
+  Qed.
+
+  Lemma remove_target_absent : forall ix r, shape ix -> ~ mem (remove r ix) r.
+  Proof.
+    intros ix r Hshape. unfold remove, remove_finish.
+    destruct (contains r ix) eqn:Hpresent.
+    - set (st := fold_left remove_step_st r (start ix)).
+      intro Hmember. unfold mem, contains in Hmember.
+      apply mark_terminal_delete in Hmember as [Hmissing Hbefore].
+      change (contains_from 1%positive r (fst st) = true) in Hbefore.
+      unfold contains_from in Hbefore.
+      destruct (seek (fst st) 1%positive r) as [m |] eqn:Hseek; [| discriminate].
+      pose proof (seek_refinement ix (fst st) (remove_walk_refines r (start ix) Hshape)
+        r 1%positive m Hseek) as Horiginal.
+      pose proof (remove_walk_pointer r (start ix) m Hshape Horiginal) as Hpointer.
+      change (snd st = m) in Hpointer.
+      apply Hmissing. change (seek (fst st) 1%positive r = Some (snd st)).
+      now rewrite Hpointer.
+    - intro Hmember. unfold mem in Hmember. congruence.
+  Qed.
+
+  Lemma remove_membership_sound : forall ix r u, shape ix -> mem (remove r ix) u ->
+    u <> r /\ mem ix u.
+  Proof.
+    intros ix r u Hshape Hmember. split.
+    - intro Heq. subst u. exact (remove_target_absent ix r Hshape Hmember).
+    - eapply remove_no_add; eassumption.
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
