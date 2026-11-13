@@ -4,7 +4,7 @@
     For example, modulus two and residue zero describe even words.
     Builds on: CongruenceSig and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith List Bool Wellfounded.Inverse_Image.
+From Stdlib Require Import ZArith Zpow_facts List Bool Lia Wellfounded.Inverse_Image.
 From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import CongruenceSig WordSig.
@@ -58,10 +58,146 @@ Module CongruenceCRT.
   Definition k_div : N := 1%N. (* STUB *)
   Definition k_gcd : N := 1%N. (* STUB *)
 
+  (** Powers indexed by natural successors double. *)
+  Lemma pow_nat_succ : forall n,
+    2 ^ Z.of_nat (S n) = 2 * 2 ^ Z.of_nat n.
+  Proof.
+    intro n. rewrite Nat2Z.inj_succ, Z.pow_succ_r by lia. reflexivity.
+  Qed.
+
+  (** Dividing an aligned doubled divisor by two is exact. *)
+  Lemma divisor_half : forall b n,
+    b * (2 * 2 ^ Z.of_nat n) / 2 = b * 2 ^ Z.of_nat n.
+  Proof.
+    intros b n.
+    replace (b * (2 * 2 ^ Z.of_nat n)) with ((b * 2 ^ Z.of_nat n) * 2) by ring.
+    apply Z.div_mul. lia.
+  Qed.
+
+  (** The scan preserves the represented dividend and ends with a canonical remainder.
+      The initial quotient is generalized because each recursive call shifts it. *)
+  Lemma div_scan_spec : forall bits b r q,
+    0 < b -> 0 <= r < b * 2 ^ Z.of_nat bits ->
+    let qr := div_scan bits (b * 2 ^ Z.of_nat bits / 2) r q in
+    0 <= snd qr < b /\
+    b * fst qr + snd qr = b * q * 2 ^ Z.of_nat bits + r.
+  Proof.
+    induction bits as [| bits IH]; intros b r q Hb Hr.
+    - cbn [div_scan fst snd].
+      rewrite Z.pow_0_r, !Z.mul_1_r in *.
+      split; [exact Hr | reflexivity].
+    - rewrite pow_nat_succ in Hr |- *.
+      rewrite divisor_half.
+      cbn [div_scan]. rewrite Z.div2_div.
+      destruct (b * 2 ^ Z.of_nat bits <=? r) eqn:Htake.
+      + apply Z.leb_le in Htake.
+        pose proof (IH b (r - b * 2 ^ Z.of_nat bits) (2 * q + 1)
+          Hb ltac:(nia)) as Hscan.
+        cbn beta zeta in Hscan |- *.
+        destruct Hscan as [Hrange Heq].
+        split; [exact Hrange |]. rewrite Heq. ring.
+      + apply Z.leb_gt in Htake.
+        pose proof (IH b r (2 * q) Hb ltac:(lia)) as Hscan.
+        cbn beta zeta in Hscan |- *.
+        destruct Hscan as [Hrange Heq].
+        split; [exact Hrange |]. rewrite Heq. ring.
+  Qed.
+
+  (** A nonnegative integer is below the power given by its bit length. *)
+  Lemma size_upper : forall a,
+    0 <= a -> a < 2 ^ Z.of_nat (Z.size_nat a).
+  Proof.
+    intros a Ha. destruct a as [| p | p]; cbn [Z.size_nat]; try lia.
+    apply Zpower2_Psize. lia.
+  Qed.
+
+  (** A positive integer reaches the preceding power of two. *)
+  Lemma size_lower : forall b,
+    0 < b -> 2 ^ Z.of_nat (Z.size_nat b - 1) <= b.
+  Proof.
+    intros b Hb. destruct b as [| p | p]; try lia.
+    cbn [Z.size_nat].
+    destruct (Z.lt_ge_cases (Z.pos p) (2 ^ Z.of_nat (Pos.size_nat p - 1)))
+      as [Hsmall | Hlower]; [| exact Hlower].
+    apply Zpower2_Psize in Hsmall.
+    pose proof (Pos.size_nat_pos p) as Hsize. lia.
+  Qed.
+
+  (** The released alignment always supplies enough quotient bits.
+      This stronger version does not need a >= b: truncated subtraction remains safe. *)
+  Lemma alignment_bound : forall a b,
+    0 <= a -> 0 < b ->
+    a < b * 2 ^ Z.of_nat (S (Z.size_nat a - Z.size_nat b)).
+  Proof.
+    intros a b Ha Hb.
+    pose proof (size_upper a Ha) as Hupper.
+    pose proof (size_lower b Hb) as Hlower.
+    assert (Hsize : (1 <= Z.size_nat b)%nat).
+    { destruct b as [| p | p]; try lia. apply Pos.size_nat_pos. }
+    assert (Hexponents : (Z.size_nat a <=
+      Z.size_nat b - 1 + S (Z.size_nat a - Z.size_nat b))%nat) by lia.
+    apply Nat2Z.inj_le in Hexponents.
+    rewrite Nat2Z.inj_add in Hexponents.
+    pose proof (Z.pow_le_mono_r 2 _ _ ltac:(lia) Hexponents) as Hpowers.
+    rewrite Z.pow_add_r in Hpowers by lia.
+    pose proof (Z.pow_pos_nonneg 2
+      (Z.of_nat (S (Z.size_nat a - Z.size_nat b))) ltac:(lia) ltac:(lia)) as Hpositive.
+    nia.
+  Qed.
+
+  (** The standard division pair has the usual quotient and remainder projections. *)
+  Lemma div_eucl_pair : forall a b,
+    Z.div_eucl a b = (a / b, a mod b).
+  Proof.
+    intros a b. unfold Z.div, Z.modulo.
+    destruct (Z.div_eucl a b). reflexivity.
+  Qed.
+
+  (** A sufficiently long aligned scan computes standard division. *)
+  Lemma scan_agrees : forall bits a b,
+    0 < b -> 0 <= a < b * 2 ^ Z.of_nat (S bits) ->
+    div_scan (S bits) (b * 2 ^ Z.of_nat bits) a 0 = (a / b, a mod b).
+  Proof.
+    intros bits a b Hb Ha.
+    pose proof (div_scan_spec (S bits) b a 0 Hb Ha) as Hscan.
+    rewrite pow_nat_succ, divisor_half in Hscan.
+    destruct (div_scan (S bits) (b * 2 ^ Z.of_nat bits) a 0) as [q r] eqn:Hresult.
+    cbn [fst snd] in Hscan.
+    destruct Hscan as [Hrange Heq].
+    assert (Hdivision : a = b * q + r) by nia.
+    pose proof (Z.div_unique_pos a b q r Hrange Hdivision) as Hq.
+    pose proof (Z.mod_unique_pos a b q r Hrange Hdivision) as Hr.
+    now subst q r.
+  Qed.
+
+
   (** Aligned division keeps the standard quotient and remainder on its input domain. *)
   Lemma F_div_aligned : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
     div_aligned a b = Z.div_eucl a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Ha Hb.
+    destruct a as [| p | p].
+    - destruct b as [| q | q]; try lia. reflexivity.
+    - destruct b as [| q | q]; try lia.
+      cbn [div_aligned].
+      destruct (Z.pos p <? Z.pos q) eqn:Hsmall.
+      + apply Z.ltb_lt in Hsmall.
+        rewrite div_eucl_pair, Z.div_small, Z.mod_small by lia.
+        reflexivity.
+      + rewrite div_eucl_pair, Z.shiftl_mul_pow2 by lia.
+        apply scan_agrees; [lia |].
+        split; [lia | apply alignment_bound; lia].
+    - lia.
+  Qed.
+
+  (** Negative or zero-divisor cases already use the standard fallback. *)
+  Lemma div_aligned_all : forall a b,
+    div_aligned a b = Z.div_eucl a b.
+  Proof.
+    intros a b. destruct a as [| p | p], b as [| q | q]; try reflexivity.
+    apply F_div_aligned; lia.
+  Qed.
+
 
   (** Division charges one dividend scan per quotient bit. *)
   Lemma T_div_aligned_le : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
@@ -85,21 +221,46 @@ Module CongruenceCRT.
   Definition nonnegative_remainders (s : congr_crt_state) : Prop :=
     (0 <= crt_r1 s /\ 0 <= crt_r2 s)%Z.
 
+  (** The first next-state component is the standard Euclidean remainder. *)
+  Lemma next_remainder : forall s,
+    crt_r1 s <> 0 -> crt_r1 (next s) = crt_r2 s mod crt_r1 s.
+  Proof.
+    intros s Hnonzero. unfold next. cbn [crt_r1].
+    rewrite div_aligned_all, div_eucl_pair.
+    cbn [fst]. rewrite Z.mod_eq by exact Hnonzero. ring.
+  Qed.
+
+
   (** Absolute-value initialization puts both remainders in the aligned division domain. *)
   Lemma initial_nonnegative : forall a b,
     nonnegative_remainders
       {| crt_r1 := Z.abs a; crt_u1 := Z.sgn a; crt_v1 := 0;
          crt_r2 := Z.abs b; crt_u2 := 0; crt_v2 := Z.sgn b |}.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. split; apply Z.abs_nonneg.
+  Qed.
 
   (** Every nonterminal reachable step keeps the remainders nonnegative. *)
   Lemma next_nonnegative : forall s, nonnegative_remainders s ->
     (crt_r1 s =? 0) = false -> nonnegative_remainders (next s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s [Hr1 Hr2] Hnonzero.
+    apply Z.eqb_neq in Hnonzero.
+    unfold nonnegative_remainders.
+    rewrite next_remainder by exact Hnonzero.
+    split.
+    - pose proof (Z.mod_pos_bound (crt_r2 s) (crt_r1 s) ltac:(lia)). lia.
+    - exact Hr1.
+  Qed.
 
   (** The Euclidean remainder strictly reduces the absolute first remainder. *)
   Lemma next_decreases : forall s, (crt_r1 s =? 0) = false -> lt (next s) s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s Hnonzero. apply Z.eqb_neq in Hnonzero.
+    unfold CongruenceCRT.lt. apply N2Z.inj_lt.
+    rewrite !N2Z.inj_abs_N, next_remainder by exact Hnonzero.
+    apply Z.mod_bound_abs. exact Hnonzero.
+  Qed.
 
   Definition step (s : congr_crt_state) :
       {s1 : congr_crt_state | lt s1 s} + (Z * Z * Z) :=
