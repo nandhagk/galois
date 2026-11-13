@@ -1212,6 +1212,33 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     clearbody unit. nia.
   Qed.
 
+  (** One level's scans and candidate probes fit its charged recursive work. *)
+  Lemma join_level_budget : forall F M D C : N,
+    (1 <= F)%N -> (1 <= M)%N -> (C + 1 <= F)%N ->
+    (1 + F + 64 * F * (M + 1) + (2 * M + C) + 2 * F * (D + 1) +
+      (D + 1) + (1 + 64 * F * (M + 1)) * D <=
+      4096 * F * (1 + M + M * (1 + D)))%N.
+  Proof.
+    intros F M D C HF HM HC.
+    assert (Hcolumns : (M <= F * M)%N).
+    { rewrite <- N.mul_1_l at 1. now apply N.mul_le_mono_r. }
+    assert (Hcandidates : (D <= F * D)%N).
+    { rewrite <- N.mul_1_l at 1. now apply N.mul_le_mono_r. }
+    assert (Hprobes : (F * D <= F * M * D)%N).
+    { replace (F * D)%N with (F * 1 * D)%N at 1 by ring.
+      apply N.mul_le_mono_r. now apply N.mul_le_mono_l. }
+    replace (1 + F + 64 * F * (M + 1) + (2 * M + C) + 2 * F * (D + 1) +
+      (D + 1) + (1 + 64 * F * (M + 1)) * D)%N with
+      (2 + C + 2 * M + 67 * F + 64 * (F * M) + 66 * (F * D) + 2 * D +
+        64 * (F * M * D))%N by ring.
+    replace (4096 * F * (1 + M + M * (1 + D)))%N with
+      (4096 * F + 8192 * (F * M) + 4096 * (F * M * D))%N by ring.
+    set (FM := (F * M)%N) in *.
+    set (FD := (F * D)%N) in *.
+    set (FMD := (FM * D)%N) in *.
+    clearbody FM FD FMD. lia.
+  Qed.
+
   (** This proof-only recursion counts every column probe and every surviving subtree. *)
   Fixpoint recursive_work (fuel : nat) (p : jplan) (ixs : list I.t) (lvl : nat)
       (ns : list positive) {struct fuel} : nat :=
