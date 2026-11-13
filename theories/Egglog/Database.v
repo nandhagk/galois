@@ -8163,6 +8163,161 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     clearbody factor. clear -Hone Hproject_budget. nia.
   Qed.
 
+  (** The outer wrapper pays its lookup, mutation pass, counter pass and actual recording. *)
+  Lemma T_slots_update_parts : forall db b f u,
+    let layouts := database_group_entries f (runtime_function_slots (db_runtime db)) in
+    let state := slot_update_many b u layouts (db_runtime db) in
+    (T_slots_update b f u db = 14 +
+      PTrieCode.T_get f (runtime_function_slots (db_runtime db)) +
+      T_slot_update_many b u layouts (db_runtime db) +
+      T_slot_updated_counters layouts state +
+      T_database_record_cache u (slot_updated_counters layouts state)
+        (database_set_runtime state db))%N.
+  Proof.
+    intros db b f u. cbn beta zeta. unfold database_group_entries.
+    time_unfold T_slots_update. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. lia.
+  Qed.
+
+  (** A complete function-group update charges every actual pass at the final width. *)
+  Lemma T_slots_update_width : forall db b f u, slots_ok db ->
+    kind (view db) f <> None -> slots_fit db f (length u) ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    (T_slots_update b f u db <=
+      1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (slots_of db f + 1) * N.of_nat (length u + 1) *
+        N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N.
+  Proof.
+    intros db b f u Hslots Hkind Hfits Hcells.
+    pose proof Hslots as Hslot_facts. destruct Hslot_facts as [Hmetadata Hindex_wf].
+    pose proof Hmetadata as Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & _ & _ & Hgroups & _).
+    set (layouts := database_group_entries f (runtime_function_slots (db_runtime db))).
+    set (state := slot_update_many b u layouts (db_runtime db)).
+    set (bits := N.size_nat (wmark (slots_update b f u db))) in *.
+    set (cost := (I.c_ix + PTrieT.c_trie + V.c_key + 1)%N).
+    set (arity := N.of_nat (length u + 1)).
+    set (width := N.of_nat (bits + 1)).
+    set (count := N.of_nat (length layouts)).
+    set (base := (cost * arity * width)%N).
+    set (total := (base * (count + 1))%N).
+    assert (Hlength : length layouts = slots_of db f).
+    { unfold layouts, slots_of. rewrite Hgroups. apply database_prepared_group_length. }
+    assert (Hdistinct : NoDup (map fst layouts)).
+    { unfold layouts. rewrite Hgroups. apply database_prepared_group_nodup. }
+    assert (Hentry : forall s layout, In (s, layout) layouts ->
+      exists perm, slot_of db s = Some (f, perm) /\ layout = prepare_slot_layout perm).
+    { intros s layout Hin. unfold layouts in Hin. rewrite Hgroups in Hin.
+      apply database_prepared_group_member in Hin. exact Hin. }
+    assert (Hcost_positive : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Harity_positive : (1 <= arity)%N) by (unfold arity; lia).
+    assert (Hwidth_positive : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbase_positive : (1 <= base)%N).
+    { unfold base. replace 1%N with ((1 * 1) * 1)%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono |]; assumption. }
+    assert (Harity_base : (arity <= base)%N).
+    { unfold base. replace arity with ((1 * arity) * 1)%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono_r |]; assumption. }
+    assert (Hwidth_base : (width <= base)%N).
+    { unfold base. replace width with ((1 * 1) * width)%N at 1 by ring.
+      apply N.mul_le_mono_r. apply N.mul_le_mono; assumption. }
+    assert (Hcost_width : (cost * width <= base)%N).
+    { unfold base. replace (cost * width)%N with ((cost * 1) * width)%N at 1 by ring.
+      apply N.mul_le_mono_r. now apply N.mul_le_mono_l. }
+    assert (Hbase_total : (base <= total)%N).
+    { unfold total. replace base with (base * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. lia. }
+    assert (Hcount_total : (count + 1 <= total)%N).
+    { unfold total. replace (count + 1)%N with (1 * (count + 1))%N at 1 by ring.
+      now apply N.mul_le_mono_r. }
+    assert (Htotal_positive : (1 <= total)%N) by lia.
+    assert (Harity_total : (arity <= total)%N) by lia.
+    assert (Hwidth_total : (width <= total)%N) by lia.
+    assert (Hwalk_main : (base * count <= total)%N).
+    { unfold total. apply N.mul_le_mono_l. lia. }
+    assert (Hmany : (T_slot_update_many b u layouts (db_runtime db) <=
+      (256 * base + 1) * count + 1)%N).
+    { unfold count. apply T_slot_update_many_snapshots with (original := db_runtime db).
+      - exact Hdistinct.
+      - intros s layout Hin. reflexivity.
+      - intros s layout current Hin Hsnapshot.
+        destruct (Hentry s layout Hin) as [perm [Hslot Hequal]]. subst layout.
+        replace (256 * base)%N with
+          (256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * N.of_nat (length u + 1) *
+            N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N
+          by (unfold base, cost, arity, width, bits; ring).
+        exact (T_slot_update_prepared db b f u s perm current Hslots Hslot Hfits Hcells Hsnapshot). }
+    assert (Hmany_total : (T_slot_update_many b u layouts (db_runtime db) <= 257 * total)%N).
+    { eapply N.le_trans; [exact Hmany |].
+      replace ((256 * base + 1) * count + 1)%N with
+        (256 * (base * count) + (count + 1))%N by ring.
+      replace (257 * total)%N with (256 * total + total)%N by ring.
+      apply N.add_le_mono; [now apply N.mul_le_mono_l | exact Hcount_total]. }
+    pose proof (wmark_slots_update b f u db) as Hmono.
+    assert (Hslot_bits : forall s layout, In (s, layout) layouts -> N.size_nat s <= bits).
+    { intros s layout Hin. destruct (Hentry s layout Hin) as [perm [Hslot _]].
+      unfold bits. apply N_width_mono.
+      pose proof (metadata_slot_number db s f perm Hmetadata Hslot). lia. }
+    pose proof (T_slot_updated_counters_le layouts state bits Hslot_bits) as Hcollect.
+    assert (Hcount_succ : N.of_nat (length layouts + 1) = (count + 1)%N)
+      by (unfold count; lia).
+    rewrite Hcount_succ in Hcollect. fold width in Hcollect.
+    assert (Hcollect_total : (T_slot_updated_counters layouts state <= 16 * total)%N).
+    { eapply N.le_trans; [exact Hcollect |]. unfold total.
+      replace (16 * (I.c_ix + PTrieT.c_trie + 1) * (count + 1) * width)%N with
+        (16 * ((I.c_ix + PTrieT.c_trie + 1) * width) * (count + 1))%N by ring.
+      replace (16 * (base * (count + 1)))%N with (16 * base * (count + 1))%N by ring.
+      apply N.mul_le_mono_r. apply N.mul_le_mono_l.
+      eapply N.le_trans; [| exact Hcost_width].
+      apply N.mul_le_mono_r. unfold cost. lia. }
+    assert (Hname_bits : Pos.size_nat f <= bits).
+    { unfold bits. change (N.size_nat (Npos f) <= N.size_nat (wmark (slots_update b f u db))).
+      apply N_width_mono. pose proof (declared_names_wmark db f Hkind). lia. }
+    assert (Hget_total : (PTrieCode.T_get f (runtime_function_slots (db_runtime db)) <= total)%N).
+    { eapply N.le_trans; [apply PTrieT.T_get_le |].
+      eapply N.le_trans with (cost * width)%N.
+      - apply N.mul_le_mono; [unfold cost; lia | unfold width; lia].
+      - eapply N.le_trans; [exact Hcost_width | exact Hbase_total]. }
+    assert (Hcache_bits : N.size_nat (db_cache_updates db) <= bits).
+    { unfold bits. apply N_width_mono. pose proof (metadata_updates_wmark db Hmetadata). lia. }
+    assert (Hsucc_cost : (N.T_succ_pos (db_cache_updates db) <= width)%N).
+    { pose proof (N.T_succ_pos_le (db_cache_updates db)). unfold width. lia. }
+    pose proof (@T_database_record_cache_le (cell V.t) I.t u
+      (slot_updated_counters layouts state) (database_set_runtime state db)) as Hrecord.
+    change (T_database_record_cache u (slot_updated_counters layouts state)
+      (database_set_runtime state db) <=
+      32 + N.T_succ_pos (db_cache_updates db) + 6 * N.of_nat (length u + 1) +
+        N.of_nat (length (slot_updated_counters layouts state) + 1))%N in Hrecord.
+    rewrite slot_updated_counters_length in Hrecord.
+    assert (Hcounter_length : N.of_nat (2 * length layouts + 1) = (2 * count + 1)%N)
+      by (unfold count; lia).
+    rewrite Hcounter_length in Hrecord. fold arity in Hrecord.
+    assert (Hrecord_total : (T_database_record_cache u (slot_updated_counters layouts state)
+      (database_set_runtime state db) <= 42 * total)%N).
+    { eapply N.le_trans; [exact Hrecord |].
+      clearbody total arity width count.
+      clear -Hsucc_cost Harity_total Hwidth_total Hcount_total Htotal_positive. lia. }
+    change (T_slots_update b f u db <=
+      1024 * cost * N.of_nat (slots_of db f + 1) * arity * width)%N.
+    replace (1024 * cost * N.of_nat (slots_of db f + 1) * arity * width)%N
+      with (1024 * total)%N.
+    2: { unfold total, base.
+         replace (count + 1)%N with (N.of_nat (slots_of db f + 1))
+           by (unfold count; rewrite Hlength; lia).
+         ring. }
+    change (T_slots_update b f u db <= 1024 * total)%N.
+    pose proof (T_slots_update_parts db b f u) as Hparts.
+    cbn beta zeta in Hparts. fold layouts in Hparts. fold state in Hparts.
+    clearbody total.
+    rewrite Hparts.
+    eapply N.le_trans with (14 + total + 257 * total + 16 * total + 42 * total)%N.
+    - apply N.add_le_mono; [| exact Hrecord_total].
+      apply N.add_le_mono; [| exact Hcollect_total].
+      apply N.add_le_mono; [| exact Hmany_total].
+      now apply N.add_le_mono_l.
+    - clear -Htotal_positive. lia.
+  Qed.
+
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
   Lemma F_slot_place : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
