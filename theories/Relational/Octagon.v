@@ -6833,6 +6833,30 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     exact Htwo.
   Qed.
 
+  (** Passing incremental and full Floyd passes have identical entries. *)
+  Lemma incremental_fw_equal : forall m i j d, dbm_wf m -> tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true /\
+      forall a b, entry (increment_matrix i j d seed) a b =
+        entry (fw direct) a b.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intro Hscan.
+    pose proof (incremental_candidate_fw_scan m i j d Hwf Htight Hscan)
+      as Hfwscan.
+    change (forallb (fun k => nonnegative k (fw direct)) (keys direct) = true)
+      in Hfwscan.
+    split; [exact Hfwscan|]. intros a b.
+    apply RelationalPathBounds.below_antisym.
+    - exact (incremental_candidate_below_fw m i j d Hwf Htight Hscan a b).
+    - exact (fw_below_incremental_candidate m i j d Hwf Htight
+        Hfwscan Hscan a b).
+  Qed.
+
   (** A coherent triangle transports a unary half-bound across one edge. *)
   Lemma unary_half_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
