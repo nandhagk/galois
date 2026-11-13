@@ -7843,6 +7843,389 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hsetup Htail Hpositive. clearbody work. nia.
   Qed.
 
+  Lemma poly_raw_source_width : forall P,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= nell (Reached P)) P.
+  Proof.
+    intros P. apply Forall_forall. intros p Hp.
+    pose proof (poly_max_member _ C.row_key_bits 0 P p Hp).
+    pose proof (poly_max_member _ C.row_bits 0 P p Hp).
+    unfold nell, ell. cbn [prows]. lia.
+  Qed.
+
+  (** A source occurrence is charged once at the certificate multiplier's width. *)
+  Lemma poly_csize_entry_bits : forall p m bits multbits,
+    C.row_key_bits p + C.row_bits p <= bits -> Z.size_nat m <= multbits ->
+    (length (lhs p) + 1) *
+      (C.row_key_bits p + (Z.size_nat m + 1) * (C.row_bits p + 1)) <=
+      (length (lhs p) + 1) * (multbits + 1) * (bits + 1).
+  Proof.
+    intros p m bits multbits Hrow Hmult.
+    assert (Hproduct : (Z.size_nat m + 1) * (C.row_bits p + 1) <=
+      (multbits + 1) * (C.row_bits p + 1)) by (apply Nat.mul_le_mono_r; lia).
+    assert (Hwidth : (multbits + 1) *
+      (C.row_key_bits p + C.row_bits p + 1) <= (multbits + 1) * (bits + 1))
+      by (apply Nat.mul_le_mono_l; lia).
+    assert (Hinner : C.row_key_bits p +
+      (Z.size_nat m + 1) * (C.row_bits p + 1) <= (multbits + 1) * (bits + 1)) by nia.
+    replace ((length (lhs p) + 1) * (multbits + 1) * (bits + 1)) with
+      ((length (lhs p) + 1) * ((multbits + 1) * (bits + 1))) by nia.
+    now apply Nat.mul_le_mono_l.
+  Qed.
+
+  (** The successor output count still fits the input successor square. *)
+  Lemma poly_fm_output_count : forall x P,
+    length (fm_elim x P) + 1 <= (length P + 1)^2.
+  Proof.
+    intros x P. unfold fm_elim. rewrite length_map.
+    pose proof (poly_step_rows X.t X.encode X.eqb x
+      (poly_initial X.encode (map (fun r => (r, false)) P))) as Hrows.
+    rewrite poly_initial_length, length_map in Hrows.
+    assert (Hdivision : length P ^ 2 / 4 <= length P ^ 2).
+    { apply Nat.Div0.div_le_upper_bound; nia. }
+    cbn [Nat.pow] in *. nia.
+  Qed.
+
+  Lemma poly_fm_multiplier_length : forall P x r, In r (fm_elim x P) ->
+    length (mults_of r) = length P.
+  Proof.
+    intros P x r Hr.
+    destruct (fm_step_mults_checked P x r Hr) as [s [Hcombine Hrow]].
+    pose proof (C.combine_admissible P (mults_of r) s Hcombine) as Hadmissible.
+    symmetry. exact (proj1 Hadmissible).
+  Qed.
+
+  (** Exact vector length makes the total raw charge the sum of source occurrences. *)
+  Lemma poly_csize_terms : forall P ms bits multbits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    Forall (fun m => Z.size_nat m <= multbits) ms -> length ms = length P ->
+    C.csize P ms <= (terms (Reached P) + length P) * (multbits + 1) * (bits + 1).
+  Proof.
+    intro P. induction P as [|p P IH]; intros ms bits multbits Hrows Hmult Hlength;
+      destruct ms as [|m ms]; cbn [length] in Hlength; try discriminate.
+    - change (0 <= 0). lia.
+    - inversion Hrows as [|? ? Hp HP]; subst.
+      inversion Hmult as [|? ? Hm Hms]; subst.
+      injection Hlength as Hlength.
+      pose proof (IH ms bits multbits HP Hms Hlength) as Htail.
+      pose proof (poly_csize_entry_bits p m bits multbits Hp Hm) as Hhead.
+      cbn [C.csize terms prows map fold_right length] in Htail |- *. nia.
+  Qed.
+
+  Lemma poly_cbits_source_bits : forall P ms bits multbits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    Forall (fun m => Z.size_nat m <= multbits) ms ->
+    C.cbits P ms <= multbits + bits + Nat.log2 (length P) + 1.
+  Proof.
+    intros P ms bits multbits Hrows Hmult. unfold C.cbits.
+    assert (Hmax : fold_right Nat.max 0
+      (map (fun pm => Z.size_nat (snd pm) + C.row_bits (fst pm))
+        (List.combine P ms)) <= multbits + bits).
+    { apply poly_max_bound; [lia|]. apply Forall_forall. intros [p m] Hin.
+      cbn [fst snd]. pose proof (in_combine_l _ _ _ _ Hin) as Hp.
+      pose proof (in_combine_r _ _ _ _ Hin) as Hm.
+      pose proof (proj1 (Forall_forall _ _) Hrows p Hp) as Hrow.
+      pose proof (proj1 (Forall_forall _ _) Hmult m Hm) as Hwidth.
+      change (C.row_key_bits p + C.row_bits p <= bits) in Hrow.
+      change (Z.size_nat m <= multbits) in Hwidth. lia. }
+    lia.
+  Qed.
+
+  (** One elimination step requires only a quadratic bit charge per raw source term. *)
+  Lemma poly_scale_one_measure_terms : forall P c ms dim bits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    length ms = length P -> Forall (fun m => Z.size_nat m <= 2 * bits + 2) ms ->
+    length (lhs c) <= dim -> C.row_key_bits c + C.row_bits c <= 2 * bits + 1 ->
+    C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1) <=
+      12 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2.
+  Proof.
+    intros P c ms dim bits Hrows Hlength Hmult Hdim Hwidth.
+    pose proof (poly_csize_terms P ms bits (2 * bits + 2) Hrows Hmult Hlength) as Hsize.
+    pose proof (poly_cbits_source_bits P ms bits (2 * bits + 2) Hrows Hmult) as Hcbits.
+    assert (Hlog : Nat.log2 (length P) <= length P) by (apply Nat.log2_le_lin; lia).
+    assert (Hlsize : C.lsize c <= 2 * (dim + 1) * (bits + 1)).
+    { unfold C.lsize. eapply Nat.le_trans with (m := (dim + 1) * (2 * bits + 2)).
+      - apply Nat.mul_le_mono; lia.
+      - nia. }
+    set (square := (bits + 1)^2).
+    assert (Hsquare : bits + 1 <= square) by (unfold square; cbn [Nat.pow]; nia).
+    assert (Hcert : C.csize P ms <= 3 * (terms (Reached P) + length P) * square).
+    { eapply Nat.le_trans; [exact Hsize|]. unfold square.
+      assert (Hbitproduct : (2 * bits + 2 + 1) * (bits + 1) <= 3 * (bits + 1)^2)
+        by (cbn [Nat.pow]; nia).
+      apply (Nat.mul_le_mono_l _ _ (terms (Reached P) + length P)) in Hbitproduct.
+      nia. }
+    assert (Hconclusion : 2 * C.lsize c <= 4 * (dim + 1) * square).
+    { pose proof (Nat.mul_le_mono_l _ _ (4 * (dim + 1)) Hsquare). nia. }
+    assert (Hwidthpart : 2 * (C.cbits P ms + 1) <= (2 * length P + 8) * square).
+    { assert (Hlinear : 2 * (C.cbits P ms + 1) <=
+        (2 * length P + 8) * (bits + 1)) by nia.
+      eapply Nat.le_trans; [exact Hlinear|]. now apply Nat.mul_le_mono_l. }
+    change (C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1) <=
+      12 * (dim + terms (Reached P) + length P + 1) * square).
+    clear -Hcert Hconclusion Hwidthpart. clearbody square. nia.
+  Qed.
+
+  Definition poly_projection_envelope (dim mlen bits : nat) (r : tracked X.t) : Prop :=
+    length (lhs (row_of r)) <= dim /\
+    C.row_key_bits (row_of r) + C.row_bits (row_of r) <= 2 * bits + 1 /\
+    length (mults_of r) = mlen /\
+    Forall (fun m => Z.size_nat m <= 2 * bits + 2) (mults_of r).
+
+  Lemma poly_T_forallb_members : forall A (f : A -> bool) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_forallb f T_f xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hf.
+    - time_unfold List.T_forallb. cbn [length]. lia.
+    - pose proof (Hf x (or_introl eq_refl)) as Hhead.
+      specialize (IH (fun y Hy => Hf y (or_intror Hy))).
+      time_unfold List.T_forallb. cbn [length]. time_simpl. nia.
+  Qed.
+
+  Definition poly_projection_key (x : X.t) (p : X.t * Z) : bool :=
+    negb (X.eqb (fst p) x).
+  TimeFun poly_projection_key.
+
+  Lemma T_poly_projection_key_bounded : forall x p bits,
+    Pos.size_nat (X.encode (fst p)) <= 2 * bits + 1 ->
+    (T_poly_projection_key x p <= (2 * X.c_key + 3) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros x p bits Hbits. pose proof (X.T_eqb_le (fst p) x) as Hkey.
+    unfold X.bits in Hkey.
+    assert (Hwidth : (N.of_nat (Pos.size_nat (X.encode (fst p)) + 1) <=
+      2 * N.of_nat (bits + 1))%N) by lia.
+    pose proof (N.mul_le_mono_l _ _ X.c_key Hwidth) as Hproduct.
+    time_unfold T_poly_projection_key. time_simpl. nia.
+  Qed.
+
+  Definition poly_projection_factor : N := (12 * C.c_lc + 2 * X.c_key + 24)%N.
+
+  Lemma T_checked_projection_bounded : forall P x r dim bits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    poly_projection_envelope dim (length P) bits r ->
+    (T_checked_projection P x r <= poly_projection_factor *
+      N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros P x r dim bits Hsource [Hdim [Hwidth [Hlength Hmult]]].
+    pose proof (poly_scale_one_measure_terms P (row_of r) (mults_of r) dim bits
+      Hsource Hlength Hmult Hdim Hwidth) as Hmeasure.
+    pose proof (C.T_check_entails_le P (row_of r) (Cert (mults_of r) 1 false)) as Hcheck.
+    change (C.T_check_entails P (row_of r) (Cert (mults_of r) 1 false) <= C.c_lc *
+      N.of_nat (C.csize P (mults_of r) + 2 *
+        (C.lsize (row_of r) + C.cbits P (mults_of r) + 1)))%N in Hcheck.
+    set (work := (N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (bits + 1)^2)%N).
+    assert (Hcheck_total : (C.T_check_entails P (row_of r) (Cert (mults_of r) 1 false) <=
+      12 * C.c_lc * work)%N).
+    { eapply N.le_trans; [exact Hcheck|].
+      assert (Htransport : (N.of_nat (C.csize P (mults_of r) + 2 *
+        (C.lsize (row_of r) + C.cbits P (mults_of r) + 1)) <=
+        N.of_nat (12 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2))%N) by lia.
+      rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Htransport.
+      change (N.of_nat 2) with 2%N in Htransport.
+      change (N.of_nat 12) with 12%N in Htransport.
+      apply N.mul_le_mono_l with (p := C.c_lc) in Htransport.
+      unfold work. nia. }
+    assert (Hkeys : forall p, In p (lhs (row_of r)) ->
+      (T_poly_projection_key x p <= (2 * X.c_key + 3) * N.of_nat (bits + 1))%N).
+    { intros p Hp. apply T_poly_projection_key_bounded.
+      pose proof (poly_row_key_member (row_of r) p Hp). lia. }
+    pose proof (poly_T_forallb_members _ (poly_projection_key x) (T_poly_projection_key x)
+      ((2 * X.c_key + 3) * N.of_nat (bits + 1))%N (lhs (row_of r)) Hkeys) as Hscan.
+    assert (Hscan_linear : (List.T_forallb (poly_projection_key x) (T_poly_projection_key x)
+      (lhs (row_of r)) <= (2 * X.c_key + 6) * N.of_nat (dim + 1) *
+        N.of_nat (bits + 1))%N).
+    { eapply N.le_trans; [exact Hscan|]. clear -Hdim. nia. }
+    assert (Hextent : (N.of_nat (dim + 1) * N.of_nat (bits + 1) <= work)%N).
+    { unfold work. apply N.mul_le_mono; [lia|rewrite N.pow_2_r; nia]. }
+    assert (Hpositive : (1 <= work)%N).
+    { eapply N.le_trans; [|exact Hextent].
+      change (1 * 1 <= N.of_nat (dim + 1) * N.of_nat (bits + 1))%N.
+      apply N.mul_le_mono; lia. }
+    assert (Hscan_total : (List.T_forallb (poly_projection_key x) (T_poly_projection_key x)
+      (lhs (row_of r)) <= (2 * X.c_key + 6) * work)%N).
+    { eapply N.le_trans; [exact Hscan_linear|]. rewrite <- N.mul_assoc.
+      now apply N.mul_le_mono_l. }
+    time_unfold T_checked_projection. time_simpl.
+    change (fun a b : X.t => X.T_eqb a b) with X.T_eqb.
+    lazymatch goal with
+    | |- context [List.T_forallb ?f ?Tf (lhs (row_of r))] =>
+        change f with (poly_projection_key x);
+        change Tf with (T_poly_projection_key x)
+    end.
+    replace (poly_projection_factor *
+      N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N
+      with (poly_projection_factor * work)%N by (unfold work; ring).
+    unfold poly_projection_factor. clear -Hcheck_total Hscan_total Hpositive.
+    clearbody work. nia.
+  Qed.
+
+  (** Filtering and retaining checked output rows charges one certificate check per row. *)
+  Lemma T_checked_projections_bounded : forall P x rows dim bits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    Forall (poly_projection_envelope dim (length P) bits) rows ->
+    (List.T_filter (checked_projection P x) (T_checked_projection P x) rows +
+      ListDef.T_map (@row_of X.t) (@T_row_of X.t)
+        (filter (checked_projection P x) rows) <=
+      (poly_projection_factor + 8) * N.of_nat (length rows + 1) *
+        N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros P x rows dim bits Hsource Hrows.
+    set (work := (N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (bits + 1)^2)%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. change (1 * 1 <= N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (bits + 1)^2)%N. apply N.mul_le_mono; [lia|rewrite N.pow_2_r; nia]. }
+    assert (Hcallback : forall r, In r rows ->
+      (T_checked_projection P x r <= poly_projection_factor * work)%N).
+    { intros r Hr. unfold work. rewrite N.mul_assoc.
+      apply T_checked_projection_bounded; [exact Hsource|].
+      exact (proj1 (Forall_forall _ _) Hrows r Hr). }
+    pose proof (poly_T_filter_members _ (checked_projection P x) (T_checked_projection P x)
+      (poly_projection_factor * work)%N rows Hcallback) as Hfilter.
+    pose proof (poly_T_map_members _ _ (@row_of X.t) (@T_row_of X.t) 1
+      (filter (checked_projection P x) rows)
+      ltac:(intros r Hr; time_unfold (@T_row_of); lia)) as Hmap.
+    pose proof (filter_length_le (checked_projection P x) rows) as Hlength.
+    assert (Hmap_linear : (ListDef.T_map (@row_of X.t) (@T_row_of X.t)
+      (filter (checked_projection P x) rows) <= 2 * N.of_nat (length rows) + 1)%N).
+    { eapply N.le_trans; [exact Hmap|]. lia. }
+    replace ((poly_projection_factor + 8) * N.of_nat (length rows + 1) *
+      N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N
+      with ((poly_projection_factor + 8) * N.of_nat (length rows + 1) * work)%N
+      by (unfold work; ring).
+    eapply N.le_trans; [apply N.add_le_mono; [exact Hfilter|exact Hmap_linear]|].
+    clear -Hpositive. clearbody work.
+    rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
+  Qed.
+
+  Lemma T_checked_fm_projections_bounded : forall P x dim bits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    Forall (poly_projection_envelope dim (length P) bits) (fm_elim x P) ->
+    (List.T_filter (checked_projection P x) (T_checked_projection P x) (fm_elim x P) +
+      ListDef.T_map (@row_of X.t) (@T_row_of X.t)
+        (filter (checked_projection P x) (fm_elim x P)) <=
+      (poly_projection_factor + 8) * N.of_nat (length P + 1)^2 *
+        N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros P x dim bits Hsource Hrows.
+    eapply N.le_trans; [apply T_checked_projections_bounded; eassumption|].
+    repeat apply N.mul_le_mono_r. apply N.mul_le_mono_l.
+    pose proof (poly_fm_output_count x P) as Hcount.
+    assert (HcountN : (N.of_nat (length (fm_elim x P) + 1) <=
+      N.of_nat ((length P + 1)^2))%N) by lia.
+    rewrite poly_nat_square, <- N.pow_2_r in HcountN. exact HcountN.
+  Qed.
+  Definition poly_raw_keys (P : list (lcons X.t)) : nat :=
+    fold_right Nat.max 0 (map C.row_key_bits P).
+
+  Definition poly_raw_bits (P : list (lcons X.t)) : nat :=
+    fold_right Nat.max 0 (map C.row_bits P) + Nat.log2 (terms (Reached P)) + 1.
+
+  (** Separate key and merged-coefficient widths add to the frozen raw width. *)
+  Lemma poly_raw_width : forall P,
+    poly_raw_keys P + poly_raw_bits P = nell (Reached P).
+  Proof.
+    intro P. unfold poly_raw_keys, poly_raw_bits, nell, ell. cbn [prows]. lia.
+  Qed.
+
+  (** One input row contributes at most all stored coefficient occurrences. *)
+  Lemma poly_raw_row_terms : forall P r, In r P -> length (lhs r) <= terms (Reached P).
+  Proof.
+    intro P. induction P as [|p P IH]; intros r Hin; [contradiction|].
+    change (length (lhs r) <= length (lhs p) + terms (Reached P)).
+    destruct Hin as [Hequal|Hin].
+    - subst r. lia.
+    - specialize (IH r Hin). lia.
+  Qed.
+
+  (** Raw normalization bounds every row by the source maxima and total occurrence count. *)
+  Lemma poly_raw_normal_widths : forall P r, In r P ->
+    C.row_key_bits (poly_normal_row X.encode r) <= poly_raw_keys P /\
+    C.row_bits (poly_normal_row X.encode r) <= poly_raw_bits P.
+  Proof.
+    intros P r Hr. split.
+    - eapply Nat.le_trans; [apply poly_normal_row_key_bits|].
+      exact (poly_max_member _ C.row_key_bits 0 P r Hr).
+    - pose proof (poly_normal_row_log_bits r) as Hnormal.
+      pose proof (poly_max_member _ C.row_bits 0 P r Hr) as Hrow.
+      pose proof (poly_raw_row_terms P r Hr) as Hterms.
+      pose proof (Nat.log2_le_mono _ _ Hterms) as Hlog.
+      unfold poly_raw_bits. lia.
+  Qed.
+
+  (** Initializing raw rows gives distinct nonzero coefficients on the original variables. *)
+  Lemma poly_raw_initial_reduced : forall P,
+    Forall (poly_reduced_row (vars_of P))
+      (poly_initial X.encode (map (fun r => (r, false)) P)).
+  Proof.
+    intro P. apply poly_initial_reduced. apply Forall_map, Forall_forall.
+    intros r Hr p Hp. cbn [fst] in *. apply poly_vars_of_contains with (r := r).
+    - exact Hr.
+    - now apply in_map.
+  Qed.
+
+  (** Normalized raw inputs and unit vectors establish the complete one-step envelope. *)
+  Lemma poly_raw_initial_envelopes : forall P,
+    Forall (poly_row_envelope (n P) (length P) (poly_raw_keys P) (poly_raw_bits P))
+      (poly_initial X.encode (map (fun r => (r, false)) P)).
+  Proof.
+    intro P. apply Forall_forall. intros r Hr.
+    pose proof (poly_raw_initial_reduced P) as Hsupport.
+    pose proof (proj1 (Forall_forall _ _) Hsupport r Hr) as Hreduced.
+    pose proof (poly_reduced_dimension (vars_of P) r Hreduced) as Hdim.
+    destruct (poly_initial_source P r Hr) as [p [Hp Hrow]].
+    destruct (poly_raw_normal_widths P p Hp) as [Hkeys Hbits].
+    pose proof (poly_initial_units X.t X.encode (map (fun p => (p, false)) P)) as Hunits.
+    destruct (proj1 (Forall_forall _ _) Hunits r Hr) as [Hlength Hunit].
+    rewrite length_map in Hlength.
+    unfold poly_row_envelope. split; [exact (proj1 Hreduced)|]. split.
+    - unfold n. lia.
+    - split; [now rewrite Hrow|]. split; [now rewrite Hrow|]. split; [lia|].
+      apply Forall_forall. intros z Hz.
+      destruct (proj1 (Forall_forall _ _) Hunit z Hz) as [Hequal|Hequal]; subst z;
+        cbn [Z.size_nat Pos.size_nat]; lia.
+  Qed.
+
+  (** One raw FM step retains the original dimension and bounded tracked coefficients. *)
+  Lemma poly_raw_step_envelopes : forall P x,
+    Forall (poly_row_envelope (n P) (length P) (poly_raw_keys P)
+      (2 * poly_raw_bits P + 1))
+      (poly_step X.encode X.eqb x
+        (poly_initial X.encode (map (fun r => (r, false)) P))).
+  Proof.
+    intros P x. apply poly_step_envelopes with (vars := vars_of P).
+    - unfold n. lia.
+    - apply poly_raw_initial_reduced.
+    - apply poly_raw_initial_envelopes.
+  Qed.
+
+  (** Every projected raw row fits the dimension and widths charged by havoc. *)
+  Lemma poly_raw_fm_envelopes : forall P x,
+    Forall (fun r =>
+      length (lhs (row_of r)) <= n P /\
+      C.row_key_bits (row_of r) + C.row_bits (row_of r) <= 2 * nell (Reached P) + 1 /\
+      length (mults_of r) = length P /\
+      Forall (fun m => Z.size_nat m <= 2 * nell (Reached P) + 2) (mults_of r))
+      (fm_elim x P).
+  Proof.
+    intros P x. apply Forall_forall. intros r Hr.
+    assert (Hlength : length (mults_of r) = length P).
+    { destruct (fm_step_mults_checked P x r Hr) as [s [Hcombine Hrow]].
+      pose proof (C.combine_admissible P (mults_of r) s Hcombine) as Hadmissible.
+      symmetry. exact (proj1 Hadmissible). }
+    unfold fm_elim in Hr. apply in_map_iff in Hr as [q [Hequal Hq]]. subst r.
+    pose proof (poly_raw_step_envelopes P x) as Hstep.
+    destruct (proj1 (Forall_forall _ _) Hstep q Hq) as
+      [Hnormal [Hdim [Hkeys [Hbits [Hmult Hwidths]]]]].
+    cbn [row_of mults_of] in *. split; [exact Hdim|]. split.
+    - rewrite <- poly_raw_width. lia.
+    - split; [exact Hlength|]. eapply Forall_impl; [|exact Hwidths]. intros m Hm.
+      change (Z.size_nat m <= 2 * poly_raw_bits P + 1 + 1) in Hm.
+      change (Z.size_nat m <= 2 * nell (Reached P) + 2).
+      rewrite <- poly_raw_width. lia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
