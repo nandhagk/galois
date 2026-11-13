@@ -6041,4 +6041,152 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
           ltac:(lia) ltac:(lia)) as Htotal.
         eapply N.le_trans; [|exact Htotal]. time_simpl. time_cbn. lia.
   Qed.
+  Definition short_coefficients (cs : list (X.t * Z)) : Prop :=
+    length cs <= 2 /\ Forall (fun p => Z.size_nat (snd p) <= 2) cs.
+
+  Definition short_form (f : lin X.t) : Prop := short_coefficients (coef f).
+
+  Definition coefficient_key (k : K.t) (cs : list (X.t * Z)) : Prop :=
+    k = None \/ exists x a, k = Some x /\ In (x, a) cs.
+
+  Lemma coefficient_key_none : forall cs, coefficient_key None cs.
+  Proof. intro cs. now left. Qed.
+
+  Lemma coefficient_key_member : forall cs x a,
+    In (x, a) cs -> coefficient_key (Some x) cs.
+  Proof. intros cs x a Hin. right. exists x, a. now split. Qed.
+
+  Lemma coefficient_key_bits : forall f k,
+    coefficient_key k (coef f) -> K.bits k <= F.form_bits f + 1.
+  Proof.
+    intros f k [Hnone|[x [a [Hkey Hin]]]].
+    - subst k. change (1 <= F.form_bits f + 1). lia.
+    - subst k. rewrite some_key_bits.
+      pose proof (form_bits_key f (x, a) Hin) as Hbits. cbn [fst] in Hbits. lia.
+  Qed.
+
+  (** A recognized difference uses at most two small coefficients and only their keys. *)
+  Lemma difference_pair_shape : forall cs i j,
+    difference_pair cs = Some (i, j) ->
+    short_coefficients cs /\ coefficient_key i cs /\ coefficient_key j cs.
+  Proof.
+    intros cs i j Hpair. destruct cs as [|[x a] cs].
+    - cbn [difference_pair] in Hpair. inversion Hpair; subst i j.
+      split; [split; [cbn; lia|constructor]|]. split; apply coefficient_key_none.
+    - destruct cs as [|[y b] cs].
+      + cbn [difference_pair] in Hpair.
+        destruct (a =? 1)%Z eqn:Hplus.
+        * apply Z.eqb_eq in Hplus. subst a. inversion Hpair; subst i j.
+          split.
+          -- split; [cbn; lia|]. constructor; [change (1 <= 2); lia|constructor].
+          -- split; [apply coefficient_key_none|].
+             apply (coefficient_key_member _ x 1%Z). now left.
+        * destruct (a =? -1)%Z eqn:Hminus; [|discriminate].
+          apply Z.eqb_eq in Hminus. subst a. inversion Hpair; subst i j.
+          split.
+          -- split; [cbn; lia|]. constructor; [change (1 <= 2); lia|constructor].
+          -- split; [|apply coefficient_key_none].
+             apply (coefficient_key_member _ x (-1)%Z). now left.
+      + destruct cs as [|p cs]; [|discriminate].
+        cbn [difference_pair] in Hpair.
+        destruct (andb (a =? 1)%Z (b =? -1)%Z) eqn:Hfirst.
+        * apply andb_true_iff in Hfirst. destruct Hfirst as [Ha Hb].
+          apply Z.eqb_eq in Ha, Hb. subst a b. inversion Hpair; subst i j.
+          split.
+          -- split; [cbn; lia|]. constructor; [change (1 <= 2); lia|].
+             constructor; [change (1 <= 2); lia|constructor].
+          -- split.
+             ++ apply (coefficient_key_member _ y (-1)%Z). right. now left.
+             ++ apply (coefficient_key_member _ x 1%Z). now left.
+        * destruct (andb (a =? -1)%Z (b =? 1)%Z) eqn:Hsecond; [|discriminate].
+          apply andb_true_iff in Hsecond. destruct Hsecond as [Ha Hb].
+          apply Z.eqb_eq in Ha, Hb. subst a b. inversion Hpair; subst i j.
+          split.
+          -- split; [cbn; lia|]. constructor; [change (1 <= 2); lia|].
+             constructor; [change (1 <= 2); lia|constructor].
+          -- split.
+             ++ apply (coefficient_key_member _ x (-1)%Z). now left.
+             ++ apply (coefficient_key_member _ y 1%Z). right. now left.
+  Qed.
+
+  (** Accepted atoms inspect only short forms, and their two matrix keys fit the form bits. *)
+  Lemma difference_forms_shape : forall l r i j,
+    difference_forms l r = Some (i, j) ->
+    short_form l /\ short_form r /\
+    K.bits i + K.bits j <= 2 * (F.form_bits l + F.form_bits r + 1).
+  Proof.
+    intros [ls lc] [rs rc] i j Hpair.
+    unfold difference_forms in Hpair. cbn [coef] in Hpair.
+    destruct ls as [|[x a] ls].
+    - destruct (difference_pair rs) as [[u v]|] eqn:Hrs; [|discriminate].
+      inversion Hpair; subst i j.
+      destruct (difference_pair_shape rs u v Hrs) as [Hshort [Hu Hv]].
+      split; [split; [cbn; lia|constructor]|]. split; [exact Hshort|].
+      pose proof (coefficient_key_bits (Lin X.t rs rc) u Hu) as Hub.
+      pose proof (coefficient_key_bits (Lin X.t rs rc) v Hv) as Hvb. lia.
+    - destruct rs as [|[y b] rs].
+      + destruct (difference_pair_shape ((x, a) :: ls) i j Hpair) as [Hshort [Hi Hj]].
+        split; [exact Hshort|]. split; [split; [cbn; lia|constructor]|].
+        pose proof (coefficient_key_bits (Lin X.t ((x, a) :: ls) lc) i Hi) as Hib.
+        pose proof (coefficient_key_bits (Lin X.t ((x, a) :: ls) lc) j Hj) as Hjb. lia.
+      + destruct ls as [|p ls]; [|discriminate].
+        destruct rs as [|q rs]; [|discriminate].
+        destruct (andb (a =? 1)%Z (b =? 1)%Z) eqn:Hplus.
+        * apply andb_true_iff in Hplus. destruct Hplus as [Ha Hb].
+          apply Z.eqb_eq in Ha, Hb. subst a b. inversion Hpair; subst i j.
+          split; [split; [cbn; lia|constructor; [change (1 <= 2); lia|constructor]]|].
+          split; [split; [cbn; lia|constructor; [change (1 <= 2); lia|constructor]]|].
+          rewrite !some_key_bits.
+          pose proof (form_bits_key (Lin X.t ((x, 1%Z) :: nil) lc)
+            (x, 1%Z) (or_introl eq_refl)) as Hx.
+          pose proof (form_bits_key (Lin X.t ((y, 1%Z) :: nil) rc)
+            (y, 1%Z) (or_introl eq_refl)) as Hy.
+          cbn [fst] in Hx, Hy. lia.
+        * destruct (andb (a =? -1)%Z (b =? -1)%Z) eqn:Hminus; [|discriminate].
+          apply andb_true_iff in Hminus. destruct Hminus as [Ha Hb].
+          apply Z.eqb_eq in Ha, Hb. subst a b. inversion Hpair; subst i j.
+          split; [split; [cbn; lia|constructor; [change (1 <= 2); lia|constructor]]|].
+          split; [split; [cbn; lia|constructor; [change (1 <= 2); lia|constructor]]|].
+          rewrite !some_key_bits.
+          pose proof (form_bits_key (Lin X.t ((x, (-1)%Z) :: nil) lc)
+            (x, (-1)%Z) (or_introl eq_refl)) as Hx.
+          pose proof (form_bits_key (Lin X.t ((y, (-1)%Z) :: nil) rc)
+            (y, (-1)%Z) (or_introl eq_refl)) as Hy.
+          cbn [fst] in Hx, Hy. lia.
+  Qed.
+
+  (** Coefficient probing stops after the third list cell, including rejected forms. *)
+  Lemma T_difference_pair_small : forall cs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) cs ->
+    (T_difference_pair cs <= 64 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros cs bits Hbits. destruct cs as [|[x a] cs]; [time_step|].
+    inversion Hbits as [|p ps Ha Htail]; subst. cbn [snd] in Ha.
+    destruct cs as [|[y b] cs]; [time_step|].
+    inversion Htail as [|p ps Hb Hrest]; subst. cbn [snd] in Hb.
+    destruct cs; time_step.
+  Qed.
+
+  Lemma T_difference_forms_small : forall l r bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) (coef l) ->
+    Forall (fun p => Z.size_nat (snd p) <= bits) (coef r) ->
+    (T_difference_forms l r <= 256 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros [ls lc] [rs rc] bits Hl Hr. cbn [coef] in Hl, Hr.
+    pose proof (T_difference_pair_small ls bits Hl) as Hleft.
+    pose proof (T_difference_pair_small rs bits Hr) as Hright.
+    destruct ls as [|[x a] ls].
+    - unfold T_difference_forms. cbn beta iota zeta. time_simpl. time_cbn.
+      destruct (difference_pair rs) as [[i j]|]; time_simpl; time_cbn; lia.
+    - destruct rs as [|[y b] rs].
+      + inversion Hl as [|p ps Ha Htail]; subst. cbn [snd] in Ha.
+        destruct ls as [|[y b] ls]; [time_step|].
+        inversion Htail as [|p ps Hb Hrest]; subst. cbn [snd] in Hb.
+        destruct ls; time_step.
+      + inversion Hl as [|p ps Ha Hls]; subst. cbn [snd] in Ha.
+        inversion Hr as [|p ps Hb Hrs]; subst. cbn [snd] in Hb.
+        destruct ls, rs; time_step.
+  Qed.
+
+
 End ZoneT.
