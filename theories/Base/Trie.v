@@ -850,6 +850,7 @@ Module PTrieT <: TRIE_ALL.
 
   Definition c_trie : N := 1024.
 
+  (** Lookup pays one traversal and one observation call per key digit. *)
   Lemma trie_get_clock : forall A p (m : t A),
     T_trie_get p m = (2 * N.of_nat (Pos.size_nat p))%N.
   Proof.
@@ -857,6 +858,7 @@ Module PTrieT <: TRIE_ALL.
     all: unfold T_trie_get; fold (@T_trie_get A); time_simpl; time_cbn; rewrite ?IHp; nia.
   Qed.
 
+  (** Replacement pays for the three observations and canonical reconstruction. *)
   Lemma replace_clock_bound : forall A p o (m : t A),
     (T_replace p o m <= 8 * N.of_nat (Pos.size_nat p))%N.
   Proof.
@@ -887,30 +889,223 @@ Module PTrieT <: TRIE_ALL.
     intros A p m. pose proof (replace_clock_bound A p None m).
     unfold c_trie. time_step.
   Qed.
-  Lemma T_merge_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2 k,
-    ((forall a b, T_f a b <= k) ->
-    T_merge f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_forall2b_le : forall A B (f : option A -> option B -> bool) T_f m1 m2 k,
-    ((forall a b, T_f a b <= k) ->
-    T_forall2b f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_existsb_le : forall A (f : A -> bool) T_f m k,
-    ((forall a, T_f a <= k) ->
-    T_existsb f T_f m <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_map_le : forall A B (f : A -> B) T_f m k,
-    ((forall a, T_f a <= k) ->
-    T_map f T_f m <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
-  Proof. Admitted. (* STUB *)
+  (** Callback accounting follows the accumulator reached at each list element. *)
+  Local Fixpoint folding_work {X B} (f : B -> X -> B) (w : B -> X -> N)
+      (xs : list X) (b : B) : N :=
+    match xs with
+    | nil => 0%N
+    | x :: xs => (w b x + folding_work f w xs (f b x))%N
+    end.
+
+  Local Lemma folding_work_left {X B} (f : B -> X -> B) (w : B -> X -> N) xs :
+    forall b total,
+    snd (fold_left (fun bw x => (f (fst bw) x, (snd bw + w (fst bw) x)%N))
+      xs (b, total)) = (total + folding_work f w xs b)%N.
+  Proof.
+    induction xs as [|x xs IH]; intros b total; cbn [fold_left folding_work fst snd].
+    - nia.
+    - rewrite IH. nia.
+  Qed.
+
+  Local Lemma folding_work_app {X B} (f : B -> X -> B) (w : B -> X -> N) xs ys :
+    forall b, folding_work f w (xs ++ ys) b =
+      (folding_work f w xs b + folding_work f w ys (fold_left f xs b))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro b; cbn [app folding_work fold_left];
+      rewrite ?IH; nia.
+  Qed.
+
+  Local Lemma folding_work_map {X Y B} (f : B -> Y -> B) (w : B -> Y -> N)
+      (g : X -> Y) xs :
+    forall b, folding_work f w (List.map g xs) b =
+      folding_work (fun acc x => f acc (g x)) (fun acc x => w acc (g x)) xs b.
+  Proof.
+    induction xs as [|x xs IH]; intro b; cbn [List.map folding_work];
+      rewrite ?IH; reflexivity.
+  Qed.
+
+  Local Lemma folding_work_uniform {X B} (f : B -> X -> B) (w : B -> X -> N) xs c :
+    (forall b x, (w b x <= c)%N) ->
+    forall b, (folding_work f w xs b <= c * N.of_nat (length xs))%N.
+  Proof.
+    intro Hbound. induction xs as [|x xs IH]; intro b.
+    - cbn [folding_work length]. nia.
+    - cbn [folding_work length]. rewrite Nat2N.inj_succ.
+      pose proof (Hbound b x). specialize (IH (f b x)). nia.
+  Qed.
+
+  Local Lemma folding_left_map {X Y B} (f : B -> Y -> B) (g : X -> Y) xs b :
+    fold_left f (List.map g xs) b = fold_left (fun acc x => f acc (g x)) xs b.
+  Proof.
+    revert b. induction xs as [|x xs IH]; intro b; cbn [List.map fold_left]; auto.
+  Qed.
+
+  Local Definition folding_keys {A} (xs : list (positive * A)) : nat :=
+    fold_right Nat.add 0 (List.map (fun kv => Pos.size_nat (fst kv)) xs).
+
+  Local Lemma folding_keys_cons {A} p (a : A) xs :
+    folding_keys ((p, a) :: xs) = Pos.size_nat p + folding_keys xs.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Local Lemma folding_keys_app {A} (xs ys : list (positive * A)) :
+    folding_keys (xs ++ ys) = folding_keys xs + folding_keys ys.
+  Proof.
+    unfold folding_keys. induction xs as [|[p a] xs IH];
+      cbn [List.map fold_right app fst] in *; lia.
+  Qed.
+
+  Local Lemma folding_keys_lift {A} (bit : positive -> positive) xs :
+    (forall p, Pos.size_nat (bit p) = S (Pos.size_nat p)) ->
+    folding_keys (List.map (fun kv : positive * A => (bit (fst kv), snd kv)) xs) =
+      folding_keys xs + length xs.
+  Proof.
+    intro Hbit. unfold folding_keys. induction xs as [|[p a] xs IH]; [reflexivity|].
+    cbn [List.map fold_right length fst snd] in *. rewrite Hbit. lia.
+  Qed.
+
+  Local Lemma folding_weight {A} (m : t A) :
+    weight m = folding_keys (elements m) + length (elements m).
+  Proof.
+    unfold weight, folding_keys.
+    induction (elements m) as [|[p a] xs IH]; cbn [List.map fold_right length fst]; lia.
+  Qed.
+
+  Local Lemma folding_state {A B} (f : B -> positive -> A -> B) path n b :
+    fold_ne f path n b =
+      fold_left (fun acc kv => f acc (path (fst kv)) (snd kv)) (entries_ne n) b.
+  Proof.
+    exact (fold_path_entries f (Nodes n) path b).
+  Qed.
+
+  Local Lemma folding_values_state {A B} (f : B -> A -> B) n b :
+    fold_values_ne f n b =
+      fold_left (fun acc kv => f acc (snd kv)) (entries_ne n) b.
+  Proof.
+    exact (fold_values_entries f (Nodes n) b).
+  Qed.
+
+  Local Lemma folding_collect_length {A} (m : t A) :
+    length (fold (fun acc p a => (p, a) :: acc) m nil) = length (elements m).
+  Proof.
+    rewrite fold_spec.
+    assert (Hlength : forall (xs acc : list (positive * A)),
+      length (fold_left (fun acc kv => (fst kv, snd kv) :: acc) xs acc) =
+        length xs + length acc).
+    { intro xs. induction xs as [|[p a] xs IH]; intro acc; cbn [fold_left length fst snd].
+      - reflexivity.
+      - rewrite IH. cbn [length]. lia. }
+    rewrite Hlength. cbn [length]. lia.
+  Qed.
+
+  Local Lemma folding_extend_bound bit T_bit path T_path q d :
+    (forall p, (T_bit p <= 1)%N) -> (forall p, (T_path p <= d)%N) ->
+    (T_extend bit T_bit path T_path q <= d + 4)%N.
+  Proof.
+    intros Hbit Hpath. time_step.
+  Qed.
+
+  Local Ltac folding_pose_child IH child d Hpath :=
+    lazymatch goal with
+    | |- context [T_fold_ne ?f ?Tf ?path ?Tp child ?acc] =>
+      let Hchild := fresh "Hfold" in
+      pose proof (IH path Tp acc (d + 4)%N) as Hchild;
+      specialize (Hchild ltac:(intro q; apply folding_extend_bound;
+        [intro p; reflexivity|exact Hpath]))
+    end.
+
+  (** Prefix extension is charged once for every bit of every emitted key. *)
+  Local Lemma folding_ne_sum {A B} (f : B -> positive -> A -> B) T_f (n : ne A) :
+    forall path T_path b d, (forall p, (T_path p <= d)%N) ->
+    (T_fold_ne f T_f path T_path n b <=
+      8 * N.of_nat (nodes_ne n + folding_keys (entries_ne n)) +
+      (d + 4) * N.of_nat (length (entries_ne n)) +
+      folding_work (fun acc kv => f acc (path (fst kv)) (snd kv))
+        (fun acc kv => T_f acc (path (fst kv)) (snd kv)) (entries_ne n) b)%N.
+  Proof.
+    induction n; intros path T_path b d Hpath; time_unfold @T_fold_ne;
+      try time_unfold @T_emit; time_simpl.
+    all: tryif (let H := type of IHn in idtac)
+      then folding_pose_child IHn n d Hpath else idtac.
+    all: tryif (let H := type of IHn1 in idtac)
+      then folding_pose_child IHn1 n1 d Hpath else idtac.
+    all: tryif (let H := type of IHn2 in idtac)
+      then folding_pose_child IHn2 n2 d Hpath else idtac.
+    all: cbn [nodes_ne entries_ne].
+    all: rewrite ?folding_keys_app, ?folding_keys_cons,
+      ?(folding_keys_lift xO _ (fun p => eq_refl)),
+      ?(folding_keys_lift xI _ (fun p => eq_refl)), ?folding_work_app.
+    all: cbn [folding_work fold_left fst snd Pos.size_nat length].
+    all: rewrite ?folding_work_map, ?folding_left_map, ?length_app, ?length_map.
+    all: rewrite ?folding_state in *; unfold emit, extend in *.
+    all: cbn [fst snd length] in *.
+    all: rewrite ?length_map, ?Nat2N.inj_add, ?Nat2N.inj_succ in *.
+    all: time_simpl; time_pose; time_cbn_all; nia.
+  Qed.
+
+  Local Lemma folding_path_sum {A B} (f : B -> positive -> A -> B) T_f path T_path m b d :
+    (forall p, (T_path p <= d)%N) ->
+    (T_fold_path f T_f path T_path m b <=
+      8 * N.of_nat (nodes m + folding_keys (elements m)) +
+      (d + 4) * N.of_nat (length (elements m)) +
+      folding_work (fun acc kv => f acc (path (fst kv)) (snd kv))
+        (fun acc kv => T_f acc (path (fst kv)) (snd kv)) (elements m) b + 1)%N.
+  Proof.
+    intro Hpath. destruct m as [|n]; rewrite !elements_entries.
+    - time_unfold @T_fold_path. time_cbn. nia.
+    - pose proof (folding_ne_sum f T_f n path T_path b d Hpath) as Hfold.
+      time_unfold @T_fold_path. unfold folding_keys in *. time_cbn_all. nia.
+  Qed.
+
+  Local Lemma folding_public_sum {A B} (f : B -> positive -> A -> B) T_f m b :
+    (T_fold f T_f m b <=
+      8 * N.of_nat (nodes m + folding_keys (elements m)) +
+      5 * N.of_nat (length (elements m)) +
+      folding_work (fun acc kv => f acc (fst kv) (snd kv))
+        (fun acc kv => T_f acc (fst kv) (snd kv)) (elements m) b + 2)%N.
+  Proof.
+    pose proof (folding_path_sum f T_f (fun p => p) (fun _ => 1%N) m b 1%N
+      (fun _ => N.le_refl 1)) as Hfold.
+    time_unfold @T_fold. unfold folding_keys in *. time_cbn_all. nia.
+  Qed.
+
   Lemma T_fold_le : forall A B (f : B -> positive -> A -> B) T_f m b k,
     ((forall acc p a, T_f acc p a <= k) ->
     T_fold f T_f m b <= c_trie * ((k + 1) * N.of_nat (nodes m + 1) +
       N.of_nat (weight m)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f m b k Hcallback.
+    pose proof (folding_public_sum f T_f m b) as Hfold.
+    pose proof (folding_work_uniform (fun acc kv => f acc (fst kv) (snd kv))
+      (fun acc kv => T_f acc (fst kv) (snd kv)) (elements m) k
+      (fun acc kv => Hcallback acc (fst kv) (snd kv)) b) as Hwork.
+    pose proof (elements_length_nodes m) as Hbindings. apply time_of_nat_le in Hbindings.
+    rewrite folding_weight. unfold c_trie. rewrite !Nat2N.inj_add in *.
+    nia.
+  Qed.
+  Local Lemma folding_elements_sum {A} (m : t A) :
+    (T_elements m <=
+      16 * N.of_nat (nodes m + folding_keys (elements m) + length (elements m) + 1))%N.
+  Proof.
+    pose proof (folding_public_sum (fun (acc : list (positive * A)) p a => (p, a) :: acc)
+      (fun _ _ _ => 1%N) m nil) as Hfold.
+    pose proof (folding_work_uniform
+      (fun (acc : list (positive * A)) kv => (fst kv, snd kv) :: acc)
+      (fun _ _ => 1%N) (elements m) 1%N (fun _ _ => N.le_refl 1) nil) as Hwork.
+    time_unfold @T_elements. time_pose.
+    rewrite ?folding_collect_length in *.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
   Lemma T_elements_le : forall A (m : t A),
     (T_elements m <= c_trie * N.of_nat (weight m + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m. pose proof (folding_elements_sum m) as Htime.
+    pose proof (nodes_le_weight A m) as Hnodes.
+    rewrite folding_weight in Hnodes |- *. apply time_of_nat_le in Hnodes.
+    unfold c_trie. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma get_tight : forall A p (m : t A), (N.of_nat (Pos.size_nat p) <= T_get p m)%N.
   Proof.
     intros A p m. unfold T_get. rewrite trie_get_clock. nia.
@@ -1009,6 +1204,7 @@ Module PTrieT <: TRIE_ALL.
     intros A p o m. pose proof (replace_clock_bound A p o m).
     unfold k_replace. nia.
   Qed.
+  (** Each nonempty filtering node pays constant overhead and at most one callback. *)
   Local Lemma filter_ne_clock_bound : forall A B (f : A -> option B) T_f n c,
     (forall a, T_f a <= c)%N ->
     (T_filter_ne f T_f n <= 8 * (c + 1) * N.of_nat (nodes_ne n))%N.
@@ -1026,7 +1222,7 @@ Module PTrieT <: TRIE_ALL.
     - pose proof (filter_ne_clock_bound A B f T_f n c Hcallback).
       time_step.
   Qed.
-  (** Filtering charges each callback at its present binding. *)
+  (** Sums over consecutive traversal segments add without duplicating callbacks. *)
   Local Lemma filtering_sum_app (xs ys : list N) :
     fold_right N.add 0%N (xs ++ ys) =
       (fold_right N.add 0 xs + fold_right N.add 0 ys)%N.
@@ -1047,6 +1243,7 @@ Module PTrieT <: TRIE_ALL.
     all: rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all; nia.
   Qed.
 
+  (** Filtering charges each callback at its present binding. *)
   Lemma T3_filter_sum : forall A B (f : A -> option B) T_f m,
     (T_filter_map f T_f m <= k_filter * (N.of_nat (nodes m + 1) +
       fold_right N.add 0 (List.map (fun ka => T_f (snd ka)) (elements m))))%N.
@@ -1056,6 +1253,58 @@ Module PTrieT <: TRIE_ALL.
     - pose proof (filtering_ne_sum f T_f n) as Hfilter.
       time_unfold @T_filter_map. time_cbn_all. rewrite Nat2N.inj_add. nia.
   Qed.
+
+  (** Merge overhead is linear in the two skeletons, including one-sided handlers. *)
+  Local Lemma merge_ne_clock_bound {A B C} (f : option A -> option B -> option C)
+      T_f (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr c cl cr
+      (Hcallback : forall a b, (T_f a b <= c)%N)
+      (Hleft : forall a, (T_fl a <= cl * N.of_nat (nodes a + 1))%N)
+      (Hright : forall b, (T_fr b <= cr * N.of_nat (nodes b + 1))%N)
+      (n : ne A) : forall u,
+    (T_merge_ne f T_f fl T_fl fr T_fr n u <=
+      16 * (c + cl + cr + 1) * N.of_nat (nodes_ne n + nodes u))%N.
+  Proof.
+    remember (16 * (c + cl + cr + 1))%N as budget eqn:Hbudget.
+    assert (Hleft_budget : (2 * cl + 1 <= budget)%N) by nia.
+    assert (Hright_budget : (cr <= budget)%N) by nia.
+    assert (Hroot_budget : (c + 2 * cr + 16 <= 2 * budget)%N) by nia.
+    clear Hbudget.
+    assert (Hright_linear : forall tr,
+      (T_fr tr <= budget * N.of_nat (nodes tr) + cr)%N).
+    { intro tr. pose proof (Hright tr) as Hraw.
+      pose proof (N.mul_le_mono_r _ _ (N.of_nat (nodes tr)) Hright_budget) as Hscaled.
+      rewrite Nat2N.inj_add in Hraw. time_cbn_all. nia. }
+    assert (Hempty : forall mass run,
+      (1 <= mass)%N -> (run <= cl * (mass + 1))%N ->
+      (1 + run <= budget * mass)%N).
+    { intros mass run Hpositive Hrun.
+      pose proof (N.mul_le_mono_r _ _ mass Hleft_budget) as Hscaled. nia. }
+    clear Hleft_budget Hright_budget Hright.
+    induction n; intros [|other]; time_unfold @T_merge_ne.
+    all: try solve [
+      match goal with
+      | |- context [?clock (Nodes ?tree)] =>
+        pose proof (Hleft (Nodes tree)) as Honly;
+        cbn [nodes] in Honly |- *; rewrite Nat.add_0_r;
+        apply Hempty;
+        [cbn [nodes_ne]; lia|rewrite Nat2N.inj_add in Honly; exact Honly]
+      end].
+    all: try pose proof (IHn (left (Nodes other))) as Hmergeleft.
+    all: try pose proof (IHn (right (Nodes other))) as Hmergeright.
+    all: try pose proof (IHn1 (left (Nodes other))) as Hmergeleft.
+    all: try pose proof (IHn2 (right (Nodes other))) as Hmergeright.
+    all: pose proof (Hright_linear (left (Nodes other))) as Honlyleft.
+    all: pose proof (Hright_linear (right (Nodes other))) as Honlyright.
+    all: pose proof (f_equal (fun count => budget * N.of_nat count)%N
+      (nodes_components_ne other)) as Hnodes.
+    all: unfold T_merge_value, T_left, T_value, T_right,
+      T_trie_left, T_trie_value, T_trie_right; time_simpl; time_pose.
+    all: cbn [nodes nodes_ne] in *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all.
+    all: repeat rewrite N.mul_add_distr_l in *.
+    all: lia.
+  Qed.
+
   Lemma T4_merge_with : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u c cl cr,
     ((forall a b, T_f a b <= c) ->
@@ -1063,8 +1312,19 @@ Module PTrieT <: TRIE_ALL.
     (forall b, T_fr b <= cr * N.of_nat (nodes b + 1)) ->
     T_merge_with f T_f fl T_fl fr T_fr m u <=
       k_merge * (c + cl + cr + 1) * N.of_nat (nodes m + nodes u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f T_f fl T_fl fr T_fr [|n] u c cl cr Hcallback Hleft Hright.
+    - pose proof (Hright u). unfold k_merge. time_step.
+    - pose proof (merge_ne_clock_bound f T_f fl T_fl fr T_fr c cl cr
+        Hcallback Hleft Hright n u) as Hmerge.
+      unfold k_merge. time_step.
+  Qed.
   (** Merging charges the callbacks at shared and one-sided bindings. *)
+
+
+
+
+
   Lemma T4_merge_with_sum : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u cl cr,
     (forall a, T_fl a <= cl * (N.of_nat (nodes a + 1) + fold_right N.add 0
@@ -1076,6 +1336,7 @@ Module PTrieT <: TRIE_ALL.
        fold_right N.add 0 (List.map (fun p => T_f (get p m) (get p u))
          (List.map fst (elements m) ++ List.map fst (elements u)))))%N.
   Proof. Admitted. (* STUB *)
+  (** Directional checking pays for at most one callback at each stored value. *)
   Local Lemma forall2_ne_clock_bound : forall A B (f : A -> option B -> bool) T_f n u c,
     (forall a b, T_f a b <= c)%N ->
     (T_forall2_ne f T_f n u <= 16 * (c + 1) * N.of_nat (nodes_ne n))%N.
@@ -1097,6 +1358,8 @@ Module PTrieT <: TRIE_ALL.
       time_step.
   Qed.
   (** Directional checking charges each visited binding against its lookup result. *)
+
+
   Lemma T5_forall2_sum : forall A B (f : A -> option B -> bool) T_f m u,
     (T_forall2 f T_f m u <= k_check * (N.of_nat (nodes m + 1) +
       fold_right N.add 0
@@ -1106,14 +1369,34 @@ Module PTrieT <: TRIE_ALL.
     ((forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
     T_fold_path f T_f path T_path m b <=
       k_fold * (N.of_nat (nodes m + key_mass m) + (c + d + 1) * N.of_nat (bindings m) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f path T_path m b c d Hcallback Hpath.
+    pose proof (folding_path_sum f T_f path T_path m b d Hpath) as Hfold.
+    pose proof (folding_work_uniform
+      (fun acc kv => f acc (path (fst kv)) (snd kv))
+      (fun acc kv => T_f acc (path (fst kv)) (snd kv)) (elements m) c
+      (fun acc kv => Hcallback acc (path (fst kv)) (snd kv)) b) as Hwork.
+    unfold k_fold, key_mass, bindings. unfold folding_keys in Hfold.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T7_fold_work : forall A B (f : B -> positive -> A -> B) T_f m b,
     (T_fold f T_f m b <=
       k_fold * (N.of_nat (nodes m + key_mass m) + fold_work f T_f m b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f m b. pose proof (folding_public_sum f T_f m b) as Hfold.
+    pose proof (elements_length_nodes m) as Hbindings. apply time_of_nat_le in Hbindings.
+    unfold k_fold, key_mass, fold_work. unfold folding_keys in Hfold.
+    rewrite (folding_work_left (fun acc kv => f acc (fst kv) (snd kv))
+      (fun acc kv => T_f acc (fst kv) (snd kv)) (elements m) b 0%N).
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T8_elements : forall A (m : t A),
     (T_elements m <= k_elements * N.of_nat (nodes m + key_mass m + bindings m + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m. pose proof (folding_elements_sum m) as Htime.
+    unfold k_elements, key_mass, bindings. unfold folding_keys in Htime. nia.
+  Qed.
+  (** The value fold charges callbacks at the accumulator used by each recursive call. *)
   Local Lemma fold_values_ne_clock_bound : forall A B (f : B -> A -> B) T_f n b c,
     (forall acc a, T_f acc a <= c)%N ->
     (T_fold_values_ne f T_f n b <= 4 * (c + 1) * N.of_nat (nodes_ne n))%N.
@@ -1131,12 +1414,90 @@ Module PTrieT <: TRIE_ALL.
     - pose proof (fold_values_ne_clock_bound A B f T_f n b c Hcallback).
       time_step.
   Qed.
+
+  Lemma T_merge_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2 k,
+    ((forall a b, T_f a b <= k) ->
+    T_merge f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
+  Proof.
+    intros A B C f T_f m1 m2 k Hcallback.
+    assert (Hleft : forall m,
+      (T_filter_map (fun a => f (Some a) None) (fun a => 1 + T_f (Some a) None)%N m <=
+        8 * (k + 2) * N.of_nat (nodes m + 1))%N).
+    { intro m. pose proof (T3_filter A C (fun a => f (Some a) None)
+        (fun a => 1 + T_f (Some a) None)%N m (k + 1)%N
+        ltac:(intro a; pose proof (Hcallback (Some a) None); time_cbn; nia)) as Hfilter.
+      unfold k_filter in Hfilter. nia. }
+    assert (Hright : forall m,
+      (T_filter_map (fun b => f None (Some b)) (fun b => 1 + T_f None (Some b))%N m <=
+        8 * (k + 2) * N.of_nat (nodes m + 1))%N).
+    { intro m. pose proof (T3_filter B C (fun b => f None (Some b))
+        (fun b => 1 + T_f None (Some b))%N m (k + 1)%N
+        ltac:(intro b; pose proof (Hcallback None (Some b)); time_cbn; nia)) as Hfilter.
+      unfold k_filter in Hfilter. nia. }
+    time_unfold @T_merge.
+    lazymatch goal with
+    | |- context [T_merge_with ?g ?T_g ?fl ?T_fl ?fr ?T_fr ?m ?u] =>
+      pose proof (T4_merge_with A B C g T_g fl T_fl fr T_fr m u k
+        (8 * (k + 2))%N (8 * (k + 2))%N Hcallback Hleft Hright) as Hmerge
+    end.
+    unfold k_merge in Hmerge. unfold c_trie.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
+  Lemma T_forall2b_le : forall A B (f : option A -> option B -> bool) T_f m1 m2 k,
+    ((forall a b, T_f a b <= k) ->
+    T_forall2b f T_f m1 m2 <= c_trie * (k + 1) * N.of_nat (nodes m1 + nodes m2 + 1))%N.
+  Proof.
+    intros A B f T_f m1 m2 k Hcallback.
+    pose proof (T5_forall2 A B (fun a b => f (Some a) b)
+      (fun a b => 1 + T_f (Some a) b)%N m1 m2 (k + 1)%N
+      ltac:(intros a b; pose proof (Hcallback (Some a) b); time_cbn; nia)) as Hforward.
+    pose proof (T5_forall2 B A
+      (fun b a => match a with None => f None (Some b) | Some _ => true end)
+      (fun b a => 1 + match a with None => T_f None (Some b) | Some _ => 0 end)%N
+      m2 m1 (k + 1)%N
+      ltac:(intros b [a|]; pose proof (Hcallback None (Some b)); time_cbn; nia)) as Hreverse.
+    unfold k_check in Hforward, Hreverse. unfold c_trie.
+    time_unfold @T_forall2b. time_simpl.
+    repeat match goal with
+    | |- context [if ?test then _ else _] => destruct test
+    end; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  Lemma T_existsb_le : forall A (f : A -> bool) T_f m k,
+    ((forall a, T_f a <= k) ->
+    T_existsb f T_f m <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
+  Proof.
+    intros A f T_f m k Hcallback.
+    pose proof (T5_forall2 A unit (fun a _ => negb (f a))
+      (fun a _ => 1 + (T_f a + 1))%N m empty (k + 2)%N
+      ltac:(intros a b; pose proof (Hcallback a); time_cbn; nia)) as Hcheck.
+    unfold k_check in Hcheck. unfold c_trie.
+    time_unfold @T_existsb. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
+  Lemma T_map_le : forall A B (f : A -> B) T_f m k,
+    ((forall a, T_f a <= k) ->
+    T_map f T_f m <= c_trie * (k + 1) * N.of_nat (nodes m + 1))%N.
+  Proof.
+    intros A B f T_f m k Hcallback.
+    pose proof (T3_filter A B (fun a => Some (f a)) (fun a => 1 + T_f a)%N
+      m (k + 1)%N ltac:(intro a; pose proof (Hcallback a); time_cbn; nia)) as Hfilter.
+    unfold k_filter in Hfilter. unfold c_trie.
+    time_unfold @T_map. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
+
+
   Lemma T_merge_sum_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2,
     (T_merge f T_f m1 m2 <= c_trie *
       ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
        fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
          (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
   Proof. Admitted. (* STUB *)
+
   Lemma T_forall2b_sum_le : forall A B (f : option A -> option B -> bool) T_f m1 m2,
     (T_forall2b f T_f m1 m2 <= c_trie *
       ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
@@ -1153,13 +1514,53 @@ Module PTrieT <: TRIE_ALL.
       snd (fold_left (fun bw ka =>
         (f (fst bw) (fst ka) (snd ka), snd bw + T_f (fst bw) (fst ka) (snd ka)))
         (elements m) (b, 0))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f m b.
+    change (T_fold f T_f m b <= c_trie *
+      (N.of_nat (nodes m + 1) + N.of_nat (weight m) + fold_work f T_f m b))%N.
+    pose proof (T7_fold_work A B f T_f m b) as Hfold.
+    rewrite F3_weight. unfold c_trie, k_fold in *.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
 
   (** Value folding charges callbacks in enumeration order without constructing keys. *)
+  Local Ltac folding_pose_values_child IH child :=
+    lazymatch goal with
+    | |- context [T_fold_values_ne ?f ?Tf child ?acc] =>
+      let Hchild := fresh "Hfold" in pose proof (IH acc) as Hchild
+    end.
+
+  Local Lemma folding_values_ne_sum {A B} (f : B -> A -> B) T_f (n : ne A) :
+    forall b, (T_fold_values_ne f T_f n b <= 4 * N.of_nat (nodes_ne n) +
+      folding_work (fun acc kv => f acc (snd kv)) (fun acc kv => T_f acc (snd kv))
+        (entries_ne n) b)%N.
+  Proof.
+    induction n; intro b; time_unfold @T_fold_values_ne; time_simpl.
+    all: tryif (let H := type of IHn in idtac)
+      then folding_pose_values_child IHn n else idtac.
+    all: tryif (let H := type of IHn1 in idtac)
+      then folding_pose_values_child IHn1 n1 else idtac.
+    all: tryif (let H := type of IHn2 in idtac)
+      then folding_pose_values_child IHn2 n2 else idtac.
+    all: cbn [nodes_ne entries_ne]; rewrite ?folding_work_app.
+    all: cbn [folding_work fold_left fst snd].
+    all: rewrite ?folding_work_map, ?folding_left_map.
+    all: rewrite ?folding_values_state in *; cbn [fst snd] in *.
+    all: rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all; nia.
+  Qed.
+
   Lemma T_fold_values_sum_le : forall A B (f : B -> A -> B) T_f m b,
     (T_fold_values f T_f m b <= c_trie * (N.of_nat (nodes m + 1) +
       snd (fold_left (fun bw ka =>
         (f (fst bw) (snd ka), snd bw + T_f (fst bw) (snd ka)))
         (elements m) (b, 0))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f m b. rewrite elements_entries. destruct m as [|n].
+    - time_unfold @T_fold_values. unfold c_trie. time_cbn. nia.
+    - pose proof (folding_values_ne_sum f T_f n b) as Hfold.
+      time_unfold @T_fold_values. cbn [entries nodes].
+      rewrite (folding_work_left (fun acc kv => f acc (snd kv))
+        (fun acc kv => T_f acc (snd kv)) (entries_ne n) b 0%N).
+      unfold c_trie. rewrite !Nat2N.inj_add. time_cbn_all. nia.
+  Qed.
 End PTrieT.
