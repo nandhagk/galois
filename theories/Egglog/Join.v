@@ -255,6 +255,36 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
       congruence.
   Qed.
 
+  (** No variable position precedes level zero. *)
+  Lemma filter_before_zero : forall lv, filter (fun i => Nat.ltb i 0) lv = [].
+  Proof.
+    induction lv as [|i lv IH]; cbn [filter Nat.ltb Nat.leb]; assumption || reflexivity.
+  Qed.
+
+  (** Root nodes represent empty projections in every aligned well-formed index. *)
+  Lemma roots_nodes : forall cs ixs,
+    Forall2 (fun lv ix => I.wf (length lv) ix) cs ixs ->
+    Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i 0) (fst lvix)) [] = Some u /\
+      I.node (snd lvix) n u) (combine cs ixs) (map I.root ixs).
+  Proof.
+    intros cs ixs Hcols. induction Hcols as [|lv ix cs ixs Hwf Hcols IH].
+    - constructor.
+    - cbn [combine map]. constructor; [|exact IH].
+      exists []. split.
+      + cbn [fst]. rewrite filter_before_zero. reflexivity.
+      + cbn [snd]. apply I.node_root with (a := length lv). exact Hwf.
+  Qed.
+
+  (** Every well-formed plan starts with its indexes at the empty prefix. *)
+  Lemma nodes_ok_initial : forall p ixs, wf_plan p ixs ->
+    nodes_ok p ixs 0 [] (map I.root ixs).
+  Proof.
+    intros p ixs Hwf. split; [exact Hwf|]. split; [reflexivity|]. split; [lia|].
+    apply roots_nodes. destruct Hwf as [_ [Hcols _]].
+    induction Hcols as [|lv ix cs ixs Hwf Hcols IH]; constructor; [tauto|exact IH].
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
@@ -346,7 +376,9 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
 
   Lemma nodes_ok_root : forall p ixs, wf_plan p ixs ->
     nodes_ok p ixs 0 [] (map I.root ixs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact nodes_ok_initial.
+  Qed.
 
   Lemma step_ok : forall p ixs l pre ns c ns', wf_plan p ixs ->
     nodes_ok p ixs l pre ns -> advance p ixs l ns c = Some ns' ->
