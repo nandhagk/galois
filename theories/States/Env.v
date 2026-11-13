@@ -230,12 +230,56 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof.
     intros a b Hbot. unfold leb. now rewrite Hbot.
   Qed.
+
+  (** Pointwise inclusion into a map without bottom bindings lifts to environments. *)
+  Lemma leb_reached_intro : forall a b,
+    M.existsb V.is_bot b = false ->
+    (forall p, V.leb (option_value (M.find p a)) (option_value (M.find p b)) = true) ->
+    leb (Reached a) (Reached b) = true.
+  Proof.
+    intros a b Hclean Hpoint. unfold leb. cbn [is_bot].
+    rewrite Hclean. destruct (M.existsb V.is_bot a); cbn; [reflexivity|].
+    now apply map_leb_spec.
+  Qed.
+
+  (** Dropping absent and recognized bottom results preserves both upper bounds. *)
+  Lemma filtered_merge_bounds : forall (f : V.t -> V.t -> V.t) a b,
+    (forall x y, V.leb x (f x y) = true) ->
+    (forall x y, V.leb y (f x y) = true) ->
+    let m := M.merge (fun x y => match x, y with
+      | Some x, Some y => if V.is_bot (f x y) then None else Some (f x y)
+      | _, _ => None
+      end) a b in
+    M.existsb V.is_bot m = false /\
+      leb (Reached a) (Reached m) = true /\ leb (Reached b) (Reached m) = true.
+  Proof.
+    intros f a b Hleft Hright m.
+    assert (Hclean : M.existsb V.is_bot m = false).
+    { apply map_nonbot_spec. intros p v Hfind. unfold m in Hfind.
+      rewrite M.find_merge in Hfind by reflexivity.
+      destruct (M.find p a) as [x|], (M.find p b) as [y|]; try discriminate.
+      destruct (V.is_bot (f x y)) eqn:Hbot; [discriminate|].
+      injection Hfind as Hvalue. subst v. exact Hbot. }
+    split; [exact Hclean|]. split; apply leb_reached_intro; try exact Hclean.
+    all: intro p; unfold m; rewrite M.find_merge by reflexivity.
+    all: destruct (M.find p a) as [x|], (M.find p b) as [y|];
+      cbn [option_value]; try apply V.top_greatest.
+    all: destruct (V.is_bot (f x y)); cbn [option_value];
+      first [apply V.top_greatest | apply Hleft | apply Hright].
+  Qed.
+
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros [|a] [|b]; try apply bot_least; try apply leb_refl.
+    exact (proj1 (proj2 (filtered_merge_bounds V.join a b V.join_ub_l V.join_ub_r))).
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros [|a] [|b]; try apply bot_least; try apply leb_refl.
+    exact (proj2 (proj2 (filtered_merge_bounds V.join a b V.join_ub_l V.join_ub_r))).
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
   Proof.
@@ -246,10 +290,20 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a); [apply leb_refl|].
+    destruct a as [|a], b as [|b]; try apply bot_least; try apply leb_refl.
+    exact (proj1 (proj2 (filtered_merge_bounds (V.widen p) a b
+      (V.widen_ub_l p) (V.widen_ub_r p)))).
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a) eqn:Hstable; [exact Hstable|].
+    destruct a as [|a], b as [|b]; try apply bot_least; try apply leb_refl.
+    exact (proj2 (proj2 (filtered_merge_bounds (V.widen p) a b
+      (V.widen_ub_l p) (V.widen_ub_r p)))).
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof.
