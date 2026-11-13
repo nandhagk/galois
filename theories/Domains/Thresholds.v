@@ -4,7 +4,7 @@
     For example, the least threshold above four in [0; 8] is eight.
     Builds on: ThresholdsSig. *)
 
-From Stdlib Require Import List ZArith Arith Lia Sorting.Sorted Sorting.Permutation.
+From Stdlib Require Import List ZArith NArith Arith Lia Sorting.Sorted Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import ThresholdsSig.
 Import List.ListNotations.
@@ -506,10 +506,305 @@ Module ThresholdsT <: THRESHOLDS_ALL.
   TimeFun below.
   TimeFun above.
 
+  Local Open Scope nat_scope.
+
+  (** Unary division traverses its numerator once, independently of the accumulators. *)
+  Lemma divmod_time : forall x y q u,
+    Nat.T_divmod x y q u = (N.of_nat x + 1)%N.
+  Proof.
+    induction x as [|x IH]; intros y q u; time_unfold Nat.T_divmod.
+    - reflexivity.
+    - destruct u; rewrite IH; lia.
+  Qed.
+
+  (** Division adds only a wrapper and the quotient projection to the numerator pass. *)
+  Lemma div_time : forall x y, (Nat.T_div x y <= N.of_nat x + 3)%N.
+  Proof.
+    intros x [|y]; time_unfold Nat.T_div; [lia|].
+    rewrite divmod_time. pose proof (Std.Datatypes.T_fst_le (Nat.divmod x y 0 y)). lia.
+  Qed.
+
+  (** Prefix extraction visits no more than the requested number of list cells. *)
+  Lemma firstn_time : forall n (xs : list Z),
+    (ListDef.T_firstn n xs <= N.of_nat n + 1)%N.
+  Proof.
+    induction n as [|n IH]; intros [|x xs]; time_unfold ListDef.T_firstn; try lia.
+    specialize (IH xs). lia.
+  Qed.
+
+  (** Prefix removal visits no more than the requested number of list cells. *)
+  Lemma skipn_time : forall n (xs : list Z),
+    (ListDef.T_skipn n xs <= N.of_nat n + 1)%N.
+  Proof.
+    induction n as [|n IH]; intros [|x xs]; time_unfold ListDef.T_skipn; try lia.
+    specialize (IH xs). lia.
+  Qed.
+
+  (** The list bit envelope bounds exactly the bit size of each stored integer. *)
+  Lemma zb_spec : forall xs bound,
+    zb xs <= bound <-> Forall (fun x => zbits x <= bound) xs.
+  Proof.
+    induction xs as [|x xs IH]; intro bound; cbn [zb map fold_right].
+    - split; intro H; [constructor|lia].
+    - rewrite Forall_cons_iff, <- IH.
+      change (Nat.max (zbits x) (zb xs) <= bound <->
+        zbits x <= bound /\ zb xs <= bound). lia.
+  Qed.
+
+  (** Reordering a list preserves every common bit bound. *)
+  Lemma sort_bits : forall fuel xs bound,
+    Forall (fun x => zbits x <= bound) xs ->
+    Forall (fun x => zbits x <= bound) (sort_fuel fuel xs).
+  Proof.
+    intros fuel xs bound Hbits. rewrite Forall_forall in Hbits |- *.
+    intros x Hin. apply Hbits. eapply Permutation_in; [|exact Hin].
+    apply Permutation_sym, sort_fuel_perm.
+  Qed.
+
+  (** Merge consumes at most its fuel, with each comparison charged to a stored value. *)
+  Lemma merge_time : forall fuel xs ys bound,
+    Forall (fun x => zbits x <= bound) xs ->
+    Forall (fun x => zbits x <= bound) ys ->
+    (T_merge fuel xs ys <= N.of_nat (fuel + 1) * N.of_nat (bound + 5))%N.
+  Proof.
+    induction fuel as [|fuel IH]; intros xs ys bound Hxs Hys; [time_unfold T_merge; nia|].
+    destruct xs as [|x xs]; [time_unfold T_merge; nia|].
+    destruct ys as [|y ys]; [time_unfold T_merge; nia|].
+    time_unfold T_merge.
+    inversion Hxs as [|x' xs' Hx Htailx]; subst.
+    inversion Hys as [|y' ys' Hy Htaily]; subst.
+    pose proof (Std.Z.T_leb_le x y) as Hcompare.
+    change (Z.size_nat x <= bound) in Hx.
+    destruct (Z.leb x y).
+    - pose proof (IH xs (y :: ys) bound Htailx Hys). nia.
+    - pose proof (IH (x :: xs) ys bound Hxs Htaily). nia.
+  Qed.
+
+  (** Halving a list at capacity two-to-the-next-level fits both halves at the lower level. *)
+  Lemma split_capacity : forall n h, n <= 2 ^ S h ->
+    n / 2 <= 2 ^ h /\ n - n / 2 <= 2 ^ h.
+  Proof.
+    intros n h Hcapacity. change (n <= 2 * 2 ^ h) in Hcapacity.
+    pose proof (Nat.div_mod n 2 ltac:(lia)) as Hdiv.
+    pose proof (Nat.mod_upper_bound n 2 ltac:(lia)) as Hmod. lia.
+  Qed.
+
+  (** The two recursive sorting budgets combine using preservation of the total length. *)
+  Lemma sort_children_budget : forall n middle h bound, middle <= n ->
+    (64 * N.of_nat (middle * (h + 1) + 1) * N.of_nat (bound + 1) +
+      64 * N.of_nat ((n - middle) * (h + 1) + 1) * N.of_nat (bound + 1) =
+      64 * N.of_nat (n * (h + 1) + 2) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros n middle h bound Hmiddle.
+    rewrite <- N.mul_add_distr_r, <- N.mul_add_distr_l, <- Nat2N.inj_add.
+    replace (middle * (h + 1) + 1 + ((n - middle) * (h + 1) + 1))
+      with (n * (h + 1) + 2) by nia. reflexivity.
+  Qed.
+
+  (** The next sorting level reserves a linear budget beyond its recursive children. *)
+  Lemma sort_parent_budget : forall n h bound, 1 <= n ->
+    (64 * N.of_nat (n * (S h + 1) + 1) * N.of_nat (bound + 1) =
+      64 * N.of_nat (n * (h + 1) + 2) * N.of_nat (bound + 1) +
+      64 * N.of_nat (n - 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros n h bound Hpositive.
+    replace (n * (S h + 1) + 1) with (n * (h + 1) + 2 + (n - 1)) by nia.
+    rewrite Nat2N.inj_add, N.mul_add_distr_l, N.mul_add_distr_r. reflexivity.
+  Qed.
+
+  (** A capacity of two to the height pays for all sorting levels at a shared bit bound. *)
+  Lemma sort_capacity_time : forall h fuel xs bound,
+    length xs <= 2 ^ h -> Forall (fun x => zbits x <= bound) xs ->
+    (T_sort_fuel fuel xs <=
+      64 * N.of_nat (length xs * (h + 1) + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    induction h as [|h IH]; intros fuel xs bound Hcapacity Hbits.
+    - destruct xs as [|x [|y ys]]; cbn [length Nat.pow] in Hcapacity; try lia;
+        destruct fuel; time_unfold T_sort_fuel; cbn [length]; nia.
+    - destruct fuel as [|fuel]; [time_unfold T_sort_fuel; nia|].
+      destruct xs as [|x [|y ys]];
+        [time_unfold T_sort_fuel; cbn [length]; nia|
+         time_unfold T_sort_fuel; cbn [length]; nia|].
+      set (input := x :: y :: ys) in *.
+      assert (Htwo : 2 <= length input) by (unfold input; cbn; lia).
+      pose proof (Nat.div_lt (length input) 2 ltac:(lia) ltac:(lia)) as Hhalf.
+      destruct (split_capacity (length input) h Hcapacity) as [Hleftcap Hrightcap].
+      assert (Hleftlength : length (firstn (length input / 2) input) = length input / 2).
+      { rewrite length_firstn, Nat.min_l by lia. reflexivity. }
+      assert (Hparts : Forall (fun x => zbits x <= bound) (firstn (length input / 2) input) /\
+        Forall (fun x => zbits x <= bound) (skipn (length input / 2) input)).
+      { rewrite <- Forall_app, firstn_skipn. exact Hbits. }
+      destruct Hparts as [Hleftbits Hrightbits].
+      pose proof (IH fuel (firstn (length input / 2) input) bound
+        ltac:(rewrite Hleftlength; exact Hleftcap) Hleftbits) as Hleft.
+      pose proof (IH fuel (skipn (length input / 2) input) bound
+        ltac:(rewrite length_skipn; exact Hrightcap) Hrightbits) as Hright.
+      pose proof (merge_time (length input)
+        (sort_fuel fuel (firstn (length input / 2) input))
+        (sort_fuel fuel (skipn (length input / 2) input)) bound
+        (sort_bits fuel _ bound Hleftbits) (sort_bits fuel _ bound Hrightbits)) as Hmerge.
+      pose proof (Std.Datatypes.T_length_le input) as Hlength.
+      pose proof (div_time (length input) 2) as Hdiv.
+      pose proof (firstn_time (length input / 2) input) as Hfirstn.
+      pose proof (skipn_time (length input / 2) input) as Hskipn.
+      rewrite Hleftlength in Hleft. rewrite length_skipn in Hright.
+      pose proof (N.add_le_mono _ _ _ _ Hleft Hright) as Hchildren.
+      rewrite (sort_children_budget (length input) (length input / 2) h bound ltac:(lia))
+        in Hchildren.
+      change (T_sort_fuel (S fuel) (x :: y :: ys) <=
+        64 * N.of_nat (length input * (S h + 1) + 1) * N.of_nat (bound + 1))%N.
+      time_unfold T_sort_fuel. fold input. rewrite sort_parent_budget by lia.
+      clear Hleft Hright IH Hcapacity Hleftcap Hrightcap Hleftlength.
+      remember (64 * N.of_nat (length input * (h + 1) + 2) * N.of_nat (bound + 1))%N
+        as children_budget. clear Heqchildren_budget. nia.
+  Qed.
+
+  (** Every list length fits the power-of-two capacity just above its binary logarithm. *)
+  Lemma log_capacity : forall n, n < 2 ^ (Nat.log2 n + 1).
+  Proof.
+    intros [|n]; [cbn; lia|].
+    replace (Nat.log2 (S n) + 1) with (S (Nat.log2 (S n))) by lia.
+    exact (proj2 (Nat.log2_spec (S n) ltac:(lia))).
+  Qed.
+
+  (** The public sorting wrapper adds only the initial length scan. *)
+  Lemma msort_time : forall xs,
+    (T_msort xs <= 256 * N.of_nat (length xs * (Nat.log2 (length xs) + 1) + 1) *
+      N.of_nat (zb xs + 1))%N.
+  Proof.
+    intro xs.
+    pose proof (sort_capacity_time (Nat.log2 (length xs) + 1) (length xs) xs (zb xs)
+      ltac:(pose proof (log_capacity (length xs)); lia)
+      (proj1 (zb_spec xs (zb xs)) (Nat.le_refl _))) as Hsort.
+    pose proof (Std.Datatypes.T_length_le xs) as Hlength.
+    time_unfold T_msort. nia.
+  Qed.
+
+  (** Adjacent deduplication charges one bounded integer comparison per visited cell. *)
+  Lemma dedup_time : forall xs bound, Forall (fun x => zbits x <= bound) xs ->
+    (T_dedup_sorted xs <= 4 * N.of_nat (length xs + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intros bound Hbits.
+    - time_unfold T_dedup_sorted. cbn [length]. nia.
+    - destruct xs as [|y ys]; [time_unfold T_dedup_sorted; cbn [length]; nia|].
+      inversion Hbits as [|x' xs' Hx Htail]; subst.
+      specialize (IH bound Htail). change (Z.size_nat x <= bound) in Hx.
+      pose proof (Std.Z.T_eqb_le x y) as Hcompare.
+      time_unfold T_dedup_sorted. destruct (Z.eqb x y); cbn [length] in *; nia.
+  Qed.
+
+  (** An empty construction call has a fixed cost even when unused fuel remains. *)
+  Lemma build_empty_time : forall fuel, (T_build fuel nil <= 6)%N.
+  Proof.
+    intros [|fuel]; [change (1 <= 6)%N|change (6 <= 6)%N]; lia.
+  Qed.
+
+  (** Each construction level charges a linear split of its nonempty input. *)
+  Lemma build_capacity_time : forall h fuel xs, length xs < 2 ^ h ->
+    (T_build fuel xs <= 32 * N.of_nat (length xs * (h + 1) + 1))%N.
+  Proof.
+    induction h as [|h IH]; intros fuel xs Hcapacity.
+    - destruct xs as [|x xs]; cbn [length Nat.pow] in Hcapacity; [|lia].
+      pose proof (build_empty_time fuel). cbn [length]. nia.
+    - destruct fuel as [|fuel]; [time_unfold T_build; nia|].
+      destruct xs as [|x xs];
+        [pose proof (build_empty_time (S fuel)); cbn [length]; nia|].
+      set (input := x :: xs) in *.
+      destruct (median_split input ltac:(unfold input; discriminate))
+        as [pivot [rhs [Hskip [Hleftlength [Hlengths Hbalance]]]]].
+      change (length input < 2 * 2 ^ h) in Hcapacity.
+      pose proof (IH fuel (firstn (length input / 2) input)
+        ltac:(rewrite Hleftlength; nia)) as Hleft.
+      pose proof (IH fuel rhs ltac:(nia)) as Hright.
+      pose proof (Std.Datatypes.T_length_le input) as Hlength.
+      pose proof (div_time (length input) 2) as Hdiv.
+      pose proof (firstn_time (length input / 2) input) as Hfirstn.
+      pose proof (skipn_time (length input / 2) input) as Hskipn.
+      rewrite Hleftlength in Hleft.
+      time_unfold T_build. rewrite Hskip. nia.
+  Qed.
+
+  (** Sufficient construction fuel absorbs the extra logarithmic-capacity level. *)
+  Lemma build_time : forall fuel xs, length xs <= fuel ->
+    (T_build fuel xs <= 64 * N.of_nat
+      (length xs * (Nat.log2 (length xs) + 1) + fuel + 1))%N.
+  Proof.
+    intros fuel xs Hfuel.
+    pose proof (build_capacity_time (Nat.log2 (length xs) + 1) fuel xs
+      (log_capacity (length xs))). nia.
+  Qed.
+
+  (** Lower search spends bounded comparison work along one path. *)
+  Lemma below_time : forall tree bound z,
+    Forall (fun x => zbits x <= bound) (vals tree) ->
+    (T_below tree z <= 16 * N.of_nat (depth tree + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    induction tree as [|lhs IHleft value rhs IHright]; intros bound z Hbits.
+    - time_unfold T_below. cbn [depth]. nia.
+    - change (Forall (fun x => zbits x <= bound) (vals lhs ++ value :: vals rhs)) in Hbits.
+      rewrite Forall_app in Hbits. destruct Hbits as [Hleft Hright].
+      inversion Hright as [|v vs Hvalue Htail]; subst.
+      specialize (IHleft bound z Hleft). specialize (IHright bound z Htail).
+      change (Z.size_nat value <= bound) in Hvalue.
+      pose proof (Std.Z.T_leb_le value z) as Hcompare.
+      pose proof (Nat.le_max_l (depth lhs) (depth rhs)) as Hdepthleft.
+      pose proof (Nat.le_max_r (depth lhs) (depth rhs)) as Hdepthright.
+      time_unfold T_below. cbn [depth]. destruct (Z.leb value z).
+      + destruct (below rhs z) as [u|]; [pose proof (Std.Z.T_max_le value u)|]; nia.
+      + nia.
+  Qed.
+
+  (** Upper search spends bounded comparison work along one path. *)
+  Lemma above_time : forall tree bound z,
+    Forall (fun x => zbits x <= bound) (vals tree) ->
+    (T_above tree z <= 16 * N.of_nat (depth tree + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    induction tree as [|lhs IHleft value rhs IHright]; intros bound z Hbits.
+    - time_unfold T_above. cbn [depth]. nia.
+    - change (Forall (fun x => zbits x <= bound) (vals lhs ++ value :: vals rhs)) in Hbits.
+      rewrite Forall_app in Hbits. destruct Hbits as [Hleft Hright].
+      inversion Hright as [|v vs Hvalue Htail]; subst.
+      specialize (IHleft bound z Hleft). specialize (IHright bound z Htail).
+      change (Z.size_nat value <= bound) in Hvalue.
+      pose proof (Std.Z.T_ltb_le value z) as Hcompare.
+      pose proof (Std.Datatypes.T_negb_le (Z.ltb value z)) as Hnegate.
+      pose proof (Nat.le_max_l (depth lhs) (depth rhs)) as Hdepthleft.
+      pose proof (Nat.le_max_r (depth lhs) (depth rhs)) as Hdepthright.
+      time_unfold T_above. cbn [depth]. destruct (Z.ltb value z); cbn [negb].
+      + nia.
+      + destruct (above lhs z) as [u|]; [pose proof (Std.Z.T_min_le value u)|]; nia.
+  Qed.
+  (** Construction combines sorting, deduplication, and median splitting within one envelope. *)
+  Lemma make_time : forall xs,
+    (T_make xs <= 1024 * N.of_nat (length xs * (Nat.log2 (length xs) + 1) + 1) *
+      N.of_nat (zb xs + 1))%N.
+  Proof.
+    intro xs. set (prepared := dedup_sorted (msort xs)).
+    pose proof (msort_time xs) as Hsort.
+    assert (Hsortedlength : length (msort xs) = length xs).
+    { symmetry. apply Permutation_length, sort_fuel_perm. }
+    pose proof (dedup_time (msort xs) (zb xs)
+      (sort_bits (length xs) xs (zb xs)
+        (proj1 (zb_spec xs (zb xs)) (Nat.le_refl _)))) as Hdedup.
+    rewrite Hsortedlength in Hdedup.
+    pose proof (build_time (length prepared) prepared (Nat.le_refl _)) as Hbuild.
+    pose proof (Std.Datatypes.T_length_le prepared) as Hlength.
+    pose proof (prepared_length xs) as Hprepared. fold prepared in Hprepared.
+    pose proof (Nat.log2_le_mono (length prepared) (length xs) Hprepared) as Hlog.
+    assert (Hsmall : (N.of_nat (length xs + 1) <=
+      N.of_nat (length xs * (Nat.log2 (length xs) + 1) + 1))%N) by nia.
+    assert (Hbuildsize : (N.of_nat (length prepared * (Nat.log2 (length prepared) + 1) +
+      length prepared + 1) <=
+      2 * N.of_nat (length xs * (Nat.log2 (length xs) + 1) + 1))%N) by nia.
+    time_unfold T_make. fold prepared.
+    remember (N.of_nat (length xs * (Nat.log2 (length xs) + 1) + 1)) as budget.
+    clear Heqbudget Hlog Hsortedlength. nia.
+  Qed.
+
   Definition c_thresholds : N := 1%N. (* STUB *)
-  Definition k_sort : N := 1%N. (* STUB *)
-  Definition k_dedup : N := 1%N. (* STUB *)
-  Definition k_build : N := 1%N. (* STUB *)
+  Definition k_sort : N := 256%N.
+  Definition k_dedup : N := 4%N.
+  Definition k_build : N := 64%N.
   Definition k_search : N := 1%N. (* STUB *)
 
   Lemma T_make_le : forall zs,
@@ -579,21 +874,31 @@ Module ThresholdsT <: THRESHOLDS_ALL.
     intro zs. unfold make. apply build_fuel_eq; [lia|apply prepared_length].
   Qed.
 
+  (** Merge sort fits the declared logarithmic sorting envelope. *)
   Lemma T1_msort : forall zs,
     (T_msort zs <= k_sort * N.of_nat
       (length zs * (Nat.log2 (length zs) + 1) + 1) *
       N.of_nat (zb zs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_sort. apply msort_time.
+  Qed.
 
+  (** Deduplication fits one pass of stored integer comparisons. *)
   Lemma T2_dedup : forall zs,
     (T_dedup_sorted zs <= k_dedup * N.of_nat ((length zs + 1)%nat) *
       N.of_nat ((zb zs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro zs. unfold k_dedup. apply dedup_time.
+    apply (proj1 (zb_spec zs (zb zs))). reflexivity.
+  Qed.
 
+  (** Median construction fits the logarithmic splitting envelope. *)
   Lemma T3_build : forall fuel zs, length zs <= fuel ->
     (T_build fuel zs <= k_build * N.of_nat
       ((length zs * (Nat.log2 (length zs) + 1) + fuel + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_build. apply build_time.
+  Qed.
 
   Lemma T4_above : forall t z,
     (T_above t z <= k_search * N.of_nat ((depth t + 1)%nat) *
