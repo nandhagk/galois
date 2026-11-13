@@ -128,11 +128,14 @@ Example one_repair_inventory_growth :
     | inr _ => False
     | inl (repaired, rest) =>
       (db_npending popped, length work, db_nuses popped,
+        FixtureDatabase.row_get 2%positive [Id 2%positive] popped,
+        UnionFind.repr (db_forest popped) 2%positive,
         db_npending repaired, length rest, db_nuses repaired,
         UnionFind.size_of (db_forest popped) 1%positive,
         UnionFind.size_of (db_forest repaired) 1%positive,
         FixtureDatabase.row_get 2%positive [Id 1%positive] repaired) =
-      (0%N, 1, 1%N, 0%N, 0, 2%N, 2, 2, Some None)
+      (0%N, 1, 1%N, Some None, 1%positive,
+        0%N, 0, 2%N, 2, 2, Some None)
     end
   end.
 Proof.
