@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
 From Argent Require Import Time Tactics Std.
-From Galois.Base Require Import Loop.
+From Galois.Base Require Import Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
 Import List.ListNotations.
@@ -145,6 +145,15 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition trace (p : program V.t) (cp : compiled V.t) (lim : limits) (db : D.t)
       : list (bool * D.t) :=
     driver_trace (driver p cp lim) (N.to_nat (max_iter lim)) (false, db).
+  Definition job_rule (p : program V.t) (c : cplan V.t) : rule V.t :=
+    nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []).
+  (** Post work counts the position and the terms of each listed atom. *)
+  Definition post_work (p : program V.t) (c : cplan V.t) : nat :=
+    fold_right (fun i n => i + 1 +
+      match nth_error (query V.t (job_rule p c)) i with
+      | Some a => length (atom_terms a)
+      | None => 0
+      end + n) 0 (post V.t c).
   Definition round_work (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : nat :=
     length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
@@ -152,7 +161,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           length (sources V.t c) + 2) *
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
-          (length (post V.t c) + 1 +
+          (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
+           post_work p c + 1 +
            fold_right (fun a n => match a with
              | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
                  (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
@@ -244,28 +254,31 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition query_vars (r : rule V.t) : list positive := flat_map atom_vars (query V.t r).
   TimeFun apply.
   (* STUB-CODE *)
-  Definition bind_env (_ : cplan V.t) (_ : list (cell V.t))
-      : Model.env (V := V.t) := fun _ => None.
-  TimeFun bind_env.
+  Definition bind_trie (_ : cplan V.t) (_ : list (cell V.t)) : ptrie (cell V.t) := Empty.
+  TimeFun bind_trie.
+  (* STUB-CODE *)
+  Definition keep (_ : program V.t) (_ : cplan V.t) (_ : ptrie (cell V.t)) : bool := false.
+  TimeFun keep.
   (* STUB-CODE *)
   Definition jobs (_ : program V.t) (_ : compiled V.t) (_ : bool) (_ : D.t)
       : list (cplan V.t * list (cell V.t)) := [].
-  Definition job_rule (p : program V.t) (c : cplan V.t) : rule V.t :=
-    nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []).
   Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : D.t :=
     match js with
     | [] => db
     | (c, b) :: rest =>
-        apply_jobs p rest (apply (actions V.t (job_rule p c)) (bind_env c b) db)
+        apply_jobs p rest
+          (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db)
     end.
   Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : N :=
     match js with
     | [] => 0%N
     | (c, b) :: rest =>
-        (T_apply (actions V.t (job_rule p c)) (bind_env c b) (T_bind_env c b) db +
-          T_apply_jobs p rest (apply (actions V.t (job_rule p c)) (bind_env c b) db))%N
+        (T_apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b))
+            (fun x => 1 + T_trie_get x (bind_trie c b)) db +
+          T_apply_jobs p rest
+            (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db))%N
     end.
 
   TimeFun driver.
@@ -296,14 +309,16 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
 
   Lemma F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     In c (all_plans cp) -> nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
-    In b (bindings cp c db) -> matches V.prim (D.view db) (query V.t r) (env_of c b).
+    In b (bindings cp c db) -> keep p c (bind_trie c b) = true ->
+    matches V.prim (D.view db) (query V.t r) (env_of c b).
   Proof. Admitted. (* STUB *)
 
   Lemma F2_naive_plans_complete : forall p cp db r s, plans_ok p cp -> D.wf db ->
     D.canonical db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
     exists c b, In c (naive V.t cp) /\
       nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r /\
-      In b (bindings cp c db) /\ agrees (env_of c b) s (query_vars r).
+      In b (bindings cp c db) /\ keep p c (bind_trie c b) = true /\
+      agrees (env_of c b) s (query_vars r).
   Proof. Admitted. (* STUB *)
 
   Lemma F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
@@ -432,7 +447,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           length (sources V.t c) + 2) *
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
-          (length (post V.t c) + 1 +
+          (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
+           post_work p c + 1 +
            fold_right (fun a n => match a with
              | Make _ f args | Put f args _ =>
                  (length args + 2) * (length args + 2) *
@@ -513,20 +529,42 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       else inl (negb (D.changed next), D.advance next).
   Proof. Admitted. (* STUB *)
 
-  (** The keyed environment gives the binding environment's value for every variable. *)
-  Lemma F30_bind_env : forall c b x, bind_env c b x = env_of c b x.
+  (** The trie of a binding gives the plan's binding environment. *)
+  Lemma F30_bind_trie : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
   Proof. Admitted. (* STUB *)
 
-  (** A lookup in the keyed environment pays for the bits of its variable. *)
-  Lemma T6_bind_env_le : forall c b x,
-    (T_bind_env c b x <= k_driver * N.of_nat (Pos.size_nat x + 1))%N.
+  (** Building the trie of a binding pays for the bits of the plan's variables. *)
+  Lemma T6_bind_trie_le : forall c b,
+    (T_bind_trie c b <= k_driver *
+      N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  (** Each round job uses one selected plan and one of its database bindings. *)
-  Lemma F31_jobs : forall p cp nv db c b, In (c, b) (jobs p cp nv db) ->
-    In c (if nv then naive V.t cp else seminaive V.t cp) /\
-    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c) /\
-    In b (bindings cp c db).
+  (** The filter pays for its atoms at the widest program word or binding cell, and for the
+      primitive work of the query. *)
+  Lemma T7_keep_le : forall p c b,
+    (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
+      N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
+      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** A round's jobs are the kept bindings of its plans, plan by plan. *)
+  Lemma F31_jobs : forall p cp nv db,
+    jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))
+      (filter (fun b => keep p c (bind_trie c b)) (bindings cp c db)))
+      (if nv then naive V.t cp else seminaive V.t cp).
+  Proof. Admitted. (* STUB *)
+
+  (** A checked plan names a rule of its program. *)
+  Lemma F33_plan_rule : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c).
+  Proof. Admitted. (* STUB *)
+
+  (** Applying a rule queues at most one pending entry per action. *)
+  Lemma F34_apply_pending : forall p cp r s db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
   Proof. Admitted. (* STUB *)
 
   (** A round applies its jobs in order and rebuilds the resulting database once. *)
@@ -540,6 +578,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (T_round p cp nv db <=
       fold_right N.add 0 (map (fun c =>
         J.T_run (join V.t c) (map (source_index db) (sources V.t c)))
+        (if nv then naive V.t cp else seminaive V.t cp)) +
+      fold_right N.add 0 (map (fun c =>
+        fold_right N.add 0 (map (fun b => T_bind_trie c b + T_keep p c (bind_trie c b))
+          (bindings cp c db)))
         (if nv then naive V.t cp else seminaive V.t cp)) +
       T_apply_jobs p (jobs p cp nv db) db +
       D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
@@ -585,7 +627,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     D.unit (apply (actions V.t r) s db) <= U ->
     (T_apply (actions V.t r) s Ts db +
       N.of_nat U * D.potential B (apply (actions V.t r) s db) <=
-      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+      k_driver * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
         N.of_nat ((fold_right (fun a n => match a with
           | Make _ f args | Put f args _ => ((length args + 2) * (length args + 2) *
               (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n)%nat
@@ -593,7 +635,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           | Let _ _ args => (length args + 1 + n)%nat
           end) 0%nat (actions V.t r) + 1)%nat) +
       fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
-      c_run * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
+      k_driver * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
       N.of_nat U * D.potential B db)%N.
   Proof. Admitted. (* STUB *)
 End RunT.
