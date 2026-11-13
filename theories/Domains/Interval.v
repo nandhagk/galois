@@ -1518,6 +1518,318 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Definition k_interval_arith : N := 8192%N.
   Definition k_interval_back : N := 8192%N.
   Definition k_interval_widen : N := (64 * (T.c_thresholds + 1))%N.
+  (** Adding positive integers increases the combined bit bound by at most one. *)
+  Lemma positive_add_bits : forall p q,
+    Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q + 1.
+  Proof.
+    intros p q. apply Std.Pos.size_nat_least.
+    rewrite Pos2Nat.inj_add, !Nat.pow_add_r. cbn [Nat.pow].
+    pose proof (Std.Pos.size_nat_upper p).
+    pose proof (Std.Pos.size_nat_upper q).
+    pose proof (Pos2Nat.is_pos p). pose proof (Pos2Nat.is_pos q). nia.
+  Qed.
+
+  (** A signed difference of positive integers fits their combined bit sizes. *)
+  Lemma positive_difference_bits : forall p q,
+    Z.size_nat (Z.pos_sub p q) <= Pos.size_nat p + Pos.size_nat q.
+  Proof.
+    intros p q. rewrite Z.pos_sub_spec. destruct (Pos.compare p q);
+      cbn [Z.size_nat]; try lia;
+      pose proof (Std.Pos.size_nat_sub p q);
+      pose proof (Std.Pos.size_nat_sub q p); lia.
+  Qed.
+
+  (** Negation preserves the bit size of an integer. *)
+  Lemma integer_opp_bits : forall z, Z.size_nat (- z) = Z.size_nat z.
+  Proof.
+    intros []; reflexivity.
+  Qed.
+
+  (** Integer addition has a linear result-size bound. *)
+  Lemma integer_add_bits : forall x y,
+    Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.add Z.size_nat]; try lia;
+      try apply positive_add_bits;
+      pose proof (positive_difference_bits p q);
+      pose proof (positive_difference_bits q p); lia.
+  Qed.
+
+  (** Integer subtraction has the same linear result-size bound. *)
+  Lemma integer_sub_bits : forall x y,
+    Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1.
+  Proof.
+    intros x y. change (Z.size_nat (x + - y) <= Z.size_nat x + Z.size_nat y + 1).
+    pose proof (integer_add_bits x (- y)). rewrite integer_opp_bits in *. lia.
+  Qed.
+
+  (** Integer multiplication adds the operand bit bounds. *)
+  Lemma integer_mul_bits : forall x y,
+    Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.mul Z.size_nat]; try lia;
+      apply Std.Pos.size_nat_mul.
+  Qed.
+
+  (** Minimum selects one of the input integers. *)
+  Lemma integer_min_bits : forall x y,
+    Z.size_nat (Z.min x y) <= Nat.max (Z.size_nat x) (Z.size_nat y).
+  Proof.
+    intros x y. unfold Z.min. destruct (Z.compare x y);
+      first [apply Nat.le_max_l | apply Nat.le_max_r].
+  Qed.
+
+  (** Maximum selects one of the input integers. *)
+  Lemma integer_max_bits : forall x y,
+    Z.size_nat (Z.max x y) <= Nat.max (Z.size_nat x) (Z.size_nat y).
+  Proof.
+    intros x y. unfold Z.max. destruct (Z.compare x y);
+      first [apply Nat.le_max_l | apply Nat.le_max_r].
+  Qed.
+
+  (** Both endpoint bit sizes are bounded by the interval size. *)
+  Lemma endpoint_sizes : forall lo hi,
+    bnd_bits lo <= size (I lo hi) /\ bnd_bits hi <= size (I lo hi).
+  Proof.
+    intros lo hi. unfold size, itv_bits. split;
+      [apply Nat.le_max_l | apply Nat.le_max_r].
+  Qed.
+
+  (** A finite endpoint addition is linear in its arguments. *)
+  Lemma endpoint_add_time : forall a b,
+    ((match a, b with Fin x, Fin y => Std.Z.T_add x y | _, _ => 0 end) <=
+      3 * N.of_nat (bnd_bits a + bnd_bits b) + 1)%N.
+  Proof.
+    intros [|x|] [|y|]; cbn [bnd_bits]; try nia.
+    apply Std.Z.T_add_le.
+  Qed.
+
+  (** A finite endpoint subtraction is linear in its arguments. *)
+  Lemma endpoint_sub_time : forall a b,
+    ((match a, b with Fin x, Fin y => Std.Z.T_sub x y | _, _ => 0 end) <=
+      3 * N.of_nat (bnd_bits a + bnd_bits b) + 3)%N.
+  Proof.
+    intros [|x|] [|y|]; cbn [bnd_bits]; try nia.
+    apply Std.Z.T_sub_le.
+  Qed.
+
+  (** Interval addition pays for at most two endpoint additions. *)
+  Lemma add_time_linear : forall a b,
+    (T_add a b <= 8 * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|la ha] [|lb hb]; time_unfold T_add; try nia.
+    pose proof (endpoint_sizes la ha) as [Hla Hha].
+    pose proof (endpoint_sizes lb hb) as [Hlb Hhb].
+    pose proof (endpoint_add_time la lb).
+    pose proof (endpoint_add_time ha hb). nia.
+  Qed.
+
+  (** Interval subtraction pays for at most two endpoint subtractions. *)
+  Lemma sub_time_linear : forall a b,
+    (T_sub a b <= 8 * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|la ha] [|lb hb]; time_unfold T_sub; try nia.
+    pose proof (endpoint_sizes la ha) as [Hla Hha].
+    pose proof (endpoint_sizes lb hb) as [Hlb Hhb].
+    pose proof (endpoint_sub_time la hb).
+    pose proof (endpoint_sub_time ha lb). nia.
+  Qed.
+
+  (** Endpoint addition fits the operand sizes and one carry bit. *)
+  Lemma endpoint_add_bits : forall a b,
+    (match a, b with Fin x, Fin y => Z.size_nat (x + y) | _, _ => 0 end) <=
+      bnd_bits a + bnd_bits b + 1.
+  Proof.
+    intros [|x|] [|y|]; cbn [bnd_bits]; try lia. apply integer_add_bits.
+  Qed.
+
+  (** Endpoint subtraction fits the operand sizes and one carry bit. *)
+  Lemma endpoint_sub_bits : forall a b,
+    (match a, b with Fin x, Fin y => Z.size_nat (x - y) | _, _ => 0 end) <=
+      bnd_bits a + bnd_bits b + 1.
+  Proof.
+    intros [|x|] [|y|]; cbn [bnd_bits]; try lia. apply integer_sub_bits.
+  Qed.
+
+  (** Addition stores at most a linear number of endpoint bits. *)
+  Lemma add_result_bits : forall a b, size (add a b) <= size a + size b + 1.
+  Proof.
+    intros [|la ha] [|lb hb]; cbn [add size itv_bits]; try lia.
+    pose proof (endpoint_sizes la ha) as [Hla Hha].
+    pose proof (endpoint_sizes lb hb) as [Hlb Hhb].
+    pose proof (endpoint_add_bits la lb). pose proof (endpoint_add_bits ha hb).
+    unfold size, itv_bits in *. apply Nat.max_lub;
+      destruct la, ha, lb, hb; cbn [bnd_bits] in *; lia.
+  Qed.
+
+  (** Subtraction stores at most a linear number of endpoint bits. *)
+  Lemma sub_result_bits : forall a b, size (sub a b) <= size a + size b + 1.
+  Proof.
+    intros [|la ha] [|lb hb]; cbn [sub size itv_bits]; try lia.
+    pose proof (endpoint_sizes la ha) as [Hla Hha].
+    pose proof (endpoint_sizes lb hb) as [Hlb Hhb].
+    pose proof (endpoint_sub_bits la hb). pose proof (endpoint_sub_bits ha lb).
+    unfold size, itv_bits in *. apply Nat.max_lub;
+      destruct la, ha, lb, hb; cbn [bnd_bits] in *; lia.
+  Qed.
+
+  (** A singleton stores the bit size of its integer. *)
+  Lemma abst_result_bits : forall z, size (abst z) = Z.size_nat z.
+  Proof.
+    intro z. unfold abst, size, itv_bits, bnd_bits. apply Nat.max_id.
+  Qed.
+
+  (** A recognized point is one of the stored finite endpoints. *)
+  Lemma point_result_bits : forall a z, point a = Some z -> Z.size_nat z <= size a.
+  Proof.
+    intros [|[|lo|] [|hi|]] z Hpoint; cbn in Hpoint;
+      try discriminate.
+    destruct (Z.eqb lo hi); inversion Hpoint; subst.
+    unfold size, itv_bits, bnd_bits. apply Nat.le_max_l.
+  Qed.
+
+  (** Meeting costs linearly in raw interval sizes with a fixed scalar constant. *)
+  Lemma meet_time_linear : forall a b,
+    (T_meet a b <= 64 * (T.c_thresholds + 1) * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof (ScalarTime.T_interval_meet_le a b) as Htime.
+    change (T_interval_meet a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + 1))%N in Htime.
+    unfold T_meet, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + 1))%N) by lia. nia.
+  Qed.
+
+  (** Point recognition has a small linear endpoint bound. *)
+  Lemma point_time_linear : forall a,
+    (T_point a <= 64 * (T.c_thresholds + 1) * N.of_nat (size a + 1))%N.
+  Proof.
+    intros a. pose proof (ScalarTime.T_interval_singleton_le a) as Htime.
+    change (T_interval_singleton a <=
+      ScalarTime.c_scalar * N.of_nat (size a + 1))%N in Htime.
+    unfold T_point, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + 1))%N) by lia. nia.
+  Qed.
+
+  (** Multiplication is quadratic in a common bound on its operand sizes. *)
+  Lemma integer_mul_time : forall x y k,
+    Z.size_nat x + Z.size_nat y + 1 <= k ->
+    (Std.Z.T_mul x y <= 3 * N.of_nat (k * k))%N.
+  Proof.
+    intros x y k Hbits. pose proof (Std.Z.T_mul_le x y).
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  (** The four products all fit the combined endpoint size. *)
+  Lemma mul_result_bits : forall a b, size (mul a b) <= size a + size b.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      cbn [mul top size itv_bits bnd_bits]; try lia.
+    pose proof (integer_mul_bits la lb).
+    pose proof (integer_mul_bits la hb).
+    pose proof (integer_mul_bits ha lb).
+    pose proof (integer_mul_bits ha hb).
+    pose proof (integer_min_bits (la * lb) (la * hb)).
+    pose proof (integer_min_bits (ha * lb) (ha * hb)).
+    pose proof (integer_min_bits (Z.min (la * lb) (la * hb))
+      (Z.min (ha * lb) (ha * hb))).
+    pose proof (integer_max_bits (la * lb) (la * hb)).
+    pose proof (integer_max_bits (ha * lb) (ha * hb)).
+    pose proof (integer_max_bits (Z.max (la * lb) (la * hb))
+      (Z.max (ha * lb) (ha * hb))). lia.
+  Qed.
+
+  (** Extrema cost linearly in any bound on the first operand bits. *)
+  Lemma integer_extrema_time : forall x y k,
+    Z.size_nat x <= k ->
+    (Std.Z.T_min x y <= N.of_nat k + 4 /\
+      Std.Z.T_max x y <= N.of_nat k + 4)%N.
+  Proof.
+    intros x y k Hbits. pose proof (Std.Z.T_min_le x y).
+    pose proof (Std.Z.T_max_le x y). split; lia.
+  Qed.
+
+  (** Four products and six extrema have a uniform quadratic interval cost. *)
+  Lemma mul_time_quadratic : forall a b,
+    (T_mul a b <= 64 * N.of_nat (binary_work a b))%N.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      time_unfold T_mul; try (unfold binary_work; cbn [Nat.pow]; nia).
+    set (s := (size (I (Fin la) (Fin ha)) + size (I (Fin lb) (Fin hb)) + 1)%nat).
+    assert (Hpair : forall x y, (x = la \/ x = ha) -> (y = lb \/ y = hb) ->
+      Z.size_nat x + Z.size_nat y + 1 <= s).
+    { intros x y [Hx | Hx] [Hy | Hy]; subst x; subst y;
+        unfold s, size, itv_bits, bnd_bits; lia. }
+    pose proof (integer_mul_time la lb s (Hpair _ _ (or_introl eq_refl)
+      (or_introl eq_refl))) as Hmul1.
+    pose proof (integer_mul_time la hb s (Hpair _ _ (or_introl eq_refl)
+      (or_intror eq_refl))) as Hmul2.
+    pose proof (integer_mul_time ha lb s (Hpair _ _ (or_intror eq_refl)
+      (or_introl eq_refl))) as Hmul3.
+    pose proof (integer_mul_time ha hb s (Hpair _ _ (or_intror eq_refl)
+      (or_intror eq_refl))) as Hmul4.
+    assert (Hprod : forall x y, (x = la \/ x = ha) -> (y = lb \/ y = hb) ->
+      Z.size_nat (x * y) <= s).
+    { intros x y Hx Hy. pose proof (Hpair x y Hx Hy).
+      pose proof (integer_mul_bits x y). lia. }
+    assert (Hbits1 : Z.size_nat (la * lb) <= s) by (apply Hprod; auto).
+    assert (Hbits2 : Z.size_nat (la * hb) <= s) by (apply Hprod; auto).
+    assert (Hbits3 : Z.size_nat (ha * lb) <= s) by (apply Hprod; auto).
+    pose proof (integer_extrema_time (la * lb) (la * hb) s Hbits1) as [Hmin1 Hmax1].
+    pose proof (integer_extrema_time (ha * lb) (ha * hb) s Hbits3) as [Hmin2 Hmax2].
+    assert (Hminbits : Z.size_nat (Z.min (la * lb) (la * hb)) <= s)
+      by (pose proof (integer_min_bits (la * lb) (la * hb)); lia).
+    assert (Hmaxbits : Z.size_nat (Z.max (la * lb) (la * hb)) <= s)
+      by (pose proof (integer_max_bits (la * lb) (la * hb)); lia).
+    pose proof (proj1 (integer_extrema_time _ (Z.min (ha * lb) (ha * hb)) s Hminbits))
+      as Hmin3.
+    pose proof (proj2 (integer_extrema_time _ (Z.max (ha * lb) (ha * hb)) s Hmaxbits))
+      as Hmax3.
+    replace (binary_work (I (Fin la) (Fin ha)) (I (Fin lb) (Fin hb)))
+      with (s * s) by (unfold binary_work, s, size; cbn [Nat.pow]; lia).
+    assert (Hs : (1 <= N.of_nat s)%N) by (unfold s; lia).
+    clear Hpair Hprod Hbits1 Hbits2 Hbits3 Hminbits Hmaxbits.
+    rewrite Nat2N.inj_mul in *. nia.
+  Qed.
+
+  (** Absolute value preserves the bit size of an integer. *)
+  Lemma integer_abs_bits : forall z, Z.size_nat (Z.abs z) = Z.size_nat z.
+  Proof.
+    intros []; reflexivity.
+  Qed.
+
+  (** Integer division cannot increase the absolute value of its numerator. *)
+  Lemma integer_div_abs : forall x y, (Z.abs (x / y) <= Z.abs x)%Z.
+  Proof.
+    intros x y. destruct (Z.eq_dec y 0) as [-> | Hnonzero].
+    - rewrite Z.div_0_r. cbn [Z.abs]. apply Z.abs_nonneg.
+    - pose proof (Z.div_mod x y Hnonzero) as Hdiv.
+      destruct (Z_lt_ge_dec 0 y) as [Hpositive | Hnegative].
+      + pose proof (Z.mod_pos_bound x y Hpositive) as Hmod.
+        destruct (Z_le_gt_dec 0 x), (Z_le_gt_dec 0 (x / y));
+          rewrite ?Z.abs_eq, ?Z.abs_neq by lia; nia.
+      + assert (Hnegative' : (y < 0)%Z) by lia.
+        pose proof (Z.mod_neg_bound x y Hnegative') as Hmod.
+        destruct (Z_le_gt_dec 0 x), (Z_le_gt_dec 0 (x / y));
+          rewrite ?Z.abs_eq, ?Z.abs_neq by lia; nia.
+  Qed.
+
+  (** Integer division does not add numerator bits. *)
+  Lemma integer_div_bits : forall x y, Z.size_nat (x / y) <= Z.size_nat x.
+  Proof.
+    intros x y. rewrite <- (integer_abs_bits (x / y)), <- (integer_abs_bits x).
+    apply Std.Z.size_nat_mono. split; [apply Z.abs_nonneg | apply integer_div_abs].
+  Qed.
+
+  (** Division is quadratic in a common operand bit bound. *)
+  Lemma integer_div_time : forall x y k,
+    Z.size_nat x + Z.size_nat y + 1 <= k ->
+    (Std.Z.T_div x y <= 33 * N.of_nat (k * k))%N.
+  Proof.
+    intros x y k Hbits. pose proof (Std.Z.T_div_le x y).
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -1658,14 +1970,20 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Addition charges linear endpoint arithmetic. *)
   Lemma T_add_le : forall a b, (T_add a b <= c_interval * N.of_nat ((size a + size b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (add_time_linear a b). unfold c_interval. nia.
+  Qed.
   (** Subtraction charges linear endpoint arithmetic. *)
   Lemma T_sub_le : forall a b, (T_sub a b <= c_interval * N.of_nat ((size a + size b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (sub_time_linear a b). unfold c_interval. nia.
+  Qed.
   (** Multiplication has the published quadratic endpoint bound. *)
   Lemma T_mul_le : forall a b, (T_mul a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (mul_time_quadratic a b). unfold c_interval. nia.
+  Qed.
   (** Unsigned division has the published quadratic endpoint bound. *)
   Lemma T_udiv_le : forall a b, (T_udiv a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
   Proof. Admitted. (* STUB *)
@@ -1924,7 +2242,9 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
   (** Endpoint arithmetic bounds multiplication before dispatch overhead. *)
   Lemma T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (mul_time_quadratic a b). unfold k_interval_arith. nia.
+  Qed.
   (** Threshold searches bound widening before dispatch overhead. *)
   Lemma T2_widen : forall ts a b,
     (T_widen ts a b <= k_interval_widen * N.of_nat
@@ -1942,5 +2262,8 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma mul_bigO : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
     (fun ab => T_mul (fst ab) (snd ab)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold bigO. exists 64%N. intros [a b] _.
+    cbn [fst snd]. pose proof (mul_time_quadratic a b). nia.
+  Qed.
 End IntervalT.
