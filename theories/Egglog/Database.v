@@ -1041,8 +1041,8 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | inr result => result
     end.
   Definition index (s : N) (new : bool) (db : t) : I.t :=
-    match N.compare (runtime_slot_bound (db_runtime db)) s with
-    | Gt =>
+    match N.compare s (runtime_slot_bound (db_runtime db)) with
+    | Lt =>
       let indexes := if new then runtime_new_indexes (db_runtime db)
         else runtime_all_indexes (db_runtime db) in
       match PTrieCode.get (N.succ_pos s) indexes with Some ix => ix | None => I.empty end
@@ -1357,6 +1357,45 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_wf. tauto.
   Qed.
   Definition wf : t -> Prop := database_wf.
+
+  (** An in-range slot reads exactly its stored full or delta cache. *)
+  Lemma index_runtime_slot : forall db s new,
+    (s < runtime_slot_bound (db_runtime db))%N ->
+    index s new db = runtime_slot_index (db_runtime db) s new.
+  Proof.
+    intros db s new Hinside. unfold index.
+    apply N.compare_lt_iff in Hinside. rewrite Hinside.
+    unfold runtime_slot_index, slot_index_get. destruct new; reflexivity.
+  Qed.
+
+  (** Out-of-range queries return the empty index without reading a slot trie. *)
+  Lemma index_outside_bound : forall db s new,
+    (runtime_slot_bound (db_runtime db) <= s)%N -> index s new db = I.empty.
+  Proof.
+    intros db s new Houtside. unfold index.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))) eqn:Hcompare;
+      try reflexivity.
+    apply N.compare_lt_iff in Hcompare. exfalso. apply (N.lt_irrefl s).
+    eapply N.lt_le_trans; eassumption.
+  Qed.
+
+  (** A declared slot number is below the stored bound in every well-formed database. *)
+  Lemma slot_of_inside_bound : forall db s f perm, wf db ->
+    slot_of db s = Some (f, perm) -> (s < runtime_slot_bound (db_runtime db))%N.
+  Proof.
+    intros db s f perm Hwf Hslot. rewrite (wf_slot_bound db Hwf).
+    assert (Hinside : N.to_nat s < length (slots db)).
+    { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    lia.
+  Qed.
+
+  (** Missing slot declarations are exactly the queries outside the allocated slot interval. *)
+  Lemma slot_of_outside_bound : forall db s, wf db -> slot_of db s = None ->
+    (runtime_slot_bound (db_runtime db) <= s)%N.
+  Proof.
+    intros db s Hwf Hslot. rewrite (wf_slot_bound db Hwf).
+    unfold slot_of in Hslot. apply nth_error_None in Hslot. lia.
+  Qed.
 
   (** Executable cell normalization returns the public representative-based cell. *)
   Lemma normal_cell_correct : forall db c, wf db -> normal_cell db c = canon db c.
@@ -2205,7 +2244,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros ds sl s new. unfold index. destruct new;
       cbn [init db_runtime runtime_slot_bound runtime_all_indexes runtime_new_indexes];
-      destruct (N.compare (N.of_nat (length sl)) s); try reflexivity;
+      destruct (N.compare s (N.of_nat (length sl))); try reflexivity;
       now rewrite PTrie.get_empty.
   Qed.
 
@@ -2296,14 +2335,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma index_advance_new : forall s db, index s true (advance db) = I.empty.
   Proof.
     intros s db.
-    change ((match N.compare (runtime_slot_bound (db_runtime db)) s with
-      | Gt => match PTrieCode.get (N.succ_pos s) (@PTrieCode.empty I.t) with
+    change ((match N.compare s (runtime_slot_bound (db_runtime db)) with
+      | Lt => match PTrieCode.get (N.succ_pos s) (@PTrieCode.empty I.t) with
         | Some ix => ix
         | None => I.empty
         end
       | _ => I.empty
       end) = I.empty).
-    destruct (N.compare (runtime_slot_bound (db_runtime db)) s); try reflexivity.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))); try reflexivity.
     now rewrite PTrie.get_empty.
   Qed.
 
