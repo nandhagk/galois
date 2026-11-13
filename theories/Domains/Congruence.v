@@ -4,10 +4,10 @@
     For example, modulus two and residue zero describe even words.
     Builds on: CongruenceSig and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith Zpow_facts List Bool Lia Wellfounded.Inverse_Image.
+From Stdlib Require Import ZArith NArith Zpow_facts List Bool Lia Wellfounded.Inverse_Image.
 From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Bits Require Import Word Fun Op Testbit Arith.
-From Galois.Domains Require Import CongruenceSig WordSig.
+From Galois.Domains Require Import CongruenceSig WordSig BitsLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -1472,29 +1472,110 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Definition psize (w : positive) (a : p) : nat :=
     (Pos.to_nat w + congr_bits a + 1) ^ 2.
   Definition pwsize (_ : pwparam) : nat := 0.
-  Definition c_payload : N := 1%N. (* STUB *)
-  Definition c_congruence : N := 1%N. (* STUB *)
-  Definition k_congr_gcd : N := 1%N. (* STUB *)
-  Definition k_congr_crt : N := 1%N. (* STUB *)
-  Definition k_congr_transfer : N := 1%N. (* STUB *)
+  Definition c_payload : N := 1073741824%N.
+  Definition c_congruence : N := 1048576%N.
+  Definition k_congr_gcd : N := 1048576%N.
+  Definition k_congr_crt : N := 268435456%N.
+  Definition k_congr_transfer : N := 1048576%N.
+
+  (** Strong canonicality bounds both stored integers by the word width. *)
+  Lemma canonical_bits : forall w a, strong_canonical w a ->
+    (congr_bits a <= 2 * Pos.to_nat w)%nat.
+  Proof.
+    intros w [|m r] Hcanonical; [cbn [congr_bits]; lia|].
+    destruct Hcanonical as [[-> Hr]|[Hm Hr]].
+    - pose proof (WordTime.word_size_bound w r Hr).
+      cbn [congr_bits Z.size_nat]. lia.
+    - assert (Hmw : is_word w m) by (unfold is_word; lia).
+      assert (Hrw : is_word w r) by (unfold is_word; lia).
+      pose proof (WordTime.word_size_bound w m Hmw).
+      pose proof (WordTime.word_size_bound w r Hrw).
+      cbn [congr_bits]. lia.
+  Qed.
+
+  (** Every normalization result satisfies the stronger representation invariant. *)
+  Lemma normalized_bits : forall w a,
+    (congr_bits (congr_norm w a) <= 2 * Pos.to_nat w)%nat.
+  Proof.
+    intros w a. apply canonical_bits, cong_norm_canonical.
+  Qed.
+
+  (** A join either reuses a normalized operand or normalizes its gcd class. *)
+  Lemma join_bits : forall w a b,
+    (congr_bits (pjoin w a b) <= 2 * Pos.to_nat w)%nat.
+  Proof.
+    intros w a b. unfold pjoin.
+    pose proof (normalized_bits w a) as Ha.
+    pose proof (normalized_bits w b) as Hb.
+    destruct (congr_norm w a), (congr_norm w b); try assumption.
+    apply normalized_bits.
+  Qed.
+
+  (** Successful CRT meets are normalized before being returned. *)
+  Lemma meet_bits : forall w a b,
+    (congr_bits (pmeet w a b) <= 2 * Pos.to_nat w)%nat.
+  Proof.
+    intros w a b. unfold pmeet.
+    destruct (congr_norm w a), (congr_norm w b); cbn [congr_bits]; try lia.
+    destruct (r mod Z.gcd m m0 =? r0 mod Z.gcd m m0).
+    - apply normalized_bits.
+    - cbn [congr_bits]. lia.
+  Qed.
+
+  (** Two width-bounded integers give a quadratic payload-size bound. *)
+  Lemma bounded_payload_size : forall w a,
+    (congr_bits a <= 2 * Pos.to_nat w)%nat ->
+    (psize w a <= 9 * (Pos.to_nat w + 1) ^ 2)%nat.
+  Proof.
+    intros w a Hbits. unfold psize.
+    replace (9 * (Pos.to_nat w + 1) ^ 2)%nat with
+      ((3 * (Pos.to_nat w + 1)) ^ 2)%nat by (rewrite Nat.pow_mul_l; reflexivity).
+    apply Nat.pow_le_mono_l. lia.
+  Qed.
+
+  (** Every payload budget includes the width contribution. *)
+  Lemma payload_width_size : forall w a,
+    ((Pos.to_nat w + 1) ^ 2 <= psize w a)%nat.
+  Proof.
+    intros w a. unfold psize. apply Nat.pow_le_mono_l. lia.
+  Qed.
 
   (** Joined payloads fit within the combined operand sizes. *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (bounded_payload_size w (pjoin w a b) (join_bits w a b)).
+    assert (Hsize : (psize w (pjoin w a b) <= 9 * (psize w a + psize w b + 1))%nat).
+    { pose proof (payload_width_size w a). lia. }
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize.
+    unfold c_payload. change (N.of_nat 9) with 9%N in Hsize. nia.
+  Qed.
   (** Met payloads fit within the combined operand sizes. *)
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (bounded_payload_size w (pmeet w a b) (meet_bits w a b)).
+    assert (Hsize : (psize w (pmeet w a b) <= 9 * (psize w a + psize w b + 1))%nat).
+    { pose proof (payload_width_size w a). lia. }
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize.
+    unfold c_payload. change (N.of_nat 9) with 9%N in Hsize. nia.
+  Qed.
   (** Widened payloads fit within the operand and parameter sizes. *)
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden, pwsize.
+    destruct (pleb w b a).
+    - unfold c_payload. rewrite !Nat2N.inj_add. nia.
+    - pose proof (pjoin_size w a b). rewrite Nat.add_0_r. exact H.
+  Qed.
   (** Narrowed payloads fit within the combined operand sizes. *)
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply pmeet_size.
+  Qed.
   (** Payload widening charges both operands and its parameters. *)
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
@@ -1526,18 +1607,30 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Constant abstraction charges the width and literal bit size. *)
   Lemma T_pconst_le : forall w z, (T_pconst w z <=
     c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (WordTime.word_wrap_time_bound w z).
+    time_unfold T_pconst. unfold c_payload.
+    rewrite !Nat2N.inj_pow, !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   (** Payload size uses the tagged width. *)
   Lemma psize_congr : forall w a, psize w a = ((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Normalized payloads fit two words of the width. *)
   Lemma congr_norm_bits : forall w a,
     (congr_bits (congr_norm w a) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply normalized_bits.
+  Qed.
   (** Negation results fit two words of the width. *)
   Lemma congr_neg_bits : forall w a,
     (congr_bits (congr_neg w a) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. unfold congr_neg. destruct (congr_norm w a).
+    - cbn [congr_bits]. lia.
+    - apply normalized_bits.
+  Qed.
   (** Binary transfer results fit two words of the width. *)
   Lemma congr_binary_bits : forall w a b,
     (congr_bits (congr_add w a b) <= 2 * Pos.to_nat w /\
@@ -1545,11 +1638,25 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
      congr_bits (congr_mul w a b) <= 2 * Pos.to_nat w /\
      congr_bits (congr_shl w a b) <= 2 * Pos.to_nat w /\
      congr_bits (congr_urem w a b) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (Pos2Nat.is_pos w) as Hwidth.
+    unfold congr_add, congr_sub, congr_mul, congr_shl, congr_urem.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s];
+      cbn [congr_bits]; try (repeat split; lia).
+    repeat split; try apply normalized_bits.
+    - destruct n; try (cbn [congr_bits Z.size_nat Pos.size_nat]; lia).
+      destruct (Zpos w <=? s); [cbn [congr_bits Z.size_nat]; lia|apply normalized_bits].
+    - destruct n; [apply normalized_bits| |]; cbn [congr_bits Z.size_nat Pos.size_nat]; lia.
+  Qed.
   (** Projection results fit two words of the target width. *)
   Lemma congr_project_bits : forall source target a,
     (congr_bits (congr_project source target a) <= 2 * Pos.to_nat target)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros source target a. unfold congr_project. destruct (congr_norm source a).
+    - cbn [congr_bits]. lia.
+    - apply normalized_bits.
+  Qed.
   (** Normalization has the published quadratic arithmetic bound. *)
   Lemma T_congr_norm_le : forall w a,
     (T_congr_norm w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
@@ -1641,24 +1748,53 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** The result stays within its declared work budget. *)
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_ptop. unfold c_payload.
+    rewrite Nat2N.inj_pow, Nat2N.inj_add. time_cbn_all. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_pbot_le : forall w,
     (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_pbot. unfold c_payload.
+    rewrite Nat2N.inj_pow, Nat2N.inj_add. time_cbn_all. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma ptop_size : forall w,
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w.
+    assert (Hsize : (psize w (ptop w) <= 4 * (Pos.to_nat w + 1) ^ 2)%nat).
+    { unfold psize. cbn [ptop congr_bits Z.size_nat Pos.size_nat].
+      replace (4 * (Pos.to_nat w + 1) ^ 2)%nat with
+        ((2 * (Pos.to_nat w + 1)) ^ 2)%nat by (rewrite Nat.pow_mul_l; reflexivity).
+      apply Nat.pow_le_mono_l. lia. }
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize.
+    unfold c_payload. change (N.of_nat 4) with 4%N in Hsize. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold psize, pbot, congr_bits, c_payload.
+    rewrite Nat.add_0_r. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma pconst_size : forall w z,
     (N.of_nat (psize w (pconst w z)) <=
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (WordTime.word_wrap_size_bound w z).
+    assert (Hsize : (psize w (pconst w z) <=
+      4 * (Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat).
+    { unfold psize. cbn [pconst congr_bits Z.size_nat].
+      replace (4 * (Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat with
+        ((2 * (Pos.to_nat w + Z.size_nat z + 1)) ^ 2)%nat
+        by (rewrite Nat.pow_mul_l; reflexivity).
+      apply Nat.pow_le_mono_l. lia. }
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize.
+    unfold c_payload. change (N.of_nat 4) with 4%N in Hsize. nia.
+  Qed.
 End CongruenceT.
 
 Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
