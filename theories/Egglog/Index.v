@@ -2666,6 +2666,104 @@ Module Index (V : VALUE) <: INDEX V.
     destruct Hmember as [-> | Hmember]; [exact Hlength | now apply Harity].
   Qed.
 
+  Lemma nodup_without : forall (A : Type) (xs : list A) x, NoDup xs -> In x xs ->
+    exists ys, NoDup ys /\ (forall y, In y ys <-> In y xs /\ y <> x) /\
+      length xs = S (length ys).
+  Proof.
+    intros A xs x Hnodup Hin. apply in_split in Hin as [pre [suf ->]].
+    destruct (NoDup_remove pre suf x Hnodup) as [Hremaining Habsent].
+    exists (pre ++ suf). split; [exact Hremaining |]. split.
+    - intro y. rewrite !in_app_iff. cbn [In]. split.
+      + intro Hmember. split; [tauto |]. intro Heq. subst y.
+        apply Habsent. now apply in_or_app.
+      + intros [Hmember Hneq]. intuition congruence.
+    - rewrite !length_app. cbn [length]. lia.
+  Qed.
+
+  (** A pending deletion has already been subtracted from each ancestor's cached count. *)
+  Definition pending_remove_edge (ix : t) (cursor : positive)
+      (edge : index_edge (cell V.t)) : Prop :=
+    exists suffixes pending, NoDup suffixes /\
+      (forall r, In r suffixes <-> contains_from (edge_child edge) r ix = true) /\
+      (pending = true <-> reaches ix (edge_child edge) cursor) /\
+      N.of_nat (length suffixes) = (edge_count edge + if pending then 1 else 0)%N.
+
+  Definition pending_remove_counts (ix : t) (cursor : positive) : Prop :=
+    forall n code edge, stored_edge ix n code edge -> pending_remove_edge ix cursor edge.
+
+  Lemma pending_remove_start : forall ix, shape ix -> counted_edges ix ->
+    pending_remove_counts ix (root ix).
+  Proof.
+    intros ix Hshape Hcounts n code edge Hget.
+    destruct (Hcounts n code edge Hget) as [suffixes [Hnodup [Hmembers Hcount]]].
+    exists suffixes, false. split; [exact Hnodup |]. split; [exact Hmembers |]. split.
+    - split; [discriminate |]. intro Hreach. exfalso.
+      eapply reaches_no_backward; [exact (proj1 Hshape) | | exact Hreach].
+      destruct ((proj1 Hshape) n code edge Hget) as [_ [Hforward _]].
+      change (1 < edge_child edge)%positive. lia.
+    - cbn. rewrite N.add_0_r. symmetry. exact Hcount.
+  Qed.
+
+  Lemma pending_remove_finish : forall ix cursor bits, shape ix ->
+    pending_remove_counts ix cursor -> node_terminal (read_node ix cursor) = true ->
+    counted_edges (mark_terminal ix cursor false bits).
+  Proof.
+    intros ix cursor bits Hshape Hcounts Hpresent n code edge Hget.
+    unfold stored_edge in Hget. rewrite mark_node_edges in Hget.
+    destruct (Hcounts n code edge Hget)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hcount]]]]].
+    destruct pending.
+    - destruct (proj1 Hpending eq_refl) as [path Hpath].
+      assert (Hin : In path suffixes).
+      { apply Hmembers. unfold contains_from. now rewrite Hpath. }
+      destruct (nodup_without _ suffixes path Hnodup Hin)
+        as [remaining [Hremaining [Hremaining_mem Hlength]]].
+      exists remaining. split; [exact Hremaining |]. split.
+      + intro r. rewrite Hremaining_mem, Hmembers, mark_terminal_delete. split.
+        * intros [Hmember Hneq]. split; [| exact Hmember].
+          intro Hseek. apply Hneq. eapply seek_paths_unique; eassumption.
+        * intros [Hmissing Hmember]. split; [exact Hmember |].
+          intro Heq. subst r. contradiction.
+      + cbn in Hcount. rewrite Hlength, Nat2N.inj_succ in Hcount. lia.
+    - exists suffixes. split; [exact Hnodup |]. split.
+      + intro r. rewrite mark_terminal_delete, Hmembers. split.
+        * intro Hmember. split; [| exact Hmember]. intro Hseek.
+          assert (Hbad : false = true) by (apply Hpending; now exists r). discriminate.
+        * tauto.
+      + cbn in Hcount. rewrite N.add_0_r in Hcount. symmetry. exact Hcount.
+  Qed.
+
+  Lemma pending_remove_current : forall ix n code edge, shape ix ->
+    pending_remove_counts ix n -> stored_edge ix n code edge ->
+    exists suffixes, NoDup suffixes /\
+      (forall r, In r suffixes <-> contains_from (edge_child edge) r ix = true) /\
+      N.of_nat (length suffixes) = edge_count edge.
+  Proof.
+    intros ix n code edge Hshape Hcounts Hget.
+    destruct ((proj1 Hshape) n code edge Hget) as [_ [Hforward _]].
+    destruct (Hcounts n code edge Hget)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hcount]]]]].
+    destruct pending.
+    - exfalso. eapply reaches_no_backward;
+        [exact (proj1 Hshape) | exact Hforward | now apply Hpending].
+    - exists suffixes. split; [exact Hnodup |]. split; [exact Hmembers |].
+      cbn in Hcount. now rewrite N.add_0_r in Hcount.
+  Qed.
+
+  Lemma pending_remove_singleton : forall ix n code edge, shape ix ->
+    pending_remove_counts ix n -> stored_edge ix n code edge -> edge_count edge = 1%N ->
+    exists suffix, forall r, contains_from (edge_child edge) r ix = true <-> r = suffix.
+  Proof.
+    intros ix n code edge Hshape Hcounts Hget Hone.
+    destruct (pending_remove_current ix n code edge Hshape Hcounts Hget)
+      as [suffixes [_ [Hmembers Hcount]]].
+    assert (Hlength : length suffixes = 1).
+    { apply Nat2N.inj. rewrite Hcount. exact Hone. }
+    destruct suffixes as [| suffix suffixes]; [discriminate |].
+    destruct suffixes as [| second suffixes]; [| discriminate].
+    exists suffix. intro r. rewrite <- Hmembers. cbn [In]. intuition congruence.
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
