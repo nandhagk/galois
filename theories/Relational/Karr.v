@@ -4605,336 +4605,6 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros p a b Hle. unfold widen. now rewrite Hle.
   Qed.
-  Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
-    wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
-  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
-  Lemma narrow_between : forall a b, leb b a = true ->
-    leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof.
-    intros a b Hle. split; [apply leb_refl | exact Hle].
-  Qed.
-  Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
-  Proof.
-    intros [| P] [| Q] v Hle Hmodels; cbn [ngamma] in *; try contradiction.
-    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty;
-        [| discriminate].
-      exact (contradiction_sound P ms v Hempty Hmodels).
-    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty.
-      + exfalso. exact (contradiction_sound P ms v Hempty Hmodels).
-      + apply Forall_forall. intros r Hin.
-        apply entails_sound with (P := P); [| exact Hmodels].
-        now apply (proj1 (forallb_forall _ _) Hle).
-  Qed.
-  Lemma ngamma_bot : forall v, ~ ngamma bot v.
-  Proof.
-    intros v Hfalse. exact Hfalse.
-  Qed.
-  Lemma ngamma_top : forall v, ngamma top v.
-  Proof.
-    intro v. constructor.
-  Qed.
-  Lemma assign_sound : forall x e s st c,
-    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
-    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof.
-    intros x e [| P] st c Hmodels Heval; [contradiction |]. unfold assign.
-    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |].
-    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (assign_rows x f P)).
-      apply numeric_update_models.
-      pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
-      cbn [wrap_into] in Hvalue. rewrite Hvalue. now apply assign_rows_sound.
-    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
-      apply numeric_update_models. now apply project_sound.
-    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
-      apply numeric_update_models. now apply project_sound.
-  Qed.
-  Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
-    ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof.
-    intros x [| P] st c Hmodels; [contradiction |].
-    change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
-    pose proof (project_sound x P (fun y => N.num (st y)) (N.num c) Hmodels) as Hpost.
-    apply Forall_forall. intros r Hin.
-    apply sat_pointwise with (v := upd X.eqb (fun y => N.num (st y)) x (N.num c)).
-    - intro y. unfold upd. destruct (X.eqb y x); reflexivity.
-    - now apply (proj1 (Forall_forall _ _) Hpost).
-  Qed.
-
-  (** Each equality admitted by a guard follows directly from its unwrapped atom. *)
-  Lemma atom_rows_sound : forall v a, atom_holds v a -> Forall (sat v) (atom_rows a).
-  Proof.
-    intros v [fl wl comparison fr wr] Hatom.
-    destruct wl, wr, comparison; cbn [atom_rows al alw ar arw acmp];
-      try solve [constructor].
-    constructor; [| constructor]. apply normalize_row_sat.
-    unfold sat. cbn [lrel lhs rhs]. rewrite eval_coef_app, eval_coef_opp.
-    cbn [atom_holds al alw ar arw acmp wrap_into] in Hatom.
-    unfold eval_lin in Hatom. lia.
-  Qed.
-
-  Lemma assume_sound : forall g es s st cs,
-    ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
-    L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
-  Proof.
-    intros g es [| P] st cs Hmodels Heval Hguard; [contradiction |].
-    change (Forall (sat (fun y => N.num (st y)))
-      (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)).
-    pose proof (F.atoms_sound g es st cs Heval Hguard) as Hatoms.
-    apply Forall_app. split; apply Forall_forall; intros r Hin.
-    - apply in_flat_map in Hin as [a [Hin Hrow]].
-      pose proof (proj1 (Forall_forall _ _) Hatoms a Hin) as Hatom.
-      pose proof (atom_rows_sound _ _ Hatom) as Hrows.
-      now apply (proj1 (Forall_forall _ _) Hrows).
-    - apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
-      apply normalize_row_sat.
-      now apply (proj1 (Forall_forall _ _) Hmodels).
-  Qed.
-  Lemma range_sound : forall e s st c,
-    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
-    in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
-  Proof.
-    intros e [| P] st c Hmodels Heval; [contradiction |]. unfold range.
-    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |];
-      try solve [split; exact I].
-    set (xs := variables (LCons X.t (coef f) REq 0 :: P)).
-    set (r := karr_target (equality_basis xs P) 1
-      (KRow (map (fun x => coefficient x (coef f)) xs) 0 (repeat 0%Z (length P)) 1)).
-    set (z := (- kright r / kscale r + cst f)%Z).
-    destruct (entail_cert P (LCons X.t (coef f) REq (z - cst f)%Z)) as [k |]
-      eqn:Hcert; [| split; exact I].
-    pose proof (C.check_entails_sound P _ k (entail_cert_checked P _ k Hcert)
-      (fun y => N.num (st y)) Hmodels) as Hbound.
-    pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
-    cbn [sat lrel lhs rhs] in Hbound.
-    cbn [wrap_into] in Hvalue. unfold eval_lin in Hvalue.
-    change (z <= N.num c <= z)%Z. lia.
-  Qed.
-  Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
-  Proof.
-    intros P v. reflexivity.
-  Qed.
-  Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
-  Proof.
-    intros v Hfalse. exact Hfalse.
-  Qed.
-End Karr.
-
-Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
-    (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: KARR_ALL X L N F C.
-  Include Karr X L N F C.
-  Definition wsize (_ : wparam) : nat := 0.
-  Definition normal (P : list (lcons X.t)) : Prop :=
-    Forall (fun r => NoDup (map fst (lhs r))) P.
-  Definition normal_s (s : t) : Prop :=
-    match s with Unreached => True | Reached P => normal P end.
-  Definition rows_of (s : t) : list (lcons X.t) :=
-    match s with Unreached => nil | Reached P => P end.
-  Definition vars_of (P : list (lcons X.t)) : list X.t :=
-    fold_left (fun acc x => if existsb (X.eqb x) acc then acc else x :: acc)
-      (flat_map (fun r => map fst (lhs r)) P) nil.
-  Definition n (s : t) : nat := length (rows_of s) + length (vars_of (rows_of s)).
-  Definition ell (s : t) : nat :=
-    fold_right Nat.max 0 (map C.row_bits (rows_of s)) +
-    fold_right Nat.max 0 (map C.row_key_bits (rows_of s)).
-  Definition ellB (dim bits : nat) : nat := dim * (bits + Nat.log2 dim + 1).
-  Definition elimination_work (a b : t) : nat :=
-    (n a + n b + 1)^3 * (ellB (n a + n b + 1) (ell a + ell b) + 1)^2.
-  Definition wunits (_ : t) : nat := 0.
-  Definition terms (s : t) : nat :=
-    fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
-  Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
-  Definition mu (s : t) : nat := terms s + n s + nell s.
-  Definition lat (m : nat) : nat :=
-    (m + 2) * ((m + 1)^3 * (ellB (m + 1) m + 1)^2 + m^2 + 1).
-  Definition size (s : t) : nat := lat (2 * mu s).
-  Definition k_karr : N := 1. (* STUB *)
-  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
-    terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
-      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2 +
-      N.to_nat (F.T_lin_of e).
-  Definition havoc_work (x : X.t) (s : t) : nat :=
-    terms s * (nell s + 1) +
-      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
-  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
-    terms s * (nell s + 1) + (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
-      (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
-        (nell s + F.bits_es g es) + 1)^2 + N.to_nat (F.T_atoms_of g es).
-  Definition range_work (e : term L.op X.t) (s : t) : nat :=
-    terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
-      (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2 + N.to_nat (F.T_lin_of e).
-  Definition range_bits (e : term L.op X.t) (s : t) : nat := range_work e s.
-  TimeFun add_term.
-  TimeFun normalize_coef.
-  TimeFun normalize_row.
-  TimeFun coefficient.
-  TimeFun variables.
-  TimeFun dense.
-  TimeFun sparse.
-  TimeFun seed_rows.
-  TimeFun equality_basis.
-  TimeFun empty_certificate.
-  TimeFun contradiction.
-  TimeFun row_eqb.
-  TimeFun target_certificate.
-  TimeFun entail_cert.
-  TimeFun entails.
-  TimeFun leb.
-  TimeFun bot.
-  TimeFun is_bot.
-  TimeFun hull_left.
-  TimeFun hull_right.
-  TimeFun checked_hull_row.
-  TimeFun present.
-  TimeFun affine_hull.
-  TimeFun join.
-  TimeFun top.
-  TimeFun meet.
-  TimeFun widen.
-  TimeFun narrow.
-  TimeFun subst.
-  TimeFun mentions.
-  TimeFun projected_row.
-  TimeFun project.
-  TimeFun havoc.
-  TimeFun inverse_row.
-  TimeFun assign_rows.
-  TimeFun assign.
-  TimeFun atom_rows.
-  TimeFun assume.
-  TimeFun range.
-  Definition c_lat : N := 1. (* STUB *)
-  Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof.
-    unfold c_lat. lia.
-  Qed.
-  Lemma T_leb_le : forall a b,
-    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_join_le : forall a b,
-    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_is_bot_le : forall s,
-    (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_widen_le : forall p a b,
-    (T_widen p a b <= c_lat * N.of_nat
-      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
-  Definition c_num : N := 1. (* STUB *)
-  Lemma T_assign_le : forall x e s,
-    (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_havoc_le : forall x s,
-    (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_assume_le : forall g es s,
-    (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof.
-    intros a b. time_unfold T_narrow. unfold c_lat. lia.
-  Qed.
-  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma range_size : forall e s,
-    (N.of_nat
-      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
-       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
-     c_num * N.of_nat (range_bits e s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Definition c_karr : N := 1. (* STUB *)
-  Lemma T_subst_le : forall x f r,
-    (T_subst x f r <= c_karr * N.of_nat
-      ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
-    (T_affine_hull a b <= c_karr * N.of_nat
-      (elimination_work (Reached a) (Reached b)))%N.
-  Proof. Admitted. (* STUB *)
-  Definition k_cert : N := 1%N. (* STUB *)
-  Lemma affine_hull_size : forall a b, normal a -> normal b ->
-    length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
-    ell (Reached (affine_hull a b)) <=
-      ellB (n (Reached a) + n (Reached b) + 1) (ell (Reached a) + ell (Reached b)).
-  Proof. Admitted. (* STUB *)
-  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
-    entail_cert P r = Some k ->
-    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
-        (C.lsize r + C.cbits P (mults k) + 1)) <=
-      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
-    (T_entail_cert P r <= c_karr * N.of_nat
-      (elimination_work (Reached P) (Reached (r :: nil))))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_join_karr_le : forall a b, normal_s a -> normal_s b ->
-    (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
-    N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
-  Proof. Admitted. (* STUB *)
-  (** Assignment charges row normalization and elimination after linearization. *)
-  Lemma F_assign_work : forall x e s,
-    (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
-      (n s + tsize e + 1)^3 *
-      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
-  Proof.
-    intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
-  Qed.
-  (** Havoc charges row normalization and elimination of the selected variable. *)
-  Lemma F_havoc_work : forall x s,
-    havoc_work x s = terms s * (nell s + 1) +
-      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
-  Proof.
-    reflexivity.
-  Qed.
-  (** Assumption charges row normalization and elimination with the new rows. *)
-  Lemma F_assume_work : forall g es s,
-    (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
-      (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
-        (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
-          (nell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
-  Proof.
-    intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
-  Qed.
-
-  (** Every key retained by pairing belongs to the original coordinate list. *)
-  Lemma combine_keys_in : forall (xs : list X.t) (zs : list Z) x,
-    In x (map fst (List.combine xs zs)) -> In x xs.
-  Proof.
-    intro xs. induction xs as [|y xs IH]; intros [|z zs] x Hin;
-      cbn [List.combine map fst In] in *; try contradiction.
-    destruct Hin as [Hsame|Hin]; [now left|]. right. now apply IH with (zs := zs).
-  Qed.
-
-  (** Pairing distinct coordinates with a coefficient vector retains distinct keys. *)
-  Lemma combine_keys_nodup : forall (xs : list X.t) (zs : list Z),
-    NoDup xs -> NoDup (map fst (List.combine xs zs)).
-  Proof.
-    intro xs. induction xs as [|x xs IH]; intros [|z zs] Hunique;
-      cbn [List.combine map fst]; try solve [constructor].
-    inversion Hunique as [|key keys Hnot Htail]; subst key keys.
-    constructor.
-    - intro Hin. apply Hnot. now apply combine_keys_in with (zs := zs).
-    - now apply IH.
-  Qed.
-
-  (** Dropping zero coefficients from a unique coordinate list preserves unique keys. *)
-  Lemma sparse_nodup : forall xs zs,
-    NoDup xs -> NoDup (map fst (sparse xs zs)).
-  Proof.
-    intros xs zs Hunique. unfold sparse. apply karr_nodup_map_filter.
-    now apply combine_keys_nodup.
-  Qed.
-
-  (** Normalization gives every source row a unique coefficient at each key. *)
-  Lemma normal_normalize_rows : forall P, normal (map normalize_row P).
-  Proof.
-    intro P. unfold normal. apply Forall_map. apply Forall_forall. intros r _.
-    cbn [normalize_row lhs]. apply normalize_coef_nodup.
-  Qed.
-
   (** A successful hull extractor returns its sparse equality row unchanged. *)
   Lemma checked_hull_row_shape : forall xs a b r c,
     checked_hull_row xs a b r = Some c ->
@@ -4953,122 +4623,6 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     injection Hrow as Hsame. subst c. exact Hcandidate.
   Qed.
 
-  (** Every affine-hull output has distinct coefficient keys, even for raw inputs. *)
-  Lemma normal_affine_hull : forall a b, normal (affine_hull a b).
-  Proof.
-    intros a b. unfold normal, affine_hull. apply present_forall.
-    intros r c Hrow. rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
-    cbn [lhs]. apply sparse_nodup. apply variables_nodup.
-  Qed.
-
-  (** A successful projection extractor returns its sparse equality row unchanged. *)
-  Lemma projected_row_shape : forall x xs P r c,
-    projected_row x xs P r = Some c ->
-    c = LCons X.t (sparse xs (kcoeff r)) REq (kright r).
-  Proof.
-    intros x xs P r c Hrow. unfold projected_row in Hrow.
-    remember (LCons X.t (sparse xs (kcoeff r)) REq (kright r)) as candidate
-      eqn:Hcandidate in Hrow.
-    destruct (negb (mentions x candidate) &&
-      C.check_entails P candidate (Cert (kweight r) 1 false)); [|discriminate].
-    injection Hrow as Hsame. subst c. exact Hcandidate.
-  Qed.
-
-  (** Moving the eliminated variable to the front preserves unique coordinates. *)
-  Lemma project_variables_nodup : forall x P,
-    NoDup (x :: filter (fun y => negb (X.eqb y x)) (variables P)).
-  Proof.
-    intros x P. constructor.
-    - intro Hin. apply filter_In in Hin as [_ Hkeep].
-      rewrite key_eqb_refl in Hkeep. discriminate.
-    - apply NoDup_filter. apply variables_nodup.
-  Qed.
-
-  (** Projection normalizes both its equality basis and its retained inequalities. *)
-  Lemma normal_project : forall x P, normal (project x P).
-  Proof.
-    intros x P. unfold normal, project. apply Forall_app. split.
-    - apply present_forall. intros r c Hrow.
-      rewrite (projected_row_shape _ _ _ _ _ Hrow). cbn [lhs].
-      apply sparse_nodup. apply project_variables_nodup.
-    - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
-      apply in_map_iff in Hin as [s [Hsame _]]. subst r.
-      cbn [normalize_row lhs]. apply normalize_coef_nodup.
-  Qed.
-
-  (** Both affine assignment branches construct only normalized rows. *)
-  Lemma normal_assign_rows : forall x f P, normal (assign_rows x f P).
-  Proof.
-    intros x f P. unfold assign_rows.
-    destruct (Z.eqb (coefficient x (coef f)) 0).
-    - constructor.
-      + cbn [normalize_row lhs]. apply normalize_coef_nodup.
-      + apply normal_project.
-    - unfold normal. apply Forall_map. apply Forall_forall. intros r _.
-      cbn [inverse_row normalize_row lhs]. apply normalize_coef_nodup.
-  Qed.
-
-  (** Every emitted equality atom has merged duplicate keys. *)
-  Lemma normal_atom_rows : forall a, normal (atom_rows a).
-  Proof.
-    intros [fl wl comparison fr wr].
-    destruct wl, wr, comparison; cbn [normal atom_rows al alw ar arw acmp];
-      try solve [constructor].
-    constructor; [|constructor]. cbn [normalize_row lhs]. apply normalize_coef_nodup.
-  Qed.
-
-  (** Top has no repeated coefficients. *)
-  Lemma normal_top : normal_s top.
-  Proof.
-    constructor.
-  Qed.
-  (** Join keeps rows free of repeated keys. *)
-  Lemma normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
-  Proof.
-    intros [|P] [|Q] Ha Hb; [exact I|exact Hb|exact Ha|].
-    apply normal_affine_hull.
-  Qed.
-  (** Widening keeps rows free of repeated keys. *)
-  Lemma normal_widen : forall p a b,
-    normal_s a -> normal_s b -> normal_s (widen p a b).
-  Proof.
-    intros p a b Ha Hb. unfold widen. destruct (leb b a); [exact Ha|].
-    now apply normal_join.
-  Qed.
-  (** Narrowing keeps rows free of repeated keys. *)
-  Lemma normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
-  Proof.
-    intros a b _ Hb. exact Hb.
-  Qed.
-  (** Assignment normalizes its new rows. *)
-  Lemma normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
-  Proof.
-    intros x e [|P] _; [exact I|]. unfold assign.
-    destruct (F.lin_of e) as [[f wrapping]|]; [destruct wrapping|].
-    - apply normal_assign_rows.
-    - apply normal_project.
-    - apply normal_project.
-  Qed.
-  (** Havoc keeps rows free of repeated keys. *)
-  Lemma normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
-  Proof.
-    intros x [|P] _; [exact I|]. apply normal_project.
-  Qed.
-  (** Assumption normalizes the rows it adds. *)
-  Lemma normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
-  Proof.
-    intros g es [|P] _; [exact I|].
-    change (normal (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)).
-    unfold normal. apply Forall_app. split.
-    - apply Forall_forall. intros r Hin. apply in_flat_map in Hin as [a [_ Hr]].
-      exact (proj1 (Forall_forall _ _) (normal_atom_rows a) r Hr).
-    - apply normal_normalize_rows.
-  Qed.
-  (** This widening has no repeated threshold search. *)
-  Lemma F_wunits : forall s, wunits s = 0.
-  Proof.
-    reflexivity.
-  Qed.
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
     In r P \/
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
@@ -6296,6 +5850,749 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Forall (in_span a) c.
   Proof.
     exact span_trans_draft.
+  Qed.
+
+
+  (** Adding source rows preserves their exact span. *)
+  Lemma span_weaken : forall A B r, incl A B -> in_span A r -> in_span B r.
+  Proof.
+    intros A B r Hin Hspan. apply span_trans_row with (B := A); [|exact Hspan].
+    apply Forall_forall. intros s Hs. left. now apply Hin.
+  Qed.
+
+  (** Every next row is fresh relative to the previously selected equalities. *)
+  Fixpoint span_sequence (prefix rows : list (lcons X.t)) : Prop :=
+    match rows with
+    | [] => True
+    | r :: rest => ~ in_span prefix r /\ span_sequence (r :: prefix) rest
+    end.
+
+  (** Moving one source from the head past a prefix preserves every member. *)
+  Lemma span_move_head_incl : forall (r : lcons X.t) prefix rest,
+    incl (r :: prefix ++ rest) (prefix ++ r :: rest).
+  Proof.
+    intros r prefix rest s [Hsame|Hs].
+    - subst s. apply in_or_app. right. now left.
+    - apply in_app_or in Hs as [Hs|Hs].
+      + apply in_or_app. now left.
+      + apply in_or_app. right. now right.
+  Qed.
+
+  (** Exclusion from all other rows implies freshness along the entire sequence. *)
+  Lemma span_sequence_exclusion : forall rows prefix,
+    (forall i r, nth_error rows i = Some r ->
+      ~ in_span (prefix ++ firstn i rows ++ skipn (S i) rows) r) ->
+    span_sequence prefix rows.
+  Proof.
+    intro rows. induction rows as [|r rows IH]; intros prefix Hexclude; [exact I|].
+    split.
+    - intro Hspan. apply (Hexclude 0 r eq_refl).
+      apply span_weaken with (A := prefix); [|exact Hspan].
+      intros s Hs. apply in_or_app. now left.
+    - apply IH. intros i s Hnth Hspan. apply (Hexclude (S i) s Hnth).
+      apply span_weaken with (A := (r :: prefix) ++ firstn i rows ++ skipn (S i) rows);
+        [|exact Hspan].
+      change (incl (r :: prefix ++ (firstn i rows ++ skipn (S i) rows))
+        (prefix ++ r :: (firstn i rows ++ skipn (S i) rows))).
+      apply span_move_head_incl.
+  Qed.
+
+  (** Equal source and multiplier prefixes split a finite row sum. *)
+  Lemma row_sum_app : forall A B ms ns entry, length ms = length A ->
+    row_sum (A ++ B) (ms ++ ns) entry =
+      (row_sum A ms entry + row_sum B ns entry)%Z.
+  Proof.
+    intro A. induction A as [|p A IH]; intros B [|m ms] ns entry Hlength;
+      cbn [length] in Hlength; try discriminate; [reflexivity|].
+    change ((m * entry p + row_sum (A ++ B) (ms ++ ns) entry)%Z =
+      (m * entry p + row_sum A ms entry + row_sum B ns entry)%Z).
+    rewrite IH by lia. ring.
+  Qed.
+
+  (** A vector of zero multipliers contributes zero to every row observation. *)
+  Lemma row_sum_all_zero : forall P ms entry,
+    Forall (fun m => m = 0%Z) ms -> row_sum P ms entry = 0%Z.
+  Proof.
+    intros P ms entry Hzero. revert P.
+    induction Hzero as [|m ms Hm Htail IH]; intros [|p P]; try reflexivity.
+    change ((m * entry p + row_sum P ms entry)%Z = 0%Z). rewrite Hm, IH. ring.
+  Qed.
+
+  (** Splitting source rows splits their admissible equality multiplier vector. *)
+  Lemma equality_weights_cut : forall A B weights,
+    equality_weights (A ++ B) weights ->
+    exists ms ns, weights = ms ++ ns /\ equality_weights A ms /\ equality_weights B ns.
+  Proof.
+    intro A. induction A as [|p A IH]; intros B weights Hweights.
+    - exists [], weights. split; [reflexivity|]. split; [constructor|exact Hweights].
+    - inversion Hweights as [|p' m rows rest Hp Hrest]; subst p' rows.
+      destruct (IH B rest Hrest) as [ms [ns [Hsame [Hms Hns]]]].
+      subst rest. exists (m :: ms), ns. split; [reflexivity|].
+      split; [now constructor|exact Hns].
+  Qed.
+
+  (** A nonzero equality multiplier identifies an equality source and its exact position. *)
+  Lemma equality_weights_nonzero : forall P weights,
+    equality_weights P weights -> ~ Forall (fun m => m = 0%Z) weights ->
+    exists left q right before m after,
+      P = left ++ q :: right /\ weights = before ++ m :: after /\
+      equality_weights left before /\ equality_weights right after /\
+      lrel q = REq /\ m <> 0%Z.
+  Proof.
+    intros P weights Hweights. induction Hweights as [|p m P weights Hp Htail IH];
+      intro Hnonzero.
+    - exfalso. apply Hnonzero. constructor.
+    - destruct (Z.eq_dec m 0) as [Hzero|Hzero].
+      + assert (Htail_nonzero : ~ Forall (fun m => m = 0%Z) weights).
+        { intro Hz. apply Hnonzero. now constructor. }
+        destruct (IH Htail_nonzero) as
+          [left [q [right [before [a [after [Hrows [Hmults [Hleft [Hright [Hq Ha]]]]]]]]]]].
+        exists (p :: left), q, right, (m :: before), a, after.
+        subst P weights. split; [reflexivity|]. split; [reflexivity|].
+        split; [now constructor|]. split; [exact Hright|]. now split.
+      + exists [], p, P, [], m, weights. split; [reflexivity|].
+        split; [reflexivity|]. split; [constructor|]. split; [exact Htail|].
+        split; [|exact Hzero]. destruct (lrel p) eqn:Hrel; [reflexivity|].
+        exfalso. apply Hzero. now apply Hp.
+  Qed.
+
+  (** A certificate with a zero suffix is already a certificate from its prefix. *)
+  Lemma equality_certificate_prefix : forall A B r ms ns sc,
+    equality_weights A ms -> Forall (fun m => m = 0%Z) ns ->
+    equality_certificate (A ++ B) r (ms ++ ns) sc -> equality_certificate A r ms sc.
+  Proof.
+    intros A B r ms ns sc Hms Hzero [_ [Hscale [Hcoef Hrhs]]].
+    pose proof (equality_weights_length _ _ Hms) as Hlength.
+    unfold equality_certificate. split; [exact Hms|]. split; [exact Hscale|]. split.
+    - intro x. specialize (Hcoef x).
+      change (row_sum (A ++ B) (ms ++ ns) (fun p => C.coef_of x (lhs p)) =
+        (sc * C.coef_of x (lhs r))%Z) in Hcoef.
+      rewrite row_sum_app in Hcoef by lia.
+      rewrite (row_sum_all_zero B ns (fun p => C.coef_of x (lhs p)) Hzero),
+        Z.add_0_r in Hcoef. exact Hcoef.
+    - change (match lrel r with
+        | REq => row_sum (A ++ B) (ms ++ ns) rhs = (sc * rhs r)%Z
+        | RLe => (row_sum (A ++ B) (ms ++ ns) rhs <= sc * rhs r)%Z
+        end) in Hrhs.
+      rewrite row_sum_app in Hrhs by lia.
+      rewrite (row_sum_all_zero B ns rhs Hzero), Z.add_0_r in Hrhs. exact Hrhs.
+  Qed.
+
+  (** Solving a weighted equality for one nonzero source preserves each observation. *)
+  Lemma row_sum_exchange : forall P Q r q ms ns m sc sign entry,
+    length ms = length P ->
+    row_sum (P ++ q :: Q) (ms ++ m :: ns) entry = (sc * entry r)%Z ->
+    row_sum (r :: P ++ Q)
+      ((sign * sc)%Z :: map (fun a => (-sign * a)%Z) (ms ++ ns)) entry =
+      (sign * m * entry q)%Z.
+  Proof.
+    intros P Q r q ms ns m sc sign entry Hlength Hsum.
+    change ((sign * sc * entry r +
+      row_sum (P ++ Q) (map (fun a => (-sign * a)%Z) (ms ++ ns)) entry)%Z =
+      (sign * m * entry q)%Z).
+    rewrite row_sum_scale, row_sum_app by exact Hlength.
+    rewrite row_sum_app in Hsum by exact Hlength.
+    change ((row_sum P ms entry + (m * entry q + row_sum Q ns entry))%Z =
+      (sc * entry r)%Z) in Hsum.
+    replace (sign * sc * entry r)%Z with (sign * (sc * entry r))%Z by ring.
+    rewrite <- Hsum. ring.
+  Qed.
+
+  (** Replacing one nonzero source multiplier by the target yields a reverse certificate. *)
+  Lemma equality_certificate_exchange : forall P Q r q ms ns m sc,
+    lrel r = REq -> lrel q = REq -> m <> 0%Z ->
+    equality_weights P ms -> equality_weights Q ns ->
+    equality_certificate (P ++ q :: Q) r (ms ++ m :: ns) sc ->
+    exists weights scale, equality_certificate (r :: P ++ Q) q weights scale.
+  Proof.
+    intros P Q r q ms ns m sc Hr Hq Hnonzero Hms Hns [_ [Hscale [Hcoef Hrhs]]].
+    rewrite Hr in Hrhs.
+    set (sign := if (m <? 0)%Z then (-1)%Z else 1%Z).
+    assert (Hsign : (sign * m)%Z = Z.abs m) by apply coefficient_sign_abs.
+    assert (Hpositive : (0 < Z.abs m)%Z) by (destruct m; cbn; lia).
+    pose proof (equality_weights_length _ _ Hms) as Hlength.
+    exists ((sign * sc)%Z :: map (fun a => (-sign * a)%Z) (ms ++ ns)), (Z.abs m).
+    unfold equality_certificate. split.
+    - constructor.
+      + intro Hkind. rewrite Hr in Hkind. discriminate.
+      + apply equality_weights_scale. now apply hull_weights_app.
+    - split; [exact Hpositive|]. split.
+      + intro x. change (row_sum (r :: P ++ Q)
+          ((sign * sc)%Z :: map (fun a => (-sign * a)%Z) (ms ++ ns))
+          (fun p => C.coef_of x (lhs p)) = (Z.abs m * C.coef_of x (lhs q))%Z).
+        rewrite <- Hsign. exact (row_sum_exchange P Q r q ms ns m sc sign
+          (fun p => C.coef_of x (lhs p)) ltac:(lia) (Hcoef x)).
+      + rewrite Hq. change (row_sum (r :: P ++ Q)
+          ((sign * sc)%Z :: map (fun a => (-sign * a)%Z) (ms ++ ns)) rhs =
+          (Z.abs m * rhs q)%Z).
+        rewrite <- Hsign. exact (row_sum_exchange P Q r q ms ns m sc sign rhs
+          ltac:(lia) Hrhs).
+  Qed.
+
+  (** A fresh equality replaces exactly one remaining source without losing the old span. *)
+  Lemma span_exchange : forall prefix remaining r,
+    lrel r = REq -> ~ in_span prefix r -> in_span (prefix ++ remaining) r ->
+    exists rest, S (length rest) = length remaining /\
+      Forall (in_span (r :: prefix ++ rest)) (prefix ++ remaining).
+  Proof.
+    intros prefix remaining r Hr Hfresh Hspan.
+    destruct (span_equality_certificate _ r Hspan Hr) as [weights [sc Hcertificate]].
+    destruct (equality_weights_cut prefix remaining weights (proj1 Hcertificate))
+      as [ms [ns [Hweights [Hms Hns]]]]. subst weights.
+    assert (Hnonzero : ~ Forall (fun m => m = 0%Z) ns).
+    { intro Hzero. apply Hfresh. apply span_of_certificate with (ms := ms) (sc := sc).
+      now apply equality_certificate_prefix with (B := remaining) (ns := ns). }
+    destruct (equality_weights_nonzero remaining ns Hns Hnonzero) as
+      [left [q [right [before [m [after [Hrows [Hmults [Hleft [Hright [Hq Hm]]]]]]]]]]].
+    subst remaining ns. exists (left ++ right). split.
+    - rewrite !length_app. cbn [length]. lia.
+    - assert (Hback : in_span (r :: prefix ++ (left ++ right)) q).
+      { assert (Hcombined : equality_certificate ((prefix ++ left) ++ q :: right) r
+          ((ms ++ before) ++ m :: after) sc).
+        { rewrite <- !app_assoc. exact Hcertificate. }
+        destruct (equality_certificate_exchange (prefix ++ left) right r q
+          (ms ++ before) after m sc Hr Hq Hm (hull_weights_app _ _ _ _ Hms Hleft)
+          Hright Hcombined) as [back_weights [back_scale Hback]].
+        rewrite <- app_assoc in Hback.
+        now apply span_of_certificate with (ms := back_weights) (sc := back_scale). }
+      apply Forall_forall. intros s Hs. apply in_app_or in Hs as [Hs|Hs].
+      + left. right. apply in_or_app. now left.
+      + apply in_app_or in Hs as [Hs|[Hsame|Hs]].
+        * left. right. apply in_or_app. right. apply in_or_app. now left.
+        * subst s. exact Hback.
+        * left. right. apply in_or_app. right. apply in_or_app. now right.
+  Qed.
+
+  (** Sequential exchange spends one remaining source per independent equality. *)
+  Lemma span_exchange_sequence : forall rows prefix remaining,
+    span_sequence prefix rows -> Forall (fun r => lrel r = REq) rows ->
+    Forall (in_span (prefix ++ remaining)) rows ->
+    exists rest, length rows + length rest = length remaining /\
+      Forall (in_span (rev rows ++ prefix ++ rest)) (prefix ++ remaining).
+  Proof.
+    intro rows. induction rows as [|r rows IH]; intros prefix remaining Hsequence Heq Hspan.
+    - exists remaining. split; [reflexivity|]. apply Forall_forall. intros s Hs. now left.
+    - destruct Hsequence as [Hfresh Hsequence].
+      inversion Heq as [|r' rows' Hr Htail_eq]; subst r' rows'.
+      inversion Hspan as [|r' rows' Hrow Htail_span]; subst r' rows'.
+      destruct (span_exchange prefix remaining r Hr Hfresh Hrow)
+        as [middle [Hcount Hforward]].
+      assert (Htail : Forall (in_span ((r :: prefix) ++ middle)) rows).
+      { apply span_trans with (b := prefix ++ remaining); assumption. }
+      destruct (IH (r :: prefix) middle Hsequence Htail_eq Htail)
+        as [rest [Hlength Hback]]. exists rest. split.
+      + cbn [length]. lia.
+      + assert (Hcomposed : Forall (in_span (rev rows ++ (r :: prefix) ++ rest))
+          (prefix ++ remaining)).
+        { apply span_trans with (b := (r :: prefix) ++ middle); assumption. }
+        cbn [rev]. rewrite <- !app_assoc. exact Hcomposed.
+  Qed.
+
+  (** Independent equalities cannot outnumber their sources; equal dimensions recover the span. *)
+  Lemma span_dimension : forall A rows,
+    Forall (fun r => lrel r = REq) rows ->
+    (forall i r, nth_error rows i = Some r ->
+      ~ in_span (firstn i rows ++ skipn (S i) rows) r) ->
+    Forall (in_span A) rows ->
+    length rows <= length A /\
+      (length A <= length rows -> Forall (in_span rows) A).
+  Proof.
+    intros A rows Heq Hindependent Hspan.
+    assert (Hsequence : span_sequence [] rows).
+    { apply span_sequence_exclusion. exact Hindependent. }
+    destruct (span_exchange_sequence rows [] A Hsequence Heq Hspan)
+      as [rest [Hlength Hback]]. split; [lia|]. intro Hdim.
+    assert (Hrest : rest = []).
+    { destruct rest; [reflexivity|]. cbn [length] in Hlength. lia. }
+    subst rest. rewrite !app_nil_r in Hback.
+    eapply Forall_impl; [|exact Hback]. intros r Hr.
+    apply span_weaken with (A := rev rows); [|exact Hr].
+    intros s Hs. exact (proj2 (in_rev rows s) Hs).
+  Qed.
+
+  (** A hull cannot gain rank, and equal rank forces the right input below the left. *)
+  Lemma affine_hull_rank : forall A B,
+    length (affine_hull A B) <= length A /\
+      (length A <= length (affine_hull A B) -> leb (Reached B) (Reached A) = true).
+  Proof.
+    intros A B. destruct (join_span A B (affine_hull A B) eq_refl) as [Hleft Hright].
+    destruct (span_dimension A (affine_hull A B)
+      (join_eq A B (affine_hull A B) eq_refl)
+      (join_independent A B (affine_hull A B) eq_refl) Hleft) as [Hlength Hreverse].
+    split; [exact Hlength|]. intro Hdim. apply leb_complete_span.
+    apply span_trans with (b := affine_hull A B); [exact Hright|now apply Hreverse].
+  Qed.
+
+  (** Every changing widening strictly decreases the number of stored source rows. *)
+  Lemma wrank_widen_checked : forall p a b, is_bot a = false -> leb b a = false ->
+    wrank p (widen p a b) < wrank p a.
+  Proof.
+    intros p a b Hbot Hle. destruct a as [|A]; [discriminate|].
+    destruct b as [|B]; [discriminate|]. unfold widen. rewrite Hle.
+    change (length (affine_hull A B) < length A).
+    destruct (affine_hull_rank A B) as [Hlength Hreverse].
+    destruct (Nat.lt_ge_cases (length (affine_hull A B)) (length A)) as [Hlt|Hge];
+      [exact Hlt|]. pose proof (Hreverse Hge). congruence.
+  Qed.
+
+  (** Stable widenings retain rank and changing widenings strictly lower it. *)
+  Lemma wrank_widen_le_checked : forall p a b, is_bot a = false ->
+    wrank p (widen p a b) <= wrank p a.
+  Proof.
+    intros p a b Hbot. destruct (leb b a) eqn:Hle.
+    - unfold widen. rewrite Hle. lia.
+    - pose proof (wrank_widen_checked p a b Hbot Hle). lia.
+  Qed.
+
+  Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
+    wrank p (widen p a b) < wrank p a.
+  Proof.
+    exact wrank_widen_checked.
+  Qed.
+  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
+  Proof.
+    exact wrank_widen_le_checked.
+  Qed.
+  Lemma narrow_between : forall a b, leb b a = true ->
+    leb b (narrow a b) = true /\ leb (narrow a b) a = true.
+  Proof.
+    intros a b Hle. split; [apply leb_refl | exact Hle].
+  Qed.
+  Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
+  Proof.
+    intros [| P] [| Q] v Hle Hmodels; cbn [ngamma] in *; try contradiction.
+    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty;
+        [| discriminate].
+      exact (contradiction_sound P ms v Hempty Hmodels).
+    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty.
+      + exfalso. exact (contradiction_sound P ms v Hempty Hmodels).
+      + apply Forall_forall. intros r Hin.
+        apply entails_sound with (P := P); [| exact Hmodels].
+        now apply (proj1 (forallb_forall _ _) Hle).
+  Qed.
+  Lemma ngamma_bot : forall v, ~ ngamma bot v.
+  Proof.
+    intros v Hfalse. exact Hfalse.
+  Qed.
+  Lemma ngamma_top : forall v, ngamma top v.
+  Proof.
+    intro v. constructor.
+  Qed.
+  Lemma assign_sound : forall x e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x e [| P] st c Hmodels Heval; [contradiction |]. unfold assign.
+    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |].
+    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (assign_rows x f P)).
+      apply numeric_update_models.
+      pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
+      cbn [wrap_into] in Hvalue. rewrite Hvalue. now apply assign_rows_sound.
+    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
+      apply numeric_update_models. now apply project_sound.
+    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
+      apply numeric_update_models. now apply project_sound.
+  Qed.
+  Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
+    ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x [| P] st c Hmodels; [contradiction |].
+    change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
+    pose proof (project_sound x P (fun y => N.num (st y)) (N.num c) Hmodels) as Hpost.
+    apply Forall_forall. intros r Hin.
+    apply sat_pointwise with (v := upd X.eqb (fun y => N.num (st y)) x (N.num c)).
+    - intro y. unfold upd. destruct (X.eqb y x); reflexivity.
+    - now apply (proj1 (Forall_forall _ _) Hpost).
+  Qed.
+
+  (** Each equality admitted by a guard follows directly from its unwrapped atom. *)
+  Lemma atom_rows_sound : forall v a, atom_holds v a -> Forall (sat v) (atom_rows a).
+  Proof.
+    intros v [fl wl comparison fr wr] Hatom.
+    destruct wl, wr, comparison; cbn [atom_rows al alw ar arw acmp];
+      try solve [constructor].
+    constructor; [| constructor]. apply normalize_row_sat.
+    unfold sat. cbn [lrel lhs rhs]. rewrite eval_coef_app, eval_coef_opp.
+    cbn [atom_holds al alw ar arw acmp wrap_into] in Hatom.
+    unfold eval_lin in Hatom. lia.
+  Qed.
+
+  Lemma assume_sound : forall g es s st cs,
+    ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
+    L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
+  Proof.
+    intros g es [| P] st cs Hmodels Heval Hguard; [contradiction |].
+    change (Forall (sat (fun y => N.num (st y)))
+      (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)).
+    pose proof (F.atoms_sound g es st cs Heval Hguard) as Hatoms.
+    apply Forall_app. split; apply Forall_forall; intros r Hin.
+    - apply in_flat_map in Hin as [a [Hin Hrow]].
+      pose proof (proj1 (Forall_forall _ _) Hatoms a Hin) as Hatom.
+      pose proof (atom_rows_sound _ _ Hatom) as Hrows.
+      now apply (proj1 (Forall_forall _ _) Hrows).
+    - apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply normalize_row_sat.
+      now apply (proj1 (Forall_forall _ _) Hmodels).
+  Qed.
+  Lemma range_sound : forall e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
+  Proof.
+    intros e [| P] st c Hmodels Heval; [contradiction |]. unfold range.
+    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |];
+      try solve [split; exact I].
+    set (xs := variables (LCons X.t (coef f) REq 0 :: P)).
+    set (r := karr_target (equality_basis xs P) 1
+      (KRow (map (fun x => coefficient x (coef f)) xs) 0 (repeat 0%Z (length P)) 1)).
+    set (z := (- kright r / kscale r + cst f)%Z).
+    destruct (entail_cert P (LCons X.t (coef f) REq (z - cst f)%Z)) as [k |]
+      eqn:Hcert; [| split; exact I].
+    pose proof (C.check_entails_sound P _ k (entail_cert_checked P _ k Hcert)
+      (fun y => N.num (st y)) Hmodels) as Hbound.
+    pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
+    cbn [sat lrel lhs rhs] in Hbound.
+    cbn [wrap_into] in Hvalue. unfold eval_lin in Hvalue.
+    change (z <= N.num c <= z)%Z. lia.
+  Qed.
+  Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
+  Proof.
+    intros P v. reflexivity.
+  Qed.
+  Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
+  Proof.
+    intros v Hfalse. exact Hfalse.
+  Qed.
+End Karr.
+
+Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
+    (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: KARR_ALL X L N F C.
+  Include Karr X L N F C.
+  Definition wsize (_ : wparam) : nat := 0.
+  Definition normal (P : list (lcons X.t)) : Prop :=
+    Forall (fun r => NoDup (map fst (lhs r))) P.
+  Definition normal_s (s : t) : Prop :=
+    match s with Unreached => True | Reached P => normal P end.
+  Definition rows_of (s : t) : list (lcons X.t) :=
+    match s with Unreached => nil | Reached P => P end.
+  Definition vars_of (P : list (lcons X.t)) : list X.t :=
+    fold_left (fun acc x => if existsb (X.eqb x) acc then acc else x :: acc)
+      (flat_map (fun r => map fst (lhs r)) P) nil.
+  Definition n (s : t) : nat := length (rows_of s) + length (vars_of (rows_of s)).
+  Definition ell (s : t) : nat :=
+    fold_right Nat.max 0 (map C.row_bits (rows_of s)) +
+    fold_right Nat.max 0 (map C.row_key_bits (rows_of s)).
+  Definition ellB (dim bits : nat) : nat := dim * (bits + Nat.log2 dim + 1).
+  Definition elimination_work (a b : t) : nat :=
+    (n a + n b + 1)^3 * (ellB (n a + n b + 1) (ell a + ell b) + 1)^2.
+  Definition wunits (_ : t) : nat := 0.
+  Definition terms (s : t) : nat :=
+    fold_right Nat.add 0 (map (fun r => length (lhs r)) (rows_of s)).
+  Definition nell (s : t) : nat := ell s + Nat.log2 (terms s) + 1.
+  Definition mu (s : t) : nat := terms s + n s + nell s.
+  Definition lat (m : nat) : nat :=
+    (m + 2) * ((m + 1)^3 * (ellB (m + 1) m + 1)^2 + m^2 + 1).
+  Definition size (s : t) : nat := lat (2 * mu s).
+  Definition k_karr : N := 1. (* STUB *)
+  Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
+    terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2 +
+      N.to_nat (F.T_lin_of e).
+  Definition havoc_work (x : X.t) (s : t) : nat :=
+    terms s * (nell s + 1) +
+      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
+  Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
+    terms s * (nell s + 1) + (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+      (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
+        (nell s + F.bits_es g es) + 1)^2 + N.to_nat (F.T_atoms_of g es).
+  Definition range_work (e : term L.op X.t) (s : t) : nat :=
+    terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2 + N.to_nat (F.T_lin_of e).
+  Definition range_bits (e : term L.op X.t) (s : t) : nat := range_work e s.
+  TimeFun add_term.
+  TimeFun normalize_coef.
+  TimeFun normalize_row.
+  TimeFun coefficient.
+  TimeFun variables.
+  TimeFun dense.
+  TimeFun sparse.
+  TimeFun seed_rows.
+  TimeFun equality_basis.
+  TimeFun empty_certificate.
+  TimeFun contradiction.
+  TimeFun row_eqb.
+  TimeFun target_certificate.
+  TimeFun entail_cert.
+  TimeFun entails.
+  TimeFun leb.
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun hull_left.
+  TimeFun hull_right.
+  TimeFun checked_hull_row.
+  TimeFun present.
+  TimeFun affine_hull.
+  TimeFun join.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun subst.
+  TimeFun mentions.
+  TimeFun projected_row.
+  TimeFun project.
+  TimeFun havoc.
+  TimeFun inverse_row.
+  TimeFun assign_rows.
+  TimeFun assign.
+  TimeFun atom_rows.
+  TimeFun assume.
+  TimeFun range.
+  Definition c_lat : N := 1. (* STUB *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof.
+    unfold c_lat. lia.
+  Qed.
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_is_bot_le : forall s,
+    (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_widen_le : forall p a b,
+    (T_widen p a b <= c_lat * N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
+  Proof. Admitted. (* STUB *)
+  Definition c_num : N := 1. (* STUB *)
+  Lemma T_assign_le : forall x e s,
+    (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_havoc_le : forall x s,
+    (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_assume_le : forall g es s,
+    (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. time_unfold T_narrow. unfold c_lat. lia.
+  Qed.
+  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma range_size : forall e s,
+    (N.of_nat
+      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
+     c_num * N.of_nat (range_bits e s + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Definition c_karr : N := 1. (* STUB *)
+  Lemma T_subst_le : forall x f r,
+    (T_subst x f r <= c_karr * N.of_nat
+      ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
+    (T_affine_hull a b <= c_karr * N.of_nat
+      (elimination_work (Reached a) (Reached b)))%N.
+  Proof. Admitted. (* STUB *)
+  Definition k_cert : N := 1%N. (* STUB *)
+  Lemma affine_hull_size : forall a b, normal a -> normal b ->
+    length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
+    ell (Reached (affine_hull a b)) <=
+      ellB (n (Reached a) + n (Reached b) + 1) (ell (Reached a) + ell (Reached b)).
+  Proof. Admitted. (* STUB *)
+  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
+    entail_cert P r = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize r + C.cbits P (mults k) + 1)) <=
+      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
+    (T_entail_cert P r <= c_karr * N.of_nat
+      (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_join_karr_le : forall a b, normal_s a -> normal_s b ->
+    (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
+    N.of_nat (((ellB (n a + n b + 1) (ell a + ell b) + 1)^2)%nat))%N.
+  Proof. Admitted. (* STUB *)
+  (** Assignment charges row normalization and elimination after linearization. *)
+  Lemma F_assign_work : forall x e s,
+    (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
+      (n s + tsize e + 1)^3 *
+      (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
+  Proof.
+    intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
+  (** Havoc charges row normalization and elimination of the selected variable. *)
+  Lemma F_havoc_work : forall x s,
+    havoc_work x s = terms s * (nell s + 1) +
+      (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
+  Proof.
+    reflexivity.
+  Qed.
+  (** Assumption charges row normalization and elimination with the new rows. *)
+  Lemma F_assume_work : forall g es s,
+    (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
+      (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
+        (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
+          (nell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
+  Proof.
+    intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
+
+  (** Every key retained by pairing belongs to the original coordinate list. *)
+  Lemma combine_keys_in : forall (xs : list X.t) (zs : list Z) x,
+    In x (map fst (List.combine xs zs)) -> In x xs.
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros [|z zs] x Hin;
+      cbn [List.combine map fst In] in *; try contradiction.
+    destruct Hin as [Hsame|Hin]; [now left|]. right. now apply IH with (zs := zs).
+  Qed.
+
+  (** Pairing distinct coordinates with a coefficient vector retains distinct keys. *)
+  Lemma combine_keys_nodup : forall (xs : list X.t) (zs : list Z),
+    NoDup xs -> NoDup (map fst (List.combine xs zs)).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros [|z zs] Hunique;
+      cbn [List.combine map fst]; try solve [constructor].
+    inversion Hunique as [|key keys Hnot Htail]; subst key keys.
+    constructor.
+    - intro Hin. apply Hnot. now apply combine_keys_in with (zs := zs).
+    - now apply IH.
+  Qed.
+
+  (** Dropping zero coefficients from a unique coordinate list preserves unique keys. *)
+  Lemma sparse_nodup : forall xs zs,
+    NoDup xs -> NoDup (map fst (sparse xs zs)).
+  Proof.
+    intros xs zs Hunique. unfold sparse. apply karr_nodup_map_filter.
+    now apply combine_keys_nodup.
+  Qed.
+
+  (** Normalization gives every source row a unique coefficient at each key. *)
+  Lemma normal_normalize_rows : forall P, normal (map normalize_row P).
+  Proof.
+    intro P. unfold normal. apply Forall_map. apply Forall_forall. intros r _.
+    cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Every affine-hull output has distinct coefficient keys, even for raw inputs. *)
+  Lemma normal_affine_hull : forall a b, normal (affine_hull a b).
+  Proof.
+    intros a b. unfold normal, affine_hull. apply present_forall.
+    intros r c Hrow. rewrite (checked_hull_row_shape _ _ _ _ _ Hrow).
+    cbn [lhs]. apply sparse_nodup. apply variables_nodup.
+  Qed.
+
+  (** A successful projection extractor returns its sparse equality row unchanged. *)
+  Lemma projected_row_shape : forall x xs P r c,
+    projected_row x xs P r = Some c ->
+    c = LCons X.t (sparse xs (kcoeff r)) REq (kright r).
+  Proof.
+    intros x xs P r c Hrow. unfold projected_row in Hrow.
+    remember (LCons X.t (sparse xs (kcoeff r)) REq (kright r)) as candidate
+      eqn:Hcandidate in Hrow.
+    destruct (negb (mentions x candidate) &&
+      C.check_entails P candidate (Cert (kweight r) 1 false)); [|discriminate].
+    injection Hrow as Hsame. subst c. exact Hcandidate.
+  Qed.
+
+  (** Moving the eliminated variable to the front preserves unique coordinates. *)
+  Lemma project_variables_nodup : forall x P,
+    NoDup (x :: filter (fun y => negb (X.eqb y x)) (variables P)).
+  Proof.
+    intros x P. constructor.
+    - intro Hin. apply filter_In in Hin as [_ Hkeep].
+      rewrite key_eqb_refl in Hkeep. discriminate.
+    - apply NoDup_filter. apply variables_nodup.
+  Qed.
+
+  (** Projection normalizes both its equality basis and its retained inequalities. *)
+  Lemma normal_project : forall x P, normal (project x P).
+  Proof.
+    intros x P. unfold normal, project. apply Forall_app. split.
+    - apply present_forall. intros r c Hrow.
+      rewrite (projected_row_shape _ _ _ _ _ Hrow). cbn [lhs].
+      apply sparse_nodup. apply project_variables_nodup.
+    - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+      apply in_map_iff in Hin as [s [Hsame _]]. subst r.
+      cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Both affine assignment branches construct only normalized rows. *)
+  Lemma normal_assign_rows : forall x f P, normal (assign_rows x f P).
+  Proof.
+    intros x f P. unfold assign_rows.
+    destruct (Z.eqb (coefficient x (coef f)) 0).
+    - constructor.
+      + cbn [normalize_row lhs]. apply normalize_coef_nodup.
+      + apply normal_project.
+    - unfold normal. apply Forall_map. apply Forall_forall. intros r _.
+      cbn [inverse_row normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Every emitted equality atom has merged duplicate keys. *)
+  Lemma normal_atom_rows : forall a, normal (atom_rows a).
+  Proof.
+    intros [fl wl comparison fr wr].
+    destruct wl, wr, comparison; cbn [normal atom_rows al alw ar arw acmp];
+      try solve [constructor].
+    constructor; [|constructor]. cbn [normalize_row lhs]. apply normalize_coef_nodup.
+  Qed.
+
+  (** Top has no repeated coefficients. *)
+  Lemma normal_top : normal_s top.
+  Proof.
+    constructor.
+  Qed.
+  (** Join keeps rows free of repeated keys. *)
+  Lemma normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
+  Proof.
+    intros [|P] [|Q] Ha Hb; [exact I|exact Hb|exact Ha|].
+    apply normal_affine_hull.
+  Qed.
+  (** Widening keeps rows free of repeated keys. *)
+  Lemma normal_widen : forall p a b,
+    normal_s a -> normal_s b -> normal_s (widen p a b).
+  Proof.
+    intros p a b Ha Hb. unfold widen. destruct (leb b a); [exact Ha|].
+    now apply normal_join.
+  Qed.
+  (** Narrowing keeps rows free of repeated keys. *)
+  Lemma normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
+  Proof.
+    intros a b _ Hb. exact Hb.
+  Qed.
+  (** Assignment normalizes its new rows. *)
+  Lemma normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
+  Proof.
+    intros x e [|P] _; [exact I|]. unfold assign.
+    destruct (F.lin_of e) as [[f wrapping]|]; [destruct wrapping|].
+    - apply normal_assign_rows.
+    - apply normal_project.
+    - apply normal_project.
+  Qed.
+  (** Havoc keeps rows free of repeated keys. *)
+  Lemma normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
+  Proof.
+    intros x [|P] _; [exact I|]. apply normal_project.
+  Qed.
+  (** Assumption normalizes the rows it adds. *)
+  Lemma normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
+  Proof.
+    intros g es [|P] _; [exact I|].
+    change (normal (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)).
+    unfold normal. apply Forall_app. split.
+    - apply Forall_forall. intros r Hin. apply in_flat_map in Hin as [a [_ Hr]].
+      exact (proj1 (Forall_forall _ _) (normal_atom_rows a) r Hr).
+    - apply normal_normalize_rows.
+  Qed.
+  (** This widening has no repeated threshold search. *)
+  Lemma F_wunits : forall s, wunits s = 0.
+  Proof.
+    reflexivity.
   Qed.
   Definition echelon (P : list (lcons X.t)) : Prop :=
     Forall (fun r => lrel r = REq) P /\
