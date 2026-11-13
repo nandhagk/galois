@@ -8289,6 +8289,195 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     lia.
   Qed.
 
+  Lemma discovery_clock_with_output : forall Q T U F BF seed loop spent output,
+    (U <= Q)%N -> (1 <= U)%N -> (F <= BF)%N ->
+    (seed <= 24 * T + 1)%N ->
+    (spent <= 512 * Q + 512 * T)%N ->
+    (loop <= spent + 128 * U + 8 * (F + 1))%N ->
+    (output <= 16 * Q)%N ->
+    (1 + seed + loop + output <= 1024 * Q + 1024 * T + 1024 * BF)%N.
+  Proof.
+    intros Q T U F BF seed loop spent output Hsub Hunit Hfuel Hseed Hspent
+      Hloop Houtput.
+    lia.
+  Qed.
+
+  Lemma discovery_output_clock_le : forall p roots fuel st result,
+    S.wf p ->
+    loopN (discovery_step p st) fuel
+      (fold_left (discovery_seed_one st) roots empty_discovery) = inr result ->
+    (1 + List.T_rev_append (discovery_missing result) [] +
+      (1 + List.T_rev_append (discovery_rows result) []) +
+      (1 + List.T_rev_append (discovery_frozen result) []) <=
+      16 * N.of_nat (finite_sum (fun r => length (row_keys p r))
+        (region p roots st) + length roots + 1))%N.
+  Proof.
+    intros p roots fuel st result Hwf Hloop.
+    pose proof (List.T_rev_append_le (discovery_missing result) []) as Hkeys.
+    pose proof (List.T_rev_append_le (discovery_rows result) []) as Hrows.
+    pose proof (List.T_rev_append_le (discovery_frozen result) []) as Hfrozen.
+    assert (Hrun : discovery p roots fuel st =
+      Some (rev (discovery_missing result), rev (discovery_rows result),
+        rev (discovery_frozen result))).
+    { rewrite discovery_rev_equation; now rewrite Hloop. }
+    pose proof (discovery_finish_lengths p roots fuel st
+      (rev (discovery_missing result)) (rev (discovery_rows result))
+      (rev (discovery_frozen result)) result Hwf Hrun Hloop) as Hlength.
+    set (r := finite_sum (fun row => length (row_keys p row))
+      (region p roots st)) in Hlength |- *.
+    set (a := length (discovery_missing result)) in Hlength |- *.
+    fold a in Hkeys.
+    set (b := length (discovery_rows result)) in Hlength |- *.
+    fold b in Hrows.
+    set (c := length (discovery_frozen result)) in Hlength |- *.
+    fold c in Hfrozen.
+    assert (HlengthN : (N.of_nat (a + b + c) <=
+      N.of_nat (length roots + 3 * r))%N) by lia.
+    rewrite !Nat2N.inj_add in HlengthN |- *.
+    cbn [N.of_nat] in HlengthN |- *.
+    lia.
+  Qed.
+
+  Lemma discovery_row_sum_equation : forall p rs,
+    finite_sum (fun r => length (row_keys p r)) rs =
+    fold_right Nat.add 0%nat
+      (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) rs).
+  Proof.
+    intros p rs; induction rs as [|r rest IH]; [reflexivity|].
+    change (finite_sum (fun q => length (row_keys p q)) (r :: rest)) with
+      (length (row_keys p r) + finite_sum
+        (fun q => length (row_keys p q)) rest).
+    cbn [fold_right map]; rewrite IH.
+    unfold row_keys, row_writes; rewrite length_app; cbn [length]; lia.
+  Qed.
+
+  Local Opaque T_loopN.
+
+  Lemma discovery_loop_total_le : forall p roots fuel st, S.wf p ->
+    (T_loopN (discovery_step p st)
+      (fun current => T_discovery_step p st current) fuel
+      (fold_left (discovery_seed_one st) roots empty_discovery) <=
+      512 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat ((fold_right Nat.add 0%nat
+          (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+            (region p roots st)) + length roots + 1)%nat) *
+        N.of_nat (width p st + 1) +
+      512 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) roots) +
+      128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (width p st + 1) +
+      c_loopN * N.of_nat (N.size_nat fuel + 1))%N.
+  Proof.
+    intros p roots fuel st Hwf.
+    destruct (discovery p roots (view_fuel p roots) st) as [[[vk vr] vf]|]
+      eqn:Hview.
+    2: { exfalso; exact (discovery_view_finishes p roots st Hwf Hview). }
+    destruct (discovery_result_done_perm p roots (view_fuel p roots) st vk vr vf
+      Hview) as [finished [Hfinish [Hperm Hnodup]]].
+    pose proof (discovery_spent_view_le p roots (view_fuel p roots) st
+      vk vr vf finished Hwf Hview Hfinish Hperm Hnodup) as Hspent.
+    rewrite (discovery_row_sum_equation p (region p roots st)) in Hspent.
+    pose proof (discovery_loop_clock p st
+      (fold_left (discovery_seed_one st) roots empty_discovery)
+      finished fuel Hwf) as Hclock.
+    assert (Hcomplete : exists n, loop_fuel (discovery_step p st) n
+      (fold_left (discovery_seed_one st) roots empty_discovery) = inr finished).
+    { exists (N.to_nat (view_fuel p roots)).
+      rewrite <- incremental_loopN_fuel; exact Hfinish. }
+    specialize (Hclock Hcomplete).
+    unfold discovery_potential in Hclock; lia.
+  Qed.
+
+  Lemma T_discovery_le : forall p roots fuel st, S.wf p ->
+    (T_discovery p roots fuel st <=
+      c_inc * N.of_nat ((fold_right Nat.add 0%nat
+        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+          (region p roots st)) + length roots + 1)%nat) *
+        N.of_nat (width p st + 1) +
+      c_inc * N.of_nat (fold_right Nat.add 0%nat
+        (map (fun x => S.key_bits x + 1)%nat roots)) +
+      c_inc * N.of_nat (N.size_nat fuel))%N.
+  Proof.
+    intros p roots fuel st Hwf.
+    pose proof (T_discovery_seed_fold_le st roots empty_discovery) as Hseed.
+    pose proof (discovery_loop_total_le p roots fuel st Hwf) as Hclock.
+    unfold T_discovery; time_simpl; time_cbn.
+    set (output := match loopN (discovery_step p st) fuel
+      (fold_left (discovery_seed_one st) roots empty_discovery) with
+      | inl _ => 0%N
+      | inr result => (1 + List.T_rev_append (discovery_missing result) [] +
+          (1 + List.T_rev_append (discovery_rows result) []) +
+          (1 + List.T_rev_append (discovery_frozen result) []))%N
+      end).
+    assert (Hout : (output <= 16 * N.of_nat
+      (finite_sum (fun r => length (row_keys p r)) (region p roots st) +
+        length roots + 1))%N).
+    { unfold output.
+      destruct (loopN (discovery_step p st) fuel
+        (fold_left (discovery_seed_one st) roots empty_discovery))
+        as [partial|result] eqn:Hresult; [lia|].
+      eapply discovery_output_clock_le; eauto. }
+    rewrite (discovery_row_sum_equation p (region p roots st)) in Hout.
+    assert (Hrootsum : finite_sum (fun x => (S.key_bits x + 1)%nat) roots =
+      fold_right Nat.add 0%nat
+        (map (fun x => (S.key_bits x + 1)%nat) roots)) by reflexivity.
+    rewrite Hrootsum in Hclock.
+    set (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) in *.
+    set (q := N.of_nat (fold_right Nat.add 0%nat
+      (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+        (region p roots st)) + length roots + 1)) in *.
+    set (t := N.of_nat (fold_right Nat.add 0%nat
+      (map (fun x => (S.key_bits x + 1)%nat) roots))) in *.
+    set (u := N.of_nat (width p st + 1)) in *.
+    set (f := N.of_nat (N.size_nat fuel)) in *.
+    assert (Hbase : (1 <= base)%N) by (unfold base; lia).
+    assert (Hq : (1 <= q)%N) by (unfold q; lia).
+    assert (Hu : (1 <= u)%N) by (unfold u; lia).
+    assert (Hqu : (base * u <= base * q * u)%N).
+    { replace (base * q * u)%N with (base * u * q)%N by ring.
+      set (w := (base * u)%N); nia. }
+    assert (Hunit : (1 <= base * u)%N) by nia.
+    assert (Hfuel : (f <= base * f)%N) by nia.
+    assert (HqQ : (q <= base * q * u)%N).
+    { replace (base * q * u)%N with (q * (base * u))%N by ring.
+      set (w := (base * u)%N) in Hunit |- *; nia. }
+    assert (HoutQ : (output <= 16 * (base * q * u))%N).
+    { eapply N.le_trans; [exact Hout|].
+      apply N.mul_le_mono_l; exact HqQ. }
+    replace (512 * base * q * u)%N with
+      (512 * (base * q * u))%N in Hclock by ring.
+    replace (512 * base * t)%N with (512 * (base * t))%N in Hclock by ring.
+    replace (128 * base * u)%N with (128 * (base * u))%N in Hclock by ring.
+    replace (24 * base * t)%N with (24 * (base * t))%N in Hseed by ring.
+    unfold c_loopN in Hclock.
+    replace (N.of_nat (N.size_nat fuel + 1)) with (f + 1)%N in Hclock.
+    2: { unfold f; rewrite Nat2N.inj_add; reflexivity. }
+    set (seed := List.T_fold_left (discovery_seed_one st)
+      (fun current x => T_discovery_seed_one st current x)
+      roots empty_discovery) in Hseed |- *.
+    set (clock := T_loopN (discovery_step p st)
+      (fun current => T_discovery_step p st current) fuel
+      (fold_left (discovery_seed_one st) roots empty_discovery)) in Hclock |- *.
+    clearbody seed clock output.
+    replace (1 + (seed + (clock + output)))%N with
+      (1 + seed + clock + output)%N by ring.
+    pose proof (discovery_clock_with_output (base * q * u)%N (base * t)%N
+      (base * u)%N f (base * f)%N seed clock
+      (512 * (base * q * u) + 512 * (base * t))%N output) as Hbudget.
+    specialize (Hbudget Hqu).
+    specialize (Hbudget Hunit).
+    specialize (Hbudget Hfuel).
+    specialize (Hbudget Hseed).
+    specialize (Hbudget (N.le_refl _)).
+    specialize (Hbudget Hclock).
+    specialize (Hbudget HoutQ).
+    clearbody q t u f.
+    eapply N.le_trans; [exact Hbudget|].
+    unfold c_inc, base.
+    match goal with
+    | |- (?lhs <= ?rhs)%N => replace rhs with lhs by ring; apply N.le_refl
+    end.
+  Qed.
 
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
