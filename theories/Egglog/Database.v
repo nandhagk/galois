@@ -10955,6 +10955,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (proj1 Hforest f k0 k Hlocated).
   Qed.
 
+  Lemma indexed_slot_exists : forall db s new u, metadata_ok db ->
+    I.mem (index s new db) u -> exists f perm, slot_of db s = Some (f, perm).
+  Proof.
+    intros db s new u Hmetadata Hmem.
+    assert (Hbound : runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db))).
+    { unfold metadata_ok in Hmetadata. tauto. }
+    unfold index in Hmem.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))) eqn:Hcompare;
+      try (exfalso; exact (I.mem_empty u Hmem)).
+    destruct (slot_of db s) as [[f perm] |] eqn:Hslot.
+    - exists f, perm. reflexivity.
+    - exfalso. apply N.compare_lt_iff in Hcompare.
+      unfold slot_of in Hslot. apply nth_error_None in Hslot.
+      assert (Houtside : (runtime_slot_bound (db_runtime db) <= s)%N).
+      { rewrite Hbound. lia. }
+      apply (N.lt_irrefl s). eapply N.lt_le_trans; eassumption.
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
