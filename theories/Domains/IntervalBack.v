@@ -2312,6 +2312,31 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     inversion Hfinite; subst. cbn [interval_bits]. lia.
   Qed.
 
+  Local Lemma table_assume_rewrap_time : forall rw a q,
+    (T_interval_assume_rewrap rw a q <=
+      100 * (Scalar.c_scalar + 1) *
+      N.of_nat ((Pos.to_nat rw + interval_bits a + interval_bits q + 1) ^ 2))%N.
+  Proof.
+    intros rw a q.
+    pose proof (PayloadBounds.payload_modulus_time rw) as Hmodulus_time.
+    pose proof (PayloadBounds.payload_modulus_bits rw) as Hmodulus_bits.
+    pose proof (Scalar.T_interval_meet_le a q) as Hmeet.
+    destruct a as [|[|lo|] [|hi|]];
+      unfold T_interval_assume_rewrap, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (pose proof (Pos2Nat.is_pos rw);
+        rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *; nia).
+    pose proof (Std.Z.T_leb_le 0 lo) as Hleb.
+    pose proof (Std.Z.T_ltb_le hi (Word.modulus rw)) as Hltb.
+    destruct (Z.leb 0 lo && Z.ltb hi (Z.pow_pos 2 rw));
+      time_cbn_all;
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *;
+      cbn [interval_bits] in *;
+      pose proof (Nat.le_max_l (Z.size_nat lo) (Z.size_nat hi));
+      pose proof (Nat.le_max_r (Z.size_nat lo) (Z.size_nat hi)); nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
