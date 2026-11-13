@@ -3967,8 +3967,36 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     lia.
   Qed.
 
+  Local Lemma table_signed_endpoint_bits : forall w u lo hi,
+    interval_signed w u = Some (lo, hi) ->
+    (Z.size_nat lo + Z.size_nat hi <=
+      2 * (Pos.to_nat w + interval_bits u + 2))%nat.
+  Proof.
+    intros w u lo hi Hsigned.
+    pose proof (PayloadBounds.payload_modulus_bits w) as Hmodbits.
+    unfold interval_signed in Hsigned.
+    destruct (interval_finite_helper u) as [[ulo uhi]|] eqn:Hfinite;
+      [|discriminate].
+    pose proof (table_finite_bits u ulo uhi Hfinite) as [Hulo Huhi].
+    destruct (uhi <? Word.half w)%Z.
+    - inversion Hsigned; subst. lia.
+    - destruct (Word.half w <=? ulo)%Z; [|discriminate].
+      inversion Hsigned; subst.
+      pose proof (table_integer_sub_bits ulo (Word.modulus w)) as Hlo.
+      pose proof (table_integer_sub_bits uhi (Word.modulus w)) as Hhi.
+      unfold Word.modulus in Hlo, Hhi.
+      replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) in Hlo, Hhi
+        by reflexivity.
+      unfold Word.modulus in Hmodbits.
+      replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) in Hmodbits
+        by reflexivity.
+      unfold Word.modulus.
+      replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) by reflexivity.
+      lia.
+  Qed.
+
   Local Lemma table_signed_time : forall w u,
-    (T_interval_signed w u <= 10000 * N.of_nat
+    (T_interval_signed w u <= 1000 * N.of_nat
       ((Pos.to_nat w + interval_bits u + 1) ^ 2))%N.
   Proof.
     intros w u.
