@@ -1164,6 +1164,33 @@ Proof.
        exact Hslot_f | exact Hslot_h | exact Hrank_f | exact Hrank_h].
 Qed.
 
+Lemma database_rank_slots_from_current_rank : forall kinds start groups sl f g j,
+  PTrieCode.get f groups = Some (g, j) ->
+  forall n perm d rank offset,
+    nth_error sl n = Some (f, perm) ->
+    nth_error (database_rank_slots_from kinds start groups sl) n =
+      Some (d, rank, offset) -> rank = g.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH];
+    intros start groups f g j Hcurrent n perm d rank offset Hslot Hplace;
+    destruct n as [|n]; cbn [nth_error database_rank_slots_from] in Hslot, Hplace;
+    try discriminate.
+  - injection Hslot as <- <-. rewrite Hcurrent in Hplace.
+    injection Hplace as _ Hrank _. symmetry. exact Hrank.
+  - set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head (fst place, N.succ (snd place)) groups).
+    assert (Hupdated : exists count, PTrieCode.get f updated = Some (g, count)).
+    { destruct (Pos.eq_dec f head) as [-> | Hne].
+      - exists (N.succ j). unfold updated, place.
+        rewrite PTrie.get_set_same, Hcurrent. reflexivity.
+      - exists j. unfold updated.
+        rewrite PTrie.get_set_other by exact Hne. exact Hcurrent. }
+    destruct Hupdated as [count Hupdated].
+    eapply IH; eassumption.
+Qed.
+
 Lemma database_rank_slots_from_bound : forall kinds start groups sl,
   database_rank_groups_bounded start groups ->
   forall n d g j, nth_error (database_rank_slots_from kinds start groups sl) n =
