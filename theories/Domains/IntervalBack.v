@@ -4708,6 +4708,20 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_square_scale : forall x s k,
+    (x <= k * s)%nat ->
+    (N.of_nat (x ^ 2) <= N.of_nat (k ^ 2) * N.of_nat (s ^ 2))%N.
+  Proof.
+    intros x s k Hx.
+    assert (Hsquare : (x ^ 2 <= (k * s) ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; exact Hx).
+    replace ((k * s) ^ 2)%nat with ((k ^ 2) * (s ^ 2))%nat in Hsquare
+      by (rewrite !Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hsquare) as HsquareN.
+    rewrite Nat2N.inj_mul in HsquareN.
+    exact HsquareN.
+  Qed.
+
   Local Lemma table_shl_time : forall rw wa a wb b,
     (T_interval_shl rw (interval_clip wa a) (interval_clip wb b) <=
       1000 * N.of_nat
