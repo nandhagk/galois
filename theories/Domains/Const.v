@@ -1662,6 +1662,269 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     set (budget := N.of_nat (b ^ 2)) in *. clearbody budget. nia.
   Qed.
 
+  (** Unary inverse dispatch fits the normalized width budget. *)
+  Local Lemma values_one_time_budget b o rw q xs :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat -> (payload_bits q <= b)%nat ->
+    Forall (fun wp => (Pos.to_nat (fst wp) <= b)%nat /\
+      (payload_bits (snd wp) <= b)%nat) xs -> (length xs <= b)%nat ->
+    (T_backward_one_values o rw q xs <=
+      (4096 * (W.c_payload + 1)) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hq Hxs Hlen.
+    pose proof (points_map_time xs) as Hmap.
+    pose proof (time_of_nat_le _ _ Hlen) as Hcount.
+    pose proof (WordTime.time_square_floor b b (Nat.le_refl b) Hb) as Hfloor.
+    pose proof (WordTime.time_square_floor 1 b Hb Hb) as Hone.
+    pose proof (unary_cost_budget b) as Hoperation.
+    pose proof (unary_bits_budget b) as Hresult.
+    pose proof (meet_time_budget b) as Hmeet.
+    set (budget := N.of_nat (b ^ 2)) in *. clearbody budget.
+    destruct xs as [|[w a] rest].
+    - time_unfold T_backward_one_values. time_cbn. nia.
+    - destruct rest as [|wp tail].
+      + destruct (Forall_inv Hxs) as [Hw Ha]. cbn [fst snd] in Ha.
+        destruct q as [|r|]; cbn [payload_bits] in Hq;
+          time_unfold T_backward_one_values; time_cbn; try nia.
+        pose proof (Hoperation rw r o Hb Hrw Hq) as Hop.
+        pose proof (Hresult rw r o Hrw) as Hsize.
+        pose proof (Hmeet rw a
+          (FVal (match o with bvnot => wnot rw r | _ => wneg rw r end))
+          Hb Hrw Ha Hsize) as Hcost.
+        nia.
+      + time_unfold T_backward_one_values. time_cbn. nia.
+  Qed.
+  (** Every normalized operand fits the total input width budget. *)
+  Local Lemma normalise_operands_bound b xs : (operand_widths xs <= b)%nat ->
+    Forall (fun wp => (Pos.to_nat (fst wp) <= b)%nat /\
+      (payload_bits (snd wp) <= b)%nat) (normalise_operands xs).
+  Proof.
+    induction xs as [|[w a] xs IH]; intro Hsum;
+      cbn [normalise_operands map fst snd]; constructor.
+    - cbn [fst snd].
+      change (Pos.to_nat w + operand_widths xs <= b)%nat in Hsum.
+      split; [lia|]. eapply Nat.le_trans; [apply normalise_bits|lia].
+    - apply IH. change (Pos.to_nat w + operand_widths xs <= b)%nat in Hsum. lia.
+  Qed.
+
+  (** Each supported binary inverse pair fits the common arithmetic budget. *)
+  Local Lemma inverse_binary_time_budget b rw w r a c :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat -> (Pos.to_nat w <= b)%nat ->
+    (Z.size_nat r <= b)%nat -> (payload_bits a <= b)%nat ->
+    (payload_bits c <= b)%nat ->
+    (T_inverse_pair rw (fun z => wsub w r z) (fun z => 1 + T_wsub w r z)%N
+       (fun z => wsub w r z) (fun z => 1 + T_wsub w r z)%N a c <=
+       32768 * (W.c_payload + 1) * N.of_nat (b ^ 2))%N /\
+    (T_inverse_pair rw (fun z => wadd w r z) (fun z => 1 + T_wadd w r z)%N
+       (fun z => wsub w z r) (fun z => 1 + T_wsub w z r)%N a c <=
+       32768 * (W.c_payload + 1) * N.of_nat (b ^ 2))%N /\
+    (T_inverse_pair rw (fun z => wxor w r z) (fun z => 1 + T_wxor w r z)%N
+       (fun z => wxor w r z) (fun z => 1 + T_wxor w r z)%N a c <=
+       32768 * (W.c_payload + 1) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hw Hr Ha Hc.
+    pose proof (binary_cost_budget b) as Hbinary.
+    pose proof (inverse_pair_time_budget b rw) as Hpair.
+    pose proof (WordTime.time_square_floor 1 b Hb Hb) as Hone.
+    set (budget := N.of_nat (b ^ 2)) in *. clearbody budget.
+    change (1 <= budget)%N in Hone.
+    assert (Hadd : forall z, (Z.size_nat z <= b)%nat ->
+      (1 + T_wadd w r z <= 8193 * budget)%N).
+    { intros z Hz. destruct (Hbinary w r z Hb Hw Hr Hz) as [Hcost _]. nia. }
+    assert (Hsub : forall z, (Z.size_nat z <= b)%nat ->
+      (1 + T_wsub w r z <= 8193 * budget)%N).
+    { intros z Hz. destruct (Hbinary w r z Hb Hw Hr Hz) as [_ [Hcost _]]. nia. }
+    assert (Hreverse : forall z, (Z.size_nat z <= b)%nat ->
+      (1 + T_wsub w z r <= 8193 * budget)%N).
+    { intros z Hz. destruct (Hbinary w z r Hb Hw Hz Hr) as [_ [Hcost _]]. nia. }
+    assert (Hxor : forall z, (Z.size_nat z <= b)%nat ->
+      (1 + T_wxor w r z <= 8193 * budget)%N).
+    { intros z Hz. destruct (Hbinary w r z Hb Hw Hr Hz) as [_ [_ Hcost]]. nia. }
+    assert (Haddbits : forall z, (Z.size_nat (wadd w r z) <= b)%nat).
+    { intro z. eapply Nat.le_trans; [apply WordTime.word_wrap_size_bound|exact Hw]. }
+    assert (Hsubbits : forall z, (Z.size_nat (wsub w r z) <= b)%nat).
+    { intro z. eapply Nat.le_trans; [apply WordTime.word_wrap_size_bound|exact Hw]. }
+    assert (Hreversebits : forall z, (Z.size_nat (wsub w z r) <= b)%nat).
+    { intro z. eapply Nat.le_trans; [apply WordTime.word_wrap_size_bound|exact Hw]. }
+    assert (Hxorbits : forall z, (Z.size_nat (wxor w r z) <= b)%nat).
+    { intro z. eapply Nat.le_trans; [apply WordTime.word_size_bound, wxor_is_word|exact Hw]. }
+    split.
+    - eapply Hpair; eassumption.
+    - split; eapply Hpair; eassumption.
+  Qed.
+
+  (** Binary backward dispatch pays for both inverse calls and all fallback list traversals. *)
+  Local Lemma values_two_time_budget b o rw q xs :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat -> (payload_bits q <= b)%nat ->
+    Forall (fun wp => (Pos.to_nat (fst wp) <= b /\ payload_bits (snd wp) <= b)%nat) xs ->
+    (length xs <= b)%nat ->
+    (T_backward_two_values o rw q xs <=
+      65536 * (W.c_payload + 1) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hq Hxs Hlength.
+    pose proof (points_map_time xs) as Hmap.
+    pose proof (WordTime.time_square_floor (length xs) b Hlength Hb) as Hlengthbudget.
+    pose proof (WordTime.time_square_floor (payload_bits q) b Hq Hb) as Hqbudget.
+    pose proof (WordTime.time_square_floor 1 b Hb Hb) as Hone.
+    pose proof (meet_time_budget b) as Hmeet.
+    pose proof (inverse_binary_time_budget b) as Hinverse.
+    set (budget := N.of_nat (b ^ 2)) in *. clearbody budget.
+    change (1 <= budget)%N in Hone.
+    destruct xs as [|[wa a] [|[wb c] [|wp xs]]].
+    - time_unfold T_backward_two_values. time_cbn. nia.
+    - time_unfold T_backward_two_values. time_cbn. nia.
+    - destruct q as [|r|].
+      + time_unfold T_backward_two_values. time_cbn. nia.
+      + cbn [payload_bits] in Hq, Hqbudget.
+        pose proof (Forall_inv Hxs) as Ha.
+        pose proof (Forall_inv (Forall_inv_tail Hxs)) as Hc.
+        cbn [fst snd] in Ha, Hc. destruct Ha as [Hwa Ha], Hc as [Hwb Hc].
+        pose proof (Hmeet rw a c Hb Hrw Ha Hc) as Hac.
+        pose proof (Hmeet rw c a Hb Hrw Hc Ha) as Hca.
+        destruct (Hinverse rw wa r a c Hb Hrw Hwa Hq Ha Hc) as [Hadd [Hsub Hxor]].
+        pose proof (Z.T_eqb_le r 1) as Heq.
+        pose proof (Z.T_eqb_le r 0) as Hne.
+        destruct o; time_unfold T_backward_two_values; time_cbn.
+        all: try match goal with
+          | |- context [if ?guard then _ else _] => destruct guard
+          end; nia.
+      + time_unfold T_backward_two_values. time_cbn. nia.
+    - time_unfold T_backward_two_values. time_cbn. nia.
+  Qed.
+
+  (** Normalized inverse calls share a quadratic budget in the sum of widths. *)
+  Local Lemma inverse_words_time_bound o rw q xs :
+    (T_backward_one_values o rw (normalise rw q) (normalise_operands xs) +
+     T_backward_two_values o rw (normalise rw q) (normalise_operands xs) <=
+      69632 * (W.c_payload + 1) *
+        N.of_nat ((Pos.to_nat rw + operand_widths xs + 1)^2))%N.
+  Proof.
+    set (b := (Pos.to_nat rw + operand_widths xs + 1)%nat).
+    assert (Hb : (1 <= b)%nat) by (unfold b; lia).
+    assert (Hrw : (Pos.to_nat rw <= b)%nat) by (unfold b; lia).
+    assert (Hq : (payload_bits (normalise rw q) <= b)%nat).
+    { eapply Nat.le_trans; [apply normalise_bits|exact Hrw]. }
+    assert (Hxs : Forall (fun wp => (Pos.to_nat (fst wp) <= b)%nat /\
+      (payload_bits (snd wp) <= b)%nat) (normalise_operands xs)).
+    { apply normalise_operands_bound. unfold b. lia. }
+    assert (Hlength : (length (normalise_operands xs) <= b)%nat).
+    { rewrite normalise_length. pose proof (width_count xs). unfold b. lia. }
+    pose proof (values_one_time_budget b o rw (normalise rw q)
+      (normalise_operands xs) Hb Hrw Hq Hxs Hlength) as Hone.
+    pose proof (values_two_time_budget b o rw (normalise rw q)
+      (normalise_operands xs) Hb Hrw Hq Hxs Hlength) as Htwo.
+    fold b. set (budget := N.of_nat (b ^ 2)) in *. clearbody budget. nia.
+  Qed.
+
+  (** Unary dispatch charges normalization before its optional inverse call. *)
+  Local Lemma wbwrap_one_clock o rw q xs :
+    (T_backward_one o rw q xs <= 4 + T_normalise rw q + T_normalise_operands xs +
+      T_backward_one_values o rw (normalise rw q) (normalise_operands xs))%N.
+  Proof.
+    time_unfold T_backward_one.
+    destruct o; destruct (normalise_operands xs) as [|a [|b rest]];
+      time_cbn; lia.
+  Qed.
+
+  (** Binary dispatch charges normalization before its optional inverse call. *)
+  Local Lemma wbwrap_two_clock o rw q xs :
+    (T_backward_two o rw q xs <= 4 + T_normalise rw q + T_normalise_operands xs +
+      T_backward_two_values o rw (normalise rw q) (normalise_operands xs))%N.
+  Proof.
+    time_unfold T_backward_two.
+    destruct o; destruct (normalise_operands xs) as [|a [|b [|c rest]]];
+      time_cbn; lia.
+  Qed.
+
+  (** The positive width square absorbs fixed wrapper overhead. *)
+  Local Lemma wbwrap_width_positive rw xs :
+    (1 <= N.of_nat ((Pos.to_nat rw + operand_widths xs + 1)^2))%N.
+  Proof.
+    change (N.of_nat 1 <= N.of_nat ((Pos.to_nat rw + operand_widths xs + 1)^2))%N.
+    apply time_of_nat_le. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** The unused inverse coefficient covers both linear scans and wrapper overhead. *)
+  Local Lemma wbwrap_budget_algebra c width request operands : (1 <= width)%N ->
+    (69632 * (c + 1) * width + 128 * request + 256 * operands + 264 <=
+      131072 * (c + 1) * (width + request + operands))%N.
+  Proof.
+    intros Hpositive.
+    assert (Hwidth_coefficient : (69632 * (c + 1) + 264 <= 131072 * (c + 1))%N)
+      by nia.
+    assert (Hwidth : ((69632 * (c + 1) + 264) * width <=
+      (131072 * (c + 1)) * width)%N).
+    { now apply N.mul_le_mono_r. }
+    assert (Hrequest : (128 * request <= (131072 * (c + 1)) * request)%N).
+    { apply N.mul_le_mono_r. nia. }
+    assert (Hoperands : (256 * operands <= (131072 * (c + 1)) * operands)%N).
+    { apply N.mul_le_mono_r. nia. }
+    assert (Hoverhead : (264 <= 264 * width)%N).
+    { replace 264%N with (264 * 1)%N at 1 by reflexivity.
+      now apply N.mul_le_mono_l. }
+    rewrite N.mul_add_distr_r in Hwidth.
+    replace (131072 * (c + 1) * (width + request + operands))%N with
+      ((131072 * (c + 1)) * width + (131072 * (c + 1)) * request +
+        (131072 * (c + 1)) * operands)%N by ring.
+    lia.
+  Qed.
+
+  (** The two wrappers share the inverse budget and each read normalization once. *)
+  Local Lemma wbwrap_combined o rw q xs :
+    (T_backward_one_values o rw (normalise rw q) (normalise_operands xs) +
+     T_backward_two_values o rw (normalise rw q) (normalise_operands xs) <=
+      69632 * (W.c_payload + 1) *
+        N.of_nat ((Pos.to_nat rw + operand_widths xs + 1)^2))%N ->
+    (T_backward_one o rw q xs + T_backward_two o rw q xs <=
+      131072 * (W.c_payload + 1) * N.of_nat
+        ((Pos.to_nat rw + operand_widths xs + 1)^2 +
+          W.psize rw q + operand_payloads xs))%N.
+  Proof.
+    intros Hinverse.
+    pose proof (wbwrap_one_clock o rw q xs) as Hone.
+    pose proof (wbwrap_two_clock o rw q xs) as Htwo.
+    pose proof (normalise_time rw q) as Hrequest.
+    pose proof (normalise_list_time xs) as Hoperands.
+    pose proof (wbwrap_width_positive rw xs) as Hpositive.
+    eapply N.le_trans with (m :=
+      (69632 * (W.c_payload + 1) *
+        N.of_nat ((Pos.to_nat rw + operand_widths xs + 1)^2) +
+        128 * N.of_nat (W.psize rw q) +
+        256 * N.of_nat (operand_payloads xs) + 264)%N).
+    - rewrite !Nat2N.inj_add in Hoperands. time_cbn_all. lia.
+    - rewrite !Nat2N.inj_add. now apply wbwrap_budget_algebra.
+  Qed.
+
+  (** Backward table dispatch invokes at most one wrapper and adds one tick. *)
+  Local Lemma wbwrap_table_clock o rw q xs :
+    (T_wbwd o rw q xs <= 1 + T_backward_one o rw q xs + T_backward_two o rw q xs)%N.
+  Proof.
+    time_unfold T_wbwd.
+    destruct o; destruct xs as [|a [|b [|c rest]]]; time_cbn; lia.
+  Qed.
+
+
+  (** The larger table coefficient pays one additional dispatch tick. *)
+  Local Lemma wbwrap_table_margin c budget : (1 <= budget)%N ->
+    (1 + 131072 * (c + 1) * budget <= 524288 * (c + 1) * budget)%N.
+  Proof.
+    intros Hpositive.
+    assert (Hcoefficient : (131072 * (c + 1) + 1 <= 524288 * (c + 1))%N) by nia.
+    assert (Hscaled : ((131072 * (c + 1) + 1) * budget <=
+      (524288 * (c + 1)) * budget)%N).
+    { now apply N.mul_le_mono_r. }
+    rewrite N.mul_add_distr_r in Hscaled. lia.
+  Qed.
+
+  (** Both public wrappers fit the coefficient reserved for backward transfer. *)
+  Local Lemma backward_pair_time_bound o rw q xs :
+    (T_backward_one o rw q xs + T_backward_two o rw q xs <=
+      131072 * (W.c_payload + 1) * N.of_nat
+        ((Pos.to_nat rw + operand_widths xs + 1)^2 +
+          W.psize rw q + operand_payloads xs))%N.
+  Proof.
+    apply wbwrap_combined, inverse_words_time_bound.
+  Qed.
+
   Definition c_word_table : N := (524288 * (W.c_payload + 1))%N.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
@@ -1680,7 +1943,19 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs. pose proof (backward_pair_time_bound o rw q xs) as Hcombined.
+    pose proof (wbwrap_table_clock o rw q xs) as Hclock.
+    pose proof (wbwrap_width_positive rw xs) as Hpositive.
+    change (1 <= N.of_nat ((Pos.to_nat rw + operand_widths xs + 1)^2))%N
+      in Hpositive.
+    assert (Hbudget : (1 <= N.of_nat
+      ((Pos.to_nat rw + operand_widths xs + 1)^2 +
+        W.psize rw q + operand_payloads xs))%N).
+    { rewrite !Nat2N.inj_add. lia. }
+    pose proof (wbwrap_table_margin W.c_payload _ Hbudget) as Hmargin.
+    unfold c_word_table, operand_widths, operand_payloads in *. lia.
+  Qed.
   Definition k_const_word : N := (131072 * (W.c_payload + 1))%N.
   (** Normalised inverse arithmetic reads bounded word payloads. *)
   Lemma T2b_inverse_words : forall o rw q xs,
@@ -1689,7 +1964,10 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
       k_const_word * N.of_nat
         (((Pos.to_nat rw +
           fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs. eapply N.le_trans; [apply inverse_words_time_bound|].
+    apply N.mul_le_mono_r. unfold k_const_word. nia.
+  Qed.
 
   (** Normalisation reads the width mask and raw literal once. *)
   Lemma T2a_normalise : forall w z,
@@ -1749,14 +2027,20 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs. pose proof (backward_pair_time_bound o rw q xs) as Hcombined.
+    unfold k_const_word, operand_widths, operand_payloads in *. lia.
+  Qed.
   Lemma T3_backward_two : forall o rw q xs,
     (T_backward_two o rw q xs <= k_const_word * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs. pose proof (backward_pair_time_bound o rw q xs) as Hcombined.
+    unfold k_const_word, operand_widths, operand_payloads in *. lia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
