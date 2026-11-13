@@ -2474,6 +2474,80 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Qed.
   End DemandAccounting.
 
+  Module DemandPlanProof.
+    (** Covered roots contribute no missing discovery seed. *)
+    Lemma covered_seed_empty : forall st roots,
+      forallb (present st) roots = true -> discovery_seed st roots = [].
+    Proof.
+      intros st roots Hcovered.
+      destruct (discovery_seed st roots) as [|x rest] eqn:Hseed; [reflexivity|].
+      exfalso; assert (Hx : In x (discovery_seed st roots)).
+      { rewrite Hseed; now left. }
+      apply discovery_seed_spec in Hx as [Hroot Hmissing].
+      pose proof (proj1 (forallb_forall (present st) roots) Hcovered x Hroot) as Hpresent.
+      unfold present in Hpresent; rewrite Hmissing in Hpresent; discriminate Hpresent.
+    Qed.
+
+    (** Covered roots discover no additional key. *)
+    Lemma covered_keys_empty : forall p st roots,
+      forallb (present st) roots = true -> discovery_keys p roots st = [].
+    Proof.
+      intros p st roots Hcovered; unfold discovery_keys, plan, footprint_run.
+      rewrite covered_seed_empty by exact Hcovered; apply footprint_close_empty.
+    Qed.
+
+    (** Covered roots leave the selected region empty. *)
+    Lemma covered_region_empty : forall p st roots,
+      forallb (present st) roots = true -> region p roots st = [].
+    Proof.
+      intros p st roots Hcovered.
+      destruct (region p roots st) as [|r rest] eqn:Hregion; [reflexivity|].
+      exfalso; assert (Hr : In r (region p roots st)).
+      { rewrite Hregion; now left. }
+      apply region_for_spec in Hr as [_ [x [_ [_ Hknown]]]].
+      rewrite (covered_keys_empty p st roots Hcovered) in Hknown; contradiction.
+    Qed.
+
+    (** Completed demands expose a checked candidate for their discovered region. *)
+    Lemma demand_certificate : forall p pol roots fuel st st', inv p st ->
+      demand p pol roots fuel st = (Done, st') ->
+      exists m, Checker.check_rows p (region p roots st) m = true.
+    Proof.
+      intros p pol roots fuel st st' Hinv Hrun; unfold demand in Hrun.
+      destruct (forallb (present st) roots) eqn:Hcovered.
+      - rewrite (covered_region_empty p st roots Hcovered).
+        exists (@PTrieCode.empty (S.key * L.t)).
+        apply (proj2 (Checker.check_rows_iff p [] _)); intros r Hr; contradiction.
+      - cbv zeta in Hrun; fold (discovery_region p roots st) in Hrun.
+        fold (frozen_pairs p roots st) in Hrun.
+        destruct (Sol.run (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+          pol fuel) as [m|m|why]; [|discriminate Hrun|discriminate Hrun].
+        destruct (Checker.check_rows p (discovery_region p roots st)
+          (restore (frozen_pairs p roots st) m)) eqn:Hcheck; [|discriminate Hrun].
+        exists (restore (frozen_pairs p roots st) m); exact Hcheck.
+    Qed.
+
+    (** Freezing a duplicate-free source list preserves distinct payload keys. *)
+    Lemma freeze_values_nodup : forall st xs, NoDup xs ->
+      NoDup (map fst (freeze_values st xs)).
+    Proof.
+      intros st xs Hnodup; induction Hnodup as [|x xs Habsent Hnodup IH].
+      - cbn [freeze_values flat_map map]; constructor.
+      - cbn [freeze_values flat_map].
+        destruct (value st x) as [v|]; cbn [app map fst]; [|exact IH].
+        constructor; [|exact IH].
+        intro Hin; apply in_map_iff in Hin as [[y w] [Heq Hin]]; cbn [fst] in Heq; subst y.
+        apply Habsent; apply freeze_values_spec in Hin; tauto.
+    Qed.
+
+    (** The frozen boundary lists each key at most once. *)
+    Lemma frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
+    Proof.
+      intros p roots st; unfold frozen, frozen_pairs, frozen_for_rows.
+      apply freeze_values_nodup; apply unique_nodup.
+    Qed.
+  End DemandPlanProof.
+
   Lemma state_ok_init : state_ok init.
   Proof.
     apply Core.state_core_ok; exact Core.state_core_init.
@@ -2843,7 +2917,9 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma demand_certificate : forall p pol roots fuel st st', inv p st ->
     demand p pol roots fuel st = (Done, st') ->
     exists m, Checker.check_rows p (region p roots st) m = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandPlanProof.demand_certificate.
+  Qed.
 
   Lemma region_least_restricted : forall p pol roots fuel st m,
     S.wf p -> S.monotone p -> Least.widening_free pol -> inv p st -> least_on p st ->
@@ -2882,6 +2958,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exists r; split; assumption.
   Qed.
   Lemma frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandPlanProof.frozen_nodup.
+  Qed.
 
 End IncrementalT.

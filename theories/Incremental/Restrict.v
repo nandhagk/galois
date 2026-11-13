@@ -1456,3 +1456,30 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
     now apply PTrie.elements_spec.
   Qed.
 End SourceBindingInventory.
+
+(** An empty accumulated set activates no footprint. *)
+Lemma footprint_active_empty : forall K A (eqb : K -> K -> bool) (triggers : A -> list K) a,
+  footprint_active eqb triggers [] a = false.
+Proof.
+  intros K A eqb triggers a; unfold footprint_active, footprint_mem.
+  induction (triggers a); cbn [existsb]; assumption || reflexivity.
+Qed.
+
+(** Selection finds no item when the accumulated set is empty. *)
+Lemma footprint_pick_empty : forall K A (eqb : K -> K -> bool) (triggers : A -> list K) xs,
+  footprint_pick eqb triggers [] xs = None.
+Proof.
+  intros K A eqb triggers xs; induction xs as [|a rest IH]; cbn [footprint_pick].
+  - reflexivity.
+  - rewrite footprint_active_empty, IH; reflexivity.
+Qed.
+
+(** Saturation without seed keys retains an empty accumulated set. *)
+Lemma footprint_close_empty : forall K A (eqb : K -> K -> bool)
+    (triggers outputs : A -> list K) allowed fuel xs,
+  footprint_seen (footprint_close eqb triggers outputs allowed fuel [] xs) = [].
+Proof.
+  intros K A eqb triggers outputs allowed fuel xs; destruct fuel; cbn [footprint_close].
+  - reflexivity.
+  - rewrite footprint_pick_empty; reflexivity.
+Qed.
