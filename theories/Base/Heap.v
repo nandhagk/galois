@@ -1218,17 +1218,57 @@ Module HeapT <: PQ_ALL.
   Qed.
   Lemma F4_skip : forall q q1, wf q -> pop_step q = inl q1 ->
     wf q1 /\ size q1 = size q /\ pending q = S (pending q1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [h m n total] q1 Hwf Hstep.
+    unfold pop_step, HeapCode.heap_pop_step in Hstep.
+    cbn [heap_pending live live_count pending_count] in Hstep.
+    pose proof (heap_remove_min_correct h (proj1 Hwf)) as Hheap.
+    destruct (heap_remove_min h) as [[[p k] rest] |] eqn:Hremove; [| discriminate].
+    destruct Hheap as [Hrest [Hentries [Hcount Hmin]]].
+    pose proof (proj2 (proj2 (proj2 Hwf))) as Htotal.
+    cbn [Base.Heap.pending pending_count] in Htotal.
+    rewrite Hcount, Nat2N.inj_succ in Htotal.
+    assert (Hskip : PTrieCode.get k m <> Some p ->
+      wf (Queue rest m n (N.pred total)) /\
+      size (Queue rest m n (N.pred total)) = size (Queue h m n total) /\
+      pending (Queue h m n total) = S (pending (Queue rest m n (N.pred total)))).
+    { intro Hstale. split.
+      - exact (wf_skip h p k rest m n total Hwf Hremove Hstale).
+      - split; [reflexivity |]. unfold pending. cbn [pending_count].
+        rewrite Htotal, N.pred_succ, N2Nat.inj_succ. reflexivity. }
+    destruct (PTrieCode.get k m) as [current |] eqn:Hget.
+    - destruct (N.eqb p current) eqn:Heq; [discriminate |].
+      inversion Hstep; subst q1. apply Hskip.
+      intro Hsame. inversion Hsame; subst current.
+      rewrite N.eqb_refl in Heq. discriminate.
+    - inversion Hstep; subst q1. apply Hskip. discriminate.
+  Qed.
   Lemma F5_skip_bounded : forall w q q1, wf q -> bounded w q ->
     pop_step q = inl q1 -> bounded w q1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [h m n total] q1 Hwf Hfits Hstep.
+    unfold bounded in Hfits |- *.
+    unfold pop_step, HeapCode.heap_pop_step in Hstep.
+    cbn [heap_pending live live_count pending_count] in Hstep.
+    destruct (heap_remove_min h) as [[[p k] rest] |] eqn:Hremove; [| discriminate].
+    destruct (PTrieCode.get k m) as [current |];
+      [destruct (N.eqb p current) |]; try discriminate;
+      inversion Hstep; subst q1;
+      exact (fits_drop w h m n total (p, k) rest m n (N.pred total) Hwf Hfits Hremove).
+  Qed.
   Lemma F6_phi_bounded : forall P w q, wf q -> bounded w q ->
     phi P w q = stale_phi P w q.
   Proof.
     reflexivity.
   Qed.
   Lemma F7_stop : forall q r, wf q -> pop_step q = inr r -> pop q = r.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q r Hwf Hstep. unfold pop_step in Hstep.
+    destruct (HeapCode.heap_pop_step (live q) (live_count q)
+      (heap_pending q, pending_count q)) as [[h total] | result] eqn:Hraw;
+      [discriminate |].
+    inversion Hstep; subst result. apply pop_step_stop. exact Hraw.
+  Qed.
   Lemma F8_push_bounded : forall w p x q, wf q -> bounded w q ->
     N.size_nat p + Pos.size_nat x <= w -> bounded w (push p x q).
   Proof.
