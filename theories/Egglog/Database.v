@@ -4554,6 +4554,172 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply slots_update_forest.
   Qed.
 
+  (** Deletion retains the allocation interval, slot declarations and pending queue. *)
+  Lemma row_delete_ids : forall f k db, ids (row_delete f k db) = ids db.
+  Proof.
+    intros f k db. apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  Lemma row_delete_slots : forall f k db, slots (row_delete f k db) = slots db.
+  Proof.
+    intros f k db. apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  Lemma row_delete_pending : forall f k db, pending (row_delete f k db) = pending db.
+  Proof.
+    intros f k db. exact (row_delete_preserves _ (fun state => length (runtime_queue state))
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+  Qed.
+
+  Lemma row_delete_npending : forall f k db,
+    db_npending (row_delete f k db) = db_npending db.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [o |]; [| reflexivity].
+    change (db_npending (slots_update false f (k ++ option_list o) db) = db_npending db).
+    apply slots_update_npending.
+  Qed.
+
+  (** Deleting the obsolete binding does not reset an already-raised change flag. *)
+  Lemma row_delete_changed : forall f k db, changed (row_delete f k db) = changed db.
+  Proof.
+    intros f k db. apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  (** A present deletion uses the finite-map removal of precisely the selected row key. *)
+  Lemma row_delete_map_present : forall f k db o, row_get f k db = Some o ->
+    runtime_rows (db_runtime (row_delete f k db)) =
+      RowMap.remove (f, k) (runtime_rows (db_runtime db)).
+  Proof.
+    intros f k db o Hrow. unfold row_delete. rewrite Hrow. unfold row_erase.
+    cbn [database_set_runtime db_runtime runtime_set_rows runtime_rows].
+    rewrite (slots_update_preserves _ (@runtime_rows (cell V.t) I.t)
+      (fun all new counts state => eq_refl)). reflexivity.
+  Qed.
+
+  (** Erasing a binding leaves every previously updated slot cache intact. *)
+  Lemma row_erase_slot_snapshot : forall db f k s,
+    slot_snapshot (db_runtime (row_erase f k db)) s = slot_snapshot (db_runtime db) s.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Actual row deletion preserves exact projection multiplicities and both index caches. *)
+  Lemma row_delete_cache_correct : forall db f k,
+    wf db -> database_cache_correct (row_delete f k db).
+  Proof.
+    intros db f k Hwf. destruct (row_get f k db) as [o |] eqn:Hrow.
+    - pose proof (row_delete_map_present f k db o Hrow) as Hmap.
+      assert (Hbound : runtime_slot_bound (db_runtime (row_delete f k db)) =
+        runtime_slot_bound (db_runtime db)).
+      { apply row_delete_preserves; intros; reflexivity. }
+      apply (database_cache_correct_from_slots (row_delete f k db)).
+      + refine (eq_ind_r (fun rows => RowMap.wf rows) _ Hmap).
+        apply RowMap.wf_remove. exact (wf_row_map db Hwf).
+      + exact (eq_trans Hbound (eq_trans (wf_slot_bound db Hwf)
+          (eq_sym (f_equal (fun sl => N.of_nat (length sl)) (row_delete_slots f k db))))).
+      + intros s g perm Hslot. unfold slot_of in Hslot. rewrite row_delete_slots in Hslot.
+        fold (slot_of db s) in Hslot.
+        pose proof (RowFacts.remove_elements_decomposition _
+          (runtime_rows (db_runtime db)) (f, k) (Some o) (wf_row_map db Hwf) Hrow) as Hrows.
+        cbn [option_list option_map app] in Hrows.
+        pose proof (wf_slot_cache db s g perm Hwf Hslot) as Hcache.
+        pose proof (slot_cache_permutation (db_runtime db) s (length perm) _ _
+          (row_contributions_permutation g perm _ _ Hrows) Hcache) as Hordered.
+        refine (eq_ind_r (fun rows => slot_cache_ok (db_runtime (row_delete f k db))
+          s (length perm) (row_contributions g perm (RowMap.elements rows))) _ Hmap).
+        unfold row_delete. rewrite Hrow.
+        eapply slot_cache_snapshot; [apply row_erase_slot_snapshot |].
+        apply slots_update_cache_row_remove; try assumption.
+        * exact (wf_group_table db Hwf).
+        * exact (wf_row_slots db Hwf f k o Hrow).
+    - unfold row_delete. rewrite Hrow. unfold database_cache_correct.
+      repeat split.
+      + exact (wf_index_sound db Hwf).
+      + exact (wf_index_complete db Hwf).
+      + exact (wf_index_arity db Hwf).
+      + exact (wf_projection_counts db Hwf).
+  Qed.
+
+  (** Removing a stored row preserves every structural and multiset-cache invariant. *)
+  Lemma row_delete_wf : forall db f k, wf db -> wf (row_delete f k db).
+  Proof.
+    intros db f k Hwf.
+    assert (Hruntime :
+      (runtime_equalities (db_runtime (row_delete f k db)),
+       runtime_queue (db_runtime (row_delete f k db)),
+       runtime_function_slots (db_runtime (row_delete f k db)),
+       runtime_max_name (db_runtime (row_delete f k db)),
+       runtime_slot_bound (db_runtime (row_delete f k db))) =
+      (runtime_equalities (db_runtime db), runtime_queue (db_runtime db),
+       runtime_function_slots (db_runtime db), runtime_max_name (db_runtime db),
+       runtime_slot_bound (db_runtime db))).
+    { exact (row_delete_preserves _
+        (fun state => (runtime_equalities state, runtime_queue state,
+          runtime_function_slots state, runtime_max_name state, runtime_slot_bound state))
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db). }
+    injection Hruntime as Hlog Hqueue Hgroups Hmax Hbound.
+    change (runtime_equalities (db_runtime (row_delete f k db)) =
+      runtime_equalities (db_runtime db)) in Hlog.
+    change (runtime_queue (db_runtime (row_delete f k db)) =
+      runtime_queue (db_runtime db)) in Hqueue.
+    change (runtime_function_slots (db_runtime (row_delete f k db)) =
+      runtime_function_slots (db_runtime db)) in Hgroups.
+    change (runtime_max_name (db_runtime (row_delete f k db)) =
+      runtime_max_name (db_runtime db)) in Hmax.
+    change (runtime_slot_bound (db_runtime (row_delete f k db)) =
+      runtime_slot_bound (db_runtime db)) in Hbound.
+    assert (Hsource : forall g args output, row (view (row_delete f k db)) g args output ->
+      row (view db) g args output).
+    { intros g args output Hrow. now apply row_delete_binding in Hrow as [Hrow _]. }
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime (row_delete f k db)))).
+    { destruct (row_get f k db) as [o |] eqn:Hrow.
+      - refine (eq_ind_r (fun rows => RowMap.wf rows) _
+          (row_delete_map_present f k db o Hrow)). apply RowMap.wf_remove.
+        exact (wf_row_map db Hwf).
+      - unfold row_delete. rewrite Hrow. exact (wf_row_map db Hwf). }
+    destruct (row_delete_cache_correct db f k Hwf) as [Hsound [Hcomplete [Harity Hcounts]]].
+    unfold wf, database_wf. split.
+    { rewrite row_delete_forest. exact (wf_forest db Hwf). }
+    split.
+    { intro i. rewrite row_delete_forest. unfold allocated. rewrite row_delete_ids.
+      exact (wf_forest_members db Hwf i). }
+    split.
+    { rewrite row_delete_forest, row_delete_ids. exact (wf_forest_count db Hwf). }
+    split.
+    { rewrite row_delete_forest, row_delete_ids. exact (wf_forest_width db Hwf). }
+    split.
+    { intros i j. rewrite row_delete_same. unfold repr. rewrite row_delete_forest.
+      exact (wf_equalities db Hwf i j). }
+    split.
+    { rewrite Hlog. unfold allocated. rewrite row_delete_ids. exact (wf_log_allocated db Hwf). }
+    split; [exact Hmap |]. split.
+    { intros g args output Hrow. rewrite row_delete_kind.
+      exact (wf_row_kind db Hwf g args output (Hsource g args output Hrow)). }
+    split.
+    { intros g args output i Hrow Hin. unfold allocated. rewrite row_delete_ids.
+      exact (wf_row_ids db Hwf g args output i (Hsource g args output Hrow) Hin). }
+    split.
+    { intros g args output Hrow. unfold slots_fit. rewrite row_delete_slots.
+      exact (wf_row_slots db Hwf g args output (Hsource g args output Hrow)). }
+    split.
+    { intros g output Houtput. rewrite row_delete_kind in Houtput. rewrite Hmax.
+      exact (wf_kind_bound db Hwf g output Houtput). }
+    split.
+    { rewrite Hbound, row_delete_slots. exact (wf_slot_bound db Hwf). }
+    split.
+    { rewrite row_delete_npending, row_delete_pending. exact (wf_pending_count db Hwf). }
+    split.
+    { rewrite Hqueue. unfold allocated. rewrite row_delete_ids. exact (wf_queue_allocated db Hwf). }
+    split.
+    { intros Hquiet g args output Hrow i Hin. unfold repr. rewrite row_delete_forest.
+      rewrite row_delete_pending in Hquiet.
+      exact (wf_quiet_canonical db Hwf Hquiet g args output (Hsource g args output Hrow) i Hin). }
+    split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
+    split; [rewrite Hgroups, row_delete_slots; exact (wf_group_table db Hwf) |].
+    split; [exact Hcounts |]. rewrite Hmax, row_delete_kind.
+    exact (wf_max_name_attained db Hwf).
+  Qed.
+
   (** Conflict resolution preserves declarations even during an active repair batch. *)
   Lemma output_conflict_kind_raw : forall db
       (previous : option (option (cell V.t))) (co : option (cell V.t)),
@@ -4860,6 +5026,33 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold rebuild.
     destruct (loopN db_rstep (db_rebuild_fuel db) (db, [])) as [s | result];
       exact (proj2 Hloop).
+  Qed.
+
+  (** A stale work entry with no current row is discarded without any state update. *)
+  Lemma repair_current_absent : forall db f k,
+    row_get f k db = None -> repair_current f k db = db.
+  Proof.
+    intros db f k Habsent. unfold repair_current. now rewrite Habsent.
+  Qed.
+
+  (** A row already equal to its normal form takes the unchanged-state branch. *)
+  Lemma repair_current_fixed : forall db f k o,
+    row_get f k db = Some o -> normal_key db k = k ->
+    option_map (normal_cell db) o = o -> repair_current f k db = db.
+  Proof.
+    intros db f k o Hrow Hkey Houtput. unfold repair_current.
+    now rewrite Hrow, Hkey, Houtput, Pos.eqb_refl, output_eqb_refl.
+  Qed.
+
+  (** Every repair retains a change flag raised before it began. *)
+  Lemma repair_current_changed : forall db f k,
+    changed db = true -> changed (repair_current f k db) = true.
+  Proof.
+    intros db f k Hchanged. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| exact Hchanged].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hchanged |].
+    apply changed_put. now rewrite row_delete_changed.
   Qed.
 
 End Database.
