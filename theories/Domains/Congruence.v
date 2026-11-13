@@ -65,7 +65,7 @@ Module CongruenceCRT.
   TimeFun div_aligned.
 
   Definition k_div : N := 256%N.
-  Definition k_gcd : N := 1%N. (* STUB *)
+  Definition k_gcd : N := 32768%N.
 
   (** Powers indexed by natural successors double. *)
   Lemma pow_nat_succ : forall n,
@@ -747,11 +747,105 @@ Module CongruenceCRT.
   Qed.
 
 
+  (** Continuing branches expose their next state without identifying proof fields. *)
+  Lemma continuing_step : forall s s1 Hlt,
+    step s = inl (exist _ s1 Hlt) -> crt_r1 s <> 0 /\ s1 = next s.
+  Proof.
+    intros [r1 u1 v1 r2 u2 v2] s1 Hlt Hstep. destruct r1;
+      cbn [step crt_r1] in Hstep; [discriminate| |].
+    - split; [discriminate|]. injection Hstep as Hpair.
+      symmetry. exact Hpair.
+    - split; [discriminate|]. injection Hstep as Hpair.
+      symmetry. exact Hpair.
+  Qed.
+
+  Lemma stopping_step : forall s result, step s = inr result -> crt_r1 s = 0.
+  Proof.
+    intros [r1 u1 v1 r2 u2 v2] result Hstep. destruct r1;
+      cbn [step crt_r1] in Hstep; [reflexivity|discriminate|discriminate].
+  Qed.
+
+  (** A linear input-bit factor times the remaining bit measure pays every loop step. *)
+  Lemma loop_time_budget : forall n s (Hacc : Acc lt s), state_budget n s ->
+    (T_loop lt step T_step s Hacc <=
+      4096 * N.of_nat (n + 1) * N.of_nat (remainder_bits s) + 6 + 1)%N.
+  Proof.
+    intro n.
+    apply (T_loop_le lt step T_step (state_budget n)
+      (fun s => (4096 * N.of_nat (n + 1) * N.of_nat (remainder_bits s))%N) 6).
+    - intros s s1 Hlt Hstate Hstep.
+      destruct (continuing_step s s1 Hlt Hstep) as [Hnonzero ->].
+      split; [now apply next_state_budget|].
+      pose proof (step_time_budget n s Hstate Hnonzero) as Hcost.
+      destruct (next_bit_budget s (proj1 Hstate) Hnonzero) as [Hdrop Hbits].
+      assert (Hdecomposition : (N.of_nat (remainder_bits s) =
+        N.of_nat (remainder_bits (next s)) +
+        N.of_nat (remainder_bits s - remainder_bits (next s)))%N).
+      { rewrite <- Nat2N.inj_add. f_equal. lia. }
+      assert (Hpositive :
+        (1 <= N.of_nat (remainder_bits s - remainder_bits (next s)))%N).
+      { change (N.of_nat 1 <= N.of_nat (remainder_bits s - remainder_bits (next s)))%N.
+        apply time_of_nat_le. lia. }
+      assert (Hwidth : (1 <= N.of_nat (n + 1))%N).
+      { rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. lia. }
+      assert (Hsavings :
+        (2048 * N.of_nat (n + 1) *
+          N.of_nat (remainder_bits s - remainder_bits (next s)) <
+         4096 * N.of_nat (n + 1) *
+          N.of_nat (remainder_bits s - remainder_bits (next s)))%N).
+      { clear - Hpositive Hwidth. nia. }
+      rewrite Hdecomposition, N.mul_add_distr_l. lia.
+    - intros s result Hstate Hstep. apply zero_step_time.
+      now apply (stopping_step s result).
+  Qed.
+
+  Lemma sign_time_bound : forall z, (Z.T_sgn z <= 1)%N.
+  Proof.
+    intros []; time_unfold Z.T_sgn; reflexivity.
+  Qed.
+
+  Lemma extgcd_cost_polynomial : forall n m : N,
+    (1 <= n -> m <= n -> 12 + 4096 * (n + 1) * m <= 32768 * n ^ 2)%N.
+  Proof.
+    intros n m Hpositive Hsize.
+    assert (Hproduct : ((n + 1) * m <= (2 * n) * n)%N).
+    { apply N.mul_le_mono; lia. }
+    nia.
+  Qed.
+
+
   (** The full Euclidean coefficient chain has quadratic input-bit work. *)
   Lemma T_extgcd_le : forall a b,
     (T_extgcd a b <= k_gcd *
       N.of_nat ((Z.size_nat a + Z.size_nat b + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. set (n := (Z.size_nat a + Z.size_nat b + 1)%nat).
+    pose proof (initial_state_budget a b) as Hstate. fold n in Hstate.
+    pose proof (proj1 (proj2 Hstate)) as Hmeasure.
+    pose proof (Z.T_abs_le a) as Habs_a.
+    pose proof (Z.T_abs_le b) as Habs_b.
+    pose proof (sign_time_bound a) as Hsign_a.
+    pose proof (sign_time_bound b) as Hsign_b.
+    time_unfold T_extgcd. cbn beta zeta.
+    match goal with
+    | |- context [@T_loop _ _ _ _ _ ?seed ?acc] =>
+      pose proof (loop_time_budget n seed acc Hstate) as Hloop
+    end.
+    apply time_of_nat_le in Hmeasure.
+    assert (Hpositive : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. apply time_of_nat_le. unfold n. lia. }
+    pose proof (extgcd_cost_polynomial (N.of_nat n)
+      (N.of_nat (remainder_bits
+        {| crt_r1 := Z.abs a; crt_u1 := Z.sgn a; crt_v1 := 0;
+           crt_r2 := Z.abs b; crt_u2 := 0; crt_v2 := Z.sgn b |}))
+      Hpositive Hmeasure) as Hpolynomial.
+    unfold k_gcd. fold n. rewrite Nat2N.inj_pow.
+    rewrite Nat2N.inj_add in Hloop.
+    change (N.of_nat 1) with 1%N in Hloop. change (N.of_nat 2) with 2%N.
+    change (fun s => T_step s) with T_step.
+    clear Hstate. lia.
+  Qed.
+
 
   Definition graph := congr_crt_graph next.
 
