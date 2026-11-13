@@ -1369,10 +1369,91 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     - apply Nat.add_le_mono; assumption.
   Qed.
 
+  (** Enumeration charges are linear in the edge count and the shared width budget. *)
+  Lemma children_budget : forall trie_cost key_cost amount bits,
+    (1 <= amount -> 1 <= bits ->
+      bits + 8 + trie_cost * bits + trie_cost * amount * bits + 4 * amount <=
+      1024 * (trie_cost + key_cost + 1) * amount * bits)%N.
+  Proof.
+    intros trie_cost key_cost amount bits Hamount Hbits.
+    assert (Hwidth : (bits <= amount * bits)%N).
+    { replace bits with (1 * bits)%N at 1 by ring.
+      apply N.mul_le_mono_r. exact Hamount. }
+    assert (Hcount : (amount <= amount * bits)%N).
+    { replace amount with (amount * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. exact Hbits. }
+    assert (Htrie : (trie_cost * bits <= trie_cost * (amount * bits))%N).
+    { apply N.mul_le_mono_l. exact Hwidth. }
+    replace (trie_cost * amount * bits)%N with (trie_cost * (amount * bits))%N by ring.
+    replace (1024 * (trie_cost + key_cost + 1) * amount * bits)%N
+      with (1024 * (amount * bits) + 1024 * (trie_cost * (amount * bits)) +
+        1024 * (key_cost * (amount * bits)))%N by ring.
+    lia.
+  Qed.
+
   Lemma T_children_le : forall a ix n, wf a ix ->
     (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
       N.of_nat (width ix [] + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix n [Hvalid Harity].
+    pose proof (T_node_guard_le ix n) as Hguard.
+    pose proof (node_bits_width ix [] (next ix) (Pos.le_refl _)) as Hcounter.
+    set (bits := N.of_nat (width ix [] + 1)).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hguard' : (T_next ix + Pos.T_ltb (next ix) n <= bits + 4)%N)
+      by (unfold bits; lia).
+    unfold c_ix, degree. fold bits. time_unfold T_children.
+    destruct (Pos.ltb (next ix) n) eqn:Hrange.
+    - pose proof (navigation_budget PTrieT.c_trie V.c_key bits Hbits) as Hbudget.
+      clear Hguard Hcounter Hvalid Harity. clearbody bits.
+      set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost.
+      time_cbn. lia.
+    - pose proof (edge_weight_le ix n Hvalid) as Hweight.
+      destruct Hvalid as [_ [Hdegrees _]].
+      pose proof (proj1 (Hdegrees n)) as Hdegree. rewrite Hdegree.
+      apply Pos.ltb_ge in Hrange.
+      pose proof (node_bits_width ix [] n Hrange) as Hnode.
+      pose proof (T_read_node_le ix n) as Hread.
+      assert (Hread' : (T_read_node ix n <= PTrieT.c_trie * bits + 2)%N).
+      { eapply N.le_trans; [exact Hread|].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      set (entries := PTrieCode.elements (node_edges (read_node ix n))) in *.
+      set (amount := N.of_nat (length entries + 1)). fold amount.
+      assert (Hamount : (1 <= amount)%N) by (unfold amount; lia).
+      assert (Hwidth : max_cell_bits ix + 1 <= width ix [] + 1)
+        by (unfold width; lia).
+      assert (Hmass : PTrieT.weight (node_edges (read_node ix n)) + 1 <=
+        (length entries + 1) * (width ix [] + 1)).
+      { assert (Hmul : length entries * (max_cell_bits ix + 1) <=
+          length entries * (width ix [] + 1)) by (apply Nat.mul_le_mono_l; exact Hwidth).
+        rewrite Nat.mul_add_distr_r. cbn [Nat.mul]. lia. }
+      assert (HmassN : (N.of_nat (PTrieT.weight (node_edges (read_node ix n)) + 1) <=
+        N.of_nat ((length entries + 1) * (width ix [] + 1)))%N).
+      { clear - Hmass. lia. }
+      rewrite Nat2N.inj_mul in HmassN. fold amount bits in HmassN.
+      pose proof (PTrieT.T_elements_le _ (node_edges (read_node ix n))) as Helements.
+      assert (Helements' : (PTrieT.T_elements (node_edges (read_node ix n)) <=
+        PTrieT.c_trie * amount * bits)%N).
+      { eapply N.le_trans; [exact Helements|].
+        rewrite <- N.mul_assoc. apply N.mul_le_mono_l. exact HmassN. }
+      assert (Hcallback : forall entry : positive * index_edge (cell V.t),
+        (1 + (Datatypes.T_snd entry + T_edge_cell (snd entry)) <= 3)%N).
+      { intro entry. time_unfold @Datatypes.T_snd. time_unfold @T_edge_cell. time_cbn. lia. }
+      pose proof (Argent.Std.ListDef.T_map_le
+        (fun entry : positive * index_edge (cell V.t) => edge_cell (snd entry))
+        (fun entry => (1 + (Datatypes.T_snd entry + T_edge_cell (snd entry)))%N)
+        3%N entries Hcallback) as Hmap.
+      assert (Hmap' : (Argent.Std.ListDef.T_map
+        (fun entry : positive * index_edge (cell V.t) => edge_cell (snd entry))
+        (fun entry => (1 + (Datatypes.T_snd entry + T_edge_cell (snd entry)))%N)
+        entries <= 4 * amount)%N) by (unfold amount; lia).
+      pose proof (children_budget PTrieT.c_trie V.c_key amount bits Hamount Hbits) as Hbudget.
+      clear Hguard Hcounter Hdegrees Hdegree Harity Hnode Hread Hweight Hwidth Hmass HmassN
+        Helements Hcallback Hmap.
+      clearbody bits amount entries.
+      set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost.
+      time_unfold @T_node_edges. time_cbn. lia.
+  Qed.
 
   Lemma T_degree_le : forall ix n,
     (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
