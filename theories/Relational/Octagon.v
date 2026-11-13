@@ -5933,6 +5933,30 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         as [d [Hd Hle]]. exists d. now split.
   Qed.
 
+  (** A coherent triangle transports a unary half-bound across one edge. *)
+  Lemma unary_half_transport : forall m, coherent m ->
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z) ->
+    forall i k a b c, entry m i k = Some a ->
+      entry m k (flip k) = Some b -> entry m i (flip i) = Some c ->
+      (Z.div2 c <= a + Z.div2 b)%Z.
+  Proof.
+    intros m Hcoh Htri i k a b c Hik Hkb Hic.
+    destruct (Htri i (flip k) k a b Hik Hkb) as [d [Hikbar Hd]].
+    assert (Hbar : entry m (flip k) (flip i) = Some a).
+    { change (entry m (bar k) (bar i) = Some a).
+      rewrite <- (Hcoh i k). exact Hik. }
+    destruct (Htri i (flip i) (flip k) d a Hikbar Hbar)
+      as [c' [Hic' Hc']].
+    rewrite Hic in Hic'. inversion Hic'; subst c'.
+    rewrite !Z.div2_div.
+    pose proof (Z.div_mod c 2 ltac:(lia)) as Hcdiv.
+    pose proof (Z.mod_pos_bound c 2 ltac:(lia)) as Hcrem.
+    pose proof (Z.div_mod b 2 ltac:(lia)) as Hbdiv.
+    pose proof (Z.mod_pos_bound b 2 ltac:(lia)) as Hbrem.
+    lia.
+  Qed.
+
   (** A successful tight closure is coherent after both numeric passes. *)
   Lemma coherent_tclose_reached : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
     tclose m = Reached m' -> coherent m'.
