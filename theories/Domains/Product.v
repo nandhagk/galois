@@ -5,7 +5,7 @@
     Builds on: ProductSig and lattice products. *)
 
 From Stdlib Require Import List NArith Bool Lia.
-From Argent Require Import Time Std BigO.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
 
@@ -421,31 +421,148 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     A.gwork g (map fst xs) + B.gwork g (map snd xs) + length xs.
   Definition wsize (p : wparam) : nat := A.wsize (fst p) + B.wsize (snd p).
   Definition wunits (_ : t) : nat := 0.
-  Definition c_val : N := 1%N. (* STUB *)
+  Definition k_core : N :=
+    (A.c_val + B.c_val + N.of_nat (A.size A.bot + B.size B.bot) + 16)%N.
+  Definition c_val : N := (64 * k_core * k_core)%N.
   Definition c_lat : N := c_val.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
-  Definition c_product : N := 1%N. (* STUB *)
+  Proof.
+    unfold c_lat, c_val, k_core. nia.
+  Qed.
+  Definition c_product : N := (16 * k_core)%N.
+
+  Local Lemma core_bounds :
+    (16 <= k_core /\ A.c_val <= k_core /\ B.c_val <= k_core /\
+      N.of_nat (A.size A.bot + B.size B.bot) <= k_core)%N.
+  Proof.
+    unfold k_core. lia.
+  Qed.
+
+  Local Lemma core_A : (A.c_val <= k_core)%N.
+  Proof.
+    exact (proj1 (proj2 core_bounds)).
+  Qed.
+
+  Local Lemma core_B : (B.c_val <= k_core)%N.
+  Proof.
+    exact (proj1 (proj2 (proj2 core_bounds))).
+  Qed.
+
+  Local Lemma scale_callback : forall ticks coefficient own budget,
+    (ticks <= coefficient * N.of_nat own)%N -> (coefficient <= k_core)%N ->
+    (own <= budget)%nat -> (ticks <= k_core * N.of_nat budget)%N.
+  Proof.
+    intros ticks coefficient own budget Htime Hcoefficient Hsize.
+    eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono; [exact Hcoefficient|].
+    lia.
+  Qed.
+
+  Local Lemma basic_coefficient : (4 * k_core + 16 <= c_val)%N.
+  Proof.
+    pose proof (proj1 core_bounds). unfold c_val. nia.
+  Qed.
+
+  Local Lemma basic_budget : forall budget,
+    (4 * (k_core * budget) + 16 * budget <= c_val * budget)%N.
+  Proof.
+    intro budget. replace (4 * (k_core * budget) + 16 * budget)%N with
+      ((4 * k_core + 16) * budget)%N by ring.
+    apply N.mul_le_mono_r. exact basic_coefficient.
+  Qed.
 
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d].
+    set (budget := N.of_nat (size (a, b) + size (c, d) + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Ha0 : (A.T_is_bot a <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_is_bot_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb0 : (B.T_is_bot b <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_is_bot_le|exact core_B|]. unfold size. cbn. lia. }
+    assert (Ha1 : (A.T_leb a c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_leb_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb1 : (B.T_leb b d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_leb_le|exact core_B|]. unfold size. cbn. lia. }
+    pose proof (basic_budget budget) as Htotal.
+    time_unfold T_leb. time_unfold @T_product_leb. time_unfold @T_product_is_bot.
+    time_cbn. time_pose. lia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d].
+    set (budget := N.of_nat (size (a, b) + size (c, d) + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Ha : (A.T_join a c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_join_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb : (B.T_join b d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_join_le|exact core_B|]. unfold size. cbn. lia. }
+    pose proof (basic_budget budget) as Htotal.
+    time_unfold T_join. time_unfold @T_product_pair. time_cbn. time_pose. lia.
+  Qed.
   Lemma T_meet_le : forall a b,
     (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b]. set (budget := N.of_nat (size (a, b) + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Ha : (A.T_is_bot a <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_is_bot_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb : (B.T_is_bot b <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_is_bot_le|exact core_B|]. unfold size. cbn. lia. }
+    pose proof (basic_budget budget) as Htotal.
+    time_unfold T_is_bot. time_unfold @T_product_is_bot. time_cbn. time_pose. lia.
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [pa pb] [a b] [c d].
+    set (budget := N.of_nat (size (a, b) + size (c, d) + wsize (pa, pb) + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Ha0 : (A.T_is_bot c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_is_bot_le|exact core_A|].
+      unfold size, wsize. cbn. lia. }
+    assert (Hb0 : (B.T_is_bot d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_is_bot_le|exact core_B|].
+      unfold size, wsize. cbn. lia. }
+    assert (Ha1 : (A.T_widen pa a c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_widen_le|exact core_A|].
+      unfold size, wsize. cbn. lia. }
+    assert (Hb1 : (B.T_widen pb b d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_widen_le|exact core_B|].
+      unfold size, wsize. cbn. lia. }
+    pose proof (basic_budget budget) as Htotal.
+    time_unfold T_widen. time_unfold @T_product_widen. time_unfold @T_product_is_bot.
+    time_cbn. time_pose. destruct (product_is_bot A.is_bot B.is_bot (c, d)); lia.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d].
+    set (budget := N.of_nat (size (a, b) + size (c, d) + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Ha0 : (A.T_is_bot c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_is_bot_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb0 : (B.T_is_bot d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_is_bot_le|exact core_B|]. unfold size. cbn. lia. }
+    assert (Ha1 : (A.T_narrow a c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_narrow_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb1 : (B.T_narrow b d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_narrow_le|exact core_B|]. unfold size. cbn. lia. }
+    pose proof (basic_budget budget) as Htotal.
+    time_unfold T_narrow. time_unfold @T_product_narrow.
+    time_unfold @T_product_is_bot. time_unfold @T_product_pair.
+    time_cbn. time_pose. destruct (product_is_bot A.is_bot B.is_bot (c, d)); lia.
+  Qed.
   Lemma T_forward_le : forall o xs,
     (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
   Proof. Admitted. (* STUB *)
