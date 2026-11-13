@@ -7723,9 +7723,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition uses_entries : t -> list (positive * use_entry) := fun _ => [].
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
-  (* STUB-CODE *)
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
-  (* STUB-CODE *)
   Definition class_size (db : t) (x : positive) : N :=
     N.of_nat (UnionFind.size_of (uf_state db) x).
   (** A historical row key resolves to its current stored key. *)
@@ -7738,7 +7736,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None) /\
     metadata_ok db /\ db_npending db = N.of_nat (pending db) /\
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
-    (forall i j, same (view db) i j <-> repr db i = repr db j).
+    (forall i j, same (view db) i j <-> repr db i = repr db j) /\
+    UnionFind.width (db_forest db) <= N.size_nat (ids db).
   Definition k_credit : N := 1. (* STUB *)
   Definition k_loop : N := c_loopN + 1.
   Definition k_active : N := 1. (* STUB *)
@@ -7789,7 +7788,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma forest_same_repr : forall db, forest_ok db ->
     forall i j, same (view db) i j <-> repr db i = repr db j.
   Proof.
-    intros db [_ [_ [_ [_ [_ Hsame]]]]]. exact Hsame.
+    intros db Hforest. unfold forest_ok in Hforest. tauto.
+  Qed.
+
+  (** Repair retains the key-width bound already required by public well-formedness. *)
+  Lemma forest_width_bound : forall db, forest_ok db ->
+    UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    intros db Hforest. unfold forest_ok in Hforest. tauto.
   Qed.
 
   (** Active entries retain coverage after their loser has left the queue. *)
@@ -7832,6 +7838,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.card (db_forest db) = N.to_nat (ids db).
   Proof.
     intros db work Hinv. apply forest_cardinality. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Every active repair state keeps forest keys within the allocation bit width. *)
+  Lemma inv_on_forest_width : forall db work, inv_on db work ->
+    UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    intros db work Hinv. apply forest_width_bound. unfold inv_on in Hinv. tauto.
   Qed.
 
   (** Active repair states expose equality agreement without a public wf conversion. *)
@@ -8200,7 +8213,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_uf_card : forall db work, inv_on db work ->
     UnionFind.card (uf_state db) <= 3 * N.to_nat (ids db) /\
     UnionFind.width (uf_state db) <= N.size_nat (ids db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work Hinv. unfold uf_state.
+    pose proof (inv_on_forest_card db work Hinv) as Hcard.
+    split; [lia | exact (inv_on_forest_width db work Hinv)].
+  Qed.
 
   Definition proj_count (db : t) (s : N) (u : list (cell V.t)) : N :=
     stored_projection_count db s u.
