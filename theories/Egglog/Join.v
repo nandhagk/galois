@@ -39,6 +39,38 @@ Proof.
       [now right | exact Hout | exact Hfresh].
 Qed.
 
+(** Each fold call pays its branch bound and one traversal step. *)
+Lemma T_fold_left_sum_le {A B : Type} (f : A -> B -> A) (T_f : A -> B -> N)
+    (cost : B -> N) : forall xs acc,
+  (forall a b, In b xs -> (T_f a b <= cost b)%N) ->
+  (List.T_fold_left f T_f xs acc <=
+    N.of_nat (length xs + 1) + fold_right N.add 0 (map cost xs))%N.
+Proof.
+  intros xs. induction xs as [| x xs IH]; intros acc Hcost.
+  - time_step fold_left.
+  - pose proof (Hcost acc x (or_introl eq_refl)) as Hhead.
+    assert (Htail : (List.T_fold_left f T_f xs (f acc x) <=
+      N.of_nat (length xs + 1) + fold_right N.add 0 (map cost xs))%N).
+    { apply IH. intros a b Hin. exact (Hcost a b (or_intror Hin)). }
+    time_step fold_left.
+Qed.
+
+(** Branch lower bounds and traversal steps also give a lower bound for a fold. *)
+Lemma T_fold_left_sum_ge {A B : Type} (f : A -> B -> A) (T_f : A -> B -> N)
+    (cost : B -> N) : forall xs acc,
+  (forall a b, In b xs -> (cost b <= T_f a b)%N) ->
+  (N.of_nat (length xs + 1) + fold_right N.add 0 (map cost xs) <=
+    List.T_fold_left f T_f xs acc)%N.
+Proof.
+  intros xs. induction xs as [| x xs IH]; intros acc Hcost.
+  - time_step fold_left.
+  - pose proof (Hcost acc x (or_introl eq_refl)) as Hhead.
+    assert (Htail : (N.of_nat (length xs + 1) + fold_right N.add 0 (map cost xs) <=
+      List.T_fold_left f T_f xs (f acc x))%N).
+    { apply IH. intros a b Hin. exact (Hcost a b (or_intror Hin)). }
+    time_step fold_left.
+Qed.
+
 Module ListDef.
   TimeFun List.nth.
 End ListDef.
