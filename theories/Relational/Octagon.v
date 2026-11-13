@@ -4690,6 +4690,48 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia.
   Qed.
 
+  (** The same scan excludes a negative cycle through the mirrored edge. *)
+  Lemma incremental_second_cycle : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed (flip i) (flip j)) (Some d)).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hcoh : coherent seed).
+    { unfold seed. apply coherent_add_cons, coherent_add_cons.
+      exact (proj1 (proj1 Htight)). }
+    pose proof (proj2 (incremental_seed_diagonals m i j Htight)) as Hj.
+    change (entry seed j j = Some 0%Z) in Hj.
+    assert (Hseed : entry seed (flip j) (flip j) = Some 0%Z).
+    { rewrite (Hcoh (flip j) (flip j)), !flip_involutive. exact Hj. }
+    destruct (entry seed (flip i) (flip j)) as [back|] eqn:Hback;
+      [|exact I].
+    pose proof (increment_below_second_edge i j d seed (flip j) (flip j))
+      as Hbound.
+    rewrite Hseed, Hback in Hbound.
+    cbn [edge_path path_sum edge_prefix RelationalPathBounds.below] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next (flip j) (flip j) = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    assert (Hrow : exists row, M.get (flip j) next = Some row).
+    { unfold entry in Hvalue.
+      destruct (M.get (flip j) next) as [row|] eqn:Hget;
+        [now exists row|discriminate]. }
+    destruct Hrow as [row Hrow].
+    pose proof (matrix_ok_row next (flip j) row Hwfnext Hscan Hrow) as Hcheck.
+    unfold nonnegative in Hcheck. rewrite Hvalue in Hcheck.
+    apply Z.leb_le in Hcheck.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
