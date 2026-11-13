@@ -1166,6 +1166,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
       N.to_nat (stored_projection_count db s u) = length rs.
 
+  (** A slot's proof observation consists of its count table and two index cache entries. *)
+  Definition slot_snapshot (state : database_runtime (cell V.t) I.t) (s : N) :=
+    (PTrieCode.get (N.succ_pos s) (runtime_projection_counts state),
+     PTrieCode.get (N.succ_pos s) (runtime_all_indexes state),
+     PTrieCode.get (N.succ_pos s) (runtime_new_indexes state)).
+
+  (** A runtime count observation uses the same lookup as the public database count. *)
+  Definition runtime_projection_count (state : database_runtime (cell V.t) I.t)
+      (s : N) (u : list (cell V.t)) : N :=
+    match PTrieCode.get (db_tuple_code u)
+      (projection_table_get (N.succ_pos s) (runtime_projection_counts state)) with
+    | Some (_, n) => n
+    | None => 0%N
+    end.
+
+  (** A runtime index observation selects one of the two stored per-slot caches. *)
+  Definition runtime_slot_index (state : database_runtime (cell V.t) I.t)
+      (s : N) (new : bool) : I.t :=
+    slot_index_get (N.succ_pos s)
+      (if new then runtime_new_indexes state else runtime_all_indexes state).
+
   (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
   Definition database_wf (db : t) : Prop :=
     (UnionFind.wf (db_forest db)) /\
@@ -1402,6 +1423,164 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))) as [layouts |].
     - apply slot_update_many_preserves. exact Hkeep.
     - reflexivity.
+  Qed.
+
+  (** Distinct binary slot numbers have distinct positive trie keys. *)
+  Lemma slot_code_injective : forall s t, N.succ_pos s = N.succ_pos t -> s = t.
+  Proof.
+    intros s t Hequal. apply (f_equal Npos) in Hequal.
+    assert (Hs : Npos (N.succ_pos s) = N.succ s) by (destruct s; reflexivity).
+    assert (Ht : Npos (N.succ_pos t) = N.succ t) by (destruct t; reflexivity).
+    rewrite Hs, Ht in Hequal. lia.
+  Qed.
+
+  (** Updating one slot leaves every other slot's cached entries unchanged. *)
+  Lemma slot_update_one_snapshot_other : forall b s u state t, t <> s ->
+    slot_snapshot (slot_update_one b s u state) t = slot_snapshot state t.
+  Proof.
+    intros b s u state t Hdifferent.
+    assert (Hcode : N.succ_pos t <> N.succ_pos s).
+    { intro Hequal. apply Hdifferent. now apply slot_code_injective. }
+    unfold slot_update_one. destruct b.
+    - unfold slot_snapshot.
+      cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes].
+      now rewrite !PTrie.get_set_other by exact Hcode.
+    - destruct (PTrieCode.get (db_tuple_code u)
+        (projection_table_get (N.succ_pos s) (runtime_projection_counts state)))
+        as [[tuple n] |]; [| reflexivity].
+      destruct n as [| p]; [reflexivity |]. destruct p; unfold slot_snapshot;
+        cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes];
+        now rewrite !PTrie.get_set_other by exact Hcode.
+  Qed.
+
+  (** A slot update depends only on that slot's three cached entries. *)
+  Lemma slot_update_one_snapshot_local : forall b s u first second,
+    slot_snapshot first s = slot_snapshot second s ->
+    slot_snapshot (slot_update_one b s u first) s =
+      slot_snapshot (slot_update_one b s u second) s.
+  Proof.
+    intros b s u first second Hkeep.
+    pose proof Hkeep as Hentries. unfold slot_snapshot in Hentries.
+    injection Hentries as Hcounts Hall Hnew. destruct b.
+    - unfold slot_update_one, slot_snapshot.
+      cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes].
+      rewrite !PTrie.get_set_same. unfold projection_table_get, slot_index_get.
+      now rewrite Hcounts, Hall, Hnew.
+    - unfold slot_update_one, projection_table_get, slot_index_get.
+      rewrite Hcounts, Hall, Hnew.
+      fold (projection_table_get (N.succ_pos s) (runtime_projection_counts second)).
+      destruct (PTrieCode.get (db_tuple_code u)
+        (projection_table_get (N.succ_pos s) (runtime_projection_counts second)))
+        as [[tuple n] |]; [| exact Hkeep].
+      destruct n as [| p]; [exact Hkeep |]. destruct p; unfold slot_snapshot;
+        cbn [runtime_set_indexes runtime_projection_counts runtime_all_indexes runtime_new_indexes];
+        rewrite !PTrie.get_set_same; now rewrite ?Hcounts, ?Hall, ?Hnew.
+  Qed.
+
+  (** A function update leaves any slot absent from its prepared list unchanged. *)
+  Lemma slot_update_many_snapshot_other : forall b u layouts state s,
+    ~ In s (map fst layouts) ->
+    slot_snapshot (slot_update_many b u layouts state) s = slot_snapshot state s.
+  Proof.
+    intros b u layouts. induction layouts as [| [t layout] rest IH];
+      intros state s Hmissing; cbn [slot_update_many]; [reflexivity |].
+    cbn [map fst] in Hmissing.
+    rewrite IH by (intro Hin; apply Hmissing; now right).
+    apply slot_update_one_snapshot_other. intro Hequal. subst s. apply Hmissing. now left.
+  Qed.
+
+  (** A duplicate-free prepared list updates each listed slot exactly once. *)
+  Lemma slot_update_many_snapshot_member : forall b u layouts,
+    NoDup (map fst layouts) -> forall state s layout, In (s, layout) layouts ->
+    slot_snapshot (slot_update_many b u layouts state) s =
+      slot_snapshot (slot_update_one b s (project_slot_layout layout u) state) s.
+  Proof.
+    intros b u layouts. induction layouts as [| [t first] rest IH];
+      intros Hnodup state s layout Hmember; [contradiction |].
+    cbn [map fst] in Hnodup. inversion Hnodup as [| key keys Hnot Htail]; subst.
+    destruct Hmember as [Hequal | Hmember].
+    - injection Hequal as -> ->. cbn [slot_update_many].
+      now rewrite slot_update_many_snapshot_other by exact Hnot.
+    - cbn [slot_update_many]. rewrite (IH Htail _ _ _ Hmember).
+      apply slot_update_one_snapshot_local. apply slot_update_one_snapshot_other.
+      intro Hequal. subst t. apply Hnot. exact (in_map fst rest (s, layout) Hmember).
+  Qed.
+
+  (** Equal cached slot entries yield equal tuple-count observations. *)
+  Lemma slot_snapshot_count : forall first second s,
+    slot_snapshot first s = slot_snapshot second s ->
+    forall u, runtime_projection_count first s u = runtime_projection_count second s u.
+  Proof.
+    intros first second s Hequal u. unfold slot_snapshot in Hequal.
+    injection Hequal as Hcounts Hall Hnew.
+    unfold runtime_projection_count, projection_table_get. now rewrite Hcounts.
+  Qed.
+
+  (** Equal cached slot entries yield the same selected index. *)
+  Lemma slot_snapshot_index : forall first second s,
+    slot_snapshot first s = slot_snapshot second s ->
+    forall new, runtime_slot_index first s new = runtime_slot_index second s new.
+  Proof.
+    intros first second s Hequal new. unfold slot_snapshot in Hequal.
+    injection Hequal as Hcounts Hall Hnew.
+    unfold runtime_slot_index, slot_index_get. destruct new; [now rewrite Hnew | now rewrite Hall].
+  Qed.
+
+  (** Adding or removing one contribution increments or decrements its exact tuple count. *)
+  Lemma slot_update_one_count_same : forall b s u state,
+    runtime_projection_count (slot_update_one b s u state) s u =
+      if b then N.succ (runtime_projection_count state s u)
+      else N.pred (runtime_projection_count state s u).
+  Proof.
+    intros b s u state. unfold slot_update_one.
+    fold (runtime_projection_count state s u).
+    remember (runtime_projection_count state s u) as n eqn:Hcount. destruct b.
+    - unfold runtime_projection_count, projection_table_get.
+      cbn [runtime_set_indexes runtime_projection_counts projection_table_get].
+      now rewrite !PTrie.get_set_same.
+    - destruct n as [| p]; [exact (eq_sym Hcount) |].
+      destruct p; unfold runtime_projection_count, projection_table_get;
+        cbn [runtime_set_indexes runtime_projection_counts projection_table_get];
+        rewrite !PTrie.get_set_same; rewrite ?PTrie.get_remove_same; reflexivity.
+  Qed.
+
+  (** A contribution update leaves every different tuple's count unchanged. *)
+  Lemma slot_update_one_count_other : forall b s u state v, v <> u ->
+    runtime_projection_count (slot_update_one b s u state) s v =
+      runtime_projection_count state s v.
+  Proof.
+    intros b s u state v Hdifferent.
+    assert (Hcode : db_tuple_code v <> db_tuple_code u).
+    { intro Hequal. apply Hdifferent. exact (Tuples.encode_inj v u Hequal). }
+    unfold slot_update_one. fold (runtime_projection_count state s u). destruct b.
+    - unfold runtime_projection_count, projection_table_get.
+      cbn [runtime_set_indexes runtime_projection_counts projection_table_get].
+      rewrite PTrie.get_set_same, PTrie.get_set_other by exact Hcode. reflexivity.
+    - destruct (runtime_projection_count state s u) as [| p]; [reflexivity |].
+      destruct p; unfold runtime_projection_count, projection_table_get;
+        cbn [runtime_set_indexes runtime_projection_counts projection_table_get];
+        rewrite PTrie.get_set_same;
+        rewrite ?PTrie.get_set_other, ?PTrie.get_remove_other by exact Hcode; reflexivity.
+  Qed.
+
+  (** Removal touches the index only when the deleted contribution was the last one. *)
+  Lemma slot_update_one_index : forall b s u state new,
+    runtime_slot_index (slot_update_one b s u state) s new =
+      if b then I.insert u (runtime_slot_index state s new)
+      else match runtime_projection_count state s u with
+        | Npos xH => I.remove u (runtime_slot_index state s new)
+        | _ => runtime_slot_index state s new
+        end.
+  Proof.
+    intros b s u state new. unfold slot_update_one.
+    fold (runtime_projection_count state s u). destruct b.
+    - unfold runtime_slot_index. destruct new;
+        cbn [runtime_set_indexes runtime_all_indexes runtime_new_indexes];
+        unfold slot_index_get; now rewrite PTrie.get_set_same.
+    - destruct (runtime_projection_count state s u) as [| p]; [reflexivity |].
+      destruct p; try reflexivity. unfold runtime_slot_index. destruct new;
+        cbn [runtime_set_indexes runtime_all_indexes runtime_new_indexes];
+        unfold slot_index_get; now rewrite PTrie.get_set_same.
   Qed.
 
   (** Index maintenance keeps the complete model view unchanged. *)
