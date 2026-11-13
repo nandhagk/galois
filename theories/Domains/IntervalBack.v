@@ -5514,7 +5514,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 
   Local Lemma table_binary_dispatch_time : forall rw wa a wb b cost,
-    (cost <= 100000 * N.of_nat
+    (cost <= 500000 * N.of_nat
       ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
         interval_bits (interval_clip wb b) + 1) ^ 2))%N ->
     (1 + T_interval_clip wa a + T_interval_clip wb b + cost <=
@@ -5566,7 +5566,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     { pose proof (Pos2Nat.is_pos rw). rewrite Nat.pow_2_r. nia. }
     assert (Hcost :
       (cost + 4 <=
-        100000 * N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        500000 * N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
           interval_bits (interval_clip wb b) + 1) ^ 2))%N) by nia.
     pose proof (table_binary_dispatch_time rw wa a wb b _ Hcost) as Hdispatch.
     eapply N.le_trans; [|exact Hdispatch].
@@ -5700,7 +5700,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     { pose proof (Pos2Nat.is_pos rw). rewrite Nat.pow_2_r. nia. }
     assert (Hcost :
       (T_interval_shl rw (interval_clip wa a) (interval_clip wb b) + 4 <=
-        100000 * N.of_nat
+        500000 * N.of_nat
           ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
             interval_bits (interval_clip wb b) + 1) ^ 2))%N)
       by (clear - Hshl Hpositive; nia).
@@ -5724,7 +5724,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     { pose proof (Pos2Nat.is_pos rw). rewrite Nat.pow_2_r. nia. }
     assert (Hcost :
       (T_interval_lshr rw (interval_clip wa a) (interval_clip wb b) + 4 <=
-        100000 * N.of_nat
+        500000 * N.of_nat
           ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
             interval_bits (interval_clip wb b) + 1) ^ 2))%N)
       by (clear - Hlshr Hpositive; nia).
