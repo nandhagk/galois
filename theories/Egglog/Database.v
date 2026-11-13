@@ -796,6 +796,43 @@ Proof.
   cbn [database_counter_credit] in H. lia.
 Qed.
 
+(** The largest declaration name fits within the sum of all name widths and the root bit. *)
+Lemma database_max_name_bits : forall ds,
+  Pos.size_nat (database_max_name ds) <=
+    fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds + 1.
+Proof.
+  intro ds. induction ds as [|d ds IH]; [reflexivity |].
+  change (Pos.size_nat (Pos.max (name d) (database_max_name ds)) <=
+    Pos.size_nat (name d) + fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds + 1).
+  unfold Pos.max. destruct (Pos.compare (name d) (database_max_name ds)); lia.
+Qed.
+
+(** A binary natural's bit width never exceeds its unary value. *)
+Lemma database_counter_bits_value : forall n, N.size_nat n <= N.to_nat n.
+Proof.
+  intros [|p]; [reflexivity | apply slot_rank_bits_value].
+Qed.
+
+(** Binary maximum pays only the bit width of its first argument. *)
+Lemma T_database_counter_max_le : forall n m,
+  (N.T_max n m <= N.of_nat (N.size_nat n) + 3)%N.
+Proof.
+  intros n m. time_step N.max.
+Qed.
+
+(** Preparing layouts preserves both the slot count and the charged function-name bits. *)
+Lemma database_prepared_sizes : forall sl,
+  length (prepare_slot_layouts sl) = length sl /\
+  fold_right (fun s n => Pos.size_nat (fst s) + n) 0 (prepare_slot_layouts sl) =
+    fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl.
+Proof.
+  intro sl. split.
+  - unfold prepare_slot_layouts. apply length_map.
+  - unfold prepare_slot_layouts.
+    induction sl as [|[f perm] sl IH]; cbn [map fold_right fst];
+      [reflexivity | now rewrite IH].
+Qed.
+
 (** Reading a missing function group gives its empty slot list. *)
 Definition database_group_entries (f : positive)
     (groups : PTrieCode.t (list (N * database_slot_layout))) : list (N * database_slot_layout) :=
