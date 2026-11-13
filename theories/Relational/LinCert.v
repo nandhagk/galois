@@ -1830,6 +1830,139 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     unfold lc_zero_factor. time_simpl. nia.
   Qed.
 
+  (** Negation preserves an integer's stored bit length. *)
+  Lemma lc_size_opp : forall z, Z.size_nat (-z) = Z.size_nat z.
+  Proof.
+    intros [|p|p]; reflexivity.
+  Qed.
+
+  (** Integer division adds at most one quotient digit under sign correction. *)
+  Lemma lc_size_div : forall a b, (Z.size_nat (a / b) <= Z.size_nat a + 1)%nat.
+  Proof.
+    intros [|a|a] [|b|b]; unfold Z.div, Z.div_eucl; cbn beta iota zeta;
+      try solve [cbn [Z.size_nat]; lia];
+      destruct (Z.pos_div_eucl_sizes a (Z.pos b) eq_refl) as (Hq0 & Hr0 & Hq & Hr);
+      destruct (Z.pos_div_eucl a (Z.pos b)) as [q r]; cbn [fst snd] in *;
+      pose proof (lc_size_add_nonnegative q 1 Hq0 ltac:(lia)) as Hadd;
+      destruct r; cbn [fst snd]; rewrite ?lc_size_opp;
+      cbn [Z.size_nat Pos.size_nat] in *; lia.
+  Qed.
+
+  (** Every raw occurrence pays for its list cell. *)
+  Lemma lc_terms_length : forall xs,
+    (N.of_nat (length xs) <= lc_terms_weight xs)%N.
+  Proof.
+    induction xs as [|[x a] xs IH]; cbn [length lc_terms_weight]; lia.
+  Qed.
+
+  (** Row size includes the right-hand-side bit width and a constant unit. *)
+  Lemma lsize_rhs : forall c, (Z.size_nat (rhs c) + 1 <= lsize c)%nat.
+  Proof.
+    intro c. pose proof (row_bits_rhs c). unfold lsize. nia.
+  Qed.
+
+  (** Scaling a conclusion charges its multiplier digits times the row size. *)
+  Lemma T_scale_conclusion : forall sc c,
+    (T_scale_terms sc (lhs c) <=
+      16 * N.of_nat ((Z.size_nat sc + 1) * lsize c))%N.
+  Proof.
+    intros sc c. pose proof (T_scale_row c sc). unfold lsize. nia.
+  Qed.
+
+  (** Scaled conclusion occurrences fit the same multiplier-weighted row size. *)
+  Lemma lc_terms_weight_conclusion : forall sc c,
+    (lc_terms_weight (scale_terms sc (lhs c)) <=
+      N.of_nat ((Z.size_nat sc + 1) * lsize c))%N.
+  Proof.
+    intros sc c. pose proof (lc_terms_weight_scale_row c sc). unfold lsize. nia.
+  Qed.
+
+  (** Linear equality charges both raw occurrence weights and conclusion scaling. *)
+  Lemma T_linear_equal_weighted : forall sc xs c,
+    (T_linear_equal sc xs (lhs c) <= (lc_zero_factor + 20) *
+      (lc_terms_weight xs + N.of_nat ((Z.size_nat sc + 1) * lsize c) + 1))%N.
+  Proof.
+    intros sc xs c.
+    pose proof (T_scale_conclusion (-sc)%Z c) as Hscale.
+    pose proof (lc_terms_weight_conclusion (-sc)%Z c) as Hweight.
+    rewrite lc_size_opp in Hscale, Hweight.
+    pose proof (T_linear_zero_weighted (xs ++ scale_terms (-sc)%Z (lhs c))) as Hzero.
+    rewrite lc_terms_weight_app in Hzero.
+    assert (HzeroW : (T_linear_zero (xs ++ scale_terms (-sc)%Z (lhs c)) <=
+      lc_zero_factor *
+        (lc_terms_weight xs + N.of_nat ((Z.size_nat sc + 1) * lsize c) + 1))%N).
+    { eapply N.le_trans; [exact Hzero|]. apply N.mul_le_mono_l. lia. }
+    clear Hzero Hweight.
+    pose proof (Datatypes.T_app_le xs (scale_terms (-sc)%Z (lhs c))) as Happ.
+    pose proof (lc_terms_length xs) as Hlength. pose proof (Z.T_opp_le sc) as Hopp.
+    time_unfold T_linear_equal. nia.
+  Qed.
+
+  (** Testing a row for contradiction charges its raw terms and right-hand-side width. *)
+  Lemma T_empty_row_weighted : forall s,
+    (T_empty_row s <= lc_zero_factor * (lc_terms_weight (lhs s) + 1) +
+      N.of_nat (Z.size_nat (rhs s)) + 12)%N.
+  Proof.
+    intro s. pose proof (T_linear_zero_weighted (lhs s)) as Hzero.
+    pose proof (Z.T_eqb_le (rhs s) 0) as Heq. pose proof (Z.T_ltb_le (rhs s) 0) as Hlt.
+    time_unfold T_empty_row. destruct (lrel s); time_simpl; lia.
+  Qed.
+
+  (** A successful combination supplies a certificate-weighted contradiction test. *)
+  Lemma T_empty_row_combined : forall P ms s, combine P ms = Some s ->
+    (T_empty_row s <= (lc_zero_factor + 13) * N.of_nat (csize P ms + 1))%N.
+  Proof.
+    intros P ms s Hsum. pose proof (T_empty_row_weighted s) as Hrow.
+    pose proof (combine_terms_weight P ms s Hsum) as Hterms.
+    assert (HtermsW : (lc_zero_factor * (lc_terms_weight (lhs s) + 1) <=
+      lc_zero_factor * N.of_nat (csize P ms + 1))%N).
+    { apply N.mul_le_mono_l. lia. }
+    pose proof (combine_rhs_coarse_size P ms s Hsum) as Hrhs. nia.
+  Qed.
+
+  (** A checked row charges the conclusion and the incoming right-hand-side width. *)
+  Lemma T_check_row_weighted : forall s c k b,
+    (Z.size_nat (rhs s) <= b)%nat ->
+    (T_check_row s c k <= (lc_zero_factor + 110) *
+      (lc_terms_weight (lhs s) +
+        N.of_nat ((Z.size_nat (scale k) + 1) * (lsize c + b + 1))))%N.
+  Proof.
+    intros s c k b Hbits.
+    set (w := (lc_terms_weight (lhs s) +
+      N.of_nat ((Z.size_nat (scale k) + 1) * (lsize c + b + 1)))%N).
+    assert (Hw : (1 <= w)%N) by (unfold w; nia).
+    pose proof (T_linear_equal_weighted (scale k) (lhs s) c) as Hequal.
+    assert (HequalW : (T_linear_equal (scale k) (lhs s) (lhs c) <=
+      (lc_zero_factor + 20) * w)%N).
+    { eapply N.le_trans; [exact Hequal|]. apply N.mul_le_mono_l. unfold w. nia. }
+    pose proof (T_Z_mul_bilinear (scale k) (rhs c)) as Hmul.
+    pose proof (lsize_rhs c) as Hcsize.
+    assert (HmulW : (Z.T_mul (scale k) (rhs c) <= 8 * w)%N)
+      by (clear -Hmul Hcsize; unfold w; nia).
+    pose proof (T_Z_div_bilinear (rhs s) (scale k)) as Hdiv.
+    assert (HdivW : (Z.T_div (rhs s) (scale k) <= 65 * w)%N)
+      by (clear -Hdiv Hbits; unfold w; nia).
+    pose proof (lc_size_div (rhs s) (scale k)) as Hquotient.
+    pose proof (Z.T_leb_le (rhs s / scale k) (rhs c)) as Hcut.
+    assert (HcutW : (Z.T_leb (rhs s / scale k) (rhs c) <= 5 * w)%N)
+      by (clear -Hcut Hquotient Hbits; unfold w; nia).
+    pose proof (Z.T_eqb_le (rhs s) (scale k * rhs c)) as Heq.
+    pose proof (Z.T_leb_le (rhs s) (scale k * rhs c)) as Hle.
+    assert (HeqW : (Z.T_eqb (rhs s) (scale k * rhs c) <= 5 * w)%N)
+      by (clear -Heq Hbits; unfold w; nia).
+    assert (HleW : (Z.T_leb (rhs s) (scale k * rhs c) <= 5 * w)%N)
+      by (clear -Hle Hbits; unfold w; nia).
+    pose proof (Z.T_ltb_le 0 (scale k)) as Hpositive.
+    change (Z.T_ltb 0 (scale k) <= 4)%N in Hpositive.
+    clear Hequal Hmul Hcsize Hdiv Hquotient Hcut Heq Hle Hbits.
+    time_unfold T_check_row. fold w. destruct (lrel c), (lrel s).
+    - time_simpl. nia.
+    - time_simpl. nia.
+    - destruct (cut k); time_simpl; nia.
+    - destruct (cut k); time_simpl; nia.
+  Qed.
+
+  (** A common constant covers combination, two trie scans and scaled bound checks. *)
   Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
@@ -1841,11 +1974,39 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     (T_check_entails P c k <= c_lc * N.of_nat
       ((csize P (mults k) + (Z.size_nat (scale k) + 1) *
         (lsize c + cbits P (mults k) + 1))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k.
+    set (w := csize P (mults k) + (Z.size_nat (scale k) + 1) *
+      (lsize c + cbits P (mults k) + 1)).
+    assert (Hw : (1 <= w)%nat) by (unfold w; nia).
+    pose proof (T_combine_weighted P (mults k)) as Hcombine.
+    assert (HcombineW : (T_combine P (mults k) <= 112 * N.of_nat w)%N).
+    { eapply N.le_trans; [exact Hcombine|]. apply N.mul_le_mono_l. unfold w. nia. }
+    clear Hcombine. time_unfold T_check_entails.
+    destruct (combine P (mults k)) as [s|] eqn:Hsum.
+    - pose proof (T_empty_row_combined P (mults k) s Hsum) as Hempty.
+      assert (HemptyW : (T_empty_row s <= (lc_zero_factor + 13) * N.of_nat w)%N).
+      { eapply N.le_trans; [exact Hempty|]. apply N.mul_le_mono_l. unfold w. nia. }
+      pose proof (combine_rhs_size P (mults k) s Hsum) as Hrhs.
+      pose proof (combine_terms_weight P (mults k) s Hsum) as Hterms.
+      pose proof (T_check_row_weighted s c k (cbits P (mults k)) Hrhs) as Hrow.
+      assert (HrowW : (T_check_row s c k <= (lc_zero_factor + 110) * N.of_nat w)%N).
+      { eapply N.le_trans; [exact Hrow|]. apply N.mul_le_mono_l. unfold w. nia. }
+      clear Hempty Hrhs Hterms Hrow Hsum.
+      destruct (empty_row s); time_simpl;
+        unfold c_lc, lc_zero_factor, lc_insert_factor in *; nia.
+    - time_simpl. unfold c_lc. nia.
+  Qed.
   (** Contradiction checking charges the certificate-weighted input. *)
   Lemma T_check_empty_le : forall P ms,
     (T_check_empty P ms <= c_lc * N.of_nat ((csize P ms + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms. pose proof (T_combine_weighted P ms) as Hcombine.
+    time_unfold T_check_empty. destruct (combine P ms) as [s|] eqn:Hsum.
+    - pose proof (T_empty_row_combined P ms s Hsum) as Hrow.
+      unfold c_lc, lc_zero_factor, lc_insert_factor in *. nia.
+    - unfold c_lc. nia.
+  Qed.
   Definition accumulate_term (m : Z) (acc : PTrieCode.t (Z * Z)) (p : X.t * Z)
       : PTrieCode.t (Z * Z) :=
     let key := X.encode (fst p) in
