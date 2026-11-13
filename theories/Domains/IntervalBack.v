@@ -1819,6 +1819,19 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     exact PayloadBounds.payload_clip_bits.
   Qed.
 
+  Local Lemma table_checked_bits : forall w lo hi, (lo <= hi)%Z ->
+    interval_bits (interval_checked w lo hi) <= Pos.to_nat w.
+  Proof.
+    intros w lo hi Hordered.
+    unfold interval_checked.
+    destruct (Z.leb 0 lo && Z.ltb hi (Word.modulus w)) eqn:Hcheck.
+    - apply andb_true_iff in Hcheck as [Hlo Hhi].
+      apply Z.leb_le in Hlo. apply Z.ltb_lt in Hhi.
+      cbn [interval_bits]. apply Nat.max_lub;
+        apply PayloadBounds.payload_word_bits; unfold Word.is_word; lia.
+    - exact (PayloadBounds.payload_top_bits w).
+  Qed.
+
   Local Lemma table_clip_time : forall w a,
     (T_interval_clip w a <= (W.k_payload_clip + 1) *
       N.of_nat (W.psize w a + 1))%N.
