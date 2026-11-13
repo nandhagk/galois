@@ -567,15 +567,100 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     intro st. split; [apply map_empty_nonbot|]. intro x.
     unfold read. rewrite M.get_empty. apply V.gamma_top.
   Qed.
+
+  (** Successful term-list evaluation pairs each term with its own concrete result. *)
+  Lemma eval_terms_rel : forall (st : X.t -> L.val) es cs,
+    eval_terms L.eval st es = Some cs ->
+    Forall2 (fun e c => eval_term L.eval st e = Some c) es cs.
+  Proof.
+    intros st es. induction es as [|e es IH]; intros cs Heval;
+      cbn [eval_terms map sequence] in Heval.
+    - injection Heval as Hvalues. subst cs. constructor.
+    - destruct (eval_term L.eval st e) as [c|] eqn:Hvalue; [|discriminate].
+      destruct (sequence (map (eval_term L.eval st) es)) as [ds|] eqn:Htail;
+        [|discriminate].
+      injection Heval as Hvalues. subst cs. constructor; [exact Hvalue|].
+      now apply IH.
+  Qed.
+
+  (** The cached root of each annotated term covers its successful concrete result. *)
+  Lemma annotate_value_sound : forall e m st c,
+    (forall x, V.gamma (read m x) (st x)) ->
+    eval_term L.eval st e = Some c -> V.gamma (root (annotate m e)) c.
+  Proof.
+    induction e as [x|o es IH]; intros m st c Hmodel Heval.
+    - cbn [eval_term] in Heval. injection Heval as Hvalue. subst c. apply Hmodel.
+    - cbn [eval_term] in Heval.
+      destruct (sequence (map (eval_term L.eval st) es)) as [cs|] eqn:Hchildren;
+        [|discriminate].
+      cbn [annotate root]. apply V.forward_sound with (cs := cs); [|exact Heval].
+      rewrite map_map. pose proof (eval_terms_rel st es cs Hchildren) as Hvalues.
+      clear Heval Hchildren. revert IH.
+      induction Hvalues as [|e value es cs Hvalue Hvalues IHvalues]; intros IH;
+        cbn [map]; [constructor|].
+      inversion IH as [|head Hhead tail Htail]; subst. constructor.
+      + exact (Hhead m st value Hmodel Hvalue).
+      + now apply IHvalues.
+  Qed.
+
+  (** Annotated operand roots cover the ordered list of concrete operand results. *)
+  Lemma annotate_values_sound : forall es m st cs,
+    (forall x, V.gamma (read m x) (st x)) ->
+    eval_terms L.eval st es = Some cs ->
+    Forall2 V.gamma (map (fun e => root (annotate m e)) es) cs.
+  Proof.
+    intros es m st cs Hmodel Heval. apply eval_terms_rel in Heval.
+    induction Heval as [|e c es cs Hvalue Hvalues IH]; cbn [map]; constructor.
+    - eapply annotate_value_sound; eassumption.
+    - exact IH.
+  Qed.
+
+  (** A represented concrete value cannot be recognized as bottom. *)
+  Lemma value_nonbot : forall a c, V.gamma a c -> V.is_bot a = false.
+  Proof.
+    intros a c Hvalue. destruct (V.is_bot a) eqn:Hbot; [|reflexivity].
+    exfalso. exact (V.is_bot_sound a c Hbot Hvalue).
+  Qed.
+
+  (** Writing a nonbottom value preserves absence of recognized bottom bindings. *)
+  Lemma map_set_nonbot : forall m x a,
+    M.existsb V.is_bot m = false -> V.is_bot a = false ->
+    M.existsb V.is_bot (M.set x a m) = false.
+  Proof.
+    intros m x a Hclean Ha. apply map_nonbot_spec. intros p b Hfind.
+    rewrite M.find_set in Hfind. destruct (Pos.eqb p (X.encode x)).
+    - injection Hfind as Hvalue. subst b. exact Ha.
+    - exact (proj1 (map_nonbot_spec m) Hclean p b Hfind).
+  Qed.
+
+  (** Updating a represented binding covers the matching concrete state update. *)
+  Lemma set_gamma : forall m st x a c,
+    gamma (Reached m) st -> V.gamma a c ->
+    gamma (Reached (M.set x a m)) (upd X.eqb st x c).
+  Proof.
+    intros m st x a c [Hclean Hmodel] Hvalue. split.
+    - apply map_set_nonbot; [exact Hclean|]. now apply value_nonbot with (c := c).
+    - intro y. unfold read, upd. destruct (X.eqb_spec y x) as [Heq|Hneq].
+      + subst y. rewrite M.get_set_same. exact Hvalue.
+      + rewrite M.get_set_other by exact Hneq. apply Hmodel.
+  Qed.
+
   (** Assignment contains each successful concrete update. *)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
     gamma (assign x e s) (upd X.eqb st x c).
-  Proof. Admitted. (* CONVERT: assign_sound: The variable update_sound was not found. *)
+  Proof.
+    intros x e [|m] st c Hgamma Heval; [contradiction|].
+    apply set_gamma; [exact Hgamma|].
+    eapply annotate_value_sound; [exact (proj2 Hgamma)|exact Heval].
+  Qed.
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
-  Proof. Admitted. (* CONVERT: havoc_sound: The variable update_sound was not found. *)
+  Proof.
+    intros x [|m] st c Hgamma; [contradiction|].
+    apply set_gamma; [exact Hgamma|apply V.gamma_top].
+  Qed.
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
@@ -584,7 +669,10 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted. (* CONVERT: abs_eval_sound: The variable term_eval_sound was not found. *)
+  Proof.
+    intros e [|m] st c Hgamma Heval; [contradiction|].
+    eapply annotate_value_sound; [exact (proj2 Hgamma)|exact Heval].
+  Qed.
 
   (** Reading an absent key returns top. *)
   Lemma read_spec : forall m x,
