@@ -5913,6 +5913,24 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now apply coherent_fw_success.
   Qed.
 
+  (** Successful closure leaves every stored unary bound even. *)
+  Lemma tclose_unary_even : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i d, entry m' i (flip i) = Some d -> (d mod 2 = 0)%Z.
+  Proof.
+    intros m m' Hwf Hresult i d Hentry.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m));
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    rewrite entry_strengthen_unary in Hentry.
+    - eapply tighten_unary_even; [apply wf_fw; exact Hwf|exact Hentry].
+    - apply wf_tighten, wf_fw. exact Hwf.
+  Qed.
+
   (** Original and final key lists cover the same supported vertices. *)
   Lemma keys_fw_membership : forall m k, dbm_wf m ->
     (In k (keys m) <-> In k (keys (fw m))).
