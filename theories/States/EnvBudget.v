@@ -551,11 +551,139 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     split; [exact Hdeclared|now apply value_inv_widen].
   Qed.
 
+  (** Refinement of a typed cached annotation preserves every stored variable's width. *)
+  Lemma refine_checked_inv : forall p e w cached current q,
+    word_term_typed (P.variables p) (P.width_of p) e w ->
+    inv p (Reached cached) -> inv p (Reached current) -> D.at_width w q ->
+    inv p (Reached (fst (E.refine_checked q (E.annotate cached e) current))).
+  Proof.
+    intros p e. induction e as [x|o es IH];
+      intros w cached current q Htyped Hcached Hcurrent Hq.
+    - inversion Htyped as [x' Hdeclared| |]; subst.
+      rewrite E.annotate_leaf, E.F_refine_leaf. cbn [fst].
+      apply inv_set; [exact Hcurrent|exact Hdeclared|].
+      apply D.meet_width; [now apply read_width|exact Hq].
+    - inversion Htyped as [|w' z|op es' ws w' Hchildren Hresult]; subst.
+      + rewrite E.annotate_node, E.F_refine_node. cbn [map fst]. exact Hcurrent.
+      + pose proof (D.backward_width (BOp op) q
+          (map (fun e => E.root (E.annotate cached e)) es) ws w Hresult Hq
+          (annotations_width p cached es ws Hcached Hchildren)) as Hrequests.
+        rewrite E.annotate_node, E.F_refine_node, map_map.
+        remember (V.backward (BOp op) q
+          (map (fun e => E.root (E.annotate cached e)) es)) as requests.
+        clear Heqrequests Htyped Hresult Hq.
+        revert IH current Hcurrent requests Hrequests.
+        generalize false as bad.
+        induction Hchildren as [|e es child_width widths Hhead Htail IHtail];
+          intros bad IH current Hcurrent requests Hrequests.
+        * cbn [map fst]. exact Hcurrent.
+        * inversion IH as [|e' IHe es' IHrest]; subst.
+          inversion Hrequests as [|w' request ws' requests' Hrequest Hrest]; subst.
+          cbn [map fst]. apply IHtail; [exact IHrest| |exact Hrest].
+          eapply IHe; eassumption.
+  Qed.
+
+  (** Existentially typed guard operands admit a common ordered width list. *)
+  Lemma typed_terms_widths : forall p es,
+    Forall (fun e => exists w, word_term_typed (P.variables p) (P.width_of p) e w) es ->
+    exists ws, word_terms_typed (P.variables p) (P.width_of p) es ws.
+  Proof.
+    intros p es Htyped. induction Htyped as [|e es [w He] Htail [ws Hrest]].
+    - exists nil. constructor.
+    - exists (w :: ws). constructor; assumption.
+  Qed.
+
+  (** Typed assignment writes a canonical result at the destination's declared width. *)
+  Lemma inv_assign : forall p x e s, inv p s -> In x (P.variables p) ->
+    word_term_typed (P.variables p) (P.width_of p) e (P.width_of p x) ->
+    inv p (E.assign x e s).
+  Proof.
+    intros p x e [|m] Hinv Hdeclared Htyped; rewrite E.F_assign; [constructor|].
+    apply inv_set; [exact Hinv|exact Hdeclared|].
+    rewrite E.F_eval. eapply annotate_width; eassumption.
+  Qed.
+
+  (** Havoc writes top only at a declared variable. *)
+  Lemma inv_havoc : forall p x s,
+    inv p s -> In x (P.variables p) -> inv p (E.havoc x s).
+  Proof.
+    intros p x [|m] Hinv Hdeclared; rewrite E.F_havoc; [constructor|].
+    apply inv_set; [exact Hinv|exact Hdeclared|apply value_inv_top].
+  Qed.
+
+  (** Sequential guard requests preserve the invariant while retaining the cached annotations. *)
+  Lemma refine_fold_inv : forall p cached es ws requests current bad,
+    inv p (Reached cached) -> inv p (Reached current) ->
+    word_terms_typed (P.variables p) (P.width_of p) es ws ->
+    Forall2 D.at_width ws requests ->
+    inv p (Reached (fst (fold_left (fun result nq =>
+      let next := E.refine_checked (snd nq) (fst nq) (fst result) in
+      (fst next, orb (snd result) (snd next)))
+      (combine (map (E.annotate cached) es) requests) (current, bad)))).
+  Proof.
+    intros p cached es ws requests current bad Hcached Hcurrent Htyped.
+    revert requests current bad Hcurrent.
+    induction Htyped as [|e es w ws Hhead Htail IH];
+      intros requests current bad Hcurrent Hrequests.
+    - cbn [map combine fold_left fst]. exact Hcurrent.
+    - inversion Hrequests as [|w' request ws' requests' Hrequest Hrest]; subst.
+      cbn [map combine fold_left fst snd]. apply IH; [|exact Hrest].
+      eapply refine_checked_inv; eassumption.
+  Qed.
+
+  (** Typed guard refinement keeps every cached request at its declared operand width. *)
+  Lemma inv_assume : forall p g es s, inv p s ->
+    Forall (fun e => exists w, word_term_typed (P.variables p) (P.width_of p) e w) es ->
+    inv p (E.assume g es s).
+  Proof.
+    intros p g es [|m] Hinv Htyped; rewrite E.F_assume; [constructor|].
+    cbn iota zeta. rewrite map_map.
+    destruct (typed_terms_widths p es Htyped) as [ws Hwidths].
+    pose proof (D.guard_width g (map (fun e => E.root (E.annotate m e)) es) ws
+      (annotations_width p m es ws Hinv Hwidths)) as Hrequests.
+    pose proof (refine_fold_inv p m es ws
+      (V.guard g (map (fun e => E.root (E.annotate m e)) es)) m false
+      Hinv Hinv Hwidths Hrequests) as Hrefined.
+    match goal with
+    | |- inv _ (if ?bad then _ else _) => destruct bad
+    end; [constructor|exact Hrefined].
+  Qed.
+
+  (** Each well-typed instruction preserves the canonical environment invariant. *)
+  Lemma inv_instruction : forall p i s,
+    P.typed_instruction p i -> inv p s -> inv p (P.apply_instruction i s).
+  Proof.
+    intros p [x e|x|g es|] s Htyped Hinv; cbn [P.apply_instruction].
+    - destruct Htyped as [Hdeclared Hterm]. now apply inv_assign.
+    - now apply inv_havoc.
+    - now apply inv_assume.
+    - exact Hinv.
+  Qed.
+
+  (** Ordered well-typed instructions preserve the invariant from their actual source state. *)
+  Lemma inv_instructions : forall p instructions s,
+    Forall (P.typed_instruction p) instructions -> inv p s ->
+    inv p (fold_left (fun s i => P.apply_instruction i s) instructions s).
+  Proof.
+    intros p instructions s Htyped. revert s.
+    induction Htyped as [|i instructions Hi Hrest IH]; intros s Hinv.
+    - exact Hinv.
+    - cbn [fold_left]. apply IH. now apply inv_instruction.
+  Qed.
+
   (** Typed operational rows preserve the representation invariant on every contribution. *)
   Lemma inv_rows : forall p r look a ss, S.wf p -> In r (S.rows p) ->
     (forall x, inv p (look x)) -> S.eval p r look = Some (a, ss) ->
     inv p a /\ Forall (fun xa => inv p (snd xa)) ss.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look a ss Hwf Hrow Hlook Heval.
+    rewrite (P.row_execution p r look Hwf Hrow) in Heval.
+    injection Heval as <- <-. split; [|constructor].
+    pose proof (P.instruction_typed p r Hwf Hrow) as Htyped.
+    destruct (P.row_plan p r) as [[source instructions]|] in Htyped |- *.
+    - now apply inv_instructions.
+    - apply inv_top.
+  Qed.
 
   (** Canonical representation sizes fit the program's sum of width-dependent envelopes. *)
   Lemma size_le : forall p a, inv p a -> E.size a <= vsize p.
