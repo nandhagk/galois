@@ -1047,3 +1047,172 @@ Proof.
 Qed.
 
 End FilteredProjectionFacts.
+
+(** * Finite occurrence measures for a deferred repair queue *)
+
+Module RebuildFuelFacts.
+
+  Definition entries_for {E : Type} (owner : positive) (entries : list (positive * E)) :=
+    filter (fun xe => Pos.eqb (fst xe) owner) entries.
+
+  Definition without_owner {E : Type} (owner : positive) (entries : list (positive * E)) :=
+    filter (fun xe => negb (Pos.eqb (fst xe) owner)) entries.
+
+  Definition transfer {E : Type} (source target : positive)
+      (entries : list (positive * E)) :=
+    map (fun xe => if Pos.eqb (fst xe) source then (target, snd xe) else xe) entries.
+
+  Definition occurrence_credit {E : Type} (credit : positive -> nat)
+      (entries : list (positive * E)) : nat :=
+    fold_right (fun xe n => credit (fst xe) + n) 0 entries.
+
+  Definition queued_work {E : Type} (queue : list positive)
+      (entries : list (positive * E)) : nat :=
+    fold_right (fun x n => length (entries_for x entries) + 1 + n) 0 queue.
+
+  (** Moving a bucket changes ownership without creating or deleting an occurrence. *)
+  Lemma transfer_length : forall E source target (entries : list (positive * E)),
+    length (transfer source target entries) = length entries.
+  Proof.
+    intros E source target entries. apply length_map.
+  Qed.
+
+  (** Owners in one class have the same remaining rank credit after a bucket transfer. *)
+  Lemma transfer_credit : forall E credit source target (entries : list (positive * E)),
+    credit source = credit target ->
+    occurrence_credit credit (transfer source target entries) = occurrence_credit credit entries.
+  Proof.
+    intros E credit source target entries Heq.
+    unfold transfer, occurrence_credit.
+    induction entries as [| [x e] entries IH]; cbn [map fold_right fst snd];
+      [reflexivity |].
+    destruct (Pos.eqb x source) eqn:Hx; cbn [fst].
+    - apply Pos.eqb_eq in Hx. subst x. now rewrite IH, Heq.
+    - now rewrite IH.
+  Qed.
+
+  (** A transfer leaves every other owner's bucket unchanged. *)
+  Lemma transfer_other : forall E source target query (entries : list (positive * E)),
+    query <> source -> query <> target ->
+    entries_for query (transfer source target entries) = entries_for query entries.
+  Proof.
+    intros E source target query entries Hsource Htarget.
+    assert (Hsq : Pos.eqb source query = false) by (apply Pos.eqb_neq; congruence).
+    assert (Htq : Pos.eqb target query = false) by (apply Pos.eqb_neq; congruence).
+    unfold transfer, entries_for.
+    induction entries as [| [x e] entries IH]; cbn [map filter fst snd];
+      [reflexivity |].
+    destruct (Pos.eqb x source) eqn:Hx; cbn [fst].
+    - apply Pos.eqb_eq in Hx. subst x. now rewrite Hsq, Htq.
+    - destruct (Pos.eqb x query); cbn; congruence.
+  Qed.
+
+  (** A queue that contains neither endpoint sees the same buckets after transfer. *)
+  Lemma queued_transfer_away : forall E queue source target (entries : list (positive * E)),
+    ~ In source queue -> ~ In target queue ->
+    queued_work queue (transfer source target entries) = queued_work queue entries.
+  Proof.
+    intros E queue. induction queue as [| x queue IH]; intros source target entries Hsource Htarget.
+    - reflexivity.
+    - change (length (entries_for x (transfer source target entries)) + 1 +
+        queued_work queue (transfer source target entries) =
+        length (entries_for x entries) + 1 + queued_work queue entries).
+      rewrite transfer_other by (cbn in *; intuition).
+      rewrite IH by (cbn in *; intuition). reflexivity.
+  Qed.
+
+  (** Popping a loser exchanges its queued bucket for active entries and spends one unit. *)
+  Lemma queue_transfer_measure : forall E credit source target queue
+      (entries : list (positive * E)) classes,
+    credit source = credit target -> ~ In source queue -> ~ In target queue ->
+    occurrence_credit credit (transfer source target entries) +
+      queued_work queue (transfer source target entries) +
+      length (map snd (entries_for source entries)) + classes + 1 =
+    occurrence_credit credit entries + queued_work (source :: queue) entries + classes.
+  Proof.
+    intros E credit source target queue entries classes Hcredit Hsource Htarget.
+    rewrite transfer_credit by exact Hcredit.
+    rewrite queued_transfer_away by assumption. rewrite length_map.
+    change (occurrence_credit credit entries + queued_work queue entries +
+      length (entries_for source entries) + classes + 1 =
+      occurrence_credit credit entries +
+        (length (entries_for source entries) + 1 + queued_work queue entries) + classes).
+    lia.
+  Qed.
+
+  (** Selecting and excluding one owner partition the occurrence inventory. *)
+  Lemma owner_partition : forall E owner (entries : list (positive * E)),
+    length (entries_for owner entries) + length (without_owner owner entries) = length entries.
+  Proof.
+    intros E owner entries. unfold entries_for, without_owner.
+    induction entries as [| [x e] entries IH]; cbn [filter fst length]; [reflexivity |].
+    destruct (Pos.eqb x owner); cbn [negb length]; lia.
+  Qed.
+
+  (** Removing another owner's occurrences leaves the selected bucket unchanged. *)
+  Lemma without_other : forall E owner query (entries : list (positive * E)),
+    query <> owner -> entries_for query (without_owner owner entries) = entries_for query entries.
+  Proof.
+    intros E owner query entries Hneq.
+    unfold entries_for, without_owner.
+    induction entries as [| [x e] entries IH]; cbn [filter fst]; [reflexivity |].
+    destruct (Pos.eqb x owner) eqn:Hx; cbn [negb filter fst].
+    - apply Pos.eqb_eq in Hx. subst x.
+      assert (Hfalse : Pos.eqb owner query = false) by (apply Pos.eqb_neq; congruence).
+      now rewrite Hfalse.
+    - destruct (Pos.eqb x query); cbn; congruence.
+  Qed.
+
+  (** Removing an owner outside the queue changes none of its queued buckets. *)
+  Lemma queued_without_away : forall E queue owner (entries : list (positive * E)),
+    ~ In owner queue -> queued_work queue (without_owner owner entries) = queued_work queue entries.
+  Proof.
+    intros E queue. induction queue as [| x queue IH]; intros owner entries Hnot.
+    - reflexivity.
+    - change (length (entries_for x (without_owner owner entries)) + 1 +
+        queued_work queue (without_owner owner entries) =
+        length (entries_for x entries) + 1 + queued_work queue entries).
+      rewrite without_other by (cbn in *; intuition).
+      rewrite IH by (cbn in *; intuition). reflexivity.
+  Qed.
+
+  (** A duplicate-free queue counts each stored occurrence at most once. *)
+  Lemma queued_work_bound : forall E queue (entries : list (positive * E)),
+    NoDup queue -> queued_work queue entries <= length entries + length queue.
+  Proof.
+    intros E queue entries Hnodup. revert entries.
+    induction Hnodup as [| x queue Hnot Hnodup IH]; intro entries.
+    - cbn [queued_work fold_right length]. lia.
+    - specialize (IH (without_owner x entries)).
+      rewrite queued_without_away in IH by exact Hnot.
+      pose proof (owner_partition E x entries) as Hpartition.
+      change (length (entries_for x entries) + 1 + queued_work queue entries <=
+        length entries + S (length queue)). lia.
+  Qed.
+
+  (** A pointwise rank bound bounds the complete occurrence credit. *)
+  Lemma occurrence_credit_bound : forall E credit (entries : list (positive * E)) bits,
+    (forall xe, In xe entries -> credit (fst xe) <= bits) ->
+    occurrence_credit credit entries <= bits * length entries.
+  Proof.
+    intros E credit entries. induction entries as [| xe entries IH]; intros bits Hbound.
+    - cbn [occurrence_credit fold_right length]. lia.
+    - assert (Hhead := Hbound xe (or_introl eq_refl)).
+      assert (Htail : occurrence_credit credit entries <= bits * length entries).
+      { apply IH. intros e Hin. apply Hbound. now right. }
+      change (credit (fst xe) + occurrence_credit credit entries <= bits * S (length entries)). nia.
+  Qed.
+
+  (** The released fuel formula covers rank credit, queued work and represented classes. *)
+  Lemma initial_measure_fuel : forall E credit queue (entries : list (positive * E)) bits classes,
+    NoDup queue -> (forall xe, In xe entries -> credit (fst xe) <= bits) ->
+    classes <= length entries ->
+    occurrence_credit credit entries + queued_work queue entries + classes <
+      (bits + 2) * (length entries + 1) + length queue + 1.
+  Proof.
+    intros E credit queue entries bits classes Hqueue Hcredit Hclasses.
+    pose proof (queued_work_bound E queue entries Hqueue).
+    pose proof (occurrence_credit_bound E credit entries bits Hcredit). nia.
+  Qed.
+
+End RebuildFuelFacts.
