@@ -6857,6 +6857,56 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         Hfwscan Hscan a b).
   Qed.
 
+  (** A successful full Floyd scan excludes the mixed signed-edge cycle. *)
+  Lemma fw_mixed_cycle : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i)).
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (fw_closed_at_success direct Hwfdirect Hscan) as Hclosed.
+    pose proof (fw_below_incremental_seed m i j d Hwf Hscan) as Hseed.
+    change (forall x y, RelationalPathBounds.below
+      (entry (fw direct) x y) (entry seed x y)) in Hseed.
+    destruct (fw_success_path_invariant direct Hwfdirect Hscan)
+      as [Hbelow_direct _ _ _].
+    destruct (add_cons_inserted_bounds m i j d) as [Hfirst Hsecond].
+    assert (Hedge1 : RelationalPathBounds.below
+      (entry (fw direct) i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hfirst]. }
+    assert (Hedge2 : RelationalPathBounds.below
+      (entry (fw direct) (flip j) (flip i)) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hsecond]. }
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (entry seed) i j d Hclosed Hseed Hedge1 (flip i) (flip j)) as Hone.
+    assert (Hzero : entry (fw direct) (flip i) (flip i) = Some 0%Z).
+    { apply (proj1 (fw_closed_success direct Hwfdirect Hscan)).
+      apply (proj2 (fw_support direct (K.encode (flip i)))).
+      unfold direct. rewrite support_add_cons. now right; right; left. }
+    pose proof (Hclosed (flip j) (flip i) (flip i)) as Htriangle.
+    rewrite Hzero in Htriangle.
+    pose proof (RelationalPathBounds.below_trans _ _ _ Htriangle
+      (RelationalPathBounds.plus_mono _ _ _ _ Hone Hedge2)) as Hcycle.
+    unfold RelationalPathBounds.edge_extension in Hcycle.
+    rewrite RelationalPathBounds.plus_minimum_r in Hcycle.
+    apply RelationalPathBounds.minimum_glb in Hcycle.
+    destruct Hcycle as [_ Hmixed].
+    destruct (entry seed (flip i) i) as [back|];
+      destruct (entry seed j (flip j)) as [cross|];
+      cbn [RelationalPathBounds.plus RelationalPathBounds.below
+        twin_path path_sum twin_prefix] in *; try exact I; lia.
+  Qed.
+
   (** A coherent triangle transports a unary half-bound across one edge. *)
   Lemma unary_half_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
