@@ -5836,8 +5836,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
   (** Union never reduces the spending unit. *)
+  Lemma wmark_union : forall i j db, wmark (union i j db) = wmark db.
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
   Lemma unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db _. unfold unit. rewrite union_ids, wmark_union. reflexivity.
+  Qed.
 
   (** Rebuilding never reduces the spending unit. *)
   Lemma unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
@@ -6101,8 +6110,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun rank_slots.
   Definition k_locate : N := 1. (* STUB *)
   Definition k_repair : N := 1. (* STUB *)
-  Definition k_pop : N := 1. (* STUB *)
-  Definition k_rstep : N := 1. (* STUB *)
+  Definition k_pop : N := 64 * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1).
+  Definition k_rstep : N := 64.
   Definition k_slots : N := 1. (* STUB *)
   Definition k_layout : N := 1. (* STUB *)
 
@@ -6268,7 +6277,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           | None => 0
           end
       end)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work. time_unfold T_rstep. time_unfold T_db_rstep.
+    destruct work as [| [f k] rest]; cbn [fst snd].
+    - unfold pop_loser. destruct (db_pop_loser db) as [[x next] |];
+        time_unfold T_pop_loser; try time_unfold T_get_uses;
+        time_simpl; unfold k_rstep; lia.
+    - time_unfold T_repair_entry. time_simpl. cbn [fst snd]. unfold k_rstep. lia.
+  Qed.
   (** A pop moves the selected bucket at one step per entry. *)
   Lemma T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
@@ -6277,7 +6293,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** An empty pop reads the stored queue. *)
   Lemma T_pop_none_le : forall db, inv db -> pop_loser db = None ->
     (T_pop_loser db <= k_pop * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _ Hnone. unfold pop_loser, db_pop_loser in Hnone.
+    destruct (runtime_queue (db_runtime db)) as [| i rest] eqn:Hqueue; [| discriminate].
+    time_unfold T_pop_loser. time_unfold T_db_pop_loser. rewrite Hqueue.
+    time_unfold @T_db_runtime. time_unfold @T_runtime_queue.
+    assert (Hunit : (1 <= N.of_nat (unit db))%N).
+    { unfold unit. rewrite Nat2N.inj_mul. nia. }
+    unfold k_pop. nia.
+  Qed.
   (** A bucket is read by one keyed lookup. *)
   Lemma T_get_uses_le : forall db work x, inv_on db work -> allocated db x ->
     (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
