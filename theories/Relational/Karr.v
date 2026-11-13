@@ -3655,7 +3655,31 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply existsb_exists. exists r. split; [exact Hin | apply row_eqb_refl].
   Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|P] b c Hleft Hright; [destruct c; reflexivity|].
+    destruct (contradiction P) as [ms|] eqn:Hempty.
+    { destruct c; unfold leb; now rewrite Hempty. }
+    destruct b as [|R].
+    { unfold leb in Hleft. rewrite Hempty in Hleft. discriminate. }
+    pose proof (leb_eq_sound_Q P R Hleft) as Hsource.
+    assert (HnonemptyR : contradiction R = None).
+    { destruct (contradiction R) as [ns|] eqn:HR; [|reflexivity].
+      exfalso. destruct (contradiction_none_model_Q P Hempty) as [v Hmodel].
+      exact (contradiction_sound_Q R ns HR v (Hsource v Hmodel)). }
+    destruct c as [|S].
+    { unfold leb in Hright. rewrite HnonemptyR in Hright. discriminate. }
+    unfold leb in Hleft, Hright |- *. rewrite Hempty in Hleft |- *.
+    rewrite HnonemptyR in Hright.
+    apply forallb_forall. intros target Hin.
+    pose proof (proj1 (forallb_forall _ _) Hright target Hin) as Hentail.
+    unfold entails in Hentail. apply orb_true_iff in Hentail as [Hliteral|Hcert].
+    - apply existsb_exists in Hliteral as [s [Hmember Hsame]].
+      apply row_eqb_sound in Hsame. subst s.
+      now apply (proj1 (forallb_forall _ _) Hleft).
+    - destruct (entail_cert R target) as [k|] eqn:Hsome; [|discriminate].
+      apply entails_complete_Q. intros v Hmodels.
+      apply entail_cert_sound_Q with (P := R) (k := k); [exact Hsome|]. now apply Hsource.
+  Qed.
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
     intros [| P]; reflexivity.
