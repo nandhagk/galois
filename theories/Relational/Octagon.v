@@ -1879,7 +1879,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     unfold c_lat. nia.
   Qed.
-  Definition c_num : N := 1. (* STUB *)
+  Definition c_num : N :=
+    (1048576 * (M.c_map + K.c_key + X.c_key + 1) *
+      (M.c_map + K.c_key + X.c_key + 1))%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -1890,12 +1892,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma range_size : forall e s,
-    (N.of_nat
-      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
-       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
-     c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Definition c_octagon : N := 1. (* STUB *)
   Lemma T_entry_le : forall m i j,
@@ -2210,6 +2206,153 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - now apply Pos.size_nat_least.
   Qed.
 
+  (** Finite range endpoints are bounded by the form and matrix bit allowances. *)
+  Lemma zbits_abs_bound : forall z bits,
+    Z.size_nat z <= bits -> Z.abs_nat z < 2 ^ bits.
+  Proof.
+    intros z bits Hbits. eapply Nat.lt_le_trans; [apply zbits_upper|].
+    apply Nat.pow_le_mono_r; lia.
+  Qed.
+
+  (** The constant seed and every coefficient are bounded by the form maximum. *)
+  Lemma form_bits_constant : forall f, Z.size_nat (cst f) <= F.form_bits f.
+  Proof.
+    intros [cs c]. unfold F.form_bits. cbn [coef cst].
+    induction cs as [|p cs IH]; cbn; [lia|].
+    eapply Nat.le_trans; [exact IH|apply Nat.le_max_r].
+  Qed.
+
+  Lemma form_bits_coefficient : forall f p,
+    In p (coef f) -> Z.size_nat (snd p) <= F.form_bits f.
+  Proof.
+    intros [cs c] p. unfold F.form_bits. cbn [coef cst].
+    induction cs as [|q cs IH]; intros Hin; [contradiction|].
+    cbn in Hin |- *. destruct Hin as [Heq|Hin].
+    - subst q. pose proof (Nat.le_max_l
+        (X.bits (fst p) + Z.size_nat (snd p))
+        (fold_right Nat.max (Z.size_nat c)
+          (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) cs))). lia.
+    - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+  Qed.
+
+  (** Negation does not change an integer's stored magnitude. *)
+  Lemma zbits_opp : forall z, Z.size_nat (-z)%Z = Z.size_nat z.
+  Proof. intros [|p|p]; reflexivity. Qed.
+
+  (** Rounding an integer toward negative infinity while halving cannot enlarge its magnitude. *)
+  Lemma zabs_div2_le : forall z, Z.abs_nat (Z.div2 z) <= Z.abs_nat z.
+  Proof.
+    intro z. apply (proj2 (Nat2Z.inj_le _ _)).
+    rewrite !Zabs2Nat.id_abs, Z.div2_div.
+    pose proof (Z.div_mod z 2 ltac:(lia)) as Hdiv.
+    pose proof (Z.mod_pos_bound z 2 ltac:(lia)) as Hrem.
+    destruct (Z.leb_spec0 0 z) as [Hz|Hz].
+    - assert (Hq : (0 <= z / 2)%Z) by lia.
+      rewrite !Z.abs_eq by lia. lia.
+    - assert (Hq : (z / 2 < 0)%Z) by lia.
+      rewrite !Z.abs_neq by lia. lia.
+  Qed.
+
+  Lemma zbits_div2 : forall z, Z.size_nat (Z.div2 z) <= Z.size_nat z.
+  Proof.
+    intro z. apply zbits_least.
+    eapply Nat.le_lt_trans; [apply zabs_div2_le|apply zbits_upper].
+  Qed.
+
+  Lemma variable_bounds_abs : forall m x,
+    rel_bounds_abs (2 ^ ell m) (variable_bounds m x).
+  Proof.
+    intros m x. unfold variable_bounds, rel_bounds_abs, rel_bound_abs.
+    destruct (entry m (x, true) (x, false)) as [lo|] eqn:Hlo;
+      destruct (entry m (x, false) (x, true)) as [hi|] eqn:Hhi;
+      cbn [fst snd]; split; try exact I; apply zbits_abs_bound.
+    - rewrite zbits_opp. eapply Nat.le_trans; [apply zbits_div2|].
+      eapply ell_entry. rewrite raw_entry_get. exact Hlo.
+    - eapply Nat.le_trans; [apply zbits_div2|].
+      eapply ell_entry. rewrite raw_entry_get. exact Hhi.
+    - rewrite zbits_opp. eapply Nat.le_trans; [apply zbits_div2|].
+      eapply ell_entry. rewrite raw_entry_get. exact Hlo.
+    - eapply Nat.le_trans; [apply zbits_div2|].
+      eapply ell_entry. rewrite raw_entry_get. exact Hhi.
+  Qed.
+
+  (** Summing at most n products adds only log2(n) plus one magnitude bit. *)
+  Lemma affine_magnitude_allowance : forall count nodes coeff_bits entry_bits,
+    count <= nodes -> 1 <= nodes ->
+    (count + 1) * 2 ^ coeff_bits * 2 ^ entry_bits <=
+      2 ^ (entry_bits + coeff_bits + Nat.log2 nodes + 2).
+  Proof.
+    intros count nodes coeff_bits entry_bits Hcount Hnodes.
+    pose proof (Nat.log2_spec nodes ltac:(lia)) as [_ Hlog].
+    assert (Hcountpow : count + 1 <= 2 ^ (Nat.log2 nodes + 1)).
+    { replace (Nat.log2 nodes + 1) with (S (Nat.log2 nodes)) by lia. lia. }
+    assert (Hproduct : (count + 1) * 2 ^ coeff_bits * 2 ^ entry_bits <=
+      2 ^ (Nat.log2 nodes + 1) * 2 ^ coeff_bits * 2 ^ entry_bits).
+    { apply Nat.mul_le_mono_r. apply Nat.mul_le_mono_r. exact Hcountpow. }
+    eapply Nat.le_trans; [exact Hproduct|].
+    rewrite <- !Nat.pow_add_r. apply Nat.pow_le_mono_r; lia.
+  Qed.
+
+  (** Recognized affine intervals respect the logarithmic range bit allowance. *)
+  Lemma form_range_abs : forall e m f r,
+    F.lin_of e = Some (f, r) ->
+    rel_bounds_abs (2 ^ range_bits e (Reached m)) (form_bounds m f).
+  Proof.
+    intros e m f r Hlin. destruct (F.lin_of_size e f r Hlin) as [Hcount Hbits].
+    assert (Hposc : 0 < 2 ^ F.bits_e e).
+    { pose proof (Nat.pow_nonzero 2 (F.bits_e e) ltac:(lia)). lia. }
+    assert (Hposx : 0 < 2 ^ ell m).
+    { pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    eapply rel_bounds_abs_mono.
+    - unfold range_bits, ells. apply affine_magnitude_allowance; [exact Hcount|].
+      destruct e; cbn [tsize]; lia.
+    - unfold form_bounds. apply rel_form_bounds_abs; try assumption.
+      + apply zbits_abs_bound. pose proof (form_bits_constant f). lia.
+      + apply Forall_forall. intros p Hin. apply zbits_abs_bound.
+        pose proof (form_bits_coefficient f p Hin). lia.
+      + apply variable_bounds_abs.
+  Qed.
+
+  (** A valid wrapping interval is bounded by its explicitly charged endpoints. *)
+  Lemma wrap_range_abs : forall r bounds bits,
+    F.wrap_bits r <= bits -> rel_bounds_abs (2 ^ bits) bounds ->
+    rel_bounds_abs (2 ^ bits) (rel_wrap_bounds r bounds).
+  Proof.
+    intros [|lo hi] bounds bits Hbits Hbounds; [exact Hbounds|].
+    unfold F.wrap_bits in Hbits. unfold rel_wrap_bounds.
+    destruct (lo <=? hi)%Z; unfold rel_bounds_abs, rel_bound_abs;
+      cbn [fst snd]; split; try exact I; apply zbits_abs_bound; lia.
+  Qed.
+
+  Lemma range_abs : forall e s,
+    rel_bounds_abs (2 ^ range_bits e s) (range e s).
+  Proof.
+    intros e [|m]; [split; exact I|].
+    unfold range. destruct (F.lin_of e) as [[f r]|] eqn:Hlin; [|split; exact I].
+    apply wrap_range_abs.
+    - destruct (F.lin_of_size e f r Hlin) as [_ Hbits]. unfold range_bits. lia.
+    - now apply (form_range_abs e m f r).
+  Qed.
+
+  Lemma range_size : forall e s,
+    (N.of_nat
+      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
+     c_num * N.of_nat (range_bits e s + 1))%N.
+  Proof.
+    intros e s. pose proof (range_abs e s) as Hrange.
+    assert (Hbits :
+      match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+      match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end <=
+      2 * range_bits e s).
+    { unfold rel_bounds_abs, rel_bound_abs in Hrange.
+      destruct (fst (range e s)), (snd (range e s));
+        destruct Hrange as [Hlo Hhi]; try apply zbits_least in Hlo;
+        try apply zbits_least in Hhi; lia. }
+    assert (Hconstant : (2 <= c_num)%N) by (unfold c_num; nia).
+    eapply N.le_trans; [apply time_of_nat_le; exact Hbits|].
+    rewrite Nat2N.inj_mul. rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
   (** Adding two integers with a common bit bound needs at most one further bit. *)
   Lemma zbits_add_bound : forall x y upper,
     Z.size_nat x <= upper -> Z.size_nat y <= upper ->
