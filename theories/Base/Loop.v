@@ -116,7 +116,39 @@ Lemma T_loopN_le : forall S R (step : S -> S + R) T_step Inv Phi Tstop fuel s,
   (forall s r, Inv s -> step s = inr r -> T_step s <= Tstop) ->
   Inv s -> T_loopN step T_step fuel s <=
     c_loopN * (Phi s + Tstop + N.of_nat (N.size_nat fuel) + 1))%N.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros S R step T_step Inv Phi Tstop fuel s Hgo Hstop Hinv.
+  assert (Hbound : forall (fs : N * S) (Hacc : Acc loopN_lt fs),
+    Inv (snd fs) ->
+    (T_loop loopN_lt (loopN_step step) (fun fs => T_loopN_step step T_step fs) fs Hacc <=
+      (8 * Phi (snd fs) + loopN_zero_bits (fst fs)) + (Tstop + 1) + 1)%N).
+  { apply T_loop_le.
+    - intros [n s0] [n1 s1] Hlt Hinv0 Hstep.
+      destruct n as [| p].
+      + discriminate Hstep.
+      + cbn [loopN_step] in Hstep.
+        destruct (step s0) as [s2 | r] eqn:E; [| discriminate].
+        inversion Hstep; subst n1 s1.
+        destruct (Hgo s0 s2 Hinv0 E) as [Hinv2 Hdec].
+        split; [exact Hinv2 |].
+        pose proof (loopN_pred_credit (N.pos p)) as Hcredit.
+        cbn [N.pred] in Hcredit.
+        time_unfold @T_loopN_step. cbn [fst snd]. rewrite E. lia.
+    - intros [n s0] r Hinv0 Hstep.
+      destruct n as [| p].
+      + time_unfold @T_loopN_step. lia.
+      + cbn [loopN_step] in Hstep.
+        destruct (step s0) as [s1 | r0] eqn:E; [discriminate |].
+        specialize (Hstop s0 r0 Hinv0 E).
+        time_unfold @T_loopN_step. rewrite E. lia. }
+  time_unfold @T_loopN.
+  match goal with
+  | |- context [T_loop _ _ _ _ ?Hacc] =>
+      pose proof (Hbound (fuel, s) Hacc Hinv) as Hloop
+  end.
+  pose proof (loopN_zero_bits_le_size fuel) as Hsize.
+  cbn [fst snd] in Hloop. unfold c_loopN. lia.
+Qed.
 
 (** The loop spends input credit once and keeps credit in its returned result. *)
 Lemma T_loopN_amort : forall S R (step : S -> S + R) T_step (Inv : S -> Prop)
