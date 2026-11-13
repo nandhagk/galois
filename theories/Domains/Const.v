@@ -20,6 +20,42 @@ Module ConstWordFast.
     intros w z. unfold wrap_fast, Word.wrap, modulus.
     apply Z.land_ones. lia.
   Qed.
+
+  (** The width mask is itself a normalized word. *)
+  Lemma mask_is_word w : is_word w (Z.ones (Zpos w)).
+  Proof.
+    unfold is_word. rewrite Z.ones_equiv, <- Z.sub_1_r.
+    fold (modulus w). pose proof (modulus_pos w). lia.
+  Qed.
+
+  (** The mask has no bits above its declared width. *)
+  Lemma mask_size w : (Z.size_nat (Z.ones (Zpos w)) <= Pos.to_nat w)%nat.
+  Proof.
+    apply WordTime.word_size_bound, mask_is_word.
+  Qed.
+
+  (** Building the mask takes linear time in its numeric width. *)
+  Lemma mask_time w : (Z.T_ones (Zpos w) <= 16 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    pose proof (Z.T_shiftl_le 1 (Zpos w)) as Hshift.
+    pose proof (Z.T_pred_le (Z.shiftl 1 (Zpos w))) as Hpred.
+    assert (Hsize : (N.of_nat (Z.size_nat (Z.shiftl 1 (Zpos w))) <=
+      N.of_nat (Pos.to_nat w + 1))%N).
+    { apply time_of_nat_le. rewrite Z.shiftl_1_l.
+      apply WordTime.word_modulus_size_bound. }
+    time_unfold Z.T_ones. rewrite Nat2N.inj_add in *.
+    time_cbn_all. rewrite positive_nat_N in *. nia.
+  Qed.
+
+  (** Masking reads the width mask and raw integer only linearly. *)
+  Lemma wrap_fast_time w z :
+    (T_wrap_fast w z <= 32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+  Proof.
+    pose proof (mask_time w) as Hmask.
+    pose proof (Z.T_land_le z (Z.ones (Zpos w))) as Hland.
+    pose proof (time_of_nat_le _ _ (mask_size w)) as Hsize.
+    time_unfold T_wrap_fast. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
 End ConstWordFast.
 
 Module ConstCode (L : LANG_OPS) (E : VAL_EQ_OPS L) <: CONST_OPS L E.
@@ -1295,7 +1331,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   TimeFun backward_two.
   TimeFun wfwd.
   TimeFun wbwd.
-  Definition c_word_table : N := 1%N. (* STUB *)
+  Definition c_word_table : N := (524288 * (W.c_payload + 1))%N.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -1309,7 +1345,7 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
   Proof. Admitted. (* STUB *)
-  Definition k_const_word : N := 1%N. (* STUB *)
+  Definition k_const_word : N := (131072 * (W.c_payload + 1))%N.
   (** Normalised inverse arithmetic reads bounded word payloads. *)
   Lemma T2b_inverse_words : forall o rw q xs,
     (T_backward_one_values o rw (normalise rw q) (normalise_operands xs) +
@@ -1323,7 +1359,11 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   Lemma T2a_normalise : forall w z,
     (T_wrap_fast w z <= k_const_word *
       N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (ConstWordFast.wrap_fast_time w z) as Htime.
+    time_unfold T_wrap_fast. unfold k_const_word.
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
 
   (** Fast wrapping preserves the specified modular reduction. *)
   Lemma F_wrap_fast : forall w z, wrap_fast w z = L.wrap w z.
