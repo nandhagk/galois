@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith Bool Lia.
 From Argent Require Import Time Std BigO.
-From Galois.Bits Require Import Word Fun Op.
+From Galois.Bits Require Import Word Fun Op Testbit Arith.
 From Galois.Domains Require Import ConstSig LangSig WordSig.
 Import List.ListNotations.
 
@@ -16,7 +16,10 @@ Module ConstWordFast.
 
   (** The mask implements the specified modular word reduction. *)
   Lemma wrap_fast_agrees : forall w z, wrap_fast w z = Word.wrap w z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. unfold wrap_fast, Word.wrap, modulus.
+    apply Z.land_ones. lia.
+  Qed.
 End ConstWordFast.
 
 Module ConstCode (L : LANG_OPS) (E : VAL_EQ_OPS L) <: CONST_OPS L E.
@@ -212,10 +215,14 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Proof. intros [|a|]; reflexivity. Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] b Hbot; try discriminate. reflexivity.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
@@ -245,7 +252,10 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Qed.
   (** Meet is below its right operand. *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; cbn [meet leb]; try reflexivity; try apply eqb_refl.
+    destruct (E.eqb a b) eqn:Hab; cbn [leb]; auto.
+  Qed.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
@@ -266,14 +276,27 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|a|] [|b|]; cbn [leb widen join]; intro Hba;
+      try discriminate; try reflexivity.
+    apply E.eqb_spec in Hba. subst b. now rewrite eqb_refl.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* CONVERT: height_wrank: The variable join_rank_grows was not found in the current environment. *)
+  Proof.
+    intros p [|a|] [|b|]; unfold wrank; cbn [is_bot leb widen join level];
+      intros Hbot Hba; try discriminate; try lia.
+    destruct (E.eqb a b) eqn:Hab; cbn [level]; [|lia].
+    apply E.eqb_spec in Hab. subst b. rewrite eqb_refl in Hba. discriminate.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* CONVERT: height_wrank: The variable rank_monotone was not found in the current environment. *)
+  Proof.
+    intros p [|a|] [|b|]; unfold wrank; cbn [is_bot widen join level];
+      intro Hbot; try discriminate; try lia.
+    destruct (E.eqb a b); cbn [level]; lia.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
@@ -313,11 +336,42 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; cbn [leb is_bot]; congruence.
+  Qed.
+
+  (** Represented operand lists contain no recognized bottom. *)
+  Local Lemma no_bot : forall xs cs,
+    Forall2 gamma xs cs -> existsb is_bot xs = false.
+  Proof.
+    intros xs cs Hxs. induction Hxs as [|a c xs cs Ha Hxs IH].
+    - reflexivity.
+    - destruct a; cbn [gamma flat_gamma] in Ha; try contradiction;
+        cbn [existsb is_bot]; exact IH.
+  Qed.
+
+  (** Collecting singleton operands identifies their represented values. *)
+  Lemma points_sound : forall xs cs vs,
+    Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
+  Proof.
+    intros xs cs vs Hxs. revert vs.
+    induction Hxs as [|a c xs cs Ha Hxs IH]; intros vs Hpoints.
+    - inversion Hpoints. reflexivity.
+    - destruct a as [|a|]; cbn [points] in Hpoints; try discriminate.
+      cbn [gamma flat_gamma] in Ha. subst c.
+      destruct (points xs) as [tail|] eqn:Htail; try discriminate.
+      inversion Hpoints; subst vs. f_equal. now apply IH.
+  Qed.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted. (* CONVERT: forward_sound: The variable no_empty was not found in the current environment. *)
+  Proof.
+    intros o xs cs c Hxs Heval. unfold forward.
+    rewrite (no_bot xs cs Hxs). destruct (points xs) as [vs|] eqn:Hpoints.
+    - pose proof (points_sound xs cs vs Hxs Hpoints) as ->.
+      rewrite Heval. reflexivity.
+    - exact I.
+  Qed.
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
@@ -339,11 +393,15 @@ Module Const (L : LANG) (E : VAL_EQ L) <: CONST L E.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs cs Hxs _. exact Hxs.
+  Qed.
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. induction xs as [|a xs IH]; constructor; auto using leb_refl.
+  Qed.
 End Const.
 
 Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
@@ -440,20 +498,34 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
   Definition k_const_points : N := 1%N. (* STUB *)
   Definition k_const_forward : N := 1%N. (* STUB *)
   Lemma F1_gamma : forall a c, gamma a c <-> flat_gamma a c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F2_widen : forall p a b, widen p a b = join a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F3_wrank : forall p a, wrank p a = 2 - level a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F4_rank_le : forall a, level a <= 2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|]; cbn [level]; lia.
+  Qed.
   Lemma F5_points_sound : forall xs cs vs,
     Forall2 gamma xs cs -> points xs = Some vs -> vs = cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply points_sound.
+  Qed.
   Lemma F6_point : forall a, point a = match a with FVal c => Some c | _ => None end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F7_abst : forall c, abst c = FVal c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma T1_points : forall xs,
     (T_points xs <= k_const_points * N.of_nat (length xs + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -488,19 +560,38 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w [|a|] [|b|]; cbn [pleb pwiden pjoin]; intro Hba;
+      try discriminate; try reflexivity.
+    apply Z.eqb_eq in Hba. subst b. now rewrite Z.eqb_refl.
+  Qed.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted. (* CONVERT: height_wrank: The variable pleb_trans was not found in the current environment. *)
+  Proof.
+    intros q w [|a|] [|b|]; cbn [pis_bot pleb pwiden pjoin pwrank];
+      intros Hbot Hba; try discriminate; try lia.
+    destruct (Z.eqb a b) eqn:Hab; cbn [pwrank]; [|lia].
+    apply Z.eqb_eq in Hab. subst b. rewrite Z.eqb_refl in Hba. discriminate.
+  Qed.
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted. (* CONVERT: height_wrank: The variable rank_monotone was not found in the current environment. *)
+  Proof.
+    intros q w [|a|] [|b|]; cbn [pis_bot pwiden pjoin pwrank];
+      intro Hbot; try discriminate; try lia.
+    destruct (Z.eqb a b); cbn [pwrank]; lia.
+  Qed.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; cbn [pleb pnarrow pmeet]; intro Hba;
+      try discriminate; try (split; reflexivity).
+    - apply Z.eqb_eq in Hba. subst b. rewrite Z.eqb_refl.
+      cbn [pleb]. now rewrite Z.eqb_refl.
+    - split; [apply Z.eqb_refl|reflexivity].
+  Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof. intros w [|a|]; cbn [pleb]; auto using Z.eqb_refl. Qed.
@@ -520,10 +611,14 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Proof. intros w [|a|]; reflexivity. Qed.
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] b Hbot; try discriminate. reflexivity.
+  Qed.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof.
@@ -548,7 +643,10 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; cbn [pmeet pleb]; try reflexivity; try apply Z.eqb_refl.
+    destruct (Z.eqb a b) eqn:Hab; cbn [pleb]; auto.
+  Qed.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
@@ -580,7 +678,9 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [|a|] [|b|]; cbn [pleb pis_bot]; congruence.
+  Qed.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof. intros. reflexivity. Qed.
@@ -594,7 +694,9 @@ Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
   (** A constant payload denotes its stored integer. *)
   Lemma F_pgamma_const : forall w a z, pgamma w a z <->
     match a with FBot => False | FVal x => z = x | FTop => True end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 End ConstWord.
 
 Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
@@ -617,7 +719,9 @@ Module ConstWordT (L : WORD_LANGUAGE_T) <: CONST_WORD_PAYLOAD_T L.
   (** Constant payload size includes the width and raw integer bits. *)
   Lemma F_psize_const : forall w a, psize w a =
     Pos.to_nat w + match a with FVal z => Z.size_nat z | _ => 0 end + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
   Proof. Admitted. (* STUB *)
