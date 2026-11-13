@@ -697,7 +697,6 @@ Module RelationalPathBounds.
     - now apply invariant_seed.
     - now apply seed_success_zero.
   Qed.
-
 End RelationalPathBounds.
 
 
@@ -2143,10 +2142,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
       N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
-    c_zone * N.of_nat (((supp m + 1)^2)%nat) *
-      N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
   Definition closed (m : dbm) : Prop :=
     (forall i, In (K.encode i) (support m) -> entry m i i = Some 0%Z) /\
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
@@ -3320,7 +3315,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     destruct (wf_raw_entry_keys a p q d Hawf Hraw) as [i [j [Hi [Hj Hentry]]]].
     exact (path_invariant_entry_bits m (entry a) ps Hpath i j d Hentry).
   Qed.
-
   Lemma supp_fw_round : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
   Proof.
@@ -4740,10 +4734,172 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       cbn beta iota zeta. lia.
   Qed.
 
+  (** A consistent pivot round satisfies the promised quadratic timing bound. *)
   Lemma T1_fw_round : forall k m, dbm_wf m ->
     (T_fw_round k m <= k_zone * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   Proof.
     intros k m Hwf. apply T_fw_round_raw.
+  Qed.
+
+  (** An incremental pass pays for one exit lookup and its sparse path updates. *)
+  Lemma increment_pass_clock_le : forall i j d m,
+    (M.T_get j m + T_row_of (M.get j m) +
+      M.T_merge (increment_row i d (row_of (M.get j m)))
+        (fun x y => T_increment_row i d (row_of (M.get j m)) x y) m M.empty <=
+      1024 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat
+        ((supp m + 1)^2 * (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)))%N.
+  Proof.
+    intros i j d m.
+    set (units := (supp m + 1)^2 *
+      (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)).
+    assert (Hkey : K.bits j + 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply quadratic_payload_le]. lia. }
+    assert (Hpositive : 1 <= units) by lia.
+    pose proof (increment_matrix_work_bound m i j d) as Hmatrix.
+    assert (Hmatrix_units : code_work (increment_row_work i d (row_of (M.get j m))) m <=
+      8 * units).
+    { eapply Nat.le_trans; [exact Hmatrix|]. unfold units.
+      replace (8 * ((supp m + 1)^2 *
+        (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1))) with
+        (8 * (supp m + 1)^2 *
+          (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)) by ring.
+      apply Nat.mul_le_mono_l. lia. }
+    assert (Hdata : code_work (increment_row_work i d (row_of (M.get j m))) m + 1 <=
+      9 * units).
+    { lia. }
+    pose proof (time_of_nat_le _ _ Hdata) as HdataN. rewrite Nat2N.inj_mul in HdataN.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    change (M.T_get j m + T_row_of (M.get j m) +
+      M.T_merge (increment_row i d (row_of (M.get j m)))
+        (fun x y => T_increment_row i d (row_of (M.get j m)) x y) m M.empty <=
+      1024 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    set (work := N.of_nat units) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    clear Hpositive Hkey Hmatrix Hmatrix_units Hdata. clearbody work. clear units.
+    pose proof (T_merge_left_code_work (M.t Z) (M.t Z) (M.t Z)
+      (increment_row i d (row_of (M.get j m)))
+      (fun x y => T_increment_row i d (row_of (M.get j m)) x y)
+      (increment_row_work i d (row_of (M.get j m))) m row_time_factor
+      (T_increment_row_le i d (row_of (M.get j m)))) as Hmerge.
+    assert (Hmerge' : (M.T_merge (increment_row i d (row_of (M.get j m)))
+      (fun x y => T_increment_row i d (row_of (M.get j m)) x y) m M.empty <=
+      M.c_map * (row_time_factor + 1) * 2 * (9 * work))%N).
+    { eapply N.le_trans; [exact Hmerge|]. apply N.mul_le_mono_l. exact HdataN. }
+    assert (Hget : (M.T_get j m <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|]. apply N.mul_le_mono_l. exact HkeyN. }
+    pose proof (T_row_of_le (M.get j m)) as Hrow.
+    assert (Hcoefficient : (M.c_map * (row_time_factor + 1) * 2 * 9 + M.c_map + 4 <=
+      1024 * (M.c_map + 1) * (M.c_map + 1))%N).
+    { unfold row_time_factor. nia. }
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    replace (M.c_map * (row_time_factor + 1) * 2 * (9 * work))%N with
+      ((M.c_map * (row_time_factor + 1) * 2 * 9) * work)%N in Hmerge' by ring.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    clear Hmerge HdataN HkeyN Hcoefficient. lia.
+  Qed.
+
+  (** Seeding the two endpoint diagonals adds only those endpoints and the new bound bits. *)
+  Lemma increment_seed_bounds : forall i j d m,
+    let seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m)) in
+    supp seed <= supp m + 2 /\
+    b seed <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
+    ell seed <= Nat.max (ell m) (Z.size_nat d).
+  Proof.
+    intros i j d m. cbn beta iota zeta.
+    set (seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))).
+    assert (Hsupport : forall p, In p (support seed) ->
+      p = K.encode i \/ p = K.encode j \/ In p (support m)).
+    { intros p Hin. unfold seed in Hin. rewrite !support_add_cons in Hin. tauto. }
+    destruct (support_endpoints i j seed m Hsupport) as [Hcount Hbits].
+    split; [exact Hcount|]. split; [exact Hbits|].
+    unfold seed. apply ell_add_cons; [|apply Nat.le_max_r].
+    apply ell_add_cons; [|change (0 <= Nat.max (ell m) (Z.size_nat d)); lia].
+    apply ell_add_cons; [apply Nat.le_max_l|
+      change (0 <= Nat.max (ell m) (Z.size_nat d)); lia].
+  Qed.
+
+  (** Incremental closure charges its seed, one path pass, and two constant-sign checks. *)
+  Lemma T_incr_close_le : forall i j d m, (T_incr_close i j d m <=
+    c_zone * N.of_nat (((supp m + 1)^2)%nat) *
+      N.of_nat ((b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)%nat))%N.
+  Proof.
+    intros i j d m.
+    replace (c_zone * N.of_nat ((supp m + 1)^2) *
+      N.of_nat (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1))%N with
+      (c_zone * N.of_nat ((supp m + 1)^2 *
+        (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)))%N
+      by (rewrite (Nat2N.inj_mul ((supp m + 1)^2)
+        (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)); ring).
+    set (units := (supp m + 1)^2 *
+      (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)).
+    set (seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))).
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty).
+    assert (Hkey : K.bits i + K.bits j + Z.size_nat d + 1 <= units)
+      by (unfold units; eapply Nat.le_trans; [|apply quadratic_payload_le]; lia).
+    assert (Hpositive : 1 <= units) by lia.
+    destruct (increment_seed_bounds i j d m) as [Hcount [Hbits Hell]].
+    fold seed in Hcount, Hbits, Hell.
+    assert (Hbcap : Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) <=
+      b m + K.bits i + K.bits j).
+    { apply Nat.max_lub; [lia|apply Nat.max_lub; lia]. }
+    assert (Hecap : Nat.max (ell m) (Z.size_nat d) <= ell m + Z.size_nat d).
+    { apply Nat.max_lub; lia. }
+    assert (Hsquare : (supp seed + 1)^2 <= 9 * (supp m + 1)^2)
+      by (cbn [Nat.pow]; nia).
+    assert (Hpayload : b seed + K.bits i + K.bits j + ell seed + Z.size_nat d + 1 <=
+      2 * (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)) by lia.
+    assert (Hpasswork : (supp seed + 1)^2 *
+      (b seed + K.bits i + K.bits j + ell seed + Z.size_nat d + 1) <= 18 * units).
+    { eapply Nat.le_trans; [apply Nat.mul_le_mono; [exact Hsquare|exact Hpayload]|].
+      unfold units. nia. }
+    pose proof (time_of_nat_le _ _ Hpasswork) as HpassN.
+    replace (N.of_nat (18 * units)) with (18 * N.of_nat units)%N in HpassN
+      by (rewrite (Nat2N.inj_mul 18 units); reflexivity).
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    set (work := N.of_nat units) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    assert (Hpass : (M.T_get j seed + T_row_of (M.get j seed) +
+      M.T_merge (increment_row i d (row_of (M.get j seed)))
+        (fun x y => T_increment_row i d (row_of (M.get j seed)) x y) seed M.empty <=
+      18432 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [apply increment_pass_clock_le|].
+      replace (18432 * (M.c_map + 1) * (M.c_map + 1) * work)%N with
+        (1024 * (M.c_map + 1) * (M.c_map + 1) * (18 * work))%N by ring.
+      apply N.mul_le_mono_l. exact HpassN. }
+    assert (Hinsert : forall x y z state,
+      K.bits x + K.bits y + Z.size_nat z + 1 <= 2 * units ->
+      (T_add_cons x y z state <= 32 * (M.c_map + 1) * work)%N).
+    { intros x y z state Hsize. eapply N.le_trans; [apply T_add_cons_small|].
+      pose proof (time_of_nat_le _ _ Hsize) as HsizeN. rewrite Nat2N.inj_mul in HsizeN.
+      fold work in HsizeN.
+      replace (32 * (M.c_map + 1) * work)%N with
+        (16 * (M.c_map + 1) * (2 * work))%N by ring.
+      apply N.mul_le_mono_l. exact HsizeN. }
+    assert (Hi : (T_add_cons i i 0%Z m <= 32 * (M.c_map + 1) * work)%N).
+    { apply Hinsert. cbn [Z.size_nat]. lia. }
+    assert (Hj : (T_add_cons j j 0%Z (add_cons i i 0%Z m) <=
+      32 * (M.c_map + 1) * work)%N).
+    { apply Hinsert. cbn [Z.size_nat]. lia. }
+    assert (Hij : (T_add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m)) <=
+      32 * (M.c_map + 1) * work)%N).
+    { apply Hinsert. lia. }
+    assert (Hdiag : forall k, K.bits k + 1 <= units ->
+      (T_nonnegative k next <= 16 * (M.c_map + 1) * work)%N).
+    { intros k Hsize. eapply N.le_trans; [apply T_nonnegative_small|].
+      apply N.mul_le_mono_l. unfold work. now apply time_of_nat_le. }
+    assert (Hdi : (T_nonnegative i next <= 16 * (M.c_map + 1) * work)%N).
+    { apply Hdiag. lia. }
+    assert (Hdj : (T_nonnegative j next <= 16 * (M.c_map + 1) * work)%N).
+    { apply Hdiag. lia. }
+    assert (Hcoefficient : (18432 * (M.c_map + 1) * (M.c_map + 1) +
+      128 * (M.c_map + 1) + 16 <= c_zone)%N) by (unfold c_zone; nia).
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    clear Hpositive Hkey Hcount Hbits Hell Hbcap Hecap Hsquare Hpayload Hpasswork
+      HpassN HkeyN Hinsert Hdiag Hcoefficient.
+    clearbody work. clear units. unfold T_incr_close. cbn beta iota zeta.
+    fold seed next. time_simpl. cbn beta iota zeta.
+    destruct (andb (nonnegative i next) (nonnegative j next)); cbn beta iota zeta; lia.
   Qed.
 End ZoneT.
