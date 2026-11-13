@@ -6986,6 +6986,61 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply Z.leb_le. exact Hbound.
   Qed.
 
+  (** Tightening and strengthening respect pointwise matrix equality. *)
+  Lemma final_pass_entry_ext : forall a b, dbm_wf a -> dbm_wf b ->
+    (forall i j, entry a i j = entry b i j) ->
+    forall i j,
+      entry (strengthen (tighten a)) i j =
+      entry (strengthen (tighten b)) i j.
+  Proof.
+    intros a b Hwa Hwb Hentry.
+    assert (Htight : forall i j,
+      entry (tighten a) i j = entry (tighten b) i j).
+    { intros i j. rewrite (entry_tighten_exact a Hwa),
+        (entry_tighten_exact b Hwb). now rewrite Hentry. }
+    intros i j.
+    rewrite (entry_strengthen_exact (tighten a) (wf_tighten a Hwa)),
+      (entry_strengthen_exact (tighten b) (wf_tighten b Hwb)).
+    now rewrite (Htight i (flip i)), (Htight i j),
+      (Htight (flip j) j).
+  Qed.
+
+  (** Pointwise equality aligns the sparse and pivot-list diagonal scans. *)
+  Lemma matrix_ok_forallb_equal : forall ma mb direct, dbm_wf ma ->
+    dbm_wf direct ->
+    (forall i j, entry ma i j = entry mb i j) ->
+    (forall p, In p (support mb) -> In p (support direct)) ->
+    matrix_ok ma = forallb (fun k => nonnegative k mb) (keys direct).
+  Proof.
+    intros ma mb direct Hwfma Hwfdirect Heq Hsupport.
+    destruct (matrix_ok ma) eqn:Hma;
+      destruct (forallb (fun k => nonnegative k mb) (keys direct))
+        eqn:Hmb; try reflexivity.
+    - exfalso. apply Bool.not_true_iff_false in Hmb.
+      apply Hmb. apply forallb_forall. intros k Hkey.
+      unfold nonnegative. destruct (entry ma k k) as [z|] eqn:Hentry;
+        [|rewrite <- (Heq k k); now rewrite Hentry].
+      assert (Hrow : exists row, M.get k ma = Some row).
+      { unfold entry in Hentry. destruct (M.get k ma) as [row|] eqn:Hget;
+          [now exists row|discriminate]. }
+      destruct Hrow as [row Hrow].
+      pose proof (matrix_ok_row ma k row Hwfma Hma Hrow) as Hcheck.
+      unfold nonnegative in Hcheck. rewrite Hentry in Hcheck.
+      rewrite <- (Heq k k). now rewrite Hentry.
+    - exfalso. apply Bool.not_true_iff_false in Hma.
+      apply Hma. apply matrix_ok_of_all_nonnegative. intro k.
+      unfold nonnegative. destruct (entry ma k k) as [z|] eqn:Hentry;
+        [|reflexivity].
+      assert (Hmbentry : entry mb k k = Some z).
+      { now rewrite <- (Heq k k). }
+      assert (Hkey : In k (keys direct)).
+      { apply keys_cover; [exact Hwfdirect|].
+        apply Hsupport. eapply entry_source_support. exact Hmbentry. }
+      rewrite forallb_forall in Hmb.
+      pose proof (Hmb k Hkey) as Hcheck.
+      unfold nonnegative in Hcheck. now rewrite Hmbentry in Hcheck.
+  Qed.
+
   (** A coherent triangle transports a unary half-bound across one edge. *)
   Lemma unary_half_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
