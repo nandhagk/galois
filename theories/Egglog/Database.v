@@ -9366,7 +9366,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Collision unions keep the same functional-dependency closure. *)
   Lemma F10_rstep_cong : forall s s' i j, state_inv s -> rstep s = inl s' ->
     (cong (fst s') i j <-> cong (fst s) i j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next i j Hinv Hstep. change (inv_on db work) in Hinv.
+    assert (Hagrees : forest_agrees db).
+    { split; [exact (inv_on_forest_wf db work Hinv) |].
+      intros a b. exact (inv_on_same_repr db work a b Hinv). }
+    assert (Htyped : forall g args output,
+      row (view db) g args output -> kind_ok db g args output).
+    { unfold inv_on in Hinv. tauto. }
+    unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db x current Hpop) as [_ Hview].
+      unfold cong. now rewrite Hview.
+    - injection Hstep as Hnext. subst next. cbn [fst]. split.
+      + exact (repair_cong_backward db f k Hagrees i j).
+      + exact (repair_cong_forward db f k Hagrees Htyped i j).
+  Qed.
 
   (** Every old row survives one step at an equivalent, possibly unfinished key. *)
   Lemma F11_rstep_keeps : forall s s' f k o, state_inv s -> rstep s = inl s' ->
