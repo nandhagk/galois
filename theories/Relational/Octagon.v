@@ -5967,6 +5967,43 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - apply wf_tighten, wf_fw. exact Hwf.
   Qed.
 
+  (** Successful final diagonal checking leaves every supported diagonal zero. *)
+  Lemma tclose_zero_diag : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i, In (K.encode i) (support m') -> entry m' i i = Some 0%Z.
+  Proof.
+    intros m m' Hwf Hresult i Hsupport.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m)) eqn:Hfirst;
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)) eqn:Hsecond; [|discriminate].
+    inversion Hresult; subst m'.
+    assert (Hsource : In (K.encode i) (support (fw m))).
+    { apply (proj1 (support_tighten (fw m) (K.encode i))).
+      apply (proj1 (support_strengthen (tighten (fw m)) (K.encode i))).
+      exact Hsupport. }
+    pose proof (proj1 (fw_closed_success m Hwf Hfirst) i Hsource) as Hzero.
+    assert (Hne : i <> flip i).
+    { intros Heq. destruct i as [x s]. destruct s; discriminate. }
+    assert (Htight : entry (tighten (fw m)) i i = Some 0%Z).
+    { rewrite entry_tighten_other by exact Hne. exact Hzero. }
+    pose proof (strengthen_below_old (tighten (fw m))
+      (wf_tighten (fw m) (wf_fw m Hwf)) i i) as Hbelow.
+    rewrite Htight in Hbelow.
+    destruct (RelationalPathBounds.below_finite _ _ Hbelow)
+      as [d [Hd Hle]].
+    rewrite forallb_forall in Hsecond.
+    assert (Hkey : In i (keys m)).
+    { apply (proj2 (keys_support_iff m i Hwf)).
+      apply (proj1 (fw_support m (K.encode i))). exact Hsource. }
+    pose proof (Hsecond i Hkey) as Hnonnegative.
+    unfold nonnegative in Hnonnegative. rewrite Hd in Hnonnegative.
+    apply Z.leb_le in Hnonnegative. assert (d = 0)%Z by lia.
+    now subst d.
+  Qed.
+
   (** Original and final key lists cover the same supported vertices. *)
   Lemma keys_fw_membership : forall m k, dbm_wf m ->
     (In k (keys m) <-> In k (keys (fw m))).
