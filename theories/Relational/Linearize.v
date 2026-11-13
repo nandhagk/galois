@@ -7,9 +7,12 @@
 From Stdlib Require Import List ZArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
-From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang.
+From Galois.Bits Require Import Word Fun Arith Op.
+From Galois.Domains Require Import LangSig ValueSig IntervalSig ZLang BitsLang.
 From Galois.Relational Require Import LinForm LinearizeSig.
 Import List.ListNotations.
+
+Local Open Scope nat_scope.
 
 Module LinearizeCode (X : KEY_OPS) (L : LANG_OPS) <: LINEARIZE_OPS X L.
   Definition lin_of (e : term L.op X.t) : option (lin X.t * wrapr) :=
@@ -345,3 +348,294 @@ Module ZLinearize (X : KEY) <: LINEARIZE X ZLang ZNum.
     - constructor.
   Qed.
 End ZLinearize.
+
+(** * Word affine forms *)
+
+(** Word affine arithmetic uses the three integer-preserving binary operators. *)
+Inductive affine_binary :=
+  | AffineAdd
+  | AffineSub
+  | AffineMul.
+
+Definition affine_zview (a : affine_binary) : zview :=
+  match a with
+  | AffineAdd => ZAdd
+  | AffineSub => ZSub
+  | AffineMul => ZMul
+  end.
+
+TimeFun affine_zview.
+
+Definition affine_word_op (a : affine_binary) : Op.op :=
+  match a with
+  | AffineAdd => bvadd
+  | AffineSub => bvsub
+  | AffineMul => bvmul
+  end.
+
+TimeFun affine_word_op.
+
+Definition affine_word_tag (a : affine_binary) : binary_tag :=
+  match a with
+  | AffineAdd => BAdd
+  | AffineSub => BSub
+  | AffineMul => BMul
+  end.
+
+TimeFun affine_word_tag.
+
+Definition affine_value (a : affine_binary) (x y : Z) : Z :=
+  match a with
+  | AffineAdd => (x + y)%Z
+  | AffineSub => (x - y)%Z
+  | AffineMul => (x * y)%Z
+  end.
+
+TimeFun affine_value.
+
+Definition word_affine (o : Op.op) : option affine_binary :=
+  match o with
+  | bvadd => Some AffineAdd
+  | bvsub => Some AffineSub
+  | bvmul => Some AffineMul
+  | _ => None
+  end.
+
+TimeFun word_affine.
+
+(** The numeric views normalize raw words before interpreting their sign. *)
+Definition word_number (is_signed : bool) (c : word) : Z :=
+  if is_signed then signed (fst c) (snd c) else wrap (fst c) (snd c).
+
+TimeFun word_number.
+
+(** Known-width results use the inclusive interval of their numeric view. *)
+Definition word_range (is_signed : bool) (w : positive) : wrapr :=
+  if is_signed then WrapTo (- half w)%Z (half w - 1)%Z
+  else WrapTo 0%Z (modulus w - 1)%Z.
+
+TimeFun word_range.
+
+(** A width from either operand is enough after the concrete equal-width check. *)
+Definition known_width (a b : option positive) : option positive :=
+  match a with
+  | Some w => Some w
+  | None => b
+  end.
+
+TimeFun known_width.
+
+(** Binary forms need a syntactically known width for their final wrap. *)
+Definition blinear_pair {X} (a : affine_binary)
+    (f g : lin X * option positive) : option (lin X * option positive) :=
+  match known_width (snd f) (snd g), zlinear_op (affine_zview a) [fst f; fst g] with
+  | Some w, Some h => Some (h, Some w)
+  | _, _ => None
+  end.
+
+TimeFun blinear_pair.
+
+(** Constants establish widths and affine binary operators propagate them. *)
+Definition blinear_op {X} (o : bop) (fs : list (lin X * option positive))
+    : option (lin X * option positive) :=
+  match o, fs with
+  | BConst w z, [] => Some (linear_const z, Some w)
+  | BOp o, [f; g] =>
+    match word_affine o with
+    | Some a => blinear_pair a f g
+    | None => None
+    end
+  | _, _ => None
+  end.
+
+TimeFun blinear_op.
+
+(** The internal form carries a known width separately from its coefficients. *)
+Fixpoint blinear_form {X} (e : term bop X) : option (lin X * option positive) :=
+  match e with
+  | Leaf x => Some (linear_var x, None)
+  | Node o es =>
+    match sequence (map blinear_form es) with
+    | Some fs => blinear_op o fs
+    | None => None
+    end
+  end.
+
+TimeFun blinear_form.
+
+(** An unknown-width leaf is exact, while a known-width form is exact modulo that width. *)
+Definition bform_holds {X} (is_signed : bool) (v : X -> Z) (c : word)
+    (fw : lin X * option positive) : Prop :=
+  match snd fw with
+  | None => word_number is_signed c = eval_lin v (fst fw)
+  | Some w => fst c = w /\ wrap w (eval_lin v (fst fw)) = wrap w (snd c)
+  end.
+
+(** Both numeric views represent the same residue as the raw word. *)
+Lemma wrap_word_number : forall is_signed w z,
+  wrap w (word_number is_signed (w, z)) = wrap w z.
+Proof.
+  intros [|] w z; cbn [word_number fst snd].
+  - apply wrap_signed.
+  - apply wrap_wrap.
+Qed.
+
+(** Every internal form agrees with its concrete word modulo the concrete width. *)
+Lemma bform_congruent : forall X is_signed (v : X -> Z) c fw,
+  bform_holds is_signed v c fw ->
+  wrap (fst c) (eval_lin v (fst fw)) = wrap (fst c) (snd c).
+Proof.
+  intros X is_signed v [w z] [f ow] Hform.
+  destruct ow as [q|]; cbn [bform_holds fst snd] in Hform |- *.
+  - destruct Hform as [Hwidth Hvalue]. now subst q.
+  - rewrite <- Hform. apply wrap_word_number.
+Qed.
+
+(** A selected operand width agrees with both equal-width concrete operands. *)
+Lemma known_width_sound : forall X is_signed (v : X -> Z) c d f g ow1 ow2 w,
+  fst c = fst d -> bform_holds is_signed v c (f, ow1) ->
+  bform_holds is_signed v d (g, ow2) -> known_width ow1 ow2 = Some w -> fst c = w.
+Proof.
+  intros X is_signed v c d f g [w1|] ow2 w Hsame Hleft Hright Hknown.
+  - cbn [known_width] in Hknown. inversion Hknown; subst w.
+    exact (proj1 Hleft).
+  - destruct ow2 as [w2|]; [|discriminate].
+    cbn [known_width] in Hknown. inversion Hknown; subst w.
+    rewrite Hsame. exact (proj1 Hright).
+Qed.
+
+(** Integer dispatch exposes the mathematical arithmetic of an affine binary tag. *)
+Lemma affine_zview_eval : forall a x y,
+  zview_eval (affine_zview a) [x; y] = Some (affine_value a x y).
+Proof.
+  intros [| |] x y; reflexivity.
+Qed.
+
+(** Word dispatch selects the matching affine arithmetic primitive. *)
+Lemma affine_word_dispatch : forall a,
+  word_fun2 (affine_word_op a) = Some (affine_word_tag a).
+Proof.
+  intros [| |]; reflexivity.
+Qed.
+
+(** Affine word primitives wrap their corresponding integer result. *)
+Lemma affine_word_value : forall a w x y,
+  eval_binary_tag (affine_word_tag a) w x y = wrap w (affine_value a x y).
+Proof.
+  intros [| |] w x y; reflexivity.
+Qed.
+
+(** Successful affine word evaluation checks equal widths and returns the wrapped result. *)
+Lemma affine_word_eval : forall a wa wb x y c,
+  eval_op (affine_word_op a) [(wa, x); (wb, y)] = Some c ->
+  wa = wb /\ c = (wa, wrap wa (affine_value a x y)).
+Proof.
+  intros a wa wb x y c Heval.
+  pose proof (eval_op_fun2_width (affine_word_op a) (affine_word_tag a)
+    wa wb x y c (affine_word_dispatch a) Heval) as Hwidth. subst wb.
+  rewrite (eval_op_fun2 (affine_word_op a) wa x y (affine_word_tag a)
+    (affine_word_dispatch a)), affine_word_value in Heval.
+  split; [reflexivity|now inversion Heval].
+Qed.
+
+(** Recognition identifies the exact word operator selected by an affine tag. *)
+Lemma word_affine_sound : forall o a, word_affine o = Some a -> o = affine_word_op a.
+Proof.
+  intros o a Htag. destruct o; cbn [word_affine] in Htag;
+    try discriminate; inversion Htag; reflexivity.
+Qed.
+
+(** Modular equivalence is preserved by every affine binary primitive. *)
+Lemma wrap_affine_value : forall a w x y u v,
+  wrap w x = wrap w u -> wrap w y = wrap w v ->
+  wrap w (affine_value a x y) = wrap w (affine_value a u v).
+Proof.
+  intros [| |] w x y u v Hleft Hright; cbn [affine_value].
+  - rewrite (wrap_add w x y), (wrap_add w u v). now rewrite Hleft, Hright.
+  - rewrite (wrap_sub w x y), (wrap_sub w u v). now rewrite Hleft, Hright.
+  - rewrite (wrap_mul w x y), (wrap_mul w u v). now rewrite Hleft, Hright.
+Qed.
+
+(** Combining recognized word forms preserves their modular interpretation. *)
+Lemma blinear_pair_sound : forall X is_signed (v : X -> Z) a c1 c2 f1 f2 fr c,
+  bform_holds is_signed v c1 f1 -> bform_holds is_signed v c2 f2 ->
+  eval_op (affine_word_op a) [c1; c2] = Some c ->
+  blinear_pair a f1 f2 = Some fr -> bform_holds is_signed v c fr.
+Proof.
+  intros X is_signed v a [wa x] [wb y] [f1 ow1] [f2 ow2] fr c Hleft Hright Heval Hlin.
+  destruct (affine_word_eval a wa wb x y c Heval) as [Hsame Hresult]. subst wb c.
+  unfold blinear_pair in Hlin. cbn [fst snd] in Hlin.
+  destruct (known_width ow1 ow2) as [w|] eqn:Hknown; [|discriminate].
+  destruct (zlinear_op (affine_zview a) [f1; f2]) as [f|] eqn:Hform;
+    [|discriminate].
+  inversion Hlin; subst fr.
+  pose proof (known_width_sound X is_signed v (wa, x) (wa, y) f1 f2 ow1 ow2 w
+    eq_refl Hleft Hright Hknown) as Hwidth. cbn [fst] in Hwidth. subst w.
+  cbn [bform_holds fst snd]. split; [reflexivity|]. rewrite wrap_wrap.
+  pose proof (zlinear_op_sound X v (affine_zview a) [f1; f2] f
+    (affine_value a (eval_lin v f1) (eval_lin v f2)) Hform
+    (affine_zview_eval a (eval_lin v f1) (eval_lin v f2))) as Hvalue.
+  rewrite <- Hvalue. apply wrap_affine_value.
+  - exact (bform_congruent X is_signed v (wa, x) (f1, ow1) Hleft).
+  - exact (bform_congruent X is_signed v (wa, y) (f2, ow2) Hright).
+Qed.
+
+(** Every recognized word operator preserves the modular meaning of its operands. *)
+Lemma blinear_op_sound : forall X is_signed (v : X -> Z) o cs fs fr c,
+  Forall2 (bform_holds is_signed v) cs fs ->
+  BitsLang.eval o cs = Some c -> blinear_op o fs = Some fr ->
+  bform_holds is_signed v c fr.
+Proof.
+  intros X is_signed v [w z|o] cs fs fr c Hargs Heval Hlin.
+  - destruct fs; cbn [blinear_op] in Hlin; [|discriminate].
+    inversion Hargs; subst cs. cbn [BitsLang.eval] in Heval.
+    inversion Heval; subst c. inversion Hlin; subst fr.
+    cbn [bform_holds fst snd]. split; [reflexivity|].
+    change (wrap w (0 + z)%Z = wrap w (wrap w z)). rewrite wrap_wrap.
+    reflexivity.
+  - destruct fs as [|f1 [|f2 [|f3 fs]]]; cbn [blinear_op] in Hlin;
+      try discriminate.
+    destruct (word_affine o) as [a|] eqn:Htag; [|discriminate].
+    inversion Hargs as [|c1 f1' cs1 fs1 Hleft Htail]; subst.
+    inversion Htail as [|c2 f2' cs2 fs2 Hright Hnil]; subst.
+    inversion Hnil; subst.
+    apply word_affine_sound in Htag. subst o.
+    change (eval_op (affine_word_op a) [c1; c2] = Some c) in Heval.
+    exact (blinear_pair_sound X is_signed v a c1 c2 f1 f2 fr c
+      Hleft Hright Heval Hlin).
+Qed.
+
+(** The recursive word recognizer agrees with concrete evaluation in either numeric view. *)
+Lemma blinear_form_sound : forall X is_signed (e : term bop X) st c fw,
+  eval_term BitsLang.eval st e = Some c -> blinear_form e = Some fw ->
+  bform_holds is_signed (fun x => word_number is_signed (st x)) c fw.
+Proof.
+  intros X is_signed e. induction e as [x|o es IH]; intros st c fw Heval Hlin.
+  - cbn [eval_term] in Heval. cbn [blinear_form] in Hlin.
+    inversion Heval; subst c. inversion Hlin; subst fw.
+    change (word_number is_signed (st x) =
+      (1 * word_number is_signed (st x) + 0 + 0)%Z). ring.
+  - cbn [eval_term] in Heval. cbn [blinear_form] in Hlin.
+    destruct (sequence (map (eval_term BitsLang.eval st) es)) as [cs|] eqn:Hcs;
+      [|discriminate].
+    destruct (sequence (map blinear_form es)) as [fs|] eqn:Hfs;
+      [|discriminate].
+    assert (Hvalues : Forall2
+      (bform_holds is_signed (fun x => word_number is_signed (st x))) cs fs).
+    { clear Heval Hlin. revert cs fs Hcs Hfs.
+      induction IH as [|e He es Hes IHes]; intros cs fs Hcs Hfs.
+      - cbn [map sequence] in Hcs, Hfs.
+        inversion Hcs; inversion Hfs; constructor.
+      - cbn [map sequence] in Hcs, Hfs.
+        destruct (eval_term BitsLang.eval st e) as [v|] eqn:Heval;
+          [|discriminate].
+        destruct (blinear_form e) as [g|] eqn:Hform; [|discriminate].
+        destruct (sequence (map (eval_term BitsLang.eval st) es)) as [vs|] eqn:Hvs;
+          [|discriminate].
+        destruct (sequence (map blinear_form es)) as [gs|] eqn:Hgs;
+          [|discriminate].
+        inversion Hcs; subst cs. inversion Hfs; subst fs. constructor.
+        + eapply He; eauto.
+        + eapply IHes; eauto. }
+    eapply blinear_op_sound; eauto.
+Qed.
