@@ -22,6 +22,25 @@ End FixtureValue.
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
 
+(** Normalization leaves an unallocated identifier unchanged even when its query code is large. *)
+Example normalize_unallocated_identifier :
+  FixtureDatabase.normal_cell (FixtureDatabase.init [] []) (Id 1048576%positive) =
+    Id 1048576%positive.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The allocation guard preserves representative lookup and mixed value/identifier keys. *)
+Example normalize_allocated_and_unallocated :
+  let first := snd (FixtureDatabase.make 9%positive [] (FixtureDatabase.init [] [])) in
+  let second := snd (FixtureDatabase.make 9%positive [] first) in
+  let db := FixtureDatabase.union 1%positive 2%positive second in
+  FixtureDatabase.normal_key db [Id 2%positive; Val 3%positive; Id 1024%positive] =
+    [Id 1%positive; Val 3%positive; Id 1024%positive].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Constructor allocation reuses an existing key and allocates once for each new key. *)
 Example make_reuses_constructor :
   let db := FixtureDatabase.init [Decl 2%positive [SVal] OId] [] in

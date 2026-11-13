@@ -1075,7 +1075,11 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     PTrieCode.get f (runtime_kinds (db_runtime db)).
   Definition normal_cell (db : t) (c : cell V.t) : cell V.t :=
     match c with
-    | Id i => Id (fst (UnionFindCode.find i (db_forest db)))
+    | Id i =>
+      match N.compare (runtime_allocated (db_runtime db)) (Npos i) with
+      | Lt => Id i
+      | _ => Id (fst (UnionFindCode.find i (db_forest db)))
+      end
     | Val v => Val v
     end.
   Definition normal_key (db : t) (k : list (cell V.t)) : list (cell V.t) :=
@@ -1665,7 +1669,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma normal_cell_correct : forall db c, wf db -> normal_cell db c = canon db c.
   Proof.
     intros db [i | v] Hwf; cbn [normal_cell canon repr].
-    - f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hallocated.
+      + f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+      + f_equal. symmetry. apply UnionFindCodeFacts.repr_absent.
+        intro Hmember. apply (proj1 (wf_forest_members db Hwf i)) in Hmember.
+        apply N.compare_lt_iff in Hallocated.
+        change (Npos i <= runtime_allocated (db_runtime db))%N in Hmember.
+        apply (N.lt_irrefl (Npos i)). eapply N.le_lt_trans; eassumption.
+      + f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
     - reflexivity.
   Qed.
 
@@ -4698,7 +4709,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     forall c, den nu (normal_cell db c) = den nu c.
   Proof.
     intros M nu db [Hforest Hmeaning] [i | v]; cbn [normal_cell den]; [| reflexivity].
-    rewrite (UnionFind.find_repr i (db_forest db) Hforest). f_equal. exact (Hmeaning i).
+    destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
+      rewrite (UnionFind.find_repr i (db_forest db) Hforest); cbn [den];
+      f_equal; exact (Hmeaning i).
   Qed.
 
   (** Row and scheduling updates that retain the forest also retain its interpretation. *)
