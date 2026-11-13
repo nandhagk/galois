@@ -233,6 +233,181 @@ Module WordTime.
       rewrite !Nat2N.inj_add, !Nat2N.inj_pow in *; time_cbn_all; nia.
   Qed.
 
+  (** Bit lookup traverses at most the positive input's bits while decrementing its index. *)
+  Lemma positive_testbit_time_bound p n :
+    (Word.Pos.T_testbit p n <=
+      N.of_nat ((Pos.size_nat p + 1) * (N.size_nat n + 2)))%N.
+  Proof.
+    revert n. induction p as [p IH|p IH|]; intros [|n];
+      time_unfold Word.Pos.T_testbit; cbn [Pos.size_nat N.size_nat].
+    all: try (specialize (IH (Pos.pred_N n)); pose proof (Pos.T_pred_N_le n) as Hpred;
+      assert (Hsize : (N.of_nat (N.size_nat (Pos.pred_N n)) <=
+        N.of_nat (Pos.size_nat n))%N) by
+        (apply time_of_nat_le; apply N.size_nat_pred_N)).
+    all: rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Nonnegative integer bit lookup is quadratic in input and index bit lengths. *)
+  Lemma integer_testbit_time_bound a n : (0 <= a)%Z -> (0 <= n)%Z ->
+    (Word.Z.T_testbit a n <=
+      4 * N.of_nat ((Z.size_nat a + 1) * (Z.size_nat n + 1)))%N.
+  Proof.
+    intros Ha Hn. destruct a as [|a|a], n as [|n|n]; try lia;
+      time_unfold Word.Z.T_testbit; cbn [Z.size_nat]; time_simpl; time_cbn; try lia.
+    pose proof (positive_testbit_time_bound a (Npos n)) as Hbit.
+    cbn [N.size_nat] in Hbit.
+    rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Reading the sign bit charges wrapping and a width-bounded bit lookup. *)
+  Lemma word_msb_time_bound w z :
+    (T_msb w z <= 128 * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w z) as Hwrap.
+    pose proof (Z.T_sub_le (Zpos w) 1) as Hsubtract.
+    pose proof (integer_testbit_time_bound (wrap w z) (Zpos w - 1)
+      (proj1 (wrap_is_word w z)) ltac:(lia)) as Hbit.
+    assert (Hsize : (N.of_nat (Z.size_nat (wrap w z)) <=
+      N.of_nat (Pos.to_nat w))%N).
+    { apply time_of_nat_le. apply word_wrap_size_bound. }
+    assert (Hwidth : (N.of_nat (Pos.size_nat w) <= N.of_nat (Pos.to_nat w))%N).
+    { apply time_of_nat_le. apply positive_size_value. }
+    assert (Hindex : (N.of_nat (Z.size_nat (Zpos w - 1)) <=
+      N.of_nat (Pos.to_nat w))%N).
+    { apply time_of_nat_le. eapply Nat.le_trans.
+      - apply (Z.size_nat_mono (Zpos w - 1) (Zpos w)). lia.
+      - apply positive_size_value. }
+    time_unfold T_msb. change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hsubtract.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_pow in *.
+    time_cbn_all. nia.
+  Qed.
+
+  (** The binary size representation agrees with the natural bit count. *)
+  Lemma positive_size_correct p : Pos.to_nat (Pos.size p) = Pos.size_nat p.
+  Proof.
+    induction p as [p IH|p IH|]; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ, ?IH; reflexivity.
+  Qed.
+
+  (** Constructing the binary bit count costs at most a quadratic bit budget. *)
+  Lemma positive_size_time_bound p :
+    (Fun.Pos.T_size p <= N.of_nat ((Pos.size_nat p + 1) ^ 2))%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_unfold Fun.Pos.T_size; cbn [Pos.size_nat].
+    all: try (pose proof (Pos.T_succ_le (Pos.size p)) as Hsucc;
+      pose proof (positive_size_value (Pos.size p)) as Hsize;
+      rewrite positive_size_correct in Hsize;
+      apply time_of_nat_le in Hsize).
+    all: rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** A binary logarithm cannot increase magnitude bit length. *)
+  Lemma integer_log2_size z : (Z.size_nat (Z.log2 z) <= Z.size_nat z)%nat.
+  Proof.
+    destruct z as [|[p|p|]|p]; cbn [Z.log2 Z.size_nat Pos.size_nat]; try lia.
+    all: pose proof (positive_size_value (Pos.size p)) as Hsize;
+      rewrite positive_size_correct in Hsize; lia.
+  Qed.
+
+  (** Integer logarithms construct a binary bit count. *)
+  Lemma integer_log2_time_bound z :
+    (Fun.Z.T_log2 z <= 2 * N.of_nat ((Z.size_nat z + 1) ^ 2))%N.
+  Proof.
+    destruct z as [|[p|p|]|p]; time_unfold Fun.Z.T_log2;
+      cbn [Z.size_nat Pos.size_nat].
+    all: try pose proof (positive_size_time_bound p) as Hsize.
+    all: rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** A positive integer has no more set bits than its numeric value. *)
+  Lemma positive_popcount_bound p : (0 <= popcount_pos p <= Zpos p)%Z.
+  Proof.
+    induction p as [p IH|p IH|].
+    - change (0 <= 1 + popcount_pos p <= 2 * Zpos p + 1)%Z. lia.
+    - change (0 <= popcount_pos p <= 2 * Zpos p)%Z. lia.
+    - cbn. lia.
+  Qed.
+
+  (** Population counts fit within the input's magnitude bit length. *)
+  Lemma positive_popcount_size p : (Z.size_nat (popcount_pos p) <= Pos.size_nat p)%nat.
+  Proof.
+    apply (Z.size_nat_mono (popcount_pos p) (Zpos p)). apply positive_popcount_bound.
+  Qed.
+
+  (** Counting set bits traverses the input and increments a bounded counter. *)
+  Lemma positive_popcount_time_bound p :
+    (T_popcount_pos p <= 8 * N.of_nat ((Pos.size_nat p + 1) ^ 2))%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_unfold T_popcount_pos; cbn [Pos.size_nat].
+    all: try (pose proof (Z.T_add_le 1 (popcount_pos p)) as Hadd;
+      pose proof (time_of_nat_le _ _ (positive_popcount_size p)) as Hsize).
+    all: rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Integer population count adds a constant dispatch cost. *)
+  Lemma integer_popcount_time_bound z :
+    (T_popcount z <= 16 * N.of_nat ((Z.size_nat z + 1) ^ 2))%N.
+  Proof.
+    destruct z as [|p|p]; time_unfold T_popcount; cbn [Z.size_nat].
+    all: try pose proof (positive_popcount_time_bound p) as Hcount.
+    all: rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Conjunction with a normalized word cannot introduce higher bits. *)
+  Lemma integer_land_size_bound w x y : is_word w x ->
+    (Z.size_nat (Z.land x y) <= Pos.to_nat w)%nat.
+  Proof.
+    intros Hx. apply word_size_bound, word_of_bits. intros i Hi.
+    rewrite Z.land_spec, (word_bits_high w x i Hx Hi). reflexivity.
+  Qed.
+
+  (** Leading-zero count charges wrapping and two bounded integer subtractions. *)
+  Lemma word_clz_time_bound w x :
+    (T_wclz w x <= 256 * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hwrap.
+    pose proof (Z.T_eqb_le (wrap w x) 0) as Heq.
+    pose proof (Z.T_sub_le (Zpos w) 1) as Hsubwidth.
+    pose proof (integer_log2_time_bound (wrap w x)) as Hlog.
+    pose proof (Z.T_sub_le (Zpos w - 1) (Z.log2 (wrap w x))) as Hsub.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsize.
+    pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidth.
+    pose proof (time_of_nat_le _ _ (integer_log2_size (wrap w x))) as Hlogsize.
+    pose proof (time_of_nat_le _ _
+      (Z.size_nat_mono (Zpos w - 1) (Zpos w) ltac:(lia))) as Hsubsize.
+    time_unfold T_wclz. destruct (wrap w x =? 0)%Z;
+      change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in *;
+      rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Trailing-zero count forms the low bit and computes its logarithm. *)
+  Lemma word_ctz_time_bound w x :
+    (T_wctz w x <= 256 * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hwrap.
+    pose proof (Z.T_eqb_le (wrap w x) 0) as Heq.
+    pose proof (Z.T_opp_le (wrap w x)) as Hopp.
+    pose proof (Z.T_land_le (wrap w x) (- wrap w x)) as Hland.
+    pose proof (integer_log2_time_bound (Z.land (wrap w x) (- wrap w x))) as Hlog.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsize.
+    pose proof (time_of_nat_le _ _
+      (integer_land_size_bound w (wrap w x) (- wrap w x) (wrap_is_word w x))) as Hlandsize.
+    rewrite integer_opp_size in Hland.
+    time_unfold T_wctz. destruct (wrap w x =? 0)%Z;
+      rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Word population count charges wrapping and traversal of at most the declared width. *)
+  Lemma word_popcount_time_bound w x :
+    (T_wpopcnt w x <= 128 * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hwrap.
+    pose proof (integer_popcount_time_bound (wrap w x)) as Hcount.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsize.
+    time_unfold T_wpopcnt.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
 End WordTime.
 
 
@@ -320,7 +495,9 @@ Module BitsLangT <: LANG_T.
     (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_literal_le : forall o, (T_literal o <= c_lang)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o. unfold c_lang. time_step.
+  Qed.
 End BitsLangT.
 
 Module WordLanguageT <: WORD_LANGUAGE_T.
