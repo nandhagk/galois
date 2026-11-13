@@ -6683,6 +6683,192 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hforest Hqueue. exact (proj2 (rebuild_queue_state db Hforest Hqueue)).
   Qed.
 
+  (** Enlarging an identifier relation preserves the induced relation on keys. *)
+  Lemma key_rel_mono_forward : forall (before after : positive -> positive -> Prop),
+    (forall i j, before i j -> after i j) -> forall (left right : list (cell V.t)),
+    Forall2 (cell_rel before) left right -> Forall2 (cell_rel after) left right.
+  Proof.
+    intros before after Hmono left right Hkeys. induction Hkeys as
+      [| first second left right Hcell Hkeys IH]; constructor; [| exact IH].
+    destruct Hcell; constructor; auto.
+  Qed.
+
+  (** Every key is related to itself by the database equality relation. *)
+  Lemma key_same_refl_forward : forall db (key : list (cell V.t)),
+    Forall2 (cell_rel (same (view db))) key key.
+  Proof.
+    intros db key. induction key as [| [i | value] rest IH]; constructor;
+      try exact IH; constructor. apply equality_log_refl.
+  Qed.
+
+  (** Normalizing an identifier returns an identifier in the same equality class. *)
+  Lemma normal_id_same_forward : forall db i, forest_agrees db ->
+    exists j, normal_cell db (Id i) = Id j /\ same (view db) i j.
+  Proof.
+    intros db i Hagrees.
+    pose proof (forest_agrees_normal_cell db (Id i) Hagrees) as Hrelated.
+    destruct (normal_cell db (Id i)) as [j | value] eqn:Hnormal.
+    - exists j. split; [reflexivity |]. inversion Hrelated; assumption.
+    - inversion Hrelated.
+  Qed.
+
+  (** A constructor accumulator is retained by the executable output combination. *)
+  Lemma combine_output_id_forward : forall db f i output,
+    combine_output db f (Some (Some (Id i))) output = Some (Id i).
+  Proof.
+    intros db f i [[j | value] |]; unfold combine_output;
+      destruct (kind_get f db) as [[| |m] |]; reflexivity.
+  Qed.
+
+  (** Inserting any row preserves every already stored constructor row exactly. *)
+  Lemma put_constructor_keeps : forall db f key output g args i,
+    row (view db) g args (Some (Id i)) ->
+    row (view (put f key output db)) g args (Some (Id i)).
+  Proof.
+    intros db f key output g args i Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args))
+      (RowKeys.encode (f, normal_key db key))) as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (put_row_target_raw db f key output) as Htarget.
+      change (row_get f (normal_key db key) db = Some (Some (Id i))) in Hrow.
+      now rewrite Hrow, combine_output_id_forward in Htarget.
+    - assert (Hother : (g, args) <> (f, normal_key db key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exact (proj2 (put_other_rows db f key output g args (Some (Id i)) Hother) Hrow).
+  Qed.
+
+  (** A typed constructor output has an identifier payload. *)
+  Lemma kind_ok_id_shape_forward : forall db f key output,
+    kind_ok db f key output -> kind (view db) f = Some OId ->
+    exists i, output = Some (Id i).
+  Proof.
+    intros db f key output [_ [_ Hshape]] Hkind. rewrite Hkind in Hshape.
+    destruct output as [[i | value] |]; try contradiction. now exists i.
+  Qed.
+
+  (** A stored typed constructor row declares a constructor function. *)
+  Lemma kind_ok_id_kind_forward : forall db f key i,
+    kind_ok db f key (Some (Id i)) -> kind (view db) f = Some OId.
+  Proof.
+    intros db f key i [_ [_ Hshape]].
+    destruct (kind (view db) f) as [[| |m] |]; try contradiction; reflexivity.
+  Qed.
+
+  (** A constructor insertion has a target row whose output equals its requested class. *)
+  Lemma put_constructor_target_same : forall db f key i, forest_agrees db ->
+    (forall output, row (view db) f (normal_key db key) output ->
+      exists j, output = Some (Id j)) ->
+    exists j, row (view (put f key (Some (Id i)) db)) f (normal_key db key)
+      (Some (Id j)) /\ same (view (put f key (Some (Id i)) db)) i j.
+  Proof.
+    intros db f key i Hagrees Hshape.
+    destruct (normal_id_same_forward db i Hagrees) as [j [Hnormal Hsame]].
+    pose proof (put_row_target_raw db f key (Some (Id i))) as Htarget.
+    cbn [option_map] in Htarget. rewrite Hnormal in Htarget.
+    destruct (row_get f (normal_key db key) db) as [output |] eqn:Hprevious.
+    - destruct (Hshape output Hprevious) as [old Houtput]. subst output.
+      rewrite combine_output_id_forward in Htarget. exists old. split; [exact Htarget |].
+      eapply equality_log_trans with (b := j).
+      + now apply put_same_preserves_raw.
+      + apply equality_log_sym. eapply put_conflict_same_raw.
+        * exact Hagrees.
+        * exact Hprevious.
+        * cbn [option_map]. now rewrite Hnormal.
+    - change (row (view (put f key (Some (Id i)) db)) f (normal_key db key)
+        (Some (Id j))) in Htarget.
+      exists j. split; [exact Htarget |]. now apply put_same_preserves_raw.
+  Qed.
+
+  (** A deleted constructor row is reinserted with an equivalent identifier output. *)
+  Lemma deleted_constructor_target_same : forall db f key i, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    row (view db) f key (Some (Id i)) ->
+    let after := put f (normal_key db key) (option_map (normal_cell db) (Some (Id i)))
+      (row_delete f key db) in
+    exists j, row (view after) f (normal_key db key) (Some (Id j)) /\
+      same (view after) i j.
+  Proof.
+    intros db f key i Hagrees Htyped Hrow. cbn zeta.
+    destruct (normal_id_same_forward db i Hagrees) as [j [Hnormal Hsame]].
+    cbn [option_map]. rewrite Hnormal.
+    assert (Hdeleted : forest_agrees (row_delete f key db)).
+    { eapply forest_agrees_frame;
+        [apply row_delete_forest | apply row_delete_same | exact Hagrees]. }
+    assert (Hkind : kind (view db) f = Some OId).
+    { apply kind_ok_id_kind_forward with (key := key) (i := i). now apply Htyped. }
+    assert (Hshape : forall output,
+      row (view (row_delete f key db)) f
+        (normal_key (row_delete f key db) (normal_key db key)) output ->
+      exists old, output = Some (Id old)).
+    { intros output Hcurrent. apply row_delete_binding in Hcurrent as [Hcurrent _].
+      exact (kind_ok_id_shape_forward db f
+        (normal_key (row_delete f key db) (normal_key db key)) output
+        (Htyped f _ output Hcurrent) Hkind). }
+    destruct (put_constructor_target_same (row_delete f key db) f (normal_key db key)
+      j Hdeleted Hshape) as [output [Htarget Hjoined]].
+    rewrite row_delete_normal_key, (normal_key_idempotent db key (proj1 Hagrees)) in Htarget.
+    exists output. split; [exact Htarget |].
+    eapply equality_log_trans; [| exact Hjoined]. apply put_same_preserves_raw.
+    now rewrite row_delete_same.
+  Qed.
+
+  (** Repair retains constructor rows other than the row it explicitly deletes. *)
+  Lemma repair_other_constructor_keeps : forall db f key g args i,
+    (g, args) <> (f, key) -> row (view db) g args (Some (Id i)) ->
+    row (view (repair_current f key db)) g args (Some (Id i)).
+  Proof.
+    intros db f key g args i Hdifferent Hrow. unfold repair_current.
+    destruct (row_get f key db) as [before |]; [| exact Hrow].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+      (output_eqb (option_map (normal_cell db) before) before)); [exact Hrow |].
+    apply put_constructor_keeps. apply row_delete_binding. now split.
+  Qed.
+
+  (** Every old constructor row has a post-repair row in the same key and output classes. *)
+  Lemma repair_constructor_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args i, row (view db) g args (Some (Id i)) ->
+    exists args' j, row (view (repair_current f key db)) g args' (Some (Id j)) /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args' /\
+      same (view (repair_current f key db)) i j.
+  Proof.
+    intros db f key Hagrees Htyped g args i Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args)) (RowKeys.encode (f, key)))
+      as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      pose proof (deleted_constructor_target_same db f key i Hagrees Htyped Hrow) as Htarget.
+      change (row_get f key db = Some (Some (Id i))) in Hrow.
+      unfold repair_current. rewrite Hrow.
+      destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+        (output_eqb (option_map (normal_cell db) (Some (Id i))) (Some (Id i)))).
+      + exists key, i. split; [exact Hrow |]. split;
+          [apply key_same_refl_forward | apply equality_log_refl].
+      + destruct Htarget as [j [Htarget Hjoined]]. exists (normal_key db key), j.
+        split; [exact Htarget |]. split; [| exact Hjoined].
+        eapply key_rel_mono_forward; [| now apply forest_agrees_normal_key].
+        intros a b Hab. apply put_same_preserves_raw. now rewrite row_delete_same.
+    - exists args, i. split.
+      + apply repair_other_constructor_keeps; [| exact Hrow].
+        intro Hequal. apply Hdifferent. now rewrite Hequal.
+      + split; [apply key_same_refl_forward | apply equality_log_refl].
+  Qed.
+
+  (** Actual repair preserves every consequence of the old constructor rows and equalities. *)
+  Lemma repair_cong_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall i j, cong db i j -> cong (repair_current f key db) i j.
+  Proof.
+    intros db f key Hagrees Htyped. unfold cong.
+    apply fd_congruence_rows_transfer.
+    - intros i j Hsame. apply cong_same. now apply repair_current_same_preserves.
+    - intros g args i Hrow.
+      destruct (repair_constructor_forward db f key Hagrees Htyped g args i Hrow)
+        as [args' [j [Htarget [Hkeys Houtput]]]].
+      exists args', j. split; [exact Htarget |]. split.
+      + eapply key_rel_mono_forward; [| exact Hkeys]. intros a b Hab. now apply cong_same.
+      + now apply cong_same.
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
