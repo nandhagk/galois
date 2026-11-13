@@ -1579,6 +1579,49 @@ Proof.
     exists (S n), perm, j. split; [exact Hslot | exact Hposition].
 Qed.
 
+Lemma database_group_of_ranked : forall kinds start groups sl n f perm g j,
+  nth_error sl n = Some (f, perm) ->
+  nth_error (database_rank_slots_from kinds start groups sl) n = Some (true, g, j) ->
+  database_group_of f sl (database_rank_slots_from kinds start groups sl) = Some g.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH];
+    intros start groups n f perm g j Hslot Hrank;
+    destruct n as [|n]; cbn [nth_error database_rank_slots_from] in Hslot, Hrank;
+    try discriminate.
+  - injection Hslot as <- <-.
+    destruct (PTrieCode.get head kinds) eqn:Hkind; cbn [database_rank_slots_from] in Hrank;
+      try discriminate.
+    inversion Hrank; subst. cbn [database_group_of database_rank_slots_from].
+    now rewrite Hkind, Pos.eqb_refl.
+  - set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head (fst place, N.succ (snd place)) groups).
+    destruct (Pos.eq_dec f head) as [-> | Hne].
+    + assert (Hdecl : PTrieCode.get head kinds <> None).
+      { intro Hnone. pose proof (database_rank_slots_from_flag kinds
+          (N.succ start) updated rest n head perm true g j Hslot Hrank) as Hflag.
+        rewrite Hnone in Hflag. discriminate. }
+      destruct (PTrieCode.get head kinds) eqn:Hkind; [|contradiction].
+      assert (Hsame : fst place = g).
+      { eapply database_rank_slots_from_same_function with
+          (kinds := kinds) (start := start) (groups := groups) (sl := (head, layout) :: rest)
+          (n := 0%nat) (m := S n) (f := head) (first := layout) (second := perm)
+          (d := true) (e := true) (j := snd place) (k := j);
+          [reflexivity | exact Hslot | | exact Hrank].
+        cbn [nth_error database_rank_slots_from]. now rewrite Hkind. }
+      cbn [database_group_of database_rank_slots_from].
+      rewrite Hkind, Pos.eqb_refl. unfold place in Hsame. now rewrite Hsame.
+    + assert (Hdifferent : Pos.eqb f head = false).
+      { apply Pos.eqb_neq. exact Hne. }
+      cbn [database_group_of].
+      destruct (PTrieCode.get head kinds) eqn:Hkind;
+        cbn [database_rank_slots_from database_group_of];
+        rewrite Hkind.
+      * rewrite Hdifferent. eapply IH; eassumption.
+      * eapply IH; eassumption.
+Qed.
+
 (** A group's stored slots are listed in their original slot order. *)
 Fixpoint database_group_slots (s : N) (d : bool) (g : N)
     (positions : list (bool * N * N)) : list N :=
@@ -11226,6 +11269,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite Hbound in Hinside. rewrite N.succ_pos_spec in Hrecorded. lia.
   Qed.
 
+  Lemma metadata_slot_strict : forall db s f perm, metadata_ok db ->
+    slot_of db s = Some (f, perm) -> (s < wmark db)%N.
+  Proof.
+    intros db s f perm Hmetadata Hslot.
+    pose proof (slots_metadata_inside db s f perm Hmetadata Hslot) as Hinside.
+    destruct Hmetadata as (_ & Hslots & _ & _ & _ & _ & _ & Hbound).
+    pose proof (recorded_counters_wmark db _ Hslots) as Hrecorded.
+    rewrite Hbound in Hinside. rewrite N.succ_pos_spec in Hrecorded. lia.
+  Qed.
+
   (** A cache call records the actual positive rank of its complete input tuple. *)
   Lemma slots_update_rank_wmark : forall db b f u,
     (Npos (Pos.of_succ_nat (length u)) <= wmark (slots_update b f u db))%N.
@@ -11511,7 +11564,63 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       nth_error (group_slots db d g) (N.to_nat j) = Some s /\
       (d = true <-> kind (view db) f <> None) /\
       (d = true -> group_of db f = Some g /\ (g < wmark db)%N).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work s f perm Hinv Hslot.
+    assert (Hrank : slot_rank_ok db).
+    { apply forest_slot_rank. unfold inv_on in Hinv. tauto. }
+    assert (Hmetadata : metadata_ok db) by (now apply inv_on_metadata with work).
+    unfold slot_rank_ok in Hrank.
+    assert (Hlength : length (slot_positions _ (db_slot_store db)) = length (slots db)).
+    { rewrite Hrank. apply database_rank_slots_from_length. }
+    assert (Hinside : N.to_nat s < length (slot_positions _ (db_slot_store db))).
+    { rewrite Hlength. apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    destruct (nth_error (slot_positions _ (db_slot_store db)) (N.to_nat s))
+      as [[[d g] j] |] eqn:Hposition.
+    2: { exfalso. apply nth_error_Some in Hinside. congruence. }
+    exists d, g, j. split; [exact Hposition |].
+    assert (Hslot_rank : nth_error
+      (database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
+        PTrieCode.empty (slots db)) (N.to_nat s) = Some (d, g, j)).
+    { now rewrite <- Hrank. }
+    assert (Hbounds : (g <= s)%N /\ (j <= s)%N).
+    { pose proof (database_rank_slots_from_bound _ _ _ _
+        database_rank_groups_bounded_empty _ _ _ _ Hslot_rank) as Hbounded.
+      now rewrite N2Nat.id in Hbounded. }
+    destruct Hbounds as [Hgroup_bound Hoffset_bound].
+    split; [exact Hgroup_bound |]. split; [exact Hoffset_bound |].
+    assert (Hslot_raw : nth_error (slots db) (N.to_nat s) = Some (f, perm)).
+    { exact Hslot. }
+    assert (Hoffset : j = N.of_nat
+      (database_slot_count f (firstn (N.to_nat s) (slots db)))).
+    { eapply database_rank_slots_from_offset with (prefix := []);
+        [| exact Hslot_raw | exact Hslot_rank].
+      intro name. unfold database_rank_offset, database_slot_count.
+      rewrite PTrie.get_empty. reflexivity. }
+    assert (Hprefix : length (database_group_slots 0%N d g
+      (firstn (N.to_nat s) (slot_positions _ (db_slot_store db)))) =
+      database_slot_count f (firstn (N.to_nat s) (slots db))).
+    { rewrite Hrank. eapply database_ranked_prefix_count; eassumption. }
+    assert (Hmember : nth_error (group_slots db d g) (N.to_nat j) = Some s).
+    { unfold group_slots. rewrite Hoffset, Nat2N.id, <- Hprefix.
+      pose proof (database_group_slots_nth _ _ _ _ _ Hposition) as Hnth.
+      now rewrite N2Nat.id in Hnth. }
+    split; [exact Hmember |].
+    assert (Hflag : d = match PTrieCode.get f (runtime_kinds (db_runtime db)) with
+      | Some _ => true | None => false end).
+    { eapply database_rank_slots_from_flag; eassumption. }
+    split.
+    - change (d = true <-> PTrieCode.get f (runtime_kinds (db_runtime db)) <> None).
+      rewrite Hflag. destruct (PTrieCode.get f (runtime_kinds (db_runtime db)));
+        split; congruence.
+    - intro Hdeclared. subst d. split.
+      + unfold group_of. rewrite Hrank.
+        rewrite Hdeclared in Hslot_rank.
+        eapply database_group_of_ranked with (n := N.to_nat s) (perm := perm) (j := j).
+        * exact Hslot_raw.
+        * exact Hslot_rank.
+      + eapply N.le_lt_trans; [exact Hgroup_bound |].
+        eapply metadata_slot_strict; eassumption.
+  Qed.
   (** A declared group lists precisely the slots of its function, once each. *)
   Lemma F_group_slots : forall db work f g, inv_on db work -> group_of db f = Some g ->
     NoDup (group_slots db true g) /\
