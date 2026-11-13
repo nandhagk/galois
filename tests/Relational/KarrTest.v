@@ -164,6 +164,31 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** The generic linearizer has no recognized forms; these fixtures test its affine worker. *)
+Example affine_assignment_updates_its_old_value :
+  Equalities.assign_rows 1%positive (Lin _ [(1%positive, 1)] 1) [x1] =
+    [LCons _ [(1%positive, 1)] REq 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example negative_self_coefficient_preserves_inequality_direction :
+  Equalities.assign_rows 1%positive (Lin _ [(1%positive, -2)] 3)
+    [LCons _ [(1%positive, 1)] RLe 4] =
+    [LCons _ [(1%positive, -1)] RLe 5].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example canceled_old_value_uses_projection_and_the_defining_equality :
+  Equalities.leb
+    (Reached (Equalities.assign_rows 1%positive
+      (Lin _ [(1%positive, 1); (1%positive, -1); (2%positive, 1)] 1) [x1; y1]))
+    (Reached [LCons _ [(1%positive, 1)] REq 2; y1]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Three nonunit pivots require exact division by earlier pivots. *)
 Definition coupled : list (lcons positive) :=
   [LCons _ [(1%positive, 2); (2%positive, 1); (3%positive, 1)] REq 3;

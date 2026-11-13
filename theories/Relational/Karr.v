@@ -1196,6 +1196,85 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     intros [| p | p]; cbn; ring.
   Qed.
 
+  (** Replacing x by its affine value satisfies the inverse image of each old row. *)
+  Lemma inverse_row_eval : forall (v : X.t -> Z) x f a r,
+    a = coefficient x (coef f) ->
+    eval_coef (upd X.eqb v x (eval_lin v f)) (lhs (inverse_row x f a r)) =
+      (Z.abs a * eval_coef v (lhs r) +
+       (if (a <? 0)%Z then (-1)%Z else 1%Z) * coefficient x (lhs r) * cst f)%Z.
+  Proof.
+    intros v x f a r Ha.
+    set (sign := if (a <? 0)%Z then (-1)%Z else 1%Z).
+    set (b := coefficient x (lhs r)).
+    unfold inverse_row. fold sign b. cbn [normalize_row lhs].
+    rewrite normalize_coef_eval.
+    change ((sign * b * upd X.eqb v x (eval_lin v f) x +
+      eval_coef (upd X.eqb v x (eval_lin v f))
+        (map (fun p => (fst p, (Z.abs a * snd p)%Z))
+          (filter (fun p => negb (X.eqb (fst p) x)) (lhs r)) ++
+         map (fun p => (fst p, (- sign * b * snd p)%Z))
+          (filter (fun p => negb (X.eqb (fst p) x)) (coef f))))%Z =
+      (Z.abs a * eval_coef v (lhs r) + sign * b * cst f)%Z).
+    rewrite eval_coef_app, !eval_coef_scale, !eval_coef_without, !eval_coef_update.
+    unfold upd. rewrite key_eqb_refl. rewrite <- Ha. fold b.
+    pose proof (coefficient_sign_abs a) as Hsign. fold sign in Hsign.
+    rewrite <- Hsign. unfold eval_lin. ring.
+  Qed.
+
+  (** Positive scaling in an inverse row preserves both equality and inequality. *)
+  Lemma inverse_row_sound : forall (v : X.t -> Z) x f r,
+    sat v r ->
+    sat (upd X.eqb v x (eval_lin v f))
+      (inverse_row x f (coefficient x (coef f)) r).
+  Proof.
+    intros v x f r Hsat. unfold sat.
+    rewrite inverse_row_eval by reflexivity.
+    cbn [inverse_row normalize_row lrel rhs].
+    pose proof (Z.abs_nonneg (coefficient x (coef f))) as Hpositive.
+    unfold sat in Hsat. destruct (lrel r); nia.
+  Qed.
+
+  (** An assignment independent of the old x establishes its defining equality. *)
+  Lemma assignment_equation_sound : forall (v : X.t -> Z) x f,
+    coefficient x (coef f) = 0%Z ->
+    sat (upd X.eqb v x (eval_lin v f))
+      (normalize_row (LCons X.t
+        ((x, 1%Z) :: map (fun p => (fst p, (- snd p)%Z)) (coef f)) REq (cst f))).
+  Proof.
+    intros v x f Hfree. apply normalize_row_sat.
+    change ((1 * upd X.eqb v x (eval_lin v f) x +
+      eval_coef (upd X.eqb v x (eval_lin v f))
+        (map (fun p => (fst p, (- snd p)%Z)) (coef f)))%Z = cst f).
+    rewrite eval_coef_opp, eval_coef_update, Hfree.
+    unfold upd, eval_lin. rewrite key_eqb_refl. ring.
+  Qed.
+
+  (** Both affine assignment branches retain the concrete updated store. *)
+  Lemma assign_rows_sound : forall (v : X.t -> Z) x f P,
+    Forall (sat v) P -> Forall (sat (upd X.eqb v x (eval_lin v f))) (assign_rows x f P).
+  Proof.
+    intros v x f P Hmodels. unfold assign_rows.
+    destruct (Z.eqb (coefficient x (coef f)) 0) eqn:Hzero.
+    - apply Z.eqb_eq in Hzero. constructor.
+      + now apply assignment_equation_sound.
+      + now apply project_sound.
+    - apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply inverse_row_sound. apply in_map_iff in Hin as [r [Hsame Hin]]. subst s.
+      apply normalize_row_sat. now apply (proj1 (Forall_forall _ _) Hmodels).
+  Qed.
+
+  (** Numeric interpretation commutes pointwise with an update of a concrete store. *)
+  Lemma numeric_update_models : forall st x c P,
+    Forall (sat (upd X.eqb (fun y => N.num (st y)) x (N.num c))) P ->
+    Forall (sat (fun y => N.num (upd X.eqb st x c y))) P.
+  Proof.
+    intros st x c P Hmodels. apply Forall_forall. intros r Hin.
+    apply sat_pointwise with (v := upd X.eqb (fun y => N.num (st y)) x (N.num c)).
+    - intro y. unfold upd. destruct (X.eqb y x); reflexivity.
+    - now apply (proj1 (Forall_forall _ _) Hmodels).
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
@@ -1269,7 +1348,18 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [| P] st c Hmodels Heval; [contradiction |]. unfold assign.
+    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |].
+    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (assign_rows x f P)).
+      apply numeric_update_models.
+      pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
+      cbn [wrap_into] in Hvalue. rewrite Hvalue. now apply assign_rows_sound.
+    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
+      apply numeric_update_models. now apply project_sound.
+    - change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
+      apply numeric_update_models. now apply project_sound.
+  Qed.
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
   Proof.
