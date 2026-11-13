@@ -128,14 +128,59 @@ Module BoundedHeight (K : KEY) (S : SET K) (U : UNIVERSE K S)
     length (filter (fun k => S.mem k (proj1_sig a)) (S.elements U.u)).
   Definition height : nat := length (S.elements U.u).
 
+  Local Lemma filter_count_order (f g : K.t -> bool) xs :
+    (forall x, In x xs -> f x = true -> g x = true) ->
+    length (filter f xs) <= length (filter g xs) /\
+    (length (filter f xs) = length (filter g xs) ->
+      forall x, In x xs -> g x = true -> f x = true).
+  Proof.
+    induction xs as [|x xs IH]; intro Horder; cbn.
+    - split; [lia|intros _ y Hin; contradiction].
+    - assert (Htail : forall y, In y xs -> f y = true -> g y = true).
+      { intros y Hin Hy; apply Horder; [right; exact Hin|exact Hy]. }
+      destruct (IH Htail) as [Hle Heq].
+      destruct (f x) eqn:Hf, (g x) eqn:Hg; cbn.
+      + split; [lia|]. intros Hlen y [<-|Hin] Hy; [exact Hf|].
+        apply Heq; [lia|assumption|assumption].
+      + exfalso. specialize (Horder x (or_introl eq_refl) Hf). congruence.
+      + split; [lia|]. intros Hlen. lia.
+      + split; [lia|]. intros Hlen y [<-|Hin] Hy; [congruence|].
+        apply Heq; assumption.
+  Qed.
+
   (** The restricted support contains at most all universe keys. *)
   Lemma rank_le : forall a, rank a <= height.
-  Proof. Admitted. (* STUB *)
+  Proof. intro a; unfold rank, height; apply filter_length_le. Qed.
   (** Inclusion never removes a universe key. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hab. unfold rank.
+    assert (Horder : forall k, In k (S.elements U.u) ->
+      S.mem k (proj1_sig a) = true -> S.mem k (proj1_sig b) = true).
+    { intros k Hin Hmem. rewrite !S.mem_has in *.
+      apply (proj1 (S.subset_spec _ _) Hab); exact Hmem. }
+    exact (proj1 (filter_count_order _ _ _ Horder)).
+  Qed.
   (** Strict inclusion adds a universe key. *)
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hab Hba.
+    assert (Horder : forall k, In k (S.elements U.u) ->
+      S.mem k (proj1_sig a) = true -> S.mem k (proj1_sig b) = true).
+    { intros k Hin Hmem. rewrite !S.mem_has in *.
+      apply (proj1 (S.subset_spec _ _) Hab); exact Hmem. }
+    destruct (filter_count_order _ _ _ Horder) as [Hle Heq].
+    unfold rank. assert (Hne : length (filter (fun k => S.mem k (proj1_sig a)) (S.elements U.u)) <>
+      length (filter (fun k => S.mem k (proj1_sig b)) (S.elements U.u))).
+    { intro Hlen. assert (Hback : Lat.leb b a = true).
+      { apply S.subset_spec. intros p Hp.
+        pose proof (proj1 (S.subset_spec _ _) (proj2_sig b) p Hp) as Hu.
+        destruct (S.wf_has U.u p U.u_wf Hu) as [k Hk]. subst p.
+        rewrite <- S.mem_has. apply (Heq Hlen k).
+        - apply (proj2 (S.elements_spec U.u k U.u_wf)). rewrite S.mem_has. exact Hu.
+        - rewrite S.mem_has. exact Hp. }
+      congruence. }
+    lia.
+  Qed.
 End BoundedHeight.
