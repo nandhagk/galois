@@ -622,10 +622,57 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         end
     end.
   TimeFun fw_trace.
-  (** A round keeps the support and its key bits. *)
+  (** Reflected key equality supplies the Boolean test used by deduplication. *)
+  Lemma key_eqb_true : forall x y, K.eqb x y = true <-> x = y.
+  Proof.
+    intros x y. destruct (K.eqb_spec x y); split; congruence.
+  Qed.
+
+  (** Consistent stored labels name codes actually present in their map. *)
+  Lemma elements_code : forall A (m : M.t A) k, M.wf m ->
+    In k (map fst (M.elements m)) -> In (K.encode k) (M.codes m).
+  Proof.
+    intros A m k Hwf Hin. apply in_map_iff in Hin.
+    destruct Hin as [[q value] [Hq Hin]]. cbn in Hq. subst q.
+    apply M.codes_spec. rewrite <- (M.get_find A k m).
+    pose proof (proj1 (M.elements_spec A m k value Hwf) Hin) as Hget.
+    rewrite Hget. discriminate.
+  Qed.
+
+  (** Pivot collection keeps each key once. *)
+  Lemma keys_nodup : forall m, NoDup (keys m).
+  Proof.
+    intro m. unfold keys. apply (dedup_nodup K.t K.eqb key_eqb_true).
+    constructor.
+  Qed.
+
+  (** Injective encoding preserves distinct pivot keys. *)
+  Lemma encoded_keys_nodup : forall ks, NoDup ks -> NoDup (map K.encode ks).
+  Proof.
+    intros ks Hkeys. induction Hkeys as [|k ks Hfresh Hkeys IH].
+    - constructor.
+    - cbn. constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin.
+      destruct Hin as [q [Hcode Hq]]. apply K.encode_inj in Hcode.
+      subst q. exact (Hfresh Hq).
+  Qed.
+
+  (** Each consistent pivot label names a code in the matrix support. *)
   Lemma keys_support : forall m k, dbm_wf m -> In k (keys m) ->
     In (K.encode k) (support m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m k [Houter Hrows] Hkey. unfold keys in Hkey.
+    rewrite (dedup_membership K.t K.eqb key_eqb_true) in Hkey.
+    destruct Hkey as [Hkey | Hempty]; [|contradiction].
+    apply in_app_iff in Hkey. apply support_spec. destruct Hkey as [Hkey | Hkey].
+    - left. now apply elements_code.
+    - right. apply in_flat_map in Hkey.
+      destruct Hkey as [[i row] [Hrow Hkey]]. cbn in Hkey.
+      pose proof (proj1 (M.elements_spec (M.t Z) m i row Houter) Hrow) as Hget.
+      rewrite M.get_find in Hget.
+      apply in_flat_map. exists row. split.
+      + exact (row_in_rows m (K.encode i) row Hget).
+      + apply elements_code; [exact (Hrows (K.encode i) row Hget)|exact Hkey].
+  Qed.
   Lemma bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
   Proof. Admitted. (* STUB *)
   Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
@@ -637,7 +684,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof. Admitted. (* STUB *)
   (** A consistent matrix has no more pivot keys than codes in its support. *)
   Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m Hwf. unfold supp.
+    rewrite <- (length_map K.encode (keys m)). apply NoDup_incl_length.
+    - apply encoded_keys_nodup, keys_nodup.
+    - intros p Hin. apply in_map_iff in Hin. destruct Hin as [k [Hcode Hkey]].
+      subst p. now apply keys_support.
+  Qed.
   (** Closure pays its pivot list, the performed rounds and the final diagonal. *)
   Lemma T2_close : forall m, dbm_wf m ->
     (T_close m <= k_zone * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
