@@ -1320,10 +1320,129 @@ Module PTrieT <: TRIE_ALL.
       unfold k_merge. time_step.
   Qed.
   (** Merging charges the callbacks at shared and one-sided bindings. *)
+  Local Lemma merging_sum_app (xs ys : list N) :
+    fold_right N.add 0%N (xs ++ ys) =
+      (fold_right N.add 0 xs + fold_right N.add 0 ys)%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [app fold_right]; rewrite ?IH; lia.
+  Qed.
 
+  Local Lemma merging_lookup_entries {A} (m : t A) (w : positive -> option A -> N) :
+    List.map (fun p => w p (get p m)) (List.map fst (elements m)) =
+      List.map (fun ka => w (fst ka) (Some (snd ka))) (elements m).
+  Proof.
+    rewrite map_map. apply map_ext_in. intros [p a] Hin.
+    apply elements_spec in Hin. cbn [fst snd]. now rewrite Hin.
+  Qed.
 
+  Local Lemma merging_empty_left {A B} (w : option A -> option B -> N)
+      (xs : list (positive * B)) :
+    List.map (fun kb => w (get (fst kb) (@Empty A)) (Some (snd kb))) xs =
+      List.map (fun kb => w None (Some (snd kb))) xs.
+  Proof.
+    apply map_ext. intros [p b]. cbn [fst snd]. now rewrite get_empty.
+  Qed.
 
+  Local Lemma merging_empty_right {A B} (w : option A -> option B -> N)
+      (xs : list (positive * A)) :
+    List.map (fun ka => w (Some (snd ka)) (get (fst ka) (@Empty B))) xs =
+      List.map (fun ka => w (Some (snd ka)) None) xs.
+  Proof.
+    apply map_ext. intros [p a]. cbn [fst snd]. now rewrite get_empty.
+  Qed.
 
+  Local Lemma T_merge_ne_sum {A B C} (f : option A -> option B -> option C) T_f
+      (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr cl cr
+      (Hfl : forall a, (T_fl a <= cl * (N.of_nat (nodes a + 1) + fold_right N.add 0
+        (List.map (fun ka => T_f (Some (snd ka)) None) (elements a))))%N)
+      (Hfr : forall b, (T_fr b <= cr * (N.of_nat (nodes b + 1) + fold_right N.add 0
+        (List.map (fun kb => T_f None (Some (snd kb))) (elements b))))%N)
+      (n : ne A) : forall u,
+    (T_merge_ne f T_f fl T_fl fr T_fr n u <=
+      16 * (cl + cr + 1) * (T_f None None + 1) * N.of_nat (nodes_ne n + nodes u) +
+      16 * (cl + cr + 1) *
+      (fold_right N.add 0 (List.map
+         (fun ka => T_f (Some (snd ka)) (get (fst ka) u)) (entries_ne n)) +
+       fold_right N.add 0 (List.map
+         (fun kb => T_f (get (fst kb) (Nodes n)) (Some (snd kb))) (entries u))))%N.
+  Proof.
+    remember (16 * (cl + cr + 1))%N as scale eqn:Hscale.
+    remember (scale * (T_f None None + 1))%N as budget eqn:Hbudget.
+    assert (Hleft_budget : (2 * cl + 1 <= budget)%N) by nia.
+    assert (Hleft_scale : (cl <= scale)%N) by nia.
+    assert (Hright_scale : (cr <= scale)%N) by nia.
+    assert (Hright_budget : (cr <= budget)%N) by nia.
+    assert (Hroot_budget : (T_f None None + 2 * cr + 16 <= 2 * budget)%N) by nia.
+    assert (Hscale_positive : (1 <= scale)%N) by nia.
+    clear Hscale Hbudget.
+    assert (Hleft_linear : forall tr,
+      (T_fl tr <= cl * N.of_nat (nodes tr + 1) + scale * fold_right N.add 0
+        (List.map (fun ka => T_f (Some (snd ka)) None) (entries tr)))%N).
+    { intro tr. pose proof (Hfl tr) as Hraw. rewrite elements_entries in Hraw.
+      pose proof (N.mul_le_mono_r _ _ (fold_right N.add 0%N
+        (List.map (fun ka => T_f (Some (snd ka)) None) (entries tr))) Hleft_scale)
+        as Hscaled.
+      rewrite N.mul_add_distr_l in Hraw. lia. }
+    assert (Hright_linear : forall tr,
+      (T_fr tr <= budget * N.of_nat (nodes tr) + cr + scale * fold_right N.add 0
+        (List.map (fun kb => T_f None (Some (snd kb))) (entries tr)))%N).
+    { intro tr. pose proof (Hfr tr) as Hraw. rewrite elements_entries in Hraw.
+      pose proof (N.mul_le_mono_r _ _ (N.of_nat (nodes tr)) Hright_budget) as Hnodes.
+      pose proof (N.mul_le_mono_r _ _ (fold_right N.add 0%N
+        (List.map (fun kb => T_f None (Some (snd kb))) (entries tr))) Hright_scale)
+        as Hscaled.
+      rewrite Nat2N.inj_add in Hraw. time_cbn_all.
+      repeat rewrite N.mul_add_distr_l in Hraw. lia. }
+    assert (Hempty : forall mass run work,
+      (1 <= mass)%N -> (run <= cl * (mass + 1) + scale * work)%N ->
+      (1 + run <= budget * mass + scale * work)%N).
+    { intros mass run work Hpositive Hrun.
+      pose proof (N.mul_le_mono_r _ _ mass Hleft_budget) as Hscaled. nia. }
+    assert (Hroot : forall a b,
+      (T_f a b + 2 * cr + 16 <= 2 * budget + scale *
+        ((match a with Some _ => T_f a b | None => 0 end) +
+         (match b with Some _ => T_f a b | None => 0 end)))%N).
+    { intros a b.
+      pose proof (N.mul_le_mono_r _ _ (T_f a b) Hscale_positive) as Hscaled.
+      destruct a, b; time_cbn_all; repeat rewrite N.mul_add_distr_l; lia. }
+    clear Hfl Hfr Hleft_budget Hleft_scale Hright_scale Hright_budget Hscale_positive.
+    induction n; intros [|other]; time_unfold @T_merge_ne.
+    all: try solve [
+      match goal with
+      | |- context [?clock (Nodes ?tree)] =>
+        pose proof (Hleft_linear (Nodes tree)) as Honly;
+        rewrite merging_empty_right;
+        cbn [nodes entries List.map fold_right] in Honly |- *;
+        rewrite Nat.add_0_r; repeat rewrite N.add_0_r;
+        apply Hempty;
+        [cbn [nodes_ne]; lia|rewrite Nat2N.inj_add in Honly; exact Honly]
+      end].
+    all: try pose proof (IHn (left (Nodes other))) as Hleft.
+    all: try pose proof (IHn (right (Nodes other))) as Hright.
+    all: try pose proof (IHn1 (left (Nodes other))) as Hleft.
+    all: try pose proof (IHn2 (right (Nodes other))) as Hright.
+    all: pose proof (Hright_linear (left (Nodes other))) as Honlyleft.
+    all: pose proof (Hright_linear (right (Nodes other))) as Honlyright.
+    all: match goal with
+      | |- context [T_merge_value ?g ?T_g ?a ?b] => pose proof (Hroot a b) as Hrootcase
+      end.
+    all: unfold T_merge_value, T_left, T_value, T_right,
+      T_trie_left, T_trie_value, T_trie_right; time_simpl.
+    all: destruct other; cbn [nodes nodes_ne entries entries_ne] in *;
+      rewrite ?map_app, ?map_map, ?merging_sum_app in *;
+      cbn [List.map fold_right fst snd get trie_get left right value
+        trie_left trie_right trie_value] in *;
+      rewrite ?map_app, ?map_map, ?merging_sum_app in *;
+      rewrite ?merging_empty_left, ?merging_empty_right in *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *;
+      time_cbn_all.
+    all: repeat progress (
+      rewrite ?map_app, ?map_map, ?merging_sum_app in *;
+      cbn [List.map fold_right fst snd get trie_get left right value
+        trie_left trie_right trie_value] in *;
+      rewrite ?merging_empty_left, ?merging_empty_right in *).
+    all: repeat rewrite N.mul_add_distr_l in *; lia.
+  Qed.
 
   Lemma T4_merge_with_sum : forall A B C (f : option A -> option B -> option C) T_f
       (fl : t A -> t C) T_fl (fr : t B -> t C) T_fr m u cl cr,
@@ -1335,7 +1454,21 @@ Module PTrieT <: TRIE_ALL.
       ((T_f None None + 1) * N.of_nat (nodes m + nodes u + 1) +
        fold_right N.add 0 (List.map (fun p => T_f (get p m) (get p u))
          (List.map fst (elements m) ++ List.map fst (elements u)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f T_f fl T_fl fr T_fr m u cl cr Hfl Hfr.
+    rewrite map_app, merging_sum_app.
+    rewrite (merging_lookup_entries m (fun p a => T_f a (get p u))).
+    rewrite (merging_lookup_entries u (fun p b => T_f (get p m) b)).
+    destruct m as [|n].
+    - pose proof (Hfr u) as Honly. rewrite !elements_entries in *.
+      time_unfold @T_merge_with. rewrite merging_empty_left.
+      unfold k_merge. cbn [entries nodes List.map fold_right].
+      rewrite !Nat2N.inj_add. time_cbn_all. nia.
+    - pose proof (T_merge_ne_sum f T_f fl T_fl fr T_fr cl cr Hfl Hfr n u) as Hsum.
+      rewrite !elements_entries. time_unfold @T_merge_with.
+      unfold k_merge. cbn [entries nodes]. rewrite !Nat2N.inj_add in *.
+      time_cbn_all. nia.
+  Qed.
   (** Directional checking pays for at most one callback at each stored value. *)
   Local Lemma forall2_ne_clock_bound : forall A B (f : A -> option B -> bool) T_f n u c,
     (forall a b, T_f a b <= c)%N ->
@@ -1526,14 +1659,46 @@ Module PTrieT <: TRIE_ALL.
     rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
   Qed.
 
+  Local Lemma merging_sum_add {X} (w : X -> N) (xs : list X) :
+    fold_right N.add 0%N (List.map (fun x => 1 + w x)%N xs) =
+      (N.of_nat (length xs) + fold_right N.add 0 (List.map w xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [List.map fold_right length];
+      rewrite ?Nat2N.inj_succ, ?IH; nia.
+  Qed.
 
+  Local Lemma merging_filter_sum {A B} (f : A -> option B) T_f (m : t A) :
+    (T_filter_map f (fun a => 1 + T_f a)%N m <=
+      16 * (N.of_nat (nodes m + 1) +
+        fold_right N.add 0 (List.map (fun ka => T_f (snd ka)) (elements m))))%N.
+  Proof.
+    pose proof (@T3_filter_sum A B f (fun a => 1 + T_f a)%N m) as Hfilter.
+    cbn beta in Hfilter.
+    rewrite (merging_sum_add (fun ka => T_f (snd ka)) (elements m)) in Hfilter.
+    pose proof (elements_length_nodes m) as Hbindings.
+    apply time_of_nat_le in Hbindings. unfold k_filter in Hfilter.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
 
   Lemma T_merge_sum_le : forall A B C (f : option A -> option B -> option C) T_f m1 m2,
     (T_merge f T_f m1 m2 <= c_trie *
       ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
        fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
          (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f T_f m1 m2. time_unfold @T_merge.
+    lazymatch goal with
+    | |- context [T_merge_with ?g ?T_g ?fl ?T_fl ?fr ?T_fr ?m ?u] =>
+      pose proof (@T4_merge_with_sum A B C g T_g fl T_fl fr T_fr m u 16 16) as Hmerge
+    end.
+    specialize (Hmerge
+      (fun m => @merging_filter_sum A C (fun a => f (Some a) None)
+        (fun a => T_f (Some a) None) m)
+      (fun m => @merging_filter_sum B C (fun b => f None (Some b))
+        (fun b => T_f None (Some b)) m)).
+    unfold k_merge in Hmerge. unfold c_trie.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   Local Lemma checking_sum_bound {X} (xs : list X) (w v : X -> N) c :
     (forall x, In x xs -> (w x <= c + v x)%N) ->
     (fold_right N.add 0 (List.map w xs) <= c * N.of_nat (length xs) +
