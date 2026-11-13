@@ -202,6 +202,56 @@ Definition poly_upper (z : Z) (b : bnd) : bnd :=
 
 TimeFun poly_upper.
 
+(** Positive division by one returns the original numerator and zero remainder. *)
+Lemma poly_pos_div_one : forall p, Z.pos_div_eucl p 1 = (Z.pos p, 0%Z).
+Proof.
+  intro p. induction p as [p IH|p IH|]; cbn [Z.pos_div_eucl];
+    rewrite ?IH; reflexivity.
+Qed.
+
+(** Appending a one bit to a doubled positive integer has constant addition cost. *)
+Lemma T_poly_add_low_bit : forall p, (Z.T_add (2 * Z.pos p) 1 <= 4)%N.
+Proof.
+  intro p. change (Z.T_add (Z.pos (xO p)) 1 <= 4)%N.
+  time_unfold Z.T_add. time_unfold Pos.T_add. cbn. lia.
+Qed.
+
+(** The positive unit-divisor loop costs a fixed amount per numerator bit. *)
+Lemma T_poly_pos_div_one : forall p,
+  (Z.T_pos_div_eucl p 1 <= 32 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  intro p. induction p as [p IH|p IH|].
+  - time_unfold Z.T_pos_div_eucl. rewrite poly_pos_div_one.
+    cbn [fst snd].
+    pose proof (Z.T_mul_two_le (Z.pos p)) as Hdouble.
+    pose proof (T_poly_add_low_bit p) as Hbit.
+    cbn [Pos.size_nat]. rewrite Nat2N.inj_succ. time_simpl.
+    change (2 * 0)%Z with 0%Z. change (0 + 1)%Z with 1%Z.
+    change (1 <? 1)%Z with false. cbn [fst].
+    change (Z.T_mul 2 0) with 1%N. change (Z.T_add 0 1) with 1%N.
+    pose proof (Z.T_ltb_le 1 1) as Hcompare.
+    pose proof (Z.T_sub_le 1 1) as Hsubtract.
+    change (Z.T_ltb 1 1 <= 5)%N in Hcompare.
+    change (Z.T_sub 1 1 <= 9)%N in Hsubtract. nia.
+  - time_unfold Z.T_pos_div_eucl. rewrite poly_pos_div_one.
+    cbn [fst snd]. pose proof (Z.T_mul_two_le (Z.pos p)) as Hdouble.
+    cbn [Pos.size_nat]. rewrite Nat2N.inj_succ. time_simpl.
+    change (2 * 0)%Z with 0%Z. change (0 <? 1)%Z with true.
+    change (Z.T_mul 2 0) with 1%N. change (Z.T_ltb 0 1) with 2%N. nia.
+  - vm_compute. congruence.
+Qed.
+
+(** Signed unit division only adds constant sign-handling work to that scan. *)
+Lemma T_poly_div_one : forall z,
+  (Z.T_div z 1 <= 40 * (N.of_nat (Z.size_nat z) + 1))%N.
+Proof.
+  intros [|p|p]; time_unfold Z.T_div; time_unfold Z.T_div_eucl.
+  - cbn [Z.size_nat N.of_nat]. time_simpl. lia.
+  - pose proof (T_poly_pos_div_one p). cbn [Z.size_nat]. time_simpl. nia.
+  - pose proof (T_poly_pos_div_one p). rewrite poly_pos_div_one.
+    cbn [fst snd Z.size_nat]. pose proof (Z.T_opp_le (Z.pos p)). time_simpl. nia.
+Qed.
+
 (** Rational coefficient evaluation keeps every raw occurrence. *)
 Definition poly_eval_coef_Q {X} (v : X -> Q) (xs : list (X * Z)) : Q :=
   fold_right (fun p q => (inject_Z (snd p) * v (fst p) + q)%Q) 0%Q xs.
@@ -10156,6 +10206,198 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (fun x : X.t => X.T_encode x) with X.T_encode.
     unfold poly_entail_raw_factor.
     clear -Hengine_total Hnormalize Hpositive. clearbody work. nia.
+  Qed.
+
+
+  Definition poly_occurrences (x : X.t) (xs : list X.t) : nat :=
+    length (filter (X.eqb x) xs).
+
+  (** Selected and unselected occurrences partition every key list. *)
+  Lemma poly_occurrences_partition : forall x xs,
+    poly_occurrences x xs + length (filter (fun y => negb (X.eqb x y)) xs) = length xs.
+  Proof.
+    intros x xs. induction xs as [|y xs IH]; unfold poly_occurrences in *;
+      cbn [filter length]; [lia|].
+    destruct (X.eqb x y); cbn [negb length]; lia.
+  Qed.
+
+  (** A key absent from a list contributes no selected occurrence. *)
+  Lemma poly_occurrences_absent : forall x xs,
+    ~ In x xs -> poly_occurrences x xs = 0.
+  Proof.
+    intros x xs. induction xs as [|y xs IH]; intro Habsent; [reflexivity|].
+    unfold poly_occurrences in *. cbn [filter].
+    destruct (X.eqb_spec x y) as [Hequal|Hother].
+    - subst y. exfalso. apply Habsent. now left.
+    - apply IH. intro Hin. apply Habsent. now right.
+  Qed.
+
+  (** A duplicate-free support contains at most one occurrence of any key. *)
+  Lemma poly_occurrences_unique : forall xs, NoDup xs -> forall x,
+    poly_occurrences x xs <= 1.
+  Proof.
+    intros xs Hunique. induction Hunique as [|y xs Habsent Hunique IH]; intro x.
+    - change (0 <= 1). lia.
+    - unfold poly_occurrences at 1. cbn [filter].
+      destruct (X.eqb_spec x y) as [Hequal|Hother].
+      + subst y. cbn [length]. fold (poly_occurrences x xs).
+        rewrite (poly_occurrences_absent x xs Habsent). lia.
+      + apply IH.
+  Qed.
+
+  (** Every additional distinct key removes one possible repetition of the selected key. *)
+  Lemma poly_occurrences_budget : forall xs vars x,
+    NoDup vars -> incl vars xs ->
+    poly_occurrences x xs + length vars <= length xs + 1.
+  Proof.
+    intros xs vars x Hunique Hsupport.
+    assert (Hfiltered : length (filter (fun y => negb (X.eqb x y)) vars) <=
+      length (filter (fun y => negb (X.eqb x y)) xs)).
+    { apply NoDup_incl_length; [now apply NoDup_filter|].
+      intros y Hy. apply filter_In in Hy as [Hy Hkeep]. apply filter_In.
+      split; [now apply Hsupport|exact Hkeep]. }
+    pose proof (poly_occurrences_unique vars Hunique x) as Hone.
+    pose proof (poly_occurrences_partition x vars) as Hvars.
+    pose proof (poly_occurrences_partition x xs) as Hxs. lia.
+  Qed.
+
+  (** The total coefficient magnitude counts only occurrences of its own key. *)
+  Lemma poly_coefficient_occurrence_magnitude : forall xs x bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    poly_magnitude (C.coef_of x xs) <=
+      poly_occurrences x (map fst xs) * 2 ^ bits.
+  Proof.
+    intro xs. induction xs as [|[y a] xs IH]; intros x bits Hsizes.
+    - change (0 <= 0). lia.
+    - inversion Hsizes as [|p ps Ha Htail]; subst p ps.
+      pose proof (IH x bits Htail) as Hrest.
+      rewrite coef_of_cons. unfold poly_occurrences at 1. cbn [map fst filter].
+      destruct (X.eqb x y).
+      + cbn [length]. fold (poly_occurrences x (map fst xs)).
+        pose proof (poly_magnitude_add a (C.coef_of x xs)) as Hsum.
+        pose proof (poly_magnitude_upper a) as Hterm.
+        assert (Hpower : 2 ^ Z.size_nat a <= 2 ^ bits).
+        { apply Nat.pow_le_mono_r; cbn [snd] in Ha; lia. }
+        nia.
+      + exact Hrest.
+  Qed.
+
+  (** Merging coefficients needs a logarithm of duplicate surplus, not total input length. *)
+  Lemma poly_normal_coef_duplicate_bits : forall xs vars bits,
+    NoDup vars -> incl vars (map fst xs) ->
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Forall (fun p => Z.size_nat (snd p) <=
+      bits + Nat.log2 (length xs - length vars + 1) + 1)
+      (poly_normal_coef X.encode xs).
+  Proof.
+    intros xs vars bits Hunique Hsupport Hsizes.
+    assert (Hcount : length vars <= length xs).
+    { rewrite <- (length_map fst xs). now apply NoDup_incl_length. }
+    apply Forall_forall. intros [x z] Hin. cbn [snd].
+    pose proof (poly_coef_member x z (poly_normal_coef X.encode xs)
+      (poly_normal_coef_nodup _ _ _) Hin) as Hcoefficient.
+    rewrite coef_of_normal in Hcoefficient. rewrite <- Hcoefficient.
+    apply poly_count_magnitude_bits.
+    eapply Nat.le_trans; [apply poly_coefficient_occurrence_magnitude; exact Hsizes|].
+    apply Nat.mul_le_mono_r.
+    pose proof (poly_occurrences_budget (map fst xs) vars x Hunique Hsupport) as Hbudget.
+    rewrite length_map in Hbudget. lia.
+  Qed.
+
+  Definition poly_form_variables (f : lin X.t) : list X.t :=
+    poly_variables X.encode [LCons X.t (coef f) REq (cst f)].
+
+  (** The executable distinct form support is included in its raw occurrences. *)
+  Lemma poly_form_variables_support : forall f,
+    incl (poly_form_variables f) (map fst (coef f)).
+  Proof.
+    intros f x Hx. destruct (poly_variables_support _ _ Hx) as [r [[Hr|Hr] Hterm]].
+    - subst r. exact Hterm.
+    - contradiction.
+  Qed.
+
+  (** The distinct support cannot outnumber the raw form entries. *)
+  Lemma poly_form_variables_length : forall f,
+    length (poly_form_variables f) <= length (coef f).
+  Proof.
+    intro f. rewrite <- (length_map fst (coef f)).
+    apply NoDup_incl_length; [apply poly_variables_nodup|apply poly_form_variables_support].
+  Qed.
+
+  (** Each form coefficient uses only the logarithm of its duplicate surplus. *)
+  Lemma poly_form_duplicate_bits : forall f,
+    Forall (fun p => Z.size_nat (snd p) <= F.form_bits f +
+      Nat.log2 (length (coef f) - length (poly_form_variables f) + 1) + 1)
+      (poly_normal_coef X.encode (coef f)).
+  Proof.
+    intro f. apply poly_normal_coef_duplicate_bits.
+    - apply poly_variables_nodup.
+    - apply poly_form_variables_support.
+    - apply Forall_forall. intros p Hp. pose proof (poly_form_entry_bits f p Hp). lia.
+  Qed.
+
+  (** Each duplicate occurrence provides a spare elimination stage beyond distinct-variable work. *)
+  Lemma poly_range_distinct_fuel : forall P f,
+    length (poly_variables X.encode
+      (LCons X.t (coef f) REq (cst f) :: map (poly_normal_row X.encode) P)) <=
+      length (vars_of P) + length (poly_form_variables f).
+  Proof.
+    intros P f.
+    assert (Hlength : length (poly_variables X.encode
+      (LCons X.t (coef f) REq (cst f) :: map (poly_normal_row X.encode) P)) <=
+      length (vars_of P ++ poly_form_variables f)).
+    { apply NoDup_incl_length; [apply poly_variables_nodup|].
+      intros x Hx. destruct (poly_variables_support _ _ Hx) as [r [[Hr|Hr] Hterm]].
+      - subst r. apply in_or_app. right.
+        apply in_map_iff in Hterm as [[y a] [Hsame Hterm]]. cbn [fst] in Hsame. subst y.
+        unfold poly_form_variables. apply poly_variables_contains with
+          (r := LCons X.t (coef f) REq (cst f)) (a := a); [now left|exact Hterm].
+      - apply in_map_iff in Hr as [p [Hsame Hp]]. subst r.
+        apply in_or_app. left. apply poly_vars_of_contains with (r := p); [exact Hp|].
+        apply in_map_iff in Hterm as [q [Hsame Hq]]. subst x.
+        cbn [poly_normal_row lhs] in Hq. now apply poly_normal_coef_keys in Hq. }
+    now rewrite length_app in Hlength.
+  Qed.
+
+  (** A nonempty source supplies one extra stage beyond all duplicate-growth allowances. *)
+  Lemma poly_range_duplicate_fuel : forall P f count,
+    P <> [] -> length (coef f) <= count ->
+    length (coef f) - length (poly_form_variables f) +
+      S (length (poly_variables X.encode
+        (LCons X.t (coef f) REq (cst f) :: map (poly_normal_row X.encode) P))) <=
+      n P + count.
+  Proof.
+    intros P f count Hnonempty Hcount.
+    pose proof (poly_form_variables_length f) as Hsupport.
+    pose proof (poly_range_distinct_fuel P f) as Hfuel.
+    unfold n. destruct P; [contradiction|]. cbn [length]. lia.
+  Qed.
+
+  (** Prefix stages pay their width growth and only increase the remaining row allowance. *)
+  Lemma poly_fmcost_shift_width : forall extra fuel dim mlen rows bits,
+    fmcost dim mlen fuel rows (poly_width_after extra bits) <=
+      fmcost dim mlen (extra + fuel) rows bits.
+  Proof.
+    intro extra. induction extra as [|extra IH]; intros fuel dim mlen rows bits.
+    - reflexivity.
+    - cbn [poly_width_after Nat.add fmcost].
+      eapply Nat.le_trans; [apply IH|].
+      pose proof (poly_fmcost_params_mono (extra + fuel)
+        dim dim mlen mlen rows (rows ^ 2 / 4 + rows) (2 * bits + 1) (2 * bits + 1)
+        ltac:(lia) ltac:(lia) ltac:(lia) ltac:(lia)) as Hnext.
+      lia.
+  Qed.
+
+  (** Linear width growth from duplicate surplus fits its exponential stage allowance. *)
+  Lemma poly_duplicate_width_shift : forall extra bits,
+    bits + Nat.log2 (extra + 1) + 1 <= poly_width_after extra (2 * bits + 1).
+  Proof.
+    intros extra bits.
+    pose proof (Nat.log2_lt_lin (extra + 1) ltac:(lia)) as Hlog.
+    pose proof (poly_width_after_successor extra (2 * bits + 1)) as Hwidth.
+    assert (Hpower : extra + 1 <= 2 ^ extra).
+    { clear -extra. induction extra as [|extra IH]; cbn [Nat.pow]; nia. }
+    nia.
   Qed.
 
 End PolyClockCore.
