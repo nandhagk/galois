@@ -3144,9 +3144,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite M.find_empty in Hentry. discriminate.
     - intros changed k ignored Hchanged. now apply tighten_row_bits.
   Qed.
-  Lemma T2_tighten : forall m, dbm_wf m ->
-    (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
-  Proof. Admitted. (* STUB *)
   Lemma T3_strengthen : forall m, dbm_wf m ->
     (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
   Proof. Admitted. (* STUB *)
@@ -5637,6 +5634,300 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     rewrite original_scan_diag_ok by exact Hwf.
     destruct (diag_ok (fw m)); cbn beta iota zeta; time_simpl; lia.
   Qed.
+  (** A fresh lookup gains exactly one stored code when inserted. *)
+  Lemma fresh_set_codes_length : forall (A : Type) k (a : A) m,
+    M.get k m = None -> length (M.codes (M.set k a m)) = S (length (M.codes m)).
+  Proof.
+    intros A k a m Hnone. rewrite M.get_find in Hnone.
+    assert (Hnew : incl (M.codes (M.set k a m)) (K.encode k :: M.codes m)).
+    { intros p Hp. apply M.codes_spec in Hp. rewrite M.find_set in Hp.
+      destruct (Pos.eqb p (K.encode k)) eqn:Hkey.
+      - apply Pos.eqb_eq in Hkey. subst p. now left.
+      - right. now apply M.codes_spec. }
+    assert (Hold : incl (K.encode k :: M.codes m) (M.codes (M.set k a m))).
+    { intros p [Hp|Hp]; apply M.codes_spec; rewrite M.find_set.
+      - subst p. rewrite Pos.eqb_refl. discriminate.
+      - apply M.codes_spec in Hp. destruct (Pos.eqb p (K.encode k)); congruence. }
+    assert (Hnodup : NoDup (K.encode k :: M.codes m)).
+    { constructor; [|apply M.codes_nodup].
+      intro Hin. apply M.codes_spec in Hin. contradiction. }
+    pose proof (NoDup_incl_length (M.codes_nodup A (M.set k a m)) Hnew).
+    pose proof (NoDup_incl_length Hnodup Hold). cbn in *. lia.
+  Qed.
+
+  (** Pairing a fold with its running clock does not change the computed accumulator. *)
+  Lemma fold_clock_value : forall (A B : Type) (step : B -> A -> B)
+      (clock : B -> A -> N) xs acc spent,
+    fst (fold_left (fun bw x => (step (fst bw) x, (snd bw + clock (fst bw) x)%N))
+      xs (acc, spent)) = fold_left step xs acc.
+  Proof.
+    intros A B step clock xs. induction xs as [|x xs IH]; intros acc spent;
+      cbn [fold_left fst snd]; [reflexivity|apply IH].
+  Qed.
+
+  (** A potential increase pays for every costly successful insertion exactly once. *)
+  Lemma fold_potential_time : forall (A B : Type) (step : B -> A -> B)
+      (clock : B -> A -> N) (potential : B -> N) (weight : A -> N) xs acc spent,
+    (forall state x, (clock state x + potential state <=
+      weight x + potential (step state x))%N) ->
+    let done := fold_left
+      (fun bw x => (step (fst bw) x, (snd bw + clock (fst bw) x)%N)) xs (acc, spent) in
+    (snd done + potential acc <=
+      spent + fold_right N.add 0%N (map weight xs) + potential (fst done))%N.
+  Proof.
+    intros A B step clock potential weight xs.
+    induction xs as [|x xs IH]; intros acc spent Hstep;
+      cbn [fold_left map fold_right fst snd].
+    - lia.
+    - pose proof (IH (step acc x) (spent + clock acc x)%N Hstep) as Hrest.
+      pose proof (Hstep acc x) as Hone. cbn [fst snd] in Hrest. lia.
+  Qed.
+
+  (** Every cached tightening row was looked up successfully in the original matrix. *)
+  Definition tightened_sources (m changed : dbm) : Prop :=
+    forall p, M.find p changed <> None -> M.find p m <> None.
+
+  Lemma tighten_row_sources : forall m changed k ignored,
+    tightened_sources m changed -> tightened_sources m (tighten_row m changed k ignored).
+  Proof.
+    intros m changed k ignored Hsources. unfold tighten_row.
+    destruct (M.get k changed); [exact Hsources|].
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hsources].
+    destruct (M.get (flip k) row); [|exact Hsources].
+    intros p Hp. rewrite M.find_set in Hp.
+    destruct (Pos.eqb p (K.encode k)) eqn:Hkey.
+    - apply Pos.eqb_eq in Hkey. subst p. rewrite <- M.get_find, Hrow. discriminate.
+    - now apply Hsources.
+  Qed.
+
+  Lemma collected_tighten_support : forall m p,
+    In p (M.codes (M.fold (tighten_row m) m M.empty)) -> In p (support m).
+  Proof.
+    intros m p Hp. apply M.codes_spec in Hp.
+    assert (Hsources : tightened_sources m (M.fold (tighten_row m) m M.empty)).
+    { apply (fold_invariant _ _ (tightened_sources m)).
+      - intros q Hq. rewrite M.find_empty in Hq. contradiction.
+      - intros changed k ignored Hchanged. now apply tighten_row_sources. }
+    apply support_find. left. now apply Hsources.
+  Qed.
+
+  Lemma T_even_bound_le : forall d,
+    (T_even_bound d <= 32 * N.of_nat (Z.size_nat d + 1))%N.
+  Proof.
+    intro d. pose proof (zbits_div2 d). time_step.
+  Qed.
+
+  Local Definition tightening_charge (m changed : dbm) (k : K.t) : N :=
+    match M.get k changed with
+    | Some _ => 0%N
+    | None =>
+      match M.get k m with
+      | Some row =>
+        match M.get (flip k) row with
+        | Some d => N.of_nat (Z.size_nat d + 1)
+        | None => 0%N
+        end
+      | None => 0%N
+      end
+    end.
+
+  (** Failed or repeated labels pay only lookup work; arithmetic is charged on fresh unaries. *)
+  Lemma T_tighten_row_work : forall m changed k ignored,
+    (T_tighten_row m changed k ignored <=
+      64 * (M.c_map + 1) * N.of_nat (K.bits k + 1) +
+        32 * tightening_charge m changed k)%N.
+  Proof.
+    intros m changed k ignored. pose proof (flip_bits k) as Hflip.
+    unfold tightening_charge. destruct (M.get k changed) as [old|] eqn:Hcache.
+    - unfold T_tighten_row. time_simpl. rewrite Hcache. time_simpl.
+      time_pose. time_cbn_all. first [time_lin|nia].
+    - destruct (M.get k m) as [row|] eqn:Hrow.
+      + destruct (M.get (flip k) row) as [d|] eqn:Hbound.
+        * unfold T_tighten_row. time_simpl. rewrite Hcache, Hrow, Hbound. time_simpl.
+          time_pose. time_cbn_all. first [time_lin|nia].
+        * unfold T_tighten_row. time_simpl. rewrite Hcache, Hrow, Hbound. time_simpl.
+          time_pose. time_cbn_all. first [time_lin|nia].
+      + unfold T_tighten_row. time_simpl. rewrite Hcache, Hrow. time_simpl.
+        time_pose. time_cbn_all. first [time_lin|nia].
+  Qed.
+
+  Local Definition tightening_potential (m changed : dbm) : N :=
+    (32 * N.of_nat (ell m + 1) * N.of_nat (length (M.codes changed)))%N.
+
+  Lemma T_tighten_row_potential : forall m changed k ignored,
+    (T_tighten_row m changed k ignored + tightening_potential m changed <=
+      64 * (M.c_map + 1) * N.of_nat (K.bits k + 1) +
+        tightening_potential m (tighten_row m changed k ignored))%N.
+  Proof.
+    intros m changed k ignored.
+    pose proof (T_tighten_row_work m changed k ignored) as Hclock.
+    unfold tightening_charge in Hclock. unfold tighten_row.
+    destruct (M.get k changed) as [old|] eqn:Hcache; [lia|].
+    destruct (M.get k m) as [row|] eqn:Hrow; [|lia].
+    destruct (M.get (flip k) row) as [d|] eqn:Hbound; [|lia].
+    assert (Hd : Z.size_nat d <= ell m).
+    { eapply (ell_entry m (K.encode k) (K.encode (flip k)) d).
+      unfold raw_entry. rewrite <- (M.get_find (M.t Z) k m), Hrow. cbn [row_of].
+      now rewrite <- (M.get_find Z (flip k) row). }
+    unfold tightening_potential.
+    rewrite fresh_set_codes_length by exact Hcache.
+    rewrite time_of_nat_succ, N.mul_add_distr_l.
+    rewrite N.mul_1_r. nia.
+  Qed.
+
+
+  Local Definition tightening_work (m : dbm) : nat :=
+    M.weight m + (supp m + 1) * (b m + ell m + 1) + 1.
+
+  (** The deduplicating fold charges all labels, but arithmetic only at fresh supported codes. *)
+  Lemma T_tighten_fold_small : forall m,
+    (M.T_fold (tighten_row m) (fun changed k row => T_tighten_row m changed k row)
+      m M.empty <= 128 * (M.c_map + 1) * (M.c_map + 1) *
+        N.of_nat (tightening_work m))%N.
+  Proof.
+    intro m.
+    pose proof (M.T_fold_sum_le (M.t Z) dbm (tighten_row m)
+      (fun changed k row => T_tighten_row m changed k row) m M.empty) as Hclock.
+    pose proof (fold_potential_time (K.t * M.t Z)%type dbm
+      (fun changed ka => tighten_row m changed (fst ka) (snd ka))
+      (fun changed ka => T_tighten_row m changed (fst ka) (snd ka))
+      (tightening_potential m)
+      (fun ka => (64 * (M.c_map + 1) * N.of_nat (K.bits (fst ka) + 1))%N)
+      (M.elements m) M.empty 0%N
+      ltac:(intros changed [k row]; apply T_tighten_row_potential)) as Hpotential.
+    cbn zeta in Hpotential. rewrite fold_clock_value in Hpotential.
+    rewrite <- (M.fold_spec (M.t Z) dbm (tighten_row m) m M.empty) in Hpotential.
+    unfold tightening_potential in Hpotential. rewrite codes_empty in Hpotential.
+    cbn [length] in Hpotential.
+    rewrite ?N.mul_0_r, ?N.add_0_r, ?N.add_0_l in Hpotential.
+    assert (Hlabels : (fold_right N.add 0%N
+      (map (fun ka => (64 * (M.c_map + 1) * N.of_nat (K.bits (fst ka) + 1))%N)
+        (M.elements m)) <= 64 * (M.c_map + 1) * N.of_nat (M.weight m))%N).
+    { change (fold_right N.add 0%N
+        (map (fun ka => (64 * (M.c_map + 1) * N.of_nat (K.bits (fst ka) + 1))%N)
+          (M.elements m)) <= 64 * (M.c_map + 1) *
+        N.of_nat (sum_weight (fun ka => (K.bits (fst ka) + 1)%nat) (M.elements m)))%N.
+      apply time_sum_bound. intros ka Hka. apply N.le_refl. }
+    pose proof (codes_support_length (M.t Z)
+      (M.fold (tighten_row m) m M.empty) m (collected_tighten_support m)) as Hcount.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    set (work := N.of_nat (tightening_work m)).
+    assert (Hlabels_work : (N.of_nat (M.weight m) <= work)%N).
+    { unfold work, tightening_work. lia. }
+    assert (Hnumeric_work :
+      (N.of_nat (ell m + 1) * N.of_nat (supp m) <= work)%N).
+    { rewrite <- Nat2N.inj_mul. unfold work. apply time_of_nat_le.
+      unfold tightening_work. nia. }
+    assert (Hnodes_work : (N.of_nat (M.nodes m + 1) <= work)%N).
+    { unfold work. apply time_of_nat_le. unfold tightening_work. nia. }
+    assert (Hlabels' : (fold_right N.add 0%N
+      (map (fun ka => (64 * (M.c_map + 1) * N.of_nat (K.bits (fst ka) + 1))%N)
+        (M.elements m)) <= 64 * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [exact Hlabels|].
+      apply N.mul_le_mono_l. exact Hlabels_work. }
+    assert (Hpotential' : (32 * N.of_nat (ell m + 1) *
+      N.of_nat (length (M.codes (M.fold (tighten_row m) m M.empty))) <= 32 * work)%N).
+    { eapply N.le_trans.
+      - apply N.mul_le_mono_l. apply time_of_nat_le. exact Hcount.
+      - replace (32 * N.of_nat (ell m + 1) * N.of_nat (supp m))%N with
+          (32 * (N.of_nat (ell m + 1) * N.of_nat (supp m)))%N by ring.
+        apply N.mul_le_mono_l. exact Hnumeric_work. }
+    assert (Hinside : (N.of_nat (M.nodes m + 1) +
+      snd (fold_left (fun bw ka =>
+        (tighten_row m (fst bw) (fst ka) (snd ka),
+          (snd bw + T_tighten_row m (fst bw) (fst ka) (snd ka))%N))
+        (M.elements m) (M.empty, 0%N)) <=
+      (64 * (M.c_map + 1) + 33) * work)%N).
+    { eapply N.le_trans with
+        (work + (64 * (M.c_map + 1) * work + 32 * work))%N.
+      - apply N.add_le_mono; [exact Hnodes_work|].
+        eapply N.le_trans; [exact Hpotential|].
+        apply N.add_le_mono; [exact Hlabels'|exact Hpotential'].
+      - replace ((64 * (M.c_map + 1) + 33) * work)%N with
+          (work + (64 * (M.c_map + 1) * work + 32 * work))%N by ring.
+        apply N.le_refl. }
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinside|].
+    replace (M.c_map * ((64 * (M.c_map + 1) + 33) * work))%N with
+      ((M.c_map * (64 * (M.c_map + 1) + 33)) * work)%N by ring.
+    apply N.mul_le_mono_r. nia.
+  Qed.
+
+  Lemma T_replace_row_le : forall old fresh, (T_replace_row old fresh <= 3)%N.
+  Proof.
+    intros [old|] [fresh|]; time_step.
+  Qed.
+
+  (** The final merge reuses the old labels and the already charged cached rows. *)
+  Lemma T_tighten_small : forall m,
+    (T_tighten m <= 256 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat (tightening_work m))%N.
+  Proof.
+    intro m.
+    pose proof (T_tighten_fold_small m) as Hfold.
+    pose proof (M.T_merge_le (M.t Z) (M.t Z) (M.t Z) replace_row
+      (fun old fresh => T_replace_row old fresh) m
+      (M.fold (tighten_row m) m M.empty) 3%N T_replace_row_le) as Hmerge.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    pose proof (nodes_support (M.t Z) (M.fold (tighten_row m) m M.empty)
+      m (collected_tighten_support m)) as Hcache.
+    set (work := N.of_nat (tightening_work m)) in *.
+    assert (Hpositive : (1 <= work)%N) by (unfold work, tightening_work; lia).
+    assert (Hmerge' : (M.T_merge replace_row
+      (fun old fresh => T_replace_row old fresh) m
+      (M.fold (tighten_row m) m M.empty) <= 8 * M.c_map * work)%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      replace (8 * M.c_map * work)%N with ((M.c_map * (3 + 1)) * (2 * work))%N by ring.
+      apply N.mul_le_mono_l. unfold work.
+      assert (Hsize : M.nodes m + M.nodes (M.fold (tighten_row m) m M.empty) + 1 <=
+        2 * tightening_work m) by (unfold tightening_work; nia).
+      pose proof (time_of_nat_le _ _ Hsize) as Hcast.
+      rewrite Nat2N.inj_mul in Hcast. exact Hcast. }
+    assert (Hcoefficient : (128 * (M.c_map + 1) * (M.c_map + 1) +
+      8 * M.c_map + 1 <= 256 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Htotal.
+    rewrite !N.mul_add_distr_r, N.mul_1_l in Htotal.
+    unfold T_tighten. time_simpl.
+    match goal with
+    | |- context [M.T_fold ?step ?callback m M.empty] =>
+      assert (Hfold_actual : (M.T_fold step callback m M.empty <=
+        128 * (M.c_map + 1) * (M.c_map + 1) * work)%N) by exact Hfold;
+      set (fold_cost := M.T_fold step callback m M.empty) in *
+    end.
+    match goal with
+    | |- context [M.T_merge ?step ?callback m ?cache] =>
+      assert (Hmerge_actual : (M.T_merge step callback m cache <=
+        8 * M.c_map * work)%N) by exact Hmerge';
+      set (merge_cost := M.T_merge step callback m cache) in *
+    end.
+    clearbody work fold_cost merge_cost.
+    clear - Hfold_actual Hmerge_actual Hpositive Htotal. lia.
+  Qed.
+
+  Lemma T2_tighten : forall m, dbm_wf m ->
+    (T_tighten m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  Proof.
+    intros m Hwf. pose proof (T_tighten_small m) as Hclock.
+    pose proof (weight_le m Hwf) as Hweight.
+    assert (Hwork : tightening_work m <=
+      4 * ((supp m + 1)^2 * (b m + ell m + 1))).
+    { unfold tightening_work. cbn [Nat.pow]. nia. }
+    pose proof (time_of_nat_le _ _ Hwork) as Hcast.
+    rewrite Nat2N.inj_mul in Hcast.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hcast|].
+    replace (256 * (M.c_map + 1) * (M.c_map + 1) *
+      (N.of_nat 4 * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))))%N with
+      ((256 * (M.c_map + 1) * (M.c_map + 1) * 4) *
+        N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N by (cbn [N.of_nat]; ring).
+    apply N.mul_le_mono_r. unfold k_octagon. nia.
+  Qed.
+
+
   (** Comparing zero to a diagonal has no dependence on the stored integer width. *)
   Lemma T_nonnegative_small : forall k m,
     (T_nonnegative k m <= 16 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N.
@@ -5728,5 +6019,4 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       (2 * (32 * (M.c_map + 1) * work))%N in Hbudget by ring.
     clear Hpositive. clearbody work. lia.
   Qed.
-
 End OctagonT.
