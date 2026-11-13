@@ -729,6 +729,78 @@ Proof.
     rewrite IH, database_group_add_member, database_slot_member_cons. tauto.
 Qed.
 
+(** A prepared function group contains exactly the declared slots at their global numbers. *)
+Lemma database_prepared_group_member : forall sl f s layout,
+  In (s, layout) (database_group_entries f
+    (database_slot_groups 0 (prepare_slot_layouts sl) PTrieCode.empty)) <->
+  exists perm, nth_error sl (N.to_nat s) = Some (f, perm) /\
+    layout = prepare_slot_layout perm.
+Proof.
+  intros sl f s layout. rewrite database_slot_groups_member.
+  unfold database_slot_member, prepare_slot_layouts.
+  unfold database_group_entries at 1. rewrite PTrie.get_empty. cbn [In]. split.
+  - intros [Hfalse | [n [Hentry Hslot]]]; [contradiction |].
+    rewrite nth_error_map in Hentry.
+    destruct (nth_error sl n) as [[g perm] |] eqn:Hnth; [| discriminate].
+    cbn [option_map fst snd] in Hentry. injection Hentry as Hfunction Hlayout.
+    subst g. exists perm. split; [| congruence].
+    replace s with (N.of_nat n) by lia. now rewrite Nat2N.id.
+  - intros [perm [Hentry ->]]. right. exists (N.to_nat s). split.
+    + rewrite nth_error_map, Hentry. reflexivity.
+    + rewrite N2Nat.id. lia.
+Qed.
+
+(** Existing group numbers are distinct and lie below the next number to allocate. *)
+Definition database_groups_bounded (next : N)
+    (groups : PTrieCode.t (list (N * database_slot_layout))) : Prop :=
+  forall f, NoDup (map fst (database_group_entries f groups)) /\
+    (forall s, In s (map fst (database_group_entries f groups)) -> (s < next)%N).
+
+(** Numbering one fresh slot preserves distinctness in every function group. *)
+Lemma database_groups_bounded_add : forall next groups g block,
+  database_groups_bounded next groups ->
+  database_groups_bounded (N.succ next)
+    (PTrieCode.set g ((next, block) :: database_group_entries g groups) groups).
+Proof.
+  intros next groups g block Hbounded f. destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+  - destruct (Hbounded g) as [Hdistinct Hbelow].
+    unfold database_group_entries at 1 3. rewrite !PTrie.get_set_same.
+    cbn [map fst]. split.
+    + constructor; [intro Hin; specialize (Hbelow next Hin); lia | exact Hdistinct].
+    + intros s [-> | Hin]; [lia | specialize (Hbelow s Hin); lia].
+  - destruct (Hbounded f) as [Hdistinct Hbelow].
+    unfold database_group_entries at 1 3. rewrite !PTrie.get_set_other by exact Hdifferent.
+    fold (database_group_entries f groups). split; [exact Hdistinct |].
+    intros s Hin. specialize (Hbelow s Hin). lia.
+Qed.
+
+(** A complete group build preserves globally fresh slot numbering. *)
+Lemma database_slot_groups_bounded : forall prepared next groups,
+  database_groups_bounded next groups ->
+  database_groups_bounded (next + N.of_nat (length prepared))
+    (database_slot_groups next prepared groups).
+Proof.
+  induction prepared as [| [g block] rest IH]; intros next groups Hbounded.
+  - cbn [database_slot_groups length]. now rewrite N.add_0_r.
+  - cbn [database_slot_groups length]. fold (database_group_entries g groups).
+    rewrite Nat2N.inj_succ.
+    replace (next + N.succ (N.of_nat (length rest)))%N
+      with (N.succ next + N.of_nat (length rest))%N by lia.
+    apply IH. now apply database_groups_bounded_add.
+Qed.
+
+(** A function's prepared list visits each global slot number at most once. *)
+Lemma database_prepared_group_nodup : forall sl f,
+  NoDup (map fst (database_group_entries f
+    (database_slot_groups 0 (prepare_slot_layouts sl) PTrieCode.empty))).
+Proof.
+  intros sl f. assert (Hempty : database_groups_bounded 0 PTrieCode.empty).
+  { intro g. unfold database_group_entries. rewrite PTrie.get_empty.
+    split; [constructor | intros s Hin; contradiction]. }
+  exact (proj1 (database_slot_groups_bounded
+    (prepare_slot_layouts sl) 0 PTrieCode.empty Hempty f)).
+Qed.
+
 Definition runtime_set_rows {C X} (rows : PTrieCode.t ((positive * list C) * option C))
     (state : database_runtime C X) : database_runtime C X :=
   DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) rows
