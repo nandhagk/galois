@@ -111,6 +111,386 @@ End LinCertCode.
 Module LinCert (X : KEY) <: LINCERT X.
   Include LinCertCode X.
   Include LINCERT_SPEC X.
+  (** Rational evaluation embeds each stored integer coefficient. *)
+  Definition eval_coefQ (v : X.t -> Q) (xs : list (X.t * Z)) : Q :=
+    fold_right (fun p q => (inject_Z (snd p) * v (fst p) + q)%Q) 0%Q xs.
+
+  (** A head occurrence adds its coefficient exactly at its own key. *)
+  Lemma coef_of_cons : forall x y a xs,
+    coef_of x ((y, a) :: xs) =
+      if X.eqb x y then (a + coef_of x xs)%Z else coef_of x xs.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Concatenation adds the coefficients of both term lists. *)
+  Lemma coef_of_app : forall x xs ys,
+    coef_of x (xs ++ ys) = (coef_of x xs + coef_of x ys)%Z.
+  Proof.
+    intros x xs ys.
+    induction xs as [|[y a] xs IH].
+    - reflexivity.
+    - cbn [app]. rewrite !coef_of_cons, IH.
+      destruct (X.eqb x y); ring.
+  Qed.
+
+  (** Scaling every occurrence scales its total coefficient. *)
+  Lemma coef_of_scale : forall x m xs,
+    coef_of x (scale_terms m xs) = (m * coef_of x xs)%Z.
+  Proof.
+    intros x m xs.
+    induction xs as [|[y a] xs IH].
+    - change (0 = m * 0)%Z. ring.
+    - change (coef_of x ((y, (m * a)%Z) :: scale_terms m xs) =
+        (m * coef_of x ((y, a) :: xs))%Z).
+      rewrite !coef_of_cons, IH. destruct (X.eqb x y); ring.
+  Qed.
+
+  (** Integer evaluation adds both sides of a concatenation. *)
+  Lemma eval_coef_app : forall (v : X.t -> Z) xs ys,
+    eval_coef v (xs ++ ys) = (eval_coef v xs + eval_coef v ys)%Z.
+  Proof.
+    intros v xs ys.
+    induction xs as [|[x a] xs IH].
+    - change (eval_coef v ys = 0 + eval_coef v ys)%Z. ring.
+    - change (a * v x + eval_coef v (xs ++ ys) =
+        (a * v x + eval_coef v xs) + eval_coef v ys)%Z.
+      rewrite IH. ring.
+  Qed.
+
+  (** Integer evaluation commutes with scaling every coefficient. *)
+  Lemma eval_coef_scale : forall m xs (v : X.t -> Z),
+    eval_coef v (scale_terms m xs) = (m * eval_coef v xs)%Z.
+  Proof.
+    intros m xs v.
+    induction xs as [|[x a] xs IH].
+    - change (0 = m * 0)%Z. ring.
+    - change ((m * a) * v x + eval_coef v (scale_terms m xs) =
+        m * (a * v x + eval_coef v xs))%Z.
+      rewrite IH. ring.
+  Qed.
+
+  (** Removing a key erases exactly that key's total coefficient. *)
+  Lemma coef_of_filter : forall x y xs,
+    coef_of y (filter (fun p => negb (X.eqb x (fst p))) xs) =
+      if X.eqb y x then 0%Z else coef_of y xs.
+  Proof.
+    intros x y xs. induction xs as [|[z a] xs IH].
+    - cbn [filter coef_of]. destruct (X.eqb y x); reflexivity.
+    - destruct (X.eqb_spec y x) as [Hyx|Hyx].
+      + subst y. cbn [filter fst].
+        destruct (X.eqb x z) eqn:Hxz; cbn [negb].
+        * exact IH.
+        * rewrite coef_of_cons, Hxz. exact IH.
+      + cbn [filter fst]. destruct (X.eqb_spec x z) as [Hxz|Hxz].
+        * subst z. cbn [negb]. rewrite IH, coef_of_cons.
+          destruct (X.eqb_spec y x) as [Heq|Hneq]; [contradiction|reflexivity].
+        * cbn [negb]. rewrite !coef_of_cons, IH. reflexivity.
+  Qed.
+
+  (** Separating one key preserves all of its repeated occurrences. *)
+  Lemma eval_coef_split : forall x xs (v : X.t -> Z),
+    eval_coef v xs =
+      (coef_of x xs * v x +
+       eval_coef v (filter (fun p => negb (X.eqb x (fst p))) xs))%Z.
+  Proof.
+    intros x xs v. induction xs as [|[y a] xs IH].
+    - reflexivity.
+    - rewrite coef_of_cons. cbn [filter fst].
+      destruct (X.eqb_spec x y) as [Hxy|Hxy].
+      + subst y.
+        change (a * v x + eval_coef v xs = (a + coef_of x xs) * v x +
+          eval_coef v (filter (fun p => negb (X.eqb x (fst p))) xs))%Z.
+        rewrite IH. ring.
+      + change (a * v y + eval_coef v xs = coef_of x xs * v x +
+          (a * v y + eval_coef v (filter (fun p => negb (X.eqb x (fst p))) xs)))%Z.
+        rewrite IH. ring.
+  Qed.
+
+  (** A term list with zero total coefficients evaluates to zero over integers. *)
+  Lemma eval_coef_zero : forall xs (v : X.t -> Z),
+    (forall x, coef_of x xs = 0%Z) -> eval_coef v xs = 0%Z.
+  Proof.
+    refine (well_founded_induction
+      (well_founded_ltof _ (@length (X.t * Z))) _ _).
+    intros xs IH v Hzero. destruct xs as [|[x a] xs].
+    - reflexivity.
+    - rewrite (eval_coef_split x ((x, a) :: xs) v), Hzero.
+      rewrite Z.mul_0_l, Z.add_0_l. apply IH.
+      + unfold ltof. cbn [filter fst length].
+        destruct (X.eqb_spec x x) as [_|Hneq]; [|contradiction].
+        cbn [negb]. pose proof
+          (filter_length_le (fun p => negb (X.eqb x (fst p))) xs) as Hlength.
+        lia.
+      + intro y. rewrite coef_of_filter.
+        destruct (X.eqb y x); [reflexivity|apply Hzero].
+  Qed.
+
+  (** Equal total coefficients give equal integer evaluations. *)
+  Lemma eval_coef_ext : forall xs ys (v : X.t -> Z),
+    (forall x, coef_of x xs = coef_of x ys) -> eval_coef v xs = eval_coef v ys.
+  Proof.
+    intros xs ys v Heq.
+    assert (Hzero : forall x, coef_of x (xs ++ scale_terms (-1)%Z ys) = 0%Z).
+    { intro x. rewrite coef_of_app, coef_of_scale, Heq. ring. }
+    pose proof (eval_coef_zero _ v Hzero) as Heval.
+    rewrite eval_coef_app, eval_coef_scale in Heval. lia.
+  Qed.
+
+  (** Rational evaluation adds both sides of a concatenation. *)
+  Lemma eval_coef_app_Q : forall (v : X.t -> Q) xs ys,
+    (fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 (xs ++ ys) ==
+     fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 xs +
+     fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 ys)%Q.
+  Proof.
+    intros v xs ys.
+    change (eval_coefQ v (xs ++ ys) == eval_coefQ v xs + eval_coefQ v ys)%Q.
+    induction xs as [|[x a] xs IH].
+    - change (eval_coefQ v ys == 0 + eval_coefQ v ys)%Q. ring.
+    - change (inject_Z a * v x + eval_coefQ v (xs ++ ys) ==
+        (inject_Z a * v x + eval_coefQ v xs) + eval_coefQ v ys)%Q.
+      setoid_rewrite IH. ring.
+  Qed.
+
+  (** Rational evaluation commutes with scaling every coefficient. *)
+  Lemma eval_coef_scale_Q : forall m xs (v : X.t -> Q),
+    (fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 (scale_terms m xs) ==
+     inject_Z m * fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 xs)%Q.
+  Proof.
+    intros m xs v.
+    change (eval_coefQ v (scale_terms m xs) == inject_Z m * eval_coefQ v xs)%Q.
+    induction xs as [|[x a] xs IH].
+    - change (0 == inject_Z m * 0)%Q. ring.
+    - change (inject_Z (m * a) * v x + eval_coefQ v (scale_terms m xs) ==
+        inject_Z m * (inject_Z a * v x + eval_coefQ v xs))%Q.
+      rewrite inject_Z_mult. setoid_rewrite IH. ring.
+  Qed.
+
+  (** Separating one key also preserves rational evaluation. *)
+  Lemma eval_coef_split_Q : forall x xs (v : X.t -> Q),
+    (fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 xs ==
+     inject_Z (coef_of x xs) * v x +
+     fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0
+       (filter (fun p => negb (X.eqb x (fst p))) xs))%Q.
+  Proof.
+    intros x xs v.
+    change (eval_coefQ v xs == inject_Z (coef_of x xs) * v x +
+      eval_coefQ v (filter (fun p => negb (X.eqb x (fst p))) xs))%Q.
+    induction xs as [|[y a] xs IH].
+    - change (0 == 0 * v x + 0)%Q. ring.
+    - rewrite coef_of_cons. cbn [filter fst].
+      destruct (X.eqb_spec x y) as [Hxy|Hxy].
+      + subst y.
+        change (inject_Z a * v x + eval_coefQ v xs ==
+          inject_Z (a + coef_of x xs) * v x +
+          eval_coefQ v (filter (fun p => negb (X.eqb x (fst p))) xs))%Q.
+        rewrite inject_Z_plus. setoid_rewrite IH. ring.
+      + change (inject_Z a * v y + eval_coefQ v xs ==
+          inject_Z (coef_of x xs) * v x + (inject_Z a * v y +
+          eval_coefQ v (filter (fun p => negb (X.eqb x (fst p))) xs)))%Q.
+        setoid_rewrite IH. ring.
+  Qed.
+
+  (** A term list with zero total coefficients evaluates to zero over rationals. *)
+  Lemma eval_coef_zero_Q : forall xs (v : X.t -> Q),
+    (forall x, coef_of x xs = 0%Z) ->
+    (fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 xs == 0)%Q.
+  Proof.
+    refine (well_founded_induction
+      (well_founded_ltof _ (@length (X.t * Z))) _ _).
+    intros xs IH v Hzero. destruct xs as [|[x a] xs].
+    - reflexivity.
+    - setoid_rewrite (eval_coef_split_Q x ((x, a) :: xs) v).
+      rewrite Hzero.
+      setoid_rewrite Qmult_0_l. setoid_rewrite Qplus_0_l. apply IH.
+      + unfold ltof. cbn [filter fst length].
+        destruct (X.eqb_spec x x) as [_|Hneq]; [|contradiction].
+        cbn [negb]. pose proof
+          (filter_length_le (fun p => negb (X.eqb x (fst p))) xs) as Hlength.
+        lia.
+      + intro y. rewrite coef_of_filter.
+        destruct (X.eqb y x); [reflexivity|apply Hzero].
+  Qed.
+
+  (** Equal total coefficients give equal rational evaluations. *)
+  Lemma eval_coef_ext_Q : forall xs ys (v : X.t -> Q),
+    (forall x, coef_of x xs = coef_of x ys) ->
+    (fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 xs ==
+     fold_right (fun p q => inject_Z (snd p) * v (fst p) + q) 0 ys)%Q.
+  Proof.
+    intros xs ys v Heq.
+    assert (Hzero : forall x, coef_of x (xs ++ scale_terms (-1)%Z ys) = 0%Z).
+    { intro x. rewrite coef_of_app, coef_of_scale, Heq. ring. }
+    pose proof (eval_coef_zero_Q _ v Hzero) as Heval.
+    setoid_rewrite eval_coef_app_Q in Heval.
+    setoid_rewrite eval_coef_scale_Q in Heval.
+    change (eval_coefQ v xs + (-1) * eval_coefQ v ys == 0)%Q in Heval.
+    change (eval_coefQ v xs == eval_coefQ v ys)%Q.
+    apply (proj1 (Qplus_inj_r (eval_coefQ v xs) (eval_coefQ v ys)
+      (- eval_coefQ v ys)%Q)).
+    setoid_replace (eval_coefQ v ys + - eval_coefQ v ys)%Q with 0%Q by ring.
+    setoid_replace (eval_coefQ v xs + - eval_coefQ v ys)%Q
+      with (eval_coefQ v xs + (-1) * eval_coefQ v ys)%Q by ring.
+    exact Heval.
+  Qed.
+
+
+  (** Separate signed sums still denote ordinary integer addition. *)
+  Lemma add_signed_value : forall z s,
+    (fst (lc_add_signed z s) - snd (lc_add_signed z s) = fst s - snd s + z)%Z.
+  Proof.
+    intros z [p n]. unfold lc_add_signed. cbn [fst snd].
+    destruct (0 <=? z)%Z; cbn [fst snd]; ring.
+  Qed.
+
+  (** Only inequality rows restrict the sign of their weight. *)
+  Lemma allowed_spec : forall p m,
+    allowed p m = true <-> (lrel p = RLe -> (0 <= m)%Z).
+  Proof.
+    intros [xs r b] m. destruct r; cbn [allowed lrel].
+    - split; [intros _ Hrel; discriminate|reflexivity].
+    - rewrite Z.leb_le. tauto.
+  Qed.
+
+  (** Successful row traversal has exactly the required admissible weights. *)
+  Lemma combine_rows_admissible : forall P ms s,
+    combine_rows P ms = Some s -> admissible P ms.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hcombine;
+      cbn [combine_rows] in Hcombine; try discriminate.
+    - split; [reflexivity|constructor].
+    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+      destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
+      destruct (IH ns tail Htail) as [Hlength Hweights].
+      split; [cbn; congruence|constructor; [|exact Hweights]].
+      now apply allowed_spec.
+  Qed.
+
+  (** Every admissible sequence produces a raw weighted sum. *)
+  Lemma combine_rows_complete : forall P ms, admissible P ms ->
+    exists s, combine_rows P ms = Some s.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] [Hlength Hweights];
+      cbn in Hlength; try discriminate.
+    - eexists. reflexivity.
+    - inversion Hweights as [|p' m' ps' ns' Hallowed Htail]; subst.
+      assert (Hallow : allowed p m = true) by (apply allowed_spec; exact Hallowed).
+      destruct (IH ns) as [s Hsum]; [split; [lia|exact Htail]|].
+      cbn [combine_rows]. rewrite Hallow, Hsum. eexists. reflexivity.
+  Qed.
+
+  (** The raw sum records the specified coefficients, bound and relation flag. *)
+  Lemma combine_rows_values : forall P ms s, combine_rows P ms = Some s ->
+    (forall x, coef_of x (lc_terms s) = comb_coef P ms x) /\
+    (fst (lc_sums s) - snd (lc_sums s))%Z = comb_rhs P ms /\
+    lc_equal s = comb_eq P ms.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hcombine;
+      cbn [combine_rows] in Hcombine; try discriminate.
+    - inversion Hcombine; subst. repeat split; reflexivity.
+    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+      destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hcombine; subst s.
+      destruct (IH ns tail Htail) as [Hcoef [Hrhs Hrel]].
+      cbn [lc_terms lc_sums lc_equal]. split.
+      + intro x. rewrite coef_of_app, coef_of_scale, Hcoef. reflexivity.
+      + split.
+        * rewrite add_signed_value, Hrhs.
+          change (comb_rhs ps ns + m * rhs p = m * rhs p + comb_rhs ps ns)%Z.
+          ring.
+        * rewrite Hrel. reflexivity.
+  Qed.
+
+  (** A trie entry denotes its positive sum minus its negative sum. *)
+  Definition sum_at (p : positive) (tr : PTrieCode.t (Z * Z)) : Z :=
+    match PTrieCode.get p tr with Some z => (fst z - snd z)%Z | None => 0%Z end.
+
+  (** Inserting a term changes only the coefficient of its own key. *)
+  Lemma insert_term_value : forall x acc y a,
+    sum_at (X.encode x) (insert_term acc (y, a)) =
+      ((if X.eqb x y then a else 0) + sum_at (X.encode x) acc)%Z.
+  Proof.
+    intros x acc y a. destruct (X.eqb_spec x y) as [Heq|Hneq].
+    - subst y. unfold insert_term, sum_at. cbn [fst snd].
+      rewrite PTrie.get_set_same. rewrite add_signed_value.
+      destruct (PTrieCode.get (X.encode x) acc) as [[p n]|]; cbn [fst snd]; ring.
+    - unfold insert_term. cbn [fst snd]. unfold sum_at.
+      rewrite PTrie.get_set_other; [ring|].
+      intro Heq. apply Hneq. now apply X.encode_inj.
+  Qed.
+
+  (** Folding insertion adds every occurrence, including repeated keys. *)
+  Lemma gather_value_from : forall xs acc x,
+    sum_at (X.encode x) (fold_left insert_term xs acc) =
+      (coef_of x xs + sum_at (X.encode x) acc)%Z.
+  Proof.
+    induction xs as [|[y a] xs IH]; intros acc x.
+    - reflexivity.
+    - cbn [fold_left]. rewrite IH, insert_term_value, coef_of_cons.
+      destruct (X.eqb x y); ring.
+  Qed.
+
+  (** The gathered trie agrees with the total coefficient at each source key. *)
+  Lemma gather_value : forall xs x, sum_at (X.encode x) (gather xs) = coef_of x xs.
+  Proof.
+    intros xs x. unfold gather. rewrite gather_value_from.
+    unfold sum_at. rewrite PTrie.get_empty. ring.
+  Qed.
+
+  (** Insertion never creates a trie key outside the encoding image. *)
+  Lemma insert_term_domain : forall acc y a,
+    (forall p z, PTrieCode.get p acc = Some z -> exists x, X.encode x = p) ->
+    forall p z, PTrieCode.get p (insert_term acc (y, a)) = Some z ->
+      exists x, X.encode x = p.
+  Proof.
+    intros acc y a Hdomain p z Hget. unfold insert_term in Hget. cbn [fst snd] in Hget.
+    destruct (Pos.eq_dec p (X.encode y)) as [Heq|Hneq].
+    - exists y. symmetry. exact Heq.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq. now apply (Hdomain p z).
+  Qed.
+
+  (** Every present gathered key encodes a source variable. *)
+  Lemma gather_domain : forall xs p z,
+    PTrieCode.get p (gather xs) = Some z -> exists x, X.encode x = p.
+  Proof.
+    assert (Hfold : forall xs acc,
+      (forall p z, PTrieCode.get p acc = Some z -> exists x, X.encode x = p) ->
+      forall p z, PTrieCode.get p (fold_left insert_term xs acc) = Some z ->
+        exists x, X.encode x = p).
+    { induction xs as [|[y a] xs IH]; intros acc Hdomain; [exact Hdomain|].
+      cbn [fold_left]. apply IH. now apply insert_term_domain. }
+    intros xs. apply Hfold. intros p z Hget. rewrite PTrie.get_empty in Hget.
+    discriminate.
+  Qed.
+
+  (** The zero test recognizes exactly the lists whose total coefficients vanish. *)
+  Lemma linear_zero_spec : forall xs,
+    linear_zero xs = true <-> forall x, coef_of x xs = 0%Z.
+  Proof.
+    intro xs. unfold linear_zero.
+    rewrite PTrie.forall2b_spec by reflexivity. split.
+    - intros Hzero x. specialize (Hzero (X.encode x)).
+      rewrite <- gather_value. unfold sum_at.
+      unfold zero_entry in Hzero.
+      destruct (PTrieCode.get (X.encode x) (gather xs)) as [[p n]|]; [|reflexivity].
+      cbn [fst snd] in *. apply Z.eqb_eq in Hzero. lia.
+    - intros Hzero p. unfold zero_entry.
+      destruct (PTrieCode.get p (gather xs)) as [[a b]|] eqn:Hget; [|reflexivity].
+      destruct (gather_domain xs p (a, b) Hget) as [x Hencode].
+      pose proof (gather_value xs x) as Hvalue.
+      unfold sum_at in Hvalue. rewrite Hencode, Hget, Hzero in Hvalue.
+      cbn [fst snd] in *. apply Z.eqb_eq. lia.
+  Qed.
+
+  (** Scaled coefficient comparison is exact even on unnormalized lists. *)
+  Lemma linear_equal_spec : forall sc xs ys,
+    linear_equal sc xs ys = true <->
+      forall x, coef_of x xs = (sc * coef_of x ys)%Z.
+  Proof.
+    intros sc xs ys. unfold linear_equal. rewrite linear_zero_spec.
+    split; intros H x; specialize (H x); rewrite coef_of_app, coef_of_scale in *; nia.
+  Qed.
+
   Lemma check_entails_sound : forall P c k, check_entails P c k = true ->
     forall v, Forall (sat v) P -> sat v c.
   Proof. Admitted. (* STUB *)
@@ -126,16 +506,31 @@ Module LinCert (X : KEY) <: LINCERT X.
   (** An accepted contradiction entails every conclusion. *)
   Lemma check_entails_empty : forall P c k,
     check_empty P (mults k) = true -> check_entails P c k = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k Hempty. unfold check_empty, check_entails in *.
+    destruct (combine P (mults k)) as [s|]; [now rewrite Hempty|discriminate].
+  Qed.
   (** Admissible multipliers combine to the weighted sum of the rows. *)
   Lemma combine_spec : forall P ms, admissible P ms ->
     exists s, combine P ms = Some s /\
       (forall x, coef_of x (lhs s) = comb_coef P ms x) /\ rhs s = comb_rhs P ms /\
       lrel s = (if comb_eq P ms then REq else RLe).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms Hadmissible.
+    destruct (combine_rows_complete P ms Hadmissible) as [s Hsum].
+    destruct (combine_rows_values P ms s Hsum) as [Hcoef [Hrhs Hrel]].
+    exists (finish_sum s). split.
+    - unfold combine. now rewrite Hsum.
+    - cbn [finish_sum lhs rhs lrel]. split; [exact Hcoef|].
+      split; [exact Hrhs|now rewrite Hrel].
+  Qed.
   (** Combination succeeds only on admissible multipliers. *)
   Lemma combine_admissible : forall P ms s, combine P ms = Some s -> admissible P ms.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms s Hcombine. unfold combine in Hcombine.
+    destruct (combine_rows P ms) as [sum|] eqn:Hsum; [|discriminate].
+    now apply (combine_rows_admissible P ms sum).
+  Qed.
   (** Exact cut-free certificates are accepted. *)
   Lemma check_entails_complete : forall P c ms sc, admissible P ms -> (0 < sc)%Z ->
     (forall x, comb_coef P ms x = (sc * coef_of x (lhs c))%Z) ->
