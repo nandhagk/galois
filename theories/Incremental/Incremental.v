@@ -7998,6 +7998,72 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     split; lia.
   Qed.
 
+  Lemma discovery_rows_length_charge : forall p rs,
+    length rs <= finite_sum (fun r => length (row_keys p r)) rs.
+  Proof.
+    intros p rs; induction rs as [|r rest IH]; [reflexivity|].
+    change (finite_sum (fun q => length (row_keys p q)) (r :: rest)) with
+      (length (row_keys p r) + finite_sum (fun q => length (row_keys p q)) rest).
+    assert (Hnonempty : 1 <= length (row_keys p r)).
+    { unfold row_keys, row_writes; rewrite length_app; cbn [length]; lia. }
+    cbn [length]; lia.
+  Qed.
+
+  Lemma discovery_frozen_length_charge : forall p roots st,
+    length (frozen p roots st) <=
+      finite_sum (fun r => length (row_keys p r)) (region p roots st).
+  Proof.
+    intros p roots st.
+    assert (Hincl : incl (map fst (frozen p roots st))
+      (flat_map (row_keys p) (region p roots st))).
+    { intros x Hx; apply in_map_iff in Hx as [[y v] [Heq Hin]].
+      cbn [fst] in Heq; subst y.
+      destruct (frozen_region p roots st x v Hin) as [r [Hr Hkey]].
+      apply in_flat_map; exists r; split; [exact Hr|exact Hkey]. }
+    pose proof (finite_sum_incl_nodup _ (fun _ => 1) _ _
+      (frozen_nodup p roots st) Hincl) as Hlength.
+    rewrite !finite_sum_one, length_map, finite_flat_map_length in Hlength.
+    exact Hlength.
+  Qed.
+
+  Lemma discovery_finish_lengths : forall p roots fuel st ks rs fz finished,
+    S.wf p -> discovery p roots fuel st = Some (ks, rs, fz) ->
+    loopN (discovery_step p st) fuel
+      (fold_left (discovery_seed_one st) roots empty_discovery) = inr finished ->
+    length (discovery_missing finished) + length (discovery_rows finished) +
+      length (discovery_frozen finished) <=
+      length roots + 3 * finite_sum (fun r => length (row_keys p r))
+        (region p roots st).
+  Proof.
+    intros p roots fuel st ks rs fz finished Hwf Hrun Hloop.
+    destruct (discovery_result_done_perm p roots fuel st ks rs fz Hrun)
+      as [final [Hfinal [Hperm Hnodup]]].
+    rewrite Hloop in Hfinal; injection Hfinal as <-.
+    destruct (discovery_done_charge p roots fuel st ks rs fz finished
+      Hwf Hrun Hperm Hnodup) as [_ Hdone].
+    pose proof (discovery_frozen_length_charge p roots st) as Hfrozen.
+    pose proof (discovery_rows_length_charge p (region p roots st)) as Hrows.
+    assert (Hparts : ks = rev (discovery_missing finished) /\
+      rs = rev (discovery_rows finished) /\
+      fz = rev (discovery_frozen finished)).
+    { unfold discovery in Hrun; rewrite Hloop in Hrun.
+      cbn in Hrun; injection Hrun as <- <- <-; repeat split; reflexivity. }
+    destruct Hparts as [Hks [Hrs Hfz]].
+    destruct (discovery_views p roots fuel st ks rs fz Hwf Hrun)
+      as [_ [Hregion Hfrozen_view]].
+    rewrite Hrs in Hregion; rewrite Hfz in Hfrozen_view.
+    assert (Hmissing_len : length (discovery_missing finished) =
+      length (discovery_done finished)).
+    { pose proof (Permutation_length Hperm) as Hlen.
+      rewrite length_rev in Hlen; rewrite Hks in Hlen; rewrite length_rev in Hlen.
+      exact (eq_sym Hlen). }
+    rewrite <- Hmissing_len in Hdone.
+    rewrite <- Hregion in Hrows; rewrite length_rev in Hrows.
+    rewrite Hregion in Hrows.
+    rewrite <- Hfrozen_view in Hfrozen; rewrite length_rev in Hfrozen.
+    lia.
+  Qed.
+
   Lemma discovery_spent_arithmetic : forall base q d t l r u,
     (d <= t + q * u)%N -> (l <= r + q)%N ->
     (128 * base * q * u + 128 * base * d + 128 * base * l * u <=
@@ -8192,6 +8258,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     cbn beta in Hamort.
     rewrite Hzero in Hamort; lia.
   Qed.
+
 
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
