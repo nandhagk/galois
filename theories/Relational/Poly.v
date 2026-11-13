@@ -201,6 +201,72 @@ Definition poly_upper (z : Z) (b : bnd) : bnd :=
 
 TimeFun poly_upper.
 
+(** The row-count recurrence is monotone. *)
+Lemma poly_rows_recurrence_mono : forall rows more, rows <= more ->
+  rows ^ 2 / 4 + rows <= more ^ 2 / 4 + more.
+Proof.
+  intros rows more Hle. apply Nat.add_le_mono; [|exact Hle].
+  apply Nat.Div0.div_le_mono. now apply Nat.pow_le_mono_l.
+Qed.
+
+(** At fixed fuel, every size input to the Fourier-Motzkin envelope is monotone. *)
+Lemma poly_fmcost_params_mono : forall fuel dim dim' mlen mlen' rows rows' bits bits',
+  dim <= dim' -> mlen <= mlen' -> rows <= rows' -> bits <= bits' ->
+  fmcost dim mlen fuel rows bits <= fmcost dim' mlen' fuel rows' bits'.
+Proof.
+  intro fuel. induction fuel as [|fuel IH];
+    intros dim dim' mlen mlen' rows rows' bits bits' Hdim Hmlen Hrows Hbits.
+  - cbn [fmcost]. apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|lia].
+  - change ((rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2 +
+      fmcost dim mlen fuel (rows^2 / 4 + rows) (2 * bits + 1) <=
+      (rows' + 1)^2 * (dim' + mlen' + 1) * (bits' + 1)^2 +
+      fmcost dim' mlen' fuel (rows'^2 / 4 + rows') (2 * bits' + 1)).
+    apply Nat.add_le_mono.
+    + apply Nat.mul_le_mono.
+      * apply Nat.mul_le_mono; [apply Nat.pow_le_mono_l; lia|lia].
+      * apply Nat.pow_le_mono_l. lia.
+    + apply IH; try assumption; [now apply poly_rows_recurrence_mono|lia].
+Qed.
+
+(** One extra elimination round only increases the declared envelope. *)
+Lemma poly_fmcost_fuel_step : forall fuel dim mlen rows bits,
+  fmcost dim mlen fuel rows bits <= fmcost dim mlen (S fuel) rows bits.
+Proof.
+  intro fuel. induction fuel as [|fuel IH]; intros dim mlen rows bits.
+  - change ((rows + 1) * (dim + mlen + 1) * (bits + 1) <=
+      (rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2 +
+      fmcost dim mlen 0 (rows^2 / 4 + rows) (2 * bits + 1)).
+    eapply Nat.le_trans with (m := (rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2).
+    + apply Nat.mul_le_mono.
+      * apply Nat.mul_le_mono; [cbn [Nat.pow]; nia|lia].
+      * cbn [Nat.pow]. nia.
+    + lia.
+  - change ((rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2 +
+      fmcost dim mlen fuel (rows^2 / 4 + rows) (2 * bits + 1) <=
+      (rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2 +
+      fmcost dim mlen (S fuel) (rows^2 / 4 + rows) (2 * bits + 1)).
+    apply Nat.add_le_mono_l. apply IH.
+Qed.
+
+Lemma poly_fmcost_fuel_mono : forall fuel fuel', fuel <= fuel' ->
+  forall dim mlen rows bits,
+  fmcost dim mlen fuel rows bits <= fmcost dim mlen fuel' rows bits.
+Proof.
+  intros fuel fuel' Hle. induction Hle; intros dim mlen rows bits; [reflexivity|].
+  eapply Nat.le_trans; [apply IHHle|apply poly_fmcost_fuel_step].
+Qed.
+
+(** The whole declared envelope is monotone in all five arguments. *)
+Lemma poly_fmcost_mono : forall dim dim' mlen mlen' fuel fuel' rows rows' bits bits',
+  dim <= dim' -> mlen <= mlen' -> fuel <= fuel' -> rows <= rows' -> bits <= bits' ->
+  fmcost dim mlen fuel rows bits <= fmcost dim' mlen' fuel' rows' bits'.
+Proof.
+  intros dim dim' mlen mlen' fuel fuel' rows rows' bits bits' Hd Hm Hf Hr Hb.
+  eapply Nat.le_trans; [eapply poly_fmcost_params_mono; eassumption|].
+  now apply poly_fmcost_fuel_mono.
+Qed.
+
+
 Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: POLY_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
@@ -1231,7 +1297,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   (** This widening has no repeated threshold search. *)
   Lemma F_wunits : forall s, wunits s = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma fm_step_mults : forall P x r, In r (fm_elim x P) ->
     exists s, C.combine P (mults_of r) = Some s /\ lrel s = lrel (row_of r) /\
       rhs s = rhs (row_of r) /\
@@ -1264,16 +1332,22 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply subst_sat_checked.
   Qed.
   Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Definition keep (P : list (lcons X.t)) (r : lcons X.t) : bool := keep_row P r.
   TimeFun keep.
   Definition entails (P : list (lcons X.t)) (r : lcons X.t) : bool :=
     match entail_cert P r with Some k => C.check_entails P r k | None => false end.
   Lemma F_leb_keep : forall a b, leb (Reached b) (Reached a) = forallb (keep b) a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_widen_keep : forall p a b,
     widen p (Reached a) (Reached b) = Reached (filter (keep b) a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_leb_split : forall a b, leb (Reached a) (Reached b) =
     forallb (fun r => match lrel r with
       | RLe => entails a r
@@ -1283,8 +1357,21 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       end) b.
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
+  Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
+  Proof.
+    intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
+    apply Nat.add_le_mono; [apply Nat.add_le_mono|lia].
+    - apply poly_fmcost_mono; lia.
+    - now apply Nat.pow_le_mono_l.
+  Qed.
+
   Lemma lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size. destruct (Nat.le_ge_cases (mu a) (mu b)) as [Hle|Hle].
+    - pose proof (lat_mono (mu a + mu b) (2 * mu b) ltac:(lia)). lia.
+    - pose proof (lat_mono (mu a + mu b) (2 * mu a) ltac:(lia)). lia.
+  Qed.
+
   Lemma T1_leb : forall a b,
     (T_leb a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof. Admitted. (* STUB *)
@@ -1298,13 +1385,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof. Admitted. (* STUB *)
   Lemma F_size : forall s, size s = lat (2 * mu s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Range work charges the numeric query and its linearization. *)
   Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) +
       fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
         (length (prows s) + 2) (nell s + F.bits_e e + 1)) + F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Lemma F_range_bits : forall e s, range_bits e s = range_work e s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 End PolyT.
