@@ -150,6 +150,25 @@ Proof.
   cbn [fst snd] in Hloop. unfold c_loopN. lia.
 Qed.
 
+(** Each loop call spends input credit and preserves its result's credit. *)
+Local Lemma loopN_acc_credit {St Out : Type} (lt : St -> St -> Prop)
+    (step : forall state, {next : St | lt next state} + Out) (T_step : St -> N)
+    (Inv : St -> Prop) (Phi : St -> N) (Psi : Out -> N) :
+  (forall state next Hlt, Inv state -> step state = inl (exist _ next Hlt) ->
+    Inv next /\ (T_step state + 1 + Phi next <= Phi state)%N) ->
+  (forall state result, Inv state -> step state = inr result ->
+    (T_step state + 1 + Psi result <= Phi state)%N) ->
+  forall state (H : Acc lt state), Inv state ->
+    (T_loop lt step T_step state H + Psi (loop lt step state H) <= Phi state)%N.
+Proof.
+  intros Hgo Hstop state H. induction H as [state Hacc IH] using Acc_ind_dep.
+  intro Hinv. time_unfold @T_loop. cbn [loop Acc_inv].
+  destruct (step state) as [[next Hlt] | result] eqn:Hstep.
+  - destruct (Hgo state next Hlt Hinv Hstep) as [Hinv1 Hcredit].
+    specialize (IH next Hlt Hinv1). lia.
+  - specialize (Hstop state result Hinv Hstep). lia.
+Qed.
+
 (** The loop spends input credit once and keeps credit in its returned result. *)
 Lemma T_loopN_amort : forall S R (step : S -> S + R) T_step (Inv : S -> Prop)
     (Phi : S -> N) (Psi : R -> N) fuel s,
@@ -161,4 +180,43 @@ Lemma T_loopN_amort : forall S R (step : S -> S + R) T_step (Inv : S -> Prop)
   T_loopN step T_step fuel s +
     match loopN step fuel s with inr r => Psi r | inl _ => 0 end
   <= Phi s + c_loopN * N.of_nat (N.size_nat fuel + 1))%N.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros S R step T_step Inv Phi Psi fuel s Hgo Hstop Hinv.
+  unfold c_loopN in Hgo, Hstop.
+  assert (Hbound : forall (fs : N * S) (Hacc : Acc loopN_lt fs),
+    Inv (snd fs) ->
+    (T_loop loopN_lt (loopN_step step) (fun fs => T_loopN_step step T_step fs) fs Hacc +
+      match loop loopN_lt (loopN_step step) fs Hacc with
+      | inl _ => 0 | inr r => Psi r
+      end <= Phi (snd fs) + loopN_zero_bits (fst fs) + 2)%N).
+  { apply (@loopN_acc_credit (N * S) (S + R) loopN_lt (loopN_step step)
+      (fun fs => T_loopN_step step T_step fs) (fun fs => Inv (snd fs))
+      (fun fs => (Phi (snd fs) + loopN_zero_bits (fst fs) + 2)%N)
+      (fun result => match result with inl _ => 0%N | inr r => Psi r end)).
+    - intros [n s0] [n1 s1] Hlt Hinv0 Hstep.
+      destruct n as [|p]; [discriminate Hstep|].
+      cbn [loopN_step] in Hstep.
+      destruct (step s0) as [s2|r] eqn:E; [|discriminate].
+      inversion Hstep; subst n1 s1.
+      destruct (Hgo s0 s2 Hinv0 E) as [Hinv2 Hcredit].
+      split; [exact Hinv2|].
+      pose proof (loopN_pred_credit (N.pos p)) as Hpred.
+      cbn [N.pred] in Hpred.
+      time_unfold @T_loopN_step. cbn [fst snd]. rewrite E. lia.
+    - intros [n s0] result Hinv0 Hstep.
+      destruct n as [|p].
+      + cbn [loopN_step] in Hstep. injection Hstep as Hresult. subst result.
+        time_unfold @T_loopN_step. cbn [fst snd loopN_zero_bits]. lia.
+      + cbn [loopN_step] in Hstep.
+        destruct (step s0) as [s1|r] eqn:E; [discriminate|].
+        injection Hstep as Hresult. subst result.
+        specialize (Hstop s0 r Hinv0 E).
+        time_unfold @T_loopN_step. cbn [fst snd]. rewrite E. lia. }
+  time_unfold @T_loopN. unfold loopN.
+  match goal with
+  | |- context [T_loop _ _ _ _ ?Hacc] =>
+      pose proof (Hbound (fuel, s) Hacc Hinv) as Hloop
+  end.
+  pose proof (loopN_zero_bits_le_size fuel) as Hsize.
+  cbn [fst snd] in Hloop. unfold c_loopN. rewrite Nat2N.inj_add. lia.
+Qed.
