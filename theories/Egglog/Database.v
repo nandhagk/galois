@@ -8002,7 +8002,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition k_pop : N := 64 * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1).
   Definition k_rstep : N := 64.
   Definition k_stop : N := k_rstep + k_pop + c_loopN.
-  Definition k_slots : N := 1. (* STUB *)
+  Definition k_slots : N := 1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1).
   Definition k_layout : N := 1. (* STUB *)
 
   (* spec: row_id row_parent row_size row_current next_row *)
@@ -8425,7 +8425,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_slots_update b f u db <= k_slots * N.of_nat (slots_of db f + 1) *
       N.of_nat (length u + 1) *
       N.of_nat (unit (slots_update b f u db)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db b f u Hslots Hkind Hfits Hcells.
+    eapply N.le_trans; [exact (T_slots_update_width db b f u Hslots Hkind Hfits Hcells) |].
+    unfold k_slots. apply N.mul_le_mono_l.
+    unfold unit. rewrite Nat2N.inj_mul.
+    replace (N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1)) with
+      (1 * N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N at 1 by ring.
+    apply N.mul_le_mono_r. lia.
+  Qed.
 
   (** A union finds both roots and links only distinct ones. *)
   Lemma F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
