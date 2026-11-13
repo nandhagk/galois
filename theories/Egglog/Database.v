@@ -8072,6 +8072,82 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact (inv_on_pending_count db work Hinv).
   Qed.
 
+  (** Allowing the forest's two queried keys costs at most four allocation-log units. *)
+  Lemma union_logarithm_budget : forall n,
+    Nat.log2 (N.to_nat n + 2) + 1 <= 4 * (N.to_nat (N.log2 n) + 1).
+  Proof.
+    intro n. pose proof (nat_log2_N_width (n + 2)) as Hlog.
+    rewrite N2Nat.inj_add in Hlog.
+    change (Nat.log2 (N.to_nat n + 2) <= N.size_nat (n + 2)) in Hlog.
+    pose proof (N_successor_width n) as Hfirst.
+    pose proof (N_successor_width (n + 1)) as Hsecond.
+    replace (n + 1 + 1)%N with (n + 2)%N in Hsecond by lia.
+    pose proof (slot_width_log n) as Hwidth. lia.
+  Qed.
+
+  (** The actual union wrapper adds a binary queue increment and fixed record work. *)
+  Lemma T_union_overhead : forall i j db,
+    (T_union i j db <= UnionFindT.T_union i j (db_forest db) +
+      N.T_succ (db_npending db) + 64)%N.
+  Proof.
+    intros i j db. time_unfold T_union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; cbn [fst snd].
+    - time_unfold @T_database_set_forest. time_unfold @T_database_set_pending.
+      time_unfold @T_database_set_runtime. time_unfold @T_runtime_set_union.
+      time_simpl. time_cbn. lia.
+    - time_unfold @T_database_set_forest. time_simpl. time_cbn. lia.
+  Qed.
+
+  (** Allocated endpoints put the measured forest union within the stored database unit. *)
+  Lemma T_union_forest_unit : forall db work i j, inv_on db work ->
+    allocated db i -> allocated db j ->
+    (UnionFindT.T_union i j (db_forest db) <=
+      4 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros db work i j Hinv Hi Hj.
+    pose proof (UnionFindT.T_union_le i j (db_forest db)
+      (inv_on_forest_wf db work Hinv)) as Htime.
+    rewrite (inv_on_forest_card db work Hinv) in Htime.
+    pose proof (union_logarithm_budget (ids db)) as Hlog.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db))
+      (Nat.max (Pos.size_nat i) (Pos.size_nat j)) <= N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (inv_on_forest_width db work Hinv) |].
+        apply N_width_mono. apply wmark_ids.
+      - apply Nat.max_lub.
+        + change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+          apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids].
+        + change (N.size_nat (Npos j) <= N.size_nat (wmark db)).
+          apply N_width_mono. eapply N.le_trans; [exact Hj | apply wmark_ids]. }
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    replace (4 * forest_cost * N.of_nat (unit db))%N with
+      (forest_cost * (4 * N.of_nat (N.to_nat (N.log2 (ids db)) + 1)) *
+        N.of_nat (N.size_nat (wmark db) + 1))%N
+      by (unfold unit; rewrite Nat2N.inj_mul; ring).
+    eapply N.le_trans; [exact Htime |]. apply N.mul_le_mono.
+    - apply N.mul_le_mono_l. lia.
+    - lia.
+  Qed.
+
+  (** Queue uniqueness bounds the actual counter increment during any invariant union. *)
+  Lemma T_union_inv_on_unit : forall db work i j, inv_on db work ->
+    allocated db i -> allocated db j ->
+    (T_union i j db <= (4 * UnionFindT.c_uf + 65) * N.of_nat (unit db))%N.
+  Proof.
+    intros db work i j Hinv Hi Hj.
+    pose proof (T_union_forest_unit db work i j Hinv Hi Hj) as Hforest.
+    pose proof (T_union_overhead i j db) as Hwrapped.
+    assert (Hsuccessor : (N.T_succ (db_npending db) <= N.of_nat (unit db))%N).
+    { pose proof (N.T_succ_le (db_npending db)) as Htime.
+      pose proof (N_width_mono _ _ (inv_on_pending_bound db work Hinv)) as Hwidth.
+      pose proof (unit_ids_width db) as Hunit. lia. }
+    pose proof (unit_positive db) as Hpositive.
+    clear - Hforest Hwrapped Hsuccessor Hpositive.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    set (budget := N.of_nat (unit db)) in *. clearbody budget. nia.
+  Qed.
+
   Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, None => True
@@ -8079,6 +8155,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     | _, _ => False
     end.
   Definition inv (db : t) : Prop := inv_on db [].
+
+  (** The public coefficient covers the actual union clock without potential assumptions. *)
+  Lemma T_union_unit_bound : forall i j db, inv db -> allocated db i -> allocated db j ->
+    (T_union i j db <= c_db * N.of_nat (unit db))%N.
+  Proof.
+    intros i j db Hinv Hi Hj.
+    eapply N.le_trans; [exact (T_union_inv_on_unit db [] i j Hinv Hi Hj) |].
+    apply N.mul_le_mono_r. pose proof c_db_forest_budget as Hcoefficient.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    set (database_cost := c_db) in *. clearbody database_cost. lia.
+  Qed.
+
   Definition state_inv (s : repair_state) : Prop := inv_on (fst s) (snd s).
 
   Definition entry_weight (db : t) (e : use_entry) : nat :=
