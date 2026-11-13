@@ -225,7 +225,7 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   TimeFun sides.
   TimeFun start.
   TimeFun resume.
-  Definition row_work p s := N.of_nat (length (rows p) + s + 1).
+  Definition row_work p s := N.of_nat (length (rows p) + s + L.size true + 1).
   Definition path_kw (p : prog) : nat := fold_right Nat.max 0
     (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
   Definition kw := path_kw.
