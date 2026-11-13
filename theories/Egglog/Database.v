@@ -2314,6 +2314,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let store := db_row_store db in
     let recorded r := In r (map (fun binding => snd (snd binding))
       (PTrieCode.elements (row_history store))) in
+    let parent r := match PTrieCode.get r (row_links store) with
+      | Some p => p | None => r end in
+    let up d r := Nat.iter d parent r in
     let size r := match PTrieCode.get r (row_weights store) with
       | Some n => n | None => 1%N end in
     let entries := flat_map (fun binding => map (pair (fst binding)) (snd binding))
@@ -2332,7 +2335,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
        | Some parent => parent | None => r end < row_fresh store)%positive /\
       In (row_fresh store) (db_index_counters db)) /\
     (forall x f k c, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
-      In c k -> In c (db_written_cells db)).
+      In c k -> In c (db_written_cells db)) /\
+    (forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
+      exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+        parent (up d r) = up d r /\
+        db_locate f k db = PTrieCode.get (up d r) (row_keys store)) /\
+    (forall f k key r d,
+      PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
+      parent (up d r) = up d r ->
+      (size (up d r) <= (ids db + 1) ^ N.of_nat (length k))%N).
 
   (** Retaining rows and extending their history preserves cell coverage. *)
   Lemma recorded_rows_transport : forall db db',
@@ -9556,8 +9568,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         rewrite PTrie.get_empty in Huse. contradiction.
       + split; [reflexivity |]. split.
         * intros f k key r Hhistory. rewrite PTrie.get_empty in Hhistory. discriminate.
-        * intros x f k c Huse. unfold DatabaseUses.bucket, DatabaseUseMap.get in Huse.
-          rewrite PTrie.get_empty in Huse. contradiction.
+        * split.
+          -- intros x f k c Huse. unfold DatabaseUses.bucket, DatabaseUseMap.get in Huse.
+             rewrite PTrie.get_empty in Huse. contradiction.
+          -- split.
+             ++ intros f k key r Hhistory.
+                rewrite PTrie.get_empty in Hhistory. discriminate.
+             ++ intros f k key r d Hhistory.
+                rewrite PTrie.get_empty in Hhistory. discriminate.
   Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
@@ -9881,7 +9899,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
       row_parent db (row_up db d r) = row_up db d r /\
       located db f k = row_current db (row_up db d r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work f k r Hinv Hrow.
+    unfold inv_on, forest_ok in Hinv.
+    destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
+    destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
+    unfold row_store_ok, database_row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & _ & _ & Hdepth & _).
+    unfold row_id in Hrow.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key id] |] eqn:Hget; [| discriminate].
+    cbn [option_map snd] in Hrow. injection Hrow as <-.
+    exact (Hdepth f k key id Hget).
+  Qed.
   (** A key without a row identifier has no current row. *)
   Lemma F_row_absent : forall db work f k, inv_on db work -> row_id db f k = None ->
     located db f k = None.
@@ -9912,7 +9942,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_row_group : forall db work f k r d, inv_on db work -> row_id db f k = Some r ->
     row_parent db (row_up db d r) = row_up db d r ->
     (row_size db (row_up db d r) <= (ids db + 1) ^ N.of_nat (length k))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work f k r d Hinv Hrow Hroot.
+    unfold inv_on, forest_ok in Hinv.
+    destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
+    destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
+    unfold row_store_ok, database_row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & _ & _ & _ & Hgroup).
+    unfold row_id in Hrow.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key id] |] eqn:Hget; [| discriminate].
+    cbn [option_map snd] in Hrow. injection Hrow as <-.
+    exact (Hgroup f k key id d Hget Hroot).
+  Qed.
   (** Row identifiers stay below a counter that the watermark covers. *)
   Lemma F_row_counter : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
     (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
@@ -9939,7 +9981,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
     destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
     unfold row_store_ok in Hstore.
-    destruct Hstore as (_ & _ & _ & _ & Hcells).
+    destruct Hstore as (_ & _ & _ & _ & Hcells & _).
     apply (Hcells x f k c); [| exact Hcell].
     change (In (f, k) (get_uses x db)). rewrite get_uses_bucket.
     unfold bucket.
