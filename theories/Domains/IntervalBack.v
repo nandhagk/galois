@@ -1756,7 +1756,7 @@ End IntervalWordTable.
 
 Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     (Scalar : INTERVAL_SCALAR_T T)
-    (W : INTERVAL_PAYLOAD_PINNED_T L T Scalar)
+    (W : INTERVAL_PAYLOAD_ALL L T Scalar)
     <: INTERVAL_WORD_TABLE_T L W.
   Include IntervalWordTable L T Scalar W.
   TimeFun interval_top.
@@ -1812,13 +1812,34 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   TimeFun wfwd.
   TimeFun wbwd.
 
+  Local Lemma table_clip_time : forall w a,
+    (T_interval_clip w a <= (W.k_payload_clip + 1) *
+      N.of_nat (W.psize w a + 1))%N.
+  Proof.
+    intros w a.
+    pose proof (W.T_clip_le w a) as Hclip.
+    unfold T_interval_clip.
+    unfold T_interval_top.
+    time_cbn.
+    unfold T_interval_payload_clip in Hclip.
+    time_cbn_all.
+    unfold interval_top.
+    unfold Word.modulus.
+    replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) by reflexivity.
+    rewrite Nat2N.inj_add in *.
+    nia.
+  Qed.
+
   Definition c_word_table : N := 1%N. (* STUB *)
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* SIG-QUESTION: PINNED_T has no lower bound of psize by raw interval bits. *)
+  Proof.
+    intros o rw xs.
+    time_step.
+  Admitted. (* OPEN: dispatch cost bound still required. *)
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
