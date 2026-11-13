@@ -4509,6 +4509,24 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     rewrite raw_entry_increment, !raw_entry_get, !relax_value_meet. reflexivity.
   Qed.
 
+  (** Every incremental path relaxation retains or lowers the old entry. *)
+  Lemma bound_meet_below_left : forall a b,
+    RelationalPathBounds.below (bound_meet a b) a.
+  Proof.
+    intros [a|] [b|]; cbn [bound_meet RelationalPathBounds.below];
+      try exact I; lia.
+  Qed.
+
+  Lemma increment_entry_below : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (entry m a b).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    repeat (eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|]).
+    apply RelationalPathBounds.below_refl.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
