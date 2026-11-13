@@ -6,7 +6,7 @@
 
 From Stdlib Require Import ZArith Zpow_facts List Bool Lia Wellfounded.Inverse_Image.
 From Argent Require Import Time Tactics Std Loop BigO.
-From Galois.Bits Require Import Word Op.
+From Galois.Bits Require Import Word Fun Op Testbit Arith.
 From Galois.Domains Require Import CongruenceSig WordSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
@@ -535,14 +535,309 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Include CONGRUENCE_SPEC L.
   Definition pgamma := congr_gamma.
   Definition pwrank (_ : pwparam) (w : positive) (a : p) : nat := congr_wrank w a.
+  Definition gamma_mod (w : width) (c : congr) (z : Z) : Prop :=
+    match c with
+    | CBot => False
+    | C m r => is_word w z /\ (z - r) mod m = 0
+    end.
+
+  Local Lemma cong_wordb_spec w z : wordb w z = true <-> is_word w z.
+  Proof.
+    unfold wordb. rewrite andb_true_iff, Z.leb_le, Z.ltb_lt. reflexivity.
+  Qed.
+
+
+  Local Lemma cong_mod_divide a m : a mod m = 0 <-> (m | a).
+  Proof.
+    destruct (Z.eq_dec m 0) as [->|Hnonzero].
+    - rewrite Z.mod_0_r. split.
+      + intro Hzero. subst a. exists 0. reflexivity.
+      + intros [k Hk]. lia.
+    - apply Z.mod_divide. exact Hnonzero.
+  Qed.
+
+  Local Lemma cong_mod_abs a m : a mod (Z.abs m) = 0 <-> a mod m = 0.
+  Proof.
+    rewrite !cong_mod_divide.
+    split; [apply Z.divide_abs_l|intro H; now apply Z.divide_abs_l].
+  Qed.
+
+  Local Lemma cong_mod_residue z m r : 0 < m ->
+    (z - r mod m) mod m = 0 <-> (z - r) mod m = 0.
+  Proof.
+    intro Hm. rewrite (Zminus_mod z (r mod m) m), Z.mod_mod by lia.
+    rewrite (Zminus_mod z r m). reflexivity.
+  Qed.
+
+  Local Lemma cong_large_modulus w m r z : modulus w <= m ->
+    0 <= r < m -> is_word w z -> ((z - r) mod m = 0 <-> z = r).
+  Proof.
+    intros Hlarge Hr [Hlo Hhi]. pose proof (modulus_pos w).
+    rewrite cong_mod_divide. split.
+    - intros [k Hk]. assert (k = 0) by nia. nia.
+    - intro Heq. subst z. exists 0. ring.
+  Qed.
+
+  (** Normalization preserves the word meaning of raw classes, including negative moduli. *)
+  Theorem cong_norm_gamma w c z : gamma_mod w (congr_norm w c) z <-> gamma_mod w c z.
+  Proof.
+    destruct c as [|m r]; [reflexivity|].
+    unfold congr_norm. destruct (Z.abs m =? 0) eqn:Hm.
+    - apply Z.eqb_eq in Hm.
+      assert (m = 0) by (destruct m; cbn in Hm; congruence). subst m.
+      destruct (wordb w r) eqn:Hr; cbn [gamma_mod]; rewrite Z.mod_0_r.
+      + reflexivity.
+      + split; [contradiction|]. intros [Hword Hzero].
+        assert (z = r) by lia. subst z.
+        pose proof (proj2 (cong_wordb_spec w r) Hword). congruence.
+    - apply Z.eqb_neq in Hm.
+      assert (Hpositive : 0 < Z.abs m) by (pose proof (Z.abs_nonneg m); lia).
+      destruct (modulus w <=? Z.abs m) eqn:Hlarge.
+      + apply Z.leb_le in Hlarge.
+        pose proof (Z.mod_pos_bound r (Z.abs m) Hpositive) as Hr.
+        destruct (wordb w (r mod Z.abs m)) eqn:Hwordr; cbn [gamma_mod].
+        * rewrite Z.mod_0_r. split; intros [Hword Hz]; split; [exact Hword| |exact Hword|].
+          -- apply (proj1 (cong_mod_abs (z - r) m)).
+             apply (proj1 (cong_mod_residue z (Z.abs m) r Hpositive)).
+             rewrite Hz. apply Z.mod_0_l. lia.
+          -- apply (proj2 (cong_mod_abs (z - r) m)) in Hz.
+             apply (proj2 (cong_mod_residue z (Z.abs m) r Hpositive)) in Hz.
+             apply (proj1 (cong_large_modulus w _ _ _ Hlarge Hr Hword)) in Hz. lia.
+        * split; [contradiction|]. intros [Hword Hz].
+          apply (proj2 (cong_mod_abs (z - r) m)) in Hz.
+          apply (proj2 (cong_mod_residue z (Z.abs m) r Hpositive)) in Hz.
+          apply (proj1 (cong_large_modulus w _ _ _ Hlarge Hr Hword)) in Hz. subst z.
+          pose proof (proj2 (cong_wordb_spec w _) Hword). congruence.
+      + cbn [gamma_mod]. split; intros [Hword Hz]; split; [exact Hword| |exact Hword|].
+        * apply (proj1 (cong_mod_abs (z - r) m)).
+          apply (proj1 (cong_mod_residue _ _ _ Hpositive)). exact Hz.
+        * apply (proj2 (cong_mod_residue _ _ _ Hpositive)).
+          now apply (proj2 (cong_mod_abs (z - r) m)).
+  Qed.
+
+  Definition strong_canonical w c : Prop :=
+    match c with
+    | CBot => True
+    | C m r => (m = 0 /\ is_word w r) \/ (0 < m < modulus w /\ 0 <= r < m)
+    end.
+
+  Local Lemma cong_norm_canonical w c : strong_canonical w (congr_norm w c).
+  Proof.
+    destruct c as [|m r]; [exact I|]. unfold congr_norm.
+    destruct (Z.abs m =? 0) eqn:Hm.
+    - destruct (wordb w r) eqn:Hr; cbn; [left; split|exact I];
+        [reflexivity|now apply cong_wordb_spec].
+    - apply Z.eqb_neq in Hm. pose proof (Z.abs_nonneg m).
+      destruct (modulus w <=? Z.abs m) eqn:Hlarge.
+      + destruct (wordb w (r mod Z.abs m)) eqn:Hr; cbn;
+          [left; split|exact I]; [reflexivity|now apply cong_wordb_spec].
+      + apply Z.leb_gt in Hlarge. right. split; [lia|apply Z.mod_pos_bound; lia].
+  Qed.
+
+  Local Lemma cong_canonical_fixed w c : strong_canonical w c -> congr_norm w c = c.
+  Proof.
+    destruct c as [|m r]; [reflexivity|].
+    intros [[-> Hword]|[[Hpositive Hsmall] Hr]]; unfold congr_norm.
+    - cbn. now rewrite (proj2 (cong_wordb_spec w r) Hword).
+    - rewrite Z.abs_eq by lia. rewrite (proj2 (Z.eqb_neq m 0)) by lia.
+      rewrite Z.mod_small by exact Hr.
+      rewrite (proj2 (Z.leb_gt (modulus w) m)) by lia. reflexivity.
+  Qed.
+
+  (** Normalization is idempotent on every raw payload. *)
+  Theorem cong_norm_idempotent w c : congr_norm w (congr_norm w c) = congr_norm w c.
+  Proof.
+    apply cong_canonical_fixed. apply cong_norm_canonical.
+  Qed.
+
+  Local Lemma cong_raw_leb_spec m r n s :
+    raw_leb (C m r) (C n s) = true <-> (n | m) /\ (n | r - s).
+  Proof.
+    unfold raw_leb. rewrite andb_true_iff, !Z.eqb_eq, !cong_mod_divide. reflexivity.
+  Qed.
+
+  Local Lemma cong_raw_leb_refl c : raw_leb c c = true.
+  Proof.
+    destruct c as [|m r]; [reflexivity|]. apply cong_raw_leb_spec.
+    split; [exists 1|exists 0]; ring.
+  Qed.
+
+  Local Lemma cong_raw_leb_trans a b c :
+    raw_leb a b = true -> raw_leb b c = true -> raw_leb a c = true.
+  Proof.
+    destruct a as [|m r], b as [|n s], c as [|p t]; intros Hab Hbc;
+      try discriminate; try reflexivity.
+    apply cong_raw_leb_spec in Hab as [Hnm Hrs].
+    apply cong_raw_leb_spec in Hbc as [Hpn Hst]. apply cong_raw_leb_spec. split.
+    - destruct Hnm as [k Hk], Hpn as [j Hj]. exists (k * j). nia.
+    - destruct Hrs as [k Hk], Hpn as [j Hj], Hst as [l Hl]. exists (k * j + l). nia.
+  Qed.
+
+  Local Lemma cong_raw_leb_gamma w a b z :
+    raw_leb a b = true -> gamma_mod w a z -> gamma_mod w b z.
+  Proof.
+    destruct a as [|m r], b as [|n s]; intros Hle Ha; try contradiction; try discriminate.
+    destruct Ha as [Hword Hz]. split; [exact Hword|].
+    apply cong_raw_leb_spec in Hle as [Hnm Hrs]. apply cong_mod_divide in Hz.
+    apply cong_mod_divide. destruct Hnm as [k Hk], Hrs as [j Hj], Hz as [l Hl].
+    exists (l * k + j). nia.
+  Qed.
+
+  (** Normalized comparison preserves every word admitted by the left operand. *)
+  Theorem cong_gamma_monotone w a b z :
+    pleb w a b = true -> gamma_mod w a z -> gamma_mod w b z.
+  Proof.
+    intros Hle Ha. apply (proj1 (cong_norm_gamma w b z)).
+    eapply cong_raw_leb_gamma; [exact Hle|]. now apply (proj2 (cong_norm_gamma w a z)).
+  Qed.
+
+  Local Lemma cong_divide_trans a b c : (a | b) -> (b | c) -> (a | c).
+  Proof.
+    intros [k Hk] [j Hj]. exists (j * k). nia.
+  Qed.
+
+  Local Lemma cong_residue_difference m r : (m | r - r mod m).
+  Proof.
+    destruct (Z.eq_dec m 0) as [->|Hnonzero].
+    - rewrite Z.mod_0_r. exists 0. ring.
+    - exists (r / m). pose proof (Z.div_mod r m Hnonzero). nia.
+  Qed.
+
+  Local Lemma cong_small_norm_equivalent w m r :
+    0 <= m < modulus w -> is_word w r ->
+    raw_leb (C m r) (congr_norm w (C m r)) = true /\
+    raw_leb (congr_norm w (C m r)) (C m r) = true.
+  Proof.
+    intros Hm Hword. unfold congr_norm. rewrite Z.abs_eq by lia.
+    destruct (m =? 0) eqn:Hzero.
+    - apply Z.eqb_eq in Hzero. subst m.
+      rewrite (proj2 (cong_wordb_spec w r) Hword). split; apply cong_raw_leb_refl.
+    - rewrite (proj2 (Z.leb_gt (modulus w) m)) by lia.
+      split; apply cong_raw_leb_spec; split; try (exists 1; ring).
+      + apply cong_residue_difference.
+      + destruct (cong_residue_difference m r) as [k Hk]. exists (-k). nia.
+  Qed.
+
+  Local Lemma cong_divisor_bound a d : 0 < a -> 0 <= d -> (d | a) -> d <= a.
+  Proof.
+    intros Ha Hd [k Hk]. destruct (Z.eq_dec d 0) as [->|Hnonzero]; [lia|].
+    assert (0 < k) by nia. nia.
+  Qed.
+
+  Local Lemma cong_join_modulus_bound w m r n s :
+    strong_canonical w (C m r) -> strong_canonical w (C n s) ->
+    0 <= Z.gcd (Z.gcd m n) (r - s) < modulus w.
+  Proof.
+    intros Ha Hb. pose proof (Z.gcd_nonneg (Z.gcd m n) (r - s)) as Hnonnegative.
+    assert (Hdm : (Z.gcd (Z.gcd m n) (r - s) | m)).
+    { eapply cong_divide_trans; [apply Z.gcd_divide_l|apply Z.gcd_divide_l]. }
+    assert (Hdn : (Z.gcd (Z.gcd m n) (r - s) | n)).
+    { eapply cong_divide_trans; [apply Z.gcd_divide_l|apply Z.gcd_divide_r]. }
+    destruct Ha as [[-> Hr]|[[Hm Hsmall] Hr]].
+    - destruct Hb as [[-> Hs]|[[Hn Hsmall] Hs]].
+      + change (0 <= Z.abs (r - s) < modulus w).
+        destruct Hr, Hs. split; [apply Z.abs_nonneg|apply Z.abs_lt; lia].
+      + pose proof (cong_divisor_bound _ _ Hn Hnonnegative Hdn). lia.
+    - pose proof (cong_divisor_bound _ _ Hm Hnonnegative Hdm). lia.
+  Qed.
+
+  Local Lemma cong_canonical_word_residue w m r :
+    strong_canonical w (C m r) -> is_word w r.
+  Proof.
+    intros [[_ Hword]|[[Hm Hsmall] Hr]]; [exact Hword|]. split; lia.
+  Qed.
+
+  Local Lemma cong_raw_join_upper m r n s :
+    let c := C (Z.gcd (Z.gcd m n) (r - s)) r in
+    raw_leb (C m r) c = true /\ raw_leb (C n s) c = true.
+  Proof.
+    cbn zeta. split; apply cong_raw_leb_spec; split.
+    - eapply cong_divide_trans; [apply Z.gcd_divide_l|apply Z.gcd_divide_l].
+    - exists 0. ring.
+    - eapply cong_divide_trans; [apply Z.gcd_divide_l|apply Z.gcd_divide_r].
+    - destruct (Z.gcd_divide_r (Z.gcd m n) (r - s)) as [k Hk]. exists (-k). nia.
+  Qed.
+
+  Local Lemma cong_join_upper w a b :
+    pleb w a (pjoin w a b) = true /\ pleb w b (pjoin w a b) = true.
+  Proof.
+    pose proof (cong_norm_canonical w a) as Ha. pose proof (cong_norm_canonical w b) as Hb.
+    unfold pleb, pjoin.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s].
+    - split; reflexivity.
+    - rewrite (cong_canonical_fixed w _ Hb). split; [reflexivity|apply cong_raw_leb_refl].
+    - rewrite (cong_canonical_fixed w _ Ha). split; [apply cong_raw_leb_refl|reflexivity].
+    - rewrite cong_norm_idempotent.
+      destruct (cong_small_norm_equivalent w _ r (cong_join_modulus_bound w _ _ _ _ Ha Hb)
+        (cong_canonical_word_residue w _ _ Ha)) as [Hnorm _].
+      destruct (cong_raw_join_upper m r n s) as [Hleft Hright].
+      split; eapply cong_raw_leb_trans; eassumption.
+  Qed.
+
+  (** Normalized comparison and gcd joins satisfy the lattice laws. *)
+
+  Local Lemma cong_abs_multiple m : (m | Z.abs m).
+  Proof.
+    destruct m as [|p|p]; [exists 0|exists 1|exists (-1)]; cbn; ring.
+  Qed.
+
+  Local Lemma cong_norm_raw_lower w c : raw_leb (congr_norm w c) c = true.
+  Proof.
+    destruct c as [|m r]; [reflexivity|]. unfold congr_norm.
+    assert (Hresidue : (m | r mod Z.abs m - r)).
+    { eapply cong_divide_trans; [apply cong_abs_multiple|].
+      destruct (cong_residue_difference (Z.abs m) r) as [k Hk]. exists (-k). nia. }
+    destruct (Z.abs m =? 0) eqn:Hm.
+    - apply Z.eqb_eq in Hm. assert (m = 0) by (destruct m; cbn in Hm; congruence).
+      subst m. destruct (wordb w r); [apply cong_raw_leb_refl|reflexivity].
+    - destruct (modulus w <=? Z.abs m).
+      + destruct (wordb w (r mod Z.abs m)); [|reflexivity].
+        apply cong_raw_leb_spec. split; [exists 0; ring|exact Hresidue].
+      + apply cong_raw_leb_spec. split; [apply cong_abs_multiple|exact Hresidue].
+  Qed.
+
+
+  (** The old remainder formulation is equivalent even at modulus zero. *)
+  Lemma gamma_mod_agrees : forall w a z, gamma_mod w a z <-> pgamma w a z.
+  Proof.
+    intros w [| m r] z; [reflexivity |].
+    cbn [gamma_mod pgamma congr_gamma].
+    rewrite cong_mod_divide. reflexivity.
+  Qed.
+
+  (** Normalization is closed without using a public admission. *)
+  Lemma norm_gamma : forall w a z,
+    pgamma w (congr_norm w a) z <-> pgamma w a z.
+  Proof.
+    intros w a z. rewrite <- !gamma_mod_agrees. apply cong_norm_gamma.
+  Qed.
+
+
+  (** Top is fixed by normalization at every positive width. *)
+  Lemma cong_top_fixed w : congr_norm w (C 1 0) = C 1 0.
+  Proof.
+    apply cong_canonical_fixed. right.
+    pose proof (one_is_word w) as Hword. unfold is_word in Hword. split; lia.
+  Qed.
+
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    - apply cong_raw_leb_refl.
+    - exact (proj1 (cong_join_upper w a b)).
+  Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Horder.
+    - exact Horder.
+    - exact (proj2 (cong_join_upper w a b)).
+  Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b Hstable. unfold pwiden. now rewrite Hstable.
+  Qed.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
@@ -557,11 +852,15 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Proof. Admitted. (* STUB *)
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_raw_leb_refl was not found in the current *)
+  Proof.
+    intros w a. apply cong_raw_leb_refl.
+  Qed.
   (** Width-specific inclusion is transitive. *)
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_raw_leb_trans was not found in the current *)
+  Proof.
+    intros w a b c. apply cong_raw_leb_trans.
+  Qed.
   (** Bottom is below every payload. *)
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
   Proof.
@@ -569,19 +868,32 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. unfold pleb, ptop. rewrite cong_top_fixed.
+    destruct (congr_norm w a); [reflexivity |].
+    cbn [raw_leb]. rewrite !Z.mod_1_r. reflexivity.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. reflexivity.
+  Qed.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Hbot. unfold pleb, pis_bot in *.
+    destruct (congr_norm w a); [reflexivity | discriminate].
+  Qed.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
+  Proof.
+    intros w a b. exact (proj1 (cong_join_upper w a b)).
+  Qed.
   (** Join contains the right payload. *)
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted. (* CONVERT: cong_lattice_laws: The variable cong_join_upper was not found in the current environment. *)
+  Proof.
+    intros w a b. exact (proj2 (cong_join_upper w a b)).
+  Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
   Proof. Admitted. (* CONVERT: cong_meet_lower_left: The variable cong_norm_idempotent was not found. *)
@@ -591,7 +903,10 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted. (* CONVERT: cong_gamma_monotone: The variable cong_norm_gamma was not found. *)
+  Proof.
+    intros w a b z Hle Ha. rewrite <- !gamma_mod_agrees in *.
+    eapply cong_gamma_monotone; eassumption.
+  Qed.
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
   Proof.
@@ -599,18 +914,26 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted. (* CONVERT: cong_top_sound: Unable to unify "?a mod 1 = 0" with "exists z0 : Z, z - 0 = z0 * 1". *)
+  Proof.
+    intros w z Hword. split; [exact Hword |]. exists z. ring.
+  Qed.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   Proof. Admitted. (* CONVERT: cong_meet_sound: The variable cong_norm_gamma was not found. *)
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted. (* CONVERT: cong_shape_laws: The variable cong_norm_gamma was not found in the current environment. *)
+  Proof.
+    intros w a z Hbot Ha. apply (proj2 (norm_gamma w a z)) in Ha.
+    unfold pis_bot in Hbot. destruct (congr_norm w a); [exact Ha | discriminate].
+  Qed.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Horder Hbot. unfold pleb, pis_bot in *.
+    destruct (congr_norm w a), (congr_norm w b); try reflexivity; discriminate.
+  Qed.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
@@ -619,14 +942,23 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
-  Proof. Admitted. (* CONVERT: cong_shape_laws: Expects a disjunctive pattern with 3 branches. *)
+  Proof.
+    intros w a z v Hpoint Hword Ha. apply (proj2 (norm_gamma w a z)) in Ha.
+    unfold ppoint in Hpoint. destruct (congr_norm w a) as [| [| m | m] r];
+      try discriminate.
+    injection Hpoint as <-. destruct Ha as [_ [k Hk]]. lia.
+  Qed.
   (** Payload concretization agrees with residue-class membership. *)
   Lemma F1_gamma : forall w a z, pgamma w a z <-> congr_gamma w a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a z. reflexivity.
+  Qed.
   (** Normalization keeps precisely the same represented integers. *)
   Lemma F2_norm_gamma : forall w a z,
     pgamma w (congr_norm w a) z <-> pgamma w a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply norm_gamma.
+  Qed.
   (** Negation retains wrapped concrete negation. *)
   Lemma F6_congr_neg_sound : forall w a x,
     pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
