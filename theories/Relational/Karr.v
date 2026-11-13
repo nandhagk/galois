@@ -7547,6 +7547,322 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - rewrite Z.add_0_l. now apply IH.
   Qed.
 
+
+  (** A one-column matrix carries bounded coordinate and multiplier vectors. *)
+  Definition karr_row_envelope (dim mlen bits : nat) (r : karr_row) : Prop :=
+    length (kcoeff r) <= dim /\
+    Forall (fun z => Z.size_nat z <= bits) (kcoeff r) /\
+    Z.size_nat (kright r) <= bits /\
+    length (kweight r) <= mlen /\
+    Forall (fun z => Z.size_nat z <= bits) (kweight r) /\
+    Z.size_nat (kscale r) <= bits.
+
+  (** Increasing the arithmetic budget preserves a row envelope. *)
+  Lemma karr_row_envelope_mono : forall dim mlen bits bits' r,
+    bits <= bits' -> karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim mlen bits' r.
+  Proof.
+    intros dim mlen bits bits' r Hle [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    split; [exact Hdim|]. split.
+    - eapply Forall_impl; [|exact Hcoeff]. intros z Hz. exact (Nat.le_trans _ _ _ Hz Hle).
+    - split; [lia|]. split; [exact Hmlen|]. split.
+      + eapply Forall_impl; [|exact Hmult]. intros z Hz. exact (Nat.le_trans _ _ _ Hz Hle).
+      + lia.
+  Qed.
+
+  (** Exact division by one is the identity, including all tracked fields. *)
+  Lemma karr_divide_one : forall r, karr_divide 1 r = r.
+  Proof.
+    intro r. unfold karr_divide. destruct (karr_exact 1 r); [|reflexivity].
+    destruct r as [zs rhs ms sc]. unfold karr_quotient. cbn [kcoeff kright kweight kscale].
+    rewrite !Z.div_1_r.
+    assert (Hmap : forall xs, map (fun z : Z => (z / 1)%Z) xs = xs).
+    { intro xs. induction xs as [|z xs IH]; cbn [map]; [reflexivity|].
+      now rewrite Z.div_1_r, IH. }
+    now rewrite !Hmap.
+  Qed.
+
+  (** Subtraction adds at most one bit to the larger signed operand. *)
+  Lemma karr_size_sub : forall x y,
+    Z.size_nat (x - y) <= Nat.max (Z.size_nat x) (Z.size_nat y) + 1.
+  Proof.
+    intros x y. replace (x - y)%Z with (x + -y)%Z by ring.
+    pose proof (karr_size_add x (-y)) as Hsize. now rewrite karr_size_opp in Hsize.
+  Qed.
+
+  (** A cross-product entry fits the sum of scalar and source widths plus one. *)
+  Lemma karr_cross_entry_bits : forall a b x y bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    Z.size_nat x <= bits -> Z.size_nat y <= bits ->
+    Z.size_nat (a * x - b * y) <= 2 * bits + 1.
+  Proof.
+    intros a b x y bits Ha Hb Hx Hy.
+    pose proof (karr_size_mul a x). pose proof (karr_size_mul b y).
+    pose proof (karr_size_sub (a * x) (b * y)). lia.
+  Qed.
+
+  (** The synchronized cross product never lengthens its left vector. *)
+  Lemma karr_cross_length_le : forall a b xs ys,
+    length (karr_cross a b xs ys) <= length xs.
+  Proof.
+    intros a b xs. induction xs as [|x xs IH]; intros [|y ys];
+      cbn [karr_cross length]; try lia. pose proof (IH ys). lia.
+  Qed.
+
+  (** The cross product preserves a uniform entry budget with its one-step growth. *)
+  Lemma karr_cross_bits : forall a b xs ys bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    Forall (fun z => Z.size_nat z <= bits) xs ->
+    Forall (fun z => Z.size_nat z <= bits) ys ->
+    Forall (fun z => Z.size_nat z <= 2 * bits + 1) (karr_cross a b xs ys).
+  Proof.
+    intros a b xs. induction xs as [|x xs IH]; intros [|y ys] bits Ha Hb Hxs Hys;
+      cbn [karr_cross]; try solve [constructor].
+    inversion Hxs as [|z zs Hx Htail]; subst z zs.
+    inversion Hys as [|z zs Hy Htail']; subst z zs. constructor.
+    - now apply karr_cross_entry_bits.
+    - now apply IH.
+  Qed.
+
+  (** A row's leading coefficient fits its envelope even when the vector is empty. *)
+  Lemma karr_head_bits : forall dim mlen bits r,
+    karr_row_envelope dim mlen bits r -> Z.size_nat (karr_head r) <= bits.
+  Proof.
+    intros dim mlen bits r [_ [Hcoeff _]]. unfold karr_head.
+    destruct (kcoeff r) as [|z zs]; [change (0 <= bits); lia|].
+    now inversion Hcoeff.
+  Qed.
+
+  (** The initial projection reduction increases the entry budget only once. *)
+  Lemma karr_reduce_one_envelope : forall dim mlen bits a b p r,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim mlen (2 * bits + 1) (karr_reduce 1 a b p r).
+  Proof.
+    intros dim mlen bits a b p r Ha Hb
+      [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]] [Hrd [Hrc [Hrr [Hrm [Hrw Hrs]]]]].
+    unfold karr_reduce. rewrite karr_divide_one.
+    unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+    split; [eapply Nat.le_trans; [apply karr_cross_length_le|exact Hrd]|].
+    split; [now apply karr_cross_bits|].
+    split; [now apply karr_cross_entry_bits|].
+    split; [eapply Nat.le_trans; [apply karr_cross_length_le|exact Hrm]|].
+    split; [now apply karr_cross_bits|]. now apply karr_cross_entry_bits.
+  Qed.
+
+  (** Deleting and restoring the leading coordinate preserves bounded nonempty width. *)
+  Lemma karr_restore_tail_envelope : forall dim mlen bits r, 1 <= dim ->
+    karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim mlen bits (karr_restore (karr_tail r)).
+  Proof.
+    intros dim mlen bits [zs rhs ms sc] Hpositive
+      [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    unfold karr_row_envelope, karr_restore, karr_tail.
+    cbn [kcoeff kright kweight kscale] in *.
+    destruct zs as [|z zs]; cbn [tl length] in *.
+    - split; [exact Hpositive|]. split; [constructor; [change (0 <= bits); lia|constructor]|].
+      repeat split; assumption.
+    - split; [exact Hdim|]. split.
+      + constructor; [change (0 <= bits); lia|]. now inversion Hcoeff.
+      + repeat split; assumption.
+  Qed.
+
+  (** Projection's one Bareiss column leaves the row count unchanged. *)
+  Lemma karr_bareiss_one_length : forall previous rows,
+    length (karr_bareiss 1 previous rows) = length rows.
+  Proof.
+    intros previous rows. cbn [karr_bareiss].
+    destruct (karr_pivot rows) as [[p rest]|] eqn:Hpivot.
+    - cbn [length]. rewrite !length_map.
+      pose proof (Permutation_length (proj2 (karr_pivot_some _ _ _ Hpivot))) as Hlength.
+      cbn [length] in Hlength. lia.
+    - now rewrite !length_map.
+  Qed.
+
+  (** One-column elimination has a direct width bound independent of general minors. *)
+  Lemma karr_bareiss_one_envelopes : forall dim mlen bits rows, 1 <= dim ->
+    Forall (karr_row_envelope dim mlen bits) rows ->
+    Forall (karr_row_envelope dim mlen (2 * bits + 1)) (karr_bareiss 1 1 rows).
+  Proof.
+    intros dim mlen bits rows Hpositive Hrows. cbn [karr_bareiss].
+    destruct (karr_pivot rows) as [[p rest]|] eqn:Hpivot.
+    - assert (Hpermuted : Forall (karr_row_envelope dim mlen bits) (p :: rest)).
+      { eapply Permutation_Forall; [exact (proj2 (karr_pivot_some _ _ _ Hpivot))|exact Hrows]. }
+      inversion Hpermuted as [|q qs Hp Hrest]; subst q qs. constructor.
+      + eapply (karr_row_envelope_mono dim mlen bits (2 * bits + 1)); [lia|exact Hp].
+      + rewrite map_map. apply Forall_map, Forall_forall. intros r Hr.
+        apply karr_restore_tail_envelope; [exact Hpositive|].
+        pose proof (proj1 (Forall_forall _ _) Hrest r Hr) as Hrbound.
+        apply karr_reduce_one_envelope; [| |exact Hp|exact Hrbound];
+          eapply karr_head_bits; eassumption.
+    - rewrite map_map. apply Forall_map, Forall_forall. intros r Hr.
+      apply karr_restore_tail_envelope; [exact Hpositive|].
+      eapply (karr_row_envelope_mono dim mlen bits (2 * bits + 1)); [lia|].
+      exact (proj1 (Forall_forall _ _) Hrows r Hr).
+  Qed.
+
+  (** Repeated zeros use no arithmetic bits. *)
+  Lemma karr_repeat_zero_bits : forall total,
+    Forall (fun z => Z.size_nat z <= 1) (repeat 0%Z total).
+  Proof.
+    intro total. induction total as [|total IH]; cbn [repeat].
+    - constructor.
+    - constructor; [change (0 <= 1); lia|exact IH].
+  Qed.
+
+  (** Unit provenance vectors contain only zero and one. *)
+  Lemma karr_unit_bits : forall total index,
+    Forall (fun z => Z.size_nat z <= 1) (karr_unit total index).
+  Proof.
+    intro total. induction total as [|total IH]; intros [|index]; cbn [karr_unit].
+    - constructor.
+    - constructor.
+    - constructor; [change (1 <= 1); lia|]. apply karr_repeat_zero_bits.
+    - constructor; [change (0 <= 1); lia|apply IH].
+  Qed.
+
+  (** Seeding omits inequalities and emits at most one row per input row. *)
+  Lemma karr_seed_rows_length : forall xs total index P,
+    length (seed_rows xs total index P) <= length P.
+  Proof.
+    intros xs total index P. revert index. induction P as [|p P IH]; intro index;
+      cbn [seed_rows length]; [lia|].
+    specialize (IH (S index)). destruct (lrel p); cbn [length]; lia.
+  Qed.
+
+  (** Dense lookup of a normal row preserves its declared arithmetic width. *)
+  Lemma karr_dense_bits : forall xs r bits,
+    NoDup (map fst (lhs r)) -> C.row_bits r <= bits ->
+    Forall (fun z => Z.size_nat z <= bits) (dense xs r).
+  Proof.
+    intros xs r bits Hnormal Hbits. unfold dense. apply Forall_map, Forall_forall.
+    intros x _. apply karr_coefficient_normal_bits; [exact Hnormal|].
+    apply Forall_forall. intros p Hin. pose proof (karr_row_entry_bits r p Hin). lia.
+  Qed.
+
+  (** Normal rows seed bounded dense coordinates and unit provenance. *)
+  Lemma karr_seed_rows_envelopes : forall xs total index P dim mlen bits,
+    length xs <= dim -> total <= mlen -> 1 <= bits ->
+    Forall (fun r => NoDup (map fst (lhs r)) /\ C.row_bits r <= bits) P ->
+    Forall (karr_row_envelope dim mlen bits) (seed_rows xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|p P IH]; intros index dim mlen bits Hdim Hmlen Hpositive Hrows;
+      [constructor|].
+    inversion Hrows as [|q qs [Hnormal Hbits] Htail]; subst q qs.
+    cbn [seed_rows]. destruct (lrel p).
+    - constructor.
+      + unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+        split; [unfold dense; now rewrite length_map|].
+        split; [now apply karr_dense_bits|]. split.
+        * pose proof (karr_row_rhs_bits p). lia.
+        * split; [now rewrite karr_unit_length|]. split.
+          -- eapply Forall_impl; [|apply karr_unit_bits]. intros z Hz. exact (Nat.le_trans _ _ _ Hz Hpositive).
+          -- change (0 <= bits). lia.
+      + now apply IH.
+    - now apply IH.
+  Qed.
+
+  (** Sparse reconstruction is no longer than its coordinate list. *)
+  Lemma karr_sparse_length : forall xs zs, length (sparse xs zs) <= length xs.
+  Proof.
+    intros xs zs. unfold sparse. eapply Nat.le_trans; [apply filter_length_le|].
+    rewrite length_combine. apply Nat.le_min_l.
+  Qed.
+
+  (** Sparse reconstruction preserves separate key and arithmetic-width envelopes. *)
+  Lemma karr_sparse_row_bits : forall xs zs right_hand keys bits,
+    Forall (fun x => X.bits x <= keys) xs ->
+    Forall (fun z => Z.size_nat z <= bits) zs -> Z.size_nat right_hand <= bits ->
+    C.row_key_bits (LCons X.t (sparse xs zs) REq right_hand) <= keys /\
+      C.row_bits (LCons X.t (sparse xs zs) REq right_hand) <= bits.
+  Proof.
+    intros xs zs right_hand keys bits Hkeys Hcoeff Hrhs. split.
+    - unfold C.row_key_bits. cbn [lhs]. apply karr_max_bound; [lia|].
+      apply Forall_forall. intros [x z] Hin. cbn [fst].
+      unfold sparse in Hin. apply filter_In in Hin as [Hin _].
+      pose proof (in_combine_l _ _ _ _ Hin) as Hx.
+      exact (proj1 (Forall_forall _ _) Hkeys x Hx).
+    - unfold C.row_bits. cbn [lhs rhs]. apply karr_max_bound; [exact Hrhs|].
+      apply Forall_forall. intros [x z] Hin. cbn [snd].
+      unfold sparse in Hin. apply filter_In in Hin as [Hin _].
+      pose proof (in_combine_r _ _ _ _ Hin) as Hz.
+      exact (proj1 (Forall_forall _ _) Hcoeff z Hz).
+  Qed.
+
+  (** Three primitive clocks cover one signed cross-product coordinate. *)
+  Lemma T_karr_cross_entry_bounded : forall a b x y bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    Z.size_nat x <= bits -> Z.size_nat y <= bits ->
+    (Z.T_mul a x + Z.T_mul b y + Z.T_sub (a * x) (b * y) <=
+      48 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros a b x y bits Ha Hb Hx Hy.
+    pose proof (karr_T_Z_mul_bilinear a x) as Hmulx.
+    pose proof (karr_T_Z_mul_bilinear b y) as Hmuly.
+    pose proof (karr_size_mul a x) as Hsizex.
+    pose proof (karr_size_mul b y) as Hsizey.
+    pose proof (Z.T_sub_le (a * x) (b * y)) as Hsub.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** A vector cross product pays a quadratic arithmetic budget per visited entry. *)
+  Lemma T_karr_cross_bounded : forall a b xs ys bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    Forall (fun z => Z.size_nat z <= bits) xs ->
+    Forall (fun z => Z.size_nat z <= bits) ys ->
+    (T_karr_cross a b xs ys <=
+      64 * N.of_nat (length xs + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros a b xs. induction xs as [|x xs IH]; intros [|y ys] bits Ha Hb Hxs Hys.
+    - time_unfold T_karr_cross. cbn [length].
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia.
+    - time_unfold T_karr_cross. cbn [length].
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia.
+    - time_unfold T_karr_cross. cbn [length].
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia.
+    - inversion Hxs as [|z zs Hx Htail]; subst z zs.
+      inversion Hys as [|z zs Hy Htail']; subst z zs.
+      specialize (IH ys bits Ha Hb Htail Htail').
+      pose proof (T_karr_cross_entry_bounded a b x y bits Ha Hb Hx Hy) as Hentry.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hsquare.
+      time_unfold T_karr_cross. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** Division by one still charges the actual general signed-division implementation. *)
+  Lemma T_karr_division_one_bounded : forall z bits, Z.size_nat z <= bits ->
+    (Z.T_div z 1 <= 64 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros z bits Hbits. pose proof (Z.T_div_le z 1) as Hdiv.
+    change (Z.size_nat 1) with 1 in Hdiv.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Exactness testing pays the actual remainder clock and a constant zero test. *)
+  Lemma T_karr_divisible_one_bounded : forall z bits, Z.size_nat z <= bits ->
+    (T_karr_divisible 1 z <= 64 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros z bits Hbits. pose proof (Z.T_modulo_le z 1) as Hmod.
+    change (Z.size_nat 1) with 1 in Hmod.
+    pose proof (T_karr_zero_test (z mod 1)) as Hzero.
+    time_unfold T_karr_divisible. time_simpl.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Universal Boolean traversal needs callback bounds only for present entries. *)
+  Lemma karr_T_forallb_members : forall A (f : A -> bool) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_forallb f T_f xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hf.
+    - time_unfold List.T_forallb. cbn [length]. lia.
+    - pose proof (Hf x (or_introl eq_refl)) as Hhead.
+      specialize (IH (fun y Hy => Hf y (or_intror Hy))).
+      time_unfold List.T_forallb. cbn [length]. time_simpl. nia.
+  Qed.
+
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
