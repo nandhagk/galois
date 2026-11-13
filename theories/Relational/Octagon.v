@@ -4269,6 +4269,21 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + unfold entry. now rewrite Hrow.
   Qed.
 
+  (** Strengthening uses the source matrix's two unary bounds. *)
+  Lemma entry_strengthen_exact : forall m, dbm_wf m -> forall i j,
+    entry (strengthen m) i j =
+      match entry m i (flip i) with
+      | Some a => strengthen_bound a (entry m i j) (entry m (flip j) j)
+      | None => entry m i j
+      end.
+  Proof.
+    intros m Hwf i j. rewrite entry_strengthen.
+    pose proof (collect_unary_twins m (flip j)) as Hright.
+    rewrite flip_involutive in Hright. rewrite <- Hright.
+    rewrite !collect_unary_left_exact by exact Hwf.
+    now rewrite flip_involutive.
+  Qed.
+
   Lemma coherent_strengthen : forall m, coherent m -> coherent (strengthen m).
   Proof.
     intros m Hcoh i j.
