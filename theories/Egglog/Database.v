@@ -1824,6 +1824,110 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros b f u db. apply slots_update_preserves. intros. reflexivity.
   Qed.
 
+  (** Index maintenance preserves the prepared function-to-slot table. *)
+  Lemma slots_update_function_slots : forall b f u db,
+    runtime_function_slots (db_runtime (slots_update b f u db)) =
+      runtime_function_slots (db_runtime db).
+  Proof.
+    intros b f u db. apply slots_update_preserves. intros. reflexivity.
+  Qed.
+
+  (** The optional function-group lookup is equivalent to walking its default-empty list. *)
+  Lemma slots_update_runtime : forall b f u db,
+    db_runtime (slots_update b f u db) =
+      slot_update_many b u
+        (database_group_entries f (runtime_function_slots (db_runtime db))) (db_runtime db).
+  Proof.
+    intros b f u db. unfold slots_update, database_group_entries.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** A fitting projection returns one cell for every requested position. *)
+  Lemma permute_length : forall perm u,
+    Forall (fun p => p < length u) perm -> length (permute perm u) = length perm.
+  Proof.
+    intros perm u Hfits. induction Hfits as [| p rest Hbound Hfits IH].
+    - reflexivity.
+    - unfold permute in *. cbn [flat_map length].
+      assert (Hpresent : nth_error u p <> None) by (now apply nth_error_Some).
+      destruct (nth_error u p); [| contradiction]. cbn [option_list app length].
+      now rewrite IH.
+  Qed.
+
+  (** A prepared group changes its own slot exactly once by the declared projection. *)
+  Lemma slots_update_snapshot_same : forall db b f u s perm,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (f, perm) -> Forall (fun p => p < length u) perm ->
+    slot_snapshot (db_runtime (slots_update b f u db)) s =
+      slot_snapshot (slot_update_one b s (permute perm u) (db_runtime db)) s.
+  Proof.
+    intros db b f u s perm Hgroups Hslot Hfits. rewrite slots_update_runtime, Hgroups.
+    assert (Hmember : In (s, prepare_slot_layout perm) (database_group_entries f
+      (database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty))).
+    { apply database_prepared_group_member. exists perm. split; [exact Hslot | reflexivity]. }
+    rewrite (slot_update_many_snapshot_member b u _
+      (database_prepared_group_nodup (slots db) f) _ s _ Hmember).
+    rewrite project_slot_layout_correct by exact Hfits. reflexivity.
+  Qed.
+
+  (** A prepared function group cannot change a slot declared for another function. *)
+  Lemma slots_update_snapshot_other : forall db b f u s g perm,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> f <> g ->
+    slot_snapshot (db_runtime (slots_update b f u db)) s = slot_snapshot (db_runtime db) s.
+  Proof.
+    intros db b f u s g perm Hgroups Hslot Hdifferent. rewrite slots_update_runtime.
+    apply slot_update_many_snapshot_other. rewrite Hgroups.
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [[t layout] [Hequal Hmember]].
+    cbn [fst] in Hequal. subst t. apply database_prepared_group_member in Hmember.
+    destruct Hmember as [other [Hentry _]]. unfold slot_of in Hslot. congruence.
+  Qed.
+
+  (** Insertion through a prepared group adds the projected contribution to its slot cache. *)
+  Lemma slots_update_cache_insert : forall db f u s perm tuples,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (f, perm) -> Forall (fun p => p < length u) perm ->
+    slot_cache_ok (db_runtime db) s (length perm) tuples ->
+    slot_cache_ok (db_runtime (slots_update true f u db)) s (length perm)
+      (permute perm u :: tuples).
+  Proof.
+    intros db f u s perm tuples Hgroups Hslot Hfits Hcache.
+    eapply slot_cache_snapshot.
+    - exact (slots_update_snapshot_same db true f u s perm Hgroups Hslot Hfits).
+    - apply slot_cache_insert; [exact Hcache | now apply permute_length].
+  Qed.
+
+  (** Deletion through a prepared group removes one projected contribution from its slot cache. *)
+  Lemma slots_update_cache_remove : forall db f u s perm tuples,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (f, perm) -> Forall (fun p => p < length u) perm ->
+    slot_cache_ok (db_runtime db) s (length perm) (permute perm u :: tuples) ->
+    slot_cache_ok (db_runtime (slots_update false f u db)) s (length perm) tuples.
+  Proof.
+    intros db f u s perm tuples Hgroups Hslot Hfits Hcache.
+    eapply slot_cache_snapshot.
+    - exact (slots_update_snapshot_same db false f u s perm Hgroups Hslot Hfits).
+    - now apply slot_cache_remove.
+  Qed.
+
+  (** Updating another function preserves every part of a slot's multiset cache. *)
+  Lemma slots_update_cache_other : forall db b f u s g perm tuples,
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    slot_of db s = Some (g, perm) -> f <> g ->
+    slot_cache_ok (db_runtime db) s (length perm) tuples ->
+    slot_cache_ok (db_runtime (slots_update b f u db)) s (length perm) tuples.
+  Proof.
+    intros db b f u s g perm tuples Hgroups Hslot Hdifferent Hcache.
+    eapply slot_cache_snapshot.
+    - exact (slots_update_snapshot_other db b f u s g perm Hgroups Hslot Hdifferent).
+    - exact Hcache.
+  Qed.
+
   (** A direct row write replaces one map binding and leaves all other bindings intact. *)
   Lemma row_write_binding : forall f k o db g args output,
     row (view (row_write f k o db)) g args output <->
