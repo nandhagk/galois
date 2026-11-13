@@ -1085,10 +1085,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db i j Hwf. exact (wf_equalities db Hwf i j).
+  Qed.
   (** Every representative represents itself. *)
   Lemma repr_idem : forall db i, wf db -> repr db (repr db i) = repr db i.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db i Hwf. apply UnionFind.repr_idem. exact (wf_forest db Hwf).
+  Qed.
 
   (** Initialization creates a well-formed database. *)
   Lemma wf_init : forall ds sl, wf (init ds sl).
@@ -1121,12 +1125,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Find returns the representative without changing the view. *)
   Lemma find_spec : forall i db, wf db ->
     fst (find i db) = repr db i /\ view (snd (find i db)) = view db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i db Hwf. split.
+    - apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - reflexivity.
+  Qed.
 
   (** Each function key has one output. *)
   Lemma row_functional : forall db f k o1 o2, wf db ->
     row (view db) f k o1 -> row (view db) f k o2 -> o1 = o2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o1 o2 _ Hfirst Hsecond.
+    change (row_get f k db = Some o1) in Hfirst.
+    change (row_get f k db = Some o2) in Hsecond. congruence.
+  Qed.
 
   (** Insertion changes precisely the canonical key and combines its output. *)
   Lemma put_rows : forall f k o db, wf db -> kind_ok db f k o ->
@@ -1155,9 +1167,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof. Admitted. (* STUB *)
   (** Find and lookup leave the change flag alone. *)
   Lemma changed_find : forall i db, changed (snd (find i db)) = changed db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma changed_lookup : forall f k db, changed (snd (lookup f k db)) = changed db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db. unfold lookup.
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f); reflexivity.
+  Qed.
   (** An insertion raises the flag only when its row was not represented. *)
   Lemma put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
     changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
@@ -1240,23 +1257,31 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma index_all : forall db s new u, wf db -> I.mem (index s new db) u ->
     exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
       u = permute perm (k ++ option_list o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new u Hwf. exact (wf_index_sound db Hwf s new u).
+  Qed.
 
   (** The full index contains every row in its slot. *)
   Lemma index_all_complete : forall db s f perm k o, wf db ->
     slot_of db s = Some (f, perm) -> row (view db) f k o ->
     I.mem (index s false db) (permute perm (k ++ option_list o)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s f perm k o Hwf. exact (wf_index_complete db Hwf s f perm k o).
+  Qed.
 
   (** Slot indexes have the declared permutation arity. *)
   Lemma index_wf : forall db s new f perm, wf db -> slot_of db s = Some (f, perm) ->
     I.wf (length perm) (index s new db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new f perm Hwf. exact (wf_index_arity db Hwf s new f perm).
+  Qed.
 
   (** Stored lookup agrees with the public row observation. *)
   Lemma old_row : forall db f k o, wf db ->
     (old db f k = Some o <-> row (view db) f k o).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o _. reflexivity.
+  Qed.
 
   (** Lookup canonicalizes its query and keeps the view and invariant. *)
   Lemma lookup_spec : forall f k db, wf db ->
@@ -1301,12 +1326,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Advancing keeps the slot layout. *)
   Lemma layout_advance : forall db, slots (advance db) = slots db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Advancing keeps allocation, pending work and representatives. *)
   Lemma advance_keeps : forall db, wf db ->
     ids (advance db) = ids db /\ pending (advance db) = pending db /\
     repr (advance db) = repr db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _. repeat split; reflexivity.
+  Qed.
 
   (** A quiet union already holds in the old view. *)
   Lemma union_quiet : forall i j db, wf db -> changed db = false ->
