@@ -4006,6 +4006,32 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now rewrite !entry_put_coordinate.
   Qed.
 
+  (** Zero insertion preserves zero or absent diagonal entries. *)
+  Lemma add_zero_diagonal_cases : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    forall k, entry (add_cons p p 0%Z m) k k = None \/
+      entry (add_cons p p 0%Z m) k k = Some 0%Z.
+  Proof.
+    intros m p Hdiag k. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate k k p p) eqn:Hfirst.
+    - right. destruct (Hdiag p) as [Hnone|Hzero];
+        rewrite Hnone || rewrite Hzero; reflexivity.
+    - destruct (same_coordinate k k (flip p) (flip p)) eqn:Hsecond.
+      + right. destruct (Hdiag (flip p)) as [Hnone|Hzero];
+          rewrite Hnone || rewrite Hzero; reflexivity.
+      + exact (Hdiag k).
+  Qed.
+
+  Lemma add_zero_own_diagonal : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    entry (add_cons p p 0%Z m) p p = Some 0%Z.
+  Proof.
+    intros m p Hdiag. rewrite entry_add_cons_coordinates.
+    unfold same_coordinate. destruct (K.eqb_spec p p); [|contradiction].
+    cbn. destruct (Hdiag p) as [Hnone|Hzero];
+      rewrite Hnone || rewrite Hzero; reflexivity.
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
