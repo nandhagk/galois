@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import NArith Bool Arith Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module Bool.
@@ -92,18 +92,28 @@ Module BoolLatT <: BLATTICE_T.
   TimeFun join.
   TimeFun is_bot.
   TimeFun meet.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := 1.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. lia.
+  Qed.
   Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold c_lat, size. time_step.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold c_lat, size. time_step.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. unfold c_lat, size. time_step.
+  Qed.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold c_lat, size. time_step.
+  Qed.
 End BoolLatT.
 
 Module UnitLatT <: BLATTICE_T.
@@ -113,18 +123,28 @@ Module UnitLatT <: BLATTICE_T.
   TimeFun join.
   TimeFun is_bot.
   TimeFun meet.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := 1.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. lia.
+  Qed.
   Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold c_lat, size. time_step.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold c_lat, size. time_step.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. unfold c_lat, size. time_step.
+  Qed.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold c_lat, size. time_step.
+  Qed.
 End UnitLatT.
 
 Module BoolLatHeight <: HEIGHT BoolLat.

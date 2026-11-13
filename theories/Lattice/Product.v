@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool NArith Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module ProductCode (A B : LATTICE_OPS) <: LATTICE_OPS.
@@ -47,17 +47,31 @@ Module ProductT (A B : LATTICE_T) <: LATTICE_T.
   TimeFun join.
 
   Definition size (x : t) : nat := A.size (fst x) + B.size (snd x) + 1.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (8 * (A.c_lat + B.c_lat + 1))%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. lia.
+  Qed.
 
   Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [a' b']; time_unfold @T_leb; time_simpl;
+      unfold size; cbn [fst snd]; unfold c_lat; time_pose;
+      rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [a' b']; time_unfold @T_join; time_simpl;
+      unfold size; cbn [fst snd]; unfold c_lat; time_pose;
+      rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b]; time_unfold @T_is_bot; time_simpl;
+      unfold size; cbn [fst snd]; unfold c_lat; time_pose;
+      rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
 End ProductT.
 
 Module ProductHeight (A B : LATTICE) (HA : HEIGHT A) (HB : HEIGHT B)

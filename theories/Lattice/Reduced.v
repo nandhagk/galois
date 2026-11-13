@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith NArith Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module ReducedCode (A B : BLATTICE_OPS) (R : REDUCER_OPS A B) <: BLATTICE_OPS.
@@ -53,19 +53,100 @@ Module ReducedT (A B : BLATTICE_T) (SA : JOIN_SIZE A) (SB : JOIN_SIZE B)
   TimeFun meet.
 
   Definition size (x : t) : nat := A.size (fst x) + B.size (snd x) + 1.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (8 * (A.c_lat + B.c_lat + 1) * (R.c_reduce + 1))%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold c_lat; nia. Qed.
+
+  Local Lemma c_lat_base : (A.c_lat + B.c_lat + 8 <= c_lat)%N.
+  Proof. unfold c_lat; nia. Qed.
+
+  Local Lemma c_lat_scale n : ((A.c_lat + B.c_lat + 8) * n <= c_lat * n)%N.
+  Proof. apply N.mul_le_mono_r. exact c_lat_base. Qed.
 
   Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d].
+    time_unfold @T_leb. destruct (R.reduce (a, b)) as [ra rb] eqn:Hreduced.
+    cbn [fst snd]. time_simpl; time_cbn.
+    remember (N.of_nat (size (a, b) + size (c, d) + 1)) as u eqn:Hu.
+    assert (Hu1 : (1 <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (Hinput : (N.of_nat (A.size a + B.size b + 1) <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (HrightA : (N.of_nat (A.size c + 1) <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (HrightB : (N.of_nat (B.size d + 1) <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (Hsize : (N.of_nat (A.size ra + B.size rb) <= R.c_reduce * u)%N).
+    { pose proof (R.reduce_size_le a b) as Hsize0. rewrite Hreduced in Hsize0.
+      cbn [fst snd] in Hsize0. eapply N.le_trans; [exact Hsize0 |].
+      apply N.mul_le_mono_l. exact Hinput. }
+    remember ((R.c_reduce + 1) * u)%N as budget eqn:Hbudget.
+    assert (Hbudget1 : (1 <= budget)%N) by (rewrite Hbudget; nia).
+    assert (HAsize : (N.of_nat (A.size ra + A.size c + 1) <= budget)%N).
+    { rewrite Hbudget, N.mul_add_distr_r, N.mul_1_l.
+      rewrite !Nat2N.inj_add in Hsize, HrightA |- *. lia. }
+    assert (HBsize : (N.of_nat (B.size rb + B.size d + 1) <= budget)%N).
+    { rewrite Hbudget, N.mul_add_distr_r, N.mul_1_l.
+      rewrite !Nat2N.inj_add in Hsize, HrightB |- *. lia. }
+    assert (HA : (A.T_leb ra c <= A.c_lat * budget)%N).
+    { eapply N.le_trans; [apply A.T_leb_le |]. apply N.mul_le_mono_l. exact HAsize. }
+    assert (HB : (B.T_leb rb d <= B.c_lat * budget)%N).
+    { eapply N.le_trans; [apply B.T_leb_le |]. apply N.mul_le_mono_l. exact HBsize. }
+    assert (HR : (R.T_reduce (a, b) <= budget)%N).
+    { eapply N.le_trans; [apply R.T_reduce_le |].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinput |].
+      rewrite Hbudget. nia. }
+    replace (c_lat * u)%N with (8 * (A.c_lat + B.c_lat + 1) * budget)%N
+      by (rewrite Hbudget; unfold c_lat; nia).
+    nia.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d].
+    time_unfold @T_join. cbn [fst snd]. time_simpl; time_cbn.
+    remember (N.of_nat (size (a, b) + size (c, d) + 1)) as u eqn:Hu.
+    assert (Hu1 : (1 <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (HinputA : (N.of_nat (A.size a + A.size c + 1) <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (HinputB : (N.of_nat (B.size b + B.size d + 1) <= u)%N).
+    { rewrite Hu. unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (HA : (A.T_join a c <= A.c_lat * u)%N).
+    { eapply N.le_trans; [apply A.T_join_le |]. apply N.mul_le_mono_l. exact HinputA. }
+    assert (HB : (B.T_join b d <= B.c_lat * u)%N).
+    { eapply N.le_trans; [apply B.T_join_le |]. apply N.mul_le_mono_l. exact HinputB. }
+    assert (HAsize : (N.of_nat (A.size (A.join a c)) <= A.c_lat * u)%N).
+    { eapply N.le_trans; [apply SA.join_size |]. apply N.mul_le_mono_l. exact HinputA. }
+    assert (HBsize : (N.of_nat (B.size (B.join b d)) <= B.c_lat * u)%N).
+    { eapply N.le_trans; [apply SB.join_size |]. apply N.mul_le_mono_l. exact HinputB. }
+    remember ((A.c_lat + B.c_lat + 1) * u)%N as budget eqn:Hbudget.
+    assert (Hbudget1 : (1 <= budget)%N) by (rewrite Hbudget; nia).
+    assert (Hjoin : (A.T_join a c + B.T_join b d <= budget)%N)
+      by (rewrite Hbudget; nia).
+    assert (Hsize : (N.of_nat (A.size (A.join a c) + B.size (B.join b d) + 1) <= budget)%N).
+    { rewrite Hbudget. rewrite !Nat2N.inj_add. nia. }
+    assert (HR : (R.T_reduce (A.join a c, B.join b d) <= R.c_reduce * budget)%N).
+    { eapply N.le_trans; [apply R.T_reduce_le |]. apply N.mul_le_mono_l. exact Hsize. }
+    replace (c_lat * u)%N with (8 * (R.c_reduce + 1) * budget)%N
+      by (rewrite Hbudget; unfold c_lat; nia).
+    nia.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b]. pose proof (A.T_is_bot_le a) as HA. pose proof (B.T_is_bot_le b) as HB.
+    pose proof (c_lat_scale (N.of_nat (size (a, b) + 1))) as Hscale.
+    time_unfold @T_is_bot. unfold size in *. cbn [fst snd] in *. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d]. pose proof (A.T_meet_le a c) as HA. pose proof (B.T_meet_le b d) as HB.
+    pose proof (c_lat_scale (N.of_nat (size (a, b) + size (c, d) + 1))) as Hscale.
+    time_unfold @T_meet. unfold size in *. cbn [fst snd] in *. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
 End ReducedT.
 
 Module ReducedHeight (A B : BLATTICE) (R : REDUCER A B)

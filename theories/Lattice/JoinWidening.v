@@ -4,8 +4,8 @@
     For example, widening two values may return their join.
     Builds on: LatticeSig. *)
 
-From Stdlib Require Import NArith.
-From Argent Require Import Time Std.
+From Stdlib Require Import NArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Lattice Require Import LatticeSig.
 
 Module JoinWideningCode (L : LATTICE_OPS) <: WIDENING_OPS L.
@@ -48,8 +48,20 @@ Module JoinWideningT (L : LATTICE_T) (H : HEIGHT L) <: WIDENING_T L.
     (T_widen p a b <= L.c_lat *
       N.of_nat ((wunits a + wunits b) * wsize p +
         (L.size a + L.size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b.
+    pose proof (L.T_leb_le b a) as Hcompare.
+    pose proof (L.T_join_le a b) as Hjoin.
+    pose proof L.c_lat_pos as Hpositive.
+    unfold wunits, wsize. time_unfold @T_widen.
+    destruct (L.leb b a); time_cbn.
+    all: repeat rewrite Nat2N.inj_mul in *;
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= L.c_lat * N.of_nat (L.size a + L.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof L.c_lat_pos as Hpositive.
+    time_unfold @T_narrow. repeat rewrite Nat2N.inj_add. nia.
+  Qed.
 End JoinWideningT.

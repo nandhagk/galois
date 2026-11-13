@@ -4,8 +4,8 @@
     For example, joining values of different widths produces top.
     Builds on: WordSig and BitsLang. *)
 
-From Stdlib Require Import List ZArith.
-From Argent Require Import Time Std BigO.
+From Stdlib Require Import List ZArith NArith Bool Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word.
 From Galois.Domains Require Import LangSig WordSig HarnessSig Harness BitsLang.
 
@@ -166,49 +166,177 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
     intros [|w p|]; cbn [leb]; try reflexivity.
     rewrite Pos.eqb_refl. apply W.pleb_refl.
   Qed.
+
+  (** A recognized empty payload is below every tag, including a different width. *)
+  Local Lemma bottom_below : forall a b, is_bot a = true -> leb a b = true.
+  Proof.
+    intros [|w p|] [|v q|] Hbot; cbn [is_bot leb] in *;
+      try discriminate; try reflexivity; try exact Hbot.
+    destruct (Pos.eqb w v); [now apply W.pis_bot_least|exact Hbot].
+  Qed.
+
+  (** Payload bottom recognition descends through the tagged order. *)
+  Local Lemma bottom_downward : forall a b,
+    leb a b = true -> is_bot b = true -> is_bot a = true.
+  Proof.
+    intros [|w p|] [|v q|] Hle Hbot; cbn [leb is_bot] in *;
+      try discriminate; try reflexivity; try exact Hle.
+    destruct (Pos.eqb w v) eqn:Hwidth; [|exact Hle].
+    apply Pos.eqb_eq in Hwidth. subst v.
+    exact (W.pis_bot_below w p q Hle Hbot).
+  Qed.
+
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: The variable v was not found. *)
+  Proof.
+    intros a b c Hab Hbc.
+    destruct (is_bot a) eqn:Ha; [now apply bottom_below|].
+    destruct (is_bot b) eqn:Hb.
+    { pose proof (bottom_downward a b Hab Hb). congruence. }
+    destruct a as [|w p|], b as [|v q|], c as [|u r|];
+      cbn [is_bot leb] in *; try discriminate; try reflexivity; try congruence.
+    destruct (Pos.eqb w v) eqn:Hwv; [|congruence].
+    destruct (Pos.eqb v u) eqn:Hvu; [|congruence].
+    apply Pos.eqb_eq in Hwv. apply Pos.eqb_eq in Hvu. subst v u.
+    rewrite Pos.eqb_refl. exact (W.pleb_trans w p q r Hab Hbc).
+  Qed.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros []; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact bottom_below.
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: Found no subterm matching "(?M1523 =? ?M1523)%positive" *)
+  Proof.
+    intros a b. unfold join.
+    destruct (is_bot a) eqn:Ha; [now apply is_bot_least|].
+    destruct (is_bot b) eqn:Hb; [apply leb_refl|].
+    destruct a as [|w p|], b as [|v q|];
+      cbn [is_bot leb] in *; try discriminate; try reflexivity.
+    destruct (Pos.eqb w v); cbn [leb]; [|reflexivity].
+    rewrite Pos.eqb_refl. apply W.pjoin_ub_l.
+  Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: Found no subterm matching "(?M1523 =? ?M1523)%positive" *)
+  Proof.
+    intros a b. unfold join.
+    destruct (is_bot a) eqn:Ha; [apply leb_refl|].
+    destruct (is_bot b) eqn:Hb; [now apply is_bot_least|].
+    destruct a as [|w p|], b as [|v q|];
+      cbn [is_bot leb] in *; try discriminate; try reflexivity.
+    destruct (Pos.eqb w v) eqn:Hwidth; cbn [leb]; [|reflexivity].
+    apply Pos.eqb_eq in Hwidth. subst v.
+    rewrite Pos.eqb_refl. apply W.pjoin_ub_r.
+  Qed.
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros []; reflexivity.
+  Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted. (* CONVERT: tagged_meet_lower: The variable tagged_val_lower was not found in the current *)
+  Proof.
+    intros [|w p|] [|v q|]; cbn [meet leb]; try reflexivity.
+    - destruct (Pos.eqb w v); cbn [leb]; [|reflexivity].
+      rewrite Pos.eqb_refl. apply W.pmeet_lb_l.
+    - rewrite Pos.eqb_refl. apply W.pleb_refl.
+  Qed.
   Lemma widen_ub_l : forall q a b, leb a (widen q a b) = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: In environment *)
+  Proof.
+    intros q a b. unfold widen.
+    destruct (leb b a) eqn:Hba; [apply leb_refl|].
+    destruct a as [|w p|], b as [|v r|];
+      try apply bot_least; try apply top_greatest; try apply leb_refl.
+    destruct (W.pis_bot w p) eqn:Hbot.
+    - apply bottom_below. exact Hbot.
+    - destruct (Pos.eqb w v); cbn [leb]; [|reflexivity].
+      rewrite Pos.eqb_refl. apply W.pwiden_ub_l.
+  Qed.
   Lemma widen_ub_r : forall q a b, leb b (widen q a b) = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: Found no subterm matching "(?M1523 =? ?M1523)%positive" *)
+  Proof.
+    intros q a b. unfold widen.
+    destruct (leb b a) eqn:Hba; [exact Hba|].
+    destruct a as [|w p|], b as [|v r|];
+      try apply leb_refl; try apply top_greatest.
+    destruct (W.pis_bot w p) eqn:Hbot.
+    - apply leb_refl.
+    - destruct (Pos.eqb w v) eqn:Hwidth; cbn [leb]; [|reflexivity].
+      apply Pos.eqb_eq in Hwidth. subst v.
+      rewrite Pos.eqb_refl. apply W.pwiden_ub_r.
+  Qed.
   Lemma widen_stable : forall q a b, leb b a = true -> widen q a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q a b Hle. unfold widen. now rewrite Hle.
+  Qed.
   Lemma wrank_widen : forall q a b, is_bot a = false -> leb b a = false ->
     (wrank q (widen q a b) < wrank q a)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q a b Hbot Hle. unfold widen. rewrite Hle.
+    destruct a as [|w p|], b as [|v r|];
+      cbn [is_bot leb wrank] in Hbot, Hle |- *; try discriminate; try lia.
+    rewrite Hbot. destruct (Pos.eqb w v) eqn:Hwidth; cbn [wrank]; [|lia].
+    apply Pos.eqb_eq in Hwidth. subst v. rewrite Pos.eqb_refl in Hle.
+    pose proof (W.pwrank_widen q w p r Hbot Hle). lia.
+  Qed.
   Lemma wrank_widen_le : forall q a b, is_bot a = false -> (wrank q (widen q a b) <= wrank q a)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q a b Hbot. destruct (leb b a) eqn:Hle.
+    - rewrite (widen_stable q a b Hle). lia.
+    - pose proof (wrank_widen q a b Hbot Hle). lia.
+  Qed.
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* CONVERT: tagged_laws: The variable w was not found in the current environment. *)
+  Proof.
+    intros [|w p|] [|v r|] Hle; cbn [leb narrow] in Hle |- *;
+      try discriminate; try (split; reflexivity).
+    - split; [exact Hle|reflexivity].
+    - destruct (Pos.eqb v w) eqn:Hwidth.
+      + apply Pos.eqb_eq in Hwidth. subst v. rewrite Pos.eqb_refl.
+        cbn [leb]. rewrite Pos.eqb_refl. apply W.pnarrow_between. exact Hle.
+      + rewrite Pos.eqb_sym, Hwidth. cbn [leb]. split; [exact Hle|reflexivity].
+    - split; [rewrite Pos.eqb_refl; apply W.pleb_refl|reflexivity].
+  Qed.
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted. (* CONVERT: tagged_numeric_laws: The variable tagged_lattice was not found in the current environment. *)
+  Proof.
+    intros [|w p|] [|v q|] [u z] Hle Hg;
+      cbn [leb gamma tagged_gamma] in *; try contradiction; try discriminate; try exact I.
+    - destruct Hg as [Hwidth [Hword Hpayload]].
+      exact (W.pis_bot_sound w p z Hle Hpayload).
+    - destruct Hg as [Huw [Hword Hpayload]].
+      destruct (Pos.eqb w v) eqn:Hwv.
+      + apply Pos.eqb_eq in Hwv. subst v.
+        split; [exact Huw|]. split; [exact Hword|].
+        exact (W.pgamma_mono w p q z Hle Hpayload).
+      + exfalso. exact (W.pis_bot_sound w p z Hle Hpayload).
+  Qed.
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof. intros c Hg. exact Hg. Qed.
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c. exact I.
+  Qed.
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted. (* CONVERT: tagged_meet_sound: The variable tagged_val_sound was not found in the current *)
+  Proof.
+    intros [|w p|] [|v q|] [u z] Ha Hb;
+      cbn [gamma tagged_gamma meet] in *; try contradiction; try assumption.
+    destruct Ha as [Huw [Hword Hp]], Hb as [Huv [_ Hq]].
+    cbn in Huw, Huv. subst u v.
+    rewrite Pos.eqb_refl. cbn [tagged_gamma].
+    split; [reflexivity|]. split; [exact Hword|].
+    exact (W.pgamma_meet w p q z Hp Hq).
+  Qed.
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted. (* CONVERT: tagged_empty_false: The relation (fun (x : tagged W.p) (y : width * Z) => ~ gamma x y) is not a declared reflexive relation. Maybe you need to require the Corelib.Classes.RelationClasses library *)
+  Proof.
+    intros [|w p|] [v z] Hbot Hg; cbn [is_bot gamma tagged_gamma] in *;
+      try discriminate; try contradiction.
+    destruct Hg as [Hwidth [Hword Hpayload]].
+    exact (W.pis_bot_sound w p z Hbot Hpayload).
+  Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact bottom_downward.
+  Qed.
   Lemma point_sound : forall a v c, point a = Some v -> gamma a c -> c = v.
   Proof.
     intros [|w p|] [v x] [u z] Hpoint Hgamma; cbn in Hpoint; try discriminate.
@@ -218,7 +346,14 @@ Module Tagged (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) <: HARNESS_BASE BitsLang.
     f_equal. exact (W.ppoint_sound w p z value Hpayload Hword Hpayload_gamma).
   Qed.
   Lemma abst_sound : forall v, gamma (abst v) v.
-  Proof. Admitted. (* CONVERT: tagged_numeric_laws: No product even after head-reduction. *)
+  Proof.
+    intros [w z]. unfold abst. cbn [fst snd].
+    destruct (Z.eqb (Word.wrap w z) z) eqn:Hwrap; [|exact I].
+    apply Z.eqb_eq in Hwrap. cbn [gamma tagged_gamma].
+    split; [reflexivity|]. split.
+    - rewrite <- Hwrap. apply L.wrap_is_word.
+    - rewrite <- Hwrap at 2. apply W.pconst_sound.
+  Qed.
 End Tagged.
 
 Module TaggedTimingHelpers (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L).
@@ -242,70 +377,314 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Definition bsize := tagged_size W.psize.
   Definition wsize := W.pwsize.
   Definition abst_work := tagged_abst_work.
-  Definition c_base : N := 1%N. (* STUB *)
+  Definition c_base : N := (256 * (W.c_payload + 1))%N.
+
+  (** Width comparison reads at most the numeric value of its left width. *)
+  Local Lemma width_compare_time : forall w v,
+    (Pos.T_eqb w v <= N.of_nat (Pos.to_nat w))%N.
+  Proof.
+    intros w v. eapply N.le_trans; [apply Pos.T_eqb_le|].
+    apply time_of_nat_le. apply WordTime.positive_size_value.
+  Qed.
+
+  (** Tag bottom recognition adds one call to payload bottom recognition. *)
+  Local Lemma is_bot_time_bound : forall a,
+    (T_is_bot a <= (W.c_payload + 1) * N.of_nat (bsize a + 1))%N.
+  Proof.
+    intros [|w p|]; time_unfold T_is_bot; time_cbn;
+      unfold bsize, tagged_size; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (W.T_pis_bot_le w p).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Tag inclusion pays for width comparison and the selected payload test. *)
+  Local Lemma leb_time_bound : forall a b,
+    (T_leb a b <= 4 * (W.c_payload + 1) * N.of_nat (bsize a + bsize b + 1))%N.
+  Proof.
+    intros [|w p|] [|v q|]; time_unfold T_leb; time_cbn;
+      unfold bsize, tagged_size; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    - pose proof (W.T_pis_bot_le w p).
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+    - pose proof (width_compare_time w v) as Hwidth.
+      destruct (Pos.eqb w v) eqn:Hsame.
+      + apply Pos.eqb_eq in Hsame. subst v.
+        pose proof (W.T_pleb_le w p q).
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+      + pose proof (W.T_pis_bot_le w p).
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_leb_le : forall a b, (T_leb a b <= c_base * N.of_nat ((bsize a + bsize b + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (leb_time_bound a b). unfold c_base. nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_join_le : forall a b, (T_join a b <= c_base * N.of_nat ((bsize a + bsize b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (is_bot_time_bound a) as Ha.
+    pose proof (is_bot_time_bound b) as Hb. time_unfold T_join.
+    destruct (is_bot a).
+    { unfold c_base. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia. }
+    destruct (is_bot b).
+    { unfold c_base. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia. }
+    destruct a as [|w p|], b as [|v q|];
+      unfold bsize, tagged_size, c_base in *; time_cbn_all;
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; try nia.
+    pose proof (width_compare_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.T_pjoin_le w p q).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_meet_le : forall a b, (T_meet a b <= c_base * N.of_nat ((bsize a + bsize b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|] [|v q|]; time_unfold T_meet; time_cbn;
+      unfold bsize, tagged_size, c_base;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (width_compare_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.T_pmeet_le w p q).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_narrow_le : forall a b, (T_narrow a b <= c_base * N.of_nat ((bsize a + bsize b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|] [|v q|]; time_unfold T_narrow; time_cbn;
+      unfold bsize, tagged_size, c_base;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (width_compare_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.T_pnarrow_le w p q).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. pose proof (is_bot_time_bound a). unfold c_base. nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_point_le : forall a, (T_point a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|]; time_unfold T_point; time_cbn;
+      unfold bsize, tagged_size, c_base;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (W.T_ppoint_le w p).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_base * N.of_nat ((bsize a + bsize b + wsize p + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros param a b. pose proof (leb_time_bound b a) as Hleb.
+    time_unfold T_widen. destruct (leb b a).
+    { unfold c_base. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia. }
+    destruct a as [|w p|], b as [|v q|];
+      unfold bsize, tagged_size, wsize, c_base in *; time_cbn_all;
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; try nia.
+    pose proof (W.T_pis_bot_le w p) as Hbot.
+    destruct (W.pis_bot w p).
+    { rewrite ?Nat2N.inj_add in *; time_cbn_all; nia. }
+    pose proof (width_compare_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame.
+    - apply Pos.eqb_eq in Hsame. subst v. pose proof (W.T_pwiden_le param w p q).
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+    - rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma meet_size_le : forall a b,
     (N.of_nat (bsize (meet a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|] [|v q|]; unfold meet, bsize, tagged_size, c_base;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    destruct (Pos.eqb w v) eqn:Hsame; [|time_cbn; nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.pmeet_size w p q).
+    time_cbn. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma join_size_le : forall a b,
     (N.of_nat (bsize (join a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold join. destruct (is_bot a).
+    { unfold c_base. rewrite ?Nat2N.inj_add. time_cbn. nia. }
+    destruct (is_bot b).
+    { unfold c_base. rewrite ?Nat2N.inj_add. time_cbn. nia. }
+    destruct a as [|w p|], b as [|v q|]; unfold bsize, tagged_size, c_base;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    destruct (Pos.eqb w v) eqn:Hsame; [|time_cbn; nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.pjoin_size w p q).
+    time_cbn. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma widen_size_le : forall p a b,
     (N.of_nat (bsize (widen p a b)) <= c_base * N.of_nat (bsize a + bsize b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros param a b. unfold widen. destruct (leb b a).
+    { unfold c_base. rewrite ?Nat2N.inj_add. time_cbn. nia. }
+    destruct a as [|w p|], b as [|v q|]; unfold bsize, tagged_size, wsize, c_base;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    destruct (W.pis_bot w p); [time_cbn; nia|].
+    destruct (Pos.eqb w v) eqn:Hsame; [|time_cbn; nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.pwiden_size param w p q).
+    time_cbn. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_abst_le : forall v,
     (T_abst v <= c_base * N.of_nat (abst_work v + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z]. pose proof (WordTime.word_wrap_time_bound w z) as Hwrap.
+    pose proof (W.T_pconst_le w z) as Hconst.
+    pose proof (Z.T_eqb_le (Word.wrap w z) z) as Hcompare.
+    assert (Hsize : (N.of_nat (Z.size_nat (Word.wrap w z)) <=
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
+    { apply WordTime.time_square_floor; [|lia].
+      pose proof (WordTime.word_wrap_size_bound w z). lia. }
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)) in *.
+    change (T_abst (w, z) <= 256 * (W.c_payload + 1) *
+      N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2) + 1))%N.
+    rewrite Nat2N.inj_add.
+    change (T_abst (w, z) <= 256 * (W.c_payload + 1) * (budget + 1))%N.
+    time_unfold T_abst. unfold Datatypes.T_fst, Datatypes.T_snd.
+    time_cbn. destruct (Z.eqb (Word.wrap w z) z); nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma abst_size_le : forall v,
     (N.of_nat (bsize (abst v)) <= c_base * N.of_nat (abst_work v + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z]. pose proof (W.pconst_size w z) as Hconst.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w) <=
+      N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N).
+    { apply WordTime.time_square_floor; lia. }
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)) in *.
+    change (N.of_nat (bsize (abst (w, z))) <= 256 * (W.c_payload + 1) *
+      N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2) + 1))%N.
+    rewrite Nat2N.inj_add.
+    change (N.of_nat (bsize (abst (w, z))) <=
+      256 * (W.c_payload + 1) * (budget + 1))%N.
+    unfold abst, bsize, tagged_size.
+    time_cbn. destruct (Z.eqb (Word.wrap w z) z);
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
 End TaggedT.
 
 Module TaggedTable (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W)
     (B : TAGGED_BASE L W) <: TABLE BitsLang B.
   Include TaggedTableCode L W T.
 
+  (** Removing tags retains each concrete operand's width and payload meaning. *)
+  Local Lemma untag_sound : forall xs cs wps,
+    Forall2 B.gamma xs cs -> untag xs = Some wps ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs.
+  Proof.
+    intros xs cs wps Hfacts. revert wps.
+    induction Hfacts as [|x [v z] xs cs Hhead Htail IH]; intros wps Htags.
+    - inversion Htags. constructor.
+    - destruct x as [|w p|]; cbn [untag] in Htags; try discriminate.
+      destruct (untag xs) as [tail|] eqn:Huntag; [|discriminate].
+      inversion Htags; subst wps. constructor.
+      + change (v = w /\ L.is_word w z /\ W.pgamma w p z) in Hhead.
+        destruct Hhead as [Hwidth [Hword Hpayload]]. subst v.
+        split; [reflexivity|]. split; assumption.
+      + apply IH. reflexivity.
+  Qed.
+
+  (** Related payload lists carry the concrete operand widths in order. *)
+  Local Lemma payload_widths : forall wps cs,
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs -> map fst wps = map fst cs.
+  Proof.
+    intros wps cs Hfacts.
+    induction Hfacts as [|wp c wps cs [Hwidth Hpayload] Htail IH]; cbn; congruence.
+  Qed.
+
+  (** Retagging restores the checked width around every refined payload. *)
+  Local Lemma retag_sound : forall ws ps cs,
+    Forall2 (fun w c => fst c = w /\ L.is_word w (snd c)) ws cs ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
+    (length ws <= length ps)%nat -> Forall2 B.gamma (retag ws ps) cs.
+  Proof.
+    intros ws ps cs Hwidths. revert ps.
+    induction Hwidths as [|w c ws cs Hhead Htail IH]; intros ps Hpayloads Hlength.
+    - destruct ps; constructor.
+    - destruct ps as [|p ps]; cbn in Hlength; [lia|].
+      inversion Hpayloads as [|wp c' pairs cs' Hp Hps]; subst.
+      cbn [retag]. constructor.
+      + change (fst c = w /\ L.is_word w (snd c) /\ W.pgamma w p (snd c)).
+        destruct Hhead as [Hwidth Hword]. split; [exact Hwidth|].
+        split; [exact Hword|exact Hp].
+      + apply IH; [exact Hps|lia].
+  Qed.
+
   Lemma fwd_sound : forall o xs cs c r, fwd o xs = Some r ->
     Forall2 B.gamma xs cs -> BitsLang.eval o cs = Some c -> B.gamma r c.
-  Proof. Admitted. (* CONVERT: tagged_forward_sound: The variable tagged_no_empty was not found in the current environment. *)
+  Proof.
+    intros [w z|o] xs cs c r Hentry Hfacts Heval.
+    - destruct xs as [|x xs]; cbn [fwd] in Hentry; [|discriminate].
+      inversion Hentry; subst r. inversion Hfacts; subst cs.
+      inversion Heval; subst c.
+      change (w = w /\ L.is_word w (L.wrap w z) /\
+        W.pgamma w (W.pconst w z) (L.wrap w z)).
+      split; [reflexivity|]. split; [apply L.wrap_is_word|apply W.pconst_sound].
+    - cbn [fwd] in Hentry.
+      destruct (untag xs) as [wps|] eqn:Htags; [|discriminate].
+      destruct (Op.result_width o (map fst wps)) as [rw|] eqn:Hwidth; [|discriminate].
+      destruct (T.wfwd o rw wps) as [p|] eqn:Hpayload; [|discriminate].
+      inversion Hentry; subst r. destruct c as [cw z].
+      change (L.eval_op o cs = Some (cw, z)) in Heval.
+      pose proof (untag_sound xs cs wps Hfacts Htags) as Hoperands.
+      pose proof (L.eval_op_is_word o cs cw z Heval) as [Hword Hresult].
+      rewrite <- (payload_widths wps cs Hoperands) in Hresult.
+      change (Op.result_width o (map fst wps) = Some cw) in Hresult.
+      rewrite Hwidth in Hresult. inversion Hresult; subst cw.
+      change (rw = rw /\ L.is_word rw z /\ W.pgamma rw p z).
+      split; [reflexivity|]. split; [exact Hword|].
+      exact (T.wfwd_sound o rw wps cs z p Hpayload Hoperands Heval).
+  Qed.
 
   Lemma bwd_sound : forall o r xs ys cs c, bwd o r xs = Some ys ->
     Forall2 B.gamma xs cs -> BitsLang.eval o cs = Some c -> B.gamma r c ->
     Forall2 B.gamma ys cs.
-  Proof. Admitted. (* CONVERT: tagged_assume_sound: The variable tagged_empty_false was not found in the current *)
+  Proof.
+    intros [w z|o] r xs ys cs c Hentry Hfacts Heval Hr;
+      [discriminate Hentry|].
+    destruct r as [|w p|]; cbn [bwd] in Hentry; try discriminate.
+    destruct (untag xs) as [wps|] eqn:Htags; [|discriminate].
+    destruct (Op.result_width o (map fst wps)) as [rw|] eqn:Hwidth; [|discriminate].
+    destruct (Pos.eqb w rw) eqn:Hwr; [|discriminate].
+    apply Pos.eqb_eq in Hwr. subst rw.
+    destruct (T.wbwd o w p wps) as [ps|] eqn:Hpayload; [|discriminate].
+    inversion Hentry; subst ys. destruct c as [cw z].
+    change (L.eval_op o cs = Some (cw, z)) in Heval.
+    change (cw = w /\ L.is_word w z /\ W.pgamma w p z) in Hr.
+    destruct Hr as [Hcw [Hword Hr]]. subst cw.
+    pose proof (untag_sound xs cs wps Hfacts Htags) as Hoperands.
+    pose proof (T.wbwd_sound o w p wps ps cs z Hpayload Hoperands Heval Hr) as Hresult.
+    apply retag_sound.
+    - clear - Hoperands.
+      induction Hoperands as [|[v q] c wps cs [Hwc [Hnormal Hq]] Htail IH];
+        cbn; constructor.
+      + cbn in Hwc, Hnormal. split; [symmetry; exact Hwc|].
+        now rewrite Hwc.
+      + exact IH.
+    - exact Hresult.
+    - rewrite length_map.
+      pose proof (Forall2_length Hoperands) as Hop_length.
+      pose proof (Forall2_length Hresult) as Hr_length.
+      rewrite length_combine, length_map in Hr_length.
+      change (length wps <= length ps)%nat.
+      change (length wps = length cs) in Hop_length.
+      change (Nat.min (length wps) (length ps) = length cs) in Hr_length.
+      rewrite Hop_length, <- Hr_length. apply Nat.le_min_r.
+  Qed.
 
   Lemma grd_sound : forall g xs ys cs, grd g xs = Some ys ->
     Forall2 B.gamma xs cs -> BitsLang.holds g cs -> Forall2 B.gamma ys cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs ys cs Hentry. discriminate Hentry.
+  Qed.
 End TaggedTable.
 
 Module TaggedTableTimingHelpers (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
@@ -329,8 +708,8 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     | TBot | TAny => 0
     | TVal w p => 1 + W.pwrank q w p
     end.
-  Definition k_untag : N := 1%N. (* STUB *)
-  Definition k_retag : N := 1%N. (* STUB *)
+  Definition k_untag : N := 1%N.
+  Definition k_retag : N := 1%N.
   Definition tagged_gamma (a : tagged W.p) (c : positive * Z) : Prop :=
     match a with
     | TBot => False
@@ -341,18 +720,52 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     Forall2 tagged_gamma xs cs -> untag xs = Some wps ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros xs cs wps Hfacts. revert wps.
+    induction Hfacts as [|x [v z] xs cs Hhead Htail IH]; intros wps Htags.
+    - inversion Htags. constructor.
+    - destruct x as [|w p|]; cbn [untag] in Htags; try discriminate.
+      destruct (untag xs) as [tail|] eqn:Huntag; [|discriminate].
+      inversion Htags; subst wps. constructor.
+      + cbn [tagged_gamma] in Hhead.
+        destruct Hhead as [Hwidth [Hword Hpayload]]. cbn in Hwidth. subst v.
+        split; [reflexivity|]. split; assumption.
+      + apply IH. reflexivity.
+  Qed.
   Lemma F2_retag_sound : forall ws ps cs,
     Forall2 (fun w c => fst c = w /\ L.is_word w (snd c)) ws cs ->
     Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c)) (combine ws ps) cs ->
     (length ws <= length ps)%nat -> Forall2 tagged_gamma (retag ws ps) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ws ps cs Hwidths. revert ps.
+    induction Hwidths as [|w c ws cs Hhead Htail IH]; intros ps Hpayloads Hlength.
+    - destruct ps; constructor.
+    - destruct ps as [|p ps]; cbn in Hlength; [lia|].
+      inversion Hpayloads as [|wp c' pairs cs' Hp Hps]; subst.
+      cbn [retag]. constructor.
+      + cbn [tagged_gamma]. destruct Hhead as [Hwidth Hword].
+        split; [exact Hwidth|]. split; [exact Hword|exact Hp].
+      + apply IH; [exact Hps|lia].
+  Qed.
+  (** Untagging charges at most one call per operand and one final call. *)
   Lemma T1_untag : forall xs,
     (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_untag. induction xs as [|x xs IH].
+    - time_step.
+    - destruct x as [|w p|]; time_unfold T_untag; cbn [length];
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all; lia.
+  Qed.
+
+  (** Retagging charges one call per paired position and one final call. *)
   Lemma T2_retag : forall ws ps,
     (T_retag ws ps <= k_retag * N.of_nat ((length ws + length ps + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_retag. induction ws as [|w ws IH]; intros [|p ps];
+      time_unfold T_retag; cbn [length];
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; time_cbn; try lia.
+    specialize (IH ps). rewrite ?Nat2N.inj_add in IH. time_cbn_all. lia.
+  Qed.
 End TaggedWordPlan.
 
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
@@ -398,7 +811,7 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Lemma T_abst_le : forall v xs o cs, BitsLangT.eval o cs = Some v ->
     Forall2 (fun x c => B.point x = Some c) xs cs ->
     (N.of_nat (B.abst_work v) <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: point widths need not be bounded by tag widths. *)
   (** The entry stays within its declared work budget. *)
   Lemma fwd_size_le : forall o xs r, fwd o xs = Some r ->
     (N.of_nat (B.bsize r) <= c_tab * N.of_nat (twork o xs + 1))%N.

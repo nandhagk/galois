@@ -4,7 +4,7 @@
     For example, a lookup of an unknown key returns that key.
     Builds on: UnionFind and Trie. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List NArith Lia.
 From Galois.Base Require Import Trie UnionFind.
 Import List.ListNotations.
 
@@ -87,6 +87,43 @@ Qed.
 Example uf_key_order : UnionFind.support uf_sample = [4; 2; 1; 3]%positive.
 Proof.
   vm_compute. reflexivity.
+Qed.
+
+(** The original link plan permits an absent losing root with an unconstrained rank. *)
+Example uf_link_plan_absent_root :
+  let u := UnionFind.add 1%positive UnionFind.empty in
+  let rk := fun x => if Pos.eqb x 2%positive then 1%nat else 0%nat in
+  UnionFind.wf u /\ UnionFind.ranked u rk /\
+  UnionFind.is_root u 1%positive /\ UnionFind.is_root u 2%positive /\
+  1%positive <> 2%positive /\
+  UnionFind.size_of u 2%positive <= UnionFind.size_of u 1%positive /\
+  ~ UnionFind.ranked (UnionFind.link 1%positive 2%positive u)
+    (fun x => if Pos.eqb x 1%positive
+      then Nat.max (rk 1%positive) (S (rk 2%positive)) else rk x).
+Proof.
+  cbv zeta. set (u := UnionFind.add 1%positive UnionFind.empty).
+  set (rk := fun x => if Pos.eqb x 2%positive then 1%nat else 0%nat).
+  assert (Hwf : UnionFind.wf u).
+  { apply UnionFind.wf_add, UnionFind.wf_empty. }
+  assert (Hmember : forall x, UnionFind.mem u x -> x = 1%positive).
+  { intros x Hmem. apply UnionFind.support_spec in Hmem.
+    change (In x [1%positive]) in Hmem.
+    cbn [In] in Hmem. destruct Hmem as [Heq|Hfalse]; [congruence|contradiction]. }
+  assert (Hroot1 : UnionFind.is_root u 1%positive) by (vm_compute; reflexivity).
+  assert (Hroot2 : UnionFind.is_root u 2%positive) by (vm_compute; reflexivity).
+  assert (Hranked : UnionFind.ranked u rk).
+  { split.
+    - intros x Hmem Hnonroot. apply Hmember in Hmem. subst x. contradiction.
+    - intros r Hmem Hroot. apply Hmember in Hmem. subst r. vm_compute. lia. }
+  refine (conj Hwf (conj Hranked (conj Hroot1 (conj Hroot2 (conj _ (conj _ _)))))).
+  - discriminate.
+  - vm_compute. lia.
+  - intros [_ Hroots].
+    assert (Hmem : UnionFind.mem (UnionFind.link 1%positive 2%positive u) 1%positive).
+    { vm_compute. discriminate. }
+    assert (Hroot : UnionFind.is_root (UnionFind.link 1%positive 2%positive u) 1%positive).
+    { vm_compute. reflexivity. }
+    specialize (Hroots 1%positive Hmem Hroot). vm_compute in Hroots. lia.
 Qed.
 
 (* BaseUnionFindTest.uf_compression_ranks compares ranks and max_rank. Union by size deletes those
