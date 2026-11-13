@@ -5,7 +5,7 @@
     Builds on: SetSig and MapSig. *)
 
 From Stdlib Require Import List Bool NArith Lia Sorting.Sorted.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig TrieSig MapSig SetSig.
 From Galois.Base Require Import Trie.
 
@@ -38,6 +38,30 @@ Module TrieSet (K : KEY) <: SET K.
   Definition wf (s : t) : Prop :=
     forall p k, PTrieCode.get p s = Some k -> K.encode k = p.
   Definition nodes (s : t) : nat := PTrie.nodes s.
+
+  (** Enumeration keeps stored keys in trie order without rebuilding their codes. *)
+  Lemma elements_trie : forall s, elements s = List.map snd (PTrieCode.elements s).
+  Proof.
+    intro s. unfold elements, fold.
+    rewrite PTrieT.F9_fold_values, rev_append_rev, app_nil_r.
+    generalize (PTrieCode.elements s). intro entries.
+    assert (Hfold : forall acc,
+      fold_left (fun acc kv => snd kv :: acc) entries acc =
+      List.rev (List.map snd entries) ++ acc).
+    { induction entries as [|[p k] rest IH]; intro acc;
+        cbn [fold_left List.map List.rev snd].
+      - reflexivity.
+      - rewrite IH, <- app_assoc. reflexivity. }
+    rewrite Hfold, app_nil_r, rev_involutive. reflexivity.
+  Qed.
+
+  (** Each enumerated member occupies a skeleton node. *)
+  Lemma elements_length : forall s, length (elements s) <= nodes s.
+  Proof.
+    intro s. rewrite elements_trie, length_map.
+    apply PTrieT.F4_bindings.
+  Qed.
+
   Lemma wf_empty : wf empty.
   Proof. Admitted. (* STUB *)
   Lemma wf_add : forall k s, wf s -> wf (add k s).
@@ -72,7 +96,13 @@ Module TrieSet (K : KEY) <: SET K.
   Proof. Admitted. (* STUB *)
   Lemma fold_spec : forall A (f : A -> K.t -> A) s a,
     fold f s a = fold_left f (elements s) a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A f s a. unfold fold.
+    rewrite PTrieT.F9_fold_values, elements_trie.
+    generalize (PTrieCode.elements s). intro entries.
+    revert a. induction entries as [|entry rest IH]; intro a;
+      cbn [List.map fold_left]; [reflexivity|apply IH].
+  Qed.
   Lemma ext : forall s u, wf s -> wf u -> (forall k, mem k s = mem k u) -> s = u.
   Proof. Admitted. (* STUB *)
   Lemma mem_has : forall k s, mem k s = has (K.encode k) s.
@@ -126,27 +156,98 @@ Module TrieSetT (K : KEY_T) <: SET_T K.
   TimeFun equal.
   TimeFun fold.
   TimeFun elements.
-  Definition c_set : N := 1. (* STUB *)
+  Definition c_set : N :=
+    16 * (K.c_key + PTrieT.c_trie + PTrieT.k_check + PTrieT.k_fold + 1).
   Lemma T_mem_le : forall k s, (T_mem k s <= c_set * N.of_nat (K.bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s.
+    pose proof (K.T_encode_le k) as Hencode.
+    pose proof (PTrieT.T_get_le K.t (K.encode k) s) as Hget.
+    unfold c_set, K.bits in *. time_step.
+  Qed.
   Lemma T_add_le : forall k s, (T_add k s <= c_set * N.of_nat (K.bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s.
+    pose proof (K.T_encode_le k) as Hencode.
+    pose proof (PTrieT.T_set_le K.t (K.encode k) k s) as Hset.
+    unfold c_set, K.bits in *. time_step.
+  Qed.
   Lemma T_remove_le : forall k s, (T_remove k s <= c_set * N.of_nat (K.bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s.
+    pose proof (K.T_encode_le k) as Hencode.
+    pose proof (PTrieT.T_remove_le K.t (K.encode k) s) as Hremove.
+    unfold c_set, K.bits in *. time_step.
+  Qed.
   Lemma T_union_le : forall s u, (T_union s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s u. unfold T_union.
+    eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_le with (k := 1%N).
+      intros a b. destruct a; time_cbn; nia.
+    - unfold c_set, nodes. nia.
+  Qed.
   Lemma T_inter_le : forall s u, (T_inter s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s u. unfold T_inter.
+    eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_le with (k := 1%N).
+      intros a b. destruct b; time_cbn; nia.
+    - unfold c_set, nodes. nia.
+  Qed.
   Lemma T_diff_le : forall s u, (T_diff s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s u. unfold T_diff.
+    eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T_merge_le with (k := 1%N).
+      intros a b. destruct b; time_cbn; nia.
+    - unfold c_set, nodes. nia.
+  Qed.
+
+  (** Inclusion needs only the left skeleton and a constant presence callback. *)
+  Lemma T_subset_nodes : forall s u,
+    (T_subset s u <= (2 * PTrieT.k_check + 1) * N.of_nat (nodes s + 1))%N.
+  Proof.
+    intros s u. unfold T_subset.
+    eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T5_forall2 with (c := 1%N).
+      intros a b. destruct b; time_cbn; nia.
+    - unfold nodes. nia.
+  Qed.
+
   Lemma T_subset_le : forall s u, (T_subset s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s u. pose proof (T_subset_nodes s u) as Hsubset.
+    unfold c_set. nia.
+  Qed.
   Lemma T_equal_le : forall s u, (T_equal s u <= c_set * N.of_nat (nodes s + nodes u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s u.
+    pose proof (T_subset_nodes s u) as Hleft.
+    pose proof (T_subset_nodes u s) as Hright.
+    unfold c_set. time_step.
+  Qed.
   Lemma T_elements_le : forall s, (wf s -> T_elements s <= c_set * N.of_nat (weight s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s Hwf.
+    pose proof (PTrieT.T9_fold_values K.t (list K.t)
+      (fun acc k => k :: acc) (fun _ _ => 1%N) s nil 1%N
+      (fun _ _ => N.le_refl 1)) as Hfold.
+    pose proof (List.T_rev_append_le (fold (fun acc k => k :: acc) s nil) nil) as Hreverse.
+    pose proof (elements_length s) as Hlength.
+    unfold elements in Hlength.
+    rewrite rev_append_rev, length_app, length_rev in Hlength.
+    pose proof (nodes_le_weight s Hwf) as Hnodes.
+    unfold T_elements, T_fold, c_set, nodes in *.
+    time_simpl. time_cbn_all. nia.
+  Qed.
   Lemma T_fold_le : forall A (f : A -> K.t -> A) T_f s a c,
     ((forall acc k, T_f acc k <= c) ->
     T_fold f T_f s a <= c_set * (c + 1) * N.of_nat (nodes s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A f T_f s a c Hf. unfold T_fold.
+    eapply N.le_trans.
+    - apply N.add_le_mono_l. apply PTrieT.T9_fold_values with (c := c). exact Hf.
+    - unfold c_set, nodes. nia.
+  Qed.
 End TrieSetT.
