@@ -1302,7 +1302,8 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
              end) ma mb
         | _, _ => 0
         end))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: MAP_TIME lacks extensionality for the clock callback;
+    the generated clock adds its unit outside the match, unlike the plan's callback. *)
   Lemma F_narrow : forall a b, narrow a b =
     if is_bot b then b else
     match a, b with
