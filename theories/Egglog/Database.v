@@ -8919,10 +8919,39 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     symmetry. exact (inv_on_repr_idem db [] i Hinv).
   Qed.
 
+  (** Lineage depends on the current view and representatives, not scheduling metadata. *)
+  Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
+    view db' = view db -> lineage initial db -> lineage initial db'.
+  Proof.
+    intros initial db db' Hforest Hview Hlineage.
+    unfold lineage, output_equiv, merged, combine, canon, repr in Hlineage |- *.
+    now rewrite Hview, Hforest.
+  Qed.
+
+  (** Removing a pending loser preserves every existing source-group witness exactly. *)
+  Lemma lineage_pop_loser : forall initial db i db',
+    db_pop_loser db = Some (i, db') -> lineage initial db -> lineage initial db'.
+  Proof.
+    intros initial db i db' Hpop Hlineage.
+    destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
+    eapply lineage_frame; eassumption.
+  Qed.
+
+  (** The queue-scheduling callback branch preserves lineage before any row repair begins. *)
+  Lemma lineage_schedule : forall initial db next,
+    rstep (db, []) = inl next -> lineage initial db -> lineage initial (fst next).
+  Proof.
+    intros initial db next Hstep Hlineage.
+    change (db_rstep (db, []) = inl next) in Hstep. cbn [db_rstep fst snd] in Hstep.
+    destruct (db_pop_loser db) as [[i current] |] eqn:Hpop; [| discriminate].
+    injection Hstep as Hnext. subst next. cbn [fst].
+    eapply lineage_pop_loser; eassumption.
+  Qed.
+
   (** Actual repair flattens source groups through canonicalization and lattice merging. *)
   Lemma F21_lineage_step : forall initial s s', state_inv s ->
     rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: active repair needs equality transport and source-group merging. *)
 
   (** Related cells normalize to the same already canonical target cell. *)
   Lemma related_cell_canonical : forall db work c d, inv_on db work ->
