@@ -270,6 +270,77 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
       destruct (f x); cbn [length]; rewrite ?Nat2N.inj_succ; nia.
   Qed.
 
+  (** The growth factor reserves at least two units for each join step. *)
+  Local Lemma join_growth_positive : (2 <= join_growth)%N.
+  Proof.
+    unfold join_growth. lia.
+  Qed.
+
+  (** A join's clock and output size fit within one multiplicative growth step. *)
+  Local Lemma join_step_budget a b tail :
+    (1 + L.T_join a b + N.of_nat (L.size (L.join a b)) + tail + 1 <=
+      join_growth * (N.of_nat (L.size a) + N.of_nat (L.size b) + tail + 2))%N.
+  Proof.
+    pose proof (L.T_join_le a b) as Hclock.
+    pose proof (J.join_size a b) as Hsize.
+    unfold join_growth. repeat rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The fold budget tracks actual work and the size passed to later joins. *)
+  Local Lemma fold_join_clock_size xs : forall a,
+    (List.T_fold_left L.join L.T_join xs a +
+      N.of_nat (L.size (fold_left L.join xs a)) + 1 <=
+      join_growth ^ N.of_nat (length xs + 1) *
+        N.of_nat (L.size a + raw_size xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro a.
+    - time_unfold @List.T_fold_left. cbn [fold_left length raw_size fold_right].
+      rewrite N.pow_1_r. repeat rewrite Nat2N.inj_add.
+      pose proof join_growth_positive. nia.
+    - specialize (IH (L.join a x)).
+      pose proof (join_step_budget a x (N.of_nat (raw_size xs))) as Hstep.
+      set (scale := (join_growth ^ N.of_nat (length xs + 1))%N) in *.
+      assert (Hscale_positive : (1 <= scale)%N).
+      { unfold scale. assert (Hnonzero : join_growth <> 0%N) by
+          (pose proof join_growth_positive; lia).
+        pose proof (N.pow_nonzero join_growth (N.of_nat (length xs + 1)) Hnonzero).
+        lia. }
+      pose proof (N.mul_le_mono_l _ _ scale Hstep) as Hscaled.
+      pose proof (N.mul_le_mono_r 1 scale (1 + L.T_join a x)%N Hscale_positive) as Hpaid.
+      time_unfold @List.T_fold_left. cbn [fold_left length].
+      replace (S (length xs) + 1) with (S (length xs + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r'. fold scale.
+      set (budget := (N.of_nat (L.size a) + N.of_nat (L.size x) +
+        N.of_nat (raw_size xs) + 2)%N) in *.
+      assert (Hbudget : N.of_nat (L.size a + raw_size (x :: xs) + 1) = budget).
+      { unfold budget, raw_size. cbn [fold_right]. repeat rewrite Nat2N.inj_add. lia. }
+      rewrite Hbudget. fold budget in Hscaled.
+      replace (join_growth * scale * budget)%N with
+        (scale * (join_growth * budget))%N by ring.
+      repeat rewrite Nat2N.inj_add in IH.
+      repeat rewrite N.mul_add_distr_l in IH, Hscaled, Hpaid.
+      rewrite N.mul_1_l in Hpaid. lia.
+  Qed.
+
+  (** A nonempty list starts from its first value, so no bottom-size bound is needed. *)
+  Local Lemma join_all_clock_size xs : xs <> [] ->
+    (T_join_all xs + N.of_nat (L.size (join_all xs)) + 1 <=
+      join_growth ^ N.of_nat (length xs + 1) * N.of_nat (raw_size xs + 1))%N.
+  Proof.
+    destruct xs as [|x xs]; intro Hnonempty; [contradiction|].
+    pose proof (fold_join_clock_size xs x) as Hfold.
+    change (List.T_fold_left L.join L.T_join xs x) with
+      (List.T_fold_left L.join (fun a b => L.T_join a b) xs x) in Hfold.
+    pose proof join_growth_positive as Hgrowth.
+    assert (Hnonzero : join_growth <> 0%N) by lia.
+    pose proof (N.pow_nonzero join_growth (N.of_nat (length xs + 1)) Hnonzero) as Hpower.
+    time_unfold @T_join_all. cbn [join_all length].
+    replace (S (length xs) + 1) with (S (length xs + 1)) by lia.
+    rewrite Nat2N.inj_succ, N.pow_succ_r'.
+    unfold raw_size in *. cbn [fold_right] in *.
+    repeat rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
   (** Order testing takes time bounded by both disjunction sizes. *)
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
