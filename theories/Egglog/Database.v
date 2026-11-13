@@ -3305,8 +3305,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
     destruct roots as [[winner loser] |]; [reflexivity | exact Hchanged].
   Qed.
-  Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
-  Proof. Admitted. (* STUB *)
   (** Find and lookup leave the change flag alone. *)
   Lemma changed_find : forall i db, changed (snd (find i db)) = changed db.
   Proof.
@@ -3735,12 +3733,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - split; [reflexivity |]. split; [reflexivity |]. split; [reflexivity |].
       change (pending db <= pending db + 1). lia.
   Qed.
-
-  (** Rebuilding keeps layout and allocation. *)
-  Lemma layout_rebuild : forall db, wf db ->
-    kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
-    ids (rebuild db) = ids db.
-  Proof. Admitted. (* STUB *)
 
   (** Advancing keeps the slot layout. *)
   Lemma layout_advance : forall db, slots (advance db) = slots db.
@@ -5053,6 +5045,100 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) o) o)); [exact Hchanged |].
     apply changed_put. now rewrite row_delete_changed.
+  Qed.
+
+  (** Every property preserved by both actual callback branches survives the fuelled loop. *)
+  Lemma rebuild_preserves : forall (P : t -> Prop),
+    (forall db f k, P db -> P (repair_current f k db)) ->
+    (forall db i db', P db -> db_pop_loser db = Some (i, db') -> P db') ->
+    forall db, P db -> P (rebuild db).
+  Proof.
+    intros P Hrepair Hpop db Hinitial.
+    assert (Hstep : forall s, P (fst s) ->
+      match db_rstep s with inl next => P (fst next) | inr result => P result end).
+    { intros [current work] Hcurrent.
+      destruct work as [| [f k] rest]; cbn [db_rstep fst snd].
+      - destruct (db_pop_loser current) as [[i next] |] eqn:Hqueue;
+          [eapply Hpop; eassumption | exact Hcurrent].
+      - now apply Hrepair. }
+    assert (Hcontinue : forall s s', P (fst s) -> db_rstep s = inl s' -> P (fst s')).
+    { intros s s' Hcurrent Hgo. specialize (Hstep s Hcurrent). now rewrite Hgo in Hstep. }
+    assert (Hstop : forall s result, P (fst s) -> db_rstep s = inr result -> P result).
+    { intros s result Hcurrent Hdone. specialize (Hstep s Hcurrent). now rewrite Hdone in Hstep. }
+    pose proof (LoopNFacts.loopN_preserves _ _ db_rstep (fun s => P (fst s)) P
+      Hcontinue Hstop (db_rebuild_fuel db) (db, []) Hinitial) as Hloop.
+    unfold rebuild. destruct (loopN db_rstep (db_rebuild_fuel db) (db, [])); exact Hloop.
+  Qed.
+
+  (** Queue scheduling retains layout, allocation and the current change flag. *)
+  Lemma db_pop_loser_layout : forall db i db', db_pop_loser db = Some (i, db') ->
+    slots db' = slots db /\ ids db' = ids db /\ changed db' = changed db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. repeat split; reflexivity.
+  Qed.
+
+  (** A raised change flag stays raised through every repair and queue operation. *)
+  Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
+  Proof.
+    apply (rebuild_preserves (fun db => changed db = true)).
+    - exact repair_current_changed.
+    - intros db i db' Hchanged Hpop.
+      rewrite (proj2 (proj2 (db_pop_loser_layout db i db' Hpop))). exact Hchanged.
+  Qed.
+
+  (** Put preserves declarations, slots and allocation even in an active repair batch. *)
+  Lemma put_layout_raw : forall db f k o,
+    kind (view (put f k o db)) = kind (view db) /\
+    slots (put f k o db) = slots db /\ ids (put f k o db) = ids db.
+  Proof.
+    intros db f k o. split; [apply put_kind_raw |]. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : slots next = slots db /\ ids next = ids db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try (split; reflexivity).
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; split; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      now rewrite row_replace_slots, row_replace_ids.
+    - now rewrite row_replace_slots, row_replace_ids.
+  Qed.
+
+  (** Single-row repair keeps all public layout observations. *)
+  Lemma repair_current_layout : forall db f k,
+    kind (view (repair_current f k db)) = kind (view db) /\
+    slots (repair_current f k db) = slots db /\ ids (repair_current f k db) = ids db.
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| repeat split; reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [repeat split; reflexivity |].
+    pose proof (put_layout_raw (row_delete f k db) f
+      (normal_key db k) (option_map (normal_cell db) o)) as Hlayout.
+    now rewrite row_delete_kind, row_delete_slots, row_delete_ids in Hlayout.
+  Qed.
+
+  (** Rebuilding keeps layout and allocation. *)
+  Lemma layout_rebuild : forall db, wf db ->
+    kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
+    ids (rebuild db) = ids db.
+  Proof.
+    intros db _. apply (rebuild_preserves (fun current =>
+      kind (view current) = kind (view db) /\ slots current = slots db /\ ids current = ids db)).
+    - intros current f k Hlayout.
+      destruct (repair_current_layout current f k) as [Hkind [Hslots Hids]].
+      now rewrite Hkind, Hslots, Hids.
+    - intros current i next Hlayout Hpop.
+      destruct (db_pop_loser_preserves current i next Hpop) as [_ Hview].
+      destruct (db_pop_loser_layout current i next Hpop) as [Hslots [Hids _]].
+      now rewrite Hview, Hslots, Hids.
+    - repeat split; reflexivity.
   Qed.
 
 End Database.
