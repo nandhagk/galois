@@ -194,14 +194,15 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
-Example unsupported_assignment_uses_havoc :
+(** The generic linearizer recognizes a leaf, so a copy relates the target to its source. *)
+Example leaf_assignment_copies_its_source :
   Equalities.assign 1%positive (Leaf 2%positive) (Reached [x1; y1]) =
-    Equalities.havoc 1%positive (Reached [x1; y1]).
+    Reached [LCons _ [(2%positive, -1); (1%positive, 1)] REq 0; y1].
 Proof.
   vm_compute. reflexivity.
 Qed.
 
-(** The generic linearizer has no recognized forms; these fixtures test its affine worker. *)
+(** These fixtures test the affine worker of assignment directly. *)
 Example affine_assignment_updates_its_old_value :
   Equalities.assign_rows 1%positive (Lin _ [(1%positive, 1)] 1) [x1] =
     [LCons _ [(1%positive, 1)] REq 2].
