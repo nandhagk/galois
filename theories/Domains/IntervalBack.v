@@ -4461,6 +4461,18 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     apply N.mul_le_mono; lia.
   Qed.
 
+  Local Lemma table_zdiv_time_budget : forall x y s,
+    Z.size_nat x + Z.size_nat y + 1 <= s ->
+    (Z.T_div x y <= 33 * N.of_nat (s ^ 2))%N.
+  Proof.
+    intros x y s Hbits.
+    pose proof (Std.Z.T_div_le x y) as Htime.
+    pose proof (table_nat_to_N_le _ _ Hbits) as Hbudget.
+    rewrite !Nat2N.inj_add in Hbudget.
+    rewrite Nat.pow_2_r, Nat2N.inj_mul.
+    nia.
+  Qed.
+
   Local Lemma table_and_time : forall rw u v,
     (T_interval_and rw u v <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
@@ -4687,6 +4699,102 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     replace (s * (s * 1))%nat with (s ^ 2)%nat
       by (rewrite Nat.pow_2_r; nia).
     lia.
+  Qed.
+
+  Local Lemma table_udiv_time : forall rw u v,
+    (T_interval_udiv rw u v <= 10000 * N.of_nat
+      ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
+  Proof.
+    intros rw u v.
+    pose proof (PayloadBounds.payload_modulus_time rw) as Hmodulus.
+    pose proof (PayloadBounds.payload_modulus_bits rw) as Hmodbits.
+    pose proof (Std.Z.T_sub_le (Word.modulus rw) 1) as Hsubtop.
+    pose proof (Pos2Nat.is_pos rw) as Hrw.
+    unfold Word.modulus in Hsubtop.
+    replace (2 ^ Z.pos rw)%Z with (Z.pow_pos 2 rw) in Hsubtop by reflexivity.
+    destruct u as [|[|la|] [|ha|]];
+      destruct v as [|[|lb|] [|hb|]];
+      unfold T_interval_udiv, T_interval_finite_helper, interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (clear - Hmodulus Hmodbits Hsubtop Hrw;
+        unfold T_interval_top; time_simpl; time_cbn; time_cbn_all;
+        repeat rewrite Nat2N.inj_add in *;
+        repeat rewrite Nat2N.inj_mul in *; nia).
+    pose proof (table_integer_div_bits la hb) as Hbits_lo.
+    pose proof (table_integer_div_bits ha lb) as Hbits_hi.
+    pose proof (table_integer_sub_bits (Word.modulus rw) 1) as Hbits_top.
+    pose proof (table_zdiv_time_budget la hb) as Hdiv_lo.
+    pose proof (table_zdiv_time_budget ha lb) as Hdiv_hi.
+    pose proof (table_checked_time rw (la / hb) (ha / lb)) as Hchecked_plain.
+    pose proof (table_checked_time rw (la / hb) (Word.modulus rw - 1))
+      as Hchecked_zero.
+    pose proof (table_top_time rw) as Htop.
+    pose proof (Std.Z.T_leb_le 0 la) as Hleb.
+    pose proof (Std.Z.T_ltb_le 0 lb) as Hltb_lb.
+    pose proof (Std.Z.T_ltb_le 0 hb) as Hltb_hb.
+    pose proof (Std.Z.T_eqb_le lb 0) as Heqb_lb.
+    pose proof (Std.Z.T_eqb_le hb 0) as Heqb_hb.
+    pose proof (Nat.le_max_l (Z.size_nat la) (Z.size_nat ha)) as Hla.
+    pose proof (Nat.le_max_r (Z.size_nat la) (Z.size_nat ha)) as Hha.
+    pose proof (Nat.le_max_l (Z.size_nat lb) (Z.size_nat hb)) as Hlb.
+    pose proof (Nat.le_max_r (Z.size_nat lb) (Z.size_nat hb)) as Hhb.
+    unfold Word.modulus in Hmodbits, Hbits_top, Hchecked_zero.
+    replace (2 ^ Z.pos rw)%Z with (Z.pow_pos 2 rw) in * by reflexivity.
+    set (s := Pos.to_nat rw + Nat.max (Z.size_nat la) (Z.size_nat ha) +
+      Nat.max (Z.size_nat lb) (Z.size_nat hb) + 1).
+    assert (Hdiv_lo_bound :
+      (Z.T_div la hb <= 33 * N.of_nat (s ^ 2))%N).
+    { apply table_zdiv_time_budget. unfold s. lia. }
+    assert (Hdiv_hi_bound :
+      (Z.T_div ha lb <= 33 * N.of_nat (s ^ 2))%N).
+    { apply table_zdiv_time_budget. unfold s. lia. }
+    assert (Hspos : (1 <= s)%nat) by (unfold s; lia).
+    assert (Hsquare : (s <= s ^ 2)%nat)
+      by (clear - Hspos; rewrite Nat.pow_2_r; nia).
+    assert (Htop_nat : ((Pos.to_nat rw + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Htop_nat) as HtopN.
+    assert (Htop_bound : (T_interval_top rw <= 100 * N.of_nat (s ^ 2))%N)
+      by (clear - Htop HtopN; nia).
+    assert (Hlinear :
+      (2 * (5 * Pos.to_nat rw + 3) +
+       2 * (3 * (Z.size_nat (Z.pow_pos 2 rw) + Z.size_nat 1) + 3) +
+       100 * (Pos.to_nat rw + Z.size_nat (la / hb) +
+         Z.size_nat (ha / lb) + 1) +
+       100 * (Pos.to_nat rw + Z.size_nat (la / hb) +
+         Z.size_nat (Z.pow_pos 2 rw - 1) + 1) +
+       3 * (Z.size_nat la + Z.size_nat lb + Z.size_nat hb + 1) + 40 <=
+       1000 * s)%nat)
+      by (clear - Hmodbits Hbits_lo Hbits_hi Hbits_top Hla Hha Hlb Hhb Hrw;
+        cbn [Z.size_nat Pos.size_nat] in *; unfold s; lia).
+    assert (Hlinear_sq :
+      (2 * (5 * Pos.to_nat rw + 3) +
+       2 * (3 * (Z.size_nat (Z.pow_pos 2 rw) + Z.size_nat 1) + 3) +
+       100 * (Pos.to_nat rw + Z.size_nat (la / hb) +
+         Z.size_nat (ha / lb) + 1) +
+       100 * (Pos.to_nat rw + Z.size_nat (la / hb) +
+         Z.size_nat (Z.pow_pos 2 rw - 1) + 1) +
+       3 * (Z.size_nat la + Z.size_nat lb + Z.size_nat hb + 1) + 40 <=
+       1000 * s ^ 2)%nat)
+      by (clear - Hlinear Hsquare; lia).
+    pose proof (table_nat_to_N_le _ _ Hlinear_sq) as HlinearN.
+    repeat (rewrite Nat2N.inj_add in HlinearN ||
+      rewrite Nat2N.inj_mul in HlinearN).
+    cbn [N.of_nat] in HlinearN.
+    clear - Hmodulus Hsubtop Hchecked_plain Hchecked_zero HlinearN
+      Hdiv_lo_bound Hdiv_hi_bound Htop_bound Hleb Hltb_lb Hltb_hb
+      Heqb_lb Heqb_hb.
+    repeat rewrite Nat2N.inj_add in Hmodulus, Hsubtop,
+      Hchecked_plain, Hchecked_zero.
+    rewrite Nat.pow_2_r in HlinearN.
+    rewrite Nat.pow_2_r in Hdiv_lo_bound, Hdiv_hi_bound, Htop_bound.
+    change (N.of_nat 0) with 0%N in HlinearN.
+    destruct ((0 <=? la)%Z && (0 <? lb)%Z);
+      destruct ((0 <=? la)%Z && (lb =? 0)%Z && (0 <? hb)%Z);
+      destruct ((lb =? 0)%Z && (hb =? 0)%Z);
+      time_cbn_all;
+      rewrite Nat.mul_1_r;
+      lia.
   Qed.
 
   Local Lemma table_unary_dispatch_time : forall rw w a cost,
@@ -5065,6 +5173,18 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     - apply table_concat_time.
   Qed.
 
+  Local Lemma table_udiv_dispatch_time : forall rw wa a wb b,
+    (5 + T_interval_clip wa a + T_interval_clip wb b +
+      T_interval_udiv rw (interval_clip wa a) (interval_clip wb b) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wa a wb b.
+    apply table_binary_small_dispatch_time.
+    apply table_udiv_time.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -5249,6 +5369,18 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     all: try (match goal with
     | |- context [T_interval_concat _ _ _ _] =>
         pose proof (table_concat_dispatch_time rw wa a wb b) as Htime;
+        match goal with
+        | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+                W.psize wa a + W.psize wb b)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
+    all: try (match goal with
+    | |- context [T_interval_udiv _ _ _] =>
+        pose proof (table_udiv_dispatch_time rw wa a wb b) as Htime;
         match goal with
         | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
             replace budget with
