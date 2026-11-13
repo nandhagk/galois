@@ -2735,6 +2735,74 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       nia.
   Qed.
 
+  Local Lemma table_assume_signed_time : forall w strict result a b,
+    (T_interval_assume_signed w strict result a b <=
+      1000 * (Scalar.c_scalar + 1) *
+      N.of_nat ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2))%N.
+  Proof.
+    intros w strict result a b.
+    pose proof (table_sign_time w a) as Ha.
+    pose proof (table_sign_time w b) as Hb.
+    pose proof (table_assume_ult_time a b) as Hult.
+    pose proof (table_assume_ult_time b a) as Hult_rev.
+    pose proof (table_assume_ule_time a b) as Hule.
+    pose proof (table_assume_ule_time b a) as Hule_rev.
+    unfold T_interval_assume_signed, T_interval_swap.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    set (s := Pos.to_nat w + interval_bits a + interval_bits b + 1).
+    set (budget := N.of_nat (s ^ 2)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget, s. rewrite Nat.pow_2_r. nia. }
+    assert (Ha_budget : (T_interval_sign w a <= 300 * budget)%N).
+    { assert (Hsmall :
+        ((Pos.to_nat w + interval_bits a + 1) ^ 2 <= s ^ 2)%nat)
+        by (apply Nat.pow_le_mono_l; unfold s; lia).
+      pose proof (table_nat_to_N_le _ _ Hsmall) as Hmono.
+      eapply N.le_trans; [exact Ha|].
+      apply N.mul_le_mono_l. exact Hmono. }
+    assert (Hb_budget : (T_interval_sign w b <= 300 * budget)%N).
+    { assert (Hsmall :
+        ((Pos.to_nat w + interval_bits b + 1) ^ 2 <= s ^ 2)%nat)
+        by (apply Nat.pow_le_mono_l; unfold s; lia).
+      pose proof (table_nat_to_N_le _ _ Hsmall) as Hmono.
+      eapply N.le_trans; [exact Hb|].
+      apply N.mul_le_mono_l. exact Hmono. }
+    assert (Hcmp_nat : (interval_bits a + interval_bits b + 1 <= s ^ 2)%nat).
+    { unfold s. rewrite Nat.pow_2_r. nia. }
+    pose proof (table_nat_to_N_le _ _ Hcmp_nat) as Hcmp.
+    assert (Hult_budget :
+      (T_interval_assume_ult a b <= 100 * (Scalar.c_scalar + 1) * budget)%N).
+    { eapply N.le_trans; [exact Hult|].
+      apply N.mul_le_mono_l. exact Hcmp. }
+    assert (Hult_rev_budget :
+      (T_interval_assume_ult b a <= 100 * (Scalar.c_scalar + 1) * budget)%N).
+    { eapply N.le_trans; [exact Hult_rev|].
+      apply N.mul_le_mono_l.
+      replace (interval_bits b + interval_bits a + 1)%nat with
+        (interval_bits a + interval_bits b + 1)%nat by lia.
+      exact Hcmp. }
+    assert (Hule_budget :
+      (T_interval_assume_ule a b <= 100 * (Scalar.c_scalar + 1) * budget)%N).
+    { eapply N.le_trans; [exact Hule|].
+      apply N.mul_le_mono_l. exact Hcmp. }
+    assert (Hule_rev_budget :
+      (T_interval_assume_ule b a <= 100 * (Scalar.c_scalar + 1) * budget)%N).
+    { eapply N.le_trans; [exact Hule_rev|].
+      apply N.mul_le_mono_l.
+      replace (interval_bits b + interval_bits a + 1)%nat with
+        (interval_bits a + interval_bits b + 1)%nat by lia.
+      exact Hcmp. }
+    clear Ha Hb Hult Hult_rev Hule Hule_rev Hcmp.
+    destruct (interval_sign w a) as [sa|];
+      destruct (interval_sign w b) as [sb|];
+      try destruct (Bool.eqb sa sb);
+      destruct strict, result;
+      time_cbn_all;
+      clear - Hbudget Ha_budget Hb_budget Hult_budget Hult_rev_budget
+        Hule_budget Hule_rev_budget;
+      nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
