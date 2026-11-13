@@ -260,6 +260,85 @@ Proof.
   - cbn [slot_position_gaps map snd]. now rewrite IH.
 Qed.
 
+(** Advancing by a nonnegative position gap reaches its absolute tuple suffix. *)
+Lemma slot_skip_gap : forall C previous position (u : list C), previous <= position ->
+  slot_skip (slot_position_difference position previous) (skipn previous u) = skipn position u.
+Proof.
+  intros C previous position u Hle.
+  rewrite slot_skip_spec, slot_position_difference_sub, skipn_skipn. f_equal. lia.
+Qed.
+
+(** The tuple scan saves each fitting position at its unique original rank. *)
+Lemma slot_pick_ranked_spec : forall C (u : list C) ps previous picked,
+  StronglySorted (fun a b => fst a <= fst b) ps ->
+  Forall (fun q => previous <= fst q) ps ->
+  Forall (fun q => fst q < length u) ps -> NoDup (map snd ps) ->
+  forall p rank, In (p, rank) ps ->
+  PTrieCode.get rank
+    (slot_pick_ranked (slot_position_gaps previous ps) (skipn previous u) picked) =
+      nth_error u p.
+Proof.
+  intros C u ps. induction ps as [| [position r] ps IH];
+    intros previous picked Hsorted Hlower Hfits Hdistinct p rank Hin.
+  - contradiction.
+  - apply StronglySorted_inv in Hsorted as [Hsorted Hnext].
+    inversion Hlower as [| ? ? Hbefore Hlower']; subst.
+    inversion Hfits as [| ? ? Hinside Hfits']; subst.
+    cbn [map snd] in Hdistinct.
+    inversion Hdistinct as [| ? ? Habsent Hdistinct']; subst.
+    cbn [fst] in Hbefore, Hinside.
+    cbn [slot_position_gaps slot_pick_ranked]. rewrite slot_skip_gap by exact Hbefore.
+    destruct (skipn position u) as [| c suffix] eqn:Hsuffix.
+    + pose proof (length_skipn position u) as Hlength.
+      rewrite Hsuffix in Hlength. cbn in Hlength. lia.
+    + destruct Hin as [Heq | Hin].
+      * injection Heq as Heqpos Heqrank. subst p rank.
+        rewrite slot_pick_ranked_other.
+        -- rewrite PTrie.get_set_same.
+           pose proof (nth_error_skipn position u 0) as Hnth.
+           rewrite Hsuffix, Nat.add_0_r in Hnth. exact Hnth.
+        -- rewrite slot_position_gaps_ranks. exact Habsent.
+      * rewrite <- Hsuffix. eapply IH; eassumption.
+Qed.
+
+(** Reading original ranks recovers the source order of every recorded position. *)
+Lemma slot_read_ranked_spec : forall C (u : list C) perm rank picked,
+  (forall p r, In (p, r) (slot_rank_positions rank perm) ->
+    PTrieCode.get r picked = nth_error u p) ->
+  slot_read_ranked (length perm) rank picked =
+    flat_map (fun p => option_list (nth_error u p)) perm.
+Proof.
+  intros C u perm. induction perm as [| p perm IH]; intros rank picked Hagree.
+  - reflexivity.
+  - assert (Hhead : PTrieCode.get rank picked = nth_error u p).
+    { apply Hagree. cbn [slot_rank_positions]. apply slot_rank_insert_in. now left. }
+    assert (Htail : slot_read_ranked (length perm) (Pos.succ rank) picked =
+      flat_map (fun p => option_list (nth_error u p)) perm).
+    { apply IH. intros q r Hin. apply Hagree. cbn [slot_rank_positions].
+      apply slot_rank_insert_in. now right. }
+    cbn [length slot_read_ranked flat_map]. rewrite Hhead, Htail.
+    destruct (nth_error u p); reflexivity.
+Qed.
+
+(** A prepared projection restores the requested order, including repeated fitting positions. *)
+Theorem project_slot_layout_correct : forall C perm (u : list C),
+  Forall (fun p => p < length u) perm ->
+  project_slot_layout (prepare_slot_layout perm) u =
+    flat_map (fun p => option_list (nth_error u p)) perm.
+Proof.
+  intros C perm u Hfits. unfold project_slot_layout, prepare_slot_layout.
+  cbn [projection_steps]. rewrite slot_position_gaps_length, slot_rank_positions_length.
+  apply slot_read_ranked_spec. intros p rank Hin.
+  eapply (slot_pick_ranked_spec C u (slot_rank_positions 1 perm) 0 PTrieCode.empty).
+  - apply slot_rank_positions_sorted.
+  - apply Forall_forall. intros [q r] _. cbn. lia.
+  - apply Forall_forall. intros [q r] Hq. cbn [fst].
+    rewrite Forall_forall in Hfits. apply Hfits.
+    exact (proj1 (slot_rank_positions_origin 1 perm q r Hq)).
+  - apply slot_rank_positions_nodup.
+  - exact Hin.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
@@ -703,13 +782,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
     sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted. (* OPEN: missing row/kind state and unmarked view/old groundwork. *)
+  Proof. Admitted. (* OPEN: runtime state lacks row outputs and declared function kinds. *)
 
   (** A justified identifier union keeps the model. *)
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  Proof. Admitted. (* OPEN: unmarked view/repr/wf groundwork does not expose the forest. *)
+  Proof. Admitted. (* OPEN: runtime state lacks an allocation counter and equality-work queue. *)
 
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
@@ -719,7 +798,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted. (* OPEN: missing allocation/row state and fresh-singleton invariant. *)
+  Proof. Admitted. (* OPEN: missing allocation/row storage and fresh-singleton invariant. *)
 
 End Database.
 
