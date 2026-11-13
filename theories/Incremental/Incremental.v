@@ -788,7 +788,13 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
 
   Lemma demand_noop : forall p pol roots fuel st,
     (forall x, In x roots -> dom st x) -> demand p pol roots fuel st = (Done, st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol roots fuel st Hcovered.
+    assert (Hready : forallb (present st) roots = true).
+    { apply (proj2 (@forallb_forall _ _ _)).
+      intros x Hx; apply present_spec, Hcovered, Hx. }
+    unfold demand; now rewrite Hready.
+  Qed.
 
   Lemma demand_rejected : forall p pol roots fuel st why st',
     demand p pol roots fuel st = (DemandRejected why, st') -> st' = st.
