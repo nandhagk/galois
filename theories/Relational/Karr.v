@@ -951,6 +951,166 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     change (0 + karr_eval_coef_Q v xs == karr_eval_coef_Q v xs)%Q. ring.
   Qed.
 
+  (** Coefficient evaluation respects concatenation. *)
+  Lemma eval_coef_app : forall (v : X.t -> Z) xs ys,
+    eval_coef v (xs ++ ys) = (eval_coef v xs + eval_coef v ys)%Z.
+  Proof.
+    intros v xs. unfold eval_coef. induction xs as [| [x a] xs IH]; intro ys;
+      cbn [fold_right fst snd app]; [reflexivity |].
+    rewrite IH. ring.
+  Qed.
+
+  (** Scaling each stored coefficient scales its evaluation. *)
+  Lemma eval_coef_scale : forall (v : X.t -> Z) a xs,
+    eval_coef v (map (fun p => (fst p, (a * snd p)%Z)) xs) =
+      (a * eval_coef v xs)%Z.
+  Proof.
+    intros v a xs. unfold eval_coef. induction xs as [| [x b] xs IH];
+      cbn [fold_right map fst snd]; [ring |].
+    rewrite IH. ring.
+  Qed.
+
+  (** Negating stored coefficients negates their evaluation. *)
+  Lemma eval_coef_opp : forall (v : X.t -> Z) xs,
+    eval_coef v (map (fun p => (fst p, (- snd p)%Z)) xs) = (- eval_coef v xs)%Z.
+  Proof.
+    intros v xs. unfold eval_coef. induction xs as [| [x a] xs IH];
+      cbn [fold_right map fst snd]; [ring |].
+    rewrite IH. ring.
+  Qed.
+
+  (** A concrete update changes a linear form by its total coefficient at the key. *)
+  Lemma eval_coef_update : forall (v : X.t -> Z) x z xs,
+    eval_coef (upd X.eqb v x z) xs =
+      (eval_coef v xs + coefficient x xs * (z - v x))%Z.
+  Proof.
+    intros v x z xs. unfold eval_coef, coefficient.
+    induction xs as [| [y a] xs IH]; [reflexivity |].
+    cbn [fold_right fst snd]. rewrite IH. unfold upd.
+    destruct (X.eqb_spec y x) as [Hsame | Hother].
+    - subst y. rewrite key_eqb_refl. ring.
+    - assert (Hreverse : X.eqb x y = false).
+      { destruct (X.eqb_spec x y); congruence. }
+      rewrite Hreverse. ring.
+  Qed.
+
+  (** Pointwise equal stores give equal coefficient evaluations. *)
+  Lemma eval_coef_pointwise : forall (v w : X.t -> Z) xs,
+    (forall x, v x = w x) -> eval_coef v xs = eval_coef w xs.
+  Proof.
+    intros v w xs Hsame. unfold eval_coef.
+    induction xs as [| [x a] xs IH]; [reflexivity |].
+    cbn [fold_right fst snd]. now rewrite Hsame, IH.
+  Qed.
+
+  (** Satisfaction depends only on the numeric values read from a store. *)
+  Lemma sat_pointwise : forall (v w : X.t -> Z) r,
+    (forall x, v x = w x) -> sat v r -> sat w r.
+  Proof.
+    intros v w r Hsame Hsat. unfold sat in *.
+    rewrite <- (eval_coef_pointwise v w (lhs r) Hsame). exact Hsat.
+  Qed.
+
+  (** Row normalization keeps the denoted constraint. *)
+  Lemma normalize_row_sat : forall v r, sat v (normalize_row r) <-> sat v r.
+  Proof.
+    intros v r. unfold sat, normalize_row. cbn [lrel lhs rhs].
+    rewrite normalize_coef_eval. reflexivity.
+  Qed.
+
+  (** Zero total coefficient makes a row independent of the updated key. *)
+  Lemma unmentioned_sat : forall v x z r,
+    mentions x r = false -> sat v r -> sat (upd X.eqb v x z) r.
+  Proof.
+    intros v x z r Hfree Hsat. unfold mentions in Hfree.
+    apply negb_false_iff in Hfree. apply Z.eqb_eq in Hfree.
+    unfold sat in *. rewrite eval_coef_update, Hfree.
+    destruct (lrel r); cbn in *; lia.
+  Qed.
+
+  (** Collecting successful optional results preserves their proved predicate. *)
+  Lemma present_forall : forall A B (f : A -> option B) (R : B -> Prop) xs,
+    (forall x r, f x = Some r -> R r) -> Forall R (present (map f xs)).
+  Proof.
+    intros A B f R xs Hresult. induction xs as [| x xs IH]; [constructor |].
+    cbn [present map flat_map]. destruct (f x) as [r |] eqn:Hsome.
+    - constructor; [now apply Hresult with (x := x) | exact IH].
+    - exact IH.
+  Qed.
+
+  (** Checked projection rows retain every replacement of the eliminated variable. *)
+  Lemma projected_row_sound : forall x xs P r c v z,
+    projected_row x xs P r = Some c -> Forall (sat v) P ->
+    sat (upd X.eqb v x z) c.
+  Proof.
+    intros x xs P r c v z Hrow Hmodels. unfold projected_row in Hrow.
+    remember (LCons X.t (sparse xs (kcoeff r)) REq (kright r)) as candidate.
+    destruct (negb (mentions x candidate) &&
+      C.check_entails P candidate (Cert (kweight r) 1 false)) eqn:Hcheck;
+      [| discriminate].
+    injection Hrow as Hsame. subst c.
+    apply andb_true_iff in Hcheck as [Hfree Hchecked].
+    apply negb_true_iff in Hfree. apply unmentioned_sat; [exact Hfree |].
+    eapply C.check_entails_sound; [exact Hchecked | exact Hmodels].
+  Qed.
+
+  (** Projection keeps every state obtained by assigning an arbitrary new value. *)
+  Lemma project_sound : forall x P v z, Forall (sat v) P ->
+    Forall (sat (upd X.eqb v x z)) (project x P).
+  Proof.
+    intros x P v z Hmodels. unfold project. apply Forall_app. split.
+    - apply present_forall. intros r c Hrow.
+      eapply projected_row_sound; [exact Hrow | exact Hmodels].
+    - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin Hkeep].
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply unmentioned_sat.
+      + destruct (lrel (normalize_row s)); [discriminate |].
+        now apply negb_true_iff in Hkeep.
+      + apply normalize_row_sat.
+        now apply (proj1 (Forall_forall _ _) Hmodels).
+  Qed.
+
+  (** Substitution expands each occurrence, including repeated keys. *)
+  Lemma eval_coef_subst : forall v x f xs,
+    eval_coef v
+      (flat_map (fun p => if X.eqb (fst p) x
+        then map (fun q => (fst q, (snd p * snd q)%Z)) (coef f) else [p]) xs) =
+      (eval_coef (upd X.eqb v x (eval_lin v f)) xs - coefficient x xs * cst f)%Z.
+  Proof.
+    intros v x f xs. induction xs as [| [y a] xs IH]; [reflexivity |].
+    cbn [flat_map fst snd]. rewrite eval_coef_app, IH.
+    cbn [eval_coef coefficient fold_right fst snd]. unfold upd.
+    destruct (X.eqb_spec y x) as [Hsame | Hother].
+    - subst y. rewrite key_eqb_refl, eval_coef_scale.
+      unfold eval_lin, coefficient, eval_coef. ring.
+    - assert (Hreverse : X.eqb x y = false).
+      { destruct (X.eqb_spec x y); congruence. }
+      rewrite Hreverse. unfold eval_coef, coefficient. cbn [fold_right fst snd]. ring.
+  Qed.
+
+  (** Removing a variable subtracts its total contribution to the form. *)
+  Lemma eval_coef_without : forall v x xs,
+    eval_coef v (filter (fun p => negb (X.eqb (fst p) x)) xs) =
+      (eval_coef v xs - coefficient x xs * v x)%Z.
+  Proof.
+    intros v x xs. unfold eval_coef, coefficient.
+    induction xs as [| [y a] xs IH]; [reflexivity |].
+    cbn [filter fst snd fold_right].
+    destruct (X.eqb_spec y x) as [Hsame | Hother].
+    - subst y. rewrite key_eqb_refl. cbn [negb]. rewrite IH.
+      cbn [fold_right fst snd]. ring.
+    - assert (Hreverse : X.eqb x y = false).
+      { destruct (X.eqb_spec x y); congruence. }
+      rewrite Hreverse. cbn [negb fold_right fst snd]. rewrite IH. ring.
+  Qed.
+
+  (** The selected sign turns a nonzero coefficient into its absolute value. *)
+  Lemma coefficient_sign_abs : forall a,
+    ((if (a <? 0)%Z then (-1)%Z else 1%Z) * a = Z.abs a)%Z.
+  Proof.
+    intros [| p | p]; cbn; ring.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
@@ -1027,15 +1187,65 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [| P] st c Hmodels; [contradiction |].
+    change (Forall (sat (fun y => N.num (upd X.eqb st x c y))) (project x P)).
+    pose proof (project_sound x P (fun y => N.num (st y)) (N.num c) Hmodels) as Hpost.
+    apply Forall_forall. intros r Hin.
+    apply sat_pointwise with (v := upd X.eqb (fun y => N.num (st y)) x (N.num c)).
+    - intro y. unfold upd. destruct (X.eqb y x); reflexivity.
+    - now apply (proj1 (Forall_forall _ _) Hpost).
+  Qed.
+
+  (** Each equality admitted by a guard follows directly from its unwrapped atom. *)
+  Lemma atom_rows_sound : forall v a, atom_holds v a -> Forall (sat v) (atom_rows a).
+  Proof.
+    intros v [fl wl comparison fr wr] Hatom.
+    destruct wl, wr, comparison; cbn [atom_rows al alw ar arw acmp];
+      try solve [constructor].
+    constructor; [| constructor]. apply normalize_row_sat.
+    unfold sat. cbn [lrel lhs rhs]. rewrite eval_coef_app, eval_coef_opp.
+    cbn [atom_holds al alw ar arw acmp wrap_into] in Hatom.
+    unfold eval_lin in Hatom. lia.
+  Qed.
+
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [| P] st cs Hmodels Heval Hguard; [contradiction |].
+    change (Forall (sat (fun y => N.num (st y)))
+      (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)).
+    pose proof (F.atoms_sound g es st cs Heval Hguard) as Hatoms.
+    apply Forall_app. split; apply Forall_forall; intros r Hin.
+    - apply in_flat_map in Hin as [a [Hin Hrow]].
+      pose proof (proj1 (Forall_forall _ _) Hatoms a Hin) as Hatom.
+      pose proof (atom_rows_sound _ _ Hatom) as Hrows.
+      now apply (proj1 (Forall_forall _ _) Hrows).
+    - apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply normalize_row_sat.
+      now apply (proj1 (Forall_forall _ _) Hmodels).
+  Qed.
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [| P] st c Hmodels Heval; [contradiction |]. unfold range.
+    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |];
+      try solve [split; exact I].
+    set (xs := variables (LCons X.t (coef f) REq 0 :: P)).
+    set (r := karr_target (equality_basis xs P) 1
+      (KRow (map (fun x => coefficient x (coef f)) xs) 0 (repeat 0%Z (length P)) 1)).
+    set (z := (- kright r / kscale r + cst f)%Z).
+    destruct (entail_cert P (LCons X.t (coef f) REq (z - cst f)%Z)) as [k |]
+      eqn:Hcert; [| split; exact I].
+    pose proof (C.check_entails_sound P _ k (entail_cert_checked P _ k Hcert)
+      (fun y => N.num (st y)) Hmodels) as Hbound.
+    pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
+    cbn [sat lrel lhs rhs] in Hbound.
+    cbn [wrap_into] in Hvalue. unfold eval_lin in Hvalue.
+    change (z <= N.num c <= z)%Z. lia.
+  Qed.
   Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
   Proof.
     intros P v. reflexivity.
@@ -1286,7 +1496,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun input_minors.
   Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v x f r. unfold subst. rewrite normalize_row_sat.
+    unfold sat. cbn [lrel lhs rhs]. rewrite eval_coef_subst.
+    destruct (lrel r); lia.
+  Qed.
   Lemma leb_complete_Q : forall a b, echelon a ->
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
     leb (Reached a) (Reached b) = true.
@@ -1294,10 +1508,14 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   Proof. Admitted. (* STUB *)
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact entail_cert_checked.
+  Qed.
   (** State size charges all stored numeric data. *)
   Lemma lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
   Proof. Admitted. (* STUB *)
