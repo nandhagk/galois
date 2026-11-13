@@ -188,6 +188,202 @@ Proof.
   destruct lo, hi; cbn [fst snd] in *; intuition lia.
 Qed.
 
+(** Finite bounds with an absent value interpreted as positive infinity. *)
+Module RelationalPathBounds.
+  Definition below (a b : option Z) : Prop :=
+    match a, b with
+    | Some x, Some y => (x <= y)%Z
+    | None, Some _ => False
+    | _, None => True
+    end.
+
+  Definition minimum (a b : option Z) : option Z :=
+    match a, b with
+    | Some x, Some y => Some (Z.min x y)
+    | None, _ => b
+    | _, None => a
+    end.
+
+  Definition plus (a b : option Z) : option Z :=
+    match a, b with Some x, Some y => Some (x + y)%Z | _, _ => None end.
+
+  Lemma below_refl : forall a, below a a.
+  Proof. intros [a|]; cbn [below]; lia || exact I. Qed.
+
+  Lemma below_trans : forall a b c, below a b -> below b c -> below a c.
+  Proof.
+    intros [a|] [b|] [c|]; cbn [below]; intros; try contradiction; try exact I; lia.
+  Qed.
+
+  Lemma below_antisym : forall a b, below a b -> below b a -> a = b.
+  Proof.
+    intros [a|] [b|]; cbn [below]; intros; try contradiction; try reflexivity.
+    f_equal. lia.
+  Qed.
+
+  Lemma minimum_glb : forall d a b,
+    below d (minimum a b) <-> below d a /\ below d b.
+  Proof.
+    intros [d|] [a|] [b|]; cbn [below minimum]; try tauto.
+    destruct (Z_le_dec a b); [rewrite Z.min_l by lia|rewrite Z.min_r by lia]; lia.
+  Qed.
+
+  Lemma minimum_l : forall a b, below (minimum a b) a.
+  Proof.
+    intros a b. exact (proj1 (proj1 (minimum_glb (minimum a b) a b)
+      (below_refl (minimum a b)))).
+  Qed.
+
+  Lemma minimum_r : forall a b, below (minimum a b) b.
+  Proof.
+    intros a b. exact (proj2 (proj1 (minimum_glb (minimum a b) a b)
+      (below_refl (minimum a b)))).
+  Qed.
+
+  Lemma minimum_idem : forall a, minimum a a = a.
+  Proof.
+    intro a. apply below_antisym; [apply minimum_l|].
+    apply minimum_glb. split; apply below_refl.
+  Qed.
+
+  Lemma minimum_when_below : forall a b, below a b -> minimum a b = a.
+  Proof.
+    intros a b Hab. apply below_antisym; [apply minimum_l|].
+    apply minimum_glb. split; [apply below_refl|exact Hab].
+  Qed.
+
+  Lemma plus_comm : forall a b, plus a b = plus b a.
+  Proof.
+    intros [a|] [b|]; cbn [plus]; try reflexivity. f_equal. lia.
+  Qed.
+
+  Lemma plus_assoc : forall a b c, plus (plus a b) c = plus a (plus b c).
+  Proof.
+    intros [a|] [b|] [c|]; cbn [plus]; try reflexivity. f_equal. lia.
+  Qed.
+
+  Lemma plus_zero_l : forall a, plus (Some 0%Z) a = a.
+  Proof. intros [a|]; reflexivity. Qed.
+
+  Lemma plus_zero_r : forall a, plus a (Some 0%Z) = a.
+  Proof. intro a. rewrite plus_comm. apply plus_zero_l. Qed.
+
+  Lemma plus_mono : forall a b c d,
+    below a b -> below c d -> below (plus a c) (plus b d).
+  Proof.
+    intros [a|] [b|] [c|] [d|]; cbn [below plus]; intros;
+      try contradiction; try exact I; lia.
+  Qed.
+
+  Lemma plus_minimum_r : forall a b c,
+    plus (minimum a b) c = minimum (plus a c) (plus b c).
+  Proof.
+    intros [a|] [b|] [c|]; cbn [plus minimum]; try reflexivity.
+    destruct (Z_le_dec a b).
+    - rewrite !Z.min_l by lia. reflexivity.
+    - rewrite !Z.min_r by lia. reflexivity.
+  Qed.
+
+  Lemma plus_minimum_l : forall a b c,
+    plus a (minimum b c) = minimum (plus a b) (plus a c).
+  Proof.
+    intros a b c. rewrite (plus_comm a (minimum b c)), plus_minimum_r.
+    now rewrite (plus_comm b a), (plus_comm c a).
+  Qed.
+
+  Lemma minimum_value : forall a b z, minimum a b = Some z -> a = Some z \/ b = Some z.
+  Proof.
+    intros [a|] [b|] z H; cbn [minimum] in H; try discriminate.
+    - destruct (Z_le_dec a b).
+      + rewrite Z.min_l in H by lia. now left.
+      + rewrite Z.min_r in H by lia. now right.
+    - now left.
+    - now right.
+  Qed.
+
+  Lemma plus_value : forall a b z, plus a b = Some z ->
+    exists x y, a = Some x /\ b = Some y /\ z = (x + y)%Z.
+  Proof.
+    intros [a|] [b|] z H; cbn [plus] in H; try discriminate.
+    inversion H; subst z. exists a, b. auto.
+  Qed.
+
+  Lemma below_finite : forall a z, below a (Some z) ->
+    exists y, a = Some y /\ (y <= z)%Z.
+  Proof.
+    intros [a|] z H; cbn [below] in H; [exists a; auto|contradiction].
+  Qed.
+
+  Definition floyd {A : Type} (r : A -> A -> option Z) (k i j : A) : option Z :=
+    minimum (r i j) (plus (r i k) (r k j)).
+
+  Definition closed_at {A : Type} (r : A -> A -> option Z) (k : A) : Prop :=
+    forall i j, below (r i j) (plus (r i k) (r k j)).
+
+  Lemma floyd_below_old : forall A (r : A -> A -> option Z) k i j,
+    below (floyd r k i j) (r i j).
+  Proof. intros. apply minimum_l. Qed.
+
+  Lemma floyd_below_path : forall A (r : A -> A -> option Z) k i j,
+    below (floyd r k i j) (plus (r i k) (r k j)).
+  Proof. intros. apply minimum_r. Qed.
+
+  Lemma floyd_to_pivot : forall A (r : A -> A -> option Z) k i,
+    r k k = Some 0%Z -> floyd r k i k = r i k.
+  Proof.
+    intros A r k i Hkk. unfold floyd. rewrite Hkk, plus_zero_r. apply minimum_idem.
+  Qed.
+
+  Lemma floyd_from_pivot : forall A (r : A -> A -> option Z) k j,
+    r k k = Some 0%Z -> floyd r k k j = r k j.
+  Proof.
+    intros A r k j Hkk. unfold floyd. rewrite Hkk, plus_zero_l. apply minimum_idem.
+  Qed.
+
+  (** A nonnegative pivot cycle lets a round preserve every previous triangle closure. *)
+  Lemma floyd_preserves_closed : forall A (r : A -> A -> option Z) k p,
+    r k k = Some 0%Z -> closed_at r p -> closed_at (floyd r k) p.
+  Proof.
+    intros A r k p Hkk Hp i j.
+    unfold floyd. rewrite plus_minimum_r, !plus_minimum_l, !minimum_glb.
+    split; split.
+    - eapply below_trans; [apply minimum_l|apply Hp].
+    - rewrite <- plus_assoc.
+      eapply below_trans; [apply minimum_r|].
+      apply plus_mono; [apply Hp|apply below_refl].
+    - rewrite plus_assoc.
+      eapply below_trans; [apply minimum_r|].
+      apply plus_mono; [apply below_refl|apply Hp].
+    - assert (Hcycle : below (Some 0%Z) (plus (r k p) (r p k))).
+      { pose proof (Hp k k) as Hcycle. now rewrite Hkk in Hcycle. }
+      replace (plus (plus (r i k) (r k p)) (plus (r p k) (r k j))) with
+        (plus (plus (r i k) (plus (r k p) (r p k))) (r k j))
+        by (rewrite !plus_assoc; reflexivity).
+      eapply below_trans; [apply minimum_r|].
+      replace (plus (r i k) (r k j)) with
+        (plus (plus (r i k) (Some 0%Z)) (r k j)) by (rewrite plus_zero_r; reflexivity).
+      apply plus_mono; [|apply below_refl].
+      apply plus_mono; [apply below_refl|exact Hcycle].
+  Qed.
+
+  Lemma floyd_closes_pivot : forall A (r : A -> A -> option Z) k,
+    r k k = Some 0%Z -> closed_at (floyd r k) k.
+  Proof.
+    intros A r k Hkk i j. rewrite floyd_to_pivot, floyd_from_pivot by exact Hkk.
+    apply floyd_below_path.
+  Qed.
+
+  Lemma floyd_preserves_zero : forall A (r : A -> A -> option Z) k p,
+    r k k = Some 0%Z -> r p p = Some 0%Z -> closed_at r p ->
+    floyd r k p p = Some 0%Z.
+  Proof.
+    intros A r k p Hkk Hpp Hp. unfold floyd. rewrite Hpp.
+    apply minimum_when_below. rewrite plus_comm.
+    pose proof (Hp k k) as Hcycle. now rewrite Hkk in Hcycle.
+  Qed.
+End RelationalPathBounds.
+
+
 Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
       with Definition encode := option_code X.encode)
     (M : MAP_OPS K) (L : LANG_OPS) (F : LINEARIZE_OPS X L) <: ZONE_OPS X K M L F.
