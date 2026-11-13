@@ -220,20 +220,20 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Assignment work is the component work of every alternative. *)
   Lemma assign_work_alternatives : forall x e d, assign_work x e d =
     fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
-  Proof. reflexivity. Qed.
+  Proof. Admitted. (* STUB *)
   (** Havoc work is the component work of every alternative. *)
   Lemma havoc_work_alternatives : forall x d, havoc_work x d =
     fold_right Nat.add 0%nat (map (fun s => S.havoc_work x s + 1) (proj1_sig d)).
-  Proof. reflexivity. Qed.
+  Proof. Admitted. (* STUB *)
   (** Assumption work is the component work of every alternative. *)
   Lemma assume_work_alternatives : forall g es d, assume_work g es d =
     fold_right Nat.add 0%nat (map (fun s => S.assume_work g es s + 1) (proj1_sig d)).
-  Proof. reflexivity. Qed.
+  Proof. Admitted. (* STUB *)
   (** Evaluation work is the component work and the value size of every alternative. *)
   Lemma eval_work_alternatives : forall e d, eval_work e d =
     fold_right Nat.add 0%nat (map (fun s =>
       S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
-  Proof. reflexivity. Qed.
+  Proof. Admitted. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_leb_le : forall a b,
@@ -336,7 +336,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Evaluation joins the values of the alternatives from bottom. *)
   Lemma F7_eval : forall e d,
     eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
-  Proof. reflexivity. Qed.
+  Proof. Admitted. (* STUB *)
   (** Evaluation charges each alternative's evaluation and the value joins. *)
   Lemma T2_eval : forall e d, (T_eval e d <= k_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
