@@ -11292,7 +11292,72 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (uses db y e /\ y <> x) \/ (y = repr db x /\ uses db x e)) /\
     N.to_nat (nuses db') = length (uses_entries db') /\
     inv_on db' (bucket db x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db x db' Hinv Hpop.
+    change (db_pop_loser db = Some (x, db')) in Hpop.
+    assert (Hstore : row_store_ok db).
+    { unfold inv, inv_on, forest_ok in Hinv. tauto. }
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold row_store_ok, database_row_store_ok in Hstore. tauto. }
+    assert (Hcount : N.to_nat (nuses db') = length (uses_entries db')).
+    { change (N.to_nat (db_nuses db') = length (uses_entries db')).
+      eapply pop_loser_nuses_count; [exact Hmap | | exact Hpop].
+      unfold row_store_ok, database_row_store_ok in Hstore. tauto. }
+    destruct (db_pop_loser_preserves db x db' Hpop) as [Hforest Hview].
+    destruct (db_pop_loser_layout db x db' Hpop) as [Hslots [Hids _]].
+    assert (Hrepr : forall z, repr db' z = repr db z).
+    { intro z. unfold repr. now rewrite Hforest. }
+    assert (Hqueue : queue db = x :: queue db').
+    { eapply pop_loser_queue. exact Hpop. }
+    assert (Huf : UnionFind.wf (db_forest db)).
+    { apply inv_on_forest_wf with (work := []). exact Hinv. }
+    split; [exact Hqueue |].
+    split; [exact Hview |].
+    split.
+    - intros y e. rewrite (pop_loser_uses_transfer db x db' Hmap Hpop y e).
+      rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+    - split; [exact Hcount |].
+      pose proof Hinv as Hpublic.
+      unfold inv, inv_on in Hinv.
+      destruct Hinv as [Hrows [Hrow_keys [Hcover [Hsched [Hcache [Hnext
+        [Hwork [Hforest_ok [Hkind [Hnodup [Hpending Hallocated]]]]]]]]]]].
+      unfold inv_on.
+      refine (conj _ (conj _ (conj _ (conj _ (conj _ (conj _
+        (conj _ (conj _ (conj _ (conj _ (conj _ _))))))))))).
+      + intros f k o. rewrite (pop_loser_rows db x db' Hpop), Hview.
+        apply Hrows.
+      + rewrite (pop_loser_rows db x db' Hpop). exact Hrow_keys.
+      + intros f k o i Hrow Hrow_ids.
+        eapply pop_loser_coverage; [exact Hpublic | exact Hpop | exact Hrow | exact Hrow_ids].
+      + intros f k o i Hrow Hrow_ids Hnonroot.
+        rewrite Hview in Hrow. rewrite Hrepr in Hnonroot.
+        destruct (Hsched f k o i Hrow Hrow_ids Hnonroot) as [k0 [Hscheduled Hloc]].
+        exists k0. split.
+        * eapply pop_loser_scheduled;
+            [exact Hstore | exact Hnodup | exact Hpop | exact Hscheduled].
+        * unfold located, locate in *.
+          rewrite (pop_loser_locate db x db' f k0 Hpop). exact Hloc.
+      + intros s f perm Hslot.
+        rewrite (pop_loser_slot_of db x db' s Hpop) in Hslot.
+        rewrite (pop_loser_index db x db' s false Hpop).
+        rewrite (pop_loser_index db x db' s true Hpop).
+        rewrite Hview. exact (Hcache s f perm Hslot).
+      + intros f k o i Hrow Hrow_ids.
+        unfold next_id. rewrite Hids. apply (Hnext f k o i); [| exact Hrow_ids].
+        now rewrite <- Hview.
+      + intros e Hmember. exists (repr db x).
+        apply (pop_loser_uses_transfer db x db' Hmap Hpop).
+        right. split.
+        * rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+        * exact (proj1 (bucket_member db x e) Hmember).
+      + eapply forest_ok_pop; [exact Hforest_ok | exact Hpop].
+      + intros f k o Hrow. apply (pop_loser_kind_ok db x db' f k o Hpop).
+        apply Hkind. now rewrite <- Hview.
+      + rewrite Hqueue in Hnodup. now inversion Hnodup.
+      + reflexivity.
+      + intros y Hmember. unfold allocated in *.
+        rewrite Hids. apply Hallocated. rewrite Hqueue. now right.
+  Qed.
 
   (** The driver consumes one active entry or dequeues one loser. *)
   Lemma F5_rstep : forall db work,
