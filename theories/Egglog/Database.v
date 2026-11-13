@@ -8624,6 +8624,53 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
 
+  (** Insertion changes its forest only by the single optional output-conflict union. *)
+  Lemma put_forest_effect : forall f k o db,
+    db_forest (put f k o db) = db_forest db \/
+    exists i j, db_forest (put f k o db) = snd (UnionFindCode.union i j (db_forest db)).
+  Proof.
+    intros f k o db. unfold put.
+    remember (normal_key db k) as ck.
+    remember (option_map (normal_cell db) o) as co.
+    remember (row_get f ck db) as previous.
+    remember (combine_output db f previous co) as updated.
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [| rewrite row_replace_forest].
+      all: destruct before as [[i | v] |]; destruct co as [[j | w] |];
+        try (left; reflexivity); right; exists i, j; apply union_forest.
+    - rewrite row_replace_forest. left. reflexivity.
+  Qed.
+
+  (** Deleting the old row before insertion introduces no additional forest change. *)
+  Lemma repair_forest_effect : forall f k db,
+    db_forest (repair_current f k db) = db_forest db \/
+    exists i j, db_forest (repair_current f k db) = snd (UnionFindCode.union i j (db_forest db)).
+  Proof.
+    intros f k db. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| left; reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [left; reflexivity |].
+    destruct (put_forest_effect f (normal_key db k) (option_map (normal_cell db) o)
+      (row_delete f k db)) as [Hsame | [i [j Hunion]]].
+    - left. now rewrite Hsame, row_delete_forest.
+    - right. exists i, j. now rewrite Hunion, row_delete_forest.
+  Qed.
+
+  (** A root redirected by actual row repair inherits the union-by-size doubling bound. *)
+  Lemma repair_root_doubling : forall db f k x,
+    UnionFind.wf (db_forest db) -> repr db x = x ->
+    repr (repair_current f k db) x <> x ->
+    (2 * class_size db x <=
+      class_size (repair_current f k db) (repr (repair_current f k db) x))%N.
+  Proof.
+    intros db f k x Hwf Hfixed Hchanged. unfold class_size, uf_state, repr in *.
+    destruct (repair_forest_effect f k db) as [Hsame | [i [j Hunion]]].
+    - rewrite Hsame in Hchanged. contradiction.
+    - rewrite Hunion in Hchanged |- *.
+      pose proof (ForestFacts.union_root_doubling i j (db_forest db) x
+        Hwf Hfixed Hchanged) as Hsize. lia.
+  Qed.
+
   (** A losing root enters a class at least twice as large. *)
   Lemma T1_doubling : forall db i j x, inv db -> repr db x = x ->
     repr (union i j db) x <> x ->
@@ -8798,7 +8845,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
     repr (fst s) x = x -> repr (fst s') x <> x ->
     (2 * class_size (fst s) x <= class_size (fst s') (repr (fst s') x))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next x Hinv Hstep Hfixed Hchanged.
+    unfold state_inv in Hinv. cbn [fst snd] in Hinv, Hfixed.
+    unfold rstep in Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i db'] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst] in Hchanged |- *.
+      destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest _].
+      unfold repr in Hfixed, Hchanged. rewrite Hforest in Hchanged. contradiction.
+    - injection Hstep as Hnext. subst next. cbn [fst] in Hchanged |- *.
+      exact (repair_root_doubling db f k x
+        (inv_on_forest_wf db ((f, k) :: rest) Hinv) Hfixed Hchanged).
+  Qed.
 
   (** Repair never reduces the spending unit. *)
   Lemma F9b_rstep_unit : forall s s', state_inv s -> rstep s = inl s' ->
