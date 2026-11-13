@@ -74,6 +74,14 @@ Module CallData <: CALLS_DATA Prog NatKeyCode NatKeyCode.
     (PTrieCode.set (NatKeyCode.encode 0) [0; 1] Empty).
 End CallData.
 Module CallView := CallsCode Prog NatKeyCode NatKeyCode CallData.
+Module CallFull := Calls Prog NatKey NatKey CallData.
+Module CallContract <: CALLS Prog NatKey NatKey := CallFull.
+Module CallRecord <: TYPE. Definition t := calls_tables nat nat. End CallRecord.
+Module PlainCallData <: CALLS_DATA CallRecord NatKey NatKey.
+  Definition tables (p : CallRecord.t) := p.
+End PlainCallData.
+Module PlainCalls := Calls CallRecord NatKey NatKey PlainCallData.
+Module PlainCallContract <: CALLS CallRecord NatKey NatKey := PlainCalls.
 Example prepared_call_inventory : CallView.calls true = [(0, 0); (0, 1)].
 Proof. vm_compute; reflexivity. Qed.
 Example recursive_call_edges :

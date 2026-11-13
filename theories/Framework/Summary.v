@@ -46,7 +46,7 @@ Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
     (L : LATTICE) (B : BODY_OPS P F Site L) <: SUMMARY P F Site CL L B.
   Include SummaryCode P F Site CL L B.
   Include SYSTEM_SPEC L.
-  Definition wf (_ : prog) := True.
+  Definition wf (p : prog) := CL.wf p.
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
   Proof. Admitted. (* STUB *)
@@ -81,7 +81,7 @@ Module Summary (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
   Lemma key_eqb_specification : key_eqb = F.eqb.
   Proof. Admitted. (* STUB *)
   (** Local rows precede calls in function, site and resolver order. *)
-  Lemma rows_spec : forall p, rows p = map SummaryLocal (CL.functions p) ++
+  Lemma rows_spec : forall p, CL.wf p -> rows p = map SummaryLocal (CL.functions p) ++
     flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
       (CL.sites_of p f)) (CL.functions p).
   Proof. Admitted. (* STUB *)

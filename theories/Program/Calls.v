@@ -90,32 +90,23 @@ Module CallsCode (P : TYPE) (F S : KEY_OPS) (D : CALLS_DATA P F S)
         (functions p) PTrieCode.empty).
 End CallsCode.
 
-Module Type CALLS_DATA_LAWS (P : TYPE) (F S : KEY) (Import D : CALLS_DATA P F S).
-  Parameter calls_valid : forall p, call_inventory (tables p) = flat_map (fun f =>
-    flat_map (fun site => map (pair site)
-      (match trie_get (S.encode site) (call_targets (tables p)) with
-      | Some fs => fs | None => nil end))
-      (match trie_get (F.encode f) (call_sites (tables p)) with
-      | Some sites => sites | None => nil end)) (call_functions (tables p)).
-End CALLS_DATA_LAWS.
-
-Module Type CALLS_DATA_VALID (P : TYPE) (F S : KEY) :=
-  CALLS_DATA P F S <+ CALLS_DATA_LAWS P F S.
-
-Module Type CALLS_DATA_VALID_T (P : TYPE) (F S : KEY_T) :=
-  CALLS_DATA_VALID P F S <+ CALLS_DATA_TIME P F S.
-
-Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA_VALID P F S) <: CALLS P F S.
+Module Calls (P : TYPE) (F S : KEY) (D : CALLS_DATA P F S) <: CALLS P F S.
   Include CallsCode P F S D.
   Include CALLS_SPEC P F S.
-
-  Definition calls_spec := D.calls_valid.
 
   Definition wf p :=
     NoDup (functions p) /\ incl (roots p) (functions p) /\
     (forall f site, In site (sites_of p f) ->
       caller_of p site = f /\ In f (functions p)) /\
-    (forall site f, In f (resolve p site) -> In f (functions p)).
+    (forall site f, In f (resolve p site) -> In f (functions p)) /\
+    calls p = flat_map (fun f =>
+      flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
+
+  Lemma calls_spec : forall p, wf p -> calls p = flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
+  Proof.
+    intros p [_ [_ [_ [_ Hcalls]]]]. exact Hcalls.
+  Qed.
 
   Lemma functions_nodup : forall p, wf p -> NoDup (functions p).
   Proof. Admitted. (* STUB *)
@@ -152,7 +143,7 @@ Module CallsSound (P : TYPE) (F S : KEY) (C : CALLS P F S)
   Proof. Admitted. (* CONVERT: active_reachable_in_call_graph: Unable to unify the induction goal. *)
 End CallsSound.
 
-Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_VALID_T P F S)
+Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     <: CALLS_ALL P F S.
   Include Calls P F S D.
   TimeFun functions.
@@ -228,7 +219,9 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_VALID_T P F S)
 
   Lemma T2_adjacency : forall p,
     (T_call_graph p <= k_adj * (T_functions p +
-      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f)%N (functions p)) +
+      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f +
+        fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
+        (functions p)) +
       N.of_nat (length (functions p) + 1) * N.of_nat (function_width p + 1)))%N.
   Proof. Admitted. (* STUB *)
 End CallsT.

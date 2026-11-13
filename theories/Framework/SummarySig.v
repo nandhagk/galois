@@ -76,7 +76,7 @@ Module Type SUMMARY_LAWS (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
   (** Function keys use the client's equality test. *)
   Parameter key_eqb_specification : key_eqb = F.eqb.
   (** Local rows precede calls in function, site and resolver order. *)
-  Parameter rows_spec : forall p, rows p = map SummaryLocal (CL.functions p) ++
+  Parameter rows_spec : forall p, CL.wf p -> rows p = map SummaryLocal (CL.functions p) ++
     flat_map (fun f => flat_map (fun site => map (SummaryCall site) (CL.resolve p site))
       (CL.sites_of p f)) (CL.functions p).
   (** A local row targets its own function. *)
