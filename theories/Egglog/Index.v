@@ -3255,6 +3255,117 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       time_simpl. time_cbn. lia.
   Qed.
 
+  (** Unary maximum examines no more constructors than its first argument contains. *)
+  Lemma T_nat_max_le : forall n m, (T_max n m <= N.of_nat n + 1)%N.
+  Proof.
+    intro n. induction n as [|n IH]; intros [|m]; time_step Nat.max.
+  Qed.
+
+  (** Measuring a cell includes its encoder and the resulting positive's bit scan. *)
+  Lemma T_cell_bits_le : forall c,
+    (T_cell_bits V.encode (fun v => V.T_encode v) c <=
+      (V.c_key + 2) * N.of_nat (cell_bits V.encode c + 1))%N.
+  Proof.
+    intros [i | v].
+    - pose proof (Pos.T_size_nat_le (xO i)) as Hsize.
+      time_unfold @T_cell_bits. cbn [cell_bits Pos.size_nat] in Hsize |- *. nia.
+    - pose proof (V.T_encode_le v) as Hencode.
+      pose proof (Pos.T_size_nat_le (xI (V.encode v))) as Hsize.
+      unfold V.bits in Hencode.
+      time_unfold @T_cell_bits. cbn [cell_bits Pos.size_nat] in Hsize |- *. nia.
+  Qed.
+
+  (** A right fold only needs its callback bound at members of the traversed list. *)
+  Lemma T_fold_right_members_le : forall A B (f : B -> A -> A) T_f xs acc k,
+    (forall x out, In x xs -> (T_f x out <= k)%N) ->
+    (List.T_fold_right f T_f acc xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f xs. induction xs as [|x xs IH]; intros acc k Hcost.
+    - time_unfold List.T_fold_right. time_cbn. lia.
+    - pose proof (Hcost x (fold_right f acc xs) (or_introl eq_refl)) as Hhead.
+      pose proof (IH acc k (fun y out Hy => Hcost y out (or_intror Hy))) as Htail.
+      time_unfold List.T_fold_right. time_cbn. nia.
+  Qed.
+
+  (** The width scan's callback and driver charges fit a linear tuple budget. *)
+  Lemma tuple_scan_budget : forall cost bits amount,
+    (1 <= cost -> 1 <= bits ->
+      2 + (8 * cost * bits + 1) * amount <= 16 * cost * (amount + 1) * bits)%N.
+  Proof.
+    intros cost bits amount Hcost Hbits.
+    assert (Hunit : (1 <= cost * bits)%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono; assumption. }
+    assert (Hamount : (amount <= cost * bits * amount)%N).
+    { replace amount with (1 * amount)%N at 1 by ring. apply N.mul_le_mono_r. exact Hunit. }
+    replace (2 + (8 * cost * bits + 1) * amount)%N
+      with (2 + 8 * (cost * bits * amount) + amount)%N by ring.
+    replace (16 * cost * (amount + 1) * bits)%N
+      with (16 * (cost * bits * amount) + 16 * (cost * bits))%N by ring.
+    lia.
+  Qed.
+
+  (** Computing the tuple's maximum width pays for each cell's encoding and comparison. *)
+  Lemma T_tuple_bits_budget : forall r bound,
+    (forall c, In c r -> cell_bits V.encode c <= bound) ->
+    (T_tuple_bits r <= 16 * (PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length r + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros r bound Hcells.
+    set (bits := N.of_nat (bound + 1)) in *.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hcallback : forall c n, In c r ->
+      (1 + (T_cell_bits V.encode (fun v => V.T_encode v) c + T_max (cell_bits V.encode c) n) <=
+        8 * cost * bits)%N).
+    { intros c n Hin. pose proof (Hcells c Hin) as Hcell.
+      assert (Hmeasure : (T_cell_bits V.encode (fun v => V.T_encode v) c <=
+        (V.c_key + 2) * bits)%N).
+      { eapply N.le_trans; [apply T_cell_bits_le |].
+        apply N.mul_le_mono_l. unfold bits. lia. }
+      pose proof (T_nat_max_le (cell_bits V.encode c) n) as Hmax.
+      assert (Hmax' : (T_max (cell_bits V.encode c) n <= bits)%N) by (unfold bits; lia).
+      assert (Hfactor : ((V.c_key + 4) * bits <= 8 * cost * bits)%N).
+      { apply N.mul_le_mono_r. unfold cost. lia. }
+      eapply N.le_trans; [|exact Hfactor].
+      replace ((V.c_key + 4) * bits)%N with
+        ((V.c_key + 2) * bits + bits + bits)%N by ring. lia. }
+    assert (Hfold : (List.T_fold_right
+      (fun c n => Nat.max (cell_bits V.encode c) n)
+      (fun c n => (1 + (T_cell_bits V.encode (fun v => V.T_encode v) c +
+        T_max (cell_bits V.encode c) n))%N) 0%nat r <=
+      (8 * cost * bits + 1) * N.of_nat (length r) + 1)%N).
+    { apply T_fold_right_members_le. exact Hcallback. }
+    pose proof (tuple_scan_budget cost bits (N.of_nat (length r)) Hcost Hbits) as Hbudget.
+    assert (Hlength : N.of_nat (length r + 1) = (N.of_nat (length r) + 1)%N) by lia.
+    rewrite Hlength. time_unfold T_tuple_bits. cbn beta iota zeta.
+    clear Hcells Hcallback. clearbody cost bits. lia.
+  Qed.
+
+  (** A terminal update charges two node-key trie operations and fixed record accesses. *)
+  Lemma T_mark_terminal_budget : forall ix n present stored_width bound,
+    Pos.size_nat n <= bound ->
+    (T_mark_terminal ix n present stored_width <=
+      16 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros ix n present stored_width bound Hnode.
+    set (bits := N.of_nat (bound + 1)) in *.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hunit : (1 <= cost * bits)%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono; assumption. }
+    assert (Hread : (T_read_node ix n <= cost * bits + 2)%N).
+    { eapply N.le_trans; [apply T_read_node_le |].
+      apply N.add_le_mono_r, N.mul_le_mono; [unfold cost; lia | unfold bits; lia]. }
+    assert (Hset : forall nd : index_node (cell V.t),
+      (PTrieCode.T_set n nd (index_nodes ix) <= cost * bits)%N).
+    { intro nd. eapply N.le_trans; [apply PTrieT.T_set_le |].
+      apply N.mul_le_mono; [unfold cost; lia | unfold bits; lia]. }
+    time_unfold T_mark_terminal. time_unfold T_next. time_unfold @T_index_counter.
+    time_pose. time_simpl. time_cbn. clear Hnode Hset. clearbody cost bits. lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
