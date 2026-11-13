@@ -8526,7 +8526,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma T1_doubling : forall db i j x, inv db -> repr db x = x ->
     repr (union i j db) x <> x ->
     (2 * class_size db x <= class_size (union i j db) (repr (union i j db) x))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db i j x Hinv Hfixed Hchanged.
+    unfold repr in Hfixed, Hchanged. rewrite union_forest in Hchanged.
+    pose proof (ForestFacts.union_root_doubling i j (db_forest db) x
+      (inv_on_forest_wf db [] Hinv) Hfixed Hchanged) as Hsize.
+    unfold class_size, uf_state, repr. rewrite union_forest. lia.
+  Qed.
 
   (** Initialization has no use-occurrence debt. *)
   Lemma T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
