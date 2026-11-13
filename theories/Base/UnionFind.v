@@ -397,6 +397,87 @@ Module UnionFind <: UNION_FIND.
       rewrite support_spec. intuition congruence.
   Qed.
 
+  (** Singleton registration preserves every fixed number of parent iterations. *)
+  Lemma iter_add_same x u y n :
+    Nat.iter n (fun z => parent_of z (add x u)) y =
+    Nat.iter n (fun z => parent_of z u) y.
+  Proof.
+    induction n as [|n IH]; [reflexivity|].
+    rewrite !Nat.iter_succ, parent_of_add, IH. reflexivity.
+  Qed.
+
+  (** The extra cardinality step after registration repeats an existing root. *)
+  Lemma repr_add_same x u y : wf u -> repr (add x u) y = repr u y.
+  Proof.
+    intro Hwf. unfold repr at 1. rewrite iter_add_same.
+    unfold add. destruct (PTrieCode.get x (parents u)); [reflexivity|].
+    unfold card at 1. cbn [count]. rewrite N2Nat.inj_succ, Nat.iter_succ.
+    exact (repr_root u y Hwf).
+  Qed.
+
+  (** A stored member's class size is its filtered support count. *)
+  Lemma size_of_member u y : mem u y -> size_of u y =
+    length (filter (fun z => Pos.eqb (repr u z) (repr u y)) (support u)).
+  Proof.
+    intro Hmem. unfold size_of.
+    destruct (PTrieCode.get y (parents u)) eqn:Hy; [reflexivity|].
+    exfalso. apply Hmem. exact Hy.
+  Qed.
+
+  (** No stored member is represented by an absent key. *)
+  Lemma class_filter_fresh u x : wf u -> ~ mem u x ->
+    filter (fun z => Pos.eqb (repr u z) x) (support u) = [].
+  Proof.
+    intros Hwf Hfresh. transitivity (filter (fun _ => false) (support u)).
+    - apply filter_ext_in. intros y Hy. apply Pos.eqb_neq. intro Heq.
+      apply Hfresh. rewrite <- Heq. apply repr_mem; [exact Hwf|].
+      apply support_spec. exact Hy.
+    - apply filter_false.
+  Qed.
+
+  (** A fresh registration adds only its singleton to the selected class count. *)
+  Lemma class_filter_add x u y : wf u -> ~ mem u x ->
+    length (filter (fun z => Pos.eqb (repr (add x u) z) (repr (add x u) y))
+      (support (add x u))) =
+    (if Pos.eqb x (repr u y) then 1 else 0) +
+      length (filter (fun z => Pos.eqb (repr u z) (repr u y)) (support u)).
+  Proof.
+    intros Hwf Hfresh.
+    assert (Hfilter :
+      filter (fun z => Pos.eqb (repr (add x u) z) (repr (add x u) y))
+        (support (add x u)) =
+      filter (fun z => Pos.eqb (repr u z) (repr u y)) (support (add x u))).
+    { apply filter_ext. intro z. now rewrite !repr_add_same by exact Hwf. }
+    rewrite Hfilter.
+    rewrite (filter_length_perm _ _ _ (support_add_fresh x u Hfresh)).
+    cbn [filter]. rewrite (repr_fresh u x Hwf Hfresh).
+    destruct (Pos.eqb x (repr u y)); reflexivity.
+  Qed.
+
+  (** Registration preserves singleton and stored class sizes uniformly. *)
+  Lemma size_add_same x u y : wf u -> size_of (add x u) y = size_of u y.
+  Proof.
+    intro Hwf. destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hx.
+    - unfold add. rewrite Hx. reflexivity.
+    - assert (Hfresh : ~ mem u x) by (unfold mem; rewrite Hx; tauto).
+      destruct (Pos.eq_dec y x) as [Heq|Hne].
+      + subst y. rewrite size_of_member by (apply mem_add_raw; auto).
+        rewrite class_filter_add by assumption.
+        rewrite (repr_fresh u x Hwf Hfresh), Pos.eqb_refl.
+        rewrite class_filter_fresh by assumption.
+        unfold size_of. rewrite Hx. reflexivity.
+      + destruct (PTrieCode.get y (parents u)) as [q|] eqn:Hy.
+        * assert (Hmem : mem u y) by (unfold mem; rewrite Hy; discriminate).
+          rewrite (size_of_member (add x u) y) by (apply mem_add_raw; auto).
+          rewrite (size_of_member u y Hmem), class_filter_add by assumption.
+          assert (Hother : Pos.eqb x (repr u y) = false).
+          { apply Pos.eqb_neq. intro Heq. apply Hfresh.
+            rewrite Heq. apply repr_mem; assumption. }
+          rewrite Hother. reflexivity.
+        * unfold size_of, add. rewrite Hx. cbn [parents].
+          rewrite PTrie.get_set_other by exact Hne. rewrite Hy. reflexivity.
+  Qed.
+
   Lemma wf_empty : wf empty.
   Proof.
     unfold wf. split; [reflexivity|]. split.
@@ -492,7 +573,10 @@ Module UnionFind <: UNION_FIND.
   Proof.
     intros u x Hwf. apply repr_of_root. apply repr_root. exact Hwf.
   Qed.
-  Lemma repr_add   : forall x u y, wf u -> repr (add x u) y = repr u y. Proof. Admitted. (* STUB *)
+  Lemma repr_add   : forall x u y, wf u -> repr (add x u) y = repr u y.
+  Proof.
+    exact repr_add_same.
+  Qed.
   Lemma find_repr  : forall x u, wf u -> fst (find x u) = repr u x. Proof. Admitted. (* STUB *)
   Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y. Proof. Admitted. (* STUB *)
   Lemma union_none : forall x y u u1, wf u -> union x y u = (None, u1) ->
@@ -529,9 +613,17 @@ Module UnionFind <: UNION_FIND.
     exfalso. apply Hfresh. unfold mem. rewrite Hx. discriminate.
   Qed.
   Lemma size_of_repr : forall u x, wf u -> size_of u x = size_of u (repr u x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros u x Hwf. destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hx.
+    - assert (Hmem : mem u x) by (unfold mem; rewrite Hx; discriminate).
+      rewrite (size_of_member u x Hmem), size_of_member by (apply repr_mem; assumption).
+      rewrite repr_idem by exact Hwf. reflexivity.
+    - rewrite repr_fresh; [reflexivity|exact Hwf|]. unfold mem. rewrite Hx. tauto.
+  Qed.
   Lemma size_of_add : forall x u y, wf u -> size_of (add x u) y = size_of u y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact size_add_same.
+  Qed.
   Lemma size_of_find : forall x u y, wf u -> size_of (snd (find x u)) y = size_of u y.
   Proof. Admitted. (* STUB *)
   Lemma size_of_union_other : forall x y u o u1 z, wf u -> union x y u = (o, u1) ->
@@ -566,17 +658,88 @@ Module UnionFindT <: UNION_FIND_ALL.
   TimeFun link.
   TimeFun union.
 
-  Definition c_uf : N := 1. (* STUB *)
+  Definition c_uf : N := 131072.
 
-  Definition k_get : N := 1. (* STUB *)
-  Definition k_step : N := 1. (* STUB *)
-  Definition k_walk : N := 1. (* STUB *)
-  Definition k_comp : N := 1. (* STUB *)
-  Definition k_link : N := 1. (* STUB *)
+  Definition k_get : N := 2048.
+  Definition k_step : N := 4096.
+  Definition k_walk : N := 16384.
+  Definition k_comp : N := 2048.
+  Definition k_link : N := 8192.
+
+  (** Binary counters fit the logarithm of any natural upper bound. *)
+  Local Lemma counter_width (n : N) (P : nat) :
+    N.to_nat n <= P -> N.size_nat n <= Nat.log2 P + 1.
+  Proof.
+    destruct n as [|p]; intro Hbound; [cbn [N.size_nat]; lia |].
+    change (Pos.to_nat p <= P) in Hbound.
+    change (Pos.size_nat p <= Nat.log2 P + 1). apply Pos.size_nat_least.
+    pose proof (Pos2Nat.is_pos p) as Hpositive.
+    pose proof (proj2 (Nat.log2_spec P ltac:(lia))) as Hpower.
+    replace (Nat.log2 P + 1) with (S (Nat.log2 P)) by lia. lia.
+  Qed.
+
+  (** Default singleton sizes and stored sizes share the count's width budget. *)
+  Local Lemma size_at_width (u : t) (r : positive) : wf u ->
+    N.size_nat (size_at r u) <= Nat.log2 (card u) + 1.
+  Proof.
+    intros [_ [_ [_ [Hsizes _]]]]. unfold size_at.
+    destruct (PTrieCode.get r (sizes u)) as [n|] eqn:Hget.
+    - apply counter_width. exact (Hsizes r n Hget).
+    - cbn [N.size_nat Pos.size_nat]. lia.
+  Qed.
+
+  (** A reached parent is either the queried key or a stored member. *)
+  Local Lemma parent_width (u : t) (x : positive) W :
+    wf u -> Pos.size_nat x <= W -> width u <= W ->
+    Pos.size_nat (parent_of x u) <= W.
+  Proof.
+    intros Hwf Hx Hu. unfold parent_of.
+    destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hget; [|exact Hx].
+    pose proof (proj1 (proj2 Hwf) x p Hget) as Hp.
+    pose proof (width_mem u p Hwf Hp). lia.
+  Qed.
+
+  Local Lemma size_at_clock (r : positive) (u : t) :
+    (T_size_at r u <= k_get * N.of_nat (Pos.size_nat r + 1))%N.
+  Proof.
+    pose proof (PTrieT.T_get_le N r (sizes u)) as Hget.
+    change (@PTrieCode.T_get N r (sizes u) <=
+      1024 * N.of_nat (Pos.size_nat r + 1))%N in Hget.
+    time_unfold T_size_at. time_unfold T_sizes.
+    destruct (PTrieCode.get r (sizes u)); unfold k_get;
+      rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
+  Qed.
+
+  (** Retain slack in the public constant for union's two singleton insertions. *)
+  Local Lemma add_clock (x : positive) (u : t) : wf u ->
+    (T_add x u <= 4096 *
+      N.of_nat (Pos.size_nat x + Nat.log2 (card u) + 2))%N.
+  Proof.
+    intro Hwf.
+    pose proof (PTrieT.T_get_le positive x (parents u)) as Hget.
+    pose proof (PTrieT.T_set_le positive x x (parents u)) as Hparent.
+    pose proof (PTrieT.T_set_le N x 1%N (sizes u)) as Hsize.
+    change (PTrieCode.T_get x (parents u) <=
+      1024 * N.of_nat (Pos.size_nat x + 1))%N in Hget.
+    change (PTrieCode.T_set x x (parents u) <=
+      1024 * N.of_nat (Pos.size_nat x + 1))%N in Hparent.
+    change (PTrieCode.T_set x 1%N (sizes u) <=
+      1024 * N.of_nat (Pos.size_nat x + 1))%N in Hsize.
+    pose proof (N.T_succ_le (count u)) as Hsucc.
+    pose proof (counter_width (count u) (card u) (Nat.le_refl _)) as Hbits.
+    apply time_of_nat_le in Hbits.
+    time_unfold T_add. time_unfold T_parents.
+    time_unfold T_sizes. time_unfold T_count.
+    destruct (PTrieCode.get x (parents u));
+      repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
+  Qed.
 
   Lemma T_add_le : forall x u, (wf u ->
     T_add x u <= c_uf * N.of_nat (Pos.size_nat x + Nat.log2 (card u) + 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x u Hwf. eapply N.le_trans; [exact (add_clock x u Hwf)|].
+    apply N.mul_le_mono_r. unfold c_uf. lia.
+  Qed.
   Lemma T_find_le : forall x u, (wf u ->
     T_find x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
@@ -619,19 +782,131 @@ Module UnionFindT <: UNION_FIND_ALL.
 
   Lemma T1_parent_of : forall x u,
     (T_parent_of x u <= k_get * N.of_nat (Pos.size_nat x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x u. pose proof (PTrieT.T_get_le positive x (parents u)) as Hget.
+    change (@PTrieCode.T_get positive x (parents u) <=
+      1024 * N.of_nat (Pos.size_nat x + 1))%N in Hget.
+    time_unfold T_parent_of. time_unfold T_parents.
+    destruct (PTrieCode.get x (parents u)); unfold k_get;
+      rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
+  Qed.
+
+  Local Lemma walk_step_clock (u : t) (s : positive * list positive) W :
+    wf u -> Pos.size_nat (fst s) <= W -> width u <= W ->
+    (T_walk_step u s <= k_step * N.of_nat (W + 1))%N.
+  Proof.
+    intros Hwf Hs Hu.
+    pose proof (T1_parent_of (fst s) u) as Hparent.
+    pose proof (Pos.T_eqb_le (parent_of (fst s) u) (fst s)) as Heq.
+    pose proof (parent_width u (fst s) W Hwf Hs Hu) as Hp.
+    apply time_of_nat_le in Hs. apply time_of_nat_le in Hp.
+    time_unfold T_walk_step. time_unfold @Datatypes.T_fst.
+    time_unfold @Datatypes.T_snd.
+    destruct (Pos.eqb (parent_of (fst s) u) (fst s)); unfold k_get, k_step in *;
+      repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; lia.
+  Qed.
+
   Lemma T2_walk_step : forall u s, (wf u -> mem u (fst s) ->
     T_walk_step u s <= k_step * N.of_nat (width u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros u s Hwf Hmem. apply walk_step_clock; [exact Hwf| |lia].
+    exact (width_mem u (fst s) Hwf Hmem).
+  Qed.
+
+  (** The actual unary fuel pays each reached step and the loop call. *)
+  Local Lemma walk_fuel_clock (u : t) W fuel :
+    wf u -> width u <= W -> forall s,
+    Pos.size_nat (fst s) <= W ->
+    (T_loop_fuel (walk_step u) (fun s0 => T_walk_step u s0) fuel s <=
+      (k_step * N.of_nat (W + 1) + 1) * N.of_nat fuel + 1)%N.
+  Proof.
+    intros Hwf Hu. induction fuel as [|fuel IH]; intros s Hs.
+    - time_unfold @T_loop_fuel. lia.
+    - pose proof (walk_step_clock u s W Hwf Hs Hu) as Hclock.
+      time_unfold @T_loop_fuel.
+      destruct (walk_step u s) as [s1|r] eqn:Hstep.
+      + assert (Hs1 : Pos.size_nat (fst s1) <= W).
+        { unfold walk_step in Hstep.
+          destruct (Pos.eqb (parent_of (fst s) u) (fst s)); [discriminate|].
+          inversion Hstep; subst s1. cbn [fst].
+          exact (parent_width u (fst s) W Hwf Hs Hu). }
+        specialize (IH s1 Hs1). rewrite Nat2N.inj_succ, N.mul_succ_r. lia.
+      + rewrite Nat2N.inj_succ, N.mul_succ_r. lia.
+  Qed.
+
   Lemma T3_walk : forall x u, (wf u ->
     T_walk x u <= k_walk * N.of_nat (Nat.log2 (card u) + 1) *
       N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x u Hwf.
+    pose proof (walk_fuel_clock u (Nat.max (width u) (Pos.size_nat x))
+      (S (N.size_nat (count u))) Hwf (Nat.le_max_l _ _)
+      (x, []) (Nat.le_max_r _ _)) as Hloop.
+    pose proof (counter_width (count u) (card u) (Nat.le_refl _)) as Hbits.
+    pose proof (N.T_size_nat_le (count u)) as Hsize.
+    apply time_of_nat_le in Hbits.
+    time_unfold T_walk. time_unfold T_count.
+    unfold k_step, k_walk in *.
+    repeat rewrite Nat2N.inj_add in *. rewrite Nat2N.inj_succ in Hloop.
+    cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** The compression callback is bounded only on the path's actual keys. *)
+  Local Lemma compress_fold_clock (r : positive) (path : list positive) W :
+    (forall y, In y path -> Pos.size_nat y <= W) -> forall m,
+    (List.T_fold_left (fun m0 y => PTrieCode.set y r m0)
+      (fun m0 y => 1 + PTrieCode.T_set y r m0)%N path m <=
+      (1024 * N.of_nat (W + 1) + 2) * N.of_nat (length path) + 1)%N.
+  Proof.
+    induction path as [|y path IH]; intros Hkeys m.
+    - time_unfold @List.T_fold_left. cbn [length]. lia.
+    - pose proof (PTrieT.T_set_le positive y r m) as Hset.
+      change (PTrieCode.T_set y r m <=
+        1024 * N.of_nat (Pos.size_nat y + 1))%N in Hset.
+      pose proof (Hkeys y (or_introl eq_refl)) as Hy.
+      apply time_of_nat_le in Hy.
+      specialize (IH ltac:(intros z Hz; apply Hkeys; now right)
+        (PTrieCode.set y r m)).
+      time_unfold @List.T_fold_left. cbn [length].
+      repeat rewrite Nat2N.inj_add in *. rewrite Nat2N.inj_succ.
+      cbn [N.of_nat] in *. nia.
+  Qed.
+
   Lemma T4_compress : forall r path u, (wf u -> (forall y, In y path -> mem u y) ->
     T_compress r path u <= k_comp * N.of_nat (length path + 1) *
       N.of_nat (width u + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r path u Hwf Hpath.
+    pose proof (compress_fold_clock r path (width u)
+      ltac:(intros y Hy; exact (width_mem u y Hwf (Hpath y Hy)))
+      (parents u)) as Hfold.
+    time_unfold T_compress. time_unfold T_parents.
+    time_unfold T_sizes. time_unfold T_count.
+    unfold k_comp. repeat rewrite Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
+  Qed.
   Lemma T5_link : forall w l u, (wf u -> mem u w -> mem u l ->
     T_link w l u <= k_link * N.of_nat (width u + Nat.log2 (card u) + 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w l u Hwf Hw Hl.
+    pose proof (width_mem u w Hwf Hw) as Hwidthw.
+    pose proof (width_mem u l Hwf Hl) as Hwidthl.
+    pose proof (size_at_width u w Hwf) as Hbitsw.
+    pose proof (size_at_width u l Hwf) as Hbitsl.
+    apply time_of_nat_le in Hwidthw. apply time_of_nat_le in Hwidthl.
+    apply time_of_nat_le in Hbitsw. apply time_of_nat_le in Hbitsl.
+    pose proof (size_at_clock w u) as Hsizew.
+    pose proof (size_at_clock l u) as Hsizel.
+    pose proof (PTrieT.T_set_le positive l w (parents u)) as Hparent.
+    pose proof (PTrieT.T_set_le N w (size_at w u + size_at l u)%N (sizes u)) as Hsizes.
+    change (PTrieCode.T_set l w (parents u) <=
+      1024 * N.of_nat (Pos.size_nat l + 1))%N in Hparent.
+    change (PTrieCode.T_set w (size_at w u + size_at l u)%N (sizes u) <=
+      1024 * N.of_nat (Pos.size_nat w + 1))%N in Hsizes.
+    pose proof (N.T_add_le (size_at w u) (size_at l u)) as Hadd.
+    time_unfold T_link. time_unfold T_parents.
+    time_unfold T_sizes. time_unfold T_count.
+    unfold k_get, k_link in *. repeat rewrite Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. lia.
+  Qed.
 End UnionFindT.
