@@ -532,6 +532,172 @@ Module RelationalPathBounds.
     intros ks i j d Hks Hentry Hchain.
     exact (Hall (S (length ks)) ks ltac:(lia) i j d Hks Hentry Hchain).
   Qed.
+  Definition seed {A : Type} (decide : forall x y : A, {x = y} + {x <> y})
+      (r : A -> A -> option Z) (k i j : A) : option Z :=
+    if decide i k then
+      if decide j k then minimum (Some 0%Z) (r k k) else r i j
+    else r i j.
+
+  Lemma seed_diag : forall A decide (r : A -> A -> option Z) k,
+    seed decide r k k k = minimum (Some 0%Z) (r k k).
+  Proof.
+    intros A decide r k. unfold seed. destruct (decide k k); congruence.
+  Qed.
+
+  Lemma seed_away : forall A decide (r : A -> A -> option Z) k i j,
+    i <> k \/ j <> k -> seed decide r k i j = r i j.
+  Proof.
+    intros A decide r k i j Haway. unfold seed.
+    destruct (decide i k), (decide j k); intuition congruence.
+  Qed.
+
+  Lemma seed_below : forall A decide (r : A -> A -> option Z) k i j,
+    below (seed decide r k i j) (r i j).
+  Proof.
+    intros A decide r k i j. unfold seed.
+    destruct (decide i k) as [Hi|Hi]; [subst i|apply below_refl].
+    destruct (decide j k) as [Hj|Hj]; [subst j; apply minimum_r|apply below_refl].
+  Qed.
+
+  Lemma seed_existing_zero : forall A decide (r : A -> A -> option Z) k,
+    r k k = Some 0%Z -> forall i j, seed decide r k i j = r i j.
+  Proof.
+    intros A decide r k Hkk i j. unfold seed.
+    destruct (decide i k) as [Hi|Hi]; [subst i|reflexivity].
+    destruct (decide j k) as [Hj|Hj]; [subst j|reflexivity].
+    rewrite Hkk. apply minimum_idem.
+  Qed.
+
+  Lemma seed_success_zero : forall A decide (r : A -> A -> option Z) k,
+    (forall d, floyd (seed decide r k) k k k = Some d -> (0 <= d)%Z) ->
+    seed decide r k k k = Some 0%Z.
+  Proof.
+    intros A decide r k Hsuccess. unfold floyd in Hsuccess.
+    rewrite !seed_diag in Hsuccess |- *.
+    destruct (r k k) as [d|]; [|reflexivity].
+    cbn [minimum plus] in Hsuccess |- *.
+    pose proof (Hsuccess (Z.min (Z.min 0 d) (Z.min 0 d + Z.min 0 d)) eq_refl)
+      as Hnonneg.
+    pose proof (Z.le_min_l 0 d) as Hupper.
+    pose proof (Z.le_min_l (Z.min 0 d) (Z.min 0 d + Z.min 0 d)) as Hlower.
+    f_equal. lia.
+  Qed.
+
+  Definition path_witness {A : Type} (e : A -> A -> option Z)
+      (processed : list A) (i j : A) (d : Z) : Prop :=
+    (i = j /\ d = 0%Z) \/
+    exists ks, incl ks processed /\ chain e i ks j = Some d.
+
+  Lemma path_witness_mono : forall A (e : A -> A -> option Z) ps qs i j d,
+    incl ps qs -> path_witness e ps i j d -> path_witness e qs i j d.
+  Proof.
+    intros A e ps qs i j d Hincl [Hid|[ks [Hks Hchain]]].
+    - now left.
+    - right. exists ks. split; [|exact Hchain].
+      intros x Hx. apply Hincl. now apply Hks.
+  Qed.
+
+  Lemma path_witness_plus : forall A (e : A -> A -> option Z) ps i k j a b,
+    path_witness e ps i k a -> path_witness e ps k j b ->
+    path_witness e (k :: ps) i j (a + b)%Z.
+  Proof.
+    intros A e ps i k j a b Hleft Hright.
+    assert (Hgrow : incl ps (k :: ps)) by (intros x Hx; now right).
+    destruct Hleft as [[Hi Ha]|[left [Hleft Hleft_value]]].
+    - subst i a. replace (0 + b)%Z with b by lia.
+      exact (path_witness_mono A e ps (k :: ps) k j b Hgrow Hright).
+    - destruct Hright as [[Hj Hb]|[right [Hright Hright_value]]].
+      + subst j b. replace (a + 0)%Z with a by lia.
+        apply (path_witness_mono A e ps (k :: ps) i k a Hgrow).
+        right. exists left. now split.
+      + right. exists (left ++ k :: right). split.
+        * intros x Hx. apply in_app_iff in Hx. destruct Hx as [Hx|[Hx|Hx]].
+          -- right. now apply Hleft.
+          -- now left.
+          -- right. now apply Hright.
+        * rewrite chain_app, Hleft_value, Hright_value. reflexivity.
+  Qed.
+
+  Record invariant {A : Type} (e r : A -> A -> option Z) (processed : list A) : Prop := {
+    invariant_below : forall i j, below (r i j) (e i j);
+    invariant_closed : forall k, In k processed -> closed_at r k;
+    invariant_zero : forall k, In k processed -> r k k = Some 0%Z;
+    invariant_path : forall i j d, r i j = Some d -> path_witness e processed i j d
+  }.
+
+  Lemma invariant_initial : forall A (e : A -> A -> option Z), invariant e e nil.
+  Proof.
+    intros A e. constructor.
+    - intros. apply below_refl.
+    - intros k Hk. contradiction.
+    - intros k Hk. contradiction.
+    - intros i j d Hentry. right. exists nil. split.
+      + intros x Hx. contradiction.
+      + exact Hentry.
+  Qed.
+
+  Lemma invariant_ext : forall A (e r s : A -> A -> option Z) ps,
+    (forall i j, r i j = s i j) -> invariant e r ps -> invariant e s ps.
+  Proof.
+    intros A e r s ps Heq [Hbelow Hclosed Hzero Hpath]. constructor.
+    - intros i j. rewrite <- Heq. apply Hbelow.
+    - intros k Hk i j. rewrite <- !Heq. now apply Hclosed.
+    - intros k Hk. rewrite <- Heq. now apply Hzero.
+    - intros i j d Hentry. apply Hpath. now rewrite Heq.
+  Qed.
+
+  Lemma invariant_seed : forall A decide (e r : A -> A -> option Z) ps k,
+    invariant e r ps -> invariant e (seed decide r k) ps.
+  Proof.
+    intros A decide e r ps k [Hbelow Hclosed Hzero Hpath]. constructor.
+    - intros i j. eapply below_trans; [apply seed_below|apply Hbelow].
+    - intros p Hp. destruct (decide p k) as [Heq|Hne].
+      + subst p. intros i j. rewrite !seed_existing_zero by (now apply Hzero).
+        now apply Hclosed.
+      + intros i j. rewrite (seed_away A decide r k i p) by (right; exact Hne).
+        rewrite (seed_away A decide r k p j) by (left; exact Hne).
+        eapply below_trans; [apply seed_below|now apply Hclosed].
+    - intros p Hp. destruct (decide p k) as [Heq|Hne].
+      + subst p. rewrite seed_existing_zero by (now apply Hzero). now apply Hzero.
+      + rewrite seed_away by (now left). now apply Hzero.
+    - intros i j d Hentry. unfold seed in Hentry.
+      destruct (decide i k) as [Hi|Hi]; [subst i|now apply Hpath].
+      destruct (decide j k) as [Hj|Hj]; [subst j|now apply Hpath].
+      apply minimum_value in Hentry. destruct Hentry as [Hentry|Hentry].
+      + inversion Hentry; subst d. left. now split.
+      + now apply Hpath.
+  Qed.
+
+  Lemma invariant_floyd : forall A (e r : A -> A -> option Z) ps k,
+    invariant e r ps -> r k k = Some 0%Z -> invariant e (floyd r k) (k :: ps).
+  Proof.
+    intros A e r ps k [Hbelow Hclosed Hzero Hpath] Hkk. constructor.
+    - intros i j. eapply below_trans; [apply floyd_below_old|apply Hbelow].
+    - intros p [Hp|Hp].
+      + subst p. now apply floyd_closes_pivot.
+      + apply floyd_preserves_closed; [exact Hkk|now apply Hclosed].
+    - intros p [Hp|Hp].
+      + subst p. rewrite floyd_from_pivot by exact Hkk. exact Hkk.
+      + apply floyd_preserves_zero; [exact Hkk|now apply Hzero|now apply Hclosed].
+    - intros i j d Hentry. apply minimum_value in Hentry.
+      destruct Hentry as [Hold|Hvia].
+      + apply (path_witness_mono A e ps (k :: ps) i j d).
+        * intros x Hx. now right.
+        * now apply Hpath.
+      + apply plus_value in Hvia. destruct Hvia as [a [b [Ha [Hb Hd]]]]. subst d.
+        apply path_witness_plus; now apply Hpath.
+  Qed.
+
+  Lemma invariant_successful_round : forall A decide (e r : A -> A -> option Z) ps k,
+    invariant e r ps ->
+    (forall d, floyd (seed decide r k) k k k = Some d -> (0 <= d)%Z) ->
+    invariant e (floyd (seed decide r k) k) (k :: ps).
+  Proof.
+    intros A decide e r ps k Hinv Hsuccess. apply invariant_floyd.
+    - now apply invariant_seed.
+    - now apply seed_success_zero.
+  Qed.
+
 End RelationalPathBounds.
 
 
