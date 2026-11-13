@@ -2431,6 +2431,116 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
     intros w a. unfold psize. apply Nat.pow_le_mono_l. lia.
   Qed.
 
+  (** A common raw bit budget pays both input normalizations and the inclusion test. *)
+  Lemma inclusion_time_budget : forall w a b n,
+    (Pos.to_nat w + congr_bits a + congr_bits b + 1 <= n)%nat ->
+    (T_pleb w a b <= 8192 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros w a b n Hinput.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    time_unfold T_pleb.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform;
+      time_unfold T_raw_leb; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits] in Ha, Hb.
+    pose proof (WordTime.integer_sub_size r s) as Hdifference.
+    pose proof (integer_modulo_size m p) as Hmodulus.
+    pose proof (integer_modulo_size (r - s) p) as Hresidue.
+    pose proof (sub_time_budget (4 * n) r s ltac:(lia)) as Hsubtract.
+    pose proof (mod_time_budget (4 * n) m p ltac:(lia)) as Hmodm.
+    pose proof (mod_time_budget (6 * n) (r - s) p ltac:(lia)) as Hmodr.
+    pose proof (eqb_time_budget (5 * n) (m mod p) 0 ltac:(lia)) as Heqm.
+    pose proof (eqb_time_budget (6 * n) ((r - s) mod p) 0 ltac:(lia)) as Heqr.
+    pose proof (Datatypes.T_andb_le (m mod p =? 0) ((r - s) mod p =? 0)) as Hboth.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
+
+  (** Joining normalizes a gcd class built from bounded canonical operands. *)
+  Lemma join_time_budget : forall w a b n,
+    (Pos.to_nat w + congr_bits a + congr_bits b + 1 <= n)%nat ->
+    (T_pjoin w a b <= 32768 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros w a b n Hinput.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    time_unfold T_pjoin.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits] in Ha, Hb.
+    pose proof (WordTime.integer_sub_size r s) as Hdifference.
+    pose proof (integer_gcd_size m p) as Hgcd1.
+    pose proof (integer_gcd_size (Z.gcd m p) (r - s)) as Hgcd2.
+    pose proof (sub_time_budget (4 * n) r s ltac:(lia)) as Hsubtract.
+    pose proof (gcd_time_budget (4 * n) m p ltac:(lia)) as Hgcdtime1.
+    pose proof (gcd_time_budget (8 * n) (Z.gcd m p) (r - s) ltac:(lia)) as Hgcdtime2.
+    pose proof (normalization_time_budget w (C (Z.gcd (Z.gcd m p) (r - s)) r)
+      (11 * n) ltac:(cbn [congr_bits]; lia)) as Hnormalize.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
+
+  (** The CRT coefficient-chain bound and bounded normalization compose quadratically. *)
+  Lemma meet_time_budget : forall w a b n,
+    (Pos.to_nat w + congr_bits a + congr_bits b + 1 <= n)%nat ->
+    (T_pmeet w a b <= 4194304 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros w a b n Hinput.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    time_unfold T_pmeet.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits] in Ha, Hb.
+    pose proof (integer_gcd_size m p) as Hgcdbits.
+    pose proof (integer_modulo_size r (Z.gcd m p)) as Hrembits.
+    pose proof (integer_lcm_size m p) as Hlcmbits.
+    destruct (combinecong_budget (4 * n) m p r s ltac:(lia)) as [Hcrtbits Hcrttime].
+    pose proof (gcd_time_budget (4 * n) m p ltac:(lia)) as Hgcd.
+    pose proof (mod_time_budget (6 * n) r (Z.gcd m p) ltac:(lia)) as Hrem1.
+    pose proof (mod_time_budget (6 * n) s (Z.gcd m p) ltac:(lia)) as Hrem2.
+    pose proof (eqb_time_budget (7 * n) (r mod Z.gcd m p) (s mod Z.gcd m p)
+      ltac:(lia)) as Hcompatible.
+    pose proof (lcm_time_budget (4 * n) m p ltac:(lia)) as Hlcm.
+    pose proof (normalization_time_budget w
+      (C (Z.lcm m p) (CongruenceCRT.combinecong m p r s))
+      (65 * n) ltac:(cbn [congr_bits]; lia)) as Hnormalize.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants.
+    destruct (r mod Z.gcd m p =? s mod Z.gcd m p); lia.
+  Qed.
+
+  (** Two separately squared payload sizes dominate the common binary-operation budget. *)
+  Lemma combined_payload_square : forall w a b,
+    ((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2 <=
+      4 * (psize w a + psize w b + 1))%nat.
+  Proof.
+    intros w a b. unfold psize.
+    destruct (Nat.le_ge_cases (congr_bits a) (congr_bits b)) as [Hle|Hge].
+    - eapply Nat.le_trans with (m := ((2 * (Pos.to_nat w + congr_bits b + 1)) ^ 2)%nat).
+      + apply Nat.pow_le_mono_l. lia.
+      + rewrite Nat.pow_mul_l. change ((2 ^ 2)%nat) with 4%nat. lia.
+    - eapply Nat.le_trans with (m := ((2 * (Pos.to_nat w + congr_bits a + 1)) ^ 2)%nat).
+      + apply Nat.pow_le_mono_l. lia.
+      + rewrite Nat.pow_mul_l. change ((2 ^ 2)%nat) with 4%nat. lia.
+  Qed.
+
   (** Joined payloads fit within the combined operand sizes. *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
@@ -2470,31 +2580,88 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Payload widening charges both operands and its parameters. *)
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b.
+    pose proof (inclusion_time_budget w b a
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Hinclusion.
+    pose proof (join_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Hjoin.
+    pose proof (combined_payload_square w a b) as Hsize.
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize. cost_constants.
+    assert (Hpositive : (1 <= N.of_nat (psize w a + psize w b + 1))%N).
+    { change (N.of_nat 1 <= N.of_nat (psize w a + psize w b + 1))%N.
+      apply time_of_nat_le. lia. }
+    time_unfold T_pwiden. unfold pwsize, c_payload. rewrite Nat.add_0_r.
+    destruct (pleb w b a); lia.
+  Qed.
   (** Payload narrowing charges both payload sizes. *)
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (meet_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Hmeet.
+    pose proof (combined_payload_square w a b) as Hsize.
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize. cost_constants.
+    assert (Hpositive : (1 <= N.of_nat (psize w a + psize w b + 1))%N).
+    { change (N.of_nat 1 <= N.of_nat (psize w a + psize w b + 1))%N.
+      apply time_of_nat_le. lia. }
+    time_unfold T_pnarrow. unfold c_payload. lia.
+  Qed.
   (** Payload inclusion charges the two payload sizes. *)
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (inclusion_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Htime.
+    pose proof (combined_payload_square w a b) as Hsize.
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize. cost_constants.
+    unfold c_payload. lia.
+  Qed.
   (** Payload join charges the two payload sizes. *)
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (join_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Htime.
+    pose proof (combined_payload_square w a b) as Hsize.
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize. cost_constants.
+    unfold c_payload. lia.
+  Qed.
   (** Payload meet charges the two payload sizes. *)
   Lemma T_pmeet_le : forall w a b,
     (T_pmeet w a b <= c_payload * N.of_nat ((psize w a + psize w b + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (meet_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Htime.
+    pose proof (combined_payload_square w a b) as Hsize.
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize. cost_constants.
+    unfold c_payload. lia.
+  Qed.
   (** Bottom recognition charges the payload size. *)
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat ((psize w a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a.
+    pose proof (normalization_time_budget w a
+      (Pos.to_nat w + congr_bits a + 1) ltac:(lia)) as Hnorm.
+    time_unfold T_pis_bot. unfold psize, c_payload. rewrite Nat2N.inj_add.
+    change (N.of_nat 1) with 1%N. destruct (congr_norm w a); lia.
+  Qed.
   (** Point recognition charges the payload size. *)
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat ((psize w a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a.
+    pose proof (normalization_time_budget w a
+      (Pos.to_nat w + congr_bits a + 1) ltac:(lia)) as Hnorm.
+    time_unfold T_ppoint. unfold psize, c_payload. rewrite Nat2N.inj_add.
+    change (N.of_nat 1) with 1%N. destruct (congr_norm w a); [lia|].
+    destruct m; lia.
+  Qed.
   (** Constant abstraction charges the width and literal bit size. *)
   Lemma T_pconst_le : forall w z, (T_pconst w z <=
     c_payload * N.of_nat (((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat))%N.
@@ -2634,12 +2801,22 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Lemma T1_join : forall w a b,
     (T_pjoin w a b <= k_congr_gcd *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (join_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Htime.
+    unfold k_congr_gcd. lia.
+  Qed.
   (** Chinese remainder meet has the published quadratic arithmetic bound. *)
   Lemma T2_meet : forall w a b,
     (T_pmeet w a b <= k_congr_crt *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    pose proof (meet_time_budget w a b
+      (Pos.to_nat w + congr_bits a + congr_bits b + 1) ltac:(lia)) as Htime.
+    unfold k_congr_crt. lia.
+  Qed.
 
   (** The result stays within its declared work budget. *)
   Lemma T_ptop_le : forall w,
