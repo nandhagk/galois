@@ -66,6 +66,23 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** Both an empty layout and missing positions project an empty tuple to an empty tuple. *)
+Example slot_projection_empty_tuple :
+  (project_slot_layout (prepare_slot_layout []) ([] : list nat),
+   project_slot_layout (prepare_slot_layout [0; 2]) ([] : list nat)) = ([], []).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Identifier and value cells retain their constructors, order and repeated positions. *)
+Example slot_projection_mixed_cells :
+  project_slot_layout (prepare_slot_layout [3; 0; 2; 1; 0])
+    ([Id 1%positive; Val 5%positive; Id 3%positive; Val 8%positive] : list (cell positive)) =
+      [Val 8%positive; Id 1%positive; Id 3%positive; Val 5%positive; Id 1%positive].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Initialization stores one prepared layout for each supplied slot. *)
 Example init_stores_prepared_slots :
   prepared_slots _ (db_slot_store (FixtureDatabase.init [] [(1%positive, [2; 0; 1])])) =
