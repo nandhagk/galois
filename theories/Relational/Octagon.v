@@ -3164,9 +3164,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   Proof. Admitted. (* STUB *)
-  Lemma bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
-    ell m' <= ell m + Nat.log2 (supp m) + 1.
-  Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
@@ -3440,6 +3437,38 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite Nat.pow_add_r. cbn [length] in Hlength.
       eapply Nat.le_lt_trans; [exact Habs|].
       apply Nat.mul_lt_mono_pos_r; [exact Hpower|lia].
+  Qed.
+
+  (** A minimum path uses at most one fewer than a power of two per original edge. *)
+  Lemma path_invariant_entry_abs : forall initial current ps,
+    RelationalPathBounds.invariant (entry initial) current ps ->
+    forall i j d, current i j = Some d ->
+      Z.abs_nat d <= supp initial * (2 ^ ell initial - 1).
+  Proof.
+    intros initial current ps [Hbelow Hclosed Hzero Hpath] i j d Hentry.
+    destruct (Hpath i j d Hentry) as [[Heq Hz]|[ks [Hks Hchain]]].
+    - subst d. cbn [Z.abs_nat]. nia.
+    - destruct (RelationalPathBounds.simple_minimum_chain K.t path_key_dec
+        (entry initial) current ps Hbelow Hclosed Hzero ks i j d Hks Hentry Hchain)
+        as [shortened [Hincl [Hnodup Hvalue]]].
+      assert (Hlength : length (i :: shortened) <= supp initial).
+      { unfold supp. rewrite <- (length_map K.encode (i :: shortened)).
+        apply NoDup_incl_length; [now apply encoded_keys_nodup|].
+        intros code Hcode. apply in_map_iff in Hcode.
+        destruct Hcode as [x [Hcode Hx]]. subst code.
+        eapply (RelationalPathBounds.chain_sources K.t (entry initial)
+          (fun q => In (K.encode q) (support initial))).
+        - intros p q z Hz. now apply (entry_source_support initial p q z).
+        - exact Hvalue.
+        - exact Hx. }
+      assert (Hedge : forall p q z, entry initial p q = Some z ->
+        Z.abs_nat z <= 2 ^ ell initial - 1).
+      { intros p q z Hz. pose proof (zbits_abs_bound z (ell initial)) as Hbits.
+        specialize (Hbits (ell_entry initial (K.encode p) (K.encode q) z
+          ltac:(now rewrite raw_entry_get))). lia. }
+      pose proof (RelationalPathBounds.chain_abs K.t (entry initial)
+        (2 ^ ell initial - 1) Hedge shortened i j d Hvalue) as Habs.
+      cbn [length] in Hlength. nia.
   Qed.
 
   (** Well-formed raw entries have source and target keys. *)
@@ -6298,6 +6327,90 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros m Hwf Hcoh Hbar.
     destruct (tclose m) as [|m'] eqn:Hresult; [exact I|].
     exact (proj1 (proj1 (tclose_tight m m' Hwf Hcoh Hbar Hresult))).
+  Qed.
+
+  (** Rounding a unary entry down changes its absolute value by at most one. *)
+  Lemma even_bound_abs : forall d,
+    Z.abs_nat (even_bound d) <= Z.abs_nat d + 1.
+  Proof.
+    intro d.
+    replace (even_bound d) with (d + - (d mod 2))%Z.
+    - eapply Nat.le_trans; [apply rel_abs_add|].
+      pose proof (Z.mod_pos_bound d 2 ltac:(lia)) as Hrem.
+      assert (d mod 2 = 0 \/ d mod 2 = 1)%Z by lia.
+      destruct H as [Hzero|Hone]; rewrite ?Hzero, ?Hone;
+        cbn [Z.abs_nat]; lia.
+    - unfold even_bound. rewrite Z.div2_div.
+      pose proof (Z.div_mod d 2 ltac:(lia)) as Hdiv. lia.
+  Qed.
+
+  (** A rounded entry stays within one unit of the input magnitude bound. *)
+  Lemma tighten_entry_abs : forall m upper, dbm_wf m ->
+    (forall i j d, entry m i j = Some d -> Z.abs_nat d <= upper) ->
+    forall i j d, entry (tighten m) i j = Some d -> Z.abs_nat d <= upper + 1.
+  Proof.
+    intros m upper Hwf Hbound i j d Hentry.
+    rewrite entry_tighten_exact in Hentry by exact Hwf.
+    destruct (K.eqb j (flip i)) eqn:Hflip.
+    - destruct (entry m i j) as [old|] eqn:Hold; [|discriminate].
+      cbn [option_map] in Hentry. injection Hentry as <-.
+      pose proof (even_bound_abs old) as Hround.
+      pose proof (Hbound i j old Hold) as Hraw. lia.
+    - pose proof (Hbound i j d Hentry). lia.
+  Qed.
+
+  (** The support bound has enough room for one unary-rounding unit. *)
+  Lemma support_power_margin : forall m,
+    supp m * (2 ^ ell m - 1) + 1 < 2 ^ (ell m + Nat.log2 (supp m) + 1).
+  Proof.
+    intro m. set (s := supp m). set (p := 2 ^ ell m).
+    assert (Hp : 0 < p).
+    { unfold p. pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    assert (Hs : s < 2 ^ (Nat.log2 s + 1)).
+    { destruct s as [|s].
+      - pose proof (Nat.pow_nonzero 2 (Nat.log2 0 + 1) ltac:(lia)) as Hpower.
+        lia.
+      - pose proof (Nat.log2_spec (S s) ltac:(lia)) as [_ Hupper].
+        replace (Nat.log2 (S s) + 1) with (S (Nat.log2 (S s))) by lia.
+        exact Hupper. }
+    rewrite <- Nat.add_assoc.
+    rewrite (Nat.pow_add_r 2 (ell m) (Nat.log2 s + 1)). fold p.
+    set (q := 2 ^ (Nat.log2 s + 1)) in *.
+    assert (Hq : 2 <= q).
+    { unfold q. replace (Nat.log2 s + 1) with (S (Nat.log2 s)) by lia.
+      rewrite Nat.pow_succ_r by lia.
+      pose proof (Nat.pow_nonzero 2 (Nat.log2 s) ltac:(lia)). nia. }
+    assert (Hsub : p - 1 + 1 = p) by lia.
+    destruct s as [|s].
+    - nia.
+    - assert (Hprod : (S s + 1) * p <= q * p).
+      { apply Nat.mul_le_mono_r. lia. }
+      assert (Hleft : S s * (p - 1) + 1 < (S s + 1) * p) by nia.
+      nia.
+  Qed.
+
+  (** Successful integer closure fits the original support-sensitive bit budget. *)
+  Lemma bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
+    ell m' <= ell m + Nat.log2 (supp m) + 1.
+  Proof.
+    intros m m' Hwf Hresult.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m)) eqn:Hscan;
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    injection Hresult as <-.
+    eapply Nat.le_trans; [apply bits_strengthen_le|].
+    apply ell_bound. intros p q d Hraw.
+    destruct (wf_raw_entry_keys (tighten (fw m)) p q d
+      (wf_tighten (fw m) (wf_fw m Hwf)) Hraw) as [i [j [_ [_ Hentry]]]].
+    apply zbits_least.
+    eapply Nat.le_lt_trans; [|apply support_power_margin].
+    eapply tighten_entry_abs; [apply wf_fw; exact Hwf| |exact Hentry].
+    intros a b z Hz.
+    eapply path_invariant_entry_abs;
+      [apply fw_success_path_invariant; exact Hwf || exact Hscan|exact Hz].
   Qed.
 
   (** Original and final key lists cover the same supported vertices. *)
