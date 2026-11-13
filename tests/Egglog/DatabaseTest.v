@@ -22,6 +22,54 @@ End FixtureValue.
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
 
+(** A one-element value type exposes the public well-formedness laws in this test. *)
+Module UnitValue <: VALUE.
+  Definition t := unit.
+  Definition eqb (_ _ : t) := true.
+  Definition encode (_ : t) := 1%positive.
+  Definition prim (_ : positive) (_ : list t) : option t := None.
+  Definition merge (_ : positive) (_ _ : t) : t := tt.
+  Definition bits (v : t) := Pos.size_nat (encode v).
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof. intros [] []; reflexivity. Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof. intros [] []; constructor; reflexivity. Qed.
+  Lemma merge_comm : forall m a b, merge m a b = merge m b a.
+  Proof. intros m [] []; reflexivity. Qed.
+  Lemma merge_assoc : forall m a b c, merge m a (merge m b c) = merge m (merge m a b) c.
+  Proof. intros m [] [] []; reflexivity. Qed.
+  Lemma merge_idem : forall m a, merge m a a = a.
+  Proof. intros m []; reflexivity. Qed.
+End UnitValue.
+
+Module UnitIndex := Index UnitValue.
+Module UnitDatabase := Database UnitValue UnitIndex.
+
+(** Clearing only the occurrence store preserves public well-formedness but loses a use. *)
+Definition missing_use_initial := UnitDatabase.init [Decl 1%positive [] OId] [].
+Definition missing_use_row := snd (UnitDatabase.make 1%positive [] missing_use_initial).
+Definition missing_use_db :=
+  database_set_row_store (db_row_store missing_use_initial) missing_use_row.
+
+Example missing_use_db_wf : UnitDatabase.wf missing_use_db.
+Proof.
+  unfold missing_use_db, missing_use_row.
+  change (UnitDatabase.wf (snd (UnitDatabase.make 1%positive [] missing_use_initial))).
+  apply UnitDatabase.wf_make.
+  - apply UnitDatabase.wf_init.
+  - intros j H; contradiction.
+  - intros perm H; contradiction.
+Qed.
+
+Example missing_use_db_observation :
+  (UnitDatabase.row_get 1%positive [] missing_use_db,
+    UnitDatabase.db_get_uses 1%positive missing_use_db,
+    UnitDatabase.locate 1%positive [] missing_use_db) =
+    (Some (Some (Id 1%positive)), [], None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Replacing the same row twice registers two historical identifier occurrences. *)
 Example repeated_row_replacement_occurrences :
   let empty := FixtureDatabase.init [] [] in
