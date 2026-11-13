@@ -4,7 +4,7 @@
     For example, a zero-to-variable entry bounds that variable from above.
     Builds on: ZoneSig and keyed map operations. *)
 
-From Stdlib Require Import List Bool NArith ZArith Lia.
+From Stdlib Require Import List Bool NArith ZArith Lia ArithRing.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig Code.
 From Galois.Lattice Require Import LatticeSig.
@@ -3883,5 +3883,186 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
         clear Hget. clearbody work. lia.
     - unfold row_time_factor. time_step.
+  Qed.
+  (** A finite source row bounds each prefix by the matrix's integer-bit maximum. *)
+  Lemma row_get_bits : forall m p row k a,
+    M.find p m = Some row -> M.get k row = Some a -> Z.size_nat a <= ell m.
+  Proof.
+    intros m p row k a Hrow Ha. apply (ell_entry m p (K.encode k) a).
+    unfold raw_entry. rewrite Hrow. cbn [row_of]. now rewrite <- M.get_find.
+  Qed.
+
+  (** Pivot work charges each source skeleton once and one supported pivot row. *)
+  Lemma pivot_row_work_bound : forall m k row, In row (rows m) ->
+    pivot_row_work k (row_of (M.get k m)) row <=
+      M.nodes row + K.bits k + 1 + supp m * (b m + 2 * ell m + 4).
+  Proof.
+    intros m k row Hin.
+    assert (Hsupport : forall q, In q (M.codes row) -> In q (support m)).
+    { intros q Hq. apply support_spec. right. apply in_flat_map. exists row. now split. }
+    pose proof (codes_support_length Z row m Hsupport) as Hcount.
+    apply rows_find in Hin. destruct Hin as [p Hrow].
+    unfold pivot_row_work. rewrite code_work_zero.
+    replace (supp m * (b m + 2 * ell m + 4)) with
+      (supp m + supp m * (b m + 2 * ell m + 3)) by ring.
+    destruct (M.get k row) as [a|] eqn:Ha.
+    - pose proof (row_get_bits m p row k a Hrow Ha) as Hprefix.
+      pose proof (code_work_bits_bound m (row_of (M.get k m)) (Z.size_nat a) (ell m)
+        (row_lookup_support m k) (row_lookup_bits m k)) as Hexit.
+      assert (Hexit_cap : code_work (fun z => Z.size_nat a + Z.size_nat z + 1)
+        (row_of (M.get k m)) <= supp m * (b m + 2 * ell m + 3)).
+      { eapply Nat.le_trans; [exact Hexit|]. apply Nat.mul_le_mono_l. lia. }
+      clear Hexit Hrow Ha Hsupport. lia.
+    - lia.
+  Qed.
+
+  (** Incremental row work adds the new-edge bits to the supported prefix and suffix. *)
+  Lemma increment_row_work_bound : forall m i j d row, In row (rows m) ->
+    increment_row_work i d (row_of (M.get j m)) row <=
+      M.nodes row + K.bits i + Z.size_nat d + ell m + 1 +
+      supp m * (b m + 2 * ell m + Z.size_nat d + 5).
+  Proof.
+    intros m i j d row Hin.
+    assert (Hsupport : forall q, In q (M.codes row) -> In q (support m)).
+    { intros q Hq. apply support_spec. right. apply in_flat_map. exists row. now split. }
+    pose proof (codes_support_length Z row m Hsupport) as Hcount.
+    apply rows_find in Hin. destruct Hin as [p Hrow].
+    unfold increment_row_work. rewrite code_work_zero.
+    replace (supp m * (b m + 2 * ell m + Z.size_nat d + 5)) with
+      (supp m + supp m * (b m + 2 * ell m + Z.size_nat d + 4)) by ring.
+    destruct (M.get i row) as [a|] eqn:Ha.
+    - pose proof (row_get_bits m p row i a Hrow Ha) as Hprefix.
+      pose proof (zbits_add_sum a d) as Hsum.
+      pose proof (code_work_bits_bound m (row_of (M.get j m))
+        (Z.size_nat (a + d)%Z) (ell m) (row_lookup_support m j) (row_lookup_bits m j))
+        as Hexit.
+      assert (Hexit_cap : code_work
+        (fun z => Z.size_nat (a + d)%Z + Z.size_nat z + 1) (row_of (M.get j m)) <=
+        supp m * (b m + 2 * ell m + Z.size_nat d + 4)).
+      { eapply Nat.le_trans; [exact Hexit|]. apply Nat.mul_le_mono_l. lia. }
+      clear Hexit Hrow Ha Hsupport Hsum. lia.
+    - lia.
+  Qed.
+
+  (** A positive quadratic budget covers the number of supported codes. *)
+  Lemma quadratic_work_count : forall n payload, 1 <= payload ->
+    n <= (n + 1)^2 * payload.
+  Proof.
+    intros n payload Hpositive. eapply Nat.le_trans with ((n + 1)^2).
+    - cbn [Nat.pow]. nia.
+    - replace ((n + 1)^2) with (((n + 1)^2) * 1) at 1 by ring.
+      now apply Nat.mul_le_mono_l.
+  Qed.
+
+  (** Summing a linear row allowance over the support yields a quadratic allowance. *)
+  Lemma quadratic_work_rows : forall n payload factor rowwork,
+    rowwork <= factor * (n + 1) * payload ->
+    n * rowwork <= factor * (n + 1)^2 * payload.
+  Proof.
+    intros n payload factor rowwork Hrow.
+    eapply Nat.le_trans; [apply Nat.mul_le_mono_l; exact Hrow|].
+    replace (n * (factor * (n + 1) * payload)) with
+      (factor * (n * (n + 1)) * payload) by ring.
+    apply Nat.mul_le_mono_r, Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** Pivot lookup and payload units fit four linear support allowances. *)
+  Lemma pivot_scalar_work_bound : forall n bb kk ee,
+    kk + 1 + n * (bb + 2 * ee + 4) <= 4 * (n + 1) * (bb + kk + ee + 1).
+  Proof.
+    intros n bb kk ee. nia.
+  Qed.
+
+  (** Incremental lookup and payload units fit six linear support allowances. *)
+  Lemma increment_scalar_work_bound : forall n bb kk ee dd,
+    kk + dd + ee + 1 + n * (bb + 2 * ee + dd + 5) <=
+      6 * (n + 1) * (bb + kk + ee + dd + 1).
+  Proof.
+    intros n bb kk ee dd. nia.
+  Qed.
+
+  (** Summing pivot callbacks preserves an additive charge for the source skeleton. *)
+  Lemma pivot_matrix_work_bound : forall m k,
+    code_work (pivot_row_work k (row_of (M.get k m))) m <=
+      6 * (supp m + 1)^2 * (b m + K.bits k + ell m + 1).
+  Proof.
+    intros m k.
+    assert (Hcount : length (M.codes m) <= supp m).
+    { apply codes_support_length. intros p Hp. apply support_spec. now left. }
+    pose proof (rows_length m) as Hrows.
+    assert (Hsum : sum_weight (pivot_row_work k (row_of (M.get k m))) (rows m) <=
+      sum_weight (fun row => M.nodes row +
+        (K.bits k + 1 + supp m * (b m + 2 * ell m + 4))) (rows m)).
+    { apply sum_weight_mono. intros row Hin.
+      pose proof (pivot_row_work_bound m k row Hin). lia. }
+    rewrite sum_weight_add, sum_weight_const in Hsum.
+    change (sum_weight (pivot_row_work k (row_of (M.get k m))) (rows m) <=
+      sum_weight M.nodes (rows m) + length (rows m) *
+        (K.bits k + 1 + supp m * (b m + 2 * ell m + 4))) in Hsum.
+    assert (Hprod : length (rows m) * (K.bits k + 1 +
+      supp m * (b m + 2 * ell m + 4)) <=
+      supp m * (K.bits k + 1 + supp m * (b m + 2 * ell m + 4))).
+    { apply Nat.mul_le_mono_r. lia. }
+    pose proof (skel_le m) as Hskel.
+    change (M.nodes m + sum_weight M.nodes (rows m) <=
+      (supp m + 1)^2 * (b m + 1)) in Hskel.
+    unfold code_work at 1. rewrite stored_weight_rows.
+    set (units := (supp m + 1)^2 * (b m + K.bits k + ell m + 1)).
+    replace (6 * (supp m + 1)^2 * (b m + K.bits k + ell m + 1)) with
+      (6 * units) by (unfold units; ring).
+    assert (Hcount_units : supp m <= units).
+    { unfold units. apply quadratic_work_count. lia. }
+    assert (Hskel_units : M.nodes m + sum_weight M.nodes (rows m) <= units).
+    { eapply Nat.le_trans; [exact Hskel|]. unfold units. apply Nat.mul_le_mono_l. lia. }
+    assert (Hprod_units : length (rows m) * (K.bits k + 1 +
+      supp m * (b m + 2 * ell m + 4)) <= 4 * units).
+    { eapply Nat.le_trans; [exact Hprod|]. unfold units.
+      replace (4 * ((supp m + 1)^2 * (b m + K.bits k + ell m + 1))) with
+        (4 * (supp m + 1)^2 * (b m + K.bits k + ell m + 1)) by ring.
+      apply quadratic_work_rows, pivot_scalar_work_bound. }
+    clear Hskel Hprod Hrows. clearbody units. lia.
+  Qed.
+
+  (** Incremental callback work remains quadratic in raw support and linear in bit bounds. *)
+  Lemma increment_matrix_work_bound : forall m i j d,
+    code_work (increment_row_work i d (row_of (M.get j m))) m <=
+      8 * (supp m + 1)^2 * (b m + K.bits i + ell m + Z.size_nat d + 1).
+  Proof.
+    intros m i j d.
+    assert (Hcount : length (M.codes m) <= supp m).
+    { apply codes_support_length. intros p Hp. apply support_spec. now left. }
+    pose proof (rows_length m) as Hrows.
+    assert (Hsum : sum_weight (increment_row_work i d (row_of (M.get j m))) (rows m) <=
+      sum_weight (fun row => M.nodes row + (K.bits i + Z.size_nat d + ell m + 1 +
+        supp m * (b m + 2 * ell m + Z.size_nat d + 5))) (rows m)).
+    { apply sum_weight_mono. intros row Hin.
+      pose proof (increment_row_work_bound m i j d row Hin). lia. }
+    rewrite sum_weight_add, sum_weight_const in Hsum.
+    change (sum_weight (increment_row_work i d (row_of (M.get j m))) (rows m) <=
+      sum_weight M.nodes (rows m) + length (rows m) * (K.bits i + Z.size_nat d + ell m + 1 +
+        supp m * (b m + 2 * ell m + Z.size_nat d + 5))) in Hsum.
+    assert (Hprod : length (rows m) * (K.bits i + Z.size_nat d + ell m + 1 +
+      supp m * (b m + 2 * ell m + Z.size_nat d + 5)) <=
+      supp m * (K.bits i + Z.size_nat d + ell m + 1 +
+        supp m * (b m + 2 * ell m + Z.size_nat d + 5))).
+    { apply Nat.mul_le_mono_r. lia. }
+    pose proof (skel_le m) as Hskel.
+    change (M.nodes m + sum_weight M.nodes (rows m) <=
+      (supp m + 1)^2 * (b m + 1)) in Hskel.
+    unfold code_work at 1. rewrite stored_weight_rows.
+    set (units := (supp m + 1)^2 * (b m + K.bits i + ell m + Z.size_nat d + 1)).
+    replace (8 * (supp m + 1)^2 * (b m + K.bits i + ell m + Z.size_nat d + 1)) with
+      (8 * units) by (unfold units; ring).
+    assert (Hcount_units : supp m <= units).
+    { unfold units. apply quadratic_work_count. lia. }
+    assert (Hskel_units : M.nodes m + sum_weight M.nodes (rows m) <= units).
+    { eapply Nat.le_trans; [exact Hskel|]. unfold units. apply Nat.mul_le_mono_l. lia. }
+    assert (Hprod_units : length (rows m) * (K.bits i + Z.size_nat d + ell m + 1 +
+      supp m * (b m + 2 * ell m + Z.size_nat d + 5)) <= 6 * units).
+    { eapply Nat.le_trans; [exact Hprod|]. unfold units.
+      replace (6 * ((supp m + 1)^2 * (b m + K.bits i + ell m + Z.size_nat d + 1))) with
+        (6 * (supp m + 1)^2 * (b m + K.bits i + ell m + Z.size_nat d + 1)) by ring.
+      apply quadratic_work_rows, increment_scalar_work_bound. }
+    clear Hskel Hprod Hrows. clearbody units. lia.
   Qed.
 End ZoneT.
