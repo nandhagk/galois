@@ -1192,18 +1192,49 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Assignment pays for annotation and one encoded-key insertion. *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [|m]; pose proof state_annotation_factor as Hfactor.
+    - change (1 <= c_state * N.of_nat (tsize e + X.bits x + 1 + 1))%N.
+      repeat rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
+    - change (1 + (1 + (T_annotate m e + 1) +
+        M.T_set x (eval e (Reached m)) m) <=
+        c_state * N.of_nat (tcost m e + size (Reached m) + X.bits x + 1 + 1))%N.
+      pose proof (annotate_time_reserve m e) as Htime.
+      pose proof (M.T_set_le V.t x (eval e (Reached m)) m) as Hset.
+      repeat rewrite Nat2N.inj_add in Hset. repeat rewrite Nat2N.inj_add.
+      change (N.of_nat 1) with 1%N in Hset |- *. nia.
+  Qed.
+  (** Havoc only inserts the top value at its encoded key. *)
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_state * N.of_nat (havoc_work x s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|m]; pose proof state_annotation_factor as Hfactor.
+    - change (1 <= c_state * N.of_nat (X.bits x + 1 + 1))%N.
+      repeat rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
+    - change (1 + M.T_set x V.top m <=
+        c_state * N.of_nat (size (Reached m) + X.bits x + 1 + 1))%N.
+      pose proof (M.T_set_le V.t x V.top m) as Hset.
+      repeat rewrite Nat2N.inj_add in Hset. repeat rewrite Nat2N.inj_add.
+      change (N.of_nat 1) with 1%N in Hset |- *. nia.
+  Qed.
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Evaluation extracts the root of one annotation pass. *)
   Lemma T_eval_le : forall e s,
     (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [|m]; pose proof state_annotation_factor as Hfactor.
+    - change (1 <= c_state * N.of_nat (tsize e + 1 + 1))%N.
+      repeat rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
+    - change (1 + (T_annotate m e + 1) <=
+        c_state * N.of_nat (tcost m e + 1 + 1))%N.
+      pose proof (annotate_time_reserve m e) as Htime.
+      repeat rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
+  Qed.
   Lemma T_annotate_le : forall m e,
     (T_annotate m e <= c_env * N.of_nat (tcost m e))%N.
   Proof.
