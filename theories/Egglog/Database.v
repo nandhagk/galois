@@ -6496,6 +6496,46 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply Pos.size_nat_monotone. lia.
   Qed.
 
+  (** Doubling a binary natural adds at most one bit. *)
+  Lemma database_double_bits : forall n, N.size_nat (2 * n) <= N.size_nat n + 1.
+  Proof.
+    intros [|p]; cbn [N.mul N.size_nat Pos.mul Pos.size_nat]; lia.
+  Qed.
+
+  (** A query length no greater than an input length fits the input's positive rank. *)
+  Lemma database_query_length_rank : forall n m, n <= m ->
+    (Npos (Pos.of_nat n) <= Npos (Pos.of_succ_nat m))%N.
+  Proof.
+    intros n m Hlength. change (Pos.of_nat n <= Pos.of_succ_nat m)%positive.
+    apply Pos2Nat.inj_le.
+    rewrite SuccNat2Pos.id_succ. destruct n as [|n].
+    - cbn. lia.
+    - rewrite Nat2Pos.id by lia. lia.
+  Qed.
+
+  (** Counter, query and stored-cell bounds together control the actual index width. *)
+  Lemma index_width_watermark : forall ix u bound,
+    (Npos (I.next ix) <= bound)%N ->
+    (Npos (Pos.of_nat (length u)) <= bound)%N ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat bound) ->
+    I.max_cell_bits ix <= N.size_nat bound ->
+    I.width ix u <= 4 * N.size_nat bound + 2.
+  Proof.
+    intros ix u bound Hnext Hlength Hcells Hstored.
+    assert (Hsum : (Npos (I.next ix + Pos.of_nat (length u)) <= 2 * bound)%N).
+    { change ((Npos (I.next ix) + Npos (Pos.of_nat (length u))) <= 2 * bound)%N. lia. }
+    pose proof (N_width_mono _ _ Hsum) as Hsum_bits.
+    change (Pos.size_nat (I.next ix + Pos.of_nat (length u)) <= N.size_nat (2 * bound))
+      in Hsum_bits.
+    pose proof (database_double_bits bound) as Hdouble.
+    assert (Hmaximum : fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 u <=
+      N.size_nat bound).
+    { clear -Hcells. induction u as [|c rest IH]; cbn [fold_right]; [lia |].
+      apply Nat.max_lub; [apply Hcells; now left |].
+      apply IH. intros d Hin. apply Hcells. now right. }
+    pose proof (I.width_le ix u). lia.
+  Qed.
+
   (** The exact watermark formula always covers the allocated identifier interval. *)
   Lemma wmark_ids : forall db, (ids db <= wmark db)%N.
   Proof.
@@ -7967,6 +8007,64 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
     lia.
   Qed.
+  (** The genuine cache-call counter is one of the recorded watermark values. *)
+  Lemma metadata_updates_wmark : forall db, metadata_ok db ->
+    (db_cache_updates db <= wmark db)%N.
+  Proof.
+    intros db Hmetadata. destruct Hmetadata as (_ & _ & Hcounter & _).
+    destruct (db_cache_updates db) as [|p] eqn:Hvalue; [lia |].
+    apply recorded_counters_wmark. apply Hcounter. reflexivity.
+  Qed.
+
+  (** Declared slot numbers fit the recorded size of the slot inventory. *)
+  Lemma metadata_slot_number : forall db s f perm, metadata_ok db ->
+    slot_of db s = Some (f, perm) -> (s <= wmark db)%N.
+  Proof.
+    intros db s f perm Hmetadata Hslot.
+    pose proof (slots_metadata_inside db s f perm Hmetadata Hslot) as Hinside.
+    destruct Hmetadata as (_ & Hslots & _ & _ & _ & _ & _ & Hbound).
+    pose proof (recorded_counters_wmark db _ Hslots) as Hrecorded.
+    rewrite Hbound in Hinside. rewrite N.succ_pos_spec in Hrecorded. lia.
+  Qed.
+
+  (** A cache call records the actual positive rank of its complete input tuple. *)
+  Lemma slots_update_rank_wmark : forall db b f u,
+    (Npos (Pos.of_succ_nat (length u)) <= wmark (slots_update b f u db))%N.
+  Proof.
+    intros db b f u. apply recorded_counters_wmark. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db)));
+      right; now left.
+  Qed.
+
+  (** Distinct fitting positions cannot outnumber the cells they select. *)
+  Lemma fitting_permutation_length : forall perm n,
+    NoDup perm -> Forall (fun p => p < n) perm -> length perm <= n.
+  Proof.
+    intros perm n Hdistinct Hpositions.
+    eapply Nat.le_trans with (length (seq 0 n)); [| rewrite length_seq; lia].
+    apply NoDup_incl_length; [exact Hdistinct |].
+    intros p Hin. apply in_seq. split; [lia |].
+    rewrite Forall_forall in Hpositions. exact (Hpositions p Hin).
+  Qed.
+
+  (** Every original slot index fits the watermark recorded after this cache call. *)
+  Lemma slots_update_query_width : forall db b f u s new v, metadata_ok db ->
+    length v <= length u ->
+    (forall c, In c v -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    I.width (index s new db) v <= 4 * N.size_nat (wmark (slots_update b f u db)) + 2.
+  Proof.
+    intros db b f u s new v Hmetadata Hlength Hcells.
+    destruct (metadata_wmark_index db s new Hmetadata) as [Hnext Hstored].
+    pose proof (wmark_slots_update b f u db) as Hmono.
+    pose proof (N_width_mono _ _ Hmono) as Hbits.
+    apply index_width_watermark.
+    - lia.
+    - eapply N.le_trans; [apply database_query_length_rank; exact Hlength |].
+      apply slots_update_rank_wmark.
+    - exact Hcells.
+    - lia.
+  Qed.
+
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
   Lemma F_slot_place : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
