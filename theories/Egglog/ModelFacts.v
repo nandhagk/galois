@@ -4,7 +4,7 @@
     For example, equal identifiers in a satisfying view have the same denotation.
     Builds on: Syntax, Model and Stdlib lists. *)
 
-From Stdlib Require Import List PArith NArith Lia Relations.Relation_Operators.
+From Stdlib Require Import List PArith NArith PeanoNat Lia Relations.Relation_Operators.
 From Galois.Base Require Import UnionFindSig KeySig MapSig Trie UnionFind.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
@@ -840,6 +840,63 @@ Module UnionFindCodeFacts.
   Proof.
     intros u bound Hwf Hmembers i Hi. apply Hmembers.
     apply repr_member; [exact Hwf|now apply Hmembers].
+  Qed.
+
+  (** A bounded allocation interval also bounds every key stored in the forest. *)
+  Lemma width_allocated : forall u bound,
+    (forall i, UnionFind.mem u i -> (Npos i <= bound)%N) ->
+    UnionFind.width u <= N.size_nat bound.
+  Proof.
+    intros u bound Hallocated.
+    assert (Hsupport : forall i, In i (UnionFind.support u) ->
+      Pos.size_nat i <= N.size_nat bound).
+    { intros i Hin. unfold UnionFind.support in Hin.
+      apply in_map_iff in Hin. destruct Hin as [[key parent] [Heq Hin]].
+      cbn [fst] in Heq. subst i.
+      apply PTrie.elements_spec in Hin.
+      assert (Hmember : UnionFind.mem u key).
+      { unfold UnionFind.mem. rewrite Hin. discriminate. }
+      specialize (Hallocated key Hmember).
+      destruct bound as [|bound]; [lia|].
+      cbn [N.size_nat]. destruct (Pos.eq_dec key bound) as [->|Hneq]; [reflexivity|].
+      apply Pos.size_nat_monotone. lia. }
+    unfold UnionFind.width. revert Hsupport.
+    induction (UnionFind.support u) as [|i keys IH]; intro Hsupport; cbn [fold_right].
+    - lia.
+    - apply Nat.max_lub.
+      + apply Hsupport. now left.
+      + apply IH. intros j Hj. apply Hsupport. now right.
+  Qed.
+
+  (** Adding the next positive identifier extends a contiguous allocation interval by one. *)
+  Lemma members_add_next : forall u bound, UnionFind.wf u ->
+    (forall i, UnionFind.mem u i <-> (Npos i <= bound)%N) ->
+    forall i, UnionFind.mem (UnionFindCode.add (N.succ_pos bound) u) i <->
+      (Npos i <= N.succ bound)%N.
+  Proof.
+    intros u bound Hwf Hmembers i. rewrite UnionFind.mem_add by exact Hwf.
+    rewrite Hmembers.
+    assert (Hnext : Npos (N.succ_pos bound) = N.succ bound).
+    { destruct bound; reflexivity. }
+    split.
+    - intros [Hi | Heq]; [lia | subst i; lia].
+    - intro Hi. destruct (N.eq_dec (Npos i) (N.succ bound)) as [Heq|Hneq].
+      + right. rewrite <- Hnext in Heq. now injection Heq.
+      + left. lia.
+  Qed.
+
+  (** Union of allocated endpoints preserves the exact membership interval. *)
+  Lemma members_union_present : forall x y u bound, UnionFind.wf u ->
+    (forall i, UnionFind.mem u i <-> (Npos i <= bound)%N) ->
+    (Npos x <= bound)%N -> (Npos y <= bound)%N ->
+    forall i, UnionFind.mem (snd (UnionFindCode.union x y u)) i <->
+      (Npos i <= bound)%N.
+  Proof.
+    intros x y u bound Hwf Hmembers Hx Hy i.
+    rewrite UnionFind.mem_union by exact Hwf. rewrite Hmembers.
+    split.
+    - intros [Hi | [Hix | Hiy]]; [exact Hi | subst i; exact Hx | subst i; exact Hy].
+    - intro Hi. now left.
   Qed.
 
 End UnionFindCodeFacts.
