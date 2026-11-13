@@ -1,10 +1,11 @@
-(** * Difference-bound matrix placeholders
+(** * Difference-bound matrices
 
-    These modules provide the zone state interface.
-    For example, closure returns an unreachable placeholder state.
-    Builds on: ZoneSig. *)
-From Stdlib Require Import List ZArith.
-From Argent Require Import Time Std.
+    Sparse matrices store finite bounds and interpret missing entries as infinity.
+    For example, a zero-to-variable entry bounds that variable from above.
+    Builds on: ZoneSig and keyed map operations. *)
+
+From Stdlib Require Import List ZArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig Code.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -18,38 +19,143 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
   Definition dbm := M.t (M.t Z).
   Definition t := reach dbm.
   Definition wparam := nat.
-  (* STUB-CODE *)
-  Definition leb (_ _ : t) := false.
-  (* STUB-CODE *)
+
+  Definition row_of (r : option (M.t Z)) : M.t Z :=
+    match r with Some row => row | None => M.empty end.
+
+  Definition bound_leb (a b : option Z) : bool :=
+    match a, b with
+    | _, None => true
+    | Some x, Some y => (x <=? y)%Z
+    | None, Some _ => false
+    end.
+
+  Definition row_leb (a b : option (M.t Z)) : bool :=
+    M.forall2b bound_leb (row_of a) (row_of b).
+
+  Definition leb (a b : t) : bool :=
+    match a, b with
+    | Unreached, _ => true
+    | Reached _, Unreached => false
+    | Reached ma, Reached mb => M.forall2b row_leb ma mb
+    end.
+
   Definition bot : t := Unreached.
-  (* STUB-CODE *)
-  Definition is_bot (_ : t) := false.
-  (* STUB-CODE *)
-  Definition join (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
+
+  Definition is_bot (s : t) : bool :=
+    match s with Unreached => true | Reached _ => false end.
+
+  Definition bound_join (a b : option Z) : option Z :=
+    match a, b with Some x, Some y => Some (Z.max x y) | _, _ => None end.
+
+  Definition row_join (a b : option (M.t Z)) : option (M.t Z) :=
+    match a, b with
+    | Some x, Some y => Some (M.merge bound_join x y)
+    | _, _ => None
+    end.
+
+  Definition join (a b : t) : t :=
+    match a, b with
+    | Unreached, _ => b
+    | _, Unreached => a
+    | Reached ma, Reached mb => Reached (M.merge row_join ma mb)
+    end.
+
   Definition top : t := Reached M.empty.
-  (* STUB-CODE *)
-  Definition meet (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition widen (_ : wparam) (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition narrow (_ _ : t) : t := Unreached.
+
+  Definition bound_meet (a b : option Z) : option Z :=
+    match a, b with
+    | Some x, Some y => Some (Z.min x y)
+    | None, _ => b
+    | _, None => a
+    end.
+
+  Definition row_meet (a b : option (M.t Z)) : option (M.t Z) :=
+    match a, b with
+    | Some x, Some y => Some (M.merge bound_meet x y)
+    | None, _ => b
+    | _, None => a
+    end.
+
+  Definition meet (a b : t) : t :=
+    match a, b with
+    | Reached ma, Reached mb => Reached (M.merge row_meet ma mb)
+    | _, _ => Unreached
+    end.
+
+  Definition bound_widen (a b : option Z) : option Z :=
+    match a, b with
+    | Some x, Some y => if (y <=? x)%Z then Some x else None
+    | _, _ => None
+    end.
+
+  Definition row_widen (a b : option (M.t Z)) : option (M.t Z) :=
+    match a with
+    | Some x => Some (M.merge bound_widen x (row_of b))
+    | None => None
+    end.
+
+  Definition widen (_ : wparam) (a b : t) : t :=
+    if leb b a then a else
+      match a, b with
+      | Unreached, _ => b
+      | _, Unreached => a
+      | Reached ma, Reached mb => Reached (M.merge row_widen ma mb)
+      end.
+
+  Definition narrow (a b : t) : t := meet a b.
+
+  Definition forget_row (x : X.t) (r : option (M.t Z))
+      (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row => Some (M.remove (Some x) row)
+    | None => None
+    end.
+
+  Definition havoc (x : X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m => Reached (M.merge (forget_row x) (M.remove (Some x) m) M.empty)
+    end.
+
   (* STUB-CODE *)
   Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition havoc (_ : X.t) (_ : t) : t := Unreached.
   (* STUB-CODE *)
   Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
   (* STUB-CODE *)
   Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
-  (* STUB-CODE *)
-  Definition entry (_ : dbm) (_ _ : K.t) : option Z := None.
-  (* STUB-CODE *)
-  Definition fw_round (_ : K.t) (m : dbm) : dbm := m.
+  Definition entry (m : dbm) (i j : K.t) : option Z :=
+    match M.get i m with Some row => M.get j row | None => None end.
+
+  Definition lower_bound (d : Z) (old : option Z) : Z :=
+    match old with Some z => Z.min d z | None => d end.
+
+  Definition add_cons (i j : K.t) (d : Z) (m : dbm) : dbm :=
+    let row := row_of (M.get i m) in
+    M.set i (M.set j (lower_bound d (M.get j row)) row) m.
+
+  Definition via_bound (a : Z) (old next : option Z) : option Z :=
+    match next with
+    | Some z => Some (lower_bound (a + z)%Z old)
+    | None => old
+    end.
+
+  Definition round_row (k : K.t) (pivot : M.t Z) (r : option (M.t Z))
+      (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row =>
+      Some (match M.get k row with
+        | Some a => M.merge (via_bound a) row pivot
+        | None => row
+        end)
+    | None => None
+    end.
+
+  Definition fw_round (k : K.t) (m : dbm) : dbm :=
+    M.merge (round_row k (row_of (M.get k m))) m M.empty.
+
   (* STUB-CODE *)
   Definition close (_ : dbm) : t := Unreached.
-  (* STUB-CODE *)
-  Definition add_cons (_ _ : K.t) (_ : Z) (m : dbm) : dbm := m.
   (* STUB-CODE *)
   Definition incr_close (_ _ : K.t) (_ : Z) (_ : dbm) : t := Unreached.
 End ZoneCode.
@@ -186,6 +292,19 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       N.to_nat (F.T_lin_of e).
   Definition range_bits (e : term L.op X.t) (s : t) : nat :=
     ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
+  TimeFun row_of.
+  TimeFun bound_leb.
+  TimeFun row_leb.
+  TimeFun bound_join.
+  TimeFun row_join.
+  TimeFun bound_meet.
+  TimeFun row_meet.
+  TimeFun bound_widen.
+  TimeFun row_widen.
+  TimeFun forget_row.
+  TimeFun lower_bound.
+  TimeFun via_bound.
+  TimeFun round_row.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -194,8 +313,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun is_bot.
   TimeFun widen.
   TimeFun narrow.
-  TimeFun assign.
   TimeFun havoc.
+  TimeFun assign.
   TimeFun assume.
   TimeFun range.
   TimeFun entry.
@@ -276,8 +395,141 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     | _, _ => False
     end.
   Definition k_zone : N := 1. (* STUB *)
+
+  (** Deduplication retains exactly the input and accumulator members. *)
+  Lemma dedup_membership : forall (A : Type) (eqb : A -> A -> bool),
+    (forall x y, eqb x y = true <-> x = y) -> forall xs acc x,
+    In x (fold_left (fun seen y => if existsb (eqb y) seen then seen else y :: seen)
+      xs acc) <-> In x xs \/ In x acc.
+  Proof.
+    intros A eqb Heq xs. induction xs as [|a xs IH]; intros acc x.
+    - cbn. tauto.
+    - cbn [fold_left]. destruct (existsb (eqb a) acc) eqn:Hseen.
+      + assert (Ha : In a acc).
+        { apply existsb_exists in Hseen. destruct Hseen as [y [Hy Hay]].
+          apply Heq in Hay. now subst y. }
+        rewrite IH. cbn [In]. split.
+        * tauto.
+        * intros [[Hax | Hin] | Hin].
+          -- subst x. now right.
+          -- now left.
+          -- now right.
+      + rewrite IH. cbn [In]. tauto.
+  Qed.
+
+  (** Deduplication preserves a duplicate-free accumulator. *)
+  Lemma dedup_nodup : forall (A : Type) (eqb : A -> A -> bool),
+    (forall x y, eqb x y = true <-> x = y) -> forall xs acc,
+    NoDup acc ->
+    NoDup (fold_left (fun seen y => if existsb (eqb y) seen then seen else y :: seen)
+      xs acc).
+  Proof.
+    intros A eqb Heq xs. induction xs as [|a xs IH]; intros acc Hacc.
+    - exact Hacc.
+    - cbn [fold_left]. destruct (existsb (eqb a) acc) eqn:Hseen; apply IH.
+      + exact Hacc.
+      + constructor; [|exact Hacc]. intro Ha.
+        assert (Hfound : existsb (eqb a) acc = true).
+        { apply existsb_exists. exists a. split; [exact Ha|apply Heq; reflexivity]. }
+        congruence.
+  Qed.
+
+  (** Support contains every outer code and every code of a stored row. *)
+  Lemma support_spec : forall m p,
+    In p (support m) <-> In p (M.codes m) \/ In p (flat_map M.codes (rows m)).
+  Proof.
+    intros m p. unfold support.
+    rewrite (dedup_membership positive Pos.eqb Pos.eqb_eq), in_app_iff.
+    cbn. tauto.
+  Qed.
+
+  (** A list maximum bounds each selected member. *)
+  Lemma maximum_member : forall (A : Type) (f : A -> nat) xs x,
+    In x xs -> f x <= fold_right Nat.max 0 (map f xs).
+  Proof.
+    intros A f xs. induction xs as [|a xs IH]; intros x Hin.
+    - contradiction.
+    - cbn in Hin |- *. destruct Hin as [Hax | Hin].
+      + subst x. apply Nat.le_max_l.
+      + eapply Nat.le_trans; [exact (IH x Hin)|apply Nat.le_max_r].
+  Qed.
+
+  (** A uniform bound on summands bounds their sum by length times that bound. *)
+  Lemma sum_members_bound : forall (A : Type) (f : A -> nat) xs upper,
+    (forall x, In x xs -> f x <= upper) ->
+    fold_right Nat.add 0 (map f xs) <= length xs * upper.
+  Proof.
+    intros A f xs. induction xs as [|a xs IH]; intros upper Hbound.
+    - cbn. lia.
+    - cbn. assert (Ha : f a <= upper) by (apply Hbound; now left).
+      assert (Htail : fold_right Nat.add 0 (map f xs) <= length xs * upper).
+      { apply IH. intros x Hin. apply Hbound. now right. }
+      lia.
+  Qed.
+
+  (** Every supported code fits the matrix key-bit bound. *)
+  Lemma support_bits : forall m p, In p (support m) -> Pos.size_nat p <= b m.
+  Proof.
+    intros m p Hin. unfold b. now apply maximum_member.
+  Qed.
+
+  (** Distinct stored codes inject into any support containing them. *)
+  Lemma codes_support_length : forall A (r : M.t A) m,
+    (forall p, In p (M.codes r) -> In p (support m)) -> length (M.codes r) <= supp m.
+  Proof.
+    intros A r m Hin. unfold supp. apply NoDup_incl_length.
+    - apply M.codes_nodup.
+    - exact Hin.
+  Qed.
+
+  (** A map whose codes lie in the support has a bounded skeleton. *)
+  Lemma nodes_support : forall A (r : M.t A) m,
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    M.nodes r <= supp m * (b m + 1).
+  Proof.
+    intros A r m Hin.
+    pose proof (M.nodes_le_codes A r) as Hnodes.
+    pose proof (codes_support_length A r m Hin) as Hlength.
+    assert (Hsum : fold_right Nat.add 0
+      (map (fun p => Pos.size_nat p + 1) (M.codes r)) <=
+      length (M.codes r) * (b m + 1)).
+    { apply sum_members_bound. intros p Hp.
+      pose proof (support_bits m p (Hin p Hp)). lia. }
+    nia.
+  Qed.
+
+  (** Row collection retains at most one row for each outer code. *)
+  Lemma rows_length : forall m, length (rows m) <= length (M.codes m).
+  Proof.
+    intro m. unfold rows. induction (M.codes m) as [|p ps IH].
+    - reflexivity.
+    - cbn. destruct (M.find p m); cbn; lia.
+  Qed.
+
+  (** Every successful raw row lookup is present in the row collection. *)
+  Lemma row_in_rows : forall m p row, M.find p m = Some row -> In row (rows m).
+  Proof.
+    intros m p row Hrow. unfold rows. apply in_flat_map. exists p. split.
+    - apply M.codes_spec. rewrite Hrow. discriminate.
+    - rewrite Hrow. now left.
+  Qed.
+
+  (** The stored codes cover the skeleton even when labels do not match their codes. *)
   Lemma skel_le : forall m, skel m <= (supp m + 1)^2 * (b m + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro m.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Houter) as Hlength.
+    pose proof (rows_length m) as Hrows.
+    assert (Hsum : fold_right Nat.add 0 (map M.nodes (rows m)) <=
+      length (rows m) * (supp m * (b m + 1))).
+    { apply sum_members_bound. intros row Hrow. apply nodes_support.
+      intros p Hp. apply support_spec. right. apply in_flat_map.
+      exists row. now split. }
+    unfold skel. cbn [Nat.pow]. nia.
+  Qed.
   Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 2 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
