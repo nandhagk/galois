@@ -9880,6 +9880,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
     In (Id i) (k ++ option_list o).
 
+  Lemma pop_loser_uses_transfer : forall db x db',
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    db_pop_loser db = Some (x, db') ->
+    forall y e, uses db' y e <->
+      (uses db y e /\ y <> x) \/
+      (y = fst (UnionFindCode.find x (db_forest db)) /\ uses db x e).
+  Proof.
+    intros db x db' Hmap Hpop y e.
+    unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'.
+    unfold uses. rewrite !uses_entries_facts.
+    - apply DatabaseUsesFacts.entries_transfer. exact Hmap.
+    - exact Hmap.
+    - apply DatabaseUsesFacts.wf_transfer. exact Hmap.
+  Qed.
+
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
