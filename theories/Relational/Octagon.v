@@ -170,28 +170,212 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     forall i j d, entry m i j = Some d -> (vl v j - vl v i <= d)%Z.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached m => models m v end.
+
+  (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
+  Definition raw_entry (m : dbm) (p q : positive) : option Z :=
+    M.find q (row_of (M.find p m)).
+
+  Lemma row_leb_spec : forall a b,
+    row_leb a b = true <->
+    forall q, bound_leb (M.find q (row_of a)) (M.find q (row_of b)) = true.
+  Proof.
+    intros a b. unfold row_leb. apply M.forall2b_spec. reflexivity.
+  Qed.
+
+  Lemma row_leb_empty : row_leb None None = true.
+  Proof.
+    apply row_leb_spec. intros q. cbn [row_of]. rewrite M.find_empty. reflexivity.
+  Qed.
+
+  (** Entrywise comparison visits actual codes, including codes with inconsistent labels. *)
+  Lemma leb_entries : forall ma mb,
+    leb (Reached ma) (Reached mb) = true <->
+    forall p q, bound_leb (raw_entry ma p q) (raw_entry mb p q) = true.
+  Proof.
+    intros ma mb. cbn [leb].
+    rewrite (M.forall2b_spec _ _ row_leb ma mb row_leb_empty).
+    split; intros H p; apply row_leb_spec; apply H.
+  Qed.
+
+  Lemma raw_entry_empty : forall p q, raw_entry M.empty p q = None.
+  Proof.
+    intros p q. unfold raw_entry. rewrite M.find_empty. apply M.find_empty.
+  Qed.
+
+  Lemma raw_entry_get : forall m i j,
+    raw_entry m (K.encode i) (K.encode j) = entry m i j.
+  Proof.
+    intros m i j. unfold raw_entry, entry.
+    rewrite <- (M.get_find _ i m). destruct (M.get i m) as [row|]; cbn [row_of].
+    - symmetry. apply M.get_find.
+    - apply M.find_empty.
+  Qed.
+
+  Lemma bound_leb_refl : forall a, bound_leb a a = true.
+  Proof.
+    intros [z|]; cbn [bound_leb]; [apply Z.leb_refl|reflexivity].
+  Qed.
+
+  Lemma bound_leb_trans : forall a b c,
+    bound_leb a b = true -> bound_leb b c = true -> bound_leb a c = true.
+  Proof.
+    intros [a|] [b|] [c|]; cbn [bound_leb]; try congruence.
+    repeat rewrite Z.leb_le. lia.
+  Qed.
+
+  Lemma raw_entry_join : forall ma mb p q,
+    raw_entry (M.merge row_join ma mb) p q =
+    bound_join (raw_entry ma p q) (raw_entry mb p q).
+  Proof.
+    intros ma mb p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p ma) as [ra|], (M.find p mb) as [rb|]; cbn [row_join row_of].
+    - apply M.find_merge. reflexivity.
+    - rewrite M.find_empty. destruct (M.find q ra); reflexivity.
+    - rewrite M.find_empty. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+  Qed.
+
+  Lemma raw_entry_meet : forall ma mb p q,
+    raw_entry (M.merge row_meet ma mb) p q =
+    bound_meet (raw_entry ma p q) (raw_entry mb p q).
+  Proof.
+    intros ma mb p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p ma) as [ra|], (M.find p mb) as [rb|]; cbn [row_meet row_of].
+    - apply M.find_merge. reflexivity.
+    - rewrite M.find_empty. destruct (M.find q ra); reflexivity.
+    - rewrite M.find_empty. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+  Qed.
+
+  Lemma raw_entry_widen : forall ma mb p q,
+    raw_entry (M.merge row_widen ma mb) p q =
+    bound_widen (raw_entry ma p q) (raw_entry mb p q).
+  Proof.
+    intros ma mb p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p ma) as [ra|], (M.find p mb) as [rb|]; cbn [row_widen row_of].
+    - apply M.find_merge. reflexivity.
+    - rewrite M.find_merge by reflexivity. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+  Qed.
+
+  Lemma bound_join_ub_l : forall a b, bound_leb a (bound_join a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_join]; try reflexivity.
+    apply Z.leb_le, Z.le_max_l.
+  Qed.
+
+  Lemma bound_join_ub_r : forall a b, bound_leb b (bound_join a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_join]; try reflexivity.
+    apply Z.leb_le, Z.le_max_r.
+  Qed.
+
+  Lemma bound_meet_lb_l : forall a b, bound_leb (bound_meet a b) a = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_meet]; try reflexivity.
+    - apply Z.leb_le, Z.le_min_l.
+    - apply Z.leb_refl.
+  Qed.
+
+  Lemma bound_meet_greatest : forall a b c,
+    bound_leb c a = true -> bound_leb c b = true ->
+    bound_leb c (bound_meet a b) = true.
+  Proof.
+    intros [a|] [b|] [c|]; cbn [bound_leb bound_meet]; try congruence.
+    repeat rewrite Z.leb_le. intros Ha Hb. apply Z.min_glb; assumption.
+  Qed.
+
+  Lemma bound_widen_ub_l : forall a b, bound_leb a (bound_widen a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_widen bound_leb]; try reflexivity.
+    destruct (b <=? a)%Z; cbn [bound_leb]; [apply Z.leb_refl|reflexivity].
+  Qed.
+
+  Lemma bound_widen_ub_r : forall a b, bound_leb b (bound_widen a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_widen bound_leb]; try reflexivity.
+    destruct (b <=? a)%Z eqn:Hle; cbn [bound_leb]; [exact Hle|reflexivity].
+  Qed.
+
+  (** Every sparse matrix compares below itself, even when labels are inconsistent. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|m]; [reflexivity|]. apply leb_entries. intros p q. apply bound_leb_refl.
+  Qed.
+
+  (** Entrywise comparison is transitive. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] [|mc]; cbn [leb]; try congruence.
+    change (leb (Reached ma) (Reached mb) = true ->
+      leb (Reached mb) (Reached mc) = true -> leb (Reached ma) (Reached mc) = true).
+    rewrite !leb_entries. intros Hab Hbc p q. eapply bound_leb_trans; [apply Hab|apply Hbc].
+  Qed.
+
+  (** The unreachable state is below every state. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a. reflexivity.
+  Qed.
+
+  (** The bottom predicate recognizes the unreachable constructor. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Every state recognized as bottom is least. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] b Hbot; [reflexivity|discriminate Hbot].
+  Qed.
+
+  (** Joining weakens every bound supplied by the left state. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros p q. rewrite raw_entry_join. apply bound_join_ub_l.
+  Qed.
+
+  (** Joining weakens every bound supplied by the right state. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros p q. rewrite raw_entry_join. apply bound_join_ub_r.
+  Qed.
+
+  (** The empty matrix imposes no upper bounds. *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|m]; [reflexivity|]. apply leb_entries. intros p q.
+    rewrite raw_entry_empty. destruct (raw_entry m p q); reflexivity.
+  Qed.
+
+  (** Widening keeps or discards each old finite bound. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a) eqn:Hle; [apply leb_refl|].
+    destruct a as [|ma], b as [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros i j. rewrite raw_entry_widen. apply bound_widen_ub_l.
+  Qed.
+
+  (** A retained old bound is also an upper bound for the candidate. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a) eqn:Hle; [exact Hle|].
+    destruct a as [|ma], b as [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros i j. rewrite raw_entry_widen. apply bound_widen_ub_r.
+  Qed.
+
+  (** A stable candidate returns the exact old representation. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hle. unfold widen. now rewrite Hle.
+  Qed.
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
   Proof. Admitted. (* STUB *)
@@ -199,13 +383,38 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] Hle; try (split; reflexivity); try discriminate Hle.
+    pose proof (proj1 (leb_entries mb ma) Hle) as Hentries.
+    split; apply leb_entries; intros p q; cbn [narrow meet].
+    - rewrite raw_entry_meet. apply bound_meet_greatest; [apply Hentries|apply bound_leb_refl].
+    - rewrite raw_entry_meet. apply bound_meet_lb_l.
+  Qed.
+
+  (** Every bound accepted by comparison follows from a source bound. *)
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] v Hle Hmodel; try contradiction; try discriminate Hle.
+    pose proof (proj1 (leb_entries ma mb) Hle) as Hentries. intros i j d Hentry.
+    specialize (Hentries (K.encode i) (K.encode j)).
+    rewrite !raw_entry_get, Hentry in Hentries.
+    destruct (entry ma i j) as [c|] eqn:Hsource; [|discriminate Hentries].
+    cbn [bound_leb] in Hentries. apply Z.leb_le in Hentries.
+    specialize (Hmodel i j c Hsource). lia.
+  Qed.
+
+  (** The unreachable constructor has no numeric models. *)
   Lemma ngamma_bot : forall v, ~ ngamma bot v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hmodel. exact Hmodel.
+  Qed.
+
+  (** Every numeric store satisfies an empty matrix. *)
   Lemma ngamma_top : forall v, ngamma top v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v i j d Hentry. unfold entry in Hentry.
+    rewrite M.get_empty in Hentry. discriminate Hentry.
+  Qed.
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
@@ -223,11 +432,21 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Reached matrices use the signed difference semantics. *)
   Lemma ngamma_reached : forall m v, ngamma (Reached m) v <-> models m v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Unreachable matrices have no numeric models. *)
   Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hmodel. exact Hmodel.
+  Qed.
 End Octagon.
 
 Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
