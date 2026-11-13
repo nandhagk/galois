@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import Bool Arith NArith Lia.
-From Argent Require Import Time.
+From Argent Require Import Time Tactics Std.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Base Require Import KeySig.
 
@@ -110,19 +110,44 @@ Module FlatT (K : KEY_T) <: BLATTICE_T.
     | FBot | FTop => 1
     | FVal a => K.bits a + 1
     end.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (K.c_key + 1)%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. lia.
+  Qed.
 
   Lemma T_leb_le : forall a b, (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; unfold c_lat, size;
+      time_unfold @T_leb; time_unfold @T_flat_leb; time_simpl; time_cbn.
+    all: try match goal with
+      | |- context [K.T_eqb ?x ?y] => pose proof (K.T_eqb_le x y)
+      end.
+    all: repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; unfold c_lat, size;
+      time_unfold @T_join; time_unfold @T_flat_join; time_simpl; time_cbn.
+    all: try match goal with
+      | |- context [K.T_eqb ?x ?y] => pose proof (K.T_eqb_le x y)
+      end.
+    all: repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|]; unfold c_lat, size; time_step.
+  Qed.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; unfold c_lat, size;
+      time_unfold @T_meet; time_simpl; time_cbn.
+    all: try match goal with
+      | |- context [K.T_eqb ?x ?y] => pose proof (K.T_eqb_le x y)
+      end.
+    all: repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
 End FlatT.
 
 Module FlatHeight (K : KEY)
