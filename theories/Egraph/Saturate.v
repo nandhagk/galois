@@ -270,6 +270,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   Lemma T2_k_sat : (k_sat <= c_sat)%N.
   Proof. Admitted. (* STUB *)
 
+  (** Adding inputs pays for their nodes at the final unit and identifier budget. *)
   Lemma T_inputs_le : forall B U ds rws ans es, front_ok ds rws ans es ->
     let p := C.compile ds rws ans in
     let db0 := E.load p (E.plan p) in
@@ -279,16 +280,19 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
         N.of_nat (D.num_slots db0 + 1) *
         N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es))%N.
   Proof. Admitted. (* STUB *)
+  (** Adding a flat expression folds over its nodes in order and returns its root cell. *)
   Lemma F10_add_expr_nodes : forall ds e db,
     expr_sorted (lookup_sorts ds) (lookup_kind ds) e ->
     snd (add_expr e db) = snd (add_nodes (expr_nodes V.t e) [] db) /\
     nth_error (fst (add_nodes (expr_nodes V.t e) [] db)) (expr_root V.t e) =
       Some (Id (fst (add_expr e db))).
   Proof. Admitted. (* STUB *)
+  (** Adding an expression separates node insertion cost from child-index work. *)
   Lemma T3_add_expr_split : forall e db,
     (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
       k_sat * N.of_nat (expr_work e))%N.
   Proof. Admitted. (* STUB *)
+  (** Adding a node pays its insertion cost and transfers the database potential. *)
   Lemma T4_add_node_amort : forall B U node cells db, D.wf db ->
     (forall i, In (Id i) cells -> D.allocated db i) ->
     match node with

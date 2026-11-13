@@ -223,12 +223,14 @@ Module ValidateT (O : OPS)
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
       k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** The tables retain the first body and certificate row for each identifier. *)
   Lemma F0_tables : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
     trie_get b (target_bodies (tables p s c)) = find_block b (blocks _ _ _ s) /\
     trie_get b (cert_envs (tables p s c)) = lookup b (fst c) /\
     index_row (cert_rows (tables p s c)) b = cert_live c b.
   Proof. Admitted. (* STUB *)
+  (** Building lookup tables scans the functions and certificate once. *)
   Lemma T0_tables : forall p s c,
     (T_tables p s c <= k_blocks *
       N.of_nat (function_size p + function_size s + cert_size c + 1) *

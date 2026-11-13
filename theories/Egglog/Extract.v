@@ -215,6 +215,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     (T_step cs db s <= k_step * N.of_nat (R db + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** The bounded extraction loop charges its initialization, steps and fuel. *)
   Lemma T2_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= T_initial cs db +
       T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db) +

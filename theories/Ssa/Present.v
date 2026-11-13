@@ -581,6 +581,7 @@ Module PresentT (O : OPS)
     Lemma nodes_agree : forall p,
       BC.nodes (R.prepare p) = map fst (first_blocks (blocks _ _ _ p)).
     Proof. Admitted. (* STUB *)
+    (** Each presented edge targets an exit of a listed source block. *)
     Lemma edges_syntax : forall p e, In e (BC.edges (R.prepare p)) ->
       exists body, In (BC.src (R.prepare p) e, body) (blocks _ _ _ p) /\
         In (BC.dst (R.prepare p) e) (exit_targets (term _ _ _ body)).

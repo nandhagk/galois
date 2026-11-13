@@ -144,6 +144,7 @@ Module LiveT (O : OPS)
           (U.universe (R.prepare p))))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Emitted rows name listed blocks and variables of the universe. *)
   Lemma live_in_ids : forall p row, In row (live_in p) ->
     In (fst row) (BC.nodes (R.prepare p)) /\ incl (snd row) (U.universe (R.prepare p)).
   Proof. Admitted. (* STUB *)

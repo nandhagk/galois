@@ -108,6 +108,7 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
     (T_compile_rule rw <= k_compile * N.of_nat (rewrite_size rw + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** The compiled rule's bit size is bounded by the square of its rewrite size. *)
   Lemma compile_rule_bits : forall rw,
     (N.of_nat (rule_bits (compile_rule rw)) <=
       c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.

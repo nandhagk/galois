@@ -499,18 +499,21 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       end + k_driver)%N.
   Proof. Admitted. (* STUB *)
 
+  (** A driver call pays for its round, limit test, flag test and advance. *)
   Lemma T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_driver p cp lim (nv, db) <= T_round p cp nv db + k_driver *
       N.of_nat (length (Syntax.slots V.t cp) +
         N.size_nat (D.ids (round p cp nv db)) + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** The loop pays for every driver call in the trace prefix and its fuel. *)
   Lemma T2b_loop_trace : forall p cp lim db,
     (T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) <=
       fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
         (firstn (N.to_nat (max_iter lim)) (trace p cp lim db))) +
       c_loopN * N.of_nat (N.size_nat (max_iter lim) + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** Applying a rule pays for its actions, referenced bindings and transferred potential. *)
   Lemma T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
     rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
