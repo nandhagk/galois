@@ -6,12 +6,15 @@
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.
-From Galois.Domains Require Import LangSig IntervalSig ZLang.
+From Galois.Bits Require Import Word Op.
+From Galois.Domains Require Import LangSig IntervalSig ZLang BitsLang.
 From Galois.Relational Require Import LinForm Linearize.
 Import List.ListNotations.
 
 Module Generic := LinearizeCode PosKeyCode ZLangCode.
 Module Integers := ZLinearizeCode PosKeyCode.
+Module Unsigned := BitsLinearizeUCode PosKeyCode.
+Module Signed := BitsLinearizeSCode PosKeyCode.
 
 (** The generic recognizer retains variable identity and its unit coefficient. *)
 Example generic_variable :
@@ -78,6 +81,111 @@ Qed.
 Example nonlinear_guard :
   Integers.atoms_of (ZGuardCmp Lt)
     [Node ZMul [Leaf 1%positive; Leaf 2%positive]; Node (ZConst 7%Z) []] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Unsigned literals retain their raw integer and the exact output wrap interval. *)
+Example unsigned_literal :
+  Unsigned.lin_of (Node (BConst 8%positive 260%Z) []) =
+    Some (Lin positive [] 260%Z, WrapTo 0%Z 255%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Signed literals use the inclusive two's complement interval. *)
+Example signed_literal :
+  Signed.lin_of (Node (BConst 8%positive 255%Z) []) =
+    Some (Lin positive [] 255%Z, WrapTo (-128)%Z 127%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Nested additions at a literal's known width combine into one final wrap. *)
+Example unsigned_nested_addition :
+  Unsigned.lin_of
+    (Node (BOp bvadd)
+      [Node (BOp bvadd) [Leaf 1%positive; Node (BConst 8%positive 250%Z) []];
+       Node (BConst 8%positive 10%Z) []]) =
+    Some (Lin positive [(1%positive, 1%Z)] 260%Z, WrapTo 0%Z 255%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An unannotated pair of variables cannot determine its output wrap width. *)
+Example unknown_width_addition :
+  Unsigned.lin_of (Node (BOp bvadd) [Leaf 1%positive; Leaf 2%positive]) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A constant word provides both a scalar coefficient and the required result width. *)
+Example unsigned_constant_product :
+  Unsigned.lin_of
+    (Node (BOp bvmul) [Node (BConst 8%positive 3%Z) []; Leaf 1%positive]) =
+    Some (Lin positive [(1%positive, 3%Z)] 0%Z, WrapTo 0%Z 255%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A true unsigned comparison keeps the original operand order. *)
+Example unsigned_less_guard :
+  Unsigned.atoms_of (BTruth true)
+    [Node (BOp bvult) [Leaf 1%positive; Leaf 2%positive]] =
+    [Atom positive (Lin positive [(1%positive, 1%Z)] 0%Z) NoWrap CLt
+      (Lin positive [(2%positive, 1%Z)] 0%Z) NoWrap].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A false strict comparison becomes the reversed non-strict inequality. *)
+Example unsigned_false_less_guard :
+  Unsigned.atoms_of (BTruth false)
+    [Node (BOp bvult) [Leaf 1%positive; Leaf 2%positive]] =
+    [Atom positive (Lin positive [(2%positive, 1%Z)] 0%Z) NoWrap CLe
+      (Lin positive [(1%positive, 1%Z)] 0%Z) NoWrap].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Signed comparison uses the same affine syntax in the signed numeric view. *)
+Example signed_less_guard :
+  Signed.atoms_of (BTruth true)
+    [Node (BOp bvslt) [Leaf 1%positive; Leaf 2%positive]] =
+    [Atom positive (Lin positive [(1%positive, 1%Z)] 0%Z) NoWrap CLt
+      (Lin positive [(2%positive, 1%Z)] 0%Z) NoWrap].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A signed comparison is not emitted in the unsigned numeric view. *)
+Example mismatched_comparison_view :
+  Unsigned.atoms_of (BTruth true)
+    [Node (BOp bvslt) [Leaf 1%positive; Leaf 2%positive]] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** False equality has no single affine comparison atom. *)
+Example false_word_equality :
+  Signed.atoms_of (BTruth false)
+    [Node (BOp bveq) [Leaf 1%positive; Leaf 2%positive]] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Raw word stores are normalized consistently by concrete evaluation and the numeric view. *)
+Example raw_word_guard :
+  let st := fun x : positive =>
+    if Pos.eqb x 1%positive then (8%positive, 260%Z) else (8%positive, 5%Z) in
+  let e := Node (BOp bvult) [Leaf 1%positive; Leaf 2%positive] in
+  let atoms := Unsigned.atoms_of (BTruth true) [e] in
+  let v := fun x => BitsNumU.num (st x) in
+  (eval_term BitsLang.eval st e,
+   map (fun a =>
+     (wrap_into (alw a) (eval_lin v (al a)),
+      wrap_into (arw a) (eval_lin v (ar a)))) atoms) =
+    (Some (1%positive, 1%Z), [(4%Z, 5%Z)]).
 Proof.
   vm_compute. reflexivity.
 Qed.
