@@ -4676,6 +4676,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply (proj2 (M.elements_spec _ m k row Houter)). exact Hrow.
   Qed.
 
+  Lemma matrix_ok_diagonal : forall m k z, dbm_wf m ->
+    matrix_ok m = true -> entry m k k = Some z -> (0 <= z)%Z.
+  Proof.
+    intros m k z Hwf Hscan Hentry.
+    assert (Hrow : exists row, M.get k m = Some row).
+    { unfold entry in Hentry. destruct (M.get k m) as [row|] eqn:Hget;
+        [now exists row|discriminate]. }
+    destruct Hrow as [row Hrow].
+    pose proof (matrix_ok_row m k row Hwf Hscan Hrow) as Hcheck.
+    unfold nonnegative in Hcheck. rewrite Hentry in Hcheck.
+    now apply Z.leb_le.
+  Qed.
+
   (** A passing incremental scan excludes a negative cycle through the first edge. *)
   Lemma incremental_first_cycle : forall m i j d, dbm_wf m ->
     tightly_closed m ->
@@ -4750,6 +4763,38 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     unfold nonnegative in Hcheck. rewrite Hvalue in Hcheck.
     apply Z.leb_le in Hcheck.
     cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia.
+  Qed.
+
+  (** A passing scan also excludes the cycle using both inserted edges. *)
+  Lemma incremental_mixed_cycle : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i)).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    pose proof (proj1 (incremental_seed_diagonals m i j Htight)) as Hseed.
+    change (entry seed i i = Some 0%Z) in Hseed.
+    destruct (entry seed j (flip j)) as [cross|] eqn:Hcross;
+      [|exact I].
+    destruct (entry seed (flip i) i) as [back|] eqn:Hback;
+      [|exact I].
+    pose proof (increment_below_first_twin i j d seed i i) as Hbound.
+    rewrite Hseed, Hcross, Hback in Hbound.
+    cbn [twin_path path_sum twin_prefix RelationalPathBounds.below] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next i i = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    pose proof (matrix_ok_diagonal next i value Hwfnext Hscan Hvalue) as Hz.
+    cbn [twin_path path_sum twin_prefix RelationalPathBounds.below]. lia.
   Qed.
 
   Lemma coherent_entry : forall m, coherent m ->
