@@ -261,6 +261,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition check_shape (_ : program V.t) (_ : compiled V.t) : bool := false.
   TimeFun check_shape.
   Definition k_check : N := 1. (* STUB *)
+  (** Two identifiers that occur in rows and are equal in the view are identical. *)
   Definition row_ids_unique (w : Model.view (V := V.t)) : Prop :=
     forall f k o f' k' o' i j, row w f k o -> row w f' k' o' ->
       In (Id i) (k ++ option_list o) -> In (Id j) (k' ++ option_list o') ->

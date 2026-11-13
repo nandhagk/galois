@@ -106,6 +106,7 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     saturate ds rws ans lim es = inr (IdLimit, db, cs) -> (D.ids db > max_ids lim)%N.
   Proof. Admitted. (* STUB *)
 
+  (** Accepted inputs load into a well-formed database of the planned program. *)
   Lemma inputs_loaded : forall ds rws ans es, front_ok ds rws ans es ->
     let p := C.compile ds rws ans in
     let cp := E.plan p in
