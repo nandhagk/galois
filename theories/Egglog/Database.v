@@ -9461,6 +9461,77 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - cbn [option_map] in Hright. rewrite fold_combine_none in Hright. discriminate.
   Qed.
 
+  (** Optional-output equivalence is symmetric under the actual equality log. *)
+  Lemma output_equiv_symmetric : forall db a b,
+    output_equiv db a b -> output_equiv db b a.
+  Proof.
+    intros db [a |] [b |] Hrelated; cbn [output_equiv] in *;
+      try contradiction; [| constructor].
+    eapply cell_rel_symmetric; [| exact Hrelated].
+    intros i j Hsame. now apply equality_log_sym.
+  Qed.
+
+  (** An output equivalent to a value has that exact value payload. *)
+  Lemma output_equiv_value_eq : forall db value output,
+    output_equiv db (Some (Val value)) output -> output = Some (Val value).
+  Proof.
+    intros db value [c |] Hrelated; cbn [output_equiv] in Hrelated; [| contradiction].
+    inversion Hrelated; subst; reflexivity.
+  Qed.
+
+  (** Executable optional-output normalization preserves output equivalence. *)
+  Lemma normal_output_equiv : forall db o, forest_agrees db ->
+    output_equiv db o (option_map (normal_cell db) o).
+  Proof.
+    intros db [c |] Hforest; cbn [output_equiv option_map]; [| constructor].
+    now apply forest_agrees_normal_cell.
+  Qed.
+
+  (** Active repair directly supplies the weak forest and equality agreement. *)
+  Lemma inv_on_forest_agrees : forall db work, inv_on db work -> forest_agrees db.
+  Proof.
+    intros db work Hinv. split.
+    - exact (inv_on_forest_wf db work Hinv).
+    - intros i j. exact (inv_on_same_repr db work i j Hinv).
+  Qed.
+
+  (** Active repair directly supplies each stored row's insertion shape condition. *)
+  Lemma inv_on_kind_ok : forall db work f k o, inv_on db work ->
+    row (view db) f k o -> kind_ok db f k o.
+  Proof.
+    intros db work f k o (_ & _ & _ & _ & _ & _ & _ & _ & Hkinds & _) Hrow.
+    exact (Hkinds f k o Hrow).
+  Qed.
+
+  (** A row's normalized key and output retain its source group after equality coarsening. *)
+  Lemma lineage_row_normalized : forall initial db db' f k o,
+    kind (view db') f = kind (view db) f ->
+    (forall i j, same (view db) i j -> same (view db') i j) ->
+    forest_agrees db -> forest_agrees db' ->
+    lineage initial db -> row (view db) f k o ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view db'))) (fst ko) (normal_key db k)) srcs /\
+      output_equiv db' (option_map (normal_cell db) o) (merged db' f (map snd srcs)).
+  Proof.
+    intros initial db db' f k o Hkind Hsame Hforest Hforest' Hlineage Hrow.
+    destruct (lineage_row_coarsen initial db db' f k o Hkind Hsame
+      (fun i => forest_agrees_id db i Hforest)
+      (fun i => forest_agrees_id db' i Hforest') Hlineage Hrow)
+      as [srcs [Hnonempty [Hsources Houtput]]].
+    assert (Hnormal : Forall2 (cell_rel (same (view db'))) k (normal_key db k)).
+    { eapply key_related_monotone; [exact Hsame |]. now apply forest_agrees_normal_key. }
+    exists srcs. split; [exact Hnonempty |]. split.
+    - rewrite Forall_forall in Hsources |- *. intros [args output] Hin.
+      destruct (Hsources (args, output) Hin) as [Hsource Hrelated].
+      cbn [fst snd] in Hsource, Hrelated |- *. split; [exact Hsource |].
+      eapply key_rel_transitive; [| exact Hrelated | exact Hnormal].
+      intros i j l Hij Hjl. eapply equality_log_trans; eassumption.
+    - eapply output_equiv_transitive with (b := o); [| exact Houtput].
+      apply output_equiv_symmetric. eapply output_equiv_monotone; [exact Hsame |].
+      now apply normal_output_equiv.
+  Qed.
+
   (** Lineage depends on the current view and representatives, not scheduling metadata. *)
   Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
     view db' = view db -> lineage initial db -> lineage initial db'.
