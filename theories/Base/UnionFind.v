@@ -173,6 +173,145 @@ Module UnionFind <: UNION_FIND.
     - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
   Qed.
 
+  (** The maximum rank over support bounds every member's rank. *)
+  Lemma support_rank_bound u rk x : mem u x ->
+    rk x <= fold_right (fun y n => Nat.max (rk y) n) 0 (support u).
+  Proof.
+    intro Hmem. apply support_spec in Hmem.
+    induction (support u) as [|y ys IH]; [contradiction|].
+    cbn [In] in Hmem. cbn [fold_right]. destruct Hmem as [Heq|Hin].
+    - subst y. apply Nat.le_max_l.
+    - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+  Qed.
+
+  (** A rank bounded above must stop increasing once the available rank gap is spent. *)
+  Lemma iter_root_rank u rk bound :
+    (forall y, mem u y -> rk y <= bound) ->
+    (forall y, mem u y -> mem u (parent_of y u)) ->
+    (forall y, mem u y -> ~ is_root u y -> rk y < rk (parent_of y u)) ->
+    forall n x, bound <= n + rk x -> mem u x ->
+      is_root u (Nat.iter n (fun y => parent_of y u) x).
+  Proof.
+    intros Hbound Hclosed Hstep. induction n as [|n IH]; intros x Hfuel Hmem.
+    - change (is_root u x). destruct (Pos.eq_dec (parent_of x u) x) as [Hroot|Hnon].
+      + exact Hroot.
+      + exfalso. pose proof (Hstep x Hmem Hnon) as Hrise.
+        pose proof (Hbound _ (Hclosed x Hmem)) as Hcap. lia.
+    - rewrite Nat.iter_succ_r.
+      destruct (Pos.eq_dec (parent_of x u) x) as [Hroot|Hnon].
+      + rewrite Hroot, (iter_root u x n Hroot). exact Hroot.
+      + apply IH; [|apply Hclosed; exact Hmem].
+        pose proof (Hstep x Hmem Hnon). lia.
+  Qed.
+
+  (** A parent step never lowers a member's ghost rank. *)
+  Lemma rank_parent_le u rk x : ranked u rk -> mem u x -> rk x <= rk (parent_of x u).
+  Proof.
+    intros [Hstep _] Hmem. destruct (Pos.eq_dec (parent_of x u) x) as [Heq|Hne].
+    - rewrite Heq. lia.
+    - pose proof (Hstep x Hmem Hne). lia.
+  Qed.
+
+  (** Parent iteration never lowers a member's ghost rank. *)
+  Lemma rank_iter_le u rk x n : wf u -> ranked u rk -> mem u x ->
+    rk x <= rk (Nat.iter n (fun y => parent_of y u) x).
+  Proof.
+    intros Hwf Hrank Hmem. induction n as [|n IH]; [reflexivity|].
+    rewrite Nat.iter_succ.
+    pose proof (rank_parent_le u rk _ Hrank (iter_mem u x n Hwf Hmem)). lia.
+  Qed.
+
+  (** Finite support and the root size condition bound every member rank logarithmically. *)
+  Lemma rank_log u rk x : wf u -> ranked u rk -> mem u x ->
+    rk x <= Nat.log2 (card u).
+  Proof.
+    intros Hwf Hrank Hmem.
+    set (bound := fold_right (fun y n => Nat.max (rk y) n) 0 (support u)).
+    assert (Hroot : is_root u (Nat.iter bound (fun y => parent_of y u) x)).
+    { eapply iter_root_rank with (rk := rk) (bound := bound).
+      - intros y Hy. apply support_rank_bound. exact Hy.
+      - intros y Hy. apply parent_mem; assumption.
+      - exact (proj1 Hrank).
+      - lia.
+      - exact Hmem. }
+    pose proof (iter_mem u x bound Hwf Hmem) as Hrmem.
+    pose proof (proj2 Hrank _ Hrmem Hroot) as Hpow.
+    pose proof (size_member_bound u _ Hwf Hrmem) as Hsize.
+    pose proof (rank_iter_le u rk x bound Hwf Hrank Hmem) as Hrankle.
+    assert (Hcard : 0 < card u).
+    { pose proof (Nat.pow_nonzero 2 (rk (Nat.iter bound (fun y => parent_of y u) x))
+        ltac:(lia)). lia. }
+    pose proof (proj1 (Nat.log2_le_pow2 (card u)
+      (rk (Nat.iter bound (fun y => parent_of y u) x)) Hcard) ltac:(lia)) as Hlog.
+    lia.
+  Qed.
+
+  (** Once an iteration reaches a root, every later iteration has the same value. *)
+  Lemma iter_stable u x n m :
+    is_root u (Nat.iter n (fun y => parent_of y u) x) -> n <= m ->
+    Nat.iter m (fun y => parent_of y u) x = Nat.iter n (fun y => parent_of y u) x.
+  Proof.
+    intros Hroot Hle. replace m with ((m - n) + n) by lia.
+    rewrite Nat.iter_add. apply iter_root. exact Hroot.
+  Qed.
+
+  (** The logarithmic rank budget suffices for every query, including absent keys. *)
+  Lemma iter_root_log u x n : wf u -> Nat.log2 (card u) <= n ->
+    is_root u (Nat.iter n (fun y => parent_of y u) x).
+  Proof.
+    intros Hwf Hfuel. destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hget.
+    - destruct (proj2 (proj2 (proj2 (proj2 Hwf)))) as [rk Hrank].
+      eapply iter_root_rank with (rk := rk) (bound := Nat.log2 (card u)).
+      + intros y Hy. exact (rank_log u rk y Hwf Hrank Hy).
+      + intros y Hy. apply parent_mem; assumption.
+      + exact (proj1 Hrank).
+      + lia.
+      + unfold mem. rewrite Hget. discriminate.
+    - assert (Hroot : is_root u x).
+      { apply parent_fresh. unfold mem. rewrite Hget. tauto. }
+      rewrite (iter_root u x n Hroot). exact Hroot.
+  Qed.
+
+  (** The specified representative is a root. *)
+  Lemma repr_root u x : wf u -> is_root u (repr u x).
+  Proof.
+    intro Hwf. apply iter_root_log; [exact Hwf|]. apply Nat.log2_le_lin. lia.
+  Qed.
+
+  (** Every sufficiently long parent iteration returns the specified representative. *)
+  Lemma iter_repr_ge u x n : wf u -> Nat.log2 (card u) <= n ->
+    Nat.iter n (fun y => parent_of y u) x = repr u x.
+  Proof.
+    intros Hwf Hn.
+    pose proof (iter_root_log u x (Nat.log2 (card u)) Hwf (Nat.le_refl _)) as Hroot.
+    rewrite (iter_stable u x (Nat.log2 (card u)) n Hroot Hn).
+    unfold repr. symmetry. apply iter_stable; [exact Hroot|].
+    apply Nat.log2_le_lin. lia.
+  Qed.
+
+  (** A parent step leaves the representative unchanged. *)
+  Lemma repr_parent u x : wf u -> repr u (parent_of x u) = repr u x.
+  Proof.
+    intro Hwf. unfold repr.
+    rewrite (@Nat.iter_swap (card u) positive (fun y => parent_of y u) x).
+    exact (repr_root u x Hwf).
+  Qed.
+
+  (** Iterating parents leaves the representative unchanged. *)
+  Lemma repr_iter u x n : wf u ->
+    repr u (Nat.iter n (fun y => parent_of y u) x) = repr u x.
+  Proof.
+    intro Hwf. induction n as [|n IH]; [reflexivity|].
+    rewrite Nat.iter_succ, repr_parent by exact Hwf. exact IH.
+  Qed.
+
+  (** A member's representative has at least its original ghost rank. *)
+  Lemma rank_le_repr u rk x : wf u -> ranked u rk -> mem u x ->
+    rk x <= rk (repr u x).
+  Proof.
+    apply rank_iter_le.
+  Qed.
+
   (** ** End forest and walk foundations *)
 
   (** Adding a singleton extends the lookup domain on every raw forest. *)
@@ -196,6 +335,68 @@ Module UnionFind <: UNION_FIND.
     - rewrite PTrie.get_set_other by exact Hne. reflexivity.
   Qed.
 
+  (** Equal membership predicates give permutations of the finite support lists. *)
+  Lemma support_perm u v : (forall x, mem u x <-> mem v x) ->
+    Permutation (support u) (support v).
+  Proof.
+    intro Hmem. apply NoDup_Permutation; try apply support_nodup.
+    intro x. rewrite !support_spec. apply Hmem.
+  Qed.
+
+  (** Filtering a permutation preserves its selected cardinality. *)
+  Lemma filter_length_perm {A} (f : A -> bool) xs ys :
+    Permutation xs ys -> length (filter f xs) = length (filter f ys).
+  Proof.
+    intro Hperm. induction Hperm as [|a xs ys Hperm IH|a b xs|xs ys zs Hxy IHxy Hyz IHyz].
+    - reflexivity.
+    - cbn [filter]. destruct (f a); cbn [length]; lia.
+    - cbn [filter]. destruct (f a), (f b); reflexivity.
+    - congruence.
+  Qed.
+
+  (** Membership and representatives determine every class size. *)
+  Lemma size_of_transport u v x :
+    (forall y, mem u y <-> mem v y) ->
+    (forall y, repr u y = repr v y) -> size_of u x = size_of v x.
+  Proof.
+    intros Hmem Hrepr. unfold size_of.
+    destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hu;
+      destruct (PTrieCode.get x (parents v)) as [q|] eqn:Hv.
+    - assert (Hfilter :
+        filter (fun y => Pos.eqb (repr u y) (repr u x)) (support u) =
+        filter (fun y => Pos.eqb (repr v y) (repr v x)) (support u)).
+      { apply filter_ext. intro y. now rewrite (Hrepr y), (Hrepr x). }
+      rewrite Hfilter. apply filter_length_perm. apply support_perm. exact Hmem.
+    - exfalso. assert (Hknown : mem v x).
+      { apply Hmem. unfold mem. rewrite Hu. discriminate. }
+      apply Hknown. exact Hv.
+    - exfalso. assert (Hknown : mem u x).
+      { apply Hmem. unfold mem. rewrite Hv. discriminate. }
+      apply Hknown. exact Hu.
+    - reflexivity.
+  Qed.
+
+  (** A uniform bound on all members bounds the stored width. *)
+  Lemma width_le_members u bound :
+    (forall x, mem u x -> Pos.size_nat x <= bound) -> width u <= bound.
+  Proof.
+    intro Hbound. unfold width.
+    assert (Hall : Forall (fun x => Pos.size_nat x <= bound) (support u)).
+    { apply Forall_forall. intros x Hin. apply Hbound, support_spec. exact Hin. }
+    induction Hall as [|x xs Hx Hxs IH]; cbn [fold_right]; lia.
+  Qed.
+
+  (** Adding an absent key adds exactly one support entry. *)
+  Lemma support_add_fresh x u : ~ mem u x ->
+    Permutation (support (add x u)) (x :: support u).
+  Proof.
+    intro Hfresh. apply NoDup_Permutation.
+    - apply support_nodup.
+    - constructor; [intro Hin; apply Hfresh, support_spec; exact Hin|apply support_nodup].
+    - intro y. rewrite support_spec, mem_add_raw. cbn [In].
+      rewrite support_spec. intuition congruence.
+  Qed.
+
   Lemma wf_empty : wf empty.
   Proof.
     unfold wf. split; [reflexivity|]. split.
@@ -210,6 +411,73 @@ Module UnionFind <: UNION_FIND.
             apply Hmem; apply PTrie.get_empty.
   Qed.
   Lemma wf_add   : forall x u, wf u -> wf (add x u). Proof. Admitted. (* STUB *)
+  (** ** Compression and find helpers *)
+
+  (** Repeated updates replace exactly the keys listed in the compression path. *)
+  Lemma fold_compress_get (r : positive) (path : list positive) (z : positive) :
+    forall m : PTrieCode.t positive,
+    PTrieCode.get z (fold_left (fun m y => PTrieCode.set y r m) path m) =
+      if in_dec Pos.eq_dec z path then Some r else PTrieCode.get z m.
+  Proof.
+    induction path as [|y path IH]; intro m; [reflexivity|].
+    cbn [fold_left]. rewrite IH.
+    destruct (in_dec Pos.eq_dec z path) as [Hin | Hout].
+    - destruct (in_dec Pos.eq_dec z (y :: path)) as [Hyes | Hno]; [reflexivity|].
+      exfalso. apply Hno. right; exact Hin.
+    - destruct (Pos.eq_dec z y) as [Heq | Hne].
+      + subst z. rewrite PTrie.get_set_same.
+        destruct (in_dec Pos.eq_dec y (y :: path)) as [Hyes | Hno]; [reflexivity|].
+        exfalso. apply Hno. left; reflexivity.
+      + rewrite PTrie.get_set_other by exact Hne.
+        destruct (in_dec Pos.eq_dec z (y :: path)) as [Hin | Hno]; [|reflexivity].
+        destruct Hin as [Heq | Hin]; [congruence | contradiction].
+  Qed.
+
+  (** Compression redirects the listed parent bindings and preserves every other lookup. *)
+  Lemma compress_get r path u z :
+    PTrieCode.get z (parents (compress r path u)) =
+      if in_dec Pos.eq_dec z path then Some r else PTrieCode.get z (parents u).
+  Proof.
+    apply fold_compress_get.
+  Qed.
+
+  (** Updating existing path members preserves the parent-map domain. *)
+  Lemma mem_compress r path u z :
+    (forall y, In y path -> mem u y) -> (mem (compress r path u) z <-> mem u z).
+  Proof.
+    intro Hpath. unfold mem. rewrite compress_get.
+    destruct (in_dec Pos.eq_dec z path) as [Hin | Hout]; [|reflexivity].
+    split; [intros _; apply Hpath; exact Hin | intros _; discriminate].
+  Qed.
+
+  (** Compression leaves the stored membership count unchanged. *)
+  Lemma card_compress r path u : card (compress r path u) = card u.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A compressed parent is the selected root exactly on the supplied path. *)
+  Lemma parent_compress r path u z :
+    parent_of z (compress r path u) =
+      if in_dec Pos.eq_dec z path then r else parent_of z u.
+  Proof.
+    unfold parent_of. rewrite compress_get.
+    destruct (in_dec Pos.eq_dec z path); reflexivity.
+  Qed.
+
+  (** Redirecting nonroot members of one class leaves precisely the old roots fixed. *)
+  Lemma root_compress r path u z :
+    (forall y, In y path -> repr u y = r /\ y <> r) ->
+    (is_root (compress r path u) z <-> is_root u z).
+  Proof.
+    intro Hpath. unfold is_root at 1. rewrite parent_compress.
+    destruct (in_dec Pos.eq_dec z path) as [Hin | Hout]; [|reflexivity].
+    destruct (Hpath z Hin) as [Hrepr Hne]. split; [congruence|].
+    intro Hroot. pose proof (repr_of_root u z Hroot). congruence.
+  Qed.
+
+  (** ** End compression and find helpers *)
+
   Lemma wf_find  : forall x u, wf u -> wf (snd (find x u)). Proof. Admitted. (* STUB *)
   Lemma wf_union : forall x y u, wf u -> wf (snd (union x y u)). Proof. Admitted. (* STUB *)
   Lemma mem_add   : forall x u y, wf u -> (mem (add x u) y <-> mem u y \/ y = x).
@@ -220,7 +488,10 @@ Module UnionFind <: UNION_FIND.
   Lemma mem_union : forall x y u z, wf u -> (mem (snd (union x y u)) z <-> mem u z \/ z = x \/ z = y).
   Proof. Admitted. (* STUB *)
   Lemma repr_empty : forall x, repr empty x = x. Proof. reflexivity. Qed.
-  Lemma repr_idem  : forall u x, wf u -> repr u (repr u x) = repr u x. Proof. Admitted. (* STUB *)
+  Lemma repr_idem  : forall u x, wf u -> repr u (repr u x) = repr u x.
+  Proof.
+    intros u x Hwf. apply repr_of_root. apply repr_root. exact Hwf.
+  Qed.
   Lemma repr_add   : forall x u y, wf u -> repr (add x u) y = repr u y. Proof. Admitted. (* STUB *)
   Lemma find_repr  : forall x u, wf u -> fst (find x u) = repr u x. Proof. Admitted. (* STUB *)
   Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y. Proof. Admitted. (* STUB *)
@@ -274,7 +545,12 @@ Module UnionFind <: UNION_FIND.
   Qed.
   Lemma width_add : forall x u, wf u ->
   width (add x u) <= Nat.max (width u) (Pos.size_nat x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x u Hwf. apply width_le_members. intros y Hy.
+    apply mem_add_raw in Hy. destruct Hy as [Hy|Hy].
+    - eapply Nat.le_trans; [apply support_width; exact Hy|apply Nat.le_max_l].
+    - subst y. apply Nat.le_max_r.
+  Qed.
   Lemma width_find : forall x u, wf u -> width (snd (find x u)) <= width u.
   Proof. Admitted. (* STUB *)
   Lemma width_union : forall x y u, wf u ->
@@ -322,7 +598,9 @@ Module UnionFindT <: UNION_FIND_ALL.
   Qed.
   Lemma F2_rank_log : forall u rk x, wf u -> ranked u rk -> mem u x ->
     rk x <= Nat.log2 (card u).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact rank_log.
+  Qed.
   Lemma F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
   Proof. Admitted. (* STUB *)
   Lemma F4_walk_path : forall x u, wf u ->
