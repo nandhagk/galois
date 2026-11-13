@@ -872,6 +872,10 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
           (runtime_set_union true ((i, j) :: runtime_equalities (db_runtime db))
             (loser :: runtime_queue (db_runtime db)) (db_runtime db)) next)
     end.
+  Definition allocate_id (i : positive) (db : t) : t :=
+    database_set_forest (UnionFindCode.add i (db_forest db))
+      (database_set_runtime
+        (runtime_set_allocated (Npos i) (runtime_set_changed true (db_runtime db))) db).
   Definition make (f : positive) (k : list (cell V.t)) (db : t) : positive * t :=
     let ck := normal_key db k in
     let previous := row_get f ck db in
@@ -879,9 +883,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | Some (Some (Id j)) => (fst (UnionFindCode.find j (db_forest db)), db)
     | _ =>
       let i := N.succ_pos (runtime_allocated (db_runtime db)) in
-      let fresh := database_set_forest (UnionFindCode.add i (db_forest db))
-        (database_set_runtime
-          (runtime_set_allocated (Npos i) (runtime_set_changed true (db_runtime db))) db) in
+      let fresh := allocate_id i db in
       let next := match kind_get f db with
         | Some OId => row_replace f ck previous (Some (Id i)) fresh
         | _ => fresh
@@ -1455,6 +1457,44 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros f k [before |] o db; unfold row_replace;
       rewrite row_write_forest, !slots_update_forest; reflexivity.
   Qed.
+
+  (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
+  Lemma allocate_id_view : forall i db, view (allocate_id i db) = view db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The allocation wrapper stores the supplied identifier as its new allocation bound. *)
+  Lemma allocate_id_ids : forall i db, ids (allocate_id i db) = Npos i.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Every stored output of a declared constructor is an identifier. *)
+  Lemma constructor_old : forall db f k o, wf db -> kind (view db) f = Some OId ->
+    old db f k = Some o -> exists i, o = Some (Id i).
+  Proof.
+    intros db f k o Hwf Hkind Hrow.
+    pose proof (wf_row_kind db Hwf f k o Hrow) as Houtput.
+    rewrite Hkind in Houtput. destruct o as [[i | v] |]; try contradiction.
+    exists i. reflexivity.
+  Qed.
+
+  (** Writing a constructor at an absent key has exactly the public extension shape. *)
+  Lemma fresh_constructor_extension : forall db f k i,
+    old db f (map (canon db) k) = None ->
+    extends_by db
+      (row_replace f (map (canon db) k) None (Some (Id i)) (allocate_id i db)) f k i.
+  Proof.
+    intros db f k i Habsent. unfold extends_by.
+    rewrite row_replace_ids, allocate_id_ids. split; [reflexivity |].
+    rewrite row_replace_kind, allocate_id_view. split; [reflexivity |]. split.
+    - intros a b. rewrite row_replace_same, allocate_id_view. split.
+      + intro Hsame. now left.
+      + intros [Hsame | [-> ->]]; [exact Hsame | apply equality_log_refl].
+    - intros g args output. rewrite row_replace_fresh by exact Habsent.
+      now rewrite allocate_id_view.
+  Qed.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
@@ -1632,7 +1672,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       i = repr db j /\ db' = db) \/
     (fresh_id db i /\ row (view db') f (map (canon db) k) (Some (Id i)) /\
       extends_by db db' f k i).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf Hkind. unfold make.
+    rewrite (normal_key_correct db k Hwf). fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous eqn:Hprevious.
+    destruct previous as [before |].
+    - destruct (constructor_old db f (map (canon db) k) before Hwf Hkind
+        (eq_sym Hprevious)) as [j ->].
+      left. exists j. split; [exact (eq_sym Hprevious) |]. split; [| reflexivity].
+      apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - change (kind_get f db = Some OId) in Hkind. rewrite Hkind.
+      right. split; [reflexivity |]. split.
+      + apply row_replace_binding. right. split; reflexivity.
+      + apply fresh_constructor_extension. exact (eq_sym Hprevious).
+  Qed.
 
   (** Union adds precisely the requested equality closure. *)
   Lemma union_same : forall i j db k l, wf db ->
@@ -2109,6 +2162,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun find.
   TimeFun lookup.
   TimeFun union.
+  TimeFun allocate_id.
   TimeFun make.
   TimeFun put.
   TimeFun db_rstep.
