@@ -714,6 +714,29 @@ Definition database_max_name (ds : list decl) : positive :=
   fold_right (fun d bound => Pos.max (name d) bound) 1%positive ds.
 TimeFun database_max_name.
 
+(** Adding an earlier declaration preserves the presence of every already-declared name. *)
+Lemma database_declaration_cons_nonempty : forall ds d f,
+  lookup_kind ds f <> None -> lookup_kind (d :: ds) f <> None.
+Proof.
+  intros ds d f Hpresent. cbn [lookup_kind].
+  destruct (Pos.eqb (name d) f); [discriminate | exact Hpresent].
+Qed.
+
+(** The stored name maximum is either the constant base or an actual declared name. *)
+Lemma database_max_name_attained : forall ds,
+  database_max_name ds = 1%positive \/ lookup_kind ds (database_max_name ds) <> None.
+Proof.
+  induction ds as [| d ds IH]; [now left |].
+  assert (Htail : database_max_name ds = 1%positive \/
+    lookup_kind (d :: ds) (database_max_name ds) <> None).
+  { destruct IH as [Hbase | Hpresent]; [now left |].
+    right. now apply database_declaration_cons_nonempty. }
+  change (Pos.max (name d) (database_max_name ds) = 1%positive \/
+    lookup_kind (d :: ds) (Pos.max (name d) (database_max_name ds)) <> None).
+  unfold Pos.max. destruct (Pos.compare (name d) (database_max_name ds)); try exact Htail.
+  right. cbn [lookup_kind]. rewrite Pos.eqb_refl. discriminate.
+Qed.
+
 Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_slot_layout))
     (groups : PTrieCode.t (list (N * database_slot_layout)))
     : PTrieCode.t (list (N * database_slot_layout)) :=
@@ -1391,7 +1414,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       I.wf (length perm) (index s new db)) /\
     (runtime_function_slots (db_runtime db) =
       database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty) /\
-    projection_counts_ok db.
+    projection_counts_ok db /\
+    (runtime_max_name (db_runtime db) = 1%positive \/
+      kind (view db) (runtime_max_name (db_runtime db)) <> None).
 
   (** The stored invariant supplies forest. *)
   Lemma wf_forest : forall db, database_wf db -> UnionFind.wf (db_forest db).
@@ -1523,6 +1548,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** The invariant ties cached projection counts to the actual row map. *)
   Lemma wf_projection_counts : forall db, database_wf db -> projection_counts_ok db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The comparison guard uses an attained declaration maximum or the constant base. *)
+  Lemma wf_max_name_attained : forall db, database_wf db ->
+    runtime_max_name (db_runtime db) = 1%positive \/
+      kind (view db) (runtime_max_name (db_runtime db)) <> None.
   Proof.
     unfold database_wf. tauto.
   Qed.
@@ -2806,7 +2839,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     { rewrite Hqueue. unfold allocated. rewrite row_replace_ids. exact (wf_queue_allocated db Hwf). }
     split; [exact (row_replace_canonical db f k previous o Hwf Hcanonical) |].
     split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
-    split; [rewrite Hgroups, row_replace_slots; exact (wf_group_table db Hwf) | exact Hcounts].
+    split; [rewrite Hgroups, row_replace_slots; exact (wf_group_table db Hwf) |].
+    split; [exact Hcounts |]. rewrite Hmax, row_replace_kind.
+    exact (wf_max_name_attained db Hwf).
   Qed.
 
   (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
@@ -3045,6 +3080,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact (lookup_kind_name_bound ds f output Hkind).
   Qed.
 
+  (** Initialization records a name maximum that is attained by its declaration table. *)
+  Lemma init_max_name_attained : forall ds sl,
+    runtime_max_name (db_runtime (init ds sl)) = 1%positive \/
+      kind (view (init ds sl)) (runtime_max_name (db_runtime (init ds sl))) <> None.
+  Proof.
+    intros ds sl. change (database_max_name ds = 1%positive \/
+      PTrieCode.get (database_max_name ds) (database_kinds ds) <> None).
+    unfold database_kinds. rewrite declaration_trie_lookup. apply database_max_name_attained.
+  Qed.
+
   (** Empty row and count tries give every initial projection multiplicity zero. *)
   Lemma init_projection_counts : forall ds sl, projection_counts_ok (init ds sl).
   Proof.
@@ -3085,7 +3130,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     { intros s f perm k o _ Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow). }
     split.
     { intros s new f perm _. rewrite index_init_empty. apply I.wf_empty. }
-    split; [reflexivity |]. apply init_projection_counts.
+    split; [reflexivity |]. split; [apply init_projection_counts |].
+    apply init_max_name_attained.
   Qed.
 
   (** Rebuilding keeps the database well formed. *)
@@ -3121,7 +3167,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - unfold wf, database_wf in Hwf |- *.
       destruct Hwf as (Hforest & Hmembers & Hcount & Hwidth & Hequalities & Hlog &
         Hrows & Hkind & Hrowids & Hslots & Hbound & Hslotbound & Hpending & Hqueue &
-        Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts).
+        Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts & Hmaxname).
       do 15 (split; [assumption |]).
       split.
       + intros s new u Hmem. destruct new.
@@ -3134,7 +3180,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           -- intros s new f perm Hslot. destruct new.
              ++ rewrite index_advance_new. apply I.wf_empty.
              ++ rewrite index_advance_all. exact (Harity s false f perm Hslot).
-          -- split; assumption.
+          -- split; [exact Hgroups |]. split; assumption.
     - split; reflexivity.
   Qed.
 
