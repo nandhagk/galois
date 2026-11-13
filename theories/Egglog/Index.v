@@ -2322,12 +2322,15 @@ Module Index (V : VALUE) <: INDEX V.
   Qed.
 
   (** Counts include one pending insertion for precisely the ancestors of its current node. *)
+  Definition pending_insert_edge (ix : t) (cursor : positive)
+      (edge : index_edge (cell V.t)) : Prop :=
+    exists suffixes pending, NoDup suffixes /\
+      (forall r, In r suffixes <-> contains_from (edge_child edge) r ix = true) /\
+      (pending = true <-> reaches ix (edge_child edge) cursor) /\
+      edge_count edge = (N.of_nat (length suffixes) + if pending then 1 else 0)%N.
+
   Definition pending_insert_counts (ix : t) (cursor : positive) : Prop :=
-    forall n code edge, stored_edge ix n code edge ->
-      exists suffixes pending, NoDup suffixes /\
-        (forall r, In r suffixes <-> contains_from (edge_child edge) r ix = true) /\
-        (pending = true <-> reaches ix (edge_child edge) cursor) /\
-        edge_count edge = (N.of_nat (length suffixes) + if pending then 1 else 0)%N.
+    forall n code edge, stored_edge ix n code edge -> pending_insert_edge ix cursor edge.
 
   Lemma pending_insert_start : forall ix, shape ix -> counted_edges ix ->
     pending_insert_counts ix (root ix).
@@ -2367,6 +2370,50 @@ Module Index (V : VALUE) <: INDEX V.
         intros [Hseek | Hmember]; [| exact Hmember].
         assert (Hbad : false = true) by (apply Hpending; now exists r). discriminate.
       + cbn in Hcount. now rewrite N.add_0_r in Hcount.
+  Qed.
+
+  Lemma pending_current_count_bound : forall ix n code edge, shape ix ->
+    pending_insert_counts ix n -> stored_edge ix n code edge ->
+    (edge_count edge < Npos (next ix))%N.
+  Proof.
+    intros ix n code edge Hshape Hcounts Hget.
+    destruct ((proj1 Hshape) n code edge Hget) as [_ [Hforward Hupper]].
+    destruct (Hcounts n code edge Hget)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hcount]]]]].
+    destruct pending.
+    - exfalso. eapply reaches_no_backward;
+        [exact (proj1 Hshape) | exact Hforward | now apply Hpending].
+    - cbn in Hcount. rewrite N.add_0_r in Hcount.
+      assert (Hrange : (1 < edge_child edge <= next ix)%positive) by (split; lia).
+      pose proof (live_suffixes_bound ix (edge_child edge) suffixes Hshape Hrange Hnodup
+        (fun r Hr => proj1 (Hmembers r) Hr)) as Hlength.
+      rewrite Hcount. pose proof (Pos2Nat.is_pos (next ix)). lia.
+  Qed.
+
+  (** Every unchanged edge retains its inventory and pending-ancestor status. *)
+  Lemma pending_insert_other : forall ix n c q code edge, shape ix ->
+    pending_insert_counts ix n -> (n <= next ix)%positive ->
+    stored_edge ix q code edge ->
+    stored_edge (fst (insert_step_st (ix, n) c)) q code edge ->
+    (q <> n \/ code <> encode_cell c) ->
+    pending_insert_edge (fst (insert_step_st (ix, n) c))
+      (snd (insert_step_st (ix, n) c)) edge.
+  Proof.
+    intros ix n c q code edge Hshape Hcounts Hbound Hget Hget' Hdiff.
+    pose proof (shape_insert_step (ix, n) c Hshape) as Hshape'.
+    pose proof (insert_step_child ix n c (proj1 (proj2 Hshape)) Hbound) as Hchild.
+    assert (Hneq : edge_child edge <> snd (insert_step_st (ix, n) c)).
+    { intro Heq. destruct (stored_child_parent _ q code edge n c _
+        (proj2 (proj2 Hshape')) Hget' Hchild Heq) as [Hnode Hcode]. tauto. }
+    destruct (Hcounts q code edge Hget)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hcount]]]]].
+    exists suffixes, pending. split; [exact Hnodup |]. split.
+    - intro r. rewrite (insert_step_membership (ix, n) c r (edge_child edge) Hshape).
+      + apply Hmembers.
+      + exact (proj2 (proj2 ((proj1 Hshape) q code edge Hget))).
+    - split; [| exact Hcount].
+      rewrite (insert_step_reaches_next ix n c (edge_child edge) Hshape Hbound Hneq).
+      exact Hpending.
   Qed.
 
 End Index.
