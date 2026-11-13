@@ -794,6 +794,239 @@ Module WordTime.
       rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
   Qed.
 
+  (** Division by a positive integer never increases magnitude bit length. *)
+  Lemma integer_positive_div_size a d : (0 < d)%Z ->
+    (Z.size_nat (a / d) <= Z.size_nat a)%nat.
+  Proof.
+    intros Hd. apply integer_abs_size_bound.
+    pose proof (integer_magnitude_bound a) as Ha.
+    destruct (Z_le_dec 0 a) as [Hnonnegative|Hnegative].
+    - assert (Hlo : (0 <= a / d)%Z) by (apply Z.div_pos; lia).
+      assert (Hhi : (a / d <= a)%Z) by (apply Z.div_le_upper_bound; nia).
+      lia.
+    - assert (Hlo : (a <= a / d)%Z) by (apply Z.div_le_lower_bound; nia).
+      assert (Hhi : (a / d <= 0)%Z) by (apply Z.div_le_upper_bound; nia).
+      lia.
+  Qed.
+
+  (** A power used by a bounded shift needs at most one extra width bit. *)
+  Lemma word_power_size_bound w k : (0 <= k <= Zpos w)%Z ->
+    (Z.size_nat (2 ^ k) <= Pos.to_nat w + 1)%nat.
+  Proof.
+    intros Hk. apply integer_size_bound. split.
+    - apply Z.pow_nonneg; lia.
+    - rewrite Nat2Z.inj_add, positive_nat_Z. apply Z.pow_lt_mono_r; lia.
+  Qed.
+
+  (** Constructing a bounded shift power takes linear time in the width. *)
+  Lemma word_power_time_bound w k : (0 <= k <= Zpos w)%Z ->
+    (Word.Z.T_pow 2 k <= 8 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    intros Hk. pose proof (word_pow_two_time_bound k ltac:(lia)) as Hpow.
+    assert (Hknat : (Z.to_nat k <= Pos.to_nat w)%nat).
+    { change (Z.to_nat k <= Z.to_nat (Zpos w))%nat. apply Z2Nat.inj_le; lia. }
+    apply time_of_nat_le in Hknat. rewrite Nat2N.inj_add. time_cbn_all. lia.
+  Qed.
+
+  (** Multiplying two normalized words fits a quadratic width budget. *)
+  Lemma integer_mul_word_time_bound w x y : is_word w x -> is_word w y ->
+    (Z.T_mul x y <= 8 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. pose proof (Z.T_mul_le x y) as Htime.
+    pose proof (time_of_nat_le _ _ (word_size_bound w x Hx)).
+    pose proof (time_of_nat_le _ _ (word_size_bound w y Hy)).
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Left shift tests the amount before constructing a width-bounded power. *)
+  Lemma word_shl_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wshl w x y <= 2048 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy.
+    pose proof (word_unary_width_bound _ _ w x word_wrap_time_bound Hx) as Hwrapx.
+    pose proof (word_unary_width_bound _ _ w y word_wrap_time_bound Hy) as Hwrapy.
+    pose proof (Z.T_leb_le (Zpos w) (wrap w y)) as Hcompare.
+    pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidthsize.
+    pose proof (time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    time_unfold T_wshl. destruct (Zpos w <=? wrap w y)%Z eqn:Hlarge.
+    - set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+      rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+    - apply Z.leb_gt in Hlarge. pose proof (proj1 (wrap_is_word w y)) as Hyzero.
+      assert (Hpower : is_word w (2 ^ wrap w y)) by (apply pow2_word; lia).
+      pose proof (word_power_time_bound w (wrap w y) ltac:(unfold is_word in *; lia))
+        as Hpowtime.
+      pose proof (integer_mul_word_time_bound w (wrap w x) (2 ^ wrap w y)
+        (wrap_is_word w x) Hpower) as Hmultime.
+      assert (Houter : (T_wrap w (wrap w x * 2 ^ wrap w y) <=
+        (64 * 9) * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+      { eapply (time_square_scale _ 64 _ _ 3); [apply word_wrap_time_bound|].
+        pose proof (integer_mul_size (wrap w x) (2 ^ wrap w y)).
+        pose proof (word_wrap_size_bound w x). pose proof (word_size_bound w _ Hpower). lia. }
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+      rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
+
+  (** Division depends quadratically on the two magnitude bounds. *)
+  Lemma integer_div_size_time_bound n x y :
+    (Z.size_nat x <= n)%nat -> (Z.size_nat y <= n)%nat ->
+    (Z.T_div x y <= 64 * N.of_nat ((n + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. apply time_of_nat_le in Hx. apply time_of_nat_le in Hy.
+    pose proof (Z.T_div_le x y) as Hdiv.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Logical right shift divides only by a power fitting the operand width. *)
+  Lemma word_lshr_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wlshr w x y <= 2048 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy.
+    pose proof (word_unary_width_bound _ _ w x word_wrap_time_bound Hx) as Hwrapx.
+    pose proof (word_unary_width_bound _ _ w y word_wrap_time_bound Hy) as Hwrapy.
+    pose proof (Z.T_leb_le (Zpos w) (wrap w y)) as Hcompare.
+    pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidthsize.
+    pose proof (time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    time_unfold T_wlshr. destruct (Zpos w <=? wrap w y)%Z eqn:Hlarge.
+    - set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+      rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+    - apply Z.leb_gt in Hlarge. pose proof (proj1 (wrap_is_word w y)) as Hyzero.
+      assert (Hpower : is_word w (2 ^ wrap w y)) by (apply pow2_word; lia).
+      pose proof (word_power_time_bound w (wrap w y) ltac:(lia)) as Hpowtime.
+      pose proof (integer_div_word_time_bound w (wrap w x) (2 ^ wrap w y)
+        (wrap_is_word w x) Hpower) as Hdivtime.
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+      rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
+
+  (** Arithmetic right shift charges its sign branch or a bounded signed quotient. *)
+  Lemma word_ashr_time_bound w x y : is_word w x -> is_word w y ->
+    (T_washr w x y <= 2048 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy.
+    pose proof (word_unary_width_bound _ _ w x word_msb_time_bound Hx) as Hmsb.
+    pose proof (word_unary_width_bound _ _ w x word_signed_time_bound Hx) as Hsigned.
+    pose proof (word_unary_width_bound _ _ w y word_wrap_time_bound Hy) as Hwrapy.
+    pose proof (word_modulus_time_bound w) as Hmodulus.
+    pose proof (Z.T_sub_le (modulus w) 1) as Hsub.
+    pose proof (time_of_nat_le _ _ (word_modulus_size_bound w)) as Hmodulussize.
+    pose proof (Z.T_leb_le (Zpos w) (wrap w y)) as Hcompare.
+    pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidthsize.
+    pose proof (time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    time_unfold T_washr. destruct (Zpos w <=? wrap w y)%Z eqn:Hlarge.
+    - set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+      destruct (msb w x); rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+    - apply Z.leb_gt in Hlarge. pose proof (proj1 (wrap_is_word w y)) as Hyzero.
+      assert (Hpower : is_word w (2 ^ wrap w y)) by (apply pow2_word; lia).
+      assert (Hpositive : (0 < 2 ^ wrap w y)%Z) by (apply Z.pow_pos_nonneg; lia).
+      pose proof (word_power_time_bound w (wrap w y) ltac:(lia)) as Hpowtime.
+      pose proof (integer_div_size_time_bound (Pos.to_nat w)
+        (signed w x) (2 ^ wrap w y) (word_signed_size_bound w x)
+        (word_size_bound w _ Hpower)) as Hdivtime.
+      assert (Houter : (T_wrap w (signed w x / 2 ^ wrap w y) <=
+        (64 * 4) * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+      { eapply (time_square_scale _ 64 _ _ 2); [apply word_wrap_time_bound|].
+        pose proof (integer_positive_div_size (signed w x) _ Hpositive).
+        pose proof (word_signed_size_bound w x). lia. }
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+      rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
+
+  (** Left rotation combines two bounded powers and one final normalization. *)
+  Lemma word_rotl_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wrotl w x y <= 4096 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. time_unfold T_wrotl. set (k := (wrap w y mod Zpos w)%Z).
+    assert (Hk : (0 <= k < Zpos w)%Z) by (unfold k; apply Z.mod_pos_bound; lia).
+    assert (Hkw : is_word w k) by (apply small_amount_word; exact Hk).
+    assert (Hpower : is_word w (2 ^ k)) by (apply pow2_word; exact Hk).
+    assert (Hcomplement : (0 < 2 ^ (Zpos w - k))%Z) by (apply Z.pow_pos_nonneg; lia).
+    pose proof (word_unary_width_bound _ _ w x word_wrap_time_bound Hx) as Hwrapx.
+    pose proof (word_unary_width_bound _ _ w y word_wrap_time_bound Hy) as Hwrapy.
+    pose proof (integer_mod_word_time_bound w (wrap w y) (Zpos w)
+      (wrap_is_word w y) (count_is_word w (Zpos w) ltac:(lia))) as Hmodtime.
+    pose proof (word_power_time_bound w k ltac:(lia)) as Hpowlo.
+    pose proof (word_power_time_bound w (Zpos w - k) ltac:(lia)) as Hpowhi.
+    pose proof (integer_mul_word_time_bound w (wrap w x) (2 ^ k)
+      (wrap_is_word w x) Hpower) as Hmultime.
+    assert (Hdivtime : (Z.T_div (wrap w x) (2 ^ (Zpos w - k)) <=
+      (64 * 4) * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+    { eapply (time_square_scale _ 64 _ _ 2).
+      - apply (integer_div_size_time_bound (Pos.to_nat w + 1)).
+        + pose proof (word_wrap_size_bound w x). lia.
+        + apply word_power_size_bound. lia.
+      - lia. }
+    assert (Hmulsize : (Z.size_nat (wrap w x * 2 ^ k) <= 2 * Pos.to_nat w)%nat).
+    { pose proof (integer_mul_size (wrap w x) (2 ^ k)).
+      pose proof (word_wrap_size_bound w x). pose proof (word_size_bound w _ Hpower). lia. }
+    assert (Hdivsize : (Z.size_nat (wrap w x / 2 ^ (Zpos w - k)) <= Pos.to_nat w)%nat).
+    { pose proof (integer_positive_div_size (wrap w x) _ Hcomplement).
+      pose proof (word_wrap_size_bound w x). lia. }
+    assert (Houter : (T_wrap w (wrap w x * 2 ^ k + wrap w x / 2 ^ (Zpos w - k)) <=
+      (64 * 16) * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+    { eapply (time_square_scale _ 64 _ _ 4); [apply word_wrap_time_bound|].
+      pose proof (integer_add_size (wrap w x * 2 ^ k) (wrap w x / 2 ^ (Zpos w - k))).
+      lia. }
+    pose proof (Z.T_add_le (wrap w x * 2 ^ k) (wrap w x / 2 ^ (Zpos w - k))) as Hadd.
+    pose proof (Z.T_sub_le (Zpos w) k) as Hsub.
+    pose proof (time_of_nat_le _ _ (word_size_bound w _ Hkw)) as Hksize.
+    pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidthsize.
+    apply time_of_nat_le in Hmulsize. apply time_of_nat_le in Hdivsize.
+    pose proof (time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget k.
+    rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
+
+  (** Right rotation calls the bounded left rotation at a normalized complementary amount. *)
+  Lemma word_rotr_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wrotr w x y <= 8192 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. time_unfold T_wrotr. set (k := (wrap w y mod Zpos w)%Z).
+    assert (Hk : (0 <= k < Zpos w)%Z) by (unfold k; apply Z.mod_pos_bound; lia).
+    pose proof (word_rotl_time_bound w x (Zpos w - k) Hx
+      (count_is_word w (Zpos w - k) ltac:(lia))) as Hrotl.
+    pose proof (word_unary_width_bound _ _ w y word_wrap_time_bound Hy) as Hwrapy.
+    pose proof (integer_mod_word_time_bound w (wrap w y) (Zpos w)
+      (wrap_is_word w y) (count_is_word w (Zpos w) ltac:(lia))) as Hmodtime.
+    pose proof (Z.T_sub_le (Zpos w) k) as Hsub.
+    pose proof (time_of_nat_le _ _ (word_size_bound w k (small_amount_word w k Hk)))
+      as Hksize.
+    pose proof (time_of_nat_le _ _ (positive_size_value w)) as Hwidthsize.
+    pose proof (time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget k.
+    rewrite ?Nat2N.inj_add in *. time_cbn_all. lia.
+  Qed.
+
+  (** Binary dispatch chooses one of the uniformly bounded normalized operations. *)
+  Lemma word_binary_time_bound tag w x y : is_word w x -> is_word w y ->
+    (T_eval_binary_tag tag w x y <= 65536 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy.
+    pose proof (word_binary_width_bound _ _ w x y word_add_time_bound Hx Hy) as Hadd.
+    pose proof (word_binary_width_bound _ _ w x y word_sub_time_bound Hx Hy) as Hsub.
+    pose proof (word_binary_width_bound _ _ w x y word_mul_time_bound Hx Hy) as Hmul.
+    pose proof (word_binary_width_bound _ _ w x y word_udiv_time_bound Hx Hy) as Hudiv.
+    pose proof (word_binary_width_bound _ _ w x y word_urem_time_bound Hx Hy) as Hurem.
+    pose proof (word_sdiv_time_bound w x y Hx Hy) as Hsdiv.
+    pose proof (word_srem_time_bound w x y Hx Hy) as Hsrem.
+    pose proof (word_smod_time_bound w x y Hx Hy) as Hsmod.
+    pose proof (word_binary_width_bound _ _ w x y word_and_time_bound Hx Hy) as Hand.
+    pose proof (word_binary_width_bound _ _ w x y word_or_time_bound Hx Hy) as Hor.
+    pose proof (word_binary_width_bound _ _ w x y word_xor_time_bound Hx Hy) as Hxor.
+    pose proof (word_shl_time_bound w x y Hx Hy) as Hshl.
+    pose proof (word_lshr_time_bound w x y Hx Hy) as Hlshr.
+    pose proof (word_ashr_time_bound w x y Hx Hy) as Hashr.
+    pose proof (word_rotl_time_bound w x y Hx Hy) as Hrotl.
+    pose proof (word_rotr_time_bound w x y Hx Hy) as Hrotr.
+    pose proof (time_square_floor 1 (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+    destruct tag; time_unfold T_eval_binary_tag; time_cbn_all; lia.
+  Qed.
+
 End WordTime.
 
 
