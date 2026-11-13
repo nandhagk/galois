@@ -22,6 +22,29 @@ End FixtureValue.
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
 
+(** A write records its cells and cache-call count even when the function has no slots. *)
+Example cache_history_without_slots :
+  let db := FixtureDatabase.init [Decl 3%positive [SVal] ORel] [] in
+  let written := FixtureDatabase.put 3%positive [Val 7%positive] None db in
+  (db_written_cells written, db_cache_updates written,
+   FixtureDatabase.row_get 3%positive [Val 7%positive] written) =
+    ([Val 7%positive], 1%N, Some None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Deleting a row extends its history while removing the actual stored binding. *)
+Example cache_history_on_deletion :
+  let db := FixtureDatabase.init [Decl 3%positive [SVal] ORel] [] in
+  let written := FixtureDatabase.put 3%positive [Val 7%positive] None db in
+  let removed := FixtureDatabase.row_delete 3%positive [Val 7%positive] written in
+  (db_written_cells removed, db_cache_updates removed,
+   FixtureDatabase.row_get 3%positive [Val 7%positive] removed) =
+    ([Val 7%positive; Val 7%positive], 2%N, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Normalization leaves an unallocated identifier unchanged even when its query code is large. *)
 Example normalize_unallocated_identifier :
   FixtureDatabase.normal_cell (FixtureDatabase.init [] []) (Id 1048576%positive) =

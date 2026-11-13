@@ -1821,7 +1821,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty) /\
     projection_counts_ok db /\
     (runtime_max_name (db_runtime db) = 1%positive \/
-      kind (view db) (runtime_max_name (db_runtime db)) <> None).
+      kind (view db) (runtime_max_name (db_runtime db)) <> None) /\
+    database_history db.
 
   (** The stored invariant supplies forest. *)
   Lemma wf_forest : forall db, database_wf db -> UnionFind.wf (db_forest db).
@@ -1963,6 +1964,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       kind (view db) (runtime_max_name (db_runtime db)) <> None.
   Proof.
     unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant includes maintained cache histories and current-row coverage. *)
+  Lemma wf_history : forall db, database_wf db -> database_history db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** Well-formed databases have genuine cache construction and recorded counter bounds. *)
+  Lemma wf_metadata : forall db, database_wf db -> metadata_ok db.
+  Proof.
+    intros db Hwf. exact (proj1 (wf_history db Hwf)).
+  Qed.
+
+  (** Every cell of a stored row is present in the write history. *)
+  Lemma wf_recorded_rows : forall db, database_wf db -> recorded_rows db.
+  Proof.
+    intros db Hwf. exact (proj2 (wf_history db Hwf)).
   Qed.
   Definition wf : t -> Prop := database_wf.
 
@@ -3490,8 +3509,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [exact (row_replace_canonical db f k previous o Hwf Hcanonical) |].
     split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
     split; [rewrite Hgroups, row_replace_slots; exact (wf_group_table db Hwf) |].
-    split; [exact Hcounts |]. rewrite Hmax, row_replace_kind.
-    exact (wf_max_name_attained db Hwf).
+    split; [exact Hcounts |]. split.
+    { rewrite Hmax, row_replace_kind. exact (wf_max_name_attained db Hwf). }
+    apply database_history_row_replace.
+    - exact (wf_history db Hwf).
+    - exact (proj1 (proj2 Hkind)).
   Qed.
 
   (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
@@ -3637,6 +3659,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (allocate_next_row_ids db Hwf) as Hrowids.
     pose proof (allocate_next_queue db Hwf) as Hqueue.
     pose proof (allocate_next_canonical db Hwf) as Hcanonical.
+    pose proof (database_history_allocate_id db (N.succ_pos (ids db))
+      (wf_history db Hwf)) as Hhistory.
     unfold wf, database_wf in Hwf |- *. unfold allocate_id in *.
     cbn [database_set_forest database_set_runtime runtime_set_allocated runtime_set_changed
       db_forest db_runtime db_npending runtime_allocated runtime_rows runtime_kinds
@@ -3788,7 +3812,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split.
     { intros s new f perm _. rewrite index_init_empty. apply I.wf_empty. }
     split; [reflexivity |]. split; [apply init_projection_counts |].
-    apply init_max_name_attained.
+    split; [apply init_max_name_attained | apply database_history_init].
   Qed.
 
   (** Rebuilding keeps the database well formed. *)
@@ -3824,7 +3848,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - unfold wf, database_wf in Hwf |- *.
       destruct Hwf as (Hforest & Hmembers & Hcount & Hwidth & Hequalities & Hlog &
         Hrows & Hkind & Hrowids & Hslots & Hbound & Hslotbound & Hpending & Hqueue &
-        Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts & Hmaxname).
+        Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts & Hmaxname & Hhistory).
       do 15 (split; [assumption |]).
       split.
       + intros s new u Hmem. destruct new.
@@ -3837,7 +3861,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           -- intros s new f perm Hslot. destruct new.
              ++ rewrite index_advance_new. apply I.wf_empty.
              ++ rewrite index_advance_all. exact (Harity s false f perm Hslot).
-          -- split; [exact Hgroups |]. split; assumption.
+          -- split; [exact Hgroups |]. split; [exact Hcounts |].
+             split; [exact Hmaxname | now apply database_history_advance].
     - split; reflexivity.
   Qed.
 
@@ -4108,6 +4133,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (union_pending_count i j db Hwf) as Hpending.
     pose proof (union_queue_allocated i j db Hwf Hi Hj) as Hqueue.
     pose proof (union_quiet_canonical i j db Hwf) as Hcanonical.
+    pose proof (database_history_union db i j (wf_history db Hwf)) as Hhistory.
     unfold wf, database_wf in Hwf |- *. unfold union in *.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
     destruct roots as [[winner loser] |];
@@ -5316,8 +5342,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exact (wf_quiet_canonical db Hwf Hquiet g args output (Hsource g args output Hrow) i Hin). }
     split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
     split; [rewrite Hgroups, row_delete_slots; exact (wf_group_table db Hwf) |].
-    split; [exact Hcounts |]. rewrite Hmax, row_delete_kind.
-    exact (wf_max_name_attained db Hwf).
+    split; [exact Hcounts |]. split.
+    { rewrite Hmax, row_delete_kind. exact (wf_max_name_attained db Hwf). }
+    apply database_history_row_delete. exact (wf_history db Hwf).
   Qed.
 
   (** Conflict resolution preserves declarations even during an active repair batch. *)
