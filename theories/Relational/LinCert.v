@@ -1261,6 +1261,117 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     - nia.
   Qed.
 
+  (** Magnitude is used only to prove binary-size bounds. *)
+  Definition lc_magnitude (z : Z) : nat := Z.to_nat (Z.abs z).
+
+  (** The magnitude of an integer is below its binary-size power of two. *)
+  Lemma lc_magnitude_upper : forall z, lc_magnitude z < 2 ^ Z.size_nat z.
+  Proof.
+    intros [|p|p].
+    - change (0 < 1). lia.
+    - exact (Pos.size_nat_upper p).
+    - exact (Pos.size_nat_upper p).
+  Qed.
+
+  (** A strict power-of-two bound bounds the number of binary digits. *)
+  Lemma lc_size_least : forall z k, lc_magnitude z < 2 ^ k -> Z.size_nat z <= k.
+  Proof.
+    intros [|p|p] k Hbound; cbn [lc_magnitude Z.abs Z.to_nat Z.size_nat] in *;
+      try lia; now apply Pos.size_nat_least.
+  Qed.
+
+  (** Magnitudes preserve multiplication. *)
+  Lemma lc_magnitude_mul : forall x y,
+    lc_magnitude (x * y) = lc_magnitude x * lc_magnitude y.
+  Proof.
+    intros x y. unfold lc_magnitude. rewrite Z.abs_mul.
+    rewrite Z2Nat.inj_mul by apply Z.abs_nonneg. reflexivity.
+  Qed.
+
+  (** The magnitude of a sum is at most the sum of magnitudes. *)
+  Lemma lc_magnitude_add : forall x y,
+    lc_magnitude (x + y) <= lc_magnitude x + lc_magnitude y.
+  Proof.
+    intros x y. unfold lc_magnitude.
+    rewrite <- Z2Nat.inj_add by apply Z.abs_nonneg.
+    apply Z2Nat.inj_le; try apply Z.abs_nonneg; try lia.
+  Qed.
+
+  (** A product fits below the power for the sum of the operand widths. *)
+  Lemma lc_product_upper : forall x y,
+    lc_magnitude (x * y) < 2 ^ (Z.size_nat x + Z.size_nat y).
+  Proof.
+    intros x y. rewrite lc_magnitude_mul, Nat.pow_add_r.
+    pose proof (lc_magnitude_upper x). pose proof (lc_magnitude_upper y). nia.
+  Qed.
+
+  (** A uniform magnitude bound charges a finite sum once per entry. *)
+  Lemma lc_sum_magnitude : forall zs bound,
+    Forall (fun z => lc_magnitude z <= bound) zs ->
+    lc_magnitude (fold_right Z.add 0%Z zs) <= length zs * bound.
+  Proof.
+    intros zs bound Hbound. induction Hbound as [|z zs Hz Htail IH].
+    - reflexivity.
+    - cbn [fold_right length]. pose proof (lc_magnitude_add z (fold_right Z.add 0%Z zs)).
+      nia.
+  Qed.
+
+  (** Every member is bounded by a maximum fold. *)
+  Lemma lc_member_max : forall xs z, In z xs -> z <= fold_right Nat.max 0 xs.
+  Proof.
+    induction xs as [|x xs IH]; intros z Hin; cbn in Hin; [contradiction|].
+    cbn [fold_right]. destruct Hin as [Heq|Hin]; [subst; apply Nat.le_max_l|].
+    eapply Nat.le_trans; [exact (IH _ Hin)|apply Nat.le_max_r].
+  Qed.
+
+  (** Every natural number is strictly below its next binary logarithm power. *)
+  Lemma lc_log_upper : forall n, n < 2 ^ (Nat.log2 n + 1).
+  Proof.
+    intros [|n]; [change (0 < 2); lia|].
+    pose proof (Nat.log2_spec (S n) (Nat.lt_0_succ n)) as [_ Hupper].
+    now replace (Nat.log2 (S n) + 1) with (S (Nat.log2 (S n))) by lia.
+  Qed.
+
+  (** Weighted right-hand sides fit the maximum product width and a row-count logarithm. *)
+  Lemma comb_rhs_size : forall P ms, Z.size_nat (comb_rhs P ms) <= cbits P ms.
+  Proof.
+    intros P ms. unfold cbits.
+    set (pairs := List.combine P ms).
+    set (width := fold_right Nat.max 0
+      (map (fun pm => Z.size_nat (snd pm) + row_bits (fst pm)) pairs)).
+    apply lc_size_least. unfold comb_rhs.
+    change (lc_magnitude (fold_right Z.add 0%Z
+      (map (fun pm => (snd pm * rhs (fst pm))%Z) pairs)) <
+      2 ^ (width + Nat.log2 (length P) + 1)).
+    assert (Hrows : Forall (fun z => lc_magnitude z <= 2 ^ width)
+      (map (fun pm => (snd pm * rhs (fst pm))%Z) pairs)).
+    { apply Forall_forall. intros z Hin. apply in_map_iff in Hin as [[r m] [Heq Hin]].
+      subst z. cbn [fst snd].
+      pose proof (row_bits_rhs r) as Hbits.
+      assert (Hwidth : Z.size_nat m + row_bits r <= width).
+      { apply lc_member_max. apply in_map_iff. exists (r, m). auto. }
+      eapply Nat.le_trans; [apply Nat.lt_le_incl, lc_product_upper|].
+      apply Nat.pow_le_mono_r; lia. }
+    pose proof (lc_sum_magnitude _ _ Hrows) as Hsum. rewrite length_map in Hsum.
+    assert (Hlength : length pairs <= length P).
+    { unfold pairs. rewrite length_combine. apply Nat.le_min_l. }
+    pose proof (lc_log_upper (length P)) as Hlog.
+    assert (Hpower : 0 < 2 ^ width) by (pose proof (Nat.pow_nonzero 2 width ltac:(lia)); lia).
+    replace (width + Nat.log2 (length P) + 1) with
+      (width + (Nat.log2 (length P) + 1)) by lia.
+    rewrite Nat.pow_add_r. nia.
+  Qed.
+
+  (** A successful combination's right-hand side fits the declared certificate width. *)
+  Lemma combine_rhs_size : forall P ms s, combine P ms = Some s ->
+    Z.size_nat (rhs s) <= cbits P ms.
+  Proof.
+    intros P ms s Hcombine.
+    pose proof (combine_admissible P ms s Hcombine) as Hadmissible.
+    destruct (combine_spec P ms Hadmissible) as [r [Hr [_ [Hrhs _]]]].
+    rewrite Hcombine in Hr. inversion Hr; subst r. rewrite Hrhs. apply comb_rhs_size.
+  Qed.
+
   Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
