@@ -340,6 +340,90 @@ Module Index (V : VALUE) <: INDEX V.
     parents_unique ix /\ counted_edges ix.
   Definition wf (a : nat) (ix : t) : Prop :=
     valid ix /\ (forall r, mem ix r -> length r = a).
+
+  (** The structural fields remain meaningful while a tuple walk updates its counts. *)
+  Definition edge_shape (ix : t) : Prop := forall n code edge,
+    stored_edge ix n code edge ->
+    encode_cell (edge_cell edge) = code /\ (n < edge_child edge <= next ix)%positive.
+
+  Definition shape (ix : t) : Prop :=
+    edge_shape ix /\ table_ok ix /\ parents_unique ix.
+
+  Lemma valid_shape : forall ix, valid ix -> shape ix.
+  Proof.
+    intros ix [Hedges [_ [Htable [_ [Hparents _]]]]].
+    split; [| now split]. intros n code edge Hget.
+    specialize (Hedges n code edge Hget). tauto.
+  Qed.
+
+  Lemma read_node_write_same : forall ix n nd counter,
+    read_node (write_node ix n nd counter) n = nd.
+  Proof.
+    intros ix n nd counter. unfold read_node, write_node. cbn [index_nodes].
+    rewrite PTrie.get_set_same. reflexivity.
+  Qed.
+
+  Lemma read_node_write_other : forall ix n q nd counter, q <> n ->
+    read_node (write_node ix n nd counter) q = read_node ix q.
+  Proof.
+    intros ix n q nd counter Hneq. unfold read_node, write_node. cbn [index_nodes].
+    now rewrite PTrie.get_set_other.
+  Qed.
+
+  Lemma read_node_above_counter : forall ix n, table_ok ix -> (next ix < n)%positive ->
+    read_node ix n = empty_node.
+  Proof.
+    intros ix n Htable Habove. unfold read_node.
+    destruct (PTrieCode.get n (index_nodes ix)) as [nd |] eqn:Hget; [| reflexivity].
+    specialize (Htable n nd Hget). apply Pos.lt_nle in Habove. contradiction.
+  Qed.
+
+  (** The runtime guard is observationally redundant for well-shaped node tables. *)
+  Lemma child_raw : forall ix n c, table_ok ix ->
+    child ix n c =
+      match PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) with
+      | Some edge => Some (edge_child edge)
+      | None => None
+      end.
+  Proof.
+    intros ix n c Htable. unfold child.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard; [| reflexivity].
+    apply Pos.ltb_lt in Hguard. rewrite (read_node_above_counter ix n Htable Hguard).
+    cbn [empty_node node_edges]. rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  Lemma table_ok_write : forall ix n nd counter, table_ok ix ->
+    (n <= counter)%positive -> (next ix <= counter)%positive ->
+    table_ok (write_node ix n nd counter).
+  Proof.
+    intros ix n nd counter Htable Hnode Hcounter q out Hget.
+    cbn [write_node index_nodes] in Hget. change (q <= counter)%positive.
+    destruct (Pos.eq_dec q n) as [-> | Hneq]; [exact Hnode |].
+    rewrite PTrie.get_set_other in Hget by exact Hneq.
+    eapply Pos.le_trans; [eapply Htable; exact Hget | exact Hcounter].
+  Qed.
+
+  Lemma insert_step_counter_mono : forall st c,
+    (next (fst st) <= next (fst (insert_step_st st c)))%positive.
+  Proof.
+    intros [ix n] c. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n); cbn [fst]; [apply Pos.le_refl |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+      cbn [fst write_node next index_counter]; [apply Pos.le_refl |].
+    apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
+
+  Lemma table_ok_insert_step : forall st c, table_ok (fst st) ->
+    table_ok (fst (insert_step_st st c)).
+  Proof.
+    intros [ix n] c Htable. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard; [exact Htable |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+      cbn [fst]; apply table_ok_write; try assumption; try apply Pos.le_refl.
+    - eapply Pos.le_trans; [exact Hguard | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
+    - apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
   Proof.
