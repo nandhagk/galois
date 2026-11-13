@@ -3196,6 +3196,255 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     now apply equality_basis_models_Q.
   Qed.
 
+  (** Equality-derived certificates retain zero weights for every source inequality. *)
+  Definition equality_certificate (P : list (lcons X.t)) (c : lcons X.t)
+      (ms : list Z) (sc : Z) : Prop :=
+    equality_weights P ms /\ (0 < sc)%Z /\
+    (forall x, C.comb_coef P ms x = (sc * C.coef_of x (lhs c))%Z) /\
+    match lrel c with
+    | REq => C.comb_rhs P ms = (sc * rhs c)%Z
+    | RLe => (C.comb_rhs P ms <= sc * rhs c)%Z
+    end.
+
+  Lemma equality_certificate_checked : forall P c ms sc,
+    equality_certificate P c ms sc -> C.check_entails P c (Cert ms sc false) = true.
+  Proof.
+    intros P c ms sc [Hweights [Hpositive [Hcoeff Hrhs]]].
+    apply C.check_entails_complete.
+    - now apply equality_weights_admissible.
+    - exact Hpositive.
+    - exact Hcoeff.
+    - destruct (lrel c); [split; [now apply equality_weights_comb_eq |] |]; exact Hrhs.
+  Qed.
+
+  (** This proof-only source erases constraints ignored by equality elimination. *)
+  Definition equality_source (P : list (lcons X.t)) : list (lcons X.t) :=
+    map (fun r => match lrel r with REq => r | RLe => LCons X.t [] REq 0%Z end) P.
+
+  Lemma equality_source_weights : forall P ms,
+    equality_weights P ms -> equality_weights (equality_source P) ms.
+  Proof.
+    intros P ms Hweights. induction Hweights as [|p m P ms Hhead Htail IH].
+    - constructor.
+    - unfold equality_source in *. cbn [map]. constructor; [|exact IH].
+      destruct (lrel p) eqn:Hrel; cbn [lrel]; intro Hfalse; congruence.
+  Qed.
+
+  Lemma equality_source_sum : forall P ms entry,
+    equality_weights P ms -> row_sum (equality_source P) ms entry = row_sum P ms entry.
+  Proof.
+    intros P ms entry Hweights. induction Hweights as [|p m P ms Hhead Htail IH].
+    - reflexivity.
+    - change ((m * entry (match lrel p with REq => p | RLe => LCons X.t [] REq 0%Z end) +
+        row_sum (equality_source P) ms entry)%Z =
+        (m * entry p + row_sum P ms entry)%Z).
+      rewrite IH. destruct (lrel p) eqn:Hrel; [reflexivity |].
+      rewrite (Hhead eq_refl). ring.
+  Qed.
+
+  Lemma equality_source_coef : forall P ms x,
+    equality_weights P ms -> C.comb_coef (equality_source P) ms x = C.comb_coef P ms x.
+  Proof.
+    intros P ms x Hweights.
+    change (row_sum (equality_source P) ms (fun r => C.coef_of x (lhs r)) =
+      row_sum P ms (fun r => C.coef_of x (lhs r))).
+    exact (equality_source_sum P ms (fun r => C.coef_of x (lhs r)) Hweights).
+  Qed.
+
+  Lemma equality_source_rhs : forall P ms,
+    equality_weights P ms -> C.comb_rhs (equality_source P) ms = C.comb_rhs P ms.
+  Proof.
+    intros P ms Hweights.
+    change (row_sum (equality_source P) ms rhs = row_sum P ms rhs).
+    exact (equality_source_sum P ms rhs Hweights).
+  Qed.
+
+  Lemma equality_source_models_Q : forall P v,
+    Forall (fun r => lrel r = REq -> satQ v r) P -> Forall (satQ v) (equality_source P).
+  Proof.
+    intros P v Hmodels. unfold equality_source. rewrite Forall_map.
+    apply Forall_forall. intros r Hin.
+    destruct (lrel r) eqn:Hrel.
+    - now apply (proj1 (Forall_forall _ _) Hmodels r Hin).
+    - reflexivity.
+  Qed.
+
+  Lemma equality_certificate_sound_Q : forall P c ms sc,
+    equality_certificate P c ms sc -> forall v,
+    Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v c.
+  Proof.
+    intros P c ms sc [Hweights [Hpositive [Hcoeff Hrhs]]] v Hmodels.
+    apply (C.check_entails_sound_Q (equality_source P) c (Cert ms sc false)).
+    - apply equality_certificate_checked. split; [now apply equality_source_weights |].
+      split; [exact Hpositive |]. split.
+      + intro x. rewrite equality_source_coef by exact Hweights. apply Hcoeff.
+      + rewrite equality_source_rhs by exact Hweights. exact Hrhs.
+    - reflexivity.
+    - now apply equality_source_models_Q.
+  Qed.
+
+  Lemma equality_empty_sound_Q : forall P ms,
+    equality_weights P ms -> (forall x, C.comb_coef P ms x = 0%Z) ->
+    C.comb_rhs P ms <> 0%Z -> forall v,
+    ~ Forall (fun r => lrel r = REq -> satQ v r) P.
+  Proof.
+    intros P ms Hweights Hcoeff Hrhs v Hmodels.
+    assert (Hempty : C.check_empty (equality_source P) ms = true).
+    { apply C.check_empty_complete.
+      - apply equality_weights_admissible. now apply equality_source_weights.
+      - intro x. rewrite equality_source_coef by exact Hweights. apply Hcoeff.
+      - right. split.
+        + apply equality_weights_comb_eq. now apply equality_source_weights.
+        + now rewrite equality_source_rhs by exact Hweights. }
+    pose proof (C.check_entails_empty (equality_source P) (LCons X.t [] REq 1%Z)
+      (Cert ms 1 false) Hempty) as Hchecked.
+    pose proof (C.check_entails_sound_Q (equality_source P) (LCons X.t [] REq 1%Z)
+      (Cert ms 1 false) Hchecked eq_refl v (equality_source_models_Q P v Hmodels)) as Hfalse.
+    cbn [satQ lhs rhs lrel fold_right inject_Z Qeq] in Hfalse. discriminate.
+  Qed.
+
+  Lemma row_tracks_equality_certificate : forall P xs target r,
+    row_tracks P xs target 0 r ->
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    karr_zero r = true -> kscale r <> 0%Z ->
+    (match lrel target with
+     | REq => kright r = 0%Z
+     | RLe => (0 <= (if (kscale r <? 0)%Z then -1 else 1) * kright r)%Z
+     end) ->
+    equality_certificate P target
+      (map (fun z => (-(if (kscale r <? 0)%Z then -1 else 1) * z)%Z) (kweight r))
+      (Z.abs (kscale r)).
+  Proof.
+    intros P xs target r Htracks Hsupport Hzero Hnonzero Hright.
+    pose proof (row_tracks_zero_coeff P xs target r Htracks Hsupport Hzero) as Hcoeff.
+    destruct Htracks as [Hweights [_ Hrhs]].
+    set (sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z) in *.
+    assert (Hsign : (sign * kscale r = Z.abs (kscale r))%Z).
+    { apply coefficient_sign_abs. }
+    split; [now apply equality_weights_scale |].
+    split; [destruct (kscale r); cbn in *; lia |]. split.
+    - intro x. rewrite comb_coef_scale. specialize (Hcoeff x).
+      change ((-sign * C.comb_coef P (kweight r) x)%Z =
+        (Z.abs (kscale r) * coefficient x (lhs target))%Z).
+      nia.
+    - destruct (lrel target); rewrite comb_rhs_scale; nia.
+  Qed.
+
+  Lemma target_certificate_equality : forall P target k,
+    target_certificate P target = Some k ->
+    equality_certificate P target (mults k) (scale k).
+  Proof.
+    intros P target k Hcert. unfold target_certificate in Hcert.
+    set (xs := variables (target :: P)) in *.
+    set (r := karr_target (equality_basis xs P) 1
+      (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)) in *.
+    set (sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z) in *.
+    destruct (karr_zero r && negb (Z.eqb (kscale r) 0) &&
+      match lrel target with
+      | REq => Z.eqb (kright r) 0
+      | RLe => (0 <=? sign * kright r)%Z
+      end) eqn:Hguard; [|discriminate].
+    injection Hcert as Hsame. subst k.
+    apply andb_true_iff in Hguard as [Hleft Hright].
+    apply andb_true_iff in Hleft as [Hzero Hscale].
+    apply negb_true_iff, Z.eqb_neq in Hscale.
+    apply row_tracks_equality_certificate with (xs := xs).
+    - apply reduced_target_tracks.
+    - intros s Hs x z Hin. apply variables_contains with (r := s) (z := z); assumption.
+    - exact Hzero.
+    - exact Hscale.
+    - destruct (lrel target); [now apply Z.eqb_eq |now apply Z.leb_le].
+  Qed.
+
+  Lemma target_certificate_sound_Q : forall P target k,
+    target_certificate P target = Some k -> forall v,
+    Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target.
+  Proof.
+    intros P target k Hcert v Hmodels.
+    apply equality_certificate_sound_Q with (P := P) (ms := mults k) (sc := scale k);
+      [now apply target_certificate_equality |exact Hmodels].
+  Qed.
+
+  Lemma empty_certificate_has_row : forall P rs ms,
+    empty_certificate P rs = Some ms ->
+    exists r, In r rs /\ karr_zero r = true /\ kright r <> 0%Z /\ kweight r = ms.
+  Proof.
+    intros P rs. induction rs as [|p rs IH]; intros ms Hcert; [discriminate |].
+    cbn [empty_certificate] in Hcert.
+    destruct (karr_zero p && negb (Z.eqb (kright p) 0) &&
+      C.check_empty P (kweight p)) eqn:Hcheck.
+    - injection Hcert as Hsame. subst ms. exists p. split; [now left |].
+      apply andb_true_iff in Hcheck as [Hleft _].
+      apply andb_true_iff in Hleft as [Hzero Hright].
+      apply negb_true_iff, Z.eqb_neq in Hright. auto.
+    - destruct (IH _ Hcert) as [r [Hin Hrow]]. exists r. split; [now right |exact Hrow].
+  Qed.
+
+  Lemma contradiction_sound_Q : forall P ms,
+    contradiction P = Some ms -> forall v,
+    ~ Forall (fun r => lrel r = REq -> satQ v r) P.
+  Proof.
+    intros P ms Hempty v Hmodels. unfold contradiction in Hempty.
+    destruct (empty_certificate_has_row _ _ _ Hempty)
+      as [r [Hin [Hzero [Hright _]]]].
+    pose proof (proj1 (Forall_forall _ _)
+      (equality_basis_tracks P (variables P) (LCons X.t [] REq 0%Z)) r Hin) as Htracks.
+    pose proof (proj1 (Forall_forall _ _)
+      (equality_basis_scale_zero P (variables P)) r Hin) as Hscale.
+    assert (Hsupport : forall s, In s (LCons X.t [] REq 0%Z :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x (variables P)).
+    { intros s Hs x z Hterm. destruct Hs as [Hsame | Hs].
+      - subst s. contradiction.
+      - now apply variables_contains with (r := s) (z := z). }
+    pose proof (row_tracks_zero_coeff P (variables P) (LCons X.t [] REq 0%Z) r
+      Htracks Hsupport Hzero) as Hcoeff.
+    destruct Htracks as [Hweights [_ Hrhs]].
+    apply (equality_empty_sound_Q P (kweight r) Hweights) with (v := v).
+    - intro x. specialize (Hcoeff x). rewrite Hscale in Hcoeff. lia.
+    - rewrite Hscale in Hrhs. lia.
+    - exact Hmodels.
+  Qed.
+
+  Lemma entail_cert_sound_Q : forall P target k,
+    entail_cert P target = Some k -> forall v,
+    Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target.
+  Proof.
+    intros P target k Hcert v Hmodels. unfold entail_cert in Hcert.
+    destruct (contradiction P) as [ms |] eqn:Hempty.
+    - exfalso. exact (contradiction_sound_Q P ms Hempty v Hmodels).
+    - destruct (target_certificate P target) as [candidate |] eqn:Htarget;
+        [|discriminate].
+      now apply target_certificate_sound_Q with (P := P) (k := candidate).
+  Qed.
+
+  Lemma entails_eq_sound_Q : forall P r,
+    entails P r = true -> lrel r = REq -> forall v,
+    Forall (fun s => lrel s = REq -> satQ v s) P -> satQ v r.
+  Proof.
+    intros P r Hentails Hrel v Hmodels. unfold entails in Hentails.
+    apply orb_true_iff in Hentails as [Hliteral | Hcert].
+    - apply existsb_exists in Hliteral as [s [Hin Hsame]].
+      apply row_eqb_sound in Hsame. subst s.
+      now apply (proj1 (Forall_forall _ _) Hmodels r Hin).
+    - destruct (entail_cert P r) as [k |] eqn:Hsome; [|discriminate].
+      now apply entail_cert_sound_Q with (P := P) (k := k).
+  Qed.
+
+  Lemma leb_eq_sound_Q : forall P R,
+    leb (Reached P) (Reached R) = true -> forall v,
+    Forall (fun r => lrel r = REq -> satQ v r) P ->
+    Forall (fun r => lrel r = REq -> satQ v r) R.
+  Proof.
+    intros P R Hle v Hmodels. unfold leb in Hle.
+    destruct (contradiction P) as [ms |] eqn:Hempty.
+    - exfalso. exact (contradiction_sound_Q P ms Hempty v Hmodels).
+    - apply Forall_forall. intros r Hin Hrel. apply entails_eq_sound_Q with (P := P).
+      + now apply (proj1 (forallb_forall _ _) Hle).
+      + exact Hrel.
+      + exact Hmodels.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
