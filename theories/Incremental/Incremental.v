@@ -8823,6 +8823,40 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       [exact Hbits|exact Hwork|exact Htime|symmetry; exact HmassN].
   Qed.
 
+  Lemma T_invalid_snapshot_fold_amort : forall st ids acc,
+    state_ok st -> invalid_snapshot_origin st acc ->
+    (forall id, In id ids -> Pos.size_nat id <= kwidth st) ->
+    (List.T_fold_left (invalid_visit_snapshot st)
+      (fun current id => T_invalid_visit_snapshot st current id) ids acc +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (invalid_snapshot_mass
+          (fold_left (invalid_visit_snapshot st) ids acc)) <=
+      (64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) + 2) * N.of_nat (length ids) +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) * N.of_nat (invalid_snapshot_mass acc) + 1)%N.
+  Proof.
+    intros st ids; induction ids as [|id rest IH]; intros acc Hstate Horigin Hwidth.
+    - time_unfold @List.T_fold_left; cbn [fold_left length]; lia.
+    - pose proof (T_invalid_visit_snapshot_amort st acc id Hstate Horigin
+        (Hwidth id (or_introl eq_refl))) as Hvisit.
+      pose proof (IH (invalid_visit_snapshot st acc id) Hstate
+        (invalid_visit_origin st acc id Horigin)
+        (fun other Hother => Hwidth other (or_intror Hother))) as Htail.
+      time_unfold @List.T_fold_left; cbn [fold_left length].
+      rewrite Nat2N.inj_succ.
+      set (c := (64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1))%N) in *.
+      replace (c * (1 + N.of_nat (invalid_snapshot_mass acc)))%N with
+        (c + c * N.of_nat (invalid_snapshot_mass acc))%N in Hvisit by ring.
+      replace (N.succ (N.of_nat (length rest))) with
+        (N.of_nat (length rest) + 1)%N by lia.
+      replace ((c + 2) * (N.of_nat (length rest) + 1))%N with
+        ((c + 2) * N.of_nat (length rest) + c + 2)%N by ring.
+      lia.
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
