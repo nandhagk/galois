@@ -4,7 +4,7 @@
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
 From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring Psatz Wf_nat.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -4050,6 +4050,304 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       exact (poly_max_member _ C.row_bits 0 P p Hp).
     - eapply Nat.le_trans; [apply poly_normal_row_key_bits|].
       exact (poly_max_member _ C.row_key_bits 0 P p Hp).
+  Qed.
+
+  (** Normalization cannot retain more coefficients than it receives. *)
+  Lemma poly_normal_length : forall xs,
+    length (poly_normal_coef X.encode xs) <= length xs.
+  Proof.
+    intro xs. rewrite <- (length_map fst (poly_normal_coef X.encode xs)),
+      <- (length_map fst xs). apply NoDup_incl_length; [apply poly_normal_coef_nodup|].
+    intros x Hin. apply in_map_iff in Hin as [p [Heq Hin]]. subst x.
+    exact (poly_normal_coef_keys _ X.encode xs p Hin).
+  Qed.
+
+  (** Inserting a possibly new variable preserves old members and includes that variable. *)
+  Lemma poly_var_insert_contains : forall acc x y,
+    In y acc \/ y = x ->
+    In y (if existsb (X.eqb x) acc then acc else x :: acc).
+  Proof.
+    intros acc x y Hin. destruct (existsb (X.eqb x) acc) eqn:Hpresent.
+    - destruct Hin as [Hin|Heq]; [exact Hin|]. subst y.
+      apply existsb_exists in Hpresent as [z [Hz Heq]].
+      destruct (X.eqb_spec x z) as [Hequal|Hneq]; [now subst z|discriminate].
+    - destruct Hin as [Hin|Heq]; [right; exact Hin|left; congruence].
+  Qed.
+
+  (** The variable collection fold contains its input and its initial accumulator. *)
+  Lemma poly_vars_fold_contains : forall xs acc x,
+    In x acc \/ In x xs ->
+    In x (fold_left (fun acc y => if existsb (X.eqb y) acc then acc else y :: acc) xs acc).
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc x Hin; cbn [fold_left].
+    - destruct Hin as [Hin|Hin]; [exact Hin|contradiction].
+    - apply IH. destruct Hin as [Hin|[Heq|Hin]].
+      + left. apply poly_var_insert_contains. now left.
+      + left. apply poly_var_insert_contains. right. congruence.
+      + now right.
+  Qed.
+
+  (** The declared variable list contains every variable of every input row. *)
+  Lemma poly_vars_of_contains : forall P r x,
+    In r P -> In x (map fst (lhs r)) -> In x (vars_of P).
+  Proof.
+    intros P r x Hr Hx. unfold vars_of. apply poly_vars_fold_contains. right.
+    apply in_flat_map. exists r. auto.
+  Qed.
+
+  (** A normal row has at most the declared number of distinct input variables. *)
+  Lemma poly_row_dimension : forall P r, normal P -> In r P ->
+    length (lhs r) <= length (vars_of P).
+  Proof.
+    intros P r Hnormal Hr. rewrite <- (length_map fst (lhs r)).
+    apply NoDup_incl_length.
+    - unfold normal in Hnormal. exact (proj1 (Forall_forall _ _) Hnormal r Hr).
+    - intros x Hx. now apply poly_vars_of_contains with (r := r).
+  Qed.
+
+  (** The normalized initial rows fit the input variable dimension. *)
+  Lemma poly_initial_dimension : forall P r, normal P ->
+    In r (poly_initial X.encode (map (fun p => (p, false)) P)) ->
+    length (lhs (poly_constraint r)) <= length (vars_of P).
+  Proof.
+    intros P r Hnormal Hin. destruct (poly_initial_source P r Hin) as [p [Hp Hrow]].
+    rewrite Hrow. cbn [poly_normal_row lhs].
+    eapply Nat.le_trans; [apply poly_normal_length|]. now apply poly_row_dimension.
+  Qed.
+
+  (** A missing accumulator binding contributes zero to the next addition. *)
+  Definition poly_previous (m : ptrie (X.t * Z)) (x : X.t) : Z :=
+    match PTrieCode.get (X.encode x) m with Some p => snd p | None => 0%Z end.
+
+  (** Updating a different source key leaves a future addition's old value unchanged. *)
+  Lemma poly_previous_other : forall m p x, x <> fst p ->
+    poly_previous (poly_add_term X.encode m p) x = poly_previous m x.
+  Proof.
+    intros m p x Hneq. unfold poly_previous, poly_add_term.
+    rewrite PTrie.get_set_other; [reflexivity|].
+    intro Heq. apply Hneq. now apply X.encode_inj.
+  Qed.
+
+  (** A nonzero accumulator binding is retained by coefficient normalization. *)
+  Lemma poly_normal_lookup_member : forall xs key q,
+    PTrieCode.get key (fold_left (poly_add_term X.encode) xs PTrieCode.empty) = Some q ->
+    snd q <> 0%Z -> In q (poly_normal_coef X.encode xs).
+  Proof.
+    intros xs key q Hget Hnonzero. unfold poly_normal_coef.
+    rewrite PTrieT.F9_fold_values.
+    rewrite (poly_fold_values_list _ _
+      (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) _ nil).
+    rewrite poly_fold_normalized, app_nil_r. apply (proj1 (in_rev _ _)).
+    apply filter_In. split.
+    - apply in_map_iff. exists (key, q). split; [reflexivity|].
+      apply (proj2 (PTrie.elements_spec _ _ _ _)). exact Hget.
+    - apply Bool.negb_true_iff, Z.eqb_neq. exact Hnonzero.
+  Qed.
+
+  (** Accumulating a unique coefficient list preserves its uniform coefficient width. *)
+  Lemma poly_unique_accum_bits : forall xs bits,
+    NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    forall key q,
+      PTrieCode.get key (fold_left (poly_add_term X.encode) xs PTrieCode.empty) = Some q ->
+      Z.size_nat (snd q) <= bits.
+  Proof.
+    intros xs bits Hunique Hbits key [x a] Hget. cbn [snd].
+    destruct (Z.eq_dec a 0) as [Hzero|Hnonzero]; [subst a; change (0 <= bits); lia|].
+    pose proof (poly_normal_lookup_member xs key (x, a) Hget Hnonzero) as Hin.
+    pose proof (poly_coef_member x a _ (poly_normal_coef_nodup _ _ _) Hin) as Hcoef.
+    rewrite coef_of_normal in Hcoef. rewrite <- Hcoef. now apply poly_coef_bits.
+  Qed.
+
+  (** Allocated trie nodes are charged once to the inserted key lengths. *)
+  Lemma poly_accum_nodes : forall xs m keys,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) xs ->
+    PTrie.nodes (fold_left (poly_add_term X.encode) xs m) <=
+      PTrie.nodes m + length xs * keys.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys Hkeys; cbn [fold_left length].
+    - lia.
+    - inversion Hkeys as [|q qs Hp Htail]; subst q qs.
+      specialize (IH (poly_add_term X.encode m p) keys Htail).
+      pose proof (PTrie.nodes_set _ (X.encode (fst p))
+        (fst p, (poly_previous m (fst p) + snd p)%Z) m) as Hset.
+      change (PTrie.nodes (poly_add_term X.encode m p) <=
+        PTrie.nodes m + Pos.size_nat (X.encode (fst p))) in Hset.
+      nia.
+  Qed.
+
+  (** The per-term clock charges encoding, two trie paths, and one bounded addition. *)
+  Definition poly_add_factor : N := (X.c_key + 2 * PTrieT.c_trie + 24)%N.
+
+  (** Accumulating a term pays for its key and both summand widths. *)
+  Lemma T_poly_add_term_bounded : forall m p keys bits old,
+    Pos.size_nat (X.encode (fst p)) <= keys -> Z.size_nat (snd p) <= bits ->
+    Z.size_nat (poly_previous m (fst p)) <= old ->
+    (T_poly_add_term X.encode X.T_encode m p <=
+      poly_add_factor * N.of_nat (keys + bits + old + 1))%N.
+  Proof.
+    intros m p keys bits old Hkey Hbits Hold.
+    pose proof (X.T_encode_le (fst p)) as Hencode.
+    pose proof (PTrieT.T_get_le (X.t * Z) (X.encode (fst p)) m) as Hget.
+    pose proof (PTrieT.T_set_le (X.t * Z) (X.encode (fst p))
+      (fst p, (poly_previous m (fst p) + snd p)%Z) m) as Hput.
+    pose proof (Z.T_add_le (poly_previous m (fst p)) (snd p)) as Hadd.
+    assert (Hbranch : (match PTrieCode.get (X.encode (fst p)) m with
+      | Some _ => 1 | None => 0 end <= 1)%N).
+    { destruct (PTrieCode.get (X.encode (fst p)) m); lia. }
+    time_unfold (@T_poly_add_term). fold (poly_previous m (fst p)).
+    unfold poly_add_factor, X.bits in *. time_simpl. nia.
+  Qed.
+
+  (** Unique remaining keys keep the same old-value bound throughout accumulation. *)
+  Lemma T_poly_accum_unique : forall xs m keys bits old,
+    NoDup (map fst xs) ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (forall p, In p xs -> Z.size_nat (poly_previous m (fst p)) <= old) ->
+    (List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+      xs m <= (poly_add_factor + 1) * N.of_nat (length xs) *
+        N.of_nat (keys + bits + old + 1) + 1)%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys bits old Hunique Hsizes Hprevious.
+    - time_unfold List.T_fold_left. cbn [length]. nia.
+    - inversion Hunique as [|key rest Hnot Hunique_tail]; subst key rest.
+      inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      assert (Hfuture : forall q, In q xs ->
+        Z.size_nat (poly_previous (poly_add_term X.encode m p) (fst q)) <= old).
+      { intros q Hq. rewrite poly_previous_other.
+        - apply Hprevious. now right.
+        - intro Heq. apply Hnot. rewrite <- Heq. now apply in_map. }
+      specialize (IH _ _ _ _ Hunique_tail Htail Hfuture).
+      pose proof (T_poly_add_term_bounded m p keys bits old Hkey Hbits
+        (Hprevious p (or_introl eq_refl))) as Hhead.
+      time_unfold List.T_fold_left. cbn [length]. time_simpl. nia.
+  Qed.
+
+  (** Splitting an accumulation list adds only its two traversal clocks. *)
+  Lemma T_poly_accum_app : forall xs ys m,
+    (List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+      (xs ++ ys) m <=
+      List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode) xs m +
+      List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode) ys
+        (fold_left (poly_add_term X.encode) xs m))%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros ys m;
+      cbn [app fold_left]; time_unfold List.T_fold_left; [lia|].
+    specialize (IH ys (poly_add_term X.encode m p)).
+    change (1 + (T_poly_add_term X.encode X.T_encode m p +
+      List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+        (xs ++ ys) (poly_add_term X.encode m p)) <=
+      1 + (T_poly_add_term X.encode X.T_encode m p +
+        List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+          xs (poly_add_term X.encode m p)) +
+      List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+        ys (fold_left (poly_add_term X.encode) xs (poly_add_term X.encode m p)))%N.
+    rewrite <- !N.add_assoc. apply N.add_le_mono_l, N.add_le_mono_l. exact IH.
+  Qed.
+
+  (** The normalization callback only discards an exact zero coefficient. *)
+  Definition poly_normal_keep (acc : list (X.t * Z)) (p : X.t * Z) : list (X.t * Z) :=
+    if Z.eqb (snd p) 0 then acc else p :: acc.
+
+  TimeFun poly_normal_keep.
+
+  (** Comparing any integer with zero needs no traversal of its magnitude. *)
+  Lemma T_poly_zero_test : forall z, (Z.T_eqb z 0 <= 2)%N.
+  Proof.
+    intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia.
+  Qed.
+
+  (** Filtering a stored zero has constant callback cost. *)
+  Lemma T_poly_normal_keep_le : forall acc p, (T_poly_normal_keep acc p <= 5)%N.
+  Proof.
+    intros acc p. pose proof (T_poly_zero_test (snd p)).
+    time_unfold T_poly_normal_keep. time_simpl. nia.
+  Qed.
+
+  (** Two unique lists need at most two summand widths at each shared key. *)
+  Lemma T_poly_accum_pair : forall xs ys keys bits,
+    NoDup (map fst xs) -> NoDup (map fst ys) ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) ys ->
+    (List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+      (xs ++ ys) PTrieCode.empty <=
+      2 * (poly_add_factor + 1) * N.of_nat (length xs + length ys + 1) *
+        N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros xs ys keys bits Hnx Hny Hxs Hys.
+    assert (Hzero : forall p, In p xs ->
+      Z.size_nat (poly_previous PTrieCode.empty (fst p)) <= 0).
+    { intros p Hin. unfold poly_previous. rewrite PTrie.get_empty. reflexivity. }
+    pose proof (T_poly_accum_unique xs PTrieCode.empty keys bits 0 Hnx Hxs Hzero) as Hleft.
+    assert (Hvalues : Forall (fun p => Z.size_nat (snd p) <= bits) xs).
+    { eapply Forall_impl; [|exact Hxs]. intros p [_ Hp]. exact Hp. }
+    assert (Hprevious : forall p, In p ys -> Z.size_nat
+      (poly_previous (fold_left (poly_add_term X.encode) xs PTrieCode.empty) (fst p)) <= bits).
+    { intros p Hin. unfold poly_previous.
+      destruct (PTrieCode.get (X.encode (fst p))
+        (fold_left (poly_add_term X.encode) xs PTrieCode.empty)) as [q|] eqn:Hget.
+      - exact (poly_unique_accum_bits xs bits Hnx Hvalues _ q Hget).
+      - change (0 <= bits). lia. }
+    pose proof (T_poly_accum_unique ys _ keys bits bits Hny Hys Hprevious) as Hright.
+    pose proof (T_poly_accum_app xs ys PTrieCode.empty) as Hsplit.
+    assert (Hmass : (1 <= N.of_nat (keys + bits + 1))%N) by lia.
+    assert (Htwice : (N.of_nat (keys + bits + bits + 1) <=
+      2 * N.of_nat (keys + bits + 1))%N) by lia.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Normalization adds a linear value traversal to the two accumulation passes. *)
+  Definition poly_normal_factor : N :=
+    (2 * (poly_add_factor + 1) + 6 * PTrieT.k_fold + 8)%N.
+
+  (** Normalizing two normal lists is linear in their entries and key/coefficient widths. *)
+  Lemma T_poly_normal_pair : forall xs ys keys bits,
+    NoDup (map fst xs) -> NoDup (map fst ys) ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) ys ->
+    (T_poly_normal_coef X.encode X.T_encode (xs ++ ys) <=
+      poly_normal_factor * N.of_nat (length xs + length ys + 1) *
+        N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros xs ys keys bits Hnx Hny Hxs Hys.
+    pose proof (T_poly_accum_pair xs ys keys bits Hnx Hny Hxs Hys) as Haccum.
+    set (tr := fold_left (poly_add_term X.encode) (xs ++ ys) PTrieCode.empty).
+    assert (Hkeys : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) (xs ++ ys)).
+    { apply Forall_app. split.
+      - eapply Forall_impl; [|exact Hxs]. intros p [Hp _]. exact Hp.
+      - eapply Forall_impl; [|exact Hys]. intros p [Hp _]. exact Hp. }
+    pose proof (poly_accum_nodes (xs ++ ys) PTrieCode.empty keys Hkeys) as Hnodes.
+    change (PTrie.nodes tr <= length (xs ++ ys) * keys) in Hnodes.
+    rewrite length_app in Hnodes.
+    pose proof (PTrieT.T9_fold_values (X.t * Z) (list (X.t * Z))
+      poly_normal_keep T_poly_normal_keep tr nil 5 T_poly_normal_keep_le) as Hfold.
+    time_unfold (@T_poly_normal_coef). fold tr.
+    change (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) with poly_normal_keep.
+    unfold poly_normal_factor. time_simpl.
+    change (fun (acc : PTrieCode.t (X.t * Z)) (p : X.t * Z) =>
+      T_poly_add_term X.encode X.T_encode acc p) with
+      (T_poly_add_term X.encode X.T_encode).
+    change (fun (_ : list (X.t * Z)) (p : X.t * Z) =>
+      (1 + (1 + Z.T_eqb (snd p) 0))%N) with T_poly_normal_keep.
+    nia.
+  Qed.
+
+  (** A single unique list is the empty-right-list instance of the normalization bound. *)
+  Lemma T_poly_normal_unique : forall xs keys bits,
+    NoDup (map fst xs) ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (T_poly_normal_coef X.encode X.T_encode xs <=
+      poly_normal_factor * N.of_nat (length xs + 1) * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros xs keys bits Hunique Hsizes.
+    pose proof (T_poly_normal_pair xs nil keys bits Hunique ltac:(constructor) Hsizes
+      ltac:(constructor)) as Htime. rewrite app_nil_r in Htime. cbn [length] in Htime.
+    now rewrite Nat.add_0_r in Htime.
   Qed.
 
   Definition prows (s : t) : list (lcons X.t) :=
