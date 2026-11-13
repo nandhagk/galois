@@ -69,10 +69,23 @@ Module Alarms (N X : KEY) (MN : MAP N) (L : LANG)
     eapply eval_operands_sound; [apply Hcovers; exact Hreach|exact Heval].
   Qed.
 
+  (** Top-valued operands have the exact arity required by the checks contract. *)
+  Lemma top_operands : forall es,
+    (forall e, In e es -> S.eval e S.top = V.top) ->
+    map (fun e => S.eval e S.top) es = repeat V.top (length es).
+  Proof.
+    intros es. induction es as [|e es IH]; intros Htop; cbn; [reflexivity|].
+    rewrite Htop; [|now left]. rewrite IH; [reflexivity|].
+    intros e1 He1. apply Htop. now right.
+  Qed.
+
   Lemma alarm_at_top : forall inv k, inv_at inv (site k) = S.top ->
     (forall e, In e (args k) -> S.eval e S.top = V.top) ->
     (exists cs, length cs = length (args k) /\ ~ C.safe (ckind k) cs) -> alarm inv k = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros inv k Hinv Htop Hunsafe. unfold alarm. rewrite Hinv.
+    rewrite top_operands; [now apply C.may_fail_top|exact Htop].
+  Qed.
 End Alarms.
 
 Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
