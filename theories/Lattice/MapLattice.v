@@ -127,12 +127,111 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
     intros p Hin. unfold lookup_size. destruct (M.find p m); [apply Hbound | lia].
   Qed.
 
+  (** Weighted concatenation adds the two list budgets. *)
+  Local Lemma weighted_sum_app (f : positive -> nat) ps qs :
+    fold_right Nat.add 0 (List.map f (ps ++ qs)) =
+      fold_right Nat.add 0 (List.map f ps) + fold_right Nat.add 0 (List.map f qs).
+  Proof.
+    induction ps as [|p ps IH]; cbn [List.map fold_right app]; lia.
+  Qed.
+
+  (** Summing pointwise sums separates the two weights. *)
+  Local Lemma weighted_sum_add (f g : positive -> nat) ps :
+    fold_right Nat.add 0 (List.map (fun p => f p + g p) ps) =
+      fold_right Nat.add 0 (List.map f ps) + fold_right Nat.add 0 (List.map g ps).
+  Proof.
+    induction ps as [|p ps IH]; cbn [List.map fold_right]; lia.
+  Qed.
+
+  (** A duplicate-free sample cannot exceed the weight of its support. *)
+  Local Lemma weighted_sample (f : positive -> nat) ps :
+    NoDup ps -> forall support,
+    (forall p, In p ps -> ~ In p support -> f p = 0) ->
+    fold_right Nat.add 0 (List.map f ps) <=
+      fold_right Nat.add 0 (List.map f support).
+  Proof.
+    intro Hnodup. induction Hnodup as [|p ps Hnot Hnodup IH]; intros support Hsupport.
+    - cbn [List.map fold_right]. lia.
+    - destruct (in_dec Pos.eq_dec p support) as [Hin | Hout].
+      + apply in_split in Hin as [xs [ys Heq]]. subst support.
+        assert (Htail : forall q, In q ps -> ~ In q (xs ++ ys) -> f q = 0).
+        { intros q Hq Houtside. apply Hsupport; [right; exact Hq |].
+          rewrite !in_app_iff in *. cbn [In]. intuition congruence. }
+        specialize (IH (xs ++ ys) Htail).
+        rewrite weighted_sum_app in IH |- *. cbn [List.map fold_right]. lia.
+      + cbn [List.map fold_right]. rewrite (Hsupport p (or_introl eq_refl) Hout).
+        apply IH. intros q Hq Houtside. apply Hsupport; [right; exact Hq | exact Houtside].
+  Qed.
+
+  (** Sampling raw code lookups charges each stored value at most once. *)
+  Local Lemma lookup_sample m ps : NoDup ps ->
+    fold_right Nat.add 0 (List.map (lookup_size m) ps) <= value_size m.
+  Proof.
+    intro Hnodup. unfold value_size. apply weighted_sample; [exact Hnodup |].
+    intros p Hin Houtside. unfold lookup_size.
+    destruct (M.find p m) as [a |] eqn:Hfind; [|reflexivity].
+    exfalso. apply Houtside. apply M.codes_spec. rewrite Hfind. discriminate.
+  Qed.
+
+  (** The two code lists duplicate each map's value budget at most twice. *)
+  Local Lemma union_values a b :
+    fold_right Nat.add 0 (List.map (fun p => lookup_size a p + lookup_size b p)
+      (M.codes a ++ M.codes b)) <= 2 * (value_size a + value_size b).
+  Proof.
+    rewrite weighted_sum_add, !weighted_sum_app.
+    pose proof (lookup_sample a (M.codes b) (M.codes_nodup L.t b)) as Hab.
+    pose proof (lookup_sample b (M.codes a) (M.codes_nodup L.t a)) as Hba.
+    unfold value_size in *. lia.
+  Qed.
+
+  (** A relational callback budget is paid by both raw maps' value sums. *)
+  Local Lemma union_charge_bound (f : positive -> N) c a b :
+    (forall p, In p (M.codes a ++ M.codes b) ->
+      (f p <= c * N.of_nat (lookup_size a p + lookup_size b p))%N) ->
+    (fold_right N.add 0 (List.map f (M.codes a ++ M.codes b)) <=
+      2 * c * N.of_nat (value_size a + value_size b))%N.
+  Proof.
+    intro Hcallback.
+    pose proof (code_sum_bound f (fun p => lookup_size a p + lookup_size b p)
+      c (M.codes a ++ M.codes b) Hcallback) as Hsum.
+    pose proof (union_values a b) as Hvalues. apply time_of_nat_le in Hvalues.
+    rewrite Nat2N.inj_mul in Hvalues. nia.
+  Qed.
+
+  (** Every code in either map has a present binding on at least one side. *)
+  Local Lemma union_present (a b : t) p : In p (M.codes a ++ M.codes b) ->
+    M.find p a <> None \/ M.find p b <> None.
+  Proof.
+    rewrite in_app_iff. intros [Hin | Hin].
+    - left. apply M.codes_spec; exact Hin.
+    - right. apply M.codes_spec; exact Hin.
+  Qed.
+
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold @T_join.
+    lazymatch goal with
+    | |- context [M.T_merge ?f ?Tf a b] =>
+        pose proof (M.T_merge_sum_le L.t L.t L.t f Tf a b) as Hclock;
+        assert (Hcallback : forall p, In p (M.codes a ++ M.codes b) ->
+          (Tf (M.find p a) (M.find p b) <= (L.c_lat + 4) *
+            N.of_nat (lookup_size a p + lookup_size b p))%N) by
+          (intros p Hin; pose proof (union_present a b p Hin) as Hpresent;
+           unfold lookup_size; destruct (M.find p a) as [x |], (M.find p b) as [y |];
+           time_cbn; try (destruct Hpresent; contradiction);
+           try pose proof (L.T_join_le x y); rewrite !Nat2N.inj_add in *; nia);
+        pose proof (union_charge_bound (fun p => Tf (M.find p a) (M.find p b))
+          (L.c_lat + 4)%N a b Hcallback) as Hsum
+    end.
+    time_cbn_all. rewrite !size_values. unfold c_lat.
+    pose proof L.c_lat_pos.
+    assert (Hbot : (1 <= N.of_nat (L.size L.bot + 1))%N) by lia.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof.
