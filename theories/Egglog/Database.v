@@ -1585,6 +1585,80 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hwf i. apply UnionFind.repr_add. exact (wf_forest db Hwf).
   Qed.
 
+  (** Fresh allocation preserves the log-to-representative agreement. *)
+  Lemma allocate_next_equalities : forall db, wf db -> forall i j,
+    same (view (allocate_id (N.succ_pos (ids db)) db)) i j <->
+      repr (allocate_id (N.succ_pos (ids db)) db) i =
+      repr (allocate_id (N.succ_pos (ids db)) db) j.
+  Proof.
+    intros db Hwf i j. rewrite allocate_id_view.
+    rewrite (allocate_next_repr db Hwf i), (allocate_next_repr db Hwf j).
+    exact (wf_equalities db Hwf i j).
+  Qed.
+
+  (** Every logged endpoint stays inside the enlarged allocation interval. *)
+  Lemma allocate_next_log : forall db, wf db ->
+    Forall (fun edge => allocated (allocate_id (N.succ_pos (ids db)) db) (fst edge) /\
+      allocated (allocate_id (N.succ_pos (ids db)) db) (snd edge))
+      (runtime_equalities (db_runtime (allocate_id (N.succ_pos (ids db)) db))).
+  Proof.
+    intros db Hwf. eapply Forall_impl; [| exact (wf_log_allocated db Hwf)].
+    intros [i j] [Hi Hj]. split; apply allocate_next_monotone; assumption.
+  Qed.
+
+  (** The unchanged pending queue remains allocated after a fresh singleton is added. *)
+  Lemma allocate_next_queue : forall db, wf db ->
+    Forall (allocated (allocate_id (N.succ_pos (ids db)) db))
+      (runtime_queue (db_runtime (allocate_id (N.succ_pos (ids db)) db))).
+  Proof.
+    intros db Hwf. eapply Forall_impl; [| exact (wf_queue_allocated db Hwf)].
+    intros i Hi. now apply allocate_next_monotone.
+  Qed.
+
+  (** Identifiers in unchanged rows remain allocated after the interval grows. *)
+  Lemma allocate_next_row_ids : forall db, wf db -> forall f k o i,
+    row (view (allocate_id (N.succ_pos (ids db)) db)) f k o ->
+    In (Id i) (k ++ option_list o) -> allocated (allocate_id (N.succ_pos (ids db)) db) i.
+  Proof.
+    intros db Hwf f k o i Hrow Hin. apply allocate_next_monotone.
+    exact (wf_row_ids db Hwf f k o i Hrow Hin).
+  Qed.
+
+  (** Fresh singleton allocation preserves canonicality whenever the queue is empty. *)
+  Lemma allocate_next_canonical : forall db, wf db ->
+    pending (allocate_id (N.succ_pos (ids db)) db) = 0 ->
+    canonical (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf Hquiet f k o Hrow i Hin.
+    rewrite (allocate_next_repr db Hwf i).
+    exact (wf_quiet_canonical db Hwf Hquiet f k o Hrow i Hin).
+  Qed.
+
+  (** Adding the next singleton preserves the complete database invariant. *)
+  Lemma wf_allocate_next : forall db, wf db -> wf (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf.
+    assert (Hforest : UnionFind.wf (db_forest (allocate_id (N.succ_pos (ids db)) db))).
+    { apply UnionFind.wf_add. exact (wf_forest db Hwf). }
+    pose proof (allocate_next_members db Hwf) as Hmembers.
+    pose proof (allocate_next_count db Hwf) as Hcount.
+    assert (Hwidth : UnionFind.width (db_forest (allocate_id (N.succ_pos (ids db)) db)) <=
+      N.size_nat (ids (allocate_id (N.succ_pos (ids db)) db))).
+    { apply UnionFindCodeFacts.width_allocated. intros i Hi. exact (proj1 (Hmembers i) Hi). }
+    pose proof (allocate_next_equalities db Hwf) as Hequalities.
+    pose proof (allocate_next_log db Hwf) as Hlog.
+    pose proof (allocate_next_row_ids db Hwf) as Hrowids.
+    pose proof (allocate_next_queue db Hwf) as Hqueue.
+    pose proof (allocate_next_canonical db Hwf) as Hcanonical.
+    unfold wf, database_wf in Hwf |- *. unfold allocate_id in *.
+    cbn [database_set_forest database_set_runtime runtime_set_allocated runtime_set_changed
+      db_forest db_runtime db_npending runtime_allocated runtime_rows runtime_kinds
+      runtime_slots runtime_equalities runtime_queue runtime_all_indexes runtime_new_indexes
+      runtime_projection_counts runtime_function_slots runtime_max_name runtime_slot_bound
+      view row same kind row_get kind_get repr allocated ids pending slots slot_of
+      index canonical slots_fit projection_counts_ok stored_projection_count] in *; tauto.
+  Qed.
+
   (** Every fresh make branch has the required layout and allocation observations. *)
   Lemma fresh_make_layout : forall db f k previous,
     let i := N.succ_pos (ids db) in
