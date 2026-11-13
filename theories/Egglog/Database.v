@@ -3337,11 +3337,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     change (row_get f (map (canon db) k) db = Some (Some (Id j))) in Hrow.
     rewrite Hrow in Hchanged. change (changed db = true) in Hchanged. congruence.
   Qed.
-  (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
-  Lemma rebuild_quiet : forall db, wf db -> canonical db ->
-    (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
-  Proof. Admitted. (* STUB *)
-
   (** Make reuses a canonical constructor output or allocates a fresh identifier. *)
   Lemma make_spec : forall f k db, wf db -> kind (view db) f = Some OId ->
     let '(i, db') := make f k db in
@@ -5141,6 +5136,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - repeat split; reflexivity.
   Qed.
 
+  (** Queue removal preserves canonical rows because both the view and forest are unchanged. *)
+  Lemma db_pop_loser_canonical : forall db i db',
+    db_pop_loser db = Some (i, db') -> canonical db -> canonical db'.
+  Proof.
+    intros db i db' Hpop Hcanonical.
+    destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
+    unfold canonical, repr in *. now rewrite Hview, Hforest.
+  Qed.
+
   (** Deletion preserves every premise for a later kind-correct insertion. *)
   Lemma row_delete_kind_ok : forall db f k g args output,
     kind_ok (row_delete f k db) g args output <-> kind_ok db g args output.
@@ -5196,6 +5200,28 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply wf_put; [now apply row_delete_wf |]. apply row_delete_kind_ok.
     rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
     apply kind_ok_canon; [exact Hwf |]. now apply wf_row_kind_ok.
+  Qed.
+
+  (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
+  Lemma rebuild_quiet : forall db, wf db -> canonical db ->
+    (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
+  Proof.
+    intros db Hwf Hcanonical _.
+    assert (Hresult : UnionFind.wf (db_forest (rebuild db)) /\
+      canonical (rebuild db) /\ changed (rebuild db) = changed db).
+    { apply (rebuild_preserves (fun current => UnionFind.wf (db_forest current) /\
+        canonical current /\ changed current = changed db)).
+      - intros current f k [Hforest [Hfixed Hflag]].
+        rewrite (repair_current_canonical current f k Hforest Hfixed).
+        exact (conj Hforest (conj Hfixed Hflag)).
+      - intros current i next [Hforest [Hfixed Hflag]] Hpop.
+        destruct (db_pop_loser_preserves current i next Hpop) as [Hsame_forest _].
+        destruct (db_pop_loser_layout current i next Hpop) as [_ [_ Hsame_flag]].
+        split; [now rewrite Hsame_forest |]. split.
+        + eapply db_pop_loser_canonical; eassumption.
+        + now rewrite Hsame_flag.
+      - split; [exact (wf_forest db Hwf) |]. split; [exact Hcanonical | reflexivity]. }
+    exact (proj2 (proj2 Hresult)).
   Qed.
 
 End Database.
