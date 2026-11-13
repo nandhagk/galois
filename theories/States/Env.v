@@ -1220,9 +1220,6 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       repeat rewrite Nat2N.inj_add in Hset. repeat rewrite Nat2N.inj_add.
       change (N.of_nat 1) with 1%N in Hset |- *. nia.
   Qed.
-  Lemma T_assume_le : forall g es s,
-    (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
   (** Evaluation extracts the root of one annotation pass. *)
   Lemma T_eval_le : forall e s,
     (T_eval e s <= c_state * N.of_nat (eval_work e s + 1))%N.
@@ -1241,11 +1238,6 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros m e. pose proof (annotate_time_reserve m e) as Htime.
     pose proof state_annotation_factor as Hfactor. unfold c_env. nia.
   Qed.
-  Lemma T_assume_env_le : forall g es s,
-    (T_assume g es s <= c_env * N.of_nat
-      (fold_right Nat.add 0%nat (map (tcost_s s) es) + V.gwork g (roots s es) +
-       fold_right Nat.add 0%nat (map tsize es) * (rsize s g es + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
   Lemma T_join_env_le : forall a b, env_wf a -> env_wf b ->
     (T_join a b <= c_env * N.of_nat (esize a + esize b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -1527,12 +1519,214 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros q n m. pose proof (refine_time_reserve q n m) as Htime.
     unfold k_env_refine. lia.
   Qed.
+  (** One guard request refines the current map and accumulates bottom recognition. *)
+  Definition assume_step (result : M.t V.t * bool) (nq : ann L.op X.t V.t * V.t) :=
+    let next := refine_checked (snd nq) (fst nq) (fst result) in
+    (fst next, orb (snd result) (snd next)).
+  (** The callback clock follows the generated projection and Boolean costs. *)
+  Definition assume_step_time (result : M.t V.t * bool)
+      (nq : ann L.op X.t V.t * V.t) :=
+    (1 + (Datatypes.T_snd nq + (Datatypes.T_fst nq + Datatypes.T_fst result) +
+      T_refine_checked (snd nq) (fst nq) (fst result) +
+      (let next := refine_checked (snd nq) (fst nq) (fst result) in
+      Datatypes.T_fst next +
+        (Datatypes.T_snd result + Datatypes.T_snd next +
+          Datatypes.T_orb (snd result) (snd next)))))%N.
+  (** Sequential guard requests record their largest encountered refinement charge. *)
+  Fixpoint assume_children_size (nqs : list (ann L.op X.t V.t * V.t)) m :=
+    match nqs with
+    | [] => 0
+    | (n, q) :: nqs => Nat.max (refine_size q n m)
+      (assume_children_size nqs (refine q n m))
+    end.
+
+  (** The maximum accumulator records the same peak as the recursive request traversal. *)
+  Lemma assume_size_fold : forall nqs m acc,
+    fst (fold_left (fun acc nq =>
+      (Nat.max (fst acc) (refine_size (snd nq) (fst nq) (snd acc)),
+        refine (snd nq) (fst nq) (snd acc))) nqs (acc, m)) =
+    Nat.max acc (assume_children_size nqs m).
+  Proof.
+    intro nqs. induction nqs as [|[n q] nqs IH]; intros m acc.
+    - cbn. lia.
+    - cbn [fold_left fst snd assume_children_size]. rewrite IH. lia.
+  Qed.
+
+  (** Pairing requests cannot increase the charge of the original child list. *)
+  Lemma combine_charge : forall (f : ann L.op X.t V.t -> nat) ns (qs : list V.t),
+    fold_right Nat.add 0 (map (fun nq => f (fst nq)) (combine ns qs)) <=
+    fold_right Nat.add 0 (map f ns).
+  Proof.
+    intros f ns. induction ns as [|n ns IH]; intros [|q qs];
+      cbn [combine map fold_right fst]; try lia.
+    specialize (IH qs). lia.
+  Qed.
+
+  (** Guard-request traversal pays for checked refinement and its constant callback overhead. *)
+  Lemma assume_children_time_bound : forall nqs m bad,
+    (List.T_fold_left assume_step assume_step_time nqs (m, bad) <=
+      (env_refine_factor + 9) * N.of_nat
+        (fold_right Nat.add 0%nat (map (fun nq => ann_work (fst nq)) nqs) +
+          fold_right Nat.add 0%nat (map (fun nq => ann_size (fst nq)) nqs) *
+            (assume_children_size nqs m + 1)) + 1)%N.
+  Proof.
+    intro nqs. induction nqs as [|[n q] nqs IH]; intros m bad.
+    - change (1 <= (env_refine_factor + 9) * 0 + 1)%N. nia.
+    - pose proof (refine_time_reserve q n m) as Hrefine.
+      specialize (IH (refine q n m) (orb bad (snd (refine_checked q n m)))).
+      unfold List.T_fold_left at 1. fold (@List.T_fold_left _ _ assume_step assume_step_time).
+      cbn [assume_step assume_step_time fst snd map fold_right assume_children_size].
+      unfold Datatypes.T_snd, Datatypes.T_fst, Datatypes.T_orb. cbn beta zeta.
+      change (fst (refine_checked q n m)) with (refine q n m).
+      autorewrite with env_time_nat in Hrefine, IH |- *.
+      pose proof (N.le_max_l (N.of_nat (refine_size q n m))
+        (N.of_nat (assume_children_size nqs (refine q n m)))) as Hleft.
+      pose proof (N.le_max_r (N.of_nat (refine_size q n m))
+        (N.of_nat (assume_children_size nqs (refine q n m)))) as Hright.
+      assert (Hwork : (1 <= N.of_nat (ann_work n))%N).
+      { destruct n; cbn [ann_work]; lia. }
+      change (N.of_nat 1) with 1%N in Hrefine, IH |- *.
+      change (assume_step_time (m, bad) (n, q)) with
+        (1 + (3 + T_refine_checked q n m + 4))%N.
+      change (assume_step (m, bad) (n, q)) with
+        (refine q n m, orb bad (snd (refine_checked q n m))).
+      change (N.succ (N.of_nat 0)) with 1%N in *.
+      nia.
+  Qed.
+  (** Annotated guard children share the original terms' work and shape charges. *)
+  Lemma assume_children_annotations : forall m es qs bad,
+    (List.T_fold_left assume_step assume_step_time
+      (combine (map (annotate m) es) qs) (m, bad) <=
+      (env_refine_factor + 9) * N.of_nat
+        (fold_right Nat.add 0%nat (map (tcost m) es) +
+          fold_right Nat.add 0%nat (map tsize es) *
+            (assume_children_size (combine (map (annotate m) es) qs) m + 1)) + 1)%N.
+  Proof.
+    intros m es qs bad.
+    pose proof (assume_children_time_bound (combine (map (annotate m) es) qs) m bad)
+      as Hfold.
+    assert (Hwork : fold_right Nat.add 0
+      (map (fun nq => ann_work (fst nq)) (combine (map (annotate m) es) qs)) <=
+      fold_right Nat.add 0 (map (tcost m) es)).
+    { eapply Nat.le_trans; [apply combine_charge|]. rewrite map_map.
+      apply rank_sum_mono. intros e _. rewrite F_ann_work. lia. }
+    assert (Hsize : fold_right Nat.add 0
+      (map (fun nq => ann_size (fst nq)) (combine (map (annotate m) es) qs)) <=
+      fold_right Nat.add 0 (map tsize es)).
+    { eapply Nat.le_trans; [apply combine_charge|]. rewrite map_map.
+      apply rank_sum_mono. intros e _. rewrite F_ann_size. lia. }
+    autorewrite with env_time_nat in Hfold |- *.
+    eapply N.le_trans; [exact Hfold|].
+    apply N.add_le_mono_r. apply N.mul_le_mono_l.
+    apply N.add_le_mono; [lia|]. apply N.mul_le_mono_r. lia.
+  Qed.
+  (** Forward, guard and refinement bounds fit the selected state coefficient. *)
+  Lemma assume_time_arithmetic :
+    forall (k cm cv work guard charge len annot child_time guard_time combine_time : N),
+    (annot <= (cm + cv + 8) * work -> len <= work ->
+      child_time <= (k + 9) * (work + charge) + 1 ->
+      guard_time <= cv * (guard + 1) -> combine_time <= len + 1 ->
+      1 + (annot + len + 1 + (2 * len + 1 + guard_time +
+        (combine_time + child_time + 2))) <=
+      (k + cm + 2 * cv + 40) * (work + guard + charge + 1))%N.
+  Proof.
+    intros k cm cv work guard charge len annot child_time guard_time combine_time
+      Hann Hlen Hchildren Hguard Hcombine.
+    assert (Htotal : (1 + (annot + len + 1 + (2 * len + 1 + guard_time +
+        (combine_time + child_time + 2))) <=
+      (k + cm + cv + 21) * work + cv * guard + (k + 9) * charge + cv + 7)%N) by nia.
+    eapply N.le_trans; [exact Htotal|].
+    clear Htotal Hann Hlen Hchildren Hguard Hcombine.
+    assert (Hwork : ((k + cm + cv + 21) * work <=
+      (k + cm + 2 * cv + 40) * work)%N) by (apply N.mul_le_mono_r; lia).
+    assert (Hguard : (cv * guard <=
+      (k + cm + 2 * cv + 40) * guard)%N) by (apply N.mul_le_mono_r; lia).
+    assert (Hcharge : ((k + 9) * charge <=
+      (k + cm + 2 * cv + 40) * charge)%N) by (apply N.mul_le_mono_r; lia).
+    nia.
+  Qed.
+
+  (** A reached assumption pays for one cached forward pass and one refinement traversal. *)
+  Lemma assume_time_reached : forall g es m,
+    (T_assume g es (Reached m) <=
+      (env_refine_factor + M.c_map + 2 * V.c_val + 40) * N.of_nat
+      (fold_right Nat.add 0%nat (map (tcost m) es) +
+        V.gwork g (roots (Reached m) es) +
+        fold_right Nat.add 0%nat (map tsize es) * (rsize (Reached m) g es + 1) + 1))%N.
+  Proof.
+    intros g es m.
+    set (ns := map (annotate m) es).
+    set (qs := V.guard g (map root ns)).
+    pose proof (assume_children_annotations m es qs false) as Hfold. fold ns in Hfold.
+    assert (Hmap : (fold_right N.add 0 (map (T_annotate m) es) <=
+      (M.c_map + V.c_val + 8) *
+      N.of_nat (fold_right Nat.add 0%nat (map (tcost m) es)))%N).
+    { apply time_sum_bound. intros e _. pose proof (annotate_time_reserve m e). lia. }
+    pose proof (tcost_lengths m es) as Hlength.
+    assert (HlengthN : (N.of_nat (length es) <=
+      N.of_nat (fold_right Nat.add 0%nat (map (tcost m) es)))%N) by lia.
+    pose proof (V.T_guard_le g (map root ns)) as Hguard.
+    pose proof (@List.T_combine_le _ _ ns qs) as Hcombine.
+    assert (Hroots : map root ns = roots (Reached m) es).
+    { unfold ns, roots. rewrite map_map. reflexivity. }
+    rewrite Hroots in Hguard.
+    assert (Hnslen : length ns = length es) by (unfold ns; apply length_map).
+    rewrite Hnslen in Hcombine.
+    unfold T_assume. cbn beta iota zeta. fold ns qs.
+    fold assume_step assume_step_time.
+    rewrite time_map_sum, time_roots, Hnslen, Hroots.
+    change (fun e : term L.op X.t => T_annotate m e) with (T_annotate m).
+    unfold rsize, assume_size. fold ns qs. rewrite assume_size_fold.
+    cbn [Nat.max].
+    set (result := fold_left assume_step (combine ns qs) (m, false)).
+    unfold Datatypes.T_snd, Datatypes.T_fst. cbn beta zeta.
+    autorewrite with env_time_nat in Hfold, Hguard |- *.
+    change (N.succ (N.of_nat 0)) with 1%N in Hfold, Hguard |- *.
+    clear Hlength Hroots Hnslen.
+    remember (N.of_nat (fold_right Nat.add 0%nat (map tsize es)) *
+      (N.of_nat (assume_children_size (combine ns qs) m) + 1))%N as charge
+      eqn:Hcharge in *. clear Hcharge.
+    eapply N.le_trans.
+    2: { eapply assume_time_arithmetic; eassumption. }
+    apply N.add_le_mono_l. apply N.add_le_mono_l.
+    apply N.add_le_mono_l. apply N.add_le_mono_l.
+    destruct (snd result); lia.
+  Qed.
+
+  (** Reached assumptions fit the environment constant after composing their traversals. *)
   Lemma T1_assume : forall g es m,
     (T_assume g es (Reached m) <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost m) es) +
         V.gwork g (roots (Reached m) es) +
         fold_right Nat.add 0%nat (map tsize es) * (rsize (Reached m) g es + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es m. pose proof (assume_time_reached g es m) as Htime.
+    eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_r.
+    unfold c_env, c_state. nia.
+  Qed.
+
+  (** Assumption time is bounded for reached and unreachable environments. *)
+  Lemma T_assume_env_le : forall g es s,
+    (T_assume g es s <= c_env * N.of_nat
+      (fold_right Nat.add 0%nat (map (tcost_s s) es) + V.gwork g (roots s es) +
+       fold_right Nat.add 0%nat (map tsize es) * (rsize s g es + 1) + 1))%N.
+  Proof.
+    intros g es [|m].
+    - change (T_assume g es Unreached) with 1%N.
+      pose proof state_annotation_factor as Hfactor. unfold c_env.
+      rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. nia.
+    - exact (T1_assume g es m).
+  Qed.
+
+  (** The state contract adds one unit to the stronger environment work bound. *)
+  Lemma T_assume_le : forall g es s,
+    (T_assume g es s <= c_state * N.of_nat (assume_work g es s + 1))%N.
+  Proof.
+    intros g es s. pose proof (T_assume_env_le g es s) as Htime.
+    change (T_assume g es s <= c_state * N.of_nat (assume_work g es s))%N in Htime.
+    eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
   Definition models (m : M.t V.t) (st : X.t -> L.val) : Prop :=
     forall x, V.gamma (read m x) (st x).
   Fixpoint ann_models (st : X.t -> L.val) (n : ann L.op X.t V.t)
