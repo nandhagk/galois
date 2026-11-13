@@ -1,8 +1,8 @@
-(** * Placeholder tuple indexes
+(** * Tuple indexes with stored prefix nodes
 
-    Indexes store tuples and navigate prefixes.
-    For example, an empty index has a root node.
-    Builds on: IndexSig. *)
+    Indexes store cell edges, live suffix counts and terminal prefix nodes.
+    For example, removing one tuple preserves a prefix shared with another tuple.
+    Builds on: IndexSig and positive-key tries. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat Lia.
 From Argent Require Import Time Tactics Std.
@@ -10,6 +10,11 @@ From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig.
 
 Import List.ListNotations.
+
+Module Nat.
+  TimeFun Nat.max.
+End Nat.
+Import Nat.
 
 (** * Consequences of the abstract index laws *)
 
@@ -142,32 +147,199 @@ Module IndexTimeFacts (V : VALUE_T) (I : INDEX_T V).
   Qed.
 End IndexTimeFacts.
 
+(** An edge retains its original cell and the number of live suffixes below its child. *)
+Record index_edge (C : Type) := IndexEdge {
+  edge_cell : C;
+  edge_child : positive;
+  edge_count : N
+}.
+
+(** Each allocated prefix has a cell map, cached degree and terminal marker. *)
+Record index_node (C : Type) := IndexNode {
+  node_edges : PTrieCode.t (index_edge C);
+  node_degree : N;
+  node_terminal : bool
+}.
+
+(** The counter retains allocated node identifiers even after their edges are removed. *)
+Record index_state (C : Type) := IndexState {
+  index_counter : positive;
+  index_nodes : PTrieCode.t (index_node C);
+  index_cell_width : nat
+}.
+
+Arguments IndexEdge {C}.
+Arguments edge_cell {C}.
+Arguments edge_child {C}.
+Arguments edge_count {C}.
+Arguments IndexNode {C}.
+Arguments node_edges {C}.
+Arguments node_degree {C}.
+Arguments node_terminal {C}.
+Arguments IndexState {C}.
+Arguments index_counter {C}.
+Arguments index_nodes {C}.
+Arguments index_cell_width {C}.
+
+TimeFun edge_cell.
+TimeFun edge_child.
+TimeFun edge_count.
+TimeFun node_edges.
+TimeFun node_degree.
+TimeFun node_terminal.
+TimeFun index_counter.
+TimeFun index_nodes.
+TimeFun index_cell_width.
+
 Module IndexCode (V : VALUE_OPS) <: INDEX_OPS V.
-  Definition t := list (list (cell V.t)).
-  (* STUB-CODE *)
-  Definition empty : t := [].
-  (* STUB-CODE *)
-  Definition insert (_ : list (cell V.t)) (ix : t) : t := ix.
-  (* STUB-CODE *)
-  Definition remove (_ : list (cell V.t)) (ix : t) : t := ix.
-  (* STUB-CODE *)
-  Definition next (_ : t) : positive := 1%positive.
-  (* STUB-CODE *)
+  Definition t := index_state (cell V.t).
+  Definition empty_node : index_node (cell V.t) := IndexNode PTrieCode.empty 0%N false.
+  Definition empty : t := IndexState 1%positive PTrieCode.empty 0.
+  Definition next (ix : t) : positive := index_counter ix.
   Definition root (_ : t) : positive := 1%positive.
-  (* STUB-CODE *)
-  Definition child (_ : t) (_ : positive) (_ : cell V.t) : option positive := None.
-  (* STUB-CODE *)
-  Definition children (_ : t) (_ : positive) : list (cell V.t) := [].
-  (* STUB-CODE *)
-  Definition degree (_ : t) (_ : positive) : N := 0%N.
+
+  Definition encode_cell (c : cell V.t) : positive :=
+    match c with Id i => xO i | Val v => xI (V.encode v) end.
+
+  Definition read_node (ix : t) (n : positive) : index_node (cell V.t) :=
+    match PTrieCode.get n (index_nodes ix) with Some nd => nd | None => empty_node end.
+
+  Definition child (ix : t) (n : positive) (c : cell V.t) : option positive :=
+    if Pos.ltb (next ix) n then None else
+      match PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) with
+      | Some edge => Some (edge_child edge)
+      | None => None
+      end.
+
+  Definition children (ix : t) (n : positive) : list (cell V.t) :=
+    if Pos.ltb (next ix) n then [] else
+      map (fun entry => edge_cell (snd entry))
+        (PTrieCode.elements (node_edges (read_node ix n))).
+
+  Definition degree (ix : t) (n : positive) : N :=
+    if Pos.ltb (next ix) n then 0%N else node_degree (read_node ix n).
+
+  Fixpoint seek (ix : t) (n : positive) (r : list (cell V.t)) : option positive :=
+    match r with
+    | [] => Some n
+    | c :: rest => match child ix n c with None => None | Some m => seek ix m rest end
+    end.
+
+  Definition contains_from (n : positive) (r : list (cell V.t)) (ix : t) : bool :=
+    match seek ix n r with
+    | None => false
+    | Some m => node_terminal (read_node ix m)
+    end.
+
+  Definition contains (r : list (cell V.t)) (ix : t) : bool :=
+    contains_from (root ix) r ix.
+
+  Definition tuple_bits (r : list (cell V.t)) : nat :=
+    fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r.
+
+  (** Reject oversized malformed counters before performing binary arithmetic on them. *)
+  Definition bounded_succ (limit : positive) (n : N) : N :=
+    if N.ltb (Npos limit) n then 0%N else N.succ n.
+
+  Definition write_node (ix : t) (n : positive) (nd : index_node (cell V.t))
+      (counter : positive) : t :=
+    IndexState counter (PTrieCode.set n nd (index_nodes ix)) (index_cell_width ix).
+
+  Definition walk_state := (t * positive)%type.
+  Definition start (ix : t) : walk_state := (ix, root ix).
+
+  Definition insert_step_st (st : walk_state) (c : cell V.t) : walk_state :=
+    let '(ix, n) := st in
+    if Pos.ltb (next ix) n then st else
+      let nd := read_node ix n in
+      let code := encode_cell c in
+      match PTrieCode.get code (node_edges nd) with
+      | Some edge =>
+        let updated := IndexEdge c (edge_child edge) (bounded_succ (next ix) (edge_count edge)) in
+        (write_node ix n
+          (IndexNode (PTrieCode.set code updated (node_edges nd))
+            (node_degree nd) (node_terminal nd)) (next ix), edge_child edge)
+      | None =>
+        let m := Pos.succ (next ix) in
+        (write_node ix n
+          (IndexNode (PTrieCode.set code (IndexEdge c m 1%N) (node_edges nd))
+            (bounded_succ (next ix) (node_degree nd)) (node_terminal nd)) m, m)
+      end.
+
+  Definition insert_step (ix : t) (n : positive) (c : cell V.t) : t :=
+    fst (insert_step_st (ix, n) c).
+
+  Definition remove_step_st (st : walk_state) (c : cell V.t) : walk_state :=
+    let '(ix, n) := st in
+    if Pos.ltb (next ix) n then st else
+      let nd := read_node ix n in
+      let code := encode_cell c in
+      match PTrieCode.get code (node_edges nd) with
+      | None => st
+      | Some edge =>
+        let nd' :=
+          if N.eqb (edge_count edge) 1%N then
+            IndexNode (PTrieCode.remove code (node_edges nd))
+              (N.pred (node_degree nd)) (node_terminal nd)
+          else
+            IndexNode (PTrieCode.set code
+              (IndexEdge (edge_cell edge) (edge_child edge) (N.pred (edge_count edge)))
+              (node_edges nd)) (node_degree nd) (node_terminal nd) in
+        (write_node ix n nd' (next ix), edge_child edge)
+      end.
+
+  Definition mark_terminal (ix : t) (n : positive) (present : bool) (bits : nat) : t :=
+    let nd := read_node ix n in
+    IndexState (next ix)
+      (PTrieCode.set n (IndexNode (node_edges nd) (node_degree nd) present) (index_nodes ix))
+      bits.
+
+  Definition insert_finish (r : list (cell V.t)) (ix : t) (st : walk_state) : t :=
+    if contains r ix then ix else
+      mark_terminal (fst st) (snd st) true (Nat.max (index_cell_width ix) (tuple_bits r)).
+
+  Definition remove_finish (r : list (cell V.t)) (ix : t) (st : walk_state) : t :=
+    if contains r ix then mark_terminal (fst st) (snd st) false (index_cell_width ix) else ix.
+
+  Definition insert (r : list (cell V.t)) (ix : t) : t :=
+    insert_finish r ix (fold_left insert_step_st r (start ix)).
+
+  Definition remove (r : list (cell V.t)) (ix : t) : t :=
+    remove_finish r ix (fold_left remove_step_st r (start ix)).
 End IndexCode.
 
 Module Index (V : VALUE) <: INDEX V.
   Include IndexCode V.
   Include INDEX_SPEC V.
-  Definition wf (_ : nat) (_ : t) : Prop := True.
-  Definition mem (_ : t) (_ : list (cell V.t)) : Prop := False.
-  Definition node (_ : t) (_ : positive) (_ : list (cell V.t)) : Prop := False.
+  Definition mem (ix : t) (r : list (cell V.t)) : Prop := contains r ix = true.
+  Definition node (ix : t) (n : positive) (pre : list (cell V.t)) : Prop :=
+    seek ix (root ix) pre = Some n.
+  Definition stored_edge (ix : t) (n code : positive) (edge : index_edge (cell V.t)) : Prop :=
+    PTrieCode.get code (node_edges (read_node ix n)) = Some edge.
+  Definition edges_ok (ix : t) : Prop := forall n code edge, stored_edge ix n code edge ->
+    encode_cell (edge_cell edge) = code /\ (n < edge_child edge <= next ix)%positive /\
+    cell_bits V.encode (edge_cell edge) <= index_cell_width ix /\
+    (0 < edge_count edge < Npos (next ix))%N.
+  Definition degrees_ok (ix : t) : Prop := forall n,
+    N.to_nat (node_degree (read_node ix n)) =
+      length (PTrieCode.elements (node_edges (read_node ix n))) /\
+    (node_degree (read_node ix n) < Npos (next ix))%N.
+  Definition table_ok (ix : t) : Prop := forall n nd,
+    PTrieCode.get n (index_nodes ix) = Some nd -> (n <= next ix)%positive.
+  Definition paths_unique (ix : t) : Prop := forall pre pre' n,
+    node ix n pre -> node ix n pre' -> pre = pre'.
+  Definition parents_unique (ix : t) : Prop := forall n code edge n' code' edge',
+    stored_edge ix n code edge -> stored_edge ix n' code' edge' ->
+    edge_child edge = edge_child edge' -> n = n' /\ code = code'.
+  Definition counted_edges (ix : t) : Prop := forall n code edge, stored_edge ix n code edge ->
+    exists suffixes, NoDup suffixes /\
+      (forall r, In r suffixes <-> contains_from (edge_child edge) r ix = true) /\
+      edge_count edge = N.of_nat (length suffixes).
+  Definition valid (ix : t) : Prop :=
+    edges_ok ix /\ degrees_ok ix /\ table_ok ix /\ paths_unique ix /\
+    parents_unique ix /\ counted_edges ix.
+  Definition wf (a : nat) (ix : t) : Prop :=
+    valid ix /\ (forall r, mem ix r -> length r = a).
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
   Proof.
@@ -197,7 +369,7 @@ Module Index (V : VALUE) <: INDEX V.
 
   Lemma mem_insert : forall a r ix u, wf a ix -> length r = a ->
     (mem (insert r ix) u <-> u = r \/ mem ix u).
-  Proof. Admitted. (* OPEN: unmarked list carrier lacks the required node-index groundwork. *)
+  Proof. Admitted. (* OPEN: insertion path and suffix-count preservation remain to be proved. *)
 
   Lemma mem_remove : forall a r ix u, wf a ix ->
     (mem (remove r ix) u <-> u <> r /\ mem ix u).
@@ -207,7 +379,9 @@ Module Index (V : VALUE) <: INDEX V.
   Proof. Admitted. (* STUB *)
 
   Lemma node_root : forall a ix, wf a ix -> node ix (root ix) [].
-  Proof. Admitted. (* OPEN: node semantics await the missing node-index representation. *)
+  Proof.
+    intros a ix _. reflexivity.
+  Qed.
 
   Lemma node_live : forall a ix n pre, wf a ix -> node ix n pre -> pre <> [] ->
     exists suf, mem ix (pre ++ suf).
@@ -215,7 +389,9 @@ Module Index (V : VALUE) <: INDEX V.
 
   Lemma node_fun : forall a ix n m pre, wf a ix ->
     node ix n pre -> node ix m pre -> n = m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix n m pre _ Hn Hm. unfold node in *. congruence.
+  Qed.
 
   Lemma child_spec : forall a ix n pre c, wf a ix -> node ix n pre ->
     (forall m, child ix n c = Some m <-> node ix m (pre ++ [c])) /\
@@ -235,18 +411,33 @@ End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Include Index V.
+  TimeFun empty_node.
   TimeFun empty.
-  TimeFun insert.
-  TimeFun remove.
   TimeFun next.
   TimeFun root.
+  TimeFun encode_cell.
+  TimeFun read_node.
   TimeFun child.
   TimeFun children.
   TimeFun degree.
-  Definition max_cell_bits (ix : t) : nat :=
-    fold_right (fun r n => fold_right
-      (fun c m => Nat.max (cell_bits V.encode c) m) n r) 0 ix.
-  Definition width (_ : t) (_ : list (cell V.t)) : nat := 0.
+  TimeFun seek.
+  TimeFun contains_from.
+  TimeFun contains.
+  TimeFun tuple_bits.
+  TimeFun bounded_succ.
+  TimeFun write_node.
+  TimeFun start.
+  TimeFun insert_step_st.
+  TimeFun insert_step.
+  TimeFun remove_step_st.
+  TimeFun mark_terminal.
+  TimeFun insert_finish.
+  TimeFun remove_finish.
+  TimeFun insert.
+  TimeFun remove.
+  Definition max_cell_bits (ix : t) : nat := index_cell_width ix.
+  Definition width (ix : t) (r : list (cell V.t)) : nat :=
+    Pos.size_nat (next ix + Pos.of_nat (length r)) + tuple_bits r + max_cell_bits ix.
   (** Empty indexes have no encoded cells. *)
   Lemma max_cell_bits_empty : max_cell_bits empty = 0.
   Proof. Admitted. (* STUB *)
@@ -273,7 +464,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 r + max_cell_bits ix.
   Proof. Admitted. (* STUB *)
 
-  Definition c_ix : N := 1. (* STUB *)
+  Definition c_ix : N := (1024 * (PTrieT.c_trie + V.c_key + 1))%N.
   (** The fresh node counter is stored. *)
   Lemma T_next_le : forall ix, (T_next ix <= c_ix)%N.
   Proof.
@@ -313,11 +504,8 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition inv (_ : t) : Prop := True.
-  (* STUB-CODE *)
-  Definition insert_step (ix : t) (_ : positive) (_ : cell V.t) : t := ix.
-  TimeFun insert_step.
-  Definition c_map : N := 1. (* STUB *)
+  Definition inv := valid.
+  Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
     wf a ix <-> inv ix /\ (forall u, mem ix u -> length u = a).
   Proof. Admitted. (* STUB *)
@@ -332,27 +520,10 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
   Proof. Admitted. (* STUB *)
 
-  Definition walk_state := (t * positive)%type.
-  (* STUB-CODE *)
-  Definition start (ix : t) : walk_state := (ix, root ix).
-  (* STUB-CODE *)
-  Definition insert_step_st (st : walk_state) (_ : cell V.t) := st.
-  (* STUB-CODE *)
-  Definition remove_step_st (st : walk_state) (_ : cell V.t) := st.
-  (* STUB-CODE *)
-  Definition insert_finish (_ : list (cell V.t)) (ix : t) (_ : walk_state) := ix.
-  (* STUB-CODE *)
-  Definition remove_finish (_ : list (cell V.t)) (ix : t) (_ : walk_state) := ix.
-  TimeFun start.
-  TimeFun insert_step_st.
-  TimeFun remove_step_st.
-  TimeFun insert_finish.
-  TimeFun remove_finish.
-
   (** Edge maps use the shared binary trie contracts. *)
   Lemma c_map_source : c_map = PTrieT.c_trie.
   Proof. Admitted. (* STUB *)
-  Definition k_walk : N := 1. (* STUB *)
+  Definition k_walk : N := (512 * (PTrieT.c_trie + V.c_key + 1))%N.
   (** The public constant absorbs the aggregate path and wrapper charges. *)
   Lemma c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
   Proof. Admitted. (* STUB *)
