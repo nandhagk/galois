@@ -1500,6 +1500,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite row_write_forest, !slots_update_forest; reflexivity.
   Qed.
 
+  (** A row replacement records a new fact by raising the change flag. *)
+  Lemma row_replace_changed : forall f k previous o db,
+    changed (row_replace f k previous o db) = true.
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
   Lemma allocate_id_view : forall i db, view (allocate_id i db) = view db.
   Proof.
@@ -1510,6 +1517,36 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma allocate_id_ids : forall i db, ids (allocate_id i db) = Npos i.
   Proof.
     reflexivity.
+  Qed.
+
+  (** Allocation preserves the slot layout. *)
+  Lemma allocate_id_slots : forall i db, slots (allocate_id i db) = slots db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Allocation does not enqueue equality work. *)
+  Lemma allocate_id_pending : forall i db, pending (allocate_id i db) = pending db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Every fresh make branch has the required layout and allocation observations. *)
+  Lemma fresh_make_layout : forall db f k previous,
+    let i := N.succ_pos (ids db) in
+    let fresh := allocate_id i db in
+    let next := match kind_get f db with
+      | Some OId => row_replace f k previous (Some (Id i)) fresh | _ => fresh end in
+    kind (view next) = kind (view db) /\ slots next = slots db /\
+    (ids next <= N.succ (ids db))%N /\ allocated next i /\ pending next = pending db.
+  Proof.
+    intros db f k previous. cbn zeta. unfold allocated.
+    assert (Hnext : Npos (N.succ_pos (ids db)) = N.succ (ids db)).
+    { destruct (ids db); reflexivity. }
+    destruct (kind_get f db) as [[| |m] |];
+      try rewrite row_replace_kind, row_replace_slots, !row_replace_ids, row_replace_pending;
+      rewrite allocate_id_view, allocate_id_slots, !allocate_id_ids, allocate_id_pending;
+      rewrite Hnext; repeat split; lia.
   Qed.
 
   (** Every stored output of a declared constructor is an identifier. *)
@@ -1706,10 +1743,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** A raised change flag stays raised until the database advances. *)
   Lemma changed_put : forall f k o db, changed db = true -> changed (put f k o db) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k o db Hchanged. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : changed next = true).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hchanged.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; [reflexivity | exact Hchanged]. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext | apply row_replace_changed].
+    - apply row_replace_changed.
+  Qed.
   Lemma changed_make : forall f k db,
     changed db = true -> changed (snd (make f k db)) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hchanged. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |]; try exact Hchanged;
+      destruct (kind_get f db) as [[| |m] |]; reflexivity.
+  Qed.
   Lemma changed_union : forall i j db, changed db = true -> changed (union i j db) = true.
   Proof.
     intros i j db Hchanged. unfold union.
@@ -1748,7 +1804,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma make_changed : forall f k db, wf db -> changed db = false ->
     changed (snd (make f k db)) = true ->
     ~ exists j, row (view db) f (map (canon db) k) (Some (Id j)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf Hquiet Hchanged [j Hrow]. unfold make in Hchanged.
+    rewrite (normal_key_correct db k Hwf) in Hchanged.
+    change (row_get f (map (canon db) k) db = Some (Some (Id j))) in Hrow.
+    rewrite Hrow in Hchanged. change (changed db = true) in Hchanged. congruence.
+  Qed.
   (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
   Lemma rebuild_quiet : forall db, wf db -> canonical db ->
     (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
@@ -2093,7 +2154,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (ids (snd (make f k db)) <= N.succ (ids db))%N /\
     allocated (snd (make f k db)) (fst (make f k db)) /\
     pending (snd (make f k db)) = pending db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf. unfold make. rewrite (normal_key_correct db k Hwf).
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hrow;
+      try apply fresh_make_layout.
+    cbn [fst snd]. split; [reflexivity |]. split; [reflexivity |].
+    split; [lia |]. split; [| reflexivity].
+    rewrite (UnionFind.find_repr j (db_forest db) (wf_forest db Hwf)).
+    unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
+    - exact (wf_forest db Hwf).
+    - intro i. exact (wf_forest_members db Hwf i).
+    - eapply (wf_row_ids db Hwf f (map (canon db) k) (Some (Id j)) j).
+      + exact Hrow.
+      + apply in_or_app. right. now left.
+  Qed.
 
   (** Union keeps layout and allocation and queues at most one loser. *)
   Lemma layout_union : forall i j db, wf db ->
@@ -2145,12 +2219,22 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma make_quiet : forall f k db, wf db -> changed db = false ->
     changed (snd (make f k db)) = false ->
     exists j, row (view db) f (map (canon db) k) (Some (Id j)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf _ Hquiet. unfold make in Hquiet.
+    rewrite (normal_key_correct db k Hwf) in Hquiet.
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hrow.
+    - exists j. exact Hrow.
+    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+  Qed.
 
   (** Every row identifier is allocated. *)
   Lemma row_allocated : forall db f k o i, wf db -> row (view db) f k o ->
     In (Id i) (k ++ option_list o) -> allocated db i.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o i Hwf. exact (wf_row_ids db Hwf f k o i).
+  Qed.
 
   (** Rebuilding keeps every satisfying model and identifier interpretation. *)
   Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
