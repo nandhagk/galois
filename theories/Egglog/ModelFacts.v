@@ -169,6 +169,42 @@ Proof.
     cbn [option_map den] in *; try contradiction; try discriminate; congruence.
 Qed.
 
+(** Renaming an output preserves its truth when every identifier keeps its meaning. *)
+Lemma holds_output_rename : forall (rename : positive -> positive),
+  (forall i, nu (rename i) = nu i) -> forall w f k o,
+  holds M nu w f k o ->
+  holds M nu w f k
+    (option_map (fun c => match c with Id i => Id (rename i) | Val v => Val v end) o).
+Proof.
+  intros rename Hrename w f k o Hholds.
+  eapply (holds_transport nu w w f k k o).
+  - reflexivity.
+  - reflexivity.
+  - destruct o as [c |]; cbn [option_map]; [| reflexivity].
+    f_equal. exact (den_rename rename Hrename c).
+  - exact Hholds.
+Qed.
+
+(** Keeping an old output or merging two lattice values preserves the row's meaning. *)
+Lemma holds_combine : forall w f k previous o,
+  lat_closed merge M w ->
+  (forall old, previous = Some old -> holds M nu w f k old) ->
+  holds M nu w f k o ->
+  holds M nu w f k
+    (match previous, kind w f, o with
+     | Some (Some (Val a)), Some (OLat m), Some (Val b) => Some (Val (merge m a b))
+     | Some old, _, _ => old
+     | None, _, _ => o
+     end).
+Proof.
+  intros w f k [old |] o Hlat Hprevious Hnew; [| exact Hnew].
+  pose proof (Hprevious old eq_refl) as Hold.
+  destruct old as [[i | a] |]; destruct (kind w f) as [[| |m] |] eqn:Hkind;
+    destruct o as [[j | b] |]; try exact Hold.
+  unfold holds in Hold, Hnew |- *. rewrite Hkind in Hold, Hnew |- *.
+  exact (Hlat f m (map (den nu) k) a b Hkind Hold Hnew).
+Qed.
+
 (** Removing rows and equalities preserves satisfaction when function kinds are unchanged. *)
 Lemma sat_restrict : forall w w',
   kind w' = kind w ->
