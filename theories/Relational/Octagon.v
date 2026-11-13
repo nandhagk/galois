@@ -5671,6 +5671,22 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - exact (Hpair i j).
   Qed.
 
+  (** A successful tight closure is coherent after both numeric passes. *)
+  Lemma coherent_tclose_reached : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
+    tclose m = Reached m' -> coherent m'.
+  Proof.
+    intros m m' Hwf Hcoh Hbar Hresult.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m)) eqn:Hscan;
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    apply coherent_strengthen, coherent_tighten.
+    now apply coherent_fw_success.
+  Qed.
+
   (** Original and final key lists cover the same supported vertices. *)
   Lemma keys_fw_membership : forall m k, dbm_wf m ->
     (In k (keys m) <-> In k (keys (fw m))).
