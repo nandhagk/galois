@@ -1022,6 +1022,23 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Module RowFacts := FiniteMapFacts RowKeys RowMap.
   Module ForestFacts := UnionFindFacts UnionFind.
 
+  (** A cached projection count records how many stored rows contribute its tuple. *)
+  Definition stored_projection_count (db : t) (s : N) (u : list (cell V.t)) : N :=
+    match PTrieCode.get (db_tuple_code u)
+      (projection_table_get (N.succ_pos s) (runtime_projection_counts (db_runtime db))) with
+    | Some (_, n) => n
+    | None => 0%N
+    end.
+
+  (** Counts refer to the actual finite row map, including distinct rows with one projection. *)
+  Definition projection_counts_ok (db : t) : Prop :=
+    forall s f perm u, slot_of db s = Some (f, perm) ->
+    exists rs, NoDup rs /\
+      (forall r, In r rs <->
+        In r (RowMap.elements (runtime_rows (db_runtime db))) /\ fst (fst r) = f /\
+        permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
+      N.to_nat (stored_projection_count db s u) = length rs.
+
   (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
   Definition database_wf (db : t) : Prop :=
     (UnionFind.wf (db_forest db)) /\
@@ -1053,7 +1070,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (forall s f perm k o, slot_of db s = Some (f, perm) ->
       row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o))) /\
     (forall s new f perm, slot_of db s = Some (f, perm) ->
-      I.wf (length perm) (index s new db)).
+      I.wf (length perm) (index s new db)) /\
+    (runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty) /\
+    projection_counts_ok db.
 
   (** The stored invariant supplies forest. *)
   Lemma wf_forest : forall db, database_wf db -> UnionFind.wf (db_forest db).
@@ -1171,6 +1191,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** The stored invariant supplies index arity. *)
   Lemma wf_index_arity : forall db, database_wf db -> forall s new f perm, slot_of db s = Some (f, perm) ->
       I.wf (length perm) (index s new db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The function table contains exactly the prepared layouts of the stored slot list. *)
+  Lemma wf_group_table : forall db, database_wf db ->
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The invariant ties cached projection counts to the actual row map. *)
+  Lemma wf_projection_counts : forall db, database_wf db -> projection_counts_ok db.
   Proof.
     unfold database_wf. tauto.
   Qed.
@@ -2416,8 +2450,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.width (uf_state db) <= N.size_nat (ids db).
   Proof. Admitted. (* STUB *)
 
-  (* STUB-CODE *)
-  Definition proj_count (_ : t) (_ : N) (_ : list (cell V.t)) : N := 0%N.
+  Definition proj_count (db : t) (s : N) (u : list (cell V.t)) : N :=
+    stored_projection_count db s u.
   (** The count of a projected tuple is the number of rows that project onto it. *)
   Lemma F_proj_count : forall db work s f perm u, inv_on db work ->
     slot_of db s = Some (f, perm) ->
