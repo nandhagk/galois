@@ -4726,13 +4726,109 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
   Proof. Admitted. (* STUB *)
 
+  (** Each initialization scan fits the same total amount of charged input. *)
+  Lemma database_init_sum_budget : forall cost decls slots layout declaration_bits slot_bits,
+    (1 <= cost ->
+      1 + 25 * (layout + slots + 1) + (slots + 1) + (3 * slots + 2) +
+      16 * (decls + declaration_bits + 1) + (slots + 1) + (declaration_bits + 4) +
+      (slots + 1) + 8 * cost * (decls + declaration_bits + 1) +
+      8 * cost * (slots + slot_bits + 1) <=
+      128 * cost * (decls + slots + layout + declaration_bits + slot_bits + 1))%N.
+  Proof.
+    intros cost decls slots layout declaration_bits slot_bits Hcost.
+    set (total := (decls + slots + layout + declaration_bits + slot_bits + 1)%N).
+    set (budget := (cost * total)%N).
+    assert (Htotal : (total <= budget)%N).
+    { unfold budget. replace total with (1 * total)%N at 1 by ring.
+      apply N.mul_le_mono_r. exact Hcost. }
+    assert (Hkinds : (8 * cost * (decls + declaration_bits + 1) <= 8 * budget)%N).
+    { unfold budget. replace (8 * cost * (decls + declaration_bits + 1))%N with
+        (8 * (cost * (decls + declaration_bits + 1)))%N by ring.
+      apply N.mul_le_mono_l.
+      apply N.mul_le_mono_l. unfold total. lia. }
+    assert (Hgroups : (8 * cost * (slots + slot_bits + 1) <= 8 * budget)%N).
+    { unfold budget. replace (8 * cost * (slots + slot_bits + 1))%N with
+        (8 * (cost * (slots + slot_bits + 1)))%N by ring.
+      apply N.mul_le_mono_l.
+      apply N.mul_le_mono_l. unfold total. lia. }
+    replace (128 * cost * total)%N with (128 * budget)%N by (unfold budget; ring).
+    unfold total in Htotal. clearbody total budget. lia.
+  Qed.
+
+  (** Initialization sums preparation, name scans, and amortized dense slot numbering. *)
+  Lemma T_init_budget : forall ds sl,
+    (T_init ds sl <= 128 * (PTrieT.c_trie + 1) *
+      N.of_nat (length ds + length sl + layout_work sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1))%N.
+  Proof.
+    intros ds sl.
+    pose proof (T_prepare_slot_layouts_le sl) as Hprepare.
+    pose proof (T_database_kinds_le ds) as Hkinds.
+    pose proof (T_database_max_name_le ds) as Hnames.
+    pose proof (T_database_slot_groups_le (prepare_slot_layouts sl) PTrieCode.empty) as Hgroups.
+    destruct (database_prepared_sizes sl) as [Hprepared_length Hprepared_bits].
+    rewrite Hprepared_length, Hprepared_bits in Hgroups.
+    pose proof (Datatypes.T_length_le sl) as Hlength.
+    pose proof (T_database_of_nat_le (length sl)) as Hconvert.
+    pose proof (database_counter_bits_value (N.of_nat (length sl))) as Hslot_bits.
+    rewrite Nat2N.id in Hslot_bits.
+    pose proof (N.T_succ_le (N.of_nat (length sl))) as Hsucc.
+    pose proof (N.T_succ_pos_le (N.of_nat (length sl))) as Hsucc_pos.
+    pose proof (T_database_counter_max_le (Npos (database_max_name ds))
+      (N.succ (N.of_nat (length sl)))) as Hmaximum.
+    cbn [N.size_nat] in Hmaximum.
+    pose proof (database_max_name_bits ds) as Hname_bits.
+    assert (Hsucc_small : (N.T_succ (N.of_nat (length sl)) <=
+      N.of_nat (length sl) + 1)%N) by (clear - Hsucc Hslot_bits; lia).
+    assert (Hsucc_pos_small : (N.T_succ_pos (N.of_nat (length sl)) <=
+      N.of_nat (length sl) + 1)%N) by (clear - Hsucc_pos Hslot_bits; lia).
+    assert (Hmaximum_small : (N.T_max (Npos (database_max_name ds))
+      (N.succ (N.of_nat (length sl))) <=
+      N.of_nat (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) + 4)%N)
+      by (clear - Hmaximum Hname_bits; lia).
+    assert (Hbranch : ((match sl with [] => 0 | _ :: _ =>
+      N.T_succ_pos (N.of_nat (length sl)) end) <= N.of_nat (length sl) + 1)%N).
+    { destruct sl; [cbn; lia | exact Hsucc_pos_small]. }
+    clear Hprepared_length Hprepared_bits Hslot_bits Hname_bits Hsucc Hsucc_pos Hmaximum.
+    time_unfold T_init. cbn beta zeta.
+    rewrite !Nat2N.inj_add in Hprepare, Hkinds, Hnames, Hgroups |- *.
+    repeat rewrite Nat2N.inj_add.
+    set (cost := (PTrieT.c_trie + 1)%N) in *.
+    set (decls := N.of_nat (length ds)) in *.
+    set (slots_count := N.of_nat (length sl)) in *.
+    set (layout := N.of_nat (layout_work sl)) in *.
+    set (declaration_bits := N.of_nat
+      (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds)) in *.
+    set (slot_bits := N.of_nat
+      (fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    pose proof (database_init_sum_budget cost decls slots_count layout declaration_bits slot_bits Hcost)
+      as Hbudget.
+    clearbody cost decls slots_count layout declaration_bits slot_bits. lia.
+  Qed.
+
   (** Initialization pays for declarations and slot permutations. *)
   Lemma T_init_le : forall ds sl,
     (T_init ds sl <= c_db * N.of_nat (length ds + length sl + layout_work sl + 1) *
       N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
       c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl. eapply N.le_trans; [apply T_init_budget |].
+    eapply N.le_trans.
+    - apply N.mul_le_mono_r. exact c_db_trie_budget.
+    - set (amount := N.of_nat (length ds + length sl + layout_work sl + 1)).
+      set (names := N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat)).
+      assert (Hsum : N.of_nat (length ds + length sl + layout_work sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1) =
+        (amount + names)%N) by (unfold amount, names; lia).
+      rewrite Hsum, N.mul_add_distr_l. apply N.add_le_mono_r.
+      replace (c_db * amount)%N with ((c_db * amount) * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. lia.
+  Qed.
 
   (** Find traverses allocated identifiers at the database unit. *)
   Lemma T_find_le : forall i db, wf db -> allocated db i ->
