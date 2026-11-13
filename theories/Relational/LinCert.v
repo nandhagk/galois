@@ -1030,6 +1030,97 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     pose proof (T_Z_div_eucl_bilinear a b). time_cbn_all. nia.
   Qed.
 
+  (** A positive sum uses at most the combined digits of its operands. *)
+  Lemma lc_size_pos_add : forall p q,
+    (Pos.size_nat (Pos.add p q) <= Pos.size_nat p + Pos.size_nat q)%nat.
+  Proof.
+    intros p q. apply Pos.size_nat_least.
+    rewrite Pos2Nat.inj_add, Nat.pow_add_r.
+    pose proof (Pos.size_nat_upper p). pose proof (Pos.size_nat_upper q).
+    pose proof (Pos2Nat.is_pos p). pose proof (Pos2Nat.is_pos q). nia.
+  Qed.
+
+  (** Adding nonnegative integers uses at most the combined input digits. *)
+  Lemma lc_size_add_nonnegative : forall x y, (0 <= x)%Z -> (0 <= y)%Z ->
+    (Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y)%nat.
+  Proof.
+    intros [|p|p] [|q|q] Hx Hy; try lia; time_cbn; try lia.
+    apply lc_size_pos_add.
+  Qed.
+
+  (** A product uses at most the combined digits of its two inputs. *)
+  Lemma lc_size_mul : forall x y,
+    (Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y)%nat.
+  Proof.
+    intros [|p|p] [|q|q]; time_cbn; try lia; apply Pos.size_nat_mul.
+  Qed.
+
+  (** Absolute value preserves the stored bit length. *)
+  Lemma lc_size_abs : forall z, Z.size_nat (Z.abs z) = Z.size_nat z.
+  Proof.
+    intros [|p|p]; reflexivity.
+  Qed.
+
+  (** Subtracting two nonnegative sums uses at most their combined digits. *)
+  Lemma lc_size_difference : forall p n, (0 <= p)%Z -> (0 <= n)%Z ->
+    (Z.size_nat (p - n) <= Z.size_nat p + Z.size_nat n)%nat.
+  Proof.
+    intros p n Hp Hn.
+    assert (Habs : (0 <= Z.abs (p - n) <= p + n)%Z).
+    { split; [apply Z.abs_nonneg|apply Z.abs_le; lia]. }
+    pose proof (Z.size_nat_mono _ _ Habs) as Hmono.
+    rewrite lc_size_abs in Hmono.
+    pose proof (lc_size_add_nonnegative p n Hp Hn). lia.
+  Qed.
+
+  (** Signed insertion increases combined accumulator digits by at most the new digits. *)
+  Lemma lc_add_signed_size : forall z p n, (0 <= p)%Z -> (0 <= n)%Z ->
+    (Z.size_nat (fst (lc_add_signed z (p, n))) +
+     Z.size_nat (snd (lc_add_signed z (p, n))) <=
+     Z.size_nat z + Z.size_nat p + Z.size_nat n)%nat.
+  Proof.
+    intros z p n Hp Hn. unfold lc_add_signed.
+    destruct (0 <=? z)%Z eqn:Hz; cbn [fst snd].
+    - apply Z.leb_le in Hz. pose proof (lc_size_add_nonnegative p z Hp Hz). lia.
+    - apply Z.leb_gt in Hz.
+      pose proof (lc_size_add_nonnegative n (-z)%Z Hn ltac:(lia)) as Hsize.
+      assert (Hopp : Z.size_nat (-z) = Z.size_nat z) by (destruct z; reflexivity).
+      rewrite Hopp in Hsize. change (Z.size_nat (n + -z)) with (Z.size_nat (n - z))
+        in Hsize. lia.
+  Qed.
+
+  (** The row bit envelope includes its right-hand side. *)
+  Lemma row_bits_rhs : forall p, (Z.size_nat (rhs p) <= row_bits p)%nat.
+  Proof.
+    intro p. unfold row_bits.
+    induction (map (fun q : X.t * Z => Z.size_nat (snd q)) (lhs p)) as [|b bs IH].
+    - reflexivity.
+    - cbn [fold_right]. eapply Nat.le_trans; [exact IH|apply Nat.le_max_r].
+  Qed.
+
+  (** The row bit envelope includes every stored coefficient occurrence. *)
+  Lemma row_bits_coefficient : forall p x a,
+    In (x, a) (lhs p) -> (Z.size_nat a <= row_bits p)%nat.
+  Proof.
+    intros [xs r b] x a Hin. unfold row_bits. cbn [lhs rhs] in *.
+    induction xs as [|[y c] xs IH]; [contradiction|].
+    cbn [map fold_right snd] in *. destruct Hin as [Heq|Hin].
+    - inversion Heq; subst. apply Nat.le_max_l.
+    - eapply Nat.le_trans; [exact (IH Hin)|apply Nat.le_max_r].
+  Qed.
+
+  (** A list traversal needs callback bounds only on values that it visits. *)
+  Lemma T_map_members : forall (A B : Type) (f : A -> B) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (ListDef.T_map f T_f xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold ListDef.T_map. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)).
+      time_unfold ListDef.T_map. time_cbn. nia.
+  Qed.
+
   Definition c_lc : N := 1. (* STUB *)
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
