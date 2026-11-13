@@ -8437,6 +8437,248 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  Definition poly_raw_row_factor : N := (poly_log_normal_factor + 8)%N.
+
+  (** Raw row normalization fits a uniform occurrence count and its logarithmic width. *)
+  Lemma T_poly_raw_normal_row_bounded : forall r count keys bits,
+    length (lhs r) <= count -> C.row_key_bits r <= keys -> C.row_bits r <= bits ->
+    (T_poly_normal_row X.encode X.T_encode r <=
+      poly_raw_row_factor * N.of_nat (count + 1) *
+        N.of_nat (keys + bits + Nat.log2 count + 1))%N.
+  Proof.
+    intros r count keys bits Hlength Hkeys Hbits.
+    pose proof (T_poly_normal_log (lhs r) keys bits
+      (poly_row_entry_bounds r keys bits Hkeys Hbits)) as Hnormal.
+    pose proof (Nat.log2_le_mono _ _ Hlength) as Hlog.
+    set (work := (N.of_nat (count + 1) *
+      N.of_nat (keys + bits + Nat.log2 count + 1))%N).
+    assert (Hnormal_total : (T_poly_normal_coef X.encode X.T_encode (lhs r) <=
+      poly_log_normal_factor * work)%N).
+    { eapply N.le_trans; [exact Hnormal|]. unfold work.
+      replace (poly_log_normal_factor * (N.of_nat (count + 1) *
+        N.of_nat (keys + bits + Nat.log2 count + 1)))%N with
+        (poly_log_normal_factor * N.of_nat (count + 1) *
+          N.of_nat (keys + bits + Nat.log2 count + 1))%N by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono_l|]; lia. }
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. change (1 * 1 <= N.of_nat (count + 1) *
+        N.of_nat (keys + bits + Nat.log2 count + 1))%N.
+      apply N.mul_le_mono; lia. }
+    replace (poly_raw_row_factor * N.of_nat (count + 1) *
+      N.of_nat (keys + bits + Nat.log2 count + 1))%N with
+      (poly_raw_row_factor * work)%N by (unfold work; ring).
+    time_unfold (@T_poly_normal_row). time_simpl.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    unfold poly_raw_row_factor. clear -Hnormal_total Hpositive. clearbody work.
+    rewrite N.mul_add_distr_r. lia.
+  Qed.
+
+  Definition poly_raw_initial_factor : N := (poly_raw_row_factor + 16)%N.
+
+  (** Initializing raw rows also pays for the quadratic identity-multiplier vectors. *)
+  Lemma T_poly_initial_raw_bounded : forall inputs count keys bits,
+    Forall (fun p => length (lhs (fst p)) <= count /\
+      C.row_key_bits (fst p) <= keys /\ C.row_bits (fst p) <= bits) inputs ->
+    (T_poly_initial X.encode X.T_encode inputs <=
+      poly_raw_initial_factor * N.of_nat (length inputs + 1)^2 *
+        N.of_nat (count + 1) * N.of_nat (keys + bits + Nat.log2 count + 1))%N.
+  Proof.
+    intro inputs. induction inputs as [|[r flag] inputs IH]; intros count keys bits Hrows.
+    - assert (Hcount : (1 <= N.of_nat (count + 1))%N) by lia.
+      assert (Hwidth : (1 <= N.of_nat (keys + bits + Nat.log2 count + 1))%N) by lia.
+      time_unfold (@T_poly_initial). time_simpl.
+      unfold poly_raw_initial_factor, poly_raw_row_factor. nia.
+    - inversion Hrows as [|p ps [Hlength [Hkeys Hbits]] Htail]; subst p ps.
+      specialize (IH count keys bits Htail).
+      pose proof (T_poly_raw_normal_row_bounded r count keys bits Hlength Hkeys Hbits)
+        as Hrow.
+      pose proof (poly_T_map_members _ _ (fun _ : lcons X.t * bool => 0%Z)
+        (fun _ : lcons X.t * bool => 1%N) 1 inputs
+        (fun _ _ => N.le_refl 1%N)) as Hzeros.
+      pose proof (poly_T_map_members _ _ (@poly_pad_row X.t) (@T_poly_pad_row X.t) 4
+        (poly_initial X.encode inputs) ltac:(intros; apply T_poly_pad_row_le)) as Hpad.
+      rewrite poly_initial_length in Hpad.
+      assert (Hcount : (1 <= N.of_nat (count + 1))%N) by lia.
+      assert (Hwidth : (1 <= N.of_nat (keys + bits + Nat.log2 count + 1))%N) by lia.
+      time_unfold (@T_poly_initial). cbn [fst snd length].
+      change (fun p => T_poly_pad_row p) with (@T_poly_pad_row X.t).
+      unfold poly_raw_initial_factor in *. time_simpl.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      rewrite N.pow_2_r in IH |- *. nia.
+  Qed.
+
+  (** All raw source rows fit the total occurrence count and their original maxima. *)
+  Lemma poly_raw_initial_sources : forall P,
+    Forall (fun p => length (lhs (fst p)) <= terms (Reached P) /\
+      C.row_key_bits (fst p) <= poly_raw_keys P /\
+      C.row_bits (fst p) <= fold_right Nat.max 0 (map C.row_bits P))
+      (map (fun r => (r, false)) P).
+  Proof.
+    intro P. apply Forall_map, Forall_forall. intros r Hr. cbn [fst]. split.
+    - now apply poly_raw_row_terms.
+    - split; apply poly_max_member; exact Hr.
+  Qed.
+
+  Definition poly_raw_fm_work (P : list (lcons X.t)) : N :=
+    (N.of_nat (length P + 1)^2 *
+      (N.of_nat (n P + terms (Reached P) + length P + 1) *
+        N.of_nat (nell (Reached P) + 1)^2))%N.
+
+  Lemma poly_raw_fm_work_positive : forall P, (1 <= poly_raw_fm_work P)%N.
+  Proof.
+    intro P. unfold poly_raw_fm_work.
+    change (1 * (1 * 1) <= N.of_nat (length P + 1)^2 *
+      (N.of_nat (n P + terms (Reached P) + length P + 1) *
+        N.of_nat (nell (Reached P) + 1)^2))%N.
+    apply N.mul_le_mono; [rewrite N.pow_2_r; nia|].
+    apply N.mul_le_mono; [lia|rewrite N.pow_2_r; nia].
+  Qed.
+
+  Definition poly_raw_fm_factor : N := (poly_raw_initial_factor + poly_step_factor + 32)%N.
+
+  (** Raw initialization and one elimination fit the same counted output stage. *)
+  Lemma T_poly_fm_raw_bounded : forall x P,
+    (T_fm_elim x P <= poly_raw_fm_factor * poly_raw_fm_work P)%N.
+  Proof.
+    intros x P.
+    set (input := map (fun r => (r, false)) P).
+    set (initial := poly_initial X.encode input).
+    set (rows := poly_step X.encode X.eqb x initial).
+    set (count := (N.of_nat (length P + 1)^2)%N).
+    set (work := (N.of_nat (n P + terms (Reached P) + length P + 1) *
+      N.of_nat (nell (Reached P) + 1)^2)%N).
+    assert (Hcount : (N.of_nat (length P + 1) <= count)%N)
+      by (unfold count; rewrite N.pow_2_r; nia).
+    assert (Hcount_positive : (1 <= count)%N) by lia.
+    assert (Hwork : (1 <= work)%N).
+    { unfold work. change (1 * 1 <=
+        N.of_nat (n P + terms (Reached P) + length P + 1) *
+        N.of_nat (nell (Reached P) + 1)^2)%N.
+      apply N.mul_le_mono; [lia|rewrite N.pow_2_r; nia]. }
+    assert (Hlength : length initial = length P).
+    { unfold initial, input. now rewrite poly_initial_length, length_map. }
+    pose proof (T_poly_initial_raw_bounded input (terms (Reached P)) (poly_raw_keys P)
+      (fold_right Nat.max 0 (map C.row_bits P)) (poly_raw_initial_sources P)) as Hinitial.
+    assert (Hwidth : poly_raw_keys P + fold_right Nat.max 0 (map C.row_bits P) +
+      Nat.log2 (terms (Reached P)) + 1 = nell (Reached P)).
+    { unfold poly_raw_keys, nell, ell. cbn [prows]. lia. }
+    rewrite Hwidth in Hinitial. unfold input in Hinitial. rewrite length_map in Hinitial.
+    fold input count in Hinitial.
+    assert (Hinitial_span : (N.of_nat (terms (Reached P) + 1) *
+      N.of_nat (nell (Reached P)) <= work)%N).
+    { unfold work. apply N.mul_le_mono; [lia|rewrite N.pow_2_r; nia]. }
+    assert (Hinitial_total : (T_poly_initial X.encode X.T_encode input <=
+      poly_raw_initial_factor * count * work)%N).
+    { eapply N.le_trans; [exact Hinitial|].
+      replace (poly_raw_initial_factor * count * N.of_nat (terms (Reached P) + 1) *
+        N.of_nat (nell (Reached P)))%N with
+        (poly_raw_initial_factor * count *
+          (N.of_nat (terms (Reached P) + 1) * N.of_nat (nell (Reached P))))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (T_poly_step_bounded x initial (n P) (length P)
+      (poly_raw_keys P) (poly_raw_bits P) (poly_raw_initial_envelopes P)) as Hstep.
+    rewrite Hlength in Hstep. fold count in Hstep.
+    assert (Hstep_span : (poly_clock_span (n P) (length P)
+      (poly_raw_keys P) (poly_raw_bits P) <= work)%N).
+    { unfold poly_clock_span, work. rewrite poly_raw_width.
+      apply N.mul_le_mono; [lia|reflexivity]. }
+    assert (Hstep_total : (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x initial <=
+      poly_step_factor * count * work)%N).
+    { eapply N.le_trans; [exact Hstep|]. now apply N.mul_le_mono_l. }
+    pose proof (poly_T_map_members _ _ (fun r : lcons X.t => (r, false))
+      (fun _ => 1%N) 1 P (fun _ _ => N.le_refl 1%N)) as Hinput.
+    assert (Hinput_total : (ListDef.T_map (fun r : lcons X.t => (r, false))
+      (fun _ => 1%N) P <= 2 * count * work)%N).
+    { eapply N.le_trans with (m := (2 * count)%N); [lia|].
+      rewrite <- (N.mul_1_r (2 * count)) at 1. now apply N.mul_le_mono_l. }
+    pose proof (T_poly_track_map rows) as Houtput.
+    pose proof (poly_fm_output_count x P) as Hrows.
+    unfold fm_elim in Hrows. rewrite length_map in Hrows. fold input initial rows in Hrows.
+    assert (HrowsN : (N.of_nat (length rows) + 1 <= count)%N).
+    { assert (Htransport : (N.of_nat (length rows + 1) <=
+        N.of_nat ((length P + 1)^2))%N) by (clear -Hrows; lia).
+      rewrite Nat2N.inj_add, poly_nat_square in Htransport.
+      change (N.of_nat 1) with 1%N in Htransport.
+      unfold count. rewrite N.pow_2_r. exact Htransport. }
+    assert (Houtput_total : (ListDef.T_map
+      (fun r => Tracked X.t (poly_constraint r) (poly_multipliers r))
+      (fun _ => 3%N) rows <= 5 * count * work)%N).
+    { eapply N.le_trans with (m := (5 * count)%N); [lia|].
+      rewrite <- (N.mul_1_r (5 * count)) at 1. now apply N.mul_le_mono_l. }
+    assert (Hpositive : (1 <= count * work)%N).
+    { change (1 * 1 <= count * work)%N. now apply N.mul_le_mono. }
+    time_unfold T_fm_elim. fold input initial rows. time_simpl.
+    change (fun _ : poly_row X.t => (1 + (1 + 1))%N)
+      with (fun _ : poly_row X.t => 3%N).
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    unfold poly_raw_fm_factor, poly_raw_fm_work. fold count work.
+    rewrite <- N.mul_assoc in Hinitial_total.
+    rewrite <- N.mul_assoc in Hstep_total.
+    rewrite <- N.mul_assoc in Hinput_total.
+    rewrite <- N.mul_assoc in Houtput_total.
+    set (total := (count * work)%N) in *.
+    clear -Hinitial_total Hstep_total Hinput_total Houtput_total Hpositive.
+    clearbody total. nia.
+  Qed.
+
+  (** Havoc's frozen width and dimension dominate the complete raw elimination stage. *)
+  Lemma poly_raw_fm_work_havoc : forall x P,
+    (poly_raw_fm_work P <= N.of_nat (havoc_work x (Reached P) + 1))%N.
+  Proof.
+    intros x P.
+    assert (Hwidth : (nell (Reached P) + 1)^2 <=
+      (nell (Reached P) + X.bits x + 1)^2) by (apply Nat.pow_le_mono_l; lia).
+    assert (Hstage : (length P + 1)^2 *
+      (n P + terms (Reached P) + length P + 1) * (nell (Reached P) + 1)^2 <=
+      havoc_work x (Reached P) + 1).
+    { pose proof (Nat.mul_le_mono_l _ _
+        ((length P + 1)^2 * (n P + terms (Reached P) + length P + 1)) Hwidth).
+      unfold havoc_work. cbn [prows]. lia. }
+    change (N.of_nat (length P + 1)^2 *
+      poly_clock_span (n P + terms (Reached P)) (length P) 0 (nell (Reached P)) <=
+      N.of_nat (havoc_work x (Reached P) + 1))%N.
+    rewrite <- poly_fm_charge_nat. cbn [Nat.add] in *.
+    clear -Hstage. lia.
+  Qed.
+
+  Definition poly_havoc_factor : N :=
+    (poly_raw_fm_factor + poly_projection_factor + 16)%N.
+
+  Lemma T_poly_havoc_reached_bounded : forall x P,
+    (T_havoc x (Reached P) <= poly_havoc_factor * poly_raw_fm_work P)%N.
+  Proof.
+    intros x P. pose proof (T_poly_fm_raw_bounded x P) as Hfm.
+    pose proof (T_checked_fm_projections_bounded P x (n P) (nell (Reached P))
+      (poly_raw_source_width P) (poly_raw_fm_envelopes P x)) as Hprojection.
+    assert (Hprojection_total : (List.T_filter (checked_projection P x)
+      (T_checked_projection P x) (fm_elim x P) +
+      ListDef.T_map (@row_of X.t) (@T_row_of X.t)
+        (filter (checked_projection P x) (fm_elim x P)) <=
+      (poly_projection_factor + 8) * poly_raw_fm_work P)%N).
+    { eapply N.le_trans; [exact Hprojection|]. unfold poly_raw_fm_work. ring_simplify. lia. }
+    pose proof (poly_raw_fm_work_positive P) as Hpositive.
+    time_unfold T_havoc. revert Hprojection_total. time_simpl. intro Hprojection_total.
+    change (@T_row_of X.t) with (fun _ : tracked X.t => 1%N) in Hprojection_total.
+    change (fun r : tracked X.t => T_checked_projection P x r)
+      with (T_checked_projection P x).
+    unfold poly_havoc_factor.
+    set (work := poly_raw_fm_work P) in *.
+    clear -Hfm Hprojection_total Hpositive. clearbody work. nia.
+  Qed.
+
+  (** Raw havoc pays for initialization, one FM step, and every independent projection check. *)
+  Lemma T_poly_havoc_bounded : forall x s,
+    (T_havoc x s <= poly_havoc_factor * N.of_nat (havoc_work x s + 1))%N.
+  Proof.
+    intros x [|P].
+    - time_unfold T_havoc. change (1 * 1 <=
+        poly_havoc_factor * N.of_nat (havoc_work x Unreached + 1))%N.
+      apply N.mul_le_mono; [unfold poly_havoc_factor; lia|lia].
+    - eapply N.le_trans; [apply T_poly_havoc_reached_bounded|].
+      apply N.mul_le_mono_l. apply poly_raw_fm_work_havoc.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -8455,13 +8697,16 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_num : N := (poly_assume_factor + 1)%N.
+  Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x s. eapply N.le_trans; [apply T_poly_havoc_bounded|].
+    apply N.mul_le_mono_r. unfold c_num. lia.
+  Qed.
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof.
