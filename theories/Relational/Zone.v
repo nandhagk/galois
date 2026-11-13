@@ -151,13 +151,72 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
     | None => None
     end.
 
-  Definition fw_round (k : K.t) (m : dbm) : dbm :=
+  Definition relax_round (k : K.t) (m : dbm) : dbm :=
     M.merge (round_row k (row_of (M.get k m))) m M.empty.
 
-  (* STUB-CODE *)
-  Definition close (_ : dbm) : t := Unreached.
-  (* STUB-CODE *)
-  Definition incr_close (_ _ : K.t) (_ : Z) (_ : dbm) : t := Unreached.
+  Definition column_present (k : K.t) (row : M.t Z) : bool :=
+    match M.get k row with Some _ => true | None => false end.
+
+  Definition pivot_present (k : K.t) (m : dbm) : bool :=
+    match M.get k m with
+    | Some _ => true
+    | None => M.existsb (column_present k) m
+    end.
+
+  (** Materialize the zero walk only when its code already belongs to the matrix. *)
+  Definition fw_round (k : K.t) (m : dbm) : dbm :=
+    let seed := if pivot_present k m then add_cons k k 0%Z m else m in
+    relax_round k seed.
+
+  Definition remember_key (acc : M.t unit * list K.t) (k : K.t)
+      : M.t unit * list K.t :=
+    match M.get k (fst acc) with
+    | Some _ => acc
+    | None => (M.set k tt (fst acc), k :: snd acc)
+    end.
+
+  (** A map-backed set preserves the signature's reverse first-occurrence order. *)
+  Definition pivot_keys (m : dbm) : list K.t :=
+    let es := M.elements m in
+    snd (fold_left remember_key
+      (map fst es ++ flat_map (fun kv => map fst (M.elements (snd kv))) es)
+      (M.empty, nil)).
+
+  Definition nonnegative (k : K.t) (m : dbm) : bool :=
+    match entry m k k with Some d => (0 <=? d)%Z | None => true end.
+
+  Fixpoint close_pivots (ks : list K.t) (m : dbm) : t :=
+    match ks with
+    | nil => Reached m
+    | k :: ks =>
+      let next := fw_round k m in
+      if nonnegative k next then close_pivots ks next else Unreached
+    end.
+
+  Definition close (m : dbm) : t :=
+    let ks := pivot_keys m in
+    match close_pivots ks m with
+    | Unreached => Unreached
+    | Reached next =>
+      if forallb (fun k => nonnegative k next) ks then Reached next else Unreached
+    end.
+
+  Definition increment_row (i : K.t) (d : Z) (exit : M.t Z)
+      (r : option (M.t Z)) (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row =>
+      Some (match M.get i row with
+        | Some a => M.merge (via_bound (a + d)%Z) row exit
+        | None => row
+        end)
+    | None => None
+    end.
+
+  (** Each new path uses the inserted edge between its old prefix and suffix. *)
+  Definition incr_close (i j : K.t) (d : Z) (m : dbm) : t :=
+    let seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m)) in
+    let next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty in
+    if andb (nonnegative i next) (nonnegative j next) then Reached next else Unreached.
 End ZoneCode.
 
 Module Zone (X : KEY) (K : KEY with Definition t := option X.t
@@ -305,6 +364,10 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun lower_bound.
   TimeFun via_bound.
   TimeFun round_row.
+  TimeFun column_present.
+  TimeFun pivot_present.
+  TimeFun remember_key.
+  TimeFun pivot_keys.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -318,9 +381,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun assume.
   TimeFun range.
   TimeFun entry.
-  TimeFun fw_round.
-  TimeFun close.
   TimeFun add_cons.
+  TimeFun relax_round.
+  TimeFun fw_round.
+  TimeFun nonnegative.
+  TimeFun close_pivots.
+  TimeFun close.
+  TimeFun increment_row.
   TimeFun incr_close.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
