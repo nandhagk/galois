@@ -4984,9 +4984,624 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros a b Hfalse. destruct (span_false_contradiction a Hfalse) as [ms Hempty].
     unfold leb. now rewrite Hempty.
   Qed.
+
+  (** Splitting a full equality multiplier vector preserves both source predicates. *)
+  Lemma hull_weights_split : forall A B ms,
+    equality_weights (A ++ B) ms ->
+    equality_weights A (firstn (length A) ms) /\
+      equality_weights B (skipn (length A) ms).
+  Proof.
+    intro A. induction A as [|p A IH]; intros B [|m ms] Hweights.
+    - split; [constructor|exact Hweights].
+    - split; [constructor|exact Hweights].
+    - inversion Hweights.
+    - inversion Hweights as [|p' m' rows weights Hhead Htail]; subst p' m' rows weights.
+      destruct (IH B ms Htail) as [HA HB]. cbn [length firstn skipn].
+      split; [now constructor|exact HB].
+  Qed.
+
+  (** Concatenating source equality multipliers preserves the whole predicate. *)
+  Lemma hull_weights_app : forall A B ms ns,
+    equality_weights A ms -> equality_weights B ns ->
+    equality_weights (A ++ B) (ms ++ ns).
+  Proof.
+    intros A B ms ns HA HB. induction HA as [|p m A ms Hhead Htail IH];
+      cbn [app]; [exact HB|now constructor].
+  Qed.
+
+  (** Prefix splitting commutes with scaling a multiplier vector. *)
+  Lemma hull_firstn_scale : forall n a zs,
+    firstn n (map (fun z => (a * z)%Z) zs) =
+      map (fun z => (a * z)%Z) (firstn n zs).
+  Proof.
+    intro n. induction n as [|n IH]; intros a [|z zs]; cbn; try reflexivity.
+    now rewrite IH.
+  Qed.
+
+  (** Suffix splitting commutes with scaling a multiplier vector. *)
+  Lemma hull_skipn_scale : forall n a zs,
+    skipn n (map (fun z => (a * z)%Z) zs) =
+      map (fun z => (a * z)%Z) (skipn n zs).
+  Proof.
+    intro n. induction n as [|n IH]; intros a [|z zs]; cbn; try reflexivity.
+    apply IH.
+  Qed.
+
+  (** Prefix splitting commutes with crossing two multiplier vectors. *)
+  Lemma hull_firstn_cross : forall n a b xs ys,
+    firstn n (karr_cross a b xs ys) =
+      karr_cross a b (firstn n xs) (firstn n ys).
+  Proof.
+    intro n. induction n as [|n IH]; intros a b [|x xs] [|y ys];
+      cbn [firstn karr_cross]; try reflexivity. now rewrite IH.
+  Qed.
+
+  (** Suffix splitting commutes with crossing two multiplier vectors. *)
+  Lemma hull_skipn_cross : forall n a b xs ys,
+    skipn n (karr_cross a b xs ys) =
+      karr_cross a b (skipn n xs) (skipn n ys).
+  Proof.
+    intro n. induction n as [|n IH]; intros a b [|x xs] [|y ys];
+      cbn [skipn karr_cross]; try reflexivity.
+    - destruct (skipn n xs); reflexivity.
+    - apply IH.
+  Qed.
+
+  (** Crossing vectors preserves equally sized block boundaries. *)
+  Lemma hull_cross_app : forall xs ys us vs a b,
+    length xs = length ys ->
+    karr_cross a b (xs ++ us) (ys ++ vs) =
+      karr_cross a b xs ys ++ karr_cross a b us vs.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros [|y ys] us vs a b Hlength;
+      cbn [length] in Hlength; try discriminate.
+    - reflexivity.
+    - cbn [app karr_cross]. now rewrite IH by lia.
+  Qed.
+
+  (** The lifted vector records the difference block and the right source equation. *)
+  Definition hull_coordinates (xs : list X.t) (A B : list (lcons X.t)) (ms : list Z)
+      : list Z :=
+    let left := firstn (length A) ms in
+    let right := skipn (length A) ms in
+    (map (fun x => (C.comb_coef A left x - C.comb_coef B right x)%Z) xs ++
+      [(- C.comb_rhs A left + C.comb_rhs B right)%Z]) ++
+    (map (fun x => C.comb_coef B right x) xs ++ [C.comb_rhs B right]).
+
+  (** Eliminated columns remain zero while the full lifted provenance is retained. *)
+  Definition hull_tracks (A B : list (lcons X.t)) (xs : list X.t)
+      (offset : nat) (r : karr_row) : Prop :=
+    equality_weights (A ++ B) (kweight r) /\
+      repeat 0%Z offset ++ kcoeff r = hull_coordinates xs A B (kweight r).
+
+  (** A lifted vector scales by the same integer as its tracked multipliers. *)
+  Lemma hull_coordinates_scale : forall xs A B ms a,
+    map (fun z => (a * z)%Z) (hull_coordinates xs A B ms) =
+      hull_coordinates xs A B (map (fun z => (a * z)%Z) ms).
+  Proof.
+    intros xs A B ms a. unfold hull_coordinates.
+    rewrite hull_firstn_scale, hull_skipn_scale, !map_app, !map_map.
+    cbn [map]. rewrite !comb_rhs_scale.
+    apply f_equal2.
+    - apply f_equal2.
+      + apply map_ext. intro x. rewrite !comb_coef_scale. ring.
+      + f_equal. ring.
+    - apply f_equal2.
+      + apply map_ext. intro x. rewrite comb_coef_scale. ring.
+      + reflexivity.
+  Qed.
+
+  (** Crossing tracked multipliers crosses each block of the lifted vectors. *)
+  Lemma hull_coordinates_cross : forall xs A B ms ns a b,
+    equality_weights (A ++ B) ms -> equality_weights (A ++ B) ns ->
+    karr_cross a b (hull_coordinates xs A B ms) (hull_coordinates xs A B ns) =
+      hull_coordinates xs A B (karr_cross a b ms ns).
+  Proof.
+    intros xs A B ms ns a b Hms Hns.
+    destruct (hull_weights_split A B ms Hms) as [Hma Hmb].
+    destruct (hull_weights_split A B ns Hns) as [Hna Hnb].
+    assert (Hleft : length (firstn (length A) ms) = length (firstn (length A) ns)).
+    { rewrite <- (equality_weights_length _ _ Hma),
+        <- (equality_weights_length _ _ Hna). reflexivity. }
+    assert (Hright : length (skipn (length A) ms) = length (skipn (length A) ns)).
+    { rewrite <- (equality_weights_length _ _ Hmb),
+        <- (equality_weights_length _ _ Hnb). reflexivity. }
+    unfold hull_coordinates. rewrite hull_firstn_cross, hull_skipn_cross.
+    rewrite hull_cross_app by now rewrite !length_app, !length_map.
+    rewrite !hull_cross_app by now rewrite !length_map.
+    rewrite !cross_coordinate_map. cbn [karr_cross].
+    rewrite !(comb_rhs_cross A _ _ a b Hleft), !(comb_rhs_cross B _ _ a b Hright).
+    apply f_equal2.
+    - apply f_equal2.
+      + apply map_ext. intro x.
+        rewrite (comb_coef_cross A _ _ a b x Hleft),
+          (comb_coef_cross B _ _ a b x Hright). ring.
+      + f_equal. ring.
+    - apply f_equal2.
+      + apply map_ext. intro x. now rewrite (comb_coef_cross B _ _ a b x Hright).
+      + reflexivity.
+  Qed.
+
+  (** Cancelling a common nonzero factor preserves full lifted provenance. *)
+  Lemma hull_tracks_factor : forall A B xs offset factor r s,
+    factor <> 0%Z -> karr_multiple factor r s -> hull_tracks A B xs offset s ->
+    hull_tracks A B xs offset r.
+  Proof.
+    intros A B xs offset factor r s Hnonzero [Hcoeff [_ [Hweight _]]] [Hweights Hcoords].
+    split.
+    - apply equality_weights_factor with (factor := factor); [exact Hnonzero|].
+      now rewrite Hweight.
+    - apply scale_list_injective with (factor := factor); [exact Hnonzero|].
+      rewrite scale_zero_prefix, Hcoeff, Hcoords, hull_coordinates_scale, Hweight.
+      reflexivity.
+  Qed.
+
+  (** Guarded division preserves full lifted provenance in either executable branch. *)
+  Lemma hull_tracks_divide : forall A B xs offset divisor r,
+    hull_tracks A B xs offset r -> hull_tracks A B xs offset (karr_divide divisor r).
+  Proof.
+    intros A B xs offset divisor r Htracks.
+    destruct (karr_divide_factor divisor r) as [factor [Hnonzero Hmultiple]].
+    now apply hull_tracks_factor with (factor := factor) (s := r).
+  Qed.
+
+  (** Every fraction-free row reduction preserves the two exact source combinations. *)
+  Lemma hull_tracks_reduce : forall A B xs offset divisor a b p r,
+    hull_tracks A B xs offset p -> hull_tracks A B xs offset r ->
+    hull_tracks A B xs offset (karr_reduce divisor a b p r).
+  Proof.
+    intros A B xs offset divisor a b p r [Hpw Hpc] [Hrw Hrc].
+    unfold karr_reduce. apply hull_tracks_divide. split.
+    - cbn [kweight]. now apply equality_weights_cross.
+    - cbn [kcoeff kweight]. rewrite <- cross_zero_prefix, Hrc, Hpc.
+      now apply hull_coordinates_cross.
+  Qed.
+
+  (** The full lifted row always has two blocks of one more than the source dimension. *)
+  Lemma hull_tracks_width : forall A B xs offset r,
+    hull_tracks A B xs offset r -> offset + length (kcoeff r) = 2 * length xs + 2.
+  Proof.
+    intros A B xs offset r [_ Hcoords].
+    pose proof (f_equal (@length Z) Hcoords) as Hlength.
+    unfold hull_coordinates in Hlength.
+    rewrite !length_app, repeat_length, !length_map in Hlength. cbn [length] in Hlength.
+    lia.
+  Qed.
+
+  (** Dropping a zero leading column advances the restored-column offset. *)
+  Lemma hull_tracks_tail : forall A B xs offset r,
+    hull_tracks A B xs offset r -> offset < 2 * length xs + 2 -> karr_head r = 0%Z ->
+    hull_tracks A B xs (S offset) (karr_tail r).
+  Proof.
+    intros A B xs offset r Htracks Hroom Hzero.
+    pose proof (hull_tracks_width _ _ _ _ _ Htracks) as Hwidth.
+    destruct Htracks as [Hweights Hcoords].
+    destruct (kcoeff r) as [|a zs] eqn:Hcoeff; [cbn [length] in Hwidth; lia|].
+    unfold karr_head in Hzero. rewrite Hcoeff in Hzero. subst a.
+    split; [exact Hweights|]. cbn [karr_tail kcoeff kweight].
+    rewrite Hcoeff. cbn [tl]. rewrite zero_prefix_succ. exact Hcoords.
+  Qed.
+
+  (** Restoring a zero leading column returns to the preceding offset. *)
+  Lemma hull_tracks_restore : forall A B xs offset r,
+    hull_tracks A B xs (S offset) r -> hull_tracks A B xs offset (karr_restore r).
+  Proof.
+    intros A B xs offset r [Hweights Hcoords]. split; [exact Hweights|].
+    cbn [karr_restore kcoeff kweight]. now rewrite <- zero_prefix_succ.
+  Qed.
+
+  (** Restoring a whole triangular suffix preserves each tracked row. *)
+  Lemma hull_tracks_restore_map : forall A B xs offset rs,
+    Forall (hull_tracks A B xs (S offset)) rs ->
+    Forall (hull_tracks A B xs offset) (map karr_restore rs).
+  Proof.
+    intros A B xs offset rs Htracks. apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst r. apply hull_tracks_restore.
+    now apply (proj1 (Forall_forall _ _) Htracks).
+  Qed.
+
+  (** Bareiss elimination preserves both exact input combinations through every column. *)
+  Lemma hull_bareiss_tracks : forall cols A B xs offset previous rs,
+    offset + cols <= 2 * length xs + 2 -> Forall (hull_tracks A B xs offset) rs ->
+    Forall (hull_tracks A B xs offset) (karr_bareiss cols previous rs).
+  Proof.
+    intro cols. induction cols as [|cols IH];
+      intros A B xs offset previous rs Hroom Hrows; [exact Hrows|].
+    cbn [karr_bareiss]. destruct (karr_pivot rs) as [[p rest]|] eqn:Hpivot.
+    - destruct (karr_pivot_some _ _ _ Hpivot) as [_ Hperm].
+      assert (Hordered : Forall (hull_tracks A B xs offset) (p :: rest)).
+      { eapply Permutation_Forall; [exact Hperm|exact Hrows]. }
+      inversion Hordered as [|p' rest' Hp Hrest]; subst p' rest'.
+      constructor; [exact Hp|]. apply hull_tracks_restore_map. apply IH; [lia|].
+      apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply hull_tracks_tail; [|lia|apply karr_reduce_head_zero].
+      apply hull_tracks_reduce; [exact Hp|].
+      now apply (proj1 (Forall_forall _ _) Hrest).
+    - apply hull_tracks_restore_map. apply IH; [lia|].
+      pose proof (karr_pivot_none _ Hpivot) as Hheads.
+      apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply hull_tracks_tail; [|lia|].
+      + now apply (proj1 (Forall_forall _ _) Hrows).
+      + now apply (proj1 (Forall_forall _ _) Hheads).
+  Qed.
+
+  (** Repeated zeros split across any two consecutive lengths. *)
+  Lemma hull_repeat_app : forall n m,
+    repeat 0%Z (n + m) = repeat 0%Z n ++ repeat 0%Z m.
+  Proof.
+    intro n. induction n as [|n IH]; intro m; cbn; [reflexivity|now rewrite IH].
+  Qed.
+
+  (** Every identity multiplier row has the declared number of entries. *)
+  Lemma hull_unit_length : forall n i, length (karr_unit n i) = n.
+  Proof.
+    intro n. induction n as [|n IH]; intros [|i]; cbn [karr_unit length];
+      try reflexivity; [now rewrite repeat_length|now rewrite IH].
+  Qed.
+
+  (** A left-source unit vector has zero entries throughout the right-source suffix. *)
+  Lemma hull_unit_left : forall n m i, i < n ->
+    karr_unit (n + m) i = karr_unit n i ++ repeat 0%Z m.
+  Proof.
+    intro n. induction n as [|n IH]; intros m i Hbound; [lia|].
+    destruct i as [|i]; cbn [Nat.add karr_unit app].
+    - f_equal. apply hull_repeat_app.
+    - f_equal. apply IH. lia.
+  Qed.
+
+  (** A right-source unit vector has a zero left-source prefix. *)
+  Lemma hull_unit_right : forall n m i,
+    karr_unit (n + m) (n + i) = repeat 0%Z n ++ karr_unit m i.
+  Proof.
+    intro n. induction n as [|n IH]; intros m i;
+      cbn [Nat.add karr_unit repeat app]; [reflexivity|now rewrite IH].
+  Qed.
+
+  (** A split at a list's exact length recovers its two appended blocks. *)
+  Lemma hull_split_app : forall n (ms ns : list Z), length ms = n ->
+    firstn n (ms ++ ns) = ms /\ skipn n (ms ++ ns) = ns.
+  Proof.
+    intros n ms. revert n. induction ms as [|m ms IH]; intros n ns Hlength.
+    - cbn [length] in Hlength. subst n. split; reflexivity.
+    - destruct n as [|n]; [discriminate|].
+      cbn [length] in Hlength. destruct (IH n ns ltac:(lia)) as [Hfirst Hskip].
+      cbn [firstn skipn app]. split; [now rewrite Hfirst|exact Hskip].
+  Qed.
+
+  (** Zero multipliers give zero source coefficients. *)
+  Lemma hull_comb_coef_zero : forall P x,
+    C.comb_coef P (repeat 0%Z (length P)) x = 0%Z.
+  Proof.
+    intros P x. change (row_sum P (repeat 0%Z (length P))
+      (fun r => C.coef_of x (lhs r)) = 0%Z). apply row_sum_zero.
+  Qed.
+
+  (** Zero multipliers give a zero source right-hand side. *)
+  Lemma hull_comb_rhs_zero : forall P,
+    C.comb_rhs P (repeat 0%Z (length P)) = 0%Z.
+  Proof.
+    intro P. change (row_sum P (repeat 0%Z (length P)) rhs = 0%Z).
+    apply row_sum_zero.
+  Qed.
+
+  (** Mapping every coordinate to zero gives a zero block of the same length. *)
+  Lemma hull_map_zero : forall (xs : list X.t),
+    map (fun _ => 0%Z) xs = repeat 0%Z (length xs).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; cbn; [reflexivity|now rewrite IH].
+  Qed.
+
+  (** Appending one zero extends a zero block by one entry. *)
+  Lemma hull_zero_snoc : forall n,
+    repeat 0%Z n ++ [0%Z] = repeat 0%Z (S n).
+  Proof.
+    intro n. induction n as [|n IH]; cbn; [reflexivity|now rewrite IH].
+  Qed.
+
+  (** A left unit vector reconstructs precisely its lifted source row. *)
+  Lemma hull_coordinates_left_unit : forall xs A B i p,
+    nth_error A i = Some p ->
+    hull_coordinates xs A B (karr_unit (length A + length B) i) =
+      dense xs p ++ (- rhs p)%Z :: repeat 0%Z (S (length xs)).
+  Proof.
+    intros xs A B i p Hnth.
+    assert (Hbound : i < length A).
+    { apply nth_error_Some. rewrite Hnth. discriminate. }
+    unfold hull_coordinates. rewrite (hull_unit_left _ _ _ Hbound).
+    destruct (hull_split_app (length A) (karr_unit (length A) i)
+      (repeat 0%Z (length B)) (hull_unit_length _ _)) as [Hfirst Hskip].
+    rewrite Hfirst, Hskip, (comb_rhs_unit A i p Hnth), hull_comb_rhs_zero.
+    assert (Hleft : map (fun x =>
+      (C.comb_coef A (karr_unit (length A) i) x -
+       C.comb_coef B (repeat 0%Z (length B)) x)%Z) xs = dense xs p).
+    { unfold dense. apply map_ext. intro x.
+      rewrite (comb_coef_unit A i p x Hnth), hull_comb_coef_zero. ring. }
+    assert (Hright : map (fun x => C.comb_coef B (repeat 0%Z (length B)) x) xs =
+      repeat 0%Z (length xs)).
+    { rewrite <- hull_map_zero. apply map_ext. intro x. apply hull_comb_coef_zero. }
+    rewrite Hleft, Hright, Z.add_0_r, hull_zero_snoc. now rewrite <- app_assoc.
+  Qed.
+
+  (** A right unit vector reconstructs precisely its lifted source row. *)
+  Lemma hull_coordinates_right_unit : forall xs A B i p,
+    nth_error B i = Some p ->
+    hull_coordinates xs A B (karr_unit (length A + length B) (length A + i)) =
+      map Z.opp (dense xs p) ++ rhs p :: dense xs p ++ [rhs p].
+  Proof.
+    intros xs A B i p Hnth. unfold hull_coordinates. rewrite hull_unit_right.
+    destruct (hull_split_app (length A) (repeat 0%Z (length A))
+      (karr_unit (length B) i) ltac:(apply repeat_length)) as [Hfirst Hskip].
+    rewrite Hfirst, Hskip, hull_comb_rhs_zero, (comb_rhs_unit B i p Hnth).
+    assert (Hleft : map (fun x =>
+      (C.comb_coef A (repeat 0%Z (length A)) x -
+       C.comb_coef B (karr_unit (length B) i) x)%Z) xs = map Z.opp (dense xs p)).
+    { unfold dense. rewrite map_map. apply map_ext. intro x.
+      rewrite hull_comb_coef_zero, (comb_coef_unit B i p x Hnth). ring. }
+    assert (Hright : map (fun x => C.comb_coef B (karr_unit (length B) i) x) xs =
+      dense xs p).
+    { unfold dense. apply map_ext. intro x. now apply comb_coef_unit with (index := i). }
+    rewrite Hleft, Hright. cbn [Z.opp Z.add]. now rewrite <- app_assoc.
+  Qed.
+
+  (** A left seed carries the original source index through skipped inequalities. *)
+  Lemma hull_left_member : forall xs total rows index r,
+    In r (hull_left xs total index rows) ->
+    exists i p, nth_error rows i = Some p /\ lrel p = REq /\
+      r = KRow (dense xs p ++ (- rhs p)%Z :: repeat 0%Z (S (length xs)))
+        0 (karr_unit total (index + i)) 0.
+  Proof.
+    intros xs total rows. induction rows as [|p rows IH]; intros index r Hin;
+      [contradiction|].
+    cbn [hull_left] in Hin. destruct (lrel p) eqn:Hrel.
+    - cbn [In] in Hin. destruct Hin as [Hsame|Hin].
+      + subst r. exists 0, p. split; [reflexivity|]. split; [exact Hrel|].
+        now rewrite Nat.add_0_r.
+      + destruct (IH _ _ Hin) as [i [q [Hnth [Heq Hrow]]]].
+        exists (S i), q. split; [exact Hnth|]. split; [exact Heq|].
+        replace (index + S i) with (S index + i) by lia. exact Hrow.
+    - destruct (IH _ _ Hin) as [i [q [Hnth [Heq Hrow]]]].
+      exists (S i), q. split; [exact Hnth|]. split; [exact Heq|].
+      replace (index + S i) with (S index + i) by lia. exact Hrow.
+  Qed.
+
+  (** A right seed carries the original source index through skipped inequalities. *)
+  Lemma hull_right_member : forall xs total rows index r,
+    In r (hull_right xs total index rows) ->
+    exists i p, nth_error rows i = Some p /\ lrel p = REq /\
+      r = KRow (map Z.opp (dense xs p) ++ rhs p :: dense xs p ++ [rhs p])
+        0 (karr_unit total (index + i)) 0.
+  Proof.
+    intros xs total rows. induction rows as [|p rows IH]; intros index r Hin;
+      [contradiction|].
+    cbn [hull_right] in Hin. destruct (lrel p) eqn:Hrel.
+    - cbn [In] in Hin. destruct Hin as [Hsame|Hin].
+      + subst r. exists 0, p. split; [reflexivity|]. split; [exact Hrel|].
+        now rewrite Nat.add_0_r.
+      + destruct (IH _ _ Hin) as [i [q [Hnth [Heq Hrow]]]].
+        exists (S i), q. split; [exact Hnth|]. split; [exact Heq|].
+        replace (index + S i) with (S index + i) by lia. exact Hrow.
+    - destruct (IH _ _ Hin) as [i [q [Hnth [Heq Hrow]]]].
+      exists (S i), q. split; [exact Hnth|]. split; [exact Heq|].
+      replace (index + S i) with (S index + i) by lia. exact Hrow.
+  Qed.
+
+  (** Every normalized left seed retains its exact raw-source provenance. *)
+  Lemma hull_left_tracks : forall xs A B,
+    Forall (hull_tracks A B xs 0)
+      (hull_left xs (length A + length B) 0 (map normalize_row A)).
+  Proof.
+    intros xs A B. apply Forall_forall. intros r Hin.
+    destruct (hull_left_member _ _ _ _ _ Hin) as [i [p [Hnth [Hrel Hrow]]]].
+    rewrite nth_error_map in Hnth.
+    destruct (nth_error A i) as [q|] eqn:Hq; [|discriminate].
+    injection Hnth as Hsame. subst p. subst r. cbn [Nat.add] in *.
+    assert (Hbound : i < length A).
+    { apply nth_error_Some. rewrite Hq. discriminate. }
+    split.
+    - cbn [kweight]. rewrite (hull_unit_left _ _ _ Hbound). apply hull_weights_app.
+      + now apply equality_weights_unit with (p := q).
+      + apply equality_weights_zero.
+    - cbn [repeat app kcoeff kweight]. rewrite dense_normalize_row.
+      cbn [normalize_row rhs].
+      symmetry. apply hull_coordinates_left_unit. exact Hq.
+  Qed.
+
+  (** Every normalized right seed retains its exact raw-source provenance. *)
+  Lemma hull_right_tracks : forall xs A B,
+    Forall (hull_tracks A B xs 0)
+      (hull_right xs (length A + length B) (length A) (map normalize_row B)).
+  Proof.
+    intros xs A B. apply Forall_forall. intros r Hin.
+    destruct (hull_right_member _ _ _ _ _ Hin) as [i [p [Hnth [Hrel Hrow]]]].
+    rewrite nth_error_map in Hnth.
+    destruct (nth_error B i) as [q|] eqn:Hq; [|discriminate].
+    injection Hnth as Hsame. subst p. subst r. split.
+    - cbn [kweight]. rewrite hull_unit_right. apply hull_weights_app.
+      + apply equality_weights_zero.
+      + now apply equality_weights_unit with (p := q).
+    - cbn [repeat app kcoeff kweight]. rewrite dense_normalize_row.
+      cbn [normalize_row rhs].
+      symmetry. apply hull_coordinates_right_unit. exact Hq.
+  Qed.
+
+  (** The actual lifted basis retains exact combinations of both raw input states. *)
+  Lemma hull_basis_tracks : forall xs A B,
+    Forall (hull_tracks A B xs 0)
+      (karr_bareiss (2 * length xs + 2) 1
+        (hull_left xs (length A + length B) 0 (map normalize_row A) ++
+         hull_right xs (length A + length B) (length A) (map normalize_row B))).
+  Proof.
+    intros xs A B. apply hull_bareiss_tracks; [lia|]. apply Forall_app. split.
+    - apply hull_left_tracks.
+    - apply hull_right_tracks.
+  Qed.
+
+  (** Splitting after the auxiliary columns exposes the two blocks of lifted provenance. *)
+  Lemma hull_coordinates_parts : forall xs A B ms,
+    firstn (S (length xs)) (hull_coordinates xs A B ms) =
+      map (fun x => (C.comb_coef A (firstn (length A) ms) x -
+        C.comb_coef B (skipn (length A) ms) x)%Z) xs ++
+        [(- C.comb_rhs A (firstn (length A) ms) +
+          C.comb_rhs B (skipn (length A) ms))%Z] /\
+    skipn (S (length xs)) (hull_coordinates xs A B ms) =
+      map (fun x => C.comb_coef B (skipn (length A) ms) x) xs ++
+        [C.comb_rhs B (skipn (length A) ms)].
+  Proof.
+    intros xs A B ms. unfold hull_coordinates. apply hull_split_app.
+    rewrite length_app, length_map. cbn [length]. lia.
+  Qed.
+
+  (** Pairing coordinates with their values ignores every trailing constant coordinate. *)
+  Lemma hull_combine_extra : forall (xs : list X.t) (f : X.t -> Z) zs,
+    List.combine xs (map f xs ++ zs) = map (fun x => (x, f x)) xs.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros f zs; cbn; [reflexivity|].
+    now rewrite IH.
+  Qed.
+
+  (** The coordinate immediately after all variable coefficients is the recorded constant. *)
+  Lemma hull_nth_extra : forall (xs : list X.t) (f : X.t -> Z) b,
+    karr_nth (length xs) (map f xs ++ [b]) = b.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros f b;
+      cbn [length map app karr_nth]; [reflexivity|apply IH].
+  Qed.
+
+  (** Sparse extraction recovers a coefficient function supported by the coordinate list. *)
+  Lemma hull_sparse_coefficient : forall xs f b x,
+    NoDup xs -> (forall y, ~ In y xs -> f y = 0%Z) ->
+    coefficient x (sparse xs (map f xs ++ [b])) = f x.
+  Proof.
+    intros xs f b x Hunique Hsupport. unfold sparse.
+    rewrite coefficient_nonzero, hull_combine_extra.
+    assert (Hdec : {In x xs} + {~ In x xs}).
+    { apply in_dec. intros y z. destruct (X.eqb_spec y z); auto. }
+    destruct Hdec as [Hin|Habsent].
+    - now apply coefficient_coordinates.
+    - rewrite Hsupport by exact Habsent. apply coefficient_absent.
+      rewrite map_map. change (~ In x (map (fun y => y) xs)). now rewrite map_id.
+  Qed.
+
+  (** A missing normalized key has total coefficient zero in the original raw row. *)
+  Lemma hull_source_coefficient_zero : forall rows xs r x,
+    (forall s, In s rows -> forall y z, In (y, z) (lhs (normalize_row s)) -> In y xs) ->
+    In r rows -> ~ In x xs -> coefficient x (lhs r) = 0%Z.
+  Proof.
+    intros rows xs r x Hsupport Hr Habsent.
+    rewrite <- normalize_coef_coefficient. apply coefficient_absent.
+    intro Hin. apply in_map_iff in Hin as [[y z] [Hsame Hin]]. cbn [fst] in Hsame.
+    subst y. apply Habsent. now apply Hsupport with (s := r) (z := z).
+  Qed.
+
+  (** Returning a hull row requires every auxiliary coefficient to be zero. *)
+  Lemma checked_hull_row_aux_zero : forall xs A B r c,
+    checked_hull_row xs A B r = Some c ->
+    forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) = true.
+  Proof.
+    intros xs A B r c Hrow. unfold checked_hull_row in Hrow.
+    remember (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) as candidate
+      eqn:Hcandidate in Hrow.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) &&
+      negb (forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r))) &&
+      C.check_entails A candidate (Cert (firstn (length A) (kweight r)) 1 false) &&
+      C.check_entails B candidate (Cert (skipn (length A) (kweight r)) 1 false))
+      eqn:Hcheck; [|discriminate].
+    apply andb_true_iff in Hcheck as [Hcheck _].
+    apply andb_true_iff in Hcheck as [Hcheck _].
+    now apply andb_true_iff in Hcheck as [Hcheck _].
+  Qed.
+
+  (** Zero auxiliary columns turn exact lifted provenance into two scale-one certificates. *)
+  Lemma checked_hull_row_certificates : forall xs A B r c,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r -> checked_hull_row xs A B r = Some c ->
+    equality_certificate A c (firstn (length A) (kweight r)) 1 /\
+      equality_certificate B c (skipn (length A) (kweight r)) 1.
+  Proof.
+    intros xs A B r c Hunique Hsupport [Hweights Hcoords] Hrow.
+    cbn [repeat app] in Hcoords.
+    set (ma := firstn (length A) (kweight r)).
+    set (mb := skipn (length A) (kweight r)).
+    destruct (hull_weights_split A B (kweight r) Hweights) as [Hma Hmb].
+    fold ma mb in Hma, Hmb.
+    destruct (hull_coordinates_parts xs A B (kweight r)) as [Hprefix Hsuffix].
+    fold ma mb in Hprefix, Hsuffix.
+    pose proof (checked_hull_row_aux_zero _ _ _ _ _ Hrow) as Hzero.
+    rewrite Hcoords, Hprefix, forallb_app in Hzero.
+    apply andb_true_iff in Hzero as [Hzero Hright].
+    cbn [forallb] in Hright. apply andb_true_iff in Hright as [Hright _].
+    apply Z.eqb_eq in Hright.
+    assert (Houtside : forall x, ~ In x xs ->
+      C.comb_coef A ma x = 0%Z /\ C.comb_coef B mb x = 0%Z).
+    { intros x Habsent. split; apply comb_coef_zero; intros s Hs.
+      - apply hull_source_coefficient_zero with (rows := A ++ B) (xs := xs);
+          [exact Hsupport|apply in_or_app; now left|exact Habsent].
+      - apply hull_source_coefficient_zero with (rows := A ++ B) (xs := xs);
+          [exact Hsupport|apply in_or_app; now right|exact Habsent]. }
+    assert (Hsame : forall x, C.comb_coef A ma x = C.comb_coef B mb x).
+    { intro x. assert (Hdec : {In x xs} + {~ In x xs}).
+      { apply in_dec. intros y z. destruct (X.eqb_spec y z); auto. }
+      destruct Hdec as [Hin|Habsent].
+      - assert (Hentry : Z.eqb 0 (C.comb_coef A ma x - C.comb_coef B mb x) = true).
+        { apply (proj1 (forallb_forall _ _) Hzero).
+          apply in_map_iff. exists x. split; [reflexivity|exact Hin]. }
+        apply Z.eqb_eq in Hentry. lia.
+      - destruct (Houtside x Habsent) as [HA HB]. now rewrite HA, HB. }
+    pose proof (checked_hull_row_shape _ _ _ _ _ Hrow) as Hshape.
+    rewrite Hcoords, Hsuffix, hull_nth_extra in Hshape.
+    assert (Hcoefficient : forall x, C.coef_of x (lhs c) = C.comb_coef B mb x).
+    { intro x. rewrite Hshape. change (coefficient x
+        (sparse xs (map (fun y => C.comb_coef B mb y) xs ++ [C.comb_rhs B mb])) =
+        C.comb_coef B mb x).
+      apply hull_sparse_coefficient; [exact Hunique|].
+      intros y Habsent. exact (proj2 (Houtside y Habsent)). }
+    assert (Hrelation : lrel c = REq) by now rewrite Hshape.
+    assert (Hrhs : rhs c = C.comb_rhs B mb) by now rewrite Hshape.
+    unfold equality_certificate. split.
+    - split; [exact Hma|]. split; [lia|]. split.
+      + intro x. rewrite Hcoefficient, Hsame. ring.
+      + rewrite Hrelation, Hrhs. lia.
+    - split; [exact Hmb|]. split; [lia|]. split.
+      + intro x. rewrite Hcoefficient. ring.
+      + rewrite Hrelation, Hrhs. ring.
+  Qed.
+
+  (** Every emitted hull row belongs to both exact input spans, even for infeasible sources. *)
+  Lemma affine_hull_span : forall A B,
+    Forall (in_span A) (affine_hull A B) /\ Forall (in_span B) (affine_hull A B).
+  Proof.
+    intros A B. set (xs := variables (map normalize_row A ++ map normalize_row B)).
+    assert (Hunique : NoDup xs) by apply variables_nodup.
+    assert (Hsupport : forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs).
+    { intros s Hs x z Hterm. unfold xs.
+      apply variables_contains with (r := normalize_row s) (z := z); [|exact Hterm].
+      rewrite <- map_app. now apply in_map. }
+    assert (Hboth : Forall (fun c => in_span A c /\ in_span B c) (affine_hull A B)).
+    { unfold affine_hull. fold xs. apply present_forall_in. intros r Hr c Hrow.
+      pose proof (proj1 (Forall_forall _ _) (hull_basis_tracks xs A B) r Hr) as Htracks.
+      destruct (checked_hull_row_certificates xs A B r c Hunique Hsupport Htracks Hrow)
+        as [HA HB]. split.
+      - now apply span_of_certificate with (ms := firstn (length A) (kweight r)) (sc := 1%Z).
+      - now apply span_of_certificate with (ms := skipn (length A) (kweight r)) (sc := 1%Z). }
+    split; apply Forall_forall; intros c Hc.
+    - exact (proj1 (proj1 (Forall_forall _ _) Hboth c Hc)).
+    - exact (proj2 (proj1 (Forall_forall _ _) Hboth c Hc)).
+  Qed.
+
+
+  (** Join rows have exact combination witnesses from both input states. *)
   Lemma join_span : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (in_span a) P /\ Forall (in_span b) P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B P Hjoin. change (Reached (affine_hull A B) = Reached P) in Hjoin.
+    injection Hjoin as Hsame. subst P. apply affine_hull_span.
+  Qed.
   Lemma span_trans : forall a b c, Forall (in_span a) b -> Forall (in_span b) c ->
     Forall (in_span a) c.
   Proof.
