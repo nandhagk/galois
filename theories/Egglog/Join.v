@@ -823,6 +823,89 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
     exact (proj2 (I.children_spec _ _ _ u (Id 1%positive) Hwf Hnode)).
   Qed.
 
+  (** A fold preserves any accumulator element preserved by each of its steps. *)
+  Lemma fold_left_preserves : forall (A B : Type) (f : list B -> A -> list B)
+      cs acc b,
+    (forall x out, In x cs -> In b out -> In b (f out x)) ->
+    In b acc -> In b (fold_left f cs acc).
+  Proof.
+    intros A B f cs. induction cs as [|x cs IH]; intros acc b Hstep Hin.
+    - exact Hin.
+    - cbn [fold_left]. apply IH.
+      + intros y out Hy Hout. apply Hstep; [right; exact Hy|exact Hout].
+      + apply Hstep; [left; reflexivity|exact Hin].
+  Qed.
+
+  (** Any selected fold step can supply an element that all subsequent steps preserve. *)
+  Lemma fold_left_contains : forall (A B : Type) (f : list B -> A -> list B)
+      cs acc x b,
+    (forall y out, In y cs -> In b out -> In b (f out y)) ->
+    In x cs -> (forall out, In b (f out x)) -> In b (fold_left f cs acc).
+  Proof.
+    intros A B f cs. induction cs as [|y cs IH]; intros acc x b Hstep Hin Hnew.
+    - contradiction.
+    - cbn [fold_left]. destruct Hin as [<-|Hin].
+      + eapply fold_left_preserves; [|apply Hnew].
+        intros z out Hz Hout. apply Hstep; [right; exact Hz|exact Hout].
+      + eapply IH; [|exact Hin|exact Hnew].
+        intros z out Hz Hout. apply Hstep; [right; exact Hz|exact Hout].
+  Qed.
+
+  (** Enumeration never removes an assignment already present in its accumulator. *)
+  Lemma enumerate_acc : forall fuel p ixs ns pre acc b, In b acc ->
+    In b (enumerate fuel p ixs ns pre acc).
+  Proof.
+    induction fuel as [|fuel IH]; intros p ixs ns pre acc b Hin; cbn [enumerate].
+    - right. exact Hin.
+    - destruct (choose_index p ixs (length pre) ns) as [j|]; [|exact Hin].
+      eapply fold_left_preserves; [|exact Hin]. intros c out _ Hout. cbn beta.
+      destruct (advance_nodes p ixs (length pre) ns c) as [nodes|]; [|exact Hout].
+      apply IH. exact Hout.
+  Qed.
+
+  (** Reading the next cell extends the assignment prefix by that cell. *)
+  Lemma firstn_next : forall lvl (b : list (cell V.t)) c,
+    nth_error b lvl = Some c -> firstn (S lvl) b = firstn lvl b ++ [c].
+  Proof.
+    induction lvl as [|lvl IH]; intros [|d b] c Hread;
+      cbn [nth_error firstn app] in Hread |- *; try discriminate.
+    - injection Hread as <-. reflexivity.
+    - f_equal. apply IH. exact Hread.
+  Qed.
+
+  (** Every full answer extending the current prefix is reached by enumeration. *)
+  Lemma enumerate_complete : forall fuel p ixs lvl pre ns acc b,
+    fuel + lvl = nvars p -> nodes_ok p ixs lvl pre ns -> answer p ixs b ->
+    firstn lvl b = rev pre -> In b (enumerate fuel p ixs ns pre acc).
+  Proof.
+    induction fuel as [|fuel IH]; intros p ixs lvl pre ns acc b Hfuel Hnodes Hanswer Hprefix.
+    - assert (Hlevel : lvl = nvars p) by lia. subst lvl.
+      rewrite firstn_all2 in Hprefix by (pose proof (proj1 Hanswer); lia).
+      cbn [enumerate]. left. symmetry. exact Hprefix.
+    - pose proof (proj1 (proj2 Hnodes)) as Hlength.
+      destruct (choose_index_some p ixs lvl pre ns Hnodes ltac:(lia)) as [j Hchoose].
+      destruct (nth_error b lvl) as [c|] eqn:Hread.
+      2: { apply nth_error_None in Hread. pose proof (proj1 Hanswer). lia. }
+      assert (Hnext_prefix : firstn (S lvl) b = rev (c :: pre)).
+      { rewrite (firstn_next lvl b c Hread), Hprefix. reflexivity. }
+      destruct (advance_nodes_complete p ixs lvl pre ns c b Hnodes Hanswer Hnext_prefix)
+        as [nodes Hstep].
+      pose proof (advance_chosen_child p ixs lvl pre ns j c nodes Hnodes Hchoose Hstep)
+        as Hchild.
+      cbn [enumerate]. rewrite Hlength, Hchoose.
+      eapply (@fold_left_contains (cell V.t) (list (cell V.t)) _ _ acc c b).
+      + intros d out _ Hout. cbn beta.
+        destruct (advance_nodes p ixs lvl ns d) as [next|]; [|exact Hout].
+        apply enumerate_acc. exact Hout.
+      + exact Hchild.
+      + intros out. cbn beta. rewrite Hstep.
+        eapply (IH p ixs (S lvl) (c :: pre) nodes out b).
+        * lia.
+        * eapply advance_nodes_ok; eassumption.
+        * exact Hanswer.
+        * exact Hnext_prefix.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
@@ -975,7 +1058,11 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Lemma go_complete : forall p ixs l pre ns acc b, nodes_ok p ixs l pre ns ->
     answer p ixs b -> firstn l b = rev pre ->
     In b (go (nvars p - l) p ixs ns pre acc).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns acc b Hnodes Hanswer Hprefix.
+    eapply enumerate_complete; [|exact Hnodes|exact Hanswer|exact Hprefix].
+    pose proof (proj1 (proj2 (proj2 Hnodes))) as Hlevel. lia.
+  Qed.
 
   Lemma go_nodup : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
     NoDup acc ->
