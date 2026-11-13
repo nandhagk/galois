@@ -8108,6 +8108,324 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
 
+  Definition karr_prepare_factor : N := (karr_raw_normal_factor + 32)%N.
+
+  (** Sharing normalized rows pays their total raw mass rather than a product of row lengths. *)
+  Lemma T_karr_prepare_rows_bounded : forall P keys bits total,
+    Forall (fun r => C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    terms (Reached P) <= total ->
+    (ListDef.T_map normalize_row T_normalize_row P <=
+      karr_prepare_factor * N.of_nat (terms (Reached P) + length P + 1) *
+        N.of_nat (keys + bits + Nat.log2 total + 1))%N.
+  Proof.
+    intro P. induction P as [|p P IH]; intros keys bits total Hrows Htotal.
+    - time_unfold ListDef.T_map. cbn [terms rows_of map fold_right length].
+      unfold karr_prepare_factor. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - inversion Hrows as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      change (length (lhs p) + terms (Reached P) <= total) in Htotal.
+      specialize (IH keys bits total Htail ltac:(lia)).
+      assert (Hentries : Forall (fun q => Pos.size_nat (X.encode (fst q)) <= keys /\
+        Z.size_nat (snd q) <= bits) (lhs p)).
+      { apply Forall_forall. intros q Hq.
+        pose proof (karr_row_key_member p q Hq).
+        pose proof (karr_row_entry_bits p q Hq). split; lia. }
+      pose proof (T_karr_normal_log (lhs p) keys bits Hentries) as Hnormal.
+      pose proof (Nat.log2_le_mono (length (lhs p)) total ltac:(lia)) as Hlog.
+      assert (Hrowtime : (T_normalize_row p <= karr_raw_normal_factor *
+        N.of_nat (length (lhs p) + 1) * N.of_nat (keys + bits + Nat.log2 total + 1) + 8)%N).
+      { assert (Hnormal_total : (T_normalize_coef (lhs p) <= karr_raw_normal_factor *
+          N.of_nat (length (lhs p) + 1) * N.of_nat (keys + bits + Nat.log2 total + 1))%N).
+        { eapply N.le_trans; [exact Hnormal|]. apply N.mul_le_mono_l. lia. }
+        time_unfold T_normalize_row. time_simpl. nia. }
+      set (work := N.of_nat (keys + bits + Nat.log2 total + 1)) in *.
+      assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+      time_unfold ListDef.T_map. time_simpl.
+      change (terms (Reached (p :: P))) with (length (lhs p) + terms (Reached P)).
+      cbn [length]. unfold karr_prepare_factor in *.
+      clear -IH Hrowtime Hpositive. clearbody work.
+      rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Every linear-form entry fits its combined key and coefficient width. *)
+  Lemma karr_form_entry_bits : forall f p, In p (coef f) ->
+    X.bits (fst p) + Z.size_nat (snd p) <= F.form_bits f.
+  Proof.
+    intros f p Hp. unfold F.form_bits.
+    exact (karr_max_member _ (fun q => X.bits (fst q) + Z.size_nat (snd q))
+      (Z.size_nat (cst f)) (coef f) p Hp).
+  Qed.
+
+  (** A form's constant fits the same maximum as its coefficient entries. *)
+  Lemma karr_form_constant_bits : forall f, Z.size_nat (cst f) <= F.form_bits f.
+  Proof.
+    intro f. unfold F.form_bits. apply karr_max_seed.
+  Qed.
+
+  Definition karr_negate_term (p : X.t * Z) : X.t * Z := (fst p, (- snd p)%Z).
+  TimeFun karr_negate_term.
+
+  (** Negating a stored coefficient only changes its outer sign constructor. *)
+  Lemma T_karr_negate_term_bounded : forall p, (T_karr_negate_term p <= 8)%N.
+  Proof.
+    intros [x z]. pose proof (Z.T_opp_le z).
+    time_unfold T_karr_negate_term. time_simpl. lia.
+  Qed.
+
+  (** Form subtraction retains the raw entry widths before equal keys are merged. *)
+  Lemma karr_atom_input_sizes : forall a bits,
+    F.form_bits (al a) + F.form_bits (ar a) <= bits ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= bits /\
+      Z.size_nat (snd p) <= bits)
+      (coef (al a) ++ map karr_negate_term (coef (ar a))).
+  Proof.
+    intros a bits Hbits. apply Forall_app. split.
+    - apply Forall_forall. intros p Hp.
+      pose proof (karr_form_entry_bits (al a) p Hp). unfold X.bits in *. split; lia.
+    - apply Forall_map, Forall_forall. intros p Hp.
+      pose proof (karr_form_entry_bits (ar a) p Hp).
+      cbn [karr_negate_term fst snd]. rewrite karr_size_opp.
+      unfold X.bits in *. split; lia.
+  Qed.
+
+  (** An atom normalizer pays for its source lengths and logarithmic merge width. *)
+  Lemma T_karr_atom_normal_bounded : forall a count bits,
+    length (coef (al a)) + length (coef (ar a)) <= count ->
+    F.form_bits (al a) + F.form_bits (ar a) <= bits ->
+    (T_normalize_coef (coef (al a) ++ map karr_negate_term (coef (ar a))) <=
+      (2 * karr_raw_normal_factor) * N.of_nat (count + 1) *
+        N.of_nat (bits + Nat.log2 count + 1))%N.
+  Proof.
+    intros a count bits Hlength Hbits.
+    pose proof (T_karr_normal_log _ bits bits (karr_atom_input_sizes a bits Hbits)) as Hnormal.
+    assert (Hcount : length (coef (al a) ++ map karr_negate_term (coef (ar a))) <= count).
+    { rewrite length_app, length_map. exact Hlength. }
+    pose proof (Nat.log2_le_mono _ _ Hcount) as Hlog.
+    eapply N.le_trans; [exact Hnormal|].
+    replace (2 * karr_raw_normal_factor * N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N with
+      (karr_raw_normal_factor * N.of_nat (count + 1) *
+        (2 * N.of_nat (bits + Nat.log2 count + 1)))%N by ring.
+    apply N.mul_le_mono; [apply N.mul_le_mono_l; lia|lia].
+  Qed.
+
+  Definition karr_atom_factor : N := (2 * karr_raw_normal_factor + 64)%N.
+
+  (** Converting one equality atom pays for sign changes, subtraction and normalization. *)
+  Lemma T_karr_atom_rows_bounded : forall a count bits,
+    length (coef (al a)) + length (coef (ar a)) <= count ->
+    F.form_bits (al a) + F.form_bits (ar a) <= bits ->
+    (T_atom_rows a <= karr_atom_factor * N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N.
+  Proof.
+    intros a count bits Hlength Hbits.
+    pose proof (T_karr_atom_normal_bounded a count bits Hlength Hbits) as Hnormal.
+    pose proof (karr_T_map_members _ _ karr_negate_term T_karr_negate_term 8
+      (coef (ar a)) ltac:(intros p _; apply T_karr_negate_term_bounded)) as Hnegate.
+    pose proof (Datatypes.T_app_le (coef (al a))
+      (map karr_negate_term (coef (ar a)))) as Happ.
+    pose proof (Z.T_sub_le (cst (ar a)) (cst (al a))) as Hsubtract.
+    pose proof (karr_form_constant_bits (al a)) as Hleft.
+    pose proof (karr_form_constant_bits (ar a)) as Hright.
+    set (work := (N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N).
+    assert (Hcount_work : (N.of_nat (count + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_r (N.of_nat (count + 1))) at 1.
+      apply N.mul_le_mono_l. lia. }
+    assert (Hbits_work : (N.of_nat (bits + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_l (N.of_nat (bits + 1))) at 1.
+      apply N.mul_le_mono; lia. }
+    assert (Hpositive : (1 <= work)%N) by lia.
+    assert (Hnormal_total : (T_normalize_coef
+      (coef (al a) ++ map karr_negate_term (coef (ar a))) <=
+        (2 * karr_raw_normal_factor) * work)%N).
+    { unfold work. rewrite N.mul_assoc. exact Hnormal. }
+    assert (Hnegate_total : (ListDef.T_map karr_negate_term T_karr_negate_term
+      (coef (ar a)) <= 10 * work)%N).
+    { clear -Hnegate Hcount_work Hlength. nia. }
+    assert (Happ_total : (Datatypes.T_app (coef (al a))
+      (map karr_negate_term (coef (ar a))) <= work)%N) by lia.
+    assert (Hsubtract_total : (Z.T_sub (cst (ar a)) (cst (al a)) <= 3 * work)%N).
+    { assert (Hlinear : (Z.T_sub (cst (ar a)) (cst (al a)) <=
+        3 * N.of_nat (bits + 1))%N) by lia.
+      eapply N.le_trans; [exact Hlinear|]. now apply N.mul_le_mono_l. }
+    replace (karr_atom_factor * N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N with (karr_atom_factor * work)%N
+      by (unfold work; ring).
+    time_unfold T_atom_rows.
+    change (fun p : X.t * Z => (fst p, (- snd p)%Z)) with karr_negate_term.
+    lazymatch goal with
+    | |- context [ListDef.T_map karr_negate_term ?Tf (coef (ar a))] =>
+      change Tf with T_karr_negate_term
+    end.
+    destruct (alw a), (arw a), (acmp a); time_simpl;
+      try time_unfold T_normalize_row; time_simpl.
+    all: cbn [lhs].
+    all: clear -Hnormal_total Hnegate_total Happ_total Hsubtract_total Hpositive.
+    all: clearbody work; unfold karr_atom_factor; nia.
+  Qed.
+
+  (** Equality-atom conversion emits at most one stored row. *)
+  Lemma karr_atom_rows_length : forall a, length (atom_rows a) <= 1.
+  Proof.
+    intro a. unfold atom_rows. destruct (alw a), (arw a), (acmp a); cbn [length]; lia.
+  Qed.
+
+  (** A flat map with singleton-or-empty outputs pays only a constant append per input. *)
+  Lemma karr_T_flat_map_singleton : forall (A B : Type) (f : A -> list B)
+      (T_f : A -> N) factor xs,
+    (forall x, In x xs -> length (f x) <= 1) ->
+    (forall x, In x xs -> (T_f x <= factor)%N) ->
+    (List.T_flat_map f T_f xs <= (factor + 4) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f factor xs. induction xs as [|x xs IH]; intros Hlength Htime.
+    - time_unfold List.T_flat_map. cbn [length]. lia.
+    - pose proof (Hlength x (or_introl eq_refl)) as Hhead_length.
+      pose proof (Htime x (or_introl eq_refl)) as Hhead_time.
+      specialize (IH ltac:(intros y Hy; apply Hlength; now right)
+        ltac:(intros y Hy; apply Htime; now right)).
+      pose proof (Datatypes.T_app_le (f x) (flat_map f xs)) as Happ.
+      time_unfold List.T_flat_map. cbn [length]. time_simpl. nia.
+  Qed.
+
+  (** Singleton-or-empty flattening never exceeds its source length. *)
+  Lemma karr_flat_map_singleton_length : forall (A B : Type) (f : A -> list B) xs,
+    (forall x, In x xs -> length (f x) <= 1) -> length (flat_map f xs) <= length xs.
+  Proof.
+    intros A B f xs. induction xs as [|x xs IH]; intro Hlength.
+    - reflexivity.
+    - pose proof (Hlength x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hy; apply Hlength; now right)).
+      cbn [flat_map length]. rewrite length_app. lia.
+  Qed.
+
+  (** Changing the initial sum from zero to one adds exactly one. *)
+  Lemma karr_fold_add_one : forall xs,
+    fold_right Nat.add 1 xs = fold_right Nat.add 0 xs + 1.
+  Proof.
+    induction xs as [|x xs IH]; cbn [fold_right]; lia.
+  Qed.
+
+  (** The cubic elimination allowance covers quadratic atom count at linear width. *)
+  Lemma karr_assume_atom_budget : forall dim count bits width,
+    count + 1 <= dim -> bits <= width ->
+    (count + 1)^2 * (bits + Nat.log2 count + 1) <=
+      dim^3 * (ellB dim width + 1)^2.
+  Proof.
+    intros dim count bits width Hcount Hbits.
+    assert (Hdim : 1 <= dim) by lia.
+    pose proof (Nat.log2_le_mono count dim ltac:(lia)) as Hlog.
+    assert (Hwidth : bits + Nat.log2 count + 1 <= ellB dim width + 1).
+    { unfold ellB. nia. }
+    apply Nat.mul_le_mono.
+    - eapply Nat.le_trans; [apply Nat.pow_le_mono_l; exact Hcount|].
+      cbn [Nat.pow]. nia.
+    - eapply Nat.le_trans; [exact Hwidth|]. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** The same allowance pays a linear traversal of each source row and its width. *)
+  Lemma karr_assume_source_budget : forall dim rows bits width,
+    rows + 1 <= dim -> bits <= width ->
+    (rows + 1) * (bits + 1) <= dim^3 * (ellB dim width + 1)^2.
+  Proof.
+    intros dim rows bits width Hrows Hbits.
+    assert (Hdim : 1 <= dim) by lia.
+    assert (Hwidth : bits + 1 <= ellB dim width + 1) by (unfold ellB; nia).
+    apply Nat.mul_le_mono.
+    - eapply Nat.le_trans; [exact Hrows|]. cbn [Nat.pow]. nia.
+    - eapply Nat.le_trans; [exact Hwidth|]. cbn [Nat.pow]. nia.
+  Qed.
+
+  Definition karr_assume_factor : N := (karr_prepare_factor + 2 * karr_atom_factor + 64)%N.
+
+  (** Assumptions normalize raw sources and every emitted equality within the frozen budget. *)
+  Lemma T_karr_assume_bounded : forall g es s,
+    (T_assume g es s <= karr_assume_factor * N.of_nat (assume_work g es s + 1))%N.
+  Proof.
+    intros g es [|P].
+    - time_unfold T_assume. unfold karr_assume_factor. time_simpl. nia.
+    - set (count := fold_right Nat.add 0 (map tsize es)).
+      set (bits := F.bits_es g es).
+      set (dim := n (Reached P) + count + 1).
+      set (source_bits := nell (Reached P)).
+      set (allowance := dim^3 * (ellB dim (source_bits + bits) + 1)^2).
+      set (work := N.of_nat (assume_work g es (Reached P) + 1)).
+      assert (Hallowance : (N.of_nat allowance <= work)%N).
+      { unfold work, assume_work, allowance, dim, source_bits, bits, count. lia. }
+      assert (Hsource_nat : (length P + 1) * (source_bits + 1) <= allowance).
+      { unfold allowance. apply karr_assume_source_budget; [unfold dim, n; cbn [rows_of]; lia|lia]. }
+      assert (Hatom_nat : (count + 1)^2 * (bits + Nat.log2 count + 1) <= allowance).
+      { unfold allowance. apply karr_assume_atom_budget; [unfold dim; lia|lia]. }
+      assert (Hcount_work : (N.of_nat (count + 1) <= work)%N).
+      { eapply N.le_trans; [|exact Hallowance].
+        assert (Hnat : count + 1 <= allowance).
+        { eapply Nat.le_trans; [|exact Hatom_nat].
+          clear -count bits. cbn [Nat.pow]. nia. }
+        clear -Hnat. lia. }
+      assert (Hpositive : (1 <= work)%N) by lia.
+      assert (Hlin : (F.T_atoms_of g es <= work)%N).
+      { unfold work, assume_work. rewrite !Nat2N.inj_add, N2Nat.id. lia. }
+      destruct (F.atoms_of_size g es) as [Hnumber Hsizes].
+      rewrite karr_fold_add_one in Hnumber. fold count bits in Hnumber, Hsizes.
+      assert (Hatoms : forall a, In a (F.atoms_of g es) ->
+        (T_atom_rows a <= karr_atom_factor * N.of_nat (count + 1) *
+          N.of_nat (bits + Nat.log2 count + 1))%N).
+      { intros a Ha. destruct (proj1 (Forall_forall _ _) Hsizes a Ha) as [Hlength Hbits].
+        apply T_karr_atom_rows_bounded; [exact Hlength|lia]. }
+      pose proof (karr_T_flat_map_singleton _ _ atom_rows T_atom_rows
+        (karr_atom_factor * N.of_nat (count + 1) *
+          N.of_nat (bits + Nat.log2 count + 1))%N (F.atoms_of g es)
+        ltac:(intros a _; apply karr_atom_rows_length) Hatoms) as Hflat.
+      pose proof (karr_flat_map_singleton_length _ _ atom_rows (F.atoms_of g es)
+        ltac:(intros a _; apply karr_atom_rows_length)) as Hflat_length.
+      assert (Hatom_product : (N.of_nat (length (F.atoms_of g es)) *
+        N.of_nat (count + 1) * N.of_nat (bits + Nat.log2 count + 1) <= 2 * work)%N).
+      { assert (Hnat : length (F.atoms_of g es) * (count + 1) *
+          (bits + Nat.log2 count + 1) <= 2 * allowance).
+        { eapply Nat.le_trans with (m := 2 * ((count + 1)^2 *
+            (bits + Nat.log2 count + 1))).
+          - clear -Hnumber. cbn [Nat.pow]. nia.
+          - lia. }
+        rewrite <- !Nat2N.inj_mul. clear -Hnat Hallowance. lia. }
+      assert (Hflat_total : (List.T_flat_map atom_rows T_atom_rows (F.atoms_of g es) <=
+        (2 * karr_atom_factor + 12) * work)%N).
+      { clear -Hflat Hatom_product Hnumber Hcount_work Hpositive. clearbody work. nia. }
+      pose proof (Datatypes.T_app_le (flat_map atom_rows (F.atoms_of g es))
+        (map normalize_row P)) as Happ.
+      assert (Happ_total : (Datatypes.T_app (flat_map atom_rows (F.atoms_of g es))
+        (map normalize_row P) <= 3 * work)%N).
+      { clear -Happ Hflat_length Hnumber Hcount_work Hpositive. clearbody work. nia. }
+      set (source_keys := fold_right Nat.max 0 (map C.row_key_bits P)).
+      set (source_values := fold_right Nat.max 0 (map C.row_bits P)).
+      assert (Hrows : Forall (fun r => C.row_key_bits r <= source_keys /\
+        C.row_bits r <= source_values) P).
+      { apply Forall_forall. intros r Hr. split; apply karr_max_member; exact Hr. }
+      pose proof (T_karr_prepare_rows_bounded P source_keys source_values
+        (terms (Reached P)) Hrows (Nat.le_refl _)) as Hmap.
+      assert (Hsource_width : source_keys + source_values + Nat.log2 (terms (Reached P)) + 1 =
+        source_bits).
+      { unfold source_keys, source_values, source_bits, nell, ell. cbn [rows_of]. lia. }
+      rewrite Hsource_width in Hmap.
+      assert (Hmap_charge : (N.of_nat (terms (Reached P) + length P + 1) *
+        N.of_nat source_bits <= work)%N).
+      { assert (Hnat : (terms (Reached P) + length P + 1) * source_bits <=
+          terms (Reached P) * (source_bits + 1) + allowance).
+        { clear -Hsource_nat. clearbody allowance source_bits. nia. }
+        rewrite <- Nat2N.inj_mul. unfold work, assume_work.
+        change (N.of_nat ((terms (Reached P) + length P + 1) * source_bits) <=
+          N.of_nat (terms (Reached P) * (source_bits + 1) + allowance +
+            N.to_nat (F.T_atoms_of g es) + 1))%N.
+        clear -Hnat. lia. }
+      assert (Hmap_total : (ListDef.T_map normalize_row T_normalize_row P <=
+        karr_prepare_factor * work)%N).
+      { eapply N.le_trans; [exact Hmap|]. rewrite <- N.mul_assoc.
+        now apply N.mul_le_mono_l. }
+      time_unfold T_assume. time_simpl.
+      change (fun a => T_atom_rows a) with T_atom_rows.
+      change (fun r => T_normalize_row r) with T_normalize_row.
+      fold work. unfold karr_assume_factor.
+      clear -Hflat_total Happ_total Hmap_total Hlin Hpositive. clearbody work. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -8126,7 +8444,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_num : N := 1. (* STUB *)
+  Definition c_num : N := (karr_assume_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -8135,7 +8453,10 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s. eapply N.le_trans; [apply T_karr_assume_bounded|].
+    apply N.mul_le_mono_r. unfold c_num. lia.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
