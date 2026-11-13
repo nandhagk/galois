@@ -3,7 +3,7 @@
     Fourier-Motzkin elimination tracks combinations of the input constraints.
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
-From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring Psatz Wf_nat.
+From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Psatz Wf_nat.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -11049,6 +11049,701 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
 End PolyClockCore.
+
+(** * Encoding support pays merged affine widths
+
+    A coefficient support cannot exceed either its raw occurrences or its finite
+    encoded-key space. Builds on: the frozen key encoding and natural logarithm. *)
+
+(** Exponential growth covers the square of a logarithmic width increase. *)
+Lemma poly_signed_log_square : forall j, (j + 2)^2 <= 9 * 2^j.
+Proof.
+  induction j as [|j IH]; [cbn; lia|].
+  rewrite (Nat.pow_succ_r 2 j) by lia.
+  destruct j as [|j]; [cbn; lia|].
+  assert (Hstep : (S (S j) + 2)^2 <= 2 * (S j + 2)^2)
+    by (cbn [Nat.pow]; nia).
+  cbn [Nat.pow] in *. nia.
+Qed.
+
+(** The smaller support bound absorbs every logarithmic raw-multiplicity increase. *)
+Lemma poly_signed_support_log_mass : forall support total bits,
+  support <= total + 1 -> support <= 2^bits ->
+  support * (bits + Nat.log2 (total + 1) + 1)^2 <=
+    16 * (total + 1) * (bits + 1)^2.
+Proof.
+  intros support total bits Hcount Hkeys.
+  pose proof (Nat.log2_spec (total + 1) ltac:(lia)) as [Hlower Hupper].
+  set (q := Nat.log2 (total + 1)) in *.
+  destruct (le_dec q bits) as [Hsmall|Hlarge].
+  - assert (Hwidth : bits + q + 1 <= 2 * (bits + 1)) by lia.
+    eapply Nat.le_trans with (m := (total + 1) * (2 * (bits + 1))^2).
+    + apply Nat.mul_le_mono; [exact Hcount|now apply Nat.pow_le_mono_l].
+    + rewrite Nat.pow_mul_l. cbn [Nat.pow]. clear -bits total. nia.
+  - set (j := q - bits).
+    assert (Hsplit : q = bits + j) by (unfold j; lia).
+    assert (Hwidth : bits + q + 1 <= (bits + 1) * (j + 2)) by nia.
+    pose proof (poly_signed_log_square j) as Hsquare.
+    eapply Nat.le_trans with (m := 2^bits * ((bits + 1)^2 * (9 * 2^j))).
+    + eapply Nat.le_trans with (m := 2^bits * ((bits + 1) * (j + 2))^2).
+      * apply Nat.mul_le_mono; [exact Hkeys|now apply Nat.pow_le_mono_l].
+      * rewrite Nat.pow_mul_l. apply Nat.mul_le_mono_l, Nat.mul_le_mono_l.
+        exact Hsquare.
+    + assert (Hpower : 2^bits * 2^j = 2^q) by (rewrite <- Nat.pow_add_r; now rewrite Hsplit).
+      replace (2^bits * ((bits + 1)^2 * (9 * 2^j))) with
+        (9 * (2^bits * 2^j) * (bits + 1)^2) by nia.
+      rewrite Hpower. eapply Nat.le_trans with (m := 9 * (total + 1) * (bits + 1)^2).
+      * apply Nat.mul_le_mono_r, Nat.mul_le_mono_l. exact Hlower.
+      * clear -bits total. nia.
+Qed.
+
+Module PolySignedKeySupport (X : KEY).
+  (** Encoding into natural numbers preserves key uniqueness. *)
+  Lemma poly_signed_encoded_nodup : forall xs,
+    NoDup xs -> NoDup (map (fun x => Pos.to_nat (X.encode x)) xs).
+  Proof.
+    intros xs Hunique. induction Hunique as [|x xs Hnot Hunique IH]; cbn [map].
+    - constructor.
+    - constructor; [|exact IH]. intro Hin.
+      apply in_map_iff in Hin as [y [Hsame Hy]].
+      assert (Heq : y = x) by (apply X.encode_inj, Pos2Nat.inj; exact Hsame).
+      subst y. contradiction.
+  Qed.
+
+  (** A bounded encoded-key space contains only finitely many distinct source keys. *)
+  Lemma poly_signed_key_width_count : forall xs bits,
+    NoDup xs -> Forall (fun x => X.bits x <= bits) xs -> length xs <= 2^bits.
+  Proof.
+    intros xs bits Hunique Hwidth.
+    rewrite <- (length_map (fun x => Pos.to_nat (X.encode x)) xs),
+      <- (length_seq (2^bits) 0).
+    apply NoDup_incl_length; [now apply poly_signed_encoded_nodup|].
+    intros value Hvalue. apply in_map_iff in Hvalue as [x [Hsame Hx]]. subst value.
+    pose proof (proj1 (Forall_forall _ _) Hwidth x Hx) as Hbits.
+    change (X.bits x <= bits) in Hbits.
+    pose proof (Pos.size_nat_upper (X.encode x)) as Hupper.
+    assert (Hpower : 2 ^ X.bits x <= 2 ^ bits) by (apply Nat.pow_le_mono_r; lia).
+    unfold X.bits in Hpower. apply in_seq. lia.
+  Qed.
+End PolySignedKeySupport.
+
+(** A logarithmic raw-size allowance also bounds the raw occurrence count exponentially. *)
+Lemma poly_signed_log_capacity : forall count bits,
+  Nat.log2 count + 1 <= bits -> count <= 2^bits.
+Proof.
+  intros count bits Hbits. destruct count as [|count]; [lia|].
+  pose proof (Nat.log2_spec (S count) ltac:(lia)) as [_ Hupper].
+  assert (Hpower : 2 ^ (Nat.log2 (S count) + 1) <= 2^bits)
+    by (apply Nat.pow_le_mono_r; lia).
+  rewrite Nat.add_1_r in Hpower.
+  lia.
+Qed.
+
+(** A pivot's linear row count absorbs both encoded support and raw-check source mass. *)
+Lemma poly_signed_assignment_pivot_mass : forall rows support terms expr bits,
+  support <= terms + expr + 1 -> support <= 2^bits -> terms <= 2^bits ->
+  1 <= bits ->
+  (rows + 2) * (support + terms + rows + 3) *
+      (bits + Nat.log2 (terms + expr + 1) + 1)^2 <=
+    128 * (rows + 3)^2 * (terms + expr + rows + 3) * bits^2.
+Proof.
+  intros rows support terms expr bits Hsupport Hkeys Hterms Hbits.
+  pose proof (poly_signed_support_log_mass support (terms + expr) bits
+    Hsupport Hkeys) as Hdim.
+  pose proof (poly_signed_support_log_mass terms (terms + expr) bits
+    ltac:(lia) Hterms) as Hraw.
+  assert (Honekey : 1 <= 2^bits).
+  { assert (Hnonzero : 2^bits <> 0) by (apply Nat.pow_nonzero; lia). lia. }
+  pose proof (poly_signed_support_log_mass 1 (terms + expr) bits
+    ltac:(lia) Honekey) as Hone.
+  assert (Hbitsquare : (bits + 1)^2 <= 4 * bits^2) by (cbn [Nat.pow]; nia).
+  set (wide := (bits + Nat.log2 (terms + expr + 1) + 1)^2) in *.
+  set (mass := (terms + expr + 1) * (bits + 1)^2) in *.
+  assert (Hsum : (support + terms + rows + 3) * wide <=
+      16 * (rows + 5) * mass) by nia.
+  eapply Nat.le_trans with (m := (rows + 2) * (16 * (rows + 5) * mass)).
+  - replace ((rows + 2) * (support + terms + rows + 3) * wide) with
+      ((rows + 2) * ((support + terms + rows + 3) * wide)) by nia.
+    now apply Nat.mul_le_mono_l.
+  - unfold mass. assert (Hrows : (rows + 2) * (rows + 5) <= 2 * (rows + 3)^2)
+      by (cbn [Nat.pow]; nia).
+    eapply Nat.le_trans with
+      (m := 32 * (rows + 3)^2 * (terms + expr + 1) * (bits + 1)^2).
+    + nia.
+    + eapply Nat.le_trans with
+        (m := 128 * (rows + 3)^2 * (terms + expr + 1) * bits^2).
+      * replace (128 * (rows + 3)^2 * (terms + expr + 1) * bits^2) with
+          ((32 * (rows + 3)^2 * (terms + expr + 1)) * (4 * bits^2)) by ring.
+        now apply Nat.mul_le_mono_l.
+      * apply Nat.mul_le_mono_r, Nat.mul_le_mono_l. lia.
+Qed.
+
+(** * Assignment branch structure and normal-form substitution clocks
+
+    The prepared affine equality either supplies the first pivot or remains a
+    zero-coefficient head. Source-only candidates use zero-scaled affine terms.
+    Builds on: checked Poly clock primitives and coefficient reflection. *)
+
+(** Preparing a form cannot create more distinct coefficients than its raw list. *)
+Lemma poly_prepare_form_length : forall A encode (f : lin A),
+  length (coef (poly_prepare_form encode f)) <= length (coef f).
+Proof.
+  intros A encode f. cbn [poly_prepare_form coef]. rewrite poly_signed_normal_eq.
+  rewrite <- (length_map fst (poly_normal_coef encode (coef f))),
+    <- (length_map fst (coef f)).
+  apply NoDup_incl_length; [apply poly_normal_coef_nodup|].
+  intros x Hin. apply in_map_iff in Hin as [p [Heq Hin]]. subst x.
+  exact (poly_normal_coef_keys _ encode (coef f) p Hin).
+Qed.
+
+(** A zero-coefficient head survives elimination without participating in any pair. *)
+Lemma poly_assign_step_zero_head : forall A encode eqb x (z : poly_row A) rows,
+  poly_coefficient eqb x (poly_constraint z) = 0%Z ->
+  poly_step encode eqb x (z :: rows) = z :: poly_step encode eqb x rows.
+Proof.
+  intros A encode eqb x z rows Hzero.
+  assert (Hpivot : poly_pivot eqb x z = false).
+  { unfold poly_pivot. rewrite Hzero. destruct (lrel (poly_constraint z)); reflexivity. }
+  unfold poly_step. cbn [find]. rewrite Hpivot.
+  destruct (find (poly_pivot eqb x) rows) as [p|] eqn:Hfind.
+  - cbn [map]. unfold poly_cancel at 1. rewrite Hzero. reflexivity.
+  - cbn [filter]. rewrite Hzero. reflexivity.
+Qed.
+
+Module PolyAssignBranch (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
+    (F : LINEARIZE_T X L N) (C : LINCERT_T X).
+  Module Base := PolyClockCore X L N F C.
+  Include Base.
+  Module AssignKeySupport := PolySignedKeySupport X.
+
+  Lemma poly_assign_raw_keys_length : forall P,
+    length (flat_map (fun r => map fst (lhs r)) P) = terms (Reached P).
+  Proof.
+    intro P. induction P as [|p P IH]; [reflexivity|].
+    cbn [flat_map]. rewrite length_app, length_map, IH. reflexivity.
+  Qed.
+
+  (** Distinct source support is bounded by the original occurrence count. *)
+  Lemma poly_assign_variables_terms : forall P, length (vars_of P) <= terms (Reached P).
+  Proof.
+    intro P. rewrite <- poly_assign_raw_keys_length.
+    apply NoDup_incl_length; [apply poly_vars_of_nodup|].
+    intros x Hin. destruct (poly_vars_of_support P x Hin) as [r [Hr Hx]].
+    apply in_flat_map. exists r. now split.
+  Qed.
+
+  (** The finite encoded-key space bounds the same distinct support independently. *)
+  Lemma poly_assign_variables_space : forall P,
+    length (vars_of P) <= 2 ^ poly_raw_keys P.
+  Proof.
+    intro P. apply AssignKeySupport.poly_signed_key_width_count;
+      [apply poly_vars_of_nodup|].
+    apply Forall_forall. intros x Hin.
+    destruct (poly_vars_of_support P x Hin) as [r [Hr Hx]].
+    apply in_map_iff in Hx as [p [Heq Hp]]. subst x.
+    pose proof (poly_row_key_member r p Hp).
+    pose proof (poly_max_member _ C.row_key_bits 0 P r Hr).
+    unfold X.bits, poly_raw_keys. lia.
+  Qed.
+
+  Lemma poly_assign_terms_space : forall P,
+    terms (Reached P) <= 2 ^ nell (Reached P).
+  Proof.
+    intro P. apply poly_signed_log_capacity. unfold nell. lia.
+  Qed.
+
+  (** Raw initialization admits the exact distinct-variable dimension. *)
+  Lemma poly_assign_initial_envelopes : forall P,
+    Forall (poly_row_envelope (length (vars_of P)) (length P)
+      (poly_raw_keys P) (poly_raw_bits P))
+      (poly_initial X.encode (map (fun r => (r, false)) P)).
+  Proof.
+    intro P. apply Forall_forall. intros r Hr.
+    pose proof (proj1 (Forall_forall _ _) (poly_raw_initial_envelopes P) r Hr) as Hrow.
+    pose proof (proj1 (Forall_forall _ _) (poly_raw_initial_reduced P) r Hr) as Hreduced.
+    pose proof (poly_reduced_dimension _ _ Hreduced) as Hdim.
+    destruct Hrow as [Hn [_ [Hk [Hb [Hm Hu]]]]].
+    unfold poly_row_envelope. repeat split; assumption.
+  Qed.
+
+  Lemma poly_assign_step_envelopes : forall P x,
+    Forall (poly_row_envelope (length (vars_of P)) (length P)
+      (poly_raw_keys P) (2 * poly_raw_bits P + 1))
+      (poly_step X.encode X.eqb x
+        (poly_initial X.encode (map (fun r => (r, false)) P))).
+  Proof.
+    intros P x. apply poly_step_envelopes with (vars := vars_of P).
+    - lia.
+    - apply poly_raw_initial_reduced.
+    - apply poly_assign_initial_envelopes.
+  Qed.
+
+  (** Adding one prepared row to raw initialization keeps its own normalization charge. *)
+  Lemma T_poly_assign_initial_cons : forall r flag rows,
+    (T_poly_initial X.encode X.T_encode ((r, flag) :: rows) <=
+      T_poly_normal_row X.encode X.T_encode r + T_poly_initial X.encode X.T_encode rows +
+      12 * N.of_nat (length rows + 1))%N.
+  Proof.
+    intros r flag rows.
+    pose proof (poly_T_map_members _ _ (fun _ : lcons X.t * bool => 0%Z)
+      (fun _ : lcons X.t * bool => 1%N) 1 rows
+      (fun _ _ => N.le_refl 1%N)) as Hzeros.
+    pose proof (poly_T_map_members _ _ (@poly_pad_row X.t) (@T_poly_pad_row X.t) 4
+      (poly_initial X.encode rows) ltac:(intros; apply T_poly_pad_row_le)) as Hpad.
+    rewrite poly_initial_length in Hpad.
+    time_unfold (@T_poly_initial). cbn [fst snd]. time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    change (fun p => T_poly_pad_row p) with (@T_poly_pad_row X.t).
+    nia.
+  Qed.
+
+  (** A nonzero summed coefficient must have an occurrence in the source list. *)
+  Lemma poly_assign_coefficient_key : forall x xs,
+    C.coef_of x xs <> 0%Z -> In x (map fst xs).
+  Proof.
+    intros x xs. induction xs as [|[y a] xs IH]; intro Hnonzero.
+    - exfalso. apply Hnonzero. reflexivity.
+    - rewrite coef_of_cons in Hnonzero. cbn [map fst].
+      destruct (X.eqb_spec x y) as [Heq|Hneq].
+      + left. symmetry. exact Heq.
+      + right. now apply IH.
+  Qed.
+
+  (** Removing an absent variable preserves the complete coefficient list. *)
+  Lemma poly_assign_filter_absent : forall x xs,
+    ~ In x (map fst xs) -> filter (poly_without_key x) xs = xs.
+  Proof.
+    intros x xs. induction xs as [|[y a] xs IH]; intro Habsent; [reflexivity|].
+    change ((if negb (X.eqb y x) then (y, a) :: filter (poly_without_key x) xs
+      else filter (poly_without_key x) xs) = (y, a) :: xs).
+    destruct (X.eqb_spec y x) as [Heq|Hneq].
+    - subst y. exfalso. apply Habsent. now left.
+    - cbn [negb]. f_equal. apply IH. intro Hin. apply Habsent. now right.
+  Qed.
+
+  (** Substitution at an absent key preserves every coefficient and the right-hand side. *)
+  Lemma poly_assign_subst_absent_coefficients : forall x f r,
+    ~ In x (map fst (lhs r)) ->
+    (forall y, C.coef_of y (lhs (subst x f r)) = C.coef_of y (lhs r)) /\
+    rhs (subst x f r) = rhs r.
+  Proof.
+    intros x f r Habsent.
+    assert (Hzero : poly_coefficient X.eqb x r = 0%Z).
+    { rewrite <- coef_of_poly_coefficient. now apply poly_coef_absent. }
+    unfold subst, poly_substitute. rewrite Hzero. cbn [lhs rhs].
+    change ((forall y, C.coef_of y (poly_normal_coef X.encode
+      (filter (poly_without_key x) (lhs r) ++ poly_scale_coef 0 (coef f))) =
+      C.coef_of y (lhs r)) /\ (rhs r - 0 * cst f)%Z = rhs r).
+    rewrite (poly_assign_filter_absent x (lhs r) Habsent). split.
+    - intro y. rewrite coef_of_normal, coef_of_app, coef_of_scale. ring.
+    - ring.
+  Qed.
+
+  (** Zero-scaled affine entries cannot introduce a new retained coefficient. *)
+  Lemma poly_assign_subst_absent_support : forall x f r p,
+    ~ In x (map fst (lhs r)) -> In p (lhs (subst x f r)) ->
+    In (fst p) (map fst (lhs r)).
+  Proof.
+    intros x f r [y a] Habsent Hin. cbn [fst].
+    destruct (poly_assign_subst_absent_coefficients x f r Habsent) as [Hcoef _].
+    pose proof (poly_coef_member y a (lhs (subst x f r))) as Hmember.
+    assert (Hunique : NoDup (map fst (lhs (subst x f r)))).
+    { unfold subst, poly_substitute. apply poly_normal_coef_nodup. }
+    specialize (Hmember Hunique Hin). rewrite Hcoef in Hmember.
+    assert (Hnonzero : a <> 0%Z).
+    { unfold subst, poly_substitute in Hin. exact (poly_normal_coef_nonzero _ _ _ _ Hin). }
+    apply poly_assign_coefficient_key. now rewrite Hmember.
+  Qed.
+
+  (** An absent-variable substitution retains the source row's size envelope. *)
+  Lemma poly_assign_subst_absent_envelope : forall x f r,
+    ~ In x (map fst (lhs r)) -> NoDup (map fst (lhs r)) ->
+    length (lhs (subst x f r)) <= length (lhs r) /\
+    C.row_key_bits (subst x f r) <= C.row_key_bits r /\
+    C.row_bits (subst x f r) <= C.row_bits r.
+  Proof.
+    intros x f r Habsent Hnormal.
+    destruct (poly_assign_subst_absent_coefficients x f r Habsent) as [Hcoef Hrhs].
+    assert (Hunique : NoDup (map fst (lhs (subst x f r)))).
+    { unfold subst, poly_substitute. apply poly_normal_coef_nodup. }
+    split.
+    - rewrite <- (length_map fst (lhs (subst x f r))), <- (length_map fst (lhs r)).
+      apply NoDup_incl_length; [exact Hunique|]. intros y Hin.
+      apply in_map_iff in Hin as [p [Heq Hin]]. subst y.
+      now apply poly_assign_subst_absent_support with (x := x) (f := f).
+    - split.
+      + unfold C.row_key_bits at 1. apply poly_max_bound; [lia|].
+        apply Forall_forall. intros p Hin.
+        pose proof (poly_assign_subst_absent_support x f r p Habsent Hin) as Hkey.
+        apply in_map_iff in Hkey as [q [Heq Hq]]. rewrite <- Heq.
+        now apply poly_row_key_member.
+      + unfold C.row_bits at 1. rewrite Hrhs. apply poly_max_bound;
+          [apply poly_row_rhs_bits|].
+        apply Forall_forall. intros [y a] Hin. cbn [snd].
+        pose proof (poly_coef_member y a _ Hunique Hin) as Hmember.
+        rewrite Hcoef in Hmember. rewrite <- Hmember, coef_of_poly_coefficient.
+        now apply poly_row_coefficient_bits.
+  Qed.
+
+  (** Normal affine substitution preserves the key maximum and doubles arithmetic width. *)
+  Lemma poly_assign_subst_normal_sizes : forall x f r keys bits,
+    NoDup (map fst (lhs r)) -> NoDup (map fst (coef f)) ->
+    C.row_key_bits r <= keys -> C.row_bits r <= bits ->
+    C.row_key_bits (LCons X.t (coef f) REq (cst f)) <= keys ->
+    C.row_bits (LCons X.t (coef f) REq (cst f)) <= bits ->
+    length (lhs (subst x f r)) <= length (lhs r) + length (coef f) /\
+    C.row_key_bits (subst x f r) <= keys /\ C.row_bits (subst x f r) <= 2 * bits + 1.
+  Proof.
+    intros x f r keys bits Hnr Hnf Hkr Hbr Hkf Hbf.
+    set (a := poly_coefficient X.eqb x r).
+    set (kept := filter (poly_without_key x) (lhs r)).
+    assert (Ha : Z.size_nat a <= bits).
+    { unfold a. pose proof (poly_row_coefficient_bits x r Hnr). lia. }
+    assert (Hkept_unique : NoDup (map fst kept)).
+    { unfold kept. now apply poly_nodup_map_filter. }
+    assert (Hkept_bits : Forall (fun p => Z.size_nat (snd p) <= bits) kept).
+    { apply Forall_forall. intros p Hin. unfold kept in Hin.
+      apply filter_In in Hin as [Hin _]. pose proof (poly_row_entry_bits r p Hin). lia. }
+    assert (Hform_bits : Forall (fun p => Z.size_nat (snd p) <= bits) (coef f)).
+    { apply Forall_forall. intros p Hin.
+      pose proof (poly_row_entry_bits (LCons X.t (coef f) REq (cst f)) p Hin). lia. }
+    assert (Hout : lhs (subst x f r) =
+      poly_normal_coef X.encode (kept ++ poly_scale_coef a (coef f))) by reflexivity.
+    split.
+    - rewrite Hout. eapply Nat.le_trans; [apply poly_normal_length|].
+      unfold poly_scale_coef. rewrite length_app, length_map.
+      unfold kept. apply Nat.add_le_mono_r, filter_length_le.
+    - split.
+      + unfold C.row_key_bits. rewrite Hout. apply poly_max_bound; [lia|].
+        apply Forall_forall. intros p Hin.
+        pose proof (poly_normal_coef_keys _ _ _ p Hin) as Hkey.
+        rewrite map_app in Hkey. apply in_app_iff in Hkey as [Hkey|Hkey].
+        * apply in_map_iff in Hkey as [q [Heq Hq]]. unfold kept in Hq.
+          apply filter_In in Hq as [Hq _]. rewrite <- Heq.
+          pose proof (poly_row_key_member r q Hq). lia.
+        * unfold poly_scale_coef in Hkey. rewrite map_map in Hkey.
+          apply in_map_iff in Hkey as [q [Heq Hq]]. cbn [fst] in Heq. rewrite <- Heq.
+          pose proof (poly_row_key_member (LCons X.t (coef f) REq (cst f)) q Hq). lia.
+      + unfold C.row_bits. apply poly_max_bound.
+        * change (Z.size_nat (rhs r - a * cst f) <= 2 * bits + 1).
+          pose proof (poly_row_rhs_bits r) as Hr.
+          pose proof (poly_row_rhs_bits (LCons X.t (coef f) REq (cst f))) as Hf.
+          cbn [rhs] in Hf. pose proof (poly_size_mul a (cst f)) as Hmul.
+          pose proof (poly_size_add (rhs r) (- (a * cst f))) as Hadd.
+          rewrite poly_size_opp in Hadd. change (Z.size_nat (rhs r + - (a * cst f)) <=
+            2 * bits + 1). lia.
+        * apply Forall_forall. intros [y z] Hin. cbn [snd]. rewrite Hout in Hin.
+          pose proof (poly_coef_member y z _ (poly_normal_coef_nodup _ _ _) Hin) as Hcoef.
+          rewrite coef_of_normal, coef_of_app, coef_of_scale in Hcoef.
+          pose proof (poly_coef_bits y kept bits Hkept_unique Hkept_bits) as Hleft.
+          pose proof (poly_coef_bits y (coef f) bits Hnf Hform_bits) as Hright.
+          pose proof (poly_size_mul a (C.coef_of y (coef f))) as Hmul.
+          pose proof (poly_size_add (C.coef_of y kept) (a * C.coef_of y (coef f))) as Hadd.
+          rewrite <- Hcoef. lia.
+  Qed.
+
+  (** An existing pivot makes elimination linear in its row count. *)
+  Lemma T_poly_assign_step_pivot_linear : forall x rows pivot dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    find (poly_pivot X.eqb x) rows = Some pivot ->
+    (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+      poly_step_factor * N.of_nat (length rows + 1) *
+        poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x rows pivot dim mlen keys bits Hrows Hpivot.
+    pose proof (poly_T_find_members _ (poly_pivot X.eqb x)
+      (T_poly_pivot X.eqb X.T_eqb x)
+      (poly_select_factor * poly_clock_span dim mlen keys bits)%N rows
+      ltac:(intros r Hin; apply T_poly_pivot_bounded;
+        exact (proj1 (Forall_forall _ _) Hrows r Hin))) as Hfind.
+    pose proof Hpivot as Hmember. apply find_some in Hmember as [Hmember _].
+    pose proof (proj1 (Forall_forall _ _) Hrows pivot Hmember) as Hp.
+    pose proof (poly_T_map_members _ _ (poly_cancel X.encode X.eqb x pivot)
+      (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot)
+      (poly_cancel_factor * poly_clock_span dim mlen keys bits)%N rows
+      ltac:(intros r Hin; apply T_poly_cancel_bounded; [exact Hp|];
+        exact (proj1 (Forall_forall _ _) Hrows r Hin))) as Hmap.
+    pose proof (poly_span_positive dim mlen keys bits) as Hpositive.
+    set (work := poly_clock_span dim mlen keys bits) in *.
+    time_unfold (@T_poly_step). rewrite Hpivot. time_simpl.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    change (fun r => T_poly_pivot X.eqb X.T_eqb x r)
+      with (T_poly_pivot X.eqb X.T_eqb x).
+    change (fun r => T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot r)
+      with (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot).
+    unfold poly_step_factor. clear -Hfind Hmap Hpositive. clearbody work. nia.
+  Qed.
+
+  (** Zero multiplication does not inspect the affine coefficient's magnitude. *)
+  Lemma T_poly_assign_scale_zero : forall xs : list (X.t * Z),
+    (T_poly_scale_coef 0 xs <= 8 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intro xs. time_unfold (@T_poly_scale_coef).
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf xs] =>
+      assert (Hmap : (ListDef.T_map f Tf xs <= 7 * N.of_nat (length xs) + 1)%N);
+      [ apply (poly_T_map_members _ _ f Tf 6 xs); intros [x a] Hin;
+        time_unfold Z.T_mul; time_simpl; lia
+      | nia ]
+    end.
+  Qed.
+
+  (** Every zero-scaled coefficient has zero width and retains only its original key. *)
+  Lemma poly_assign_scale_zero_sizes : forall xs keys bits,
+    Forall (fun p : X.t * Z => Pos.size_nat (X.encode (fst p)) <= keys) xs ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) (poly_scale_coef 0 xs).
+  Proof.
+    intros xs keys bits Hkeys. unfold poly_scale_coef. apply Forall_map.
+    eapply Forall_impl; [|exact Hkeys]. intros [x a] Hkey.
+    cbn [fst snd Z.mul Z.size_nat]. split; [exact Hkey|lia].
+  Qed.
+
+  Definition poly_assign_zero_subst_factor : N :=
+    (4 * poly_normal_factor + 4 * poly_coef_factor + 4 * X.c_key + 96)%N.
+
+  (** Normal source rows and zero-scaled normal forms incur only a linear width charge. *)
+  Lemma T_poly_assign_subst_zero : forall x f r keys bits,
+    NoDup (map fst (lhs r)) -> NoDup (map fst (coef f)) ->
+    C.row_key_bits r <= keys -> C.row_bits r <= bits ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) (coef f) ->
+    poly_coefficient X.eqb x r = 0%Z ->
+    (T_subst x f r <= poly_assign_zero_subst_factor *
+      N.of_nat (length (lhs r) + length (coef f) + 1) *
+      N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros x f r keys bits Hnormal Hform Hkeys Hbits Hformkeys Hzero.
+    set (kept := filter (poly_without_key x) (lhs r)).
+    assert (Hkept_unique : NoDup (map fst kept)).
+    { unfold kept. apply poly_nodup_map_filter. exact Hnormal. }
+    assert (Hkept_sizes : Forall (fun p =>
+      Pos.size_nat (X.encode (fst p)) <= keys /\ Z.size_nat (snd p) <= bits) kept).
+    { apply Forall_forall. intros p Hin. unfold kept in Hin.
+      apply filter_In in Hin as [Hin _].
+      pose proof (poly_row_key_member r p Hin).
+      pose proof (poly_row_entry_bits r p Hin). split; lia. }
+    pose proof (T_poly_normal_pair kept (poly_scale_coef 0 (coef f)) keys bits
+      Hkept_unique (poly_scale_nodup _ _ Hform) Hkept_sizes
+      (poly_assign_scale_zero_sizes _ _ bits Hformkeys)) as Hnormal_time.
+    assert (Hscaled_length : length (poly_scale_coef 0 (coef f)) = length (coef f))
+      by (unfold poly_scale_coef; apply length_map).
+    rewrite Hscaled_length in Hnormal_time.
+    pose proof (T_poly_coefficient_normal x r keys bits Hnormal Hkeys Hbits) as Hlookup.
+    pose proof (T_poly_assign_scale_zero (coef f)) as Hscale.
+    pose proof (T_poly_without_filter_le x r) as Hfilter.
+    pose proof (Datatypes.T_app_le kept (poly_scale_coef 0 (coef f))) as Happ.
+    pose proof (filter_length_le (poly_without_key x) (lhs r)) as Hlength.
+    fold kept in Hlength.
+    pose proof (Z.T_sub_le (rhs r) 0) as Hsub.
+    pose proof (poly_row_rhs_bits r) as Hrhs.
+    assert (Hmul : (Z.T_mul 0 (cst f) <= 1)%N).
+    { time_unfold Z.T_mul. time_simpl. lia. }
+    assert (Hsize : C.lsize r <= (length (lhs r) + 1) * (keys + bits + 1)).
+    { unfold C.lsize. apply Nat.mul_le_mono_l. lia. }
+    set (work := (N.of_nat (length (lhs r) + length (coef f) + 1) *
+      N.of_nat (keys + bits + 1))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. change (1 * 1 <= N.of_nat (length (lhs r) + length (coef f) + 1) *
+        N.of_nat (keys + bits + 1))%N. apply N.mul_le_mono; lia. }
+    assert (Hwidth_work : (N.of_nat (keys + bits + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_l (N.of_nat (keys + bits + 1))) at 1.
+      apply N.mul_le_mono_r. lia. }
+    assert (Hleft_work : (N.of_nat (length (lhs r) + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_r (N.of_nat (length (lhs r) + 1))) at 1.
+      apply N.mul_le_mono; lia. }
+    assert (Hright_work : (N.of_nat (length (coef f) + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_r (N.of_nat (length (coef f) + 1))) at 1.
+      apply N.mul_le_mono; lia. }
+    assert (Hnormal_total : (T_poly_normal_coef X.encode X.T_encode
+      (kept ++ poly_scale_coef 0 (coef f)) <= poly_normal_factor * work)%N).
+    { eapply N.le_trans; [exact Hnormal_time|]. rewrite <- N.mul_assoc.
+      apply N.mul_le_mono_l. unfold work. apply N.mul_le_mono; [lia|reflexivity]. }
+    assert (Hlookup_total : (T_poly_coefficient X.eqb X.T_eqb x r <=
+      poly_coef_factor * work)%N).
+    { eapply N.le_trans; [exact Hlookup|]. rewrite <- N.mul_assoc.
+      apply N.mul_le_mono_l. unfold work. apply N.mul_le_mono; [lia|reflexivity]. }
+    assert (Hscale_total : (T_poly_scale_coef 0 (coef f) <= 8 * work)%N).
+    { eapply N.le_trans; [exact Hscale|]. now apply N.mul_le_mono_l. }
+    assert (Hsize_work : (N.of_nat (C.lsize r) <= work)%N).
+    { eapply N.le_trans with (m := N.of_nat ((length (lhs r) + 1) * (keys + bits + 1))).
+      - lia.
+      - rewrite Nat2N.inj_mul. unfold work. apply N.mul_le_mono; [lia|reflexivity]. }
+    assert (Hfilter_total : (List.T_filter (poly_without_key x) (T_poly_without_key x)
+      (lhs r) <= (X.c_key + 8) * work)%N).
+    { eapply N.le_trans; [exact Hfilter|]. now apply N.mul_le_mono_l. }
+    assert (Happ_total : (Datatypes.T_app kept (poly_scale_coef 0 (coef f)) <= work)%N)
+      by lia.
+    assert (Harithmetic : (Z.T_mul 0 (cst f) + Z.T_sub (rhs r) 0 <= 8 * work)%N).
+    { cbn [Z.size_nat] in Hsub. rewrite Nat.add_0_r in Hsub.
+      assert (Hlinear : (Z.T_sub (rhs r) 0 <= 4 * N.of_nat (keys + bits + 1))%N) by lia.
+      nia. }
+    replace (poly_assign_zero_subst_factor *
+      N.of_nat (length (lhs r) + length (coef f) + 1) * N.of_nat (keys + bits + 1))%N
+      with (poly_assign_zero_subst_factor * work)%N by (unfold work; ring).
+    time_unfold T_subst. time_unfold (@T_poly_substitute). rewrite Hzero.
+    time_simpl. change (fun u : X.t => X.T_encode u) with X.T_encode.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun p : X.t * Z => negb (X.eqb (fst p) x)) with (poly_without_key x).
+    lazymatch goal with
+    | |- context [List.T_filter (poly_without_key x) ?Tf (lhs r)] =>
+      change Tf with (T_poly_without_key x)
+    end.
+    fold kept. change (0 * cst f)%Z with 0%Z. unfold poly_assign_zero_subst_factor.
+    clear -Hnormal_total Hlookup_total Hscale_total Hfilter_total Happ_total Harithmetic Hpositive.
+    clearbody work. nia.
+  Qed.
+
+  Definition poly_assign_normal_subst_factor : N :=
+    (8 * poly_normal_factor + 4 * poly_coef_factor + 4 * X.c_key + 192)%N.
+
+  (** Two normal coefficient lists require one quadratic bit charge per stored key. *)
+  Lemma T_poly_assign_subst_normal : forall x f r dim keys bits,
+    poly_input_envelope dim keys bits r ->
+    poly_input_envelope dim keys bits (LCons X.t (coef f) REq (cst f)) ->
+    (T_subst x f r <= poly_assign_normal_subst_factor *
+      poly_clock_span dim 0 keys bits)%N.
+  Proof.
+    intros x f r dim keys bits
+      (Hnr & Hdr & Hkr & Hbr) (Hnf & Hdf & Hkf & Hbf).
+    cbn [lhs] in Hnf, Hdf.
+    set (a := poly_coefficient X.eqb x r).
+    set (kept := filter (poly_without_key x) (lhs r)).
+    assert (Ha : Z.size_nat a <= bits).
+    { unfold a. pose proof (poly_row_coefficient_bits x r Hnr). lia. }
+    assert (Hform : poly_row_envelope dim 0 keys bits
+      (PolyRow X.t (LCons X.t (coef f) REq (cst f)) [] false)).
+    { unfold poly_row_envelope. cbn [poly_constraint poly_multipliers lhs length].
+      repeat split; try assumption; [lia|constructor]. }
+    pose proof (T_poly_scale_row_envelope a _ dim 0 keys bits Hform Ha) as Hscale.
+    cbn [poly_constraint lhs] in Hscale.
+    assert (Hkept_unique : NoDup (map fst kept)).
+    { unfold kept. now apply poly_nodup_map_filter. }
+    assert (Hkept_length : length kept <= dim).
+    { unfold kept. pose proof (filter_length_le (poly_without_key x) (lhs r)). lia. }
+    assert (Hkept_sizes : Forall (fun p =>
+      Pos.size_nat (X.encode (fst p)) <= keys /\ Z.size_nat (snd p) <= 2 * bits) kept).
+    { apply Forall_forall. intros p Hin. unfold kept in Hin.
+      apply filter_In in Hin as [Hin _]. pose proof (poly_row_key_member r p Hin).
+      pose proof (poly_row_entry_bits r p Hin). split; lia. }
+    pose proof (poly_row_entry_bounds (LCons X.t (coef f) REq (cst f))
+      keys bits Hkf Hbf) as Hentries.
+    cbn [lhs] in Hentries.
+    pose proof (T_poly_normal_pair kept (poly_scale_coef a (coef f)) keys (2 * bits)
+      Hkept_unique (poly_scale_nodup _ _ Hnf) Hkept_sizes
+      (poly_scale_entry_sizes a _ keys bits Ha Hentries)) as Hnormal.
+    assert (Hscale_length : length (poly_scale_coef a (coef f)) = length (coef f))
+      by (unfold poly_scale_coef; apply length_map).
+    rewrite Hscale_length in Hnormal.
+    pose proof (poly_span_normal_pair (length kept) (length (coef f))
+      dim 0 keys bits Hkept_length Hdf) as Hnormal_span.
+    assert (Hnormal_total : (T_poly_normal_coef X.encode X.T_encode
+      (kept ++ poly_scale_coef a (coef f)) <=
+      4 * poly_normal_factor * poly_clock_span dim 0 keys bits)%N).
+    { eapply N.le_trans; [exact Hnormal|].
+      pose proof (N.mul_le_mono_l _ _ poly_normal_factor Hnormal_span). nia. }
+    pose proof (T_poly_coefficient_normal x r keys bits Hnr Hkr Hbr) as Hlookup.
+    pose proof (poly_span_linear (length (lhs r)) (keys + bits)
+      dim 0 keys bits ltac:(lia) ltac:(lia)) as Hlookup_span.
+    assert (Hlookup_total : (T_poly_coefficient X.eqb X.T_eqb x r <=
+      poly_coef_factor * poly_clock_span dim 0 keys bits)%N).
+    { eapply N.le_trans; [exact Hlookup|]. rewrite <- N.mul_assoc.
+      now apply N.mul_le_mono_l. }
+    pose proof (T_poly_without_filter_le x r) as Hfilter.
+    assert (Hlsize_span : (N.of_nat (C.lsize r) <= poly_clock_span dim 0 keys bits)%N).
+    { unfold C.lsize. rewrite Nat2N.inj_mul.
+      apply poly_span_linear; lia. }
+    assert (Hfilter_total : (List.T_filter (poly_without_key x) (T_poly_without_key x)
+      (lhs r) <= (X.c_key + 8) * poly_clock_span dim 0 keys bits)%N).
+    { eapply N.le_trans; [exact Hfilter|]. now apply N.mul_le_mono_l. }
+    pose proof (Datatypes.T_app_le kept (poly_scale_coef a (coef f))) as Happ.
+    pose proof (poly_span_linear dim 0 dim 0 keys bits ltac:(lia) ltac:(lia)) as Hcount.
+    rewrite N.mul_1_r in Hcount.
+    assert (Happ_total : (Datatypes.T_app kept (poly_scale_coef a (coef f)) <=
+      poly_clock_span dim 0 keys bits)%N) by lia.
+    pose proof (poly_T_Z_mul_bilinear a (cst f)) as Hmul.
+    pose proof (Z.T_sub_le (rhs r) (a * cst f)) as Hsub.
+    pose proof (poly_row_rhs_bits r) as Hrhs.
+    pose proof (poly_row_rhs_bits (LCons X.t (coef f) REq (cst f))) as Hcst.
+    cbn [rhs] in Hcst.
+    pose proof (poly_size_mul a (cst f)) as Hproduct.
+    pose proof (poly_span_product 0 bits dim 0 keys bits ltac:(lia) ltac:(lia)) as Hscalar.
+    rewrite N.mul_1_l in Hscalar.
+    assert (Harithmetic : (Z.T_mul a (cst f) + Z.T_sub (rhs r) (a * cst f) <=
+      32 * poly_clock_span dim 0 keys bits)%N).
+    { assert (Hmul_width : (Z.T_mul a (cst f) <= 8 * N.of_nat (bits + 1)^2)%N).
+      { eapply N.le_trans; [exact Hmul|].
+        replace (8 * N.of_nat (bits + 1)^2)%N with
+          ((8 * N.of_nat (bits + 1)) * N.of_nat (bits + 1))%N
+          by (rewrite N.pow_2_r; ring).
+        apply N.mul_le_mono; [apply N.mul_le_mono_l|]; lia. }
+      assert (Hsub_width : (Z.T_sub (rhs r) (a * cst f) <=
+        12 * N.of_nat (bits + 1)^2)%N) by (rewrite N.pow_2_r; nia).
+      nia. }
+    pose proof (poly_span_positive dim 0 keys bits) as Hpositive.
+    set (work := poly_clock_span dim 0 keys bits) in *.
+    time_unfold T_subst. time_unfold (@T_poly_substitute).
+    change (fun p => negb (X.eqb (fst p) x)) with (poly_without_key x).
+    fold a kept. time_simpl.
+    lazymatch goal with
+    | |- context [List.T_filter (poly_without_key x) ?Tf (lhs r)] =>
+      change Tf with (T_poly_without_key x)
+    end.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    fold a kept. unfold poly_assign_normal_subst_factor.
+    clear -Hnormal_total Hlookup_total Hfilter_total Hscale Happ_total Harithmetic Hpositive.
+    clearbody work. nia.
+  Qed.
+
+  (** One normal substitution increases only the fixed multiplier of a scale-one check. *)
+  Lemma poly_assign_checker_measure : forall P c ms dim bits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    length ms = length P -> Forall (fun m => Z.size_nat m <= 2 * bits + 2) ms ->
+    length (lhs c) <= dim -> C.row_key_bits c + C.row_bits c <= 3 * bits + 1 ->
+    C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1) <=
+      48 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2.
+  Proof.
+    intros P c ms dim bits Hsource Hlength Hmult Hdim Hwidth.
+    assert (Hsource' : Forall (fun p => C.row_key_bits p + C.row_bits p <= 2 * bits + 1) P).
+    { eapply Forall_impl; [|exact Hsource]. intros p Hp.
+      change (C.row_key_bits p + C.row_bits p <= bits) in Hp.
+      change (C.row_key_bits p + C.row_bits p <= 2 * bits + 1). lia. }
+    assert (Hmult' : Forall (fun m => Z.size_nat m <= 2 * (2 * bits + 1) + 2) ms).
+    { eapply Forall_impl; [|exact Hmult]. intros m Hm.
+      change (Z.size_nat m <= 2 * bits + 2) in Hm.
+      change (Z.size_nat m <= 2 * (2 * bits + 1) + 2). lia. }
+    pose proof (poly_scale_one_measure_terms P c ms dim (2 * bits + 1)
+      Hsource' Hlength Hmult' Hdim ltac:(lia)) as Hmeasure.
+    replace (12 * (dim + terms (Reached P) + length P + 1) * (2 * bits + 1 + 1)^2)
+      with (48 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2)
+      in Hmeasure by (cbn [Nat.pow]; nia).
+    exact Hmeasure.
+  Qed.
+
+  Lemma T_poly_assign_checker : forall P c ms dim bits,
+    Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
+    length ms = length P -> Forall (fun m => Z.size_nat m <= 2 * bits + 2) ms ->
+    length (lhs c) <= dim -> C.row_key_bits c + C.row_bits c <= 3 * bits + 1 ->
+    (C.T_check_entails P c (Cert ms 1 false) <= 48 * C.c_lc *
+      N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N.
+  Proof.
+    intros P c ms dim bits Hsource Hlength Hmult Hdim Hwidth.
+    pose proof (poly_assign_checker_measure P c ms dim bits
+      Hsource Hlength Hmult Hdim Hwidth) as Hmeasure.
+    pose proof (C.T_check_entails_le P c (Cert ms 1 false)) as Hcheck.
+    change (C.T_check_entails P c (Cert ms 1 false) <= C.c_lc *
+      N.of_nat (C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1)))%N in Hcheck.
+    eapply N.le_trans; [exact Hcheck|].
+    replace (48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (bits + 1)^2)%N with
+      (C.c_lc * N.of_nat (48 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2))%N
+      by (rewrite !Nat2N.inj_mul, poly_nat_square, N.pow_2_r;
+        change (N.of_nat 48) with 48%N; ring).
+    apply N.mul_le_mono_l. lia.
+  Qed.
+End PolyAssignBranch.
+
 
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (F : LINEARIZE_T X L N) (C : LINCERT_T X) <: POLY_ALL X L N F C.
