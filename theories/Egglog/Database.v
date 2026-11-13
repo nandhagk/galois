@@ -5971,6 +5971,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     symmetry. unfold repr. now apply UnionFind.repr_idem.
   Qed.
 
+  (** The actual guarded cell normalizer stays within the input equality relation. *)
+  Lemma forest_agrees_normal_cell : forall db c, forest_agrees db ->
+    cell_rel (same (view db)) c (normal_cell db c).
+  Proof.
+    intros db [i | v] Hagrees; [| constructor].
+    destruct Hagrees as [Hforest Hsame]. cbn [normal_cell].
+    destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); constructor.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+      exact (forest_agrees_id db i (conj Hforest Hsame)).
+    - apply equality_log_refl.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest).
+      exact (forest_agrees_id db i (conj Hforest Hsame)).
+  Qed.
+
+  (** Normalizing a tuple relates each output cell to its original cell. *)
+  Lemma forest_agrees_normal_key : forall db k, forest_agrees db ->
+    Forall2 (cell_rel (same (view db))) k (normal_key db k).
+  Proof.
+    intros db k Hagrees. unfold normal_key. induction k; constructor.
+    - now apply forest_agrees_normal_cell.
+    - exact IHk.
+  Qed.
+
   (** Exact forest and equality frames retain agreement independently of scheduling. *)
   Lemma forest_agrees_frame : forall db db', db_forest db' = db_forest db ->
     same (view db') = same (view db) -> forest_agrees db -> forest_agrees db'.
@@ -6040,6 +6063,22 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         [apply row_replace_forest | apply row_replace_same | exact Hnext].
     - eapply forest_agrees_frame;
         [apply row_replace_forest | apply row_replace_same | exact Hnext].
+  Qed.
+
+  (** An actual constructor-output conflict equates the two outputs retained by put. *)
+  Lemma put_conflict_same_raw : forall db f k o i j, forest_agrees db ->
+    row_get f (normal_key db k) db = Some (Some (Id i)) ->
+    option_map (normal_cell db) o = Some (Id j) ->
+    same (view (put f k o db)) i j.
+  Proof.
+    intros db f k o i j Hagrees Hprevious Houtput.
+    assert (Hunion : same (view (union i j db)) i j).
+    { apply (proj2 (union_same_from_forest_agreement db i j Hagrees i j)).
+      apply rst_step. right. reflexivity. }
+    unfold put. rewrite Hprevious, Houtput.
+    set (updated := combine_output db f (Some (Some (Id i))) (Some (Id j))).
+    destruct (output_eqb (Some (Id i)) updated); [exact Hunion |].
+    now rewrite row_replace_same.
   Qed.
 
   (** Single-row repair can change scheduling while keeping exact forest/log agreement. *)
