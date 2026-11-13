@@ -1155,6 +1155,95 @@ Module CongruenceCost.
     { apply N.mul_le_mono; lia. }
     nia.
   Qed.
+  (** Compute literal coefficients while keeping every symbolic budget folded. *)
+  Ltac cost_literal n :=
+    lazymatch n with
+    | O => idtac
+    | S ?rest => cost_literal rest
+    end.
+
+  Ltac cost_constants :=
+    repeat match goal with
+    | H : context [N.of_nat ((?k ^ 2)%nat)] |- _ =>
+      cost_literal k;
+      let value := eval vm_compute in (N.of_nat ((k ^ 2)%nat)) in
+      progress change (N.of_nat ((k ^ 2)%nat)) with value in H
+    | H : context [N.of_nat ?k] |- _ =>
+      cost_literal k;
+      let value := eval vm_compute in (N.of_nat k) in
+      progress change (N.of_nat k) with value in H
+    end.
+
+  Lemma linear_le_square : forall n, (1 <= n)%nat ->
+    (N.of_nat n <= N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n Hpositive. apply time_of_nat_le. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** The CRT expression uses only linearly sized coefficients and intermediate integers. *)
+  Lemma combinecong_budget : forall n m1 m2 r1 r2,
+    (Z.size_nat m1 + Z.size_nat m2 + Z.size_nat r1 + Z.size_nat r2 + 1 <= n)%nat ->
+    (Z.size_nat (combinecong m1 m2 r1 r2) <= 15 * n)%nat /\
+    (T_combinecong m1 m2 r1 r2 <= 131072 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros n m1 m2 r1 r2 Hinput.
+    pose proof (extgcd_result_budget m1 m2) as Hresult.
+    pose proof (T_extgcd_le m1 m2) as Hexttime.
+    unfold k_gcd in Hexttime.
+    destruct (extgcd m1 m2) as [[u v] d] eqn:Hext.
+    cbn [result_budget] in Hresult. destruct Hresult as [Hu [Hv Hd]].
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    assert (Hubits : (Z.size_nat u <= 4 * n)%nat) by lia.
+    assert (Hvbits : (Z.size_nat v <= 4 * n)%nat) by lia.
+    assert (Hdbits : (Z.size_nat d <= n)%nat) by lia.
+    pose proof (integer_multiply_size v m2) as Hvm2.
+    pose proof (integer_multiply_size (v * m2) r1) as Hleft.
+    pose proof (integer_multiply_size u m1) as Hum1.
+    pose proof (integer_multiply_size (u * m1) r2) as Hright.
+    pose proof (WordTime.integer_add_size (v * m2 * r1) (u * m1 * r2)) as Hsum.
+    assert (Hnumerator : (Z.size_nat (v * m2 * r1 + u * m1 * r2) <= 13 * n)%nat)
+      by lia.
+    pose proof (integer_divide_size (v * m2 * r1 + u * m1 * r2) d) as Hquotient.
+    pose proof (integer_divide_size m2 d) as Hfactor.
+    pose proof (integer_multiply_size m1 (m2 / d)) as Hproduct.
+    assert (Hmodulus : (Z.size_nat (Z.abs (m1 * (m2 / d))) <= 2 * n)%nat).
+    { rewrite integer_abs_size. lia. }
+    pose proof (integer_modulo_size r1 d) as Hrem1.
+    pose proof (integer_modulo_size r2 d) as Hrem2.
+    pose proof (integer_modulo_size ((v * m2 * r1 + u * m1 * r2) / d)
+      (Z.abs (m1 * (m2 / d)))) as Houtput.
+    split.
+    - unfold combinecong. rewrite Hext.
+      destruct (r1 mod d =? r2 mod d), (d =? 0); cbn [Z.size_nat]; lia.
+    - pose proof (mod_time_budget (3 * n) r1 d ltac:(lia)) as Hmod1.
+      pose proof (mod_time_budget (3 * n) r2 d ltac:(lia)) as Hmod2.
+      pose proof (eqb_time_budget (3 * n) (r1 mod d) (r2 mod d) ltac:(lia)) as Heq.
+      pose proof (eqb_time_budget (2 * n) d 0 ltac:(lia)) as Hzero.
+      pose proof (mul_time_budget (6 * n) v m2 ltac:(lia)) as Hmulv.
+      pose proof (mul_time_budget (7 * n) (v * m2) r1 ltac:(lia)) as Hmull.
+      pose proof (mul_time_budget (6 * n) u m1 ltac:(lia)) as Hmulu.
+      pose proof (mul_time_budget (7 * n) (u * m1) r2 ltac:(lia)) as Hmulr.
+      pose proof (add_time_budget (13 * n) (v * m2 * r1) (u * m1 * r2)
+        ltac:(lia)) as Hadd.
+      pose proof (div_time_budget (15 * n) (v * m2 * r1 + u * m1 * r2) d
+        ltac:(lia)) as Hdivide.
+      pose proof (div_time_budget (3 * n) m2 d ltac:(lia)) as Hdividefactor.
+      pose proof (mul_time_budget (3 * n) m1 (m2 / d) ltac:(lia)) as Hmulmodulus.
+      pose proof (Z.T_abs_le (m1 * (m2 / d))) as Habs.
+      pose proof (mod_time_budget (16 * n) ((v * m2 * r1 + u * m1 * r2) / d)
+        (Z.abs (m1 * (m2 / d))) ltac:(lia)) as Hmodulo.
+      assert (Hextsquare :
+        (N.of_nat ((Z.size_nat m1 + Z.size_nat m2 + 1) ^ 2) <=
+          N.of_nat (n ^ 2))%N).
+      { apply time_of_nat_le. apply Nat.pow_le_mono_l. lia. }
+      pose proof (linear_le_square n Hpositive) as Hlinear.
+      assert (Hone : (1 <= N.of_nat n)%N).
+      { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+      time_unfold T_combinecong. rewrite Hext. cbn beta zeta.
+      rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *.
+      cost_constants.
+      destruct (r1 mod d =? r2 mod d), (d =? 0); lia.
+  Qed.
 End CongruenceCost.
 
 
