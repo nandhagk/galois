@@ -357,11 +357,39 @@ Module Thresholds <: THRESHOLDS.
   (** Upper search is sound even when the tree is unordered. *)
   Lemma above_sound : forall t z u,
     above t z = Some u -> In u (vals t) /\ (z <= u)%Z.
-  Proof. Admitted. (* CONVERT: upper_threshold_member: In environment *)
+  Proof.
+    induction t as [|lhs IHleft value rhs IHright]; intros z u Hresult;
+      cbn [above] in Hresult; [discriminate|].
+    cbn [vals]. rewrite in_app_iff.
+    destruct (Z.ltb value z) eqn:Htest; cbn in Hresult.
+    - destruct (IHright z u Hresult) as [Hin Hbound]. split; [right; now right|assumption].
+    - apply Z.ltb_ge in Htest.
+      destruct (above lhs z) as [v|] eqn:Hleft.
+      + injection Hresult as <-. destruct (IHleft z v Hleft) as [Hin Hbound].
+        split.
+        * destruct (Z.min_dec value v) as [Hmin | Hmin]; rewrite Hmin;
+            [right; now left|now left].
+        * apply Z.min_glb; assumption.
+      + injection Hresult as <-. split; [right; now left|assumption].
+  Qed.
   (** Lower search is sound even when the tree is unordered. *)
   Lemma below_sound : forall t z u,
     below t z = Some u -> In u (vals t) /\ (u <= z)%Z.
-  Proof. Admitted. (* CONVERT: lower_threshold_member: In environment *)
+  Proof.
+    induction t as [|lhs IHleft value rhs IHright]; intros z u Hresult;
+      cbn [below] in Hresult; [discriminate|].
+    cbn [vals]. rewrite in_app_iff.
+    destruct (Z.leb value z) eqn:Htest.
+    - apply Z.leb_le in Htest.
+      destruct (below rhs z) as [v|] eqn:Hright.
+      + injection Hresult as <-. destruct (IHright z v Hright) as [Hin Hbound].
+        split.
+        * destruct (Z.max_dec value v) as [Hmax | Hmax]; rewrite Hmax;
+            right; [now left|now right].
+        * apply Z.max_lub; assumption.
+      + injection Hresult as <-. split; [right; now left|assumption].
+    - destruct (IHleft z u Hresult) as [Hin Hbound]. split; [now left|assumption].
+  Qed.
 End Thresholds.
 
 Module ThresholdsT <: THRESHOLDS_ALL.
