@@ -22,6 +22,49 @@ End FixtureValue.
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
 
+(** Replacing the same row twice registers two historical identifier occurrences. *)
+Example repeated_row_replacement_occurrences :
+  let empty := FixtureDatabase.init [] [] in
+  let first := FixtureDatabase.row_replace 1%positive [Id 1%positive] None None empty in
+  let second := FixtureDatabase.row_replace 1%positive [Id 1%positive] (Some None)
+    None first in
+  (db_nuses first, db_nuses second,
+    FixtureDatabase.row_get 1%positive [Id 1%positive] second) =
+    (1%N, 2%N, Some None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The losing identifier occurs in a row when a key or output contains it. *)
+Definition affected_by_two (db : FixtureDatabase.t) : nat :=
+  length (filter
+    (fun stored => existsb (fun c =>
+      match c with
+      | Id i => Pos.eqb i 2%positive
+      | Val _ => false
+      end) (snd (fst stored) ++ option_list (snd stored)))
+    (map snd (PTrieCode.elements (runtime_rows (db_runtime db))))).
+
+(** Seven queued rows fit the occurrence budget and all lose identifier two. *)
+Example rebuild_repairs_seven_affected_rows :
+  let empty := FixtureDatabase.init
+    [Decl 1%positive [SVal] OId; Decl 2%positive [SId; SVal] ORel] [] in
+  let first := FixtureDatabase.make 1%positive [Val 1%positive] empty in
+  let second := FixtureDatabase.make 1%positive [Val 2%positive] (snd first) in
+  let rows := fold_left (fun db v =>
+    FixtureDatabase.put 2%positive [Id 2%positive; Val v] None db)
+    [1%positive; 2%positive; 3%positive; 4%positive; 5%positive; 6%positive]
+    (snd second) in
+  let queued := FixtureDatabase.union 1%positive 2%positive rows in
+  let rebuilt := FixtureDatabase.rebuild queued in
+  (FixtureDatabase.db_rebuild_fuel queued,
+    affected_by_two queued, affected_by_two rebuilt,
+    fst (FixtureDatabase.find 2%positive rebuilt)) =
+    (38%N, 7, 0, 1%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** A write records its cells and cache-call count even when the function has no slots. *)
 Example cache_history_without_slots :
   let db := FixtureDatabase.init [Decl 3%positive [SVal] ORel] [] in

@@ -13,11 +13,11 @@ From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig Mod
 Import List.ListNotations.
 
 Module Pos.
-  TimeFun Pos.max.
+  TimeFun Pos.iter_op Pos.max Pos.to_nat.
 End Pos.
 
 Module N.
-  TimeFun N.of_nat N.max.
+  TimeFun N.of_nat N.max N.log2 N.to_nat.
 End N.
 
 (** Set bits pay for the carries performed by successive binary increments. *)
@@ -666,12 +666,133 @@ Qed.
 
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
-  row_history : list ((positive * list C) * positive);
-  row_links : list (positive * positive);
-  row_weights : list (positive * N);
-  row_keys : list (positive * list C);
-  row_fresh : positive
+  row_history : PTrieCode.t ((positive * list C) * positive);
+  row_links : PTrieCode.t positive;
+  row_weights : PTrieCode.t N;
+  row_keys : PTrieCode.t (list C);
+  row_fresh : positive;
+  row_uses : PTrieCode.t (positive * list (positive * list C))
 }.
+
+Arguments row_history {C}.
+Arguments row_links {C}.
+Arguments row_weights {C}.
+Arguments row_keys {C}.
+Arguments row_fresh {C}.
+Arguments row_uses {C}.
+
+TimeFun row_history row_links row_weights row_keys row_fresh row_uses.
+
+Module DatabaseUseMap := TrieMapT PosKeyT.
+
+Module DatabaseUses.
+  Include OccurrenceBucketCode PosKeyT DatabaseUseMap.
+  TimeFun bucket add transfer register.
+End DatabaseUses.
+
+Definition database_filter_uses {A} (x : positive)
+    (bindings : list (positive * list A)) : list A :=
+  map snd (filter (fun xe => Pos.eqb (fst xe) x)
+    (flat_map (fun binding => map (pair (fst binding)) (snd binding)) bindings)).
+
+Lemma database_filter_one : forall A (owner x : positive) (entries : list A),
+  map snd (filter (fun xe => Pos.eqb (fst xe) x) (map (pair owner) entries)) =
+    if Pos.eqb owner x then entries else [].
+Proof.
+  intros A owner x entries. destruct (Pos.eqb owner x) eqn:Heq;
+    induction entries as [|entry rest IH]; cbn [map filter fst snd];
+    try rewrite Heq; cbn; now rewrite ?IH.
+Qed.
+
+Lemma database_filter_uses_none : forall A (bindings : list (positive * list A)) x,
+  ~ In x (map fst bindings) -> database_filter_uses x bindings = [].
+Proof.
+  intros A bindings. induction bindings as [|[owner entries] rest IH]; intros x Hnot;
+    [reflexivity |].
+  unfold database_filter_uses in *. cbn [flat_map map fst] in *.
+  rewrite filter_app, map_app, database_filter_one.
+  assert (Hdifferent : owner <> x) by (intro Heq; apply Hnot; now left).
+  apply Pos.eqb_neq in Hdifferent. rewrite Hdifferent.
+  cbn [app]. apply IH. intro Hin. apply Hnot. now right.
+Qed.
+
+Lemma database_filter_uses_some : forall A (bindings : list (positive * list A)) x entries,
+  NoDup (map fst bindings) -> In (x, entries) bindings ->
+  database_filter_uses x bindings = entries.
+Proof.
+  intros A bindings. induction bindings as [|[owner values] rest IH];
+    intros x entries Hnodup Hin; [contradiction |].
+  inversion Hnodup as [|? ? Hfresh Htail]; subst.
+  unfold database_filter_uses in *. cbn [flat_map map fst] in *.
+  rewrite filter_app, map_app, database_filter_one.
+  destruct Hin as [Heq | Hin].
+  - injection Heq as <- <-. rewrite Pos.eqb_refl.
+    change (values ++ database_filter_uses owner rest = values).
+    rewrite (database_filter_uses_none A rest owner Hfresh). now rewrite app_nil_r.
+  - assert (Hdifferent : owner <> x).
+    { intro Heq. subst owner. apply Hfresh.
+      apply in_map_iff. exists (x, entries). now split. }
+    apply Pos.eqb_neq in Hdifferent. rewrite Hdifferent.
+    change ([] ++ database_filter_uses x rest = entries).
+    cbn [app]. now apply IH.
+Qed.
+
+Lemma database_uses_bucket_entries : forall A (m : DatabaseUseMap.t (list A)) x,
+  database_filter_uses x
+    (map (fun binding => (fst binding, snd (snd binding))) (PTrieCode.elements m)) =
+    DatabaseUses.bucket x m.
+Proof.
+  intros A m x. unfold DatabaseUses.bucket, DatabaseUseMap.get, PosKeyT.encode.
+  destruct (PTrieCode.get x m) as [[label entries] |] eqn:Hget;
+    cbn [option_map].
+  - apply database_filter_uses_some.
+    + rewrite !map_map. cbn [fst]. apply PTrie.elements_nodup.
+    + apply in_map_iff. exists (x, (label, entries)). split; [reflexivity |].
+      now apply PTrie.elements_spec.
+  - apply database_filter_uses_none. intro Hin.
+    apply in_map_iff in Hin as [[owner entries] [Heq Hin]].
+    cbn [fst] in Heq. subst owner.
+    apply in_map_iff in Hin as [[code [label entries']] [Hpair Hraw]].
+    cbn [fst snd] in Hpair. injection Hpair as Hcode Hentries.
+    subst code. apply PTrie.elements_spec in Hraw. congruence.
+Qed.
+
+Lemma T_database_uses_transfer_le : forall A (source target : positive)
+    (m : DatabaseUseMap.t (list A)),
+  (DatabaseUses.T_transfer source target m <=
+    8 * DatabaseUseMap.c_map *
+      N.of_nat (Pos.size_nat source + Pos.size_nat target + 2) +
+    N.of_nat (length (DatabaseUses.bucket source m) + 1))%N.
+Proof.
+  intros A source target m.
+  pose proof (PosKeyT.T_eqb_le source target) as Heq.
+  pose proof (DatabaseUseMap.T_get_le (list A) source m) as Hsource.
+  pose proof (DatabaseUseMap.T_get_le (list A) target m) as Htarget.
+  pose proof (DatabaseUseMap.T_remove_le (list A) source m) as Hremove.
+  pose proof (DatabaseUseMap.T_set_le (list A) target
+    (rev_append (DatabaseUses.bucket source m) (DatabaseUses.bucket target m))
+    (DatabaseUseMap.remove source m)) as Hset.
+  pose proof (List.T_rev_append_le (DatabaseUses.bucket source m)
+    (DatabaseUses.bucket target m)) as Hreverse.
+  time_unfold @DatabaseUses.T_transfer.
+  destruct (PosKeyT.eqb source target).
+  - unfold PosKeyT.c_key, PosKeyT.bits in Heq.
+    unfold PosKeyT.encode in Heq. unfold DatabaseUseMap.c_map. nia.
+  - time_unfold @DatabaseUses.T_bucket.
+    destruct (DatabaseUseMap.get source m); destruct (DatabaseUseMap.get target m);
+      unfold PosKeyT.c_key, PosKeyT.bits in Heq;
+      unfold PosKeyT.bits in Hsource, Htarget, Hremove, Hset;
+      unfold PosKeyT.encode in *;
+      cbn [Datatypes.T_fst Datatypes.T_snd];
+      time_simpl; time_cbn.
+    all: repeat rewrite Nat2N.inj_add in *;
+      change (N.of_nat 1) with 1%N in *;
+      change (N.of_nat 2) with 2%N in *;
+      assert (Hcmap : (2 <= DatabaseUseMap.c_map)%N)
+        by (unfold DatabaseUseMap.c_map; nia);
+      set (cm := DatabaseUseMap.c_map) in *;
+      clearbody cm; nia.
+Qed.
 
 (** Slot groups and tuple counts retain the layout of the initialized database. *)
 Record database_slot_store (C : Type) := {
@@ -681,6 +802,7 @@ Record database_slot_store (C : Type) := {
   slot_groups : list ((bool * N) * list N);
   projection_counts : list ((N * list C) * N)
 }.
+
 
 (** Runtime contents are stored independently of the union-find membership counter.
     The abstract index type is an explicit parameter of the concrete state. *)
@@ -800,6 +922,221 @@ Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_s
   end.
 TimeFun database_slot_groups.
 
+(** The first slot of a function fixes its group rank and later slots get offsets. *)
+Fixpoint database_rank_slots_from (kinds : PTrieCode.t output) (s : N)
+    (groups : PTrieCode.t (N * N)) (sl : list (positive * list nat))
+    : list (bool * N * N) :=
+  match sl with
+  | [] => []
+  | (f, _) :: rest =>
+    let declared := match PTrieCode.get f kinds with Some _ => true | None => false end in
+    let place := match PTrieCode.get f groups with
+      | Some position => position
+      | None => (s, 0%N)
+      end in
+    (declared, fst place, snd place) ::
+      database_rank_slots_from kinds (N.succ s)
+        (PTrieCode.set f (fst place, N.succ (snd place)) groups) rest
+  end.
+TimeFun database_rank_slots_from.
+
+Definition database_rank_slots (ds : list decl) (sl : list (positive * list nat))
+    : list (bool * N * N) :=
+  database_rank_slots_from (database_kinds ds) 0%N PTrieCode.empty sl.
+TimeFun database_rank_slots.
+
+Definition database_rank_offset (groups : PTrieCode.t (N * N)) (f : positive) : N :=
+  match PTrieCode.get f groups with Some (_, j) => j | None => 0%N end.
+
+Fixpoint database_rank_credit (universe : list positive)
+    (groups : PTrieCode.t (N * N)) : N :=
+  match universe with
+  | [] => 0%N
+  | f :: rest =>
+    (database_counter_credit (database_rank_offset groups f) +
+      database_rank_credit rest groups)%N
+  end.
+
+Fixpoint database_rank_final (s : N) (groups : PTrieCode.t (N * N))
+    (sl : list (positive * list nat)) : PTrieCode.t (N * N) :=
+  match sl with
+  | [] => groups
+  | (f, _) :: rest =>
+    let place := match PTrieCode.get f groups with
+      | Some position => position | None => (s, 0%N) end in
+    database_rank_final (N.succ s)
+      (PTrieCode.set f (fst place, N.succ (snd place)) groups) rest
+  end.
+
+Lemma database_rank_credit_other : forall universe groups f value,
+  ~ In f universe ->
+  database_rank_credit universe (PTrieCode.set f value groups) =
+    database_rank_credit universe groups.
+Proof.
+  intros universe. induction universe as [|g rest IH]; intros groups f value Hnot.
+  - reflexivity.
+  - cbn [database_rank_credit] in *. assert (Hdifferent : g <> f).
+    { intro Heq. apply Hnot. now left. }
+    unfold database_rank_offset at 1 2.
+    rewrite PTrie.get_set_other by exact Hdifferent.
+    f_equal. apply IH. intro Hin. apply Hnot. now right.
+Qed.
+
+Lemma database_rank_credit_step : forall universe groups f rank,
+  NoDup universe -> In f universe ->
+  let offset := database_rank_offset groups f in
+  (database_rank_credit universe
+      (PTrieCode.set f (rank, N.succ offset) groups) +
+    database_counter_credit offset =
+    database_rank_credit universe groups +
+      database_counter_credit (N.succ offset))%N.
+Proof.
+  intro universe. induction universe as [|g rest IH]; intros groups f rank Hnodup Hin.
+  - contradiction.
+  - inversion Hnodup as [|? ? Hnot Htail]; subst.
+    destruct Hin as [Heq | Hin].
+    + subst g. cbn [database_rank_credit].
+      unfold database_rank_offset at 1 3.
+      rewrite PTrie.get_set_same.
+      rewrite database_rank_credit_other by exact Hnot. cbn [snd]. lia.
+    + cbn [database_rank_credit].
+      assert (Hdifferent : g <> f) by (intro Heq; subst; contradiction).
+      unfold database_rank_offset at 1 2.
+      rewrite PTrie.get_set_other by exact Hdifferent.
+      specialize (IH groups f rank Htail Hin).
+      change (database_rank_credit rest
+        (PTrieCode.set f (rank, N.succ (database_rank_offset groups f)) groups) +
+        database_counter_credit (database_rank_offset groups f) =
+        database_rank_credit rest groups +
+        database_counter_credit (N.succ (database_rank_offset groups f)))%N in IH.
+      change (database_counter_credit (database_rank_offset groups g) +
+        database_rank_credit rest
+          (PTrieCode.set f (rank, N.succ (database_rank_offset groups f)) groups) +
+        database_counter_credit (database_rank_offset groups f) =
+        database_counter_credit (database_rank_offset groups g) +
+        database_rank_credit rest groups +
+        database_counter_credit (N.succ (database_rank_offset groups f)))%N.
+      lia.
+Qed.
+
+Lemma T_database_rank_slots_from_amort : forall kinds universe sl s groups,
+  NoDup universe -> (forall x, In x (map fst sl) -> In x universe) ->
+  (T_database_rank_slots_from kinds s groups sl +
+    database_counter_credit (s + N.of_nat (length sl)) +
+    database_rank_credit universe (database_rank_final s groups sl) <=
+    32 * (PTrieT.c_trie + 1) *
+      N.of_nat (length sl +
+        fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat sl + 1)%nat +
+      database_counter_credit s + database_rank_credit universe groups)%N.
+Proof.
+  intros kinds universe sl. induction sl as [|[f perm] rest IH];
+    intros s groups Hnodup Hcover.
+  - time_unfold T_database_rank_slots_from. cbn [length fold_right map
+      database_rank_final]. cbn [N.of_nat Nat.add].
+    cbn [Pos.of_succ_nat]. rewrite !N.add_0_r.
+    rewrite N.mul_1_r.
+    assert (1 <= 32 * (PTrieT.c_trie + 1))%N.
+    { rewrite N.mul_add_distr_l. lia. }
+    set (global := database_counter_credit s).
+    set (credit := database_rank_credit universe groups).
+    clearbody global credit.
+    lia.
+  - set (place := match PTrieCode.get f groups with
+      | Some position => position | None => (s, 0%N) end).
+    set (updated := PTrieCode.set f (fst place, N.succ (snd place)) groups).
+    pose proof (IH (N.succ s) updated Hnodup) as Htail.
+    assert (Htailcover : forall x, In x (map fst rest) -> In x universe).
+    { intros x Hin. apply Hcover. cbn [map In]. now right. }
+    specialize (Htail Htailcover).
+    assert (Hmember : In f universe).
+    { apply Hcover. cbn [map In]. now left. }
+    pose proof (PTrieT.T_get_le output f kinds) as Hkind.
+    pose proof (PTrieT.T_get_le (N * N) f groups) as Hget.
+    pose proof (PTrieT.T_set_le (N * N) f
+      (fst place, N.succ (snd place)) groups) as Hset.
+    pose proof (database_counter_succ_amort s) as Hglobal.
+    pose proof (database_counter_succ_amort (snd place)) as Hlocal.
+    assert (Hoffset : snd place = database_rank_offset groups f).
+    { unfold place, database_rank_offset. destruct (PTrieCode.get f groups) as [[a b] |];
+        reflexivity. }
+    rewrite Hoffset in Hlocal.
+    pose proof (database_rank_credit_step universe groups f (fst place)
+      Hnodup Hmember) as Hcredit.
+    cbn beta in Hcredit. fold updated in Hcredit.
+    assert (Hfinish : (s + N.of_nat (length ((f, perm) :: rest)))%N =
+      (N.succ s + N.of_nat (length rest))%N) by (cbn [length]; lia).
+    assert (Hmass : N.of_nat (length ((f, perm) :: rest) +
+        fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat
+          ((f, perm) :: rest) + 1)%nat =
+      (N.of_nat (length rest +
+        fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat rest + 1)%nat +
+        N.of_nat (Pos.size_nat f + 1))%N).
+    { cbn [length fold_right fst]. repeat rewrite Nat2N.inj_add. lia. }
+    cbv zeta in Hcredit.
+    assert (Hcredit' : (database_rank_credit universe updated +
+      database_counter_credit (database_rank_offset groups f) =
+      database_rank_credit universe groups +
+      database_counter_credit (N.succ (database_rank_offset groups f)))%N).
+    { unfold updated. rewrite Hoffset. exact Hcredit. }
+    rewrite Hmass.
+    rewrite Hfinish. time_unfold T_database_rank_slots_from.
+    fold place updated. cbn [database_rank_final].
+    replace (PTrieCode.set f
+      (fst (match PTrieCode.get f groups with Some position => position | None => (s, 0%N) end),
+       N.succ (snd (match PTrieCode.get f groups with
+         Some position => position | None => (s, 0%N) end))) groups)
+      with updated by reflexivity.
+    unfold Datatypes.T_fst, Datatypes.T_snd. cbn beta zeta.
+    rewrite Hoffset.
+    set (trie_cost := PTrieT.c_trie) in *.
+    set (bits := N.of_nat (Pos.size_nat f + 1)) in *.
+    set (tailmass := N.of_nat (length rest +
+      fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat rest + 1)%nat) in *.
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hbudget_step : (32 * (trie_cost + 1) * tailmass +
+      3 * trie_cost * bits + 16 <=
+      32 * (trie_cost + 1) * (tailmass + bits))%N).
+    { rewrite N.mul_add_distr_l. nia. }
+    assert (Hlocalpay : (N.T_succ (database_rank_offset groups f) +
+      database_rank_credit universe updated <=
+      3 + database_rank_credit universe groups)%N) by lia.
+    change (PTrieCode.T_get f kinds <= trie_cost * bits)%N in Hkind.
+    change (PTrieCode.T_get f groups <= trie_cost * bits)%N in Hget.
+    assert (Hset' : (PTrieCode.T_set f (fst place,
+      N.succ (database_rank_offset groups f)) groups <= trie_cost * bits)%N).
+    { rewrite <- Hoffset. exact Hset. }
+    lia.
+Qed.
+
+(** Initial ranking has no per-function carry debt. *)
+Lemma database_rank_credit_empty : forall universe,
+  database_rank_credit universe (PTrieCode.empty : PTrieCode.t (N * N)) = 0%N.
+Proof.
+  intro universe. induction universe as [|f rest IH]; [reflexivity |].
+  cbn [database_rank_credit]. unfold database_rank_offset.
+  rewrite PTrie.get_empty, IH. reflexivity.
+Qed.
+
+(** A declared function inherits the group of its first ranked slot. *)
+Fixpoint database_group_of (f : positive) (sl : list (positive * list nat))
+    (positions : list (bool * N * N)) : option N :=
+  match sl, positions with
+  | (g, _) :: rest, (true, rank, _) :: places =>
+    if Pos.eqb f g then Some rank else database_group_of f rest places
+  | _ :: rest, _ :: places => database_group_of f rest places
+  | _, _ => None
+  end.
+
+(** A group's stored slots are listed in their original slot order. *)
+Fixpoint database_group_slots (s : N) (d : bool) (g : N)
+    (positions : list (bool * N * N)) : list N :=
+  match positions with
+  | [] => []
+  | (flag, rank, _) :: rest =>
+    let tail := database_group_slots (N.succ s) d g rest in
+    if andb (Bool.eqb flag d) (N.eqb rank g) then s :: tail else tail
+  end.
+
 (** A maximum comparison reads no more bits than its current declaration name. *)
 Lemma T_database_positive_max_le : forall p q,
   (Pos.T_max p q <= N.of_nat (Pos.size_nat p) + 2)%N.
@@ -819,6 +1156,46 @@ Proof.
     time_unfold T_database_kinds. time_unfold List.T_fold_right.
     revert IH. time_simpl. intro IH. time_cbn_all.
     set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost. nia.
+Qed.
+
+(** The ranking clock pays once for each declaration and named slot. *)
+Lemma T_database_rank_slots_budget : forall ds sl,
+  (T_database_rank_slots ds sl <=
+    48 * (PTrieT.c_trie + 1) *
+      N.of_nat (length ds + length sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat sl + 1)%nat)%N.
+Proof.
+  intros ds sl.
+  set (universe := nodup Pos.eq_dec (map fst sl)).
+  pose proof (T_database_rank_slots_from_amort (database_kinds ds) universe sl 0%N
+    PTrieCode.empty (NoDup_nodup Pos.eq_dec (map fst sl))) as Hrank.
+  assert (Hcover : forall x, In x (map fst sl) -> In x universe).
+  { intros x Hin. unfold universe. now apply nodup_In. }
+  specialize (Hrank Hcover).
+  rewrite database_rank_credit_empty in Hrank.
+  cbn [database_counter_credit] in Hrank.
+  pose proof (T_database_kinds_le ds) as Hkinds.
+  time_unfold T_database_rank_slots.
+  set (cost := (PTrieT.c_trie + 1)%N) in *.
+  set (slotamount := N.of_nat (length sl +
+    fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat sl + 1)%nat) in *.
+  set (declamount := N.of_nat (length ds +
+    fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds + 1)%nat) in *.
+  set (total := N.of_nat (length ds + length sl +
+    fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+    fold_right (fun x n => (Pos.size_nat (fst x) + n)%nat) 0%nat sl + 1)%nat) in *.
+  assert (Hslot : (slotamount <= total)%N) by (unfold slotamount, total; lia).
+  assert (Hdecl : (declamount <= total)%N) by (unfold declamount, total; lia).
+  assert (Htotal : (1 <= total)%N) by (unfold total; lia).
+  assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+  assert (Hrank' : (T_database_rank_slots_from (database_kinds ds) 0%N
+      PTrieCode.empty sl <= 32 * cost * slotamount)%N) by lia.
+  assert (Hslots_budget : (32 * cost * slotamount <= 32 * cost * total)%N).
+  { apply N.mul_le_mono_l. exact Hslot. }
+  assert (Hdecl_budget : (8 * cost * declamount <= 8 * cost * total)%N).
+  { apply N.mul_le_mono_l. exact Hdecl. }
+  nia.
 Qed.
 
 (** The declaration maximum charges the bit length of each name independently. *)
@@ -1130,6 +1507,27 @@ Definition database_set_pending {C X} (pending : N)
     (db_cache_updates db).
 TimeFun database_set_pending.
 
+Definition database_set_nuses {C X} (count : N)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) count (db_npending db) (db_wmark db)
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db)
+    (db_runtime db) (db_cache_updates db).
+TimeFun database_set_nuses.
+
+Definition database_set_row_store {C X} (store : database_row_store C)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    (db_written_cells db) (db_index_counters db) store (db_slot_store db)
+    (db_runtime db) (db_cache_updates db).
+TimeFun database_set_row_store.
+
+Definition database_set_index_counters {C X} (counters : list positive)
+    (db : database_state C X) : database_state C X :=
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    (db_written_cells db) counters (db_row_store db) (db_slot_store db)
+    (db_runtime db) (db_cache_updates db).
+TimeFun database_set_index_counters.
+
 (** Each cache call records its actual update counter, input rank, index counters and cells. *)
 Definition database_record_cache {C X} (u : list C) (counters : list positive)
     (db : database_state C X) : database_state C X :=
@@ -1235,6 +1633,15 @@ Qed.
 
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition t := database_state (cell V.t) I.t.
+
+  Fixpoint id_occurrences (f : positive) (k : list (cell V.t))
+      (cells : list (cell V.t)) : list (positive * (positive * list (cell V.t))) :=
+    match cells with
+    | [] => []
+    | Id i :: rest => (i, (f, k)) :: id_occurrences f k rest
+    | Val _ :: rest => id_occurrences f k rest
+    end.
+  TimeFun id_occurrences.
 
   Definition db_cell_code (c : cell V.t) : positive :=
     match c with Id i => xO i | Val v => xI (V.encode v) end.
@@ -1350,13 +1757,76 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
         (PTrieCode.set (db_row_code f k) ((f, k), o) (runtime_rows (db_runtime db)))
         (runtime_set_changed true (db_runtime db))) db.
 
+  (** A new historical key gets a stable row identifier and a current key. *)
+  Definition ensure_row_identity (f : positive) (k : list (cell V.t))
+      (db : t) : t :=
+    let store := db_row_store db in
+    match PTrieCode.get (db_row_code f k) (row_history store) with
+    | Some _ => db
+    | None =>
+      let r := row_fresh store in
+      let next := Pos.succ r in
+      let updated := {|
+        row_history := PTrieCode.set (db_row_code f k) ((f, k), r) (row_history store);
+        row_links := row_links store;
+        row_weights := PTrieCode.set r 1%N (row_weights store);
+        row_keys := PTrieCode.set r k (row_keys store);
+        row_fresh := next;
+        row_uses := row_uses store
+      |} in
+      database_set_index_counters (next :: db_index_counters db)
+        (database_set_row_store updated db)
+    end.
+
+  (** Resolution follows the parent links of a historical row identifier. *)
+  Fixpoint row_root (fuel : nat) (r : positive)
+      (store : database_row_store (cell V.t)) : positive :=
+    match fuel with
+    | O => r
+    | S remaining =>
+      match PTrieCode.get r (row_links store) with
+      | None => r
+      | Some parent =>
+        if Pos.eqb parent r then r else row_root remaining parent store
+      end
+    end.
+
+  Definition db_locate (f : positive) (k : list (cell V.t)) (db : t)
+      : option (list (cell V.t)) :=
+    let store := db_row_store db in
+    match PTrieCode.get (db_row_code f k) (row_history store) with
+    | None => None
+    | Some (_, r) =>
+      let depth := length k *
+        (N.to_nat (N.log2 (runtime_allocated (db_runtime db))) + 1) in
+      PTrieCode.get (row_root depth r store) (row_keys store)
+    end.
+
+  (** A replacement registers every identifier occurrence in its written tuple. *)
+  Definition register_row_uses (f : positive) (k : list (cell V.t))
+      (o : option (cell V.t)) (db : t) : t :=
+    let entries := id_occurrences f k (k ++ option_list o) in
+    let identified := ensure_row_identity f k db in
+    let store := db_row_store identified in
+    let updated := {|
+      row_history := row_history store;
+      row_links := row_links store;
+      row_weights := row_weights store;
+      row_keys := row_keys store;
+      row_fresh := row_fresh store;
+      row_uses := DatabaseUses.register entries (row_uses store)
+    |} in
+    database_set_nuses (db_nuses identified + N.of_nat (length entries))
+      (database_set_row_store updated identified).
+
   Definition row_replace (f : positive) (k : list (cell V.t))
       (previous : option (option (cell V.t))) (o : option (cell V.t)) (db : t) : t :=
     let without := match previous with
       | None => db
       | Some before => slots_update false f (k ++ option_list before) db
       end in
-    row_write f k o (slots_update true f (k ++ option_list o) without).
+    register_row_uses f k o
+      (row_write f k o (slots_update true f (k ++ option_list o) without)).
 
   (** The row table is erased after its slot contributions have been removed. *)
   Definition row_erase (f : positive) (k : list (cell V.t)) (db : t) : t :=
@@ -1371,17 +1841,18 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | Some o => row_erase f k (slots_update false f (k ++ option_list o) db)
     end.
   (** Initialization stores declarations, slots, empty rows and index caches. *)
-  (* STUB-CODE *)
   Definition init (ds : list decl) (sl : list (positive * list nat)) : t :=
     let prepared := prepare_slot_layouts sl in
     let bound := N.of_nat (length sl) in
     DatabaseState UnionFindCode.empty 0%N 0%N
       (N.max (Npos (database_max_name ds)) (N.succ bound)) []
       (match sl with [] => [1%positive] | _ => [1%positive; N.succ_pos bound] end)
-      {| row_history := []; row_links := []; row_weights := []; row_keys := [];
-         row_fresh := 1 |}
+      {| row_history := PTrieCode.empty; row_links := PTrieCode.empty;
+         row_weights := PTrieCode.empty; row_keys := PTrieCode.empty;
+         row_fresh := 1; row_uses := DatabaseUseMap.empty |}
       {| prepared_slots := prepared;
-         slot_positions := []; function_groups := []; slot_groups := [];
+         slot_positions := database_rank_slots ds sl;
+         function_groups := []; slot_groups := [];
          projection_counts := [] |}
       (DatabaseRuntime 0%N false ds (database_kinds ds) PTrieCode.empty sl [] []
         PTrieCode.empty PTrieCode.empty PTrieCode.empty
@@ -1440,6 +1911,40 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | None => row_replace f ck previous updated next
     end.
 
+  (** A repaired row keeps its historical identifier through a size-based link. *)
+  Definition move_row_identity (f : positive) (old current : list (cell V.t))
+      (db : t) : t :=
+    let store := db_row_store db in
+    match PTrieCode.get (db_row_code f old) (row_history store),
+      PTrieCode.get (db_row_code f current) (row_history store) with
+    | Some (_, old_id), Some (_, current_id) =>
+      let depth := length old *
+        (N.to_nat (N.log2 (runtime_allocated (db_runtime db))) + 1) in
+      let old_root := row_root depth old_id store in
+      let current_root := row_root depth current_id store in
+      let old_size := match PTrieCode.get old_root (row_weights store) with
+        | Some n => n | None => 1%N end in
+      let current_size := match PTrieCode.get current_root (row_weights store) with
+        | Some n => n | None => 1%N end in
+      let same_root := Pos.eqb old_root current_root in
+      let old_loses := N.leb old_size current_size in
+      let winner := if same_root then old_root else
+        if old_loses then current_root else old_root in
+      let loser := if old_loses then old_root else current_root in
+      let updated := {|
+        row_history := row_history store;
+        row_links := if same_root then row_links store else
+          PTrieCode.set loser winner (row_links store);
+        row_weights := if same_root then row_weights store else
+          PTrieCode.set winner (old_size + current_size)%N (row_weights store);
+        row_keys := PTrieCode.set winner current (row_keys store);
+        row_fresh := row_fresh store;
+        row_uses := row_uses store
+      |} in
+      database_set_row_store updated db
+    | _, _ => db
+    end.
+
   (** Repair one current row, discarding its old projections before inserting its normal form. *)
   Definition repair_current (f : positive) (k : list (cell V.t)) (db : t) : t :=
     match row_get f k db with
@@ -1450,33 +1955,53 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       if andb (Pos.eqb (db_tuple_code ck) (db_tuple_code k)) (output_eqb co o)
       then db else put f ck co (row_delete f k db)
     end.
+
+  (** An active historical key resolves before its current row is repaired. *)
+  Definition db_repair_entry (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    match db_locate f k db with
+    | None => db
+    | Some current =>
+      match row_get f current db with
+      | None => db
+      | Some o =>
+        let ck := normal_key db current in
+        let co := option_map (normal_cell db) o in
+        if andb (Pos.eqb (db_tuple_code ck) (db_tuple_code current)) (output_eqb co o)
+        then db else move_row_identity f current ck (repair_current f current db)
+      end
+    end.
   (** Enumerate current rows that contain an occurrence of a queued loser. *)
   Definition db_get_uses (i : positive) (db : t) : list (positive * list (cell V.t)) :=
-    fold_right (fun entry work =>
-      let stored := snd entry in
-      if existsb (fun c => match c with
-          | Id j => Pos.eqb i j
-          | Val _ => false
-          end) (snd (fst stored) ++ option_list (snd stored))
-      then fst stored :: work else work) []
-      (PTrieCode.elements (runtime_rows (db_runtime db))).
+    DatabaseUses.bucket i (row_uses (db_row_store db)).
 
   (** Popping the scheduling queue leaves the represented database view unchanged. *)
   Definition db_pop_loser (db : t) : option (positive * t) :=
     match runtime_queue (db_runtime db) with
     | [] => None
-    | i :: rest => Some (i,
+    | i :: rest =>
+      let store := db_row_store db in
+      let root := fst (UnionFindCode.find i (db_forest db)) in
+      let updated := {|
+        row_history := row_history store;
+        row_links := row_links store;
+        row_weights := row_weights store;
+        row_keys := row_keys store;
+        row_fresh := row_fresh store;
+        row_uses := DatabaseUses.transfer i root (row_uses store)
+      |} in
+      Some (i,
         database_set_pending (N.pred (db_npending db))
           (database_set_runtime
             (runtime_set_union (runtime_changed (db_runtime db))
-              (runtime_equalities (db_runtime db)) rest (db_runtime db)) db))
+              (runtime_equalities (db_runtime db)) rest (db_runtime db))
+            (database_set_row_store updated db)))
     end.
 
   (** Repair active rows before taking the next pending equality. *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
       : (t * list (positive * list (cell V.t))) + t :=
     match snd s with
-    | (f, k) :: rest => inl (repair_current f k (fst s), rest)
+    | (f, k) :: rest => inl (db_repair_entry f k (fst s), rest)
     | [] =>
       match db_pop_loser (fst s) with
       | None => inr (fst s)
@@ -1505,12 +2030,8 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
           (runtime_projection_counts (db_runtime db)) (db_runtime db))) db.
   Definition changed (db : t) := runtime_changed (db_runtime db).
   Definition ids (db : t) : N := runtime_allocated (db_runtime db).
-  (* STUB-CODE *)
-  Definition locate (_ : positive) (_ : list (cell V.t)) (_ : t)
-      : option (list (cell V.t)) := None.
-  (* STUB-CODE *)
-  Definition rank_slots (_ : list decl) (_ : list (positive * list nat))
-      : list (bool * N * N) := [].
+  Definition locate := db_locate.
+  Definition rank_slots := database_rank_slots.
 End DatabaseCode.
 
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
@@ -2746,12 +3267,60 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Replacing a row composes metadata preservation for its old and new contributions. *)
+  Lemma metadata_cons_counter : forall db counter, metadata_ok db ->
+    metadata_ok (database_set_index_counters (counter :: db_index_counters db) db).
+  Proof.
+    intros db counter (Hone & Hslot & Hcache & Hnext & Hhistory & Hcounts &
+      Hgroups & Hbound).
+    repeat split; try assumption.
+    - now right.
+    - now right.
+    - intros p Hupdate. right. now apply Hcache.
+    - intros s new. right. apply Hnext.
+  Qed.
+
+  (** Row identifier allocation adds one historical counter without changing indexes. *)
+  Lemma metadata_ensure_row_identity : forall db f k, metadata_ok db ->
+    metadata_ok (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hmetadata. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [entry |]; [exact Hmetadata |].
+    set (store := {|
+      row_history := PTrieCode.set (db_row_code f k)
+        ((f, k), row_fresh (db_row_store db)) (row_history (db_row_store db));
+      row_links := row_links (db_row_store db);
+      row_weights := PTrieCode.set (row_fresh (db_row_store db)) 1%N
+        (row_weights (db_row_store db));
+      row_keys := PTrieCode.set (row_fresh (db_row_store db)) k
+        (row_keys (db_row_store db));
+      row_fresh := Pos.succ (row_fresh (db_row_store db));
+      row_uses := row_uses (db_row_store db)
+    |}).
+    change (metadata_ok (database_set_index_counters
+      (Pos.succ (row_fresh (db_row_store db)) ::
+        db_index_counters (database_set_row_store store db))
+      (database_set_row_store store db))).
+    apply metadata_cons_counter.
+    eapply metadata_snapshot_ok; [reflexivity | exact Hmetadata].
+  Qed.
+
+  (** Use registration changes no metadata observation outside row identifiers. *)
+  Lemma metadata_register_row_uses : forall db f k o, metadata_ok db ->
+    metadata_ok (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hmetadata. unfold register_row_uses.
+    eapply metadata_snapshot_ok; [reflexivity |].
+    apply metadata_ensure_row_identity. exact Hmetadata.
+  Qed.
+
   Lemma metadata_row_replace : forall db f k previous o, metadata_ok db ->
     slots_fit db f (length (k ++ option_list o)) ->
     metadata_ok (row_replace f k previous o db).
   Proof.
     intros db f k previous o Hmetadata Hnew. unfold row_replace.
-    apply metadata_row_write. destruct previous as [before |].
+    apply metadata_register_row_uses. apply metadata_row_write.
+    destruct previous as [before |].
     - apply metadata_slots_update.
       + apply metadata_slots_update; [exact Hmetadata | discriminate].
       + intros _. unfold slots_fit. rewrite slots_update_slots. exact Hnew.
@@ -3003,6 +3572,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The final row-table write leaves the already-maintained slot caches unchanged. *)
+  (** Registration changes no runtime table or index cache. *)
+  Lemma register_row_uses_runtime : forall f k o db,
+    db_runtime (register_row_uses f k o db) = db_runtime db.
+  Proof.
+    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
   Lemma row_write_slot_snapshot : forall db f k o s,
     slot_snapshot (db_runtime (row_write f k o db)) s = slot_snapshot (db_runtime db) s.
   Proof.
@@ -3022,7 +3600,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (row_contributions g perm (((f, k), o) :: rest)).
   Proof.
     intros db f k previous o s g perm rest Hgroups Hslot Hnew Hbefore Hcache.
-    unfold row_replace. eapply slot_cache_snapshot; [apply row_write_slot_snapshot |].
+    unfold row_replace. rewrite register_row_uses_runtime.
+    eapply slot_cache_snapshot; [apply row_write_slot_snapshot |].
     destruct previous as [before |]; cbn [option_map option_list app] in Hcache |- *.
     - apply slots_update_cache_row_insert.
       + rewrite slots_update_function_slots, slots_update_slots. exact Hgroups.
@@ -3132,6 +3711,35 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply RowFacts.set_binding_iff.
   Qed.
 
+  (** Registering use entries leaves the represented database view unchanged. *)
+  Lemma register_row_uses_view : forall f k o db,
+    view (register_row_uses f k o db) = view db.
+  Proof.
+    intros f k o db. unfold view, row_get, kind_get.
+    now rewrite register_row_uses_runtime.
+  Qed.
+
+  (** Registering occurrences leaves every control field unchanged. *)
+  Lemma register_row_uses_control : forall f k o db,
+    ids (register_row_uses f k o db) = ids db /\
+    pending (register_row_uses f k o db) = pending db /\
+    slots (register_row_uses f k o db) = slots db /\
+    db_forest (register_row_uses f k o db) = db_forest db.
+  Proof.
+    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      repeat split; reflexivity.
+  Qed.
+
+  (** Occurrence registration does not record new payload cells. *)
+  Lemma register_row_uses_written_cells : forall f k o db,
+    db_written_cells (register_row_uses f k o db) = db_written_cells db.
+  Proof.
+    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
   (** Maintaining the index caches does not change the row-write specification. *)
   Lemma row_replace_binding : forall f k previous o db g args output,
     row (view (row_replace f k previous o db)) g args output <->
@@ -3139,7 +3747,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       ((g, args) = (f, k) /\ output = o).
   Proof.
     intros f k [before |] o db g args output; unfold row_replace;
-      rewrite row_write_binding, !slots_update_view; reflexivity.
+      rewrite register_row_uses_view, row_write_binding, !slots_update_view; reflexivity.
   Qed.
 
   (** Row replacement exposes the function, key and output equalities separately. *)
@@ -3210,8 +3818,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         | None => db_written_cells db
         end.
   Proof.
-    intros db f k [before |] o; unfold row_replace, row_write;
-      cbn [database_set_runtime db_written_cells]; rewrite !slots_update_written_cells;
+    intros db f k [before |] o; unfold row_replace;
+      rewrite register_row_uses_written_cells;
+      unfold row_write; cbn [database_set_runtime db_written_cells];
+      rewrite !slots_update_written_cells;
       reflexivity.
   Qed.
 
@@ -3297,7 +3907,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     kind (view (row_replace f k previous o db)) = kind (view db).
   Proof.
     intros f k [before |] o db; unfold row_replace;
-      rewrite row_write_kind, !slots_update_view; reflexivity.
+      rewrite register_row_uses_view, row_write_kind, !slots_update_view; reflexivity.
   Qed.
 
   (** A replacement leaves the recorded equality relation unchanged. *)
@@ -3305,7 +3915,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     same (view (row_replace f k previous o db)) = same (view db).
   Proof.
     intros f k [before |] o db; unfold row_replace;
-      rewrite row_write_same, !slots_update_view; reflexivity.
+      rewrite register_row_uses_view, row_write_same, !slots_update_view; reflexivity.
   Qed.
 
   (** Replacing a row does not allocate identifiers. *)
@@ -3313,6 +3923,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     ids (row_replace f k previous o db) = ids db.
   Proof.
     intros f k [before |] o db; unfold row_replace;
+      rewrite (proj1 (register_row_uses_control f k o _));
       rewrite row_write_ids, !slots_update_ids; reflexivity.
   Qed.
 
@@ -3321,6 +3932,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pending (row_replace f k previous o db) = pending db.
   Proof.
     intros f k [before |] o db; unfold row_replace;
+      rewrite (proj1 (proj2 (register_row_uses_control f k o _)));
       rewrite row_write_pending, !slots_update_pending; reflexivity.
   Qed.
 
@@ -3329,6 +3941,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     slots (row_replace f k previous o db) = slots db.
   Proof.
     intros f k [before |] o db; unfold row_replace;
+      rewrite (proj1 (proj2 (proj2 (register_row_uses_control f k o _))));
       rewrite row_write_slots, !slots_update_slots; reflexivity.
   Qed.
 
@@ -3337,6 +3950,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     db_forest (row_replace f k previous o db) = db_forest db.
   Proof.
     intros f k [before |] o db; unfold row_replace;
+      rewrite (proj2 (proj2 (proj2 (register_row_uses_control f k o _))));
       rewrite row_write_forest, !slots_update_forest; reflexivity.
   Qed.
 
@@ -3344,7 +3958,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma row_replace_changed : forall f k previous o db,
     changed (row_replace f k previous o db) = true.
   Proof.
-    reflexivity.
+    intros f k [before |] o db; unfold row_replace, changed;
+      rewrite register_row_uses_runtime; reflexivity.
   Qed.
 
   (** Row and cache replacement preserves every observation outside the changed fields. *)
@@ -3358,7 +3973,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       observe (db_runtime (row_replace f k previous o db)) = observe (db_runtime db).
   Proof.
     intros A observe Hrows Hchanged Hindexes f k [before |] o db;
-      unfold row_replace, row_write; cbn [database_set_runtime db_runtime];
+      unfold row_replace; rewrite register_row_uses_runtime;
+      unfold row_write; cbn [database_set_runtime db_runtime];
       rewrite Hrows, Hchanged;
       repeat rewrite (slots_update_preserves A observe Hindexes); reflexivity.
   Qed.
@@ -3368,7 +3984,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     runtime_rows (db_runtime (row_replace f k previous o db)) =
       RowMap.set (f, k) o (runtime_rows (db_runtime db)).
   Proof.
-    intros f k [before |] o db; unfold row_replace, row_write;
+    intros f k [before |] o db; unfold row_replace;
+      rewrite register_row_uses_runtime;
+      unfold row_write;
       cbn [database_set_runtime db_runtime runtime_set_rows runtime_rows];
       repeat rewrite (slots_update_preserves _ (@runtime_rows (cell V.t) I.t)
         (fun all new counts state => eq_refl)); reflexivity.
@@ -3480,11 +4098,21 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Replacing one row does not change the stored pending-work counter. *)
+  Lemma register_row_uses_npending : forall f k o db,
+    db_npending (register_row_uses f k o db) = db_npending db.
+  Proof.
+    intros f k o db. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
   Lemma row_replace_npending : forall f k previous o db,
     db_npending (row_replace f k previous o db) = db_npending db.
   Proof.
-    intros f k [before |] o db; unfold row_replace, row_write;
-      cbn [database_set_runtime db_npending]; now rewrite !slots_update_npending.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite register_row_uses_npending;
+      unfold row_write; cbn [database_set_runtime db_npending];
+      now rewrite !slots_update_npending.
   Qed.
 
   (** Cache correctness is the only remaining obligation for a well-kinded canonical row update. *)
@@ -3962,7 +4590,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros f k db Hchanged. unfold make.
     destruct (row_get f (normal_key db k) db) as [[[j | v] |] |]; try exact Hchanged;
-      destruct (kind_get f db) as [[| |m] |]; reflexivity.
+      destruct (kind_get f db) as [[| |m] |]; try reflexivity;
+      apply row_replace_changed.
   Qed.
   Lemma changed_union : forall i j db, changed db = true -> changed (union i j db) = true.
   Proof.
@@ -4430,9 +5059,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite (normal_key_correct db k Hwf) in Hquiet.
     destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hrow.
     - exists j. exact Hrow.
-    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
-    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
-    - destruct (kind_get f db) as [[| |m] |]; discriminate Hquiet.
+    - destruct (kind_get f db) as [[| |m] |]; cbn [snd] in Hquiet;
+        try discriminate Hquiet;
+        rewrite row_replace_changed in Hquiet; discriminate.
+    - destruct (kind_get f db) as [[| |m] |]; cbn [snd] in Hquiet;
+        try discriminate Hquiet;
+        rewrite row_replace_changed in Hquiet; discriminate.
+    - destruct (kind_get f db) as [[| |m] |]; cbn [snd] in Hquiet;
+        try discriminate Hquiet;
+        rewrite row_replace_changed in Hquiet; discriminate.
   Qed.
 
   (** Every row identifier is allocated. *)
@@ -5887,6 +6522,41 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     injection Hpop as Hname Hdb. subst i db'. split; reflexivity.
   Qed.
 
+  (** Row-group links leave the represented rows and identifier forest unchanged. *)
+  Lemma move_row_identity_semantic_fields : forall db f old current,
+    db_forest (move_row_identity f old current db) = db_forest db /\
+    view (move_row_identity f old current db) = view db.
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[[old_f old_key] old_id] |];
+      destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+        as [[[current_f current_key] current_id] |];
+      split; reflexivity.
+  Qed.
+
+  (** Resolving a historical row key keeps model satisfaction during repair. *)
+  Lemma db_repair_entry_semantic : forall M nu db f k,
+    model_forest M nu db -> sat V.merge M nu (view db) ->
+    model_forest M nu (db_repair_entry f k db) /\
+      sat V.merge M nu (view (db_repair_entry f k db)).
+  Proof.
+    intros M nu db f k Hmodel Hsat. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| now split].
+    destruct (row_get f current db) as [o |]; [| now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [now split |].
+    destruct (repair_current_semantic M nu db f current Hmodel Hsat)
+      as [Hnext Hnext_sat].
+    destruct (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))
+      as [Hforest Hview].
+    split.
+    - eapply model_forest_unchanged; [exact Hforest | exact Hnext].
+    - now rewrite Hview.
+  Qed.
+
   (** Every continuing callback preserves the weaker semantic invariant. *)
   Lemma db_rstep_semantic_continue : forall M nu s s',
     model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)) ->
@@ -5900,7 +6570,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
       split; [eapply model_forest_unchanged; eassumption | now rewrite Hview].
     - injection Hstep as Hnext. subst s'. cbn [fst].
-      now apply repair_current_semantic.
+      now apply db_repair_entry_semantic.
   Qed.
 
   (** A stopped callback returns the database whose semantic invariant it carries. *)
@@ -5959,7 +6629,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Every property preserved by both actual callback branches survives the fuelled loop. *)
   Lemma rebuild_preserves : forall (P : t -> Prop),
-    (forall db f k, P db -> P (repair_current f k db)) ->
+    (forall db f k, P db -> P (db_repair_entry f k db)) ->
     (forall db i db', P db -> db_pop_loser db = Some (i, db') -> P db') ->
     forall db, P db -> P (rebuild db).
   Proof.
@@ -5991,12 +6661,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply put_same_preserves_raw. now rewrite row_delete_same.
   Qed.
 
+  (** Historical-key resolution retains every old identifier equality. *)
+  Lemma db_repair_entry_same_preserves : forall db f k i j,
+    same (view db) i j -> same (view (db_repair_entry f k db)) i j.
+  Proof.
+    intros db f k i j Hsame. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hsame].
+    destruct (row_get f current db) as [o |]; [| exact Hsame].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hsame |].
+    rewrite (proj2 (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))).
+    now apply repair_current_same_preserves.
+  Qed.
+
   (** Old equalities survive the actual rebuild loop, including fuel exhaustion. *)
   Lemma rebuild_same_preserves : forall db i j,
     same (view db) i j -> same (view (rebuild db)) i j.
   Proof.
     intros db i j Hsame. apply (rebuild_preserves (fun current => same (view current) i j)).
-    - intros current f k Hcurrent. now apply repair_current_same_preserves.
+    - intros current f k Hcurrent. now apply db_repair_entry_same_preserves.
     - intros current x next Hcurrent Hpop.
       destruct (db_pop_loser_preserves current x next Hpop) as [_ Hview].
       now rewrite Hview.
@@ -6190,11 +6875,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Forest/log agreement survives both return branches of the actual rebuild driver. *)
+  Lemma forest_agrees_entry : forall db f k,
+    forest_agrees db -> forest_agrees (db_repair_entry f k db).
+  Proof.
+    intros db f k Hagrees. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hagrees].
+    destruct (row_get f current db) as [o |]; [| exact Hagrees].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hagrees |].
+    destruct (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))
+      as [Hforest Hview].
+    eapply forest_agrees_frame; [exact Hforest | now rewrite Hview |].
+    now apply forest_agrees_repair.
+  Qed.
+
   Lemma forest_agrees_rebuild : forall db,
     forest_agrees db -> forest_agrees (rebuild db).
   Proof.
     apply (rebuild_preserves forest_agrees).
-    - exact forest_agrees_repair.
+    - exact forest_agrees_entry.
     - intros db x next Hagrees Hpop.
       destruct (db_pop_loser_preserves db x next Hpop) as [Hforest Hview].
       eapply forest_agrees_frame; [exact Hforest | now rewrite Hview | exact Hagrees].
@@ -6324,10 +7025,32 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A raised change flag stays raised through every repair and queue operation. *)
+  Lemma move_row_identity_changed : forall db f old current,
+    changed (move_row_identity f old current db) = changed db.
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[[old_f old_key] old_id] |];
+      destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+        as [[[current_f current_key] current_id] |]; reflexivity.
+  Qed.
+
+  Lemma db_repair_entry_changed : forall db f k,
+    changed db = true -> changed (db_repair_entry f k db) = true.
+  Proof.
+    intros db f k Hchanged. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hchanged].
+    destruct (row_get f current db) as [o |]; [| exact Hchanged].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hchanged |].
+    rewrite move_row_identity_changed. now apply repair_current_changed.
+  Qed.
+
   Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
   Proof.
     apply (rebuild_preserves (fun db => changed db = true)).
-    - exact repair_current_changed.
+    - exact db_repair_entry_changed.
     - intros db i db' Hchanged Hpop.
       rewrite (proj2 (proj2 (db_pop_loser_layout db i db' Hpop))). exact Hchanged.
   Qed.
@@ -6368,6 +7091,39 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     now rewrite row_delete_kind, row_delete_slots, row_delete_ids in Hlayout.
   Qed.
 
+  (** Historical row linking changes no declaration or allocation observation. *)
+  Lemma move_row_identity_layout : forall db f old current,
+    slots (move_row_identity f old current db) = slots db /\
+    ids (move_row_identity f old current db) = ids db.
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[[old_f old_key] old_id] |];
+      destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+        as [[[current_f current_key] current_id] |]; split; reflexivity.
+  Qed.
+
+  Lemma db_repair_entry_layout : forall db f k,
+    kind (view (db_repair_entry f k db)) = kind (view db) /\
+    slots (db_repair_entry f k db) = slots db /\
+    ids (db_repair_entry f k db) = ids db.
+  Proof.
+    intros db f k. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| repeat split; reflexivity].
+    destruct (row_get f current db) as [o |]; [| repeat split; reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [repeat split; reflexivity |].
+    destruct (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current)) as [_ Hview].
+    destruct (move_row_identity_layout
+      (repair_current f current db) f current (normal_key db current))
+      as [Hslots Hids].
+    destruct (repair_current_layout db f current) as [Hkind [Hslot_original Hids_original]].
+    rewrite Hview, Hslots, Hids, Hkind, Hslot_original, Hids_original.
+    repeat split; reflexivity.
+  Qed.
+
   (** Rebuilding keeps layout and allocation. *)
   Lemma layout_rebuild : forall db, wf db ->
     kind (view (rebuild db)) = kind (view db) /\ slots (rebuild db) = slots db /\
@@ -6376,7 +7132,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db _. apply (rebuild_preserves (fun current =>
       kind (view current) = kind (view db) /\ slots current = slots db /\ ids current = ids db)).
     - intros current f k Hlayout.
-      destruct (repair_current_layout current f k) as [Hkind [Hslots Hids]].
+      destruct (db_repair_entry_layout current f k) as [Hkind [Hslots Hids]].
       now rewrite Hkind, Hslots, Hids.
     - intros current i next Hlayout Hpop.
       destruct (db_pop_loser_preserves current i next Hpop) as [_ Hview].
@@ -6439,6 +7195,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     now apply repair_current_fixed with (o := o).
   Qed.
 
+  (** Historical entries also skip rows whose current form is canonical. *)
+  Lemma db_repair_entry_canonical : forall db f k,
+    UnionFind.wf (db_forest db) -> canonical db -> db_repair_entry f k db = db.
+  Proof.
+    intros db f k Hforest Hcanonical. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [o |] eqn:Hrow; [| reflexivity].
+    destruct (normal_row_fixed db current o Hforest
+      (Hcanonical f current o Hrow)) as [Hkey Houtput].
+    now rewrite Hkey, Houtput, Pos.eqb_refl, output_eqb_refl.
+  Qed.
+
   (** A repair begun in a public well-formed state preserves its complete database invariant. *)
   Lemma repair_current_wf : forall db f k, wf db -> wf (repair_current f k db).
   Proof.
@@ -6461,7 +7229,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     { apply (rebuild_preserves (fun current => UnionFind.wf (db_forest current) /\
         canonical current /\ changed current = changed db)).
       - intros current f k [Hforest [Hfixed Hflag]].
-        rewrite (repair_current_canonical current f k Hforest Hfixed).
+        rewrite (db_repair_entry_canonical current f k Hforest Hfixed).
         exact (conj Hforest (conj Hfixed Hflag)).
       - intros current i next [Hforest [Hfixed Hflag]] Hpop.
         destruct (db_pop_loser_preserves current i next Hpop) as [Hsame_forest _].
@@ -6709,6 +7477,36 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db f k Hforest Hqueue. exact (proj2 (repair_queue_state db f k Hforest Hqueue)).
   Qed.
 
+  (** Row-group links keep the pending-queue validity condition. *)
+  Lemma queue_valid_move_row_identity : forall db f old current,
+    queue_valid db -> queue_valid (move_row_identity f old current db).
+  Proof.
+    intros db f old current Hqueue. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[[old_f old_key] old_id] |];
+      destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+        as [[[current_f current_key] current_id] |]; exact Hqueue.
+  Qed.
+
+  Lemma db_repair_entry_queue_state : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (db_repair_entry f k db)) /\
+      queue_valid (db_repair_entry f k db).
+  Proof.
+    intros db f k Hforest Hqueue. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| now split].
+    destruct (row_get f current db) as [o |]; [| now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [now split |].
+    destruct (repair_queue_state db f current Hforest Hqueue) as [Hnext Hnext_queue].
+    split.
+    - rewrite (proj1 (move_row_identity_semantic_fields
+        (repair_current f current db) f current (normal_key db current))).
+      exact Hnext.
+    - now apply queue_valid_move_row_identity.
+  Qed.
+
   (** Both completed and exhausted rebuilds preserve distinct queued nonrepresentatives. *)
   Lemma rebuild_queue_state : forall db,
     UnionFind.wf (db_forest db) -> queue_valid db ->
@@ -6716,7 +7514,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db Hforest Hqueue. apply (rebuild_preserves (fun current =>
       UnionFind.wf (db_forest current) /\ queue_valid current)).
-    - intros current f k [Hforest' Hqueue']. now apply repair_queue_state.
+    - intros current f k [Hforest' Hqueue']. now apply db_repair_entry_queue_state.
     - intros current i next [Hforest' Hqueue'] Hpop. split.
       + now rewrite (proj1 (db_pop_loser_preserves current i next Hpop)).
       + eapply queue_valid_pop; eassumption.
@@ -7080,13 +7878,32 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Definition slots_of (db : t) (f : positive) : nat :=
     length (filter (fun s => Pos.eqb (fst s) f) (slots db)).
-  (* STUB-CODE *)
-  Definition potential (_ : N) (_ : t) : N := 0%N.
+  Definition k_credit : N := 1%N.
+  Definition k_loop : N := (c_loopN + 1)%N.
+  Definition k_queue : N := 1%N.
+  Definition potential (B : N) (db : t) : N :=
+    let uses := flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses (db_row_store db)))) in
+    let weight := fun (e : positive * list (cell V.t)) =>
+      (length (snd e) + 1) * (slots_of db (fst e) + 1) in
+    let bucket := fun x => map snd (filter (fun xe => Pos.eqb (fst xe) x) uses) in
+    let credit := fun (xe : positive * (positive * list (cell V.t))) =>
+      N.to_nat (N.log2 B - N.log2
+        (N.of_nat (UnionFind.size_of (db_forest db) (repr db (fst xe))))) *
+        weight (snd xe) in
+    let work := fun entries => fold_right (fun e n => (weight e + n)%nat) 0%nat entries in
+    let queued := fold_right (fun x n => (work (bucket x) + 1 + n)%nat) 0%nat
+      (runtime_queue (db_runtime db)) in
+    (k_loop * (k_credit * N.of_nat
+      (fold_right (fun xe n => (credit xe + n)%nat) 0%nat uses) +
+      k_queue * N.of_nat queued))%N.
   Definition num_slots (db : t) : nat := length (slots db).
   TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
   TimeFun normal_cell normal_key output_eqb combine_output.
   TimeFun slot_index_get projection_table_get slot_update_one slot_update_many slot_updated_counters.
-  TimeFun slots_update row_write row_replace row_erase row_delete.
+  TimeFun slots_update row_write ensure_row_identity register_row_uses row_replace.
+  TimeFun row_erase row_delete.
   TimeFun init.
   TimeFun find.
   TimeFun lookup.
@@ -7094,7 +7911,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun allocate_id.
   TimeFun make.
   TimeFun put.
-  TimeFun repair_current.
+  TimeFun row_root db_locate move_row_identity repair_current db_repair_entry.
   TimeFun db_get_uses db_pop_loser.
   TimeFun db_rstep.
   TimeFun db_rebuild_fuel.
@@ -7302,7 +8119,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
 
   (** The database coefficient dominates the trie work and every constant observation cost. *)
-  Lemma c_db_trie_budget : (128 * (PTrieT.c_trie + 1) <= c_db)%N.
+  Lemma c_db_trie_budget : (256 * (PTrieT.c_trie + 1) <= c_db)%N.
   Proof.
     unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
     intros a b c d. nia.
@@ -7921,6 +8738,53 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     reflexivity.
   Qed.
 
+  (** Raising the base of a maximum fold cannot lower its result. *)
+  Lemma fold_max_base_mono : forall values a b,
+    (a <= b)%N ->
+    (fold_right N.max a values <= fold_right N.max b values)%N.
+  Proof.
+    intros values. induction values as [| value rest IH]; intros a b Hbound.
+    - exact Hbound.
+    - cbn [fold_right]. apply N.max_lub.
+      + apply N.le_max_l.
+      + eapply N.le_trans; [apply IH; exact Hbound | apply N.le_max_r].
+  Qed.
+
+  (** A fresh row identifier is added to the historical counter inventory. *)
+  Lemma wmark_ensure_row_identity : forall f k db,
+    (wmark db <= wmark (ensure_row_identity f k db))%N.
+  Proof.
+    intros f k db. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [entry |]; [reflexivity |].
+    unfold wmark, decl_names, ids.
+    cbn [database_set_index_counters database_set_row_store db_nuses
+      db_index_counters db_written_cells db_runtime runtime_allocated runtime_kinds
+      map fold_right].
+    apply N.le_max_r.
+  Qed.
+
+  (** Registering occurrences raises the count input to the watermark. *)
+  Lemma wmark_register_row_uses : forall f k o db,
+    (wmark db <= wmark (register_row_uses f k o db))%N.
+  Proof.
+    intros f k o db. unfold register_row_uses.
+    eapply N.le_trans; [apply wmark_ensure_row_identity |].
+    set (identified := ensure_row_identity f k db).
+    unfold wmark.
+    cbn [database_set_nuses database_set_row_store db_nuses ids
+      db_index_counters db_written_cells db_runtime].
+    apply fold_max_base_mono.
+    change (N.max (db_nuses identified) (ids identified) <=
+      N.max (db_nuses identified +
+        N.of_nat (length (id_occurrences f k (k ++ option_list o))))
+        (ids identified))%N.
+    apply N.max_lub.
+    -
+      eapply N.le_trans; [| apply N.le_max_l]. lia.
+    - apply N.le_max_r.
+  Qed.
+
   (** Erasing only the row table likewise retains every watermark input. *)
   Lemma wmark_row_erase : forall f k db, wmark (row_erase f k db) = wmark db.
   Proof.
@@ -7931,11 +8795,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma wmark_row_replace : forall f k previous o db,
     (wmark db <= wmark (row_replace f k previous o db))%N.
   Proof.
-    intros f k [before |] o db; unfold row_replace; rewrite wmark_row_write.
-    - eapply N.le_trans.
+    intros f k [before |] o db; unfold row_replace.
+    - eapply N.le_trans; [| apply wmark_register_row_uses].
+      rewrite wmark_row_write. eapply N.le_trans.
       + exact (wmark_slots_update false f (k ++ option_list before) db).
       + apply wmark_slots_update.
-    - apply wmark_slots_update.
+    - eapply N.le_trans; [| apply wmark_register_row_uses].
+      rewrite wmark_row_write. apply wmark_slots_update.
   Qed.
 
   (** Deletion records its removed contribution and never discards prior watermark inputs. *)
@@ -8424,12 +9290,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply Nat.le_trans; [apply unit_row_delete_monotone | apply unit_put_monotone].
   Qed.
 
+  Lemma move_row_identity_unit : forall f old current db,
+    unit (move_row_identity f old current db) = unit db.
+  Proof.
+    intros f old current db. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+      as [[current_key current_id] |]; [| reflexivity].
+    reflexivity.
+  Qed.
+
+  Lemma db_repair_entry_unit_monotone : forall db f k,
+    unit db <= unit (db_repair_entry f k db).
+  Proof.
+    intros db f k. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [o |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
+    rewrite move_row_identity_unit. apply repair_current_unit_monotone.
+  Qed.
+
   (** Both actual loop branches preserve the original spending-unit lower bound. *)
   Lemma unit_rebuild_monotone : forall db, unit db <= unit (rebuild db).
   Proof.
     intro db. apply (rebuild_preserves (fun current => unit db <= unit current)).
     - intros current f k Hcurrent. eapply Nat.le_trans;
-        [exact Hcurrent | apply repair_current_unit_monotone].
+        [exact Hcurrent | apply db_repair_entry_unit_monotone].
     - intros current i next Hcurrent Hpop.
       rewrite (unit_pop_loser current i next Hpop). exact Hcurrent.
     - reflexivity.
@@ -8451,8 +9340,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       1 + 25 * (layout + slots + 1) + (slots + 1) + (3 * slots + 2) +
       16 * (decls + declaration_bits + 1) + (slots + 1) + (declaration_bits + 4) +
       (slots + 1) + 8 * cost * (decls + declaration_bits + 1) +
-      8 * cost * (slots + slot_bits + 1) <=
-      128 * cost * (decls + slots + layout + declaration_bits + slot_bits + 1))%N.
+      8 * cost * (slots + slot_bits + 1) +
+      48 * cost * (decls + slots + declaration_bits + slot_bits + 1) <=
+      256 * cost * (decls + slots + layout + declaration_bits + slot_bits + 1))%N.
   Proof.
     intros cost decls slots layout declaration_bits slot_bits Hcost.
     set (total := (decls + slots + layout + declaration_bits + slot_bits + 1)%N).
@@ -8470,13 +9360,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (8 * (cost * (slots + slot_bits + 1)))%N by ring.
       apply N.mul_le_mono_l.
       apply N.mul_le_mono_l. unfold total. lia. }
-    replace (128 * cost * total)%N with (128 * budget)%N by (unfold budget; ring).
+    replace (256 * cost * total)%N with (256 * budget)%N by (unfold budget; ring).
     unfold total in Htotal. clearbody total budget. lia.
   Qed.
 
   (** Initialization sums preparation, name scans, and amortized dense slot numbering. *)
   Lemma T_init_budget : forall ds sl,
-    (T_init ds sl <= 128 * (PTrieT.c_trie + 1) *
+    (T_init ds sl <= 256 * (PTrieT.c_trie + 1) *
       N.of_nat (length ds + length sl + layout_work sl +
         fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
         fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1))%N.
@@ -8486,6 +9376,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     pose proof (T_database_kinds_le ds) as Hkinds.
     pose proof (T_database_max_name_le ds) as Hnames.
     pose proof (T_database_slot_groups_le (prepare_slot_layouts sl) PTrieCode.empty) as Hgroups.
+    pose proof (T_database_rank_slots_budget ds sl) as Hrank.
     destruct (database_prepared_sizes sl) as [Hprepared_length Hprepared_bits].
     rewrite Hprepared_length, Hprepared_bits in Hgroups.
     pose proof (Datatypes.T_length_le sl) as Hlength.
@@ -8511,7 +9402,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { destruct sl; [cbn; lia | exact Hsucc_pos_small]. }
     clear Hprepared_length Hprepared_bits Hslot_bits Hname_bits Hsucc Hsucc_pos Hmaximum.
     time_unfold T_init. cbn beta zeta.
-    rewrite !Nat2N.inj_add in Hprepare, Hkinds, Hnames, Hgroups |- *.
+    rewrite !Nat2N.inj_add in Hprepare, Hkinds, Hnames, Hgroups, Hrank |- *.
     repeat rewrite Nat2N.inj_add.
     set (cost := (PTrieT.c_trie + 1)%N) in *.
     set (decls := N.of_nat (length ds)) in *.
@@ -8522,6 +9413,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (slot_bits := N.of_nat
       (fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl)) in *.
     assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hrank_arg : (N.of_nat (length ds + length sl +
+      fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) +
+      slot_bits + 1 =
+      decls + slots_count + declaration_bits + slot_bits + 1)%N).
+    { unfold decls, slots_count, declaration_bits.
+      repeat rewrite Nat2N.inj_add. lia. }
+    change (N.of_nat 1) with 1%N in Hrank.
+    rewrite Hrank_arg in Hrank.
     pose proof (database_init_sum_budget cost decls slots_count layout declaration_bits slot_bits Hcost)
       as Hbudget.
     clearbody cost decls slots_count layout declaration_bits slot_bits. lia.
@@ -8606,17 +9505,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
      index_counters written_cells *)
   Definition rows (db : t) : list stored_row :=
     map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
-  (* STUB-CODE *)
-  Definition uses_entries : t -> list (positive * use_entry) := fun _ => [].
+  Definition uses_entries (db : t) : list (positive * use_entry) :=
+    flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses (db_row_store db)))).
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
   Definition class_size (db : t) (x : positive) : N :=
     N.of_nat (UnionFind.size_of (uf_state db) x).
   (** A historical row key resolves to its current stored key. *)
-  (* STUB-CODE *)
-  Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
-      : option (list (cell V.t)) := None.
+  Definition located (db : t) (f : positive) (k : list (cell V.t))
+      : option (list (cell V.t)) := locate f k db.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
@@ -8625,10 +9525,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db).
-  Definition k_credit : N := 1. (* STUB *)
-  Definition k_loop : N := c_loopN + 1.
   Definition k_active : N := 1. (* STUB *)
-  Definition k_queue : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
@@ -8880,17 +9777,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition state_potential (B : N) (s : repair_state) : N :=
     (rebuild_potential B (fst s) +
       k_active * N.of_nat (work_weight (fst s) (snd s)))%N.
-  (* STUB-CODE *)
   Definition nuses (db : t) : N := db_nuses db.
   Definition npending (db : t) : N := db_npending db.
   Definition index_counters (db : t) : list positive := db_index_counters db.
   Definition written_cells (db : t) : list (cell V.t) := db_written_cells db.
   Definition get_uses : positive -> t -> list use_entry := db_get_uses.
   TimeFun get_uses.
+  Lemma get_uses_bucket : forall db x, get_uses x db = bucket db x.
+  Proof.
+    intros db x. unfold get_uses, db_get_uses, bucket, uses_entries.
+    change (DatabaseUses.bucket x (row_uses (db_row_store db)) =
+      database_filter_uses x
+        (map (fun binding => (fst binding, snd (snd binding)))
+          (PTrieCode.elements (row_uses (db_row_store db))))).
+    symmetry. apply database_uses_bucket_entries.
+  Qed.
   Definition pop_loser : t -> option (positive * t) := db_pop_loser.
   TimeFun pop_loser.
   Definition repair_entry (e : use_entry) (db : t) : t :=
-    repair_current (fst e) (snd e) db.
+    db_repair_entry (fst e) (snd e) db.
   TimeFun repair_entry.
   Definition rstep (s : repair_state) : repair_state + t := db_rstep s.
   TimeFun rstep.
@@ -8901,23 +9806,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun rank_slots.
   Definition k_locate : N := 1. (* STUB *)
   Definition k_repair : N := 1. (* STUB *)
-  Definition k_pop : N := 64 * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1).
+  Definition k_pop : N := 128 * (DatabaseUseMap.c_map + 1) * (UnionFindT.c_uf + 1).
   Definition k_rstep : N := 64.
   Definition k_stop : N := k_rstep + k_pop + c_loopN.
   Definition k_slots : N := 1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1).
   Definition k_layout : N := 1. (* STUB *)
 
   (* spec: row_id row_parent row_size row_current next_row *)
-  (* STUB-CODE *)
-  Definition row_id (_ : t) (_ : positive) (_ : list (cell V.t)) : option positive := None.
-  (* STUB-CODE *)
-  Definition row_parent (_ : t) (r : positive) : positive := r.
-  (* STUB-CODE *)
-  Definition row_size (_ : t) (_ : positive) : N := 1%N.
-  (* STUB-CODE *)
-  Definition row_current (_ : t) (_ : positive) : option (list (cell V.t)) := None.
-  (* STUB-CODE *)
-  Definition next_row (_ : t) : positive := 1%positive.
+  Definition row_id (db : t) (f : positive) (k : list (cell V.t)) : option positive :=
+    option_map snd
+      (PTrieCode.get (db_row_code f k) (row_history (db_row_store db))).
+  Definition row_parent (db : t) (r : positive) : positive :=
+    match PTrieCode.get r (row_links (db_row_store db)) with
+    | Some parent => parent
+    | None => r
+    end.
+  Definition row_size (db : t) (r : positive) : N :=
+    match PTrieCode.get r (row_weights (db_row_store db)) with
+    | Some size => size
+    | None => 1%N
+    end.
+  Definition row_current (db : t) (r : positive)
+      : option (list (cell V.t)) :=
+    PTrieCode.get r (row_keys (db_row_store db)).
+  Definition next_row (db : t) : positive := row_fresh (db_row_store db).
   (** Following the merge parent of a row identifier [n] times. *)
   Definition row_up (db : t) (n : nat) (r : positive) : positive :=
     Nat.iter n (row_parent db) r.
@@ -8963,12 +9875,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof. Admitted. (* STUB *)
 
   (* spec: slot_place group_of group_slots proj_count slots_ok *)
-  (* STUB-CODE *)
-  Definition slot_place (_ : t) (_ : N) : option (bool * N * N) := None.
-  (* STUB-CODE *)
-  Definition group_of (_ : t) (_ : positive) : option N := None.
-  (* STUB-CODE *)
-  Definition group_slots (_ : t) (_ : bool) (_ : N) : list N := [].
+  Definition slot_place (db : t) (s : N) : option (bool * N * N) :=
+    nth_error (slot_positions _ (db_slot_store db)) (N.to_nat s).
+  Definition group_of (db : t) (f : positive) : option N :=
+    database_group_of f (slots db) (slot_positions _ (db_slot_store db)).
+  Definition group_slots (db : t) (d : bool) (g : N) : list N :=
+    database_group_slots 0%N d g (slot_positions _ (db_slot_store db)).
   (** Slot facts survive changes to the row store between projection updates. *)
   Definition slots_ok (db : t) : Prop :=
     metadata_ok db /\
@@ -9432,32 +10344,155 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - time_unfold T_repair_entry. time_simpl. cbn [fst snd]. unfold k_rstep. lia.
   Qed.
   (** A pop moves the selected bucket at one step per entry. *)
-  Lemma T_pop_loser_counter_bound : forall db,
-    (T_pop_loser db <= 64 + N.of_nat (N.size_nat (db_npending db)))%N.
+  Lemma T_pop_loser_counter_bound : forall db i rest,
+    runtime_queue (db_runtime db) = i :: rest ->
+    (T_pop_loser db <= 64 + N.of_nat (N.size_nat (db_npending db)) +
+      UnionFindCode.T_find i (db_forest db) +
+      DatabaseUses.T_transfer i (fst (UnionFindCode.find i (db_forest db)))
+        (row_uses (db_row_store db)))%N.
   Proof.
-    intro db. pose proof (N.T_pred_le (db_npending db)) as Hpred.
+    intros db i rest Hqueue.
+    pose proof (N.T_pred_le (db_npending db)) as Hpred.
     time_unfold T_pop_loser. time_unfold T_db_pop_loser.
-    destruct (runtime_queue (db_runtime db)) as [| i rest].
-    - time_simpl. time_cbn. lia.
-    - time_unfold @T_runtime_set_union. time_unfold @T_database_set_runtime.
-      time_unfold @T_database_set_pending. time_simpl. time_cbn. lia.
+    rewrite Hqueue.
+    time_unfold @T_runtime_set_union. time_unfold @T_database_set_runtime.
+    time_unfold @T_database_set_pending. time_unfold @T_database_set_row_store.
+    time_simpl. time_cbn. lia.
+  Qed.
+
+  Lemma pop_find_unit_budget : forall db work i, inv_on db work -> allocated db i ->
+    (UnionFindCode.T_find i (db_forest db) <=
+      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros db work i Hinv Hi.
+    pose proof (UnionFindT.T_find_le i (db_forest db)
+      (inv_on_forest_wf db work Hinv)) as Hfind.
+    rewrite (inv_on_forest_card db work Hinv) in Hfind.
+    pose proof (nat_log2_N_width (ids db)) as Hlog.
+    pose proof (slot_width_log (ids db)) as Hlogwidth.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
+      N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (inv_on_forest_width db work Hinv) |].
+        apply N_width_mono. apply wmark_ids.
+      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    unfold unit. rewrite Nat2N.inj_mul.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  Lemma pop_root_width : forall db work i, inv_on db work -> allocated db i ->
+    Pos.size_nat (fst (UnionFindCode.find i (db_forest db))) <=
+      N.size_nat (wmark db).
+  Proof.
+    intros db work i Hinv Hi.
+    pose proof (inv_on_forest_wf db work Hinv) as Hwf.
+    rewrite (UnionFind.find_repr i (db_forest db) Hwf).
+    destruct (PTrieCode.get i (UnionFind.parents (db_forest db))) as [parent |]
+      eqn:Hmember.
+    - eapply Nat.le_trans.
+      + apply UnionFind.width_mem; [exact Hwf |].
+        apply UnionFind.repr_mem; [exact Hwf |].
+        unfold UnionFind.mem. rewrite Hmember. discriminate.
+      + eapply Nat.le_trans; [exact (inv_on_forest_width db work Hinv) |].
+        apply N_width_mono. apply wmark_ids.
+    - rewrite UnionFind.repr_fresh by
+        (exact Hwf || (unfold UnionFind.mem; rewrite Hmember; congruence)).
+      change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+      apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids].
+  Qed.
+
+  Lemma work_weight_length : forall db work, length work <= work_weight db work.
+  Proof.
+    intros db work. induction work as [|entry rest IH]; [reflexivity |].
+    change (S (length rest) <= entry_weight db entry + work_weight db rest).
+    unfold entry_weight. nia.
   Qed.
 
   Lemma T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
       N.of_nat (unit db))%N.
   Proof.
-    intros db x db' Hinv _.
-    pose proof (T_pop_loser_counter_bound db) as Htime.
+    intros db x db' Hinv Hpop.
+    assert (Hqueue : exists rest, runtime_queue (db_runtime db) = x :: rest).
+    { unfold pop_loser, db_pop_loser in Hpop.
+      destruct (runtime_queue (db_runtime db)) as [|i rest] eqn:Hqueue;
+        [discriminate |]. inversion Hpop; subst x. now exists rest. }
+    destruct Hqueue as [rest Hqueue].
+    pose proof (T_pop_loser_counter_bound db x rest Hqueue) as Htime.
+    assert (Hqueued : In x (queue db)).
+    { unfold queue. rewrite Hqueue. now left. }
+    assert (Hi : allocated db x).
+    { unfold inv, inv_on in Hinv. change (In x (queue db)) in Hqueued. firstorder. }
+    pose proof (pop_find_unit_budget db [] x Hinv Hi) as Hfind.
+    pose proof (pop_root_width db [] x Hinv Hi) as Hroot.
+    pose proof (T_database_uses_transfer_le use_entry x
+      (fst (UnionFindCode.find x (db_forest db)))
+      (row_uses (db_row_store db))) as Htransfer.
+    change (DatabaseUses.bucket x (row_uses (db_row_store db)))
+      with (get_uses x db) in Htransfer.
+    rewrite get_uses_bucket in Htransfer.
     assert (Hcount : (db_npending db <= wmark db)%N).
     { eapply N.le_trans; [exact (inv_on_pending_bound db [] Hinv) | apply wmark_ids]. }
     pose proof (N_width_mono _ _ Hcount) as Hbits.
     pose proof (unit_width_budget db) as Hwidth.
     pose proof (unit_positive db) as Hunit.
-    assert (Hcoefficient : (64 <= k_pop)%N) by (unfold k_pop; nia).
-    assert (Hweight : (1 <= N.of_nat (work_weight db (bucket db x) + 1))%N) by lia.
-    assert (Hsmall : (T_pop_loser db <= 64 * N.of_nat (unit db))%N) by nia.
-    nia.
+    assert (Hid : Pos.size_nat x <= N.size_nat (wmark db)).
+    { change (N.size_nat (Npos x) <= N.size_nat (wmark db)).
+      apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    pose proof (work_weight_length db (bucket db x)) as Hwork.
+    set (U := N.of_nat (unit db)) in *.
+    set (W := N.of_nat (work_weight db (bucket db x))) in *.
+    set (M := DatabaseUseMap.c_map) in *.
+    set (F := UnionFindT.c_uf) in *.
+    assert (Hsum : (N.of_nat (Pos.size_nat x +
+      Pos.size_nat (fst (UnionFindCode.find x (db_forest db))) + 2) <= 2 * U)%N)
+      by (unfold U; lia).
+    assert (Hmaps : (8 * M * N.of_nat (Pos.size_nat x +
+      Pos.size_nat (fst (UnionFindCode.find x (db_forest db))) + 2) <=
+      16 * M * U)%N).
+    { replace (16 * M * U)%N with ((8 * M) * (2 * U))%N by ring.
+      apply N.mul_le_mono_l. exact Hsum. }
+    assert (Hlength : (N.of_nat (length (bucket db x) + 1) <= W + 1)%N).
+    { unfold W. lia. }
+    assert (Htransfer_small :
+      (DatabaseUses.T_transfer x (fst (UnionFindCode.find x (db_forest db)))
+        (row_uses (db_row_store db)) <= 16 * M * U + W + 1)%N).
+    { eapply N.le_trans; [exact Htransfer |].
+      replace (16 * M * U + W + 1)%N with (16 * M * U + (W + 1))%N by ring.
+      apply N.add_le_mono; [exact Hmaps | exact Hlength]. }
+    assert (Hcoefficient : (67 + 2 * F + 16 * M <= k_pop)%N).
+    { unfold k_pop. fold M F.
+      eapply N.le_trans with (m := (128 * (M + F + 1))%N).
+      - replace (128 * (M + F + 1))%N with (128 * M + 128 * F + 128)%N by ring.
+        lia.
+      - replace (128 * (M + 1) * (F + 1))%N with
+          (128 * (M * F + M + F + 1))%N by ring.
+        apply N.mul_le_mono_l. lia. }
+    assert (Hsize : (N.of_nat (N.size_nat (db_npending db)) <= U)%N)
+      by (unfold U; lia).
+    assert (Hcore : (T_pop_loser db <= (67 + 2 * F + 16 * M) * U + W)%N).
+    { replace ((67 + 2 * F + 16 * M) * U)%N with
+        (67 * U + 2 * F * U + 16 * M * U)%N by ring.
+      assert (Hconstant : (65 <= 66 * U)%N).
+      { replace (66 * U)%N with (65 * U + U)%N by ring.
+        replace 65%N with (65 * 1)%N at 1 by ring.
+        eapply N.le_trans; [apply N.mul_le_mono_l; exact Hunit |]. lia. }
+      lia. }
+    eapply N.le_trans; [exact Hcore |].
+    assert (Hcoefficient_unit : ((67 + 2 * F + 16 * M) * U <= k_pop * U)%N).
+    { apply N.mul_le_mono_r. exact Hcoefficient. }
+    assert (Hwork_unit : (W <= k_pop * W * U)%N).
+    { replace W with (W * 1)%N at 1 by ring.
+      eapply N.le_trans with (m := (W * U)%N).
+      - apply N.mul_le_mono_l. exact Hunit.
+      - replace (k_pop * W * U)%N with (k_pop * (W * U))%N by ring.
+        replace (W * U)%N with (1 * (W * U))%N at 1 by ring.
+        apply N.mul_le_mono_r. lia. }
+    replace (k_pop * N.of_nat (work_weight db (bucket db x) + 1) * U)%N with
+      (k_pop * W * U + k_pop * U)%N.
+    2: { unfold W. rewrite Nat2N.inj_add. cbn [N.of_nat Pos.of_succ_nat]. ring. }
+    lia.
   Qed.
   (** An empty pop reads the stored queue. *)
   Lemma T_pop_none_le : forall db, inv db -> pop_loser db = None ->
@@ -9476,8 +10511,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
   Proof. Admitted. (* STUB *)
 
-  (* STUB-CODE *)
-  Definition rebuild_measure : repair_state -> nat := fun _ => 0.
+  Definition rebuild_measure (s : repair_state) : nat :=
+    let db := fst s in
+    N.to_nat (npending db) + length (snd s) +
+      fold_right (fun xe n =>
+        (N.to_nat (N.log2 (ids db) -
+          N.log2 (class_size db (repr db (fst xe)))) + 1 + n)%nat)
+        0%nat (uses_entries db).
 
   (** Public well-formedness is the maintained invariant at an empty active batch. *)
   Lemma F1_inv_wf : forall db, wf db <-> inv db.
@@ -9494,7 +10534,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Direct bucket lookup agrees with the occurrence inventory. *)
   Lemma F4_bucket : forall db work x, inv_on db work -> get_uses x db = bucket db x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x _. apply get_uses_bucket.
+  Qed.
 
   (** An empty pop detects an empty pending queue. *)
   Lemma F4_pop_none : forall db, inv db -> (pop_loser db = None <-> queue db = []).
@@ -9553,7 +10595,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (db_pop_loser_layout db i current Hpop) as [_ [Hids _]].
       split; [now rewrite Hview | exact Hids].
     - injection Hstep as Hnext. subst next. cbn [fst].
-      destruct (repair_current_layout db f k) as [Hkind [_ Hids]]. now split.
+      destruct (db_repair_entry_layout db f k) as [Hkind [_ Hids]]. now split.
+  Qed.
+
+  Lemma db_repair_entry_cong : forall db f k, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall i j, cong (db_repair_entry f k db) i j <-> cong db i j.
+  Proof.
+    intros db f k Hagrees Htyped i j. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [o |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [reflexivity |].
+    pose proof (proj2 (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))) as Hview.
+    unfold cong. rewrite Hview. fold cong. split.
+    - apply repair_cong_backward. exact Hagrees.
+    - apply repair_cong_forward; assumption.
   Qed.
 
   (** Collision unions keep the same functional-dependency closure. *)
@@ -9573,9 +10632,42 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       injection Hstep as Hnext. subst next. cbn [fst].
       destruct (db_pop_loser_preserves db x current Hpop) as [_ Hview].
       unfold cong. now rewrite Hview.
-    - injection Hstep as Hnext. subst next. cbn [fst]. split.
-      + exact (repair_cong_backward db f k Hagrees i j).
-      + exact (repair_cong_forward db f k Hagrees Htyped i j).
+    - injection Hstep as Hnext. subst next. cbn [fst].
+      exact (db_repair_entry_cong db f k Hagrees Htyped i j).
+  Qed.
+
+  Lemma db_repair_entry_row_forward : forall db f key,
+    forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args output, row (view db) g args output ->
+    exists args' output', row (view (db_repair_entry f key db)) g args' output' /\
+      Forall2 (cell_rel (same (view (db_repair_entry f key db)))) args args' /\
+      out_le (db_repair_entry f key db) g
+        (option_map (canon (db_repair_entry f key db)) output) output'.
+  Proof.
+    intros db f key Hagrees Htyped g args output Hrow.
+    unfold db_repair_entry.
+    destruct (db_locate f key db) as [current |];
+      [| exists args, output; repeat split;
+        [exact Hrow | apply key_same_refl_forward |
+          exact (row_output_canon_le db g args output Hagrees (Htyped g args output Hrow))]].
+    destruct (row_get f current db) as [o |];
+      [| exists args, output; repeat split;
+        [exact Hrow | apply key_same_refl_forward |
+          exact (row_output_canon_le db g args output Hagrees (Htyped g args output Hrow))]].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) o) o));
+      [exists args, output; repeat split;
+        [exact Hrow | apply key_same_refl_forward |
+          exact (row_output_canon_le db g args output Hagrees (Htyped g args output Hrow))] |].
+    destruct (repair_row_forward db f current Hagrees Htyped g args output Hrow)
+      as [args' [output' [Hrow' [Hkeys Hout]]]].
+    destruct (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))
+      as [Hforest Hview].
+    exists args', output'. rewrite Hview. split; [exact Hrow' |].
+    split; [exact Hkeys |].
+    unfold out_le, canon, repr in *. rewrite Hforest, Hview. exact Hout.
   Qed.
 
   (** Every old row survives one step at an equivalent, possibly unfinished key. *)
@@ -9603,7 +10695,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         unfold out_le, canon, repr in Hout |- *. now rewrite Hview, Hforest.
     - change (db_rstep (db, (g, args) :: rest) = inl next) in Hstep.
       cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
-      exact (repair_row_forward db g args Hagrees Htyped f k o Hrow).
+      exact (db_repair_entry_row_forward db g args Hagrees Htyped f k o Hrow).
   Qed.
 
   (** Empty active and pending schedules leave no noncanonical row occurrence. *)
@@ -10217,6 +11309,42 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now rewrite Hview, Hforest.
   Qed.
 
+  Lemma forest_agrees_db_repair_entry : forall db f key,
+    forest_agrees db -> forest_agrees (db_repair_entry f key db).
+  Proof.
+    intros db f key Hforest. unfold db_repair_entry.
+    destruct (db_locate f key db) as [current |]; [| exact Hforest].
+    destruct (row_get f current db) as [output |]; [| exact Hforest].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hforest |].
+    destruct (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))
+      as [Hforest_frame Hview].
+    eapply forest_agrees_frame;
+      [exact Hforest_frame | now rewrite Hview |].
+    apply forest_agrees_repair. exact Hforest.
+  Qed.
+
+  Lemma lineage_db_repair_entry : forall initial db f key,
+    forest_agrees db -> lineage initial db ->
+    lineage initial (db_repair_entry f key db).
+  Proof.
+    intros initial db f key Hforest Hlineage. unfold db_repair_entry.
+    destruct (db_locate f key db) as [current |]; [| exact Hlineage].
+    destruct (row_get f current db) as [output |]; [| exact Hlineage].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hlineage |].
+    destruct (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))
+      as [Hforest_frame Hview].
+    eapply lineage_frame; [exact Hforest_frame | exact Hview |].
+    apply lineage_repair_current; assumption.
+  Qed.
+
   (** Removing a pending loser preserves every existing source-group witness exactly. *)
   Lemma lineage_pop_loser : forall initial db i db',
     db_pop_loser db = Some (i, db') -> lineage initial db -> lineage initial db'.
@@ -10253,8 +11381,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { apply (rebuild_preserves
         (fun current => forest_agrees current /\ lineage initial current)).
       - intros current f k [Hcurrent Hsources]. split.
-        + now apply forest_agrees_repair.
-        + now apply lineage_repair_current.
+        + now apply forest_agrees_db_repair_entry.
+        + now apply lineage_db_repair_entry.
       - intros current i next [Hcurrent Hsources] Hpop.
         destruct (db_pop_loser_preserves current i next Hpop) as [Hforest_frame Hview].
         split.
@@ -10281,7 +11409,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact (lineage_schedule initial db next Hstep Hlineage).
     - change (db_rstep (db, (f, k) :: rest) = inl next) in Hstep.
       cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
-      apply lineage_repair_current; [| exact Hlineage].
+      apply lineage_db_repair_entry; [| exact Hlineage].
       exact (inv_on_forest_agrees db ((f, k) :: rest) Hinv).
   Qed.
 
@@ -10651,6 +11779,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite Nat2N.inj_max, N2Nat.id in Hbinary. exact Hbinary.
   Qed.
 
+  Lemma db_repair_entry_root_doubling : forall db f key x,
+    UnionFind.wf (db_forest db) -> repr db x = x ->
+    repr (db_repair_entry f key db) x <> x ->
+    (2 * class_size db x <=
+      class_size (db_repair_entry f key db) (repr (db_repair_entry f key db) x))%N.
+  Proof.
+    intros db f key x Hwf Hfixed Hchanged.
+    unfold db_repair_entry in Hchanged |- *.
+    destruct (db_locate f key db) as [current |]; [| contradiction].
+    destruct (row_get f current db) as [output |]; [| contradiction].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [contradiction |].
+    pose proof (proj1 (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))) as Hforest.
+    assert (Hchanged_current : repr (repair_current f current db) x <> x).
+    { unfold repr in Hchanged |- *. rewrite <- Hforest. exact Hchanged. }
+    pose proof (repair_root_doubling db f current x Hwf Hfixed Hchanged_current)
+      as Hdouble.
+    unfold class_size, uf_state, repr in Hdouble |- *.
+    rewrite Hforest. exact Hdouble.
+  Qed.
+
   (** Collision unions also double the losing class. *)
   Lemma F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
     repr (fst s) x = x -> repr (fst s') x <> x ->
@@ -10665,7 +11817,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest _].
       unfold repr in Hfixed, Hchanged. rewrite Hforest in Hchanged. contradiction.
     - injection Hstep as Hnext. subst next. cbn [fst] in Hchanged |- *.
-      exact (repair_root_doubling db f k x
+      exact (db_repair_entry_root_doubling db f k x
         (inv_on_forest_wf db ((f, k) :: rest) Hinv) Hfixed Hchanged).
   Qed.
 
@@ -10679,7 +11831,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       injection Hstep as Hnext. subst next. cbn [fst].
       rewrite (unit_pop_loser db i current Hpop). reflexivity.
     - injection Hstep as Hnext. subst next. cbn [fst].
-      apply repair_current_unit_monotone.
+      apply db_repair_entry_unit_monotone.
   Qed.
 
   (** Loop credit includes the binary driver charge. *)
