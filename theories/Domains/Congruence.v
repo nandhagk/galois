@@ -911,6 +911,39 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
 
 
+  (** A canonical residue is already normalized modulo its own modulus. *)
+  Lemma canonical_residue_mod : forall w m r, strong_canonical w (C m r) ->
+    r mod m = r.
+  Proof.
+    intros w m r [[-> Hword] | [Hm Hr]].
+    - apply Z.mod_0_r.
+    - apply Z.mod_small. exact Hr.
+  Qed.
+
+  (** Ordered meet absorbs the narrower normalized input. *)
+  Lemma meet_absorbs : forall w a b, pleb w b a = true ->
+    pmeet w a b = congr_norm w b.
+  Proof.
+    intros w a b Horder.
+    pose proof (cong_norm_canonical w a) as Ha.
+    pose proof (cong_norm_canonical w b) as Hb.
+    unfold pleb in Horder. unfold pmeet.
+    destruct (congr_norm w a) as [| m r], (congr_norm w b) as [| n s];
+      try discriminate; try reflexivity.
+    apply cong_raw_leb_spec in Horder as [Hmn Hresidue].
+    assert (Hn : 0 <= n) by (destruct Hb as [[-> _] | [Hn _]]; lia).
+    assert (Hlcm : Z.lcm m n = n) by (apply Z.divide_lcm_eq_r; assumption).
+    assert (Hsm : s mod m = r mod m).
+    { apply Z.cong_iff_0. apply cong_mod_divide. exact Hresidue. }
+    assert (Hsn : s mod n = s mod n) by reflexivity.
+    pose proof (Z.combinecong_complete' s m n r s Hsm Hsn) as Hcompatible.
+    rewrite (proj2 (Z.eqb_eq _ _) Hcompatible), CongruenceCRT.combinecong_agrees.
+    pose proof (Z.combinecong_complete s m n r s Hsm Hsn) as Hcrt.
+    rewrite Hlcm, (canonical_residue_mod w n s Hb) in Hcrt.
+    rewrite <- Hcrt, Hlcm. apply cong_canonical_fixed. exact Hb.
+  Qed.
+
+
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
@@ -959,7 +992,11 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Horder. unfold pnarrow. rewrite meet_absorbs by exact Horder.
+    unfold pleb. rewrite cong_norm_idempotent.
+    split; [apply cong_raw_leb_refl | exact Horder].
+  Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof.
@@ -1006,10 +1043,30 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
   (** Meet refines the left payload. *)
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted. (* CONVERT: cong_meet_lower_left: The variable cong_norm_idempotent was not found. *)
+  Proof.
+    intros w a b.
+    unfold pleb, pmeet.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try reflexivity.
+    destruct (r mod Z.gcd m n =? s mod Z.gcd m n) eqn:Hcompatible; [|reflexivity].
+    rewrite CongruenceCRT.combinecong_agrees, cong_norm_idempotent.
+    eapply cong_raw_leb_trans; [apply cong_norm_raw_lower|].
+    apply cong_raw_leb_spec. split; [apply Z.divide_lcm_l|].
+    apply cong_mod_divide. apply Z.cong_iff_0.
+    exact (proj1 (Z.combinecong_sound m n r s (proj1 (Z.eqb_eq _ _) Hcompatible))).
+  Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    unfold pleb, pmeet.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try reflexivity.
+    destruct (r mod Z.gcd m n =? s mod Z.gcd m n) eqn:Hcompatible; [|reflexivity].
+    rewrite CongruenceCRT.combinecong_agrees, cong_norm_idempotent.
+    eapply cong_raw_leb_trans; [apply cong_norm_raw_lower|].
+    apply cong_raw_leb_spec. split; [apply Z.divide_lcm_r|].
+    apply cong_mod_divide. apply Z.cong_iff_0.
+    exact (proj2 (Z.combinecong_sound m n r s (proj1 (Z.eqb_eq _ _) Hcompatible))).
+  Qed.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
@@ -1030,7 +1087,18 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* CONVERT: cong_meet_sound: The variable cong_norm_gamma was not found. *)
+  Proof.
+    intros w a b z Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a z)) in Ha.
+    apply (proj2 (cong_norm_gamma w b z)) in Hb. unfold pmeet.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
+    destruct Ha as [Hword Hr], Hb as [_ Hs].
+    apply <- Z.cong_iff_0 in Hr. apply <- Z.cong_iff_0 in Hs.
+    pose proof (Z.combinecong_complete' z m n r s Hr Hs) as Hcompatible.
+    rewrite (proj2 (Z.eqb_eq _ _) Hcompatible).
+    rewrite CongruenceCRT.combinecong_agrees.
+    apply (proj2 (cong_norm_gamma w _ z)). split; [exact Hword|].
+    apply Z.cong_iff_0. rewrite Z.mod_combinecong_lcm. now apply Z.combinecong_complete.
+  Qed.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof.
@@ -1297,7 +1365,9 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Chinese remainder meet retains each shared integer. *)
   Lemma F5_crt_meet_sound : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply pgamma_meet.
+  Qed.
   (** The requested congruence rank is bounded by width plus two. *)
   Lemma F13_wrank_le : forall w a, (congr_wrank w a <= Pos.to_nat w + 2)%nat.
   Proof.
