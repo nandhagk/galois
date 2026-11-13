@@ -4091,7 +4091,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   Definition inv := valid.
-  Definition c_map : N := PTrieT.c_trie.
+  Definition c_map : N := (32 * (PTrieT.c_trie + V.c_key + 1))%N.
   Lemma inv_wf : forall a ix,
     wf a ix <-> inv ix /\ (forall u, mem ix u -> length u = a).
   Proof.
@@ -4110,10 +4110,20 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
 
   Lemma T_insert_step_le : forall ix n c,
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
-  Proof. Admitted. (* PLAN-DEFECT: eager Val encoding contributes V.T_encode; the fixed trie-only coefficient omits V.c_key. *)
+  Proof.
+    intros ix n c.
+    assert (Hcounter : Pos.size_nat (next (fst (ix, n))) <= width ix [c]).
+    { cbn [fst]. apply node_bits_width, Pos.le_refl. }
+    assert (Hcell : cell_bits V.encode c <= width ix [c]).
+    { apply tuple_cell_width. now left. }
+    pose proof (T_insert_step_budget (ix, n) c (width ix [c]) Hcounter Hcell) as Hstep.
+    time_unfold T_insert_step. time_cbn. unfold Datatypes.T_fst, c_map.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    set (bits := N.of_nat (width ix [c] + 1)) in *. lia.
+  Qed.
 
-  (** Edge maps use the shared binary trie contracts. *)
-  Lemma c_map_source : c_map = PTrieT.c_trie.
+  (** The step constant covers the edge-map operations, the cell encoding and the counters. *)
+  Lemma c_map_source : c_map = (32 * (PTrieT.c_trie + V.c_key + 1))%N.
   Proof.
     reflexivity.
   Qed.
@@ -4127,13 +4137,29 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma T_insert_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
     (T_insert_step_st (fold_left insert_step_st pre (start ix)) c <=
       4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
-  Proof. Admitted. (* PLAN-DEFECT: even the empty valid prefix eagerly pays V.T_encode, which is absent from the fixed trie-only coefficient. *)
+  Proof.
+    intros ix r pre c suf _ Hsplit. eapply N.le_trans.
+    - apply (T_insert_step_budget _ c (width ix r)).
+      + apply insert_prefix_counter_bits. rewrite Hsplit, length_app. cbn [length]. lia.
+      + apply tuple_cell_width. rewrite Hsplit. apply in_or_app. right. now left.
+    - unfold c_map. set (cost := (PTrieT.c_trie + V.c_key + 1)%N).
+      set (bits := N.of_nat (width ix r + 1)). lia.
+  Qed.
 
   (** Each removal step uses the width of the complete original walk. *)
   Lemma T_remove_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
     (T_remove_step_st (fold_left remove_step_st pre (start ix)) c <=
       4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
-  Proof. Admitted. (* PLAN-DEFECT: even an absent edge in the empty valid prefix eagerly pays V.T_encode, omitted by the fixed trie-only coefficient. *)
+  Proof.
+    intros ix r pre c suf Hvalid Hsplit. eapply N.le_trans.
+    - apply (T_remove_step_budget _ c (width ix r)).
+      + apply edges_ok_remove_walk. exact (proj1 Hvalid).
+      + apply degrees_ok_remove_walk. exact (proj1 (proj2 Hvalid)).
+      + rewrite remove_walk_counter. cbn [start fst]. apply node_bits_width, Pos.le_refl.
+      + apply tuple_cell_width. rewrite Hsplit. apply in_or_app. right. now left.
+    - unfold c_map. set (cost := (PTrieT.c_trie + V.c_key + 1)%N).
+      set (bits := N.of_nat (width ix r + 1)). lia.
+  Qed.
 
   (** Initialization and both finishing passes fit the original walk budget. *)
   Lemma T_walk_ends : forall r ix, inv ix ->
@@ -4185,12 +4211,11 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Proof.
     intros r ix Hvalid. eapply N.le_trans; [apply T_insert_total_budget; exact Hvalid |].
     unfold c_map, k_walk.
-    replace (N.of_nat (length r + 1) *
-      ((4 * PTrieT.c_trie + 512 * (PTrieT.c_trie + V.c_key + 1)) *
-        N.of_nat (width ix r + 1) + 4))%N with
-      (512 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (length r + 1) *
-        N.of_nat (width ix r + 1) +
-        N.of_nat (length r + 1) * (4 * PTrieT.c_trie * N.of_nat (width ix r + 1) + 4))%N by ring.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N).
+    set (amount := N.of_nat (length r + 1)).
+    set (bits := N.of_nat (width ix r + 1)).
+    replace (amount * ((4 * (32 * cost) + 512 * cost) * bits + 4))%N
+      with (512 * cost * amount * bits + (128 * cost * amount * bits + 4 * amount))%N by ring.
     apply N.le_add_r.
   Qed.
 
@@ -4201,12 +4226,11 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Proof.
     intros r ix Hvalid. eapply N.le_trans; [apply T_remove_total_budget; exact Hvalid |].
     unfold c_map, k_walk.
-    replace (N.of_nat (length r + 1) *
-      ((4 * PTrieT.c_trie + 512 * (PTrieT.c_trie + V.c_key + 1)) *
-        N.of_nat (width ix r + 1) + 4))%N with
-      (512 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (length r + 1) *
-        N.of_nat (width ix r + 1) +
-        N.of_nat (length r + 1) * (4 * PTrieT.c_trie * N.of_nat (width ix r + 1) + 4))%N by ring.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N).
+    set (amount := N.of_nat (length r + 1)).
+    set (bits := N.of_nat (width ix r + 1)).
+    replace (amount * ((4 * (32 * cost) + 512 * cost) * bits + 4))%N
+      with (512 * cost * amount * bits + (128 * cost * amount * bits + 4 * amount))%N by ring.
     apply N.le_add_r.
   Qed.
 

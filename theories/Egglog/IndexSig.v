@@ -151,7 +151,7 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   Parameter insert_step : t -> positive -> cell V.t -> t.
   Parameter T_insert_step : t -> positive -> cell V.t -> N.
   Parameter c_map : N.
-  (** A path step uses at most four map operations and constant bookkeeping. *)
+  (** A path step charges four units of the step constant. *)
   Parameter T_insert_step_le : forall ix n c,
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
   Definition walk_state := (t * positive)%type.
@@ -161,8 +161,8 @@ Module Type INDEX_PLAN (V : VALUE_T) (Import X : INDEX_T V).
   Parameter T_start : t -> N.
   Parameter T_insert_step_st T_remove_step_st : walk_state -> cell V.t -> N.
   Parameter T_insert_finish T_remove_finish : list (cell V.t) -> t -> walk_state -> N.
-  (** Edge maps use the shared binary trie contracts. *)
-  Parameter c_map_source : c_map = PTrieT.c_trie.
+  (** The step constant covers the edge-map operations, the cell encoding and the counters. *)
+  Parameter c_map_source : c_map = (32 * (PTrieT.c_trie + V.c_key + 1))%N.
   Parameter k_walk : N.
   (** The public constant absorbs the aggregate path and wrapper charges. *)
   Parameter c_ix_walk : (4 * c_map + 4 + k_walk <= c_ix)%N.
