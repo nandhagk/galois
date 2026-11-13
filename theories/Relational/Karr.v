@@ -4,7 +4,7 @@
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
 From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring Psatz Permutation.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -19,10 +19,16 @@ Module List.
 End List.
 
 Module ListDef.
+  TimeFun seq.
   TimeFun repeat.
   TimeFun firstn.
   TimeFun skipn.
 End ListDef.
+
+Module Nat.
+  TimeFun Nat.even.
+  TimeFun Nat.min.
+End Nat.
 
 Fixpoint karr_list_eqb {A} (eqb : A -> A -> bool) (xs ys : list A) : bool :=
   match xs, ys with
@@ -265,6 +271,275 @@ Fixpoint karr_unit (length index : nat) : list Z :=
   end.
 
 TimeFun karr_unit.
+
+(** Every stored integer is part of the augmented elimination matrix. *)
+Definition karr_row_entries (r : karr_row) : list Z :=
+  kcoeff r ++ kright r :: kweight r ++ [kscale r].
+
+TimeFun karr_row_entries.
+
+(** The instrumented run records matrix states before and after every elimination stage. *)
+Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
+    : list karr_row * list Z :=
+  let here := flat_map karr_row_entries rs in
+  match cols with
+  | 0 => (rs, here)
+  | S cols =>
+    match karr_pivot rs with
+    | None =>
+      let '(result, history) :=
+        karr_bareiss_record cols previous (map karr_tail rs) in
+      let output := map karr_restore result in
+      (output, here ++ history ++ flat_map karr_row_entries output)
+    | Some (p, rest) =>
+      let a := karr_head p in
+      let reduced := map (fun r => karr_reduce previous a (karr_head r) p r) rest in
+      let '(result, history) := karr_bareiss_record cols a (map karr_tail reduced) in
+      let output := p :: map karr_restore result in
+      (output, here ++ flat_map karr_row_entries reduced ++ history ++
+        flat_map karr_row_entries output)
+    end
+  end.
+
+TimeFun karr_bareiss_record.
+
+(** Recording the execution leaves its resulting basis unchanged. *)
+Lemma karr_bareiss_record_value : forall cols previous rs,
+  fst (karr_bareiss_record cols previous rs) = karr_bareiss cols previous rs.
+Proof.
+  induction cols as [|cols IH]; intros previous rs; [reflexivity|].
+  cbn [karr_bareiss_record karr_bareiss].
+  destruct (karr_pivot rs) as [[p rest]|].
+  - rewrite map_map.
+    destruct (karr_bareiss_record cols (karr_head p)
+      (map (fun r => karr_tail (karr_reduce previous (karr_head p) (karr_head r) p r))
+        rest)) as [result history] eqn:Hrun.
+    cbn [fst]. pose proof (IH (karr_head p)
+      (map (fun r => karr_tail (karr_reduce previous (karr_head p) (karr_head r) p r))
+        rest)) as Hagrees.
+    rewrite Hrun in Hagrees. cbn [fst] in Hagrees. now rewrite Hagrees.
+  - destruct (karr_bareiss_record cols previous (map karr_tail rs))
+      as [result history] eqn:Hrun.
+    cbn [fst]. pose proof (IH previous (map karr_tail rs)) as Hagrees.
+    rewrite Hrun in Hagrees. cbn [fst] in Hagrees. now rewrite Hagrees.
+Qed.
+
+(** Initial matrix entries occur in the recorded execution. *)
+Lemma karr_bareiss_record_initial : forall cols previous rs z,
+  In z (flat_map karr_row_entries rs) -> In z (snd (karr_bareiss_record cols previous rs)).
+Proof.
+  intros [|cols] previous rs z Hin; cbn [karr_bareiss_record snd]; [exact Hin|].
+  destruct (karr_pivot rs) as [[p rest]|].
+  - destruct (karr_bareiss_record cols (karr_head p)
+      (map karr_tail
+        (map (fun r => karr_reduce previous (karr_head p) (karr_head r) p r) rest))).
+    cbn [snd]. apply in_or_app. now left.
+  - destruct (karr_bareiss_record cols previous (map karr_tail rs)).
+    cbn [snd]. apply in_or_app. now left.
+Qed.
+
+(** Final matrix entries occur in the recorded execution. *)
+Lemma karr_bareiss_record_final : forall cols previous rs z,
+  In z (flat_map karr_row_entries (karr_bareiss cols previous rs)) ->
+  In z (snd (karr_bareiss_record cols previous rs)).
+Proof.
+  intros cols previous rs z Hin. rewrite <- karr_bareiss_record_value in Hin.
+  destruct cols as [|cols]; cbn [karr_bareiss_record fst snd] in *; [exact Hin|].
+  destruct (karr_pivot rs) as [[p rest]|].
+  - destruct (karr_bareiss_record cols (karr_head p)
+      (map karr_tail
+        (map (fun r => karr_reduce previous (karr_head p) (karr_head r) p r) rest)));
+      cbn [fst snd] in *.
+    apply in_or_app. right. apply in_or_app. right. apply in_or_app. now right.
+  - destruct (karr_bareiss_record cols previous (map karr_tail rs)); cbn [fst snd] in *.
+    apply in_or_app. right. apply in_or_app. now right.
+Qed.
+
+(** Removing one column gives the smaller matrix used by Laplace expansion. *)
+Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
+  match index, row with
+  | _, [] => []
+  | 0, _ :: row => row
+  | S index, z :: row => z :: karr_delete index row
+  end.
+
+TimeFun karr_delete.
+
+(** Laplace expansion defines determinants independently of the elimination program. *)
+Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
+  match order with
+  | 0 => 1%Z
+  | S order =>
+    match rows with
+    | [] => 0%Z
+    | row :: rows =>
+      fold_right Z.add 0%Z (map (fun index =>
+        ((if Nat.even index then 1 else -1) * karr_nth index row *
+          karr_determinant order (map (karr_delete index) rows))%Z)
+        (seq 0 (S order)))
+    end
+  end.
+
+TimeFun karr_determinant.
+
+(** Choosing ordered subsequences enumerates minors without reordering their rows. *)
+Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
+  match count with
+  | 0 => [[]]
+  | S count =>
+    match xs with
+    | [] => []
+    | x :: xs => map (fun ys => x :: ys) (karr_choose count xs) ++
+        karr_choose (S count) xs
+    end
+  end.
+
+TimeFun karr_choose.
+
+(** Choosing no rows gives the unique empty selection. *)
+Lemma karr_choose_zero : forall A (xs : list A), karr_choose 0 xs = [[]].
+Proof.
+  intros A [|x xs]; reflexivity.
+Qed.
+
+(** Every enumerated choice has exactly its requested order. *)
+Lemma karr_choose_length : forall A (xs : list A) order selected,
+  In selected (karr_choose order xs) -> length selected = order.
+Proof.
+  intros A xs. induction xs as [|x xs IH]; intros [|order] selected Hin.
+  - cbn [karr_choose In] in Hin. destruct Hin as [Hsame|Hin]; [now subst|contradiction].
+  - contradiction.
+  - rewrite karr_choose_zero in Hin. destruct Hin as [Hsame|Hin]; [now subst|contradiction].
+  - cbn [karr_choose] in Hin. apply in_app_or in Hin as [Hin|Hin].
+    + apply in_map_iff in Hin as [tail [Hsame Htail]]. subst selected.
+      cbn [length]. f_equal. now apply IH.
+    + now apply IH.
+Qed.
+
+(** Choosing one row enumerates exactly the singleton rows. *)
+Lemma karr_choose_one : forall A (xs : list A),
+  karr_choose 1 xs = map (fun x => [x]) xs.
+Proof.
+  intros A xs. induction xs as [|x xs IH]; [reflexivity|].
+  cbn [karr_choose map]. rewrite karr_choose_zero, IH. reflexivity.
+Qed.
+
+(** A selected row and column set determines one square submatrix. *)
+Definition karr_submatrix (columns : list nat) (rows : list (list Z)) : list (list Z) :=
+  map (fun row => map (fun index => karr_nth index row) columns) rows.
+
+TimeFun karr_submatrix.
+
+(** Selecting columns fixes every output row width. *)
+Lemma karr_submatrix_width : forall columns rows,
+  Forall (fun row => length row = length columns) (karr_submatrix columns rows).
+Proof.
+  intros columns rows. unfold karr_submatrix. apply Forall_map.
+  apply Forall_forall. intros row _. apply length_map.
+Qed.
+
+(** Signed minors account for the row exchanges made when selecting a pivot. *)
+Definition karr_signed_minors (width : nat) (rows : list (list Z)) : list Z :=
+  flat_map (fun order =>
+    flat_map (fun selected =>
+      flat_map (fun columns =>
+        let d := karr_determinant order (karr_submatrix columns selected) in
+        match order with
+        | 0 | 1 => [d]
+        | S (S _) => [d; (-d)%Z]
+        end)
+        (karr_choose order (seq 0 width)))
+      (karr_choose order rows))
+    (seq 0 (S (Nat.min (length rows) width))).
+
+TimeFun karr_signed_minors.
+
+(** The order-one determinant is its sole entry. *)
+Lemma karr_determinant_one : forall z, karr_determinant 1 [[z]] = z.
+Proof.
+  intro z. cbn [karr_determinant karr_submatrix karr_delete karr_nth
+    seq map fold_right Nat.even]. ring.
+Qed.
+
+(** A successful list lookup agrees with the dense integer accessor. *)
+Lemma karr_nth_error_value : forall index row z,
+  nth_error row index = Some z -> karr_nth index row = z.
+Proof.
+  induction index as [|index IH]; intros [|x row] z Hget;
+    cbn [nth_error karr_nth] in *; try discriminate.
+  - now injection Hget.
+  - now apply IH.
+Qed.
+
+(** Every actual matrix entry is an independently enumerated order-one minor. *)
+Lemma karr_signed_minors_entry : forall width rows row z,
+  In row rows -> length row <= width -> In z row ->
+  In z (karr_signed_minors width rows).
+Proof.
+  intros width rows row z Hrow Hwidth Hz.
+  apply In_nth_error in Hz as [index Hget].
+  assert (Hindex : index < length row).
+  { apply nth_error_Some. rewrite Hget. discriminate. }
+  assert (Hrows : 0 < length rows).
+  { destruct rows; [contradiction|cbn; lia]. }
+  assert (Horder : 1 <= Nat.min (length rows) width).
+  { apply Nat.min_glb; lia. }
+  unfold karr_signed_minors. apply in_flat_map. exists 1. split.
+  - apply in_seq. lia.
+  - apply in_flat_map. exists [row]. split.
+    + rewrite karr_choose_one. apply in_map_iff. exists row. now split.
+    + apply in_flat_map. exists [index]. split.
+      * rewrite karr_choose_one. apply in_map_iff. exists index. split; [reflexivity|].
+        apply in_seq. lia.
+      * cbn [karr_submatrix map]. rewrite karr_determinant_one.
+        rewrite (karr_nth_error_value _ _ _ Hget). now left.
+Qed.
+
+(** A certificate unit vector has the declared source-row width. *)
+Lemma karr_unit_length : forall total index, length (karr_unit total index) = total.
+Proof.
+  induction total as [|total IH]; intros [|index]; cbn [karr_unit length];
+    try reflexivity.
+  - now rewrite repeat_length.
+  - now rewrite IH.
+Qed.
+
+(** The order-two determinant has the usual cross-product formula. *)
+Lemma karr_determinant_two : forall a b c d,
+  karr_determinant 2 [[a; b]; [c; d]] = (a * d - b * c)%Z.
+Proof.
+  intros a b c d. cbn [karr_determinant karr_delete karr_nth seq map fold_right
+    Nat.even]. ring.
+Qed.
+
+(** The order-three determinant agrees with the six signed permutation products. *)
+Lemma karr_determinant_three : forall a b c d e f g h i,
+  karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]] =
+    (a * e * i + b * f * g + c * d * h - c * e * g - b * d * i - a * f * h)%Z.
+Proof.
+  intros a b c d e f g h i. cbn [karr_determinant karr_delete karr_nth seq map fold_right
+    Nat.even]. ring.
+Qed.
+
+(** The first nontrivial Bareiss division is the three-row Sylvester identity. *)
+Lemma karr_sylvester_three : forall a b c d e f g h i,
+  ((a * e - b * d) * (a * i - c * g) -
+    (a * f - c * d) * (a * h - b * g))%Z =
+    (a * karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]])%Z.
+Proof.
+  intros a b c d e f g h i. rewrite karr_determinant_three. ring.
+Qed.
+
+(** Dividing the three-row cross product by a nonzero first pivot is exact. *)
+Lemma karr_sylvester_three_quotient : forall a b c d e f g h i,
+  a <> 0%Z ->
+  (((a * e - b * d) * (a * i - c * g) -
+    (a * f - c * d) * (a * h - b * g)) / a)%Z =
+    karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]].
+Proof.
+  intros a b c d e f g h i Hnonzero. rewrite karr_sylvester_three, Z.mul_comm.
+  now apply Z.div_mul.
+Qed.
 
 Definition karr_zero (r : karr_row) : bool := forallb (Z.eqb 0) (kcoeff r).
 
@@ -4436,7 +4711,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun range.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. lia.
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -4462,7 +4739,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold T_narrow. unfold c_lat. lia.
+  Qed.
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma range_size : forall e s,
@@ -5612,12 +5891,69 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (forall i r, nth_error P i = Some r -> exists x a, In (x, a) (lhs r) /\ a <> 0%Z /\
       forall j s, nth_error P j = Some s -> i <> j ->
         forall b, In (x, b) (lhs s) -> b = 0%Z).
-  (* STUB-CODE *)
-  Definition bareiss_entries (_ : list (lcons X.t)) : list Z := nil.
-  (* STUB-CODE *)
-  Definition input_minors (_ : list (lcons X.t)) : list Z := nil.
+  (** The augmented source matrix includes the identity certificate columns. *)
+  Definition bareiss_seeds (P : list (lcons X.t)) : list karr_row :=
+    seed_rows (variables P) (length P) 0 (map normalize_row P).
+  TimeFun bareiss_seeds.
+
+  (** Entries are collected from the actual normalized equality-elimination run. *)
+  Definition bareiss_entries (P : list (lcons X.t)) : list Z :=
+    snd (karr_bareiss_record (length (variables P)) 1 (bareiss_seeds P)).
+
+  (** Input minors use an independent Laplace expansion of the augmented seed matrix. *)
+  Definition input_minors (P : list (lcons X.t)) : list Z :=
+    karr_signed_minors (length (variables P) + length P + 2)
+      (map karr_row_entries (bareiss_seeds P)).
   TimeFun bareiss_entries.
   TimeFun input_minors.
+
+  (** Instrumentation returns the same basis used by contradiction detection. *)
+  Lemma bareiss_record_basis : forall P,
+    fst (karr_bareiss_record (length (variables P)) 1 (bareiss_seeds P)) =
+      equality_basis (variables P) P.
+  Proof.
+    intro P. apply karr_bareiss_record_value.
+  Qed.
+
+  (** Every seed row has coefficient, RHS, multiplier and scale columns of fixed width. *)
+  Lemma seed_entries_width : forall xs total index P,
+    Forall (fun r => length (karr_row_entries r) = length xs + total + 2)
+      (seed_rows xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [constructor|].
+    cbn [seed_rows]. destruct (lrel r); [constructor|apply IH].
+    - unfold karr_row_entries. cbn [kcoeff kright kweight kscale length].
+      rewrite !length_app. cbn [length]. rewrite length_app, karr_unit_length. cbn [length].
+      unfold dense. rewrite length_map. lia.
+    - apply IH.
+  Qed.
+
+  (** Every initial augmented entry is both traced and an input minor. *)
+  Lemma bareiss_initial_entry : forall P r z,
+    In r (bareiss_seeds P) -> In z (karr_row_entries r) ->
+    In z (bareiss_entries P) /\ In z (input_minors P).
+  Proof.
+    intros P r z Hr Hz. split.
+    - unfold bareiss_entries. apply karr_bareiss_record_initial.
+      apply in_flat_map. now exists r.
+    - unfold input_minors. apply karr_signed_minors_entry with (row := karr_row_entries r).
+      + now apply in_map.
+      + unfold bareiss_seeds in Hr.
+        pose proof (proj1 (Forall_forall _ _)
+          (seed_entries_width (variables P) (length P) 0 (map normalize_row P)) r Hr) as Hwidth.
+        rewrite Hwidth. reflexivity.
+      + exact Hz.
+  Qed.
+
+  (** Every final basis entry occurs in the trace. *)
+  Lemma bareiss_basis_entry : forall P r z,
+    In r (equality_basis (variables P) P) -> In z (karr_row_entries r) ->
+    In z (bareiss_entries P).
+  Proof.
+    intros P r z Hr Hz. unfold bareiss_entries. apply karr_bareiss_record_final.
+    apply in_flat_map. exists r. split; [exact Hr|exact Hz].
+  Qed.
   Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   Proof.
@@ -5639,7 +5975,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact (proj1 (Forall_forall _ _) (Hsemantic v Hfull) target Hin).
   Qed.
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: general Sylvester and initialized-run divisibility invariant. *)
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
   Proof.
     reflexivity.
@@ -5686,7 +6022,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T1_narrow : forall a b,
     (T_narrow a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold T_narrow. unfold k_karr, lat. nia.
+  Qed.
   Lemma F_size : forall s, size s = lat (2 * mu s).
   Proof.
     reflexivity.

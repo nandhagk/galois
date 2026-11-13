@@ -244,3 +244,42 @@ Example canceled_private_pivots_leave_the_real_equations :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** The minor model uses a determinant independent of the elimination recurrence. *)
+Example laplace_determinant_of_coupled_coefficients :
+  karr_determinant 3 [[2; 1; 1]; [1; 3; 2]; [3; 0; 4]] = 17.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition coupled_seeds : list karr_row :=
+  Equalities.seed_rows (Equalities.variables coupled) (length coupled) 0
+    (map Equalities.normalize_row coupled).
+
+Example instrumented_bareiss_returns_the_actual_basis :
+  fst (karr_bareiss_record 3 1 coupled_seeds) =
+    Equalities.equality_basis (Equalities.variables coupled) coupled.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example coupled_trace_entries_are_independent_augmented_minors :
+  forallb (fun z => existsb (Z.eqb z)
+    (karr_signed_minors 8 (map karr_row_entries coupled_seeds)))
+    (snd (karr_bareiss_record 3 1 coupled_seeds)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition exchanged_negative_seeds : list karr_row :=
+  [KRow [0; 2; 1] 3 [1; 0; 0] 0;
+   KRow [-3; 0; -2] (-1) [0; 1; 0] 0;
+   KRow [-1; -1; 0] (-3) [0; 0; 1] 0].
+
+Example exchanged_negative_trace_entries_are_independent_augmented_minors :
+  forallb (fun z => existsb (Z.eqb z)
+    (karr_signed_minors 8 (map karr_row_entries exchanged_negative_seeds)))
+    (snd (karr_bareiss_record 3 1 exchanged_negative_seeds)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
