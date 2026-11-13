@@ -4413,9 +4413,431 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun range_candidate.
   TimeFun range_linear.
   TimeFun range.
+  (** The number of set bits pays for carry chains in nonnegative accumulation. *)
+  Fixpoint poly_mul_ones_count (p : positive) : N :=
+    match p with
+    | xI q => (poly_mul_ones_count q + 1)%N
+    | xO q => poly_mul_ones_count q
+    | xH => 1%N
+    end.
+
+  (** A positive integer has no more set bits than binary digits. *)
+  Lemma poly_mul_ones_count_le : forall p, (poly_mul_ones_count p <= N.of_nat (Pos.size_nat p))%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_cbn; lia.
+  Qed.
+
+  (** A successor pays for every carry by removing set bits. *)
+  Lemma poly_T_succ_ones : forall p,
+    (Pos.T_succ p + poly_mul_ones_count (Pos.succ p) <= poly_mul_ones_count p + 2)%N.
+  Proof.
+    induction p as [p IH|p IH|]; time_unfold Pos.T_succ; time_cbn; lia.
+  Qed.
+
+  (** Addition charges the first operand's digits and the change of set-bit potential. *)
+  Lemma poly_T_add_ones_both : forall p q,
+    (Pos.T_add p q + poly_mul_ones_count (Pos.add p q) <=
+      3 * N.of_nat (Pos.size_nat p) + poly_mul_ones_count q + 3)%N /\
+    (Pos.T_add_carry p q + poly_mul_ones_count (Pos.add_carry p q) <=
+      3 * N.of_nat (Pos.size_nat p) + poly_mul_ones_count q + 3)%N.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intros [q|q|];
+      time_unfold Pos.T_add; time_unfold Pos.T_add_carry; time_cbn;
+      try specialize (IH q);
+      try pose proof (poly_T_succ_ones p); try pose proof (poly_T_succ_ones q);
+      try pose proof (poly_mul_ones_count_le p); try pose proof (poly_mul_ones_count_le q); lia.
+  Qed.
+
+  (** Shift-and-add multiplication amortizes its internal carry chains. *)
+  Lemma poly_T_mul_ones : forall p q,
+    (Pos.T_mul p q + poly_mul_ones_count (Pos.mul p q) <=
+      6 * N.of_nat (Pos.size_nat p) * (N.of_nat (Pos.size_nat q) + 1) + poly_mul_ones_count q)%N.
+  Proof.
+    intro p. induction p as [p IH|p IH|]; intro q;
+      time_unfold Pos.T_mul; time_cbn; try specialize (IH q).
+    - pose proof (proj1 (poly_T_add_ones_both q (xO (Pos.mul p q)))) as Hadd.
+      time_cbn_all. nia.
+    - nia.
+    - nia.
+  Qed.
+
+  (** Positive multiplication is bilinear in operand bit lengths. *)
+  Lemma poly_T_pos_mul_bilinear : forall p q,
+    (Pos.T_mul p q <=
+      7 * N.of_nat (Pos.size_nat p) * (N.of_nat (Pos.size_nat q) + 1))%N.
+  Proof.
+    intros p q. pose proof (poly_T_mul_ones p q) as Hmul.
+    pose proof (poly_mul_ones_count_le q) as Hones.
+    pose proof (Pos.size_nat_pos p) as Hpositive. nia.
+  Qed.
+
+  (** Signed multiplication has the same bilinear bound with its sign dispatch. *)
+  Lemma poly_T_Z_mul_bilinear : forall x y,
+    (Z.T_mul x y <=
+      8 * N.of_nat (Z.size_nat x + 1) * N.of_nat (Z.size_nat y + 1))%N.
+  Proof.
+    intros [|p|p] [|q|q]; time_unfold Z.T_mul; time_cbn;
+      try pose proof (poly_T_pos_mul_bilinear p q); nia.
+  Qed.
+
+  (** Every stored accumulator coefficient fits one common bit budget. *)
+  Definition poly_accum_values_bits (m : ptrie (X.t * Z)) (bits : nat) : Prop :=
+    forall key p, PTrieCode.get key m = Some p -> Z.size_nat (snd p) <= bits.
+
+  (** A lookup in a bounded accumulator has the same coefficient-width bound. *)
+  Lemma poly_previous_bits : forall m bits x,
+    poly_accum_values_bits m bits -> Z.size_nat (poly_previous m x) <= bits.
+  Proof.
+    intros m bits x Hbits. unfold poly_previous.
+    destruct (PTrieCode.get (X.encode x) m) as [p|] eqn:Hget.
+    - exact (Hbits _ p Hget).
+    - change (0 <= bits). lia.
+  Qed.
+
+  (** One raw insertion needs at most one extra bit beyond a shared input bound. *)
+  Lemma poly_add_term_values_bits : forall m p bits,
+    poly_accum_values_bits m bits -> Z.size_nat (snd p) <= bits ->
+    poly_accum_values_bits (poly_add_term X.encode m p) (bits + 1).
+  Proof.
+    intros m p bits Hvalues Hp key q Hget.
+    change (PTrieCode.get key (PTrieCode.set (X.encode (fst p))
+      (fst p, (poly_previous m (fst p) + snd p)%Z) m) = Some q) in Hget.
+    destruct (Pos.eq_dec key (X.encode (fst p))) as [Heq|Hneq].
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Hsame. subst q.
+      cbn [snd]. pose proof (poly_size_add (poly_previous m (fst p)) (snd p)).
+      pose proof (poly_previous_bits m bits (fst p) Hvalues). lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      pose proof (Hvalues key q Hget). lia.
+  Qed.
+
+  (** Raw accumulation grows its uniform coefficient budget by at most one per occurrence. *)
+  Lemma poly_accum_raw_bits : forall xs m bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    poly_accum_values_bits m bits ->
+    poly_accum_values_bits (fold_left (poly_add_term X.encode) xs m) (bits + length xs).
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m bits Hsizes Hvalues;
+      cbn [fold_left length].
+    - now rewrite Nat.add_0_r.
+    - inversion Hsizes as [|q qs Hp Htail]; subst q qs.
+      replace (bits + S (length xs)) with (bits + 1 + length xs) by lia.
+      apply (IH (poly_add_term X.encode m p) (bits + 1)).
+      + eapply Forall_impl; [|exact Htail]. intros q Hq. cbn in Hq. lia.
+      + now apply poly_add_term_values_bits.
+  Qed.
+
+  (** The remaining traversal length pays for the increasing partial-sum widths. *)
+  Lemma T_poly_accum_raw : forall xs m keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs -> poly_accum_values_bits m bits ->
+    (List.T_fold_left (poly_add_term X.encode) (T_poly_add_term X.encode X.T_encode)
+      xs m <= (poly_add_factor + 1) * N.of_nat (length xs) *
+        N.of_nat (keys + 2 * bits + 2 * length xs + 1) + 1)%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys bits Hsizes Hvalues.
+    - time_unfold List.T_fold_left. cbn [length]. nia.
+    - inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      assert (Hnext : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+        Z.size_nat (snd p) <= bits + 1) xs).
+      { eapply Forall_impl; [|exact Htail]. intros q [Hqkey Hqbits]. split; lia. }
+      pose proof (poly_add_term_values_bits m p bits Hvalues Hbits) as Hnewvalues.
+      specialize (IH (poly_add_term X.encode m p) keys (bits + 1) Hnext Hnewvalues).
+      pose proof (T_poly_add_term_bounded m p keys bits bits Hkey Hbits
+        (poly_previous_bits m bits (fst p) Hvalues)) as Hhead.
+      time_unfold List.T_fold_left. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  Definition poly_raw_normal_factor : N :=
+    (4 * (poly_add_factor + 1) + 6 * PTrieT.k_fold + 16)%N.
+
+  (** Raw normalization is quadratic in the input length and linear in its initial widths. *)
+  Lemma T_poly_normal_raw : forall xs keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (T_poly_normal_coef X.encode X.T_encode xs <=
+      poly_raw_normal_factor * N.of_nat (length xs + 1) *
+        N.of_nat (keys + 2 * bits + 2 * length xs + 1))%N.
+  Proof.
+    intros xs keys bits Hsizes.
+    assert (Hempty : poly_accum_values_bits PTrieCode.empty bits).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (T_poly_accum_raw xs PTrieCode.empty keys bits Hsizes Hempty) as Haccum.
+    set (tr := fold_left (poly_add_term X.encode) xs PTrieCode.empty).
+    assert (Hkeys : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) xs).
+    { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
+    pose proof (poly_accum_nodes xs PTrieCode.empty keys Hkeys) as Hnodes.
+    change (PTrie.nodes tr <= length xs * keys) in Hnodes.
+    pose proof (PTrieT.T9_fold_values (X.t * Z) (list (X.t * Z))
+      poly_normal_keep T_poly_normal_keep tr nil 5 T_poly_normal_keep_le) as Hfold.
+    time_unfold (@T_poly_normal_coef). fold tr.
+    change (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc) with poly_normal_keep.
+    unfold poly_raw_normal_factor. time_simpl.
+    change (fun (acc : PTrieCode.t (X.t * Z)) (p : X.t * Z) =>
+      T_poly_add_term X.encode X.T_encode acc p) with
+      (T_poly_add_term X.encode X.T_encode).
+    change (fun (_ : list (X.t * Z)) (p : X.t * Z) =>
+      (1 + (1 + Z.T_eqb (snd p) 0))%N) with T_poly_normal_keep.
+    nia.
+  Qed.
+
+  (** A raw repeated-key coefficient gains at most one bit per additional occurrence. *)
+  Lemma poly_raw_coefficient_bits : forall x xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Z.size_nat (C.coef_of x xs) <= length xs + bits.
+  Proof.
+    intros x xs. induction xs as [|[y a] xs IH]; intros bits Hsizes.
+    - change (0 <= 0 + bits). lia.
+    - inversion Hsizes as [|p ps Ha Htail]; subst p ps.
+      rewrite coef_of_cons. cbn [length]. destruct (X.eqb x y).
+      + pose proof (poly_size_add a (C.coef_of x xs)).
+        specialize (IH bits Htail). cbn [snd] in Ha. lia.
+      + specialize (IH bits Htail). lia.
+  Qed.
+
+  (** Callback bounds are needed only on list members actually visited by mapping. *)
+  Lemma poly_T_map_members : forall (A B : Type) (f : A -> B) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (ListDef.T_map f T_f xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold ListDef.T_map. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)).
+      time_unfold ListDef.T_map. time_cbn. nia.
+  Qed.
+
+  (** Filtering also needs callback bounds only on its actual input list. *)
+  Lemma poly_T_filter_members : forall A (f : A -> bool) (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_filter f T_f xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold List.T_filter. time_cbn. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH ltac:(intros y Hin; apply Hcallback; now right)).
+      time_unfold List.T_filter. destruct (f x); time_cbn; nia.
+  Qed.
+
+  (** Scaling has a bilinear multiplication charge for each original occurrence. *)
+  Lemma T_poly_scale_coef_bounded : forall a (xs : list (X.t * Z)) bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    (T_poly_scale_coef a xs <=
+      16 * N.of_nat ((length xs + 1) * (Z.size_nat a + 1) * (bits + 1)))%N.
+  Proof.
+    intros a xs bits Hbits. time_unfold (@T_poly_scale_coef).
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf xs] =>
+      assert (Hmap : (ListDef.T_map f Tf xs <=
+        (12 * N.of_nat ((Z.size_nat a + 1) * (bits + 1)) + 1) *
+        N.of_nat (length xs) + 1)%N);
+      [ apply poly_T_map_members; intros [x z] Hin;
+        pose proof (proj1 (Forall_forall _ _) Hbits (x, z) Hin) as Hz;
+        pose proof (poly_T_Z_mul_bilinear a z);
+        time_simpl; time_cbn_all; nia
+      | nia ]
+    end.
+  Qed.
+
+  (** Coefficient lookup tests the stored key and adds its matching occurrence. *)
+  Definition poly_coefficient_step (x : X.t) (p : X.t * Z) (z : Z) : Z :=
+    if X.eqb (fst p) x then (snd p + z)%Z else z.
+
+  TimeFun poly_coefficient_step.
+
+  (** The executable lookup fold agrees with the public summed coefficient. *)
+  Lemma poly_coefficient_step_fold : forall x xs,
+    fold_right (poly_coefficient_step x) 0%Z xs = C.coef_of x xs.
+  Proof.
+    intros x xs.
+    change (poly_coefficient X.eqb x (LCons X.t xs REq 0%Z) = C.coef_of x xs).
+    symmetry. exact (coef_of_poly_coefficient x (LCons X.t xs REq 0%Z)).
+  Qed.
+
+  (** Lookup charges a key comparison, projections, and one binary addition. *)
+  Definition poly_coefficient_factor : N := (X.c_key + 16)%N.
+
+  (** One coefficient-fold step pays for both summand widths and the stored key. *)
+  Lemma T_poly_coefficient_step_bounded : forall x p z keys bits old,
+    Pos.size_nat (X.encode (fst p)) <= keys -> Z.size_nat (snd p) <= bits ->
+    Z.size_nat z <= old ->
+    (T_poly_coefficient_step x p z <=
+      poly_coefficient_factor * N.of_nat (keys + bits + old + 1))%N.
+  Proof.
+    intros x p z keys bits old Hkeys Hbits Hold.
+    pose proof (X.T_eqb_le (fst p) x) as Heqb.
+    pose proof (Z.T_add_le (snd p) z) as Hadd.
+    time_unfold T_poly_coefficient_step. unfold poly_coefficient_factor, X.bits in *.
+    destruct (X.eqb (fst p) x); time_simpl; nia.
+  Qed.
+
+  (** Raw lookup charges each partial sum at the length of its remaining suffix. *)
+  Lemma T_poly_coefficient_fold : forall x xs keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (List.T_fold_right (poly_coefficient_step x) (T_poly_coefficient_step x) 0%Z xs <=
+      (poly_coefficient_factor + 1) * N.of_nat (length xs + 1) *
+        N.of_nat (keys + 2 * bits + length xs + 1))%N.
+  Proof.
+    intros x xs. induction xs as [|p xs IH]; intros keys bits Hsizes.
+    - time_unfold List.T_fold_right. cbn [length]. unfold poly_coefficient_factor. nia.
+    - inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      specialize (IH keys bits Htail).
+      assert (Htailbits : Forall (fun q => Z.size_nat (snd q) <= bits) xs).
+      { eapply Forall_impl; [|exact Htail]. intros q [_ Hq]. exact Hq. }
+      assert (Hsum : Z.size_nat (fold_right (poly_coefficient_step x) 0%Z xs) <=
+        length xs + bits).
+      { rewrite poly_coefficient_step_fold. now apply poly_raw_coefficient_bits. }
+      pose proof (T_poly_coefficient_step_bounded x p
+        (fold_right (poly_coefficient_step x) 0%Z xs)
+        keys bits (length xs + bits) Hkey Hbits Hsum) as Hhead.
+      time_unfold List.T_fold_right. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** A raw row lookup includes the growing partial sums in its traversal bound. *)
+  Lemma T_poly_coefficient_bounded : forall x r keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) (lhs r) ->
+    (T_poly_coefficient X.eqb X.T_eqb x r <=
+      (poly_coefficient_factor + 4) * N.of_nat (length (lhs r) + 1) *
+        N.of_nat (keys + 2 * bits + length (lhs r) + 1))%N.
+  Proof.
+    intros x r keys bits Hsizes.
+    pose proof (T_poly_coefficient_fold x (lhs r) keys bits Hsizes) as Hfold.
+    time_unfold (@T_poly_coefficient).
+    change (fun p z => if X.eqb (fst p) x then (snd p + z)%Z else z)
+      with (poly_coefficient_step x).
+    time_simpl.
+    change (fun (p : X.t * Z) z => (1 + (1 + X.T_eqb (fst p) x +
+      (if X.eqb (fst p) x then 1 + Z.T_add (snd p) z else 0)))%N)
+      with (T_poly_coefficient_step x).
+    assert (Hmass : (1 <= N.of_nat (length (lhs r) + 1) *
+      N.of_nat (keys + 2 * bits + length (lhs r) + 1))%N).
+    { change (1 * 1 <= N.of_nat (length (lhs r) + 1) *
+        N.of_nat (keys + 2 * bits + length (lhs r) + 1))%N.
+      apply N.mul_le_mono; lia. }
+    replace ((poly_coefficient_factor + 4) * N.of_nat (length (lhs r) + 1) *
+      N.of_nat (keys + 2 * bits + length (lhs r) + 1))%N with
+      (((poly_coefficient_factor + 1) * N.of_nat (length (lhs r) + 1) *
+       N.of_nat (keys + 2 * bits + length (lhs r) + 1)) +
+       3 * (N.of_nat (length (lhs r) + 1) *
+       N.of_nat (keys + 2 * bits + length (lhs r) + 1)))%N by ring.
+    lia.
+  Qed.
+
+  (** Every stored coefficient is bounded by its row's maximum coefficient width. *)
+  Lemma poly_row_entry_bits : forall r p, In p (lhs r) ->
+    Z.size_nat (snd p) <= C.row_bits r.
+  Proof.
+    intros r p Hin. unfold C.row_bits.
+    exact (poly_max_member _ (fun p => Z.size_nat (snd p))
+      (Z.size_nat (rhs r)) (lhs r) p Hin).
+  Qed.
+
+  (** A raw row supplies uniform key and coefficient bounds for every occurrence. *)
+  Lemma poly_row_entry_sizes : forall r,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= C.row_key_bits r /\
+      Z.size_nat (snd p) <= C.row_bits r) (lhs r).
+  Proof.
+    intro r. apply Forall_forall. intros p Hin. split.
+    - now apply poly_row_key_member with (r := r).
+    - now apply poly_row_entry_bits with (r := r).
+  Qed.
+
+  (** Summing all repeated occurrences adds at most the raw row length in bits. *)
+  Lemma poly_raw_row_coefficient_bits : forall x r,
+    Z.size_nat (poly_coefficient X.eqb x r) <= length (lhs r) + C.row_bits r.
+  Proof.
+    intros x r. rewrite <- coef_of_poly_coefficient. apply poly_raw_coefficient_bits.
+    apply Forall_forall. intros p Hin. now apply poly_row_entry_bits with (r := r).
+  Qed.
+
+  (** The row size dominates its length and both initial arithmetic widths. *)
+  Lemma poly_lsize_parts : forall r,
+    length (lhs r) + C.row_key_bits r + C.row_bits r + 1 <= C.lsize r /\
+    (length (lhs r) + 1) * (C.row_bits r + 1) <= C.lsize r /\
+    (length (lhs r) + 1) * (C.row_key_bits r + 1) <= C.lsize r.
+  Proof.
+    intro r. unfold C.lsize. nia.
+  Qed.
+
+  (** Substitution retains exactly the source terms with a different key. *)
+  Definition poly_without_key (x : X.t) (p : X.t * Z) : bool :=
+    negb (X.eqb (fst p) x).
+
+  TimeFun poly_without_key.
+
+  (** The retention test charges only the stored key's comparison bound. *)
+  Lemma T_poly_without_key_le : forall x p keys,
+    Pos.size_nat (X.encode (fst p)) <= keys ->
+    (T_poly_without_key x p <= (X.c_key + 4) * N.of_nat (keys + 1))%N.
+  Proof.
+    intros x p keys Hkey. pose proof (X.T_eqb_le (fst p) x) as Heqb.
+    time_unfold T_poly_without_key. unfold X.bits in *. time_simpl. nia.
+  Qed.
+
+  (** Filtering one raw row is linear in the public row size. *)
+  Lemma T_poly_without_filter_le : forall x r,
+    (List.T_filter (poly_without_key x) (T_poly_without_key x) (lhs r) <=
+      (X.c_key + 8) * N.of_nat (C.lsize r))%N.
+  Proof.
+    intros x r.
+    assert (Hfilter : (List.T_filter (poly_without_key x) (T_poly_without_key x)
+      (lhs r) <= ((X.c_key + 4) * N.of_nat (C.row_key_bits r + 1) + 1) *
+        N.of_nat (length (lhs r)) + 1)%N).
+    { apply poly_T_filter_members. intros p Hin. apply T_poly_without_key_le.
+      now apply poly_row_key_member with (r := r). }
+    pose proof (poly_lsize_parts r) as [Hparts [_ Hkeys]]. nia.
+  Qed.
+
+  (** Substitution accumulates the surviving source terms and one scaled affine form. *)
+  Definition poly_subst_input (x : X.t) (f : lin X.t) (r : lcons X.t)
+      : list (X.t * Z) :=
+    filter (poly_without_key x) (lhs r) ++
+      poly_scale_coef (poly_coefficient X.eqb x r) (coef f).
+
+  (** Aggregate-first substitution creates at most the two original lists' total length. *)
+  Lemma poly_subst_input_length : forall x f r,
+    length (poly_subst_input x f r) <= length (lhs r) + length (coef f).
+  Proof.
+    intros x f r. unfold poly_subst_input, poly_scale_coef.
+    rewrite length_app, length_map. apply Nat.add_le_mono_r, filter_length_le.
+  Qed.
+
+  (** The accumulated substitution list has bounded source keys and product widths. *)
+  Lemma poly_subst_input_sizes : forall x f r,
+    Forall (fun p =>
+      Pos.size_nat (X.encode (fst p)) <=
+        C.row_key_bits r + C.row_key_bits (LCons X.t (coef f) REq (cst f)) /\
+      Z.size_nat (snd p) <= length (lhs r) + C.row_bits r +
+        C.row_bits (LCons X.t (coef f) REq (cst f))) (poly_subst_input x f r).
+  Proof.
+    intros x f r. unfold poly_subst_input. apply Forall_app. split.
+    - apply Forall_forall. intros p Hin. apply filter_In in Hin as [Hin _].
+      pose proof (poly_row_key_member r p Hin).
+      pose proof (poly_row_entry_bits r p Hin). split; lia.
+    - apply Forall_forall. intros [y z] Hin. unfold poly_scale_coef in Hin.
+      apply in_map_iff in Hin as [[u a] [Heq Hin]]. cbn [fst snd] in Heq.
+      injection Heq as Heqy Heqz. subst y z.
+      pose proof (poly_row_key_member (LCons X.t (coef f) REq (cst f))
+        (u, a) Hin) as Hkey.
+      pose proof (poly_row_entry_bits (LCons X.t (coef f) REq (cst f))
+        (u, a) Hin) as Hbits.
+      pose proof (poly_raw_row_coefficient_bits x r) as Hcoefficient.
+      pose proof (poly_size_mul (poly_coefficient X.eqb x r) a) as Hmul.
+      cbn [fst snd] in *. split; lia.
+  Qed.
+
+  (** Each constituent traversal fits one quadratic source-and-form size. *)
+  Definition poly_subst_factor : N :=
+    (8 * poly_raw_normal_factor + 4 * poly_coefficient_factor + 8 * X.c_key + 192)%N.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. lia.
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -4441,7 +4863,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold T_narrow. unfold c_lat. lia.
+  Qed.
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma range_size : forall e s,
@@ -4718,7 +5142,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T1_narrow : forall a b,
     (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold T_narrow. unfold k_poly, lat. nia.
+  Qed.
   Lemma F_size : forall s, size s = lat (2 * mu s).
   Proof.
     reflexivity.
