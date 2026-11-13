@@ -4190,6 +4190,14 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now rewrite Z.mod_mul by lia.
   Qed.
 
+  Lemma entry_tighten_unary_option : forall m, dbm_wf m -> forall i,
+    entry (tighten m) i (flip i) = option_map even_bound (entry m i (flip i)).
+  Proof.
+    intros m Hwf i. rewrite entry_tighten_exact by exact Hwf.
+    destruct (K.eqb_spec (flip i) (flip i)) as [_|Hne];
+      [reflexivity|contradiction].
+  Qed.
+
   Lemma coherent_tighten : forall m, coherent m -> coherent (tighten m).
   Proof.
     intros m Hcoh i j.
@@ -5963,6 +5971,46 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Definition strong_view (m : dbm) (i j : K.t) : option Z :=
     RelationalPathBounds.minimum (entry m i j)
       (RelationalPathBounds.plus (half_unary m i) (half_unary m (flip j))).
+
+  Lemma even_half_sum : forall a b,
+    Z.div2 (even_bound a + even_bound b) = (Z.div2 a + Z.div2 b)%Z.
+  Proof.
+    intros a b. unfold even_bound. rewrite Z.div2_div.
+    replace (2 * Z.div2 a + 2 * Z.div2 b)%Z with
+      ((Z.div2 a + Z.div2 b) * 2)%Z by ring.
+    now rewrite Z.div_mul by lia.
+  Qed.
+
+  (** Tightening and strengthening implement the unary-half minimum. *)
+  Lemma strengthen_tighten_view : forall m, dbm_wf m -> forall i j,
+    entry (strengthen (tighten m)) i j = strong_view m i j.
+  Proof.
+    intros m Hwf i j.
+    destruct (K.eqb_spec j (flip i)) as [Heq|Hne].
+    - subst j. rewrite entry_strengthen_unary by (apply wf_tighten; exact Hwf).
+      rewrite entry_tighten_unary_option by exact Hwf.
+      unfold strong_view, half_unary. rewrite flip_involutive.
+      destruct (entry m i (flip i)) as [a|] eqn:Hunary;
+        cbn [option_map RelationalPathBounds.plus RelationalPathBounds.minimum];
+        [|reflexivity].
+      unfold even_bound.
+      rewrite Z.div2_div.
+      pose proof (Z.div_mod a 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound a 2 ltac:(lia)) as Hmod.
+      rewrite Z.min_r by lia. f_equal. lia.
+    - rewrite entry_strengthen_exact by (apply wf_tighten; exact Hwf).
+      rewrite entry_tighten_unary_option by exact Hwf.
+      pose proof (entry_tighten_unary_option m Hwf (flip j)) as Hright.
+      rewrite flip_involutive in Hright. rewrite Hright.
+      rewrite entry_tighten_other by exact Hne.
+      unfold strong_view, half_unary. rewrite flip_involutive.
+      destruct (entry m i (flip i)) as [a|],
+        (entry m (flip j) j) as [b|], (entry m i j) as [old|];
+        cbn [option_map RelationalPathBounds.plus RelationalPathBounds.minimum
+          strengthen_bound lower_bound]; try reflexivity.
+      + rewrite even_half_sum. f_equal. apply Z.min_comm.
+      + now rewrite even_half_sum.
+  Qed.
 
   Lemma half_unary_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
