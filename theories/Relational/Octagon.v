@@ -4922,6 +4922,31 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       try reflexivity; try (f_equal; lia).
   Qed.
 
+  (** A passing diagonal scan leaves the four-path candidate triangle closed. *)
+  Lemma incremental_candidate_closed : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall p, RelationalPathBounds.closed_at
+      (entry (increment_matrix i j d seed)) p.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)). intro Hscan.
+    pose proof (incremental_mixed_cycle m i j d Hwf Htight Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    pose proof (incremental_two_edge_closed m i j d Hwf Htight Hscan)
+      as Hclosed.
+    change (forall p, RelationalPathBounds.closed_at
+      (RelationalPathBounds.edge_extension
+        (RelationalPathBounds.edge_extension (entry seed) i j d)
+        (flip j) (flip i) d) p) in Hclosed.
+    intro p. unfold RelationalPathBounds.closed_at. intros a b.
+    rewrite !(incremental_sequential_extension seed i j d Hmixed).
+    exact (Hclosed p a b).
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
