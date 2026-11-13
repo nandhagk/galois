@@ -1323,6 +1323,65 @@ Proof.
     rewrite <- app_assoc in IH. exact IH.
 Qed.
 
+Lemma database_rank_slots_select : forall kinds sl n m f h first second d e g rank j k,
+  nth_error sl n = Some (f, first) -> nth_error sl m = Some (h, second) ->
+  nth_error (database_rank_slots_from kinds 0%N PTrieCode.empty sl) n =
+    Some (d, g, j) ->
+  nth_error (database_rank_slots_from kinds 0%N PTrieCode.empty sl) m =
+    Some (e, rank, k) ->
+  andb (Bool.eqb e d) (N.eqb rank g) = Pos.eqb h f.
+Proof.
+  intros kinds sl n m f h first second d e g rank j k
+    Hslot_f Hslot_h Hrank_f Hrank_h.
+  destruct (Pos.eq_dec h f) as [-> | Hdifferent].
+  - assert (Hsame_rank : rank = g).
+    { symmetry. eapply database_rank_slots_from_same_function;
+        [exact Hslot_f | exact Hslot_h | exact Hrank_f | exact Hrank_h]. }
+    assert (Hflag_f : d = match PTrieCode.get f kinds with
+      | Some _ => true | None => false end).
+    { eapply database_rank_slots_from_flag with
+        (start := 0%N) (groups := PTrieCode.empty) (sl := sl)
+        (n := n) (perm := first) (g := g) (j := j); eassumption. }
+    assert (Hflag_h : e = match PTrieCode.get f kinds with
+      | Some _ => true | None => false end).
+    { eapply database_rank_slots_from_flag with
+        (start := 0%N) (groups := PTrieCode.empty) (sl := sl)
+        (n := m) (perm := second) (g := rank) (j := k); eassumption. }
+    subst rank. rewrite Hflag_f, Hflag_h, Pos.eqb_refl, N.eqb_refl.
+    destruct (PTrieCode.get f kinds); reflexivity.
+  - assert (Hdifferent_rank : rank <> g).
+    { intro Hequal. subst rank. apply Hdifferent. symmetry.
+      eapply database_rank_slots_from_same_rank;
+        [apply database_rank_groups_fresh_empty |
+         apply database_rank_groups_unique_empty |
+         exact Hslot_f | exact Hslot_h | exact Hrank_f | exact Hrank_h]. }
+    apply N.eqb_neq in Hdifferent_rank.
+    assert (Hdifferent_name : Pos.eqb h f = false).
+    { apply Pos.eqb_neq. exact Hdifferent. }
+    rewrite Hdifferent_rank, Hdifferent_name. destruct (Bool.eqb e d); reflexivity.
+Qed.
+
+Lemma database_filter_count_agrees : forall (A B : Type) (left : list A) (right : list B)
+    (select_left : A -> bool) (select_right : B -> bool),
+  length left = length right ->
+  (forall n a b, nth_error left n = Some a -> nth_error right n = Some b ->
+    select_left a = select_right b) ->
+  length (filter select_left left) = length (filter select_right right).
+Proof.
+  intros A B left. induction left as [|a rest IH];
+    intros right select_left select_right Hlength Hpoint;
+    destruct right as [|b tail]; cbn [length] in Hlength; try discriminate.
+  - reflexivity.
+  - assert (Hhead : select_left a = select_right b).
+    { apply (Hpoint 0%nat); reflexivity. }
+    cbn [filter length]. rewrite Hhead.
+    destruct (select_right b); cbn [length].
+    + f_equal. apply IH with (right := tail); [lia |].
+      intros n x y Hleft Hright. apply (Hpoint (S n)); assumption.
+    + apply IH with (right := tail); [lia |].
+      intros n x y Hleft Hright. apply (Hpoint (S n)); assumption.
+Qed.
+
 Fixpoint database_rank_credit (universe : list positive)
     (groups : PTrieCode.t (N * N)) : N :=
   match universe with
@@ -1629,6 +1688,37 @@ Proof.
   cbn [database_group_slots nth_error].
   destruct flag; cbn [Bool.eqb]; rewrite N.eqb_refl; cbn [andb nth_error].
   all: now rewrite N.add_0_l.
+Qed.
+
+Lemma database_group_slots_count : forall positions start d g,
+  length (database_group_slots start d g positions) =
+    length (filter (fun place =>
+      andb (Bool.eqb (fst (fst place)) d) (N.eqb (snd (fst place)) g)) positions).
+Proof.
+  induction positions as [|[[flag rank] offset] rest IH];
+    intros start d g; cbn [database_group_slots filter length fst snd];
+    [reflexivity |].
+  destruct (andb (Bool.eqb flag d) (N.eqb rank g));
+    cbn [length]; rewrite IH; reflexivity.
+Qed.
+
+Lemma database_ranked_prefix_count : forall kinds sl n f perm d g j,
+  nth_error sl n = Some (f, perm) ->
+  nth_error (database_rank_slots_from kinds 0%N PTrieCode.empty sl) n =
+    Some (d, g, j) ->
+  length (database_group_slots 0%N d g
+    (firstn n (database_rank_slots_from kinds 0%N PTrieCode.empty sl))) =
+    database_slot_count f (firstn n sl).
+Proof.
+  intros kinds sl n f perm d g j Hslot Hrank.
+  rewrite database_group_slots_count. unfold database_slot_count.
+  apply database_filter_count_agrees.
+  - rewrite !length_firstn, database_rank_slots_from_length. reflexivity.
+  - intros m [[flag rank] offset] [h other] Hprefix_place Hprefix_slot.
+    rewrite nth_error_firstn in Hprefix_slot, Hprefix_place.
+    destruct (m <? n)%nat; [| discriminate].
+    eapply database_rank_slots_select;
+      [exact Hslot | exact Hprefix_slot | exact Hrank | exact Hprefix_place].
 Qed.
 
 (** A maximum comparison reads no more bits than its current declaration name. *)
