@@ -5859,6 +5859,141 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now apply decl_names_spec.
   Qed.
 
+  (** One database unit covers the watermark width and a constant step. *)
+  Lemma unit_width_budget : forall db, N.size_nat (wmark db) + 1 <= unit db.
+  Proof.
+    intro db. unfold unit. nia.
+  Qed.
+
+  (** The allocation guard fits the same unit because identifiers are watermarked. *)
+  Lemma unit_ids_width : forall db, N.size_nat (ids db) + 1 <= unit db.
+  Proof.
+    intro db. pose proof (N_width_mono (ids db) (wmark db) (wmark_ids db)).
+    pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Every database unit is positive, including the empty database. *)
+  Lemma unit_positive : forall db, (1 <= N.of_nat (unit db))%N.
+  Proof.
+    intro db. pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
+  Lemma T_normal_cell_id : forall db i,
+    (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
+      match N.compare (ids db) (Npos i) with
+      | Lt => 0
+      | _ => UnionFindT.T_find i (db_forest db) + 2
+      end)%N.
+  Proof.
+    intros db i. time_unfold T_normal_cell. time_unfold @T_db_runtime.
+    time_unfold @T_runtime_allocated. time_unfold @T_db_forest.
+    time_unfold @Datatypes.T_fst. fold (ids db).
+    destruct (N.compare (ids db) (Npos i)); nia.
+  Qed.
+
+  (** The guard keeps normalization bounded even for arbitrarily large unallocated queries. *)
+  Lemma T_normal_cell_bound : forall db c, wf db ->
+    (T_normal_cell db c <=
+      (2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N.
+  Proof.
+    intros db [i | v] Hwf.
+    - pose proof (N.T_compare_le (ids db) (Npos i)) as Hcompare.
+      pose proof (unit_ids_width db) as Hwidth.
+      pose proof (unit_positive db) as Hpositive. rewrite T_normal_cell_id.
+      destruct (N.compare (ids db) (Npos i)) eqn:Hcompare_result.
+      + apply N.compare_eq_iff in Hcompare_result.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+      + set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+      + apply N.compare_gt_iff in Hcompare_result.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+    - time_unfold T_normal_cell. pose proof (unit_positive db).
+      set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  (** Key normalization pays one guarded cell normalization per list element. *)
+  Lemma T_normal_key_bound : forall db k, wf db ->
+    (T_normal_key db k <= (2 * UnionFindT.c_uf + 12) *
+      N.of_nat (length k + 1) * N.of_nat (unit db))%N.
+  Proof.
+    intros db k Hwf.
+    pose proof (ListDef.T_map_le (normal_cell db) (fun c => T_normal_cell db c)
+      ((2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N k
+      (fun c => T_normal_cell_bound db c Hwf)) as Hmap.
+    pose proof (unit_positive db) as Hpositive. time_unfold T_normal_key.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  (** Normalizing an allocated identifier produces a cell whose width fits one unit. *)
+  Lemma normal_cell_allocated_bits : forall db i, wf db -> allocated db i ->
+    cell_bits V.encode (normal_cell db (Id i)) <= unit db.
+  Proof.
+    intros db i Hwf Hi. rewrite (normal_cell_correct db (Id i) Hwf).
+    pose proof (repr_allocated db i Hwf Hi) as Hrepr.
+    assert (Hbound : (Npos (repr db i) <= wmark db)%N).
+    { eapply N.le_trans; [exact Hrepr | apply wmark_ids]. }
+    pose proof (N_width_mono _ _ Hbound) as Hbits.
+    pose proof (unit_width_budget db) as Hunit.
+    cbn [canon cell_bits Pos.size_nat N.size_nat] in *. lia.
+  Qed.
+
+  (** Normalization either preserves a query cell or replaces its identifier within the unit. *)
+  Lemma normal_cell_bits : forall db c, wf db ->
+    cell_bits V.encode (normal_cell db c) <= cell_bits V.encode c + unit db.
+  Proof.
+    intros db [i | v] Hwf.
+    - destruct (N.compare (ids db) (Npos i)) eqn:Hcompare.
+      + apply N.compare_eq_iff in Hcompare.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
+      + unfold normal_cell. fold (ids db). rewrite Hcompare. lia.
+      + apply N.compare_gt_iff in Hcompare.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
+    - cbn [normal_cell]. lia.
+  Qed.
+
+  (** Normalization preserves the number of cells in a query key. *)
+  Lemma normal_key_length : forall db k, length (normal_key db k) = length k.
+  Proof.
+    intros db k. unfold normal_key. apply length_map.
+  Qed.
+
+  (** The normalized key width is covered by its original width and one unit per cell. *)
+  Lemma normal_key_bits_bound : forall db k, wf db ->
+    tuple_cell_bits (normal_key db k) <= tuple_cell_bits k + length k * unit db.
+  Proof.
+    intros db k Hwf. unfold normal_key, tuple_cell_bits.
+    induction k as [| c rest IH]; cbn [map fold_right length] in *; [lia |].
+    pose proof (normal_cell_bits db c Hwf). nia.
+  Qed.
+
+  (** The declaration guard uses the base name or an actual declared, watermarked name. *)
+  Lemma runtime_max_name_bits : forall db, wf db ->
+    Pos.size_nat (runtime_max_name (db_runtime db)) <= unit db.
+  Proof.
+    intros db Hwf. destruct (wf_max_name_attained db Hwf) as [Hbase | Hkind].
+    - rewrite Hbase. cbn [Pos.size_nat]. pose proof (unit_positive db). lia.
+    - pose proof (wmark_names db _ Hwf Hkind).
+      pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Any function name admitted by the guard has width bounded by one unit. *)
+  Lemma guarded_name_bits : forall db f, wf db ->
+    (f <= runtime_max_name (db_runtime db))%positive -> Pos.size_nat f <= unit db.
+  Proof.
+    intros db f Hwf Hname.
+    assert (Hnumber : (Npos f <= Npos (runtime_max_name (db_runtime db)))%N)
+      by exact Hname.
+    pose proof (N_width_mono _ _ Hnumber) as Hbits.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    cbn [N.size_nat] in Hbits. lia.
+  Qed.
+
   (** The high-water mark covers every slot index. *)
   Lemma wmark_index : forall db s new, wf db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
