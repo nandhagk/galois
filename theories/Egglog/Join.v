@@ -80,6 +80,13 @@ Qed.
 
 Module ListDef.
   TimeFun List.nth.
+
+  (** Selecting a list position pays at most one call for each traversed cell. *)
+  Lemma T_nth_le : forall (A : Type) n (xs : list A) d,
+    (T_nth n xs d <= N.of_nat (n + 1))%N.
+  Proof.
+    intros A n. induction n as [|n IH]; intros [|x xs] d; time_step List.nth.
+  Qed.
 End ListDef.
 Import ListDef.
 
@@ -1048,6 +1055,114 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Definition wmax (_ : jplan) (ixs : list I.t) : nat :=
     fold_right (fun ix w => Nat.max (Pos.size_nat (I.next ix) + I.max_cell_bits ix) w)
       0 ixs.
+
+  Module IT := IndexTimeFacts V I.
+
+  (** Strictly increasing columns contain no repeated variable positions. *)
+  Lemma sorted_column_nodup : forall lv, StronglySorted lt lv -> NoDup lv.
+  Proof.
+    intros lv Hsorted. induction Hsorted as [|i lv Hsorted IH Hafter]; constructor.
+    - intro Hin. rewrite Forall_forall in Hafter. specialize (Hafter i Hin). lia.
+    - exact IH.
+  Qed.
+
+  (** An increasing column inside the variable range has at most that many entries. *)
+  Lemma column_length_bound : forall lv limit, StronglySorted lt lv ->
+    Forall (fun i => i < limit) lv -> length lv <= limit.
+  Proof.
+    intros lv limit Hsorted Hrange.
+    assert (Hinclude : incl lv (seq 0 limit)).
+    { intros i Hin. apply in_seq. rewrite Forall_forall in Hrange.
+      specialize (Hrange i Hin). lia. }
+    pose proof (NoDup_incl_length (sorted_column_nodup lv Hsorted) Hinclude) as Hlength.
+    now rewrite length_seq in Hlength.
+  Qed.
+
+  (** Every plan column fits within its declared variable count. *)
+  Lemma plan_column_lengths : forall p ixs, wf_plan p ixs ->
+    Forall (fun lv => length lv <= nvars p) (cols p).
+  Proof.
+    intros p ixs [_ [Hcols _]]. induction Hcols as [|lv ix cs ixs Hcolumn Hcols IH].
+    - constructor.
+    - constructor; [|exact IH]. apply column_length_bound; tauto.
+  Qed.
+
+  (** The maximum width covers the stored counter and cells of each input index. *)
+  Lemma wmax_contains : forall p ixs ix, In ix ixs ->
+    Pos.size_nat (I.next ix) + I.max_cell_bits ix <= wmax p ixs.
+  Proof.
+    intros p ixs. unfold wmax. induction ixs as [|head ixs IH]; intros ix Hin.
+    - contradiction.
+    - cbn [fold_right]. destruct Hin as [<-|Hin].
+      + apply Nat.le_max_l.
+      + eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+  Qed.
+
+  (** Pointwise facts at aligned positions reconstruct a two-list invariant. *)
+  Lemma Forall2_by_nth : forall (A B : Type) (P : A -> B -> Prop) xs ys da db,
+    length xs = length ys ->
+    (forall j, j < length xs -> P (nth j xs da) (nth j ys db)) -> Forall2 P xs ys.
+  Proof.
+    intros A B P xs. induction xs as [|x xs IH]; intros [|y ys] da db Hlength Hpoint;
+      cbn [length] in Hlength; try discriminate.
+    - constructor.
+    - constructor.
+      + exact (Hpoint 0 ltac:(cbn [length]; lia)).
+      + apply (IH ys da db); [lia|]. intros j Hj.
+        apply (Hpoint (S j)). cbn [length]. lia.
+  Qed.
+
+  (** Every represented index has bounded empty-query width and encoded degree. *)
+  Lemma nodes_degree_widths : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    Forall2 (fun ix n => I.width ix [] <= wmax p ixs + 1 /\
+      N.size_nat (I.degree ix n) <= wmax p ixs + 1) ixs ns.
+  Proof.
+    intros p ixs lvl pre ns Hnodes.
+    destruct (nodes_ok_lengths p ixs lvl pre ns Hnodes) as [Hix Hns].
+    eapply (Forall2_by_nth I.t positive _ ixs ns I.empty 1%positive); [lia|].
+    intros j Hj. destruct (nodes_ok_at p ixs lvl pre ns j Hnodes ltac:(lia))
+      as [[_ [_ [_ Hwf]]] [u [_ Hnode]]].
+    assert (Hin : In (nth j ixs I.empty) ixs) by (apply nth_In; exact Hj).
+    pose proof (wmax_contains p ixs _ Hin) as Hwidth.
+    pose proof (IT.width_empty (nth j ixs I.empty)) as Hempty.
+    pose proof (IT.degree_bits _ _ _ u Hwf Hnode) as Hdegree. split; lia.
+  Qed.
+
+  (** Every candidate cell from a pivot fits the common stored-width budget. *)
+  Lemma chosen_child_bits : forall p ixs lvl pre ns j c,
+    nodes_ok p ixs lvl pre ns -> choose_index p ixs lvl ns = Some j ->
+    In c (I.children (nth j ixs I.empty) (nth j ns 1%positive)) ->
+    cell_bits V.encode c <= wmax p ixs.
+  Proof.
+    intros p ixs lvl pre ns j c Hnodes Hchoose Hchild.
+    destruct (choose_index_min p ixs lvl pre ns j Hnodes Hchoose) as [Hpart _].
+    apply filter_In in Hpart as [Hrange _]. apply in_seq in Hrange.
+    destruct (nodes_ok_lengths p ixs lvl pre ns Hnodes) as [Hix _].
+    destruct (nodes_ok_at p ixs lvl pre ns j Hnodes ltac:(lia))
+      as [[_ [_ [_ Hwf]]] [u [_ Hnode]]].
+    assert (Hin : In (nth j ixs I.empty) ixs) by (apply nth_In; lia).
+    pose proof (wmax_contains p ixs _ Hin) as Hwidth.
+    pose proof (IT.child_bits _ _ _ u c Hwf Hnode Hchild) as Hbits. lia.
+  Qed.
+
+  (** A candidate fitting the common budget has bounded query width at every index. *)
+  Lemma probe_widths : forall p ixs c, cell_bits V.encode c <= wmax p ixs ->
+    Forall (fun ix => I.width ix [c] <= 2 * wmax p ixs + 1) ixs.
+  Proof.
+    intros p ixs c Hbits. apply Forall_forall. intros ix Hin.
+    pose proof (wmax_contains p ixs ix Hin) as Hwidth.
+    pose proof (IT.width_singleton ix c) as Hsingle. lia.
+  Qed.
+
+  (** Coverage gives at least one column at every unfinished level. *)
+  Lemma unfinished_columns : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    lvl < nvars p -> 0 < length (cols p).
+  Proof.
+    intros p ixs lvl pre ns [[_ [_ Hcover]] _] Hlevel.
+    destruct (Hcover lvl Hlevel) as [lv [Hin _]].
+    destruct (cols p) as [|head cs]; [contradiction|]. cbn [length]. lia.
+  Qed.
+
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
