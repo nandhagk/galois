@@ -1490,10 +1490,51 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
   Proof. Admitted. (* STUB *)
 
+  (** Advancing preserves every full slot index exactly. *)
+  Lemma index_advance_all : forall s db, index s false (advance db) = index s false db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Advancing clears every delta slot index, including out-of-range queries. *)
+  Lemma index_advance_new : forall s db, index s true (advance db) = I.empty.
+  Proof.
+    intros s db.
+    change ((match N.compare (runtime_slot_bound (db_runtime db)) s with
+      | Gt => match PTrieCode.get (N.succ_pos s) (@PTrieCode.empty I.t) with
+        | Some ix => ix
+        | None => I.empty
+        end
+      | _ => I.empty
+      end) = I.empty).
+    destruct (N.compare (runtime_slot_bound (db_runtime db)) s); try reflexivity.
+    now rewrite PTrie.get_empty.
+  Qed.
+
   (** Advancing clears the change flag without changing the view. *)
   Lemma wf_advance : forall db, wf db ->
     wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hwf. split.
+    - unfold wf, database_wf in Hwf |- *.
+      destruct Hwf as (Hforest & Hmembers & Hcount & Hwidth & Hequalities & Hlog &
+        Hrows & Hkind & Hrowids & Hslots & Hbound & Hslotbound & Hpending & Hqueue &
+        Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts).
+      do 15 (split; [assumption |]).
+      split.
+      + intros s new u Hmem. destruct new.
+        * rewrite index_advance_new in Hmem. exfalso. exact (I.mem_empty u Hmem).
+        * rewrite index_advance_all in Hmem. exact (Hsound s false u Hmem).
+      + split.
+        * intros s f perm k o Hslot Hrow. rewrite index_advance_all.
+          exact (Hcomplete s f perm k o Hslot Hrow).
+        * split.
+          -- intros s new f perm Hslot. destruct new.
+             ++ rewrite index_advance_new. apply I.wf_empty.
+             ++ rewrite index_advance_all. exact (Harity s false f perm Hslot).
+          -- split; assumption.
+    - split; reflexivity.
+  Qed.
 
   (** Find returns the representative without changing the view. *)
   Lemma find_spec : forall i db, wf db ->
