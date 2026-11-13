@@ -7205,6 +7205,348 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody mass. nia.
   Qed.
 
+  (** Every occurrence count lies below the next power of two above its logarithm. *)
+  Lemma karr_log_upper : forall count, count < 2 ^ (Nat.log2 count + 1).
+  Proof.
+    intros [|count]; [change (0 < 2); lia|].
+    pose proof (Nat.log2_spec (S count) (Nat.lt_0_succ count)) as [_ Hupper].
+    now replace (Nat.log2 (S count) + 1) with (S (Nat.log2 (S count))) by lia.
+  Qed.
+
+  (** A sum of bounded magnitudes needs only the logarithm of their count. *)
+  Lemma karr_count_magnitude_bits : forall z count bits,
+    karr_magnitude z <= count * 2 ^ bits ->
+    Z.size_nat z <= bits + Nat.log2 count + 1.
+  Proof.
+    intros z count bits Hmagnitude. apply karr_size_least.
+    replace (bits + Nat.log2 count + 1) with (bits + (Nat.log2 count + 1)) by lia.
+    rewrite Nat.pow_add_r.
+    pose proof (karr_log_upper count) as Hcount.
+    assert (Hpositive : 0 < 2 ^ bits).
+    { pose proof (Nat.pow_nonzero 2 bits ltac:(lia)). lia. }
+    nia.
+  Qed.
+
+  (** A magnitude budget bounds every coefficient currently stored in the trie. *)
+  Definition karr_accum_magnitude (m : ptrie (X.t * Z)) (bound : nat) : Prop :=
+    forall key p, PTrieCode.get key m = Some p -> karr_magnitude (snd p) <= bound.
+
+  (** Missing keys contribute zero to the accumulator budget. *)
+  Lemma karr_previous_magnitude : forall m bound x,
+    karr_accum_magnitude m bound -> karr_magnitude (karr_previous m x) <= bound.
+  Proof.
+    intros m bound x Hmagnitude. unfold karr_previous.
+    destruct (PTrieCode.get (X.encode x) m) as [p|] eqn:Hget.
+    - exact (Hmagnitude _ _ Hget).
+    - change (0 <= bound). lia.
+  Qed.
+
+  (** One insertion adds at most the next raw coefficient's magnitude budget. *)
+  Lemma karr_add_term_magnitude : forall m p bound bits,
+    karr_accum_magnitude m bound -> Z.size_nat (snd p) <= bits ->
+    karr_accum_magnitude (add_term m p) (bound + 2 ^ bits).
+  Proof.
+    intros m p bound bits Hmagnitude Hbits key q Hget.
+    pose proof (karr_magnitude_upper (snd p)) as Hnew.
+    assert (Hpower : 2 ^ Z.size_nat (snd p) <= 2 ^ bits).
+    { apply Nat.pow_le_mono_r; lia. }
+    unfold add_term in Hget.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [old|] eqn:Hold;
+      destruct (Pos.eq_dec key (X.encode (fst p))) as [Hequal|Hother].
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Hequal. subst q.
+      cbn [snd]. pose proof (karr_magnitude_add (snd old) (snd p)) as Hadd.
+      pose proof (Hmagnitude _ _ Hold). lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hother.
+      specialize (Hmagnitude _ _ Hget). lia.
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Hequal. subst q.
+      lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hother.
+      specialize (Hmagnitude _ _ Hget). lia.
+  Qed.
+
+  (** Folding a raw list spends one magnitude budget for every occurrence. *)
+  Lemma karr_accum_magnitude_fold : forall xs m bound bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    karr_accum_magnitude m bound ->
+    karr_accum_magnitude (fold_left add_term xs m) (bound + length xs * 2 ^ bits).
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m bound bits Hsizes Hmagnitude;
+      cbn [fold_left length].
+    - now rewrite Nat.add_0_r.
+    - inversion Hsizes as [|q qs Hp Htail]; subst q qs.
+      replace (bound + S (length xs) * 2 ^ bits) with
+        ((bound + 2 ^ bits) + length xs * 2 ^ bits) by nia.
+      apply IH; [exact Htail|]. now apply karr_add_term_magnitude.
+  Qed.
+
+  (** Every retained normalized coefficient is read from the completed accumulator. *)
+  Lemma karr_normal_coef_lookup : forall xs p, In p (normalize_coef xs) ->
+    exists key, PTrieCode.get key (fold_left add_term xs PTrieCode.empty) = Some p.
+  Proof.
+    intros xs p Hin. unfold normalize_coef in Hin. apply filter_In in Hin as [Hin _].
+    rewrite karr_values_elements in Hin.
+    apply in_map_iff in Hin as [[key q] [Hsame Hin]]. cbn [snd] in Hsame. subst q.
+    exists key. now apply (proj1 (PTrie.elements_spec _ _ _ _)).
+  Qed.
+
+  (** Normalized coefficients have logarithmic growth in the raw occurrence count. *)
+  Lemma karr_normal_coef_log_bits : forall xs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Forall (fun p => Z.size_nat (snd p) <= bits + Nat.log2 (length xs) + 1)
+      (normalize_coef xs).
+  Proof.
+    intros xs bits Hsizes.
+    assert (Hempty : karr_accum_magnitude PTrieCode.empty 0).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (karr_accum_magnitude_fold xs PTrieCode.empty 0 bits Hsizes Hempty)
+      as Hmagnitude.
+    apply Forall_forall. intros p Hin. apply karr_count_magnitude_bits.
+    destruct (karr_normal_coef_lookup _ _ Hin) as [key Hget].
+    exact (Hmagnitude _ _ Hget).
+  Qed.
+
+  (** A bounded seed and bounded entries give the same bound on a maximum fold. *)
+  Lemma karr_max_bound : forall A (f : A -> nat) seed xs bound,
+    seed <= bound -> Forall (fun x => f x <= bound) xs ->
+    fold_right Nat.max seed (map f xs) <= bound.
+  Proof.
+    intros A f seed xs bound Hseed Hentries. induction Hentries;
+      cbn [map fold_right]; lia.
+  Qed.
+
+  (** A prepared row gains only a logarithmic coefficient-width allowance. *)
+  Lemma karr_normal_row_log_bits : forall r,
+    C.row_bits (normalize_row r) <= C.row_bits r + Nat.log2 (length (lhs r)) + 1.
+  Proof.
+    intro r. unfold C.row_bits at 1. cbn [normalize_row lhs rhs].
+    apply karr_max_bound.
+    - pose proof (karr_row_rhs_bits r). lia.
+    - apply karr_normal_coef_log_bits. apply Forall_forall. intros p Hin.
+      exact (karr_row_entry_bits r p Hin).
+  Qed.
+
+  (** The fold clock uses one width budget for every prefix of the complete input. *)
+  Lemma T_karr_accum_log : forall xs m keys bits used total,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    karr_accum_magnitude m (used * 2 ^ bits) -> used + length xs <= total ->
+    (List.T_fold_left add_term T_add_term xs m <=
+      (karr_add_factor + 1) * N.of_nat (length xs) *
+        N.of_nat (keys + 2 * bits + Nat.log2 total + 2) + 1)%N.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m keys bits used total Hsizes Hmagnitude Hcount.
+    - time_unfold List.T_fold_left. cbn [length]. nia.
+    - inversion Hsizes as [|q qs [Hkey Hbits] Htail]; subst q qs.
+      assert (Hprevious : Z.size_nat (karr_previous m (fst p)) <=
+        bits + Nat.log2 total + 1).
+      { apply karr_count_magnitude_bits.
+        pose proof (karr_previous_magnitude m (used * 2 ^ bits) (fst p) Hmagnitude).
+        cbn [length] in Hcount. nia. }
+      assert (Hnext : karr_accum_magnitude (add_term m p) ((used + 1) * 2 ^ bits)).
+      { replace ((used + 1) * 2 ^ bits) with (used * 2 ^ bits + 2 ^ bits) by nia.
+        now apply karr_add_term_magnitude. }
+      specialize (IH (add_term m p) keys bits (used + 1) total Htail Hnext
+        ltac:(cbn [length] in Hcount; lia)).
+      pose proof (T_karr_add_term_bounded m p keys bits
+        (bits + Nat.log2 total + 1) Hkey Hbits Hprevious) as Hhead.
+      time_unfold List.T_fold_left. cbn [length]. time_simpl.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Raw normalization charges each occurrence at the logarithmic merged width. *)
+  Lemma T_karr_normal_log : forall xs keys bits,
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) xs ->
+    (T_normalize_coef xs <= karr_raw_normal_factor * N.of_nat (length xs + 1) *
+      N.of_nat (keys + bits + Nat.log2 (length xs) + 1))%N.
+  Proof.
+    intros xs keys bits Hsizes.
+    assert (Hempty : karr_accum_magnitude PTrieCode.empty (0 * 2 ^ bits)).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (T_karr_accum_log xs PTrieCode.empty keys bits 0 (length xs)
+      Hsizes Hempty ltac:(lia)) as Haccum.
+    set (tr := fold_left add_term xs PTrieCode.empty).
+    assert (Hkeys : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys) xs).
+    { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
+    pose proof (karr_accum_nodes xs PTrieCode.empty keys Hkeys) as Hnodes.
+    change (PTrie.nodes tr <= length xs * keys) in Hnodes.
+    pose proof (T_karr_values_bounded (X.t * Z) tr) as Hvalues.
+    pose proof (karr_values_length (X.t * Z) tr) as Hlength.
+    pose proof (karr_T_filter_members (X.t * Z) karr_nonzero T_karr_nonzero 6
+      (karr_values tr) (fun p _ => T_karr_nonzero_bounded p)) as Hfilter.
+    time_unfold T_normalize_coef. fold tr.
+    change (fun p : X.t * Z => negb (Z.eqb (snd p) 0)) with karr_nonzero.
+    time_simpl.
+    change (fun (m : ptrie (X.t * Z)) (p : X.t * Z) => T_add_term m p) with T_add_term.
+    lazymatch goal with
+    | |- context [List.T_filter karr_nonzero ?Tf (karr_values tr)] =>
+      change Tf with T_karr_nonzero
+    end.
+    unfold karr_raw_normal_factor.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
+  Qed.
+  (** An inserted binding uses the new key or an already present address. *)
+  Lemma karr_add_key_origin : forall m p key q,
+    PTrieCode.get key (add_term m p) = Some q ->
+    key = X.encode (fst p) \/ exists old, PTrieCode.get key m = Some old.
+  Proof.
+    intros m p key q Hget. destruct (Pos.eq_dec key (X.encode (fst p))) as [Heq|Hother].
+    - now left.
+    - right. unfold add_term in Hget.
+      destruct (PTrieCode.get (X.encode (fst p)) m);
+        rewrite PTrie.get_set_other in Hget by exact Hother;
+        exists q; exact Hget.
+  Qed.
+
+  (** Every accumulator address comes from a scanned occurrence or its initial table. *)
+  Lemma karr_fold_key_origin : forall xs m key q,
+    PTrieCode.get key (fold_left add_term xs m) = Some q ->
+    In key (map (fun p => X.encode (fst p)) xs) \/
+      exists old, PTrieCode.get key m = Some old.
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m key q Hget; cbn [fold_left] in Hget.
+    - right. now exists q.
+    - destruct (IH _ _ _ Hget) as [Hin|[old Hold]].
+      + left. now right.
+      + destruct (karr_add_key_origin m p key old Hold) as [Heq|Hbefore].
+        * left. left. symmetry. exact Heq.
+        * now right.
+  Qed.
+
+  (** Every key enumerated from a fresh accumulator occurs in the raw source. *)
+  Lemma karr_accum_keys : forall xs p,
+    In p (karr_values (fold_left add_term xs PTrieCode.empty)) ->
+    In (fst p) (map fst xs).
+  Proof.
+    intros xs p Hin. rewrite karr_values_elements in Hin.
+    apply in_map_iff in Hin as [[key q] [Hsame Hin]]. cbn [snd] in Hsame. subst q.
+    apply (proj1 (PTrie.elements_spec _ _ _ _)) in Hin.
+    pose proof (normalize_fold_wf xs PTrieCode.empty normalization_empty key p Hin) as Haddress.
+    destruct (karr_fold_key_origin _ _ _ _ Hin) as [Hsource|[q Hempty]].
+    - apply in_map_iff in Hsource as [r [Hkey Hr]].
+      apply in_map_iff. exists r. split; [|exact Hr].
+      apply X.encode_inj. now rewrite Hkey, Haddress.
+    - rewrite PTrie.get_empty in Hempty. discriminate.
+  Qed.
+
+  (** Merging and deleting coefficients never introduces a new raw key. *)
+  Lemma karr_normal_coef_keys : forall xs p,
+    In p (normalize_coef xs) -> In (fst p) (map fst xs).
+  Proof.
+    intros xs p Hin. unfold normalize_coef in Hin. apply filter_In in Hin as [Hin _].
+    now apply karr_accum_keys.
+  Qed.
+
+  (** Every executable coordinate belongs to a source row's raw key list. *)
+  Lemma karr_variables_support : forall P x,
+    In x (variables P) -> exists r, In r P /\ In x (map fst (lhs r)).
+  Proof.
+    intros P x Hin. unfold variables in Hin.
+    apply in_map_iff in Hin as [p [Hsame Hin]]. subst x.
+    apply karr_accum_keys in Hin. apply in_map_iff in Hin as [q [Hsame Hin]].
+    apply in_flat_map in Hin as [r [Hr Hq]]. exists r. split; [exact Hr|].
+    apply in_map_iff. exists q. split; assumption.
+  Qed.
+
+  (** The declared set insertion retains its prior members and the inserted variable. *)
+  Lemma karr_var_insert_contains : forall acc x y,
+    In y acc \/ y = x ->
+    In y (if existsb (X.eqb x) acc then acc else x :: acc).
+  Proof.
+    intros acc x y Hin. destruct (existsb (X.eqb x) acc) eqn:Hpresent.
+    - destruct Hin as [Hin|Heq]; [exact Hin|]. subst y.
+      apply existsb_exists in Hpresent as [z [Hz Heq]].
+      destruct (X.eqb_spec x z) as [Hequal|Hneq]; [now subst z|discriminate].
+    - destruct Hin as [Hin|Heq]; [right; exact Hin|left; congruence].
+  Qed.
+
+  (** The declared variable fold contains every scanned variable. *)
+  Lemma karr_vars_fold_contains : forall xs acc x,
+    In x acc \/ In x xs ->
+    In x (fold_left (fun acc y => if existsb (X.eqb y) acc then acc else y :: acc) xs acc).
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc x Hin; cbn [fold_left].
+    - destruct Hin as [Hin|Hin]; [exact Hin|contradiction].
+    - apply IH. destruct Hin as [Hin|[Heq|Hin]].
+      + left. apply karr_var_insert_contains. now left.
+      + left. apply karr_var_insert_contains. right. congruence.
+      + now right.
+  Qed.
+
+  (** The public source dimension contains every raw row variable. *)
+  Lemma karr_vars_of_contains : forall P r x,
+    In r P -> In x (map fst (lhs r)) -> In x (vars_of P).
+  Proof.
+    intros P r x Hr Hx. unfold vars_of. apply karr_vars_fold_contains. right.
+    apply in_flat_map. exists r. auto.
+  Qed.
+
+  (** Unique executable coordinates fit the dimension declared by the signature. *)
+  Lemma karr_variables_count : forall P, length (variables P) <= length (vars_of P).
+  Proof.
+    intro P. apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx. destruct (karr_variables_support P x Hx) as [r [Hr Hterm]].
+    now apply karr_vars_of_contains with (r := r).
+  Qed.
+
+  (** A normalized source row has at most one term per original source variable. *)
+  Lemma karr_normal_row_dimension : forall P r, In r P ->
+    length (lhs (normalize_row r)) <= length (vars_of P).
+  Proof.
+    intros P r Hr. cbn [normalize_row lhs]. rewrite <- (length_map fst (normalize_coef (lhs r))).
+    apply NoDup_incl_length; [apply normalize_coef_nodup|].
+    intros x Hin. apply in_map_iff in Hin as [p [Hsame Hp]]. subst x.
+    apply karr_vars_of_contains with (r := r); [exact Hr|].
+    now apply karr_normal_coef_keys.
+  Qed.
+
+  (** Preparing a row never increases its maximum encoded-key width. *)
+  Lemma karr_normal_row_key_bits : forall r,
+    C.row_key_bits (normalize_row r) <= C.row_key_bits r.
+  Proof.
+    intro r. unfold C.row_key_bits at 1. cbn [normalize_row lhs].
+    apply karr_max_bound; [lia|]. apply Forall_forall. intros p Hin.
+    apply karr_normal_coef_keys in Hin.
+    apply in_map_iff in Hin as [q [Hsame Hq]]. rewrite <- Hsame.
+    exact (karr_row_key_member r q Hq).
+  Qed.
+
+  (** One row's raw occurrences are included in the complete source occurrence count. *)
+  Lemma karr_terms_member : forall P r, In r P -> length (lhs r) <= terms (Reached P).
+  Proof.
+    intro P. induction P as [|p P IH]; intros r Hin; [contradiction|].
+    change (length (lhs r) <= length (lhs p) + terms (Reached P)).
+    destruct Hin as [Heq|Hin]; [subst r; lia|]. pose proof (IH r Hin). lia.
+  Qed.
+
+  (** Every prepared source row fits the signature's logarithmic raw width. *)
+  Lemma karr_normal_source_width : forall P,
+    Forall (fun r => C.row_key_bits r + C.row_bits r <= nell (Reached P))
+      (map normalize_row P).
+  Proof.
+    intros P. apply Forall_map, Forall_forall. intros r Hr.
+    pose proof (karr_normal_row_key_bits r) as Hkeys.
+    pose proof (karr_normal_row_log_bits r) as Hbits.
+    pose proof (karr_max_member _ C.row_key_bits 0 P r Hr) as Hrawkeys.
+    pose proof (karr_max_member _ C.row_bits 0 P r Hr) as Hrawbits.
+    pose proof (Nat.log2_le_mono _ _ (karr_terms_member P r Hr)) as Hlog.
+    unfold nell, ell. cbn [rows_of]. lia.
+  Qed.
+
+  (** A coefficient in a row with unique keys never adds distinct occurrences together. *)
+  Lemma karr_coefficient_normal_bits : forall xs x bits,
+    NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Z.size_nat (coefficient x xs) <= bits.
+  Proof.
+    intro xs. induction xs as [|[y a] xs IH]; intros x bits Hunique Hsizes;
+      [change (0 <= bits); lia|].
+    inversion Hunique as [|key keys Hnot Htail]; subst key keys.
+    inversion Hsizes as [|p ps Hhead Hsizes']; subst p ps.
+    rewrite coefficient_cons. destruct (X.eqb_spec x y) as [Hequal|Hother].
+    - subst x. rewrite (coefficient_absent y xs Hnot), Z.add_0_r. exact Hhead.
+    - rewrite Z.add_0_l. now apply IH.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
