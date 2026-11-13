@@ -4,8 +4,8 @@
     For example, removing the sole binding collapses its path to the empty trie.
     Builds on: TrieSig and Argent time derivation. *)
 
-From Stdlib Require Import NArith PArith List Bool Sorting.Sorted.
-From Argent Require Import Time Std.
+From Stdlib Require Import NArith PArith Arith List Bool Lia Sorting.Sorted.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import TrieSig.
 
 Inductive trie_ne (A : Type) : Type :=
@@ -288,11 +288,142 @@ Module PTrie <: TRIE.
   Definition nodes {A} (tr : t A) : nat :=
     match tr with Empty => 0 | Nodes n => nodes_ne n end.
 
+  (** Rebuilding preserves the unique canonical representation. *)
+  Lemma node_eta {A} (tr : t A) : node (left tr) (value tr) (right tr) = tr.
+  Proof.
+    destruct tr as [|n]; [reflexivity|destruct n; reflexivity].
+  Qed.
+
+  (** Semantic induction exposes the two subtries and the optional root binding. *)
+  Lemma node_ind {A} (P : t A -> Prop) :
+    P Empty -> (forall l o r, P l -> P r -> P (node l o r)) -> forall tr, P tr.
+  Proof.
+    intros Hempty Hnode [|n]; [exact Hempty|].
+    induction n as [r IHr|v|v r IHr|l IHl|l IHl r IHr|l IHl v|l IHl v r IHr].
+    - exact (Hnode Empty None (Nodes r) Hempty IHr).
+    - exact (Hnode Empty (Some v) Empty Hempty Hempty).
+    - exact (Hnode Empty (Some v) (Nodes r) Hempty IHr).
+    - exact (Hnode (Nodes l) None Empty IHl Hempty).
+    - exact (Hnode (Nodes l) None (Nodes r) IHl IHr).
+    - exact (Hnode (Nodes l) (Some v) Empty IHl Hempty).
+    - exact (Hnode (Nodes l) (Some v) (Nodes r) IHl IHr).
+  Qed.
+
+  (** This specification list records the executable traversal's left-root-right order. *)
+  Fixpoint entries_ne {A} (n : ne A) : list (positive * A) :=
+    match n with
+    | N001 r => List.map (fun pv => (xI (fst pv), snd pv)) (entries_ne r)
+    | N010 v => (xH, v) :: nil
+    | N011 v r => (xH, v) :: List.map (fun pv => (xI (fst pv), snd pv)) (entries_ne r)
+    | N100 l => List.map (fun pv => (xO (fst pv), snd pv)) (entries_ne l)
+    | N101 l r =>
+      List.map (fun pv => (xO (fst pv), snd pv)) (entries_ne l) ++
+        List.map (fun pv => (xI (fst pv), snd pv)) (entries_ne r)
+    | N110 l v => List.map (fun pv => (xO (fst pv), snd pv)) (entries_ne l) ++ (xH, v) :: nil
+    | N111 l v r =>
+      List.map (fun pv => (xO (fst pv), snd pv)) (entries_ne l) ++
+        (xH, v) :: List.map (fun pv => (xI (fst pv), snd pv)) (entries_ne r)
+    end.
+
+  Definition entries {A} (tr : t A) : list (positive * A) :=
+    match tr with Empty => nil | Nodes n => entries_ne n end.
+
+  Local Lemma fold_left_map_values {X Y B} (f : B -> Y -> B) (g : X -> Y) xs b :
+    fold_left f (List.map g xs) b = fold_left (fun acc x => f acc (g x)) xs b.
+  Proof.
+    revert b. induction xs as [|x xs IH]; intro b; cbn [List.map fold_left]; auto.
+  Qed.
+
+  Lemma fold_path_entries {A B} (f : B -> positive -> A -> B) (tr : t A) :
+    forall path b, fold_path f path tr b =
+      fold_left (fun acc pv => f acc (path (fst pv)) (snd pv)) (entries tr) b.
+  Proof.
+    destruct tr as [|n]; [reflexivity|].
+    induction n; intros path b; cbn [fold_path fold_ne entries entries_ne emit];
+      rewrite ?fold_left_app; cbn [fold_left]; rewrite ?fold_left_map_values;
+      cbn [fst snd]; cbn [fold_path entries] in *;
+      rewrite ?IHn, ?IHn1, ?IHn2; reflexivity.
+  Qed.
+
+  Lemma fold_values_entries {A B} (f : B -> A -> B) (tr : t A) :
+    forall b, fold_values f tr b =
+      fold_left (fun acc pv => f acc (snd pv)) (entries tr) b.
+  Proof.
+    destruct tr as [|n]; [reflexivity|].
+    induction n; intro b; cbn [fold_values fold_values_ne entries entries_ne];
+      rewrite ?fold_left_app; cbn [fold_left]; rewrite ?fold_left_map_values;
+      cbn [fst snd]; cbn [fold_values entries] in *;
+      rewrite ?IHn, ?IHn1, ?IHn2; reflexivity.
+  Qed.
+
+  Local Lemma fold_left_pairs {A} (xs acc : list (positive * A)) :
+    fold_left (fun acc pv => (fst pv, snd pv) :: acc) xs acc = List.rev xs ++ acc.
+  Proof.
+    revert acc. induction xs as [|[p a] xs IH]; intro acc.
+    - reflexivity.
+    - cbn [fold_left rev fst snd]. rewrite IH, <- app_assoc. reflexivity.
+  Qed.
+
+  Lemma elements_entries {A} (tr : t A) : elements tr = entries tr.
+  Proof.
+    unfold elements, fold. rewrite rev_append_rev, app_nil_r, fold_path_entries.
+    change (List.rev (fold_left (fun acc pv => (fst pv, snd pv) :: acc)
+      (entries tr) nil) = entries tr).
+    rewrite fold_left_pairs, app_nil_r, rev_involutive. reflexivity.
+  Qed.
+
+  Lemma elements_node {A} (l r : t A) o :
+    elements (node l o r) =
+      List.map (fun pv => (xO (fst pv), snd pv)) (elements l) ++
+      (match o with Some v => (xH, v) :: nil | None => nil end) ++
+      List.map (fun pv => (xI (fst pv), snd pv)) (elements r).
+  Proof.
+    rewrite !elements_entries. destruct l, o, r;
+      cbn [node entries entries_ne]; rewrite ?app_nil_r; reflexivity.
+  Qed.
+
+  Lemma fold_path_elements {A B} (f : B -> positive -> A -> B) path m b :
+    fold_path f path m b =
+      fold_left (fun acc kv => f acc (path (fst kv)) (snd kv)) (elements m) b.
+  Proof.
+    rewrite elements_entries. apply fold_path_entries.
+  Qed.
+
+  Lemma fold_values_elements {A B} (f : B -> A -> B) m b :
+    fold_values f m b = fold_left (fun acc kv => f acc (snd kv)) (elements m) b.
+  Proof.
+    rewrite elements_entries. apply fold_values_entries.
+  Qed.
+
+  Lemma elements_length_nodes {A} (m : t A) : length (elements m) <= nodes m.
+  Proof.
+    rewrite elements_entries. destruct m as [|n]; [reflexivity|].
+    induction n; cbn [entries entries_ne nodes nodes_ne];
+      rewrite ?length_app, ?length_map; cbn [length];
+      rewrite ?length_map; cbn [entries nodes] in *; lia.
+  Qed.
+
+  Lemma nodes_node_le {A} (l r : t A) o : nodes (node l o r) <= S (nodes l + nodes r).
+  Proof.
+    destruct l, o, r; cbn [node nodes nodes_ne]; lia.
+  Qed.
+
+  Lemma nodes_children_le {A} (m : t A) : nodes (left m) + nodes (right m) <= nodes m.
+  Proof.
+    destruct m as [|n]; [reflexivity|destruct n;
+      cbn [left right trie_left trie_right nodes nodes_ne]; lia].
+  Qed.
 
   Lemma get_empty : forall A p, get p (@empty A) = None.
   Proof.
     intros A p; induction p; cbn [get trie_get trie_left trie_right trie_value empty];
       assumption || reflexivity.
+  Qed.
+  Lemma get_equation {A} p (tr : t A) :
+    get p tr =
+    match p with xH => value tr | xO q => get q (left tr) | xI q => get q (right tr) end.
+  Proof.
+    destruct p; reflexivity.
   Qed.
   Lemma left_node {A} (l r : t A) o : left (node l o r) = l.
   Proof. destruct l, o, r; reflexivity. Qed.
@@ -323,25 +454,205 @@ Module PTrie <: TRIE.
   Lemma get_remove_other : forall A p q (m : t A),
     p <> q -> get p (remove q m) = get p m.
   Proof. intros; apply get_replace_other; congruence. Qed.
+
+  Lemma filter_node {A B} (f : A -> option B) (l r : t A) o :
+    filter_map f (node l o r) =
+      node (filter_map f l) (match o with Some v => f v | None => None end) (filter_map f r).
+  Proof.
+    destruct l, o, r; reflexivity.
+  Qed.
+
+  Lemma get_filter {A B} (f : A -> option B) (tr : t A) p :
+    get p (filter_map f tr) = match get p tr with Some a => f a | None => None end.
+  Proof.
+    revert p. induction tr as [|l o r IHl IHr] using node_ind; intro p.
+    - rewrite !get_empty. reflexivity.
+    - rewrite filter_node, !get_node. destruct p; auto.
+  Qed.
+
+  Lemma get_merge_with {A B C} (f : option A -> option B -> option C) only_l only_r :
+    (forall p tr, get p (only_l tr) = f (get p tr) None) ->
+    (forall p tr, get p (only_r tr) = f None (get p tr)) ->
+    forall p tr u, get p (merge_with f only_l only_r tr u) = f (get p tr) (get p u).
+  Proof.
+    intros Hl Hr p [|n] u.
+    - cbn [merge_with]. rewrite get_empty. apply Hr.
+    - revert p u.
+      induction n as [r IHr|v|v r IHr|l IHl|l IHl r IHr|l IHl v|l IHl v r IHr];
+        intros p [|other].
+      all: try (cbn [merge_with merge_ne]; rewrite get_empty; apply Hl).
+      all: try (cbn [merge_with] in IHl); try (cbn [merge_with] in IHr).
+      all: destruct p; cbn [merge_with merge_ne merge_value]; rewrite get_node;
+        match goal with
+        | |- _ = ?callback (get ?p ?tr) _ => rewrite (get_equation p tr)
+        end;
+        rewrite (get_equation _ (Nodes other));
+        cbn [left right value trie_left trie_right trie_value];
+        rewrite ?IHl, ?IHr, ?Hr, ?get_empty; reflexivity.
+  Qed.
+
   Lemma get_merge : forall A B C (f : option A -> option B -> option C) m1 m2 p,
     f None None = None -> get p (merge f m1 m2) = f (get p m1) (get p m2).
-  Proof. Admitted. (* CONVERT: get_combine: The variable get_merge_with was not found in the current environment. *)
+  Proof.
+    intros A B C f m1 m2 p Hnone. unfold merge. apply get_merge_with;
+      intros q tr; rewrite get_filter; destruct (get q tr); auto.
+  Qed.
+
+  Lemma forall2_node {A B} (rel : A -> option B -> bool) (l r : t A) o (u : t B) :
+    forall2 rel (node l o r) u =
+      (forall2 rel l (left u) && (test_value rel o (value u) &&
+        forall2 rel r (right u)))%bool.
+  Proof.
+    destruct l, o, r; cbn [node forall2 forall2_ne test_value];
+      rewrite ?andb_true_r; reflexivity.
+  Qed.
+
+  Lemma forall2_spec {A B} (rel : A -> option B -> bool) (tr : t A) (u : t B) :
+    forall2 rel tr u = true <->
+      forall p a, get p tr = Some a -> rel a (get p u) = true.
+  Proof.
+    revert u. induction tr as [|l o r IHl IHr] using node_ind; intro u.
+    - split.
+      + intros _ p a Hget. rewrite get_empty in Hget. discriminate.
+      + reflexivity.
+    - rewrite forall2_node, !andb_true_iff, IHl, IHr. split.
+      + intros [Hl [Ho Hr]] p a Hget. rewrite get_node in Hget.
+        destruct p; rewrite get_equation; [apply Hr|apply Hl|]; try exact Hget.
+        subst o. exact Ho.
+      + intro Htest. split.
+        * intros p a Hget. apply (Htest (xO p) a). rewrite get_node. exact Hget.
+        * split.
+          -- destruct o as [a|]; [apply (Htest xH a); apply get_node|reflexivity].
+          -- intros p a Hget. apply (Htest (xI p) a). rewrite get_node. exact Hget.
+  Qed.
+
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
     f None None = true ->
     (forall2b f m1 m2 = true <-> forall p, f (get p m1) (get p m2) = true).
-  Proof. Admitted. (* STUB *)
-  Lemma existsb_spec : forall A (f : A -> bool) m,
-    existsb f m = true <-> exists p a, get p m = Some a /\ f a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f m1 m2 Hnone. unfold forall2b.
+    rewrite andb_true_iff, !forall2_spec. split.
+    - intros [Hl Hr] p.
+      destruct (get p m1) as [a|] eqn:Hleft.
+      + exact (Hl p a Hleft).
+      + destruct (get p m2) as [b|] eqn:Hright; [|exact Hnone].
+        specialize (Hr p b Hright). now rewrite Hleft in Hr.
+    - intro Htest. split.
+      + intros p a Hget. specialize (Htest p). now rewrite Hget in Htest.
+      + intros p b Hget. specialize (Htest p). rewrite Hget in Htest.
+        destruct (get p m1); [reflexivity|exact Htest].
+  Qed.
   Lemma get_map : forall A B (f : A -> B) m p,
     get p (map f m) = option_map f (get p m).
-  Proof. Admitted. (* CONVERT: get_map: The variable get_filter was not found in the current environment. *)
+  Proof.
+    intros A B f m p. unfold map. rewrite get_filter. destruct (get p m); reflexivity.
+  Qed.
   Lemma elements_spec : forall A (m : t A) p a,
     In (p, a) (elements m) <-> get p m = Some a.
-  Proof. Admitted. (* CONVERT: elements_spec: The variable node_ind was not found in the current environment. *)
+  Proof.
+    intros A m. induction m as [|l o r IHl IHr] using node_ind; intros p a.
+    - rewrite get_empty, elements_entries. cbn [entries].
+      split; [contradiction|discriminate].
+    - rewrite elements_node, !in_app_iff, get_node. destruct p.
+      + split.
+        * intros [Hl|[Ho|Hr]].
+          -- apply in_map_iff in Hl as [[q b] [Heq _]]. discriminate Heq.
+          -- destruct o; cbn in Ho; intuition discriminate.
+          -- apply in_map_iff in Hr as [[q b] [Heq Hin]].
+             injection Heq as -> ->. now apply IHr.
+        * intro Hget. right. right. apply in_map_iff. exists (p, a).
+          split; [reflexivity|now apply IHr].
+      + split.
+        * intros [Hl|[Ho|Hr]].
+          -- apply in_map_iff in Hl as [[q b] [Heq Hin]].
+             injection Heq as -> ->. now apply IHl.
+          -- destruct o; cbn in Ho; intuition discriminate.
+          -- apply in_map_iff in Hr as [[q b] [Heq _]]. discriminate Heq.
+        * intro Hget. left. apply in_map_iff. exists (p, a).
+          split; [reflexivity|now apply IHl].
+      + split.
+        * intros [Hl|[Ho|Hr]].
+          -- apply in_map_iff in Hl as [[q b] [Heq _]]. discriminate Heq.
+          -- destruct o; cbn in Ho; intuition congruence.
+          -- apply in_map_iff in Hr as [[q b] [Heq _]]. discriminate Heq.
+        * intro Hget. right. left. subst o. now left.
+  Qed.
+
+  Lemma forall2_elements {A B} (rel : A -> option B -> bool) m u :
+    forall2 rel m u =
+      List.forallb (fun kv => rel (snd kv) (get (fst kv) u)) (elements m).
+  Proof.
+    apply eq_true_iff_eq. rewrite forall2_spec, forallb_forall. split.
+    - intros Htest [p a] Hin. apply Htest. now apply elements_spec.
+    - intros Htest p a Hget. apply (Htest (p, a)). now apply elements_spec.
+  Qed.
+
+  Lemma existsb_spec : forall A (f : A -> bool) m,
+    existsb f m = true <-> exists p a, get p m = Some a /\ f a = true.
+  Proof.
+    intros A f m. unfold existsb. rewrite forall2_elements.
+    assert (Hneg : forall xs : list (positive * A),
+      negb (List.forallb (fun kv => negb (f (snd kv))) xs) =
+        List.existsb (fun kv => f (snd kv)) xs).
+    { induction xs as [|[p a] xs IH]; cbn [List.forallb List.existsb snd].
+      - reflexivity.
+      - rewrite negb_andb, negb_involutive, IH. reflexivity. }
+    change (negb (List.forallb (fun kv => negb (f (snd kv))) (elements m)) = true <->
+      exists p a, get p m = Some a /\ f a = true).
+    rewrite Hneg, existsb_exists. split.
+    - intros [[p a] [Hin Htest]]. exists p, a. split; [now apply elements_spec|exact Htest].
+    - intros [p [a [Hget Htest]]]. exists (p, a).
+      split; [now apply elements_spec|exact Htest].
+  Qed.
+
+  Local Lemma strongly_sorted_app {X} (R : X -> X -> Prop) xs ys :
+    StronglySorted R xs -> StronglySorted R ys ->
+    (forall x y, In x xs -> In y ys -> R x y) -> StronglySorted R (xs ++ ys).
+  Proof.
+    intros Hxs Hys. induction Hxs as [|x xs Hsort IH Hforall]; intro Hcross.
+    - exact Hys.
+    - cbn [app]. constructor.
+      + apply IH. intros a b Ha Hb. apply Hcross; [right; exact Ha|exact Hb].
+      + apply Forall_app. split; [exact Hforall|]. apply Forall_forall.
+        intros y Hy. apply Hcross; [left; reflexivity|exact Hy].
+  Qed.
+
+  Local Lemma strongly_sorted_map {X Y} (R : X -> X -> Prop) (S : Y -> Y -> Prop)
+      (f : X -> Y) xs :
+    (forall x y, R x y -> S (f x) (f y)) ->
+    StronglySorted R xs -> StronglySorted S (List.map f xs).
+  Proof.
+    intros Hmap Hsort. induction Hsort as [|x xs Hsort IH Hforall]; cbn [List.map].
+    - constructor.
+    - constructor; [exact IH|]. apply Forall_forall. intros y Hy.
+      apply in_map_iff in Hy. destruct Hy as [z [Heq Hin]]. subst y.
+      apply Hmap. rewrite Forall_forall in Hforall. apply Hforall. exact Hin.
+  Qed.
+
   Lemma elements_sorted : forall A (m : t A),
     StronglySorted (fun x y => trie_lt (fst x) (fst y)) (elements m).
-  Proof. Admitted. (* CONVERT: elements_sorted: The variable node_ind was not found in the current environment. *)
+  Proof.
+    intros A m. induction m as [|l o r IHl IHr] using node_ind.
+    - rewrite elements_entries. constructor.
+    - rewrite elements_node.
+      assert (Hl : StronglySorted (fun a b => trie_lt (fst a) (fst b))
+        (List.map (fun pv => (xO (fst pv), snd pv)) (elements l))).
+      { eapply strongly_sorted_map; [|exact IHl]. intros [p a] [q b] Hlt. exact Hlt. }
+      assert (Hr : StronglySorted (fun a b => trie_lt (fst a) (fst b))
+        (List.map (fun pv => (xI (fst pv), snd pv)) (elements r))).
+      { eapply strongly_sorted_map; [|exact IHr]. intros [p a] [q b] Hlt. exact Hlt. }
+      apply strongly_sorted_app; [exact Hl| |].
+      + destruct o as [v|]; cbn [app]; [|exact Hr].
+        constructor; [exact Hr|]. apply Forall_forall. intros [q b] Hin.
+        apply in_map_iff in Hin as [[p a] [Heq _]]. inversion Heq. exact I.
+      + intros [p a] [q b] Hinl Hinr.
+        apply in_map_iff in Hinl as [[k c] [Heq _]]. inversion Heq; subst p a.
+        apply in_app_iff in Hinr as [Hroot|Hright].
+        * destruct o as [v|]; cbn in Hroot; [|contradiction].
+          destruct Hroot as [Heqroot|Hfalse]; [|contradiction]. inversion Heqroot. exact I.
+        * apply in_map_iff in Hright as [[j d] [Heqright _]].
+          inversion Heqright. exact I.
+  Qed.
   Lemma elements_nodup : forall A (m : t A), NoDup (List.map fst (elements m)).
   Proof.
     intros A m. pose proof (elements_sorted A m) as Hsort.
@@ -356,23 +667,158 @@ Module PTrie <: TRIE.
   Qed.
   Lemma fold_spec : forall A B (f : B -> positive -> A -> B) m b,
     fold f m b = fold_left (fun acc kv => f acc (fst kv) (snd kv)) (elements m) b.
-  Proof. Admitted. (* CONVERT: fold_elements: The variable elements_entries was not found in the current environment. *)
+  Proof.
+    intros A B f m b. apply (fold_path_elements f (fun p => p)).
+  Qed.
+
+  Local Lemma all_absent_empty {A} (tr : t A) :
+    (forall p, get p tr = None) -> tr = Empty.
+  Proof.
+    induction tr as [|l o r IHl IHr] using node_ind; intro Hnone.
+    - reflexivity.
+    - assert (Hl : l = Empty).
+      { apply IHl. intro p. specialize (Hnone (xO p)). now rewrite get_node in Hnone. }
+      assert (Hr : r = Empty).
+      { apply IHr. intro p. specialize (Hnone (xI p)). now rewrite get_node in Hnone. }
+      specialize (Hnone xH). rewrite get_node in Hnone.
+      rewrite Hl, Hr, Hnone. reflexivity.
+  Qed.
+
   Lemma ext : forall A (m n : t A), (forall p, get p m = get p n) -> m = n.
-  Proof. Admitted. (* CONVERT: extensionality: The variable node_ind was not found in the current environment. *)
+  Proof.
+    intros A m. induction m as [|l o r IHl IHr] using node_ind; intros n Hagree.
+    - symmetry. apply all_absent_empty. intro p. rewrite <- Hagree. apply get_empty.
+    - assert (Hl : l = left n).
+      { apply IHl. intro p. specialize (Hagree (xO p)).
+        rewrite get_node, (get_equation (xO p) n) in Hagree. exact Hagree. }
+      assert (Hr : r = right n).
+      { apply IHr. intro p. specialize (Hagree (xI p)).
+        rewrite get_node, (get_equation (xI p) n) in Hagree. exact Hagree. }
+      specialize (Hagree xH). rewrite get_node, get_equation in Hagree.
+      rewrite Hl, Hr, Hagree. apply node_eta.
+  Qed.
   Lemma nodes_set : forall A p (a : A) m,
     nodes (set p a m) <= nodes m + Pos.size_nat p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A p a. induction p; intro m; cbn [set replace Pos.size_nat].
+    all: eapply Nat.le_trans; [apply nodes_node_le|].
+    all: pose proof (nodes_children_le m) as Hchildren.
+    - specialize (IHp (right m)). unfold set in IHp. lia.
+    - specialize (IHp (left m)). unfold set in IHp. lia.
+    - lia.
+  Qed.
+
+  Local Definition entry_weight {A} (xs : list (positive * A)) : nat :=
+    fold_right Nat.add 0 (List.map (fun kv => Pos.size_nat (fst kv) + 1) xs).
+
+  Local Lemma entry_weight_cons {A} p (a : A) xs :
+    entry_weight ((p, a) :: xs) = Pos.size_nat p + 1 + entry_weight xs.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Local Lemma entry_weight_app {A} (xs ys : list (positive * A)) :
+    entry_weight (xs ++ ys) = entry_weight xs + entry_weight ys.
+  Proof.
+    unfold entry_weight. induction xs as [|[p a] xs IH];
+      cbn [List.map fold_right app fst] in *; lia.
+  Qed.
+
+  Local Lemma entry_weight_lift {A} (bit : positive -> positive) xs :
+    (forall p, Pos.size_nat (bit p) = S (Pos.size_nat p)) ->
+    entry_weight (List.map (fun kv : positive * A => (bit (fst kv), snd kv)) xs) =
+      entry_weight xs + length xs.
+  Proof.
+    intro Hbit. unfold entry_weight. induction xs as [|[p a] xs IH]; [reflexivity|].
+    cbn [List.map fold_right length fst snd] in *.
+    rewrite Hbit. lia.
+  Qed.
+
+  Local Lemma entries_ne_positive {A} (n : ne A) : 0 < length (entries_ne n).
+  Proof.
+    induction n; cbn [entries_ne length]; rewrite ?length_app, ?length_map;
+      cbn [length]; rewrite ?length_map; lia.
+  Qed.
+
   Lemma nodes_le_weight : forall A (m : t A), nodes m <= weight m.
-  Proof. Admitted. (* STUB *)
-Lemma is_empty_spec : forall A (m : t A), is_empty m = true <-> m = empty.
-  Proof. Admitted. (* STUB *)
-Lemma nodes_remove : forall A p (m : t A), nodes (remove p m) <= nodes m.
-  Proof. Admitted. (* STUB *)
-Lemma nodes_map : forall A B (f : A -> B) m, nodes (map f m) <= nodes m.
-  Proof. Admitted. (* STUB *)
-Lemma nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
-  nodes (merge f m1 m2) <= nodes m1 + nodes m2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m. unfold weight. rewrite elements_entries. destruct m as [|n]; [reflexivity|].
+    change (nodes_ne n <= entry_weight (entries_ne n)).
+    induction n; cbn [nodes_ne entries_ne]; rewrite ?entry_weight_app, ?entry_weight_cons,
+      ?(entry_weight_lift xO _ (fun p => eq_refl)),
+      ?(entry_weight_lift xI _ (fun p => eq_refl)).
+    all: try pose proof (entries_ne_positive n) as Hpositive.
+    all: try pose proof (entries_ne_positive n1) as Hpositive.
+    all: unfold entry_weight in *; cbn [List.map fold_right fst Pos.size_nat] in *; lia.
+  Qed.
+
+  Lemma is_empty_spec : forall A (m : t A), is_empty m = true <-> m = empty.
+  Proof.
+    intros A [|n]; split; intro H; try reflexivity; discriminate H.
+  Qed.
+
+  Lemma remove_empty {A} p : remove p (@empty A) = empty.
+  Proof.
+    unfold remove, empty. induction p;
+      cbn [replace left right value trie_left trie_right trie_value]; rewrite ?IHp; reflexivity.
+  Qed.
+
+  Lemma nodes_components_ne {A} (n : ne A) :
+    nodes (Nodes n) = S (nodes (left (Nodes n)) + nodes (right (Nodes n))).
+  Proof.
+    destruct n; cbn [nodes nodes_ne left right trie_left trie_right]; lia.
+  Qed.
+
+  Lemma nodes_remove : forall A p (m : t A), nodes (remove p m) <= nodes m.
+  Proof.
+    intros A p. induction p; intro m.
+    all: destruct m as [|n]; [rewrite remove_empty; reflexivity|].
+    all: cbn [remove replace]; eapply Nat.le_trans; [apply nodes_node_le|].
+    all: pose proof (nodes_components_ne n) as Hnodes.
+    - specialize (IHp (right (Nodes n))). unfold remove in IHp. lia.
+    - specialize (IHp (left (Nodes n))). unfold remove in IHp. lia.
+    - lia.
+  Qed.
+
+  Lemma nodes_filter {A B} (f : A -> option B) m : nodes (filter_map f m) <= nodes m.
+  Proof.
+    destruct m as [|n]; [reflexivity|].
+    induction n; cbn [filter_map filter_ne].
+    all: eapply Nat.le_trans; [apply nodes_node_le|].
+    all: cbn [filter_map nodes nodes_ne] in *; lia.
+  Qed.
+
+  Lemma nodes_map : forall A B (f : A -> B) m, nodes (map f m) <= nodes m.
+  Proof.
+    intros A B f m. apply nodes_filter.
+  Qed.
+
+  Lemma nodes_merge_with {A B C} (f : option A -> option B -> option C) fl fr m u :
+    (forall tr, nodes (fl tr) <= nodes tr) ->
+    (forall tr, nodes (fr tr) <= nodes tr) ->
+    nodes (merge_with f fl fr m u) <= nodes m + nodes u.
+  Proof.
+    intros Hl Hr. destruct m as [|n].
+    - cbn [merge_with nodes]. apply Hr.
+    - revert u. induction n; intros [|other].
+      all: try (cbn [merge_with merge_ne nodes]; rewrite Nat.add_0_r; apply Hl).
+      all: cbn [merge_with merge_ne]; eapply Nat.le_trans; [apply nodes_node_le|].
+      all: cbn [merge_with] in *.
+      all: try pose proof (IHn (left (Nodes other))) as Hleft.
+      all: try pose proof (IHn (right (Nodes other))) as Hright.
+      all: try pose proof (IHn1 (left (Nodes other))) as Hleft.
+      all: try pose proof (IHn2 (right (Nodes other))) as Hright.
+      all: pose proof (Hr (left (Nodes other))) as Honly_left.
+      all: pose proof (Hr (right (Nodes other))) as Honly_right.
+      all: pose proof (nodes_components_ne other) as Hother.
+      all: cbn [nodes nodes_ne] in *; lia.
+  Qed.
+
+  Lemma nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
+    nodes (merge f m1 m2) <= nodes m1 + nodes m2.
+  Proof.
+    intros A B C f m1 m2. apply nodes_merge_with; intro tr; apply nodes_filter.
+  Qed.
 
 End PTrie.
 
