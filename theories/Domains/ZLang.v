@@ -4,7 +4,7 @@
     For example, ZAdd evaluates two operands by integer addition.
     Builds on: IntervalSig. *)
 
-From Stdlib Require Import List ZArith.
+From Stdlib Require Import List ZArith NArith Lia PeanoNat.
 From Argent Require Import Time Tactics Std.
 From Galois.Domains Require Import LangSig IntervalSig.
 
@@ -59,20 +59,46 @@ Module ZLangT <: Z_LANGUAGE_T.
   TimeFun view.
   TimeFun gview.
 
-  Definition c_view : N := 1%N. (* STUB *)
+  Definition c_view : N := 1%N.
   (** Viewing an integer operator takes constant time. *)
   Lemma T_view_le : forall o, (T_view o <= c_view)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro o. time_unfold T_view. unfold c_view. lia.
+  Qed.
   (** Viewing an integer guard takes constant time. *)
   Lemma T_gview_le : forall g, (T_gview g <= c_view)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro g. time_unfold T_gview. unfold c_view. lia.
+  Qed.
 
-  Definition c_lang : N := 1%N. (* STUB *)
-  (** STUB: constant-factor cost obligation for viewed integer evaluation. *)
+  Definition c_lang : N := 128%N.
+  Local Lemma constant_budget : forall ticks n,
+    (ticks <= 128)%N -> (ticks <= c_lang * N.of_nat (n + 1))%N.
+  Proof.
+    intros ticks n Hticks. unfold c_lang. rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  (** Integer evaluation charges the selected primitive on valid operand shapes. *)
   Lemma T_eval_le : forall o vs,
     (T_eval o vs <= c_lang * N.of_nat (work o vs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** STUB: uniform literal-recognition cost obligation. *)
+  Proof.
+    intros o xs. destruct xs as [|x [|y [|z xs]]].
+    - apply constant_budget. destruct o; time_unfold T_eval;
+        time_unfold T_zview_eval; time_cbn; lia.
+    - apply constant_budget. destruct o; time_unfold T_eval;
+        time_unfold T_zview_eval; time_cbn; lia.
+    - destruct o; unfold c_lang, work, quadratic_work, shift_work, operand_bits;
+        cbn [map fold_right]; time_unfold T_eval; time_unfold T_zview_eval;
+        time_cbn; time_pose.
+      all: repeat first [rewrite Nat2N.inj_add in * | rewrite Nat2N.inj_mul in * |
+        rewrite Nat2N.inj_pow in * | rewrite N2Nat.id in *].
+      all: time_cases; time_cbn_all; nia.
+    - apply constant_budget. destruct o; time_unfold T_eval;
+        time_unfold T_zview_eval; time_cbn; lia.
+  Qed.
+  (** Literal recognition reads only the operator constructor. *)
   Lemma T_literal_le : forall o, (T_literal o <= c_lang)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro o. destruct o; time_unfold T_literal; unfold c_lang; time_cbn; lia.
+  Qed.
 End ZLangT.
