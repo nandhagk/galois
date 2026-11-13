@@ -154,11 +154,67 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     | Reached m => M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x)
     end.
 
+  Definition option_value (a : option V.t) : V.t :=
+    match a with Some a => a | None => V.top end.
+
+  (** Optional comparison is the value order with top at absent bindings. *)
+  Lemma option_leb_spec : forall a b,
+    option_leb a b = V.leb (option_value a) (option_value b).
+  Proof.
+    intros [a|] [b|]; cbn [option_leb option_value]; try reflexivity;
+      symmetry; apply V.top_greatest.
+  Qed.
+
+  (** Raw map comparison reflects the value order at every encoded key. *)
+  Lemma map_leb_spec : forall a b,
+    M.forall2b option_leb a b = true <->
+      forall p, V.leb (option_value (M.find p a)) (option_value (M.find p b)) = true.
+  Proof.
+    intros a b. rewrite (M.forall2b_spec V.t V.t option_leb a b eq_refl).
+    split; intros H p; specialize (H p); rewrite option_leb_spec in *; exact H.
+  Qed.
+
+  (** A map is not recognized as bottom exactly when none of its bindings is. *)
+  Lemma map_nonbot_spec : forall m,
+    M.existsb V.is_bot m = false <->
+      forall p a, M.find p m = Some a -> V.is_bot a = false.
+  Proof.
+    intro m. split.
+    - intros Hclean p a Hfind. destruct (V.is_bot a) eqn:Hbot; [|reflexivity].
+      assert (Hbad : M.existsb V.is_bot m = true).
+      { apply M.existsb_spec. exists p, a. split; assumption. }
+      congruence.
+    - intros Hclean. destruct (M.existsb V.is_bot m) eqn:Hbad; [|reflexivity].
+      apply M.existsb_spec in Hbad as [p [a [Hfind Hbot]]].
+      specialize (Hclean p a Hfind). congruence.
+  Qed.
+
+  (** The empty map has no recognized bottom binding. *)
+  Lemma map_empty_nonbot : M.existsb V.is_bot (@M.empty V.t) = false.
+  Proof.
+    apply map_nonbot_spec. intros p a Hfind. rewrite M.find_empty in Hfind. discriminate.
+  Qed.
+
+  (** Every environment is below itself, including recognized bottom maps. *)
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros [|m]; [reflexivity|]. unfold leb. cbn [is_bot].
+    destruct (M.existsb V.is_bot m); cbn; [reflexivity|].
+    apply map_leb_spec. intro p. apply V.leb_refl.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros a b c Hab Hbc. unfold leb in *.
+    destruct (is_bot a) eqn:Ha; [reflexivity|]. cbn in Hab |- *.
+    apply andb_true_iff in Hab as [Hb Hab]. apply negb_true_iff in Hb.
+    rewrite Hb in Hbc. cbn in Hbc.
+    apply andb_true_iff in Hbc as [Hc Hbc]. rewrite Hc. cbn.
+    destruct a as [|a], b as [|b], c as [|c]; try discriminate.
+    pose proof (proj1 (map_leb_spec a b) Hab) as Hab_point.
+    pose proof (proj1 (map_leb_spec b c) Hbc) as Hbc_point.
+    apply map_leb_spec. intro p. eapply V.leb_trans; [apply Hab_point|apply Hbc_point].
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
@@ -166,10 +222,14 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hbot. unfold leb. now rewrite Hbot.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
@@ -178,7 +238,11 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* CONVERT: env_top: The variable leb_lift_bot was not found in the current environment. *)
+  Proof.
+    intros [|m]; [reflexivity|]. unfold leb, top. cbn [is_bot].
+    rewrite map_empty_nonbot. destruct (M.existsb V.is_bot m); cbn; [reflexivity|].
+    apply map_leb_spec. intro p. rewrite M.find_empty. apply V.top_greatest.
+  Qed.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
@@ -188,7 +252,9 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hstable. unfold widen. now rewrite Hstable.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
@@ -240,17 +306,25 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Qed.
   (** Leaf roots expose their stored abstract value. *)
   Lemma root_leaf : forall x a, root (ALeaf x a) = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Node roots expose their stored abstract value. *)
   Lemma root_node : forall o a ns, root (ANode o a ns) = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Leaf annotation reads the current environment. *)
   Lemma annotate_leaf : forall m x, annotate m (Leaf x) = ALeaf x (read m x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Node annotation transfers the annotated child roots. *)
   Lemma annotate_node : forall m o es, annotate m (Node o es) =
     ANode o (V.forward o (map (fun e => root (annotate m e)) es)) (map (annotate m) es).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m o es. cbn [annotate]. now rewrite map_map.
+  Qed.
   (** Unreachable states describe no stores. *)
   Lemma gamma_unreached : forall st, ~ gamma Unreached st.
   Proof.
@@ -260,7 +334,9 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Lemma gamma_reached : forall m st,
     gamma (Reached m) st <->
       M.existsb V.is_bot m = false /\ forall x, V.gamma (read m x) (st x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 End Env.
 
 Module EnvTimingHelpers (X : KEY_T) (M : MAP_T X) (L : LANG_T)
