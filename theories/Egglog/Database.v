@@ -2263,6 +2263,91 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact (slots_update_cache_row_insert db f k o s g perm rest Hgroups Hslot Hnew Hcache).
   Qed.
 
+  (** The four cache fields relate both indexes and stored counts to the actual row map. *)
+  Definition database_cache_correct (db : t) : Prop :=
+    (forall s new u, I.mem (index s new db) u ->
+      exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+        u = permute perm (k ++ option_list o)) /\
+    (forall s f perm k o, slot_of db s = Some (f, perm) -> row (view db) f k o ->
+      I.mem (index s false db) (permute perm (k ++ option_list o))) /\
+    (forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db)) /\ projection_counts_ok db.
+
+  (** A correct slot bound exposes the raw cache at every declared slot. *)
+  Lemma index_declared_slot : forall db s new f perm,
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    slot_of db s = Some (f, perm) ->
+    index s new db = runtime_slot_index (db_runtime db) s new.
+  Proof.
+    intros db s new f perm Hbound Hslot. apply index_runtime_slot. rewrite Hbound.
+    assert (Hinside : N.to_nat s < length (slots db)).
+    { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    lia.
+  Qed.
+
+  (** A correct slot bound hides all cache entries without a declared slot. *)
+  Lemma index_undeclared_slot : forall db s new,
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    slot_of db s = None -> index s new db = I.empty.
+  Proof.
+    intros db s new Hbound Hslot. apply index_outside_bound. rewrite Hbound.
+    unfold slot_of in Hslot. apply nth_error_None in Hslot. lia.
+  Qed.
+
+  (** Exact per-slot multiplicities provide the finite witnesses required by stored counts. *)
+  Lemma projection_counts_from_slot_caches : forall db,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    (forall s f perm, slot_of db s = Some (f, perm) ->
+      slot_cache_ok (db_runtime db) s (length perm)
+        (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))) ->
+    projection_counts_ok db.
+  Proof.
+    intros db Hmap Hcaches s f perm u Hslot.
+    destruct (Hcaches s f perm Hslot) as [_ [_ [_ [_ Hcounts]]]].
+    destruct (filtered_projection_witness _ _ (fun r => Pos.eqb (fst (fst r)) f)
+      (fun r => permute perm (snd (fst r) ++ option_list (snd r)))
+      Tuples.eqb Tuples.eqb_spec u (RowMap.elements (runtime_rows (db_runtime db)))
+      (RowFacts.elements_nodup_pairs _ _ Hmap)) as [rs [Hdistinct [Hmembers Hlength]]].
+    exists rs. split; [exact Hdistinct |]. split.
+    - intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
+    - change (N.to_nat (runtime_projection_count (db_runtime db) s u) = length rs).
+      rewrite Hcounts. exact Hlength.
+  Qed.
+
+  (** The raw per-slot invariants imply all four public database cache fields. *)
+  Lemma database_cache_correct_from_slots : forall db,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    (forall s f perm, slot_of db s = Some (f, perm) ->
+      slot_cache_ok (db_runtime db) s (length perm)
+        (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))) ->
+    database_cache_correct db.
+  Proof.
+    intros db Hmap Hbound Hcaches. split.
+    - intros s new u Hmember. destruct (slot_of db s) as [[f perm] |] eqn:Hslot.
+      + rewrite (index_declared_slot db s new f perm Hbound Hslot) in Hmember.
+        destruct (Hcaches s f perm Hslot) as [_ [_ [Hfull [Hdelta _]]]].
+        assert (Hin : In u
+          (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))).
+        { destruct new; [now apply Hdelta | now apply Hfull]. }
+        apply row_contributions_member in Hin as [k [o [Hrow Hvalue]]].
+        exists f, perm, k, o. split; [reflexivity |]. split; [| exact Hvalue].
+        apply row_elements_member; assumption.
+      + rewrite (index_undeclared_slot db s new Hbound Hslot) in Hmember.
+        exfalso. exact (I.mem_empty u Hmember).
+    - split.
+      + intros s f perm k o Hslot Hrow.
+        rewrite (index_declared_slot db s false f perm Hbound Hslot).
+        destruct (Hcaches s f perm Hslot) as [_ [_ [Hfull _]]]. apply Hfull.
+        apply row_contributions_member. exists k, o. split; [| reflexivity].
+        apply row_elements_member; assumption.
+      + split.
+        * intros s new f perm Hslot.
+          rewrite (index_declared_slot db s new f perm Hbound Hslot).
+          destruct (Hcaches s f perm Hslot) as [Hall [Hnew _]]. destruct new; assumption.
+        * apply projection_counts_from_slot_caches; assumption.
+  Qed.
+
   (** A direct row write replaces one map binding and leaves all other bindings intact. *)
   Lemma row_write_binding : forall f k o db g args output,
     row (view (row_write f k o db)) g args output <->
