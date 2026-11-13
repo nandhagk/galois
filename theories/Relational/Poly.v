@@ -12461,6 +12461,441 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  Lemma T_poly_lower_bounded : forall z b,
+    (T_poly_lower z b <= N.of_nat (Z.size_nat z) + 8)%N.
+  Proof.
+    intros z [|n|]; time_unfold T_poly_lower; time_simpl; try lia.
+    pose proof (Z.T_max_le z n). lia.
+  Qed.
+
+  Lemma T_poly_upper_bounded : forall z b,
+    (T_poly_upper z b <= N.of_nat (Z.size_nat z) + 8)%N.
+  Proof.
+    intros z [|n|]; time_unfold T_poly_upper; time_simpl; try lia.
+    pose proof (Z.T_min_le z n). lia.
+  Qed.
+
+  Lemma T_poly_range_update_unit : forall a b is_eq bounds,
+    a = 0%Z \/ a = 1%Z ->
+    (T_range_update a b is_eq bounds <= 128 * N.of_nat (Z.size_nat b + 1))%N.
+  Proof.
+    intros a b is_eq [lo hi] [Hzero|Hone]; subst a.
+    - time_unfold T_range_update. cbn [Z.ltb Z.compare]. time_simpl.
+      change (Z.T_ltb 0 0) with 2%N. nia.
+    - pose proof (T_poly_div_one b) as Hpositive_div.
+      pose proof (T_poly_div_one (-b)) as Hnegative_div.
+      rewrite poly_size_opp in Hnegative_div.
+      pose proof (Z.T_opp_le b) as Hopp.
+      pose proof (Z.T_opp_le (-b)) as Hopp2.
+      pose proof (T_poly_lower_bounded b lo) as Hlower.
+      pose proof (T_poly_upper_bounded b hi) as Hupper.
+      time_unfold T_range_update. cbn [Z.ltb Z.compare].
+      rewrite !Z.div_1_r, Z.opp_involutive.
+      destruct is_eq; time_simpl; cbn [fst snd]; change (Z.T_ltb 0 1) with 2%N;
+        rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N; nia.
+  Qed.
+
+
+  Definition poly_range_result_key (p : option X.t * Z) : bool :=
+    match fst p with None => true | Some _ => false end.
+  TimeFun poly_range_result_key.
+
+  (** Testing the temporary result coordinate does not inspect an original key. *)
+  Lemma T_poly_range_result_key_bounded : forall p,
+    (T_poly_range_result_key p <= 2)%N.
+  Proof.
+    intros [x z]. time_unfold T_poly_range_result_key. time_simpl. lia.
+  Qed.
+
+  (** A checked range conclusion scales the form and subtracts its scaled constant. *)
+  Lemma poly_range_conclusion_envelope : forall f a (r : lcons (option X.t)) dim bits,
+    length (coef f) <= dim -> F.form_bits f <= bits ->
+    Z.size_nat a <= bits -> Z.size_nat (rhs r) <= bits ->
+    poly_source_envelope dim (4 * bits + 1)
+      (LCons X.t (poly_scale_coef a (coef f)) (lrel r) (rhs r - a * cst f)%Z).
+  Proof.
+    intros f a r dim bits Hlength Hform Ha Hr.
+    pose proof (poly_form_constant_bits f) as Hconstant.
+    assert (Hkeys : C.row_key_bits
+      (LCons X.t (poly_scale_coef a (coef f)) (lrel r) (rhs r - a * cst f)%Z) <= bits).
+    { unfold C.row_key_bits. cbn [lhs]. apply poly_max_bound; [lia|].
+      unfold poly_scale_coef. apply Forall_map, Forall_forall. intros p Hp.
+      cbn [fst]. pose proof (poly_form_entry_bits f p Hp). unfold X.bits in *. lia. }
+    assert (Harithmetic : C.row_bits
+      (LCons X.t (poly_scale_coef a (coef f)) (lrel r) (rhs r - a * cst f)%Z) <=
+        2 * bits + 1).
+    { unfold C.row_bits. cbn [lhs rhs]. apply poly_max_bound.
+      - replace (rhs r - a * cst f)%Z with (rhs r + -(a * cst f))%Z by ring.
+        pose proof (poly_size_add (rhs r) (-(a * cst f))) as Hsum.
+        rewrite poly_size_opp in Hsum.
+        pose proof (poly_size_mul a (cst f)). lia.
+      - unfold poly_scale_coef. apply Forall_map, Forall_forall. intros p Hp.
+        cbn [snd]. pose proof (poly_form_entry_bits f p Hp).
+        pose proof (poly_size_mul a (snd p)). lia. }
+    unfold poly_source_envelope. split.
+    - change (length (poly_scale_coef a (coef f)) <= dim).
+      unfold poly_scale_coef. rewrite length_map. exact Hlength.
+    - lia.
+  Qed.
+
+
+  Definition poly_range_empty_candidate_factor : N :=
+    (32 * C.c_lc + RangeCore.poly_coef_factor + 256)%N.
+
+  (** An empty-source result has a unit or zero result coefficient, so its check is linear in width. *)
+  Lemma T_poly_range_empty_candidate : forall f bounds r dim keys bits,
+    length (coef f) <= dim -> F.form_bits f <= bits ->
+    RangeCore.poly_row_envelope dim 1 keys bits r ->
+    (poly_coefficient tmp_eqb None (poly_constraint r) = 0%Z \/
+      poly_coefficient tmp_eqb None (poly_constraint r) = 1%Z) ->
+    (T_range_candidate [] f bounds r <= poly_range_empty_candidate_factor *
+      N.of_nat (dim + 2) * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros f bounds r dim keys bits Hform_length Hform
+      (Hnormal & Hdim & Hkeys & Hbits & Hmlen & Hmult) Hunit.
+    unfold RangeKey.t in *.
+    set (c := poly_constraint r). fold c in Hnormal, Hdim, Hkeys, Hbits, Hunit.
+    set (a := poly_coefficient tmp_eqb None c). fold a in Hunit.
+    set (conclusion := LCons X.t (poly_scale_coef a (coef f)) (lrel c)
+      (rhs c - a * cst f)%Z).
+    assert (Ha : Z.size_nat a <= bits).
+    { unfold a, c. eapply Nat.le_trans;
+        [apply RangeCore.poly_row_coefficient_bits; exact Hnormal|exact Hbits]. }
+    assert (Ha_unit : Z.size_nat a <= 1).
+    { destruct Hunit as [Hunit|Hunit]; rewrite Hunit; cbn [Z.size_nat Pos.size_nat]; lia. }
+    assert (Hrhs : Z.size_nat (rhs c) <= bits).
+    { unfold c. eapply Nat.le_trans; [apply RangeCore.poly_row_rhs_bits|exact Hbits]. }
+    assert (Hconclusion : poly_source_envelope dim (4 * bits + 1) conclusion).
+    { unfold conclusion. apply poly_range_conclusion_envelope; assumption. }
+    pose proof (poly_lsize_envelope conclusion dim (4 * bits + 1) Hconclusion) as Hlsize.
+    pose proof (RangeCore.T_poly_coefficient_normal None c keys bits
+      Hnormal Hkeys Hbits) as Hcoefficient.
+    change (T_poly_coefficient tmp_eqb T_tmp_eqb None c <=
+      RangeCore.poly_coef_factor * N.of_nat (length (lhs c) + 1) *
+        N.of_nat (keys + bits + 1))%N in Hcoefficient.
+    pose proof (List.T_forallb_le poly_range_result_key T_poly_range_result_key 2
+      (lhs c) T_poly_range_result_key_bounded) as Hscan.
+    assert (Hform_coefficients : Forall (fun p => Z.size_nat (snd p) <= bits) (coef f)).
+    { apply Forall_forall. intros p Hp. pose proof (poly_form_entry_bits f p Hp). lia. }
+    pose proof (T_poly_scale_coef_bounded a (coef f) bits Hform_coefficients) as Hscale.
+    pose proof (poly_form_constant_bits f) as Hconstant.
+    pose proof (poly_T_Z_mul_bilinear a (cst f)) as Hmultiply.
+    pose proof (Z.T_sub_le (rhs c) (a * cst f)) as Hsubtract.
+    pose proof (poly_size_mul a (cst f)) as Hproduct_width.
+    pose proof (T_poly_range_update_unit a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds Hunit) as Hupdate.
+    set (work := (N.of_nat (dim + 2) * N.of_nat (keys + bits + 1))%N).
+    assert (Hwidth : (N.of_nat (bits + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_l (N.of_nat (bits + 1))) at 1.
+      apply N.mul_le_mono; lia. }
+    assert (Hpositive : (1 <= work)%N) by lia.
+    assert (Hlength : (N.of_nat (length (lhs c) + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_r (N.of_nat (length (lhs c) + 1))) at 1.
+      apply N.mul_le_mono; lia. }
+    assert (Hcoefficient_total : (T_poly_coefficient tmp_eqb T_tmp_eqb None c <=
+      RangeCore.poly_coef_factor * work)%N).
+    { eapply N.le_trans; [exact Hcoefficient|]. unfold work. rewrite N.mul_assoc.
+      apply N.mul_le_mono_r, N.mul_le_mono_l. lia. }
+    assert (Hscan_total : (List.T_forallb poly_range_result_key T_poly_range_result_key
+      (lhs c) <= 5 * work)%N).
+    { clear -Hscan Hlength. clearbody work.
+      change (List.T_forallb poly_range_result_key T_poly_range_result_key (lhs c) <=
+        4 * N.of_nat (length (lhs c)) + 1)%N in Hscan.
+      rewrite Nat2N.inj_add in Hlength. change (N.of_nat 1) with 1%N in Hlength. lia. }
+    assert (Hscale_total : (T_poly_scale_coef a (coef f) <= 32 * work)%N).
+    { eapply N.le_trans; [exact Hscale|].
+      assert (Hproduct : (length (coef f) + 1) * (Z.size_nat a + 1) * (bits + 1) <=
+        2 * ((dim + 2) * (keys + bits + 1))).
+      { replace (2 * ((dim + 2) * (keys + bits + 1))) with
+          ((dim + 2) * 2 * (keys + bits + 1)) by (clear -dim keys bits; nia).
+        apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|lia]. }
+      assert (Htransport : (N.of_nat ((length (coef f) + 1) *
+        (Z.size_nat a + 1) * (bits + 1)) <= 2 * work)%N).
+      { unfold work. rewrite <- Nat2N.inj_mul, <- (Nat2N.inj_mul 2). clear -Hproduct. lia. }
+      clear -Htransport. nia. }
+    assert (Hmultiply_total : (Z.T_mul a (cst f) <= 16 * work)%N).
+    { assert (Hproduct : (N.of_nat (Z.size_nat a + 1) *
+        N.of_nat (Z.size_nat (cst f) + 1) <= 2 * N.of_nat (bits + 1))%N).
+      { apply N.mul_le_mono; lia. }
+      clear -Hmultiply Hproduct Hwidth. nia. }
+    assert (Hsubtract_total : (Z.T_sub (rhs c) (a * cst f) <= 12 * work)%N).
+    { assert (Hsum : (N.of_nat (Z.size_nat (rhs c) + Z.size_nat (a * cst f)) <=
+        3 * N.of_nat (bits + 1))%N).
+      { clear -Hrhs Hproduct_width Ha_unit Hconstant Hform. lia. }
+      clear -Hsubtract Hsum Hwidth Hpositive. nia. }
+    assert (Hupdate_total : (T_range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds <= 128 * work)%N).
+    { eapply N.le_trans; [exact Hupdate|]. apply N.mul_le_mono_l.
+      eapply N.le_trans; [|exact Hwidth]. lia. }
+    assert (Hcheck_total : (C.T_check_entails [] conclusion (Cert [] 1 false) <=
+      32 * C.c_lc * work)%N).
+    { pose proof (C.T_check_entails_le [] conclusion (Cert [] 1 false)) as Hcheck.
+      change (C.T_check_entails [] conclusion (Cert [] 1 false) <=
+        C.c_lc * N.of_nat (2 * (C.lsize conclusion + 1 + 1)))%N in Hcheck.
+      replace (C.lsize conclusion + 1 + 1) with (C.lsize conclusion + 2) in Hcheck by lia.
+      assert (Hmeasure : 2 * (C.lsize conclusion + 2) <=
+        32 * ((dim + 2) * (keys + bits + 1))) by (clear -Hlsize; nia).
+      assert (Htransport : (N.of_nat (2 * (C.lsize conclusion + 2)) <= 32 * work)%N).
+      { unfold work. rewrite <- Nat2N.inj_mul, <- (Nat2N.inj_mul 32).
+        clear -Hmeasure. lia. }
+      clear -Hcheck Htransport. nia. }
+    time_unfold T_range_candidate. time_simpl.
+    change (fun p : option X.t * Z =>
+      match fst p with Some _ => false | None => true end) with poly_range_result_key.
+    change (fun u v : option X.t => T_tmp_eqb u v) with T_tmp_eqb.
+    lazymatch goal with
+    | |- context [List.T_forallb poly_range_result_key ?Tf ?xs] =>
+        change Tf with T_poly_range_result_key
+    end.
+    unfold conclusion, a, c in *.
+    destruct (forallb poly_range_result_key (lhs (poly_constraint r))); time_simpl.
+    - destruct (poly_multipliers r) as [|m ms] eqn:Hmultipliers; time_simpl.
+      + replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
+          N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
+          by (unfold work; ring).
+        unfold poly_range_empty_candidate_factor.
+        clear -Hcoefficient_total Hscan_total Hscale_total Hmultiply_total Hsubtract_total
+          Hpositive. clearbody work. nia.
+      + assert (Htail : ms = []).
+        { destruct ms; [reflexivity|cbn [length] in Hmlen; lia]. }
+        subst ms. destruct (C.check_entails []
+          (LCons X.t (poly_scale_coef (poly_coefficient tmp_eqb None (poly_constraint r)) (coef f))
+            (lrel (poly_constraint r))
+            (rhs (poly_constraint r) - poly_coefficient tmp_eqb None (poly_constraint r) * cst f)%Z)
+          (Cert [] 1 false)); time_simpl.
+        all: replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
+          N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
+          by (unfold work; ring).
+        all: unfold poly_range_empty_candidate_factor;
+          clear -Hcoefficient_total Hscan_total Hscale_total Hmultiply_total Hsubtract_total
+            Hupdate_total Hcheck_total Hpositive; clearbody work; nia.
+    - replace (poly_range_empty_candidate_factor * N.of_nat (dim + 2) *
+        N.of_nat (keys + bits + 1))%N with (poly_range_empty_candidate_factor * work)%N
+        by (unfold work; ring).
+      unfold poly_range_empty_candidate_factor. clear -Hscan_total Hpositive.
+      clearbody work. nia.
+  Qed.
+
+  (** Duplicate surplus consumes fuel before the actual elimination columns. *)
+  Lemma poly_range_empty_budget_transport : forall dim fuel extra bits,
+    extra + fuel <= dim ->
+    fmcost (dim + 1) 1 fuel 1 (2 * bits + Nat.log2 (extra + 1) + 1) <=
+      32 * fmcost dim 2 dim 2 bits.
+  Proof.
+    intros dim fuel extra bits Hfuel.
+    assert (Hwidth : 2 * bits + Nat.log2 (extra + 1) + 1 <=
+      poly_width_after extra (2 * (2 * bits + 1) + 1)).
+    { eapply Nat.le_trans; [apply poly_duplicate_width_shift|].
+      apply poly_width_after_mono. lia. }
+    eapply Nat.le_trans with (m := fmcost (dim + 1) 1 fuel 1
+      (poly_width_after extra (2 * (2 * bits + 1) + 1))).
+    { apply poly_fmcost_params_mono; lia. }
+    eapply Nat.le_trans; [apply poly_fmcost_shift_width|].
+    eapply Nat.le_trans with (m := fmcost (dim + 1) 2 dim 2 (2 * (2 * bits + 1) + 1)).
+    { apply poly_fmcost_mono; lia. }
+    pose proof (poly_fmcost_dimension_successor dim dim 2 2 (2 * (2 * bits + 1) + 1))
+      as Hdimension.
+    pose proof (poly_fmcost_double_width dim dim 2 2 (2 * bits + 1)) as Hdouble.
+    pose proof (poly_fmcost_double_width dim dim 2 2 bits) as Hbase.
+    lia.
+  Qed.
+
+  Definition poly_range_empty_initial (f : lin X.t) : poly_row (option X.t) :=
+    PolyRow (option X.t) (poly_normal_row tmp_encode (range_row f)) [1%Z] false.
+
+  (** The normalized result equation has coefficient one at the fresh None coordinate. *)
+  Lemma poly_range_empty_initial_none : forall f,
+    poly_coefficient tmp_eqb None (poly_constraint (poly_range_empty_initial f)) = 1%Z.
+  Proof.
+    intro f. unfold poly_range_empty_initial. cbn [poly_constraint].
+    change (poly_coefficient RangeKey.eqb None
+      (poly_normal_row RangeKey.encode (range_row f)) = 1%Z).
+    rewrite RangeCore.poly_coefficient_normal.
+    change (poly_coefficient tmp_eqb None (range_row f) = 1%Z).
+    unfold poly_coefficient, range_row. cbn [lhs].
+    induction (coef f) as [|[x z] xs IH]; cbn [map fold_right fst snd tmp_eqb] in *;
+      [reflexivity|exact IH].
+  Qed.
+
+  (** Empty-source elimination retains exactly one equality with result coefficient zero or one. *)
+  Lemma poly_range_empty_output : forall f,
+    exists r,
+      poly_run tmp_encode tmp_eqb (map (@Some X.t) (poly_form_variables f))
+        (poly_initial tmp_encode
+          (map (fun r => (r, false)) (poly_range_input [] f))) = [r] /\
+      (poly_coefficient tmp_eqb None (poly_constraint r) = 0%Z \/
+        poly_coefficient tmp_eqb None (poly_constraint r) = 1%Z).
+  Proof.
+    intro f.
+    assert (Hinitial : poly_initial tmp_encode
+      (map (fun r => (r, false)) (poly_range_input [] f)) = [poly_range_empty_initial f])
+      by reflexivity.
+    rewrite Hinitial.
+    destruct (RangeCore.poly_equality_singleton_observations
+      (map (@Some X.t) (poly_form_variables f)) (poly_range_empty_initial f) None eq_refl)
+      as [r [Hrun [Hcoefficient Hrhs]]].
+    exists r. split; [exact Hrun|].
+    destruct Hcoefficient as [Hsame|Hzero]; [right|now left].
+    eapply eq_trans; [exact Hsame|apply poly_range_empty_initial_none].
+  Qed.
+
+  Definition poly_range_empty_factor : N :=
+    (poly_range_setup_factor +
+      32 * (RangeCore.poly_run_factor + poly_range_empty_candidate_factor + 4))%N.
+
+  (** A singleton terminal check fits the existing terminal recurrence charge, without extra fuel. *)
+  Lemma T_poly_range_empty_bounded : forall f,
+    (T_range_linear [] f <= poly_range_empty_factor * N.of_nat
+      (fmcost (length (coef f)) 2 (length (coef f)) 2
+        (nell (Reached []) + F.form_bits f + 1)))%N.
+  Proof.
+    intro f.
+    set (dim := length (coef f)).
+    set (bits := nell (Reached []) + F.form_bits f + 1).
+    set (extra := dim - length (poly_form_variables f)).
+    set (fuel := length (poly_form_variables f)).
+    set (initial_bits := bits + Nat.log2 (extra + 1) + 1).
+    set (xs := map (@Some X.t) (poly_form_variables f)).
+    set (support := poly_range_fixed_support [] f).
+    set (initial := poly_initial tmp_encode
+      (map (fun r => (r, false)) (poly_range_input [] f))).
+    set (final_bits := poly_width_after fuel initial_bits).
+    set (stage := N.of_nat (fmcost (dim + 1) 1 fuel 1 (bits + initial_bits))).
+    set (work := N.of_nat (fmcost dim 2 dim 2 bits)).
+    assert (Hfuel : extra + fuel <= dim).
+    { unfold extra, fuel. pose proof (poly_form_variables_length f). unfold dim. lia. }
+    assert (Hsupport : length support <= dim + 1).
+    { pose proof (poly_range_fixed_support_length [] f) as Hsupport.
+      change (length support <= dim + 1) in Hsupport. exact Hsupport. }
+    assert (Hreduced : Forall (RangeCore.poly_reduced_row support) initial).
+    { exact (poly_range_initial_reduced [] f). }
+    assert (Henvelopes : Forall (RangeCore.poly_row_envelope
+      (dim + 1) 1 bits initial_bits) initial).
+    { exact (poly_range_initial_envelopes [] f). }
+    assert (Hinitial_length : length initial = 1) by reflexivity.
+    assert (Hxs_length : length xs = fuel) by (unfold xs, fuel; apply length_map).
+    pose proof (RangeCore.T_poly_run_bounded xs support initial (dim + 1) 1 bits initial_bits
+      Hsupport Hreduced Henvelopes) as Hrun.
+    change (T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb xs initial <=
+      RangeCore.poly_run_factor * N.of_nat
+        (fmcost (dim + 1) 1 (length xs) (length initial) (bits + initial_bits)))%N in Hrun.
+    rewrite Hxs_length, Hinitial_length in Hrun. fold stage in Hrun.
+    pose proof (RangeCore.poly_run_envelopes xs support initial (dim + 1) 1 bits initial_bits
+      Hsupport Hreduced Henvelopes) as Hrows.
+    change (Forall (RangeCore.poly_row_envelope (dim + 1) 1 bits
+      (poly_width_after (length xs) initial_bits)) (poly_run tmp_encode tmp_eqb xs initial)) in Hrows.
+    rewrite Hxs_length in Hrows. fold final_bits in Hrows.
+    destruct (poly_range_empty_output f) as [r [Houtput Hunit]].
+    change (poly_run tmp_encode tmp_eqb xs initial = [r]) in Houtput.
+    rewrite Houtput in Hrows.
+    assert (Hr : RangeCore.poly_row_envelope (dim + 1) 1 bits final_bits r).
+    { exact (proj1 (Forall_forall _ _) Hrows r (or_introl eq_refl)). }
+    assert (Hform_final : F.form_bits f <= final_bits).
+    { pose proof (poly_width_after_fuel_mono 0 fuel initial_bits ltac:(lia)) as Hgrowth.
+      cbn [poly_width_after] in Hgrowth. clear -Hgrowth.
+      unfold final_bits, initial_bits, bits in *. lia. }
+    assert (Hterminal : (N.of_nat (dim + 1 + 2) *
+      N.of_nat (bits + final_bits + 1) <= stage)%N).
+    { pose proof (poly_fmcost_terminal_width fuel (dim + 1) 1 1 (bits + initial_bits))
+        as Hterminal_nat.
+      pose proof (poly_width_after_fixed_keys fuel bits initial_bits) as Hwidth.
+      fold final_bits in Hwidth.
+      assert (Hnat : (dim + 1 + 2) * (bits + final_bits + 1) <=
+        fmcost (dim + 1) 1 fuel 1 (bits + initial_bits)).
+      { eapply Nat.le_trans; [|exact Hterminal_nat]. apply Nat.mul_le_mono; lia. }
+      unfold stage. rewrite <- Nat2N.inj_mul. clear -Hnat. lia. }
+    assert (Hstage_positive : (1 <= stage)%N).
+    { unfold stage. pose proof (poly_fmcost_positive (dim + 1) 1 fuel 1 (bits + initial_bits)). lia. }
+    assert (Hcandidate : forall bounds,
+      (T_range_candidate [] f bounds r <= poly_range_empty_candidate_factor * stage)%N).
+    { intro bounds. eapply N.le_trans.
+      - apply (T_poly_range_empty_candidate f bounds r (dim + 1) bits final_bits);
+          [unfold dim; lia|exact Hform_final|exact Hr|exact Hunit].
+      - rewrite <- N.mul_assoc. now apply N.mul_le_mono_l. }
+    pose proof (poly_T_fold_left_members (poly_row (option X.t)) (bnd * bnd)
+      (range_candidate [] f) (T_range_candidate [] f)
+      (poly_range_empty_candidate_factor * stage)%N [r] (NegInf, PosInf)
+      ltac:(intros acc q [Hq|Hq]; [subst q; apply Hcandidate|contradiction])) as Hfold.
+    change (List.T_fold_left (range_candidate [] f) (T_range_candidate [] f)
+      [r] (NegInf, PosInf) <= (poly_range_empty_candidate_factor * stage + 1) * 1 + 1)%N in Hfold.
+    assert (Hfold_total : (List.T_fold_left (range_candidate [] f) (T_range_candidate [] f)
+      [r] (NegInf, PosInf) <= (poly_range_empty_candidate_factor + 2) * stage)%N).
+    { clear -Hfold Hstage_positive. clearbody stage. nia. }
+    assert (Hstage : (stage <= 32 * work)%N).
+    { pose proof (poly_range_empty_budget_transport dim fuel extra bits Hfuel) as Hstage_nat.
+      unfold stage, initial_bits, work.
+      replace (bits + (bits + Nat.log2 (extra + 1) + 1)) with
+        (2 * bits + Nat.log2 (extra + 1) + 1) by lia.
+      rewrite <- (Nat2N.inj_mul 32). clear -Hstage_nat. lia. }
+    assert (Hrun_total : (T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb xs initial <=
+      (32 * RangeCore.poly_run_factor) * work)%N).
+    { eapply N.le_trans; [exact Hrun|].
+      replace (32 * RangeCore.poly_run_factor * work)%N with
+        (RangeCore.poly_run_factor * (32 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hfold_work : (List.T_fold_left (range_candidate [] f) (T_range_candidate [] f)
+      [r] (NegInf, PosInf) <= (32 * (poly_range_empty_candidate_factor + 2)) * work)%N).
+    { eapply N.le_trans; [exact Hfold_total|].
+      replace (32 * (poly_range_empty_candidate_factor + 2) * work)%N with
+        ((poly_range_empty_candidate_factor + 2) * (32 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (T_poly_range_setup_bounded [] f) as Hsetup.
+    change (poly_range_setup_cost [] f <= poly_range_setup_factor * work)%N in Hsetup.
+    pose proof (T_poly_range_linear_setup [] f) as Hnative.
+    change (T_range_linear [] f <= poly_range_setup_cost [] f +
+      T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb xs initial +
+      List.T_fold_left (range_candidate [] f) (T_range_candidate [] f)
+        (poly_run tmp_encode tmp_eqb xs initial) (NegInf, PosInf))%N in Hnative.
+    rewrite Houtput in Hnative. fold dim bits work.
+    unfold poly_range_empty_factor.
+    clear -Hsetup Hnative Hrun_total Hfold_work. clearbody work. nia.
+  Qed.
+
+  (** A completed affine-case bound lifts through linearization and the wrapped/unknown branches. *)
+  Lemma T_poly_range_from_linear : forall factor,
+    (forall P f, (T_range_linear P f <=
+      factor * N.of_nat (poly_range_setup_budget P f))%N) ->
+    forall e s, (T_range e s <= (factor + 32) * N.of_nat (range_work e s + 1))%N.
+  Proof.
+    intros factor Hlinear e [|P].
+    - time_unfold T_range. time_simpl. nia.
+    - set (work := N.of_nat (range_work e (Reached P) + 1)).
+      assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+      assert (Hlin_clock : (F.T_lin_of e <= work)%N).
+      { unfold work, range_work. rewrite !Nat2N.inj_add, N2Nat.id. lia. }
+      pose proof (poly_fmcost_initial_bits (n P + tsize e) (length P + 2)
+        (n P + tsize e) (length P + 2) (nell (Reached P) + F.bits_e e + 1)) as Hbase.
+      assert (Hwidth : (N.of_nat (F.bits_e e + 1) <= work)%N).
+      { unfold work, range_work. cbn [prows]. lia. }
+      time_unfold T_range.
+      destruct (F.lin_of e) as [[f wr]|] eqn:Hlin; time_simpl.
+      + destruct (F.lin_of_size _ _ _ Hlin) as [Hlength Hbits].
+        destruct wr as [|lo hi]; time_simpl.
+        * pose proof (Hlinear P f) as Haffine.
+          assert (Hbudget : poly_range_setup_budget P f <= range_work e (Reached P) + 1).
+          { pose proof (poly_fmcost_mono
+              (n P + length (coef f)) (n P + tsize e)
+              (length P + 2) (length P + 2)
+              (n P + length (coef f)) (n P + tsize e)
+              (length P + 2) (length P + 2)
+              (nell (Reached P) + F.form_bits f + 1)
+              (nell (Reached P) + F.bits_e e + 1)
+              ltac:(lia) ltac:(lia) ltac:(lia) ltac:(lia)
+              ltac:(cbn [F.wrap_bits] in Hbits; lia)) as Hfm.
+            unfold poly_range_setup_budget, range_work. cbn [prows]. lia. }
+          assert (Haffine_total : (T_range_linear P f <= factor * work)%N).
+          { eapply N.le_trans; [exact Haffine|]. apply N.mul_le_mono_l.
+            unfold work. clear -Hbudget. lia. }
+          fold work. clear -Haffine_total Hlin_clock Hpositive. clearbody work. nia.
+        * pose proof (Z.T_leb_le lo hi) as Hcompare.
+          cbn [F.wrap_bits] in Hbits.
+          assert (Hcompare_total : (Z.T_leb lo hi <= 16 * work)%N).
+          { clear -Hcompare Hbits Hwidth Hpositive. clearbody work. nia. }
+          destruct (lo <=? hi)%Z; time_simpl; fold work;
+            clear -Hcompare_total Hlin_clock Hpositive; clearbody work; nia.
+      + fold work. clear -Hlin_clock Hpositive. clearbody work. nia.
+  Qed.
+
   Definition c_lat : N := (poly_lattice_factor + 1)%N.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
