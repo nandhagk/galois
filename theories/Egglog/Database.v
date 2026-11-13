@@ -1622,6 +1622,103 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         unfold slot_index_get; now rewrite PTrie.get_set_same.
   Qed.
 
+  (** A tuple's multiplicity counts distinct row contributions with the same projection. *)
+  Definition tuple_multiplicity (u : list (cell V.t))
+      (tuples : list (list (cell V.t))) : nat :=
+    length (filter (Tuples.eqb u) tuples).
+
+  (** Adding one contribution increments exactly the matching tuple's multiplicity. *)
+  Lemma tuple_multiplicity_cons : forall u v tuples,
+    tuple_multiplicity u (v :: tuples) =
+      if Tuples.eqb u v then S (tuple_multiplicity u tuples)
+      else tuple_multiplicity u tuples.
+  Proof.
+    intros u v tuples. unfold tuple_multiplicity. cbn [filter].
+    destruct (Tuples.eqb u v); reflexivity.
+  Qed.
+
+  (** A tuple contributes one to its own multiplicity. *)
+  Lemma tuple_multiplicity_head : forall u tuples,
+    tuple_multiplicity u (u :: tuples) = S (tuple_multiplicity u tuples).
+  Proof.
+    intros u tuples. rewrite tuple_multiplicity_cons.
+    destruct (Tuples.eqb_spec u u); [reflexivity | contradiction].
+  Qed.
+
+  (** A different tuple does not change the queried multiplicity. *)
+  Lemma tuple_multiplicity_other : forall u v tuples, u <> v ->
+    tuple_multiplicity u (v :: tuples) = tuple_multiplicity u tuples.
+  Proof.
+    intros u v tuples Hdifferent. rewrite tuple_multiplicity_cons.
+    destruct (Tuples.eqb_spec u v); [contradiction | reflexivity].
+  Qed.
+
+  (** Positive multiplicity is equivalent to presence in the contribution list. *)
+  Lemma tuple_multiplicity_positive : forall u tuples,
+    0 < tuple_multiplicity u tuples <-> In u tuples.
+  Proof.
+    intros u tuples. induction tuples as [| v rest IH].
+    - unfold tuple_multiplicity. cbn. split; [lia | contradiction].
+    - destruct (Tuples.eqb_spec u v) as [-> | Hdifferent].
+      + rewrite tuple_multiplicity_head. cbn [In]. split; [auto | lia].
+      + rewrite tuple_multiplicity_other by exact Hdifferent.
+        rewrite IH. cbn [In]. intuition congruence.
+  Qed.
+
+  (** Zero multiplicity is equivalent to absence from the contribution list. *)
+  Lemma tuple_multiplicity_zero : forall u tuples,
+    tuple_multiplicity u tuples = 0 <-> ~ In u tuples.
+  Proof.
+    intros u tuples. split.
+    - intros Hzero Hin. apply tuple_multiplicity_positive in Hin. lia.
+    - intro Hmissing. destruct (tuple_multiplicity u tuples) eqn:Hcount; [reflexivity |].
+      exfalso. apply Hmissing. apply tuple_multiplicity_positive. lia.
+  Qed.
+
+  (** Each slot cache tracks a multiset of row projections and a sound delta subset. *)
+  Definition slot_cache_ok (state : database_runtime (cell V.t) I.t)
+      (s : N) (arity : nat) (tuples : list (list (cell V.t))) : Prop :=
+    I.wf arity (runtime_slot_index state s false) /\
+    I.wf arity (runtime_slot_index state s true) /\
+    (forall u, I.mem (runtime_slot_index state s false) u <-> In u tuples) /\
+    (forall u, I.mem (runtime_slot_index state s true) u -> In u tuples) /\
+    (forall u, N.to_nat (runtime_projection_count state s u) =
+      tuple_multiplicity u tuples).
+
+  (** Equal slot snapshots preserve the complete cache invariant. *)
+  Lemma slot_cache_snapshot : forall first second s arity tuples,
+    slot_snapshot first s = slot_snapshot second s ->
+    slot_cache_ok second s arity tuples -> slot_cache_ok first s arity tuples.
+  Proof.
+    intros first second s arity tuples Hsnapshot Hcache.
+    unfold slot_cache_ok in *. rewrite !(slot_snapshot_index first second s Hsnapshot).
+    destruct Hcache as [Hall [Hnew [Hfull [Hdelta Hcounts]]]].
+    split; [exact Hall |]. split; [exact Hnew |].
+    split; [exact Hfull |]. split; [exact Hdelta |].
+    intro u. rewrite (slot_snapshot_count first second s Hsnapshot). apply Hcounts.
+  Qed.
+
+  (** Inserting one contribution preserves both indexes and increments its exact count. *)
+  Lemma slot_cache_insert : forall state s arity tuples u,
+    slot_cache_ok state s arity tuples -> length u = arity ->
+    slot_cache_ok (slot_update_one true s u state) s arity (u :: tuples).
+  Proof.
+    intros state s arity tuples u [Hall [Hnew [Hfull [Hdelta Hcounts]]]] Harity.
+    unfold slot_cache_ok. rewrite !slot_update_one_index. split.
+    - now apply I.wf_insert.
+    - split; [now apply I.wf_insert |]. split.
+      + intro v. rewrite (I.mem_insert arity u _ v Hall Harity), Hfull.
+        cbn [In]. intuition congruence.
+      + split.
+        * intros v Hmember. apply (I.mem_insert arity u _ v Hnew Harity) in Hmember.
+          cbn [In]. destruct Hmember as [-> | Hmember]; [auto | right; now apply Hdelta].
+        * intro v. destruct (Tuples.eqb_spec v u) as [-> | Hdifferent].
+          -- rewrite slot_update_one_count_same, N2Nat.inj_succ,
+               tuple_multiplicity_head, Hcounts. reflexivity.
+          -- rewrite slot_update_one_count_other by exact Hdifferent.
+             rewrite tuple_multiplicity_other by exact Hdifferent. apply Hcounts.
+  Qed.
+
   (** Index maintenance keeps the complete model view unchanged. *)
   Lemma slots_update_view : forall b f u db, view (slots_update b f u db) = view db.
   Proof.
