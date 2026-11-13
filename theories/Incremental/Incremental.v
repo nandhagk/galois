@@ -904,10 +904,71 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     destruct (mem x (invalidate_keys p p' ch st)); [discriminate Hvalue|exact Hvalue].
   Qed.
 
+  (** Restricted least solving with old least seeds bounds every raw candidate value. *)
+  Lemma regional_run_below : forall p pol roots fuel st m,
+    S.wf p -> S.monotone p -> Least.widening_free pol -> least_on p st ->
+    Sol.run (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+      pol fuel = Solved m ->
+    forall upper, S.post_solution p upper -> forall x,
+      L.leb (look_or S.key_code L.bot m x) (upper x) = true.
+  Proof.
+    intros p pol roots fuel st m Hwf Hmono Hfree Hleast Hrun upper Hpost x.
+    pose proof (discovery_region_rows p roots st) as Hrows.
+    assert (Hseeds : forall y v, In (y, v) (frozen_pairs p roots st) ->
+      L.leb v (upper y) = true).
+    { intros y v Hin; apply (Hleast upper Hpost y v).
+      exact (frozen_for_rows_sound p (discovery_region p roots st) st y v Hin). }
+    eapply (Least.run_least
+      (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+      pol fuel m upper).
+    - apply R.mk_wf; [exact Hwf|exact Hrows].
+    - apply R.mk_monotone; [exact Hmono|exact Hrows].
+    - exact Hfree.
+    - exact Hrun.
+    - apply R.restrict_complete; [exact Hpost|exact Hrows|exact Hseeds].
+  Qed.
+
+  (** Restored candidate bindings and retained old bindings both remain globally bounded. *)
+  Lemma finish_demand_least : forall p roots st m,
+    least_on p st ->
+    (forall upper, S.post_solution p upper -> forall x,
+      L.leb (look_or S.key_code L.bot m x) (upper x) = true) ->
+    least_on p (finish_demand p st (discovery_keys p roots st)
+      (discovery_region p roots st) (restore (frozen_pairs p roots st) m)).
+  Proof.
+    intros p roots st m Hleast Hcandidate upper Hpost x v Hvalue.
+    rewrite finish_demand_value in Hvalue.
+    unfold value, merge_discovered in Hvalue; cbn [inc_values] in Hvalue.
+    rewrite fill_lookup in Hvalue.
+    destruct (Bindings.mem x (discovery_keys p roots st)) eqn:Hmem.
+    - injection Hvalue as <-; rewrite Checker.look_spec.
+      apply restore_below.
+      + exact (Hcandidate upper Hpost).
+      + intros y w Hin; apply (Hleast upper Hpost y w).
+        exact (frozen_for_rows_sound p (discovery_region p roots st) st y w Hin).
+    - exact (Hleast upper Hpost x v Hvalue).
+  Qed.
+
   Lemma demand_least : forall p pol roots fuel st o st', S.wf p -> S.monotone p ->
     Least.widening_free pol -> inv p st -> least_on p st ->
     demand p pol roots fuel st = (o, st') -> least_on p st'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol roots fuel st o st' Hwf Hmono Hfree Hinv Hleast Hrun.
+    unfold demand in Hrun.
+    destruct (forallb (present st) roots); [inversion Hrun; subst; exact Hleast|].
+    cbv zeta in Hrun.
+    fold (discovery_region p roots st) in Hrun.
+    fold (frozen_pairs p roots st) in Hrun.
+    destruct (Sol.run (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+      pol fuel) as [m|m|why] eqn:Hsolver.
+    - destruct (Checker.check_rows p (discovery_region p roots st)
+        (restore (frozen_pairs p roots st) m)) eqn:Hcheck.
+      + inversion Hrun; subst; apply finish_demand_least; [exact Hleast|].
+        exact (regional_run_below p pol roots fuel st m Hwf Hmono Hfree Hleast Hsolver).
+      + inversion Hrun; subst; exact Hleast.
+    - inversion Hrun; subst; exact Hleast.
+    - inversion Hrun; subst; exact Hleast.
+  Qed.
 
   Lemma edit_least : forall p p' ch st, S.wf p -> edit_covers p p' ch ->
     inv p st -> least_on p st -> least_on p' (edit p p' ch st).
