@@ -3161,9 +3161,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
-    same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
-  Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
@@ -7039,6 +7036,71 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite forallb_forall in Hmb.
       pose proof (Hmb k Hkey) as Hcheck.
       unfold nonnegative in Hcheck. now rewrite Hmbentry in Hcheck.
+  Qed.
+
+  Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
+    same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
+  Proof.
+    intros m i j d Hwf Htight.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed).
+    set (full := fw direct).
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    assert (Hscan_eq : matrix_ok next =
+      forallb (fun k => nonnegative k full) (keys direct)).
+    { destruct (matrix_ok next) eqn:Hcandidate;
+        destruct (forallb (fun k => nonnegative k full) (keys direct))
+          eqn:Hfull; try reflexivity.
+      - pose proof (incremental_candidate_fw_scan m i j d Hwf Htight
+          Hcandidate) as Hscan.
+        change (forallb (fun k => nonnegative k full) (keys direct) = true)
+          in Hscan. congruence.
+      - pose proof (full_scan_implies_incremental_scan m i j d Hwf Hfull)
+          as Hscan.
+        change (matrix_ok next = true) in Hscan. congruence. }
+    unfold incr_close, tclose. rewrite pivot_keys_eq_keys.
+    rewrite <- fw_keys.
+    change (same_entries
+      (if matrix_ok next then
+        if matrix_ok (strengthen (tighten next))
+          then Reached (strengthen (tighten next)) else Unreached
+       else Unreached)
+      (if forallb (fun k => nonnegative k full) (keys direct) then
+        if forallb (fun k => nonnegative k (strengthen (tighten full)))
+          (keys direct)
+          then Reached (strengthen (tighten full)) else Unreached
+       else Unreached)).
+    rewrite Hscan_eq.
+    destruct (forallb (fun k => nonnegative k full) (keys direct))
+      eqn:Hfullscan; [|exact I].
+    assert (Hcandidate : matrix_ok next = true).
+    { exact Hscan_eq. }
+    destruct (incremental_fw_equal m i j d Hwf Htight Hcandidate)
+      as [_ Hentry].
+    change (forall x y, entry next x y = entry full x y) in Hentry.
+    pose proof (final_pass_entry_ext next full Hwfnext
+      (wf_fw direct Hwfdirect) Hentry) as Hfinal.
+    assert (Hcheck : matrix_ok (strengthen (tighten next)) =
+      forallb (fun k => nonnegative k (strengthen (tighten full)))
+        (keys direct)).
+    { apply matrix_ok_forallb_equal.
+      - apply wf_strengthen, wf_tighten. exact Hwfnext.
+      - exact Hwfdirect.
+      - exact Hfinal.
+      - intros p Hp.
+        apply (proj1 (fw_support direct p)).
+        apply (proj1 (support_tighten (fw direct) p)).
+        apply (proj1 (support_strengthen (tighten (fw direct)) p)).
+        exact Hp. }
+    rewrite Hcheck.
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten full)))
+      (keys direct)); [exact Hfinal|exact I].
   Qed.
 
   (** A coherent triangle transports a unary half-bound across one edge. *)
