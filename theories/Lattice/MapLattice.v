@@ -5,7 +5,7 @@
     Builds on: LatticeSig and MapSig. *)
 
 From Stdlib Require Import Bool List Arith NArith Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Lattice Require Import LatticeSig.
 
@@ -79,10 +79,53 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Definition size (m : t) : nat :=
     M.nodes m + fold_right Nat.add 1 (List.map (fun p =>
       match M.find p m with Some a => L.size a + 1 | None => 0 end) (M.codes m)).
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N :=
+    (64 * (M.c_map + 1) * (L.c_lat + 1) * N.of_nat (L.size L.bot + 1))%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. pose proof L.c_lat_pos.
+    assert (Hbot : (1 <= N.of_nat (L.size L.bot + 1))%N) by lia. nia.
+  Qed.
+
+  (** Each present code pays for its value and one binding cell. *)
+  Local Definition lookup_size (m : t) (p : positive) : nat :=
+    match M.find p m with Some a => L.size a + 1 | None => 0 end.
+
+  Local Definition value_size (m : t) : nat :=
+    fold_right Nat.add 0 (List.map (lookup_size m) (M.codes m)).
+
+  (** The declared size counts skeleton nodes, present values, and one base unit. *)
+  Local Lemma size_values m : size m = M.nodes m + value_size m + 1.
+  Proof.
+    assert (Hbase : forall xs, fold_right Nat.add 1 xs = fold_right Nat.add 0 xs + 1).
+    { induction xs as [|x xs IH]; cbn [fold_right]; lia. }
+    unfold size, value_size, lookup_size. rewrite Hbase. lia.
+  Qed.
+
+  (** Pointwise charges sum to the corresponding weighted code budget. *)
+  Local Lemma code_sum_bound (f : positive -> N) (g : positive -> nat) c ps :
+    (forall p, In p ps -> (f p <= c * N.of_nat (g p))%N) ->
+    (fold_right N.add 0 (List.map f ps) <=
+      c * N.of_nat (fold_right Nat.add 0%nat (List.map g ps)))%N.
+  Proof.
+    induction ps as [|p ps IH]; intro Hbound.
+    - cbn [List.map fold_right]. lia.
+    - cbn [List.map fold_right]. rewrite Nat2N.inj_add.
+      specialize (IH (fun q Hq => Hbound q (or_intror Hq))).
+      specialize (Hbound p (or_introl eq_refl)). nia.
+  Qed.
+
+  (** Existential callbacks are charged once for every present code. *)
+  Local Lemma exists_charge_bound (f : L.t -> N) c m :
+    (forall a, (f a <= c * N.of_nat (L.size a + 1))%N) ->
+    (fold_right N.add 0 (List.map (fun p =>
+      match M.find p m with Some a => f a | None => 0 end) (M.codes m)) <=
+      c * N.of_nat (value_size m))%N.
+  Proof.
+    intro Hbound. unfold value_size. apply code_sum_bound.
+    intros p Hin. unfold lookup_size. destruct (M.find p m); [apply Hbound | lia].
+  Qed.
 
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
@@ -92,5 +135,20 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
   Proof. Admitted. (* STUB *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. time_unfold @T_is_bot. time_simpl; time_cbn.
+    lazymatch goal with
+    | |- context [M.T_existsb ?f ?Tf a] =>
+        pose proof (M.T_existsb_sum_le L.t f Tf a) as Hclock;
+        assert (Hcallback : forall v, (Tf v <= (L.c_lat + 4) *
+          N.of_nat (L.size v + 1))%N) by
+          (intro v; pose proof (L.T_is_bot_le v); time_cbn;
+           rewrite !Nat2N.inj_add in *; nia);
+        pose proof (exists_charge_bound Tf (L.c_lat + 4)%N a Hcallback) as Hsum
+    end.
+    rewrite size_values. unfold c_lat.
+    pose proof L.c_lat_pos.
+    assert (Hbot : (1 <= N.of_nat (L.size L.bot + 1))%N) by lia.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
 End MapLatticeT.
