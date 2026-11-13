@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith QArith Bool.
+From Stdlib Require Import List ZArith QArith Bool Lia Ring.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -184,6 +184,217 @@ TimeFun karr_unit.
 Definition karr_zero (r : karr_row) : bool := forallb (Z.eqb 0) (kcoeff r).
 
 TimeFun karr_zero.
+
+Lemma karr_values_ne_app : forall A (tr : trie_ne A) acc,
+  karr_values_ne tr acc = karr_values_ne tr [] ++ acc.
+Proof.
+  intros A tr.
+  induction tr as [r IHr|a|a r IHr|l IHl|l IHl r IHr|l IHl a|l IHl a r IHr];
+    intro acc; cbn [karr_values_ne].
+  - apply IHr.
+  - reflexivity.
+  - rewrite (IHr acc). reflexivity.
+  - apply IHl.
+  - rewrite (IHl (karr_values_ne r acc)), (IHr acc),
+      (IHl (karr_values_ne r [])). now rewrite app_assoc.
+  - rewrite (IHl (a :: acc)), (IHl [a]). now rewrite <- app_assoc.
+  - rewrite (IHl (a :: karr_values_ne r acc)), (IHr acc),
+      (IHl (a :: karr_values_ne r [])). now rewrite <- app_assoc.
+Qed.
+
+Lemma karr_values_node : forall A (l r : ptrie A) o,
+  karr_values (PTrieCode.node l o r) =
+    karr_values l ++ match o with Some a => a :: karr_values r | None => karr_values r end.
+Proof.
+  intros A [|l] [|r] [a|]; cbn [PTrieCode.node karr_values karr_values_ne];
+    try rewrite karr_values_ne_app; now rewrite ?app_nil_r.
+Qed.
+
+Definition karr_zsum {A} (f : A -> Z) (xs : list A) : Z :=
+  fold_right (fun a z => (f a + z)%Z) 0%Z xs.
+
+Definition karr_zmass {A} (f : A -> Z) (tr : ptrie A) : Z :=
+  karr_zsum f (karr_values tr).
+
+Definition karr_zoption {A} (f : A -> Z) (o : option A) : Z :=
+  match o with Some a => f a | None => 0%Z end.
+
+Lemma karr_zsum_app : forall A (f : A -> Z) xs ys,
+  karr_zsum f (xs ++ ys) = (karr_zsum f xs + karr_zsum f ys)%Z.
+Proof.
+  intros A f xs. unfold karr_zsum. induction xs as [|a xs IH]; intro ys; cbn.
+  - reflexivity.
+  - rewrite IH. ring.
+Qed.
+
+Lemma karr_zmass_node : forall A (f : A -> Z) l o r,
+  karr_zmass f (PTrieCode.node l o r) =
+    (karr_zmass f l + karr_zoption f o + karr_zmass f r)%Z.
+Proof.
+  intros A f l [a|] r; unfold karr_zmass; rewrite karr_values_node, karr_zsum_app;
+    unfold karr_zsum; cbn [fold_right karr_zoption]; ring.
+Qed.
+
+Lemma karr_zmass_view : forall A (f : A -> Z) tr,
+  karr_zmass f tr =
+    (karr_zmass f (PTrieCode.left tr) + karr_zoption f (PTrieCode.value tr) +
+     karr_zmass f (PTrieCode.right tr))%Z.
+Proof.
+  intros A f tr.
+  assert (Hnode : PTrieCode.node (PTrieCode.left tr) (PTrieCode.value tr)
+    (PTrieCode.right tr) = tr).
+  { destruct tr as [|n]; [reflexivity|destruct n; reflexivity]. }
+  rewrite <- Hnode at 1. apply karr_zmass_node.
+Qed.
+
+Lemma karr_zmass_set : forall A (f : A -> Z) p a tr,
+  karr_zmass f (PTrieCode.set p a tr) =
+    (karr_zmass f tr + f a - karr_zoption f (PTrieCode.get p tr))%Z.
+Proof.
+  intros A f p a. unfold PTrieCode.set.
+  induction p as [p IH|p IH|]; intro tr; cbn [PTrieCode.replace].
+  - rewrite karr_zmass_node, IH, (karr_zmass_view A f tr).
+    unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
+    cbn [trie_get]. ring.
+  - rewrite karr_zmass_node, IH, (karr_zmass_view A f tr).
+    unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
+    cbn [trie_get]. ring.
+  - rewrite karr_zmass_node, (karr_zmass_view A f tr).
+    unfold PTrieCode.get, PTrieCode.left, PTrieCode.right, PTrieCode.value.
+    cbn [trie_get karr_zoption]. ring.
+Qed.
+
+Definition karr_qsum {A} (f : A -> Q) (xs : list A) : Q :=
+  fold_right (fun a q => (f a + q)%Q) 0%Q xs.
+
+Definition karr_qmass {A} (f : A -> Q) (tr : ptrie A) : Q :=
+  karr_qsum f (karr_values tr).
+
+Definition karr_qoption {A} (f : A -> Q) (o : option A) : Q :=
+  match o with Some a => f a | None => 0%Q end.
+
+Definition karr_eval_coef_Q {X} (v : X -> Q) (xs : list (X * Z)) : Q :=
+  karr_qsum (fun p => (inject_Z (snd p) * v (fst p))%Q) xs.
+
+Lemma karr_qsum_app : forall A (f : A -> Q) xs ys,
+  (karr_qsum f (xs ++ ys) == karr_qsum f xs + karr_qsum f ys)%Q.
+Proof.
+  intros A f xs. induction xs as [|a xs IH]; intro ys.
+  - change (karr_qsum f ys == 0 + karr_qsum f ys)%Q. ring.
+  - change (f a + karr_qsum f (xs ++ ys) ==
+      (f a + karr_qsum f xs) + karr_qsum f ys)%Q.
+    setoid_rewrite IH. ring.
+Qed.
+
+Lemma karr_qmass_node : forall A (f : A -> Q) l o r,
+  (karr_qmass f (PTrieCode.node l o r) ==
+    karr_qmass f l + karr_qoption f o + karr_qmass f r)%Q.
+Proof.
+  intros A f l [a|] r; unfold karr_qmass; rewrite karr_values_node;
+    setoid_rewrite karr_qsum_app; cbn [karr_qoption].
+  - change (karr_qsum f (karr_values l) + (f a + karr_qsum f (karr_values r)) ==
+      karr_qsum f (karr_values l) + f a + karr_qsum f (karr_values r))%Q. ring.
+  - ring.
+Qed.
+
+Lemma karr_qmass_view : forall A (f : A -> Q) tr,
+  (karr_qmass f tr ==
+    karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
+     karr_qmass f (PTrieCode.right tr))%Q.
+Proof.
+  intros A f tr.
+  assert (Hnode : PTrieCode.node (PTrieCode.left tr) (PTrieCode.value tr)
+    (PTrieCode.right tr) = tr).
+  { destruct tr as [|n]; [reflexivity|destruct n; reflexivity]. }
+  rewrite <- Hnode at 1. apply karr_qmass_node.
+Qed.
+
+Lemma karr_qmass_set : forall A (f : A -> Q) p a tr,
+  (karr_qmass f (PTrieCode.set p a tr) ==
+    karr_qmass f tr + f a - karr_qoption f (PTrieCode.get p tr))%Q.
+Proof.
+  intros A f p a. unfold PTrieCode.set.
+  induction p as [p IH|p IH|]; intro tr; cbn [PTrieCode.replace].
+  - setoid_rewrite karr_qmass_node. setoid_rewrite IH.
+    setoid_rewrite (karr_qmass_view A f tr).
+    change (karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
+      (karr_qmass f (PTrieCode.right tr) + f a -
+       karr_qoption f (PTrieCode.get p (PTrieCode.right tr))) ==
+      karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
+      karr_qmass f (PTrieCode.right tr) + f a -
+       karr_qoption f (PTrieCode.get p (PTrieCode.right tr)))%Q. ring.
+  - setoid_rewrite karr_qmass_node. setoid_rewrite IH.
+    setoid_rewrite (karr_qmass_view A f tr).
+    change (karr_qmass f (PTrieCode.left tr) + f a -
+      karr_qoption f (PTrieCode.get p (PTrieCode.left tr)) +
+      karr_qoption f (PTrieCode.value tr) + karr_qmass f (PTrieCode.right tr) ==
+      karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
+      karr_qmass f (PTrieCode.right tr) + f a -
+       karr_qoption f (PTrieCode.get p (PTrieCode.left tr)))%Q. ring.
+  - setoid_rewrite karr_qmass_node. setoid_rewrite (karr_qmass_view A f tr).
+    change (karr_qmass f (PTrieCode.left tr) + f a + karr_qmass f (PTrieCode.right tr) ==
+      karr_qmass f (PTrieCode.left tr) + karr_qoption f (PTrieCode.value tr) +
+      karr_qmass f (PTrieCode.right tr) + f a - karr_qoption f (PTrieCode.value tr))%Q.
+    ring.
+Qed.
+
+Lemma karr_fold_values_ne_append : forall A (tr : trie_ne A) acc,
+  PTrieCode.fold_values_ne (fun acc a => acc ++ [a]) tr acc =
+    acc ++ karr_values_ne tr [].
+Proof.
+  intros A tr.
+  induction tr as [r IHr|a|a r IHr|l IHl|l IHl r IHr|l IHl a|l IHl a r IHr];
+    intro acc; cbn [PTrieCode.fold_values_ne karr_values_ne].
+  - apply IHr.
+  - reflexivity.
+  - rewrite IHr. now rewrite <- app_assoc.
+  - apply IHl.
+  - rewrite IHr, IHl, (karr_values_ne_app A l (karr_values_ne r [])).
+    now rewrite app_assoc.
+  - rewrite IHl, (karr_values_ne_app A l [a]). now rewrite app_assoc.
+  - rewrite IHr, IHl, (karr_values_ne_app A l (a :: karr_values_ne r [])).
+    now rewrite <- !app_assoc.
+Qed.
+
+Lemma karr_fold_values_append : forall A (tr : ptrie A) acc,
+  PTrieCode.fold_values (fun acc a => acc ++ [a]) tr acc = acc ++ karr_values tr.
+Proof.
+  intros A [|n] acc; cbn [PTrieCode.fold_values karr_values].
+  - now rewrite app_nil_r.
+  - apply karr_fold_values_ne_append.
+Qed.
+
+Lemma karr_fold_left_values : forall A (xs : list (positive * A)) acc,
+  fold_left (fun acc p => acc ++ [snd p]) xs acc = acc ++ map snd xs.
+Proof.
+  intros A xs. induction xs as [|[p a] xs IH]; intro acc; cbn [fold_left map snd].
+  - now rewrite app_nil_r.
+  - rewrite IH. now rewrite <- app_assoc.
+Qed.
+
+Lemma karr_values_elements : forall A (tr : ptrie A),
+  karr_values tr = map snd (PTrieCode.elements tr).
+Proof.
+  intros A tr.
+  pose proof (PTrieT.F9_fold_values A (list A)
+    (fun acc a => acc ++ [a]) tr []) as Hfold.
+  rewrite karr_fold_values_append, karr_fold_left_values in Hfold.
+  exact Hfold.
+Qed.
+
+Lemma karr_nodup_map_filter : forall A B (f : A -> B) test xs,
+  NoDup (map f xs) -> NoDup (map f (filter test xs)).
+Proof.
+  intros A B f test xs. induction xs as [|a xs IH]; intro Hunique.
+  - constructor.
+  - inversion Hunique as [|b bs Hnot Htail]; subst b bs.
+    cbn [filter]. destruct (test a) eqn:Htest; cbn [map].
+    + constructor; [|now apply IH].
+      intro Hin. apply Hnot. apply in_map_iff in Hin as [p [Heq Hin]].
+      apply filter_In in Hin as [Hin _]. apply in_map_iff. exists p. auto.
+    + now apply IH.
+Qed.
+
 
 Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: KARR_OPS X L F C.
@@ -455,28 +666,321 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     match s with Unreached => 0 | Reached P => length P end.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
+
+  (** A key is equal to itself in the executable test. *)
+  Lemma key_eqb_refl : forall x, X.eqb x x = true.
+  Proof.
+    intro x. destruct (X.eqb_spec x x); [reflexivity | contradiction].
+  Qed.
+
+  (** Successful key comparison gives propositional equality. *)
+  Lemma key_eqb_eq : forall x y, X.eqb x y = true -> x = y.
+  Proof.
+    intros x y Hsame. destruct (X.eqb_spec x y); congruence.
+  Qed.
+
+  (** Comparing keys is symmetric. *)
+  Lemma key_eqb_sym : forall x y, X.eqb x y = X.eqb y x.
+  Proof.
+    intros x y. destruct (X.eqb_spec x y), (X.eqb_spec y x); congruence.
+  Qed.
+
+  (** Every coefficient list passes its own literal comparison. *)
+  Lemma coefficient_list_eqb_refl : forall xs,
+    karr_list_eqb (fun p q => X.eqb (fst p) (fst q) && Z.eqb (snd p) (snd q)) xs xs = true.
+  Proof.
+    induction xs as [| [x a] xs IH]; [reflexivity |].
+    cbn [karr_list_eqb fst snd]. rewrite key_eqb_refl, Z.eqb_refl, IH. reflexivity.
+  Qed.
+
+  (** Literal coefficient comparison retains order and multiplicity. *)
+  Lemma coefficient_list_eqb_sound : forall xs ys,
+    karr_list_eqb (fun p q => X.eqb (fst p) (fst q) && Z.eqb (snd p) (snd q)) xs ys = true ->
+    xs = ys.
+  Proof.
+    induction xs as [| [x a] xs IH]; intros [| [y b] ys] Hsame;
+      cbn [karr_list_eqb fst snd] in Hsame; try discriminate; [reflexivity |].
+    apply andb_true_iff in Hsame as [Hhead Htail].
+    apply andb_true_iff in Hhead as [Hkey Hcoeff].
+    apply key_eqb_eq in Hkey. apply Z.eqb_eq in Hcoeff.
+    subst y b. f_equal. now apply IH.
+  Qed.
+
+  (** A row is literally equal to itself. *)
+  Lemma row_eqb_refl : forall r, row_eqb r r = true.
+  Proof.
+    intros [xs rel z]. unfold row_eqb. cbn [lhs lrel rhs].
+    rewrite Z.eqb_refl, coefficient_list_eqb_refl. destruct rel; reflexivity.
+  Qed.
+
+  (** Literal row comparison decides equality of the complete stored row. *)
+  Lemma row_eqb_sound : forall r s, row_eqb r s = true -> r = s.
+  Proof.
+    intros [xs rel z] [ys rel' w] Hsame. unfold row_eqb in Hsame.
+    cbn [lhs lrel rhs] in Hsame. destruct rel, rel'; cbn in Hsame; try discriminate;
+      apply andb_true_iff in Hsame as [Hright Hleft];
+      apply Z.eqb_eq in Hright; apply coefficient_list_eqb_sound in Hleft;
+      now subst.
+  Qed.
+
+  (** The producer returns only certificates that its checker accepted. *)
+  Lemma entail_cert_checked : forall P c k,
+    entail_cert P c = Some k -> C.check_entails P c k = true.
+  Proof.
+    intros P c k Hcert. unfold entail_cert in Hcert.
+    remember (match contradiction P with
+      | Some ms => Cert ms 1 false
+      | None => target_certificate P c
+      end) as candidate.
+    destruct (C.check_entails P c candidate) eqn:Hcheck; [| discriminate].
+    injection Hcert as Hsame. subst k. exact Hcheck.
+  Qed.
+
+  (** Every returned contradiction passed the contradiction checker. *)
+  Lemma empty_certificate_checked : forall P rs ms,
+    empty_certificate P rs = Some ms -> C.check_empty P ms = true.
+  Proof.
+    intros P rs. induction rs as [| r rs IH]; intros ms Hcert; [discriminate |].
+    cbn [empty_certificate] in Hcert.
+    destruct (karr_zero r && negb (Z.eqb (kright r) 0) && C.check_empty P (kweight r))
+      eqn:Hcheck.
+    - injection Hcert as Hsame. subst ms.
+      now apply andb_true_iff in Hcheck as [_ Hcheck].
+    - now apply IH.
+  Qed.
+
+  (** Left-system infeasibility is always checked against the raw input. *)
+  Lemma contradiction_checked : forall P ms,
+    contradiction P = Some ms -> C.check_empty P ms = true.
+  Proof.
+    intros P ms Hcert. unfold contradiction in Hcert.
+    now apply empty_certificate_checked in Hcert.
+  Qed.
+
+  (** Both branches of row inclusion retain every integer model. *)
+  Lemma entails_sound : forall P r v, entails P r = true -> Forall (sat v) P -> sat v r.
+  Proof.
+    intros P r v Hcheck Hmodels. unfold entails in Hcheck.
+    apply orb_true_iff in Hcheck as [Hliteral | Hcert].
+    - apply existsb_exists in Hliteral as [s [Hin Hsame]].
+      apply row_eqb_sound in Hsame. subst s.
+      now apply (proj1 (Forall_forall _ _) Hmodels).
+    - destruct (entail_cert P r) as [k |] eqn:Hproduced; [| discriminate].
+      eapply (C.check_entails_sound P r k).
+      + exact (entail_cert_checked P r k Hproduced).
+      + exact Hmodels.
+  Qed.
+
+  (** Every returned contradiction excludes each integer model of its input. *)
+  Lemma contradiction_sound : forall P ms v,
+    contradiction P = Some ms -> ~ Forall (sat v) P.
+  Proof.
+    intros P ms v Hcert. apply C.check_empty_sound with (ms := ms).
+    now apply contradiction_checked in Hcert.
+  Qed.
+
+  Definition normalization_wf (m : ptrie (X.t * Z)) : Prop :=
+    forall p q, PTrieCode.get p m = Some q -> X.encode (fst q) = p.
+
+  Lemma normalization_empty : normalization_wf PTrieCode.empty.
+  Proof.
+    intros p q Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  Lemma add_term_wf : forall m p, normalization_wf m -> normalization_wf (add_term m p).
+  Proof.
+    intros m p Hwf. unfold add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [q|] eqn:Hq;
+      intros key value Hvalue;
+      destruct (Pos.eq_dec key (X.encode (fst p))) as [Heq|Hneq].
+    - subst key. rewrite PTrie.get_set_same in Hvalue. inversion Hvalue; subst value.
+      cbn [fst]. exact (Hwf _ _ Hq).
+    - rewrite PTrie.get_set_other in Hvalue by exact Hneq. exact (Hwf _ _ Hvalue).
+    - subst key. rewrite PTrie.get_set_same in Hvalue. inversion Hvalue; reflexivity.
+    - rewrite PTrie.get_set_other in Hvalue by exact Hneq. exact (Hwf _ _ Hvalue).
+  Qed.
+
+  Lemma normalize_fold_wf : forall xs m,
+    normalization_wf m -> normalization_wf (fold_left add_term xs m).
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intros m Hwf; cbn [fold_left].
+    - exact Hwf.
+    - apply IH. now apply add_term_wf.
+  Qed.
+
+  Lemma add_term_mass : forall (v : X.t -> Z) m p, normalization_wf m ->
+    karr_zmass (fun q => (snd q * v (fst q))%Z) (add_term m p) =
+    (karr_zmass (fun q => (snd q * v (fst q))%Z) m + snd p * v (fst p))%Z.
+  Proof.
+    intros v m p Hwf. unfold add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [q|] eqn:Hq;
+      rewrite karr_zmass_set, Hq; cbn [karr_zoption fst snd].
+    - assert (Hkey : fst q = fst p).
+      { apply X.encode_inj. exact (Hwf _ _ Hq). }
+      rewrite Hkey. ring.
+    - ring.
+  Qed.
+
+  Lemma normalize_fold_mass : forall (v : X.t -> Z) xs m, normalization_wf m ->
+    karr_zmass (fun q => (snd q * v (fst q))%Z) (fold_left add_term xs m) =
+    (karr_zmass (fun q => (snd q * v (fst q))%Z) m + eval_coef v xs)%Z.
+  Proof.
+    intros v xs. induction xs as [|p xs IH]; intros m Hwf; cbn [fold_left].
+    - unfold eval_coef. cbn [fold_right]. ring.
+    - rewrite (IH _ (add_term_wf _ _ Hwf)), (add_term_mass v m p Hwf).
+      unfold eval_coef. cbn [fold_right]. ring.
+  Qed.
+
+  Lemma eval_coef_nonzero : forall (v : X.t -> Z) xs,
+    eval_coef v (filter (fun p => negb (Z.eqb (snd p) 0)) xs) = eval_coef v xs.
+  Proof.
+    intros v xs. unfold eval_coef.
+    induction xs as [|[x z] xs IH]; cbn [filter fold_right snd fst].
+    - reflexivity.
+    - destruct (Z.eqb z 0) eqn:Hz; cbn [negb fold_right fst snd].
+      + apply Z.eqb_eq in Hz. subst z. rewrite IH. ring.
+      + rewrite IH. reflexivity.
+  Qed.
+
+  Lemma normalize_coef_eval : forall (v : X.t -> Z) xs,
+    eval_coef v (normalize_coef xs) = eval_coef v xs.
+  Proof.
+    intros v xs. unfold normalize_coef. rewrite eval_coef_nonzero.
+    change (karr_zmass (fun q => (snd q * v (fst q))%Z)
+      (fold_left add_term xs PTrieCode.empty) = eval_coef v xs).
+    rewrite (normalize_fold_mass v xs PTrieCode.empty normalization_empty).
+    reflexivity.
+  Qed.
+
+  Lemma normalization_values_nodup : forall m, normalization_wf m ->
+    NoDup (map fst (karr_values m)).
+  Proof.
+    intros m Hwf. apply NoDup_map_inv with (f := X.encode).
+    rewrite karr_values_elements, !map_map.
+    assert (Hkeys : map (fun p => X.encode (fst (snd p))) (PTrieCode.elements m) =
+      map fst (PTrieCode.elements m)).
+    { apply map_ext_in. intros [key p] Hin. cbn [fst snd].
+      apply Hwf. apply (proj1 (PTrie.elements_spec _ m key p)). exact Hin. }
+    rewrite Hkeys. apply PTrie.elements_nodup.
+  Qed.
+
+  Lemma normalize_coef_nodup : forall xs, NoDup (map fst (normalize_coef xs)).
+  Proof.
+    intro xs. unfold normalize_coef. apply karr_nodup_map_filter.
+    apply normalization_values_nodup. apply normalize_fold_wf. apply normalization_empty.
+  Qed.
+
+  Lemma coefficient_as_eval : forall x xs,
+    coefficient x xs = eval_coef (fun y => if X.eqb x y then 1%Z else 0%Z) xs.
+  Proof.
+    intros x xs. unfold coefficient, eval_coef.
+    induction xs as [|[y z] xs IH]; cbn [fold_right fst snd].
+    - reflexivity.
+    - destruct (X.eqb x y); rewrite IH; ring.
+  Qed.
+
+  Lemma normalize_coef_coefficient : forall x xs,
+    coefficient x (normalize_coef xs) = coefficient x xs.
+  Proof.
+    intros x xs. rewrite !coefficient_as_eval. apply normalize_coef_eval.
+  Qed.
+
+  Lemma add_term_mass_Q : forall (v : X.t -> Q) m p, normalization_wf m ->
+    (karr_qmass (fun q => inject_Z (snd q) * v (fst q)) (add_term m p) ==
+    karr_qmass (fun q => inject_Z (snd q) * v (fst q)) m +
+      inject_Z (snd p) * v (fst p))%Q.
+  Proof.
+    intros v m p Hwf. unfold add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [q|] eqn:Hq;
+      setoid_rewrite karr_qmass_set; rewrite Hq; cbn [karr_qoption fst snd].
+    - assert (Hkey : fst q = fst p).
+      { apply X.encode_inj. exact (Hwf _ _ Hq). }
+      rewrite Hkey, inject_Z_plus. ring.
+    - ring.
+  Qed.
+
+  Lemma normalize_fold_mass_Q : forall (v : X.t -> Q) xs m, normalization_wf m ->
+    (karr_qmass (fun q => inject_Z (snd q) * v (fst q)) (fold_left add_term xs m) ==
+    karr_qmass (fun q => inject_Z (snd q) * v (fst q)) m + karr_eval_coef_Q v xs)%Q.
+  Proof.
+    intros v xs. induction xs as [|p xs IH]; intros m Hwf; cbn [fold_left].
+    - change (karr_qmass (fun q => inject_Z (snd q) * v (fst q)) m ==
+        karr_qmass (fun q => inject_Z (snd q) * v (fst q)) m + 0)%Q. ring.
+    - setoid_rewrite (IH _ (add_term_wf _ _ Hwf)).
+      setoid_rewrite (add_term_mass_Q v m p Hwf).
+      change (karr_qmass (fun q => inject_Z (snd q) * v (fst q)) m +
+        inject_Z (snd p) * v (fst p) + karr_eval_coef_Q v xs ==
+        karr_qmass (fun q => inject_Z (snd q) * v (fst q)) m +
+        (inject_Z (snd p) * v (fst p) + karr_eval_coef_Q v xs))%Q. ring.
+  Qed.
+
+  Lemma eval_coef_nonzero_Q : forall (v : X.t -> Q) xs,
+    (karr_eval_coef_Q v (filter (fun p => negb (Z.eqb (snd p) 0)) xs) ==
+      karr_eval_coef_Q v xs)%Q.
+  Proof.
+    intros v xs. induction xs as [|[x z] xs IH].
+    - reflexivity.
+    - cbn [filter snd]. destruct (Z.eqb z 0) eqn:Hz; cbn [negb].
+      + apply Z.eqb_eq in Hz. subst z.
+        change (karr_eval_coef_Q v (filter (fun p => negb (Z.eqb (snd p) 0)) xs) ==
+          0 * v x + karr_eval_coef_Q v xs)%Q.
+        setoid_rewrite IH. ring.
+      + change (inject_Z z * v x +
+          karr_eval_coef_Q v (filter (fun p => negb (Z.eqb (snd p) 0)) xs) ==
+          inject_Z z * v x + karr_eval_coef_Q v xs)%Q.
+        now setoid_rewrite IH.
+  Qed.
+
+  Lemma normalize_coef_eval_Q : forall (v : X.t -> Q) xs,
+    (karr_eval_coef_Q v (normalize_coef xs) == karr_eval_coef_Q v xs)%Q.
+  Proof.
+    intros v xs. unfold normalize_coef. setoid_rewrite eval_coef_nonzero_Q.
+    change (karr_qmass (fun q => inject_Z (snd q) * v (fst q))
+      (fold_left add_term xs PTrieCode.empty) == karr_eval_coef_Q v xs)%Q.
+    setoid_rewrite (normalize_fold_mass_Q v xs PTrieCode.empty normalization_empty).
+    change (0 + karr_eval_coef_Q v xs == karr_eval_coef_Q v xs)%Q. ring.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [| P]; [reflexivity |]. unfold leb.
+    destruct (contradiction P); [reflexivity |].
+    apply forallb_forall. intros r Hin. unfold entails. apply orb_true_iff. left.
+    apply existsb_exists. exists r. split; [exact Hin | apply row_eqb_refl].
+  Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof. Admitted. (* STUB *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [| P]; reflexivity.
+  Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [| P] b Hbot; [destruct b; reflexivity |].
+    unfold is_bot in Hbot. destruct (contradiction P) eqn:Hempty; [| discriminate].
+    destruct b; unfold leb; now rewrite Hempty.
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [| P]; [reflexivity |]. unfold leb, top.
+    destruct (contradiction P); reflexivity.
+  Qed.
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hle. unfold widen. now rewrite Hle.
+  Qed.
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
   Proof. Admitted. (* STUB *)
@@ -484,13 +988,29 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle. split; [apply leb_refl | exact Hle].
+  Qed.
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [| P] [| Q] v Hle Hmodels; cbn [ngamma] in *; try contradiction.
+    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty;
+        [| discriminate].
+      exact (contradiction_sound P ms v Hempty Hmodels).
+    - unfold leb in Hle. destruct (contradiction P) as [ms |] eqn:Hempty.
+      + exfalso. exact (contradiction_sound P ms v Hempty Hmodels).
+      + apply Forall_forall. intros r Hin.
+        apply entails_sound with (P := P); [| exact Hmodels].
+        now apply (proj1 (forallb_forall _ _) Hle).
+  Qed.
   Lemma ngamma_bot : forall v, ~ ngamma bot v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hfalse. exact Hfalse.
+  Qed.
   Lemma ngamma_top : forall v, ngamma top v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro v. constructor.
+  Qed.
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
@@ -507,9 +1027,13 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
   Proof. Admitted. (* STUB *)
   Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P v. reflexivity.
+  Qed.
   Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hfalse. exact Hfalse.
+  Qed.
 End Karr.
 
 Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
