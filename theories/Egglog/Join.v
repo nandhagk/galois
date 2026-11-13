@@ -91,6 +91,17 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
   Include JoinCode V I.
   Include JOIN_SPEC V I.
 
+  Definition nodes_ok (p : jplan) (ixs : list I.t) (lvl : nat)
+      (pre : list (cell V.t)) (ns : list positive) : Prop :=
+    wf_plan p ixs /\ length pre = lvl /\ lvl <= nvars p /\
+    Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i lvl) (fst lvix)) (rev pre) = Some u /\
+      I.node (snd lvix) n u) (combine (cols p) ixs) ns.
+
+  Definition participants (p : jplan) (lvl : nat) : list nat :=
+    filter (fun j => existsb (Nat.eqb lvl) (nth j (cols p) []))
+      (seq 0 (length (cols p))).
+
   Module IF := IndexFacts V I.
 
   (** A missing pivot means that no aligned column contains the current level. *)
@@ -181,6 +192,69 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
           Hlater lv (nth_error_In _ _ Hlv)) as Hnone. congruence.
   Qed.
 
+  (** The column, index and node lists stay aligned at every represented prefix. *)
+  Lemma nodes_ok_lengths : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    length (cols p) = length ixs /\ length (cols p) = length ns.
+  Proof.
+    intros p ixs lvl pre ns [[Hix _] [_ [_ Hnodes]]].
+    apply Forall2_length in Hnodes.
+    rewrite length_combine, Hix, Nat.min_id in Hnodes. split; lia.
+  Qed.
+
+  (** The chosen index is a participant of minimum degree, with position breaking ties. *)
+  Lemma choose_index_min : forall p ixs lvl pre ns j, nodes_ok p ixs lvl pre ns ->
+    choose_index p ixs lvl ns = Some j ->
+    In j (participants p lvl) /\ forall k, In k (participants p lvl) ->
+      (I.degree (nth j ixs I.empty) (nth j ns 1%positive) <=
+       I.degree (nth k ixs I.empty) (nth k ns 1%positive))%N /\
+      (I.degree (nth j ixs I.empty) (nth j ns 1%positive) =
+       I.degree (nth k ixs I.empty) (nth k ns 1%positive) -> j <= k).
+  Proof.
+    intros p ixs lvl pre ns j Hnodes Hchoose.
+    destruct (nodes_ok_lengths _ _ _ _ _ Hnodes) as [Hix Hns].
+    unfold choose_index in Hchoose.
+    destruct (choose_columns (columns p) ixs ns lvl 0) as [[selected d]|] eqn:Hselected;
+      [|discriminate].
+    injection Hchoose as <-.
+    destruct (choose_columns_member _ _ _ _ _ _ _ Hselected)
+      as [k [lv [ix [n [Hpos [Hlv [Hread_ix [Hread_n [Hpart Hd]]]]]]]]].
+    cbn in Hpos. subst k.
+    change (nth_error (cols p) selected = Some lv) in Hlv.
+    assert (Hbound : selected < length (cols p)).
+    { apply nth_error_Some. rewrite Hlv. discriminate. }
+    assert (Hix_value : nth selected ixs I.empty = ix).
+    { eapply nth_error_nth. exact Hread_ix. }
+    assert (Hn_value : nth selected ns 1%positive = n).
+    { eapply nth_error_nth. exact Hread_n. }
+    split.
+    - apply filter_In. split; [apply in_seq; lia|].
+      erewrite nth_error_nth; [exact Hpart|exact Hlv].
+    - intros k Hk. apply filter_In in Hk as [Hrange Hpartk]. apply in_seq in Hrange.
+      pose proof (choose_columns_minimal (columns p) ixs ns lvl 0 selected d Hix Hns
+        Hselected k (nth k (cols p) []) (nth k ixs I.empty) (nth k ns 1%positive)
+        (@nth_error_nth' (list nat) (cols p) k [] ltac:(lia))
+        (@nth_error_nth' I.t ixs k I.empty ltac:(lia))
+        (@nth_error_nth' positive ns k 1%positive ltac:(lia)) Hpartk) as Hmin.
+      rewrite Hix_value, Hn_value, <- Hd. exact Hmin.
+  Qed.
+
+  (** Coverage supplies at least one participant before all variables have been bound. *)
+  Lemma choose_index_some : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    lvl < nvars p -> exists j, choose_index p ixs lvl ns = Some j.
+  Proof.
+    intros p ixs lvl pre ns Hnodes Hlevel.
+    destruct (nodes_ok_lengths _ _ _ _ _ Hnodes) as [Hix Hns].
+    destruct Hnodes as [[_ [_ Hcover]] _].
+    destruct (Hcover lvl Hlevel) as [lv [Hlv Hin]].
+    unfold choose_index.
+    destruct (choose_columns (columns p) ixs ns lvl 0) as [[j d]|] eqn:Hchoose.
+    - exists j. reflexivity.
+    - pose proof (choose_columns_none _ _ _ _ _ Hix Hns Hchoose lv Hlv) as Hnone.
+      assert (Hpart : existsb (Nat.eqb lvl) lv = true).
+      { apply existsb_exists. exists lvl. split; [exact Hin|apply Nat.eqb_refl]. }
+      congruence.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
@@ -239,12 +313,6 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     (N.of_nat (work p ixs) <= T_run p ixs)%N.
   Proof. Admitted. (* STUB *)
 
-  Definition nodes_ok (p : jplan) (ixs : list I.t) (lvl : nat)
-      (pre : list (cell V.t)) (ns : list positive) : Prop :=
-    wf_plan p ixs /\ length pre = lvl /\ lvl <= nvars p /\
-    Forall2 (fun lvix n => exists u,
-      project (filter (fun i => Nat.ltb i lvl) (fst lvix)) (rev pre) = Some u /\
-      I.node (snd lvix) n u) (combine (cols p) ixs) ns.
   Definition advance (p : jplan) (ixs : list I.t) (lvl : nat) (ns : list positive)
       (c : cell V.t) : option (list positive) := advance_nodes p ixs lvl ns c.
   TimeFun advance.
@@ -254,9 +322,6 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   TimeFun go.
   Definition work_at (p : jplan) (ixs : list I.t) (lvl : nat)
       (ns : list positive) : nat := recursive_work (nvars p - lvl) p ixs lvl ns.
-  Definition participants (p : jplan) (lvl : nat) : list nat :=
-    filter (fun j => existsb (Nat.eqb lvl) (nth j (cols p) []))
-      (seq 0 (length (cols p))).
   Definition choose (p : jplan) (ixs : list I.t) (lvl : nat)
       (ns : list positive) : option nat := choose_index p ixs lvl ns.
   TimeFun choose.
@@ -267,11 +332,17 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
        I.degree (nth k ixs I.empty) (nth k ns 1%positive))%N /\
       (I.degree (nth j ixs I.empty) (nth j ns 1%positive) =
        I.degree (nth k ixs I.empty) (nth k ns 1%positive) -> j <= k).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns j Hnodes _ Hchoose.
+    eapply choose_index_min; eassumption.
+  Qed.
 
   Lemma choose_some : forall p ixs l pre ns, nodes_ok p ixs l pre ns ->
     l < nvars p -> exists j, choose p ixs l ns = Some j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns Hnodes Hlevel.
+    exact (choose_index_some p ixs l pre ns Hnodes Hlevel).
+  Qed.
 
   Lemma nodes_ok_root : forall p ixs, wf_plan p ixs ->
     nodes_ok p ixs 0 [] (map I.root ixs).
