@@ -532,30 +532,52 @@ Module ThresholdsT <: THRESHOLDS_ALL.
       (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
   Proof. Admitted. (* STUB *)
 
+  (** Merge sort orders every input list. *)
   Lemma F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro zs. apply StronglySorted_Sorted, sort_fuel_sorted. lia.
+  Qed.
 
+  (** Merge sort keeps the input multiset. *)
   Lemma F2_msort_perm : forall zs, Permutation zs (msort zs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro zs. apply sort_fuel_perm.
+  Qed.
 
+  (** Deduplication keeps exactly the input values. *)
   Lemma F3_dedup_vals : forall zs x, In x (dedup_sorted zs) <-> In x zs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply dedup_vals.
+  Qed.
 
+  (** Deduplication strengthens weak sortedness to strict sortedness. *)
   Lemma F4_dedup_ordered : forall zs, Sorted Z.le zs ->
     StronglySorted Z.lt (dedup_sorted zs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros zs Hsorted. apply dedup_ordered, Sorted_StronglySorted; [|exact Hsorted].
+    intros x y z Hxy Hyz. lia.
+  Qed.
 
+  (** Sufficient construction fuel preserves the inorder traversal. *)
   Lemma F5_build_vals : forall fuel zs, length zs <= fuel ->
     vals (build fuel zs) = zs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply build_vals.
+  Qed.
 
+  (** Median construction has logarithmic depth. *)
   Lemma F6_build_depth : forall fuel zs, length zs <= fuel ->
     depth (build fuel zs) <= Nat.log2 (length zs) + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros fuel zs Hfuel. apply build_depth.
+  Qed.
 
+  (** Increasing fuel to the original list length preserves the constructed tree. *)
   Lemma F7_make_eq : forall zs,
     make zs = build (length zs) (dedup_sorted (msort zs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro zs. unfold make. apply build_fuel_eq; [lia|apply prepared_length].
+  Qed.
 
   Lemma T1_msort : forall zs,
     (T_msort zs <= k_sort * N.of_nat
