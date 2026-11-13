@@ -1232,6 +1232,94 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
       end
     end.
 
+  (** The pivot wrapper retains the full aligned column traversal charge. *)
+  Lemma T_choose_index_ge : forall p ixs ns lvl,
+    length (cols p) = length ixs -> length (cols p) = length ns ->
+    (N.of_nat (2 * length (cols p) + 1) <= T_choose_index p ixs lvl ns)%N.
+  Proof.
+    intros p ixs ns lvl Hix Hns.
+    pose proof (T_choose_columns_ge (columns p) ixs ns lvl 0 Hix Hns) as Hscan.
+    change (N.of_nat (2 * length (cols p) + 1) <=
+      T_choose_columns (columns p) ixs ns lvl 0)%N in Hscan.
+    time_step choose_index.
+  Qed.
+
+  (** An unfinished level retains every column's advancement charge. *)
+  Lemma T_advance_nodes_ge : forall p ixs ns lvl c,
+    length (cols p) = length ixs -> length (cols p) = length ns ->
+    lvl < nvars p ->
+    (N.of_nat (2 * length (cols p) + 1) <= T_advance_nodes p ixs lvl ns c)%N.
+  Proof.
+    intros p ixs ns lvl c Hix Hns Hlevel.
+    pose proof (T_advance_columns_ge (columns p) ixs ns lvl c Hix Hns) as Hscan.
+    change (N.of_nat (2 * length (cols p) + 1) <=
+      T_advance_columns (columns p) ixs lvl ns c)%N in Hscan.
+    assert (Hguard : Nat.leb (S lvl) (level_count p) = true).
+    { apply Nat.leb_le. change (S lvl <= nvars p). lia. }
+    time_step advance_nodes.
+  Qed.
+
+  (** The selected pivot's stored degree is exactly its enumerated child count. *)
+  Lemma chosen_degree_count : forall p ixs lvl pre ns j,
+    nodes_ok p ixs lvl pre ns -> choose_index p ixs lvl ns = Some j ->
+    N.to_nat (I.degree (nth j ixs I.empty) (nth j ns 1%positive)) =
+      length (I.children (nth j ixs I.empty) (nth j ns 1%positive)).
+  Proof.
+    intros p ixs lvl pre ns j Hnodes Hchoose.
+    destruct (choose_index_min p ixs lvl pre ns j Hnodes Hchoose) as [Hpart _].
+    apply filter_In in Hpart as [Hrange _]. apply in_seq in Hrange.
+    destruct (nodes_ok_at p ixs lvl pre ns j Hnodes ltac:(lia))
+      as [[_ [_ [_ Hwf]]] [u [_ Hnode]]].
+    exact (I.degree_spec _ _ _ u Hwf Hnode).
+  Qed.
+
+  (** Every recursive work unit is paid by the derived enumeration clock. *)
+  Lemma T_enumerate_ge : forall fuel p ixs lvl pre ns acc,
+    fuel + lvl = nvars p -> nodes_ok p ixs lvl pre ns ->
+    (N.of_nat (recursive_work fuel p ixs lvl ns) <=
+      T_enumerate fuel p ixs ns pre acc)%N.
+  Proof.
+    induction fuel as [| fuel IH]; intros p ixs lvl pre ns acc Hfuel Hnodes.
+    - pose proof (proj1 (proj2 Hnodes)) as Hlength.
+      pose proof (T_rev_ge pre) as Hreverse.
+      cbn [recursive_work]. time_step enumerate.
+    - pose proof (proj1 (proj2 Hnodes)) as Hlength.
+      destruct (nodes_ok_lengths p ixs lvl pre ns Hnodes) as [Hix Hns].
+      assert (Hlevel : lvl < nvars p) by lia.
+      destruct (choose_index_some p ixs lvl pre ns Hnodes Hlevel) as [j Hchoose].
+      pose proof (T_choose_index_ge p ixs ns lvl Hix Hns) as Hselect.
+      pose proof (chosen_degree_count p ixs lvl pre ns j Hnodes Hchoose) as Hdegree.
+      assert (Hfold : (N.of_nat
+        (length (cols p) * length (I.children (nth j ixs I.empty) (nth j ns 1%positive)) +
+          fold_right Nat.add 0%nat
+            (map (fun c => match advance_nodes p ixs lvl ns c with
+              | Some nodes => recursive_work fuel p ixs (S lvl) nodes
+              | None => 0%nat
+              end) (I.children (nth j ixs I.empty) (nth j ns 1%positive)))) <=
+        List.T_fold_left
+          (fun out c => match advance_nodes p ixs lvl ns c with
+            | Some nodes => enumerate fuel p ixs nodes (c :: pre) out
+            | None => out
+            end)
+          (fun out c => 1 + (T_advance_nodes p ixs lvl ns c +
+            match advance_nodes p ixs lvl ns c with
+            | Some nodes => T_enumerate fuel p ixs nodes (c :: pre) out
+            | None => 0
+            end))
+          (I.children (nth j ixs I.empty) (nth j ns 1%positive)) acc)%N).
+      { apply T_fold_left_work_ge. intros out c _.
+        pose proof (T_advance_nodes_ge p ixs ns lvl c Hix Hns Hlevel) as Hprobe.
+        destruct (advance_nodes p ixs lvl ns c) as [nodes|] eqn:Hstep.
+        - pose proof (advance_nodes_ok p ixs lvl pre ns c nodes Hnodes Hstep) as Hnext.
+          pose proof (IH p ixs (S lvl) (c :: pre) nodes out ltac:(lia) Hnext) as Hsubtree.
+          rewrite Nat2N.inj_add. time_cbn_all. lia.
+        - rewrite Nat2N.inj_add. time_cbn_all. lia. }
+      cbn [recursive_work]. rewrite Hchoose, Hdegree.
+      time_step enumerate.
+      rewrite Hlength, Hchoose.
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_succ in *. nia.
+  Qed.
+
   Definition work (p : jplan) (ixs : list I.t) : nat :=
     recursive_work (nvars p) p ixs 0 (map I.root ixs).
   Definition wmax (_ : jplan) (ixs : list I.t) : nat :=
@@ -1444,7 +1532,14 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
 
   Lemma T_run_ge : forall p ixs, wf_plan p ixs ->
     (N.of_nat (work p ixs) <= T_run p ixs)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs Hwf.
+    pose proof (T_enumerate_ge (nvars p) p ixs 0 [] (map I.root ixs) []
+      ltac:(lia) (nodes_ok_initial p ixs Hwf)) as Hwork.
+    change (N.of_nat (recursive_work (level_count p) p ixs 0 (map I.root ixs)) <=
+      T_enumerate (level_count p) p ixs (map I.root ixs) [] [])%N in Hwork.
+    unfold work. change (nvars p) with (level_count p). time_step run.
+  Qed.
 
   Definition advance (p : jplan) (ixs : list I.t) (lvl : nat) (ns : list positive)
       (c : cell V.t) : option (list positive) := advance_nodes p ixs lvl ns c.
