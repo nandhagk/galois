@@ -1420,6 +1420,362 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - now apply (proj1 (Forall_forall _ _) Hmodels).
   Qed.
 
+  (** Every key already present in the accumulator survives another insertion. *)
+  Lemma add_term_present : forall key m p,
+    key = X.encode (fst p) \/ (exists q, PTrieCode.get key m = Some q) ->
+    exists q, PTrieCode.get key (add_term m p) = Some q.
+  Proof.
+    intros key m p Hpresent. unfold add_term.
+    destruct (PTrieCode.get (X.encode (fst p)) m) as [q |] eqn:Hlookup;
+      destruct (Pos.eq_dec key (X.encode (fst p))) as [Hsame | Hdifferent].
+    - subst key. rewrite PTrie.get_set_same. eexists. reflexivity.
+    - rewrite PTrie.get_set_other by exact Hdifferent.
+      destruct Hpresent as [Hsame | Hpresent]; [contradiction | exact Hpresent].
+    - subst key. rewrite PTrie.get_set_same. eexists. reflexivity.
+    - rewrite PTrie.get_set_other by exact Hdifferent.
+      destruct Hpresent as [Hsame | Hpresent]; [contradiction | exact Hpresent].
+  Qed.
+
+  (** Folding terms preserves every original key, including keys whose sum is zero. *)
+  Lemma normalize_fold_present : forall ps m key,
+    In key (map (fun p => X.encode (fst p)) ps) \/
+      (exists q, PTrieCode.get key m = Some q) ->
+    exists q, PTrieCode.get key (fold_left add_term ps m) = Some q.
+  Proof.
+    intro ps. induction ps as [| p ps IH]; intros m key Hpresent.
+    - cbn [map In] in Hpresent. destruct Hpresent as [Hfalse | Hpresent];
+        [contradiction | exact Hpresent].
+    - cbn [fold_left]. apply IH. cbn [map In] in Hpresent.
+      destruct Hpresent as [[Hsame | Hin] | Hin].
+      + right. apply add_term_present. left. symmetry. exact Hsame.
+      + left. exact Hin.
+      + right. apply add_term_present. right. exact Hin.
+  Qed.
+
+  (** The dense coordinate list never repeats a key. *)
+  Lemma variables_nodup : forall P, NoDup (variables P).
+  Proof.
+    intro P. unfold variables. apply normalization_values_nodup.
+    apply normalize_fold_wf. apply normalization_empty.
+  Qed.
+
+  (** All raw occurrences have a dense coordinate, even after duplicate cancellation. *)
+  Lemma variables_contains : forall P r x z,
+    In r P -> In (x, z) (lhs r) -> In x (variables P).
+  Proof.
+    intros P r x z Hrow Hterm.
+    assert (Hraw : In (x, z) (flat_map lhs P)).
+    { apply in_flat_map. exists r. auto. }
+    assert (Hkey : In (X.encode x)
+      (map (fun p => X.encode (fst p)) (flat_map lhs P))).
+    { apply in_map_iff. exists (x, z). split; [reflexivity | exact Hraw]. }
+    destruct (normalize_fold_present (flat_map lhs P) PTrieCode.empty
+      (X.encode x) (or_introl Hkey)) as [q Hget].
+    assert (Hfst : fst q = x).
+    { apply X.encode_inj. eapply normalize_fold_wf.
+      - apply normalization_empty.
+      - exact Hget. }
+    unfold variables. apply in_map_iff. exists q. split; [exact Hfst |].
+    rewrite karr_values_elements. apply in_map_iff.
+    exists (X.encode x, q). split; [reflexivity |].
+    apply (proj2 (PTrie.elements_spec _ _ _ _)). exact Hget.
+  Qed.
+
+  (** A variable absent from every stored occurrence has total coefficient zero. *)
+  Lemma coefficient_absent : forall x ps,
+    ~ In x (map fst ps) -> coefficient x ps = 0%Z.
+  Proof.
+    intros x ps. induction ps as [| [y z] ps IH]; intro Habsent; [reflexivity |].
+    cbn [map fst In] in Habsent. unfold coefficient in *. cbn [fold_right fst snd].
+    destruct (X.eqb_spec x y) as [Hsame | Hdifferent].
+    - subst y. exfalso. apply Habsent. left. reflexivity.
+    - apply IH. intro Hin. apply Habsent. right. exact Hin.
+  Qed.
+
+  (** Combining a coordinate list with its mapped values is ordinary pair mapping. *)
+  Lemma combine_coordinate_map : forall xs (f : X.t -> Z),
+    List.combine xs (map f xs) = map (fun x => (x, f x)) xs.
+  Proof.
+    intro xs. induction xs as [| x xs IH]; intro f; cbn; [reflexivity |].
+    now rewrite IH.
+  Qed.
+
+  (** A unique coordinate carries exactly its assigned coefficient. *)
+  Lemma coefficient_coordinates : forall xs (f : X.t -> Z) x,
+    NoDup xs -> In x xs -> coefficient x (map (fun y => (y, f y)) xs) = f x.
+  Proof.
+    intro xs. induction xs as [| y xs IH]; intros f x Hunique Hin;
+      [contradiction |].
+    inversion Hunique as [| y' xs' Hnot Htail]; subst y' xs'.
+    cbn [map]. unfold coefficient at 1. cbn [fold_right fst snd].
+    destruct (X.eqb_spec x y) as [Hsame | Hdifferent].
+    - subst x.
+      assert (Hzero : coefficient y (map (fun z => (z, f z)) xs) = 0%Z).
+      { apply coefficient_absent. rewrite map_map.
+        change (~ In y (map (fun z => z) xs)). rewrite map_id. exact Hnot. }
+      change ((f y + coefficient y (map (fun z => (z, f z)) xs))%Z = f y).
+      rewrite Hzero. ring.
+    - apply IH; [exact Htail |]. destruct Hin as [Hsame | Hin];
+        [congruence | exact Hin].
+  Qed.
+
+  (** Filtering literal zero coefficients leaves every coefficient unchanged. *)
+  Lemma coefficient_nonzero : forall x ps,
+    coefficient x (filter (fun p => negb (Z.eqb (snd p) 0)) ps) = coefficient x ps.
+  Proof.
+    intros x ps. rewrite !coefficient_as_eval. apply eval_coef_nonzero.
+  Qed.
+
+  (** Sparse reconstruction of a dense row preserves all variable coefficients. *)
+  Lemma dense_sparse_coefficient : forall xs r x,
+    NoDup xs -> (forall y z, In (y, z) (lhs r) -> In y xs) ->
+    coefficient x (sparse xs (dense xs r)) = coefficient x (lhs r).
+  Proof.
+    intros xs r x Hunique Hsupport. unfold sparse, dense.
+    rewrite coefficient_nonzero, combine_coordinate_map.
+    assert (Hdec : {In x xs} + {~ In x xs}).
+    { apply in_dec. intros a b. destruct (X.eqb_spec a b); auto. }
+    destruct Hdec as [Hin | Habsent].
+    - now apply coefficient_coordinates.
+    - rewrite coefficient_absent.
+      + symmetry. apply coefficient_absent. intro Hin.
+        apply in_map_iff in Hin as [[y z] [Hsame Hin]]. cbn [fst] in Hsame.
+        subst y. apply Habsent. now apply Hsupport with (z := z).
+      + rewrite map_map. change (~ In x (map (fun y => y) xs)).
+        now rewrite map_id.
+  Qed.
+
+  (** Dense reconstruction of an input row preserves its raw total coefficients. *)
+  Lemma variables_dense_coefficient : forall P r x, In r P ->
+    coefficient x (sparse (variables P) (dense (variables P) r)) =
+      coefficient x (lhs r).
+  Proof.
+    intros P r x Hin. apply dense_sparse_coefficient; [apply variables_nodup |].
+    intros y z Hterm. now apply variables_contains with (r := r) (z := z).
+  Qed.
+
+  Lemma coefficient_cons : forall x y a ps,
+    coefficient x ((y, a) :: ps) =
+      ((if X.eqb x y then a else 0%Z) + coefficient x ps)%Z.
+  Proof.
+    intros x y a ps. unfold coefficient. cbn [fold_right fst snd].
+    destruct (X.eqb x y); ring.
+  Qed.
+
+  Lemma coefficient_app : forall x ps qs,
+    coefficient x (ps ++ qs) = (coefficient x ps + coefficient x qs)%Z.
+  Proof.
+    intros x ps qs. rewrite !coefficient_as_eval. apply eval_coef_app.
+  Qed.
+
+  Lemma coefficient_scale : forall x a ps,
+    coefficient x (map (fun p => (fst p, (a * snd p)%Z)) ps) =
+      (a * coefficient x ps)%Z.
+  Proof.
+    intros x a ps. rewrite !coefficient_as_eval. apply eval_coef_scale.
+  Qed.
+
+  Lemma coefficient_filter : forall x y ps,
+    coefficient y (filter (fun p => negb (X.eqb x (fst p))) ps) =
+      if X.eqb y x then 0%Z else coefficient y ps.
+  Proof.
+    intros x y ps. induction ps as [|[z a] ps IH].
+    - cbn [filter coefficient]. destruct (X.eqb y x); reflexivity.
+    - destruct (X.eqb_spec y x) as [Hyx|Hyx].
+      + subst y. cbn [filter fst].
+        destruct (X.eqb x z) eqn:Hxz; cbn [negb].
+        * exact IH.
+        * rewrite coefficient_cons, Hxz. exact IH.
+      + cbn [filter fst]. destruct (X.eqb_spec x z) as [Hxz|Hxz].
+        * subst z. cbn [negb]. rewrite IH, coefficient_cons.
+          destruct (X.eqb_spec y x) as [Heq|Hneq]; [contradiction|reflexivity].
+        * cbn [negb]. rewrite !coefficient_cons, IH. reflexivity.
+  Qed.
+
+  Lemma eval_coef_split : forall x ps (v : X.t -> Z),
+    eval_coef v ps = (coefficient x ps * v x +
+      eval_coef v (filter (fun p => negb (X.eqb x (fst p))) ps))%Z.
+  Proof.
+    intros x ps v. induction ps as [|[y a] ps IH].
+    - reflexivity.
+    - rewrite coefficient_cons. cbn [filter fst].
+      destruct (X.eqb_spec x y) as [Hxy|Hxy].
+      + subst y.
+        change (a * v x + eval_coef v ps = (a + coefficient x ps) * v x +
+          eval_coef v (filter (fun p => negb (X.eqb x (fst p))) ps))%Z.
+        rewrite IH. ring.
+      + change (a * v y + eval_coef v ps = coefficient x ps * v x +
+          (a * v y + eval_coef v (filter (fun p => negb (X.eqb x (fst p))) ps)))%Z.
+        rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_zero : forall ps (v : X.t -> Z),
+    (forall x, coefficient x ps = 0%Z) -> eval_coef v ps = 0%Z.
+  Proof.
+    refine (well_founded_induction
+      (well_founded_ltof _ (@length (X.t * Z))) _ _).
+    intros ps IH v Hzero. destruct ps as [|[x a] ps].
+    - reflexivity.
+    - rewrite (eval_coef_split x ((x, a) :: ps) v), Hzero.
+      rewrite Z.mul_0_l, Z.add_0_l. apply IH.
+      + unfold ltof. cbn [filter fst length].
+        rewrite key_eqb_refl. cbn [negb].
+        pose proof (filter_length_le (fun p => negb (X.eqb x (fst p))) ps). lia.
+      + intro y. rewrite coefficient_filter.
+        destruct (X.eqb y x); [reflexivity|apply Hzero].
+  Qed.
+
+  Lemma eval_coef_ext : forall ps qs (v : X.t -> Z),
+    (forall x, coefficient x ps = coefficient x qs) -> eval_coef v ps = eval_coef v qs.
+  Proof.
+    intros ps qs v Heq.
+    assert (Hzero : forall x,
+      coefficient x (ps ++ map (fun p => (fst p, ((-1) * snd p)%Z)) qs) = 0%Z).
+    { intro x. rewrite coefficient_app, coefficient_scale, Heq. ring. }
+    pose proof (eval_coef_zero _ v Hzero) as Heval.
+    rewrite eval_coef_app, eval_coef_scale in Heval. lia.
+  Qed.
+
+  Lemma eval_coef_app_Q : forall (v : X.t -> Q) ps qs,
+    (karr_eval_coef_Q v (ps ++ qs) == karr_eval_coef_Q v ps + karr_eval_coef_Q v qs)%Q.
+  Proof.
+    intros v ps qs. apply karr_qsum_app.
+  Qed.
+
+  Lemma eval_coef_scale_Q : forall a ps (v : X.t -> Q),
+    (karr_eval_coef_Q v (map (fun p => (fst p, (a * snd p)%Z)) ps) ==
+      inject_Z a * karr_eval_coef_Q v ps)%Q.
+  Proof.
+    intros a ps v. induction ps as [|[x z] ps IH].
+    - change (0 == inject_Z a * 0)%Q. ring.
+    - change (inject_Z (a * z) * v x +
+        karr_eval_coef_Q v (map (fun p => (fst p, (a * snd p)%Z)) ps) ==
+        inject_Z a * (inject_Z z * v x + karr_eval_coef_Q v ps))%Q.
+      rewrite inject_Z_mult. setoid_rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_split_Q : forall x ps (v : X.t -> Q),
+    (karr_eval_coef_Q v ps == inject_Z (coefficient x ps) * v x +
+      karr_eval_coef_Q v (filter (fun p => negb (X.eqb x (fst p))) ps))%Q.
+  Proof.
+    intros x ps v. induction ps as [|[y a] ps IH].
+    - change (0 == 0 * v x + 0)%Q. ring.
+    - rewrite coefficient_cons. cbn [filter fst].
+      destruct (X.eqb_spec x y) as [Hxy|Hxy].
+      + subst y.
+        change (inject_Z a * v x + karr_eval_coef_Q v ps ==
+          inject_Z (a + coefficient x ps) * v x +
+          karr_eval_coef_Q v (filter (fun p => negb (X.eqb x (fst p))) ps))%Q.
+        rewrite inject_Z_plus. setoid_rewrite IH. ring.
+      + change (inject_Z a * v y + karr_eval_coef_Q v ps ==
+          inject_Z (coefficient x ps) * v x + (inject_Z a * v y +
+          karr_eval_coef_Q v (filter (fun p => negb (X.eqb x (fst p))) ps)))%Q.
+        setoid_rewrite IH. ring.
+  Qed.
+
+  Lemma eval_coef_zero_Q : forall ps (v : X.t -> Q),
+    (forall x, coefficient x ps = 0%Z) -> (karr_eval_coef_Q v ps == 0)%Q.
+  Proof.
+    refine (well_founded_induction
+      (well_founded_ltof _ (@length (X.t * Z))) _ _).
+    intros ps IH v Hzero. destruct ps as [|[x a] ps].
+    - reflexivity.
+    - setoid_rewrite (eval_coef_split_Q x ((x, a) :: ps) v).
+      rewrite Hzero. setoid_rewrite Qmult_0_l. setoid_rewrite Qplus_0_l. apply IH.
+      + unfold ltof. cbn [filter fst length]. rewrite key_eqb_refl. cbn [negb].
+        pose proof (filter_length_le (fun p => negb (X.eqb x (fst p))) ps). lia.
+      + intro y. rewrite coefficient_filter.
+        destruct (X.eqb y x); [reflexivity|apply Hzero].
+  Qed.
+
+  Lemma eval_coef_ext_Q : forall ps qs (v : X.t -> Q),
+    (forall x, coefficient x ps = coefficient x qs) ->
+    (karr_eval_coef_Q v ps == karr_eval_coef_Q v qs)%Q.
+  Proof.
+    intros ps qs v Heq.
+    assert (Hzero : forall x,
+      coefficient x (ps ++ map (fun p => (fst p, ((-1) * snd p)%Z)) qs) = 0%Z).
+    { intro x. rewrite coefficient_app, coefficient_scale, Heq. ring. }
+    pose proof (eval_coef_zero_Q _ v Hzero) as Heval.
+    setoid_rewrite eval_coef_app_Q in Heval.
+    setoid_rewrite eval_coef_scale_Q in Heval.
+    change (karr_eval_coef_Q v ps + (-1) * karr_eval_coef_Q v qs == 0)%Q in Heval.
+    apply (proj1 (Qplus_inj_r (karr_eval_coef_Q v ps) (karr_eval_coef_Q v qs)
+      (- karr_eval_coef_Q v qs)%Q)).
+    setoid_replace (karr_eval_coef_Q v qs + - karr_eval_coef_Q v qs)%Q with 0%Q by ring.
+    setoid_replace (karr_eval_coef_Q v ps + - karr_eval_coef_Q v qs)%Q
+      with (karr_eval_coef_Q v ps + (-1) * karr_eval_coef_Q v qs)%Q by ring.
+    exact Heval.
+  Qed.
+
+  Lemma dense_sparse_eval : forall xs r v,
+    NoDup xs -> (forall y z, In (y, z) (lhs r) -> In y xs) ->
+    eval_coef v (sparse xs (dense xs r)) = eval_coef v (lhs r).
+  Proof.
+    intros xs r v Hunique Hsupport. apply eval_coef_ext. intro x.
+    now apply dense_sparse_coefficient.
+  Qed.
+
+  Lemma dense_sparse_eval_Q : forall xs r v,
+    NoDup xs -> (forall y z, In (y, z) (lhs r) -> In y xs) ->
+    (karr_eval_coef_Q v (sparse xs (dense xs r)) == karr_eval_coef_Q v (lhs r))%Q.
+  Proof.
+    intros xs r v Hunique Hsupport. apply eval_coef_ext_Q. intro x.
+    now apply dense_sparse_coefficient.
+  Qed.
+
+  (** Finite coordinate values extend to a total rational store. *)
+  Definition coordinate_store (xs : list X.t) (qs : list Q) (x : X.t) : Q :=
+    fold_right (fun p q => if X.eqb x (fst p) then snd p else q) 0%Q
+      (List.combine xs qs).
+
+  Lemma coordinate_store_values : forall xs qs,
+    NoDup xs -> length xs = length qs -> map (coordinate_store xs qs) xs = qs.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros [|q qs] Hunique Hlength;
+      cbn [length] in Hlength; try discriminate; [reflexivity |].
+    inversion Hunique as [|x' xs' Hnot Htail]; subst x' xs'.
+    cbn [map]. f_equal.
+    - unfold coordinate_store. cbn [List.combine fold_right fst snd].
+      now rewrite key_eqb_refl.
+    - transitivity (map (coordinate_store xs qs) xs).
+      + apply map_ext_in. intros y Hin. unfold coordinate_store.
+        cbn [List.combine fold_right fst snd].
+        destruct (X.eqb_spec y x) as [Hsame | Hdifferent]; [|reflexivity].
+        subst y. contradiction.
+      + apply IH; [exact Htail |lia].
+  Qed.
+
+  Lemma dense_combine_eval_Q : forall xs zs (v : X.t -> Q),
+    (karr_eval (map v xs) zs == karr_eval_coef_Q v (List.combine xs zs))%Q.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros [|z zs] v;
+      cbn [map karr_eval List.combine karr_eval_coef_Q karr_qsum fold_right fst snd];
+      try reflexivity.
+    apply Qplus_comp; [reflexivity |apply IH].
+  Qed.
+
+  Lemma dense_eval_Q : forall xs r (v : X.t -> Q),
+    NoDup xs -> (forall y z, In (y, z) (lhs r) -> In y xs) ->
+    (karr_eval (map v xs) (dense xs r) == karr_eval_coef_Q v (lhs r))%Q.
+  Proof.
+    intros xs r v Hunique Hsupport.
+    pose proof (dense_sparse_eval_Q xs r v Hunique Hsupport) as Heval.
+    unfold sparse in Heval. setoid_rewrite eval_coef_nonzero_Q in Heval.
+    setoid_rewrite dense_combine_eval_Q. exact Heval.
+  Qed.
+
+  Lemma coordinate_dense_eval_Q : forall xs qs r,
+    NoDup xs -> length xs = length qs ->
+    (forall y z, In (y, z) (lhs r) -> In y xs) ->
+    (karr_eval qs (dense xs r) ==
+      karr_eval_coef_Q (coordinate_store xs qs) (lhs r))%Q.
+  Proof.
+    intros xs qs r Hunique Hlength Hsupport.
+    rewrite <- (coordinate_store_values xs qs Hunique Hlength) at 1.
+    now apply dense_eval_Q.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
