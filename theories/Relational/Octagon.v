@@ -4527,6 +4527,22 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply RelationalPathBounds.below_refl.
   Qed.
 
+  (** A successful matrix scan checks every stored row label. *)
+  Lemma matrix_ok_row : forall m k row, dbm_wf m ->
+    matrix_ok m = true -> M.get k m = Some row -> nonnegative k m = true.
+  Proof.
+    intros m k row [Houter Hrows] Hscan Hrow.
+    unfold matrix_ok in Hscan. rewrite M.fold_spec in Hscan.
+    assert (Hfold : forall (es : list (K.t * M.t Z)) acc,
+      fold_left (fun ok ka => andb ok (nonnegative (fst ka) m)) es acc =
+        andb acc (forallb (fun ka => nonnegative (fst ka) m) es)).
+    { induction es as [|[p value] es IH]; intro acc; [now destruct acc|].
+      cbn [fold_left forallb]. rewrite IH. now rewrite andb_assoc. }
+    rewrite Hfold in Hscan. cbn in Hscan.
+    rewrite forallb_forall in Hscan. apply (Hscan (k, row)).
+    apply (proj2 (M.elements_spec _ m k row Houter)). exact Hrow.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
