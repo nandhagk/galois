@@ -904,6 +904,71 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Qed.
 
 
+  (** The signed potential counts bits in the absolute value. *)
+  Definition lc_ones_Z (z : Z) : N :=
+    match z with
+    | Z0 => 0%N
+    | Zpos p => lc_ones p
+    | Zneg p => lc_ones p
+    end.
+
+  (** The separate positive and negative sums carry separate potentials. *)
+  Definition lc_pair_ones (s : Z * Z) : N :=
+    (lc_ones_Z (fst s) + lc_ones_Z (snd s))%N.
+
+  (** Adding a nonnegative operand charges its bits and the set-bit potential change. *)
+  Lemma T_Z_add_nonnegative : forall x y, (0 <= x)%Z -> (0 <= y)%Z ->
+    (Z.T_add x y + lc_ones_Z (x + y) <=
+      4 * N.of_nat (Z.size_nat y + 1) + lc_ones_Z x)%N.
+  Proof.
+    intros [|p|p] [|q|q] Hx Hy; try lia;
+      time_unfold Z.T_add; time_cbn;
+      try pose proof (lc_ones_le q); try pose proof (T_add_ones_right p q); lia.
+  Qed.
+
+  (** Subtracting a nonpositive operand has the same amortized addition bound. *)
+  Lemma T_Z_sub_nonpositive : forall x y, (0 <= x)%Z -> (y <= 0)%Z ->
+    (Z.T_sub x y + lc_ones_Z (x - y) <=
+      6 * N.of_nat (Z.size_nat y + 1) + lc_ones_Z x)%N.
+  Proof.
+    intros x y Hx Hy.
+    pose proof (T_Z_add_nonnegative x (- y)%Z Hx ltac:(lia)) as Hadd.
+    pose proof (Z.T_opp_le y) as Hopp.
+    assert (Hsize : Z.size_nat (- y) = Z.size_nat y) by (destruct y; reflexivity).
+    rewrite Hsize in Hadd. time_unfold Z.T_sub.
+    change (lc_ones_Z (x - y)) with (lc_ones_Z (x + - y)). lia.
+  Qed.
+
+  (** Signed insertion preserves nonnegativity of the separate sums. *)
+  Lemma lc_add_signed_nonnegative : forall z p n, (0 <= p)%Z -> (0 <= n)%Z ->
+    (0 <= fst (lc_add_signed z (p, n)))%Z /\
+    (0 <= snd (lc_add_signed z (p, n)))%Z.
+  Proof.
+    intros z p n Hp Hn. unfold lc_add_signed.
+    destruct (0 <=? z)%Z eqn:Hz; cbn [fst snd].
+    - apply Z.leb_le in Hz. lia.
+    - apply Z.leb_gt in Hz. lia.
+  Qed.
+
+  (** Signed insertion pays only the new operand's bits after accounting for carries. *)
+  Lemma T_lc_add_signed_ones : forall z p n, (0 <= p)%Z -> (0 <= n)%Z ->
+    (T_lc_add_signed z (p, n) + lc_pair_ones (lc_add_signed z (p, n)) <=
+      16 * N.of_nat (Z.size_nat z + 1) + lc_pair_ones (p, n))%N.
+  Proof.
+    intros z p n Hp Hn. pose proof (Z.T_leb_le 0 z) as Htest.
+    destruct z as [|q|q].
+    - pose proof (T_Z_add_nonnegative p 0 Hp ltac:(lia)) as Hadd.
+      time_unfold T_lc_add_signed. unfold lc_pair_ones.
+      time_simpl. time_cbn_all. lia.
+    - pose proof (T_Z_add_nonnegative p (Zpos q) Hp ltac:(lia)) as Hadd.
+      time_unfold T_lc_add_signed. unfold lc_pair_ones.
+      time_simpl. time_cbn_all. lia.
+    - pose proof (T_Z_sub_nonpositive n (Zneg q) Hn ltac:(lia)) as Hsub.
+      time_unfold T_lc_add_signed. unfold lc_pair_ones.
+      time_simpl. time_cbn_all. lia.
+  Qed.
+
+
   Definition c_lc : N := 1. (* STUB *)
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
