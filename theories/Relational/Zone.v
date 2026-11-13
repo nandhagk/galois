@@ -4415,6 +4415,57 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     apply RelationalPathBounds.plus_mono; [exact Hmiddle|apply Hbase].
   Qed.
 
+  (** A successful direct closure forbids a negative distinct-endpoint cycle. *)
+  Lemma direct_close_success_cycle : forall m i j d final,
+    dbm_wf m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    close (add_cons i j d m) = Reached final ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)).
+  Proof.
+    intros m i j d final Hwf Hdistinct. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (direct := add_cons i j d m). intro Hresult.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    destruct (close_path_invariant direct final Hwfdirect Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct i Hwfdirect). unfold direct. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct j Hwfdirect). unfold direct. rewrite support_add_cons.
+      right. now left. }
+    destruct (entry base j i) as [back|] eqn:Holdback; [|exact I].
+    assert (Hback : entry m j i = Some back).
+    { unfold base in Holdback. repeat rewrite entry_add_cons in Holdback.
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (K.eqb_spec i j); [congruence|].
+      destruct (K.eqb_spec j i); [congruence|exact Holdback]. }
+    assert (Hdirect_ji : entry direct j i = Some back).
+    { unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec j i); [congruence|exact Hback]. }
+    assert (Hdirect_bound : RelationalPathBounds.below (entry direct i j) (Some d)).
+    { unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i j) Hdirect_bound)
+      as Hfirst_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hfirst_bound)
+      as [first [Hfirst Hfirst_le]].
+    pose proof (Hbelow j i) as Hsecond_bound. rewrite Hdirect_ji in Hsecond_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hsecond_bound)
+      as [second [Hsecond Hsecond_le]].
+    pose proof (Hclosed j Hj i i) as Htriangle.
+    rewrite (Hzero i Hi), Hfirst, Hsecond in Htriangle.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below] in Htriangle |- *.
+    lia.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
