@@ -7740,10 +7740,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j).
   Definition k_credit : N := 1. (* STUB *)
-  Definition k_loop : N := 1. (* STUB *)
+  Definition k_loop : N := c_loopN + 1.
   Definition k_active : N := 1. (* STUB *)
   Definition k_queue : N := 1. (* STUB *)
-  Definition k_stop : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
@@ -7919,6 +7918,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition k_repair : N := 1. (* STUB *)
   Definition k_pop : N := 64 * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1).
   Definition k_rstep : N := 64.
+  Definition k_stop : N := k_rstep + k_pop + c_loopN.
   Definition k_slots : N := 1. (* STUB *)
   Definition k_layout : N := 1. (* STUB *)
 
@@ -8724,10 +8724,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       k_loop * N.of_nat U * state_potential B s)%N.
   Proof. Admitted. (* STUB *)
 
+  (** The stopped branch reads an empty queue and pays the real wrapper overhead. *)
+  Lemma T_rstep_stop_bound : forall s r, state_inv s -> rstep s = inr r ->
+    (T_rstep s <= (k_rstep + k_pop) * N.of_nat (unit (fst s)))%N.
+  Proof.
+    intros [db work] result Hinv Hstop. unfold rstep in Hstop.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstop; [| discriminate].
+    change (inv db) in Hinv.
+    destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [discriminate |].
+    change (pop_loser db = None) in Hpop.
+    pose proof (T_rstep_split db []) as Hsplit. rewrite Hpop in Hsplit.
+    pose proof (T_pop_none_le db Hinv Hpop) as Htime.
+    pose proof (unit_positive db) as Hpositive. cbn [fst]. nia.
+  Qed.
+
   (** Stopping charges one unit of the final database. *)
   Lemma T7_rstep_stop : forall s r, state_inv s -> rstep s = inr r ->
     (T_rstep s <= k_stop * N.of_nat (unit (fst s)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s r Hinv Hstop.
+    pose proof (T_rstep_stop_bound s r Hinv Hstop) as Htime.
+    unfold k_stop. nia.
+  Qed.
 
   (** Continuing steps also pay the binary loop driver's per-step charge. *)
   Lemma T6a_rstep_credit : forall B U s s', state_inv s ->
@@ -8741,7 +8759,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rstep s = inr r ->
     (T_rstep s + c_loopN + k_loop * N.of_nat U * rebuild_potential B r <=
       k_loop * N.of_nat U * state_potential B s + k_stop * N.of_nat U)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B U [db work] result Hinv Hunit Hstop.
+    pose proof (T_rstep_stop_bound (db, work) result Hinv Hstop) as Htime.
+    destruct (F13_rstep_done (db, work) result Hinv Hstop) as [Hresult [Hwork _]].
+    cbn [fst snd] in Hresult, Hwork, Hunit, Htime. subst result work.
+    pose proof (unit_positive db) as Hpositive.
+    unfold state_potential. cbn [fst snd work_weight fold_right].
+    unfold k_stop. nia.
+  Qed.
 
 
   (** The actual loop must fit the public budget after all use-entry charges are summed. *)
@@ -8874,7 +8900,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Loop credit includes the binary driver charge. *)
   Lemma k_loop_le : (c_loopN <= k_loop)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold k_loop. lia. Qed.
 
   (** Fuel construction uses stored binary counters. *)
   Lemma T7b_fuel : forall db, inv db ->
