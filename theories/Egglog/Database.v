@@ -10785,6 +10785,48 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     NoDup (queue db) /\ pending db = length (queue db) /\
     (forall x, In x (queue db) -> allocated db x).
 
+  Lemma database_idle_row_store : forall db, database_idle_ok db -> row_store_ok db.
+  Proof.
+    intros db Hidle. unfold database_idle_ok, row_store_ok in *. tauto.
+  Qed.
+
+  Lemma database_idle_queue_distinct : forall db, database_idle_ok db -> NoDup (queue db).
+  Proof.
+    intros db Hidle. unfold database_idle_ok, queue in *. tauto.
+  Qed.
+
+  Lemma database_idle_coverage : forall db, database_idle_ok db ->
+    forall f k o i, row (view db) f k o -> row_ids k o i ->
+      exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
+        located db f k0 = Some k /\ (x = repr db i \/ In x (queue db)).
+  Proof.
+    intros db Hidle f k o i Hrow Hid.
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & Hcover & _).
+    unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid)
+      as [x [k0 [Hrepr [Huse [Hlocated Hactive]]]]].
+    exists x, k0. repeat split; try assumption.
+  Qed.
+
+  Lemma database_idle_scheduled : forall db, database_idle_ok db ->
+    forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
+      exists k0, scheduled db [] (f, k0) /\ located db f k0 = Some k.
+  Proof.
+    intros db Hidle f k o i Hrow Hid Hnonroot.
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & Hcover & _).
+    unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid Hnonroot)
+      as [k0 [[x [Hqueue Huse]] Hlocated]].
+    exists k0. split; [right; exists x; split; assumption | exact Hlocated].
+  Qed.
+
+  Lemma database_idle_located : forall db, database_idle_ok db ->
+    forall f k0 k, located db f k0 = Some k ->
+      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
+  Proof.
+    intros db Hidle f k0 k Hlocated.
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & _ & Hcover).
+    exact (Hcover f k0 k Hlocated).
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
