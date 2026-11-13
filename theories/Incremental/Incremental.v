@@ -8913,6 +8913,87 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     lia.
   Qed.
 
+  Lemma invalid_next_credit_arithmetic : forall q head readers degree clock after before,
+    (1 <= q)%N -> (head <= q)%N -> (readers <= degree)%N ->
+    (clock + 64 * q * after <=
+      16 * head + 4 * (readers + 1) + (64 * q + 2) * degree +
+        64 * q * before + 1)%N ->
+    (clock + 64 * q * after <=
+      128 * q * (degree + 1) + 64 * q * before)%N.
+  Proof.
+    intros q head readers degree clock after before Hq Hhead Hread Hraw.
+    assert (Hbudget : (16 * head + 4 * (readers + 1) +
+      (64 * q + 2) * degree + 1 <= 128 * q * (degree + 1))%N).
+    { clear Hraw; nia. }
+    replace (16 * head + 4 * (readers + 1) + (64 * q + 2) * degree +
+      64 * q * before + 1)%N with
+      ((16 * head + 4 * (readers + 1) + (64 * q + 2) * degree + 1) +
+        64 * q * before)%N in Hraw by ring.
+    eapply N.le_trans; [exact Hraw|].
+    apply N.add_le_mono_r; exact Hbudget.
+  Qed.
+
+  Lemma T_invalid_next_amort : forall st x pending seen bad done snapshots,
+    state_ok st -> dom st x ->
+    invalid_snapshot_origin st
+      {| invalid_pending := pending; invalid_seen := seen;
+         invalid_bad := bad; invalid_done := x :: done;
+         invalid_snapshots := snapshots |} ->
+    (T_invalid_next st x pending seen bad done snapshots +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (invalid_snapshot_mass
+          (invalid_next st x pending seen bad done snapshots)) <=
+      128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (infl_deg st x + length (cowrite_at st x) + 1) +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (invalid_snapshot_mass
+          {| invalid_pending := pending; invalid_seen := seen;
+             invalid_bad := bad; invalid_done := x :: done;
+             invalid_snapshots := snapshots |}))%N.
+  Proof.
+    intros st x pending seen bad done snapshots Hstate Hdom Horigin.
+    pose proof (T_invalid_next_amort_raw st x pending seen bad done snapshots
+      Hstate Horigin) as Hraw.
+    pose proof (kwidth_dom st x Hstate Hdom) as Hkey.
+    assert (Hbits : (N.of_nat (S.key_bits x + 1) <=
+      N.of_nat (kwidth st + 1))%N).
+    { apply nat_to_N_le; lia. }
+    unfold infl_deg.
+    replace (N.of_nat (length (infl_at st x ++ cowrite_at st x))) with
+      (N.of_nat (length (infl_at st x)) +
+        N.of_nat (length (cowrite_at st x)))%N in Hraw.
+    2: { rewrite length_app, Nat2N.inj_add; reflexivity. }
+    replace (N.of_nat (length (infl_at st x) + 1)) with
+      (N.of_nat (length (infl_at st x)) + 1)%N in Hraw.
+    2: { rewrite Nat2N.inj_add; reflexivity. }
+    replace (N.of_nat (length (infl_at st x) + length (cowrite_at st x) + 1)) with
+      (N.of_nat (length (infl_at st x)) +
+        N.of_nat (length (cowrite_at st x)) + 1)%N.
+    2: { rewrite !Nat2N.inj_add; reflexivity. }
+    set (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) in Hraw |- *.
+    set (widthN := N.of_nat (kwidth st + 1)) in Hraw, Hbits |- *.
+    set (bits := N.of_nat (S.key_bits x + 1)) in Hraw, Hbits |- *.
+    set (r := N.of_nat (length (infl_at st x))) in Hraw |- *.
+    set (s := N.of_nat (length (cowrite_at st x))) in Hraw |- *.
+    replace (64 * base * widthN)%N with (64 * (base * widthN))%N
+      in Hraw |- * by ring.
+    replace (128 * base * widthN)%N with (128 * (base * widthN))%N
+      in |- * by ring.
+    replace (16 * base * bits)%N with (16 * (base * bits))%N
+      in Hraw by ring.
+    set (q := (base * widthN)%N) in Hraw |- *.
+    set (head := (base * bits)%N) in Hraw |- *.
+    assert (Hq : (1 <= q)%N) by (unfold q, base, widthN; nia).
+    assert (Hhead : (head <= q)%N).
+    { unfold head, q; apply N.mul_le_mono_l; exact Hbits. }
+    assert (Hread : (r <= r + s)%N) by lia.
+    eapply invalid_next_credit_arithmetic;
+      [exact Hq|exact Hhead|exact Hread|exact Hraw].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
