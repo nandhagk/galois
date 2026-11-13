@@ -68,14 +68,87 @@ Definition karr_values {A} (tr : ptrie A) : list A :=
 
 TimeFun karr_values.
 
-(** Dense row arithmetic uses the previous pivot as the Bareiss divisor. *)
-Fixpoint karr_cross (d a b : Z) (xs ys : list Z) : list Z :=
+(** Cross multiplication eliminates one coordinate without dividing. *)
+Fixpoint karr_cross (a b : Z) (xs ys : list Z) : list Z :=
   match xs, ys with
-  | x :: xs, y :: ys => ((a * x - b * y) / d)%Z :: karr_cross d a b xs ys
+  | x :: xs, y :: ys => (a * x - b * y)%Z :: karr_cross a b xs ys
   | _, _ => []
   end.
 
 TimeFun karr_cross.
+
+(** A quotient is used only when its remainder vanishes. *)
+Definition karr_divisible (d z : Z) : bool := Z.eqb (z mod d) 0.
+
+TimeFun karr_divisible.
+
+(** All tracked coordinates must share a nonzero exact divisor. *)
+Definition karr_exact (d : Z) (r : karr_row) : bool :=
+  negb (Z.eqb d 0) &&
+    (forallb (karr_divisible d) (kcoeff r) &&
+      (karr_divisible d (kright r) &&
+        (forallb (karr_divisible d) (kweight r) && karr_divisible d (kscale r)))).
+
+TimeFun karr_exact.
+
+Definition karr_quotient (d : Z) (r : karr_row) : karr_row :=
+  KRow (map (fun z => (z / d)%Z) (kcoeff r)) ((kright r / d)%Z)
+    (map (fun z => (z / d)%Z) (kweight r)) ((kscale r / d)%Z).
+
+TimeFun karr_quotient.
+
+(** Failed exactness keeps the integer cross product and its valid provenance. *)
+Definition karr_divide (d : Z) (r : karr_row) : karr_row :=
+  if karr_exact d r then karr_quotient d r else r.
+
+TimeFun karr_divide.
+
+(** Multiplication recovers each coordinate of an exactly divided row. *)
+Definition karr_multiple (d : Z) (r s : karr_row) : Prop :=
+  map (fun z => (d * z)%Z) (kcoeff r) = kcoeff s /\
+  (d * kright r = kright s)%Z /\
+  map (fun z => (d * z)%Z) (kweight r) = kweight s /\
+  (d * kscale r = kscale s)%Z.
+
+(** A checked zero remainder identifies an exact integer quotient. *)
+Lemma karr_divisible_exact : forall d z, d <> 0%Z -> karr_divisible d z = true ->
+  (d * (z / d) = z)%Z.
+Proof.
+  intros d z Hnonzero Hexact. unfold karr_divisible in Hexact.
+  apply Z.eqb_eq in Hexact. pose proof (Z.div_mod z d Hnonzero). nia.
+Qed.
+
+(** Exact division followed by multiplication restores a whole coefficient list. *)
+Lemma karr_exact_list : forall d zs, d <> 0%Z ->
+  forallb (karr_divisible d) zs = true ->
+  map (fun z => (d * z)%Z) (map (fun z => (z / d)%Z) zs) = zs.
+Proof.
+  intros d zs Hnonzero Hchecked. rewrite map_map.
+  transitivity (map (fun z : Z => z) zs); [|apply map_id].
+  apply map_ext_in. intros z Hin. apply karr_divisible_exact; [exact Hnonzero|].
+  exact (proj1 (forallb_forall _ _) Hchecked z Hin).
+Qed.
+
+(** Either branch returns a row related to its input by a nonzero integer factor. *)
+Lemma karr_divide_factor : forall d r,
+  exists factor, factor <> 0%Z /\ karr_multiple factor (karr_divide d r) r.
+Proof.
+  intros d r. unfold karr_divide. destruct (karr_exact d r) eqn:Hchecked.
+  - unfold karr_exact in Hchecked.
+    apply andb_true_iff in Hchecked as [Hnonzero Hchecked].
+    apply negb_true_iff, Z.eqb_neq in Hnonzero.
+    apply andb_true_iff in Hchecked as [Hcoeff Hchecked].
+    apply andb_true_iff in Hchecked as [Hright Hchecked].
+    apply andb_true_iff in Hchecked as [Hweight Hscale].
+    exists d. split; [exact Hnonzero|].
+    unfold karr_multiple, karr_quotient; cbn [kcoeff kright kweight kscale].
+    repeat split; first [now apply karr_exact_list|now apply karr_divisible_exact].
+  - exists 1%Z. split; [lia|]. unfold karr_multiple.
+    assert (Hone : forall zs : list Z, map (fun z => (1 * z)%Z) zs = zs).
+    { intro zs. induction zs as [|z zs IH]; cbn [map]; [reflexivity|].
+      f_equal; [ring|exact IH]. }
+    repeat split; try ring; apply Hone.
+Qed.
 
 Definition karr_head (r : karr_row) : Z :=
   match kcoeff r with [] => 0%Z | z :: _ => z end.
@@ -93,12 +166,24 @@ Definition karr_restore (r : karr_row) : karr_row :=
 TimeFun karr_restore.
 
 Definition karr_reduce (d a b : Z) (p r : karr_row) : karr_row :=
-  KRow (karr_cross d a b (kcoeff r) (kcoeff p))
-    ((a * kright r - b * kright p) / d)%Z
-    (karr_cross d a b (kweight r) (kweight p))
-    ((a * kscale r - b * kscale p) / d)%Z.
+  karr_divide d
+    (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+      (a * kright r - b * kright p)%Z
+      (karr_cross a b (kweight r) (kweight p))
+      (a * kscale r - b * kscale p)%Z).
 
 TimeFun karr_reduce.
+
+(** A finite rational store evaluates the dense coefficient coordinates in order. *)
+Fixpoint karr_eval (qs : list Q) (zs : list Z) : Q :=
+  match qs, zs with
+  | q :: qs, z :: zs => (inject_Z z * q + karr_eval qs zs)%Q
+  | _, _ => 0%Q
+  end.
+
+(** Dense row semantics is an equality over a finite rational store. *)
+Definition karr_models (qs : list Q) (r : karr_row) : Prop :=
+  (karr_eval qs (kcoeff r) == inject_Z (kright r))%Q.
 
 Fixpoint karr_pivot (rs : list karr_row) : option (karr_row * list karr_row) :=
   match rs with

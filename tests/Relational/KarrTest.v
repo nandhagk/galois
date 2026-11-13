@@ -22,6 +22,24 @@ Definition y0 : lcons positive := LCons _ [(2%positive, 1)] REq 0.
 Definition y1 : lcons positive := LCons _ [(2%positive, 1)] REq 1.
 Definition same : lcons positive := LCons _ [(1%positive, 1); (2%positive, -1)] REq 0.
 
+Example exact_row_division_scales_all_tracked_fields :
+  karr_divide 2 (KRow [2; -4] 6 [8; 0] 10) = KRow [1; -2] 3 [4; 0] 5.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example inexact_weight_keeps_the_integer_cross_product :
+  karr_divide 2 (KRow [2; -4] 6 [3; 0] 10) = KRow [2; -4] 6 [3; 0] 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example zero_divisor_keeps_the_integer_cross_product :
+  karr_divide 0 (KRow [2; -4] 6 [8; 0] 10) = KRow [2; -4] 6 [8; 0] 10.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example reached_empty_is_top : Equalities.leb (Reached [x1]) (Reached []) = true.
 Proof.
   vm_compute. reflexivity.
