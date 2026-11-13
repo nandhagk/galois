@@ -1574,6 +1574,94 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     nia.
   Qed.
 
+  (** Applying an inverse adds one tick to its bounded callback. *)
+  Local Lemma inverse_time_budget b f tf a k :
+    (1 <= b)%nat -> (payload_bits a <= b)%nat ->
+    (forall z, (Z.size_nat z <= b)%nat -> (tf z <= k * N.of_nat (b ^ 2))%N) ->
+    (T_inverse f tf a <= (k + 1) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Ha Hf. pose proof (WordTime.time_square_floor 1 b Hb Hb) as Hone.
+    set (budget := N.of_nat (b ^ 2)) in *. clearbody budget.
+    destruct a as [|z|]; cbn [payload_bits] in Ha;
+      time_unfold T_inverse; time_cbn; try nia.
+    pose proof (Hf z Ha). nia.
+  Qed.
+  (** An inverse whose outputs have bounded raw bits preserves that bound. *)
+  Local Lemma inverse_bits_budget b f a :
+    (forall z, (Z.size_nat (f z) <= b)%nat) -> (payload_bits (inverse f a) <= b)%nat.
+  Proof.
+    intro Hf. destruct a as [|z|]; cbn [inverse payload_bits]; auto; lia.
+  Qed.
+  (** Unary inverse clocks fit a common quadratic bound on widths and raw bits. *)
+  Local Lemma unary_cost_budget b rw r o :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat -> (Z.size_nat r <= b)%nat ->
+    ((match o with bvnot => T_wnot rw r | _ => T_wneg rw r end) <=
+      2048 * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hr.
+    assert (Hnot : (T_wnot rw r <= 1152 * N.of_nat (b ^ 2))%N).
+    { eapply WordTime.time_square_scale with (c := 128%N) (k := 3%nat);
+        [apply WordTime.word_not_time_bound|lia]. }
+    assert (Hneg : (T_wneg rw r <= 1152 * N.of_nat (b ^ 2))%N).
+    { eapply WordTime.time_square_scale with (c := 128%N) (k := 3%nat);
+        [apply WordTime.word_neg_time_bound|lia]. }
+    set (budget := N.of_nat (b ^ 2)) in *. clearbody budget.
+    destruct o; nia.
+  Qed.
+  (** Unary inverse results stay within the bounded result width. *)
+  Local Lemma unary_bits_budget b rw r o : (Pos.to_nat rw <= b)%nat ->
+    (payload_bits (FVal (match o with bvnot => wnot rw r | _ => wneg rw r end)) <= b)%nat.
+  Proof.
+    intro Hrw.
+    pose proof (WordTime.word_size_bound rw (wnot rw r) (wnot_is_word rw r)) as Hnot.
+    assert (Hneg : (Z.size_nat (wneg rw r) <= Pos.to_nat rw)%nat).
+    { apply WordTime.word_size_bound, wrap_is_word. }
+    destruct o; cbn [payload_bits]; lia.
+  Qed.
+  (** Add, subtract and xor inverses fit a shared quadratic input budget. *)
+  Local Lemma binary_cost_budget b w x y :
+    (1 <= b)%nat -> (Pos.to_nat w <= b)%nat ->
+    (Z.size_nat x <= b)%nat -> (Z.size_nat y <= b)%nat ->
+    (T_wadd w x y <= 8192 * N.of_nat (b ^ 2))%N /\
+    (T_wsub w x y <= 8192 * N.of_nat (b ^ 2))%N /\
+    (T_wxor w x y <= 8192 * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hw Hx Hy. split.
+    - eapply WordTime.time_square_scale with (c := 512%N) (k := 4%nat);
+        [apply WordTime.word_add_time_bound|lia].
+    - split.
+      + eapply WordTime.time_square_scale with (c := 512%N) (k := 4%nat);
+          [apply WordTime.word_sub_time_bound|lia].
+      + eapply N.le_trans with (m := (4096 * N.of_nat (b ^ 2))%N).
+        * eapply WordTime.time_square_scale with (c := 256%N) (k := 4%nat);
+            [apply WordTime.word_xor_time_bound|lia].
+        * apply N.mul_le_mono_r. lia.
+  Qed.
+  (** Two inverse callbacks and their payload meets fit one common budget. *)
+  Local Lemma inverse_pair_time_budget b rw f tf g tg a c :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat ->
+    (payload_bits a <= b)%nat -> (payload_bits c <= b)%nat ->
+    (forall z, (Z.size_nat z <= b)%nat ->
+      (tf z <= 8193 * N.of_nat (b ^ 2))%N) ->
+    (forall z, (Z.size_nat z <= b)%nat ->
+      (tg z <= 8193 * N.of_nat (b ^ 2))%N) ->
+    (forall z, (Z.size_nat (f z) <= b)%nat) ->
+    (forall z, (Z.size_nat (g z) <= b)%nat) ->
+    (T_inverse_pair rw f tf g tg a c <=
+      (32768 * (W.c_payload + 1)) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Ha Hc Htf Htg Hf Hg.
+    pose proof (inverse_time_budget b f tf c 8193 Hb Hc Htf) as Hif.
+    pose proof (inverse_time_budget b g tg a 8193 Hb Ha Htg) as Hig.
+    pose proof (inverse_bits_budget b f c Hf) as Hfsize.
+    pose proof (inverse_bits_budget b g a Hg) as Hgsize.
+    pose proof (meet_time_budget b rw a (inverse f c) Hb Hrw Ha Hfsize) as Hmf.
+    pose proof (meet_time_budget b rw c (inverse g a) Hb Hrw Hc Hgsize) as Hmg.
+    pose proof (WordTime.time_square_floor 1 b Hb Hb) as Hone.
+    time_unfold T_inverse_pair.
+    set (budget := N.of_nat (b ^ 2)) in *. clearbody budget. nia.
+  Qed.
+
   Definition c_word_table : N := (524288 * (W.c_payload + 1))%N.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
