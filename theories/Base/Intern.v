@@ -5,7 +5,7 @@
     Builds on: InternSig, MapSig and KeySig. *)
 
 From Stdlib Require Import List Bool NArith PArith Lia Sorting.Sorted.
-From Argent Require Import Time Std.
+From Argent Require Import Time Std Tactics.
 From Galois.Base Require Import InternSig KeySig MapSig.
 From Galois.Base Require Import Trie.
 
@@ -59,9 +59,44 @@ Module Intern (K : KEY) (M : MAP K) <: INTERN K.
       + intros i Hi; change (i < 1)%positive in Hi; lia.
   Qed.
   Lemma wf_intern : forall k s, wf s -> wf (snd (intern k s)).
-  Proof. Admitted. (* CONVERT: intern_wf: The variable fresh_bound was not found in the current environment. *)
+  Proof.
+    intros k s Hwf. unfold intern. destruct (find k s) as [i|] eqn:Hfind;
+      cbn [snd]; [exact Hwf|].
+    destruct Hwf as [Hmap [Hbound [Hlink Hdense]]].
+    unfold wf. cbn [intern_forward intern_next intern_inverse].
+    split; [apply M.wf_set; exact Hmap|]. split.
+    - intros l j Hget. unfold find in Hget. cbn [intern_forward] in Hget.
+      destruct (K.eqb_spec l k) as [Heq|Hneq].
+      + subst l. rewrite M.get_set_same in Hget. injection Hget as Hj. subst j. lia.
+      + rewrite M.get_set_other in Hget by exact Hneq.
+        pose proof (Hbound l j Hget). lia.
+    - split.
+      + intros l j. unfold find, name. cbn [intern_forward intern_inverse].
+        destruct (K.eqb_spec l k) as [Heq|Hneq].
+        * subst l. rewrite M.get_set_same.
+          destruct (Pos.eq_dec j (intern_next s)) as [Hj|Hj].
+          -- subst j. rewrite PTrie.get_set_same. split; intros _; reflexivity.
+          -- rewrite PTrie.get_set_other by exact Hj. split.
+             ++ intro Heq. injection Heq as Heq. congruence.
+             ++ intro Hname. apply (proj2 (Hlink k j)) in Hname.
+                rewrite Hfind in Hname. discriminate.
+        * rewrite M.get_set_other by exact Hneq.
+          destruct (Pos.eq_dec j (intern_next s)) as [Hj|Hj].
+          -- subst j. rewrite PTrie.get_set_same. split.
+             ++ intro Hget. pose proof (Hbound l (intern_next s) Hget). lia.
+             ++ intro Heq. injection Heq as Heq. congruence.
+          -- rewrite PTrie.get_set_other by exact Hj. apply Hlink.
+      + intros j Hj. destruct (Pos.eq_dec j (intern_next s)) as [Heq|Hneq].
+        * subst j. exists k. unfold find. cbn [intern_forward]. apply M.get_set_same.
+        * assert (Hlt : (j < intern_next s)%positive) by lia.
+          destruct (Hdense j Hlt) as [l Hl]. exists l.
+          unfold find. cbn [intern_forward]. rewrite M.get_set_other; [exact Hl|].
+          intro Heq. subst l. rewrite Hfind in Hl. discriminate.
+  Qed.
   Lemma size_empty : size empty = 0%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma find_name : forall k i s, wf s -> (find k s = Some i <-> name i s = Some k).
   Proof. intros k i s [_ [_ [Hlink _]]]; apply Hlink. Qed.
   Lemma find_inj : forall k l i s, wf s ->
@@ -73,14 +108,25 @@ Module Intern (K : KEY) (M : MAP K) <: INTERN K.
   Qed.
   Lemma find_range : forall k i s, wf s -> find k s = Some i ->
     (N.pos i <= size s)%N.
-  Proof. Admitted. (* CONVERT: ids_size: The variable ids_size was not found in the current environment. *)
+  Proof.
+    intros k i s [_ [Hbound _]] Hfind. specialize (Hbound k i Hfind).
+    unfold size. pose proof (N.succ_pos_pred (intern_next s)). lia.
+  Qed.
   Lemma dense : forall i s, wf s -> (N.pos i <= size s)%N -> exists k, name i s = Some k.
-  Proof. Admitted. (* CONVERT: ids_size: The variable ids_size was not found in the current environment. *)
+  Proof.
+    intros i s [_ [_ [Hlink Hdense]]] Hsize.
+    assert (Hlt : (i < intern_next s)%positive).
+    { unfold size in Hsize. pose proof (N.succ_pos_pred (intern_next s)). lia. }
+    destruct (Hdense i Hlt) as [k Hfind]. exists k. apply (proj1 (Hlink k i)); exact Hfind.
+  Qed.
   Lemma intern_found : forall k s i, find k s = Some i -> intern k s = (i, s).
   Proof. intros k s i H; unfold intern; rewrite H; reflexivity. Qed.
   Lemma intern_new : forall k s, wf s -> find k s = None ->
     N.pos (fst (intern k s)) = N.succ (size s).
-  Proof. Admitted. (* CONVERT: next_size: The variable next_size was not found in the current environment. *)
+  Proof.
+    intros k s Hwf Hfind. unfold intern. rewrite Hfind. cbn [fst].
+    unfold size. symmetry. apply N.succ_pos_pred.
+  Qed.
   Lemma find_intern_same : forall k s, wf s ->
     find k (snd (intern k s)) = Some (fst (intern k s)).
   Proof.
@@ -101,11 +147,20 @@ Module Intern (K : KEY) (M : MAP K) <: INTERN K.
   Qed.
   Lemma name_stable : forall k s i l, wf s -> name i s = Some l ->
     name i (snd (intern k s)) = Some l.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s i l Hwf Hname.
+    pose proof (proj2 (find_name l i s Hwf) Hname) as Hfind.
+    pose proof (proj1 (proj2 Hwf) l i Hfind) as Hbound.
+    unfold intern. destruct (find k s); cbn [snd]; [exact Hname|].
+    unfold name. cbn [intern_inverse]. rewrite PTrie.get_set_other by lia. exact Hname.
+  Qed.
   Lemma size_intern : forall k s, wf s ->
     size (snd (intern k s)) =
       match find k s with Some _ => size s | None => N.succ (size s) end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s Hwf. unfold intern. destruct (find k s); cbn [snd]; [reflexivity|].
+    unfold size. cbn [intern_next]. rewrite Pos.pred_N_succ, N.succ_pos_pred. reflexivity.
+  Qed.
 End Intern.
 
 Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
@@ -116,21 +171,72 @@ Module InternT (K : KEY_T) (M : MAP_T K) <: INTERN_T K.
   TimeFun size.
   TimeFun intern.
 
-  Definition c_intern : N := 1. (* STUB *)
+  Definition c_intern : N := (8 * (M.c_map + PTrieT.c_trie + 1))%N.
+
+  (** The allocation frontier has at most one more bit than its predecessor. *)
+  Local Lemma frontier_width (p : positive) :
+    Pos.size_nat p <= N.size_nat (Pos.pred_N p) + 1.
+  Proof.
+    destruct (Pos.succ_pred_or p) as [Hone|Hsucc].
+    - subst p. cbn [Pos.size_nat Pos.pred_N N.size_nat]. lia.
+    - rewrite <- Hsucc, Pos.pred_N_succ. cbn [N.size_nat].
+      apply Z.size_nat_succ.
+  Qed.
+
+  Local Lemma find_clock (k : K.t) (s : t) :
+    (T_find k s <= M.c_map * N.of_nat (K.bits k + 1) + 2)%N.
+  Proof.
+    pose proof (M.T_get_le positive k (intern_forward s)) as Hget.
+    time_unfold T_find. time_unfold @T_intern_forward. lia.
+  Qed.
 
   Lemma T_intern_le : forall k s, (wf s ->
     T_intern k s <= c_intern * N.of_nat (K.bits k + N.size_nat (size s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s Hwf.
+    pose proof (find_clock k s) as Hfind.
+    pose proof (M.T_set_le positive k (intern_next s) (intern_forward s)) as Hforward.
+    pose proof (PTrieT.T_set_le K.t (intern_next s) k (intern_inverse s)) as Hinverse.
+    change (PTrieCode.T_set (intern_next s) k (intern_inverse s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (intern_next s) + 1))%N in Hinverse.
+    pose proof (Pos.T_succ_le (intern_next s)) as Hsucc.
+    pose proof (frontier_width (intern_next s)) as Hwidth.
+    change (Pos.size_nat (intern_next s) <= N.size_nat (size s) + 1) in Hwidth.
+    apply time_of_nat_le in Hwidth.
+    time_unfold T_intern. time_unfold @T_intern_next.
+    time_unfold @T_intern_forward. time_unfold @T_intern_inverse.
+    destruct (find k s); unfold c_intern, PTrieT.c_trie in *;
+      repeat rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
   Lemma T_find_le : forall k s,
     (T_find k s <= c_intern * N.of_nat (K.bits k + N.size_nat (size s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s. pose proof (find_clock k s) as Hfind.
+    unfold c_intern, PTrieT.c_trie.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
   Lemma T_name_le : forall i s,
     (T_name i s <= c_intern * N.of_nat (Pos.size_nat i + N.size_nat (size s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i s. pose proof (PTrieT.T_get_le K.t i (intern_inverse s)) as Hget.
+    change (PTrieCode.T_get i (intern_inverse s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hget.
+    time_unfold T_name. time_unfold @T_intern_inverse.
+    unfold c_intern, PTrieT.c_trie in *.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
   (** Reading size charges the allocation frontier width. *)
   Lemma T_size_le : forall s,
     (T_size s <= c_intern * N.of_nat (N.size_nat (size s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro s. pose proof (Pos.T_pred_N_le (intern_next s)) as Hpred.
+    pose proof (frontier_width (intern_next s)) as Hwidth.
+    change (Pos.size_nat (intern_next s) <= N.size_nat (size s) + 1) in Hwidth.
+    apply time_of_nat_le in Hwidth.
+    time_unfold T_size. time_unfold @T_intern_next.
+    unfold c_intern, PTrieT.c_trie.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
 End InternT.
 
 (** A bucket lookup returns the values associated with the encoded key. *)
