@@ -140,16 +140,155 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
   Definition add_cons (i j : K.t) (d : Z) (m : dbm) : dbm :=
     put i j (lower_bound d (entry m i j))
       (put (flip j) (flip i) (lower_bound d (entry m (flip j) (flip i))) m).
-  (* STUB-CODE *)
-  Definition fw (m : dbm) : dbm := m.
-  (* STUB-CODE *)
-  Definition strengthen (m : dbm) : dbm := m.
-  (* STUB-CODE *)
-  Definition tighten (m : dbm) : dbm := m.
-  (* STUB-CODE *)
-  Definition tclose (_ : dbm) : t := Unreached.
-  (* STUB-CODE *)
-  Definition incr_close (_ _ : K.t) (_ : Z) (_ : dbm) : t := Unreached.
+
+  Definition via_bound (a : Z) (old next : option Z) : option Z :=
+    match next with
+    | Some z => Some (lower_bound (a + z)%Z old)
+    | None => old
+    end.
+
+  Definition relax_row (prefix : option Z) (row exit : M.t Z) : M.t Z :=
+    match prefix with Some a => M.merge (via_bound a) row exit | None => row end.
+
+  Definition round_row (k : K.t) (pivot : M.t Z) (r : option (M.t Z))
+      (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row => Some (relax_row (M.get k row) row pivot)
+    | None => None
+    end.
+
+  Definition column_present (k : K.t) (row : M.t Z) : bool :=
+    match M.get k row with Some _ => true | None => false end.
+
+  Definition pivot_present (k : K.t) (m : dbm) : bool :=
+    match M.get k m with
+    | Some _ => true
+    | None => M.existsb (column_present k) m
+    end.
+
+  (** A zero diagonal is materialized only at an already supported code. *)
+  Definition fw_round (k : K.t) (m : dbm) : dbm :=
+    let seed := if pivot_present k m then put k k (lower_bound 0%Z (entry m k k)) m else m in
+    M.merge (round_row k (row_of (M.get k seed))) seed M.empty.
+
+  Definition remember_key (acc : M.t unit * list K.t) (k : K.t)
+      : M.t unit * list K.t :=
+    match M.get k (fst acc) with
+    | Some _ => acc
+    | None => (M.set k tt (fst acc), k :: snd acc)
+    end.
+
+  Definition pivot_keys (m : dbm) : list K.t :=
+    let es := M.elements m in
+    snd (fold_left remember_key
+      (map fst es ++ flat_map (fun kv => map fst (M.elements (snd kv))) es)
+      (M.empty, nil)).
+
+  Definition nonnegative (k : K.t) (m : dbm) : bool :=
+    match entry m k k with Some d => (0 <=? d)%Z | None => true end.
+
+  Fixpoint fw_pivots (ks : list K.t) (m : dbm) : dbm :=
+    match ks with
+    | nil => m
+    | k :: ks =>
+      let next := fw_round k m in
+      if nonnegative k next then fw_pivots ks next else next
+    end.
+
+  Definition fw (m : dbm) : dbm := fw_pivots (pivot_keys m) m.
+
+  Definition replace_row (old fresh : option (M.t Z)) : option (M.t Z) :=
+    match old with
+    | None => None
+    | Some row => match fresh with Some next => Some next | None => Some row end
+    end.
+
+  Definition even_bound (d : Z) : Z := (2 * Z.div2 d)%Z.
+
+  (** Candidate labels are validated by lookup before a unary entry is rewritten. *)
+  Definition tighten_row (m changed : dbm) (k : K.t) (_ : M.t Z) : dbm :=
+    match M.get k m with
+    | None => changed
+    | Some row =>
+      match M.get (flip k) row with
+      | None => changed
+      | Some d => M.set k (M.set (flip k) (even_bound d) row) changed
+      end
+    end.
+
+  Definition tighten (m : dbm) : dbm :=
+    M.merge replace_row m (M.fold (tighten_row m) m M.empty).
+
+  Definition unary_maps (m : dbm) (acc : M.t Z * M.t Z) (k : K.t)
+      (_ : M.t Z) : M.t Z * M.t Z :=
+    match entry m k (flip k) with
+    | Some d => (M.set k d (fst acc), M.set (flip k) d (snd acc))
+    | None => acc
+    end.
+
+  Definition strengthen_bound (a : Z) (old unary : option Z) : option Z :=
+    match unary with
+    | Some b => Some (lower_bound (Z.div2 (a + b)) old)
+    | None => old
+    end.
+
+  Definition strengthen_row (m : dbm) (unaries : M.t Z) (changed : dbm)
+      (k : K.t) (a : Z) : dbm :=
+    match M.get k m with
+    | Some row => M.set k (M.merge (strengthen_bound a) row unaries) changed
+    | None => changed
+    end.
+
+  (** The final merge preserves outer labels even on matrices with inconsistent labels. *)
+  Definition strengthen (m : dbm) : dbm :=
+    let unaries := M.fold (unary_maps m) m (M.empty, M.empty) in
+    M.merge replace_row m
+      (M.fold (strengthen_row m (snd unaries)) (fst unaries) M.empty).
+
+  Definition tclose (m : dbm) : t :=
+    let ks := pivot_keys m in
+    let closed := fw_pivots ks m in
+    if forallb (fun k => nonnegative k closed) ks then
+      let next := strengthen (tighten closed) in
+      if forallb (fun k => nonnegative k next) ks then Reached next else Unreached
+    else Unreached.
+
+  Definition edge_prefix (d : Z) (a : option Z) : option Z :=
+    match a with Some z => Some (z + d)%Z | None => None end.
+
+  Definition twin_prefix (d : Z) (a cross : option Z) : option Z :=
+    match a, cross with
+    | Some z, Some c => Some (z + d + c + d)%Z
+    | _, _ => None
+    end.
+
+  (** Every new path uses each inserted signed edge at most once. *)
+  Definition increment_row (i j : K.t) (d : Z) (exit1 exit2 : M.t Z)
+      (cross1 cross2 : option Z) (r : option (M.t Z))
+      (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | None => None
+    | Some row =>
+      let a := M.get i row in
+      let b := M.get (flip j) row in
+      let r1 := relax_row (edge_prefix d a) row exit1 in
+      let r2 := relax_row (edge_prefix d b) r1 exit2 in
+      let r3 := relax_row (twin_prefix d a cross1) r2 exit2 in
+      Some (relax_row (twin_prefix d b cross2) r3 exit1)
+    end.
+
+  Definition matrix_ok (m : dbm) : bool :=
+    M.fold (fun ok k _ => andb ok (nonnegative k m)) m true.
+
+  Definition incr_close (i j : K.t) (d : Z) (m : dbm) : t :=
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let next := M.merge
+      (increment_row i j d (row_of (M.get j seed)) (row_of (M.get (flip i) seed))
+        (entry seed j (flip j)) (entry seed (flip i) i)) seed M.empty in
+    if matrix_ok next then
+      let tightened := strengthen (tighten next) in
+      if matrix_ok tightened then Reached tightened else Unreached
+    else Unreached.
 End OctagonCode.
 
 Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
@@ -519,6 +658,28 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun flip.
   TimeFun put.
   TimeFun lower_bound.
+  TimeFun entry.
+  TimeFun add_cons.
+  TimeFun via_bound.
+  TimeFun relax_row.
+  TimeFun round_row.
+  TimeFun column_present.
+  TimeFun pivot_present.
+  TimeFun fw_round.
+  TimeFun remember_key.
+  TimeFun pivot_keys.
+  TimeFun nonnegative.
+  TimeFun fw_pivots.
+  TimeFun replace_row.
+  TimeFun even_bound.
+  TimeFun tighten_row.
+  TimeFun unary_maps.
+  TimeFun strengthen_bound.
+  TimeFun strengthen_row.
+  TimeFun edge_prefix.
+  TimeFun twin_prefix.
+  TimeFun increment_row.
+  TimeFun matrix_ok.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -531,12 +692,10 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun havoc.
   TimeFun assume.
   TimeFun range.
-  TimeFun entry.
   TimeFun fw.
-  TimeFun strengthen.
   TimeFun tighten.
+  TimeFun strengthen.
   TimeFun tclose.
-  TimeFun add_cons.
   TimeFun incr_close.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
@@ -602,9 +761,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     | Unreached, Unreached => True
     | _, _ => False
     end.
-  (* STUB-CODE *)
-  Definition fw_round (_ : K.t) (m : dbm) : dbm := m.
-  TimeFun fw_round.
   Definition k_octagon : N := 1. (* STUB *)
   Lemma F_join_entry : forall ma mb i j,
     match join (Reached ma) (Reached mb) with

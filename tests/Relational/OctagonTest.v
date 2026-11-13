@@ -74,3 +74,64 @@ Example havoc_signed_rows_and_columns :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** An odd negative unary bound rounds down, never toward zero. *)
+Example tighten_negative_odd_bound :
+  let m := Oct.add_cons (Oct.flip positive_x) positive_x (-5)%Z OctMap.empty in
+  Oct.entry (Oct.tighten m) (Oct.flip positive_x) positive_x = Some (-6)%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Integer closure strengthens an odd unary bound to its nearest even lower bound. *)
+Example tight_closure_unary_bound :
+  let m := Oct.add_cons (Oct.flip positive_x) positive_x 5%Z OctMap.empty in
+  match Oct.tclose m with
+  | Reached closed => Oct.entry closed (Oct.flip positive_x) positive_x
+  | Unreached => None
+  end = Some 4%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Opposite unary bounds detect an empty integer interval. *)
+Example tight_closure_inconsistent :
+  let m := Oct.add_cons (Oct.flip positive_x) positive_x 0%Z
+    (Oct.add_cons positive_x (Oct.flip positive_x) (-2)%Z OctMap.empty) in
+  Oct.tclose m = Unreached.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Strengthening combines the upper bound on x with the lower bound on y. *)
+Example strengthen_unary_bounds :
+  let m := Oct.add_cons (Oct.flip positive_x) positive_x 4%Z
+    (Oct.add_cons positive_y (Oct.flip positive_y) (-6)%Z OctMap.empty) in
+  Oct.entry (Oct.strengthen m) positive_y positive_x = Some (-1)%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Floyd-Warshall composes a pair of signed difference constraints. *)
+Example closure_composes_path :
+  let z := (3%positive, true) in
+  let m := Oct.add_cons positive_x positive_y 3%Z
+    (Oct.add_cons positive_y z 4%Z OctMap.empty) in
+  Oct.entry (Oct.fw m) positive_x z = Some 7%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Incremental closure propagates the new edge through an old suffix. *)
+Example incremental_closure_composes_path :
+  let z := (3%positive, true) in
+  let m := Oct.add_cons positive_y z 4%Z OctMap.empty in
+  match Oct.incr_close positive_x positive_y 3%Z m with
+  | Reached closed =>
+    (Oct.entry closed positive_x z,
+     Oct.entry closed (Oct.flip z) (Oct.flip positive_x))
+  | Unreached => (None, None)
+  end = (Some 7%Z, Some 7%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
