@@ -360,7 +360,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Definition c_lookup : N := (S.c_sys + PTrieT.c_trie + 2)%N.
   Definition c_step : N := (64 * (S.c_sys + PTrieT.c_trie + 1))%N.
   Definition c_wl : N := 1%N. (* STUB *)
-  Definition k_prepare : N := 1%N. (* STUB *)
+  Definition k_prepare : N :=
+    (4096 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
   Definition k_eval : N := (64 * (c_lookup + S.c_sys + 1))%N.
   Definition c_enqueue : N :=
     (128 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
@@ -3283,6 +3284,293 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         clear -Hbase Henqueue; unfold k_update, c_enqueue, c_lookup in *; nia.
   Qed.
 
+  (** Preparation traversals use one shared key-and-identifier width. *)
+  Definition prep_width (p : S.prog) : N :=
+    N.of_nat (S.kw p + Nat.log2 (C p) + 1).
+
+  (** A row pays for declared occurrences and its target accessor. *)
+  Definition prep_row (p : S.prog) (r : S.row) : N :=
+    (N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) *
+      prep_width p + unit p)%N.
+
+  (** Width includes the leading bit, key width and identifier width. *)
+  Lemma prep_width_bounds : forall p,
+    (1 <= prep_width p)%N /\
+    (N.of_nat (S.kw p + 1) <= prep_width p)%N /\
+    (N.of_nat (Nat.log2 (C p) + 1) <= prep_width p)%N.
+  Proof.
+    intro p; unfold prep_width; repeat split; lia.
+  Qed.
+
+  (** A right fold charges each callback only at a member of its input list. *)
+  Lemma fold_right_budget {A X : Type} (f : X -> A -> A) (Tf : X -> A -> N)
+      (budget : X -> N) : forall xs a,
+    (forall x acc, In x xs -> (Tf x acc + 1 <= budget x)%N) ->
+    (List.T_fold_right f Tf a xs <=
+      fold_right (fun x total => budget x + total)%N 1%N xs)%N.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros a Hcost.
+    - time_step.
+    - pose proof (Hcost x (fold_right f a xs) (or_introl eq_refl)) as Hhead.
+      pose proof (IH a (fun y acc Hin => Hcost y acc (or_intror Hin))) as Htail.
+      time_unfold @List.T_fold_right; time_cbn; nia.
+  Qed.
+
+  (** A uniform callback bound pays once per input occurrence. *)
+  Lemma fold_right_member_bound {A X : Type} (f : X -> A -> A)
+      (Tf : X -> A -> N) : forall xs a k,
+    (forall x acc, In x xs -> (Tf x acc <= k)%N) ->
+    (List.T_fold_right f Tf a xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros a k Hcost.
+    - time_step.
+    - pose proof (Hcost x (fold_right f a xs) (or_introl eq_refl)) as Hhead.
+      pose proof (IH a k (fun y acc Hin => Hcost y acc (or_intror Hin))) as Htail.
+      time_unfold @List.T_fold_right; time_cbn; nia.
+  Qed.
+
+  (** Flattening charges its callback and the append of that callback's output. *)
+  Lemma flat_map_budget {A X : Type} (f : X -> list A) (Tf : X -> N)
+      (budget : X -> N) : forall xs,
+    (forall x, In x xs ->
+      (Tf x + N.of_nat (length (f x)) + 2 <= budget x)%N) ->
+    (Code.List.T_flat_map f Tf xs <=
+      fold_right (fun x total => budget x + total)%N 1%N xs)%N.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intro Hcost.
+    - time_step.
+    - pose proof (Hcost x (or_introl eq_refl)) as Hhead.
+      pose proof (IH (fun y Hin => Hcost y (or_intror Hin))) as Htail.
+      pose proof (Datatypes.T_app_le (f x) (flat_map f xs)) as Happ.
+      time_unfold @Code.List.T_flat_map; time_cbn; nia.
+  Qed.
+
+  (** Summing row budgets gives the declared occurrence and row totals. *)
+  Lemma prep_row_sum : forall p rs k,
+    fold_right (fun r total => k * prep_row p r + total)%N 1%N rs =
+      (k * (N.of_nat (fold_right Nat.add 0%nat (List.map
+        (fun r => (length (S.deps p r) + length (S.sides p r) + 1)%nat) rs)) *
+        prep_width p + N.of_nat (length rs) * unit p) + 1)%N.
+  Proof.
+    intros p rs; induction rs as [|r rs IH]; intro k.
+    - unfold prep_row; time_cbn; nia.
+    - cbn [fold_right List.map length]; rewrite IH.
+      unfold prep_row; rewrite !Nat2N.inj_add, !Nat2N.inj_succ; time_cbn; nia.
+  Qed.
+
+  (** Numbering preserves the sum of costs depending only on the row. *)
+  Lemma prep_combine_sum {A X : Type} : forall (ids : list A) (xs : list X) g,
+    length ids = length xs ->
+    fold_right (fun ix total => g (snd ix) + total)%N 1%N (combine ids xs) =
+      fold_right (fun x total => g x + total)%N 1%N xs.
+  Proof.
+    intro ids; induction ids as [|id ids IH]; intros [|x xs] g Hlength;
+      cbn [length combine fold_right snd] in *; try discriminate; [reflexivity|].
+    f_equal; apply IH; lia.
+  Qed.
+
+  (** The seed has empty queue potential and already satisfies the state invariant. *)
+  Lemma prepare_seed_invariant : forall p pol, invariant p pol (prepare_seed p pol).
+  Proof.
+    intros p pol; split; [apply structural_empty; reflexivity|]; split.
+    - intro x; rewrite prepare_seed_look; apply B.inv_bot.
+    - apply prepare_seed_prepared.
+  Qed.
+
+  (** Before initial enqueue, the queue is empty and has zero potential. *)
+  Lemma prepare_seed_phi : forall p pol, queue_phi p (prepare_seed p pol) = 0%N.
+  Proof.
+    intros p pol; unfold queue_phi; change
+      (Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 3) Q.empty = 0%N).
+    apply Q.phi_empty.
+  Qed.
+
+  (** Deduplicating dependencies never increases their occurrence count. *)
+  Lemma read_set_length : forall xs,
+    length (PTrieCode.elements (read_set xs)) <= length xs.
+  Proof.
+    intro xs; rewrite <- (length_map fst (PTrieCode.elements (read_set xs))).
+    rewrite <- (length_map S.key_code xs); apply NoDup_incl_length.
+    - apply PTrie.elements_nodup.
+    - intros c Hin; apply in_map_iff in Hin as [[key []] [Heq Hin]].
+      cbn [fst] in Heq; subst key; apply read_set_member in Hin as [x [Hx Hcode]].
+      apply in_map_iff; exists x; split; assumption.
+  Qed.
+
+  (** A deduplicated read code retains the width of one declared dependency. *)
+  Lemma read_set_bits : forall xs b,
+    (forall x, In x xs -> S.key_bits x <= b) ->
+    forall kv, In kv (PTrieCode.elements (read_set xs)) -> Pos.size_nat (fst kv) <= b.
+  Proof.
+    intros xs b Hbits [c []] Hin; cbn [fst].
+    apply read_set_member in Hin as [x [Hx <-]]; exact (Hbits x Hx).
+  Qed.
+
+  (** Enumerating a read set costs at most its declared occurrences times key width. *)
+  Lemma read_set_weight : forall xs b,
+    (forall x, In x xs -> S.key_bits x <= b) ->
+    PTrieT.weight (read_set xs) <= length xs * (b + 1).
+  Proof.
+    intros xs b Hbits; pose proof (read_set_length xs) as Hlength.
+    pose proof (read_set_bits xs b Hbits) as Hkeys.
+    unfold PTrieT.weight.
+    assert (Hsum : forall (entries : list (positive * Datatypes.unit)),
+      (forall kv, In kv entries -> Pos.size_nat (fst kv) <= b) ->
+      fold_right Nat.add 0 (List.map (fun kv => Pos.size_nat (fst kv) + 1) entries)
+        <= length entries * (b + 1)).
+    { intro entries; induction entries as [|kv entries IH]; intro Hentry;
+        cbn [fold_right List.map length]; [lia|].
+      pose proof (Hentry kv (or_introl eq_refl)).
+      pose proof (IH (fun x Hin => Hentry x (or_intror Hin))); nia. }
+    eapply Nat.le_trans; [apply Hsum; exact Hkeys|]; nia.
+  Qed.
+
+  TimeFun mark_read.
+
+  (** Marking one dependency pays for encoding, lookup and at most one insertion. *)
+  Lemma T_mark_read_bound : forall p seen x, S.key_bits x <= S.kw p ->
+    (T_mark_read seen x <= 3 * c_lookup * prep_width p)%N.
+  Proof.
+    intros p seen x Hbits.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le Datatypes.unit (S.key_code x) seen) as Hget.
+    pose proof (PTrieT.T_set_le Datatypes.unit (S.key_code x) tt seen) as Hset.
+    unfold PTrieT.T_get in Hget.
+    change (@PTrieT.T_set Datatypes.unit) with (@PTrieCode.T_set Datatypes.unit) in Hset.
+    assert (Hwidth : (N.of_nat (S.key_bits x + 1) <= prep_width p)%N)
+      by (unfold prep_width; lia).
+    assert (Hcode' : (S.T_key_code x <= S.c_sys * prep_width p)%N)
+      by (eapply N.le_trans; [exact Hcode|now apply N.mul_le_mono_l]).
+    assert (Hget' : (T_trie_get (S.key_code x) seen <= PTrieT.c_trie * prep_width p)%N)
+      by (eapply N.le_trans with
+        (m := (PTrieT.c_trie * N.of_nat (S.key_bits x + 1))%N);
+        [unfold S.key_bits; lia|now apply N.mul_le_mono_l]).
+    assert (Hset' : (PTrieCode.T_set (S.key_code x) tt seen <=
+      PTrieT.c_trie * prep_width p)%N)
+      by (eapply N.le_trans; [exact Hset|now apply N.mul_le_mono_l]).
+    destruct (prep_width_bounds p) as [Hpositive _].
+    unfold T_mark_read; destruct (trie_get (S.key_code x) seen); time_cbn;
+      clear -Hcode' Hget' Hset' Hpositive; unfold c_lookup; nia.
+  Qed.
+
+  (** Building a dependency set charges the original list, including repeated reads. *)
+  Lemma T_read_set_fold : forall p xs,
+    (forall x, In x xs -> S.key_bits x <= S.kw p) ->
+    (List.T_fold_left mark_read T_mark_read xs Empty <=
+      8 * c_lookup * N.of_nat (length xs + 1) * prep_width p)%N.
+  Proof.
+    intros p xs Hbits.
+    destruct (fold_left_inv_time mark_read T_mark_read (fun _ => True)
+      (fun _ => (3 * c_lookup * prep_width p)%N) xs Empty I) as [_ Hfold].
+    - intros seen x _ Hin; split; [exact I|apply T_mark_read_bound; now apply Hbits].
+    - rewrite fold_constant_cost in Hfold.
+      destruct (prep_width_bounds p) as [Hwidth _].
+      rewrite Nat2N.inj_add; clear -Hfold Hwidth; unfold c_lookup in *; time_cbn; nia.
+  Qed.
+
+  (** Adding one reader traverses its dependency code twice. *)
+  Lemma T_add_reader_bound : forall p id c m, Pos.size_nat c <= S.kw p ->
+    (T_add_reader id c m <= 3 * c_lookup * prep_width p)%N.
+  Proof.
+    intros p id c m Hbits; pose proof (PTrieT.T_get_le (list positive) c m) as Hget.
+    pose proof (PTrieT.T_set_le (list positive) c
+      (id :: match trie_get c m with Some ids => ids | None => [] end) m) as Hset.
+    unfold PTrieT.T_get in Hget.
+    change (@PTrieT.T_set (list positive)) with (@PTrieCode.T_set (list positive)) in Hset.
+    assert (Hwidth : (N.of_nat (Pos.size_nat c + 1) <= prep_width p)%N)
+      by (unfold prep_width; lia).
+    assert (Hget' : (T_trie_get c m <= PTrieT.c_trie * prep_width p)%N)
+      by (eapply N.le_trans with
+        (m := (PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1))%N);
+        [lia|now apply N.mul_le_mono_l]).
+    assert (Hset' : (PTrieCode.T_set c
+      (id :: match trie_get c m with Some ids => ids | None => [] end) m <=
+      PTrieT.c_trie * prep_width p)%N)
+      by (eapply N.le_trans; [exact Hset|now apply N.mul_le_mono_l]).
+    destruct (prep_width_bounds p) as [Hpositive _].
+    unfold T_add_reader; clear -Hget' Hset' Hpositive; unfold c_lookup; nia.
+  Qed.
+
+  (** Initial enqueue starts from zero potential and charges only actual row identifiers. *)
+  Lemma prepare_enqueue_cost : forall p pol, S.wf p -> prio_ok p pol ->
+    (T_enqueue p pol (row_ids p) (prepare_seed p pol) + queue_phi p (prepare p pol) <=
+      2 * c_enqueue * N.of_nat (C p) * unit p + 32)%N.
+  Proof.
+    intros p pol Hwf Hprio; destruct (Nat.eq_dec (C p) 0) as [Hzero|Hpositive].
+    - assert (Hids : row_ids p = []).
+      { apply length_zero_iff_nil; now rewrite row_ids_length. }
+      rewrite prepare_eq, Hids, enqueue_nil, prepare_seed_phi.
+      unfold T_enqueue; time_unfold @List.T_fold_left; time_simpl; time_cbn; nia.
+    - pose proof (T_enqueue_bound p pol (row_ids p) (prepare_seed p pol)
+        Hwf Hprio (prepare_seed_invariant p pol) (fun id Hin => Hin)) as Hcost.
+      rewrite <- prepare_eq, prepare_seed_phi, row_ids_length in Hcost.
+      assert (Hcount : (N.of_nat (C p + 1) <= 2 * N.of_nat (C p))%N) by lia.
+      assert (Hmul : (c_enqueue * N.of_nat (C p + 1) * unit p <=
+        c_enqueue * (2 * N.of_nat (C p)) * unit p)%N).
+      { apply N.mul_le_mono_r; now apply N.mul_le_mono_l. }
+      clear -Hcost Hmul; nia.
+  Qed.
+
+  (** Numbering spends one successor traversal for each emitted identifier. *)
+  Lemma T_wl_ids_from_bits : forall n id b,
+    (forall c, In c (wl_ids_from n id) -> Pos.size_nat c <= b) ->
+    (T_wl_ids_from n id <= (N.of_nat b + 2) * N.of_nat n + 1)%N.
+  Proof.
+    intro n; induction n as [|n IH]; intros id b Hbits.
+    - time_unfold @T_wl_ids_from; lia.
+    - assert (Hhead : Pos.size_nat id <= b).
+      { apply Hbits; now left. }
+      assert (Htail : forall c, In c (wl_ids_from n (Pos.succ id)) ->
+        Pos.size_nat c <= b).
+      { intros c Hin; apply Hbits; now right. }
+      specialize (IH (Pos.succ id) b Htail).
+      pose proof (Std.Pos.T_succ_le id) as Hsucc.
+      assert (Hwidth : (N.of_nat (Pos.size_nat id) <= N.of_nat b)%N) by lia.
+      time_unfold @T_wl_ids_from; rewrite Nat2N.inj_succ; nia.
+  Qed.
+
+  (** Row numbering pays the row-list scan and the logarithmic width of each occurrence. *)
+  Lemma T_row_ids_bits : forall p, S.wf p ->
+    (T_row_ids p <= S.c_sys * N.of_nat (C p + 1) +
+      N.of_nat (Nat.log2 (C p) + 4) * N.of_nat (C p) + 3)%N.
+  Proof.
+    intros p Hwf.
+    pose proof (S.T_rows_le p Hwf) as Hrows.
+    change (S.T_rows p <= S.c_sys * N.of_nat (C p + 1))%N in Hrows.
+    pose proof (Datatypes.T_length_le (S.rows p)) as Hlength.
+    change (Datatypes.T_length (S.rows p) <= N.of_nat (C p) + 1)%N in Hlength.
+    assert (Hbits : forall c, In c (wl_ids_from (C p) 1%positive) ->
+      Pos.size_nat c <= Nat.log2 (C p) + 1).
+    { intros c Hin; exact (row_ids_bits p c Hin). }
+    pose proof (T_wl_ids_from_bits (C p) 1%positive (Nat.log2 (C p) + 1) Hbits)
+      as Hids.
+    assert (Hwidth : (N.of_nat (Nat.log2 (C p) + 4) =
+      N.of_nat (Nat.log2 (C p) + 1) + 3)%N).
+    { rewrite !Nat2N.inj_add; lia. }
+    time_unfold @T_row_ids.
+    change (1 + (S.T_rows p + Datatypes.T_length (S.rows p) +
+      T_wl_ids_from (C p) 1%positive) <= S.c_sys * N.of_nat (C p + 1) +
+      N.of_nat (Nat.log2 (C p) + 4) * N.of_nat (C p) + 3)%N.
+    rewrite Hwidth; nia.
+  Qed.
+
+  (** The public preparation budget absorbs row enumeration, including its empty-list cost. *)
+  Lemma T_row_ids_prep : forall p, S.wf p ->
+    (T_row_ids p <= (S.c_sys + 4) * (N.of_nat (prep p) + 1))%N.
+  Proof.
+    intros p Hwf; pose proof (T_row_ids_bits p Hwf) as Htime.
+    assert (Hcount_nat : C p <= prep p) by (unfold prep; nia).
+    assert (Hcount : (N.of_nat (C p) <= N.of_nat (prep p))%N) by lia.
+    assert (Hbits_nat : (Nat.log2 (C p) + 4) * C p <= 4 * prep p).
+    { unfold prep; nia. }
+    assert (Hbits : (N.of_nat (Nat.log2 (C p) + 4) * N.of_nat (C p) <=
+      4 * N.of_nat (prep p))%N).
+    { rewrite <- Nat2N.inj_mul; lia. }
+    replace (N.of_nat (C p + 1)) with (N.of_nat (C p) + 1)%N in Htime.
+    - nia.
+    - rewrite Nat2N.inj_add; reflexivity.
+  Qed.
+
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
   Lemma W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
@@ -3290,7 +3578,23 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Initial guarded pushes supply the potential consumed by later queue operations. *)
   Lemma W1_queue_phi : forall p pol, S.wf p -> prio_ok p pol ->
     (queue_phi p (prepare p pol) <= k_prepare * N.of_nat (C p + D p) * unit p)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol Hwf Hprio; destruct (Nat.eq_dec (C p) 0) as [Hzero|Hpositive].
+    - assert (Hids : row_ids p = []).
+      { apply length_zero_iff_nil; now rewrite row_ids_length. }
+      rewrite prepare_eq, Hids, enqueue_nil, prepare_seed_phi; apply N.le_0_l.
+    - pose proof (T_enqueue_bound p pol (row_ids p) (prepare_seed p pol)
+        Hwf Hprio (prepare_seed_invariant p pol) (fun id Hin => Hin)) as Hcost.
+      rewrite <- prepare_eq, prepare_seed_phi, row_ids_length in Hcost.
+      assert (Hcount : (N.of_nat (C p + 1) <= 2 * N.of_nat (C p + D p))%N) by lia.
+      assert (Hmul : (c_enqueue * N.of_nat (C p + 1) * unit p <=
+        c_enqueue * (2 * N.of_nat (C p + D p)) * unit p)%N).
+      { apply N.mul_le_mono_r; now apply N.mul_le_mono_l. }
+      eapply N.le_trans with
+        (m := (2 * c_enqueue * N.of_nat (C p + D p) * unit p)%N).
+      + clear -Hcost Hmul; nia.
+      + apply N.mul_le_mono_r, N.mul_le_mono_r; unfold c_enqueue, k_prepare; nia.
+  Qed.
   (** W2 charges every dependency-resume occurrence on invariant stores. *)
   Lemma W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
     (T_eval_row p r (ws_store s) <=
