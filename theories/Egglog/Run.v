@@ -148,7 +148,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition round_work (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : nat :=
     length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
-        J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+        (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+          length (sources V.t c) + 2) *
+          (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (length (post V.t c) + 1 +
            fold_right (fun a n => match a with
@@ -241,6 +243,31 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition apply (_ : list (action V.t)) (_ : Model.env (V := V.t)) (db : D.t) : D.t := db.
   Definition query_vars (r : rule V.t) : list positive := flat_map atom_vars (query V.t r).
   TimeFun apply.
+  (* STUB-CODE *)
+  Definition bind_env (_ : cplan V.t) (_ : list (cell V.t))
+      : Model.env (V := V.t) := fun _ => None.
+  TimeFun bind_env.
+  (* STUB-CODE *)
+  Definition jobs (_ : program V.t) (_ : compiled V.t) (_ : bool) (_ : D.t)
+      : list (cplan V.t * list (cell V.t)) := [].
+  Definition job_rule (p : program V.t) (c : cplan V.t) : rule V.t :=
+    nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []).
+  Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
+      (db : D.t) : D.t :=
+    match js with
+    | [] => db
+    | (c, b) :: rest =>
+        apply_jobs p rest (apply (actions V.t (job_rule p c)) (bind_env c b) db)
+    end.
+  Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
+      (db : D.t) : N :=
+    match js with
+    | [] => 0%N
+    | (c, b) :: rest =>
+        (T_apply (actions V.t (job_rule p c)) (bind_env c b) (T_bind_env c b) db +
+          T_apply_jobs p rest (apply (actions V.t (job_rule p c)) (bind_env c b) db))%N
+    end.
+
   TimeFun driver.
   Definition k_driver : N := 1. (* STUB *)
   Definition env_allocated (db : D.t) (s : Model.env (V := V.t)) : Prop :=
@@ -283,7 +310,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
     env_allocated db s ->
     D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
-    (D.ids db <= D.ids (apply (actions V.t r) s db))%N.
+    (D.ids db <= D.ids (apply (actions V.t r) s db))%N /\
+    D.unit db <= D.unit (apply (actions V.t r) s db).
   Proof. Admitted. (* STUB *)
 
   Lemma F4a_match_model : forall (M : model (V := V.t)) nu p cp db q s,
@@ -400,7 +428,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     round_work p cp nv db =
       length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
-        J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+        (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+          length (sources V.t c) + 2) *
+          (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (length (post V.t c) + 1 +
            fold_right (fun a n => match a with
@@ -483,6 +513,34 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       else inl (negb (D.changed next), D.advance next).
   Proof. Admitted. (* STUB *)
 
+  Lemma F30_bind_env : forall c b x, bind_env c b x = env_of c b x.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T6_bind_env_le : forall c b x,
+    (T_bind_env c b x <= k_driver * N.of_nat (Pos.size_nat x + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma F31_jobs : forall p cp nv db c b, In (c, b) (jobs p cp nv db) ->
+    In c (if nv then naive V.t cp else seminaive V.t cp) /\
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c) /\
+    In b (bindings cp c db).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F32_round_jobs : forall p cp nv db,
+    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
+  Proof. Admitted. (* STUB *)
+
+  Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
+    (T_round p cp nv db <=
+      fold_right N.add 0 (map (fun c =>
+        J.T_run (join V.t c) (map (source_index db) (sources V.t c)))
+        (if nv then naive V.t cp else seminaive V.t cp)) +
+      T_apply_jobs p (jobs p cp nv db) db +
+      D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
+      k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
+  Proof. Admitted. (* STUB *)
+
   Lemma T1_round_le : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
     (T_round p cp nv db + N.of_nat U * D.potential B (round p cp nv db) <=
@@ -530,7 +588,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           | Let _ _ args => (length args + 1 + n)%nat
           end) 0%nat (actions V.t r) + 1)%nat) +
       fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
-      action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
+      c_run * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
       N.of_nat U * D.potential B db)%N.
   Proof. Admitted. (* STUB *)
 End RunT.

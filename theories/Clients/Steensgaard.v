@@ -122,3 +122,73 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Proof. Admitted. (* STUB *)
 
 End SteensgaardT.
+
+Module SteensgaardSound (V : VALUE with Definition t := positive)
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
+    (A : STEENSGAARD V I J D R) (L : POINTER_LINK) <: STEENSGAARD_SOUND V I J D R A L.
+  Lemma F1_source_closed : forall q,
+    pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
+    pointer_congruence q (Deref (Cell x)) (Cell a).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F6_step_covered : forall q instruction before after,
+    In instruction (constraints q) ->
+    memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
+    pointer_exec instruction before = Some after ->
+    memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
+  Proof. Admitted. (* STUB *)
+
+  Lemma concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
+    pointer_reachable (L.initial q) (L.step q) s -> forall x a,
+      trie_get x (L.memory s) = Some a -> A.points db x a = true.
+  Proof. Admitted. (* STUB *)
+End SteensgaardSound.
+
+Module SteensgaardExact (V : VALUE with Definition t := positive)
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
+    (A : STEENSGAARD V I J D R) (Q : POINTER_QUOTIENT)
+    <: STEENSGAARD_EXACT V I J D R A Q.
+  Definition source_relation q f x y :=
+    (f = 1%positive /\ (In (Addr x y) (constraints q) \/ In (x, y) (initial_pointers q))) \/
+    (f = 2%positive /\ In (Copy x y) (constraints q)) \/
+    (f = 3%positive /\ In (Load x y) (constraints q)) \/
+    (f = 4%positive /\ In (Store x y) (constraints q)).
+  Definition concrete_model q : model (V := V.t) :=
+    Model (Q.carrier q)
+      (fun f args => exists x y, args = [inr x; inr y] /\ source_relation q f x y)
+      (fun f args =>
+        match f, args with
+        | 6%positive, [inr x] => Q.cell q x
+        | 7%positive, [inl address] => Q.deref q address
+        | _, _ => Q.cell q 1%positive
+        end)
+      (fun _ _ _ => False).
+  (** Address constraints equate the pointer's dereference with the addressed cell. *)
+  Lemma addr_equation : forall q x a,
+    In (Addr x a) (constraints q) \/ In (x, a) (initial_pointers q) ->
+    Q.deref q (Q.cell q x) = Q.cell q a.
+  Proof. Admitted. (* STUB *)
+  (** Copy constraints equate their two dereference terms. *)
+  Lemma copy_equation : forall q x y, In (Copy x y) (constraints q) ->
+    Q.deref q (Q.cell q x) = Q.deref q (Q.cell q y).
+  Proof. Admitted. (* STUB *)
+  (** Load constraints equate a result's dereference with the operand's second dereference. *)
+  Lemma load_equation : forall q x y, In (Load x y) (constraints q) ->
+    Q.deref q (Q.cell q x) = Q.deref q (Q.deref q (Q.cell q y)).
+  Proof. Admitted. (* STUB *)
+  (** Store constraints equate the destination's second dereference with the stored pointer. *)
+  Lemma store_equation : forall q x y, In (Store x y) (constraints q) ->
+    Q.deref q (Q.deref q (Q.cell q x)) = Q.deref q (Q.cell q y).
+  Proof. Admitted. (* STUB *)
+  (** Source equations establish validity of all generated union rules. *)
+  Lemma rules_valid : forall q, valid V.prim V.merge (concrete_model q) (A.compile q).
+  Proof. Admitted. (* STUB *)
+
+  (** Saturated query answers are exactly the source congruence approximation. *)
+  Lemma solve_exact : forall q lim db, A.solve q lim = (Saturated, db) ->
+    forall x a, A.points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
+  Proof. Admitted. (* STUB *)
+End SteensgaardExact.

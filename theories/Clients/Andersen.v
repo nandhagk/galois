@@ -131,3 +131,20 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Proof. Admitted. (* STUB *)
 
 End AndersenT.
+
+Module AndersenSound (V : VALUE with Definition t := positive)
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
+    (A : ANDERSEN V I J D R) (L : POINTER_LINK) <: ANDERSEN_SOUND V I J D R A L.
+  Lemma F1_source_closed : forall q, pointer_closed q (may_points q).
+  Proof. Admitted. (* STUB *)
+
+  Lemma F7_step_covered : forall q r instruction before after,
+    pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
+    pointer_exec instruction before = Some after -> memory_covered r after.
+  Proof. Admitted. (* STUB *)
+
+  Lemma concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
+    pointer_reachable (L.initial q) (L.step q) s -> forall x a,
+      trie_get x (L.memory s) = Some a -> A.points db x a = true.
+  Proof. Admitted. (* STUB *)
+End AndersenSound.

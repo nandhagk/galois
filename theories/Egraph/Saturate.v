@@ -195,7 +195,9 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     D.slots (snd (add_node node cells db)) = D.slots db /\
     (forall i, fst (add_node node cells db) = Id i ->
       D.allocated (snd (add_node node cells db)) i) /\
-    cell_sort (fst (add_node node cells db)) = enode_sort node.
+    cell_sort (fst (add_node node cells db)) = enode_sort node /\
+    (D.ids db <= D.ids (snd (add_node node cells db)))%N /\
+    D.unit db <= D.unit (snd (add_node node cells db)).
   Proof. Admitted. (* STUB *)
 
   Lemma F2_add_expr_wf : forall ds e db, D.wf db -> expr_ok ds db e ->
@@ -204,7 +206,9 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     view_sorted (lookup_sorts ds) (D.view (snd (add_expr e db))) /\
     kind (D.view (snd (add_expr e db))) = kind (D.view db) /\
     D.slots (snd (add_expr e db)) = D.slots db /\
-    D.allocated (snd (add_expr e db)) (fst (add_expr e db)).
+    D.allocated (snd (add_expr e db)) (fst (add_expr e db)) /\
+    (D.ids db <= D.ids (snd (add_expr e db)))%N /\
+    D.unit db <= D.unit (snd (add_expr e db)).
   Proof. Admitted. (* STUB *)
 
   Lemma F3_represents_den : forall (M : model (V := V.t)) nu db c e,
