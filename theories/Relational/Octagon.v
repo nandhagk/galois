@@ -2012,6 +2012,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     forall i j, entry m i j = entry m (bar j) (bar i).
   Definition coh (s : t) : Prop :=
     match s with Unreached => True | Reached m => coherent m end.
+  (** The support of a sign-closed matrix holds both signs of each of its keys. *)
+  Definition bar_closed (m : dbm) : Prop :=
+    forall i, In (K.encode i) (support m) -> In (K.encode (bar i)) (support m).
   Definition same_entries (a b : t) : Prop :=
     match a, b with
     | Reached ma, Reached mb => forall i j, entry ma i j = entry mb i j
@@ -2785,17 +2788,8 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (X.eqb (fst i) x), (X.eqb (fst j) x); try reflexivity.
     apply Hcoh.
   Qed.
-  Lemma coh_tclose : forall m, coherent m -> coh (tclose m).
-  Proof. Admitted. (* PLAN-DEFECT: coherence does not require signed support symmetry. *)
-  (* Coherence does not require signed support symmetry.
-     OctagonTest.isolated_positive_row_wf/coherent give a well-formed coherent
-     matrix containing only an empty positive row; closure creates its zero
-     diagonal while the negative twin remains absent. Thus dbm_wf alone does
-     not repair this plan. The repeated-label fixture supplies a separate raw
-     pivot-enumeration obstruction. *)
-  Lemma F_add_cons_twins : forall i j d m,
-    entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
-  Proof. Admitted. (* PLAN-DEFECT: incoherent twins -100 and -2 stay unequal when d = 0. *)
+  Lemma coh_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
+  Proof. Admitted. (* STUB *)
 
   (** Retrieving a row, with an empty fallback, preserves map consistency. *)
   Lemma row_of_wf : forall m k,
@@ -3170,17 +3164,13 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma tclose_tight : forall m m', dbm_wf m -> coherent m ->
+  Lemma tclose_tight : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
     tclose m = Reached m' -> tightly_closed m'.
-  Proof. Admitted. (* PLAN-DEFECT: a well-formed coherent empty row may lack signed support symmetry. *)
-  (* A well-formed coherent singleton empty row has asymmetric
-     signed support. The support-preserving closure materializes only its own
-     zero diagonal, so the result is not coherent and hence not tightly closed.
-     See OctagonTest.isolated_positive_row_closure_asymmetric. *)
+  Proof. Admitted. (* STUB *)
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   Proof. Admitted. (* STUB *)
-  Lemma bits_tclose_le : forall m m', tclose m = Reached m' ->
+  Lemma bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
@@ -3970,6 +3960,35 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros i j d m Hcoh. unfold add_cons.
     assert (Hsame : entry m i j = entry m (flip j) (flip i)) by exact (Hcoh i j).
     rewrite <- Hsame. now apply coherent_put_twins.
+  Qed.
+
+  (** Constraint insertion adds both signs of both keys. *)
+  Lemma bar_closed_add_cons : forall i j d m,
+    bar_closed m -> bar_closed (add_cons i j d m).
+  Proof.
+    intros i j d m Hclosed k Hin. apply support_add_cons in Hin. apply support_add_cons.
+    change (bar k) with (flip k).
+    destruct Hin as [Hk | [Hk | [Hk | [Hk | Hk]]]].
+    - apply K.encode_inj in Hk. subst k. right. right. now left.
+    - apply K.encode_inj in Hk. subst k. right. right. right. now left.
+    - apply K.encode_inj in Hk. subst k. rewrite flip_involutive. now left.
+    - apply K.encode_inj in Hk. subst k. rewrite flip_involutive. right. now left.
+    - right. right. right. right. now apply Hclosed.
+  Qed.
+
+  (** Constraint insertion writes both signed twins of a coherent matrix. *)
+  Lemma F_add_cons_twins : forall i j d m, coherent m ->
+    entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
+  Proof.
+    intros i j d m Hcoh. exact (coherent_add_cons i j d m Hcoh i j).
+  Qed.
+
+  (** A strongly closed matrix is sign-closed. *)
+  Lemma bar_closed_strong : forall m, strongly_closed m -> bar_closed m.
+  Proof.
+    intros m [Hcoh [Hdiag _]] i Hin.
+    pose proof (Hdiag i Hin) as Hzero. rewrite (Hcoh i i) in Hzero.
+    exact (entry_source_support m (bar i) (bar i) 0%Z Hzero).
   Qed.
 
   (** A tightened replacement changes only its unary coordinate. *)

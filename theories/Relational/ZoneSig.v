@@ -206,7 +206,7 @@ Module Type ZONE_PLAN (X : KEY_T) (K : KEY_T with Definition t := option X.t
     (T_fw_round k m <= k_zone * N.of_nat
       ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
   (** Early negative-diagonal exit limits finite entry growth. *)
-  Parameter bits_close_le : forall m m', close m = Reached m' ->
+  Parameter bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   (** State size charges all stored numeric data. *)
   Parameter F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
