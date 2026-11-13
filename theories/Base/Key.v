@@ -158,37 +158,83 @@ End UnitKey.
 Module PairKey (A B : KEY) <: KEY.
   Include PairKeyCode A B.
   Include KEY_SPEC.
+  (** Equal pair codes identify each component. *)
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* CONVERT: pair_encoding_laws: The variable serialized_code_injective was not found in the current environment. *)
+  Proof.
+    intros [a b] [a' b'] Hcode. apply glue_inj in Hcode as [Ha Hb].
+    f_equal; [now apply A.encode_inj | now apply B.encode_inj].
+  Qed.
+  (** Component equality tests decide equality of pairs. *)
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive while a structured key was expected. *)
+  Proof.
+    intros [a b] [a' b']; unfold eqb; cbn [fst snd].
+    destruct (A.eqb_spec a a') as [Ha | Ha];
+      destruct (B.eqb_spec b b') as [Hb | Hb]; cbn; constructor; congruence.
+  Qed.
 End PairKey.
 
 Module SumKey (A B : KEY) <: KEY.
   Include SumKeyCode A B.
   Include KEY_SPEC.
+  (** Tags and component injectivity identify encoded sum values. *)
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* CONVERT: sum_encoding_laws: The variable serialized_code_injective was not found in the current environment. *)
+  Proof.
+    intros [a | b] [a' | b'] Hcode; cbn [encode sum_code] in Hcode;
+      try discriminate.
+    - injection Hcode as Ha. f_equal. now apply A.encode_inj.
+    - injection Hcode as Hb. f_equal. now apply B.encode_inj.
+  Qed.
+  (** Sum equality checks matching alternatives with the component test. *)
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
+  Proof.
+    intros [a | b] [a' | b']; cbn [eqb]; try (constructor; discriminate).
+    - destruct (A.eqb_spec a a') as [Ha | Ha]; constructor; congruence.
+    - destruct (B.eqb_spec b b') as [Hb | Hb]; constructor; congruence.
+  Qed.
 End SumKey.
 
 Module OptionKey (K : KEY) <: KEY.
   Include OptionKeyCode K.
   Include KEY_SPEC.
+  (** Option tags separate absence and preserve component injectivity. *)
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* CONVERT: option_codec_laws: The variable codec_laws_injective was not found in the current environment. *)
+  Proof.
+    intros [a |] [b |] Hcode; cbn [encode option_code] in Hcode;
+      try discriminate; [|reflexivity].
+    injection Hcode as Hab. f_equal. now apply K.encode_inj.
+  Qed.
+  (** Option equality checks presence and then the component test. *)
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
+  Proof.
+    intros [a |] [b |]; cbn [eqb]; try (constructor; congruence).
+    destruct (K.eqb_spec a b) as [Hab | Hab]; constructor; congruence.
+  Qed.
 End OptionKey.
 
 Module ListKey (K : KEY) <: KEY.
   Include ListKeyCode K.
   Include KEY_SPEC.
+  (** Delimited component codes identify a list and each of its elements. *)
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* CONVERT: list_codec_laws: The variable codec_laws_injective was not found in the current environment. *)
+  Proof.
+    intro a; induction a as [|x xs IH]; intros [|y ys] Hcode;
+      cbn [encode list_code] in Hcode.
+    - reflexivity.
+    - destruct (K.encode y); discriminate.
+    - destruct (K.encode x); discriminate.
+    - apply glue_inj in Hcode as [Hhead Htail].
+      apply K.encode_inj in Hhead. apply IH in Htail. congruence.
+  Qed.
+  (** Recursive component equality decides list equality. *)
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* CONVERT: eqb_spec: The term "Pos.eqb_spec" has type forall x y : positive. *)
+  Proof.
+    intro a; induction a as [|x xs IH]; intros [|y ys]; cbn [eqb].
+    - constructor; reflexivity.
+    - constructor; discriminate.
+    - constructor; discriminate.
+    - destruct (K.eqb_spec x y) as [Hhead | Hhead];
+        destruct (IH ys) as [Htail | Htail]; cbn; constructor; congruence.
+  Qed.
 End ListKey.
 
 Module PosKeyT <: KEY_T.
