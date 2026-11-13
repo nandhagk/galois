@@ -1262,6 +1262,67 @@ Qed.
 Definition database_rank_offset (groups : PTrieCode.t (N * N)) (f : positive) : N :=
   match PTrieCode.get f groups with Some (_, j) => j | None => 0%N end.
 
+Lemma database_rank_offset_step : forall groups head start f,
+  let place := match PTrieCode.get head groups with
+    | Some position => position | None => (start, 0%N) end in
+  database_rank_offset
+    (PTrieCode.set head (fst place, N.succ (snd place)) groups) f =
+    if Pos.eqb head f then N.succ (database_rank_offset groups f)
+    else database_rank_offset groups f.
+Proof.
+  intros groups head start f place.
+  unfold database_rank_offset.
+  destruct (Pos.eq_dec head f) as [-> | Hne].
+  - rewrite Pos.eqb_refl, PTrie.get_set_same.
+    unfold place. destruct (PTrieCode.get f groups) as [[rank offset] |]; reflexivity.
+  - assert (Htest : Pos.eqb head f = false) by (apply Pos.eqb_neq; exact Hne).
+    rewrite Htest, PTrie.get_set_other by congruence. reflexivity.
+Qed.
+
+Definition database_slot_count (f : positive) (sl : list (positive * list nat)) : nat :=
+  length (filter (fun slot => Pos.eqb (fst slot) f) sl).
+
+Lemma database_slot_count_snoc : forall f prefix head layout,
+  database_slot_count f (prefix ++ [(head, layout)]) =
+    if Pos.eqb head f then S (database_slot_count f prefix)
+    else database_slot_count f prefix.
+Proof.
+  intros f prefix head layout. unfold database_slot_count.
+  rewrite filter_app, length_app. cbn [filter length fst].
+  destruct (Pos.eqb head f) eqn:Hsame; cbn; lia.
+Qed.
+
+Lemma database_rank_slots_from_offset : forall kinds start groups sl prefix,
+  (forall f, database_rank_offset groups f = N.of_nat (database_slot_count f prefix)) ->
+  forall n f perm d g j,
+    nth_error sl n = Some (f, perm) ->
+    nth_error (database_rank_slots_from kinds start groups sl) n = Some (d, g, j) ->
+    j = N.of_nat (database_slot_count f (prefix ++ firstn n sl)).
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH];
+    intros start groups prefix Hcount n f perm d g j Hslot Hrank;
+    destruct n as [|n]; cbn [nth_error database_rank_slots_from firstn] in *;
+    try discriminate.
+  - injection Hslot as <- <-. injection Hrank as _ _ Hoffset.
+    rewrite app_nil_r. rewrite <- (Hcount head).
+    unfold database_rank_offset.
+    destruct (PTrieCode.get head groups) as [[rank offset] |];
+      cbn [fst snd] in Hoffset |- *; lia.
+  - set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head (fst place, N.succ (snd place)) groups).
+    assert (Hcount_updated : forall name,
+      database_rank_offset updated name =
+        N.of_nat (database_slot_count name (prefix ++ [(head, layout)]))).
+    { intro name. unfold updated, place.
+      rewrite database_rank_offset_step, database_slot_count_snoc.
+      rewrite Hcount. destruct (Pos.eqb head name); lia. }
+    specialize (IH (N.succ start) updated (prefix ++ [(head, layout)])
+      Hcount_updated n f perm d g j Hslot Hrank).
+    rewrite <- app_assoc in IH. exact IH.
+Qed.
+
 Fixpoint database_rank_credit (universe : list positive)
     (groups : PTrieCode.t (N * N)) : N :=
   match universe with
