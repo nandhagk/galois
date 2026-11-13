@@ -433,6 +433,185 @@ Module CongruenceCRT.
           (fun st => Z.abs_N (crt_r1 st)) N.lt_wf_0) s).
   TimeFun extgcd.
 
+
+  Lemma integer_abs_size : forall z, Z.size_nat (Z.abs z) = Z.size_nat z.
+  Proof.
+    intros []; reflexivity.
+  Qed.
+
+  Lemma integer_abs_upper : forall z,
+    - (2 ^ Z.of_nat (Z.size_nat z)) < z < 2 ^ Z.of_nat (Z.size_nat z).
+  Proof.
+    apply WordTime.integer_magnitude_bound.
+  Qed.
+
+  Lemma integer_multiply_size : forall x y,
+    (Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y)%nat.
+  Proof.
+    apply WordTime.integer_mul_size.
+  Qed.
+
+  Lemma integer_subtract_size : forall x y,
+    (Z.size_nat (x - y) <= Nat.max (Z.size_nat x) (Z.size_nat y) + 1)%nat.
+  Proof.
+    intros x y. apply WordTime.integer_abs_size_bound.
+    rewrite Nat2Z.inj_add, Z.pow_add_r by lia.
+    change (2 ^ Z.of_nat 1) with 2.
+    pose proof (integer_abs_upper x) as Hx.
+    pose proof (integer_abs_upper y) as Hy.
+    pose proof (Z.pow_le_mono_r 2 (Z.of_nat (Z.size_nat x))
+      (Z.of_nat (Nat.max (Z.size_nat x) (Z.size_nat y))) ltac:(lia)
+      ltac:(apply Nat2Z.inj_le; apply Nat.le_max_l)) as Hpx.
+    pose proof (Z.pow_le_mono_r 2 (Z.of_nat (Z.size_nat y))
+      (Z.of_nat (Nat.max (Z.size_nat x) (Z.size_nat y))) ltac:(lia)
+      ltac:(apply Nat2Z.inj_le; apply Nat.le_max_r)) as Hpy.
+    lia.
+  Qed.
+
+  Lemma positive_integer_size : forall z, 0 < z -> (1 <= Z.size_nat z)%nat.
+  Proof.
+    intros [|p|p] Hz; try lia. apply Pos.size_nat_pos.
+  Qed.
+
+  Lemma quotient_size_bound : forall a b, 0 <= a -> 0 < b ->
+    (Z.size_nat (a / b) <= S (Z.size_nat a - Z.size_nat b))%nat.
+  Proof.
+    intros a b Ha Hb. apply WordTime.integer_size_bound.
+    pose proof (Z.div_pos a b Ha Hb) as Hq.
+    pose proof (Z.div_mod a b ltac:(lia)) as Hdivision.
+    pose proof (Z.mod_pos_bound a b Hb) as Hremainder.
+    pose proof (alignment_bound a b Ha Hb) as Haligned. split; [exact Hq|nia].
+  Qed.
+
+  Lemma remainder_size_drop : forall a b, 0 < b <= a ->
+    (Z.size_nat (a mod b) < Z.size_nat a)%nat.
+  Proof.
+    intros a b Hb. pose proof (Z.mod_pos_bound a b ltac:(lia)) as Hr.
+    pose proof (Z.div_str_pos a b Hb) as Hq.
+    pose proof (Z.div_mod a b ltac:(lia)) as Hdivision.
+    pose proof (Z.size_nat_mono (2 * (a mod b)) a ltac:(nia)) as Hsize.
+    destruct (a mod b) as [|p|p] eqn:Hremainder.
+    - apply positive_integer_size. lia.
+    - change (S (Pos.size_nat p) <= Z.size_nat a)%nat in Hsize. exact Hsize.
+    - lia.
+  Qed.
+
+  Lemma division_bit_budget : forall a b, 0 <= a -> 0 < b ->
+    let before := (Z.size_nat b + Z.size_nat a + if (a <? b)%Z then 1 else 0)%nat in
+    let after := (Z.size_nat b + Z.size_nat (a mod b))%nat in
+    (after < before /\
+     Z.size_nat (a / b) <= 2 * (before - after) /\
+     Z.size_nat a - Z.size_nat b + 2 <= 3 * (before - after))%nat.
+  Proof.
+    intros a b Ha Hb. cbn beta zeta. destruct (a <? b) eqn:Hsmall.
+    - apply Z.ltb_lt in Hsmall. rewrite Z.mod_small, Z.div_small by lia.
+      pose proof (Z.size_nat_mono a b ltac:(lia)) as Hsizes.
+      change (Z.size_nat 0) with 0%nat. repeat split; lia.
+    - apply Z.ltb_ge in Hsmall.
+      pose proof (remainder_size_drop a b ltac:(lia)) as Hdrop.
+      pose proof (Z.mod_pos_bound a b Hb) as Hremainder.
+      pose proof (Z.size_nat_mono (a mod b) b ltac:(lia)) as Hrsize.
+      pose proof (quotient_size_bound a b Ha Hb) as Hqsize.
+      repeat split; lia.
+  Qed.
+
+
+  (** The flag pays for a possible initial zero-quotient swap. After every transition,
+      the second remainder is at least the first, and the flag is zero. *)
+  Definition remainder_bits s :=
+    (Z.size_nat (crt_r1 s) + Z.size_nat (crt_r2 s) +
+      if (crt_r2 s <? crt_r1 s)%Z then 1 else 0)%nat.
+
+  Lemma next_remainder_bits : forall s, 0 < crt_r1 s ->
+    remainder_bits (next s) = (Z.size_nat (crt_r1 s) +
+      Z.size_nat (crt_r2 s mod crt_r1 s))%nat.
+  Proof.
+    intros s Hr1. unfold remainder_bits.
+    rewrite next_remainder by lia.
+    change (crt_r2 (next s)) with (crt_r1 s).
+    pose proof (Z.mod_pos_bound (crt_r2 s) (crt_r1 s) Hr1) as Hremainder.
+    rewrite (proj2 (Z.ltb_ge (crt_r1 s) (crt_r2 s mod crt_r1 s)) ltac:(lia)). lia.
+  Qed.
+
+  Lemma next_bit_budget : forall s, nonnegative_remainders s -> crt_r1 s <> 0 ->
+    let delta := (remainder_bits s - remainder_bits (next s))%nat in
+    (remainder_bits (next s) < remainder_bits s /\
+     Z.size_nat (crt_r2 s / crt_r1 s) <= 2 * delta /\
+     Z.size_nat (crt_r2 s) - Z.size_nat (crt_r1 s) + 2 <= 3 * delta)%nat.
+  Proof.
+    intros s [Hr1 Hr2] Hnonzero. cbn beta zeta.
+    pose proof (division_bit_budget (crt_r2 s) (crt_r1 s) Hr2 ltac:(lia)) as Hbudget.
+    cbn beta zeta in Hbudget.
+    fold (remainder_bits s) in Hbudget.
+    rewrite <- (next_remainder_bits s ltac:(lia)) in Hbudget. exact Hbudget.
+  Qed.
+
+  (** A decrease of delta remainder bits permits at most 3*delta coefficient bits. *)
+  Lemma coefficient_budget : forall n before after q x y,
+    (after <= before)%nat ->
+    (Z.size_nat q + 1 <= 3 * (before - after))%nat ->
+    (Z.size_nat x + 3 * before <= 3 * n + 1)%nat ->
+    (Z.size_nat y + 3 * before <= 3 * n + 1)%nat ->
+    (Z.size_nat (y - q * x) + 3 * after <= 3 * n + 1)%nat.
+  Proof.
+    intros n before after q x y Hafter Hq Hx Hy.
+    pose proof (integer_multiply_size q x) as Hproduct.
+    pose proof (integer_subtract_size y (q * x)) as Hsubtract.
+    destruct (Nat.le_ge_cases (Z.size_nat y) (Z.size_nat (q * x))) as [Hle|Hge].
+    - rewrite Nat.max_r in Hsubtract by exact Hle. lia.
+    - rewrite Nat.max_l in Hsubtract by exact Hge. lia.
+  Qed.
+
+  Definition state_budget n s : Prop :=
+    nonnegative_remainders s /\
+    (remainder_bits s <= n /\
+     Z.size_nat (crt_u1 s) + 3 * remainder_bits s <= 3 * n + 1 /\
+     Z.size_nat (crt_v1 s) + 3 * remainder_bits s <= 3 * n + 1 /\
+     Z.size_nat (crt_u2 s) + 3 * remainder_bits s <= 3 * n + 1 /\
+     Z.size_nat (crt_v2 s) + 3 * remainder_bits s <= 3 * n + 1)%nat.
+
+  Lemma next_state_budget : forall n s,
+    state_budget n s -> crt_r1 s <> 0 -> state_budget n (next s).
+  Proof.
+    intros n s [Hnonnegative [Hmeasure [Hu1 [Hv1 [Hu2 Hv2]]]]] Hnonzero.
+    destruct (next_bit_budget s Hnonnegative Hnonzero) as [Hdrop [Hq Halign]].
+    assert (Hqcharge : (Z.size_nat (crt_r2 s / crt_r1 s) + 1 <=
+      3 * (remainder_bits s - remainder_bits (next s)))%nat) by lia.
+    unfold state_budget. split.
+    - apply next_nonnegative; [exact Hnonnegative|now apply Z.eqb_neq].
+    - split; [lia|]. repeat split.
+      + change (Z.size_nat (crt_u2 s -
+          fst (div_aligned (crt_r2 s) (crt_r1 s)) * crt_u1 s) +
+          3 * remainder_bits (next s) <= 3 * n + 1)%nat.
+        rewrite div_aligned_all, div_eucl_pair. cbn [fst].
+        eapply (coefficient_budget n (remainder_bits s)); eassumption || lia.
+      + change (Z.size_nat (crt_v2 s -
+          fst (div_aligned (crt_r2 s) (crt_r1 s)) * crt_v1 s) +
+          3 * remainder_bits (next s) <= 3 * n + 1)%nat.
+        rewrite div_aligned_all, div_eucl_pair. cbn [fst].
+        eapply (coefficient_budget n (remainder_bits s)); eassumption || lia.
+      + change (Z.size_nat (crt_u1 s) + 3 * remainder_bits (next s) <= 3 * n + 1)%nat.
+        lia.
+      + change (Z.size_nat (crt_v1 s) + 3 * remainder_bits (next s) <= 3 * n + 1)%nat.
+        lia.
+  Qed.
+
+  Lemma initial_state_budget : forall a b,
+    state_budget (Z.size_nat a + Z.size_nat b + 1)
+      {| crt_r1 := Z.abs a; crt_u1 := Z.sgn a; crt_v1 := 0;
+         crt_r2 := Z.abs b; crt_u2 := 0; crt_v2 := Z.sgn b |}.
+  Proof.
+    intros a b. unfold state_budget. split; [apply initial_nonnegative|].
+    unfold remainder_bits. cbn [crt_r1 crt_u1 crt_v1 crt_r2 crt_u2 crt_v2].
+    rewrite !integer_abs_size.
+    assert (Ha : (Z.size_nat (Z.sgn a) <= 1)%nat).
+    { destruct a; cbn [Z.sgn Z.size_nat Pos.size_nat]; lia. }
+    assert (Hb : (Z.size_nat (Z.sgn b) <= 1)%nat).
+    { destruct b; cbn [Z.sgn Z.size_nat Pos.size_nat]; lia. }
+    change (Z.size_nat 0) with 0%nat.
+    destruct (Z.abs b <? Z.abs a); repeat split; lia.
+  Qed.
+
   (** The full Euclidean coefficient chain has quadratic input-bit work. *)
   Lemma T_extgcd_le : forall a b,
     (T_extgcd a b <= k_gcd *
