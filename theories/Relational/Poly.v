@@ -10807,6 +10807,247 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   Definition k_poly : N := poly_lattice_factor.
 
+
+  (** One spare stage covers any terminal fold whose callback satisfies the row envelope. *)
+  Lemma T_poly_run_fold_bounded : forall (A : Type)
+    (f : A -> poly_row X.t -> A) (T_f : A -> poly_row X.t -> N) factor
+    xs vars rows dim mlen keys bits count acc,
+    length vars <= dim -> mlen <= count -> length rows <= count ->
+    Forall (poly_reduced_row vars) rows ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (forall wider a r, bits <= wider -> poly_row_envelope dim mlen keys wider r ->
+      (T_f a r <= factor * N.of_nat (mlen + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat (keys + wider + 1)^2)%N) ->
+    (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      List.T_fold_left f T_f (poly_run X.encode X.eqb xs rows) acc <=
+      (poly_step_factor + factor + 16) * N.of_nat
+        (fmcost dim mlen (S (length xs)) count (keys + bits)))%N.
+  Proof.
+    intros A f T_f factor xs. induction xs as [|x xs IH];
+      intros vars rows dim mlen keys bits count acc Hdim HM HR Hsupport Henvelopes Hcallback.
+    - pose proof (poly_T_fold_left_members (poly_row X.t) A f T_f
+        (factor * N.of_nat (mlen + 1) * N.of_nat (dim + mlen + 1) *
+          N.of_nat (keys + bits + 1)^2)%N rows acc) as Hfold.
+      specialize (Hfold ltac:(intros a r Hr; apply Hcallback with (wider := bits);
+        [lia|exact (proj1 (Forall_forall _ _) Henvelopes r Hr)])).
+      set (span := poly_clock_span dim mlen keys bits).
+      set (work := (N.of_nat (count + 1)^2 * span)%N).
+      assert (Hspan : (1 <= span)%N) by (unfold span; apply poly_span_positive).
+      assert (Hwork : (1 <= work)%N) by (unfold work, span; apply poly_fm_charge_positive).
+      assert (Hcallback_count : (N.of_nat (mlen + 1) * N.of_nat (length rows) <=
+        N.of_nat (count + 1)^2)%N).
+      { rewrite N.pow_2_r. apply N.mul_le_mono; lia. }
+      assert (Hrows_work : (N.of_nat (length rows) <= work)%N).
+      { unfold work. rewrite N.pow_2_r. nia. }
+      assert (Hfold_work : (List.T_fold_left f T_f rows acc <= (factor + 2) * work)%N).
+      { replace (factor * N.of_nat (mlen + 1) * N.of_nat (dim + mlen + 1) *
+          N.of_nat (keys + bits + 1)^2)%N with
+          (factor * N.of_nat (mlen + 1) * span)%N in Hfold
+          by (unfold span, poly_clock_span; ring).
+        assert (Hscaled : (factor * N.of_nat (mlen + 1) * span * N.of_nat (length rows) <=
+          factor * work)%N).
+        { unfold work. nia. }
+        clear -Hfold Hscaled Hrows_work Hwork. clearbody work. nia. }
+      cbn [length poly_run]. rewrite poly_fmcost_clock_step. fold span work.
+      eapply N.le_trans with (m := ((poly_step_factor + factor + 16) * work)%N).
+      2: { apply N.mul_le_mono_l. apply N.le_add_r. }
+      time_unfold (@T_poly_run). time_cbn.
+      clear -Hfold_work Hwork. clearbody work. nia.
+    - set (next := poly_step X.encode X.eqb x rows).
+      set (next_count := count^2 / 4 + count).
+      assert (Hnext_count : length next <= next_count).
+      { pose proof (poly_step_rows X.t X.encode X.eqb x rows) as Hrows.
+        pose proof (poly_rows_recurrence_mono (length rows) count HR).
+        unfold next, next_count. lia. }
+      assert (Hnext_mlen : mlen <= next_count) by (unfold next_count; lia).
+      assert (Hnext_support : Forall (poly_reduced_row vars) next).
+      { unfold next. now apply poly_step_reduced. }
+      assert (Hnext_envelopes : Forall (poly_row_envelope dim mlen keys (2 * bits + 1)) next).
+      { unfold next. now apply poly_step_envelopes with (vars := vars). }
+      pose proof (IH vars next dim mlen keys (2 * bits + 1) next_count acc
+        Hdim Hnext_mlen Hnext_count Hnext_support Hnext_envelopes
+        ltac:(intros wider a r Hwide Hr; apply Hcallback with (wider := wider);
+          [lia|exact Hr])) as Hrecursive.
+      pose proof (poly_fmcost_params_mono (S (length xs))
+        dim dim mlen mlen next_count next_count
+        (keys + (2 * bits + 1)) (2 * (keys + bits) + 1)
+        (Nat.le_refl _) (Nat.le_refl _) (Nat.le_refl _) ltac:(lia)) as Hfuture.
+      assert (Hrecursive_total :
+        (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs next +
+          List.T_fold_left f T_f (poly_run X.encode X.eqb xs next) acc <=
+          (poly_step_factor + factor + 16) * N.of_nat
+            (fmcost dim mlen (S (length xs)) next_count (2 * (keys + bits) + 1)))%N).
+      { eapply N.le_trans; [exact Hrecursive|]. apply N.mul_le_mono_l.
+        clear -Hfuture. lia. }
+      pose proof (T_poly_step_bounded x rows dim mlen keys bits Henvelopes) as Hstep.
+      set (work := (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N).
+      assert (Hhead : (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+        poly_step_factor * work)%N).
+      { eapply N.le_trans; [exact Hstep|]. unfold work. rewrite N.mul_assoc.
+        apply N.mul_le_mono_r, N.mul_le_mono_l, N.pow_le_mono_l. lia. }
+      assert (Hwork : (1 <= work)%N) by (unfold work; apply poly_fm_charge_positive).
+      change (T_poly_run X.encode X.T_encode X.eqb X.T_eqb (x :: xs) rows +
+        List.T_fold_left f T_f (poly_run X.encode X.eqb xs next) acc <=
+        (poly_step_factor + factor + 16) * N.of_nat
+          (fmcost dim mlen (S (S (length xs))) count (keys + bits)))%N.
+      rewrite poly_fmcost_clock_step. fold next_count work.
+      time_unfold (@T_poly_run). fold next. time_simpl.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      set (future := N.of_nat
+        (fmcost dim mlen (S (length xs)) next_count (2 * (keys + bits) + 1))) in *.
+      clear -Hrecursive_total Hhead Hwork. clearbody work future.
+      rewrite !N.mul_add_distr_l. nia.
+  Qed.
+
+  (** An allowance of at least two rows gains at least one row per recurrence step. *)
+  Lemma poly_rows_allowance_grows : forall rows,
+    2 <= rows -> rows + 1 <= rows^2 / 4 + rows.
+  Proof.
+    intros rows Hrows. assert (Hquarter : 1 <= rows^2 / 4).
+    { apply Nat.div_le_lower_bound; [lia|]. cbn [Nat.pow]. nia. }
+    lia.
+  Qed.
+
+  (** The terminal charge retains both the accumulated row and width allowances. *)
+  Lemma poly_fmcost_terminal_count : forall fuel dim mlen rows bits,
+    2 <= rows ->
+    (rows + fuel + 1) * (dim + mlen + 1) * (poly_width_after fuel bits + 1) <=
+      fmcost dim mlen fuel rows bits.
+  Proof.
+    intro fuel. induction fuel as [|fuel IH]; intros dim mlen rows bits Hrows.
+    - cbn [poly_width_after fmcost]. nia.
+    - pose proof (poly_rows_allowance_grows rows Hrows) as Hgrowth.
+      pose proof (IH dim mlen (rows^2 / 4 + rows) (2 * bits + 1) ltac:(lia)) as Htail.
+      cbn [poly_width_after fmcost].
+      eapply Nat.le_trans with (m := fmcost dim mlen fuel (rows^2 / 4 + rows)
+        (2 * bits + 1)); [|lia].
+      eapply Nat.le_trans; [|exact Htail].
+      apply Nat.mul_le_mono_r, Nat.mul_le_mono_r. lia.
+  Qed.
+
+  (** A squared dimension is bounded by a constant multiple of its power of two. *)
+  Lemma poly_range_dimension_power : forall dim,
+    (dim + 2)^2 <= 9 * 2^dim.
+  Proof.
+    induction dim as [|dim IH]; [cbn; lia|].
+    rewrite (Nat.pow_succ_r 2 dim) by lia.
+    destruct dim as [|dim]; [cbn; lia|].
+    assert (Hstep : (S (S dim) + 2)^2 <= 2 * (S dim + 2)^2)
+      by (cbn [Nat.pow]; nia).
+    cbn [Nat.pow] in *. nia.
+  Qed.
+
+  (** The frozen full-fuel range budget pays a quartic setup polynomial at linear bit width. *)
+  Lemma poly_range_budget_preprocessing : forall dim rows bits,
+    (dim + 2)^4 * (bits + 1) <=
+      9 * fmcost dim (rows + 2) dim (rows + 2) bits.
+  Proof.
+    intros dim rows bits.
+    pose proof (poly_fmcost_terminal_count dim dim (rows + 2) (rows + 2) bits ltac:(lia))
+      as Hterminal.
+    rewrite poly_width_after_successor in Hterminal.
+    pose proof (poly_range_dimension_power dim) as Hpower.
+    assert (Hspan : (dim + 2)^2 <= (rows + 2 + dim + 1) * (dim + (rows + 2) + 1)).
+    { cbn [Nat.pow]. nia. }
+    assert (Hscale : (dim + 2)^2 * ((dim + 2)^2 * (bits + 1)) <=
+      9 * ((dim + 2)^2 * (2^dim * (bits + 1)))).
+    { pose proof (Nat.mul_le_mono_r _ _ ((dim + 2)^2 * (bits + 1)) Hpower).
+      nia. }
+    assert (Hscaled_span : (dim + 2)^2 * (2^dim * (bits + 1)) <=
+      fmcost dim (rows + 2) dim (rows + 2) bits).
+    { eapply Nat.le_trans; [|exact Hterminal].
+      pose proof (Nat.mul_le_mono_r _ _ (2^dim * (bits + 1)) Hspan). nia. }
+    replace ((dim + 2)^4) with ((dim + 2)^2 * (dim + 2)^2)
+      by (cbn [Nat.pow]; nia).
+    clear -Hscale Hscaled_span. nia.
+  Qed.
+
+  (** One auxiliary result coordinate increases every recurrence charge by at most a factor two. *)
+  Lemma poly_fmcost_dimension_successor : forall fuel dim mlen rows bits,
+    fmcost (dim + 1) mlen fuel rows bits <= 2 * fmcost dim mlen fuel rows bits.
+  Proof.
+    intro fuel. induction fuel as [|fuel IH]; intros dim mlen rows bits.
+    - cbn [fmcost]. nia.
+    - pose proof (IH dim mlen (rows^2 / 4 + rows) (2 * bits + 1)) as Htail.
+      cbn [fmcost].
+      assert (Hhead : (rows + 1)^2 * (dim + 1 + mlen + 1) * (bits + 1)^2 <=
+        2 * ((rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2)).
+      { assert (Hspan : dim + 1 + mlen + 1 <= 2 * (dim + mlen + 1)) by lia.
+        pose proof (Nat.mul_le_mono_l _ _ ((rows + 1)^2) Hspan) as Hleft.
+        pose proof (Nat.mul_le_mono_r _ _ ((bits + 1)^2) Hleft). nia. }
+      lia.
+  Qed.
+
+  (** A canceled equality has zero right-hand side and zero summed coefficient at every key. *)
+  Definition poly_zero_equality (r : poly_row X.t) : Prop :=
+    lrel (poly_constraint r) = REq /\ rhs (poly_constraint r) = 0%Z /\
+      forall y, poly_coefficient X.eqb y (poly_constraint r) = 0%Z.
+
+  Lemma poly_self_cancel_zero : forall x r,
+    lrel (poly_constraint r) = REq ->
+    Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0 = false ->
+    poly_zero_equality (poly_cancel X.encode X.eqb x r r).
+  Proof.
+    intros x r Hrel Hnonzero. unfold poly_zero_equality, poly_cancel. rewrite Hnonzero.
+    split.
+    - cbn [poly_add_rows poly_constraint lrel]. unfold poly_eq_used.
+      rewrite Hrel. reflexivity.
+    - split.
+      + cbn [poly_add_rows poly_constraint rhs]. rewrite <- poly_sgn_abs. ring.
+      + intro y. rewrite poly_add_rows_coefficient, <- poly_sgn_abs. ring.
+  Qed.
+
+  (** A singleton step either retains its equality or returns its zero self-cancellation. *)
+  Lemma poly_equality_singleton_step : forall x r,
+    lrel (poly_constraint r) = REq ->
+    exists q, poly_step X.encode X.eqb x [r] = [q] /\ (q = r \/ poly_zero_equality q).
+  Proof.
+    intros x r Hrel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) eqn:Hzero.
+    - assert (Hpivot : poly_pivot X.eqb x r = false).
+      { unfold poly_pivot. now rewrite Hrel, Hzero. }
+      apply Z.eqb_eq in Hzero. exists r. split; [|now left].
+      unfold poly_step. cbn [find]. rewrite Hpivot.
+      cbn [filter flat_map map app]. rewrite Hzero. reflexivity.
+    - assert (Hpivot : poly_pivot X.eqb x r = true).
+      { unfold poly_pivot. now rewrite Hrel, Hzero. }
+      exists (poly_cancel X.encode X.eqb x r r). split.
+      + unfold poly_step. cbn [find]. now rewrite Hpivot.
+      + right. now apply poly_self_cancel_zero.
+  Qed.
+
+  (** Any number of elimination columns preserves the same singleton dichotomy. *)
+  Lemma poly_equality_singleton_run : forall xs r,
+    lrel (poly_constraint r) = REq ->
+    exists q, poly_run X.encode X.eqb xs [r] = [q] /\ (q = r \/ poly_zero_equality q).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros r Hrel.
+    - exists r. split; [reflexivity|now left].
+    - cbn [poly_run]. destruct (poly_equality_singleton_step x r Hrel)
+        as [q [Hstep [Hsame|Hzero]]]; rewrite Hstep.
+      + subst q. now apply IH.
+      + destruct (IH q (proj1 Hzero)) as [s [Hrun [Hsame|Hzero_s]]].
+        * exists s. split; [exact Hrun|]. right. now subst s.
+        * exists s. split; [exact Hrun|now right].
+  Qed.
+
+  (** Each observable coordinate and the right-hand side are retained or become zero. *)
+  Lemma poly_equality_singleton_observations : forall xs r x,
+    lrel (poly_constraint r) = REq ->
+    exists q, poly_run X.encode X.eqb xs [r] = [q] /\
+      (poly_coefficient X.eqb x (poly_constraint q) =
+        poly_coefficient X.eqb x (poly_constraint r) \/
+        poly_coefficient X.eqb x (poly_constraint q) = 0%Z) /\
+      (rhs (poly_constraint q) = rhs (poly_constraint r) \/ rhs (poly_constraint q) = 0%Z).
+  Proof.
+    intros xs r x Hrel.
+    destruct (poly_equality_singleton_run xs r Hrel) as [q [Hrun [Hsame|Hzero]]].
+    - subst q. exists r. split; [exact Hrun|]. split; now left.
+    - destruct Hzero as [Hqrel [Hrhs Hcoef]]. exists q. split; [exact Hrun|].
+      split; right; auto.
+  Qed.
+
 End PolyClockCore.
 
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
@@ -11027,6 +11268,218 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       pose proof (poly_fmcost_initial_bits (n P + tsize e) (length P + 2)
         (n P + tsize e) (length P + 2) (nell (Reached P) + F.bits_e e + 1)) as Hbudget.
       unfold range_bits, range_work. cbn [prows]. rewrite !Nat2N.inj_add. nia.
+  Qed.
+
+  (** Wrapping distinct keys preserves their uniqueness. *)
+  Lemma poly_some_nodup : forall xs : list X.t,
+    NoDup xs -> NoDup (map (@Some X.t) xs).
+  Proof.
+    intros xs Hunique. induction Hunique as [|x xs Habsent Hunique IH]; cbn [map].
+    - constructor.
+    - constructor; [|exact IH]. intro Hin.
+      apply in_map_iff in Hin as [y [Hsame Hin]]. injection Hsame as Hsame.
+      subst y. contradiction.
+  Qed.
+
+  Definition poly_range_fixed_support (P : list (lcons X.t)) (f : lin X.t) :
+      list (option X.t) :=
+    None :: map (@Some X.t) (vars_of P ++ poly_form_variables f).
+
+  (** Original source variables and distinct form variables bound the tagged support. *)
+  Lemma poly_range_fixed_support_length : forall P f,
+    length (poly_range_fixed_support P f) <= n P + length (coef f) + 1.
+  Proof.
+    intros P f. unfold poly_range_fixed_support, n. cbn [length].
+    rewrite length_map, length_app. pose proof (poly_form_variables_length f). lia.
+  Qed.
+
+  (** Normalizing a source row retains at most its original system's distinct coordinates. *)
+  Lemma poly_range_normal_source_dimension : forall P r, In r P ->
+    length (lhs (poly_normal_row X.encode r)) <= length (vars_of P).
+  Proof.
+    intros P r Hr. rewrite <- (length_map fst (lhs (poly_normal_row X.encode r))).
+    apply NoDup_incl_length; [apply poly_normal_coef_nodup|].
+    intros x Hx. apply poly_normal_row_keys in Hx.
+    now apply poly_vars_of_contains with (r := r).
+  Qed.
+
+  (** The temporary result coordinate is distinct from every original form coordinate. *)
+  Lemma poly_range_form_support_unique : forall f,
+    NoDup (None :: map (@Some X.t) (poly_form_variables f)).
+  Proof.
+    intro f. constructor.
+    - intro Hin. apply in_map_iff in Hin as [x [Hsame _]]. discriminate.
+    - apply poly_some_nodup. apply poly_variables_nodup.
+  Qed.
+
+  (** Every distinct form coordinate occurs in its temporary range equation. *)
+  Lemma poly_range_form_support : forall f,
+    incl (None :: map (@Some X.t) (poly_form_variables f)) (map fst (lhs (range_row f))).
+  Proof.
+    intros f x [Hresult|Hin].
+    - subst x. now left.
+    - apply in_map_iff in Hin as [y [Hsame Hy]]. subst x.
+      pose proof (poly_form_variables_support f y Hy) as Hsource.
+      apply in_map_iff in Hsource as [p [Hkey Hp]]. subst y.
+      cbn [range_row lhs map fst]. right. rewrite map_map.
+      apply in_map_iff. exists p. split; [reflexivity|exact Hp].
+  Qed.
+
+  (** Only repeated occurrences enlarge the normalized query-equation coefficients. *)
+  Lemma poly_range_row_duplicate_bits : forall f,
+    RangeCert.row_bits (poly_normal_row tmp_encode (range_row f)) <=
+      F.form_bits f + Nat.log2 (length (coef f) - length (poly_form_variables f) + 1) + 2.
+  Proof.
+    intro f.
+    assert (Hsizes : Forall (fun p => Z.size_nat (snd p) <= F.form_bits f + 1)
+      (lhs (range_row f))).
+    { cbn [range_row lhs]. constructor; [cbn [snd Z.size_nat Pos.size_nat]; lia|].
+      apply Forall_map, Forall_forall. intros p Hp. cbn [snd].
+      rewrite poly_size_opp. pose proof (poly_form_entry_bits f p Hp). lia. }
+    pose proof (RangeCore.poly_normal_coef_duplicate_bits (lhs (range_row f))
+      (None :: map (@Some X.t) (poly_form_variables f)) (F.form_bits f + 1)
+      (poly_range_form_support_unique f) (poly_range_form_support f) Hsizes) as Hnormalized.
+    unfold RangeCert.row_bits. cbn [poly_normal_row rhs lhs range_row].
+    apply poly_max_bound.
+    - pose proof (poly_form_constant_bits f). lia.
+    - eapply Forall_impl; [|exact Hnormalized]. intros p Hp.
+      cbn [range_row lhs length] in Hp. rewrite !length_map in Hp.
+      cbn [Nat.sub] in Hp. lia.
+  Qed.
+
+  (** Renaming an ordinary row adds one tag bit to each retained key. *)
+  Lemma poly_range_rename_keys : forall r,
+    RangeCert.row_key_bits (rename_row (@Some X.t) r) <= C.row_key_bits r + 1.
+  Proof.
+    intro r. unfold RangeCert.row_key_bits. cbn [rename_row lhs].
+    apply poly_max_bound; [lia|]. apply Forall_map, Forall_forall. intros p Hp.
+    change (S (Pos.size_nat (X.encode (fst p))) <= C.row_key_bits r + 1).
+    pose proof (poly_row_key_member r p Hp). lia.
+  Qed.
+
+  (** The raw temporary query equation has one tag bit beyond its form key widths. *)
+  Lemma poly_range_row_keys : forall f,
+    RangeCert.row_key_bits (range_row f) <= F.form_bits f + 1.
+  Proof.
+    intro f. unfold RangeCert.row_key_bits. cbn [range_row lhs].
+    apply poly_max_bound; [lia|]. constructor.
+    - change (1 <= F.form_bits f + 1). lia.
+    - apply Forall_map, Forall_forall. intros p Hp.
+      change (S (Pos.size_nat (X.encode (fst p))) <= F.form_bits f + 1).
+      pose proof (poly_form_entry_bits f p Hp). unfold X.bits in *. lia.
+  Qed.
+
+  (** Every source and query key fits the same fixed tagged-key allowance. *)
+  Lemma poly_range_input_keys : forall P f,
+    Forall (fun r => RangeCert.row_key_bits r <= nell (Reached P) + F.form_bits f + 1)
+      (poly_range_input P f).
+  Proof.
+    intros P f. unfold poly_range_input. constructor.
+    - pose proof (poly_range_row_keys f). lia.
+    - apply Forall_map, Forall_map, Forall_forall. intros r Hr.
+      eapply Nat.le_trans; [apply poly_range_rename_keys|].
+      pose proof (poly_normal_row_key_bits r) as Hnormal.
+      pose proof (poly_max_member _ C.row_key_bits 0 P r Hr) as Hkeys.
+      unfold nell, ell. cbn [prows]. lia.
+  Qed.
+
+  (** Tagged normal source rows remain normal. *)
+  Lemma poly_range_normal_rename_unique : forall r,
+    NoDup (map fst (lhs (rename_row (@Some X.t) (poly_normal_row X.encode r)))).
+  Proof.
+    intro r. cbn [rename_row lhs]. rewrite map_map.
+    change (NoDup (map (fun p => Some (fst p)) (lhs (poly_normal_row X.encode r)))).
+    rewrite <- (map_map fst (@Some X.t) (lhs (poly_normal_row X.encode r))).
+    apply poly_some_nodup. apply poly_normal_coef_nodup.
+  Qed.
+
+  (** Range initialization keeps its rows on a fixed source-and-form support. *)
+  Lemma poly_range_initial_reduced : forall P f,
+    Forall (RangeCore.poly_reduced_row (poly_range_fixed_support P f))
+      (poly_initial tmp_encode (map (fun r => (r, false)) (poly_range_input P f))).
+  Proof.
+    intros P f. apply RangeCore.poly_initial_reduced.
+    apply Forall_map, Forall_forall. intros r Hr p Hp. cbn [fst] in Hp.
+    unfold poly_range_input in Hr. destruct Hr as [Htarget|Hsource].
+    - subst r. cbn [range_row lhs] in Hp. destruct Hp as [Hresult|Hform].
+      + subst p. unfold poly_range_fixed_support. now left.
+      + apply in_map_iff in Hform as [q [Hsame Hq]]. subst p. cbn [fst].
+        unfold poly_range_fixed_support. right. apply in_map. apply in_or_app. right.
+        unfold poly_form_variables. apply poly_variables_contains with
+          (r := LCons X.t (coef f) REq (cst f)) (a := snd q).
+        * now left.
+        * destruct q. exact Hq.
+    - apply in_map_iff in Hsource as [normalized [Hsame Hnormalized]]. subst r.
+      apply in_map_iff in Hnormalized as [source [Hsame Hsource]]. subst normalized.
+      cbn [rename_row lhs] in Hp. apply in_map_iff in Hp as [q [Hsame Hq]]. subst p.
+      cbn [fst]. unfold poly_range_fixed_support. right. apply in_map. apply in_or_app. left.
+      apply poly_vars_of_contains with (r := source); [exact Hsource|].
+      apply poly_normal_row_keys. now apply in_map.
+  Qed.
+
+  (** The initial arithmetic width uses duplicate surplus only in the query equation. *)
+  Lemma poly_range_normalized_input_bits : forall P f,
+    Forall (fun r => RangeCert.row_bits (poly_normal_row tmp_encode r) <=
+      nell (Reached P) + F.form_bits f + 1 +
+        Nat.log2 (length (coef f) - length (poly_form_variables f) + 1) + 1)
+      (poly_range_input P f).
+  Proof.
+    intros P f. unfold poly_range_input. constructor.
+    - pose proof (poly_range_row_duplicate_bits f). lia.
+    - apply Forall_map, Forall_map, Forall_forall. intros r Hr.
+      eapply Nat.le_trans; [apply RangeCore.poly_normal_row_bits;
+        apply poly_range_normal_rename_unique|].
+      rewrite poly_range_rename_bits.
+      pose proof (proj2 (poly_raw_normal_widths P r Hr)) as Hwidth.
+      pose proof (poly_raw_width P). lia.
+  Qed.
+
+  (** Query initialization combines fixed support, unit weights and duplicate-aware widths. *)
+  Lemma poly_range_initial_envelopes : forall P f,
+    Forall (RangeCore.poly_row_envelope (n P + length (coef f) + 1) (length P + 1)
+      (nell (Reached P) + F.form_bits f + 1)
+      (nell (Reached P) + F.form_bits f + 1 +
+        Nat.log2 (length (coef f) - length (poly_form_variables f) + 1) + 1))
+      (poly_initial tmp_encode (map (fun r => (r, false)) (poly_range_input P f))).
+  Proof.
+    intros P f. apply Forall_forall. intros r Hr.
+    pose proof (proj1 (Forall_forall _ _) (poly_range_initial_reduced P f) r Hr) as Hreduced.
+    pose proof (RangeCore.poly_reduced_dimension (poly_range_fixed_support P f) r Hreduced)
+      as Hdim.
+    pose proof (poly_range_fixed_support_length P f) as Hsupport_length.
+    destruct (RangeCore.poly_initial_source (poly_range_input P f) r Hr) as [p [Hp Hrow]].
+    pose proof (proj1 (Forall_forall _ _) (poly_range_input_keys P f) p Hp) as Hkeys.
+    pose proof (proj1 (Forall_forall _ _) (poly_range_normalized_input_bits P f) p Hp)
+      as Hbits.
+    pose proof (poly_initial_units (option X.t) tmp_encode
+      (map (fun r => (r, false)) (poly_range_input P f))) as Hunits.
+    destruct (proj1 (Forall_forall _ _) Hunits r Hr) as [Hlength Hunit].
+    rewrite length_map in Hlength. unfold poly_range_input in Hlength.
+    cbn [length] in Hlength. rewrite !length_map in Hlength.
+    unfold RangeCore.poly_row_envelope. split; [exact (proj1 Hreduced)|]. split.
+    - eapply Nat.le_trans; [exact Hdim|exact Hsupport_length].
+    - split.
+      + rewrite Hrow. eapply Nat.le_trans;
+          [apply RangeCore.poly_normal_row_key_bits|exact Hkeys].
+      + split; [now rewrite Hrow|]. split.
+        * exact (@eq_ind_r nat (S (length P)) (fun count => count <= length P + 1)
+            ltac:(cbn beta; rewrite Nat.add_1_r; apply Nat.le_refl)
+            (length (poly_multipliers r)) Hlength).
+        * apply Forall_forall. intros z Hz.
+          destruct (proj1 (Forall_forall _ _) Hunit z Hz) as [Hzero|Hone]; subst z;
+            cbn [Z.size_nat Pos.size_nat]; lia.
+  Qed.
+
+  (** Canonical source rows fit the original normalization width and variable support. *)
+  Lemma poly_range_sources_envelope : forall P f,
+    Forall (poly_source_envelope (n P + length (coef f) + 1)
+      (nell (Reached P) + F.form_bits f + 1)) (map (poly_normal_row X.encode) P).
+  Proof.
+    intros P f. apply Forall_map, Forall_forall. intros r Hr.
+    unfold poly_source_envelope. split.
+    - pose proof (poly_range_normal_source_dimension P r Hr). unfold n. lia.
+    - destruct (poly_raw_normal_widths P r Hr) as [Hkeys Hbits].
+      pose proof (poly_raw_width P). lia.
   Qed.
 
   Definition c_lat : N := (poly_lattice_factor + 1)%N.
