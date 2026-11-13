@@ -5866,6 +5866,271 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     cbn [fold_left]; lia.
   Qed.
 
+  (** A contribution in a stable segment performs no strict head work. *)
+  Lemma stable_head_work_zero : forall p pol s x a,
+    heads_unchanged pol s (update_one p pol s (x, a)) ->
+    strict_head_work pol s x a = 0%N.
+  Proof.
+    intros p pol s x a Hstable; unfold strict_head_work.
+    destruct (L.leb a (look s x)) eqn:Hcovered; [reflexivity|].
+    now rewrite (stable_update_nonhead p pol s x a Hstable Hcovered).
+  Qed.
+
+  (** The scan reserve pays every reader occurrence of one stable contribution. *)
+  Lemma T_update_stable_scan : forall p pol r lower s x a,
+    S.wf p -> prio_ok p pol -> In r (S.rows p) -> In x (S.writes p r) ->
+    (lower <= N.pos (row_rank p pol r))%N -> invariant p pol s -> B.inv p a ->
+    heads_unchanged pol s (update_one p pol s (x, a)) ->
+    (T_update_one p pol s (x, a) +
+      k_update * N.of_nat (scan_credit p pol lower (update_one p pol s (x, a))) * unit p +
+      queue_phi p (update_one p pol s (x, a)) <= k_update * unit p +
+      k_update * N.of_nat (scan_credit p pol lower s) * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol r lower s x a Hwf Hprio Hr Hwrite Hlower Hinv Ha Hstable.
+    assert (Hsupport : In (S.key_code x) (key_support p)).
+    { apply key_support_spec; exists r, x; split; [exact Hr|].
+      split; [apply in_or_app; now left|reflexivity]. }
+    pose proof (proj2 (W3_update p pol s x a Hwf Hprio Hinv Ha Hsupport)) as Hcost.
+    rewrite (stable_head_work_zero p pol s x a Hstable) in Hcost.
+    pose proof (scan_credit_update_write p pol r lower s x a Hr Hwrite Hlower Hstable)
+      as Hscan.
+    assert (HscanN : (N.of_nat (push_work p s x a) +
+      N.of_nat (scan_credit p pol lower (update_one p pol s (x, a))) =
+      N.of_nat (scan_credit p pol lower s))%N) by lia.
+    rewrite Nat2N.inj_add in Hcost; change (N.of_nat 1) with 1%N in Hcost.
+    set (charge := (k_update * unit p)%N).
+    assert (Hcost' : (T_update_one p pol s (x, a) +
+      queue_phi p (update_one p pol s (x, a)) <=
+      charge * (1 + N.of_nat (push_work p s x a)) + queue_phi p s)%N).
+    { unfold charge; clear -Hcost; nia. }
+    replace (k_update * N.of_nat
+      (scan_credit p pol lower (update_one p pol s (x, a))) * unit p)%N with
+      (charge * N.of_nat (scan_credit p pol lower (update_one p pol s (x, a))))%N
+      by (unfold charge; ring).
+    replace (k_update * N.of_nat (scan_credit p pol lower s) * unit p)%N with
+      (charge * N.of_nat (scan_credit p pol lower s))%N by (unfold charge; ring).
+    fold charge; clear -Hcost' HscanN; nia.
+  Qed.
+
+  (** Stable output folds spend scan credit once across every intermediate update. *)
+  Lemma output_cost_stable_scan : forall p pol r lower outs s,
+    S.wf p -> prio_ok p pol -> In r (S.rows p) ->
+    (lower <= N.pos (row_rank p pol r))%N -> invariant p pol s ->
+    Forall (fun xa => B.inv p (snd xa)) outs ->
+    (forall x a, In (x, a) outs -> In x (S.writes p r)) ->
+    heads_unchanged pol s (fold_left (update_one p pol) outs s) ->
+    (output_cost p pol outs s +
+      k_update * N.of_nat (scan_credit p pol lower
+        (fold_left (update_one p pol) outs s)) * unit p +
+      queue_phi p (fold_left (update_one p pol) outs s) <=
+      k_update * N.of_nat (length outs) * unit p +
+      k_update * N.of_nat (scan_credit p pol lower s) * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol r lower outs; induction outs as [|[x a] outs IH];
+      intros s Hwf Hprio Hr Hlower Hinv Hvalues Hwrites Hstable.
+    - unfold output_cost; cbn [fold_left snd length]; lia.
+    - inversion Hvalues; subst.
+      destruct (heads_unchanged_fold_cons p pol (x, a) outs s Hstable) as [Hfirst Htail].
+      pose proof (T_update_stable_scan p pol r lower s x a Hwf Hprio Hr
+        (Hwrites x a (or_introl eq_refl)) Hlower Hinv ltac:(assumption) Hfirst) as Hone.
+      pose proof (update_invariant p pol s x a Hwf Hprio Hinv ltac:(assumption)) as Hnext.
+      pose proof (IH (update_one p pol s (x, a)) Hwf Hprio Hr Hlower Hnext
+        ltac:(assumption) (fun y b Hin => Hwrites y b (or_intror Hin)) Htail) as Hrest.
+      rewrite output_cost_cons; cbn [fold_left length]; rewrite Nat2N.inj_succ.
+      clear -Hone Hrest; nia.
+  Qed.
+
+  (** A stable callback pays its row weight and retains the scan reserve. *)
+  Lemma T_step_stable_scan : forall p pol s s1 lower pr id q r a ss,
+    fits p pol -> reachable p pol s -> step p pol s = inl s1 ->
+    heads_unchanged pol s s1 -> Q.pop (ws_queue s) = Some (pr, id, q) ->
+    source_row p id = Some r -> eval_row p r (ws_store s) = Some (a, ss) ->
+    (lower <= pr)%N ->
+    (T_step p pol s + c_loopN +
+      k_update * N.of_nat (scan_credit p pol pr s1) * unit p + queue_phi p s1 <=
+      k_credit * N.of_nat (weight p id) * unit p +
+      k_update * N.of_nat (scan_credit p pol lower s) * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol s s1 lower pr id q r a ss Hfits Hreachable Hstep Hstable Hpop
+      Hsource Heval Hlower.
+    destruct Hfits as [Hwf [Hcuts Hprio]].
+    pose proof (reachable_invariant p pol s Hwf Hprio Hreachable) as Hinv.
+    assert (Hrow : row_at s id = Some r).
+    { rewrite (proj1 (proj1 (proj2 (proj2 Hinv)))); exact Hsource. }
+    assert (Hrank : pr = N.pos (row_rank p pol r)).
+    { destruct (proj1 Hinv) as [Hqwf [Hqfits [Hpending [Hcount Hsupport]]]].
+      pose proof (proj1 (Q.pop_min _ _ _ _ Hqwf Hpop)) as Hlive.
+      destruct (Hsupport pr id Hlive) as [Hid [r' [Hsource' Hrank]]].
+      rewrite Hsource in Hsource'; injection Hsource' as <-; exact Hrank. }
+    assert (Hstate : s1 = fold_left (update_one p pol) ((S.target p r, a) :: ss)
+      (after_pop p s id q)).
+    { unfold step in Hstep; rewrite Hpop, Hrow, Heval in Hstep.
+      injection Hstep as Heq; symmetry; exact Heq. }
+    pose proof (proj2 (source_row_member p id r Hsource)) as Hr.
+    pose proof (after_pop_invariant p pol s pr id q Hinv Hpop) as Hafter.
+    pose proof (eval_outputs_invariant p pol s r a ss Hwf Hinv Hr Heval) as Houts.
+    assert (Hvalues : Forall (fun xa => B.inv p (snd xa)) ((S.target p r, a) :: ss)).
+    { eapply Forall_impl; [|exact Houts]; intros xa Hxa; exact (proj1 Hxa). }
+    assert (Hstable_after : heads_unchanged pol (after_pop p s id q)
+      (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q))).
+    { intros c cfg Hhead; rewrite <- Hstate, counter_after_pop; exact (Hstable c cfg Hhead). }
+    pose proof (output_cost_stable_scan p pol r pr ((S.target p r, a) :: ss)
+      (after_pop p s id q) Hwf Hprio Hr ltac:(rewrite Hrank; lia) Hafter Hvalues
+      (fun x b Hin => eval_outputs_writes p r (ws_store s) a ss x b Hwf Hr Heval Hin)
+      Hstable_after) as Houtput.
+    rewrite <- Hstate in Houtput.
+    assert (Hscan : scan_credit p pol pr (after_pop p s id q) <=
+      scan_credit p pol lower s).
+    { rewrite Hrank, (scan_credit_after_pop p pol s id q r Hcuts Hr Hrow).
+      apply scan_credit_lower; now rewrite <- Hrank. }
+    pose proof (T_step_weighted p pol s pr id q r a ss Hwf Hinv Hpop Hsource Heval)
+      as Htime.
+    pose proof (T_queue_pop_bound p pol s (proj1 Hinv)) as Hpop_cost.
+    rewrite Hpop in Hpop_cost.
+    change (Q.T_pop (ws_queue s) + queue_phi p (after_pop p s id q) <=
+      2 * Q.c_pq * unit p + queue_phi p s)%N in Hpop_cost.
+    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
+    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
+    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
+    { unfold weight; now rewrite Hsource. }
+    set (budget := (N.of_nat (weight p id) * unit p)%N).
+    assert (Hout_count : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
+      unit p <= k_update * budget)%N).
+    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r, N.mul_le_mono_l.
+      cbn [length]; rewrite Hweight; lia. }
+    assert (Hscan_cost : (k_update * N.of_nat (scan_credit p pol pr
+      (after_pop p s id q)) * unit p <=
+      k_update * N.of_nat (scan_credit p pol lower s) * unit p)%N).
+    { apply N.mul_le_mono_r, N.mul_le_mono_l; lia. }
+    destruct (time_unit_bounds p) as [Hu _].
+    assert (Hu_budget : (unit p <= budget)%N).
+    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
+      apply N.mul_le_mono_r; rewrite Hweight; lia. }
+    assert (Hpayment :
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
+        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
+    { unfold k_credit; clear -Hu Hu_budget; nia. }
+    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+      N.of_nat (weight p id) * unit p)%N with
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N in Htime
+      by (unfold budget; ring).
+    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
+      (k_credit * budget)%N by (unfold budget; ring).
+    clear -Houtput Htime Hpop_cost Hout_count Hscan_cost Hpayment; lia.
+  Qed.
+
+  (** Finite occurrence weights distribute over append. *)
+  Lemma list_weight_app : forall A (f : A -> nat) xs ys,
+    fold_right Nat.add 0 (List.map f (xs ++ ys)) =
+      fold_right Nat.add 0 (List.map f xs) + fold_right Nat.add 0 (List.map f ys).
+  Proof.
+    intros A f xs; induction xs as [|x xs IH]; intro ys; cbn [app List.map fold_right].
+    - reflexivity.
+    - rewrite IH; lia.
+  Qed.
+
+  (** A duplicate-free sublist cannot carry more nonnegative weight than its support. *)
+  Lemma list_weight_incl : forall A (f : A -> nat) xs ys, NoDup xs -> incl xs ys ->
+    fold_right Nat.add 0 (List.map f xs) <= fold_right Nat.add 0 (List.map f ys).
+  Proof.
+    intros A f xs; induction xs as [|x xs IH]; intros ys Hnodup Hincl; [cbn; lia|].
+    inversion Hnodup as [|x' xs' Hfresh Htail]; subst.
+    destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [before [after ->]].
+    assert (Hincl' : incl xs (before ++ after)).
+    { intros y Hy; specialize (Hincl y (or_intror Hy)).
+      apply in_app_iff in Hincl as [Hleft|Hright]; apply in_app_iff.
+      - now left.
+      - destruct Hright as [Heq|Hright]; [subst y; contradiction|now right]. }
+    pose proof (IH (before ++ after) Htail Hincl') as Hweight.
+    rewrite list_weight_app in Hweight |- *; cbn [List.map fold_right]; lia.
+  Qed.
+
+  (** Stable callbacks consume each numbered row's occurrence weight at most once. *)
+  Lemma stable_popped_weight : forall p pol s xs last, fits p pol -> reachable p pol s ->
+    wl_path (step p pol) s xs last -> stable_segment p pol xs ->
+    fold_right Nat.add 0 (List.map (weight p) (popped_ids xs)) <= D p.
+  Proof.
+    intros p pol s xs last Hfits Hreach Hpath Hstable; rewrite <- row_weight_sum.
+    apply list_weight_incl.
+    - eapply stable_no_repeat; eassumption.
+    - eapply popped_ids_supported; eassumption.
+  Qed.
+
+  (** A stable path telescopes scan reserves as its queue frontier increases. *)
+  Lemma T_trace_stable_scan : forall p pol s xs last lower, fits p pol ->
+    reachable p pol s -> wl_path (step p pol) s xs last -> stable_segment p pol xs ->
+    (forall id pr, Q.prio (ws_queue s) id = Some pr -> (lower <= pr)%N) ->
+    (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+      k_credit * N.of_nat (fold_right Nat.add 0%nat (List.map (weight p) (popped_ids xs))) *
+        unit p + k_update * N.of_nat (scan_credit p pol lower s) * unit p +
+      queue_phi p s)%N.
+  Proof.
+    intros p pol s xs last lower Hfits Hreach Hpath; revert lower Hreach.
+    induction Hpath as [s|s s1 xs last Hstep Hpath IH]; intros lower Hreach Hstable Hfrontier.
+    - cbn [trace_cost popped_ids flat_map List.map fold_right length]; lia.
+    - pose proof Hfits as [Hwf [Hcuts Hprio]].
+      pose proof (reachable_invariant p pol s Hwf Hprio Hreach) as Hinv.
+      assert (Hfirst : heads_unchanged pol s s1).
+      { apply (Hstable s s1); [now left|exact Hstep]. }
+      assert (Htail : stable_segment p pol xs).
+      { intros st st1 Hin Hgo; apply (Hstable st st1); [now right|exact Hgo]. }
+      destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+      pose proof (proj1 (Q.pop_min _ _ _ _ (proj1 (proj1 Hinv)) Hpop)) as Hlive.
+      assert (Hsource : exists r, source_row p id = Some r).
+      { destruct (proj1 Hinv) as [_ [_ [_ [_ Hsupport]]]].
+        destruct (Hsupport pr id Hlive) as [_ [r [Hr _]]]; now exists r. }
+      destruct Hsource as [r Hsource].
+      assert (Hrow : row_at s id = Some r).
+      { rewrite (proj1 (proj1 (proj2 (proj2 Hinv)))); exact Hsource. }
+      assert (Heval : exists a ss, eval_row p r (ws_store s) = Some (a, ss)).
+      { pose proof Hstep as Hgo; unfold step in Hgo; rewrite Hpop, Hrow in Hgo.
+        destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval;
+          [now exists a, ss|discriminate]. }
+      destruct Heval as [a [ss Heval]].
+      pose proof (T_step_stable_scan p pol s s1 lower pr id q r a ss Hfits Hreach
+        Hstep Hfirst Hpop Hsource Heval (Hfrontier id pr Hlive)) as Hone.
+      pose proof (reachable_step p pol s s1 Hreach Hstep) as Hreach1.
+      pose proof (proj2 (stable_step_frontier p pol s s1 pr id q Hfits Hreach Hstep
+        Hfirst Hpop)) as Hnext_frontier.
+      pose proof (IH pr Hreach1 Htail Hnext_frontier) as Hrest.
+      change (T_step p pol s + trace_cost p pol xs +
+        c_loopN * N.of_nat (Datatypes.S (length xs)) + queue_phi p last <=
+        k_credit * N.of_nat (fold_right Nat.add 0%nat
+          (List.map (weight p) (popped_ids (s :: xs)))) * unit p +
+        k_update * N.of_nat (scan_credit p pol lower s) * unit p + queue_phi p s)%N.
+      cbn [popped_ids flat_map]; rewrite Hpop; cbn [app List.map fold_right].
+      fold (popped_ids xs).
+      rewrite Nat2N.inj_add, Nat2N.inj_succ.
+      clear -Hone Hrest; nia.
+  Qed.
+
+  (** Stable segments include their full binary-driver callback overhead. *)
+  Lemma W5_round_strong : forall p pol s xs last,
+    fits p pol -> reachable p pol s -> wl_path (step p pol) s xs last ->
+    stable_segment p pol xs ->
+    (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+      k_round * N.of_nat (C p + D p) * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol s xs last Hfits Hreach Hpath Hstable.
+    pose proof (T_trace_stable_scan p pol s xs last 0%N Hfits Hreach Hpath Hstable
+      ltac:(intros; lia)) as Hcost.
+    pose proof (stable_popped_weight p pol s xs last Hfits Hreach Hpath Hstable) as Hrows.
+    pose proof (scan_credit_bound p pol 0%N s) as Hscans.
+    assert (Hcoefficient : (k_update <= k_credit)%N) by (unfold k_credit; nia).
+    assert (HrowsN : (N.of_nat (fold_right Nat.add 0%nat
+      (List.map (weight p) (popped_ids xs))) <= N.of_nat (C p + D p))%N) by lia.
+    assert (HscansN : (N.of_nat (scan_credit p pol 0%N s) <= N.of_nat (C p + D p))%N)
+      by lia.
+    assert (Hrow_cost : (k_credit * N.of_nat (fold_right Nat.add 0%nat
+      (List.map (weight p) (popped_ids xs))) * unit p <=
+      k_credit * N.of_nat (C p + D p) * unit p)%N).
+    { apply N.mul_le_mono_r, N.mul_le_mono_l; exact HrowsN. }
+    assert (Hscan_cost : (k_update * N.of_nat (scan_credit p pol 0%N s) * unit p <=
+      k_credit * N.of_nat (C p + D p) * unit p)%N).
+    { apply N.mul_le_mono_r, N.mul_le_mono; assumption. }
+    unfold k_round; clear -Hcost Hrow_cost Hscan_cost; nia.
+  Qed.
+
   (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
   Lemma W5_round : forall p pol s xs last,
     fits p pol -> reachable p pol s ->
@@ -5873,7 +6138,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (forall id, count_occ Pos.eq_dec (popped_ids xs) id <= 1) /\
     (trace_cost p pol xs + queue_phi p last <=
       k_round * N.of_nat (C p + D p) * unit p + queue_phi p s)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s xs last Hfits Hreachable Hpath Hstable; split.
+    - apply (proj1 (NoDup_count_occ Pos.eq_dec (popped_ids xs))).
+      eapply stable_no_repeat; eassumption.
+    - pose proof (W5_round_strong p pol s xs last Hfits Hreachable Hpath Hstable); lia.
+  Qed.
+
   (** A callback that ends a stable segment is charged to its strict head events. *)
   Lemma W5_boundary : forall p pol s s1, fits p pol -> reachable p pol s ->
     step p pol s = inl s1 -> 0 < head_events pol s s1 ->
