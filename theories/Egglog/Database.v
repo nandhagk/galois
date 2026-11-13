@@ -2130,6 +2130,75 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact Hequal.
   Qed.
 
+  (** The next positive identifier is outside the current allocation interval. *)
+  Lemma fresh_id_unallocated : forall db i, fresh_id db i -> ~ allocated db i.
+  Proof.
+    intros db i Hfresh. unfold fresh_id in Hfresh. subst i. unfold allocated.
+    assert (Hnext : Npos (N.succ_pos (ids db)) = N.succ (ids db)).
+    { destruct (ids db); reflexivity. }
+    rewrite Hnext. lia.
+  Qed.
+
+  (** A representative of an allocated identifier is still allocated. *)
+  Lemma repr_allocated : forall db i, wf db -> allocated db i -> allocated db (repr db i).
+  Proof.
+    intros db i Hwf Hi. unfold allocated, repr.
+    eapply UnionFindCodeFacts.repr_allocated.
+    - exact (wf_forest db Hwf).
+    - intro j. exact (wf_forest_members db Hwf j).
+    - exact Hi.
+  Qed.
+
+  (** Canonicalizing an allocated tuple does not introduce an unallocated identifier. *)
+  Lemma canon_key_allocated : forall db k, wf db ->
+    (forall j, In (Id j) k -> allocated db j) ->
+    forall i, In (Id i) (map (canon db) k) -> allocated db i.
+  Proof.
+    intros db k Hwf Hargs i Hin.
+    apply in_map_iff in Hin as [c [Hcell Hin]].
+    destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+    injection Hcell as <-. apply repr_allocated; [exact Hwf | exact (Hargs j Hin)].
+  Qed.
+
+  (** A satisfying interpretation gives each identifier and its representative one meaning. *)
+  Lemma repr_den : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> forall i, nu (repr db i) = nu i.
+  Proof.
+    intros M nu db Hwf Hsat i.
+    apply (sat_same V.merge M nu (view db) (repr db i) i Hsat).
+    apply (proj2 (same_repr db (repr db i) i Hwf)).
+    apply repr_idem. exact Hwf.
+  Qed.
+
+  (** A fresh constructor extension preserves the model after assigning its new output. *)
+  Lemma fresh_extension_sat : forall (M : model (V := V.t)) nu db db' f k i,
+    wf db -> fresh_id db i -> extends_by db db' f k i ->
+    kind (view db) f = Some OId ->
+    (forall j, In (Id j) k -> allocated db j) -> sat V.merge M nu (view db) ->
+    exists nu', (forall j, j <> i -> nu' j = nu j) /\
+      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
+  Proof.
+    intros M nu db db' f k i Hwf Hfresh [_ [Hkinds [Hsame Hrows]]] Hkind Hargs Hsat.
+    pose proof (fresh_id_unallocated db i Hfresh) as Hnot.
+    assert (Hmodel : exists nu', (forall j, j <> i -> nu' j = nu j) /\
+      nu' i = con M f (map (den nu) (map (canon db) k)) /\ sat V.merge M nu' (view db')).
+    { eapply (@sat_fresh_constructor_view V.t V.merge M nu (view db) (view db')
+        f (map (canon db) k) i).
+      - exact Hsat.
+      - exact Hkinds.
+      - intros g args output Hrow Hin. apply Hnot.
+        exact (wf_row_ids db Hwf g args output i Hrow Hin).
+      - exact (equality_log_fresh_occurs (runtime_equalities (db_runtime db))
+          (allocated db) (wf_log_allocated db Hwf) i Hnot).
+      - exact Hsame.
+      - exact Hrows.
+      - exact Hkind.
+      - intro Hin. apply Hnot. exact (canon_key_allocated db k Hwf Hargs i Hin). }
+    destruct Hmodel as [nu' [Hkeep [Hmeaning Hsat']]].
+    exists nu'. split; [exact Hkeep |]. split; [| exact Hsat'].
+    now rewrite (canon_key_den M nu db k Hwf Hsat) in Hmeaning.
+  Qed.
+
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
     kind (view db) f = Some OId ->
@@ -2138,7 +2207,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted. (* OPEN: establish allocation, stored-row and fresh-singleton invariants. *)
+  Proof.
+    intros M nu db f k Hwf Hkind Hargs Hsat.
+    remember (make f k db) as result eqn:Hmake. destruct result as [i db'].
+    pose proof (make_spec f k db Hwf Hkind) as Hspec. rewrite <- Hmake in Hspec.
+    destruct Hspec as [[j [Hrow [Hi Hdb]]] | [Hfresh [_ Hextension]]].
+    - subst db' i. exists nu. split; [reflexivity |]. split; [| exact Hsat].
+      rewrite (repr_den M nu db Hwf Hsat j). symmetry.
+      pose proof (sat_constructor V.merge M nu (view db) f (map (canon db) k) j Hsat Hrow)
+        as Hconstructor.
+      now rewrite (canon_key_den M nu db k Hwf Hsat) in Hconstructor.
+    - exact (fresh_extension_sat M nu db db' f k i Hwf Hfresh Hextension Hkind Hargs Hsat).
+  Qed.
 
 End Database.
 
