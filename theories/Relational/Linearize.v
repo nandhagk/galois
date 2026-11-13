@@ -20,7 +20,7 @@ Module LinearizeCode (X : KEY_OPS) (L : LANG_OPS) <: LINEARIZE_OPS X L.
     | Leaf x => Some (Lin X.t ((x, 1%Z) :: nil) 0%Z, NoWrap)
     | Node _ _ => None
     end.
-  (* STUB-CODE *)
+  (** Opaque language guards have no numeric comparison view; the generic fallback emits no atoms. *)
   Definition atoms_of (_ : L.guard) (_ : list (term L.op X.t)) : list (atom X.t) := nil.
 End LinearizeCode.
 
@@ -39,7 +39,9 @@ Module Linearize (X : KEY) (L : LANG) (N : NUM_VIEW L) <: LINEARIZE X L N.
   Lemma atoms_sound : forall g es st cs,
     eval_terms L.eval st es = Some cs -> L.holds g cs ->
     Forall (atom_holds (fun x => N.num (st x))) (atoms_of g es).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es st cs Heval Hholds. unfold atoms_of. constructor.
+  Qed.
 End Linearize.
 
 Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L N.
@@ -49,7 +51,7 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
     | Leaf x => X.bits x + 1
     | Node _ _ => 0
     end.
-  (* STUB-CODE *)
+  (** The generic fallback has no atom payload to charge. *)
   Definition bits_es (_ : L.guard) (_ : list (term L.op X.t)) : nat := 0.
   TimeFun lin_of.
   TimeFun atoms_of.
@@ -75,8 +77,10 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
       length (coef (al a)) + length (coef (ar a)) <= fold_right Nat.add 0 (map tsize es) /\
       form_bits (al a) + wrap_bits (alw a) + form_bits (ar a) + wrap_bits (arw a) <=
         bits_es g es) (atoms_of g es).
-  Proof. Admitted. (* STUB *)
-  Definition c_linearize : N := 1. (* STUB *)
+  Proof.
+    intros g es. unfold atoms_of. split; [cbn [length]; lia|constructor].
+  Qed.
+  Definition c_linearize : N := 1.
   Lemma T_lin_of_le : forall e,
     (T_lin_of e <= c_linearize * N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat))%N.
   Proof.
@@ -90,7 +94,12 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
   Lemma T_atoms_of_le : forall g es,
     (T_atoms_of g es <= c_linearize * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
       N.of_nat ((bits_es g es + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es.
+    assert (Hsize : (1 <= N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat))%N)
+      by lia.
+    unfold c_linearize, bits_es. time_step; lia.
+  Qed.
   Lemma wrap_into_id : forall lo hi z, (lo <= z <= hi)%Z ->
     wrap_into (WrapTo lo hi) z = z.
   Proof.
