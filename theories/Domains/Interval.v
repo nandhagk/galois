@@ -4,8 +4,8 @@
     For example, meeting disjoint finite intervals returns bottom.
     Builds on: IntervalSig and ThresholdsSig. *)
 
-From Stdlib Require Import ZArith Bool List Lia.
-From Argent Require Import Time Std BigO.
+From Stdlib Require Import ZArith NArith Bool List Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
 Import List.ListNotations.
 Local Open Scope Z_scope.
@@ -38,40 +38,294 @@ Module IntervalBaseT (T : THRESHOLDS_T) <: INTERVAL_SCALAR_T T.
   TimeFun interval_is_bot.
   TimeFun interval_stable_widen.
 
-  Definition c_scalar : N := 1%N. (* STUB *)
+  Local Open Scope nat_scope.
+
+  Definition c_scalar : N := (32 * (T.c_thresholds + 1))%N.
+
+  (** An infinite endpoint stores no integer bits. *)
+  Definition scalar_bnd_bits (b : bnd) : nat :=
+    match b with Fin z => Z.size_nat z | _ => 0 end.
+
+  (** Each endpoint is bounded by the interval's maximum endpoint size. *)
+  Lemma scalar_endpoint_bits : forall lo hi,
+    scalar_bnd_bits lo <= interval_bits (I lo hi) /\
+    scalar_bnd_bits hi <= interval_bits (I lo hi).
+  Proof.
+    intros lo hi. unfold interval_bits, scalar_bnd_bits.
+    split; [apply Nat.le_max_l | apply Nat.le_max_r].
+  Qed.
+
+  (** Endpoint minimum selects one of its arguments. *)
+  Lemma bound_min_bits : forall a b,
+    scalar_bnd_bits (bound_min a b) <= scalar_bnd_bits a + scalar_bnd_bits b.
+  Proof.
+    intros a b; unfold bound_min; destruct (bound_leb a b); lia.
+  Qed.
+
+  (** Endpoint maximum selects one of its arguments. *)
+  Lemma bound_max_bits : forall a b,
+    scalar_bnd_bits (bound_max a b) <= scalar_bnd_bits a + scalar_bnd_bits b.
+  Proof.
+    intros a b; unfold bound_max; destruct (bound_leb a b); lia.
+  Qed.
+
+  (** Narrowing selects an old finite endpoint or the next endpoint. *)
+  Lemma narrow_bound_bits : forall a b,
+    scalar_bnd_bits (narrow_bound a b) <= scalar_bnd_bits a + scalar_bnd_bits b.
+  Proof.
+    intros [] b; cbn [narrow_bound scalar_bnd_bits]; lia.
+  Qed.
+
+  (** Joining selects endpoints already present in its operands. *)
+  Lemma interval_join_bits : forall a b,
+    interval_bits (interval_join a b) <= interval_bits a + interval_bits b.
+  Proof.
+    intros [|lo hi] [|lo' hi']; try (cbn [interval_join interval_bits]; lia).
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    change (Nat.max (scalar_bnd_bits (bound_min lo lo'))
+      (scalar_bnd_bits (bound_max hi hi')) <=
+      interval_bits (I lo hi) + interval_bits (I lo' hi')).
+    pose proof (bound_min_bits lo lo'). pose proof (bound_max_bits hi hi').
+    apply Nat.max_lub; lia.
+  Qed.
+
+  (** Meeting either returns bottom or selects existing endpoints. *)
+  Lemma interval_meet_bits : forall a b,
+    interval_bits (interval_meet a b) <= interval_bits a + interval_bits b.
+  Proof.
+    intros [|lo hi] [|lo' hi']; try (cbn [interval_meet interval_bits]; lia).
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    unfold interval_meet.
+    destruct (bounds_nonempty (bound_max lo lo') (bound_min hi hi')).
+    - change (Nat.max (scalar_bnd_bits (bound_max lo lo'))
+        (scalar_bnd_bits (bound_min hi hi')) <=
+        interval_bits (I lo hi) + interval_bits (I lo' hi')).
+      pose proof (bound_max_bits lo lo'). pose proof (bound_min_bits hi hi').
+      apply Nat.max_lub; lia.
+    - cbn [interval_bits]; lia.
+  Qed.
+
+  (** Narrowing also selects endpoints already present in the operands. *)
+  Lemma interval_narrow_bits : forall a b,
+    interval_bits (interval_narrow a b) <= interval_bits a + interval_bits b.
+  Proof.
+    intros [|lo hi] [|lo' hi']; try (cbn [interval_narrow interval_bits]; lia).
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    change (Nat.max (scalar_bnd_bits (narrow_bound lo lo'))
+      (scalar_bnd_bits (narrow_bound hi hi')) <=
+      interval_bits (I lo hi) + interval_bits (I lo' hi')).
+    pose proof (narrow_bound_bits lo lo'). pose proof (narrow_bound_bits hi hi').
+    apply Nat.max_lub; lia.
+  Qed.
+
+  (** The tree size includes every stored threshold. *)
+  Lemma threshold_value_bits : forall ts z,
+    In z (T.vals ts) -> Z.size_nat z <= T.tree_bits ts.
+  Proof.
+    intros ts z. unfold T.tree_bits, T.zb, T.zbits.
+    induction (T.vals ts) as [|x xs IH]; cbn; intros Hin; [contradiction |].
+    destruct Hin as [<- | Hin]; [apply Nat.le_max_l |].
+    eapply Nat.le_trans; [apply IH, Hin | apply Nat.le_max_r].
+  Qed.
+
+  (** A widened lower endpoint comes from the operands or the threshold tree. *)
+  Lemma widen_lower_bits : forall ts a b,
+    scalar_bnd_bits (widen_lower ts a b) <=
+    scalar_bnd_bits a + scalar_bnd_bits b + T.tree_bits ts.
+  Proof.
+    intros ts a b. unfold widen_lower. destruct (bound_leb a b); [lia |].
+    destruct b as [|z|]; cbn [scalar_bnd_bits]; try lia.
+    destruct (T.below ts z) as [u|] eqn:Hbelow; cbn [scalar_bnd_bits]; try lia.
+    apply T.below_sound in Hbelow as [Hin _].
+    pose proof (threshold_value_bits ts u Hin); lia.
+  Qed.
+
+  (** A widened upper endpoint comes from the operands or the threshold tree. *)
+  Lemma widen_upper_bits : forall ts a b,
+    scalar_bnd_bits (widen_upper ts a b) <=
+    scalar_bnd_bits a + scalar_bnd_bits b + T.tree_bits ts.
+  Proof.
+    intros ts a b. unfold widen_upper. destruct (bound_leb b a); [lia |].
+    destruct b as [|z|]; cbn [scalar_bnd_bits]; try lia.
+    destruct (T.above ts z) as [u|] eqn:Habove; cbn [scalar_bnd_bits]; try lia.
+    apply T.above_sound in Habove as [Hin _].
+    pose proof (threshold_value_bits ts u Hin); lia.
+  Qed.
+
+  (** The maximum endpoint size charges the threshold tree only once. *)
+  Lemma interval_widen_bits : forall ts a b,
+    interval_bits (interval_widen ts a b) <=
+    interval_bits a + interval_bits b + T.tree_bits ts.
+  Proof.
+    intros ts [|lo hi] [|lo' hi']; try (cbn [interval_widen interval_bits]; lia).
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    change (Nat.max (scalar_bnd_bits (widen_lower ts lo lo'))
+      (scalar_bnd_bits (widen_upper ts hi hi')) <=
+      interval_bits (I lo hi) + interval_bits (I lo' hi') + T.tree_bits ts).
+    pose proof (widen_lower_bits ts lo lo'). pose proof (widen_upper_bits ts hi hi').
+    apply Nat.max_lub; lia.
+  Qed.
+
+  (** Endpoint comparison inspects at most the first finite endpoint's bits. *)
+  Lemma T_bound_leb_bits : forall a b,
+    (T_bound_leb a b <= N.of_nat (scalar_bnd_bits a) + 5)%N.
+  Proof.
+    intros [|x|] [|y|]; unfold T_bound_leb; time_cbn; try lia.
+    pose proof (Std.Z.T_leb_le x y). cbn [scalar_bnd_bits]; lia.
+  Qed.
+
+  (** Choosing a minimum adds one constructor branch to endpoint comparison. *)
+  Lemma T_bound_min_bits : forall a b,
+    (T_bound_min a b <= N.of_nat (scalar_bnd_bits a) + 6)%N.
+  Proof.
+    intros a b; pose proof (T_bound_leb_bits a b); unfold T_bound_min; lia.
+  Qed.
+
+  (** Choosing a maximum adds one constructor branch to endpoint comparison. *)
+  Lemma T_bound_max_bits : forall a b,
+    (T_bound_max a b <= N.of_nat (scalar_bnd_bits a) + 6)%N.
+  Proof.
+    intros a b; pose proof (T_bound_leb_bits a b); unfold T_bound_max; lia.
+  Qed.
+
+  (** Testing nonemptiness performs at most one endpoint comparison. *)
+  Lemma T_bounds_nonempty_bits : forall a b,
+    (T_bounds_nonempty a b <= N.of_nat (scalar_bnd_bits a) + 6)%N.
+  Proof.
+    intros a b; pose proof (T_bound_leb_bits a b).
+    destruct a, b; unfold T_bounds_nonempty; cbn beta iota zeta; lia.
+  Qed.
+  (** Inclusion compares two endpoint pairs and combines their answers. *)
+  Lemma T_interval_leb_bits : forall a b,
+    (T_interval_leb a b <= N.of_nat (interval_bits a + interval_bits b) + 12)%N.
+  Proof.
+    intros [|lo hi] [|lo' hi']; unfold T_interval_leb; cbn beta iota zeta; try lia.
+    pose proof (T_bound_leb_bits lo' lo). pose proof (T_bound_leb_bits hi hi').
+    pose proof (Std.Datatypes.T_andb_le (bound_leb lo' lo) (bound_leb hi hi')).
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    rewrite Nat2N.inj_add. lia.
+  Qed.
 
   (** Scalar inclusion charges the raw endpoint bits. *)
   Lemma T_interval_leb_le : forall a b,
     (T_interval_leb a b <= c_scalar * N.of_nat (interval_bits a + interval_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (T_interval_leb_bits a b).
+    unfold c_scalar. rewrite Nat2N.inj_add. nia.
+  Qed.
+
   (** Scalar join charges the raw endpoint bits. *)
   Lemma T_interval_join_le : forall a b,
     (T_interval_join a b <= c_scalar * N.of_nat (interval_bits a + interval_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|lo hi] [|lo' hi']; unfold T_interval_join; cbn beta iota zeta;
+      unfold c_scalar; rewrite !Nat2N.inj_add; try nia.
+    pose proof (T_bound_min_bits lo lo'). pose proof (T_bound_max_bits hi hi').
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    nia.
+  Qed.
+
   (** Scalar meet charges the raw endpoint bits. *)
   Lemma T_interval_meet_le : forall a b,
     (T_interval_meet a b <= c_scalar * N.of_nat (interval_bits a + interval_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|lo hi] [|lo' hi']; unfold T_interval_meet; cbn beta iota zeta;
+      unfold c_scalar; rewrite !Nat2N.inj_add; try nia.
+    pose proof (T_bound_max_bits lo lo'). pose proof (T_bound_min_bits hi hi').
+    pose proof (T_bounds_nonempty_bits (bound_max lo lo') (bound_min hi hi')).
+    pose proof (bound_max_bits lo lo').
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    nia.
+  Qed.
+
   (** Scalar narrowing reads the endpoint constructors. *)
   Lemma T_interval_narrow_le : forall a b, (T_interval_narrow a b <= c_scalar)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|lo hi] [|lo' hi']; unfold T_interval_narrow, T_narrow_bound;
+      cbn beta iota zeta; unfold c_scalar; nia.
+  Qed.
+
   (** Scalar bottom recognition reads the interval constructor. *)
   Lemma T_interval_is_bot_le : forall a, (T_interval_is_bot a <= c_scalar)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a; unfold T_interval_is_bot, c_scalar; nia.
+  Qed.
+
   (** Scalar point recognition compares both finite endpoints. *)
   Lemma T_interval_singleton_le : forall a,
     (T_interval_singleton a <= c_scalar * N.of_nat (interval_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|[|lo|] [|hi|]];
+      unfold T_interval_singleton, T_interval_finite, T_interval_finite_helper,
+        interval_finite, interval_finite_helper;
+      cbn beta iota zeta; unfold c_scalar; rewrite Nat2N.inj_add; try nia.
+    pose proof (Std.Z.T_eqb_le lo hi).
+    pose proof (scalar_endpoint_bits (Fin lo) (Fin hi)) as [Hlo Hhi].
+    cbn [scalar_bnd_bits] in Hlo. nia.
+  Qed.
+
+  (** Lower widening charges one comparison and at most one threshold search. *)
+  Lemma T_widen_lower_bits : forall ts a b,
+    (T_widen_lower ts a b <= N.of_nat (scalar_bnd_bits a) + 6 +
+      T.c_thresholds * N.of_nat ((T.depth ts + 1) * (T.tree_bits ts + 1)))%N.
+  Proof.
+    intros ts a b. pose proof (T_bound_leb_bits a b).
+    unfold T_widen_lower. destruct (bound_leb a b); [nia |].
+    destruct b as [|z|]; cbn beta iota zeta; try nia.
+    pose proof (T.T_below_le ts z). rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  (** Upper widening uses the next endpoint as its comparison's first argument. *)
+  Lemma T_widen_upper_bits : forall ts a b,
+    (T_widen_upper ts a b <= N.of_nat (scalar_bnd_bits b) + 6 +
+      T.c_thresholds * N.of_nat ((T.depth ts + 1) * (T.tree_bits ts + 1)))%N.
+  Proof.
+    intros ts a b. pose proof (T_bound_leb_bits b a).
+    unfold T_widen_upper. destruct (bound_leb b a); [nia |].
+    destruct b as [|z|]; cbn beta iota zeta; try nia.
+    pose proof (T.T_above_le ts z). rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  (** A scalar widening searches for at most two endpoints. *)
+  Lemma T_interval_widen_bits : forall ts a b,
+    (T_interval_widen ts a b <= N.of_nat (interval_bits a + interval_bits b) + 13 +
+      2 * T.c_thresholds * N.of_nat ((T.depth ts + 1) * (T.tree_bits ts + 1)))%N.
+  Proof.
+    intros ts [|lo hi] [|lo' hi']; unfold T_interval_widen; cbn beta iota zeta; try nia.
+    pose proof (T_widen_lower_bits ts lo lo'). pose proof (T_widen_upper_bits ts hi hi').
+    pose proof (scalar_endpoint_bits lo hi) as [Hlo Hhi].
+    pose proof (scalar_endpoint_bits lo' hi') as [Hlo' Hhi'].
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
   (** Scalar widening pays for inclusion and the threshold search paths. *)
   Lemma T_interval_stable_widen_le : forall ts a b,
     (T_interval_stable_widen ts a b <= c_scalar * N.of_nat
       (interval_bits a + interval_bits b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts a b. pose proof (T_interval_leb_bits b a).
+    pose proof (T_interval_widen_bits ts a b).
+    unfold T_interval_stable_widen, c_scalar.
+    rewrite !Nat2N.inj_add in *.
+    destruct (interval_leb b a); nia.
+  Qed.
+
   (** Widening selects endpoints from its operands, thresholds and infinities. *)
   Lemma interval_stable_widen_bits : forall ts a b,
     (interval_bits (interval_stable_widen ts a b) <=
       interval_bits a + interval_bits b + T.tree_bits ts)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts a b. unfold interval_stable_widen.
+    destruct (interval_leb b a); [lia | apply interval_widen_bits].
+  Qed.
+
+  Local Close Scope nat_scope.
 End IntervalBaseT.
 
 Module IntervalCode (L : Z_LANGUAGE_OPS) (T : THRESHOLDS_OPS) <: INTERVAL_OPS L T.
