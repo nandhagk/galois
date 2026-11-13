@@ -204,7 +204,7 @@ Definition zlinear_op {X} (o : zview) (fs : list (lin X)) : option (lin X) :=
 
 TimeFun zlinear_op.
 
-(** Integer linearization recursively recognizes every affine operand. *)
+(** Integer linearization recursively recognizes affine operands. *)
 Fixpoint zlinear_form {X} (e : term zview X) : option (lin X) :=
   match e with
   | Leaf x => Some (linear_var x)
@@ -1396,4 +1396,109 @@ Proof.
     cbn [fst snd width_mass] in Hcoef, Hbits, Hwidth.
   - pose proof (word_range_bits is_signed w). split; [exact Hcoef|lia].
   - cbn [range_bits]. split; [exact Hcoef|lia].
+Qed.
+
+(** * Bounds for the derived affine clocks *)
+
+(** Mapping pays the callback budget once for each actual input element. *)
+Lemma map_time_forall : forall A B (f : A -> B) (T_f : A -> N) k xs,
+  Forall (fun x => (T_f x <= k)%N) xs ->
+  (ListDef.T_map f T_f xs <= (k + 1) * N.of_nat ((length xs)%nat) + 1)%N.
+Proof.
+  intros A B f T_f k xs Hbounds.
+  induction Hbounds as [|x xs Hhead Htail IH]; time_step.
+Qed.
+
+(** Mapping also sums callback budgets weighted by each input's syntax size. *)
+Lemma map_time_weighted : forall A B (f : A -> B) (T_f : A -> N)
+    (size : A -> nat) c k xs,
+  Forall (fun x => (T_f x <= c * N.of_nat ((size x)%nat) * k)%N) xs ->
+  (ListDef.T_map f T_f xs <=
+    c * N.of_nat ((fold_right Nat.add 0 (map size xs))%nat) * k +
+      N.of_nat ((length xs)%nat) + 1)%N.
+Proof.
+  intros A B f T_f size c k xs Hbounds.
+  induction Hbounds as [|x xs Hhead Htail IH]; time_step;
+    rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+
+(** Optional-result sequencing inspects each list cell at most once. *)
+Lemma sequence_time : forall A (xs : list (option A)),
+  (T_sequence xs <= N.of_nat ((length xs)%nat) + 1)%N.
+Proof.
+  intros A xs. induction xs as [|[x|] xs IH]; time_step.
+Qed.
+
+(** Adding forms pays for list concatenation and one integer addition. *)
+Lemma linear_add_time : forall X (key_bits : X -> nat) f g,
+  (T_linear_add f g <=
+    32 * N.of_nat ((length (coef f) + length (coef g) + 1)%nat) *
+      N.of_nat (((linear_bits key_bits f + linear_bits key_bits g + 1) ^ 2)%nat))%N.
+Proof.
+  intros X key_bits f g.
+  pose proof (proj1 (proj1 (linear_bits_components X key_bits f
+    (linear_bits key_bits f)) (Nat.le_refl _))) as Hconstf.
+  pose proof (proj1 (proj1 (linear_bits_components X key_bits g
+    (linear_bits key_bits g)) (Nat.le_refl _))) as Hconstg.
+  time_step; rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *; nia.
+Qed.
+
+(** Two factors whose combined bit size fits a budget have a quadratic multiplication cost. *)
+Lemma integer_product_time_budget : forall a z budget,
+  (N.of_nat ((Z.size_nat a + Z.size_nat z + 1)%nat) <= budget)%N ->
+  (Z.T_mul a z <= 2 * (budget * budget))%N.
+Proof.
+  intros a z budget Hbudget. rewrite !Nat2N.inj_add in Hbudget.
+  eapply N.le_trans; [apply Z.T_mul_le|].
+  replace (2 * (budget * budget))%N with (budget * (2 * budget))%N by ring.
+  apply N.mul_le_mono; lia.
+Qed.
+
+(** A fixed scalar and a coefficient bit limit give one positive square budget for every product. *)
+Lemma integer_product_time_envelope : forall a bits,
+  (1 <= N.of_nat (((Z.size_nat a + bits + 1) ^ 2)%nat))%N /\
+  forall z, Z.size_nat z <= bits ->
+    (Z.T_mul a z <= 2 * N.of_nat (((Z.size_nat a + bits + 1) ^ 2)%nat))%N.
+Proof.
+  intros a bits. set (budget := N.of_nat ((Z.size_nat a + bits + 1)%nat)).
+  assert (Hsquare : N.of_nat (((Z.size_nat a + bits + 1) ^ 2)%nat) =
+    (budget * budget)%N).
+  { unfold budget. cbn [Nat.pow]. rewrite Nat.mul_1_r, Nat2N.inj_mul. reflexivity. }
+  rewrite Hsquare. split.
+  - change (1 * 1 <= budget * budget)%N. apply N.mul_le_mono; unfold budget; lia.
+  - intros z Hz. apply integer_product_time_budget. unfold budget. lia.
+Qed.
+
+(** Scaling pays one integer product for every coefficient and the constant. *)
+Lemma linear_scale_time : forall X (key_bits : X -> nat) a f,
+  (T_linear_scale a f <= 32 * N.of_nat ((length (coef f) + 1)%nat) *
+    N.of_nat (((Z.size_nat a + linear_bits key_bits f + 1) ^ 2)%nat))%N.
+Proof.
+  intros X key_bits a f.
+  destruct (proj1 (linear_bits_components X key_bits f (linear_bits key_bits f))
+    (Nat.le_refl _)) as [Hconst Hcoeff].
+  set (b := linear_bits key_bits f) in *. clearbody b.
+  destruct (integer_product_time_envelope a b) as [Hcharge Hscalar].
+  set (charge := N.of_nat (((Z.size_nat a + b + 1) ^ 2)%nat)) in *. clearbody charge.
+  time_unfold (@T_linear_scale). time_simpl. time_cbn.
+  match goal with
+  | |- context [ListDef.T_map ?fmap ?tmap ?xs] =>
+    pose proof (map_time_forall _ _ fmap tmap (2 * charge + 3)%N xs) as Hmap;
+    assert (Hcallbacks : Forall (fun p => (tmap p <= 2 * charge + 3)%N) xs);
+    [ eapply Forall_impl; [|exact Hcoeff];
+      intros [x c] Hbound; cbn [fst snd] in Hbound;
+      pose proof (Hscalar c ltac:(lia)); time_simpl; time_cbn; lia
+    | specialize (Hmap Hcallbacks) ]
+  end.
+  pose proof (Hscalar (cst f) Hconst) as Hconstant.
+  rewrite !Nat2N.inj_add. change (N.of_nat 1%nat) with 1%N in *.
+  set (count := N.of_nat (length (coef f))) in *. clearbody count.
+  assert (Hcount : (count <= count * charge)%N).
+  { replace count with (count * 1)%N at 1 by ring.
+    apply N.mul_le_mono; [apply N.le_refl|exact Hcharge]. }
+  replace ((2 * charge + 3 + 1) * count + 1)%N with
+    (2 * (count * charge) + 4 * count + 1)%N in Hmap by ring.
+  replace (32 * (count + 1) * charge)%N with
+    (32 * (count * charge) + 32 * charge)%N by ring.
+  set (product := (count * charge)%N) in *. clearbody product. lia.
 Qed.
