@@ -1882,9 +1882,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Definition c_num : N :=
     (281474976710656 * (M.c_map + K.c_key + X.c_key + 1) *
       (M.c_map + K.c_key + X.c_key + 1))%N.
-  Lemma T_assume_le : forall g es s,
-    (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
   (** Signed literal encodings add the Boolean sign bit to the doubled variable code. *)
   Lemma literal_bits : forall x sign,
     K.bits (x, sign) = 2 * X.bits x + (if sign then 1 else 0).
@@ -9232,6 +9229,862 @@ Definition shift_column_work (target : K.t) (d : Z) (row : M.t Z) : nat :=
           clearbody charge work. time_simpl. cbn beta iota zeta. lia.
       + set (charge := (k_assign * work)%N) in *.
         clearbody charge work. time_simpl. cbn beta iota zeta. lia.
+  Qed.
+
+  Definition short_coefficients (cs : list (X.t * Z)) : Prop :=
+    length cs <= 2 /\ Forall (fun p => Z.size_nat (snd p) <= 2) cs.
+
+  Definition short_form (f : lin X.t) : Prop := short_coefficients (coef f).
+
+  Definition shape_bits (shape : oct_shape) : nat :=
+    match shape with OctConstant => 0 | OctDifference i j _ => K.bits i + K.bits j end.
+
+  Definition coefficient_key (k : K.t) (cs : list (X.t * Z)) : Prop :=
+    exists x a, fst k = x /\ In (x, a) cs.
+
+  Definition shape_keys (shape : oct_shape) (cs : list (X.t * Z)) : Prop :=
+    match shape with
+    | OctConstant => True
+    | OctDifference i j _ => coefficient_key i cs /\ coefficient_key j cs
+    end.
+
+  Lemma short_coefficients_nil : short_coefficients nil.
+  Proof.
+    split; [cbn; lia|constructor].
+  Qed.
+
+  Lemma short_coefficients_one : forall x a, Z.size_nat a <= 2 ->
+    short_coefficients ((x, a) :: nil).
+  Proof.
+    intros x a Ha. split; [cbn; lia|]. constructor; [exact Ha|constructor].
+  Qed.
+
+  Lemma short_coefficients_two : forall x a y b,
+    Z.size_nat a <= 2 -> Z.size_nat b <= 2 ->
+    short_coefficients ((x, a) :: (y, b) :: nil).
+  Proof.
+    intros x a y b Ha Hb. split; [cbn; lia|].
+    constructor; [exact Ha|]. constructor; [exact Hb|constructor].
+  Qed.
+
+  Lemma coefficient_key_member : forall cs x a k,
+    fst k = x -> In (x, a) cs -> coefficient_key k cs.
+  Proof.
+    intros cs x a k Hkey Hin. exists x, a. now split.
+  Qed.
+
+  Lemma coefficient_key_flip : forall k cs,
+    coefficient_key k cs -> coefficient_key (flip k) cs.
+  Proof.
+    intros k cs [x [a [Hkey Hin]]]. exists x, a. split; [|exact Hin].
+    unfold flip. cbn [fst]. exact Hkey.
+  Qed.
+
+  (** Literal encodings charge twice the variable code and one sign bit. *)
+  Lemma coefficient_key_bits : forall f k,
+    coefficient_key k (coef f) -> K.bits k <= 2 * F.form_bits f + 1.
+  Proof.
+    intros f [y sign] [x [a [Hkey Hin]]]. cbn [fst] in Hkey. subst y.
+    assert (Hbits : X.bits x <= F.form_bits f).
+    { destruct f as [cs c]. unfold F.form_bits. cbn [coef cst] in *.
+      revert Hin. induction cs as [|[z b] cs IH]; intro Hin; [contradiction|].
+      cbn in Hin |- *. destruct Hin as [Heq|Hin].
+      - injection Heq as Hz Hb. subst z b.
+        pose proof (Nat.le_max_l (X.bits x + Z.size_nat a)
+          (fold_right Nat.max (Z.size_nat c)
+            (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) cs))). lia.
+      - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r]. }
+    pose proof (signed_bits_le x sign). lia.
+  Qed.
+
+  Lemma signed_unit_shape : forall x a k, signed_unit x a = Some k ->
+    Z.size_nat a <= 2 /\ fst k = x.
+  Proof.
+    intros x a k Hunit. unfold signed_unit in Hunit.
+    destruct (a =? 1)%Z eqn:Hplus.
+    - apply Z.eqb_eq in Hplus. subst a. injection Hunit as <-.
+      split; [change (1 <= 2); lia|reflexivity].
+    - destruct (a =? -1)%Z eqn:Hminus; [|discriminate].
+      apply Z.eqb_eq in Hminus. subst a. injection Hunit as <-.
+      split; [change (1 <= 2); lia|reflexivity].
+  Qed.
+
+  Lemma reverse_shape_bits : forall shape,
+    shape_bits (reverse_shape shape) = shape_bits shape.
+  Proof.
+    intros [|i j double]; cbn [reverse_shape shape_bits]; lia.
+  Qed.
+
+  (** Accepted signed differences use at most two small coefficients and only their variables. *)
+  Lemma difference_pair_shape : forall cs shape,
+    difference_pair cs = Some shape ->
+    short_coefficients cs /\ shape_keys shape cs.
+  Proof.
+    intros cs shape Hpair. destruct cs as [|[x a] cs].
+    - cbn [difference_pair] in Hpair. injection Hpair as <-.
+      split; [apply short_coefficients_nil|constructor].
+    - destruct cs as [|[y b] cs].
+      + cbn [difference_pair] in Hpair.
+        destruct (signed_unit x a) as [k|] eqn:Hunit.
+        * injection Hpair as <-. destruct (signed_unit_shape x a k Hunit) as [Ha Hkey].
+          split; [now apply short_coefficients_one|].
+          assert (Hmember : coefficient_key k ((x, a) :: nil)).
+          { apply (coefficient_key_member _ x a); [exact Hkey|now left]. }
+          split; [now apply coefficient_key_flip|exact Hmember].
+        * destruct (a =? 2)%Z eqn:Htwo.
+          -- apply Z.eqb_eq in Htwo. subst a. injection Hpair as <-.
+             split; [apply short_coefficients_one; change (2 <= 2); lia|].
+             split; (apply (coefficient_key_member _ x 2%Z); [reflexivity|now left]).
+          -- destruct (a =? -2)%Z eqn:Hminus; [|discriminate].
+             apply Z.eqb_eq in Hminus. subst a. injection Hpair as <-.
+             split; [apply short_coefficients_one; change (2 <= 2); lia|].
+             split; (apply (coefficient_key_member _ x (-2)%Z); [reflexivity|now left]).
+      + destruct cs as [|p cs]; [|discriminate].
+        cbn [difference_pair] in Hpair.
+        destruct (signed_unit x a) as [i|] eqn:Hi; [|discriminate].
+        destruct (signed_unit y b) as [j|] eqn:Hj; [|discriminate].
+        injection Hpair as <-.
+        destruct (signed_unit_shape x a i Hi) as [Ha Hix].
+        destruct (signed_unit_shape y b j Hj) as [Hb Hjy].
+        split; [now apply short_coefficients_two|].
+        split.
+        * apply coefficient_key_flip. apply (coefficient_key_member _ y b);
+            [exact Hjy|right; now left].
+        * apply (coefficient_key_member _ x a); [exact Hix|now left].
+  Qed.
+
+  Lemma shape_keys_bits : forall f shape, shape_keys shape (coef f) ->
+    shape_bits shape <= 4 * (F.form_bits f + 1).
+  Proof.
+    intros f [|i j double] Hkeys; [cbn [shape_bits]; lia|].
+    destruct Hkeys as [Hi Hj].
+    pose proof (coefficient_key_bits f i Hi).
+    pose proof (coefficient_key_bits f j Hj). cbn [shape_bits]. lia.
+  Qed.
+
+  (** Accepted atoms contain only short forms and their signed endpoint codes fit the form bits. *)
+  Lemma difference_forms_shape : forall l r shape,
+    difference_forms l r = Some shape ->
+    short_form l /\ short_form r /\
+    shape_bits shape <= 4 * (F.form_bits l + F.form_bits r + 1).
+  Proof.
+    intros [ls lc] [rs rc] shape Hpair.
+    unfold difference_forms in Hpair. cbn [coef] in Hpair.
+    destruct ls as [|[x a] ls].
+    - destruct (difference_pair rs) as [found|] eqn:Hrs; [|discriminate].
+      injection Hpair as <-.
+      destruct (difference_pair_shape rs found Hrs) as [Hshort Hkeys].
+      split; [apply short_coefficients_nil|]. split; [exact Hshort|].
+      rewrite reverse_shape_bits.
+      pose proof (shape_keys_bits (Lin X.t rs rc) found Hkeys). lia.
+    - destruct rs as [|[y b] rs].
+      + destruct (difference_pair_shape ((x, a) :: ls) shape Hpair) as [Hshort Hkeys].
+        split; [exact Hshort|]. split; [apply short_coefficients_nil|].
+        pose proof (shape_keys_bits (Lin X.t ((x, a) :: ls) lc) shape Hkeys). lia.
+      + destruct ls as [|p ls]; [|discriminate].
+        destruct rs as [|q rs]; [|discriminate].
+        destruct (signed_unit x a) as [i|] eqn:Hi; [|discriminate].
+        destruct (signed_unit y b) as [j|] eqn:Hj; [|discriminate].
+        injection Hpair as <-.
+        destruct (signed_unit_shape x a i Hi) as [Ha Hix].
+        destruct (signed_unit_shape y b j Hj) as [Hb Hjy].
+        split; [now apply short_coefficients_one|].
+        split; [now apply short_coefficients_one|].
+        assert (Hleft : coefficient_key i (coef (Lin X.t ((x, a) :: nil) lc))).
+        { apply (coefficient_key_member _ x a); [exact Hix|now left]. }
+        assert (Hright : coefficient_key j (coef (Lin X.t ((y, b) :: nil) rc))).
+        { apply (coefficient_key_member _ y b); [exact Hjy|now left]. }
+        pose proof (coefficient_key_bits (Lin X.t ((x, a) :: nil) lc) i Hleft).
+        pose proof (coefficient_key_bits (Lin X.t ((y, b) :: nil) rc) j Hright).
+        cbn [shape_bits]. lia.
+  Qed.
+
+  Lemma T_reverse_shape_le : forall shape, (T_reverse_shape shape <= 1)%N.
+  Proof.
+    intros [|i j double]; time_step.
+  Qed.
+
+  (** Probing rejects a third coefficient immediately and otherwise reads at most two integer tags. *)
+  Lemma T_difference_pair_small : forall cs bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) cs ->
+    (T_difference_pair cs <= 256 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros cs bits Hbits. destruct cs as [|[x a] cs]; [time_step|].
+    inversion Hbits as [|p ps Ha Htail]; subst. cbn [snd] in Ha.
+    destruct cs as [|[y b] cs]; [time_step|].
+    inversion Htail as [|p ps Hb Hrest]; subst. cbn [snd] in Hb.
+    destruct cs; time_step.
+  Qed.
+
+  Lemma T_difference_forms_small : forall l r bits,
+    Forall (fun p => Z.size_nat (snd p) <= bits) (coef l) ->
+    Forall (fun p => Z.size_nat (snd p) <= bits) (coef r) ->
+    (T_difference_forms l r <= 1024 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros [ls lc] [rs rc] bits Hl Hr. cbn [coef] in Hl, Hr.
+    pose proof (T_difference_pair_small ls bits Hl) as Hleft.
+    pose proof (T_difference_pair_small rs bits Hr) as Hright.
+    destruct ls as [|[x a] ls].
+    - unfold T_difference_forms. cbn beta iota zeta. time_simpl. time_cbn.
+      destruct (difference_pair rs) as [found|].
+      + pose proof (T_reverse_shape_le found). time_simpl. time_cbn. lia.
+      + time_simpl. time_cbn. lia.
+    - destruct rs as [|[y b] rs].
+      + inversion Hl as [|p ps Ha Htail]; subst. cbn [snd] in Ha.
+        destruct ls as [|[y b] ls]; [time_step|].
+        inversion Htail as [|p ps Hb Hrest]; subst. cbn [snd] in Hb.
+        destruct ls; time_step.
+      + inversion Hl as [|p ps Ha Hls]; subst. cbn [snd] in Ha.
+        inversion Hr as [|p ps Hb Hrs]; subst. cbn [snd] in Hb.
+        destruct ls, rs; time_step.
+  Qed.
+
+  (** A recognized short form has at most three affine summands. *)
+  Lemma form_fragment_short_abs : forall m f cs,
+    incl cs (coef f) -> length cs <= 2 ->
+    rel_bounds_abs (2 ^ (ell m + F.form_bits f + 2))
+      (rel_form_bounds (variable_bounds m) (Lin X.t cs (cst f))).
+  Proof.
+    intros m f cs Hincl Hcount.
+    eapply rel_bounds_abs_mono with
+      (lower := (length cs + 1) * 2 ^ F.form_bits f * 2 ^ ell m).
+    - rewrite !Nat.pow_add_r. change ((length cs + 1) * 2 ^ F.form_bits f * 2 ^ ell m <=
+        (2 ^ ell m * 2 ^ F.form_bits f) * 4).
+      replace ((2 ^ ell m * 2 ^ F.form_bits f) * 4) with
+        ((4 * 2 ^ F.form_bits f) * 2 ^ ell m) by ring.
+      apply Nat.mul_le_mono_r, Nat.mul_le_mono_r. lia.
+    - apply rel_form_bounds_abs.
+      + cbn [cst]. apply zbits_abs_bound, form_bits_constant.
+      + cbn [coef]. apply Forall_forall. intros p Hin. apply zbits_abs_bound.
+        apply form_bits_coefficient, Hincl, Hin.
+      + apply variable_bounds_abs.
+      + pose proof (Nat.pow_nonzero 2 (F.form_bits f) ltac:(lia)). lia.
+      + pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia.
+  Qed.
+
+  (** Small coefficients make each supported assumption-form step linear in its bits. *)
+  Lemma form_bounds_short_step_time : forall m f p after,
+    short_form f -> In p (coef f) -> incl after (coef f) -> length after <= 2 ->
+    (16 + T_variable_bounds m (fst p) +
+      T_rel_scale_bounds (snd p) (variable_bounds m (fst p)) +
+      T_rel_add_bounds (rel_scale_bounds (snd p) (variable_bounds m (fst p)))
+        (rel_form_bounds (variable_bounds m) (Lin X.t after (cst f))) <=
+      512 * (M.c_map + 1) * N.of_nat (ell m + F.form_bits f + 1))%N.
+  Proof.
+    intros m f p after [_ Hsmall] Hin Hincl Hcount.
+    assert (Hcoefficient : Z.size_nat (snd p) <= 2).
+    { apply Forall_forall with (x := p) in Hsmall; assumption. }
+    assert (Hproduct : rel_bounds_abs (2 ^ (ell m + 2))
+      (rel_scale_bounds (snd p) (variable_bounds m (fst p)))).
+    { replace (2 ^ (ell m + 2)) with (2 ^ 2 * 2 ^ ell m)
+        by (rewrite Nat.pow_add_r; ring).
+      apply rel_bounds_abs_scale.
+      - now apply zbits_abs_bound.
+      - apply variable_bounds_abs.
+      - cbn. lia.
+      - pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    pose proof (form_fragment_short_abs m f after Hincl Hcount) as Hsuffix.
+    pose proof (T_variable_bounds_small m (fst p)) as Hquery.
+    pose proof (form_bits_key f p Hin) as Hkey.
+    pose proof (rel_scale_bounds_small_time _ _ _ Hcoefficient
+      (variable_bounds_abs m (fst p))) as Hscale.
+    pose proof (rel_add_bounds_time _ _ _ _ Hproduct Hsuffix) as Hadd.
+    set (unit := N.of_nat (ell m + F.form_bits f + 1)).
+    assert (Hpositive : (1 <= unit)%N) by (unfold unit; lia).
+    assert (Hquery_bits : (N.of_nat (X.bits (fst p) + ell m + 1) <= unit)%N).
+    { unfold unit. apply time_of_nat_le. lia. }
+    assert (Hscale_bits : (N.of_nat (ell m + 1) <= unit)%N).
+    { unfold unit. apply time_of_nat_le. lia. }
+    assert (Hadd_bits : (N.of_nat (ell m + 2 + (ell m + F.form_bits f + 2) + 1) <=
+      5 * unit)%N).
+    { unfold unit. replace (5 * N.of_nat (ell m + F.form_bits f + 1))%N with
+        (N.of_nat (5 * (ell m + F.form_bits f + 1))) by
+          (rewrite Nat2N.inj_mul; reflexivity).
+      apply time_of_nat_le. lia. }
+    assert (Hquery' : (T_variable_bounds m (fst p) <= 128 * (M.c_map + 1) * unit)%N).
+    { eapply N.le_trans; [exact Hquery|]. now apply N.mul_le_mono_l. }
+    assert (Hscale' : (T_rel_scale_bounds (snd p) (variable_bounds m (fst p)) <= 128 * unit)%N).
+    { eapply N.le_trans; [exact Hscale|]. now apply N.mul_le_mono_l. }
+    assert (Hadd' : (T_rel_add_bounds
+      (rel_scale_bounds (snd p) (variable_bounds m (fst p)))
+      (rel_form_bounds (variable_bounds m) (Lin X.t after (cst f))) <= 80 * unit)%N).
+    { eapply N.le_trans; [exact Hadd|].
+      replace (80 * unit)%N with (16 * (5 * unit))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hcharge : (unit <= (M.c_map + 1) * unit)%N) by nia.
+    replace (128 * (M.c_map + 1) * unit)%N with
+      (128 * ((M.c_map + 1) * unit))%N in Hquery' by ring.
+    replace (512 * (M.c_map + 1) * unit)%N with
+      (512 * ((M.c_map + 1) * unit))%N by ring.
+    set (charge := ((M.c_map + 1) * unit)%N) in *.
+    clear Hsmall Hin Hincl Hcount Hcoefficient Hproduct Hsuffix Hquery Hkey Hscale Hadd
+      Hquery_bits Hscale_bits Hadd_bits. clearbody charge unit. lia.
+  Qed.
+
+  (** The short affine fold makes at most two linear-cost steps. *)
+  Lemma T_form_bounds_short : forall m f,
+    short_form f ->
+    (T_form_bounds m f <=
+      4096 * (M.c_map + 1) * N.of_nat (ell m + F.form_bits f + 1))%N.
+  Proof.
+    intros m [cs c] Hshort.
+    pose proof (proj1 Hshort) as Hcount. cbn [coef] in Hcount.
+    time_unfold (@T_form_bounds). time_simpl. time_cbn.
+    time_unfold (@T_rel_form_bounds). time_simpl. time_cbn.
+    lazymatch goal with
+    | |- context [Std.List.T_fold_right ?ff ?tf ?seed ?xs] =>
+      assert (Hfold : (Std.List.T_fold_right ff tf seed xs <=
+        (512 * ((M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1)) + 1) *
+          N.of_nat (length xs) + 1)%N)
+    end.
+    { apply rel_fold_right_time. intros before p after Heq.
+      assert (Hin : In p (coef (Lin X.t cs c))).
+      { cbn [coef]. rewrite Heq. apply in_or_app. right. now left. }
+      assert (Hincl : incl after (coef (Lin X.t cs c))).
+      { intros q Hq. cbn [coef]. rewrite Heq. apply in_or_app. right. now right. }
+      assert (Hafter : length after <= 2).
+      { rewrite Heq, length_app in Hcount. cbn [length] in Hcount. lia. }
+      pose proof (form_bounds_short_step_time m (Lin X.t cs c) p after
+        Hshort Hin Hincl Hafter) as Hstep.
+      unfold rel_form_bounds in Hstep. cbn [coef cst] in Hstep.
+      replace (512 * (M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1))%N with
+        (512 * ((M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1)))%N
+        in Hstep by ring.
+      eapply N.le_trans; [|exact Hstep]. time_simpl. time_cbn. lia. }
+    pose proof (time_of_nat_le _ _ Hcount) as HcountN.
+    change (N.of_nat (length cs) <= 2)%N in HcountN.
+    set (unit := ((M.c_map + 1) * N.of_nat (ell m + F.form_bits (Lin X.t cs c) + 1))%N) in *.
+    assert (Hpositive : (1 <= unit)%N) by (unfold unit; nia).
+    lazymatch goal with |- (?actual <= ?rhs)%N =>
+      replace rhs with (4096 * unit)%N by
+        (unfold unit, F.form_bits; cbn [coef cst]; ring)
+    end.
+    pose proof (N.mul_le_mono_l _ _ (512 * unit + 1)%N HcountN) as Hsteps.
+    replace ((512 * unit + 1) * 2)%N with (1024 * unit + 2)%N in Hsteps by ring.
+    clear -Hfold Hsteps Hpositive. clearbody unit. lia.
+  Qed.
+
+  (** A supported wrap test charges the short form and its explicitly stored endpoints. *)
+  Lemma T_form_exact_short : forall m f r,
+    short_form f ->
+    (T_form_exact m f r <= 8192 * (M.c_map + 1) *
+      N.of_nat (ell m + F.form_bits f + F.wrap_bits r + 1))%N.
+  Proof.
+    intros m f r Hshort.
+    pose proof (T_form_bounds_short m f Hshort) as Hform.
+    pose proof (form_fragment_short_abs m f (coef f) (incl_refl _) (proj1 Hshort)) as Habs.
+    change (rel_bounds_abs (2 ^ (ell m + F.form_bits f + 2)) (form_bounds m f)) in Habs.
+    pose proof (rel_wrap_exact_time r (form_bounds m f) (F.wrap_bits r)
+      (ell m + F.form_bits f + 2) (Nat.le_refl _) Habs) as Hwrap.
+    clear Hshort Habs. unfold F.form_bits, F.wrap_bits in Hform, Hwrap |- *.
+    unfold T_form_exact. destruct r; time_simpl; time_cbn;
+      rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Unary signed comparisons add at most one bit when doubling their bound. *)
+  Lemma scale_constraint_bits : forall double d bits,
+    Z.size_nat d <= bits -> Z.size_nat (scale_constraint double d) <= bits + 1.
+  Proof.
+    intros [] d bits Hbits; cbn [scale_constraint]; [|lia].
+    replace (2 * d)%Z with (d + d)%Z by ring. now apply zbits_add_bound.
+  Qed.
+
+  Lemma T_scale_constraint_small : forall double d,
+    (T_scale_constraint double d <= 32 * N.of_nat (Z.size_nat d + 1))%N.
+  Proof.
+    intros double d.
+    pose proof (rel_mul_small_time 2%Z d (Z.size_nat d)
+      ltac:(change (2 <= 2); lia) (Nat.le_refl _)) as Hmul.
+    assert (Hunit : (1 <= N.of_nat (Z.size_nat d + 1))%N) by lia.
+    destruct double; time_unfold (@T_scale_constraint); time_simpl;
+      cbn beta iota zeta; lia.
+  Qed.
+
+  (** A signed comparison performs at most two refinements over the same endpoint codes. *)
+  Lemma grow_assume_cmp : forall shape d c s bits,
+    1 <= bits -> Z.size_nat d <= bits ->
+    ns (assume_cmp c shape d s) <= ns s + 8 /\
+    bs (assume_cmp c shape d s) <= Nat.max (bs s) (shape_bits shape + 1) /\
+    ells (assume_cmp c shape d s) <= Nat.max (ells s) (bits + 2) + 8 /\
+    labs (assume_cmp c shape d s) <= labs s + 8 * (shape_bits shape + 2).
+  Proof.
+    intros shape d c s bits Hpositive Hbits.
+    pose proof (Nat.le_max_l (bs s) (shape_bits shape + 1)) as Hbase_keys.
+    pose proof (Nat.le_max_l (ells s) (bits + 2)) as Hbase_entries.
+    destruct shape as [|i j double].
+    - destruct c; cbn [assume_cmp shape_bits] in *;
+        repeat match goal with |- context [if ?test then _ else _] => destruct test end;
+        cbn [ns bs ells labs]; repeat split; lia.
+    - cbn [shape_bits] in *.
+      assert (Hkey_sum : Nat.max (K.bits i) (K.bits j) <= K.bits i + K.bits j).
+      { apply Nat.max_lub; lia. }
+      assert (Hkey_cap : Nat.max (bs s) (Nat.max (K.bits i) (K.bits j) + 1) <=
+        Nat.max (bs s) (K.bits i + K.bits j + 1)).
+      { apply Nat.max_lub; [apply Nat.le_max_l|].
+        apply Nat.le_trans with (m := K.bits i + K.bits j + 1);
+          [lia|apply Nat.le_max_r]. }
+      assert (Hnormal_bits : Z.size_nat (scale_constraint double d) <= bits + 1).
+      { now apply scale_constraint_bits. }
+      assert (Hstrict_base : Z.size_nat (d - 1)%Z <= bits + 1).
+      { change (Z.size_nat (d + (-1))%Z <= bits + 1).
+        apply zbits_add_bound; [exact Hbits|]. change (1 <= bits). exact Hpositive. }
+      assert (Hstrict_bits : Z.size_nat (scale_constraint double (d - 1)%Z) <= bits + 2).
+      { eapply Nat.le_trans; [apply (scale_constraint_bits double (d - 1)%Z (bits + 1)
+          Hstrict_base)|]. lia. }
+      assert (Hnormal_cap : Nat.max (ells s) (Z.size_nat (scale_constraint double d)) <=
+        Nat.max (ells s) (bits + 2)).
+      { apply Nat.max_lub; [apply Nat.le_max_l|].
+        apply Nat.le_trans with (m := bits + 2); [lia|apply Nat.le_max_r]. }
+      destruct c; cbn [assume_cmp].
+      + destruct (grow_refine i j (scale_constraint double d) s) as [Hn [Hb [He Hl]]].
+        repeat split; lia.
+      + destruct (grow_refine i j (scale_constraint double (d - 1)%Z) s)
+          as [Hn [Hb [He Hl]]].
+        assert (Hstrict_cap :
+          Nat.max (ells s) (Z.size_nat (scale_constraint double (d - 1)%Z)) <=
+            Nat.max (ells s) (bits + 2)).
+        { apply Nat.max_lub; [apply Nat.le_max_l|].
+          eapply Nat.le_trans; [exact Hstrict_bits|apply Nat.le_max_r]. }
+        repeat split; lia.
+      + set (next := refine i j (scale_constraint double d) s).
+        destruct (grow_refine i j (scale_constraint double d) s)
+          as [Hn1 [Hb1 [He1 Hl1]]].
+        fold next in Hn1, Hb1, He1, Hl1.
+        destruct (grow_refine j i (- scale_constraint double d)%Z next)
+          as [Hn2 [Hb2 [He2 Hl2]]].
+        rewrite zbits_opp in He2.
+        rewrite (Nat.max_comm (K.bits j) (K.bits i)) in Hb2, Hl2.
+        assert (Hkeys : Nat.max (bs next) (Nat.max (K.bits i) (K.bits j) + 1) <=
+          Nat.max (bs s) (K.bits i + K.bits j + 1)).
+        { apply Nat.max_lub; [lia|].
+          apply Nat.le_trans with (m := K.bits i + K.bits j + 1);
+            [lia|apply Nat.le_max_r]. }
+        assert (Hd : Z.size_nat (scale_constraint double d) <=
+          Nat.max (ells s) (bits + 2)).
+        { apply Nat.le_trans with (m := bits + 2); [lia|apply Nat.le_max_r]. }
+        assert (Hentries : Nat.max (ells next) (Z.size_nat (scale_constraint double d)) <=
+          Nat.max (ells s) (bits + 2) + 4) by (apply Nat.max_lub; lia).
+        fold next. repeat split; lia.
+  Qed.
+
+  (** Comparison dispatch, doubling and refinement fit one signed matrix allowance. *)
+  Lemma T_assume_cmp_small : forall shape d c s bits,
+    1 <= bits -> Z.size_nat d <= bits ->
+    (T_assume_cmp c shape d s <= 1024 * c_octagon * N.of_nat
+      ((ns s + 1)^2 * (bs s + ells s + shape_bits shape + bits + 1) + labs s))%N.
+  Proof.
+    intros [|i j double] d c s bits Hpositive Hbits.
+    - set (units := (ns s + 1)^2 * (bs s + ells s + 0 + bits + 1) + labs s).
+      assert (Hpayload : bs s + ells s + bits + 1 <= units).
+      { pose proof (quadratic_payload_le (ns s) (bs s + ells s + bits + 1)).
+        unfold units. lia. }
+      assert (Hscalar : Z.size_nat d + 1 <= units) by lia.
+      pose proof (time_of_nat_le _ _ Hscalar) as Hscalar_cast.
+      pose proof (time_of_nat_le 1 units ltac:(lia)) as Hwork.
+      set (work := N.of_nat units) in *.
+      change (1 <= work)%N in Hwork.
+      assert (Htest : (T_assume_cmp c OctConstant d s <= 32 * work)%N).
+      { destruct c; time_unfold (@T_assume_cmp); time_simpl; time_step. }
+      change (T_assume_cmp c OctConstant d s <= 1024 * c_octagon * work)%N.
+      eapply N.le_trans; [exact Htest|]. apply N.mul_le_mono_r.
+      pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap. unfold c_octagon. nia.
+    - set (units := (ns s + 1)^2 *
+        (bs s + ells s + K.bits i + K.bits j + bits + 1) + labs s).
+      cbn [shape_bits].
+      replace (bs s + ells s + (K.bits i + K.bits j) + bits + 1) with
+        (bs s + ells s + K.bits i + K.bits j + bits + 1) by lia.
+      change (T_assume_cmp c (OctDifference i j double) d s <=
+        1024 * c_octagon * N.of_nat units)%N.
+      assert (Hpayload : bs s + ells s + K.bits i + K.bits j + bits + 1 <= units).
+      { pose proof (quadratic_payload_le (ns s)
+          (bs s + ells s + K.bits i + K.bits j + bits + 1)).
+        unfold units. lia. }
+      assert (Hunit : 1 <= units) by lia.
+      assert (Hscalar : Z.size_nat d + 1 <= units) by lia.
+      assert (Hstrict_bits : Z.size_nat (d - 1)%Z <= bits + 1).
+      { change (Z.size_nat (d + (-1))%Z <= bits + 1).
+        apply zbits_add_bound; [exact Hbits|]. change (1 <= bits). exact Hpositive. }
+      assert (Hnormal_bits : Z.size_nat (scale_constraint double d) <= bits + 2).
+      { pose proof (scale_constraint_bits double d bits Hbits). lia. }
+      assert (Hscaled_strict_bits :
+        Z.size_nat (scale_constraint double (d - 1)%Z) <= bits + 2).
+      { pose proof (scale_constraint_bits double (d - 1)%Z (bits + 1) Hstrict_bits). lia. }
+      assert (Hwide_units : (ns s + 1)^2 *
+        (bs s + ells s + K.bits i + K.bits j + (bits + 2) + 1) + labs s <= 3 * units).
+      { unfold units. replace (3 * ((ns s + 1)^2 *
+          (bs s + ells s + K.bits i + K.bits j + bits + 1) + labs s)) with
+          ((ns s + 1)^2 *
+            (3 * (bs s + ells s + K.bits i + K.bits j + bits + 1)) + 3 * labs s) by ring.
+        apply Nat.add_le_mono; [apply Nat.mul_le_mono_l; lia|lia]. }
+      assert (Hsingle_units : forall v, Z.size_nat v <= bits + 2 ->
+        (ns s + 1)^2 *
+          (bs s + K.bits i + K.bits j + ells s + Z.size_nat v + 1) + labs s <= 3 * units).
+      { intros v Hv. eapply Nat.le_trans; [|exact Hwide_units].
+        apply Nat.add_le_mono_r, Nat.mul_le_mono_l. lia. }
+      assert (Hstrict_scalar : Z.size_nat (d - 1)%Z + 1 <= 2 * units) by lia.
+      pose proof (time_of_nat_le _ _ Hwide_units) as Hwide_cast.
+      pose proof (time_of_nat_le _ _ Hscalar) as Hscalar_cast.
+      pose proof (time_of_nat_le _ _ Hstrict_scalar) as Hstrict_scalar_cast.
+      rewrite (Nat2N.inj_mul 3 units) in Hwide_cast.
+      rewrite (Nat2N.inj_mul 2 units) in Hstrict_scalar_cast.
+      pose proof (time_of_nat_le _ _ Hunit) as Hwork.
+      set (work := N.of_nat units) in *.
+      change (1 <= work)%N in Hwork.
+      set (charge := (c_octagon * work)%N).
+      assert (Hsingle : forall v, Z.size_nat v <= bits + 2 ->
+        (T_refine i j v s <= 1 + 3 * charge)%N).
+      { intros v Hv. pose proof (time_of_nat_le _ _ (Hsingle_units v Hv)) as Hcast.
+        rewrite (Nat2N.inj_mul 3 units) in Hcast. fold work in Hcast.
+        eapply N.le_trans; [apply T_refine_small|].
+        replace (3 * charge)%N with (c_octagon * (3 * work))%N by (unfold charge; ring).
+        apply N.add_le_mono_l, N.mul_le_mono_l. exact Hcast. }
+      pose proof (Hsingle (scale_constraint double d) Hnormal_bits) as Hnormal.
+      pose proof (Hsingle (scale_constraint double (d - 1)%Z) Hscaled_strict_bits) as Hstrict.
+      assert (Hopp_bits : Z.size_nat (- scale_constraint double d)%Z <= bits + 2)
+        by (now rewrite zbits_opp).
+      pose proof (T_refine_pair_small i j (scale_constraint double d)
+        (- scale_constraint double d)%Z s (bits + 2) Hnormal_bits Hopp_bits) as Hpair_raw.
+      assert (Hpair : (T_refine i j (scale_constraint double d) s +
+        T_refine j i (- scale_constraint double d)%Z
+          (refine i j (scale_constraint double d) s) <= 768 * charge)%N).
+      { eapply N.le_trans; [exact Hpair_raw|].
+        replace (768 * charge)%N with (256 * c_octagon * (3 * work))%N
+          by (unfold charge; ring).
+        now apply N.mul_le_mono_l. }
+      assert (Hscale : (T_scale_constraint double d <= 32 * work)%N).
+      { eapply N.le_trans; [apply T_scale_constraint_small|].
+        now apply N.mul_le_mono_l. }
+      assert (Hstrict_scale : (T_scale_constraint double (d - 1)%Z <= 64 * work)%N).
+      { eapply N.le_trans; [apply T_scale_constraint_small|].
+        replace (64 * work)%N with (32 * (2 * work))%N by ring.
+        now apply N.mul_le_mono_l. }
+      pose proof (Z.T_sub_le d 1%Z) as Hsub_raw.
+      change (Z.size_nat 1%Z) with 1%nat in Hsub_raw.
+      assert (Hsub : (Z.T_sub d 1%Z <= 6 * work)%N).
+      { pose proof (N.mul_le_mono_l _ _ 3%N Hscalar_cast) as Hscaled. lia. }
+      pose proof (Z.T_opp_le (scale_constraint double d)) as Hopp.
+      assert (Hcoefficient : (1 <= c_octagon)%N).
+      { pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap. unfold c_octagon. nia. }
+      assert (Hwork_charge : (work <= charge)%N).
+      { unfold charge. replace work with (1 * work)%N at 1 by ring.
+        now apply N.mul_le_mono_r. }
+      assert (Hcharge : (1 <= charge)%N) by lia.
+      replace (1024 * c_octagon * work)%N with (1024 * charge)%N
+        by (unfold charge; ring).
+      destruct c; unfold T_assume_cmp; cbn beta iota zeta; time_simpl;
+        clearbody charge work;
+        clear -Hnormal Hstrict Hpair Hscale Hstrict_scale Hsub Hopp Hcharge Hwork_charge; lia.
+  Qed.
+
+  (** Atom size includes both affine forms and both stored wrap endpoints. *)
+  Definition assume_atom_bits (a : atom X.t) : nat :=
+    F.form_bits (al a) + F.wrap_bits (alw a) +
+      F.form_bits (ar a) + F.wrap_bits (arw a).
+
+  (** The comparison constant is the difference of the two affine seeds. *)
+  Lemma assume_difference_bits : forall l r,
+    Z.size_nat (cst r - cst l)%Z <= F.form_bits l + F.form_bits r + 1.
+  Proof.
+    intros l r. change (Z.size_nat (cst r + (-cst l))%Z <=
+      F.form_bits l + F.form_bits r + 1).
+    apply zbits_add_bound.
+    - pose proof (form_bits_constant r). lia.
+    - rewrite zbits_opp. pose proof (form_bits_constant l). lia.
+  Qed.
+
+  (** A recognized atom bounds its signed endpoints by the two source forms. *)
+  Lemma grow_assume_atom : forall s a B,
+    assume_atom_bits a <= B ->
+    ns (assume_atom s a) <= ns s + 8 /\
+    bs (assume_atom s a) <= Nat.max (bs s) (4 * B + 5) /\
+    ells (assume_atom s a) <= Nat.max (ells s) (B + 3) + 8 /\
+    labs (assume_atom s a) <= labs s + 48 * (B + 1).
+  Proof.
+    intros [|m] a B Hbits.
+    - cbn [assume_atom ns bs ells labs]. repeat split; lia.
+    - assert (Hsame : ns (Reached m) <= ns (Reached m) + 8 /\
+        bs (Reached m) <= Nat.max (bs (Reached m)) (4 * B + 5) /\
+        ells (Reached m) <= Nat.max (ells (Reached m)) (B + 3) + 8 /\
+        labs (Reached m) <= labs (Reached m) + 48 * (B + 1)).
+      { pose proof (Nat.le_max_l (bs (Reached m)) (4 * B + 5)).
+        pose proof (Nat.le_max_l (ells (Reached m)) (B + 3)).
+        repeat split; lia. }
+      cbn [assume_atom].
+      destruct (difference_forms (al a) (ar a)) as [shape|] eqn:Hforms; [|exact Hsame].
+      destruct (andb (form_exact m (al a) (alw a))
+        (form_exact m (ar a) (arw a))); [|exact Hsame].
+      destruct (difference_forms_shape (al a) (ar a) shape Hforms)
+        as [Hl [Hr Hkeys]].
+      pose proof (assume_difference_bits (al a) (ar a)) as Hdifference.
+      unfold assume_atom_bits in Hbits.
+      assert (Hscalar : Z.size_nat (cst (ar a) - cst (al a))%Z <= B + 1) by lia.
+      destruct (grow_assume_cmp shape (cst (ar a) - cst (al a))%Z
+        (acmp a) (Reached m) (B + 1) ltac:(lia) Hscalar) as [Hn [Hb [He Hlabels]]].
+      assert (Hkey_cap : shape_bits shape + 1 <= 4 * B + 5) by lia.
+      assert (Hkeys_max : Nat.max (bs (Reached m)) (shape_bits shape + 1) <=
+        Nat.max (bs (Reached m)) (4 * B + 5)).
+      { apply Nat.max_lub; [apply Nat.le_max_l|].
+        eapply Nat.le_trans; [exact Hkey_cap|apply Nat.le_max_r]. }
+      assert (Hlabel_cap : 8 * (shape_bits shape + 2) <= 48 * (B + 1)) by lia.
+      replace (B + 1 + 2) with (B + 3) in He by lia.
+      repeat split; lia.
+  Qed.
+
+  (** Atom clocks combine short-form exactness checks with the signed comparison update. *)
+  Lemma T_assume_atom_small : forall s a B,
+    assume_atom_bits a <= B ->
+    (T_assume_atom s a <= 8192 * c_octagon * N.of_nat
+      ((ns s + 1)^2 * (bs s + ells s + B + 1) + labs s))%N.
+  Proof.
+    intros [|m] [l lw c r rw] B Hbits.
+    - change (1 <= 8192 * c_octagon *
+        N.of_nat ((0 + 1)^2 * (0 + 0 + B + 1) + 0))%N.
+      replace ((0 + 1)^2 * (0 + 0 + B + 1) + 0) with (B + 1)
+        by (cbn [Nat.pow]; ring).
+      pose proof (time_of_nat_le 1 (B + 1) ltac:(lia)) as Hwork.
+      change (1 <= N.of_nat (B + 1))%N in Hwork.
+      assert (Hcoefficient : (1 <= 8192 * c_octagon)%N) by (unfold c_octagon; nia).
+      eapply N.le_trans; [exact Hwork|].
+      replace (N.of_nat (B + 1)) with (1 * N.of_nat (B + 1))%N at 1 by ring.
+      now apply N.mul_le_mono_r.
+    - unfold assume_atom_bits in Hbits. cbn [al alw ar arw] in Hbits.
+      set (units := (supp m + 1)^2 * (b m + ell m + B + 1) + M.weight m).
+      change (T_assume_atom (Reached m) (Atom X.t l lw c r rw) <=
+        8192 * c_octagon * N.of_nat units)%N.
+      assert (Hpayload : b m + ell m + B + 1 <= units).
+      { pose proof (quadratic_payload_le (supp m) (b m + ell m + B + 1)).
+        unfold units. lia. }
+      assert (Hunit : 1 <= units) by lia.
+      assert (Hscalar_unit : B + 1 <= units) by lia.
+      assert (Hlcoef : Forall (fun p => Z.size_nat (snd p) <= B) (coef l)).
+      { apply Forall_forall. intros p Hp.
+        pose proof (form_bits_coefficient l p Hp). lia. }
+      assert (Hrcoef : Forall (fun p => Z.size_nat (snd p) <= B) (coef r)).
+      { apply Forall_forall. intros p Hp.
+        pose proof (form_bits_coefficient r p Hp). lia. }
+      pose proof (T_difference_forms_small l r B Hlcoef Hrcoef) as Hprobe_raw.
+      pose proof (time_of_nat_le _ _ Hscalar_unit) as Hscalar_cast.
+      pose proof (time_of_nat_le _ _ Hunit) as Hwork.
+      set (work := N.of_nat units) in *.
+      change (1 <= work)%N in Hwork.
+      set (charge := (c_octagon * work)%N).
+      set (map_charge := ((M.c_map + 1) * work)%N).
+      assert (Hprobe : (T_difference_forms l r <= 1024 * work)%N).
+      { eapply N.le_trans; [exact Hprobe_raw|].
+        apply N.mul_le_mono_l. exact Hscalar_cast. }
+      assert (Hcoefficient :
+        (6144 * c_octagon + 16384 * (M.c_map + 1) + 1024 + 6 + 32 <=
+          8192 * c_octagon)%N).
+      { pose proof (N.le_0_l M.c_map) as Hmap. clear -Hmap. unfold c_octagon. nia. }
+      pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+      replace ((6144 * c_octagon + 16384 * (M.c_map + 1) + 1024 + 6 + 32) * work)%N with
+        (6144 * charge + 16384 * map_charge + 1024 * work + 6 * work + 32 * work)%N
+        in Hbudget by (unfold charge, map_charge; ring).
+      replace (8192 * c_octagon * work)%N with (8192 * charge)%N in Hbudget |- *
+        by (unfold charge; ring).
+      destruct (difference_forms l r) as [shape|] eqn:Hforms.
+      + destruct (difference_forms_shape l r shape Hforms) as [Hl [Hr Hkeys]].
+        pose proof (form_bits_constant l) as Hconstant_l.
+        pose proof (form_bits_constant r) as Hconstant_r.
+        pose proof (assume_difference_bits l r) as Hsub_bits.
+        assert (Hscalar : Z.size_nat (cst r - cst l)%Z <= B + 1) by lia.
+        assert (Hkeys_cap : shape_bits shape <= 4 * (B + 1)) by lia.
+        assert (Hcmp_units : (supp m + 1)^2 *
+          (b m + ell m + shape_bits shape + (B + 1) + 1) + M.weight m <= 6 * units).
+        { unfold units. replace
+            (6 * ((supp m + 1)^2 * (b m + ell m + B + 1) + M.weight m)) with
+            ((supp m + 1)^2 * (6 * (b m + ell m + B + 1)) + 6 * M.weight m) by ring.
+          apply Nat.add_le_mono; [apply Nat.mul_le_mono_l; lia|lia]. }
+        pose proof (time_of_nat_le _ _ Hcmp_units) as Hcmp_cast.
+        rewrite (Nat2N.inj_mul 6 units) in Hcmp_cast. fold work in Hcmp_cast.
+        assert (Hcmp : (T_assume_cmp c shape (cst r - cst l)%Z (Reached m) <=
+          6144 * charge)%N).
+        { eapply N.le_trans.
+          - exact (T_assume_cmp_small shape (cst r - cst l)%Z c (Reached m)
+              (B + 1) ltac:(lia) Hscalar).
+          - replace (6144 * charge)%N with (1024 * c_octagon * (6 * work))%N
+              by (unfold charge; ring).
+            apply N.mul_le_mono_l. exact Hcmp_cast. }
+        assert (Hleft_units : ell m + F.form_bits l + F.wrap_bits lw + 1 <= units) by lia.
+        assert (Hright_units : ell m + F.form_bits r + F.wrap_bits rw + 1 <= units) by lia.
+        assert (Hleft : (T_form_exact m l lw <= 8192 * map_charge)%N).
+        { eapply N.le_trans; [exact (T_form_exact_short m l lw Hl)|].
+          replace (8192 * map_charge)%N with
+            (8192 * (M.c_map + 1) * work)%N by (unfold map_charge; ring).
+          apply N.mul_le_mono_l. exact (time_of_nat_le _ _ Hleft_units). }
+        assert (Hright : (T_form_exact m r rw <= 8192 * map_charge)%N).
+        { eapply N.le_trans; [exact (T_form_exact_short m r rw Hr)|].
+          replace (8192 * map_charge)%N with
+            (8192 * (M.c_map + 1) * work)%N by (unfold map_charge; ring).
+          apply N.mul_le_mono_l. exact (time_of_nat_le _ _ Hright_units). }
+        pose proof (Z.T_sub_le (cst r) (cst l)) as Hsub_raw.
+        assert (Hsub_units : Z.size_nat (cst r) + Z.size_nat (cst l) <= units) by lia.
+        pose proof (time_of_nat_le _ _ Hsub_units) as Hsub_cast. fold work in Hsub_cast.
+        assert (Hsub : (Z.T_sub (cst r) (cst l) <= 6 * work)%N).
+        { pose proof (N.mul_le_mono_l _ _ 3%N Hsub_cast). lia. }
+        pose proof (Std.Datatypes.T_andb_le (form_exact m l lw) (form_exact m r rw)) as Hbool.
+        unfold T_assume_atom. cbn beta iota zeta. cbn [al alw acmp ar arw].
+        rewrite Hforms. cbn beta iota zeta.
+        destruct (andb (form_exact m l lw) (form_exact m r rw));
+          time_simpl; time_cbn;
+          clearbody charge map_charge work;
+          clear -Hprobe Hleft Hright Hcmp Hsub Hbool Hbudget Hwork; lia.
+      + unfold T_assume_atom. cbn beta iota zeta. cbn [al alw acmp ar arw].
+        rewrite Hforms. cbn beta iota zeta. time_simpl. time_cbn.
+        clearbody charge map_charge work. clear -Hprobe Hbudget Hwork. lia.
+  Qed.
+
+  (** Signed assumptions accumulate support, entry-bit and raw-label allowances. *)
+
+Definition assume_grid_work (initial : t) (bits count : nat) : nat :=
+    (ns initial + 2 * count + 1)^2 *
+      (bs initial + ells initial + bits + 2 * count + 1).
+
+  Definition assume_stage (initial : t) (bits index : nat) (state : t) : Prop :=
+    ns state <= ns initial + 8 * index /\
+    bs state <= bs initial + 4 * bits + 5 /\
+    ells state <= ells initial + bits + 3 + 8 * index /\
+    labs state <= labs initial + 48 * index * (bits + 1).
+
+  Lemma assume_grid_positive : forall initial bits count,
+    1 <= assume_grid_work initial bits count.
+  Proof.
+    intros initial bits count. unfold assume_grid_work.
+    eapply Nat.le_trans; [|apply quadratic_payload_le]. lia.
+  Qed.
+
+  Lemma assume_stage_initial : forall initial bits,
+    assume_stage initial bits 0 initial.
+  Proof.
+    intros initial bits. unfold assume_stage. repeat split; lia.
+  Qed.
+
+  Lemma assume_stage_step : forall initial bits index state item,
+    assume_stage initial bits index state -> assume_atom_bits item <= bits ->
+    assume_stage initial bits (S index) (assume_atom state item).
+  Proof.
+    intros initial bits index state item [Hn [Hb [He Hl]]] Hitem.
+    destruct (grow_assume_atom state item bits Hitem) as [Hn' [Hb' [He' Hl']]].
+    assert (Hmaxb : Nat.max (bs state) (4 * bits + 5) <=
+      bs initial + 4 * bits + 5) by (apply Nat.max_lub; lia).
+    assert (Hmaxe : Nat.max (ells state) (bits + 3) <=
+      ells initial + bits + 3 + 8 * index) by (apply Nat.max_lub; lia).
+    unfold assume_stage. repeat split; nia.
+  Qed.
+
+  Lemma assume_stage_work : forall initial bits count index state,
+    index < count -> assume_stage initial bits index state ->
+    (ns state + 1)^2 * (bs state + ells state + bits + 1) + labs state <=
+      192 * (assume_grid_work initial bits count + labs initial).
+  Proof.
+    intros initial bits count index state Hindex [Hn [Hb [He Hl]]].
+    assert (Hwidth : ns state + 1 <= 4 * (ns initial + 2 * count + 1)) by lia.
+    assert (Hpayload : bs state + ells state + bits + 1 <=
+      9 * (bs initial + ells initial + bits + 2 * count + 1)) by lia.
+    assert (Hmatrix : (ns state + 1)^2 * (bs state + ells state + bits + 1) <=
+      144 * assume_grid_work initial bits count).
+    { replace (144 * assume_grid_work initial bits count) with
+        ((4 * (ns initial + 2 * count + 1))^2 *
+          (9 * (bs initial + ells initial + bits + 2 * count + 1)))
+        by (unfold assume_grid_work; cbn [Nat.pow]; ring).
+      apply Nat.mul_le_mono; [now apply Nat.pow_le_mono_l|exact Hpayload]. }
+    assert (Hsquare : index <= (ns initial + 2 * count + 1)^2).
+    { cbn [Nat.pow]. nia. }
+    assert (Hlabels : index * (bits + 1) <= assume_grid_work initial bits count).
+    { unfold assume_grid_work. apply Nat.mul_le_mono; [exact Hsquare|lia]. }
+    set (work := assume_grid_work initial bits count) in *.
+    clearbody work. nia.
+  Qed.
+
+  Lemma T_assume_fold_stages : forall initial bits xs,
+    Forall (fun item => assume_atom_bits item <= bits) xs ->
+    (Std.List.T_fold_left assume_atom (fun state item => T_assume_atom state item)
+      xs initial <=
+      (2097152 * c_octagon *
+        N.of_nat (assume_grid_work initial bits (length xs) + labs initial) + 1) *
+        N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros initial bits xs Hgood.
+    assert (Htime : forall index state item, index < length xs ->
+      assume_stage initial bits index state -> assume_atom_bits item <= bits ->
+      (T_assume_atom state item <= 2097152 * c_octagon *
+        N.of_nat (assume_grid_work initial bits (length xs) + labs initial))%N).
+    { intros index state item Hindex Hstate Hitem.
+      pose proof (T_assume_atom_small state item bits Hitem) as Hatom.
+      pose proof (assume_stage_work initial bits (length xs) index state Hindex Hstate)
+        as Hstage.
+      assert (Hstage' : (ns state + 1)^2 *
+        (bs state + ells state + bits + 1) + labs state <=
+        256 * (assume_grid_work initial bits (length xs) + labs initial)).
+      { eapply Nat.le_trans; [exact Hstage|]. apply Nat.mul_le_mono_r. lia. }
+      pose proof (time_of_nat_le _ _ Hstage') as Hcast.
+      rewrite (Nat2N.inj_mul 256
+        (assume_grid_work initial bits (length xs) + labs initial)) in Hcast.
+      eapply N.le_trans; [exact Hatom|].
+      replace (2097152 * c_octagon * N.of_nat
+        (assume_grid_work initial bits (length xs) + labs initial))%N with
+        (8192 * c_octagon * (256 * N.of_nat
+          (assume_grid_work initial bits (length xs) + labs initial)))%N by ring.
+      apply N.mul_le_mono_l. exact Hcast. }
+    exact (rel_fold_left_time_stages t (atom X.t) assume_atom
+      (fun state item => T_assume_atom state item) (assume_stage initial bits)
+      (fun item => assume_atom_bits item <= bits) (length xs)
+      (2097152 * c_octagon *
+        N.of_nat (assume_grid_work initial bits (length xs) + labs initial))%N
+      (assume_stage_step initial bits) Htime xs Hgood 0 initial
+      ltac:(lia) (assume_stage_initial initial bits)).
+  Qed.
+
+  Lemma assume_work_grid : forall g es initial,
+    assume_work g es initial =
+      length (F.atoms_of g es) *
+        (assume_grid_work initial (F.bits_es g es) (length (F.atoms_of g es)) +
+          labs initial) + N.to_nat (F.T_atoms_of g es).
+  Proof.
+    intros g es initial. unfold assume_work, assume_grid_work. ring.
+  Qed.
+
+  Lemma T_assume_overhead : forall g es initial,
+    (T_assume g es initial <= F.T_atoms_of g es +
+      Std.List.T_fold_left assume_atom (fun state item => T_assume_atom state item)
+        (F.atoms_of g es) initial + 1)%N.
+  Proof.
+    intros g es [|m]; unfold T_assume; cbn beta iota zeta; lia.
+  Qed.
+
+  Lemma assume_time_coefficient : (4194304 * c_octagon <= c_num)%N.
+  Proof.
+    unfold c_octagon, c_num. nia.
+  Qed.
+
+  Lemma T_assume_le : forall g es initial,
+    (T_assume g es initial <= c_num * N.of_nat (assume_work g es initial + 1))%N.
+  Proof.
+    intros g es initial.
+    assert (Hgood : Forall
+      (fun item => assume_atom_bits item <= F.bits_es g es) (F.atoms_of g es)).
+    { pose proof (proj2 (F.atoms_of_size g es)) as Hatoms.
+      eapply Forall_impl; [|exact Hatoms].
+      intros item Hitem. unfold assume_atom_bits. exact (proj2 Hitem). }
+    pose proof (T_assume_fold_stages initial (F.bits_es g es) (F.atoms_of g es)
+      Hgood) as Hfold.
+    pose proof (T_assume_overhead g es initial) as Hoverhead.
+    rewrite assume_work_grid.
+    repeat rewrite Nat2N.inj_add.
+    rewrite Nat2N.inj_mul, N2Nat.id.
+    eapply N.le_trans with
+      (F.T_atoms_of g es +
+        (2097152 * c_octagon * N.of_nat
+          (assume_grid_work initial (F.bits_es g es) (length (F.atoms_of g es)) +
+            labs initial) + 1) *
+        N.of_nat (length (F.atoms_of g es)) + 2)%N.
+    - lia.
+    - apply rel_fold_overhead_budget.
+      + unfold c_octagon. nia.
+      + apply (time_of_nat_le 1%nat _).
+        pose proof (assume_grid_positive initial (F.bits_es g es)
+          (length (F.atoms_of g es))). lia.
+      + pose proof assume_time_coefficient. nia.
   Qed.
 
 End OctagonT.
