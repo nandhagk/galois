@@ -10311,6 +10311,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - intro Huse. apply in_map_iff. exists (x, e). split; [reflexivity |].
       apply filter_In. split; [exact Huse |]. cbn [fst]. apply Pos.eqb_refl.
   Qed.
+  Lemma pop_loser_scheduled : forall db x db' e,
+    row_store_ok db -> NoDup (queue db) -> db_pop_loser db = Some (x, db') ->
+    scheduled db [] e -> scheduled db' (bucket db x) e.
+  Proof.
+    intros db x db' e Hstore Hnodup Hpop Hscheduled.
+    rewrite (pop_loser_queue db x db' Hpop) in Hnodup.
+    inversion Hnodup as [|? ? Hfresh _]. subst.
+    destruct Hscheduled as [Hempty | [y [Hqueue Huse]]]; [contradiction |].
+    rewrite (pop_loser_queue db x db' Hpop) in Hqueue.
+    destruct Hqueue as [Hy | Htail].
+    - left. subst y. now apply bucket_member.
+    - right. exists y. split; [exact Htail |].
+      apply (pop_loser_uses_transfer db x db').
+      + unfold row_store_ok, database_row_store_ok in Hstore. tauto.
+      + exact Hpop.
+      + left. split; [exact Huse |].
+        intro Heq. subst y. contradiction.
+  Qed.
   Definition use_credit (B : N) (db : t) (xe : positive * use_entry) : nat :=
     N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe)))) *
         entry_weight db (snd xe).
