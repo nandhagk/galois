@@ -4041,6 +4041,43 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     apply table_rewrap_time.
   Qed.
 
+  Local Lemma table_binary_dispatch_time : forall rw wa a wb b cost,
+    (cost <= 100000 * N.of_nat
+      ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (interval_clip wb b) + 1) ^ 2))%N ->
+    (1 + T_interval_clip wa a + T_interval_clip wb b + cost <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wa a wb b cost Hcost.
+    pose proof (table_clip_time wa a) as Hclip_a.
+    pose proof (table_clip_time wb b) as Hclip_b.
+    pose proof (table_clip_bits wa a) as Hbits_a.
+    pose proof (table_clip_bits wb b) as Hbits_b.
+    set (s := Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1).
+    set (budget_nat := s ^ 2 + W.psize wa a + W.psize wb b).
+    assert (Hcost_nat :
+      ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (interval_clip wb b) + 1) ^ 2 <= budget_nat)%nat).
+    { unfold budget_nat, s. apply Nat.le_trans with
+        (m := (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2).
+      - apply Nat.pow_le_mono_l. lia.
+      - lia. }
+    assert (Hclip_a_nat : (W.psize wa a + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    assert (Hclip_b_nat : (W.psize wb b + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hcost_nat) as HcostN.
+    pose proof (table_nat_to_N_le _ _ Hclip_a_nat) as Hclip_aN.
+    pose proof (table_nat_to_N_le _ _ Hclip_b_nat) as Hclip_bN.
+    assert (Hbudget : (1 <= N.of_nat budget_nat)%N)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    clear - Hcost Hclip_a Hclip_b HcostN Hclip_aN Hclip_bN Hbudget.
+    unfold c_word_table.
+    nia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
