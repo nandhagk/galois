@@ -4217,6 +4217,44 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     lia.
   Qed.
 
+  (** A nonnegative inserted cycle makes the distinct-endpoint incremental check succeed. *)
+  Lemma incremental_cycle_success : forall m i j d, closed m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)) ->
+    exists next, incr_close i j d m = Reached next /\
+      forall a b, entry next a b =
+        RelationalPathBounds.edge_extension (entry base) i j d a b.
+  Proof.
+    intros m i j d Hclosed Hdistinct. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intro Hcycle.
+    set (seed := add_cons i j d base).
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    assert (Hentry : forall a b, entry next a b =
+      RelationalPathBounds.edge_extension (entry base) i j d a b).
+    { intros a b. unfold next, seed, base.
+      apply incremental_candidate_extension; assumption. }
+    assert (Hdiag_i : entry next i i = Some 0%Z).
+    { rewrite Hentry. eapply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|exact Hii]. }
+    assert (Hdiag_j : entry next j j = Some 0%Z).
+    { rewrite Hentry. eapply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|exact Hjj]. }
+    exists next. split; [|exact Hentry].
+    unfold incr_close. change
+      ((if andb (nonnegative i next) (nonnegative j next)
+        then Reached next else Unreached) = Reached next).
+    unfold nonnegative. now rewrite Hdiag_i, Hdiag_j.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
