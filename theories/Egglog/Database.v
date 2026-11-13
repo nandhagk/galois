@@ -2604,6 +2604,49 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         (fun all new counts state => eq_refl)); reflexivity.
   Qed.
 
+  (** Replacing one actual binding preserves the complete multiset cache at every declared slot. *)
+  Lemma row_replace_slot_cache : forall db f k previous o s g perm,
+    wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    slot_of db s = Some (g, perm) ->
+    slot_cache_ok (db_runtime (row_replace f k previous o db)) s (length perm)
+      (row_contributions g perm
+        (RowMap.elements (runtime_rows (db_runtime (row_replace f k previous o db))))).
+  Proof.
+    intros db f k previous o s g perm Hwf Hprevious Hfits Hslot.
+    pose proof (wf_row_map db Hwf) as Hmap.
+    destruct (RowFacts.set_elements_decomposition _ _ (f, k) previous o Hmap Hprevious)
+      as [rest [Hsource [Htarget _]]].
+    rewrite row_replace_map. eapply slot_cache_permutation.
+    - apply row_contributions_permutation. apply Permutation_sym. exact Htarget.
+    - apply (row_replace_cache_list db f k previous o s g perm rest).
+      + now apply wf_group_table.
+      + exact Hslot.
+      + exact Hfits.
+      + intros before Hbefore. apply (wf_row_slots db Hwf f k before).
+        change (old db f k = Some before). now rewrite Hprevious.
+      + eapply slot_cache_permutation.
+        * apply row_contributions_permutation. exact Hsource.
+        * exact (wf_slot_cache db s g perm Hwf Hslot).
+  Qed.
+
+  (** Row replacement preserves both indexes and exact projection counts without an output-wf premise. *)
+  Lemma row_replace_cache_correct : forall db f k previous o,
+    wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    database_cache_correct (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hwf Hprevious Hfits.
+    apply database_cache_correct_from_slots.
+    - rewrite row_replace_map. apply RowMap.wf_set. now apply wf_row_map.
+    - change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
+        N.of_nat (length (slots (row_replace f k previous o db)))).
+      rewrite (row_replace_preserves _ (@runtime_slot_bound (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db), row_replace_slots.
+      now apply wf_slot_bound.
+    - intros s g perm Hslot. apply row_replace_slot_cache; try assumption.
+      unfold slot_of in *. now rewrite row_replace_slots in Hslot.
+  Qed.
+
   (** Replacing a well-kinded row preserves the kind condition for every stored binding. *)
   Lemma row_replace_kinds : forall db f k previous o,
     wf db -> kind_ok db f k o ->
