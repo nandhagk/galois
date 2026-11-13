@@ -4025,8 +4025,15 @@ End Database.
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Include Database V I.
   (* spec: wmark potential *)
-  (* STUB-CODE *)
-  Definition wmark (db : t) : N := db_wmark db.
+  Definition decl_names (db : t) : list positive :=
+    map fst (PTrieCode.elements (runtime_kinds (db_runtime db))).
+  Definition wmark (db : t) : N :=
+    fold_right N.max (N.max (db_nuses db) (ids db))
+      (map Npos (db_index_counters db) ++ map Npos (decl_names db) ++
+        map (fun c => match c with
+          | Id i => Npos (xO i)
+          | Val v => Npos (xI (V.encode v))
+          end) (db_written_cells db)).
   Definition unit (db : t) : nat :=
     (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Definition slots_of (db : t) (f : positive) : nat :=
@@ -4087,6 +4094,53 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros [| p]; [cbn; lia |].
     cbn [N.succ_pos N.size_nat]. induction p; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** Taking the maximum over a list retains its initial lower bound. *)
+  Lemma fold_max_base : forall values base, (base <= fold_right N.max base values)%N.
+  Proof.
+    intro values. induction values as [| value values IH]; intro base; cbn [fold_right].
+    - lia.
+    - eapply N.le_trans; [apply IH | apply N.le_max_r].
+  Qed.
+
+  (** Every recorded value is below the maximum over the recording list. *)
+  Lemma fold_max_member : forall values base value,
+    In value values -> (value <= fold_right N.max base values)%N.
+  Proof.
+    intro values. induction values as [| head values IH]; intros base value Hin.
+    - contradiction.
+    - cbn [fold_right]. destruct Hin as [-> | Hin]; [apply N.le_max_l |].
+      eapply N.le_trans; [now apply IH | apply N.le_max_r].
+  Qed.
+
+  (** Increasing a binary number never decreases its encoded width. *)
+  Lemma N_width_mono : forall n m, (n <= m)%N -> N.size_nat n <= N.size_nat m.
+  Proof.
+    intros [| p] [| q] Hle; cbn [N.size_nat]; try lia.
+    destruct (Pos.eq_dec p q) as [-> | Hneq]; [lia |].
+    apply Pos.size_nat_monotone. lia.
+  Qed.
+
+  (** The exact watermark formula always covers the allocated identifier interval. *)
+  Lemma wmark_ids : forall db, (ids db <= wmark db)%N.
+  Proof.
+    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_r | apply fold_max_base].
+  Qed.
+
+  (** The declaration inventory is exactly the domain of the stored kind trie. *)
+  Lemma decl_names_spec : forall db f,
+    kind (view db) f <> None <-> In f (decl_names db).
+  Proof.
+    intros db f. unfold decl_names.
+    change (PTrieCode.get f (runtime_kinds (db_runtime db)) <> None <->
+      In f (map fst (PTrieCode.elements (runtime_kinds (db_runtime db))))).
+    split.
+    - intro Hpresent. destruct (PTrieCode.get f (runtime_kinds (db_runtime db))) as [output |] eqn:Hget;
+        [| contradiction]. apply in_map_iff. exists (f, output). split; [reflexivity |].
+      now apply PTrie.elements_spec.
+    - intro Hin. apply in_map_iff in Hin as [[g output] [Heq Hin]].
+      cbn [fst] in Heq. subst g. apply PTrie.elements_spec in Hin. congruence.
   Qed.
 
   (** A guarded slot lookup pays only the query's bits and one trie access. *)
@@ -4170,7 +4224,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** The high-water mark covers every declared function name. *)
   Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
     Pos.size_nat f <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f _ Hkind. change (N.size_nat (Npos f) <= N.size_nat (wmark db)).
+    apply N_width_mono. unfold wmark. apply fold_max_member.
+    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
+    now apply decl_names_spec.
+  Qed.
 
   (** The high-water mark covers every slot index. *)
   Lemma wmark_index : forall db s new, wf db ->
@@ -4335,8 +4394,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition index_counters (db : t) : list positive := db_index_counters db.
   (* STUB-CODE *)
   Definition written_cells (db : t) : list (cell V.t) := db_written_cells db.
-  (* STUB-CODE *)
-  Definition decl_names (_ : t) : list positive := [].
   (* STUB-CODE *)
   Definition get_uses : positive -> t -> list use_entry := fun _ _ => [].
   TimeFun get_uses.
@@ -4806,11 +4863,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Slot lookup charges its binary slot code. *)
   Lemma T10_index : forall s new db,
     (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_index_le.
+  Qed.
 
   (** Advancing clears each maintained slot once. *)
   Lemma T11_advance : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_advance_le.
+  Qed.
 
   (** Stored counters agree with the occurrence inventory and pending queue. *)
   Lemma F15_counts : forall db work, inv_on db work ->
@@ -4820,7 +4881,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** The declaration inventory contains precisely the names with a kind. *)
   Lemma F_decl_names : forall db f, inv db ->
     (kind (view db) f <> None <-> In f (decl_names db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f _. apply decl_names_spec.
+  Qed.
 
   (** The stored watermark is the exact historical maximum of written payloads and counters. *)
   Lemma F_wmark : forall db, inv db ->
@@ -4830,7 +4893,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           | Id i => Npos (xO i)
           | Val v => Npos (xI (V.encode v))
           end) (written_cells db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   (** Every slot index fits the stored counter and cell watermark. *)
   Lemma F_wmark_index : forall db s new, inv db ->
