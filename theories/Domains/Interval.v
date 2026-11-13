@@ -1064,18 +1064,130 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
        destruct (unsigned_back_sound a b x y Ha Hb Hnonneg Hpositive) as [Hleft Hright]].
     all: constructor; [exact Hleft|constructor; [exact Hright|constructor]].
   Qed.
+  Local Open Scope Z_scope.
+
+  (** Strict comparison retains represented operands whose first value is smaller. *)
+  Lemma strict_back_sound : forall a b x y,
+    gamma a x -> gamma b y -> x < y ->
+    gamma (fst (strict_back a b)) x /\ gamma (snd (strict_back a b)) y.
+  Proof.
+    intros [|la ha] [|lb hb] x y Ha Hb Hlt; try contradiction.
+    cbn [strict_back fst snd]. split; apply gamma_meet; try assumption.
+    - change (in_bnd lb hb y) in Hb. unfold in_bnd in Hb.
+      cbn [gamma in_itv]. unfold in_bnd.
+      destruct hb; cbn in *; intuition lia.
+    - change (in_bnd la ha x) in Ha. unfold in_bnd in Ha.
+      cbn [gamma in_itv]. unfold in_bnd.
+      destruct la; cbn in *; intuition lia.
+  Qed.
+
+  (** Strict comparison returns a refinement of each original operand. *)
+  Lemma strict_back_refines : forall a b,
+    leb (fst (strict_back a b)) a = true /\
+    leb (snd (strict_back a b)) b = true.
+  Proof.
+    intros [|la ha] [|lb hb]; cbn [strict_back fst snd]; split;
+      first [apply bot_least | apply meet_lb_l].
+  Qed.
+
+  (** A represented comparison result preserves both operands of unsigned comparison. *)
+  Lemma ult_back_sound : forall r a b x y,
+    gamma a x -> gamma b y -> gamma r (if x <? y then 1 else 0) ->
+    gamma (fst (ult_back r a b)) x /\ gamma (snd (ult_back r a b)) y.
+  Proof.
+    intros r a b x y Ha Hb Hr. unfold ult_back.
+    destruct (point r) as [z|] eqn:Hpoint; [|split; assumption].
+    destruct a as [|la ha], b as [|lb hb]; try contradiction.
+    destruct la as [|la|], hb as [|hb|]; try (split; assumption).
+    destruct (z =? 1) eqn:Hone; [|split; assumption].
+    apply Z.eqb_eq in Hone. subst z.
+    pose proof (point_sound r _ 1 Hr Hpoint) as Hresult.
+    destruct (x <? y) eqn:Hlt; [|discriminate]. apply Z.ltb_lt in Hlt.
+    cbn [fst snd]. split; apply gamma_meet; try assumption.
+    - change (in_bnd lb (Fin hb) y) in Hb. unfold in_bnd in Hb. cbn in Hb.
+      change (True /\ x <= hb - 1). intuition lia.
+    - change (in_bnd (Fin la) ha x) in Ha. unfold in_bnd in Ha. cbn in Ha.
+      change (la + 1 <= y /\ True). intuition lia.
+  Qed.
+
+  (** Unsigned comparison refinement stays below both original operands. *)
+  Lemma ult_back_refines : forall r a b,
+    leb (fst (ult_back r a b)) a = true /\
+    leb (snd (ult_back r a b)) b = true.
+  Proof.
+    intros r a b. unfold ult_back.
+    destruct (point r) as [z|]; [|split; apply leb_refl].
+    destruct a as [|[|la|] ha], b as [|lb [|hb|]];
+      try (split; apply leb_refl).
+    destruct (z =? 1); cbn [fst snd]; split;
+      first [apply meet_lb_l | apply leb_refl].
+  Qed.
+
+  (** Every operand list refines itself position by position. *)
+  Lemma operands_refine_refl : forall xs,
+    Forall2 (fun y x => leb y x = true) xs xs.
+  Proof.
+    induction xs as [|a xs IH]; constructor; [apply leb_refl | exact IH].
+  Qed.
+
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. unfold backward.
+    destruct (L.view o); destruct xs as [|a [|b [|extra rest]]];
+      try apply operands_refine_refl.
+    all: cbn [add_back sub_back mul_back udiv_back urem_back unsigned_back fst snd];
+      repeat constructor; apply meet_lb_l.
+  Qed.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs cs Hxs Hholds.
+    destruct (L.gview g) as [c| |] eqn:Hview;
+      [| |unfold guard; rewrite Hview; exact Hxs].
+    all: pose proof (proj1 (L.gview_holds g cs
+      ltac:(rewrite Hview; discriminate)) Hholds) as Hguard.
+    all: rewrite Hview in Hguard.
+    all: destruct cs as [|x [|y [|extra rest]]]; try contradiction.
+    all: inversion Hxs as [|a x' tail values Ha Htail]; subst.
+    all: inversion Htail as [|b y' tail' values' Hb Hlast]; subst.
+    all: inversion Hlast; subst.
+    all: unfold guard; rewrite Hview.
+    - change (Z.compare x y = c) in Hguard. destruct c.
+      + apply Z.compare_eq_iff in Hguard. subst y.
+        repeat constructor; apply gamma_meet; assumption.
+      + apply Z.compare_lt_iff in Hguard.
+        destruct (strict_back_sound a b x y Ha Hb Hguard) as [Hx Hy].
+        constructor; [exact Hx|constructor; [exact Hy|constructor]].
+      + apply Z.compare_gt_iff in Hguard.
+        destruct (strict_back_sound b a y x Hb Ha Hguard) as [Hy Hx].
+        constructor; [exact Hx|constructor; [exact Hy|constructor]].
+    - change (0 <= x /\ 0 <= y /\ x < y) in Hguard.
+      destruct Hguard as [Hnonnegx [Hnonnegy Hlt]].
+      assert (Hresult : gamma (abst 1) (if x <? y then 1 else 0)).
+      { assert (Hltb : (x <? y) = true) by (apply Z.ltb_lt; exact Hlt).
+        rewrite Hltb. apply abst_sound. }
+      destruct (ult_back_sound (abst 1) a b x y Ha Hb Hresult) as [Hx Hy].
+      constructor; [exact Hx|constructor; [exact Hy|constructor]].
+  Qed.
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold guard.
+    destruct (L.gview g) as [c| |]; [destruct c| |].
+    all: destruct xs as [|a [|b [|extra rest]]]; try apply operands_refine_refl.
+    - repeat constructor; apply meet_lb_l.
+    - destruct (strict_back_refines a b) as [Ha Hb].
+      constructor; [exact Ha|constructor; [exact Hb|constructor]].
+    - destruct (strict_back_refines b a) as [Hb Ha].
+      constructor; [exact Ha|constructor; [exact Hb|constructor]].
+    - destruct (ult_back_refines (abst 1) a b) as [Ha Hb].
+      constructor; [exact Ha|constructor; [exact Hb|constructor]].
+  Qed.
+  Local Close Scope Z_scope.
 End Interval.
 
 Module IntervalTimingHelpers (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
