@@ -2803,6 +2803,120 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       nia.
   Qed.
 
+  Local Lemma table_assume_pair_time : forall o w a b q,
+    (T_interval_assume_pair o w a b q <=
+      10000 * (Scalar.c_scalar + 1) *
+      N.of_nat ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2 +
+        interval_bits q))%N.
+  Proof.
+    intros o w a b q.
+    pose proof (table_is_point_time q 0) as Hpoint0.
+    pose proof (table_is_point_time q 1) as Hpoint1.
+    pose proof (table_assume_equal_time a b) as Heq.
+    pose proof (table_assume_neq_time a b) as Hneq.
+    pose proof (table_assume_ult_time a b) as Hult.
+    pose proof (table_assume_ult_time b a) as Hult_rev.
+    pose proof (table_assume_ule_time a b) as Hule.
+    pose proof (table_assume_ule_time b a) as Hule_rev.
+    pose proof (table_assume_signed_time w true true a b) as Hslt_true.
+    pose proof (table_assume_signed_time w true false a b) as Hslt_false.
+    pose proof (table_assume_signed_time w false true a b) as Hsle_true.
+    pose proof (table_assume_signed_time w false false a b) as Hsle_false.
+    pose proof (table_assume_add_time w a b q) as Hadd.
+    pose proof (table_assume_sub_time a b q) as Hsub.
+    unfold T_interval_assume_pair, T_interval_swap.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    set (s := Pos.to_nat w + interval_bits a + interval_bits b + 1).
+    set (budget_nat := s ^ 2 + interval_bits q).
+    set (budget := N.of_nat budget_nat).
+    set (coeff := (Scalar.c_scalar + 1)%N).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget, budget_nat, s. rewrite Nat.pow_2_r. nia. }
+    assert (Hcoeff : (1 <= coeff)%N) by (unfold coeff; lia).
+    assert (Hsmall_nat :
+      (interval_bits a + interval_bits b + 1 <= budget_nat)%nat).
+    { unfold budget_nat, s. rewrite Nat.pow_2_r. nia. }
+    assert (Hq_nat : (interval_bits q + 1 <= 2 * budget_nat)%nat).
+    { unfold budget_nat, s. rewrite Nat.pow_2_r. nia. }
+    assert (Hadd_nat :
+      (Pos.to_nat w + interval_bits a + interval_bits b + interval_bits q + 1 <=
+        budget_nat)%nat).
+    { unfold budget_nat, s. rewrite Nat.pow_2_r. nia. }
+    assert (Hsub_nat :
+      (interval_bits a + interval_bits b + interval_bits q + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    assert (Hsign_nat : (s ^ 2 <= budget_nat)%nat)
+      by (unfold budget_nat; lia).
+    pose proof (table_nat_to_N_le _ _ Hsmall_nat) as Hsmall.
+    pose proof (table_nat_to_N_le _ _ Hq_nat) as Hq.
+    pose proof (table_nat_to_N_le _ _ Hadd_nat) as Hadd_size.
+    pose proof (table_nat_to_N_le _ _ Hsub_nat) as Hsub_size.
+    pose proof (table_nat_to_N_le _ _ Hsign_nat) as Hsign.
+    rewrite Nat2N.inj_mul in Hq.
+    assert (Hpoint0_budget : (T_interval_is_point q 0 <= 40 * budget)%N).
+    { clear - Hpoint0 Hq. unfold budget. nia. }
+    assert (Hpoint1_budget : (T_interval_is_point q 1 <= 40 * budget)%N).
+    { clear - Hpoint1 Hq. unfold budget. nia. }
+    assert (Heq_budget : (T_interval_assume_equal a b <= 10 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Heq|].
+      apply N.mul_le_mono_l. exact Hsmall. }
+    assert (Hneq_budget : (T_interval_assume_neq a b <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hneq|].
+      apply N.mul_le_mono_l. exact Hsmall. }
+    assert (Hult_budget : (T_interval_assume_ult a b <= 100 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hult|].
+      apply N.mul_le_mono_l. exact Hsmall. }
+    assert (Hule_budget : (T_interval_assume_ule a b <= 100 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hule|].
+      apply N.mul_le_mono_l. exact Hsmall. }
+    assert (Hult_rev_budget : (T_interval_assume_ult b a <= 100 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hult_rev|].
+      apply N.mul_le_mono_l.
+      replace (interval_bits b + interval_bits a + 1)%nat with
+        (interval_bits a + interval_bits b + 1)%nat by lia.
+      exact Hsmall. }
+    assert (Hule_rev_budget : (T_interval_assume_ule b a <= 100 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hule_rev|].
+      apply N.mul_le_mono_l.
+      replace (interval_bits b + interval_bits a + 1)%nat with
+        (interval_bits a + interval_bits b + 1)%nat by lia.
+      exact Hsmall. }
+    assert (Hslt_true_budget :
+      (T_interval_assume_signed w true true a b <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hslt_true|].
+      apply N.mul_le_mono_l. exact Hsign. }
+    assert (Hslt_false_budget :
+      (T_interval_assume_signed w true false a b <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hslt_false|].
+      apply N.mul_le_mono_l. exact Hsign. }
+    assert (Hsle_true_budget :
+      (T_interval_assume_signed w false true a b <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hsle_true|].
+      apply N.mul_le_mono_l. exact Hsign. }
+    assert (Hsle_false_budget :
+      (T_interval_assume_signed w false false a b <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hsle_false|].
+      apply N.mul_le_mono_l. exact Hsign. }
+    assert (Hadd_budget : (T_interval_assume_add w a b q <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hadd|].
+      apply N.mul_le_mono_l. exact Hadd_size. }
+    assert (Hsub_budget : (T_interval_assume_sub a b q <= 1000 * coeff * budget)%N).
+    { eapply N.le_trans; [exact Hsub|].
+      apply N.mul_le_mono_l. exact Hsub_size. }
+    clear Hpoint0 Hpoint1 Heq Hneq Hult Hult_rev Hule Hule_rev
+      Hslt_true Hslt_false Hsle_true Hsle_false Hadd Hsub.
+    destruct o;
+      repeat match goal with
+      | |- context [interval_is_point q ?z] => destruct (interval_is_point q z)
+      end;
+      time_cbn_all;
+      clear - Hbudget Hcoeff Hpoint0_budget Hpoint1_budget Heq_budget
+        Hneq_budget Hult_budget Hule_budget Hult_rev_budget Hule_rev_budget
+        Hslt_true_budget Hslt_false_budget Hsle_true_budget Hsle_false_budget
+        Hadd_budget Hsub_budget;
+      nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
@@ -3440,7 +3554,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     set (s := Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1).
     set (sq := s ^ 2).
     assert (Hwidth : (Pos.to_nat wa + Pos.to_nat wb + 2 <= sq)%nat).
-    { subst sq s. rewrite Nat.pow_2_r. nia. }
+    { subst sq s. clear - Hwa Hwb. rewrite Nat.pow_2_r. nia. }
     set (budget := sq + W.psize rw q + W.psize wa a + W.psize wb b).
     assert (Hsize :
       (2 + W.psize wa
