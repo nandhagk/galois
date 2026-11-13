@@ -2714,9 +2714,6 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     unfold T_narrow, c_val, ScalarTime.c_scalar in *.
     assert (Hpos : (1 <= N.of_nat (size a + size b + 1))%N) by lia. nia.
   Qed.
-  (** Forward transfer is bounded by operator work. *)
-  Lemma T_forward_le : forall o xs, (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
   (** Backward transfer additionally charges the requested result. *)
   Lemma T_backward_le : forall o r xs,
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
@@ -2770,10 +2767,6 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     end.
     all: unfold c_val in *; nia.
   Qed.
-  (** Forward results fit within the charged operator work. *)
-  Lemma forward_size : forall o xs,
-    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
   (** Meet results fit within the combined operand sizes. *)
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
@@ -2986,6 +2979,109 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
       c_interval * N.of_nat (size a + size b + wsize ts + 1))%N.
     unfold T_widen, c_interval, ScalarTime.c_scalar in *.
     assert (Hpos : (1 <= N.of_nat (size a + size b + wsize ts + 1))%N) by lia. nia.
+  Qed.
+  (** The declared work of a binary call includes its quadratic primitive budget. *)
+  Lemma forward_work_quadratic : forall o a b,
+    binary_work a b <= work o (a :: b :: nil) + 1.
+  Proof.
+    intros o a b. unfold binary_work, work, operand_bits. fold size.
+    cbn [map fold_right length]. rewrite Nat.add_0_r. lia.
+  Qed.
+
+  (** The same work budget includes a linear pair of endpoint sizes. *)
+  Lemma forward_work_linear : forall o a b,
+    size a + size b + 1 <= work o (a :: b :: nil) + 1.
+  Proof.
+    intros o a b. unfold work, operand_bits.
+    cbn [map fold_right length]. rewrite Nat.pow_2_r. nia.
+  Qed.
+
+  (** Constant primitive clocks fit every declared forward work budget. *)
+  Lemma forward_constant_time : forall o xs,
+    (1 <= c_interval * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs. assert (Hwork : (1 <= N.of_nat (work o xs + 1))%N) by lia.
+    unfold c_interval. nia.
+  Qed.
+
+  (** Primitive time bounds may use the enclosing dispatch work budget. *)
+  Lemma forward_time_weaken : forall o xs cost n,
+    (cost <= c_interval * N.of_nat n)%N -> n <= work o xs + 1 ->
+    (cost <= c_interval * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs cost n Htime Hwork. eapply N.le_trans; [exact Htime|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** The value-domain constant pays for the operator view and primitive call. *)
+  Lemma forward_dispatch_time : forall o xs cost,
+    (cost <= c_interval * N.of_nat (work o xs + 1))%N ->
+    (1 + (L.T_view o + cost) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs cost Hprimitive. pose proof (L.T_view_le o) as Hview.
+    set (budget := N.of_nat (work o xs + 1)) in *.
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; lia).
+    assert (Hoverhead : (1 + L.T_view o <= (L.c_view + 1) * budget)%N) by nia.
+    assert (Hcoeff : (c_interval + L.c_view + 1 <= c_val)%N).
+    { unfold c_interval, c_val. nia. }
+    eapply N.le_trans with ((c_interval + L.c_view + 1) * budget)%N; [nia|].
+    now apply N.mul_le_mono_r.
+  Qed.
+
+
+  (** Binary result bounds can be charged to the enclosing forward work. *)
+  Lemma forward_pair_size : forall o a b r,
+    size r <= 2 * (size a + size b + 1) -> size r <= 2 * (work o (a :: b :: nil) + 1).
+  Proof.
+    intros o a b r Hresult. pose proof (forward_work_linear o a b) as Hwork. lia.
+  Qed.
+
+  (** Forward results fit a small multiple of the declared work before constant scaling. *)
+  Lemma forward_result_bits : forall o xs, size (forward o xs) <= 2 * (work o xs + 1).
+  Proof.
+    intros o xs. unfold forward.
+    destruct (L.view o) as [ | | | | | | | | c | z | ] eqn:Hview;
+      destruct xs as [|a [|b [|extra rest]]]; cbn beta iota zeta;
+      try (unfold top, size, itv_bits, bnd_bits; lia).
+    - apply forward_pair_size. pose proof (add_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. pose proof (sub_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. pose proof (mul_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. pose proof (udiv_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. pose proof (urem_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. pose proof (bitand_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. pose proof (bitor_result_bits a b) as Hbits; lia.
+    - apply forward_pair_size. apply shl_result_bits.
+    - apply forward_pair_size. pose proof (cmp_result_bits c a b) as Hbits; lia.
+    - rewrite abst_result_bits. unfold work, operand_bits. rewrite Hview.
+      cbn [map fold_right length Nat.pow]. lia.
+  Qed.
+
+
+  (** Forward transfer is bounded by operator work. *)
+  Lemma T_forward_le : forall o xs, (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs. unfold T_forward.
+    destruct (L.view o) as [ | | | | | | | | c | z | ] eqn:Hview;
+      destruct xs as [|a [|b [|extra rest]]]; cbn beta iota zeta;
+      apply forward_dispatch_time; try apply N.le_0_l; try apply forward_constant_time.
+    - eapply forward_time_weaken; [apply T_add_le|apply forward_work_linear].
+    - eapply forward_time_weaken; [apply T_sub_le|apply forward_work_linear].
+    - eapply forward_time_weaken; [apply T_mul_le|apply forward_work_quadratic].
+    - eapply forward_time_weaken; [apply T_udiv_le|apply forward_work_quadratic].
+    - eapply forward_time_weaken; [apply T_urem_le|apply forward_work_quadratic].
+    - eapply forward_time_weaken; [apply T_bitand_le|apply forward_work_quadratic].
+    - eapply forward_time_weaken; [apply T_bitor_le|apply forward_work_quadratic].
+    - eapply forward_time_weaken; [apply T_shl_le|apply forward_work_quadratic].
+    - eapply forward_time_weaken; [apply T_cmp_le|apply forward_work_linear].
+  Qed.
+
+  (** Forward results fit within the charged operator work. *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs. pose proof (forward_result_bits o xs) as Hbits.
+    eapply N.le_trans with (2 * N.of_nat (work o xs + 1))%N; [lia|].
+    apply N.mul_le_mono_r. unfold c_val. nia.
   Qed.
   (** Interval concretization is inclusive endpoint membership. *)
   Lemma F1_gamma : forall a z, gamma a z <-> in_itv a z.
