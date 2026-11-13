@@ -1784,6 +1784,349 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     exact (proj1 (Forall_forall _ _) (poly_step_tracks P x _ Hinitial) s Hmember).
   Qed.
 
+  (** The strict flag records exactly a positive weight of the strict target complement. *)
+  Definition poly_target_strict (r : poly_row X.t) : Prop :=
+    forall sc ms, poly_multipliers r = sc :: ms -> poly_strict r = (0 <? sc)%Z.
+
+  Lemma poly_tracks_scale_admissible : forall P r a,
+    poly_tracks P r ->
+    (lrel (poly_constraint r) = RLe -> (0 <= a)%Z) ->
+    C.admissible P (map (fun m => (a * m)%Z) (poly_multipliers r)).
+  Proof.
+    intros P r a [Hweights [_ [_ Hrel]]] Hpositive. apply poly_admissible_scale;
+      [exact Hweights|].
+    destruct (C.comb_eq P (poly_multipliers r)) eqn:Hused; [now left|right].
+    apply Hpositive. rewrite Hrel. now rewrite ?Hused.
+  Qed.
+
+  Lemma poly_positive_product : forall a m, (0 <= m)%Z ->
+    (0 <? a * m)%Z = ((0 <? a)%Z && (0 <? m)%Z).
+  Proof.
+    intros a m Hm. destruct (Z.ltb_spec 0 a), (Z.ltb_spec 0 m); cbn [andb].
+    - apply Z.ltb_lt. nia.
+    - apply Z.ltb_ge. nia.
+    - apply Z.ltb_ge. nia.
+    - apply Z.ltb_ge. nia.
+  Qed.
+
+  Lemma poly_positive_sum : forall m n, (0 <= m)%Z -> (0 <= n)%Z ->
+    (0 <? m + n)%Z = ((0 <? m)%Z || (0 <? n)%Z).
+  Proof.
+    intros m n Hm Hn. destruct (Z.ltb_spec 0 m), (Z.ltb_spec 0 n); cbn [orb].
+    - apply Z.ltb_lt. lia.
+    - apply Z.ltb_lt. lia.
+    - apply Z.ltb_lt. lia.
+    - apply Z.ltb_ge. lia.
+  Qed.
+
+  Lemma poly_add_rows_target_strict : forall target P p q a b,
+    lrel target = RLe -> poly_tracks (target :: P) p -> poly_tracks (target :: P) q ->
+    poly_target_strict p -> poly_target_strict q ->
+    (lrel (poly_constraint p) = RLe -> (0 <= a)%Z) ->
+    (lrel (poly_constraint q) = RLe -> (0 <= b)%Z) ->
+    poly_target_strict (poly_add_rows X.encode a p b q).
+  Proof.
+    intros target P [pr [|m ms] ps] [qr [|n ns] qs] a b Htarget Hp Hq Hps Hqs Ha Hb;
+      unfold poly_target_strict; intros sc weights Hweights;
+      cbn [poly_add_rows poly_multipliers poly_weighted] in Hweights;
+      try discriminate.
+    injection Hweights as Hsc Htail. subst sc weights.
+    pose proof (proj1 Hp) as Hm. pose proof (proj1 Hq) as Hn.
+    apply poly_admissible_cons in Hm as [Hm _].
+    apply poly_admissible_cons in Hn as [Hn _].
+    specialize (Hm Htarget). specialize (Hn Htarget).
+    pose proof (poly_tracks_scale_admissible _ _ a Hp Ha) as Ham.
+    pose proof (poly_tracks_scale_admissible _ _ b Hq Hb) as Hbn.
+    cbn [poly_multipliers map] in Ham, Hbn.
+    apply poly_admissible_cons in Ham as [Ham _].
+    apply poly_admissible_cons in Hbn as [Hbn _].
+    specialize (Ham Htarget). specialize (Hbn Htarget).
+    cbn [poly_add_rows poly_strict].
+    specialize (Hps m ms eq_refl). specialize (Hqs n ns eq_refl).
+    cbn [poly_strict] in Hps, Hqs. rewrite Hps, Hqs.
+    rewrite poly_positive_sum by assumption.
+    rewrite !poly_positive_product by assumption. reflexivity.
+  Qed.
+
+  Lemma poly_initial_false_strict : forall rows,
+    Forall (fun r => poly_strict r = false)
+      (poly_initial X.encode (map (fun r => (r, false)) rows)).
+  Proof.
+    intro rows. induction rows as [|r rows IH]; [constructor|].
+    cbn [map poly_initial fst snd]. constructor; [reflexivity|].
+    apply Forall_map. exact IH.
+  Qed.
+
+  Lemma poly_pad_target_strict : forall r, poly_strict r = false ->
+    poly_target_strict (poly_pad_row r).
+  Proof.
+    intros r Hfalse sc ms Hweights. cbn [poly_pad_row poly_multipliers] in Hweights.
+    injection Hweights as Hsc Htail. subst sc ms.
+    cbn [poly_pad_row poly_strict]. exact Hfalse.
+  Qed.
+
+  Lemma poly_initial_target_strict : forall target P,
+    Forall poly_target_strict
+      (poly_initial X.encode ((target, true) :: map (fun r => (r, false)) P)).
+  Proof.
+    intros target P. cbn [poly_initial fst snd]. constructor.
+    - intros sc ms Hweights. cbn [poly_multipliers] in Hweights.
+      injection Hweights as Hsc Htail. subst sc ms. reflexivity.
+    - apply Forall_map. apply Forall_forall. intros r Hin. apply poly_pad_target_strict.
+      exact (proj1 (Forall_forall _ _) (poly_initial_false_strict P) r Hin).
+  Qed.
+
+  Lemma poly_cancel_target_strict : forall target P x p r,
+    lrel target = RLe -> poly_tracks (target :: P) p -> poly_tracks (target :: P) r ->
+    poly_target_strict p -> poly_target_strict r -> lrel (poly_constraint p) = REq ->
+    poly_target_strict (poly_cancel X.encode X.eqb x p r).
+  Proof.
+    intros target P x p r Htarget Hp Hr Hps Hrs Heq. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hrs|].
+    apply poly_add_rows_target_strict with (target := target) (P := P);
+      try assumption.
+    - intro Hfalse. congruence.
+    - intros _. apply Z.abs_nonneg.
+  Qed.
+
+  Lemma poly_step_target_strict : forall target P x rows,
+    lrel target = RLe -> Forall (poly_tracks (target :: P)) rows ->
+    Forall poly_target_strict rows ->
+    Forall poly_target_strict (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros target P x rows Htarget Htracks Hstrict. unfold poly_step.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - apply find_some in Hfind as [Hmember Hpivot].
+      assert (Heq : lrel (poly_constraint p) = REq).
+      { unfold poly_pivot in Hpivot. destruct (lrel (poly_constraint p));
+          [reflexivity|discriminate]. }
+      apply Forall_map. apply Forall_forall. intros r Hin.
+      apply poly_cancel_target_strict with (target := target) (P := P);
+        try assumption.
+      + exact (proj1 (Forall_forall _ _) Htracks p Hmember).
+      + exact (proj1 (Forall_forall _ _) Htracks r Hin).
+      + exact (proj1 (Forall_forall _ _) Hstrict p Hmember).
+      + exact (proj1 (Forall_forall _ _) Hstrict r Hin).
+    - apply Forall_app. split; apply Forall_forall; intros r Hin.
+      + apply filter_In in Hin as [Hin _].
+        exact (proj1 (Forall_forall _ _) Hstrict r Hin).
+      + apply in_flat_map in Hin as [p [Hp Hin]].
+        apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
+        apply filter_In in Hp as [Hp Hpositive]. apply Z.ltb_lt in Hpositive.
+        apply filter_In in Hq as [Hq Hnegative]. apply Z.ltb_lt in Hnegative.
+        apply poly_add_rows_target_strict with (target := target) (P := P);
+          [exact Htarget| | | | | |].
+        * exact (proj1 (Forall_forall _ _) Htracks p Hp).
+        * exact (proj1 (Forall_forall _ _) Htracks q Hq).
+        * exact (proj1 (Forall_forall _ _) Hstrict p Hp).
+        * exact (proj1 (Forall_forall _ _) Hstrict q Hq).
+        * intros _. lia.
+        * intros _. lia.
+  Qed.
+
+  Lemma poly_run_target_strict : forall xs target P rows,
+    lrel target = RLe -> Forall (poly_tracks (target :: P)) rows ->
+    Forall poly_target_strict rows ->
+    Forall poly_target_strict (poly_run X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros target P rows Htarget Htracks Hstrict;
+      [exact Hstrict|].
+    cbn [poly_run]. apply IH with (target := target) (P := P); [exact Htarget| |].
+    - now apply poly_step_tracks.
+    - now apply poly_step_target_strict with (target := target) (P := P).
+  Qed.
+
+  Lemma poly_entailment_initial_tracks : forall c P,
+    Forall (poly_tracks (poly_negate c :: P))
+      (poly_initial X.encode
+        ((poly_negate c, true) :: map (fun r => (r, false)) P)).
+  Proof.
+    intros c P. pose proof (poly_initial_tracks
+      ((poly_negate c, true) :: map (fun r => (r, false)) P)) as Htracks.
+    cbn [map fst] in Htracks. rewrite map_map in Htracks.
+    change (Forall (poly_tracks (poly_negate c :: map (fun r => r) P))
+      (poly_initial X.encode
+        ((poly_negate c, true) :: map (fun r => (r, false)) P))) in Htracks.
+    now rewrite map_id in Htracks.
+  Qed.
+
+  Lemma poly_entailment_tracks : forall xs c P,
+    Forall (poly_tracks (poly_negate c :: P))
+      (poly_run X.encode X.eqb xs (poly_initial X.encode
+        ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros xs c P. apply poly_run_tracks. apply poly_entailment_initial_tracks.
+  Qed.
+
+  Lemma poly_entailment_target_strict : forall xs c P,
+    Forall poly_target_strict
+      (poly_run X.encode X.eqb xs (poly_initial X.encode
+        ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros xs c P. apply poly_run_target_strict with (target := poly_negate c) (P := P).
+    - reflexivity.
+    - apply poly_entailment_initial_tracks.
+    - apply poly_initial_target_strict.
+  Qed.
+
+  Lemma poly_contradiction_empty : forall (r : poly_row X.t), poly_contradiction r = true ->
+    lhs (poly_constraint r) = nil.
+  Proof.
+    intros r Hcontra. unfold poly_contradiction in Hcontra.
+    destruct (lhs (poly_constraint r)); [reflexivity|discriminate].
+  Qed.
+
+  Lemma poly_contradiction_eq_rhs : forall (r : poly_row X.t),
+    lrel (poly_constraint r) = REq -> poly_contradiction r = true ->
+    rhs (poly_constraint r) <> 0%Z.
+  Proof.
+    intros r Hrel Hcontra. unfold poly_contradiction in Hcontra. rewrite Hrel in Hcontra.
+    destruct (lhs (poly_constraint r)); [|discriminate].
+    now apply negb_true_iff, Z.eqb_neq in Hcontra.
+  Qed.
+
+  Lemma poly_contradiction_le_rhs : forall (r : poly_row X.t),
+    lrel (poly_constraint r) = RLe -> poly_contradiction r = true ->
+    (rhs (poly_constraint r) <= 0)%Z.
+  Proof.
+    intros r Hrel Hcontra. unfold poly_contradiction in Hcontra. rewrite Hrel in Hcontra.
+    destruct (lhs (poly_constraint r)); [|discriminate].
+    apply orb_true_iff in Hcontra as [Hnegative|Hstrict].
+    - apply Z.ltb_lt in Hnegative. lia.
+    - apply andb_true_iff in Hstrict as [_ Hnonpositive]. now apply Z.leb_le.
+  Qed.
+
+  Lemma poly_contradiction_nonstrict_rhs : forall (r : poly_row X.t),
+    lrel (poly_constraint r) = RLe -> poly_strict r = false ->
+    poly_contradiction r = true -> (rhs (poly_constraint r) < 0)%Z.
+  Proof.
+    intros r Hrel Hflag Hcontra. unfold poly_contradiction in Hcontra.
+    rewrite Hrel, Hflag in Hcontra.
+    destruct (lhs (poly_constraint r)); [|discriminate].
+    cbn [andb] in Hcontra. rewrite orb_false_r in Hcontra. now apply Z.ltb_lt.
+  Qed.
+
+  (** A zero target residual gives the exact source certificate equations. *)
+  Lemma poly_target_data : forall P c r sc ms,
+    poly_tracks (poly_negate c :: P) r -> poly_multipliers r = sc :: ms ->
+    lhs (poly_constraint r) = nil ->
+    C.admissible P ms /\ (0 <= sc)%Z /\
+    (forall x, C.comb_coef P ms x = (sc * C.coef_of x (lhs c))%Z) /\
+    C.comb_rhs P ms = (rhs (poly_constraint r) + sc * rhs c)%Z /\
+    (lrel (poly_constraint r) = REq -> sc = 0%Z /\ C.comb_eq P ms = true).
+  Proof.
+    intros P c r sc ms [Hweights [Hcoef [Hrhs Hrel]]] Hms Hlhs.
+    rewrite Hms in Hweights, Hcoef, Hrhs, Hrel.
+    apply poly_admissible_cons in Hweights as [Hnonnegative Htail].
+    split; [exact Htail|]. split; [apply Hnonnegative; reflexivity|]. split.
+    - intro x. pose proof (Hcoef x) as Heq. rewrite Hlhs in Heq.
+      change (0%Z = C.comb_coef (poly_negate c :: P) (sc :: ms) x) in Heq.
+      rewrite poly_comb_coef_cons in Heq. cbn [poly_negate lhs] in Heq.
+      rewrite coef_of_scale in Heq. nia.
+    - split.
+      + rewrite poly_comb_rhs_cons in Hrhs. cbn [poly_negate rhs] in Hrhs. nia.
+      + intro Hrowrel.
+        assert (Hused : C.comb_eq (poly_negate c :: P) (sc :: ms) = true).
+        { destruct (C.comb_eq (poly_negate c :: P) (sc :: ms));
+            [reflexivity|congruence]. }
+        rewrite poly_comb_eq_cons in Hused. cbn [poly_negate lrel] in Hused.
+        apply andb_true_iff in Hused as [Hzero Hequality].
+        apply Z.eqb_eq in Hzero. auto.
+  Qed.
+
+  (** A contradictory residual with zero target weight is a source contradiction. *)
+  Lemma poly_zero_target_empty : forall P c r ms,
+    poly_tracks (poly_negate c :: P) r -> poly_target_strict r ->
+    poly_multipliers r = 0%Z :: ms -> poly_contradiction r = true ->
+    C.check_empty P ms = true.
+  Proof.
+    intros P c r ms Htracks Hstrict Hweights Hcontra.
+    destruct (poly_target_data P c r 0%Z ms Htracks Hweights
+      (poly_contradiction_empty r Hcontra)) as [Hadmissible [_ [Hcoef [Hrhs Heq]]]].
+    apply C.check_empty_complete; [exact Hadmissible| |].
+    - intro x. specialize (Hcoef x). lia.
+    - destruct (lrel (poly_constraint r)) eqn:Hrel.
+      + right. destruct (Heq eq_refl) as [_ Hequality]. split; [exact Hequality|].
+        pose proof (poly_contradiction_eq_rhs r Hrel Hcontra). lia.
+      + left. assert (Hflag : poly_strict r = false) by exact (Hstrict 0%Z ms Hweights).
+        pose proof (poly_contradiction_nonstrict_rhs r Hrel Hflag Hcontra). lia.
+  Qed.
+
+  (** Positive target weight turns a contradictory residual into a cut-free certificate. *)
+  Lemma poly_positive_target_checked : forall P c r sc ms,
+    lrel c = RLe -> poly_tracks (poly_negate c :: P) r ->
+    poly_multipliers r = sc :: ms -> (0 < sc)%Z -> poly_contradiction r = true ->
+    C.check_entails P c (Cert ms sc false) = true.
+  Proof.
+    intros P c r sc ms Htarget Htracks Hweights Hpositive Hcontra.
+    destruct (poly_target_data P c r sc ms Htracks Hweights
+      (poly_contradiction_empty r Hcontra)) as [Hadmissible [_ [Hcoef [Hrhs Heq]]]].
+    assert (Hrel : lrel (poly_constraint r) = RLe).
+    { destruct (lrel (poly_constraint r)); [|reflexivity].
+      destruct (Heq eq_refl) as [Hzero _]. lia. }
+    pose proof (poly_contradiction_le_rhs r Hrel Hcontra) as Hnonpositive.
+    apply C.check_entails_complete; try assumption. rewrite Htarget. nia.
+  Qed.
+
+  (** Every contradictory producer row is accepted by the certificate search. *)
+  Lemma poly_candidate_complete : forall P c r,
+    lrel c = RLe -> poly_tracks (poly_negate c :: P) r -> poly_target_strict r ->
+    poly_contradiction r = true -> exists k, candidate P c r = Some k.
+  Proof.
+    intros P c r Htarget Htracks Hstrict Hcontra.
+    destruct (poly_multipliers r) as [|sc ms] eqn:Hweights.
+    { destruct (proj1 Htracks) as [Hlength _]. rewrite Hweights in Hlength.
+      cbn [length] in Hlength. discriminate. }
+    assert (Hnonnegative : (0 <= sc)%Z).
+    { pose proof (proj1 Htracks) as Hadmissible. rewrite Hweights in Hadmissible.
+      apply poly_admissible_cons in Hadmissible as [Hhead _]. apply Hhead. reflexivity. }
+    destruct (C.check_empty P ms) eqn:Hempty.
+    - assert (Hcheck : C.check_entails P c (Cert ms 1%Z false) = true).
+      { apply C.check_entails_empty. exact Hempty. }
+      exists (Cert ms 1%Z false). unfold candidate.
+      now rewrite Hcontra, Hweights, Hempty, Hcheck.
+    - assert (Hpositive : (0 < sc)%Z).
+      { destruct (Z.eq_dec sc 0) as [Hzero|Hnonzero]; [|lia]. subst sc.
+        pose proof (poly_zero_target_empty P c r ms Htracks Hstrict Hweights Hcontra).
+        congruence. }
+      pose proof (poly_positive_target_checked P c r sc ms
+        Htarget Htracks Hweights Hpositive Hcontra) as Hcheck.
+      exists (Cert ms sc false). unfold candidate.
+      now rewrite Hcontra, Hweights, Hempty, Hcheck.
+  Qed.
+
+  Lemma poly_find_certificate_complete : forall P c rows r k,
+    In r rows -> candidate P c r = Some k -> exists found, find_certificate P c rows = Some found.
+  Proof.
+    intros P c rows. induction rows as [|p rows IH]; intros r k Hin Hcandidate;
+      [contradiction|].
+    cbn [find_certificate]. destruct (candidate P c p) as [found|] eqn:Hhead.
+    - exists found. reflexivity.
+    - destruct Hin as [Hsame|Hin].
+      + subst p. congruence.
+      + now apply IH with (r := r) (k := k).
+  Qed.
+
+  (** Search failure means the final projected system contains no contradictory row. *)
+  Lemma poly_entailment_no_contradiction : forall P c,
+    lrel c = RLe -> entail_cert P c = None ->
+    Forall (fun r => poly_contradiction r = false)
+      (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros P c Htarget Hnone. apply Forall_forall. intros r Hin.
+    destruct (poly_contradiction r) eqn:Hcontra; [|reflexivity].
+    pose proof (proj1 (Forall_forall _ _)
+      (poly_entailment_tracks (poly_variables X.encode (c :: P)) c P) r Hin) as Htracks.
+    pose proof (proj1 (Forall_forall _ _)
+      (poly_entailment_target_strict (poly_variables X.encode (c :: P)) c P) r Hin)
+      as Hstrict.
+    destruct (poly_candidate_complete P c r Htarget Htracks Hstrict Hcontra)
+      as [k Hcandidate].
+    destruct (poly_find_certificate_complete P c _ r k Hin Hcandidate) as [found Hfound].
+    unfold entail_cert in Hnone. rewrite Hnone in Hfound. discriminate.
+  Qed.
+
   (** A valid lower endpoint can be intersected with the existing interval. *)
   Lemma lower_sound : forall lo hi b z, (b <= z)%Z -> in_bnd lo hi z ->
     in_bnd (poly_lower b lo) hi z.
