@@ -9380,6 +9380,71 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     rewrite Hretained; exact Hsum.
   Qed.
 
+  Lemma stored_edit_partition : forall p p' ch st, state_ok st ->
+    Permutation (stored (edit p p' ch st) ++ invalidate p p' ch st) (stored st).
+  Proof.
+    intros p p' ch st Hstate.
+    pose proof (state_ok_edit p p' ch st Hstate) as Hstate'.
+    apply NoDup_Permutation.
+    - apply NoDup_app; [exact (stored_nodup _ Hstate')|apply invalidate_nodup|].
+      intros x Hkept Hbad.
+      apply (proj1 (stored_spec (edit p p' ch st) x Hstate')) in Hkept.
+      apply (proj1 (edit_dom_keys p p' ch st x)) in Hkept as [_ Hnot].
+      exact (Hnot Hbad).
+    - exact (stored_nodup st Hstate).
+    - intro x; rewrite in_app_iff; split.
+      + intros [Hkept|Hbad].
+        * apply (proj2 (stored_spec st x Hstate)).
+          pose proof (proj1 (stored_spec (edit p p' ch st) x Hstate') Hkept)
+            as Hdom'.
+          apply (proj1 (edit_dom_keys p p' ch st x)) in Hdom' as [Hdom _].
+          exact Hdom.
+        * apply (proj2 (stored_spec st x Hstate)).
+          eapply invalidate_dom; exact Hbad.
+      + intro Hold.
+        pose proof (proj1 (stored_spec st x Hstate) Hold) as Hdom.
+        destruct (mem x (invalidate p p' ch st)) eqn:Hmem.
+        * right; now apply (proj1 (mem_spec x _)).
+        * left; apply (proj2 (stored_spec (edit p p' ch st) x Hstate')).
+          apply (proj2 (edit_dom_keys p p' ch st x)); split; [exact Hdom|].
+          intro Hbad.
+          pose proof (proj2 (mem_spec x _) Hbad) as Htrue.
+          change (mem x (invalidate_keys p p' ch st) = true) in Htrue.
+          change (mem x (invalidate_keys p p' ch st) = false) in Hmem.
+          congruence.
+  Qed.
+
+  Lemma snapshot_mass_partition : forall p p' ch st, state_ok st ->
+    snapshot_mass st = snapshot_mass (edit p p' ch st) +
+      finite_sum (fun x => length (cowrite_at st x)) (invalidate p p' ch st).
+  Proof.
+    intros p p' ch st Hstate.
+    pose proof (state_ok_edit p p' ch st Hstate) as Hstate'.
+    pose proof (stored_edit_partition p p' ch st Hstate) as Hperm.
+    pose proof (finite_sum_perm _ (fun x => length (cowrite_at st x))
+      _ _ Hperm) as Hsum.
+    rewrite finite_sum_app in Hsum.
+    assert (Hkept : finite_sum (fun x => length (cowrite_at st x))
+        (stored (edit p p' ch st)) =
+      finite_sum (fun x => length (cowrite_at (edit p p' ch st) x))
+        (stored (edit p p' ch st))).
+    { apply finite_sum_ext; intros x Hin.
+      pose proof (proj1 (stored_spec (edit p p' ch st) x Hstate') Hin) as Hdom.
+      pose proof (proj1 (edit_dom_keys p p' ch st x) Hdom) as [_ Hnot].
+      rewrite EditMetadata.edit_cowrite_eq.
+      destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem;
+        [|reflexivity].
+      exfalso; apply Hnot.
+      apply (proj1 (mem_spec x _)); exact Hmem. }
+    rewrite (cowrite_mass_pin st Hstate),
+      (cowrite_mass_pin (edit p p' ch st) Hstate').
+    change (finite_sum (fun x => length (cowrite_at st x)) (stored st) =
+      finite_sum (fun x => length (cowrite_at (edit p p' ch st) x))
+        (stored (edit p p' ch st)) +
+      finite_sum (fun x => length (cowrite_at st x)) (invalidate p p' ch st)).
+    rewrite Hkept in Hsum; symmetry; exact Hsum.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
