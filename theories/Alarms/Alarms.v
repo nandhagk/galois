@@ -139,5 +139,15 @@ Module AlarmsAnalysis (P : TYPE) (N : KEY) (E : TYPE) (G : CFG_OPS P N E)
     A.alarm inv k = false -> forall s cs,
     reachable (M.initial p) (M.step p) s -> K.point s = site k ->
     eval_terms L.eval (K.store s) (args k) = Some cs -> C.safe (ckind k) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p inv Hpost k Hquiet s cs Hreach Hpoint Heval.
+    eapply A.no_alarm_safe with
+      (reach := fun n st => exists s,
+        reachable (M.initial p) (M.step p) s /\ K.point s = n /\ K.store s = st).
+    - intros n st [s1 [Hs1 [Hn Hst]]]. subst n st.
+      eapply SOUND.covers; eassumption.
+    - exact Hquiet.
+    - exists s. auto.
+    - exact Heval.
+  Qed.
 End AlarmsAnalysis.
