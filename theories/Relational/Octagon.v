@@ -4126,6 +4126,21 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       apply RelationalPathBounds.plus_comm.
   Qed.
 
+  (** A sign-closed pivot set contains the paired chain of every witness. *)
+  Lemma coherent_path_pair : forall m ps i j d,
+    coherent m -> (forall k, In k ps -> In (bar k) ps) ->
+    RelationalPathBounds.path_witness (entry m) ps i j d ->
+    RelationalPathBounds.path_witness (entry m) ps (bar j) (bar i) d.
+  Proof.
+    intros m ps i j d Hcoh Hbar [Hzero|[ks [Hks Hchain]]].
+    - left. destruct Hzero as [Heq Hd]. subst j d. now split.
+    - right. exists (map bar (rev ks)). split.
+      + intros k Hin. apply in_map_iff in Hin.
+        destruct Hin as [p [Heq Hp]]. subst k.
+        apply Hbar, Hks. now apply in_rev.
+      + rewrite <- (coherent_chain_pair m i j ks Hcoh). exact Hchain.
+  Qed.
+
 
   Local Definition path_sum (a b : option Z) : option Z :=
     match a, b with Some x, Some y => Some (x + y)%Z | _, _ => None end.
