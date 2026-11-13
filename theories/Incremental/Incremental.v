@@ -9577,6 +9577,62 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     eapply invalid_loop_finish_arithmetic; [exact Hcow|exact Hloop].
   Qed.
 
+  Definition invalid_changed_work (p p' : S.prog) (ch : list S.row) : nat :=
+    finite_sum (fun r =>
+      length (S.writes p r) + length (S.writes p' r) +
+      length (S.deps p r) + length (S.deps p' r) + 1) ch.
+
+  Lemma invalid_changed_keys_length : forall p p' ch,
+    length (changed_keys p p' ch) <= invalid_changed_work p p' ch.
+  Proof.
+    intros p p' ch; induction ch as [|r rest IH]; [reflexivity|].
+    change (length ((row_writes p r ++ row_writes p' r) ++
+      changed_keys p p' rest) <=
+      (length (S.writes p r) + length (S.writes p' r) +
+        length (S.deps p r) + length (S.deps p' r) + 1) +
+      invalid_changed_work p p' rest).
+    rewrite !length_app.
+    change (row_writes p r) with (S.writes p r).
+    change (row_writes p' r) with (S.writes p' r).
+    lia.
+  Qed.
+
+  Lemma invalid_changed_keys_width : forall p p' ch st,
+    S.wf p -> S.wf p' ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    forall x, In x (changed_keys p p' ch) ->
+      S.key_bits x <= width p st + width p' st + kwidth st.
+  Proof.
+    intros p p' ch st Hwf Hwf' Hlisted x Hin.
+    unfold changed_keys in Hin; apply in_flat_map in Hin as [r [Hr Hx]].
+    destruct (Hlisted r Hr) as [Hrow Hrow'].
+    apply in_app_iff in Hx as [Hx|Hx].
+    - assert (Hbits : S.key_bits x <= S.kw p).
+      { apply (S.key_bits_le p r x Hwf Hrow).
+        apply in_or_app; left; exact Hx. }
+      unfold width; lia.
+    - assert (Hbits : S.key_bits x <= S.kw p').
+      { apply (S.key_bits_le p' r x Hwf' Hrow').
+        apply in_or_app; left; exact Hx. }
+      unfold width; lia.
+  Qed.
+
+  Lemma invalid_changed_keys_bits : forall p p' ch st,
+    S.wf p -> S.wf p' ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    finite_sum (fun x => S.key_bits x + 1) (changed_keys p p' ch) <=
+      invalid_changed_work p p' ch *
+        (width p st + width p' st + kwidth st + 1).
+  Proof.
+    intros p p' ch st Hwf Hwf' Hlisted.
+    pose proof (finite_sum_key_bits_width (changed_keys p p' ch)
+      (width p st + width p' st + kwidth st)) as Hbits.
+    specialize (Hbits (invalid_changed_keys_width p p' ch st Hwf Hwf' Hlisted)).
+    pose proof (invalid_changed_keys_length p p' ch) as Hlength.
+    eapply Nat.le_trans; [exact Hbits|].
+    apply Nat.mul_le_mono_r; exact Hlength.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
