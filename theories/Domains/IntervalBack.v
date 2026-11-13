@@ -3676,7 +3676,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Definition c_word_table : N := (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N.
 
   Local Lemma table_bwd2_time : forall o rw wa a wb b q,
-    (2 + T_interval_clip wa a + T_interval_clip wb b +
+    (4 + T_interval_clip wa a + T_interval_clip wb b +
       T_interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q <=
       c_word_table * N.of_nat
         (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
@@ -3837,7 +3837,39 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* OPEN: bound timed backward clipping and refinement dispatches. *)
+  Proof.
+    intros o rw q xs.
+    assert (Hcoeff : (1 <= c_word_table)%N) by (unfold c_word_table; nia).
+    pose proof (Pos2Nat.is_pos rw) as Hrw.
+    unfold T_wbwd.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct xs as [|[wa a] [|[wb b] [|extra rest]]]; destruct o;
+      cbn [map fold_right fst snd]; time_cbn_all;
+      try (clear - Hcoeff Hrw;
+        repeat rewrite Nat2N.inj_add in *;
+        repeat rewrite Nat2N.inj_mul in *; nia).
+    all: try (unfold T_interval_bwd1; time_simpl; time_cbn; time_cbn_all).
+    all: try (match goal with
+    | |- context [T_interval_assume_rewrap _ _ _] =>
+        pose proof (table_bwd1_time rw wa q a) as Htime;
+        rewrite Nat.pow_2_r in Htime;
+        rewrite !Nat.add_0_r, !Nat.mul_1_r;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
+    all: try (unfold T_interval_bwd2; time_simpl; time_cbn; time_cbn_all).
+    all: try (match goal with
+    | |- context [T_interval_assume_pair ?op _ _ _ _] =>
+        pose proof (table_bwd2_time op rw wa a wb b q) as Htime;
+        match goal with
+        | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+                W.psize rw q + W.psize wa a + W.psize wb b)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
