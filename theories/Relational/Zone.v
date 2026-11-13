@@ -532,7 +532,6 @@ Module RelationalPathBounds.
     intros ks i j d Hks Hentry Hchain.
     exact (Hall (S (length ks)) ks ltac:(lia) i j d Hks Hentry Hchain).
   Qed.
-
 End RelationalPathBounds.
 
 
@@ -2891,10 +2890,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
     same_entries (incr_close i j d m) (close (add_cons i j d m)).
   Proof. Admitted. (* STUB *)
-  Lemma T1_fw_round : forall k m, dbm_wf m ->
-    (T_fw_round k m <= k_zone * N.of_nat
-      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
-  Proof. Admitted. (* STUB *)
   Lemma bits_close_le : forall m m', close m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   Proof. Admitted. (* STUB *)
@@ -4216,5 +4211,204 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         (6 * (supp m + 1)^2 * (b m + K.bits i + ell m + Z.size_nat d + 1)) by ring.
       apply quadratic_work_rows, increment_scalar_work_bound. }
     clear Hskel Hprod Hrows. clearbody units. lia.
+  Qed.
+
+  (** A nonempty support grid covers one payload allowance. *)
+  Lemma quadratic_payload_le : forall n payload,
+    payload <= (n + 1)^2 * payload.
+  Proof.
+    intros n payload. replace payload with (1 * payload) at 1 by ring.
+    apply Nat.mul_le_mono_r. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** A merge against an empty right input charges only present left payloads. *)
+  Lemma T_merge_left_code_work : forall (A B C : Type)
+      (f : option A -> option B -> option C) tf (w : A -> nat) (m : M.t A) c,
+    (forall a b, (tf a b <= c * N.of_nat (option_weight w a + 1))%N) ->
+    (M.T_merge f tf m (@M.empty B) <= M.c_map * (c + 1) * 2 *
+      N.of_nat (code_work w m + 1))%N.
+  Proof.
+    intros A B C f tf w m c Hbound.
+    assert (Hcallback : forall a b,
+      (tf a b <= c * N.of_nat (option_weight w a +
+        option_weight (fun _ : B => 0%nat) b + 1))%N).
+    { intros a b. rewrite option_weight_zero, Nat.add_0_r. apply Hbound. }
+    pose proof (T_merge_code_work A B C f tf w (fun _ : B => 0) m M.empty c Hcallback)
+      as Hmerge. rewrite code_work_empty, Nat.add_0_r in Hmerge. exact Hmerge.
+  Qed.
+
+  (** A sparse pivot update uses a quadratic raw-support work budget. *)
+  Definition relax_time_factor : N := (512 * (M.c_map + 1) * (M.c_map + 1))%N.
+
+  (** One relaxation pays for one pivot-row lookup and the supported row updates. *)
+  Lemma T_relax_round_small : forall k m,
+    (T_relax_round k m <= relax_time_factor * N.of_nat
+      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
+  Proof.
+    intros k m.
+    set (units := (supp m + 1)^2 * (b m + K.bits k + ell m + 1)).
+    change (T_relax_round k m <= relax_time_factor * N.of_nat units)%N.
+    assert (Hkey : K.bits k + 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply quadratic_payload_le]. lia. }
+    assert (Hpositive : 1 <= units) by lia.
+    pose proof (pivot_matrix_work_bound m k) as Hmatrix.
+    replace (6 * (supp m + 1)^2 * (b m + K.bits k + ell m + 1)) with
+      (6 * units) in Hmatrix by (unfold units; ring).
+    assert (Hdata : code_work (pivot_row_work k (row_of (M.get k m))) m + 1 <= 7 * units).
+    { lia. }
+    pose proof (time_of_nat_le _ _ Hdata) as HdataN. rewrite Nat2N.inj_mul in HdataN.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    set (work := N.of_nat units) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    clear Hpositive Hkey Hmatrix Hdata. clearbody work. clear units.
+    pose proof (T_merge_left_code_work (M.t Z) (M.t Z) (M.t Z)
+      (round_row k (row_of (M.get k m)))
+      (fun x y => T_round_row k (row_of (M.get k m)) x y)
+      (pivot_row_work k (row_of (M.get k m))) m row_time_factor
+      (T_round_row_le k (row_of (M.get k m)))) as Hmerge.
+    assert (Hmerge' : (M.T_merge (round_row k (row_of (M.get k m)))
+      (fun x y => T_round_row k (row_of (M.get k m)) x y) m M.empty <=
+      M.c_map * (row_time_factor + 1) * 2 * (7 * work))%N).
+    { eapply N.le_trans; [exact Hmerge|]. apply N.mul_le_mono_l. exact HdataN. }
+    assert (Hget : (M.T_get k m <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|]. apply N.mul_le_mono_l. exact HkeyN. }
+    pose proof (T_row_of_le (M.get k m)) as Hrow.
+    assert (Hcoefficient : (M.c_map * (row_time_factor + 1) * 2 * 7 + M.c_map + 4 <=
+      relax_time_factor)%N).
+    { unfold row_time_factor, relax_time_factor. nia. }
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    clear Hmerge HdataN HkeyN Hcoefficient.
+    replace (M.c_map * (row_time_factor + 1) * 2 * (7 * work))%N with
+      ((M.c_map * (row_time_factor + 1) * 2 * 7) * work)%N in Hmerge' by ring.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    unfold T_relax_round. cbn beta iota zeta. lia.
+  Qed.
+
+  (** Pivot-presence checking charges lookup bits only at finite outer rows. *)
+  Lemma T_pivot_present_small : forall k m,
+    (T_pivot_present k m <= 8 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat
+      (M.nodes m + length (M.codes m) * (K.bits k + 2) + K.bits k + 1))%N.
+  Proof.
+    intros k m.
+    set (units := M.nodes m + length (M.codes m) * (K.bits k + 2) + K.bits k + 1).
+    change (T_pivot_present k m <=
+      8 * (M.c_map + 1) * (M.c_map + 1) * N.of_nat units)%N.
+    assert (Hpositive : 1 <= units) by (unfold units; lia).
+    assert (Hkey : K.bits k + 1 <= units) by (unfold units; lia).
+    assert (Hweight : stored_weight (fun _ : M.t Z => K.bits k + 1) m <=
+      length (M.codes m) * (K.bits k + 1)).
+    { apply stored_weight_uniform. intros p row Hrow. lia. }
+    assert (Hdata : code_work (fun _ : M.t Z => K.bits k + 1) m + 1 <= units).
+    { unfold code_work, units.
+      replace (length (M.codes m) * (K.bits k + 2)) with
+        (length (M.codes m) * (K.bits k + 1) + length (M.codes m)) by ring.
+      lia. }
+    pose proof (time_of_nat_le _ _ Hdata) as HdataN.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    set (work := N.of_nat units) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    clear Hpositive Hkey Hweight Hdata. clearbody work. clear units.
+    pose proof (T_existsb_code_work (M.t Z) (column_present k)
+      (fun row => T_column_present k row) (fun _ : M.t Z => K.bits k + 1)
+      m (4 * (M.c_map + 1))%N (T_column_present_small k)) as Hscan.
+    assert (Hscan' : (M.T_existsb (column_present k) (fun row => T_column_present k row) m <=
+      M.c_map * (4 * (M.c_map + 1) + 1) * work)%N).
+    { eapply N.le_trans; [exact Hscan|]. apply N.mul_le_mono_l. exact HdataN. }
+    assert (Hget : (M.T_get k m <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_get_le|]. apply N.mul_le_mono_l. exact HkeyN. }
+    assert (Hcoefficient : (M.c_map * (4 * (M.c_map + 1) + 1) + M.c_map + 4 <=
+      8 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    clear Hscan HdataN HkeyN Hcoefficient.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    unfold T_pivot_present. cbn beta iota zeta.
+    destruct (M.get k m); cbn beta iota zeta; lia.
+  Qed.
+
+  (** Pivot-presence work fits the same quadratic budget as the round. *)
+  Lemma pivot_test_work_bound : forall k m,
+    M.nodes m + length (M.codes m) * (K.bits k + 2) + K.bits k + 1 <=
+      3 * ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)).
+  Proof.
+    intros k m.
+    assert (Hsupport : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Hsupport) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Hsupport) as Hcount.
+    cbn [Nat.pow]. nia.
+  Qed.
+
+  (** Materializing a supported diagonal changes neither support count nor key-bit maximum. *)
+  Lemma seed_round_sizes : forall k m, pivot_present k m = true ->
+    supp (add_cons k k 0%Z m) = supp m /\ b (add_cons k k 0%Z m) = b m.
+  Proof.
+    intros k m Hpresent. apply pivot_present_support in Hpresent. apply support_sizes.
+    intro p. rewrite support_add_cons. split.
+    - intros [Heq | [Heq | Hin]]; subst; assumption.
+    - intro Hin. right. now right.
+  Qed.
+
+  (** A complete pivot round fits the raw-support budget, including its presence test. *)
+  Lemma T_fw_round_raw : forall k m,
+    (T_fw_round k m <= k_zone * N.of_nat
+      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
+  Proof.
+    intros k m.
+    set (units := (supp m + 1)^2 * (b m + K.bits k + ell m + 1)).
+    change (T_fw_round k m <= k_zone * N.of_nat units)%N.
+    assert (Hkey : K.bits k + 1 <= units).
+    { unfold units. eapply Nat.le_trans; [|apply quadratic_payload_le]. lia. }
+    assert (Hpositive : 1 <= units) by lia.
+    pose proof (pivot_test_work_bound k m) as Htest.
+    fold units in Htest.
+    pose proof (time_of_nat_le _ _ Htest) as HtestN. rewrite Nat2N.inj_mul in HtestN.
+    pose proof (time_of_nat_le _ _ Hkey) as HkeyN.
+    set (work := N.of_nat units) in *.
+    assert (Hwork : (1 <= work)%N) by (unfold work; lia).
+    assert (Hpresent : (T_pivot_present k m <=
+      24 * (M.c_map + 1) * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [apply T_pivot_present_small|].
+      replace (24 * (M.c_map + 1) * (M.c_map + 1) * work)%N with
+        (8 * (M.c_map + 1) * (M.c_map + 1) * (3 * work))%N by ring.
+      apply N.mul_le_mono_l. exact HtestN. }
+    assert (Hinsert : (T_add_cons k k 0%Z m <= 32 * (M.c_map + 1) * work)%N).
+    { pose proof (T_add_cons_small k k 0%Z m) as Hadd.
+      replace (K.bits k + K.bits k + Z.size_nat 0%Z + 1) with
+        (K.bits k + K.bits k + 1) in Hadd by (cbn [Z.size_nat]; lia).
+      repeat rewrite Nat2N.inj_add in Hadd.
+      repeat rewrite Nat2N.inj_add in HkeyN.
+      eapply N.le_trans; [exact Hadd|].
+      replace (32 * (M.c_map + 1) * work)%N with
+        (16 * (M.c_map + 1) * (2 * work))%N by ring.
+      apply N.mul_le_mono_l. lia. }
+    assert (Hcoefficient : (relax_time_factor +
+      24 * (M.c_map + 1) * (M.c_map + 1) + 32 * (M.c_map + 1) + 8 <= k_zone)%N).
+    { unfold relax_time_factor, k_zone. nia. }
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    destruct (pivot_present k m) eqn:Hcheck.
+    - destruct (seed_round_sizes k m Hcheck) as [Hsupport Hbits].
+      assert (Hell : ell (add_cons k k 0%Z m) <= ell m).
+      { apply ell_add_cons; [lia|change (0 <= ell m); lia]. }
+      assert (Hrelax : (T_relax_round k (add_cons k k 0%Z m) <=
+        relax_time_factor * work)%N).
+      { eapply N.le_trans; [apply T_relax_round_small|]. apply N.mul_le_mono_l.
+        unfold work, units. apply time_of_nat_le. rewrite Hsupport, Hbits.
+        apply Nat.mul_le_mono_l. lia. }
+      clear Hpositive Hkey Htest HtestN HkeyN Hcoefficient Hsupport Hbits Hell.
+      clearbody work. clear units. unfold T_fw_round. rewrite Hcheck.
+      cbn beta iota zeta. lia.
+    - pose proof (T_relax_round_small k m) as Hrelax.
+      change (T_relax_round k m <= relax_time_factor * work)%N in Hrelax.
+      clear Hpositive Hkey Htest HtestN HkeyN Hcoefficient.
+      clearbody work. clear units. unfold T_fw_round. rewrite Hcheck.
+      cbn beta iota zeta. lia.
+  Qed.
+
+  Lemma T1_fw_round : forall k m, dbm_wf m ->
+    (T_fw_round k m <= k_zone * N.of_nat
+      ((supp m + 1)^2 * (b m + K.bits k + ell m + 1)))%N.
+  Proof.
+    intros k m Hwf. apply T_fw_round_raw.
   Qed.
 End ZoneT.
