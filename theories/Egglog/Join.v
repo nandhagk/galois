@@ -1202,6 +1202,65 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     destruct (cols p) as [|head cs]; [contradiction|]. cbn [length]. lia.
   Qed.
 
+  (** A common proof-only factor absorbs index width and unary variable operations. *)
+  Definition scan_factor (p : jplan) (ixs : list I.t) : N :=
+    ((I.c_ix + 1) * N.of_nat (wmax p ixs + 1) *
+      N.of_nat ((nvars p + 1) * (nvars p + 1)))%N.
+
+  (** The common factor covers each of its positive constituent costs. *)
+  Lemma scan_factor_covers : forall p ixs,
+    (1 <= scan_factor p ixs /\ I.c_ix + 1 <= scan_factor p ixs /\
+      N.of_nat (nvars p + 1) <= scan_factor p ixs /\
+      N.of_nat ((nvars p + 1) * (nvars p + 1)) <= scan_factor p ixs /\
+      (I.c_ix + 1) * N.of_nat (wmax p ixs + 1) <= scan_factor p ixs)%N.
+  Proof.
+    intros p ixs. unfold scan_factor. rewrite Nat2N.inj_mul.
+    assert (Hvars : (1 <= N.of_nat (nvars p + 1))%N) by lia.
+    assert (Hwidth : (1 <= N.of_nat (wmax p ixs + 1))%N) by lia.
+    assert (Hsquare : (1 <= N.of_nat (nvars p + 1) * N.of_nat (nvars p + 1))%N) by nia.
+    assert (Hindex : (1 <= (I.c_ix + 1) * N.of_nat (wmax p ixs + 1))%N) by nia.
+    repeat split; nia.
+  Qed.
+
+  (** Reading the pivot pays for both list traversals and the eagerly evaluated empty default. *)
+  Lemma T_pivot_reads_le : forall p ixs lvl pre ns j,
+    nodes_ok p ixs lvl pre ns -> choose_index p ixs lvl ns = Some j ->
+    (ListDef.T_nth j ixs I.empty + ListDef.T_nth j ns 1%positive + I.T_empty <=
+      2 * N.of_nat (length (cols p)) + I.c_ix)%N.
+  Proof.
+    intros p ixs lvl pre ns j Hnodes Hchoose.
+    destruct (choose_index_min p ixs lvl pre ns j Hnodes Hchoose) as [Hpart _].
+    apply filter_In in Hpart as [Hrange _]. apply in_seq in Hrange.
+    pose proof (ListDef.T_nth_le I.t j ixs I.empty) as Hix.
+    pose proof (ListDef.T_nth_le positive j ns 1%positive) as Hns.
+    pose proof I.T_empty_le as Hempty. lia.
+  Qed.
+
+  (** Enumerating the pivot children pays their stored degree at the common width. *)
+  Lemma T_pivot_children_le : forall p ixs lvl pre ns j,
+    nodes_ok p ixs lvl pre ns -> choose_index p ixs lvl ns = Some j ->
+    (I.T_children (nth j ixs I.empty) (nth j ns 1%positive) <=
+      2 * scan_factor p ixs *
+        N.of_nat (N.to_nat (I.degree (nth j ixs I.empty) (nth j ns 1%positive)) + 1))%N.
+  Proof.
+    intros p ixs lvl pre ns j Hnodes Hchoose.
+    destruct (choose_index_min p ixs lvl pre ns j Hnodes Hchoose) as [Hpart _].
+    apply filter_In in Hpart as [Hrange _]. apply in_seq in Hrange.
+    destruct (nodes_ok_lengths p ixs lvl pre ns Hnodes) as [Hix _].
+    destruct (nodes_ok_at p ixs lvl pre ns j Hnodes ltac:(lia))
+      as [[_ [_ [_ Hwf]]] [u [_ Hnode]]].
+    assert (Hin : In (nth j ixs I.empty) ixs) by (apply nth_In; lia).
+    pose proof (wmax_contains p ixs _ Hin) as Hstored.
+    pose proof (IT.width_empty (nth j ixs I.empty)) as Hempty.
+    pose proof (I.T_children_le _ _ (nth j ns 1%positive) Hwf) as Hchildren.
+    destruct (scan_factor_covers p ixs) as [_ [_ [_ [_ Hfactor]]]].
+    assert (Hquery : (N.of_nat (I.width (nth j ixs I.empty) [] + 1) <=
+      2 * N.of_nat (wmax p ixs + 1))%N) by lia.
+    assert (Hscaled : (I.c_ix * N.of_nat (I.width (nth j ixs I.empty) [] + 1) <=
+      2 * scan_factor p ixs)%N) by nia.
+    nia.
+  Qed.
+
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
