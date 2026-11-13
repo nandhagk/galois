@@ -6440,6 +6440,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intro db. pose proof (unit_width_budget db). lia.
   Qed.
 
+  (** The size operation returns the number of bits as a binary natural. *)
+  Lemma N_size_value : forall n, N.to_nat (N.size n) = N.size_nat n.
+  Proof.
+    intros [| p]; cbn [N.size N.to_nat N.size_nat]; [reflexivity | apply positive_size_nat].
+  Qed.
+
+  (** Incrementing a counter adds at most one bit. *)
+  Lemma N_successor_width : forall n, N.size_nat (n + 1) <= N.size_nat n + 1.
+  Proof.
+    intro n. replace (n + 1)%N with (N.succ n) by lia.
+    pose proof (slot_code_bits n) as Hbits. destruct n; exact Hbits.
+  Qed.
+
+  (** Product encodings have at most the sum of their operand widths. *)
+  Lemma N_product_width : forall n m,
+    N.size_nat (n * m) <= N.size_nat n + N.size_nat m.
+  Proof.
+    intros [| p] [| q]; cbn [N.mul N.size_nat]; try lia. apply Pos.size_nat_mul.
+  Qed.
+
+  (** A sum has a coarse linear width bound, including both zero operands. *)
+  Lemma N_sum_width : forall n m,
+    N.size_nat (n + m) <= N.size_nat n + N.size_nat m + 2.
+  Proof.
+    intros n m.
+    assert (Hnumber : (n + m <= (n + 1) * (m + 1))%N) by nia.
+    pose proof (N_width_mono _ _ Hnumber) as Hwidth.
+    pose proof (N_product_width (n + 1) (m + 1)).
+    pose proof (N_successor_width n). pose proof (N_successor_width m). lia.
+  Qed.
+
+  (** The pinned watermark covers the stored occurrence count directly. *)
+  Lemma wmark_nuses : forall db, (db_nuses db <= wmark db)%N.
+  Proof.
+    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_l | apply fold_max_base].
+  Qed.
+
   (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
   Lemma T_normal_cell_id : forall db i,
     (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
