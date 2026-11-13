@@ -2256,6 +2256,40 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_bwd1_bits : forall rw w q a,
+    interval_bits (interval_assume_rewrap rw (interval_clip w a) q) <=
+      Pos.to_nat w + interval_bits q.
+  Proof.
+    intros rw w q a.
+    unfold interval_assume_rewrap.
+    destruct (interval_finite_helper (interval_clip w a)) as [[lo hi]|].
+    - destruct (Z.leb 0 lo && Z.ltb hi (Word.modulus rw)).
+      + pose proof (PayloadBounds.payload_raw_meet_bits (interval_clip w a) q).
+        pose proof (table_clip_bits w a).
+        lia.
+      + pose proof (table_clip_bits w a). lia.
+    - pose proof (table_clip_bits w a). lia.
+  Qed.
+
+  Local Lemma table_bwd1_size : forall rw w q a,
+    (N.of_nat (1 + W.psize w (interval_assume_rewrap rw (interval_clip w a) q)) <=
+      (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1)) * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 +
+          W.psize rw q + W.psize w a)%nat))%N.
+  Proof.
+    intros rw w q a.
+    pose proof (table_bwd1_bits rw w q a) as Hbits.
+    pose proof (table_raw_size rw q) as Hq.
+    pose proof (Pos2Nat.is_pos rw) as Hr.
+    pose proof (Pos2Nat.is_pos w) as Hw.
+    rewrite W.F_psize.
+    rewrite Nat.pow_2_r.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
+    assert (Hcoeff : (1 <= 1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N)
+      by nia.
+    nia.
+  Qed.
+
   Local Lemma table_ite_time : forall rw wa wb a b,
     (T_interval_clip wa a + T_interval_clip wb b +
       Scalar.T_interval_join (interval_clip wa a) (interval_clip wb b) <=
