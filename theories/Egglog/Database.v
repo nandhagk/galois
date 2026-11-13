@@ -9986,6 +9986,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           -- apply DatabaseUsesFacts.wf_transfer. exact Hmap.
   Qed.
 
+  Lemma forest_ok_pop : forall db x db', forest_ok db ->
+    db_pop_loser db = Some (x, db') -> forest_ok db'.
+  Proof.
+    intros db x db' Hforest Hpop.
+    destruct Hforest as
+      [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
+        [Hstore [Hcounts [Hhistory Hcore]]]]]]]]]].
+    pose proof (pop_loser_row_store_ok db x db' Hstore Hpop) as Hstore'.
+    assert (Hlocate : forall f k, db_locate f k db' = db_locate f k db).
+    { intros f k. eapply pop_loser_locate. exact Hpop. }
+    unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest] eqn:Hqueue;
+      [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'.
+    unfold forest_ok. split.
+    - intros f k0 k Hcurrent. unfold located in Hcurrent.
+      rewrite Hlocate in Hcurrent.
+      destruct (Hlocated f k0 k Hcurrent) as [o [Hrow Hkind]].
+      exists o. split; [exact Hrow | exact Hkind].
+    - split.
+      + eapply metadata_snapshot_ok; [reflexivity | exact Hmetadata].
+      + split.
+        * cbn [database_set_pending database_set_runtime runtime_set_union
+            db_npending pending db_runtime runtime_queue].
+          unfold pending in Hpending. rewrite Hqueue in Hpending.
+          rewrite Hpending. cbn [length]. rewrite Nat2N.inj_succ.
+          apply N.pred_succ.
+        * split; [exact Huf |].
+          split; [exact Hcard |].
+          split; [exact Hsame |].
+          split; [exact Hwidth |].
+          split; [exact Hstore' |].
+          split; [exact Hcounts |].
+          split; [exact Hhistory |].
+          exact Hcore.
+  Qed.
+
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
