@@ -3054,6 +3054,100 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     - apply tuple_cell_width. rewrite Hsplit. apply in_or_app. right. now left.
   Qed.
 
+  (** A child read performs a prefix of the work done by an insertion step. *)
+  Lemma T_child_le_insert_step : forall ix n c,
+    (T_child ix n c <= T_insert_step_st (ix, n) c)%N.
+  Proof.
+    intros ix n c. time_unfold T_child. time_unfold T_insert_step_st.
+    cbn beta iota zeta. destruct (Pos.ltb (next ix) n); [apply N.le_refl |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+      time_simpl; time_cbn; lia.
+  Qed.
+
+  (** The direct insertion budget also bounds a child read at an arbitrary cursor. *)
+  Lemma T_child_budget : forall ix n c bound,
+    Pos.size_nat (next ix) <= bound -> cell_bits V.encode c <= bound ->
+    (T_child ix n c <=
+      128 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros ix n c bound Hcounter Hcell.
+    eapply N.le_trans; [apply T_child_le_insert_step |].
+    apply T_insert_step_budget; assumption.
+  Qed.
+
+  (** Seeking a tuple sums bounded child reads and its own recursive calls. *)
+  Lemma T_seek_budget : forall ix r n bound,
+    Pos.size_nat (next ix) <= bound ->
+    (forall c, In c r -> cell_bits V.encode c <= bound) ->
+    (T_seek ix n r <=
+      (128 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (bound + 1) + 1) *
+        N.of_nat (length r) + 1)%N.
+  Proof.
+    intros ix r. induction r as [|c r IH]; intros n bound Hcounter Hcells.
+    - time_unfold T_seek. time_cbn. lia.
+    - pose proof (T_child_budget ix n c bound Hcounter (Hcells c (or_introl eq_refl))) as Hchild.
+      time_unfold T_seek. cbn beta iota zeta.
+      destruct (child ix n c) as [m |] eqn:Hnext.
+      + pose proof (IH m bound Hcounter (fun d Hd => Hcells d (or_intror Hd))) as Htail.
+        set (step_cost := (128 * (PTrieT.c_trie + V.c_key + 1) *
+          N.of_nat (bound + 1))%N) in *; clearbody step_cost.
+        time_cbn. nia.
+      + set (step_cost := (128 * (PTrieT.c_trie + V.c_key + 1) *
+          N.of_nat (bound + 1))%N) in *; clearbody step_cost.
+        time_cbn. nia.
+  Qed.
+
+  (** A final node read fits beside the charged sequence of child reads. *)
+  Lemma contains_budget : forall cost bits amount,
+    (1 <= cost -> 1 <= bits ->
+      8 + (128 * cost * bits + 1) * amount + cost * bits <=
+      160 * cost * (amount + 1) * bits)%N.
+  Proof.
+    intros cost bits amount Hcost Hbits.
+    assert (Hunit : (1 <= cost * bits)%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. apply N.mul_le_mono; assumption. }
+    assert (Hamount : (amount <= cost * bits * amount)%N).
+    { replace amount with (1 * amount)%N at 1 by ring. apply N.mul_le_mono_r. exact Hunit. }
+    replace (8 + (128 * cost * bits + 1) * amount + cost * bits)%N
+      with (8 + 128 * (cost * bits * amount) + amount + cost * bits)%N by ring.
+    replace (160 * cost * (amount + 1) * bits)%N
+      with (160 * (cost * bits * amount) + 160 * (cost * bits))%N by ring.
+    lia.
+  Qed.
+
+  (** Membership checking pays the walk and a bounded terminal-node observation. *)
+  Lemma T_contains_budget : forall ix r bound, shape ix ->
+    Pos.size_nat (next ix) <= bound ->
+    (forall c, In c r -> cell_bits V.encode c <= bound) ->
+    (T_contains r ix <= 160 * (PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length r + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros ix r bound Hshape Hcounter Hcells.
+    pose proof (T_seek_budget ix r (root ix) bound Hcounter Hcells) as Hseek.
+    set (bits := N.of_nat (bound + 1)) in *.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    pose proof (contains_budget cost bits (N.of_nat (length r)) Hcost Hbits) as Hbudget.
+    assert (Hlength : N.of_nat (length r + 1) = (N.of_nat (length r) + 1)%N) by lia.
+    rewrite Hlength. time_unfold T_contains. time_unfold T_contains_from. time_unfold T_root.
+    destruct (seek ix (root ix) r) as [n |] eqn:Hpath.
+    - assert (Hnode : (n <= next ix)%positive).
+      { eapply (seek_bounded ix r (root ix) n);
+          [exact (proj1 Hshape) | unfold root; lia | exact Hpath]. }
+      assert (Hnode_bits : Pos.size_nat n <= bound).
+      { eapply Nat.le_trans; [apply positive_bits_mono; exact Hnode | exact Hcounter]. }
+      assert (Hread : (T_read_node ix n <= cost * bits + 2)%N).
+      { eapply N.le_trans; [apply T_read_node_le |].
+        apply N.add_le_mono_r, N.mul_le_mono.
+        - unfold cost. lia.
+        - unfold bits. lia. }
+      clear Hshape Hcounter Hcells Hnode Hnode_bits. clearbody cost bits.
+      time_simpl. time_cbn. lia.
+    - clear Hshape Hcounter Hcells. clearbody cost bits.
+      time_simpl. time_cbn. lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
