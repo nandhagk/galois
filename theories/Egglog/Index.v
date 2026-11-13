@@ -2245,6 +2245,130 @@ Module Index (V : VALUE) <: INDEX V.
     - intros [Hneq Hmember]. now apply remove_membership_complete.
   Qed.
 
+  Definition reaches (ix : t) (source target : positive) : Prop :=
+    exists path, seek ix source path = Some target.
+
+  Lemma reaches_self : forall ix n, reaches ix n n.
+  Proof.
+    intros ix n. exists []. reflexivity.
+  Qed.
+
+  Lemma reaches_no_backward : forall ix source target, edge_shape ix ->
+    (target < source)%positive -> ~ reaches ix source target.
+  Proof.
+    intros ix source target Hshape Hlt [path Hseek].
+    pose proof (seek_forward ix path source target Hshape Hseek) as Hle.
+    apply Pos.lt_nle in Hlt. contradiction.
+  Qed.
+
+  (** A distinct source reaches a child precisely when it reaches its unique parent. *)
+  Lemma reaches_parent : forall ix n c m source, parents_unique ix ->
+    child ix n c = Some m -> source <> m ->
+    (reaches ix source m <-> reaches ix source n).
+  Proof.
+    intros ix n c m source Hparents Hchild Hneq. split.
+    - intros [path Hseek]. destruct (rev path) as [| d rest] eqn:Hrev.
+      + apply (f_equal (@rev (cell V.t))) in Hrev.
+        rewrite rev_involutive in Hrev. cbn [rev] in Hrev. subst path.
+        cbn [seek] in Hseek. injection Hseek as Heq. contradiction.
+      + assert (Hpath : path = rev rest ++ [d]).
+        { rewrite <- (rev_involutive path), Hrev. reflexivity. }
+        rewrite Hpath, seek_append in Hseek.
+        destruct (seek ix source (rev rest)) as [q |] eqn:Hprefix; [| discriminate].
+        cbn [seek] in Hseek.
+        destruct (child ix q d) as [out |] eqn:Hlast; [| discriminate].
+        injection Hseek as ->.
+        destruct (child_parents_unique ix q d n c m Hparents Hlast Hchild) as [-> _].
+        now exists (rev rest).
+    - intros [path Hseek]. exists (path ++ [c]).
+      rewrite seek_append, Hseek. cbn [seek]. now rewrite Hchild.
+  Qed.
+
+  Lemma stored_child_parent : forall ix n code edge parent c m, parents_unique ix ->
+    stored_edge ix n code edge -> child ix parent c = Some m -> edge_child edge = m ->
+    n = parent /\ code = encode_cell c.
+  Proof.
+    intros ix n code edge parent c m Hparents Hget Hchild Hsame.
+    unfold child in Hchild. destruct (Pos.ltb (next ix) parent); [discriminate |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix parent)))
+      as [other |] eqn:Hother; [| discriminate].
+    eapply Hparents; [exact Hget | exact Hother | congruence].
+  Qed.
+
+  Lemma insert_step_reaches_cursor : forall ix n c source, shape ix ->
+    (reaches (fst (insert_step_st (ix, n) c)) source n <-> reaches ix source n).
+  Proof.
+    intros ix n c source Hshape.
+    pose proof (shape_insert_step (ix, n) c Hshape) as Hshape'.
+    split; intros [path Hpath]; exists path.
+    - eapply seek_preserve_endpoint; [exact (proj1 Hshape') |
+        exact (proj1 (proj2 Hshape')) | exact (proj1 (proj2 Hshape)) | | exact Hpath].
+      intros q Hneq. symmetry. exact (insert_step_other_edges (ix, n) c q Hneq).
+    - eapply seek_preserve_endpoint; [exact (proj1 Hshape) |
+        exact (proj1 (proj2 Hshape)) | exact (proj1 (proj2 Hshape')) | | exact Hpath].
+      intros q Hneq. exact (insert_step_other_edges (ix, n) c q Hneq).
+  Qed.
+
+  Lemma insert_step_reaches_next : forall ix n c source, shape ix ->
+    (n <= next ix)%positive -> source <> snd (insert_step_st (ix, n) c) ->
+    (reaches (fst (insert_step_st (ix, n) c)) source (snd (insert_step_st (ix, n) c)) <->
+      reaches ix source n).
+  Proof.
+    intros ix n c source Hshape Hbound Hneq.
+    pose proof (shape_insert_step (ix, n) c Hshape) as Hshape'.
+    rewrite (reaches_parent _ n c _ source (proj2 (proj2 Hshape'))
+      (insert_step_child ix n c (proj1 (proj2 Hshape)) Hbound) Hneq).
+    apply insert_step_reaches_cursor. exact Hshape.
+  Qed.
+
+  (** Counts include one pending insertion for precisely the ancestors of its current node. *)
+  Definition pending_insert_counts (ix : t) (cursor : positive) : Prop :=
+    forall n code edge, stored_edge ix n code edge ->
+      exists suffixes pending, NoDup suffixes /\
+        (forall r, In r suffixes <-> contains_from (edge_child edge) r ix = true) /\
+        (pending = true <-> reaches ix (edge_child edge) cursor) /\
+        edge_count edge = (N.of_nat (length suffixes) + if pending then 1 else 0)%N.
+
+  Lemma pending_insert_start : forall ix, shape ix -> counted_edges ix ->
+    pending_insert_counts ix (root ix).
+  Proof.
+    intros ix Hshape Hcounts n code edge Hget.
+    destruct (Hcounts n code edge Hget) as [suffixes [Hnodup [Hmembers Hcount]]].
+    exists suffixes, false. split; [exact Hnodup |]. split; [exact Hmembers |]. split.
+    - split; [discriminate |]. intro Hreach. exfalso.
+      eapply reaches_no_backward; [exact (proj1 Hshape) | | exact Hreach].
+      destruct ((proj1 Hshape) n code edge Hget) as [_ [Hforward _]].
+      change (1 < edge_child edge)%positive. lia.
+    - cbn. now rewrite N.add_0_r.
+  Qed.
+
+  (** Marking a previously absent terminal turns every pending credit into a real suffix. *)
+  Lemma pending_insert_finish : forall ix cursor bits, shape ix ->
+    pending_insert_counts ix cursor -> node_terminal (read_node ix cursor) = false ->
+    counted_edges (mark_terminal ix cursor true bits).
+  Proof.
+    intros ix cursor bits Hshape Hcounts Habsent n code edge Hget.
+    unfold stored_edge in Hget. rewrite mark_node_edges in Hget.
+    destruct (Hcounts n code edge Hget)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hcount]]]]].
+    destruct pending.
+    - destruct (proj1 Hpending eq_refl) as [path Hpath].
+      exists (path :: suffixes). split.
+      + constructor; [| exact Hnodup]. intro Hin. apply Hmembers in Hin.
+        unfold contains_from in Hin. rewrite Hpath, Habsent in Hin. discriminate.
+      + split.
+        * intro r. rewrite mark_terminal_add. cbn [In]. rewrite Hmembers. split.
+          -- intros [-> | Hmember]; [now left | now right].
+          -- intros [Hseek | Hmember]; [left | now right].
+             symmetry. eapply seek_paths_unique; [exact Hshape | exact Hseek | exact Hpath].
+        * cbn [length] in *. rewrite Nat2N.inj_succ. lia.
+    - exists suffixes. split; [exact Hnodup |]. split.
+      + intro r. rewrite mark_terminal_add, Hmembers. split; [now right |].
+        intros [Hseek | Hmember]; [| exact Hmember].
+        assert (Hbad : false = true) by (apply Hpending; now exists r). discriminate.
+      + cbn in Hcount. now rewrite N.add_0_r in Hcount.
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
