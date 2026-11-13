@@ -5476,6 +5476,541 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       try change (fun u : X.t => X.T_encode u) with X.T_encode; nia.
   Qed.
 
+  (** A coefficient lookup in an enveloped row fits one common row charge. *)
+  Lemma T_poly_lookup_envelope : forall x r dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits r ->
+    (T_poly_coefficient X.eqb X.T_eqb x (poly_constraint r) <=
+      poly_coef_factor * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x r dim mlen keys bits (Hn & Hd & Hk & Hb & Hm & Hu).
+    pose proof (T_poly_coefficient_normal x _ keys bits Hn Hk Hb) as Hlookup.
+    pose proof (poly_span_linear (length (lhs (poly_constraint r))) (keys + bits)
+      dim mlen keys bits ltac:(lia) ltac:(lia)) as Hspan.
+    pose proof (N.mul_le_mono_l _ _ poly_coef_factor Hspan). nia.
+  Qed.
+
+  (** The coefficient of an enveloped normal row stays within its coefficient width. *)
+  Lemma poly_envelope_coefficient_bits : forall x r dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits r ->
+    Z.size_nat (poly_coefficient X.eqb x (poly_constraint r)) <= bits.
+  Proof.
+    intros x r dim mlen keys bits (Hn & Hd & Hk & Hb & Hm & Hu).
+    eapply Nat.le_trans; [apply poly_row_coefficient_bits; exact Hn|exact Hb].
+  Qed.
+
+  (** Row selection applies a scalar test to the coefficient of the selected variable. *)
+  Definition poly_clock_select (test : Z -> bool) (x : X.t) (r : poly_row X.t) : bool :=
+    test (poly_coefficient X.eqb x (poly_constraint r)).
+
+  TimeFun poly_clock_select.
+
+  Definition poly_select_factor : N := (poly_coef_factor + 12)%N.
+
+  (** The three sign-class tests add only a linear scalar test to coefficient lookup. *)
+  Lemma T_poly_select_bounded : forall test T_test x r dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits r ->
+    (forall z, Z.size_nat z <= bits -> (T_test z <= N.of_nat (bits + 1) + 4)%N) ->
+    (T_poly_clock_select test T_test x r <=
+      poly_select_factor * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros test T_test x r dim mlen keys bits Hr Htest.
+    pose proof (T_poly_lookup_envelope x r _ _ _ _ Hr) as Hlookup.
+    pose proof (Htest _ (poly_envelope_coefficient_bits x r _ _ _ _ Hr)) as Hscalar.
+    pose proof (poly_span_linear 0 bits dim mlen keys bits ltac:(lia) ltac:(lia)) as Hspan.
+    pose proof (poly_span_positive dim mlen keys bits) as Hpositive.
+    time_unfold T_poly_clock_select. unfold poly_select_factor. time_simpl.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb. nia.
+  Qed.
+
+  (** A pivot test adds the relation tag and a zero test to coefficient lookup. *)
+  Lemma T_poly_pivot_bounded : forall x r dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits r ->
+    (T_poly_pivot X.eqb X.T_eqb x r <=
+      poly_select_factor * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x r dim mlen keys bits Hr.
+    pose proof (T_poly_lookup_envelope x r _ _ _ _ Hr) as Hlookup.
+    pose proof (T_poly_zero_test (poly_coefficient X.eqb x (poly_constraint r))) as Hzero.
+    pose proof (poly_span_positive dim mlen keys bits) as Hpositive.
+    time_unfold (@T_poly_pivot). destruct (lrel (poly_constraint r));
+      unfold poly_select_factor; time_simpl;
+      try change (fun u v : X.t => X.T_eqb u v) with X.T_eqb; nia.
+  Qed.
+
+  (** The positive selector has a constant first comparison operand. *)
+  Lemma poly_positive_test_clock : forall bits z, Z.size_nat z <= bits ->
+    (Z.T_ltb 0 z <= N.of_nat (bits + 1) + 4)%N.
+  Proof.
+    intros bits z Hz. pose proof (Z.T_ltb_le 0 z) as Hcompare.
+    change (Z.T_ltb 0 z <= 4)%N in Hcompare.
+    lia.
+  Qed.
+
+  (** The negative selector charges at most the coefficient's width. *)
+  Lemma poly_negative_test_clock : forall bits z, Z.size_nat z <= bits ->
+    (Z.T_ltb z 0 <= N.of_nat (bits + 1) + 4)%N.
+  Proof.
+    intros bits z Hz. pose proof (Z.T_ltb_le z 0) as Hcompare. lia.
+  Qed.
+
+  (** The zero selector compares only the outer integer constructor. *)
+  Lemma poly_zero_test_clock : forall bits z, Z.size_nat z <= bits ->
+    (Z.T_eqb z 0 <= N.of_nat (bits + 1) + 4)%N.
+  Proof.
+    intros bits z Hz. pose proof (T_poly_zero_test z) as Hcompare. lia.
+  Qed.
+
+  (** One pair forms the Fourier-Motzkin combination of its two coefficients. *)
+  Definition poly_clock_pair (x : X.t) (p q : poly_row X.t) : poly_row X.t :=
+    poly_add_rows X.encode (- poly_coefficient X.eqb x (poly_constraint q))%Z p
+      (poly_coefficient X.eqb x (poly_constraint p)) q.
+
+  TimeFun poly_clock_pair.
+
+  Definition poly_pair_factor : N :=
+    (poly_add_rows_factor + 2 * poly_coef_factor + 16)%N.
+
+  (** Constructing a pair charges its two coefficient lookups and its normalized row sum. *)
+  Lemma T_poly_pair_bounded : forall x p q dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits p -> poly_row_envelope dim mlen keys bits q ->
+    (T_poly_clock_pair x p q <=
+      poly_pair_factor * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x p q dim mlen keys bits Hp Hq.
+    pose proof (T_poly_lookup_envelope x p _ _ _ _ Hp) as Hlookup_p.
+    pose proof (T_poly_lookup_envelope x q _ _ _ _ Hq) as Hlookup_q.
+    pose proof (poly_envelope_coefficient_bits x p _ _ _ _ Hp) as Hbits_p.
+    pose proof (poly_envelope_coefficient_bits x q _ _ _ _ Hq) as Hbits_q.
+    pose proof (T_poly_add_rows_bounded
+      (- poly_coefficient X.eqb x (poly_constraint q))%Z p
+      (poly_coefficient X.eqb x (poly_constraint p)) q dim mlen keys bits Hp Hq
+      ltac:(now rewrite poly_size_opp) Hbits_p) as Hadd.
+    pose proof (poly_span_positive dim mlen keys bits) as Hpositive.
+    assert (Hopp : (Z.T_opp (poly_coefficient X.eqb x (poly_constraint q)) <= 1)%N).
+    { destruct (poly_coefficient X.eqb x (poly_constraint q));
+        time_unfold Z.T_opp; time_simpl; lia. }
+    time_unfold T_poly_clock_pair. unfold poly_pair_factor. time_simpl.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun u : X.t => X.T_encode u) with X.T_encode. nia.
+  Qed.
+
+  (** Mapping one positive row over the negative class builds its pair list. *)
+  Definition poly_clock_pair_map (x : X.t) (neg : list (poly_row X.t)) (p : poly_row X.t)
+      : list (poly_row X.t) := map (poly_clock_pair x p) neg.
+
+  TimeFun poly_clock_pair_map.
+
+  (** The inner pair traversal pays one bounded row combination for every negative row. *)
+  Lemma T_poly_pair_map_bounded : forall x neg p dim mlen keys bits,
+    poly_row_envelope dim mlen keys bits p ->
+    Forall (poly_row_envelope dim mlen keys bits) neg ->
+    (T_poly_clock_pair_map x neg p <=
+      (poly_pair_factor * poly_clock_span dim mlen keys bits + 1) *
+        N.of_nat (length neg) + 4)%N.
+  Proof.
+    intros x neg p dim mlen keys bits Hp Hneg.
+    pose proof (poly_T_map_members _ _ (poly_clock_pair x p) (T_poly_clock_pair x p)
+      (poly_pair_factor * poly_clock_span dim mlen keys bits)%N neg
+      ltac:(intros q Hq; apply T_poly_pair_bounded; [exact Hp|];
+        exact (proj1 (Forall_forall _ _) Hneg q Hq))) as Hmap.
+    time_unfold T_poly_clock_pair_map.
+    change (fun q => T_poly_clock_pair x p q) with (T_poly_clock_pair x p).
+    time_simpl. nia.
+  Qed.
+
+  (** Flattening the inner pair traversals creates the complete opposite-sign cross product. *)
+  Definition poly_clock_pairs (x : X.t) (pos neg : list (poly_row X.t)) : list (poly_row X.t) :=
+    flat_map (poly_clock_pair_map x neg) pos.
+
+  TimeFun poly_clock_pairs.
+
+  (** All opposite-sign pairs fit the square of the original row count. *)
+  Lemma T_poly_pairs_bounded : forall x pos neg count dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) pos ->
+    Forall (poly_row_envelope dim mlen keys bits) neg ->
+    length pos <= count -> length neg <= count ->
+    (T_poly_clock_pairs x pos neg <=
+      (poly_pair_factor + 16) * N.of_nat (count + 1)^2 *
+        poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x pos neg count dim mlen keys bits Hpos Hneg Hp Hn.
+    pose proof (poly_T_flat_map_members _ _ (poly_clock_pair_map x neg)
+      (T_poly_clock_pair_map x neg)
+      ((poly_pair_factor * poly_clock_span dim mlen keys bits + 1) *
+        N.of_nat (length neg) + 4)%N (length neg) pos
+      ltac:(intros p Hin; apply T_poly_pair_map_bounded; [|exact Hneg];
+        exact (proj1 (Forall_forall _ _) Hpos p Hin))
+      ltac:(intros p Hin; unfold poly_clock_pair_map; rewrite length_map; reflexivity)) as Hflat.
+    pose proof (poly_span_positive dim mlen keys bits) as Hpositive.
+    set (work := poly_clock_span dim mlen keys bits) in *.
+    set (count1 := N.of_nat (count + 1)).
+    assert (Hcount1 : (1 <= count1)%N) by (unfold count1; lia).
+    assert (Hpos_count : (N.of_nat (length pos) <= count1)%N)
+      by (unfold count1; lia).
+    assert (Hneg_count : (N.of_nat (length neg) <= count1)%N)
+      by (unfold count1; lia).
+    assert (Hinner :
+      (((poly_pair_factor * work + 1) * N.of_nat (length neg) + 4 +
+        N.of_nat (length neg) + 3) <=
+        (poly_pair_factor + 9) * work * count1)%N).
+    { pose proof (N.mul_le_mono_l _ _ (poly_pair_factor * work + 1)%N
+        Hneg_count) as Hproducts.
+      pose proof (N.mul_le_mono_r _ _ count1 Hpositive) as Hwork_count.
+      nia. }
+    pose proof (N.mul_le_mono _ _ _ _ Hinner Hpos_count) as Htotal.
+    assert (Hmass : (1 <= work * count1 * count1)%N).
+    { change (1 * 1 * 1 <= work * count1 * count1)%N.
+      apply N.mul_le_mono; [apply N.mul_le_mono; assumption|assumption]. }
+    clear Hpos Hneg Hp Hn Hinner Hpos_count Hneg_count.
+    time_unfold T_poly_clock_pairs.
+    change (fun p => T_poly_clock_pair_map x neg p) with (T_poly_clock_pair_map x neg).
+    time_simpl. fold count1. rewrite N.pow_2_r. nia.
+  Qed.
+
+  (** Selecting one sign class pays a bounded predicate for every input row. *)
+  Lemma T_poly_filter_select : forall test T_test x rows dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (forall z, Z.size_nat z <= bits -> (T_test z <= N.of_nat (bits + 1) + 4)%N) ->
+    (List.T_filter (poly_clock_select test x) (T_poly_clock_select test T_test x) rows <=
+      (poly_select_factor * poly_clock_span dim mlen keys bits + 1) *
+        N.of_nat (length rows) + 1)%N.
+  Proof.
+    intros test T_test x rows dim mlen keys bits Hrows Htest.
+    apply poly_T_filter_members. intros r Hin. apply T_poly_select_bounded; [|exact Htest].
+    exact (proj1 (Forall_forall _ _) Hrows r Hin).
+  Qed.
+
+  (** The inequality branch retains zeros and combines the positive and negative classes. *)
+  Definition poly_clock_inequalities (x : X.t) (rows : list (poly_row X.t))
+      : list (poly_row X.t) :=
+    let pos := filter (fun r => (0 <? poly_coefficient X.eqb x (poly_constraint r))%Z) rows in
+    let neg := filter (fun r => (poly_coefficient X.eqb x (poly_constraint r) <? 0)%Z) rows in
+    filter (fun r => Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) rows ++
+      poly_clock_pairs x pos neg.
+
+  TimeFun poly_clock_inequalities.
+
+  Definition poly_inequalities_factor : N :=
+    (poly_pair_factor + 8 * poly_select_factor + 48)%N.
+
+  (** The complete inequality branch fits the square row-count envelope. *)
+  Lemma T_poly_inequalities_bounded : forall x rows dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (T_poly_clock_inequalities x rows <=
+      poly_inequalities_factor * N.of_nat (length rows + 1)^2 *
+        poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x rows dim mlen keys bits Hrows.
+    pose proof (T_poly_filter_select (fun z => (0 <? z)%Z) (fun z => Z.T_ltb 0 z)
+      x rows _ _ _ _ Hrows (poly_positive_test_clock bits)) as Hpositive_filter.
+    pose proof (T_poly_filter_select (fun z => (z <? 0)%Z) (fun z => Z.T_ltb z 0)
+      x rows _ _ _ _ Hrows (poly_negative_test_clock bits)) as Hnegative_filter.
+    pose proof (T_poly_filter_select (fun z => Z.eqb z 0) (fun z => Z.T_eqb z 0)
+      x rows _ _ _ _ Hrows (poly_zero_test_clock bits)) as Hzero_filter.
+    set (pos := filter (poly_clock_select (fun z => (0 <? z)%Z) x) rows).
+    set (neg := filter (poly_clock_select (fun z => (z <? 0)%Z) x) rows).
+    set (zero := filter (poly_clock_select (fun z => Z.eqb z 0) x) rows).
+    assert (Hpos : Forall (poly_row_envelope dim mlen keys bits) pos).
+    { apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+      exact (proj1 (Forall_forall _ _) Hrows r Hin). }
+    assert (Hneg : Forall (poly_row_envelope dim mlen keys bits) neg).
+    { apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+      exact (proj1 (Forall_forall _ _) Hrows r Hin). }
+    pose proof (filter_length_le (poly_clock_select (fun z => (0 <? z)%Z) x) rows) as Hp.
+    pose proof (filter_length_le (poly_clock_select (fun z => (z <? 0)%Z) x) rows) as Hn.
+    pose proof (filter_length_le (poly_clock_select (fun z => Z.eqb z 0) x) rows) as Hz.
+    fold pos in Hp. fold neg in Hn. fold zero in Hz.
+    pose proof (T_poly_pairs_bounded x pos neg (length rows) _ _ _ _ Hpos Hneg Hp Hn) as Hpairs.
+    pose proof (Datatypes.T_app_le zero (poly_clock_pairs x pos neg)) as Happ.
+    pose proof (poly_span_positive dim mlen keys bits) as Hspan.
+    set (work := poly_clock_span dim mlen keys bits) in *.
+    set (row_count := (N.of_nat (length rows + 1)^2)%N) in Hpairs |- *.
+    assert (Hcount : (N.of_nat (length rows + 1) <= row_count)%N).
+    { unfold row_count. rewrite N.pow_2_r.
+      assert (1 <= N.of_nat (length rows + 1))%N by lia. nia. }
+    assert (Hcount_positive : (1 <= row_count)%N) by lia.
+    set (total := (row_count * work)%N).
+    assert (Hcount_total : (row_count <= total)%N).
+    { unfold total. pose proof (N.mul_le_mono_l _ _ row_count Hspan) as Hproduct.
+      rewrite N.mul_1_r in Hproduct. exact Hproduct. }
+    assert (Htotal_positive : (1 <= total)%N) by lia.
+    assert (Hfilter :
+      ((poly_select_factor * work + 1) * N.of_nat (length rows) + 1 <=
+        (poly_select_factor + 2) * total)%N).
+    { assert (Hfactor : (poly_select_factor * work + 1 <=
+        (poly_select_factor + 1) * work)%N) by nia.
+      assert (Hlength : (N.of_nat (length rows) <= row_count)%N) by lia.
+      pose proof (N.mul_le_mono _ _ _ _ Hfactor Hlength) as Hproducts.
+      unfold total in Htotal_positive |- *. nia. }
+    pose proof (N.le_trans _ _ _ Hpositive_filter Hfilter) as Hpositive_total.
+    pose proof (N.le_trans _ _ _ Hnegative_filter Hfilter) as Hnegative_total.
+    pose proof (N.le_trans _ _ _ Hzero_filter Hfilter) as Hzero_total.
+    assert (Happend_total : (Datatypes.T_app zero (poly_clock_pairs x pos neg) <=
+      2 * total)%N) by lia.
+    rewrite <- N.mul_assoc in Hpairs. fold total in Hpairs.
+    clear Hpositive_filter Hnegative_filter Hzero_filter Hfilter Happ Hpos Hneg Hp Hn Hz.
+    time_unfold T_poly_clock_inequalities.
+    change (fun r : poly_row X.t => (0 <? poly_coefficient X.eqb x (poly_constraint r))%Z)
+      with (poly_clock_select (fun z => (0 <? z)%Z) x).
+    change (fun r : poly_row X.t => (poly_coefficient X.eqb x (poly_constraint r) <? 0)%Z)
+      with (poly_clock_select (fun z => (z <? 0)%Z) x).
+    change (fun r : poly_row X.t => Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0)
+      with (poly_clock_select (fun z => Z.eqb z 0) x).
+    fold pos neg zero. time_simpl.
+    lazymatch goal with
+    | |- context [List.T_filter (poly_clock_select (fun z => (0 <? z)%Z) x) ?Tf rows] =>
+        change Tf with (T_poly_clock_select (fun z => (0 <? z)%Z) (fun z => Z.T_ltb 0 z) x)
+    end.
+    lazymatch goal with
+    | |- context [List.T_filter (poly_clock_select (fun z => (z <? 0)%Z) x) ?Tf rows] =>
+        change Tf with (T_poly_clock_select (fun z => (z <? 0)%Z) (fun z => Z.T_ltb z 0) x)
+    end.
+    lazymatch goal with
+    | |- context [List.T_filter (poly_clock_select (fun z => Z.eqb z 0) x) ?Tf rows] =>
+        change Tf with (T_poly_clock_select (fun z => Z.eqb z 0) (fun z => Z.T_eqb z 0) x)
+    end.
+    unfold poly_inequalities_factor.
+    rewrite <- N.mul_assoc. fold total. nia.
+  Qed.
+
+  Definition poly_step_factor : N :=
+    (poly_cancel_factor + poly_inequalities_factor + 4 * poly_select_factor + 32)%N.
+
+  (** Finding a pivot and then taking either elimination branch fits the square envelope. *)
+  Lemma T_poly_step_bounded : forall x rows dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+      poly_step_factor * N.of_nat (length rows + 1)^2 *
+        poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros x rows dim mlen keys bits Hrows.
+    pose proof (poly_T_find_members _ (poly_pivot X.eqb x)
+      (T_poly_pivot X.eqb X.T_eqb x)
+      (poly_select_factor * poly_clock_span dim mlen keys bits)%N rows
+      ltac:(intros r Hin; apply T_poly_pivot_bounded;
+        exact (proj1 (Forall_forall _ _) Hrows r Hin))) as Hfind.
+    pose proof (poly_span_positive dim mlen keys bits) as Hspan.
+    time_unfold (@T_poly_step).
+    try change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    try change (fun u : X.t => X.T_encode u) with X.T_encode.
+    change (fun r => T_poly_pivot X.eqb X.T_eqb x r)
+      with (T_poly_pivot X.eqb X.T_eqb x).
+    destruct (find (poly_pivot X.eqb x) rows) as [pivot|] eqn:Hpivot.
+    - apply find_some in Hpivot as [Hpivot _].
+      pose proof (proj1 (Forall_forall _ _) Hrows pivot Hpivot) as Hpivot_row.
+      pose proof (poly_T_map_members _ _ (poly_cancel X.encode X.eqb x pivot)
+        (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot)
+        (poly_cancel_factor * poly_clock_span dim mlen keys bits)%N rows
+        ltac:(intros r Hin; apply T_poly_cancel_bounded; [exact Hpivot_row|];
+          exact (proj1 (Forall_forall _ _) Hrows r Hin))) as Hmap.
+      change (fun r => T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot r)
+        with (T_poly_cancel X.encode X.T_encode X.eqb X.T_eqb x pivot).
+      unfold poly_step_factor. time_simpl.
+      try change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      try change (fun u : X.t => X.T_encode u) with X.T_encode.
+      rewrite N.pow_2_r. nia.
+    - pose proof (T_poly_inequalities_bounded x rows _ _ _ _ Hrows) as Hbranch.
+      unfold T_poly_clock_inequalities, T_poly_clock_pairs, T_poly_clock_pair_map,
+        T_poly_clock_pair, poly_clock_pairs, poly_clock_pair_map, poly_clock_pair in Hbranch.
+      cbn beta iota zeta in Hbranch.
+      unfold poly_step_factor. revert Hbranch. time_simpl. intro Hbranch.
+      try change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      try change (fun u : X.t => X.T_encode u) with X.T_encode.
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb in Hbranch.
+      change (fun u : X.t => X.T_encode u) with X.T_encode in Hbranch.
+      rewrite N.pow_2_r in Hbranch |- *. nia.
+  Qed.
+  (** A raw input row fits the fixed dimension and width parameters used during initialization. *)
+  Definition poly_input_envelope (dim keys bits : nat) (r : lcons X.t) : Prop :=
+    NoDup (map fst (lhs r)) /\ length (lhs r) <= dim /\
+      C.row_key_bits r <= keys /\ C.row_bits r <= bits.
+
+  Definition poly_normal_row_factor : N := (poly_normal_factor + 8)%N.
+
+  (** Normalizing one normal source row pays its linear coefficient-list normalization. *)
+  Lemma T_poly_normal_row_bounded : forall r dim keys bits,
+    poly_input_envelope dim keys bits r ->
+    (T_poly_normal_row X.encode X.T_encode r <=
+      poly_normal_row_factor * N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros r dim keys bits (Hnormal & Hdim & Hkeys & Hbits).
+    pose proof (T_poly_normal_unique (lhs r) keys bits Hnormal
+      (poly_row_entry_bounds r keys bits Hkeys Hbits)) as Hnormalization.
+    assert (Hwidth : (1 <= N.of_nat (keys + bits + 1))%N) by lia.
+    time_unfold (@T_poly_normal_row). unfold poly_normal_row_factor. time_simpl.
+    change (fun u : X.t => X.T_encode u) with X.T_encode. nia.
+  Qed.
+
+  (** Padding an identity-vector row requires only its three record projections. *)
+  Lemma T_poly_pad_row_le : forall r : poly_row X.t, (T_poly_pad_row r <= 4)%N.
+  Proof.
+    intro r. time_unfold (@T_poly_pad_row). time_simpl. lia.
+  Qed.
+
+  Definition poly_initial_factor : N := (poly_normal_row_factor + 16)%N.
+
+  (** Building normalized rows and their identity multiplier vectors fits a quadratic row count. *)
+  Lemma T_poly_initial_bounded : forall P dim keys bits,
+    Forall (fun p => poly_input_envelope dim keys bits (fst p)) P ->
+    (T_poly_initial X.encode X.T_encode P <=
+      poly_initial_factor * N.of_nat (length P + 1)^2 *
+        N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intro P. induction P as [|[r flag] P IH]; intros dim keys bits Hrows.
+    - assert (Hdimension : (1 <= N.of_nat (dim + 1))%N) by lia.
+      assert (Hwidth : (1 <= N.of_nat (keys + bits + 1))%N) by lia.
+      time_unfold (@T_poly_initial). time_simpl. unfold poly_initial_factor,
+        poly_normal_row_factor, poly_normal_factor. nia.
+    - inversion Hrows as [|p ps Hr Htail]; subst p ps.
+      specialize (IH dim keys bits Htail).
+      pose proof (T_poly_normal_row_bounded r dim keys bits Hr) as Hrow.
+      pose proof (poly_T_map_members _ _ (fun _ : lcons X.t * bool => 0%Z)
+        (fun _ : lcons X.t * bool => 1%N) 1 P
+        (fun _ _ => N.le_refl 1%N)) as Hzeros.
+      pose proof (poly_T_map_members _ _ (@poly_pad_row X.t) (@T_poly_pad_row X.t) 4
+        (poly_initial X.encode P) ltac:(intros; apply T_poly_pad_row_le)) as Hpad.
+      rewrite poly_initial_length in Hpad.
+      assert (Hdimension : (1 <= N.of_nat (dim + 1))%N) by lia.
+      assert (Hwidth : (1 <= N.of_nat (keys + bits + 1))%N) by lia.
+      time_unfold (@T_poly_initial). cbn [fst snd length].
+      change (fun p => T_poly_pad_row p) with (@T_poly_pad_row X.t).
+      unfold poly_initial_factor in *. time_simpl.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      rewrite N.pow_2_r in IH |- *. nia.
+  Qed.
+
+  (** Every normal source row fits the common input maxima and variable dimension. *)
+  Lemma poly_source_envelopes : forall P, normal P ->
+    Forall (fun p => poly_input_envelope (n P)
+      (fold_right Nat.max 0 (map C.row_key_bits P))
+      (fold_right Nat.max 0 (map C.row_bits P)) (fst p))
+      (map (fun r => (r, false)) P).
+  Proof.
+    intros P Hnormal. apply Forall_map, Forall_forall. intros r Hin.
+    unfold poly_input_envelope. cbn [fst]. split.
+    - unfold normal in Hnormal. exact (proj1 (Forall_forall _ _) Hnormal r Hin).
+    - split.
+      + pose proof (poly_row_dimension P r Hnormal Hin). unfold n. lia.
+      + split; [exact (poly_max_member _ C.row_key_bits 0 P r Hin)|].
+        exact (poly_max_member _ C.row_bits 0 P r Hin).
+  Qed.
+
+  (** Initial normalization and unit vectors satisfy every input invariant for one FM step. *)
+  Lemma poly_initial_envelopes : forall P, normal P ->
+    Forall (poly_row_envelope (n P) (length P)
+      (fold_right Nat.max 0 (map C.row_key_bits P))
+      (fold_right Nat.max 0 (map C.row_bits P)))
+      (poly_initial X.encode (map (fun r => (r, false)) P)).
+  Proof.
+    intros P Hnormal. apply Forall_forall. intros r Hin.
+    pose proof (poly_initial_sizes P Hnormal) as Hsizes.
+    destruct (proj1 (Forall_forall _ _) Hsizes r Hin) as [Hunique [Hbits Hkeys]].
+    pose proof (poly_initial_dimension P r Hnormal Hin) as Hdim.
+    pose proof (poly_initial_units X.t X.encode (map (fun r => (r, false)) P)) as Hunits.
+    destruct (proj1 (Forall_forall _ _) Hunits r Hin) as [Hlength Hunit].
+    rewrite length_map in Hlength. unfold poly_row_envelope. repeat split; try assumption.
+    - unfold n. lia.
+    - lia.
+    - apply Forall_forall. intros z Hz.
+      destruct (proj1 (Forall_forall _ _) Hunit z Hz) as [Heq|Heq]; subst z;
+        cbn [Z.size_nat Pos.size_nat]; lia.
+  Qed.
+
+  (** The FM row-count recurrence is bounded by the successor square. *)
+  Lemma poly_step_length_square : forall x rows,
+    length (poly_step X.encode X.eqb x rows) <= (length rows + 1)^2.
+  Proof.
+    intros x rows. pose proof (poly_step_rows X.t X.encode X.eqb x rows) as Hrows.
+    assert (Hdivision : length rows ^ 2 / 4 <= length rows ^ 2).
+    { apply Nat.Div0.div_le_upper_bound; nia. }
+    cbn [Nat.pow] in *. nia.
+  Qed.
+
+  (** Mapping output records charges one closure and two projections per constraint. *)
+  Lemma T_poly_track_map : forall rows,
+    (ListDef.T_map (fun r => Tracked X.t (poly_constraint r) (poly_multipliers r))
+      (fun _ => 3%N) rows <= 4 * N.of_nat (length rows) + 1)%N.
+  Proof.
+    intro rows. exact (poly_T_map_members _ _
+      (fun r => Tracked X.t (poly_constraint r) (poly_multipliers r))
+      (fun _ => 3%N) 3 rows (fun _ _ => N.le_refl 3%N)).
+  Qed.
+
+  (** The complete FM clock combines initialization, elimination, and record projection. *)
+  Definition poly_fm_factor : N := (poly_step_factor + poly_initial_factor + 32)%N.
+
+  (** The actual elimination clock fits the frozen row, dimension, and width envelope. *)
+  Lemma T_poly_fm_bounded : forall x P, normal P ->
+    (T_fm_elim x P <= poly_fm_factor * N.of_nat (length P + 1)^2 *
+      N.of_nat (n P + length P + 1) * N.of_nat (ell P + 1)^2)%N.
+  Proof.
+    intros x P Hnormal.
+    set (input := map (fun r => (r, false)) P).
+    set (initial := poly_initial X.encode input).
+    set (rows := poly_step X.encode X.eqb x initial).
+    set (keys := fold_right Nat.max 0 (map C.row_key_bits P)).
+    set (bits := fold_right Nat.max 0 (map C.row_bits P)).
+    pose proof (T_poly_initial_bounded input (n P) keys bits
+      (poly_source_envelopes P Hnormal)) as Hinitial.
+    pose proof (T_poly_step_bounded x initial (n P) (length P) keys bits
+      (poly_initial_envelopes P Hnormal)) as Hstep.
+    assert (Hinput_length : length input = length P) by (unfold input; apply length_map).
+    assert (Hinitial_length : length initial = length P).
+    { unfold initial. now rewrite poly_initial_length. }
+    rewrite Hinput_length in Hinitial. rewrite Hinitial_length in Hstep.
+    pose proof (poly_step_length_square x initial) as Hcount.
+    fold rows in Hcount. rewrite Hinitial_length in Hcount.
+    pose proof (poly_T_map_members _ _ (fun r => (r, false)) (fun _ => 1%N) 1 P
+      (fun _ _ => N.le_refl 1%N)) as Hinput.
+    pose proof (T_poly_track_map rows) as Houtput.
+    pose proof (poly_span_linear (n P) (keys + bits)
+      (n P) (length P) keys bits ltac:(lia) ltac:(lia)) as Hinitial_span.
+    pose proof (poly_span_positive (n P) (length P) keys bits) as Hspan.
+    set (row_work := poly_clock_span (n P) (length P) keys bits) in *.
+    set (row_count := (N.of_nat (length P + 1)^2)%N) in *.
+    assert (Hinitial_total : (T_poly_initial X.encode X.T_encode input <=
+      poly_initial_factor * row_count * row_work)%N).
+    { eapply N.le_trans; [exact Hinitial|]. rewrite <- !N.mul_assoc.
+      apply N.mul_le_mono_l, N.mul_le_mono_l. exact Hinitial_span. }
+    assert (Hcount_positive : (1 <= row_count)%N).
+    { unfold row_count. rewrite N.pow_2_r. assert (1 <= N.of_nat (length P + 1))%N by lia.
+      nia. }
+    assert (Hinput_total : (ListDef.T_map (fun r => (r, false)) (fun _ => 1%N) P <=
+      2 * row_count * row_work)%N).
+    { assert (N.of_nat (length P + 1) <= row_count)%N.
+      { unfold row_count. rewrite N.pow_2_r. nia. }
+      nia. }
+    assert (Houtput_total : (ListDef.T_map
+      (fun r => Tracked X.t (poly_constraint r) (poly_multipliers r))
+      (fun _ => 3%N) rows <= 5 * row_count * row_work)%N).
+    { assert (Hrows_N : (N.of_nat (length rows) <= row_count)%N).
+      { assert (Hcount_N : (N.of_nat (length rows) <=
+          N.of_nat ((length P + 1)^2))%N) by (clear -Hcount; lia).
+        rewrite poly_nat_square in Hcount_N.
+        unfold row_count. rewrite N.pow_2_r. exact Hcount_N. }
+      clear -Houtput Hrows_N Hspan Hcount_positive.
+      nia. }
+    clear Hinitial Hinitial_span Hinput Houtput Hcount.
+    assert (Hshape : row_work =
+      (N.of_nat (n P + length P + 1) * N.of_nat (ell P + 1)^2)%N).
+    { unfold row_work, poly_clock_span, ell, keys, bits.
+      f_equal. f_equal. f_equal. lia. }
+    time_unfold T_fm_elim. fold input initial rows.
+    rewrite <- N.mul_assoc, <- Hshape. unfold poly_fm_factor.
+    time_simpl. fold row_count.
+    change (fun _ : poly_row X.t => (1 + (1 + 1))%N)
+      with (fun _ : poly_row X.t => 3%N).
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    assert (Htotal_positive : (1 <= row_count * row_work)%N).
+    { change (1 * 1 <= row_count * row_work)%N.
+      apply N.mul_le_mono; assumption. }
+    rewrite <- N.mul_assoc in Hstep, Hinitial_total, Hinput_total, Houtput_total |- *.
+    set (total := (row_count * row_work)%N) in *.
+    clear -Hstep Hinitial_total Hinput_total Houtput_total Htotal_positive.
+    clearbody total. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -5517,13 +6052,13 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_poly : N := poly_subst_factor.
+  Definition c_poly : N := (poly_subst_factor + poly_fm_factor + 1)%N.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_poly * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
   Proof.
     intros x f r. pose proof (T_poly_subst_bounded x f r) as Hsubst.
-    eapply N.le_trans; [exact Hsubst|]. unfold c_poly. apply N.mul_le_mono_l.
+    eapply N.le_trans; [exact Hsubst|]. unfold c_poly. apply N.mul_le_mono; [lia|].
     assert (Hsquare : (C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1)^2 <=
       (X.bits x + C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1)^2).
     { apply Nat.pow_le_mono_l. lia. }
@@ -5533,7 +6068,12 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma T_fm_elim_le : forall x P, normal P ->
     (T_fm_elim x P <= c_poly * N.of_nat (((length P + 1)^2)%nat) *
       N.of_nat ((n P + length P + 1)%nat) * N.of_nat (((ell P + 1)^2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x P Hnormal.
+    eapply N.le_trans; [apply T_poly_fm_bounded; exact Hnormal|].
+    rewrite !Nat2N.inj_pow. repeat apply N.mul_le_mono_r.
+    unfold c_poly. lia.
+  Qed.
   Lemma T_entail_cert_le : forall P c, normal P -> normal (c :: nil) ->
     (T_entail_cert P c <= c_poly *
       N.of_nat (fmcost (n P + length (lhs c)) (length P + 1)
