@@ -10514,7 +10514,41 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** A bucket is read by one keyed lookup. *)
   Lemma T_get_uses_le : forall db work x, inv_on db work -> allocated db x ->
     (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x _ Hallocated.
+    pose proof (DatabaseUseMap.T_get_le (list use_entry) x
+      (row_uses (db_row_store db))) as Hget.
+    assert (Hwidth : Pos.size_nat x <= unit db).
+    { change (N.size_nat (Npos x) <= unit db).
+      pose proof (unit_width_budget db) as Hunit.
+      eapply Nat.le_trans with (m := N.size_nat (wmark db));
+        [apply N_width_mono | lia].
+      eapply N.le_trans; [exact Hallocated | apply wmark_ids]. }
+    time_unfold T_get_uses. time_unfold T_db_get_uses.
+    time_unfold @DatabaseUses.T_bucket.
+    destruct (DatabaseUseMap.get x (row_uses (db_row_store db)));
+      time_simpl; time_cbn.
+    all: unfold PosKeyT.bits, PosKeyT.encode in Hget;
+      rewrite Nat2N.inj_add in Hget; cbn [N.of_nat] in Hget;
+      pose proof (unit_positive db) as Hunit;
+      set (M := DatabaseUseMap.c_map) in *;
+      set (F := UnionFindT.c_uf);
+      set (U := N.of_nat (unit db)) in *;
+      assert (Hsingle : (5 + M * (U + 1) <= 128 * (M + 1) * U)%N) by nia;
+      assert (Hbits : (N.of_nat (Pos.size_nat x) <= U)%N) by (unfold U; lia);
+      assert (Hmap : (M * (N.of_nat (Pos.size_nat x) + 1) <= M * (U + 1))%N)
+        by (apply N.mul_le_mono_l; lia);
+      assert (Hcost : (DatabaseUseMap.T_get x (row_uses (db_row_store db)) <=
+        M * (N.of_nat (Pos.size_nat x) + 1))%N) by exact Hget;
+      eapply N.le_trans with (m := (128 * (M + 1) * U)%N);
+      [lia |];
+      unfold k_pop; fold M F;
+      replace (128 * (M + 1) * (F + 1) * U)%N with
+        ((128 * (M + 1) * U) * (F + 1))%N by ring;
+      replace (128 * (M + 1) * U)%N with
+        ((128 * (M + 1) * U) * 1)%N at 1 by ring;
+      apply N.mul_le_mono_l; lia.
+  Qed.
 
   Definition rebuild_measure (s : repair_state) : nat :=
     let db := fst s in
