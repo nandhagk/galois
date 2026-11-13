@@ -95,6 +95,23 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** An occurrence can remain registered after the separate write history is erased. *)
+Definition missing_written_history_db :=
+  let db := missing_use_row in
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    [] (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db)
+    (db_cache_updates db).
+
+Example missing_written_history_observation :
+  (UnitDatabase.row_get 1%positive [] missing_written_history_db,
+    UnitDatabase.db_get_uses 1%positive missing_written_history_db,
+    UnitDatabase.locate 1%positive [] missing_written_history_db,
+    db_written_cells missing_written_history_db) =
+    (Some (Some (Id 1%positive)), [(1%positive, [])], Some [], []).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Replacing the same row twice registers two historical identifier occurrences. *)
 Example repeated_row_replacement_occurrences :
   let empty := FixtureDatabase.init [] [] in
