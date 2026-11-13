@@ -71,6 +71,13 @@ Proof.
     time_step fold_left.
 Qed.
 
+(** Inspecting a Boolean list predicate always pays its first traversal call. *)
+Lemma T_existsb_ge_one {A : Type} (p : A -> bool) (T_p : A -> N) : forall xs,
+  (1 <= List.T_existsb p T_p xs)%N.
+Proof.
+  intros [| x xs]; time_step existsb.
+Qed.
+
 Module ListDef.
   TimeFun List.nth.
 End ListDef.
@@ -839,6 +846,33 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   TimeFun advance_nodes.
   TimeFun enumerate.
   TimeFun run.
+
+  (** Pivot selection visits every aligned column, including nonparticipants. *)
+  Lemma T_choose_columns_ge : forall cs ixs ns lvl pos,
+    length cs = length ixs -> length cs = length ns ->
+    (N.of_nat (2 * length cs + 1) <= T_choose_columns cs ixs ns lvl pos)%N.
+  Proof.
+    induction cs as [| lv cs IH]; intros [| ix ixs] [| n ns] lvl pos Hix Hns;
+      cbn [length] in Hix, Hns; try discriminate Hix; try discriminate Hns.
+    - time_step choose_columns.
+    - pose proof (IH ixs ns lvl (S pos) ltac:(lia) ltac:(lia)) as Htail.
+      pose proof (T_existsb_ge_one (Nat.eqb lvl) (fun i => Nat.T_eqb lvl i) lv) as Htest.
+      time_step choose_columns.
+  Qed.
+
+  (** Advancement pays for every column even if an earlier probe fails. *)
+  Lemma T_advance_columns_ge : forall cs ixs ns lvl c,
+    length cs = length ixs -> length cs = length ns ->
+    (N.of_nat (2 * length cs + 1) <= T_advance_columns cs ixs lvl ns c)%N.
+  Proof.
+    induction cs as [| lv cs IH]; intros [| ix ixs] [| n ns] lvl c Hix Hns;
+      cbn [length] in Hix, Hns; try discriminate Hix; try discriminate Hns.
+    - time_step advance_columns.
+    - pose proof (IH ixs ns lvl c ltac:(lia) ltac:(lia)) as Htail.
+      pose proof (T_existsb_ge_one (Nat.eqb lvl) (fun i => Nat.T_eqb lvl i) lv) as Htest.
+      time_step advance_columns.
+  Qed.
+
   (** This proof-only recursion counts every column probe and every surviving subtree. *)
   Fixpoint recursive_work (fuel : nat) (p : jplan) (ixs : list I.t) (lvl : nat)
       (ns : list positive) {struct fuel} : nat :=
