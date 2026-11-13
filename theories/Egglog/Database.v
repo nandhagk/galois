@@ -8426,13 +8426,65 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       output_equiv (fst s') o' (merged (fst s') f (map snd srcs)).
   Proof. Admitted. (* STUB *)
 
+  (** Empty active and pending schedules leave no noncanonical row occurrence. *)
+  Lemma inv_quiet_canonical : forall db, inv db -> queue db = [] -> canonical db.
+  Proof.
+    intros db Hinv Hqueue f k o Hrow i Hin.
+    destruct (Pos.eq_dec (repr db i) i) as [Hequal | Hdifferent]; [exact Hequal |].
+    destruct Hinv as (_ & _ & _ & Hscheduled & _).
+    destruct (Hscheduled f k o i Hrow Hin Hdifferent) as [k0 [Hwork _]].
+    unfold scheduled in Hwork. rewrite Hqueue in Hwork.
+    destruct Hwork as [Hempty | [x [Hempty _]]]; contradiction.
+  Qed.
+
+  (** The active invariant identifies canonical related keys cell by cell. *)
+  Lemma inv_on_canonical_keys_equal : forall db work (k1 k2 : list (cell V.t)), inv_on db work ->
+    (forall i, In (Id i) k1 -> repr db i = i) ->
+    (forall i, In (Id i) k2 -> repr db i = i) ->
+    Forall2 (cell_rel (same (view db))) k1 k2 -> k1 = k2.
+  Proof.
+    intros db work k1 k2 Hinv Hleft Hright Hrelated. revert Hleft Hright.
+    induction Hrelated as [| c d left right Hcell Htail IH]; intros Hleft Hright.
+    - reflexivity.
+    - f_equal.
+      + destruct Hcell as [i j Hsame | v]; [| reflexivity].
+        f_equal. apply (proj1 (inv_on_same_repr db work i j Hinv)) in Hsame.
+        rewrite (Hleft i), (Hright j) in Hsame by now left. exact Hsame.
+      + apply IH.
+        * intros i Hin. apply Hleft. now right.
+        * intros i Hin. apply Hright. now right.
+  Qed.
+
   (** A stopped driver exposes canonical rows and constructor closure. *)
   Lemma F13_rstep_done : forall s r, state_inv s -> rstep s = inr r ->
     r = fst s /\ snd s = [] /\ inv r /\ canonical r /\ pending r = 0 /\
     (forall f k1 k2 i j, row (view r) f k1 (Some (Id i)) ->
       row (view r) f k2 (Some (Id j)) ->
       Forall2 (cell_rel (same (view r))) k1 k2 -> same (view r) i j).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] result Hinv Hstop. unfold rstep in Hstop.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstop; [| discriminate].
+    change (inv db) in Hinv.
+    destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [discriminate |].
+    injection Hstop as Hresult. subst result. cbn [fst snd].
+    assert (Hqueue : queue db = []).
+    { apply (proj1 (F4_pop_none db Hinv)). exact Hpop. }
+    assert (Hcanonical : canonical db) by (now apply inv_quiet_canonical).
+    split; [reflexivity |]. split; [reflexivity |]. split; [exact Hinv |].
+    split; [exact Hcanonical |]. split.
+    - unfold pending, queue in *. now rewrite Hqueue.
+    - intros f k1 k2 i j Hrow1 Hrow2 Hrelated.
+      assert (Hkeys : k1 = k2).
+      { eapply inv_on_canonical_keys_equal; [exact Hinv | | | exact Hrelated].
+        - intros x Hin. apply (Hcanonical f k1 (Some (Id i)) Hrow1 x).
+          apply in_or_app. now left.
+        - intros x Hin. apply (Hcanonical f k2 (Some (Id j)) Hrow2 x).
+          apply in_or_app. now left. }
+      subst k2. change (row_get f k1 db = Some (Some (Id i))) in Hrow1.
+      change (row_get f k1 db = Some (Some (Id j))) in Hrow2.
+      assert (Hequal : i = j) by congruence. subst j.
+      apply (proj2 (inv_on_same_repr db [] i i Hinv)). reflexivity.
+  Qed.
 
   (** Continuing steps strictly decrease a measure that includes active work. *)
   Lemma F14_rstep_measure : forall s s', state_inv s -> rstep s = inl s' ->
@@ -8490,11 +8542,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * exact Hnext.
   Qed.
 
+  (** Satisfaction and the active forest facts give representative meanings during repair. *)
+  Lemma inv_on_model_forest : forall M nu db work, inv_on db work ->
+    sat V.merge M nu (view db) -> model_forest M nu db.
+  Proof.
+    intros M nu db work Hinv Hsat. split.
+    - exact (inv_on_forest_wf db work Hinv).
+    - intro i. apply (sat_same V.merge M nu (view db) (repr db i) i Hsat).
+      apply (proj2 (inv_on_same_repr db work (repr db i) i Hinv)).
+      unfold repr. apply UnionFind.repr_idem. exact (inv_on_forest_wf db work Hinv).
+  Qed.
+
   (** Repair preserves satisfaction through its collision, lattice and index branches. *)
   Lemma F19_rstep_sat : forall (M : model (V := V.t)) nu s s',
     state_inv s -> rstep s = inl s' -> sat V.merge M nu (view (fst s)) ->
     sat V.merge M nu (view (fst s')).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu s s' Hinv Hstep Hsat.
+    apply (proj2 (db_rstep_semantic_continue M nu s s'
+      (conj (inv_on_model_forest M nu (fst s) (snd s) Hinv Hsat) Hsat) Hstep)).
+  Qed.
 
   (** Lineage retains original row groups throughout repeated deletion and reinsertion. *)
   Definition lineage (initial current : t) : Prop :=
