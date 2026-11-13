@@ -1626,6 +1626,70 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     nia.
   Qed.
 
+  (** Each recursive work unit pays a common factor, without a surcharge per subtree. *)
+  Lemma T_enumerate_le : forall fuel p ixs lvl pre ns acc,
+    fuel + lvl = nvars p -> nodes_ok p ixs lvl pre ns ->
+    (T_enumerate fuel p ixs ns pre acc <=
+      4096 * scan_factor p ixs * N.of_nat (recursive_work fuel p ixs lvl ns))%N.
+  Proof.
+    induction fuel as [|fuel IH]; intros p ixs lvl pre ns acc Hfuel Hnodes.
+    - pose proof (T_prefix_rev_le p ixs lvl pre ns Hnodes) as Hreverse.
+      destruct (scan_factor_covers p ixs) as [Hfactor _].
+      set (F := scan_factor p ixs) in *. clearbody F.
+      cbn [recursive_work]. time_unfold T_enumerate. time_cbn. nia.
+    - pose proof (proj1 (proj2 Hnodes)) as Hlength.
+      assert (Hlevel : lvl < nvars p) by lia.
+      destruct (choose_index_some p ixs lvl pre ns Hnodes Hlevel) as [j Hchoose].
+      pose proof (chosen_degree_count p ixs lvl pre ns j Hnodes Hchoose) as Hdegree.
+      pose proof (unfinished_columns p ixs lvl pre ns Hnodes Hlevel) as Hcolumns.
+      pose proof (T_prefix_length_le p ixs lvl pre ns Hnodes) as Hlength_time.
+      pose proof (T_choose_index_le p ixs lvl pre ns Hnodes) as Hchoose_time.
+      pose proof (T_pivot_reads_le p ixs lvl pre ns j Hnodes Hchoose) as Hread_time.
+      pose proof (T_pivot_children_le p ixs lvl pre ns j Hnodes Hchoose) as Hchildren_time.
+      destruct (scan_factor_covers p ixs) as [Hfactor [Hindex _]].
+      set (F := scan_factor p ixs) in *.
+      set (children := I.children (nth j ixs I.empty) (nth j ns 1%positive)) in *.
+      set (branch_work := fun c => match advance_nodes p ixs lvl ns c with
+        | Some nodes => recursive_work fuel p ixs (S lvl) nodes
+        | None => 0%nat
+        end).
+      assert (Hfold : (List.T_fold_left
+          (fun out c => match advance_nodes p ixs lvl ns c with
+            | Some nodes => enumerate fuel p ixs nodes (c :: pre) out
+            | None => out
+            end)
+          (fun out c => 1 + (T_advance_nodes p ixs lvl ns c +
+            match advance_nodes p ixs lvl ns c with
+            | Some nodes => T_enumerate fuel p ixs nodes (c :: pre) out
+            | None => 0
+            end)) children acc <=
+        N.of_nat (length children + 1) +
+          ((1 + 64 * F * N.of_nat (length (cols p) + 1)) * N.of_nat (length children) +
+            (4096 * F) * N.of_nat (fold_right Nat.add 0%nat (map branch_work children))))%N).
+      { eapply N.le_trans.
+        - eapply T_fold_left_sum_le with (cost := fun c =>
+            ((1 + 64 * F * N.of_nat (length (cols p) + 1)) +
+              (4096 * F) * N.of_nat (branch_work c))%N).
+          intros out c Hin. cbn beta. unfold branch_work.
+          pose proof (chosen_child_bits p ixs lvl pre ns j c Hnodes Hchoose Hin) as Hbits.
+          pose proof (T_advance_nodes_le p ixs lvl pre ns c Hnodes Hbits) as Hprobe.
+          fold F in Hprobe.
+          destruct (advance_nodes p ixs lvl ns c) as [nodes|] eqn:Hstep.
+          + pose proof (advance_nodes_ok p ixs lvl pre ns c nodes Hnodes Hstep) as Hnext.
+            pose proof (IH p ixs (S lvl) (c :: pre) nodes out ltac:(lia) Hnext) as Hsubtree.
+            fold F in Hsubtree. lia.
+          + lia.
+        - rewrite fold_sum_nat_affine. reflexivity. }
+      rewrite Hdegree in Hchildren_time.
+      assert (Hcolumn_count : (1 <= N.of_nat (length (cols p)))%N) by lia.
+      pose proof (join_level_budget F (N.of_nat (length (cols p)))
+        (N.of_nat (length children)) I.c_ix Hfactor Hcolumn_count Hindex) as Hbudget.
+      cbn [recursive_work]. rewrite Hchoose, Hdegree. fold children branch_work.
+      time_unfold T_enumerate. rewrite Hlength, Hchoose. fold children.
+      clear IH. clearbody F children branch_work.
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_succ in *. nia.
+  Qed.
+
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
