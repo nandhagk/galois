@@ -90,6 +90,45 @@ Module ListDef.
 End ListDef.
 Import ListDef.
 
+(** Reversing a list pays at least one call for every element and the empty tail. *)
+Lemma T_rev_ge {A : Type} : forall (xs : list A),
+  (N.of_nat (length xs + 1) <= List.T_rev xs)%N.
+Proof.
+  intro xs. induction xs as [| x xs IH].
+  - change (1 <= 1)%N. reflexivity.
+  - change (N.of_nat (S (length xs) + 1) <=
+      1 + (List.T_rev xs + Datatypes.T_app (rev xs) [x]))%N.
+    rewrite Nat.add_succ_l, Nat2N.inj_succ. lia.
+Qed.
+
+(** A sum of fixed branch charges separates from the natural-number subtree work. *)
+Lemma fold_sum_nat_affine {A : Type} : forall (xs : list A) (a k : N) (work : A -> nat),
+  fold_right N.add 0%N (map (fun x => (a + k * N.of_nat (work x))%N) xs) =
+    (a * N.of_nat (length xs) + k * N.of_nat (fold_right Nat.add 0%nat (map work xs)))%N.
+Proof.
+  intros xs a k work. induction xs as [| x xs IH]; cbn [map fold_right length].
+  - now rewrite !N.mul_0_r.
+  - rewrite IH, Nat2N.inj_succ, Nat2N.inj_add, N.mul_succ_r, N.mul_add_distr_l.
+    lia.
+Qed.
+
+(** A fold pays the fixed per-child work and all surviving recursive work. *)
+Lemma T_fold_left_work_ge {A B : Type} (f : A -> B -> A) (T_f : A -> B -> N)
+    (step : nat) (work : B -> nat) : forall xs acc,
+  (forall a b, In b xs -> (N.of_nat (step + work b) <= T_f a b)%N) ->
+  (N.of_nat (step * length xs + fold_right Nat.add 0%nat (map work xs)) <=
+    List.T_fold_left f T_f xs acc)%N.
+Proof.
+  intro xs. induction xs as [| x xs IH]; intros acc Hcost.
+  - time_step fold_left.
+  - pose proof (Hcost acc x (or_introl eq_refl)) as Hhead.
+    assert (Htail : (N.of_nat
+      (step * length xs + fold_right Nat.add 0%nat (map work xs)) <=
+      List.T_fold_left f T_f xs (f acc x))%N).
+    { apply IH. intros a b Hin. exact (Hcost a b (or_intror Hin)). }
+    time_step fold_left.
+Qed.
+
 Module JoinCode (V : VALUE_OPS) (I : INDEX_OPS V) <: JOIN_OPS V I.
   Definition level_count (p : jplan) : nat :=
     let '(JPlan n _) := p in n.
