@@ -4,7 +4,7 @@
     For example, repeated writes by one row occupy one index entry per key.
     Builds on: Fixpoint.IndexedSig and Base.Trie. *)
 
-From Stdlib Require Import List PArith Arith NArith Bool.
+From Stdlib Require Import List PArith Arith NArith Bool Lia.
 From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -50,26 +50,89 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
   Include IndexedCode L S.
   Include SYSTEM_SPEC L.
   Definition wf (p : prog) := S.wf (program p) /\ p = prepare (program p).
+
+  (** Dropping row numbers recovers the input list, including repeated rows. *)
+  Lemma number_from_snd : forall rs id,
+    List.map snd (number_from id rs) = rs.
+  Proof.
+    induction rs as [|r rs IH]; intro id; cbn [number_from List.map snd].
+    - reflexivity.
+    - now rewrite IH.
+  Qed.
+
+  (** Every prepared row refers to a listed row of the underlying program. *)
+  Lemma listed_original : forall p r, wf p -> In r (rows p) ->
+    In (snd r) (S.rows (program p)).
+  Proof.
+    intros p r [_ Hprepare] Hin.
+    apply in_map with (f := @snd positive S.row) in Hin.
+    unfold rows in Hin; rewrite Hprepare in Hin.
+    cbn [prepare numbered_rows] in Hin.
+    now rewrite number_from_snd in Hin.
+  Qed.
+
+  (** Numbering does not alter query evaluation, even outside a prepared list. *)
+  Lemma eval_original : forall p r look,
+    eval p r look = S.eval (program p) (snd r) look.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Key encodings are the underlying system's encodings. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact S.key_code_inj.
+  Qed.
+
+  (** Key equality is the underlying system's reflected equality. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact S.key_eqb_spec.
+  Qed.
+
+  (** Listed prepared rows terminate whenever the underlying program is well formed. *)
   Lemma eval_total : forall p r look, wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look Hwf Hin; rewrite eval_original.
+    apply S.eval_total; [exact (proj1 Hwf)|].
+    exact (listed_original p r Hwf Hin).
+  Qed.
+
+  (** Numbering preserves the declared-read frame property. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r s u Hwf Hin Hreads; rewrite !eval_original.
+    apply S.reads_within; [exact (proj1 Hwf)| |exact Hreads].
+    exact (listed_original p r Hwf Hin).
+  Qed.
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look n q acc x f Hwf Hin Hreach Hask.
+    eapply S.asks_within; [exact (proj1 Hwf)| |exact Hreach|exact Hask].
+    exact (listed_original p r Hwf Hin).
+  Qed.
+
+  (** Numbering preserves the declared side-write keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look a ss x b Hwf Hin Heval Hside.
+    eapply S.sides_within; [exact (proj1 Hwf)| |exact Heval|exact Hside].
+    exact (listed_original p r Hwf Hin).
+  Qed.
+
+  (** Numbering preserves the declared side-write occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look a ss Hwf Hin Heval.
+    eapply S.sides_count; [exact (proj1 Hwf)| |exact Heval].
+    exact (listed_original p r Hwf Hin).
+  Qed.
   Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
   Proof. Admitted. (* STUB *)
@@ -77,30 +140,52 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
     (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
   Proof. Admitted. (* STUB *)
   Lemma prepare_program : forall p, program (prepare p) = p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma prepare_rows : forall p, List.map snd (rows (prepare p)) = S.rows p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; apply number_from_snd.
+  Qed.
   Lemma eval_prepare : forall p r look, In r (rows (prepare p)) ->
     eval (prepare p) r look = S.eval p (snd r) look.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma wf_prepare : forall p, S.wf p -> wf (prepare p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf; split; [exact Hwf|reflexivity].
+  Qed.
   (** Prepared targets agree with the original rows. *)
   Lemma prepare_target : forall p r, In r (rows (prepare p)) ->
     target (prepare p) r = S.target p (snd r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Prepared dependencies agree with the original rows. *)
   Lemma prepare_deps : forall p r, In r (rows (prepare p)) ->
     deps (prepare p) r = S.deps p (snd r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Prepared side declarations agree with the original rows. *)
   Lemma prepare_sides : forall p r, In r (rows (prepare p)) ->
     sides (prepare p) r = S.sides p (snd r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Preparation keeps precisely the original post-solutions. *)
   Lemma prepare_post : forall p look,
     post_solution (prepare p) look <-> S.post_solution p look.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p look; split; intros Hpost r Hin.
+    - rewrite <- prepare_rows in Hin.
+      apply in_map_iff in Hin as [nr [Hrow Hnr]].
+      subst r; exact (Hpost nr Hnr).
+    - apply Hpost.
+      rewrite <- prepare_rows.
+      now apply in_map.
+  Qed.
 End Indexed.
 
 Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
