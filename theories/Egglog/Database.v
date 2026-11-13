@@ -5565,6 +5565,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + now right.
   Qed.
 
+  (** Put retains or writes its actual normalized target with the combined output. *)
+  Lemma put_row_target_raw : forall db f k o,
+    row (view (put f k o db)) f (normal_key db k)
+      (combine_output db f (row_get f (normal_key db k) db)
+        (option_map (normal_cell db) o)).
+  Proof.
+    intros db f k o. unfold put.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hprevious.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)) by apply output_conflict_rows_raw.
+    destruct previous as [before |].
+    - destruct (output_eqb_spec before updated) as [Hequal | Hdifferent].
+      + rewrite Hrows, <- Hequal. exact (eq_sym Hprevious).
+      + apply row_replace_binding. right. split; reflexivity.
+    - apply row_replace_binding. right. split; reflexivity.
+  Qed.
+
   (** Put leaves every row outside its actually normalized insertion key unchanged. *)
   Lemma put_other_rows : forall db f k o g args output,
     (g, args) <> (f, normal_key db k) ->
@@ -5604,6 +5624,36 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest) in Hnew.
       rewrite row_delete_normal_output, (normal_output_idempotent db before Hforest) in Hnew.
       exact Hnew.
+  Qed.
+
+  (** Repair retains the normalized target, including its unchanged-row branch. *)
+  Lemma repair_current_target : forall db f k before,
+    UnionFind.wf (db_forest db) -> row_get f k db = Some before ->
+    row (view (repair_current f k db)) f (normal_key db k)
+      (combine_output (row_delete f k db) f
+        (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before)).
+  Proof.
+    intros db f k before Hforest Hrow. unfold repair_current. rewrite Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)) eqn:Hfixed.
+    - apply andb_true_iff in Hfixed as [Hkey Houtput].
+      apply Pos.eqb_eq in Hkey.
+      pose proof (Tuples.encode_inj (normal_key db k) k Hkey) as Hnormal.
+      destruct (output_eqb_spec (option_map (normal_cell db) before) before)
+        as [Hequal | Hdifferent]; [| discriminate].
+      rewrite Hnormal, Hequal.
+      assert (Habsent : row_get f k (row_delete f k db) = None).
+      { destruct (row_get f k (row_delete f k db)) as [output |] eqn:Hlookup;
+          [| reflexivity].
+        apply row_delete_binding in Hlookup. destruct Hlookup as [_ Hother].
+        exfalso. apply Hother. reflexivity. }
+      rewrite Habsent. exact Hrow.
+    - pose proof (put_row_target_raw (row_delete f k db) f (normal_key db k)
+        (option_map (normal_cell db) before)) as Htarget.
+      rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest) in Htarget.
+      rewrite row_delete_normal_output, (normal_output_idempotent db before Hforest) in Htarget.
+      exact Htarget.
   Qed.
 
   (** Repair preserves every row away from both the removed key and its normal form. *)
