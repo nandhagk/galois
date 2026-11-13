@@ -2378,6 +2378,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
                 rewrite PTrie.get_empty in Hhistory. discriminate.
   Qed.
 
+  (** Public idle states retain enough historical uses to rebuild every row. *)
+  Definition database_idle_ok (db : t) : Prop :=
+    let entries := flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses (db_row_store db)))) in
+    let stored := map snd (PTrieCode.elements (runtime_rows (db_runtime db))) in
+    let queued := runtime_queue (db_runtime db) in
+    database_row_store_ok db /\ NoDup queued /\
+    (forall f k o i, row (view db) f k o -> In (Id i) (k ++ option_list o) ->
+      exists x k0, repr db x = repr db i /\ In (x, (f, k0)) entries /\
+        db_locate f k0 db = Some k /\ (x = repr db i \/ In x queued)) /\
+    (forall f k o i, row (view db) f k o -> In (Id i) (k ++ option_list o) ->
+      repr db i <> i -> exists k0,
+        (exists x, In x queued /\ In (x, (f, k0)) entries) /\
+        db_locate f k0 db = Some k) /\
+    (forall f k0 k, db_locate f k0 db = Some k ->
+      exists o, In ((f, k), o) stored /\ kind (view db) f <> None).
+
   (** Retaining rows and extending their history preserves cell coverage. *)
   Lemma recorded_rows_transport : forall db db',
     (forall f k o, row (view db') f k o -> row (view db) f k o) ->
