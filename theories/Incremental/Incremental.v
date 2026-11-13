@@ -4,7 +4,7 @@
     For example, an initial state has no stored values.
     Builds on: IncrementalSig. *)
 
-From Stdlib Require Import List PArith NArith Lia.
+From Stdlib Require Import List Bool PArith NArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -41,7 +41,7 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
        inc_cowrites := PTrieCode.empty; inc_snapshots := PTrieCode.empty |}.
   Definition value (st : state) (x : S.key) : option L.t :=
     match PTrieCode.get (S.key_code x) (inc_values st) with
-    | Some (_, v) => Some v
+    | Some (stored_key, v) => if S.key_eqb x stored_key then Some v else None
     | None => None
     end.
   (* STUB-CODE *)
@@ -221,8 +221,16 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     intros st x.
     pose proof (S.T_key_code_le x) as Hcode.
     pose proof (PTrieT.T_get_le (S.key * L.t) (S.key_code x) (inc_values st)) as Hget.
+    assert (Hguard :
+      (match PTrieCode.get (S.key_code x) (inc_values st) with
+       | Some (stored_key, _) => S.T_key_eqb x stored_key
+       | None => 0
+       end <= S.c_sys * N.of_nat (S.key_bits x + 1))%N).
+    { destruct (PTrieCode.get (S.key_code x) (inc_values st)) as [[stored_key v]|].
+      - apply S.T_key_eqb_le.
+      - lia. }
     unfold PTrieT.T_get in Hget.
-    unfold S.key_bits in Hcode.
+    unfold S.key_bits in Hcode, Hguard.
     unfold T_value, PTrieCode.T_get, c_inc, S.key_bits.
     time_simpl; time_cbn; nia.
   Qed.
