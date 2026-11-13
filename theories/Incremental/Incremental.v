@@ -2939,7 +2939,39 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     least_solution p global ->
     forall x, E x -> L.leb (small x) (global x) = true /\
       L.leb (global x) (small x) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p E rs small global Hwf Hmono Hclosed Hrows Hsmall Hregional
+      [Hglobal Hleast] x HEx; split.
+    - apply (Hregional global); intros r Hr; apply Hglobal.
+      exact (proj1 (proj1 (Hrows r) Hr)).
+    - set (support := x :: flat_map (fun r => S.writes p r ++ S.deps p r) rs).
+      set (member := fun y => existsb (S.key_eqb y) support).
+      assert (Hmember : forall y, member y = true <-> In y support).
+      { intro y; unfold member; rewrite existsb_exists; split.
+        - intros [z [Hz Heq]].
+          destruct (S.key_eqb_spec y z) as [->|Hneq]; [exact Hz|discriminate Heq].
+        - intro Hy; exists y; split; [exact Hy|].
+          destruct (S.key_eqb_spec y y); congruence. }
+      assert (Hsupport : forall y, In y support -> E y).
+      { intros y Hy; unfold support in Hy; destruct Hy as [<-|Hy]; [exact HEx|].
+        apply in_flat_map in Hy as [r [Hr Hy]].
+        destruct (proj1 (Hrows r) Hr) as [Hlisted [z [HEz Hwrite]]].
+        exact (Hclosed r z y Hlisted Hwrite HEz Hy). }
+      assert (Hselected : forall r y, In r (S.rows p) -> In y (S.writes p r) ->
+        member y = true -> In r rs).
+      { intros r y Hr Hy Hmem; apply (proj2 (Hrows r)); split; [exact Hr|].
+        exists y; split; [apply Hsupport; apply (proj1 (Hmember y)); exact Hmem|exact Hy]. }
+      assert (Hclosed_member : TopFacts.support_closed p member).
+      { intros r y z Hr Hy Hmem Hz; apply (proj2 (Hmember z)); unfold support; right.
+        apply in_flat_map; exists r; split; [exact (Hselected r y Hr Hy Hmem)|exact Hz]. }
+      assert (Hextended : S.post_solution p (TopFacts.top_extend member small)).
+      { apply TopFacts.top_extend_post; [exact Hwf|exact Hclosed_member|].
+        intros r y Hr Hy Hmem; apply Hsmall; exact (Hselected r y Hr Hy Hmem). }
+      pose proof (Hleast (TopFacts.top_extend member small) Hextended x) as Hbound.
+      assert (Hmember_x : member x = true).
+      { apply (proj2 (Hmember x)); unfold support; now left. }
+      rewrite (TopFacts.top_extend_on member small x Hmember_x) in Hbound; exact Hbound.
+  Qed.
 
   (** Frozen pairs are stored checked values. *)
   Lemma frozen_spec : forall p roots st x v,
