@@ -3,7 +3,7 @@
     The solver prepares row and reader indexes and tracks live queue entries.
     For example, repeated reads by one row enqueue that row once per change.
     Builds on: Fixpoint.WorklistSig and Base.Loop. *)
-From Stdlib Require Import List NArith PArith.
+From Stdlib Require Import List Bool Arith NArith PArith Lia.
 From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Code MapSig Trie HeapSig Loop.
 From Galois.Lattice Require Import LatticeSig.
@@ -11,6 +11,116 @@ From Galois.Graph Require Import DigraphSig WtoSig.
 From Galois.Fixpoint Require Import Query SystemSig SolverSig PolicySig ScheduleSig WorklistSig.
 Import List.ListNotations.
 Import Code.List.
+
+(** * Binary-loop and numbering facts *)
+
+(** A positive identifier's bit width is its logarithm plus the leading bit. *)
+Lemma pos_size_log2 : forall p,
+  Pos.size_nat p = Nat.log2 (Pos.to_nat p) + 1.
+Proof.
+  induction p as [p IH|p IH|].
+  - rewrite Pos2Nat.inj_xI.
+    replace (S (2 * Pos.to_nat p)) with (2 * Pos.to_nat p + 1) by lia.
+    rewrite Nat.log2_succ_double by apply Pos2Nat.is_pos.
+    cbn [Pos.size_nat]; lia.
+  - rewrite Pos2Nat.inj_xO, Nat.log2_double by apply Pos2Nat.is_pos.
+    cbn [Pos.size_nat]; lia.
+  - reflexivity.
+Qed.
+
+(** The accessibility driver has the same outcomes as the corresponding unary fuel. *)
+Lemma loopN_acc_fuel {St R : Type} (step : St -> St + R) :
+  forall fs (H : Acc (@loopN_lt St) fs),
+    loop loopN_lt (loopN_step step) fs H =
+      loop_fuel step (N.to_nat (fst fs)) (snd fs).
+Proof.
+  intros fs H; induction H as [[fuel s] Hacc IH] using Acc_ind_dep.
+  destruct fuel as [|p].
+  - reflexivity.
+  - assert (Hpos : 0 < N.to_nat (N.pos p)) by apply Pos2Nat.is_pos.
+    assert (Hfuel : N.to_nat (N.pos p) = S (N.to_nat (N.pred (N.pos p)))).
+    { rewrite N2Nat.inj_pred; lia. }
+    cbn [fst snd]; rewrite Hfuel.
+    cbn [loop loopN_step loop_fuel].
+    destruct (step s) as [s1|result] eqn:Hstep; [apply IH|reflexivity].
+Qed.
+
+(** Binary and unary fuel select exactly the same callback outcomes. *)
+Lemma loopN_fuel {St R : Type} (step : St -> St + R) : forall fuel s,
+  loopN step fuel s = loop_fuel step (N.to_nat fuel) s.
+Proof.
+  intros fuel s; unfold loopN; apply loopN_acc_fuel.
+Qed.
+
+(** A state projection commutes with a fuelled loop when callbacks preserve its invariant. *)
+Lemma loop_fuel_view {St Ref R : Type} (step : St -> St + R)
+    (reference : Ref -> Ref + R) (view : St -> Ref) (Inv : St -> Prop) :
+  (forall s, Inv s ->
+    match step s with inl s1 => inl (view s1) | inr r => inr r end = reference (view s)) ->
+  (forall s s1, Inv s -> step s = inl s1 -> Inv s1) ->
+  forall fuel s, Inv s ->
+    match loop_fuel step fuel s with inl s1 => inl (view s1) | inr r => inr r end =
+      loop_fuel reference fuel (view s).
+Proof.
+  intros Hview Hinv fuel; induction fuel as [|fuel IH]; intros s Hs.
+  - reflexivity.
+  - cbn [loop_fuel]; rewrite <- (Hview s Hs).
+    destruct (step s) as [s1|result] eqn:Hstep; cbn.
+    + apply IH; eapply Hinv; eassumption.
+    + reflexivity.
+Qed.
+
+(** The same projection law applies to the binary-fuel public driver. *)
+Lemma loopN_view {St Ref R : Type} (step : St -> St + R)
+    (reference : Ref -> Ref + R) (view : St -> Ref) (Inv : St -> Prop) :
+  (forall s, Inv s ->
+    match step s with inl s1 => inl (view s1) | inr r => inr r end = reference (view s)) ->
+  (forall s s1, Inv s -> step s = inl s1 -> Inv s1) ->
+  forall fuel s, Inv s ->
+    match loopN step fuel s with inl s1 => inl (view s1) | inr r => inr r end =
+      loopN reference fuel (view s).
+Proof.
+  intros Hview Hinv fuel s Hs; rewrite !loopN_fuel.
+  eapply loop_fuel_view; eassumption.
+Qed.
+
+(** Continuing paths concatenate in callback order. *)
+Lemma wl_path_append {St R : Type} (step : St -> St + R) : forall s xs mid ys last,
+  wl_path step s xs mid -> wl_path step mid ys last -> wl_path step s (xs ++ ys) last.
+Proof.
+  intros s xs mid ys last Hfirst; revert ys last.
+  induction Hfirst as [s|s s1 xs mid Hstep Hpath IH]; intros ys last Htail.
+  - exact Htail.
+  - cbn; econstructor; [exact Hstep|now apply IH].
+Qed.
+
+(** Exhausting unary fuel yields a continuing path with exactly that many callbacks. *)
+Lemma loop_fuel_path {St R : Type} (step : St -> St + R) : forall fuel s last,
+  loop_fuel step fuel s = inl last ->
+  exists xs, wl_path step s xs last /\ length xs = fuel.
+Proof.
+  intro fuel; induction fuel as [|fuel IH]; intros s last Hrun.
+  - cbn [loop_fuel] in Hrun; inversion Hrun; subst.
+    exists []; split; [constructor|reflexivity].
+  - cbn [loop_fuel] in Hrun; destruct (step s) as [s1|result] eqn:Hstep;
+      [|discriminate].
+    destruct (IH s1 last Hrun) as [xs [Hpath Hlength]].
+    exists (s :: xs); split; [econstructor; eassumption|cbn; now rewrite Hlength].
+Qed.
+
+(** Returning a result exposes a continuing prefix and its final stopping callback. *)
+Lemma loop_fuel_stop_path {St R : Type} (step : St -> St + R) : forall fuel s result,
+  loop_fuel step fuel s = inr result ->
+  exists xs last, wl_path step s xs last /\ step last = inr result /\ length xs < fuel.
+Proof.
+  intro fuel; induction fuel as [|fuel IH]; intros s result Hrun; [discriminate|].
+  cbn [loop_fuel] in Hrun; destruct (step s) as [s1|out] eqn:Hstep.
+  - destruct (IH s1 result Hrun) as [xs [last [Hpath [Hstop Hlength]]]].
+    exists (s :: xs), last; split; [econstructor; eassumption|].
+    split; [exact Hstop|cbn; lia].
+  - inversion Hrun; subst; exists [], s.
+    split; [constructor|split; [exact Hstep|cbn; lia]].
+Qed.
 
 Module Pos.
   TimeFun Stdlib.PArith.BinPos.Pos.max.
@@ -385,6 +495,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     snd (fold_left (fun sn xa =>
       (update_one p pol (fst sn) xa,
         (snd sn + T_update_one p pol (fst sn) xa)%N)) outs (s, 0%N)).
+
+  (** * Enumeration and cached metadata *)
+
   (** Binary enumeration retains the original observable identifiers and occurrence order. *)
   Lemma F0_row_ids : forall p,
     row_ids p = List.map Pos.of_succ_nat (seq 0 (C p)).
@@ -410,6 +523,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma F3_eval : forall p r m,
     eval_row p r m = S.eval p r (look_or S.key_code L.bot m).
   Proof. Admitted. (* STUB *)
+
+  (** * Identifier and priority widths *)
+
   (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
   Lemma F4_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     invariant p pol (prepare p pol) /\
@@ -565,6 +681,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     | inr result => result
     end.
   Proof. Admitted. (* STUB *)
+
+  (** * Reachable-state invariants *)
+
   (** Every state reached by the public solver satisfies its internal preparation duties. *)
   Lemma F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
   Proof. Admitted. (* STUB *)
@@ -588,6 +707,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Reachable states satisfy every row outside their queue. *)
   Lemma F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
   Proof. Admitted. (* STUB *)
+
+  (** * Operation costs and height credit *)
 
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
   Lemma W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
@@ -646,6 +767,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (height_phi p rk h (prepare p pol) <=
       k_credit * N.of_nat (D p + h * DW p) * unit p + queue_phi p (prepare p pol))%N.
   Proof. Admitted. (* STUB *)
+
+  (** * Stable segments and row visits *)
+
   (** Cut edges make popped row ranks nondecreasing in a stable segment. *)
   Lemma W5_priority : forall p pol s xs last i j a b,
     fits p pol -> reachable p pol s ->
@@ -687,6 +811,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     wl_path (step p pol) (prepare p pol) xs last ->
     (N.of_nat (length xs) < k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
   Proof. Admitted. (* STUB *)
+
+  (** * Driver outcomes and global bounds *)
+
   (** Stopping callbacks must solve and must fit the final driver budget. *)
   Lemma W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
