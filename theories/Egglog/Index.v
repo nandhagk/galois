@@ -639,10 +639,6 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma wf_remove : forall a r ix, wf a ix -> wf a (remove r ix).
   Proof. Admitted. (* STUB *)
 
-  Lemma mem_insert : forall a r ix u, wf a ix -> length r = a ->
-    (mem (insert r ix) u <-> u = r \/ mem ix u).
-  Proof. Admitted. (* OPEN: insertion path and suffix-count preservation remain to be proved. *)
-
   Lemma mem_remove : forall a r ix u, wf a ix ->
     (mem (remove r ix) u <-> u <> r /\ mem ix u).
   Proof. Admitted. (* STUB *)
@@ -1016,6 +1012,117 @@ Module Index (V : VALUE) <: INDEX V.
     - eapply Pos.le_trans; [exact Hbound | apply insert_step_counter_mono].
   Qed.
 
+  Lemma seek_bounded : forall ix r q n, edge_shape ix -> (q <= next ix)%positive ->
+    seek ix q r = Some n -> (n <= next ix)%positive.
+  Proof.
+    intros ix r. induction r as [| c r IH]; intros q n Hshape Hbound Hseek.
+    - cbn [seek] in Hseek. injection Hseek as <-. exact Hbound.
+    - cbn [seek] in Hseek.
+      destruct (child ix q c) as [m |] eqn:Hchild; [| discriminate].
+      eapply IH; [exact Hshape | | exact Hseek].
+      exact (proj2 (child_forward ix q c m Hshape Hchild)).
+  Qed.
+
+  (** A path ending at a node never reads that node's outgoing edges. *)
+  Lemma seek_preserve_endpoint : forall ix ix' target,
+    edge_shape ix -> table_ok ix -> table_ok ix' ->
+    (forall q, q <> target ->
+      node_edges (read_node ix' q) = node_edges (read_node ix q)) ->
+    forall r q, seek ix q r = Some target -> seek ix' q r = Some target.
+  Proof.
+    intros ix ix' target Hshape Htable Htable' Hedges r.
+    induction r as [| c r IH]; intros q Hseek; cbn [seek] in *; [exact Hseek |].
+    destruct (child ix q c) as [m |] eqn:Hchild; [| discriminate].
+    assert (Hneq : q <> target).
+    { intro Heq. subst q.
+      pose proof (proj1 (child_forward ix target c m Hshape Hchild)) as Hlt.
+      pose proof (seek_forward ix r m target Hshape Hseek) as Hle.
+      apply Pos.lt_nle in Hlt. contradiction. }
+    assert (Hchild' : child ix' q c = Some m).
+    { rewrite child_raw by exact Htable'. rewrite Hedges by exact Hneq.
+      rewrite <- child_raw by exact Htable. exact Hchild. }
+    rewrite Hchild'. now apply IH.
+  Qed.
+
+  Lemma insert_step_other_edges : forall st c q, q <> snd st ->
+    node_edges (read_node (fst (insert_step_st st c)) q) =
+      node_edges (read_node (fst st) q).
+  Proof.
+    intros [ix n] c q Hneq. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n); [reflexivity |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+      cbn [fst]; rewrite read_node_write_other by exact Hneq; reflexivity.
+  Qed.
+
+  Lemma insert_step_child : forall ix n c, table_ok ix -> (n <= next ix)%positive ->
+    child (fst (insert_step_st (ix, n) c)) n c = Some (snd (insert_step_st (ix, n) c)).
+  Proof.
+    intros ix n c Htable Hnode.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    unfold insert_step_st. rewrite Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n))); cbn [fst snd].
+    - rewrite child_put_edge_same; [reflexivity |].
+      apply table_ok_write; [exact Htable | exact Hnode | apply Pos.le_refl].
+    - rewrite child_put_edge_same; [reflexivity |].
+      apply table_ok_write; [exact Htable | |].
+      + eapply Pos.le_trans; [exact Hnode | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
+      + apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
+
+  Lemma insert_step_path : forall st c pre, shape (fst st) -> node (fst st) (snd st) pre ->
+    node (fst (insert_step_st st c)) (snd (insert_step_st st c)) (pre ++ [c]).
+  Proof.
+    intros [ix n] c pre [Hshape [Htable Hparents]] Hnode.
+    assert (Hbound : (n <= next ix)%positive).
+    { eapply seek_bounded; [exact Hshape | apply Pos.le_1_l | exact Hnode]. }
+    assert (Hprefix : seek (fst (insert_step_st (ix, n) c)) (root ix) pre = Some n).
+    { eapply seek_preserve_endpoint; [exact Hshape | exact Htable | | | exact Hnode].
+      - now apply table_ok_insert_step.
+      - intros q Hneq. exact (insert_step_other_edges (ix, n) c q Hneq). }
+    unfold node. change (seek (fst (insert_step_st (ix, n) c)) (root ix)
+      (pre ++ [c]) = Some (snd (insert_step_st (ix, n) c))).
+    rewrite seek_append, Hprefix. cbn [seek].
+    rewrite (insert_step_child ix n c Htable Hbound). reflexivity.
+  Qed.
+
+  Lemma insert_walk_path : forall walk st pre, shape (fst st) ->
+    node (fst st) (snd st) pre ->
+    node (fst (fold_left insert_step_st walk st)) (snd (fold_left insert_step_st walk st))
+      (pre ++ walk).
+  Proof.
+    induction walk as [| c walk IH]; intros st pre Hshape Hnode; cbn [fold_left].
+    - now rewrite app_nil_r.
+    - pose proof (IH (insert_step_st st c) (pre ++ [c])
+        (shape_insert_step st c Hshape) (insert_step_path st c pre Hshape Hnode)) as Hpath.
+      rewrite <- app_assoc in Hpath. exact Hpath.
+  Qed.
+
+  (** Insertion marks exactly its reached endpoint after preserving every old member. *)
+  Lemma insert_membership : forall ix r u, shape ix ->
+    (mem (insert r ix) u <-> u = r \/ mem ix u).
+  Proof.
+    intros ix r u Hshape. unfold insert, insert_finish.
+    destruct (contains r ix) eqn:Hpresent.
+    - split; [now right |]. intros [-> | Hmem]; [exact Hpresent | exact Hmem].
+    - set (st := fold_left insert_step_st r (start ix)).
+      assert (Hshape' : shape (fst st)) by (apply shape_insert_walk; exact Hshape).
+      assert (Hpath : node (fst st) (snd st) r).
+      { exact (insert_walk_path r (start ix) [] Hshape eq_refl). }
+      pose proof (shape_paths_unique (fst st) Hshape') as Hunique.
+      pose proof (insert_walk_membership r (start ix) u 1%positive Hshape
+        (Pos.le_1_l (next ix))) as Hmembers.
+      change (contains_from 1%positive u (fst st) = contains_from 1%positive u ix) in Hmembers.
+      unfold mem, contains. cbn [root]. rewrite mark_terminal_add.
+      change ((seek (fst st) 1%positive u = Some (snd st) \/
+        contains_from 1%positive u (fst st) = true) <->
+        u = r \/ contains_from 1%positive u ix = true).
+      rewrite Hmembers.
+      split.
+      + intros [Hnode | Hmem]; [left | now right].
+        eapply Hunique; [exact Hnode | exact Hpath].
+      + intros [-> | Hmem]; [now left | now right].
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
@@ -1140,6 +1247,12 @@ Module Index (V : VALUE) <: INDEX V.
     intros a ix n pre [[_ [Hdegree _]] _] _.
     unfold degree, children. destruct (Pos.ltb (next ix) n); [reflexivity |].
     rewrite length_map. exact (proj1 (Hdegree n)).
+  Qed.
+
+  Lemma mem_insert : forall a r ix u, wf a ix -> length r = a ->
+    (mem (insert r ix) u <-> u = r \/ mem ix u).
+  Proof.
+    intros a r ix u [Hvalid _] _. apply insert_membership. now apply valid_shape.
   Qed.
 
 End Index.
