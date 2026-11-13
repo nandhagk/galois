@@ -5,6 +5,7 @@
     Builds on: EnvBudgetSig and the operational environment and system links. *)
 
 From Stdlib Require Import List PArith Arith ZArith Bool Lia.
+From Stdlib.Sorting Require Import Permutation.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Bits Require Import Word.
 From Galois.Domains Require Import LangSig ValueSig WordSig BitsLang SignSig CongruenceSig.
@@ -25,45 +26,53 @@ Module SignEnvelope (L : WORD_LANGUAGE_T) (S : SIGN_ALL L)
   Proof.
     intros w p _. unfold payload_size_bound. rewrite S.psize_width. reflexivity.
   Qed.
+
   (** Canonical payload ranks fit the concrete rank envelope. *)
   Lemma canonical_rank : forall q w p,
     canonical w p -> S.pwrank q w p <= payload_rank_bound q w.
   Proof.
     intros q w p _. unfold payload_rank_bound. rewrite S.F_pwrank. lia.
   Qed.
+
   (** The concrete bottom payload is canonical. *)
   Lemma canonical_bot : forall w, canonical w (S.pbot w).
   Proof.
     intros. constructor.
   Qed.
+
   (** The concrete top payload is canonical. *)
   Lemma canonical_top : forall w, canonical w (S.ptop w).
   Proof.
     intros. constructor.
   Qed.
+
   (** Literal abstraction returns a canonical payload. *)
   Lemma canonical_const : forall w z, canonical w (S.pconst w z).
   Proof.
     intros. constructor.
   Qed.
+
   (** Concrete join keeps canonical payloads canonical. *)
   Lemma canonical_join : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pjoin w a b).
   Proof.
     intros. constructor.
   Qed.
+
   (** Concrete meet keeps canonical payloads canonical. *)
   Lemma canonical_meet : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pmeet w a b).
   Proof.
     intros. constructor.
   Qed.
+
   (** Concrete widening keeps canonical payloads canonical. *)
   Lemma canonical_widen : forall q w a b,
     canonical w a -> canonical w b -> canonical w (S.pwiden q w a b).
   Proof.
     intros. constructor.
   Qed.
+
   (** Concrete narrowing keeps canonical payloads canonical. *)
   Lemma canonical_narrow : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pnarrow w a b).
@@ -88,6 +97,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     pose proof (W.congr_norm_bits w p) as Hbits. rewrite Hcanonical in Hbits.
     rewrite W.psize_congr. unfold payload_size_bound. apply Nat.pow_le_mono_l. lia.
   Qed.
+
   (** Congruence ranks fit the width-plus-two envelope. *)
   Lemma canonical_rank : forall q w p,
     canonical w p -> W.pwrank q w p <= payload_rank_bound q w.
@@ -95,11 +105,13 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     intros q w p _. unfold payload_rank_bound. rewrite W.F14_pwrank.
     apply W.F13_wrank_le.
   Qed.
+
   (** The concrete bottom payload is canonical. *)
   Lemma canonical_bot : forall w, canonical w (W.pbot w).
   Proof.
     intro w. rewrite R.bot_code. reflexivity.
   Qed.
+
   (** The concrete top payload is canonical. *)
   Lemma canonical_top : forall w, canonical w (W.ptop w).
   Proof.
@@ -109,6 +121,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     cbn [CongruenceBudgetCode.congr_norm Z.abs Z.eqb].
     now rewrite Hwidth.
   Qed.
+
   (** Literal abstraction returns a canonical payload. *)
   Lemma canonical_const : forall w z, canonical w (W.pconst w z).
   Proof.
@@ -121,6 +134,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
       - apply Z.ltb_lt. exact (proj2 (wrap_is_word w z)). }
     now rewrite Hword.
   Qed.
+
   (** Concrete join keeps canonical payloads canonical. *)
   Lemma canonical_join : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pjoin w a b).
@@ -130,6 +144,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     destruct a as [|m r], b as [|n s]; try assumption; try reflexivity.
     unfold canonical. rewrite <- R.norm_code. apply W.F4_norm_idempotent.
   Qed.
+
   (** Concrete meet keeps canonical payloads canonical. *)
   Lemma canonical_meet : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pmeet w a b).
@@ -140,6 +155,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     destruct (Z.eqb (r mod Z.gcd m n) (s mod Z.gcd m n)); [|reflexivity].
     unfold canonical. rewrite <- R.norm_code. apply W.F4_norm_idempotent.
   Qed.
+
   (** Concrete widening keeps canonical payloads canonical. *)
   Lemma canonical_widen : forall q w a b,
     canonical w a -> canonical w b -> canonical w (W.pwiden q w a b).
@@ -147,6 +163,7 @@ Module CongruenceEnvelope (L : WORD_LANGUAGE_T) (W : CONGRUENCE_ALL L)
     intros q w a b Ha Hb. rewrite R.widen_code.
     destruct (W.pleb w b a); [exact Ha|now apply canonical_join].
   Qed.
+
   (** Concrete narrowing keeps canonical payloads canonical. *)
   Lemma canonical_narrow : forall w a b,
     canonical w a -> canonical w b -> canonical w (W.pnarrow w a b).
@@ -351,6 +368,145 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     - constructor; [eapply annotate_width; eassumption|exact IH].
   Qed.
 
+  (** Summing concatenated lists adds their separate sums. *)
+  Lemma budget_sum_app : forall {A} (f : A -> nat) xs ys,
+    fold_right Nat.add 0 (map f (xs ++ ys)) =
+      fold_right Nat.add 0 (map f xs) + fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys. induction xs; cbn; lia.
+  Qed.
+
+  (** Permutation preserves a nonnegative list sum. *)
+  Lemma budget_sum_permutation : forall {A} (f : A -> nat) xs ys,
+    Permutation xs ys ->
+    fold_right Nat.add 0 (map f xs) = fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys Hperm. induction Hperm; cbn [map fold_right]; lia.
+  Qed.
+
+  (** Pointwise bounds give a bound on their list sums. *)
+  Lemma budget_sum_mono : forall {A} (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) ->
+    fold_right Nat.add 0 (map f xs) <= fold_right Nat.add 0 (map g xs).
+  Proof.
+    intros A f g xs. induction xs as [|x xs IH]; intros H; cbn; [lia|].
+    pose proof (H x (or_introl eq_refl)).
+    assert (Htail : forall y, In y xs -> f y <= g y).
+    { intros y Hy. apply H. now right. }
+    specialize (IH Htail). lia.
+  Qed.
+
+  (** A list without duplicates contributes no more than any list containing it. *)
+  Lemma budget_sum_incl : forall {A} (f : A -> nat) xs ys,
+    NoDup xs -> incl xs ys ->
+    fold_right Nat.add 0 (map f xs) <= fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs. induction xs as [|x xs IH]; intros ys Hnd Hincl; [cbn; lia|].
+    inversion Hnd as [|x1 xs1 Hnot Hndtail]; subst x1 xs1.
+    destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [ys1 [ys2 Hys]].
+    subst ys.
+    assert (Htail : incl xs (ys1 ++ ys2)).
+    { intros y Hy. specialize (Hincl y (or_intror Hy)).
+      apply in_app_iff in Hincl. apply in_app_iff.
+      destruct Hincl as [Hin|[Heq|Hin]]; [now left| |now right].
+      subst y. contradiction. }
+    specialize (IH (ys1 ++ ys2) Hndtail Htail).
+    rewrite budget_sum_app in IH. rewrite budget_sum_app. cbn. lia.
+  Qed.
+
+  (** The initial accumulator contributes one to the sum. *)
+  Lemma budget_sum_seed : forall xs,
+    fold_right Nat.add 1 xs = fold_right Nat.add 0 xs + 1.
+  Proof.
+    induction xs; cbn; lia.
+  Qed.
+
+  (** Summing pointwise additions separates the two contributions. *)
+  Lemma budget_sum_pair : forall {A} (f g : A -> nat) xs,
+    fold_right Nat.add 0 (map (fun x => f x + g x) xs) =
+      fold_right Nat.add 0 (map f xs) + fold_right Nat.add 0 (map g xs).
+  Proof.
+    intros A f g xs. induction xs; cbn; lia.
+  Qed.
+
+  (** Injective key encoding preserves the absence of duplicate keys. *)
+  Lemma budget_encode_nodup : forall xs,
+    NoDup xs -> NoDup (map X.encode xs).
+  Proof.
+    intros xs Hnd. induction Hnd; cbn; constructor; [|assumption].
+    intros Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
+    apply X.encode_inj in Heq. subst y. contradiction.
+  Qed.
+
+  (** Stored codes permute the encodings of the enumerated consistent bindings. *)
+  Lemma budget_codes_elements : forall (m : M.t V.t), M.wf m ->
+    Permutation (M.codes m) (map (fun xa => X.encode (fst xa)) (M.elements m)).
+  Proof.
+    intros m Hwf. apply NoDup_Permutation.
+    - apply M.codes_nodup.
+    - rewrite <- map_map. apply budget_encode_nodup. now apply M.elements_nodup.
+    - intro code. rewrite M.codes_spec, in_map_iff. split.
+      + intros Hbound. destruct (M.find code m) as [a|] eqn:Hfind; [|contradiction].
+        destruct (M.wf_find V.t m code a Hwf Hfind) as [x Hcode].
+        exists (x, a). split; [exact Hcode|].
+        apply (proj2 (M.elements_spec V.t m x a Hwf)).
+        rewrite M.get_find, Hcode. exact Hfind.
+      + intros [[x a] [Hcode Hin]]. cbn in Hcode.
+        rewrite <- Hcode, <- M.get_find.
+        rewrite (proj1 (M.elements_spec V.t m x a Hwf) Hin). discriminate.
+  Qed.
+
+  (** Summing successful code lookups agrees with summing enumerated values. *)
+  Lemma budget_codes_sum : forall (m : M.t V.t) (f : V.t -> nat), M.wf m ->
+    fold_right Nat.add 0 (map (fun code =>
+      match M.find code m with Some a => f a | None => 0 end) (M.codes m)) =
+    fold_right Nat.add 0 (map (fun xa => f (snd xa)) (M.elements m)).
+  Proof.
+    intros m f Hwf.
+    rewrite (budget_sum_permutation _ _ _ (budget_codes_elements m Hwf)), map_map.
+    f_equal. apply map_ext_in. intros [x a] Hin. cbn.
+    rewrite <- M.get_find, (proj1 (M.elements_spec V.t m x a Hwf) Hin). reflexivity.
+  Qed.
+
+  (** Distinct stored variables fit the program sum even when declarations repeat. *)
+  Lemma budget_declared_sum : forall p m (f : X.t * V.t -> nat) (g : X.t -> nat),
+    inv p (Reached m) ->
+    (forall x a, In (x, a) (M.elements m) -> f (x, a) <= g x) ->
+    fold_right Nat.add 0 (map f (M.elements m)) <=
+      fold_right Nat.add 0 (map g (P.variables p)).
+  Proof.
+    intros p m f g [Hwf Hinv] Hbound.
+    eapply Nat.le_trans with
+      (m := fold_right Nat.add 0 (map (fun xa => g (fst xa)) (M.elements m))).
+    - apply budget_sum_mono. intros [x a] Hin. now apply Hbound.
+    - rewrite <- map_map. apply budget_sum_incl.
+      + now apply M.elements_nodup.
+      + intros x Hx. apply in_map_iff in Hx. destruct Hx as [[y a] [Heq Hin]].
+        cbn in Heq. subst y. rewrite Forall_forall in Hinv.
+        exact (proj1 (Hinv (x, a) Hin)).
+  Qed.
+
+  (** A canonical value fits the envelope of its declared variable. *)
+  Lemma budget_value_size : forall p x a, value_inv p x a ->
+    V.size a <= Pos.to_nat (P.width_of p x) +
+      C.payload_size_bound (P.width_of p x) + 1.
+  Proof.
+    intros p x a Hinv. rewrite D.size_tag.
+    destruct a as [|w q|]; cbn; try lia.
+    destruct Hinv as [Hw Hcanon]. subst w.
+    pose proof (C.canonical_size _ _ Hcanon). lia.
+  Qed.
+
+  (** A canonical value rank fits the envelope of its declared variable. *)
+  Lemma budget_value_rank : forall p w x a, value_inv p x a ->
+    V.wrank w a <= 1 + C.payload_rank_bound w (P.width_of p x).
+  Proof.
+    intros p w x a Hinv. rewrite D.rank_tag.
+    destruct a as [|u q|]; cbn; try lia.
+    destruct Hinv as [Hu Hcanon]. subst u.
+    pose proof (C.canonical_rank w _ _ Hcanon). lia.
+  Qed.
+
   (** Unreachable environments satisfy the representation invariant. *)
   Lemma inv_bot : forall p, inv p E.bot.
   Proof.
@@ -403,13 +559,49 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
 
   (** Canonical representation sizes fit the program's sum of width-dependent envelopes. *)
   Lemma size_le : forall p a, inv p a -> E.size a <= vsize p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|m] Hinv.
+    - rewrite P.size_unreached. lia.
+    - destruct Hinv as [Hwf Hvalues]. rewrite P.size_environment, budget_sum_seed.
+      rewrite (budget_codes_sum m (fun a => V.size a + 1) Hwf).
+      pose proof (M.nodes_le_weight V.t m Hwf) as Hnodes.
+      unfold M.weight in Hnodes.
+      assert (Hsum : fold_right Nat.add 0
+        (map (fun xa => (X.bits (fst xa) + 1) + (V.size (snd xa) + 1)) (M.elements m)) <=
+        fold_right Nat.add 0
+          (map (fun x => X.bits x + Pos.to_nat (P.width_of p x) +
+            C.payload_size_bound (P.width_of p x) + 3) (P.variables p))).
+      { apply budget_declared_sum; [split; assumption|].
+        intros x a Hin. rewrite Forall_forall in Hvalues.
+        pose proof (budget_value_size p x a (proj2 (Hvalues (x, a) Hin))). cbn. lia. }
+      rewrite budget_sum_pair in Hsum.
+      unfold vsize. rewrite budget_sum_seed. unfold X.bits in *. lia.
+  Qed.
 
   (** Canonical environments store at most one binding per declared variable. *)
   Lemma wunits_le : forall p a, inv p a -> E.wunits a <= wunits p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|m] Hinv.
+    - rewrite E.F_wunits_unreached. lia.
+    - rewrite E.F_wunits_reached. unfold wunits.
+      destruct Hinv as [Hwf Hvalues].
+      pose proof (Permutation_length (budget_codes_elements m Hwf)) as Hlength.
+      rewrite length_map in Hlength. rewrite Hlength.
+      rewrite <- (length_map fst (M.elements m)). apply NoDup_incl_length.
+      + now apply M.elements_nodup.
+      + intros x Hx. apply in_map_iff in Hx. destruct Hx as [[y a] [Heq Hin]].
+        cbn in Heq. subst y. rewrite Forall_forall in Hvalues.
+        exact (proj1 (Hvalues (x, a) Hin)).
+  Qed.
 
   (** Canonical payload ranks fit the program's sum of parameter-dependent rank envelopes. *)
   Lemma wrank_le : forall p w a, inv p a -> E.wrank w a <= wmax p w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p w [|m] Hinv.
+    - rewrite P.rank_unreached. lia.
+    - rewrite E.wrank_env by exact (proj1 Hinv). unfold wmax.
+      apply budget_declared_sum; [exact Hinv|].
+      intros x a Hin. destruct Hinv as [_ Hvalues]. rewrite Forall_forall in Hvalues.
+      exact (budget_value_rank p w x a (proj2 (Hvalues (x, a) Hin))).
+  Qed.
 End EnvBudget.
