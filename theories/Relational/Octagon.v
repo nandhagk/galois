@@ -5618,6 +5618,20 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intro m. unfold fw. now rewrite pivot_keys_eq_keys.
   Qed.
 
+  (** A successful full scan leaves every original support key processed. *)
+  Lemma fw_success_path_invariant : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true ->
+    RelationalPathBounds.invariant (entry m) (entry (fw m)) (rev (keys m)).
+  Proof.
+    intros m Hwf Hscan. rewrite fw_keys in Hscan |- *.
+    replace (rev (keys m)) with (rev (keys m) ++ nil) by now rewrite app_nil_r.
+    apply fw_pivots_success_path_invariant.
+    - apply RelationalPathBounds.invariant_initial.
+    - intros k Hkey. now apply keys_support.
+    - intros k Hkey. rewrite forallb_forall in Hscan.
+      now apply Hscan.
+  Qed.
+
   (** Original and final key lists cover the same supported vertices. *)
   Lemma keys_fw_membership : forall m k, dbm_wf m ->
     (In k (keys m) <-> In k (keys (fw m))).
