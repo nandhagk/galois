@@ -8,7 +8,8 @@ From Stdlib Require Import List Bool Arith NArith PArith Lia.
 From Argent Require Import Loop.
 From Galois.Base Require Import MapSig Trie Heap.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig Policy Check Worklist.
+From Galois.Fixpoint Require Import Query SystemSig PolicySig SolverSig CheckSig
+  Policy Check Worklist.
 From Galois.Incremental Require Import RestrictSig Restrict IncrementalSig Incremental.
 
 Import List.ListNotations.
@@ -545,3 +546,111 @@ Example graph_unknown_root_is_present_bottom :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(** * Snapshot and bucket transitions *)
+
+Definition graph_bucket (buckets : PTrieCode.t (list positive)) (x : nat)
+    : option (list positive) := PTrieCode.get (IncGraphSystem.key_code x) buckets.
+
+Definition graph_snapshot_view (st : IncGraph.state) (owner : nat)
+    : option (nat * list nat * bool) :=
+  match IncGraph.snapshot_get (IncGraphSystem.key_code owner) st with
+  | Some ss => Some (snapshot_owner ss, snapshot_writes ss, snapshot_live ss)
+  | None => None
+  end.
+
+(** Shared writes and readers retain each occurrence at the owning snapshot's identifier. *)
+Example graph_metadata_recording :
+  let st := snd graph_side_loaded in
+  (graph_bucket (inc_influence st) 41,
+   graph_bucket (inc_cowrites st) 40,
+   graph_bucket (inc_cowrites st) 41,
+   graph_snapshot_view st 40,
+   graph_snapshot_view st 41) =
+    (Some [51%positive], Some [41%positive], Some [42%positive; 41%positive],
+     Some (40, [40; 41], true), Some (41, [41], true)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Invalidated buckets disappear; visited snapshots remain as retired groups. *)
+Example graph_metadata_edit_retirement :
+  (graph_bucket (inc_influence graph_side_edited) 41,
+   graph_bucket (inc_cowrites graph_side_edited) 40,
+   graph_bucket (inc_cowrites graph_side_edited) 41,
+   graph_snapshot_view graph_side_edited 40,
+   graph_snapshot_view graph_side_edited 41,
+   graph_snapshot_view graph_side_edited 20) =
+    (None, None, None, Some (40, [40; 41], false), Some (41, [41], false),
+     Some (20, [20], true)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Recomputing a retired group adds one fresh occurrence instead of replaying stale ones. *)
+Example graph_metadata_redemand :
+  let st := snd (IncGraph.demand graph_side_changed graph_flat [50] 64%N graph_side_edited) in
+  (graph_bucket (inc_influence st) 41,
+   graph_bucket (inc_cowrites st) 40,
+   graph_bucket (inc_cowrites st) 41,
+   graph_snapshot_view st 40,
+   graph_snapshot_view st 41) =
+    (Some [51%positive], Some [41%positive], Some [42%positive; 41%positive],
+     Some (40, [40; 41], true), Some (41, [41], true)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** Recording the same owner twice preserves both write occurrences in its shared group. *)
+Example graph_metadata_repeated_owner :
+  let st := IncGraph.record_rows graph_original [4; 4; 7] IncGraph.init in
+  (graph_bucket (inc_cowrites st) 40,
+   graph_bucket (inc_cowrites st) 41,
+   graph_snapshot_view st 40) =
+    (Some [41%positive; 41%positive], Some [42%positive; 41%positive; 41%positive],
+     Some (40, [40; 41; 40; 41], true)).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition graph_hidden_buckets : IncGraph.state :=
+  {| inc_values := PTrieCode.empty;
+     inc_influence := PTrieCode.set (IncGraphSystem.key_code 99) [1000%positive] PTrieCode.empty;
+     inc_cowrites := PTrieCode.set (IncGraphSystem.key_code 99) [2000%positive] PTrieCode.empty;
+     inc_snapshots := PTrieCode.empty |}.
+
+(** A new key cannot inherit hidden influence or co-write entries from an arbitrary state. *)
+Example graph_metadata_clears_hidden_buckets :
+  let st := snd (IncGraph.demand graph_original graph_flat [99] 4%N graph_hidden_buckets) in
+  (IncGraph.value st 99, graph_bucket (inc_influence st) 99,
+   graph_bucket (inc_cowrites st) 99) = (Some false, None, None).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+Definition graph_malformed_value : IncGraph.state :=
+  {| inc_values := PTrieCode.set (IncGraphSystem.key_code 0) (99, true) PTrieCode.empty;
+     inc_influence := PTrieCode.empty;
+     inc_cowrites := PTrieCode.empty;
+     inc_snapshots := PTrieCode.empty |}.
+
+(** A payload stored at the wrong code is absent and is pruned before the new binding is added. *)
+Example graph_metadata_prunes_malformed_values :
+  let st := snd (IncGraph.demand graph_original graph_flat [99] 4%N graph_malformed_value) in
+  (IncGraph.value graph_malformed_value 0,
+   IncGraph.value graph_malformed_value 99,
+   PTrieCode.get (IncGraphSystem.key_code 0) (inc_values st),
+   IncGraph.value st 99) = (None, None, None, Some false).
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
+(** An importing client can apply the complete timed functor under its released parameters. *)
+Module IncrementalContractClient (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L)
+    (S : LOCAL_SYSTEM_T L)
+    (RS : SYSTEM_T L with Definition key := S.key with Definition key_code := S.key_code)
+    (R : RESTRICT_T L S RS) (Sol : SOLVER_T L RS) (Checker : CHECK_T L S)
+    (Least : SOLVER_LEAST L LB RS Sol).
+  Module Certified <: INCREMENTAL_ALL L LB Top S RS R Sol Checker Least :=
+    IncrementalT L LB Top S RS R Sol Checker Least.
+End IncrementalContractClient.
