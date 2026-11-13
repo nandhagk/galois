@@ -4058,6 +4058,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite Hnone || rewrite Hzero; reflexivity.
   Qed.
 
+  Lemma add_zero_flip_diagonal : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    entry (add_cons p p 0%Z m) (flip p) (flip p) = Some 0%Z.
+  Proof.
+    intros m p Hdiag. rewrite entry_add_cons_coordinates.
+    unfold same_coordinate.
+    destruct (K.eqb_spec (flip p) p) as [Heq|Hne].
+    - destruct p as [x sign]. destruct sign; discriminate Heq.
+    - destruct (K.eqb_spec (flip p) (flip p)); [|contradiction].
+      cbn. destruct (Hdiag (flip p)) as [Hnone|Hzero];
+        rewrite Hnone || rewrite Hzero; reflexivity.
+  Qed.
+
   Lemma add_zero_preserve_diagonal : forall m p k,
     (forall q, entry m q q = None \/ entry m q q = Some 0%Z) ->
     entry m k k = Some 0%Z ->
@@ -4156,6 +4169,37 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - apply add_zero_global_closed;
         [now apply tightly_closed_at_every_key|exact Hdiag].
     - now apply add_zero_diagonal_cases.
+  Qed.
+
+  (** Paired zero insertion gives every supported key a zero diagonal. *)
+  Lemma add_zero_support_diagonal : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    (forall k, In (K.encode k) (support m) -> entry m k k = Some 0%Z) ->
+    forall k, In (K.encode k) (support (add_cons p p 0%Z m)) ->
+      entry (add_cons p p 0%Z m) k k = Some 0%Z.
+  Proof.
+    intros m p Hcases Hzero k Hsupport.
+    rewrite support_add_cons in Hsupport.
+    destruct Hsupport as [Hcode|[Hcode|[Hcode|[Hcode|Hcode]]]].
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_own_diagonal.
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_own_diagonal.
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_flip_diagonal.
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_flip_diagonal.
+    - apply add_zero_preserve_diagonal; [exact Hcases|now apply Hzero].
+  Qed.
+
+  Lemma incremental_seed_zero_support : forall m i j, tightly_closed m ->
+    forall k, In (K.encode k)
+      (support (add_cons j j 0%Z (add_cons i i 0%Z m))) ->
+      entry (add_cons j j 0%Z (add_cons i i 0%Z m)) k k = Some 0%Z.
+  Proof.
+    intros m i j Htight.
+    assert (Hcases : forall k, entry m k k = None \/ entry m k k = Some 0%Z).
+    { now apply tightly_closed_diagonal_cases. }
+    apply add_zero_support_diagonal.
+    - now apply add_zero_diagonal_cases.
+    - apply add_zero_support_diagonal;
+        [exact Hcases|exact (proj1 (proj2 (proj1 Htight)))].
   Qed.
 
   Lemma coordinate_flip : forall a b i j,
