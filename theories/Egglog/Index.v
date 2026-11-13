@@ -740,6 +740,81 @@ Module Index (V : VALUE) <: INDEX V.
     induction r as [| c r IH]; intros st Hedges; cbn [fold_left]; [exact Hedges |].
     apply IH. now apply edges_ok_remove_step.
   Qed.
+
+  Lemma bounded_succ_small : forall limit count, (count <= Npos limit)%N ->
+    bounded_succ limit count = N.succ count.
+  Proof.
+    intros limit count Hbound. unfold bounded_succ.
+    assert (Hguard : N.ltb (Npos limit) count = false) by now apply N.ltb_ge.
+    now rewrite Hguard.
+  Qed.
+
+  Lemma degrees_ok_write : forall ix n nd counter, degrees_ok ix ->
+    N.to_nat (node_degree nd) = length (PTrieCode.elements (node_edges nd)) ->
+    (node_degree nd < Npos counter)%N -> (next ix <= counter)%positive ->
+    degrees_ok (write_node ix n nd counter).
+  Proof.
+    intros ix n nd counter Hdegrees Hlength Hdegree Hcounter q.
+    destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_write_same. split; [exact Hlength | exact Hdegree].
+    - rewrite read_node_write_other by exact Hneq.
+      destruct (Hdegrees q) as [Hlen Hbound]. split; [exact Hlen |].
+      change (node_degree (read_node ix q) < Npos counter)%N.
+      eapply N.lt_le_trans; [exact Hbound | exact Hcounter].
+  Qed.
+
+  Lemma degrees_ok_insert_step : forall st c, degrees_ok (fst st) ->
+    degrees_ok (fst (insert_step_st st c)).
+  Proof.
+    intros [ix n] c Hdegrees. cbn [fst] in Hdegrees. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n); [exact Hdegrees |].
+    destruct (Hdegrees n) as [Hlength Hbound].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; cbn [fst].
+    - apply degrees_ok_write; try exact Hdegrees; try exact Hbound; try apply Pos.le_refl.
+      cbn [node_degree node_edges].
+      rewrite (TrieCardinalityFacts.set_present _ _ edge) by exact Hget. exact Hlength.
+    - rewrite bounded_succ_small by (apply N.lt_le_incl; exact Hbound).
+      apply degrees_ok_write; [exact Hdegrees | | |].
+      + cbn [node_degree node_edges]. rewrite N2Nat.inj_succ.
+        rewrite TrieCardinalityFacts.set_absent by exact Hget. f_equal. exact Hlength.
+      + change (N.succ (node_degree (read_node ix n)) < N.succ (Npos (next ix)))%N.
+        change (node_degree (read_node ix n) < Npos (next ix))%N in Hbound. lia.
+      + apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
+
+  Lemma degrees_ok_remove_step : forall st c, degrees_ok (fst st) ->
+    degrees_ok (fst (remove_step_st st c)).
+  Proof.
+    intros [ix n] c Hdegrees. cbn [fst] in Hdegrees. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [exact Hdegrees |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| exact Hdegrees].
+    destruct (Hdegrees n) as [Hlength Hbound].
+    destruct (N.eqb (edge_count edge) 1%N); cbn [fst].
+    - apply degrees_ok_write; [exact Hdegrees | | | apply Pos.le_refl].
+      + cbn [node_degree node_edges]. rewrite N2Nat.inj_pred, Hlength.
+        rewrite <- (TrieCardinalityFacts.remove_present _ _ edge _ Hget). reflexivity.
+      + change (N.pred (node_degree (read_node ix n)) < Npos (next ix))%N.
+        change (node_degree (read_node ix n) < Npos (next ix))%N in Hbound. lia.
+    - apply degrees_ok_write; try exact Hdegrees; try exact Hbound; try apply Pos.le_refl.
+      cbn [node_degree node_edges].
+      rewrite (TrieCardinalityFacts.set_present _ _ edge) by exact Hget. exact Hlength.
+  Qed.
+
+  Lemma degrees_ok_insert_walk : forall r st, degrees_ok (fst st) ->
+    degrees_ok (fst (fold_left insert_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros st Hdegrees; cbn [fold_left]; [exact Hdegrees |].
+    apply IH. now apply degrees_ok_insert_step.
+  Qed.
+
+  Lemma degrees_ok_remove_walk : forall r st, degrees_ok (fst st) ->
+    degrees_ok (fst (fold_left remove_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros st Hdegrees; cbn [fold_left]; [exact Hdegrees |].
+    apply IH. now apply degrees_ok_remove_step.
+  Qed.
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
   Proof.
