@@ -1205,7 +1205,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k0 k Hforest Hlocated. exact (Hforest f k0 k Hlocated).
+  Qed.
 
   (** Active entries retain coverage after their loser has left the queue. *)
   Definition inv_on (db : t) (work : list use_entry) : Prop :=
