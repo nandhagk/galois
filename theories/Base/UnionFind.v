@@ -312,6 +312,98 @@ Module UnionFind <: UNION_FIND.
     apply rank_iter_le.
   Qed.
 
+  (** The binary count width covers the logarithmic parent-depth budget. *)
+  Lemma card_log_size u : Nat.log2 (card u) <= N.size_nat (count u).
+  Proof.
+    unfold card. destruct (count u) as [|p]; [reflexivity|].
+    change (Nat.log2 (Pos.to_nat p) <= Pos.size_nat p).
+    pose proof (proj1 (Nat.log2_lt_pow2 (Pos.to_nat p) (Pos.size_nat p)
+      (Pos2Nat.is_pos p)) (Pos.size_nat_upper p)). lia.
+  Qed.
+
+  (** A member walk spends one increasing rank per recorded nonroot key. *)
+  Lemma walk_fuel_correct u rk : wf u -> ranked u rk ->
+    forall fuel x path, mem u x -> Nat.log2 (card u) < fuel + rk x ->
+    let result :=
+      match loop_fuel (walk_step u) fuel (x, path) with inl s => s | inr s => s end in
+    fst result = repr u x /\
+    length (snd result) <= length path + (Nat.log2 (card u) - rk x) /\
+    forall y, In y (snd result) -> In y path \/
+      (mem u y /\ repr u y = repr u x /\ y <> repr u x).
+  Proof.
+    intros Hwf Hrank. induction fuel as [|fuel IH]; intros x path Hmem Hfuel.
+    - pose proof (rank_log u rk x Hwf Hrank Hmem). lia.
+    - cbn [loop_fuel]. unfold walk_step. cbn [fst snd].
+      destruct (Pos.eqb (parent_of x u) x) eqn:Hstop.
+      + apply Pos.eqb_eq in Hstop. cbn [fst snd]. split.
+        * symmetry. apply repr_of_root. exact Hstop.
+        * split; [lia|]. intros y Hy. left. exact Hy.
+      + apply Pos.eqb_neq in Hstop.
+        pose proof (parent_mem u x Hwf Hmem) as Hp.
+        pose proof (proj1 Hrank x Hmem Hstop) as Hrise.
+        destruct (IH (parent_of x u) (x :: path) Hp ltac:(lia))
+          as [Hresult [Hlength Hpath]].
+        rewrite repr_parent in Hresult, Hpath by exact Hwf.
+        split; [exact Hresult|]. split.
+        * unfold walk_step in Hlength. cbn [length fst snd] in Hlength.
+          pose proof (rank_log u rk (parent_of x u) Hwf Hrank Hp). lia.
+        * intros y Hy. destruct (Hpath y Hy) as [[Heq|Hin]|Hnew].
+          -- subst y. right. split; [exact Hmem|]. split; [reflexivity|].
+             intro Heq. pose proof (repr_root u x Hwf) as Hroot.
+             unfold is_root in Hroot. congruence.
+          -- left. exact Hin.
+          -- right. exact Hnew.
+  Qed.
+
+  (** Walking returns the representative and records a logarithmic path within its class. *)
+  Lemma walk_correct x u : wf u ->
+    fst (walk x u) = repr u x /\
+    length (snd (walk x u)) <= Nat.log2 (card u) /\
+    forall y, In y (snd (walk x u)) ->
+      mem u y /\ repr u y = repr u x /\ y <> repr u x.
+  Proof.
+    intro Hwf. destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hget.
+    - assert (Hmem : mem u x) by (unfold mem; rewrite Hget; discriminate).
+      destruct (proj2 (proj2 (proj2 (proj2 Hwf)))) as [rk Hrank].
+      pose proof (card_log_size u) as Hfuel.
+      destruct (walk_fuel_correct u rk Hwf Hrank (S (N.size_nat (count u)))
+        x nil Hmem ltac:(lia)) as [Hroot [Hlength Hpath]].
+      change (fst (walk x u) = repr u x) in Hroot.
+      change (length (snd (walk x u)) <= 0 + (Nat.log2 (card u) - rk x)) in Hlength.
+      split; [exact Hroot|]. split; [lia|].
+      intros y Hy. destruct (Hpath y Hy) as [Hnil|Hnew]; [contradiction|exact Hnew].
+    - assert (Hfresh : ~ mem u x) by (unfold mem; rewrite Hget; tauto).
+      pose proof (parent_fresh u x Hfresh) as Hparent.
+      pose proof (repr_fresh u x Hwf Hfresh) as Hrepr.
+      unfold walk. cbn [loop_fuel]. unfold walk_step. cbn [fst snd].
+      rewrite Hparent, Pos.eqb_refl. cbn [fst snd length].
+      split; [symmetry; exact Hrepr|]. split; [lia|]. intros y Hy. contradiction.
+  Qed.
+
+  (** The executable walk returns the specified representative. *)
+  Lemma walk_root x u : wf u -> fst (walk x u) = repr u x.
+  Proof.
+    intro Hwf. exact (proj1 (walk_correct x u Hwf)).
+  Qed.
+
+  (** Every recorded path key is a member of the queried class. *)
+  Lemma walk_path x u : wf u ->
+    length (snd (walk x u)) <= Nat.log2 (card u) /\
+    forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
+  Proof.
+    intro Hwf. destruct (walk_correct x u Hwf) as [_ [Hlength Hpath]].
+    split; [exact Hlength|]. intros y Hy.
+    destruct (Hpath y Hy) as [Hmem [Hrepr _]]. split; assumption.
+  Qed.
+
+  (** The recorded path excludes the returned root. *)
+  Lemma walk_path_nonroot x u : wf u ->
+    forall y, In y (snd (walk x u)) -> y <> fst (walk x u).
+  Proof.
+    intro Hwf. destruct (walk_correct x u Hwf) as [Hroot [_ Hpath]].
+    intros y Hy. rewrite Hroot. exact (proj2 (proj2 (Hpath y Hy))).
+  Qed.
+
   (** ** End forest and walk foundations *)
 
   (** Adding a singleton extends the lookup domain on every raw forest. *)
@@ -491,7 +583,65 @@ Module UnionFind <: UNION_FIND.
         * exists (fun _ => 0). split; intros r Hmem; exfalso;
             apply Hmem; apply PTrie.get_empty.
   Qed.
-  Lemma wf_add   : forall x u, wf u -> wf (add x u). Proof. Admitted. (* STUB *)
+  Lemma wf_add   : forall x u, wf u -> wf (add x u).
+  Proof.
+    intros x u Hwf. destruct (PTrieCode.get x (parents u)) as [p|] eqn:Hx.
+    - unfold add. rewrite Hx. exact Hwf.
+    - assert (Hfresh : ~ mem u x) by (unfold mem; rewrite Hx; tauto).
+      assert (Hshape : add x u = UF (PTrieCode.set x x (parents u))
+        (PTrieCode.set x 1%N (sizes u)) (N.succ (count u))).
+      { unfold add. now rewrite Hx. }
+      assert (Hcardnew : card (add x u) = S (card u)).
+      { rewrite Hshape. unfold card. cbn [count]. apply N2Nat.inj_succ. }
+      pose proof Hwf as [Hcard [Hparent [Hsize [Hsizes [rk Hrank]]]]].
+      unfold wf. split.
+      + rewrite Hcardnew.
+        pose proof (Permutation_length (support_add_fresh x u Hfresh)) as Hlength.
+        cbn [length] in Hlength. lia.
+      + split.
+        * intros y q Hy. rewrite Hshape in Hy. cbn [parents] in Hy.
+          destruct (Pos.eq_dec y x) as [Heq|Hne].
+          -- subst y. rewrite PTrie.get_set_same in Hy. injection Hy as Hq. subst q.
+             apply mem_add_raw. auto.
+          -- rewrite PTrie.get_set_other in Hy by exact Hne.
+             apply mem_add_raw. left. eapply Hparent. exact Hy.
+        * split.
+          -- intros r Hmem Hroot. rewrite size_add_same by exact Hwf.
+             assert (Hrootold : is_root u r).
+             { unfold is_root in *. now rewrite parent_of_add in Hroot. }
+             destruct (Pos.eq_dec r x) as [Heq|Hne].
+             ++ subst r. unfold size_at. rewrite Hshape. cbn [sizes].
+                rewrite PTrie.get_set_same. unfold size_of. rewrite Hx. reflexivity.
+             ++ unfold size_at at 1. rewrite Hshape. cbn [sizes].
+                rewrite PTrie.get_set_other by exact Hne.
+                change (N.to_nat (size_at r u) = size_of u r).
+                apply Hsize; [apply mem_add_raw in Hmem; tauto|exact Hrootold].
+          -- split.
+             ++ intros r n Hget. rewrite Hshape in Hget. cbn [sizes] in Hget.
+                destruct (Pos.eq_dec r x) as [Heq|Hne].
+                ** subst r. rewrite PTrie.get_set_same in Hget.
+                   injection Hget as Hn. subst n. rewrite Hcardnew. cbn [N.to_nat]. lia.
+                ** rewrite PTrie.get_set_other in Hget by exact Hne.
+                   specialize (Hsizes r n Hget). rewrite Hcardnew. lia.
+             ++ exists (fun r => if Pos.eqb r x then 0 else rk r). split.
+                ** intros r Hmem Hnonroot. rewrite parent_of_add.
+                   assert (Hne : r <> x).
+                   { intro Heq. subst r. apply Hnonroot. unfold is_root.
+                     rewrite parent_of_add. apply parent_fresh. exact Hfresh. }
+                   assert (Hmemold : mem u r) by (apply mem_add_raw in Hmem; tauto).
+                   assert (Hparentne : parent_of r u <> x).
+                   { intro Heq. apply Hfresh. rewrite <- Heq. apply parent_mem; assumption. }
+                   rewrite (proj2 (Pos.eqb_neq r x) Hne),
+                     (proj2 (Pos.eqb_neq (parent_of r u) x) Hparentne).
+                   apply (proj1 Hrank r Hmemold). unfold is_root in *.
+                   now rewrite parent_of_add in Hnonroot.
+                ** intros r Hmem Hroot. rewrite size_add_same by exact Hwf.
+                   destruct (Pos.eq_dec r x) as [Heq|Hne].
+                   --- subst r. rewrite Pos.eqb_refl. unfold size_of. rewrite Hx. reflexivity.
+                   --- rewrite (proj2 (Pos.eqb_neq r x) Hne). apply (proj2 Hrank).
+                       +++ apply mem_add_raw in Hmem. tauto.
+                       +++ unfold is_root in *. now rewrite parent_of_add in Hroot.
+  Qed.
   (** ** Compression and find helpers *)
 
   (** Repeated updates replace exactly the keys listed in the compression path. *)
@@ -555,6 +705,101 @@ Module UnionFind <: UNION_FIND.
     destruct (in_dec Pos.eq_dec z path) as [Hin | Hout]; [|reflexivity].
     destruct (Hpath z Hin) as [Hrepr Hne]. split; [congruence|].
     intro Hroot. pose proof (repr_of_root u z Hroot). congruence.
+  Qed.
+
+  (** Every old path to a root still reaches that root after taking compression shortcuts. *)
+  Lemma compress_iter r path u n : wf u ->
+    (forall y, In y path -> repr u y = r /\ y <> r) ->
+    forall x q, is_root u q -> Nat.iter n (fun y => parent_of y u) x = q ->
+      Nat.iter n (fun y => parent_of y (compress r path u)) x = q.
+  Proof.
+    intros Hwf Hpath. induction n as [|n IH]; intros x q Hroot Hsteps;
+      [exact Hsteps|].
+    pose proof (repr_iter u x (S n) Hwf) as Hrepr.
+    rewrite Hsteps, (repr_of_root u q Hroot) in Hrepr.
+    rewrite Nat.iter_succ_r in Hsteps |- *. rewrite parent_compress.
+    destruct (in_dec Pos.eq_dec x path) as [Hin | Hout].
+    - destruct (Hpath x Hin) as [Hclass Hne].
+      assert (Hqr : q = r) by congruence. rewrite Hqr in Hroot |- *.
+      apply iter_root. apply (proj2 (root_compress r path u r Hpath)). exact Hroot.
+    - apply IH; assumption.
+  Qed.
+
+  (** Compression preserves every representative without assuming the resulting invariant. *)
+  Lemma repr_compress r path u x : wf u ->
+    (forall y, In y path -> repr u y = r /\ y <> r) ->
+    repr (compress r path u) x = repr u x.
+  Proof.
+    intros Hwf Hpath. unfold repr at 1. rewrite card_compress.
+    apply compress_iter; [exact Hwf | exact Hpath | apply repr_root; exact Hwf | reflexivity].
+  Qed.
+
+  (** Compression preserves class cardinalities, including absent singleton queries. *)
+  Lemma size_of_compress r path u x : wf u ->
+    (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) ->
+    size_of (compress r path u) x = size_of u x.
+  Proof.
+    intros Hwf Hpath. apply size_of_transport.
+    - intro y. apply mem_compress. intros z Hz. exact (proj1 (Hpath z Hz)).
+    - intro y. apply repr_compress; [exact Hwf|].
+      intros z Hz. exact (proj2 (Hpath z Hz)).
+  Qed.
+
+  (** Ghost ranks still increase along shortcuts and retain their root-size certificates. *)
+  Lemma ranked_compress r path u rk : wf u -> ranked u rk ->
+    (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) ->
+    ranked (compress r path u) rk.
+  Proof.
+    intros Hwf Hrank Hpath.
+    assert (Hmembers : forall y, In y path -> mem u y).
+    { intros y Hy. exact (proj1 (Hpath y Hy)). }
+    assert (Hclasses : forall y, In y path -> repr u y = r /\ y <> r).
+    { intros y Hy. exact (proj2 (Hpath y Hy)). }
+    split.
+    - intros x Hmem Hnonroot. apply (proj1 (mem_compress r path u x Hmembers)) in Hmem.
+      assert (Hold : ~ is_root u x).
+      { intro Hroot. apply Hnonroot. apply (proj2 (root_compress r path u x Hclasses)).
+        exact Hroot. }
+      rewrite parent_compress. destruct (in_dec Pos.eq_dec x path) as [Hin | Hout].
+      + pose proof (proj1 Hrank x Hmem Hold) as Hstep.
+        pose proof (rank_le_repr u rk (parent_of x u) Hwf Hrank
+          (parent_mem u x Hwf Hmem)) as Htop.
+        rewrite repr_parent, (proj1 (Hclasses x Hin)) in Htop by exact Hwf. lia.
+      + exact (proj1 Hrank x Hmem Hold).
+    - intros q Hmem Hroot. rewrite size_of_compress by assumption.
+      apply (proj2 Hrank).
+      + apply (proj1 (mem_compress r path u q Hmembers)); exact Hmem.
+      + apply (proj1 (root_compress r path u q Hclasses)); exact Hroot.
+  Qed.
+
+  (** Compression preserves the full forest invariant when every path entry is a nonroot member. *)
+  Lemma wf_compress r path u : wf u ->
+    (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) ->
+    wf (compress r path u).
+  Proof.
+    intros Hwf Hpath. pose proof Hwf as [Hcard [Hparents [Hsizes [Hbounds [rk Hrank]]]]].
+    assert (Hmembers : forall y, In y path -> mem u y).
+    { intros y Hy. exact (proj1 (Hpath y Hy)). }
+    assert (Hclasses : forall y, In y path -> repr u y = r /\ y <> r).
+    { intros y Hy. exact (proj2 (Hpath y Hy)). }
+    split.
+    - rewrite card_compress, Hcard. apply Permutation_length.
+      apply support_perm. intro y. symmetry. apply mem_compress; exact Hmembers.
+    - split.
+      + intros x p Hget. apply (proj2 (mem_compress r path u p Hmembers)).
+        rewrite compress_get in Hget.
+        destruct (in_dec Pos.eq_dec x path) as [Hin | Hout].
+        * injection Hget as Heq. subst p. rewrite <- (proj1 (Hclasses x Hin)).
+          apply repr_mem; [exact Hwf | apply Hmembers; exact Hin].
+        * apply (Hparents x p Hget).
+      + split.
+        * intros q Hmem Hroot. change (N.to_nat (size_at q u) = size_of (compress r path u) q).
+          rewrite size_of_compress by assumption. apply Hsizes.
+          -- apply (proj1 (mem_compress r path u q Hmembers)); exact Hmem.
+          -- apply (proj1 (root_compress r path u q Hclasses)); exact Hroot.
+        * split.
+          -- intros q n Hget. apply (Hbounds q n Hget).
+          -- exists rk. apply ranked_compress; assumption.
   Qed.
 
   (** ** End compression and find helpers *)
@@ -740,20 +985,6 @@ Module UnionFindT <: UNION_FIND_ALL.
     intros x u Hwf. eapply N.le_trans; [exact (add_clock x u Hwf)|].
     apply N.mul_le_mono_r. unfold c_uf. lia.
   Qed.
-  Lemma T_find_le : forall x u, (wf u ->
-    T_find x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
-      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_union_le : forall x y u, (wf u ->
-    T_union x y u <= c_uf * N.of_nat (Nat.log2 (card u + 2) + 1) *
-      N.of_nat (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma find_bigO : bigO (fun xu : positive * t => wf (snd xu))
-    (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
-      (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
-    (fun xu => T_find (fst xu) (snd xu)).
-  Proof. Admitted. (* STUB *)
 
   Lemma F1_ranked : forall u, wf u -> exists rk, ranked u rk.
   Proof.
@@ -765,15 +996,21 @@ Module UnionFindT <: UNION_FIND_ALL.
     exact rank_log.
   Qed.
   Lemma F3_walk_root : forall x u, wf u -> fst (walk x u) = repr u x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact walk_root.
+  Qed.
   Lemma F4_walk_path : forall x u, wf u ->
     length (snd (walk x u)) <= Nat.log2 (card u) /\
     forall y, In y (snd (walk x u)) -> mem u y /\ repr u y = repr u x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact walk_path.
+  Qed.
   Lemma F5_compress : forall u rk r path, wf u -> ranked u rk -> is_root u r ->
     (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) ->
     ranked (compress r path u) rk.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros u rk r path Hwf Hrank Hroot Hpath. apply ranked_compress; assumption.
+  Qed.
   Lemma F6_link : forall u rk w l, wf u -> ranked u rk ->
     is_root u w -> is_root u l -> w <> l -> size_of u l <= size_of u w ->
     ranked (link w l u)
@@ -908,5 +1145,44 @@ Module UnionFindT <: UNION_FIND_ALL.
     time_unfold T_sizes. time_unfold T_count.
     unfold k_get, k_link in *. repeat rewrite Nat2N.inj_add in *.
     cbn [N.of_nat] in *. lia.
+  Qed.
+  (** Keep the two find charges below the common public union constant. *)
+  Local Lemma find_clock (x : positive) (u : t) : wf u ->
+    (T_find x u <= 32768 * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
+  Proof.
+    intro Hwf. pose proof (T3_walk x u Hwf) as Hwalk.
+    destruct (F4_walk_path x u Hwf) as [Hlength Hmembers].
+    pose proof (T4_compress (fst (walk x u)) (snd (walk x u)) u Hwf
+      ltac:(intros y Hy; exact (proj1 (Hmembers y Hy)))) as Hcompress.
+    pose proof (Nat.le_max_l (width u) (Pos.size_nat x)) as Hwidth.
+    apply time_of_nat_le in Hlength. apply time_of_nat_le in Hwidth.
+    time_unfold T_find. time_unfold @Datatypes.T_fst.
+    time_unfold @Datatypes.T_snd.
+    unfold k_walk, k_comp in *.
+    repeat rewrite Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  Lemma T_find_le : forall x u, (wf u ->
+    T_find x u <= c_uf * N.of_nat (Nat.log2 (card u) + 1) *
+      N.of_nat (Nat.max (width u) (Pos.size_nat x) + 1))%N.
+  Proof.
+    intros x u Hwf. eapply N.le_trans; [exact (find_clock x u Hwf)|].
+    apply N.mul_le_mono_r, N.mul_le_mono_r. unfold c_uf. lia.
+  Qed.
+
+  Lemma T_union_le : forall x y u, (wf u ->
+    T_union x y u <= c_uf * N.of_nat (Nat.log2 (card u + 2) + 1) *
+      N.of_nat (Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma find_bigO : bigO (fun xu : positive * t => wf (snd xu))
+    (fun xu => N.of_nat ((Nat.log2 (card (snd xu)) + 1) *
+      (Nat.max (width (snd xu)) (Pos.size_nat (fst xu)) + 1)))
+    (fun xu => T_find (fst xu) (snd xu)).
+  Proof.
+    exists c_uf. intros [x u] Hwf. cbn [fst snd] in *.
+    pose proof (T_find_le x u Hwf) as Hfind.
+    rewrite Nat2N.inj_mul. nia.
   Qed.
 End UnionFindT.
