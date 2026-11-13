@@ -286,6 +286,71 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     destruct (M.get x m) as [a|]; [exact (proj2 Hget)|apply value_inv_top].
   Qed.
 
+  (** Untagging typed operands exposes their declared widths and canonical payloads. *)
+  Lemma untag_width : forall ws xs wps,
+    Forall2 D.at_width ws xs -> budget_untag xs = Some wps ->
+    map fst wps = ws /\ Forall (fun wp => C.canonical (fst wp) (snd wp)) wps.
+  Proof.
+    intros ws xs wps Hwidth. revert wps.
+    induction Hwidth as [|w a ws xs Ha Htail IH]; intros wps Htag.
+    - cbn [budget_untag] in Htag. inversion Htag; subst. split; constructor.
+    - destruct a as [|u q|]; cbn [budget_untag] in Htag; try discriminate.
+      destruct (budget_untag xs) as [ps|] eqn:Hrest; [|discriminate].
+      injection Htag as <-. destruct Ha as [Hu Hq]. subst u.
+      destruct (IH ps eq_refl) as [Hws Hcanonical].
+      split; [cbn; now rewrite Hws|constructor; assumption].
+  Qed.
+
+  (** A typed operator's tagged result has its declared width and a canonical payload. *)
+  Lemma forward_width : forall o xs ws rw,
+    D.operator_width o ws rw -> Forall2 D.at_width ws xs ->
+    D.at_width rw (V.forward o xs).
+  Proof.
+    intros o xs ws rw Hoperator Hwidth.
+    destruct (V.forward o xs) as [|w q|] eqn:Hforward; try exact Logic.I.
+    destruct (D.forward_tag o xs w q Hforward) as
+      [[z [Hop [Hxs Hq]]]|[op [wps [Hop [Htag [Hresult Hq]]]]]].
+    - subst o xs q. destruct Hoperator as [_ Hrw]. subst rw.
+      split; [reflexivity|apply C.canonical_const].
+    - subst o. destruct (untag_width ws xs wps Hwidth Htag) as [Hws Hcanonical].
+      rewrite Hws in Hresult. change (Op.result_width op ws = Some rw) in Hoperator.
+      assert (Hw : w = rw) by congruence. subst w. split; [reflexivity|].
+      destruct Hq as [Htop|[Hentry|[z Hconst]]].
+      + subst q. apply C.canonical_top.
+      + eapply CT.wfwd_canonical; eassumption.
+      + subst q. apply C.canonical_const.
+  Qed.
+
+  (** Typed annotations place every forward result at its declared width. *)
+  Lemma annotate_width : forall p e w m, inv p (Reached m) ->
+    word_term_typed (P.variables p) (P.width_of p) e w ->
+    D.at_width w (E.root (E.annotate m e)).
+  Proof.
+    intros p e. induction e as [x|o es IH]; intros w m Hinv Htyped.
+    - inversion Htyped; subst. rewrite E.annotate_leaf, E.root_leaf. now apply read_width.
+    - inversion Htyped as [|w' z|op es' ws w' Hchildren Hresult]; subst.
+      + rewrite E.annotate_node, E.root_node. cbn [map].
+        apply (forward_width _ _ nil); [split; reflexivity|constructor].
+      + rewrite E.annotate_node, E.root_node. apply (forward_width _ _ ws); [exact Hresult|].
+        clear Htyped Hresult. revert IH.
+        induction Hchildren as [|e es cw cws Hhead Hrest IHrest]; intro IH.
+        * constructor.
+        * inversion IH as [|e' IHe es' IHtail]; subst. constructor.
+          -- now apply IHe.
+          -- now apply IHrest.
+  Qed.
+
+  (** Lists of typed terms retain their ordered list of declared widths. *)
+  Lemma annotations_width : forall p m es ws, inv p (Reached m) ->
+    word_terms_typed (P.variables p) (P.width_of p) es ws ->
+    Forall2 D.at_width ws (map (fun e => E.root (E.annotate m e)) es).
+  Proof.
+    intros p m es ws Hinv Htyped.
+    induction Htyped as [|e es w ws Hhead Htail IH].
+    - constructor.
+    - constructor; [eapply annotate_width; eassumption|exact IH].
+  Qed.
+
   (** Unreachable environments satisfy the representation invariant. *)
   Lemma inv_bot : forall p, inv p E.bot.
   Proof.
