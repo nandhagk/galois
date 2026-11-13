@@ -2859,7 +2859,47 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Lemma T_congr_shl_le : forall w a b,
     (T_congr_shl w a b <= c_congruence *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    remember (Pos.to_nat w + congr_bits a + congr_bits b + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_shl.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    destruct p; cbn beta iota zeta; try lia.
+    pose proof (Z.T_leb_le (Zpos w) s) as Hcompare.
+    assert (Hwidthbits : (N.of_nat (Z.size_nat (Zpos w)) <= N.of_nat n)%N).
+    { apply time_of_nat_le. change (Z.size_nat (Zpos w)) with (Pos.size_nat w).
+      pose proof (WordTime.positive_size_value w). lia. }
+    destruct (Zpos w <=? s) eqn:Hlarge; [lia|].
+    apply Z.leb_gt in Hlarge.
+    pose proof (cong_norm_canonical w b) as Hcanonical. rewrite Hbform in Hcanonical.
+    destruct Hcanonical as [[Hm Hword]|[Hm Hr]]; [|lia].
+    destruct Hword as [Hs Hbound].
+    pose proof (normalized_bits w a) as Habits. rewrite Haform in Habits.
+    cbn [congr_bits] in Habits.
+    assert (Hpowerword : is_word w (2 ^ s)).
+    { unfold is_word, modulus. split.
+      - apply Z.pow_nonneg. lia.
+      - apply Z.pow_lt_mono_r; lia. }
+    pose proof (WordTime.word_size_bound w (2 ^ s) Hpowerword) as Hpowerbits.
+    pose proof (WordTime.word_pow_two_time_bound s Hs) as Hpower.
+    assert (Hexponent : (N.of_nat (Z.to_nat s) <= N.of_nat n)%N).
+    { apply time_of_nat_le. apply Nat2Z.inj_le.
+      rewrite Z2Nat.id by exact Hs. rewrite Hn, !Nat2Z.inj_add, positive_nat_Z. lia. }
+    pose proof (WordTime.integer_mul_size m (2 ^ s)) as Hmbits.
+    pose proof (WordTime.integer_mul_size r (2 ^ s)) as Hrbits.
+    pose proof (mul_time_budget (3 * n) m (2 ^ s) ltac:(lia)) as Hmulm.
+    pose proof (mul_time_budget (3 * n) r (2 ^ s) ltac:(lia)) as Hmulr.
+    pose proof (wrap_class_time_budget w (m * 2 ^ s) (r * 2 ^ s) (5 * n)
+      ltac:(lia)) as Hwrap.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
   (** Remainder transfer has the published quadratic arithmetic bound. *)
   Lemma T_congr_urem_le : forall w a b,
     (T_congr_urem w a b <= c_congruence *
@@ -3025,7 +3065,22 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
   Include CongruenceTable L D.
   TimeFun wfwd.
   TimeFun wbwd.
-  Definition c_word_table : N := 1%N. (* STUB *)
+  Definition c_word_table : N := (4096 * (D.c_congruence + D.c_payload + 1))%N.
+
+  Definition table_budget rw (xs : list (positive * D.p)) : nat :=
+    ((Pos.to_nat rw +
+      fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+    fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat.
+
+  Lemma table_budget_positive : forall rw xs, (1 <= table_budget rw xs)%nat.
+  Proof.
+    intros rw xs. unfold table_budget.
+    remember (Pos.to_nat rw +
+      fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1)%nat as n eqn:Hn.
+    assert (Hsquare : (1 <= n ^ 2)%nat).
+    { change ((1 ^ 2) <= n ^ 2)%nat. apply Nat.pow_le_mono_l. lia. }
+    lia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
@@ -3040,7 +3095,17 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         D.psize rw q +
         fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs. pose proof (table_budget_positive rw xs) as Hbudget.
+    unfold table_budget in Hbudget.
+    assert (Hpositive : (1 <= N.of_nat
+      (((Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        D.psize rw q +
+        fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat))%N).
+    { change 1%N with (N.of_nat 1). apply time_of_nat_le. lia. }
+    time_unfold T_wbwd. unfold c_word_table. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (D.psize rw r) <= c_word_table * N.of_nat
@@ -3057,5 +3122,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         D.psize rw q +
         fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs ys Hresult. discriminate Hresult.
+  Qed.
 End CongruenceTableT.
