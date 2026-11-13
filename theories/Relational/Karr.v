@@ -3445,6 +3445,208 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       + exact Hmodels.
   Qed.
 
+  (** The dense basis always has the structural echelon form proved above. *)
+  Lemma equality_basis_echelon : forall P xs,
+    karr_echelon (length xs) (equality_basis xs P).
+  Proof.
+    intros P xs. unfold equality_basis. apply karr_bareiss_echelon. apply seed_rows_width.
+  Qed.
+
+  Lemma equality_basis_width : forall P xs,
+    Forall (fun r => length (kcoeff r) = length xs) (equality_basis xs P).
+  Proof.
+    intros P xs. apply karr_echelon_width. apply equality_basis_echelon.
+  Qed.
+
+  (** Failure to produce a contradiction supplies an actual rational equality model. *)
+  Lemma contradiction_none_model_Q : forall P, contradiction P = None ->
+    exists v : X.t -> Q, Forall (fun r => lrel r = REq -> satQ v r) P.
+  Proof.
+    intros P Hnone. set (xs := variables P).
+    assert (Hzero : karr_zero_right (equality_basis xs P)).
+    { apply Forall_forall. intros r Hin Hrowzero.
+      exact (contradiction_none_no_false_row P r Hnone Hin Hrowzero). }
+    destruct (karr_echelon_model _ _ (equality_basis_echelon P xs) Hzero)
+      as [qs [Hlength Hmodels]].
+    exists (coordinate_store xs qs).
+    assert (Hsupport : forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs).
+    { intros r Hin x z Hterm. now apply variables_contains with (r := r) (z := z). }
+    apply (proj1 (coordinate_basis_models_Q P xs qs (variables_nodup P)
+      (eq_sym Hlength) Hsupport)). exact Hmodels.
+  Qed.
+
+  (** A modeled basis has no false constant row, regardless of the chosen variable list. *)
+  Lemma equality_basis_zero_right : forall P xs v,
+    NoDup xs ->
+    (forall r, In r P -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    Forall (fun r => lrel r = REq -> satQ v r) P ->
+    karr_zero_right (equality_basis xs P).
+  Proof.
+    intros P xs v Hunique Hsupport Hmodels.
+    pose proof (proj2 (equality_basis_models_Q P xs v Hunique Hsupport) Hmodels) as Hbasis.
+    apply Forall_forall. intros r Hin Hzero.
+    apply karr_zero_model_right with (qs := map v xs); [|exact Hzero].
+    now apply (proj1 (Forall_forall _ _) Hbasis).
+  Qed.
+
+  (** The tracked target scale relates the residual to the original target over every model. *)
+  Lemma reduced_target_defect_Q : forall P xs target qs,
+    Forall (karr_models qs) (equality_basis xs P) ->
+    karr_scaled_defect qs
+      (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)
+      (karr_target (equality_basis xs P) 1
+        (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)).
+  Proof.
+    intros P xs target qs Hmodels.
+    apply karr_target_scaled_defect with (n := length xs).
+    - exact Hmodels.
+    - apply equality_basis_scale_zero.
+    - apply equality_basis_width.
+    - cbn [kcoeff]. unfold dense. apply length_map.
+    - unfold karr_scaled_defect. cbn [kscale]. ring.
+  Qed.
+
+  (** Dense and sparse satisfaction agree for both equality and inequality targets. *)
+  Lemma dense_satQ : forall xs r v,
+    NoDup xs -> (forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (satQ v r <->
+      match lrel r with
+      | REq => (karr_eval (map v xs) (dense xs r) == inject_Z (rhs r))%Q
+      | RLe => (karr_eval (map v xs) (dense xs r) <= inject_Z (rhs r))%Q
+      end).
+  Proof.
+    intros xs r v Hunique Hsupport.
+    pose proof (dense_eval_Q xs r v Hunique Hsupport) as Heval.
+    unfold satQ. destruct (lrel r).
+    - change ((karr_eval_coef_Q v (lhs r) == inject_Z (rhs r))%Q <->
+        (karr_eval (map v xs) (dense xs r) == inject_Z (rhs r))%Q).
+      now setoid_rewrite Heval.
+    - change ((karr_eval_coef_Q v (lhs r) <= inject_Z (rhs r))%Q <->
+        (karr_eval (map v xs) (dense xs r) <= inject_Z (rhs r))%Q).
+      now setoid_rewrite Heval.
+  Qed.
+
+  Lemma coordinate_satQ : forall xs qs r,
+    NoDup xs -> length xs = length qs ->
+    (forall x z, In (x, z) (lhs r) -> In x xs) ->
+    (satQ (coordinate_store xs qs) r <->
+      match lrel r with
+      | REq => (karr_eval qs (dense xs r) == inject_Z (rhs r))%Q
+      | RLe => (karr_eval qs (dense xs r) <= inject_Z (rhs r))%Q
+      end).
+  Proof.
+    intros xs qs r Hunique Hlength Hsupport.
+    rewrite (dense_satQ xs r (coordinate_store xs qs) Hunique Hsupport).
+    now rewrite (coordinate_store_values xs qs Hunique Hlength).
+  Qed.
+
+  (** Every rational consequence of the equality rows passes the producer residual guard. *)
+  Lemma target_certificate_complete_Q : forall P target,
+    contradiction P = None ->
+    (forall v : X.t -> Q,
+      Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target) ->
+    exists k, target_certificate P target = Some k.
+  Proof.
+    intros P target Hnone Hsemantic.
+    destruct (contradiction_none_model_Q P Hnone) as [v0 Hmodel0].
+    set (xs := variables (target :: P)).
+    set (initial := KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1).
+    set (r := karr_target (equality_basis xs P) 1 initial).
+    assert (Hunique : NoDup xs) by apply variables_nodup.
+    assert (Hsupport : forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs).
+    { intros s Hin x z Hterm. now apply variables_contains with (r := s) (z := z). }
+    assert (Hsource : forall s, In s P ->
+      forall x z, In (x, z) (lhs s) -> In x xs).
+    { intros s Hin. apply Hsupport. now right. }
+    assert (Htarget : forall x z, In (x, z) (lhs target) -> In x xs).
+    { apply Hsupport. now left. }
+    pose proof (equality_basis_echelon P xs) as Hechelon.
+    pose proof (equality_basis_zero_right P xs v0 Hunique Hsource Hmodel0) as Hconsistent.
+    assert (Hscale : kscale r <> 0%Z) by apply reduced_target_scale_nonzero.
+    assert (HscaleQ : ~ (inject_Z (kscale r) == 0)%Q).
+    { now apply karr_inject_nonzero. }
+    assert (Hwidth : length (kcoeff r) = length xs).
+    { apply karr_target_width with (n := length xs).
+      - apply equality_basis_width.
+      - cbn [initial kcoeff]. unfold dense. apply length_map. }
+    assert (Hreduced : karr_reduced (equality_basis xs P) (kcoeff r)).
+    { apply karr_target_reduced with (n := length xs). exact Hechelon. }
+    assert (Hzero : karr_zero r = true).
+    { destruct (karr_zero r) eqn:Hrowzero; [reflexivity|]. exfalso.
+      destruct (karr_echelon_countermodel _ _ Hechelon Hconsistent _ Hwidth Hreduced
+        Hrowzero (inject_Z (kright r) + inject_Z (kscale r))%Q)
+        as [qs [Hlength [Hbasis Hvalue]]].
+      assert (HP : Forall (fun s => lrel s = REq -> satQ (coordinate_store xs qs) s) P).
+      { apply (proj1 (coordinate_basis_models_Q P xs qs Hunique ltac:(lia) Hsource)).
+        exact Hbasis. }
+      pose proof (proj1 (coordinate_satQ xs qs target Hunique ltac:(lia) Htarget)
+        (Hsemantic _ HP)) as Htarget_sat.
+      pose proof (reduced_target_defect_Q P xs target qs Hbasis) as Hdefect.
+      change (karr_eval qs (kcoeff r) - inject_Z (kright r) ==
+        inject_Z (kscale r) * (karr_eval qs (dense xs target) - inject_Z (rhs target)))%Q
+        in Hdefect.
+      assert (Hbad : (karr_eval qs (dense xs target) - inject_Z (rhs target) == 1)%Q).
+      { apply (proj1 (Qmult_inj_l _ _ (inject_Z (kscale r)) HscaleQ)).
+        eapply Qeq_trans; [symmetry; exact Hdefect|].
+        setoid_rewrite Hvalue. ring. }
+      destruct (lrel target); nra. }
+    pose proof (proj2 (equality_basis_models_Q P xs v0 Hunique Hsource) Hmodel0) as Hbasis0.
+    pose proof (reduced_target_defect_Q P xs target (map v0 xs) Hbasis0) as Hdefect0.
+    change (karr_eval (map v0 xs) (kcoeff r) - inject_Z (kright r) ==
+      inject_Z (kscale r) * (karr_eval (map v0 xs) (dense xs target) -
+        inject_Z (rhs target)))%Q in Hdefect0.
+    setoid_rewrite (karr_eval_zero _ Hzero (map v0 xs)) in Hdefect0.
+    pose proof (proj1 (dense_satQ xs target v0 Hunique Htarget)
+      (Hsemantic v0 Hmodel0)) as Htarget_sat0.
+    assert (Hright : match lrel target with
+      | REq => Z.eqb (kright r) 0
+      | RLe => (0 <=? (if (kscale r <? 0)%Z then -1 else 1) * kright r)%Z
+      end = true).
+    { destruct (lrel target).
+      - setoid_rewrite Htarget_sat0 in Hdefect0.
+        apply Z.eqb_eq. apply (proj1 (inject_Z_injective _ _)).
+        change (inject_Z (kright r) == 0)%Q. nra.
+      - apply Z.leb_le. destruct (Z.ltb (kscale r) 0) eqn:Hsign.
+        + apply Z.ltb_lt in Hsign. rewrite Zlt_Qlt in Hsign.
+          change (inject_Z (kscale r) < 0)%Q in Hsign.
+          assert (Hnegative_scale : (0 <= - inject_Z (kscale r))%Q) by lra.
+          assert (Hnegative_delta : (0 <= inject_Z (rhs target) -
+            karr_eval (map v0 xs) (dense xs target))%Q) by lra.
+          pose proof (Qmult_le_0_compat _ _ Hnegative_scale Hnegative_delta) as Hproduct.
+          assert (Hrhs : (inject_Z (kright r) <= 0)%Q) by nra.
+          change (inject_Z (kright r) <= inject_Z 0)%Q in Hrhs.
+          rewrite <- Zle_Qle in Hrhs. lia.
+        + apply Z.ltb_ge in Hsign.
+          assert (Hpositive : (0 < kscale r)%Z) by lia.
+          rewrite Zlt_Qlt in Hpositive.
+          change (0 < inject_Z (kscale r))%Q in Hpositive.
+          assert (Hpositive_scale : (0 <= inject_Z (kscale r))%Q) by lra.
+          assert (Hnegative_delta : (0 <= inject_Z (rhs target) -
+            karr_eval (map v0 xs) (dense xs target))%Q) by lra.
+          pose proof (Qmult_le_0_compat _ _ Hpositive_scale Hnegative_delta) as Hproduct.
+          assert (Hrhs : (0 <= inject_Z (kright r))%Q) by nra.
+          change (inject_Z 0 <= inject_Z (kright r))%Q in Hrhs.
+          rewrite <- Zle_Qle in Hrhs. lia. }
+    unfold target_certificate. fold xs initial r.
+    assert (Hscale_bool : Z.eqb (kscale r) 0 = false) by now apply Z.eqb_neq.
+    rewrite Hzero, Hscale_bool, Hright. eexists. reflexivity.
+  Qed.
+
+  Lemma entails_complete_Q : forall P target,
+    (forall v : X.t -> Q,
+      Forall (fun r => lrel r = REq -> satQ v r) P -> satQ v target) ->
+    entails P target = true.
+  Proof.
+    intros P target Hsemantic. destruct (contradiction P) as [ms|] eqn:Hempty.
+    - unfold entails, entail_cert. rewrite Hempty.
+      assert (Hchecked : C.check_entails P target (Cert ms 1 false) = true).
+      { apply C.check_entails_empty. now apply contradiction_checked in Hempty. }
+      rewrite Hchecked. apply orb_true_r.
+    - destruct (target_certificate_complete_Q P target Hempty Hsemantic) as [k Htarget].
+      now apply entails_of_target_certificate with (k := k).
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
@@ -4052,7 +4254,16 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma leb_complete_Q : forall a b, echelon a ->
     (forall v : X.t -> Q, Forall (satQ v) a -> Forall (satQ v) b) ->
     leb (Reached a) (Reached b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b [Hequalities _] Hsemantic. unfold leb.
+    destruct (contradiction a); [reflexivity|].
+    apply forallb_forall. intros target Hin. apply entails_complete_Q.
+    intros v Hmodels. assert (Hfull : Forall (satQ v) a).
+    { apply Forall_forall. intros r Hmember.
+      apply (proj1 (Forall_forall _ _) Hmodels r Hmember).
+      now apply (proj1 (Forall_forall _ _) Hequalities). }
+    exact (proj1 (Forall_forall _ _) (Hsemantic v Hfull) target Hin).
+  Qed.
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   Proof. Admitted. (* STUB *)
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
