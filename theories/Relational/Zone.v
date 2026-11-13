@@ -674,6 +674,80 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
     reflexivity.
   Qed.
 
+  (** The assigned coordinate reads the new numeric value. *)
+  Lemma vz_update_same : forall x st c,
+    vz (fun y => N.num (upd X.eqb st x c y)) (Some x) = N.num c.
+  Proof.
+    intros x st c. unfold vz, upd.
+    destruct (X.eqb_spec x x); [reflexivity|congruence].
+  Qed.
+
+  (** Column translation changes exactly the finite entries targeting the assigned variable. *)
+  Lemma entry_shift_columns : forall x d m i j,
+    entry (shift_columns x d m) i j =
+    if K.eqb j (Some x) then option_map (fun z => (z + d)%Z) (entry m i j)
+    else entry m i j.
+  Proof.
+    intros x d m i j. unfold entry, shift_columns.
+    rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+    destruct (M.get i m) as [row|]; cbn [shift_column_row].
+    - destruct (M.get (Some x) row) as [old|] eqn:Hcol.
+      + destruct (K.eqb_spec j (Some x)) as [Hj|Hj].
+        * subst j. rewrite M.get_set_same, Hcol. reflexivity.
+        * rewrite M.get_set_other by exact Hj. reflexivity.
+      + destruct (K.eqb_spec j (Some x)) as [Hj|Hj].
+        * subst j. now rewrite Hcol.
+        * reflexivity.
+    - destruct (K.eqb j (Some x)); reflexivity.
+  Qed.
+
+  (** Row translation subtracts the offset after the column translation. *)
+  Lemma entry_shift : forall x d m i j,
+    entry (shift x d m) i j =
+    if K.eqb i (Some x) then
+      option_map (fun z => (z - d)%Z) (entry (shift_columns x d m) i j)
+    else entry (shift_columns x d m) i j.
+  Proof.
+    intros x d m i j. unfold shift.
+    destruct (M.get (Some x) (shift_columns x d m)) as [row|] eqn:Hrow.
+    - destruct (K.eqb_spec i (Some x)) as [Hi|Hi].
+      + subst i. unfold entry. rewrite M.get_set_same, Hrow.
+        rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+        destruct (M.get j row); reflexivity.
+      + unfold entry. rewrite M.get_set_other by exact Hi. reflexivity.
+    - destruct (K.eqb_spec i (Some x)) as [Hi|Hi]; [subst i|reflexivity].
+      unfold entry. now rewrite Hrow.
+  Qed.
+
+  (** Translating one variable preserves every old constraint under its concrete update. *)
+  Lemma shift_models : forall x offset m st c,
+    models m (fun y => N.num (st y)) ->
+    N.num c = (N.num (st x) + offset)%Z ->
+    models (shift x offset m) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x offset m st c Hmodel Hvalue i j d Hentry.
+    rewrite entry_shift, !entry_shift_columns in Hentry.
+    destruct (K.eqb_spec i (Some x)) as [Hi|Hi];
+      destruct (K.eqb_spec j (Some x)) as [Hj|Hj].
+    - subst i j. destruct (entry m (Some x) (Some x)) as [z|] eqn:Hz;
+        [|discriminate Hentry].
+      inversion Hentry; subst d. specialize (Hmodel (Some x) (Some x) z Hz).
+      cbn [vz] in Hmodel |- *. lia.
+    - subst i. destruct (entry m (Some x) j) as [z|] eqn:Hz;
+        [|discriminate Hentry].
+      inversion Hentry; subst d. specialize (Hmodel (Some x) j z Hz).
+      rewrite vz_update_same, (vz_update_other x st c j Hj).
+      cbn [vz] in Hmodel. lia.
+    - subst j. destruct (entry m i (Some x)) as [z|] eqn:Hz;
+        [|discriminate Hentry].
+      inversion Hentry; subst d. specialize (Hmodel i (Some x) z Hz).
+      rewrite vz_update_same, (vz_update_other x st c i Hi).
+      cbn [vz] in Hmodel. lia.
+    - destruct (entry m i j) as [z|] eqn:Hz; [|discriminate Hentry].
+      inversion Hentry; subst d. rewrite !vz_update_other by assumption.
+      exact (Hmodel i j z Hz).
+  Qed.
+
   (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
   Definition raw_entry (m : dbm) (p q : positive) : option Z :=
     M.find q (row_of (M.find p m)).
@@ -1078,10 +1152,6 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
     intros v i j d Hentry. unfold entry in Hentry.
     rewrite M.get_empty in Hentry. discriminate Hentry.
   Qed.
-  Lemma assign_sound : forall x e s st c,
-    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
-    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
   Proof.
@@ -1243,6 +1313,74 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
     - rewrite (F.lin_sound st e c f r Heval Hlinear).
       apply rel_wrap_bounds_sound. now apply form_bounds_sound.
     - unfold in_bnd. cbn. tauto.
+  Qed.
+
+  (** A recognized source is either the zero node or a variable with coefficient one. *)
+  Lemma copy_source_sound : forall f source v, copy_source f = Some source ->
+    eval_lin v f = (vz v source + cst f)%Z.
+  Proof.
+    intros [cs c] source v Hsource. unfold copy_source in Hsource.
+    cbn [coef] in Hsource. destruct cs as [|[x a] cs].
+    - inversion Hsource; subst. unfold eval_lin, eval_coef, vz. cbn. reflexivity.
+    - destruct cs as [|p cs]; [|discriminate Hsource].
+      destruct (a =? 1)%Z eqn:Ha; [|discriminate Hsource].
+      apply Z.eqb_eq in Ha. subst a. inversion Hsource; subst.
+      unfold eval_lin, eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+  Qed.
+
+  (** Exact copy transfer handles self-translation separately from forgetting. *)
+  Lemma assign_copy_sound : forall x source d s st c,
+    ngamma s (fun y => N.num (st y)) ->
+    N.num c = (vz (fun y => N.num (st y)) source + d)%Z ->
+    ngamma (assign_copy x source d s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x source d [|m] st c Hmodel Hvalue; [exact Hmodel|].
+    unfold assign_copy. destruct (K.eqb_spec source (Some x)) as [Heq|Hne].
+    - subst source. now apply shift_models.
+    - apply refine_sound.
+      + apply refine_sound.
+        * now apply havoc_sound.
+        * rewrite vz_update_same, (vz_update_other x st c source Hne). lia.
+      + rewrite vz_update_same, (vz_update_other x st c source Hne). lia.
+  Qed.
+
+  (** Adding finite range endpoints retains every value inside those endpoints. *)
+  Lemma add_range_sound : forall x bounds s v, ngamma s v ->
+    in_bnd (fst bounds) (snd bounds) (v x) -> ngamma (add_range x bounds s) v.
+  Proof.
+    intros x [lo hi] s v Hmodel Hbounds. unfold add_range, in_bnd in *.
+    destruct lo, hi; cbn [fst snd] in *; try contradiction;
+      repeat (apply refine_sound; [|cbn [vz]; lia]); exact Hmodel.
+  Qed.
+
+  Lemma assign_sound : forall x e s st c,
+    ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
+    ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
+  Proof.
+    intros x e [|m] st c Hmodel Heval; [exact Hmodel|].
+    unfold assign. destruct (F.lin_of e) as [[f r]|] eqn:Hlinear;
+      [|now apply havoc_sound].
+    pose proof (F.lin_sound st e c f r Heval Hlinear) as Hvalue.
+    pose proof (form_bounds_sound m (fun y => N.num (st y)) f Hmodel) as Hbounds.
+    assert (Hwrapped : in_bnd
+      (fst (rel_wrap_bounds r (form_bounds m f)))
+      (snd (rel_wrap_bounds r (form_bounds m f))) (N.num c)).
+    { rewrite Hvalue. now apply rel_wrap_bounds_sound. }
+    destruct (copy_source f) as [source|] eqn:Hsource.
+    - destruct (rel_wrap_exact r (form_bounds m f)) eqn:Hexact.
+      + apply assign_copy_sound; [exact Hmodel|].
+        rewrite Hvalue, (rel_wrap_exact_sound r (form_bounds m f) _ Hbounds Hexact).
+        now apply copy_source_sound.
+      + apply add_range_sound; [now apply havoc_sound|].
+        change (in_bnd (fst (rel_wrap_bounds r (form_bounds m f)))
+          (snd (rel_wrap_bounds r (form_bounds m f)))
+          (vz (fun y => N.num (upd X.eqb st x c y)) (Some x))).
+        now rewrite vz_update_same.
+    - apply add_range_sound; [now apply havoc_sound|].
+      change (in_bnd (fst (rel_wrap_bounds r (form_bounds m f)))
+        (snd (rel_wrap_bounds r (form_bounds m f)))
+        (vz (fun y => N.num (upd X.eqb st x c y)) (Some x))).
+      now rewrite vz_update_same.
   Qed.
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
@@ -1408,14 +1546,31 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_zone : N := 1. (* STUB *)
+  (** Matrix primitives share one concrete constant for lookup and update costs. *)
+  Definition c_zone : N := (65536 * (M.c_map + 1) * (M.c_map + 1))%N.
+
+  Lemma T_row_of_le : forall r, (T_row_of r <= 1)%N.
+  Proof.
+    intros [row|]; time_step.
+  Qed.
+
+  Lemma T_lower_bound_le : forall d old,
+    (T_lower_bound d old <= N.of_nat (Z.size_nat d) + 5)%N.
+  Proof.
+    intros d [z|]; time_step.
+  Qed.
+
   Lemma T_entry_le : forall m i j,
     (T_entry m i j <= c_zone * N.of_nat (K.bits i + K.bits j + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m i j. unfold c_zone. time_step.
+  Qed.
   Lemma T_add_cons_le : forall i j d m,
     (T_add_cons i j d m <= c_zone * N.of_nat
       (K.bits i + K.bits j + Z.size_nat d + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j d m. unfold c_zone. time_step.
+  Qed.
   Lemma T_close_le : forall m, dbm_wf m ->
     (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
       N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
@@ -1443,7 +1598,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     | Unreached, Unreached => True
     | _, _ => False
     end.
-  Definition k_zone : N := 1. (* STUB *)
+  Definition k_zone : N := (1024 * (M.c_map + 1) * (M.c_map + 1))%N.
 
   (** Deduplication retains exactly the input and accumulator members. *)
   Lemma dedup_membership : forall (A : Type) (eqb : A -> A -> bool),
@@ -2058,7 +2213,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
 
   (** Widening units cover the squared support size. *)
   Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption work charges incremental closure for every emitted atom. *)
   Lemma F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
@@ -2066,7 +2223,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         (ns s + 2 * length (F.atoms_of g es) + 1)^2 *
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1)) +
       F.T_atoms_of g es)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Lemma F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
@@ -2074,10 +2233,14 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s +
         (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) +
       F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Lemma F_havoc_work : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_join_entry : forall ma mb i j,
     match join (Reached ma) (Reached mb) with
     | Reached mj => entry mj i j =
@@ -2205,15 +2368,21 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Range work charges the numeric query and its linearization. *)
   Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat ((tsize e + 1) *
       (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Lemma F_range_bits : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
     match ks with
     | nil => nil
@@ -2310,4 +2479,212 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
         (fw_trace (keys m) m))))%N.
   Proof. Admitted. (* STUB *)
+  (** A missing value contributes no stored weight. *)
+  Definition option_weight {A : Type} (w : A -> nat) (a : option A) : nat :=
+    match a with Some x => w x | None => 0 end.
+
+  (** Summed weights account for stored payloads independently of their labels. *)
+  Definition sum_weight {A : Type} (w : A -> nat) (xs : list A) : nat :=
+    fold_right Nat.add 0 (map w xs).
+
+  (** A map's payload weight ranges over its distinct stored codes. *)
+  Definition stored_weight {A : Type} (w : A -> nat) (m : M.t A) : nat :=
+    sum_weight (fun p => option_weight w (M.find p m)) (M.codes m).
+
+  (** A sparse map pays for its skeleton, bindings, and stored payloads separately. *)
+  Definition code_work {A : Type} (w : A -> nat) (m : M.t A) : nat :=
+    M.nodes m + length (M.codes m) + stored_weight w m.
+
+  (** List concatenation adds the two weight sums. *)
+  Lemma sum_weight_app : forall (A : Type) (w : A -> nat) xs ys,
+    sum_weight w (xs ++ ys) = sum_weight w xs + sum_weight w ys.
+  Proof.
+    intros A w xs. induction xs as [|x xs IH]; intro ys.
+    - reflexivity.
+    - change (w x + sum_weight w (xs ++ ys) =
+        w x + sum_weight w xs + sum_weight w ys). rewrite IH. lia.
+  Qed.
+
+  (** Pointwise addition distributes over the weight sum. *)
+  Lemma sum_weight_add : forall (A : Type) (f g : A -> nat) xs,
+    sum_weight (fun x => f x + g x) xs = sum_weight f xs + sum_weight g xs.
+  Proof.
+    intros A f g xs. induction xs as [|x xs IH].
+    - reflexivity.
+    - change (f x + g x + sum_weight (fun y => f y + g y) xs =
+        f x + sum_weight f xs + (g x + sum_weight g xs)). rewrite IH. lia.
+  Qed.
+
+  (** Unit weights count list members. *)
+  Lemma sum_weight_one : forall (A : Type) (xs : list A),
+    sum_weight (fun _ => 1) xs = length xs.
+  Proof.
+    intros A xs. induction xs as [|x xs IH]; [reflexivity|].
+    change (1 + sum_weight (fun _ : A => 1) xs = S (length xs)). now rewrite IH.
+  Qed.
+
+  (** A duplicate-free sublist cannot have a larger nonnegative weight sum. *)
+  Lemma sum_weight_incl : forall (A : Type) (w : A -> nat) xs ys,
+    NoDup xs -> incl xs ys -> sum_weight w xs <= sum_weight w ys.
+  Proof.
+    intros A w xs. induction xs as [|x xs IH]; intros ys Hnodup Hincl.
+    - change (0 <= sum_weight w ys). lia.
+    - apply NoDup_cons_iff in Hnodup. destruct Hnodup as [Hfresh Hnodup].
+      assert (Hx : In x ys) by (apply Hincl; now left).
+      apply in_split in Hx. destruct Hx as [before [after Heq]]. subst ys.
+      assert (Hrest : incl xs (before ++ after)).
+      { intros y Hy. specialize (Hincl y (or_intror Hy)).
+        apply in_app_iff in Hincl. apply in_app_iff.
+        destruct Hincl as [Hin | [Heq | Hin]].
+        - now left.
+        - subst y. contradiction.
+        - now right. }
+      pose proof (IH (before ++ after) Hnodup Hrest) as Hsum.
+      rewrite !sum_weight_app in Hsum |- *.
+      change (w x + sum_weight w xs <=
+        sum_weight w before + (w x + sum_weight w after)). lia.
+  Qed.
+
+  (** Removing absent lookups does not change their summed payload weight. *)
+  Lemma sum_lookup_filter : forall (A : Type) (w : A -> nat) (m : M.t A) xs,
+    sum_weight (fun p => option_weight w (M.find p m)) xs =
+    sum_weight (fun p => option_weight w (M.find p m))
+      (filter (fun p => match M.find p m with Some _ => true | None => false end) xs).
+  Proof.
+    intros A w m xs. unfold sum_weight. induction xs as [|p xs IH]; [reflexivity|].
+    cbn [map fold_right filter]. destruct (M.find p m) eqn:Hlookup;
+      cbn [option_weight map fold_right]; rewrite ?Hlookup;
+      cbn [option_weight]; now rewrite IH.
+  Qed.
+
+  (** Looking up distinct codes can charge each stored payload at most once. *)
+  Lemma stored_weight_bound : forall (A : Type) (w : A -> nat) (m : M.t A) xs,
+    NoDup xs -> sum_weight (fun p => option_weight w (M.find p m)) xs <=
+      stored_weight w m.
+  Proof.
+    intros A w m xs Hnodup. rewrite sum_lookup_filter. unfold stored_weight.
+    apply sum_weight_incl.
+    - now apply NoDup_filter.
+    - intros p Hin. apply filter_In in Hin. destruct Hin as [_ Hpresent].
+      apply M.codes_spec. destruct (M.find p m); congruence.
+  Qed.
+
+  (** Scanning both code lists charges each payload at most twice. *)
+  Lemma pair_stored_weight_bound : forall (A B : Type) (wa : A -> nat) (wb : B -> nat)
+      (ma : M.t A) (mb : M.t B),
+    sum_weight (fun p => option_weight wa (M.find p ma) +
+      option_weight wb (M.find p mb) + 1) (M.codes ma ++ M.codes mb) <=
+    2 * stored_weight wa ma + 2 * stored_weight wb mb +
+      length (M.codes ma) + length (M.codes mb).
+  Proof.
+    intros A B wa wb ma mb.
+    pose proof (stored_weight_bound A wa ma (M.codes mb) (M.codes_nodup B mb)) as Ha.
+    pose proof (stored_weight_bound B wb mb (M.codes ma) (M.codes_nodup A ma)) as Hb.
+    rewrite sum_weight_app. repeat rewrite sum_weight_add. rewrite !sum_weight_one.
+    unfold stored_weight in *. lia.
+  Qed.
+
+  (** Pointwise callback bounds sum to the corresponding weighted list bound. *)
+  Lemma time_sum_bound : forall (A : Type) (xs : list A) (f : A -> N) (w : A -> nat) c,
+    (forall x, In x xs -> (f x <= c * N.of_nat (w x))%N) ->
+    (fold_right N.add 0%N (map f xs) <= c * N.of_nat (sum_weight w xs))%N.
+  Proof.
+    intros A xs. induction xs as [|x xs IH]; intros f w c Hbound.
+    - change (0 <= c * 0)%N. nia.
+    - assert (Hx : (f x <= c * N.of_nat (w x))%N) by (apply Hbound; now left).
+      assert (Hxs : (fold_right N.add 0%N (map f xs) <=
+        c * N.of_nat (sum_weight w xs))%N).
+      { apply IH. intros y Hin. apply Hbound. now right. }
+      change (f x + fold_right N.add 0%N (map f xs) <=
+        c * N.of_nat (w x + sum_weight w xs))%N.
+      rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Sparse callback sums separate skeleton work from the payload weights they visit. *)
+  Lemma map_sum_time_bound : forall (A B : Type) (wa : A -> nat) (wb : B -> nat)
+      (tf : option A -> option B -> N) (ma : M.t A) (mb : M.t B) c clock,
+    (forall a b, (tf a b <= c * N.of_nat (option_weight wa a +
+      option_weight wb b + 1))%N) ->
+    (clock <= M.c_map * ((tf None None + 1) * N.of_nat (M.nodes ma + M.nodes mb + 1) +
+      fold_right N.add 0%N
+        (map (fun p => tf (M.find p ma) (M.find p mb)) (M.codes ma ++ M.codes mb))))%N ->
+    (clock <= M.c_map * (c + 1) * 2 * N.of_nat (code_work wa ma + code_work wb mb + 1))%N.
+  Proof.
+    intros A B wa wb tf ma mb c clock Hbound Hclock.
+    pose proof (Hbound None None) as Hempty.
+    change (tf None None <= c * 1)%N in Hempty. rewrite N.mul_1_r in Hempty.
+    assert (Hsum : (fold_right N.add 0%N
+        (map (fun p => tf (M.find p ma) (M.find p mb)) (M.codes ma ++ M.codes mb)) <=
+      c * N.of_nat (sum_weight (fun p => (option_weight wa (M.find p ma) +
+        option_weight wb (M.find p mb) + 1)%nat) (M.codes ma ++ M.codes mb)))%N).
+    { apply time_sum_bound. intros p _. apply Hbound. }
+    pose proof (pair_stored_weight_bound A B wa wb ma mb) as Hweight.
+    assert (Hsum' : (fold_right N.add 0%N
+        (map (fun p => tf (M.find p ma) (M.find p mb)) (M.codes ma ++ M.codes mb)) <=
+      c * N.of_nat (2 * stored_weight wa ma + 2 * stored_weight wb mb +
+        length (M.codes ma) + length (M.codes mb)))%N).
+    { eapply N.le_trans; [exact Hsum|]. apply N.mul_le_mono_l. lia. }
+    eapply N.le_trans; [exact Hclock|].
+    replace (M.c_map * (c + 1) * 2 * N.of_nat (code_work wa ma + code_work wb mb + 1))%N
+      with (M.c_map * (2 * (c + 1) *
+        N.of_nat (code_work wa ma + code_work wb mb + 1)))%N by ring.
+    apply N.mul_le_mono_l. clear Hclock Hsum Hbound Hweight.
+    unfold code_work. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
+
+  (** The map merge clock is bounded by each input's own code work. *)
+  Lemma T_merge_code_work : forall (A B C : Type)
+      (f : option A -> option B -> option C) tf (wa : A -> nat) (wb : B -> nat) ma mb c,
+    (forall a b, (tf a b <= c * N.of_nat (option_weight wa a +
+      option_weight wb b + 1))%N) ->
+    (M.T_merge f tf ma mb <= M.c_map * (c + 1) * 2 *
+      N.of_nat (code_work wa ma + code_work wb mb + 1))%N.
+  Proof.
+    intros A B C f tf wa wb ma mb c Hbound. eapply map_sum_time_bound;
+      [exact Hbound|apply M.T_merge_sum_le].
+  Qed.
+
+  (** Relational scanning has the same sparse code-work bound as merging. *)
+  Lemma T_forall2b_code_work : forall (A B : Type)
+      (f : option A -> option B -> bool) tf (wa : A -> nat) (wb : B -> nat) ma mb c,
+    (forall a b, (tf a b <= c * N.of_nat (option_weight wa a +
+      option_weight wb b + 1))%N) ->
+    (M.T_forall2b f tf ma mb <= M.c_map * (c + 1) * 2 *
+      N.of_nat (code_work wa ma + code_work wb mb + 1))%N.
+  Proof.
+    intros A B f tf wa wb ma mb c Hbound. eapply map_sum_time_bound;
+      [exact Hbound|apply M.T_forall2b_sum_le].
+  Qed.
+
+  (** A bound comparison pays only for its present integer operands. *)
+  Lemma T_bound_leb_le : forall a b,
+    (T_bound_leb a b <= 8 * N.of_nat
+      (option_weight Z.size_nat a + option_weight Z.size_nat b + 1))%N.
+  Proof.
+    intros [x|] [y|]; unfold option_weight; time_step.
+  Qed.
+
+  (** A bound join pays only for its present integer operands. *)
+  Lemma T_bound_join_le : forall a b,
+    (T_bound_join a b <= 8 * N.of_nat
+      (option_weight Z.size_nat a + option_weight Z.size_nat b + 1))%N.
+  Proof.
+    intros [x|] [y|]; unfold option_weight; time_step.
+  Qed.
+
+  (** A bound meet pays only for its present integer operands. *)
+  Lemma T_bound_meet_le : forall a b,
+    (T_bound_meet a b <= 8 * N.of_nat
+      (option_weight Z.size_nat a + option_weight Z.size_nat b + 1))%N.
+  Proof.
+    intros [x|] [y|]; unfold option_weight; time_step.
+  Qed.
+
+  (** A bound widening pays only for its present integer operands. *)
+  Lemma T_bound_widen_le : forall a b,
+    (T_bound_widen a b <= 8 * N.of_nat
+      (option_weight Z.size_nat a + option_weight Z.size_nat b + 1))%N.
+  Proof.
+    intros [x|] [y|]; unfold option_weight; time_step.
+  Qed.
 End ZoneT.
