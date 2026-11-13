@@ -682,6 +682,217 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     - rewrite Q.prio_push_other in Hpush by exact Hneq; left; now exists out.
   Qed.
 
+  (** Trie insertion exposes one code and retains every other lookup. *)
+  Lemma trie_get_set {A : Type} : forall c key (a : A) m,
+    trie_get c (PTrieCode.set key a m) =
+      if Pos.eqb c key then Some a else trie_get c m.
+  Proof.
+    intros c key a m; destruct (Pos.eqb c key) eqn:Heq.
+    - apply Pos.eqb_eq in Heq; subst c; apply PTrie.get_set_same.
+    - apply Pos.eqb_neq in Heq; now apply PTrie.get_set_other.
+  Qed.
+
+  (** Trie removal clears one code and retains every other lookup. *)
+  Lemma trie_get_remove {A : Type} : forall c key (m : ptrie A),
+    trie_get c (PTrieCode.remove key m) =
+      if Pos.eqb c key then None else trie_get c m.
+  Proof.
+    intros c key m; destruct (Pos.eqb c key) eqn:Heq.
+    - apply Pos.eqb_eq in Heq; subst c; apply PTrie.get_remove_same.
+    - apply Pos.eqb_neq in Heq; now apply PTrie.get_remove_other.
+  Qed.
+
+  (** An empty trie has no binding at any positive code. *)
+  Lemma trie_get_empty {A : Type} : forall c, trie_get c (@Empty A) = None.
+  Proof.
+    apply PTrie.get_empty.
+  Qed.
+
+  (** A push keeps every previously live identifier live. *)
+  Lemma queue_push_retains : forall priority fresh q id pr,
+    Q.prio q id = Some pr -> exists next, Q.prio (Q.push priority fresh q) id = Some next.
+  Proof.
+    intros priority fresh q id pr Hprio; destruct (Pos.eq_dec fresh id) as [->|Hneq].
+    - eexists; apply Q.prio_push.
+    - rewrite Q.prio_push_other by exact Hneq; now exists pr.
+  Qed.
+
+  (** A guarded absent push preserves equality between pending and live cardinality. *)
+  Lemma queue_exact_push : forall q priority id,
+    Q.wf q -> Q.pending q = N.to_nat (Q.size q) -> Q.prio q id = None ->
+    Q.pending (Q.push priority id q) = N.to_nat (Q.size (Q.push priority id q)).
+  Proof.
+    intros q priority id Hwf Hexact Hnone.
+    pose proof (Q.pending_push priority id q Hwf) as Hupper.
+    pose proof (Q.size_pending (Q.push priority id q) (Q.wf_push priority id q Hwf))
+      as Hlower.
+    rewrite Q.size_push by exact Hwf; rewrite Hnone, N2Nat.inj_succ.
+    rewrite Q.size_push in Hlower by exact Hwf; rewrite Hnone, N2Nat.inj_succ in Hlower.
+    lia.
+  Qed.
+
+  (** A pop preserves equality between pending and live cardinality. *)
+  Lemma queue_exact_pop : forall q priority id q1,
+    Q.wf q -> Q.pending q = N.to_nat (Q.size q) ->
+    Q.pop q = Some (priority, id, q1) -> Q.pending q1 = N.to_nat (Q.size q1).
+  Proof.
+    intros q priority id q1 Hwf Hexact Hpop.
+    pose proof (Q.pending_pop q priority id q1 Hwf Hpop) as Hupper.
+    pose proof (Q.size_pending q1 (Q.wf_pop q priority id q1 Hwf Hpop)) as Hlower.
+    rewrite (Q.size_pop q priority id q1 Hwf Hpop), N2Nat.inj_succ in Hexact; lia.
+  Qed.
+
+  (** A live-map absence is a queue absence whenever the two representations agree. *)
+  Lemma live_absent : forall s id, live_agrees s ->
+    trie_get id (ws_live s) = None -> Q.prio (ws_queue s) id = None.
+  Proof.
+    intros s id Hlive Hnone; destruct (Q.prio (ws_queue s) id) as [pr|] eqn:Hprio;
+      [|reflexivity].
+    assert (Hpresent : trie_get id (ws_live s) = Some tt).
+    { apply Hlive; now exists pr. }
+    congruence.
+  Qed.
+
+  (** One absent enqueue installs a queue entry and its matching live marker. *)
+  Definition enqueue_push (s : state) id rank : state :=
+    WorklistState (ws_store s) (ws_counters s) (Q.push (N.pos rank) id (ws_queue s))
+      (PTrieCode.set id tt (ws_live s)) (ws_rows s) (ws_readers s)
+      (ws_armed s) (ws_ranks s).
+
+  (** Installing matching queue and live entries preserves their lookup agreement. *)
+  Lemma live_agrees_push : forall s id rank, live_agrees s ->
+    live_agrees (enqueue_push s id rank).
+  Proof.
+    intros s id rank Hlive x; unfold enqueue_push; cbn [ws_live ws_queue].
+    rewrite trie_get_set; destruct (Pos.eqb x id) eqn:Heq.
+    - apply Pos.eqb_eq in Heq; subst x; split.
+      + intro H; eexists; apply Q.prio_push.
+      + intro H; reflexivity.
+    - apply Pos.eqb_neq in Heq; rewrite Q.prio_push_other by congruence; apply Hlive.
+  Qed.
+
+  (** A genuinely new queue entry preserves every prepared-state property. *)
+  Lemma prepared_push : forall p pol s id rank, prepared p pol s ->
+    Q.prio (ws_queue s) id = None -> prepared p pol (enqueue_push s id rank).
+  Proof.
+    intros p pol s id rank [Hmeta [Hlive [Hwf [Hexact [Harmed Hranks]]]]] Hnone.
+    split; [exact Hmeta|]; split; [now apply live_agrees_push|].
+    split; [now apply Q.wf_push|]; split.
+    - apply queue_exact_push; assumption.
+    - split; [|exact Hranks].
+      intros c target Hflag Hreader; destruct (Harmed c target Hflag Hreader) as [pr Hprio].
+      eapply queue_push_retains; exact Hprio.
+  Qed.
+
+  (** Enqueueing nothing leaves the complete state unchanged. *)
+  Lemma enqueue_nil : forall p pol s, enqueue p pol [] s = s.
+  Proof.
+    intros p pol s; destruct s; reflexivity.
+  Qed.
+
+  (** A singleton enqueue performs one guarded push against the cached row and rank. *)
+  Lemma enqueue_single : forall p pol id s,
+    enqueue p pol [id] s =
+      match trie_get id (ws_live s), row_at s id with
+      | None, Some r => enqueue_push s id
+          (match trie_get id (ws_ranks s) with Some rank => rank | None => 1%positive end)
+      | _, _ => s
+      end.
+  Proof.
+    intros p pol id [store counts queue live rows readers armed ranks].
+    unfold enqueue, enqueue_push, row_at.
+    cbn [fold_left fst snd ws_store ws_counters ws_queue ws_live ws_rows ws_readers
+      ws_armed ws_ranks].
+    destruct (trie_get id live), (trie_get id rows); reflexivity.
+  Qed.
+
+  (** Enqueueing a list can be split after its first guarded push. *)
+  Lemma enqueue_cons : forall p pol id ids s,
+    enqueue p pol (id :: ids) s = enqueue p pol ids (enqueue p pol [id] s).
+  Proof.
+    intros p pol id ids [store counts queue live rows readers armed ranks].
+    unfold enqueue, row_at.
+    cbn [fold_left fst snd ws_store ws_counters ws_queue ws_live ws_rows ws_readers
+      ws_armed ws_ranks].
+    destruct (trie_get id live), (trie_get id rows); reflexivity.
+  Qed.
+
+  (** Every queue-fold prefix is represented by an ordinary enqueue state. *)
+  Lemma enqueue_state_fold : forall p pol ids s,
+    enqueue p pol ids s = fold_left (fun acc id => enqueue p pol [id] acc) ids s.
+  Proof.
+    intros p pol ids; induction ids as [|id ids IH]; intro s.
+    - apply enqueue_nil.
+    - rewrite enqueue_cons, IH; reflexivity.
+  Qed.
+
+  (** A singleton enqueue retains every old live identifier. *)
+  Lemma enqueue_single_retains : forall p pol s fresh id pr,
+    Q.prio (ws_queue s) id = Some pr ->
+    exists next, Q.prio (ws_queue (enqueue p pol [fresh] s)) id = Some next.
+  Proof.
+    intros p pol s fresh id pr Hprio; rewrite enqueue_single.
+    destruct (trie_get fresh (ws_live s)), (row_at s fresh); try (now exists pr).
+    eapply queue_push_retains; exact Hprio.
+  Qed.
+
+  (** Enqueue retains every old live identifier without cache assumptions. *)
+  Lemma enqueue_retains : forall p pol ids s id pr,
+    Q.prio (ws_queue s) id = Some pr ->
+    exists next, Q.prio (ws_queue (enqueue p pol ids s)) id = Some next.
+  Proof.
+    intros p pol ids; induction ids as [|fresh ids IH]; intros s id pr Hprio.
+    - rewrite enqueue_nil; now exists pr.
+    - rewrite enqueue_cons.
+      destruct (enqueue_single_retains p pol s fresh id pr Hprio) as [next Hnext].
+      eapply IH; exact Hnext.
+  Qed.
+
+  (** Each guarded singleton enqueue preserves the cache, queue and live invariants. *)
+  Lemma enqueue_single_prepared : forall p pol id s, prepared p pol s ->
+    prepared p pol (enqueue p pol [id] s).
+  Proof.
+    intros p pol id s Hprepared; rewrite enqueue_single.
+    destruct (trie_get id (ws_live s)) eqn:Hlive, (row_at s id);
+      try exact Hprepared.
+    apply prepared_push; [exact Hprepared|].
+    apply live_absent; [exact (proj1 (proj2 Hprepared))|exact Hlive].
+  Qed.
+
+  (** Every enqueue prefix preserves prepared-state agreement. *)
+  Lemma enqueue_prepared : forall p pol ids s, prepared p pol s ->
+    prepared p pol (enqueue p pol ids s).
+  Proof.
+    intros p pol ids; induction ids as [|id ids IH]; intros s Hprepared.
+    - now rewrite enqueue_nil.
+    - rewrite enqueue_cons; apply IH, enqueue_single_prepared, Hprepared.
+  Qed.
+
+  (** A listed source row is live after its own enqueue. *)
+  Lemma enqueue_single_contains : forall p pol s id r,
+    prepared p pol s -> source_row p id = Some r ->
+    exists pr, Q.prio (ws_queue (enqueue p pol [id] s)) id = Some pr.
+  Proof.
+    intros p pol s id r Hprepared Hsource; rewrite enqueue_single.
+    pose proof (proj1 (proj1 Hprepared) id) as Hrow; rewrite Hrow, Hsource.
+    destruct (trie_get id (ws_live s)) as [[]|] eqn:Hlive.
+    - apply (proj1 (proj1 (proj2 Hprepared) id)); exact Hlive.
+    - eexists; apply Q.prio_push.
+  Qed.
+
+  (** Every requested source row is live after enqueue, including repeated identifiers. *)
+  Lemma enqueue_contains : forall p pol ids s id r,
+    prepared p pol s -> In id ids -> source_row p id = Some r ->
+    exists pr, Q.prio (ws_queue (enqueue p pol ids s)) id = Some pr.
+  Proof.
+    intros p pol ids; induction ids as [|fresh ids IH]; intros s id r Hprepared Hin Hsource.
+    - contradiction.
+    - rewrite enqueue_cons; destruct Hin as [Heq|Hin].
+      + subst fresh; destruct (enqueue_single_contains p pol s id r Hprepared Hsource)
+          as [pr Hprio]; eapply enqueue_retains; exact Hprio.
+      + eapply IH; [apply enqueue_single_prepared, Hprepared|exact Hin|exact Hsource].
+  Qed.
+
   (** * Identifier and priority widths *)
 
   (** Increasing a positive number cannot shorten its bit representation. *)
@@ -820,7 +1031,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     reference_update p pol s (x, a) =
       if L.leb a (reference_look s x) then s else
         reference_enqueue p pol (source_readers p c) s1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Each callback pops one row and processes its primary and side outputs in occurrence order. *)
   Lemma F7_step : forall p pol s,
     reference_step p pol s = match Q.pop (wl_queue s) with
@@ -836,14 +1049,20 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         end
       end
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Indexed lookup reads the prepared row table without traversing the source rows. *)
   Lemma F1_row_at : forall s id, row_at s id = trie_get id (ws_rows s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Reader lookup reads the prepared bucket and maps an absent bucket to the empty list. *)
   Lemma F2_reader_at : forall s c,
     readers s c = match trie_get c (ws_readers s) with Some ids => ids | None => nil end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Preparation establishes all cache and live facts within the solver. *)
   Lemma F4_metadata : forall p pol, prepared p pol (prepare p pol).
   Proof. Admitted. (* STUB *)
@@ -855,7 +1074,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     ws_readers (enqueue p pol ids s) = ws_readers s /\
     ws_armed (enqueue p pol ids s) = ws_armed s /\
     ws_ranks (enqueue p pol ids s) = ws_ranks s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol ids s; unfold enqueue; repeat split; reflexivity.
+  Qed.
   (** Guarded pushes update the queue and live set together in occurrence order. *)
   Lemma F5_indexed : forall p pol ids s,
     (ws_queue (enqueue p pol ids s), ws_live (enqueue p pol ids s)) =
@@ -868,7 +1089,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
           PTrieCode.set id tt (snd ql))
       | _, _ => ql
       end) ids (ws_queue s, ws_live s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol ids s; unfold enqueue; cbn [ws_queue ws_live].
+    match goal with |- (fst ?pair, snd ?pair) = ?pair => destruct pair end.
+    reflexivity.
+  Qed.
   (** Enqueue agrees with the original helper after projection from prepared states. *)
   Lemma F5_agreement : forall p pol ids s, prepared p pol s ->
     wl_view (enqueue p pol ids s) = reference_enqueue p pol ids (wl_view s).
@@ -876,7 +1101,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Enqueue maintains the metadata and live facts that justify projected agreement. *)
   Lemma F5_prepared : forall p pol ids s, prepared p pol s ->
     prepared p pol (enqueue p pol ids s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply enqueue_prepared.
+  Qed.
   (** Indexed updates retain metadata while writing the policy result and enqueueing readers. *)
   Lemma F6_indexed : forall p pol s x a,
     let c := S.key_code x in
@@ -890,12 +1117,20 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       | Some _ => s1
       | None => arm c (enqueue p pol (readers s c) s1)
       end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Indexed updates preserve both tables independently of the input cache validity. *)
   Lemma F6_tables : forall p pol s xa,
     ws_rows (update_one p pol s xa) = ws_rows s /\
     ws_readers (update_one p pol s xa) = ws_readers s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s [x a]; unfold update_one.
+    destruct (L.leb a (look_or S.key_code L.bot (ws_store s) x));
+      [split; reflexivity|].
+    destruct (trie_get (S.key_code x) (ws_armed s));
+      unfold arm, enqueue; split; reflexivity.
+  Qed.
   (** Every update has the original projected behavior on prepared states. *)
   Lemma F6_agreement : forall p pol s xa, prepared p pol s ->
     wl_view (update_one p pol s xa) = reference_update p pol (wl_view s) xa.
@@ -919,7 +1154,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         end
       end
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Popping preserves cache agreement and restores live agreement for the residual queue. *)
   Lemma F7_pop_prepared : forall p pol s pr id q1, prepared p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) ->
@@ -939,7 +1176,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     | inl s => OutOfFuel (ws_store s)
     | inr result => result
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The original three-field loop has the same public result for every fuel. *)
   Lemma F8_reference_run : forall p pol fuel,
     run p pol fuel =
