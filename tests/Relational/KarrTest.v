@@ -126,3 +126,59 @@ Example unsupported_assignment_uses_havoc :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Three nonunit pivots require exact division by earlier pivots. *)
+Definition coupled : list (lcons positive) :=
+  [LCons _ [(1%positive, 2); (2%positive, 1); (3%positive, 1)] REq 3;
+   LCons _ [(1%positive, 1); (2%positive, 3); (3%positive, 2)] REq 5;
+   LCons _ [(1%positive, 3); (3%positive, 4)] REq (-1)].
+
+Example three_pivots_recover_the_unique_solution :
+  Equalities.leb (Reached coupled)
+    (Reached [x1; LCons _ [(2%positive, 1)] REq 2;
+      LCons _ [(3%positive, 1)] REq (-1)]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example three_pivots_detect_a_late_contradiction :
+  Equalities.is_bot
+    (Reached (coupled ++ [LCons _ [(1%positive, 5); (2%positive, -2);
+      (3%positive, 3)] REq 0])) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example pivot_exchange_preserves_the_solution :
+  Equalities.leb
+    (Reached [LCons _ [(2%positive, 2); (3%positive, 1)] REq 3;
+      LCons _ [(1%positive, 3); (3%positive, 2)] REq 1;
+      LCons _ [(1%positive, 1); (2%positive, 1)] REq 3])
+    (Reached [x1; LCons _ [(2%positive, 1)] REq 2;
+      LCons _ [(3%positive, 1)] REq (-1)]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example negative_pivots_preserve_the_solution :
+  Equalities.leb
+    (Reached [LCons _ [(1%positive, -2); (2%positive, -1);
+      (3%positive, -1)] REq (-3);
+      LCons _ [(1%positive, 1); (2%positive, 3); (3%positive, 2)] REq 5;
+      LCons _ [(1%positive, 3); (3%positive, 4)] REq (-1)])
+    (Reached [x1; LCons _ [(2%positive, 1)] REq 2;
+      LCons _ [(3%positive, 1)] REq (-1)]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example canceled_private_pivots_leave_the_real_equations :
+  Equalities.leb
+    (Reached [LCons _ [(4%positive, 1); (4%positive, -1);
+      (1%positive, 2); (2%positive, 1)] REq 4;
+      LCons _ [(5%positive, 1); (5%positive, -1);
+        (1%positive, 1); (2%positive, 3)] REq 7])
+    (Reached [x1; LCons _ [(2%positive, 1)] REq 2]) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
