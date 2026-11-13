@@ -1190,13 +1190,170 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   (** * Reachable-state invariants *)
 
+  (** A continuing callback appends one state to a reachable prefix. *)
+  Lemma reachable_step : forall p pol s s1, reachable p pol s ->
+    step p pol s = inl s1 -> reachable p pol s1.
+  Proof.
+    intros p pol s s1 [xs Hpath] Hstep; exists (xs ++ [s]).
+    eapply wl_path_append; [exact Hpath|].
+    econstructor; [exact Hstep|constructor].
+  Qed.
+
+  (** Every suffix of a reachable continuing path remains reachable. *)
+  Lemma reachable_path : forall p pol s xs last, reachable p pol s ->
+    wl_path (step p pol) s xs last -> reachable p pol last.
+  Proof.
+    intros p pol s xs last [prefix Hprefix] Hpath.
+    exists (prefix ++ xs); eapply wl_path_append; eassumption.
+  Qed.
+
+  (** Policy choices preserve the client's value invariant. *)
+  Lemma policy_update_inv : forall p pol c cnt a b,
+    B.inv p a -> B.inv p b -> B.inv p (fst (P.update pol c cnt a b)).
+  Proof.
+    intros p pol c cnt a b Ha Hb; rewrite P.update_spec.
+    destruct (L.leb b a); [exact Ha|].
+    destruct (trie_get c (heads pol)) as [cfg|].
+    - destruct (N.ltb cnt (delay cfg)); cbn [fst].
+      + now apply B.inv_join.
+      + now apply B.inv_widen.
+    - cbn [fst]; now apply B.inv_join.
+  Qed.
+
+  (** Encoded values also include keys that have never occurred in the program. *)
+  Definition raw_value (s : state) (c : positive) : L.t :=
+    match trie_get c (ws_store s) with Some (_, a) => a | None => L.bot end.
+
+  Lemma raw_value_look : forall s x, raw_value s (S.key_code x) = look s x.
+  Proof. reflexivity. Qed.
+
+  Lemma raw_value_enqueue : forall p pol ids s c,
+    raw_value (enqueue p pol ids s) c = raw_value s c.
+  Proof. reflexivity. Qed.
+
+  Lemma raw_value_arm : forall s c d, raw_value (arm c s) d = raw_value s d.
+  Proof. reflexivity. Qed.
+
+  Lemma raw_value_after_pop : forall p s id q c,
+    raw_value (after_pop p s id q) c = raw_value s c.
+  Proof. reflexivity. Qed.
+
+  (** An update stores exactly its policy value at the selected encoding. *)
+  Lemma raw_value_update_same : forall p pol s x a,
+    raw_value (update_one p pol s (x, a)) (S.key_code x) =
+      fst (P.update pol (S.key_code x) (counter s (S.key_code x)) (look s x) a).
+  Proof.
+    intros p pol s x a; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)) eqn:Hcovered.
+    - rewrite (P.update_stable pol (S.key_code x) (counter s (S.key_code x))
+        (look s x) a Hcovered); apply raw_value_look.
+    - destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
+      + unfold raw_value; cbn [ws_store]; rewrite PTrie.get_set_same; reflexivity.
+      + rewrite raw_value_arm, raw_value_enqueue.
+        unfold raw_value; cbn [ws_store]; rewrite PTrie.get_set_same; reflexivity.
+  Qed.
+
+  (** Other encodings retain their prior value. *)
+  Lemma raw_value_update_other : forall p pol s x a c, c <> S.key_code x ->
+    raw_value (update_one p pol s (x, a)) c = raw_value s c.
+  Proof.
+    intros p pol s x a c Hother; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)); [reflexivity|].
+    destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
+    - unfold raw_value; cbn [ws_store]; now rewrite PTrie.get_set_other.
+    - rewrite raw_value_arm, raw_value_enqueue.
+      unfold raw_value; cbn [ws_store]; now rewrite PTrie.get_set_other.
+  Qed.
+
+  Lemma raw_value_prepare : forall p pol c, raw_value (prepare p pol) c = L.bot.
+  Proof.
+    intros p pol c; unfold prepare; rewrite raw_value_enqueue.
+    unfold raw_value; cbn [ws_store]; now rewrite PTrie.get_empty.
+  Qed.
+
+  (** Encoded invariant values remain invariant after any invariant contribution. *)
+  Lemma raw_inv_update : forall p pol s x a,
+    (forall c, B.inv p (raw_value s c)) -> B.inv p a ->
+    forall c, B.inv p (raw_value (update_one p pol s (x, a)) c).
+  Proof.
+    intros p pol s x a Hs Ha c; destruct (Pos.eq_dec c (S.key_code x)) as [->|Hother].
+    - rewrite raw_value_update_same; apply policy_update_inv; [|exact Ha].
+      rewrite <- raw_value_look; apply Hs.
+    - rewrite raw_value_update_other by exact Hother; apply Hs.
+  Qed.
+
+  Lemma raw_inv_fold : forall p pol outs s,
+    (forall c, B.inv p (raw_value s c)) ->
+    Forall (fun xa => B.inv p (snd xa)) outs ->
+    forall c, B.inv p (raw_value (fold_left (update_one p pol) outs s) c).
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH]; intros s Hs Houts c.
+    - exact (Hs c).
+    - inversion Houts; subst; cbn [fold_left].
+      apply IH; [now apply raw_inv_update|assumption].
+  Qed.
+
+  (** A continuing callback evaluates a listed row on invariant lookups. *)
+  Lemma raw_inv_step : forall p pol s s1, S.wf p -> prepared p pol s ->
+    (forall c, B.inv p (raw_value s c)) -> step p pol s = inl s1 ->
+    forall c, B.inv p (raw_value s1 c).
+  Proof.
+    intros p pol s s1 Hwf Hprepared Hinv Hstep c.
+    unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
+    destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    assert (Hr : In r (S.rows p)).
+    { destruct Hprepared as [[Hrows _] _].
+      rewrite Hrows in Hrow; exact (proj2 (source_row_member p id r Hrow)). }
+    assert (Hlook : forall x, B.inv p (look s x)).
+    { intro x; rewrite <- raw_value_look; apply Hinv. }
+    change (S.eval p r (look s) = Some (a, ss)) in Heval.
+    destruct (B.inv_rows p r (look s) a ss Hwf Hr Hlook Heval) as [Ha Hss].
+    apply (raw_inv_fold p pol ((S.target p r, a) :: ss) (after_pop p s id q)).
+    - intro d; exact (Hinv d).
+    - constructor; assumption.
+  Qed.
+
+  (** Both cached preparation and raw client values hold along every reachable prefix. *)
+  Lemma reachable_raw_inv : forall p pol s, S.wf p -> reachable p pol s ->
+    forall c, B.inv p (raw_value s c).
+  Proof.
+    intros p pol s Hwf [xs Hpath].
+    assert (Hpres : forall start ys last,
+      wl_path (step p pol) start ys last -> prepared p pol start ->
+      (forall c, B.inv p (raw_value start c)) ->
+      forall c, B.inv p (raw_value last c)).
+    { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
+        intros Hp Hi c; [exact (Hi c)|].
+      apply IH.
+      - exact (proj1 (F7_prepared p pol st st1 Hp Hstep)).
+      - eapply raw_inv_step; eassumption. }
+    eapply Hpres; [exact Hpath|apply F4_metadata|].
+    intro c; rewrite raw_value_prepare; apply B.inv_bot.
+  Qed.
+
+
+
   (** Every state reached by the public solver satisfies its internal preparation duties. *)
   Lemma F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s [xs Hpath].
+    assert (Hpres : forall start ys last,
+      wl_path (step p pol) start ys last -> prepared p pol start -> prepared p pol last).
+    { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
+        intro Hp; [exact Hp|].
+      apply IH; exact (proj1 (F7_prepared p pol st st1 Hp Hstep)). }
+    eapply Hpres; [exact Hpath|apply F4_metadata].
+  Qed.
   (** Every reachable store satisfies the client invariant with arbitrary priorities. *)
   Lemma F9_reachable_inv : forall p pol s, S.wf p -> reachable p pol s ->
     forall x, B.inv p (look s x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s Hwf Hreachable x; rewrite <- raw_value_look.
+    eapply reachable_raw_inv; eassumption.
+  Qed.
   (** Prepared ranks equal each row's least non-head write priority. *)
   Lemma F4_rank_cache : forall p pol id r, row_at (prepare p pol) id = Some r ->
     trie_get id (ws_ranks (prepare p pol)) = Some (row_rank p pol r).
@@ -1213,6 +1370,22 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Reachable states satisfy every row outside their queue. *)
   Lemma F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
   Proof. Admitted. (* STUB *)
+
+
+
+  (** Legal priorities give the stronger structural invariant along reachable paths. *)
+  Lemma reachable_invariant : forall p pol s, S.wf p -> prio_ok p pol ->
+    reachable p pol s -> invariant p pol s.
+  Proof.
+    intros p pol s Hwf Hprio [xs Hpath].
+    assert (Hpres : forall start ys last,
+      wl_path (step p pol) start ys last -> invariant p pol start -> invariant p pol last).
+    { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
+        intro Hinv; [exact Hinv|].
+      apply IH; eapply F9_step_inv; eassumption. }
+    eapply Hpres; [exact Hpath|].
+    exact (proj1 (F4_prepare p pol Hwf Hprio)).
+  Qed.
 
   (** * Operation costs and height credit *)
 
