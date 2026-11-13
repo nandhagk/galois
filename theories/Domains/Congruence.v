@@ -944,6 +944,63 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Qed.
 
 
+  Local Lemma cong_top_sound w z : is_word w z -> gamma_mod w (C 1 0) z.
+  Proof.
+    intro Hword. split; [exact Hword|apply Z.mod_1_r].
+  Qed.
+
+  (** Wrapping retains only a divisor of the word modulus. *)
+
+  Local Lemma cong_wrap_class_sound w m r z : (z - r) mod m = 0 ->
+    gamma_mod w (wrap_class w m r) (wrap w z).
+  Proof.
+    intro Hz. unfold wrap_class. apply (proj2 (cong_norm_gamma w _ _)).
+    split; [apply wrap_is_word|]. apply cong_mod_divide. apply cong_mod_divide in Hz.
+    pose proof (cong_residue_difference (modulus w) z) as Hwrap.
+    rewrite <- wrap_mod in Hwrap.
+    destruct (Z.gcd_divide_l m (modulus w)) as [k Hk].
+    destruct (Z.gcd_divide_r m (modulus w)) as [j Hj].
+    destruct Hz as [l Hl], Hwrap as [n Hn]. exists (l * k - n * j). nia.
+  Qed.
+
+
+
+  (** Every represented integer is a normalized word. *)
+  Lemma gamma_word : forall w a z, pgamma w a z -> is_word w z.
+  Proof.
+    intros w [| m r] z Ha; [contradiction | exact (proj1 Ha)].
+  Qed.
+
+  (** Raw integer shifting agrees with the bounded word shift on normalized inputs. *)
+  Lemma normalized_wshl : forall w x y, is_word w x -> is_word w y ->
+    wrap w (Z.shiftl x y) = wshl w x y.
+  Proof.
+    intros w x y Hx Hy.
+    rewrite Z.shiftl_mul_pow2 by (destruct Hy; lia).
+    unfold wshl. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
+    destruct (Zpos w <=? y) eqn:Hlarge; [| reflexivity].
+    apply Z.leb_le in Hlarge.
+    replace y with (Zpos w + (y - Zpos w)) by lia.
+    rewrite Z.pow_add_r by lia. unfold wrap.
+    replace (x * (2 ^ Zpos w * 2 ^ (y - Zpos w))) with
+      ((x * 2 ^ (y - Zpos w)) * modulus w) by (unfold modulus; ring).
+    apply Z.mod_mul. apply modulus_nonzero.
+  Qed.
+
+  (** Raw integer remainder agrees with unsigned word remainder on normalized inputs. *)
+  Lemma normalized_wurem : forall w x y, is_word w x -> is_word w y ->
+    wrap w (x mod y) = wurem w x y.
+  Proof.
+    intros w x y Hx Hy.
+    rewrite wurem_mod, (wrap_id w x Hx), (wrap_id w y Hy).
+    apply wrap_id. destruct (Z.eq_dec y 0) as [-> | Hnonzero].
+    - now rewrite Z.mod_0_r.
+    - destruct Hy as [Hy Hbound].
+      pose proof (Z.mod_pos_bound x y ltac:(lia)) as Hremainder.
+      unfold is_word. lia.
+  Qed.
+
+
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
@@ -1140,34 +1197,109 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** Negation retains wrapped concrete negation. *)
   Lemma F6_congr_neg_sound : forall w a x,
     pgamma w a x -> pgamma w (congr_neg w a) (L.wrap w (- x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x Ha. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    unfold congr_neg. destruct (congr_norm w a) as [|m r]; [contradiction|].
+    destruct Ha as [_ Hresidue]. apply cong_wrap_class_sound.
+    apply cong_mod_divide. apply cong_mod_divide in Hresidue.
+    destruct Hresidue as [k Hk]. exists (-k). nia.
+  Qed.
   (** Addition retains wrapped concrete addition. *)
   Lemma F7_congr_add_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_add.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
+    destruct Ha as [_ Hx], Hb as [_ Hy]. apply cong_wrap_class_sound.
+    apply cong_mod_divide. apply cong_mod_divide in Hx. apply cong_mod_divide in Hy.
+    destruct Hx as [i Hi], Hy as [j Hj].
+    destruct (Z.gcd_divide_l m n) as [k Hk], (Z.gcd_divide_r m n) as [l Hl].
+    exists (i * k + j * l). nia.
+  Qed.
   (** Subtraction retains wrapped concrete subtraction. *)
   Lemma F8_congr_sub_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_sub.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
+    destruct Ha as [_ Hx], Hb as [_ Hy]. apply cong_wrap_class_sound.
+    apply cong_mod_divide. apply cong_mod_divide in Hx. apply cong_mod_divide in Hy.
+    destruct Hx as [i Hi], Hy as [j Hj].
+    destruct (Z.gcd_divide_l m n) as [k Hk], (Z.gcd_divide_r m n) as [l Hl].
+    exists (i * k - j * l). nia.
+  Qed.
   (** Multiplication retains wrapped concrete multiplication. *)
   Lemma F9_congr_mul_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_mul.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
+    destruct Ha as [_ Hx], Hb as [_ Hy]. apply cong_wrap_class_sound.
+    apply cong_mod_divide. apply cong_mod_divide in Hx. apply cong_mod_divide in Hy.
+    destruct Hx as [i Hi], Hy as [j Hj].
+    pose (g := Z.gcd (m * n) (Z.gcd (m * s) (n * r))).
+    assert (Hmn : (g | m * n)) by apply Z.gcd_divide_l.
+    assert (Hms : (g | m * s)).
+    { eapply cong_divide_trans; [apply Z.gcd_divide_r|apply Z.gcd_divide_l]. }
+    assert (Hnr : (g | n * r)).
+    { eapply cong_divide_trans; [apply Z.gcd_divide_r|apply Z.gcd_divide_r]. }
+    destruct Hmn as [k Hk], Hms as [l Hl], Hnr as [p Hp].
+    exists (i * j * k + i * l + j * p).
+    replace (x * y - r * s) with (i * j * (m * n) + i * (m * s) + j * (n * r)) by nia.
+    fold g. rewrite Hk, Hl, Hp. ring.
+  Qed.
   (** Projection retains truncations to smaller widths. *)
   Lemma F10_congr_project_sound : forall source target a x,
     (target <= source)%positive -> pgamma source a x ->
     pgamma target (congr_project source target a) (L.wrap target x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros source target a x Hwidth Ha. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma source a x)) in Ha.
+    unfold congr_project. destruct (congr_norm source a) as [|m r]; [contradiction|].
+    apply cong_wrap_class_sound. exact (proj2 Ha).
+  Qed.
   (** Shift transfer retains the wrapped concrete shift. *)
   Lemma F11_congr_shl_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y ->
     pgamma w (congr_shl w a b) (L.wrap w (Z.shiftl x y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Ha Hb.
+    rewrite normalized_wshl by (eapply gamma_word; eassumption).
+    rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_shl.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n k]; try contradiction.
+    destruct n as [|n|n]; try (apply cong_top_sound; apply wshl_is_word).
+    destruct Ha as [Hwordx Hx], Hb as [Hwordy Hy].
+    rewrite Z.mod_0_r in Hy. assert (y = k) by lia. subst y.
+    rewrite wshl_value, (wrap_id w k Hwordy), (wrap_id w x Hwordx).
+    destruct (Zpos w <=? k).
+    - split; [apply zero_is_word|reflexivity].
+    - apply cong_wrap_class_sound. apply cong_mod_divide. apply cong_mod_divide in Hx.
+      destruct Hx as [i Hi]. exists i. nia.
+  Qed.
   (** Remainder transfer retains unsigned remainder, including a zero divisor. *)
   Lemma F12_congr_urem_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y ->
     pgamma w (congr_urem w a b) (L.wrap w (Z.modulo x y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Ha Hb.
+    rewrite normalized_wurem by (eapply gamma_word; eassumption).
+    rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_urem.
+    destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n c]; try contradiction.
+    destruct n as [|n|n]; try (apply cong_top_sound; apply wurem_is_word).
+    destruct Ha as [Hwordx Hx], Hb as [Hwordy Hy].
+    rewrite Z.mod_0_r in Hy. assert (y = c) by lia. subst y.
+    apply (proj2 (cong_norm_gamma w _ _)). split; [apply wurem_is_word|].
+    rewrite wurem_mod, (wrap_id w c Hwordy), (wrap_id w x Hwordx).
+    apply cong_mod_divide in Hx. apply cong_mod_divide.
+    destruct (Z.gcd_divide_l m c) as [k Hk], (Z.gcd_divide_r m c) as [j Hj].
+    destruct Hx as [i Hi]. destruct (Z.eq_dec c 0) as [->|Hnonzero].
+    - rewrite Z.mod_0_r. exists (i * k). nia.
+    - destruct (cong_residue_difference c x) as [l Hl]. exists (i * k - l * j). nia.
+  Qed.
 End Congruence.
 
 Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABLE L W.
