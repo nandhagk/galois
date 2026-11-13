@@ -8524,6 +8524,110 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     eapply N.le_trans; [exact Hfold|apply Hsum].
   Qed.
 
+  Lemma invalid_snapshot_get_budget : forall base bits cost,
+    (1 + cost <= 1024 * bits)%N -> (1 <= bits)%N ->
+    (1027 <= 64 * base)%N -> (4 + cost <= 64 * base * bits)%N.
+  Proof.
+    intros base bits cost Hget Hbits Hcoef.
+    assert (Hsmall : (4 + cost <= 1027 * bits)%N) by lia.
+    assert (Hscale : (1027 * bits <= 64 * base * bits)%N).
+    { apply N.mul_le_mono_r; exact Hcoef. }
+    exact (N.le_trans _ _ _ Hsmall Hscale).
+  Qed.
+
+  Lemma invalid_snapshot_live_budget : forall base bits work get set fold,
+    (1 + get <= 1024 * bits)%N -> (1 + set <= 1024 * bits)%N ->
+    (fold <= 24 * base * work + 1)%N -> (1 <= bits)%N ->
+    (1025 <= base)%N ->
+    (16 + get + fold + set <= 64 * base * (bits + work))%N.
+  Proof.
+    intros base bits work get set fold Hget Hset Hfold Hbits Hbase.
+    assert (Hscale : (1024 * bits <= base * bits)%N).
+    { apply N.mul_le_mono_r; lia. }
+    assert (Hunit : (1 <= base * bits)%N) by nia.
+    replace (64 * base * (bits + work))%N with
+      (64 * (base * bits) + 64 * (base * work))%N by ring.
+    set (q := (base * bits)%N) in Hscale, Hunit |- *.
+    set (w := (base * work)%N) in Hfold |- *.
+    lia.
+  Qed.
+
+  Lemma T_invalid_visit_snapshot_le : forall st acc id,
+    (T_invalid_visit_snapshot st acc id <=
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (N.of_nat (Pos.size_nat id + 1) +
+          match PTrieCode.get id (invalid_snapshots acc) with
+          | Some ss => if snapshot_live ss then
+              N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat)
+                (snapshot_writes ss))
+            else 0%N
+          | None => 0%N
+          end))%N.
+  Proof.
+    intros st acc id.
+    pose proof (PTrieT.T_get_le (incremental_snapshot S.key) id
+      (invalid_snapshots acc)) as Hget.
+    unfold PTrieT.T_get in Hget.
+    destruct (PTrieCode.get id (invalid_snapshots acc)) as [ss|] eqn:Hsnapshot.
+    2: { unfold T_invalid_visit_snapshot, PTrieCode.T_get.
+         rewrite Hsnapshot; time_simpl; time_cbn.
+         set (bits := N.of_nat (Pos.size_nat id + 1)) in *.
+         assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+         unfold PTrieT.c_trie in Hget |- *.
+         replace (1 + (1 + (1 + T_trie_get id (invalid_snapshots acc)) + 0))%N
+           with (3 + T_trie_get id (invalid_snapshots acc))%N by ring.
+         rewrite N.add_0_r.
+         eapply N.le_trans with
+           (m := (4 + T_trie_get id (invalid_snapshots acc))%N); [lia|].
+         apply invalid_snapshot_get_budget; [exact Hget|exact Hbits|lia]. }
+    destruct (snapshot_live ss) eqn:Hlive.
+    2: { unfold T_invalid_visit_snapshot, PTrieCode.T_get.
+         rewrite Hsnapshot, Hlive; time_simpl; time_cbn.
+         set (bits := N.of_nat (Pos.size_nat id + 1)) in *.
+         assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+         unfold PTrieT.c_trie in Hget |- *.
+         eapply N.le_trans with
+           (m := (4 + T_trie_get id (invalid_snapshots acc))%N).
+         1: lia.
+         rewrite N.add_0_r.
+         apply invalid_snapshot_get_budget; [exact Hget|exact Hbits|lia]. }
+    pose proof (T_invalid_seed_fold_le st (snapshot_writes ss) acc) as Hfold.
+    pose proof (PTrieT.T_set_le (incremental_snapshot S.key) id
+      {| snapshot_owner := snapshot_owner ss;
+         snapshot_writes := snapshot_writes ss;
+         snapshot_live := false |}
+      (invalid_snapshots
+        (fold_left (invalid_seed_one st) (snapshot_writes ss) acc))) as Hset.
+    unfold PTrieT.T_set in Hset.
+    unfold T_invalid_visit_snapshot, PTrieCode.T_get, PTrieCode.T_set.
+    rewrite Hsnapshot, Hlive; time_simpl; time_cbn.
+    unfold PTrieT.c_trie in Hget, Hset, Hfold |- *.
+    set (bits := N.of_nat (Pos.size_nat id + 1)) in Hget, Hset |- *.
+    set (work := N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat)
+      (snapshot_writes ss))) in Hfold |- *.
+    set (base := (S.c_sys + S.c_loc + 1024 + 1)%N) in Hfold |- *.
+    set (tg := T_trie_get id (invalid_snapshots acc)) in Hget |- *.
+    set (tf := List.T_fold_left (invalid_seed_one st)
+      (fun current x => T_invalid_seed_one st current x)
+      (snapshot_writes ss) acc) in Hfold |- *.
+    set (next := fold_left (invalid_seed_one st) (snapshot_writes ss) acc)
+      in Hset |- *.
+    set (ts := PTrieCode.T_replace id
+      (Some {| snapshot_owner := snapshot_owner ss;
+               snapshot_writes := snapshot_writes ss;
+               snapshot_live := false |}) (invalid_snapshots next)) in Hset |- *.
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hbase : (1025 <= base)%N) by (unfold base; lia).
+    match goal with
+    | |- (?clock <= ?budget)%N =>
+      assert (Hclock : (clock <= 16 + tg + tf + ts)%N)
+        by (clear Hget Hset Hfold; lia);
+      eapply N.le_trans; [exact Hclock|]
+    end.
+    eapply invalid_snapshot_live_budget;
+      [exact Hget|exact Hset|exact Hfold|exact Hbits|exact Hbase].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
