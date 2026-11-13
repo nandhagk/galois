@@ -5228,6 +5228,36 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - exact Hbelow.
   Qed.
 
+  Lemma incremental_candidate_fw_scan : forall m i j d,
+    dbm_wf m -> tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    apply forallb_forall. intros k Hkey.
+    assert (Hsupport : In (K.encode k) (support seed)).
+    { apply (proj1 (direct_seed_support m i j d (K.encode k))).
+      unfold direct in Hkey. now apply keys_support. }
+    pose proof (incremental_candidate_zero_support m i j d Hwf Htight
+      Hscan k Hsupport) as Hzero.
+    change (entry next k k = Some 0%Z) in Hzero.
+    pose proof (incremental_candidate_below_fw m i j d Hwf Htight Hscan k k)
+      as Hbound.
+    change (RelationalPathBounds.below (entry next k k)
+      (entry (fw direct) k k)) in Hbound.
+    unfold nonnegative. destruct (entry (fw direct) k k) as [z|]
+      eqn:Hentry; [|reflexivity].
+    rewrite Hzero in Hbound.
+    apply Z.leb_le. exact Hbound.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
