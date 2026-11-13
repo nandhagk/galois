@@ -4597,6 +4597,62 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       now rewrite (nonnegative_self_extension base i d Hbase Hd a b) in Hlower_ab.
   Qed.
 
+  (** A negative self-edge fails the incremental diagonal check. *)
+  Lemma incr_close_self_negative : forall m i d, closed m -> (d < 0)%Z ->
+    incr_close i i d m = Unreached.
+  Proof.
+    intros m i d Hclosed Hd.
+    set (base := add_cons i i 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i i d base).
+    set (next := M.merge (increment_row i d (row_of (M.get i seed))) seed M.empty).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hdiag : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    assert (Hseed : entry seed i i = Some d).
+    { unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec i i); [|contradiction].
+      rewrite Hdiag. cbn [lower_bound]. f_equal. lia. }
+    assert (Hnext : entry next i i = Some (Z.min d (d + (d + d))%Z)).
+    { unfold next. rewrite entry_increment_extension.
+      unfold RelationalPathBounds.edge_extension. rewrite Hseed.
+      reflexivity. }
+    unfold incr_close. change
+      ((if andb (nonnegative i next) (nonnegative i next)
+        then Reached next else Unreached) = Unreached).
+    unfold nonnegative. rewrite Hnext.
+    assert (Hnegative : (0 <=? Z.min d (d + (d + d)))%Z = false).
+    { apply Z.leb_gt. lia. }
+    now rewrite Hnegative.
+  Qed.
+
+  (** A negative self-edge also fails full closure. *)
+  Lemma close_self_negative : forall m i d, dbm_wf m -> (d < 0)%Z ->
+    close (add_cons i i d m) = Unreached.
+  Proof.
+    intros m i d Hwf Hd.
+    set (direct := add_cons i i d m).
+    destruct (close direct) as [|final] eqn:Hfull; [reflexivity|].
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    destruct (close_path_invariant direct final Hwfdirect Hfull)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct i Hwfdirect). unfold direct. rewrite support_add_cons.
+      now left. }
+    assert (Hdirect : RelationalPathBounds.below (entry direct i i) (Some d)).
+    { unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (entry m i i) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i i) Hdirect)
+      as Hfinal. rewrite (Hzero i Hi) in Hfinal.
+    cbn [RelationalPathBounds.below] in Hfinal. lia.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
