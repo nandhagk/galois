@@ -3346,6 +3346,43 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       intros i j. symmetry. now apply entry_fw_absent.
   Qed.
 
+  (** A successful scan processes every supported pivot in the loop. *)
+  Lemma fw_pivots_success_path_invariant : forall ks initial m ps,
+    RelationalPathBounds.invariant (entry initial) (entry m) ps ->
+    (forall k, In k ks -> In (K.encode k) (support m)) ->
+    (forall k, In k ks -> nonnegative k (fw_pivots ks m) = true) ->
+    RelationalPathBounds.invariant (entry initial) (entry (fw_pivots ks m))
+      (rev ks ++ ps).
+  Proof.
+    induction ks as [|k ks IH]; intros initial m ps Hinv Hsupport Hscan.
+    - exact Hinv.
+    - cbn [fw_pivots].
+      assert (Hpresent : pivot_present k m = true).
+      { apply pivot_present_support, Hsupport. now left. }
+      destruct (nonnegative k (fw_round k m)) eqn:Hnext.
+      + assert (Hsuccess : forall d, entry (fw_round k m) k k = Some d -> (0 <= d)%Z).
+        { intros d Hd. unfold nonnegative in Hnext. rewrite Hd in Hnext.
+          now apply Z.leb_le. }
+        assert (Hround : RelationalPathBounds.invariant (entry initial)
+          (entry (fw_round k m)) (k :: ps)).
+        { eapply RelationalPathBounds.invariant_ext.
+          - intros i j. symmetry. now apply entry_fw_present.
+          - eapply RelationalPathBounds.invariant_successful_round;
+              [exact Hinv|].
+            intros d Hd. apply Hsuccess.
+            now rewrite (entry_fw_present k m Hpresent k k). }
+        replace (rev (k :: ks) ++ ps) with (rev ks ++ k :: ps)
+          by (cbn [rev]; rewrite <- app_assoc; reflexivity).
+        apply IH; [exact Hround| |].
+        * intros p Hp. rewrite support_round.
+          apply Hsupport. now right.
+        * intros p Hp. specialize (Hscan p (or_intror Hp)).
+          cbn [fw_pivots] in Hscan. now rewrite Hnext in Hscan.
+      + specialize (Hscan k (or_introl eq_refl)).
+        cbn [fw_pivots] in Hscan. rewrite Hnext in Hscan.
+        congruence.
+  Qed.
+
   (** Every recorded state precedes the first rejected pivot cycle. *)
   Lemma fw_trace_path_invariant : forall ks initial m ps k a,
     dbm_wf m -> RelationalPathBounds.invariant (entry initial) (entry m) ps ->
