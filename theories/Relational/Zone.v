@@ -236,49 +236,621 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
     forall i j d, entry m i j = Some d -> (vz v j - vz v i <= d)%Z.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached m => models m v end.
+
+  (** An absent row supplies no finite bound. *)
+  Lemma get_row_of : forall r k,
+    M.get k (row_of r) = match r with Some row => M.get k row | None => None end.
+  Proof.
+    intros [row|] k; [reflexivity|apply M.get_empty].
+  Qed.
+
+  (** Insertion changes only the selected entry, taking its minimum with the new bound. *)
+  Lemma entry_add_cons : forall i j d m a b,
+    entry (add_cons i j d m) a b =
+    if K.eqb a i then
+      if K.eqb b j then Some (lower_bound d (entry m i j)) else entry m a b
+    else entry m a b.
+  Proof.
+    intros i j d m a b. unfold entry, add_cons.
+    destruct (K.eqb_spec a i) as [Ha | Ha].
+    - subst a. rewrite M.get_set_same.
+      destruct (K.eqb_spec b j) as [Hb | Hb].
+      + subst b. rewrite M.get_set_same, get_row_of. reflexivity.
+      + rewrite M.get_set_other by exact Hb. apply get_row_of.
+    - rewrite M.get_set_other by exact Ha. reflexivity.
+  Qed.
+
+  (** A minimum retains every value below both its finite operands. *)
+  Lemma lower_bound_holds : forall value d old,
+    (value <= d)%Z -> (forall z, old = Some z -> (value <= z)%Z) ->
+    (value <= lower_bound d old)%Z.
+  Proof.
+    intros value d [z|] Hnew Hold; cbn [lower_bound].
+    - apply Z.min_glb; [exact Hnew|apply Hold; reflexivity].
+    - exact Hnew.
+  Qed.
+
+  (** Adding a satisfied constraint preserves the numeric store. *)
+  Lemma models_add_cons : forall i j d m v,
+    models m v -> (vz v j - vz v i <= d)%Z -> models (add_cons i j d m) v.
+  Proof.
+    intros i j d m v Hmodel Hnew a b z Hentry.
+    rewrite entry_add_cons in Hentry.
+    destruct (K.eqb_spec a i) as [Ha | Ha].
+    - subst a. destruct (K.eqb_spec b j) as [Hb | Hb].
+      + subst b. inversion Hentry; subst z.
+        apply lower_bound_holds; [exact Hnew|]. intros old Hold. now apply Hmodel.
+      + now apply Hmodel.
+    - now apply Hmodel.
+  Qed.
+
+  (** A row relaxation selects the old bound or the two-edge path through its pivot. *)
+  Lemma entry_relax_round : forall k m i j,
+    entry (relax_round k m) i j =
+    match entry m i k with
+    | Some a => via_bound a (entry m i j) (entry m k j)
+    | None => entry m i j
+    end.
+  Proof.
+    intros k m i j. unfold relax_round, entry.
+    rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+    destruct (M.get i m) as [row|]; cbn [round_row].
+    - destruct (M.get k row) as [a|]; [|reflexivity].
+      rewrite M.get_merge by reflexivity. rewrite get_row_of. reflexivity.
+    - reflexivity.
+  Qed.
+
+  (** Relaxation retains values below the old bound and the proposed path bound. *)
+  Lemma via_bound_holds : forall value a old next,
+    (forall d, old = Some d -> (value <= d)%Z) ->
+    (forall z, next = Some z -> (value <= a + z)%Z) ->
+    forall d, via_bound a old next = Some d -> (value <= d)%Z.
+  Proof.
+    intros value a old [z|] Hold Hnext d Hentry; cbn [via_bound] in Hentry.
+    - inversion Hentry; subst d. apply lower_bound_holds.
+      + apply Hnext. reflexivity.
+      + exact Hold.
+    - now apply Hold.
+  Qed.
+
+  (** Every path added by one sparse round follows from two existing edges. *)
+  Lemma relax_round_models : forall k m v, models m v -> models (relax_round k m) v.
+  Proof.
+    intros k m v Hmodel i j d Hentry. rewrite entry_relax_round in Hentry.
+    destruct (entry m i k) as [a|] eqn:Hik.
+    - eapply via_bound_holds; [| |exact Hentry].
+      + intros old Hold. now apply Hmodel.
+      + intros z Hkj. pose proof (Hmodel i k a Hik).
+        pose proof (Hmodel k j z Hkj). lia.
+    - now apply Hmodel.
+  Qed.
+
+  (** Adding a zero walk and relaxing through it preserves every model. *)
+  Lemma fw_round_models : forall k m v, models m v -> models (fw_round k m) v.
+  Proof.
+    intros k m v Hmodel. unfold fw_round. apply relax_round_models.
+    destruct (pivot_present k m); [|exact Hmodel].
+    apply models_add_cons; [exact Hmodel|lia].
+  Qed.
+
+  (** A matrix with a model cannot have a negative diagonal. *)
+  Lemma nonnegative_models : forall k m v, models m v -> nonnegative k m = true.
+  Proof.
+    intros k m v Hmodel. unfold nonnegative.
+    destruct (entry m k k) as [d|] eqn:Hentry; [|reflexivity].
+    apply Z.leb_le. specialize (Hmodel k k d Hentry). lia.
+  Qed.
+
+  (** Every completed prefix of the pivot loop preserves the original model. *)
+  Lemma close_pivots_models : forall ks m v,
+    models m v -> ngamma (close_pivots ks m) v.
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intros m v Hmodel; cbn [close_pivots].
+    - exact Hmodel.
+    - pose proof (fw_round_models k m v Hmodel) as Hnext.
+      rewrite (nonnegative_models k (fw_round k m) v Hnext). now apply IH.
+  Qed.
+
+  (** The full closure loop and its final diagonal check preserve every model. *)
+  Lemma close_models : forall m v, models m v -> ngamma (close m) v.
+  Proof.
+    intros m v Hmodel. unfold close.
+    pose proof (close_pivots_models (pivot_keys m) m v Hmodel) as Hnext.
+    destruct (close_pivots (pivot_keys m) m) as [|next]; [exact Hnext|].
+    assert (Hdiag : forallb (fun k => nonnegative k next) (pivot_keys m) = true).
+    { apply forallb_forall. intros k Hkey. now apply (nonnegative_models k next v). }
+    rewrite Hdiag. exact Hnext.
+  Qed.
+
+  (** An incremental update combines an incoming prefix, the new edge and an outgoing suffix. *)
+  Lemma entry_increment : forall i j d m a b,
+    entry (M.merge (increment_row i d (row_of (M.get j m))) m M.empty) a b =
+    match entry m a i with
+    | Some prefix => via_bound (prefix + d)%Z (entry m a b) (entry m j b)
+    | None => entry m a b
+    end.
+  Proof.
+    intros i j d m a b. unfold entry.
+    rewrite M.get_merge by reflexivity. rewrite M.get_empty.
+    destruct (M.get a m) as [row|]; cbn [increment_row].
+    - destruct (M.get i row) as [prefix|]; [|reflexivity].
+      rewrite M.get_merge by reflexivity. rewrite get_row_of. reflexivity.
+    - reflexivity.
+  Qed.
+
+  (** Every incremental path follows from the matrix and the added constraint. *)
+  Lemma increment_models : forall i j d m v,
+    models m v -> (vz v j - vz v i <= d)%Z ->
+    models (M.merge (increment_row i d (row_of (M.get j m))) m M.empty) v.
+  Proof.
+    intros i j d m v Hmodel Hnew a b bound Hentry. rewrite entry_increment in Hentry.
+    destruct (entry m a i) as [prefix|] eqn:Hai.
+    - eapply via_bound_holds; [| |exact Hentry].
+      + intros old Hold. now apply Hmodel.
+      + intros z Hjb. pose proof (Hmodel a i prefix Hai).
+        pose proof (Hmodel j b z Hjb). lia.
+    - now apply Hmodel.
+  Qed.
+
+  (** Incremental closure and its diagonal checks preserve each model of the new constraint. *)
+  Lemma incr_close_models : forall i j d m v,
+    models m v -> (vz v j - vz v i <= d)%Z -> ngamma (incr_close i j d m) v.
+  Proof.
+    intros i j d m v Hmodel Hnew.
+    assert (Hseed : models (add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))) v).
+    { apply models_add_cons; [|exact Hnew].
+      apply models_add_cons; [|lia]. apply models_add_cons; [exact Hmodel|lia]. }
+    pose proof (increment_models i j d _ v Hseed Hnew) as Hnext.
+    unfold incr_close.
+    rewrite (nonnegative_models i _ v Hnext), (nonnegative_models j _ v Hnext).
+    exact Hnext.
+  Qed.
+
+  (** Forgetting removes exactly the row and column of the chosen variable. *)
+  Lemma entry_havoc : forall x m i j,
+    entry (M.merge (forget_row x) (M.remove (Some x) m) M.empty) i j =
+    if K.eqb i (Some x) then None else
+      if K.eqb j (Some x) then None else entry m i j.
+  Proof.
+    intros x m i j. unfold entry. rewrite M.get_merge by reflexivity.
+    rewrite M.get_empty. destruct (K.eqb_spec i (Some x)) as [Hi | Hi].
+    - subst i. rewrite M.get_remove_same. reflexivity.
+    - rewrite M.get_remove_other by exact Hi.
+      destruct (M.get i m) as [row|]; cbn [forget_row].
+      + destruct (K.eqb_spec j (Some x)) as [Hj | Hj].
+        * subst j. apply M.get_remove_same.
+        * apply M.get_remove_other. exact Hj.
+      + destruct (K.eqb j (Some x)); reflexivity.
+  Qed.
+
+  (** A variable update leaves every other zone coordinate unchanged. *)
+  Lemma vz_update_other : forall x st c i,
+    i <> Some x ->
+    vz (fun y => N.num (upd X.eqb st x c y)) i = vz (fun y => N.num (st y)) i.
+  Proof.
+    intros x st c [y|] Hne; [|reflexivity].
+    change (N.num (if X.eqb y x then c else st y) = N.num (st y)).
+    destruct (X.eqb_spec y x) as [Heq | Heq]; [subst y; contradiction Hne; reflexivity|].
+    reflexivity.
+  Qed.
+
+  (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
+  Definition raw_entry (m : dbm) (p q : positive) : option Z :=
+    M.find q (row_of (M.find p m)).
+
+  Lemma row_leb_spec : forall a b,
+    row_leb a b = true <->
+    forall q, bound_leb (M.find q (row_of a)) (M.find q (row_of b)) = true.
+  Proof.
+    intros a b. unfold row_leb. apply M.forall2b_spec. reflexivity.
+  Qed.
+
+  Lemma row_leb_empty : row_leb None None = true.
+  Proof.
+    apply row_leb_spec. intros q. cbn [row_of]. rewrite M.find_empty. reflexivity.
+  Qed.
+
+  (** Entrywise comparison visits actual codes, including codes with inconsistent labels. *)
+  Lemma leb_entries : forall ma mb,
+    leb (Reached ma) (Reached mb) = true <->
+    forall p q, bound_leb (raw_entry ma p q) (raw_entry mb p q) = true.
+  Proof.
+    intros ma mb. cbn [leb].
+    rewrite (M.forall2b_spec _ _ row_leb ma mb row_leb_empty).
+    split; intros H p; apply row_leb_spec; apply H.
+  Qed.
+
+  Lemma raw_entry_empty : forall p q, raw_entry M.empty p q = None.
+  Proof.
+    intros p q. unfold raw_entry. rewrite M.find_empty. apply M.find_empty.
+  Qed.
+
+  Lemma raw_entry_get : forall m i j,
+    raw_entry m (K.encode i) (K.encode j) = entry m i j.
+  Proof.
+    intros m i j. unfold raw_entry, entry.
+    rewrite <- (M.get_find _ i m). destruct (M.get i m) as [row|]; cbn [row_of].
+    - symmetry. apply M.get_find.
+    - apply M.find_empty.
+  Qed.
+
+  Lemma bound_leb_refl : forall a, bound_leb a a = true.
+  Proof.
+    intros [z|]; cbn [bound_leb]; [apply Z.leb_refl|reflexivity].
+  Qed.
+
+  Lemma bound_leb_trans : forall a b c,
+    bound_leb a b = true -> bound_leb b c = true -> bound_leb a c = true.
+  Proof.
+    intros [a|] [b|] [c|]; cbn [bound_leb]; try congruence.
+    repeat rewrite Z.leb_le. lia.
+  Qed.
+
+  Lemma raw_entry_join : forall ma mb p q,
+    raw_entry (M.merge row_join ma mb) p q =
+    bound_join (raw_entry ma p q) (raw_entry mb p q).
+  Proof.
+    intros ma mb p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p ma) as [ra|], (M.find p mb) as [rb|]; cbn [row_join row_of].
+    - apply M.find_merge. reflexivity.
+    - rewrite M.find_empty. destruct (M.find q ra); reflexivity.
+    - rewrite M.find_empty. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+  Qed.
+
+  Lemma raw_entry_meet : forall ma mb p q,
+    raw_entry (M.merge row_meet ma mb) p q =
+    bound_meet (raw_entry ma p q) (raw_entry mb p q).
+  Proof.
+    intros ma mb p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p ma) as [ra|], (M.find p mb) as [rb|]; cbn [row_meet row_of].
+    - apply M.find_merge. reflexivity.
+    - rewrite M.find_empty. destruct (M.find q ra); reflexivity.
+    - rewrite M.find_empty. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+  Qed.
+
+  Lemma raw_entry_widen : forall ma mb p q,
+    raw_entry (M.merge row_widen ma mb) p q =
+    bound_widen (raw_entry ma p q) (raw_entry mb p q).
+  Proof.
+    intros ma mb p q. unfold raw_entry.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p ma) as [ra|], (M.find p mb) as [rb|]; cbn [row_widen row_of].
+    - apply M.find_merge. reflexivity.
+    - rewrite M.find_merge by reflexivity. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+    - rewrite M.find_empty. reflexivity.
+  Qed.
+
+  Lemma bound_join_ub_l : forall a b, bound_leb a (bound_join a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_join]; try reflexivity.
+    apply Z.leb_le, Z.le_max_l.
+  Qed.
+
+  Lemma bound_join_ub_r : forall a b, bound_leb b (bound_join a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_join]; try reflexivity.
+    apply Z.leb_le, Z.le_max_r.
+  Qed.
+
+  Lemma bound_meet_lb_l : forall a b, bound_leb (bound_meet a b) a = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_meet]; try reflexivity.
+    - apply Z.leb_le, Z.le_min_l.
+    - apply Z.leb_refl.
+  Qed.
+
+  Lemma bound_meet_greatest : forall a b c,
+    bound_leb c a = true -> bound_leb c b = true ->
+    bound_leb c (bound_meet a b) = true.
+  Proof.
+    intros [a|] [b|] [c|]; cbn [bound_leb bound_meet]; try congruence.
+    repeat rewrite Z.leb_le. intros Ha Hb. apply Z.min_glb; assumption.
+  Qed.
+
+  Lemma bound_widen_ub_l : forall a b, bound_leb a (bound_widen a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_widen bound_leb]; try reflexivity.
+    destruct (b <=? a)%Z; cbn [bound_leb]; [apply Z.leb_refl|reflexivity].
+  Qed.
+
+  Lemma bound_widen_ub_r : forall a b, bound_leb b (bound_widen a b) = true.
+  Proof.
+    intros [a|] [b|]; cbn [bound_widen bound_leb]; try reflexivity.
+    destruct (b <=? a)%Z eqn:Hle; cbn [bound_leb]; [exact Hle|reflexivity].
+  Qed.
+
+  (** Every sparse matrix compares below itself, even when labels are inconsistent. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|m]; [reflexivity|]. apply leb_entries. intros p q. apply bound_leb_refl.
+  Qed.
+
+  (** Entrywise comparison is transitive. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] [|mc]; cbn [leb]; try congruence.
+    change (leb (Reached ma) (Reached mb) = true ->
+      leb (Reached mb) (Reached mc) = true -> leb (Reached ma) (Reached mc) = true).
+    rewrite !leb_entries. intros Hab Hbc p q. eapply bound_leb_trans; [apply Hab|apply Hbc].
+  Qed.
+
+  (** The unreachable state is below every state. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a. reflexivity.
+  Qed.
+
+  (** The bottom predicate recognizes the unreachable constructor. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Every state recognized as bottom is least. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] b Hbot; [reflexivity|discriminate Hbot].
+  Qed.
+
+  (** Joining weakens every bound supplied by the left state. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros p q. rewrite raw_entry_join. apply bound_join_ub_l.
+  Qed.
+
+  (** Joining weakens every bound supplied by the right state. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros p q. rewrite raw_entry_join. apply bound_join_ub_r.
+  Qed.
+
+  (** The empty matrix imposes no upper bounds. *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|m]; [reflexivity|]. apply leb_entries. intros p q.
+    rewrite raw_entry_empty. destruct (raw_entry m p q); reflexivity.
+  Qed.
+
+  (** Widening keeps or discards each old finite bound. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a) eqn:Hle; [apply leb_refl|].
+    destruct a as [|ma], b as [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros i j. rewrite raw_entry_widen. apply bound_widen_ub_l.
+  Qed.
+
+  (** A retained old bound is also an upper bound for the candidate. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a) eqn:Hle; [exact Hle|].
+    destruct a as [|ma], b as [|mb]; try apply leb_refl; try reflexivity.
+    apply leb_entries. intros i j. rewrite raw_entry_widen. apply bound_widen_ub_r.
+  Qed.
+
+  (** A stable candidate returns the exact old representation. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hle. unfold widen. now rewrite Hle.
+  Qed.
+  (** A row contributes the distinct pairs formed from its actual stored codes. *)
+  Definition row_entry_codes (m : dbm) (p : positive) : list (positive * positive) :=
+    match M.find p m with
+    | Some row => map (pair p) (M.codes row)
+    | None => nil
+    end.
+
+  (** Finite-entry counting ignores stored labels at both map levels. *)
+  Definition entry_codes (m : dbm) : list (positive * positive) :=
+    flat_map (row_entry_codes m) (M.codes m).
+
+  (** The first coordinate of every row entry is its outer stored code. *)
+  Lemma row_entry_first : forall m p pq, In pq (row_entry_codes m p) -> fst pq = p.
+  Proof.
+    intros m p pq Hin. unfold row_entry_codes in Hin.
+    destruct (M.find p m) as [row|]; [|contradiction].
+    apply in_map_iff in Hin. destruct Hin as [q [Heq Hin]]. now subst pq.
+  Qed.
+
+  (** Pairing distinct column codes with one row code preserves distinctness. *)
+  Lemma paired_codes_nodup : forall (p : positive) (qs : list positive),
+    NoDup qs -> NoDup (map (pair p) qs).
+  Proof.
+    intros p qs Hcodes. induction Hcodes as [|q qs Hfresh Hcodes IH].
+    - constructor.
+    - cbn. constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin.
+      destruct Hin as [r [Heq Hr]]. injection Heq as Heq. subst r. exact (Hfresh Hr).
+  Qed.
+
+  (** Distinct outer codes yield disjoint lists of finite-entry coordinates. *)
+  Lemma rows_entry_nodup : forall m ps, NoDup ps ->
+    NoDup (flat_map (row_entry_codes m) ps).
+  Proof.
+    intros m ps Hcodes. induction Hcodes as [|p ps Hfresh Hcodes IH].
+    - constructor.
+    - cbn [flat_map]. apply NoDup_app; [|exact IH|].
+      + unfold row_entry_codes. destruct (M.find p m) as [row|].
+        * apply paired_codes_nodup, M.codes_nodup.
+        * constructor.
+      + intros pq Hfirst Htail. apply in_flat_map in Htail.
+        destruct Htail as [q [Hq Hentry]].
+        pose proof (row_entry_first m p pq Hfirst) as Hp.
+        pose proof (row_entry_first m q pq Hentry) as Hsame.
+        apply Hfresh. rewrite <- Hp, Hsame. exact Hq.
+  Qed.
+
+  (** No finite raw-code coordinate is counted twice. *)
+  Lemma entry_codes_nodup : forall m, NoDup (entry_codes m).
+  Proof.
+    intro m. unfold entry_codes. apply rows_entry_nodup, M.codes_nodup.
+  Qed.
+
+  (** A coordinate occurs exactly when its raw entry is finite. *)
+  Lemma entry_codes_spec : forall m p q,
+    In (p, q) (entry_codes m) <-> raw_entry m p q <> None.
+  Proof.
+    intros m p q. split.
+    - intro Hin. unfold entry_codes in Hin. apply in_flat_map in Hin.
+      destruct Hin as [i [Hi Hin]]. unfold row_entry_codes in Hin.
+      destruct (M.find i m) as [row|] eqn:Hrow; [|contradiction].
+      apply in_map_iff in Hin. destruct Hin as [j [Heq Hj]].
+      injection Heq as Hip Hjq. subst i j.
+      unfold raw_entry. rewrite Hrow. cbn [row_of]. now apply M.codes_spec.
+    - intro Hentry. unfold raw_entry in Hentry.
+      destruct (M.find p m) as [row|] eqn:Hrow; cbn [row_of] in Hentry.
+      + unfold entry_codes. apply in_flat_map. exists p. split.
+        * apply M.codes_spec. rewrite Hrow. discriminate.
+        * unfold row_entry_codes. rewrite Hrow. apply in_map_iff. exists q.
+          split; [reflexivity|now apply M.codes_spec].
+      + rewrite M.find_empty in Hentry. contradiction.
+  Qed.
+
+  (** The flattened coordinate count is the released widening rank. *)
+  Lemma entry_codes_rank : forall p m, length (entry_codes m) = wrank p (Reached m).
+  Proof.
+    intros p m. unfold entry_codes, wrank.
+    induction (M.codes m) as [|q qs IH].
+    - reflexivity.
+    - cbn [flat_map map fold_right]. rewrite length_app, IH.
+      unfold row_entry_codes. destruct (M.find q m); cbn; rewrite ?length_map; reflexivity.
+  Qed.
+
+  (** Every finite entry retained by widening was already finite in the old matrix. *)
+  Lemma widen_codes_incl : forall ma mb,
+    incl (entry_codes (M.merge row_widen ma mb)) (entry_codes ma).
+  Proof.
+    intros ma mb [p q] Hin. apply entry_codes_spec in Hin. apply entry_codes_spec.
+    rewrite raw_entry_widen in Hin.
+    destruct (raw_entry ma p q) as [d|]; [discriminate|].
+    cbn [bound_widen] in Hin. contradiction.
+  Qed.
+
+  (** A failed finite Boolean scan provides a member on which its predicate fails. *)
+  Lemma forallb_failure : forall (A : Type) (test : A -> bool) xs,
+    forallb test xs = false -> exists x, In x xs /\ test x = false.
+  Proof.
+    intros A test xs. induction xs as [|x xs IH]; intro Hfalse.
+    - discriminate Hfalse.
+    - cbn in Hfalse. destruct (test x) eqn:Hx.
+      + destruct (IH Hfalse) as [y [Hy Htest]]. exists y. split; [now right|exact Htest].
+      + exists x. split; [now left|exact Hx].
+  Qed.
+
+  (** Failure of entrywise inclusion identifies an old finite bound that widening discards. *)
+  Lemma leb_failure_entry : forall ma mb,
+    leb (Reached mb) (Reached ma) = false ->
+    exists p q, raw_entry ma p q <> None /\
+      bound_leb (raw_entry mb p q) (raw_entry ma p q) = false.
+  Proof.
+    intros ma mb Hfalse.
+    destruct (forallb (fun pq =>
+      bound_leb (raw_entry mb (fst pq) (snd pq)) (raw_entry ma (fst pq) (snd pq)))
+      (entry_codes ma)) eqn:Hscan.
+    - assert (Htrue : leb (Reached mb) (Reached ma) = true).
+      { apply leb_entries. intros p q.
+        destruct (raw_entry ma p q) as [d|] eqn:Hentry.
+        - rewrite forallb_forall in Hscan.
+          assert (Hin : In (p, q) (entry_codes ma)).
+          { apply entry_codes_spec. rewrite Hentry. discriminate. }
+          specialize (Hscan (p, q) Hin). cbn in Hscan. now rewrite Hentry in Hscan.
+        - destruct (raw_entry mb p q); reflexivity. }
+      congruence.
+    - apply forallb_failure in Hscan. destruct Hscan as [[p q] [Hin Hfailed]].
+      exists p, q. split; [now apply entry_codes_spec|exact Hfailed].
+  Qed.
+
+  (** An unstable finite old bound is dropped by the widening callback. *)
+  Lemma bound_widen_drops : forall a b,
+    bound_leb b a = false -> bound_widen a b = None.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_widen]; try congruence.
+    intro Hle. now rewrite Hle.
+  Qed.
+
+  (** Every unstable widening removes at least one distinct stored coordinate. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|ma] [|mb] Hbot Hunstable; try discriminate.
+    unfold widen. rewrite Hunstable.
+    change (wrank p (Reached (M.merge row_widen ma mb)) < wrank p (Reached ma)).
+    destruct (leb_failure_entry ma mb Hunstable) as [i [j [Hfinite Hfailed]]].
+    assert (Hmissing : ~ In (i, j) (entry_codes (M.merge row_widen ma mb))).
+    { intro Hin. apply entry_codes_spec in Hin. rewrite raw_entry_widen in Hin.
+      rewrite (bound_widen_drops _ _ Hfailed) in Hin. contradiction. }
+    assert (Hlength : length ((i, j) :: entry_codes (M.merge row_widen ma mb)) <=
+      length (entry_codes ma)).
+    { apply NoDup_incl_length.
+      - constructor; [exact Hmissing|apply entry_codes_nodup].
+      - intros pq [Hpq | Hin].
+        + subst pq. now apply entry_codes_spec.
+        + exact (widen_codes_incl ma mb pq Hin). }
+    change (S (length (entry_codes (M.merge row_widen ma mb))) <=
+      length (entry_codes ma)) in Hlength.
+    rewrite (entry_codes_rank p (M.merge row_widen ma mb)) in Hlength.
+    rewrite (entry_codes_rank p ma) in Hlength. exact Hlength.
+  Qed.
+
+  (** Stable widening preserves rank and unstable widening strictly lowers it. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot. destruct (leb b a) eqn:Hstable.
+    - rewrite (widen_stable p a b Hstable). reflexivity.
+    - apply Nat.lt_le_incl. now apply wrank_widen.
+  Qed.
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] Hle; try (split; reflexivity); try discriminate Hle.
+    pose proof (proj1 (leb_entries mb ma) Hle) as Hentries.
+    split; apply leb_entries; intros p q; cbn [narrow meet].
+    - rewrite raw_entry_meet. apply bound_meet_greatest; [apply Hentries|apply bound_leb_refl].
+    - rewrite raw_entry_meet. apply bound_meet_lb_l.
+  Qed.
+
+  (** Every bound accepted by comparison follows from a source bound. *)
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] v Hle Hmodel; try contradiction; try discriminate Hle.
+    pose proof (proj1 (leb_entries ma mb) Hle) as Hentries. intros i j d Hentry.
+    specialize (Hentries (K.encode i) (K.encode j)).
+    rewrite !raw_entry_get, Hentry in Hentries.
+    destruct (entry ma i j) as [c|] eqn:Hsource; [|discriminate Hentries].
+    cbn [bound_leb] in Hentries. apply Z.leb_le in Hentries.
+    specialize (Hmodel i j c Hsource). lia.
+  Qed.
+
+  (** The unreachable constructor has no numeric models. *)
   Lemma ngamma_bot : forall v, ~ ngamma bot v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hmodel. exact Hmodel.
+  Qed.
+
+  (** Every numeric store satisfies an empty matrix. *)
   Lemma ngamma_top : forall v, ngamma top v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v i j d Hentry. unfold entry in Hentry.
+    rewrite M.get_empty in Hentry. discriminate Hentry.
+  Qed.
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
   Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|m] st c Hmodel; [exact Hmodel|].
+    intros i j d Hentry. rewrite entry_havoc in Hentry.
+    destruct (K.eqb_spec i (Some x)) as [Hi | Hi]; [discriminate Hentry|].
+    destruct (K.eqb_spec j (Some x)) as [Hj | Hj]; [discriminate Hentry|].
+    rewrite !vz_update_other by assumption. now apply Hmodel.
+  Qed.
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
@@ -289,11 +861,21 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
   Proof. Admitted. (* STUB *)
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Reached matrices use the difference semantics. *)
   Lemma ngamma_reached : forall m v, ngamma (Reached m) v <-> models m v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Unreachable matrices have no numeric models. *)
   Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hmodel. exact Hmodel.
+  Qed.
 End Zone.
 
 Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
@@ -636,7 +1218,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     end.
   Proof. Admitted. (* STUB *)
   Lemma fw_round_implied : forall k m v, models m v -> models (fw_round k m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact fw_round_models.
+  Qed.
   Lemma wf_fw_round : forall k m, dbm_wf m -> dbm_wf (fw_round k m).
   Proof. Admitted. (* STUB *)
   Lemma wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
@@ -645,12 +1229,19 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     match incr_close i j d m with Unreached => True | Reached m' => dbm_wf m' end.
   Proof. Admitted. (* STUB *)
   Lemma close_sound : forall m v, models m v -> ngamma (close m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact close_models.
+  Qed.
   Lemma close_bot : forall m, close m = Unreached -> forall v, ~ models m v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m Hclose v Hmodel. pose proof (close_sound m v Hmodel) as Hnext.
+    rewrite Hclose in Hnext. exact Hnext.
+  Qed.
   Lemma incr_close_sound : forall i j d m v,
     models m v -> (vz v j - vz v i <= d)%Z -> ngamma (incr_close i j d m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact incr_close_models.
+  Qed.
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
     (forall ks d, chain_weight m i ks j = Some d ->
