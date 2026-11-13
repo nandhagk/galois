@@ -783,4 +783,63 @@ Module UnionFindCodeFacts.
     rewrite (add_present x u Hx), (add_present y u Hy). reflexivity.
   Qed.
 
+  (** A well-formed forest's parent edges stay within its members. *)
+  Lemma parent_member : forall u x, UnionFind.wf u -> UnionFind.mem u x ->
+    UnionFind.mem u (UnionFindCode.parent_of x u).
+  Proof.
+    intros u x [_ [Hparents _]] Hmember.
+    unfold UnionFindCode.parent_of.
+    destruct (PTrieCode.get x (parents u)) as [parent|] eqn:Hparent.
+    - exact (Hparents x parent Hparent).
+    - exact Hmember.
+  Qed.
+
+  (** Following any number of parent edges keeps a member inside the forest. *)
+  Lemma repr_member : forall u x, UnionFind.wf u -> UnionFind.mem u x ->
+    UnionFind.mem u (UnionFind.repr u x).
+  Proof.
+    intros u x Hwf Hmember. unfold UnionFind.repr.
+    induction (UnionFind.card u) as [|steps IH]; cbn [Nat.iter].
+    - exact Hmember.
+    - apply parent_member; assumption.
+  Qed.
+
+  (** An absent identifier has no parent edge and therefore represents itself. *)
+  Lemma repr_absent : forall u x, ~ UnionFind.mem u x -> UnionFind.repr u x = x.
+  Proof.
+    intros u x Habsent.
+    assert (Hparent : UnionFindCode.parent_of x u = x).
+    { unfold UnionFindCode.parent_of.
+      destruct (PTrieCode.get x (parents u)) as [parent|] eqn:Hlookup; [|reflexivity].
+      exfalso. apply Habsent. unfold UnionFind.mem. rewrite Hlookup. discriminate. }
+    unfold UnionFind.repr.
+    induction (UnionFind.card u) as [|steps IH]; cbn [Nat.iter]; [reflexivity|].
+    exact (eq_trans (f_equal (fun y => UnionFindCode.parent_of y u) IH) Hparent).
+  Qed.
+
+  (** No other identifier has the representative of an absent identifier. *)
+  Lemma repr_eq_absent : forall u x fresh, UnionFind.wf u -> ~ UnionFind.mem u fresh ->
+    (UnionFind.repr u x = UnionFind.repr u fresh <-> x = fresh).
+  Proof.
+    intros u x fresh Hwf Hfresh. split; [|intros ->; reflexivity].
+    rewrite (repr_absent u fresh Hfresh). intro Heq.
+    destruct (PTrieCode.get x (parents u)) as [parent|] eqn:Hlookup.
+    - assert (Hmember : UnionFind.mem u x).
+      { unfold UnionFind.mem. rewrite Hlookup. discriminate. }
+      pose proof (repr_member u x Hwf Hmember) as Hroot.
+      rewrite Heq in Hroot. contradiction.
+    - assert (Habsent : ~ UnionFind.mem u x).
+      { unfold UnionFind.mem. rewrite Hlookup. tauto. }
+      rewrite (repr_absent u x Habsent) in Heq. exact Heq.
+  Qed.
+
+  (** An allocation interval also bounds the representative of every allocated identifier. *)
+  Lemma repr_allocated : forall u bound, UnionFind.wf u ->
+    (forall i, UnionFind.mem u i <-> (Npos i <= bound)%N) ->
+    forall i, (Npos i <= bound)%N -> (Npos (UnionFind.repr u i) <= bound)%N.
+  Proof.
+    intros u bound Hwf Hmembers i Hi. apply Hmembers.
+    apply repr_member; [exact Hwf|now apply Hmembers].
+  Qed.
+
 End UnionFindCodeFacts.
