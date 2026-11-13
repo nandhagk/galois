@@ -182,9 +182,9 @@ TimeFun tnum_mul_acc_done.
 
 Definition tnum_scalar_value (o : op) (w : width) (k x : Z) : Z :=
   match o with
-  | bvshl => tnum_shl_value w (Z.min k (Zpos w)) x
-  | bvlshr => tnum_lshr_value w (Z.min k (Zpos w)) x
-  | bvashr => tnum_ashr_value w (Z.min k (Zpos w)) x
+  | bvshl => tnum_shl_value w (Z.min (Z.max 0 k) (Zpos w)) x
+  | bvlshr => tnum_lshr_value w (Z.min (Z.max 0 k) (Zpos w)) x
+  | bvashr => tnum_ashr_value w (Z.min (Z.max 0 k) (Zpos w)) x
   | bvrotl => tnum_rotl_value w (k mod Zpos w) x
   | bvrotr => tnum_rotl_value w ((-k) mod Zpos w) x
   | _ => tnum_wrap w x

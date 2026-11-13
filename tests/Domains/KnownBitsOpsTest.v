@@ -17,6 +17,13 @@ Module Masks := KnownBitsCode WordLanguageCode Stages.
 Module Ops := KnownBitsOpsCode WordLanguageCode Stages Masks.
 Module Table := KnownBitsTableCode WordLanguageCode Stages Masks.
 
+(** Before clamping, these shifts returned 1, 2 and 2 respectively. *)
+Example negative_scalar_shift_amount :
+  tnum_scalar_value bvshl 8%positive (-1) 2 = 2 /\
+  tnum_scalar_value bvlshr 8%positive (-1) 1 = 1 /\
+  tnum_scalar_value bvashr 8%positive (-1) 1 = 1.
+Proof. vm_compute. auto. Qed.
+
 Example variable_logical_shift :
   Ops.tnum_forward_raw bvshl [(8%positive, tnum_const 8%positive 1); (8%positive, Tnum 252 0)]
     8%positive = Tnum 240 0.
