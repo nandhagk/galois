@@ -1507,9 +1507,77 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db i Hwf. apply UnionFind.repr_idem. exact (wf_forest db Hwf).
   Qed.
 
+  (** Every initial slot query reads an empty index. *)
+  Lemma index_init_empty : forall ds sl s new, index s new (init ds sl) = I.empty.
+  Proof.
+    intros ds sl s new. unfold index. destruct new;
+      cbn [init db_runtime runtime_slot_bound runtime_all_indexes runtime_new_indexes];
+      destruct (N.compare (N.of_nat (length sl)) s); try reflexivity;
+      now rewrite PTrie.get_empty.
+  Qed.
+
+  (** Initialization has no stored row of any kind. *)
+  Lemma init_rows_empty : forall ds sl f k o, ~ row (view (init ds sl)) f k o.
+  Proof.
+    intros ds sl f k o Hrow.
+    change (row_get f k (init ds sl) = Some o) in Hrow.
+    unfold row_get in Hrow. cbn [init db_runtime runtime_rows] in Hrow.
+    rewrite PTrie.get_empty in Hrow. discriminate.
+  Qed.
+
+  (** Every declared function fits the maximum name recorded by initialization. *)
+  Lemma init_kind_bound : forall ds sl f output,
+    kind (view (init ds sl)) f = Some output ->
+    (f <= runtime_max_name (db_runtime (init ds sl)))%positive.
+  Proof.
+    intros ds sl f output Hkind.
+    change (PTrieCode.get f (database_kinds ds) = Some output) in Hkind.
+    unfold database_kinds in Hkind. rewrite declaration_trie_lookup in Hkind.
+    exact (lookup_kind_name_bound ds f output Hkind).
+  Qed.
+
+  (** Empty row and count tries give every initial projection multiplicity zero. *)
+  Lemma init_projection_counts : forall ds sl, projection_counts_ok (init ds sl).
+  Proof.
+    intros ds sl s f perm u _. exists []. split; [constructor |]. split.
+    - intro r.
+      assert (Hempty : RowMap.elements (runtime_rows (db_runtime (init ds sl))) = [])
+        by reflexivity.
+      rewrite Hempty. cbn [In]. tauto.
+    - unfold stored_projection_count, projection_table_get.
+      cbn [init db_runtime runtime_projection_counts].
+      rewrite PTrie.get_empty. cbn. rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
   (** Initialization creates a well-formed database. *)
   Lemma wf_init : forall ds sl, wf (init ds sl).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl. unfold wf, database_wf.
+    split; [apply UnionFind.wf_empty |].
+    split.
+    { intro i. change (PTrieCode.get i (@PTrieCode.empty positive) <> None <->
+        (Npos i <= 0)%N). rewrite PTrie.get_empty. split; intro H; [contradiction | lia]. }
+    split; [reflexivity |].
+    split; [change (0 <= 0); lia |].
+    split; [intros i j; apply equality_log_empty |].
+    split; [constructor |].
+    split; [apply RowMap.wf_empty |].
+    split; [intros f k o Hrow; exfalso; exact (init_rows_empty ds sl f k o Hrow) |].
+    split; [intros f k o i Hrow; exfalso; exact (init_rows_empty ds sl f k o Hrow) |].
+    split; [intros f k o Hrow; exfalso; exact (init_rows_empty ds sl f k o Hrow) |].
+    split; [exact (init_kind_bound ds sl) |].
+    split; [reflexivity |]. split; [reflexivity |]. split; [constructor |].
+    split.
+    { intros _ f k o Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow). }
+    split.
+    { intros s new u Hmem. rewrite index_init_empty in Hmem.
+      exfalso. exact (I.mem_empty u Hmem). }
+    split.
+    { intros s f perm k o _ Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow). }
+    split.
+    { intros s new f perm _. rewrite index_init_empty. apply I.wf_empty. }
+    split; [reflexivity |]. apply init_projection_counts.
+  Qed.
 
   (** Kind-correct insertion keeps the database well formed. *)
   Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
