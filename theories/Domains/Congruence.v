@@ -20,6 +20,15 @@ Record congr_crt_state : Type := {
   crt_v2 : Z
 }.
 
+(** The Euclidean transition graph records only states and observable terminal triples. *)
+Inductive congr_crt_graph (advance : congr_crt_state -> congr_crt_state) :
+    congr_crt_state -> (Z * Z * Z) -> Prop :=
+  | crt_graph_done : forall s,
+      crt_r1 s = 0 -> congr_crt_graph advance s (crt_u2 s, crt_v2 s, crt_r2 s)
+  | crt_graph_next : forall s result,
+      crt_r1 s <> 0 -> congr_crt_graph advance (advance s) result ->
+      congr_crt_graph advance s result.
+
 TimeFun crt_r1.
 TimeFun crt_u1.
 TimeFun crt_v1.
@@ -257,7 +266,7 @@ Module CongruenceCRT.
   Lemma next_decreases : forall s, (crt_r1 s =? 0) = false -> lt (next s) s.
   Proof.
     intros s Hnonzero. apply Z.eqb_neq in Hnonzero.
-    unfold CongruenceCRT.lt. apply N2Z.inj_lt.
+    unfold lt. apply N2Z.inj_lt.
     rewrite !N2Z.inj_abs_N, next_remainder by exact Hnonzero.
     apply Z.mod_bound_abs. exact Hnonzero.
   Qed.
@@ -286,9 +295,111 @@ Module CongruenceCRT.
       N.of_nat ((Z.size_nat a + Z.size_nat b + 1) ^ 2))%N.
   Proof. Admitted. (* STUB *)
 
+  Definition graph := congr_crt_graph next.
+
+  (** A fixed Euclid state has at most one terminal result. *)
+  Lemma graph_deterministic : forall s left right,
+    graph s left -> graph s right -> left = right.
+  Proof.
+    intros s left right Hleft. revert right.
+    induction Hleft as [s Hzero | s result Hnonzero Htail IH]; intros right Hright.
+    - inversion Hright as [s' Hzero' | s' result' Hnonzero' Htail']; subst.
+      + reflexivity.
+      + contradiction.
+    - inversion Hright as [s' Hzero' | s' result' Hnonzero' Htail']; subst.
+      + contradiction.
+      + apply IH. exact Htail'.
+  Qed.
+
+  (** Every accessibility proof drives the released loop to a graph result. *)
+  Lemma loop_graph : forall s (Hacc : Acc lt s),
+    graph s (loop lt step s Hacc).
+  Proof.
+    intros s Hacc.
+    induction Hacc as [s Hacc IH] using Acc_ind_dep.
+    destruct s as [r1 u1 v1 r2 u2 v2].
+    destruct r1 as [| p | p]; cbn [loop step crt_r1 crt_u2 crt_v2 crt_r2].
+    - apply crt_graph_done. reflexivity.
+    - apply crt_graph_next; [discriminate | apply IH].
+    - apply crt_graph_next; [discriminate | apply IH].
+  Qed.
+
+  (** A well-founded fixpoint preserves any observation respected by its functional.
+      The observation may project a dependent result; no proof-field equality is used. *)
+  Lemma fix_f_preserves
+      (A : Type) (R : A -> A -> Prop) (B : A -> Type)
+      (F : forall x, (forall y, R y x -> B y) -> B x)
+      (P : forall x, B x -> Prop)
+      (Hstep : forall x rec,
+        (forall y (Hlt : R y x), P y (rec y Hlt)) -> P x (F x rec)) :
+    forall x (Hacc : Acc R x), P x (@Fix_F A R B F x Hacc).
+  Proof.
+    intros x Hacc.
+    induction Hacc as [x Hacc IH] using Acc_ind_dep.
+    cbn [Fix_F]. apply Hstep. exact IH.
+  Qed.
+
+  (** This is the unchanged invariant type carried by Stdlib's extgcd_rec. *)
+  Definition standard_invariant a b r1 u1 v1 r2 u2 v2 :=
+    True -> 0 <= r1 /\ 0 <= r2 /\
+      r1 = u1 * a + v1 * b /\ r2 = u2 * a + v2 * b /\
+      Z.gcd r1 r2 = Z.gcd a b.
+
+  (** This is the unchanged result type returned by Stdlib's extgcd_rec. *)
+  Definition standard_result a b :=
+    { '(u, v, d) | True -> u * a + v * b = d /\ d = Z.gcd a b }.
+
+  (** The Fix_F motive generalizes all changing coefficients and invariant witnesses. *)
+  Definition standard_graph_property a b r1
+      (rec : forall u1 v1 r2 u2 v2,
+        standard_invariant a b r1 u1 v1 r2 u2 v2 ->
+        standard_result a b) : Prop :=
+    forall u1 v1 r2 u2 v2 Hinvariant,
+      graph
+        {| crt_r1 := r1; crt_u1 := u1; crt_v1 := v1;
+           crt_r2 := r2; crt_u2 := u2; crt_v2 := v2 |}
+        (proj1_sig (rec u1 v1 r2 u2 v2 Hinvariant)).
+
+  (** Stdlib's recursion follows the same ordered state transitions. *)
+  Lemma standard_extgcd_graph : forall a b,
+    graph
+      {| crt_r1 := Z.abs a; crt_u1 := Z.sgn a; crt_v1 := 0;
+         crt_r2 := Z.abs b; crt_u2 := 0; crt_v2 := Z.sgn b |}
+      (Z.extgcd a b).
+  Proof.
+    intros a b. unfold Z.extgcd, Zdivisibility.Z.extgcd_rec, Fix.
+    (* Retain the invariant proof arguments without comparing their proof fields. *)
+    match goal with
+    | |- graph _
+        (proj1_sig (@Fix_F ?A ?R ?B ?F ?r1 ?Hacc ?u1 ?v1 ?r2 ?u2 ?v2 ?Hinitial)) =>
+      let Hrun := fresh "Hrun" in
+      assert (Hrun : standard_graph_property a b r1
+        (@Fix_F A R B F r1 Hacc));
+      [ apply fix_f_preserves
+      | exact (Hrun u1 v1 r2 u2 v2 Hinitial) ]
+    end.
+    intros r1 rec Hrec.
+    unfold standard_graph_property in Hrec |- *.
+    intros u1 v1 r2 u2 v2 Hinvariant.
+    cbn beta iota zeta.
+    destruct (Z.eq_dec r1 0) as [Hzero | Hnonzero].
+    - cbn [proj1_sig]. apply crt_graph_done. exact Hzero.
+    - apply crt_graph_next; [exact Hnonzero |].
+      unfold next.
+      cbn [crt_r1 crt_u1 crt_v1 crt_r2 crt_u2 crt_v2].
+      rewrite div_aligned_all, div_eucl_pair.
+      cbn [fst]. apply Hrec.
+  Qed.
+
+
   (** The state loop returns the exact coefficients chosen by the standard library. *)
   Lemma extgcd_agrees : forall a b, extgcd a b = Z.extgcd a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b.
+    eapply graph_deterministic.
+    - unfold extgcd. apply loop_graph.
+    - apply standard_extgcd_graph.
+  Qed.
 
   Definition combinecong (m1 m2 r1 r2 : Z) : Z :=
     let '(u, v, d) := extgcd m1 m2 in
@@ -301,7 +412,17 @@ Module CongruenceCRT.
   (** The CRT helper keeps the standard library's exact residue, including zero moduli. *)
   Lemma combinecong_agrees : forall m1 m2 r1 r2,
     combinecong m1 m2 r1 r2 = Z.combinecong m1 m2 r1 r2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m1 m2 r1 r2.
+    unfold combinecong, Z.combinecong. rewrite extgcd_agrees.
+    destruct (Z.extgcd m1 m2) as [[u v] d].
+    destruct (Z.eq_dec (r1 mod d) (r2 mod d)) as [Hequal | Hdifferent].
+    - rewrite (proj2 (Z.eqb_eq _ _) Hequal).
+      destruct (Z.eq_dec d 0) as [Hzero | Hnonzero].
+      + rewrite (proj2 (Z.eqb_eq _ _) Hzero). reflexivity.
+      + rewrite (proj2 (Z.eqb_neq _ _) Hnonzero). reflexivity.
+    - rewrite (proj2 (Z.eqb_neq _ _) Hdifferent). reflexivity.
+  Qed.
 End CongruenceCRT.
 
 Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
