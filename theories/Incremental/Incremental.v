@@ -9754,6 +9754,62 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
        exact Hfirst|exact Hsecond|exact Happ'|exact Houtput].
   Qed.
 
+  Lemma invalid_changed_budget_sum : forall p p' ch st,
+    fold_right (fun r total =>
+      32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_row_work p p' r) *
+        N.of_nat (width p st + width p' st + kwidth st + 1) + total)%N 1%N ch =
+      (32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_work p p' ch) *
+        N.of_nat (width p st + width p' st + kwidth st + 1) + 1)%N.
+  Proof.
+    intros p p' ch st; induction ch as [|r rest IH].
+    - change (invalid_changed_work p p' []) with 0%nat.
+      cbn [fold_right N.of_nat].
+      rewrite N.mul_0_r, N.mul_0_l, N.add_0_l; reflexivity.
+    - cbn [fold_right]; rewrite IH.
+      change (invalid_changed_work p p' (r :: rest)) with
+        (invalid_changed_row_work p p' r + invalid_changed_work p p' rest).
+      replace (N.of_nat (invalid_changed_row_work p p' r +
+        invalid_changed_work p p' rest)) with
+        (N.of_nat (invalid_changed_row_work p p' r) +
+          N.of_nat (invalid_changed_work p p' rest))%N by
+        (rewrite Nat2N.inj_add; reflexivity).
+      ring.
+  Qed.
+
+  Lemma T_invalid_changed_keys_le : forall p p' ch st,
+    S.wf p -> S.wf p' ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    (T_changed_keys p p' ch <=
+      32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_work p p' ch) *
+        N.of_nat (width p st + width p' st + kwidth st + 1) + 2)%N.
+  Proof.
+    intros p p' ch st Hwf Hwf' Hlisted.
+    pose proof (invalid_flat_map_budget
+      (fun r => row_writes p r ++ row_writes p' r)
+      (fun r => (1 + (T_row_writes p r + T_row_writes p' r +
+        Datatypes.T_app (row_writes p r) (row_writes p' r)))%N)
+      (fun r => (32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_row_work p p' r) *
+        N.of_nat (width p st + width p' st + kwidth st + 1))%N)
+      ch) as Hflat.
+    assert (Hcallback : forall r, In r ch ->
+      (1 + (T_row_writes p r + T_row_writes p' r +
+        Datatypes.T_app (row_writes p r) (row_writes p' r)) +
+        N.of_nat (length (row_writes p r ++ row_writes p' r)) + 2 <=
+        32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (invalid_changed_row_work p p' r) *
+          N.of_nat (width p st + width p' st + kwidth st + 1))%N).
+    { intros r Hr; destruct (Hlisted r Hr) as [Hrow Hrow'].
+      exact (T_invalid_changed_row_le p p' r st Hwf Hwf' Hrow Hrow'). }
+    specialize (Hflat Hcallback).
+    cbn beta in Hflat.
+    rewrite invalid_changed_budget_sum in Hflat.
+    unfold T_changed_keys; lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
