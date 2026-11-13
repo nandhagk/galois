@@ -5,7 +5,8 @@
     Builds on: Syntax, Model and Stdlib lists. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat Lia Relations.Relation_Operators Sorting.Permutation.
-From Galois.Base Require Import UnionFindSig KeySig MapSig Trie UnionFind.
+From Argent Require Import Loop.
+From Galois.Base Require Import UnionFindSig KeySig MapSig Trie UnionFind Loop.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
@@ -1216,3 +1217,62 @@ Module RebuildFuelFacts.
   Qed.
 
 End RebuildFuelFacts.
+
+(** * Semantic invariants of the actual binary-fuel driver *)
+
+Module LoopNFacts.
+
+  (** Accessibility recursion preserves any invariant respected by its actual callback. *)
+  Lemma loop_preserves : forall S R (lt : S -> S -> Prop)
+      (step : forall s, {s1 : S | lt s1 s} + R) (Inv : S -> Prop) (Post : R -> Prop),
+    (forall s s1 (Hlt : lt s1 s), Inv s -> step s = inl (exist _ s1 Hlt) -> Inv s1) ->
+    (forall s r, Inv s -> step s = inr r -> Post r) ->
+    forall s (Hacc : Acc lt s), Inv s -> Post (loop lt step s Hacc).
+  Proof.
+    intros S R lt step Inv Post Hgo Hstop s Hacc.
+    induction Hacc as [s Hacc IH] using Acc_ind_dep. intro Hinv.
+    cbn [loop Acc_inv]. destruct (step s) as [[s1 Hlt] | r] eqn:Hstep.
+    - apply IH. eapply Hgo; eassumption.
+    - eapply Hstop; eassumption.
+  Qed.
+
+  (** Both an exhausted state and a stopped result retain their callback invariants. *)
+  Lemma loopN_preserves : forall S R (step : S -> S + R)
+      (Inv : S -> Prop) (Post : R -> Prop),
+    (forall s s1, Inv s -> step s = inl s1 -> Inv s1) ->
+    (forall s r, Inv s -> step s = inr r -> Post r) ->
+    forall fuel s, Inv s ->
+    match loopN step fuel s with inl s1 => Inv s1 | inr r => Post r end.
+  Proof.
+    intros S R step Inv Post Hgo Hstop fuel s Hinitial. unfold loopN.
+    apply (loop_preserves (N * S) (S + R) loopN_lt (loopN_step step)
+      (fun fs => Inv (snd fs))
+      (fun result => match result with inl s1 => Inv s1 | inr r => Post r end)).
+    - intros [[| p] current] next Hlt Hinv Hstep; cbn [loopN_step] in Hstep;
+        [discriminate |].
+      destruct (step current) as [current' | result] eqn:Hcallback; [| discriminate].
+      inversion Hstep; subst. eapply Hgo; eassumption.
+    - intros [[| p] current] result Hinv Hstep; cbn [loopN_step] in Hstep.
+      + injection Hstep as Hresult. subst result. exact Hinv.
+      + destruct (step current) as [current' | value] eqn:Hcallback; [discriminate |].
+        injection Hstep as Hresult. subst result. eapply Hstop; eassumption.
+    - exact Hinitial.
+  Qed.
+
+  (** A stopped callback determines the accessibility loop's result immediately. *)
+  Lemma loop_stop : forall S R (lt : S -> S -> Prop)
+      (step : forall s, {s1 : S | lt s1 s} + R) s (Hacc : Acc lt s) r,
+    step s = inr r -> loop lt step s Hacc = r.
+  Proof.
+    intros S R lt step s [Hacc] r Hstop. cbn [loop]. now rewrite Hstop.
+  Qed.
+
+  (** Any positive fuel returns an immediate stop without modifying its result. *)
+  Lemma loopN_stop : forall S R (step : S -> S + R) fuel s r,
+    (0 < fuel)%N -> step s = inr r -> loopN step fuel s = inr r.
+  Proof.
+    intros S R step fuel s r Hfuel Hstop. unfold loopN. apply loop_stop.
+    destruct fuel as [| p]; [lia |]. cbn [loopN_step]. now rewrite Hstop.
+  Qed.
+
+End LoopNFacts.
