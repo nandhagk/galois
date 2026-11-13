@@ -4,7 +4,7 @@
     For example, a congruence payload uses its polynomial representation envelope.
     Builds on: EnvBudgetSig and the operational environment and system links. *)
 
-From Stdlib Require Import List PArith Arith.
+From Stdlib Require Import List PArith Arith ZArith Bool Lia.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Bits Require Import Word.
 From Galois.Domains Require Import LangSig ValueSig WordSig BitsLang SignSig CongruenceSig.
@@ -22,36 +22,54 @@ Module SignEnvelope (L : WORD_LANGUAGE_T) (S : SIGN_ALL L)
   (** Canonical payload sizes fit the concrete width envelope. *)
   Lemma canonical_size : forall w p,
     canonical w p -> S.psize w p <= payload_size_bound w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w p _. unfold payload_size_bound. rewrite S.psize_width. reflexivity.
+  Qed.
   (** Canonical payload ranks fit the concrete rank envelope. *)
   Lemma canonical_rank : forall q w p,
     canonical w p -> S.pwrank q w p <= payload_rank_bound q w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w p _. unfold payload_rank_bound. rewrite S.F_pwrank. lia.
+  Qed.
   (** The concrete bottom payload is canonical. *)
   Lemma canonical_bot : forall w, canonical w (S.pbot w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
   (** The concrete top payload is canonical. *)
   Lemma canonical_top : forall w, canonical w (S.ptop w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
   (** Literal abstraction returns a canonical payload. *)
   Lemma canonical_const : forall w z, canonical w (S.pconst w z).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
   (** Concrete join keeps canonical payloads canonical. *)
   Lemma canonical_join : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pjoin w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
   (** Concrete meet keeps canonical payloads canonical. *)
   Lemma canonical_meet : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pmeet w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
   (** Concrete widening keeps canonical payloads canonical. *)
   Lemma canonical_widen : forall q w a b,
     canonical w a -> canonical w b -> canonical w (S.pwiden q w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
   (** Concrete narrowing keeps canonical payloads canonical. *)
   Lemma canonical_narrow : forall w a b,
     canonical w a -> canonical w b -> canonical w (S.pnarrow w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros. constructor.
+  Qed.
 End SignEnvelope.
 
 (** Concrete normalized congruences fit a quadratic width envelope. *)
