@@ -2045,6 +2045,139 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
 
+  (** A finite upper cut stores precisely its endpoint bits. *)
+  Lemma upper_cut_bits : forall b, size (I NegInf b) = bnd_bits b.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A finite lower cut stores precisely its endpoint bits. *)
+  Lemma lower_cut_bits : forall b, size (I b PosInf) = bnd_bits b.
+  Proof.
+    intro b. unfold size, itv_bits. cbn [bnd_bits]. apply Nat.max_0_r.
+  Qed.
+
+  (** The unsigned precondition clamps each operand with a constant-sized interval. *)
+  Lemma unsigned_back_time_linear : forall a b,
+    (T_unsigned_back a b <= 256 * (T.c_thresholds + 1) *
+      N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof (meet_time_linear a (I (Fin 0) PosInf)).
+    pose proof (meet_time_linear b (I (Fin 1) PosInf)).
+    cbn [size itv_bits bnd_bits Z.size_nat Pos.size_nat] in *.
+    unfold T_unsigned_back. nia.
+  Qed.
+
+  (** Unsigned precondition clamps add at most one stored endpoint bit. *)
+  Lemma unsigned_back_result_bits : forall a b,
+    size (fst (unsigned_back a b)) + size (snd (unsigned_back a b)) <=
+      size a + size b + 1.
+  Proof.
+    intros a b. pose proof (meet_result_bits a (I (Fin 0) PosInf)).
+    pose proof (meet_result_bits b (I (Fin 1) PosInf)).
+    cbn [size itv_bits bnd_bits Z.size_nat Pos.size_nat] in *.
+    unfold unsigned_back. cbn [fst snd]. lia.
+  Qed.
+
+  (** Decrementing a finite strict upper endpoint adds at most two bits. *)
+  Lemma strict_upper_bits : forall b,
+    bnd_bits (match b with Fin z => Fin (z - 1) | _ => b end) <= bnd_bits b + 2.
+  Proof.
+    intros [|z|]; cbn [bnd_bits]; try lia.
+    pose proof (integer_sub_bits z 1). cbn [Z.size_nat Pos.size_nat] in *. lia.
+  Qed.
+
+  (** Incrementing a finite strict lower endpoint adds at most two bits. *)
+  Lemma strict_lower_bits : forall b,
+    bnd_bits (match b with Fin z => Fin (z + 1) | _ => b end) <= bnd_bits b + 2.
+  Proof.
+    intros [|z|]; cbn [bnd_bits]; try lia.
+    pose proof (integer_add_bits z 1). cbn [Z.size_nat Pos.size_nat] in *. lia.
+  Qed.
+
+  (** A strict upper endpoint requires at most one linear subtraction. *)
+  Lemma strict_upper_time : forall b,
+    ((match b with Fin z => Std.Z.T_sub z 1 | _ => 0 end) <=
+      3 * N.of_nat (bnd_bits b) + 6)%N.
+  Proof.
+    intros [|z|]; cbn [bnd_bits]; try nia.
+    pose proof (Std.Z.T_sub_le z 1). cbn [Z.size_nat Pos.size_nat] in *. nia.
+  Qed.
+
+  (** A strict lower endpoint requires at most one linear addition. *)
+  Lemma strict_lower_time : forall b,
+    ((match b with Fin z => Std.Z.T_add z 1 | _ => 0 end) <=
+      3 * N.of_nat (bnd_bits b) + 4)%N.
+  Proof.
+    intros [|z|]; cbn [bnd_bits]; try nia.
+    pose proof (Std.Z.T_add_le z 1). cbn [Z.size_nat Pos.size_nat] in *. nia.
+  Qed.
+
+  (** Strict refinement costs linearly in both operands. *)
+  Lemma strict_back_time_linear : forall a b,
+    (T_strict_back a b <= 1024 * (T.c_thresholds + 1) *
+      N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros [|la ha] [|lb hb]; time_unfold T_strict_back; try nia.
+    pose proof (endpoint_sizes la ha) as [Hla Hha].
+    pose proof (endpoint_sizes lb hb) as [Hlb Hhb].
+    pose proof (strict_upper_time hb). pose proof (strict_lower_time la).
+    pose proof (strict_upper_bits hb). pose proof (strict_lower_bits la).
+    pose proof (meet_time_linear (I la ha)
+      (I NegInf (match hb with Fin z => Fin (z - 1) | _ => hb end))).
+    pose proof (meet_time_linear (I lb hb)
+      (I (match la with Fin z => Fin (z + 1) | _ => la end) PosInf)).
+    rewrite upper_cut_bits, lower_cut_bits in *.
+    nia.
+  Qed.
+
+  (** Strict refinement stores only operand endpoints and unit adjustments. *)
+  Lemma strict_back_result_bits : forall a b,
+    size (fst (strict_back a b)) + size (snd (strict_back a b)) <=
+      2 * (size a + size b + 2).
+  Proof.
+    intros [|la ha] [|lb hb]; cbn [strict_back fst snd];
+      try (cbn [size itv_bits]; lia).
+    pose proof (strict_upper_bits hb). pose proof (strict_lower_bits la).
+    pose proof (meet_result_bits (I la ha)
+      (I NegInf (match hb with Fin z => Fin (z - 1) | _ => hb end))).
+    pose proof (meet_result_bits (I lb hb)
+      (I (match la with Fin z => Fin (z + 1) | _ => la end) PosInf)).
+    rewrite upper_cut_bits, lower_cut_bits in *.
+    pose proof (endpoint_sizes la ha). pose proof (endpoint_sizes lb hb). lia.
+  Qed.
+
+  (** Unsigned comparison refinement has a linear result-and-operand cost. *)
+  Lemma ult_back_time_linear : forall r a b,
+    (T_ult_back r a b <= 2048 * (T.c_thresholds + 1) *
+      N.of_nat (size r + size a + size b + 1))%N.
+  Proof.
+    intros r a b. pose proof (point_time_linear r) as Hpoint.
+    time_unfold T_ult_back. destruct (point r) as [z |] eqn:Hr.
+    - pose proof (point_result_bits _ _ Hr) as Hbits.
+      pose proof (Std.Z.T_eqb_le z 1) as Heq.
+      pose proof (strict_back_time_linear a b) as Hstrict.
+      assert (Hcombined : (T_point r + Std.Z.T_eqb z 1 + T_strict_back a b + 2 <=
+        2048 * (T.c_thresholds + 1) *
+          N.of_nat (size r + size a + size b + 1))%N) by nia.
+      destruct a as [|[|la|] ha], b as [|lb [|hb|]]; try lia.
+      destruct (Z.eqb z 1); [unfold T_strict_back in Hcombined; lia | lia].
+    - nia.
+  Qed.
+
+
+  (** Unsigned comparison refinement stores only strict operand cuts. *)
+  Lemma ult_back_result_bits : forall r a b,
+    size (fst (ult_back r a b)) + size (snd (ult_back r a b)) <=
+      2 * (size a + size b + 2).
+  Proof.
+    intros r a b. pose proof (strict_back_result_bits a b) as Hstrict.
+    unfold ult_back. destruct (point r) as [z |];
+      [|cbn [fst snd]; lia].
+    destruct a as [|[|la|] ha], b as [|lb [|hb|]]; cbn [fst snd]; try lia.
+    destruct (Z.eqb z 1); cbn [fst snd]; [exact Hstrict | lia].
+  Qed.
+
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -2258,15 +2391,30 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Backward unsigned division charges the result and both operands. *)
   Lemma T_udiv_back_le : forall r a b, (T_udiv_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b. pose proof (unsigned_back_time_linear a b).
+    assert (Hbudget : size a + size b + 1 <=
+      size r + (size a + size b + 1) ^ 2) by (cbn [Nat.pow]; nia).
+    unfold T_udiv_back, c_interval. nia.
+  Qed.
   (** Backward unsigned remainder charges the result and both operands. *)
   Lemma T_urem_back_le : forall r a b, (T_urem_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b. pose proof (unsigned_back_time_linear a b).
+    assert (Hbudget : size a + size b + 1 <=
+      size r + (size a + size b + 1) ^ 2) by (cbn [Nat.pow]; nia).
+    unfold T_urem_back, c_interval. nia.
+  Qed.
   (** Backward comparison charges the result and both operands. *)
   Lemma T_ult_back_le : forall r a b, (T_ult_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b. pose proof (ult_back_time_linear r a b).
+    assert (Hbudget : size r + size a + size b + 1 <=
+      size r + (size a + size b + 1) ^ 2) by (cbn [Nat.pow]; nia).
+    unfold c_interval. nia.
+  Qed.
   (** Signed splitting charges the width and endpoints. *)
   Lemma T_signed_split_le : forall w a, (T_signed_split w a <=
     c_interval * N.of_nat (((Pos.to_nat w + size a + 1) ^ 2)%nat))%N.
