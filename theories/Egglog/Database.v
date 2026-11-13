@@ -11326,7 +11326,69 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_group_slots : forall db work f g, inv_on db work -> group_of db f = Some g ->
     NoDup (group_slots db true g) /\
     forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work f g Hinv Hgroup.
+    assert (Hrank : slot_rank_ok db).
+    { apply forest_slot_rank. unfold inv_on in Hinv. tauto. }
+    unfold slot_rank_ok in Hrank.
+    unfold group_of in Hgroup.
+    destruct (database_group_of_witness f (slots db)
+      (slot_positions _ (db_slot_store db)) g Hgroup)
+      as [anchor [anchor_perm [anchor_offset [Hanchor_slot Hanchor_place]]]].
+    rewrite Hrank in Hanchor_place.
+    assert (Hlength : length (slot_positions _ (db_slot_store db)) = length (slots db)).
+    { rewrite Hrank. apply database_rank_slots_from_length. }
+    split; [unfold group_slots; apply database_group_slots_nodup |].
+    intro s. unfold group_slots, slot_of. split.
+    - intro Hmember. apply database_group_slots_member in Hmember.
+      destruct Hmember as [n [offset [Hplace Hnumber]]].
+      assert (Hindex : N.to_nat s = n).
+      { rewrite Hnumber. cbn [N.add]. apply Nat2N.id. }
+      assert (Hbelow : n < length (slots db)).
+      { rewrite <- Hlength. apply nth_error_Some. congruence. }
+      destruct (nth_error (slots db) n) as [[owner perm] |] eqn:Hslot.
+      2: { exfalso. apply (nth_error_Some (slots db) n) in Hbelow. congruence. }
+      rewrite Hrank in Hplace.
+      assert (Howner : f = owner).
+      { eapply database_rank_slots_from_same_rank with
+          (kinds := runtime_kinds (db_runtime db))
+          (start := 0%N) (groups := PTrieCode.empty)
+          (n := anchor) (m := n) (first := anchor_perm) (second := perm)
+          (d := true) (e := true) (j := anchor_offset) (k := offset);
+          [apply database_rank_groups_fresh_empty |
+           apply database_rank_groups_unique_empty |
+           exact Hanchor_slot | exact Hslot | exact Hanchor_place | exact Hplace]. }
+      subst owner. exists perm. now rewrite Hindex.
+    - intros [perm Hslot].
+      set (n := N.to_nat s) in *.
+      assert (Hbelow : n < length (slot_positions _ (db_slot_store db))).
+      { rewrite Hlength. apply nth_error_Some. congruence. }
+      destruct (nth_error (slot_positions _ (db_slot_store db)) n)
+        as [[[flag rank] offset] |] eqn:Hplace.
+      2: { exfalso. apply (nth_error_Some _ n) in Hbelow. congruence. }
+      rewrite Hrank in Hplace.
+      assert (Hanchor_flag : true =
+        match PTrieCode.get f (runtime_kinds (db_runtime db)) with
+        | Some _ => true | None => false end).
+      { eapply database_rank_slots_from_flag with
+          (start := 0%N) (groups := PTrieCode.empty) (sl := slots db)
+          (n := anchor) (perm := anchor_perm) (g := g) (j := anchor_offset);
+          eassumption. }
+      assert (Hflag : flag =
+        match PTrieCode.get f (runtime_kinds (db_runtime db)) with
+        | Some _ => true | None => false end).
+      { eapply database_rank_slots_from_flag with
+          (start := 0%N) (groups := PTrieCode.empty) (sl := slots db)
+          (n := n) (perm := perm) (g := rank) (j := offset);
+          eassumption. }
+      assert (Hsame : g = rank).
+      { eapply database_rank_slots_from_same_function;
+          [exact Hanchor_slot | exact Hslot | exact Hanchor_place | exact Hplace]. }
+      subst flag rank. apply database_group_slots_member.
+      exists n, offset. split.
+      * rewrite Hrank. rewrite <- Hanchor_flag in Hplace. exact Hplace.
+      * unfold n. rewrite N.add_0_l, N2Nat.id. reflexivity.
+  Qed.
   (** Initialization stores the ranking of its slot list. *)
   Lemma F_init_place : forall ds sl s,
     slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
