@@ -5,7 +5,7 @@
     Builds on: Syntax, Model and Stdlib lists. *)
 
 From Stdlib Require Import List PArith NArith Lia Relations.Relation_Operators.
-From Galois.Base Require Import UnionFindSig Trie.
+From Galois.Base Require Import UnionFindSig KeySig MapSig Trie.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
@@ -690,3 +690,49 @@ Proof.
 Qed.
 
 End DeclarationLookupFacts.
+
+(** * Observations of finite-map updates *)
+
+Module FiniteMapFacts (K : KEY) (M : MAP K).
+
+  (** Insertion replaces the selected binding and preserves every other binding. *)
+  Lemma set_binding_iff : forall A k (v : A) m q out,
+    M.get q (M.set k v m) = Some out <->
+      (M.get q m = Some out /\ q <> k) \/ (q = k /\ out = v).
+  Proof.
+    intros A k v m q out. destruct (K.eqb_spec q k) as [->|Hneq].
+    - rewrite M.get_set_same. split.
+      + intro Hvalue. injection Hvalue as Hvalue.
+        right. split; [reflexivity|symmetry; exact Hvalue].
+      + intros [[_ Hfalse]|[_ Hvalue]].
+        * contradiction.
+        * now rewrite Hvalue.
+    - rewrite M.get_set_other by exact Hneq. split.
+      + intro Hvalue. left. split; assumption.
+      + intros [[Hvalue _]|[Heq _]]; [exact Hvalue|contradiction].
+  Qed.
+
+  (** Inserting at an absent key keeps every old binding and adds exactly the new pair. *)
+  Lemma set_fresh_binding_iff : forall A k (v : A) m q out, M.get k m = None ->
+    (M.get q (M.set k v m) = Some out <->
+      M.get q m = Some out \/ (q = k /\ out = v)).
+  Proof.
+    intros A k v m q out Hfresh. rewrite set_binding_iff. split.
+    - intros [[Hvalue _]|Hnew]; [left; exact Hvalue|right; exact Hnew].
+    - intros [Hvalue|Hnew]; [left|right; exact Hnew].
+      split; [exact Hvalue|]. intro Heq. subst q. congruence.
+  Qed.
+
+  (** Rewriting a consistent map with its existing value leaves the map unchanged. *)
+  Lemma get_set_id : forall A k (v : A) m, M.wf m -> M.get k m = Some v ->
+    M.set k v m = m.
+  Proof.
+    intros A k v m Hwf Hvalue. apply M.ext.
+    - apply M.wf_set. exact Hwf.
+    - exact Hwf.
+    - intro q. destruct (K.eqb_spec q k) as [->|Hneq].
+      + rewrite M.get_set_same. symmetry. exact Hvalue.
+      + apply M.get_set_other. exact Hneq.
+  Qed.
+
+End FiniteMapFacts.
