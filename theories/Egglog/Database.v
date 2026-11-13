@@ -9589,7 +9589,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
-    row_store_ok db /\ database_wf db.
+    row_store_ok db /\ projection_counts_ok db /\ database_history db.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
@@ -10406,9 +10406,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       N.to_nat (proj_count db s u) = length rs.
   Proof.
     intros db work s f perm u Hinv Hslot.
-    assert (Hbase : database_wf db).
+    assert (Hcounts : projection_counts_ok db).
     { unfold inv_on, forest_ok in Hinv. tauto. }
-    destruct (wf_projection_counts db Hbase s f perm u Hslot)
+    destruct (Hcounts s f perm u Hslot)
       as [rs [Hnodup [Hmembers Hcount]]].
     exists rs. split; [exact Hnodup |]. split.
     - intro r. unfold rows. rewrite <- RowMap.elements_trie. exact (Hmembers r).
