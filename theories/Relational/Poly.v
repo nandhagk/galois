@@ -3,7 +3,7 @@
     Fourier-Motzkin elimination tracks combinations of the input constraints.
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
-From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Psatz Wf_nat.
+From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Lqa Wf_nat.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.

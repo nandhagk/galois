@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Psatz Permutation.
+From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Lqa Permutation.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.

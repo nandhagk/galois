@@ -4,7 +4,7 @@
     For example, opposite occurrences of one variable cancel before comparison.
     Builds on: LinCertSig. *)
 
-From Stdlib Require Import List ZArith QArith Lia Bool Psatz.
+From Stdlib Require Import List ZArith QArith Lia Bool Lqa.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm LinCertSig.
