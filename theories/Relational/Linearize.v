@@ -4,7 +4,7 @@
     For example, a leaf becomes one unit coefficient and an unwrapped zero constant.
     Builds on: LinearizeSig. *)
 
-From Stdlib Require Import List NArith ZArith Lia.
+From Stdlib Require Import List NArith ZArith ArithRing Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Bits Require Import Word Fun Arith Op.
@@ -1510,4 +1510,215 @@ Proof.
   replace (32 * (count + 1) * charge)%N with
     (32 * (count * charge) + 32 * charge)%N by ring.
   set (product := (count * charge)%N) in *. clearbody product. lia.
+Qed.
+
+(** A coefficient-count and bit-size pair determines a quadratic arithmetic charge. *)
+Definition affine_charge (count bits : nat) : N :=
+  (N.of_nat ((count + 1)%nat) * N.of_nat (((bits + 1) ^ 2)%nat))%N.
+
+(** Every arithmetic charge pays at least one dispatch step. *)
+Lemma affine_charge_positive : forall count bits, (1 <= affine_charge count bits)%N.
+Proof.
+  intros count bits. unfold affine_charge.
+  pose proof (proj1 (integer_product_time_envelope 0%Z bits)) as Hsquare.
+  change (1 <= N.of_nat (((bits + 1) ^ 2)%nat))%N in Hsquare.
+  change (1 * 1 <= N.of_nat ((count + 1)%nat) *
+    N.of_nat (((bits + 1) ^ 2)%nat))%N.
+  apply N.mul_le_mono; [lia|exact Hsquare].
+Qed.
+
+(** Scaling a bit budget by a factor scales its square by the factor's square. *)
+Lemma square_size_le : forall a b factor, a <= factor * b ->
+  (N.of_nat ((a ^ 2)%nat) <=
+    N.of_nat ((factor ^ 2)%nat) * N.of_nat ((b ^ 2)%nat))%N.
+Proof.
+  intros a b factor Hbound.
+  assert (Hsquare : a * a <= (factor * b) * (factor * b))
+    by (apply Nat.mul_le_mono; exact Hbound).
+  cbn [Nat.pow]. rewrite !Nat.mul_1_r, <- Nat2N.inj_mul.
+  replace (factor * factor * (b * b))%nat with
+    ((factor * b) * (factor * b))%nat by ring. lia.
+Qed.
+
+(** Coefficient-count monotonicity and a scaled bit budget bound the arithmetic charge. *)
+Lemma affine_charge_bound : forall count bits next_count next_bits factor,
+  count <= next_count -> bits + 1 <= factor * (next_bits + 1) ->
+  (affine_charge count bits <=
+    N.of_nat ((factor ^ 2)%nat) * affine_charge next_count next_bits)%N.
+Proof.
+  intros count bits next_count next_bits factor Hcount Hbits. unfold affine_charge.
+  pose proof (square_size_le (bits + 1) (next_bits + 1) factor Hbits) as Hsquare.
+  replace (N.of_nat ((factor ^ 2)%nat) *
+    (N.of_nat ((next_count + 1)%nat) * N.of_nat (((next_bits + 1) ^ 2)%nat)))%N with
+    (N.of_nat ((next_count + 1)%nat) *
+      (N.of_nat ((factor ^ 2)%nat) * N.of_nat (((next_bits + 1) ^ 2)%nat)))%N by ring.
+  apply N.mul_le_mono; [lia|exact Hsquare].
+Qed.
+
+(** A cost bound transports through a multiplicative charge bound. *)
+Lemma time_charge_mono : forall time constant charge next_charge factor,
+  (time <= constant * charge)%N -> (charge <= factor * next_charge)%N ->
+  (time <= (constant * factor) * next_charge)%N.
+Proof.
+  intros time constant charge next_charge factor Htime Hcharge.
+  eapply N.le_trans; [exact Htime|].
+  replace ((constant * factor) * next_charge)%N with
+    (constant * (factor * next_charge))%N by ring.
+  apply N.mul_le_mono; [apply N.le_refl|exact Hcharge].
+Qed.
+
+(** Addition's primitive clock can be expressed through one opaque arithmetic charge. *)
+Lemma linear_add_charge_time : forall X (key_bits : X -> nat) f g,
+  (T_linear_add f g <= 32 * affine_charge
+    ((length (coef f) + length (coef g))%nat) ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N.
+Proof.
+  intros X key_bits f g. pose proof (linear_add_time X key_bits f g) as Htime.
+  unfold affine_charge. replace
+    (32 * (N.of_nat ((length (coef f) + length (coef g) + 1)%nat) *
+      N.of_nat (((linear_bits key_bits f + linear_bits key_bits g + 1) ^ 2)%nat)))%N
+    with (32 * N.of_nat ((length (coef f) + length (coef g) + 1)%nat) *
+      N.of_nat (((linear_bits key_bits f + linear_bits key_bits g + 1) ^ 2)%nat))%N by ring.
+  exact Htime.
+Qed.
+
+(** Scalar multiplication has the same opaque-charge presentation. *)
+Lemma linear_scale_charge_time : forall X (key_bits : X -> nat) a f,
+  (T_linear_scale a f <=
+    32 * affine_charge ((length (coef f))%nat) ((Z.size_nat a + linear_bits key_bits f)%nat))%N.
+Proof.
+  intros X key_bits a f. pose proof (linear_scale_time X key_bits a f) as Htime.
+  unfold affine_charge. replace
+    (32 * (N.of_nat ((length (coef f) + 1)%nat) *
+      N.of_nat (((Z.size_nat a + linear_bits key_bits f + 1) ^ 2)%nat)))%N with
+    (32 * N.of_nat ((length (coef f) + 1)%nat) *
+      N.of_nat (((Z.size_nat a + linear_bits key_bits f + 1) ^ 2)%nat))%N by ring.
+  exact Htime.
+Qed.
+
+(** Subtraction combines scalar negation and addition under a common arithmetic charge. *)
+Lemma linear_sub_time : forall X (key_bits : X -> nat) f g,
+  (T_linear_sub f g <= 512 * affine_charge
+    ((length (coef f) + length (coef g))%nat) ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N.
+Proof.
+  intros X key_bits f g.
+  pose proof (linear_scale_charge_time X key_bits (-1)%Z g) as Hscale.
+  pose proof (linear_add_charge_time X key_bits f (linear_scale (-1)%Z g)) as Hadd.
+  rewrite linear_length_scale in Hadd.
+  pose proof (linear_bits_scale X key_bits (-1)%Z g) as Hbits.
+  change (linear_bits key_bits (linear_scale (-1)%Z g) <= 1 + linear_bits key_bits g)
+    in Hbits.
+  assert (Hscalecharge : (affine_charge ((length (coef g))%nat)
+    ((Z.size_nat (-1)%Z + linear_bits key_bits g)%nat) <= 4 * affine_charge
+    ((length (coef f) + length (coef g))%nat) ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N).
+  { apply affine_charge_bound with (factor := 2); [lia|].
+    change (1 + linear_bits key_bits g + 1 <=
+      2 * (linear_bits key_bits f + linear_bits key_bits g + 1))%nat. lia. }
+  assert (Haddcharge : (affine_charge ((length (coef f) + length (coef g))%nat)
+    ((linear_bits key_bits f + linear_bits key_bits (linear_scale (-1)%Z g))%nat) <=
+    4 * affine_charge ((length (coef f) + length (coef g))%nat)
+      ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N).
+  { apply affine_charge_bound with (factor := 2); lia. }
+  pose proof (time_charge_mono _ 32 _ _ 4 Hscale Hscalecharge) as Hscaletime.
+  pose proof (time_charge_mono _ 32 _ _ 4 Hadd Haddcharge) as Haddtime.
+  pose proof (affine_charge_positive (length (coef f) + length (coef g))
+    (linear_bits key_bits f + linear_bits key_bits g)) as Hpositive.
+  clear Hscale Hadd Hscalecharge Haddcharge Hbits.
+  set (work := affine_charge ((length (coef f) + length (coef g))%nat)
+    ((linear_bits key_bits f + linear_bits key_bits g)%nat)) in *. clearbody work.
+  time_unfold (@T_linear_sub). time_simpl. time_cbn_all. lia.
+Qed.
+
+(** Affine multiplication executes at most one scalar traversal. *)
+Lemma linear_mul_time : forall X (key_bits : X -> nat) f g,
+  (T_linear_mul f g <= 64 * affine_charge
+    ((length (coef f) + length (coef g))%nat) ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N.
+Proof.
+  intros X key_bits f g.
+  pose proof (linear_scale_charge_time X key_bits (cst f) g) as Hleft.
+  pose proof (linear_scale_charge_time X key_bits (cst g) f) as Hright.
+  pose proof (proj1 (proj1 (linear_bits_components X key_bits f
+    (linear_bits key_bits f)) (Nat.le_refl _))) as Hconstf.
+  pose proof (proj1 (proj1 (linear_bits_components X key_bits g
+    (linear_bits key_bits g)) (Nat.le_refl _))) as Hconstg.
+  assert (Hleftcharge : (affine_charge ((length (coef g))%nat)
+    ((Z.size_nat (cst f) + linear_bits key_bits g)%nat) <= 1 * affine_charge
+    ((length (coef f) + length (coef g))%nat) ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N).
+  { apply affine_charge_bound with (factor := 1); lia. }
+  assert (Hrightcharge : (affine_charge ((length (coef f))%nat)
+    ((Z.size_nat (cst g) + linear_bits key_bits f)%nat) <= 1 * affine_charge
+    ((length (coef f) + length (coef g))%nat) ((linear_bits key_bits f + linear_bits key_bits g)%nat))%N).
+  { apply affine_charge_bound with (factor := 1); lia. }
+  pose proof (time_charge_mono _ 32 _ _ 1 Hleft Hleftcharge) as Hlefttime.
+  pose proof (time_charge_mono _ 32 _ _ 1 Hright Hrightcharge) as Hrighttime.
+  pose proof (affine_charge_positive (length (coef f) + length (coef g))
+    (linear_bits key_bits f + linear_bits key_bits g)) as Hpositive.
+  clear Hleft Hright Hleftcharge Hrightcharge Hconstf Hconstg.
+  set (work := affine_charge ((length (coef f) + length (coef g))%nat)
+    ((linear_bits key_bits f + linear_bits key_bits g)%nat)) in *. clearbody work.
+  time_unfold (@T_linear_mul). destruct (coef f), (coef g);
+    time_simpl; time_cbn_all; lia.
+Qed.
+
+(** Operator dispatch pays the affine arithmetic charge of its operands. *)
+Lemma zlinear_op_time : forall X (key_bits : X -> nat) o fs,
+  (T_zlinear_op o fs <= 1024 * affine_charge
+    ((fold_right Nat.add 0 (map (fun f => length (coef f)) fs))%nat)
+    ((fold_right Nat.add 0 (map (linear_bits key_bits) fs))%nat))%N.
+Proof.
+  intros X key_bits o fs.
+  pose proof (affine_charge_positive
+    (fold_right Nat.add 0 (map (fun f => length (coef f)) fs))
+    (fold_right Nat.add 0 (map (linear_bits key_bits) fs))) as Hpositive.
+  destruct o; destruct fs as [|f1 [|f2 [|f3 fs]]];
+    time_unfold (@T_zlinear_op); time_simpl; time_cbn_all;
+    rewrite ?Nat.add_0_r in *;
+    try match goal with
+    | |- (_ <= 1024 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia
+    end.
+  - pose proof (linear_add_charge_time X key_bits f1 f2) as Htime. time_cbn_all.
+    match goal with |- (_ <= 1024 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia end.
+  - pose proof (linear_sub_time X key_bits f1 f2) as Htime. time_cbn_all.
+    match goal with |- (_ <= 1024 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia end.
+  - pose proof (linear_mul_time X key_bits f1 f2) as Htime. time_cbn_all.
+    match goal with |- (_ <= 1024 * ?charge)%N =>
+      let work := fresh "work" in set (work := charge) in *; clearbody work; lia end.
+Qed.
+(** A list of recognized integer forms inherits the summed size bounds of its operands. *)
+Lemma zlinear_forms_size : forall X (key_bits : X -> nat) es fs,
+  sequence (map zlinear_form es) = Some fs ->
+  fold_right Nat.add 0 (map (fun f => length (coef f)) fs) <=
+    fold_right Nat.add 0 (map tsize es) /\
+  fold_right Nat.add 0 (map (linear_bits key_bits) fs) <=
+    fold_right Nat.add 0 (map (term_mass key_bits zoperator_bits) es).
+Proof.
+  intros X key_bits es fs Hforms. split.
+  - eapply sequence_map_bound; [|exact Hforms].
+    apply Forall_forall. intros e Hin f Hf.
+    exact (proj1 (zlinear_form_size X key_bits e f Hf)).
+  - eapply sequence_map_bound; [|exact Hforms].
+    apply Forall_forall. intros e Hin f Hf.
+    exact (proj2 (zlinear_form_size X key_bits e f Hf)).
+Qed.
+
+(** Each list member is charged within the sum of the list's nonnegative sizes. *)
+Lemma summed_size_member : forall A (size : A -> nat) xs x,
+  In x xs -> size x <= fold_right Nat.add 0 (map size xs).
+Proof.
+  intros A size xs. induction xs as [|y xs IH]; intros x Hin.
+  - contradiction.
+  - cbn [map fold_right]. destruct Hin as [Heq|Hin].
+    + subst y. lia.
+    + specialize (IH x Hin). lia.
+Qed.
+
+(** Each operand contributes at least one syntax node to the sum. *)
+Lemma operand_count_size : forall K X (es : list (term K X)),
+  length es <= fold_right Nat.add 0 (map tsize es).
+Proof.
+  intros K X es. induction es as [|e es IH]; cbn [length map fold_right].
+  - lia.
+  - pose proof (term_size_pos K X e). lia.
 Qed.
