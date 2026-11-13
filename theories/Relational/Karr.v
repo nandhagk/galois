@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith QArith Bool Lia Ring Psatz Permutation.
+From Stdlib Require Import List ZArith QArith Qfield Bool Lia Ring Psatz Permutation.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -598,6 +598,366 @@ Proof.
       rewrite karr_Forall_restore, (IH d _ qs Htail_length Htail_width).
       apply karr_Forall_map_iff. intros r Hin. symmetry. apply karr_models_tail_zero.
       exact (proj1 (Forall_forall _ _) (karr_pivot_none rs Hpivot) r Hin).
+Qed.
+
+(** A reduced target has zero coefficients at every pivot of the basis. *)
+Definition karr_reduced (rs : list karr_row) (zs : list Z) : Prop :=
+  forall r i a, In r rs -> karr_first (kcoeff r) = Some (i, a) -> karr_nth i zs = 0%Z.
+
+(** A nonzero head is the first coefficient of a row. *)
+Lemma karr_first_head : forall r, karr_head r <> 0%Z ->
+  karr_first (kcoeff r) = Some (0%nat, karr_head r).
+Proof.
+  intros [zs rhs ws sc] Hnonzero. destruct zs as [|z zs].
+  - exfalso. apply Hnonzero. reflexivity.
+  - cbn [karr_head kcoeff] in *. cbn [karr_first].
+    assert (Hz : Z.eqb z 0 = false) by now apply Z.eqb_neq.
+    now rewrite Hz.
+Qed.
+
+(** A restored zero shifts every existing pivot by one position. *)
+Lemma karr_first_restore : forall r i a, karr_first (kcoeff r) = Some (i, a) ->
+  karr_first (kcoeff (karr_restore r)) = Some (S i, a).
+Proof.
+  intros r i a Hfirst. cbn [karr_restore kcoeff karr_first]. now rewrite Hfirst.
+Qed.
+
+(** Every pivot of a restored row comes from its unshifted row. *)
+Lemma karr_first_restore_inv : forall r i a,
+  karr_first (kcoeff (karr_restore r)) = Some (i, a) ->
+  exists j, i = S j /\ karr_first (kcoeff r) = Some (j, a).
+Proof.
+  intros r i a Hfirst. cbn [karr_restore kcoeff karr_first] in Hfirst.
+  destruct (karr_first (kcoeff r)) as [[j b]|] eqn:Htail; [|discriminate].
+  injection Hfirst as Hindex Hvalue. subst i a. exists j. split; reflexivity.
+Qed.
+
+(** Every coordinate before the first nonzero coefficient vanishes. *)
+Lemma karr_first_before : forall zs i a,
+  karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
+Proof.
+  intro zs. induction zs as [|z zs IH]; intros i a Hfirst j Hbefore;
+    cbn [karr_first] in Hfirst; [discriminate|].
+  destruct (Z.eqb z 0) eqn:Hzero.
+  - apply Z.eqb_eq in Hzero. subst z.
+    destruct (karr_first zs) as [[k b]|] eqn:Htail; [|discriminate].
+    injection Hfirst as Hindex Hvalue. subst i a.
+    destruct j as [|j]; cbn [karr_nth]; [reflexivity|].
+    apply (IH k b); [auto|lia].
+  - injection Hfirst as Hindex Hvalue. subst i a. lia.
+Qed.
+
+(** Failure to find a first coefficient means every coordinate vanishes. *)
+Lemma karr_first_none : forall zs, karr_first zs = None ->
+  forall i, karr_nth i zs = 0%Z.
+Proof.
+  intro zs. induction zs as [|z zs IH]; intros Hnone i.
+  - destruct i; reflexivity.
+  - cbn [karr_first] in Hnone. destruct (Z.eqb z 0) eqn:Hzero; [|discriminate].
+    apply Z.eqb_eq in Hzero. subst z.
+    destruct (karr_first zs) as [[j a]|] eqn:Htail; [discriminate|].
+    destruct i as [|i]; cbn [karr_nth]; [reflexivity|].
+    apply IH. auto.
+Qed.
+
+(** Coordinate lookup commutes with integer coefficient scaling, including absent positions. *)
+Lemma karr_nth_scale : forall factor zs i,
+  karr_nth i (map (fun z => (factor * z)%Z) zs) = (factor * karr_nth i zs)%Z.
+Proof.
+  intros factor zs. induction zs as [|z zs IH]; intros [|i];
+    cbn [map karr_nth]; try ring. apply IH.
+Qed.
+
+(** Checked division preserves a zero coordinate in every branch. *)
+Lemma karr_divide_coordinate_zero : forall divisor r i,
+  karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
+Proof.
+  intros divisor r i Hzero.
+  destruct (karr_divide_factor divisor r) as [factor [Hnonzero [Hcoeff _]]].
+  pose proof (f_equal (karr_nth i) Hcoeff) as Hcoordinate.
+  rewrite karr_nth_scale, Hzero in Hcoordinate. nia.
+Qed.
+
+(** Crossing two rows preserves every coordinate zero in both, even for unequal widths. *)
+Lemma karr_nth_cross_zero : forall i a b xs ys,
+  karr_nth i xs = 0%Z -> karr_nth i ys = 0%Z ->
+  karr_nth i (karr_cross a b xs ys) = 0%Z.
+Proof.
+  intro i. induction i as [|i IH]; intros a b [|x xs] [|y ys] Hx Hy;
+    cbn [karr_nth karr_cross] in *; try reflexivity.
+  - rewrite Hx, Hy. ring.
+  - now apply IH.
+Qed.
+
+(** Crossing at a selected coordinate cancels it even if the lists are truncated. *)
+Lemma karr_nth_cross_cancel : forall i xs ys,
+  karr_nth i (karr_cross (karr_nth i ys) (karr_nth i xs) xs ys) = 0%Z.
+Proof.
+  intro i. induction i as [|i IH]; intros [|x xs] [|y ys];
+    cbn [karr_nth karr_cross]; try reflexivity.
+  - ring.
+  - apply IH.
+Qed.
+
+(** A reduction preserves every coordinate zero in both of its rows. *)
+Lemma karr_reduce_coordinate_zero : forall divisor a b p r i,
+  karr_nth i (kcoeff p) = 0%Z -> karr_nth i (kcoeff r) = 0%Z ->
+  karr_nth i (kcoeff (karr_reduce divisor a b p r)) = 0%Z.
+Proof.
+  intros divisor a b p r i Hp Hr. unfold karr_reduce.
+  apply karr_divide_coordinate_zero. cbn [kcoeff]. now apply karr_nth_cross_zero.
+Qed.
+
+(** Reducing against a row's first coefficient cancels that pivot coordinate. *)
+Lemma karr_reduce_coordinate_cancel : forall divisor p r i a,
+  karr_first (kcoeff p) = Some (i, a) ->
+  karr_nth i (kcoeff (karr_reduce divisor a (karr_nth i (kcoeff r)) p r)) = 0%Z.
+Proof.
+  intros divisor p r i a Hfirst. unfold karr_reduce.
+  apply karr_divide_coordinate_zero. cbn [kcoeff].
+  rewrite <- (karr_first_nth (kcoeff p) i a Hfirst). apply karr_nth_cross_cancel.
+Qed.
+
+(** A coordinate absent from every basis row stays zero during target reduction. *)
+Lemma karr_target_coordinate_zero : forall rs previous r i,
+  Forall (fun p => karr_nth i (kcoeff p) = 0%Z) rs ->
+  karr_nth i (kcoeff r) = 0%Z ->
+  karr_nth i (kcoeff (karr_target rs previous r)) = 0%Z.
+Proof.
+  intro rs. induction rs as [|p rs IH]; intros previous r i Hbasis Hrow; [exact Hrow|].
+  inversion Hbasis as [|p' rs' Hp Hrest]; subst p' rs'.
+  cbn [karr_target]. destruct (karr_first (kcoeff p)) as [[j a]|].
+  - apply IH; [exact Hrest|]. now apply karr_reduce_coordinate_zero.
+  - now apply IH.
+Qed.
+
+(** Nonzero pivots advance strictly through the list, while zero rows may occur anywhere. *)
+Inductive karr_ordered : list karr_row -> Prop :=
+  | karr_ordered_nil : karr_ordered []
+  | karr_ordered_cons : forall p rs,
+      karr_ordered rs ->
+      (forall i a q j b, karr_first (kcoeff p) = Some (i, a) ->
+        In q rs -> karr_first (kcoeff q) = Some (j, b) -> i < j) ->
+      karr_ordered (p :: rs).
+
+(** Lists with no nonzero pivots satisfy the ordering condition. *)
+Lemma karr_ordered_zero : forall rs,
+  Forall (fun r => karr_first (kcoeff r) = None) rs -> karr_ordered rs.
+Proof.
+  intros rs Hzero. induction Hzero as [|p rs Hp Hrest IH].
+  - constructor.
+  - constructor; [exact IH|]. intros i a q j b Hfirst _ _.
+    rewrite Hp in Hfirst. discriminate.
+Qed.
+
+(** Restoring a zero shifts all pivots together and preserves their strict order. *)
+Lemma karr_ordered_restore : forall rs,
+  karr_ordered rs -> karr_ordered (map karr_restore rs).
+Proof.
+  intros rs Hordered. induction Hordered as [|p rs Hordered IH Hbefore]; cbn [map].
+  - constructor.
+  - constructor; [exact IH|]. intros i a q j b Hp Hin Hq.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst q.
+    destruct (karr_first_restore_inv p i a Hp) as [ip [Hi Hpi]].
+    destruct (karr_first_restore_inv s j b Hq) as [iq [Hj Hqi]].
+    subst i j. pose proof (Hbefore ip a s iq b Hpi Hin Hqi). lia.
+Qed.
+
+(** The recursive echelon shape entails strictly ordered pivot positions. *)
+Lemma karr_echelon_ordered : forall n rs, karr_echelon n rs -> karr_ordered rs.
+Proof.
+  intros n rs Hechelon. induction Hechelon as
+    [rs Hempty|n rs Hechelon IH|n p rs Hwidth Hnonzero Hechelon IH].
+  - apply karr_ordered_zero. apply Forall_forall. intros r Hin.
+    rewrite (proj1 (Forall_forall _ _) Hempty r Hin). reflexivity.
+  - now apply karr_ordered_restore.
+  - constructor; [now apply karr_ordered_restore|]. intros i a q j b Hp Hin Hq.
+    rewrite (karr_first_head p Hnonzero) in Hp. injection Hp as Hindex Hvalue. subst i a.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst q.
+    destruct (karr_first_restore_inv s j b Hq) as [k [Hj _]]. lia.
+Qed.
+
+(** Later pivots leave each canceled earlier pivot at zero. *)
+Lemma karr_target_ordered_reduced : forall rs, karr_ordered rs ->
+  forall previous r, karr_reduced rs (kcoeff (karr_target rs previous r)).
+Proof.
+  intros rs Hordered. induction Hordered as [|p rs Hordered IH Hbefore]; intros previous r.
+  - intros q i a Hin. contradiction.
+  - cbn [karr_target]. destruct (karr_first (kcoeff p)) as [[i a]|] eqn:Hp.
+    + assert (Hlater : Forall (fun q => karr_nth i (kcoeff q) = 0%Z) rs).
+      { apply Forall_forall. intros q Hin.
+        destruct (karr_first (kcoeff q)) as [[j b]|] eqn:Hq.
+        - apply (karr_first_before (kcoeff q) j b Hq i).
+          eapply Hbefore; [auto|exact Hin|exact Hq].
+        - now apply karr_first_none. }
+      assert (Hpivot : karr_nth i
+        (kcoeff (karr_target rs a
+          (karr_reduce previous a (karr_nth i (kcoeff r)) p r))) = 0%Z).
+      { apply karr_target_coordinate_zero; [exact Hlater|].
+        now apply karr_reduce_coordinate_cancel. }
+      intros q j b Hin Hq. destruct Hin as [Hsame|Hin].
+      * subst q. rewrite Hp in Hq. injection Hq as Hindex Hvalue. subst j b. exact Hpivot.
+      * exact (IH a (karr_reduce previous a (karr_nth i (kcoeff r)) p r) q j b Hin Hq).
+    + intros q j b Hin Hq. destruct Hin as [Hsame|Hin].
+      * subst q. rewrite Hp in Hq. discriminate.
+      * exact (IH previous r q j b Hin Hq).
+Qed.
+
+(** Target reduction against an echelon basis zeros every basis pivot. *)
+Lemma karr_target_reduced : forall n rs previous r,
+  karr_echelon n rs -> karr_reduced rs (kcoeff (karr_target rs previous r)).
+Proof.
+  intros n rs previous r Hechelon. apply karr_target_ordered_reduced.
+  now apply karr_echelon_ordered with (n := n).
+Qed.
+
+(** Every row in an echelon basis has the recorded coordinate width. *)
+Lemma karr_echelon_width : forall n rs, karr_echelon n rs ->
+  Forall (fun r => length (kcoeff r) = n) rs.
+Proof.
+  intros n rs Hechelon. induction Hechelon as
+    [rs Hempty|n rs Hechelon IH|n p rs Hwidth Hnonzero Hechelon IH].
+  - apply Forall_forall. intros r Hin.
+    rewrite (proj1 (Forall_forall _ _) Hempty r Hin). reflexivity.
+  - apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+    rewrite karr_restore_width, (proj1 (Forall_forall _ _) IH s Hin). reflexivity.
+  - constructor; [exact Hwidth|]. apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+    rewrite karr_restore_width, (proj1 (Forall_forall _ _) IH s Hin). reflexivity.
+Qed.
+
+(** Reducing a target against equally wide basis rows preserves its width. *)
+Lemma karr_target_width : forall n rs previous r,
+  Forall (fun p => length (kcoeff p) = n) rs -> length (kcoeff r) = n ->
+  length (kcoeff (karr_target rs previous r)) = n.
+Proof.
+  intros n rs. induction rs as [|p rs IH]; intros previous r Hbasis Hwidth; [exact Hwidth|].
+  inversion Hbasis as [|p' rs' Hp Hrest]; subst p' rs'.
+  cbn [karr_target]. destruct (karr_first (kcoeff p)) as [[i a]|].
+  - apply IH; [exact Hrest|]. rewrite karr_reduce_width; [exact Hwidth|lia].
+  - now apply IH.
+Qed.
+
+(** A zero coefficient row is consistent exactly when its right-hand side vanishes. *)
+Definition karr_zero_right (rs : list karr_row) : Prop :=
+  Forall (fun r => karr_zero r = true -> kright r = 0%Z) rs.
+
+(** Removing a leading basis row preserves reduction at the remaining pivots. *)
+Lemma karr_reduced_tail : forall p rs zs,
+  karr_reduced (p :: rs) zs -> karr_reduced rs zs.
+Proof.
+  intros p rs zs Hreduced r i a Hin Hfirst.
+  apply (Hreduced r i a); [now right|exact Hfirst].
+Qed.
+
+(** Restored basis pivots constrain only the tail of a reduced target. *)
+Lemma karr_reduced_restore : forall rs z zs,
+  karr_reduced (map karr_restore rs) (z :: zs) -> karr_reduced rs zs.
+Proof.
+  intros rs z zs Hreduced r i a Hin Hfirst.
+  exact (Hreduced (karr_restore r) (S i) a (in_map karr_restore rs r Hin)
+    (karr_first_restore r i a Hfirst)).
+Qed.
+
+(** Zero-row consistency is unchanged by restoring leading zero coefficients. *)
+Lemma karr_zero_right_restore : forall rs,
+  karr_zero_right (map karr_restore rs) <-> karr_zero_right rs.
+Proof.
+  intro rs. unfold karr_zero_right. apply karr_Forall_map_iff. intros r _.
+  change ((karr_zero r = true -> kright r = 0%Z) <->
+    (karr_zero r = true -> kright r = 0%Z)). reflexivity.
+Qed.
+
+(** Solving one nonzero leading coefficient determines its store coordinate. *)
+Definition karr_head_value (qs : list Q) (p : karr_row) : Q :=
+  ((inject_Z (kright p) - karr_eval qs (tl (kcoeff p))) / inject_Z (karr_head p))%Q.
+
+(** Back substitution satisfies its pivot row. *)
+Lemma karr_solve_head : forall qs p, karr_head p <> 0%Z ->
+  karr_models (karr_head_value qs p :: qs) p.
+Proof.
+  intros qs [zs rhs ws sc] Hnonzero. destruct zs as [|z zs].
+  - exfalso. apply Hnonzero. reflexivity.
+  - cbn [karr_head kcoeff] in Hnonzero.
+    unfold karr_models, karr_head_value. cbn [karr_head kcoeff kright tl karr_eval].
+    field. now apply karr_inject_nonzero.
+Qed.
+
+(** A triangular basis with no false constant row has a rational model. *)
+Lemma karr_echelon_model : forall n rs, karr_echelon n rs -> karr_zero_right rs ->
+  exists qs, length qs = n /\ Forall (karr_models qs) rs.
+Proof.
+  intros n rs Hechelon. induction Hechelon as
+    [rs Hempty|n rs Hechelon IH|n p rs Hwidth Hnonzero Hechelon IH]; intro Hzero.
+  - exists []. split; [reflexivity|]. apply Forall_forall. intros r Hin.
+    pose proof (proj1 (Forall_forall _ _) Hempty r Hin) as Hcoeff.
+    pose proof (proj1 (Forall_forall _ _) Hzero r Hin) as Hright.
+    assert (Hrowzero : karr_zero r = true).
+    { unfold karr_zero. now rewrite Hcoeff. }
+    specialize (Hright Hrowzero). unfold karr_models. rewrite Hright. reflexivity.
+  - apply (proj1 (karr_zero_right_restore rs)) in Hzero.
+    destruct (IH Hzero) as [qs [Hlength Hmodels]].
+    exists (0%Q :: qs). split; [cbn [length]; now rewrite Hlength|].
+    now apply (proj2 (karr_Forall_restore 0%Q qs rs)).
+  - assert (Htail : karr_zero_right rs).
+    { apply (proj1 (karr_zero_right_restore rs)). now apply Forall_inv_tail in Hzero. }
+    destruct (IH Htail) as [qs [Hlength Hmodels]].
+    exists (karr_head_value qs p :: qs). split; [cbn [length]; now rewrite Hlength|].
+    constructor; [now apply karr_solve_head|].
+    now apply (proj2 (karr_Forall_restore (karr_head_value qs p) qs rs)).
+Qed.
+
+(** A nonzero reduced target can attain any rational value while the basis remains true. *)
+Lemma karr_echelon_countermodel : forall n rs, karr_echelon n rs ->
+  karr_zero_right rs -> forall zs, length zs = n -> karr_reduced rs zs ->
+  forallb (Z.eqb 0) zs = false -> forall value : Q,
+  exists qs, length qs = n /\ Forall (karr_models qs) rs /\
+    (karr_eval qs zs == value)%Q.
+Proof.
+  intros n rs Hechelon. induction Hechelon as
+    [rs Hempty|n rs Hechelon IH|n p rs Hwidth Hnonzero Hechelon IH];
+    intros Hzero zs Hlength Hreduced Hnotzero value.
+  - destruct zs as [|z zs].
+    + change (true = false) in Hnotzero. discriminate.
+    + cbn [length] in Hlength. discriminate.
+  - destruct zs as [|z zs]; cbn [length] in Hlength; [discriminate|].
+    assert (Htail_length : length zs = n) by lia.
+    apply (proj1 (karr_zero_right_restore rs)) in Hzero.
+    pose proof (karr_reduced_restore rs z zs Hreduced) as Htail_reduced.
+    change (Z.eqb 0 z && forallb (Z.eqb 0) zs = false) in Hnotzero.
+    destruct (Z.eqb 0 z) eqn:Hzero_z.
+    + apply Z.eqb_eq in Hzero_z. subst z. cbn [andb] in Hnotzero.
+      destruct (IH Hzero zs Htail_length Htail_reduced Hnotzero value)
+        as [qs [Hqlength [Hmodels Hvalue]]].
+      exists (0%Q :: qs). split; [cbn [length]; now rewrite Hqlength|].
+      split; [now apply (proj2 (karr_Forall_restore 0%Q qs rs))|].
+      change (0 * 0 + karr_eval qs zs == value)%Q. setoid_rewrite Hvalue. ring.
+    + apply Z.eqb_neq in Hzero_z.
+      destruct (karr_echelon_model n rs Hechelon Hzero) as [qs [Hqlength Hmodels]].
+      set (q := ((value - karr_eval qs zs) / inject_Z z)%Q).
+      exists (q :: qs). split; [cbn [length]; now rewrite Hqlength|].
+      split; [now apply (proj2 (karr_Forall_restore q qs rs))|].
+      change (inject_Z z * q + karr_eval qs zs == value)%Q.
+      unfold q. field. apply karr_inject_nonzero. lia.
+  - destruct zs as [|z zs]; cbn [length] in Hlength; [discriminate|].
+    assert (Htail_length : length zs = n) by lia.
+    assert (Htail_zero : karr_zero_right rs).
+    { apply (proj1 (karr_zero_right_restore rs)). now apply Forall_inv_tail in Hzero. }
+    assert (Hzero_z : z = 0%Z).
+    { exact (Hreduced p 0 (karr_head p) (or_introl eq_refl)
+        (karr_first_head p Hnonzero)). }
+    pose proof (karr_reduced_restore rs z zs (karr_reduced_tail p _ _ Hreduced))
+      as Htail_reduced.
+    subst z. change (forallb (Z.eqb 0) zs = false) in Hnotzero.
+    destruct (IH Htail_zero zs Htail_length Htail_reduced Hnotzero value)
+      as [qs [Hqlength [Hmodels Hvalue]]].
+    exists (karr_head_value qs p :: qs). split; [cbn [length]; now rewrite Hqlength|].
+    split.
+    + constructor; [now apply karr_solve_head|].
+      now apply (proj2 (karr_Forall_restore (karr_head_value qs p) qs rs)).
+    + change (0 * karr_head_value qs p + karr_eval qs zs == value)%Q.
+      setoid_rewrite Hvalue. ring.
 Qed.
 
 Lemma karr_values_ne_app : forall A (tr : trie_ne A) acc,
