@@ -2644,6 +2644,17 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     - fold s. unfold budget. rewrite Nat.pow_2_r, Nat2N.inj_mul. nia.
   Qed.
 
+  (** Operator work accounts for every operand size. *)
+  Lemma work_sizes : forall o xs, fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof.
+    intros o xs. unfold work, operand_bits. lia.
+  Qed.
+  (** Guard work accounts for every operand size. *)
+  Lemma gwork_sizes : forall g xs, fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof.
+    intros g xs. unfold gwork, operand_bits. lia.
+  Qed.
+
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -2709,10 +2720,56 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Backward transfer additionally charges the requested result. *)
   Lemma T_backward_le : forall o r xs,
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. pose proof (L.T_view_le o) as Hview.
+    pose proof (work_sizes o xs) as Hwork.
+    remember (work o xs) as budget eqn:Hbudget in *. clear Hbudget.
+    assert (Hpositive : (1 <= N.of_nat (budget + size r + 1))%N) by lia.
+    unfold T_backward.
+    destruct (L.view o); destruct xs as [|a [|b [|extra xs]]];
+      cbn beta iota zeta;
+      unfold Datatypes.T_fst, Datatypes.T_snd;
+      cbn beta zeta;
+      cbn [map fold_right] in Hwork.
+    all: try match goal with
+    | |- context [T_add_back ?r ?a ?b] =>
+        pose proof (add_back_time_linear r a b) as Hprimitive
+    | |- context [T_sub_back ?r ?a ?b] =>
+        pose proof (sub_back_time_linear r a b) as Hprimitive
+    | |- context [T_mul_back ?r ?a ?b] =>
+        pose proof (mul_back_time_linear r a b) as Hprimitive
+    | |- context [T_udiv_back ?r ?a ?b] =>
+        pose proof (unsigned_back_time_linear a b) as Hprimitive; unfold T_udiv_back
+    | |- context [T_urem_back ?r ?a ?b] =>
+        pose proof (unsigned_back_time_linear a b) as Hprimitive; unfold T_urem_back
+    end.
+    all: unfold c_val in *; nia.
+  Qed.
   (** Guard transfer is bounded by guard work. *)
   Lemma T_guard_le : forall g xs, (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. pose proof (L.T_gview_le g) as Hview.
+    pose proof (gwork_sizes g xs) as Hwork.
+    remember (gwork g xs) as budget eqn:Hbudget in *. clear Hbudget.
+    assert (Hpositive : (1 <= N.of_nat (budget + 1))%N) by lia.
+    unfold T_guard.
+    destruct (L.gview g) as [c| |]; [destruct c| |];
+      destruct xs as [|a [|b [|extra xs]]]; cbn beta iota zeta;
+      unfold Datatypes.T_fst, Datatypes.T_snd;
+      cbn beta zeta; cbn [map fold_right] in Hwork.
+    all: try match goal with
+    | |- context [T_strict_back ?a ?b] =>
+        pose proof (strict_back_time_linear a b) as Hprimitive
+    | |- context [T_ult_back (abst 1) ?a ?b] =>
+        pose proof (ult_back_time_linear (abst 1) a b) as Hprimitive;
+        rewrite abst_result_bits in Hprimitive;
+        cbn [Z.size_nat Pos.size_nat] in Hprimitive; unfold T_abst
+    | |- context [T_meet ?a ?b] =>
+        pose proof (meet_time_linear a b) as Hleft;
+        pose proof (meet_time_linear b a) as Hright
+    end.
+    all: unfold c_val in *; nia.
+  Qed.
   (** Forward results fit within the charged operator work. *)
   Lemma forward_size : forall o xs,
     (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
@@ -2746,21 +2803,47 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. pose proof (work_sizes o xs) as Hwork.
+    remember (work o xs) as budget eqn:Hbudget in *. clear Hbudget.
+    unfold backward.
+    destruct (L.view o); destruct xs as [|a [|b [|extra xs]]];
+      cbn beta iota zeta; cbn [map fold_right] in Hwork |- *.
+    all: try match goal with
+    | |- context [add_back ?r ?a ?b] =>
+        pose proof (add_back_result_bits r a b) as Hprimitive
+    | |- context [sub_back ?r ?a ?b] =>
+        pose proof (sub_back_result_bits r a b) as Hprimitive
+    | |- context [mul_back ?r ?a ?b] =>
+        pose proof (mul_back_result_bits r a b) as Hprimitive
+    | |- context [udiv_back ?r ?a ?b] =>
+        unfold udiv_back; pose proof (unsigned_back_result_bits a b) as Hprimitive
+    | |- context [urem_back ?r ?a ?b] =>
+        unfold urem_back; pose proof (unsigned_back_result_bits a b) as Hprimitive
+    end.
+    all: unfold c_val; nia.
+  Qed.
   (** Guard results fit within the charged guard work. *)
   Lemma guard_size : forall g xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
       c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Operator work accounts for every operand size. *)
-  Lemma work_sizes : forall o xs, fold_right Nat.add 0%nat (map size xs) <= work o xs.
   Proof.
-    intros o xs. unfold work, operand_bits. lia.
-  Qed.
-  (** Guard work accounts for every operand size. *)
-  Lemma gwork_sizes : forall g xs, fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof.
-    intros g xs. unfold gwork, operand_bits. lia.
+    intros g xs. pose proof (gwork_sizes g xs) as Hwork.
+    remember (gwork g xs) as budget eqn:Hbudget in *. clear Hbudget.
+    unfold guard.
+    destruct (L.gview g) as [c| |]; [destruct c| |];
+      destruct xs as [|a [|b [|extra xs]]]; cbn beta iota zeta;
+      cbn [map fold_right] in Hwork |- *.
+    all: try match goal with
+    | |- context [strict_back ?a ?b] =>
+        pose proof (strict_back_result_bits a b) as Hprimitive
+    | |- context [ult_back (abst 1) ?a ?b] =>
+        pose proof (ult_back_result_bits (abst 1) a b) as Hprimitive
+    | |- context [meet ?a ?b] =>
+        pose proof (meet_result_bits a b) as Hleft;
+        pose proof (meet_result_bits b a) as Hright
+    end.
+    all: unfold c_val; nia.
   Qed.
   (** Interval size records the largest endpoint bit size. *)
   Lemma size_bits : forall a, size a = itv_bits a.
