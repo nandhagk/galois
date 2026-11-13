@@ -4,7 +4,7 @@
     For example, equal identifiers in a satisfying view have the same denotation.
     Builds on: Syntax, Model and Stdlib lists. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith Relations.Relation_Operators.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
@@ -154,6 +154,69 @@ Proof.
     reflexivity.
   - symmetry. exact IH.
   - exact (eq_trans IHleft IHright).
+Qed.
+
+(** A row's truth depends only on its kind and interpreted arguments and output. *)
+Lemma holds_transport : forall (nu' : positive -> carrier M) w w' f k k' o o',
+  kind w' f = kind w f -> map (den nu') k' = map (den nu) k ->
+  option_map (den nu') o' = option_map (den nu) o ->
+  holds M nu w f k o -> holds M nu' w' f k' o'.
+Proof.
+  intros nu' w w' f k k' o o' Hkind Hargs Hout Hholds.
+  unfold holds in *. rewrite Hkind, Hargs.
+  destruct (kind w f) as [[| |m] |];
+    destruct o as [[i | v] |]; destruct o' as [[j | v'] |];
+    cbn [option_map den] in *; try contradiction; try discriminate; congruence.
+Qed.
+
+(** Removing rows and equalities preserves satisfaction when function kinds are unchanged. *)
+Lemma sat_restrict : forall w w',
+  kind w' = kind w ->
+  (forall f k o, row w' f k o -> row w f k o) ->
+  (forall i j, same w' i j -> same w i j) ->
+  sat merge M nu w -> sat merge M nu w'.
+Proof.
+  intros w w' Hkind Hrows Hsame [Hrow_sat [Hsame_sat Hlat]].
+  split.
+  - intros f k o Hrow. unfold holds. rewrite Hkind.
+    exact (Hrow_sat f k o (Hrows f k o Hrow)).
+  - split.
+    + intros i j Hrelation. exact (Hsame_sat i j (Hsame i j Hrelation)).
+    + unfold lat_closed in *. rewrite Hkind. exact Hlat.
+Qed.
+
+(** Equality closure preserves an interpretation when every generating pair agrees. *)
+Lemma equality_closure_den : forall R,
+  (forall i j, R i j -> nu i = nu j) -> forall i j,
+  clos_refl_sym_trans positive R i j -> nu i = nu j.
+Proof.
+  intros R Hstep i j Hclosure.
+  induction Hclosure as [i j Hpair | i | i j Hpair IH | i j k Hleft IHleft Hright IHright].
+  - exact (Hstep i j Hpair).
+  - reflexivity.
+  - symmetry. exact IH.
+  - exact (eq_trans IHleft IHright).
+Qed.
+
+(** Adding a justified equality keeps every row and every satisfying interpretation. *)
+Lemma sat_union_view : forall w w' i j,
+  kind w' = kind w -> row w' = row w ->
+  (forall a b, same w' a b ->
+    clos_refl_sym_trans positive (fun x y => same w x y \/ (x = i /\ y = j)) a b) ->
+  sat merge M nu w -> nu i = nu j -> sat merge M nu w'.
+Proof.
+  intros w w' i j Hkind Hrows Hsame [Hrow_sat [Hsame_sat Hlat]] Heq.
+  split.
+  - intros f k o Hrow. unfold holds. rewrite Hkind.
+    apply Hrow_sat. now rewrite <- Hrows.
+  - split.
+    + intros a b Hab. apply (equality_closure_den
+        (fun x y => same w x y \/ (x = i /\ y = j))).
+      * intros x y [Hxy | [-> ->]].
+        -- exact (Hsame_sat x y Hxy).
+        -- exact Heq.
+      * exact (Hsame a b Hab).
+    + unfold lat_closed in *. rewrite Hkind. exact Hlat.
 Qed.
 
 End ModelFacts.
