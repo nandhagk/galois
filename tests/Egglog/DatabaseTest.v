@@ -70,6 +70,31 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+(** An empty row history permits a parent link whose default sizes do not double. *)
+Definition bad_row_link_db :=
+  let db := UnitDatabase.init [] [] in
+  let store := db_row_store db in
+  database_set_row_store
+    {| row_history := row_history store;
+       row_links := PTrieCode.set 2%positive 1%positive (row_links store);
+       row_weights := row_weights store;
+       row_keys := row_keys store;
+       row_fresh := row_fresh store;
+       row_uses := row_uses store |} db.
+
+Example bad_row_link_observation :
+  let store := db_row_store bad_row_link_db in
+  let parent r := match PTrieCode.get r (row_links store) with
+    | Some p => p | None => r end in
+  let size r := match PTrieCode.get r (row_weights store) with
+    | Some n => n | None => 1%N end in
+  (parent 2%positive, size 2%positive, size 1%positive,
+    row_history store, row_uses store) =
+    (1%positive, 1%N, 1%N, PTrieCode.empty, DatabaseUseMap.empty).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Replacing the same row twice registers two historical identifier occurrences. *)
 Example repeated_row_replacement_occurrences :
   let empty := FixtureDatabase.init [] [] in
