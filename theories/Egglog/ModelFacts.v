@@ -5,7 +5,7 @@
     Builds on: Syntax, Model and Stdlib lists. *)
 
 From Stdlib Require Import List PArith NArith Lia Relations.Relation_Operators.
-From Galois.Base Require Import UnionFindSig KeySig MapSig Trie.
+From Galois.Base Require Import UnionFindSig KeySig MapSig Trie UnionFind.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
@@ -736,3 +736,51 @@ Module FiniteMapFacts (K : KEY) (M : MAP K).
   Qed.
 
 End FiniteMapFacts.
+
+(** * Allocation counts in the concrete union-find implementation *)
+
+Module UnionFindCodeFacts.
+
+  (** Adding an existing member preserves the entire forest record. *)
+  Lemma add_present : forall x u, UnionFind.mem u x -> UnionFindCode.add x u = u.
+  Proof.
+    intros x u Hmember. unfold UnionFind.mem in Hmember.
+    unfold UnionFindCode.add.
+    destruct (PTrieCode.get x (parents u)); [reflexivity|contradiction].
+  Qed.
+
+  (** An absent key creates exactly one new membership-counter entry. *)
+  Lemma count_add_absent : forall x u, ~ UnionFind.mem u x ->
+    count (UnionFindCode.add x u) = N.succ (count u).
+  Proof.
+    intros x u Habsent. unfold UnionFind.mem in Habsent.
+    unfold UnionFindCode.add.
+    destruct (PTrieCode.get x (parents u)) as [parent|] eqn:Hparent.
+    - exfalso. apply Habsent. discriminate.
+    - reflexivity.
+  Qed.
+
+  (** Path compression keeps the membership counter unchanged. *)
+  Lemma count_find : forall x u,
+    count (snd (UnionFindCode.find x u)) = count u.
+  Proof. reflexivity. Qed.
+
+  (** A union's two insertions account for all changes to its membership counter. *)
+  Lemma count_union_add : forall x y u,
+    count (snd (UnionFindCode.union x y u)) =
+    count (UnionFindCode.add y (UnionFindCode.add x u)).
+  Proof.
+    intros x y u. unfold UnionFindCode.union.
+    destruct (Pos.eqb _ _); [|destruct (N.leb _ _)];
+      cbn [snd UnionFindCode.link count]; rewrite !count_find; reflexivity.
+  Qed.
+
+  (** Uniting two existing members preserves the allocation count. *)
+  Lemma count_union_present : forall x y u, UnionFind.mem u x -> UnionFind.mem u y ->
+    count (snd (UnionFindCode.union x y u)) = count u.
+  Proof.
+    intros x y u Hx Hy. rewrite count_union_add.
+    rewrite (add_present x u Hx), (add_present y u Hy). reflexivity.
+  Qed.
+
+End UnionFindCodeFacts.
