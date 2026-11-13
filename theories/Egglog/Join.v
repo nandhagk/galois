@@ -10,6 +10,35 @@ From Galois.Egglog Require Import ValueSig IndexSig Syntax JoinSig Index.
 
 Import List.ListNotations.
 
+(** Folding disjoint branches preserves the absence of duplicate results. *)
+Lemma fold_left_nodup_disjoint {A B : Type} (f : list B -> A -> list B)
+    (P : A -> B -> Prop) : forall cs acc,
+  NoDup cs -> NoDup acc ->
+  (forall x b, In x cs -> P x b -> ~ In b acc) ->
+  (forall x y b, P x b -> P y b -> x = y) ->
+  (forall x out b, In x cs -> In b (f out x) -> In b out \/ P x b) ->
+  (forall x out, In x cs -> NoDup out ->
+    (forall b, P x b -> ~ In b out) -> NoDup (f out x)) ->
+  NoDup (fold_left f cs acc).
+Proof.
+  intros cs. induction cs as [| x cs IH]; intros acc Hcs Hacc Hdisjoint Hunique
+    Hsound Hstep; cbn [fold_left]; [exact Hacc |].
+  inversion Hcs as [| x' cs' Habsent Htail]; subst.
+  apply IH.
+  - exact Htail.
+  - apply Hstep; [now left | exact Hacc |].
+    intros b Hb. apply (Hdisjoint x b); [now left | exact Hb].
+  - intros y b Hy Hbranch Hin.
+    destruct (Hsound x acc b (or_introl eq_refl) Hin) as [Hprevious | Hcurrent].
+    + exact (Hdisjoint y b (or_intror Hy) Hbranch Hprevious).
+    + assert (Heq : x = y) by exact (Hunique x y b Hcurrent Hbranch).
+      subst y. exact (Habsent Hy).
+  - exact Hunique.
+  - intros y out b Hy Hin. apply (Hsound y out b); [now right | exact Hin].
+  - intros y out Hy Hout Hfresh. apply (Hstep y out);
+      [now right | exact Hout | exact Hfresh].
+Qed.
+
 Module ListDef.
   TimeFun List.nth.
 End ListDef.
