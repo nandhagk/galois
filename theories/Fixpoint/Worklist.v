@@ -1948,13 +1948,339 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       exact (S.sides_within p r (look_or S.key_code L.bot m) a ss x b Hwf Hr Heval Hin).
   Qed.
 
+  (** A residual live item retains its original queue priority. *)
+  Lemma pop_residual_live : forall q pr id q1 j pj, Q.wf q ->
+    Q.pop q = Some (pr, id, q1) -> Q.prio q1 j = Some pj -> Q.prio q j = Some pj.
+  Proof.
+    intros q pr id q1 j pj Hwf Hpop Hlive.
+    destruct (Q.pop_min q pr id q1 Hwf Hpop) as [_ [_ [Hremoved Hothers]]].
+    destruct (Pos.eq_dec j id) as [->|Hother].
+    - rewrite Hremoved in Hlive; discriminate.
+    - now rewrite <- (Hothers j Hother).
+  Qed.
+
+  (** Every reachable live occurrence has its fixed source row and cached priority. *)
+  Lemma reachable_live_row : forall p pol s id pr, S.wf p -> prio_ok p pol ->
+    reachable p pol s -> Q.prio (ws_queue s) id = Some pr ->
+    exists r, source_row p id = Some r /\ In r (S.rows p) /\
+      pr = N.pos (row_rank p pol r).
+  Proof.
+    intros p pol s id pr Hwf Hprio Hreach Hlive.
+    pose proof (reachable_invariant p pol s Hwf Hprio Hreach) as Hinv.
+    destruct Hinv as [[_ [_ [_ [_ Hlisted]]]] _].
+    destruct (Hlisted pr id Hlive) as [_ [r [Hrow Hrank]]].
+    exists r; split; [exact Hrow|].
+    split; [exact (proj2 (source_row_member p id r Hrow))|exact Hrank].
+  Qed.
+
+  (** A fixed row occurrence has the same priority in every reachable queue. *)
+  Lemma reachable_priority_same : forall p pol s t id a b, S.wf p -> prio_ok p pol ->
+    reachable p pol s -> reachable p pol t ->
+    Q.prio (ws_queue s) id = Some a -> Q.prio (ws_queue t) id = Some b -> a = b.
+  Proof.
+    intros p pol s t id a b Hwf Hprio Hs Ht Ha Hb.
+    destruct (reachable_live_row p pol s id a Hwf Hprio Hs Ha)
+      as [r [Hr [_ Hrank]]].
+    destruct (reachable_live_row p pol t id b Hwf Hprio Ht Hb)
+      as [r1 [Hr1 [_ Hrank1]]].
+    congruence.
+  Qed.
+
+  (** Stable callbacks can add only readers of their declared non-head writes. *)
+  Lemma stable_step_sources : forall p pol s s1 pr id q r,
+    S.wf p -> prio_ok p pol -> reachable p pol s ->
+    Q.pop (ws_queue s) = Some (pr, id, q) -> source_row p id = Some r ->
+    step p pol s = inl s1 -> heads_unchanged pol s s1 ->
+    forall j pj, Q.prio (ws_queue s1) j = Some pj ->
+    (exists old, Q.prio q j = Some old) \/
+      exists x, In x (S.writes p r) /\ trie_get (S.key_code x) (heads pol) = None /\
+        In j (source_readers p (S.key_code x)).
+  Proof.
+    intros p pol s s1 pr id q r Hwf Hprio Hreach Hpop Hrow Hstep Hstable j pj Hlive.
+    pose proof (proj2 (proj2 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hprepared.
+    rewrite F7_indexed, Hpop in Hstep.
+    rewrite (proj1 (proj1 Hprepared) id), Hrow in Hstep.
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    assert (Hfold : heads_unchanged pol (after_pop p s id q)
+      (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q))).
+    { intros c cfg Hhead; rewrite counter_after_pop; exact (Hstable c cfg Hhead). }
+    destruct (stable_fold_sources p pol ((S.target p r, a) :: ss) (after_pop p s id q)
+      (F7_pop_prepared p pol s pr id q Hprepared Hpop) Hfold j pj Hlive)
+      as [Hold|[x [b [Hin [Hhead Hreader]]]]].
+    - left; exact Hold.
+    - right; exists x; split.
+      + eapply eval_outputs_writes; [exact Hwf| |exact Heval|exact Hin].
+        exact (proj2 (source_row_member p id r Hrow)).
+      + now split.
+  Qed.
+
+  (** Each newly queued reader has rank strictly above the row just popped. *)
+  Lemma stable_step_support : forall p pol s s1 pr id q, fits p pol ->
+    reachable p pol s -> step p pol s = inl s1 -> heads_unchanged pol s s1 ->
+    Q.pop (ws_queue s) = Some (pr, id, q) ->
+    forall j pj, Q.prio (ws_queue s1) j = Some pj ->
+      Q.prio q j = Some pj \/ (pr < pj)%N.
+  Proof.
+    intros p pol s s1 pr id q [Hwf [Hcuts Hprio]] Hreach Hstep Hstable Hpop j pj Hlive.
+    pose proof (reachable_step p pol s s1 Hreach Hstep) as Hreach1.
+    pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+    pose proof (proj1 (Q.pop_min (ws_queue s) pr id q Hqueue Hpop)) as Hpopped.
+    destruct (reachable_live_row p pol s id pr Hwf Hprio Hreach Hpopped)
+      as [r [Hrow [Hr Hrank]]].
+    destruct (stable_step_sources p pol s s1 pr id q r Hwf Hprio Hreach Hpop Hrow
+      Hstep Hstable j pj Hlive) as [[old Hold]|[x [Hwrite [Hhead Hreader]]]].
+    - left.
+      pose proof (pop_residual_live (ws_queue s) pr id q j old Hqueue Hpop Hold) as Hbefore.
+      pose proof (reachable_priority_same p pol s s1 j old pj Hwf Hprio Hreach Hreach1
+        Hbefore Hlive) as Hequal.
+      now rewrite <- Hequal.
+    - right.
+      destruct (reachable_live_row p pol s1 j pj Hwf Hprio Hreach1 Hlive)
+        as [r1 [Hrow1 [Hr1 Hrank1]]].
+      apply source_readers_spec in Hreader.
+      destruct Hreader as [r2 [y [Hrow2 [Hread Hcode]]]].
+      rewrite Hrow1 in Hrow2; injection Hrow2 as <-.
+      pose proof (row_rank_write_le p pol r x Hwrite Hhead) as Hwriter.
+      pose proof (row_rank_read_lt p pol r1 y Hcuts Hr1 Hread) as Hreader.
+      rewrite Hcode in Hreader; rewrite Hrank, Hrank1.
+      change (row_rank p pol r < row_rank p pol r1)%positive.
+      eapply Pos.le_lt_trans; eassumption.
+  Qed.
+
+  (** After a stable pop, its occurrence is absent and all remaining priorities are no smaller. *)
+  Lemma stable_step_frontier : forall p pol s s1 pr id q, fits p pol ->
+    reachable p pol s -> step p pol s = inl s1 -> heads_unchanged pol s s1 ->
+    Q.pop (ws_queue s) = Some (pr, id, q) ->
+    Q.prio (ws_queue s1) id = None /\
+      forall j pj, Q.prio (ws_queue s1) j = Some pj -> (pr <= pj)%N.
+  Proof.
+    intros p pol s s1 pr id q Hfits Hreach Hstep Hstable Hpop.
+    destruct Hfits as [Hwf [Hcuts Hprio]].
+    assert (Hfits : fits p pol) by now repeat split.
+    pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+    destruct (Q.pop_min (ws_queue s) pr id q Hqueue Hpop)
+      as [Hpopped [Hminimum [Hremoved Hothers]]].
+    pose proof (reachable_step p pol s s1 Hreach Hstep) as Hreach1.
+    split.
+    - destruct (Q.prio (ws_queue s1) id) as [pj|] eqn:Hlive; [|reflexivity].
+      destruct (stable_step_support p pol s s1 pr id q Hfits Hreach Hstep Hstable Hpop
+        id pj Hlive) as [Hold|Hgreater].
+      + rewrite Hremoved in Hold; discriminate.
+      + pose proof (reachable_priority_same p pol s s1 id pr pj Hwf Hprio Hreach Hreach1
+          Hpopped Hlive); lia.
+    - intros j pj Hlive.
+      destruct (stable_step_support p pol s s1 pr id q Hfits Hreach Hstep Hstable Hpop
+        j pj Hlive) as [Hold|Hgreater]; [|lia].
+      apply (Hminimum j pj).
+      exact (pop_residual_live (ws_queue s) pr id q j pj Hqueue Hpop Hold).
+  Qed.
+  (** Every continuing callback has popped one queue occurrence. *)
+  Lemma continuing_pop : forall p pol s s1, step p pol s = inl s1 ->
+    exists pr id q, Q.pop (ws_queue s) = Some (pr, id, q).
+  Proof.
+    intros p pol s s1 Hstep; unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
+    now exists pr, id, q.
+  Qed.
+
+  (** A stable callback preserves every lower bound on its live priorities. *)
+  Lemma stable_step_lower : forall p pol s s1 lo, fits p pol -> reachable p pol s ->
+    step p pol s = inl s1 -> heads_unchanged pol s s1 ->
+    (forall id pr, Q.prio (ws_queue s) id = Some pr -> (lo <= pr)%N) ->
+    forall id pr, Q.prio (ws_queue s1) id = Some pr -> (lo <= pr)%N.
+  Proof.
+    intros p pol s s1 lo Hfits Hreach Hstep Hstable Hlower j pj Hlive.
+    destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+    destruct Hfits as [Hwf [Hcuts Hprio]].
+    assert (Hfits : fits p pol) by now repeat split.
+    pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+    destruct (stable_step_support p pol s s1 pr id q Hfits Hreach Hstep Hstable Hpop
+      j pj Hlive) as [Hold|Hgreater].
+    - apply (Hlower j pj).
+      exact (pop_residual_live (ws_queue s) pr id q j pj Hqueue Hpop Hold).
+    - pose proof (Hlower id pr (proj1 (Q.pop_min (ws_queue s) pr id q Hqueue Hpop))).
+      lia.
+  Qed.
+
+  (** An absent row below the live frontier cannot be reinserted by a stable callback. *)
+  Lemma stable_step_absent_low : forall p pol s s1 lo id r,
+    fits p pol -> reachable p pol s -> step p pol s = inl s1 ->
+    heads_unchanged pol s s1 -> source_row p id = Some r ->
+    (N.pos (row_rank p pol r) <= lo)%N -> Q.prio (ws_queue s) id = None ->
+    (forall j pj, Q.prio (ws_queue s) j = Some pj -> (lo <= pj)%N) ->
+    Q.prio (ws_queue s1) id = None.
+  Proof.
+    intros p pol s s1 lo id r Hfits Hreach Hstep Hstable Hrow Hrank Habsent Hlower.
+    destruct (continuing_pop p pol s s1 Hstep) as [pr [popped [q Hpop]]].
+    destruct Hfits as [Hwf [Hcuts Hprio]].
+    assert (Hfits : fits p pol) by now repeat split.
+    pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+    destruct (Q.prio (ws_queue s1) id) as [pj|] eqn:Hlive; [|reflexivity].
+    destruct (stable_step_support p pol s s1 pr popped q Hfits Hreach Hstep Hstable Hpop
+      id pj Hlive) as [Hold|Hgreater].
+    - pose proof (pop_residual_live (ws_queue s) pr popped q id pj Hqueue Hpop Hold).
+      congruence.
+    - pose proof (Hlower popped pr
+        (proj1 (Q.pop_min (ws_queue s) pr popped q Hqueue Hpop))) as Hpop_lower.
+      destruct (reachable_live_row p pol s1 id pj Hwf Hprio
+        (reachable_step p pol s s1 Hreach Hstep) Hlive) as [r1 [Hrow1 [_ Hrank1]]].
+      rewrite Hrow in Hrow1; injection Hrow1 as <-; lia.
+  Qed.
+
+  (** Every later stable pop respects the current lower bound on live priorities. *)
+  Lemma stable_path_ranks_lower : forall p pol s xs last lo,
+    fits p pol -> reachable p pol s -> wl_path (step p pol) s xs last ->
+    stable_segment p pol xs ->
+    (forall id pr, Q.prio (ws_queue s) id = Some pr -> (lo <= pr)%N) ->
+    forall pr, In pr (popped_ranks xs) -> (lo <= pr)%N.
+  Proof.
+    intros p pol s xs last lo Hfits Hreach Hpath.
+    revert Hreach; induction Hpath as [s|s s1 xs last Hstep Hpath IH];
+      intros Hreach Hstable Hlower pj Hin.
+    - contradiction.
+    - destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+      assert (Hfirst : heads_unchanged pol s s1).
+      { apply (Hstable s s1); [now left|exact Hstep]. }
+      assert (Htail : stable_segment p pol xs).
+      { intros t t1 Ht Hnext; apply (Hstable t t1); [now right|exact Hnext]. }
+      cbn [popped_ranks flat_map] in Hin; rewrite Hpop in Hin; cbn [app] in Hin.
+      destruct Hin as [<-|Hin].
+      + destruct Hfits as [Hwf [_ Hprio]].
+        pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+        apply (Hlower id pr); exact (proj1 (Q.pop_min (ws_queue s) pr id q Hqueue Hpop)).
+      + apply (IH (reachable_step p pol s s1 Hreach Hstep) Htail
+          (stable_step_lower p pol s s1 lo Hfits Hreach Hstep Hfirst Hlower) pj Hin).
+  Qed.
+
+  (** A row absent below the current frontier is never popped in the stable suffix. *)
+  Lemma stable_path_avoids : forall p pol s xs last lo id r,
+    fits p pol -> reachable p pol s -> wl_path (step p pol) s xs last ->
+    stable_segment p pol xs -> source_row p id = Some r ->
+    (N.pos (row_rank p pol r) <= lo)%N -> Q.prio (ws_queue s) id = None ->
+    (forall j pj, Q.prio (ws_queue s) j = Some pj -> (lo <= pj)%N) ->
+    ~ In id (popped_ids xs).
+  Proof.
+    intros p pol s xs last lo id r Hfits Hreach Hpath.
+    revert Hreach; induction Hpath as [s|s s1 xs last Hstep Hpath IH];
+      intros Hreach Hstable Hrow Hrank Habsent Hlower.
+    - intros Hin; contradiction.
+    - destruct (continuing_pop p pol s s1 Hstep) as [pr [popped [q Hpop]]].
+      assert (Hfirst : heads_unchanged pol s s1).
+      { apply (Hstable s s1); [now left|exact Hstep]. }
+      assert (Htail : stable_segment p pol xs).
+      { intros t t1 Ht Hnext; apply (Hstable t t1); [now right|exact Hnext]. }
+      assert (Habsent1 : Q.prio (ws_queue s1) id = None).
+      { eapply (stable_step_absent_low p pol s s1 lo id r); eassumption. }
+      assert (Hlower1 : forall j pj, Q.prio (ws_queue s1) j = Some pj -> (lo <= pj)%N).
+      { eapply stable_step_lower; eassumption. }
+      cbn [popped_ids flat_map]; rewrite Hpop; cbn [app].
+      intros [Hequal|Hin].
+      + subst popped; destruct Hfits as [Hwf [_ Hprio]].
+        pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+        pose proof (proj1 (Q.pop_min (ws_queue s) pr id q Hqueue Hpop)); congruence.
+      + apply (IH (reachable_step p pol s s1 Hreach Hstep) Htail Hrow Hrank Habsent1 Hlower1).
+        exact Hin.
+  Qed.
+
+  (** Stable segments pop each numbered occurrence at most once. *)
+  Lemma stable_no_repeat : forall p pol s xs last, fits p pol -> reachable p pol s ->
+    wl_path (step p pol) s xs last -> stable_segment p pol xs -> NoDup (popped_ids xs).
+  Proof.
+    intros p pol s xs last Hfits Hreach Hpath.
+    revert Hreach; induction Hpath as [s|s s1 xs last Hstep Hpath IH];
+      intros Hreach Hstable.
+    - constructor.
+    - destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+      assert (Hfirst : heads_unchanged pol s s1).
+      { apply (Hstable s s1); [now left|exact Hstep]. }
+      assert (Htail : stable_segment p pol xs).
+      { intros t t1 Ht Hnext; apply (Hstable t t1); [now right|exact Hnext]. }
+      pose proof (reachable_step p pol s s1 Hreach Hstep) as Hreach1.
+      destruct (stable_step_frontier p pol s s1 pr id q Hfits Hreach Hstep Hfirst Hpop)
+        as [Habsent Hlower].
+      cbn [popped_ids flat_map]; rewrite Hpop; cbn [app]; constructor.
+      + destruct Hfits as [Hwf [Hcuts Hprio]].
+        assert (Hfits : fits p pol) by now repeat split.
+        pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+        destruct (reachable_live_row p pol s id pr Hwf Hprio Hreach
+          (proj1 (Q.pop_min (ws_queue s) pr id q Hqueue Hpop))) as [r [Hrow [_ Hrank]]].
+        apply (stable_path_avoids p pol s1 xs last pr id r Hfits Hreach1 Hpath Htail Hrow).
+        * lia.
+        * exact Habsent.
+        * exact Hlower.
+      + apply IH; assumption.
+  Qed.
+
+  (** A continuing trace records exactly one popped identifier per callback. *)
+  Lemma popped_ids_length : forall p pol s xs last,
+    wl_path (step p pol) s xs last -> length (popped_ids xs) = length xs.
+  Proof.
+    intros p pol s xs last Hpath; induction Hpath as [s|s s1 xs last Hstep Hpath IH].
+    - reflexivity.
+    - destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+      cbn [popped_ids flat_map]; rewrite Hpop; cbn [app length]; f_equal; exact IH.
+  Qed.
+
+  (** Every identifier popped on a reachable path is a listed occurrence. *)
+  Lemma popped_ids_supported : forall p pol s xs last, fits p pol -> reachable p pol s ->
+    wl_path (step p pol) s xs last -> incl (popped_ids xs) (row_ids p).
+  Proof.
+    intros p pol s xs last Hfits Hreach Hpath.
+    revert Hreach; induction Hpath as [s|s s1 xs last Hstep Hpath IH]; intros Hreach j Hin.
+    - contradiction.
+    - destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+      cbn [popped_ids flat_map] in Hin; rewrite Hpop in Hin; cbn [app] in Hin.
+      destruct Hin as [<-|Hin].
+      + destruct Hfits as [Hwf [_ Hprio]].
+        pose proof (proj1 (proj1 (reachable_invariant p pol s Hwf Hprio Hreach))) as Hqueue.
+        destruct (reachable_live_row p pol s id pr Hwf Hprio Hreach
+          (proj1 (Q.pop_min (ws_queue s) pr id q Hqueue Hpop))) as [r [Hrow _]].
+        exact (proj1 (source_row_member p id r Hrow)).
+      + exact (IH (reachable_step p pol s s1 Hreach Hstep) j Hin).
+  Qed.
+
+  (** A stable segment performs at most one callback per listed occurrence. *)
+  Lemma stable_length_le : forall p pol s xs last, fits p pol -> reachable p pol s ->
+    wl_path (step p pol) s xs last -> stable_segment p pol xs -> length xs <= C p.
+  Proof.
+    intros p pol s xs last Hfits Hreach Hpath Hstable.
+    pose proof (stable_no_repeat p pol s xs last Hfits Hreach Hpath Hstable) as Hunique.
+    pose proof (popped_ids_supported p pol s xs last Hfits Hreach Hpath) as Hsupport.
+    assert (Hlength : length (popped_ids xs) <= length (row_ids p)).
+    { eapply NoDup_incl_length; eassumption. }
+    now rewrite (popped_ids_length p pol s xs last Hpath), row_ids_length in Hlength.
+  Qed.
+
   (** Cut edges make popped row ranks nondecreasing in a stable segment. *)
   Lemma W5_priority : forall p pol s xs last i j a b,
     fits p pol -> reachable p pol s ->
     wl_path (step p pol) s xs last -> stable_segment p pol xs ->
     i < j -> nth_error (popped_ranks xs) i = Some a ->
     nth_error (popped_ranks xs) j = Some b -> (a <= b)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s xs last i j a b Hfits Hreach Hpath.
+    revert i j a b Hreach; induction Hpath as [s|s s1 xs last Hstep Hpath IH];
+      intros i j a b Hreach Hstable Hij Hia Hjb.
+    - destruct i; discriminate.
+    - destruct (continuing_pop p pol s s1 Hstep) as [pr [id [q Hpop]]].
+      assert (Hfirst : heads_unchanged pol s s1).
+      { apply (Hstable s s1); [now left|exact Hstep]. }
+      assert (Htail : stable_segment p pol xs).
+      { intros t t1 Ht Hnext; apply (Hstable t t1); [now right|exact Hnext]. }
+      pose proof (reachable_step p pol s s1 Hreach Hstep) as Hreach1.
+      cbn [popped_ranks flat_map] in Hia, Hjb; rewrite Hpop in Hia, Hjb.
+      cbn [app] in Hia, Hjb.
+      destruct i as [|i], j as [|j]; try lia.
+      + cbn [nth_error] in Hia, Hjb; injection Hia as <-.
+        pose proof (proj2 (stable_step_frontier p pol s s1 pr id q Hfits Hreach Hstep
+          Hfirst Hpop)) as Hlower.
+        apply (stable_path_ranks_lower p pol s1 xs last pr Hfits Hreach1 Hpath Htail
+          Hlower b).
+        eapply nth_error_In; exact Hjb.
+      + cbn [nth_error] in Hia, Hjb.
+        apply (IH i j a b Hreach1 Htail); [lia|exact Hia|exact Hjb].
+  Qed.
   (** W5 uses cuts to bound each numbered row's visits between strict head updates. *)
   Lemma W5_round : forall p pol s xs last,
     fits p pol -> reachable p pol s ->
