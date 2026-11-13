@@ -20,6 +20,55 @@ Module N.
   TimeFun N.of_nat N.max.
 End N.
 
+(** Set bits pay for the carries performed by successive binary increments. *)
+Fixpoint database_positive_credit (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => database_positive_credit q
+  | xI q => (1 + database_positive_credit q)%N
+  end.
+
+Definition database_counter_credit (n : N) : N :=
+  match n with N0 => 0%N | Npos p => database_positive_credit p end.
+
+(** A positive increment spends at most two units after releasing its carry credit. *)
+Lemma database_positive_succ_amort : forall p,
+  (Pos.T_succ p + database_positive_credit (Pos.succ p) <=
+    2 + database_positive_credit p)%N.
+Proof.
+  intro p. induction p as [p IH | p IH |]; time_unfold Pos.T_succ;
+    cbn [Pos.succ database_positive_credit]; lia.
+Qed.
+
+(** The natural-number wrapper adds one unit to a positive increment's amortized cost. *)
+Lemma database_counter_succ_amort : forall n,
+  (N.T_succ n + database_counter_credit (N.succ n) <=
+    3 + database_counter_credit n)%N.
+Proof.
+  intros [|p]; time_unfold N.T_succ; cbn [N.succ database_counter_credit].
+  - cbn [database_positive_credit]. lia.
+  - pose proof (database_positive_succ_amort p). lia.
+Qed.
+
+(** Unary conversion shares the same carry credit as dense slot numbering. *)
+Lemma database_of_succ_nat_amort : forall n,
+  (Pos.T_of_succ_nat n + database_positive_credit (Pos.of_succ_nat n) <=
+    3 * N.of_nat n + 2)%N.
+Proof.
+  intro n. induction n as [|n IH]; time_unfold Pos.T_of_succ_nat.
+  - reflexivity.
+  - pose proof (database_positive_succ_amort (Pos.of_succ_nat n)) as Hcarry.
+    cbn [Pos.of_succ_nat]. lia.
+Qed.
+
+(** Constructing a binary natural from a unary length has linear total carry cost. *)
+Lemma T_database_of_nat_le : forall n,
+  (N.T_of_nat n <= 3 * N.of_nat n + 2)%N.
+Proof.
+  intros [|n]; time_unfold N.T_of_nat; [lia |].
+  pose proof (database_of_succ_nat_amort n). lia.
+Qed.
+
 (** Sorted positions retain their original positive ranks in a projection. *)
 Record database_slot_layout := {
   ranked_positions : list (nat * positive);
