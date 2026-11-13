@@ -218,6 +218,14 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
          inc_cowrites := remove_keys bad (inc_cowrites st);
          inc_snapshots := PTrieCode.map (retire_snapshot bad) (inc_snapshots st) |}
     end.
+
+  (** The public region and invalidation views are the operational plans. *)
+  Definition region := discovery_region.
+  Definition frozen := frozen_pairs.
+  Definition discover := discovery_keys.
+  Definition invalidate := invalidate_keys.
+  Definition invalidated := invalidate.
+  Definition merge_region := merge_discovered.
 End IncrementalCode.
 
 Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYSTEM L)
@@ -317,21 +325,26 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros p st xs r; unfold region_for; rewrite filter_In, active_spec; reflexivity.
   Qed.
 
-  Lemma discovery_region_rows : forall p roots st r,
-    In r (discovery_region p roots st) -> In r (S.rows p).
+  Lemma region_rows : forall p roots st r,
+    In r (region p roots st) -> In r (S.rows p).
   Proof.
+    unfold region.
     intros p roots st r Hr; apply region_for_spec in Hr; tauto.
   Qed.
 
-  Lemma discovery_region_new : forall p roots st r,
-    In r (discovery_region p roots st) ->
-    exists x, In x (S.writes p r) /\ ~ dom st x.
+  Definition discovery_region_rows := region_rows.
+
+  Lemma region_new : forall p roots st r,
+    In r (region p roots st) -> exists y, In y (S.writes p r) /\ ~ dom st y.
   Proof.
+    unfold region.
     intros p roots st r Hr; apply region_for_spec in Hr.
     destruct Hr as [_ [x [Hx [Hnone _]]]].
     exists x; split; [exact Hx|].
     intros [v Hvalue]; rewrite Hnone in Hvalue; discriminate Hvalue.
   Qed.
+
+  Definition discovery_region_new := region_new.
 
   (** This closure fact has no wf or inv precondition. *)
   Lemma discovery_region_support : forall p roots st r x,
@@ -351,9 +364,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       + apply missing_spec; exact Hvalue.
   Qed.
 
-  Lemma discovery_closed : forall p roots st, inv p st ->
-    closed p (fun x => dom st x \/ In x (discovery_keys p roots st)).
+  Lemma discover_closed : forall p roots st, inv p st ->
+    closed p (fun x => dom st x \/ In x (discover p roots st)).
   Proof.
+    unfold discover.
     intros p roots st [Hclosed Hpost] r y x Hr Hy [Hold|Hnew] Hx.
     - left; eapply Hclosed; eauto.
     - apply (discovery_region_support p roots st r x); [|exact Hx].
@@ -361,6 +375,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       exists y; repeat split; [exact Hy| |exact Hnew].
       apply (discovery_keys_missing p roots st y Hnew).
   Qed.
+
+  Definition discovery_closed := discover_closed.
 
   (** Unlike raw trie lookup, validated lookup exposes exactly the requested payload key. *)
   Lemma value_cell : forall st x v,
@@ -681,9 +697,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Qed.
 
   (** Invalidation can only remove keys that were actually present. *)
-  Lemma invalidate_keys_dom : forall p p' ch st x,
-    In x (invalidate_keys p p' ch st) -> dom st x.
+  Lemma invalidate_dom : forall p p' ch st x,
+    In x (invalidate p p' ch st) -> dom st x.
   Proof.
+    unfold invalidate.
     intros p p' ch st x Hin; apply (proj1 (present_spec st x)).
     unfold invalidate_keys in Hin.
     destruct (changed_seeds p p' ch st) as [|y ys] eqn:Hseeds; [contradiction|].
@@ -695,15 +712,20 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     exact (proj1 (proj1 (changed_seeds_spec p p' ch st z) Hseed)).
   Qed.
 
+  Definition invalidate_keys_dom := invalidate_dom.
+
   (** Invalidation lists each removed key once. *)
-  Lemma invalidate_keys_nodup : forall p p' ch st, NoDup (invalidate_keys p p' ch st).
+  Lemma invalidate_nodup : forall p p' ch st, NoDup (invalidate p p' ch st).
   Proof.
+    unfold invalidate.
     intros p p' ch st; unfold invalidate_keys.
     destruct (changed_seeds p p' ch st) as [|x xs] eqn:Hseeds; [constructor|].
     cbn beta iota zeta; unfold footprint_run.
     apply (footprint_close_nodup S.key_eqb edit_triggers edit_outputs (present st) key_eqb_true).
     rewrite <- Hseeds; apply changed_seeds_nodup.
   Qed.
+
+  Definition invalidate_keys_nodup := invalidate_nodup.
 
   (** Every activated footprint loses all of its old-present outputs. *)
   Lemma invalidate_keys_footprint : forall p p' ch st fp x y,
@@ -756,17 +778,20 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Qed.
 
   (** Listed changed writes in either program are seed invalidations. *)
-  Lemma invalidate_keys_changed : forall p p' ch st r y, In r ch ->
+  Lemma invalidate_changed : forall p p' ch st r y, In r ch ->
     (In r (S.rows p) /\ In y (S.writes p r) \/
       In r (S.rows p') /\ In y (S.writes p' r)) ->
-    dom st y -> In y (invalidate_keys p p' ch st).
+    dom st y -> In y (invalidate p p' ch st).
   Proof.
+    unfold invalidate.
     intros p p' ch st r y Hchanged Hwrite Hdom.
     apply (invalidate_keys_seed p p' ch st).
     apply (proj2 (changed_seeds_spec p p' ch st y)).
     split; [exact Hdom|]; exists r; split; [exact Hchanged|].
     apply in_or_app; destruct Hwrite as [[_ Hy]|[_ Hy]]; [now left|now right].
   Qed.
+
+  Definition invalidate_keys_changed := invalidate_changed.
 
   (** A row with a retained new write cannot be one of the changed rows. *)
   Lemma retained_row_unchanged : forall p p' ch st r y,
@@ -788,9 +813,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Qed.
 
   (** Removing the closure leaves a closed domain in the new program. *)
-  Lemma invalidate_keys_closed : forall p p' ch st, edit_covers p p' ch -> inv p st ->
-    closed p' (fun x => dom st x /\ ~ In x (invalidate_keys p p' ch st)).
+  Lemma invalidate_closed : forall p p' ch st, edit_covers p p' ch -> inv p st ->
+    closed p' (fun x => dom st x /\ ~ In x (invalidate p p' ch st)).
   Proof.
+    unfold invalidate.
     intros p p' ch st Hcovers [Hclosed Hpost] r y x Hr' Hy' [Hdom Hkeep] Hx'.
     pose proof (retained_row_unchanged p p' ch st r y Hr' Hy' Hdom Hkeep) as Hunchanged.
     destruct (Hcovers r Hunchanged) as [Hrows Hbody].
@@ -807,15 +833,22 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       exact (invalidate_keys_new p p' ch st r x y Hr' Hx' Hbad Hy' Hdom).
   Qed.
 
+  Definition invalidate_keys_closed := invalidate_closed.
+
   (** Metadata retirement does not alter exact value deletion. *)
-  Lemma edit_value_keys : forall p p' ch st x,
+  Lemma edit_value : forall p p' ch st x,
     value (edit p p' ch st) x =
-      if mem x (invalidate_keys p p' ch st) then None else value st x.
+      if existsb (S.key_eqb x) (invalidate p p' ch st) then None else value st x.
   Proof.
+    unfold invalidate.
     intros p p' ch st x; unfold edit.
     destruct (invalidate_keys p p' ch st) as [|y bad]; [reflexivity|].
     unfold value; cbn [inc_values]; apply lookup_remove_keys.
   Qed.
+
+  Definition edit_value_keys : forall p p' ch st x,
+    value (edit p p' ch st) x =
+      if mem x (invalidate_keys p p' ch st) then None else value st x := edit_value.
 
   (** Retained values are exactly old values outside the invalidation list. *)
   Lemma edit_dom_keys : forall p p' ch st x,
@@ -837,9 +870,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Qed.
 
   (** The public invalidation inventory equals the actual removed domain, on all states. *)
-  Lemma invalidated_keys_spec : forall p p' ch st x,
-    In x (invalidate_keys p p' ch st) <-> dom st x /\ ~ dom (edit p p' ch st) x.
+  Lemma invalidated_spec : forall p p' ch st x,
+    In x (invalidated p p' ch st) <-> dom st x /\ ~ dom (edit p p' ch st) x.
   Proof.
+    unfold invalidated, invalidate.
     intros p p' ch st x; split.
     - intro Hin; split; [eapply invalidate_keys_dom; exact Hin|].
       intro Hnew; apply (proj1 (edit_dom_keys p p' ch st x)) in Hnew as [_ Hkeep].
@@ -854,6 +888,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         change (mem x (invalidate_keys p p' ch st) = true) in Htrue; congruence.
   Qed.
 
+  Definition invalidated_keys_spec := invalidated_spec.
+
   (** Values at retained keys agree pointwise with their old lookups. *)
   Lemma edit_look_kept : forall p p' ch st x,
     ~ In x (invalidate_keys p p' ch st) -> look (edit p p' ch st) x = look st x.
@@ -865,8 +901,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Qed.
 
   (** Unchanged retained rows keep their accepted contributions under the edited lookup. *)
-  Lemma edit_frame_keys : forall p p' ch st,
-    S.wf p' -> edit_covers p p' ch -> inv p st -> post_on p' (edit p p' ch st).
+  Lemma edit_frame : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
+    post_on p' (edit p p' ch st).
   Proof.
     intros p p' ch st Hwf Hcovers Hinv r y Hr' Hy' Hnew.
     apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew as [Hdom Hkeep].
@@ -887,6 +923,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       Hwf Hr' Hagree) in Hrow.
     exact Hrow.
   Qed.
+
+  Definition edit_frame_keys := edit_frame.
 
   Lemma edit_inv : forall p p' ch st,
     S.wf p' -> edit_covers p p' ch -> inv p st -> inv p' (edit p p' ch st).
@@ -1112,11 +1150,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   TimeFun invalidate_keys.
   TimeFun retire_snapshot.
   TimeFun edit.
-  Definition region := discovery_region.
-  Definition invalidate := invalidate_keys.
   TimeFun invalidate.
-  Definition invalidated := invalidate.
-  Definition frozen := frozen_pairs.
   Definition stored (st : state) : list S.key :=
     map (fun binding => fst (snd binding)) (PTrieCode.elements (inc_values st)).
   Definition infl_at (st : state) (x : S.key) : list positive :=
@@ -1226,9 +1260,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Proof. Admitted. (* STUB *)
 
   (** Invalidation lists each removed stored key once. *)
-  Lemma invalidated_spec : forall p p' ch st x,
-    In x (invalidated p p' ch st) <-> dom st x /\ ~ dom (edit p p' ch st) x.
-  Proof. Admitted. (* STUB *)
   Lemma invalidated_nodup : forall p p' ch st, NoDup (invalidated p p' ch st).
   Proof. Admitted. (* STUB *)
   (** The empty state stores no key and no influence entry. *)
@@ -1269,7 +1300,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       N.of_nat (width p st + width p' st + kwidth st + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition discover := discovery_keys.
   TimeFun discover.
   (** Snapshot access walks the identifier once. *)
   Lemma T_snapshot_get_le : forall id st,
@@ -1392,17 +1422,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma invalidated_pin : forall p p' ch st,
     invalidated p p' ch st = invalidate p p' ch st.
   Proof. Admitted. (* STUB *)
-  (** The closure lists stored keys only, each once. *)
-  Lemma invalidate_dom : forall p p' ch st x,
-    In x (invalidate p p' ch st) -> dom st x.
-  Proof. Admitted. (* STUB *)
-  Lemma invalidate_nodup : forall p p' ch st, NoDup (invalidate p p' ch st).
-  Proof. Admitted. (* STUB *)
-  Definition merge_region := merge_discovered.
   TimeFun merge_region.
-  Lemma discover_closed : forall p roots st, inv p st ->
-    closed p (fun x => dom st x \/ In x (discover p roots st)).
-  Proof. Admitted. (* STUB *)
 
   Lemma region_closed : forall p roots st r x, inv p st ->
     In r (region p roots st) -> In x (S.writes p r ++ S.deps p r) ->
@@ -1424,27 +1444,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma demand_certificate : forall p pol roots fuel st st', inv p st ->
     demand p pol roots fuel st = (Done, st') ->
     exists m, Checker.check_rows p (region p roots st) m = true.
-  Proof. Admitted. (* STUB *)
-
-  Lemma invalidate_closed : forall p p' ch st, edit_covers p p' ch -> inv p st ->
-    closed p' (fun x => dom st x /\ ~ In x (invalidate p p' ch st)).
-  Proof. Admitted. (* STUB *)
-
-  (** Editing removes precisely the invalidated stored values. *)
-  Lemma edit_value : forall p p' ch st x,
-    value (edit p p' ch st) x =
-      if existsb (S.key_eqb x) (invalidate p p' ch st) then None else value st x.
-  Proof. Admitted. (* STUB *)
-
-  (** Changed writes in either program invalidate their old stored values. *)
-  Lemma invalidate_changed : forall p p' ch st r y, In r ch ->
-    (In r (S.rows p) /\ In y (S.writes p r) \/
-      In r (S.rows p') /\ In y (S.writes p' r)) ->
-    dom st y -> In y (invalidate p p' ch st).
-  Proof. Admitted. (* STUB *)
-
-  Lemma edit_frame : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
-    post_on p' (edit p p' ch st).
   Proof. Admitted. (* STUB *)
 
   Lemma region_least_restricted : forall p pol roots fuel st m,
@@ -1473,14 +1472,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exists r, In r (region p roots st) /\ In x (S.writes p r ++ S.deps p r).
   Proof. Admitted. (* STUB *)
   Lemma frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
-  Proof. Admitted. (* STUB *)
-  (** Discovery selects declared rows. *)
-  Lemma region_rows : forall p roots st r,
-    In r (region p roots st) -> In r (S.rows p).
-  Proof. Admitted. (* STUB *)
-  (** Every selected row writes a key outside the old checked domain. *)
-  Lemma region_new : forall p roots st r,
-    In r (region p roots st) -> exists y, In y (S.writes p r) /\ ~ dom st y.
   Proof. Admitted. (* STUB *)
 
 End IncrementalT.
