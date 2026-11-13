@@ -1888,8 +1888,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
   (** Signed literal encodings add the Boolean sign bit to the doubled variable code. *)
   Lemma literal_bits : forall x sign,
     K.bits (x, sign) = 2 * X.bits x + (if sign then 1 else 0).
@@ -7655,6 +7653,339 @@ Lemma tightening_work_le_strengthening : forall m,
           else 0)))) <= c_octagon * work)%N.
     clearbody seed next rounded finished.
     destruct (matrix_ok next); cbn beta iota zeta; lia.
+  Qed.
+
+  Definition range_payload (e : term L.op X.t) (m : dbm) : nat :=
+    b m + ell m + F.bits_e e + Nat.log2 (tsize e) + 1.
+
+  (** The interval arithmetic charge is the square of its combined bit allowance. *)
+  Definition range_unit (e : term L.op X.t) (m : dbm) : N :=
+    N.of_nat ((range_payload e m ^ 2)%nat).
+
+  (** Every range arithmetic allowance contains one unit for fixed work. *)
+  Lemma range_payload_positive : forall e m, 1 <= range_payload e m.
+  Proof.
+    intros e m. unfold range_payload. lia.
+  Qed.
+
+  (** A positive squared allowance also pays for linear arithmetic. *)
+  Lemma range_unit_linear : forall e m,
+    (N.of_nat (range_payload e m) <= range_unit e m)%N.
+  Proof.
+    intros e m. unfold range_unit. apply time_of_nat_le.
+    pose proof (range_payload_positive e m) as Hpositive.
+    cbn [Nat.pow]. rewrite Nat.mul_1_r.
+    replace (range_payload e m) with (range_payload e m * 1) at 1 by lia.
+    apply Nat.mul_le_mono; [apply Nat.le_refl|exact Hpositive].
+  Qed.
+
+  (** The arithmetic charge is nonzero on every source term and state. *)
+  Lemma range_unit_positive : forall e m, (1 <= range_unit e m)%N.
+  Proof.
+    intros e m. eapply N.le_trans; [|apply range_unit_linear].
+    change (N.of_nat 1%nat <= N.of_nat (range_payload e m))%N.
+    apply time_of_nat_le. apply range_payload_positive.
+  Qed.
+
+  (** Every mentioned key fits the maximum charged by its linear form. *)
+  Lemma form_bits_key : forall f p,
+    In p (coef f) -> X.bits (fst p) <= F.form_bits f.
+  Proof.
+    intros [cs c] p. unfold F.form_bits. cbn [coef cst].
+    induction cs as [|q cs IH]; intros Hin; [contradiction|].
+    cbn in Hin |- *. destruct Hin as [Heq|Hin].
+    - subst q. pose proof (Nat.le_max_l
+        (X.bits (fst p) + Z.size_nat (snd p))
+        (fold_right Nat.max (Z.size_nat c)
+          (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) cs))). lia.
+    - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+  Qed.
+
+  (** A source form's suffix accumulators retain the same logarithmic bit allowance. *)
+  Lemma form_fragment_abs : forall e m f r cs,
+    F.lin_of e = Some (f, r) -> incl cs (coef f) -> length cs <= tsize e ->
+    rel_bounds_abs (2 ^ range_bits e (Reached m))
+      (rel_form_bounds (variable_bounds m) (Lin X.t cs (cst f))).
+  Proof.
+    intros e m f r cs Hlin Hincl Hcount.
+    destruct (F.lin_of_size e f r Hlin) as [_ Hbits].
+    eapply rel_bounds_abs_mono with
+      (lower := (length cs + 1) * 2 ^ F.bits_e e * 2 ^ ell m).
+    - unfold range_bits, ells. apply affine_magnitude_allowance; [exact Hcount|].
+      destruct e; cbn [tsize]; lia.
+    - apply rel_form_bounds_abs.
+      + cbn [cst]. apply zbits_abs_bound.
+        eapply Nat.le_trans; [exact (form_bits_constant f)|]. lia.
+      + cbn [coef]. apply Forall_forall. intros p Hin. apply zbits_abs_bound.
+        eapply Nat.le_trans; [exact (form_bits_coefficient f p (Hincl p Hin))|]. lia.
+      + apply variable_bounds_abs.
+      + pose proof (Nat.pow_nonzero 2 (F.bits_e e) ltac:(lia)). lia.
+      + pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia.
+  Qed.
+
+(** Signed unary queries charge halving as well as the two encoded-key lookups. *)
+  Lemma T_variable_bounds_small : forall m x,
+    (T_variable_bounds m x <=
+      128 * (M.c_map + 1) * N.of_nat (X.bits x + ell m + 1))%N.
+  Proof.
+    intros m x.
+    pose proof (T_entry_small m (x, true) (x, false)) as Hlower.
+    pose proof (T_entry_small m (x, false) (x, true)) as Hupper.
+    rewrite !literal_bits in Hlower, Hupper.
+    cbn beta iota zeta in Hlower, Hupper.
+    assert (Hhalf : forall a b z, entry m a b = Some z ->
+      (Z.T_div2 z <= N.of_nat (ell m) + 2)%N).
+    { intros a b z Hz. eapply N.le_trans; [apply Z.T_div2_le|].
+      assert (Hbits : Z.size_nat z <= ell m).
+      { apply (ell_entry m (K.encode a) (K.encode b) z). now rewrite raw_entry_get. }
+      apply N.add_le_mono_r. now apply time_of_nat_le. }
+    set (key_bits := X.bits x) in *.
+    set (entry_bits := ell m) in *.
+    clearbody key_bits entry_bits.
+    unfold T_variable_bounds. time_simpl.
+    destruct (entry m (x, true) (x, false)) as [lo|] eqn:Hlo;
+      destruct (entry m (x, false) (x, true)) as [hi|] eqn:Hhi;
+      try pose proof (Hhalf _ _ _ Hlo) as Hhalflo;
+      try pose proof (Hhalf _ _ _ Hhi) as Hhalfhi;
+      time_simpl; time_cbn;
+      try match goal with |- context [Z.T_opp ?z] => pose proof (Z.T_opp_le z) end;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *; nia.
+  Qed.
+
+  (** A smaller linear allowance fits the shared squared range charge. *)
+  Lemma range_linear_charge : forall e m bits,
+    bits <= range_payload e m -> (N.of_nat bits <= range_unit e m)%N.
+  Proof.
+    intros e m bits Hbits. eapply N.le_trans; [|apply range_unit_linear].
+    now apply time_of_nat_le.
+  Qed.
+
+  (** Squaring a smaller bit allowance preserves the range budget. *)
+  Lemma range_square_charge : forall e m bits,
+    bits <= range_payload e m -> (N.of_nat (bits ^ 2) <= range_unit e m)%N.
+  Proof.
+    intros e m bits Hbits. unfold range_unit. apply time_of_nat_le.
+    cbn [Nat.pow]. rewrite !Nat.mul_1_r. now apply Nat.mul_le_mono.
+  Qed.
+
+  (** A coefficient key lookup fits one range arithmetic charge. *)
+  Lemma T_variable_bounds_range : forall e m x,
+    X.bits x <= F.bits_e e ->
+    (T_variable_bounds m x <= 128 * (M.c_map + 1) * range_unit e m)%N.
+  Proof.
+    intros e m x Hbits. eapply N.le_trans; [apply T_variable_bounds_small|].
+    apply N.mul_le_mono_l. apply range_linear_charge. unfold range_payload. lia.
+  Qed.
+
+  (** Coefficient multiplication uses the source and matrix endpoint bit allowances. *)
+  Lemma T_scale_bounds_range : forall e m c x,
+    Z.size_nat c <= F.bits_e e ->
+    (T_rel_scale_bounds c (variable_bounds m x) <= 32 * range_unit e m)%N.
+  Proof.
+    intros e m c x Hbits.
+    eapply N.le_trans.
+    - apply rel_scale_bounds_time with (bits_c := F.bits_e e) (bits_x := ell m).
+      + exact Hbits.
+      + apply variable_bounds_abs.
+    - apply N.mul_le_mono_l. apply range_square_charge. unfold range_payload. lia.
+  Qed.
+
+  (** Adding a product to a source suffix costs a linear fraction of the squared budget. *)
+  Lemma T_add_bounds_range : forall e m a acc,
+    rel_bounds_abs (2 ^ (F.bits_e e + ell m)) a ->
+    rel_bounds_abs (2 ^ range_bits e (Reached m)) acc ->
+    (T_rel_add_bounds a acc <= 48 * range_unit e m)%N.
+  Proof.
+    intros e m a acc Ha Hacc.
+    eapply N.le_trans; [exact (rel_add_bounds_time _ _ _ _ Ha Hacc)|].
+    replace (48 * range_unit e m)%N with (16 * (3 * range_unit e m))%N by ring.
+    apply N.mul_le_mono_l.
+    eapply N.le_trans with (N.of_nat (3 * range_payload e m)).
+    - apply time_of_nat_le. unfold range_bits, ells, range_payload. lia.
+    - rewrite Nat2N.inj_mul. change (3 * N.of_nat (range_payload e m) <=
+        3 * range_unit e m)%N.
+      apply N.mul_le_mono_l. apply range_unit_linear.
+  Qed.
+
+  (** Source wrap endpoints are already part of the charged linearization bits. *)
+  Lemma T_wrap_bounds_range : forall e m f r bounds,
+    F.lin_of e = Some (f, r) ->
+    (T_rel_wrap_bounds r bounds <= 8 * range_unit e m)%N.
+  Proof.
+    intros e m f r bounds Hlin.
+    destruct (F.lin_of_size e f r Hlin) as [_ Hbits].
+    eapply N.le_trans.
+    - apply rel_wrap_bounds_time with (bits := F.bits_e e).
+      change (F.wrap_bits r <= F.bits_e e). lia.
+    - apply N.mul_le_mono_l. apply range_linear_charge. unfold range_payload. lia.
+  Qed.
+
+  (** Each actual form-fold step has bounded queries, products and suffix addition. *)
+  Lemma form_bounds_step_time : forall e m f r p after,
+    F.lin_of e = Some (f, r) -> In p (coef f) -> incl after (coef f) ->
+    length after <= tsize e ->
+    (16 + T_variable_bounds m (fst p) +
+      T_rel_scale_bounds (snd p) (variable_bounds m (fst p)) +
+      T_rel_add_bounds (rel_scale_bounds (snd p) (variable_bounds m (fst p)))
+        (rel_form_bounds (variable_bounds m) (Lin X.t after (cst f))) <=
+      512 * (M.c_map + 1) * range_unit e m)%N.
+  Proof.
+    intros e m f r p after Hlin Hin Hincl Hcount.
+    destruct (F.lin_of_size e f r Hlin) as [_ Hbits].
+    assert (Hkey : X.bits (fst p) <= F.bits_e e).
+    { pose proof (form_bits_key f p Hin). lia. }
+    assert (Hcoefficient : Z.size_nat (snd p) <= F.bits_e e).
+    { pose proof (form_bits_coefficient f p Hin). lia. }
+    assert (Hproduct : rel_bounds_abs (2 ^ (F.bits_e e + ell m))
+      (rel_scale_bounds (snd p) (variable_bounds m (fst p)))).
+    { rewrite Nat.pow_add_r. apply rel_bounds_abs_scale.
+      - now apply zbits_abs_bound.
+      - apply variable_bounds_abs.
+      - pose proof (Nat.pow_nonzero 2 (F.bits_e e) ltac:(lia)). lia.
+      - pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    pose proof (form_fragment_abs e m f r after Hlin Hincl Hcount) as Hsuffix.
+    pose proof (T_variable_bounds_range e m (fst p) Hkey) as Hquery.
+    pose proof (T_scale_bounds_range e m (snd p) (fst p) Hcoefficient) as Hscale.
+    pose proof (T_add_bounds_range e m _ _ Hproduct Hsuffix) as Hadd.
+    assert (Hcharge : (range_unit e m <= (M.c_map + 1) * range_unit e m)%N).
+    { replace (range_unit e m) with (1 * range_unit e m)%N at 1 by ring.
+      apply N.mul_le_mono_r. lia. }
+    pose proof (N.mul_le_mono_l _ _ 32%N Hcharge) as Hscale_charge.
+    pose proof (N.mul_le_mono_l _ _ 48%N Hcharge) as Hadd_charge.
+    pose proof (range_unit_positive e m) as Hpositive.
+    replace (128 * (M.c_map + 1) * range_unit e m)%N with
+      (128 * ((M.c_map + 1) * range_unit e m))%N in Hquery by ring.
+    replace (512 * (M.c_map + 1) * range_unit e m)%N with
+      (512 * ((M.c_map + 1) * range_unit e m))%N by ring.
+    set (charge := ((M.c_map + 1) * range_unit e m)%N) in *.
+    clear Hbits Hkey Hcoefficient Hproduct Hsuffix. clearbody charge. lia.
+  Qed.
+
+  (** Summing bounded steps and the fold frame adds one source-size factor. *)
+  Lemma range_fold_budget : forall fold_cost count nodes unit : N,
+    (1 <= unit)%N -> (count <= nodes)%N ->
+    (fold_cost <= (512 * unit + 1) * count + 1)%N ->
+    (8 + fold_cost <= 1024 * unit * (nodes + 1))%N.
+  Proof.
+    intros fold_cost count nodes unit Hunit Hcount Hfold.
+    assert (Hcount_unit : (count <= unit * count)%N).
+    { replace count with (1 * count)%N at 1 by ring.
+      apply N.mul_le_mono_r. exact Hunit. }
+    assert (Hproduct : (unit * count <= unit * nodes)%N).
+    { now apply N.mul_le_mono_l. }
+    replace ((512 * unit + 1) * count + 1)%N with
+      (512 * (unit * count) + count + 1)%N in Hfold by ring.
+    replace (1024 * unit * (nodes + 1))%N with
+      (1024 * (unit * nodes) + 1024 * unit)%N by ring.
+    set (count_charge := (unit * count)%N) in *.
+    set (node_charge := (unit * nodes)%N) in *.
+    clearbody count_charge node_charge. lia.
+  Qed.
+
+  (** The actual affine fold is linear in source size at the squared bit charge. *)
+  Lemma T_form_bounds_source : forall e m f r,
+    F.lin_of e = Some (f, r) ->
+    (T_form_bounds m f <= 1024 * (M.c_map + 1) *
+      (N.of_nat ((tsize e + 1)%nat) * range_unit e m))%N.
+  Proof.
+    intros e m [cs c] r Hlin.
+    destruct (F.lin_of_size e (Lin X.t cs c) r Hlin) as [Hcount Hbits].
+    cbn [coef] in Hcount.
+    time_unfold (@T_form_bounds). time_simpl. time_cbn.
+    time_unfold (@T_rel_form_bounds). time_simpl. time_cbn.
+    lazymatch goal with
+    | |- context [Std.List.T_fold_right ?ff ?tf ?seed ?xs] =>
+      assert (Hfold : (Std.List.T_fold_right ff tf seed xs <=
+        (512 * ((M.c_map + 1) * range_unit e m) + 1) *
+          N.of_nat (length xs) + 1)%N)
+    end.
+    { apply rel_fold_right_time. intros before p after Heq.
+      assert (Hin : In p (coef (Lin X.t cs c))).
+      { cbn [coef]. rewrite Heq. apply in_or_app. right. now left. }
+      assert (Hincl : incl after (coef (Lin X.t cs c))).
+      { intros q Hq. cbn [coef]. rewrite Heq. apply in_or_app. right. now right. }
+      assert (Hafter : length after <= tsize e).
+      { rewrite Heq, length_app in Hcount. cbn [length] in Hcount. lia. }
+      pose proof (form_bounds_step_time e m (Lin X.t cs c) r p after
+        Hlin Hin Hincl Hafter) as Hstep.
+      unfold rel_form_bounds in Hstep. cbn [coef cst] in Hstep.
+      replace (512 * (M.c_map + 1) * range_unit e m)%N with
+        (512 * ((M.c_map + 1) * range_unit e m))%N in Hstep by ring.
+      eapply N.le_trans; [|exact Hstep]. time_simpl. time_cbn. lia. }
+    assert (Hunit : (1 <= (M.c_map + 1) * range_unit e m)%N).
+    { eapply N.le_trans; [apply range_unit_positive|].
+      replace (range_unit e m) with (1 * range_unit e m)%N at 1 by ring.
+      apply N.mul_le_mono_r. lia. }
+    pose proof (time_of_nat_le _ _ Hcount) as HcountN.
+    pose proof (range_fold_budget _ _ _ _ Hunit HcountN Hfold) as Htotal.
+    rewrite Nat2N.inj_add. change (N.of_nat 1%nat) with 1%N.
+    replace (1024 * (M.c_map + 1) *
+      ((N.of_nat (tsize e) + 1) * range_unit e m))%N with
+      (1024 * ((M.c_map + 1) * range_unit e m) * (N.of_nat (tsize e) + 1))%N
+      by ring.
+    eapply N.le_trans; [|exact Htotal]. lia.
+  Qed.
+
+  (** The public numeric coefficient pays the affine range fold with fixed slack. *)
+  Lemma c_num_range_coefficient : (4096 * (M.c_map + 1) <= c_num)%N.
+  Proof.
+    unfold c_num. nia.
+  Qed.
+
+  (** Actual linearization time is charged additively beside the interval fold. *)
+  Lemma range_public_budget : forall form_cost wrap_cost lin_cost work : N,
+    (form_cost <= 1024 * (M.c_map + 1) * work)%N ->
+    (wrap_cost <= 8 * work)%N ->
+    (8 + lin_cost + form_cost + wrap_cost <= c_num * (work + lin_cost + 1))%N.
+  Proof.
+    intros form_cost wrap_cost lin_cost work Hform Hwrap.
+    pose proof c_num_range_coefficient as Hcoefficient.
+    assert (Hcombined : (1024 * (M.c_map + 1) + 8 <= c_num)%N) by lia.
+    pose proof (N.mul_le_mono_r _ _ work Hcombined) as Hwork.
+    rewrite N.mul_add_distr_r in Hwork.
+    assert (Hlinear : (lin_cost <= c_num * lin_cost)%N).
+    { replace lin_cost with (1 * lin_cost)%N at 1 by ring.
+      apply N.mul_le_mono_r. lia. }
+    replace (c_num * (work + lin_cost + 1))%N with
+      (c_num * work + c_num * lin_cost + c_num)%N by ring.
+    lia.
+  Qed.
+
+  (** Range queries charge every performed form step and the actual linearizer clock. *)
+  Lemma T_range_le : forall e s,
+    (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
+  Proof.
+    intros e [|m].
+    - assert (Hpositive : (1 <= c_num)%N).
+      { pose proof c_num_range_coefficient. lia. }
+      assert (Hwork : (1 <= N.of_nat (range_work e Unreached + 1))%N).
+      { change (N.of_nat 1%nat <= N.of_nat (range_work e Unreached + 1))%N.
+        apply time_of_nat_le. lia. }
+      pose proof (N.mul_le_mono _ _ _ _ Hpositive Hwork) as Hbudget.
+      time_unfold (@T_range). time_simpl. time_cbn. lia.
+    - set (work := (N.of_nat ((tsize e + 1)%nat) * range_unit e m)%N).
+      assert (Hwork : N.of_nat (range_work e (Reached m) + 1) =
+        (work + F.T_lin_of e + 1)%N).
+      { rewrite Nat2N.inj_add, F_range_work. cbn [bs ells].
+        unfold work, range_unit, range_payload. rewrite Nat2N.inj_mul.
+        reflexivity. }
+      assert (Hunit_work : (range_unit e m <= work)%N).
+      { unfold work. replace (range_unit e m) with (1 * range_unit e m)%N at 1 by ring.
+        apply N.mul_le_mono_r.
+        change (N.of_nat 1%nat <= N.of_nat (tsize e + 1))%N.
+        apply time_of_nat_le. lia. }
+      rewrite Hwork. time_unfold (@T_range).
+      destruct (F.lin_of e) as [[f r]|] eqn:Hlin.
+      + pose proof (T_form_bounds_source e m f r Hlin) as Hform.
+        change (T_form_bounds m f <= 1024 * (M.c_map + 1) * work)%N in Hform.
+        pose proof (T_wrap_bounds_range e m f r (form_bounds m f) Hlin) as Hwrap.
+        assert (Hwrap_work : (T_rel_wrap_bounds r (form_bounds m f) <= 8 * work)%N).
+        { eapply N.le_trans; [exact Hwrap|]. now apply N.mul_le_mono_l. }
+        pose proof (range_public_budget _ _ (F.T_lin_of e) work Hform Hwrap_work) as Htotal.
+        eapply N.le_trans; [|exact Htotal]. time_simpl. time_cbn. lia.
+      + pose proof (range_public_budget 0 0 (F.T_lin_of e) work
+          ltac:(lia) ltac:(lia)) as Htotal.
+        eapply N.le_trans; [|exact Htotal]. time_simpl. time_cbn. lia.
   Qed.
 
 End OctagonT.
