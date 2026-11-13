@@ -843,12 +843,67 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Definition coefficient_trie (P : list (lcons X.t)) (ms : list Z) : PTrieCode.t (Z * Z) :=
     fold_left (fun acc pm => fold_left (accumulate_term (snd pm)) (lhs (fst pm)) acc)
       (List.combine P ms) PTrieCode.empty.
+  (** The plan's insertion adds the same weighted term as the executable checker. *)
+  Lemma accumulate_term_value : forall m acc x y a,
+    sum_at (X.encode x) (accumulate_term m acc (y, a)) =
+      (m * (if X.eqb x y then a else 0) + sum_at (X.encode x) acc)%Z.
+  Proof.
+    intros m acc x y a.
+    change (sum_at (X.encode x) (insert_term acc (y, (a * m)%Z)) =
+      (m * (if X.eqb x y then a else 0) + sum_at (X.encode x) acc)%Z).
+    rewrite insert_term_value. destruct (X.eqb x y); ring.
+  Qed.
+
+  (** Folding one row adds its weighted total coefficient at every source key. *)
+  Lemma accumulate_row_value : forall m xs acc x,
+    sum_at (X.encode x) (fold_left (accumulate_term m) xs acc) =
+      (m * coef_of x xs + sum_at (X.encode x) acc)%Z.
+  Proof.
+    intros m xs. induction xs as [|[y a] xs IH]; intros acc x.
+    - change (sum_at (X.encode x) acc =
+        m * 0 + sum_at (X.encode x) acc)%Z. ring.
+    - cbn [fold_left]. rewrite IH, accumulate_term_value, coef_of_cons.
+      destruct (X.eqb x y); ring.
+  Qed.
+
+  (** Folding all paired rows adds exactly their specified coefficient sum. *)
+  Lemma coefficient_trie_value_from : forall P ms acc x,
+    sum_at (X.encode x)
+      (fold_left (fun tr pm =>
+        fold_left (accumulate_term (snd pm)) (lhs (fst pm)) tr)
+        (List.combine P ms) acc) =
+      (comb_coef P ms x + sum_at (X.encode x) acc)%Z.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] acc x; try reflexivity.
+    cbn [List.combine fold_left fst snd]. rewrite IH, accumulate_row_value.
+    change (comb_coef ps ns x + (m * coef_of x (lhs p) + sum_at (X.encode x) acc) =
+      (m * coef_of x (lhs p) + comb_coef ps ns x) + sum_at (X.encode x) acc)%Z.
+    ring.
+  Qed.
+
+  (** Starting from the empty trie gives the specified coefficient sum. *)
+  Lemma coefficient_trie_value : forall P ms x,
+    sum_at (X.encode x) (coefficient_trie P ms) = comb_coef P ms x.
+  Proof.
+    intros P ms x. unfold coefficient_trie. rewrite coefficient_trie_value_from.
+    unfold sum_at. rewrite PTrie.get_empty. ring.
+  Qed.
+
+
   (** A successful combination agrees with the concrete trie accumulation at every key. *)
   Lemma combine_trie : forall P ms s, combine P ms = Some s -> forall x,
     (match PTrieCode.get (X.encode x) (coefficient_trie P ms) with
      | Some z => (fst z - snd z)%Z | None => 0%Z end) =
     fold_right (fun p z => if X.eqb x (fst p) then (snd p + z)%Z else z) 0%Z (lhs s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms s Hcombine x.
+    change (sum_at (X.encode x) (coefficient_trie P ms) = coef_of x (lhs s)).
+    rewrite coefficient_trie_value.
+    destruct (combine_spec P ms (combine_admissible P ms s Hcombine))
+      as [row [Hrow [Hcoef [_ _]]]].
+    assert (Hsame : row = s) by congruence. subst row.
+    symmetry. apply Hcoef.
+  Qed.
   (** Successful combination retains the consequences of all input rows. *)
   Lemma combine_sound : forall P ms s, combine P ms = Some s ->
     forall v, Forall (sat v) P -> sat v s.
