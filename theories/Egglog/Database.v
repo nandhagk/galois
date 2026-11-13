@@ -1573,7 +1573,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Fuel budgets logarithmic relabelings of all stored use occurrences. *)
   Lemma F15_fuel_formula : forall db, rebuild_fuel db =
     ((N.size (ids db) + 2) * (nuses db + 1) + npending db + 1)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. reflexivity.
+  Qed.
 
   (** Computed fuel includes the final stop call. *)
   Lemma F15_fuel_enough : forall db, inv db ->
