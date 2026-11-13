@@ -6602,6 +6602,47 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + rewrite M.find_empty in Hraw. contradiction.
   Qed.
 
+  (** Successful full Floyd closure is below the seeded old matrix. *)
+  Lemma fw_below_incremental_seed : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    forall a b, RelationalPathBounds.below (entry (fw direct) a b)
+      (entry (add_cons j j 0%Z (add_cons i i 0%Z m)) a b).
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hinv : RelationalPathBounds.invariant (entry direct)
+      (entry (fw direct)) (rev (keys direct))).
+    { unfold fw. rewrite pivot_keys_eq_keys.
+      replace (rev (keys direct)) with (rev (keys direct) ++ nil)
+        by now rewrite app_nil_r.
+      apply fw_pivots_success_path_invariant.
+      - apply RelationalPathBounds.invariant_initial.
+      - intros k Hkey. now apply keys_support.
+      - intros k Hkey. rewrite forallb_forall in Hscan.
+        unfold fw in Hscan. rewrite pivot_keys_eq_keys in Hscan.
+        now apply Hscan. }
+    destruct Hinv as [Hbelow Hclosed Hzero Hpath].
+    assert (Hdiag : forall p, In (K.encode p) (support direct) ->
+      entry (fw direct) p p = Some 0%Z).
+    { intros p Hp. apply Hzero. apply in_rev. rewrite rev_involutive.
+      now apply keys_cover. }
+    assert (Hendpoints : forall p, p = i \/ p = j \/ p = flip i \/ p = flip j ->
+      entry (fw direct) p p = Some 0%Z).
+    { intros p [Hp|[Hp|[Hp|Hp]]]; subst p; apply Hdiag;
+        unfold direct; rewrite support_add_cons; tauto. }
+    intros a b. eapply below_add_zero.
+    - eapply below_add_zero.
+      + intros x y. eapply RelationalPathBounds.below_trans;
+          [apply Hbelow|apply add_cons_entry_below].
+      + apply Hendpoints. now left.
+      + apply Hendpoints. now right; right; left.
+    - apply Hendpoints. now right; left.
+    - apply Hendpoints. now right; right; right.
+  Qed.
+
   Lemma keys_support_iff : forall m k, dbm_wf m ->
     (In k (keys m) <-> In (K.encode k) (support m)).
   Proof.
