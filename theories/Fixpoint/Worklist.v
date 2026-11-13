@@ -354,10 +354,13 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         (key_support p)))%nat) * unit p +
       N.of_nat (rounds p pol) * (N.of_nat (Nat.log2 (rounds p pol) + 1) +
         L.c_lat * N.of_nat ((2 * B.wunits p + 1) * L.wsize (wp pol))))%N.
+  Definition c_lookup : N := (S.c_sys + PTrieT.c_trie + 2)%N.
+  Definition c_step : N := (64 * (S.c_sys + PTrieT.c_trie + 1))%N.
   Definition c_wl : N := 1%N. (* STUB *)
   Definition k_prepare : N := 1%N. (* STUB *)
-  Definition k_eval : N := 1%N. (* STUB *)
-  Definition k_update : N := 1%N. (* STUB *)
+  Definition k_eval : N := (64 * (c_lookup + S.c_sys + 1))%N.
+  Definition k_update : N :=
+    (512 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
   Definition k_credit : N := 1%N. (* STUB *)
   Definition k_round : N := 1%N. (* STUB *)
   Definition k_loop : N := 1%N. (* STUB *)
@@ -974,6 +977,256 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   (** * Operation costs and height credit *)
 
+  (** Structural work pays for a key traversal, an identifier traversal and one call. *)
+  Lemma time_unit_bounds : forall p,
+    (1 <= unit p)%N /\
+    (N.of_nat (S.kw p + 1) <= unit p)%N /\
+    (N.of_nat (Nat.log2 (C p) + 1) <= unit p)%N /\
+    (L.c_lat * N.of_nat (B.vsize p + 1) <= unit p)%N /\
+    (S.row_work p 0 + 1 <= unit p)%N.
+  Proof.
+    intro p.
+    pose proof (S.row_work_mono p 0 (B.vsize p) ltac:(lia)) as Hwork.
+    assert (Hpositive : (1 <= N.of_nat
+      ((Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)))%N).
+    { assert (1 <= (Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)) by nia.
+      lia. }
+    assert (Hkey : (N.of_nat (S.kw p + 1) <= N.of_nat
+      ((Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)))%N).
+    { assert (S.kw p + 1 <=
+        (Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)) by nia.
+      lia. }
+    assert (Hid : (N.of_nat (Nat.log2 (C p) + 1) <= N.of_nat
+      ((Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)))%N).
+    { assert (Nat.log2 (C p) + 1 <=
+        (Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)) by nia.
+      lia. }
+    unfold unit; repeat split; lia.
+  Qed.
+
+  (** Store lookup pays once for encoding and once for trie traversal. *)
+  Lemma T_lookup_bound : forall m x,
+    (T_look_or S.key_code S.T_key_code L.bot m x <=
+      c_lookup * N.of_nat (S.key_bits x + 1))%N.
+  Proof.
+    intros m x; pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le (S.key * L.t) (S.key_code x) m) as Hget.
+    unfold T_look_or, PTrieT.T_get in *; unfold c_lookup, S.key_bits in *.
+    rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** The invariant bounds every store value used by query evaluation. *)
+  Lemma invariant_sizes : forall p pol s, invariant p pol s ->
+    forall x, L.size (look s x) <= B.vsize p.
+  Proof.
+    intros p pol s [_ [Hvalues _]] x; apply B.size_le; apply Hvalues.
+  Qed.
+
+  (** Reachable frames pay only for their actual resume and declared key lookup. *)
+  Lemma T_query_bound : forall p r m, S.wf p -> In r (S.rows p) ->
+    (forall x, L.size (look_or S.key_code L.bot m x) <= B.vsize p) ->
+    (T_eval_query (S.resume p) (S.T_resume p) (look_or S.key_code L.bot m)
+      (T_look_or S.key_code S.T_key_code L.bot m)
+      (Datatypes.S (length (S.deps p r))) (S.start p r) <=
+      20 * (c_lookup + S.c_sys + 1) *
+        N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
+  Proof.
+    intros p r m Hwf Hr Hsize.
+    destruct (S.eval p r (look_or S.key_code L.bot m)) as [[a ss]|] eqn:Heval.
+    2: { exfalso; exact (S.eval_total p r (look_or S.key_code L.bot m) Hwf Hr Heval). }
+    pose proof (S.sides_count p r (look_or S.key_code L.bot m) a ss Hwf Hr Heval)
+      as Hcount.
+    assert (Hread : forall n q acc x f,
+      loop_fuel (eval_step (S.resume p) (look_or S.key_code L.bot m)) n
+        (S.start p r, nil) = inl (q, acc) ->
+      fst (peel q acc) = inr (x, f) ->
+      (T_look_or S.key_code S.T_key_code L.bot m x +
+        S.T_resume p f (look_or S.key_code L.bot m x) <=
+        (c_lookup + S.c_sys) * unit p)%N).
+    { intros n q acc x f Hprefix Hask.
+      pose proof (S.asks_within p r (look_or S.key_code L.bot m) n q acc x f
+        Hwf Hr Hprefix Hask) as Hdep.
+      assert (Hbits : S.key_bits x <= S.kw p).
+      { apply (S.key_bits_le p r x Hwf Hr); apply in_or_app; now right. }
+      pose proof (T_lookup_bound m x) as Hlook.
+      pose proof (S.T_resume_le p r (look_or S.key_code L.bot m) (B.vsize p)
+        n q acc x f Hwf Hr Hsize Hprefix Hask) as Hresume.
+      destruct (time_unit_bounds p) as [_ [Hkey [_ [_ Hwork0]]]].
+      assert (HkeyN : (N.of_nat (S.key_bits x + 1) <= unit p)%N).
+      { eapply N.le_trans; [|exact Hkey]; lia. }
+      assert (Hwork : (S.row_work p (B.vsize p) + 1 <= unit p)%N).
+      { destruct (time_unit_bounds p) as [Hpositive _].
+        unfold unit in *.
+        assert (1 <= N.of_nat
+          ((Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)))%N.
+        { assert (1 <= (Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)) by nia.
+          lia. }
+        nia. }
+      assert (Hlook_bound : (T_look_or S.key_code S.T_key_code L.bot m x <=
+        c_lookup * unit p)%N).
+      { eapply N.le_trans; [exact Hlook|]; now apply N.mul_le_mono_l. }
+      assert (Hresume_bound :
+        (S.T_resume p f (look_or S.key_code L.bot m x) <= S.c_sys * unit p)%N).
+      { eapply N.le_trans; [exact Hresume|]; now apply N.mul_le_mono_l. }
+      clear -Hlook_bound Hresume_bound; nia. }
+    pose proof (T_eval_query_le (S.resume p) (S.T_resume p)
+      (look_or S.key_code L.bot m) (T_look_or S.key_code S.T_key_code L.bot m)
+      (Datatypes.S (length (S.deps p r))) (S.start p r) a ss
+      ((c_lookup + S.c_sys) * unit p)%N Heval Hread) as Heval_cost.
+    assert (HcountN : (N.of_nat (length ss) <= N.of_nat (length (S.sides p r)))%N)
+      by lia.
+    destruct (time_unit_bounds p) as [Hunit _].
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
+    clear -Heval_cost HcountN Hunit; nia.
+  Qed.
+
+  (** Evaluation adds its dependency enumeration and starting-frame overhead. *)
+  Lemma T_eval_row_bound : forall p r m, S.wf p -> In r (S.rows p) ->
+    (forall x, L.size (look_or S.key_code L.bot m x) <= B.vsize p) ->
+    (T_eval_row p r m <= k_eval *
+      N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
+  Proof.
+    intros p r m Hwf Hr Hsize.
+    pose proof (T_query_bound p r m Hwf Hr Hsize) as Hquery.
+    pose proof (S.T_deps_le p r Hwf Hr) as Hdeps.
+    pose proof (Datatypes.T_length_le (S.deps p r)) as Hlength.
+    pose proof (S.T_start_le p r Hwf Hr) as Hstart.
+    destruct (time_unit_bounds p) as [Hu [Hkey [_ [_ Hwork]]]].
+    set (u := unit p) in *.
+    set (d := N.of_nat (length (S.deps p r) + length (S.sides p r) + 1)) in *.
+    set (chunk := (d * u)%N).
+    assert (Hd : (1 <= d)%N) by (unfold d; lia).
+    assert (Hdeps_size : (N.of_nat (length (S.deps p r) + 1) <= d)%N)
+      by (unfold d; lia).
+    assert (Hchunk : (1 <= chunk)%N) by (unfold chunk; clear -Hd Hu; nia).
+    assert (Hunit_chunk : (u <= chunk)%N) by (unfold chunk; clear -Hd; nia).
+    assert (Hstart_bound : (S.T_start p r <= S.c_sys * chunk)%N).
+    { eapply N.le_trans; [exact Hstart|].
+      apply N.mul_le_mono_l; eapply N.le_trans; eassumption. }
+    assert (Hdeps_bound : (S.T_deps p r <= S.c_sys * chunk)%N).
+    { eapply N.le_trans; [exact Hdeps|].
+      unfold chunk; rewrite N.mul_assoc.
+      apply N.mul_le_mono; [now apply N.mul_le_mono_l|exact Hkey]. }
+    assert (Hlength_bound : (Datatypes.T_length (S.deps p r) <= chunk)%N).
+    { rewrite Nat2N.inj_add in Hdeps_size; unfold chunk.
+      clear -Hlength Hdeps_size Hu; nia. }
+    replace (20 * (c_lookup + S.c_sys + 1) * d * u)%N with
+      (20 * (c_lookup + S.c_sys + 1) * chunk)%N in Hquery by (unfold chunk; ring).
+    replace (k_eval * d * u)%N with (k_eval * chunk)%N by (unfold chunk; ring).
+    unfold T_eval_row.
+    change (fun f a => S.T_resume p f a) with (S.T_resume p).
+    change (fun x => T_look_or S.key_code (fun y => S.T_key_code y) L.bot m x)
+      with (T_look_or S.key_code S.T_key_code L.bot m).
+    time_simpl; time_cbn.
+    clear -Hquery Hstart_bound Hdeps_bound Hlength_bound Hchunk.
+    unfold k_eval; nia.
+  Qed.
+
+  (** Reading a prepared row table is independent of the source row-list length. *)
+  Lemma T_row_at_bits : forall s id,
+    (T_row_at s id <= (PTrieT.c_trie + 2) * N.of_nat (Pos.size_nat id + 1))%N.
+  Proof.
+    intros s id; pose proof (PTrieT.T_get_le S.row id (ws_rows s)) as Hget.
+    unfold T_row_at, PTrieT.T_get in *; time_simpl; time_cbn.
+    rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Reading an absent or present bucket uses the same key traversal. *)
+  Lemma T_readers_bits : forall s c,
+    (T_readers s c <= (PTrieT.c_trie + 2) * N.of_nat (Pos.size_nat c + 1))%N.
+  Proof.
+    intros s c; pose proof (PTrieT.T_get_le (list positive) c (ws_readers s)) as Hget.
+    unfold T_readers, PTrieT.T_get in *; time_simpl; time_cbn.
+    destruct (trie_get c (ws_readers s)); rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** The output-cost accumulator adds its initial credit without affecting callbacks. *)
+  Lemma output_cost_acc : forall p pol outs s n,
+    snd (fold_left (fun sn xa =>
+      (update_one p pol (fst sn) xa,
+        (snd sn + T_update_one p pol (fst sn) xa)%N)) outs (s, n)) =
+      (n + output_cost p pol outs s)%N.
+  Proof.
+    intros p pol outs; induction outs as [|xa outs IH]; intros s n.
+    - unfold output_cost; cbn [fold_left snd]; lia.
+    - cbn [fold_left fst snd].
+      rewrite IH; unfold output_cost at 2; cbn [fold_left fst snd].
+      rewrite IH; lia.
+  Qed.
+
+  (** One emitted occurrence adds exactly its callback clock before processing the suffix. *)
+  Lemma output_cost_cons : forall p pol xa outs s,
+    output_cost p pol (xa :: outs) s =
+      (T_update_one p pol s xa + output_cost p pol outs (update_one p pol s xa))%N.
+  Proof.
+    intros p pol xa outs s; unfold output_cost at 1; cbn [fold_left fst snd].
+    rewrite output_cost_acc; lia.
+  Qed.
+
+  (** The derived fold clock adds one list step to every recorded output callback. *)
+  Lemma T_output_fold_le : forall p pol outs s,
+    (List.T_fold_left (update_one p pol) (T_update_one p pol) outs s <=
+      output_cost p pol outs s + N.of_nat (length outs) + 1)%N.
+  Proof.
+    intros p pol outs; induction outs as [|xa outs IH]; intro s.
+    - unfold output_cost; time_step.
+    - specialize (IH (update_one p pol s xa)).
+      time_unfold @List.T_fold_left; time_cbn.
+      rewrite output_cost_cons; nia.
+  Qed.
+
+  (** The queue's one-larger pending cap changes its logarithmic unit by at most two. *)
+  Lemma queue_unit_le : forall p,
+    (N.of_nat (Q.unit_pq (C p + 1) (S.kw p + Nat.log2 (C p) + 3)) <=
+      2 * unit p)%N.
+  Proof.
+    intro p; pose proof (Nat.log2_succ_le (C p)) as Hlog.
+    assert (Hnat : Q.unit_pq (C p + 1) (S.kw p + Nat.log2 (C p) + 3) <=
+      2 * ((Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4))).
+    { unfold Q.unit_pq; replace (C p + 1) with (S (C p)) by lia; nia. }
+    assert (Hcost : (N.of_nat (Q.unit_pq (C p + 1)
+      (S.kw p + Nat.log2 (C p) + 3)) <=
+      2 * N.of_nat ((Nat.log2 (C p) + 1) *
+        (S.kw p + Nat.log2 (C p) + 4)))%N).
+    { lia. }
+    unfold unit; lia.
+  Qed.
+
+  (** A bounded guarded push keeps the coefficient of queue potential equal to one. *)
+  Lemma T_queue_push_bound : forall p pr id q,
+    Q.wf q -> Q.fits (S.kw p + Nat.log2 (C p) + 3) q -> Q.pending q <= C p ->
+    Pos.size_nat id + N.size_nat pr <= S.kw p + Nat.log2 (C p) + 3 ->
+    (Q.T_push pr id q +
+      Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 3) (Q.push pr id q) <=
+      2 * Q.c_pq * unit p + Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 3) q)%N.
+  Proof.
+    intros p pr id q Hwf Hfits Hpending Hwidth.
+    pose proof (Q.T_push_amort (C p + 1) (S.kw p + Nat.log2 (C p) + 3)
+      pr id q Hwf Hfits ltac:(lia) Hwidth) as Hpush.
+    eapply N.le_trans; [exact Hpush|].
+    apply N.add_le_mono_r.
+    eapply N.le_trans; [apply N.mul_le_mono_l; apply queue_unit_le|].
+    nia.
+  Qed.
+
+  (** A pop refunds the potential of every discarded stale queue entry. *)
+  Lemma T_queue_pop_bound : forall p pol s, structural p pol s ->
+    (Q.T_pop (ws_queue s) +
+      match Q.pop (ws_queue s) with
+      | Some (_, _, q1) => Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 3) q1
+      | None => 0
+      end <= 2 * Q.c_pq * unit p + queue_phi p s)%N.
+  Proof.
+    intros p pol s [Hwf [Hfits [Hpending _]]].
+    pose proof (Q.T_pop_amort (C p + 1) (S.kw p + Nat.log2 (C p) + 3)
+      (ws_queue s) Hwf Hfits ltac:(lia)) as Hpop.
+    eapply N.le_trans; [exact Hpop|].
+    unfold queue_phi; apply N.add_le_mono_r.
+    eapply N.le_trans; [apply N.mul_le_mono_l; apply queue_unit_le|].
+    nia.
+  Qed.
+
+
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
   Lemma W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
@@ -986,15 +1239,37 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma W2_eval : forall p pol r s, S.wf p -> In r (S.rows p) -> invariant p pol s ->
     (T_eval_row p r (ws_store s) <=
       k_eval * N.of_nat (length (S.deps p r) + length (S.sides p r) + 1) * unit p)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol r s Hwf Hr Hinv.
+    apply T_eval_row_bound; [exact Hwf|exact Hr|].
+    exact (invariant_sizes p pol s Hinv).
+  Qed.
   (** Reading a numbered row pays for the bits of its identifier. *)
   Lemma W2_row_at : forall p s id, In id (row_ids p) ->
     (T_row_at s id <= k_eval * unit p)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s id Hid; pose proof (row_ids_bits p id Hid) as Hbits.
+    pose proof (T_row_at_bits s id) as Htime.
+    destruct (time_unit_bounds p) as [Hu [_ [Hid_unit _]]].
+    assert (HbitsN : (N.of_nat (Pos.size_nat id + 1) <= 2 * unit p)%N).
+    { rewrite Nat2N.inj_add in Hid_unit |- *; lia. }
+    eapply N.le_trans; [exact Htime|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact HbitsN|].
+    unfold k_eval, c_lookup; nia.
+  Qed.
   (** Reading a reader bucket pays for the bits of its declared key code. *)
   Lemma W2_readers : forall p s c, S.wf p -> In c (key_support p) ->
     (T_readers s c <= k_update * unit p)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s c Hwf Hc; pose proof (key_support_bits p c Hwf Hc) as Hbits.
+    pose proof (T_readers_bits s c) as Htime.
+    destruct (time_unit_bounds p) as [_ [Hkey _]].
+    assert (HbitsN : (N.of_nat (Pos.size_nat c + 1) <= unit p)%N).
+    { eapply N.le_trans; [|exact Hkey]; lia. }
+    eapply N.le_trans; [exact Htime|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact HbitsN|].
+    unfold k_update, c_lookup; nia.
+  Qed.
   (** Guarded enqueue pays each supplied reader occurrence even when it is already live. *)
   Lemma W3_enqueue : forall p pol ids s, S.wf p -> prio_ok p pol -> invariant p pol s ->
     incl ids (row_ids p) ->
