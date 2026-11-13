@@ -1,10 +1,11 @@
-(** * Octagon placeholders
+(** * Integer octagons
 
-    These modules provide the octagon state interface.
-    For example, closure returns an unreachable placeholder state.
-    Builds on: OctagonSig. *)
-From Stdlib Require Import List ZArith.
-From Argent Require Import Time Std.
+    Sparse signed difference matrices support entrywise lattice operations.
+    For example, joining upper bounds 3 and 5 retains the weaker bound 5.
+    Builds on: OctagonSig, keyed map laws and numeric linearization. *)
+
+From Stdlib Require Import List ZArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -18,32 +19,127 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
   Definition dbm := M.t (M.t Z).
   Definition t := reach dbm.
   Definition wparam := nat.
-  (* STUB-CODE *)
-  Definition leb (_ _ : t) := false.
-  (* STUB-CODE *)
+
+  Definition row_of (r : option (M.t Z)) : M.t Z :=
+    match r with Some row => row | None => M.empty end.
+
+  Definition bound_leb (a b : option Z) : bool :=
+    match a, b with
+    | _, None => true
+    | Some x, Some y => (x <=? y)%Z
+    | None, Some _ => false
+    end.
+
+  Definition row_leb (a b : option (M.t Z)) : bool :=
+    M.forall2b bound_leb (row_of a) (row_of b).
+
+  Definition leb (a b : t) : bool :=
+    match a, b with
+    | Unreached, _ => true
+    | Reached _, Unreached => false
+    | Reached ma, Reached mb => M.forall2b row_leb ma mb
+    end.
+
   Definition bot : t := Unreached.
-  (* STUB-CODE *)
-  Definition is_bot (_ : t) := false.
-  (* STUB-CODE *)
-  Definition join (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
+
+  Definition is_bot (s : t) : bool :=
+    match s with Unreached => true | Reached _ => false end.
+
+  Definition bound_join (a b : option Z) : option Z :=
+    match a, b with Some x, Some y => Some (Z.max x y) | _, _ => None end.
+
+  Definition row_join (a b : option (M.t Z)) : option (M.t Z) :=
+    match a, b with
+    | Some x, Some y => Some (M.merge bound_join x y)
+    | _, _ => None
+    end.
+
+  Definition join (a b : t) : t :=
+    match a, b with
+    | Unreached, _ => b
+    | _, Unreached => a
+    | Reached ma, Reached mb => Reached (M.merge row_join ma mb)
+    end.
+
   Definition top : t := Reached M.empty.
-  (* STUB-CODE *)
-  Definition meet (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition widen (_ : wparam) (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition narrow (_ _ : t) : t := Unreached.
+
+  Definition bound_meet (a b : option Z) : option Z :=
+    match a, b with
+    | Some x, Some y => Some (Z.min x y)
+    | None, _ => b
+    | _, None => a
+    end.
+
+  Definition row_meet (a b : option (M.t Z)) : option (M.t Z) :=
+    match a, b with
+    | Some x, Some y => Some (M.merge bound_meet x y)
+    | None, _ => b
+    | _, None => a
+    end.
+
+  Definition meet (a b : t) : t :=
+    match a, b with
+    | Reached ma, Reached mb => Reached (M.merge row_meet ma mb)
+    | _, _ => Unreached
+    end.
+
+  Definition bound_widen (a b : option Z) : option Z :=
+    match a, b with
+    | Some x, Some y => if (y <=? x)%Z then Some x else None
+    | _, _ => None
+    end.
+
+  Definition row_widen (a b : option (M.t Z)) : option (M.t Z) :=
+    match a with
+    | Some x => Some (M.merge bound_widen x (row_of b))
+    | None => None
+    end.
+
+  Definition widen (_ : wparam) (a b : t) : t :=
+    if leb b a then a else
+      match a, b with
+      | Unreached, _ => b
+      | _, Unreached => a
+      | Reached ma, Reached mb => Reached (M.merge row_widen ma mb)
+      end.
+
+  Definition narrow (a b : t) : t := meet a b.
+
+  Definition forget_row (x : X.t) (r : option (M.t Z))
+      (_ : option (M.t Z)) : option (M.t Z) :=
+    match r with
+    | Some row => Some (M.remove (x, true) (M.remove (x, false) row))
+    | None => None
+    end.
+
+  Definition havoc (x : X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      Reached (M.merge (forget_row x)
+        (M.remove (x, true) (M.remove (x, false) m)) M.empty)
+    end.
+
   (* STUB-CODE *)
   Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition havoc (_ : X.t) (_ : t) : t := Unreached.
   (* STUB-CODE *)
   Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
   (* STUB-CODE *)
   Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
-  (* STUB-CODE *)
-  Definition entry (_ : dbm) (_ _ : K.t) : option Z := None.
+  Definition entry (m : dbm) (i j : K.t) : option Z :=
+    match M.get i m with Some row => M.get j row | None => None end.
+
+  Definition flip (i : K.t) : K.t := (fst i, negb (snd i)).
+
+  Definition put (i j : K.t) (d : Z) (m : dbm) : dbm :=
+    M.set i (M.set j d (row_of (M.get i m))) m.
+
+  Definition lower_bound (d : Z) (old : option Z) : Z :=
+    match old with Some z => Z.min d z | None => d end.
+
+  Definition add_cons (i j : K.t) (d : Z) (m : dbm) : dbm :=
+    put i j (lower_bound d (entry m i j))
+      (put (flip j) (flip i) (lower_bound d (entry m (flip j) (flip i))) m).
   (* STUB-CODE *)
   Definition fw (m : dbm) : dbm := m.
   (* STUB-CODE *)
@@ -52,8 +148,6 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
   Definition tighten (m : dbm) : dbm := m.
   (* STUB-CODE *)
   Definition tclose (_ : dbm) : t := Unreached.
-  (* STUB-CODE *)
-  Definition add_cons (_ _ : K.t) (_ : Z) (m : dbm) : dbm := m.
   (* STUB-CODE *)
   Definition incr_close (_ _ : K.t) (_ : Z) (_ : dbm) : t := Unreached.
 End OctagonCode.
@@ -193,6 +287,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       N.to_nat (F.T_lin_of e).
   Definition range_bits (e : term L.op X.t) (s : t) : nat :=
     ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
+  TimeFun row_of.
+  TimeFun bound_leb.
+  TimeFun row_leb.
+  TimeFun bound_join.
+  TimeFun row_join.
+  TimeFun bound_meet.
+  TimeFun row_meet.
+  TimeFun bound_widen.
+  TimeFun row_widen.
+  TimeFun forget_row.
+  TimeFun flip.
+  TimeFun put.
+  TimeFun lower_bound.
   TimeFun bot.
   TimeFun top.
   TimeFun meet.
@@ -342,7 +449,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   Lemma F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: incoherent twins -100 and -2 stay unequal when d = 0. *)
   Lemma wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
   Proof. Admitted. (* STUB *)
   Lemma wf_incr_close : forall i j d m, dbm_wf m ->
