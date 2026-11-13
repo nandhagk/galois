@@ -6028,6 +6028,43 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now subst d.
   Qed.
 
+  (** A zero output diagonal rules out a negative tightened unary pair. *)
+  Lemma tclose_pair_nonnegative : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i a z,
+      entry (tighten (fw m)) i (flip i) = Some a ->
+      entry (tighten (fw m)) (flip i) i = Some z -> (0 <= a + z)%Z.
+  Proof.
+    intros m m' Hwf Hresult i a z Hleft Hright.
+    pose proof Hresult as Hresult0.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m));
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    assert (Hsupport : In (K.encode i) (support (strengthen (tighten (fw m))))).
+    { apply (proj2 (support_strengthen (tighten (fw m)) (K.encode i))).
+      eapply entry_source_support. exact Hleft. }
+    pose proof (tclose_zero_diag m (strengthen (tighten (fw m))) Hwf Hresult0
+      i Hsupport) as Hdiag.
+    rewrite entry_strengthen_exact in Hdiag by (apply wf_tighten, wf_fw; exact Hwf).
+    rewrite Hleft, Hright in Hdiag.
+    cbn [strengthen_bound lower_bound] in Hdiag.
+    destruct (entry (tighten (fw m)) i i) as [old|] eqn:Hold;
+      inversion Hdiag; subst; clear Hdiag.
+    - pose proof (Z.le_min_l (Z.div2 (a + z)) old) as Hmin.
+      rewrite Z.div2_div in *.
+      pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      lia.
+    - rewrite Z.div2_div in *.
+      pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      lia.
+  Qed.
+
   Lemma tclose_strong_clause : forall m m', dbm_wf m ->
     tclose m = Reached m' ->
     forall i j a z, entry m' i (flip i) = Some a ->
