@@ -43,6 +43,35 @@ End IndexFacts.
 Module IndexTimeFacts (V : VALUE_T) (I : INDEX_T V).
   Module C := CellKey V.
 
+  (** Incrementing a positive counter adds at most one encoded bit. *)
+  Lemma counter_bits_succ : forall p, Pos.size_nat (Pos.succ p) <= Pos.size_nat p + 1.
+  Proof.
+    intro p. induction p; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** Navigation without a query cell pays for the counter and stored cell width. *)
+  Lemma width_empty : forall ix,
+    I.width ix [] <= Pos.size_nat (I.next ix) + I.max_cell_bits ix + 1.
+  Proof.
+    intro ix. pose proof (I.width_le ix []) as Hwidth.
+    change (I.width ix [] <=
+      Pos.size_nat (I.next ix + 1)%positive + 0 + I.max_cell_bits ix) in Hwidth.
+    rewrite Pos.add_1_r in Hwidth.
+    pose proof (counter_bits_succ (I.next ix)). lia.
+  Qed.
+
+  (** A one-cell probe adds only that cell's encoding to the stored-width budget. *)
+  Lemma width_singleton : forall ix c,
+    I.width ix [c] <=
+      Pos.size_nat (I.next ix) + I.max_cell_bits ix + cell_bits V.encode c + 1.
+  Proof.
+    intros ix c. pose proof (I.width_le ix [c]) as Hwidth.
+    change (I.width ix [c] <= Pos.size_nat (I.next ix + 1)%positive +
+      Nat.max (cell_bits V.encode c) 0 + I.max_cell_bits ix) in Hwidth.
+    rewrite Pos.add_1_r, Nat.max_0_r in Hwidth.
+    pose proof (counter_bits_succ (I.next ix)). lia.
+  Qed.
+
   (** Every enumerated child has an encoding covered by the stored cell width. *)
   Lemma child_bits : forall a ix n pre c, I.wf a ix -> I.node ix n pre ->
     In c (I.children ix n) -> cell_bits V.encode c <= I.max_cell_bits ix.
