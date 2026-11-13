@@ -1501,6 +1501,7 @@ End IntervalTimingHelpers.
 
 Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Include IntervalTimingHelpers L T.
+  Module ScalarTime := IntervalBaseT T.
 
   Definition size := itv_bits.
   Definition wsize (ts : ttree) := (T.depth ts + 1) * (T.tree_bits ts + 1).
@@ -1511,35 +1512,71 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     match L.view o with ZConst z => Z.size_nat z | _ => 0 end.
   Definition gwork (_ : L.guard) (xs : list t) :=
     operand_bits xs + length xs + (operand_bits xs + 1) ^ 2.
-  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_val : N := (65536 * (T.c_thresholds + L.c_view + 1))%N.
   Definition c_lat : N := c_val.
-  Definition c_interval : N := 1%N. (* STUB *)
-  Definition k_interval_arith : N := 1%N. (* STUB *)
-  Definition k_interval_back : N := 1%N. (* STUB *)
-  Definition k_interval_widen : N := 1%N. (* STUB *)
+  Definition c_interval : N := (8192 * (T.c_thresholds + 1))%N.
+  Definition k_interval_arith : N := 8192%N.
+  Definition k_interval_back : N := 8192%N.
+  Definition k_interval_widen : N := (64 * (T.c_thresholds + 1))%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat, c_val. nia.
+  Qed.
   (** Inclusion testing costs at most the combined abstract sizes. *)
   Lemma T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (ScalarTime.T_interval_leb_le a b) as Htime.
+    change (T_interval_leb a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + 1))%N in Htime.
+    unfold T_leb, c_val, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + 1))%N) by lia. nia.
+  Qed.
   (** Join costs at most the combined abstract sizes. *)
   Lemma T_join_le : forall a b, (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (ScalarTime.T_interval_join_le a b) as Htime.
+    change (T_interval_join a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + 1))%N in Htime.
+    unfold T_join, c_val, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + 1))%N) by lia. nia.
+  Qed.
   (** Meet costs at most the combined abstract sizes. *)
   Lemma T_meet_le : forall a b, (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (ScalarTime.T_interval_meet_le a b) as Htime.
+    change (T_interval_meet a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + 1))%N in Htime.
+    unfold T_meet, c_val, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + 1))%N) by lia. nia.
+  Qed.
   (** Bottom testing costs at most the abstract size. *)
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a. pose proof (ScalarTime.T_interval_is_bot_le a) as Htime.
+    change (T_interval_is_bot a <= ScalarTime.c_scalar)%N in Htime.
+    unfold T_is_bot, c_val, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + 1))%N) by lia. nia.
+  Qed.
   (** Widening charges both values and the widening parameters. *)
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. pose proof (ScalarTime.T_interval_stable_widen_le p a b) as Htime.
+    change (T_interval_stable_widen p a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + wsize p + 1))%N in Htime.
+    unfold T_widen, c_val, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + wsize p + 1))%N) by lia. nia.
+  Qed.
   (** Narrowing charges both abstract values. *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (ScalarTime.T_interval_narrow_le a b) as Htime.
+    change (T_interval_narrow a b <= ScalarTime.c_scalar)%N in Htime.
+    unfold T_narrow, c_val, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + 1))%N) by lia. nia.
+  Qed.
   (** Forward transfer is bounded by operator work. *)
   Lemma T_forward_le : forall o xs, (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -1557,15 +1594,28 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Meet results fit within the combined operand sizes. *)
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (ScalarTime.interval_meet_bits a b) as Hbits.
+    change (size (meet a b) <= size a + size b) in Hbits.
+    unfold c_val. nia.
+  Qed.
   (** Join results fit within the combined operand sizes. *)
   Lemma join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (ScalarTime.interval_join_bits a b) as Hbits.
+    change (size (join a b) <= size a + size b) in Hbits.
+    unfold c_val. nia.
+  Qed.
   (** Widening results fit within the operand and parameter sizes. *)
   Lemma widen_size : forall p a b,
     (N.of_nat (size (widen p a b)) <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. pose proof (ScalarTime.interval_stable_widen_bits p a b) as Hbits.
+    change (size (widen p a b) <= size a + size b + T.tree_bits p) in Hbits.
+    assert (Hparam : T.tree_bits p <= wsize p) by (unfold wsize; nia).
+    unfold c_val. nia.
+  Qed.
   (** Backward results fit within the charged work and request size. *)
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
@@ -1578,19 +1628,33 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Proof. Admitted. (* STUB *)
   (** Operator work accounts for every operand size. *)
   Lemma work_sizes : forall o xs, fold_right Nat.add 0%nat (map size xs) <= work o xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. unfold work, operand_bits. lia.
+  Qed.
   (** Guard work accounts for every operand size. *)
   Lemma gwork_sizes : forall g xs, fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold gwork, operand_bits. lia.
+  Qed.
   (** Interval size records the largest endpoint bit size. *)
   Lemma size_bits : forall a, size a = itv_bits a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Point recognition charges both endpoint comparisons. *)
   Lemma T_point_le : forall a, (T_point a <= c_interval * N.of_nat ((size a + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a. pose proof (ScalarTime.T_interval_singleton_le a) as Htime.
+    change (T_interval_singleton a <=
+      ScalarTime.c_scalar * N.of_nat (size a + 1))%N in Htime.
+    unfold T_point, c_interval, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + 1))%N) by lia. nia.
+  Qed.
   (** A singleton interval shares its integer argument. *)
   Lemma T_abst_le : forall z, (T_abst z <= c_interval)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros z. unfold T_abst, c_interval. nia.
+  Qed.
   (** Addition charges linear endpoint arithmetic. *)
   Lemma T_add_le : forall a b, (T_add a b <= c_interval * N.of_nat ((size a + size b +
     1)%nat))%N.
@@ -1655,7 +1719,15 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma T_widen_thresholds_le : forall ts a b, (T_widen ts a b <=
     c_interval * N.of_nat
       ((size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts a b. pose proof (ScalarTime.T_interval_stable_widen_le ts a b) as Htime.
+    change (T_interval_stable_widen ts a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + wsize ts + 1))%N in Htime.
+    change (T_widen ts a b <=
+      c_interval * N.of_nat (size a + size b + wsize ts + 1))%N.
+    unfold T_widen, c_interval, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + wsize ts + 1))%N) by lia. nia.
+  Qed.
   (** Interval concretization is inclusive endpoint membership. *)
   Lemma F1_gamma : forall a z, gamma a z <-> in_itv a z.
   Proof.
@@ -1857,7 +1929,15 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Lemma T2_widen : forall ts a b,
     (T_widen ts a b <= k_interval_widen * N.of_nat
       (size a + size b + (T.depth ts + 1) * (T.tree_bits ts + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts a b. pose proof (ScalarTime.T_interval_stable_widen_le ts a b) as Htime.
+    change (T_interval_stable_widen ts a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + wsize ts + 1))%N in Htime.
+    change (T_widen ts a b <=
+      k_interval_widen * N.of_nat (size a + size b + wsize ts + 1))%N.
+    unfold T_widen, k_interval_widen, ScalarTime.c_scalar in *.
+    assert (Hpos : (1 <= N.of_nat (size a + size b + wsize ts + 1))%N) by lia. nia.
+  Qed.
   (** Multiplication has the published quadratic endpoint bound. *)
   Lemma mul_bigO : (bigO (fun _ => True)
     (fun ab => N.of_nat ((binary_work (fst ab) (snd ab))%nat))
