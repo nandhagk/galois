@@ -7323,6 +7323,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db work Hinv. apply forest_pending_count. unfold inv_on in Hinv. tauto.
   Qed.
 
+  (** Distinct allocated queue entries bound the actual stored pending counter. *)
+  Lemma inv_on_pending_bound : forall db work, inv_on db work ->
+    (db_npending db <= ids db)%N.
+  Proof.
+    intros db work Hinv. apply queue_counter_le_ids_from_members.
+    - unfold inv_on, queue in Hinv. tauto.
+    - unfold inv_on, queue in Hinv. tauto.
+    - exact (inv_on_pending_count db work Hinv).
+  Qed.
+
   Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, None => True
@@ -7593,10 +7603,33 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - time_unfold T_repair_entry. time_simpl. cbn [fst snd]. unfold k_rstep. lia.
   Qed.
   (** A pop moves the selected bucket at one step per entry. *)
+  Lemma T_pop_loser_counter_bound : forall db,
+    (T_pop_loser db <= 64 + N.of_nat (N.size_nat (db_npending db)))%N.
+  Proof.
+    intro db. pose proof (N.T_pred_le (db_npending db)) as Hpred.
+    time_unfold T_pop_loser. time_unfold T_db_pop_loser.
+    destruct (runtime_queue (db_runtime db)) as [| i rest].
+    - time_simpl. time_cbn. lia.
+    - time_unfold @T_runtime_set_union. time_unfold @T_database_set_runtime.
+      time_unfold @T_database_set_pending. time_simpl. time_cbn. lia.
+  Qed.
+
   Lemma T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
       N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db x db' Hinv _.
+    pose proof (T_pop_loser_counter_bound db) as Htime.
+    assert (Hcount : (db_npending db <= wmark db)%N).
+    { eapply N.le_trans; [exact (inv_on_pending_bound db [] Hinv) | apply wmark_ids]. }
+    pose proof (N_width_mono _ _ Hcount) as Hbits.
+    pose proof (unit_width_budget db) as Hwidth.
+    pose proof (unit_positive db) as Hunit.
+    assert (Hcoefficient : (64 <= k_pop)%N) by (unfold k_pop; nia).
+    assert (Hweight : (1 <= N.of_nat (work_weight db (bucket db x) + 1))%N) by lia.
+    assert (Hsmall : (T_pop_loser db <= 64 * N.of_nat (unit db))%N) by nia.
+    nia.
+  Qed.
   (** An empty pop reads the stored queue. *)
   Lemma T_pop_none_le : forall db, inv db -> pop_loser db = None ->
     (T_pop_loser db <= k_pop * N.of_nat (unit db))%N.
