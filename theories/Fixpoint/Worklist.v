@@ -1639,6 +1639,155 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Qed.
 
 
+  (** A fold preserves its invariant while telescoping callback potential refunds. *)
+  Lemma fold_left_inv_credit {St X : Type} (f : St -> X -> St) (T_f : St -> X -> N)
+      (Inv : St -> Prop) (Phi : St -> N) (budget : X -> N) : forall xs a,
+    Inv a ->
+    (forall st x, Inv st -> In x xs -> Inv (f st x) /\
+      (T_f st x + Phi (f st x) <= budget x + Phi st)%N) ->
+    Inv (fold_left f xs a) /\
+    (List.T_fold_left f T_f xs a + Phi (fold_left f xs a) <=
+      fold_right (fun x total => budget x + 2 + total)%N 1%N xs + Phi a)%N.
+  Proof.
+    induction xs as [|x xs IH]; intros a Hinv Hstep.
+    - split; [exact Hinv|time_step].
+    - destruct (Hstep a x Hinv (or_introl eq_refl)) as [Hnext Hcost].
+      destruct (IH (f a x) Hnext
+        (fun st y Hst Hin => Hstep st y Hst (or_intror Hin))) as [Hfinal Htail].
+      split; [exact Hfinal|].
+      time_unfold @List.T_fold_left; time_cbn; nia.
+  Qed.
+
+  (** A constant callback budget is charged once for every supplied occurrence. *)
+  Lemma fold_constant_cost {A : Type} : forall (xs : list A) t,
+    fold_right (fun _ total => t + 2 + total)%N 1%N xs =
+      ((t + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intro t; time_cbn.
+    - lia.
+    - rewrite IH; nia.
+  Qed.
+
+  (** Clearing dependency flags traverses each declared key and removes its code once. *)
+  Lemma T_clear_dependencies_le : forall p xs (armed : ptrie Datatypes.unit),
+    (forall x, In x xs -> S.key_bits x <= S.kw p) ->
+    (List.T_fold_left
+      (fun acc x => PTrieCode.remove (S.key_code x) acc)
+      (fun acc x => 1 + (S.T_key_code x + PTrieCode.T_remove (S.key_code x) acc))%N
+      xs armed <=
+      (S.c_sys + PTrieT.c_trie + 4) * N.of_nat (length xs + 1) *
+        N.of_nat (S.kw p + 1))%N.
+  Proof.
+    intros p xs armed Hkeys.
+    assert (Hstep : forall (st : ptrie Datatypes.unit) x, True -> In x xs -> True /\
+      (1 + (S.T_key_code x + PTrieCode.T_remove (S.key_code x) st) <=
+        (S.c_sys + PTrieT.c_trie + 1) * N.of_nat (S.kw p + 1))%N).
+    { intros st x _ Hx; split; [exact I|].
+      pose proof (Hkeys x Hx) as Hbits.
+      pose proof (S.T_key_code_le x) as Hcode.
+      pose proof (PTrieT.T_remove_le Datatypes.unit (S.key_code x) st) as Hremove.
+      change (@PTrieT.T_remove Datatypes.unit) with (@PTrieCode.T_remove Datatypes.unit) in Hremove.
+      unfold S.key_bits in Hcode.
+      assert (HbitsN : (N.of_nat (Pos.size_nat (S.key_code x) + 1) <=
+        N.of_nat (S.kw p + 1))%N) by (unfold S.key_bits in Hbits; lia).
+      assert (Hkeypos : (1 <= N.of_nat (S.kw p + 1))%N) by lia.
+      assert (Hcode_bound : (S.T_key_code x <= S.c_sys * N.of_nat (S.kw p + 1))%N).
+      { eapply N.le_trans; [exact Hcode|]; now apply N.mul_le_mono_l. }
+      assert (Hremove_bound : (PTrieCode.T_remove (S.key_code x) st <=
+        PTrieT.c_trie * N.of_nat (S.kw p + 1))%N).
+      { eapply N.le_trans; [exact Hremove|]; now apply N.mul_le_mono_l. }
+      clear -Hcode_bound Hremove_bound Hkeypos; nia. }
+    destruct (fold_left_inv_time
+      (fun acc x => PTrieCode.remove (S.key_code x) acc)
+      (fun acc x => 1 + (S.T_key_code x + PTrieCode.T_remove (S.key_code x) acc))%N
+      (fun _ => True)
+      (fun _ => (S.c_sys + PTrieT.c_trie + 1) * N.of_nat (S.kw p + 1))%N
+      xs armed I Hstep) as [_ Hfold].
+    rewrite fold_constant_cost in Hfold.
+    assert (Hkeypos : (1 <= N.of_nat (S.kw p + 1))%N) by lia.
+    rewrite Nat2N.inj_add; clear -Hfold Hkeypos; nia.
+  Qed.
+
+  (** Popping clears dependency flags and removes one live identifier. *)
+  Lemma T_after_pop_bound : forall p s id q r, S.wf p -> In r (S.rows p) ->
+    row_at s id = Some r ->
+    (T_after_pop p s id q <= T_row_at s id +
+      16 * (S.c_sys + PTrieT.c_trie + 1) *
+        N.of_nat ((length (S.deps p r) + 1) * (S.kw p + Pos.size_nat id + 1)))%N.
+  Proof.
+    intros p s id q r Hwf Hr Hrow.
+    assert (Hkeys : forall x, In x (S.deps p r) -> S.key_bits x <= S.kw p).
+    { intros x Hx; apply (S.key_bits_le p r x Hwf Hr); apply in_or_app; now right. }
+    pose proof (T_clear_dependencies_le p (S.deps p r) (ws_armed s) Hkeys) as Hclear.
+    pose proof (S.T_deps_le p r Hwf Hr) as Hdeps.
+    pose proof (PTrieT.T_remove_le Datatypes.unit id (ws_live s)) as Hremove.
+    change (@PTrieT.T_remove Datatypes.unit) with (@PTrieCode.T_remove Datatypes.unit) in Hremove.
+    set (chunk := N.of_nat
+      ((length (S.deps p r) + 1) * (S.kw p + Pos.size_nat id + 1))).
+    assert (Hchunk : (1 <= chunk)%N) by (unfold chunk; nia).
+    assert (Hkeys_chunk : (N.of_nat (length (S.deps p r) + 1) *
+      N.of_nat (S.kw p + 1) <= chunk)%N).
+    { unfold chunk; rewrite Nat2N.inj_mul; apply N.mul_le_mono_l; lia. }
+    assert (Hid_chunk : (N.of_nat (Pos.size_nat id + 1) <= chunk)%N).
+    { unfold chunk; assert (Pos.size_nat id + 1 <=
+        (length (S.deps p r) + 1) * (S.kw p + Pos.size_nat id + 1)) by nia.
+      lia. }
+    assert (Hclear_bound : (List.T_fold_left
+      (fun acc x => PTrieCode.remove (S.key_code x) acc)
+      (fun acc x => 1 + (S.T_key_code x + PTrieCode.T_remove (S.key_code x) acc))%N
+      (S.deps p r) (ws_armed s) <= (S.c_sys + PTrieT.c_trie + 4) * chunk)%N).
+    { eapply N.le_trans; [exact Hclear|].
+      rewrite <- N.mul_assoc; now apply N.mul_le_mono_l. }
+    assert (Hdeps_bound : (S.T_deps p r <= S.c_sys * chunk)%N).
+    { eapply N.le_trans; [exact Hdeps|].
+      rewrite <- N.mul_assoc; now apply N.mul_le_mono_l. }
+    assert (Hremove_bound : (PTrieCode.T_remove id (ws_live s) <=
+      PTrieT.c_trie * chunk)%N).
+    { eapply N.le_trans; [exact Hremove|]; now apply N.mul_le_mono_l. }
+    unfold T_after_pop; rewrite Hrow; time_simpl; time_cbn.
+    clear -Hclear_bound Hdeps_bound Hremove_bound Hchunk; nia.
+  Qed.
+
+  (** Additive callback accounting preserves the coefficient of amortized queue clocks. *)
+  Lemma T_step_accounting : forall p pol s pr id q1 r a ss, S.wf p -> invariant p pol s ->
+    Q.pop (ws_queue s) = Some (pr, id, q1) -> source_row p id = Some r ->
+    eval_row p r (ws_store s) = Some (a, ss) ->
+    (T_step p pol s <= Q.T_pop (ws_queue s) + T_eval_row p r (ws_store s) +
+      output_cost p pol ((S.target p r, a) :: ss) (after_pop p s id q1) +
+      S.T_target p r + 2 * T_row_at s id +
+      c_step * N.of_nat
+        ((length (S.deps p r) + 1) * (S.kw p + Nat.log2 (C p) + 1)) +
+      N.of_nat (length ss) + c_step)%N.
+  Proof.
+    intros p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval.
+    destruct (source_row_member p id r Hsource) as [Hid Hr].
+    pose proof (row_ids_bits p id Hid) as Hbits.
+    assert (Hrow : row_at s id = Some r).
+    { destruct Hinv as [_ [_ [[Hrows _] _]]]; now rewrite Hrows. }
+    pose proof (T_after_pop_bound p s id q1 r Hwf Hr Hrow) as Hafter.
+    pose proof (T_output_fold_le p pol ((S.target p r, a) :: ss)
+      (after_pop p s id q1)) as Hfold.
+    assert (Hwidth : (N.of_nat
+      ((length (S.deps p r) + 1) * (S.kw p + Pos.size_nat id + 1)) <=
+      2 * N.of_nat ((length (S.deps p r) + 1) *
+        (S.kw p + Nat.log2 (C p) + 1)))%N).
+    { assert ((length (S.deps p r) + 1) * (S.kw p + Pos.size_nat id + 1) <=
+        2 * ((length (S.deps p r) + 1) * (S.kw p + Nat.log2 (C p) + 1))) by nia.
+      lia. }
+    assert (Hafter_bound : (T_after_pop p s id q1 <= T_row_at s id +
+      c_step * N.of_nat ((length (S.deps p r) + 1) *
+        (S.kw p + Nat.log2 (C p) + 1)))%N).
+    { eapply N.le_trans; [exact Hafter|].
+      apply N.add_le_mono_l.
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hwidth|].
+      unfold c_step; nia. }
+    unfold T_step; rewrite Hpop, Hrow, Heval.
+    change (fun st xa => T_update_one p pol st xa) with (T_update_one p pol).
+    time_simpl; time_cbn.
+    time_cbn_all.
+    clear -Hafter_bound Hfold; unfold c_step in *; nia.
+  Qed.
+
   (** W1 charges indexing, numbering and initial guarded enqueue to preparation. *)
   Lemma W1_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     (T_prepare p pol <= k_prepare * (N.of_nat (prep p) + N.of_nat (C p) * unit p + 1))%N.
