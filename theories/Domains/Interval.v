@@ -1830,6 +1830,221 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
 
 
+  (** Unsigned interval division keeps the numerator endpoint bit bound. *)
+  Lemma udiv_result_bits : forall a b, size (udiv a b) <= size a.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      cbn [udiv top size itv_bits bnd_bits]; try lia.
+    destruct ((0 <=? la)%Z && (0 <? lb)%Z); cbn [top size itv_bits bnd_bits Z.size_nat]; try lia.
+    pose proof (integer_div_bits la hb). pose proof (integer_div_bits ha lb). lia.
+  Qed.
+
+  (** The remainder cap uses only an input endpoint and one subtraction. *)
+  Lemma urem_result_bits : forall a b, size (urem a b) <= size a + size b + 2.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      cbn [urem top size itv_bits bnd_bits]; try lia.
+    destruct ((0 <=? la)%Z && (0 <? lb)%Z); cbn [top size itv_bits bnd_bits Z.size_nat]; try lia.
+    pose proof (integer_sub_bits hb 1). cbn [Z.size_nat Pos.size_nat] in *.
+    pose proof (integer_min_bits ha (hb - 1)). lia.
+  Qed.
+
+  (** Bitwise conjunction's cap is selected from an input endpoint. *)
+  Lemma bitand_result_bits : forall a b, size (bitand a b) <= size a + size b.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      cbn [bitand top size itv_bits bnd_bits]; try lia.
+    destruct ((0 <=? la)%Z && (0 <=? lb)%Z); cbn [top size itv_bits bnd_bits Z.size_nat]; try lia.
+    pose proof (integer_min_bits ha hb). lia.
+  Qed.
+
+  (** Two integer divisions and their guards have a quadratic interval cost. *)
+  Lemma udiv_time_quadratic : forall a b,
+    (T_udiv a b <= 128 * N.of_nat (binary_work a b))%N.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      time_unfold T_udiv; try (unfold binary_work; cbn [Nat.pow]; nia).
+    set (s := (size (I (Fin la) (Fin ha)) + size (I (Fin lb) (Fin hb)) + 1)%nat).
+    assert (Hfirst : Z.size_nat la + Z.size_nat hb + 1 <= s)
+      by (unfold s, size, itv_bits, bnd_bits; lia).
+    assert (Hsecond : Z.size_nat ha + Z.size_nat lb + 1 <= s)
+      by (unfold s, size, itv_bits, bnd_bits; lia).
+    pose proof (integer_div_time la hb s Hfirst).
+    pose proof (integer_div_time ha lb s Hsecond).
+    pose proof (Std.Z.T_leb_le 0 la). pose proof (Std.Z.T_ltb_le 0 lb).
+    time_unfold Datatypes.T_andb.
+    destruct ((0 <=? la)%Z && (0 <? lb)%Z);
+      replace (binary_work (I (Fin la) (Fin ha)) (I (Fin lb) (Fin hb)))
+        with (s * s) by (unfold binary_work, s, size; cbn [Nat.pow]; lia);
+      cbn [Z.size_nat] in *; rewrite Nat2N.inj_mul; nia.
+  Qed.
+
+  (** Computing a remainder cap is linear and therefore within the quadratic work. *)
+  Lemma urem_time_quadratic : forall a b,
+    (T_urem a b <= 32 * N.of_nat (binary_work a b))%N.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      time_unfold T_urem; try (unfold binary_work; cbn [Nat.pow]; nia).
+    pose proof (Std.Z.T_leb_le 0 la). pose proof (Std.Z.T_ltb_le 0 lb).
+    pose proof (Std.Z.T_sub_le hb 1). pose proof (Std.Z.T_min_le ha (hb - 1)).
+    time_unfold Datatypes.T_andb.
+    destruct ((0 <=? la)%Z && (0 <? lb)%Z);
+      unfold binary_work, itv_bits, bnd_bits;
+      cbn [Z.size_nat Pos.size_nat Nat.pow] in *; nia.
+  Qed.
+
+  (** Computing a bitwise cap fits the published quadratic work. *)
+  Lemma bitand_time_quadratic : forall a b,
+    (T_bitand a b <= 16 * N.of_nat (binary_work a b))%N.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      time_unfold T_bitand; try (unfold binary_work; cbn [Nat.pow]; nia).
+    pose proof (Std.Z.T_leb_le 0 la). pose proof (Std.Z.T_leb_le 0 lb).
+    pose proof (Std.Z.T_min_le ha hb). time_unfold Datatypes.T_andb.
+    destruct ((0 <=? la)%Z && (0 <=? lb)%Z);
+      unfold binary_work, itv_bits, bnd_bits; cbn [Z.size_nat Nat.pow] in *; nia.
+  Qed.
+
+  (** Constructing an abstract Boolean uses two constant-time wrappers. *)
+  Lemma truth_time_constant : forall b, (T_truth b <= 2)%N.
+  Proof.
+    intros []; unfold T_truth, T_abst; lia.
+  Qed.
+
+  (** An abstract comparison stores at most one result bit. *)
+  Lemma cmp_result_bits : forall c a b, size (cmp c a b) <= 1.
+  Proof.
+    intros c [|la ha] [|lb hb]; cbn [cmp size itv_bits]; try lia.
+    destruct (point (I la ha)) as [x |], (point (I lb hb)) as [y |];
+      cbn [size itv_bits bnd_bits Z.size_nat Pos.size_nat]; try lia.
+    destruct (Z.compare x y), c; cbn [truth abst size itv_bits bnd_bits Z.size_nat
+      Pos.size_nat]; lia.
+  Qed.
+
+  (** Comparing intervals has a linear endpoint cost. *)
+  Lemma cmp_time_linear : forall c a b,
+    (T_cmp c a b <= 256 * (T.c_thresholds + 1) *
+      N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros c a b. pose proof (point_time_linear a) as Ha.
+    pose proof (point_time_linear b) as Hb.
+    destruct a as [|la ha], b as [|lb hb]; time_unfold T_cmp; try nia.
+    destruct (point (I la ha)) as [x |] eqn:Hx; try nia.
+    destruct (point (I lb hb)) as [y |] eqn:Hy; try nia.
+    pose proof (point_result_bits _ _ Hx).
+    pose proof (Std.Z.T_compare_le x y).
+    pose proof (truth_time_constant
+      (match Z.compare x y, c with Eq, Eq | Lt, Lt | Gt, Gt => true | _, _ => false end)).
+    nia.
+  Qed.
+
+  (** Meeting selects existing endpoints or returns bottom. *)
+  Lemma meet_result_bits : forall a b, size (meet a b) <= size a + size b.
+  Proof.
+    intros a b. exact (ScalarTime.interval_meet_bits a b).
+  Qed.
+
+  (** Backward addition costs linearly in its result and both arguments. *)
+  Lemma add_back_time_linear : forall r a b,
+    (T_add_back r a b <= 512 * (T.c_thresholds + 1) *
+      N.of_nat (size r + size a + size b + 1))%N.
+  Proof.
+    intros r a b. pose proof (sub_time_linear r b).
+    pose proof (sub_time_linear r a).
+    pose proof (meet_time_linear a (sub r b)).
+    pose proof (meet_time_linear b (sub r a)).
+    pose proof (sub_result_bits r b). pose proof (sub_result_bits r a).
+    unfold T_add_back. nia.
+  Qed.
+
+  (** Backward subtraction costs linearly in its result and both arguments. *)
+  Lemma sub_back_time_linear : forall r a b,
+    (T_sub_back r a b <= 512 * (T.c_thresholds + 1) *
+      N.of_nat (size r + size a + size b + 1))%N.
+  Proof.
+    intros r a b. pose proof (add_time_linear r b).
+    pose proof (sub_time_linear a r).
+    pose proof (meet_time_linear a (add r b)).
+    pose proof (meet_time_linear b (sub a r)).
+    pose proof (add_result_bits r b). pose proof (sub_result_bits a r).
+    unfold T_sub_back. nia.
+  Qed.
+
+  (** Backward addition stores at most two copies of its linear input budget. *)
+  Lemma add_back_result_bits : forall r a b,
+    size (fst (add_back r a b)) + size (snd (add_back r a b)) <=
+      2 * (size r + size a + size b + 1).
+  Proof.
+    intros r a b. pose proof (meet_result_bits a (sub r b)).
+    pose proof (meet_result_bits b (sub r a)).
+    pose proof (sub_result_bits r b). pose proof (sub_result_bits r a).
+    unfold add_back. cbn [fst snd]. lia.
+  Qed.
+
+  (** Backward subtraction stores at most two copies of its linear input budget. *)
+  Lemma sub_back_result_bits : forall r a b,
+    size (fst (sub_back r a b)) + size (snd (sub_back r a b)) <=
+      2 * (size r + size a + size b + 1).
+  Proof.
+    intros r a b. pose proof (meet_result_bits a (add r b)).
+    pose proof (meet_result_bits b (sub a r)).
+    pose proof (add_result_bits r b). pose proof (sub_result_bits a r).
+    unfold sub_back. cbn [fst snd]. lia.
+  Qed.
+
+  (** A multiplication preimage is the request, its negation, or top. *)
+  Lemma mul_preimage_result_bits : forall r x,
+    size (mul_preimage r x) <= size r + 1.
+  Proof.
+    intros r x. unfold mul_preimage. destruct (point x) as [z |];
+      [|cbn [top size itv_bits bnd_bits]; lia].
+    destruct (Z.eqb z 1); [lia |]. destruct (Z.eqb z (-1));
+      [|cbn [top size itv_bits bnd_bits]; lia].
+    pose proof (sub_result_bits (abst 0) r). rewrite abst_result_bits in *.
+    cbn [Z.size_nat] in *. lia.
+  Qed.
+
+  (** Recognizing a unit multiplication preimage has a linear input cost. *)
+  Lemma mul_preimage_time_linear : forall r x,
+    (T_mul_preimage r x <= 256 * (T.c_thresholds + 1) *
+      N.of_nat (size r + size x + 1))%N.
+  Proof.
+    intros r x. pose proof (point_time_linear x) as Hpoint.
+    pose proof (sub_time_linear (abst 0) r) as Hsub.
+    rewrite abst_result_bits in Hsub. cbn [Z.size_nat] in Hsub.
+    time_unfold T_mul_preimage. destruct (point x) as [z |] eqn:Hx; try nia.
+    pose proof (point_result_bits _ _ Hx).
+    pose proof (Std.Z.T_eqb_le z 1). pose proof (Std.Z.T_eqb_le z (-1)).
+    destruct (Z.eqb z 1), (Z.eqb z (-1)); unfold T_abst; nia.
+  Qed.
+
+  (** Backward multiplication costs linearly in its result and both arguments. *)
+  Lemma mul_back_time_linear : forall r a b,
+    (T_mul_back r a b <= 2048 * (T.c_thresholds + 1) *
+      N.of_nat (size r + size a + size b + 1))%N.
+  Proof.
+    intros r a b. pose proof (mul_preimage_time_linear r a).
+    pose proof (mul_preimage_time_linear r b).
+    pose proof (mul_preimage_result_bits r a).
+    pose proof (mul_preimage_result_bits r b).
+    pose proof (meet_time_linear a (mul_preimage r b)).
+    pose proof (meet_time_linear b (mul_preimage r a)).
+    unfold T_mul_back. nia.
+  Qed.
+
+  (** Backward multiplication stores at most two linear input budgets. *)
+  Lemma mul_back_result_bits : forall r a b,
+    size (fst (mul_back r a b)) + size (snd (mul_back r a b)) <=
+      2 * (size r + size a + size b + 1).
+  Proof.
+    intros r a b. pose proof (mul_preimage_result_bits r a).
+    pose proof (mul_preimage_result_bits r b).
+    pose proof (meet_result_bits a (mul_preimage r b)).
+    pose proof (meet_result_bits b (mul_preimage r a)).
+    unfold mul_back. cbn [fst snd]. lia.
+  Qed.
+
+
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -1986,14 +2201,20 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Qed.
   (** Unsigned division has the published quadratic endpoint bound. *)
   Lemma T_udiv_le : forall a b, (T_udiv a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (udiv_time_quadratic a b). unfold c_interval. nia.
+  Qed.
   (** Unsigned remainder has the published quadratic endpoint bound. *)
   Lemma T_urem_le : forall a b, (T_urem a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (urem_time_quadratic a b). unfold c_interval. nia.
+  Qed.
   (** Bitwise conjunction has the published quadratic endpoint bound. *)
   Lemma T_bitand_le : forall a b, (T_bitand a b <= c_interval * N.of_nat ((binary_work a
     b)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (bitand_time_quadratic a b). unfold c_interval. nia.
+  Qed.
   (** Bitwise disjunction has the published quadratic endpoint bound. *)
   Lemma T_bitor_le : forall a b, (T_bitor a b <= c_interval * N.of_nat ((binary_work a
     b)%nat))%N.
@@ -2004,19 +2225,36 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Comparison charges linear endpoint comparisons. *)
   Lemma T_cmp_le : forall c a b, (T_cmp c a b <= c_interval * N.of_nat ((size a + size b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c a b. pose proof (cmp_time_linear c a b). unfold c_interval. nia.
+  Qed.
   (** Backward addition charges the result and both operands. *)
   Lemma T_add_back_le : forall r a b, (T_add_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b. pose proof (add_back_time_linear r a b).
+    assert (Hbudget : size r + size a + size b + 1 <=
+      size r + (size a + size b + 1) ^ 2) by (cbn [Nat.pow]; nia).
+    unfold c_interval. nia.
+  Qed.
   (** Backward subtraction charges the result and both operands. *)
   Lemma T_sub_back_le : forall r a b, (T_sub_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b. pose proof (sub_back_time_linear r a b).
+    assert (Hbudget : size r + size a + size b + 1 <=
+      size r + (size a + size b + 1) ^ 2) by (cbn [Nat.pow]; nia).
+    unfold c_interval. nia.
+  Qed.
   (** Backward multiplication charges the result and both operands. *)
   Lemma T_mul_back_le : forall r a b, (T_mul_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b. pose proof (mul_back_time_linear r a b).
+    assert (Hbudget : size r + size a + size b + 1 <=
+      size r + (size a + size b + 1) ^ 2) by (cbn [Nat.pow]; nia).
+    unfold c_interval. nia.
+  Qed.
   (** Backward unsigned division charges the result and both operands. *)
   Lemma T_udiv_back_le : forall r a b, (T_udiv_back r a b <=
     c_interval * N.of_nat ((size r + (size a + size b + 1) ^ 2)%nat))%N.
