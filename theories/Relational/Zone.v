@@ -4,7 +4,7 @@
     For example, a zero-to-variable entry bounds that variable from above.
     Builds on: ZoneSig and keyed map operations. *)
 
-From Stdlib Require Import List ZArith Lia.
+From Stdlib Require Import List Bool NArith ZArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig Code.
 From Galois.Lattice Require Import LatticeSig.
@@ -12,6 +12,108 @@ From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig ZoneSig.
 Local Open Scope nat_scope.
+
+(** Finite interval endpoints add; an absent endpoint remains unbounded. *)
+Definition rel_add_bounds (a b : bnd * bnd) : bnd * bnd :=
+  (match fst a, fst b with Fin x, Fin y => Fin (x + y)%Z | _, _ => NegInf end,
+   match snd a, snd b with Fin x, Fin y => Fin (x + y)%Z | _, _ => PosInf end).
+TimeFun rel_add_bounds.
+
+(** Scaling reverses endpoints exactly when the coefficient is negative. *)
+Definition rel_scale_bounds (c : Z) (a : bnd * bnd) : bnd * bnd :=
+  if (c =? 0)%Z then (Fin 0%Z, Fin 0%Z) else
+  let lo := if (0 <=? c)%Z then fst a else snd a in
+  let hi := if (0 <=? c)%Z then snd a else fst a in
+  (match lo with Fin x => Fin (c * x)%Z | _ => NegInf end,
+   match hi with Fin x => Fin (c * x)%Z | _ => PosInf end).
+TimeFun rel_scale_bounds.
+
+(** Each coefficient is queried once, and the constant starts the sum. *)
+Definition rel_form_bounds {X : Type} (ranges : X -> bnd * bnd)
+    (f : lin X) : bnd * bnd :=
+  fold_right (fun p acc => rel_add_bounds (rel_scale_bounds (snd p) (ranges (fst p))) acc)
+    (Fin (cst f), Fin (cst f)) (coef f).
+TimeFun rel_form_bounds.
+
+(** A valid wrapping interval bounds every modular result. *)
+Definition rel_wrap_bounds (r : wrapr) (a : bnd * bnd) : bnd * bnd :=
+  match r with
+  | NoWrap => a
+  | WrapTo lo hi => if (lo <=? hi)%Z then (Fin lo, Fin hi) else (NegInf, PosInf)
+  end.
+TimeFun rel_wrap_bounds.
+
+(** An affine result may be used without wrapping when both endpoints fit. *)
+Definition rel_wrap_exact (r : wrapr) (a : bnd * bnd) : bool :=
+  match r with
+  | NoWrap => true
+  | WrapTo lo hi =>
+    match a with
+    | (Fin l, Fin h) => andb (lo <=? l)%Z (h <=? hi)%Z
+    | _ => false
+    end
+  end.
+TimeFun rel_wrap_exact.
+
+Lemma rel_add_bounds_sound : forall a b x y,
+  in_bnd (fst a) (snd a) x -> in_bnd (fst b) (snd b) y ->
+  in_bnd (fst (rel_add_bounds a b)) (snd (rel_add_bounds a b)) (x + y)%Z.
+Proof.
+  intros [al ah] [bl bh] x y Ha Hb.
+  unfold rel_add_bounds, in_bnd in *.
+  destruct al, ah, bl, bh; cbn in *; intuition lia.
+Qed.
+
+Lemma rel_scale_bounds_sound : forall c a x,
+  in_bnd (fst a) (snd a) x ->
+  in_bnd (fst (rel_scale_bounds c a)) (snd (rel_scale_bounds c a)) (c * x)%Z.
+Proof.
+  intros c [lo hi] x Hx. unfold rel_scale_bounds.
+  destruct (c =? 0)%Z eqn:Hc.
+  - apply Z.eqb_eq in Hc. subst c. unfold in_bnd. cbn. lia.
+  - destruct (0 <=? c)%Z eqn:Hsign;
+      [apply Z.leb_le in Hsign|apply Z.leb_gt in Hsign];
+      unfold in_bnd in *; destruct lo, hi; cbn in *; intuition nia.
+Qed.
+
+Lemma rel_form_bounds_sound : forall (X : Type) ranges (f : lin X) v,
+  (forall x, in_bnd (fst (ranges x)) (snd (ranges x)) (v x)) ->
+  in_bnd (fst (rel_form_bounds ranges f)) (snd (rel_form_bounds ranges f)) (eval_lin v f).
+Proof.
+  intros X ranges [cs c] v Hr. unfold rel_form_bounds, eval_lin. cbn [coef cst].
+  induction cs as [|[x a] cs IH].
+  - change (in_bnd (Fin c) (Fin c) c). unfold in_bnd. lia.
+  - change (in_bnd
+      (fst (rel_add_bounds (rel_scale_bounds a (ranges x))
+        (rel_form_bounds ranges (Lin X cs c))))
+      (snd (rel_add_bounds (rel_scale_bounds a (ranges x))
+        (rel_form_bounds ranges (Lin X cs c))))
+      (a * v x + eval_coef v cs + c)%Z).
+    replace (a * v x + eval_coef v cs + c)%Z with (a * v x + (eval_coef v cs + c))%Z by ring.
+    apply rel_add_bounds_sound; [apply rel_scale_bounds_sound, Hr|exact IH].
+Qed.
+
+Lemma rel_wrap_bounds_sound : forall r a z,
+  in_bnd (fst a) (snd a) z ->
+  in_bnd (fst (rel_wrap_bounds r a)) (snd (rel_wrap_bounds r a)) (wrap_into r z).
+Proof.
+  intros [|lo hi] a z Hz; [exact Hz|].
+  unfold rel_wrap_bounds. destruct (lo <=? hi)%Z eqn:Hbounds.
+  - apply Z.leb_le in Hbounds. unfold wrap_into, in_bnd. cbn.
+    pose proof (Z.mod_pos_bound (z - lo) (hi - lo + 1) ltac:(lia)). lia.
+  - unfold in_bnd. cbn. tauto.
+Qed.
+
+Lemma rel_wrap_exact_sound : forall r a z,
+  in_bnd (fst a) (snd a) z -> rel_wrap_exact r a = true -> wrap_into r z = z.
+Proof.
+  intros [|lo hi] [l h] z Hz Hexact; [reflexivity|].
+  unfold rel_wrap_exact in Hexact.
+  destruct l, h; cbn in Hexact; try discriminate Hexact.
+  apply andb_true_iff in Hexact. destruct Hexact as [Hl Hh].
+  apply Z.leb_le in Hl. apply Z.leb_le in Hh. unfold in_bnd in Hz. cbn in Hz.
+  unfold wrap_into. rewrite Z.mod_small by lia. lia.
+Qed.
 
 Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
       with Definition encode := option_code X.encode)
@@ -122,10 +224,25 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
   Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
   (* STUB-CODE *)
   Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
   Definition entry (m : dbm) (i j : K.t) : option Z :=
     match M.get i m with Some row => M.get j row | None => None end.
+
+  Definition variable_bounds (m : dbm) (x : X.t) : bnd * bnd :=
+    (match entry m (Some x) None with Some d => Fin (-d)%Z | None => NegInf end,
+     match entry m None (Some x) with Some d => Fin d | None => PosInf end).
+
+  Definition form_bounds (m : dbm) (f : lin X.t) : bnd * bnd :=
+    rel_form_bounds (variable_bounds m) f.
+
+  Definition range (e : term L.op X.t) (s : t) : bnd * bnd :=
+    match s with
+    | Unreached => (NegInf, PosInf)
+    | Reached m =>
+      match F.lin_of e with
+      | Some (f, r) => rel_wrap_bounds r (form_bounds m f)
+      | None => (NegInf, PosInf)
+      end
+    end.
 
   Definition lower_bound (d : Z) (old : option Z) : Z :=
     match old with Some z => Z.min d z | None => d end.
@@ -855,10 +972,38 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
   Proof. Admitted. (* STUB *)
+
+  (** Unary entries supply lower and upper bounds for each variable. *)
+  Lemma variable_bounds_sound : forall m v x, models m v ->
+    in_bnd (fst (variable_bounds m x)) (snd (variable_bounds m x)) (v x).
+  Proof.
+    intros m v x Hmodel. unfold variable_bounds.
+    destruct (entry m (Some x) None) as [lo|] eqn:Hlo;
+      destruct (entry m None (Some x)) as [hi|] eqn:Hhi;
+      cbn [fst snd in_bnd]; split; try exact I.
+    - pose proof (Hmodel (Some x) None lo Hlo). cbn [vz] in *. lia.
+    - pose proof (Hmodel None (Some x) hi Hhi). cbn [vz] in *. lia.
+    - pose proof (Hmodel (Some x) None lo Hlo). cbn [vz] in *. lia.
+    - pose proof (Hmodel None (Some x) hi Hhi). cbn [vz] in *. lia.
+  Qed.
+
+  Lemma form_bounds_sound : forall m v f, models m v ->
+    in_bnd (fst (form_bounds m f)) (snd (form_bounds m f)) (eval_lin v f).
+  Proof.
+    intros m v f Hmodel. apply rel_form_bounds_sound.
+    intro x. now apply variable_bounds_sound.
+  Qed.
+
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [|m] st c Hmodel Heval; [contradiction|].
+    unfold range. destruct (F.lin_of e) as [[f r]|] eqn:Hlinear.
+    - rewrite (F.lin_sound st e c f r Heval Hlinear).
+      apply rel_wrap_bounds_sound. now apply form_bounds_sound.
+    - unfold in_bnd. cbn. tauto.
+  Qed.
   Lemma entry_spec : forall m i j,
     entry m i j = match M.get i m with Some row => M.get j row | None => None end.
   Proof.
@@ -961,8 +1106,10 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun havoc.
   TimeFun assign.
   TimeFun assume.
-  TimeFun range.
   TimeFun entry.
+  TimeFun variable_bounds.
+  TimeFun form_bounds.
+  TimeFun range.
   TimeFun add_cons.
   TimeFun relax_round.
   TimeFun fw_round.
@@ -1179,6 +1326,194 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       exists row. now split. }
     unfold skel. cbn [Nat.pow]. nia.
   Qed.
+  (** A collected row is witnessed by a successful lookup at an outer stored code. *)
+  Lemma rows_find : forall m row,
+    In row (rows m) <-> exists p, M.find p m = Some row.
+  Proof.
+    intros m row. split.
+    - intro Hin. unfold rows in Hin. apply in_flat_map in Hin.
+      destruct Hin as [p [Hp Hin]]. destruct (M.find p m) as [r|] eqn:Hrow.
+      + cbn in Hin. destruct Hin as [Heq | Hempty]; [subst r|contradiction].
+        now exists p.
+      + contradiction.
+    - intros [p Hrow]. exact (row_in_rows m p row Hrow).
+  Qed.
+
+  (** Support records row codes and column codes independently of their stored labels. *)
+  Lemma support_find : forall m p, In p (support m) <->
+    M.find p m <> None \/ exists q, raw_entry m q p <> None.
+  Proof.
+    intros m p. rewrite support_spec. split.
+    - intros [Houter | Hinner].
+      + left. now apply M.codes_spec.
+      + right. apply in_flat_map in Hinner. destruct Hinner as [row [Hrow Hp]].
+        apply rows_find in Hrow. destruct Hrow as [q Hrow]. exists q.
+        unfold raw_entry. rewrite Hrow. cbn [row_of]. now apply M.codes_spec.
+    - intros [Houter | [q Hinner]].
+      + left. now apply M.codes_spec.
+      + right. unfold raw_entry in Hinner.
+        destruct (M.find q m) as [row|] eqn:Hrow; cbn [row_of] in Hinner.
+        * apply in_flat_map. exists row. split.
+          -- exact (row_in_rows m q row Hrow).
+          -- now apply M.codes_spec.
+        * rewrite M.find_empty in Hinner. contradiction.
+  Qed.
+
+  (** The deduplicated support contains each stored code once. *)
+  Lemma support_nodup : forall m, NoDup (support m).
+  Proof.
+    intro m. unfold support. apply (dedup_nodup positive Pos.eqb Pos.eqb_eq).
+    constructor.
+  Qed.
+
+  (** A common upper bound for list members bounds their maximum. *)
+  Lemma maximum_bound : forall (A : Type) (f : A -> nat) xs upper,
+    (forall x, In x xs -> f x <= upper) -> fold_right Nat.max 0 (map f xs) <= upper.
+  Proof.
+    intros A f xs. induction xs as [|x xs IH]; intros upper Hbound.
+    - cbn. lia.
+    - cbn. apply Nat.max_lub.
+      + apply Hbound. now left.
+      + apply IH. intros y Hin. apply Hbound. now right.
+  Qed.
+
+  (** Equal support membership gives equal support size and key-bit bounds. *)
+  Lemma support_sizes : forall ma mb,
+    (forall p, In p (support ma) <-> In p (support mb)) ->
+    supp ma = supp mb /\ b ma = b mb.
+  Proof.
+    intros ma mb Hsame. split.
+    - unfold supp. apply Nat.le_antisymm; apply NoDup_incl_length;
+        try apply support_nodup.
+      + intros p Hin. now apply Hsame.
+      + intros p Hin. now apply Hsame.
+    - apply Nat.le_antisymm.
+      + unfold b at 1. apply maximum_bound. intros p Hin.
+        apply support_bits. now apply Hsame.
+      + unfold b at 1. apply maximum_bound. intros p Hin.
+        apply support_bits. now apply Hsame.
+  Qed.
+
+  (** Constraint insertion preserves all outer codes and adds its source code. *)
+  Lemma find_add_cons_presence : forall i j d m p,
+    M.find p (add_cons i j d m) <> None <-> p = K.encode i \/ M.find p m <> None.
+  Proof.
+    intros i j d m p. unfold add_cons. rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode i)) eqn:Hkey.
+    - apply Pos.eqb_eq in Hkey. subst p. split; [intros; now left|intros; discriminate].
+    - apply Pos.eqb_neq in Hkey. tauto.
+  Qed.
+
+  (** Constraint insertion changes finite-entry presence only at its supplied coordinates. *)
+  Lemma raw_add_cons_presence : forall i j d m p q,
+    raw_entry (add_cons i j d m) p q <> None <->
+    (p = K.encode i /\ q = K.encode j) \/ raw_entry m p q <> None.
+  Proof.
+    intros i j d m p q. unfold raw_entry, add_cons. rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode i)) eqn:Hrow.
+    - apply Pos.eqb_eq in Hrow. subst p. cbn [row_of]. rewrite M.find_set.
+      destruct (Pos.eqb q (K.encode j)) eqn:Hcol.
+      + apply Pos.eqb_eq in Hcol. subst q. split.
+        * intros. left. now split.
+        * intros. discriminate.
+      + apply Pos.eqb_neq in Hcol. rewrite M.get_find. tauto.
+    - apply Pos.eqb_neq in Hrow. tauto.
+  Qed.
+
+  (** Insertion adds only its two endpoint codes to the support. *)
+  Lemma support_add_cons : forall i j d m p,
+    In p (support (add_cons i j d m)) <->
+    p = K.encode i \/ p = K.encode j \/ In p (support m).
+  Proof.
+    intros i j d m p. split.
+    - intro Hin. apply support_find in Hin. destruct Hin as [Hrow | [q Hentry]].
+      + apply find_add_cons_presence in Hrow. destruct Hrow as [Heq | Hrow].
+        * now left.
+        * right. right. apply support_find. now left.
+      + apply raw_add_cons_presence in Hentry. destruct Hentry as [[Hq Hp] | Hentry].
+        * right. now left.
+        * right. right. apply support_find. right. now exists q.
+    - intros [Hrow | [Hcol | Hin]]; apply support_find.
+      + left. apply find_add_cons_presence. now left.
+      + right. exists (K.encode i). apply raw_add_cons_presence. left. now split.
+      + apply support_find in Hin. destruct Hin as [Hrow | [q Hentry]].
+        * left. apply find_add_cons_presence. now right.
+        * right. exists q. apply raw_add_cons_presence. now right.
+  Qed.
+
+  (** The pivot test recognizes precisely the supplied key's membership in raw support. *)
+  Lemma pivot_present_support : forall k m,
+    pivot_present k m = true <-> In (K.encode k) (support m).
+  Proof.
+    intros k m. unfold pivot_present. rewrite M.get_find.
+    destruct (M.find (K.encode k) m) as [row|] eqn:Hrow.
+    - split; [intros|reflexivity]. apply support_find. left. rewrite Hrow. discriminate.
+    - rewrite (M.existsb_spec (M.t Z) (column_present k) m). split.
+      + intros [p [row [Hp Hcol]]]. apply support_find. right. exists p.
+        unfold raw_entry. rewrite Hp. cbn [row_of].
+        unfold column_present in Hcol. rewrite M.get_find in Hcol.
+        destruct (M.find (K.encode k) row); congruence.
+      + intro Hin. apply support_find in Hin. destruct Hin as [Hfound | [p Hentry]].
+        * rewrite Hrow in Hfound. contradiction.
+        * unfold raw_entry in Hentry. destruct (M.find p m) as [r|] eqn:Hp.
+          -- exists p, r. split; [exact Hp|]. unfold column_present. rewrite M.get_find.
+             cbn [row_of] in Hentry. destruct (M.find (K.encode k) r); congruence.
+          -- cbn [row_of] in Hentry. rewrite M.find_empty in Hentry. contradiction.
+  Qed.
+
+  (** Relaxation retains precisely the existing outer rows. *)
+  Lemma find_relax_presence : forall k m p,
+    M.find p (relax_round k m) <> None <-> M.find p m <> None.
+  Proof.
+    intros k m p. unfold relax_round. rewrite M.find_merge by reflexivity.
+    rewrite M.find_empty. destruct (M.find p m); cbn [round_row]; split; congruence.
+  Qed.
+
+  (** A relaxed coordinate is old or joins an incoming and an outgoing pivot edge. *)
+  Lemma raw_relax_presence : forall k m p q,
+    raw_entry (relax_round k m) p q <> None <->
+    raw_entry m p q <> None \/
+      (raw_entry m p (K.encode k) <> None /\ raw_entry m (K.encode k) q <> None).
+  Proof.
+    intros k m p q. unfold raw_entry, relax_round.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [round_row row_of].
+    - rewrite !M.get_find. destruct (M.find (K.encode k) row) as [a|] eqn:Hentry.
+      + rewrite M.find_merge by reflexivity.
+        destruct (M.find q row), (M.find q (row_of (M.find (K.encode k) m)));
+          cbn [via_bound]; intuition congruence.
+      + tauto.
+    - rewrite !M.find_empty. tauto.
+  Qed.
+
+  (** Relaxing through a pivot adds no code and deletes no supported code. *)
+  Lemma support_relax : forall k m p,
+    In p (support (relax_round k m)) <-> In p (support m).
+  Proof.
+    intros k m p. rewrite !support_find. split.
+    - intros [Hrow | [q Hentry]].
+      + left. now apply find_relax_presence in Hrow.
+      + apply raw_relax_presence in Hentry. right.
+        destruct Hentry as [Hentry | [Hprefix Hsuffix]].
+        * now exists q.
+        * now exists (K.encode k).
+    - intros [Hrow | [q Hentry]].
+      + left. now apply find_relax_presence.
+      + right. exists q. apply raw_relax_presence. now left.
+  Qed.
+
+  (** Materializing an already-supported pivot diagonal leaves support unchanged. *)
+  Lemma support_round : forall k m p,
+    In p (support (fw_round k m)) <-> In p (support m).
+  Proof.
+    intros k m p. unfold fw_round. rewrite support_relax.
+    destruct (pivot_present k m) eqn:Hpresent; [|reflexivity].
+    apply pivot_present_support in Hpresent. rewrite support_add_cons.
+    split.
+    - intros [Heq | [Heq | Hin]]; subst; assumption.
+    - intro Hin. right. now right.
+  Qed.
+
   Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 2 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
@@ -1339,7 +1674,9 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof. Admitted. (* STUB *)
   Lemma supp_fw_round : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k m. apply support_sizes, support_round.
+  Qed.
   (** A consistent matrix has no more pivot keys than codes in its support. *)
   Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
   Proof.
