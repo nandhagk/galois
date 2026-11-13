@@ -3287,4 +3287,150 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     { apply N.mul_le_mono_r. exact matrix_time_factor_lat. }
     clearbody work. unfold T_narrow. cbn beta iota zeta. nia.
   Qed.
+  (** Optional zero weights vanish independently of presence. *)
+  Lemma option_weight_zero : forall (A : Type) (a : option A),
+    option_weight (fun _ => 0) a = 0.
+  Proof.
+    intros A [a|]; reflexivity.
+  Qed.
+
+  (** Stored payload weights inherit a bound established at each successful lookup. *)
+  Lemma stored_weight_uniform : forall (A : Type) (w : A -> nat) (m : M.t A) upper,
+    (forall p a, M.find p m = Some a -> w a <= upper) ->
+    stored_weight w m <= length (M.codes m) * upper.
+  Proof.
+    intros A w m upper Hbound. unfold stored_weight, sum_weight. apply sum_members_bound.
+    intros p Hp. destruct (M.find p m) as [a|] eqn:Ha.
+    - change (w a <= upper). exact (Hbound p a Ha).
+    - change (0 <= upper). lia.
+  Qed.
+
+  (** Zero payload weights leave only skeleton and binding work. *)
+  Lemma code_work_zero : forall (A : Type) (m : M.t A),
+    code_work (fun _ => 0) m = M.nodes m + length (M.codes m).
+  Proof.
+    intros A m.
+    assert (Hweight : stored_weight (fun _ : A => 0) m <= length (M.codes m) * 0).
+    { apply stored_weight_uniform. intros p a Ha. lia. }
+    unfold code_work. nia.
+  Qed.
+
+  (** A retrieved row uses only the matrix's supported codes. *)
+  Lemma row_lookup_support : forall m k p,
+    In p (M.codes (row_of (M.get k m))) -> In p (support m).
+  Proof.
+    intros m k p Hp. apply M.codes_spec in Hp. apply support_find. right.
+    exists (K.encode k). unfold raw_entry. now rewrite <- M.get_find.
+  Qed.
+
+  (** Each finite entry in a retrieved row satisfies the matrix bit bound. *)
+  Lemma row_lookup_bits : forall m k p z,
+    M.find p (row_of (M.get k m)) = Some z -> Z.size_nat z <= ell m.
+  Proof.
+    intros m k p z Hentry. apply (ell_entry m (K.encode k) p z).
+    unfold raw_entry. now rewrite <- M.get_find.
+  Qed.
+
+  (** A supported row's shifted payload work is bounded by its support and bit maxima. *)
+  Lemma code_work_bits_bound : forall m row shift upper,
+    (forall p, In p (M.codes row) -> In p (support m)) ->
+    (forall p z, M.find p row = Some z -> Z.size_nat z <= upper) ->
+    code_work (fun z => shift + Z.size_nat z + 1) row <=
+      supp m * (b m + upper + shift + 3).
+  Proof.
+    intros m row shift upper Hsupport Hbits.
+    pose proof (nodes_support Z row m Hsupport) as Hnodes.
+    pose proof (codes_support_length Z row m Hsupport) as Hcount.
+    assert (Hweight : stored_weight (fun z => shift + Z.size_nat z + 1) row <=
+      length (M.codes row) * (shift + upper + 1)).
+    { apply stored_weight_uniform. intros p z Hentry.
+      pose proof (Hbits p z Hentry). lia. }
+    unfold code_work. nia.
+  Qed.
+
+  (** Sum bit length is bounded by the two operand bit lengths and one carry bit. *)
+  Lemma zbits_add_sum : forall a d,
+    Z.size_nat (a + d)%Z <= Z.size_nat a + Z.size_nat d + 1.
+  Proof.
+    intros a d. apply zbits_add_bound; lia.
+  Qed.
+
+  (** Lookup has a small internal coefficient for composition inside closure. *)
+  Lemma T_entry_small : forall m i j,
+    (T_entry m i j <= 4 * (M.c_map + 1) * N.of_nat (K.bits i + K.bits j + 1))%N.
+  Proof.
+    intros m i j. time_step.
+  Qed.
+
+  (** Insertion has a small internal coefficient independent of old entry bit lengths. *)
+  Lemma T_add_cons_small : forall i j d m,
+    (T_add_cons i j d m <= 16 * (M.c_map + 1) *
+      N.of_nat (K.bits i + K.bits j + Z.size_nat d + 1))%N.
+  Proof.
+    intros i j d m. time_step.
+  Qed.
+
+  (** Diagonal testing compares zero first, so it pays only for the supplied key. *)
+  Lemma T_nonnegative_small : forall k m,
+    (T_nonnegative k m <= 16 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N.
+  Proof.
+    intros k m. pose proof (T_entry_small m k k) as Hentry. time_step.
+  Qed.
+
+  (** Column-presence testing performs one key lookup. *)
+  Lemma T_column_present_small : forall k row,
+    (T_column_present k row <= 4 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N.
+  Proof.
+    intros k row. time_step.
+  Qed.
+
+  (** An existential scan pays only for callbacks at stored payloads. *)
+  Lemma T_existsb_code_work : forall (A : Type) (f : A -> bool) tf
+      (w : A -> nat) (m : M.t A) c,
+    (forall a, (tf a <= c * N.of_nat (w a))%N) ->
+    (M.T_existsb f tf m <= M.c_map * (c + 1) * N.of_nat (code_work w m + 1))%N.
+  Proof.
+    intros A f tf w m c Hbound. pose proof (M.T_existsb_sum_le A f tf m) as Hclock.
+    assert (Hsum : (fold_right N.add 0%N (map (fun p =>
+      match M.find p m with Some a => tf a | None => 0%N end) (M.codes m)) <=
+      c * N.of_nat (stored_weight w m))%N).
+    { unfold stored_weight. apply time_sum_bound. intros p Hp.
+      destruct (M.find p m) as [a|].
+      - change (tf a <= c * N.of_nat (w a))%N. apply Hbound.
+      - change (0 <= c * N.of_nat 0)%N. nia. }
+    eapply N.le_trans; [exact Hclock|].
+    replace (M.c_map * (c + 1) * N.of_nat (code_work w m + 1))%N with
+      (M.c_map * ((c + 1) * N.of_nat (code_work w m + 1)))%N by ring.
+    apply N.mul_le_mono_l. clear Hclock Hbound.
+    unfold code_work. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Path relaxation charges prefix bits only when a finite suffix is processed. *)
+  Lemma T_via_bound_le : forall a old next,
+    (T_via_bound a old next <= 8 * N.of_nat
+      (option_weight (fun z => (Z.size_nat a + Z.size_nat z + 1)%nat) next + 1))%N.
+  Proof.
+    intros a old [z|].
+    - pose proof (zbits_add_sum a z) as Hsum. destruct old;
+        unfold option_weight; time_step.
+    - destruct old; unfold option_weight; time_step.
+  Qed.
+
+  (** A pivot row update pays for lookup, the source skeleton, and finite pivot payloads. *)
+  Definition pivot_row_work (k : K.t) (pivot row : M.t Z) : nat :=
+    K.bits k + 1 + code_work (fun _ : Z => 0) row +
+      match M.get k row with
+      | Some a => code_work (fun z => Z.size_nat a + Z.size_nat z + 1) pivot
+      | None => 0
+      end.
+
+  (** An inserted edge adds its arithmetic cost to the same sparse row accounting. *)
+  Definition increment_row_work (i : K.t) (d : Z) (exit row : M.t Z) : nat :=
+    K.bits i + Z.size_nat d + 1 + code_work (fun _ : Z => 0) row +
+      match M.get i row with
+      | Some a => Z.size_nat a +
+          code_work (fun z => Z.size_nat (a + d)%Z + Z.size_nat z + 1) exit
+      | None => 0
+      end.
+
 End ZoneT.
