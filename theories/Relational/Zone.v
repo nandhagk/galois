@@ -570,6 +570,80 @@ Module RelationalPathBounds.
       apply plus_mono; [apply below_refl|exact Hcycle].
   Qed.
 
+  (** A one-edge update uses an old prefix and suffix around the inserted edge. *)
+  Definition edge_extension {A : Type} (r : A -> A -> option Z)
+      (source target : A) (weight : Z) (i j : A) : option Z :=
+    minimum (r i j) (plus (r i source) (plus (Some weight) (r target j))).
+
+  (** A nonnegative new-edge cycle keeps the rank-one update triangle closed. *)
+  Lemma edge_extension_closed : forall A (r : A -> A -> option Z) source target weight,
+    (forall p, closed_at r p) ->
+    below (Some 0%Z) (plus (r target source) (Some weight)) ->
+    forall p, closed_at (edge_extension r source target weight) p.
+  Proof.
+    intros A r source target weight Hr Hcycle p i j.
+    unfold closed_at, edge_extension.
+    rewrite plus_minimum_r, !plus_minimum_l, !minimum_glb.
+    split; split.
+    - eapply below_trans; [apply minimum_l|apply Hr].
+    - eapply below_trans; [apply minimum_r|].
+      replace (plus (r i p) (plus (r p source) (plus (Some weight) (r target j))))
+        with (plus (plus (r i p) (r p source))
+          (plus (Some weight) (r target j)))
+        by (rewrite plus_assoc; reflexivity).
+      apply plus_mono; [apply Hr|apply below_refl].
+    - eapply below_trans; [apply minimum_r|].
+      replace (plus (plus (r i source) (plus (Some weight) (r target p)))
+        (r p j)) with
+        (plus (r i source)
+          (plus (Some weight) (plus (r target p) (r p j))))
+        by (rewrite !plus_assoc; reflexivity).
+      apply plus_mono; [apply below_refl|].
+      apply plus_mono; [apply below_refl|apply Hr].
+    - assert (Hcycle' : below (Some 0%Z)
+        (plus (r target p) (plus (r p source) (Some weight)))).
+      { eapply (below_trans (Some 0%Z)
+          (plus (r target source) (Some weight)) _).
+        - exact Hcycle.
+        - rewrite <- plus_assoc. apply plus_mono;
+            [apply Hr|apply below_refl]. }
+      eapply below_trans; [apply minimum_r|].
+      replace (plus
+        (plus (r i source) (plus (Some weight) (r target p)))
+        (plus (r p source) (plus (Some weight) (r target j)))) with
+        (plus (plus (r i source) (Some weight))
+          (plus (plus (r target p) (plus (r p source) (Some weight)))
+            (r target j))).
+      2: { destruct (r i source), (r target p), (r p source), (r target j);
+             cbn [plus]; try reflexivity; f_equal; lia. }
+      replace (plus (r i source) (plus (Some weight) (r target j))) with
+        (plus (plus (r i source) (Some weight))
+          (plus (Some 0%Z) (r target j)))
+        by (rewrite plus_zero_l, plus_assoc; reflexivity).
+      apply plus_mono; [apply below_refl|].
+      apply plus_mono; [exact Hcycle'|apply below_refl].
+  Qed.
+
+  (** A nonnegative inserted cycle keeps each existing zero diagonal. *)
+  Lemma edge_extension_zero : forall A (r : A -> A -> option Z) source target weight,
+    (forall p, closed_at r p) ->
+    below (Some 0%Z) (plus (r target source) (Some weight)) ->
+    forall k, r k k = Some 0%Z ->
+      edge_extension r source target weight k k = Some 0%Z.
+  Proof.
+    intros A r source target weight Hr Hcycle k Hdiag.
+    unfold edge_extension. rewrite Hdiag.
+    apply minimum_when_below.
+    replace (plus (r k source) (plus (Some weight) (r target k))) with
+      (plus (plus (r target k) (r k source)) (Some weight)).
+    2: { destruct (r k source), (r target k); cbn [plus];
+           try reflexivity; f_equal; lia. }
+    eapply (below_trans (Some 0%Z)
+      (plus (r target source) (Some weight)) _);
+      [exact Hcycle|].
+    apply plus_mono; [apply Hr|apply below_refl].
+  Qed.
+
   Lemma floyd_closes_pivot : forall A (r : A -> A -> option Z) k,
     r k k = Some 0%Z -> closed_at (floyd r k) k.
   Proof.
@@ -785,6 +859,68 @@ Module RelationalPathBounds.
     pose proof (Z.le_min_l 0 d) as Hupper.
     pose proof (Z.le_min_l (Z.min 0 d) (Z.min 0 d + Z.min 0 d)) as Hlower.
     f_equal. lia.
+  Qed.
+
+  (** Adding a zero loop to a globally closed relation keeps every triangle bound. *)
+  Lemma seed_global_closed : forall A decide (r : A -> A -> option Z) k,
+    (forall p, closed_at r p) ->
+    (r k k = None \/ r k k = Some 0%Z) ->
+    forall p, closed_at (seed decide r k) p.
+  Proof.
+    intros A decide r k Hclosed [Hnone|Hzero] p a b.
+    - destruct (decide p k) as [Hp|Hp].
+      + subst p. destruct (decide a k) as [Ha|Ha];
+          destruct (decide b k) as [Hb|Hb]; subst.
+        * rewrite !seed_diag, Hnone. cbn [minimum plus below]. lia.
+        * rewrite seed_diag, Hnone.
+          rewrite (seed_away A decide r k k b) by (right; exact Hb).
+          rewrite plus_zero_l. apply below_refl.
+        * rewrite seed_diag, Hnone.
+          rewrite (seed_away A decide r k a k) by (left; exact Ha).
+          rewrite plus_zero_r. apply below_refl.
+        * rewrite (seed_away A decide r k a b) by (left; exact Ha).
+          rewrite (seed_away A decide r k a k) by (left; exact Ha).
+          rewrite (seed_away A decide r k k b) by (right; exact Hb).
+          apply Hclosed.
+      + rewrite (seed_away A decide r k a p) by (right; exact Hp).
+        rewrite (seed_away A decide r k p b) by (left; exact Hp).
+        destruct (decide a k) as [Ha|Ha];
+          destruct (decide b k) as [Hb|Hb]; subst.
+        * rewrite seed_diag, Hnone.
+          pose proof (Hclosed p k k) as Hcycle.
+          rewrite Hnone in Hcycle.
+          destruct (plus (r k p) (r p k)) eqn:Hpath;
+            cbn [below] in Hcycle; [contradiction|exact I].
+        * rewrite (seed_away A decide r k k b) by (right; exact Hb).
+          apply Hclosed.
+        * rewrite (seed_away A decide r k a k) by (left; exact Ha).
+          apply Hclosed.
+        * rewrite (seed_away A decide r k a b) by (left; exact Ha).
+          apply Hclosed.
+    - rewrite (seed_existing_zero A decide r k Hzero a b).
+      rewrite (seed_existing_zero A decide r k Hzero a p).
+      rewrite (seed_existing_zero A decide r k Hzero p b).
+      apply Hclosed.
+  Qed.
+
+  (** A closed lower bound stays below one seeded Floyd round. *)
+  Lemma floyd_above_closed : forall A decide (u r : A -> A -> option Z) k,
+    (forall p, closed_at u p) ->
+    (forall i j, below (u i j) (r i j)) ->
+    u k k = Some 0%Z ->
+    forall i j, below (u i j) (floyd (seed decide r k) k i j).
+  Proof.
+    intros A decide u r k Hclosed Hbelow Hdiag.
+    assert (Hseed : forall i j, below (u i j) (seed decide r k i j)).
+    { intros i j. unfold seed.
+      destruct (decide i k) as [Hi|Hi]; [subst i|apply Hbelow].
+      destruct (decide j k) as [Hj|Hj]; [subst j|apply Hbelow].
+      rewrite Hdiag. apply minimum_glb. split;
+        [apply below_refl|rewrite <- Hdiag; apply Hbelow]. }
+    intros i j. unfold floyd. apply minimum_glb. split.
+    - apply Hseed.
+    - eapply below_trans; [apply Hclosed|].
+      apply plus_mono; apply Hseed.
   Qed.
 
   Definition path_witness {A : Type} (e : A -> A -> option Z)
@@ -3235,17 +3371,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
-    (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
-    (forall ks d, chain_weight m i ks j = Some d ->
-       exists d', entry m' i j = Some d' /\ (d' <= d)%Z).
-  Proof. Admitted. (* STUB *)
-  Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
-    same_entries (incr_close i j d m) (close (add_cons i j d m)).
-  Proof. Admitted. (* STUB *)
-  Lemma bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
-    ell m' <= ell m + Nat.log2 (supp m) + 1.
-  Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
@@ -3564,6 +3689,1026 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     intro m. unfold pivot_keys, keys. apply remember_fold_keys.
     intro k. rewrite M.get_empty. cbn [In]. tauto.
+  Qed.
+
+  (** Every supported code has its key in a well-formed pivot enumeration. *)
+  Lemma keys_cover : forall m k, dbm_wf m ->
+    In (K.encode k) (support m) -> In k (keys m).
+  Proof.
+    intros m k [Houter Hrows] Hsupport. unfold keys.
+    rewrite (dedup_membership K.t K.eqb key_eqb_true).
+    left. apply in_app_iff. apply support_find in Hsupport.
+    destruct Hsupport as [Hrow|[p Hraw]].
+    - left. destruct (M.find (K.encode k) m) as [row|] eqn:Hfound;
+        [|contradiction].
+      apply in_map_iff. exists (k, row). split; [reflexivity|].
+      apply (proj2 (M.elements_spec (M.t Z) m k row Houter)).
+      now rewrite M.get_find.
+    - right. unfold raw_entry in Hraw.
+      destruct (M.find p m) as [row|] eqn:Hrow; cbn [row_of] in Hraw.
+      + destruct (M.wf_find (M.t Z) m p row Houter Hrow) as [i Hi].
+        apply in_flat_map. exists (i, row). split.
+        * apply (proj2 (M.elements_spec (M.t Z) m i row Houter)).
+          now rewrite M.get_find, Hi.
+        * cbn [snd]. destruct (M.find (K.encode k) row) as [z|] eqn:Hentry;
+            [|contradiction].
+          apply in_map_iff. exists (k, z). split; [reflexivity|].
+          apply (proj2 (M.elements_spec Z row k z (Hrows p row Hrow))).
+          now rewrite M.get_find.
+      + rewrite M.find_empty in Hraw. contradiction.
+  Qed.
+
+  (** A successful pivot loop closes every supported pivot in its input list. *)
+  Lemma close_pivots_path_invariant : forall ks initial current ps final,
+    (forall k, In k ks -> In (K.encode k) (support current)) ->
+    RelationalPathBounds.invariant (entry initial) (entry current) ps ->
+    close_pivots ks current = Reached final ->
+    RelationalPathBounds.invariant (entry initial) (entry final) (rev ks ++ ps).
+  Proof.
+    induction ks as [|k ks IH]; intros initial current ps final Hsupport Hinv Hresult.
+    - cbn [close_pivots] in Hresult. injection Hresult as <-.
+      exact Hinv.
+    - cbn [close_pivots] in Hresult.
+      destruct (nonnegative k (fw_round k current)) eqn:Haccept;
+        [|discriminate].
+      assert (Hpresent : pivot_present k current = true).
+      { apply pivot_present_support, Hsupport. now left. }
+      assert (Hnext : RelationalPathBounds.invariant (entry initial)
+        (entry (fw_round k current)) (k :: ps)).
+      { eapply RelationalPathBounds.invariant_ext.
+        - intros i j. symmetry. now apply entry_fw_present.
+        - eapply RelationalPathBounds.invariant_successful_round;
+            [exact Hinv|].
+          intros z Hz. rewrite <- (entry_fw_present k current Hpresent k k) in Hz.
+          unfold nonnegative in Haccept. rewrite Hz in Haccept.
+          now apply Z.leb_le. }
+      replace (rev (k :: ks) ++ ps) with (rev ks ++ k :: ps)
+        by (cbn [rev]; now rewrite <- app_assoc).
+      eapply IH; [|exact Hnext|exact Hresult].
+      intros q Hq. apply (proj2 (support_round k current (K.encode q))).
+      apply Hsupport. now right.
+  Qed.
+
+  (** Successful closure gives a path invariant over all original keys. *)
+  Lemma close_path_invariant : forall m final, dbm_wf m ->
+    close m = Reached final ->
+    RelationalPathBounds.invariant (entry m) (entry final) (rev (keys m)).
+  Proof.
+    intros m final Hwf Hclose. unfold close in Hclose.
+    rewrite pivot_keys_eq_keys in Hclose.
+    destruct (close_pivots (keys m) m) as [|result] eqn:Hrun;
+      [discriminate|].
+    destruct (forallb (fun k => nonnegative k result) (keys m));
+      [|discriminate].
+    injection Hclose as <-.
+    rewrite <- (app_nil_r (rev (keys m))).
+    eapply close_pivots_path_invariant; [|apply RelationalPathBounds.invariant_initial|exact Hrun].
+    intros k Hkey. now apply keys_support.
+  Qed.
+
+  (** A closed lower relation prevents a supported Floyd round from crossing its bounds. *)
+  Lemma fw_round_above_closed : forall u current k,
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall i j, RelationalPathBounds.below (u i j) (entry current i j)) ->
+    u k k = Some 0%Z -> pivot_present k current = true ->
+    forall i j, RelationalPathBounds.below (u i j) (entry (fw_round k current) i j).
+  Proof.
+    intros u current k Hclosed Hbelow Hzero Hpresent i j.
+    rewrite (entry_fw_present k current Hpresent i j).
+    apply (RelationalPathBounds.floyd_above_closed K.t path_key_dec
+      u (entry current) k Hclosed Hbelow Hzero i j).
+  Qed.
+
+  (** A zero lower diagonal makes its matrix diagonal check pass. *)
+  Lemma nonnegative_above_zero : forall u current k,
+    u k k = Some 0%Z ->
+    RelationalPathBounds.below (u k k) (entry current k k) ->
+    nonnegative k current = true.
+  Proof.
+    intros u current k Hzero Hbelow. unfold nonnegative.
+    destruct (entry current k k) as [z|]; [|reflexivity].
+    rewrite Hzero in Hbelow. cbn [RelationalPathBounds.below] in Hbelow.
+    apply Z.leb_le. exact Hbelow.
+  Qed.
+
+  (** All supported pivot rounds finish above a closed relation with zero pivot diagonals. *)
+  Lemma close_pivots_above_closed : forall ks current u,
+    (forall k, In k ks -> In (K.encode k) (support current)) ->
+    (forall k, In k ks -> u k k = Some 0%Z) ->
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall i j, RelationalPathBounds.below (u i j) (entry current i j)) ->
+    exists final, close_pivots ks current = Reached final /\
+      forall i j, RelationalPathBounds.below (u i j) (entry final i j).
+  Proof.
+    induction ks as [|k ks IH]; intros current u Hsupport Hzero Hclosed Hbelow.
+    - exists current. split; [reflexivity|exact Hbelow].
+    - assert (Hpresent : pivot_present k current = true).
+      { apply pivot_present_support, Hsupport. now left. }
+      assert (Hnext : forall i j,
+        RelationalPathBounds.below (u i j) (entry (fw_round k current) i j)).
+      { intros i j. eapply fw_round_above_closed; eauto.
+        apply Hzero. now left. }
+      assert (Haccept : nonnegative k (fw_round k current) = true).
+      { eapply nonnegative_above_zero; [apply Hzero; now left|apply Hnext]. }
+      specialize (IH (fw_round k current) u).
+      assert (Htail_support : forall q, In q ks ->
+        In (K.encode q) (support (fw_round k current))).
+      { intros q Hq. apply (proj2 (support_round k current (K.encode q))).
+        apply Hsupport. now right. }
+      assert (Htail_zero : forall q, In q ks -> u q q = Some 0%Z).
+      { intros q Hq. apply Hzero. now right. }
+      destruct (IH Htail_support Htail_zero Hclosed Hnext) as [final [Hrun Hfinal]].
+      exists final. split; [|exact Hfinal].
+      cbn [close_pivots]. now rewrite Haccept.
+  Qed.
+
+  (** A closed lower relation with zero support diagonals makes full closure succeed. *)
+  Lemma close_above_closed : forall m u, dbm_wf m ->
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall i j, RelationalPathBounds.below (u i j) (entry m i j)) ->
+    (forall k, In k (keys m) -> u k k = Some 0%Z) ->
+    exists final, close m = Reached final /\
+      forall i j, RelationalPathBounds.below (u i j) (entry final i j).
+  Proof.
+    intros m u Hwf Hclosed Hbelow Hzero.
+    destruct (close_pivots_above_closed (keys m) m u
+      (fun k Hkey => keys_support m k Hwf Hkey) Hzero Hclosed Hbelow)
+      as [final [Hrun Hfinal]].
+    exists final. split; [|exact Hfinal].
+    unfold close. rewrite pivot_keys_eq_keys, Hrun.
+    assert (Hchecks : forallb (fun k => nonnegative k final) (keys m) = true).
+    { apply forallb_forall. intros k Hkey.
+      eapply nonnegative_above_zero; [apply Hzero; exact Hkey|apply Hfinal]. }
+    now rewrite Hchecks.
+  Qed.
+
+  (** Every successful pivot loop retains well-formed matrix labels. *)
+  Lemma close_pivots_wf : forall ks m result, dbm_wf m ->
+    close_pivots ks m = Reached result -> dbm_wf result.
+  Proof.
+    induction ks as [|k ks IH]; intros m result Hwf Hresult.
+    - cbn [close_pivots] in Hresult. now injection Hresult as <-.
+    - cbn [close_pivots] in Hresult.
+      destruct (nonnegative k (fw_round k m)); [|discriminate].
+      exact (IH (fw_round k m) result (wf_fw_round k m Hwf) Hresult).
+  Qed.
+
+  (** Successful closure keeps the matrix well formed. *)
+  Lemma close_result_wf : forall m result, dbm_wf m ->
+    close m = Reached result -> dbm_wf result.
+  Proof.
+    intros m result Hwf Hclose. unfold close in Hclose.
+    destruct (close_pivots (pivot_keys m) m) as [|final] eqn:Hrun;
+      [discriminate|].
+    destruct (forallb (fun k => nonnegative k final) (pivot_keys m));
+      [|discriminate].
+    injection Hclose as <-. exact (close_pivots_wf (pivot_keys m) m final Hwf Hrun).
+  Qed.
+
+  (** The public chain weight is the option-valued path sum. *)
+  Lemma chain_weight_path : forall m i ks j,
+    chain_weight m i ks j = RelationalPathBounds.chain (entry m) i ks j.
+  Proof.
+    intros m i ks. revert i. induction ks as [|k ks IH]; intros i j.
+    - reflexivity.
+    - cbn [chain_weight RelationalPathBounds.chain]. rewrite IH.
+      destruct (entry m i k), (RelationalPathBounds.chain (entry m) k ks j);
+        reflexivity.
+  Qed.
+
+  (** A closed matrix bounds every two-edge route through any pivot. *)
+  Lemma closed_at_every_key : forall m, closed m ->
+    forall k, RelationalPathBounds.closed_at (entry m) k.
+  Proof.
+    intros m [_ Htriangle] k i j.
+    unfold RelationalPathBounds.closed_at.
+    destruct (entry m i k) as [a|] eqn:Hik;
+      destruct (entry m k j) as [z|] eqn:Hkj.
+    - destruct (Htriangle i j k a z Hik Hkj) as [d [Hentry Hle]].
+      rewrite Hentry. cbn [RelationalPathBounds.plus RelationalPathBounds.below]. exact Hle.
+    - destruct (entry m i j); exact I.
+    - destruct (entry m i j); exact I.
+    - destruct (entry m i j); exact I.
+  Qed.
+
+  (** A closed matrix bounds every chain of its own entries. *)
+  Lemma closed_chain_bound : forall m, closed m ->
+    forall ks i j, RelationalPathBounds.below
+      (entry m i j) (chain_weight m i ks j).
+  Proof.
+    intros m Hclosed ks i j. rewrite chain_weight_path.
+    eapply (RelationalPathBounds.chain_bound K.t (entry m) (entry m) ks).
+    - intros a b. apply RelationalPathBounds.below_refl.
+    - intros k _. now apply closed_at_every_key.
+    - intros k Hk. exact Hk.
+  Qed.
+
+  (** Materializing one zero diagonal keeps a closed matrix closed. *)
+  Lemma closed_add_zero : forall m k, closed m -> closed (add_cons k k 0%Z m).
+  Proof.
+    intros m k Hclosed.
+    assert (Hdiag : entry m k k = None \/ entry m k k = Some 0%Z).
+    { destruct (entry m k k) as [z|] eqn:Hentry; [right|now left].
+      pose proof (proj1 Hclosed k (entry_source_support m k k z Hentry)) as Hz.
+      rewrite Hentry in Hz. injection Hz as <-. reflexivity. }
+    assert (Hglobal : forall p,
+      RelationalPathBounds.closed_at (entry (add_cons k k 0%Z m)) p).
+    { intro p. unfold RelationalPathBounds.closed_at. intros i j.
+      rewrite !entry_path_seed.
+      exact (RelationalPathBounds.seed_global_closed K.t path_key_dec
+        (entry m) k (closed_at_every_key m Hclosed) Hdiag p i j). }
+    split.
+    - intros i Hsupport. rewrite support_add_cons in Hsupport.
+      destruct Hsupport as [Hcode|[Hcode|Hcode]].
+      + apply K.encode_inj in Hcode. subst i.
+        rewrite entry_path_seed, RelationalPathBounds.seed_diag.
+        destruct Hdiag as [Hnone|Hzero]; rewrite Hnone || rewrite Hzero; reflexivity.
+      + apply K.encode_inj in Hcode. subst i.
+        rewrite entry_path_seed, RelationalPathBounds.seed_diag.
+        destruct Hdiag as [Hnone|Hzero]; rewrite Hnone || rewrite Hzero; reflexivity.
+      + destruct (path_key_dec i k) as [Heq|Hne].
+        * subst i. rewrite entry_path_seed, RelationalPathBounds.seed_diag.
+          destruct Hdiag as [Hnone|Hzero]; rewrite Hnone || rewrite Hzero; reflexivity.
+        * rewrite entry_path_seed.
+          rewrite RelationalPathBounds.seed_away by (left; exact Hne).
+          exact (proj1 Hclosed i Hcode).
+    - intros i j p a z Hleft Hright.
+      pose proof (Hglobal p i j) as Hbound.
+      rewrite Hleft, Hright in Hbound.
+      cbn [RelationalPathBounds.plus] in Hbound.
+      exact (RelationalPathBounds.below_finite _ _ Hbound).
+  Qed.
+
+  (** The sparse row merge implements the minimum of the old entry and one new-edge path. *)
+  Lemma entry_increment_extension : forall seed i j d a b,
+    entry (M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty) a b =
+    RelationalPathBounds.edge_extension (entry seed) i j d a b.
+  Proof.
+    intros seed i j d a b. rewrite entry_increment.
+    unfold RelationalPathBounds.edge_extension.
+    destruct (entry seed a i) as [prefix|];
+      destruct (entry seed j b) as [suffix|];
+      destruct (entry seed a b) as [old|];
+      cbn [via_bound lower_bound RelationalPathBounds.minimum
+        RelationalPathBounds.plus]; try reflexivity.
+    - f_equal. rewrite Z.min_comm. f_equal. lia.
+    - f_equal. lia.
+  Qed.
+
+  (** Inserting a distinct edge before the row merge leaves its prefix and suffix unchanged. *)
+  Lemma edge_extension_after_insert : forall base i j d,
+    i <> j -> entry base i i = Some 0%Z -> entry base j j = Some 0%Z ->
+    forall a b,
+      RelationalPathBounds.edge_extension (entry (add_cons i j d base)) i j d a b =
+      RelationalPathBounds.edge_extension (entry base) i j d a b.
+  Proof.
+    intros base i j d Hdistinct Hii Hjj a b.
+    assert (Hprefix : entry (add_cons i j d base) a i = entry base a i).
+    { rewrite entry_add_cons.
+      destruct (K.eqb_spec a i); [|reflexivity].
+      destruct (K.eqb_spec i j); congruence. }
+    assert (Hsuffix : entry (add_cons i j d base) j b = entry base j b).
+    { rewrite entry_add_cons.
+      destruct (K.eqb_spec j i); congruence. }
+    unfold RelationalPathBounds.edge_extension.
+    rewrite Hprefix, Hsuffix, entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha]; [subst a|reflexivity].
+    destruct (K.eqb_spec b j) as [Hb|Hb]; [subst b|reflexivity].
+    rewrite Hii, Hjj. cbn [RelationalPathBounds.plus].
+    replace (0 + (d + 0))%Z with d by lia.
+    destruct (entry base i j) as [old|];
+      cbn [lower_bound RelationalPathBounds.minimum].
+    - f_equal. destruct (Z_le_dec d old) as [Hle|Hgt].
+      + rewrite (Z.min_l d old) by lia. rewrite Z.min_id.
+        rewrite (Z.min_r old d) by lia. reflexivity.
+      + rewrite (Z.min_r d old) by lia. reflexivity.
+    - now rewrite Z.min_id.
+  Qed.
+
+  (** For distinct endpoints the incremental merge has the closed-base one-edge formula. *)
+  Lemma incremental_candidate_extension : forall m i j d, closed m -> i <> j ->
+    forall a b,
+      entry (M.merge
+        (increment_row i d (row_of (M.get j
+          (add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))))))
+        (add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))) M.empty) a b =
+      RelationalPathBounds.edge_extension
+        (entry (add_cons j j 0%Z (add_cons i i 0%Z m))) i j d a b.
+  Proof.
+    intros m i j d Hclosed Hdistinct a b.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    change (entry (M.merge (increment_row i d (row_of (M.get j (add_cons i j d base))))
+      (add_cons i j d base) M.empty) a b =
+      RelationalPathBounds.edge_extension (entry base) i j d a b).
+    rewrite entry_increment_extension.
+    now apply edge_extension_after_insert.
+  Qed.
+
+  (** The one-edge formula lies below every bound of the inserted matrix. *)
+  Lemma edge_extension_below_insert : forall base i j d,
+    entry base i i = Some 0%Z -> entry base j j = Some 0%Z ->
+    forall a b,
+      RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i j d a b)
+        (entry (add_cons i j d base) a b).
+  Proof.
+    intros base i j d Hii Hjj a b.
+    unfold RelationalPathBounds.edge_extension.
+    rewrite entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha];
+      [subst a|apply RelationalPathBounds.minimum_l].
+    destruct (K.eqb_spec b j) as [Hb|Hb];
+      [subst b|apply RelationalPathBounds.minimum_l].
+    rewrite Hii, Hjj. cbn [RelationalPathBounds.plus].
+    replace (0 + (d + 0))%Z with d by lia.
+    destruct (entry base i j) as [old|];
+      cbn [lower_bound RelationalPathBounds.minimum RelationalPathBounds.below].
+    - rewrite (Z.min_comm old d). lia.
+    - lia.
+  Qed.
+
+  (** Every inserted bound is below its previous matrix entry. *)
+  Lemma entry_add_cons_below : forall m i j d a b,
+    RelationalPathBounds.below (entry (add_cons i j d m) a b) (entry m a b).
+  Proof.
+    intros m i j d a b. rewrite entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha];
+      [subst a|apply RelationalPathBounds.below_refl].
+    destruct (K.eqb_spec b j) as [Hb|Hb];
+      [subst b|apply RelationalPathBounds.below_refl].
+    destruct (entry m i j) as [old|];
+      cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_r|exact I].
+  Qed.
+
+  (** The closed-base one-edge formula also bounds insertion without preseeded diagonals. *)
+  Lemma edge_extension_below_direct : forall m i j d,
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    entry base i i = Some 0%Z -> entry base j j = Some 0%Z ->
+    forall a b, RelationalPathBounds.below
+      (RelationalPathBounds.edge_extension (entry base) i j d a b)
+      (entry (add_cons i j d m) a b).
+  Proof.
+    intros m i j d. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intros Hii Hjj a b.
+    assert (Hbase : forall x y,
+      RelationalPathBounds.below (entry base x y) (entry m x y)).
+    { intros x y. unfold base. eapply RelationalPathBounds.below_trans;
+        apply entry_add_cons_below. }
+    unfold RelationalPathBounds.edge_extension.
+    rewrite entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha].
+    - subst a. destruct (K.eqb_spec b j) as [Hb|Hb].
+      + subst b. rewrite Hii, Hjj. cbn [RelationalPathBounds.plus].
+        replace (0 + (d + 0))%Z with d by lia.
+        destruct (entry m i j) as [old|] eqn:Hold;
+          cbn [lower_bound].
+        * change (RelationalPathBounds.below
+            (RelationalPathBounds.minimum (entry base i j) (Some d))
+            (RelationalPathBounds.minimum (Some d) (Some old))).
+          apply (proj2 (RelationalPathBounds.minimum_glb _ _ _)). split.
+          -- apply RelationalPathBounds.minimum_r.
+          -- eapply RelationalPathBounds.below_trans;
+               [apply RelationalPathBounds.minimum_l|].
+             pose proof (Hbase i j) as Hbase_ij.
+             now rewrite Hold in Hbase_ij.
+        * apply RelationalPathBounds.minimum_r.
+      + eapply RelationalPathBounds.below_trans;
+          [apply RelationalPathBounds.minimum_l|apply Hbase].
+    - eapply RelationalPathBounds.below_trans;
+        [apply RelationalPathBounds.minimum_l|apply Hbase].
+  Qed.
+
+  (** A zero diagonal remains below a zero-diagonal insertion. *)
+  Lemma below_add_zero : forall m u k,
+    (forall x y, RelationalPathBounds.below (u x y) (entry m x y)) ->
+    u k k = Some 0%Z ->
+    forall x y, RelationalPathBounds.below
+      (u x y) (entry (add_cons k k 0%Z m) x y).
+  Proof.
+    intros m u k Hbelow Hzero x y. rewrite entry_add_cons.
+    destruct (K.eqb_spec x k) as [Hx|Hx]; [subst x|apply Hbelow].
+    destruct (K.eqb_spec y k) as [Hy|Hy]; [subst y|apply Hbelow].
+    rewrite Hzero. destruct (entry m k k) as [old|] eqn:Hold;
+      cbn [lower_bound RelationalPathBounds.below]; [|lia].
+    pose proof (Hbelow k k) as Hbound. rewrite Hzero, Hold in Hbound.
+    cbn [RelationalPathBounds.below] in Hbound. lia.
+  Qed.
+
+  (** A passing incremental diagonal rules out a negative cycle through the new edge. *)
+  Lemma incremental_candidate_cycle : forall m i j d, closed m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    let next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty in
+    nonnegative i next = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)).
+  Proof.
+    intros m i j d Hclosed Hdistinct.
+    cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base).
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty).
+    intro Haccept.
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    pose proof (incremental_candidate_extension m i j d Hclosed Hdistinct i i) as Heq.
+    change (entry next i i =
+      RelationalPathBounds.edge_extension (entry base) i j d i i) in Heq.
+    unfold RelationalPathBounds.edge_extension in Heq.
+    change (nonnegative i next = true) in Haccept.
+    rewrite Hii in Heq. unfold nonnegative in Haccept. rewrite Heq in Haccept.
+    destruct (entry base j i) as [back|] eqn:Hback;
+      cbn [RelationalPathBounds.plus RelationalPathBounds.minimum
+        RelationalPathBounds.below] in Haccept |- *.
+    - apply Z.leb_le in Haccept.
+      pose proof (Z.le_min_r 0 (0 + (d + back))) as Hmin. lia.
+    - exact I.
+  Qed.
+
+  (** A nonnegative new-edge cycle lets full closure finish above the one-edge formula. *)
+  Lemma inserted_cycle_close_success : forall m i j d, dbm_wf m -> closed m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)) ->
+    exists final, close seed = Reached final /\
+      forall a b, RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i j d a b)
+        (entry final a b).
+  Proof.
+    intros m i j d Hwf Hclosed. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base).
+    intro Hcycle.
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hwfbase : dbm_wf base).
+    { unfold base. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. now apply add_cons_wf. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    set (u := RelationalPathBounds.edge_extension (entry base) i j d).
+    assert (Hglobal : forall p, RelationalPathBounds.closed_at u p).
+    { unfold u. eapply RelationalPathBounds.edge_extension_closed;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle]. }
+    assert (Hbelow : forall a b,
+      RelationalPathBounds.below (u a b) (entry seed a b)).
+    { intros a b. unfold u, seed.
+      now apply edge_extension_below_insert. }
+    assert (Hzero : forall k, In k (keys seed) -> u k k = Some 0%Z).
+    { intros k Hkey. unfold u.
+      apply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|].
+      apply (proj1 Hbase). assert (Hsupport : In (K.encode k) (support seed)).
+      { now apply keys_support. }
+      unfold seed in Hsupport. rewrite support_add_cons in Hsupport.
+      destruct Hsupport as [Hcode|[Hcode|Hcode]].
+      - apply K.encode_inj in Hcode. subst k.
+        unfold base. rewrite support_add_cons. right. right.
+        rewrite support_add_cons. now left.
+      - apply K.encode_inj in Hcode. subst k.
+        unfold base. rewrite support_add_cons. now left.
+      - exact Hcode. }
+    exact (close_above_closed seed u Hwfseed Hglobal Hbelow Hzero).
+  Qed.
+
+  (** Successful full closure lies below every old or one-new-edge path. *)
+  Lemma close_below_edge_extension : forall m i j d final, dbm_wf m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    close seed = Reached final ->
+    forall a b, RelationalPathBounds.below (entry final a b)
+      (RelationalPathBounds.edge_extension (entry base) i j d a b).
+  Proof.
+    intros m i j d final Hwf. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base). intros Hresult a b.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed, base. apply add_cons_wf, add_cons_wf, add_cons_wf. exact Hwf. }
+    destruct (close_path_invariant seed final Hwfseed Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hbase : forall x y,
+      RelationalPathBounds.below (entry final x y) (entry base x y)).
+    { intros x y. eapply RelationalPathBounds.below_trans; [apply Hbelow|].
+      unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec x i) as [Hx|Hx]; [subst x|apply RelationalPathBounds.below_refl].
+      destruct (K.eqb_spec y j) as [Hy|Hy]; [subst y|apply RelationalPathBounds.below_refl].
+      destruct (entry base i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_r|exact I]. }
+    assert (Hmiddle : RelationalPathBounds.below (entry final i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans; [apply Hbelow|].
+      unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (entry base i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    assert (Hi : In i (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed i Hwfseed). unfold seed. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed j Hwfseed). unfold seed. rewrite support_add_cons.
+      right. now left. }
+    unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_glb. split; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed i Hi a b)|].
+    apply RelationalPathBounds.plus_mono; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed j Hj i b)|].
+    apply RelationalPathBounds.plus_mono; [exact Hmiddle|apply Hbase].
+  Qed.
+
+  (** Successful full closure rules out a negative cycle through a distinct inserted edge. *)
+  Lemma close_success_cycle : forall m i j d final, dbm_wf m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    close seed = Reached final ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)).
+  Proof.
+    intros m i j d final Hwf Hdistinct. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base). intro Hresult.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed, base. apply add_cons_wf, add_cons_wf, add_cons_wf. exact Hwf. }
+    destruct (close_path_invariant seed final Hwfseed Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed i Hwfseed). unfold seed. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed j Hwfseed). unfold seed. rewrite support_add_cons.
+      right. now left. }
+    destruct (entry base j i) as [back|] eqn:Hback;
+      [|exact I].
+    assert (Hseed_ij : entry seed i j = Some (lower_bound d (entry base i j))).
+    { unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction]. reflexivity. }
+    assert (Hseed_ji : entry seed j i = Some back).
+    { unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec j i); [congruence|exact Hback]. }
+    assert (Hseed_bound : RelationalPathBounds.below (entry seed i j) (Some d)).
+    { rewrite Hseed_ij. destruct (entry base i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below];
+        [apply Z.le_min_l|lia]. }
+    pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i j) Hseed_bound)
+      as Hfirst_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hfirst_bound)
+      as [first [Hfirst Hfirst_le]].
+    pose proof (Hbelow j i) as Hsecond_bound. rewrite Hseed_ji in Hsecond_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hsecond_bound)
+      as [second [Hsecond Hsecond_le]].
+    pose proof (Hclosed j Hj i i) as Htriangle.
+    rewrite (Hzero i Hi), Hfirst, Hsecond in Htriangle.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below] in Htriangle |- *.
+    lia.
+  Qed.
+
+  (** A nonnegative inserted cycle makes the distinct-endpoint incremental check succeed. *)
+  Lemma incremental_cycle_success : forall m i j d, closed m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)) ->
+    exists next, incr_close i j d m = Reached next /\
+      forall a b, entry next a b =
+        RelationalPathBounds.edge_extension (entry base) i j d a b.
+  Proof.
+    intros m i j d Hclosed Hdistinct. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intro Hcycle.
+    set (seed := add_cons i j d base).
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    assert (Hentry : forall a b, entry next a b =
+      RelationalPathBounds.edge_extension (entry base) i j d a b).
+    { intros a b. unfold next, seed, base.
+      apply incremental_candidate_extension; assumption. }
+    assert (Hdiag_i : entry next i i = Some 0%Z).
+    { rewrite Hentry. eapply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|exact Hii]. }
+    assert (Hdiag_j : entry next j j = Some 0%Z).
+    { rewrite Hentry. eapply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|exact Hjj]. }
+    exists next. split; [|exact Hentry].
+    unfold incr_close. change
+      ((if andb (nonnegative i next) (nonnegative j next)
+        then Reached next else Unreached) = Reached next).
+    unfold nonnegative. now rewrite Hdiag_i, Hdiag_j.
+  Qed.
+
+  (** A nonnegative new cycle also makes direct insertion close successfully. *)
+  Lemma direct_cycle_close_success : forall m i j d, dbm_wf m -> closed m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)) ->
+    exists final, close (add_cons i j d m) = Reached final /\
+      forall a b, RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i j d a b)
+        (entry final a b).
+  Proof.
+    intros m i j d Hwf Hclosed. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (direct := add_cons i j d m). intro Hcycle.
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    set (u := RelationalPathBounds.edge_extension (entry base) i j d).
+    assert (Hglobal : forall p, RelationalPathBounds.closed_at u p).
+    { unfold u. eapply RelationalPathBounds.edge_extension_closed;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle]. }
+    assert (Hbelow : forall a b,
+      RelationalPathBounds.below (u a b) (entry direct a b)).
+    { intros a b. unfold u, direct, base.
+      apply edge_extension_below_direct; [exact Hii|exact Hjj]. }
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hzero : forall k, In k (keys direct) -> u k k = Some 0%Z).
+    { intros k Hkey. unfold u.
+      apply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|].
+      apply (proj1 Hbase). assert (Hsupport : In (K.encode k) (support direct)).
+      { now apply keys_support. }
+      unfold direct in Hsupport. rewrite support_add_cons in Hsupport.
+      destruct Hsupport as [Hcode|[Hcode|Hcode]].
+      - apply K.encode_inj in Hcode. subst k.
+        unfold base. rewrite support_add_cons. right. right.
+        rewrite support_add_cons. now left.
+      - apply K.encode_inj in Hcode. subst k.
+        unfold base. rewrite support_add_cons. now left.
+      - unfold base. rewrite support_add_cons. right. right.
+        rewrite support_add_cons. right. right. exact Hcode. }
+    exact (close_above_closed direct u Hwfdirect Hglobal Hbelow Hzero).
+  Qed.
+
+  (** Successful direct insertion is bounded by the same one-edge formula. *)
+  Lemma direct_close_below_extension : forall m i j d final, dbm_wf m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    close (add_cons i j d m) = Reached final ->
+    forall a b, RelationalPathBounds.below (entry final a b)
+      (RelationalPathBounds.edge_extension (entry base) i j d a b).
+  Proof.
+    intros m i j d final Hwf. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (direct := add_cons i j d m). intro Hresult.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    destruct (close_path_invariant direct final Hwfdirect Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct i Hwfdirect). unfold direct. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct j Hwfdirect). unfold direct. rewrite support_add_cons.
+      right. now left. }
+    assert (Hbase : forall x y,
+      RelationalPathBounds.below (entry final x y) (entry base x y)).
+    { intros x y. unfold base.
+      eapply below_add_zero; [|exact (Hzero j Hj)].
+      eapply below_add_zero; [|exact (Hzero i Hi)].
+      intros p q. eapply RelationalPathBounds.below_trans;
+        [apply Hbelow|apply entry_add_cons_below]. }
+    assert (Hmiddle : RelationalPathBounds.below (entry final i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans; [apply Hbelow|].
+      unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    intros a b. unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_glb. split; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed i Hi a b)|].
+    apply RelationalPathBounds.plus_mono; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed j Hj i b)|].
+    apply RelationalPathBounds.plus_mono; [exact Hmiddle|apply Hbase].
+  Qed.
+
+  (** A successful direct closure forbids a negative distinct-endpoint cycle. *)
+  Lemma direct_close_success_cycle : forall m i j d final,
+    dbm_wf m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    close (add_cons i j d m) = Reached final ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)).
+  Proof.
+    intros m i j d final Hwf Hdistinct. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (direct := add_cons i j d m). intro Hresult.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    destruct (close_path_invariant direct final Hwfdirect Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct i Hwfdirect). unfold direct. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct j Hwfdirect). unfold direct. rewrite support_add_cons.
+      right. now left. }
+    destruct (entry base j i) as [back|] eqn:Holdback; [|exact I].
+    assert (Hback : entry m j i = Some back).
+    { unfold base in Holdback. repeat rewrite entry_add_cons in Holdback.
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (K.eqb_spec i j); [congruence|].
+      destruct (K.eqb_spec j i); [congruence|exact Holdback]. }
+    assert (Hdirect_ji : entry direct j i = Some back).
+    { unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec j i); [congruence|exact Hback]. }
+    assert (Hdirect_bound : RelationalPathBounds.below (entry direct i j) (Some d)).
+    { unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i j) Hdirect_bound)
+      as Hfirst_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hfirst_bound)
+      as [first [Hfirst Hfirst_le]].
+    pose proof (Hbelow j i) as Hsecond_bound. rewrite Hdirect_ji in Hsecond_bound.
+    destruct (RelationalPathBounds.below_finite _ _ Hsecond_bound)
+      as [second [Hsecond Hsecond_le]].
+    pose proof (Hclosed j Hj i i) as Htriangle.
+    rewrite (Hzero i Hi), Hfirst, Hsecond in Htriangle.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below] in Htriangle |- *.
+    lia.
+  Qed.
+
+  (** Distinct-endpoint incremental and full closures have identical outcomes. *)
+  Lemma incr_close_eq_distinct : forall m i j d, dbm_wf m -> closed m ->
+    i <> j -> same_entries (incr_close i j d m) (close (add_cons i j d m)).
+  Proof.
+    intros m i j d Hwf Hclosed Hdistinct.
+    destruct (close (add_cons i j d m)) as [|final] eqn:Hfull.
+    - destruct (incr_close i j d m) as [|next] eqn:Hincr; [exact I|].
+      unfold incr_close in Hincr.
+      set (base := add_cons j j 0%Z (add_cons i i 0%Z m)) in *.
+      set (seed := add_cons i j d base) in *.
+      set (candidate := M.merge
+        (increment_row i d (row_of (M.get j seed))) seed M.empty) in *.
+      destruct (andb (nonnegative i candidate) (nonnegative j candidate))
+        eqn:Hchecks; [|discriminate].
+      apply andb_true_iff in Hchecks. destruct Hchecks as [Hcheck _].
+      pose proof (incremental_candidate_cycle m i j d Hclosed Hdistinct Hcheck)
+        as Hcycle.
+      destruct (direct_cycle_close_success m i j d Hwf Hclosed Hcycle)
+        as [result [Hsuccess _]]. congruence.
+    - pose proof (direct_close_success_cycle m i j d final Hwf Hdistinct Hfull)
+        as Hcycle.
+      destruct (incremental_cycle_success m i j d Hclosed Hdistinct Hcycle)
+        as [next [Hincr Hentry]].
+      rewrite Hincr. cbn [same_entries]. intros a b. rewrite Hentry.
+      apply RelationalPathBounds.below_antisym.
+      + destruct (direct_cycle_close_success m i j d Hwf Hclosed Hcycle)
+          as [result [Hsuccess Hbelow]].
+        injection (eq_trans (eq_sym Hfull) Hsuccess) as <-.
+        exact (Hbelow a b).
+      + exact (direct_close_below_extension m i j d final Hwf Hfull a b).
+  Qed.
+
+  (** A nonnegative self-edge leaves every entry of a closed matrix unchanged. *)
+  Lemma nonnegative_self_extension : forall m i d, closed m -> (0 <= d)%Z ->
+    forall a b, RelationalPathBounds.edge_extension (entry m) i i d a b =
+      entry m a b.
+  Proof.
+    intros m i d Hclosed Hd a b.
+    unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_when_below.
+    pose proof (closed_at_every_key m Hclosed i a b) as Htriangle.
+    destruct (entry m a i) as [left|] eqn:Hleft;
+      destruct (entry m i b) as [right|] eqn:Hright;
+      cbn [RelationalPathBounds.plus];
+      destruct (entry m a b) as [old|] eqn:Hold;
+      cbn [RelationalPathBounds.below RelationalPathBounds.plus] in *;
+      try exact I.
+    all: lia.
+  Qed.
+
+  (** Inserting a nonnegative self-edge after zero seeding is inert. *)
+  Lemma nonnegative_self_seed : forall m i d,
+    closed m -> (0 <= d)%Z ->
+    forall a b,
+      entry (add_cons i i d (add_cons i i 0%Z m)) a b =
+      entry (add_cons i i 0%Z m) a b.
+  Proof.
+    intros m i d Hclosed Hd a b. rewrite entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha]; [subst a|reflexivity].
+    destruct (K.eqb_spec b i) as [Hb|Hb]; [subst b|reflexivity].
+    assert (Hseed : closed (add_cons i i 0%Z m)).
+    { now apply closed_add_zero. }
+    assert (Hdiag : entry (add_cons i i 0%Z m) i i = Some 0%Z).
+    { apply (proj1 Hseed). rewrite support_add_cons. now left. }
+    rewrite Hdiag. cbn [lower_bound]. f_equal. lia.
+  Qed.
+
+  (** A nonnegative self-edge produces exactly the seeded closed matrix. *)
+  Lemma incr_close_self_nonnegative : forall m i d, dbm_wf m -> closed m ->
+    (0 <= d)%Z ->
+    exists next, incr_close i i d m = Reached next /\
+      forall a b, entry next a b =
+        entry (add_cons i i 0%Z (add_cons i i 0%Z m)) a b.
+  Proof.
+    intros m i d Hwf Hclosed Hd.
+    set (base := add_cons i i 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i i d base).
+    set (next := M.merge (increment_row i d (row_of (M.get i seed))) seed M.empty).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hseed : forall x y, entry seed x y = entry base x y).
+    { intros x y. unfold seed, base.
+      apply nonnegative_self_seed; [apply closed_add_zero; exact Hclosed|exact Hd]. }
+    assert (Hentry : forall a b, entry next a b = entry base a b).
+    { intros a b. unfold next. rewrite entry_increment_extension.
+      unfold RelationalPathBounds.edge_extension.
+      rewrite (Hseed a b), (Hseed a i), (Hseed i b).
+      change (RelationalPathBounds.edge_extension (entry base) i i d a b =
+        entry base a b).
+      now apply nonnegative_self_extension. }
+    assert (Hdiag : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    exists next. split; [|exact Hentry].
+    unfold incr_close. change
+      ((if andb (nonnegative i next) (nonnegative i next)
+        then Reached next else Unreached) = Reached next).
+    unfold nonnegative. now rewrite Hentry, Hdiag.
+  Qed.
+
+  (** Full closure of a nonnegative self-edge agrees with the seeded base. *)
+  Lemma close_self_nonnegative : forall m i d, dbm_wf m -> closed m ->
+    (0 <= d)%Z ->
+    exists final, close (add_cons i i d m) = Reached final /\
+      forall a b, entry final a b =
+        entry (add_cons i i 0%Z (add_cons i i 0%Z m)) a b.
+  Proof.
+    intros m i d Hwf Hclosed Hd.
+    set (base := add_cons i i 0%Z (add_cons i i 0%Z m)).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hdiag : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    assert (Hcycle : RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base i i) (Some d))).
+    { rewrite Hdiag. cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia. }
+    destruct (direct_cycle_close_success m i i d Hwf Hclosed Hcycle)
+      as [final [Hfull Hlower]].
+    exists final. split; [exact Hfull|]. intros a b.
+    apply RelationalPathBounds.below_antisym.
+    - pose proof (direct_close_below_extension m i i d final Hwf Hfull a b)
+        as Hupper.
+      change (RelationalPathBounds.below (entry final a b)
+        (RelationalPathBounds.edge_extension (entry base) i i d a b)) in Hupper.
+      now rewrite (nonnegative_self_extension base i d Hbase Hd a b) in Hupper.
+    - pose proof (Hlower a b) as Hlower_ab.
+      change (RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i i d a b)
+        (entry final a b)) in Hlower_ab.
+      now rewrite (nonnegative_self_extension base i d Hbase Hd a b) in Hlower_ab.
+  Qed.
+
+  (** A negative self-edge fails the incremental diagonal check. *)
+  Lemma incr_close_self_negative : forall m i d, closed m -> (d < 0)%Z ->
+    incr_close i i d m = Unreached.
+  Proof.
+    intros m i d Hclosed Hd.
+    set (base := add_cons i i 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i i d base).
+    set (next := M.merge (increment_row i d (row_of (M.get i seed))) seed M.empty).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hdiag : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    assert (Hseed : entry seed i i = Some d).
+    { unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec i i); [|contradiction].
+      rewrite Hdiag. cbn [lower_bound]. f_equal. lia. }
+    assert (Hnext : entry next i i = Some (Z.min d (d + (d + d))%Z)).
+    { unfold next. rewrite entry_increment_extension.
+      unfold RelationalPathBounds.edge_extension. rewrite Hseed.
+      reflexivity. }
+    unfold incr_close. change
+      ((if andb (nonnegative i next) (nonnegative i next)
+        then Reached next else Unreached) = Unreached).
+    unfold nonnegative. rewrite Hnext.
+    assert (Hnegative : (0 <=? Z.min d (d + (d + d)))%Z = false).
+    { apply Z.leb_gt. lia. }
+    now rewrite Hnegative.
+  Qed.
+
+  (** A negative self-edge also fails full closure. *)
+  Lemma close_self_negative : forall m i d, dbm_wf m -> (d < 0)%Z ->
+    close (add_cons i i d m) = Unreached.
+  Proof.
+    intros m i d Hwf Hd.
+    set (direct := add_cons i i d m).
+    destruct (close direct) as [|final] eqn:Hfull; [reflexivity|].
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    destruct (close_path_invariant direct final Hwfdirect Hfull)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hi : In i (rev (keys direct))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover direct i Hwfdirect). unfold direct. rewrite support_add_cons.
+      now left. }
+    assert (Hdirect : RelationalPathBounds.below (entry direct i i) (Some d)).
+    { unfold direct. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (entry m i i) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i i) Hdirect)
+      as Hfinal. rewrite (Hzero i Hi) in Hfinal.
+    cbn [RelationalPathBounds.below] in Hfinal. lia.
+  Qed.
+
+  Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
+    same_entries (incr_close i j d m) (close (add_cons i j d m)).
+  Proof.
+    intros m i j d Hwf Hclosed.
+    destruct (K.eqb_spec i j) as [Heq|Hdistinct].
+    - subst j. destruct (Z_le_gt_dec 0 d) as [Hnonnegative|Hnegative].
+      + destruct (incr_close_self_nonnegative m i d Hwf Hclosed Hnonnegative)
+          as [next [Hincr Hnext]].
+        destruct (close_self_nonnegative m i d Hwf Hclosed Hnonnegative)
+          as [final [Hfull Hfinal]].
+        rewrite Hincr, Hfull. cbn [same_entries]. intros a b.
+        now rewrite Hnext, Hfinal.
+      + assert (Hd : (d < 0)%Z) by lia.
+        rewrite (incr_close_self_negative m i d Hclosed Hd),
+          (close_self_negative m i d Hwf Hd).
+        exact I.
+    - now apply incr_close_eq_distinct.
+  Qed.
+
+  (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
+  Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
+    (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
+    (forall ks d, chain_weight m i ks j = Some d ->
+       exists d', entry m' i j = Some d' /\ (d' <= d)%Z).
+  Proof.
+    intros m m' i j Hwf Hclose Hne.
+    destruct (close_path_invariant m m' Hwf Hclose)
+      as [Hbelow Hclosed Hzero Hpath]. split.
+    - intros d Hentry. destruct (Hpath i j d Hentry) as [[Heq _]|[ks [_ Hchain]]].
+      + contradiction.
+      + exists ks. now rewrite chain_weight_path.
+    - intros ks d Hchain.
+      rewrite chain_weight_path in Hchain.
+      assert (Hincl : incl ks (rev (keys m))).
+      { intros k Hk. apply in_rev. rewrite rev_involutive.
+        apply (keys_cover m k Hwf).
+        eapply (RelationalPathBounds.chain_sources K.t (entry m)
+          (fun q => In (K.encode q) (support m))).
+        - intros p q z Hz. now apply (entry_source_support m p q z).
+        - exact Hchain.
+        - now right. }
+      pose proof (RelationalPathBounds.chain_bound K.t (entry m) (entry m')
+        (rev (keys m)) Hbelow Hclosed ks i j Hincl) as Hbound.
+      rewrite Hchain in Hbound. destruct (entry m' i j) as [d'|] eqn:Hentry;
+        cbn [RelationalPathBounds.below] in Hbound; [|contradiction].
+      exists d'. now split.
+  Qed.
+
+  (** Successful closure fits the support-sensitive entry-bit budget. *)
+  Lemma bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
+    ell m' <= ell m + Nat.log2 (supp m) + 1.
+  Proof.
+    intros m m' Hwf Hclose.
+    pose proof (close_path_invariant m m' Hwf Hclose) as Hpath.
+    pose proof (close_result_wf m m' Hwf Hclose) as Hfinal.
+    apply ell_bound. intros p q d Hraw.
+    destruct (wf_raw_entry_keys m' p q d Hfinal Hraw) as [i [j [_ [_ Hentry]]]].
+    exact (path_invariant_entry_bits m (entry m') (rev (keys m))
+      Hpath i j d Hentry).
   Qed.
 
   (** A consistent matrix has no more pivot keys than codes in its support. *)

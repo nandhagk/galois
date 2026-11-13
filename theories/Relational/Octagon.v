@@ -3161,12 +3161,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
-    same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
-  Proof. Admitted. (* STUB *)
-  Lemma bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
-    ell m' <= ell m + Nat.log2 (supp m) + 1.
-  Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
@@ -3440,6 +3434,38 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite Nat.pow_add_r. cbn [length] in Hlength.
       eapply Nat.le_lt_trans; [exact Habs|].
       apply Nat.mul_lt_mono_pos_r; [exact Hpower|lia].
+  Qed.
+
+  (** A minimum path uses at most one fewer than a power of two per original edge. *)
+  Lemma path_invariant_entry_abs : forall initial current ps,
+    RelationalPathBounds.invariant (entry initial) current ps ->
+    forall i j d, current i j = Some d ->
+      Z.abs_nat d <= supp initial * (2 ^ ell initial - 1).
+  Proof.
+    intros initial current ps [Hbelow Hclosed Hzero Hpath] i j d Hentry.
+    destruct (Hpath i j d Hentry) as [[Heq Hz]|[ks [Hks Hchain]]].
+    - subst d. cbn [Z.abs_nat]. nia.
+    - destruct (RelationalPathBounds.simple_minimum_chain K.t path_key_dec
+        (entry initial) current ps Hbelow Hclosed Hzero ks i j d Hks Hentry Hchain)
+        as [shortened [Hincl [Hnodup Hvalue]]].
+      assert (Hlength : length (i :: shortened) <= supp initial).
+      { unfold supp. rewrite <- (length_map K.encode (i :: shortened)).
+        apply NoDup_incl_length; [now apply encoded_keys_nodup|].
+        intros code Hcode. apply in_map_iff in Hcode.
+        destruct Hcode as [x [Hcode Hx]]. subst code.
+        eapply (RelationalPathBounds.chain_sources K.t (entry initial)
+          (fun q => In (K.encode q) (support initial))).
+        - intros p q z Hz. now apply (entry_source_support initial p q z).
+        - exact Hvalue.
+        - exact Hx. }
+      assert (Hedge : forall p q z, entry initial p q = Some z ->
+        Z.abs_nat z <= 2 ^ ell initial - 1).
+      { intros p q z Hz. pose proof (zbits_abs_bound z (ell initial)) as Hbits.
+        specialize (Hbits (ell_entry initial (K.encode p) (K.encode q) z
+          ltac:(now rewrite raw_entry_get))). lia. }
+      pose proof (RelationalPathBounds.chain_abs K.t (entry initial)
+        (2 ^ ell initial - 1) Hedge shortened i j d Hvalue) as Habs.
+      cbn [length] in Hlength. nia.
   Qed.
 
   (** Well-formed raw entries have source and target keys. *)
@@ -3965,6 +3991,235 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (K.eqb a i), (K.eqb b j); reflexivity.
   Qed.
 
+  (** Twin insertion changes precisely its two signed coordinates. *)
+  Lemma entry_add_cons_coordinates : forall i j d m a b,
+    entry (add_cons i j d m) a b =
+      if same_coordinate a b i j then Some (lower_bound d (entry m i j))
+      else if same_coordinate a b (flip j) (flip i)
+        then Some (lower_bound d (entry m (flip j) (flip i)))
+        else entry m a b.
+  Proof.
+    intros i j d m a b. unfold add_cons.
+    now rewrite !entry_put_coordinate.
+  Qed.
+
+  Lemma same_coordinate_true : forall a b i j,
+    same_coordinate a b i j = true -> a = i /\ b = j.
+  Proof.
+    intros a b i j Hsame. unfold same_coordinate in Hsame.
+    apply andb_true_iff in Hsame. destruct Hsame as [Ha Hb].
+    apply key_eqb_true in Ha. apply key_eqb_true in Hb. now split.
+  Qed.
+
+  Lemma add_cons_entry_below : forall i j d m a b,
+    RelationalPathBounds.below (entry (add_cons i j d m) a b) (entry m a b).
+  Proof.
+    intros i j d m a b. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate a b i j) eqn:Hfirst.
+    - destruct (same_coordinate_true a b i j Hfirst) as [Ha Hb].
+      subst a b. destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below];
+        [apply Z.le_min_r|exact I].
+    - destruct (same_coordinate a b (flip j) (flip i)) eqn:Hsecond.
+      + destruct (same_coordinate_true a b (flip j) (flip i) Hsecond)
+          as [Ha Hb]. subst a b.
+        destruct (entry m (flip j) (flip i)) as [old|];
+          cbn [lower_bound RelationalPathBounds.below];
+          [apply Z.le_min_r|exact I].
+      + apply RelationalPathBounds.below_refl.
+  Qed.
+
+  Lemma add_cons_inserted_bounds : forall m i j d,
+    RelationalPathBounds.below (entry (add_cons i j d m) i j) (Some d) /\
+    RelationalPathBounds.below
+      (entry (add_cons i j d m) (flip j) (flip i)) (Some d).
+  Proof.
+    intros m i j d. split; rewrite entry_add_cons_coordinates.
+    - assert (Hsame : same_coordinate i j i j = true).
+      { unfold same_coordinate. apply andb_true_iff. split;
+          apply key_eqb_true; reflexivity. }
+      rewrite Hsame. destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia].
+    - destruct (same_coordinate (flip j) (flip i) i j) eqn:Hfirst.
+      + destruct (entry m i j) as [old|];
+          cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia].
+      + assert (Hsame : same_coordinate (flip j) (flip i) (flip j) (flip i) = true).
+        { unfold same_coordinate. apply andb_true_iff. split;
+            apply key_eqb_true; reflexivity. }
+        rewrite Hsame. destruct (entry m (flip j) (flip i)) as [old|];
+          cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia].
+  Qed.
+
+  (** Zero insertion preserves zero or absent diagonal entries. *)
+  Lemma add_zero_diagonal_cases : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    forall k, entry (add_cons p p 0%Z m) k k = None \/
+      entry (add_cons p p 0%Z m) k k = Some 0%Z.
+  Proof.
+    intros m p Hdiag k. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate k k p p) eqn:Hfirst.
+    - right. destruct (Hdiag p) as [Hnone|Hzero];
+        rewrite Hnone || rewrite Hzero; reflexivity.
+    - destruct (same_coordinate k k (flip p) (flip p)) eqn:Hsecond.
+      + right. destruct (Hdiag (flip p)) as [Hnone|Hzero];
+          rewrite Hnone || rewrite Hzero; reflexivity.
+      + exact (Hdiag k).
+  Qed.
+
+  Lemma add_zero_own_diagonal : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    entry (add_cons p p 0%Z m) p p = Some 0%Z.
+  Proof.
+    intros m p Hdiag. rewrite entry_add_cons_coordinates.
+    unfold same_coordinate. destruct (K.eqb_spec p p); [|contradiction].
+    cbn. destruct (Hdiag p) as [Hnone|Hzero];
+      rewrite Hnone || rewrite Hzero; reflexivity.
+  Qed.
+
+  Lemma add_zero_flip_diagonal : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    entry (add_cons p p 0%Z m) (flip p) (flip p) = Some 0%Z.
+  Proof.
+    intros m p Hdiag. rewrite entry_add_cons_coordinates.
+    unfold same_coordinate.
+    destruct (K.eqb_spec (flip p) p) as [Heq|Hne].
+    - destruct p as [x sign]. destruct sign; discriminate Heq.
+    - destruct (K.eqb_spec (flip p) (flip p)); [|contradiction].
+      cbn. destruct (Hdiag (flip p)) as [Hnone|Hzero];
+        rewrite Hnone || rewrite Hzero; reflexivity.
+  Qed.
+
+  Lemma add_zero_preserve_diagonal : forall m p k,
+    (forall q, entry m q q = None \/ entry m q q = Some 0%Z) ->
+    entry m k k = Some 0%Z ->
+    entry (add_cons p p 0%Z m) k k = Some 0%Z.
+  Proof.
+    intros m p k Hdiag Hzero. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate k k p p).
+    - destruct (Hdiag p) as [Hnone|Hz];
+        rewrite Hnone || rewrite Hz; reflexivity.
+    - destruct (same_coordinate k k (flip p) (flip p)).
+      + destruct (Hdiag (flip p)) as [Hnone|Hz];
+          rewrite Hnone || rewrite Hz; reflexivity.
+      + exact Hzero.
+  Qed.
+
+  Lemma tightly_closed_diagonal_cases : forall m, tightly_closed m ->
+    forall k, entry m k k = None \/ entry m k k = Some 0%Z.
+  Proof.
+    intros m [[Hcoh [Hzero [Htri Hstrong]]] Heven] k.
+    destruct (entry m k k) as [d|] eqn:Hentry; [right|now left].
+    pose proof (Hzero k (entry_source_support m k k d Hentry)) as Hdiag.
+    now rewrite Hentry in Hdiag.
+  Qed.
+
+  Lemma incremental_seed_diagonals : forall m i j, tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    entry seed i i = Some 0%Z /\ entry seed j j = Some 0%Z.
+  Proof.
+    intros m i j Htight. cbn beta iota zeta.
+    set (first := add_cons i i 0%Z m).
+    assert (Hdiag : forall k, entry m k k = None \/ entry m k k = Some 0%Z).
+    { now apply tightly_closed_diagonal_cases. }
+    assert (Hfirst : forall k, entry first k k = None \/
+      entry first k k = Some 0%Z).
+    { unfold first. now apply add_zero_diagonal_cases. }
+    split.
+    - apply add_zero_preserve_diagonal; [exact Hfirst|].
+      unfold first. now apply add_zero_own_diagonal.
+    - now apply add_zero_own_diagonal.
+  Qed.
+
+  (** Tight triangle closure holds at every signed key, including absent labels. *)
+  Lemma tightly_closed_at_every_key : forall m, tightly_closed m ->
+    forall p, RelationalPathBounds.closed_at (entry m) p.
+  Proof.
+    intros m [[Hcoh [Hzero [Htriangle Hstrong]]] Heven] p a b.
+    destruct (entry m a p) as [left|] eqn:Hleft;
+      destruct (entry m p b) as [right|] eqn:Hright;
+      cbn [RelationalPathBounds.plus RelationalPathBounds.below];
+      try (destruct (entry m a b); exact I).
+    destruct (Htriangle a b p left right Hleft Hright)
+      as [value [Hvalue Hle]]. rewrite Hvalue.
+    cbn [RelationalPathBounds.below]. exact Hle.
+  Qed.
+
+  (** Adding paired zero diagonals preserves every triangle bound. *)
+  Lemma add_zero_global_closed : forall m k,
+    (forall p, RelationalPathBounds.closed_at (entry m) p) ->
+    (forall p, entry m p p = None \/ entry m p p = Some 0%Z) ->
+    forall p, RelationalPathBounds.closed_at
+      (entry (add_cons k k 0%Z m)) p.
+  Proof.
+    intros m k Hclosed Hdiag.
+    set (mid := put (flip k) (flip k)
+      (lower_bound 0%Z (entry m (flip k) (flip k))) m).
+    assert (Hmid : forall p, RelationalPathBounds.closed_at (entry mid) p).
+    { intro p. unfold RelationalPathBounds.closed_at. intros a b.
+      unfold mid. rewrite !entry_path_seed.
+      exact (RelationalPathBounds.seed_global_closed K.t path_key_dec
+        (entry m) (flip k) Hclosed (Hdiag (flip k)) p a b). }
+    assert (Hmid_diag : entry mid k k = entry m k k).
+    { unfold mid. rewrite entry_put.
+      destruct (K.eqb_spec k (flip k)) as [Heq|Hne]; [|reflexivity].
+      destruct k as [x sign]. destruct sign; discriminate Heq. }
+    intro p. unfold RelationalPathBounds.closed_at. intros a b.
+    change (RelationalPathBounds.below
+      (entry (put k k (lower_bound 0%Z (entry m k k)) mid) a b)
+      (RelationalPathBounds.plus
+        (entry (put k k (lower_bound 0%Z (entry m k k)) mid) a p)
+        (entry (put k k (lower_bound 0%Z (entry m k k)) mid) p b))).
+    rewrite <- Hmid_diag. rewrite !entry_path_seed.
+    assert (Hcase : entry mid k k = None \/ entry mid k k = Some 0%Z).
+    { rewrite Hmid_diag. apply Hdiag. }
+    exact (RelationalPathBounds.seed_global_closed K.t path_key_dec
+      (entry mid) k Hmid Hcase p a b).
+  Qed.
+
+  Lemma incremental_seed_global_closed : forall m i j, tightly_closed m ->
+    forall p, RelationalPathBounds.closed_at
+      (entry (add_cons j j 0%Z (add_cons i i 0%Z m))) p.
+  Proof.
+    intros m i j Htight.
+    assert (Hdiag : forall k, entry m k k = None \/ entry m k k = Some 0%Z).
+    { now apply tightly_closed_diagonal_cases. }
+    apply add_zero_global_closed.
+    - apply add_zero_global_closed;
+        [now apply tightly_closed_at_every_key|exact Hdiag].
+    - now apply add_zero_diagonal_cases.
+  Qed.
+
+  (** Paired zero insertion gives every supported key a zero diagonal. *)
+  Lemma add_zero_support_diagonal : forall m p,
+    (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
+    (forall k, In (K.encode k) (support m) -> entry m k k = Some 0%Z) ->
+    forall k, In (K.encode k) (support (add_cons p p 0%Z m)) ->
+      entry (add_cons p p 0%Z m) k k = Some 0%Z.
+  Proof.
+    intros m p Hcases Hzero k Hsupport.
+    rewrite support_add_cons in Hsupport.
+    destruct Hsupport as [Hcode|[Hcode|[Hcode|[Hcode|Hcode]]]].
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_own_diagonal.
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_own_diagonal.
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_flip_diagonal.
+    - apply K.encode_inj in Hcode. subst k. now apply add_zero_flip_diagonal.
+    - apply add_zero_preserve_diagonal; [exact Hcases|now apply Hzero].
+  Qed.
+
+  Lemma incremental_seed_zero_support : forall m i j, tightly_closed m ->
+    forall k, In (K.encode k)
+      (support (add_cons j j 0%Z (add_cons i i 0%Z m))) ->
+      entry (add_cons j j 0%Z (add_cons i i 0%Z m)) k k = Some 0%Z.
+  Proof.
+    intros m i j Htight.
+    assert (Hcases : forall k, entry m k k = None \/ entry m k k = Some 0%Z).
+    { now apply tightly_closed_diagonal_cases. }
+    apply add_zero_support_diagonal.
+    - now apply add_zero_diagonal_cases.
+    - apply add_zero_support_diagonal;
+        [exact Hcases|exact (proj1 (proj2 (proj1 Htight)))].
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
@@ -4478,6 +4733,547 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros i j d m a b.
     rewrite <- (raw_entry_get (increment_matrix i j d m) a b).
     rewrite raw_entry_increment, !raw_entry_get, !relax_value_meet. reflexivity.
+  Qed.
+
+  (** Every incremental path relaxation retains or lowers the old entry. *)
+  Lemma bound_meet_below_left : forall a b,
+    RelationalPathBounds.below (bound_meet a b) a.
+  Proof.
+    intros [a|] [b|]; cbn [bound_meet RelationalPathBounds.below];
+      try exact I; lia.
+  Qed.
+
+  Lemma bound_meet_below_right : forall a b,
+    RelationalPathBounds.below (bound_meet a b) b.
+  Proof.
+    intros [a|] [b|]; cbn [bound_meet RelationalPathBounds.below];
+      try exact I; lia.
+  Qed.
+
+  Lemma increment_entry_below : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (entry m a b).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    repeat (eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|]).
+    apply RelationalPathBounds.below_refl.
+  Qed.
+
+  (** The candidate diagonal is bounded by either inserted signed edge. *)
+  Lemma increment_below_first_edge : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (edge_path d (entry m a i) (entry m j b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    apply bound_meet_below_right.
+  Qed.
+
+  Lemma increment_below_second_edge : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (edge_path d (entry m a (flip j)) (entry m (flip i) b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    apply bound_meet_below_right.
+  Qed.
+
+  Lemma increment_below_first_twin : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (twin_path d (entry m a i) (entry m j (flip j))
+        (entry m (flip i) b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    apply bound_meet_below_right.
+  Qed.
+
+  Lemma increment_below_second_twin : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (twin_path d (entry m a (flip j)) (entry m (flip i) i)
+        (entry m j b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    apply bound_meet_below_right.
+  Qed.
+
+  (** A successful matrix scan checks every stored row label. *)
+  Lemma matrix_ok_row : forall m k row, dbm_wf m ->
+    matrix_ok m = true -> M.get k m = Some row -> nonnegative k m = true.
+  Proof.
+    intros m k row [Houter Hrows] Hscan Hrow.
+    unfold matrix_ok in Hscan. rewrite M.fold_spec in Hscan.
+    assert (Hfold : forall (es : list (K.t * M.t Z)) acc,
+      fold_left (fun ok ka => andb ok (nonnegative (fst ka) m)) es acc =
+        andb acc (forallb (fun ka => nonnegative (fst ka) m) es)).
+    { induction es as [|[p value] es IH]; intro acc; [now destruct acc|].
+      cbn [fold_left forallb]. rewrite IH. now rewrite andb_assoc. }
+    rewrite Hfold in Hscan. cbn in Hscan.
+    rewrite forallb_forall in Hscan. apply (Hscan (k, row)).
+    apply (proj2 (M.elements_spec _ m k row Houter)). exact Hrow.
+  Qed.
+
+  Lemma matrix_ok_diagonal : forall m k z, dbm_wf m ->
+    matrix_ok m = true -> entry m k k = Some z -> (0 <= z)%Z.
+  Proof.
+    intros m k z Hwf Hscan Hentry.
+    assert (Hrow : exists row, M.get k m = Some row).
+    { unfold entry in Hentry. destruct (M.get k m) as [row|] eqn:Hget;
+        [now exists row|discriminate]. }
+    destruct Hrow as [row Hrow].
+    pose proof (matrix_ok_row m k row Hwf Hscan Hrow) as Hcheck.
+    unfold nonnegative in Hcheck. rewrite Hentry in Hcheck.
+    now apply Z.leb_le.
+  Qed.
+
+  (** A passing incremental scan excludes a negative cycle through the first edge. *)
+  Lemma incremental_first_cycle : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed j i) (Some d)).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    pose proof (proj1 (incremental_seed_diagonals m i j Htight)) as Hseed.
+    change (entry seed i i = Some 0%Z) in Hseed.
+    destruct (entry seed j i) as [back|] eqn:Hback; [|exact I].
+    pose proof (increment_below_first_edge i j d seed i i) as Hbound.
+    rewrite Hseed, Hback in Hbound.
+    cbn [edge_path path_sum edge_prefix RelationalPathBounds.below] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next i i = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    assert (Hrow : exists row, M.get i next = Some row).
+    { unfold entry in Hvalue. destruct (M.get i next) as [row|] eqn:Hget;
+        [now exists row|discriminate]. }
+    destruct Hrow as [row Hrow].
+    pose proof (matrix_ok_row next i row Hwfnext Hscan Hrow) as Hcheck.
+    unfold nonnegative in Hcheck. rewrite Hvalue in Hcheck.
+    apply Z.leb_le in Hcheck.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia.
+  Qed.
+
+  (** The same scan excludes a negative cycle through the mirrored edge. *)
+  Lemma incremental_second_cycle : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed (flip i) (flip j)) (Some d)).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hcoh : coherent seed).
+    { unfold seed. apply coherent_add_cons, coherent_add_cons.
+      exact (proj1 (proj1 Htight)). }
+    pose proof (proj2 (incremental_seed_diagonals m i j Htight)) as Hj.
+    change (entry seed j j = Some 0%Z) in Hj.
+    assert (Hseed : entry seed (flip j) (flip j) = Some 0%Z).
+    { rewrite (Hcoh (flip j) (flip j)), !flip_involutive. exact Hj. }
+    destruct (entry seed (flip i) (flip j)) as [back|] eqn:Hback;
+      [|exact I].
+    pose proof (increment_below_second_edge i j d seed (flip j) (flip j))
+      as Hbound.
+    rewrite Hseed, Hback in Hbound.
+    cbn [edge_path path_sum edge_prefix RelationalPathBounds.below] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next (flip j) (flip j) = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    assert (Hrow : exists row, M.get (flip j) next = Some row).
+    { unfold entry in Hvalue.
+      destruct (M.get (flip j) next) as [row|] eqn:Hget;
+        [now exists row|discriminate]. }
+    destruct Hrow as [row Hrow].
+    pose proof (matrix_ok_row next (flip j) row Hwfnext Hscan Hrow) as Hcheck.
+    unfold nonnegative in Hcheck. rewrite Hvalue in Hcheck.
+    apply Z.leb_le in Hcheck.
+    cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia.
+  Qed.
+
+  (** A passing scan also excludes the cycle using both inserted edges. *)
+  Lemma incremental_mixed_cycle : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i)).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    pose proof (proj1 (incremental_seed_diagonals m i j Htight)) as Hseed.
+    change (entry seed i i = Some 0%Z) in Hseed.
+    destruct (entry seed j (flip j)) as [cross|] eqn:Hcross;
+      [|exact I].
+    destruct (entry seed (flip i) i) as [back|] eqn:Hback;
+      [|exact I].
+    pose proof (increment_below_first_twin i j d seed i i) as Hbound.
+    rewrite Hseed, Hcross, Hback in Hbound.
+    cbn [twin_path path_sum twin_prefix RelationalPathBounds.below] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next i i = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    pose proof (matrix_ok_diagonal next i value Hwfnext Hscan Hvalue) as Hz.
+    cbn [twin_path path_sum twin_prefix RelationalPathBounds.below]. lia.
+  Qed.
+
+  (** The two sequential signed-edge extensions remain triangle closed. *)
+  Lemma incremental_two_edge_closed : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall p, RelationalPathBounds.closed_at
+      (RelationalPathBounds.edge_extension
+        (RelationalPathBounds.edge_extension (entry seed) i j d)
+        (flip j) (flip i) d) p.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)). intro Hscan.
+    pose proof (incremental_seed_global_closed m i j Htight) as Hseed.
+    change (forall p, RelationalPathBounds.closed_at (entry seed) p) in Hseed.
+    pose proof (incremental_first_cycle m i j d Hwf Htight Hscan) as Hfirst.
+    pose proof (incremental_second_cycle m i j d Hwf Htight Hscan) as Hsecond.
+    pose proof (incremental_mixed_cycle m i j d Hwf Htight Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed j i) (Some d))) in Hfirst.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed (flip i) (flip j)) (Some d)))
+      in Hsecond.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    assert (Hnew_cycle : RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus
+        (RelationalPathBounds.edge_extension (entry seed) i j d
+          (flip i) (flip j)) (Some d))).
+    { unfold RelationalPathBounds.edge_extension.
+      rewrite RelationalPathBounds.plus_minimum_r.
+      apply RelationalPathBounds.minimum_glb. split; [exact Hsecond|].
+      destruct (entry seed (flip i) i) as [back|] eqn:Hback;
+        destruct (entry seed j (flip j)) as [cross|] eqn:Hcross;
+        cbn [RelationalPathBounds.plus RelationalPathBounds.below
+          twin_path path_sum twin_prefix] in *; try exact I; lia. }
+    intro p. apply RelationalPathBounds.edge_extension_closed.
+    - apply RelationalPathBounds.edge_extension_closed; [exact Hseed|exact Hfirst].
+    - exact Hnew_cycle.
+  Qed.
+
+  (** The four candidate paths equal two sequential edge extensions. *)
+  Lemma incremental_sequential_extension : forall m i j d,
+    RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry m j (flip j))
+        (entry m (flip i) i)) ->
+    forall a b, entry (increment_matrix i j d m) a b =
+      RelationalPathBounds.edge_extension
+        (RelationalPathBounds.edge_extension (entry m) i j d)
+        (flip j) (flip i) d a b.
+  Proof.
+    intros m i j d Hmixed a b. rewrite entry_increment.
+    unfold RelationalPathBounds.edge_extension, edge_path, twin_path,
+      path_sum, edge_prefix, twin_prefix, bound_meet.
+    destruct (entry m a b) as [old|];
+      destruct (entry m a i) as [left|];
+      destruct (entry m j b) as [right|];
+      destruct (entry m a (flip j)) as [tleft|];
+      destruct (entry m (flip i) b) as [tright|];
+      destruct (entry m j (flip j)) as [cross|];
+      destruct (entry m (flip i) i) as [back|];
+      cbn [RelationalPathBounds.minimum RelationalPathBounds.plus
+        RelationalPathBounds.below twin_path path_sum twin_prefix] in *;
+      try reflexivity; try (f_equal; lia).
+  Qed.
+
+  (** A passing diagonal scan leaves the four-path candidate triangle closed. *)
+  Lemma incremental_candidate_closed : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall p, RelationalPathBounds.closed_at
+      (entry (increment_matrix i j d seed)) p.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)). intro Hscan.
+    pose proof (incremental_mixed_cycle m i j d Hwf Htight Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    pose proof (incremental_two_edge_closed m i j d Hwf Htight Hscan)
+      as Hclosed.
+    change (forall p, RelationalPathBounds.closed_at
+      (RelationalPathBounds.edge_extension
+        (RelationalPathBounds.edge_extension (entry seed) i j d)
+        (flip j) (flip i) d) p) in Hclosed.
+    intro p. unfold RelationalPathBounds.closed_at. intros a b.
+    rewrite !(incremental_sequential_extension seed i j d Hmixed).
+    exact (Hclosed p a b).
+  Qed.
+
+  Lemma below_lower_bound : forall value d old,
+    RelationalPathBounds.below value (Some d) ->
+    RelationalPathBounds.below value old ->
+    RelationalPathBounds.below value (Some (lower_bound d old)).
+  Proof.
+    intros [value|] d [old|]; cbn [lower_bound RelationalPathBounds.below];
+      intros; try contradiction; lia.
+  Qed.
+
+  Lemma below_add_zero : forall m u p,
+    (forall a b, RelationalPathBounds.below (u a b) (entry m a b)) ->
+    u p p = Some 0%Z -> u (flip p) (flip p) = Some 0%Z ->
+    forall a b, RelationalPathBounds.below
+      (u a b) (entry (add_cons p p 0%Z m) a b).
+  Proof.
+    intros m u p Hbelow Hzero Hbar a b. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate a b p p) eqn:Hfirst.
+    - destruct (same_coordinate_true a b p p Hfirst) as [Ha Hb].
+      subst a b. apply below_lower_bound;
+        [rewrite Hzero; cbn [RelationalPathBounds.below]; lia|apply Hbelow].
+    - destruct (same_coordinate a b (flip p) (flip p)) eqn:Hsecond.
+      + destruct (same_coordinate_true a b (flip p) (flip p) Hsecond)
+          as [Ha Hb]. subst a b.
+        apply below_lower_bound;
+          [rewrite Hbar; cbn [RelationalPathBounds.below]; lia|apply Hbelow].
+      + apply Hbelow.
+  Qed.
+
+  (** Any closed lower relation lies below a one-edge extension. *)
+  Lemma closed_below_edge_extension : forall (u base : K.t -> K.t -> option Z)
+      i j d,
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall a b, RelationalPathBounds.below (u a b) (base a b)) ->
+    RelationalPathBounds.below (u i j) (Some d) ->
+    forall a b, RelationalPathBounds.below (u a b)
+      (RelationalPathBounds.edge_extension base i j d a b).
+  Proof.
+    intros u base i j d Hclosed Hbelow Hedge a b.
+    unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_glb. split; [apply Hbelow|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed i a b)|].
+    apply RelationalPathBounds.plus_mono; [apply Hbelow|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed j i b)|].
+    apply RelationalPathBounds.plus_mono; [exact Hedge|apply Hbelow].
+  Qed.
+
+  (** The four-path candidate is below direct twin insertion. *)
+  Lemma incremental_candidate_below_direct : forall m i j d,
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forall a b, RelationalPathBounds.below
+      (entry (increment_matrix i j d seed) a b)
+      (entry (add_cons i j d m) a b).
+  Proof.
+    intros m i j d Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed).
+    destruct (incremental_seed_diagonals m i j Htight) as [Hii Hjj].
+    change (entry seed i i = Some 0%Z) in Hii.
+    change (entry seed j j = Some 0%Z) in Hjj.
+    assert (Hcoh : coherent seed).
+    { unfold seed. apply coherent_add_cons, coherent_add_cons.
+      exact (proj1 (proj1 Htight)). }
+    assert (Hbar_i : entry seed (flip i) (flip i) = Some 0%Z).
+    { rewrite (Hcoh (flip i) (flip i)), !flip_involutive. exact Hii. }
+    assert (Hbar_j : entry seed (flip j) (flip j) = Some 0%Z).
+    { rewrite (Hcoh (flip j) (flip j)), !flip_involutive. exact Hjj. }
+    assert (Hold : forall x y,
+      RelationalPathBounds.below (entry next x y) (entry m x y)).
+    { intros x y. eapply RelationalPathBounds.below_trans.
+      - unfold next. apply increment_entry_below.
+      - unfold seed. eapply RelationalPathBounds.below_trans;
+          apply add_cons_entry_below. }
+    assert (Hfirst : RelationalPathBounds.below (entry next i j) (Some d)).
+    { unfold next. pose proof (increment_below_first_edge i j d seed i j) as Hbound.
+      rewrite Hii, Hjj in Hbound.
+      cbn [edge_path path_sum edge_prefix] in Hbound.
+      replace (0 + d + 0)%Z with d in Hbound by lia. exact Hbound. }
+    assert (Hsecond : RelationalPathBounds.below
+      (entry next (flip j) (flip i)) (Some d)).
+    { unfold next.
+      pose proof (increment_below_second_edge i j d seed (flip j) (flip i))
+        as Hbound.
+      rewrite Hbar_j, Hbar_i in Hbound.
+      cbn [edge_path path_sum edge_prefix] in Hbound.
+      replace (0 + d + 0)%Z with d in Hbound by lia. exact Hbound. }
+    intros a b. rewrite entry_add_cons_coordinates.
+    destruct (same_coordinate a b i j) eqn:Hcoordinate.
+    - destruct (same_coordinate_true a b i j Hcoordinate) as [Ha Hb].
+      subst a b. apply below_lower_bound; [exact Hfirst|apply Hold].
+    - destruct (same_coordinate a b (flip j) (flip i)) eqn:Hmirror.
+      + destruct (same_coordinate_true a b (flip j) (flip i) Hmirror)
+          as [Ha Hb]. subst a b.
+        apply below_lower_bound; [exact Hsecond|apply Hold].
+      + apply Hold.
+  Qed.
+
+  (** The scan and seed zeros fix every candidate support diagonal at zero. *)
+  Lemma incremental_candidate_zero_support : forall m i j d,
+    dbm_wf m -> tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall k, In (K.encode k) (support seed) ->
+      entry (increment_matrix i j d seed) k k = Some 0%Z.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intros Hscan k Hsupport.
+    pose proof (incremental_seed_zero_support m i j Htight k Hsupport)
+      as Hseed.
+    change (entry seed k k = Some 0%Z) in Hseed.
+    pose proof (increment_entry_below i j d seed k k) as Hbound.
+    rewrite Hseed in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next k k = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    pose proof (matrix_ok_diagonal next k value Hwfnext Hscan Hvalue) as Hz.
+    assert (value = 0)%Z by lia. now subst value.
+  Qed.
+
+  (** A closed lower relation remains below every Floyd round. *)
+  Lemma fw_round_above_closed : forall u current k,
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall a b, RelationalPathBounds.below (u a b) (entry current a b)) ->
+    u k k = Some 0%Z -> pivot_present k current = true ->
+    forall a b, RelationalPathBounds.below
+      (u a b) (entry (fw_round k current) a b).
+  Proof.
+    intros u current k Hclosed Hbelow Hzero Hpresent a b.
+    rewrite (entry_fw_present k current Hpresent a b).
+    apply (RelationalPathBounds.floyd_above_closed K.t path_key_dec
+      u (entry current) k Hclosed Hbelow Hzero a b).
+  Qed.
+
+  Lemma fw_pivots_above_closed : forall ks current u,
+    (forall k, In k ks -> In (K.encode k) (support current)) ->
+    (forall k, In k ks -> u k k = Some 0%Z) ->
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall a b, RelationalPathBounds.below (u a b) (entry current a b)) ->
+    forall a b, RelationalPathBounds.below
+      (u a b) (entry (fw_pivots ks current) a b).
+  Proof.
+    induction ks as [|k ks IH]; intros current u Hsupport Hzero Hclosed Hbelow a b.
+    - exact (Hbelow a b).
+    - assert (Hpresent : pivot_present k current = true).
+      { apply pivot_present_support. apply Hsupport. now left. }
+      assert (Hnext : forall x y, RelationalPathBounds.below
+        (u x y) (entry (fw_round k current) x y)).
+      { intros x y. eapply fw_round_above_closed;
+          [exact Hclosed|exact Hbelow|apply Hzero; now left|exact Hpresent]. }
+      assert (Haccept : nonnegative k (fw_round k current) = true).
+      { unfold nonnegative. destruct (entry (fw_round k current) k k) as [z|]
+          eqn:Hentry; [|reflexivity].
+        pose proof (Hnext k k) as Hbound. rewrite (Hzero k (or_introl eq_refl)),
+          Hentry in Hbound.
+        apply Z.leb_le. exact Hbound. }
+      cbn [fw_pivots]. rewrite Haccept.
+      apply IH.
+      + intros q Hq. apply (proj2 (support_round k current (K.encode q))).
+        apply Hsupport. now right.
+      + intros q Hq. apply Hzero. now right.
+      + exact Hclosed.
+      + exact Hnext.
+  Qed.
+
+  Lemma direct_seed_support : forall m i j d p,
+    In p (support (add_cons i j d m)) <->
+      In p (support (add_cons j j 0%Z (add_cons i i 0%Z m))).
+  Proof.
+    intros m i j d p. rewrite !support_add_cons. tauto.
+  Qed.
+
+  (** Successful incremental closure bounds the full Floyd matrix below it. *)
+  Lemma incremental_candidate_below_fw : forall m i j d,
+    dbm_wf m -> tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall a b, RelationalPathBounds.below
+      (entry (increment_matrix i j d seed) a b) (entry (fw direct) a b).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hclosed : forall p, RelationalPathBounds.closed_at (entry next) p).
+    { unfold next, seed. now apply incremental_candidate_closed. }
+    assert (Hbelow : forall x y,
+      RelationalPathBounds.below (entry next x y) (entry direct x y)).
+    { intros x y. unfold next, seed, direct.
+      now apply incremental_candidate_below_direct. }
+    assert (Hzero : forall k, In k (keys direct) -> entry next k k = Some 0%Z).
+    { intros k Hkey. unfold next.
+      apply (incremental_candidate_zero_support m i j d Hwf Htight Hscan).
+      change (In (K.encode k) (support seed)).
+      apply (proj1 (direct_seed_support m i j d (K.encode k))).
+      unfold direct in Hkey. now apply keys_support. }
+    intros a b. unfold fw. rewrite pivot_keys_eq_keys.
+    apply fw_pivots_above_closed.
+    - intros k Hkey. now apply keys_support.
+    - exact Hzero.
+    - exact Hclosed.
+    - exact Hbelow.
+  Qed.
+
+  Lemma incremental_candidate_fw_scan : forall m i j d,
+    dbm_wf m -> tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    apply forallb_forall. intros k Hkey.
+    assert (Hsupport : In (K.encode k) (support seed)).
+    { apply (proj1 (direct_seed_support m i j d (K.encode k))).
+      unfold direct in Hkey. now apply keys_support. }
+    pose proof (incremental_candidate_zero_support m i j d Hwf Htight
+      Hscan k Hsupport) as Hzero.
+    change (entry next k k = Some 0%Z) in Hzero.
+    pose proof (incremental_candidate_below_fw m i j d Hwf Htight Hscan k k)
+      as Hbound.
+    change (RelationalPathBounds.below (entry next k k)
+      (entry (fw direct) k k)) in Hbound.
+    unfold nonnegative. destruct (entry (fw direct) k k) as [z|]
+      eqn:Hentry; [|reflexivity].
+    rewrite Hzero in Hbound.
+    apply Z.leb_le. exact Hbound.
   Qed.
 
   Lemma coherent_entry : forall m, coherent m ->
@@ -5824,6 +6620,47 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + rewrite M.find_empty in Hraw. contradiction.
   Qed.
 
+  (** Successful full Floyd closure is below the seeded old matrix. *)
+  Lemma fw_below_incremental_seed : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    forall a b, RelationalPathBounds.below (entry (fw direct) a b)
+      (entry (add_cons j j 0%Z (add_cons i i 0%Z m)) a b).
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hinv : RelationalPathBounds.invariant (entry direct)
+      (entry (fw direct)) (rev (keys direct))).
+    { unfold fw. rewrite pivot_keys_eq_keys.
+      replace (rev (keys direct)) with (rev (keys direct) ++ nil)
+        by now rewrite app_nil_r.
+      apply fw_pivots_success_path_invariant.
+      - apply RelationalPathBounds.invariant_initial.
+      - intros k Hkey. now apply keys_support.
+      - intros k Hkey. rewrite forallb_forall in Hscan.
+        unfold fw in Hscan. rewrite pivot_keys_eq_keys in Hscan.
+        now apply Hscan. }
+    destruct Hinv as [Hbelow Hclosed Hzero Hpath].
+    assert (Hdiag : forall p, In (K.encode p) (support direct) ->
+      entry (fw direct) p p = Some 0%Z).
+    { intros p Hp. apply Hzero. apply in_rev. rewrite rev_involutive.
+      now apply keys_cover. }
+    assert (Hendpoints : forall p, p = i \/ p = j \/ p = flip i \/ p = flip j ->
+      entry (fw direct) p p = Some 0%Z).
+    { intros p [Hp|[Hp|[Hp|Hp]]]; subst p; apply Hdiag;
+        unfold direct; rewrite support_add_cons; tauto. }
+    intros a b. eapply below_add_zero.
+    - eapply below_add_zero.
+      + intros x y. eapply RelationalPathBounds.below_trans;
+          [apply Hbelow|apply add_cons_entry_below].
+      + apply Hendpoints. now left.
+      + apply Hendpoints. now right; right; left.
+    - apply Hendpoints. now right; left.
+    - apply Hendpoints. now right; right; right.
+  Qed.
+
   Lemma keys_support_iff : forall m k, dbm_wf m ->
     (In k (keys m) <-> In (K.encode k) (support m)).
   Proof.
@@ -5947,6 +6784,323 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (proj2 (fw_closed_success m Hwf Hscan) i j k a z Hik Hkj)
       as [d [Hd Hle]]. rewrite Hd.
     cbn [RelationalPathBounds.below]. exact Hle.
+  Qed.
+
+  (** Successful full Floyd entries lie below all four incremental paths. *)
+  Lemma fw_below_incremental_candidate : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall a b, RelationalPathBounds.below (entry (fw direct) a b)
+      (entry (increment_matrix i j d seed) a b).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intros Hfwscan Hscan a b.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (fw_closed_at_success direct Hwfdirect Hfwscan) as Hclosed.
+    pose proof (fw_below_incremental_seed m i j d Hwf Hfwscan) as Hseed.
+    change (forall x y, RelationalPathBounds.below
+      (entry (fw direct) x y) (entry seed x y)) in Hseed.
+    destruct (fw_success_path_invariant direct Hwfdirect Hfwscan)
+      as [Hbelow_direct _ _ _].
+    destruct (add_cons_inserted_bounds m i j d) as [Hfirst Hsecond].
+    assert (Hedge1 : RelationalPathBounds.below
+      (entry (fw direct) i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hfirst]. }
+    assert (Hedge2 : RelationalPathBounds.below
+      (entry (fw direct) (flip j) (flip i)) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hsecond]. }
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (entry seed) i j d Hclosed Hseed Hedge1) as Hone.
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (RelationalPathBounds.edge_extension (entry seed) i j d)
+      (flip j) (flip i) d Hclosed Hone Hedge2 a b) as Htwo.
+    pose proof (incremental_mixed_cycle m i j d Hwf Htight Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    rewrite (incremental_sequential_extension seed i j d Hmixed a b).
+    exact Htwo.
+  Qed.
+
+  (** Passing incremental and full Floyd passes have identical entries. *)
+  Lemma incremental_fw_equal : forall m i j d, dbm_wf m -> tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true /\
+      forall a b, entry (increment_matrix i j d seed) a b =
+        entry (fw direct) a b.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intro Hscan.
+    pose proof (incremental_candidate_fw_scan m i j d Hwf Htight Hscan)
+      as Hfwscan.
+    change (forallb (fun k => nonnegative k (fw direct)) (keys direct) = true)
+      in Hfwscan.
+    split; [exact Hfwscan|]. intros a b.
+    apply RelationalPathBounds.below_antisym.
+    - exact (incremental_candidate_below_fw m i j d Hwf Htight Hscan a b).
+    - exact (fw_below_incremental_candidate m i j d Hwf Htight
+        Hfwscan Hscan a b).
+  Qed.
+
+  (** A successful full Floyd scan excludes the mixed signed-edge cycle. *)
+  Lemma fw_mixed_cycle : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i)).
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (fw_closed_at_success direct Hwfdirect Hscan) as Hclosed.
+    pose proof (fw_below_incremental_seed m i j d Hwf Hscan) as Hseed.
+    change (forall x y, RelationalPathBounds.below
+      (entry (fw direct) x y) (entry seed x y)) in Hseed.
+    destruct (fw_success_path_invariant direct Hwfdirect Hscan)
+      as [Hbelow_direct _ _ _].
+    destruct (add_cons_inserted_bounds m i j d) as [Hfirst Hsecond].
+    assert (Hedge1 : RelationalPathBounds.below
+      (entry (fw direct) i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hfirst]. }
+    assert (Hedge2 : RelationalPathBounds.below
+      (entry (fw direct) (flip j) (flip i)) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hsecond]. }
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (entry seed) i j d Hclosed Hseed Hedge1 (flip i) (flip j)) as Hone.
+    assert (Hzero : entry (fw direct) (flip i) (flip i) = Some 0%Z).
+    { apply (proj1 (fw_closed_success direct Hwfdirect Hscan)).
+      apply (proj2 (fw_support direct (K.encode (flip i)))).
+      unfold direct. rewrite support_add_cons. now right; right; left. }
+    pose proof (Hclosed (flip j) (flip i) (flip i)) as Htriangle.
+    rewrite Hzero in Htriangle.
+    pose proof (RelationalPathBounds.below_trans _ _ _ Htriangle
+      (RelationalPathBounds.plus_mono _ _ _ _ Hone Hedge2)) as Hcycle.
+    unfold RelationalPathBounds.edge_extension in Hcycle.
+    rewrite RelationalPathBounds.plus_minimum_r in Hcycle.
+    apply RelationalPathBounds.minimum_glb in Hcycle.
+    destruct Hcycle as [_ Hmixed].
+    destruct (entry seed (flip i) i) as [back|];
+      destruct (entry seed j (flip j)) as [cross|];
+      cbn [RelationalPathBounds.plus RelationalPathBounds.below
+        twin_path path_sum twin_prefix] in *; try exact I; lia.
+  Qed.
+
+  Lemma fw_below_candidate_on_full_scan : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    forall a b, RelationalPathBounds.below (entry (fw direct) a b)
+      (entry (increment_matrix i j d seed) a b).
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intros Hscan a b.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (fw_closed_at_success direct Hwfdirect Hscan) as Hclosed.
+    pose proof (fw_below_incremental_seed m i j d Hwf Hscan) as Hseed.
+    change (forall x y, RelationalPathBounds.below
+      (entry (fw direct) x y) (entry seed x y)) in Hseed.
+    destruct (fw_success_path_invariant direct Hwfdirect Hscan)
+      as [Hbelow_direct _ _ _].
+    destruct (add_cons_inserted_bounds m i j d) as [Hfirst Hsecond].
+    assert (Hedge1 : RelationalPathBounds.below
+      (entry (fw direct) i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hfirst]. }
+    assert (Hedge2 : RelationalPathBounds.below
+      (entry (fw direct) (flip j) (flip i)) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hsecond]. }
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (entry seed) i j d Hclosed Hseed Hedge1) as Hone.
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (RelationalPathBounds.edge_extension (entry seed) i j d)
+      (flip j) (flip i) d Hclosed Hone Hedge2 a b) as Htwo.
+    pose proof (fw_mixed_cycle m i j d Hwf Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    rewrite (incremental_sequential_extension seed i j d Hmixed a b).
+    exact Htwo.
+  Qed.
+
+  Lemma matrix_ok_of_all_nonnegative : forall m,
+    (forall k, nonnegative k m = true) -> matrix_ok m = true.
+  Proof.
+    intros m Hnonnegative. unfold matrix_ok.
+    apply (fold_invariant _ _ (fun ok => ok = true)); [reflexivity|].
+    intros ok k row Hok. rewrite Hok, Hnonnegative. reflexivity.
+  Qed.
+
+  (** A successful full Floyd scan makes the incremental scan pass. *)
+  Lemma full_scan_implies_incremental_scan : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    matrix_ok (increment_matrix i j d seed) = true.
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (proj1 (fw_closed_success direct Hwfdirect Hscan)) as Hzero.
+    apply matrix_ok_of_all_nonnegative. intro k. unfold nonnegative.
+    destruct (entry next k k) as [value|] eqn:Hentry; [|reflexivity].
+    assert (Hsupport : In (K.encode k) (support (fw direct))).
+    { apply (proj2 (fw_support direct (K.encode k))).
+      apply (proj2 (direct_seed_support m i j d (K.encode k))).
+      apply (proj1 (support_increment i j d seed (K.encode k))).
+      eapply entry_source_support. exact Hentry. }
+    pose proof (Hzero k Hsupport) as Hdiag.
+    pose proof (fw_below_candidate_on_full_scan m i j d Hwf Hscan k k)
+      as Hbound.
+    change (RelationalPathBounds.below
+      (entry (fw direct) k k) (entry next k k)) in Hbound.
+    rewrite Hdiag, Hentry in Hbound.
+    apply Z.leb_le. exact Hbound.
+  Qed.
+
+  (** Tightening and strengthening respect pointwise matrix equality. *)
+  Lemma final_pass_entry_ext : forall a b, dbm_wf a -> dbm_wf b ->
+    (forall i j, entry a i j = entry b i j) ->
+    forall i j,
+      entry (strengthen (tighten a)) i j =
+      entry (strengthen (tighten b)) i j.
+  Proof.
+    intros a b Hwa Hwb Hentry.
+    assert (Htight : forall i j,
+      entry (tighten a) i j = entry (tighten b) i j).
+    { intros i j. rewrite (entry_tighten_exact a Hwa),
+        (entry_tighten_exact b Hwb). now rewrite Hentry. }
+    intros i j.
+    rewrite (entry_strengthen_exact (tighten a) (wf_tighten a Hwa)),
+      (entry_strengthen_exact (tighten b) (wf_tighten b Hwb)).
+    now rewrite (Htight i (flip i)), (Htight i j),
+      (Htight (flip j) j).
+  Qed.
+
+  (** Pointwise equality aligns the sparse and pivot-list diagonal scans. *)
+  Lemma matrix_ok_forallb_equal : forall ma mb direct, dbm_wf ma ->
+    dbm_wf direct ->
+    (forall i j, entry ma i j = entry mb i j) ->
+    (forall p, In p (support mb) -> In p (support direct)) ->
+    matrix_ok ma = forallb (fun k => nonnegative k mb) (keys direct).
+  Proof.
+    intros ma mb direct Hwfma Hwfdirect Heq Hsupport.
+    destruct (matrix_ok ma) eqn:Hma;
+      destruct (forallb (fun k => nonnegative k mb) (keys direct))
+        eqn:Hmb; try reflexivity.
+    - exfalso. apply Bool.not_true_iff_false in Hmb.
+      apply Hmb. apply forallb_forall. intros k Hkey.
+      unfold nonnegative. destruct (entry ma k k) as [z|] eqn:Hentry;
+        [|rewrite <- (Heq k k); now rewrite Hentry].
+      assert (Hrow : exists row, M.get k ma = Some row).
+      { unfold entry in Hentry. destruct (M.get k ma) as [row|] eqn:Hget;
+          [now exists row|discriminate]. }
+      destruct Hrow as [row Hrow].
+      pose proof (matrix_ok_row ma k row Hwfma Hma Hrow) as Hcheck.
+      unfold nonnegative in Hcheck. rewrite Hentry in Hcheck.
+      rewrite <- (Heq k k). now rewrite Hentry.
+    - exfalso. apply Bool.not_true_iff_false in Hma.
+      apply Hma. apply matrix_ok_of_all_nonnegative. intro k.
+      unfold nonnegative. destruct (entry ma k k) as [z|] eqn:Hentry;
+        [|reflexivity].
+      assert (Hmbentry : entry mb k k = Some z).
+      { now rewrite <- (Heq k k). }
+      assert (Hkey : In k (keys direct)).
+      { apply keys_cover; [exact Hwfdirect|].
+        apply Hsupport. eapply entry_source_support. exact Hmbentry. }
+      rewrite forallb_forall in Hmb.
+      pose proof (Hmb k Hkey) as Hcheck.
+      unfold nonnegative in Hcheck. now rewrite Hmbentry in Hcheck.
+  Qed.
+
+  Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
+    same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
+  Proof.
+    intros m i j d Hwf Htight.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed).
+    set (full := fw direct).
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    assert (Hscan_eq : matrix_ok next =
+      forallb (fun k => nonnegative k full) (keys direct)).
+    { destruct (matrix_ok next) eqn:Hcandidate;
+        destruct (forallb (fun k => nonnegative k full) (keys direct))
+          eqn:Hfull; try reflexivity.
+      - pose proof (incremental_candidate_fw_scan m i j d Hwf Htight
+          Hcandidate) as Hscan.
+        change (forallb (fun k => nonnegative k full) (keys direct) = true)
+          in Hscan. congruence.
+      - pose proof (full_scan_implies_incremental_scan m i j d Hwf Hfull)
+          as Hscan.
+        change (matrix_ok next = true) in Hscan. congruence. }
+    unfold incr_close, tclose. rewrite pivot_keys_eq_keys.
+    rewrite <- fw_keys.
+    change (same_entries
+      (if matrix_ok next then
+        if matrix_ok (strengthen (tighten next))
+          then Reached (strengthen (tighten next)) else Unreached
+       else Unreached)
+      (if forallb (fun k => nonnegative k full) (keys direct) then
+        if forallb (fun k => nonnegative k (strengthen (tighten full)))
+          (keys direct)
+          then Reached (strengthen (tighten full)) else Unreached
+       else Unreached)).
+    rewrite Hscan_eq.
+    destruct (forallb (fun k => nonnegative k full) (keys direct))
+      eqn:Hfullscan; [|exact I].
+    assert (Hcandidate : matrix_ok next = true).
+    { exact Hscan_eq. }
+    destruct (incremental_fw_equal m i j d Hwf Htight Hcandidate)
+      as [_ Hentry].
+    change (forall x y, entry next x y = entry full x y) in Hentry.
+    pose proof (final_pass_entry_ext next full Hwfnext
+      (wf_fw direct Hwfdirect) Hentry) as Hfinal.
+    assert (Hcheck : matrix_ok (strengthen (tighten next)) =
+      forallb (fun k => nonnegative k (strengthen (tighten full)))
+        (keys direct)).
+    { apply matrix_ok_forallb_equal.
+      - apply wf_strengthen, wf_tighten. exact Hwfnext.
+      - exact Hwfdirect.
+      - exact Hfinal.
+      - intros p Hp.
+        apply (proj1 (fw_support direct p)).
+        apply (proj1 (support_tighten (fw direct) p)).
+        apply (proj1 (support_strengthen (tighten (fw direct)) p)).
+        exact Hp. }
+    rewrite Hcheck.
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten full)))
+      (keys direct)); [exact Hfinal|exact I].
   Qed.
 
   (** A coherent triangle transports a unary half-bound across one edge. *)
@@ -6298,6 +7452,90 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros m Hwf Hcoh Hbar.
     destruct (tclose m) as [|m'] eqn:Hresult; [exact I|].
     exact (proj1 (proj1 (tclose_tight m m' Hwf Hcoh Hbar Hresult))).
+  Qed.
+
+  (** Rounding a unary entry down changes its absolute value by at most one. *)
+  Lemma even_bound_abs : forall d,
+    Z.abs_nat (even_bound d) <= Z.abs_nat d + 1.
+  Proof.
+    intro d.
+    replace (even_bound d) with (d + - (d mod 2))%Z.
+    - eapply Nat.le_trans; [apply rel_abs_add|].
+      pose proof (Z.mod_pos_bound d 2 ltac:(lia)) as Hrem.
+      assert (d mod 2 = 0 \/ d mod 2 = 1)%Z by lia.
+      destruct H as [Hzero|Hone]; rewrite ?Hzero, ?Hone;
+        cbn [Z.abs_nat]; lia.
+    - unfold even_bound. rewrite Z.div2_div.
+      pose proof (Z.div_mod d 2 ltac:(lia)) as Hdiv. lia.
+  Qed.
+
+  (** A rounded entry stays within one unit of the input magnitude bound. *)
+  Lemma tighten_entry_abs : forall m upper, dbm_wf m ->
+    (forall i j d, entry m i j = Some d -> Z.abs_nat d <= upper) ->
+    forall i j d, entry (tighten m) i j = Some d -> Z.abs_nat d <= upper + 1.
+  Proof.
+    intros m upper Hwf Hbound i j d Hentry.
+    rewrite entry_tighten_exact in Hentry by exact Hwf.
+    destruct (K.eqb j (flip i)) eqn:Hflip.
+    - destruct (entry m i j) as [old|] eqn:Hold; [|discriminate].
+      cbn [option_map] in Hentry. injection Hentry as <-.
+      pose proof (even_bound_abs old) as Hround.
+      pose proof (Hbound i j old Hold) as Hraw. lia.
+    - pose proof (Hbound i j d Hentry). lia.
+  Qed.
+
+  (** The support bound has enough room for one unary-rounding unit. *)
+  Lemma support_power_margin : forall m,
+    supp m * (2 ^ ell m - 1) + 1 < 2 ^ (ell m + Nat.log2 (supp m) + 1).
+  Proof.
+    intro m. set (s := supp m). set (p := 2 ^ ell m).
+    assert (Hp : 0 < p).
+    { unfold p. pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    assert (Hs : s < 2 ^ (Nat.log2 s + 1)).
+    { destruct s as [|s].
+      - pose proof (Nat.pow_nonzero 2 (Nat.log2 0 + 1) ltac:(lia)) as Hpower.
+        lia.
+      - pose proof (Nat.log2_spec (S s) ltac:(lia)) as [_ Hupper].
+        replace (Nat.log2 (S s) + 1) with (S (Nat.log2 (S s))) by lia.
+        exact Hupper. }
+    rewrite <- Nat.add_assoc.
+    rewrite (Nat.pow_add_r 2 (ell m) (Nat.log2 s + 1)). fold p.
+    set (q := 2 ^ (Nat.log2 s + 1)) in *.
+    assert (Hq : 2 <= q).
+    { unfold q. replace (Nat.log2 s + 1) with (S (Nat.log2 s)) by lia.
+      rewrite Nat.pow_succ_r by lia.
+      pose proof (Nat.pow_nonzero 2 (Nat.log2 s) ltac:(lia)). nia. }
+    assert (Hsub : p - 1 + 1 = p) by lia.
+    destruct s as [|s].
+    - nia.
+    - assert (Hprod : (S s + 1) * p <= q * p).
+      { apply Nat.mul_le_mono_r. lia. }
+      assert (Hleft : S s * (p - 1) + 1 < (S s + 1) * p) by nia.
+      nia.
+  Qed.
+
+  (** Successful integer closure fits the original support-sensitive bit budget. *)
+  Lemma bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
+    ell m' <= ell m + Nat.log2 (supp m) + 1.
+  Proof.
+    intros m m' Hwf Hresult.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m)) eqn:Hscan;
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    injection Hresult as <-.
+    eapply Nat.le_trans; [apply bits_strengthen_le|].
+    apply ell_bound. intros p q d Hraw.
+    destruct (wf_raw_entry_keys (tighten (fw m)) p q d
+      (wf_tighten (fw m) (wf_fw m Hwf)) Hraw) as [i [j [_ [_ Hentry]]]].
+    apply zbits_least.
+    eapply Nat.le_lt_trans; [|apply support_power_margin].
+    eapply tighten_entry_abs; [apply wf_fw; exact Hwf| |exact Hentry].
+    intros a b z Hz.
+    eapply path_invariant_entry_abs;
+      [apply fw_success_path_invariant; exact Hwf || exact Hscan|exact Hz].
   Qed.
 
   (** Original and final key lists cover the same supported vertices. *)
