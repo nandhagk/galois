@@ -702,6 +702,142 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Proof.
     intros [|la ha] [|lb hb]; cbn; intros; congruence.
   Qed.
+
+  (** A singleton interval contains its defining integer. *)
+  Lemma abst_sound : forall z, gamma (abst z) z.
+  Proof.
+    intro z. change (z <= z <= z)%Z. lia.
+  Qed.
+
+  (** Addition retains every sum of represented operands. *)
+  Lemma add_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (add a b) (x + y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Hx Hy; try contradiction.
+    change (in_bnd la ha x) in Hx. change (in_bnd lb hb y) in Hy.
+    destruct Hx as [Hla Hha], Hy as [Hlb Hhb]. unfold add, gamma, in_itv, in_bnd.
+    split.
+    - destruct la, lb; cbn in *; intuition lia.
+    - destruct ha, hb; cbn in *; intuition lia.
+  Qed.
+
+  (** Subtraction retains every difference of represented operands. *)
+  Lemma sub_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (sub a b) (x - y).
+  Proof.
+    intros [|la ha] [|lb hb] x y Hx Hy; try contradiction.
+    change (in_bnd la ha x) in Hx. change (in_bnd lb hb y) in Hy.
+    destruct Hx as [Hla Hha], Hy as [Hlb Hhb]. unfold sub, gamma, in_itv, in_bnd.
+    split.
+    - destruct la, hb; cbn in *; intuition lia.
+    - destruct ha, lb; cbn in *; intuition lia.
+  Qed.
+
+  (** Multiplication by a fixed integer is bounded by the endpoint products. *)
+  Lemma mul_endpoint_bounds : forall k lo hi v, (lo <= v <= hi)%Z ->
+    (Z.min (k * lo) (k * hi) <= k * v <= Z.max (k * lo) (k * hi))%Z.
+  Proof.
+    intros k lo hi v Hv. destruct (Z_le_gt_dec 0 k) as [Hpos|Hneg].
+    - rewrite Z.min_l, Z.max_r by nia. nia.
+    - rewrite Z.min_r, Z.max_l by nia. nia.
+  Qed.
+
+  (** The four corner products bound every product from two finite ranges. *)
+  Lemma mul_rectangle_bounds : forall la ha lb hb x y,
+    (la <= x <= ha)%Z -> (lb <= y <= hb)%Z ->
+    (Z.min (Z.min (la * lb) (la * hb)) (Z.min (ha * lb) (ha * hb)) <= x * y <=
+      Z.max (Z.max (la * lb) (la * hb)) (Z.max (ha * lb) (ha * hb)))%Z.
+  Proof.
+    intros la ha lb hb x y Hx Hy.
+    pose proof (mul_endpoint_bounds la lb hb y Hy) as [Hla Hha].
+    pose proof (mul_endpoint_bounds ha lb hb y Hy) as [Hlb Hhb].
+    assert (Hmid : (Z.min (la * y) (ha * y) <= x * y <= Z.max (la * y) (ha * y))%Z).
+    { rewrite (Z.mul_comm la y), (Z.mul_comm ha y), (Z.mul_comm x y).
+      apply mul_endpoint_bounds. exact Hx. }
+    destruct Hmid as [Hlower Hupper]. split.
+    - eapply Z.le_trans; [|exact Hlower]. apply Z.min_glb.
+      + eapply Z.le_trans; [apply Z.le_min_l|exact Hla].
+      + eapply Z.le_trans; [apply Z.le_min_r|exact Hlb].
+    - eapply Z.le_trans; [exact Hupper|]. apply Z.max_lub.
+      + eapply Z.le_trans; [exact Hha|apply Z.le_max_l].
+      + eapply Z.le_trans; [exact Hhb|apply Z.le_max_r].
+  Qed.
+
+  (** Multiplication retains every product of represented operands. *)
+  Lemma mul_sound : forall a b x y,
+    gamma a x -> gamma b y -> gamma (mul a b) (x * y).
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]] x y Hx Hy;
+      try contradiction; try apply gamma_top.
+    change (la <= x <= ha)%Z in Hx. change (lb <= y <= hb)%Z in Hy.
+    change (Z.min (Z.min (la * lb) (la * hb)) (Z.min (ha * lb) (ha * hb)) <= x * y <=
+      Z.max (Z.max (la * lb) (la * hb)) (Z.max (ha * lb) (ha * hb)))%Z.
+    now apply mul_rectangle_bounds.
+  Qed.
+
+  (** Point recognition identifies every integer represented by the interval. *)
+  Lemma point_sound : forall a x c, gamma a x -> point a = Some c -> x = c.
+  Proof.
+    intros [|[|lo|] [|hi|]] x c Hx Hpoint; cbn in Hpoint; try discriminate.
+    destruct (Z.eqb lo hi) eqn:Heq; [|discriminate].
+    injection Hpoint as Hc. subst c. apply Z.eqb_eq in Heq.
+    change (lo <= x <= hi)%Z in Hx. lia.
+  Qed.
+
+  (** Backward addition retains both operands of a represented sum. *)
+  Lemma add_back_sound : forall r a b x y,
+    gamma a x -> gamma b y -> gamma r (x + y) ->
+    gamma (fst (add_back r a b)) x /\ gamma (snd (add_back r a b)) y.
+  Proof.
+    intros r a b x y Ha Hb Hr. split; apply gamma_meet; try assumption.
+    - replace x with ((x + y) - y)%Z by lia. now apply sub_sound.
+    - replace y with ((x + y) - x)%Z by lia. now apply sub_sound.
+  Qed.
+
+  (** Backward subtraction retains both operands of a represented difference. *)
+  Lemma sub_back_sound : forall r a b x y,
+    gamma a x -> gamma b y -> gamma r (x - y) ->
+    gamma (fst (sub_back r a b)) x /\ gamma (snd (sub_back r a b)) y.
+  Proof.
+    intros r a b x y Ha Hb Hr. split; apply gamma_meet; try assumption.
+    - replace x with ((x - y) + y)%Z by lia. now apply add_sound.
+    - replace y with (x - (x - y))%Z by lia. now apply sub_sound.
+  Qed.
+
+  (** Multiplication preimages retain an operand of a represented product. *)
+  Lemma mul_preimage_sound : forall r b x y,
+    gamma b y -> gamma r (x * y) -> gamma (mul_preimage r b) x.
+  Proof.
+    intros r b x y Hb Hr. unfold mul_preimage.
+    destruct (point b) as [z|] eqn:Hpoint; [|apply gamma_top].
+    pose proof (point_sound b y z Hb Hpoint) as Hy. subst y.
+    destruct (Z.eqb z 1) eqn:Hone.
+    - apply Z.eqb_eq in Hone. subst z. now rewrite Z.mul_1_r in Hr.
+    - destruct (Z.eqb z (-1)) eqn:Hneg; [|apply gamma_top].
+      apply Z.eqb_eq in Hneg. subst z.
+      replace x with (0 - x * (-1))%Z by ring.
+      apply sub_sound; [apply abst_sound|exact Hr].
+  Qed.
+
+  (** Backward multiplication retains both operands of a represented product. *)
+  Lemma mul_back_sound : forall r a b x y,
+    gamma a x -> gamma b y -> gamma r (x * y) ->
+    gamma (fst (mul_back r a b)) x /\ gamma (snd (mul_back r a b)) y.
+  Proof.
+    intros r a b x y Ha Hb Hr. split; apply gamma_meet; try assumption.
+    - eapply mul_preimage_sound; eassumption.
+    - eapply mul_preimage_sound; [exact Ha|]. now rewrite Z.mul_comm.
+  Qed.
+
+  (** Defined unsigned division and remainder retain nonnegative inputs and positive divisors. *)
+  Lemma unsigned_back_sound : forall a b x y,
+    gamma a x -> gamma b y -> (0 <= x)%Z -> (0 < y)%Z ->
+    gamma (fst (unsigned_back a b)) x /\ gamma (snd (unsigned_back a b)) y.
+  Proof.
+    intros a b x y Ha Hb Hx Hy. split; apply gamma_meet; try assumption.
+    - change ((0 <= x)%Z /\ True). tauto.
+    - change ((1 <= y)%Z /\ True). split; [lia|trivial].
+  Qed.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
