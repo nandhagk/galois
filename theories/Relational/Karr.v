@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith QArith Qfield Bool Lia Ring Psatz Permutation.
+From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring Psatz Permutation.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -4505,19 +4505,25 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
       (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + X.bits x + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   (** Havoc charges row normalization and elimination of the selected variable. *)
   Lemma F_havoc_work : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (n s + 1)^3 * (ellB (n s + 1) (nell s + X.bits x) + 1)^2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption charges row normalization and elimination with the new rows. *)
   Lemma F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) = N.of_nat (terms s * (nell s + 1) +
       (n s + fold_right Nat.add 0%nat (map tsize es) + 1)^3 *
         (ellB (n s + fold_right Nat.add 0%nat (map tsize es) + 1)
           (nell s + F.bits_es g es) + 1)^2) + F.T_atoms_of g es)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   (** Top has no repeated coefficients. *)
   Lemma normal_top : normal_s top.
   Proof. Admitted. (* STUB *)
@@ -4542,7 +4548,9 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   (** This widening has no repeated threshold search. *)
   Lemma F_wunits : forall s, wunits s = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Definition in_span (P : list (lcons X.t)) (r : lcons X.t) : Prop :=
     In r P \/
     exists ms s sc, C.combine P ms = Some s /\ lrel s = REq /\ (0 < sc)%Z /\
@@ -4879,8 +4887,31 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact entail_cert_checked.
   Qed.
   (** State size charges all stored numeric data. *)
+  Lemma ellB_mono : forall dim dim' bits bits', dim <= dim' -> bits <= bits' ->
+    ellB dim bits <= ellB dim' bits'.
+  Proof.
+    intros dim dim' bits bits' Hdim Hbits. unfold ellB.
+    apply Nat.mul_le_mono; [exact Hdim|].
+    pose proof (Nat.log2_le_mono dim dim' Hdim). lia.
+  Qed.
+
+  Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
+  Proof.
+    intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
+    apply Nat.add_le_mono; [apply Nat.add_le_mono|lia].
+    - apply Nat.mul_le_mono; [apply Nat.pow_le_mono_l; lia|].
+      apply Nat.pow_le_mono_l.
+      pose proof (ellB_mono (m + 1) (n + 1) m n ltac:(lia) Hle). lia.
+    - now apply Nat.pow_le_mono_l.
+  Qed.
+
   Lemma lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size. destruct (Nat.le_ge_cases (mu a) (mu b)) as [Hle|Hle].
+    - pose proof (lat_mono (mu a + mu b) (2 * mu b) ltac:(lia)). lia.
+    - pose proof (lat_mono (mu a + mu b) (2 * mu a) ltac:(lia)). lia.
+  Qed.
+
   Lemma T1_leb : forall a b,
     (T_leb a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   Proof. Admitted. (* STUB *)
@@ -4894,12 +4925,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_narrow a b <= k_karr * N.of_nat (lat (mu a + mu b)))%N.
   Proof. Admitted. (* STUB *)
   Lemma F_size : forall s, size s = lat (2 * mu s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Range work charges the numeric query and its linearization. *)
   Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat (terms s * (nell s + 1) + (n s + tsize e + 1)^3 *
       (ellB (n s + tsize e + 1) (nell s + F.bits_e e) + 1)^2) + F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Lemma F_range_bits : forall e s, range_bits e s = range_work e s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 End KarrT.
