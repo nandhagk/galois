@@ -1404,27 +1404,46 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   Proof. Admitted. (* STUB *)
   (** Interval concretization is inclusive endpoint membership. *)
   Lemma F1_gamma : forall a z, gamma a z <-> in_itv a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Widening uses the count of thresholds beyond each finite endpoint. *)
   Lemma F2_wrank : forall ts a, wrank ts a = interval_wrank ts a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Each endpoint contributes at most one plus the threshold count. *)
   Lemma F3_wrank_le : forall ts a, wrank ts a <= 2 * (length (T.vals ts) + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts [|lo hi]; [cbn; lia|].
+    change (upper_rank (T.vals ts) hi + lower_rank (T.vals ts) lo <=
+      2 * (length (T.vals ts) + 1)).
+    destruct lo as [|lo|], hi as [|hi|]; cbn [upper_rank lower_rank];
+      try pose proof (lower_count_bounded (T.vals ts) lo);
+      try pose proof (upper_count_bounded (T.vals ts) hi); lia.
+  Qed.
   (** Raising a finite upper endpoint to its next threshold removes one rank unit. *)
   Lemma F4_count_gt : forall ts z u, In u (T.vals ts) ->
     (z < u)%Z -> count_gt ts u < count_gt ts z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts z u Hin Hlt. exact (upper_count_strict (T.vals ts) z u Hin Hlt).
+  Qed.
   (** Lowering a finite lower endpoint to its previous threshold removes one rank unit. *)
   Lemma F5_count_lt : forall ts z u, In u (T.vals ts) ->
     (u < z)%Z -> count_lt ts u < count_lt ts z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ts z u Hin Hlt. exact (lower_count_strict (T.vals ts) u z Hin Hlt).
+  Qed.
   (** Widening parameter size pays for a threshold search path. *)
   Lemma F_wsize : forall ts, wsize ts = (T.depth ts + 1) * (T.tree_bits ts + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Shift transfer computes finite endpoints below the cutoff and a sound infinity above it. *)
   Lemma F_shl_cutoff : forall a b, shl a b = shift_cutoff a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Viewed forward transfer dispatches to the proved interval primitives. *)
   Lemma F_forward_view : forall o xs, forward o xs =
     match L.view o, xs with
@@ -1440,13 +1459,17 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     | ZCmp c, a :: b :: nil => cmp c a b
     | _, _ => top
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Viewed strict guards dispatch to unsigned comparison refinement. *)
   Lemma F_guard_lt : forall g a b, L.gview g = ZGuardUlt ->
     guard g (a :: b :: nil) =
       let result := ult_back (I (Fin 1) (Fin 1)) a b in
       fst result :: snd result :: nil.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g a b Hview. unfold guard. now rewrite Hview.
+  Qed.
   (** Cutoff shifting keeps the published quadratic endpoint bound. *)
   Lemma T3_shl : forall a b,
     (T_shl a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
@@ -1454,80 +1477,125 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Addition retains every sum of represented operands. *)
   Lemma F6_add_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (add a b) (x + y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact add_sound.
+  Qed.
   (** Subtraction retains every difference of represented operands. *)
   Lemma F7_sub_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (sub a b) (x - y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact sub_sound.
+  Qed.
   (** Multiplication retains every product of represented operands. *)
   Lemma F8_mul_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (mul a b) (x * y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact mul_sound.
+  Qed.
   (** Unsigned division retains each defined quotient of nonnegative operands. *)
   Lemma F9_udiv_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (udiv a b) (Z.div x y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b x y Ha Hb _ _. now apply raw_udiv_sound.
+  Qed.
   (** Unsigned remainder retains each defined remainder of nonnegative operands. *)
   Lemma F10_urem_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= x)%Z -> (0 < y)%Z -> in_itv (urem a b) (Z.modulo x y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b x y Ha Hb _ _. now apply raw_urem_sound.
+  Qed.
   (** Bitwise conjunction retains every represented pair of operands. *)
   Lemma F11_and_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (bitand a b) (Z.land x y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact raw_bitand_sound.
+  Qed.
   (** Bitwise disjunction retains every represented pair of operands. *)
   Lemma F12_or_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (bitor a b) (Z.lor x y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact raw_bitor_sound.
+  Qed.
   (** Left shifting retains represented operands for every nonnegative shift. *)
   Lemma F13_shl_sound : forall a b x y, in_itv a x -> in_itv b y ->
     (0 <= y)%Z -> in_itv (shl a b) (Z.shiftl x y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact raw_shl_sound.
+  Qed.
   (** Unsigned comparison refinement descends in both operands. *)
   Lemma F22_ult_back_lower : forall r a b,
     leb (fst (ult_back r a b)) a = true /\ leb (snd (ult_back r a b)) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact ult_back_refines.
+  Qed.
   (** Comparison contains the Boolean result as zero or one. *)
   Lemma F14_cmp_sound : forall c a b x y, in_itv a x -> in_itv b y ->
     in_itv (cmp c a b) (match Z.compare x y, c with Eq, Eq | Lt, Lt | Gt, Gt => 1 | _, _ => 0 end).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c a b x y Ha Hb. pose proof (raw_cmp_sound c a b x y Ha Hb) as Hcmp.
+    destruct (Z.compare x y), c; exact Hcmp.
+  Qed.
   (** Signed splitting retains the signed view of every normalized word. *)
   Lemma F15_signed_split_sound : forall w a x, in_itv a x ->
     (0 <= x < 2 ^ Zpos w)%Z ->
     exists b, In b (signed_split w a) /\
       in_itv b (if (x <? 2 ^ (Zpos w - 1))%Z then x else x - 2 ^ Zpos w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x Ha Hword. unfold signed_split.
+    set (m := (2 ^ Zpos w)%Z) in *.
+    set (h := (2 ^ (Zpos w - 1))%Z).
+    destruct (Z.ltb x h) eqn:Hhalf.
+    - exists (meet a (I (Fin 0) (Fin (h - 1)))). split; [now left|].
+      apply gamma_meet; [exact Ha|]. change (0 <= x <= h - 1)%Z.
+      apply Z.ltb_lt in Hhalf. lia.
+    - exists (sub (meet a (I (Fin h) (Fin (m - 1)))) (abst m)).
+      split; [right; now left|]. apply sub_sound; [|apply abst_sound].
+      apply gamma_meet; [exact Ha|]. change (h <= x <= m - 1)%Z.
+      apply Z.ltb_ge in Hhalf. lia.
+  Qed.
   (** Backward addition retains operands consistent with its result. *)
   Lemma F16_add_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x + y) ->
     in_itv (fst (add_back r a b)) x /\ in_itv (snd (add_back r a b)) y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact add_back_sound.
+  Qed.
   (** Backward subtraction retains operands consistent with its result. *)
   Lemma F17_sub_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x - y) ->
     in_itv (fst (sub_back r a b)) x /\ in_itv (snd (sub_back r a b)) y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact sub_back_sound.
+  Qed.
   (** Backward multiplication retains operands consistent with its result. *)
   Lemma F18_mul_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> in_itv r (x * y) ->
     in_itv (fst (mul_back r a b)) x /\ in_itv (snd (mul_back r a b)) y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact mul_back_sound.
+  Qed.
   (** Backward division retains operands consistent with a defined unsigned quotient. *)
   Lemma F19_udiv_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 < y)%Z -> in_itv r (Z.div x y) ->
     in_itv (fst (udiv_back r a b)) x /\ in_itv (snd (udiv_back r a b)) y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b x y Ha Hb Hx Hy _. now apply unsigned_back_sound.
+  Qed.
   (** Backward remainder retains operands consistent with a defined unsigned remainder. *)
   Lemma F20_urem_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 < y)%Z -> in_itv r (Z.modulo x y) ->
     in_itv (fst (urem_back r a b)) x /\ in_itv (snd (urem_back r a b)) y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b x y Ha Hb Hx Hy _. now apply unsigned_back_sound.
+  Qed.
   (** Backward unsigned comparison retains operands with the specified Boolean result. *)
   Lemma F21_ult_back_sound : forall r a b x y,
     in_itv a x -> in_itv b y -> (0 <= x)%Z -> (0 <= y)%Z ->
     in_itv r (if (x <? y)%Z then 1 else 0) ->
     in_itv (fst (ult_back r a b)) x /\ in_itv (snd (ult_back r a b)) y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r a b x y Ha Hb _ _ Hr. now apply ult_back_sound.
+  Qed.
   (** Endpoint arithmetic bounds multiplication before dispatch overhead. *)
   Lemma T1_mul : forall a b, (T_mul a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
   Proof. Admitted. (* STUB *)
