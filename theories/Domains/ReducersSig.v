@@ -223,9 +223,9 @@ Module Type INTERVAL_CONGR_PIN (L : WORD_LANGUAGE)
   (** The left exchange meets the interval with inward residue rounding at the same width. *)
   Parameter F_to_left : forall w a b, R.to_left (TVal w a, TVal w b) =
     (TVal w (I.pmeet w a (congr_interval w a b)), TVal w b).
-  (** The right exchange meets the congruence with the interval's singleton fact. *)
+  (** The right exchange meets the congruence with the clipped interval's singleton fact. *)
   Parameter F_to_right : forall w a b, R.to_right (TVal w a, TVal w b) =
-    (TVal w a, TVal w (G.pmeet w b (interval_congr a))).
+    (TVal w a, TVal w (G.pmeet w b (interval_congr (interval_word_clip w a)))).
   (** Pairs of other shapes are left unchanged. *)
   Parameter F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     R.to_left x = x /\ R.to_right x = x.

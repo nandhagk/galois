@@ -95,6 +95,19 @@ Module Type DISJUNCTION_TIME (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Parameter T_compact : nat -> list S.t -> N.
   Parameter T_collapse : list S.t -> N.
   Parameter c_disjunction : N.
+  (** Assignment work is the component work of every alternative. *)
+  Parameter assign_work_alternatives : forall x e d, assign_work x e d =
+    fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
+  (** Havoc work is the component work of every alternative. *)
+  Parameter havoc_work_alternatives : forall x d, havoc_work x d =
+    fold_right Nat.add 0%nat (map (fun s => S.havoc_work x s + 1) (proj1_sig d)).
+  (** Assumption work is the component work of every alternative. *)
+  Parameter assume_work_alternatives : forall g es d, assume_work g es d =
+    fold_right Nat.add 0%nat (map (fun s => S.assume_work g es s + 1) (proj1_sig d)).
+  (** Evaluation work is the component work and the value size of every alternative. *)
+  Parameter eval_work_alternatives : forall e d, eval_work e d =
+    fold_right Nat.add 0%nat (map (fun s =>
+      S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
   (** Assignment charges each alternative independently. *)
   Parameter T_assign_alternatives : forall x e d, (T_assign x e d <= c_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_assign x e s + 1) (proj1_sig d)) + 1))%N.
@@ -135,9 +148,15 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (P : SharedDisjunction.DISJUNCTION_T S JS C)
     (Import D : DISJUNCTION_T X L V S JS JU C P).
   Parameter k_disjunction : N.
+  (** The time of the value joins of evaluation, along the actual accumulator. *)
+  Definition eval_joins (e : term L.op X.t) (xs : list S.t) : N :=
+    fst (fold_left (fun acc s =>
+      ((fst acc + V.T_join (snd acc) (S.eval e s) + 1)%N,
+       V.join (snd acc) (S.eval e s))) xs (0%N, V.bot)).
   (** Unstable widening widens the first nonbottom alternative with every uncovered one. *)
   Parameter F2_widen : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
+    if is_bot a then proj1_sig b else
     if forallb S.is_bot (proj1_sig a) then [S.top] else
     replace_first S.is_bot
       (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
@@ -155,9 +174,12 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Assumption maps its transfer over the alternatives. *)
   Parameter F6_assume : forall g es d,
     proj1_sig (assume g es d) = map (S.assume g es) (proj1_sig d).
+  (** Evaluation joins the values of the alternatives from bottom. *)
+  Parameter F7_eval : forall e d,
+    eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
   (** Widening charges the order, the scans, one collapse and one component widening. *)
   Parameter T1_widen : forall p a b, (T_widen p a b <= k_disjunction *
-    (T_leb b a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
+    (T_leb b a + T_is_bot a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
      fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
      fold_right N.add 0%N (map (fun y => fold_right N.add 0%N
        (map (fun x => S.T_leb y x + 1) (proj1_sig a))) (proj1_sig b)) +
@@ -165,6 +187,14 @@ Module Type DISJUNCTION_PLAN (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
        let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
        T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
        (proj1_sig a))))%N.
+  (** Evaluation charges each alternative's evaluation and the value joins. *)
+  Parameter T2_eval : forall e d, (T_eval e d <= k_disjunction *
+    (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
+     eval_joins e (proj1_sig d) + 1))%N.
+  (** The value joins of a capped list charge the sizes of the evaluated values. *)
+  Parameter T3_eval_joins : forall e xs, length xs <= C.k ->
+    (eval_joins e xs <= k_disjunction * N.of_nat (fold_right Nat.add 0%nat
+      (map (fun s => (V.size (S.eval e s) + 1)%nat) xs) + 1))%N.
 End DISJUNCTION_PLAN.
 
 Module Type DISJUNCTION_ALL (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)

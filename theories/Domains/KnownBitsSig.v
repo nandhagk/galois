@@ -6,7 +6,7 @@
 
 From Stdlib Require Import ZArith List Bool.
 From Argent Require Import Time Std BigO.
-From Galois.Bits Require Import Word Op.
+From Galois.Bits Require Import Word Op Fun.
 From Galois.Domains Require Import WordSig.
 Local Open Scope nat_scope.
 
@@ -189,6 +189,8 @@ Module Type KNOWN_BITS_T (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) :=
 
 Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     (Import K : KNOWN_BITS_T L C).
+  Parameter tnum_scalar_value : Op.op -> positive -> Z -> Z -> Z.
+  Parameter T_tnum_scalar_value : Op.op -> positive -> Z -> Z -> N.
   Parameter mul_step : positive -> tnum -> tnum -> Z * tnum -> (Z * tnum) + tnum.
   Parameter T_mul_step : positive -> tnum -> tnum -> Z * tnum -> N.
   Parameter acc_step : positive -> tnum -> tnum -> Z * tnum -> (Z * tnum) + tnum.
@@ -196,6 +198,17 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Parameter k_mul_step : N.
   (** The mask agrees with the modular word reduction. *)
   Parameter F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
+  (** Masked scalar shifts agree with the word operations for a nonnegative amount. *)
+  Parameter F0_scalar_value : forall o w k x, (0 <= k)%Z ->
+    tnum_scalar_value o w k x =
+      match o with
+      | Op.bvshl => wshl w x (Z.min k (Zpos w))
+      | Op.bvlshr => wlshr w x (Z.min k (Zpos w))
+      | Op.bvashr => washr w x (Z.min k (Zpos w))
+      | Op.bvrotl => wrotl w x (k mod Zpos w)
+      | Op.bvrotr => wrotl w x ((- k) mod Zpos w)
+      | _ => L.wrap w x
+      end.
   (** Remaining widening credit counts known positions at nonbottoms. *)
   Parameter F3_rank : forall q w a, pis_bot w a = false -> pwrank q w a = known_count w a.
   (** At most one fact per position contributes nonbottom widening credit. *)
@@ -208,12 +221,18 @@ Module Type KNOWN_BITS_PLAN (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     | inl (j, s) => j = (i + 1)%Z /\ pgamma w s (L.wrap w (x * (y mod 2 ^ j)))
     | inr s => pgamma w s (L.wrap w (x * y))
     end.
-  (** A stage step keeps its accumulator within the width. *)
+  (** A stage step keeps a bounded accumulator within the width. *)
   Parameter F8_mul_step_bits : forall w a b i r j s,
+    tnum_bits r <= 2 * Pos.to_nat w ->
     mul_step w a b (i, r) = inl (j, s) -> tnum_bits s <= 2 * Pos.to_nat w.
-  (** An accumulating step keeps its accumulator within the width. *)
+  (** An accumulating step keeps a bounded accumulator within the width. *)
   Parameter F9_acc_step_bits : forall w a b i r j s,
+    tnum_bits r <= 2 * Pos.to_nat w ->
     acc_step w a b (i, r) = inl (j, s) -> tnum_bits s <= 2 * Pos.to_nat w.
+  (** One masked scalar shift reads the width, the amount and the raw value once. *)
+  Parameter T0_scalar_value : forall o w k x,
+    (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
+      (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
   (** The mask reads the width once and the raw integer once. *)
   Parameter T0_tnum_wrap : forall w z,
     (T_tnum_wrap w z <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.

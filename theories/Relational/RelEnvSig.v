@@ -78,6 +78,19 @@ Module Type REL_ENV_TIME (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DO
   (** Evaluation work counts the query, its endpoints, value evaluation and its result. *)
   Parameter eval_work_components : forall e r s, eval_work e (r, s) =
     R.range_work e r + R.range_bits e r + E.eval_work e s + V.size (E.eval e s) + 1.
+  (** Assignment work adds the work of both components. *)
+  Parameter assign_work_components : forall x e r s,
+    assign_work x e (r, s) = R.assign_work x e r + E.assign_work x e s.
+  (** Havoc work adds the work of both components. *)
+  Parameter havoc_work_components : forall x r s,
+    havoc_work x (r, s) = R.havoc_work x r + E.havoc_work x s.
+  (** Assumption work adds the work of both components. *)
+  Parameter assume_work_components : forall g es r s,
+    assume_work g es (r, s) = R.assume_work g es r + E.assume_work g es s.
+  (** Widening visits the units of both components. *)
+  Parameter wunits_components : forall r s, wunits (r, s) = R.wunits r + E.wunits s.
+  (** The widening parameter is measured by its two component parameters. *)
+  Parameter wsize_components : forall p, wsize p = R.wsize (fst p) + E.wsize (snd p).
   (** The shared constant pays for the shared order and join. *)
   Parameter c_lat_pair : (P.c_lat <= c_lat)%N.
   (** The shared lattice measures a pair by its two components. *)
