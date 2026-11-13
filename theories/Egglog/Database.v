@@ -5141,6 +5141,63 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - repeat split; reflexivity.
   Qed.
 
+  (** Deletion preserves every premise for a later kind-correct insertion. *)
+  Lemma row_delete_kind_ok : forall db f k g args output,
+    kind_ok (row_delete f k db) g args output <-> kind_ok db g args output.
+  Proof.
+    intros db f k g args output. unfold kind_ok, allocated, slots_fit.
+    now rewrite row_delete_ids, row_delete_slots, row_delete_kind.
+  Qed.
+
+  (** Every actual row of a well-formed database satisfies the insertion shape conditions. *)
+  Lemma wf_row_kind_ok : forall db f k o, wf db -> row (view db) f k o -> kind_ok db f k o.
+  Proof.
+    intros db f k o Hwf Hrow. split.
+    - intros i Hin. exact (wf_row_ids db Hwf f k o i Hrow Hin).
+    - split; [exact (wf_row_slots db Hwf f k o Hrow) |].
+      exact (wf_row_kind db Hwf f k o Hrow).
+  Qed.
+
+  (** A row of representative identifiers is fixed by the actual guarded normalizer. *)
+  Lemma normal_row_fixed : forall db k o,
+    UnionFind.wf (db_forest db) ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    normal_key db k = k /\ option_map (normal_cell db) o = o.
+  Proof.
+    intros db k o Hforest Hfixed.
+    assert (Hcell : forall c, In c (k ++ option_list o) -> normal_cell db c = c).
+    { intros [i | v] Hin; [| reflexivity]. cbn [normal_cell].
+      destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)); try reflexivity;
+        rewrite (UnionFind.find_repr i (db_forest db) Hforest); f_equal; exact (Hfixed i Hin). }
+    split.
+    - unfold normal_key. rewrite <- (map_id k) at 2. apply map_ext_in.
+      intros c Hin. apply Hcell. apply in_or_app. now left.
+    - destruct o as [c |]; [| reflexivity]. cbn [option_map]. f_equal.
+      apply Hcell. apply in_or_app. right. cbn [option_list In]. now left.
+  Qed.
+
+  (** Canonical rows are skipped even when an active batch prevents public well-formedness. *)
+  Lemma repair_current_canonical : forall db f k,
+    UnionFind.wf (db_forest db) -> canonical db -> repair_current f k db = db.
+  Proof.
+    intros db f k Hforest Hcanonical.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| now apply repair_current_absent].
+    destruct (normal_row_fixed db k o Hforest (Hcanonical f k o Hrow)) as [Hkey Houtput].
+    now apply repair_current_fixed with (o := o).
+  Qed.
+
+  (** A repair begun in a public well-formed state preserves its complete database invariant. *)
+  Lemma repair_current_wf : forall db f k, wf db -> wf (repair_current f k db).
+  Proof.
+    intros db f k Hwf. unfold repair_current.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| exact Hwf].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hwf |].
+    apply wf_put; [now apply row_delete_wf |]. apply row_delete_kind_ok.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    apply kind_ok_canon; [exact Hwf |]. now apply wf_row_kind_ok.
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
