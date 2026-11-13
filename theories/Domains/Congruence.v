@@ -425,6 +425,36 @@ Module CongruenceCRT.
   Qed.
 End CongruenceCRT.
 
+(** Raw integer shifting agrees with the bounded word shift on normalized inputs. *)
+Lemma normalized_wshl : forall w x y, is_word w x -> is_word w y ->
+  wrap w (Z.shiftl x y) = wshl w x y.
+Proof.
+  intros w x y Hx Hy.
+  rewrite Z.shiftl_mul_pow2 by (destruct Hy; lia).
+  unfold wshl. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
+  destruct (Zpos w <=? y) eqn:Hlarge; [| reflexivity].
+  apply Z.leb_le in Hlarge.
+  replace y with (Zpos w + (y - Zpos w)) by lia.
+  rewrite Z.pow_add_r by lia. unfold wrap.
+  replace (x * (2 ^ Zpos w * 2 ^ (y - Zpos w))) with
+    ((x * 2 ^ (y - Zpos w)) * modulus w) by (unfold modulus; ring).
+  apply Z.mod_mul. apply modulus_nonzero.
+Qed.
+
+(** Raw integer remainder agrees with unsigned word remainder on normalized inputs. *)
+Lemma normalized_wurem : forall w x y, is_word w x -> is_word w y ->
+  wrap w (x mod y) = wurem w x y.
+Proof.
+  intros w x y Hx Hy.
+  rewrite wurem_mod, (wrap_id w x Hx), (wrap_id w y Hy).
+  apply wrap_id. destruct (Z.eq_dec y 0) as [-> | Hnonzero].
+  - now rewrite Z.mod_0_r.
+  - destruct Hy as [Hy Hbound].
+    pose proof (Z.mod_pos_bound x y ltac:(lia)) as Hremainder.
+    unfold is_word. lia.
+Qed.
+
+
 Module CongruenceCode (L : WORD_LANGUAGE_OPS) <: CONGRUENCE_OPS L.
   Definition p := congr.
   Definition wordb w z := (0 <=? z) && (z <? modulus w).
@@ -971,36 +1001,6 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     intros w [| m r] z Ha; [contradiction | exact (proj1 Ha)].
   Qed.
 
-  (** Raw integer shifting agrees with the bounded word shift on normalized inputs. *)
-  Lemma normalized_wshl : forall w x y, is_word w x -> is_word w y ->
-    wrap w (Z.shiftl x y) = wshl w x y.
-  Proof.
-    intros w x y Hx Hy.
-    rewrite Z.shiftl_mul_pow2 by (destruct Hy; lia).
-    unfold wshl. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
-    destruct (Zpos w <=? y) eqn:Hlarge; [| reflexivity].
-    apply Z.leb_le in Hlarge.
-    replace y with (Zpos w + (y - Zpos w)) by lia.
-    rewrite Z.pow_add_r by lia. unfold wrap.
-    replace (x * (2 ^ Zpos w * 2 ^ (y - Zpos w))) with
-      ((x * 2 ^ (y - Zpos w)) * modulus w) by (unfold modulus; ring).
-    apply Z.mod_mul. apply modulus_nonzero.
-  Qed.
-
-  (** Raw integer remainder agrees with unsigned word remainder on normalized inputs. *)
-  Lemma normalized_wurem : forall w x y, is_word w x -> is_word w y ->
-    wrap w (x mod y) = wurem w x y.
-  Proof.
-    intros w x y Hx Hy.
-    rewrite wurem_mod, (wrap_id w x Hx), (wrap_id w y Hy).
-    apply wrap_id. destruct (Z.eq_dec y 0) as [-> | Hnonzero].
-    - now rewrite Z.mod_0_r.
-    - destruct Hy as [Hy Hbound].
-      pose proof (Z.mod_pos_bound x y ltac:(lia)) as Hremainder.
-      unfold is_word. lia.
-  Qed.
-
-
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
@@ -1304,12 +1304,128 @@ End Congruence.
 
 Module CongruenceTable (L : WORD_LANGUAGE) (W : CONGRUENCE L) <: CONGRUENCE_TABLE L W.
   Include CongruenceTableCode L W.
+
+  (** Widening the word range preserves the same residue membership. *)
+  Local Lemma zext_sound : forall source target a x,
+    (source <= target)%positive -> W.pgamma source a x ->
+    W.pgamma target (W.congr_norm target a) x.
+  Proof.
+    intros source target a x Hwidth Ha.
+    apply (proj2 (W.F2_norm_gamma target a x)).
+    apply (proj2 (W.F1_gamma target a x)).
+    apply (proj1 (W.F1_gamma source a x)) in Ha.
+    destruct a as [| m r]; [contradiction |].
+    destruct Ha as [Hword Hresidue]. split; [| exact Hresidue].
+    eapply word_widen; eassumption.
+  Qed.
+
+  (** Unary entries preserve normalized negation, extension and truncation. *)
+  Local Lemma unary_sound : forall o rw w a cs z r,
+    wfwd o rw [(w, a)] = Some r ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) [(w, a)] cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
+  Proof.
+    intros o rw w a cs z r Hf Hcs Heval.
+    inversion Hcs as [| ? [v x] ? ? Hhead Hnil]; subst.
+    inversion Hnil; subst. destruct Hhead as [Hv [Hx Ha]].
+    cbn [fst snd] in Hv, Hx, Ha. subst v.
+    change (eval_op o [(w, x)] = Some (rw, z)) in Heval.
+    destruct o; cbn [wfwd] in Hf; try discriminate.
+    - pose proof (eq_trans
+        (eq_sym (eval_op_fun1 bvneg w x UNeg eq_refl)) Heval) as Hresult.
+      inversion Hresult; subst rw z. rewrite Pos.eqb_refl in Hf.
+      injection Hf as <-. cbn [eval_unary_tag]. rewrite wneg_value.
+      now apply W.F6_congr_neg_sound.
+    - rewrite eval_zext_value in Heval. inversion Heval; subst rw z.
+      rewrite (proj2 (Pos.leb_le _ _)) in Hf by apply width_add_le.
+      injection Hf as <-. rewrite (wrap_id w x Hx).
+      eapply zext_sound; [apply width_add_le | exact Ha].
+    - rewrite eval_op_trunc in Heval.
+      match type of Heval with
+      | context [if Pos.leb ?target w then _ else _] =>
+        destruct (Pos.leb target w) eqn:Hwidth
+      end; [| discriminate].
+      inversion Heval; subst rw z. injection Hf as <-.
+      rewrite (wrap_id w x Hx). apply W.F10_congr_project_sound.
+      + now apply Pos.leb_le.
+      + exact Ha.
+  Qed.
+
+  (** Binary entries preserve each supported arithmetic operator. *)
+  Local Lemma binary_sound : forall o rw wa a wb b cs z r,
+    wfwd o rw [(wa, a); (wb, b)] = Some r ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) [(wa, a); (wb, b)] cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
+  Proof.
+    intros o rw wa a wb b cs z r Hf Hcs Heval.
+    inversion Hcs as [| ? [wx x] ? ? Hhead Htail]; subst.
+    inversion Htail as [| ? [wy y] ? ? Hhead' Hnil]; subst.
+    inversion Hnil; subst.
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hwy [Hy Hb]].
+    cbn [fst snd] in Hwx, Hwy, Hx, Hy, Ha, Hb. subst wx wy.
+    change (eval_op o [(wa, x); (wb, y)] = Some (rw, z)) in Heval.
+    destruct o; cbn [wfwd] in Hf; try discriminate.
+    all: match type of Heval with
+    | eval_op ?operation _ = _ =>
+      assert (Hwidth : wa = wb) by
+        (eapply (eval_op_fun2_width operation); [reflexivity | exact Heval]);
+      subst wb;
+      pose proof (eq_trans
+        (eq_sym (eval_op_fun2 operation wa x y _ eq_refl)) Heval) as Hresult;
+      inversion Hresult; subst rw z;
+      rewrite !Pos.eqb_refl in Hf; injection Hf as <-;
+      cbn [eval_binary_tag]
+    end.
+    - rewrite wadd_value. now apply W.F7_congr_add_sound.
+    - rewrite wsub_value. now apply W.F8_congr_sub_sound.
+    - rewrite wmul_value. now apply W.F9_congr_mul_sound.
+    - rewrite <- (normalized_wurem wa x y Hx Hy). now apply W.F12_congr_urem_sound.
+    - rewrite <- (normalized_wshl wa x y Hx Hy). now apply W.F11_congr_shl_sound.
+  Qed.
+
+  (** Selection retains the chosen branch through the branch join. *)
+  Local Lemma select_sound : forall o rw wc a wa b wb c cs z r,
+    wfwd o rw [(wc, a); (wa, b); (wb, c)] = Some r ->
+    Forall2 (fun wp v => fst wp = fst v /\ L.is_word (fst v) (snd v) /\
+      W.pgamma (fst wp) (snd wp) (snd v)) [(wc, a); (wa, b); (wb, c)] cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
+  Proof.
+    intros o rw wc a wa b wb c cs z r Hf Hcs Heval.
+    destruct o; cbn [wfwd] in Hf; try discriminate.
+    inversion Hcs as [| ? [wx x] ? ? Hhead Htail]; subst.
+    inversion Htail as [| ? [wy y] ? ? Hhead' Htail']; subst.
+    inversion Htail' as [| ? [wt t] ? ? Hhead'' Hnil]; subst.
+    inversion Hnil; subst.
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hwy [Hy Hb]],
+      Hhead'' as [Hwt [Ht Hc]].
+    cbn [fst snd] in Hwx, Hwy, Hwt, Hx, Hy, Ht, Ha, Hb, Hc. subst wx wy wt.
+    change (eval_op bvite [(wc, x); (wa, y); (wb, t)] = Some (rw, z)) in Heval.
+    destruct (eval_op_ite_width wc wa wb x y t (rw, z) Heval) as [Hwc Hab].
+    subst wc wb. rewrite eval_op_ite in Heval.
+    destruct (wrap 1%positive x =? 1); inversion Heval; subst rw z;
+      rewrite !Pos.eqb_refl in Hf; injection Hf as <-.
+    - rewrite (wrap_id wa y Hy).
+      eapply W.pgamma_mono; [apply W.pjoin_ub_l | exact Hb].
+    - rewrite (wrap_id wa t Ht).
+      eapply W.pgamma_mono; [apply W.pjoin_ub_r | exact Hc].
+  Qed.
+
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* CONVERT: cong_table_laws: No product even after head-reduction. *)
+  Proof.
+    intros o rw wps cs z r Hf Hcs Heval.
+    destruct wps as [| [w a] [| [v b] [| [u c] [| wp rest]]]].
+    - destruct o; discriminate Hf.
+    - eapply unary_sound; eassumption.
+    - eapply binary_sound; eassumption.
+    - eapply select_sound; eassumption.
+    - destruct o; discriminate Hf.
+  Qed.
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
