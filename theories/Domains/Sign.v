@@ -4,9 +4,9 @@
     For example, a zero-only payload represents the integer zero.
     Builds on: SignSig and the fixed-width word operations. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
+From Stdlib Require Import ZArith List Bool Lia Ring.
 From Argent Require Import Time Std.
-From Galois.Bits Require Import Word Op Arith.
+From Galois.Bits Require Import Word Fun Testbit Op Arith.
 From Galois.Domains Require Import SignSig WordSig.
 Import List.ListNotations.
 
@@ -116,6 +116,23 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Include SIGN_SPEC L.
   Definition pgamma := sign_gamma.
   Definition pwrank (_ : pwparam) (_ : positive) (a : p) : nat := 3 - sign_level a.
+
+  (** Each inhabited signed class requires its corresponding flag. *)
+  Local Lemma pgamma_cases w a z : pgamma w a z <->
+    (Word.signed w z < 0 -> neg a = true) /\
+    (Word.signed w z = 0 -> zero a = true) /\
+    (0 < Word.signed w z -> pos a = true).
+  Proof.
+    unfold pgamma, sign_gamma, L.signed.
+    destruct (Word.signed w z <? 0) eqn:Hneg.
+    - apply Z.ltb_lt in Hneg. split; intros H; intuition lia.
+    - apply Z.ltb_ge in Hneg. destruct (Word.signed w z =? 0) eqn:Hzero.
+      + apply Z.eqb_eq in Hzero. split; intros H; intuition lia.
+      + apply Z.eqb_neq in Hzero. split.
+        * intros H. intuition lia.
+        * intros [_ [_ Hp]]. apply Hp. lia.
+  Qed.
+
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
@@ -127,7 +144,10 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Qed.
   (** Stable widening retains the previous payload. *)
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w [a b c] [d e f] Hle. destruct a, b, c, d, e, f;
+      cbn in Hle |- *; try discriminate; reflexivity.
+  Qed.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
@@ -145,7 +165,10 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [a b c] [d e f] Hle. destruct a, b, c, d, e, f;
+      cbn in Hle |- *; try discriminate; split; reflexivity.
+  Qed.
   (** Width-specific inclusion is reflexive. *)
   Lemma pleb_refl : forall w a, pleb w a a = true.
   Proof. intros w [a b c]. destruct a, b, c; reflexivity. Qed.
@@ -161,13 +184,20 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Proof. intros w [a b c]. reflexivity. Qed.
   (** Top is above every payload. *)
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [a b c]. destruct a, b, c; reflexivity.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. reflexivity.
+  Qed.
   (** Recognized bottoms are below every payload. *)
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [a b c] d Hbot. destruct a, b, c;
+      cbn in Hbot |- *; try discriminate; reflexivity.
+  Qed.
   (** Join contains the left payload. *)
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
   Proof. intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity. Qed.
@@ -181,14 +211,27 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   Qed.
   (** Meet refines the right payload. *)
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [a b c] [d e f]. destruct a, b, c, d, e, f; reflexivity.
+  Qed.
   (** Inclusion retains represented integers. *)
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted. (* CONVERT: sign_mono: Attempt to save an incomplete proof. *)
+  Proof.
+    intros w [an az ap] [bn bz bp] z Hle Hg.
+    apply pgamma_cases in Hg. apply pgamma_cases.
+    destruct an, az, ap, bn, bz, bp; cbn in Hle, Hg |- *;
+      try discriminate; intuition.
+  Qed.
   (** Bottom represents no integer. *)
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted. (* CONVERT: sign_bot_empty: Not an inductive product. *)
+  Proof.
+    intros w z Hg. apply pgamma_cases in Hg as [Hn [Hz Hp]].
+    destruct (Z.lt_trichotomy (Word.signed w z) 0) as [Hneg|[Hzero|Hpos]].
+    - discriminate (Hn Hneg).
+    - discriminate (Hz Hzero).
+    - discriminate (Hp Hpos).
+  Qed.
   (** Top contains every normalized integer at its width. *)
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
   Proof.
@@ -199,7 +242,12 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Meet retains every common integer. *)
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* CONVERT: sign_meet_sound: Not an inductive product. *)
+  Proof.
+    intros w a b z Ha Hb. apply pgamma_cases in Ha as [Hn [Hz Hp]].
+    apply pgamma_cases in Hb as [Hn' [Hz' Hp']]. apply pgamma_cases.
+    split; [|split]; cbn [pmeet neg zero pos]; intro Hsign;
+      apply andb_true_iff; auto.
+  Qed.
   (** Recognized bottoms contain no integer. *)
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
   Proof.
@@ -208,7 +256,10 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** Every payload below a recognized bottom is recognized as bottom. *)
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [a b c] [d e f] Hle Hbot. destruct a, b, c, d, e, f;
+      cbn in Hle, Hbot |- *; try discriminate; reflexivity.
+  Qed.
   (** A constant payload contains the wrapped integer. *)
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
   Proof.
@@ -222,33 +273,146 @@ Module Sign (L : WORD_LANGUAGE) <: SIGN L.
   (** A recognized point identifies all represented integers. *)
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
-  Proof. Admitted. (* CONVERT: sign_shape_laws: Not an inductive definition. *)
+  Proof.
+    intros w [n q p] z v Hpoint Hword Hg.
+    destruct n, q, p; cbn in Hpoint; try discriminate.
+    injection Hpoint as <-. apply pgamma_cases in Hg as [Hn [Hz Hp]].
+    assert (Hsigned : Word.signed w z = 0).
+    { destruct (Z.lt_trichotomy (Word.signed w z) 0) as [Hneg|[Hzero|Hpos]];
+        [discriminate (Hn Hneg)|exact Hzero|discriminate (Hp Hpos)]. }
+    assert (Hwrap : wrap w z = wrap w 0).
+    { apply signed_inj. now rewrite signed_zero. }
+    now rewrite wrap_0, wrap_id in Hwrap by exact Hword.
+  Qed.
   (** Payload concretization reads the sign flags. *)
   Lemma F1_gamma : forall w a z, pgamma w a z <-> sign_gamma w a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a z. reflexivity.
+  Qed.
+
+  (** The most significant bit selects the negative or nonnegative flags. *)
+  Local Lemma sign_class w a x : pgamma w a x ->
+    (if msb w x then neg a else sign_nonneg a) = true.
+  Proof.
+    intros Hg. apply pgamma_cases in Hg as [Hn [Hz Hp]].
+    destruct (msb w x) eqn:Hmsb.
+    - apply Hn. now apply signed_neg_iff_msb.
+    - pose proof (signed_nonnegative w x Hmsb) as Hsigned.
+      pose proof (wrap_is_word w x) as [Hlo Hhi].
+      destruct (Z.eq_dec (Word.signed w x) 0) as [Heq|Hneq].
+      + unfold sign_nonneg. rewrite (Hz Heq). reflexivity.
+      + unfold sign_nonneg. rewrite (Hp ltac:(lia)). apply orb_true_r.
+  Qed.
+
+  (** A sign bit and two nonnegative flags suffice for concretization. *)
+  Local Lemma sign_from_msb w a x :
+    (msb w x = true -> neg a = true) ->
+    (msb w x = false -> zero a = true /\ pos a = true) -> pgamma w a x.
+  Proof.
+    intros Hn Hnn. apply pgamma_cases. split; [|split]; intro Hsign.
+    - apply Hn. now apply signed_neg_iff_msb.
+    - assert (Hclear : msb w x = false).
+      { destruct (msb w x) eqn:Hmsb; [|reflexivity].
+        apply signed_neg_iff_msb in Hmsb. lia. }
+      exact (proj1 (Hnn Hclear)).
+    - assert (Hclear : msb w x = false).
+      { destruct (msb w x) eqn:Hmsb; [|reflexivity].
+        apply signed_neg_iff_msb in Hmsb. lia. }
+      exact (proj2 (Hnn Hclear)).
+  Qed.
+
+  (** Integer bitwise operations preserve their Boolean sign-bit equations after wrapping. *)
+  Local Lemma sign_bitwise_msb w x y :
+    msb w (wrap w (Z.land x y)) = (msb w x && msb w y) /\
+    msb w (wrap w (Z.lor x y)) = (msb w x || msb w y) /\
+    msb w (wrap w (Z.lxor x y)) = xorb (msb w x) (msb w y).
+  Proof.
+    rewrite !msb_testbit, !testbit_wrap by lia.
+    rewrite (proj2 (Z.ltb_lt (Zpos w - 1) (Zpos w)) ltac:(lia)).
+    rewrite Z.land_spec, Z.lor_spec, Z.lxor_spec. auto.
+  Qed.
+
   (** Bitwise negation retains every normalized concrete result. *)
   Lemma F3_sign_not_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_not a) (L.wrap w (Z.lnot x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x Hx Ha. pose proof (sign_class w a x Ha) as Hfa.
+    assert (Hnot : msb w (L.wrap w (Z.lnot x)) = negb (msb w x)).
+    { rewrite !msb_testbit, testbit_wrap, Z.lnot_spec by lia.
+      rewrite (proj2 (Z.ltb_lt (Zpos w - 1) (Zpos w)) ltac:(lia)). reflexivity. }
+    apply sign_from_msb; cbn [sign_not sign_bits neg zero pos]; rewrite Hnot;
+      destruct (msb w x); cbn in Hfa |- *; intro Hresult; try discriminate; auto.
+  Qed.
   (** Arithmetic negation retains every normalized concrete result. *)
   Lemma F4_sign_neg_sound : forall w a x, L.is_word w x -> pgamma w a x ->
     pgamma w (sign_neg a) (L.wrap w (- x)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x Hx Ha. apply pgamma_cases in Ha as [Hn [Hz Hp]].
+    pose proof (half_pos w). pose proof (modulus_half w).
+    assert (Hwrap : wrap w (- x) = if x =? 0 then 0 else modulus w - x).
+    { destruct (x =? 0) eqn:Hxzero.
+      - apply Z.eqb_eq in Hxzero. subst x. apply wrap_0.
+      - apply Z.eqb_neq in Hxzero.
+        replace (- x) with ((modulus w - x) + (-1) * modulus w) by ring.
+        rewrite wrap_add_modulus. apply wrap_id. split; destruct Hx; lia. }
+    apply pgamma_cases. cbn [sign_neg neg zero pos].
+    rewrite signed_value, wrap_wrap, Hwrap.
+    rewrite signed_value, (wrap_id w x Hx) in Hn, Hz, Hp.
+    destruct (x =? 0) eqn:Hxzero.
+    - apply Z.eqb_eq in Hxzero. subst x.
+      rewrite (proj2 (Z.ltb_lt 0 (half w)) ltac:(lia)) in *.
+      split; [lia|]. split; [intros _; now apply Hz|lia].
+    - apply Z.eqb_neq in Hxzero.
+      destruct (x <? half w) eqn:Hxhalf, (modulus w - x <? half w) eqn:Hnhalf;
+        try apply Z.ltb_lt in Hxhalf; try apply Z.ltb_ge in Hxhalf;
+        try apply Z.ltb_lt in Hnhalf; try apply Z.ltb_ge in Hnhalf;
+        destruct Hx; (split; [|split]); intro Hsign; try lia.
+      + rewrite (Hp ltac:(lia)). apply orb_true_r.
+      + rewrite (Hn ltac:(lia)). reflexivity.
+      + rewrite (Hn ltac:(lia)). reflexivity.
+  Qed.
   (** Bitwise conjunction retains every normalized concrete result. *)
   Lemma F5_sign_and_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_and a b) (L.wrap w (Z.land x y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Hx Hy Ha Hb.
+    pose proof (sign_class w a x Ha) as Hfa. pose proof (sign_class w b y Hb) as Hfb.
+    unfold L.wrap.
+    apply sign_from_msb; cbn [sign_and sign_bits neg zero pos];
+      rewrite (proj1 (sign_bitwise_msb w x y));
+      destruct (msb w x), (msb w y); cbn in Hfa, Hfb |- *;
+      intro Hresult; try discriminate; rewrite ?Hfa, ?Hfb, ?orb_true_r, ?andb_true_r;
+      cbn; auto.
+  Qed.
   (** Bitwise disjunction retains every normalized concrete result. *)
   Lemma F6_sign_or_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_or a b) (L.wrap w (Z.lor x y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Hx Hy Ha Hb.
+    pose proof (sign_class w a x Ha) as Hfa. pose proof (sign_class w b y Hb) as Hfb.
+    unfold L.wrap.
+    apply sign_from_msb; cbn [sign_or sign_bits neg zero pos];
+      rewrite (proj1 (proj2 (sign_bitwise_msb w x y)));
+      destruct (msb w x), (msb w y); cbn in Hfa, Hfb |- *;
+      intro Hresult; try discriminate; rewrite ?Hfa, ?Hfb, ?orb_true_r, ?andb_true_r;
+      cbn; auto.
+  Qed.
   (** Bitwise exclusive disjunction retains every normalized concrete result. *)
   Lemma F7_sign_xor_sound : forall w a b x y,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     pgamma w (sign_xor a b) (L.wrap w (Z.lxor x y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y Hx Hy Ha Hb.
+    pose proof (sign_class w a x Ha) as Hfa. pose proof (sign_class w b y Hb) as Hfb.
+    unfold L.wrap.
+    apply sign_from_msb; cbn [sign_xor sign_bits neg zero pos];
+      rewrite (proj2 (proj2 (sign_bitwise_msb w x y)));
+      destruct (msb w x), (msb w y); cbn in Hfa, Hfb |- *;
+      intro Hresult; try discriminate; rewrite ?Hfa, ?Hfb, ?orb_true_r, ?andb_true_r;
+      cbn; auto.
+  Qed.
 End Sign.
 
 Module SignT (L : WORD_LANGUAGE_T) <: SIGN_T L.
@@ -361,9 +525,13 @@ End SignT.
 Module SignAll (L : WORD_LANGUAGE_T) <: SIGN_ALL L.
   Include SignT L.
   Lemma F2_level : forall a, (sign_level a <= 3)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b c]. destruct a, b, c; cbn; lia.
+  Qed.
   Lemma F_pwrank : forall q w a, pwrank q w a = Nat.sub 3 (sign_level a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a. reflexivity.
+  Qed.
 End SignAll.
 
 Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
