@@ -7344,11 +7344,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
       : option (list (cell V.t)) := None.
-  (** Repair retains located rows, cache metadata and an exact stored pending count. *)
+  (** Repair retains located rows, cache metadata, queue counts and the allocated forest. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
       exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None) /\
-    metadata_ok db /\ db_npending db = N.of_nat (pending db).
+    metadata_ok db /\ db_npending db = N.of_nat (pending db) /\
+    UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db).
   Definition k_credit : N := 1. (* STUB *)
   Definition k_loop : N := 1. (* STUB *)
   Definition k_active : N := 1. (* STUB *)
@@ -7380,7 +7381,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma forest_pending_count : forall db, forest_ok db ->
     db_npending db = N.of_nat (pending db).
   Proof.
-    intros db [_ [_ Hpending]]. exact Hpending.
+    intros db [_ [_ [Hpending _]]]. exact Hpending.
+  Qed.
+
+  (** Active repair keeps the same well-formed union-find discipline as public states. *)
+  Lemma forest_uf_wf : forall db, forest_ok db -> UnionFind.wf (db_forest db).
+  Proof.
+    intros db [_ [_ [_ [Hforest _]]]]. exact Hforest.
+  Qed.
+
+  (** The forest's cardinality agrees with the exact allocation counter. *)
+  Lemma forest_cardinality : forall db, forest_ok db ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db [_ [_ [_ [_ Hcard]]]]. exact Hcard.
   Qed.
 
   (** Active entries retain coverage after their loser has left the queue. *)
@@ -7410,6 +7424,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
     intros db work Hinv. apply forest_metadata. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active and queued repair states expose their forest invariant directly. *)
+  Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
+  Proof.
+    intros db work Hinv. apply forest_uf_wf. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active repair retains the exact forest cardinality without a public wf conversion. *)
+  Lemma inv_on_forest_card : forall db work, inv_on db work ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db work Hinv. apply forest_cardinality. unfold inv_on in Hinv. tauto.
   Qed.
 
   (** Active repair states expose the exact stored queue count directly. *)
@@ -8085,13 +8112,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     repr db x = UnionFind.repr (uf_state db) x /\
     class_size db x = N.of_nat (UnionFind.size_of (uf_state db) x) /\
     UnionFind.wf (uf_state db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x Hinv. split; [reflexivity |]. split; [reflexivity |].
+    exact (inv_on_forest_wf db work Hinv).
+  Qed.
 
   (** Root classes are nonempty and bounded by allocation. *)
   Lemma F_class_size : forall db work x, inv_on db work ->
     (1 <= class_size db (repr db x))%N /\
     (class_size db (repr db x) <= N.max 1 (ids db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x Hinv. unfold class_size, uf_state.
+    pose proof (ConcreteUnionFindFacts.size_of_positive (db_forest db) (repr db x)) as Hpositive.
+    pose proof (ConcreteUnionFindFacts.size_of_card_bound (db_forest db) (repr db x)
+      (inv_on_forest_wf db work Hinv)) as Hbound.
+    rewrite (inv_on_forest_card db work Hinv) in Hbound. split; [lia |].
+    assert (Hbinary : (N.of_nat (UnionFind.size_of (db_forest db) (repr db x)) <=
+      N.of_nat (Nat.max 1 (N.to_nat (ids db))))%N) by lia.
+    rewrite Nat2N.inj_max, N2Nat.id in Hbinary. exact Hbinary.
+  Qed.
 
   (** Collision unions also double the losing class. *)
   Lemma F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
