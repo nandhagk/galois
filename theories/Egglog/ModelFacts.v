@@ -5,7 +5,7 @@
     Builds on: Syntax, Model and Stdlib lists. *)
 
 From Stdlib Require Import List PArith NArith Lia Relations.Relation_Operators.
-From Galois.Base Require Import UnionFindSig.
+From Galois.Base Require Import UnionFindSig Trie.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
@@ -625,3 +625,22 @@ Proof.
 Qed.
 
 End EqualityLogFacts.
+
+(** * Declaration tables built in source order *)
+
+Section DeclarationLookupFacts.
+
+(** A right fold writes the first declaration last, matching the frozen first-match lookup. *)
+Lemma declaration_trie_lookup : forall ds f,
+  PTrieCode.get f
+    (fold_right (fun d table => PTrieCode.set (name d) (out d) table) PTrieCode.empty ds) =
+  lookup_kind ds f.
+Proof.
+  induction ds as [|d ds IH]; intro f; cbn [fold_right lookup_kind].
+  - apply PTrie.get_empty.
+  - destruct (Pos.eqb_spec (name d) f) as [Heq|Hneq].
+    + subst f. apply PTrie.get_set_same.
+    + rewrite PTrie.get_set_other by congruence. apply IH.
+Qed.
+
+End DeclarationLookupFacts.
