@@ -5360,14 +5360,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
      index_counters written_cells *)
-  (* STUB-CODE *)
-  Definition rows : t -> list stored_row := fun _ => [].
+  Definition rows (db : t) : list stored_row :=
+    map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
   (* STUB-CODE *)
   Definition uses_entries : t -> list (positive * use_entry) := fun _ => [].
-  (* STUB-CODE *)
-  Definition queue : t -> list positive := fun _ => [].
-  (* STUB-CODE *)
-  Definition next_id : t -> positive := fun _ => 1%positive.
+  Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
+  Definition next_id (db : t) : positive := N.succ_pos (ids db).
   (* STUB-CODE *)
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
   (* STUB-CODE *)
@@ -5458,19 +5456,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition index_counters (db : t) : list positive := db_index_counters db.
   (* STUB-CODE *)
   Definition written_cells (db : t) : list (cell V.t) := db_written_cells db.
-  (* STUB-CODE *)
-  Definition get_uses : positive -> t -> list use_entry := fun _ _ => [].
+  Definition get_uses : positive -> t -> list use_entry := db_get_uses.
   TimeFun get_uses.
-  (* STUB-CODE *)
-  Definition pop_loser : t -> option (positive * t) := fun _ => None.
+  Definition pop_loser : t -> option (positive * t) := db_pop_loser.
   TimeFun pop_loser.
-  (* STUB-CODE *)
-  Definition repair_entry : use_entry -> t -> t := fun _ db => db.
+  Definition repair_entry (e : use_entry) (db : t) : t :=
+    repair_current (fst e) (snd e) db.
   TimeFun repair_entry.
-  (* STUB-CODE *)
   Definition rstep (s : repair_state) : repair_state + t := db_rstep s.
   TimeFun rstep.
-  (* STUB-CODE *)
   Definition rebuild_fuel (db : t) : N := db_rebuild_fuel db.
   TimeFun rebuild_fuel.
 
@@ -5674,7 +5668,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** The unit charges identifier traversal and cell encoding widths. *)
   Lemma F3_unit : forall db,
     unit db = (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
 
   (** Direct bucket lookup agrees with the occurrence inventory. *)
   Lemma F4_bucket : forall db work x, inv_on db work -> get_uses x db = bucket db x.
@@ -5682,7 +5676,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** An empty pop detects an empty pending queue. *)
   Lemma F4_pop_none : forall db, inv db -> (pop_loser db = None <-> queue db = []).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db _. unfold pop_loser, db_pop_loser, queue.
+    destruct (runtime_queue (db_runtime db)); split; congruence.
+  Qed.
 
   (** A pop transfers its selected bucket into the active work list. *)
   Lemma F4_pop : forall db x db', inv db -> pop_loser db = Some (x, db') ->
@@ -5704,7 +5701,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         | Some (x, db') => inl (db', get_uses x db)
         end
       end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db [| [f k] rest]; reflexivity.
+  Qed.
 
   (** Entries without a current row are discarded without changing the database. *)
   Lemma F6_absent : forall db f k,
