@@ -4,7 +4,7 @@
     For example, reading an absent binding returns the value domain's top.
     Builds on: EnvSig and the keyed map operations. *)
 
-From Stdlib Require Import List Bool NArith.
+From Stdlib Require Import List Bool NArith Arith Lia Permutation.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -309,13 +309,180 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Proof.
     intros p a b Hstable. unfold widen. now rewrite Hstable.
   Qed.
+  (** Permuting bindings preserves the sum of their ranks. *)
+  Lemma rank_sum_permutation : forall {A} (f : A -> nat) xs ys,
+    Permutation xs ys ->
+    fold_right Nat.add 0 (map f xs) = fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys Hperm. induction Hperm; cbn [map fold_right]; lia.
+  Qed.
+
+  (** Filtering zero contributions leaves a rank sum unchanged. *)
+  Lemma rank_sum_filter_zero : forall {A} (test : A -> bool) f xs,
+    (forall x, In x xs -> test x = false -> f x = 0) ->
+    fold_right Nat.add 0 (map f (filter test xs)) =
+      fold_right Nat.add 0 (map f xs).
+  Proof.
+    intros A test f xs. induction xs as [|x xs IH]; intros Hz; cbn; [reflexivity|].
+    destruct (test x) eqn:Hx; cbn.
+    - rewrite IH; [reflexivity|]. intros y Hy. apply Hz. now right.
+    - rewrite IH; [rewrite (Hz x (or_introl eq_refl) Hx); lia|].
+      intros y Hy. apply Hz. now right.
+  Qed.
+
+  (** Pointwise rank bounds extend to sums over the same bindings. *)
+  Lemma rank_sum_mono : forall {A} (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) ->
+    fold_right Nat.add 0 (map f xs) <= fold_right Nat.add 0 (map g xs).
+  Proof.
+    intros A f g xs. induction xs as [|x xs IH]; intros H; cbn; [lia|].
+    pose proof (H x (or_introl eq_refl)).
+    assert (Htail : forall y, In y xs -> f y <= g y).
+    { intros y Hy. apply H. now right. }
+    specialize (IH Htail). lia.
+  Qed.
+
+  (** One strict binding decrease makes a pointwise nonincreasing sum decrease. *)
+  Lemma rank_sum_strict : forall {A} (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) ->
+    (exists x, In x xs /\ f x < g x) ->
+    fold_right Nat.add 0 (map f xs) < fold_right Nat.add 0 (map g xs).
+  Proof.
+    intros A f g xs. induction xs as [|x xs IH]; intros H [y [Hy Hlt]];
+      cbn in *; [contradiction|].
+    assert (Htail : forall z, In z xs -> f z <= g z).
+    { intros z Hz. apply H. now right. }
+    destruct Hy as [Heq|Hy].
+    - subst y. pose proof (rank_sum_mono f g xs Htail). lia.
+    - specialize (IH Htail (ex_intro _ y (conj Hy Hlt))).
+      pose proof (H x (or_introl eq_refl)). lia.
+  Qed.
+
+  (** A larger code list leaves the rank unchanged when added lookups are absent. *)
+  Lemma rank_codes_extend : forall p (m ms : M.t V.t),
+    incl (M.codes m) (M.codes ms) ->
+    wrank p (Reached m) = fold_right Nat.add 0 (map (fun c =>
+      match M.find c m with Some a => V.wrank p a | None => 0 end) (M.codes ms)).
+  Proof.
+    intros p m ms Hincl.
+    set (present := fun c => match M.find c m with Some _ => true | None => false end).
+    assert (Hperm : Permutation (M.codes m) (filter present (M.codes ms))).
+    { apply NoDup_Permutation.
+      - apply M.codes_nodup.
+      - apply NoDup_filter. apply M.codes_nodup.
+      - intros c. rewrite filter_In. split.
+        + intros Hc. split; [now apply Hincl|]. unfold present.
+          apply M.codes_spec in Hc. destruct (M.find c m); congruence.
+        + intros [_ Hc]. apply M.codes_spec. unfold present in Hc.
+          destruct (M.find c m); congruence. }
+    unfold wrank. rewrite (rank_sum_permutation _ _ _ Hperm).
+    apply rank_sum_filter_zero. intros c _ Hc. unfold present in Hc.
+    destruct (M.find c m); congruence.
+  Qed.
+
+  (** The proof names the map produced by an unstable reached widening. *)
+  Definition rank_widen_map p a b := M.merge (fun x y => match x, y with
+    | Some a, Some b => let v := V.widen p a b in if V.is_bot v then None else Some v
+    | _, _ => None end) a b.
+
+  (** Widening a map acts on each pair of present encoded bindings. *)
+  Lemma rank_widen_find : forall p a b c,
+    M.find c (rank_widen_map p a b) = match M.find c a, M.find c b with
+    | Some x, Some y =>
+      let v := V.widen p x y in if V.is_bot v then None else Some v
+    | _, _ => None end.
+  Proof.
+    intros p a b c. unfold rank_widen_map. apply M.find_merge. reflexivity.
+  Qed.
+
+  (** Map widening retains only codes present in the previous map. *)
+  Lemma rank_widen_codes : forall p a b,
+    incl (M.codes (rank_widen_map p a b)) (M.codes a).
+  Proof.
+    intros p a b c Hc. apply M.codes_spec in Hc. apply M.codes_spec.
+    rewrite rank_widen_find in Hc. destruct (M.find c a); congruence.
+  Qed.
+
+  (** Each widening contribution is bounded by its previous binding rank. *)
+  Lemma rank_widen_pointwise : forall p a b c,
+    M.existsb V.is_bot a = false ->
+    (match M.find c (rank_widen_map p a b) with
+     | Some x => V.wrank p x | None => 0 end) <=
+    (match M.find c a with Some x => V.wrank p x | None => 0 end).
+  Proof.
+    intros p a b c Ha. rewrite rank_widen_find.
+    destruct (M.find c a) as [x|] eqn:Hx; [|lia].
+    destruct (M.find c b) as [y|]; [|lia].
+    cbn. destruct (V.is_bot (V.widen p x y)); cbn; [lia|].
+    apply V.wrank_widen_le. exact (proj1 (map_nonbot_spec a) Ha c x Hx).
+  Qed.
+
+  (** A failed finite Boolean check exposes a failing member. *)
+  Lemma rank_forallb_false : forall {A} (test : A -> bool) xs,
+    forallb test xs = false -> exists x, In x xs /\ test x = false.
+  Proof.
+    intros A test xs. induction xs as [|x xs IH]; cbn; intros H; [discriminate|].
+    destruct (test x) eqn:Hx.
+    - cbn in H. destruct (IH H) as [y [Hy Hfalse]]. exists y. split; [now right|assumption].
+    - exists x. split; [now left|assumption].
+  Qed.
+
+  (** Failed sparse comparison exposes an unstable binding in the previous map. *)
+  Lemma rank_order_failure : forall a b,
+    M.forall2b option_leb b a = false ->
+    exists c x, In c (M.codes a) /\ M.find c a = Some x /\
+      option_leb (M.find c b) (Some x) = false.
+  Proof.
+    intros a b Hbad.
+    assert (Hfalse : forallb (fun c => option_leb (M.find c b) (M.find c a))
+        (M.codes a) = false).
+    { destruct (forallb (fun c => option_leb (M.find c b) (M.find c a))
+        (M.codes a)) eqn:Hlist; [|reflexivity].
+      assert (Htrue : M.forall2b option_leb b a = true).
+      { apply M.forall2b_spec; [reflexivity|]. intros c.
+        destruct (M.find c a) as [x|] eqn:Hx.
+        - apply forallb_forall with (x := c) in Hlist.
+          + now rewrite Hx in Hlist.
+          + apply M.codes_spec. rewrite Hx. discriminate.
+        - destruct (M.find c b); reflexivity. }
+      congruence. }
+    destruct (rank_forallb_false _ _ Hfalse) as [c [Hc Hfalsec]].
+    destruct (M.find c a) as [x|] eqn:Hx.
+    - exists c, x. auto.
+    - destruct (M.find c b); discriminate.
+  Qed.
+
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* CONVERT: env_core_wrank: The variable U was not found in the current environment. *)
+  Proof.
+    intros p [|a] [|b] Ha Hba; cbn [is_bot] in Ha; try discriminate.
+    unfold widen. rewrite Hba.
+    change (wrank p (Reached (rank_widen_map p a b)) < wrank p (Reached a)).
+    rewrite (rank_codes_extend p _ a (rank_widen_codes p a b)).
+    unfold wrank. apply rank_sum_strict.
+    - intros c _. now apply rank_widen_pointwise.
+    - assert (Horder : M.forall2b option_leb b a = false).
+      { unfold leb in Hba. cbn [is_bot] in Hba. rewrite Ha in Hba.
+        destruct (M.existsb V.is_bot b); cbn in Hba; [discriminate|exact Hba]. }
+      destruct (rank_order_failure a b Horder) as [c [x [Hc [Hx Hbad]]]].
+      exists c. split; [exact Hc|]. rewrite Hx, rank_widen_find, Hx.
+      pose proof (proj1 (map_nonbot_spec a) Ha c x Hx) as Hxbot.
+      destruct (M.find c b) as [y|] eqn:Hy; cbn [option_leb] in Hbad.
+      + pose proof (V.wrank_widen p x y Hxbot Hbad) as Hrank.
+        cbn. destruct (V.is_bot (V.widen p x y)); cbn; lia.
+      + pose proof (V.wrank_widen p x V.top Hxbot Hbad). lia.
+  Qed.
+
   (** Widening from a nonbottom does not increase rank. *)
-  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* CONVERT: env_core_wrank: The variable msum_bounded was not found in the current environment. *)
+  Lemma wrank_widen_le : forall p a b, is_bot a = false ->
+    wrank p (widen p a b) <= wrank p a.
+  Proof.
+    intros p a b Ha. destruct (leb b a) eqn:Hba.
+    - unfold widen. rewrite Hba. lia.
+    - apply Nat.lt_le_incl. now apply wrank_widen.
+  Qed.
+
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
