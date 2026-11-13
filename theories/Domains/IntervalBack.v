@@ -2020,6 +2020,37 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
             [apply PayloadBounds.payload_top_bits|lia].
   Qed.
 
+  Local Lemma table_urem_bits : forall rw wa wb a b,
+    interval_bits (interval_urem rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_urem rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_urem interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    destruct (Z.leb 0 la && Z.ltb 0 lb && Z.eqb (la / hb) (ha / lb))
+      eqn:Hexact.
+    - repeat rewrite andb_true_iff in Hexact.
+      destruct Hexact as [[_ Hlb] Hquot].
+      apply Z.ltb_lt in Hlb. apply Z.eqb_eq in Hquot.
+      apply table_checked_bits.
+      assert (Hqnonnegative : (0 <= la / hb)%Z) by (apply Z.div_pos; lia).
+      rewrite Hquot.
+      nia.
+    - apply table_checked_bits.
+      destruct (Z.ltb 0 lb) eqn:Hpositive.
+      + apply Z.ltb_lt in Hpositive.
+        destruct (Z.le_gt_cases ha (hb - 1)) as [Hcase|Hcase].
+        * rewrite Z.min_l by lia. lia.
+        * rewrite Z.min_r by lia. lia.
+      + lia.
+  Qed.
+
   Local Lemma table_and_bits : forall rw wa wb a b,
     interval_bits (interval_and rw (interval_clip wa a) (interval_clip wb b)) <=
       Pos.to_nat rw.
@@ -2060,6 +2091,50 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     pose proof (Z.pow_pos_nonneg 2 (Z.log2 (Z.max ha hb) + 1)
       ltac:(lia) ltac:(lia)).
     lia.
+  Qed.
+
+  Local Lemma table_shl_bits : forall rw wa wb a b,
+    interval_bits (interval_shl rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_shl rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_shl interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Z.pos rw)) eqn:Hrange;
+      [|exact (PayloadBounds.payload_top_bits rw)].
+    apply table_checked_bits.
+    assert (Hpow : (2 ^ lb <= 2 ^ hb)%Z) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpow_nonneg : (0 <= 2 ^ lb)%Z) by (apply Z.pow_nonneg; lia).
+    nia.
+  Qed.
+
+  Local Lemma table_lshr_bits : forall rw wa wb a b,
+    interval_bits (interval_lshr rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_lshr rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_lshr interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Z.pos rw)) eqn:Hrange;
+      [|exact (PayloadBounds.payload_top_bits rw)].
+    apply table_checked_bits.
+    assert (Hpow : (2 ^ lb <= 2 ^ hb)%Z) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpow_pos : (0 < 2 ^ lb)%Z) by (apply Z.pow_pos_nonneg; lia).
+    apply Z.le_trans with (m := (ha / 2 ^ hb)%Z).
+    - apply Z.div_le_mono; lia.
+    - apply Z.div_le_compat_l; lia.
   Qed.
 
   Local Lemma table_concat_bits : forall rw wa wb a b,
