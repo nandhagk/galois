@@ -1001,11 +1001,10 @@ Module CongruenceCRT.
     - rewrite (proj2 (Z.eqb_neq _ _) Hdifferent). reflexivity.
   Qed.
 End CongruenceCRT.
+Import CongruenceCRT.
 
 (** Arithmetic bit and cost bounds shared by CRT and payload normalization. *)
 Module CongruenceCost.
-  Import CongruenceCRT.
-
   Lemma integer_divide_size : forall a b,
     (Z.size_nat (a / b) <= Z.size_nat a)%nat.
   Proof.
@@ -1263,7 +1262,7 @@ Module CongruenceCost.
     time_unfold Z.T_lcm. cost_constants. lia.
   Qed.
 End CongruenceCost.
-
+Import CongruenceCost.
 
 (** Raw integer shifting agrees with the bounded word shift on normalized inputs. *)
 Lemma normalized_wshl : forall w x y, is_word w x -> is_word w y ->
@@ -1985,7 +1984,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   Proof.
-    intros w a b z Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a z)) in Ha.
+    intros w a b z Ha Hb. rewrite <- !gamma_mod_agrees in *.
+    apply (proj2 (cong_norm_gamma w a z)) in Ha.
     apply (proj2 (cong_norm_gamma w b z)) in Hb. unfold pmeet.
     destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
     destruct Ha as [Hword Hr], Hb as [_ Hs].
@@ -2048,7 +2048,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Lemma F7_congr_add_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_add w a b) (L.wrap w (x + y)).
   Proof.
-    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *.
+    apply (proj2 (cong_norm_gamma w a x)) in Ha.
     apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_add.
     destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
     destruct Ha as [_ Hx], Hb as [_ Hy]. apply cong_wrap_class_sound.
@@ -2061,7 +2062,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Lemma F8_congr_sub_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_sub w a b) (L.wrap w (x - y)).
   Proof.
-    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *.
+    apply (proj2 (cong_norm_gamma w a x)) in Ha.
     apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_sub.
     destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
     destruct Ha as [_ Hx], Hb as [_ Hy]. apply cong_wrap_class_sound.
@@ -2074,7 +2076,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   Lemma F9_congr_mul_sound : forall w a b x y,
     pgamma w a x -> pgamma w b y -> pgamma w (congr_mul w a b) (L.wrap w (x * y)).
   Proof.
-    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma w a x)) in Ha.
+    intros w a b x y Ha Hb. rewrite <- !gamma_mod_agrees in *.
+    apply (proj2 (cong_norm_gamma w a x)) in Ha.
     apply (proj2 (cong_norm_gamma w b y)) in Hb. unfold congr_mul.
     destruct (congr_norm w a) as [|m r], (congr_norm w b) as [|n s]; try contradiction.
     destruct Ha as [_ Hx], Hb as [_ Hy]. apply cong_wrap_class_sound.
@@ -2096,7 +2099,8 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     (target <= source)%positive -> pgamma source a x ->
     pgamma target (congr_project source target a) (L.wrap target x).
   Proof.
-    intros source target a x Hwidth Ha. rewrite <- !gamma_mod_agrees in *. apply (proj2 (cong_norm_gamma source a x)) in Ha.
+    intros source target a x Hwidth Ha. rewrite <- !gamma_mod_agrees in *.
+    apply (proj2 (cong_norm_gamma source a x)) in Ha.
     unfold congr_project. destruct (congr_norm source a) as [|m r]; [contradiction|].
     apply cong_wrap_class_sound. exact (proj2 Ha).
   Qed.
@@ -2317,8 +2321,6 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Definition k_congr_gcd : N := 1048576%N.
   Definition k_congr_crt : N := 268435456%N.
   Definition k_congr_transfer : N := 1048576%N.
-
-  Import CongruenceCost.
 
   (** Word recognition charges a modulus construction and a linear comparison. *)
   Lemma wordb_time_budget : forall w z n,
@@ -3067,11 +3069,13 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
   TimeFun wbwd.
   Definition c_word_table : N := (4096 * (D.c_congruence + D.c_payload + 1))%N.
 
+  (** The table budget includes all declared widths and every raw payload size. *)
   Definition table_budget rw (xs : list (positive * D.p)) : nat :=
     ((Pos.to_nat rw +
       fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
     fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat.
 
+  (** Every table budget pays for the constant dispatch cost. *)
   Lemma table_budget_positive : forall rw xs, (1 <= table_budget rw xs)%nat.
   Proof.
     intros rw xs. unfold table_budget.
@@ -3081,8 +3085,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     { change ((1 ^ 2) <= n ^ 2)%nat. apply Nat.pow_le_mono_l. lia. }
     lia.
   Qed.
-  Import CongruenceCost.
-
+  (** Each member contributes at most the sum of nonnegative member costs. *)
   Lemma member_sum_bound {A : Type} (f : A -> nat) : forall xs x,
     In x xs -> (f x <= fold_right Nat.add 0%nat (map f xs))%nat.
   Proof.
@@ -3093,11 +3096,13 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
       + pose proof (IH x Htail). lia.
   Qed.
 
+  (** Squaring a positive natural number does not decrease it. *)
   Lemma natural_le_square : forall n, (1 <= n -> n <= n ^ 2)%nat.
   Proof.
     intros n Hpositive. cbn [Nat.pow]. nia.
   Qed.
 
+  (** A squared two-term sum is bounded by a constant times the component squares. *)
   Lemma sum_square_bound : forall x y k,
     (k <= x + y -> k ^ 2 <= 4 * (x ^ 2 + y ^ 2))%nat.
   Proof.
@@ -3110,6 +3115,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
       + rewrite Nat.pow_mul_l. change ((2 ^ 2)%nat) with 4%nat. lia.
   Qed.
 
+  (** A squared three-term sum is bounded by a constant times the component squares. *)
   Lemma triple_square_bound : forall x y z k,
     (k <= x + y + z -> k ^ 2 <= 16 * (x ^ 2 + y ^ 2 + z ^ 2))%nat.
   Proof.
@@ -3118,6 +3124,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     pose proof (sum_square_bound y z (y + z) ltac:(lia)) as Hinner. lia.
   Qed.
 
+  (** The table budget contains the full linear width charge. *)
   Lemma table_budget_width : forall rw xs,
     (Pos.to_nat rw +
       fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1 <=
@@ -3130,6 +3137,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
       ltac:(lia)) as Hsquare. lia.
   Qed.
 
+  (** The published table constant covers the unit dispatch charge. *)
   Lemma table_unit_budget : forall rw xs,
     (1 <= c_word_table * N.of_nat (table_budget rw xs))%N.
   Proof.
@@ -3138,6 +3146,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     unfold c_word_table. nia.
   Qed.
 
+  (** The result width square is included in every table budget. *)
   Lemma table_top_square : forall rw xs,
     (N.of_nat ((Pos.to_nat rw + 1) ^ 2) <= N.of_nat (table_budget rw xs))%N.
   Proof.
@@ -3149,6 +3158,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     lia.
   Qed.
 
+  (** Positivity of the table budget is preserved by its time-carrier conversion. *)
   Lemma table_budget_positive_N : forall rw xs,
     (1 <= N.of_nat (table_budget rw xs))%N.
   Proof.
@@ -3156,6 +3166,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     apply time_of_nat_le. apply table_budget_positive.
   Qed.
 
+  (** A unary arithmetic budget is covered by its operand and the table widths. *)
   Lemma unary_square_budget : forall rw xs wa a k, In (wa, a) xs ->
     (k <= Pos.to_nat wa + Pos.to_nat rw + congr_bits a + 1)%nat ->
     (N.of_nat (k ^ 2) <= 4 * N.of_nat (table_budget rw xs))%N.
@@ -3176,6 +3187,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     cost_constants. exact Hbudget.
   Qed.
 
+  (** A binary arithmetic budget is covered even when both operands coincide. *)
   Lemma binary_square_budget : forall rw xs wa a wb b k,
     In (wa, a) xs -> In (wb, b) xs ->
     (k <= Pos.to_nat rw + congr_bits a + congr_bits b + 1)%nat ->
@@ -3199,6 +3211,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     cost_constants. exact Hbudget.
   Qed.
 
+  (** Scaling a call budget preserves an upper bound on its time. *)
   Lemma scaled_cost : forall t c g k budget : N,
     (t <= c * g -> g <= k * budget -> t <= k * c * budget)%N.
   Proof.
@@ -3209,6 +3222,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     - nia.
   Qed.
 
+  (** A top fallback fits within the table time budget. *)
   Lemma top_time_budget : forall rw xs,
     (D.T_ptop rw <= D.c_payload * N.of_nat (table_budget rw xs))%N.
   Proof.
@@ -3216,6 +3230,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     apply N.mul_le_mono_l. apply table_top_square.
   Qed.
 
+  (** A top fallback fits within the table result-size budget. *)
   Lemma top_size_budget : forall rw xs,
     (N.of_nat (D.psize rw (D.ptop rw)) <=
       D.c_payload * N.of_nat (table_budget rw xs))%N.
@@ -3224,6 +3239,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     apply N.mul_le_mono_l. apply table_top_square.
   Qed.
 
+  (** Joining two table operands fits the sum of their declared payload budgets. *)
   Lemma join_call_budget : forall rw xs wa a wb b t,
     In (wa, a) xs -> In (wb, b) xs ->
     (t <= D.c_payload * N.of_nat (D.psize rw a + D.psize rw b + 1))%N ->
@@ -3242,6 +3258,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     rewrite !Nat2N.inj_add. change (N.of_nat 1) with 1%N. lia.
   Qed.
 
+  (** A result bounded by the result width fits the table size budget. *)
   Lemma normalized_output_budget : forall rw xs r,
     (congr_bits r <= 2 * Pos.to_nat rw)%nat ->
     (N.of_nat (D.psize rw r) <= 9 * N.of_nat (table_budget rw xs))%N.
@@ -3256,6 +3273,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     pose proof (table_top_square rw xs). lia.
   Qed.
 
+  (** Comparing positive widths charges at most their first operand's bit length. *)
   Lemma positive_leb_time : forall wa wb,
     (Pos.T_leb wa wb <= N.of_nat (Pos.size_nat wa) + 2)%N.
   Proof.
@@ -3263,6 +3281,7 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     time_unfold Pos.T_leb. destruct (Pos.compare wa wb); lia.
   Qed.
 
+  (** Comparing a declared operand width fits the table width budget. *)
   Lemma width_comparison_budget : forall rw xs wa a wb, In (wa, a) xs ->
     (Pos.T_eqb wa wb <= N.of_nat (table_budget rw xs) /\
      Pos.T_leb wa wb <= 2 * N.of_nat (table_budget rw xs))%N.
@@ -3278,13 +3297,172 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     split; lia.
   Qed.
 
+  (** Unary dispatch charges its width check and selected transfer call. *)
+  Lemma unary_forward_time : forall o rw wa a,
+    (T_wfwd o rw [(wa, a)] <= c_word_table *
+      N.of_nat (table_budget rw [(wa, a)]))%N.
+  Proof.
+    intros o rw wa a.
+    assert (Hmember : In (wa, a) [(wa, a)]) by (left; reflexivity).
+    pose proof (table_unit_budget rw [(wa, a)]) as Hunit.
+    pose proof (table_budget_positive_N rw [(wa, a)]) as Hpositive.
+    pose proof (unary_square_budget rw [(wa, a)] wa a
+      (Pos.to_nat rw + congr_bits a + 1) Hmember ltac:(lia)) as Hsquare.
+    pose proof (unary_square_budget rw [(wa, a)] wa a
+      (Pos.to_nat wa + Pos.to_nat rw + congr_bits a + 1) Hmember ltac:(lia))
+      as Hprojectsquare.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_neg_le rw a) Hsquare) as Hneg.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_norm_le rw a) Hsquare) as Hnorm.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_project_le wa rw a) Hprojectsquare)
+      as Hproject.
+    pose proof (top_time_budget rw [(wa, a)]) as Htop.
+    destruct (width_comparison_budget rw [(wa, a)] wa a rw Hmember) as [Heq Hle].
+    clear Hsquare Hprojectsquare.
+    destruct o; time_unfold T_wfwd; cbn beta iota zeta; try exact Hunit.
+    - destruct (Pos.eqb wa rw); unfold c_word_table; nia.
+    - destruct (Pos.leb wa rw); unfold c_word_table; nia.
+    - unfold c_word_table. nia.
+  Qed.
+
+  (** Binary dispatch charges both width checks and the selected transfer call. *)
+  Lemma binary_forward_time : forall o rw wa a wb b,
+    (T_wfwd o rw [(wa, a); (wb, b)] <= c_word_table *
+      N.of_nat (table_budget rw [(wa, a); (wb, b)]))%N.
+  Proof.
+    intros o rw wa a wb b.
+    assert (Ha : In (wa, a) [(wa, a); (wb, b)]) by (left; reflexivity).
+    assert (Hb : In (wb, b) [(wa, a); (wb, b)]) by (right; left; reflexivity).
+    pose proof (table_unit_budget rw [(wa, a); (wb, b)]) as Hunit.
+    pose proof (table_budget_positive_N rw [(wa, a); (wb, b)]) as Hpositive.
+    pose proof (binary_square_budget rw [(wa, a); (wb, b)] wa a wb b
+      (Pos.to_nat rw + congr_bits a + congr_bits b + 1) Ha Hb ltac:(lia)) as Hsquare.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_add_le rw a b) Hsquare) as Hadd.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_sub_le rw a b) Hsquare) as Hsub.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_mul_le rw a b) Hsquare) as Hmul.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_shl_le rw a b) Hsquare) as Hshl.
+    pose proof (scaled_cost _ _ _ _ _ (D.T_congr_urem_le rw a b) Hsquare) as Hurem.
+    pose proof (top_time_budget rw [(wa, a); (wb, b)]) as Htop.
+    destruct (width_comparison_budget rw [(wa, a); (wb, b)] wa a rw Ha) as [Heqa _].
+    destruct (width_comparison_budget rw [(wa, a); (wb, b)] wb b rw Hb) as [Heqb _].
+    pose proof (Datatypes.T_andb_le (Pos.eqb wa rw) (Pos.eqb wb rw)) as Hboth.
+    clear Hsquare.
+    destruct o; time_unfold T_wfwd; cbn beta iota zeta; try exact Hunit.
+    all: destruct (Pos.eqb wa rw && Pos.eqb wb rw); unfold c_word_table; nia.
+  Qed.
+
+  (** Selection dispatch charges the branch width checks and payload join. *)
+  Lemma select_forward_time : forall o rw wc c wa a wb b,
+    (T_wfwd o rw [(wc, c); (wa, a); (wb, b)] <= c_word_table *
+      N.of_nat (table_budget rw [(wc, c); (wa, a); (wb, b)]))%N.
+  Proof.
+    intros o rw wc c wa a wb b.
+    assert (Ha : In (wa, a) [(wc, c); (wa, a); (wb, b)])
+      by (right; left; reflexivity).
+    assert (Hb : In (wb, b) [(wc, c); (wa, a); (wb, b)])
+      by (right; right; left; reflexivity).
+    pose proof (table_unit_budget rw [(wc, c); (wa, a); (wb, b)]) as Hunit.
+    pose proof (table_budget_positive_N rw [(wc, c); (wa, a); (wb, b)]) as Hpositive.
+    pose proof (join_call_budget rw [(wc, c); (wa, a); (wb, b)] wa a wb b
+      (D.T_pjoin rw a b) Ha Hb (D.T_pjoin_le rw a b)) as Hjoin.
+    pose proof (top_time_budget rw [(wc, c); (wa, a); (wb, b)]) as Htop.
+    destruct (width_comparison_budget rw [(wc, c); (wa, a); (wb, b)] wa a rw Ha)
+      as [Heqa _].
+    destruct (width_comparison_budget rw [(wc, c); (wa, a); (wb, b)] wb b rw Hb)
+      as [Heqb _].
+    pose proof (Datatypes.T_andb_le (Pos.eqb wa rw) (Pos.eqb wb rw)) as Hboth.
+    destruct o; time_unfold T_wfwd; cbn beta iota zeta; try exact Hunit.
+    destruct (Pos.eqb wa rw && Pos.eqb wb rw); unfold c_word_table; nia.
+  Qed.
+
+  (** Every supported unary table result fits the declared table budget. *)
+  Lemma unary_forward_size : forall o rw wa a r, wfwd o rw [(wa, a)] = Some r ->
+    (N.of_nat (D.psize rw r) <= c_word_table *
+      N.of_nat (table_budget rw [(wa, a)]))%N.
+  Proof.
+    intros o rw wa a r Hresult.
+    pose proof (table_budget_positive_N rw [(wa, a)]) as Hpositive.
+    pose proof (normalized_output_budget rw [(wa, a)] (D.congr_neg rw a)
+      (D.congr_neg_bits rw a)) as Hneg.
+    pose proof (normalized_output_budget rw [(wa, a)] (D.congr_norm rw a)
+      (D.congr_norm_bits rw a)) as Hnorm.
+    pose proof (normalized_output_budget rw [(wa, a)] (D.congr_project wa rw a)
+      (D.congr_project_bits wa rw a)) as Hproject.
+    pose proof (top_size_budget rw [(wa, a)]) as Htop.
+    destruct o; cbn [wfwd] in Hresult; try discriminate.
+    - destruct (Pos.eqb wa rw) in Hresult; injection Hresult as <-;
+        unfold c_word_table; nia.
+    - destruct (Pos.leb wa rw) in Hresult; injection Hresult as <-;
+        unfold c_word_table; nia.
+    - injection Hresult as <-. unfold c_word_table. nia.
+  Qed.
+
+  (** Every supported binary table result fits the declared table budget. *)
+  Lemma binary_forward_size : forall o rw wa a wb b r,
+    wfwd o rw [(wa, a); (wb, b)] = Some r ->
+    (N.of_nat (D.psize rw r) <= c_word_table *
+      N.of_nat (table_budget rw [(wa, a); (wb, b)]))%N.
+  Proof.
+    intros o rw wa a wb b r Hresult.
+    pose proof (table_budget_positive_N rw [(wa, a); (wb, b)]) as Hpositive.
+    destruct (D.congr_binary_bits rw a b) as [Ha [Hs [Hm [Hl Hr]]]].
+    pose proof (normalized_output_budget rw [(wa, a); (wb, b)]
+      (D.congr_add rw a b) Ha) as Hadd.
+    pose proof (normalized_output_budget rw [(wa, a); (wb, b)]
+      (D.congr_sub rw a b) Hs) as Hsub.
+    pose proof (normalized_output_budget rw [(wa, a); (wb, b)]
+      (D.congr_mul rw a b) Hm) as Hmul.
+    pose proof (normalized_output_budget rw [(wa, a); (wb, b)]
+      (D.congr_shl rw a b) Hl) as Hshl.
+    pose proof (normalized_output_budget rw [(wa, a); (wb, b)]
+      (D.congr_urem rw a b) Hr) as Hurem.
+    pose proof (top_size_budget rw [(wa, a); (wb, b)]) as Htop.
+    destruct o; cbn [wfwd] in Hresult; try discriminate.
+    all: destruct (Pos.eqb wa rw && Pos.eqb wb rw) in Hresult;
+      injection Hresult as <-; unfold c_word_table; nia.
+  Qed.
+
+  (** A selected branch join or top fallback fits the declared table budget. *)
+  Lemma select_forward_size : forall o rw wc c wa a wb b r,
+    wfwd o rw [(wc, c); (wa, a); (wb, b)] = Some r ->
+    (N.of_nat (D.psize rw r) <= c_word_table *
+      N.of_nat (table_budget rw [(wc, c); (wa, a); (wb, b)]))%N.
+  Proof.
+    intros o rw wc c wa a wb b r Hresult.
+    assert (Ha : In (wa, a) [(wc, c); (wa, a); (wb, b)])
+      by (right; left; reflexivity).
+    assert (Hb : In (wb, b) [(wc, c); (wa, a); (wb, b)])
+      by (right; right; left; reflexivity).
+    pose proof (table_budget_positive_N rw [(wc, c); (wa, a); (wb, b)]) as Hpositive.
+    pose proof (join_call_budget rw [(wc, c); (wa, a); (wb, b)] wa a wb b
+      (N.of_nat (D.psize rw (D.pjoin rw a b))) Ha Hb (D.pjoin_size rw a b)) as Hjoin.
+    pose proof (top_size_budget rw [(wc, c); (wa, a); (wb, b)]) as Htop.
+    destruct o; cbn [wfwd] in Hresult; try discriminate.
+    destruct (Pos.eqb wa rw && Pos.eqb wb rw) in Hresult;
+      injection Hresult as <-; unfold c_word_table; nia.
+  Qed.
+
   (** The result stays within its declared work budget. *)
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs.
+    change (T_wfwd o rw xs <= c_word_table * N.of_nat (table_budget rw xs))%N.
+    destruct xs as [|[w1 a1] xs].
+    - pose proof (table_unit_budget rw []) as Hunit.
+      destruct o; time_unfold T_wfwd; exact Hunit.
+    - destruct xs as [|[w2 a2] xs].
+      + apply unary_forward_time.
+      + destruct xs as [|[w3 a3] xs].
+        * apply binary_forward_time.
+        * destruct xs as [|[w4 a4] xs].
+          -- apply select_forward_time.
+          -- pose proof (table_unit_budget rw
+               ((w1, a1) :: (w2, a2) :: (w3, a3) :: (w4, a4) :: xs)) as Hunit.
+             destruct o; time_unfold T_wfwd; exact Hunit.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
@@ -3309,7 +3487,20 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => D.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs r Hresult.
+    change (N.of_nat (D.psize rw r) <=
+      c_word_table * N.of_nat (table_budget rw xs))%N.
+    destruct xs as [|[w1 a1] xs].
+    - destruct o; cbn [wfwd] in Hresult; discriminate.
+    - destruct xs as [|[w2 a2] xs].
+      + eapply unary_forward_size. exact Hresult.
+      + destruct xs as [|[w3 a3] xs].
+        * eapply binary_forward_size. exact Hresult.
+        * destruct xs as [|[w4 a4] xs].
+          -- eapply select_forward_size. exact Hresult.
+          -- destruct o; cbn [wfwd] in Hresult; discriminate.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
