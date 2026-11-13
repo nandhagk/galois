@@ -1849,6 +1849,47 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       apply table_truth_bits.
   Qed.
 
+  Local Lemma table_eq_bits : forall a b, interval_bits (interval_eq a b) <= 1.
+  Proof.
+    intros a b.
+    unfold interval_eq.
+    destruct (interval_finite_helper a) as [[la ha]|];
+      destruct (interval_finite_helper b) as [[lb hb]|];
+      repeat match goal with |- context [if ?test then _ else _] => destruct test end;
+      apply table_truth_bits.
+  Qed.
+
+  Local Lemma table_ult_bits : forall a b, interval_bits (interval_ult a b) <= 1.
+  Proof.
+    intros a b.
+    unfold interval_ult.
+    destruct (interval_finite_helper a) as [[la ha]|];
+      destruct (interval_finite_helper b) as [[lb hb]|];
+      repeat match goal with |- context [if ?test then _ else _] => destruct test end;
+      apply table_truth_bits.
+  Qed.
+
+  Local Lemma table_ule_bits : forall a b, interval_bits (interval_ule a b) <= 1.
+  Proof.
+    intros a b.
+    unfold interval_ule.
+    destruct (interval_finite_helper a) as [[la ha]|];
+      destruct (interval_finite_helper b) as [[lb hb]|];
+      repeat match goal with |- context [if ?test then _ else _] => destruct test end;
+      apply table_truth_bits.
+  Qed.
+
+  Local Lemma table_signed_compare_bits : forall w strict a b,
+    interval_bits (interval_signed_compare w strict a b) <= 1.
+  Proof.
+    intros w strict a b.
+    unfold interval_signed_compare.
+    destruct (interval_signed w a) as [[la ha]|];
+      destruct (interval_signed w b) as [[lb hb]|]; destruct strict;
+      repeat match goal with |- context [if ?test then _ else _] => destruct test end;
+      apply table_truth_bits.
+  Qed.
+
   Local Lemma table_clip_time : forall w a,
     (T_interval_clip w a <= (W.k_payload_clip + 1) *
       N.of_nat (W.psize w a + 1))%N.
