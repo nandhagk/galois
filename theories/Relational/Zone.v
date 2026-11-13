@@ -222,8 +222,6 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
 
   (* STUB-CODE *)
   Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
   Definition entry (m : dbm) (i j : K.t) : option Z :=
     match M.get i m with Some row => M.get j row | None => None end.
 
@@ -334,6 +332,66 @@ Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
     let seed := add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m)) in
     let next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty in
     if andb (nonnegative i next) (nonnegative j next) then Reached next else Unreached.
+
+  (** A difference has at most one positive and one negative unit coefficient. *)
+  Definition difference_pair (cs : list (X.t * Z)) : option (K.t * K.t) :=
+    match cs with
+    | nil => Some (None, None)
+    | (x, a) :: nil =>
+      if (a =? 1)%Z then Some (None, Some x) else
+      if (a =? -1)%Z then Some (Some x, None) else None
+    | (x, a) :: (y, b) :: nil =>
+      if andb (a =? 1)%Z (b =? -1)%Z then Some (Some y, Some x) else
+      if andb (a =? -1)%Z (b =? 1)%Z then Some (Some x, Some y) else None
+    | _ => None
+    end.
+
+  (** Recognizing bounded coefficient patterns avoids traversing unsupported forms. *)
+  Definition difference_forms (l r : lin X.t) : option (K.t * K.t) :=
+    match coef l, coef r with
+    | nil, rs =>
+      match difference_pair rs with Some (i, j) => Some (j, i) | None => None end
+    | ls, nil => difference_pair ls
+    | (x, a) :: nil, (y, b) :: nil =>
+      if andb (a =? 1)%Z (b =? 1)%Z then Some (Some y, Some x) else
+      if andb (a =? -1)%Z (b =? -1)%Z then Some (Some x, Some y) else None
+    | _, _ => None
+    end.
+
+  Definition form_exact (m : dbm) (f : lin X.t) (r : wrapr) : bool :=
+    match r with
+    | NoWrap => true
+    | _ => rel_wrap_exact r (form_bounds m f)
+    end.
+
+  Definition refine (i j : K.t) (d : Z) (s : t) : t :=
+    match s with Unreached => Unreached | Reached m => incr_close i j d m end.
+
+  Definition assume_cmp (c : cmp) (i j : K.t) (d : Z) (s : t) : t :=
+    match c with
+    | CLe => refine i j d s
+    | CLt => refine i j (d - 1)%Z s
+    | CEq => refine j i (-d)%Z (refine i j d s)
+    end.
+
+  Definition assume_atom (s : t) (a : atom X.t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached m =>
+      match difference_forms (al a) (ar a) with
+      | None => s
+      | Some (i, j) =>
+        if andb (form_exact m (al a) (alw a)) (form_exact m (ar a) (arw a)) then
+          assume_cmp (acmp a) i j (cst (ar a) - cst (al a))%Z s
+        else s
+      end
+    end.
+
+  Definition assume (g : L.guard) (es : list (term L.op X.t)) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached _ => fold_left assume_atom (F.atoms_of g es) s
+    end.
 End ZoneCode.
 
 Module Zone (X : KEY) (K : KEY with Definition t := option X.t
@@ -968,11 +1026,6 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
     destruct (K.eqb_spec j (Some x)) as [Hj | Hj]; [discriminate Hentry|].
     rewrite !vz_update_other by assumption. now apply Hmodel.
   Qed.
-  Lemma assume_sound : forall g es s st cs,
-    ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
-    L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
-  Proof. Admitted. (* STUB *)
-
   (** Unary entries supply lower and upper bounds for each variable. *)
   Lemma variable_bounds_sound : forall m v x, models m v ->
     in_bnd (fst (variable_bounds m x)) (snd (variable_bounds m x)) (v x).
@@ -992,6 +1045,128 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
   Proof.
     intros m v f Hmodel. apply rel_form_bounds_sound.
     intro x. now apply variable_bounds_sound.
+  Qed.
+
+  (** Recognized coefficient lists denote exactly their selected difference. *)
+  Lemma difference_pair_sound : forall cs v i j,
+    difference_pair cs = Some (i, j) -> eval_coef v cs = (vz v j - vz v i)%Z.
+  Proof.
+    intros cs v i j Hpair.
+    destruct cs as [|[x a] cs].
+    - inversion Hpair; subst. unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+    - destruct cs as [|[y b] cs].
+      + unfold difference_pair in Hpair.
+        destruct (a =? 1)%Z eqn:Ha.
+        * apply Z.eqb_eq in Ha. subst a. inversion Hpair; subst.
+          unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+        * destruct (a =? -1)%Z eqn:Hneg; [|discriminate Hpair].
+          apply Z.eqb_eq in Hneg. subst a. inversion Hpair; subst.
+          unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+      + destruct cs as [|p cs]; [|discriminate Hpair].
+        unfold difference_pair in Hpair.
+        destruct (andb (a =? 1)%Z (b =? -1)%Z) eqn:Hsigns.
+        * apply andb_true_iff in Hsigns. destruct Hsigns as [Ha Hb].
+          apply Z.eqb_eq in Ha. apply Z.eqb_eq in Hb. subst a b.
+          inversion Hpair; subst. unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+        * destruct (andb (a =? -1)%Z (b =? 1)%Z) eqn:Hother;
+            [|discriminate Hpair].
+          apply andb_true_iff in Hother. destruct Hother as [Ha Hb].
+          apply Z.eqb_eq in Ha. apply Z.eqb_eq in Hb. subst a b.
+          inversion Hpair; subst. unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+  Qed.
+
+  (** Recognition subtracts the two coefficient sums without changing their meaning. *)
+  Lemma difference_forms_sound : forall l r v i j,
+    difference_forms l r = Some (i, j) ->
+    (eval_coef v (coef l) - eval_coef v (coef r) = vz v j - vz v i)%Z.
+  Proof.
+    intros [ls lc] [rs rc] v i j Hpair. unfold difference_forms in Hpair.
+    cbn [coef] in Hpair |- *. destruct ls as [|[x a] xs].
+    - destruct (difference_pair rs) as [[u w]|] eqn:Hrecognized;
+        [|discriminate Hpair].
+      pose proof (difference_pair_sound rs v u w Hrecognized) as Hvalue.
+      inversion Hpair; subst. unfold eval_coef in *. cbn in *. lia.
+    - destruct rs as [|[y b] ys].
+      + pose proof (difference_pair_sound ((x, a) :: xs) v i j Hpair) as Hvalue.
+        unfold eval_coef in *. cbn in *. lia.
+      + destruct xs as [|p xs], ys as [|q ys]; try discriminate Hpair.
+        destruct (andb (a =? 1)%Z (b =? 1)%Z) eqn:Hsigns.
+        * apply andb_true_iff in Hsigns. destruct Hsigns as [Ha Hb].
+          apply Z.eqb_eq in Ha. apply Z.eqb_eq in Hb. subst a b.
+          inversion Hpair; subst. unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+        * destruct (andb (a =? -1)%Z (b =? -1)%Z) eqn:Hother;
+            [|discriminate Hpair].
+          apply andb_true_iff in Hother. destruct Hother as [Ha Hb].
+          apply Z.eqb_eq in Ha. apply Z.eqb_eq in Hb. subst a b.
+          inversion Hpair; subst. unfold eval_coef, vz. cbn -[Z.add Z.sub Z.mul Z.opp]. ring.
+  Qed.
+
+  (** An accepted range check justifies interpreting a wrapped form as an integer form. *)
+  Lemma form_exact_sound : forall m f r v, models m v -> form_exact m f r = true ->
+    wrap_into r (eval_lin v f) = eval_lin v f.
+  Proof.
+    intros m f [|lo hi] v Hmodel Hexact; [reflexivity|].
+    apply (rel_wrap_exact_sound (WrapTo lo hi) (form_bounds m f)).
+    - now apply form_bounds_sound.
+    - exact Hexact.
+  Qed.
+
+  (** A refinement retains every current model satisfying the new difference bound. *)
+  Lemma refine_sound : forall i j d s v, ngamma s v ->
+    (vz v j - vz v i <= d)%Z -> ngamma (refine i j d s) v.
+  Proof.
+    intros i j d [|m] v Hmodel Hbound; [exact Hmodel|].
+    now apply incr_close_models.
+  Qed.
+
+  Lemma assume_cmp_sound : forall c i j d s v, ngamma s v ->
+    (match c with
+     | CLe => (vz v j - vz v i <= d)%Z
+     | CLt => (vz v j - vz v i < d)%Z
+     | CEq => (vz v j - vz v i = d)%Z
+     end) -> ngamma (assume_cmp c i j d s) v.
+  Proof.
+    intros [| |] i j d s v Hmodel Hbound; unfold assume_cmp.
+    - now apply refine_sound.
+    - apply refine_sound; [exact Hmodel|lia].
+    - apply refine_sound; [apply refine_sound; [exact Hmodel|lia]|lia].
+  Qed.
+
+  (** Each supported atom contributes only difference constraints implied by that atom. *)
+  Lemma assume_atom_sound : forall s a v, ngamma s v -> atom_holds v a ->
+    ngamma (assume_atom s a) v.
+  Proof.
+    intros [|m] a v Hmodel Hatom; [exact Hmodel|].
+    unfold assume_atom. destruct (difference_forms (al a) (ar a))
+      as [[i j]|] eqn:Hpair; [|exact Hmodel].
+    destruct (andb (form_exact m (al a) (alw a))
+      (form_exact m (ar a) (arw a))) eqn:Hexact; [|exact Hmodel].
+    apply andb_true_iff in Hexact. destruct Hexact as [Hl Hr].
+    unfold atom_holds in Hatom.
+    rewrite (form_exact_sound m (al a) (alw a) v Hmodel Hl),
+      (form_exact_sound m (ar a) (arw a) v Hmodel Hr) in Hatom.
+    pose proof (difference_forms_sound (al a) (ar a) v i j Hpair) as Hdiff.
+    apply assume_cmp_sound; [exact Hmodel|].
+    unfold eval_lin in Hatom. destruct (acmp a); lia.
+  Qed.
+
+  (** A sequence of satisfied atoms retains the same concrete model. *)
+  Lemma assume_atoms_sound : forall atoms s v, ngamma s v ->
+    Forall (atom_holds v) atoms -> ngamma (fold_left assume_atom atoms s) v.
+  Proof.
+    induction atoms as [|a atoms IH]; intros s v Hmodel Hatoms.
+    - exact Hmodel.
+    - inversion Hatoms as [|a' atoms' Ha Htail]; subst.
+      apply IH; [now apply assume_atom_sound|exact Htail].
+  Qed.
+
+  Lemma assume_sound : forall g es s st cs,
+    ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
+    L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
+  Proof.
+    intros g es [|m] st cs Hmodel Heval Hholds; [exact Hmodel|].
+    apply assume_atoms_sound; [exact Hmodel|].
+    now apply (F.atoms_sound g es st cs).
   Qed.
 
   Lemma range_sound : forall e s st c,
@@ -1105,7 +1280,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun narrow.
   TimeFun havoc.
   TimeFun assign.
-  TimeFun assume.
   TimeFun entry.
   TimeFun variable_bounds.
   TimeFun form_bounds.
@@ -1118,6 +1292,13 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   TimeFun close.
   TimeFun increment_row.
   TimeFun incr_close.
+  TimeFun difference_pair.
+  TimeFun difference_forms.
+  TimeFun form_exact.
+  TimeFun refine.
+  TimeFun assume_cmp.
+  TimeFun assume_atom.
+  TimeFun assume.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -1514,6 +1695,169 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - intro Hin. right. now right.
   Qed.
 
+  (** Every member of a list is bounded by its maximum. *)
+  Lemma maximum_raw_member : forall xs n,
+    In n xs -> n <= fold_right Nat.max 0 xs.
+  Proof.
+    intros xs. induction xs as [|x xs IH]; intros n Hin.
+    - contradiction.
+    - cbn in Hin. cbn. destruct Hin as [Heq | Hin].
+      + subst n. apply Nat.le_max_l.
+      + eapply Nat.le_trans; [exact (IH n Hin)|apply Nat.le_max_r].
+  Qed.
+
+  (** A uniform upper bound for a list bounds its maximum. *)
+  Lemma maximum_raw_bound : forall xs upper,
+    (forall n, In n xs -> n <= upper) -> fold_right Nat.max 0 xs <= upper.
+  Proof.
+    intros xs. induction xs as [|x xs IH]; intros upper Hbound.
+    - cbn. lia.
+    - cbn. apply Nat.max_lub.
+      + apply Hbound. now left.
+      + apply IH. intros n Hin. apply Hbound. now right.
+  Qed.
+
+  (** Every finite raw entry satisfies the matrix's integer-bit bound. *)
+  Lemma ell_entry : forall m p q z,
+    raw_entry m p q = Some z -> Z.size_nat z <= ell m.
+  Proof.
+    intros m p q z Hentry. unfold raw_entry in Hentry.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [row_of] in Hentry.
+    - unfold ell. apply maximum_raw_member. apply in_flat_map.
+      exists row. split; [exact (row_in_rows m p row Hrow)|].
+      apply in_map_iff. exists q. split.
+      + now rewrite Hentry.
+      + apply M.codes_spec. rewrite Hentry. discriminate.
+    - rewrite M.find_empty in Hentry. discriminate.
+  Qed.
+
+  (** Bounding every finite raw entry bounds the matrix's integer-bit maximum. *)
+  Lemma ell_bound : forall m upper,
+    (forall p q z, raw_entry m p q = Some z -> Z.size_nat z <= upper) ->
+    ell m <= upper.
+  Proof.
+    intros m upper Hbound. unfold ell. apply maximum_raw_bound.
+    intros n Hin. apply in_flat_map in Hin. destruct Hin as [row [Hrow Hin]].
+    apply in_map_iff in Hin. destruct Hin as [q [Heq Hq]].
+    apply rows_find in Hrow. destruct Hrow as [p Hrow].
+    destruct (M.find q row) as [z|] eqn:Hentry.
+    - subst n. apply (Hbound p q z). unfold raw_entry. rewrite Hrow. exact Hentry.
+    - cbn in Heq. lia.
+  Qed.
+
+  (** An integer's absolute value fits strictly below its bit-length power of two. *)
+  Lemma zbits_upper : forall z, Z.abs_nat z < 2 ^ Z.size_nat z.
+  Proof.
+    intros [|p|p]; cbn [Z.abs_nat Z.size_nat].
+    - change (0 < 1). lia.
+    - apply Pos.size_nat_upper.
+    - apply Pos.size_nat_upper.
+  Qed.
+
+  (** Any strict power-of-two bound also bounds the integer's bit length. *)
+  Lemma zbits_least : forall z n,
+    Z.abs_nat z < 2 ^ n -> Z.size_nat z <= n.
+  Proof.
+    intros [|p|p] n Hbound; cbn [Z.abs_nat Z.size_nat] in *.
+    - lia.
+    - now apply Pos.size_nat_least.
+    - now apply Pos.size_nat_least.
+  Qed.
+
+  (** Adding two integers with a common bit bound needs at most one further bit. *)
+  Lemma zbits_add_bound : forall x y upper,
+    Z.size_nat x <= upper -> Z.size_nat y <= upper ->
+    Z.size_nat (x + y)%Z <= upper + 1.
+  Proof.
+    intros x y upper Hx Hy.
+    pose proof (zbits_upper x) as Hxabs. pose proof (zbits_upper y) as Hyabs.
+    assert (Hxp : 2 ^ Z.size_nat x <= 2 ^ upper).
+    { apply Nat.pow_le_mono_r; lia. }
+    assert (Hyp : 2 ^ Z.size_nat y <= 2 ^ upper).
+    { apply Nat.pow_le_mono_r; lia. }
+    assert (Htriangle : Z.abs_nat (x + y)%Z <= Z.abs_nat x + Z.abs_nat y).
+    { apply (proj2 (Nat2Z.inj_le _ _)).
+      rewrite Nat2Z.inj_add, !Zabs2Nat.id_abs. apply Z.abs_triangle. }
+    apply zbits_least. replace (upper + 1) with (S upper) by lia.
+    cbn [Nat.pow]. lia.
+  Qed.
+
+  (** Tightening a bound selects one of its inputs and preserves their common bit bound. *)
+  Lemma lower_bound_size : forall d old upper,
+    Z.size_nat d <= upper ->
+    (forall z, old = Some z -> Z.size_nat z <= upper) ->
+    Z.size_nat (lower_bound d old) <= upper.
+  Proof.
+    intros d [z|] upper Hd Hold; cbn [lower_bound].
+    - destruct (Z.leb_spec0 d z) as [Hle | Hgt].
+      + now rewrite Z.min_l by exact Hle.
+      + rewrite Z.min_r by lia. apply Hold. reflexivity.
+    - exact Hd.
+  Qed.
+
+  (** Insertion changes only the supplied raw coordinate, retaining its tighter bound. *)
+  Lemma raw_entry_add_cons : forall i j d m p q,
+    raw_entry (add_cons i j d m) p q =
+    if Pos.eqb p (K.encode i) then
+      if Pos.eqb q (K.encode j) then Some (lower_bound d (raw_entry m p q))
+      else raw_entry m p q
+    else raw_entry m p q.
+  Proof.
+    intros i j d m p q. unfold raw_entry, add_cons. rewrite M.find_set.
+    destruct (Pos.eqb p (K.encode i)) eqn:Hrow; [|reflexivity].
+    apply Pos.eqb_eq in Hrow. subst p. cbn [row_of]. rewrite M.find_set.
+    destruct (Pos.eqb q (K.encode j)) eqn:Hcol.
+    - apply Pos.eqb_eq in Hcol. subst q. now rewrite !M.get_find.
+    - now rewrite M.get_find.
+  Qed.
+
+  (** Inserting one constraint preserves a common bit bound for old and new entries. *)
+  Lemma ell_add_cons : forall i j d m upper,
+    ell m <= upper -> Z.size_nat d <= upper -> ell (add_cons i j d m) <= upper.
+  Proof.
+    intros i j d m upper Hm Hd. apply ell_bound. intros p q z Hentry.
+    rewrite raw_entry_add_cons in Hentry.
+    destruct (Pos.eqb p (K.encode i)).
+    - destruct (Pos.eqb q (K.encode j)).
+      + injection Hentry as <-. apply lower_bound_size; [exact Hd|].
+        intros old Hold. eapply Nat.le_trans; [eapply ell_entry; exact Hold|exact Hm].
+      + eapply Nat.le_trans; [eapply ell_entry; exact Hentry|exact Hm].
+    - eapply Nat.le_trans; [eapply ell_entry; exact Hentry|exact Hm].
+  Qed.
+
+  (** Raw relaxation considers the old edge and the two edges through the pivot. *)
+  Lemma raw_entry_relax : forall k m p q,
+    raw_entry (relax_round k m) p q =
+    match raw_entry m p (K.encode k) with
+    | Some a => via_bound a (raw_entry m p q) (raw_entry m (K.encode k) q)
+    | None => raw_entry m p q
+    end.
+  Proof.
+    intros k m p q. unfold raw_entry, relax_round.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|]; cbn [round_row row_of].
+    - rewrite !M.get_find. destruct (M.find (K.encode k) row).
+      + now rewrite M.find_merge by reflexivity.
+      + reflexivity.
+    - now rewrite !M.find_empty.
+  Qed.
+
+  (** One sparse relaxation adds at most one bit to the maximum stored bound. *)
+  Lemma ell_relax : forall k m, ell (relax_round k m) <= ell m + 1.
+  Proof.
+    intros k m. apply ell_bound. intros p q z Hentry.
+    rewrite raw_entry_relax in Hentry.
+    destruct (raw_entry m p (K.encode k)) as [a|] eqn:Ha.
+    - unfold via_bound in Hentry.
+      destruct (raw_entry m (K.encode k) q) as [c|] eqn:Hc.
+      + injection Hentry as <-. apply lower_bound_size.
+        * apply zbits_add_bound; [exact (ell_entry m p (K.encode k) a Ha)|
+            exact (ell_entry m (K.encode k) q c Hc)].
+        * intros old Hold. pose proof (ell_entry m p q old Hold). lia.
+      + pose proof (ell_entry m p q z Hentry). lia.
+    - pose proof (ell_entry m p q z Hentry). lia.
+  Qed.
+
   Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
     supp m' <= supp m + 2 /\
     b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j)) /\
@@ -1667,7 +2011,14 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       + apply elements_code; [exact (Hrows (K.encode i) row Hget)|exact Hkey].
   Qed.
   Lemma bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k m. unfold fw_round. destruct (pivot_present k m).
+    - eapply Nat.le_trans; [apply ell_relax|].
+      assert (Hseed : ell (add_cons k k 0%Z m) <= ell m).
+      { apply ell_add_cons; [lia|cbn [Z.size_nat]; lia]. }
+      lia.
+    - apply ell_relax.
+  Qed.
   Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
     In (k, a) (fw_trace ks m) ->
     ell a <= ell m + Nat.log2 (supp m) + 1.
