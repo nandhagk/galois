@@ -4122,6 +4122,52 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     exact (close_above_closed seed u Hwfseed Hglobal Hbelow Hzero).
   Qed.
 
+  (** Successful full closure lies below every old or one-new-edge path. *)
+  Lemma close_below_edge_extension : forall m i j d final, dbm_wf m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    close seed = Reached final ->
+    forall a b, RelationalPathBounds.below (entry final a b)
+      (RelationalPathBounds.edge_extension (entry base) i j d a b).
+  Proof.
+    intros m i j d final Hwf. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base). intros Hresult a b.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed, base. apply add_cons_wf, add_cons_wf, add_cons_wf. exact Hwf. }
+    destruct (close_path_invariant seed final Hwfseed Hresult)
+      as [Hbelow Hclosed Hzero Hpath].
+    assert (Hbase : forall x y,
+      RelationalPathBounds.below (entry final x y) (entry base x y)).
+    { intros x y. eapply RelationalPathBounds.below_trans; [apply Hbelow|].
+      unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec x i) as [Hx|Hx]; [subst x|apply RelationalPathBounds.below_refl].
+      destruct (K.eqb_spec y j) as [Hy|Hy]; [subst y|apply RelationalPathBounds.below_refl].
+      destruct (entry base i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_r|exact I]. }
+    assert (Hmiddle : RelationalPathBounds.below (entry final i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans; [apply Hbelow|].
+      unfold seed. rewrite entry_add_cons.
+      destruct (K.eqb_spec i i); [|contradiction].
+      destruct (K.eqb_spec j j); [|contradiction].
+      destruct (entry base i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia]. }
+    assert (Hi : In i (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed i Hwfseed). unfold seed. rewrite support_add_cons.
+      now left. }
+    assert (Hj : In j (rev (keys seed))).
+    { apply in_rev. rewrite rev_involutive.
+      apply (keys_cover seed j Hwfseed). unfold seed. rewrite support_add_cons.
+      right. now left. }
+    unfold RelationalPathBounds.edge_extension.
+    apply RelationalPathBounds.minimum_glb. split; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed i Hi a b)|].
+    apply RelationalPathBounds.plus_mono; [apply Hbase|].
+    eapply RelationalPathBounds.below_trans; [apply (Hclosed j Hj i b)|].
+    apply RelationalPathBounds.plus_mono; [exact Hmiddle|apply Hbase].
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
