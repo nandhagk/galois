@@ -1358,13 +1358,50 @@ Module PTrieT <: TRIE_ALL.
       time_step.
   Qed.
   (** Directional checking charges each visited binding against its lookup result. *)
+  Local Lemma checking_sum_app (xs ys : list N) :
+    fold_right N.add 0%N (xs ++ ys) =
+      (fold_right N.add 0 xs + fold_right N.add 0 ys)%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [app fold_right]; rewrite ?IH; lia.
+  Qed.
 
+  Local Lemma T_forall2_ne_sum {A B} (f : A -> option B -> bool) T_f (n : ne A) :
+    forall u,
+    (T_forall2_ne f T_f n u <= 16 * N.of_nat (nodes_ne n) +
+      fold_right N.add 0
+        (List.map (fun ka => T_f (snd ka) (get (fst ka) u)) (entries_ne n)))%N.
+  Proof.
+    induction n; intro u; time_unfold @T_forall2_ne; time_unfold @T_test_value;
+      time_simpl; time_cbn.
+    all: cbn [nodes_ne entries_ne].
+    all: rewrite ?map_app, ?map_map, ?checking_sum_app; time_cbn.
+    all: try pose proof (IHn (left u)) as Hleft.
+    all: try pose proof (IHn (right u)) as Hright.
+    all: try pose proof (IHn1 (left u)) as Hleft.
+    all: try pose proof (IHn2 (right u)) as Hright.
+    all: cbn [fst snd get trie_get left right value] in *.
+    all: time_unfold @T_left; time_unfold @T_value; time_unfold @T_right.
+    all: time_simpl; time_cbn_all; rewrite ?Nat2N.inj_add in *.
+    all: repeat match goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; time_cbn.
+    all: repeat rewrite map_map in *.
+    all: cbn [fst snd get trie_get] in *.
+    all: unfold left, right, value in *.
+    all: lia.
+  Qed.
 
   Lemma T5_forall2_sum : forall A B (f : A -> option B -> bool) T_f m u,
     (T_forall2 f T_f m u <= k_check * (N.of_nat (nodes m + 1) +
       fold_right N.add 0
         (List.map (fun ka => T_f (snd ka) (get (fst ka) u)) (elements m))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f [|n] u; rewrite elements_entries.
+    - time_unfold @T_forall2. unfold k_check. time_cbn. nia.
+    - pose proof (T_forall2_ne_sum f T_f n u) as Hsum.
+      time_unfold @T_forall2. unfold k_check. time_cbn_all.
+      rewrite Nat2N.inj_add. nia.
+  Qed.
   Lemma T6_fold_path : forall A B (f : B -> positive -> A -> B) T_f path T_path m b c d,
     ((forall acc p a, T_f acc p a <= c) -> (forall p, T_path p <= d) ->
     T_fold_path f T_f path T_path m b <=
@@ -1497,18 +1534,92 @@ Module PTrieT <: TRIE_ALL.
        fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
          (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
   Proof. Admitted. (* STUB *)
+  Local Lemma checking_sum_bound {X} (xs : list X) (w v : X -> N) c :
+    (forall x, In x xs -> (w x <= c + v x)%N) ->
+    (fold_right N.add 0 (List.map w xs) <= c * N.of_nat (length xs) +
+      fold_right N.add 0 (List.map v xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound.
+    - cbn [List.map fold_right length]. nia.
+    - pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+      assert (Htail : forall y, In y xs -> (w y <= c + v y)%N).
+      { intros y Hin. apply Hbound. now right. }
+      specialize (IH Htail). cbn [List.map fold_right length].
+      rewrite Nat2N.inj_succ. nia.
+  Qed.
 
   Lemma T_forall2b_sum_le : forall A B (f : option A -> option B -> bool) T_f m1 m2,
     (T_forall2b f T_f m1 m2 <= c_trie *
       ((T_f None None + 1) * N.of_nat (nodes m1 + nodes m2 + 1) +
        fold_right N.add 0 (List.map (fun p => T_f (get p m1) (get p m2))
          (List.map fst (elements m1) ++ List.map fst (elements m2)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f T_f m1 m2.
+    pose proof (@T5_forall2_sum A B (fun a b => f (Some a) b)
+      (fun a b => (1 + T_f (Some a) b)%N) m1 m2) as Hforward.
+    pose proof (@T5_forall2_sum B A
+      (fun b a => match a with None => f None (Some b) | Some _ => true end)
+      (fun b a => (1 + match a with None => T_f None (Some b) | Some _ => 0 end)%N)
+      m2 m1) as Hreverse.
+    assert (Hforward_sum :
+      (fold_right N.add 0 (List.map
+        (fun ka => 1 + T_f (Some (snd ka)) (get (fst ka) m2)) (elements m1)) <=
+       N.of_nat (length (elements m1)) + fold_right N.add 0
+        (List.map (fun ka => T_f (get (fst ka) m1) (get (fst ka) m2))
+          (elements m1)))%N).
+    { eapply N.le_trans.
+      - apply (checking_sum_bound (elements m1)
+          (fun ka => (1 + T_f (Some (snd ka)) (get (fst ka) m2))%N)
+          (fun ka => T_f (get (fst ka) m1) (get (fst ka) m2)) 1%N).
+        intros [p a] Hin. apply elements_spec in Hin. cbn [fst snd]. rewrite Hin. lia.
+      - nia. }
+    assert (Hreverse_sum :
+      (fold_right N.add 0 (List.map (fun kb => 1 +
+        match get (fst kb) m1 with
+        | None => T_f None (Some (snd kb)) | Some _ => 0
+        end) (elements m2)) <=
+       N.of_nat (length (elements m2)) + fold_right N.add 0
+        (List.map (fun kb => T_f (get (fst kb) m1) (get (fst kb) m2))
+          (elements m2)))%N).
+    { eapply N.le_trans.
+      - apply (checking_sum_bound (elements m2)
+          (fun kb => (1 + match get (fst kb) m1 with
+            | None => T_f None (Some (snd kb)) | Some _ => 0 end)%N)
+          (fun kb => T_f (get (fst kb) m1) (get (fst kb) m2)) 1%N).
+        intros [p b] Hin. apply elements_spec in Hin. cbn [fst snd]. rewrite Hin.
+        destruct (get p m1); nia.
+      - nia. }
+    pose proof (elements_length_nodes m1) as Hbindings1.
+    pose proof (elements_length_nodes m2) as Hbindings2.
+    apply time_of_nat_le in Hbindings1. apply time_of_nat_le in Hbindings2.
+    time_unfold @T_forall2b. time_simpl.
+    rewrite map_app, checking_sum_app, !map_map.
+    unfold k_check in Hforward, Hreverse. unfold c_trie.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   Lemma T_existsb_sum_le : forall A (f : A -> bool) T_f m,
     (T_existsb f T_f m <= c_trie * (N.of_nat (nodes m + 1) +
       fold_right N.add 0 (List.map (fun p =>
         match get p m with Some a => T_f a | None => 0 end) (List.map fst (elements m)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A f T_f m.
+    time_unfold @T_existsb. time_simpl.
+    lazymatch goal with
+    | |- context [T_forall2 ?g ?T_g ?tr ?u] =>
+      pose proof (@T5_forall2_sum A unit g T_g tr u) as Hcheck
+    end.
+    assert (Hsum : (fold_right N.add 0
+      (List.map (fun ka => 1 + (T_f (snd ka) + 1)) (elements m)) <=
+      2 * N.of_nat (length (elements m)) + fold_right N.add 0
+        (List.map (fun ka => match get (fst ka) m with
+          | Some a => T_f a | None => 0 end) (elements m)))%N).
+    { apply checking_sum_bound. intros [p a] Hin.
+      apply elements_spec in Hin. cbn [fst snd]. rewrite Hin. lia. }
+    pose proof (elements_length_nodes m) as Hbindings.
+    apply time_of_nat_le in Hbindings. rewrite map_map.
+    unfold k_check in Hcheck. unfold c_trie.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   Lemma T_fold_sum_le : forall A B (f : B -> positive -> A -> B) T_f m b,
     (T_fold f T_f m b <= c_trie * (N.of_nat (nodes m + 1) + N.of_nat (weight m) +
       snd (fold_left (fun bw ka =>
