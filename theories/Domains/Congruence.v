@@ -3081,6 +3081,203 @@ Module CongruenceTableT (L : WORD_LANGUAGE_T) (D : CONGRUENCE_T L)
     { change ((1 ^ 2) <= n ^ 2)%nat. apply Nat.pow_le_mono_l. lia. }
     lia.
   Qed.
+  Import CongruenceCost.
+
+  Lemma member_sum_bound {A : Type} (f : A -> nat) : forall xs x,
+    In x xs -> (f x <= fold_right Nat.add 0%nat (map f xs))%nat.
+  Proof.
+    induction xs as [|head xs IH]; intros x Hmember; cbn [In] in Hmember.
+    - contradiction.
+    - destruct Hmember as [->|Htail]; cbn [map fold_right].
+      + lia.
+      + pose proof (IH x Htail). lia.
+  Qed.
+
+  Lemma natural_le_square : forall n, (1 <= n -> n <= n ^ 2)%nat.
+  Proof.
+    intros n Hpositive. cbn [Nat.pow]. nia.
+  Qed.
+
+  Lemma sum_square_bound : forall x y k,
+    (k <= x + y -> k ^ 2 <= 4 * (x ^ 2 + y ^ 2))%nat.
+  Proof.
+    intros x y k Hsum. destruct (Nat.le_ge_cases x y) as [Hle|Hge].
+    - eapply Nat.le_trans with (m := ((2 * y) ^ 2)%nat).
+      + apply Nat.pow_le_mono_l. lia.
+      + rewrite Nat.pow_mul_l. change ((2 ^ 2)%nat) with 4%nat. lia.
+    - eapply Nat.le_trans with (m := ((2 * x) ^ 2)%nat).
+      + apply Nat.pow_le_mono_l. lia.
+      + rewrite Nat.pow_mul_l. change ((2 ^ 2)%nat) with 4%nat. lia.
+  Qed.
+
+  Lemma triple_square_bound : forall x y z k,
+    (k <= x + y + z -> k ^ 2 <= 16 * (x ^ 2 + y ^ 2 + z ^ 2))%nat.
+  Proof.
+    intros x y z k Hsum.
+    pose proof (sum_square_bound x (y + z) k ltac:(lia)) as Houter.
+    pose proof (sum_square_bound y z (y + z) ltac:(lia)) as Hinner. lia.
+  Qed.
+
+  Lemma table_budget_width : forall rw xs,
+    (Pos.to_nat rw +
+      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1 <=
+      table_budget rw xs)%nat.
+  Proof.
+    intros rw xs. unfold table_budget.
+    pose proof (natural_le_square
+      (Pos.to_nat rw +
+        fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1)
+      ltac:(lia)) as Hsquare. lia.
+  Qed.
+
+  Lemma table_unit_budget : forall rw xs,
+    (1 <= c_word_table * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs. pose proof (table_budget_positive rw xs) as Hpositive.
+    apply time_of_nat_le in Hpositive. change (N.of_nat 1) with 1%N in Hpositive.
+    unfold c_word_table. nia.
+  Qed.
+
+  Lemma table_top_square : forall rw xs,
+    (N.of_nat ((Pos.to_nat rw + 1) ^ 2) <= N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs. apply time_of_nat_le. unfold table_budget.
+    assert (Hsquare : ((Pos.to_nat rw + 1) ^ 2 <=
+      (Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2)%nat).
+    { apply Nat.pow_le_mono_l. lia. }
+    lia.
+  Qed.
+
+  Lemma table_budget_positive_N : forall rw xs,
+    (1 <= N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs. change 1%N with (N.of_nat 1).
+    apply time_of_nat_le. apply table_budget_positive.
+  Qed.
+
+  Lemma unary_square_budget : forall rw xs wa a k, In (wa, a) xs ->
+    (k <= Pos.to_nat wa + Pos.to_nat rw + congr_bits a + 1)%nat ->
+    (N.of_nat (k ^ 2) <= 4 * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs wa a k Hmember Hsize.
+    pose proof (member_sum_bound (fun x => D.psize (fst x) (snd x))
+      xs (wa, a) Hmember) as Hpayload.
+    cbn [fst snd] in Hpayload. rewrite D.psize_congr in Hpayload.
+    pose proof (sum_square_bound
+      (Pos.to_nat rw +
+        fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1)
+      (Pos.to_nat wa + congr_bits a + 1) k ltac:(lia)) as Hsquare.
+    assert (Hbudget : (k ^ 2 <= 4 * table_budget rw xs)%nat).
+    { unfold table_budget.
+      eapply Nat.le_trans; [exact Hsquare|].
+      apply Nat.mul_le_mono_l. apply Nat.add_le_mono_l. exact Hpayload. }
+    apply time_of_nat_le in Hbudget. rewrite Nat2N.inj_mul in Hbudget.
+    cost_constants. exact Hbudget.
+  Qed.
+
+  Lemma binary_square_budget : forall rw xs wa a wb b k,
+    In (wa, a) xs -> In (wb, b) xs ->
+    (k <= Pos.to_nat rw + congr_bits a + congr_bits b + 1)%nat ->
+    (N.of_nat (k ^ 2) <= 32 * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs wa a wb b k Ha Hb Hsize.
+    pose proof (member_sum_bound (fun x => D.psize (fst x) (snd x))
+      xs (wa, a) Ha) as Hasize.
+    pose proof (member_sum_bound (fun x => D.psize (fst x) (snd x))
+      xs (wb, b) Hb) as Hbsize.
+    cbn [fst snd] in Hasize, Hbsize.
+    rewrite D.psize_congr in Hasize, Hbsize.
+    pose proof (triple_square_bound
+      (Pos.to_nat rw +
+        fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1)
+      (Pos.to_nat wa + congr_bits a + 1) (Pos.to_nat wb + congr_bits b + 1) k
+      ltac:(lia)) as Hsquare.
+    assert (Hbudget : (k ^ 2 <= 32 * table_budget rw xs)%nat).
+    { unfold table_budget. unfold D.p in *. lia. }
+    apply time_of_nat_le in Hbudget. rewrite Nat2N.inj_mul in Hbudget.
+    cost_constants. exact Hbudget.
+  Qed.
+
+  Lemma scaled_cost : forall t c g k budget : N,
+    (t <= c * g -> g <= k * budget -> t <= k * c * budget)%N.
+  Proof.
+    intros t c g k budget Hcost Hbudget.
+    eapply N.le_trans; [exact Hcost|].
+    eapply N.le_trans with (m := (c * (k * budget))%N).
+    - apply N.mul_le_mono_l. exact Hbudget.
+    - nia.
+  Qed.
+
+  Lemma top_time_budget : forall rw xs,
+    (D.T_ptop rw <= D.c_payload * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs. eapply N.le_trans; [apply D.T_ptop_le|].
+    apply N.mul_le_mono_l. apply table_top_square.
+  Qed.
+
+  Lemma top_size_budget : forall rw xs,
+    (N.of_nat (D.psize rw (D.ptop rw)) <=
+      D.c_payload * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs. eapply N.le_trans; [apply D.ptop_size|].
+    apply N.mul_le_mono_l. apply table_top_square.
+  Qed.
+
+  Lemma join_call_budget : forall rw xs wa a wb b t,
+    In (wa, a) xs -> In (wb, b) xs ->
+    (t <= D.c_payload * N.of_nat (D.psize rw a + D.psize rw b + 1))%N ->
+    (t <= 9 * D.c_payload * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs wa a wb b t Ha Hb Hcost.
+    pose proof (unary_square_budget rw xs wa a
+      (Pos.to_nat rw + congr_bits a + 1) Ha ltac:(lia)) as Hasize.
+    pose proof (unary_square_budget rw xs wb b
+      (Pos.to_nat rw + congr_bits b + 1) Hb ltac:(lia)) as Hbsize.
+    rewrite <- (D.psize_congr rw a) in Hasize.
+    rewrite <- (D.psize_congr rw b) in Hbsize.
+    pose proof (table_budget_positive rw xs) as Hpositive.
+    apply time_of_nat_le in Hpositive. change (N.of_nat 1) with 1%N in Hpositive.
+    eapply scaled_cost; [exact Hcost|].
+    rewrite !Nat2N.inj_add. change (N.of_nat 1) with 1%N. lia.
+  Qed.
+
+  Lemma normalized_output_budget : forall rw xs r,
+    (congr_bits r <= 2 * Pos.to_nat rw)%nat ->
+    (N.of_nat (D.psize rw r) <= 9 * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs r Hbits.
+    assert (Hsize : (D.psize rw r <= 9 * (Pos.to_nat rw + 1) ^ 2)%nat).
+    { rewrite D.psize_congr.
+      replace (9 * (Pos.to_nat rw + 1) ^ 2)%nat with
+        ((3 * (Pos.to_nat rw + 1)) ^ 2)%nat by (rewrite Nat.pow_mul_l; reflexivity).
+      apply Nat.pow_le_mono_l. lia. }
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_mul in Hsize. cost_constants.
+    pose proof (table_top_square rw xs). lia.
+  Qed.
+
+  Lemma positive_leb_time : forall wa wb,
+    (Pos.T_leb wa wb <= N.of_nat (Pos.size_nat wa) + 2)%N.
+  Proof.
+    intros wa wb. pose proof (Pos.T_compare_le wa wb).
+    time_unfold Pos.T_leb. destruct (Pos.compare wa wb); lia.
+  Qed.
+
+  Lemma width_comparison_budget : forall rw xs wa a wb, In (wa, a) xs ->
+    (Pos.T_eqb wa wb <= N.of_nat (table_budget rw xs) /\
+     Pos.T_leb wa wb <= 2 * N.of_nat (table_budget rw xs))%N.
+  Proof.
+    intros rw xs wa a wb Hmember.
+    pose proof (member_sum_bound (fun x => Pos.to_nat (fst x)) xs (wa, a) Hmember)
+      as Hwidth. cbn [fst] in Hwidth.
+    pose proof (WordTime.positive_size_value wa) as Hbits.
+    pose proof (table_budget_width rw xs) as Hbudget.
+    assert (Hsize : (Pos.size_nat wa + 1 <= table_budget rw xs)%nat) by lia.
+    apply time_of_nat_le in Hsize. rewrite Nat2N.inj_add in Hsize. cost_constants.
+    pose proof (Pos.T_eqb_le wa wb). pose proof (positive_leb_time wa wb).
+    split; lia.
+  Qed.
+
   (** The result stays within its declared work budget. *)
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
