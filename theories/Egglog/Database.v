@@ -1118,6 +1118,19 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       | Some before => slots_update false f (k ++ option_list before) db
       end in
     row_write f k o (slots_update true f (k ++ option_list o) without).
+
+  (** The row table is erased after its slot contributions have been removed. *)
+  Definition row_erase (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    database_set_runtime
+      (runtime_set_rows
+        (PTrieCode.remove (db_row_code f k) (runtime_rows (db_runtime db))) (db_runtime db)) db.
+
+  (** An absent row is unchanged; a present row releases each projected occurrence. *)
+  Definition row_delete (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    match row_get f k db with
+    | None => db
+    | Some o => row_erase f k (slots_update false f (k ++ option_list o) db)
+    end.
   (** Initialization stores declarations, slots, empty rows and index caches. *)
   (* STUB-CODE *)
   Definition init (ds : list decl) (sl : list (positive * list nat)) : t :=
@@ -4344,6 +4357,72 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact (wf_make_from_replacement row_replace_wf).
   Qed.
 
+  (** Erasing a row removes precisely its selected table binding. *)
+  Lemma row_erase_binding : forall f k db g args output,
+    row (view (row_erase f k db)) g args output <->
+      row (view db) g args output /\ (g, args) <> (f, k).
+  Proof.
+    intros f k db g args output.
+    change (RowMap.get (g, args) (RowMap.remove (f, k) (runtime_rows (db_runtime db))) =
+      Some output <-> RowMap.get (g, args) (runtime_rows (db_runtime db)) = Some output /\
+        (g, args) <> (f, k)).
+    apply RowFacts.remove_binding_iff.
+  Qed.
+
+  (** Cache maintenance and table deletion preserve all unrelated runtime observations. *)
+  Lemma row_delete_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall rows state, observe (runtime_set_rows rows state) = observe state) ->
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall f k db, observe (db_runtime (row_delete f k db)) = observe (db_runtime db).
+  Proof.
+    intros A observe Hrows Hindexes f k db. unfold row_delete.
+    destruct (row_get f k db); [| reflexivity].
+    unfold row_erase. cbn [database_set_runtime db_runtime]. rewrite Hrows.
+    now apply slots_update_preserves.
+  Qed.
+
+  (** Deleting a row keeps every function declaration exactly unchanged. *)
+  Lemma row_delete_kind : forall f k db, kind (view (row_delete f k db)) = kind (view db).
+  Proof.
+    intros f k db. unfold view, kind_get. cbn [kind].
+    rewrite (row_delete_preserves _ (@runtime_kinds (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    reflexivity.
+  Qed.
+
+  (** Deleting a row keeps the stored equality relation exactly unchanged. *)
+  Lemma row_delete_same : forall f k db, same (view (row_delete f k db)) = same (view db).
+  Proof.
+    intros f k db. unfold view. cbn [same].
+    rewrite (row_delete_preserves _ (@runtime_equalities (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    reflexivity.
+  Qed.
+
+  (** Deletion removes one row key and retains all other rows, even before rebuilding. *)
+  Lemma row_delete_binding : forall f k db g args output,
+    row (view (row_delete f k db)) g args output <->
+      row (view db) g args output /\ (g, args) <> (f, k).
+  Proof.
+    intros f k db g args output. unfold row_delete.
+    destruct (row_get f k db) as [before |] eqn:Hprevious.
+    - now rewrite row_erase_binding, slots_update_view.
+    - split; [| tauto]. intro Hrow. split; [exact Hrow |].
+      intro Hequal. inversion Hequal; subst.
+      change (row_get f k db = Some output) in Hrow. congruence.
+  Qed.
+
+  (** Removing a stored row preserves every satisfying interpretation without a quietness premise. *)
+  Lemma row_delete_sat : forall (M : model (V := V.t)) nu f k db,
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (row_delete f k db)).
+  Proof.
+    intros M nu f k db Hsat. eapply sat_restrict; [apply row_delete_kind | | | exact Hsat].
+    - intros g args output Hrow. now apply row_delete_binding in Hrow as [Hrow _].
+    - intros i j Hsame. now rewrite row_delete_same in Hsame.
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
@@ -4368,7 +4447,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
   TimeFun normal_cell normal_key output_eqb combine_output.
   TimeFun slot_index_get projection_table_get slot_update_one slot_update_many.
-  TimeFun slots_update row_write row_replace.
+  TimeFun slots_update row_write row_replace row_erase row_delete.
   TimeFun init.
   TimeFun find.
   TimeFun lookup.
@@ -4481,6 +4560,72 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct new; time_unfold @T_runtime_new_indexes; time_unfold @T_runtime_all_indexes;
       cbn in Hget; nia.
   Qed.
+
+  (** Unary logarithms agree with the width of a positive binary integer. *)
+  Lemma positive_nat_log2_size : forall p,
+    S (Nat.log2 (Pos.to_nat p)) = Pos.size_nat p.
+  Proof.
+    intro p. induction p.
+    - rewrite Pos2Nat.inj_xI.
+      replace (S (2 * Pos.to_nat p)) with (2 * Pos.to_nat p + 1) by lia.
+      rewrite Nat.log2_succ_double by apply Pos2Nat.is_pos.
+      cbn [Pos.size_nat]. now rewrite IHp.
+    - rewrite Pos2Nat.inj_xO, Nat.log2_double by apply Pos2Nat.is_pos.
+      cbn [Pos.size_nat]. now rewrite IHp.
+    - reflexivity.
+  Qed.
+
+  (** A unary logarithm is bounded by the width of the same binary integer. *)
+  Lemma nat_log2_N_width : forall n, Nat.log2 (N.to_nat n) <= N.size_nat n.
+  Proof.
+    intros [| p]; [reflexivity |].
+    change (Nat.log2 (Pos.to_nat p) <= Pos.size_nat p).
+    pose proof (positive_nat_log2_size p). lia.
+  Qed.
+
+  (** Forest cardinality is exactly the database allocation counter. *)
+  Lemma forest_card_ids : forall db, wf db ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db Hwf. unfold UnionFind.card. now rewrite (wf_forest_count db Hwf).
+  Qed.
+
+  (** Find adds only the fixed record-wrapper work to the actual forest clock. *)
+  Lemma T_find_overhead : forall i db,
+    (T_find i db = UnionFindT.T_find i (db_forest db) + 13)%N.
+  Proof.
+    intros i db. time_unfold T_find. time_unfold @T_database_set_forest.
+    time_simpl. time_cbn. nia.
+  Qed.
+
+  (** The shared coefficient also dominates forest work and fixed wrapper costs. *)
+  Lemma c_db_forest_budget : (128 * (UnionFindT.c_uf + 1) <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. nia.
+  Qed.
+
+  (** Allocated finds fit the logarithmic database unit without any history assumption. *)
+  Lemma T_find_unit_budget : forall i db, wf db -> allocated db i ->
+    (UnionFindT.T_find i (db_forest db) <=
+      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros i db Hwf Hi.
+    pose proof (UnionFindT.T_find_le i (db_forest db) (wf_forest db Hwf)) as Hfind.
+    rewrite (forest_card_ids db Hwf) in Hfind.
+    pose proof (nat_log2_N_width (ids db)) as Hlog.
+    pose proof (slot_width_log (ids db)) as Hlogwidth.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
+      N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (wf_forest_width db Hwf) |].
+        apply N_width_mono. apply wmark_ids.
+      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    unfold unit. rewrite Nat2N.inj_mul.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    nia.
+  Qed.
   (** Initialization starts without amortized debt. *)
   Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
@@ -4592,7 +4737,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Find traverses allocated identifiers at the database unit. *)
   Lemma T_find_le : forall i db, wf db -> allocated db i ->
     (T_find i db <= c_db * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i db Hwf Hi. rewrite T_find_overhead.
+    pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+    pose proof c_db_forest_budget as Hcoefficient.
+    assert (Hunit : (1 <= N.of_nat (unit db))%N).
+    { unfold unit. rewrite Nat2N.inj_mul. nia. }
+    nia.
+  Qed.
 
   (** Lookup charges the stored unit and query cell encodings. *)
   Lemma T_lookup_le : forall f k db, wf db ->
