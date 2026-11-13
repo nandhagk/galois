@@ -139,8 +139,22 @@ Module TrieSet (K : KEY) <: SET K.
   Proof. Admitted. (* STUB *)
   Lemma nodes_diff : forall s u, nodes (diff s u) <= nodes s.
   Proof. Admitted. (* STUB *)
+
+  (** Consistent labels give the same binding weight as the stored trie codes. *)
+  Lemma weight_trie : forall s, wf s -> weight s = PTrie.weight s.
+  Proof.
+    intros s Hwf. unfold weight, PTrie.weight.
+    rewrite elements_trie, List.map_map.
+    f_equal. apply map_ext_in. intros [p k] Hin. cbn [fst snd].
+    apply PTrie.elements_spec in Hin.
+    rewrite (Hwf p k Hin). reflexivity.
+  Qed.
+
   Lemma nodes_le_weight : forall s, wf s -> nodes s <= weight s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s Hwf. rewrite weight_trie by exact Hwf.
+    apply PTrie.nodes_le_weight.
+  Qed.
 End TrieSet.
 
 Module TrieSetT (K : KEY_T) <: SET_T K.
