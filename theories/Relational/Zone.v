@@ -297,6 +297,47 @@ Proof.
     try apply rel_zbits_least in Hlo; try apply rel_zbits_least in Hhi; time_step.
 Qed.
 
+(** Multiplication by a coefficient of at most two bits has a linear endpoint clock. *)
+Lemma rel_mul_small_time : forall c z bits,
+  Z.size_nat c <= 2 -> Z.size_nat z <= bits ->
+  (Z.T_mul c z <= 16 * N.of_nat (bits + 1))%N.
+Proof.
+  intros c z bits Hc Hz.
+  pose proof (time_of_nat_le _ _ Hc) as HcN.
+  change (N.of_nat (Z.size_nat c) <= 2)%N in HcN.
+  pose proof (time_of_nat_le _ _ Hz) as HzN.
+  eapply N.le_trans; [apply Z.T_mul_le|].
+  rewrite Nat2N.inj_add. nia.
+Qed.
+
+(** Supported small coefficients preserve a linear interval arithmetic budget. *)
+Lemma rel_scale_bounds_small_time : forall c bounds bits,
+  Z.size_nat c <= 2 -> rel_bounds_abs (2 ^ bits) bounds ->
+  (T_rel_scale_bounds c bounds <= 128 * N.of_nat (bits + 1))%N.
+Proof.
+  intros c [lo hi] bits Hc Hbounds.
+  set (charge := N.of_nat (bits + 1)).
+  assert (Hunit : (1 <= charge)%N) by (unfold charge; lia).
+  assert (Hproduct : forall z, Z.abs_nat z < 2 ^ bits ->
+    (Z.T_mul c z <= 16 * charge)%N).
+  { intros z Hz. unfold charge. apply rel_mul_small_time; [exact Hc|].
+    now apply rel_zbits_least. }
+  pose proof (time_of_nat_le _ _ Hc) as HcN.
+  change (N.of_nat (Z.size_nat c) <= 2)%N in HcN.
+  pose proof (Z.T_eqb_le c 0%Z) as Hequal.
+  pose proof (Z.T_leb_le 0%Z c) as Hsign.
+  change (Z.T_leb 0%Z c <= 4)%N in Hsign.
+  clearbody charge. unfold T_rel_scale_bounds.
+  destruct (c =? 0)%Z eqn:Hcz; [time_simpl; time_cbn; lia|].
+  destruct (0 <=? c)%Z eqn:Hsgn; destruct lo, hi;
+    unfold rel_bounds_abs, rel_bound_abs in Hbounds;
+    cbn [fst snd] in Hbounds; destruct Hbounds as [Hlo Hhi];
+    try pose proof (Hproduct _ Hlo) as Hmullo;
+    try pose proof (Hproduct _ Hhi) as Hmulhi;
+    time_simpl; time_cbn; lia.
+Qed.
+
+
 (** Finite bounds with an absent value interpreted as positive infinity. *)
 Module RelationalPathBounds.
   Definition below (a b : option Z) : Prop :=
@@ -5836,5 +5877,66 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     set (count_charge := (unit * count)%N) in *.
     set (node_charge := (unit * nodes)%N) in *.
     clearbody count_charge node_charge. lia.
+  Qed.
+  (** State refinement inherits the raw incremental resource bounds. *)
+  Lemma grow_refine : forall i j d s,
+    ns (refine i j d s) <= ns s + 2 /\
+    bs (refine i j d s) <= Nat.max (bs s) (Nat.max (K.bits i) (K.bits j)) /\
+    ells (refine i j d s) <= Nat.max (ells s) (Z.size_nat d) + 2.
+  Proof.
+    intros i j d [|m]; [cbn [refine ns bs ells]; repeat split; lia|].
+    unfold refine. destruct (incr_close i j d m) as [|next] eqn:Hnext.
+    - cbn [ns bs ells]. repeat split; lia.
+    - cbn [ns bs ells]. exact (grow_incr_close i j d m next Hnext).
+  Qed.
+
+  (** Refinement adds only its state dispatch to the incremental closure clock. *)
+  Lemma T_refine_small : forall i j d s,
+    (T_refine i j d s <= 1 + c_zone * N.of_nat
+      ((ns s + 1)^2 * (bs s + K.bits i + K.bits j + ells s + Z.size_nat d + 1)))%N.
+  Proof.
+    intros i j d [|m].
+    - change (1 <= 1 + c_zone * N.of_nat
+        ((0 + 1)^2 * (0 + K.bits i + K.bits j + 0 + Z.size_nat d + 1)))%N. lia.
+    - change (1 + T_incr_close i j d m <= 1 + c_zone * N.of_nat
+        ((supp m + 1)^2 * (b m + K.bits i + K.bits j + ell m + Z.size_nat d + 1)))%N.
+      rewrite Nat2N.inj_mul, N.mul_assoc.
+      pose proof (T_incr_close_le i j d m). lia.
+  Qed.
+
+  (** Positive-to-natural conversion preserves a list's distinct encoded coordinates. *)
+  Lemma support_nat_codes_nodup : forall ps,
+    NoDup ps -> NoDup (map Pos.to_nat ps).
+  Proof.
+    intros ps Hdistinct. induction Hdistinct as [|p ps Hfresh Hdistinct IH].
+    - constructor.
+    - cbn. constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin.
+      destruct Hin as [q [Heq Hq]]. apply Pos2Nat.inj in Heq. subst q.
+      exact (Hfresh Hq).
+  Qed.
+
+  (** Distinct positive codes of at most b bits occupy at most the nonzero b-bit integers. *)
+  Lemma support_cardinality_power : forall m, supp m + 1 <= 2 ^ b m.
+  Proof.
+    intro m.
+    assert (Hpositive : 1 <= 2 ^ b m).
+    { change (2 ^ 0 <= 2 ^ b m). apply Nat.pow_le_mono_r; lia. }
+    assert (Hlength : length (map Pos.to_nat (support m)) <= length (seq 1 (2 ^ b m - 1))).
+    { apply NoDup_incl_length.
+      - apply support_nat_codes_nodup, support_nodup.
+      - intros n Hin. apply in_map_iff in Hin. destruct Hin as [p [Heq Hp]]. subst n.
+        apply in_seq. pose proof (Pos2Nat.is_pos p) as Hnonzero.
+        assert (Hupper : Pos.to_nat p < 2 ^ b m).
+        { eapply Nat.lt_le_trans; [apply Pos.size_nat_upper|].
+          apply Nat.pow_le_mono_r; [lia|now apply support_bits]. }
+        split; lia. }
+    rewrite length_map, length_seq in Hlength. unfold supp. lia.
+  Qed.
+
+  (** The support count's logarithm is already covered by the encoded-key bit allowance. *)
+  Lemma log2_support_le : forall m, Nat.log2 (supp m + 1) <= b m.
+  Proof.
+    intro m. pose proof (Nat.log2_le_mono _ _ (support_cardinality_power m)) as Hlog.
+    rewrite Nat.log2_pow2 in Hlog by lia. exact Hlog.
   Qed.
 End ZoneT.
