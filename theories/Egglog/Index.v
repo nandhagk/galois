@@ -2416,6 +2416,113 @@ Module Index (V : VALUE) <: INDEX V.
       exact Hpending.
   Qed.
 
+  Lemma pending_insert_existing : forall ix n c edge, shape ix ->
+    pending_insert_counts ix n -> (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    pending_insert_edge (fst (insert_step_st (ix, n) c))
+      (snd (insert_step_st (ix, n) c))
+      (IndexEdge c (edge_child edge) (bounded_succ (next ix) (edge_count edge))).
+  Proof.
+    intros ix n c edge Hshape Hcounts Hbound Hget.
+    pose proof (pending_current_count_bound ix n (encode_cell c) edge Hshape Hcounts Hget)
+      as Hcount_bound.
+    destruct ((proj1 Hshape) n (encode_cell c) edge Hget) as [_ [Hforward Hupper]].
+    destruct (Hcounts n (encode_cell c) edge Hget)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hcount]]]]].
+    destruct pending.
+    - exfalso. eapply reaches_no_backward;
+        [exact (proj1 Hshape) | exact Hforward | now apply Hpending].
+    - assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+      assert (Hpointer : snd (insert_step_st (ix, n) c) = edge_child edge).
+      { unfold insert_step_st. now rewrite Hguard, Hget. }
+      exists suffixes, true. split; [exact Hnodup |]. split.
+      + intro r. cbn [edge_child].
+        rewrite (insert_step_membership (ix, n) c r (edge_child edge) Hshape Hupper).
+        apply Hmembers.
+      + split.
+        * cbn [edge_child]. rewrite Hpointer. split; [intros _; apply reaches_self | reflexivity].
+        * cbn [edge_count]. rewrite bounded_succ_small by now apply N.lt_le_incl.
+          cbn in Hcount. rewrite N.add_0_r in Hcount. rewrite Hcount. lia.
+  Qed.
+
+  Lemma pending_insert_fresh : forall ix n c, shape ix -> (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = None ->
+    pending_insert_edge (fst (insert_step_st (ix, n) c))
+      (snd (insert_step_st (ix, n) c)) (IndexEdge c (Pos.succ (next ix)) 1%N).
+  Proof.
+    intros ix n c Hshape Hbound Hget.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    assert (Hpointer : snd (insert_step_st (ix, n) c) = Pos.succ (next ix)).
+    { unfold insert_step_st. now rewrite Hguard, Hget. }
+    assert (Hempty : read_node (fst (insert_step_st (ix, n) c)) (Pos.succ (next ix)) =
+      empty_node).
+    { unfold insert_step_st. rewrite Hguard, Hget. cbn [fst].
+      rewrite read_node_write_other.
+      - apply read_node_above_counter; [exact (proj1 (proj2 Hshape)) |].
+        apply Pos.lt_succ_diag_r.
+      - pose proof (Pos.lt_succ_diag_r (next ix)). lia. }
+    exists [], true. split; [constructor |]. split.
+    - intro r. cbn [In edge_child].
+      rewrite contains_from_empty_node by exact Hempty. intuition discriminate.
+    - split.
+      + cbn [edge_child]. rewrite Hpointer. split; [intros _; apply reaches_self | reflexivity].
+      + reflexivity.
+  Qed.
+
+  Lemma pending_insert_step : forall ix n c, shape ix -> pending_insert_counts ix n ->
+    (n <= next ix)%positive ->
+    pending_insert_counts (fst (insert_step_st (ix, n) c)) (snd (insert_step_st (ix, n) c)).
+  Proof.
+    intros ix n c Hshape Hcounts Hbound q code out Hout.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    pose proof Hout as Hnew.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget.
+    - unfold insert_step_st in Hout. rewrite Hguard, Hget in Hout. cbn [fst] in Hout.
+      apply stored_edge_put in Hout as [[-> [-> ->]] | [Hdiff Hout]].
+      + now apply pending_insert_existing.
+      + eapply pending_insert_other; eassumption.
+    - unfold insert_step_st in Hout. rewrite Hguard, Hget in Hout. cbn [fst] in Hout.
+      apply stored_edge_put in Hout as [[-> [-> ->]] | [Hdiff Hout]].
+      + now apply pending_insert_fresh.
+      + eapply pending_insert_other; eassumption.
+  Qed.
+
+  Lemma pending_insert_walk : forall r st, shape (fst st) ->
+    pending_insert_counts (fst st) (snd st) -> (snd st <= next (fst st))%positive ->
+    pending_insert_counts (fst (fold_left insert_step_st r st))
+      (snd (fold_left insert_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros [ix n] Hshape Hcounts Hbound;
+      cbn [fold_left]; [exact Hcounts |].
+    apply IH.
+    - apply shape_insert_step. exact Hshape.
+    - apply pending_insert_step; assumption.
+    - pose proof (shape_insert_step (ix, n) c Hshape) as Hshape'.
+      exact (proj2 (child_forward _ n c _ (proj1 Hshape')
+        (insert_step_child ix n c (proj1 (proj2 Hshape)) Hbound))).
+  Qed.
+
+  Lemma counted_edges_insert : forall ix r, shape ix -> counted_edges ix ->
+    counted_edges (insert r ix).
+  Proof.
+    intros ix r Hshape Hcounts. unfold insert, insert_finish.
+    destruct (contains r ix) eqn:Hpresent; [exact Hcounts |].
+    set (st := fold_left insert_step_st r (start ix)).
+    assert (Hshape' : shape (fst st)) by (apply shape_insert_walk; exact Hshape).
+    assert (Hpending : pending_insert_counts (fst st) (snd st)).
+    { apply pending_insert_walk; [exact Hshape | | apply Pos.le_1_l].
+      now apply pending_insert_start. }
+    assert (Hpath : seek (fst st) 1%positive r = Some (snd st)).
+    { exact (insert_walk_path r (start ix) [] Hshape eq_refl). }
+    pose proof (insert_walk_membership r (start ix) r 1%positive Hshape
+      (Pos.le_1_l (next ix))) as Hmembers.
+    change (contains_from 1%positive r (fst st) = contains_from 1%positive r ix) in Hmembers.
+    change (contains_from 1%positive r ix = false) in Hpresent.
+    rewrite <- Hmembers in Hpresent. unfold contains_from in Hpresent.
+    rewrite Hpath in Hpresent. now apply pending_insert_finish.
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
