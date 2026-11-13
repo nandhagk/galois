@@ -5953,6 +5953,118 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact Hsame.
   Qed.
 
+  (** The logged equalities agree with a well-formed operational forest. *)
+  Definition forest_agrees (db : t) : Prop :=
+    UnionFind.wf (db_forest db) /\
+    forall i j, same (view db) i j <-> repr db i = repr db j.
+
+  Lemma forest_agrees_initial : forall db, wf db -> forest_agrees db.
+  Proof.
+    intros db Hwf. split; [exact (wf_forest db Hwf) |].
+    intros i j. exact (same_repr db i j Hwf).
+  Qed.
+
+  (** Every identifier is related to its representative under the weak forest invariant. *)
+  Lemma forest_agrees_id : forall db i, forest_agrees db -> same (view db) i (repr db i).
+  Proof.
+    intros db i [Hforest Hsame]. apply (proj2 (Hsame i (repr db i))).
+    symmetry. unfold repr. now apply UnionFind.repr_idem.
+  Qed.
+
+  (** Exact forest and equality frames retain agreement independently of scheduling. *)
+  Lemma forest_agrees_frame : forall db db', db_forest db' = db_forest db ->
+    same (view db') = same (view db) -> forest_agrees db -> forest_agrees db'.
+  Proof.
+    intros db db' Hforest Hsame Hagrees. unfold forest_agrees, repr in *.
+    now rewrite Hforest, Hsame.
+  Qed.
+
+  (** Union's equality closure only requires agreement with its input forest. *)
+  Lemma union_same_from_forest_agreement : forall db i j,
+    forest_agrees db -> forall a b,
+    (same (view (union i j db)) a b <->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/ (x, y) = (i, j)) a b).
+  Proof.
+    intros db i j [Hforest Hsame] a b. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - apply equality_log_cons.
+    - change (equality_log (runtime_equalities (db_runtime db)) a b <->
+        clos_refl_sym_trans positive
+          (fun x y => equality_log (runtime_equalities (db_runtime db)) x y \/
+            (x, y) = (i, j)) a b).
+      rewrite <- equality_log_cons. symmetry. apply equality_log_redundant.
+      apply (proj2 (Hsame i j)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest Hforest Hunion)).
+  Qed.
+
+  (** Logging the requested pair and updating the forest preserve the same equivalence. *)
+  Lemma forest_agrees_union : forall db i j,
+    forest_agrees db -> forest_agrees (union i j db).
+  Proof.
+    intros db i j Hagrees. destruct Hagrees as [Hforest Hsame]. split.
+    - rewrite union_forest. now apply UnionFind.wf_union.
+    - intros a b.
+      rewrite (union_same_from_forest_agreement db i j (conj Hforest Hsame) a b).
+      unfold repr. rewrite union_forest.
+      rewrite (ForestFacts.union_same_closure i j (db_forest db) a b Hforest).
+      apply equality_closure_equiv. intros x y. rewrite (Hsame x y). tauto.
+  Qed.
+
+  (** Every actual output-conflict branch preserves forest/log agreement. *)
+  Lemma forest_agrees_output_conflict : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    forest_agrees db -> forest_agrees (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+  Proof.
+    intros db previous co Hagrees.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try exact Hagrees.
+    now apply forest_agrees_union.
+  Qed.
+
+  (** Insertion retains the weak forest invariant even in an active repair batch. *)
+  Lemma forest_agrees_put : forall db f k o,
+    forest_agrees db -> forest_agrees (put f k o db).
+  Proof.
+    intros db f k o Hagrees. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : forest_agrees next) by (now apply forest_agrees_output_conflict).
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      eapply forest_agrees_frame;
+        [apply row_replace_forest | apply row_replace_same | exact Hnext].
+    - eapply forest_agrees_frame;
+        [apply row_replace_forest | apply row_replace_same | exact Hnext].
+  Qed.
+
+  (** Single-row repair can change scheduling while keeping exact forest/log agreement. *)
+  Lemma forest_agrees_repair : forall db f k,
+    forest_agrees db -> forest_agrees (repair_current f k db).
+  Proof.
+    intros db f k Hagrees. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| exact Hagrees].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [exact Hagrees |].
+    apply forest_agrees_put. eapply forest_agrees_frame;
+      [apply row_delete_forest | apply row_delete_same | exact Hagrees].
+  Qed.
+
+  (** Forest/log agreement survives both return branches of the actual rebuild driver. *)
+  Lemma forest_agrees_rebuild : forall db,
+    forest_agrees db -> forest_agrees (rebuild db).
+  Proof.
+    apply (rebuild_preserves forest_agrees).
+    - exact forest_agrees_repair.
+    - intros db x next Hagrees Hpop.
+      destruct (db_pop_loser_preserves db x next Hpop) as [Hforest Hview].
+      eapply forest_agrees_frame; [exact Hforest | now rewrite Hview | exact Hagrees].
+  Qed.
+
   (** Queue scheduling retains layout, allocation and the current change flag. *)
   Lemma db_pop_loser_layout : forall db i db', db_pop_loser db = Some (i, db') ->
     slots db' = slots db /\ ids db' = ids db /\ changed db' = changed db.
