@@ -294,6 +294,132 @@ Qed.
 
 Local Close Scope Q_scope.
 
+(** Magnitude is used only to prove binary-size bounds. *)
+Definition poly_magnitude (z : Z) : nat := Z.to_nat (Z.abs z).
+
+(** An integer magnitude is strictly below the power determined by its binary width. *)
+Lemma poly_magnitude_upper : forall z, poly_magnitude z < 2 ^ Z.size_nat z.
+Proof.
+  intros [|p|p].
+  - change (0 < 1). lia.
+  - exact (Pos.size_nat_upper p).
+  - exact (Pos.size_nat_upper p).
+Qed.
+
+(** A strict power-of-two bound bounds an integer's binary width. *)
+Lemma poly_size_least : forall z k, poly_magnitude z < 2 ^ k -> Z.size_nat z <= k.
+Proof.
+  intros [|p|p] k Hbound; cbn [poly_magnitude Z.abs Z.to_nat Z.size_nat] in *;
+    try lia; now apply Pos.size_nat_least.
+Qed.
+
+(** The magnitude of a sum is at most the sum of its magnitudes. *)
+Lemma poly_magnitude_add : forall x y,
+  poly_magnitude (x + y) <= poly_magnitude x + poly_magnitude y.
+Proof.
+  intros x y. unfold poly_magnitude.
+  rewrite <- Z2Nat.inj_add by apply Z.abs_nonneg.
+  apply Z2Nat.inj_le; try apply Z.abs_nonneg; try lia.
+Qed.
+
+(** Addition uses at most one bit beyond the wider operand. *)
+Lemma poly_size_add : forall x y,
+  Z.size_nat (x + y) <= Nat.max (Z.size_nat x) (Z.size_nat y) + 1.
+Proof.
+  intros x y. apply poly_size_least.
+  pose proof (poly_magnitude_upper x) as Hx.
+  pose proof (poly_magnitude_upper y) as Hy.
+  pose proof (poly_magnitude_add x y) as Hsum.
+  set (bits := Nat.max (Z.size_nat x) (Z.size_nat y)).
+  assert (Hxp : 2 ^ Z.size_nat x <= 2 ^ bits).
+  { apply Nat.pow_le_mono_r; unfold bits; lia. }
+  assert (Hyp : 2 ^ Z.size_nat y <= 2 ^ bits).
+  { apply Nat.pow_le_mono_r; unfold bits; lia. }
+  replace (bits + 1) with (S bits) by lia. rewrite Nat.pow_succ_r by lia. lia.
+Qed.
+
+(** A product uses at most the combined widths of its operands. *)
+Lemma poly_size_mul : forall x y,
+  Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.mul Z.size_nat]; try lia; apply Pos.size_nat_mul.
+Qed.
+
+(** Negation preserves an integer's binary width. *)
+Lemma poly_size_opp : forall z, Z.size_nat (- z) = Z.size_nat z.
+Proof.
+  intros [|p|p]; reflexivity.
+Qed.
+
+(** Absolute value preserves an integer's binary width. *)
+Lemma poly_size_abs : forall z, Z.size_nat (Z.abs z) = Z.size_nat z.
+Proof.
+  intros [|p|p]; reflexivity.
+Qed.
+
+(** Multiplication by a negated sign cannot increase the other operand's width. *)
+Lemma poly_size_sign_mul : forall a b,
+  Z.size_nat (- Z.sgn a * b) <= Z.size_nat b.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.sgn Z.opp Z.mul Z.size_nat Pos.mul]; lia.
+Qed.
+
+(** A unit-vector weighted entry uses at most one extra bit. *)
+Lemma poly_unit_combination_size : forall a b m n bits,
+  Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+  (m = 0%Z \/ m = 1%Z) -> (n = 0%Z \/ n = 1%Z) ->
+  Z.size_nat (a * m + b * n) <= bits + 1.
+Proof.
+  intros a b m n bits Ha Hb Hm Hn.
+  destruct Hm as [Hm|Hm], Hn as [Hn|Hn]; subst m n;
+    rewrite ?Z.mul_0_r, ?Z.mul_1_r, ?Z.add_0_l, ?Z.add_0_r;
+    try solve [cbn [Z.size_nat]; lia].
+  pose proof (poly_size_add a b). lia.
+Qed.
+
+(** Combining equal-length multiplier vectors preserves their length. *)
+Lemma poly_weighted_length : forall a ms b ns,
+  length ms = length ns -> length (poly_weighted a ms b ns) = length ms.
+Proof.
+  intros a ms. induction ms as [|m ms IH]; intros b [|n ns] Hlength;
+    cbn [poly_weighted length] in *; try lia.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Combining two unit vectors bounds every resulting multiplier. *)
+Lemma poly_weighted_units : forall a ms b ns bits,
+  Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+  Forall (fun m => m = 0%Z \/ m = 1%Z) ms ->
+  Forall (fun n => n = 0%Z \/ n = 1%Z) ns ->
+  Forall (fun z => Z.size_nat z <= bits + 1) (poly_weighted a ms b ns).
+Proof.
+  intros a ms. induction ms as [|m ms IH]; intros b ns bits Ha Hb Hms Hns.
+  - constructor.
+  - destruct ns as [|n ns]; [constructor|]. cbn [poly_weighted].
+    inversion Hms as [|? ? Hm Htailm]. inversion Hns as [|? ? Hn Htailn].
+    constructor.
+    + eapply poly_unit_combination_size; eassumption.
+    + eapply IH; eassumption.
+Qed.
+
+(** Every initial multiplier vector has the input length and contains only zero or one. *)
+Lemma poly_initial_units : forall A (encode : A -> positive) P,
+  Forall (fun r => length (poly_multipliers r) = length P /\
+    Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers r))
+    (poly_initial encode P).
+Proof.
+  intros A encode P. induction P as [|p ps IH]; cbn [poly_initial].
+  - constructor.
+  - constructor.
+    + cbn [poly_multipliers length]. split; [now rewrite length_map|].
+      constructor; [right; reflexivity|].
+      apply Forall_map, Forall_forall. intros r Hin. left. reflexivity.
+    + apply Forall_map, Forall_forall. intros r Hin.
+      rewrite Forall_forall in IH. destruct (IH r Hin) as [Hlength Hunit].
+      cbn [poly_pad_row poly_multipliers length]. split; [lia|].
+      constructor; [left; reflexivity|exact Hunit].
+Qed.
+
 (** Each stored source key agrees with the address used to find it. *)
 Definition poly_addressed {A} (encode : A -> positive) (m : ptrie (A * Z)) : Prop :=
   forall key p, PTrieCode.get key m = Some p -> encode (fst p) = key.
@@ -2986,6 +3112,187 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition ell (P : list (lcons X.t)) : nat :=
     fold_right Nat.max 0 (map C.row_bits P) +
     fold_right Nat.max 0 (map C.row_key_bits P).
+  (** An absent key has coefficient zero. *)
+  Lemma poly_coef_absent : forall x xs,
+    ~ In x (map fst xs) -> C.coef_of x xs = 0%Z.
+  Proof.
+    intros x xs. induction xs as [|[y a] xs IH]; intro Habsent; [reflexivity|].
+    rewrite coef_of_cons. destruct (X.eqb_spec x y) as [Heq|Hneq].
+    - subst y. exfalso. apply Habsent. left. reflexivity.
+    - apply IH. intro Hin. apply Habsent. right. exact Hin.
+  Qed.
+
+  (** A unique stored coefficient equals its row's total coefficient at that key. *)
+  Lemma poly_coef_member : forall x a xs,
+    NoDup (map fst xs) -> In (x, a) xs -> C.coef_of x xs = a.
+  Proof.
+    intros x a xs. induction xs as [|[y b] xs IH]; intros Hunique Hin;
+      [contradiction|].
+    inversion Hunique as [|key keys Hnot Htail]; subst key keys.
+    destruct Hin as [Heq|Hin].
+    - injection Heq as Hkey Hcoef. subst y b.
+      rewrite coef_of_cons, poly_key_eqb_refl, (poly_coef_absent x xs Hnot).
+      ring.
+    - rewrite coef_of_cons. destruct (X.eqb_spec x y) as [Heq|Hneq].
+      + subst y. exfalso. apply Hnot. apply in_map with (f := fst) in Hin. exact Hin.
+      + apply IH; assumption.
+  Qed.
+
+  (** A maximum fold bounds each contributing entry. *)
+  Lemma poly_max_member : forall A (f : A -> nat) base xs x,
+    In x xs -> f x <= fold_right Nat.max base (map f xs).
+  Proof.
+    intros A f base xs. induction xs as [|a xs IH]; intros x Hin; [contradiction|].
+    cbn [map fold_right]. destruct Hin as [->|Hin].
+    - apply Nat.le_max_l.
+    - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+  Qed.
+
+  (** A maximum fold also bounds its initial value. *)
+  Lemma poly_max_base : forall A (f : A -> nat) base xs,
+    base <= fold_right Nat.max base (map f xs).
+  Proof.
+    intros A f base xs. induction xs as [|a xs IH]; cbn [map fold_right]; lia.
+  Qed.
+
+  (** Bounding the initial value and every entry bounds a maximum fold. *)
+  Lemma poly_max_bound : forall A (f : A -> nat) base xs bound,
+    base <= bound -> Forall (fun x => f x <= bound) xs ->
+    fold_right Nat.max base (map f xs) <= bound.
+  Proof.
+    intros A f base xs bound Hbase Hentries. induction Hentries as [|a xs Ha Htail IH];
+      cbn [map fold_right]; lia.
+  Qed.
+
+  (** Uniqueness prevents coefficient lookup from summing separate occurrences. *)
+  Lemma poly_coef_bits : forall x xs bits,
+    NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
+    Z.size_nat (C.coef_of x xs) <= bits.
+  Proof.
+    intros x xs. induction xs as [|[y a] xs IH]; intros bits Hunique Hbits.
+    - change (0 <= bits). lia.
+    - inversion Hunique as [|key keys Hnot Htail]; subst key keys.
+      inversion Hbits as [|p ps Ha Htailbits]; subst p ps. rewrite coef_of_cons.
+      destruct (X.eqb_spec x y) as [Heq|Hneq].
+      + subst y. rewrite (poly_coef_absent x xs Hnot), Z.add_0_r. exact Ha.
+      + apply IH; assumption.
+  Qed.
+
+  (** A coefficient in a normal row fits the row's declared width. *)
+  Lemma poly_row_coefficient_bits : forall x r,
+    NoDup (map fst (lhs r)) ->
+    Z.size_nat (poly_coefficient X.eqb x r) <= C.row_bits r.
+  Proof.
+    intros x r Hunique. rewrite <- coef_of_poly_coefficient.
+    apply poly_coef_bits; [exact Hunique|]. apply Forall_forall. intros p Hin.
+    unfold C.row_bits.
+    exact (poly_max_member _ (fun p => Z.size_nat (snd p))
+      (Z.size_nat (rhs r)) (lhs r) p Hin).
+  Qed.
+
+  (** Every initialized constraint is the normalization of one original constraint. *)
+  Lemma poly_initial_source : forall P r,
+    In r (poly_initial X.encode (map (fun p => (p, false)) P)) ->
+    exists p, In p P /\ poly_constraint r = poly_normal_row X.encode p.
+  Proof.
+    intros P r Hin. apply in_map with (f := poly_constraint) in Hin.
+    rewrite poly_initial_constraints, map_map in Hin.
+    apply in_map_iff in Hin as [p [Heq Hin]]. exists p. split; [exact Hin|].
+    symmetry. exact Heq.
+  Qed.
+
+  (** Each initial coefficient is bounded by the maximum original row width. *)
+  Lemma poly_initial_coefficient_bits : forall P x r,
+    normal P -> In r (poly_initial X.encode (map (fun p => (p, false)) P)) ->
+    Z.size_nat (poly_coefficient X.eqb x (poly_constraint r)) <=
+      fold_right Nat.max 0 (map C.row_bits P).
+  Proof.
+    intros P x r Hnormal Hin.
+    destruct (poly_initial_source P r Hin) as [p [Hp Hrow]].
+    rewrite Hrow, poly_coefficient_normal.
+    eapply Nat.le_trans; [apply poly_row_coefficient_bits|].
+    - unfold normal in Hnormal. exact (proj1 (Forall_forall _ _) Hnormal p Hp).
+    - exact (poly_max_member _ C.row_bits 0 P p Hp).
+  Qed.
+
+  (** An unchanged initial vector fits every width increased by one. *)
+  Lemma poly_unit_row_bits : forall (r : poly_row X.t) count bits,
+    length (poly_multipliers r) = count ->
+    Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers r) ->
+    length (poly_multipliers r) = count /\
+      Forall (fun m => Z.size_nat m <= bits + 1) (poly_multipliers r).
+  Proof.
+    intros r count bits Hlength Hunit. split; [exact Hlength|].
+    apply Forall_forall. intros m Hin.
+    destruct (proj1 (Forall_forall _ _) Hunit m Hin) as [Hm|Hm]; subst m;
+      cbn [Z.size_nat Pos.size_nat]; lia.
+  Qed.
+
+  (** Adding two initial vectors preserves their common length and bounds their entries. *)
+  Lemma poly_add_rows_multiplier_bits : forall a p b q count bits,
+    length (poly_multipliers p) = count ->
+    length (poly_multipliers q) = count ->
+    Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers p) ->
+    Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers q) ->
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    length (poly_multipliers (poly_add_rows X.encode a p b q)) = count /\
+      Forall (fun m => Z.size_nat m <= bits + 1)
+        (poly_multipliers (poly_add_rows X.encode a p b q)).
+  Proof.
+    intros a p b q count bits Hlp Hlq Hup Huq Ha Hb.
+    cbn [poly_add_rows poly_multipliers]. split.
+    - rewrite poly_weighted_length by lia. exact Hlp.
+    - apply poly_weighted_units; assumption.
+  Qed.
+
+  (** Equality cancellation uses only the pivot coefficient and the target coefficient. *)
+  Lemma poly_cancel_multiplier_bits : forall x p r count bits,
+    length (poly_multipliers p) = count ->
+    length (poly_multipliers r) = count ->
+    Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers p) ->
+    Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers r) ->
+    Z.size_nat (poly_coefficient X.eqb x (poly_constraint p)) <= bits ->
+    Z.size_nat (poly_coefficient X.eqb x (poly_constraint r)) <= bits ->
+    length (poly_multipliers (poly_cancel X.encode X.eqb x p r)) = count /\
+      Forall (fun m => Z.size_nat m <= bits + 1)
+        (poly_multipliers (poly_cancel X.encode X.eqb x p r)).
+  Proof.
+    intros x p r count bits Hlp Hlr Hup Hur Hp Hr. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0).
+    - apply poly_unit_row_bits; assumption.
+    - apply poly_add_rows_multiplier_bits; try assumption.
+      + eapply Nat.le_trans; [apply poly_size_sign_mul|exact Hr].
+      + now rewrite poly_size_abs.
+  Qed.
+
+  (** A single step combines unit vectors with coefficients bounded by the input width. *)
+  Lemma poly_step_multiplier_bits : forall x rows count bits,
+    Forall (fun r => length (poly_multipliers r) = count /\
+      Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers r) /\
+      Z.size_nat (poly_coefficient X.eqb x (poly_constraint r)) <= bits) rows ->
+    Forall (fun r => length (poly_multipliers r) = count /\
+      Forall (fun m => Z.size_nat m <= bits + 1) (poly_multipliers r))
+      (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros x rows count bits Hrows. rewrite Forall_forall in Hrows.
+    unfold poly_step. destruct (find (poly_pivot X.eqb x) rows) as [pivot|] eqn:Hpivot.
+    - apply find_some in Hpivot as [Hpivot _].
+      destruct (Hrows pivot Hpivot) as [Hlp [Hup Hp]].
+      apply Forall_map, Forall_forall. intros r Hin.
+      destruct (Hrows r Hin) as [Hlr [Hur Hr]].
+      apply poly_cancel_multiplier_bits; assumption.
+    - apply Forall_app. split.
+      + apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+        destruct (Hrows r Hin) as [Hlength [Hunit _]].
+        apply poly_unit_row_bits; assumption.
+      + apply Forall_forall. intros r Hin. apply in_flat_map in Hin as [p [Hp Hin]].
+        apply filter_In in Hp as [Hp _]. apply in_map_iff in Hin as [q [Heq Hq]].
+        apply filter_In in Hq as [Hq _]. subst r.
+        destruct (Hrows p Hp) as [Hlp [Hup Hbp]].
+        destruct (Hrows q Hq) as [Hlq [Huq Hbq]].
+        apply poly_add_rows_multiplier_bits; try assumption. now rewrite poly_size_opp.
+  Qed.
+
   Definition prows (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
   Definition wunits (_ : t) : nat := 0.
@@ -3146,7 +3453,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma fm_mults_size : forall x P r, normal P -> In r (fm_elim x P) ->
     length (mults_of r) = length P /\
     Forall (fun m => Z.size_nat m <= ell P + 1) (mults_of r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x P r Hnormal Hin. unfold fm_elim in Hin.
+    apply in_map_iff in Hin as [p [Heq Hin]]. subst r.
+    cbn [mults_of].
+    assert (Hinitial : Forall (fun r => length (poly_multipliers r) = length P /\
+      Forall (fun m => m = 0%Z \/ m = 1%Z) (poly_multipliers r) /\
+      Z.size_nat (poly_coefficient X.eqb x (poly_constraint r)) <=
+        fold_right Nat.max 0 (map C.row_bits P))
+      (poly_initial X.encode (map (fun p => (p, false)) P))).
+    { apply Forall_forall. intros q Hq.
+      pose proof (poly_initial_units X.t X.encode (map (fun p => (p, false)) P)) as Hunit.
+      destruct (proj1 (Forall_forall _ _) Hunit q Hq) as [Hlength Hunitq].
+      rewrite length_map in Hlength. split; [exact Hlength|]. split; [exact Hunitq|].
+      now apply poly_initial_coefficient_bits. }
+    pose proof (poly_step_multiplier_bits _ _ _ _ Hinitial) as Hstep.
+    destruct (proj1 (Forall_forall _ _) Hstep p Hin) as [Hlength Hbits].
+    split; [exact Hlength|]. apply Forall_forall. intros m Hm.
+    eapply Nat.le_trans; [exact (proj1 (Forall_forall _ _) Hbits m Hm)|].
+    unfold ell. lia.
+  Qed.
+
   (** Top has no repeated coefficients. *)
   Lemma normal_top : normal_s top.
   Proof. Admitted. (* STUB *)
