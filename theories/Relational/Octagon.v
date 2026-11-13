@@ -4032,6 +4032,27 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + apply RelationalPathBounds.below_refl.
   Qed.
 
+  Lemma add_cons_inserted_bounds : forall m i j d,
+    RelationalPathBounds.below (entry (add_cons i j d m) i j) (Some d) /\
+    RelationalPathBounds.below
+      (entry (add_cons i j d m) (flip j) (flip i)) (Some d).
+  Proof.
+    intros m i j d. split; rewrite entry_add_cons_coordinates.
+    - assert (Hsame : same_coordinate i j i j = true).
+      { unfold same_coordinate. apply andb_true_iff. split;
+          apply key_eqb_true; reflexivity. }
+      rewrite Hsame. destruct (entry m i j) as [old|];
+        cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia].
+    - destruct (same_coordinate (flip j) (flip i) i j) eqn:Hfirst.
+      + destruct (entry m i j) as [old|];
+          cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia].
+      + assert (Hsame : same_coordinate (flip j) (flip i) (flip j) (flip i) = true).
+        { unfold same_coordinate. apply andb_true_iff. split;
+            apply key_eqb_true; reflexivity. }
+        rewrite Hsame. destruct (entry m (flip j) (flip i)) as [old|];
+          cbn [lower_bound RelationalPathBounds.below]; [apply Z.le_min_l|lia].
+  Qed.
+
   (** Zero insertion preserves zero or absent diagonal entries. *)
   Lemma add_zero_diagonal_cases : forall m p,
     (forall k, entry m k k = None \/ entry m k k = Some 0%Z) ->
