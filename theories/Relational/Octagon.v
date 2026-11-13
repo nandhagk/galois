@@ -199,14 +199,18 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
 
   Definition even_bound (d : Z) : Z := (2 * Z.div2 d)%Z.
 
-  (** Candidate labels are validated by lookup before a unary entry is rewritten. *)
+  (** Each candidate is rounded once, after its label has been validated by lookup. *)
   Definition tighten_row (m changed : dbm) (k : K.t) (_ : M.t Z) : dbm :=
-    match M.get k m with
-    | None => changed
-    | Some row =>
-      match M.get (flip k) row with
+    match M.get k changed with
+    | Some _ => changed
+    | None =>
+      match M.get k m with
       | None => changed
-      | Some d => M.set k (M.set (flip k) (even_bound d) row) changed
+      | Some row =>
+        match M.get (flip k) row with
+        | None => changed
+        | Some d => M.set k (M.set (flip k) (even_bound d) row) changed
+        end
       end
     end.
 
@@ -643,6 +647,7 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     models m v -> models changed v -> models (tighten_row m changed k row) v.
   Proof.
     intros m v changed k ignored Hmodel Hchanged. unfold tighten_row.
+    destruct (M.get k changed); [exact Hchanged|].
     destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
     destruct (M.get (flip k) row) as [d|] eqn:Hunary; [|exact Hchanged].
     apply set_row_models; [exact Hchanged|]. intros j z Hentry.
@@ -2264,6 +2269,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     dbm_wf m -> dbm_wf changed -> dbm_wf (tighten_row m changed k ignored).
   Proof.
     intros m changed k ignored Hwf Hchanged. unfold tighten_row.
+    destruct (M.get k changed); [exact Hchanged|].
     destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
     destruct (M.get (flip k) row); [|exact Hchanged].
     apply dbm_set_wf; [exact Hchanged|]. apply M.wf_set.

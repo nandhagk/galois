@@ -279,3 +279,16 @@ Example assign_negative_self_range :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Definition repeated_unary_labels : Oct.dbm :=
+  PTrieCode.set (OctKey.encode positive_x)
+    (positive_x, PTrieCode.set (OctKey.encode (Oct.flip positive_x))
+      (positive_x, (-5)%Z) PTrieCode.empty)
+    (PTrieCode.set (OctKey.encode positive_y) (positive_x, PTrieCode.empty) PTrieCode.empty).
+
+(** Repeated raw labels round the validated unary entry to the same even bound. *)
+Example repeated_labels_tighten_once :
+  Oct.entry (Oct.tighten repeated_unary_labels) positive_x (Oct.flip positive_x) = Some (-6)%Z.
+Proof.
+  vm_compute. reflexivity.
+Qed.
