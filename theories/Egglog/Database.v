@@ -10527,7 +10527,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition k_rstep : N := 64.
   Definition k_stop : N := k_rstep + k_pop + c_loopN.
   Definition k_slots : N := 1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1).
-  Definition k_layout : N := 1. (* STUB *)
+  Definition k_layout : N := (256 * (PTrieT.c_trie + 1))%N.
 
   (* spec: row_id row_parent row_size row_current next_row *)
   Definition row_id (db : t) (f : positive) (k : list (cell V.t)) : option positive :=
@@ -11005,7 +11005,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + layout_work sl + 1) +
       k_layout * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds +
         fold_right (fun s n => Pos.size_nat (fst s) + n) 0%nat sl)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl.
+    pose proof (T_database_rank_slots_budget ds sl) as Hrank.
+    time_unfold T_rank_slots.
+    eapply N.le_trans; [apply N.add_le_mono_l; exact Hrank |].
+    unfold k_layout.
+    set (names := fold_right (fun d n => Pos.size_nat (name d) + n) 0%nat ds).
+    set (slot_names := fold_right (fun s n => Pos.size_nat (fst s) + n) 0%nat sl).
+    set (base := N.of_nat (length ds + length sl + names + slot_names + 1)%nat).
+    set (amount := N.of_nat (length ds + length sl + layout_work sl + 1)%nat).
+    set (bits := N.of_nat (names + slot_names)%nat).
+    assert (Hbase : (base <= amount + bits)%N).
+    { unfold base, amount, bits. lia. }
+    assert (Hcost : (48 * (PTrieT.c_trie + 1) <=
+      256 * (PTrieT.c_trie + 1))%N) by lia.
+    assert (Hpositive : (1 <= (PTrieT.c_trie + 1) * (amount + bits))%N).
+    { unfold amount, bits. nia. }
+    replace (256 * (PTrieT.c_trie + 1) * amount +
+      256 * (PTrieT.c_trie + 1) * bits)%N with
+      (256 * (PTrieT.c_trie + 1) * (amount + bits))%N by ring.
+    eapply N.le_trans with (1 + 48 * (PTrieT.c_trie + 1) * (amount + bits))%N.
+    - apply N.add_le_mono_l. apply N.mul_le_mono_l. exact Hbase.
+    - nia.
+  Qed.
   (** Initialization adds the ranking to one pass over declarations and permutations. *)
   Lemma T_init_split : forall ds sl,
     (T_init ds sl <= T_rank_slots ds sl +
