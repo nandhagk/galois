@@ -1789,14 +1789,110 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     destruct (trie_get (S.key_code x) (ws_armed s));
       unfold arm, enqueue; split; reflexivity.
   Qed.
+  (** A strict value update changes the store and counter before touching queue metadata. *)
+  Definition update_base pol (s : state) (x : S.key) (a : L.t) : state :=
+    let c := S.key_code x in
+    let ac := P.update pol c (counter s c) (look s x) a in
+    WorklistState (PTrieCode.set c (x, fst ac) (ws_store s))
+      (PTrieCode.set c (snd ac) (ws_counters s)) (ws_queue s) (ws_live s)
+      (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s).
+
+  (** Store and counter writes do not change the prepared cache properties. *)
+  Lemma update_base_prepared : forall p pol s x a, prepared p pol s ->
+    prepared p pol (update_base pol s x a).
+  Proof.
+    intros p pol s x a Hprepared; exact Hprepared.
+  Qed.
+
+  (** Arming a fully live reader bucket preserves prepared-state coverage. *)
+  Lemma arm_prepared : forall p pol c s, prepared p pol s ->
+    (forall id, In id (readers s c) -> exists pr, Q.prio (ws_queue s) id = Some pr) ->
+    prepared p pol (arm c s).
+  Proof.
+    intros p pol c s [Hmeta [Hlive [Hwf [Hexact [Harmed Hranks]]]]] Hcovered.
+    split; [exact Hmeta|]; split; [exact Hlive|]; split; [exact Hwf|].
+    split; [exact Hexact|]; split; [|exact Hranks].
+    intros key id Hflag Hin.
+    change (trie_get key (PTrieCode.set c tt (ws_armed s)) = Some tt) in Hflag.
+    rewrite trie_get_set in Hflag; destruct (Pos.eqb key c) eqn:Heq.
+    - apply Pos.eqb_eq in Heq; subst key; now apply Hcovered.
+    - eapply Harmed; [exact Hflag|exact Hin].
+  Qed.
+
+  (** Arming a bucket preserves all components of the reference view. *)
+  Lemma arm_view : forall c s, wl_view (arm c s) = wl_view s.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Indexed updates decompose into a store write and a guarded reader enqueue. *)
+  Lemma update_one_core : forall p pol s x a,
+    update_one p pol s (x, a) =
+      if L.leb a (look s x) then s else
+      match trie_get (S.key_code x) (ws_armed s) with
+      | Some _ => update_base pol s x a
+      | None => arm (S.key_code x)
+          (enqueue p pol (readers s (S.key_code x)) (update_base pol s x a))
+      end.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Reference updates use the same store and counter write as the indexed operation. *)
+  Lemma reference_update_view : forall p pol s x a,
+    reference_update p pol (wl_view s) (x, a) =
+      if L.leb a (look s x) then wl_view s else
+        reference_enqueue p pol (source_readers p (S.key_code x))
+          (wl_view (update_base pol s x a)).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Each intermediate update keeps the cache, queue and armed-reader invariants. *)
+  Lemma update_prepared : forall p pol s x a, prepared p pol s ->
+    prepared p pol (update_one p pol s (x, a)).
+  Proof.
+    intros p pol s x a Hprepared; rewrite update_one_core.
+    destruct (L.leb a (look s x)); [exact Hprepared|].
+    destruct (trie_get (S.key_code x) (ws_armed s)).
+    - now apply update_base_prepared.
+    - apply arm_prepared; [apply enqueue_prepared, update_base_prepared, Hprepared|].
+      intros id Hin; change (In id (readers s (S.key_code x))) in Hin.
+      pose proof Hin as Hrequested; rewrite (proj2 (proj1 Hprepared)) in Hin.
+      apply source_readers_spec in Hin as [r [y [Hsource Hread]]].
+      eapply enqueue_contains.
+      + apply update_base_prepared, Hprepared.
+      + exact Hrequested.
+      + exact Hsource.
+  Qed.
+
+  (** Armed buckets skip exactly the reference enqueue that would leave the queue unchanged. *)
+  Lemma update_agreement : forall p pol s x a, prepared p pol s ->
+    wl_view (update_one p pol s (x, a)) = reference_update p pol (wl_view s) (x, a).
+  Proof.
+    intros p pol s x a Hprepared; rewrite update_one_core, reference_update_view.
+    destruct (L.leb a (look s x)); [reflexivity|].
+    destruct (trie_get (S.key_code x) (ws_armed s)) as [[]|] eqn:Hflag.
+    - symmetry; apply reference_enqueue_existing; intros id Hin.
+      rewrite <- (proj2 (proj1 Hprepared)) in Hin.
+      destruct Hprepared as [Hmeta [Hlive [Hwf [Hexact [Harmed Hranks]]]]].
+      eapply Harmed; [exact Hflag|exact Hin].
+    - rewrite arm_view, enqueue_agreement by (apply update_base_prepared; exact Hprepared).
+      now rewrite (proj2 (proj1 Hprepared)).
+  Qed.
+
   (** Every update has the original projected behavior on prepared states. *)
   Lemma F6_agreement : forall p pol s xa, prepared p pol s ->
     wl_view (update_one p pol s xa) = reference_update p pol (wl_view s) xa.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s [x a] Hprepared; now apply update_agreement.
+  Qed.
   (** Every intermediate update maintains prepared-state agreement without client duties. *)
   Lemma F6_prepared : forall p pol s xa, prepared p pol s ->
     prepared p pol (update_one p pol s xa).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s [x a] Hprepared; now apply update_prepared.
+  Qed.
   (** A pop removes its live identifier and clears every reader flag used by that row. *)
   Lemma F7_indexed : forall p pol s,
     step p pol s = match Q.pop (ws_queue s) with
@@ -1815,19 +1911,130 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Proof.
     reflexivity.
   Qed.
+  (** Clearing a dependency list removes precisely its declared read codes. *)
+  Lemma clear_reads_lookup : forall xs (marked : ptrie Datatypes.unit) c,
+    trie_get c (fold_left (fun acc x => PTrieCode.remove (S.key_code x) acc) xs marked) =
+      if existsb (fun x => Pos.eqb c (S.key_code x)) xs then None else trie_get c marked.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; intros marked c; [reflexivity|].
+    cbn [fold_left existsb]; rewrite IH, trie_get_remove.
+    destruct (existsb (fun y => Pos.eqb c (S.key_code y)) xs),
+      (Pos.eqb c (S.key_code x)); reflexivity.
+  Qed.
+
+  (** Every flag surviving a pop was already armed and does not name the popped reader. *)
+  Lemma pop_flag_readers : forall p s id q c, metadata p s ->
+    trie_get c (ws_armed (after_pop p s id q)) = Some tt ->
+    trie_get c (ws_armed s) = Some tt /\ ~ In id (readers s c).
+  Proof.
+    intros p s id q c [Hrows Hreaders] Hflag; unfold after_pop in Hflag.
+    cbn [ws_armed] in Hflag; destruct (row_at s id) as [r|] eqn:Hrow.
+    - rewrite clear_reads_lookup in Hflag.
+      destruct (existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)) eqn:Hclear;
+        [discriminate|].
+      split; [exact Hflag|]; intro Hin; rewrite Hreaders in Hin.
+      apply source_readers_spec in Hin as [row [x [Hsource [Hread Hcode]]]].
+      rewrite <- (Hrows id), Hrow in Hsource; injection Hsource as Heq; subst row.
+      assert (Hpresent : existsb (fun y => Pos.eqb c (S.key_code y)) (S.deps p r) = true).
+      { apply existsb_exists; exists x; split; [exact Hread|].
+        apply Pos.eqb_eq; symmetry; exact Hcode. }
+      congruence.
+    - split; [exact Hflag|]; intro Hin; rewrite Hreaders in Hin.
+      apply source_readers_spec in Hin as [r [x [Hsource Hread]]].
+      rewrite <- (Hrows id), Hrow in Hsource; discriminate.
+  Qed.
+
+  (** Removing the popped live marker restores agreement with the residual queue. *)
+  Lemma after_pop_live : forall p s pr id q1, live_agrees s -> Q.wf (ws_queue s) ->
+    Q.pop (ws_queue s) = Some (pr, id, q1) -> live_agrees (after_pop p s id q1).
+  Proof.
+    intros p s pr id q1 Hlive Hwf Hpop x.
+    destruct (Q.pop_min (ws_queue s) pr id q1 Hwf Hpop)
+      as [Hselected [Hleast [Hremoved Hothers]]].
+    change (trie_get x (PTrieCode.remove id (ws_live s)) = Some tt <->
+      exists priority, Q.prio q1 x = Some priority).
+    rewrite trie_get_remove; destruct (Pos.eqb x id) eqn:Heq.
+    - apply Pos.eqb_eq in Heq; subst x; rewrite Hremoved.
+      split; [discriminate|intros [priority H]; discriminate].
+    - apply Pos.eqb_neq in Heq; rewrite Hothers by exact Heq; apply Hlive.
+  Qed.
+
+  (** Popping preserves prepared metadata, exact queue size and surviving armed coverage. *)
+  Lemma pop_prepared : forall p pol s pr id q1, prepared p pol s ->
+    Q.pop (ws_queue s) = Some (pr, id, q1) -> prepared p pol (after_pop p s id q1).
+  Proof.
+    intros p pol s pr id q1 [Hmeta [Hlive [Hwf [Hexact [Harmed Hranks]]]]] Hpop.
+    destruct (Q.pop_min (ws_queue s) pr id q1 Hwf Hpop)
+      as [Hselected [Hleast [Hremoved Hothers]]].
+    split; [exact Hmeta|]; split; [eapply after_pop_live; eassumption|].
+    split; [eapply Q.wf_pop; eassumption|]; split.
+    - eapply queue_exact_pop; eassumption.
+    - split; [|exact Hranks]; intros c target Hflag Hin.
+      destruct (pop_flag_readers p s id q1 c Hmeta Hflag) as [Hbefore Hnotin].
+      destruct (Harmed c target Hbefore Hin) as [priority Hprio].
+      assert (Hother : target <> id) by (intro Heq; subst target; now apply Hnotin).
+      exists priority; change (Q.prio q1 target = Some priority).
+      now rewrite Hothers by exact Hother.
+  Qed.
+
+  (** Ordered output application preserves preparation and both immutable index tables. *)
+  Lemma updates_prepared : forall p pol outs s, prepared p pol s ->
+    prepared p pol (fold_left (update_one p pol) outs s) /\
+    ws_rows (fold_left (update_one p pol) outs s) = ws_rows s /\
+    ws_readers (fold_left (update_one p pol) outs s) = ws_readers s.
+  Proof.
+    intros p pol outs; induction outs as [|xa outs IH]; intros s Hprepared.
+    - split; [exact Hprepared|split; reflexivity].
+    - cbn [fold_left].
+      destruct (IH (update_one p pol s xa) (F6_prepared p pol s xa Hprepared))
+        as [Hfinal [Hrows Hreaders]].
+      destruct (F6_tables p pol s xa) as [Hrow_step Hreader_step].
+      split; [exact Hfinal|]; split; congruence.
+  Qed.
+
+  (** Ordered output application commutes with the reference-state projection. *)
+  Lemma updates_agreement : forall p pol outs s, prepared p pol s ->
+    wl_view (fold_left (update_one p pol) outs s) =
+      fold_left (reference_update p pol) outs (wl_view s).
+  Proof.
+    intros p pol outs; induction outs as [|xa outs IH]; intros s Hprepared;
+      [reflexivity|].
+    cbn [fold_left]; rewrite IH by (apply F6_prepared; exact Hprepared).
+    now rewrite F6_agreement by exact Hprepared.
+  Qed.
+
   (** Popping preserves cache agreement and restores live agreement for the residual queue. *)
   Lemma F7_pop_prepared : forall p pol s pr id q1, prepared p pol s ->
     Q.pop (ws_queue s) = Some (pr, id, q1) ->
     prepared p pol (after_pop p s id q1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply pop_prepared.
+  Qed.
   (** The full callback retains every observable behavior of the original callback. *)
   Lemma F7_agreement : forall p pol s, prepared p pol s ->
     view_result (step p pol s) = reference_step p pol (wl_view s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s Hprepared; unfold step, reference_step, view_result.
+    cbn [wl_view wl_store wl_counters wl_queue].
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|reflexivity].
+    rewrite <- (proj1 (proj1 Hprepared) id).
+    destruct (row_at s id) as [r|] eqn:Hrow; [|reflexivity].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|reflexivity].
+    f_equal; rewrite updates_agreement by (eapply F7_pop_prepared; eassumption).
+    reflexivity.
+  Qed.
   (** Continuing callbacks retain both tables and all prepared-state facts. *)
   Lemma F7_prepared : forall p pol s s1, prepared p pol s -> step p pol s = inl s1 ->
     prepared p pol s1 /\ ws_rows s1 = ws_rows s /\ ws_readers s1 = ws_readers s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s s1 Hprepared Hstep; unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|discriminate].
+    destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    exact (updates_prepared p pol ((S.target p r, a) :: ss) (after_pop p s id q1)
+      (F7_pop_prepared p pol s pr id q1 Hprepared Hpop)).
+  Qed.
   (** The public solver is the binary-fuel loop over these callbacks. *)
   Lemma F8_run : forall p pol fuel,
     run p pol fuel = match loopN (step p pol) fuel (prepare p pol) with
@@ -1844,7 +2051,20 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     | inl s => OutOfFuel (wl_store s)
     | inr result => result
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel.
+    assert (Hview :
+      match loopN (step p pol) fuel (prepare p pol) with
+      | inl s => inl (wl_view s)
+      | inr result => inr result
+      end = loopN (reference_step p pol) fuel (wl_view (prepare p pol))).
+    { apply (loopN_view (step p pol) (reference_step p pol) wl_view (prepared p pol)).
+      - intros s Hprepared; exact (F7_agreement p pol s Hprepared).
+      - intros s s1 Hprepared Hstep; exact (proj1 (F7_prepared p pol s s1 Hprepared Hstep)).
+      - apply F4_metadata. }
+    unfold run; rewrite <- Hview.
+    destruct (loopN (step p pol) fuel (prepare p pol)); reflexivity.
+  Qed.
 
   (** * Reachable-state invariants *)
 
