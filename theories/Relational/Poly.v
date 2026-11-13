@@ -2227,6 +2227,417 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply normalize_row_sat. exact (proj1 (Forall_forall _ _) Hmodels s Hin).
   Qed.
 
+
+  (** A normalized row sum has the same sum of coefficients at every key. *)
+  Lemma poly_add_rows_coefficient : forall x a p b q,
+    poly_coefficient X.eqb x (poly_constraint (poly_add_rows X.encode a p b q)) =
+      (a * poly_coefficient X.eqb x (poly_constraint p) +
+       b * poly_coefficient X.eqb x (poly_constraint q))%Z.
+  Proof.
+    intros x a p b q. rewrite <- !coef_of_poly_coefficient.
+    cbn [poly_add_rows poly_constraint lhs].
+    rewrite coef_of_normal, coef_of_app, !coef_of_scale. reflexivity.
+  Qed.
+
+  (** Multiplying by a sign yields the nonnegative absolute value. *)
+  Lemma poly_sgn_abs : forall a, (Z.sgn a * a = Z.abs a)%Z.
+  Proof.
+    intros [|a|a]; cbn; ring.
+  Qed.
+
+  (** The cancellation formula always removes its selected coefficient. *)
+  Lemma poly_cancel_zero : forall x p r,
+    poly_coefficient X.eqb x
+      (poly_constraint (poly_cancel X.encode X.eqb x p r)) = 0%Z.
+  Proof.
+    intros x p r. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) eqn:Hzero.
+    - now apply Z.eqb_eq in Hzero.
+    - rewrite poly_add_rows_coefficient, <- poly_sgn_abs. ring.
+  Qed.
+
+  (** A coordinate zero in both inputs stays zero after cancellation. *)
+  Lemma poly_cancel_preserves_zero : forall x y p r,
+    poly_coefficient X.eqb y (poly_constraint p) = 0%Z ->
+    poly_coefficient X.eqb y (poly_constraint r) = 0%Z ->
+    poly_coefficient X.eqb y
+      (poly_constraint (poly_cancel X.encode X.eqb x p r)) = 0%Z.
+  Proof.
+    intros x y p r Hp Hr. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    rewrite poly_add_rows_coefficient, Hp, Hr. ring.
+  Qed.
+
+  (** Equality pivots and opposite-sign pairing both eliminate the selected variable. *)
+  Lemma poly_step_zero : forall x rows,
+    Forall (fun r => poly_coefficient X.eqb x (poly_constraint r) = 0%Z)
+      (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros x rows. unfold poly_step.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - apply Forall_map. apply Forall_forall. intros r _. apply poly_cancel_zero.
+    - apply Forall_app. split; apply Forall_forall; intros r Hin.
+      + apply filter_In in Hin as [_ Hzero]. now apply Z.eqb_eq in Hzero.
+      + apply in_flat_map in Hin as [p [_ Hin]].
+        apply in_map_iff in Hin as [q [Hsame _]]. subst r.
+        rewrite poly_add_rows_coefficient. ring.
+  Qed.
+
+  (** Elimination preserves every coefficient already zero in all input rows. *)
+  Lemma poly_step_preserves_zero : forall x y rows,
+    Forall (fun r => poly_coefficient X.eqb y (poly_constraint r) = 0%Z) rows ->
+    Forall (fun r => poly_coefficient X.eqb y (poly_constraint r) = 0%Z)
+      (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros x y rows Hzero. unfold poly_step.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - apply find_some in Hfind as [Hp _].
+      apply Forall_map. apply Forall_forall. intros r Hr.
+      apply poly_cancel_preserves_zero.
+      + exact (proj1 (Forall_forall _ _) Hzero p Hp).
+      + exact (proj1 (Forall_forall _ _) Hzero r Hr).
+    - apply Forall_app. split; apply Forall_forall; intros r Hin.
+      + apply filter_In in Hin as [Hin _].
+        exact (proj1 (Forall_forall _ _) Hzero r Hin).
+      + apply in_flat_map in Hin as [p [Hp Hin]].
+        apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
+        apply filter_In in Hp as [Hp _]. apply filter_In in Hq as [Hq _].
+        rewrite poly_add_rows_coefficient,
+          (proj1 (Forall_forall _ _) Hzero p Hp),
+          (proj1 (Forall_forall _ _) Hzero q Hq). ring.
+  Qed.
+
+  (** Repeated elimination preserves every initially zero coefficient. *)
+  Lemma poly_run_preserves_zero : forall xs x rows,
+    Forall (fun r => poly_coefficient X.eqb x (poly_constraint r) = 0%Z) rows ->
+    Forall (fun r => poly_coefficient X.eqb x (poly_constraint r) = 0%Z)
+      (poly_run X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros x rows Hzero; [exact Hzero|].
+    cbn [poly_run]. apply IH. now apply poly_step_preserves_zero.
+  Qed.
+
+  (** Every variable listed for elimination has zero coefficient in the final rows. *)
+  Lemma poly_run_zero : forall xs rows x, In x xs ->
+    Forall (fun r => poly_coefficient X.eqb x (poly_constraint r) = 0%Z)
+      (poly_run X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros rows x Hin; [contradiction|].
+    cbn [poly_run]. destruct Hin as [Hsame|Hin].
+    - subst y. apply poly_run_preserves_zero. apply poly_step_zero.
+    - now apply IH.
+  Qed.
+
+  (** Every final row simultaneously has zero coefficients at all eliminated keys. *)
+  Lemma poly_run_zero_all : forall xs rows,
+    Forall (fun r => forall x, In x xs ->
+      poly_coefficient X.eqb x (poly_constraint r) = 0%Z)
+      (poly_run X.encode X.eqb xs rows).
+  Proof.
+    intros xs rows. apply Forall_forall. intros r Hr x Hx.
+    exact (proj1 (Forall_forall _ _) (poly_run_zero xs rows x Hx) r Hr).
+  Qed.
+
+  (** Inserting a stored key preserves every existing key's own value. *)
+  Lemma poly_variable_set_preserves : forall acc x y,
+    PTrieCode.get (X.encode x) acc = Some x ->
+    PTrieCode.get (X.encode x) (PTrieCode.set (X.encode y) y acc) = Some x.
+  Proof.
+    intros acc x y Hget. destruct (Pos.eq_dec (X.encode x) (X.encode y))
+      as [Hsame|Hother].
+    - apply X.encode_inj in Hsame. subst y. apply PTrie.get_set_same.
+    - rewrite PTrie.get_set_other by exact Hother. exact Hget.
+  Qed.
+
+  (** Scanning a row records all its raw keys and preserves the prior key set. *)
+  Lemma poly_variables_terms_present : forall (ps : list (X.t * Z)) acc x,
+    In x (map fst ps) \/ PTrieCode.get (X.encode x) acc = Some x ->
+    PTrieCode.get (X.encode x)
+      (fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc)
+        ps acc) = Some x.
+  Proof.
+    intro ps. induction ps as [|[y a] ps IH]; intros acc x Hpresent.
+    - cbn [map In] in Hpresent. destruct Hpresent as [Hfalse|Hget];
+        [contradiction|exact Hget].
+    - cbn [fold_left fst]. apply IH. cbn [map fst In] in Hpresent.
+      destruct Hpresent as [[Hsame|Hin]|Hget].
+      + subst y. right. apply PTrie.get_set_same.
+      + now left.
+      + right. now apply poly_variable_set_preserves.
+  Qed.
+
+  (** Scanning source rows records every raw occurrence, including cancelled keys. *)
+  Lemma poly_variables_rows_present : forall rows acc x,
+    (exists r, In r rows /\ In x (map fst (lhs r))) \/
+      PTrieCode.get (X.encode x) acc = Some x ->
+    PTrieCode.get (X.encode x)
+      (fold_left (fun acc r =>
+        fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc)
+          (lhs r) acc) rows acc) = Some x.
+  Proof.
+    intro rows. induction rows as [|r rows IH]; intros acc x Hpresent.
+    - destruct Hpresent as [[s [Hin _]]|Hget]; [contradiction|exact Hget].
+    - cbn [fold_left]. apply IH.
+      destruct Hpresent as [[s [[Hsame|Hin] Hterm]]|Hget].
+      + subst s. right. apply poly_variables_terms_present. now left.
+      + left. exists s. auto.
+      + right. apply poly_variables_terms_present. now right.
+  Qed.
+
+  (** Accumulating trie values into a list retains every stored value. *)
+  Lemma poly_variables_fold_present : forall (entries : list (positive * X.t)) acc x,
+    In x (map snd entries) \/ In x acc ->
+    In x (fold_left (fun acc p => snd p :: acc) entries acc).
+  Proof.
+    intro entries. induction entries as [|[key value] entries IH];
+      intros acc x Hpresent.
+    - cbn [map In] in Hpresent. destruct Hpresent as [Hfalse|Hin];
+        [contradiction|exact Hin].
+    - cbn [fold_left snd]. apply IH. cbn [map snd In] in Hpresent.
+      destruct Hpresent as [[Hsame|Hin]|Hin].
+      + subst value. right. now left.
+      + now left.
+      + right. now right.
+  Qed.
+
+  (** The elimination coordinate list contains every key occurring in any raw source row. *)
+  Lemma poly_variables_contains : forall rows r x a,
+    In r rows -> In (x, a) (lhs r) -> In x (poly_variables X.encode rows).
+  Proof.
+    intros rows r x a Hrow Hterm. unfold poly_variables.
+    rewrite PTrieT.F9_fold_values. apply poly_variables_fold_present. left.
+    apply in_map_iff. exists (X.encode x, x). split; [reflexivity|].
+    apply (proj2 (PTrie.elements_spec _ _ _ _)).
+    apply poly_variables_rows_present. left. exists r. split; [exact Hrow|].
+    apply in_map_iff. exists (x, a). split; [reflexivity|exact Hterm].
+  Qed.
+
+  (** A prepared row has distinct nonzero coefficients supported by its source keys. *)
+  Definition poly_reduced_row (xs : list X.t) (r : poly_row X.t) : Prop :=
+    NoDup (map fst (lhs (poly_constraint r))) /\
+      Forall (fun p => snd p <> 0%Z /\ In (fst p) xs) (lhs (poly_constraint r)).
+
+  (** Scaling a coefficient list does not change its list of keys. *)
+  Lemma poly_scale_coef_keys : forall a (terms : list (X.t * Z)),
+    map fst (poly_scale_coef a terms) = map fst terms.
+  Proof.
+    intros a terms. unfold poly_scale_coef. rewrite map_map. reflexivity.
+  Qed.
+
+  (** Every raw key retained by normalization remains in the supplied source list. *)
+  Lemma poly_normal_coef_reduced : forall xs terms,
+    (forall p, In p terms -> In (fst p) xs) ->
+    Forall (fun p => snd p <> 0%Z /\ In (fst p) xs)
+      (poly_normal_coef X.encode terms).
+  Proof.
+    intros xs terms Hsupport. apply Forall_forall. intros p Hp. split.
+    - eapply poly_normal_coef_nonzero. exact Hp.
+    - apply poly_normal_coef_keys in Hp.
+      apply in_map_iff in Hp as [q [Hsame Hq]]. rewrite <- Hsame. now apply Hsupport.
+  Qed.
+
+  (** Normalizing a source row establishes distinct nonzero supported coefficients. *)
+  Lemma poly_normal_row_reduced : forall xs r ms flag,
+    (forall p, In p (lhs r) -> In (fst p) xs) ->
+    poly_reduced_row xs (PolyRow X.t (poly_normal_row X.encode r) ms flag).
+  Proof.
+    intros xs r ms flag Hsupport. unfold poly_reduced_row.
+    cbn [poly_constraint poly_normal_row lhs]. split.
+    - apply poly_normal_coef_nodup.
+    - now apply poly_normal_coef_reduced.
+  Qed.
+
+  (** Every initialized source row has distinct nonzero supported coefficients. *)
+  Lemma poly_initial_reduced : forall xs rows,
+    Forall (fun r => forall p, In p (lhs (fst r)) -> In (fst p) xs) rows ->
+    Forall (poly_reduced_row xs) (poly_initial X.encode rows).
+  Proof.
+    intros xs rows. induction rows as [|[r flag] rows IH]; intro Hsupport;
+      [constructor|].
+    inversion Hsupport as [|source rest Hhead Htail]; subst source rest.
+    cbn [poly_initial fst snd]. constructor.
+    - apply poly_normal_row_reduced. exact Hhead.
+    - apply Forall_map. eapply Forall_impl; [|exact (IH Htail)].
+      intros q Hq. exact Hq.
+  Qed.
+
+  (** Combining prepared rows preserves distinct nonzero coefficients and source support. *)
+  Lemma poly_add_rows_reduced : forall xs a p b q,
+    poly_reduced_row xs p -> poly_reduced_row xs q ->
+    poly_reduced_row xs (poly_add_rows X.encode a p b q).
+  Proof.
+    intros xs a p b q [_ Hp] [_ Hq]. unfold poly_reduced_row.
+    cbn [poly_add_rows poly_constraint lhs]. split.
+    - apply poly_normal_coef_nodup.
+    - apply poly_normal_coef_reduced. intros term Hterm.
+      assert (Hkey : In (fst term)
+        (map fst (poly_scale_coef a (lhs (poly_constraint p)) ++
+          poly_scale_coef b (lhs (poly_constraint q))))).
+      { apply in_map. exact Hterm. }
+      rewrite map_app, !poly_scale_coef_keys in Hkey.
+      apply in_app_or in Hkey as [Hkey|Hkey].
+      + apply in_map_iff in Hkey as [s [Hsame Hs]]. rewrite <- Hsame.
+        exact (proj2 (proj1 (Forall_forall _ _) Hp s Hs)).
+      + apply in_map_iff in Hkey as [s [Hsame Hs]]. rewrite <- Hsame.
+        exact (proj2 (proj1 (Forall_forall _ _) Hq s Hs)).
+  Qed.
+
+  (** Cancelling against a prepared pivot preserves the prepared-row invariant. *)
+  Lemma poly_cancel_reduced : forall xs x p r,
+    poly_reduced_row xs p -> poly_reduced_row xs r ->
+    poly_reduced_row xs (poly_cancel X.encode X.eqb x p r).
+  Proof.
+    intros xs x p r Hp Hr. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    now apply poly_add_rows_reduced.
+  Qed.
+
+  (** A complete elimination step preserves the prepared-row invariant. *)
+  Lemma poly_step_reduced : forall xs x rows,
+    Forall (poly_reduced_row xs) rows ->
+    Forall (poly_reduced_row xs) (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros xs x rows Hrows. unfold poly_step.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - apply find_some in Hfind as [Hp _].
+      apply Forall_map. apply Forall_forall. intros r Hr.
+      apply poly_cancel_reduced.
+      + exact (proj1 (Forall_forall _ _) Hrows p Hp).
+      + exact (proj1 (Forall_forall _ _) Hrows r Hr).
+    - apply Forall_app. split; apply Forall_forall; intros r Hin.
+      + apply filter_In in Hin as [Hin _].
+        exact (proj1 (Forall_forall _ _) Hrows r Hin).
+      + apply in_flat_map in Hin as [p [Hp Hin]].
+        apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
+        apply filter_In in Hp as [Hp _]. apply filter_In in Hq as [Hq _].
+        apply poly_add_rows_reduced.
+        * exact (proj1 (Forall_forall _ _) Hrows p Hp).
+        * exact (proj1 (Forall_forall _ _) Hrows q Hq).
+  Qed.
+
+  (** Repeated elimination preserves the prepared-row invariant. *)
+  Lemma poly_run_reduced : forall xs keys rows,
+    Forall (poly_reduced_row xs) rows ->
+    Forall (poly_reduced_row xs) (poly_run X.encode X.eqb keys rows).
+  Proof.
+    intros xs keys. induction keys as [|x keys IH]; intros rows Hrows; [exact Hrows|].
+    cbn [poly_run]. apply IH. now apply poly_step_reduced.
+  Qed.
+
+  (** A key absent from the stored terms has zero summed coefficient. *)
+  Lemma poly_coefficient_absent : forall x r,
+    ~ In x (map fst (lhs r)) -> poly_coefficient X.eqb x r = 0%Z.
+  Proof.
+    intros x [terms relation bound]. unfold poly_coefficient. cbn [lhs].
+    induction terms as [|[y a] terms IH]; intro Habsent; [reflexivity|].
+    cbn [map fst In] in Habsent. cbn [fold_right fst snd].
+    destruct (X.eqb_spec y x) as [Hsame|Hother].
+    - subst y. exfalso. apply Habsent. now left.
+    - apply IH. intro Hin. apply Habsent. now right.
+  Qed.
+
+  (** A prepared row whose supported coefficients all vanish has an empty left-hand side. *)
+  Lemma poly_reduced_zero_empty : forall xs r,
+    poly_reduced_row xs r ->
+    (forall x, In x xs -> poly_coefficient X.eqb x (poly_constraint r) = 0%Z) ->
+    lhs (poly_constraint r) = nil.
+  Proof.
+    intros xs r [Hunique Hterms] Hzero.
+    destruct (poly_constraint r) as [terms relation bound].
+    destruct terms as [|[x a] terms]; [reflexivity|].
+    cbn [lhs map fst] in Hunique, Hterms.
+    inversion Hunique as [|key keys Habsent Htail]; subst key keys.
+    inversion Hterms as [|term rest [Hnonzero Hsupport] Hrest]; subst term rest.
+    cbn [fst snd] in Hnonzero, Hsupport.
+    specialize (Hzero x Hsupport).
+    assert (Hcoefficient : poly_coefficient X.eqb x (LCons X.t terms relation bound) = 0%Z).
+    { apply poly_coefficient_absent. exact Habsent. }
+    unfold poly_coefficient in Hzero, Hcoefficient. cbn [lhs] in Hcoefficient.
+    cbn [lhs fold_right fst snd] in Hzero.
+    rewrite poly_key_eqb_refl, Hcoefficient in Hzero. exfalso. apply Hnonzero. lia.
+  Qed.
+
+  (** Eliminating every source key leaves only constant rows. *)
+  Lemma poly_terminal_rows : forall xs rows,
+    Forall (fun r => forall p, In p (lhs (fst r)) -> In (fst p) xs) rows ->
+    Forall (fun r => lhs (poly_constraint r) = nil)
+      (poly_run X.encode X.eqb xs (poly_initial X.encode rows)).
+  Proof.
+    intros xs rows Hsupport.
+    pose proof (poly_run_reduced xs xs _ (poly_initial_reduced xs rows Hsupport)) as Hreduced.
+    pose proof (poly_run_zero_all xs (poly_initial X.encode rows)) as Hzero.
+    apply Forall_forall. intros r Hr. apply poly_reduced_zero_empty with (xs := xs).
+    - exact (proj1 (Forall_forall _ _) Hreduced r Hr).
+    - exact (proj1 (Forall_forall _ _) Hzero r Hr).
+  Qed.
+
+  (** A constant row not recognized as a contradiction holds under every rational store. *)
+  Lemma poly_constant_model_Q : forall r v,
+    lhs (poly_constraint r) = nil -> poly_contradiction r = false -> poly_satQ v r.
+  Proof.
+    intros r v Hempty Hconsistent. unfold poly_contradiction in Hconsistent.
+    rewrite Hempty in Hconsistent. unfold poly_satQ. rewrite Hempty.
+    cbn [poly_eval_coef_Q fold_right]. destruct (lrel (poly_constraint r)).
+    - apply negb_false_iff in Hconsistent. apply Z.eqb_eq in Hconsistent.
+      rewrite Hconsistent. reflexivity.
+    - apply orb_false_iff in Hconsistent as [Hnonnegative Hstrict].
+      apply Z.ltb_ge in Hnonnegative. destruct (poly_strict r) eqn:Hflag.
+      + cbn [andb] in Hstrict. apply Z.leb_gt in Hstrict.
+        change (inject_Z 0 < inject_Z (rhs (poly_constraint r)))%Q.
+        now rewrite <- Zlt_Qlt.
+      + change (inject_Z 0 <= inject_Z (rhs (poly_constraint r)))%Q.
+        now rewrite <- Zle_Qle.
+  Qed.
+
+  (** The zero store models a terminal system when none of its rows is contradictory. *)
+  Lemma poly_terminal_model_Q : forall rows,
+    Forall (fun r => lhs (poly_constraint r) = nil) rows ->
+    Forall (fun r => poly_contradiction r = false) rows ->
+    Forall (poly_satQ (fun _ => 0%Q)) rows.
+  Proof.
+    intros rows Hempty Hconsistent. apply Forall_forall. intros r Hr.
+    apply poly_constant_model_Q.
+    - exact (proj1 (Forall_forall _ _) Hempty r Hr).
+    - exact (proj1 (Forall_forall _ _) Hconsistent r Hr).
+  Qed.
+
+  (** The source and negated target are supported by the same original coordinate list. *)
+  Lemma poly_entail_source_support : forall P c,
+    Forall (fun r => forall p, In p (lhs (fst r)) ->
+      In (fst p) (poly_variables X.encode (c :: P)))
+      ((poly_negate c, true) :: map (fun r => (r, false)) P).
+  Proof.
+    intros P c. constructor.
+    - intros p Hp. cbn [fst poly_negate lhs] in Hp. unfold poly_scale_coef in Hp.
+      apply in_map_iff in Hp as [q [Hsame Hq]]. subst p. cbn [fst].
+      destruct q as [x a]. apply poly_variables_contains with (r := c) (a := a).
+      + now left.
+      + exact Hq.
+    - apply Forall_map. apply Forall_forall. intros r Hr [x a] Hterm.
+      apply poly_variables_contains with (r := r) (a := a); [now right|exact Hterm].
+  Qed.
+
+  (** The actual entailment run eliminates every stored coefficient of its final rows. *)
+  Lemma poly_entail_terminal_rows : forall P c,
+    Forall (fun r => lhs (poly_constraint r) = nil)
+      (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros P c. apply poly_terminal_rows. apply poly_entail_source_support.
+  Qed.
+
+  (** A failed entailment search leaves a terminal system modeled by the zero store. *)
+  Lemma poly_entail_terminal_model_Q : forall P c,
+    lrel c = RLe -> entail_cert P c = None ->
+    Forall (poly_satQ (fun _ => 0%Q))
+      (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
+  Proof.
+    intros P c Hrelation Hnone. apply poly_terminal_model_Q.
+    - apply poly_entail_terminal_rows.
+    - now apply poly_entailment_no_contradiction.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
