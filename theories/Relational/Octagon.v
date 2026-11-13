@@ -4856,6 +4856,47 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     cbn [twin_path path_sum twin_prefix RelationalPathBounds.below]. lia.
   Qed.
 
+  (** The two sequential signed-edge extensions remain triangle closed. *)
+  Lemma incremental_two_edge_closed : forall m i j d, dbm_wf m ->
+    tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall p, RelationalPathBounds.closed_at
+      (RelationalPathBounds.edge_extension
+        (RelationalPathBounds.edge_extension (entry seed) i j d)
+        (flip j) (flip i) d) p.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)). intro Hscan.
+    pose proof (incremental_seed_global_closed m i j Htight) as Hseed.
+    change (forall p, RelationalPathBounds.closed_at (entry seed) p) in Hseed.
+    pose proof (incremental_first_cycle m i j d Hwf Htight Hscan) as Hfirst.
+    pose proof (incremental_second_cycle m i j d Hwf Htight Hscan) as Hsecond.
+    pose proof (incremental_mixed_cycle m i j d Hwf Htight Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed j i) (Some d))) in Hfirst.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry seed (flip i) (flip j)) (Some d)))
+      in Hsecond.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    assert (Hnew_cycle : RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus
+        (RelationalPathBounds.edge_extension (entry seed) i j d
+          (flip i) (flip j)) (Some d))).
+    { unfold RelationalPathBounds.edge_extension.
+      rewrite RelationalPathBounds.plus_minimum_r.
+      apply RelationalPathBounds.minimum_glb. split; [exact Hsecond|].
+      destruct (entry seed (flip i) i) as [back|] eqn:Hback;
+        destruct (entry seed j (flip j)) as [cross|] eqn:Hcross;
+        cbn [RelationalPathBounds.plus RelationalPathBounds.below
+          twin_path path_sum twin_prefix] in *; try exact I; lia. }
+    intro p. apply RelationalPathBounds.edge_extension_closed.
+    - apply RelationalPathBounds.edge_extension_closed; [exact Hseed|exact Hfirst].
+    - exact Hnew_cycle.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
