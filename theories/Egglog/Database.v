@@ -9538,6 +9538,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       In (row_fresh store) (db_index_counters db)) /\
     (forall x f k c, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
       In c k -> In c (db_written_cells db)).
+  (** Initialization has no historical keys, links or registered occurrences. *)
+  Lemma row_store_ok_init : forall ds sl, row_store_ok (init ds sl).
+  Proof.
+    intros ds sl. unfold row_store_ok. cbn [db_row_store row_history row_links row_weights
+      row_fresh row_uses db_nuses].
+    split.
+    - intros r p Hlink. rewrite PTrie.get_empty in Hlink. discriminate.
+    - split.
+      + intros x f k Huse. unfold DatabaseUses.bucket, DatabaseUseMap.get in Huse.
+        rewrite PTrie.get_empty in Huse. contradiction.
+      + split; [reflexivity |]. split.
+        * intros f k key r Hhistory. rewrite PTrie.get_empty in Hhistory. discriminate.
+        * intros x f k c Huse. unfold DatabaseUses.bucket, DatabaseUseMap.get in Huse.
+          rewrite PTrie.get_empty in Huse. contradiction.
+  Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
