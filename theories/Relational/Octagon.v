@@ -4876,4 +4876,138 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     { apply N.mul_le_mono_r. exact matrix_time_factor_lat. }
     clearbody work. unfold T_narrow. cbn beta iota zeta. nia.
   Qed.
+  (** Every supported code has its key in a well-formed pivot enumeration. *)
+  Lemma keys_cover : forall m k, dbm_wf m ->
+    In (K.encode k) (support m) -> In k (keys m).
+  Proof.
+    intros m k [Houter Hrows] Hsupport. unfold keys.
+    rewrite (dedup_membership K.t K.eqb key_eqb_true).
+    left. apply in_app_iff. apply support_find in Hsupport.
+    destruct Hsupport as [Hrow|[p Hraw]].
+    - left. destruct (M.find (K.encode k) m) as [row|] eqn:Hfound;
+        [|contradiction].
+      apply in_map_iff. exists (k, row). split; [reflexivity|].
+      apply (proj2 (M.elements_spec (M.t Z) m k row Houter)).
+      now rewrite M.get_find.
+    - right. unfold raw_entry in Hraw.
+      destruct (M.find p m) as [row|] eqn:Hrow; cbn [row_of] in Hraw.
+      + destruct (M.wf_find (M.t Z) m p row Houter Hrow) as [i Hi].
+        apply in_flat_map. exists (i, row). split.
+        * apply (proj2 (M.elements_spec (M.t Z) m i row Houter)).
+          now rewrite M.get_find, Hi.
+        * cbn [snd]. destruct (M.find (K.encode k) row) as [z|] eqn:Hentry;
+            [|contradiction].
+          apply in_map_iff. exists (k, z). split; [reflexivity|].
+          apply (proj2 (M.elements_spec Z row k z (Hrows p row Hrow))).
+          now rewrite M.get_find.
+      + rewrite M.find_empty in Hraw. contradiction.
+  Qed.
+
+  Lemma keys_support_iff : forall m k, dbm_wf m ->
+    (In k (keys m) <-> In (K.encode k) (support m)).
+  Proof.
+    intros m k Hwf. split; [now apply keys_support|now apply keys_cover].
+  Qed.
+
+  (** Every performed pivot round preserves the same support. *)
+  Lemma fw_pivots_support : forall ks m p,
+    In p (support (fw_pivots ks m)) <-> In p (support m).
+  Proof.
+    induction ks as [|k ks IH]; intros m p; [reflexivity|].
+    cbn [fw_pivots]. destruct (nonnegative k (fw_round k m)).
+    - rewrite IH. apply support_round.
+    - apply support_round.
+  Qed.
+
+  Lemma fw_support : forall m p, In p (support (fw m)) <-> In p (support m).
+  Proof.
+    intros m p. unfold fw. apply fw_pivots_support.
+  Qed.
+
+  Lemma fw_sizes : forall m, supp (fw m) = supp m /\ b (fw m) = b m.
+  Proof.
+    intro m. apply support_sizes, fw_support.
+  Qed.
+
+  Lemma fw_keys : forall m, fw m = fw_pivots (keys m) m.
+  Proof.
+    intro m. unfold fw. now rewrite pivot_keys_eq_keys.
+  Qed.
+
+  (** Original and final key lists cover the same supported vertices. *)
+  Lemma keys_fw_membership : forall m k, dbm_wf m ->
+    (In k (keys m) <-> In k (keys (fw m))).
+  Proof.
+    intros m k Hwf. rewrite (keys_support_iff m k Hwf).
+    rewrite (keys_support_iff (fw m) k (wf_fw m Hwf)).
+    symmetry. apply fw_support.
+  Qed.
+
+  (** Diagonal checking is independent of the order of the complete pivot lists. *)
+  Lemma original_scan_diag_ok : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = diag_ok (fw m).
+  Proof.
+    intros m Hwf. unfold diag_ok.
+    change (forallb (fun k => nonnegative k (fw m)) (keys m) =
+      forallb (fun k => nonnegative k (fw m)) (keys (fw m))).
+    apply Bool.eq_true_iff_eq. rewrite !forallb_forall. split.
+    - intros Hscan k Hkey. apply Hscan. now apply (proj2 (keys_fw_membership m k Hwf)).
+    - intros Hscan k Hkey. apply Hscan. now apply (proj1 (keys_fw_membership m k Hwf)).
+  Qed.
+
+  (** The trace stops at the same negative diagonal as the executable pivot loop. *)
+  Lemma fw_trace_nonnegative : forall k ks m,
+    fw_trace (k :: ks) m = (k, m) ::
+      if nonnegative k (fw_round k m) then fw_trace ks (fw_round k m) else nil.
+  Proof.
+    intros k ks m. cbn [fw_trace]. unfold nonnegative.
+    destruct (entry (fw_round k m) k k) as [z|]; [|reflexivity].
+    destruct (z <? 0)%Z eqn:Hneg; destruct (0 <=? z)%Z eqn:Hnonneg;
+      try reflexivity.
+    - apply Z.ltb_lt in Hneg. apply Z.leb_le in Hnonneg. lia.
+    - apply Z.ltb_ge in Hneg. apply Z.leb_gt in Hnonneg. lia.
+  Qed.
+
+  (** A nonempty closure run returns the result of one recorded round. *)
+  Lemma fw_pivots_last : forall ks m,
+    fw_pivots ks m = m \/ exists k a,
+      In (k, a) (fw_trace ks m) /\ fw_pivots ks m = fw_round k a.
+  Proof.
+    induction ks as [|k ks IH]; intro m; [now left|].
+    right. cbn [fw_pivots]. rewrite fw_trace_nonnegative.
+    destruct (nonnegative k (fw_round k m)) eqn:Hnext.
+    - destruct (IH (fw_round k m)) as [Hsame|[q [a [Hin Hlast]]]].
+      + exists k, m. split; [now left|exact Hsame].
+      + exists q, a. split; [now right|exact Hlast].
+    - exists k, m. split; [now left|reflexivity].
+  Qed.
+
+  (** The returned matrix adds at most one round to the checked trace allowance. *)
+  Lemma fw_bits : forall m, dbm_wf m ->
+    ell (fw m) <= ell m + Nat.log2 (supp m) + 2.
+  Proof.
+    intros m Hwf. rewrite fw_keys.
+    destruct (fw_pivots_last (keys m) m) as [Hsame|[k [a [Hin Hlast]]]].
+    - rewrite Hsame. lia.
+    - rewrite Hlast. pose proof (bits_fw_round_step k a) as Hround.
+      pose proof (bits_fw_trace_le (keys m) m k a Hwf Hin) as Htrace. lia.
+  Qed.
+
+  (** Tight closure pays two bounded diagonal scans beyond its numeric stages. *)
+  Lemma T_tclose_overhead : forall m overhead, dbm_wf m ->
+    (forall next,
+      (List.T_forallb (fun k => nonnegative k next) (fun k => 1 + T_nonnegative k next)
+        (keys m) <= overhead)%N) ->
+    (T_tclose m <= T_fw m + 2 * overhead + 8 +
+      if diag_ok (fw m) then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0)%N.
+  Proof.
+    intros m overhead Hwf Hscan.
+    pose proof (Hscan (fw m)) as Hfirst.
+    pose proof (Hscan (strengthen (tighten (fw m)))) as Hlast.
+    unfold T_tclose, T_fw. cbn beta iota zeta.
+    rewrite pivot_keys_eq_keys, <- fw_keys.
+    rewrite original_scan_diag_ok by exact Hwf.
+    destruct (diag_ok (fw m)); cbn beta iota zeta; time_simpl; lia.
+  Qed.
+
 End OctagonT.
