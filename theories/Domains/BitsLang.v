@@ -691,6 +691,109 @@ Module WordTime.
       time_simpl; rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
   Qed.
 
+  (** A normalized unary input reduces its raw budget to twice the width budget. *)
+  Lemma word_unary_width_bound f c w x :
+    (forall w x, (f w x <= c * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N) ->
+    is_word w x -> (f w x <= (c * 4) * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Htime Hx. eapply (time_square_scale _ c _ _ 2); [apply Htime|].
+    pose proof (word_size_bound w x Hx). lia.
+  Qed.
+
+  (** Two normalized inputs reduce their raw budget to three times the width budget. *)
+  Lemma word_binary_width_bound f c w x y :
+    (forall w x y, (f w x y <=
+      c * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N) ->
+    is_word w x -> is_word w y ->
+    (f w x y <= (c * 9) * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Htime Hx Hy. eapply (time_square_scale _ c _ _ 3); [apply Htime|].
+    pose proof (word_size_bound w x Hx). pose proof (word_size_bound w y Hy). lia.
+  Qed.
+
+  (** Signed division composes bounded sign reads, unsigned division and modular negation. *)
+  Lemma word_sdiv_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wsdiv w x y <= 16384 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. assert (Hnx : is_word w (wneg w x)) by apply wrap_is_word.
+    assert (Hny : is_word w (wneg w y)) by apply wrap_is_word.
+    pose proof (word_unary_width_bound _ _ w x word_msb_time_bound Hx) as Hmx.
+    pose proof (word_unary_width_bound _ _ w y word_msb_time_bound Hy) as Hmy.
+    pose proof (word_unary_width_bound _ _ w x word_neg_time_bound Hx) as Hnegx.
+    pose proof (word_unary_width_bound _ _ w y word_neg_time_bound Hy) as Hnegy.
+    pose proof (word_binary_width_bound _ _ w x y word_udiv_time_bound Hx Hy) as Hpp.
+    pose proof (word_binary_width_bound _ _ w (wneg w x) y
+      word_udiv_time_bound Hnx Hy) as Hnp.
+    pose proof (word_binary_width_bound _ _ w x (wneg w y)
+      word_udiv_time_bound Hx Hny) as Hpn.
+    pose proof (word_binary_width_bound _ _ w (wneg w x) (wneg w y)
+      word_udiv_time_bound Hnx Hny) as Hnn.
+    pose proof (word_unary_width_bound _ _ w (wudiv w (wneg w x) y)
+      word_neg_time_bound (wudiv_is_word w (wneg w x) y)) as Houtnp.
+    pose proof (word_unary_width_bound _ _ w (wudiv w x (wneg w y))
+      word_neg_time_bound (wudiv_is_word w x (wneg w y))) as Houtpn.
+    pose proof (time_square_floor 1 (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+    time_unfold T_wsdiv. destruct (msb w x), (msb w y); time_cbn_all; lia.
+  Qed.
+
+  (** Signed remainder composes the same bounded sign reads and normalized operations. *)
+  Lemma word_srem_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wsrem w x y <= 16384 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. assert (Hnx : is_word w (wneg w x)) by apply wrap_is_word.
+    assert (Hny : is_word w (wneg w y)) by apply wrap_is_word.
+    pose proof (word_unary_width_bound _ _ w x word_msb_time_bound Hx) as Hmx.
+    pose proof (word_unary_width_bound _ _ w y word_msb_time_bound Hy) as Hmy.
+    pose proof (word_unary_width_bound _ _ w x word_neg_time_bound Hx) as Hnegx.
+    pose proof (word_unary_width_bound _ _ w y word_neg_time_bound Hy) as Hnegy.
+    pose proof (word_binary_width_bound _ _ w x y word_urem_time_bound Hx Hy) as Hpp.
+    pose proof (word_binary_width_bound _ _ w (wneg w x) y
+      word_urem_time_bound Hnx Hy) as Hnp.
+    pose proof (word_binary_width_bound _ _ w x (wneg w y)
+      word_urem_time_bound Hx Hny) as Hpn.
+    pose proof (word_binary_width_bound _ _ w (wneg w x) (wneg w y)
+      word_urem_time_bound Hnx Hny) as Hnn.
+    pose proof (word_unary_width_bound _ _ w (wurem w (wneg w x) y)
+      word_neg_time_bound (wurem_is_word w (wneg w x) y)) as Houtnp.
+    pose proof (word_unary_width_bound _ _ w (wurem w (wneg w x) (wneg w y))
+      word_neg_time_bound (wurem_is_word w (wneg w x) (wneg w y))) as Houtnn.
+    pose proof (time_square_floor 1 (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *. clearbody budget.
+    time_unfold T_wsrem. destruct (msb w x), (msb w y); time_cbn_all; lia.
+  Qed.
+
+  (** Signed modulus adjusts a normalized unsigned remainder by bounded word arithmetic. *)
+  Lemma word_smod_time_bound w x y : is_word w x -> is_word w y ->
+    (T_wsmod w x y <= 32768 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Hx Hy. time_unfold T_wsmod.
+    set (ax := if msb w x then wneg w x else wrap w x).
+    set (ay := if msb w y then wneg w y else wrap w y).
+    set (u := wurem w ax ay).
+    assert (Hax : is_word w ax) by (unfold ax; destruct (msb w x); apply wrap_is_word).
+    assert (Hay : is_word w ay) by (unfold ay; destruct (msb w y); apply wrap_is_word).
+    assert (Hu : is_word w u) by apply wurem_is_word.
+    pose proof (word_unary_width_bound _ _ w x word_msb_time_bound Hx) as Hmx.
+    pose proof (word_unary_width_bound _ _ w y word_msb_time_bound Hy) as Hmy.
+    pose proof (word_unary_width_bound _ _ w x word_neg_time_bound Hx) as Hnegx.
+    pose proof (word_unary_width_bound _ _ w y word_neg_time_bound Hy) as Hnegy.
+    pose proof (word_unary_width_bound _ _ w x word_wrap_time_bound Hx) as Hwrapx.
+    pose proof (word_unary_width_bound _ _ w y word_wrap_time_bound Hy) as Hwrapy.
+    pose proof (word_binary_width_bound _ _ w ax ay word_urem_time_bound Hax Hay) as Hurem.
+    pose proof (word_unary_width_bound _ _ w u word_neg_time_bound Hu) as Hnegu.
+    pose proof (word_binary_width_bound _ _ w (wneg w u) y
+      word_add_time_bound (wrap_is_word w (- u)) Hy) as Haddneg.
+    pose proof (word_binary_width_bound _ _ w u y word_add_time_bound Hu Hy) as Hadd.
+    pose proof (Z.T_eqb_le u 0) as Heq.
+    pose proof (time_of_nat_le _ _ (word_size_bound w u Hu)) as Hsize.
+    pose proof (time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget ax ay u. destruct (u =? 0)%Z, (msb w x), (msb w y);
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
+
 End WordTime.
 
 
