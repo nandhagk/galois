@@ -1722,3 +1722,115 @@ Proof.
   - lia.
   - pose proof (term_size_pos K X e). lia.
 Qed.
+
+(** A linear coefficient count and quadratic bit budget fit a common cubic envelope. *)
+Lemma cubic_cost_bound : forall count bits bound,
+  count <= bound -> bits <= bound ->
+  (N.of_nat ((count + 1)%nat) * N.of_nat (((bits + 1) ^ 2)%nat) <=
+    N.of_nat (((bound + 1) ^ 3)%nat))%N.
+Proof.
+  intros count bits bound Hcount Hbits.
+  assert (Hnat : (count + 1) * (bits + 1) ^ 2 <= (bound + 1) ^ 3).
+  { change ((count + 1) * ((bits + 1) * ((bits + 1) * 1)) <=
+      (bound + 1) * ((bound + 1) * ((bound + 1) * 1))).
+    apply Nat.mul_le_mono; [lia|]. apply Nat.mul_le_mono; lia. }
+  rewrite <- Nat2N.inj_mul. lia.
+Qed.
+
+(** The cubic envelope also pays for list traversal and fixed overheads. *)
+Lemma cubic_size : forall bound, bound + 1 <= (bound + 1) ^ 3.
+Proof.
+  intro bound.
+  assert (Hsquare : 1 <= (bound + 1) * (bound + 1)).
+  { change (1 * 1 <= (bound + 1) * (bound + 1)). apply Nat.mul_le_mono; lia. }
+  cbn [Nat.pow]. rewrite Nat.mul_1_r.
+  replace (bound + 1) with ((bound + 1) * 1) at 1 by lia.
+  apply Nat.mul_le_mono; [lia|exact Hsquare].
+Qed.
+
+(** One recursive traversal adds list overhead and one bounded operator call. *)
+Lemma traversal_time_budget :
+  forall (nodes cells charge map_cost sequence_cost operator_cost coefficient
+    node_coefficient : N),
+  (1 <= charge)%N -> (cells + 1 <= charge)%N ->
+  (map_cost <= coefficient * nodes * charge + cells + 1)%N ->
+  (sequence_cost <= cells + 1)%N ->
+  (operator_cost <= node_coefficient * charge)%N ->
+  (node_coefficient + 10 <= coefficient)%N ->
+  (8 + map_cost + sequence_cost + operator_cost <=
+    coefficient * (nodes + 1) * charge)%N.
+Proof.
+  intros nodes cells charge map_cost sequence_cost operator_cost coefficient
+    node_coefficient Hcharge Hcells Hmap Hsequence Hoperator Hcoefficient.
+  assert (Hstep : ((node_coefficient + 10) * charge <= coefficient * charge)%N)
+    by (apply N.mul_le_mono; [exact Hcoefficient|apply N.le_refl]).
+  replace ((node_coefficient + 10) * charge)%N with
+    (node_coefficient * charge + 10 * charge)%N in Hstep by ring.
+  replace (coefficient * (nodes + 1) * charge)%N with
+    (coefficient * nodes * charge + coefficient * charge)%N by ring.
+  set (children_work := (coefficient * nodes * charge)%N) in *. clearbody children_work.
+  set (node_work := (coefficient * charge)%N) in *. clearbody node_work.
+  set (operator_work := (node_coefficient * charge)%N) in *. clearbody operator_work. lia.
+Qed.
+
+(** The integer operator reached after sequencing fits the enclosing term's syntax budget. *)
+Lemma zlinear_node_operation_time : forall X (key_bits : X -> nat) o es bound,
+  term_mass key_bits zoperator_bits (Node o es) <= bound ->
+  ((match sequence (map zlinear_form es) with
+    | Some fs => T_zlinear_op o fs
+    | None => 0%N
+    end) <= 1024 * N.of_nat (((bound + 1) ^ 3)%nat))%N.
+Proof.
+  intros X key_bits o es bound Hmass.
+  destruct (sequence (map zlinear_form es)) as [fs|] eqn:Hforms.
+  - destruct (zlinear_forms_size X key_bits es fs Hforms) as [Hlength Hbits].
+    pose proof (term_mass_size zview X key_bits zoperator_bits (Node o es)) as Hnodes.
+    cbn [tsize term_mass] in Hmass, Hnodes.
+    pose proof (zlinear_op_time X key_bits o fs) as Htime.
+    eapply N.le_trans; [exact Htime|].
+    apply N.mul_le_mono; [apply N.le_refl|].
+    unfold affine_charge. apply cubic_cost_bound; lia.
+  - apply N.le_0_l.
+Qed.
+
+(** Integer recognition charges every syntax node against one common syntactic bit budget. *)
+Lemma zlinear_form_time : forall X (key_bits : X -> nat) e bound,
+  term_mass key_bits zoperator_bits e <= bound ->
+  (T_zlinear_form e <=
+    4096 * N.of_nat ((tsize e)%nat) * N.of_nat (((bound + 1) ^ 3)%nat))%N.
+Proof.
+  intros X key_bits e. induction e as [x|o es IH]; intros bound Hmass.
+  - pose proof (cubic_size bound) as Hcube.
+    assert (Hpositive : (1 <= N.of_nat (((bound + 1) ^ 3)%nat))%N) by lia.
+    time_unfold (@T_zlinear_form). time_simpl. time_cbn_all. lia.
+  - apply all_children_forall in IH.
+    assert (Hchildren : Forall (fun e =>
+      (T_zlinear_form e <= 4096 * N.of_nat ((tsize e)%nat) *
+        N.of_nat (((bound + 1) ^ 3)%nat))%N) es).
+    { apply Forall_forall. intros e Hin. rewrite Forall_forall in IH.
+      apply (IH e Hin bound).
+      pose proof (summed_size_member _ (term_mass key_bits zoperator_bits) es e Hin).
+      cbn [term_mass] in Hmass. lia. }
+    pose proof (map_time_weighted _ _ (@zlinear_form X) (fun e => @T_zlinear_form X e)
+      (@tsize zview X) 4096 (N.of_nat (((bound + 1) ^ 3)%nat)) es Hchildren) as Hmap.
+    pose proof (sequence_time _ (map (@zlinear_form X) es)) as Hsequence.
+    rewrite length_map in Hsequence.
+    pose proof (zlinear_node_operation_time X key_bits o es bound Hmass) as Hoperation.
+    pose proof (operand_count_size zview X es) as Hcount.
+    pose proof (term_mass_size zview X key_bits zoperator_bits (Node o es)) as Hnodes.
+    pose proof (cubic_size bound) as Hcube.
+    cbn [tsize term_mass] in Hmass, Hnodes.
+    assert (Hcells : (N.of_nat (length es) + 1 <=
+      N.of_nat (((bound + 1) ^ 3)%nat))%N) by lia.
+    clear Hcube Hnodes Hcount Hmass IH Hchildren.
+    set (work := N.of_nat (((bound + 1) ^ 3)%nat)) in *. clearbody work.
+    assert (Hpositive : (1 <= work)%N) by lia.
+    pose proof (traversal_time_budget
+      (N.of_nat ((fold_right Nat.add 0 (map tsize es))%nat)) (N.of_nat (length es)) work
+      (ListDef.T_map (@zlinear_form X) (fun e => @T_zlinear_form X e) es)
+      (T_sequence (map (@zlinear_form X) es))
+      (match sequence (map (@zlinear_form X) es) with
+       | Some fs => T_zlinear_op o fs | None => 0%N end)
+      4096 1024 Hpositive Hcells Hmap Hsequence Hoperation ltac:(lia)) as Htotal.
+    time_unfold (@T_zlinear_form). time_simpl. time_cbn_all. lia.
+Qed.
