@@ -802,15 +802,47 @@ Module UnionFind <: UNION_FIND.
           -- exists rk. apply ranked_compress; assumption.
   Qed.
 
+  (** Finding returns the old representative and preserves the forest, classes, and roots. *)
+  Lemma find_correct x u : wf u ->
+    fst (find x u) = repr u x /\ wf (snd (find x u)) /\
+    (forall z, mem (snd (find x u)) z <-> mem u z) /\
+    (forall z, repr (snd (find x u)) z = repr u z) /\
+    (forall z, size_of (snd (find x u)) z = size_of u z) /\
+    (forall z, is_root (snd (find x u)) z <-> is_root u z).
+  Proof.
+    intro Hwf. pose proof (walk_root x u Hwf) as Hroot.
+    pose proof (proj2 (walk_path x u Hwf)) as Hmembers.
+    pose proof (walk_path_nonroot x u Hwf) as Hnonroot.
+    unfold find. destruct (walk x u) as [r path] eqn:Hwalk. cbn [fst snd] in *.
+    assert (Hpath : forall y, In y path -> mem u y /\ repr u y = r /\ y <> r).
+    { intros y Hy. destruct (Hmembers y Hy) as [Hmem Hrepr].
+      split; [exact Hmem|]. split; [congruence | apply Hnonroot; exact Hy]. }
+    split; [exact Hroot|]. split; [apply wf_compress; assumption|].
+    split.
+    - intro z. apply mem_compress. intros y Hy. exact (proj1 (Hpath y Hy)).
+    - split.
+      + intro z. apply repr_compress; [exact Hwf|].
+        intros y Hy. exact (proj2 (Hpath y Hy)).
+      + split.
+        * intro z. apply size_of_compress; assumption.
+        * intro z. apply root_compress. intros y Hy. exact (proj2 (Hpath y Hy)).
+  Qed.
+
   (** ** End compression and find helpers *)
 
-  Lemma wf_find  : forall x u, wf u -> wf (snd (find x u)). Proof. Admitted. (* STUB *)
+  Lemma wf_find  : forall x u, wf u -> wf (snd (find x u)).
+  Proof.
+    intros x u Hwf. exact (proj1 (proj2 (find_correct x u Hwf))).
+  Qed.
   Lemma wf_union : forall x y u, wf u -> wf (snd (union x y u)). Proof. Admitted. (* STUB *)
   Lemma mem_add   : forall x u y, wf u -> (mem (add x u) y <-> mem u y \/ y = x).
   Proof.
     intros x u y Hwf. apply mem_add_raw.
   Qed.
-  Lemma mem_find  : forall x u y, wf u -> (mem (snd (find x u)) y <-> mem u y). Proof. Admitted. (* STUB *)
+  Lemma mem_find  : forall x u y, wf u -> (mem (snd (find x u)) y <-> mem u y).
+  Proof.
+    intros x u y Hwf. exact (proj1 (proj2 (proj2 (find_correct x u Hwf))) y).
+  Qed.
   Lemma mem_union : forall x y u z, wf u -> (mem (snd (union x y u)) z <-> mem u z \/ z = x \/ z = y).
   Proof. Admitted. (* STUB *)
   Lemma repr_empty : forall x, repr empty x = x. Proof. reflexivity. Qed.
@@ -822,8 +854,15 @@ Module UnionFind <: UNION_FIND.
   Proof.
     exact repr_add_same.
   Qed.
-  Lemma find_repr  : forall x u, wf u -> fst (find x u) = repr u x. Proof. Admitted. (* STUB *)
-  Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y. Proof. Admitted. (* STUB *)
+  Lemma find_repr  : forall x u, wf u -> fst (find x u) = repr u x.
+  Proof.
+    intros x u Hwf. exact (proj1 (find_correct x u Hwf)).
+  Qed.
+  Lemma find_same  : forall x u y, wf u -> repr (snd (find x u)) y = repr u y.
+  Proof.
+    intros x u y Hwf.
+    exact (proj1 (proj2 (proj2 (proj2 (find_correct x u Hwf)))) y).
+  Qed.
   Lemma union_none : forall x y u u1, wf u -> union x y u = (None, u1) ->
     repr u x = repr u y /\ forall z, repr u1 z = repr u z. Proof. Admitted. (* STUB *)
   Lemma union_some : forall x y u w l u1, wf u -> union x y u = (Some (w, l), u1) ->
@@ -870,7 +909,10 @@ Module UnionFind <: UNION_FIND.
     exact size_add_same.
   Qed.
   Lemma size_of_find : forall x u y, wf u -> size_of (snd (find x u)) y = size_of u y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x u y Hwf.
+    exact (proj1 (proj2 (proj2 (proj2 (proj2 (find_correct x u Hwf))))) y).
+  Qed.
   Lemma size_of_union_other : forall x y u o u1 z, wf u -> union x y u = (o, u1) ->
   (forall w l, o = Some (w, l) -> repr u z <> w /\ repr u z <> l) ->
   size_of u1 z = size_of u z.
@@ -889,7 +931,10 @@ Module UnionFind <: UNION_FIND.
     - subst y. apply Nat.le_max_r.
   Qed.
   Lemma width_find : forall x u, wf u -> width (snd (find x u)) <= width u.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x u Hwf. apply width_le_members. intros y Hy.
+    apply support_width. apply (proj1 (mem_find x u y Hwf)); exact Hy.
+  Qed.
   Lemma width_union : forall x y u, wf u ->
   width (snd (union x y u)) <= Nat.max (width u) (Nat.max (Pos.size_nat x) (Pos.size_nat y)).
   Proof. Admitted. (* STUB *)
