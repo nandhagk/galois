@@ -9842,10 +9842,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** A key without a row identifier has no current row. *)
   Lemma F_row_absent : forall db work f k, inv_on db work -> row_id db f k = None ->
     located db f k = None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work f k _ Habsent.
+    unfold row_id, located, locate, db_locate in *.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |]; [discriminate | reflexivity].
+  Qed.
   (** The executable resolution agrees with the observation. *)
   Lemma F_locate : forall db work f k, inv_on db work -> locate f k db = located db f k.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
   (** Merged row groups at least double the losing group. *)
   Lemma F_row_by_size : forall db work r, inv_on db work -> row_parent db r <> r ->
     (1 <= row_size db r)%N /\ (2 * row_size db r <= row_size db (row_parent db r))%N.
@@ -10218,7 +10223,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Initialization stores the ranking of its slot list. *)
   Lemma F_init_place : forall ds sl s,
     slot_place (init ds sl) s = nth_error (rank_slots ds sl) (N.to_nat s).
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
   (** Ranking pays for slot positions and the bits of function names. *)
   Lemma T_rank_slots_le : forall ds sl,
     (T_rank_slots ds sl <= k_layout * N.of_nat (length ds + length sl + layout_work sl + 1) +
@@ -10572,7 +10577,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Entries without a current row are discarded without changing the database. *)
   Lemma F6_absent : forall db f k,
     located db f k = None -> repair_entry (f, k) db = db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k Habsent.
+    change (db_locate f k db = None) in Habsent.
+    unfold repair_entry, db_repair_entry.
+    cbn [fst snd].
+    now rewrite Habsent.
+  Qed.
 
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
