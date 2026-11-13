@@ -1,22 +1,111 @@
-(** * Linear certificate placeholders
+(** * Linear certificate checking
 
-    These modules provide the certificate checker interface.
-    For example, a placeholder combination returns no row.
+    The checker combines admissible rows and compares their summed coefficients.
+    For example, opposite occurrences of one variable cancel before comparison.
     Builds on: LinCertSig. *)
 
-From Stdlib Require Import List ZArith QArith.
-From Argent Require Import Time Std.
+From Stdlib Require Import List ZArith QArith Lia Bool.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Relational Require Import LinForm LinCertSig.
 Local Open Scope nat_scope.
 
+(** Positive and negative contributions grow separately until the final subtraction. *)
+Definition lc_add_signed (z : Z) (s : Z * Z) : Z * Z :=
+  if (0 <=? z)%Z then (fst s + z, snd s)%Z else (fst s, snd s - z)%Z.
+
+TimeFun lc_add_signed.
+
+(** A partial combination retains raw terms and separate right-hand-side sums. *)
+Record lc_sum (X : Type) := LCSum {
+  lc_terms : list (X * Z);
+  lc_sums : Z * Z;
+  lc_equal : bool
+}.
+
+Arguments lc_terms {X} _.
+Arguments lc_sums {X} _.
+Arguments lc_equal {X} _.
+TimeFun lc_terms.
+TimeFun lc_sums.
+TimeFun lc_equal.
+
 Module LinCertCode (X : KEY_OPS) <: LINCERT_OPS X.
-  (* STUB-CODE *)
-  Definition combine (_ : list (lcons X.t)) (_ : list Z) : option (lcons X.t) := None.
-  (* STUB-CODE *)
-  Definition check_entails (_ : list (lcons X.t)) (_ : lcons X.t) (_ : cert) : bool := false.
-  (* STUB-CODE *)
-  Definition check_empty (_ : list (lcons X.t)) (_ : list Z) : bool := false.
+  Definition scale_terms (m : Z) (xs : list (X.t * Z)) : list (X.t * Z) :=
+    map (fun p => (fst p, (m * snd p)%Z)) xs.
+
+  Definition allowed (r : lcons X.t) (m : Z) : bool :=
+    match lrel r with REq => true | RLe => (0 <=? m)%Z end.
+
+  Definition equality_used (r : lcons X.t) (m : Z) : bool :=
+    match lrel r with REq => true | RLe => (m =? 0)%Z end.
+
+  Fixpoint combine_rows (P : list (lcons X.t)) (ms : list Z) : option (lc_sum X.t) :=
+    match P, ms with
+    | nil, nil => Some (LCSum _ nil (0%Z, 0%Z) true)
+    | p :: ps, m :: ns =>
+      if allowed p m then
+        match combine_rows ps ns with
+        | Some s => Some (LCSum _ (scale_terms m (lhs p) ++ lc_terms s)
+            (lc_add_signed (m * rhs p)%Z (lc_sums s))
+            (equality_used p m && lc_equal s))
+        | None => None
+        end
+      else None
+    | _, _ => None
+    end.
+
+  Definition finish_sum (s : lc_sum X.t) : lcons X.t :=
+    LCons _ (lc_terms s) (if lc_equal s then REq else RLe)
+      (fst (lc_sums s) - snd (lc_sums s))%Z.
+
+  Definition combine (P : list (lcons X.t)) (ms : list Z) : option (lcons X.t) :=
+    match combine_rows P ms with Some s => Some (finish_sum s) | None => None end.
+
+  Definition insert_term (acc : PTrieCode.t (Z * Z)) (p : X.t * Z)
+      : PTrieCode.t (Z * Z) :=
+    let key := X.encode (fst p) in
+    let previous := match PTrieCode.get key acc with
+      | Some z => z | None => (0%Z, 0%Z) end in
+    PTrieCode.set key (lc_add_signed (snd p) previous) acc.
+
+  Definition gather (xs : list (X.t * Z)) : PTrieCode.t (Z * Z) :=
+    fold_left insert_term xs PTrieCode.empty.
+
+  Definition zero_entry (a : option (Z * Z)) (_ : option unit) : bool :=
+    match a with None => true | Some z => (fst z =? snd z)%Z end.
+
+  Definition linear_zero (xs : list (X.t * Z)) : bool :=
+    PTrieCode.forall2b zero_entry (gather xs) (@PTrieCode.empty unit).
+
+  Definition linear_equal (sc : Z) (xs ys : list (X.t * Z)) : bool :=
+    linear_zero (xs ++ scale_terms (- sc)%Z ys).
+
+  Definition empty_row (s : lcons X.t) : bool :=
+    linear_zero (lhs s) &&
+      match lrel s with
+      | REq => negb (rhs s =? 0)%Z
+      | RLe => (rhs s <? 0)%Z
+      end.
+
+  Definition check_empty (P : list (lcons X.t)) (ms : list Z) : bool :=
+    match combine P ms with Some s => empty_row s | None => false end.
+
+  Definition check_row (s c : lcons X.t) (k : cert) : bool :=
+    (0 <? scale k)%Z && linear_equal (scale k) (lhs s) (lhs c) &&
+      match lrel c, lrel s with
+      | REq, REq => (rhs s =? scale k * rhs c)%Z
+      | RLe, _ =>
+        if cut k then (rhs s / scale k <=? rhs c)%Z
+        else (rhs s <=? scale k * rhs c)%Z
+      | REq, RLe => false
+      end.
+
+  Definition check_entails (P : list (lcons X.t)) (c : lcons X.t) (k : cert) : bool :=
+    match combine P (mults k) with
+    | Some s => if empty_row s then true else check_row s c k
+    | None => false
+    end.
 End LinCertCode.
 
 Module LinCert (X : KEY) <: LINCERT X.
@@ -70,9 +159,21 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   TimeFun comb_coef.
   TimeFun comb_rhs.
   TimeFun comb_eq.
+  TimeFun scale_terms.
+  TimeFun allowed.
+  TimeFun equality_used.
+  TimeFun combine_rows.
+  TimeFun finish_sum.
   TimeFun combine.
-  TimeFun check_entails.
+  TimeFun insert_term.
+  TimeFun gather.
+  TimeFun zero_entry.
+  TimeFun linear_zero.
+  TimeFun linear_equal.
+  TimeFun empty_row.
   TimeFun check_empty.
+  TimeFun check_row.
+  TimeFun check_entails.
   Definition c_lc : N := 1. (* STUB *)
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
