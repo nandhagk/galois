@@ -5,7 +5,7 @@
     Builds on: LatticeSig and Argent time interfaces. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Lattice Require Import LatticeSig DisjunctionSig Bounded.
 Import List.ListNotations.
 
@@ -193,10 +193,82 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
 
   Definition size (xs : t) : nat :=
     fold_right (fun a n => (L.size a + 1 + n)%nat) 1 (proj1_sig xs).
-  Definition c_lat : N := 1. (* STUB *)
+
+  (** Raw alternatives contribute their value sizes and one list-cell unit each. *)
+  Local Definition raw_size (xs : list L.t) : nat :=
+    fold_right (fun a n => (L.size a + 1 + n)%nat) 0%nat xs.
+
+  (** Each join step can grow both accumulated work and the resulting value. *)
+  Local Definition join_growth : N := (2 * (L.c_lat + 1))%N.
+
+  Definition c_lat : N :=
+    (64 * ((L.c_lat + 1) * N.of_nat ((C.k + 1) * (C.k + 1)) +
+      join_growth ^ N.of_nat (2 * C.k + 2) * N.of_nat (2 * C.k + 2) + 1))%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. nia.
+  Qed.
+
+  (** The public size adds one terminal unit to raw alternative size. *)
+  Local Lemma size_raw (xs : t) : size xs = raw_size (proj1_sig xs) + 1.
+  Proof.
+    destruct xs as [xs Hcap]. unfold size, raw_size. cbn [proj1_sig]. clear Hcap.
+    induction xs as [|x xs IH]; cbn [fold_right]; lia.
+  Qed.
+
+  (** Raw size is additive across concatenation. *)
+  Local Lemma raw_size_app xs ys : raw_size (xs ++ ys) = raw_size xs + raw_size ys.
+  Proof.
+    induction xs as [|x xs IH]; unfold raw_size in *; cbn [app fold_right]; lia.
+  Qed.
+
+  (** Raw size is the cell count plus the sum of component sizes. *)
+  Local Lemma raw_size_values xs :
+    raw_size xs = length xs + fold_right (fun a n => (L.size a + n)%nat) 0%nat xs.
+  Proof.
+    induction xs as [|x xs IH]; unfold raw_size in *; cbn [length fold_right]; lia.
+  Qed.
+
+  (** Every member's size fits within the total raw size. *)
+  Local Lemma raw_size_member x xs : In x xs -> L.size x + 1 <= raw_size xs.
+  Proof.
+    induction xs as [|y ys IH]; cbn [In]; intro Hin; [contradiction|].
+    change (L.size x + 1 <= L.size y + 1 + raw_size ys).
+    destruct Hin as [<-|Hin]; [lia|]. specialize (IH Hin). lia.
+  Qed.
+
+  (** List cells alone never exceed raw alternative size. *)
+  Local Lemma raw_size_length xs : length xs <= raw_size xs.
+  Proof.
+    rewrite raw_size_values. lia.
+  Qed.
+
+  (** A memberwise callback budget suffices for existential traversal. *)
+  Local Lemma exists_clock_in (f : L.t -> bool) (T_f : L.t -> N) budget xs :
+    (forall x, In x xs -> (T_f x <= budget)%N) ->
+    (List.T_existsb f T_f xs <= (budget + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound.
+    - time_unfold @List.T_existsb. cbn [length]. lia.
+    - specialize (IH (fun y Hin => Hbound y (or_intror Hin))).
+      pose proof (Hbound x (or_introl eq_refl)) as Hx.
+      time_unfold @List.T_existsb; time_simpl.
+      destruct (f x); cbn [length]; rewrite ?Nat2N.inj_succ; nia.
+  Qed.
+
+  (** A memberwise callback budget suffices for universal traversal. *)
+  Local Lemma forall_clock_in (f : L.t -> bool) (T_f : L.t -> N) budget xs :
+    (forall x, In x xs -> (T_f x <= budget)%N) ->
+    (List.T_forallb f T_f xs <= (budget + 2) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound.
+    - time_unfold @List.T_forallb. cbn [length]. lia.
+    - specialize (IH (fun y Hin => Hbound y (or_intror Hin))).
+      pose proof (Hbound x (or_introl eq_refl)) as Hx.
+      time_unfold @List.T_forallb; time_simpl.
+      destruct (f x); cbn [length]; rewrite ?Nat2N.inj_succ; nia.
+  Qed.
 
   (** Order testing takes time bounded by both disjunction sizes. *)
   Lemma T_leb_le : forall a b,
@@ -209,7 +281,11 @@ Module DisjunctionT (L : LATTICE_T) (J : JOIN_SIZE L) (C : CAP)
   (** Bottom testing takes time bounded by the disjunction size. *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [xs Hcap]. pose proof c_lat_pos as Hpositive.
+    time_unfold @T_is_bot; time_simpl. unfold size; cbn [proj1_sig].
+    destruct xs; cbn [fold_right]; rewrite ?Nat2N.inj_add; nia.
+  Qed.
   (** Clipping charges raw length and component sizes within twice the cap. *)
   Lemma T_clip_le : forall xs, length xs <= 2 * C.k ->
     (T_clip xs <= c_lat * N.of_nat
