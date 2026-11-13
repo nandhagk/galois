@@ -4,7 +4,7 @@
     For example, a leaf becomes one unit coefficient and an unwrapped zero constant.
     Builds on: LinearizeSig. *)
 
-From Stdlib Require Import List ZArith Lia.
+From Stdlib Require Import List NArith ZArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Bits Require Import Word Fun Arith Op.
@@ -79,7 +79,14 @@ Module LinearizeT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) <: LINEARIZE_ALL X L
   Definition c_linearize : N := 1. (* STUB *)
   Lemma T_lin_of_le : forall e,
     (T_lin_of e <= c_linearize * N.of_nat ((tsize e)%nat) * N.of_nat ((bits_e e + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro e.
+    assert (Hsize : (1 <= tsize e)%nat) by (destruct e; cbn [tsize]; lia).
+    assert (Hbits : (1 <= bits_e e + 1)%nat) by lia.
+    assert (HsizeN : (1 <= N.of_nat (tsize e))%N) by lia.
+    assert (HbitsN : (1 <= N.of_nat (bits_e e + 1))%N) by lia.
+    unfold c_linearize. time_step; nia.
+  Qed.
   Lemma T_atoms_of_le : forall g es,
     (T_atoms_of g es <= c_linearize * N.of_nat ((fold_right Nat.add 0 (map tsize es) + 1)%nat) *
       N.of_nat ((bits_es g es + 1)%nat))%N.
@@ -973,3 +980,144 @@ Module BitsLinearizeS (X : KEY) <: LINEARIZE X BitsLang BitsNumS.
     exact (bits_atoms_of_sound X.t true).
   Qed.
 End BitsLinearizeS.
+
+(** * Syntactic size envelopes *)
+
+(** Linear-form bits count the largest coefficient/key pair or constant. *)
+Definition linear_bits {X} (key_bits : X -> nat) (f : lin X) : nat :=
+  fold_right Nat.max (Z.size_nat (cst f))
+    (map (fun p => key_bits (fst p) + Z.size_nat (snd p)) (coef f)).
+
+(** Integer literals contribute their raw bit length to a syntax envelope. *)
+Definition zoperator_bits (o : zview) : nat :=
+  match o with
+  | ZConst z => Z.size_nat z
+  | _ => 0
+  end.
+
+(** Word literals additionally pay for the numeric value of their explicit width. *)
+Definition boperator_bits (o : bop) : nat :=
+  match o with
+  | BConst w z => Pos.to_nat w + Z.size_nat z
+  | BOp o => op_widths o
+  end.
+
+(** Every syntax node and every explicit key, literal or width contributes to this envelope. *)
+Fixpoint term_mass {K X} (key_bits : X -> nat) (operator_bits : K -> nat)
+    (e : term K X) : nat :=
+  match e with
+  | Leaf x => key_bits x + 1
+  | Node o es => operator_bits o + 1 +
+    fold_right Nat.add 0 (map (term_mass key_bits operator_bits) es)
+  end.
+
+(** Positive addition fits within the sum of the operand bit lengths. *)
+Lemma positive_bits_add : forall p q,
+  Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q.
+Proof.
+  intros p q. apply Pos.size_nat_least. rewrite Pos2Nat.inj_add, Nat.pow_add_r.
+  pose proof (Pos.size_nat_upper p). pose proof (Pos.size_nat_upper q).
+  pose proof (Pos2Nat.is_pos p). pose proof (Pos2Nat.is_pos q). nia.
+Qed.
+
+(** A signed difference of positive integers has no more bits than its two inputs together. *)
+Lemma zbits_pos_sub : forall p q,
+  Z.size_nat (Z.pos_sub p q) <= Pos.size_nat p + Pos.size_nat q.
+Proof.
+  intros p q. rewrite Z.pos_sub_spec. destruct (Pos.compare p q); cbn [Z.size_nat].
+  - lia.
+  - pose proof (Pos.size_nat_sub q p). lia.
+  - pose proof (Pos.size_nat_sub p q). lia.
+Qed.
+
+(** Integer addition fits within the sum of the input bit lengths. *)
+Lemma zbits_add : forall x y, Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.add Z.size_nat]; try lia.
+  - apply positive_bits_add.
+  - apply zbits_pos_sub.
+  - pose proof (zbits_pos_sub q p). lia.
+  - apply positive_bits_add.
+Qed.
+
+(** Integer multiplication adds at most the input bit lengths. *)
+Lemma zbits_mul : forall x y, Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.mul Z.size_nat]; try lia; apply Pos.size_nat_mul.
+Qed.
+
+(** A form-bit bound is exactly a bound on its constant and every coefficient/key pair. *)
+Lemma linear_bits_components : forall X (key_bits : X -> nat) f bound,
+  linear_bits key_bits f <= bound <->
+  Z.size_nat (cst f) <= bound /\
+    Forall (fun p => key_bits (fst p) + Z.size_nat (snd p) <= bound) (coef f).
+Proof.
+  intros X key_bits [xs z] bound. unfold linear_bits. cbn [coef cst].
+  induction xs as [|p xs IH]; cbn [map fold_right].
+  - split; intro H; [split; [exact H|constructor]|exact (proj1 H)].
+  - rewrite Nat.max_lub_iff, IH, Forall_cons_iff. tauto.
+Qed.
+
+(** Adding two forms adds at most their bit envelopes. *)
+Lemma linear_bits_add : forall X (key_bits : X -> nat) f g,
+  linear_bits key_bits (linear_add f g) <= linear_bits key_bits f + linear_bits key_bits g.
+Proof.
+  intros X key_bits f g.
+  destruct (proj1 (linear_bits_components X key_bits f (linear_bits key_bits f))
+    (Nat.le_refl _)) as [Hconstf Hcoeff].
+  destruct (proj1 (linear_bits_components X key_bits g (linear_bits key_bits g))
+    (Nat.le_refl _)) as [Hconstg Hcoeffg].
+  apply (proj2 (linear_bits_components X key_bits (linear_add f g) _)).
+  cbn [linear_add coef cst]. split.
+  - pose proof (zbits_add (cst f) (cst g)). lia.
+  - apply Forall_app. split.
+    + eapply Forall_impl; [|exact Hcoeff]. intros p Hbound.
+      exact (Nat.le_trans _ _ _ Hbound (Nat.le_add_r _ _)).
+    + eapply Forall_impl; [|exact Hcoeffg]. intros p Hbound.
+      exact (Nat.le_trans _ _ _ Hbound (Nat.le_add_l _ _)).
+Qed.
+
+(** Scaling a form adds the scalar's bit length to its previous envelope. *)
+Lemma linear_bits_scale : forall X (key_bits : X -> nat) a f,
+  linear_bits key_bits (linear_scale a f) <= Z.size_nat a + linear_bits key_bits f.
+Proof.
+  intros X key_bits a f.
+  destruct (proj1 (linear_bits_components X key_bits f (linear_bits key_bits f))
+    (Nat.le_refl _)) as [Hconst Hcoeff].
+  apply (proj2 (linear_bits_components X key_bits (linear_scale a f) _)).
+  cbn [linear_scale coef cst]. split.
+  - pose proof (zbits_mul a (cst f)). lia.
+  - induction Hcoeff as [|[x b] xs Hhead Htail IH]; cbn [map]; constructor.
+    + cbn [fst snd] in Hhead |- *. pose proof (zbits_mul a b). lia.
+    + exact IH.
+Qed.
+
+(** Subtraction needs at most one extra bit for its negative scalar. *)
+Lemma linear_bits_sub : forall X (key_bits : X -> nat) f g,
+  linear_bits key_bits (linear_sub f g) <=
+    linear_bits key_bits f + linear_bits key_bits g + 1.
+Proof.
+  intros X key_bits f g. unfold linear_sub.
+  eapply Nat.le_trans; [apply linear_bits_add|].
+  pose proof (linear_bits_scale X key_bits (-1)%Z g) as Hscale.
+  change (linear_bits key_bits (linear_scale (-1)%Z g) <= 1 + linear_bits key_bits g)
+    in Hscale. lia.
+Qed.
+
+(** An affine product adds at most the two operand bit envelopes. *)
+Lemma linear_bits_mul : forall X (key_bits : X -> nat) f g h,
+  linear_mul f g = Some h ->
+  linear_bits key_bits h <= linear_bits key_bits f + linear_bits key_bits g.
+Proof.
+  intros X key_bits f g h Hmul. unfold linear_mul in Hmul.
+  destruct (coef f) as [|p ps] eqn:Hleft.
+  - inversion Hmul; subst h.
+    pose proof (linear_bits_scale X key_bits (cst f) g).
+    pose proof (proj1 (proj1 (linear_bits_components X key_bits f
+      (linear_bits key_bits f)) (Nat.le_refl _))). lia.
+  - destruct (coef g) as [|q qs] eqn:Hright; [|discriminate].
+    inversion Hmul; subst h.
+    pose proof (linear_bits_scale X key_bits (cst g) f).
+    pose proof (proj1 (proj1 (linear_bits_components X key_bits g
+      (linear_bits key_bits g)) (Nat.le_refl _))). lia.
+Qed.
