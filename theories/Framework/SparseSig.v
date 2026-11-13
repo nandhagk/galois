@@ -128,9 +128,14 @@ Module Type SPARSE_TIME (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   (** The widest value key that a row targets. *)
   Definition value_bits (p : prog) : nat :=
     fold_right Nat.max 0 (map (fun r => X.bits (target p r)) (rows p)).
+  (** The widest key that a listed row writes or reads. *)
+  Definition sparse_kw (p : prog) : nat := fold_right Nat.max 0
+    (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
   Include SYSTEM_TIME V A with Definition row_work := fun p s =>
-    N.of_nat (B.op_work p s + (B.op_arity p + 1) * (s + 1) + T.seed_work p +
-      value_bits p + V.size V.top + V.size V.bot + 1).
+    (V.c_val * N.of_nat (B.op_work p s + 1) +
+      N.of_nat ((B.op_arity p + 1) * (s + 1) + T.seed_work p +
+        value_bits p + V.size V.top + V.size V.bot + 1))%N
+    with Definition kw := sparse_kw.
 End SPARSE_TIME.
 
 Module Type SPARSE_T (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
@@ -151,10 +156,11 @@ Module Type SPARSE_INITIAL_LINK (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     (SL : SSA_LINK P N E C X K G Val S M CL).
   (** Concrete operation evaluation agrees with the domain's language. *)
   Parameter eval_agrees : SL.eval = L.eval.
-  (** Initial bindings come from entry seeds, operations or arbitrary definitions. *)
+  (** Initial bindings come from entry seeds, operations of the initial block or arbitrary
+      definitions. *)
   Parameter initial_binding : forall p s x c, M.initial p s -> SL.venv s x = Some c ->
     (exists b, In b (C.entries p) /\ In x (S.params p b) /\ V.gamma (T.seed p x) c) \/
-    (exists op xs cs, S.def p x = Op op xs /\
+    (exists op xs cs, S.def p x = Op op xs /\ S.home p x = CL.point s /\
       Forall2 (fun y d => SL.venv s y = Some d) xs cs /\ SL.eval op cs = Some c) \/
     S.def p x = Arbitrary.
   (** Edges selected by value origins belong to the executable edge inventory. *)

@@ -55,11 +55,12 @@ Module Type CALLS_SPEC (P : TYPE) (F S : KEY_OPS) (Import C : CALLS_OPS P F S).
 End CALLS_SPEC.
 
 Module Type CALLS_LAWS (P : TYPE) (F S : KEY) (Import C : CALLS_OPS P F S).
-  (** The call inventory retains function, site and resolver order. *)
-  Parameter calls_spec : forall p, calls p = flat_map (fun f =>
-    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
   (* spec: wf *)
   Parameter wf : P.t -> Prop.
+  (** The call inventory of a well-formed presentation retains function, site and resolver
+      order. *)
+  Parameter calls_spec : forall p, wf p -> calls p = flat_map (fun f =>
+    flat_map (fun site => map (pair site) (resolve p site)) (sites_of p f)) (functions p).
   (** A well-formed inventory lists each function once. *)
   Parameter functions_nodup : forall p, wf p -> NoDup (functions p).
   (** Every root belongs to the function inventory. *)
@@ -138,10 +139,13 @@ Module Type CALLS_PLAN (P : TYPE) (F S : KEY_T) (Import C : CALLS_T P F S).
       fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
       fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
       N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N.
-  (** The adjacency fold pays each row and one insertion path per listed function. *)
+  (** The adjacency fold pays each row, its target encodings and one insertion path per
+      listed function. *)
   Parameter T2_adjacency : forall p,
     (T_call_graph p <= k_adj * (T_functions p +
-      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f)%N (functions p)) +
+      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f +
+        fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
+        (functions p)) +
       N.of_nat (length (functions p) + 1) * N.of_nat (function_width p + 1)))%N.
 End CALLS_PLAN.
 
