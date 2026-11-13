@@ -1397,7 +1397,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     | ALeaf _ _ => 1
     | ANode _ _ ns => S (fold_right Nat.add 0 (map ann_size ns))
     end.
-  Definition k_env_refine : N := 1%N. (* STUB *)
+  Definition k_env_refine : N := env_refine_factor.
   (** Annotation records the work of its term. *)
   Lemma F_ann_work : forall m e, ann_work (annotate m e) = tcost m e.
   Proof.
@@ -1418,11 +1418,115 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       rewrite (IH m e), IHes. reflexivity. }
     now rewrite Hkids.
   Qed.
+  Create Rewrite HintDb env_time_nat.
+  Local Hint Rewrite Nat2N.inj_add Nat2N.inj_mul Nat2N.inj_succ Nat2N.inj_max
+    : env_time_nat.
+
+  (** The child traversal carries the generated clock of checked refinement. *)
+  Fixpoint refine_children_time ns qs m bad :=
+    (1 + match ns, qs with
+    | n :: ns, q :: qs => T_refine_checked q n m + (3 +
+      refine_children_time ns qs (refine q n m) (orb bad (snd (refine_checked q n m))))
+    | _, _ => 0 end)%N.
+  (** Child refinement records the maximum request charge along its changing map. *)
+  Fixpoint refine_children_size ns qs m :=
+    match ns, qs with
+    | n :: ns, q :: qs => Nat.max (refine_size q n m)
+      (refine_children_size ns qs (refine q n m))
+    | _, _ => 0 end.
+
+  (** Cached child work covers the traversal length. *)
+  Lemma ann_work_lengths : forall ns,
+    length ns <= fold_right Nat.add 0 (map ann_work ns).
+  Proof.
+    intro ns. induction ns as [|n ns IH]; cbn [length map fold_right]; [lia|].
+    destruct n; cbn [ann_work]; lia.
+  Qed.
+
+  (** Child clocks share the largest request charge encountered along the traversal. *)
+  Lemma refine_children_time_bound : forall ns,
+    list_all _ (fun n => forall q m,
+      (T_refine_checked q n m + 6 <= env_refine_factor *
+        N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N) ns ->
+    forall qs m bad,
+    (refine_children_time ns qs m bad + 2 * N.of_nat (length ns) <=
+      env_refine_factor * N.of_nat
+        (fold_right Nat.add 0%nat (map ann_work ns) +
+          fold_right Nat.add 0%nat (map ann_size ns) *
+            (refine_children_size ns qs m + 1)) + 1)%N.
+  Proof.
+    intros ns Hns. induction Hns as [|n Hn ns Hns IH]; intros qs m bad.
+    - cbn [refine_children_time length map fold_right]. nia.
+    - destruct qs as [|q qs].
+      + pose proof (ann_work_lengths (n :: ns)) as Hlen.
+        cbn [refine_children_time refine_children_size].
+        assert (HlenN : (N.of_nat (length (n :: ns)) <=
+          N.of_nat (fold_right Nat.add 0%nat (map ann_work (n :: ns))))%N) by lia.
+        unfold env_refine_factor. repeat rewrite Nat2N.inj_add. nia.
+      + specialize (Hn q m).
+        specialize (IH qs (refine q n m) (orb bad (snd (refine_checked q n m)))).
+        cbn [refine_children_time refine_children_size length map fold_right].
+        autorewrite with env_time_nat.
+        autorewrite with env_time_nat in Hn.
+        autorewrite with env_time_nat in IH.
+        pose proof (N.le_max_l (N.of_nat (refine_size q n m))
+          (N.of_nat (refine_children_size ns qs (refine q n m)))) as Hleft.
+        pose proof (N.le_max_r (N.of_nat (refine_size q n m))
+          (N.of_nat (refine_children_size ns qs (refine q n m)))) as Hright.
+        change (N.of_nat 1) with 1%N in Hn, IH |- *.
+        nia.
+  Qed.
+
+  (** Each checked refinement reserves six units for its parent traversal. *)
+  Lemma refine_time_reserve : forall q n m,
+    (T_refine_checked q n m + 6 <= env_refine_factor *
+      N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N.
+  Proof.
+    intros q n. revert q. induction n as [x a|o a ns IH]; intros q m.
+    - pose proof (M.T_get_le V.t x m) as Hget.
+      pose proof (M.T_set_le V.t x (V.meet (read m x) q) m) as Hset.
+      pose proof (V.T_meet_le (read m x) q) as Hmeet.
+      pose proof (V.T_is_bot_le (V.meet (read m x) q)) as Hbot.
+      pose proof (V.meet_size (read m x) q) as Hsize.
+      unfold T_refine_checked at 1. fold T_refine_checked.
+      cbn [ann_work ann_size refine_size]. unfold T_read. cbn beta zeta.
+      unfold env_refine_factor.
+      autorewrite with env_time_nat in Hget, Hset, Hmeet, Hbot, Hsize |- *.
+      pose proof (N.le_max_l (N.of_nat (V.size q))
+        (N.of_nat (V.size (read m x)))) as Hleft.
+      pose proof (N.le_max_r (N.of_nat (V.size q))
+        (N.of_nat (V.size (read m x)))) as Hright.
+      change (N.of_nat 1) with 1%N in Hget, Hset, Hmeet, Hbot, Hsize |- *.
+      nia.
+    - pose proof (refine_children_time_bound ns IH
+        (V.backward o q (map root ns)) m false) as Hchildren.
+      pose proof (V.T_backward_le o q (map root ns)) as Hback.
+      change (1 + (ListDef.T_map root T_root ns + V.T_backward o q (map root ns) +
+        refine_children_time ns (V.backward o q (map root ns)) m false) + 6 <=
+        env_refine_factor * N.of_nat
+          (ann_work (ANode o a ns) + ann_size (ANode o a ns) *
+            (refine_size q (ANode o a ns) m + 1)))%N.
+      rewrite time_roots.
+      cbn [ann_work ann_size refine_size]. fold refine_children_size.
+      autorewrite with env_time_nat.
+      autorewrite with env_time_nat in Hchildren.
+      autorewrite with env_time_nat in Hback.
+      pose proof (N.le_max_l (N.of_nat (V.size q))
+        (N.of_nat (refine_children_size ns (V.backward o q (map root ns)) m))) as Hleft.
+      pose proof (N.le_max_r (N.of_nat (V.size q))
+        (N.of_nat (refine_children_size ns (V.backward o q (map root ns)) m))) as Hright.
+      change (N.of_nat 1) with 1%N in Hchildren, Hback |- *.
+      unfold env_refine_factor in *. nia.
+  Qed.
+
   (** Checked refinement charges cached transfers, leaf lookups and the requests it meets. *)
   Lemma T2_refine_checked : forall q n m,
     (T_refine_checked q n m <= k_env_refine *
       N.of_nat (ann_work n + ann_size n * (refine_size q n m + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q n m. pose proof (refine_time_reserve q n m) as Htime.
+    unfold k_env_refine. lia.
+  Qed.
   Lemma T1_assume : forall g es m,
     (T_assume g es (Reached m) <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost m) es) +
