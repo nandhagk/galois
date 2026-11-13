@@ -188,6 +188,116 @@ Proof.
   destruct lo, hi; cbn [fst snd] in *; intuition lia.
 Qed.
 
+(** Timing helpers for interval folds use only the accumulators that the fold reaches. *)
+Lemma rel_zbits_least : forall z bits,
+  Z.abs_nat z < 2 ^ bits -> Z.size_nat z <= bits.
+Proof.
+  intros [|p|p] bits Hbound; cbn [Z.abs_nat Z.size_nat] in *.
+  - lia.
+  - now apply Pos.size_nat_least.
+  - now apply Pos.size_nat_least.
+Qed.
+
+(** A right fold needs a callback bound only at its actual suffix results. *)
+Lemma rel_fold_right_time : forall (A B : Type) (f : B -> A -> A)
+    (tf : B -> A -> N) initial xs charge,
+  (forall before x after, xs = before ++ x :: after ->
+    (tf x (fold_right f initial after) <= charge)%N) ->
+  (Std.List.T_fold_right f tf initial xs <=
+    (charge + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros A B f tf initial xs charge. induction xs as [|x xs IH]; intro Hbound.
+  - time_step.
+  - pose proof (Hbound nil x xs eq_refl) as Hhead.
+    assert (Htail : (Std.List.T_fold_right f tf initial xs <=
+      (charge + 1) * N.of_nat (length xs) + 1)%N).
+    { apply IH. intros before y after Heq.
+      apply (Hbound (x :: before) y after). cbn [app]. now rewrite Heq. }
+    time_step.
+Qed.
+
+(** A common bit budget bounds the two factors in the derived integer product clock. *)
+Lemma rel_mul_time_budget : forall a b budget,
+  (N.of_nat (Z.size_nat a + Z.size_nat b + 1) <= budget)%N ->
+  (Z.T_mul a b <= 2 * (budget * budget))%N.
+Proof.
+  intros a b budget Hbudget. rewrite !Nat2N.inj_add in Hbudget.
+  eapply N.le_trans; [apply Z.T_mul_le|].
+  replace (2 * (budget * budget))%N with (budget * (2 * budget))%N by ring.
+  apply N.mul_le_mono; lia.
+Qed.
+
+(** Endpoint addition is linear in the two finite endpoint bit allowances. *)
+Lemma rel_add_bounds_time : forall a b bits_a bits_b,
+  rel_bounds_abs (2 ^ bits_a) a -> rel_bounds_abs (2 ^ bits_b) b ->
+  (T_rel_add_bounds a b <= 16 * N.of_nat (bits_a + bits_b + 1))%N.
+Proof.
+  intros [al ah] [bl bh] bits_a bits_b Ha Hb.
+  unfold rel_bounds_abs, rel_bound_abs in Ha, Hb.
+  destruct al, ah, bl, bh; cbn [fst snd] in Ha, Hb;
+    destruct Ha as [Hal Hah]; destruct Hb as [Hbl Hbh];
+    try apply rel_zbits_least in Hal; try apply rel_zbits_least in Hah;
+    try apply rel_zbits_least in Hbl; try apply rel_zbits_least in Hbh;
+    time_step.
+Qed.
+
+(** Scaling has a quadratic allowance for the coefficient and finite endpoints. *)
+Lemma rel_scale_bounds_time : forall c bounds bits_c bits_x,
+  Z.size_nat c <= bits_c -> rel_bounds_abs (2 ^ bits_x) bounds ->
+  (T_rel_scale_bounds c bounds <= 32 * N.of_nat ((bits_c + bits_x + 1)^2))%N.
+Proof.
+  intros c [lo hi] bits_c bits_x Hc Hbounds.
+  set (budget := N.of_nat (bits_c + bits_x + 1)).
+  assert (Hpositive : (1 <= budget)%N) by (unfold budget; lia).
+  assert (Hsquare : N.of_nat ((bits_c + bits_x + 1)^2) = (budget * budget)%N).
+  { unfold budget. cbn [Nat.pow]. rewrite Nat.mul_1_r, Nat2N.inj_mul. reflexivity. }
+  rewrite Hsquare.
+  assert (Hunit : (1 <= budget * budget)%N).
+  { change (1 * 1 <= budget * budget)%N. now apply N.mul_le_mono. }
+  assert (Hlinear : (budget <= budget * budget)%N).
+  { replace budget with (1 * budget)%N at 1 by ring.
+    apply N.mul_le_mono_r. exact Hpositive. }
+  assert (Hcoefficient : (N.of_nat (Z.size_nat c) + 1 <= budget * budget)%N).
+  { eapply N.le_trans; [|exact Hlinear]. unfold budget. rewrite !Nat2N.inj_add. lia. }
+  assert (Hproduct : forall z, Z.abs_nat z < 2 ^ bits_x ->
+    (Z.T_mul c z <= 2 * (budget * budget))%N).
+  { intros z Hz. apply rel_mul_time_budget. unfold budget. apply time_of_nat_le.
+    pose proof (rel_zbits_least z bits_x Hz). lia. }
+  pose proof (Z.T_eqb_le c 0%Z) as Hequal.
+  pose proof (Z.T_leb_le 0%Z c) as Hsign.
+  change (Z.T_leb 0%Z c <= 4)%N in Hsign.
+  set (charge := (budget * budget)%N) in *. clearbody charge.
+  unfold T_rel_scale_bounds.
+  destruct (c =? 0)%Z eqn:Hcz; [time_simpl; time_cbn; lia|].
+  destruct (0 <=? c)%Z eqn:Hsgn; destruct lo, hi;
+    unfold rel_bounds_abs, rel_bound_abs in Hbounds;
+    cbn [fst snd] in Hbounds; destruct Hbounds as [Hlo Hhi];
+    try pose proof (Hproduct _ Hlo) as Hmullo;
+    try pose proof (Hproduct _ Hhi) as Hmulhi;
+    time_simpl; time_cbn; lia.
+Qed.
+
+(** Wrapping checks its explicitly stored endpoints once. *)
+Lemma rel_wrap_bounds_time : forall r bounds bits,
+  (match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end) <= bits ->
+  (T_rel_wrap_bounds r bounds <= 8 * N.of_nat (bits + 1))%N.
+Proof.
+  intros [|lo hi] bounds bits Hbits; cbn in Hbits; time_step.
+Qed.
+
+(** Exactness checks charge a wrapping endpoint and the computed upper endpoint. *)
+Lemma rel_wrap_exact_time : forall r bounds bits_r bits_a,
+  (match r with NoWrap => 0 | WrapTo lo hi => Z.size_nat lo + Z.size_nat hi end) <= bits_r ->
+  rel_bounds_abs (2 ^ bits_a) bounds ->
+  (T_rel_wrap_exact r bounds <= 16 * N.of_nat (bits_r + bits_a + 1))%N.
+Proof.
+  intros [|wl wh] [lo hi] bits_r bits_a Hr Ha; [time_step|].
+  cbn in Hr. unfold rel_bounds_abs, rel_bound_abs in Ha.
+  destruct lo, hi; cbn [fst snd] in Ha; destruct Ha as [Hlo Hhi];
+    try apply rel_zbits_least in Hlo; try apply rel_zbits_least in Hhi; time_step.
+Qed.
+
+
 (** Finite bounds with an absent value interpreted as positive infinity. *)
 Module RelationalPathBounds.
   Definition below (a b : option Z) : Prop :=
