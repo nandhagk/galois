@@ -5,7 +5,7 @@
     Builds on: LatticeSig, SetSig and MapSig. *)
 
 From Stdlib Require Import Bool List Arith NArith Lia Sorting.Sorted Sorting.Permutation.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig SetSig.
 From Galois.Lattice Require Import LatticeSig Simple WithBot.
 
@@ -98,20 +98,33 @@ Module MaySetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
   TimeFun join.
 
   Definition size (s : t) : nat := S.nodes s + S.weight s + 1.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (S.c_set + 8)%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold c_lat; lia. Qed.
 
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (S.T_subset_le a b) as Hsubset.
+    time_unfold @T_leb. unfold size, c_lat.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (S.T_union_le a b) as Hunion.
+    time_unfold @T_join. unfold size, c_lat.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. pose proof (S.T_subset_le a S.empty) as Hsubset.
+    rewrite S.nodes_empty in Hsubset.
+    time_unfold @T_is_bot. unfold size, c_lat.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
 End MaySetT.
 
 Module MustSetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
@@ -123,18 +136,35 @@ Module MustSetT (K : KEY_T) (S : SET_T K) <: LATTICE_T.
 
   Definition size (s : t) : nat :=
     match s with None => 1 | Some members => S.nodes members + S.weight members + 1 end.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (S.c_set + 8)%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold c_lat; lia. Qed.
 
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a |] [b |]; time_unfold @T_leb; cbn [size]; unfold c_lat.
+    - pose proof (S.T_subset_le b a) as Hsubset.
+      rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+    - rewrite ?Nat2N.inj_add; time_cbn; nia.
+    - rewrite ?Nat2N.inj_add; time_cbn; nia.
+    - rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a |] [b |]; time_unfold @T_join; cbn [size]; unfold c_lat.
+    - pose proof (S.T_inter_le a b) as Hinter.
+      rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+    - rewrite ?Nat2N.inj_add; time_cbn; nia.
+    - rewrite ?Nat2N.inj_add; time_cbn; nia.
+    - rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a |]; time_unfold @T_is_bot; cbn [size]; unfold c_lat;
+      rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
 End MustSetT.
