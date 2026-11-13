@@ -91,6 +91,26 @@ Module UnionFindFacts (U : UNION_FIND).
     destruct Hroots as [[-> ->] | [-> ->]]; congruence.
   Qed.
 
+  (** A root that loses a union joins a class at least twice its old size. *)
+  Lemma union_root_doubling : forall i j u x,
+    U.wf u -> U.repr u x = x -> U.repr (snd (U.union i j u)) x <> x ->
+    2 * U.size_of u x <= U.size_of (snd (U.union i j u))
+      (U.repr (snd (U.union i j u)) x).
+  Proof.
+    intros i j u x Hwf Hfixed Hchanged.
+    destruct (U.union i j u) as [roots next] eqn:Hunion.
+    destruct roots as [[winner loser] |]; cbn [snd] in *.
+    - pose proof (U.union_by_size i j u winner loser next Hwf Hunion) as Hsize.
+      pose proof (U.size_of_union i j u winner loser next Hwf Hunion) as Hmerged.
+      destruct (U.union_some i j u winner loser next Hwf Hunion) as [_ [_ Hrepr]].
+      specialize (Hrepr x). rewrite Hfixed in Hrepr.
+      destruct (Pos.eqb x loser) eqn:Hloser.
+      + apply Pos.eqb_eq in Hloser. subst x. rewrite Hrepr, Hmerged. lia.
+      + contradiction.
+    - pose proof (proj2 (U.union_none i j u next Hwf Hunion) x) as Hrepr.
+      rewrite Hrepr in Hchanged. contradiction.
+  Qed.
+
   (** Union always identifies its requested endpoints. *)
   Lemma union_requested : forall i j u, U.wf u ->
     U.repr (snd (U.union i j u)) i = U.repr (snd (U.union i j u)) j.
