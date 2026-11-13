@@ -4696,13 +4696,13 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
 
   Local Lemma table_shl_time : forall rw wa a wb b,
     (T_interval_shl rw (interval_clip wa a) (interval_clip wb b) <=
-      100000 * N.of_nat
+      1000 * N.of_nat
         ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
           interval_bits (interval_clip wb b) + 1) ^ 2))%N.
   Proof.
     intros rw wa a wb b.
     change (T_interval_shl rw (PayloadBounds.interval_clip wa a)
-      (PayloadBounds.interval_clip wb b) <= 100000 * N.of_nat
+      (PayloadBounds.interval_clip wb b) <= 1000 * N.of_nat
         ((Pos.to_nat rw + interval_bits (PayloadBounds.interval_clip wa a) +
           interval_bits (PayloadBounds.interval_clip wb b) + 1) ^ 2))%N.
     destruct (PayloadBounds.interval_clip_shape wa a) as
@@ -5541,6 +5541,30 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     apply table_or_xor_time.
   Qed.
 
+  Local Lemma table_shl_dispatch_time : forall rw wa a wb b,
+    (5 + T_interval_clip wa a + T_interval_clip wb b +
+      T_interval_shl rw (interval_clip wa a) (interval_clip wb b) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wa a wb b.
+    pose proof (table_shl_time rw wa a wb b) as Hshl.
+    assert (Hpositive :
+      (1 <= N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (interval_clip wb b) + 1) ^ 2))%N).
+    { pose proof (Pos2Nat.is_pos rw). rewrite Nat.pow_2_r. nia. }
+    assert (Hcost :
+      (T_interval_shl rw (interval_clip wa a) (interval_clip wb b) + 4 <=
+        100000 * N.of_nat
+          ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+            interval_bits (interval_clip wb b) + 1) ^ 2))%N)
+      by (clear - Hshl Hpositive; nia).
+    pose proof (table_binary_dispatch_time rw wa a wb b _ Hcost) as Hdispatch.
+    eapply N.le_trans; [|exact Hdispatch].
+    lia.
+  Qed.
+
   Local Lemma table_signed_compare_dispatch_time : forall rw wa a wb b strict,
     (5 + T_interval_clip wa a + T_interval_clip wb b +
       T_interval_signed_compare wa strict
@@ -5832,6 +5856,18 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     all: try (match goal with
     | |- context [T_interval_or_xor _ _ _] =>
         pose proof (table_or_xor_dispatch_time rw wa a wb b) as Htime;
+        match goal with
+        | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+                W.psize wa a + W.psize wb b)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
+    all: try (match goal with
+    | |- context [T_interval_shl _ _ _] =>
+        pose proof (table_shl_dispatch_time rw wa a wb b) as Htime;
         match goal with
         | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
             replace budget with
