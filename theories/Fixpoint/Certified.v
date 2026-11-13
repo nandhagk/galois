@@ -4,7 +4,7 @@
     For example, a failed check rejects the candidate.
     Builds on: Fixpoint.CertifiedSig. *)
 
-From Stdlib Require Import NArith.
+From Stdlib Require Import NArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import MapSig.
 From Galois.Lattice Require Import LatticeSig.
@@ -26,6 +26,7 @@ End CertifiedCode.
 Module Certified (L : WLATTICE) (S : SYSTEM L) (V : SOLVER_OPS L S)
     (C : CHECK L S) (R : NARROW L S C) <: CERTIFIED L S V C R.
   Include CertifiedCode L S V C R.
+  (** The public equation retains every solver outcome and checks solved candidates. *)
   Lemma analyze_spec : forall p pol fuel,
     analyze p pol fuel =
       match V.run p pol fuel with
@@ -34,7 +35,9 @@ Module Certified (L : WLATTICE) (S : SYSTEM L) (V : SOLVER_OPS L S)
       | OutOfFuel m => OutOfFuel m
       | Rejected why => Rejected why
       end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma analyze_sound : forall p pol fuel m,
     analyze p pol fuel = Solved m -> S.post_solution p (C.look m).
   Proof.
@@ -55,10 +58,15 @@ Module CertifiedT (L : WLATTICE_T) (S : SYSTEM_T L) (V : SOLVER_T L S)
     | Rejected _ => 0%N
     end.
   TimeFun analyze.
-  Definition c_cert : N := 1%N. (* STUB *)
+  Definition c_cert : N := 2%N.
 
+  (** Solving is always charged; checking and refinement are charged for solved candidates. *)
   Lemma T_analyze_le : forall p pol fuel,
     (T_analyze p pol fuel <= c_cert *
       (V.T_run p pol fuel + candidate_work p pol fuel + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel.
+    unfold c_cert, candidate_work.
+    time_step.
+  Qed.
 End CertifiedT.
