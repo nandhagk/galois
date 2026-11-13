@@ -387,6 +387,8 @@ Module Type WORKLIST_PLAN (L : WLATTICE_T) (S : SYSTEM_T L)
     (forall x, look (prepare p pol) x = L.bot) /\
     (forall c, counter (prepare p pol) c = 0%N) /\
     (forall id, In id (row_ids p) -> exists pr, Q.prio (ws_queue (prepare p pol)) id = Some pr).
+  (** Preparation starts every key at bottom for every policy. *)
+  Parameter F4_bottom : forall p pol x, look (prepare p pol) x = L.bot.
   (** Enqueue changes the queue alone and guards every push by live absence. *)
   Parameter F5_enqueue : forall p pol ids s,
     wl_store (reference_enqueue p pol ids s) = wl_store s /\
