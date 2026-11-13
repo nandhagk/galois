@@ -1638,6 +1638,87 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     reflexivity.
   Qed.
 
+  (** Row and cache replacement preserves every observation outside the changed fields. *)
+  Lemma row_replace_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall rows state, observe (runtime_set_rows rows state) = observe state) ->
+    (forall flag state, observe (runtime_set_changed flag state) = observe state) ->
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall f k previous o db,
+      observe (db_runtime (row_replace f k previous o db)) = observe (db_runtime db).
+  Proof.
+    intros A observe Hrows Hchanged Hindexes f k [before |] o db;
+      unfold row_replace, row_write; cbn [database_set_runtime db_runtime];
+      rewrite Hrows, Hchanged;
+      repeat rewrite (slots_update_preserves A observe Hindexes); reflexivity.
+  Qed.
+
+  (** Index maintenance preserves the row map itself before its final binding update. *)
+  Lemma row_replace_map : forall f k previous o db,
+    runtime_rows (db_runtime (row_replace f k previous o db)) =
+      RowMap.set (f, k) o (runtime_rows (db_runtime db)).
+  Proof.
+    intros f k [before |] o db; unfold row_replace, row_write;
+      cbn [database_set_runtime db_runtime runtime_set_rows runtime_rows];
+      repeat rewrite (slots_update_preserves _ (@runtime_rows (cell V.t) I.t)
+        (fun all new counts state => eq_refl)); reflexivity.
+  Qed.
+
+  (** Replacing a well-kinded row preserves the kind condition for every stored binding. *)
+  Lemma row_replace_kinds : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    forall g args output, row (view (row_replace f k previous o db)) g args output ->
+      match kind (view (row_replace f k previous o db)) g, output with
+      | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
+      | _, _ => False
+      end.
+  Proof.
+    intros db f k previous o Hwf [_ [_ Hkind]] g args output Hrow.
+    rewrite row_replace_kind. apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_row_kind db Hwf g args output Hold).
+    - exact Hkind.
+  Qed.
+
+  (** A replacement whose new cells are allocated keeps every row identifier allocated. *)
+  Lemma row_replace_allocated : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    forall g args output i, row (view (row_replace f k previous o db)) g args output ->
+      In (Id i) (args ++ option_list output) -> allocated (row_replace f k previous o db) i.
+  Proof.
+    intros db f k previous o Hwf [Hids _] g args output i Hrow Hin.
+    unfold allocated. rewrite row_replace_ids.
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_row_ids db Hwf g args output i Hold Hin).
+    - exact (Hids i Hin).
+  Qed.
+
+  (** A fitting replacement preserves all row lengths required by the stored slots. *)
+  Lemma row_replace_fits : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    forall g args output, row (view (row_replace f k previous o db)) g args output ->
+      slots_fit (row_replace f k previous o db) g (length (args ++ option_list output)).
+  Proof.
+    intros db f k previous o Hwf [_ [Hfits _]] g args output Hrow.
+    unfold slots_fit. rewrite row_replace_slots. fold (slots_fit db g (length (args ++ option_list output))).
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_row_slots db Hwf g args output Hold).
+    - exact Hfits.
+  Qed.
+
+  (** A canonical replacement leaves quiet databases canonical. *)
+  Lemma row_replace_canonical : forall db f k previous o,
+    wf db -> (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    pending (row_replace f k previous o db) = 0 -> canonical (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hwf Hnew Hquiet g args output Hrow i Hin.
+    unfold repr. rewrite row_replace_forest. fold (repr db i).
+    rewrite row_replace_pending in Hquiet.
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - exact (wf_quiet_canonical db Hwf Hquiet g args output Hold i Hin).
+    - exact (Hnew i Hin).
+  Qed.
+
   (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
   Lemma allocate_id_view : forall i db, view (allocate_id i db) = view db.
   Proof.
