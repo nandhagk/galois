@@ -2638,6 +2638,213 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - now apply poly_entailment_no_contradiction.
   Qed.
 
+  (** The residual puts both sides of a rational row on the same scale. *)
+  Definition poly_residual_Q (v : X.t -> Q) (c : lcons X.t) : Q :=
+    (poly_eval_coef_Q v (lhs c) - inject_Z (rhs c))%Q.
+
+  Lemma poly_inject_nonzero : forall z, z <> 0%Z -> ~ (inject_Z z == 0)%Q.
+  Proof.
+    intros z Hnonzero Hzero. apply Hnonzero.
+    apply (proj1 (inject_Z_injective z 0)). exact Hzero.
+  Qed.
+
+  Lemma poly_inject_positive : forall z, (0 < z)%Z -> (0 < inject_Z z)%Q.
+  Proof.
+    intros z Hpositive. rewrite Zlt_Qlt in Hpositive. exact Hpositive.
+  Qed.
+
+  Lemma poly_Q_scale_eq_zero : forall a x : Q, (0 < a)%Q ->
+    ((a * x == 0)%Q <-> (x == 0)%Q).
+  Proof.
+    intros a x Hpositive. assert (Hnonzero : ~ (a == 0)%Q) by lra.
+    pose proof (Qmult_inj_l x 0 a Hnonzero) as Hiff.
+    now setoid_rewrite Qmult_0_r in Hiff.
+  Qed.
+
+  Lemma poly_Q_scale_lt_zero : forall a x : Q, (0 < a)%Q ->
+    ((a * x < 0)%Q <-> (x < 0)%Q).
+  Proof.
+    intros a x Hpositive. pose proof (Qmult_lt_l x 0 a Hpositive) as Hiff.
+    now setoid_rewrite Qmult_0_r in Hiff.
+  Qed.
+
+  Lemma poly_Q_scale_le_zero : forall a x : Q, (0 < a)%Q ->
+    ((a * x <= 0)%Q <-> (x <= 0)%Q).
+  Proof.
+    intros a x Hpositive. pose proof (Qmult_le_l x 0 a Hpositive) as Hiff.
+    now setoid_rewrite Qmult_0_r in Hiff.
+  Qed.
+
+  Lemma poly_satQ_residual : forall v r,
+    poly_satQ v r <->
+      match lrel (poly_constraint r) with
+      | REq => (poly_residual_Q v (poly_constraint r) == 0)%Q
+      | RLe => if poly_strict r then (poly_residual_Q v (poly_constraint r) < 0)%Q
+          else (poly_residual_Q v (poly_constraint r) <= 0)%Q
+      end.
+  Proof.
+    intros v r. unfold poly_satQ, poly_residual_Q.
+    destruct (lrel (poly_constraint r)); [|destruct (poly_strict r)]; split; intro H; lra.
+  Qed.
+
+  (** Updating one rational coordinate changes evaluation by its total raw coefficient. *)
+  Lemma poly_eval_update_Q : forall v x q xs,
+    (poly_eval_coef_Q (upd X.eqb v x q) xs == poly_eval_coef_Q v xs +
+      inject_Z (C.coef_of x xs) * (q - v x))%Q.
+  Proof.
+    intros v x q xs. induction xs as [|[y a] xs IH].
+    - change (0 == 0 + 0 * (q - v x))%Q. ring.
+    - change (inject_Z a * upd X.eqb v x q y + poly_eval_coef_Q (upd X.eqb v x q) xs ==
+        (inject_Z a * v y + poly_eval_coef_Q v xs) +
+          inject_Z (C.coef_of x ((y, a) :: xs)) * (q - v x))%Q.
+      setoid_rewrite IH. rewrite coef_of_cons. unfold upd.
+      rewrite (poly_key_eqb_sym y x). destruct (X.eqb_spec x y) as [Heq|Hneq].
+      + subst y. rewrite inject_Z_plus. ring.
+      + ring.
+  Qed.
+
+  Lemma poly_residual_update_Q : forall v x q c,
+    (poly_residual_Q (upd X.eqb v x q) c == poly_residual_Q v c +
+      inject_Z (poly_coefficient X.eqb x c) * (q - v x))%Q.
+  Proof.
+    intros v x q c. unfold poly_residual_Q.
+    setoid_rewrite poly_eval_update_Q. rewrite coef_of_poly_coefficient. ring.
+  Qed.
+
+  Lemma poly_satQ_update_zero : forall v x q r,
+    poly_coefficient X.eqb x (poly_constraint r) = 0%Z ->
+    (poly_satQ (upd X.eqb v x q) r <-> poly_satQ v r).
+  Proof.
+    intros v x q r Hzero.
+    assert (Heval : (poly_residual_Q (upd X.eqb v x q) (poly_constraint r) ==
+      poly_residual_Q v (poly_constraint r))%Q).
+    { setoid_rewrite poly_residual_update_Q. rewrite Hzero.
+      change (poly_residual_Q v (poly_constraint r) + 0 * (q - v x) ==
+        poly_residual_Q v (poly_constraint r))%Q. ring. }
+    rewrite !poly_satQ_residual.
+    destruct (lrel (poly_constraint r)); [|destruct (poly_strict r)];
+      now setoid_rewrite Heval.
+  Qed.
+
+  (** Row combination acts linearly on rational residuals. *)
+  Lemma poly_residual_add_Q : forall v a p b q,
+    (poly_residual_Q v (poly_constraint (poly_add_rows X.encode a p b q)) ==
+      inject_Z a * poly_residual_Q v (poly_constraint p) +
+      inject_Z b * poly_residual_Q v (poly_constraint q))%Q.
+  Proof.
+    intros v a p b q. unfold poly_residual_Q, poly_add_rows.
+    cbn [poly_constraint lhs rhs].
+    setoid_rewrite normalize_coef_eval_Q. setoid_rewrite eval_coef_app_Q.
+    setoid_rewrite eval_coef_scale_Q. rewrite inject_Z_plus, !inject_Z_mult. ring.
+  Qed.
+
+  (** Adding a satisfied equality and scaling positively preserves every row interpretation. *)
+  Lemma poly_add_equality_positive_satQ : forall v a p b r,
+    lrel (poly_constraint p) = REq -> poly_eq_nonstrict p -> poly_satQ v p ->
+    (0 < b)%Z ->
+    (poly_satQ v (poly_add_rows X.encode a p b r) <-> poly_satQ v r).
+  Proof.
+    intros v a p b r Hpeq Hstrict Hp Hb.
+    pose proof (Hstrict Hpeq) as Hpflag.
+    assert (Hbzero : Z.eqb b 0 = false) by (apply Z.eqb_neq; lia).
+    assert (Hbpositive : Z.ltb 0 b = true) by now apply Z.ltb_lt.
+    assert (Hrel : lrel (poly_constraint (poly_add_rows X.encode a p b r)) =
+      lrel (poly_constraint r)).
+    { unfold poly_add_rows. cbn [poly_constraint lrel].
+      unfold poly_eq_used. rewrite Hpeq.
+      destruct (lrel (poly_constraint r)); cbn [andb]; [reflexivity|now rewrite Hbzero]. }
+    assert (Hflag : poly_strict (poly_add_rows X.encode a p b r) = poly_strict r).
+    { unfold poly_add_rows. cbn [poly_strict]. rewrite Hpflag, Hbpositive.
+      now rewrite andb_false_r. }
+    pose proof (proj1 (poly_satQ_residual v p) Hp) as Hpzero. rewrite Hpeq in Hpzero.
+    assert (Hres : (poly_residual_Q v (poly_constraint (poly_add_rows X.encode a p b r)) ==
+      inject_Z b * poly_residual_Q v (poly_constraint r))%Q).
+    { eapply Qeq_trans; [apply poly_residual_add_Q|]. setoid_rewrite Hpzero. ring. }
+    rewrite !poly_satQ_residual, Hrel, Hflag.
+    pose proof (poly_inject_positive b Hb) as HbQ.
+    destruct (lrel (poly_constraint r)); [|destruct (poly_strict r)];
+      setoid_rewrite Hres.
+    - now apply poly_Q_scale_eq_zero.
+    - now apply poly_Q_scale_lt_zero.
+    - now apply poly_Q_scale_le_zero.
+  Qed.
+
+  Lemma poly_pivot_info : forall x p, poly_pivot X.eqb x p = true ->
+    lrel (poly_constraint p) = REq /\ poly_coefficient X.eqb x (poly_constraint p) <> 0%Z.
+  Proof.
+    intros x p Hpivot. unfold poly_pivot in Hpivot.
+    destruct (lrel (poly_constraint p)) eqn:Hrel; [|discriminate].
+    split; [reflexivity|]. now apply negb_true_iff, Z.eqb_neq in Hpivot.
+  Qed.
+
+  Lemma poly_cancel_satQ : forall v x p r,
+    poly_pivot X.eqb x p = true -> poly_eq_nonstrict p -> poly_satQ v p ->
+    (poly_satQ v (poly_cancel X.encode X.eqb x p r) <-> poly_satQ v r).
+  Proof.
+    intros v x p r Hpivot Hstrict Hp.
+    destruct (poly_pivot_info x p Hpivot) as [Hpeq Hnonzero].
+    unfold poly_cancel. destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0);
+      [reflexivity|].
+    apply poly_add_equality_positive_satQ; try assumption. now apply Z.abs_pos.
+  Qed.
+
+  (** A bound records the coordinate value where the row becomes an equality. *)
+  Definition poly_endpoint_Q (v : X.t -> Q) (x : X.t) (r : poly_row X.t) : Q :=
+    (v x - poly_residual_Q v (poly_constraint r) /
+      inject_Z (poly_coefficient X.eqb x (poly_constraint r)))%Q.
+  Definition poly_bound_Q (v : X.t -> Q) (x : X.t) (r : poly_row X.t) : Q * bool :=
+    (poly_endpoint_Q v x r, poly_strict r).
+
+  Lemma poly_endpoint_residual_Q : forall v x r,
+    poly_coefficient X.eqb x (poly_constraint r) <> 0%Z ->
+    (poly_residual_Q v (poly_constraint r) ==
+      inject_Z (poly_coefficient X.eqb x (poly_constraint r)) *
+        (v x - poly_endpoint_Q v x r))%Q.
+  Proof.
+    intros v x r Hnonzero. unfold poly_endpoint_Q. field. now apply poly_inject_nonzero.
+  Qed.
+
+  Lemma poly_endpoint_update_Q : forall v x q r,
+    poly_coefficient X.eqb x (poly_constraint r) <> 0%Z ->
+    (poly_residual_Q (upd X.eqb v x q) (poly_constraint r) ==
+      inject_Z (poly_coefficient X.eqb x (poly_constraint r)) *
+        (q - poly_endpoint_Q v x r))%Q.
+  Proof.
+    intros v x q r Hnonzero. eapply Qeq_trans; [apply poly_residual_update_Q|].
+    setoid_rewrite (poly_endpoint_residual_Q v x r Hnonzero). ring.
+  Qed.
+
+  Lemma poly_upper_satQ : forall v x q r,
+    lrel (poly_constraint r) = RLe ->
+    (0 < poly_coefficient X.eqb x (poly_constraint r))%Z ->
+    (poly_satQ (upd X.eqb v x q) r <-> poly_upper_at q (poly_bound_Q v x r)).
+  Proof.
+    intros v x q r Hrel Hpositive.
+    pose proof (poly_inject_positive _ Hpositive) as HpositiveQ.
+    rewrite poly_satQ_residual, Hrel. unfold poly_upper_at, poly_bound_Q. cbn [fst snd].
+    destruct (poly_strict r); setoid_rewrite (poly_endpoint_update_Q v x q r ltac:(lia)).
+    - rewrite (poly_Q_scale_lt_zero _ _ HpositiveQ). lra.
+    - rewrite (poly_Q_scale_le_zero _ _ HpositiveQ). lra.
+  Qed.
+
+  Lemma poly_lower_satQ : forall v x q r,
+    lrel (poly_constraint r) = RLe ->
+    (poly_coefficient X.eqb x (poly_constraint r) < 0)%Z ->
+    (poly_satQ (upd X.eqb v x q) r <-> poly_lower_at q (poly_bound_Q v x r)).
+  Proof.
+    intros v x q r Hrel Hnegative.
+    assert (HpositiveQ : (0 < inject_Z (- poly_coefficient X.eqb x (poly_constraint r)))%Q).
+    { apply poly_inject_positive. lia. }
+    assert (Hres : (poly_residual_Q (upd X.eqb v x q) (poly_constraint r) ==
+      inject_Z (- poly_coefficient X.eqb x (poly_constraint r)) *
+        (poly_endpoint_Q v x r - q))%Q).
+    { eapply Qeq_trans; [apply poly_endpoint_update_Q; lia|]. rewrite inject_Z_opp. ring. }
+    rewrite poly_satQ_residual, Hrel. unfold poly_lower_at, poly_bound_Q. cbn [fst snd].
+    destruct (poly_strict r); setoid_rewrite Hres.
+    - rewrite (poly_Q_scale_lt_zero _ _ HpositiveQ). lra.
+    - rewrite (poly_Q_scale_le_zero _ _ HpositiveQ). lra.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
