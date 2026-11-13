@@ -4,7 +4,7 @@
     For example, an initialized database supplies indexes on request.
     Builds on: DatabaseSig. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia Relations.Relation_Operators
+From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relation_Operators
   Sorting.Permutation Sorting.Sorted.
 From Argent Require Import Time Std Loop.
 From Galois.Base Require Import Code Loop UnionFind Trie.
@@ -182,6 +182,82 @@ Proof.
     + rewrite IH.
       * apply PTrie.get_set_other. intro Heq. apply Habsent. cbn. now left.
       * intro Hin. apply Habsent. cbn. now right.
+Qed.
+
+(** Insertion changes only the order of the ranked entries. *)
+Lemma slot_rank_insert_perm : forall p ps,
+  Permutation (p :: ps) (slot_rank_insert p ps).
+Proof.
+  intros p ps. induction ps as [| a ps IH]; cbn [slot_rank_insert].
+  - reflexivity.
+  - destruct (Nat.leb (fst p) (fst a)).
+    + reflexivity.
+    + eapply perm_trans; [apply perm_swap | now apply perm_skip].
+Qed.
+
+(** Insertion keeps absolute positions in increasing order. *)
+Lemma slot_rank_insert_sorted : forall p ps,
+  StronglySorted (fun a b => fst a <= fst b) ps ->
+  StronglySorted (fun a b => fst a <= fst b) (slot_rank_insert p ps).
+Proof.
+  intros p ps Hsorted. induction Hsorted as [| a ps Hsorted IH Hlower].
+  - cbn [slot_rank_insert]. constructor; constructor.
+  - cbn [slot_rank_insert]. destruct (Nat.leb (fst p) (fst a)) eqn:Hle.
+    + apply Nat.leb_le in Hle. constructor.
+      * constructor; assumption.
+      * constructor; [exact Hle |].
+        eapply Forall_impl; [| exact Hlower]. intros q Hq. cbn in *. lia.
+    + apply Nat.leb_gt in Hle. constructor; [exact IH |].
+      apply Forall_forall. intros q Hin. apply slot_rank_insert_in in Hin.
+      destruct Hin as [-> | Hin]; [cbn; lia |].
+      rewrite Forall_forall in Hlower. exact (Hlower q Hin).
+Qed.
+
+(** Prepared absolute positions are increasing even when positions repeat. *)
+Lemma slot_rank_positions_sorted : forall rank perm,
+  StronglySorted (fun a b => fst a <= fst b) (slot_rank_positions rank perm).
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - constructor.
+  - cbn [slot_rank_positions]. apply slot_rank_insert_sorted. apply IH.
+Qed.
+
+(** Every ranked entry retains its source position and a rank above its starting rank. *)
+Lemma slot_rank_positions_origin : forall rank perm p r,
+  In (p, r) (slot_rank_positions rank perm) ->
+  In p perm /\ Pos.to_nat rank <= Pos.to_nat r.
+Proof.
+  intros rank perm. revert rank. induction perm as [| a perm IH]; intros rank p r Hin.
+  - contradiction.
+  - cbn [slot_rank_positions] in Hin. apply slot_rank_insert_in in Hin.
+    destruct Hin as [Heq | Hin].
+    + inversion Heq; subst. split; [now left | lia].
+    + destruct (IH (Pos.succ rank) p r Hin) as [Hposition Hrank].
+      split; [now right |]. rewrite Pos2Nat.inj_succ in Hrank. lia.
+Qed.
+
+(** Original ranks remain distinct after sorting, including repeated source positions. *)
+Lemma slot_rank_positions_nodup : forall rank perm,
+  NoDup (map snd (slot_rank_positions rank perm)).
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - constructor.
+  - cbn [slot_rank_positions]. eapply Permutation_NoDup.
+    + apply Permutation_map. apply slot_rank_insert_perm.
+    + cbn [map snd]. constructor; [| apply IH].
+      intro Hin. apply in_map_iff in Hin. destruct Hin as [[q r] [Heq Hin]].
+      cbn in Heq. subst r.
+      destruct (slot_rank_positions_origin (Pos.succ rank) perm q rank Hin) as [_ Hrank].
+      rewrite Pos2Nat.inj_succ in Hrank. lia.
+Qed.
+
+(** Gap construction does not change the original ranks. *)
+Lemma slot_position_gaps_ranks : forall previous ps,
+  map snd (slot_position_gaps previous ps) = map snd ps.
+Proof.
+  intros previous ps. revert previous. induction ps as [| [p rank] ps IH]; intro previous.
+  - reflexivity.
+  - cbn [slot_position_gaps map snd]. now rewrite IH.
 Qed.
 
 (** Stable row identifiers retain historical keys through collisions. *)
