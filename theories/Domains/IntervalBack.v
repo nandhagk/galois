@@ -1930,6 +1930,15 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_boolean_size : forall rw r,
+    interval_bits r <= 1 -> W.psize rw r <= (Pos.to_nat rw + 1) ^ 2.
+  Proof.
+    intros rw r Hbits.
+    pose proof (Pos2Nat.is_pos rw) as Hwidth.
+    rewrite W.F_psize, Nat.pow_2_r.
+    nia.
+  Qed.
+
   Local Lemma table_ite_time : forall rw wa wb a b,
     (T_interval_clip wa a + T_interval_clip wb b +
       Scalar.T_interval_join (interval_clip wa a) (interval_clip wb b) <=
