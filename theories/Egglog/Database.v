@@ -2309,6 +2309,31 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** The history invariant combines cache construction with coverage of current rows. *)
   Definition database_history (db : t) : Prop := metadata_ok db /\ recorded_rows db.
 
+  (** Stored links, counters and uses have witnesses in the row history. *)
+  Definition database_row_store_ok (db : t) : Prop :=
+    let store := db_row_store db in
+    let recorded r := In r (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history store))) in
+    let size r := match PTrieCode.get r (row_weights store) with
+      | Some n => n | None => 1%N end in
+    let entries := flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses store))) in
+    (forall r p, PTrieCode.get r (row_links store) = Some p ->
+      recorded r /\ recorded p /\
+      (p <> r -> (1 <= size r)%N /\ (2 * size r <= size p)%N)) /\
+    (forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
+      exists r, PTrieCode.get (db_row_code f k) (row_history store) = Some ((f, k), r)) /\
+    N.to_nat (db_nuses db) = length entries /\
+    (forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
+      (r < row_fresh store)%positive /\
+      (match PTrieCode.get r (row_links store) with
+       | Some parent => parent | None => r end < row_fresh store)%positive /\
+      In (row_fresh store) (db_index_counters db)) /\
+    (forall x f k c, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
+      In c k -> In c (db_written_cells db)).
+
   (** Retaining rows and extending their history preserves cell coverage. *)
   Lemma recorded_rows_transport : forall db db',
     (forall f k o, row (view db') f k o -> row (view db) f k o) ->
@@ -9518,26 +9543,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition located (db : t) (f : positive) (k : list (cell V.t))
       : option (list (cell V.t)) := locate f k db.
   (** Parent links and use entries refer to the historical row inventory. *)
-  Definition row_store_ok (db : t) : Prop :=
-    let store := db_row_store db in
-    let recorded r := In r (map (fun binding => snd (snd binding))
-      (PTrieCode.elements (row_history store))) in
-    let size r := match PTrieCode.get r (row_weights store) with
-      | Some n => n | None => 1%N end in
-    (forall r p, PTrieCode.get r (row_links store) = Some p ->
-      recorded r /\ recorded p /\
-      (p <> r -> (1 <= size r)%N /\ (2 * size r <= size p)%N)) /\
-    (forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
-      exists r, PTrieCode.get (db_row_code f k) (row_history store) = Some ((f, k), r)) /\
-    N.to_nat (db_nuses db) = length (uses_entries db) /\
-    (forall f k key r,
-      PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
-      (r < row_fresh store)%positive /\
-      (match PTrieCode.get r (row_links store) with
-       | Some parent => parent | None => r end < row_fresh store)%positive /\
-      In (row_fresh store) (db_index_counters db)) /\
-    (forall x f k c, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
-      In c k -> In c (db_written_cells db)).
+  Definition row_store_ok (db : t) : Prop := database_row_store_ok db.
   (** Initialization has no historical keys, links or registered occurrences. *)
   Lemma row_store_ok_init : forall ds sl, row_store_ok (init ds sl).
   Proof.
