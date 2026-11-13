@@ -464,19 +464,28 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       karr_list_eqb (fun p q => X.eqb (fst p) (fst q) && Z.eqb (snd p) (snd q))
         (lhs r) (lhs s).
 
-  Definition target_certificate (P : list (lcons X.t)) (c : lcons X.t) : cert :=
+  Definition target_certificate (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
     let xs := variables (c :: P) in
     let r := karr_target (equality_basis xs P) 1
       (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1) in
     let sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z in
-    Cert (map (fun z => (- sign * z)%Z) (kweight r)) (Z.abs (kscale r)) false.
+    let right := match lrel c with
+      | REq => Z.eqb (kright r) 0
+      | RLe => (0 <=? sign * kright r)%Z
+      end in
+    if karr_zero r && negb (Z.eqb (kscale r) 0) && right then
+      Some (Cert (map (fun z => (- sign * z)%Z) (kweight r)) (Z.abs (kscale r)) false)
+    else None.
 
   Definition entail_cert (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
-    let k := match contradiction P with
-      | Some ms => Cert ms 1 false
+    let candidate := match contradiction P with
+      | Some ms => Some (Cert ms 1 false)
       | None => target_certificate P c
       end in
-    if C.check_entails P c k then Some k else None.
+    match candidate with
+    | Some k => if C.check_entails P c k then Some k else None
+    | None => None
+    end.
 
   Definition entails (P : list (lcons X.t)) (r : lcons X.t) : bool :=
     existsb (row_eqb r) P ||
@@ -729,10 +738,11 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Proof.
     intros P c k Hcert. unfold entail_cert in Hcert.
     remember (match contradiction P with
-      | Some ms => Cert ms 1 false
+      | Some ms => Some (Cert ms 1 false)
       | None => target_certificate P c
       end) as candidate.
-    destruct (C.check_entails P c candidate) eqn:Hcheck; [| discriminate].
+    destruct candidate as [produced |]; [| discriminate].
+    destruct (C.check_entails P c produced) eqn:Hcheck; [| discriminate].
     injection Hcert as Hsame. subst k. exact Hcheck.
   Qed.
 

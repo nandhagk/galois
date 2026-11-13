@@ -71,6 +71,25 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
+Example unsupported_inequality_residual_is_rejected_before_checking :
+  Equalities.target_certificate [LCons _ [(1%positive, 1)] RLe 0]
+    (LCons _ [(1%positive, 2)] RLe 0) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example wrong_equality_residual_is_rejected_before_checking :
+  Equalities.target_certificate [x0] x1 = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example stronger_inequality_residual_is_rejected_before_checking :
+  Equalities.target_certificate [x1] (LCons _ [(1%positive, 1)] RLe 0) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Example scaled_rational_row_is_detected :
   Equalities.leb (Reached [LCons _ [(1%positive, 2)] REq 1])
     (Reached [LCons _ [(1%positive, 4)] REq 2]) = true.
