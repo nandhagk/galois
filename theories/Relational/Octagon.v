@@ -310,6 +310,266 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached m => models m v end.
 
+  (** Flipping a literal negates its integer value. *)
+  Lemma vl_flip : forall v i, vl v (flip i) = (- vl v i)%Z.
+  Proof.
+    intros v [x s]. unfold flip, vl. destruct s; cbn; lia.
+  Qed.
+
+  Lemma flip_involutive : forall i, flip (flip i) = i.
+  Proof.
+    intros [x s]. destruct s; reflexivity.
+  Qed.
+
+  (** An absent row supplies no finite bound. *)
+  Lemma get_row_of : forall r k,
+    M.get k (row_of r) = match r with Some row => M.get k row | None => None end.
+  Proof.
+    intros [row|] k; [reflexivity|apply M.get_empty].
+  Qed.
+
+  Lemma get_set_cases : forall A i j (a : A) m,
+    M.get i (M.set j a m) = if K.eqb i j then Some a else M.get i m.
+  Proof.
+    intros A i j a m. destruct (K.eqb_spec i j) as [Heq|Hneq].
+    - subst i. apply M.get_set_same.
+    - now apply M.get_set_other.
+  Qed.
+
+  (** Writing a matrix entry leaves every other coordinate unchanged. *)
+  Lemma entry_put : forall i j d m a b,
+    entry (put i j d m) a b =
+    if K.eqb a i then if K.eqb b j then Some d else entry m a b else entry m a b.
+  Proof.
+    intros i j d m a b. unfold entry, put.
+    destruct (K.eqb_spec a i) as [Ha|Ha].
+    - subst a. rewrite M.get_set_same.
+      destruct (K.eqb_spec b j) as [Hb|Hb].
+      + subst b. apply M.get_set_same.
+      + rewrite M.get_set_other by exact Hb. apply get_row_of.
+    - rewrite M.get_set_other by exact Ha. reflexivity.
+  Qed.
+
+  (** A minimum retains every value below both its finite operands. *)
+  Lemma lower_bound_holds : forall value d old,
+    (value <= d)%Z -> (forall z, old = Some z -> (value <= z)%Z) ->
+    (value <= lower_bound d old)%Z.
+  Proof.
+    intros value d [z|] Hnew Hold; cbn [lower_bound].
+    - apply Z.min_glb; [exact Hnew|apply Hold; reflexivity].
+    - exact Hnew.
+  Qed.
+
+  (** A satisfied replacement bound preserves the numeric store. *)
+  Lemma models_put : forall i j d m v,
+    models m v -> (vl v j - vl v i <= d)%Z -> models (put i j d m) v.
+  Proof.
+    intros i j d m v Hmodel Hnew a b z Hentry. rewrite entry_put in Hentry.
+    destruct (K.eqb_spec a i) as [Ha|Ha].
+    - subst a. destruct (K.eqb_spec b j) as [Hb|Hb].
+      + subst b. inversion Hentry; subst z. exact Hnew.
+      + now apply Hmodel.
+    - now apply Hmodel.
+  Qed.
+
+  (** The two inserted signed twins express the same inequality. *)
+  Lemma models_add_cons : forall i j d m v,
+    models m v -> (vl v j - vl v i <= d)%Z -> models (add_cons i j d m) v.
+  Proof.
+    intros i j d m v Hmodel Hnew. unfold add_cons. apply models_put.
+    - apply models_put; [exact Hmodel|]. apply lower_bound_holds.
+      + rewrite !vl_flip. lia.
+      + intros z Hz. now apply Hmodel.
+    - apply lower_bound_holds; [exact Hnew|]. intros z Hz. now apply Hmodel.
+  Qed.
+
+  (** A fold preserves any invariant maintained by every callback. *)
+  Lemma fold_invariant : forall A B (P : B -> Prop) (f : B -> K.t -> A -> B) m seed,
+    P seed -> (forall acc k a, P acc -> P (f acc k a)) -> P (M.fold f m seed).
+  Proof.
+    intros A B P f m seed Hseed Hstep. rewrite M.fold_spec.
+    generalize (M.elements m) as es. intros es. revert seed Hseed.
+    induction es as [|[k a] es IH]; intros seed Hseed; cbn [fold_left].
+    - exact Hseed.
+    - apply IH, Hstep, Hseed.
+  Qed.
+
+  (** A fold needs its callback invariant only for the labels it actually visits. *)
+  Lemma fold_invariant_elements : forall A B (P : B -> Prop)
+      (f : B -> K.t -> A -> B) m seed,
+    P seed ->
+    (forall acc k a, In (k, a) (M.elements m) -> P acc -> P (f acc k a)) ->
+    P (M.fold f m seed).
+  Proof.
+    intros A B P f m seed Hseed Hstep. rewrite M.fold_spec.
+    set (es := M.elements m) in *. clearbody es. revert seed Hseed Hstep.
+    induction es as [|[k a] es IH]; intros seed Hseed Hstep; cbn [fold_left].
+    - exact Hseed.
+    - apply IH.
+      + apply Hstep; [now left|exact Hseed].
+      + intros acc q b Hin Hacc. apply Hstep; [now right|exact Hacc].
+  Qed.
+
+  Lemma empty_models : forall v, models M.empty v.
+  Proof.
+    intros v i j d Hentry. unfold entry in Hentry.
+    rewrite M.get_empty in Hentry. discriminate Hentry.
+  Qed.
+
+  (** A validated row lookup inherits the matrix's model. *)
+  Lemma row_models : forall m v i row, models m v -> M.get i m = Some row ->
+    forall j d, M.get j row = Some d -> (vl v j - vl v i <= d)%Z.
+  Proof.
+    intros m v i row Hmodel Hrow j d Hentry. apply (Hmodel i j d).
+    unfold entry. now rewrite Hrow.
+  Qed.
+
+  (** Replacing one row by satisfied bounds preserves the numeric store. *)
+  Lemma set_row_models : forall m v i row, models m v ->
+    (forall j d, M.get j row = Some d -> (vl v j - vl v i <= d)%Z) ->
+    models (M.set i row m) v.
+  Proof.
+    intros m v i row Hmodel Hrow a b d Hentry. unfold entry in Hentry.
+    rewrite get_set_cases in Hentry. destruct (K.eqb_spec a i) as [Ha|Ha].
+    - subst a. now apply Hrow.
+    - now apply Hmodel.
+  Qed.
+
+  (** Row replacement chooses a row from one of two matrices satisfied by the store. *)
+  Lemma replace_models : forall m fresh v, models m v -> models fresh v ->
+    models (M.merge replace_row m fresh) v.
+  Proof.
+    intros m fresh v Hmodel Hfresh i j d Hentry. unfold entry in Hentry.
+    rewrite M.get_merge in Hentry by reflexivity.
+    destruct (M.get i m) as [row|] eqn:Hrow; cbn [replace_row] in Hentry.
+    - destruct (M.get i fresh) as [next|] eqn:Hnext.
+      + eapply row_models; [exact Hfresh|exact Hnext|exact Hentry].
+      + eapply row_models; [exact Hmodel|exact Hrow|exact Hentry].
+    - discriminate Hentry.
+  Qed.
+
+  (** Integer division by two keeps every integral lower bound on the quotient. *)
+  Lemma div2_lower : forall d z, (2 * z <= d)%Z -> (z <= Z.div2 d)%Z.
+  Proof.
+    intros d z Hle. rewrite Z.div2_div.
+    pose proof (Z.div_mod d 2 ltac:(lia)).
+    pose proof (Z.mod_pos_bound d 2 ltac:(lia)). lia.
+  Qed.
+
+  (** A unary signed difference is even, so rounding its bound down remains sound. *)
+  Lemma even_bound_holds : forall v k d,
+    (vl v (flip k) - vl v k <= d)%Z ->
+    (vl v (flip k) - vl v k <= even_bound d)%Z.
+  Proof.
+    intros v k d Hle. rewrite vl_flip in *. unfold even_bound.
+    pose proof (div2_lower d (- vl v k) ltac:(lia)). lia.
+  Qed.
+
+  Lemma tighten_row_models : forall m v changed k row,
+    models m v -> models changed v -> models (tighten_row m changed k row) v.
+  Proof.
+    intros m v changed k ignored Hmodel Hchanged. unfold tighten_row.
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    destruct (M.get (flip k) row) as [d|] eqn:Hunary; [|exact Hchanged].
+    apply set_row_models; [exact Hchanged|]. intros j z Hentry.
+    rewrite get_set_cases in Hentry. destruct (K.eqb_spec j (flip k)) as [Hj|Hj].
+    - subst j. inversion Hentry; subst z. apply even_bound_holds.
+      eapply row_models; [exact Hmodel|exact Hrow|exact Hunary].
+    - eapply row_models; [exact Hmodel|exact Hrow|exact Hentry].
+  Qed.
+
+  (** Tightening changes only validated unary entries and keeps their integer models. *)
+  Lemma tighten_models : forall m v, models m v -> models (tighten m) v.
+  Proof.
+    intros m v Hmodel. unfold tighten. apply replace_models; [exact Hmodel|].
+    apply (fold_invariant _ _ (fun changed => models changed v)).
+    - apply empty_models.
+    - intros changed k row Hchanged. now apply tighten_row_models.
+  Qed.
+
+  (** Both unary maps retain the meaning of the signed bounds they collect. *)
+  Definition unary_models (v : X.t -> Z) (unaries : M.t Z * M.t Z) : Prop :=
+    (forall k d, M.get k (fst unaries) = Some d -> (vl v (flip k) - vl v k <= d)%Z) /\
+    (forall k d, M.get k (snd unaries) = Some d -> (vl v k - vl v (flip k) <= d)%Z).
+
+  Lemma unary_maps_models : forall m v unaries k row,
+    models m v -> unary_models v unaries -> unary_models v (unary_maps m unaries k row).
+  Proof.
+    intros m v unaries k row Hmodel [Hleft Hright]. unfold unary_maps.
+    destruct (entry m k (flip k)) as [d|] eqn:Hentry; [|now split].
+    split; intros j z Hget; cbn [fst snd] in Hget; rewrite get_set_cases in Hget.
+    - destruct (K.eqb_spec j k) as [Hj|Hj].
+      + subst j. inversion Hget; subst z. now apply Hmodel.
+      + now apply Hleft.
+    - destruct (K.eqb_spec j (flip k)) as [Hj|Hj].
+      + subst j. inversion Hget; subst z. rewrite flip_involutive. now apply Hmodel.
+      + now apply Hright.
+  Qed.
+
+  Lemma collect_unary_models : forall m v, models m v ->
+    unary_models v (M.fold (unary_maps m) m (M.empty, M.empty)).
+  Proof.
+    intros m v Hmodel. apply (fold_invariant _ _ (unary_models v)).
+    - split; intros k d Hget; cbn [fst snd] in Hget;
+        rewrite M.get_empty in Hget; discriminate Hget.
+    - intros acc k row Hacc. now apply unary_maps_models.
+  Qed.
+
+  (** Unary collection constructs both maps from well-formed insertions. *)
+  Lemma collect_unary_wf : forall m,
+    M.wf (fst (M.fold (unary_maps m) m (M.empty, M.empty))) /\
+    M.wf (snd (M.fold (unary_maps m) m (M.empty, M.empty))).
+  Proof.
+    intros m. apply (fold_invariant _ _ (fun acc => M.wf (fst acc) /\ M.wf (snd acc))).
+    - split; apply M.wf_empty.
+    - intros acc k row [Hleft Hright]. unfold unary_maps.
+      destruct (entry m k (flip k)); [split; cbn [fst snd]; now apply M.wf_set|now split].
+  Qed.
+
+  (** Two unary signed inequalities imply their averaged difference bound. *)
+  Lemma strengthen_bound_holds : forall v i j a b,
+    (vl v (flip i) - vl v i <= a)%Z ->
+    (vl v j - vl v (flip j) <= b)%Z ->
+    (vl v j - vl v i <= Z.div2 (a + b))%Z.
+  Proof.
+    intros v i j a b Ha Hb. rewrite !vl_flip in *. apply div2_lower. lia.
+  Qed.
+
+  Lemma strengthen_row_models : forall m v unaries changed k a,
+    models m v -> models changed v ->
+    (vl v (flip k) - vl v k <= a)%Z ->
+    (forall j b, M.get j unaries = Some b -> (vl v j - vl v (flip j) <= b)%Z) ->
+    models (strengthen_row m unaries changed k a) v.
+  Proof.
+    intros m v unaries changed k a Hmodel Hchanged Ha Hunaries. unfold strengthen_row.
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    apply set_row_models; [exact Hchanged|]. intros j d Hentry.
+    rewrite M.get_merge in Hentry by reflexivity.
+    unfold strengthen_bound in Hentry. destruct (M.get j unaries) as [b|] eqn:Hb.
+    - inversion Hentry; subst d. apply lower_bound_holds.
+      + apply strengthen_bound_holds; [exact Ha|now apply Hunaries].
+      + intros z Hz. eapply row_models; [exact Hmodel|exact Hrow|exact Hz].
+    - eapply row_models; [exact Hmodel|exact Hrow|exact Hentry].
+  Qed.
+
+  (** Strengthening adds only constraints implied by the validated unary maps. *)
+  Lemma strengthen_models : forall m v, models m v -> models (strengthen m) v.
+  Proof.
+    intros m v Hmodel. unfold strengthen.
+    remember (M.fold (unary_maps m) m (M.empty, M.empty)) as unaries eqn:Hunaries.
+    pose proof (collect_unary_models m v Hmodel) as Hsound. rewrite <- Hunaries in Hsound.
+    pose proof (collect_unary_wf m) as Hwf. rewrite <- Hunaries in Hwf.
+    destruct Hsound as [Hleft Hright]. destruct Hwf as [Hwf_left Hwf_right].
+    apply replace_models; [exact Hmodel|].
+    apply (fold_invariant_elements _ _ (fun changed => models changed v)).
+    - apply empty_models.
+    - intros changed k a Hin Hchanged. apply strengthen_row_models.
+      + exact Hmodel.
+      + exact Hchanged.
+      + apply Hleft. exact (proj1 (M.elements_spec _ _ _ _ Hwf_left) Hin).
+      + exact Hright.
+  Qed.
+
   (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
   Definition raw_entry (m : dbm) (p q : positive) : option Z :=
     M.find q (row_of (M.find p m)).
@@ -1175,9 +1435,13 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma fw_implied : forall m v, models m v -> models (fw m) v.
   Proof. Admitted. (* STUB *)
   Lemma strengthen_implied : forall m v, models m v -> models (strengthen m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact strengthen_models.
+  Qed.
   Lemma tighten_implied : forall m v, models m v -> models (tighten m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact tighten_models.
+  Qed.
   Lemma wf_fw : forall m, dbm_wf m -> dbm_wf (fw m).
   Proof. Admitted. (* STUB *)
   Lemma wf_tighten : forall m, dbm_wf m -> dbm_wf (tighten m).
