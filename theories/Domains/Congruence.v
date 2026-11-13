@@ -64,7 +64,7 @@ Module CongruenceCRT.
     end.
   TimeFun div_aligned.
 
-  Definition k_div : N := 1%N. (* STUB *)
+  Definition k_div : N := 256%N.
   Definition k_gcd : N := 1%N. (* STUB *)
 
   (** Powers indexed by natural successors double. *)
@@ -207,12 +207,156 @@ Module CongruenceCRT.
     apply F_div_aligned; lia.
   Qed.
 
+  (** Each consumed scan bit pays for at most one additional quotient bit. The other
+      two integers only shrink, so this total bit budget is invariant. *)
+  Lemma div_scan_time_bound : forall bits d r q n,
+    0 <= d -> 0 <= r -> 0 <= q ->
+    (Z.size_nat d + Z.size_nat r + Z.size_nat q + bits <= n)%nat ->
+    (T_div_scan bits d r q <= 32 * N.of_nat (S bits) * N.of_nat (S n))%N.
+  Proof.
+    induction bits as [|bits IH]; intros d r q n Hd Hr Hq Hbudget.
+    - time_unfold T_div_scan. rewrite !Nat2N.inj_succ. time_cbn_all. nia.
+    - assert (Hdhalf : 0 <= Z.div2 d).
+      { rewrite Z.div2_div. apply Z.div_pos; lia. }
+      pose proof (Z.size_nat_div2 d) as Hdsize.
+      pose proof (Z.size_nat_double q Hq) as Hqsize.
+      pose proof (Z.T_leb_le d r) as Hcompare.
+      pose proof (Z.T_div2_le d) as Hhalf.
+      pose proof (Z.T_sub_le r d) as Hsubtract.
+      pose proof (Z.T_mul_two_le q) as Hdouble.
+      pose proof (Z.T_add_le (2 * q) 1) as Hadd.
+      time_unfold T_div_scan. destruct (d <=? r) eqn:Htake.
+      + apply Z.leb_le in Htake.
+        pose proof (Z.size_nat_mono (r - d) r ltac:(lia)) as Hrsize.
+        pose proof (Z.size_nat_succ_double q Hq) as Hqnext.
+        pose proof (IH (Z.div2 d) (r - d) (2 * q + 1) n
+          Hdhalf ltac:(lia) ltac:(lia) ltac:(lia)) as Htail.
+        apply time_of_nat_le in Hbudget. apply time_of_nat_le in Hqsize.
+        rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
+        time_cbn_all. nia.
+      + apply Z.leb_gt in Htake.
+        pose proof (IH (Z.div2 d) r (2 * q) n
+          Hdhalf Hr ltac:(lia) ltac:(lia)) as Htail.
+        apply time_of_nat_le in Hbudget.
+        rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
+        time_cbn_all. nia.
+  Qed.
+
+  (** Reading an integer's magnitude size traverses that many bits. *)
+  Lemma integer_size_time_bound : forall z,
+    (Word.Z.T_size_nat z <= N.of_nat (Z.size_nat z) + 1)%N.
+  Proof.
+    intro z. destruct z; time_unfold Word.Z.T_size_nat; cbn [Z.size_nat].
+    - reflexivity.
+    - pose proof (Pos.T_size_nat_le p). lia.
+    - pose proof (Pos.T_size_nat_le p). lia.
+  Qed.
+
+  (** Unary subtraction visits no more constructors than its first operand. *)
+  Lemma natural_subtract_time_bound : forall n m,
+    (Op.Nat.T_sub n m <= N.of_nat n + 1)%N.
+  Proof.
+    induction n as [|n IH]; intros [|m]; time_unfold Op.Nat.T_sub;
+      rewrite ?Nat2N.inj_succ; time_cbn_all; try lia.
+    specialize (IH m). lia.
+  Qed.
+
+  (** A quadratic unary-to-binary conversion bound fits the alignment setup budget. *)
+  Lemma positive_of_succ_time_bound : forall n,
+    (Op.Pos.T_of_succ_nat n <= (N.of_nat n + 1) ^ 2)%N.
+  Proof.
+    induction n as [|n IH].
+    - time_unfold Op.Pos.T_of_succ_nat. reflexivity.
+    - pose proof (Pos.T_succ_le (Pos.of_succ_nat n)) as Hsucc.
+      pose proof (WordTime.positive_size_value (Pos.of_succ_nat n)) as Hsize.
+      rewrite SuccNat2Pos.id_succ in Hsize. apply time_of_nat_le in Hsize.
+      time_unfold Op.Pos.T_of_succ_nat. rewrite !Nat2N.inj_succ in *.
+      time_cbn_all. nia.
+  Qed.
+
+  Lemma natural_integer_time_bound : forall n,
+    (Op.Z.T_of_nat n <= (N.of_nat n + 1) ^ 2 + 1)%N.
+  Proof.
+    intros [|n]; time_unfold Op.Z.T_of_nat.
+    - time_cbn_all. lia.
+    - pose proof (positive_of_succ_time_bound n).
+      rewrite Nat2N.inj_succ. time_cbn_all. nia.
+  Qed.
+
+  (** Left alignment appends at most the requested number of zero bits. *)
+  Lemma aligned_size_bound : forall b n, 0 <= b ->
+    (Z.size_nat (Z.shiftl b (Z.of_nat n)) <= Z.size_nat b + n)%nat.
+  Proof.
+    intros b n Hb. rewrite Z.shiftl_mul_pow2 by lia.
+    apply WordTime.integer_size_bound.
+    rewrite Nat2Z.inj_add, Z.pow_add_r by lia.
+    pose proof (size_upper b Hb).
+    pose proof (Z.pow_pos_nonneg 2 (Z.of_nat n) ltac:(lia) ltac:(lia)). nia.
+  Qed.
+
+  (** The setup and scan polynomials fit a common quotient-bit budget. *)
+  Lemma alignment_cost_polynomial : forall a b d : N,
+    (b <= a -> d <= a ->
+      1 + (a + 4) + ((a + 1) + (b + 1) + (a + 1)) +
+        (((d + 1) ^ 2 + 1) + ((b + 5) * d + 1)) +
+        32 * (d + 2) * (3 * a + 2) <= 256 * (d + 2) * (a + 1))%N.
+  Proof.
+    intros a b d Hb Hd.
+    assert (Hsquare : (d * d <= d * a)%N) by (apply N.mul_le_mono_l; exact Hd).
+    assert (Hproduct : (b * d <= a * d)%N) by (apply N.mul_le_mono_r; exact Hb).
+    nia.
+  Qed.
 
   (** Division charges one dividend scan per quotient bit. *)
   Lemma T_div_aligned_le : forall a b, (0 <= a)%Z -> (0 < b)%Z ->
     (T_div_aligned a b <= k_div *
       N.of_nat ((Z.size_nat a - Z.size_nat b + 2) * (Z.size_nat a + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Ha Hb. destruct a as [|p|p], b as [|q|q]; try lia.
+    - time_unfold T_div_aligned. cbn [Z.ltb Z.compare Z.size_nat].
+      pose proof (Z.T_ltb_le 0 (Zpos q)).
+      unfold k_div. time_cbn_all. lia.
+    - pose proof (Z.T_ltb_le (Zpos p) (Zpos q)) as Hcompare.
+      time_unfold T_div_aligned.
+      destruct (Zpos p <? Zpos q) eqn:Hsmall.
+      + unfold k_div. rewrite !Nat2N.inj_mul, !Nat2N.inj_add.
+        time_cbn_all. nia.
+      + apply Z.ltb_ge in Hsmall.
+        pose proof (Z.size_nat_mono (Zpos q) (Zpos p) ltac:(lia)) as Hsizes.
+        pose proof (aligned_size_bound (Zpos q)
+          (Z.size_nat (Zpos p) - Z.size_nat (Zpos q)) ltac:(lia)) as Haligned.
+        assert (Hnonnegative : 0 <= Z.shiftl (Zpos q)
+          (Z.of_nat (Z.size_nat (Zpos p) - Z.size_nat (Zpos q)))).
+        { rewrite Z.shiftl_mul_pow2 by lia.
+          pose proof (Z.pow_pos_nonneg 2
+            (Z.of_nat (Z.size_nat (Zpos p) - Z.size_nat (Zpos q)))
+            ltac:(lia) ltac:(lia)). nia. }
+        pose proof (div_scan_time_bound
+          (S (Z.size_nat (Zpos p) - Z.size_nat (Zpos q)))
+          (Z.shiftl (Zpos q) (Z.of_nat (Z.size_nat (Zpos p) - Z.size_nat (Zpos q))))
+          (Zpos p) 0 (3 * Z.size_nat (Zpos p) + 1)
+          Hnonnegative ltac:(lia) ltac:(lia)
+          ltac:(change (Z.size_nat 0) with 0%nat; lia)) as Hscan.
+        pose proof (integer_size_time_bound (Zpos p)) as Hsizea.
+        pose proof (integer_size_time_bound (Zpos q)) as Hsizeb.
+        pose proof (natural_subtract_time_bound
+          (Z.size_nat (Zpos p)) (Z.size_nat (Zpos q))) as Hsubtract.
+        pose proof (natural_integer_time_bound
+          (Z.size_nat (Zpos p) - Z.size_nat (Zpos q))) as Hconvert.
+        pose proof (Z.T_shiftl_le (Zpos q)
+          (Z.of_nat (Z.size_nat (Zpos p) - Z.size_nat (Zpos q)))) as Hshift.
+        rewrite <- Zabs_nat_N, Zabs2Nat.id in Hshift.
+        assert (Hdifference : (Z.size_nat (Zpos p) - Z.size_nat (Zpos q) <=
+          Z.size_nat (Zpos p))%nat) by lia.
+        apply time_of_nat_le in Hsizes. apply time_of_nat_le in Hdifference.
+        unfold k_div. rewrite !Nat2N.inj_mul, !Nat2N.inj_add, !Nat2N.inj_succ in *.
+        clear Ha Hb Hsmall Haligned Hnonnegative.
+        time_cbn_all.
+        pose proof (alignment_cost_polynomial
+          (N.of_nat (Pos.size_nat p)) (N.of_nat (Pos.size_nat q))
+          (N.of_nat (Pos.size_nat p - Pos.size_nat q)) Hsizes Hdifference).
+        lia.
+  Qed.
 
   Definition next (s : congr_crt_state) : congr_crt_state :=
     let q := fst (div_aligned (crt_r2 s) (crt_r1 s)) in
