@@ -1034,6 +1034,233 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   (** * Stable segments and row visits *)
 
+  (** Every support priority lies below the sentinel used for all-head rows. *)
+  Lemma priority_lt_top_rank : forall p pol c, In c (key_support p) ->
+    (priority pol c < top_rank p pol)%positive.
+  Proof.
+    intros p pol c Hin; unfold top_rank; apply Pos.lt_succ_r.
+    revert Hin; induction (key_support p) as [|d ds IH]; intros Hin.
+    - contradiction.
+    - cbn [List.map fold_right]; destruct Hin as [<-|Hin].
+      + apply Pos.le_max_l.
+      + eapply Pos.le_trans; [apply IH; exact Hin|apply Pos.le_max_r].
+  Qed.
+
+  (** A non-head output bounds its producing row's queue rank from above. *)
+  Lemma row_rank_write_le : forall p pol r x, In x (S.writes p r) ->
+    trie_get (S.key_code x) (heads pol) = None ->
+    (row_rank p pol r <= priority pol (S.key_code x))%positive.
+  Proof.
+    intros p pol r x Hin Hhead; unfold row_rank.
+    revert Hin; induction (S.writes p r) as [|y ys IH]; intros Hin.
+    - contradiction.
+    - cbn [fold_right]; destruct Hin as [<-|Hin].
+      + rewrite Hhead; apply Pos.le_min_l.
+      + destruct (trie_get (S.key_code y) (heads pol)) as [cfg|].
+        * apply IH; exact Hin.
+        * eapply Pos.le_trans; [apply Pos.le_min_r|apply IH; exact Hin].
+  Qed.
+
+  (** Cut dependencies lie strictly below the rank of every row that reads them. *)
+  Lemma row_rank_read_lt : forall p pol r x, Sched.cuts p pol = true ->
+    In r (S.rows p) -> In x (S.deps p r) ->
+    (priority pol (S.key_code x) < row_rank p pol r)%positive.
+  Proof.
+    intros p pol r x Hcuts Hr Hread.
+    assert (Hsupport : In (S.key_code x) (key_support p)).
+    { unfold key_support; apply nodup_In, in_map.
+      apply in_flat_map; exists r; split; [exact Hr|].
+      apply in_or_app; now right. }
+    pose proof (priority_lt_top_rank p pol (S.key_code x) Hsupport) as Htop.
+    assert (Hwrites : forall y, In y (S.writes p r) ->
+      trie_get (S.key_code y) (heads pol) = None ->
+      (priority pol (S.key_code x) < priority pol (S.key_code y))%positive).
+    { intros y Hy Hhead.
+      assert (Hedge : Sched.dependency_edge p (S.key_code x) (S.key_code y)).
+      { exists r, x, y; repeat split; assumption || reflexivity. }
+      destruct (proj1 (Sched.cuts_spec p pol) Hcuts _ _ Hedge)
+        as [Hrank|[cfg Hcfg]].
+      - exact Hrank.
+      - rewrite Hhead in Hcfg; discriminate. }
+    unfold row_rank; revert Hwrites.
+    induction (S.writes p r) as [|y ys IH]; intros Hwrites.
+    - exact Htop.
+    - cbn [fold_right].
+      destruct (trie_get (S.key_code y) (heads pol)) as [cfg|] eqn:Hhead.
+      + apply IH; intros z Hz; apply Hwrites; now right.
+      + apply Pos.min_glb_lt.
+        * apply Hwrites; [now left|exact Hhead].
+        * apply IH; intros z Hz; apply Hwrites; now right.
+  Qed.
+
+  (** Enqueue leaves every strict-update counter unchanged. *)
+  Lemma counter_enqueue : forall p pol ids s c,
+    counter (enqueue p pol ids s) c = counter s c.
+  Proof.
+    intros p pol ids s c; unfold counter.
+    now rewrite (proj1 (proj2 (F5_fields p pol ids s))).
+  Qed.
+
+  (** Arming a reader bucket leaves every strict-update counter unchanged. *)
+  Lemma counter_arm : forall s c d, counter (arm c s) d = counter s d.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Popping changes no strict-update counter. *)
+  Lemma counter_after_pop : forall p s id q c,
+    counter (after_pop p s id q) c = counter s c.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Updating a key retains exactly the counter returned by the policy. *)
+  Lemma counter_update_same : forall p pol s x a,
+    counter (update_one p pol s (x, a)) (S.key_code x) =
+      snd (P.update pol (S.key_code x) (counter s (S.key_code x)) (look s x) a).
+  Proof.
+    intros p pol s x a; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)) eqn:Hcovered.
+    - rewrite (P.update_stable pol (S.key_code x) (counter s (S.key_code x))
+        (look s x) a Hcovered); reflexivity.
+    - destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
+      + unfold counter; cbn [ws_counters]; rewrite PTrie.get_set_same; reflexivity.
+      + rewrite counter_arm, counter_enqueue.
+        unfold counter; cbn [ws_counters]; rewrite PTrie.get_set_same; reflexivity.
+  Qed.
+
+  (** Updating another encoded key preserves the selected counter. *)
+  Lemma counter_update_other : forall p pol s x a c, c <> S.key_code x ->
+    counter (update_one p pol s (x, a)) c = counter s c.
+  Proof.
+    intros p pol s x a c Hother; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)); [reflexivity|].
+    destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
+    - unfold counter; cbn [ws_counters].
+      now rewrite PTrie.get_set_other by exact Hother.
+    - rewrite counter_arm, counter_enqueue.
+      unfold counter; cbn [ws_counters].
+      now rewrite PTrie.get_set_other by exact Hother.
+  Qed.
+
+  (** Every contribution leaves all counters unchanged or increases its configured head. *)
+  Lemma counter_update_mono : forall p pol s xa c,
+    (counter s c <= counter (update_one p pol s xa) c)%N.
+  Proof.
+    intros p pol s [x a] c; destruct (Pos.eq_dec c (S.key_code x)) as [->|Hother].
+    - rewrite counter_update_same, P.update_spec.
+      destruct (L.leb a (look s x)); [cbn [snd]; lia|].
+      destruct (trie_get (S.key_code x) (heads pol)) as [cfg|]; [|cbn [snd]; lia].
+      destruct (N.ltb (counter s (S.key_code x)) (delay cfg)); cbn [snd]; lia.
+    - rewrite counter_update_other by exact Hother; lia.
+  Qed.
+
+  (** A strict update to a configured head increments its counter exactly once. *)
+  Lemma counter_update_head : forall p pol s x a cfg,
+    trie_get (S.key_code x) (heads pol) = Some cfg -> L.leb a (look s x) = false ->
+    counter (update_one p pol s (x, a)) (S.key_code x) =
+      N.succ (counter s (S.key_code x)).
+  Proof.
+    intros p pol s x a cfg Hhead Hstrict.
+    rewrite counter_update_same, P.update_spec, Hstrict, Hhead.
+    destruct (N.ltb (counter s (S.key_code x)) (delay cfg)); reflexivity.
+  Qed.
+
+  (** Processing a list of contributions never decreases any counter. *)
+  Lemma counter_fold_mono : forall p pol outs s c,
+    (counter s c <= counter (fold_left (update_one p pol) outs s) c)%N.
+  Proof.
+    intros p pol outs; induction outs as [|xa outs IH]; intros s c.
+    - cbn [fold_left]; lia.
+    - cbn [fold_left].
+      pose proof (counter_update_mono p pol s xa c) as Hfirst.
+      specialize (IH (update_one p pol s xa) c); lia.
+  Qed.
+
+  (** Head stability of a complete fold holds at its first update and remaining suffix. *)
+  Lemma heads_unchanged_fold_cons : forall p pol xa outs s,
+    heads_unchanged pol s (fold_left (update_one p pol) (xa :: outs) s) ->
+    heads_unchanged pol s (update_one p pol s xa) /\
+    heads_unchanged pol (update_one p pol s xa)
+      (fold_left (update_one p pol) outs (update_one p pol s xa)).
+  Proof.
+    intros p pol xa outs s Hstable.
+    split; intros c cfg Hhead;
+      pose proof (Hstable c cfg Hhead) as Htotal;
+      cbn [fold_left] in Htotal;
+      pose proof (counter_update_mono p pol s xa c) as Hfirst;
+      pose proof (counter_fold_mono p pol outs (update_one p pol s xa) c) as Htail;
+      lia.
+  Qed.
+
+  (** A stable update can strictly change only a key without a configured head. *)
+  Lemma stable_update_nonhead : forall p pol s x a,
+    heads_unchanged pol s (update_one p pol s (x, a)) ->
+    L.leb a (look s x) = false -> trie_get (S.key_code x) (heads pol) = None.
+  Proof.
+    intros p pol s x a Hstable Hstrict.
+    destruct (trie_get (S.key_code x) (heads pol)) as [cfg|] eqn:Hhead; [|reflexivity].
+    pose proof (Hstable (S.key_code x) cfg Hhead) as Hequal.
+    pose proof (counter_update_head p pol s x a cfg Hhead Hstrict) as Hnext.
+    lia.
+  Qed.
+  (** A newly queued row comes from the reader bucket of a strict contribution. *)
+  Lemma update_queue_sources : forall p pol s x a id pr,
+    prepared p pol s -> Q.prio (ws_queue (update_one p pol s (x, a))) id = Some pr ->
+    (exists old, Q.prio (ws_queue s) id = Some old) \/
+      L.leb a (look s x) = false /\ In id (source_readers p (S.key_code x)).
+  Proof.
+    intros p pol s x a id pr Hprepared Hlive.
+    rewrite F6_indexed in Hlive; cbn beta iota zeta in Hlive.
+    destruct (L.leb a (look s x)) eqn:Hcovered.
+    - left; exists pr; exact Hlive.
+    - destruct (trie_get (S.key_code x) (ws_armed s)) as [u|].
+      + left; exists pr; exact Hlive.
+      + cbn [arm ws_queue] in Hlive.
+        apply enqueue_support in Hlive; destruct Hlive as [Hold|Hreader].
+        * left; exact Hold.
+        * right; split; [reflexivity|].
+          now rewrite <- (proj2 (proj1 Hprepared) (S.key_code x)).
+  Qed.
+
+  (** In a stable output fold, every new queue member reads a non-head output key. *)
+  Lemma stable_fold_sources : forall p pol outs s,
+    prepared p pol s ->
+    heads_unchanged pol s (fold_left (update_one p pol) outs s) ->
+    forall id pr, Q.prio (ws_queue (fold_left (update_one p pol) outs s)) id = Some pr ->
+    (exists old, Q.prio (ws_queue s) id = Some old) \/
+      exists x a, In (x, a) outs /\ trie_get (S.key_code x) (heads pol) = None /\
+        In id (source_readers p (S.key_code x)).
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH];
+      intros s Hprepared Hstable id pr Hlive.
+    - left; exists pr; exact Hlive.
+    - destruct (heads_unchanged_fold_cons p pol (x, a) outs s Hstable)
+        as [Hfirst Htail].
+      cbn [fold_left] in Hlive.
+      destruct (IH (update_one p pol s (x, a)) (F6_prepared p pol s (x, a) Hprepared)
+        Htail id pr Hlive) as [[old Hold]|[y [b [Hin [Hhead Hreader]]]]].
+      + destruct (update_queue_sources p pol s x a id old Hprepared Hold)
+          as [Hbefore|[Hstrict Hreader]].
+        * now left.
+        * right; exists x, a; split; [now left|].
+          split; [eapply stable_update_nonhead; eassumption|exact Hreader].
+      + right; exists y, b; split; [now right|].
+        now split.
+  Qed.
+
+  (** Every emitted primary or side occurrence has a declared write key. *)
+  Lemma eval_outputs_writes : forall p r m a ss x b,
+    S.wf p -> In r (S.rows p) -> eval_row p r m = Some (a, ss) ->
+    In (x, b) ((S.target p r, a) :: ss) -> In x (S.writes p r).
+  Proof.
+    intros p r m a ss x b Hwf Hr Heval Hin.
+    destruct Hin as [Hequal|Hin].
+    - injection Hequal as <- <-; now left.
+    - right; rewrite F3_eval in Heval.
+      exact (S.sides_within p r (look_or S.key_code L.bot m) a ss x b Hwf Hr Heval Hin).
+  Qed.
+
   (** Cut edges make popped row ranks nondecreasing in a stable segment. *)
   Lemma W5_priority : forall p pol s xs last i j a b,
     fits p pol -> reachable p pol s ->
