@@ -424,6 +424,101 @@ Module Index (V : VALUE) <: INDEX V.
     - eapply Pos.le_trans; [exact Hguard | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
     - apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
   Qed.
+
+  (** Writing one edge exposes exactly that binding and retains every other binding. *)
+  Lemma stored_edge_put : forall ix n code edge degree terminal counter q key out,
+    stored_edge
+      (write_node ix n
+        (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree terminal)
+        counter) q key out <->
+      (q = n /\ key = code /\ out = edge) \/
+      ((q <> n \/ key <> code) /\ stored_edge ix q key out).
+  Proof.
+    intros ix n code edge degree terminal counter q key out.
+    unfold stored_edge. destruct (Pos.eq_dec q n) as [-> | Hnode].
+    - rewrite read_node_write_same. cbn [node_edges].
+      destruct (Pos.eq_dec key code) as [-> | Hkey].
+      + rewrite PTrie.get_set_same. intuition congruence.
+      + rewrite PTrie.get_set_other by exact Hkey. intuition congruence.
+    - rewrite read_node_write_other by exact Hnode. intuition congruence.
+  Qed.
+
+  Lemma edge_shape_put : forall ix n code edge degree terminal counter,
+    edge_shape ix -> encode_cell (edge_cell edge) = code ->
+    (n < edge_child edge <= counter)%positive -> (next ix <= counter)%positive ->
+    edge_shape
+      (write_node ix n
+        (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree terminal)
+        counter).
+  Proof.
+    intros ix n code edge degree terminal counter Hshape Hcode Hbounds Hcounter q key out Hget.
+    apply stored_edge_put in Hget as [[-> [-> ->]] | [_ Hget]].
+    - split; [exact Hcode | exact Hbounds].
+    - destruct (Hshape q key out Hget) as [Hencode [Hbelow Habove]].
+      split; [exact Hencode |]. split; [exact Hbelow |].
+      change (edge_child out <= counter)%positive. eapply Pos.le_trans; eassumption.
+  Qed.
+
+  Lemma parents_unique_put : forall ix n code edge degree terminal counter,
+    parents_unique ix ->
+    (forall q key out, stored_edge ix q key out -> edge_child out = edge_child edge ->
+      q = n /\ key = code) ->
+    parents_unique
+      (write_node ix n
+        (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree terminal)
+        counter).
+  Proof.
+    intros ix n code edge degree terminal counter Hparents Hcollision p key out q key' out'
+      Hget Hget' Hchild.
+    apply stored_edge_put in Hget as [[-> [-> ->]] | [_ Hget]];
+      apply stored_edge_put in Hget' as [[-> [-> ->]] | [_ Hget']].
+    - auto.
+    - destruct (Hcollision q key' out' Hget' (eq_sym Hchild)) as [-> ->]. auto.
+    - now apply Hcollision in Hget.
+    - eapply Hparents; eassumption.
+  Qed.
+
+  Lemma edge_shape_insert_step : forall st c, edge_shape (fst st) ->
+    edge_shape (fst (insert_step_st st c)).
+  Proof.
+    intros [ix n] c Hshape. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard; [exact Hshape |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; cbn [fst].
+    - apply edge_shape_put; try exact Hshape; try reflexivity; try apply Pos.le_refl.
+      exact (proj2 (Hshape n (encode_cell c) edge Hget)).
+    - apply edge_shape_put; try exact Hshape; try reflexivity.
+      + cbn [edge_child]. split; [| apply Pos.le_refl].
+        eapply Pos.le_lt_trans; [exact Hguard | apply Pos.lt_succ_diag_r].
+      + apply Pos.lt_le_incl, Pos.lt_succ_diag_r.
+  Qed.
+
+  Lemma parents_unique_insert_step : forall st c,
+    edge_shape (fst st) -> parents_unique (fst st) ->
+    parents_unique (fst (insert_step_st st c)).
+  Proof.
+    intros [ix n] c Hshape Hparents. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n); [exact Hparents |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; cbn [fst]; apply parents_unique_put; [exact Hparents |..].
+    - intros q key out Hout Hchild. cbn [edge_child] in Hchild.
+      eapply Hparents; [exact Hout | exact Hget | exact Hchild].
+    - exact Hparents.
+    - intros q key out Hout Hchild. cbn [edge_child] in Hchild.
+      pose proof (proj2 (proj2 (Hshape q key out Hout))) as Hbound.
+      rewrite Hchild in Hbound. exfalso.
+      pose proof (Pos.lt_succ_diag_r (next ix)) as Hlt. apply Pos.lt_nle in Hlt. contradiction.
+  Qed.
+
+  Lemma shape_insert_step : forall st c, shape (fst st) ->
+    shape (fst (insert_step_st st c)).
+  Proof.
+    intros st c [Hedges [Htable Hparents]]. split.
+    - now apply edge_shape_insert_step.
+    - split; [now apply table_ok_insert_step |].
+      now apply parents_unique_insert_step.
+  Qed.
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
   Proof.
