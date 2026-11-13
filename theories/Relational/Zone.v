@@ -4037,6 +4037,40 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - lia.
   Qed.
 
+  (** A passing incremental diagonal rules out a negative cycle through the new edge. *)
+  Lemma incremental_candidate_cycle : forall m i j d, closed m -> i <> j ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    let next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty in
+    nonnegative i next = true ->
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)).
+  Proof.
+    intros m i j d Hclosed Hdistinct.
+    cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base).
+    set (next := M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty).
+    intro Haccept.
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    pose proof (incremental_candidate_extension m i j d Hclosed Hdistinct i i) as Heq.
+    change (entry next i i =
+      RelationalPathBounds.edge_extension (entry base) i j d i i) in Heq.
+    unfold RelationalPathBounds.edge_extension in Heq.
+    change (nonnegative i next = true) in Haccept.
+    rewrite Hii in Heq. unfold nonnegative in Haccept. rewrite Heq in Haccept.
+    destruct (entry base j i) as [back|] eqn:Hback;
+      cbn [RelationalPathBounds.plus RelationalPathBounds.minimum
+        RelationalPathBounds.below] in Haccept |- *.
+    - apply Z.leb_le in Haccept.
+      pose proof (Z.le_min_r 0 (0 + (d + back))) as Hmin. lia.
+    - exact I.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
