@@ -1162,6 +1162,44 @@ Proof.
   lia.
 Qed.
 
+Lemma database_group_slots_member : forall positions start d g s,
+  In s (database_group_slots start d g positions) <->
+    exists n offset, nth_error positions n = Some (d, g, offset) /\
+      s = (start + N.of_nat n)%N.
+Proof.
+  induction positions as [|[[flag rank] offset] rest IH];
+    intros start d g s; cbn [database_group_slots].
+  - split; [intros [] |]. intros [n [o [Hentry _]]]. destruct n; discriminate.
+  - destruct (andb (Bool.eqb flag d) (N.eqb rank g)) eqn:Hselect.
+    + apply andb_true_iff in Hselect as [Hflag Hrank].
+      assert (Hflag_eq : flag = d).
+      { destruct flag, d; cbn in Hflag; try discriminate; reflexivity. }
+      apply N.eqb_eq in Hrank. subst d g. split.
+      * intros [-> | Htail].
+        -- exists 0%nat, offset. split; [reflexivity | lia].
+        -- apply IH in Htail as [n [o [Hentry Hnumber]]].
+           exists (S n), o. split; [exact Hentry |].
+           rewrite Nat2N.inj_succ. lia.
+      * intros [n [o [Hentry Hnumber]]]. destruct n as [|n].
+        -- cbn [nth_error] in Hentry. injection Hentry as <-.
+           left. cbn [N.of_nat] in Hnumber. lia.
+        -- right. apply IH. exists n, o. split; [exact Hentry |].
+           rewrite Nat2N.inj_succ in Hnumber. lia.
+    + split.
+      * intro Htail. apply IH in Htail as [n [o [Hentry Hnumber]]].
+        exists (S n), o. split; [exact Hentry |].
+        rewrite Nat2N.inj_succ. lia.
+      * intros [n [o [Hentry Hnumber]]]. destruct n as [|n].
+        -- cbn [nth_error] in Hentry. injection Hentry as Hflag Hrank _.
+           assert (Htrue : andb (Bool.eqb flag d) (N.eqb rank g) = true).
+           { apply andb_true_iff. split.
+             - destruct flag, d; cbn in Hflag |- *; try discriminate; reflexivity.
+             - apply N.eqb_eq. congruence. }
+           congruence.
+        -- apply IH. exists n, o. split; [exact Hentry |].
+           rewrite Nat2N.inj_succ in Hnumber. lia.
+Qed.
+
 (** A maximum comparison reads no more bits than its current declaration name. *)
 Lemma T_database_positive_max_le : forall p q,
   (Pos.T_max p q <= N.of_nat (Pos.size_nat p) + 2)%N.
