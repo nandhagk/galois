@@ -1901,6 +1901,47 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 
   Definition c_word_table : N := (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N.
+
+  Local Lemma table_ite_dispatch_time : forall rw wc c wa a wb b,
+    (T_wfwd bvite rw [(wc, c); (wa, a); (wb, b)] <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        W.psize wc c + W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wc c wa a wb b.
+    pose proof (table_ite_time rw wa wb a b) as Hite.
+    unfold T_wfwd, c_word_table.
+    time_cbn.
+    assert (Hbudget_nat :
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        W.psize wa a + W.psize wb b <=
+       (Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        W.psize wc c + W.psize wa a + W.psize wb b)%nat).
+    { assert (Hbase :
+        (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1 <=
+         Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1)%nat)
+        by lia.
+      pose proof (Nat.pow_le_mono_l _ _ 2 Hbase) as Hsquare.
+      lia. }
+    set (small := N.of_nat ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+      W.psize wa a + W.psize wb b)) in *.
+    set (large := N.of_nat ((Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa +
+      Pos.to_nat wb + 1) ^ 2 + W.psize wc c + W.psize wa a + W.psize wb b)) in *.
+    assert (Hbudget : (small <= large)%N) by (subst small large; lia).
+    assert (Hpositive : (1 <= large)%N).
+    { assert (Hbase :
+        (0 < Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1)%nat)
+        by lia.
+      assert (Hpow :
+        (0 < (Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)%nat)
+        by (rewrite Nat.pow_2_r; nia).
+      subst large. lia. }
+    assert (Hcoefficient : (1 <= W.k_payload_clip + Scalar.c_scalar + 1)%N) by lia.
+    change (1 + (T_interval_clip wa a + T_interval_clip wb b +
+      Scalar.T_interval_join (interval_clip wa a) (interval_clip wb b)) <=
+      1000000 * (W.k_payload_clip + Scalar.c_scalar + 1) * large)%N.
+    nia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
