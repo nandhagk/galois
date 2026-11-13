@@ -4466,6 +4466,38 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     lia.
   Qed.
 
+  (** Distinct-endpoint incremental and full closures have identical outcomes. *)
+  Lemma incr_close_eq_distinct : forall m i j d, dbm_wf m -> closed m ->
+    i <> j -> same_entries (incr_close i j d m) (close (add_cons i j d m)).
+  Proof.
+    intros m i j d Hwf Hclosed Hdistinct.
+    destruct (close (add_cons i j d m)) as [|final] eqn:Hfull.
+    - destruct (incr_close i j d m) as [|next] eqn:Hincr; [exact I|].
+      unfold incr_close in Hincr.
+      set (base := add_cons j j 0%Z (add_cons i i 0%Z m)) in *.
+      set (seed := add_cons i j d base) in *.
+      set (candidate := M.merge
+        (increment_row i d (row_of (M.get j seed))) seed M.empty) in *.
+      destruct (andb (nonnegative i candidate) (nonnegative j candidate))
+        eqn:Hchecks; [|discriminate].
+      apply andb_true_iff in Hchecks. destruct Hchecks as [Hcheck _].
+      pose proof (incremental_candidate_cycle m i j d Hclosed Hdistinct Hcheck)
+        as Hcycle.
+      destruct (direct_cycle_close_success m i j d Hwf Hclosed Hcycle)
+        as [result [Hsuccess _]]. congruence.
+    - pose proof (direct_close_success_cycle m i j d final Hwf Hdistinct Hfull)
+        as Hcycle.
+      destruct (incremental_cycle_success m i j d Hclosed Hdistinct Hcycle)
+        as [next [Hincr Hentry]].
+      rewrite Hincr. cbn [same_entries]. intros a b. rewrite Hentry.
+      apply RelationalPathBounds.below_antisym.
+      + destruct (direct_cycle_close_success m i j d Hwf Hclosed Hcycle)
+          as [result [Hsuccess Hbelow]].
+        injection (eq_trans (eq_sym Hfull) Hsuccess) as <-.
+        exact (Hbelow a b).
+      + exact (direct_close_below_extension m i j d final Hwf Hfull a b).
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
