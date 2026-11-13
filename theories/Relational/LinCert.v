@@ -1599,6 +1599,237 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
     - rewrite PTrie.get_set_other in Hget by exact Hneq. exact (Hgood key z Hget).
   Qed.
 
+  (** A stored value pays for both component widths and its occupied binding. *)
+  Definition lc_pair_bits (z : Z * Z) : N :=
+    N.of_nat (Z.size_nat (fst z) + Z.size_nat (snd z) + 1).
+
+  (** A new contribution increases the stored width by at most its own width. *)
+  Lemma lc_add_signed_bits : forall z s,
+    (0 <= fst s)%Z -> (0 <= snd s)%Z ->
+    (lc_pair_bits (lc_add_signed z s) <= N.of_nat (Z.size_nat z) + lc_pair_bits s)%N.
+  Proof.
+    intros z [p n] Hp Hn. cbn [fst snd] in Hp, Hn.
+    pose proof (lc_add_signed_size z p n Hp Hn). unfold lc_pair_bits.
+    cbn [fst snd]. lia.
+  Qed.
+
+  (** The signed accumulation clock accepts a pair-shaped invariant. *)
+  Lemma T_lc_add_signed_pair : forall z s,
+    (0 <= fst s)%Z -> (0 <= snd s)%Z ->
+    (T_lc_add_signed z s + lc_pair_ones (lc_add_signed z s) <=
+      16 * N.of_nat (Z.size_nat z + 1) + lc_pair_ones s)%N.
+  Proof.
+    intros z [p n] Hp Hn. exact (T_lc_add_signed_ones z p n Hp Hn).
+  Qed.
+
+  (** The zero default carries no set-bit potential. *)
+  Lemma lc_previous_ones : forall tr key,
+    lc_pair_ones (match PTrieCode.get key tr with Some z => z | None => (0%Z, 0%Z) end) =
+      lc_option_sum lc_pair_ones (PTrieCode.get key tr).
+  Proof.
+    intros tr key. destruct (PTrieCode.get key tr); reflexivity.
+  Qed.
+
+  (** The zero default adds at most one new occupied binding. *)
+  Lemma lc_previous_bits : forall tr key,
+    (lc_pair_bits (match PTrieCode.get key tr with Some z => z | None => (0%Z, 0%Z) end) <=
+      lc_option_sum lc_pair_bits (PTrieCode.get key tr) + 1)%N.
+  Proof.
+    intros tr key. destruct (PTrieCode.get key tr) as [z|].
+    - change (lc_pair_bits z <= lc_pair_bits z + 1)%N. lia.
+    - change (1 <= 0 + 1)%N. lia.
+  Qed.
+
+  (** Insertion increases total stored bit mass only by the incoming coefficient. *)
+  Lemma insert_term_bits : forall tr x a, lc_trie_good tr ->
+    (lc_trie_sum lc_pair_bits (insert_term tr (x, a)) <=
+      lc_trie_sum lc_pair_bits tr + N.of_nat (Z.size_nat a + 1))%N.
+  Proof.
+    intros tr x a Hgood.
+    pose proof (lc_previous_nonnegative tr (X.encode x) Hgood) as [Hp Hn].
+    pose proof (lc_previous_bits tr (X.encode x)) as Hprevious.
+    set (previous := match PTrieCode.get (X.encode x) tr with
+      | Some z => z | None => (0%Z, 0%Z) end) in *.
+    pose proof (lc_add_signed_bits a previous Hp Hn) as Hbits.
+    pose proof (lc_trie_sum_set lc_pair_bits (X.encode x)
+      (lc_add_signed a previous) tr) as Hset.
+    change (lc_trie_sum lc_pair_bits (insert_term tr (x, a)) +
+      lc_option_sum lc_pair_bits (PTrieCode.get (X.encode x) tr) =
+      lc_trie_sum lc_pair_bits tr + lc_pair_bits (lc_add_signed a previous))%N in Hset.
+    lia.
+  Qed.
+
+  (** Insertion charges newly allocated trie nodes and coefficient storage together. *)
+  Lemma insert_term_storage : forall tr x a, lc_trie_good tr ->
+    (N.of_nat (PTrie.nodes (insert_term tr (x, a))) +
+      lc_trie_sum lc_pair_bits (insert_term tr (x, a)) <=
+      N.of_nat (PTrie.nodes tr) + lc_trie_sum lc_pair_bits tr +
+      N.of_nat (Pos.size_nat (X.encode x) + Z.size_nat a + 1))%N.
+  Proof.
+    intros tr x a Hgood. pose proof (insert_term_bits tr x a Hgood) as Hbits.
+    pose proof (PTrie.nodes_set (Z * Z) (X.encode x)
+      (lc_add_signed a (match PTrieCode.get (X.encode x) tr with
+        | Some z => z | None => (0%Z, 0%Z) end)) tr) as Hnodes.
+    change (PTrie.nodes (insert_term tr (x, a)) <=
+      PTrie.nodes tr + Pos.size_nat (X.encode x))%nat in Hnodes. lia.
+  Qed.
+
+  (** Encoding and the two trie paths determine the per-occurrence insertion factor. *)
+  Definition lc_insert_factor : N :=
+    (2 * X.c_key + 4 * PTrieT.c_trie + 32)%N.
+
+  (** A trie insertion pays for the new occurrence and the set-bit potential change. *)
+  Lemma T_insert_term_ones : forall tr x a, lc_trie_good tr ->
+    (T_insert_term tr (x, a) + lc_trie_sum lc_pair_ones (insert_term tr (x, a)) <=
+      lc_insert_factor * N.of_nat (Pos.size_nat (X.encode x) + Z.size_nat a + 1) +
+      lc_trie_sum lc_pair_ones tr)%N.
+  Proof.
+    intros tr x a Hgood.
+    pose proof (lc_previous_nonnegative tr (X.encode x) Hgood) as [Hp Hn].
+    pose proof (lc_previous_ones tr (X.encode x)) as Hprevious.
+    set (previous := match PTrieCode.get (X.encode x) tr with
+      | Some z => z | None => (0%Z, 0%Z) end) in *.
+    pose proof (lc_trie_sum_set lc_pair_ones (X.encode x)
+      (lc_add_signed a previous) tr) as Hset.
+    change (lc_trie_sum lc_pair_ones (insert_term tr (x, a)) +
+      lc_option_sum lc_pair_ones (PTrieCode.get (X.encode x) tr) =
+      lc_trie_sum lc_pair_ones tr + lc_pair_ones (lc_add_signed a previous))%N in Hset.
+    pose proof (X.T_encode_le x) as Hencode.
+    pose proof (PTrieT.T_get_le (Z * Z) (X.encode x) tr) as Hget.
+    pose proof (PTrieT.T_set_le (Z * Z) (X.encode x)
+      (lc_add_signed a previous) tr) as Hput.
+    pose proof (T_lc_add_signed_pair a previous Hp Hn) as Hadd.
+    time_unfold T_insert_term. cbn [fst snd]. fold previous.
+    unfold lc_insert_factor, X.bits in *. time_simpl. nia.
+  Qed.
+
+  (** Folding insertion preserves the signed-pair invariant. *)
+  Lemma gather_from_good : forall xs tr, lc_trie_good tr ->
+    lc_trie_good (fold_left insert_term xs tr).
+  Proof.
+    induction xs as [|p xs IH]; intros tr Hgood; cbn [fold_left].
+    - exact Hgood.
+    - apply IH, insert_term_good, Hgood.
+  Qed.
+
+  (** Folding insertion charges the total weight of raw occurrences. *)
+  Lemma gather_from_storage : forall xs tr, lc_trie_good tr ->
+    (N.of_nat (PTrie.nodes (fold_left insert_term xs tr)) +
+      lc_trie_sum lc_pair_bits (fold_left insert_term xs tr) <=
+      N.of_nat (PTrie.nodes tr) + lc_trie_sum lc_pair_bits tr + lc_terms_weight xs)%N.
+  Proof.
+    induction xs as [|[x a] xs IH]; intros tr Hgood; cbn [fold_left lc_terms_weight].
+    - lia.
+    - specialize (IH (insert_term tr (x, a)) (insert_term_good tr (x, a) Hgood)).
+      pose proof (insert_term_storage tr x a Hgood). lia.
+  Qed.
+
+  (** The folding clock telescopes the set-bit potential across all insertions. *)
+  Lemma T_gather_from_ones : forall xs tr, lc_trie_good tr ->
+    (List.T_fold_left insert_term T_insert_term xs tr +
+      lc_trie_sum lc_pair_ones (fold_left insert_term xs tr) <=
+      (lc_insert_factor + 1) * lc_terms_weight xs + lc_trie_sum lc_pair_ones tr + 1)%N.
+  Proof.
+    induction xs as [|[x a] xs IH]; intros tr Hgood;
+      time_unfold List.T_fold_left; cbn [fold_left lc_terms_weight].
+    - lia.
+    - specialize (IH (insert_term tr (x, a)) (insert_term_good tr (x, a) Hgood)).
+      pose proof (T_insert_term_ones tr x a Hgood) as Hinsert. nia.
+  Qed.
+
+  (** The empty trie satisfies the signed-pair invariant. *)
+  Lemma lc_empty_good : lc_trie_good (@PTrieCode.empty (Z * Z)).
+  Proof.
+    intros key z Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  (** Building the coefficient trie preserves nonnegative signed accumulators. *)
+  Lemma gather_good : forall xs, lc_trie_good (gather xs).
+  Proof.
+    intro xs. apply gather_from_good, lc_empty_good.
+  Qed.
+
+  (** The final trie skeleton and stored widths fit the incoming occurrence weight. *)
+  Lemma gather_storage : forall xs,
+    (N.of_nat (PTrie.nodes (gather xs)) + lc_trie_sum lc_pair_bits (gather xs) <=
+      lc_terms_weight xs)%N.
+  Proof.
+    intro xs. pose proof (gather_from_storage xs PTrieCode.empty lc_empty_good) as Hstorage.
+    change (N.of_nat (PTrie.nodes (gather xs)) + lc_trie_sum lc_pair_bits (gather xs) <=
+      N.of_nat 0 + 0 + lc_terms_weight xs)%N in Hstorage. lia.
+  Qed.
+
+  (** Trie construction has linear amortized cost in incoming occurrence weight. *)
+  Lemma T_gather_weighted : forall xs,
+    (T_gather xs <= (lc_insert_factor + 1) * lc_terms_weight xs + 3)%N.
+  Proof.
+    intro xs. pose proof (T_gather_from_ones xs PTrieCode.empty lc_empty_good) as Hfold.
+    change (List.T_fold_left insert_term T_insert_term xs PTrieCode.empty +
+      lc_trie_sum lc_pair_ones (gather xs) <=
+      (lc_insert_factor + 1) * lc_terms_weight xs + 0 + 1)%N in Hfold.
+    time_unfold T_gather.
+    change (1 + List.T_fold_left insert_term T_insert_term xs PTrieCode.empty <=
+      (lc_insert_factor + 1) * lc_terms_weight xs + 3)%N. lia.
+  Qed.
+
+  (** Comparing one occupied pair charges its stored bit mass. *)
+  Lemma T_zero_entry_bits : forall z b,
+    (T_zero_entry (Some z) b <= 4 * lc_pair_bits z)%N.
+  Proof.
+    intros z b. time_unfold T_zero_entry.
+    pose proof (Z.T_eqb_le (fst z) (snd z)).
+    unfold lc_pair_bits. time_simpl. lia.
+  Qed.
+
+  (** The zero-test callbacks together charge each stored value once. *)
+  Lemma lc_zero_callbacks : forall tr,
+    (fold_right N.add 0 (map (fun ka =>
+      T_zero_entry (PTrieCode.get (fst ka) tr)
+        (PTrieCode.get (fst ka) (@PTrieCode.empty unit))) (PTrieCode.elements tr)) <=
+      4 * lc_trie_sum lc_pair_bits tr)%N.
+  Proof.
+    intro tr. rewrite lc_trie_sum_elements.
+    assert (Hall : Forall (fun ka =>
+      (T_zero_entry (PTrieCode.get (fst ka) tr)
+        (PTrieCode.get (fst ka) (@PTrieCode.empty unit)) <=
+        4 * lc_pair_bits (snd ka))%N) (PTrieCode.elements tr)).
+    { apply Forall_forall. intros [key z] Hin. cbn [fst snd].
+      apply PTrie.elements_spec in Hin. rewrite Hin. apply T_zero_entry_bits. }
+    induction Hall as [|ka kas Hentry Htail IH]; cbn [map fold_right]; lia.
+  Qed.
+
+  (** The final trie comparison charges its skeleton and total stored bit mass. *)
+  Lemma T_zero_trie : forall tr,
+    (PTrieT.T_forall2b zero_entry T_zero_entry tr (@PTrieCode.empty unit) <=
+      PTrieT.c_trie * (2 * N.of_nat (PTrie.nodes tr + 1) +
+        4 * lc_trie_sum lc_pair_bits tr))%N.
+  Proof.
+    intro tr.
+    pose proof (PTrieT.T_forall2b_sum_le (Z * Z) unit zero_entry T_zero_entry
+      tr PTrieCode.empty) as Hcheck.
+    change (PTrieT.elements (@PTrieCode.empty unit)) with
+      (@nil (positive * unit)) in Hcheck.
+    change (PTrieT.nodes (@PTrieCode.empty unit)) with 0%nat in Hcheck.
+    change (T_zero_entry None None) with 1%N in Hcheck.
+    cbn [map] in Hcheck. rewrite app_nil_r, map_map, Nat.add_0_r in Hcheck.
+    pose proof (lc_zero_callbacks tr) as Hcallbacks. nia.
+  Qed.
+
+  (** The zero-check factor pays for construction and a single trie traversal. *)
+  Definition lc_zero_factor : N := (lc_insert_factor + 4 * PTrieT.c_trie + 8)%N.
+
+  (** Coefficient zero testing has linear cost in raw occurrence weight. *)
+  Lemma T_linear_zero_weighted : forall xs,
+    (T_linear_zero xs <= lc_zero_factor * (lc_terms_weight xs + 1))%N.
+  Proof.
+    intro xs. pose proof (T_gather_weighted xs) as Hbuild.
+    pose proof (T_zero_trie (gather xs)) as Hcheck.
+    pose proof (gather_storage xs) as Hstorage.
+    time_unfold T_linear_zero.
+    change (fun a b => T_zero_entry a b) with T_zero_entry.
+    unfold lc_zero_factor. time_simpl. nia.
+  Qed.
+
   Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
