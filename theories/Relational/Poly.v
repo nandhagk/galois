@@ -711,6 +711,49 @@ Proof.
 Qed.
 
 
+(** A tracked row has no repeated stored key. *)
+Definition poly_row_unique {A} (r : poly_row A) : Prop :=
+  NoDup (map fst (lhs (poly_constraint r))).
+
+Lemma poly_add_rows_unique : forall A (encode : A -> positive) a (p : poly_row A) b q,
+  poly_row_unique (poly_add_rows encode a p b q).
+Proof.
+  intros A encode a p b q. unfold poly_row_unique.
+  cbn [poly_add_rows poly_constraint lhs]. apply poly_normal_coef_nodup.
+Qed.
+
+Lemma poly_initial_unique : forall A (encode : A -> positive) rows,
+  Forall poly_row_unique (poly_initial encode rows).
+Proof.
+  intros A encode rows. induction rows as [|[r flag] rows IH]; [constructor|].
+  cbn [poly_initial fst snd]. constructor.
+  - unfold poly_row_unique. cbn [poly_constraint poly_normal_row lhs].
+    apply poly_normal_coef_nodup.
+  - apply Forall_map. exact IH.
+Qed.
+
+Lemma poly_cancel_unique : forall A (encode : A -> positive) eqb x p r,
+  poly_row_unique r -> poly_row_unique (poly_cancel encode eqb x p r).
+Proof.
+  intros A encode eqb x p r Hunique. unfold poly_cancel.
+  destruct (Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0); [exact Hunique|].
+  apply poly_add_rows_unique.
+Qed.
+
+Lemma poly_step_unique : forall A (encode : A -> positive) eqb x rows,
+  Forall poly_row_unique rows -> Forall poly_row_unique (poly_step encode eqb x rows).
+Proof.
+  intros A encode eqb x rows Hunique. unfold poly_step.
+  destruct (find (poly_pivot eqb x) rows) as [p|].
+  - apply Forall_map. apply Forall_forall. intros r Hin. apply poly_cancel_unique.
+    exact (proj1 (Forall_forall _ _) Hunique r Hin).
+  - apply Forall_app. split; apply Forall_forall; intros r Hin.
+    + apply filter_In in Hin as [Hin _].
+      exact (proj1 (Forall_forall _ _) Hunique r Hin).
+    + apply in_flat_map in Hin as [p [Hp Hin]].
+      apply in_map_iff in Hin as [q [Hsame Hq]]. subst r. apply poly_add_rows_unique.
+Qed.
+
 Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: POLY_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
@@ -3256,6 +3299,112 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
 
+  (** A complete successful untagging maps each original key through Some. *)
+  Lemma untag_keys : forall xs ys, untag xs = Some ys ->
+    map fst xs = map (@Some X.t) (map fst ys).
+  Proof.
+    intro xs. induction xs as [|[x a] xs IH]; intros ys Hresult.
+    - cbn [untag] in Hresult. injection Hresult as Hsame. subst ys. reflexivity.
+    - destruct x as [x|]; cbn [untag] in Hresult; [|discriminate].
+      destruct (untag xs) as [zs|] eqn:Htail; [|discriminate].
+      injection Hresult as Hsame. subst ys. cbn [map fst]. f_equal.
+      now apply IH.
+  Qed.
+
+  Lemma untag_nodup : forall xs ys, untag xs = Some ys ->
+    NoDup (map fst xs) -> NoDup (map fst ys).
+  Proof.
+    intros xs ys Hresult Hunique. apply NoDup_map_inv with (f := @Some X.t).
+    rewrite <- (untag_keys xs ys Hresult). exact Hunique.
+  Qed.
+
+  (** Every raw one-step elimination emits normalized coefficient lists. *)
+  Lemma fm_elim_nodup : forall x P,
+    Forall (fun r => NoDup (map fst (lhs (row_of r)))) (fm_elim x P).
+  Proof.
+    intros x P. unfold fm_elim. apply Forall_map.
+    change (Forall poly_row_unique
+      (poly_step X.encode X.eqb x
+        (poly_initial X.encode (map (fun r => (r, false)) P)))).
+    apply poly_step_unique, poly_initial_unique.
+  Qed.
+
+  Lemma havoc_rows_nodup : forall x P,
+    Forall (fun r => NoDup (map fst (lhs r)))
+      (map row_of (filter (checked_projection P x) (fm_elim x P))).
+  Proof.
+    intros x P. apply Forall_map. apply Forall_forall. intros r Hin.
+    apply filter_In in Hin as [Hin _].
+    exact (proj1 (Forall_forall _ _) (fm_elim_nodup x P) r Hin).
+  Qed.
+
+  Lemma assigned_candidate_nodup : forall P x f r c,
+    poly_row_unique r -> assigned_candidate P x f r = Some c -> NoDup (map fst (lhs c)).
+  Proof.
+    intros P x f r c Hunique Hresult. unfold assigned_candidate in Hresult.
+    destruct (untag (lhs (poly_constraint r))) as [xs|] eqn:Huntag; [|discriminate].
+    destruct (poly_multipliers r) as [|m ms]; [discriminate|].
+    destruct (C.check_entails P
+      (subst x f (LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r))))
+      (Cert ms 1 false)); [|discriminate].
+    injection Hresult as Hsame. subst c. cbn [lhs].
+    apply untag_nodup with (xs := lhs (poly_constraint r)); assumption.
+  Qed.
+
+  Lemma assign_linear_nodup : forall x f P,
+    Forall (fun r => NoDup (map fst (lhs r))) (assign_linear x f P).
+  Proof.
+    intros x f P. unfold assign_linear. apply Forall_forall. intros c Hin.
+    apply in_flat_map in Hin as [r [Hmember Hin]].
+    destruct (assigned_candidate P x f r) as [s|] eqn:Hcandidate; [|contradiction].
+    destruct Hin as [Hsame|Hfalse]; [subst s|contradiction].
+    apply assigned_candidate_nodup with (P := P) (x := x) (f := f) (r := r);
+      [|exact Hcandidate].
+    exact (proj1 (Forall_forall _ _)
+      (poly_step_unique _ tmp_encode tmp_eqb None _
+        (poly_initial_unique _ tmp_encode _)) r Hmember).
+  Qed.
+
+  Lemma atom_row_nodup : forall a r, atom_row a = Some r -> NoDup (map fst (lhs r)).
+  Proof.
+    intros a r Hresult. unfold atom_row in Hresult.
+    destruct (alw a), (arw a); try discriminate.
+    destruct (acmp a); injection Hresult as Hsame; subst r;
+      cbn [lhs]; apply poly_normal_coef_nodup.
+  Qed.
+
+  Lemma assume_rows_nodup : forall g es,
+    Forall (fun r => NoDup (map fst (lhs r)))
+      (flat_map (fun a => match atom_row a with Some r => r :: nil | None => nil end)
+        (F.atoms_of g es)).
+  Proof.
+    intros g es. apply Forall_forall. intros r Hin.
+    apply in_flat_map in Hin as [a [Ha Hin]].
+    destruct (atom_row a) as [s|] eqn:Hatom; [|contradiction].
+    destruct Hin as [Hsame|Hfalse]; [subst s|contradiction].
+    now apply atom_row_nodup with (a := a).
+  Qed.
+
+  (** Keeping every list member leaves the list unchanged. *)
+  Lemma filter_all_true : forall A (f : A -> bool) xs,
+    forallb f xs = true -> filter f xs = xs.
+  Proof.
+    intros A f xs. induction xs as [|x xs IH]; intro Hall; [reflexivity|].
+    cbn [forallb] in Hall. apply andb_true_iff in Hall as [Hhead Htail].
+    cbn [filter]. rewrite Hhead, (IH Htail). reflexivity.
+  Qed.
+
+  (** Rejecting at least one member strictly reduces the filtered list length. *)
+  Lemma filter_some_false : forall A (f : A -> bool) xs,
+    forallb f xs = false -> length (filter f xs) < length xs.
+  Proof.
+    intros A f xs. induction xs as [|x xs IH]; intro Hsome; [discriminate|].
+    cbn [forallb] in Hsome. cbn [filter].
+    destruct (f x); cbn [length] in *.
+    - specialize (IH Hsome). lia.
+    - pose proof (filter_length_le f xs). lia.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
@@ -3283,12 +3432,23 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|P] [|Q] Hle; cbn [widen]; try reflexivity.
+    - change (is_bot (Reached Q) = true) in Hle. now rewrite Hle.
+    - f_equal. apply filter_all_true. exact Hle.
+  Qed.
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|P] [|Q] Hbot Hle; cbn [is_bot leb] in Hbot, Hle; try discriminate.
+    change (length (filter (keep_row Q) P) < length P). now apply filter_some_false.
+  Qed.
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|P] [|Q] Hbot; cbn [is_bot] in Hbot; try discriminate.
+    - apply Nat.le_refl.
+    - apply filter_length_le.
+  Qed.
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
   Proof. Admitted. (* STUB *)
@@ -3925,26 +4085,55 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   (** Top has no repeated coefficients. *)
   Lemma normal_top : normal_s top.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    constructor.
+  Qed.
   (** Join keeps rows free of repeated keys. *)
   Lemma normal_join : forall a b, normal_s a -> normal_s b -> normal_s (join a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|P] [|Q] HP HQ; cbn [normal_s join] in *; try assumption.
+    apply Forall_app. split; apply Forall_forall; intros r Hin;
+      apply filter_In in Hin as [Hin _].
+    - exact (proj1 (Forall_forall _ _) HP r Hin).
+    - exact (proj1 (Forall_forall _ _) HQ r Hin).
+  Qed.
   (** Widening keeps rows free of repeated keys. *)
   Lemma normal_widen : forall p a b,
     normal_s a -> normal_s b -> normal_s (widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|P] [|Q] HP HQ; cbn [normal_s widen] in *.
+    - exact I.
+    - destruct (is_bot (Reached Q)); [exact I|exact HQ].
+    - exact HP.
+    - apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+      exact (proj1 (Forall_forall _ _) HP r Hin).
+  Qed.
   (** Narrowing keeps rows free of repeated keys. *)
   Lemma normal_narrow : forall a b, normal_s a -> normal_s b -> normal_s (narrow a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Ha Hb. exact Hb.
+  Qed.
   (** Assignment normalizes its new rows. *)
   Lemma normal_assign : forall x e s, normal_s s -> normal_s (assign x e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [|P] Hnormal; [exact I|]. unfold assign.
+    destruct (F.lin_of e) as [[f wr]|]; [destruct wr|].
+    - apply assign_linear_nodup.
+    - apply havoc_rows_nodup.
+    - apply havoc_rows_nodup.
+  Qed.
   (** Havoc keeps rows free of repeated keys. *)
   Lemma normal_havoc : forall x s, normal_s s -> normal_s (havoc x s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|P] Hnormal; [exact I|]. apply havoc_rows_nodup.
+  Qed.
   (** Assumption normalizes the rows it adds. *)
   Lemma normal_assume : forall g es s, normal_s s -> normal_s (assume g es s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [|P] Hnormal; [exact I|]. apply Forall_app. split.
+    - apply assume_rows_nodup.
+    - exact Hnormal.
+  Qed.
   (** This widening has no repeated threshold search. *)
   Lemma F_wunits : forall s, wunits s = 0.
   Proof.
@@ -3969,7 +4158,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
   (** Elimination keeps rows free of repeated keys. *)
   Lemma normal_fm_elim : forall x P, normal P -> normal (map row_of (fm_elim x P)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x P Hnormal. apply Forall_map. apply fm_elim_nodup.
+  Qed.
   Lemma fm_complete_Q : forall P c, lrel c = RLe -> entail_cert P c = None ->
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
   Proof.
@@ -4035,7 +4226,23 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (entails a (LCons _ (map (fun p => (fst p, (- snd p)%Z)) (lhs r)) RLe
             (- rhs r)%Z))
       end) b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold leb.
+    assert (Hhead : forall r, keep_row a r =
+      match lrel r with
+      | RLe => entails a r
+      | REq => andb (entails a (LCons _ (lhs r) RLe (rhs r)))
+          (entails a (LCons _ (map (fun p => (fst p, (- snd p)%Z)) (lhs r)) RLe
+            (- rhs r)%Z))
+      end).
+    { intro r. unfold keep_row. destruct (lrel r); [|reflexivity].
+      assert (Hnegative : poly_scale_coef (-1)%Z (lhs r) =
+        map (fun p => (fst p, (- snd p)%Z)) (lhs r)).
+      { unfold poly_scale_coef. apply map_ext. intros [x z]. cbn [fst snd]. f_equal. }
+      unfold poly_negate. rewrite Hnegative. reflexivity. }
+    induction b as [|r b IH]; cbn [forallb]; [reflexivity|].
+    now rewrite Hhead, IH.
+  Qed.
   (** State size charges all stored numeric data. *)
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
