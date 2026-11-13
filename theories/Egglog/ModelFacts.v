@@ -643,4 +643,15 @@ Proof.
     + rewrite PTrie.get_set_other by congruence. apply IH.
 Qed.
 
+(** A successful declaration lookup lies below the stored maximum function name. *)
+Lemma lookup_kind_name_bound : forall ds f o, lookup_kind ds f = Some o ->
+  (f <= fold_right (fun d bound => Pos.max (name d) bound) 1%positive ds)%positive.
+Proof.
+  induction ds as [|d ds IH]; intros f o Hlookup;
+    cbn [lookup_kind fold_right] in Hlookup |- *; [discriminate|].
+  destruct (Pos.eqb_spec (name d) f) as [Heq|Hneq].
+  - subst f. apply Pos.le_max_l.
+  - eapply Pos.le_trans; [eapply IH; exact Hlookup|apply Pos.le_max_r].
+Qed.
+
 End DeclarationLookupFacts.
