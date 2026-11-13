@@ -3,7 +3,7 @@
     Fourier-Motzkin elimination tracks combinations of the input constraints.
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
-From Stdlib Require Import List ZArith NArith QArith.
+From Stdlib Require Import List ZArith NArith QArith Bool Lia Ring.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -432,19 +432,124 @@ End PolyCode.
 Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     (F : LINEARIZE X L N) (C : LINCERT X) <: POLY X L N F C.
   Include PolyCode X L F C.
-  (* STUB-CODE *)
   Definition wrank (_ : wparam) (s : t) : nat :=
     match s with Unreached => 0 | Reached P => length P end.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
+
+  (** Scaling every stored occurrence scales its integer evaluation. *)
+  Lemma eval_coef_scale : forall (v : X.t -> Z) a xs,
+    eval_coef v (poly_scale_coef a xs) = (a * eval_coef v xs)%Z.
+  Proof.
+    intros v a xs. unfold eval_coef, poly_scale_coef.
+    induction xs as [|[x b] xs IH]; cbn [map fold_right fst snd].
+    - ring.
+    - rewrite IH. ring.
+  Qed.
+
+  (** A returned candidate passes the checker and never requests an integer cut. *)
+  Lemma candidate_returned : forall P c r k, candidate P c r = Some k ->
+    C.check_entails P c k = true /\ cut k = false.
+  Proof.
+    intros P c r k Hresult. unfold candidate in Hresult.
+    destruct (poly_contradiction r); [| discriminate].
+    destruct (poly_multipliers r) as [|sc ms]; [discriminate |].
+    destruct (C.check_entails P c
+      (Cert ms (if C.check_empty P ms then 1%Z else sc) false)) eqn:Hcheck;
+      [| discriminate].
+    injection Hresult as Hsame. subst k. split; [exact Hcheck | reflexivity].
+  Qed.
+
+  (** Searching candidates preserves their checker result and cut flag. *)
+  Lemma find_certificate_returned : forall P c rs k, find_certificate P c rs = Some k ->
+    C.check_entails P c k = true /\ cut k = false.
+  Proof.
+    intros P c rs. induction rs as [|r rs IH]; intros k Hresult;
+      cbn [find_certificate] in Hresult; [discriminate |].
+    destruct (candidate P c r) as [j|] eqn:Hcandidate.
+    - injection Hresult as Hsame. subst j. now apply candidate_returned with (r := r).
+    - now apply IH.
+  Qed.
+
+  (** Every produced entailment certificate is checked and is valid without cuts. *)
+  Lemma entail_cert_returned : forall P c k, entail_cert P c = Some k ->
+    C.check_entails P c k = true /\ cut k = false.
+  Proof.
+    intros P c k Hresult. unfold entail_cert in Hresult.
+    now apply find_certificate_returned in Hresult.
+  Qed.
+
+  (** Successful row inclusion retains every integer model of its input. *)
+  Lemma entails_row_sound : forall P r v,
+    entails_row P r = true -> Forall (sat v) P -> sat v r.
+  Proof.
+    intros P r v Hcheck Hmodels. unfold entails_row in Hcheck.
+    destruct (entail_cert P r) as [k|]; [| discriminate].
+    exact (C.check_entails_sound P r k Hcheck v Hmodels).
+  Qed.
+
+  (** Splitting an equality into two inequalities preserves its meaning. *)
+  Lemma keep_row_sound : forall P r v,
+    keep_row P r = true -> Forall (sat v) P -> sat v r.
+  Proof.
+    intros P r v Hkeep Hmodels. unfold keep_row in Hkeep.
+    destruct (lrel r) eqn:Hrel.
+    - apply andb_true_iff in Hkeep as [Hupper Hlower].
+      pose proof (entails_row_sound P _ v Hupper Hmodels) as Hle.
+      pose proof (entails_row_sound P _ v Hlower Hmodels) as Hge.
+      unfold sat, poly_negate in Hle, Hge. cbn [lhs lrel rhs] in Hle, Hge.
+      rewrite eval_coef_scale in Hge. unfold sat. rewrite Hrel. lia.
+    - exact (entails_row_sound P r v Hkeep Hmodels).
+  Qed.
+
+  (** A state recognized as bottom has no integer model. *)
+  Lemma is_bot_sound : forall s v, is_bot s = true -> ~ ngamma s v.
+  Proof.
+    intros [|P] v Hbot Hmodels; [exact Hmodels |].
+    pose proof (entails_row_sound P _ v Hbot Hmodels) as Hfalse.
+    cbn [sat lrel lhs rhs eval_coef fold_right] in Hfalse. lia.
+  Qed.
+
+  (** A coefficient list that omits the updated key keeps its evaluation. *)
+  Lemma eval_coef_havoc : forall x st c xs,
+    forallb (fun p => negb (X.eqb (fst p) x)) xs = true ->
+    eval_coef (fun y => N.num (upd X.eqb st x c y)) xs =
+      eval_coef (fun y => N.num (st y)) xs.
+  Proof.
+    intros x st c xs. unfold eval_coef.
+    induction xs as [|[y a] xs IH]; intro Hfree; [reflexivity |].
+    cbn [forallb fst] in Hfree. apply andb_true_iff in Hfree as [Hhead Htail].
+    apply negb_true_iff in Hhead.
+    change (a * N.num (if X.eqb y x then c else st y) +
+      eval_coef (fun z => N.num (upd X.eqb st x c z)) xs =
+      a * N.num (st y) + eval_coef (fun z => N.num (st z)) xs)%Z.
+    rewrite Hhead. f_equal. exact (IH Htail).
+  Qed.
+
+  (** Checked projection rows hold after any replacement of the omitted variable. *)
+  Lemma checked_projection_sound : forall P x r st c,
+    checked_projection P x r = true -> Forall (sat (fun y => N.num (st y))) P ->
+    sat (fun y => N.num (upd X.eqb st x c y)) (row_of r).
+  Proof.
+    intros P x r st c Hchecked Hmodels. unfold checked_projection in Hchecked.
+    apply andb_true_iff in Hchecked as [Hfree Hcheck].
+    pose proof (C.check_entails_sound P (row_of r) (Cert (mults_of r) 1 false)
+      Hcheck (fun y => N.num (st y)) Hmodels) as Hsat.
+    unfold sat in *. rewrite (eval_coef_havoc x st c (lhs (row_of r)) Hfree).
+    exact Hsat.
+  Qed.
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof. Admitted. (* STUB *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct a; reflexivity.
+  Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
@@ -452,7 +557,9 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    destruct a; reflexivity.
+  Qed.
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
   Proof. Admitted. (* STUB *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
@@ -468,18 +575,36 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
   Proof. Admitted. (* STUB *)
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|P] [|Q] v Hle Hmodels; cbn [ngamma] in *; try contradiction.
+    - exact (is_bot_sound (Reached P) v Hle Hmodels).
+    - apply Forall_forall. intros r Hin. apply keep_row_sound with (P := P).
+      + exact (proj1 (forallb_forall _ _) Hle r Hin).
+      + exact Hmodels.
+  Qed.
   Lemma ngamma_bot : forall v, ~ ngamma bot v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hfalse. exact Hfalse.
+  Qed.
   Lemma ngamma_top : forall v, ngamma top v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro v. constructor.
+  Qed.
   Lemma assign_sound : forall x e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     ngamma (assign x e s) (fun y => N.num (upd X.eqb st x c y)).
   Proof. Admitted. (* STUB *)
   Lemma havoc_sound : forall x s st c, ngamma s (fun y => N.num (st y)) ->
     ngamma (havoc x s) (fun y => N.num (upd X.eqb st x c y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [|P] st c Hmodels; [contradiction |].
+    change (Forall (sat (fun y => N.num (upd X.eqb st x c y)))
+      (map row_of (filter (checked_projection P x) (fm_elim x P)))).
+    apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [q [Hsame Hin]]. subst r.
+    apply filter_In in Hin as [_ Hchecked].
+    exact (checked_projection_sound P x q st c Hchecked Hmodels).
+  Qed.
   Lemma assume_sound : forall g es s st cs,
     ngamma s (fun y => N.num (st y)) -> eval_terms L.eval st es = Some cs ->
     L.holds g cs -> ngamma (assume g es s) (fun y => N.num (st y)).
@@ -489,9 +614,13 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
   Proof. Admitted. (* STUB *)
   Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P v. reflexivity.
+  Qed.
   Lemma ngamma_unreached : forall v, ~ ngamma Unreached v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v Hfalse. exact Hfalse.
+  Qed.
 End Poly.
 
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
@@ -702,10 +831,14 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma entail_cert_checks : forall P c k,
     entail_cert P c = Some k -> C.check_entails P c k = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k Hresult. exact (proj1 (entail_cert_returned P c k Hresult)).
+  Qed.
   (** Generated entailment certificates use rationally valid combinations. *)
   Lemma entail_cert_nocut : forall P c k, entail_cert P c = Some k -> cut k = false.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k Hresult. exact (proj2 (entail_cert_returned P c k Hresult)).
+  Qed.
   (** Elimination keeps rows free of repeated keys. *)
   Lemma normal_fm_elim : forall x P, normal P -> normal (map row_of (fm_elim x P)).
   Proof. Admitted. (* STUB *)
