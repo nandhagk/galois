@@ -4640,6 +4640,26 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply bound_meet_below_right.
   Qed.
 
+  Lemma increment_below_first_twin : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (twin_path d (entry m a i) (entry m j (flip j))
+        (entry m (flip i) b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    apply bound_meet_below_right.
+  Qed.
+
+  Lemma increment_below_second_twin : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (twin_path d (entry m a (flip j)) (entry m (flip i) i)
+        (entry m j b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    apply bound_meet_below_right.
+  Qed.
+
   (** A successful matrix scan checks every stored row label. *)
   Lemma matrix_ok_row : forall m k row, dbm_wf m ->
     matrix_ok m = true -> M.get k m = Some row -> nonnegative k m = true.
