@@ -3288,10 +3288,194 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       lia.
     - apply ell_relax.
   Qed.
+  Lemma path_key_dec : forall x y : K.t, {x = y} + {x <> y}.
+  Proof.
+    intros x y. destruct (K.eqb_spec x y); [now left|now right].
+  Defined.
+
+  (** The executable seed is the abstract zero-diagonal insertion. *)
+  Lemma entry_path_seed : forall k m i j,
+    entry (put k k (lower_bound 0%Z (entry m k k)) m) i j =
+      RelationalPathBounds.seed path_key_dec (entry m) k i j.
+  Proof.
+    intros k m i j. rewrite entry_put. unfold RelationalPathBounds.seed.
+    destruct (K.eqb_spec i k) as [Hi|Hi];
+      destruct (path_key_dec i k) as [Hi'|Hi']; try contradiction.
+    - subst i. destruct (K.eqb_spec j k) as [Hj|Hj];
+        destruct (path_key_dec j k) as [Hj'|Hj']; try contradiction.
+      + subst j. destruct (entry m k k); reflexivity.
+      + reflexivity.
+    - reflexivity.
+  Qed.
+
+  Lemma entry_relax_round : forall k m i j,
+    entry (relax_round k m) i j =
+      match entry m i k with
+      | Some a => via_bound a (entry m i j) (entry m k j)
+      | None => entry m i j
+      end.
+  Proof.
+    intros k m i j. rewrite <- !raw_entry_get, raw_entry_relax. reflexivity.
+  Qed.
+
+  (** Sparse merging agrees pointwise with the abstract Floyd step. *)
+  Lemma entry_path_floyd : forall k m i j,
+    entry (relax_round k m) i j = RelationalPathBounds.floyd (entry m) k i j.
+  Proof.
+    intros k m i j. rewrite entry_relax_round. unfold RelationalPathBounds.floyd.
+    destruct (entry m i k), (entry m i j), (entry m k j);
+      cbn [via_bound lower_bound RelationalPathBounds.minimum RelationalPathBounds.plus];
+      try reflexivity. f_equal. apply Z.min_comm.
+  Qed.
+
+  Lemma entry_fw_present : forall k m, pivot_present k m = true -> forall i j,
+    entry (fw_round k m) i j =
+      RelationalPathBounds.floyd
+        (RelationalPathBounds.seed path_key_dec (entry m) k) k i j.
+  Proof.
+    intros k m Hpresent i j. unfold fw_round. rewrite Hpresent.
+    change (entry (relax_round k (put k k (lower_bound 0%Z (entry m k k)) m)) i j =
+      RelationalPathBounds.floyd
+        (RelationalPathBounds.seed path_key_dec (entry m) k) k i j).
+    rewrite entry_path_floyd.
+    unfold RelationalPathBounds.floyd. now rewrite !entry_path_seed.
+  Qed.
+
+  (** Both endpoints of a finite entry are in the raw code support. *)
+  Lemma entry_source_support : forall m i j d, entry m i j = Some d ->
+    In (K.encode i) (support m).
+  Proof.
+    intros m i j d Hentry. unfold entry in Hentry.
+    destruct (M.get i m) as [row|] eqn:Hrow; [|discriminate].
+    apply support_find. left. rewrite <- (M.get_find (M.t Z) i m), Hrow. discriminate.
+  Qed.
+
+  Lemma entry_target_support : forall m i j d, entry m i j = Some d ->
+    In (K.encode j) (support m).
+  Proof.
+    intros m i j d Hentry. apply support_find. right. exists (K.encode i).
+    rewrite raw_entry_get, Hentry. discriminate.
+  Qed.
+
+  Lemma entry_fw_absent : forall k m, pivot_present k m = false -> forall i j,
+    entry (fw_round k m) i j = entry m i j.
+  Proof.
+    intros k m Habsent i j.
+    assert (Hcolumn : entry m i k = None).
+    { destruct (entry m i k) as [d|] eqn:Hentry; [|reflexivity].
+      pose proof (entry_target_support m i k d Hentry) as Hsupport.
+      apply pivot_present_support in Hsupport. congruence. }
+    unfold fw_round. rewrite Habsent.
+    change (entry (relax_round k m) i j = entry m i j).
+    now rewrite entry_relax_round, Hcolumn.
+  Qed.
+
+  (** A successful actual round extends the processed-path invariant. *)
+  Lemma fw_round_path_invariant : forall initial m ps k,
+    RelationalPathBounds.invariant (entry initial) (entry m) ps ->
+    (forall d, entry (fw_round k m) k k = Some d -> (0 <= d)%Z) ->
+    exists ps', RelationalPathBounds.invariant (entry initial) (entry (fw_round k m)) ps'.
+  Proof.
+    intros initial m ps k Hinv Hnonnegative.
+    destruct (pivot_present k m) eqn:Hpresent.
+    - exists (k :: ps). eapply RelationalPathBounds.invariant_ext.
+      + intros i j. symmetry. now apply entry_fw_present.
+      + apply RelationalPathBounds.invariant_successful_round; [exact Hinv|].
+        intros d Hdiag. apply Hnonnegative. now rewrite (entry_fw_present k m Hpresent).
+    - exists ps. eapply RelationalPathBounds.invariant_ext; [|exact Hinv].
+      intros i j. symmetry. now apply entry_fw_absent.
+  Qed.
+
+  (** Every recorded state precedes the first rejected pivot cycle. *)
+  Lemma fw_trace_path_invariant : forall ks initial m ps k a,
+    dbm_wf m -> RelationalPathBounds.invariant (entry initial) (entry m) ps ->
+    In (k, a) (fw_trace ks m) -> dbm_wf a /\
+      exists ps', RelationalPathBounds.invariant (entry initial) (entry a) ps'.
+  Proof.
+    induction ks as [|p ks IH]; intros initial m ps k a Hwf Hinv Hin.
+    - contradiction.
+    - cbn [fw_trace] in Hin. destruct Hin as [Heq|Hin].
+      + inversion Heq; subst k a. split; [exact Hwf|now exists ps].
+      + assert (Hnext_wf : dbm_wf (fw_round p m)) by (now apply wf_fw_round).
+        destruct (entry (fw_round p m) p p) as [d|] eqn:Hdiag.
+        * destruct (d <? 0)%Z eqn:Hnegative; [contradiction|].
+          apply Z.ltb_ge in Hnegative.
+          assert (Hsuccess : forall z, entry (fw_round p m) p p = Some z -> (0 <= z)%Z).
+          { intros z Hz. rewrite Hdiag in Hz. inversion Hz. lia. }
+          destruct (fw_round_path_invariant initial m ps p Hinv Hsuccess) as [ps' Hnext].
+          exact (IH initial (fw_round p m) ps' k a Hnext_wf Hnext Hin).
+        * assert (Hsuccess : forall z, entry (fw_round p m) p p = Some z -> (0 <= z)%Z).
+          { intros z Hz. rewrite Hdiag in Hz. discriminate. }
+          destruct (fw_round_path_invariant initial m ps p Hinv Hsuccess) as [ps' Hnext].
+          exact (IH initial (fw_round p m) ps' k a Hnext_wf Hnext Hin).
+  Qed.
+
+  (** A minimum path has no more original edges than the initial support has codes. *)
+  Lemma path_invariant_entry_bits : forall initial current ps,
+    RelationalPathBounds.invariant (entry initial) current ps ->
+    forall i j d, current i j = Some d ->
+      Z.size_nat d <= ell initial + Nat.log2 (supp initial) + 1.
+  Proof.
+    intros initial current ps [Hbelow Hclosed Hzero Hpath] i j d Hentry.
+    destruct (Hpath i j d Hentry) as [[Heq Hz]|[ks [Hks Hchain]]].
+    - subst d. cbn [Z.size_nat]. lia.
+    - destruct (RelationalPathBounds.simple_minimum_chain K.t path_key_dec
+        (entry initial) current ps Hbelow Hclosed Hzero ks i j d Hks Hentry Hchain)
+        as [shortened [Hincl [Hnodup Hvalue]]].
+      assert (Hlength : length (i :: shortened) <= supp initial).
+      { unfold supp. rewrite <- (length_map K.encode (i :: shortened)).
+        apply NoDup_incl_length; [now apply encoded_keys_nodup|].
+        intros code Hcode. apply in_map_iff in Hcode.
+        destruct Hcode as [x [Hcode Hx]]. subst code.
+        eapply (RelationalPathBounds.chain_sources K.t (entry initial)
+          (fun q => In (K.encode q) (support initial))).
+        - intros p q z Hz. now apply (entry_source_support initial p q z).
+        - exact Hvalue.
+        - exact Hx. }
+      assert (Hedge : forall p q z, entry initial p q = Some z ->
+        Z.abs_nat z <= 2 ^ ell initial).
+      { intros p q z Hz. apply Nat.lt_le_incl. apply zbits_abs_bound.
+        apply (ell_entry initial (K.encode p) (K.encode q) z).
+        now rewrite raw_entry_get. }
+      pose proof (RelationalPathBounds.chain_abs K.t (entry initial)
+        (2 ^ ell initial) Hedge shortened i j d Hvalue) as Habs.
+      assert (Hpositive : 0 < supp initial) by (cbn [length] in Hlength; lia).
+      pose proof (Nat.log2_spec (supp initial) Hpositive) as [_ Hlog].
+      assert (Hpower : 0 < 2 ^ ell initial).
+      { pose proof (Nat.pow_nonzero 2 (ell initial) ltac:(lia)). lia. }
+      apply zbits_least.
+      replace (ell initial + Nat.log2 (supp initial) + 1) with
+        (S (Nat.log2 (supp initial)) + ell initial) by lia.
+      rewrite Nat.pow_add_r. cbn [length] in Hlength.
+      eapply Nat.le_lt_trans; [exact Habs|].
+      apply Nat.mul_lt_mono_pos_r; [exact Hpower|lia].
+  Qed.
+
+  (** Well-formed raw entries have source and target keys. *)
+  Lemma wf_raw_entry_keys : forall m p q d, dbm_wf m -> raw_entry m p q = Some d ->
+    exists i j, K.encode i = p /\ K.encode j = q /\ entry m i j = Some d.
+  Proof.
+    intros m p q d [Houter Hrows] Hraw.
+    unfold raw_entry in Hraw. destruct (M.find p m) as [row|] eqn:Hrow;
+      cbn [row_of] in Hraw.
+    - destruct (M.wf_find (M.t Z) m p row Houter Hrow) as [i Hi].
+      destruct (M.wf_find Z row q d (Hrows p row Hrow) Hraw) as [j Hj].
+      exists i, j. split; [exact Hi|]. split; [exact Hj|].
+      rewrite <- raw_entry_get, Hi, Hj. unfold raw_entry. now rewrite Hrow.
+    - rewrite M.find_empty in Hraw. discriminate.
+  Qed.
+
   Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
     In (k, a) (fw_trace ks m) ->
     ell a <= ell m + Nat.log2 (supp m) + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ks m k a Hwf Hin.
+    destruct (fw_trace_path_invariant ks m m nil k a Hwf
+      (RelationalPathBounds.invariant_initial K.t (entry m)) Hin) as [Hawf [ps Hpath]].
+    apply ell_bound. intros p q d Hraw.
+    destruct (wf_raw_entry_keys a p q d Hawf Hraw) as [i [j [Hi [Hj Hentry]]]].
+    exact (path_invariant_entry_bits m (entry a) ps Hpath i j d Hentry).
+  Qed.
   Lemma T0_fw : forall m, dbm_wf m ->
     (T_fw m <= k_octagon * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
       fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
