@@ -1102,9 +1102,62 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       unfold V.bits in Hencode. nia.
   Qed.
 
+  (** A fixed navigation charge fits the shared coefficient after normalizing its widths. *)
+  Lemma navigation_budget : forall trie_cost key_cost bits,
+    (1 <= bits ->
+      bits + 16 + 2 * trie_cost * bits + (key_cost + 1) * bits <=
+      1024 * (trie_cost + key_cost + 1) * bits)%N.
+  Proof.
+    intros trie_cost key_cost bits Hbits.
+    replace (bits + 16 + 2 * trie_cost * bits + (key_cost + 1) * bits)%N
+      with (16 + 2 * bits + 2 * (trie_cost * bits) + key_cost * bits)%N by ring.
+    replace (1024 * (trie_cost + key_cost + 1) * bits)%N
+      with (1024 * bits + 1024 * (trie_cost * bits) +
+        1024 * (key_cost * bits))%N by ring.
+    lia.
+  Qed.
+
   Lemma T_child_le : forall ix n c,
     (T_child ix n c <= c_ix * N.of_nat (width ix [c] + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix n c.
+    pose proof (T_node_guard_le ix n) as Hguard.
+    pose proof (node_bits_width ix [c] (next ix) (Pos.le_refl _)) as Hcounter.
+    set (bits := N.of_nat (width ix [c] + 1)).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hguard' : (T_next ix + Pos.T_ltb (next ix) n <= bits + 4)%N)
+      by (unfold bits; lia).
+    pose proof (navigation_budget PTrieT.c_trie V.c_key bits Hbits) as Hbudget.
+    unfold c_ix. fold bits. time_unfold T_child.
+    destruct (Pos.ltb (next ix) n) eqn:Hrange.
+    - clear Hguard Hcounter. clearbody bits.
+      time_cbn. set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost. lia.
+    - apply Pos.ltb_ge in Hrange.
+      pose proof (node_bits_width ix [c] n Hrange) as Hnode.
+      pose proof (cell_bits_width ix c) as Hcell.
+      pose proof (T_read_node_le ix n) as Hread.
+      pose proof (T_encode_cell_le c) as Hencode.
+      pose proof (PTrieT.T_get_le _ (encode_cell c)
+        (node_edges (read_node ix n))) as Hget.
+      assert (Hcode : Pos.size_nat (encode_cell c) = cell_bits V.encode c)
+        by (destruct c; reflexivity).
+      rewrite Hcode in Hget.
+      assert (Hread' : (T_read_node ix n <= PTrieT.c_trie * bits + 2)%N).
+      { eapply N.le_trans; [exact Hread|].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hencode' : (T_encode_cell c <= (V.c_key + 1) * bits)%N).
+      { eapply N.le_trans; [exact Hencode|].
+        apply N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hget' : (PTrieT.T_get (encode_cell c)
+        (node_edges (read_node ix n)) <= PTrieT.c_trie * bits)%N).
+      { eapply N.le_trans; [exact Hget|].
+        apply N.mul_le_mono_l. unfold bits. lia. }
+      clear Hguard Hcounter Hnode Hcell Hread Hencode Hget Hcode.
+      clearbody bits.
+      set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost.
+      destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+        time_unfold @T_node_edges; try time_unfold @T_edge_child; time_cbn; lia.
+  Qed.
 
   Lemma T_children_le : forall a ix n, wf a ix ->
     (T_children ix n <= c_ix * N.of_nat (N.to_nat (degree ix n) + 1) *
@@ -1113,7 +1166,29 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
 
   Lemma T_degree_le : forall ix n,
     (T_degree ix n <= c_ix * N.of_nat (width ix [] + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix n.
+    pose proof (T_node_guard_le ix n) as Hguard.
+    pose proof (node_bits_width ix [] (next ix) (Pos.le_refl _)) as Hcounter.
+    set (bits := N.of_nat (width ix [] + 1)).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hguard' : (T_next ix + Pos.T_ltb (next ix) n <= bits + 4)%N)
+      by (unfold bits; lia).
+    pose proof (navigation_budget PTrieT.c_trie V.c_key bits Hbits) as Hbudget.
+    unfold c_ix. fold bits. time_unfold T_degree.
+    destruct (Pos.ltb (next ix) n) eqn:Hrange.
+    - clear Hguard Hcounter. clearbody bits.
+      time_cbn. set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost. lia.
+    - apply Pos.ltb_ge in Hrange.
+      pose proof (node_bits_width ix [] n Hrange) as Hnode.
+      pose proof (T_read_node_le ix n) as Hread.
+      assert (Hread' : (T_read_node ix n <= PTrieT.c_trie * bits + 2)%N).
+      { eapply N.le_trans; [exact Hread|].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      clear Hguard Hcounter Hnode Hread. clearbody bits.
+      set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost.
+      time_unfold @T_node_degree. time_cbn. lia.
+  Qed.
 
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
