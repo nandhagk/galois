@@ -1493,11 +1493,42 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db f k o _. reflexivity.
   Qed.
 
+  (** Every stored row has a declared function within the stored name bound. *)
+  Lemma row_name_bound : forall db f k o, wf db -> row (view db) f k o ->
+    (f <= runtime_max_name (db_runtime db))%positive.
+  Proof.
+    intros db f k o Hwf Hrow.
+    destruct (kind (view db) f) as [output |] eqn:Hkind.
+    - exact (wf_kind_bound db Hwf f output Hkind).
+    - pose proof (wf_row_kind db Hwf f k o Hrow) as Hshape.
+      rewrite Hkind in Hshape. destruct o as [[i | v] |]; contradiction.
+  Qed.
+
+  (** A function above the stored name bound cannot have a row. *)
+  Lemma row_get_outside : forall db f k, wf db ->
+    (runtime_max_name (db_runtime db) < f)%positive -> row_get f k db = None.
+  Proof.
+    intros db f k Hwf Houtside.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| reflexivity].
+    pose proof (row_name_bound db f k o Hwf Hrow) as Hbound. exfalso. lia.
+  Qed.
+
   (** Lookup canonicalizes its query and keeps the view and invariant. *)
   Lemma lookup_spec : forall f k db, wf db ->
     fst (lookup f k db) = old db f (map (canon db) k) /\
     view (snd (lookup f k db)) = view db /\ wf (snd (lookup f k db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros f k db Hwf. unfold lookup, old.
+    rewrite (normal_key_correct db k Hwf).
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f) eqn:Hcompare;
+      cbn [fst snd].
+    - split; [reflexivity |]. split; [reflexivity | exact Hwf].
+    - split.
+      + apply Pos.compare_lt_iff in Hcompare. symmetry.
+        exact (row_get_outside db f (map (canon db) k) Hwf Hcompare).
+      + split; [reflexivity | exact Hwf].
+    - split; [reflexivity |]. split; [reflexivity | exact Hwf].
+  Qed.
 
   (** Initialization records declarations and slots and starts empty. *)
   Lemma init_view : forall ds sl f k o i j,
@@ -1505,7 +1536,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (same (view (init ds sl)) i j <-> i = j) /\
     kind (view (init ds sl)) f = lookup_kind ds f /\
     slots (init ds sl) = sl /\ ids (init ds sl) = 0%N /\ pending (init ds sl) = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl f k o i j. split.
+    - change (row_get f k (init ds sl) = Some o <-> False).
+      unfold row_get. cbn [init db_runtime runtime_rows].
+      rewrite PTrie.get_empty. cbn. split; [discriminate | contradiction].
+    - split; [apply equality_log_empty |]. split.
+      + change (PTrieCode.get f (database_kinds ds) = lookup_kind ds f).
+        unfold database_kinds. apply declaration_trie_lookup.
+      + repeat split; reflexivity.
+  Qed.
 
   (** Insertion keeps layout and allocation and queues at most one loser. *)
   Lemma layout_put : forall f k o db, wf db ->
