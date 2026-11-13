@@ -179,6 +179,94 @@ Module ConcreteUnionFindFacts.
   Qed.
 End ConcreteUnionFindFacts.
 
+Section ConstructorClosureFacts.
+Context {V : Type}.
+
+(** Symmetric identifier relations induce symmetric cell and tuple relations. *)
+Lemma cell_rel_symmetric : forall R,
+  (forall i j, R i j -> R j i) ->
+  forall (c d : cell V), cell_rel R c d -> cell_rel R d c.
+Proof.
+  intros R Hsym c d Hrelated. destruct Hrelated; constructor; auto.
+Qed.
+
+Lemma key_rel_symmetric : forall R,
+  (forall i j, R i j -> R j i) ->
+  forall (left right : list (cell V)),
+  Forall2 (cell_rel R) left right -> Forall2 (cell_rel R) right left.
+Proof.
+  intros R Hsym left right Hrelated. induction Hrelated; constructor; auto.
+  now apply cell_rel_symmetric.
+Qed.
+
+(** Transitive identifier relations compose without changing value payloads. *)
+Lemma cell_rel_transitive : forall R,
+  (forall i j k, R i j -> R j k -> R i k) ->
+  forall (a b c : cell V), cell_rel R a b -> cell_rel R b c -> cell_rel R a c.
+Proof.
+  intros R Htrans a b c Hab Hbc. destruct Hab; inversion Hbc; subst; constructor.
+  eauto.
+Qed.
+
+Lemma key_rel_transitive : forall R,
+  (forall i j k, R i j -> R j k -> R i k) ->
+  forall (left middle right : list (cell V)),
+  Forall2 (cell_rel R) left middle -> Forall2 (cell_rel R) middle right ->
+  Forall2 (cell_rel R) left right.
+Proof.
+  intros R Htrans left middle right Hleft. revert right.
+  induction Hleft; intros right Hright; inversion Hright; subst; constructor.
+  - eapply cell_rel_transitive; eauto.
+  - now apply IHHleft.
+Qed.
+
+(** Any symmetric transitive relation closed under stored constructors contains congruence. *)
+Lemma fd_congruence_minimal : forall (w : view (V := V)) R,
+  (forall i j, same w i j -> R i j) ->
+  (forall f k1 k2 i j, row w f k1 (Some (Id i)) ->
+    row w f k2 (Some (Id j)) -> Forall2 (cell_rel R) k1 k2 -> R i j) ->
+  (forall i j, R i j -> R j i) ->
+  (forall i j k, R i j -> R j k -> R i k) ->
+  forall i j, fd_congruence w i j -> R i j.
+Proof.
+  intros w R Hsame Hfd Hsym Htrans i j Hcong.
+  induction Hcong as
+    [i j Hrelated | f k1 k2 i j Hrow1 Hrow2 Hcells IHcells |
+     i j Hrelated IH | i j k Hleft IHleft Hright IHright].
+  - now apply Hsame.
+  - apply (Hfd f k1 k2 i j Hrow1 Hrow2).
+    clear Hrow1 Hrow2.
+    induction IHcells as [| c d ks ds Hr Hhead Htail Hall IH]; constructor.
+    + destruct Hhead; constructor; assumption.
+    + exact IH.
+  - now apply Hsym.
+  - eauto.
+Qed.
+
+(** Constructor rows may move to related keys and outputs while retaining their closure. *)
+Lemma fd_congruence_rows_transfer : forall (before after : view (V := V)),
+  (forall i j, same before i j -> fd_congruence after i j) ->
+  (forall f key i, row before f key (Some (Id i)) ->
+    exists key' i', row after f key' (Some (Id i')) /\
+      Forall2 (cell_rel (fd_congruence after)) key key' /\ fd_congruence after i i') ->
+  forall i j, fd_congruence before i j -> fd_congruence after i j.
+Proof.
+  intros before after Hsame Hrows. apply fd_congruence_minimal.
+  - exact Hsame.
+  - intros f k1 k2 i j Hrow1 Hrow2 Hkeys.
+    destruct (Hrows f k1 i Hrow1) as [k1' [i' [Hrow1' [Hkey1 Hout1]]]].
+    destruct (Hrows f k2 j Hrow2) as [k2' [j' [Hrow2' [Hkey2 Hout2]]]].
+    eapply cong_trans; [exact Hout1 |].
+    eapply cong_trans; [| exact (cong_sym after j j' Hout2)].
+    eapply cong_fd; [exact Hrow1' | exact Hrow2' |].
+    eapply key_rel_transitive; [exact (cong_trans after) | | exact Hkey2].
+    eapply key_rel_transitive; [exact (cong_trans after) | | exact Hkeys].
+    apply key_rel_symmetric; [exact (cong_sym after) | exact Hkey1].
+  - exact (cong_sym after).
+  - exact (cong_trans after).
+Qed.
+End ConstructorClosureFacts.
+
 Section ModelFacts.
 Context {V : Type} (prim : positive -> list V -> option V)
   (merge : positive -> V -> V -> V).
