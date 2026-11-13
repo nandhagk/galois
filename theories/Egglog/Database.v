@@ -8,7 +8,7 @@ From Stdlib Require Import List PArith NArith PeanoNat Bool Lia Relations.Relati
   Sorting.Permutation Sorting.Sorted.
 From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Code Loop UnionFind Trie.
-From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig.
+From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig ModelFacts.
 
 Import List.ListNotations.
 
@@ -1468,7 +1468,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Congruent cells have equal denotations in every satisfying model. *)
   Lemma F17_cong_den : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> cong db i j -> nu i = nu j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db i j _ Hsat Hcong.
+    exact (fd_congruence_den V.merge M nu (view db) i j Hsat Hcong).
+  Qed.
 
   (** Nonempty output groups keep their model meaning through the actual merge fold. *)
   Lemma F18_merged_holds : forall (M : model (V := V.t)) nu db f k os,
