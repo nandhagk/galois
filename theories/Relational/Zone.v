@@ -115,6 +115,79 @@ Proof.
   unfold wrap_into. rewrite Z.mod_small by lia. lia.
 Qed.
 
+(** Finite endpoints are measured by their absolute values, independently of sign. *)
+Definition rel_bound_abs (upper : nat) (b : bnd) : Prop :=
+  match b with Fin z => Z.abs_nat z < upper | _ => True end.
+
+Definition rel_bounds_abs (upper : nat) (bounds : bnd * bnd) : Prop :=
+  rel_bound_abs upper (fst bounds) /\ rel_bound_abs upper (snd bounds).
+
+Lemma rel_abs_add : forall x y, Z.abs_nat (x + y)%Z <= Z.abs_nat x + Z.abs_nat y.
+Proof.
+  intros x y. apply (proj2 (Nat2Z.inj_le _ _)).
+  rewrite Nat2Z.inj_add, !Zabs2Nat.id_abs. apply Z.abs_triangle.
+Qed.
+
+(** Endpoint addition adds the two magnitude bounds. *)
+Lemma rel_bounds_abs_add : forall a b upper_a upper_b,
+  rel_bounds_abs upper_a a -> rel_bounds_abs upper_b b ->
+  rel_bounds_abs (upper_a + upper_b) (rel_add_bounds a b).
+Proof.
+  intros [al ah] [bl bh] upper_a upper_b Ha Hb.
+  unfold rel_add_bounds, rel_bounds_abs, rel_bound_abs in *.
+  destruct al, ah, bl, bh; cbn [fst snd] in *;
+    intuition (eapply Nat.le_lt_trans; [apply rel_abs_add|lia]).
+Qed.
+
+(** Scalar multiplication multiplies magnitude bounds, with zero handled exactly. *)
+Lemma rel_bounds_abs_scale : forall c bounds upper_c upper_x,
+  Z.abs_nat c < upper_c -> rel_bounds_abs upper_x bounds ->
+  0 < upper_c -> 0 < upper_x ->
+  rel_bounds_abs (upper_c * upper_x) (rel_scale_bounds c bounds).
+Proof.
+  intros c [lo hi] upper_c upper_x Hc Hbounds Hpc Hpx.
+  unfold rel_scale_bounds. destruct (c =? 0)%Z eqn:Hcz.
+  - change (0 < upper_c * upper_x /\ 0 < upper_c * upper_x). nia.
+  - destruct (0 <=? c)%Z;
+      unfold rel_bounds_abs, rel_bound_abs in *;
+      destruct lo, hi; cbn [fst snd] in *;
+      rewrite ?Zabs2Nat.inj_mul; intuition nia.
+Qed.
+
+(** An affine interval is bounded by the sum of its coefficient products and its constant. *)
+Lemma rel_form_bounds_abs : forall (X : Type) ranges (f : lin X) upper_c upper_x,
+  Z.abs_nat (cst f) < upper_c ->
+  Forall (fun p => Z.abs_nat (snd p) < upper_c) (coef f) ->
+  (forall x, rel_bounds_abs upper_x (ranges x)) ->
+  0 < upper_c -> 0 < upper_x ->
+  rel_bounds_abs ((length (coef f) + 1) * upper_c * upper_x)
+    (rel_form_bounds ranges f).
+Proof.
+  intros X ranges [cs c] upper_c upper_x Hc.
+  cbn [cst] in Hc.
+  induction cs as [|[x a] cs IH]; intros Hcoeff Hr Hpc Hpx.
+  - change (rel_bounds_abs ((0 + 1) * upper_c * upper_x) (Fin c, Fin c)).
+    unfold rel_bounds_abs, rel_bound_abs. cbn [fst snd]. nia.
+  - inversion Hcoeff as [|p ps Ha Htail]; subst.
+    change (rel_bounds_abs ((S (length cs) + 1) * upper_c * upper_x)
+      (rel_add_bounds (rel_scale_bounds a (ranges x))
+        (rel_form_bounds ranges (Lin X cs c)))).
+    replace ((S (length cs) + 1) * upper_c * upper_x) with
+      (upper_c * upper_x + (length cs + 1) * upper_c * upper_x) by nia.
+    apply rel_bounds_abs_add.
+    + apply rel_bounds_abs_scale; try assumption. apply Hr.
+    + now apply IH.
+Qed.
+
+(** Increasing a magnitude allowance preserves every finite endpoint bound. *)
+Lemma rel_bounds_abs_mono : forall lower upper bounds,
+  lower <= upper -> rel_bounds_abs lower bounds -> rel_bounds_abs upper bounds.
+Proof.
+  intros lower upper [lo hi] Hle Hbounds.
+  unfold rel_bounds_abs, rel_bound_abs in *.
+  destruct lo, hi; cbn [fst snd] in *; intuition lia.
+Qed.
+
 Module ZoneCode (X : KEY_OPS) (K : KEY_OPS with Definition t := option X.t
       with Definition encode := option_code X.encode)
     (M : MAP_OPS K) (L : LANG_OPS) (F : LINEARIZE_OPS X L) <: ZONE_OPS X K M L F.
@@ -1516,7 +1589,10 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     unfold c_lat. nia.
   Qed.
-  Definition c_num : N := 1. (* STUB *)
+  (** Numeric transfers pay for map operations and the two key equality tests. *)
+  Definition c_num : N :=
+    (262144 * (M.c_map + K.c_key + X.c_key + 1) *
+      (M.c_map + K.c_key + X.c_key + 1))%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -1527,12 +1603,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma range_size : forall e s,
-    (N.of_nat
-      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
-       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
-     c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
   (** Matrix primitives share one concrete constant for lookup and update costs. *)
   Definition c_zone : N := (65536 * (M.c_map + 1) * (M.c_map + 1))%N.
@@ -1977,6 +2047,130 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - lia.
     - now apply Pos.size_nat_least.
     - now apply Pos.size_nat_least.
+  Qed.
+
+  (** A bit allowance is equivalently a strict magnitude allowance. *)
+  Lemma zbits_abs_bound : forall z bits,
+    Z.size_nat z <= bits -> Z.abs_nat z < 2 ^ bits.
+  Proof.
+    intros z bits Hbits. eapply Nat.lt_le_trans; [apply zbits_upper|].
+    apply Nat.pow_le_mono_r; lia.
+  Qed.
+
+  (** The constant seed and every coefficient are bounded by the form maximum. *)
+  Lemma form_bits_constant : forall f, Z.size_nat (cst f) <= F.form_bits f.
+  Proof.
+    intros [cs c]. unfold F.form_bits. cbn [coef cst].
+    induction cs as [|p cs IH]; cbn; [lia|].
+    eapply Nat.le_trans; [exact IH|apply Nat.le_max_r].
+  Qed.
+
+  Lemma form_bits_coefficient : forall f p,
+    In p (coef f) -> Z.size_nat (snd p) <= F.form_bits f.
+  Proof.
+    intros [cs c] p. unfold F.form_bits. cbn [coef cst].
+    induction cs as [|q cs IH]; intros Hin; [contradiction|].
+    cbn in Hin |- *. destruct Hin as [Heq|Hin].
+    - subst q. pose proof (Nat.le_max_l
+        (X.bits (fst p) + Z.size_nat (snd p))
+        (fold_right Nat.max (Z.size_nat c)
+          (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) cs))). lia.
+    - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+  Qed.
+
+  (** Negation does not change an integer's stored magnitude. *)
+  Lemma zbits_opp : forall z, Z.size_nat (-z)%Z = Z.size_nat z.
+  Proof. intros [|p|p]; reflexivity. Qed.
+
+  Lemma variable_bounds_abs : forall m x,
+    rel_bounds_abs (2 ^ ell m) (variable_bounds m x).
+  Proof.
+    intros m x. unfold variable_bounds, rel_bounds_abs, rel_bound_abs.
+    destruct (entry m (Some x) None) as [lo|] eqn:Hlo;
+      destruct (entry m None (Some x)) as [hi|] eqn:Hhi;
+      cbn [fst snd]; split; try exact I; apply zbits_abs_bound.
+    - rewrite zbits_opp. eapply ell_entry. rewrite raw_entry_get. exact Hlo.
+    - eapply ell_entry. rewrite raw_entry_get. exact Hhi.
+    - rewrite zbits_opp. eapply ell_entry. rewrite raw_entry_get. exact Hlo.
+    - eapply ell_entry. rewrite raw_entry_get. exact Hhi.
+  Qed.
+
+  (** Summing at most n products adds only log2(n) plus one magnitude bit. *)
+  Lemma affine_magnitude_allowance : forall count nodes coeff_bits entry_bits,
+    count <= nodes -> 1 <= nodes ->
+    (count + 1) * 2 ^ coeff_bits * 2 ^ entry_bits <=
+      2 ^ (entry_bits + coeff_bits + Nat.log2 nodes + 2).
+  Proof.
+    intros count nodes coeff_bits entry_bits Hcount Hnodes.
+    pose proof (Nat.log2_spec nodes ltac:(lia)) as [_ Hlog].
+    assert (Hcountpow : count + 1 <= 2 ^ (Nat.log2 nodes + 1)).
+    { replace (Nat.log2 nodes + 1) with (S (Nat.log2 nodes)) by lia. lia. }
+    assert (Hproduct : (count + 1) * 2 ^ coeff_bits * 2 ^ entry_bits <=
+      2 ^ (Nat.log2 nodes + 1) * 2 ^ coeff_bits * 2 ^ entry_bits).
+    { apply Nat.mul_le_mono_r. apply Nat.mul_le_mono_r. exact Hcountpow. }
+    eapply Nat.le_trans; [exact Hproduct|].
+    rewrite <- !Nat.pow_add_r. apply Nat.pow_le_mono_r; lia.
+  Qed.
+
+  (** Recognized affine intervals respect the logarithmic range bit allowance. *)
+  Lemma form_range_abs : forall e m f r,
+    F.lin_of e = Some (f, r) ->
+    rel_bounds_abs (2 ^ range_bits e (Reached m)) (form_bounds m f).
+  Proof.
+    intros e m f r Hlin. destruct (F.lin_of_size e f r Hlin) as [Hcount Hbits].
+    assert (Hposc : 0 < 2 ^ F.bits_e e).
+    { pose proof (Nat.pow_nonzero 2 (F.bits_e e) ltac:(lia)). lia. }
+    assert (Hposx : 0 < 2 ^ ell m).
+    { pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia. }
+    eapply rel_bounds_abs_mono.
+    - unfold range_bits, ells. apply affine_magnitude_allowance; [exact Hcount|].
+      destruct e; cbn [tsize]; lia.
+    - unfold form_bounds. apply rel_form_bounds_abs; try assumption.
+      + apply zbits_abs_bound. pose proof (form_bits_constant f). lia.
+      + apply Forall_forall. intros p Hin. apply zbits_abs_bound.
+        pose proof (form_bits_coefficient f p Hin). lia.
+      + apply variable_bounds_abs.
+  Qed.
+
+  (** A valid wrapping interval is bounded by its explicitly charged endpoints. *)
+  Lemma wrap_range_abs : forall r bounds bits,
+    F.wrap_bits r <= bits -> rel_bounds_abs (2 ^ bits) bounds ->
+    rel_bounds_abs (2 ^ bits) (rel_wrap_bounds r bounds).
+  Proof.
+    intros [|lo hi] bounds bits Hbits Hbounds; [exact Hbounds|].
+    unfold F.wrap_bits in Hbits. unfold rel_wrap_bounds.
+    destruct (lo <=? hi)%Z; unfold rel_bounds_abs, rel_bound_abs;
+      cbn [fst snd]; split; try exact I; apply zbits_abs_bound; lia.
+  Qed.
+
+  Lemma range_abs : forall e s,
+    rel_bounds_abs (2 ^ range_bits e s) (range e s).
+  Proof.
+    intros e [|m]; [split; exact I|].
+    unfold range. destruct (F.lin_of e) as [[f r]|] eqn:Hlin; [|split; exact I].
+    apply wrap_range_abs.
+    - destruct (F.lin_of_size e f r Hlin) as [_ Hbits]. unfold range_bits. lia.
+    - now apply (form_range_abs e m f r).
+  Qed.
+
+  Lemma range_size : forall e s,
+    (N.of_nat
+      (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+       match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
+     c_num * N.of_nat (range_bits e s + 1))%N.
+  Proof.
+    intros e s. pose proof (range_abs e s) as Hrange.
+    assert (Hbits :
+      match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
+      match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end <=
+      2 * range_bits e s).
+    { unfold rel_bounds_abs, rel_bound_abs in Hrange.
+      destruct (fst (range e s)), (snd (range e s));
+        destruct Hrange as [Hlo Hhi]; try apply zbits_least in Hlo;
+        try apply zbits_least in Hhi; lia. }
+    assert (Hconstant : (2 <= c_num)%N) by (unfold c_num; nia).
+    eapply N.le_trans; [apply time_of_nat_le; exact Hbits|].
+    rewrite Nat2N.inj_mul. rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
 
   (** Adding two integers with a common bit bound needs at most one further bit. *)
