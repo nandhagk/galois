@@ -482,6 +482,15 @@ Module Index (V : VALUE) <: INDEX V.
   Definition wf (a : nat) (ix : t) : Prop :=
     valid ix /\ (forall r, mem ix r -> length r = a).
 
+  (** The tuple's maximum cell width covers every cell that occurs in it. *)
+  Lemma tuple_bits_member : forall r c, In c r -> cell_bits V.encode c <= tuple_bits r.
+  Proof.
+    induction r as [| head r IH]; intros c Hin; [contradiction |].
+    cbn [tuple_bits fold_right]. destruct Hin as [Heq | Hin].
+    - subst c. apply Nat.le_max_l.
+    - eapply Nat.le_trans; [apply IH; exact Hin | apply Nat.le_max_r].
+  Qed.
+
   (** The structural fields remain meaningful while a tuple walk updates its counts. *)
   Definition edge_shape (ix : t) : Prop := forall n code edge,
     stored_edge ix n code edge ->
@@ -2376,6 +2385,48 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
       clear Hguard Hcounter Hnode Hread. clearbody bits.
       set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost.
       time_unfold @T_node_degree. time_cbn. lia.
+  Qed.
+
+  (** Increasing a positive bound never decreases its binary width. *)
+  Lemma positive_bits_mono : forall p q, (p <= q)%positive ->
+    Pos.size_nat p <= Pos.size_nat q.
+  Proof.
+    intros p q Hle. destruct (Pos.eq_dec p q) as [Heq | Hneq].
+    - now subst q.
+    - apply Pos.size_nat_monotone. lia.
+  Qed.
+
+  (** A binary natural below a positive counter fits that counter's bit width. *)
+  Lemma N_bits_bounded : forall n limit, (n <= Npos limit)%N ->
+    N.size_nat n <= Pos.size_nat limit.
+  Proof.
+    intros [|n] limit Hle; cbn [N.size_nat]; [lia |].
+    apply positive_bits_mono. lia.
+  Qed.
+
+  (** Guarding the counter first makes even a malformed stored count cheap to reject. *)
+  Lemma T_bounded_succ_le : forall limit n,
+    (T_bounded_succ limit n <= 2 * N.of_nat (Pos.size_nat limit) + 5)%N.
+  Proof.
+    intros limit n. pose proof (N.T_compare_le (Npos limit) n) as Hcompare.
+    time_unfold T_bounded_succ. time_unfold N.T_ltb.
+    destruct (N.ltb (Npos limit) n) eqn:Hrange.
+    - cbn [N.size_nat] in Hcompare. time_cbn. lia.
+    - apply N.ltb_ge in Hrange.
+      pose proof (N_bits_bounded n limit Hrange) as Hbits.
+      pose proof (N.T_succ_le n) as Hsucc.
+      cbn [N.size_nat] in Hcompare. time_cbn. lia.
+  Qed.
+
+  (** Writing a node charges its trie key and three fixed wrapper calls. *)
+  Lemma T_write_node_le : forall ix n nd counter,
+    (T_write_node ix n nd counter <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat n + 1) + 3)%N.
+  Proof.
+    intros ix n nd counter.
+    pose proof (PTrieT.T_set_le _ n nd (index_nodes ix)) as Hset.
+    time_unfold T_write_node. time_unfold @T_index_nodes. time_unfold @T_index_cell_width.
+    time_cbn. lia.
   Qed.
 
   Definition inv := valid.
