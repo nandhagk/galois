@@ -313,25 +313,80 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Definition c_val : N :=
     (64 * (B.c_base + 1) * (T.c_tab + 1) + L.c_lang +
       N.of_nat (B.bsize B.bot + B.bsize B.top) + 8)%N.
+
+  (** The common constant covers a base call and its harness wrapper. *)
+  Local Lemma c_val_base : (B.c_base + 1 <= c_val)%N.
+  Proof.
+    unfold c_val. nia.
+  Qed.
+
   Definition c_lat : N := c_val.
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat. pose proof c_val_base. lia.
+  Qed.
   Lemma T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size.
+    pose proof (B.T_leb_le a b) as Hbase.
+    pose proof c_val_base as Hconstant.
+    time_unfold T_leb. nia.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size.
+    pose proof (B.T_join_le a b) as Hbase.
+    pose proof c_val_base as Hconstant.
+    time_unfold T_join. nia.
+  Qed.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size.
+    pose proof (B.T_meet_le a b) as Hbase.
+    pose proof c_val_base as Hconstant.
+    time_unfold T_meet. nia.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a. unfold size.
+    pose proof (B.T_is_bot_le a) as Hbase.
+    pose proof c_val_base as Hconstant.
+    time_unfold T_is_bot. nia.
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold size, wsize.
+    pose proof (B.T_widen_le p a b) as Hbase.
+    pose proof c_val_base as Hconstant.
+    time_unfold T_widen. nia.
+  Qed.
   Lemma T_narrow_le : forall a b, (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size.
+    pose proof (B.T_narrow_le a b) as Hbase.
+    pose proof c_val_base as Hconstant.
+    time_unfold T_narrow. nia.
+  Qed.
   Lemma T_forward_le : forall o xs,
     (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. unfold work, opt_vals, t. time_unfold T_forward.
+    pose proof (bot_scan_time_bound xs) as Hscan.
+    pose proof (points_time_bound xs) as Hpoints.
+    change (fun x : B.t => B.T_is_bot x) with B.T_is_bot.
+    destruct (existsb B.is_bot xs) eqn:Hbot.
+    - unfold c_val. rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+    - destruct (points xs) as [cs|] eqn:Hcs.
+      + pose proof (L.T_eval_le o cs) as Heval.
+        destruct (L.eval o cs) as [v|] eqn:Hv.
+        * pose proof (B.T_abst_le v) as Habst.
+          pose proof (T.T_abst_le v xs o cs Hv (points_complete xs cs Hcs)) as Hwork.
+          unfold c_val. rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+        * unfold c_val. rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+      + pose proof (T.T_fwd_le o xs) as Htable.
+        unfold c_val. rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_backward_le : forall o r xs,
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -343,14 +398,26 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
   Proof. Admitted. (* STUB *)
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size, meet.
+    pose proof (B.meet_size_le a b) as Hbase.
+    pose proof c_val_base as Hconstant. nia.
+  Qed.
   Lemma join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold size, join.
+    pose proof (B.join_size_le a b) as Hbase.
+    pose proof c_val_base as Hconstant. nia.
+  Qed.
   Lemma widen_size : forall p a b,
     (N.of_nat (size (widen p a b)) <= c_val *
       N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold size, wsize, widen.
+    pose proof (B.widen_size_le p a b) as Hbase.
+    pose proof c_val_base as Hconstant. nia.
+  Qed.
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
@@ -459,7 +526,9 @@ Module HarnessT (L : LANG_T) (B : HARNESS_BASE_T L) (T : TABLE_T L B)
     (T_forward o xs <= k_forward *
       N.of_nat ((fold_right Nat.add 0%nat (map B.bsize xs) + length xs +
         L.work o (opt_vals xs) + T.twork o xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_forward_le.
+  Qed.
   Lemma T3_backward : forall o r xs, (T_backward o r xs <= k_backward *
     (T.T_bwd o r xs + N.of_nat ((length xs)%nat) +
      match T.bwd o r xs with
