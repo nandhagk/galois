@@ -3371,9 +3371,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
-    same_entries (incr_close i j d m) (close (add_cons i j d m)).
-  Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
   Proof.
@@ -4651,6 +4648,25 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     pose proof (RelationalPathBounds.below_trans _ _ _ (Hbelow i i) Hdirect)
       as Hfinal. rewrite (Hzero i Hi) in Hfinal.
     cbn [RelationalPathBounds.below] in Hfinal. lia.
+  Qed.
+
+  Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
+    same_entries (incr_close i j d m) (close (add_cons i j d m)).
+  Proof.
+    intros m i j d Hwf Hclosed.
+    destruct (K.eqb_spec i j) as [Heq|Hdistinct].
+    - subst j. destruct (Z_le_gt_dec 0 d) as [Hnonnegative|Hnegative].
+      + destruct (incr_close_self_nonnegative m i d Hwf Hclosed Hnonnegative)
+          as [next [Hincr Hnext]].
+        destruct (close_self_nonnegative m i d Hwf Hclosed Hnonnegative)
+          as [final [Hfull Hfinal]].
+        rewrite Hincr, Hfull. cbn [same_entries]. intros a b.
+        now rewrite Hnext, Hfinal.
+      + assert (Hd : (d < 0)%Z) by lia.
+        rewrite (incr_close_self_negative m i d Hclosed Hd),
+          (close_self_negative m i d Hwf Hd).
+        exact I.
+    - now apply incr_close_eq_distinct.
   Qed.
 
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
