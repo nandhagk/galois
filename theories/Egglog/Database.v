@@ -1719,6 +1719,69 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
              rewrite tuple_multiplicity_other by exact Hdifferent. apply Hcounts.
   Qed.
 
+  (** Removing one contribution decrements its multiplicity and preserves all other counts. *)
+  Lemma slot_cache_remove_counts : forall state s u tuples,
+    (forall v, N.to_nat (runtime_projection_count state s v) =
+      tuple_multiplicity v (u :: tuples)) ->
+    forall v, N.to_nat (runtime_projection_count (slot_update_one false s u state) s v) =
+      tuple_multiplicity v tuples.
+  Proof.
+    intros state s u tuples Hcounts v. destruct (Tuples.eqb_spec v u) as [-> | Hdifferent].
+    - rewrite slot_update_one_count_same, N2Nat.inj_pred, Hcounts,
+        tuple_multiplicity_head. reflexivity.
+    - rewrite slot_update_one_count_other by exact Hdifferent.
+      rewrite Hcounts, tuple_multiplicity_other by exact Hdifferent. reflexivity.
+  Qed.
+
+  (** Removing a contribution keeps the indexes whenever its count was not one. *)
+  Lemma slot_update_one_index_retained : forall state s u new,
+    runtime_projection_count state s u <> 1%N ->
+    runtime_slot_index (slot_update_one false s u state) s new =
+      runtime_slot_index state s new.
+  Proof.
+    intros state s u new Hnotone. rewrite slot_update_one_index.
+    destruct (runtime_projection_count state s u) as [| p] eqn:Hcount; [reflexivity |].
+    destruct p; try reflexivity. exfalso. apply Hnotone. reflexivity.
+  Qed.
+
+  (** Deletion preserves shared projections and removes a tuple only at its last contribution. *)
+  Lemma slot_cache_remove : forall state s arity tuples u,
+    slot_cache_ok state s arity (u :: tuples) ->
+    slot_cache_ok (slot_update_one false s u state) s arity tuples.
+  Proof.
+    intros state s arity tuples u [Hall [Hnew [Hfull [Hdelta Hcounts]]]].
+    pose proof (slot_cache_remove_counts state s u tuples Hcounts) as Hupdated.
+    destruct (tuple_multiplicity u tuples) as [| n] eqn:Hrest.
+    - assert (Hone : runtime_projection_count state s u = 1%N).
+      { apply N2Nat.inj. rewrite Hcounts, tuple_multiplicity_head, Hrest. reflexivity. }
+      assert (Hmissing : ~ In u tuples) by (now apply tuple_multiplicity_zero).
+      unfold slot_cache_ok. rewrite !slot_update_one_index, Hone. split.
+      + now apply I.wf_remove.
+      + split; [now apply I.wf_remove |]. split.
+        * intro v. rewrite (I.mem_remove arity u _ v Hall), Hfull. cbn [In]. split.
+          -- intros [Hdiffer [Hequal | Hin]]; [congruence | exact Hin].
+          -- intro Hin. split; [intro Hequal; subst v; contradiction | now right].
+        * split.
+          -- intros v Hmember. apply (I.mem_remove arity u _ v Hnew) in Hmember.
+             destruct Hmember as [Hdiffer Hmember]. specialize (Hdelta v Hmember).
+             destruct Hdelta as [Hequal | Hin]; [congruence | exact Hin].
+          -- exact Hupdated.
+    - assert (Hnotone : runtime_projection_count state s u <> 1%N).
+      { intro Hone. specialize (Hcounts u). rewrite Hone, tuple_multiplicity_head,
+          Hrest in Hcounts. cbn in Hcounts. lia. }
+      assert (Hpresent : In u tuples).
+      { apply tuple_multiplicity_positive. rewrite Hrest. lia. }
+      unfold slot_cache_ok. rewrite !slot_update_one_index_retained by exact Hnotone.
+      split; [exact Hall |]. split; [exact Hnew |]. split.
+      + intro v. rewrite Hfull. cbn [In]. split.
+        * intros [Hequal | Hin]; [now subst v | exact Hin].
+        * intro Hin. now right.
+      + split.
+        * intros v Hmember. specialize (Hdelta v Hmember).
+          destruct Hdelta as [Hequal | Hin]; [now subst v | exact Hin].
+        * exact Hupdated.
+  Qed.
+
   (** Index maintenance keeps the complete model view unchanged. *)
   Lemma slots_update_view : forall b f u db, view (slots_update b f u db) = view db.
   Proof.
