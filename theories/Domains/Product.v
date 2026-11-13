@@ -4,7 +4,7 @@
     For example, a forward transfer pairs the two component results.
     Builds on: ProductSig and lattice products. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List NArith Bool Lia.
 From Argent Require Import Time Std BigO.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
@@ -87,56 +87,200 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   Definition wrank (p : wparam) (a : t) : nat :=
     A.wrank (fst p) (fst a) + B.wrank (snd p) (snd a).
   Definition gamma (a : t) (c : L.val) : Prop := A.gamma (fst a) c /\ B.gamma (snd a) c.
+
+  (** Coordinate inclusion entails product inclusion, even for recognized bottoms. *)
+  Lemma components_below : forall a b,
+    A.leb (fst a) (fst b) = true -> B.leb (snd a) (snd b) = true -> leb a b = true.
+  Proof.
+    intros a b Ha Hb. unfold leb, product_leb.
+    apply orb_true_iff. right. apply andb_true_iff. split; assumption.
+  Qed.
+
+  (** A nonbottom source must compare below its target in both coordinates. *)
+  Lemma nonbottom_components : forall a b, is_bot a = false -> leb a b = true ->
+    A.leb (fst a) (fst b) = true /\ B.leb (snd a) (snd b) = true.
+  Proof.
+    intros a b Hbot Hle.
+    change (orb (is_bot a) (andb (A.leb (fst a) (fst b))
+      (B.leb (snd a) (snd b))) = true) in Hle.
+    rewrite Hbot in Hle. now apply andb_true_iff in Hle.
+  Qed.
+
+  (** Product bottom recognition descends through the product order. *)
+  Lemma bottom_downward : forall a b,
+    leb a b = true -> is_bot b = true -> is_bot a = true.
+  Proof.
+    intros a b Hle Hbot. destruct (is_bot a) eqn:Ha; [reflexivity|].
+    destruct (nonbottom_components a b Ha Hle) as [Hleft Hright].
+    unfold is_bot, product_is_bot in Hbot, Ha.
+    apply orb_false_iff in Ha as [Ha Hb]. apply orb_true_iff in Hbot as [Hbot|Hbot].
+    - pose proof (A.is_bot_below (fst a) (fst b) Hleft Hbot). congruence.
+    - pose proof (B.is_bot_below (snd a) (snd b) Hright Hbot). congruence.
+  Qed.
+
+  (** A bottom in either coordinate excludes every shared concrete value. *)
+  Lemma bottom_empty : forall a c, is_bot a = true -> ~ gamma a c.
+  Proof.
+    intros [a b] c Hbot [Ha Hb].
+    change (orb (A.is_bot a) (B.is_bot b) = true) in Hbot.
+    apply orb_true_iff in Hbot as [Hbot|Hbot].
+    - exact (A.is_bot_sound a c Hbot Ha).
+    - exact (B.is_bot_sound b c Hbot Hb).
+  Qed.
+
+  (** Normalizing a recognized bottom descends in each coordinate. *)
+  Lemma normalize_components_lower : forall a,
+    A.leb (fst (normalize a)) (fst a) = true /\
+    B.leb (snd (normalize a)) (snd a) = true.
+  Proof.
+    intros [a b]. unfold normalize, product_normalize.
+    destruct (product_is_bot A.is_bot B.is_bot (a, b)); cbn [fst snd]; split.
+    - apply A.bot_least.
+    - apply B.bot_least.
+    - apply A.leb_refl.
+    - apply B.leb_refl.
+  Qed.
+
+  (** Normalization refines the original product value. *)
+  Lemma normalize_lower : forall a, leb (normalize a) a = true.
+  Proof.
+    intro a. destruct (normalize_components_lower a) as [Ha Hb].
+    now apply components_below.
+  Qed.
+
+  (** Normalization retains every concrete value represented by the pair. *)
+  Lemma normalize_sound : forall a c, gamma a c -> gamma (normalize a) c.
+  Proof.
+    intros a c Hgamma. unfold normalize, product_normalize.
+    destruct (product_is_bot A.is_bot B.is_bot a) eqn:Hbot; [|exact Hgamma].
+    exfalso. exact (bottom_empty a c Hbot Hgamma).
+  Qed.
+
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    intro a. apply components_below; [apply A.leb_refl|apply B.leb_refl].
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    intros a b c Hab Hbc. destruct (is_bot a) eqn:Ha.
+    - unfold leb, product_leb. change (product_is_bot A.is_bot B.is_bot a = true) in Ha.
+      now rewrite Ha.
+    - destruct (is_bot b) eqn:Hb.
+      { pose proof (bottom_downward a b Hab Hb). congruence. }
+      destruct (nonbottom_components a b Ha Hab) as [HabA HabB].
+      destruct (nonbottom_components b c Hb Hbc) as [HbcA HbcB].
+      apply components_below; [eapply A.leb_trans|eapply B.leb_trans]; eassumption.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intro a. apply components_below; [apply A.bot_least|apply B.bot_least].
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold is_bot, product_is_bot, bot. cbn [fst snd].
+    rewrite A.is_bot_bot. reflexivity.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hbot. unfold leb, product_leb.
+    change (product_is_bot A.is_bot B.is_bot a = true) in Hbot. now rewrite Hbot.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intros a b. apply components_below; [apply A.join_ub_l|apply B.join_ub_l].
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intros a b. apply components_below; [apply A.join_ub_r|apply B.join_ub_r].
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* CONVERT: slots2_top: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    intro a. apply components_below; [apply A.top_greatest|apply B.top_greatest].
+  Qed.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold meet. eapply leb_trans; [apply normalize_lower|].
+    apply components_below; [apply A.meet_lb_l|apply B.meet_lb_l].
+  Qed.
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intros p a b. unfold widen, product_widen.
+    destruct (product_is_bot A.is_bot B.is_bot b); [apply leb_refl|].
+    apply components_below; [apply A.widen_ub_l|apply B.widen_ub_l].
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intros p a b. unfold widen, product_widen.
+    destruct (product_is_bot A.is_bot B.is_bot b) eqn:Hbot.
+    - apply is_bot_least. exact Hbot.
+    - apply components_below; [apply A.widen_ub_r|apply B.widen_ub_r].
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [pa pb] [a b] [c d] Hle. unfold widen, product_widen.
+    destruct (product_is_bot A.is_bot B.is_bot (c, d)) eqn:Hbot; [reflexivity|].
+    destruct (nonbottom_components (c, d) (a, b) Hbot Hle) as [Ha Hb].
+    cbn [fst snd] in Ha, Hb |- *.
+    rewrite (A.widen_stable pa a c Ha), (B.widen_stable pb b d Hb). reflexivity.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intros [pa pb] [a b] [c d] Hbot Hle.
+    change (orb (A.is_bot a) (B.is_bot b) = false) in Hbot.
+    apply orb_false_iff in Hbot as [Ha Hb].
+    change (orb (is_bot (c, d)) (andb (A.leb c a) (B.leb d b)) = false) in Hle.
+    apply orb_false_iff in Hle as [Hcandidate Hle].
+    unfold widen, product_widen. change (product_is_bot A.is_bot B.is_bot (c, d) = false)
+      in Hcandidate. rewrite Hcandidate. unfold wrank. cbn [fst snd].
+    pose proof (A.wrank_widen_le pa a c Ha) as Hleft.
+    pose proof (B.wrank_widen_le pb b d Hb) as Hright.
+    apply andb_false_iff in Hle as [Hle|Hle].
+    - pose proof (A.wrank_widen pa a c Ha Hle). lia.
+    - pose proof (B.wrank_widen pb b d Hb Hle). lia.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    intros p a b Hbot. destruct (leb b a) eqn:Hle.
+    - rewrite (widen_stable p a b Hle). lia.
+    - pose proof (wrank_widen p a b Hbot Hle). lia.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    intros a b Hle. unfold narrow, product_narrow.
+    destruct (product_is_bot A.is_bot B.is_bot b) eqn:Hbot.
+    - split; [apply leb_refl|exact Hle].
+    - destruct (nonbottom_components b a Hbot Hle) as [Ha Hb].
+      destruct (A.narrow_between (fst a) (fst b) Ha) as [Ha1 Ha2].
+      destruct (B.narrow_between (snd a) (snd b) Hb) as [Hb1 Hb2].
+      split; apply components_below; assumption.
+  Qed.
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted. (* CONVERT: slots2_gamma_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    intros a b c Hle Hgamma. destruct (is_bot a) eqn:Hbot.
+    - exfalso. exact (bottom_empty a c Hbot Hgamma).
+    - destruct (nonbottom_components a b Hbot Hle) as [Ha Hb].
+      destruct Hgamma as [Hleft Hright]. split.
+      + exact (A.gamma_mono (fst a) (fst b) c Ha Hleft).
+      + exact (B.gamma_mono (snd a) (snd b) c Hb Hright).
+  Qed.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
@@ -150,34 +294,108 @@ Module Product (L : LANG) (A B : VALUE_DOMAIN L) <: PRODUCT L A B.
   Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c [HaA HaB] [HbA HbB]. apply normalize_sound. split.
+    - exact (A.gamma_meet (fst a) (fst b) c HaA HbA).
+    - exact (B.gamma_meet (snd a) (snd b) c HaB HbB).
+  Qed.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact bottom_empty.
+  Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact bottom_downward.
+  Qed.
+
+  (** Related products project to related argument lists for both components. *)
+  Lemma arguments_sound : forall xs cs, Forall2 gamma xs cs ->
+    Forall2 A.gamma (map fst xs) cs /\ Forall2 B.gamma (map snd xs) cs.
+  Proof.
+    intros xs cs Hfacts.
+    induction Hfacts as [|[a b] c xs cs [Ha Hb] Htail [IHleft IHright]];
+      cbn; split; constructor; assumption.
+  Qed.
+
+  (** Zipping corresponding sound component results retains their shared meaning. *)
+  Lemma zip_sound : forall xs ys cs,
+    Forall2 A.gamma xs cs -> Forall2 B.gamma ys cs ->
+    Forall2 gamma (map normalize (combine xs ys)) cs.
+  Proof.
+    intros xs ys cs Hleft. revert ys.
+    induction Hleft as [|a c xs cs Ha Htail IH]; intros ys Hright.
+    - inversion Hright; subst. constructor.
+    - inversion Hright as [|b c' ys' cs' Hb Hrest]; subst.
+      cbn [combine map]. constructor.
+      + apply normalize_sound. split; assumption.
+      + now apply IH.
+  Qed.
+
+  (** Zipping component refinements preserves every original product position. *)
+  Lemma zip_refines : forall xs ys zs,
+    Forall2 (fun y x => A.leb y x = true) ys (map fst xs) ->
+    Forall2 (fun z x => B.leb z x = true) zs (map snd xs) ->
+    Forall2 (fun y x => leb y x = true) (map normalize (combine ys zs)) xs.
+  Proof.
+    intro xs. induction xs as [|[a b] xs IH]; intros ys zs Hleft Hright.
+    - inversion Hleft; inversion Hright; subst. constructor.
+    - cbn [map fst snd] in Hleft, Hright.
+      inversion Hleft as [|y a' ys' axs' Hy Hys]; subst.
+      inversion Hright as [|z b' zs' bxs' Hz Hzs]; subst.
+      cbn [combine map]. constructor.
+      + eapply leb_trans; [apply normalize_lower|]. apply components_below; assumption.
+      + now apply IH.
+  Qed.
+
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found. *)
+  Proof.
+    intros o xs cs c Hfacts Heval.
+    destruct (arguments_sound xs cs Hfacts) as [Hleft Hright].
+    unfold forward, product_forward. apply normalize_sound. split.
+    - exact (A.forward_sound o (map fst xs) cs c Hleft Heval).
+    - exact (B.forward_sound o (map snd xs) cs c Hright Heval).
+  Qed.
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
+  Proof.
+    intros o r xs cs c Hfacts Heval [HrA HrB].
+    destruct (arguments_sound xs cs Hfacts) as [Hleft Hright].
+    unfold backward, product_backward. apply zip_sound.
+    - exact (A.backward_sound o (fst r) (map fst xs) cs c Hleft Heval HrA).
+    - exact (B.backward_sound o (snd r) (map snd xs) cs c Hright Heval HrB).
+  Qed.
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. unfold backward, product_backward. apply zip_refines.
+    - apply A.backward_refines.
+    - apply B.backward_refines.
+  Qed.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
+  Proof.
+    intros g xs cs Hfacts Hholds.
+    destruct (arguments_sound xs cs Hfacts) as [Hleft Hright].
+    unfold guard, product_guard. apply zip_sound.
+    - exact (A.guard_sound g (map fst xs) cs Hleft Hholds).
+    - exact (B.guard_sound g (map snd xs) cs Hright Hholds).
+  Qed.
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold guard, product_guard. apply zip_refines.
+    - apply A.guard_refines.
+    - apply B.guard_refines.
+  Qed.
 End Product.
 
 Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
@@ -297,28 +515,44 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
   Definition k_product_lists : N := 1%N. (* STUB *)
   Lemma F1_gamma : forall a b c,
     gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F2_leb : forall a b,
     leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F3_widen : forall p a b,
     widen p a b = if is_bot b then a
       else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F4_wrank : forall p a b,
     wrank p (a, b) = A.wrank (fst p) a + B.wrank (snd p) b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F5_size : forall a b, size (a, b) = A.size a + B.size b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F6_is_bot : forall a b,
     is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F7_narrow : forall a b,
     narrow a b = if is_bot b then b
       else (A.narrow (fst a) (fst b), B.narrow (snd a) (snd b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma T1_leb_components : forall a b,
     (T_leb a b <= k_product_lists *
       (A.T_is_bot (fst a) + B.T_is_bot (snd a) +
