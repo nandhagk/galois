@@ -4,8 +4,8 @@
     For example, a bounded may set adds at most the number of universe keys.
     Builds on: LatticeSig, Sets and MapLattice. *)
 
-From Stdlib Require Import List NArith.
-From Argent Require Import Time.
+From Stdlib Require Import List NArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig SetSig.
 From Galois.Lattice Require Import LatticeSig Sets MapLattice.
 
@@ -79,23 +79,36 @@ Module BoundedSetT (K : KEY_T) (S : SET_T K) (U : UNIVERSE K S) <: LATTICE_T.
   TimeFun clip.
 
   Definition size (a : t) : nat := S.nodes (proj1_sig a) + S.weight (proj1_sig a) + 1.
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (S.c_set + 8)%N.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. unfold c_lat; lia. Qed.
 
   (** Restricted inclusion has the time bound of the underlying set operation. *)
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a Ha] [b Hb]. pose proof (S.T_subset_le a b) as Hsubset.
+    time_unfold @T_leb. unfold size, c_lat. cbn [proj1_sig]. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   (** Restricted union has the time bound of the underlying set operation. *)
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a Ha] [b Hb]. pose proof (S.T_union_le a b) as Hunion.
+    time_unfold @T_join. unfold size, c_lat. cbn [proj1_sig]. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
   (** Bottom testing charges the restricted support. *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a Ha]. pose proof (S.T_subset_le a S.empty) as Hsubset.
+    rewrite S.nodes_empty in Hsubset.
+    time_unfold @T_is_bot. unfold size, c_lat. cbn [proj1_sig]. time_simpl.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
 End BoundedSetT.
 
 Module BoundedHeight (K : KEY) (S : SET K) (U : UNIVERSE K S)
