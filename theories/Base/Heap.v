@@ -6,9 +6,7 @@
 
 From Stdlib Require Import List Bool NArith PArith PeanoNat Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop.
-From Galois.Base Require Import HeapSig KeySig MapSig.
-From Stdlib Require Import List NArith PArith.
-From Galois.Base Require Import Trie Loop.
+From Galois.Base Require Import HeapSig KeySig MapSig Trie Loop.
 Import List.ListNotations.
 
 Definition heap_entry := (N * positive)%type.
@@ -1163,17 +1161,6 @@ Module HeapT <: PQ_ALL.
     (N.of_nat (stale q) * credit P w)%N.
   Definition phi (P w : nat) (q : t) : N := stale_phi P w q.
 
-  Lemma T_push_amort : forall P w p x q,
-    (wf q -> fits w q -> (pending q < P)%nat ->
-    (Pos.size_nat x + N.size_nat p <= w)%nat ->
-    T_push p x q + phi P w (push p x q) <=
-      c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_pop_amort : forall P w q,
-    (wf q -> fits w q -> (pending q <= P)%nat ->
-    T_pop q + match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end
-      <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
-  Proof. Admitted. (* STUB *)
   Lemma phi_empty : forall P w, (phi P w empty = 0)%N.
   Proof.
     intros P w. reflexivity.
@@ -1526,23 +1513,284 @@ Module HeapT <: PQ_ALL.
     unfold k_remove, unit_pq. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *.
     nia.
   Qed.
+  Local Lemma pop_step_clock P w q :
+    wf q -> bounded w q -> pending q <= P ->
+    (T_pop_step q + c_loopN <= k_step * N.of_nat (unit_pq P w))%N.
+  Proof.
+    intros Hwf Hbounded Hpending.
+    assert (Hunit_bounds :
+      (1 <= N.of_nat (unit_pq P w) /\
+       N.of_nat (Nat.log2 P + 1) <= N.of_nat (unit_pq P w) /\
+       N.of_nat (w + 1) <= N.of_nat (unit_pq P w))%N).
+    { unfold unit_pq. rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+    destruct Hunit_bounds as [Hunit_positive [Hunit_log Hunit_width]].
+    pose proof (T2_remove_min P w q Hwf Hbounded Hpending) as Hremove.
+    pose proof (heap_counter_width (pending_count q) P Hpending) as Htotal_width.
+    assert (Hlive_capacity : N.to_nat (live_count q) <= P).
+    { pose proof (size_pending q Hwf). change (N.to_nat (size q) <= P). lia. }
+    pose proof (heap_counter_width (live_count q) P Hlive_capacity) as Hlive_width.
+    pose proof (N.T_pred_le (pending_count q)) as Htotal_pred.
+    pose proof (N.T_pred_le (live_count q)) as Hlive_pred.
+    apply time_of_nat_le in Htotal_width. apply time_of_nat_le in Hlive_width.
+    assert (Htotal_unit : (N.of_nat (N.size_nat (pending_count q)) <=
+      N.of_nat (unit_pq P w))%N) by lia.
+    assert (Hlive_unit : (N.of_nat (N.size_nat (live_count q)) <=
+      N.of_nat (unit_pq P w))%N) by lia.
+    pose proof (heap_remove_min_correct (forest q) (proj1 Hwf)) as Hentries.
+    unfold forest in Hremove, Hentries. unfold T_remove_min in Hremove.
+    time_unfold @T_pop_step. time_unfold @HeapCode.T_heap_pop_step.
+    destruct (heap_remove_min (heap_pending q)) as [[[p x] rest]|] eqn:Hmin.
+    - destruct Hentries as [Hrest [Hin [Hcount Hmin_order]]].
+      assert (Hentry : N.size_nat p + Pos.size_nat x <= w).
+      { apply Hbounded. apply (proj2 (Hin (p, x))). left. reflexivity. }
+      pose proof (PTrieT.T_get_le N x (live q)) as Hget.
+      pose proof (PTrieT.T_remove_le N x (live q)) as Hdelete.
+      change (PTrieCode.T_get x (live q) <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat x + 1))%N in Hget.
+      change (PTrieCode.T_remove x (live q) <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat x + 1))%N in Hdelete.
+      assert (Hentry_width : (N.of_nat (Pos.size_nat x + 1) <=
+        N.of_nat (w + 1))%N) by (apply time_of_nat_le; lia).
+      assert (Hpriority_width : (N.of_nat (N.size_nat p + 1) <=
+        N.of_nat (w + 1))%N) by (apply time_of_nat_le; lia).
+      destruct (PTrieCode.get x (live q)) as [current|] eqn:Hlookup.
+      + pose proof (N.T_eqb_le p current) as Hequal.
+        destruct (N.eqb p current) eqn:Heq; time_simpl; time_cbn.
+        all: rewrite Hmin, Hlookup, Heq; time_cbn.
+        all: unfold k_step, k_remove, PTrieT.c_trie, c_loopN in *;
+          repeat rewrite Nat2N.inj_add in *; lia.
+      + time_simpl; time_cbn.
+        rewrite Hmin, Hlookup. time_cbn.
+        unfold k_step, k_remove, PTrieT.c_trie, c_loopN in *.
+        repeat rewrite Nat2N.inj_add in *. lia.
+    - time_simpl; time_cbn.
+      rewrite Hmin. time_cbn.
+      unfold k_step, k_remove, c_loopN in *. lia.
+  Qed.
+
   Lemma T3_skip_credit : forall P w q q1,
     (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inl q1 ->
     T_pop_step q + c_loopN + phi P w q1 <= phi P w q)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P w q q1 Hwf Hbounded Hpending Hskip.
+    pose proof (pop_step_clock P w q Hwf Hbounded Hpending) as Hclock.
+    destruct (F4_skip q q1 Hwf Hskip) as [Hwf1 [Hsize Hcount]].
+    pose proof (size_pending q1 Hwf1) as Hsize_count.
+    assert (Hstale : stale q = S (stale q1)).
+    { unfold stale. rewrite Hcount, <- Hsize. lia. }
+    unfold phi, stale_phi. rewrite Hstale, Nat2N.inj_succ, N.mul_succ_l.
+    unfold credit, k_credit, k_step in *. lia.
+  Qed.
   Lemma T4_stop_credit : forall P w q r,
     (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inr r ->
     T_pop_step q + c_loopN + output_phi P w r <= k_step * N.of_nat (unit_pq P w) + phi P w q)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P w q r Hwf Hbounded Hpending Hstop.
+    pose proof (pop_step_clock P w q Hwf Hbounded Hpending) as Hclock.
+    pose proof (F7_stop q r Hwf Hstop) as Hpop.
+    destruct r as [[[p x] q1]|]; cbn [output_phi].
+    - pose proof (size_pop q p x q1 Hwf Hpop) as Hsize.
+      pose proof (pending_pop q p x q1 Hwf Hpop) as Hcount.
+      assert (Hstale : stale q1 <= stale q).
+      { unfold stale. rewrite Hsize, N2Nat.inj_succ. lia. }
+      apply time_of_nat_le in Hstale.
+      pose proof (N.mul_le_mono_r _ _ (credit P w) Hstale) as Hcredit.
+      unfold phi, stale_phi. lia.
+    - lia.
+  Qed.
+  Local Lemma heap_pop_loop_credit P w h (m : PTrieCode.t N) n total fuel :
+    (wf (Queue h m n total) -> bounded w (Queue h m n total) ->
+    (pending (Queue h m n total) <= P)%nat ->
+    T_loopN (HeapCode.heap_pop_step m n) (fun s => HeapCode.T_heap_pop_step m n s)
+      fuel (h, total) +
+      match loopN (HeapCode.heap_pop_step m n) fuel (h, total) with
+      | inl _ => 0 | inr r => output_phi P w r
+      end <= k_step * N.of_nat (unit_pq P w) + phi P w (Queue h m n total) +
+        c_loopN * N.of_nat (N.size_nat fuel + 1))%N.
+  Proof.
+    intros Hwf Hbounded Hcap.
+    assert (Hraw : forall h0 total0,
+      (HeapCode.T_heap_pop_step m n (h0, total0) <=
+        T_pop_step (Queue h0 m n total0))%N).
+    { intros h0 total0. time_unfold @T_pop_step. time_cbn.
+      destruct (HeapCode.heap_pop_step m n (h0, total0)); time_cbn; lia. }
+    set (makeq := fun s : heap_forest * N => Queue (fst s) m n (snd s)).
+    set (Inv := fun s => wf (makeq s) /\ bounded w (makeq s) /\ pending (makeq s) <= P).
+    set (Phi := fun s => (k_step * N.of_nat (unit_pq P w) + phi P w (makeq s))%N).
+    assert (Hgo : forall s s1, Inv s -> HeapCode.heap_pop_step m n s = inl s1 ->
+      Inv s1 /\ (HeapCode.T_heap_pop_step m n s + c_loopN + Phi s1 <= Phi s)%N).
+    { intros [h0 total0] [h1 total1] [Hwf0 [Hbound0 Hcap0]] Hnext.
+      unfold makeq in Hwf0, Hbound0, Hcap0.
+      cbn [fst snd] in Hwf0, Hbound0, Hcap0.
+      assert (Hstep : pop_step (Queue h0 m n total0) = inl (Queue h1 m n total1)).
+      { unfold pop_step. cbn [live live_count heap_pending pending_count].
+        rewrite Hnext. reflexivity. }
+      destruct (F4_skip _ _ Hwf0 Hstep) as [Hwf1 [Hsize Hpending]].
+      pose proof (F5_skip_bounded _ _ _ Hwf0 Hbound0 Hstep) as Hbound1.
+      pose proof (T3_skip_credit P w _ _ Hwf0 Hbound0 Hcap0 Hstep) as Hcredit.
+      pose proof (Hraw h0 total0) as Hclock.
+      split.
+      - unfold Inv, makeq. cbn [fst snd]. split; [exact Hwf1|].
+        split; [exact Hbound1|]. lia.
+      - unfold Phi, makeq. cbn [fst snd]. lia. }
+    assert (Hstop : forall s r, Inv s -> HeapCode.heap_pop_step m n s = inr r ->
+      (HeapCode.T_heap_pop_step m n s + c_loopN + output_phi P w r <= Phi s)%N).
+    { intros [h0 total0] r [Hwf0 [Hbound0 Hcap0]] Hnext.
+      unfold makeq in Hwf0, Hbound0, Hcap0.
+      cbn [fst snd] in Hwf0, Hbound0, Hcap0.
+      assert (Hstep : pop_step (Queue h0 m n total0) = inr r).
+      { unfold pop_step. cbn [live live_count heap_pending pending_count].
+        rewrite Hnext. reflexivity. }
+      pose proof (T4_stop_credit P w _ _ Hwf0 Hbound0 Hcap0 Hstep) as Hcredit.
+      pose proof (Hraw h0 total0) as Hclock.
+      unfold Phi, makeq. cbn [fst snd]. lia. }
+    assert (Hinitial : Inv (h, total)).
+    { unfold Inv, makeq. cbn [fst snd]. auto. }
+    pose proof (T_loopN_amort (heap_forest * N) (option (N * positive * t))
+      (HeapCode.heap_pop_step m n) (fun s => HeapCode.T_heap_pop_step m n s)
+      Inv Phi (output_phi P w) fuel (h, total)
+      Hgo Hstop Hinitial) as Hloop.
+    unfold Phi, makeq in Hloop. cbn [fst snd] in Hloop. exact Hloop.
+  Qed.
+
+  (** Constructing binary fuel traverses each forest position once. *)
+  Local Lemma heap_fuel_clock h : (T_heap_fuel h <= N.of_nat (length h + 1))%N.
+  Proof.
+    induction h as [|slot hs IH]; time_unfold @T_heap_fuel; cbn [length].
+    - lia.
+    - rewrite ?Nat2N.inj_succ, ?Nat2N.inj_add in *. lia.
+  Qed.
+
   Lemma T5_pop_bounded : forall P w q,
     (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_pop q + output_phi P w (pop q) <=
       k_driver * N.of_nat (unit_pq P w) + phi P w q)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P w [h m n total] Hwf Hbounded Hcap.
+    pose proof (heap_pop_loop_credit P w h m n total (N.pos (heap_fuel h))
+      Hwf Hbounded Hcap) as Hloop.
+    cbn [N.size_nat] in Hloop.
+    rewrite heap_fuel_size in Hloop.
+    pose proof (heap_fuel_clock h) as Hfuel.
+    pose proof (F2_ranks P (Queue h m n total) Hwf Hcap) as Hranks.
+    change (length h <= Nat.log2 P + 1) in Hranks.
+    assert (Hrankbudget : length h <= unit_pq P w) by (unfold unit_pq; nia).
+    assert (Hunit : (1 <= N.of_nat (unit_pq P w))%N).
+    { assert (1 <= unit_pq P w) by (unfold unit_pq; nia). lia. }
+    time_unfold @T_pop. cbn [pending live live_count pending_count].
+    unfold pop. cbn [pending live live_count pending_count].
+    time_simpl.
+    change (1 + (1 + 1 + (1 + T_heap_fuel h + (1 + 1)) +
+      T_loopN (HeapCode.heap_pop_step m n) (fun s => HeapCode.T_heap_pop_step m n s)
+        (N.pos (heap_fuel h)) (h, total)) +
+      output_phi P w
+        (match loopN (HeapCode.heap_pop_step m n) (N.pos (heap_fuel h)) (h, total) with
+        | inl _ => None | inr result => result end)
+      <= k_driver * N.of_nat (unit_pq P w) + phi P w (Queue h m n total))%N.
+    destruct (loopN (HeapCode.heap_pop_step m n) (N.pos (heap_fuel h)) (h, total))
+      as [s|r]; cbn [output_phi] in *.
+    all: unfold k_driver, k_step, c_loopN in Hloop |- *;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in Hloop, Hfuel;
+      lia.
+  Qed.
+  Local Lemma heap_enqueue_clock p x (q : t) count :
+    (T_enqueue p x q count <= T_insert p x (forest q) +
+      PTrieT.c_trie * N.of_nat (Pos.size_nat x + 1) +
+      N.of_nat (N.size_nat (pending_count q)) + 8)%N.
+  Proof.
+    destruct q as [h m n total].
+    pose proof (PTrieT.T_set_le N x p m) as Hset.
+    pose proof (N.T_succ_le total) as Hsucc.
+    time_unfold @T_enqueue. time_unfold @T_insert.
+    cbn [forest heap_pending Base.Heap.pending live pending_count] in *.
+    time_simpl; time_cbn_all. lia.
+  Qed.
+
+  Local Lemma heap_push_clock P w p x q :
+    (wf q -> bounded w q -> (pending q < P)%nat ->
+    (N.size_nat p + Pos.size_nat x <= w)%nat ->
+    T_push p x q <= (k_insert + k_step) * N.of_nat (unit_pq P w))%N.
+  Proof.
+    intros Hwf Hfits Hcap Hwidth. destruct q as [h m n total].
+    change (N.to_nat total < P) in Hcap.
+    pose proof (size_pending (Queue h m n total) Hwf) as Hlivecap.
+    change (N.to_nat n <= N.to_nat total) in Hlivecap.
+    pose proof (heap_counter_width n P ltac:(lia)) as Hnw.
+    pose proof (heap_counter_width total P ltac:(lia)) as Htw.
+    assert (Hkey : Pos.size_nat x + 1 <= unit_pq P w) by (unfold unit_pq; nia).
+    assert (Hprio : N.size_nat p <= unit_pq P w) by (unfold unit_pq; nia).
+    assert (Hlive : N.size_nat n <= unit_pq P w) by (unfold unit_pq; nia).
+    assert (Htotal : N.size_nat total <= unit_pq P w) by (unfold unit_pq; nia).
+    assert (Hunit : 1 <= unit_pq P w) by (unfold unit_pq; nia).
+    apply time_of_nat_le in Hkey, Hprio, Hlive, Htotal, Hunit.
+    pose proof (T1_insert P w p x (Queue h m n total) Hwf Hfits Hcap Hwidth) as Hinsert.
+    assert (Henqueue : forall count,
+      (T_enqueue p x (Queue h m n total) count <=
+        (k_insert + 2048) * N.of_nat (unit_pq P w))%N).
+    { intro count. pose proof (heap_enqueue_clock p x (Queue h m n total) count) as Hclock.
+      cbn [pending_count] in Hclock. unfold PTrieT.c_trie in Hclock.
+      unfold k_insert in Hinsert |- *. lia. }
+    pose proof (PTrieT.T_get_le N x m) as Hget.
+    pose proof (N.T_succ_le n) as Hsucc.
+    unfold PTrieT.c_trie in Hget.
+    time_unfold @T_push. cbn [live live_count].
+    destruct (PTrieCode.get x m) as [old |] eqn:Hlookup.
+    - pose proof (Henqueue n) as Henqueue_now.
+      pose proof (N.T_compare_le p old) as Hcompare.
+      time_unfold N.T_ltb. destruct (N.ltb p old);
+        time_simpl; time_cbn_all; unfold k_insert, k_step in *; lia.
+    - pose proof (Henqueue (N.succ n)) as Henqueue_now.
+      time_simpl; time_cbn_all; unfold k_insert, k_step in *; lia.
+  Qed.
+
   Lemma T6_push_bounded : forall P w p x q,
     (wf q -> bounded w q -> (pending q < P)%nat ->
     (N.size_nat p + Pos.size_nat x <= w)%nat ->
     T_push p x q + phi P w (push p x q) <=
       (k_insert + k_step + k_credit) * N.of_nat (unit_pq P w) + phi P w q)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P w p x q Hwf Hfits Hcap Hwidth.
+    pose proof (heap_push_clock P w p x q Hwf Hfits Hcap Hwidth) as Hclock.
+    pose proof (F3_stale_push p x q Hwf) as Hstale.
+    apply time_of_nat_le in Hstale. rewrite Nat2N.inj_succ in Hstale.
+    assert (Hphi : (phi P w (push p x q) <= phi P w q + credit P w)%N).
+    { unfold phi, stale_phi. eapply N.le_trans.
+      - apply N.mul_le_mono_r. exact Hstale.
+      - rewrite N.mul_succ_l. lia. }
+    unfold credit in Hphi. unfold k_insert, k_step, k_credit in *. lia.
+  Qed.
+
+  Lemma T_push_amort : forall P w p x q,
+    (wf q -> fits w q -> (pending q < P)%nat ->
+    (Pos.size_nat x + N.size_nat p <= w)%nat ->
+    T_push p x q + phi P w (push p x q) <=
+      c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof.
+    intros P w p x q Hwf Hfits Hcap Hwidth.
+    assert (Hwidth' : N.size_nat p + Pos.size_nat x <= w) by lia.
+    pose proof (T6_push_bounded P w p x q Hwf Hfits Hcap Hwidth') as Hpush.
+    unfold c_pq, k_insert, k_step, k_credit in *. lia.
+  Qed.
+  Local Lemma pop_amort_output P w (work potential : N)
+      (result : option (N * positive * t)) :
+    (work + output_phi P w result <=
+      k_driver * N.of_nat (unit_pq P w) + potential ->
+    work + match result with Some (_, _, q1) => phi P w q1 | None => 0 end <=
+      c_pq * N.of_nat (unit_pq P w) + potential)%N.
+  Proof.
+    intro Hbound. unfold output_phi in Hbound.
+    eapply N.le_trans; [exact Hbound|].
+    apply N.add_le_mono_r. apply N.mul_le_mono_r.
+    unfold c_pq, k_driver. lia.
+  Qed.
+
+  Lemma T_pop_amort : forall P w q,
+    (wf q -> fits w q -> (pending q <= P)%nat ->
+    T_pop q + match pop q with Some (_, _, q1) => phi P w q1 | None => 0 end
+      <= c_pq * N.of_nat (unit_pq P w) + phi P w q)%N.
+  Proof.
+    intros P w q Hwf Hfits Hpending.
+    exact (pop_amort_output P w (T_pop q) (phi P w q) (pop q)
+      (T5_pop_bounded P w q Hwf Hfits Hpending)).
+  Qed.
 End HeapT.
